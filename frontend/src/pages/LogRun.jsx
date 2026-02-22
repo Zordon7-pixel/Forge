@@ -91,9 +91,9 @@ export default function LogRun() {
         aiFeedback = feedbackRes.data?.ai_feedback || ''
       }
 
-      setFeedback(aiFeedback || 'Feedback coming soon...')
+      setFeedback(aiFeedback || "Your coach is thinking... check back after your next run.")
     } catch (err) {
-      setError(err?.response?.data?.error || 'Could not log run.')
+      setError(err?.response?.data?.error || 'Could not save run. Check your connection and try again.')
     } finally {
       setLoading(false)
       setPolling(false)

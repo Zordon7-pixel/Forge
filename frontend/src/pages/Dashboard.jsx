@@ -47,12 +47,13 @@ export default function Dashboard() {
   const [warning, setWarning] = useState(false)
   const [runs, setRuns] = useState([])
   const [allRuns, setAllRuns] = useState([])
+  const [coachMode, setCoachMode] = useState('')
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     ;(async () => {
       try {
-        const [, warningRes, runsRes, allRunsRes] = await Promise.all([
+        const [meRes, warningRes, runsRes, allRunsRes] = await Promise.all([
           api.get('/auth/me'),
           api.get('/coach/warning'),
           api.get('/runs', { params: { limit: 3 } }),
@@ -60,6 +61,7 @@ export default function Dashboard() {
         ])
 
         setWarning(warningRes.data?.warning === true)
+        setCoachMode(meRes.data?.user?.coach_personality || '')
         const runsData = Array.isArray(runsRes.data) ? runsRes.data : runsRes.data?.runs || []
         const allRunsData = Array.isArray(allRunsRes.data) ? allRunsRes.data : allRunsRes.data?.runs || []
         setRuns(runsData)
@@ -87,7 +89,7 @@ export default function Dashboard() {
   }, [allRuns])
 
   const bestPace = useMemo(() => {
-    const paces = runs
+    const paces = allRuns
       .map(run => {
         if (!run.distance || !run.duration_seconds) return null
         return run.duration_seconds / 60 / run.distance
@@ -99,7 +101,24 @@ export default function Dashboard() {
     const mins = Math.floor(min)
     const secs = Math.round((min - mins) * 60)
     return `${mins}:${String(secs).padStart(2, '0')} /mi`
-  }, [runs])
+  }, [allRuns])
+
+  const streak = useMemo(() => {
+    if (!allRuns.length) return 0
+    const dates = [...new Set(allRuns.map(r => r.date || r.created_at?.slice(0,10)))].sort().reverse()
+    const today = new Date().toISOString().slice(0,10)
+    const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0,10)
+    if (dates[0] !== today && dates[0] !== yesterday) return 0
+    let count = 1
+    for (let i = 1; i < dates.length; i++) {
+      const prev = new Date(dates[i-1])
+      const curr = new Date(dates[i])
+      const diff = Math.round((prev - curr) / 86400000)
+      if (diff === 1) count++
+      else break
+    }
+    return count
+  }, [allRuns])
 
   const greeting = useMemo(() => {
     const hour = new Date().getHours()
@@ -107,6 +126,13 @@ export default function Dashboard() {
     if (hour < 18) return 'Good afternoon 👋'
     return 'Good evening 👋'
   }, [])
+
+  const COACH_LABELS = {
+    mentor: '🎓 Mentor',
+    hype_coach: '⚡ Hype Coach',
+    drill_sergeant: '💪 Drill Sergeant',
+    training_partner: '🤝 Training Partner'
+  }
 
   const weeklyMilesCount = useCountUp(Math.floor(thisWeekMiles * 10), 900)
   const totalRunsCount = useCountUp(allRuns.length, 900)
@@ -121,7 +147,16 @@ export default function Dashboard() {
       <div>
         <p className="text-sm text-slate-400">{greeting}</p>
         <h2 className="text-xl font-bold text-white">Ready to forge your next PR?</h2>
+        {coachMode && (
+          <p className="text-xs text-gray-500">Coach mode: {COACH_LABELS[coachMode] || coachMode}</p>
+        )}
       </div>
+
+      {streak > 0 && (
+        <div className="inline-flex items-center gap-2 rounded-full bg-orange-500/20 px-3 py-1.5 text-sm font-semibold text-orange-400">
+          🔥 {streak}-day streak
+        </div>
+      )}
 
       {warning && (
         <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300">

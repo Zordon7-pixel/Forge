@@ -35,6 +35,18 @@ export default function Onboarding() {
   const submit = async () => {
     setError('')
     setSaving(true)
+    
+    if (!form.age || form.age < 10 || form.age > 100) {
+      setError('Please enter a valid age.')
+      setSaving(false)
+      return
+    }
+    if (!form.weightLbs || form.weightLbs < 50 || form.weightLbs > 500) {
+      setError('Please enter a valid weight.')
+      setSaving(false)
+      return
+    }
+    
     try {
       await api.put('/auth/me/profile', {
         age: Number(form.age),

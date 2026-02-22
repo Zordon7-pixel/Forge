@@ -2,6 +2,10 @@ import { useEffect, useMemo, useState } from 'react'
 import { Trash2 } from 'lucide-react'
 import api from '../lib/api'
 
+function getRunDate(run) {
+  return run.date || run.created_at?.slice(0, 10) || ''
+}
+
 function formatDuration(totalSeconds = 0) {
   const mins = Math.floor(totalSeconds / 60)
   const secs = totalSeconds % 60
@@ -25,8 +29,8 @@ export default function History() {
   useEffect(() => {
     ;(async () => {
       const [runsRes, liftsRes] = await Promise.all([api.get('/runs'), api.get('/lifts')])
-      setRuns(Array.isArray(runsRes.data) ? runsRes.data : runsRes.data?.runs || [])
-      setLifts(Array.isArray(liftsRes.data) ? liftsRes.data : liftsRes.data?.lifts || [])
+      setRuns(sorted => [...(Array.isArray(runsRes.data) ? runsRes.data : runsRes.data?.runs || [])].sort((a,b) => getRunDate(b).localeCompare(getRunDate(a))))
+      setLifts(sorted => [...(Array.isArray(liftsRes.data) ? liftsRes.data : liftsRes.data?.lifts || [])].sort((a,b) => (b.date || b.created_at || '').localeCompare(a.date || a.created_at || '')))
     })()
   }, [])
 
@@ -48,7 +52,7 @@ export default function History() {
     const thisMonth = new Date()
     return runs
       .filter(r => {
-        const d = new Date(r.date || r.created_at)
+        const d = new Date(getRunDate(r))
         return d.getMonth() === thisMonth.getMonth() && d.getFullYear() === thisMonth.getFullYear()
       })
       .reduce((s, r) => s + Number(r.distance || 0), 0)
@@ -105,7 +109,7 @@ export default function History() {
               className="cursor-pointer rounded-xl bg-[#111318] p-4 transition-all duration-150 hover:scale-[1.01] hover:bg-[#1e2235]"
             >
               <div className="mb-2 flex items-center justify-between">
-                <p className="text-sm text-gray-300">{new Date(run.date || run.created_at).toLocaleDateString()}</p>
+                <p className="text-sm text-gray-300">{new Date(getRunDate(run)).toLocaleDateString()}</p>
                 <div className="flex items-center gap-2">
                   {run.effort ? (
                     <span className="rounded-full bg-[#09090f] px-2 py-1 text-xs text-gray-300">Effort {run.effort}/10</span>
@@ -123,6 +127,10 @@ export default function History() {
                 {Number(run.distance || 0).toFixed(2)} mi · {formatDuration(run.duration_seconds)} ·{' '}
                 {formatPace(run.duration_seconds, run.distance)}
               </p>
+
+              {run.notes && (
+                <p className="mt-1 text-xs text-gray-500 italic">"{run.notes}"</p>
+              )}
 
               {run.ai_feedback && (
                 <>
