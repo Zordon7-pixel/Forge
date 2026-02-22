@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { NavLink } from 'react-router-dom'
+import { NavLink, useLocation } from 'react-router-dom'
 import { getUser } from '../lib/auth'
 import { useTheme } from '../context/ThemeContext'
 import HelpDesk from './HelpDesk'
@@ -19,6 +19,8 @@ export default function Layout({ children }) {
   const [showHelp, setShowHelp] = useState(false)
   const [showFeedback, setShowFeedback] = useState(false)
   const { theme, toggle } = useTheme()
+  const location = useLocation()
+  const isWorkout = location.pathname.startsWith('/workout/')
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg-base)', color: 'var(--text-primary)' }}>
@@ -52,25 +54,27 @@ export default function Layout({ children }) {
       <HelpDesk externalOpen={showHelp} onClose={() => setShowHelp(false)} />
       <FeedbackButton externalOpen={showFeedback} onClose={() => setShowFeedback(false)} />
 
-      <nav className="fixed bottom-0 left-1/2 z-30 grid w-full max-w-[480px] -translate-x-1/2 grid-cols-5 border-t px-1 py-1" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}>
-        {NAV_ITEMS.map(({ to, end, icon, label }) => (
-          <NavLink key={to} to={to} end={end} className="flex flex-col items-center justify-center">
-            {({ isActive }) => (
-              <span className="flex flex-col items-center justify-center gap-0.5 px-2 py-1.5 rounded-xl transition-all duration-200 w-full" style={isActive ? { background: 'rgba(234,179,8,0.18)', boxShadow: '0 0 0 1px rgba(234,179,8,0.3)' } : {}}>
-                <img
-                  src={icon}
-                  alt={label}
-                  className={`w-7 h-7 object-contain transition-all duration-200 mix-blend-lighten ${isActive ? 'scale-110' : 'opacity-50'}`}
-                  style={isActive ? { filter: 'drop-shadow(0 0 6px rgba(234,179,8,0.8)) sepia(1) saturate(5) hue-rotate(0deg)' } : {}}
-                />
-                <span className="text-[10px] font-medium transition-colors duration-200" style={{ color: isActive ? 'var(--accent)' : 'var(--text-muted)' }}>
-                  {label}
+      {!isWorkout && (
+        <nav className="fixed bottom-0 left-1/2 z-30 grid w-full max-w-[480px] -translate-x-1/2 grid-cols-5 border-t px-1 py-1" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}>
+          {NAV_ITEMS.map(({ to, end, icon, label }) => (
+            <NavLink key={to} to={to} end={end} className="flex flex-col items-center justify-center">
+              {({ isActive }) => (
+                <span className="flex flex-col items-center justify-center gap-0.5 px-2 py-1.5 rounded-xl transition-all duration-200 w-full" style={isActive ? { background: 'rgba(234,179,8,0.18)', boxShadow: '0 0 0 1px rgba(234,179,8,0.3)' } : {}}>
+                  <img
+                    src={icon}
+                    alt={label}
+                    className={`w-7 h-7 object-contain transition-all duration-200 mix-blend-lighten ${isActive ? 'scale-110' : 'opacity-50'}`}
+                    style={isActive ? { filter: 'drop-shadow(0 0 6px rgba(234,179,8,0.8)) sepia(1) saturate(5) hue-rotate(0deg)' } : {}}
+                  />
+                  <span className="text-[10px] font-medium transition-colors duration-200" style={{ color: isActive ? 'var(--accent)' : 'var(--text-muted)' }}>
+                    {label}
+                  </span>
                 </span>
-              </span>
-            )}
-          </NavLink>
-        ))}
-      </nav>
+              )}
+            </NavLink>
+          ))}
+        </nav>
+      )}
     </div>
   )
 }

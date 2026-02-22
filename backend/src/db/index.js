@@ -61,6 +61,29 @@ db.exec(`
     call_type TEXT NOT NULL,
     created_at TEXT DEFAULT (datetime('now'))
   );
+
+  CREATE TABLE IF NOT EXISTS workout_sessions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT REFERENCES users(id),
+    started_at TEXT NOT NULL,
+    ended_at TEXT,
+    notes TEXT,
+    muscle_groups TEXT DEFAULT '[]',
+    total_seconds INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS workout_sets (
+    id TEXT PRIMARY KEY,
+    session_id TEXT REFERENCES workout_sessions(id),
+    user_id TEXT REFERENCES users(id),
+    exercise_name TEXT NOT NULL,
+    muscle_group TEXT,
+    set_number INTEGER DEFAULT 1,
+    reps INTEGER,
+    weight_lbs REAL,
+    logged_at TEXT DEFAULT (datetime('now'))
+  );
 `);
 
 // Add is_pro column to users if not exists
