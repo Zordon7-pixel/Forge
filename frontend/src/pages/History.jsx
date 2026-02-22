@@ -55,13 +55,13 @@ export default function History() {
         const d = new Date(getRunDate(r))
         return d.getMonth() === thisMonth.getMonth() && d.getFullYear() === thisMonth.getFullYear()
       })
-      .reduce((s, r) => s + Number(r.distance || 0), 0)
+      .reduce((s, r) => s + Number(r.distance_miles || 0), 0)
   }, [runs])
 
   const avgPace = useMemo(() => {
-    const validRuns = runs.filter(r => r.distance && r.duration_seconds)
+    const validRuns = runs.filter(r => r.distance_miles && r.duration_seconds)
     if (!validRuns.length) return '--'
-    const avgPaceMin = validRuns.reduce((s, r) => s + r.duration_seconds / 60 / r.distance, 0) / validRuns.length
+    const avgPaceMin = validRuns.reduce((s, r) => s + r.duration_seconds / 60 / r.distance_miles, 0) / validRuns.length
     const m = Math.floor(avgPaceMin)
     const s = Math.round((avgPaceMin - m) * 60)
     return `${m}:${String(s).padStart(2, '0')} /mi`
@@ -111,8 +111,8 @@ export default function History() {
               <div className="mb-2 flex items-center justify-between">
                 <p className="text-sm text-gray-300">{new Date(getRunDate(run)).toLocaleDateString()}</p>
                 <div className="flex items-center gap-2">
-                  {run.effort ? (
-                    <span className="rounded-full bg-[#09090f] px-2 py-1 text-xs text-gray-300">Effort {run.effort}/10</span>
+                  {run.perceived_effort ? (
+                    <span className="rounded-full bg-[#09090f] px-2 py-1 text-xs text-gray-300">Effort {run.perceived_effort}/10</span>
                   ) : null}
                   <button
                     onClick={e => deleteRun(run.id, e)}
@@ -124,8 +124,8 @@ export default function History() {
               </div>
 
               <p className="text-sm text-gray-200">
-                {Number(run.distance || 0).toFixed(2)} mi · {formatDuration(run.duration_seconds)} ·{' '}
-                {formatPace(run.duration_seconds, run.distance)}
+                {Number(run.distance_miles || 0).toFixed(2)} mi · {formatDuration(run.duration_seconds)} ·{' '}
+                {formatPace(run.duration_seconds, run.distance_miles)}
               </p>
 
               {run.notes && (

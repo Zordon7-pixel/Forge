@@ -68,10 +68,11 @@ export default function LogRun() {
       setLoading(true)
       const runRes = await api.post('/runs', {
         date,
-        distance: Number(distance),
+        type: 'easy',
+        distance_miles: Number(distance),
         duration_seconds: seconds,
         notes,
-        effort: Number(effort)
+        perceived_effort: Number(effort)
       })
 
       const runId = runRes.data?.id || runRes.data?.run?.id

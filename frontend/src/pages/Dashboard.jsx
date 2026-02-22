@@ -81,18 +81,18 @@ export default function Dashboard() {
 
     return allRuns
       .filter(run => new Date(run.date || run.created_at) >= start)
-      .reduce((sum, run) => sum + Number(run.distance || 0), 0)
+      .reduce((sum, run) => sum + Number(run.distance_miles || 0), 0)
   }, [allRuns])
 
   const totalMiles = useMemo(() => {
-    return allRuns.reduce((sum, run) => sum + Number(run.distance || 0), 0)
+    return allRuns.reduce((sum, run) => sum + Number(run.distance_miles || 0), 0)
   }, [allRuns])
 
   const bestPace = useMemo(() => {
     const paces = allRuns
       .map(run => {
-        if (!run.distance || !run.duration_seconds) return null
-        return run.duration_seconds / 60 / run.distance
+        if (!run.distance_miles || !run.duration_seconds) return null
+        return run.duration_seconds / 60 / run.distance_miles
       })
       .filter(Boolean)
 
@@ -194,11 +194,11 @@ export default function Dashboard() {
               <div className="mb-2 flex items-center justify-between">
                 <p className="text-sm text-gray-300">{new Date(run.date || run.created_at).toLocaleDateString()}</p>
                 <span className="rounded-full bg-orange-500/20 px-2 py-1 text-xs text-orange-400">
-                  {formatPace(run.duration_seconds, run.distance)}
+                  {formatPace(run.duration_seconds, run.distance_miles)}
                 </span>
               </div>
               <p className="text-sm text-gray-200">
-                {Number(run.distance || 0).toFixed(2)} mi · {formatDuration(run.duration_seconds)}
+                {Number(run.distance_miles || 0).toFixed(2)} mi · {formatDuration(run.duration_seconds)}
               </p>
             </div>
           ))}
