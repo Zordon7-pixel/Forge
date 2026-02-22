@@ -44,20 +44,32 @@ export default function Layout({ children }) {
       <HelpDesk externalOpen={showHelp} onClose={() => setShowHelp(false)} />
       <FeedbackButton externalOpen={showFeedback} onClose={() => setShowFeedback(false)} />
 
-      <nav className="fixed bottom-0 left-1/2 z-30 grid w-full max-w-[480px] -translate-x-1/2 grid-cols-5 border-t border-white/10 bg-[#111318] px-2 py-2">
+      <nav className="fixed bottom-0 left-1/2 z-30 grid w-full max-w-[480px] -translate-x-1/2 grid-cols-5 border-t border-white/10 bg-[#111318] px-1 py-1">
         {NAV_ITEMS.map(({ to, end, icon, label }) => (
           <NavLink
             key={to}
             to={to}
             end={end}
-            className={({ isActive }) =>
-              `flex flex-col items-center justify-center gap-1 text-xs transition-all ${
-                isActive ? 'opacity-100 scale-110' : 'opacity-40'
-              }`
-            }
+            className="flex flex-col items-center justify-center"
           >
-            <img src={icon} alt={label} className="w-7 h-7 object-contain" />
-            <span className="text-gray-300">{label}</span>
+            {({ isActive }) => (
+              <span className={`flex flex-col items-center justify-center gap-0.5 px-2 py-1.5 rounded-xl transition-all duration-200 w-full ${
+                isActive
+                  ? 'bg-violet-600/25 ring-1 ring-violet-500/40'
+                  : 'bg-transparent'
+              }`}>
+                <img
+                  src={icon}
+                  alt={label}
+                  className={`w-7 h-7 object-contain transition-all duration-200 mix-blend-lighten ${
+                    isActive ? 'scale-110 drop-shadow-[0_0_6px_rgba(167,139,250,0.9)]' : 'opacity-50'
+                  }`}
+                />
+                <span className={`text-[10px] font-medium transition-colors duration-200 ${
+                  isActive ? 'text-violet-300' : 'text-gray-500'
+                }`}>{label}</span>
+              </span>
+            )}
           </NavLink>
         ))}
       </nav>
