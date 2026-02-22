@@ -9,11 +9,23 @@ router.get('/', auth, (req, res) => {
 });
 
 router.post('/', auth, (req, res) => {
-  const { date, muscle_groups, intensity, notes } = req.body;
+  const { date, muscle_groups, intensity, notes, exercise_name, sets, reps, weight_lbs } = req.body;
   if (!date) return res.status(400).json({ error: 'date required' });
   const id = uuidv4();
-  db.prepare(`INSERT INTO lifts (id, user_id, date, muscle_groups, intensity, notes) VALUES (?, ?, ?, ?, ?, ?)`)
-    .run(id, req.user.id, date, JSON.stringify(muscle_groups || []), intensity || 'moderate', notes || null);
+  db.prepare(`INSERT INTO lifts (id, user_id, date, muscle_groups, intensity, notes, exercise_name, sets, reps, weight_lbs)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(
+      id,
+      req.user.id,
+      date,
+      JSON.stringify(muscle_groups || []),
+      intensity || 'moderate',
+      notes || null,
+      exercise_name || null,
+      sets || null,
+      reps || null,
+      weight_lbs || null
+    );
   const lift = db.prepare('SELECT * FROM lifts WHERE id = ?').get(id);
   res.status(201).json({ ...lift, muscle_groups: JSON.parse(lift.muscle_groups || '[]') });
 });

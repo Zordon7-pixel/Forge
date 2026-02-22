@@ -16,7 +16,7 @@ export default function Profile() {
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState('')
   const [form, setForm] = useState({
-    name: '', email: '', age: '', weight_lbs: '', fitness_level: 'beginner', primary_goal: 'general_fitness', injury_status: 'none', injury_detail: '', coach_personality: 'mentor', weekly_miles: ''
+    name: '', email: '', age: '', weight_lbs: '', sex: 'male', fitness_level: 'beginner', primary_goal: 'general_fitness', injury_status: 'none', injury_detail: '', coach_personality: 'mentor', weekly_miles: ''
   })
 
   useEffect(() => {
@@ -29,6 +29,7 @@ export default function Profile() {
           email: user.email || '',
           age: user.age ?? '',
           weight_lbs: user.weight_lbs ?? '',
+          sex: user.sex || 'male',
           fitness_level: user.fitness_level || (user.comeback_mode ? 'intermediate' : 'beginner'),
           primary_goal: user.primary_goal || user.goal_type || 'general_fitness',
           injury_status: user.injury_status || (user.injury_notes ? 'recovering' : 'none'),
@@ -49,6 +50,7 @@ export default function Profile() {
         name: form.name,
         age: form.age === '' ? null : Number(form.age),
         weight_lbs: form.weight_lbs === '' ? null : Number(form.weight_lbs),
+        sex: form.sex,
         fitness_level: form.fitness_level,
         primary_goal: form.primary_goal,
         injury_status: form.injury_status,
@@ -86,6 +88,18 @@ export default function Profile() {
           <input type="number" min="0" placeholder="Age" value={form.age} onChange={e => update('age', e.target.value)} className="rounded-xl border px-3 py-3" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }} />
           <input type="number" min="0" step="0.1" placeholder="Weight" value={form.weight_lbs} onChange={e => update('weight_lbs', e.target.value)} className="rounded-xl border px-3 py-3" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }} />
           <input type="number" min="0" step="0.1" placeholder="Weekly mi" value={form.weekly_miles} onChange={e => update('weekly_miles', e.target.value)} className="rounded-xl border px-3 py-3" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }} />
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          {['male', 'female'].map(s => (
+            <button key={s} type="button" onClick={() => update('sex', s)}
+              className="rounded-xl border p-3 text-sm font-medium capitalize transition"
+              style={form.sex === s
+                ? { borderColor: 'var(--accent)', background: 'var(--accent-dim)', color: 'var(--accent)' }
+                : { borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-muted)' }}>
+              {s === 'male' ? 'Male' : 'Female'}
+            </button>
+          ))}
         </div>
 
         <select value={form.fitness_level} onChange={e => update('fitness_level', e.target.value)} className="w-full rounded-xl border px-4 py-3" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }}>

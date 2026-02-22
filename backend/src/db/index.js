@@ -68,5 +68,93 @@ const cols = db.prepare("PRAGMA table_info(users)").all().map(c => c.name);
 if (!cols.includes('is_pro')) {
   db.prepare("ALTER TABLE users ADD COLUMN is_pro INTEGER DEFAULT 0").run();
 }
+if (!cols.includes('sex')) {
+  db.prepare("ALTER TABLE users ADD COLUMN sex TEXT DEFAULT 'male'").run();
+}
+
+// Exercise library table (shared across all users)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS exercises (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    muscle_group TEXT NOT NULL,
+    is_custom INTEGER DEFAULT 0,
+    created_by TEXT REFERENCES users(id),
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+`);
+
+const exerciseCount = db.prepare('SELECT COUNT(*) as cnt FROM exercises').get().cnt;
+if (exerciseCount === 0) {
+  const defaultExercises = [
+    // Chest
+    { name: 'Bench Press', group: 'chest' },
+    { name: 'Incline Bench Press', group: 'chest' },
+    { name: 'Decline Bench Press', group: 'chest' },
+    { name: 'Dumbbell Fly', group: 'chest' },
+    { name: 'Cable Crossover', group: 'chest' },
+    { name: 'Push-ups', group: 'chest' },
+    { name: 'Dips', group: 'chest' },
+    // Back
+    { name: 'Pull-ups', group: 'back' },
+    { name: 'Lat Pulldown', group: 'back' },
+    { name: 'Barbell Row', group: 'back' },
+    { name: 'Seated Cable Row', group: 'back' },
+    { name: 'Single Arm Dumbbell Row', group: 'back' },
+    { name: 'T-Bar Row', group: 'back' },
+    { name: 'Deadlift', group: 'back' },
+    // Legs
+    { name: 'Squat', group: 'legs' },
+    { name: 'Leg Press', group: 'legs' },
+    { name: 'Romanian Deadlift', group: 'legs' },
+    { name: 'Leg Curl', group: 'legs' },
+    { name: 'Leg Extension', group: 'legs' },
+    { name: 'Lunges', group: 'legs' },
+    { name: 'Calf Raises', group: 'legs' },
+    { name: 'Hip Thrust', group: 'legs' },
+    // Shoulders
+    { name: 'Overhead Press', group: 'shoulders' },
+    { name: 'Dumbbell Shoulder Press', group: 'shoulders' },
+    { name: 'Lateral Raise', group: 'shoulders' },
+    { name: 'Front Raise', group: 'shoulders' },
+    { name: 'Face Pull', group: 'shoulders' },
+    { name: 'Arnold Press', group: 'shoulders' },
+    { name: 'Upright Row', group: 'shoulders' },
+    // Arms
+    { name: 'Barbell Curl', group: 'arms' },
+    { name: 'Dumbbell Curl', group: 'arms' },
+    { name: 'Hammer Curl', group: 'arms' },
+    { name: 'Preacher Curl', group: 'arms' },
+    { name: 'Tricep Pushdown', group: 'arms' },
+    { name: 'Skull Crushers', group: 'arms' },
+    { name: 'Overhead Tricep Extension', group: 'arms' },
+    { name: 'Diamond Push-ups', group: 'arms' },
+    // Core
+    { name: 'Plank', group: 'core' },
+    { name: 'Crunches', group: 'core' },
+    { name: 'Leg Raises', group: 'core' },
+    { name: 'Russian Twists', group: 'core' },
+    { name: 'Ab Rollout', group: 'core' },
+    { name: 'Cable Crunch', group: 'core' },
+    { name: 'Hanging Knee Raise', group: 'core' },
+  ];
+  const { v4: uuidv4 } = require('uuid');
+  const insertEx = db.prepare('INSERT INTO exercises (id, name, muscle_group) VALUES (?, ?, ?)');
+  defaultExercises.forEach(ex => insertEx.run(uuidv4(), ex.name, ex.group));
+}
+
+const liftCols = db.prepare("PRAGMA table_info(lifts)").all().map(c => c.name);
+if (!liftCols.includes('exercise_name')) {
+  db.prepare("ALTER TABLE lifts ADD COLUMN exercise_name TEXT").run();
+}
+if (!liftCols.includes('sets')) {
+  db.prepare("ALTER TABLE lifts ADD COLUMN sets INTEGER").run();
+}
+if (!liftCols.includes('reps')) {
+  db.prepare("ALTER TABLE lifts ADD COLUMN reps INTEGER").run();
+}
+if (!liftCols.includes('weight_lbs')) {
+  db.prepare("ALTER TABLE lifts ADD COLUMN weight_lbs REAL").run();
+}
 
 module.exports = db;

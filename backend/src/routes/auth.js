@@ -36,7 +36,7 @@ router.post('/register', (req, res) => {
 });
 
 router.get('/me', auth, (req, res) => {
-  const user = db.prepare('SELECT id, name, email, weekly_miles_current, goal_type, goal_race_date, goal_race_distance, injury_notes, comeback_mode, onboarded, coach_personality, run_days_per_week, lift_days_per_week FROM users WHERE id = ?').get(req.user.id);
+  const user = db.prepare('SELECT id, name, email, sex, weekly_miles_current, goal_type, goal_race_date, goal_race_distance, injury_notes, comeback_mode, onboarded, coach_personality, run_days_per_week, lift_days_per_week FROM users WHERE id = ?').get(req.user.id);
   if (!user) return res.status(404).json({ error: 'User not found' });
 
   const normalized = {
@@ -68,7 +68,8 @@ router.put('/me/profile', auth, (req, res) => {
     comeback_mode,
     coach_personality,
     run_days_per_week,
-    lift_days_per_week
+    lift_days_per_week,
+    sex
   } = req.body;
 
   const mappedWeekly = weekly_miles ?? weekly_miles_current;
@@ -87,6 +88,7 @@ router.put('/me/profile', auth, (req, res) => {
     coach_personality = COALESCE(?, coach_personality),
     run_days_per_week = COALESCE(?, run_days_per_week),
     lift_days_per_week = COALESCE(?, lift_days_per_week),
+    sex = COALESCE(?, sex),
     onboarded = 1
     WHERE id = ?`).run(
     name ?? null,
@@ -99,6 +101,7 @@ router.put('/me/profile', auth, (req, res) => {
     coach_personality ?? null,
     run_days_per_week ?? null,
     lift_days_per_week ?? null,
+    sex ?? null,
     req.user.id
   );
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
