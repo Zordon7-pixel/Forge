@@ -105,4 +105,24 @@ router.put('/me/profile', auth, (req, res) => {
   res.json({ token: sign(user), user });
 });
 
+router.get('/me/ai-usage', auth, (req, res) => {
+  const today = new Date().toISOString().slice(0, 10);
+  const month = new Date().toISOString().slice(0, 7);
+  const user = db.prepare("SELECT is_pro FROM users WHERE id = ?").get(req.user.id);
+  
+  const daily = db.prepare(
+    "SELECT COUNT(*) as cnt FROM ai_usage WHERE user_id = ? AND created_at >= ?"
+  ).get(req.user.id, today + 'T00:00:00').cnt;
+  
+  const monthly = db.prepare(
+    "SELECT COUNT(*) as cnt FROM ai_usage WHERE user_id = ? AND created_at >= ?"
+  ).get(req.user.id, month + '-01T00:00:00').cnt;
+
+  res.json({
+    is_pro: !!user?.is_pro,
+    daily: { used: daily, limit: 10 },
+    monthly: { used: monthly, limit: user?.is_pro ? null : 5 }
+  });
+});
+
 module.exports = router;

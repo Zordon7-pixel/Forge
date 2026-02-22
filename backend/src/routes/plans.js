@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const db     = require('../db');
 const auth   = require('../middleware/auth');
+const { checkAiLimit } = require('../middleware/aiLimit');
 const { v4: uuidv4 } = require('uuid');
 const { generateTrainingPlan } = require('../services/ai');
 
@@ -10,7 +11,7 @@ router.get('/current', auth, (req, res) => {
   res.json({ plan: { ...plan, plan_json: JSON.parse(plan.plan_json) } });
 });
 
-router.post('/generate', auth, async (req, res) => {
+router.post('/generate', auth, checkAiLimit('plan_generate'), async (req, res) => {
   const profile = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
   if (!profile) return res.status(404).json({ error: 'User not found' });
 

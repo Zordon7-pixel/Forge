@@ -20,11 +20,27 @@ router.post('/', auth, (req, res) => {
   const run = db.prepare('SELECT * FROM runs WHERE id = ?').get(id);
   res.status(201).json(run);
 
-  // Async: generate AI feedback and update the record
-  const profile = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
-  generateRunFeedback(run, profile).then(feedback => {
-    if (feedback) db.prepare('UPDATE runs SET ai_feedback = ? WHERE id = ?').run(feedback, id);
-  }).catch(() => {});
+  // Async: generate AI feedback — check limits first
+  const today = new Date().toISOString().slice(0, 10);
+  const month = new Date().toISOString().slice(0, 7);
+  const dailyCount = db.prepare(
+    "SELECT COUNT(*) as cnt FROM ai_usage WHERE user_id = ? AND created_at >= ?"
+  ).get(req.user.id, today + 'T00:00:00').cnt;
+  const userRow = db.prepare("SELECT is_pro FROM users WHERE id = ?").get(req.user.id);
+  const monthlyCount = !userRow?.is_pro ? db.prepare(
+    "SELECT COUNT(*) as cnt FROM ai_usage WHERE user_id = ? AND created_at >= ?"
+  ).get(req.user.id, month + '-01T00:00:00').cnt : 0;
+
+  const canCallAI = dailyCount < 10 && (userRow?.is_pro || monthlyCount < 5);
+
+  if (canCallAI) {
+    db.prepare("INSERT INTO ai_usage (id, user_id, call_type) VALUES (?, ?, ?)")
+      .run(uuidv4(), req.user.id, 'run_feedback');
+    const profile = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+    generateRunFeedback(run, profile).then(feedback => {
+      if (feedback) db.prepare('UPDATE runs SET ai_feedback = ? WHERE id = ?').run(feedback, id);
+    }).catch(() => {});
+  }
 });
 
 router.delete('/:id', auth, (req, res) => {

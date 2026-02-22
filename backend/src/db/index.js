@@ -54,6 +54,19 @@ db.exec(`
     plan_json TEXT NOT NULL,
     created_at TEXT DEFAULT (datetime('now'))
   );
+
+  CREATE TABLE IF NOT EXISTS ai_usage (
+    id TEXT PRIMARY KEY,
+    user_id TEXT REFERENCES users(id),
+    call_type TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
 `);
+
+// Add is_pro column to users if not exists
+const cols = db.prepare("PRAGMA table_info(users)").all().map(c => c.name);
+if (!cols.includes('is_pro')) {
+  db.prepare("ALTER TABLE users ADD COLUMN is_pro INTEGER DEFAULT 0").run();
+}
 
 module.exports = db;
