@@ -14,7 +14,7 @@ export default function Login() {
     setLoading(true)
 
     try {
-      const response = await api.post('/api/auth/login', { email, password })
+      const response = await api.post('/auth/login', { email, password })
       localStorage.setItem('forge_token', response.data.token)
       window.location.href = '/'
     } catch (err) {

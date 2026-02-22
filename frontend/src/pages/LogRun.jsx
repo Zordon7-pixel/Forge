@@ -36,7 +36,7 @@ export default function LogRun() {
 
     try {
       setLoading(true)
-      const runRes = await api.post('/api/runs', {
+      const runRes = await api.post('/runs', {
         date,
         distance: Number(distance),
         duration_seconds: seconds,

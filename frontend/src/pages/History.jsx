@@ -23,7 +23,7 @@ export default function History() {
 
   useEffect(() => {
     ;(async () => {
-      const [runsRes, liftsRes] = await Promise.all([api.get('/api/runs'), api.get('/api/lifts')])
+      const [runsRes, liftsRes] = await Promise.all([api.get('/runs'), api.get('/lifts')])
       setRuns(Array.isArray(runsRes.data) ? runsRes.data : runsRes.data?.runs || [])
       setLifts(Array.isArray(liftsRes.data) ? liftsRes.data : liftsRes.data?.lifts || [])
     })()

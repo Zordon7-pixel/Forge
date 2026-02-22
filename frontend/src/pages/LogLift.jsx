@@ -32,7 +32,7 @@ export default function LogLift() {
     setError('')
 
     try {
-      await api.post('/api/lifts', {
+      await api.post('/lifts', {
         ...form,
         sets: Number(form.sets),
         reps: Number(form.reps),

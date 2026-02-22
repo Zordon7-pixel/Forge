@@ -53,10 +53,10 @@ export default function Dashboard() {
     ;(async () => {
       try {
         const [, warningRes, runsRes, allRunsRes] = await Promise.all([
-          api.get('/api/auth/me'),
-          api.get('/api/coach/warning'),
-          api.get('/api/runs', { params: { limit: 3 } }),
-          api.get('/api/runs')
+          api.get('/auth/me'),
+          api.get('/coach/warning'),
+          api.get('/runs', { params: { limit: 3 } }),
+          api.get('/runs')
         ])
 
         setWarning(warningRes.data?.warning === true)

@@ -36,7 +36,7 @@ export default function Onboarding() {
     setError('')
     setSaving(true)
     try {
-      await api.put('/api/auth/me/profile', {
+      await api.put('/auth/me/profile', {
         age: Number(form.age),
         weight_lbs: Number(form.weightLbs),
         height_ft: Number(form.heightFt),
@@ -49,7 +49,7 @@ export default function Onboarding() {
         coach_personality: form.coachPersonality
       })
 
-      await api.post('/api/plans/generate')
+      await api.post('/plans/generate')
       window.location.href = '/'
     } catch (err) {
       setError(err?.response?.data?.error || 'Could not finish onboarding. Please try again.')

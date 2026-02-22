@@ -15,7 +15,7 @@ export default function Plan() {
 
   const loadPlan = async () => {
     try {
-      const res = await api.get('/api/plans/current')
+      const res = await api.get('/plans/current')
       setPlan(res.data?.plan || res.data || null)
     } finally {
       setLoading(false)
@@ -39,7 +39,7 @@ export default function Plan() {
   const regenerate = async () => {
     setRegenerating(true)
     try {
-      await api.post('/api/plans/generate')
+      await api.post('/plans/generate')
       await loadPlan()
     } finally {
       setRegenerating(false)

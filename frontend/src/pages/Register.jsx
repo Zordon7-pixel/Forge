@@ -15,7 +15,7 @@ export default function Register() {
     setLoading(true)
 
     try {
-      const response = await api.post('/api/auth/register', { name, email, password })
+      const response = await api.post('/auth/register', { name, email, password })
       localStorage.setItem('forge_token', response.data.token)
       window.location.href = '/onboarding'
     } catch (err) {
