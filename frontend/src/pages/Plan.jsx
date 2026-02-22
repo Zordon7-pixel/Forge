@@ -41,13 +41,20 @@ export default function Plan() {
 
   if (!plan) {
     return (
-      <div className="rounded-2xl p-5 text-center" style={{ background: 'var(--bg-card)' }}>
-        <div className="flex flex-col items-center justify-center gap-4 py-8">
-          <img src="/empty-plan.png" alt="" className="h-40 w-40 object-contain opacity-90" />
-          <p className="text-sm font-medium" style={{ color: 'var(--text-muted)' }}>No training plan yet.</p>
-          <p className="text-xs" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>Generate one to get started.</p>
+      <div className="relative overflow-hidden" style={{ minHeight: 'calc(100vh - 180px)' }}>
+        <img src="/empty-plan.png" alt="" className="absolute inset-0 w-full h-full object-cover" />
+        <div className="absolute inset-0" style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.92) 0%, rgba(0,0,0,0.3) 60%, transparent 100%)' }} />
+        <div className="absolute bottom-10 left-0 right-0 flex flex-col items-center gap-3 px-6">
+          <p className="text-base font-bold text-white">No training plan yet.</p>
+          <p className="text-sm" style={{ color: 'rgba(255,255,255,0.6)' }}>Generate one to get started.</p>
+          <button
+            onClick={regenerate}
+            className="mt-2 rounded-xl px-6 py-3 font-semibold text-black"
+            style={{ background: 'var(--accent)' }}
+          >
+            Generate Plan
+          </button>
         </div>
-        <button onClick={regenerate} className="rounded-xl px-4 py-2 font-semibold" style={{ background: 'var(--accent)', color: 'black' }}>Generate</button>
       </div>
     )
   }
