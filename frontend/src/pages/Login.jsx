@@ -18,7 +18,7 @@ export default function Login() {
       localStorage.setItem('forge_token', response.data.token)
       window.location.href = '/'
     } catch (err) {
-      setError(err?.response?.data?.error || 'Login failed. Please try again.')
+      setError('Wrong email or password.')
     } finally {
       setLoading(false)
     }

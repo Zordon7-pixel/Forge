@@ -28,7 +28,9 @@ router.post('/', auth, (req, res) => {
 });
 
 router.delete('/:id', auth, (req, res) => {
-  db.prepare('DELETE FROM runs WHERE id = ? AND user_id = ?').run(req.params.id, req.user.id);
+  const run = db.prepare('SELECT * FROM runs WHERE id=? AND user_id=?').get(req.params.id, req.user.id);
+  if (!run) return res.status(404).json({ error: 'Not found' });
+  db.prepare('DELETE FROM runs WHERE id=?').run(req.params.id);
   res.json({ ok: true });
 });
 

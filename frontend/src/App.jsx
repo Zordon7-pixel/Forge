@@ -9,6 +9,7 @@ import LogRun from './pages/LogRun'
 import LogLift from './pages/LogLift'
 import Plan from './pages/Plan'
 import History from './pages/History'
+import Profile from './pages/Profile'
 
 function PrivateRoute({ children }) {
   if (!isLoggedIn()) return <Navigate to="/login" replace />
@@ -64,6 +65,14 @@ export default function App() {
           element={
             <PrivateRoute>
               <History />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/profile"
+          element={
+            <PrivateRoute>
+              <Profile />
             </PrivateRoute>
           }
         />

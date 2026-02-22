@@ -77,10 +77,10 @@ export default function Dashboard() {
     start.setDate(now.getDate() - day)
     start.setHours(0, 0, 0, 0)
 
-    return runs
+    return allRuns
       .filter(run => new Date(run.date || run.created_at) >= start)
       .reduce((sum, run) => sum + Number(run.distance || 0), 0)
-  }, [runs])
+  }, [allRuns])
 
   const totalMiles = useMemo(() => {
     return allRuns.reduce((sum, run) => sum + Number(run.distance || 0), 0)
@@ -171,15 +171,18 @@ export default function Dashboard() {
         </div>
       </section>
 
-      <div className="grid grid-cols-2 gap-3">
-        <Link to="/log-run" className="rounded-xl bg-orange-500 px-4 py-3 text-center font-semibold text-white">
-          Log a Run →
+      <div className="grid grid-cols-3 gap-3">
+        <Link to="/log-run" className="rounded-xl bg-orange-500 px-4 py-3 text-center text-sm font-semibold text-white">
+          🏃 Log Run
+        </Link>
+        <Link to="/log-lift" className="rounded-xl bg-purple-600 px-4 py-3 text-center text-sm font-semibold text-white">
+          💪 Log Lift
         </Link>
         <Link
           to="/plan"
-          className="rounded-xl border border-white/20 bg-transparent px-4 py-3 text-center font-semibold text-gray-100"
+          className="rounded-xl border border-white/20 bg-transparent px-4 py-3 text-center text-sm font-semibold text-gray-100"
         >
-          View Plan →
+          📋 View Plan
         </Link>
       </div>
     </div>

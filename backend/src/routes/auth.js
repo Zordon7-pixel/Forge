@@ -37,12 +37,47 @@ router.post('/register', (req, res) => {
 
 router.get('/me', auth, (req, res) => {
   const user = db.prepare('SELECT id, name, email, weekly_miles_current, goal_type, goal_race_date, goal_race_distance, injury_notes, comeback_mode, onboarded, coach_personality, run_days_per_week, lift_days_per_week FROM users WHERE id = ?').get(req.user.id);
-  res.json({ user });
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  const normalized = {
+    ...user,
+    weekly_miles: user.weekly_miles_current,
+    primary_goal: user.goal_type,
+    injury_status: user.injury_notes ? 'recovering' : 'none',
+    injury_detail: user.injury_notes,
+    fitness_level: user.comeback_mode ? 'intermediate' : 'beginner',
+    age: null,
+    weight_lbs: null
+  };
+
+  res.json({ user: normalized });
 });
 
 router.put('/me/profile', auth, (req, res) => {
-  const { weekly_miles_current, goal_type, goal_race_date, goal_race_distance, injury_notes, comeback_mode, coach_personality, run_days_per_week, lift_days_per_week } = req.body;
+  const {
+    name,
+    weekly_miles,
+    primary_goal,
+    injury_detail,
+    injury_status,
+    weekly_miles_current,
+    goal_type,
+    goal_race_date,
+    goal_race_distance,
+    injury_notes,
+    comeback_mode,
+    coach_personality,
+    run_days_per_week,
+    lift_days_per_week
+  } = req.body;
+
+  const mappedWeekly = weekly_miles ?? weekly_miles_current;
+  const mappedGoal = primary_goal ?? goal_type;
+  const mappedInjury = injury_detail ?? injury_notes;
+  const mappedComeback = comeback_mode ?? (injury_status && injury_status !== 'none' ? 1 : null);
+
   db.prepare(`UPDATE users SET
+    name = COALESCE(?, name),
     weekly_miles_current = COALESCE(?, weekly_miles_current),
     goal_type = COALESCE(?, goal_type),
     goal_race_date = COALESCE(?, goal_race_date),
@@ -54,9 +89,16 @@ router.put('/me/profile', auth, (req, res) => {
     lift_days_per_week = COALESCE(?, lift_days_per_week),
     onboarded = 1
     WHERE id = ?`).run(
-    weekly_miles_current ?? null, goal_type ?? null, goal_race_date ?? null, goal_race_distance ?? null,
-    injury_notes ?? null, comeback_mode ?? null, coach_personality ?? null,
-    run_days_per_week ?? null, lift_days_per_week ?? null,
+    name ?? null,
+    mappedWeekly ?? null,
+    mappedGoal ?? null,
+    goal_race_date ?? null,
+    goal_race_distance ?? null,
+    mappedInjury ?? null,
+    mappedComeback ?? null,
+    coach_personality ?? null,
+    run_days_per_week ?? null,
+    lift_days_per_week ?? null,
     req.user.id
   );
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);

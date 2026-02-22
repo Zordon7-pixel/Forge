@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom'
-import { Calendar, Clock3, Home, Plus } from 'lucide-react'
+import { Clock3, Dumbbell, Home, User, Zap } from 'lucide-react'
 import { getUser } from '../lib/auth'
 import HelpDesk from './HelpDesk'
 import FeedbackButton from './FeedbackButton'
@@ -25,27 +25,30 @@ export default function Layout({ children }) {
       <HelpDesk />
       <FeedbackButton />
 
-      <nav className="fixed bottom-0 left-1/2 z-30 flex w-full max-w-[480px] -translate-x-1/2 items-center justify-around border-t border-white/10 bg-[#111318] px-3 py-2">
+      <nav className="fixed bottom-0 left-1/2 z-30 grid w-full max-w-[480px] -translate-x-1/2 grid-cols-5 border-t border-white/10 bg-[#111318] px-2 py-2">
         <NavLink to="/" className={navClass}>
           <Home size={18} />
           <span>Home</span>
         </NavLink>
 
         <NavLink to="/log-run" className={navClass}>
-          <div className="rounded-full bg-orange-500 p-2 text-white">
-            <Plus size={18} />
-          </div>
-          <span>Log Run</span>
+          <Zap size={18} />
+          <span>Run</span>
         </NavLink>
 
-        <NavLink to="/plan" className={navClass}>
-          <Calendar size={18} />
-          <span>Plan</span>
+        <NavLink to="/log-lift" className={navClass}>
+          <Dumbbell size={18} />
+          <span>Lift</span>
         </NavLink>
 
         <NavLink to="/history" className={navClass}>
           <Clock3 size={18} />
           <span>History</span>
+        </NavLink>
+
+        <NavLink to="/profile" className={navClass}>
+          <User size={18} />
+          <span>Profile</span>
         </NavLink>
       </nav>
     </div>

@@ -46,6 +46,8 @@ export default function Plan() {
     }
   }
 
+  const todayName = new Date().toLocaleDateString('en-US', { weekday: 'long' })
+
   if (loading) return <div className="rounded-xl bg-[#111318] p-4 text-gray-300">Loading your training data...</div>
 
   if (!plan) {
@@ -80,11 +82,24 @@ export default function Plan() {
               : rawType.includes('rest')
                 ? 'rest'
                 : 'run'
+          const isToday = (day.day || '').toLowerCase().includes(todayName.toLowerCase())
 
           return (
-            <div key={idx} className="rounded-xl bg-[#111318] p-4">
+            <div
+              key={idx}
+              className={`rounded-xl border p-4 ${
+                isToday
+                  ? 'border-orange-500/60 bg-gradient-to-br from-orange-900/20 to-[#111318]'
+                  : 'border-white/10 bg-[#111318]'
+              }`}
+            >
               <div className="mb-2 flex items-center justify-between">
-                <p className="font-semibold text-white">{day.day || `Day ${idx + 1}`}</p>
+                <div className="flex items-center gap-2">
+                  <p className="font-semibold text-white">{day.day || `Day ${idx + 1}`}</p>
+                  {isToday ? (
+                    <span className="rounded-full bg-orange-500 px-2 py-0.5 text-xs font-bold text-white">TODAY</span>
+                  ) : null}
+                </div>
                 <span className={`rounded-full px-2 py-1 text-xs ${badgeStyles[typeKey]}`}>
                   {day.workout_type || day.type || 'Run'}
                 </span>
