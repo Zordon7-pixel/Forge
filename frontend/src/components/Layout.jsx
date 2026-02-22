@@ -24,6 +24,7 @@ export default function Layout({ children }) {
         <header className="sticky top-0 z-20 flex items-center justify-between border-b border-white/10 bg-[#09090f]/90 py-4 backdrop-blur">
           <h1 className="text-lg font-bold text-violet-400">⚡ FORGE</h1>
           <div className="flex items-center gap-3">
+            <p className="text-sm text-gray-300">{firstName}</p>
             <button
               onClick={() => setShowFeedback(true)}
               className="text-gray-600 hover:text-gray-400 transition-colors text-xs"
@@ -34,7 +35,6 @@ export default function Layout({ children }) {
               className="text-gray-600 hover:text-gray-400 transition-colors text-xs"
               title="Help & diagnostics"
             >?</button>
-            <p className="text-sm text-gray-300">{firstName}</p>
           </div>
         </header>
 
