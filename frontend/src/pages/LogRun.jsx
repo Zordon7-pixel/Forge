@@ -6,10 +6,40 @@ function todayISO() {
   return new Date().toISOString().slice(0, 10)
 }
 
-function parseDurationToSeconds(mmss) {
-  const [mins, secs] = mmss.split(':').map(Number)
-  if (Number.isNaN(mins) || Number.isNaN(secs)) return null
-  return mins * 60 + secs
+function parseDurationToSeconds(input) {
+  if (!input || !input.trim()) return null
+  const s = input.trim().replace(/\s+/g, '')
+
+  // H:MM:SS
+  const hms = s.match(/^(\d+):(\d{1,2}):(\d{2})$/)
+  if (hms) return +hms[1] * 3600 + +hms[2] * 60 + +hms[3]
+
+  // MM:SS
+  const ms = s.match(/^(\d+):(\d{2})$/)
+  if (ms) return +ms[1] * 60 + +ms[2]
+
+  // Plain number → treat as minutes
+  const plain = s.match(/^(\d+)$/)
+  if (plain) return +plain[1] * 60
+
+  // "45m", "45min", "45 min"
+  const minOnly = s.match(/^(\d+)m(?:in)?$/i)
+  if (minOnly) return +minOnly[1] * 60
+
+  // "1h30m", "1h30", "1h 30m"
+  const hm = s.match(/^(\d+)h\s*(\d+)?m?$/i)
+  if (hm) return +hm[1] * 3600 + (+hm[2] || 0) * 60
+
+  return null
+}
+
+function secondsToDisplay(sec) {
+  if (!sec) return ''
+  const h = Math.floor(sec / 3600)
+  const m = Math.floor((sec % 3600) / 60)
+  const s = sec % 60
+  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+  return `${m}:${String(s).padStart(2, '0')}`
 }
 
 export default function LogRun() {
@@ -30,7 +60,7 @@ export default function LogRun() {
 
     const seconds = parseDurationToSeconds(duration)
     if (!seconds) {
-      setError('Duration must be in MM:SS format.')
+      setError('Please enter a valid duration.')
       return
     }
 
@@ -57,7 +87,7 @@ export default function LogRun() {
       while (attempts < 5 && !aiFeedback) {
         attempts += 1
         await new Promise(resolve => setTimeout(resolve, 2000))
-        const feedbackRes = await api.get(`/api/coach/feedback/${runId}`)
+        const feedbackRes = await api.get(`/coach/feedback/${runId}`)
         aiFeedback = feedbackRes.data?.ai_feedback || ''
       }
 
@@ -94,11 +124,16 @@ export default function LogRun() {
         <input
           type="text"
           required
-          placeholder="Duration (MM:SS)"
+          placeholder="Duration (e.g. 45, 4:30, 1:23:45)"
           value={duration}
           onChange={e => setDuration(e.target.value)}
+          onBlur={() => {
+            const sec = parseDurationToSeconds(duration)
+            if (sec) setDuration(secondsToDisplay(sec))
+          }}
           className="w-full rounded-xl border border-white/10 bg-[#09090f] px-4 py-3"
         />
+        <p className="-mt-2 text-xs text-gray-500">Enter minutes (45), MM:SS (45:00), or H:MM:SS (1:23:00)</p>
         <textarea
           rows={4}
           placeholder="Route / notes"

@@ -16,6 +16,7 @@ app.use('/api/lifts', require('./routes/lifts'));
 app.use('/api/plans', require('./routes/plans'));
 app.use('/api/coach', require('./routes/coach'));
 app.use('/api/diagnostics', require('./routes/diagnostics'));
+app.use('/api/feedback', require('./routes/feedback'));
 
 // Serve frontend
 const dist = path.join(__dirname, '../../frontend/dist');

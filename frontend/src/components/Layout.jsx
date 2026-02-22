@@ -2,6 +2,7 @@ import { NavLink } from 'react-router-dom'
 import { Calendar, Clock3, Home, Plus } from 'lucide-react'
 import { getUser } from '../lib/auth'
 import HelpDesk from './HelpDesk'
+import FeedbackButton from './FeedbackButton'
 
 export default function Layout({ children }) {
   const user = getUser()
@@ -22,6 +23,7 @@ export default function Layout({ children }) {
       </div>
 
       <HelpDesk />
+      <FeedbackButton />
 
       <nav className="fixed bottom-0 left-1/2 z-30 flex w-full max-w-[480px] -translate-x-1/2 items-center justify-around border-t border-white/10 bg-[#111318] px-3 py-2">
         <NavLink to="/" className={navClass}>
