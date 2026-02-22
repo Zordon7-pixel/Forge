@@ -46,12 +46,16 @@ export default function Plan() {
     }
   }
 
-  if (loading) return <div className="rounded-xl bg-[#111318] p-4 text-gray-300">Loading plan...</div>
+  if (loading) return <div className="rounded-xl bg-[#111318] p-4 text-gray-300">Loading your training data...</div>
 
   if (!plan) {
     return (
       <div className="rounded-2xl bg-[#111318] p-5 text-center">
-        <p className="mb-4 text-gray-300">No plan yet</p>
+        <div className="flex flex-col items-center justify-center gap-4 py-8">
+          <img src="/empty-plan.png" alt="" className="h-40 w-40 object-contain opacity-90" />
+          <p className="text-sm font-medium text-slate-400">No training plan yet.</p>
+          <p className="text-xs text-slate-600">Generate one to get started.</p>
+        </div>
         <button onClick={regenerate} className="rounded-xl bg-orange-500 px-4 py-2 font-semibold text-white">
           Generate
         </button>

@@ -51,7 +51,10 @@ export default function History() {
       {tab === 'runs' && (
         <div className="space-y-3">
           {runs.map(run => (
-            <div key={run.id} className="rounded-xl bg-[#111318] p-4">
+            <div
+              key={run.id}
+              className="cursor-pointer rounded-xl bg-[#111318] p-4 transition-all duration-150 hover:scale-[1.01] hover:bg-[#1e2235]"
+            >
               <div className="mb-2 flex items-center justify-between">
                 <p className="text-sm text-gray-300">{new Date(run.date || run.created_at).toLocaleDateString()}</p>
                 <span className="rounded-full bg-[#09090f] px-2 py-1 text-xs text-gray-300">Effort {run.effort || 0}/10</span>
@@ -76,7 +79,13 @@ export default function History() {
             </div>
           ))}
 
-          {runs.length === 0 && <p className="text-sm text-gray-500">No runs yet.</p>}
+          {runs.length === 0 && (
+            <div className="flex flex-col items-center justify-center gap-4 py-16">
+              <img src="/empty-runs.png" alt="" className="h-40 w-40 object-contain opacity-90" />
+              <p className="text-sm font-medium text-slate-400">No runs logged yet.</p>
+              <p className="text-xs text-slate-600">Lace up and log your first run to get started.</p>
+            </div>
+          )}
         </div>
       )}
 
@@ -91,7 +100,10 @@ export default function History() {
             }
 
             return (
-              <div key={lift.id} className="rounded-xl bg-[#111318] p-4">
+              <div
+                key={lift.id}
+                className="cursor-pointer rounded-xl bg-[#111318] p-4 transition-all duration-150 hover:scale-[1.01] hover:bg-[#1e2235]"
+              >
                 <p className="text-sm text-gray-300">{new Date(lift.date || lift.created_at).toLocaleDateString()}</p>
                 <p className="mt-1 font-semibold text-white">{lift.exercise_name}</p>
                 <p className="mt-1 text-sm text-gray-300">
@@ -108,7 +120,13 @@ export default function History() {
             )
           })}
 
-          {lifts.length === 0 && <p className="text-sm text-gray-500">No lifts yet.</p>}
+          {lifts.length === 0 && (
+            <div className="flex flex-col items-center justify-center gap-4 py-16">
+              <img src="/empty-lifts.png" alt="" className="h-40 w-40 object-contain opacity-90" />
+              <p className="text-sm font-medium text-slate-400">No lifts recorded yet.</p>
+              <p className="text-xs text-slate-600">Hit the weights.</p>
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -1,6 +1,33 @@
-import { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import api from '../lib/api'
+
+function useCountUp(target, duration = 1000) {
+  const [count, setCount] = React.useState(0)
+
+  React.useEffect(() => {
+    if (!target) {
+      setCount(0)
+      return
+    }
+
+    let start = 0
+    const step = target / (duration / 16)
+    const timer = setInterval(() => {
+      start += step
+      if (start >= target) {
+        setCount(target)
+        clearInterval(timer)
+      } else {
+        setCount(Math.floor(start))
+      }
+    }, 16)
+
+    return () => clearInterval(timer)
+  }, [target, duration])
+
+  return count
+}
 
 function formatDuration(totalSeconds = 0) {
   const mins = Math.floor(totalSeconds / 60)
@@ -53,8 +80,11 @@ export default function Dashboard() {
     return runs
       .filter(run => new Date(run.date || run.created_at) >= start)
       .reduce((sum, run) => sum + Number(run.distance || 0), 0)
-      .toFixed(1)
   }, [runs])
+
+  const totalMiles = useMemo(() => {
+    return allRuns.reduce((sum, run) => sum + Number(run.distance || 0), 0)
+  }, [allRuns])
 
   const bestPace = useMemo(() => {
     const paces = runs
@@ -71,29 +101,49 @@ export default function Dashboard() {
     return `${mins}:${String(secs).padStart(2, '0')} /mi`
   }, [runs])
 
+  const greeting = useMemo(() => {
+    const hour = new Date().getHours()
+    if (hour < 12) return 'Good morning 👋'
+    if (hour < 18) return 'Good afternoon 👋'
+    return 'Good evening 👋'
+  }, [])
+
+  const weeklyMilesCount = useCountUp(Math.floor(thisWeekMiles * 10), 900)
+  const totalRunsCount = useCountUp(allRuns.length, 900)
+  const totalMilesCount = useCountUp(Math.floor(totalMiles * 10), 900)
+
   if (loading) {
-    return <div className="rounded-xl bg-[#111318] p-4 text-gray-300">Loading dashboard...</div>
+    return <div className="rounded-xl bg-[#111318] p-4 text-gray-300">Loading your training data...</div>
   }
 
   return (
     <div className="space-y-4">
+      <div>
+        <p className="text-sm text-slate-400">{greeting}</p>
+        <h2 className="text-xl font-bold text-white">Ready to forge your next PR?</h2>
+      </div>
+
       {warning && (
         <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300">
           ⚠️ Heavy legs detected — consider a rest day
         </div>
       )}
 
-      <div className="grid grid-cols-3 gap-3">
-        <div className="rounded-xl bg-[#111318] p-3">
-          <p className="text-xs text-gray-400">This Week</p>
-          <p className="text-lg font-bold text-white">{thisWeekMiles} mi</p>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="rounded-xl bg-gradient-to-br from-rose-900/40 to-[#1a1d2e] p-3">
+          <p className="text-xs text-gray-300">Weekly Miles</p>
+          <p className="text-lg font-bold text-white">{(weeklyMilesCount / 10).toFixed(1)} mi</p>
         </div>
-        <div className="rounded-xl bg-[#111318] p-3">
-          <p className="text-xs text-gray-400">Total Runs</p>
-          <p className="text-lg font-bold text-white">{allRuns.length}</p>
+        <div className="rounded-xl bg-gradient-to-br from-red-900/40 to-[#1a1d2e] p-3">
+          <p className="text-xs text-gray-300">Total Runs</p>
+          <p className="text-lg font-bold text-white">{totalRunsCount}</p>
         </div>
-        <div className="rounded-xl bg-[#111318] p-3">
-          <p className="text-xs text-gray-400">Best Pace</p>
+        <div className="rounded-xl bg-gradient-to-br from-red-900/40 to-[#1a1d2e] p-3">
+          <p className="text-xs text-gray-300">Total Miles</p>
+          <p className="text-lg font-bold text-white">{(totalMilesCount / 10).toFixed(1)} mi</p>
+        </div>
+        <div className="rounded-xl bg-gradient-to-br from-orange-900/40 to-[#1a1d2e] p-3">
+          <p className="text-xs text-gray-300">Best Pace</p>
           <p className="text-lg font-bold text-white">{bestPace}</p>
         </div>
       </div>
@@ -102,7 +152,10 @@ export default function Dashboard() {
         <h3 className="mb-3 text-base font-semibold">Recent Runs</h3>
         <div className="space-y-3">
           {runs.slice(0, 3).map(run => (
-            <div key={run.id} className="rounded-xl border border-white/10 bg-[#09090f] p-3">
+            <div
+              key={run.id}
+              className="cursor-pointer rounded-xl border border-white/10 bg-[#09090f] p-3 transition-all duration-150 hover:scale-[1.01] hover:bg-[#1e2235]"
+            >
               <div className="mb-2 flex items-center justify-between">
                 <p className="text-sm text-gray-300">{new Date(run.date || run.created_at).toLocaleDateString()}</p>
                 <span className="rounded-full bg-orange-500/20 px-2 py-1 text-xs text-orange-400">
