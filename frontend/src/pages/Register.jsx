@@ -10,69 +10,32 @@ export default function Register() {
   const [loading, setLoading] = useState(false)
 
   const onSubmit = async e => {
-    e.preventDefault()
-    setError('')
-    setLoading(true)
-
+    e.preventDefault(); setError(''); setLoading(true)
     try {
       const response = await api.post('/auth/register', { name, email, password })
       localStorage.setItem('forge_token', response.data.token)
       window.location.href = '/onboarding'
-    } catch (err) {
-      setError(err?.response?.data?.error || 'Registration failed. Please try again.')
-    } finally {
-      setLoading(false)
-    }
+    } catch (err) { setError(err?.response?.data?.error || 'Registration failed. Please try again.') }
+    finally { setLoading(false) }
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[#09090f] px-4 text-white">
-      <div className="w-full max-w-[420px] rounded-2xl border border-white/10 bg-[#111318] p-6 shadow-xl">
-        <h1 className="mb-1 text-2xl font-bold">Create account</h1>
-        <p className="mb-6 text-sm text-gray-400">Start building your smartest training cycle.</p>
+    <div className="flex min-h-screen items-center justify-center px-4" style={{ background: 'var(--bg-base)', color: 'var(--text-primary)' }}>
+      <div className="w-full max-w-[420px] rounded-2xl border p-6 shadow-xl" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}>
+        <h1 className="mb-1 text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>Create account</h1>
+        <p className="mb-6 text-sm" style={{ color: 'var(--text-muted)' }}>Start building your smartest training cycle.</p>
 
         <form onSubmit={onSubmit} className="space-y-4">
-          <input
-            type="text"
-            required
-            placeholder="Full name"
-            className="w-full rounded-xl border border-white/10 bg-[#09090f] px-4 py-3 text-white outline-none ring-violet-600 placeholder:text-gray-500 focus:ring-2"
-            value={name}
-            onChange={e => setName(e.target.value)}
-          />
-          <input
-            type="email"
-            required
-            placeholder="Email"
-            className="w-full rounded-xl border border-white/10 bg-[#09090f] px-4 py-3 text-white outline-none ring-violet-600 placeholder:text-gray-500 focus:ring-2"
-            value={email}
-            onChange={e => setEmail(e.target.value)}
-          />
-          <input
-            type="password"
-            required
-            placeholder="Password"
-            className="w-full rounded-xl border border-white/10 bg-[#09090f] px-4 py-3 text-white outline-none ring-violet-600 placeholder:text-gray-500 focus:ring-2"
-            value={password}
-            onChange={e => setPassword(e.target.value)}
-          />
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full rounded-xl bg-violet-600 py-3 font-semibold text-white transition hover:opacity-90 disabled:opacity-70"
-          >
-            {loading ? 'Creating account...' : 'Create Account'}
-          </button>
+          <input type="text" required placeholder="Full name" className="w-full rounded-xl border px-4 py-3 outline-none placeholder:text-gray-500 focus:ring-2" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }} value={name} onChange={e => setName(e.target.value)} />
+          <input type="email" required placeholder="Email" className="w-full rounded-xl border px-4 py-3 outline-none placeholder:text-gray-500 focus:ring-2" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }} value={email} onChange={e => setEmail(e.target.value)} />
+          <input type="password" required placeholder="Password" className="w-full rounded-xl border px-4 py-3 outline-none placeholder:text-gray-500 focus:ring-2" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }} value={password} onChange={e => setPassword(e.target.value)} />
+          <button type="submit" disabled={loading} className="w-full rounded-xl py-3 font-semibold transition hover:opacity-90 disabled:opacity-70" style={{ background: 'var(--accent)', color: 'black' }}>{loading ? 'Creating account...' : 'Create Account'}</button>
         </form>
 
-        {error && <p className="mt-3 text-sm text-violet-400">{error}</p>}
+        {error && <p className="mt-3 text-sm" style={{ color: 'var(--accent)' }}>{error}</p>}
 
-        <p className="mt-5 text-center text-sm text-gray-400">
-          Already have an account?{' '}
-          <Link to="/login" className="font-semibold text-violet-600 hover:underline">
-            Log in
-          </Link>
+        <p className="mt-5 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
+          Already have an account? <Link to="/login" className="font-semibold hover:underline" style={{ color: 'var(--accent)' }}>Log in</Link>
         </p>
       </div>
     </div>

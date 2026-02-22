@@ -10,23 +10,18 @@ function parseDurationToSeconds(input) {
   if (!input || !input.trim()) return null
   const s = input.trim().replace(/\s+/g, '')
 
-  // H:MM:SS
   const hms = s.match(/^(\d+):(\d{1,2}):(\d{2})$/)
   if (hms) return +hms[1] * 3600 + +hms[2] * 60 + +hms[3]
 
-  // MM:SS
   const ms = s.match(/^(\d+):(\d{2})$/)
   if (ms) return +ms[1] * 60 + +ms[2]
 
-  // Plain number → treat as minutes
   const plain = s.match(/^(\d+)$/)
   if (plain) return +plain[1] * 60
 
-  // "45m", "45min", "45 min"
   const minOnly = s.match(/^(\d+)m(?:in)?$/i)
   if (minOnly) return +minOnly[1] * 60
 
-  // "1h30m", "1h30", "1h 30m"
   const hm = s.match(/^(\d+)h\s*(\d+)?m?$/i)
   if (hm) return +hm[1] * 3600 + (+hm[2] || 0) * 60
 
@@ -92,7 +87,7 @@ export default function LogRun() {
         aiFeedback = feedbackRes.data?.ai_feedback || ''
       }
 
-      setFeedback(aiFeedback || "Your coach is thinking... check back after your next run.")
+      setFeedback(aiFeedback || 'Your coach is thinking... check back after your next run.')
     } catch (err) {
       setError(err?.response?.data?.error || 'Could not save run. Check your connection and try again.')
     } finally {
@@ -102,26 +97,12 @@ export default function LogRun() {
   }
 
   return (
-    <div className="rounded-2xl bg-[#111318] p-4">
-      <h2 className="mb-4 text-xl font-bold">Log Run</h2>
+    <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>
+      <h2 className="mb-4 text-xl font-bold" style={{ color: 'var(--text-primary)' }}>Log Run</h2>
 
       <form onSubmit={onSubmit} className="space-y-4">
-        <input
-          type="date"
-          value={date}
-          onChange={e => setDate(e.target.value)}
-          className="w-full rounded-xl border border-white/10 bg-[#09090f] px-4 py-3"
-        />
-        <input
-          type="number"
-          step="0.01"
-          min="0"
-          required
-          placeholder="Distance (miles)"
-          value={distance}
-          onChange={e => setDistance(e.target.value)}
-          className="w-full rounded-xl border border-white/10 bg-[#09090f] px-4 py-3"
-        />
+        <input type="date" value={date} onChange={e => setDate(e.target.value)} className="w-full rounded-xl border px-4 py-3" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }} />
+        <input type="number" step="0.01" min="0" required placeholder="Distance (miles)" value={distance} onChange={e => setDistance(e.target.value)} className="w-full rounded-xl border px-4 py-3" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }} />
         <input
           type="text"
           required
@@ -132,51 +113,33 @@ export default function LogRun() {
             const sec = parseDurationToSeconds(duration)
             if (sec) setDuration(secondsToDisplay(sec))
           }}
-          className="w-full rounded-xl border border-white/10 bg-[#09090f] px-4 py-3"
+          className="w-full rounded-xl border px-4 py-3"
+          style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }}
         />
-        <p className="-mt-2 text-xs text-gray-500">Enter minutes (45), MM:SS (45:00), or H:MM:SS (1:23:00)</p>
-        <textarea
-          rows={4}
-          placeholder="Route / notes"
-          value={notes}
-          onChange={e => setNotes(e.target.value)}
-          className="w-full rounded-xl border border-white/10 bg-[#09090f] px-4 py-3"
-        />
+        <p className="-mt-2 text-xs" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>Enter minutes (45), MM:SS (45:00), or H:MM:SS (1:23:00)</p>
+        <textarea rows={4} placeholder="Route / notes" value={notes} onChange={e => setNotes(e.target.value)} className="w-full rounded-xl border px-4 py-3" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }} />
 
         <div>
-          <label className="mb-2 block text-sm text-gray-300">Effort: {effort}/10</label>
-          <input
-            type="range"
-            min="1"
-            max="10"
-            value={effort}
-            onChange={e => setEffort(e.target.value)}
-            className="w-full accent-violet-600"
-          />
+          <label className="mb-2 block text-sm" style={{ color: 'var(--text-muted)' }}>Effort: {effort}/10</label>
+          <input type="range" min="1" max="10" value={effort} onChange={e => setEffort(e.target.value)} className="w-full accent-yellow-500" />
         </div>
 
-        <button
-          type="submit"
-          disabled={loading || polling}
-          className="w-full rounded-xl bg-violet-600 py-3 font-semibold text-white disabled:opacity-70"
-        >
+        <button type="submit" disabled={loading || polling} className="w-full rounded-xl py-3 font-semibold disabled:opacity-70" style={{ background: 'var(--accent)', color: 'black' }}>
           {loading ? 'Logging run...' : 'Save Run'}
         </button>
       </form>
 
       {(loading || polling) && (
-        <div className="mt-4 flex items-center gap-2 text-sm text-gray-300">
-          <div className="h-4 w-4 animate-spin rounded-full border-2 border-violet-600 border-t-transparent" />
+        <div className="mt-4 flex items-center gap-2 text-sm" style={{ color: 'var(--text-muted)' }}>
+          <div className="h-4 w-4 animate-spin rounded-full border-2 border-t-transparent" style={{ borderColor: 'var(--accent)', borderTopColor: 'transparent' }} />
           Getting AI feedback...
         </div>
       )}
 
-      {feedback && <div className="mt-4 rounded-xl bg-violet-600/15 p-3 text-violet-300">{feedback}</div>}
-      {error && <p className="mt-3 text-sm text-violet-400">{error}</p>}
+      {feedback && <div className="mt-4 rounded-xl p-3" style={{ background: 'var(--accent-dim)', color: 'var(--accent)' }}>{feedback}</div>}
+      {error && <p className="mt-3 text-sm" style={{ color: 'var(--accent)' }}>{error}</p>}
 
-      <Link to="/" className="mt-5 inline-block text-sm text-gray-300 hover:text-white">
-        ← Back
-      </Link>
+      <Link to="/" className="mt-5 inline-block text-sm" style={{ color: 'var(--text-muted)' }}>← Back</Link>
     </div>
   )
 }

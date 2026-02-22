@@ -84,9 +84,7 @@ export default function Dashboard() {
       .reduce((sum, run) => sum + Number(run.distance_miles || 0), 0)
   }, [allRuns])
 
-  const totalMiles = useMemo(() => {
-    return allRuns.reduce((sum, run) => sum + Number(run.distance_miles || 0), 0)
-  }, [allRuns])
+  const totalMiles = useMemo(() => allRuns.reduce((sum, run) => sum + Number(run.distance_miles || 0), 0), [allRuns])
 
   const bestPace = useMemo(() => {
     const paces = allRuns
@@ -105,13 +103,13 @@ export default function Dashboard() {
 
   const streak = useMemo(() => {
     if (!allRuns.length) return 0
-    const dates = [...new Set(allRuns.map(r => r.date || r.created_at?.slice(0,10)))].sort().reverse()
-    const today = new Date().toISOString().slice(0,10)
-    const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0,10)
+    const dates = [...new Set(allRuns.map(r => r.date || r.created_at?.slice(0, 10)))].sort().reverse()
+    const today = new Date().toISOString().slice(0, 10)
+    const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10)
     if (dates[0] !== today && dates[0] !== yesterday) return 0
     let count = 1
     for (let i = 1; i < dates.length; i++) {
-      const prev = new Date(dates[i-1])
+      const prev = new Date(dates[i - 1])
       const curr = new Date(dates[i])
       const diff = Math.round((prev - curr) / 86400000)
       if (diff === 1) count++
@@ -139,84 +137,62 @@ export default function Dashboard() {
   const totalMilesCount = useCountUp(Math.floor(totalMiles * 10), 900)
 
   if (loading) {
-    return <div className="rounded-xl bg-[#111318] p-4 text-gray-300">Loading your training data...</div>
+    return <div className="rounded-xl p-4" style={{ background: 'var(--bg-card)', color: 'var(--text-muted)' }}>Loading your training data...</div>
   }
 
   return (
     <div className="space-y-4">
       <div>
-        <p className="text-sm text-slate-400">{greeting}</p>
-        <h2 className="text-xl font-bold text-white">Ready to forge your next PR?</h2>
-        {coachMode && (
-          <p className="text-xs text-gray-500">Coach mode: {COACH_LABELS[coachMode] || coachMode}</p>
-        )}
+        <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{greeting}</p>
+        <h2 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>Ready to forge your next PR?</h2>
+        {coachMode && <p className="text-xs" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>Coach mode: {COACH_LABELS[coachMode] || coachMode}</p>}
       </div>
 
       {streak > 0 && (
-        <div className="inline-flex items-center gap-2 rounded-full bg-violet-600/20 px-3 py-1.5 text-sm font-semibold text-violet-400">
+        <div className="inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-semibold" style={{ background: 'var(--accent-dim)', color: 'var(--accent)' }}>
           {streak}-day streak
         </div>
       )}
 
       {warning && (
-        <div className="rounded-xl border border-violet-500/30 bg-violet-500/10 p-3 text-sm text-violet-300">
+        <div className="rounded-xl border p-3 text-sm" style={{ borderColor: 'var(--accent)', background: 'var(--accent-dim)', color: 'var(--accent)' }}>
           Heavy legs detected — consider a rest day
         </div>
       )}
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <div className="rounded-xl bg-gradient-to-br from-violet-900/40 to-[#1a1d2e] p-3">
-          <p className="text-xs text-gray-300">Weekly Miles</p>
-          <p className="text-lg font-bold text-white">{(weeklyMilesCount / 10).toFixed(1)} mi</p>
-        </div>
-        <div className="rounded-xl bg-gradient-to-br from-violet-900/40 to-[#1a1d2e] p-3">
-          <p className="text-xs text-gray-300">Total Runs</p>
-          <p className="text-lg font-bold text-white">{totalRunsCount}</p>
-        </div>
-        <div className="rounded-xl bg-gradient-to-br from-violet-900/40 to-[#1a1d2e] p-3">
-          <p className="text-xs text-gray-300">Total Miles</p>
-          <p className="text-lg font-bold text-white">{(totalMilesCount / 10).toFixed(1)} mi</p>
-        </div>
-        <div className="rounded-xl bg-gradient-to-br from-violet-900/40 to-[#1a1d2e] p-3">
-          <p className="text-xs text-gray-300">Best Pace</p>
-          <p className="text-lg font-bold text-white">{bestPace}</p>
-        </div>
+        {[['Weekly Miles', `${(weeklyMilesCount / 10).toFixed(1)} mi`], ['Total Runs', `${totalRunsCount}`], ['Total Miles', `${(totalMilesCount / 10).toFixed(1)} mi`], ['Best Pace', bestPace]].map(([label, value]) => (
+          <div key={label} className="rounded-xl p-3" style={{ background: 'linear-gradient(135deg, rgba(234,179,8,0.12) 0%, var(--bg-card) 100%)' }}>
+            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{label}</p>
+            <p className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>{value}</p>
+          </div>
+        ))}
       </div>
 
-      <section className="rounded-2xl bg-[#111318] p-4">
-        <h3 className="mb-3 text-base font-semibold">Recent Runs</h3>
+      <section className="rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>
+        <h3 className="mb-3 text-base font-semibold" style={{ color: 'var(--text-primary)' }}>Recent Runs</h3>
         <div className="space-y-3">
           {runs.slice(0, 3).map(run => (
-            <div
-              key={run.id}
-              className="cursor-pointer rounded-xl border border-white/10 bg-[#09090f] p-3 transition-all duration-150 hover:scale-[1.01] hover:bg-[#1e2235]"
-            >
+            <div key={run.id} className="cursor-pointer rounded-xl border p-3 transition-all duration-150 hover:scale-[1.01]" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)' }}>
               <div className="mb-2 flex items-center justify-between">
-                <p className="text-sm text-gray-300">{new Date(run.date || run.created_at).toLocaleDateString()}</p>
-                <span className="rounded-full bg-violet-600/20 px-2 py-1 text-xs text-violet-400">
+                <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{new Date(run.date || run.created_at).toLocaleDateString()}</p>
+                <span className="rounded-full px-2 py-1 text-xs" style={{ background: 'var(--accent-dim)', color: 'var(--accent)' }}>
                   {formatPace(run.duration_seconds, run.distance_miles)}
                 </span>
               </div>
-              <p className="text-sm text-gray-200">
+              <p className="text-sm" style={{ color: 'var(--text-primary)' }}>
                 {Number(run.distance_miles || 0).toFixed(2)} mi · {formatDuration(run.duration_seconds)}
               </p>
             </div>
           ))}
-          {runs.length === 0 && <p className="text-sm text-gray-500">No runs logged yet.</p>}
+          {runs.length === 0 && <p className="text-sm" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>No runs logged yet.</p>}
         </div>
       </section>
 
       <div className="grid grid-cols-3 gap-3">
-        <Link to="/log-run" className="rounded-xl bg-violet-600 px-4 py-3 text-center text-sm font-semibold text-white">
-          Log Run
-        </Link>
-        <Link to="/log-lift" className="rounded-xl bg-purple-600 px-4 py-3 text-center text-sm font-semibold text-white">
-          Log Lift
-        </Link>
-        <Link
-          to="/plan"
-          className="rounded-xl border border-white/20 bg-transparent px-4 py-3 text-center text-sm font-semibold text-gray-100"
-        >
+        <Link to="/log-run" className="rounded-xl px-4 py-3 text-center text-sm font-semibold" style={{ background: 'var(--accent)', color: 'black' }}>Log Run</Link>
+        <Link to="/log-lift" className="rounded-xl px-4 py-3 text-center text-sm font-semibold" style={{ background: 'var(--accent)', color: 'black' }}>Log Lift</Link>
+        <Link to="/plan" className="rounded-xl border bg-transparent px-4 py-3 text-center text-sm font-semibold" style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}>
           View Plan
         </Link>
       </div>

@@ -2,10 +2,10 @@ import { useEffect, useMemo, useState } from 'react'
 import api from '../lib/api'
 
 const badgeStyles = {
-  run: 'bg-violet-600/20 text-violet-300',
-  rest: 'bg-gray-500/20 text-gray-300',
-  'cross-train': 'bg-amber-500/20 text-amber-300',
-  strength: 'bg-purple-500/20 text-purple-300'
+  run: { background: 'var(--accent-dim)', color: 'var(--accent)' },
+  rest: { background: 'rgba(107,114,128,0.15)', color: 'var(--text-muted)' },
+  'cross-train': { background: 'rgba(245,158,11,0.18)', color: '#f59e0b' },
+  strength: { background: 'var(--accent-dim)', color: 'var(--accent)' }
 }
 
 export default function Plan() {
@@ -22,99 +22,65 @@ export default function Plan() {
     }
   }
 
-  useEffect(() => {
-    loadPlan()
-  }, [])
+  useEffect(() => { loadPlan() }, [])
 
   const weeklyStructure = useMemo(() => {
     if (!plan?.weekly_structure) return []
     if (Array.isArray(plan.weekly_structure)) return plan.weekly_structure
-    try {
-      return JSON.parse(plan.weekly_structure)
-    } catch {
-      return []
-    }
+    try { return JSON.parse(plan.weekly_structure) } catch { return [] }
   }, [plan])
 
   const regenerate = async () => {
     setRegenerating(true)
-    try {
-      await api.post('/plans/generate')
-      await loadPlan()
-    } finally {
-      setRegenerating(false)
-    }
+    try { await api.post('/plans/generate'); await loadPlan() } finally { setRegenerating(false) }
   }
 
   const todayName = new Date().toLocaleDateString('en-US', { weekday: 'long' })
 
-  if (loading) return <div className="rounded-xl bg-[#111318] p-4 text-gray-300">Loading your training data...</div>
+  if (loading) return <div className="rounded-xl p-4" style={{ background: 'var(--bg-card)', color: 'var(--text-muted)' }}>Loading your training data...</div>
 
   if (!plan) {
     return (
-      <div className="rounded-2xl bg-[#111318] p-5 text-center">
+      <div className="rounded-2xl p-5 text-center" style={{ background: 'var(--bg-card)' }}>
         <div className="flex flex-col items-center justify-center gap-4 py-8">
           <img src="/empty-plan.png" alt="" className="h-40 w-40 object-contain opacity-90" />
-          <p className="text-sm font-medium text-slate-400">No training plan yet.</p>
-          <p className="text-xs text-slate-600">Generate one to get started.</p>
+          <p className="text-sm font-medium" style={{ color: 'var(--text-muted)' }}>No training plan yet.</p>
+          <p className="text-xs" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>Generate one to get started.</p>
         </div>
-        <button onClick={regenerate} className="rounded-xl bg-violet-600 px-4 py-2 font-semibold text-white">
-          Generate
-        </button>
+        <button onClick={regenerate} className="rounded-xl px-4 py-2 font-semibold" style={{ background: 'var(--accent)', color: 'black' }}>Generate</button>
       </div>
     )
   }
 
   return (
     <div className="space-y-4">
-      <div className="rounded-2xl bg-[#111318] p-4">
-        <h2 className="text-xl font-bold">{plan.title || 'Your Plan'}</h2>
-        <p className="mt-1 text-sm text-gray-400">Goal: {plan.goal || '--'}</p>
+      <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>
+        <h2 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{plan.title || 'Your Plan'}</h2>
+        <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>Goal: {plan.goal || '--'}</p>
       </div>
 
       <div className="space-y-3">
         {weeklyStructure.map((day, idx) => {
           const rawType = (day.workout_type || day.type || '').toString().toLowerCase()
-          const typeKey = rawType.includes('cross')
-            ? 'cross-train'
-            : rawType.includes('strength')
-              ? 'strength'
-              : rawType.includes('rest')
-                ? 'rest'
-                : 'run'
+          const typeKey = rawType.includes('cross') ? 'cross-train' : rawType.includes('strength') ? 'strength' : rawType.includes('rest') ? 'rest' : 'run'
           const isToday = (day.day || '').toLowerCase().includes(todayName.toLowerCase())
 
           return (
-            <div
-              key={idx}
-              className={`rounded-xl border p-4 ${
-                isToday
-                  ? 'border-violet-600/60 bg-gradient-to-br from-violet-900/20 to-[#111318]'
-                  : 'border-white/10 bg-[#111318]'
-              }`}
-            >
+            <div key={idx} className="rounded-xl border p-4" style={isToday ? { borderColor: 'var(--accent)', background: 'linear-gradient(135deg, rgba(234,179,8,0.12) 0%, var(--bg-card) 100%)' } : { borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}>
               <div className="mb-2 flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <p className="font-semibold text-white">{day.day || `Day ${idx + 1}`}</p>
-                  {isToday ? (
-                    <span className="rounded-full bg-violet-600 px-2 py-0.5 text-xs font-bold text-white">TODAY</span>
-                  ) : null}
+                  <p className="font-semibold" style={{ color: 'var(--text-primary)' }}>{day.day || `Day ${idx + 1}`}</p>
+                  {isToday ? <span className="rounded-full px-2 py-0.5 text-xs font-bold" style={{ background: 'var(--accent)', color: 'black' }}>TODAY</span> : null}
                 </div>
-                <span className={`rounded-full px-2 py-1 text-xs ${badgeStyles[typeKey]}`}>
-                  {day.workout_type || day.type || 'Run'}
-                </span>
+                <span className="rounded-full px-2 py-1 text-xs" style={badgeStyles[typeKey]}>{day.workout_type || day.type || 'Run'}</span>
               </div>
-              <p className="text-sm text-gray-300">{day.description || 'No description.'}</p>
+              <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{day.description || 'No description.'}</p>
             </div>
           )
         })}
       </div>
 
-      <button
-        onClick={regenerate}
-        disabled={regenerating}
-        className="w-full rounded-xl border border-white/20 bg-[#111318] py-3 font-semibold text-white disabled:opacity-60"
-      >
+      <button onClick={regenerate} disabled={regenerating} className="w-full rounded-xl border py-3 font-semibold disabled:opacity-60" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)', color: 'var(--text-primary)' }}>
         {regenerating ? 'Regenerating...' : 'Regenerate Plan'}
       </button>
     </div>

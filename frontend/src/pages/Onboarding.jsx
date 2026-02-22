@@ -12,55 +12,23 @@ export default function Onboarding() {
   const [step, setStep] = useState(1)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
-  const [form, setForm] = useState({
-    age: '',
-    weightLbs: '',
-    heightFt: 5,
-    heightIn: 8,
-    weeklyMiles: 10,
-    fitnessLevel: 'beginner',
-    primaryGoal: 'general_fitness',
-    injuryStatus: 'none',
-    injuryDetail: '',
-    coachPersonality: 'mentor'
-  })
+  const [form, setForm] = useState({ age: '', weightLbs: '', heightFt: 5, heightIn: 8, weeklyMiles: 10, fitnessLevel: 'beginner', primaryGoal: 'general_fitness', injuryStatus: 'none', injuryDetail: '', coachPersonality: 'mentor' })
 
   const progress = useMemo(() => `${(step / 5) * 100}%`, [step])
-
   const next = () => setStep(s => Math.min(5, s + 1))
   const back = () => setStep(s => Math.max(1, s - 1))
-
   const update = (key, value) => setForm(prev => ({ ...prev, [key]: value }))
 
   const submit = async () => {
-    setError('')
-    setSaving(true)
-    
-    if (!form.age || form.age < 10 || form.age > 100) {
-      setError('Please enter a valid age.')
-      setSaving(false)
-      return
-    }
-    if (!form.weightLbs || form.weightLbs < 50 || form.weightLbs > 500) {
-      setError('Please enter a valid weight.')
-      setSaving(false)
-      return
-    }
-    
+    setError(''); setSaving(true)
+    if (!form.age || form.age < 10 || form.age > 100) return setError('Please enter a valid age.'), setSaving(false)
+    if (!form.weightLbs || form.weightLbs < 50 || form.weightLbs > 500) return setError('Please enter a valid weight.'), setSaving(false)
+
     try {
       await api.put('/auth/me/profile', {
-        age: Number(form.age),
-        weight_lbs: Number(form.weightLbs),
-        height_ft: Number(form.heightFt),
-        height_in: Number(form.heightIn),
-        weekly_miles: Number(form.weeklyMiles),
-        fitness_level: form.fitnessLevel,
-        primary_goal: form.primaryGoal,
-        injury_status: form.injuryStatus,
-        injury_detail: form.injuryDetail,
-        coach_personality: form.coachPersonality
+        age: Number(form.age), weight_lbs: Number(form.weightLbs), height_ft: Number(form.heightFt), height_in: Number(form.heightIn), weekly_miles: Number(form.weeklyMiles),
+        fitness_level: form.fitnessLevel, primary_goal: form.primaryGoal, injury_status: form.injuryStatus, injury_detail: form.injuryDetail, coach_personality: form.coachPersonality
       })
-
       await api.post('/plans/generate')
       window.location.href = '/'
     } catch (err) {
@@ -70,57 +38,23 @@ export default function Onboarding() {
   }
 
   return (
-    <div className="min-h-screen bg-[#09090f] px-4 py-6 text-white">
+    <div className="min-h-screen px-4 py-6" style={{ background: 'var(--bg-base)', color: 'var(--text-primary)' }}>
       <div className="mx-auto w-full max-w-[480px]">
-        <div className="mb-6 h-2 w-full overflow-hidden rounded-full bg-[#111318]">
-          <div className="h-full bg-violet-600 transition-all" style={{ width: progress }} />
+        <div className="mb-6 h-2 w-full overflow-hidden rounded-full" style={{ background: 'var(--bg-card)' }}>
+          <div className="h-full transition-all" style={{ width: progress, background: 'var(--accent)' }} />
         </div>
 
-        <div className="rounded-2xl border border-white/10 bg-[#111318] p-5">
-          <p className="mb-1 text-xs uppercase tracking-widest text-gray-400">Step {step} of 5</p>
+        <div className="rounded-2xl border p-5" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}>
+          <p className="mb-1 text-xs uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Step {step} of 5</p>
 
           {step === 1 && (
             <div className="space-y-4">
-              <h2 className="text-xl font-bold">Your baseline</h2>
-              <input
-                type="number"
-                min="1"
-                placeholder="Age"
-                className="w-full rounded-xl border border-white/10 bg-[#09090f] px-4 py-3"
-                value={form.age}
-                onChange={e => update('age', e.target.value)}
-              />
-              <input
-                type="number"
-                min="1"
-                placeholder="Weight (lbs)"
-                className="w-full rounded-xl border border-white/10 bg-[#09090f] px-4 py-3"
-                value={form.weightLbs}
-                onChange={e => update('weightLbs', e.target.value)}
-              />
+              <h2 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>Your baseline</h2>
+              <input type="number" min="1" placeholder="Age" className="w-full rounded-xl border px-4 py-3" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)' }} value={form.age} onChange={e => update('age', e.target.value)} />
+              <input type="number" min="1" placeholder="Weight (lbs)" className="w-full rounded-xl border px-4 py-3" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)' }} value={form.weightLbs} onChange={e => update('weightLbs', e.target.value)} />
               <div className="grid grid-cols-2 gap-3">
-                <select
-                  className="rounded-xl border border-white/10 bg-[#09090f] px-4 py-3"
-                  value={form.heightFt}
-                  onChange={e => update('heightFt', e.target.value)}
-                >
-                  {[4, 5, 6, 7].map(ft => (
-                    <option key={ft} value={ft}>
-                      {ft} ft
-                    </option>
-                  ))}
-                </select>
-                <select
-                  className="rounded-xl border border-white/10 bg-[#09090f] px-4 py-3"
-                  value={form.heightIn}
-                  onChange={e => update('heightIn', e.target.value)}
-                >
-                  {Array.from({ length: 12 }).map((_, inch) => (
-                    <option key={inch} value={inch}>
-                      {inch} in
-                    </option>
-                  ))}
-                </select>
+                <select className="rounded-xl border px-4 py-3" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)' }} value={form.heightFt} onChange={e => update('heightFt', e.target.value)}>{[4,5,6,7].map(ft => <option key={ft} value={ft}>{ft} ft</option>)}</select>
+                <select className="rounded-xl border px-4 py-3" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)' }} value={form.heightIn} onChange={e => update('heightIn', e.target.value)}>{Array.from({ length: 12 }).map((_, inch) => <option key={inch} value={inch}>{inch} in</option>)}</select>
               </div>
             </div>
           )}
@@ -129,81 +63,25 @@ export default function Onboarding() {
             <div className="space-y-4">
               <h2 className="text-xl font-bold">Training profile</h2>
               <div>
-                <label className="mb-2 block text-sm text-gray-300">Weekly miles: {form.weeklyMiles}</label>
-                <input
-                  type="range"
-                  min="0"
-                  max="50"
-                  value={form.weeklyMiles}
-                  onChange={e => update('weeklyMiles', e.target.value)}
-                  className="w-full accent-violet-600"
-                />
+                <label className="mb-2 block text-sm" style={{ color: 'var(--text-muted)' }}>Weekly miles: {form.weeklyMiles}</label>
+                <input type="range" min="0" max="50" value={form.weeklyMiles} onChange={e => update('weeklyMiles', e.target.value)} className="w-full accent-yellow-500" />
               </div>
-              <div className="space-y-2">
-                {['beginner', 'intermediate', 'advanced'].map(level => (
-                  <label key={level} className="flex items-center gap-2 capitalize text-gray-200">
-                    <input
-                      type="radio"
-                      name="fitnessLevel"
-                      value={level}
-                      checked={form.fitnessLevel === level}
-                      onChange={e => update('fitnessLevel', e.target.value)}
-                    />
-                    {level}
-                  </label>
-                ))}
-              </div>
+              <div className="space-y-2">{['beginner','intermediate','advanced'].map(level => <label key={level} className="flex items-center gap-2 capitalize" style={{ color: 'var(--text-primary)' }}><input type="radio" name="fitnessLevel" value={level} checked={form.fitnessLevel===level} onChange={e=>update('fitnessLevel',e.target.value)} />{level}</label>)}</div>
             </div>
           )}
 
           {step === 3 && (
             <div className="space-y-4">
               <h2 className="text-xl font-bold">Primary goal</h2>
-              {[
-                ['get_faster', 'Get Faster'],
-                ['run_longer', 'Run Longer'],
-                ['lose_fat', 'Lose Fat'],
-                ['general_fitness', 'General Fitness']
-              ].map(([value, label]) => (
-                <label key={value} className="flex items-center gap-2 text-gray-200">
-                  <input
-                    type="radio"
-                    name="primaryGoal"
-                    value={value}
-                    checked={form.primaryGoal === value}
-                    onChange={e => update('primaryGoal', e.target.value)}
-                  />
-                  {label}
-                </label>
-              ))}
+              {[['get_faster','Get Faster'],['run_longer','Run Longer'],['lose_fat','Lose Fat'],['general_fitness','General Fitness']].map(([value,label]) => <label key={value} className="flex items-center gap-2" style={{ color: 'var(--text-primary)' }}><input type="radio" name="primaryGoal" value={value} checked={form.primaryGoal===value} onChange={e=>update('primaryGoal',e.target.value)} />{label}</label>)}
             </div>
           )}
 
           {step === 4 && (
             <div className="space-y-4">
               <h2 className="text-xl font-bold">Injury status</h2>
-              {['none', 'recovering', 'chronic'].map(status => (
-                <label key={status} className="flex items-center gap-2 capitalize text-gray-200">
-                  <input
-                    type="radio"
-                    name="injuryStatus"
-                    value={status}
-                    checked={form.injuryStatus === status}
-                    onChange={e => update('injuryStatus', e.target.value)}
-                  />
-                  {status}
-                </label>
-              ))}
-
-              {form.injuryStatus !== 'none' && (
-                <textarea
-                  rows={4}
-                  placeholder="Tell us more about your injury"
-                  className="w-full rounded-xl border border-white/10 bg-[#09090f] px-4 py-3"
-                  value={form.injuryDetail}
-                  onChange={e => update('injuryDetail', e.target.value)}
-                />
-              )}
+              {['none','recovering','chronic'].map(status => <label key={status} className="flex items-center gap-2 capitalize" style={{ color: 'var(--text-primary)' }}><input type="radio" name="injuryStatus" value={status} checked={form.injuryStatus===status} onChange={e=>update('injuryStatus',e.target.value)} />{status}</label>)}
+              {form.injuryStatus !== 'none' && <textarea rows={4} placeholder="Tell us more about your injury" className="w-full rounded-xl border px-4 py-3" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)' }} value={form.injuryDetail} onChange={e=>update('injuryDetail',e.target.value)} />}
             </div>
           )}
 
@@ -212,16 +90,8 @@ export default function Onboarding() {
               <h2 className="text-xl font-bold">Coach personality</h2>
               <div className="grid grid-cols-2 gap-3">
                 {personalityOptions.map(option => (
-                  <button
-                    key={option.key}
-                    type="button"
-                    onClick={() => update('coachPersonality', option.key)}
-                    className={`rounded-xl border p-4 text-left text-sm transition ${
-                      form.coachPersonality === option.key
-                        ? 'border-violet-600 bg-violet-600/10 text-white'
-                        : 'border-white/10 bg-[#09090f] text-gray-300'
-                    }`}
-                  >
+                  <button key={option.key} type="button" onClick={() => update('coachPersonality', option.key)} className="rounded-xl border p-4 text-left text-sm transition"
+                    style={form.coachPersonality === option.key ? { borderColor: 'var(--accent)', background: 'var(--accent-dim)', color: 'var(--text-primary)' } : { borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-muted)' }}>
                     {option.label}
                   </button>
                 ))}
@@ -229,43 +99,22 @@ export default function Onboarding() {
             </div>
           )}
 
-          {error && <p className="mt-4 text-sm text-violet-400">{error}</p>}
+          {error && <p className="mt-4 text-sm" style={{ color: 'var(--accent)' }}>{error}</p>}
 
           <div className="mt-6 flex items-center justify-between">
-            <button
-              type="button"
-              onClick={back}
-              disabled={step === 1 || saving}
-              className="rounded-xl border border-white/10 px-4 py-2 text-gray-300 disabled:opacity-40"
-            >
-              Back
-            </button>
-
+            <button type="button" onClick={back} disabled={step === 1 || saving} className="rounded-xl border px-4 py-2 disabled:opacity-40" style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-muted)' }}>Back</button>
             {step < 5 ? (
-              <button
-                type="button"
-                onClick={next}
-                className="rounded-xl bg-violet-600 px-5 py-2 font-semibold text-white"
-              >
-                Next
-              </button>
+              <button type="button" onClick={next} className="rounded-xl px-5 py-2 font-semibold" style={{ background: 'var(--accent)', color: 'black' }}>Next</button>
             ) : (
-              <button
-                type="button"
-                onClick={submit}
-                disabled={saving}
-                className="rounded-xl bg-violet-600 px-5 py-2 font-semibold text-white disabled:opacity-70"
-              >
-                Finish
-              </button>
+              <button type="button" onClick={submit} disabled={saving} className="rounded-xl px-5 py-2 font-semibold disabled:opacity-70" style={{ background: 'var(--accent)', color: 'black' }}>Finish</button>
             )}
           </div>
         </div>
       </div>
 
       {saving && (
-        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#09090f]/95 text-white">
-          <div className="mb-4 h-10 w-10 animate-spin rounded-full border-4 border-violet-600 border-t-transparent" />
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center" style={{ background: 'rgba(0,0,0,0.85)', color: 'var(--text-primary)' }}>
+          <div className="mb-4 h-10 w-10 animate-spin rounded-full border-4 border-t-transparent" style={{ borderColor: 'var(--accent)', borderTopColor: 'transparent' }} />
           <p className="text-lg font-semibold">Building your plan...</p>
         </div>
       )}

@@ -29,8 +29,8 @@ export default function History() {
   useEffect(() => {
     ;(async () => {
       const [runsRes, liftsRes] = await Promise.all([api.get('/runs'), api.get('/lifts')])
-      setRuns(sorted => [...(Array.isArray(runsRes.data) ? runsRes.data : runsRes.data?.runs || [])].sort((a,b) => getRunDate(b).localeCompare(getRunDate(a))))
-      setLifts(sorted => [...(Array.isArray(liftsRes.data) ? liftsRes.data : liftsRes.data?.lifts || [])].sort((a,b) => (b.date || b.created_at || '').localeCompare(a.date || a.created_at || '')))
+      setRuns([...(Array.isArray(runsRes.data) ? runsRes.data : runsRes.data?.runs || [])].sort((a, b) => getRunDate(b).localeCompare(getRunDate(a))))
+      setLifts([...(Array.isArray(liftsRes.data) ? liftsRes.data : liftsRes.data?.lifts || [])].sort((a, b) => (b.date || b.created_at || '').localeCompare(a.date || a.created_at || '')))
     })()
   }, [])
 
@@ -70,31 +70,21 @@ export default function History() {
   return (
     <div>
       <div className="mb-4 grid grid-cols-3 gap-2">
-        <div className="rounded-xl bg-[#111318] p-3 text-center">
-          <p className="text-xs text-gray-500">This Month</p>
-          <p className="text-sm font-bold text-white">{monthMiles.toFixed(1)} mi</p>
-        </div>
-        <div className="rounded-xl bg-[#111318] p-3 text-center">
-          <p className="text-xs text-gray-500">Avg Pace</p>
-          <p className="text-sm font-bold text-white">{avgPace}</p>
-        </div>
-        <div className="rounded-xl bg-[#111318] p-3 text-center">
-          <p className="text-xs text-gray-500">Lifts</p>
-          <p className="text-sm font-bold text-white">{lifts.length}</p>
-        </div>
+        {[["This Month", `${monthMiles.toFixed(1)} mi`], ['Avg Pace', avgPace], ['Lifts', `${lifts.length}`]].map(([l, v]) => (
+          <div key={l} className="rounded-xl p-3 text-center" style={{ background: 'var(--bg-card)' }}>
+            <p className="text-xs" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>{l}</p>
+            <p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{v}</p>
+          </div>
+        ))}
       </div>
 
-      <div className="mb-4 flex border-b border-white/10">
-        {[
-          ['runs', 'Runs'],
-          ['lifts', 'Lifts']
-        ].map(([value, label]) => (
+      <div className="mb-4 flex border-b" style={{ borderColor: 'var(--border-subtle)' }}>
+        {[['runs', 'Runs'], ['lifts', 'Lifts']].map(([value, label]) => (
           <button
             key={value}
             onClick={() => setTab(value)}
-            className={`px-4 py-2 text-sm font-medium ${
-              tab === value ? 'border-b-2 border-violet-600 text-white' : 'text-gray-400'
-            }`}
+            className="px-4 py-2 text-sm font-medium border-b-2"
+            style={tab === value ? { borderColor: 'var(--accent)', color: 'var(--text-primary)' } : { borderColor: 'transparent', color: 'var(--text-muted)' }}
           >
             {label}
           </button>
@@ -104,43 +94,27 @@ export default function History() {
       {tab === 'runs' && (
         <div className="space-y-3">
           {runs.map(run => (
-            <div
-              key={run.id}
-              className="cursor-pointer rounded-xl bg-[#111318] p-4 transition-all duration-150 hover:scale-[1.01] hover:bg-[#1e2235]"
-            >
+            <div key={run.id} className="cursor-pointer rounded-xl p-4" style={{ background: 'var(--bg-card)' }}>
               <div className="mb-2 flex items-center justify-between">
-                <p className="text-sm text-gray-300">{new Date(getRunDate(run)).toLocaleDateString()}</p>
+                <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{new Date(getRunDate(run)).toLocaleDateString()}</p>
                 <div className="flex items-center gap-2">
-                  {run.perceived_effort ? (
-                    <span className="rounded-full bg-[#09090f] px-2 py-1 text-xs text-gray-300">Effort {run.perceived_effort}/10</span>
-                  ) : null}
-                  <button
-                    onClick={e => deleteRun(run.id, e)}
-                    className="text-gray-600 transition-colors hover:text-violet-400"
-                  >
-                    <Trash2 size={14} />
-                  </button>
+                  {run.perceived_effort ? <span className="rounded-full px-2 py-1 text-xs" style={{ background: 'var(--bg-input)', color: 'var(--text-muted)' }}>Effort {run.perceived_effort}/10</span> : null}
+                  <button onClick={e => deleteRun(run.id, e)} className="transition-colors" style={{ color: 'var(--text-muted)' }}><Trash2 size={14} /></button>
                 </div>
               </div>
 
-              <p className="text-sm text-gray-200">
-                {Number(run.distance_miles || 0).toFixed(2)} mi · {formatDuration(run.duration_seconds)} ·{' '}
-                {formatPace(run.duration_seconds, run.distance_miles)}
+              <p className="text-sm" style={{ color: 'var(--text-primary)' }}>
+                {Number(run.distance_miles || 0).toFixed(2)} mi · {formatDuration(run.duration_seconds)} · {formatPace(run.duration_seconds, run.distance_miles)}
               </p>
 
-              {run.notes && (
-                <p className="mt-1 text-xs text-gray-500 italic">"{run.notes}"</p>
-              )}
+              {run.notes && <p className="mt-1 text-xs italic" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>"{run.notes}"</p>}
 
               {run.ai_feedback && (
                 <>
-                  <button
-                    onClick={() => setExpanded(prev => ({ ...prev, [run.id]: !prev[run.id] }))}
-                    className="mt-3 rounded-full bg-violet-600/20 px-3 py-1 text-xs text-violet-300"
-                  >
+                  <button onClick={() => setExpanded(prev => ({ ...prev, [run.id]: !prev[run.id] }))} className="mt-3 rounded-full px-3 py-1 text-xs" style={{ background: 'var(--accent-dim)', color: 'var(--accent)' }}>
                     AI Feedback
                   </button>
-                  {expanded[run.id] && <p className="mt-2 text-sm text-gray-300">{run.ai_feedback}</p>}
+                  {expanded[run.id] && <p className="mt-2 text-sm" style={{ color: 'var(--text-muted)' }}>{run.ai_feedback}</p>}
                 </>
               )}
             </div>
@@ -149,8 +123,8 @@ export default function History() {
           {runs.length === 0 && (
             <div className="flex flex-col items-center justify-center gap-4 py-16">
               <img src="/empty-runs.png" alt="" className="h-40 w-40 object-contain opacity-90" />
-              <p className="text-sm font-medium text-slate-400">No runs logged yet.</p>
-              <p className="text-xs text-slate-600">Lace up and log your first run to get started.</p>
+              <p className="text-sm font-medium" style={{ color: 'var(--text-muted)' }}>No runs logged yet.</p>
+              <p className="text-xs" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>Lace up and log your first run to get started.</p>
             </div>
           )}
         </div>
@@ -160,36 +134,18 @@ export default function History() {
         <div className="space-y-3">
           {lifts.map(lift => {
             let tags = []
-            try {
-              tags = Array.isArray(lift.muscle_groups) ? lift.muscle_groups : JSON.parse(lift.muscle_groups || '[]')
-            } catch {
-              tags = []
-            }
+            try { tags = Array.isArray(lift.muscle_groups) ? lift.muscle_groups : JSON.parse(lift.muscle_groups || '[]') } catch { tags = [] }
 
             return (
-              <div
-                key={lift.id}
-                className="cursor-pointer rounded-xl bg-[#111318] p-4 transition-all duration-150 hover:scale-[1.01] hover:bg-[#1e2235]"
-              >
+              <div key={lift.id} className="cursor-pointer rounded-xl p-4" style={{ background: 'var(--bg-card)' }}>
                 <div className="flex items-center justify-between">
-                  <p className="text-sm text-gray-300">{new Date(lift.date || lift.created_at).toLocaleDateString()}</p>
-                  <button
-                    onClick={e => deleteLift(lift.id, e)}
-                    className="text-gray-600 transition-colors hover:text-violet-400"
-                  >
-                    <Trash2 size={14} />
-                  </button>
+                  <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{new Date(lift.date || lift.created_at).toLocaleDateString()}</p>
+                  <button onClick={e => deleteLift(lift.id, e)} className="transition-colors" style={{ color: 'var(--text-muted)' }}><Trash2 size={14} /></button>
                 </div>
-                <p className="mt-1 font-semibold text-white">{lift.exercise_name}</p>
-                <p className="mt-1 text-sm text-gray-300">
-                  {lift.sets} × {lift.reps} @ {lift.weight_lbs} lbs
-                </p>
+                <p className="mt-1 font-semibold" style={{ color: 'var(--text-primary)' }}>{lift.exercise_name}</p>
+                <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>{lift.sets} × {lift.reps} @ {lift.weight_lbs} lbs</p>
                 <div className="mt-2 flex flex-wrap gap-2">
-                  {tags.map(tag => (
-                    <span key={tag} className="rounded-full bg-[#09090f] px-2 py-1 text-xs capitalize text-gray-300">
-                      {tag}
-                    </span>
-                  ))}
+                  {tags.map(tag => <span key={tag} className="rounded-full px-2 py-1 text-xs capitalize" style={{ background: 'var(--bg-input)', color: 'var(--text-muted)' }}>{tag}</span>)}
                 </div>
               </div>
             )
@@ -198,8 +154,8 @@ export default function History() {
           {lifts.length === 0 && (
             <div className="flex flex-col items-center justify-center gap-4 py-16">
               <img src="/empty-lifts.png" alt="" className="h-40 w-40 object-contain opacity-90" />
-              <p className="text-sm font-medium text-slate-400">No lifts recorded yet.</p>
-              <p className="text-xs text-slate-600">Hit the weights.</p>
+              <p className="text-sm font-medium" style={{ color: 'var(--text-muted)' }}>No lifts recorded yet.</p>
+              <p className="text-xs" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>Hit the weights.</p>
             </div>
           )}
         </div>
