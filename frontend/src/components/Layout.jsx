@@ -26,7 +26,6 @@ export default function Layout({ children }) {
         <header className="sticky top-0 z-20 flex items-center justify-between border-b py-4 backdrop-blur" style={{ borderColor: 'var(--border-subtle)', background: 'color-mix(in srgb, var(--bg-base) 90%, transparent)' }}>
           <img src="/icon-192.png" alt="FORGE" className="w-9 h-9 rounded-xl object-cover" />
           <div className="flex items-center gap-3">
-            <p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{firstName}</p>
             <button onClick={toggle} className="transition-colors hover:opacity-80 text-xs" style={{ color: 'var(--text-muted)' }} title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}>
               {theme === 'dark' ? (
                 <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
