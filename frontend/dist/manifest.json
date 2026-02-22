@@ -1,0 +1,14 @@
+{
+  "name": "FORGE — Built to adapt.",
+  "short_name": "FORGE",
+  "description": "AI athletic performance coach. Train smarter, recover faster.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#09090f",
+  "theme_color": "#f97316",
+  "orientation": "portrait-primary",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ],
+  "categories": ["health", "fitness", "sports"]
+}
