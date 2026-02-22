@@ -1,58 +1,78 @@
 import { useState } from 'react'
-import { useNavigate, Link } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import api from '../lib/api'
 
 export default function Register() {
-  const [form, setForm] = useState({ name:'', email:'', password:'', confirm:'' })
+  const [name, setName] = useState('')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-  const navigate = useNavigate()
-  const f = v => setForm(p => ({...p, ...v}))
 
-  async function submit(e) {
-    e.preventDefault(); setError('')
-    if (form.password !== form.confirm) { setError('Passwords do not match'); return }
-    if (form.password.length < 6) { setError('Password must be at least 6 characters'); return }
+  const onSubmit = async e => {
+    e.preventDefault()
+    setError('')
     setLoading(true)
+
     try {
-      const { data } = await api.post('/auth/register', { name: form.name, email: form.email, password: form.password })
-      localStorage.setItem('forge_token', data.token)
-      navigate('/onboarding')
-    } catch (e) {
-      setError(e?.response?.data?.error || 'Something went wrong')
-    } finally { setLoading(false) }
+      const response = await api.post('/api/auth/register', { name, email, password })
+      localStorage.setItem('forge_token', response.data.token)
+      window.location.href = '/onboarding'
+    } catch (err) {
+      setError(err?.response?.data?.error || 'Registration failed. Please try again.')
+    } finally {
+      setLoading(false)
+    }
   }
 
-  const inp = 'w-full bg-[#09090f] border border-[#2a2d3e] rounded-xl px-4 py-3 text-white text-sm placeholder-slate-700 focus:outline-none focus:border-orange-500 transition-colors'
-
   return (
-    <div className="min-h-screen bg-[#09090f] flex items-center justify-center p-4">
-      <div className="w-full max-w-sm">
-        <div className="text-center mb-8">
-          <div className="w-16 h-16 bg-orange-500 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-orange-900/50">
-            <span className="text-3xl">🔥</span>
-          </div>
-          <h1 className="text-3xl font-black text-white">FORGE</h1>
-          <p className="text-slate-500 text-sm mt-1">Start your journey</p>
-        </div>
+    <div className="flex min-h-screen items-center justify-center bg-[#09090f] px-4 text-white">
+      <div className="w-full max-w-[420px] rounded-2xl border border-white/10 bg-[#111318] p-6 shadow-xl">
+        <h1 className="mb-1 text-2xl font-bold">Create account</h1>
+        <p className="mb-6 text-sm text-gray-400">Start building your smartest training cycle.</p>
 
-        <form onSubmit={submit} className="space-y-4">
-          <input className={inp} placeholder="Your name" value={form.name} onChange={e => f({name: e.target.value})} required />
-          <input type="email" className={inp} placeholder="Email" value={form.email} onChange={e => f({email: e.target.value})} required />
-          <input type="password" className={inp} placeholder="Password (6+ chars)" value={form.password} onChange={e => f({password: e.target.value})} required />
-          <input type="password" className={inp} placeholder="Confirm password" value={form.confirm} onChange={e => f({confirm: e.target.value})} required />
+        <form onSubmit={onSubmit} className="space-y-4">
+          <input
+            type="text"
+            required
+            placeholder="Full name"
+            className="w-full rounded-xl border border-white/10 bg-[#09090f] px-4 py-3 text-white outline-none ring-orange-500 placeholder:text-gray-500 focus:ring-2"
+            value={name}
+            onChange={e => setName(e.target.value)}
+          />
+          <input
+            type="email"
+            required
+            placeholder="Email"
+            className="w-full rounded-xl border border-white/10 bg-[#09090f] px-4 py-3 text-white outline-none ring-orange-500 placeholder:text-gray-500 focus:ring-2"
+            value={email}
+            onChange={e => setEmail(e.target.value)}
+          />
+          <input
+            type="password"
+            required
+            placeholder="Password"
+            className="w-full rounded-xl border border-white/10 bg-[#09090f] px-4 py-3 text-white outline-none ring-orange-500 placeholder:text-gray-500 focus:ring-2"
+            value={password}
+            onChange={e => setPassword(e.target.value)}
+          />
 
-          {error && <p className="text-red-400 text-xs text-center bg-red-900/20 border border-red-800/30 rounded-xl px-3 py-2">{error}</p>}
-
-          <button type="submit" disabled={loading}
-            className="w-full bg-orange-500 hover:bg-orange-400 text-white font-bold rounded-xl py-3.5 text-sm transition-colors disabled:opacity-50">
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full rounded-xl bg-orange-500 py-3 font-semibold text-white transition hover:opacity-90 disabled:opacity-70"
+          >
             {loading ? 'Creating account...' : 'Create Account'}
           </button>
         </form>
 
-        <p className="text-center text-slate-600 text-xs mt-5">
+        {error && <p className="mt-3 text-sm text-red-400">{error}</p>}
+
+        <p className="mt-5 text-center text-sm text-gray-400">
           Already have an account?{' '}
-          <Link to="/login" className="text-orange-400 hover:text-orange-300">Sign in →</Link>
+          <Link to="/login" className="font-semibold text-orange-500 hover:underline">
+            Log in
+          </Link>
         </p>
       </div>
     </div>

@@ -1,100 +1,138 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import api from '../lib/api'
 
-const MUSCLES = ['legs','chest','back','shoulders','arms','core']
-const INTENSITY = ['light','moderate','heavy']
+const groups = ['legs', 'back', 'chest', 'shoulders', 'arms', 'core']
+
+function todayISO() {
+  return new Date().toISOString().slice(0, 10)
+}
 
 export default function LogLift() {
-  const navigate = useNavigate()
-  const today = new Date().toISOString().split('T')[0]
-  const [form, setForm] = useState({ date: today, muscle_groups: [], intensity: 'moderate', notes: '' })
-  const [saving, setSaving] = useState(false)
-  const f = v => setForm(p => ({...p, ...v}))
+  const [form, setForm] = useState({
+    date: todayISO(),
+    exercise_name: '',
+    sets: '',
+    reps: '',
+    weight_lbs: '',
+    notes: ''
+  })
+  const [selectedGroups, setSelectedGroups] = useState([])
+  const [success, setSuccess] = useState('')
+  const [error, setError] = useState('')
 
-  function toggleMuscle(m) {
-    setForm(p => ({
-      ...p,
-      muscle_groups: p.muscle_groups.includes(m)
-        ? p.muscle_groups.filter(x => x !== m)
-        : [...p.muscle_groups, m]
-    }))
+  const update = (key, value) => setForm(prev => ({ ...prev, [key]: value }))
+
+  const toggleGroup = group => {
+    setSelectedGroups(prev => (prev.includes(group) ? prev.filter(g => g !== group) : [...prev, group]))
   }
 
-  const heavyLegs = form.intensity === 'heavy' && form.muscle_groups.includes('legs')
-
-  async function submit(e) {
+  const onSubmit = async e => {
     e.preventDefault()
-    if (!form.muscle_groups.length) { alert('Select at least one muscle group'); return }
-    setSaving(true)
-    try {
-      await api.post('/lifts', form)
-      navigate('/')
-    } catch { setSaving(false) }
-  }
+    setSuccess('')
+    setError('')
 
-  const inp = 'w-full bg-[#09090f] border border-[#2a2d3e] rounded-xl px-4 py-3 text-white text-sm placeholder-slate-700 focus:outline-none focus:border-orange-500 transition-colors'
-  const lbl = 'block text-xs font-semibold text-slate-400 mb-2 uppercase tracking-wider'
+    try {
+      await api.post('/api/lifts', {
+        ...form,
+        sets: Number(form.sets),
+        reps: Number(form.reps),
+        weight_lbs: Number(form.weight_lbs),
+        muscle_groups: JSON.stringify(selectedGroups)
+      })
+
+      setSuccess('Lift logged! 💪')
+      setForm({ date: todayISO(), exercise_name: '', sets: '', reps: '', weight_lbs: '', notes: '' })
+      setSelectedGroups([])
+    } catch (err) {
+      setError(err?.response?.data?.error || 'Could not log lift.')
+    }
+  }
 
   return (
-    <div className="space-y-5 pb-4">
-      <div>
-        <h1 className="text-2xl font-black text-white">Log a Lift</h1>
-        <p className="text-slate-500 text-sm">FORGE tracks gym work to protect your running.</p>
-      </div>
+    <div className="rounded-2xl bg-[#111318] p-4">
+      <h2 className="mb-4 text-xl font-bold">Log Lift</h2>
+      <form onSubmit={onSubmit} className="space-y-4">
+        <input
+          type="date"
+          value={form.date}
+          onChange={e => update('date', e.target.value)}
+          className="w-full rounded-xl border border-white/10 bg-[#09090f] px-4 py-3"
+        />
+        <input
+          type="text"
+          required
+          placeholder="Exercise name"
+          value={form.exercise_name}
+          onChange={e => update('exercise_name', e.target.value)}
+          className="w-full rounded-xl border border-white/10 bg-[#09090f] px-4 py-3"
+        />
 
-      <form onSubmit={submit} className="space-y-5">
-        <div>
-          <label className={lbl}>Date</label>
-          <input type="date" className={inp} value={form.date} onChange={e => f({date: e.target.value})} />
+        <div className="grid grid-cols-3 gap-3">
+          <input
+            type="number"
+            min="1"
+            required
+            placeholder="Sets"
+            value={form.sets}
+            onChange={e => update('sets', e.target.value)}
+            className="rounded-xl border border-white/10 bg-[#09090f] px-4 py-3"
+          />
+          <input
+            type="number"
+            min="1"
+            required
+            placeholder="Reps"
+            value={form.reps}
+            onChange={e => update('reps', e.target.value)}
+            className="rounded-xl border border-white/10 bg-[#09090f] px-4 py-3"
+          />
+          <input
+            type="number"
+            min="0"
+            step="0.5"
+            required
+            placeholder="Weight"
+            value={form.weight_lbs}
+            onChange={e => update('weight_lbs', e.target.value)}
+            className="rounded-xl border border-white/10 bg-[#09090f] px-4 py-3"
+          />
         </div>
 
-        {/* Muscle groups */}
-        <div>
-          <label className={lbl}>Muscle groups</label>
-          <div className="flex flex-wrap gap-2">
-            {MUSCLES.map(m => (
-              <button key={m} type="button" onClick={() => toggleMuscle(m)}
-                className={`px-4 py-2 rounded-xl text-sm font-bold transition-colors border capitalize ${form.muscle_groups.includes(m) ? 'bg-orange-500 border-orange-500 text-white' : 'bg-[#111318] border-[#2a2d3e] text-slate-400'}`}>
-                {m}
+        <textarea
+          rows={3}
+          placeholder="Notes"
+          value={form.notes}
+          onChange={e => update('notes', e.target.value)}
+          className="w-full rounded-xl border border-white/10 bg-[#09090f] px-4 py-3"
+        />
+
+        <div className="flex flex-wrap gap-2">
+          {groups.map(group => {
+            const selected = selectedGroups.includes(group)
+            return (
+              <button
+                type="button"
+                key={group}
+                onClick={() => toggleGroup(group)}
+                className={`rounded-full border px-3 py-1 text-sm capitalize ${
+                  selected
+                    ? 'border-orange-500 bg-orange-500/20 text-orange-300'
+                    : 'border-white/10 bg-[#09090f] text-gray-300'
+                }`}
+              >
+                {group}
               </button>
-            ))}
-          </div>
+            )
+          })}
         </div>
 
-        {/* Intensity */}
-        <div>
-          <label className={lbl}>Intensity</label>
-          <div className="grid grid-cols-3 gap-3">
-            {INTENSITY.map(i => (
-              <button key={i} type="button" onClick={() => f({intensity: i})}
-                className={`py-3 rounded-xl text-sm font-bold transition-colors border capitalize ${form.intensity === i ? 'bg-orange-500 border-orange-500 text-white' : 'bg-[#111318] border-[#2a2d3e] text-slate-400'}`}>
-                {i}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Heavy legs warning */}
-        {heavyLegs && (
-          <div className="bg-amber-900/20 border border-amber-700/40 rounded-xl p-4">
-            <p className="text-xs text-amber-300 font-semibold">⚠️ Heavy leg day logged</p>
-            <p className="text-xs text-amber-300/70 mt-1">FORGE will warn you before scheduling a hard run in the next 48 hours. Your recovery window matters.</p>
-          </div>
-        )}
-
-        {/* Notes */}
-        <div>
-          <label className={lbl}>Notes (optional)</label>
-          <textarea className={`${inp} resize-none`} rows={3} placeholder="Exercises, sets, anything notable..." value={form.notes} onChange={e => f({notes: e.target.value})} />
-        </div>
-
-        <button type="submit" disabled={saving}
-          className="w-full bg-orange-500 hover:bg-orange-400 text-white font-bold rounded-xl py-3.5 text-sm transition-colors disabled:opacity-50">
-          {saving ? 'Saving...' : 'Log Lift 💪'}
+        <button type="submit" className="w-full rounded-xl bg-orange-500 py-3 font-semibold text-white">
+          Save Lift
         </button>
-        <button type="button" onClick={() => navigate('/')} className="w-full text-slate-600 text-sm py-2">Cancel</button>
       </form>
+
+      {success && <p className="mt-3 text-sm text-green-400">{success}</p>}
+      {error && <p className="mt-3 text-sm text-red-400">{error}</p>}
     </div>
   )
 }

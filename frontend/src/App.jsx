@@ -1,5 +1,5 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
-import { getUser } from './lib/auth'
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { isLoggedIn, getUser } from './lib/auth'
 import Layout from './components/Layout'
 import Login from './pages/Login'
 import Register from './pages/Register'
@@ -11,32 +11,64 @@ import Plan from './pages/Plan'
 import History from './pages/History'
 
 function PrivateRoute({ children }) {
+  if (!isLoggedIn()) return <Navigate to="/login" replace />
+
   const user = getUser()
-  if (!user) return <Navigate to="/login" />
-  if (!user.onboarded) return <Navigate to="/onboarding" />
-  return children
-}
+  if (user && !user.onboarded) return <Navigate to="/onboarding" replace />
 
-function AuthRoute({ children }) {
-  return isLoggedIn() ? <Navigate to="/" /> : children
+  return <Layout>{children}</Layout>
 }
-
-function isLoggedIn() { return !!getUser() }
 
 export default function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/login"      element={<Login />} />
-        <Route path="/register"   element={<Register />} />
-        <Route path="/onboarding" element={isLoggedIn() ? <Onboarding /> : <Navigate to="/login" />} />
-        <Route path="/" element={<PrivateRoute><Layout /></PrivateRoute>}>
-          <Route index         element={<Dashboard />} />
-          <Route path="log-run"  element={<LogRun />} />
-          <Route path="log-lift" element={<LogLift />} />
-          <Route path="plan"     element={<Plan />} />
-          <Route path="history"  element={<History />} />
-        </Route>
+        <Route path="/login" element={<Login />} />
+        <Route path="/register" element={<Register />} />
+        <Route path="/onboarding" element={<Onboarding />} />
+
+        <Route
+          path="/"
+          element={
+            <PrivateRoute>
+              <Dashboard />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/log-run"
+          element={
+            <PrivateRoute>
+              <LogRun />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/log-lift"
+          element={
+            <PrivateRoute>
+              <LogLift />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/plan"
+          element={
+            <PrivateRoute>
+              <Plan />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/history"
+          element={
+            <PrivateRoute>
+              <History />
+            </PrivateRoute>
+          }
+        />
+
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
   )
