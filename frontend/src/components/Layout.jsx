@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import { getUser } from '../lib/auth'
 import HelpDesk from './HelpDesk'
@@ -14,20 +15,34 @@ const NAV_ITEMS = [
 export default function Layout({ children }) {
   const user = getUser()
   const firstName = user?.name?.split(' ')[0] || 'Athlete'
+  const [showHelp, setShowHelp] = useState(false)
+  const [showFeedback, setShowFeedback] = useState(false)
 
   return (
     <div className="min-h-screen bg-[#09090f] text-white">
       <div className="mx-auto w-full max-w-[480px] px-4">
         <header className="sticky top-0 z-20 flex items-center justify-between border-b border-white/10 bg-[#09090f]/90 py-4 backdrop-blur">
           <h1 className="text-lg font-bold text-violet-400">⚡ FORGE</h1>
-          <p className="text-sm text-gray-300">{firstName}</p>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setShowFeedback(true)}
+              className="text-gray-600 hover:text-gray-400 transition-colors text-xs"
+              title="Send feedback"
+            >💬</button>
+            <button
+              onClick={() => setShowHelp(true)}
+              className="text-gray-600 hover:text-gray-400 transition-colors text-xs"
+              title="Help & diagnostics"
+            >?</button>
+            <p className="text-sm text-gray-300">{firstName}</p>
+          </div>
         </header>
 
         <main className="pb-24 pt-4">{children}</main>
       </div>
 
-      <HelpDesk />
-      <FeedbackButton />
+      <HelpDesk externalOpen={showHelp} onClose={() => setShowHelp(false)} />
+      <FeedbackButton externalOpen={showFeedback} onClose={() => setShowFeedback(false)} />
 
       <nav className="fixed bottom-0 left-1/2 z-30 grid w-full max-w-[480px] -translate-x-1/2 grid-cols-5 border-t border-white/10 bg-[#111318] px-2 py-2">
         {NAV_ITEMS.map(({ to, end, icon, label }) => (
