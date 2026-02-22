@@ -30,7 +30,7 @@ export default class ErrorBoundary extends React.Component {
             fontFamily: 'sans-serif',
           }}
         >
-          <div style={{ fontSize: 48 }}>⚠️</div>
+          <div style={{ fontSize: 48, color: '#ef4444' }}>!</div>
           <h1 style={{ color: '#fff', fontSize: 22, fontWeight: 700, margin: 0 }}>Something went wrong</h1>
           <p style={{ color: '#94a3b8', fontSize: 14, margin: 0, textAlign: 'center', maxWidth: 400 }}>
             FORGE ran into an unexpected error. Click below to attempt an automatic repair and reload.
@@ -62,7 +62,7 @@ export default class ErrorBoundary extends React.Component {
               cursor: 'pointer',
             }}
           >
-            🔧 Repair &amp; Reload
+            Repair &amp; Reload
           </button>
         </div>
       );

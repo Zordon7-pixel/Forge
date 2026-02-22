@@ -3,10 +3,10 @@ import { useNavigate } from 'react-router-dom'
 import api from '../lib/api'
 
 const personalityOptions = [
-  { key: 'mentor', label: 'Mentor 🎓' },
-  { key: 'hype_coach', label: 'Hype Coach ⚡' },
-  { key: 'drill_sergeant', label: 'Drill Sergeant 💪' },
-  { key: 'training_partner', label: 'Training Partner 🤝' }
+  { key: 'mentor', label: 'Mentor' },
+  { key: 'hype_coach', label: 'Hype Coach' },
+  { key: 'drill_sergeant', label: 'Drill Sergeant' },
+  { key: 'training_partner', label: 'Training Partner' }
 ]
 
 export default function Profile() {
@@ -204,7 +204,7 @@ export default function Profile() {
         </div>
 
         {error && <p className="text-sm text-violet-400">{error}</p>}
-        {saved && <p className="text-sm text-green-400">Saved! ✅</p>}
+        {saved && <p className="text-sm text-green-400">Saved</p>}
 
         <button
           type="submit"

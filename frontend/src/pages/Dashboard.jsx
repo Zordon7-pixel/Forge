@@ -122,16 +122,16 @@ export default function Dashboard() {
 
   const greeting = useMemo(() => {
     const hour = new Date().getHours()
-    if (hour < 12) return 'Good morning 👋'
-    if (hour < 18) return 'Good afternoon 👋'
-    return 'Good evening 👋'
+    if (hour < 12) return 'Good morning,'
+    if (hour < 18) return 'Good afternoon,'
+    return 'Good evening,'
   }, [])
 
   const COACH_LABELS = {
-    mentor: '🎓 Mentor',
-    hype_coach: '⚡ Hype Coach',
-    drill_sergeant: '💪 Drill Sergeant',
-    training_partner: '🤝 Training Partner'
+    mentor: 'Mentor',
+    hype_coach: 'Hype Coach',
+    drill_sergeant: 'Drill Sergeant',
+    training_partner: 'Training Partner'
   }
 
   const weeklyMilesCount = useCountUp(Math.floor(thisWeekMiles * 10), 900)
@@ -154,13 +154,13 @@ export default function Dashboard() {
 
       {streak > 0 && (
         <div className="inline-flex items-center gap-2 rounded-full bg-violet-600/20 px-3 py-1.5 text-sm font-semibold text-violet-400">
-          🔥 {streak}-day streak
+          {streak}-day streak
         </div>
       )}
 
       {warning && (
         <div className="rounded-xl border border-violet-500/30 bg-violet-500/10 p-3 text-sm text-violet-300">
-          ⚠️ Heavy legs detected — consider a rest day
+          Heavy legs detected — consider a rest day
         </div>
       )}
 
@@ -208,16 +208,16 @@ export default function Dashboard() {
 
       <div className="grid grid-cols-3 gap-3">
         <Link to="/log-run" className="rounded-xl bg-violet-600 px-4 py-3 text-center text-sm font-semibold text-white">
-          🏃 Log Run
+          Log Run
         </Link>
         <Link to="/log-lift" className="rounded-xl bg-purple-600 px-4 py-3 text-center text-sm font-semibold text-white">
-          💪 Log Lift
+          Log Lift
         </Link>
         <Link
           to="/plan"
           className="rounded-xl border border-white/20 bg-transparent px-4 py-3 text-center text-sm font-semibold text-gray-100"
         >
-          📋 View Plan
+          View Plan
         </Link>
       </div>
     </div>

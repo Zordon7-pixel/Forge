@@ -115,7 +115,7 @@ export default function Plan() {
         disabled={regenerating}
         className="w-full rounded-xl border border-white/20 bg-[#111318] py-3 font-semibold text-white disabled:opacity-60"
       >
-        {regenerating ? 'Regenerating...' : '🔄 Regenerate Plan'}
+        {regenerating ? 'Regenerating...' : 'Regenerate Plan'}
       </button>
     </div>
   )

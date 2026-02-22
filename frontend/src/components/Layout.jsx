@@ -22,14 +22,18 @@ export default function Layout({ children }) {
     <div className="min-h-screen bg-[#09090f] text-white">
       <div className="mx-auto w-full max-w-[480px] px-4">
         <header className="sticky top-0 z-20 flex items-center justify-between border-b border-white/10 bg-[#09090f]/90 py-4 backdrop-blur">
-          <h1 className="text-lg font-bold text-violet-400">⚡ FORGE</h1>
+          <h1 className="text-lg font-bold text-violet-400">FORGE</h1>
           <div className="flex items-center gap-3">
             <p className="text-sm text-gray-300">{firstName}</p>
             <button
               onClick={() => setShowFeedback(true)}
               className="text-gray-600 hover:text-gray-400 transition-colors text-xs"
               title="Send feedback"
-            >💬</button>
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+              </svg>
+            </button>
             <button
               onClick={() => setShowHelp(true)}
               className="text-gray-600 hover:text-gray-400 transition-colors text-xs"

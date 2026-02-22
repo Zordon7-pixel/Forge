@@ -2,10 +2,10 @@ import { useMemo, useState } from 'react'
 import api from '../lib/api'
 
 const personalityOptions = [
-  { key: 'mentor', label: 'Mentor 🎓' },
-  { key: 'hype_coach', label: 'Hype Coach ⚡' },
-  { key: 'drill_sergeant', label: 'Drill Sergeant 💪' },
-  { key: 'training_partner', label: 'Training Partner 🤝' }
+  { key: 'mentor', label: 'Mentor' },
+  { key: 'hype_coach', label: 'Hype Coach' },
+  { key: 'drill_sergeant', label: 'Drill Sergeant' },
+  { key: 'training_partner', label: 'Training Partner' }
 ]
 
 export default function Onboarding() {
@@ -266,7 +266,7 @@ export default function Onboarding() {
       {saving && (
         <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#09090f]/95 text-white">
           <div className="mb-4 h-10 w-10 animate-spin rounded-full border-4 border-violet-600 border-t-transparent" />
-          <p className="text-lg font-semibold">🔥 Building your plan...</p>
+          <p className="text-lg font-semibold">Building your plan...</p>
         </div>
       )}
     </div>

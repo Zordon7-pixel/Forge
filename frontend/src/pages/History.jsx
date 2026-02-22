@@ -138,7 +138,7 @@ export default function History() {
                     onClick={() => setExpanded(prev => ({ ...prev, [run.id]: !prev[run.id] }))}
                     className="mt-3 rounded-full bg-violet-600/20 px-3 py-1 text-xs text-violet-300"
                   >
-                    💬 AI
+                    AI Feedback
                   </button>
                   {expanded[run.id] && <p className="mt-2 text-sm text-gray-300">{run.ai_feedback}</p>}
                 </>

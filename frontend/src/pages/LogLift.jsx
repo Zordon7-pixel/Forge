@@ -40,7 +40,7 @@ export default function LogLift() {
         muscle_groups: JSON.stringify(selectedGroups)
       })
 
-      setSuccess('Lift logged! 💪')
+      setSuccess('Lift logged!')
       setForm({ date: todayISO(), exercise_name: '', sets: '', reps: '', weight_lbs: '', notes: '' })
       setSelectedGroups([])
     } catch (err) {

@@ -2,9 +2,9 @@ import { useEffect, useState } from 'react'
 import api from '../lib/api'
 
 const FEEDBACK_TYPES = [
-  { value: 'bug', label: 'Bug', icon: '🐛' },
-  { value: 'suggestion', label: 'Suggestion', icon: '💡' },
-  { value: 'praise', label: 'Praise', icon: '⭐' }
+  { value: 'bug', label: 'Bug', icon: 'B' },
+  { value: 'suggestion', label: 'Suggestion', icon: 'S' },
+  { value: 'praise', label: 'Praise', icon: 'P' }
 ]
 
 export default function FeedbackButton({ externalOpen, onClose }) {
@@ -30,7 +30,7 @@ export default function FeedbackButton({ externalOpen, onClose }) {
     setLoading(true); setStatus('')
     try {
       await api.post('/feedback', { type, message: message.trim(), page: window.location.pathname })
-      setStatus("Thanks! We'll look into it 🙌")
+      setStatus("Thanks! We'll look into it.")
       setTimeout(() => { setMessage(''); setType('bug'); handleClose() }, 2000)
     } catch { setStatus("Couldn't send — try again") }
     finally { setLoading(false) }
