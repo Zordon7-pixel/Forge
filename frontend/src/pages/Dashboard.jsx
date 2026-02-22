@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
 import api from '../lib/api'
 
 function useCountUp(target, duration = 1000) {
@@ -189,13 +188,6 @@ export default function Dashboard() {
         </div>
       </section>
 
-      <div className="grid grid-cols-3 gap-3">
-        <Link to="/log-run" className="rounded-xl px-4 py-3 text-center text-sm font-semibold" style={{ background: 'var(--accent)', color: 'black' }}>Log Run</Link>
-        <Link to="/log-lift" className="rounded-xl px-4 py-3 text-center text-sm font-semibold" style={{ background: 'var(--accent)', color: 'black' }}>Log Lift</Link>
-        <Link to="/plan" className="rounded-xl border bg-transparent px-4 py-3 text-center text-sm font-semibold" style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}>
-          View Plan
-        </Link>
-      </div>
     </div>
   )
 }
