@@ -121,13 +121,10 @@ export default function History() {
           ))}
 
           {runs.length === 0 && (
-            <div className="relative overflow-hidden" style={{ minHeight: 'calc(100vh - 180px)' }}>
-              <img src="/empty-runs.png" alt="" className="absolute inset-0 w-full h-full object-cover" />
-              <div className="absolute inset-0" style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.2) 60%, transparent 100%)' }} />
-              <div className="absolute bottom-8 left-0 right-0 flex flex-col items-center gap-2">
-                <p className="text-base font-bold text-white">No runs logged yet.</p>
-                <p className="text-sm" style={{ color: 'rgba(255,255,255,0.6)' }}>Lace up and log your first run.</p>
-              </div>
+            <div className="flex flex-col items-center justify-center gap-4 py-12">
+              <img src="/empty-runs.png" alt="" className="w-64 h-64 object-contain" />
+              <p className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>No runs logged yet.</p>
+              <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Lace up and log your first run.</p>
             </div>
           )}
         </div>
@@ -155,13 +152,10 @@ export default function History() {
           })}
 
           {lifts.length === 0 && (
-            <div className="relative overflow-hidden" style={{ minHeight: 'calc(100vh - 180px)' }}>
-              <img src="/empty-lifts.png" alt="" className="absolute inset-0 w-full h-full object-cover" />
-              <div className="absolute inset-0" style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.2) 60%, transparent 100%)' }} />
-              <div className="absolute bottom-8 left-0 right-0 flex flex-col items-center gap-2">
-                <p className="text-base font-bold text-white">No lifts recorded yet.</p>
-                <p className="text-sm" style={{ color: 'rgba(255,255,255,0.6)' }}>Hit the weights.</p>
-              </div>
+            <div className="flex flex-col items-center justify-center gap-4 py-12">
+              <img src="/empty-lifts.png" alt="" className="w-64 h-64 object-contain" />
+              <p className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>No lifts recorded yet.</p>
+              <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Hit the weights.</p>
             </div>
           )}
         </div>
