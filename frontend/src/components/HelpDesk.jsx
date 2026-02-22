@@ -76,7 +76,7 @@ export default function HelpDesk() {
             ) : (
               <>
                 {error && (
-                  <div className="mb-4 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-300">
+                  <div className="mb-4 rounded-lg border border-violet-500/40 bg-violet-500/10 px-3 py-2 text-sm text-violet-300">
                     {error}
                   </div>
                 )}

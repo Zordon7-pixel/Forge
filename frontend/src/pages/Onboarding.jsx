@@ -73,7 +73,7 @@ export default function Onboarding() {
     <div className="min-h-screen bg-[#09090f] px-4 py-6 text-white">
       <div className="mx-auto w-full max-w-[480px]">
         <div className="mb-6 h-2 w-full overflow-hidden rounded-full bg-[#111318]">
-          <div className="h-full bg-orange-500 transition-all" style={{ width: progress }} />
+          <div className="h-full bg-violet-600 transition-all" style={{ width: progress }} />
         </div>
 
         <div className="rounded-2xl border border-white/10 bg-[#111318] p-5">
@@ -136,7 +136,7 @@ export default function Onboarding() {
                   max="50"
                   value={form.weeklyMiles}
                   onChange={e => update('weeklyMiles', e.target.value)}
-                  className="w-full accent-orange-500"
+                  className="w-full accent-violet-600"
                 />
               </div>
               <div className="space-y-2">
@@ -218,7 +218,7 @@ export default function Onboarding() {
                     onClick={() => update('coachPersonality', option.key)}
                     className={`rounded-xl border p-4 text-left text-sm transition ${
                       form.coachPersonality === option.key
-                        ? 'border-orange-500 bg-orange-500/10 text-white'
+                        ? 'border-violet-600 bg-violet-600/10 text-white'
                         : 'border-white/10 bg-[#09090f] text-gray-300'
                     }`}
                   >
@@ -229,7 +229,7 @@ export default function Onboarding() {
             </div>
           )}
 
-          {error && <p className="mt-4 text-sm text-red-400">{error}</p>}
+          {error && <p className="mt-4 text-sm text-violet-400">{error}</p>}
 
           <div className="mt-6 flex items-center justify-between">
             <button
@@ -245,7 +245,7 @@ export default function Onboarding() {
               <button
                 type="button"
                 onClick={next}
-                className="rounded-xl bg-orange-500 px-5 py-2 font-semibold text-white"
+                className="rounded-xl bg-violet-600 px-5 py-2 font-semibold text-white"
               >
                 Next
               </button>
@@ -254,7 +254,7 @@ export default function Onboarding() {
                 type="button"
                 onClick={submit}
                 disabled={saving}
-                className="rounded-xl bg-orange-500 px-5 py-2 font-semibold text-white disabled:opacity-70"
+                className="rounded-xl bg-violet-600 px-5 py-2 font-semibold text-white disabled:opacity-70"
               >
                 Finish
               </button>
@@ -265,7 +265,7 @@ export default function Onboarding() {
 
       {saving && (
         <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#09090f]/95 text-white">
-          <div className="mb-4 h-10 w-10 animate-spin rounded-full border-4 border-orange-500 border-t-transparent" />
+          <div className="mb-4 h-10 w-10 animate-spin rounded-full border-4 border-violet-600 border-t-transparent" />
           <p className="text-lg font-semibold">🔥 Building your plan...</p>
         </div>
       )}

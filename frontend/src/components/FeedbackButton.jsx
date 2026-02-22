@@ -95,7 +95,7 @@ export default function FeedbackButton() {
             />
 
             {status && (
-              <p className={`mb-3 text-sm ${status.startsWith('Thanks') ? 'text-green-300' : 'text-red-300'}`}>{status}</p>
+              <p className={`mb-3 text-sm ${status.startsWith('Thanks') ? 'text-green-300' : 'text-violet-300'}`}>{status}</p>
             )}
 
             <div className="flex justify-end gap-2">

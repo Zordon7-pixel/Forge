@@ -116,7 +116,7 @@ export default function LogLift() {
                 onClick={() => toggleGroup(group)}
                 className={`rounded-full border px-3 py-1 text-sm capitalize ${
                   selected
-                    ? 'border-orange-500 bg-orange-500/20 text-orange-300'
+                    ? 'border-violet-600 bg-violet-600/20 text-violet-300'
                     : 'border-white/10 bg-[#09090f] text-gray-300'
                 }`}
               >
@@ -126,13 +126,13 @@ export default function LogLift() {
           })}
         </div>
 
-        <button type="submit" className="w-full rounded-xl bg-orange-500 py-3 font-semibold text-white">
+        <button type="submit" className="w-full rounded-xl bg-violet-600 py-3 font-semibold text-white">
           Save Lift
         </button>
       </form>
 
       {success && <p className="mt-3 text-sm text-green-400">{success}</p>}
-      {error && <p className="mt-3 text-sm text-red-400">{error}</p>}
+      {error && <p className="mt-3 text-sm text-violet-400">{error}</p>}
     </div>
   )
 }

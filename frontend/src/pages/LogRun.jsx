@@ -151,14 +151,14 @@ export default function LogRun() {
             max="10"
             value={effort}
             onChange={e => setEffort(e.target.value)}
-            className="w-full accent-orange-500"
+            className="w-full accent-violet-600"
           />
         </div>
 
         <button
           type="submit"
           disabled={loading || polling}
-          className="w-full rounded-xl bg-orange-500 py-3 font-semibold text-white disabled:opacity-70"
+          className="w-full rounded-xl bg-violet-600 py-3 font-semibold text-white disabled:opacity-70"
         >
           {loading ? 'Logging run...' : 'Save Run'}
         </button>
@@ -166,13 +166,13 @@ export default function LogRun() {
 
       {(loading || polling) && (
         <div className="mt-4 flex items-center gap-2 text-sm text-gray-300">
-          <div className="h-4 w-4 animate-spin rounded-full border-2 border-orange-500 border-t-transparent" />
+          <div className="h-4 w-4 animate-spin rounded-full border-2 border-violet-600 border-t-transparent" />
           Getting AI feedback...
         </div>
       )}
 
-      {feedback && <div className="mt-4 rounded-xl bg-orange-500/15 p-3 text-orange-300">{feedback}</div>}
-      {error && <p className="mt-3 text-sm text-red-400">{error}</p>}
+      {feedback && <div className="mt-4 rounded-xl bg-violet-600/15 p-3 text-violet-300">{feedback}</div>}
+      {error && <p className="mt-3 text-sm text-violet-400">{error}</p>}
 
       <Link to="/" className="mt-5 inline-block text-sm text-gray-300 hover:text-white">
         ← Back

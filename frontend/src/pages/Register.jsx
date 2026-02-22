@@ -36,7 +36,7 @@ export default function Register() {
             type="text"
             required
             placeholder="Full name"
-            className="w-full rounded-xl border border-white/10 bg-[#09090f] px-4 py-3 text-white outline-none ring-orange-500 placeholder:text-gray-500 focus:ring-2"
+            className="w-full rounded-xl border border-white/10 bg-[#09090f] px-4 py-3 text-white outline-none ring-violet-600 placeholder:text-gray-500 focus:ring-2"
             value={name}
             onChange={e => setName(e.target.value)}
           />
@@ -44,7 +44,7 @@ export default function Register() {
             type="email"
             required
             placeholder="Email"
-            className="w-full rounded-xl border border-white/10 bg-[#09090f] px-4 py-3 text-white outline-none ring-orange-500 placeholder:text-gray-500 focus:ring-2"
+            className="w-full rounded-xl border border-white/10 bg-[#09090f] px-4 py-3 text-white outline-none ring-violet-600 placeholder:text-gray-500 focus:ring-2"
             value={email}
             onChange={e => setEmail(e.target.value)}
           />
@@ -52,7 +52,7 @@ export default function Register() {
             type="password"
             required
             placeholder="Password"
-            className="w-full rounded-xl border border-white/10 bg-[#09090f] px-4 py-3 text-white outline-none ring-orange-500 placeholder:text-gray-500 focus:ring-2"
+            className="w-full rounded-xl border border-white/10 bg-[#09090f] px-4 py-3 text-white outline-none ring-violet-600 placeholder:text-gray-500 focus:ring-2"
             value={password}
             onChange={e => setPassword(e.target.value)}
           />
@@ -60,17 +60,17 @@ export default function Register() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full rounded-xl bg-orange-500 py-3 font-semibold text-white transition hover:opacity-90 disabled:opacity-70"
+            className="w-full rounded-xl bg-violet-600 py-3 font-semibold text-white transition hover:opacity-90 disabled:opacity-70"
           >
             {loading ? 'Creating account...' : 'Create Account'}
           </button>
         </form>
 
-        {error && <p className="mt-3 text-sm text-red-400">{error}</p>}
+        {error && <p className="mt-3 text-sm text-violet-400">{error}</p>}
 
         <p className="mt-5 text-center text-sm text-gray-400">
           Already have an account?{' '}
-          <Link to="/login" className="font-semibold text-orange-500 hover:underline">
+          <Link to="/login" className="font-semibold text-violet-600 hover:underline">
             Log in
           </Link>
         </p>

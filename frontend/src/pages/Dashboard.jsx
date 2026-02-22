@@ -153,31 +153,31 @@ export default function Dashboard() {
       </div>
 
       {streak > 0 && (
-        <div className="inline-flex items-center gap-2 rounded-full bg-orange-500/20 px-3 py-1.5 text-sm font-semibold text-orange-400">
+        <div className="inline-flex items-center gap-2 rounded-full bg-violet-600/20 px-3 py-1.5 text-sm font-semibold text-violet-400">
           🔥 {streak}-day streak
         </div>
       )}
 
       {warning && (
-        <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300">
+        <div className="rounded-xl border border-violet-500/30 bg-violet-500/10 p-3 text-sm text-violet-300">
           ⚠️ Heavy legs detected — consider a rest day
         </div>
       )}
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <div className="rounded-xl bg-gradient-to-br from-rose-900/40 to-[#1a1d2e] p-3">
+        <div className="rounded-xl bg-gradient-to-br from-violet-900/40 to-[#1a1d2e] p-3">
           <p className="text-xs text-gray-300">Weekly Miles</p>
           <p className="text-lg font-bold text-white">{(weeklyMilesCount / 10).toFixed(1)} mi</p>
         </div>
-        <div className="rounded-xl bg-gradient-to-br from-red-900/40 to-[#1a1d2e] p-3">
+        <div className="rounded-xl bg-gradient-to-br from-violet-900/40 to-[#1a1d2e] p-3">
           <p className="text-xs text-gray-300">Total Runs</p>
           <p className="text-lg font-bold text-white">{totalRunsCount}</p>
         </div>
-        <div className="rounded-xl bg-gradient-to-br from-red-900/40 to-[#1a1d2e] p-3">
+        <div className="rounded-xl bg-gradient-to-br from-violet-900/40 to-[#1a1d2e] p-3">
           <p className="text-xs text-gray-300">Total Miles</p>
           <p className="text-lg font-bold text-white">{(totalMilesCount / 10).toFixed(1)} mi</p>
         </div>
-        <div className="rounded-xl bg-gradient-to-br from-orange-900/40 to-[#1a1d2e] p-3">
+        <div className="rounded-xl bg-gradient-to-br from-violet-900/40 to-[#1a1d2e] p-3">
           <p className="text-xs text-gray-300">Best Pace</p>
           <p className="text-lg font-bold text-white">{bestPace}</p>
         </div>
@@ -193,7 +193,7 @@ export default function Dashboard() {
             >
               <div className="mb-2 flex items-center justify-between">
                 <p className="text-sm text-gray-300">{new Date(run.date || run.created_at).toLocaleDateString()}</p>
-                <span className="rounded-full bg-orange-500/20 px-2 py-1 text-xs text-orange-400">
+                <span className="rounded-full bg-violet-600/20 px-2 py-1 text-xs text-violet-400">
                   {formatPace(run.duration_seconds, run.distance_miles)}
                 </span>
               </div>
@@ -207,7 +207,7 @@ export default function Dashboard() {
       </section>
 
       <div className="grid grid-cols-3 gap-3">
-        <Link to="/log-run" className="rounded-xl bg-orange-500 px-4 py-3 text-center text-sm font-semibold text-white">
+        <Link to="/log-run" className="rounded-xl bg-violet-600 px-4 py-3 text-center text-sm font-semibold text-white">
           🏃 Log Run
         </Link>
         <Link to="/log-lift" className="rounded-xl bg-purple-600 px-4 py-3 text-center text-sm font-semibold text-white">

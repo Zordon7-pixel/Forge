@@ -93,7 +93,7 @@ export default function History() {
             key={value}
             onClick={() => setTab(value)}
             className={`px-4 py-2 text-sm font-medium ${
-              tab === value ? 'border-b-2 border-orange-500 text-white' : 'text-gray-400'
+              tab === value ? 'border-b-2 border-violet-600 text-white' : 'text-gray-400'
             }`}
           >
             {label}
@@ -116,7 +116,7 @@ export default function History() {
                   ) : null}
                   <button
                     onClick={e => deleteRun(run.id, e)}
-                    className="text-gray-600 transition-colors hover:text-red-400"
+                    className="text-gray-600 transition-colors hover:text-violet-400"
                   >
                     <Trash2 size={14} />
                   </button>
@@ -136,7 +136,7 @@ export default function History() {
                 <>
                   <button
                     onClick={() => setExpanded(prev => ({ ...prev, [run.id]: !prev[run.id] }))}
-                    className="mt-3 rounded-full bg-orange-500/20 px-3 py-1 text-xs text-orange-300"
+                    className="mt-3 rounded-full bg-violet-600/20 px-3 py-1 text-xs text-violet-300"
                   >
                     💬 AI
                   </button>
@@ -175,7 +175,7 @@ export default function History() {
                   <p className="text-sm text-gray-300">{new Date(lift.date || lift.created_at).toLocaleDateString()}</p>
                   <button
                     onClick={e => deleteLift(lift.id, e)}
-                    className="text-gray-600 transition-colors hover:text-red-400"
+                    className="text-gray-600 transition-colors hover:text-violet-400"
                   >
                     <Trash2 size={14} />
                   </button>

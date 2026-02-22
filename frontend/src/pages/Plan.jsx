@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import api from '../lib/api'
 
 const badgeStyles = {
-  run: 'bg-orange-500/20 text-orange-300',
+  run: 'bg-violet-600/20 text-violet-300',
   rest: 'bg-gray-500/20 text-gray-300',
   'cross-train': 'bg-amber-500/20 text-amber-300',
   strength: 'bg-purple-500/20 text-purple-300'
@@ -58,7 +58,7 @@ export default function Plan() {
           <p className="text-sm font-medium text-slate-400">No training plan yet.</p>
           <p className="text-xs text-slate-600">Generate one to get started.</p>
         </div>
-        <button onClick={regenerate} className="rounded-xl bg-orange-500 px-4 py-2 font-semibold text-white">
+        <button onClick={regenerate} className="rounded-xl bg-violet-600 px-4 py-2 font-semibold text-white">
           Generate
         </button>
       </div>
@@ -89,7 +89,7 @@ export default function Plan() {
               key={idx}
               className={`rounded-xl border p-4 ${
                 isToday
-                  ? 'border-orange-500/60 bg-gradient-to-br from-orange-900/20 to-[#111318]'
+                  ? 'border-violet-600/60 bg-gradient-to-br from-violet-900/20 to-[#111318]'
                   : 'border-white/10 bg-[#111318]'
               }`}
             >
@@ -97,7 +97,7 @@ export default function Plan() {
                 <div className="flex items-center gap-2">
                   <p className="font-semibold text-white">{day.day || `Day ${idx + 1}`}</p>
                   {isToday ? (
-                    <span className="rounded-full bg-orange-500 px-2 py-0.5 text-xs font-bold text-white">TODAY</span>
+                    <span className="rounded-full bg-violet-600 px-2 py-0.5 text-xs font-bold text-white">TODAY</span>
                   ) : null}
                 </div>
                 <span className={`rounded-full px-2 py-1 text-xs ${badgeStyles[typeKey]}`}>

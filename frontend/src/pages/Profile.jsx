@@ -194,7 +194,7 @@ export default function Profile() {
               onClick={() => update('coach_personality', option.key)}
               className={`rounded-xl border p-3 text-left text-sm transition ${
                 form.coach_personality === option.key
-                  ? 'border-orange-500 bg-orange-500/10 text-white'
+                  ? 'border-violet-600 bg-violet-600/10 text-white'
                   : 'border-white/10 bg-[#09090f] text-gray-300'
               }`}
             >
@@ -203,13 +203,13 @@ export default function Profile() {
           ))}
         </div>
 
-        {error && <p className="text-sm text-red-400">{error}</p>}
+        {error && <p className="text-sm text-violet-400">{error}</p>}
         {saved && <p className="text-sm text-green-400">Saved! ✅</p>}
 
         <button
           type="submit"
           disabled={saving}
-          className="w-full rounded-xl bg-orange-500 py-3 font-semibold text-white disabled:opacity-70"
+          className="w-full rounded-xl bg-violet-600 py-3 font-semibold text-white disabled:opacity-70"
         >
           {saving ? 'Saving...' : 'Save Changes'}
         </button>
