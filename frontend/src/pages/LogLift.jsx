@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../lib/api'
 import ExercisePickerModal from '../components/ExercisePickerModal'
@@ -15,8 +15,9 @@ const MUSCLE_GROUPS = [
 const BODY_GRAY = '#374151'
 const BODY_ACCENT = '#EAB308'
 
-function BodySVG({ highlight }) {
+function BodySVG({ highlight, sex = 'male' }) {
   const hi = (part) => highlight === 'full' || highlight === part ? BODY_ACCENT : BODY_GRAY
+  const isFemale = sex === 'female'
 
   return (
     <svg viewBox="0 0 60 90" width="52" height="78" xmlns="http://www.w3.org/2000/svg">
@@ -25,16 +26,20 @@ function BodySVG({ highlight }) {
       {/* Neck */}
       <rect x="27" y="17" width="6" height="5" fill={BODY_GRAY} />
       {/* Left arm */}
-      <rect x="7" y="20" width="9" height="24" rx="4" fill={hi('arms')} />
+      <rect x={isFemale ? 9 : 7} y="20" width="9" height="24" rx="4" fill={hi('arms')} />
       {/* Right arm */}
-      <rect x="44" y="20" width="9" height="24" rx="4" fill={hi('arms')} />
+      <rect x={isFemale ? 42 : 44} y="20" width="9" height="24" rx="4" fill={hi('arms')} />
       {/* Torso base */}
       <rect x="16" y="20" width="28" height="33" rx="4" fill={BODY_GRAY} />
+      {/* Female waist curve */}
+      {isFemale && (
+        <rect x="18" y="34" width="24" height="8" rx="2" fill={BODY_GRAY} />
+      )}
       {/* Shoulder highlights */}
       {(highlight === 'shoulders' || highlight === 'full') && (
         <>
-          <rect x="7" y="20" width="9" height="11" rx="4" fill={BODY_ACCENT} />
-          <rect x="44" y="20" width="9" height="11" rx="4" fill={BODY_ACCENT} />
+          <rect x={isFemale ? 9 : 7} y="20" width="9" height="11" rx="4" fill={BODY_ACCENT} />
+          <rect x={isFemale ? 42 : 44} y="20" width="9" height="11" rx="4" fill={BODY_ACCENT} />
           <rect x="15" y="20" width="30" height="8" rx="3" fill={BODY_ACCENT} />
         </>
       )}
@@ -51,9 +56,9 @@ function BodySVG({ highlight }) {
         <rect x="18" y="37" width="24" height="14" rx="3" fill={BODY_ACCENT} />
       )}
       {/* Left leg */}
-      <rect x="17" y="53" width="11" height="33" rx="4" fill={hi('legs')} />
+      <rect x={isFemale ? 15 : 17} y="53" width={isFemale ? 13 : 11} height="33" rx="4" fill={hi('legs')} />
       {/* Right leg */}
-      <rect x="32" y="53" width="11" height="33" rx="4" fill={hi('legs')} />
+      <rect x={isFemale ? 32 : 32} y="53" width={isFemale ? 13 : 11} height="33" rx="4" fill={hi('legs')} />
     </svg>
   )
 }
@@ -65,6 +70,13 @@ export default function LogLift() {
   const [error, setError] = useState('')
   const [showExercisePicker, setShowExercisePicker] = useState(false)
   const [selectedExercise, setSelectedExercise] = useState(null)
+  const [userSex, setUserSex] = useState('male')
+
+  useEffect(() => {
+    api.get('/auth/me').then(res => {
+      setUserSex(res.data.user?.sex || 'male')
+    }).catch(() => {})
+  }, [])
 
   const selectedMuscleGroup = selected[0] || ''
 
@@ -99,6 +111,26 @@ export default function LogLift() {
         <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Select the muscle groups you are targeting today</p>
       </div>
 
+      {/* Gender-appropriate body display */}
+      <div className="flex justify-center gap-6 mb-2">
+        <div className="flex flex-col items-center gap-1">
+          <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Front</span>
+          <img
+            src={userSex === 'female' ? '/body-female-front.png' : '/body-male-front.png'}
+            alt="Body front"
+            style={{ height: 160, objectFit: 'contain', opacity: 0.85 }}
+          />
+        </div>
+        <div className="flex flex-col items-center gap-1">
+          <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Back</span>
+          <img
+            src={userSex === 'female' ? '/body-female-back.png' : '/body-male-back.png'}
+            alt="Body back"
+            style={{ height: 160, objectFit: 'contain', opacity: 0.85 }}
+          />
+        </div>
+      </div>
+
       {/* 3-column silhouette grid */}
       <div className="grid grid-cols-3 gap-3">
         {MUSCLE_GROUPS.map(({ key, label }) => {
@@ -115,7 +147,7 @@ export default function LogLift() {
                 boxShadow: isSelected ? '0 0 10px rgba(234,179,8,0.25)' : 'none',
               }}
             >
-              <BodySVG highlight={key} />
+              <BodySVG highlight={key} sex={userSex} />
               <span
                 className="text-xs font-semibold mt-1 capitalize"
                 style={{ color: isSelected ? BODY_ACCENT : 'var(--text-muted)' }}
@@ -140,7 +172,7 @@ export default function LogLift() {
                 boxShadow: isSelected ? '0 0 10px rgba(234,179,8,0.25)' : 'none',
               }}
             >
-              <BodySVG highlight="full" />
+              <BodySVG highlight="full" sex={userSex} />
               <span
                 className="text-sm font-bold"
                 style={{ color: isSelected ? BODY_ACCENT : 'var(--text-muted)' }}

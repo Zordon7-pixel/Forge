@@ -124,7 +124,7 @@ function BodyBack({ primaryIds = [], secondaryIds = [] }) {
   )
 }
 
-export default function MuscleDiagram({ primaryMuscles = [], secondaryMuscles = [] }) {
+export default function MuscleDiagram({ primaryMuscles = [], secondaryMuscles = [], sex = 'male' }) {
   const getPrimary = view => {
     const ids = []
     for (const m of primaryMuscles) {

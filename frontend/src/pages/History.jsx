@@ -127,7 +127,7 @@ export default function History() {
 
       <div className="mb-4">
         <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 4, marginBottom: 12 }}>
-          {Array.from({ length: 5 }, (_, i) => currentYear - i).map(year => (
+          {Array.from({ length: 1 }, (_, i) => currentYear - i).map(year => (
             <button key={year} onClick={() => { setSelectedYear(selectedYear === year ? null : year); setCustomRange({ from: '', to: '' }) }}
               style={{
                 flexShrink: 0,
