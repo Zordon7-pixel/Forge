@@ -201,12 +201,24 @@ router.get('/me/stats', auth, (req, res) => {
   for (let d = 6; d >= 0; d--) {
     const dateStr = new Date(now - d * 86400000).toISOString().slice(0, 10);
     const dayName = new Date(now - d * 86400000).toLocaleDateString('en-US', { weekday: 'short' });
+    const dayRun = allRuns.find(r => (r.date || r.created_at || '').slice(0, 10) === dateStr);
+    const dayLifts = db.prepare(
+      "SELECT id, ended_at, notes FROM workout_sessions WHERE user_id=? AND started_at LIKE ? AND ended_at IS NOT NULL"
+    ).all(userId, `${dateStr}%`);
     calendarDays.push({
       date: dateStr,
       day: dayName,
-      hasRun: allRuns.some(r => (r.date || r.created_at || '').slice(0, 10) === dateStr),
+      hasRun: !!dayRun,
       hasLift: allDates.has(dateStr),
-      isToday: dateStr === today
+      isToday: dateStr === today,
+      run: dayRun ? {
+        distance: dayRun.distance_miles,
+        duration: dayRun.duration_seconds,
+        type: dayRun.type || 'run',
+        surface: dayRun.surface,
+        notes: dayRun.notes
+      } : null,
+      lifts: dayLifts.length > 0 ? dayLifts.length : null
     });
   }
 

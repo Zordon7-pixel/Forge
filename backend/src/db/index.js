@@ -119,6 +119,39 @@ db.exec(`
     FOREIGN KEY (badge_id) REFERENCES badges(id),
     UNIQUE(user_id, badge_id)
   );
+
+  CREATE TABLE IF NOT EXISTS challenges (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT,
+    type TEXT DEFAULT 'virtual_course',
+    target_value REAL NOT NULL,
+    unit TEXT DEFAULT 'miles',
+    badge_color TEXT DEFAULT '#EAB308',
+    is_featured INTEGER DEFAULT 0,
+    sort_order INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS user_challenges (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    challenge_id TEXT NOT NULL,
+    progress REAL DEFAULT 0,
+    joined_at TEXT DEFAULT (datetime('now')),
+    completed_at TEXT,
+    UNIQUE(user_id, challenge_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS step_logs (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    log_date TEXT NOT NULL,
+    steps INTEGER DEFAULT 0,
+    source TEXT DEFAULT 'manual',
+    created_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(user_id, log_date)
+  );
 `);
 
 // Add is_pro column to users if not exists
@@ -201,5 +234,7 @@ const userCols3 = db.prepare("PRAGMA table_info(users)").all().map(c => c.name);
 if (!userCols3.includes('username')) {
   db.prepare("ALTER TABLE users ADD COLUMN username TEXT DEFAULT NULL").run();
 }
+
+try { db.exec('ALTER TABLE users ADD COLUMN step_goal INTEGER DEFAULT 10000') } catch (_) {}
 
 module.exports = db;

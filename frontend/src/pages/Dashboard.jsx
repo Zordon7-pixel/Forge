@@ -184,6 +184,7 @@ export default function Dashboard() {
   const [editingGoal, setEditingGoal] = useState(false)
   const [goalInput, setGoalInput] = useState('')
   const [showReadinessModal, setShowReadinessModal] = useState(false)
+  const [selectedCalendarDay, setSelectedCalendarDay] = useState(null)
 
   useEffect(() => {
     ;(async () => {
@@ -371,7 +372,10 @@ export default function Dashboard() {
           <p className="text-xs font-medium mb-3" style={{ color: 'var(--text-muted)' }}>This Week</p>
           <div className="grid grid-cols-7 gap-1">
             {stats.calendarDays.map((day) => (
-              <div key={day.date} className="flex flex-col items-center gap-1">
+              <div key={day.date} className="flex flex-col items-center gap-1"
+                onClick={() => setSelectedCalendarDay(day)}
+                style={{ cursor: 'pointer' }}
+              >
                 <span className="text-xs" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>{day.day}</span>
                 <div className="w-8 h-8 rounded-full flex items-center justify-center border"
                   style={{
@@ -593,6 +597,91 @@ export default function Dashboard() {
           )}
         </div>
       </section>
+
+      {/* Calendar Day Detail Sheet */}
+      {selectedCalendarDay && (
+        <div onClick={() => setSelectedCalendarDay(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 50, display: 'flex', alignItems: 'flex-end' }}>
+          <div onClick={e => e.stopPropagation()}
+            style={{ background: 'var(--bg-card)', borderRadius: '20px 20px 0 0', padding: 24, width: '100%', maxHeight: '60vh', overflowY: 'auto' }}>
+            {/* Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+              <div>
+                <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+                  {new Date(selectedCalendarDay.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+                </p>
+                <p style={{ fontSize: 20, fontWeight: 900, color: 'var(--text-primary)' }}>
+                  {selectedCalendarDay.hasRun || selectedCalendarDay.hasLift ? 'Active Day' : 'Rest Day'}
+                </p>
+              </div>
+              <button onClick={() => setSelectedCalendarDay(null)}
+                style={{ background: 'var(--bg-input)', border: 'none', borderRadius: 10, padding: '8px 14px', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 13 }}>
+                Close
+              </button>
+            </div>
+
+            {/* Run info */}
+            {selectedCalendarDay.run && (
+              <div style={{ background: 'var(--bg-base)', borderRadius: 14, padding: 16, marginBottom: 12 }}>
+                <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--accent)', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 10 }}>Run</p>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <div>
+                    <p style={{ fontSize: 22, fontWeight: 900, color: 'var(--text-primary)' }}>
+                      {Number(selectedCalendarDay.run.distance || 0).toFixed(2)}
+                    </p>
+                    <p style={{ fontSize: 11, color: 'var(--text-muted)' }}>miles</p>
+                  </div>
+                  {selectedCalendarDay.run.duration > 0 && (
+                    <div>
+                      <p style={{ fontSize: 22, fontWeight: 900, color: 'var(--text-primary)' }}>
+                        {Math.floor(selectedCalendarDay.run.duration / 60)}:{String(selectedCalendarDay.run.duration % 60).padStart(2, '0')}
+                      </p>
+                      <p style={{ fontSize: 11, color: 'var(--text-muted)' }}>duration</p>
+                    </div>
+                  )}
+                  {selectedCalendarDay.run.distance > 0 && selectedCalendarDay.run.duration > 0 && (
+                    <div>
+                      <p style={{ fontSize: 22, fontWeight: 900, color: 'var(--text-primary)' }}>
+                        {(() => { const ppm = selectedCalendarDay.run.duration / selectedCalendarDay.run.distance; return `${Math.floor(ppm/60)}:${String(Math.round(ppm%60)).padStart(2,'0')}`})()}
+                      </p>
+                      <p style={{ fontSize: 11, color: 'var(--text-muted)' }}>avg pace /mi</p>
+                    </div>
+                  )}
+                  {selectedCalendarDay.run.surface && (
+                    <div>
+                      <p style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', textTransform: 'capitalize' }}>{selectedCalendarDay.run.surface}</p>
+                      <p style={{ fontSize: 11, color: 'var(--text-muted)' }}>surface</p>
+                    </div>
+                  )}
+                </div>
+                {selectedCalendarDay.run.notes && (
+                  <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 12, lineHeight: 1.5, borderTop: '1px solid var(--border-subtle)', paddingTop: 10 }}>
+                    {selectedCalendarDay.run.notes}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Lift info */}
+            {selectedCalendarDay.lifts && (
+              <div style={{ background: 'var(--bg-base)', borderRadius: 14, padding: 16, marginBottom: 12 }}>
+                <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--accent)', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 8 }}>Strength</p>
+                <p style={{ fontSize: 20, fontWeight: 900, color: 'var(--text-primary)' }}>{selectedCalendarDay.lifts} workout session{selectedCalendarDay.lifts > 1 ? 's' : ''}</p>
+              </div>
+            )}
+
+            {/* Rest day */}
+            {!selectedCalendarDay.hasRun && !selectedCalendarDay.hasLift && (
+              <div style={{ background: 'var(--bg-base)', borderRadius: 14, padding: 20, textAlign: 'center' }}>
+                <p style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 6 }}>Rest day</p>
+                <p style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.6 }}>
+                  {selectedCalendarDay.isToday ? "No activity logged yet today." : "Recovery is part of training. Rest days make you stronger."}
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Readiness Breakdown Modal */}
       {showReadinessModal && (

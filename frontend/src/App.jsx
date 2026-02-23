@@ -20,6 +20,7 @@ import Stretches from './pages/Stretches'
 import StretchSession from './pages/StretchSession'
 import PRWall from './pages/PRWall'
 import Badges from './pages/Badges'
+import Challenges from './pages/Challenges'
 
 function PrivateRoute({ children }) {
   if (!isLoggedIn()) return <Navigate to="/login" replace />
@@ -115,6 +116,14 @@ export default function App() {
           element={
             <PrivateRoute>
               <Badges />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/challenges"
+          element={
+            <PrivateRoute>
+              <Challenges />
             </PrivateRoute>
           }
         />

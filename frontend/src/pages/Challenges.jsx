@@ -1,0 +1,272 @@
+import { useEffect, useMemo, useState } from 'react'
+import { CheckCircle2, Footprints, ChevronDown, ChevronUp } from 'lucide-react'
+import api from '../lib/api'
+import PRWall from './PRWall'
+import Badges from './Badges'
+
+function fmtValue(value, unit) {
+  if (unit === 'miles') return `${Number(value).toFixed(value % 1 === 0 ? 0 : 1)} miles`
+  if (unit === 'steps') return `${Math.round(value).toLocaleString()} steps`
+  return `${Math.round(value)} days`
+}
+
+export default function Challenges() {
+  const [activeTab, setActiveTab] = useState('challenges')
+  const [loading, setLoading] = useState(true)
+  const [challenges, setChallenges] = useState([])
+  const [myChallenges, setMyChallenges] = useState([])
+  const [today, setToday] = useState({ steps: 0, goal: 10000, date: '' })
+  const [week, setWeek] = useState({ days: [], weekTotal: 0, goal: 10000 })
+  const [showStepInput, setShowStepInput] = useState(false)
+  const [stepInput, setStepInput] = useState('')
+  const [expandedId, setExpandedId] = useState(null)
+  const [showBrowse, setShowBrowse] = useState(true)
+
+  async function loadData() {
+    setLoading(true)
+    try {
+      const [allRes, myRes, todayRes, weekRes] = await Promise.all([
+        api.get('/challenges'),
+        api.get('/challenges/my'),
+        api.get('/challenges/steps/today'),
+        api.get('/challenges/steps/week'),
+      ])
+      setChallenges(allRes.data?.challenges || [])
+      setMyChallenges(myRes.data?.challenges || [])
+      setToday(todayRes.data || { steps: 0, goal: 10000, date: '' })
+      setWeek(weekRes.data || { days: [], weekTotal: 0, goal: 10000 })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    loadData()
+  }, [])
+
+  const featured = useMemo(() => challenges.filter(c => c.is_featured), [challenges])
+  const unjoined = useMemo(() => challenges.filter(c => !c.joined), [challenges])
+
+  async function joinChallenge(id) {
+    await api.post(`/challenges/${id}/join`, {})
+    await api.post('/challenges/sync', {})
+    await loadData()
+  }
+
+  async function logSteps() {
+    const steps = Number(stepInput)
+    if (!Number.isFinite(steps) || steps < 0) return
+    await api.post('/challenges/steps', { steps })
+    await api.post('/challenges/sync', {})
+    setStepInput('')
+    setShowStepInput(false)
+    await loadData()
+  }
+
+  function renderChallengesTab() {
+    if (loading) {
+      return (
+        <div className="rounded-xl p-4" style={{ background: 'var(--bg-card)', color: 'var(--text-muted)' }}>
+          Loading challenges...
+        </div>
+      )
+    }
+
+    return (
+      <div className="space-y-5">
+        <section>
+          <h3 className="mb-3 text-sm font-bold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+            Featured Courses
+          </h3>
+          <div className="flex gap-3 overflow-x-auto pb-2">
+            {featured.map(c => {
+              const pct = Math.min(100, (Number(c.progress || 0) / Number(c.target_value || 1)) * 100)
+              return (
+                <div
+                  key={c.id}
+                  className="group relative flex-shrink-0 rounded-xl p-3"
+                  style={{
+                    width: 100,
+                    minHeight: 112,
+                    border: `2px solid ${c.badge_color || 'var(--accent)'}`,
+                    background: 'var(--bg-card)',
+                  }}
+                >
+                  <div className="flex items-center justify-center rounded-xl" style={{ height: 56, background: 'var(--bg-input)' }}>
+                    <span className="text-lg font-black" style={{ color: c.badge_color || 'var(--accent)' }}>
+                      {c.unit === 'miles' ? Number(c.target_value).toFixed(c.target_value % 1 === 0 ? 0 : 1) : Math.round(c.target_value / 1000)}
+                    </span>
+                  </div>
+                  <p className="mt-2 text-[11px] font-bold leading-tight" style={{ color: 'var(--text-primary)' }}>{c.name}</p>
+                  <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{fmtValue(c.target_value, c.unit)}</p>
+                  {c.joined ? (
+                    <p className="mt-1 text-[10px] font-semibold" style={{ color: 'var(--accent)' }}>{Math.round(pct)}% complete</p>
+                  ) : (
+                    <button
+                      onClick={() => joinChallenge(c.id)}
+                      className="absolute inset-x-2 bottom-2 rounded-lg px-2 py-1 text-[10px] font-bold opacity-100 transition group-hover:opacity-100"
+                      style={{ background: 'var(--accent)', color: '#000' }}
+                    >
+                      Join
+                    </button>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </section>
+
+        <section className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+          <div className="mb-3 flex items-center gap-2">
+            <Footprints size={16} style={{ color: 'var(--accent)' }} />
+            <h3 className="text-sm font-bold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Steps This Week</h3>
+          </div>
+          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Today</p>
+          <p className="text-2xl font-black" style={{ color: 'var(--text-primary)' }}>{Number(today.steps || 0).toLocaleString()} steps</p>
+          <p className="mb-3 text-xs" style={{ color: 'var(--text-muted)' }}>Goal: {Number(today.goal || 10000).toLocaleString()}</p>
+
+          <div className="mb-3 flex items-end gap-2">
+            {(week.days || []).map(d => {
+              const ratio = Math.min(1, (d.steps || 0) / (d.goal || week.goal || 10000))
+              const height = Math.max(8, Math.round(ratio * 60))
+              const hitGoal = (d.steps || 0) >= (d.goal || week.goal || 10000)
+              return (
+                <div key={d.date} className="flex flex-1 flex-col items-center gap-1">
+                  <div
+                    className="w-full rounded-md"
+                    style={{
+                      height,
+                      background: hitGoal ? '#22c55e' : '#EAB308',
+                      minWidth: 10,
+                    }}
+                    title={`${d.date}: ${d.steps}`}
+                  />
+                  <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{d.date.slice(5)}</span>
+                </div>
+              )
+            })}
+          </div>
+
+          {!showStepInput ? (
+            <button className="rounded-xl px-3 py-2 text-xs font-bold" style={{ background: 'var(--accent)', color: '#000' }} onClick={() => setShowStepInput(true)}>
+              Log today's steps
+            </button>
+          ) : (
+            <div className="flex items-center gap-2 rounded-xl p-2" style={{ background: 'var(--bg-input)' }}>
+              <input
+                type="number"
+                placeholder="Steps today"
+                value={stepInput}
+                onChange={e => setStepInput(e.target.value)}
+                className="flex-1 rounded-lg px-3 py-2 text-sm"
+                style={{ background: 'var(--bg-card)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}
+              />
+              <button className="rounded-lg px-3 py-2 text-xs font-bold" style={{ background: 'var(--accent)', color: '#000' }} onClick={logSteps}>
+                Save
+              </button>
+            </div>
+          )}
+
+          <p className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>Connect Garmin to sync automatically</p>
+        </section>
+
+        <section>
+          <h3 className="mb-3 text-sm font-bold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+            My Challenges
+          </h3>
+          <div className="space-y-2">
+            {myChallenges.length === 0 && (
+              <div className="rounded-xl p-3 text-sm" style={{ background: 'var(--bg-card)', color: 'var(--text-muted)' }}>
+                Join a challenge to start tracking progress.
+              </div>
+            )}
+            {myChallenges.map(c => {
+              const pct = Math.min(100, (Number(c.progress || 0) / Number(c.target_value || 1)) * 100)
+              const complete = !!c.completed_at || pct >= 100
+              const isOpen = expandedId === c.id
+              return (
+                <button
+                  key={c.id}
+                  onClick={() => setExpandedId(isOpen ? null : c.id)}
+                  className="w-full rounded-xl p-3 text-left"
+                  style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}
+                >
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{c.name}</p>
+                    {complete && (
+                      <span className="inline-flex items-center gap-1 text-xs font-semibold" style={{ color: '#22c55e' }}>
+                        <CheckCircle2 size={14} />
+                        {c.completed_at ? new Date(c.completed_at).toLocaleDateString() : 'Completed'}
+                      </span>
+                    )}
+                  </div>
+                  <div className="h-2 w-full rounded-full" style={{ background: 'var(--bg-input)' }}>
+                    <div className="h-2 rounded-full" style={{ width: `${pct}%`, background: 'var(--accent)' }} />
+                  </div>
+                  <p className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>
+                    {fmtValue(c.progress || 0, c.unit)} of {fmtValue(c.target_value, c.unit)} • {Math.round(pct)}% complete
+                  </p>
+                  {isOpen && (
+                    <p className="mt-2 text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>{c.description}</p>
+                  )}
+                </button>
+              )
+            })}
+          </div>
+        </section>
+
+        <section className="rounded-xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+          <button
+            onClick={() => setShowBrowse(v => !v)}
+            className="flex w-full items-center justify-between p-3"
+            style={{ color: 'var(--text-primary)' }}
+          >
+            <span className="text-sm font-bold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Browse All</span>
+            {showBrowse ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+          </button>
+          {showBrowse && (
+            <div className="space-y-2 px-3 pb-3">
+              {unjoined.map(c => (
+                <div key={c.id} className="rounded-lg p-3" style={{ background: 'var(--bg-input)' }}>
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{c.name}</p>
+                      <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{fmtValue(c.target_value, c.unit)}</p>
+                    </div>
+                    <button onClick={() => joinChallenge(c.id)} className="rounded-lg px-3 py-1.5 text-xs font-bold" style={{ background: 'var(--accent)', color: '#000' }}>
+                      Join
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
+    )
+  }
+
+  return (
+    <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
+        {['challenges', 'prs', 'badges'].map(t => (
+          <button
+            key={t}
+            onClick={() => setActiveTab(t)}
+            style={{
+              padding: '8px 16px', borderRadius: 20, fontSize: 13, fontWeight: 700, border: 'none', cursor: 'pointer',
+              background: activeTab === t ? 'var(--accent)' : 'var(--bg-card)',
+              color: activeTab === t ? '#000' : 'var(--text-muted)',
+            }}
+          >
+            {t === 'challenges' ? 'Challenges' : t === 'prs' ? 'PRs' : 'Badges'}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === 'challenges' && renderChallengesTab()}
+      {activeTab === 'prs' && <PRWall />}
+      {activeTab === 'badges' && <Badges />}
+    </div>
+  )
+}
