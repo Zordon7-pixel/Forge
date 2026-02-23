@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Flame, ArrowUpRight, ArrowDownRight } from 'lucide-react'
+import { Flame, ArrowUpRight, ArrowDownRight, Watch } from 'lucide-react'
 import AchievementUnlock from '../components/AchievementUnlock'
 import { useUnits } from '../context/UnitsContext'
 import api from '../lib/api'
@@ -112,52 +112,70 @@ const PERIOD_LABELS = { day: 'Today', week: 'This Week', month: 'This Month', ye
 // Watch Sync Widget
 function WatchSyncWidget() {
   const [syncStatus, setSyncStatus] = useState(null)
-  const [loading, setLoading] = useState(true)
+  const [syncing, setSyncing] = useState(false)
+  const [justSynced, setJustSynced] = useState(false)
 
   useEffect(() => {
-    const fetchStatus = async () => {
-      try {
-        const res = await api.get('/watch-sync/status')
-        setSyncStatus(res.data)
-      } catch (err) {
-        console.error('Failed to fetch watch sync status:', err)
-      } finally {
-        setLoading(false)
-      }
-    }
+    const token = localStorage.getItem('forge_token')
+    if (!token) return
+    fetch('/api/watch-sync/status', { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => setSyncStatus(d))
+      .catch(() => {})
     
-    fetchStatus()
-    // Refresh every 30 seconds
-    const interval = setInterval(fetchStatus, 30000)
+    // Poll every 10 seconds while page is open
+    const interval = setInterval(() => {
+      fetch('/api/watch-sync/status', { headers: { Authorization: `Bearer ${token}` } })
+        .then(r => r.ok ? r.json() : null)
+        .then(d => {
+          if (d && syncStatus && d.synced_at !== syncStatus?.synced_at) {
+            setJustSynced(true)
+            setTimeout(() => setJustSynced(false), 3000)
+          }
+          setSyncStatus(d)
+        })
+        .catch(() => {})
+    }, 10000)
     return () => clearInterval(interval)
   }, [])
 
-  if (loading || !syncStatus) {
-    return (
-      <div className="rounded-xl px-3 py-2" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Watch</p>
-        <p className="text-sm font-bold" style={{ color: 'var(--text-muted)' }}>--</p>
-      </div>
-    )
-  }
-
-  const lastSynced = syncStatus.lastSynced ? new Date(syncStatus.lastSynced) : null
-  const minutesAgo = lastSynced ? Math.floor((Date.now() - lastSynced.getTime()) / 60000) : null
-  
-  let syncText = 'No watch'
-  if (lastSynced) {
-    if (minutesAgo < 1) syncText = 'Just now'
-    else if (minutesAgo < 60) syncText = `${minutesAgo}m ago`
-    else {
-      const hoursAgo = Math.floor(minutesAgo / 60)
-      syncText = hoursAgo === 1 ? '1h ago' : `${hoursAgo}h ago`
-    }
-  }
+  const watchBrand = syncStatus?.treadmill_brand || syncStatus?.watch_mode || null
+  const hasData = syncStatus && (syncStatus.avg_heart_rate || syncStatus.distance_miles)
 
   return (
-    <div className="rounded-xl px-3 py-2" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-      <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Last synced</p>
-      <p className="text-sm font-bold" style={{ color: lastSynced ? 'var(--accent)' : 'var(--text-muted)' }}>{syncText}</p>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <style>{`
+        @keyframes watchPulse { 0%,100% { box-shadow: 0 0 0 0 rgba(234,179,8,0.4); } 50% { box-shadow: 0 0 0 8px rgba(234,179,8,0); } }
+        @keyframes syncFlash { 0% { background: rgba(34,197,94,0.3); } 100% { background: transparent; } }
+      `}</style>
+      <button
+        onClick={() => {
+          setSyncing(true)
+          setTimeout(() => setSyncing(false), 1500)
+        }}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 6,
+          background: hasData ? 'rgba(234,179,8,0.1)' : 'var(--bg-input)',
+          border: `1px solid ${hasData ? 'rgba(234,179,8,0.4)' : 'var(--border-subtle)'}`,
+          borderRadius: 10, padding: '6px 12px', cursor: 'pointer',
+          animation: syncing ? 'watchPulse 1s ease-in-out infinite' : 'none',
+          transition: 'all 0.3s ease',
+          ...(justSynced ? { animation: 'syncFlash 1s ease forwards' } : {}),
+        }}
+      >
+        <Watch size={14} color={hasData ? '#EAB308' : 'var(--text-muted)'} />
+        <div style={{ textAlign: 'left' }}>
+          <p style={{ fontSize: 9, color: 'var(--text-muted)', margin: 0, letterSpacing: 0.5, textTransform: 'uppercase' }}>
+            {watchBrand || 'Watch'}
+          </p>
+          <p style={{ fontSize: 11, fontWeight: 700, color: hasData ? '#EAB308' : 'var(--text-muted)', margin: 0 }}>
+            {justSynced ? 'Synced!' : hasData ? `HR ${syncStatus.avg_heart_rate || '--'} bpm` : 'No data'}
+          </p>
+        </div>
+        {hasData && (
+          <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#22c55e', animation: 'watchPulse 2s ease infinite' }} />
+        )}
+      </button>
     </div>
   )
 }
@@ -413,11 +431,6 @@ export default function Dashboard() {
           ))}
         </div>
       )}
-
-      <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>
-        <div className="flex items-center gap-2 mb-1"><Flame size={18} style={{ color: 'var(--accent)' }} /><p className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>{streakStats.currentStreak > 0 ? `${streakCount}-day streak` : 'Start your streak today'}</p></div>
-        <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Best: {streakStats.bestStreak || 0} days</p>
-      </div>
 
       {!checkedInToday && (
         <a href="/checkin"

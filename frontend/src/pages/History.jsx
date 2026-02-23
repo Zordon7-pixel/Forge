@@ -44,6 +44,7 @@ export default function History() {
   const [runs, setRuns] = useState([])
   const [lifts, setLifts] = useState([])
   const [workoutSessions, setWorkoutSessions] = useState([])
+  const [races, setRaces] = useState([])
   const [editingRun, setEditingRun] = useState(null)
   const [editingLift, setEditingLift] = useState(null)
   const [selectedRun, setSelectedRun] = useState(null)
@@ -58,14 +59,16 @@ export default function History() {
   useEffect(() => {
     ;(async () => {
       try {
-        const [runsRes, liftsRes, workoutsRes] = await Promise.all([
+        const [runsRes, liftsRes, workoutsRes, racesRes] = await Promise.all([
           api.get('/runs'),
           api.get('/lifts'),
           api.get('/workouts').catch(() => ({ data: { sessions: [] } })),
+          api.get('/races').catch(() => ({ data: { races: [] } })),
         ])
         setRuns([...(Array.isArray(runsRes.data) ? runsRes.data : runsRes.data?.runs || [])].sort((a, b) => getRunDate(b).localeCompare(getRunDate(a))))
         setLifts([...(Array.isArray(liftsRes.data) ? liftsRes.data : liftsRes.data?.lifts || [])].sort((a, b) => (b.date || b.created_at || '').localeCompare(a.date || a.created_at || '')))
         setWorkoutSessions([...(workoutsRes.data?.sessions || [])].sort((a, b) => (b.started_at || '').localeCompare(a.started_at || '')))
+        setRaces([...(racesRes.data?.races || [])].sort((a, b) => (b.race_date || '').localeCompare(a.race_date || '')))
       } finally {
         setLoading(false)
       }
@@ -281,7 +284,7 @@ export default function History() {
       </div>
 
       <div className="mb-4 flex border-b" style={{ borderColor: 'var(--border-subtle)' }}>
-        {[['all', 'All'], ['runs', 'Runs'], ['lifts', 'Lifts']].map(([value, label]) => (
+        {[['all', 'All'], ['runs', 'Runs'], ['lifts', 'Lifts'], ['races', 'Races']].map(([value, label]) => (
           <button
             key={value}
             onClick={() => setTab(value)}
@@ -381,6 +384,36 @@ export default function History() {
               <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Hit the weights.</p>
             </div>
           )}
+        </div>
+      )}
+
+      {(tab === 'all' || tab === 'races') && (
+        <div className="space-y-3">
+          {races.length === 0 ? (
+            <p className="text-center py-8" style={{ color: 'var(--text-muted)', fontSize: 14 }}>No races yet. Add one from the Races page.</p>
+          ) : (
+            races.map(r => (
+              <div key={r.id} className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+                <div className="flex justify-between items-start">
+                  <div>
+                    <p className="font-bold" style={{ color: 'var(--text-primary)' }}>{r.race_name}</p>
+                    <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{r.race_date} · {r.distance_miles} mi{r.location ? ` · ${r.location}` : ''}</p>
+                  </div>
+                  <span className="text-xs px-2 py-1 rounded-full font-semibold" style={{ background: r.status === 'completed' ? 'rgba(34,197,94,0.15)' : 'rgba(234,179,8,0.15)', color: r.status === 'completed' ? '#22c55e' : '#EAB308' }}>
+                    {r.status || 'upcoming'}
+                  </span>
+                </div>
+                {r.goal_time_seconds && (
+                  <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>
+                    Goal: {Math.floor(r.goal_time_seconds/3600) > 0 ? `${Math.floor(r.goal_time_seconds/3600)}h ` : ''}{Math.floor((r.goal_time_seconds%3600)/60)}:{String(r.goal_time_seconds%60).padStart(2,'0')}
+                  </p>
+                )}
+              </div>
+            ))
+          )}
+          <button onClick={() => window.location.href = '/races'} style={{ width: '100%', padding: '10px 0', borderRadius: 12, background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)', fontSize: 13, cursor: 'pointer' }}>
+            + Add Race
+          </button>
         </div>
       )}
 

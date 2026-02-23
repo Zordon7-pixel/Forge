@@ -10,6 +10,9 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 
 function normalizeActivityType(rawType = '') {
   const v = String(rawType || '').toLowerCase().trim();
 
+  // Meta Ray-Ban glasses
+  if (v.includes('meta') || v.includes('ray-ban') || v.includes('meta_glasses')) return { normalized: 'meta_glasses', section: 'devices' };
+
   if (['run', 'outdoor run'].includes(v)) return { normalized: 'run_outdoor', section: 'run', runType: 'easy', surface: 'outdoor' };
   if (v === 'indoor run') return { normalized: 'run_indoor', section: 'run', runType: 'easy', surface: 'treadmill' };
   if (v === 'treadmill') return { normalized: 'treadmill', section: 'run', runType: 'treadmill', surface: 'treadmill' };
@@ -246,6 +249,17 @@ router.get('/status', auth, (req, res) => {
   res.json({
     lastSynced: lastSync?.synced_at || null,
     activityCount: activityCount?.count || 0
+  });
+});
+
+router.get('/meta/status', auth, (req, res) => {
+  const lastSync = db.prepare(`SELECT * FROM watch_sync WHERE user_id=? AND (normalized_type='meta_glasses' OR activity_type LIKE '%meta%') ORDER BY synced_at DESC LIMIT 1`).get(req.user.id);
+  res.json({
+    connected: false,
+    api_status: 'coming_soon',
+    last_sync: lastSync || null,
+    capabilities: ['step_count', 'ambient_audio', 'voice_coaching', 'camera_pov', 'activity_detection'],
+    note: 'Meta Ray-Ban API integration is ready — connect when Meta opens developer access'
   });
 });
 

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { CheckCircle2, Footprints, ChevronDown, ChevronUp, Heart, MessageCircle, Camera } from 'lucide-react'
+import { CheckCircle2, Footprints, ChevronDown, ChevronUp, Heart, MessageCircle, Camera, Flame } from 'lucide-react'
 import api from '../lib/api'
 import PRWall from './PRWall'
 import Badges from './Badges'
@@ -33,6 +33,7 @@ export default function Challenges() {
   const [showCreate, setShowCreate] = useState(false)
   const [createForm, setCreateForm] = useState({ name: '', type: 'running', target_value: '', description: '' })
   const [creating, setCreating] = useState(false)
+  const [streakData, setStreakData] = useState(null)
 
   const CHALLENGE_TEMPLATES = [
     { type: 'running',    label: 'Running',        unit: 'miles',   placeholder: 'e.g. 50',   hint: 'Total miles to run' },
@@ -66,7 +67,7 @@ export default function Challenges() {
   async function loadData() {
     setLoading(true)
     try {
-      const [allRes, myRes, todayRes, weekRes, feedRes, runsRes, goalRes] = await Promise.all([
+      const [allRes, myRes, todayRes, weekRes, feedRes, runsRes, goalRes, streakRes] = await Promise.all([
         api.get('/challenges'),
         api.get('/challenges/my'),
         api.get('/challenges/steps/today'),
@@ -74,6 +75,7 @@ export default function Challenges() {
         api.get('/challenges/feed'),
         api.get('/runs'),
         api.get('/users/goal').catch(() => ({ data: {} })),
+        api.get('/auth/me/streak').catch(() => ({ data: {} })),
       ])
       setChallenges(allRes.data?.challenges || [])
       setMyChallenges(myRes.data?.challenges || [])
@@ -81,6 +83,7 @@ export default function Challenges() {
       setWeek(weekRes.data || { days: [], weekTotal: 0, goal: 10000 })
       setFeed(feedRes.data?.feed || [])
       setFeedLastUpdated(new Date())
+      setStreakData(streakRes.data || {})
       const runs = Array.isArray(runsRes.data) ? runsRes.data : runsRes.data?.runs || []
       const now = new Date();
       const month = now.getMonth();
@@ -157,6 +160,19 @@ export default function Challenges() {
 
     return (
       <div className="space-y-5">
+        {streakData !== null && (
+          <div className="rounded-2xl p-4 mb-2" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+            <div className="flex items-center gap-3">
+              <Flame size={22} color="#EAB308" />
+              <div>
+                <p className="text-lg font-black" style={{ color: 'var(--text-primary)' }}>
+                  {streakData.currentStreak > 0 ? `${streakData.currentStreak}-day streak` : 'Start your streak today'}
+                </p>
+                {streakData.bestStreak > 0 && <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Best: {streakData.bestStreak} days</p>}
+              </div>
+            </div>
+          </div>
+        )}
         <section>
           <h3 className="mb-3 text-sm font-bold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
             Featured Courses

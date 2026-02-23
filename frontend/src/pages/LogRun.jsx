@@ -524,6 +524,12 @@ export default function LogRun() {
                     <option key={s.id} value={s.id}>{s.brand} {s.model}{s.nickname ? ` (${s.nickname})` : ''} — {s.total_miles} mi</option>
                   ))}
                 </select>
+                <button
+                  onClick={() => window.location.href = '/gear'}
+                  style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: 12, cursor: 'pointer', padding: '4px 0', textDecoration: 'underline', marginTop: 8 }}
+                >
+                  Manage shoes / add new pair
+                </button>
               </div>
             )}
 
