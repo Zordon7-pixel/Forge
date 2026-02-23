@@ -22,6 +22,7 @@ export default function Challenges() {
   const [expandedId, setExpandedId] = useState(null)
   const [showBrowse, setShowBrowse] = useState(true)
   const [feed, setFeed] = useState([])
+  const [feedLastUpdated, setFeedLastUpdated] = useState(null)
   const [showCreate, setShowCreate] = useState(false)
   const [createForm, setCreateForm] = useState({ name: '', type: 'running', target_value: '', description: '' })
   const [creating, setCreating] = useState(false)
@@ -70,13 +71,24 @@ export default function Challenges() {
       setToday(todayRes.data || { steps: 0, goal: 10000, date: '' })
       setWeek(weekRes.data || { days: [], weekTotal: 0, goal: 10000 })
       setFeed(feedRes.data?.feed || [])
+      setFeedLastUpdated(new Date())
     } finally {
       setLoading(false)
     }
   }
 
+  async function refreshFeed() {
+    try {
+      const res = await api.get('/challenges/feed')
+      setFeed(res.data?.feed || [])
+      setFeedLastUpdated(new Date())
+    } catch {}
+  }
+
   useEffect(() => {
     loadData()
+    const interval = setInterval(refreshFeed, 24 * 60 * 60 * 1000)
+    return () => clearInterval(interval)
   }, [])
 
   const featured = useMemo(() => challenges.filter(c => c.is_featured), [challenges])
@@ -357,41 +369,58 @@ export default function Challenges() {
       {activeTab === 'prs' && <PRWall />}
       {activeTab === 'badges' && <Badges />}
       {activeTab === 'feed' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 4 }}>Community Activity</p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+            <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, textTransform: 'uppercase' }}>Community Activity</p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              {feedLastUpdated && (
+                <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                  Updated {feedLastUpdated.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+                </span>
+              )}
+              <button onClick={refreshFeed} style={{ fontSize: 10, fontWeight: 700, color: 'var(--accent)', background: 'var(--accent-dim)', border: 'none', borderRadius: 6, padding: '3px 8px', cursor: 'pointer' }}>
+                Refresh
+              </button>
+            </div>
+          </div>
+
           {feed.length === 0 && (
             <div style={{ textAlign: 'center', padding: 32, color: 'var(--text-muted)', fontSize: 14 }}>
               No activity yet. Log a run or workout to show up here.
             </div>
           )}
+
           {feed.map(item => (
-            <div key={item.id} style={{ background: 'var(--bg-base)', borderRadius: 14, padding: 16 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: 14, color: '#000', flexShrink: 0 }}>
-                    {(item.user_name || 'A')[0].toUpperCase()}
-                  </div>
-                  <div>
-                    <p style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{item.user_name || 'Athlete'}</p>
-                    <p style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                      {new Date(item._ts).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
-                    </p>
-                  </div>
+            <div key={item.id} style={{ background: 'var(--bg-base)', borderRadius: 10, padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 10 }}>
+              {/* Avatar */}
+              <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: 11, color: '#000', flexShrink: 0 }}>
+                {(item.user_name || 'A')[0].toUpperCase()}
+              </div>
+
+              {/* Main content */}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.user_name || 'Athlete'}</span>
+                  <span style={{ fontSize: 11, color: 'var(--text-muted)', flexShrink: 0 }}>
+                    {item._type === 'run'
+                      ? `ran ${item.distance_miles ? Number(item.distance_miles).toFixed(1) + ' mi' : ''}${item.duration_seconds > 0 ? ' · ' + (Math.floor(item.duration_seconds/60)) + 'min' : ''}`
+                      : `logged ${item.set_count || 0} sets`}
+                  </span>
                 </div>
-                <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--accent)', background: 'var(--accent-dim)', padding: '3px 8px', borderRadius: 8, textTransform: 'uppercase' }}>
+                {item.notes && (
+                  <p style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.notes}</p>
+                )}
+              </div>
+
+              {/* Type badge + time */}
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', flexShrink: 0, gap: 2 }}>
+                <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--accent)', background: 'var(--accent-dim)', padding: '2px 6px', borderRadius: 5, textTransform: 'uppercase' }}>
                   {item._type === 'run' ? (item.surface || 'Run') : 'Lift'}
                 </span>
+                <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>
+                  {new Date(item._ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                </span>
               </div>
-              {item._type === 'run' && (
-                <div style={{ display: 'flex', gap: 20 }}>
-                  {item.distance_miles && <div><p style={{ fontSize: 18, fontWeight: 900, color: 'var(--text-primary)' }}>{Number(item.distance_miles).toFixed(2)}</p><p style={{ fontSize: 11, color: 'var(--text-muted)' }}>miles</p></div>}
-                  {item.duration_seconds > 0 && <div><p style={{ fontSize: 18, fontWeight: 900, color: 'var(--text-primary)' }}>{Math.floor(item.duration_seconds/3600) > 0 ? `${Math.floor(item.duration_seconds/3600)}h ${Math.floor((item.duration_seconds%3600)/60)}min` : `${Math.floor(item.duration_seconds/60)} min`}</p><p style={{ fontSize: 11, color: 'var(--text-muted)' }}>time</p></div>}
-                </div>
-              )}
-              {item._type === 'lift' && (
-                <div><p style={{ fontSize: 18, fontWeight: 900, color: 'var(--text-primary)' }}>{item.set_count || 0}</p><p style={{ fontSize: 11, color: 'var(--text-muted)' }}>sets logged</p></div>
-              )}
-              {item.notes && <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8, lineHeight: 1.5 }}>{item.notes}</p>}
             </div>
           ))}
         </div>
