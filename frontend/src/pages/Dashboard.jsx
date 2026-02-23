@@ -100,6 +100,70 @@ function ReadinessGauge({ score }) {
 
 const PERIOD_LABELS = { day: 'Today', week: 'This Week', month: 'This Month', year: 'This Year', all: 'All Time' }
 
+// Watch Sync Widget
+function WatchSyncWidget() {
+  const [syncing, setSyncing] = useState(true)
+  const [done, setDone] = useState(false)
+
+  useEffect(() => {
+    // Simulate sync completing after 3 seconds
+    const t = setTimeout(() => {
+      setSyncing(false)
+      setDone(true)
+      // Ring disappears after 1s fade
+      setTimeout(() => setDone(false), 1000)
+    }, 3000)
+    return () => clearTimeout(t)
+  }, [])
+
+  return (
+    <div className="relative flex items-center justify-center" style={{ width: 56, height: 56 }}>
+      {/* Spinning sync ring — visible while syncing */}
+      {syncing && (
+        <svg
+          className="absolute inset-0"
+          width="56" height="56"
+          viewBox="0 0 56 56"
+          style={{ animation: 'spin 1.2s linear infinite' }}
+        >
+          <circle
+            cx="28" cy="28" r="25"
+            fill="none"
+            stroke="#EAB308"
+            strokeWidth="2.5"
+            strokeDasharray="100 58"
+            strokeLinecap="round"
+          />
+        </svg>
+      )}
+      {/* Closing ring — shown when sync completes */}
+      {done && !syncing && (
+        <svg
+          className="absolute inset-0"
+          width="56" height="56"
+          viewBox="0 0 56 56"
+          style={{ animation: 'ringClose 0.8s ease-out forwards' }}
+        >
+          <circle
+            cx="28" cy="28" r="25"
+            fill="none"
+            stroke="#22c55e"
+            strokeWidth="2.5"
+            strokeDasharray="157 0"
+            strokeLinecap="round"
+          />
+        </svg>
+      )}
+      {/* Watch face image */}
+      <img
+        src="/fenix7x.png"
+        alt="Garmin Fenix 7X"
+        style={{ width: 44, height: 44, borderRadius: '50%', objectFit: 'cover' }}
+      />
+    </div>
+  )
+}
+
 export default function Dashboard() {
   const navigate = useNavigate()
   const [stats, setStats] = useState(null)
@@ -211,6 +275,18 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-4">
+      <style>{`
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+        @keyframes ringClose {
+          0% { opacity: 1; stroke-dasharray: 157 0; }
+          80% { opacity: 1; stroke-dasharray: 157 0; }
+          100% { opacity: 0; stroke-dasharray: 157 0; }
+        }
+      `}</style>
+
       {!checkedInToday && (
         <a href="/checkin"
           style={{ display: 'block', background: 'rgba(234,179,8,0.12)', border: '1px solid rgba(234,179,8,0.3)', borderRadius: 14, padding: '12px 16px', marginBottom: 12, textDecoration: 'none' }}>
@@ -220,12 +296,15 @@ export default function Dashboard() {
       )}
 
       {/* Greeting */}
-      <div>
-        <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{greeting}{firstName ? ` ${firstName}` : ''}</p>
-        <h2 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>
-          {stats?.streak > 1 ? `${stats.streak}-day streak` : 'Ready to forge today?'}
-        </h2>
-        {coachLabel && <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>Coach: {coachLabel}</p>}
+      <div className="flex items-start justify-between">
+        <div>
+          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{greeting}{firstName ? ` ${firstName}` : ''}</p>
+          <h2 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>
+            {stats?.streak > 1 ? `${stats.streak}-day streak` : 'Ready to forge today?'}
+          </h2>
+          {coachLabel && <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>Coach: {coachLabel}</p>}
+        </div>
+        <WatchSyncWidget />
       </div>
 
       {/* Ready to Run CTA */}
