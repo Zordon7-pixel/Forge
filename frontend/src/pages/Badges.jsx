@@ -183,7 +183,9 @@ function SeasonalBadgeCard({ badge }) {
 }
 
 export default function Badges() {
+  const [tab, setTab] = useState('achievements')
   const [badges, setBadges] = useState([])
+  const [seasonal, setSeasonal] = useState([])
   const [leaderboard, setLeaderboard] = useState([])
   const [loading, setLoading] = useState(true)
   const [checking, setChecking] = useState(false)
@@ -195,11 +197,13 @@ export default function Badges() {
   async function loadData() {
     setLoading(true)
     try {
-      const [badgesRes, lbRes] = await Promise.all([
+      const [badgesRes, seasonalRes, lbRes] = await Promise.all([
         api.get('/badges'),
+        api.get('/badges/seasonal'),
         api.get('/badges/leaderboard'),
       ])
       setBadges(badgesRes.data.badges || [])
+      setSeasonal(seasonalRes.data.badges || [])
       setLeaderboard(lbRes.data.leaderboard || [])
     } catch (e) {
       // silently fail
@@ -235,51 +239,83 @@ export default function Badges() {
         <div>
           <h2 className="text-2xl font-black" style={{ color: 'var(--text-primary)' }}>Badge Wall</h2>
           <p className="text-sm mt-0.5" style={{ color: 'var(--text-muted)' }}>
-            {earnedCount} of {badges.length} earned
+            {tab === 'achievements' ? `${earnedCount} of ${badges.length} earned` : `${seasonal.filter(b => b.earned).length} of ${seasonal.length} seasonal`}
           </p>
         </div>
-        <button
-          onClick={checkBadges}
-          disabled={checking}
-          className="text-xs font-bold px-3 py-1.5 rounded-xl transition-all disabled:opacity-50"
-          style={{ background: '#EAB308', color: '#000' }}
-        >
-          {checking ? 'Checking...' : 'Check Progress'}
-        </button>
+        {tab === 'achievements' && (
+          <button
+            onClick={checkBadges}
+            disabled={checking}
+            className="text-xs font-bold px-3 py-1.5 rounded-xl transition-all disabled:opacity-50"
+            style={{ background: '#EAB308', color: '#000' }}
+          >
+            {checking ? 'Checking...' : 'Check Progress'}
+          </button>
+        )}
       </div>
 
-      {/* Achievements */}
-      <section>
-        <h3 className="text-sm font-bold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>
-          Achievements
-        </h3>
-        <div className="grid grid-cols-3 gap-3">
-          {achievements.map(b => <BadgeCard key={b.id} badge={b} />)}
-        </div>
-      </section>
+      {/* Tab bar */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
+        {['achievements', 'seasonal'].map(t => (
+          <button key={t} onClick={() => setTab(t)}
+            style={{
+              flex: 1, padding: '8px 0', borderRadius: 10, fontSize: 13, fontWeight: 700, border: 'none', cursor: 'pointer',
+              background: tab === t ? 'var(--accent)' : 'var(--bg-input)',
+              color: tab === t ? '#000' : 'var(--text-muted)',
+            }}>
+            {t === 'achievements' ? 'Achievements' : 'Seasonal'}
+          </button>
+        ))}
+      </div>
 
-      {/* Monthly */}
-      {monthly.length > 0 && (
-        <section>
-          <h3 className="text-sm font-bold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>
-            Monthly
-          </h3>
-          <div className="grid grid-cols-3 gap-3">
-            {monthly.map(b => <BadgeCard key={b.id} badge={b} />)}
-          </div>
-        </section>
+      {/* Achievements Tab */}
+      {tab === 'achievements' && (
+        <div className="space-y-6">
+          {/* Achievements */}
+          <section>
+            <h3 className="text-sm font-bold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>
+              Achievements
+            </h3>
+            <div className="grid grid-cols-3 gap-3">
+              {achievements.map(b => <BadgeCard key={b.id} badge={b} />)}
+            </div>
+          </section>
+
+          {/* Monthly */}
+          {monthly.length > 0 && (
+            <section>
+              <h3 className="text-sm font-bold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>
+                Monthly
+              </h3>
+              <div className="grid grid-cols-3 gap-3">
+                {monthly.map(b => <BadgeCard key={b.id} badge={b} />)}
+              </div>
+            </section>
+          )}
+
+          {/* Holiday */}
+          {holiday.length > 0 && (
+            <section>
+              <h3 className="text-sm font-bold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>
+                Holiday
+              </h3>
+              <div className="grid grid-cols-3 gap-3">
+                {holiday.map(b => <BadgeCard key={b.id} badge={b} />)}
+              </div>
+            </section>
+          )}
+
+        </div>
       )}
 
-      {/* Holiday */}
-      {holiday.length > 0 && (
-        <section>
-          <h3 className="text-sm font-bold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>
-            Holiday
-          </h3>
-          <div className="grid grid-cols-3 gap-3">
-            {holiday.map(b => <BadgeCard key={b.id} badge={b} />)}
-          </div>
-        </section>
+      {/* Seasonal Tab */}
+      {tab === 'seasonal' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <p style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>
+            Complete challenges tied to real events and seasons. Active challenges are live right now.
+          </p>
+          {seasonal.map(b => <SeasonalBadgeCard key={b.slug} badge={b} />)}
+        </div>
       )}
 
       {/* Leaderboard */}

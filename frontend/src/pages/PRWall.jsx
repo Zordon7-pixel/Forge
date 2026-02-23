@@ -11,6 +11,31 @@ const baseCardStyle = {
 
 const liftingLabels = ['Best Bench Press', 'Best Squat', 'Best Deadlift']
 
+const RUNNING_PR_LABELS = [
+  { label: '1 Mile PR',           unit: 'min/mi' },
+  { label: '5K PR',               unit: 'min/mi' },
+  { label: '10K PR',              unit: 'min/mi' },
+  { label: 'Half Marathon PR',    unit: 'min/mi' },
+  { label: 'Marathon PR',         unit: 'min/mi' },
+  { label: 'Longest Run',         unit: 'mi' },
+  { label: 'Fastest Mile',        unit: 'min/mi' },
+  { label: 'Best Avg Pace',       unit: 'min/mi' },
+  { label: 'Most Miles in a Week',unit: 'mi' },
+]
+
+const LIFTING_PR_LABELS = [
+  { label: 'Best Bench Press',    unit: 'lbs' },
+  { label: 'Best Squat',          unit: 'lbs' },
+  { label: 'Best Deadlift',       unit: 'lbs' },
+  { label: 'Best Overhead Press', unit: 'lbs' },
+  { label: 'Best Pull-Up',        unit: 'reps' },
+  { label: 'Best Barbell Row',    unit: 'lbs' },
+  { label: 'Best Incline Press',  unit: 'lbs' },
+  { label: 'Best Leg Press',      unit: 'lbs' },
+  { label: 'Best Hip Thrust',     unit: 'lbs' },
+  { label: 'Best Dumbbell Curl',  unit: 'lbs' },
+]
+
 function formatValue(pr) {
   const unit = (pr?.unit || '').toLowerCase()
   const value = Number(pr?.value || 0)
