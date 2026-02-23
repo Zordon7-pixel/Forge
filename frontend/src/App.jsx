@@ -10,6 +10,7 @@ import LogLift from './pages/LogLift'
 import Plan from './pages/Plan'
 import History from './pages/History'
 import Profile from './pages/Profile'
+import Settings from './pages/Settings'
 import ActiveWorkout from './pages/ActiveWorkout'
 import WorkoutSummary from './pages/WorkoutSummary'
 import ActiveRun from './pages/ActiveRun'
@@ -113,6 +114,14 @@ export default function App() {
           element={
             <PrivateRoute>
               <Profile />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/settings"
+          element={
+            <PrivateRoute>
+              <Settings />
             </PrivateRoute>
           }
         />

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
-import { Trophy, Zap } from 'lucide-react'
+import { Trophy, SlidersHorizontal } from 'lucide-react'
 import { getUser } from '../lib/auth'
 import { useTheme } from '../context/ThemeContext'
 import HelpDesk from './HelpDesk'
@@ -11,7 +11,7 @@ const NAV_ITEMS = [
   { to: '/log-run', icon: '/nav-run.png', label: 'Run' },
   { to: '/log-lift', icon: '/nav-lift.png', label: 'Lift' },
   { to: '/prs', label: 'PR Wall', iconComponent: Trophy },
-  { to: '/stretches', label: 'Stretches', iconComponent: Zap },
+  { to: '/settings', label: 'Settings', iconComponent: SlidersHorizontal },
   { to: '/history', icon: '/nav-history.png', label: 'History' },
   { to: '/profile', icon: '/nav-profile.png', label: 'Profile' },
 ]
