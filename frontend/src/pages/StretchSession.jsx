@@ -246,75 +246,106 @@ export default function StretchSession() {
   }
 
   return (
-    <div className="bg-[#0f1117] min-h-screen text-white rounded-2xl">
-      <div className="mx-auto flex min-h-screen max-w-[480px] flex-col p-4">
-        <div className="mb-4 h-2 w-full rounded-full bg-[#1f2433]">
-          <div className="h-2 rounded-full bg-yellow-500 transition-all" style={{ width: `${done ? 100 : progress}%` }} />
-        </div>
-
-        <header className="mb-6 flex items-center justify-between">
-          <button onClick={() => navigate(-1)} className="text-slate-300">← Back</button>
-          <div className="text-center">
-            <h1 className="text-lg font-bold">{isPre ? 'Pre-Run Warmup' : 'Post-Run Recovery'}</h1>
-            <p className="text-xs text-slate-400">{Math.min(current + 1, stretches.length)} / {stretches.length}</p>
+    <>
+      <style>{`
+        @keyframes fadeIn {
+          from { opacity: 0; transform: scale(0.95); }
+          to { opacity: 1; transform: scale(1); }
+        }
+        @keyframes fadeOut {
+          from { opacity: 1; transform: scale(1); }
+          to { opacity: 0; transform: scale(0.95); }
+        }
+        @keyframes timerPulse {
+          0%,100% { color: #EAB308; transform: scale(1); }
+          50% { color: #fbbf24; transform: scale(1.15); }
+        }
+        @keyframes popIn {
+          from { transform: scale(0); opacity: 0; }
+          to { transform: scale(1); opacity: 1; }
+        }
+        .animate-transition-in { animation: fadeIn 0.3s ease forwards; }
+        .animate-transition-out { animation: fadeOut 0.3s ease forwards; }
+        .animate-timer-pulse { animation: timerPulse 0.6s ease-in-out infinite; }
+        .animate-pop-in { animation: popIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards; }
+      `}</style>
+      
+      <div className="bg-[#0f1117] min-h-screen text-white rounded-2xl">
+        <div className="mx-auto flex min-h-screen max-w-[480px] flex-col p-4">
+          <div className="mb-4 h-2 w-full rounded-full bg-[#1f2433]">
+            <div className="h-2 rounded-full bg-yellow-500 transition-all" style={{ width: `${done ? 100 : progress}%` }} />
           </div>
-          <div className="w-12" />
-        </header>
 
-        {transitioning ? (
-          <div className="my-auto rounded-2xl border border-[#2a2d3e] bg-[#151823] p-8 text-center">
-            <p className="text-sm text-slate-400">Next up:</p>
-            <p className="mt-2 text-2xl font-black text-yellow-500">{nextName}</p>
-          </div>
-        ) : done ? (
-          <div className="my-auto rounded-2xl border border-emerald-600 bg-[#151823] p-8 text-center">
-            <p className="text-3xl font-black text-emerald-400">Session Complete — Done</p>
-            <p className="mt-2 text-sm text-slate-300">
-              {isPre ? 'You are warmed up with dynamic movement only. Ready to run strong.' : 'Recovery complete. Hold static stretches after each run to reduce tightness.'}
-            </p>
-            <button
-              onClick={() => navigate('/log-run')}
-              className="mt-5 rounded-xl bg-yellow-500 px-5 py-3 font-bold text-black"
-            >
-              Done
-            </button>
-          </div>
-        ) : (
-          <>
-            <div className="rounded-2xl border border-[#2a2d3e] bg-[#151823] p-5">
-              <span className="rounded-full bg-slate-700 px-2 py-1 text-xs text-slate-200">{currentStretch.muscle}</span>
-              <h2 className="mt-3 text-3xl font-black text-white">{currentStretch.name}</h2>
-              <p className="mt-3 text-sm text-slate-400">{currentStretch.cue}</p>
-              <p className="mt-3 text-sm font-semibold text-slate-300">{currentStretch.reps}</p>
+          <header className="mb-6 flex items-center justify-between">
+            <button onClick={() => navigate(-1)} className="text-slate-300">← Back</button>
+            <div className="text-center">
+              <h1 className="text-lg font-bold">{isPre ? 'Pre-Run Warmup' : 'Post-Run Recovery'}</h1>
+              <p className="text-xs text-slate-400">{Math.min(current + 1, stretches.length)} / {stretches.length}</p>
+            </div>
+            <div className="w-12" />
+          </header>
 
+          {transitioning ? (
+            <div className="my-auto rounded-2xl border border-[#2a2d3e] bg-[#151823] p-8 text-center animate-transition-in">
+              <p className="text-sm text-slate-400">Next up:</p>
+              <p className="mt-2 text-2xl font-black text-yellow-500">{nextName}</p>
+            </div>
+          ) : done ? (
+            <div className="my-auto rounded-2xl border border-emerald-600 bg-[#151823] p-8 text-center animate-pop-in">
+              <div className="flex justify-center mb-4">
+                <CheckCircle2 size={64} color="#EAB308" strokeWidth={1.5} />
+              </div>
+              <p className="text-3xl font-black text-yellow-500">Session Complete</p>
+              <p className="mt-3 text-sm text-slate-300">
+                {isPre ? 'You are warmed up with dynamic movement only. Ready to run strong.' : 'Recovery complete. Hold static stretches after each run to reduce tightness.'}
+              </p>
               <button
-                onClick={() => window.open(currentStretch.videoUrl, '_blank', 'noopener,noreferrer')}
-                className="mt-4 border border-[#2a2d3e] text-slate-300 rounded-lg px-4 py-2 text-sm flex items-center gap-2"
+                onClick={() => navigate('/log-run')}
+                className="mt-5 rounded-xl bg-yellow-500 px-5 py-3 font-bold text-black"
               >
-                ▶ Watch How
+                Done
               </button>
             </div>
+          ) : (
+            <>
+              <div className={`rounded-2xl border border-[#2a2d3e] bg-[#151823] p-5 ${transitioning ? 'animate-transition-out' : 'animate-transition-in'}`}>
+                <span className="rounded-full bg-slate-700 px-2 py-1 text-xs text-slate-200">{currentStretch.muscle}</span>
+                <h2 className="mt-3 text-3xl font-black text-white">{currentStretch.name}</h2>
+                <p className="mt-3 text-sm text-slate-400">{currentStretch.cue}</p>
+                <p className="mt-3 text-sm font-semibold text-slate-300">{currentStretch.reps}</p>
 
-            <div className="my-8 text-center">
-              <p className="text-7xl font-black text-yellow-500">{secondsLeft}</p>
-              <div className="mt-3 flex items-center justify-center gap-4">
-                <button onClick={() => setPaused(prev => !prev)} className="rounded-lg border border-[#2a2d3e] px-3 py-1 text-xs text-slate-300">
-                  {paused ? 'Resume' : 'Pause'}
+                <button
+                  onClick={() => window.open(currentStretch.videoUrl, '_blank', 'noopener,noreferrer')}
+                  className="mt-4 border border-[#2a2d3e] text-slate-300 rounded-lg px-4 py-2 text-sm flex items-center gap-2"
+                >
+                  ▶ Watch How
                 </button>
-                <button onClick={skipToNext} className="text-xs text-slate-400 underline">Skip</button>
               </div>
-            </div>
 
-            <footer className="mt-auto pb-4 text-center">
-              {current === stretches.length - 1 ? (
-                <button onClick={() => setDone(true)} className="rounded-xl bg-emerald-500 px-5 py-3 font-bold text-black">Done</button>
-              ) : (
-                <p className="text-sm text-slate-400">Up next: {nextStretch?.name} →</p>
-              )}
-            </footer>
-          </>
-        )}
+              <div className="my-8 flex flex-col items-center">
+                <StretchFigure stretchName={currentStretch.name} active={!paused} />
+                <p className={`text-7xl font-black mt-6 ${secondsLeft <= 5 ? 'animate-timer-pulse' : 'text-yellow-500'}`}>
+                  {secondsLeft}
+                </p>
+                <div className="mt-3 flex items-center justify-center gap-4">
+                  <button onClick={() => setPaused(prev => !prev)} className="rounded-lg border border-[#2a2d3e] px-3 py-1 text-xs text-slate-300">
+                    {paused ? 'Resume' : 'Pause'}
+                  </button>
+                  <button onClick={skipToNext} className="text-xs text-slate-400 underline">Skip</button>
+                </div>
+              </div>
+
+              <footer className="mt-auto pb-4 text-center">
+                {current === stretches.length - 1 ? (
+                  <button onClick={() => setDone(true)} className="rounded-xl bg-emerald-500 px-5 py-3 font-bold text-black">Done</button>
+                ) : (
+                  <p className="text-sm text-slate-400">Up next: {nextStretch?.name} →</p>
+                )}
+              </footer>
+            </>
+          )}
+        </div>
       </div>
-    </div>
+    </>
   )
 }
