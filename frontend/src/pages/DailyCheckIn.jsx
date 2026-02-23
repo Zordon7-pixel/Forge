@@ -135,28 +135,33 @@ export default function DailyCheckIn({ onComplete }) {
 
       <div style={{ marginBottom: 24 }}>
         <p style={{ fontWeight: 700, color: 'var(--text-primary)', marginBottom: 12 }}>How are you feeling?</p>
-        <div style={{ display: 'flex', gap: 4 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 6 }}>
           {FEELINGS.map(f => (
-            <button key={f.value} onClick={() => setFeeling(f.value)}
-              style={{
-                flex: 1,
-                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
-                padding: '8px 2px', borderRadius: 14,
-                border: 'none',
-                background: feeling === f.value ? 'var(--accent-dim)' : 'transparent',
-                cursor: 'pointer',
-              }}>
-              <img src={f.img} alt={f.label}
+            <div key={f.value} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, flex: 1 }}>
+              <button onClick={() => setFeeling(f.value)}
                 style={{
-                  width: 54, height: 54, objectFit: 'cover', borderRadius: '50%',
-                  filter: feeling === f.value ? 'brightness(1.15)' : 'brightness(0.75)',
-                  transition: 'filter 0.2s',
-                }} />
+                  width: 62, height: 62, borderRadius: '50%',
+                  border: feeling === f.value ? '2.5px solid var(--accent)' : '2.5px solid transparent',
+                  background: feeling === f.value ? 'var(--accent-dim)' : 'var(--bg-input)',
+                  cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  padding: 0,
+                  boxShadow: feeling === f.value ? '0 0 12px rgba(234,179,8,0.35)' : 'none',
+                  transition: 'all 0.2s',
+                  flexShrink: 0,
+                }}>
+                <img src={f.img} alt={f.label}
+                  style={{
+                    width: 46, height: 46, objectFit: 'cover', borderRadius: '50%',
+                    filter: feeling === f.value ? 'brightness(1.1)' : 'brightness(0.7)',
+                    transition: 'filter 0.2s',
+                  }} />
+              </button>
               <span style={{
-                fontSize: 11, fontWeight: 700,
+                fontSize: 10, fontWeight: 700, textAlign: 'center',
                 color: feeling === f.value ? 'var(--accent)' : 'var(--text-muted)',
               }}>{f.label}</span>
-            </button>
+            </div>
           ))}
         </div>
       </div>

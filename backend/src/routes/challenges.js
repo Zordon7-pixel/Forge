@@ -150,7 +150,22 @@ router.get('/feed', auth, (req, res) => {
     ...lifts.map(l => ({ ...l, _type: 'lift', _ts: l.started_at }))
   ].sort((a, b) => new Date(b._ts) - new Date(a._ts)).slice(0, 30)
 
-  res.json({ feed })
+  const enrichedFeed = feed.map(item => {
+    const likes = db.prepare('SELECT COUNT(*) as cnt FROM activity_likes WHERE activity_id=? AND activity_type=?').get(item.id, item._type)
+    const userLiked = db.prepare('SELECT id FROM activity_likes WHERE activity_id=? AND activity_type=? AND user_id=?').get(item.id, item._type, req.user.id)
+    const commentCount = db.prepare('SELECT COUNT(*) as cnt FROM activity_comments WHERE activity_id=? AND activity_type=?').get(item.id, item._type)
+    const media = db.prepare('SELECT id FROM activity_media WHERE activity_id=? AND activity_type=? LIMIT 1').get(item.id, item._type)
+
+    return {
+      ...item,
+      like_count: likes.cnt,
+      user_liked: !!userLiked,
+      comment_count: commentCount.cnt,
+      has_photo: !!media,
+    }
+  })
+
+  res.json({ feed: enrichedFeed })
 })
 
 module.exports = router

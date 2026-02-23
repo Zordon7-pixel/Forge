@@ -25,6 +25,7 @@ app.use('/api/checkin', require('./routes/checkin'));
 app.use('/api/prs', require('./routes/prs'));
 app.use('/api/badges', require('./routes/badges'));
 app.use('/api/challenges', require('./routes/challenges'));
+app.use('/api/social', require('./routes/social'));
 
 // Serve frontend
 const dist = path.join(__dirname, '../../frontend/dist');
@@ -33,5 +34,5 @@ app.get('*', (req, res) => res.sendFile(path.join(dist, 'index.html')));
 
 const PORT = process.env.PORT || 4002;
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🔥 FORGE running on http://localhost:${PORT}`);
+  console.log(`FORGE running on http://localhost:${PORT}`);
 });

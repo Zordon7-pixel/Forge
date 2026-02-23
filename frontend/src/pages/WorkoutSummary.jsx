@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import api from '../lib/api'
 import MuscleDiagram from '../components/MuscleDiagram'
 import { getMuscleBreakdown } from '../lib/muscleMap'
+import PhotoUploader from '../components/PhotoUploader'
 
 function fmtDuration(s) {
   if (!s) return '--'
@@ -104,6 +105,10 @@ export default function WorkoutSummary() {
               </div>
             </div>
           </div>
+        </div>
+
+        <div className="mt-4">
+          <PhotoUploader activityId={session.id} activityType="lift" />
         </div>
       </div>
 

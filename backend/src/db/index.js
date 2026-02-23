@@ -152,6 +152,34 @@ db.exec(`
     created_at TEXT DEFAULT (datetime('now')),
     UNIQUE(user_id, log_date)
   );
+
+  CREATE TABLE IF NOT EXISTS activity_likes (
+    id TEXT PRIMARY KEY,
+    activity_id TEXT NOT NULL,
+    activity_type TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(activity_id, activity_type, user_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS activity_comments (
+    id TEXT PRIMARY KEY,
+    activity_id TEXT NOT NULL,
+    activity_type TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS activity_media (
+    id TEXT PRIMARY KEY,
+    activity_id TEXT NOT NULL,
+    activity_type TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    data TEXT NOT NULL,
+    mime_type TEXT DEFAULT 'image/jpeg',
+    created_at TEXT DEFAULT (datetime('now'))
+  );
 `);
 
 // Add is_pro column to users if not exists

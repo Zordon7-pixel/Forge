@@ -4,6 +4,7 @@ import { MapPin, Mountain, RefreshCw, Gauge, Pencil } from 'lucide-react'
 import api from '../lib/api'
 import { parseDuration, formatDurationDisplay } from '../lib/parseDuration'
 import PostRunCheckIn from '../components/PostRunCheckIn'
+import PhotoUploader from '../components/PhotoUploader'
 
 function todayISO() {
   return new Date().toISOString().slice(0, 10)
@@ -454,6 +455,11 @@ export default function LogRun() {
             <button type="submit" disabled={loading || polling} className="w-full rounded-xl py-3 font-semibold disabled:opacity-70" style={{ background: 'var(--accent)', color: '#000', border: 'none', cursor: 'pointer' }}>{loading ? 'Logging run...' : 'Save Run'}</button>
             {error && <p className="mt-2 text-sm" style={{ color: 'var(--accent)' }}>{error}</p>}
             {feedback && <div className="mt-2 rounded-xl p-3" style={{ background: 'var(--bg-base)', color: 'var(--text-primary)' }}>{feedback}</div>}
+            {savedRunId && (
+              <div className="mt-4">
+                <PhotoUploader activityId={savedRunId} activityType="run" />
+              </div>
+            )}
           </form>
         )}
 

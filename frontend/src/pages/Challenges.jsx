@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
-import { CheckCircle2, Footprints, ChevronDown, ChevronUp } from 'lucide-react'
+import { CheckCircle2, Footprints, ChevronDown, ChevronUp, Heart, MessageCircle, Camera } from 'lucide-react'
 import api from '../lib/api'
 import PRWall from './PRWall'
 import Badges from './Badges'
 import LoadingRunner from '../components/LoadingRunner'
+import CommentSheet from '../components/CommentSheet'
+import PhotoViewer from '../components/PhotoViewer'
 
 function fmtValue(value, unit) {
   if (unit === 'miles') return `${Number(value).toFixed(value % 1 === 0 ? 0 : 1)} miles`
@@ -24,6 +26,9 @@ export default function Challenges() {
   const [showBrowse, setShowBrowse] = useState(true)
   const [feed, setFeed] = useState([])
   const [feedLastUpdated, setFeedLastUpdated] = useState(null)
+  const [commentTarget, setCommentTarget] = useState(null)
+  const [photoViewer, setPhotoViewer] = useState(null)
+  const [photoCache, setPhotoCache] = useState({})
   const [showCreate, setShowCreate] = useState(false)
   const [createForm, setCreateForm] = useState({ name: '', type: 'running', target_value: '', description: '' })
   const [creating, setCreating] = useState(false)
@@ -83,6 +88,27 @@ export default function Challenges() {
       const res = await api.get('/challenges/feed')
       setFeed(res.data?.feed || [])
       setFeedLastUpdated(new Date())
+    } catch {}
+  }
+
+  const toggleLike = async item => {
+    try {
+      const r = await api.post('/social/like', { activity_id: item.id, activity_type: item._type })
+      setFeed(prev => prev.map(f => (f.id === item.id ? { ...f, user_liked: r.data.liked, like_count: r.data.count } : f)))
+    } catch {}
+  }
+
+  const loadPhoto = async item => {
+    if (photoCache[item.id]) {
+      setPhotoViewer(photoCache[item.id])
+      return
+    }
+    try {
+      const r = await api.get(`/social/${item._type}/${item.id}/photo`)
+      if (r.data.media?.data) {
+        setPhotoCache(prev => ({ ...prev, [item.id]: r.data.media.data }))
+        setPhotoViewer(r.data.media.data)
+      }
     } catch {}
   }
 
@@ -388,38 +414,62 @@ export default function Challenges() {
           )}
 
           {feed.map(item => (
-            <div key={item.id} style={{ background: 'var(--bg-base)', borderRadius: 10, padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 10 }}>
-              {/* Avatar */}
-              <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: 11, color: '#000', flexShrink: 0 }}>
-                {(item.user_name || 'A')[0].toUpperCase()}
-              </div>
-
-              {/* Main content */}
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.user_name || 'Athlete'}</span>
-                  <span style={{ fontSize: 11, color: 'var(--text-muted)', flexShrink: 0 }}>
-                    {item._type === 'run'
-                      ? `ran ${item.distance_miles ? Number(item.distance_miles).toFixed(1) + ' mi' : ''}${item.duration_seconds > 0 ? ' · ' + (Math.floor(item.duration_seconds/60)) + 'min' : ''}`
-                      : `logged ${item.set_count || 0} sets`}
+            <div key={item.id} style={{ background: 'var(--bg-base)', borderRadius: 10, overflow: 'hidden' }}>
+              <div style={{ padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: 11, color: '#000', flexShrink: 0 }}>
+                  {(item.user_name || 'A')[0].toUpperCase()}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.user_name || 'Athlete'}</span>
+                    <span style={{ fontSize: 11, color: 'var(--text-muted)', flexShrink: 0 }}>
+                      {item._type === 'run'
+                        ? `ran ${item.distance_miles ? Number(item.distance_miles).toFixed(1) + ' mi' : ''}${item.duration_seconds > 0 ? ' · ' + Math.floor(item.duration_seconds / 60) + 'min' : ''}`
+                        : `logged ${item.set_count || 0} sets`}
+                    </span>
+                  </div>
+                  {item.notes && <p style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.notes}</p>}
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', flexShrink: 0, gap: 2 }}>
+                  <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--accent)', background: 'var(--accent-dim)', padding: '2px 6px', borderRadius: 5, textTransform: 'uppercase' }}>
+                    {item._type === 'run' ? (item.surface || 'Run') : 'Lift'}
+                  </span>
+                  <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>
+                    {new Date(item._ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                   </span>
                 </div>
-                {item.notes && (
-                  <p style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.notes}</p>
-                )}
               </div>
 
-              {/* Type badge + time */}
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', flexShrink: 0, gap: 2 }}>
-                <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--accent)', background: 'var(--accent-dim)', padding: '2px 6px', borderRadius: 5, textTransform: 'uppercase' }}>
-                  {item._type === 'run' ? (item.surface || 'Run') : 'Lift'}
-                </span>
-                <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>
-                  {new Date(item._ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                </span>
+              {item.has_photo && (
+                <div style={{ padding: '0 12px 8px' }}>
+                  <button onClick={() => loadPhoto(item)} style={{ width: '100%', background: 'var(--bg-input)', border: 'none', borderRadius: 8, padding: '6px 10px', display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                    <Camera size={12} style={{ color: 'var(--accent)' }} />
+                    <span style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 600 }}>View photo</span>
+                  </button>
+                </div>
+              )}
+
+              <div style={{ borderTop: '1px solid var(--border-subtle)', display: 'flex', alignItems: 'center', padding: '6px 12px', gap: 16 }}>
+                <button onClick={() => toggleLike(item)} style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'none', border: 'none', cursor: 'pointer', padding: '2px 0' }}>
+                  <Heart size={14} fill={item.user_liked ? '#EAB308' : 'none'} style={{ color: item.user_liked ? '#EAB308' : 'var(--text-muted)', transition: 'all 0.15s' }} />
+                  <span style={{ fontSize: 11, color: item.user_liked ? 'var(--accent)' : 'var(--text-muted)', fontWeight: item.user_liked ? 700 : 400 }}>{item.like_count || 0}</span>
+                </button>
+                <button onClick={() => setCommentTarget({ id: item.id, type: item._type })} style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'none', border: 'none', cursor: 'pointer', padding: '2px 0' }}>
+                  <MessageCircle size={14} style={{ color: 'var(--text-muted)' }} />
+                  <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{item.comment_count || 0}</span>
+                </button>
               </div>
             </div>
           ))}
+
+          {commentTarget && (
+            <CommentSheet
+              activityId={commentTarget.id}
+              activityType={commentTarget.type}
+              onClose={() => setCommentTarget(null)}
+            />
+          )}
+          {photoViewer && <PhotoViewer src={photoViewer} onClose={() => setPhotoViewer(null)} />}
         </div>
       )}
     </div>
