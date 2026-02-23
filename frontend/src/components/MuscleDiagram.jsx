@@ -1,158 +1,267 @@
 import React from 'react'
 
-const MUSCLE_HIGHLIGHT_MAP = {
-  chest: { front: ['chest-l', 'chest-r'], back: [] },
-  back: { front: [], back: ['lat-l', 'lat-r', 'trap-upper', 'trap-lower', 'rhomboid'] },
-  legs: { front: ['quad-l', 'quad-r', 'inner-quad-l', 'inner-quad-r'], back: ['hamstring-l', 'hamstring-r', 'glute-l', 'glute-r', 'calf-l', 'calf-r'] },
-  shoulders: { front: ['shoulder-front-l', 'shoulder-front-r'], back: ['shoulder-rear-l', 'shoulder-rear-r', 'trap-upper'] },
-  arms: { front: ['bicep-l', 'bicep-r', 'forearm-l', 'forearm-r'], back: ['tricep-l', 'tricep-r', 'forearm-l', 'forearm-r'] },
-  core: { front: ['abs', 'oblique-l', 'oblique-r'], back: ['lower-back'] }
-}
-
 const PRIMARY_COLOR = '#EF4444'
 const SECONDARY_COLOR = '#EAB308'
-const UNTARGETED_COLOR = 'rgba(255,255,255,0.08)'
-const OUTLINE_COLOR = 'rgba(255,255,255,0.15)'
+const BASE_FILL = '#000'
+const STROKE = 'rgba(255,255,255,0.85)'
 
-function BodyFront({ primaryIds = [], secondaryIds = [] }) {
-  const fill = (id) => {
-    if (primaryIds.includes(id)) return PRIMARY_COLOR
-    if (secondaryIds.includes(id)) return SECONDARY_COLOR
-    return UNTARGETED_COLOR
-  }
+const FRONT_MUSCLES = [
+  'chest',
+  'shoulders',
+  'biceps',
+  'forearms',
+  'abs',
+  'obliques',
+  'quads',
+  'hip_flexors',
+  'adductors',
+  'calves',
+  'neck',
+  'traps'
+]
 
+const BACK_MUSCLES = [
+  'traps',
+  'lats',
+  'rhomboids',
+  'lower_back',
+  'rear_delts',
+  'triceps',
+  'glutes',
+  'hamstrings',
+  'calves',
+  'forearms'
+]
+
+function muscleFill(name, primarySet, secondarySet) {
+  if (primarySet.has(name)) return PRIMARY_COLOR
+  if (secondarySet.has(name)) return SECONDARY_COLOR
+  return BASE_FILL
+}
+
+function MuscleRegion({ name, d, primarySet, secondarySet }) {
   return (
-    <svg viewBox="0 0 120 280" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-full h-full">
-      <ellipse cx="60" cy="30" rx="18" ry="22" fill={UNTARGETED_COLOR} stroke={OUTLINE_COLOR} strokeWidth="1" />
-      <rect x="54" y="50" width="12" height="14" rx="4" fill={UNTARGETED_COLOR} stroke={OUTLINE_COLOR} strokeWidth="1" />
-      <path d="M30 64 Q25 70 24 90 L24 150 Q24 158 30 162 L90 162 Q96 158 96 150 L96 90 Q95 70 90 64 Z" fill={UNTARGETED_COLOR} stroke={OUTLINE_COLOR} strokeWidth="1" />
-
-      <ellipse id="shoulder-front-l" cx="22" cy="76" rx="11" ry="9" fill={fill('shoulder-front-l')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
-      <ellipse id="shoulder-front-r" cx="98" cy="76" rx="11" ry="9" fill={fill('shoulder-front-r')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
-
-      <path id="chest-l" d="M30 68 Q35 65 55 68 L55 100 Q48 105 30 100 Z" fill={fill('chest-l')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
-      <path id="chest-r" d="M90 68 Q85 65 65 68 L65 100 Q72 105 90 100 Z" fill={fill('chest-r')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
-
-      <rect id="abs" x="47" y="105" width="26" height="45" rx="4" fill={fill('abs')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
-
-      <path id="oblique-l" d="M30 100 Q35 105 47 108 L47 148 Q40 150 28 142 Z" fill={fill('oblique-l')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
-      <path id="oblique-r" d="M90 100 Q85 105 73 108 L73 148 Q80 150 92 142 Z" fill={fill('oblique-r')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
-
-      <rect id="bicep-l" x="8" y="88" width="11" height="38" rx="5" fill={fill('bicep-l')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
-      <rect id="bicep-r" x="101" y="88" width="11" height="38" rx="5" fill={fill('bicep-r')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
-
-      <rect id="forearm-l" x="6" y="130" width="10" height="36" rx="4" fill={fill('forearm-l')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
-      <rect id="forearm-r" x="104" y="130" width="10" height="36" rx="4" fill={fill('forearm-r')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
-
-      <path d="M28 158 Q24 172 26 185 L42 185 Q46 172 46 160 Z" fill={UNTARGETED_COLOR} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
-      <path d="M92 158 Q96 172 94 185 L78 185 Q74 172 74 160 Z" fill={UNTARGETED_COLOR} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
-
-      <path id="quad-l" d="M27 187 Q24 200 26 230 L42 230 Q44 200 43 187 Z" fill={fill('quad-l')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
-      <path id="quad-r" d="M93 187 Q96 200 94 230 L78 230 Q76 200 77 187 Z" fill={fill('quad-r')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
-      <path id="inner-quad-l" d="M43 187 Q46 200 46 230 L54 230 Q54 200 50 187 Z" fill={fill('inner-quad-l')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
-      <path id="inner-quad-r" d="M77 187 Q74 200 74 230 L66 230 Q66 200 70 187 Z" fill={fill('inner-quad-r')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
-
-      <ellipse cx="35" cy="234" rx="10" ry="6" fill={UNTARGETED_COLOR} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
-      <ellipse cx="85" cy="234" rx="10" ry="6" fill={UNTARGETED_COLOR} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
-
-      <path d="M26 240 Q25 255 26 275 L44 275 Q45 255 44 240 Z" fill={UNTARGETED_COLOR} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
-      <path d="M76 240 Q75 255 76 275 L94 275 Q95 255 94 240 Z" fill={UNTARGETED_COLOR} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
-    </svg>
+    <path
+      data-muscle={name}
+      d={d}
+      fill={muscleFill(name, primarySet, secondarySet)}
+      stroke={STROKE}
+      strokeWidth="1"
+      strokeLinejoin="round"
+    />
   )
 }
 
-function BodyBack({ primaryIds = [], secondaryIds = [] }) {
-  const fill = (id) => {
-    if (primaryIds.includes(id)) return PRIMARY_COLOR
-    if (secondaryIds.includes(id)) return SECONDARY_COLOR
-    return UNTARGETED_COLOR
-  }
-
+function BackgroundFrame() {
   return (
-    <svg viewBox="0 0 120 280" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-full h-full">
-      <ellipse cx="60" cy="30" rx="18" ry="22" fill={UNTARGETED_COLOR} stroke={OUTLINE_COLOR} strokeWidth="1" />
-      <rect x="54" y="50" width="12" height="14" rx="4" fill={UNTARGETED_COLOR} stroke={OUTLINE_COLOR} strokeWidth="1" />
-      <path d="M30 64 Q25 70 24 90 L24 150 Q24 158 30 162 L90 162 Q96 158 96 150 L96 90 Q95 70 90 64 Z" fill={UNTARGETED_COLOR} stroke={OUTLINE_COLOR} strokeWidth="1" />
-
-      <ellipse id="shoulder-rear-l" cx="22" cy="76" rx="11" ry="9" fill={fill('shoulder-rear-l')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
-      <ellipse id="shoulder-rear-r" cx="98" cy="76" rx="11" ry="9" fill={fill('shoulder-rear-r')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
-
-      <path id="trap-upper" d="M36 64 Q60 58 84 64 L84 80 Q60 76 36 80 Z" fill={fill('trap-upper')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
-      <path id="trap-lower" d="M36 80 Q60 76 84 80 L80 110 Q60 115 40 110 Z" fill={fill('trap-lower')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
-      <path id="rhomboid" d="M40 82 Q60 78 80 82 L76 108 Q60 112 44 108 Z" fill={fill('rhomboid')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" opacity="0.7" />
-
-      <path id="lat-l" d="M28 82 Q32 90 34 130 L48 130 Q46 95 40 82 Z" fill={fill('lat-l')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
-      <path id="lat-r" d="M92 82 Q88 90 86 130 L72 130 Q74 95 80 82 Z" fill={fill('lat-r')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
-
-      <rect id="lower-back" x="40" y="120" width="40" height="38" rx="4" fill={fill('lower-back')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
-
-      <rect id="tricep-l" x="8" y="88" width="11" height="38" rx="5" fill={fill('tricep-l')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
-      <rect id="tricep-r" x="101" y="88" width="11" height="38" rx="5" fill={fill('tricep-r')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
-
-      <rect id="forearm-l" x="6" y="130" width="10" height="36" rx="4" fill={fill('forearm-l')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
-      <rect id="forearm-r" x="104" y="130" width="10" height="36" rx="4" fill={fill('forearm-r')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
-
-      <path id="glute-l" d="M28 162 Q26 178 28 195 L56 195 Q56 178 50 162 Z" fill={fill('glute-l')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
-      <path id="glute-r" d="M92 162 Q94 178 92 195 L64 195 Q64 178 70 162 Z" fill={fill('glute-r')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
-
-      <path id="hamstring-l" d="M28 197 Q26 214 28 232 L50 232 Q52 214 54 197 Z" fill={fill('hamstring-l')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
-      <path id="hamstring-r" d="M92 197 Q94 214 92 232 L70 232 Q68 214 66 197 Z" fill={fill('hamstring-r')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
-
-      <path id="calf-l" d="M28 235 Q26 250 28 270 L48 270 Q50 250 50 235 Z" fill={fill('calf-l')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
-      <path id="calf-r" d="M92 235 Q94 250 92 270 L72 270 Q70 250 70 235 Z" fill={fill('calf-r')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
-    </svg>
+    <>
+      <rect x="2" y="2" width="196" height="396" rx="16" fill="#000" />
+      <rect x="2" y="2" width="196" height="396" rx="16" fill="none" stroke="rgba(255,255,255,0.16)" strokeWidth="1" />
+    </>
   )
 }
 
-export default function MuscleDiagram({ primaryMuscles = [], secondaryMuscles = [] }) {
-  const normalizedPrimary = primaryMuscles.map((m) => String(m).toLowerCase())
-  const normalizedSecondary = secondaryMuscles.map((m) => String(m).toLowerCase())
+function FrontFigure({ sex, primarySet, secondarySet }) {
+  const male = sex === 'male'
 
-  const getIds = (groups, view) => {
-    const ids = []
-    for (const key of groups) {
-      const mapped = MUSCLE_HIGHLIGHT_MAP[key]
-      if (mapped) ids.push(...(mapped[view] || []))
-    }
-    return [...new Set(ids)]
+  const outline = {
+    head: male
+      ? 'M83 20 L88 10 L100 8 L112 10 L117 20 L115 31 Q109 40 100 40 Q91 40 85 31 Z'
+      : 'M84 20 Q87 10 100 8 Q113 10 116 20 Q117 31 109 39 Q100 43 91 39 Q83 31 84 20 Z',
+    neck: male ? 'M92 40 L108 40 L111 55 L89 55 Z' : 'M93 40 L107 40 L109 55 L91 55 Z',
+    torso: male
+      ? 'M62 55 Q48 60 43 79 L39 126 Q38 152 46 174 Q57 202 68 246 Q74 272 77 327 L123 327 Q126 272 132 246 Q143 202 154 174 Q162 152 161 126 L157 79 Q152 60 138 55 Z'
+      : 'M66 55 Q54 60 48 79 L44 126 Q43 154 51 174 Q60 197 70 242 Q76 274 78 327 L122 327 Q124 274 130 242 Q140 197 149 174 Q157 154 156 126 L152 79 Q146 60 134 55 Z',
+    armL: male
+      ? 'M43 79 Q34 102 34 125 Q34 155 43 172 Q49 182 53 174 Q49 154 50 128 Q51 106 57 86 Z'
+      : 'M48 79 Q40 102 40 125 Q40 154 48 171 Q53 181 57 174 Q53 154 54 128 Q55 106 60 86 Z',
+    armR: male
+      ? 'M157 79 Q166 102 166 125 Q166 155 157 172 Q151 182 147 174 Q151 154 150 128 Q149 106 143 86 Z'
+      : 'M152 79 Q160 102 160 125 Q160 154 152 171 Q147 181 143 174 Q147 154 146 128 Q145 106 140 86 Z',
+    legL: male
+      ? 'M77 327 Q73 350 72 380 L88 380 Q91 350 95 327 Z'
+      : 'M78 327 Q74 350 73 380 L89 380 Q92 350 96 327 Z',
+    legR: male
+      ? 'M123 327 Q127 350 128 380 L112 380 Q109 350 105 327 Z'
+      : 'M122 327 Q126 350 127 380 L111 380 Q108 350 104 327 Z'
   }
 
-  const frontPrimary = getIds(normalizedPrimary, 'front')
-  const backPrimary = getIds(normalizedPrimary, 'back')
-  const frontSecondary = getIds(normalizedSecondary, 'front').filter((id) => !frontPrimary.includes(id))
-  const backSecondary = getIds(normalizedSecondary, 'back').filter((id) => !backPrimary.includes(id))
+  return (
+    <>
+      <path d={outline.head} fill="#000" stroke={STROKE} strokeWidth="1" />
+      <path d={outline.neck} fill="#000" stroke={STROKE} strokeWidth="1" />
+      <path d={outline.torso} fill="#000" stroke={STROKE} strokeWidth="1" />
+      <path d={outline.armL} fill="#000" stroke={STROKE} strokeWidth="1" />
+      <path d={outline.armR} fill="#000" stroke={STROKE} strokeWidth="1" />
+      <path d={outline.legL} fill="#000" stroke={STROKE} strokeWidth="1" />
+      <path d={outline.legR} fill="#000" stroke={STROKE} strokeWidth="1" />
+
+      <MuscleRegion
+        name="traps"
+        primarySet={primarySet}
+        secondarySet={secondarySet}
+        d={male ? 'M79 55 Q100 48 121 55 L116 69 Q100 65 84 69 Z' : 'M81 55 Q100 49 119 55 L114 69 Q100 66 86 69 Z'}
+      />
+      <MuscleRegion
+        name="neck"
+        primarySet={primarySet}
+        secondarySet={secondarySet}
+        d={male ? 'M93 41 L100 55 L107 41 L111 55 L89 55 Z' : 'M93 41 L100 54 L107 41 L109 55 L91 55 Z'}
+      />
+      <g data-muscle="chest" fill={muscleFill('chest', primarySet, secondarySet)} stroke={STROKE} strokeWidth="1">
+        <path d={male ? 'M66 73 Q78 65 96 73 Q95 90 84 101 Q72 96 66 82 Z' : 'M68 73 Q80 66 96 73 Q95 89 86 100 Q74 95 68 83 Z'} />
+        <path d={male ? 'M134 73 Q122 65 104 73 Q105 90 116 101 Q128 96 134 82 Z' : 'M132 73 Q120 66 104 73 Q105 89 114 100 Q126 95 132 83 Z'} />
+      </g>
+      <g data-muscle="shoulders" fill={muscleFill('shoulders', primarySet, secondarySet)} stroke={STROKE} strokeWidth="1">
+        <path d={male ? 'M44 82 Q51 67 64 71 Q66 88 58 99 Q48 96 44 82 Z' : 'M49 82 Q56 69 68 72 Q70 88 63 99 Q53 96 49 82 Z'} />
+        <path d={male ? 'M156 82 Q149 67 136 71 Q134 88 142 99 Q152 96 156 82 Z' : 'M151 82 Q144 69 132 72 Q130 88 137 99 Q147 96 151 82 Z'} />
+      </g>
+      <g data-muscle="biceps" fill={muscleFill('biceps', primarySet, secondarySet)} stroke={STROKE} strokeWidth="1">
+        <path d={male ? 'M39 100 Q32 115 35 131 Q40 142 47 135 Q47 116 52 102 Z' : 'M44 100 Q38 115 41 130 Q46 141 52 134 Q52 116 57 103 Z'} />
+        <path d={male ? 'M161 100 Q168 115 165 131 Q160 142 153 135 Q153 116 148 102 Z' : 'M156 100 Q162 115 159 130 Q154 141 148 134 Q148 116 143 103 Z'} />
+      </g>
+      <g data-muscle="forearms" fill={muscleFill('forearms', primarySet, secondarySet)} stroke={STROKE} strokeWidth="1">
+        <path d={male ? 'M35 132 Q33 149 39 166 Q45 172 50 165 Q48 149 47 135 Z' : 'M41 131 Q39 147 44 165 Q49 171 54 164 Q52 148 52 134 Z'} />
+        <path d={male ? 'M165 132 Q167 149 161 166 Q155 172 150 165 Q152 149 153 135 Z' : 'M159 131 Q161 147 156 165 Q151 171 146 164 Q148 148 148 134 Z'} />
+      </g>
+      <MuscleRegion
+        name="abs"
+        primarySet={primarySet}
+        secondarySet={secondarySet}
+        d={male ? 'M88 105 L112 105 L116 160 L84 160 Z M89 106 L89 160 M100 105 L100 160 M111 106 L111 160 M84 123 L116 123 M84 141 L116 141' : 'M89 106 L111 106 L114 160 L86 160 Z M90 107 L90 160 M100 106 L100 160 M110 107 L110 160 M86 123 L114 123 M86 141 L114 141'}
+      />
+      <g data-muscle="obliques" fill={muscleFill('obliques', primarySet, secondarySet)} stroke={STROKE} strokeWidth="1">
+        <path d={male ? 'M66 100 Q56 123 60 156 Q69 164 83 160 Q80 129 84 103 Z' : 'M68 100 Q59 123 63 156 Q71 164 85 160 Q82 129 86 104 Z'} />
+        <path d={male ? 'M134 100 Q144 123 140 156 Q131 164 117 160 Q120 129 116 103 Z' : 'M132 100 Q141 123 137 156 Q129 164 115 160 Q118 129 114 104 Z'} />
+      </g>
+      <g data-muscle="hip_flexors" fill={muscleFill('hip_flexors', primarySet, secondarySet)} stroke={STROKE} strokeWidth="1">
+        <path d={male ? 'M79 164 Q86 159 94 164 L92 178 Q84 178 78 173 Z' : 'M80 164 Q87 159 95 164 L93 178 Q85 178 79 173 Z'} />
+        <path d={male ? 'M121 164 Q114 159 106 164 L108 178 Q116 178 122 173 Z' : 'M120 164 Q113 159 105 164 L107 178 Q115 178 121 173 Z'} />
+      </g>
+      <g data-muscle="quads" fill={muscleFill('quads', primarySet, secondarySet)} stroke={STROKE} strokeWidth="1">
+        <path d={male ? 'M76 178 Q66 214 74 256 Q82 266 90 258 Q92 219 95 178 Z' : 'M77 178 Q68 214 75 257 Q83 267 91 259 Q93 220 96 178 Z'} />
+        <path d={male ? 'M124 178 Q134 214 126 256 Q118 266 110 258 Q108 219 105 178 Z' : 'M123 178 Q132 214 125 257 Q117 267 109 259 Q107 220 104 178 Z'} />
+        <path d={male ? 'M91 178 Q84 214 89 255 Q95 264 100 258 Q100 219 100 178 Z' : 'M92 178 Q86 214 90 255 Q96 264 100 258 Q100 220 100 178 Z'} />
+        <path d={male ? 'M109 178 Q116 214 111 255 Q105 264 100 258 Q100 219 100 178 Z' : 'M108 178 Q114 214 110 255 Q104 264 100 258 Q100 220 100 178 Z'} />
+      </g>
+      <g data-muscle="adductors" fill={muscleFill('adductors', primarySet, secondarySet)} stroke={STROKE} strokeWidth="1">
+        <path d={male ? 'M92 200 Q84 230 92 266 Q98 274 100 266 Q99 231 100 206 Z' : 'M93 200 Q86 230 93 266 Q98 274 100 266 Q99 232 100 206 Z'} />
+        <path d={male ? 'M108 200 Q116 230 108 266 Q102 274 100 266 Q101 231 100 206 Z' : 'M107 200 Q114 230 107 266 Q102 274 100 266 Q101 232 100 206 Z'} />
+      </g>
+      <g data-muscle="calves" fill={muscleFill('calves', primarySet, secondarySet)} stroke={STROKE} strokeWidth="1">
+        <path d={male ? 'M73 265 Q68 296 74 334 Q81 344 87 336 Q89 300 88 266 Z' : 'M74 266 Q69 297 75 334 Q82 344 88 336 Q90 301 89 267 Z'} />
+        <path d={male ? 'M127 265 Q132 296 126 334 Q119 344 113 336 Q111 300 112 266 Z' : 'M126 266 Q131 297 125 334 Q118 344 112 336 Q110 301 111 267 Z'} />
+      </g>
+    </>
+  )
+}
+
+function BackFigure({ sex, primarySet, secondarySet }) {
+  const male = sex === 'male'
+
+  const outline = {
+    head: male
+      ? 'M83 20 L88 10 L100 8 L112 10 L117 20 L115 31 Q109 40 100 40 Q91 40 85 31 Z'
+      : 'M84 20 Q87 10 100 8 Q113 10 116 20 Q117 31 109 39 Q100 43 91 39 Q83 31 84 20 Z',
+    neck: male ? 'M92 40 L108 40 L111 55 L89 55 Z' : 'M93 40 L107 40 L109 55 L91 55 Z',
+    torso: male
+      ? 'M62 55 Q48 60 43 79 L39 126 Q38 152 46 174 Q57 202 68 246 Q74 272 77 327 L123 327 Q126 272 132 246 Q143 202 154 174 Q162 152 161 126 L157 79 Q152 60 138 55 Z'
+      : 'M66 55 Q54 60 48 79 L44 126 Q43 154 51 174 Q60 197 70 242 Q76 274 78 327 L122 327 Q124 274 130 242 Q140 197 149 174 Q157 154 156 126 L152 79 Q146 60 134 55 Z',
+    armL: male
+      ? 'M43 79 Q34 102 34 125 Q34 155 43 172 Q49 182 53 174 Q49 154 50 128 Q51 106 57 86 Z'
+      : 'M48 79 Q40 102 40 125 Q40 154 48 171 Q53 181 57 174 Q53 154 54 128 Q55 106 60 86 Z',
+    armR: male
+      ? 'M157 79 Q166 102 166 125 Q166 155 157 172 Q151 182 147 174 Q151 154 150 128 Q149 106 143 86 Z'
+      : 'M152 79 Q160 102 160 125 Q160 154 152 171 Q147 181 143 174 Q147 154 146 128 Q145 106 140 86 Z',
+    legL: male
+      ? 'M77 327 Q73 350 72 380 L88 380 Q91 350 95 327 Z'
+      : 'M78 327 Q74 350 73 380 L89 380 Q92 350 96 327 Z',
+    legR: male
+      ? 'M123 327 Q127 350 128 380 L112 380 Q109 350 105 327 Z'
+      : 'M122 327 Q126 350 127 380 L111 380 Q108 350 104 327 Z'
+  }
 
   return (
-    <div>
-      <div className="flex gap-4 justify-center">
-        <div className="flex flex-col items-center gap-1 flex-1">
-          <span className="text-xs font-medium" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>Front</span>
-          <div className="h-48 w-full">
-            <BodyFront primaryIds={frontPrimary} secondaryIds={frontSecondary} />
-          </div>
-        </div>
-        <div className="flex flex-col items-center gap-1 flex-1">
-          <span className="text-xs font-medium" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>Back</span>
-          <div className="h-48 w-full">
-            <BodyBack primaryIds={backPrimary} secondaryIds={backSecondary} />
-          </div>
-        </div>
-      </div>
+    <>
+      <path d={outline.head} fill="#000" stroke={STROKE} strokeWidth="1" />
+      <path d={outline.neck} fill="#000" stroke={STROKE} strokeWidth="1" />
+      <path d={outline.torso} fill="#000" stroke={STROKE} strokeWidth="1" />
+      <path d={outline.armL} fill="#000" stroke={STROKE} strokeWidth="1" />
+      <path d={outline.armR} fill="#000" stroke={STROKE} strokeWidth="1" />
+      <path d={outline.legL} fill="#000" stroke={STROKE} strokeWidth="1" />
+      <path d={outline.legR} fill="#000" stroke={STROKE} strokeWidth="1" />
 
-      <div style={{ display: 'flex', justifyContent: 'center', gap: 20, marginTop: 8 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <div style={{ width: 10, height: 10, borderRadius: '50%', background: '#EF4444' }} />
-          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Primary</span>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <div style={{ width: 10, height: 10, borderRadius: '50%', background: '#EAB308' }} />
-          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Secondary</span>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <div style={{ width: 10, height: 10, borderRadius: '50%', background: 'rgba(255,255,255,0.2)' }} />
-          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Untargeted</span>
-        </div>
-      </div>
-    </div>
+      <MuscleRegion
+        name="traps"
+        primarySet={primarySet}
+        secondarySet={secondarySet}
+        d={male ? 'M80 56 Q100 48 120 56 L114 88 Q100 96 86 88 Z' : 'M82 56 Q100 49 118 56 L113 88 Q100 95 87 88 Z'}
+      />
+      <g data-muscle="rear_delts" fill={muscleFill('rear_delts', primarySet, secondarySet)} stroke={STROKE} strokeWidth="1">
+        <path d={male ? 'M45 83 Q51 69 64 73 Q66 90 58 101 Q48 98 45 83 Z' : 'M50 83 Q56 70 68 74 Q70 90 63 101 Q54 98 50 83 Z'} />
+        <path d={male ? 'M155 83 Q149 69 136 73 Q134 90 142 101 Q152 98 155 83 Z' : 'M150 83 Q144 70 132 74 Q130 90 137 101 Q146 98 150 83 Z'} />
+      </g>
+      <g data-muscle="triceps" fill={muscleFill('triceps', primarySet, secondarySet)} stroke={STROKE} strokeWidth="1">
+        <path d={male ? 'M40 99 Q34 116 37 136 Q43 144 50 137 Q49 118 54 101 Z' : 'M45 99 Q40 116 43 135 Q48 143 54 136 Q53 118 58 102 Z'} />
+        <path d={male ? 'M160 99 Q166 116 163 136 Q157 144 150 137 Q151 118 146 101 Z' : 'M155 99 Q160 116 157 135 Q152 143 146 136 Q147 118 142 102 Z'} />
+      </g>
+      <g data-muscle="forearms" fill={muscleFill('forearms', primarySet, secondarySet)} stroke={STROKE} strokeWidth="1">
+        <path d={male ? 'M37 136 Q35 154 41 169 Q47 175 52 167 Q50 151 50 137 Z' : 'M43 136 Q41 152 46 168 Q51 174 56 166 Q54 150 54 136 Z'} />
+        <path d={male ? 'M163 136 Q165 154 159 169 Q153 175 148 167 Q150 151 150 137 Z' : 'M157 136 Q159 152 154 168 Q149 174 144 166 Q146 150 146 136 Z'} />
+      </g>
+      <g data-muscle="rhomboids" fill={muscleFill('rhomboids', primarySet, secondarySet)} stroke={STROKE} strokeWidth="1">
+        <path d={male ? 'M88 88 Q94 82 100 86 L100 122 Q92 118 86 110 Z' : 'M89 88 Q94 83 100 86 L100 121 Q93 117 88 109 Z'} />
+        <path d={male ? 'M112 88 Q106 82 100 86 L100 122 Q108 118 114 110 Z' : 'M111 88 Q106 83 100 86 L100 121 Q107 117 112 109 Z'} />
+      </g>
+      <g data-muscle="lats" fill={muscleFill('lats', primarySet, secondarySet)} stroke={STROKE} strokeWidth="1">
+        <path d={male ? 'M71 92 Q52 112 57 158 Q66 176 81 170 Q81 124 88 96 Z' : 'M73 92 Q57 112 62 158 Q70 175 83 170 Q83 124 89 96 Z'} />
+        <path d={male ? 'M129 92 Q148 112 143 158 Q134 176 119 170 Q119 124 112 96 Z' : 'M127 92 Q143 112 138 158 Q130 175 117 170 Q117 124 111 96 Z'} />
+      </g>
+      <g data-muscle="lower_back" fill={muscleFill('lower_back', primarySet, secondarySet)} stroke={STROKE} strokeWidth="1">
+        <path d={male ? 'M90 124 Q85 145 89 172 Q94 180 100 176 Q101 145 100 124 Z' : 'M91 124 Q86 145 90 172 Q94 180 100 176 Q101 145 100 124 Z'} />
+        <path d={male ? 'M110 124 Q115 145 111 172 Q106 180 100 176 Q99 145 100 124 Z' : 'M109 124 Q114 145 110 172 Q106 180 100 176 Q99 145 100 124 Z'} />
+      </g>
+      <g data-muscle="glutes" fill={muscleFill('glutes', primarySet, secondarySet)} stroke={STROKE} strokeWidth="1">
+        <path d={male ? 'M77 173 Q67 191 76 214 Q88 223 99 214 Q96 186 100 173 Z' : 'M78 173 Q69 191 77 214 Q89 224 99 214 Q97 186 100 173 Z'} />
+        <path d={male ? 'M123 173 Q133 191 124 214 Q112 223 101 214 Q104 186 100 173 Z' : 'M122 173 Q131 191 123 214 Q111 224 101 214 Q103 186 100 173 Z'} />
+      </g>
+      <g data-muscle="hamstrings" fill={muscleFill('hamstrings', primarySet, secondarySet)} stroke={STROKE} strokeWidth="1">
+        <path d={male ? 'M77 214 Q69 244 74 281 Q82 291 90 283 Q91 248 95 216 Z' : 'M78 214 Q71 244 76 281 Q83 291 91 283 Q92 248 96 216 Z'} />
+        <path d={male ? 'M123 214 Q131 244 126 281 Q118 291 110 283 Q109 248 105 216 Z' : 'M122 214 Q129 244 124 281 Q117 291 109 283 Q108 248 104 216 Z'} />
+      </g>
+      <g data-muscle="calves" fill={muscleFill('calves', primarySet, secondarySet)} stroke={STROKE} strokeWidth="1">
+        <path d={male ? 'M74 282 Q68 306 73 338 Q80 348 87 340 Q90 312 89 284 Z' : 'M75 282 Q70 306 75 338 Q81 348 88 340 Q91 312 90 284 Z'} />
+        <path d={male ? 'M126 282 Q132 306 127 338 Q120 348 113 340 Q110 312 111 284 Z' : 'M125 282 Q130 306 125 338 Q119 348 112 340 Q109 312 110 284 Z'} />
+      </g>
+    </>
+  )
+}
+
+export default function MuscleDiagram({
+  view = 'front',
+  sex = 'male',
+  primaryMuscles = [],
+  secondaryMuscles = []
+}) {
+  const normalizedPrimary = new Set(primaryMuscles.map((m) => String(m).toLowerCase()))
+  const normalizedSecondary = new Set(
+    secondaryMuscles
+      .map((m) => String(m).toLowerCase())
+      .filter((m) => !normalizedPrimary.has(m))
+  )
+
+  const allowed = new Set(view === 'front' ? FRONT_MUSCLES : BACK_MUSCLES)
+  const primarySet = new Set([...normalizedPrimary].filter((m) => allowed.has(m)))
+  const secondarySet = new Set([...normalizedSecondary].filter((m) => allowed.has(m) && !primarySet.has(m)))
+
+  return (
+    <svg viewBox="0 0 200 400" width="100%" height="auto" xmlns="http://www.w3.org/2000/svg" role="img" aria-label={`${view} ${sex} muscle diagram`}>
+      <BackgroundFrame />
+      {view === 'back' ? (
+        <BackFigure sex={sex} primarySet={primarySet} secondarySet={secondarySet} />
+      ) : (
+        <FrontFigure sex={sex} primarySet={primarySet} secondarySet={secondarySet} />
+      )}
+    </svg>
   )
 }
