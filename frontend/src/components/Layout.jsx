@@ -61,7 +61,7 @@ export default function Layout({ children }) {
       <FeedbackButton externalOpen={showFeedback} onClose={() => setShowFeedback(false)} />
 
       {!isWorkout && (
-        <nav className="fixed bottom-0 left-1/2 z-30 grid w-full max-w-[480px] -translate-x-1/2 grid-cols-8 border-t px-1 py-1" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}>
+        <nav className="fixed bottom-0 left-1/2 z-30 grid w-full max-w-[480px] -translate-x-1/2 grid-cols-6 border-t px-1 py-1" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}>
           {NAV_ITEMS.map(({ to, end, icon, iconComponent: IconComponent, label }) => (
             <NavLink key={to} to={to} end={end} className="flex flex-col items-center justify-center"
               onClick={to === '/' ? (e) => { e.preventDefault(); navigate('/') } : undefined}>
