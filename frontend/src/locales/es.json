@@ -133,5 +133,15 @@
     "fullBody": "Cuerpo Completo",
     "upperBody": "Tren Superior",
     "lowerBack": "Espalda Baja"
+  },
+  "injury_logs": {
+    "injury_log": "Registro de Lesiones",
+    "active_injuries": "Lesiones Activas",
+    "log_injury": "Registrar Nueva Lesion",
+    "body_part": "Parte del Cuerpo",
+    "pain_level": "Nivel de Dolor",
+    "mark_cleared": "Marcar como Curado",
+    "injury_history": "Historial de Lesiones",
+    "no_active_injuries": "Sin lesiones activas"
   }
 }

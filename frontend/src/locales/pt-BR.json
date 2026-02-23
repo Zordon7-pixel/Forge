@@ -133,5 +133,15 @@
     "fullBody": "Corpo Inteiro",
     "upperBody": "Membros Superiores",
     "lowerBack": "Lombar"
+  },
+  "injury_logs": {
+    "injury_log": "Registro de Lesoes",
+    "active_injuries": "Lesoes Ativas",
+    "log_injury": "Registrar Nova Lesao",
+    "body_part": "Parte do Corpo",
+    "pain_level": "Nivel de Dor",
+    "mark_cleared": "Marcar como Curado",
+    "injury_history": "Historico de Lesoes",
+    "no_active_injuries": "Nenhuma lesao ativa"
   }
 }

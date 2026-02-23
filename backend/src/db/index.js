@@ -572,4 +572,18 @@ db.exec(`
   );
 `);
 
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS injury_logs (
+    id TEXT PRIMARY KEY,
+    user_id TEXT,
+    date TEXT,
+    body_part TEXT,
+    pain_level INTEGER,
+    notes TEXT,
+    cleared INTEGER DEFAULT 0,
+    created_at TEXT
+  );
+`);
+
 module.exports = db;

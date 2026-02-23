@@ -133,5 +133,15 @@
     "fullBody": "Corps Entier",
     "upperBody": "Haut du Corps",
     "lowerBack": "Bas du Dos"
+  },
+  "injury_logs": {
+    "injury_log": "Journal des Blessures",
+    "active_injuries": "Blessures Actives",
+    "log_injury": "Enregistrer une Blessure",
+    "body_part": "Partie du Corps",
+    "pain_level": "Niveau de Douleur",
+    "mark_cleared": "Marquer comme Gueri",
+    "injury_history": "Historique des Blessures",
+    "no_active_injuries": "Aucune blessure active"
   }
 }

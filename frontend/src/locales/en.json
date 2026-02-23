@@ -133,5 +133,15 @@
     "fullBody": "Full-Body",
     "upperBody": "Upper-Body",
     "lowerBack": "Lower-Back"
+  },
+  "injury_logs": {
+    "injury_log": "Injury Log",
+    "active_injuries": "Active Injuries",
+    "log_injury": "Log New Injury",
+    "body_part": "Body Part",
+    "pain_level": "Pain Level",
+    "mark_cleared": "Mark Cleared",
+    "injury_history": "Injury History",
+    "no_active_injuries": "No active injuries"
   }
 }

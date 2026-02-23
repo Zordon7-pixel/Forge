@@ -133,5 +133,15 @@
     "fullBody": "Ganzkörper",
     "upperBody": "Oberkörper",
     "lowerBack": "Unterer Rücken"
+  },
+  "injury_logs": {
+    "injury_log": "Verletzungsprotokoll",
+    "active_injuries": "Aktive Verletzungen",
+    "log_injury": "Verletzung Erfassen",
+    "body_part": "Koerperteil",
+    "pain_level": "Schmerzlevel",
+    "mark_cleared": "Als Geheilt Markieren",
+    "injury_history": "Verletzungsverlauf",
+    "no_active_injuries": "Keine aktiven Verletzungen"
   }
 }

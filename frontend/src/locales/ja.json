@@ -133,5 +133,15 @@
     "fullBody": "全身",
     "upperBody": "上半身",
     "lowerBack": "腰部"
+  },
+  "injury_logs": {
+    "injury_log": "負傷記録",
+    "active_injuries": "現在の負傷",
+    "log_injury": "新しい負傷を記録",
+    "body_part": "部位",
+    "pain_level": "痛みのレベル",
+    "mark_cleared": "完治としてマーク",
+    "injury_history": "負傷履歴",
+    "no_active_injuries": "現在の負傷はありません"
   }
 }

@@ -71,6 +71,7 @@ app.use('/api/races', require('./routes/races'));
 app.use('/api/routes', require('./routes/routes'));
 app.use('/api/gear', require('./routes/gear'));
 app.use('/api/stretches', require('./routes/stretches'));
+app.use('/api/injury', require('./routes/injury'));
 
 // Serve frontend
 const dist = path.join(__dirname, '../../frontend/dist');

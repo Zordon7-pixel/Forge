@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ChevronRight, Settings as SettingsIcon, User, Dumbbell, HeartPulse, Eye } from 'lucide-react'
+import { ChevronRight, Settings as SettingsIcon, User, Dumbbell, HeartPulse, Eye, Activity } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import api from '../lib/api'
 
@@ -341,6 +341,17 @@ export default function Profile() {
           <div onClick={() => navigate('/journal')} className="flex items-center justify-between rounded-xl p-4 cursor-pointer transition-colors mt-2" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
             <span className="text-sm font-medium text-[var(--text-primary)]">Journal</span>
             <ChevronRight size={16} className="text-[var(--text-muted)]" />
+          </div>
+
+          <div style={{ marginTop: 16 }}>
+            <p style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 }}>Health</p>
+            <div onClick={() => navigate('/injury')} className="flex items-center justify-between rounded-xl p-4 cursor-pointer transition-colors" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+              <div className="flex items-center gap-3">
+                <Activity size={18} color="#EAB308" />
+                <span className="text-sm font-medium text-[var(--text-primary)]">Injury Log</span>
+              </div>
+              <ChevronRight size={16} className="text-[var(--text-muted)]" />
+            </div>
           </div>
 
           <div style={{ marginTop: 16 }}>
