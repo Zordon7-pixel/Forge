@@ -1,9 +1,38 @@
 const router = require('express').Router();
-const db     = require('../db');
-const auth   = require('../middleware/auth');
+const db = require('../db');
+const auth = require('../middleware/auth');
 const { checkAiLimit } = require('../middleware/aiLimit');
 const { v4: uuidv4 } = require('uuid');
 const { generateTrainingPlan } = require('../services/ai');
+
+function getDayShort() {
+  return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date().getDay()];
+}
+
+function normalizeTodayEntry(planJson) {
+  if (!planJson?.weeks?.length) return null;
+  const today = getDayShort();
+  for (const week of planJson.weeks) {
+    const days = Array.isArray(week.days) ? week.days : [];
+    const hit = days.find(d => d?.day === today);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+router.get('/', auth, (req, res) => {
+  const plan = db.prepare('SELECT * FROM training_plans WHERE user_id = ? ORDER BY created_at DESC LIMIT 1').get(req.user.id);
+  if (!plan) return res.json({ plan: null, today: null });
+  const parsed = JSON.parse(plan.plan_json);
+  res.json({ plan: { ...plan, plan_json: parsed }, today: normalizeTodayEntry(parsed) });
+});
+
+router.get('/today', auth, (req, res) => {
+  const plan = db.prepare('SELECT * FROM training_plans WHERE user_id = ? ORDER BY created_at DESC LIMIT 1').get(req.user.id);
+  if (!plan) return res.json({ today: null });
+  const parsed = JSON.parse(plan.plan_json);
+  res.json({ today: normalizeTodayEntry(parsed) });
+});
 
 router.get('/current', auth, (req, res) => {
   const plan = db.prepare('SELECT * FROM training_plans WHERE user_id = ? ORDER BY created_at DESC LIMIT 1').get(req.user.id);
@@ -17,7 +46,6 @@ router.post('/generate', auth, checkAiLimit('plan_generate'), async (req, res) =
 
   const planData = await generateTrainingPlan(profile);
   if (!planData) {
-    // Fallback: generate a simple static plan
     const fallback = generateFallbackPlan(profile);
     const id = uuidv4();
     const weekStart = getMonday();

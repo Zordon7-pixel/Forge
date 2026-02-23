@@ -53,8 +53,7 @@ router.post('/', auth, (req, res) => {
   }
 });
 
-// PUT /api/runs/:id — edit a run
-router.put('/:id', auth, (req, res) => {
+function updateRunHandler(req, res) {
   const run = db.prepare('SELECT * FROM runs WHERE id=? AND user_id=?').get(req.params.id, req.user.id);
   if (!run) return res.status(404).json({ error: 'Run not found' });
 
@@ -83,7 +82,10 @@ router.put('/:id', auth, (req, res) => {
 
   const updated = db.prepare('SELECT * FROM runs WHERE id=?').get(req.params.id);
   res.json(updated);
-});
+}
+
+router.put('/:id', auth, updateRunHandler);
+router.patch('/:id', auth, updateRunHandler);
 
 router.delete('/:id', auth, (req, res) => {
   const run = db.prepare('SELECT * FROM runs WHERE id=? AND user_id=?').get(req.params.id, req.user.id);

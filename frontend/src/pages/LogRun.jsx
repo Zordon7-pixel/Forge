@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { Flame, MapPin, Mountain, RefreshCw, Gauge } from 'lucide-react'
+import { Flame, MapPin, Mountain, RefreshCw, Gauge, Pencil } from 'lucide-react'
 import api from '../lib/api'
 import { parseDuration, formatDurationDisplay } from '../lib/parseDuration'
 import PostRunCheckIn from '../components/PostRunCheckIn'
@@ -18,17 +18,19 @@ const WARM_UP_STEPS = [
 ]
 
 const SURFACE_OPTIONS = [
-  { value: 'road',      label: 'Road',      icon: MapPin },
-  { value: 'trail',     label: 'Trail',     icon: Mountain },
-  { value: 'track',     label: 'Track',     icon: RefreshCw },
+  { value: 'road', label: 'Road', icon: MapPin },
+  { value: 'trail', label: 'Trail', icon: Mountain },
+  { value: 'track', label: 'Track', icon: RefreshCw },
   { value: 'treadmill', label: 'Treadmill', icon: Gauge },
 ]
 
+const PANEL_KEY = 'forge_run_detail_panels'
+const DEFAULT_PANELS = { overview: true, stats: true, pace: true, hr: true, notes: true }
+
 function getEffortColor(level) {
-  if (level <= 3) return '#3B82F6'
-  if (level <= 6) return '#22C55E'
-  if (level <= 8) return '#EAB308'
-  return '#EF4444'
+  if (level <= 3) return 'var(--text-muted)'
+  if (level <= 6) return 'var(--text-primary)'
+  return 'var(--accent)'
 }
 
 function getEffortLabel(level) {
@@ -38,16 +40,43 @@ function getEffortLabel(level) {
   return 'Max Effort'
 }
 
+function formatRunDuration(seconds) {
+  const h = Math.floor(seconds / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  const s = seconds % 60
+  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+  return `${m}:${String(s).padStart(2, '0')}`
+}
+
+function formatPace(seconds, distance) {
+  if (!seconds || !distance) return '—'
+  const paceSec = Math.round(seconds / distance)
+  const m = Math.floor(paceSec / 60)
+  const s = paceSec % 60
+  return `${m}:${String(s).padStart(2, '0')}/mi`
+}
+
+function parseSplits(run) {
+  const raw = run?.splits || run?.splits_json || run?.gps_splits
+  if (!raw) return []
+  if (Array.isArray(raw)) return raw
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw)
+      return Array.isArray(parsed) ? parsed : []
+    } catch {
+      return []
+    }
+  }
+  return []
+}
+
 function EffortBar({ effort, setEffort }) {
   return (
     <div>
-      <label className="mb-3 block text-sm font-medium" style={{ color: 'var(--text-muted)' }}>
-        Effort Level
-      </label>
       <div style={{ display: 'flex', gap: 4 }}>
         {Array.from({ length: 10 }, (_, i) => i + 1).map(level => {
           const isActive = level <= effort
-          const color = getEffortColor(level)
           return (
             <button
               key={level}
@@ -57,10 +86,9 @@ function EffortBar({ effort, setEffort }) {
                 flex: 1,
                 height: 40,
                 borderRadius: 6,
-                border: 'none',
+                border: '1px solid var(--border-subtle)',
                 cursor: 'pointer',
-                background: isActive ? color : 'rgba(255,255,255,0.08)',
-                transition: 'background 0.15s',
+                background: isActive ? 'var(--accent)' : 'var(--bg-base)',
               }}
             />
           )
@@ -78,23 +106,46 @@ function EffortBar({ effort, setEffort }) {
   )
 }
 
-function formatRunDuration(seconds) {
-  const h = Math.floor(seconds / 3600)
-  const m = Math.floor((seconds % 3600) / 60)
-  const s = seconds % 60
-  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
-  return `${m}:${String(s).padStart(2, '0')}`
+function WorkoutWatchModal({ workout, onClose }) {
+  if (!workout) return null
+
+  const copyText = async () => {
+    const text = `${workout.day}: ${workout.typeLabel}\nDistance: ${workout.distanceLabel}\n${workout.pace ? `Pace: ${workout.pace}\n` : ''}${workout.description ? `Notes: ${workout.description}` : ''}`
+    try { await navigator.clipboard.writeText(text) } catch {}
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-4" style={{ background: 'rgba(0,0,0,0.7)' }}>
+      <div className="w-full max-w-md rounded-2xl p-5" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+        <h3 className="text-xl font-black mb-4" style={{ color: 'var(--text-primary)' }}>Today's Workout</h3>
+        <div className="rounded-xl p-4 mb-4" style={{ background: 'var(--bg-base)', border: '1px solid var(--border-subtle)' }}>
+          <div className="text-xs font-semibold uppercase mb-2" style={{ color: 'var(--text-muted)' }}>{workout.day}</div>
+          <span className="inline-block rounded-full px-3 py-1 text-xs font-bold mb-3" style={{ background: 'var(--accent)', color: '#000' }}>
+            {workout.typeLabel}
+          </span>
+          <div className="text-sm mb-1" style={{ color: 'var(--text-primary)' }}><strong>Distance:</strong> {workout.distanceLabel}</div>
+          {workout.pace && <div className="text-sm mb-1" style={{ color: 'var(--text-primary)' }}><strong>Pace:</strong> {workout.pace}</div>}
+          {workout.description && <div className="text-sm" style={{ color: 'var(--text-muted)' }}>{workout.description}</div>}
+        </div>
+
+        <button
+          onClick={copyText}
+          className="w-full rounded-xl py-3 font-bold mb-3"
+          style={{ background: 'var(--accent)', color: '#000', border: 'none', cursor: 'pointer' }}
+        >
+          Copy Workout
+        </button>
+        <p className="text-sm mb-4" style={{ color: 'var(--text-muted)' }}>📱 Automatic watch sync is coming in the FORGE mobile app</p>
+        <button onClick={onClose} className="w-full rounded-xl py-2" style={{ background: 'var(--bg-base)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>Close</button>
+      </div>
+    </div>
+  )
 }
 
 export default function LogRun() {
   const navigate = useNavigate()
-
-  // Warm-up gate: 'gate' | 'warmup' | 'done'
   const [warmUpState, setWarmUpState] = useState('gate')
-
-  // Mini-tabs: 'log' | 'gps' | 'history'
-  const [activeTab, setActiveTab] = useState('log')
-
+  const [activeTab, setActiveTab] = useState('today')
   const [countdown, setCountdown] = useState(3)
   const [surface, setSurface] = useState('road')
 
@@ -113,41 +164,62 @@ export default function LogRun() {
   const [recentRuns, setRecentRuns] = useState([])
   const [runsLoading, setRunsLoading] = useState(false)
 
+  const [todayWorkout, setTodayWorkout] = useState(null)
+  const [todayLoading, setTodayLoading] = useState(false)
+  const [showWatchModal, setShowWatchModal] = useState(false)
+
+  const [selectedRun, setSelectedRun] = useState(null)
+  const [showCustomize, setShowCustomize] = useState(false)
+  const [panelPrefs, setPanelPrefs] = useState(() => {
+    try { return { ...DEFAULT_PANELS, ...(JSON.parse(localStorage.getItem(PANEL_KEY) || '{}')) } } catch { return DEFAULT_PANELS }
+  })
+  const [editingNotes, setEditingNotes] = useState('')
+
+  useEffect(() => {
+    if (warmUpState === 'done') setActiveTab('today')
+  }, [warmUpState])
+
   useEffect(() => {
     if (activeTab === 'history' && recentRuns.length === 0) {
       setRunsLoading(true)
-      api.get('/runs')
-        .then(res => setRecentRuns(res.data?.runs || []))
-        .catch(() => {})
-        .finally(() => setRunsLoading(false))
+      api.get('/runs').then(res => setRecentRuns(res.data?.runs || [])).catch(() => {}).finally(() => setRunsLoading(false))
     }
-  }, [activeTab])
+  }, [activeTab, recentRuns.length])
+
+  useEffect(() => {
+    if (activeTab !== 'today' || todayWorkout) return
+    setTodayLoading(true)
+    api.get('/plans/today')
+      .then(res => {
+        const w = res.data?.today || null
+        if (!w) return
+        setTodayWorkout({
+          day: w.day || w.day_of_week || new Date().toLocaleDateString(undefined, { weekday: 'short' }),
+          typeLabel: String(w.type || 'run').replace('-', ' ').replace(/\b\w/g, c => c.toUpperCase()),
+          distanceLabel: Number(w.distance_miles) > 0 ? `${Number(w.distance_miles).toFixed(1)} miles` : 'No distance target',
+          pace: w.pace_target || w.pace || w.target_pace || '',
+          description: w.description || w.notes || '',
+        })
+      })
+      .catch(() => {})
+      .finally(() => setTodayLoading(false))
+  }, [activeTab, todayWorkout])
+
+  useEffect(() => {
+    localStorage.setItem(PANEL_KEY, JSON.stringify(panelPrefs))
+  }, [panelPrefs])
 
   const onSubmit = async e => {
     e.preventDefault()
     setError('')
     setFeedback('')
-
     const seconds = parseDuration(duration)
-    if (!seconds) {
-      setError('Please enter a valid duration.')
-      return
-    }
+    if (!seconds) return setError('Please enter a valid duration.')
 
     try {
       setLoading(true)
       const runType = surface === 'treadmill' ? 'treadmill' : surface === 'trail' ? 'trail' : 'easy'
-      const runRes = await api.post('/runs', {
-        date,
-        type: runType,
-        surface,
-        run_surface: surface,
-        distance_miles: Number(distance),
-        duration_seconds: seconds,
-        notes,
-        perceived_effort: Number(effort),
-      })
-
+      const runRes = await api.post('/runs', { date, type: runType, surface, run_surface: surface, distance_miles: Number(distance), duration_seconds: seconds, notes, perceived_effort: Number(effort) })
       const runId = runRes.data?.id || runRes.data?.run?.id
       if (runId) api.post('/prs/auto-detect', { run_id: runId }).catch(() => {})
       api.post('/badges/check', {}).catch(() => {})
@@ -159,8 +231,8 @@ export default function LogRun() {
 
       setSavedRunId(runId)
       setShowPostCheckIn(true)
-
       setPolling(true)
+
       let attempts = 0
       let aiFeedback = ''
       while (attempts < 5 && !aiFeedback) {
@@ -180,419 +252,210 @@ export default function LogRun() {
     }
   }
 
-  // ── Warm-up Gate ──────────────────────────────────────────────────────────
+  const selectedSplits = useMemo(() => parseSplits(selectedRun), [selectedRun])
+
+  const saveNotes = async () => {
+    if (!selectedRun) return
+    try {
+      const res = await api.patch(`/runs/${selectedRun.id}`, { notes: editingNotes })
+      const updated = res.data || { ...selectedRun, notes: editingNotes }
+      setSelectedRun(updated)
+      setRecentRuns(prev => prev.map(r => (r.id === updated.id ? { ...r, notes: updated.notes } : r)))
+    } catch {
+      try {
+        const res = await api.put(`/runs/${selectedRun.id}`, { notes: editingNotes })
+        const updated = res.data || { ...selectedRun, notes: editingNotes }
+        setSelectedRun(updated)
+        setRecentRuns(prev => prev.map(r => (r.id === updated.id ? { ...r, notes: updated.notes } : r)))
+      } catch {}
+    }
+  }
+
+  const deleteRun = async () => {
+    if (!selectedRun) return
+    if (!window.confirm("Are you sure? This can't be undone.")) return
+    await api.delete(`/runs/${selectedRun.id}`)
+    setRecentRuns(prev => prev.filter(r => r.id !== selectedRun.id))
+    setSelectedRun(null)
+  }
+
   if (warmUpState === 'gate') {
     return (
-      <>
-        <style>{`
-          @keyframes warmup-pulse {
-            0%   { transform: scale(1);    opacity: 0.75; }
-            70%  { transform: scale(1.45); opacity: 0; }
-            100% { transform: scale(1.45); opacity: 0; }
-          }
-          .warmup-ring {
-            position: absolute; inset: 0;
-            border-radius: 50%;
-            border: 3px solid #EAB308;
-            animation: warmup-pulse 2s ease-out infinite;
-            pointer-events: none;
-          }
-          .warmup-ring-2 {
-            position: absolute; inset: 0;
-            border-radius: 50%;
-            border: 3px solid #F97316;
-            animation: warmup-pulse 2s ease-out 0.7s infinite;
-            pointer-events: none;
-          }
-        `}</style>
-
-        <div className="rounded-2xl p-6 flex flex-col items-center" style={{ background: 'var(--bg-card)' }}>
-          <h2 className="text-2xl font-black mb-1" style={{ color: 'var(--text-primary)' }}>Ready to Run?</h2>
-          <p className="text-sm mb-10 text-center" style={{ color: 'var(--text-muted)' }}>
-            Dynamic warm-up reduces injury risk and improves performance.
-          </p>
-
-          {/* Pulsing circle button */}
-          <div style={{ position: 'relative', width: 128, height: 128, marginBottom: 28 }}>
-            <div className="warmup-ring" />
-            <div className="warmup-ring-2" />
-            <button
-              onClick={() => setWarmUpState('warmup')}
-              style={{
-                position: 'absolute', inset: 0,
-                borderRadius: '50%',
-                background: 'linear-gradient(135deg, #EAB308 0%, #F97316 100%)',
-                border: 'none',
-                cursor: 'pointer',
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 6,
-                color: '#000',
-                fontWeight: 900,
-                fontSize: 12,
-              }}
-            >
-              <Flame size={34} />
-              <span style={{ fontSize: 11, lineHeight: 1, textAlign: 'center' }}>Start{'\n'}Warm-Up</span>
-            </button>
-          </div>
-
-          <button
-            onClick={() => setWarmUpState('done')}
-            style={{
-              background: 'none', border: 'none', cursor: 'pointer',
-              color: 'var(--text-muted)', fontSize: 14, padding: '8px 0',
-            }}
-          >
-            Skip warm-up →
-          </button>
-        </div>
-      </>
+      <div className="rounded-2xl p-6 flex flex-col items-center" style={{ background: 'var(--bg-card)' }}>
+        <h2 className="text-2xl font-black mb-1" style={{ color: 'var(--text-primary)' }}>Ready to Run?</h2>
+        <p className="text-sm mb-10 text-center" style={{ color: 'var(--text-muted)' }}>Dynamic warm-up reduces injury risk and improves performance.</p>
+        <button onClick={() => setWarmUpState('warmup')} className="rounded-full w-28 h-28 mb-6 font-black" style={{ background: 'var(--accent)', color: '#000', border: 'none' }}><Flame className="mx-auto mb-1" />Start Warm-Up</button>
+        <button onClick={() => setWarmUpState('done')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 14, padding: '8px 0' }}>Skip warm-up →</button>
+      </div>
     )
   }
 
-  // ── Warm-up Steps ─────────────────────────────────────────────────────────
   if (warmUpState === 'warmup') {
     return (
       <div className="rounded-2xl p-6" style={{ background: 'var(--bg-card)' }}>
         <h2 className="text-xl font-black mb-1" style={{ color: 'var(--text-primary)' }}>Dynamic Warm-Up</h2>
-        <p className="text-sm mb-5" style={{ color: 'var(--text-muted)' }}>
-          Complete each movement before you run.
-        </p>
-
+        <p className="text-sm mb-5" style={{ color: 'var(--text-muted)' }}>Complete each movement before you run.</p>
         <div className="space-y-3 mb-6">
           {WARM_UP_STEPS.map((step, i) => (
-            <div
-              key={i}
-              className="flex items-center gap-3 rounded-xl p-3"
-              style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}
-            >
-              <div style={{
-                width: 30, height: 30, borderRadius: '50%',
-                background: 'var(--accent)', color: '#000',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontWeight: 900, fontSize: 13, flexShrink: 0,
-              }}>
-                {i + 1}
-              </div>
+            <div key={i} className="flex items-center gap-3 rounded-xl p-3" style={{ background: 'var(--bg-base)', border: '1px solid var(--border-subtle)' }}>
+              <div style={{ width: 30, height: 30, borderRadius: '50%', background: 'var(--accent)', color: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: 13, flexShrink: 0 }}>{i + 1}</div>
               <span style={{ color: 'var(--text-primary)', fontSize: 14, fontWeight: 500 }}>{step}</span>
             </div>
           ))}
         </div>
-
-        <button
-          onClick={() => setWarmUpState('done')}
-          className="w-full rounded-xl py-3 font-bold"
-          style={{ background: 'var(--accent)', color: '#000', border: 'none', cursor: 'pointer', fontSize: 16 }}
-        >
-          Done — Start Run
-        </button>
+        <button onClick={() => setWarmUpState('done')} className="w-full rounded-xl py-3 font-bold" style={{ background: 'var(--accent)', color: '#000', border: 'none', cursor: 'pointer', fontSize: 16 }}>Done — Start Run</button>
       </div>
     )
   }
 
-  // ── Main Tabbed Content (warmUpState === 'done') ──────────────────────────
   return (
     <>
       <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>
-
-        {/* Mini-tabs */}
-        <div className="flex gap-2 mb-5">
-          {[
-            { key: 'log',     label: 'Log' },
-            { key: 'gps',     label: 'GPS' },
-            { key: 'history', label: 'History' },
-          ].map(tab => (
-            <button
-              key={tab.key}
-              onClick={() => setActiveTab(tab.key)}
-              style={{
-                padding: '5px 18px',
-                borderRadius: 999,
-                border: activeTab === tab.key
-                  ? '1.5px solid var(--accent)'
-                  : '1.5px solid var(--border-subtle)',
-                background: activeTab === tab.key ? 'var(--accent)' : 'transparent',
-                color: activeTab === tab.key ? '#000' : 'var(--text-muted)',
-                fontWeight: 700,
-                fontSize: 13,
-                cursor: 'pointer',
-              }}
-            >
-              {tab.label}
-            </button>
+        <div className="flex gap-2 mb-5 flex-wrap">
+          {[{ key: 'today', label: 'Today' }, { key: 'log', label: 'Manual' }, { key: 'gps', label: 'GPS' }, { key: 'history', label: 'History' }].map(tab => (
+            <button key={tab.key} onClick={() => setActiveTab(tab.key)} style={{ padding: '5px 18px', borderRadius: 999, border: activeTab === tab.key ? '1.5px solid var(--accent)' : '1.5px solid var(--border-subtle)', background: activeTab === tab.key ? 'var(--accent)' : 'transparent', color: activeTab === tab.key ? '#000' : 'var(--text-muted)', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>{tab.label}</button>
           ))}
         </div>
 
-        {/* ── Log Tab ─────────────────────────────────────────────────────── */}
-        {activeTab === 'log' && (
+        {activeTab === 'today' && (
           <div>
-            <p className="text-xs text-center mb-4" style={{ color: 'var(--text-muted)', opacity: 0.75 }}>
-              For when your watch dies, app glitched, or you forgot to start — log manually below.
-            </p>
-
-            <form onSubmit={onSubmit} className="space-y-4">
-
-              {/* Surface Picker */}
-              <div>
-                <label className="mb-2 block text-sm font-semibold" style={{ color: 'var(--text-muted)' }}>
-                  Surface
-                </label>
-                <div className="flex gap-2">
-                  {SURFACE_OPTIONS.map(opt => {
-                    const Icon = opt.icon
-                    const selected = surface === opt.value
-                    return (
-                      <button
-                        key={opt.value}
-                        type="button"
-                        onClick={() => setSurface(opt.value)}
-                        style={{
-                          flex: 1,
-                          display: 'flex',
-                          flexDirection: 'column',
-                          alignItems: 'center',
-                          gap: 5,
-                          padding: '10px 4px',
-                          borderRadius: 12,
-                          border: selected ? '2px solid #EAB308' : '2px solid var(--border-subtle)',
-                          background: selected ? 'rgba(234,179,8,0.1)' : 'var(--bg-input)',
-                          color: selected ? '#EAB308' : 'var(--text-muted)',
-                          cursor: 'pointer',
-                          fontSize: 11,
-                          fontWeight: 700,
-                          transition: 'border-color 0.15s, background 0.15s',
-                        }}
-                      >
-                        <Icon size={20} />
-                        <span>{opt.label}</span>
-                      </button>
-                    )
-                  })}
-                </div>
-                {surface === 'treadmill' && (
-                  <p className="mt-2 text-xs font-semibold" style={{ color: '#F97316' }}>
-                    GPS disabled for treadmill — enter distance manually.
-                  </p>
-                )}
+            {todayLoading ? <p style={{ color: 'var(--text-muted)' }}>Loading workout...</p> : todayWorkout ? (
+              <div className="rounded-2xl p-4" style={{ background: 'var(--bg-base)', border: '1px solid var(--border-subtle)' }}>
+                <span className="inline-block rounded-full px-3 py-1 text-xs font-bold mb-3" style={{ background: 'var(--accent)', color: '#000' }}>{todayWorkout.typeLabel}</span>
+                <p className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>{todayWorkout.distanceLabel}</p>
+                {todayWorkout.pace && <p className="mt-1" style={{ color: 'var(--text-muted)' }}>{todayWorkout.pace}</p>}
+                {todayWorkout.description && <p className="mt-3 text-sm" style={{ color: 'var(--text-muted)' }}>{todayWorkout.description}</p>}
+                <button onClick={() => setShowWatchModal(true)} className="w-full mt-4 rounded-xl py-3 font-bold" style={{ background: 'var(--accent)', color: '#000', border: 'none', cursor: 'pointer' }}>Send to Watch</button>
               </div>
-
-              <input
-                type="date"
-                value={date}
-                onChange={e => setDate(e.target.value)}
-                className="w-full rounded-xl border px-4 py-3"
-                style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }}
-              />
-
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                required
-                placeholder="Distance (miles)"
-                value={distance}
-                onChange={e => setDistance(e.target.value)}
-                className="w-full rounded-xl border px-4 py-3"
-                style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }}
-              />
-
-              <div>
-                <input
-                  type="text"
-                  required
-                  placeholder="Duration (e.g. 2 hours 45 minutes, 45:30, 1h30m)"
-                  value={duration}
-                  onChange={e => setDuration(e.target.value)}
-                  onBlur={() => {
-                    const sec = parseDuration(duration)
-                    if (sec) setDuration(formatDurationDisplay(sec))
-                  }}
-                  className="w-full rounded-xl border px-4 py-3"
-                  style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }}
-                />
-                <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)', opacity: 0.65 }}>
-                  Try: 45, 45:30, 1:23:45, 90 minutes, 1hr 30min
-                </p>
+            ) : (
+              <div className="rounded-2xl p-4" style={{ background: 'var(--bg-base)', border: '1px solid var(--border-subtle)' }}>
+                <p style={{ color: 'var(--text-muted)' }}>No workout scheduled today — rest up or log a free run.</p>
+                <button onClick={() => setActiveTab('log')} className="mt-4 rounded-xl px-4 py-2 font-semibold" style={{ background: 'var(--accent)', color: '#000', border: 'none', cursor: 'pointer' }}>Log Free Run</button>
               </div>
-
-              <textarea
-                rows={3}
-                placeholder="Route / notes"
-                value={notes}
-                onChange={e => setNotes(e.target.value)}
-                className="w-full rounded-xl border px-4 py-3"
-                style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }}
-              />
-
-              {/* Creative Effort Bar */}
-              <EffortBar effort={effort} setEffort={setEffort} />
-
-              <button
-                type="submit"
-                disabled={loading || polling}
-                className="w-full rounded-xl py-3 font-semibold disabled:opacity-70"
-                style={{ background: 'var(--accent)', color: 'black', border: 'none', cursor: 'pointer' }}
-              >
-                {loading ? 'Logging run...' : 'Save Run'}
-              </button>
-            </form>
-
-            {(loading || polling) && (
-              <div className="mt-4 flex items-center gap-2 text-sm" style={{ color: 'var(--text-muted)' }}>
-                <div
-                  className="h-4 w-4 animate-spin rounded-full border-2"
-                  style={{ borderColor: 'var(--accent)', borderTopColor: 'transparent' }}
-                />
-                Getting AI feedback...
-              </div>
-            )}
-
-            {feedback && (
-              <div className="mt-4 rounded-xl p-3" style={{ background: 'var(--accent-dim)', color: 'var(--accent)' }}>
-                {feedback}
-              </div>
-            )}
-            {error && (
-              <p className="mt-3 text-sm" style={{ color: 'var(--accent)' }}>{error}</p>
             )}
           </div>
         )}
 
-        {/* ── GPS Tab ─────────────────────────────────────────────────────── */}
+        {activeTab === 'log' && (
+          <form onSubmit={onSubmit} className="space-y-4">
+            <div className="rounded-2xl p-4" style={{ background: 'var(--bg-base)', border: '1px solid var(--border-subtle)' }}>
+              <div className="text-center py-6">
+                <input type="number" step="0.1" min="0" required className="text-5xl font-bold bg-transparent text-center w-32 focus:outline-none" style={{ color: 'var(--accent)' }} value={distance} onChange={e => setDistance(e.target.value)} placeholder="0.0" />
+                <div className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>miles</div>
+              </div>
+            </div>
+
+            <div className="rounded-2xl p-4" style={{ background: 'var(--bg-base)', border: '1px solid var(--border-subtle)' }}>
+              <div className="flex gap-2 justify-center">
+                <input type="text" required value={duration} onChange={e => setDuration(e.target.value)} onBlur={() => { const sec = parseDuration(duration); if (sec) setDuration(formatDurationDisplay(sec)) }} placeholder="MM:SS or HH:MM:SS" className="w-full max-w-xs rounded-full border px-4 py-3 text-center text-xl font-bold" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)', color: 'var(--text-primary)' }} />
+              </div>
+            </div>
+
+            <div className="rounded-2xl p-4" style={{ background: 'var(--bg-base)', border: '1px solid var(--border-subtle)' }}>
+              <textarea rows={4} placeholder="How did it feel? Anything worth remembering?" value={notes} onChange={e => setNotes(e.target.value)} className="w-full rounded-xl border px-4 py-3" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)', color: 'var(--text-primary)' }} />
+            </div>
+
+            <div className="rounded-2xl p-4" style={{ background: 'var(--bg-base)', border: '1px solid var(--border-subtle)' }}>
+              <div className="flex gap-2 mb-4">
+                {SURFACE_OPTIONS.map(opt => {
+                  const Icon = opt.icon
+                  const selected = surface === opt.value
+                  return (
+                    <button key={opt.value} type="button" onClick={() => setSurface(opt.value)} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5, padding: '10px 4px', borderRadius: 12, border: selected ? '2px solid var(--accent)' : '2px solid var(--border-subtle)', background: selected ? 'var(--bg-card)' : 'var(--bg-base)', color: selected ? 'var(--accent)' : 'var(--text-muted)', cursor: 'pointer', fontSize: 11, fontWeight: 700 }}><Icon size={20} /><span>{opt.label}</span></button>
+                  )
+                })}
+              </div>
+              <EffortBar effort={effort} setEffort={setEffort} />
+            </div>
+
+            <input type="date" value={date} onChange={e => setDate(e.target.value)} className="w-full rounded-xl border px-4 py-3" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-base)', color: 'var(--text-primary)' }} />
+
+            <button type="submit" disabled={loading || polling} className="w-full rounded-xl py-3 font-semibold disabled:opacity-70" style={{ background: 'var(--accent)', color: '#000', border: 'none', cursor: 'pointer' }}>{loading ? 'Logging run...' : 'Save Run'}</button>
+            {error && <p className="mt-2 text-sm" style={{ color: 'var(--accent)' }}>{error}</p>}
+            {feedback && <div className="mt-2 rounded-xl p-3" style={{ background: 'var(--bg-base)', color: 'var(--text-primary)' }}>{feedback}</div>}
+          </form>
+        )}
+
         {activeTab === 'gps' && (
           <div>
             <div className="rounded-2xl p-5" style={{ background: 'var(--accent)' }}>
-              <h2 className="text-2xl font-black text-black mb-1">Start Live Run</h2>
-              <p className="text-sm text-black mb-4" style={{ opacity: 0.7 }}>GPS tracking · live pace · auto-saved</p>
-
+              <h2 className="text-2xl font-black mb-1" style={{ color: '#000' }}>Start Live Run</h2>
+              <p className="text-sm mb-4" style={{ color: '#000' }}>GPS tracking · live pace · auto-saved</p>
               <div className="flex gap-2 mb-4 items-center flex-wrap">
-                <span className="text-xs text-black self-center" style={{ opacity: 0.6 }}>Countdown:</span>
-                {[0, 3, 5, 10].map(n => (
-                  <button
-                    key={n}
-                    onClick={() => setCountdown(n)}
-                    style={{
-                      padding: '4px 12px',
-                      borderRadius: 8,
-                      background: countdown === n ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0.1)',
-                      color: '#000',
-                      fontWeight: 700,
-                      fontSize: 12,
-                      border: 'none',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    {n === 0 ? 'Off' : `${n}s`}
-                  </button>
-                ))}
+                {[0, 3, 5, 10].map(n => <button key={n} onClick={() => setCountdown(n)} style={{ padding: '4px 12px', borderRadius: 8, background: countdown === n ? 'var(--bg-card)' : 'var(--bg-base)', color: '#000', fontWeight: 700, fontSize: 12, border: 'none', cursor: 'pointer' }}>{n === 0 ? 'Off' : `${n}s`}</button>)}
               </div>
-
-              <button
-                onClick={() => navigate('/run/active', { state: { countdown } })}
-                className="w-full py-4 rounded-xl font-black text-lg"
-                style={{ background: '#000', color: '#fff', border: 'none', cursor: 'pointer' }}
-              >
-                Go
-              </button>
+              <button onClick={() => navigate('/run/active', { state: { countdown } })} className="w-full py-4 rounded-xl font-black text-lg" style={{ background: 'var(--bg-base)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>Go</button>
             </div>
-
-            <button
-              onClick={() => navigate('/run/treadmill')}
-              className="w-full mt-3 rounded-xl py-3 font-semibold text-sm"
-              style={{ background: 'var(--bg-input)', color: 'var(--text-muted)', border: '1px solid var(--border-subtle)', cursor: 'pointer' }}
-            >
-              Treadmill Run instead
-            </button>
           </div>
         )}
 
-        {/* ── History Tab ─────────────────────────────────────────────────── */}
         {activeTab === 'history' && (
           <div>
-            {runsLoading ? (
-              <div className="flex items-center justify-center py-10 gap-2" style={{ color: 'var(--text-muted)' }}>
-                <div
-                  className="h-4 w-4 animate-spin rounded-full border-2"
-                  style={{ borderColor: 'var(--accent)', borderTopColor: 'transparent' }}
-                />
-                Loading runs...
-              </div>
-            ) : recentRuns.length === 0 ? (
-              <p className="text-center py-10 text-sm" style={{ color: 'var(--text-muted)' }}>
-                No runs logged yet.
-              </p>
-            ) : (
+            {runsLoading ? <p style={{ color: 'var(--text-muted)' }}>Loading runs...</p> : recentRuns.length === 0 ? <p className="text-center py-10 text-sm" style={{ color: 'var(--text-muted)' }}>No runs logged yet.</p> : (
               <div className="space-y-2">
                 {recentRuns.slice(0, 20).map(run => (
-                  <div
-                    key={run.id}
-                    className="rounded-xl p-3"
-                    style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}
-                  >
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <span className="font-bold text-sm" style={{ color: 'var(--text-primary)' }}>
-                          {run.date}
-                        </span>
-                        <span className="ml-2 text-xs capitalize" style={{ color: 'var(--text-muted)' }}>
-                          {run.surface || run.run_surface || run.type || ''}
-                        </span>
-                      </div>
-                      <span className="text-sm font-semibold" style={{ color: 'var(--accent)' }}>
-                        {run.distance_miles ? `${run.distance_miles} mi` : '—'}
-                      </span>
-                    </div>
-                    <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-                      {run.duration_seconds ? formatRunDuration(run.duration_seconds) : ''}
-                      {run.perceived_effort ? ` · Effort ${run.perceived_effort}/10` : ''}
-                    </div>
-                    {run.notes && (
-                      <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)', opacity: 0.65 }}>
-                        {run.notes}
-                      </p>
-                    )}
-                  </div>
+                  <button key={run.id} onClick={() => { setSelectedRun(run); setEditingNotes(run.notes || '') }} className="w-full text-left rounded-xl p-3" style={{ background: 'var(--bg-base)', border: '1px solid var(--border-subtle)' }}>
+                    <div className="flex justify-between items-start"><div><span className="font-bold text-sm" style={{ color: 'var(--text-primary)' }}>{run.date}</span><span className="ml-2 text-xs capitalize" style={{ color: 'var(--text-muted)' }}>{run.surface || run.run_surface || run.type || ''}</span></div><span className="text-sm font-semibold" style={{ color: 'var(--accent)' }}>{run.distance_miles ? `${run.distance_miles} mi` : '—'}</span></div>
+                    <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>{run.duration_seconds ? formatRunDuration(run.duration_seconds) : ''}{run.perceived_effort ? ` · Effort ${run.perceived_effort}/10` : ''}</div>
+                  </button>
                 ))}
               </div>
             )}
           </div>
         )}
 
-        <Link to="/" className="mt-5 inline-block text-sm" style={{ color: 'var(--text-muted)' }}>
-          ← Back
-        </Link>
+        <Link to="/" className="mt-5 inline-block text-sm" style={{ color: 'var(--text-muted)' }}>← Back</Link>
       </div>
 
-      {showPostCheckIn && savedRunId && (
-        <PostRunCheckIn
-          runId={savedRunId}
-          onDone={() => { setShowPostCheckIn(false); navigate('/') }}
-        />
+      {showWatchModal && <WorkoutWatchModal workout={todayWorkout} onClose={() => setShowWatchModal(false)} />}
+
+      {selectedRun && (
+        <div className="fixed inset-0 z-50" style={{ background: 'var(--bg-base)' }}>
+          <div className="h-full overflow-auto p-4">
+            <div className="flex items-center justify-between mb-4">
+              <button onClick={() => setSelectedRun(null)} style={{ color: 'var(--text-primary)' }}>← Back</button>
+              <h3 className="font-bold" style={{ color: 'var(--text-primary)' }}>Run Detail</h3>
+              <button onClick={() => setShowCustomize(true)} style={{ color: 'var(--text-primary)' }}><Pencil size={18} /></button>
+            </div>
+
+            {panelPrefs.overview && <div className="rounded-xl p-4 mb-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}><h4 className="font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>Overview</h4><div className="text-sm" style={{ color: 'var(--text-muted)' }}>{selectedRun.date}</div><div className="flex gap-2 mt-2"><span className="px-2 py-1 rounded-full text-xs" style={{ background: 'var(--bg-base)', color: 'var(--text-primary)' }}>{selectedRun.surface || selectedRun.run_surface || 'road'}</span><span className="px-2 py-1 rounded-full text-xs" style={{ background: 'var(--bg-base)', color: 'var(--text-primary)' }}>Effort {selectedRun.perceived_effort || 5}/10</span><span className="px-2 py-1 rounded-full text-xs" style={{ background: 'var(--bg-base)', color: 'var(--text-primary)' }}>{selectedRun.type}</span></div></div>}
+
+            {panelPrefs.stats && <div className="rounded-xl p-4 mb-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}><h4 className="font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>Stats</h4><div className="grid grid-cols-2 gap-2"><div className="rounded-xl p-3" style={{ background: 'var(--bg-base)' }}><div className="text-xs" style={{ color: 'var(--text-muted)' }}>Distance</div><div className="text-2xl font-black" style={{ color: 'var(--text-primary)' }}>{selectedRun.distance_miles || 0} mi</div></div><div className="rounded-xl p-3" style={{ background: 'var(--bg-base)' }}><div className="text-xs" style={{ color: 'var(--text-muted)' }}>Time</div><div className="text-2xl font-black" style={{ color: 'var(--text-primary)' }}>{formatRunDuration(selectedRun.duration_seconds || 0)}</div></div><div className="rounded-xl p-3" style={{ background: 'var(--bg-base)' }}><div className="text-xs" style={{ color: 'var(--text-muted)' }}>Avg Pace</div><div className="text-2xl font-black" style={{ color: 'var(--text-primary)' }}>{formatPace(selectedRun.duration_seconds, selectedRun.distance_miles)}</div></div><div className="rounded-xl p-3" style={{ background: 'var(--bg-base)' }}><div className="text-xs" style={{ color: 'var(--text-muted)' }}>Calories</div><div className="text-2xl font-black" style={{ color: 'var(--text-primary)' }}>{selectedRun.calories || '—'}</div></div></div></div>}
+
+            {panelPrefs.pace && <div className="rounded-xl p-4 mb-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}><h4 className="font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>Pace Chart</h4>{selectedSplits.length ? <svg width="100%" height="120" viewBox="0 0 320 120">{selectedSplits.map((split, i) => { const v = Number(split.seconds || split.pace_seconds || split.value || 0); const h = Math.max(10, 100 - Math.min(90, Math.floor(v / 10))); return <rect key={i} x={10 + i * 30} y={110 - h} width="20" height={h} fill="var(--accent)" /> })}</svg> : <p className="text-sm" style={{ color: 'var(--text-muted)' }}>GPS splits available in the mobile app</p>}</div>}
+
+            {panelPrefs.hr && <div className="rounded-xl p-4 mb-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}><h4 className="font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>Heart Rate</h4>{selectedRun.avg_hr || selectedRun.avg_heart_rate ? <div className="text-2xl font-black" style={{ color: 'var(--text-primary)' }}>{selectedRun.avg_hr || selectedRun.avg_heart_rate} bpm</div> : <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Connect a watch to see HR data</p>}</div>}
+
+            {panelPrefs.notes && <div className="rounded-xl p-4 mb-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}><h4 className="font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>Notes</h4><textarea rows={5} value={editingNotes} onChange={e => setEditingNotes(e.target.value)} className="w-full rounded-xl border px-3 py-2" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-base)', color: 'var(--text-primary)' }} /><button onClick={saveNotes} className="mt-2 rounded-lg px-3 py-2 text-sm font-semibold" style={{ background: 'var(--accent)', color: '#000', border: 'none' }}>Save Notes</button></div>}
+
+            <button onClick={deleteRun} className="w-full rounded-xl py-3 font-bold" style={{ background: 'var(--bg-card)', color: 'var(--accent)', border: '1px solid var(--accent)' }}>🗑️ Delete Run</button>
+          </div>
+
+          {showCustomize && (
+            <div className="fixed inset-x-0 bottom-0 z-10 rounded-t-2xl p-4" style={{ background: 'var(--bg-card)', borderTop: '1px solid var(--border-subtle)' }}>
+              <h4 className="font-bold mb-3" style={{ color: 'var(--text-primary)' }}>Customize Panels</h4>
+              {Object.entries({ overview: 'Overview', stats: 'Stats Grid', pace: 'Pace Chart', hr: 'Heart Rate', notes: 'Notes' }).map(([key, label]) => (
+                <label key={key} className="flex items-center justify-between py-2" style={{ color: 'var(--text-primary)' }}>
+                  <span>{label}</span>
+                  <input type="checkbox" checked={panelPrefs[key]} onChange={e => setPanelPrefs(prev => ({ ...prev, [key]: e.target.checked }))} />
+                </label>
+              ))}
+              <button onClick={() => setShowCustomize(false)} className="w-full mt-3 rounded-xl py-2" style={{ background: 'var(--accent)', color: '#000', border: 'none' }}>Done</button>
+            </div>
+          )}
+        </div>
       )}
 
+      {showPostCheckIn && savedRunId && <PostRunCheckIn runId={savedRunId} onDone={() => { setShowPostCheckIn(false); navigate('/') }} />}
+
       {showRecoveryPrompt && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
-          <div className="w-full max-w-sm rounded-2xl border border-[#2a2d3e] bg-[#151823] p-5 text-white">
-            <h3 className="text-xl font-black">Great run! Time to recover.</h3>
-            <p className="mt-2 text-sm text-slate-300">
-              Post-run recovery uses static holds. Hold each stretch for the full duration to target the muscles you just used.
-            </p>
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4" style={{ background: 'rgba(0,0,0,0.7)' }}>
+          <div className="w-full max-w-sm rounded-2xl p-5" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+            <h3 className="text-xl font-black" style={{ color: 'var(--text-primary)' }}>Great run! Time to recover.</h3>
+            <p className="mt-2 text-sm" style={{ color: 'var(--text-muted)' }}>Post-run recovery uses static holds. Hold each stretch for the full duration to target the muscles you just used.</p>
             <div className="mt-4 flex gap-2">
-              <button
-                onClick={() => { setShowRecoveryPrompt(false); navigate('/stretches/session?type=post') }}
-                className="flex-1 rounded-xl bg-yellow-500 px-4 py-2 font-bold text-black"
-              >
-                Start Recovery
-              </button>
-              <button
-                onClick={() => setShowRecoveryPrompt(false)}
-                className="flex-1 rounded-xl border border-[#2a2d3e] px-4 py-2 text-slate-300"
-              >
-                Skip
-              </button>
+              <button onClick={() => { setShowRecoveryPrompt(false); navigate('/stretches/session?type=post') }} className="flex-1 rounded-xl px-4 py-2 font-bold" style={{ background: 'var(--accent)', color: '#000', border: 'none' }}>Start Recovery</button>
+              <button onClick={() => setShowRecoveryPrompt(false)} className="flex-1 rounded-xl px-4 py-2" style={{ background: 'var(--bg-base)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>Skip</button>
             </div>
           </div>
         </div>
