@@ -57,15 +57,18 @@ export default function History() {
 
   useEffect(() => {
     ;(async () => {
-      const [runsRes, liftsRes, workoutsRes] = await Promise.all([
-        api.get('/runs'),
-        api.get('/lifts'),
-        api.get('/workouts'),
-      ])
-      setRuns([...(Array.isArray(runsRes.data) ? runsRes.data : runsRes.data?.runs || [])].sort((a, b) => getRunDate(b).localeCompare(getRunDate(a))))
-      setLifts([...(Array.isArray(liftsRes.data) ? liftsRes.data : liftsRes.data?.lifts || [])].sort((a, b) => (b.date || b.created_at || '').localeCompare(a.date || a.created_at || '')))
-      setWorkoutSessions([...(workoutsRes.data?.sessions || [])].sort((a, b) => (b.started_at || '').localeCompare(a.started_at || '')))
-      setLoading(false)
+      try {
+        const [runsRes, liftsRes, workoutsRes] = await Promise.all([
+          api.get('/runs'),
+          api.get('/lifts'),
+          api.get('/workouts').catch(() => ({ data: { sessions: [] } })),
+        ])
+        setRuns([...(Array.isArray(runsRes.data) ? runsRes.data : runsRes.data?.runs || [])].sort((a, b) => getRunDate(b).localeCompare(getRunDate(a))))
+        setLifts([...(Array.isArray(liftsRes.data) ? liftsRes.data : liftsRes.data?.lifts || [])].sort((a, b) => (b.date || b.created_at || '').localeCompare(a.date || a.created_at || '')))
+        setWorkoutSessions([...(workoutsRes.data?.sessions || [])].sort((a, b) => (b.started_at || '').localeCompare(a.started_at || '')))
+      } finally {
+        setLoading(false)
+      }
     })()
   }, [])
 

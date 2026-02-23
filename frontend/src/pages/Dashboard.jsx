@@ -464,15 +464,13 @@ export default function Dashboard() {
         <h2 className="text-2xl font-black mb-1" style={{ color: 'var(--text-primary)' }}>Ready to Run?</h2>
         <p className="text-sm mb-10 text-center" style={{ color: 'var(--text-muted)' }}>Dynamic warm-up reduces injury risk and improves performance.</p>
         <button
-          onClick={() => checkedInToday && navigate('/log-run?warmup=true')}
-          disabled={!checkedInToday}
-          className="rounded-full w-28 h-28 mb-3 font-black flex flex-col items-center justify-center disabled:opacity-40"
-          style={{ background: checkedInToday ? 'var(--accent)' : 'var(--bg-input)', color: checkedInToday ? '#000' : 'var(--text-muted)', border: 'none', cursor: checkedInToday ? 'pointer' : 'not-allowed' }}
+          onClick={() => navigate('/log-run?warmup=true')}
+          className="rounded-full w-28 h-28 mb-3 font-black flex flex-col items-center justify-center"
+          style={{ background: 'var(--accent)', color: '#000', border: 'none', cursor: 'pointer' }}
         >
           <Flame className="mb-1" />
           <span className="text-xs font-black">Start Warm-Up</span>
         </button>
-        {!checkedInToday && <p className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>Complete your daily check-in to unlock today's warm-up</p>}
         <button onClick={() => navigate('/log-run')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 14, padding: '8px 0' }}>Skip warm-up</button>
       </div>
 
