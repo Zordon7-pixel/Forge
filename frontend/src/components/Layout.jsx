@@ -5,6 +5,7 @@ import { getUser } from '../lib/auth'
 import { useTheme } from '../context/ThemeContext'
 import HelpDesk from './HelpDesk'
 import FeedbackButton from './FeedbackButton'
+import PullToRefresh from './PullToRefresh'
 
 const NAV_ITEMS = [
   { to: '/', end: true, icon: '/nav-home.png', label: 'Home' },
@@ -52,7 +53,9 @@ export default function Layout({ children }) {
           </div>
         </header>
 
-        <main className="pb-24 pt-4">{children}</main>
+        <PullToRefresh>
+          <main className="pb-24 pt-4">{children}</main>
+        </PullToRefresh>
       </div>
 
       <HelpDesk externalOpen={showHelp} onClose={() => setShowHelp(false)} />
