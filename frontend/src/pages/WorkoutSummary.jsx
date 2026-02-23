@@ -21,6 +21,11 @@ export default function WorkoutSummary() {
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [userSex, setUserSex] = useState('male')
+
+  useEffect(() => {
+    api.get('/auth/me').then(res => setUserSex(res.data.user?.sex || 'male')).catch(() => {})
+  }, [])
 
   useEffect(() => {
     api.get(`/workouts/${id}`).then(res => {
@@ -79,7 +84,7 @@ export default function WorkoutSummary() {
       <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>
         <p className="text-sm font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>Muscles Targeted</p>
         <div className="flex gap-4 items-start">
-          <MuscleDiagram muscleGroups={muscleGroups} secondaryLabels={secondary} size={80} />
+          <MuscleDiagram primaryMuscles={primary} secondaryMuscles={secondary} sex={userSex} />
           <div className="flex-1 space-y-3">
             <div>
               <p className="text-xs font-bold uppercase tracking-wide mb-1" style={{ color: 'var(--accent)' }}>Primary</p>

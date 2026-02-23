@@ -22,7 +22,7 @@ const SECONDARY_MAP = {
 function BodyFront({ primaryIds = [], secondaryIds = [] }) {
   const accent = '#EAB308'
   const accentDim = 'rgba(234,179,8,0.25)'
-  const muscleBase = 'rgba(255,255,255,0.12)'
+  const muscleBase = 'transparent'
 
   const fill = id => {
     if (primaryIds.includes(id)) return accent
@@ -34,7 +34,7 @@ function BodyFront({ primaryIds = [], secondaryIds = [] }) {
     <svg viewBox="0 0 120 280" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-full h-full">
       <ellipse cx="60" cy="30" rx="18" ry="22" fill="rgba(255,255,255,0.08)" stroke="rgba(255,255,255,0.15)" strokeWidth="1" />
       <rect x="54" y="50" width="12" height="14" rx="4" fill="rgba(255,255,255,0.08)" stroke="rgba(255,255,255,0.15)" strokeWidth="1" />
-      <path d="M30 64 Q25 70 24 90 L24 150 Q24 158 30 162 L90 162 Q96 158 96 150 L96 90 Q95 70 90 64 Z" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.15)" strokeWidth="1" />
+      <path d="M30 64 Q25 70 24 90 L24 150 Q24 158 30 162 L90 162 Q96 158 96 150 L96 90 Q95 70 90 64 Z" fill="transparent" stroke="rgba(255,255,255,0.15)" strokeWidth="1" />
 
       <ellipse id="shoulder-front-l" cx="22" cy="76" rx="11" ry="9" fill={fill('shoulder-front-l')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
       <ellipse id="shoulder-front-r" cx="98" cy="76" rx="11" ry="9" fill={fill('shoulder-front-r')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
@@ -60,8 +60,8 @@ function BodyFront({ primaryIds = [], secondaryIds = [] }) {
       <rect id="forearm-l" x="6" y="130" width="10" height="36" rx="4" fill={fill('forearm-l')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
       <rect id="forearm-r" x="104" y="130" width="10" height="36" rx="4" fill={fill('forearm-r')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
 
-      <path d="M28 158 Q24 172 26 185 L42 185 Q46 172 46 160 Z" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
-      <path d="M92 158 Q96 172 94 185 L78 185 Q74 172 74 160 Z" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
+      <path d="M28 158 Q24 172 26 185 L42 185 Q46 172 46 160 Z" fill="transparent" stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
+      <path d="M92 158 Q96 172 94 185 L78 185 Q74 172 74 160 Z" fill="transparent" stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
 
       <path id="quad-l" d="M27 187 Q24 200 26 230 L42 230 Q44 200 43 187 Z" fill={fill('quad-l')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
       <path id="quad-r" d="M93 187 Q96 200 94 230 L78 230 Q76 200 77 187 Z" fill={fill('quad-r')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
@@ -71,8 +71,8 @@ function BodyFront({ primaryIds = [], secondaryIds = [] }) {
       <ellipse cx="35" cy="234" rx="10" ry="6" fill="rgba(255,255,255,0.08)" stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
       <ellipse cx="85" cy="234" rx="10" ry="6" fill="rgba(255,255,255,0.08)" stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
 
-      <path d="M26 240 Q25 255 26 275 L44 275 Q45 255 44 240 Z" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
-      <path d="M76 240 Q75 255 76 275 L94 275 Q95 255 94 240 Z" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
+      <path d="M26 240 Q25 255 26 275 L44 275 Q45 255 44 240 Z" fill="transparent" stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
+      <path d="M76 240 Q75 255 76 275 L94 275 Q95 255 94 240 Z" fill="transparent" stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
     </svg>
   )
 }
@@ -80,7 +80,7 @@ function BodyFront({ primaryIds = [], secondaryIds = [] }) {
 function BodyBack({ primaryIds = [], secondaryIds = [] }) {
   const accent = '#EAB308'
   const accentDim = 'rgba(234,179,8,0.25)'
-  const muscleBase = 'rgba(255,255,255,0.12)'
+  const muscleBase = 'transparent'
 
   const fill = id => {
     if (primaryIds.includes(id)) return accent
@@ -92,7 +92,7 @@ function BodyBack({ primaryIds = [], secondaryIds = [] }) {
     <svg viewBox="0 0 120 280" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-full h-full">
       <ellipse cx="60" cy="30" rx="18" ry="22" fill="rgba(255,255,255,0.08)" stroke="rgba(255,255,255,0.15)" strokeWidth="1" />
       <rect x="54" y="50" width="12" height="14" rx="4" fill="rgba(255,255,255,0.08)" stroke="rgba(255,255,255,0.15)" strokeWidth="1" />
-      <path d="M30 64 Q25 70 24 90 L24 150 Q24 158 30 162 L90 162 Q96 158 96 150 L96 90 Q95 70 90 64 Z" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.15)" strokeWidth="1" />
+      <path d="M30 64 Q25 70 24 90 L24 150 Q24 158 30 162 L90 162 Q96 158 96 150 L96 90 Q95 70 90 64 Z" fill="transparent" stroke="rgba(255,255,255,0.15)" strokeWidth="1" />
 
       <ellipse id="shoulder-rear-l" cx="22" cy="76" rx="11" ry="9" fill={fill('shoulder-rear-l')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
       <ellipse id="shoulder-rear-r" cx="98" cy="76" rx="11" ry="9" fill={fill('shoulder-rear-r')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
@@ -171,14 +171,30 @@ export default function MuscleDiagram({ primaryMuscles = [], secondaryMuscles = 
       <div className="flex gap-4 justify-center">
         <div className="flex flex-col items-center gap-1 flex-1">
           <span className="text-xs font-medium" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>Front</span>
-          <div className="h-48">
-            <BodyFront primaryIds={frontPrimary} secondaryIds={frontSecondary} />
+          <div className="h-48 relative w-full">
+            <img
+              src={sex === 'female' ? '/body-female-front.png' : '/body-male-front.png'}
+              alt="Body"
+              className="absolute inset-0 w-full h-full"
+              style={{ objectFit: 'contain', opacity: 0.55 }}
+            />
+            <div className="absolute inset-0">
+              <BodyFront primaryIds={frontPrimary} secondaryIds={frontSecondary} />
+            </div>
           </div>
         </div>
         <div className="flex flex-col items-center gap-1 flex-1">
           <span className="text-xs font-medium" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>Back</span>
-          <div className="h-48">
-            <BodyBack primaryIds={backPrimary} secondaryIds={backSecondary} />
+          <div className="h-48 relative w-full">
+            <img
+              src={sex === 'female' ? '/body-female-back.png' : '/body-male-back.png'}
+              alt="Body"
+              className="absolute inset-0 w-full h-full"
+              style={{ objectFit: 'contain', opacity: 0.55 }}
+            />
+            <div className="absolute inset-0">
+              <BodyBack primaryIds={backPrimary} secondaryIds={backSecondary} />
+            </div>
           </div>
         </div>
       </div>
