@@ -58,20 +58,27 @@ export default function ActiveRun() {
   const [treadmillBrand, setTreadmillBrand] = useState(location?.state?.treadmillBrand ?? null)
   const [userProfile, setUserProfile] = useState(null)
   const [liveHr, setLiveHr] = useState(null)
+  const [hrLastUpdated, setHrLastUpdated] = useState(null)
   const watchRef = useRef(null)
   const lastPointRef = useRef(null)
 
   useEffect(() => { api.get('/auth/me').then(r => setUserProfile(r.data?.user || null)).catch(() => {}) }, [])
+  
   useEffect(() => {
     const poll = async () => {
       try {
-        const res = await api.get('/watch-sync/recent', { params: { since: '1970-01-01T00:00:00' } })
-        const latest = (res.data?.items || []).find(i => i.avg_heart_rate)
-        if (latest?.avg_heart_rate) setLiveHr(Number(latest.avg_heart_rate))
+        const res = await api.get('/watch-sync/status')
+        if (res.data?.avg_heart_rate) {
+          setLiveHr(Number(res.data.avg_heart_rate))
+          setHrLastUpdated(Date.now())
+        }
       } catch {}
     }
-    poll(); const t = setInterval(poll, 10000); return () => clearInterval(t)
-  }, [])
+    if (!running) return
+    poll()
+    const t = setInterval(poll, 5000)
+    return () => clearInterval(t)
+  }, [running])
 
   const maxHr = userProfile?.max_heart_rate || (userProfile?.age ? 220 - Number(userProfile.age) : null)
   const hrZone = getZone(liveHr, maxHr)
@@ -194,8 +201,14 @@ export default function ActiveRun() {
         <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Heart Rate</p>
         {liveHr ? (
           <>
-            <div className="flex items-center gap-2"><p className="font-bold" style={{ color: 'var(--text-primary)' }}>{liveHr} bpm</p>{hrZone && <span className="px-2 py-0.5 rounded-full text-xs font-semibold" style={{ background: `${hrZone.color}22`, color: hrZone.color }}>{hrZone.key} · {hrZone.name}</span>}</div>
+            <div className="flex items-center gap-2">
+              <p className="font-bold" style={{ color: 'var(--text-primary)' }}>{liveHr} bpm</p>
+              <span style={{ width: 8, height: 8, borderRadius: '50%', background: hrLastUpdated && Date.now() - hrLastUpdated < 10000 ? '#22c55e' : '#6b7280', animation: hrLastUpdated && Date.now() - hrLastUpdated < 10000 ? 'pulse 2s infinite' : 'none' }} />
+              {hrLastUpdated && Date.now() - hrLastUpdated > 60000 && <span className="text-xs" style={{ color: 'var(--text-muted)' }}>(last known)</span>}
+              {hrZone && <span className="px-2 py-0.5 rounded-full text-xs font-semibold" style={{ background: `${hrZone.color}22`, color: hrZone.color }}>{hrZone.key} · {hrZone.name}</span>}
+            </div>
             {hrZone && <div className="mt-2 h-1.5 rounded-full" style={{ background: 'var(--bg-base)' }}><div className="h-full rounded-full" style={{ width: `${Math.min(100, Math.max(0, (hrZone.pct * 100))) }%`, background: hrZone.color }} /></div>}
+            <style>{`@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }`}</style>
           </>
         ) : <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Connect watch for live HR</p>}
       </div>

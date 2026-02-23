@@ -250,6 +250,10 @@ if (!runCols.includes('temperature_f')) db.prepare("ALTER TABLE runs ADD COLUMN 
 if (!runCols.includes('treadmill_brand')) db.prepare("ALTER TABLE runs ADD COLUMN treadmill_brand TEXT").run();
 if (!runCols.includes('treadmill_model')) db.prepare("ALTER TABLE runs ADD COLUMN treadmill_model TEXT").run();
 if (!runCols.includes('gps_available')) db.prepare("ALTER TABLE runs ADD COLUMN gps_available INTEGER DEFAULT 1").run();
+try { db.prepare("ALTER TABLE runs ADD COLUMN cadence_avg REAL").run() } catch (_) {}
+try { db.prepare("ALTER TABLE runs ADD COLUMN vo2max REAL").run() } catch (_) {}
+try { db.prepare("ALTER TABLE runs ADD COLUMN temperature_c REAL").run() } catch (_) {}
+try { db.prepare("ALTER TABLE runs ADD COLUMN calories_watch INTEGER").run() } catch (_) {}
 
 const liftCols = db.prepare("PRAGMA table_info(lifts)").all().map(c => c.name);
 if (!liftCols.includes('exercise_name')) {
@@ -302,6 +306,8 @@ if (!userCols3.includes('username')) {
 
 try { db.exec('ALTER TABLE users ADD COLUMN step_goal INTEGER DEFAULT 10000') } catch (_) {}
 try { db.prepare('ALTER TABLE workout_sessions ADD COLUMN ai_feedback TEXT').run() } catch (_) {}
+try { db.prepare('ALTER TABLE saved_workouts ADD COLUMN community_workout_id TEXT').run() } catch (_) {}
+try { db.prepare('ALTER TABLE saved_workouts ADD COLUMN saved_at TEXT DEFAULT (datetime(\'now\'))').run() } catch (_) {}
 
 // Add seasonal columns to badges if missing
 try { db.prepare("ALTER TABLE badges ADD COLUMN window_start TEXT").run() } catch (_) {}
