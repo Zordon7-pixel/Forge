@@ -6,7 +6,7 @@ const FEELINGS = [
   { value: 1, label: 'Exhausted', img: '/checkin/exhausted.png' },
   { value: 2, label: 'Tired',     img: '/checkin/tired.png' },
   { value: 3, label: 'Okay',      img: '/checkin/okay.png' },
-  { value: 4, label: 'Good',      img: '/checkin/good.jpg' },
+  { value: 4, label: 'Good',      img: '/checkin/good.png' },
   { value: 5, label: 'Great',     img: '/checkin/great.png' },
 ]
 
@@ -91,21 +91,28 @@ export default function DailyCheckIn({ onComplete }) {
 
       <div style={{ marginBottom: 24 }}>
         <p style={{ fontWeight: 700, color: 'var(--text-primary)', marginBottom: 12 }}>How are you feeling?</p>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 10 }}>
           {FEELINGS.map(f => (
-            <button key={f.value} onClick={() => setFeeling(f.value)}
-              style={{
-                flex: 1, padding: 0, borderRadius: 14,
-                border: `2px solid ${feeling === f.value ? 'var(--accent)' : 'transparent'}`,
-                background: 'transparent', cursor: 'pointer', overflow: 'hidden',
-                boxShadow: feeling === f.value ? '0 0 12px rgba(234,179,8,0.5)' : 'none',
-                transition: 'box-shadow 0.2s, border-color 0.2s',
-              }}>
-              <img src={f.img} alt={f.label}
-                style={{ width: '100%', display: 'block', borderRadius: 12,
-                  filter: feeling === f.value ? 'brightness(1.1)' : 'brightness(0.75)',
-                  transition: 'filter 0.2s' }} />
-            </button>
+            <div key={f.value} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+              <button onClick={() => setFeeling(f.value)}
+                style={{
+                  width: '100%', padding: 0, borderRadius: 16,
+                  border: `2px solid ${feeling === f.value ? 'var(--accent)' : 'transparent'}`,
+                  background: 'transparent', cursor: 'pointer', overflow: 'hidden',
+                  boxShadow: feeling === f.value ? '0 0 16px rgba(234,179,8,0.6)' : 'none',
+                  transition: 'box-shadow 0.2s, border-color 0.2s',
+                }}>
+                <img src={f.img} alt={f.label}
+                  style={{ width: '100%', display: 'block', borderRadius: 14,
+                    filter: feeling === f.value ? 'brightness(1.15)' : 'brightness(0.7)',
+                    transition: 'filter 0.2s' }} />
+              </button>
+              <span style={{
+                fontSize: 11, fontWeight: 700, textAlign: 'center',
+                color: feeling === f.value ? 'var(--accent)' : 'var(--text-muted)',
+                transition: 'color 0.2s',
+              }}>{f.label}</span>
+            </div>
           ))}
         </div>
       </div>
