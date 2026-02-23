@@ -32,6 +32,11 @@ export default function History() {
   const [editingRun, setEditingRun] = useState(null)
   const [editingLift, setEditingLift] = useState(null)
   const [showMissedModal, setShowMissedModal] = useState(false)
+  
+  const currentYear = new Date().getFullYear()
+  const [selectedYear, setSelectedYear] = useState(null)
+  const [customRange, setCustomRange] = useState({ from: '', to: '' })
+  const [showDatePicker, setShowDatePicker] = useState(false)
 
   useEffect(() => {
     ;(async () => {
@@ -65,7 +70,24 @@ export default function History() {
     setEditingLift(null)
   }
 
-  const filterByPeriod = (items, dateKey) => {
+  const filterItems = (items, dateKey) => {
+    // Custom range takes priority
+    if (customRange.from || customRange.to) {
+      return items.filter(item => {
+        const d = (item[dateKey] || item.created_at || '').slice(0, 10)
+        if (customRange.from && d < customRange.from) return false
+        if (customRange.to && d > customRange.to) return false
+        return true
+      })
+    }
+    // Year filter
+    if (selectedYear) {
+      return items.filter(item => {
+        const d = (item[dateKey] || item.created_at || '').slice(0, 10)
+        return d.startsWith(String(selectedYear))
+      })
+    }
+    // Period filter (existing logic)
     if (period === 'all') return items
     const days = { week: 7, month: 30, year: 365 }[period]
     const since = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10)
@@ -75,8 +97,8 @@ export default function History() {
     })
   }
 
-  const filteredRuns = filterByPeriod(runs, 'date')
-  const filteredLifts = filterByPeriod(lifts, 'date')
+  const filteredRuns = filterItems(runs, 'date')
+  const filteredLifts = filterItems(lifts, 'date')
 
   const periodMiles = useMemo(
     () => filteredRuns.reduce((s, r) => s + Number(r.distance_miles || 0), 0),
@@ -103,7 +125,75 @@ export default function History() {
         ))}
       </div>
 
-      <div className="mb-4 flex rounded-xl overflow-hidden border" style={{ borderColor: 'var(--border-subtle)' }}>
+      <div className="mb-4">
+        <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 4, marginBottom: 12 }}>
+          {Array.from({ length: 5 }, (_, i) => currentYear - i).map(year => (
+            <button key={year} onClick={() => { setSelectedYear(selectedYear === year ? null : year); setCustomRange({ from: '', to: '' }) }}
+              style={{
+                flexShrink: 0,
+                padding: '6px 16px',
+                borderRadius: 20,
+                border: `1.5px solid ${selectedYear === year ? 'var(--accent)' : 'var(--border-subtle)'}`,
+                background: selectedYear === year ? 'var(--accent)' : 'var(--bg-input)',
+                color: selectedYear === year ? 'black' : 'var(--text-muted)',
+                fontWeight: 700,
+                fontSize: 13,
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+              }}>
+              {year}
+            </button>
+          ))}
+          <button onClick={() => { setShowDatePicker(p => !p); setSelectedYear(null) }}
+            style={{
+              flexShrink: 0,
+              padding: '6px 14px',
+              borderRadius: 20,
+              border: `1.5px solid ${(customRange.from || customRange.to) ? 'var(--accent)' : 'var(--border-subtle)'}`,
+              background: (customRange.from || customRange.to) ? 'var(--accent-dim)' : 'var(--bg-input)',
+              color: (customRange.from || customRange.to) ? 'var(--accent)' : 'var(--text-muted)',
+              fontWeight: 700,
+              fontSize: 13,
+              cursor: 'pointer',
+              whiteSpace: 'nowrap',
+            }}>
+            Custom Range
+          </button>
+        </div>
+
+        {showDatePicker && (
+          <div className="rounded-xl p-4 mb-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+            <p className="text-xs font-semibold mb-3" style={{ color: 'var(--text-muted)' }}>Custom Date Range</p>
+            <div className="flex gap-3">
+              <div className="flex-1">
+                <label className="text-xs mb-1 block" style={{ color: 'var(--text-muted)' }}>From</label>
+                <input type="date" value={customRange.from}
+                  min={`${currentYear - 5}-01-01`}
+                  max={new Date().toISOString().slice(0, 10)}
+                  onChange={e => setCustomRange(p => ({ ...p, from: e.target.value }))}
+                  style={{ width: '100%', background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', borderRadius: 8, padding: '8px 10px', color: 'var(--text-primary)', fontSize: 13 }} />
+              </div>
+              <div className="flex-1">
+                <label className="text-xs mb-1 block" style={{ color: 'var(--text-muted)' }}>To</label>
+                <input type="date" value={customRange.to}
+                  min={`${currentYear - 5}-01-01`}
+                  max={new Date().toISOString().slice(0, 10)}
+                  onChange={e => setCustomRange(p => ({ ...p, to: e.target.value }))}
+                  style={{ width: '100%', background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', borderRadius: 8, padding: '8px 10px', color: 'var(--text-primary)', fontSize: 13 }} />
+              </div>
+            </div>
+            {(customRange.from || customRange.to) && (
+              <button onClick={() => { setCustomRange({ from: '', to: '' }); setShowDatePicker(false) }}
+                className="mt-3 text-xs"
+                style={{ color: 'var(--text-muted)' }}>
+                Clear
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div className="mb-4 flex rounded-xl overflow-hidden border" style={{ borderColor: 'var(--border-subtle)', opacity: (selectedYear || customRange.from || customRange.to) ? 0.4 : 1 }}>
         {['week', 'month', 'year', 'all'].map(p => (
           <button
             key={p}
