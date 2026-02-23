@@ -10,21 +10,39 @@ router.get('/', auth, (req, res) => {
 });
 
 router.post('/', auth, (req, res) => {
-  const { date, type, distance_miles, duration_seconds, perceived_effort, notes, run_surface, surface, incline_pct, treadmill_speed, route_coords, watch_mode } = req.body;
+  const { date, type, distance_miles, duration_seconds, perceived_effort, notes, run_surface, surface, incline_pct, treadmill_speed, route_coords, watch_mode,
+    avg_heart_rate, max_heart_rate, min_heart_rate, heart_rate_zones, cadence_spm, elevation_gain, elevation_loss,
+    pace_avg, pace_splits, vo2_max, training_effect_aerobic, training_effect_anaerobic, recovery_time_hours,
+    detected_surface_type, temperature_f, calories, treadmill_brand, treadmill_model, watch_sync_id, watch_activity_type, watch_normalized_type } = req.body;
   if (!date || !type) return res.status(400).json({ error: 'date and type required' });
   const id = uuidv4();
   const resolvedSurface = surface || run_surface || 'road';
-  db.prepare(`INSERT INTO runs (id, user_id, date, type, distance_miles, duration_seconds, perceived_effort, notes, run_surface, surface, incline_pct, treadmill_speed, route_coords, watch_mode)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-    id, req.user.id, date, type, distance_miles || 0, duration_seconds || 0, perceived_effort || 5, notes || null, resolvedSurface, resolvedSurface, incline_pct || 0, treadmill_speed || 0, JSON.stringify(route_coords || []), watch_mode || null
+  db.prepare(`INSERT INTO runs (
+    id, user_id, date, type, distance_miles, duration_seconds, perceived_effort, notes,
+    run_surface, surface, incline_pct, treadmill_speed, route_coords, watch_mode,
+    avg_heart_rate, max_heart_rate, min_heart_rate, heart_rate_zones,
+    cadence_spm, elevation_gain, elevation_loss, pace_avg, pace_splits,
+    vo2_max, training_effect_aerobic, training_effect_anaerobic, recovery_time_hours,
+    detected_surface_type, temperature_f, calories, treadmill_brand, treadmill_model,
+    watch_sync_id, watch_activity_type, watch_normalized_type
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id, req.user.id, date, type, distance_miles || 0, duration_seconds || 0, perceived_effort || 5, notes || null,
+    resolvedSurface, resolvedSurface, incline_pct || 0, treadmill_speed || 0, JSON.stringify(route_coords || []), watch_mode || null,
+    avg_heart_rate || null, max_heart_rate || null, min_heart_rate || null, JSON.stringify(heart_rate_zones || []),
+    cadence_spm || null, elevation_gain || null, elevation_loss || null, pace_avg || null, JSON.stringify(pace_splits || []),
+    vo2_max || null, training_effect_aerobic || null, training_effect_anaerobic || null, recovery_time_hours || null,
+    detected_surface_type || null, temperature_f || null, calories || 0, treadmill_brand || null, treadmill_model || null,
+    watch_sync_id || null, watch_activity_type || null, watch_normalized_type || null
   );
 
   // Get user weight for calorie calc (default 185 if not set)
   const userProfile = db.prepare('SELECT weight_lbs FROM users WHERE id=?').get(req.user.id);
   const weightLbs = userProfile?.weight_lbs || 185;
-  const calories = Math.round(0.75 * weightLbs * (distance_miles || 0));
-  if (calories > 0) {
-    db.prepare('UPDATE runs SET calories=? WHERE id=?').run(calories, id);
+  const computedCalories = Math.round(0.75 * weightLbs * (distance_miles || 0));
+  const resolvedCalories = Number(calories || 0) > 0 ? Number(calories) : computedCalories;
+  if (resolvedCalories > 0) {
+    db.prepare('UPDATE runs SET calories=? WHERE id=?').run(resolvedCalories, id);
   }
 
   const run = db.prepare('SELECT * FROM runs WHERE id = ?').get(id);

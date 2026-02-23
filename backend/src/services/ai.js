@@ -162,7 +162,7 @@ async function generateWorkoutFeedback(session, sets, profile) {
 async function generateRunBrief({ run, profile, recentRuns, recentLifts }) {
   try {
     const prompt = `Return JSON only with keys: why, effort, bpmRange, cadence. Athlete ${profile?.name || 'athlete'} goal ${profile?.goal_type || 'fitness'}. Latest planned/session run: ${JSON.stringify(run || {})}. Recent runs: ${JSON.stringify((recentRuns || []).slice(0,5))}. Recent workouts: ${JSON.stringify((recentLifts || []).slice(0,3))}.`; 
-    const msg = await getClient().messages.create({ model: 'claude-3-5-sonnet-20241022', max_tokens: 220, messages: [{ role: 'user', content: prompt }] });
+    const msg = await getClient().messages.create({ model: 'claude-haiku-4-5', max_tokens: 220, messages: [{ role: 'user', content: prompt }] });
     const text = msg.content?.[0]?.text || '{}';
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     return jsonMatch ? JSON.parse(jsonMatch[0]) : null;
@@ -172,7 +172,7 @@ async function generateRunBrief({ run, profile, recentRuns, recentLifts }) {
 async function generateLiftPlan({ bodyPart, timeAvailable, profile, recentSets, recentRuns }) {
   try {
     const prompt = `Return JSON only with keys: workoutName, exercises(array of {name,sets,reps,rest}), estimatedTime. Body part: ${bodyPart}. Time available: ${timeAvailable}. Athlete: ${profile?.name || 'athlete'}. Recent sets: ${JSON.stringify((recentSets || []).slice(0,12))}. Recent runs: ${JSON.stringify((recentRuns || []).slice(0,4))}.`;
-    const msg = await getClient().messages.create({ model: 'claude-3-5-sonnet-20241022', max_tokens: 320, messages: [{ role: 'user', content: prompt }] });
+    const msg = await getClient().messages.create({ model: 'claude-haiku-4-5', max_tokens: 320, messages: [{ role: 'user', content: prompt }] });
     const text = msg.content?.[0]?.text || '{}';
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     return jsonMatch ? JSON.parse(jsonMatch[0]) : null;
@@ -182,7 +182,7 @@ async function generateLiftPlan({ bodyPart, timeAvailable, profile, recentSets, 
 async function generateWorkoutRecommendation({ profile, recentRuns, recentWorkouts }) {
   try {
     const prompt = `Return JSON only with keys: workoutName,target,warmup(array),main(array of {name,sets,reps,rest}),recovery(array),explanation,restExplanation. Athlete:${profile?.name || 'athlete'} goal ${profile?.goal_type || 'fitness'}. recent runs ${JSON.stringify((recentRuns || []).slice(0,5))}. recent workouts ${JSON.stringify((recentWorkouts || []).slice(0,5))}.`;
-    const msg = await getClient().messages.create({ model: 'claude-3-5-sonnet-20241022', max_tokens: 420, messages: [{ role: 'user', content: prompt }] });
+    const msg = await getClient().messages.create({ model: 'claude-haiku-4-5', max_tokens: 420, messages: [{ role: 'user', content: prompt }] });
     const text = msg.content?.[0]?.text || '{}';
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     return jsonMatch ? JSON.parse(jsonMatch[0]) : null;

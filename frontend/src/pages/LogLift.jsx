@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../lib/api'
-import ExercisePickerModal from '../components/ExercisePickerModal'
 
 const MUSCLE_GROUPS = [
   { key: 'chest', label: 'Chest' },
@@ -68,13 +67,14 @@ export default function LogLift() {
   const [selected, setSelected] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [showExercisePicker, setShowExercisePicker] = useState(false)
   const [selectedExercise, setSelectedExercise] = useState(null)
   const [userSex, setUserSex] = useState('male')
   const [timeAvailable, setTimeAvailable] = useState('')
   const [liftPlan, setLiftPlan] = useState(null)
   const [activeTab, setActiveTab] = useState('manual')
   const [aiRecommendation, setAiRecommendation] = useState(null)
+  const [sharedWorkoutId, setSharedWorkoutId] = useState(null)
+  const [sharingWorkout, setSharingWorkout] = useState(false)
 
   useEffect(() => {
     api.get('/auth/me').then(res => {
@@ -83,12 +83,6 @@ export default function LogLift() {
   }, [])
 
   const selectedMuscleGroup = selected[0] || ''
-
-  useEffect(() => {
-    if (selectedMuscleGroup && timeAvailable && !selectedExercise) {
-      setShowExercisePicker(true)
-    }
-  }, [selectedMuscleGroup, timeAvailable])
 
   useEffect(() => {
     api.get('/ai/workout-recommendation?date=today').then((r) => setAiRecommendation(r.data?.recommendation || null)).catch(() => {})
@@ -104,6 +98,20 @@ export default function LogLift() {
     }
     return next
   })
+
+  const shareWorkout = async () => {
+    if (!aiRecommendation) return
+    setSharingWorkout(true)
+    try {
+      const res = await api.post('/ai/community-share', { workoutData: aiRecommendation })
+      setSharedWorkoutId(res.data.id)
+    } catch (err) {
+      console.error('Failed to share workout:', err)
+      setError('Could not share workout. Try again.')
+    } finally {
+      setSharingWorkout(false)
+    }
+  }
 
   const begin = async () => {
     setLoading(true)
@@ -141,6 +149,14 @@ export default function LogLift() {
           <p className="text-sm mt-2"><strong>Recovery:</strong> {(aiRecommendation.recovery || []).join(', ')}</p>
           <p className="text-sm mt-2">{aiRecommendation.explanation}</p>
           <p className="text-xs mt-1">{aiRecommendation.restExplanation}</p>
+          <button
+            onClick={shareWorkout}
+            disabled={sharingWorkout || sharedWorkoutId}
+            className="mt-3 w-full rounded-xl py-2 font-semibold text-sm"
+            style={{ background: sharedWorkoutId ? 'var(--bg-base)' : 'var(--accent)', color: sharedWorkoutId ? 'var(--text-muted)' : '#000', border: 'none', cursor: sharedWorkoutId ? 'default' : 'pointer', opacity: sharingWorkout ? 0.6 : 1 }}
+          >
+            {sharingWorkout ? 'Sharing...' : sharedWorkoutId ? 'Shared' : 'Share to Community'}
+          </button>
         </div>
       )}
 
@@ -216,14 +232,6 @@ export default function LogLift() {
           {selectedExercise && <p className="text-sm" style={{ color: 'var(--text-primary)' }}>Exercise: {selectedExercise.name}</p>}
           {liftPlan && <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{liftPlan.workoutName} · Estimated: {liftPlan.estimatedTime}</p>}
         </div>
-      )}
-
-      {showExercisePicker && (
-        <ExercisePickerModal
-          muscleGroup={selectedMuscleGroup}
-          onSelect={(ex) => { setSelectedExercise(ex); setShowExercisePicker(false) }}
-          onClose={() => setShowExercisePicker(false)}
-        />
       )}
 
       {error && <p className="text-sm" style={{ color: 'var(--accent)' }}>{error}</p>}

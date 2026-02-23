@@ -230,6 +230,25 @@ if (!runCols.includes('surface')) db.prepare("ALTER TABLE runs ADD COLUMN surfac
 if (!runCols.includes('route_coords')) db.prepare("ALTER TABLE runs ADD COLUMN route_coords TEXT DEFAULT '[]'").run();
 if (!runCols.includes('avg_heart_rate')) db.prepare("ALTER TABLE runs ADD COLUMN avg_heart_rate INTEGER").run();
 if (!runCols.includes('watch_mode')) db.prepare("ALTER TABLE runs ADD COLUMN watch_mode TEXT").run();
+if (!runCols.includes('watch_sync_id')) db.prepare("ALTER TABLE runs ADD COLUMN watch_sync_id TEXT").run();
+if (!runCols.includes('watch_activity_type')) db.prepare("ALTER TABLE runs ADD COLUMN watch_activity_type TEXT").run();
+if (!runCols.includes('watch_normalized_type')) db.prepare("ALTER TABLE runs ADD COLUMN watch_normalized_type TEXT").run();
+if (!runCols.includes('max_heart_rate')) db.prepare("ALTER TABLE runs ADD COLUMN max_heart_rate INTEGER").run();
+if (!runCols.includes('min_heart_rate')) db.prepare("ALTER TABLE runs ADD COLUMN min_heart_rate INTEGER").run();
+if (!runCols.includes('heart_rate_zones')) db.prepare("ALTER TABLE runs ADD COLUMN heart_rate_zones TEXT DEFAULT '[]'").run();
+if (!runCols.includes('cadence_spm')) db.prepare("ALTER TABLE runs ADD COLUMN cadence_spm REAL").run();
+if (!runCols.includes('elevation_gain')) db.prepare("ALTER TABLE runs ADD COLUMN elevation_gain REAL").run();
+if (!runCols.includes('elevation_loss')) db.prepare("ALTER TABLE runs ADD COLUMN elevation_loss REAL").run();
+if (!runCols.includes('pace_avg')) db.prepare("ALTER TABLE runs ADD COLUMN pace_avg REAL").run();
+if (!runCols.includes('pace_splits')) db.prepare("ALTER TABLE runs ADD COLUMN pace_splits TEXT DEFAULT '[]'").run();
+if (!runCols.includes('vo2_max')) db.prepare("ALTER TABLE runs ADD COLUMN vo2_max REAL").run();
+if (!runCols.includes('training_effect_aerobic')) db.prepare("ALTER TABLE runs ADD COLUMN training_effect_aerobic REAL").run();
+if (!runCols.includes('training_effect_anaerobic')) db.prepare("ALTER TABLE runs ADD COLUMN training_effect_anaerobic REAL").run();
+if (!runCols.includes('recovery_time_hours')) db.prepare("ALTER TABLE runs ADD COLUMN recovery_time_hours REAL").run();
+if (!runCols.includes('detected_surface_type')) db.prepare("ALTER TABLE runs ADD COLUMN detected_surface_type TEXT").run();
+if (!runCols.includes('temperature_f')) db.prepare("ALTER TABLE runs ADD COLUMN temperature_f REAL").run();
+if (!runCols.includes('treadmill_brand')) db.prepare("ALTER TABLE runs ADD COLUMN treadmill_brand TEXT").run();
+if (!runCols.includes('treadmill_model')) db.prepare("ALTER TABLE runs ADD COLUMN treadmill_model TEXT").run();
 
 const liftCols = db.prepare("PRAGMA table_info(lifts)").all().map(c => c.name);
 if (!liftCols.includes('exercise_name')) {
@@ -244,6 +263,18 @@ if (!liftCols.includes('reps')) {
 if (!liftCols.includes('weight_lbs')) {
   db.prepare("ALTER TABLE lifts ADD COLUMN weight_lbs REAL").run();
 }
+if (!liftCols.includes('watch_sync_id')) db.prepare("ALTER TABLE lifts ADD COLUMN watch_sync_id TEXT").run();
+if (!liftCols.includes('watch_activity_type')) db.prepare("ALTER TABLE lifts ADD COLUMN watch_activity_type TEXT").run();
+if (!liftCols.includes('watch_normalized_type')) db.prepare("ALTER TABLE lifts ADD COLUMN watch_normalized_type TEXT").run();
+if (!liftCols.includes('avg_heart_rate')) db.prepare("ALTER TABLE lifts ADD COLUMN avg_heart_rate INTEGER").run();
+if (!liftCols.includes('max_heart_rate')) db.prepare("ALTER TABLE lifts ADD COLUMN max_heart_rate INTEGER").run();
+if (!liftCols.includes('min_heart_rate')) db.prepare("ALTER TABLE lifts ADD COLUMN min_heart_rate INTEGER").run();
+if (!liftCols.includes('set_heart_rate')) db.prepare("ALTER TABLE lifts ADD COLUMN set_heart_rate TEXT DEFAULT '[]'").run();
+if (!liftCols.includes('rest_heart_rate')) db.prepare("ALTER TABLE lifts ADD COLUMN rest_heart_rate TEXT DEFAULT '[]'").run();
+if (!liftCols.includes('workout_duration_seconds')) db.prepare("ALTER TABLE lifts ADD COLUMN workout_duration_seconds INTEGER").run();
+if (!liftCols.includes('calories')) db.prepare("ALTER TABLE lifts ADD COLUMN calories INTEGER").run();
+if (!liftCols.includes('recovery_heart_rate')) db.prepare("ALTER TABLE lifts ADD COLUMN recovery_heart_rate INTEGER").run();
+if (!liftCols.includes('category')) db.prepare("ALTER TABLE lifts ADD COLUMN category TEXT DEFAULT 'strength'").run();
 
 // Schedule preference columns
 const userCols2 = db.prepare("PRAGMA table_info(users)").all().map(c => c.name);
@@ -291,6 +322,44 @@ const seasonalBadges = [
 const seasonalStmt = db.prepare("INSERT OR IGNORE INTO badges (slug, name, description, icon, category, requirement_type, requirement_value, window_start, window_end, color) VALUES (?,?,?,?,?,?,?,?,?,?)")
 seasonalBadges.forEach(b => seasonalStmt.run(b.slug, b.name, b.description, b.icon, b.category, b.requirement_type, b.requirement_value, b.window_start, b.window_end, b.color))
 
+const watchCols = db.prepare("PRAGMA table_info(watch_sync)").all().map(c => c.name);
+const addWatchCol = (name, sqlType) => { if (!watchCols.includes(name)) db.prepare(`ALTER TABLE watch_sync ADD COLUMN ${name} ${sqlType}`).run(); };
+addWatchCol('activity_type', 'TEXT');
+addWatchCol('activity_name', 'TEXT');
+addWatchCol('normalized_type', 'TEXT');
+addWatchCol('routed_section', 'TEXT');
+addWatchCol('distance_miles', 'REAL');
+addWatchCol('duration_seconds', 'INTEGER');
+addWatchCol('avg_pace', 'REAL');
+addWatchCol('pace_splits_json', "TEXT DEFAULT '[]'");
+addWatchCol('avg_heart_rate', 'INTEGER');
+addWatchCol('max_heart_rate', 'INTEGER');
+addWatchCol('min_heart_rate', 'INTEGER');
+addWatchCol('heart_rate_zones_json', "TEXT DEFAULT '[]'");
+addWatchCol('cadence_spm', 'REAL');
+addWatchCol('elevation_gain', 'REAL');
+addWatchCol('elevation_loss', 'REAL');
+addWatchCol('route_coords', "TEXT DEFAULT '[]'");
+addWatchCol('vo2_max', 'REAL');
+addWatchCol('training_effect_aerobic', 'REAL');
+addWatchCol('training_effect_anaerobic', 'REAL');
+addWatchCol('recovery_time_hours', 'REAL');
+addWatchCol('detected_surface_type', 'TEXT');
+addWatchCol('temperature_f', 'REAL');
+addWatchCol('calories', 'INTEGER');
+addWatchCol('exercise_name', 'TEXT');
+addWatchCol('sets', 'INTEGER');
+addWatchCol('reps', 'INTEGER');
+addWatchCol('weight_lbs', 'REAL');
+addWatchCol('set_heart_rate_json', "TEXT DEFAULT '[]'");
+addWatchCol('rest_heart_rate_json', "TEXT DEFAULT '[]'");
+addWatchCol('workout_duration_seconds', 'INTEGER');
+addWatchCol('recovery_heart_rate', 'INTEGER');
+addWatchCol('belt_speed_mph', 'REAL');
+addWatchCol('treadmill_brand', 'TEXT');
+addWatchCol('treadmill_model', 'TEXT');
+addWatchCol('raw_payload', 'TEXT');
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS community_workouts (
     id TEXT PRIMARY KEY,
@@ -309,15 +378,43 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS watch_sync (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
-    hrv REAL,
-    sleep_quality INTEGER,
-    energy INTEGER,
-    soreness INTEGER,
-    current_hr INTEGER,
-    watch_mode TEXT,
-    treadmill_type TEXT,
+    activity_type TEXT,
+    activity_name TEXT,
+    normalized_type TEXT,
+    routed_section TEXT,
+    distance_miles REAL,
+    duration_seconds INTEGER,
+    avg_pace REAL,
+    pace_splits_json TEXT DEFAULT '[]',
+    avg_heart_rate INTEGER,
+    max_heart_rate INTEGER,
+    min_heart_rate INTEGER,
+    heart_rate_zones_json TEXT DEFAULT '[]',
+    cadence_spm REAL,
+    elevation_gain REAL,
+    elevation_loss REAL,
+    route_coords TEXT DEFAULT '[]',
+    vo2_max REAL,
+    training_effect_aerobic REAL,
+    training_effect_anaerobic REAL,
+    recovery_time_hours REAL,
+    detected_surface_type TEXT,
+    temperature_f REAL,
+    calories INTEGER,
+    exercise_name TEXT,
+    sets INTEGER,
+    reps INTEGER,
+    weight_lbs REAL,
+    set_heart_rate_json TEXT DEFAULT '[]',
+    rest_heart_rate_json TEXT DEFAULT '[]',
+    workout_duration_seconds INTEGER,
+    recovery_heart_rate INTEGER,
     incline_pct REAL,
-    speed_mph REAL,
+    belt_speed_mph REAL,
+    treadmill_brand TEXT,
+    treadmill_model TEXT,
+    watch_mode TEXT,
+    raw_payload TEXT,
     synced_at TEXT DEFAULT (datetime('now'))
   );
 `);

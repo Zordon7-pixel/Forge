@@ -58,23 +58,38 @@ router.get('/workout-recommendation', auth, async (req, res) => {
     restExplanation: 'Longer rest on compounds to preserve quality sets.'
   };
 
-  const id = uuidv4();
-  db.prepare(`INSERT INTO community_workouts
-    (id, user_id, workout_name, target, warmup_json, main_json, recovery_json, explanation, rest_notes)
-    VALUES (?,?,?,?,?,?,?,?,?)`)
-    .run(
-      id,
-      req.user.id,
-      recommendation.workoutName || 'AI Workout',
-      recommendation.target || '',
-      JSON.stringify(recommendation.warmup || []),
-      JSON.stringify(recommendation.main || []),
-      JSON.stringify(recommendation.recovery || []),
-      recommendation.explanation || '',
-      recommendation.restExplanation || ''
-    );
+  res.json({ recommendation });
+});
 
-  res.json({ id, recommendation });
+router.post('/community-share', auth, async (req, res) => {
+  const { workoutData } = req.body || {};
+  
+  if (!workoutData) {
+    return res.status(400).json({ error: 'workoutData is required' });
+  }
+
+  const id = uuidv4();
+  try {
+    db.prepare(`INSERT INTO community_workouts
+      (id, user_id, workout_name, target, warmup_json, main_json, recovery_json, explanation, rest_notes)
+      VALUES (?,?,?,?,?,?,?,?,?)`)
+      .run(
+        id,
+        req.user.id,
+        workoutData.workoutName || 'AI Workout',
+        workoutData.target || '',
+        JSON.stringify(workoutData.warmup || []),
+        JSON.stringify(workoutData.main || []),
+        JSON.stringify(workoutData.recovery || []),
+        workoutData.explanation || '',
+        workoutData.restExplanation || ''
+      );
+
+    res.status(201).json({ id, success: true });
+  } catch (err) {
+    console.error('Error sharing workout:', err);
+    res.status(500).json({ error: 'Failed to share workout' });
+  }
 });
 
 module.exports = router;

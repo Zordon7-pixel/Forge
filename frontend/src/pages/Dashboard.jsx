@@ -109,64 +109,53 @@ const PERIOD_LABELS = { day: 'Today', week: 'This Week', month: 'This Month', ye
 
 // Watch Sync Widget
 function WatchSyncWidget() {
-  const [syncing, setSyncing] = useState(true)
-  const [done, setDone] = useState(false)
+  const [syncStatus, setSyncStatus] = useState(null)
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    // Simulate sync completing after 3 seconds
-    const t = setTimeout(() => {
-      setSyncing(false)
-      setDone(true)
-      // Ring disappears after 1s fade
-      setTimeout(() => setDone(false), 1000)
-    }, 3000)
-    return () => clearTimeout(t)
+    const fetchStatus = async () => {
+      try {
+        const res = await api.get('/watch-sync/status')
+        setSyncStatus(res.data)
+      } catch (err) {
+        console.error('Failed to fetch watch sync status:', err)
+      } finally {
+        setLoading(false)
+      }
+    }
+    
+    fetchStatus()
+    // Refresh every 30 seconds
+    const interval = setInterval(fetchStatus, 30000)
+    return () => clearInterval(interval)
   }, [])
 
+  if (loading || !syncStatus) {
+    return (
+      <div className="rounded-xl px-3 py-2" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Watch</p>
+        <p className="text-sm font-bold" style={{ color: 'var(--text-muted)' }}>--</p>
+      </div>
+    )
+  }
+
+  const lastSynced = syncStatus.lastSynced ? new Date(syncStatus.lastSynced) : null
+  const minutesAgo = lastSynced ? Math.floor((Date.now() - lastSynced.getTime()) / 60000) : null
+  
+  let syncText = 'No watch'
+  if (lastSynced) {
+    if (minutesAgo < 1) syncText = 'Just now'
+    else if (minutesAgo < 60) syncText = `${minutesAgo}m ago`
+    else {
+      const hoursAgo = Math.floor(minutesAgo / 60)
+      syncText = hoursAgo === 1 ? '1h ago' : `${hoursAgo}h ago`
+    }
+  }
+
   return (
-    <div className="relative flex items-center justify-center" style={{ width: 56, height: 56 }}>
-      {/* Spinning sync ring — visible while syncing */}
-      {syncing && (
-        <svg
-          className="absolute inset-0"
-          width="56" height="56"
-          viewBox="0 0 56 56"
-          style={{ animation: 'spin 1.2s linear infinite' }}
-        >
-          <circle
-            cx="28" cy="28" r="25"
-            fill="none"
-            stroke="#EAB308"
-            strokeWidth="2.5"
-            strokeDasharray="100 58"
-            strokeLinecap="round"
-          />
-        </svg>
-      )}
-      {/* Closing ring — shown when sync completes */}
-      {done && !syncing && (
-        <svg
-          className="absolute inset-0"
-          width="56" height="56"
-          viewBox="0 0 56 56"
-          style={{ animation: 'ringClose 0.8s ease-out forwards' }}
-        >
-          <circle
-            cx="28" cy="28" r="25"
-            fill="none"
-            stroke="#22c55e"
-            strokeWidth="2.5"
-            strokeDasharray="157 0"
-            strokeLinecap="round"
-          />
-        </svg>
-      )}
-      {/* Watch face image */}
-      <img
-        src="/fenix7x.png"
-        alt="Garmin Fenix 7X"
-        style={{ width: 44, height: 44, borderRadius: '50%', objectFit: 'cover' }}
-      />
+    <div className="rounded-xl px-3 py-2" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+      <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Last synced</p>
+      <p className="text-sm font-bold" style={{ color: lastSynced ? 'var(--accent)' : 'var(--text-muted)' }}>{syncText}</p>
     </div>
   )
 }
@@ -189,6 +178,8 @@ export default function Dashboard() {
   const [goalInput, setGoalInput] = useState('')
   const [showReadinessModal, setShowReadinessModal] = useState(false)
   const [selectedCalendarDay, setSelectedCalendarDay] = useState(null)
+  const [watchSyncNotice, setWatchSyncNotice] = useState(null)
+  const [otherActivities, setOtherActivities] = useState([])
 
   useEffect(() => {
     ;(async () => {
@@ -222,6 +213,18 @@ export default function Dashboard() {
         setLoading(false)
       }
     })()
+  }, [])
+
+  useEffect(() => {
+    const lastSeen = localStorage.getItem('forge_last_watch_sync_seen_at') || '1970-01-01T00:00:00'
+    api.get('/watch-sync/recent', { params: { since: lastSeen } })
+      .then((res) => {
+        const items = res.data?.items || []
+        if (!items.length) return
+        setOtherActivities(items.filter(i => i.routed_section === 'other'))
+        setWatchSyncNotice(items[0])
+      })
+      .catch(() => {})
   }, [])
 
   const greeting = useMemo(() => {
@@ -298,14 +301,15 @@ export default function Dashboard() {
   const recentActivity = useMemo(() => {
     const runItems = runs.slice(0, 3).map(r => ({ ...r, _type: 'run' }))
     const liftItems = (lifts || []).slice(0, 3).map(l => ({ ...l, _type: 'lift' }))
-    const combined = [...runItems, ...liftItems]
+    const otherItems = (otherActivities || []).slice(0, 3).map(o => ({ ...o, _type: 'other' }))
+    const combined = [...runItems, ...liftItems, ...otherItems]
       .sort((a, b) => {
         const da = a.date || a.started_at || a.created_at || ''
         const db2 = b.date || b.started_at || b.created_at || ''
         return db2.localeCompare(da)
       })
     return combined.slice(0, 4)
-  }, [runs, lifts])
+  }, [runs, lifts, otherActivities])
 
   if (loading) return <LoadingRunner message="Getting ready" />
 
@@ -347,6 +351,38 @@ export default function Dashboard() {
           <p style={{ color: 'var(--accent)', fontWeight: 700, fontSize: 14, margin: 0 }}>Quick check-in — 3 taps</p>
           <p style={{ color: 'var(--text-muted)', fontSize: 12, margin: '2px 0 0' }}>Help me adjust today's plan around your day</p>
         </a>
+      )}
+
+      {watchSyncNotice && (
+        <div className="rounded-xl p-3" style={{ background: 'rgba(234,179,8,0.12)', border: '1px solid rgba(234,179,8,0.3)' }}>
+          <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+            New activity synced from your watch — {watchSyncNotice.activity_name}. View it in {watchSyncNotice.routed_section === 'lift' ? 'Lift' : watchSyncNotice.routed_section === 'other' ? 'History' : 'Run'} tab.
+          </p>
+          <div className="mt-2 flex gap-2">
+            <button
+              onClick={() => {
+                localStorage.setItem('forge_last_watch_sync_seen_at', watchSyncNotice.synced_at)
+                if (watchSyncNotice.routed_section === 'lift') navigate('/log-lift')
+                else if (watchSyncNotice.normalized_type === 'treadmill') navigate('/run/treadmill', { state: { incline: watchSyncNotice.incline_pct, speed: watchSyncNotice.belt_speed_mph, durationSeconds: watchSyncNotice.duration_seconds, treadmillType: watchSyncNotice.treadmill_brand || 'Generic', watchMetrics: watchSyncNotice } })
+                else navigate('/log-run')
+              }}
+              className="rounded-lg px-3 py-1.5 text-xs font-bold"
+              style={{ background: 'var(--accent)', color: '#000' }}
+            >
+              View
+            </button>
+            <button
+              onClick={() => {
+                localStorage.setItem('forge_last_watch_sync_seen_at', watchSyncNotice.synced_at)
+                setWatchSyncNotice(null)
+              }}
+              className="rounded-lg px-3 py-1.5 text-xs"
+              style={{ background: 'var(--bg-input)', color: 'var(--text-muted)', border: '1px solid var(--border-subtle)' }}
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
       )}
 
       {/* Ready to Run CTA */}
@@ -490,35 +526,53 @@ export default function Dashboard() {
       <section className="rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>
         <h3 className="text-sm font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>Recent Activity</h3>
         <div className="space-y-3">
-          {recentActivity.map(item => item._type === 'run' ? (
-            <div key={item.id} onClick={() => navigate(`/history?runId=${item.id}`)} className="rounded-xl p-3 border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', cursor: 'pointer' }}>
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: 'var(--accent-dim)', color: 'var(--accent)' }}>Run</span>
-                <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                  {new Date(item.date || item.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                </span>
+          {recentActivity.map(item => {
+            if (item._type === 'run') {
+              return (
+                <div key={item.id} onClick={() => navigate(`/history?runId=${item.id}`)} className="rounded-xl p-3 border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', cursor: 'pointer' }}>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: 'var(--accent-dim)', color: 'var(--accent)' }}>Run</span>
+                    <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                      {new Date(item.date || item.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                    </span>
+                  </div>
+                  <div className="flex gap-4 mt-1">
+                    <div><p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{Number(item.distance_miles || 0).toFixed(2)} mi</p></div>
+                    <div><p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{fmtPace(item.duration_seconds, item.distance_miles)}</p></div>
+                    <div><p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{fmtDuration(item.duration_seconds)}</p></div>
+                    {item.calories > 0 && <div><p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{item.calories} cal</p></div>}
+                  </div>
+                </div>
+              )
+            }
+
+            if (item._type === 'other') {
+              return (
+                <div key={item.id} className="rounded-xl p-3 border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)' }}>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: 'rgba(234,179,8,0.2)', color: 'var(--accent)' }}>Other Activity</span>
+                    <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{new Date(item.synced_at || item.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
+                  </div>
+                  <p className="text-sm font-bold mt-1" style={{ color: 'var(--text-primary)' }}>{item.activity_name || item.activity_type || 'Synced activity'}</p>
+                </div>
+              )
+            }
+
+            return (
+              <div key={item.id} onClick={() => navigate(`/history?workoutId=${item.id}`)} className="rounded-xl p-3 border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', cursor: 'pointer' }}>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: 'rgba(139,92,246,0.15)', color: '#a78bfa' }}>Lift</span>
+                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                    {new Date(item.date || item.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                  </span>
+                </div>
+                <p className="text-sm font-bold mt-1" style={{ color: 'var(--text-primary)' }}>
+                  {item.exercise_name || (Array.isArray(item.muscle_groups) ? item.muscle_groups.join(', ') : 'Workout')}
+                </p>
+                {item.sets && <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>{item.sets} sets · {item.reps} reps · {item.weight_lbs} lbs</p>}
               </div>
-              <div className="flex gap-4 mt-1">
-                <div><p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{Number(item.distance_miles || 0).toFixed(2)} mi</p></div>
-                <div><p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{fmtPace(item.duration_seconds, item.distance_miles)}</p></div>
-                <div><p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{fmtDuration(item.duration_seconds)}</p></div>
-                {item.calories > 0 && <div><p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{item.calories} cal</p></div>}
-              </div>
-            </div>
-          ) : (
-            <div key={item.id} onClick={() => navigate(`/history?workoutId=${item.id}`)} className="rounded-xl p-3 border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', cursor: 'pointer' }}>
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: 'rgba(139,92,246,0.15)', color: '#a78bfa' }}>Lift</span>
-                <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                  {new Date(item.date || item.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                </span>
-              </div>
-              <p className="text-sm font-bold mt-1" style={{ color: 'var(--text-primary)' }}>
-                {item.exercise_name || (Array.isArray(item.muscle_groups) ? item.muscle_groups.join(', ') : 'Workout')}
-              </p>
-              {item.sets && <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>{item.sets} sets · {item.reps} reps · {item.weight_lbs} lbs</p>}
-            </div>
-          ))}
+            )
+          })}
           {recentActivity.length === 0 && (
             <p className="text-sm py-4 text-center" style={{ color: 'var(--text-muted)' }}>No activity yet. Start moving!</p>
           )}

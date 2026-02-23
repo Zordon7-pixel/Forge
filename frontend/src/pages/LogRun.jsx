@@ -428,7 +428,7 @@ export default function LogRun() {
                               </div>
                             )}
                             {!day.rest && isToday && (
-                              <button onClick={e => { e.stopPropagation(); navigate('/run/active', { state: { countdown } }) }}
+                              <button onClick={e => { e.stopPropagation(); navigate('/run/active', { state: { countdown, runType: day.type || 'easy', runEnvironment: 'outdoor', surface: 'road', mapMyRun: false } }) }}
                                 style={{ width: '100%', background: 'var(--accent)', color: '#000', fontWeight: 900, borderRadius: 10, padding: '12px', border: 'none', cursor: 'pointer', fontSize: 14 }}>
                                 Start This Run
                               </button>

@@ -17,6 +17,12 @@ function haversineMiles(a, b) {
   return 2 * R * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x))
 }
 
+function fmtLap(seconds = 0) {
+  const m = Math.floor(seconds / 60)
+  const s = Math.max(0, seconds % 60)
+  return `${m}:${String(s).padStart(2, '0')}`
+}
+
 export default function ActiveRun() {
   const location = useLocation()
   const navigate = useNavigate()
@@ -30,18 +36,28 @@ export default function ActiveRun() {
   const [saving, setSaving] = useState(false)
   const [showPostCheckIn, setShowPostCheckIn] = useState(false)
   const [savedRunId, setSavedRunId] = useState(null)
-  const [mapMyRun, setMapMyRun] = useState(false)
+  const [mapMyRun, setMapMyRun] = useState(location?.state?.mapMyRun ?? false)
   const [routeCoords, setRouteCoords] = useState([])
+  const [runEnvironment, setRunEnvironment] = useState(location?.state?.runEnvironment ?? 'outdoor')
+  const [surface, setSurface] = useState(location?.state?.surface ?? 'road')
+  const [runType, setRunType] = useState(location?.state?.runType ?? 'run')
+  const [treadmillBrand, setTreadmillBrand] = useState(location?.state?.treadmillBrand ?? null)
   const watchRef = useRef(null)
   const lastPointRef = useRef(null)
 
   const startGPS = () => {
+    setRunning(true)
+    
+    // Only request GPS if mapMyRun is enabled
+    if (!mapMyRun) {
+      return
+    }
+
     if (!navigator?.geolocation) {
       setGpsError('Geolocation is not supported on this device/browser.')
       return
     }
 
-    setRunning(true)
     watchRef.current = navigator.geolocation.watchPosition(
       pos => {
         const point = {
@@ -52,7 +68,7 @@ export default function ActiveRun() {
           const segment = haversineMiles(lastPointRef.current, point)
           if (segment > 0 && segment < 0.25) setDistanceMiles(v => v + segment)
         }
-        if (mapMyRun) setRouteCoords((prev) => [...prev, [point.lat, point.lon]])
+        setRouteCoords((prev) => [...prev, [point.lat, point.lon]])
         lastPointRef.current = point
       },
       err => {
@@ -81,7 +97,7 @@ export default function ActiveRun() {
 
   useEffect(() => {
     return () => {
-      if (watchRef.current != null && navigator?.geolocation) {
+      if (watchRef.current != null && watchRef.current !== null) {
         navigator.geolocation.clearWatch(watchRef.current)
       }
     }
@@ -106,15 +122,22 @@ export default function ActiveRun() {
   const saveRun = async () => {
     setSaving(true)
     try {
+      // Determine run_surface based on environment and surface
+      let runSurface = surface
+      if (runEnvironment === 'indoor' && surface === 'treadmill') {
+        runSurface = 'treadmill'
+      }
+
       const res = await api.post('/runs', {
         date: new Date().toISOString().slice(0, 10),
-        type: 'easy',
-        run_surface: 'outdoor',
+        type: runType,
+        run_surface: runSurface,
         distance_miles: distanceMiles,
         duration_seconds: elapsed,
         notes: '',
         perceived_effort: 5,
-        route_coords: routeCoords.map(([lat, lon]) => ({ lat, lon }))
+        route_coords: routeCoords.map(([lat, lon]) => ({ lat, lon })),
+        treadmill_type: treadmillBrand || null
       })
       const runId = res.data?.id || res.data?.run?.id
       if (runId) {
