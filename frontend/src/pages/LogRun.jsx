@@ -190,6 +190,8 @@ export default function LogRun() {
     try { return { ...DEFAULT_PANELS, ...(JSON.parse(localStorage.getItem(PANEL_KEY) || '{}')) } } catch { return DEFAULT_PANELS }
   })
   const [editingNotes, setEditingNotes] = useState('')
+  const [activeShoes, setActiveShoes] = useState([])
+  const [selectedShoeId, setSelectedShoeId] = useState('')
 
   useEffect(() => {
     if (warmUpState === 'done') setActiveTab('today')
@@ -217,6 +219,10 @@ export default function LogRun() {
   useEffect(() => {
     localStorage.setItem(PANEL_KEY, JSON.stringify(panelPrefs))
   }, [panelPrefs])
+
+  useEffect(() => {
+    api.get('/gear/shoes').then(r => setActiveShoes(r.data?.shoes || [])).catch(() => {})
+  }, [])
 
   useEffect(() => {
     if (activeTab !== 'week' || weekPlan) return
@@ -264,7 +270,7 @@ export default function LogRun() {
       }
       // Convert distance to miles for backend
       const distanceMiles = units === 'metric' ? fmt.milesFromKm(Number(distance)) : Number(distance)
-      const runRes = await api.post('/runs', { date, type: runType, surface: resolvedSurface, run_surface: resolvedSurface, distance_miles: distanceMiles, duration_seconds: seconds, notes, perceived_effort: Number(effort), treadmill_type: treadmillType })
+      const runRes = await api.post('/runs', { date, type: runType, surface: resolvedSurface, run_surface: resolvedSurface, distance_miles: distanceMiles, duration_seconds: seconds, notes, perceived_effort: Number(effort), treadmill_type: treadmillType, shoe_id: selectedShoeId || null })
       const runId = runRes.data?.id || runRes.data?.run?.id
       if (runId) api.post('/prs/auto-detect', { run_id: runId }).catch(() => {})
       api.post('/badges/check', {}).catch(() => {})
@@ -503,6 +509,23 @@ export default function LogRun() {
               </div>
               <EffortBar effort={effort} setEffort={setEffort} />
             </div>
+
+            {activeShoes.length > 0 && (
+              <div style={{ marginTop: 12 }}>
+                <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>Running In</p>
+                {activeShoes.find(s => s.id === selectedShoeId)?.alert && (
+                  <p style={{ fontSize: 11, color: '#f97316', marginBottom: 4 }}>
+                    This shoe is at {activeShoes.find(s => s.id === selectedShoeId)?.pct_used}% — consider rotating to a fresh pair
+                  </p>
+                )}
+                <select value={selectedShoeId} onChange={e => setSelectedShoeId(e.target.value)} style={{ width: '100%', padding: '10px 12px', borderRadius: 10, background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', fontSize: 14 }}>
+                  <option value="">No shoe selected</option>
+                  {activeShoes.map(s => (
+                    <option key={s.id} value={s.id}>{s.brand} {s.model}{s.nickname ? ` (${s.nickname})` : ''} — {s.total_miles} mi</option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             <input type="date" value={date} onChange={e => setDate(e.target.value)} className="w-full rounded-xl border px-4 py-3" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-base)', color: 'var(--text-primary)' }} />
 

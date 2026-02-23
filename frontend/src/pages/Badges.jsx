@@ -384,6 +384,48 @@ export default function Badges() {
           </div>
         </section>
       )}
+
+      {/* Seasonal badge info modal */}
+      {selectedSeasonal && (
+        <div onClick={() => setSelectedSeasonal(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 50, display: 'flex', alignItems: 'flex-end' }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: 'var(--bg-card)', borderRadius: '20px 20px 0 0', padding: 24, width: '100%', maxHeight: '70vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
+              <div>
+                {(() => { const Icon = getSeasonalIcon(selectedSeasonal); return <Icon size={36} color={selectedSeasonal.color || '#EAB308'} style={{ marginBottom: 8 }} /> })()}
+                <p style={{ fontSize: 20, fontWeight: 900, color: 'var(--text-primary)', margin: 0 }}>{selectedSeasonal.name}</p>
+                <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>{selectedSeasonal.description}</p>
+              </div>
+              <button onClick={() => setSelectedSeasonal(null)} style={{ background: 'var(--bg-input)', border: 'none', borderRadius: 10, padding: '8px 14px', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 13, flexShrink: 0 }}>Close</button>
+            </div>
+            <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
+              {(() => { const fmt = s => { const d = new Date((s||'').includes('-') && (s||'').length > 5 ? s + 'T12:00:00' : `2026-${s}T12:00:00`); return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) }; return `${fmt(selectedSeasonal.window_start_full || selectedSeasonal.window_start)} – ${fmt(selectedSeasonal.window_end_full || selectedSeasonal.window_end)}` })()}
+            </p>
+            <p style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 12 }}>
+              {selectedSeasonal.requirement_type === 'miles_in_window' ? `Run ${selectedSeasonal.requirement_value} miles` : `Complete ${selectedSeasonal.requirement_value} workouts`}
+            </p>
+            {!selectedSeasonal.earned && (
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
+                  <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{selectedSeasonal.requirement_type === 'miles_in_window' ? `${(selectedSeasonal.progress||0).toFixed(1)} / ${selectedSeasonal.requirement_value} mi` : `${selectedSeasonal.progress||0} / ${selectedSeasonal.requirement_value}`}</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: selectedSeasonal.color || '#EAB308' }}>{Math.round(Math.min(100,((selectedSeasonal.progress||0)/selectedSeasonal.requirement_value)*100))}%</span>
+                </div>
+                <div style={{ height: 6, background: 'var(--bg-input)', borderRadius: 3, overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: `${Math.min(100,((selectedSeasonal.progress||0)/selectedSeasonal.requirement_value)*100)}%`, background: selectedSeasonal.color || '#EAB308', borderRadius: 3 }} />
+                </div>
+              </div>
+            )}
+            <div style={{ padding: '12px 16px', background: 'var(--bg-base)', borderRadius: 12 }}>
+              {selectedSeasonal.status === 'earned' && <p style={{ fontSize: 14, fontWeight: 700, color: selectedSeasonal.color || '#EAB308', margin: 0 }}>Completed {selectedSeasonal.earned_at ? new Date(selectedSeasonal.earned_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : ''}</p>}
+              {selectedSeasonal.status === 'active' && <p style={{ fontSize: 14, color: 'var(--text-primary)', margin: 0 }}>{selectedSeasonal.days_remaining} days remaining</p>}
+              {selectedSeasonal.status === 'upcoming' && <p style={{ fontSize: 14, color: 'var(--text-muted)', margin: 0 }}>Starts in {selectedSeasonal.days_until_start} days</p>}
+              {selectedSeasonal.status === 'past' && <p style={{ fontSize: 14, color: 'var(--text-muted)', margin: 0 }}>This challenge has ended</p>}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Achievement unlock animation */}
+      {unlockQueue.length > 0 && <AchievementUnlock badge={unlockQueue[0]} onDismiss={dismissUnlock} />}
     </div>
   )
 }
