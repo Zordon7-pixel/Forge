@@ -163,7 +163,7 @@ export default function ActiveRun() {
         gps_available: gpsAvailable,
         avg_heart_rate: liveHr || null,
         route_coords: routeCoords.map(([lat, lon]) => ({ lat, lon })),
-        treadmill_type: treadmillBrand || null
+        treadmill_brand: treadmillBrand || null
       })
       const runId = res.data?.id || res.data?.run?.id
       if (runId) {

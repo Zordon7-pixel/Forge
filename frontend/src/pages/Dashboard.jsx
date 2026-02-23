@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Flame, ArrowUpRight, ArrowDownRight, UserCircle2 } from 'lucide-react'
+import { Flame, ArrowUpRight, ArrowDownRight } from 'lucide-react'
+import AchievementUnlock from '../components/AchievementUnlock'
 import { useUnits } from '../context/UnitsContext'
 import api from '../lib/api'
 import LoadingRunner from '../components/LoadingRunner'
@@ -170,8 +171,6 @@ export default function Dashboard() {
   const [warning, setWarning] = useState(false)
   const [loading, setLoading] = useState(true)
   const [period, setPeriod] = useState('week')
-  const [coachLabel, setCoachLabel] = useState('')
-  const [firstName, setFirstName] = useState('')
   const [checkedInToday, setCheckedInToday] = useState(false)
   const [hasWatchData, setHasWatchData] = useState(false)
   const [goalMode, setGoalMode] = useState('auto') // 'auto' | 'manual'
@@ -184,6 +183,7 @@ export default function Dashboard() {
   const [otherActivities, setOtherActivities] = useState([])
   const [streakStats, setStreakStats] = useState({ currentStreak: 0, bestStreak: 0 })
   const [milestones, setMilestones] = useState([])
+  const [milestoneUnlock, setMilestoneUnlock] = useState(null)
   const [compliance, setCompliance] = useState(null)
   const [showComplianceDetails, setShowComplianceDetails] = useState(false)
   const [loadAnalysis, setLoadAnalysis] = useState(null)
@@ -193,12 +193,11 @@ export default function Dashboard() {
   useEffect(() => {
     ;(async () => {
       try {
-        const [statsRes, runsRes, liftsRes, warningRes, meRes, checkinRes, goalRes, streakRes, milestoneRes, complianceRes, loadRes, nextRaceRes] = await Promise.all([
+        const [statsRes, runsRes, liftsRes, warningRes, checkinRes, goalRes, streakRes, milestoneRes, complianceRes, loadRes, nextRaceRes] = await Promise.all([
           api.get('/auth/me/stats'),
           api.get('/runs', { params: { limit: 5 } }),
           api.get('/lifts'),
           api.get('/coach/warning'),
-          api.get('/auth/me'),
           api.get('/checkin/today').catch(() => ({ data: null })),
           api.get('/users/goal').catch(() => ({ data: null })),
           api.get('/auth/me/streak').catch(() => ({ data: { currentStreak: 0, bestStreak: 0 } })),
@@ -213,18 +212,22 @@ export default function Dashboard() {
         setHasWatchData(runsList.some((r) => r.avg_heart_rate || r.watch_mode || r.route_coords))
         setLifts(Array.isArray(liftsRes.data) ? liftsRes.data : liftsRes.data?.lifts || [])
         setWarning(warningRes.data?.warning === true)
-        const coaches = { mentor: 'Mentor', hype_coach: 'Hype Coach', drill_sergeant: 'Drill Sergeant', training_partner: 'Training Partner' }
-        const cp = meRes.data?.user?.coach_personality
-        setCoachLabel(coaches[cp] || cp || '')
-        const name = meRes.data?.user?.name || ''
-        setFirstName(name.split(' ')[0])
         if (checkinRes.data) setCheckedInToday(true)
         if (goalRes.data) {
           setGoalMode(goalRes.data.mode || 'auto')
           setManualGoalMiles(goalRes.data.miles || null)
         }
         setStreakStats(streakRes.data || { currentStreak: 0, bestStreak: 0 })
-        setMilestones(milestoneRes.data?.milestones || [])
+        const fetchedMilestones = milestoneRes.data?.milestones || []
+        setMilestones(fetchedMilestones)
+        if (fetchedMilestones.length > 0) {
+          setMilestoneUnlock(prev => prev || {
+            name: fetchedMilestones[0].title,
+            description: fetchedMilestones[0].description,
+            icon: 'Award',
+            color: '#EAB308',
+          })
+        }
         setCompliance(complianceRes.data)
         setLoadAnalysis(loadRes.data)
         setNextRace(nextRaceRes.data?.race || null)
@@ -246,12 +249,6 @@ export default function Dashboard() {
       .catch(() => {})
   }, [])
 
-  const greeting = useMemo(() => {
-    const h = new Date().getHours()
-    if (h < 12) return 'Good morning, Bryan'
-    if (h < 18) return 'Good afternoon, Bryan'
-    return 'Good evening, Bryan'
-  }, [])
 
   // Compute readiness from stats
   const { readiness, readinessBreakdown } = useMemo(() => {
@@ -338,6 +335,12 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-4">
+      {milestoneUnlock && (
+        <AchievementUnlock
+          badge={milestoneUnlock}
+          onDismiss={() => setMilestoneUnlock(null)}
+        />
+      )}
       <style>{`
         @keyframes spin {
           from { transform: rotate(0deg); }
@@ -350,21 +353,6 @@ export default function Dashboard() {
         }
       `}</style>
 
-      <div className="rounded-2xl p-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-        <div className="grid grid-cols-3 items-center">
-          <img src="/icon-192.png" alt="FORGE" className="w-9 h-9 rounded-xl" />
-          <button onClick={() => readiness !== null && setShowReadinessModal(true)} className="mx-auto rounded-xl px-3 py-1.5" style={{ border: '1px solid var(--border-subtle)', background: readiness !== null ? 'rgba(234,179,8,0.12)' : 'var(--bg-input)', boxShadow: readiness !== null ? '0 0 16px rgba(234,179,8,0.18)' : 'none' }}>
-            <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>Training Readiness</p>
-            <p className="text-base font-bold" style={{ color: 'var(--accent)' }}>{readiness !== null ? readiness : '—'}</p>
-          </button>
-          <div className="justify-self-end"><UserCircle2 size={24} style={{ color: 'var(--text-muted)' }} /></div>
-        </div>
-        <div className="mt-3">
-          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{greeting}</p>
-          <h2 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{stats?.streak > 1 ? `${stats.streak}-day streak` : 'Ready to forge today?'}</h2>
-          {coachLabel && <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>Coach: {coachLabel}</p>}
-        </div>
-      </div>
       <WatchSyncWidget />
 
       {showLoadWarning && (

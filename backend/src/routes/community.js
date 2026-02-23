@@ -57,4 +57,23 @@ router.post('/workouts/:id/save', auth, (req, res) => {
   res.status(201).json({ id, ok: true });
 });
 
+router.get('/saved', auth, (req, res) => {
+  const rows = db.prepare('SELECT * FROM saved_workouts WHERE user_id=? ORDER BY created_at DESC').all(req.user.id);
+  res.json({
+    workouts: rows.map(w => ({
+      ...w,
+      warmup: JSON.parse(w.warmup_json || '[]'),
+      main: JSON.parse(w.main_json || '[]'),
+      recovery: JSON.parse(w.recovery_json || '[]')
+    }))
+  });
+});
+
+router.delete('/saved/:id', auth, (req, res) => {
+  const row = db.prepare('SELECT * FROM saved_workouts WHERE id=? AND user_id=?').get(req.params.id, req.user.id);
+  if (!row) return res.status(404).json({ error: 'Not found' });
+  db.prepare('DELETE FROM saved_workouts WHERE id=?').run(req.params.id);
+  res.json({ ok: true });
+});
+
 module.exports = router;
