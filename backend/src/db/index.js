@@ -249,6 +249,7 @@ if (!runCols.includes('detected_surface_type')) db.prepare("ALTER TABLE runs ADD
 if (!runCols.includes('temperature_f')) db.prepare("ALTER TABLE runs ADD COLUMN temperature_f REAL").run();
 if (!runCols.includes('treadmill_brand')) db.prepare("ALTER TABLE runs ADD COLUMN treadmill_brand TEXT").run();
 if (!runCols.includes('treadmill_model')) db.prepare("ALTER TABLE runs ADD COLUMN treadmill_model TEXT").run();
+if (!runCols.includes('gps_available')) db.prepare("ALTER TABLE runs ADD COLUMN gps_available INTEGER DEFAULT 1").run();
 
 const liftCols = db.prepare("PRAGMA table_info(lifts)").all().map(c => c.name);
 if (!liftCols.includes('exercise_name')) {
@@ -290,6 +291,8 @@ if (!userCols2.includes('injury_date')) db.prepare("ALTER TABLE users ADD COLUMN
 if (!userCols2.includes('injury_limitations')) db.prepare("ALTER TABLE users ADD COLUMN injury_limitations TEXT DEFAULT ''").run();
 if (!userCols2.includes('distance_unit')) db.prepare("ALTER TABLE users ADD COLUMN distance_unit TEXT DEFAULT 'miles'").run();
 if (!userCols2.includes('theme')) db.prepare("ALTER TABLE users ADD COLUMN theme TEXT DEFAULT 'dark'").run();
+if (!userCols2.includes('age')) db.prepare("ALTER TABLE users ADD COLUMN age INTEGER").run();
+if (!userCols2.includes('max_heart_rate')) db.prepare("ALTER TABLE users ADD COLUMN max_heart_rate INTEGER").run();
 
 // Add username column to users if not exists
 const userCols3 = db.prepare("PRAGMA table_info(users)").all().map(c => c.name);
@@ -373,6 +376,37 @@ db.exec(`
     rest_notes TEXT,
     usage_count INTEGER DEFAULT 0,
     created_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS saved_workouts (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    source_workout_id TEXT,
+    workout_name TEXT NOT NULL,
+    target TEXT,
+    warmup_json TEXT DEFAULT '[]',
+    main_json TEXT DEFAULT '[]',
+    recovery_json TEXT DEFAULT '[]',
+    explanation TEXT,
+    rest_notes TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS journal_entries (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    source TEXT NOT NULL,
+    content TEXT NOT NULL,
+    session_id TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS milestones_seen (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    milestone_key TEXT NOT NULL,
+    seen_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(user_id, milestone_key)
   );
 
   CREATE TABLE IF NOT EXISTS watch_sync (

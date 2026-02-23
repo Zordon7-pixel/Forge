@@ -158,6 +158,7 @@ export default function LogRun() {
   const [environment, setEnvironment] = useState('outside')
   const [treadmillType, setTreadmillType] = useState('Generic')
   const [runBrief, setRunBrief] = useState(null)
+  const [trackWorkout, setTrackWorkout] = useState('no')
 
   const [date, setDate] = useState(todayISO())
   const [distance, setDistance] = useState('')
@@ -428,7 +429,7 @@ export default function LogRun() {
                               </div>
                             )}
                             {!day.rest && isToday && (
-                              <button onClick={e => { e.stopPropagation(); navigate('/run/active', { state: { countdown, runType: day.type || 'easy', runEnvironment: 'outdoor', surface: 'road', mapMyRun: false } }) }}
+                              <button onClick={e => { e.stopPropagation(); navigate('/run/active', { state: { countdown, runType: day.type || 'easy', runEnvironment: 'outdoor', surface: trackWorkout === 'yes' ? 'track' : 'road', mapMyRun: true, trackMode: trackWorkout === 'yes' } }) }}
                                 style={{ width: '100%', background: 'var(--accent)', color: '#000', fontWeight: 900, borderRadius: 10, padding: '12px', border: 'none', cursor: 'pointer', fontSize: 14 }}>
                                 Start This Run
                               </button>
@@ -451,6 +452,14 @@ export default function LogRun() {
               <div className="flex gap-2 mb-4">{['easy','tempo','long','walk'].map((t)=><button key={t} type="button" onClick={()=>setRunType(t)} className="rounded-full px-3 py-1 text-xs font-semibold" style={{background:runType===t?'var(--accent)':'var(--bg-card)',color:runType===t?'#000':'var(--text-muted)',border:'1px solid var(--border-subtle)'}}>{t === 'walk' ? 'Walk' : t.charAt(0).toUpperCase()+t.slice(1)}</button>)}</div>
               <p className="text-sm mb-2" style={{ color: 'var(--text-primary)' }}>Are you running outside or inside?</p>
               <div className="flex gap-2">{['outside','inside'].map((e)=><button key={e} type="button" onClick={()=>setEnvironment(e)} className="rounded-full px-3 py-1 text-xs font-semibold" style={{background:environment===e?'var(--accent)':'var(--bg-card)',color:environment===e?'#000':'var(--text-muted)',border:'1px solid var(--border-subtle)'}}>{e.charAt(0).toUpperCase()+e.slice(1)}</button>)}</div>
+              {environment === 'outside' && (
+                <div className="mt-3">
+                  <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Are you doing a track workout?</p>
+                  <div className="flex gap-2">
+                    {['yes','no'].map(v => <button key={v} type="button" onClick={() => setTrackWorkout(v)} className="rounded-full px-3 py-1 text-xs font-semibold" style={{background:trackWorkout===v?'var(--accent)':'var(--bg-card)',color:trackWorkout===v?'#000':'var(--text-muted)',border:'1px solid var(--border-subtle)'}}>{v === 'yes' ? 'Yes (track intervals)' : 'No (road run)'}</button>)}
+                  </div>
+                </div>
+              )}
               {environment === 'inside' && (
                 <div className="mt-3">
                   <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>What treadmill are you using?</p>

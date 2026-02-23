@@ -1,10 +1,8 @@
 -- FORGE PostgreSQL Schema
 -- Converted from SQLite better-sqlite3
 
--- Enable UUID extension
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
--- Users table
 CREATE TABLE IF NOT EXISTS users (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   name TEXT NOT NULL,
@@ -23,10 +21,8 @@ CREATE TABLE IF NOT EXISTS users (
   created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
--- Create index on email for auth lookups
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 
--- Runs table
 CREATE TABLE IF NOT EXISTS runs (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -37,14 +33,39 @@ CREATE TABLE IF NOT EXISTS runs (
   perceived_effort INTEGER DEFAULT 5,
   notes TEXT,
   ai_feedback TEXT,
+  run_surface TEXT DEFAULT 'road',
+  surface TEXT DEFAULT 'road',
+  incline_pct REAL DEFAULT 0,
+  treadmill_speed REAL DEFAULT 0,
+  route_coords TEXT DEFAULT '[]',
+  avg_heart_rate INTEGER,
+  max_heart_rate INTEGER,
+  min_heart_rate INTEGER,
+  heart_rate_zones TEXT DEFAULT '[]',
+  cadence_spm REAL,
+  elevation_gain REAL,
+  elevation_loss REAL,
+  pace_avg REAL,
+  pace_splits TEXT DEFAULT '[]',
+  vo2_max REAL,
+  training_effect_aerobic REAL,
+  training_effect_anaerobic REAL,
+  recovery_time_hours REAL,
+  detected_surface_type TEXT,
+  temperature_f REAL,
+  calories INTEGER DEFAULT 0,
+  treadmill_brand TEXT,
+  treadmill_model TEXT,
+  watch_mode TEXT,
+  watch_sync_id TEXT,
+  watch_activity_type TEXT,
+  watch_normalized_type TEXT,
   created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
--- Create indexes for run queries
 CREATE INDEX IF NOT EXISTS idx_runs_user_id ON runs(user_id);
 CREATE INDEX IF NOT EXISTS idx_runs_user_date ON runs(user_id, date DESC);
 
--- Lifts table
 CREATE TABLE IF NOT EXISTS lifts (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -52,14 +73,28 @@ CREATE TABLE IF NOT EXISTS lifts (
   muscle_groups TEXT DEFAULT '[]',
   intensity TEXT DEFAULT 'moderate',
   notes TEXT,
+  exercise_name TEXT,
+  sets INTEGER,
+  reps INTEGER,
+  weight_lbs REAL,
+  avg_heart_rate INTEGER,
+  max_heart_rate INTEGER,
+  min_heart_rate INTEGER,
+  set_heart_rate TEXT DEFAULT '[]',
+  rest_heart_rate TEXT DEFAULT '[]',
+  workout_duration_seconds INTEGER,
+  calories INTEGER,
+  recovery_heart_rate INTEGER,
+  category TEXT DEFAULT 'strength',
+  watch_sync_id TEXT,
+  watch_activity_type TEXT,
+  watch_normalized_type TEXT,
   created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
--- Create indexes for lift queries
 CREATE INDEX IF NOT EXISTS idx_lifts_user_id ON lifts(user_id);
 CREATE INDEX IF NOT EXISTS idx_lifts_user_date ON lifts(user_id, date DESC);
 
--- Training plans table
 CREATE TABLE IF NOT EXISTS training_plans (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -68,21 +103,47 @@ CREATE TABLE IF NOT EXISTS training_plans (
   created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
--- Create index for plan queries
 CREATE INDEX IF NOT EXISTS idx_training_plans_user_id ON training_plans(user_id);
 
--- Coach feedback table (for future use)
-CREATE TABLE IF NOT EXISTS coach_feedback (
+CREATE TABLE IF NOT EXISTS watch_sync (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  run_id UUID REFERENCES runs(id) ON DELETE SET NULL,
-  lift_id UUID REFERENCES lifts(id) ON DELETE SET NULL,
-  feedback_type TEXT,
-  feedback_text TEXT,
-  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+  activity_type TEXT,
+  activity_name TEXT,
+  normalized_type TEXT,
+  routed_section TEXT,
+  distance_miles REAL,
+  duration_seconds INTEGER,
+  avg_pace REAL,
+  pace_splits_json TEXT DEFAULT '[]',
+  avg_heart_rate INTEGER,
+  max_heart_rate INTEGER,
+  min_heart_rate INTEGER,
+  heart_rate_zones_json TEXT DEFAULT '[]',
+  cadence_spm REAL,
+  elevation_gain REAL,
+  elevation_loss REAL,
+  route_coords TEXT DEFAULT '[]',
+  vo2_max REAL,
+  training_effect_aerobic REAL,
+  training_effect_anaerobic REAL,
+  recovery_time_hours REAL,
+  detected_surface_type TEXT,
+  temperature_f REAL,
+  calories INTEGER,
+  exercise_name TEXT,
+  sets INTEGER,
+  reps INTEGER,
+  weight_lbs REAL,
+  set_heart_rate_json TEXT DEFAULT '[]',
+  rest_heart_rate_json TEXT DEFAULT '[]',
+  workout_duration_seconds INTEGER,
+  recovery_heart_rate INTEGER,
+  incline_pct REAL,
+  belt_speed_mph REAL,
+  treadmill_brand TEXT,
+  treadmill_model TEXT,
+  watch_mode TEXT,
+  raw_payload TEXT,
+  synced_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
-
--- Create index for coach feedback queries
-CREATE INDEX IF NOT EXISTS idx_coach_feedback_user_id ON coach_feedback(user_id);
-CREATE INDEX IF NOT EXISTS idx_coach_feedback_run_id ON coach_feedback(run_id);
-CREATE INDEX IF NOT EXISTS idx_coach_feedback_lift_id ON coach_feedback(lift_id);

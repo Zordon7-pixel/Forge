@@ -13,7 +13,8 @@ router.post('/', auth, (req, res) => {
   const { date, type, distance_miles, duration_seconds, perceived_effort, notes, run_surface, surface, incline_pct, treadmill_speed, route_coords, watch_mode,
     avg_heart_rate, max_heart_rate, min_heart_rate, heart_rate_zones, cadence_spm, elevation_gain, elevation_loss,
     pace_avg, pace_splits, vo2_max, training_effect_aerobic, training_effect_anaerobic, recovery_time_hours,
-    detected_surface_type, temperature_f, calories, treadmill_brand, treadmill_model, watch_sync_id, watch_activity_type, watch_normalized_type } = req.body;
+    detected_surface_type, temperature_f, calories, treadmill_brand, treadmill_model, watch_sync_id, watch_activity_type, watch_normalized_type,
+    gps_available } = req.body;
   if (!date || !type) return res.status(400).json({ error: 'date and type required' });
   const id = uuidv4();
   const resolvedSurface = surface || run_surface || 'road';
@@ -24,8 +25,8 @@ router.post('/', auth, (req, res) => {
     cadence_spm, elevation_gain, elevation_loss, pace_avg, pace_splits,
     vo2_max, training_effect_aerobic, training_effect_anaerobic, recovery_time_hours,
     detected_surface_type, temperature_f, calories, treadmill_brand, treadmill_model,
-    watch_sync_id, watch_activity_type, watch_normalized_type
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    watch_sync_id, watch_activity_type, watch_normalized_type, gps_available
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id, req.user.id, date, type, distance_miles || 0, duration_seconds || 0, perceived_effort || 5, notes || null,
     resolvedSurface, resolvedSurface, incline_pct || 0, treadmill_speed || 0, JSON.stringify(route_coords || []), watch_mode || null,
@@ -33,7 +34,7 @@ router.post('/', auth, (req, res) => {
     cadence_spm || null, elevation_gain || null, elevation_loss || null, pace_avg || null, JSON.stringify(pace_splits || []),
     vo2_max || null, training_effect_aerobic || null, training_effect_anaerobic || null, recovery_time_hours || null,
     detected_surface_type || null, temperature_f || null, calories || 0, treadmill_brand || null, treadmill_model || null,
-    watch_sync_id || null, watch_activity_type || null, watch_normalized_type || null
+    watch_sync_id || null, watch_activity_type || null, watch_normalized_type || null, gps_available === false ? 0 : 1
   );
 
   // Get user weight for calorie calc (default 185 if not set)

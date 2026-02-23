@@ -14,7 +14,7 @@ export default function TreadmillRun() {
   const navigate = useNavigate()
   const location = useLocation()
   const [status, setStatus] = useState('idle') // idle | running | paused | done
-  const [elapsed, setElapsed] = useState(0)
+  const [elapsed, setElapsed] = useState(location.state?.durationSeconds || 0)
   const [distance, setDistance] = useState('')
   const [speed, setSpeed] = useState(location.state?.speed || '')
   const [incline, setIncline] = useState(location.state?.incline || '0')
@@ -23,9 +23,20 @@ export default function TreadmillRun() {
   const [notes, setNotes] = useState('')
   const [saving, setSaving] = useState(false)
   const [feedback, setFeedback] = useState('')
+  const [manualLapDistance, setManualLapDistance] = useState('0.25')
+  const [manualLaps, setManualLaps] = useState([])
+  const [trackSuggestion, setTrackSuggestion] = useState(false)
+  const [trackMode, setTrackMode] = useState(false)
+  const watchMetrics = location.state?.watchMetrics || null
   const timerRef = useRef(null)
 
   useEffect(() => () => clearInterval(timerRef.current), [])
+
+  useEffect(() => {
+    if (manualLaps.length < 2) return
+    const last = manualLaps[manualLaps.length - 1]
+    if (Math.abs(last - 0.25) <= 0.02) setTrackSuggestion(true)
+  }, [manualLaps])
 
   const start = () => {
     setStatus('running')
@@ -53,7 +64,7 @@ export default function TreadmillRun() {
     try {
       await api.post('/runs', {
         date: new Date().toISOString().slice(0, 10),
-        type: 'treadmill',
+        type: trackMode ? 'track' : 'treadmill',
         run_surface: 'treadmill',
         distance_miles: Number(distance),
         duration_seconds: elapsed,
@@ -61,6 +72,22 @@ export default function TreadmillRun() {
         perceived_effort: effort,
         treadmill_speed: Number(speed) || 0,
         incline_pct: Number(incline) || 0,
+        pace_splits: manualLaps,
+        avg_heart_rate: watchMetrics?.avg_heart_rate,
+        max_heart_rate: watchMetrics?.max_heart_rate,
+        min_heart_rate: watchMetrics?.min_heart_rate,
+        cadence_spm: watchMetrics?.cadence_spm,
+        elevation_gain: watchMetrics?.elevation_gain,
+        elevation_loss: watchMetrics?.elevation_loss,
+        vo2_max: watchMetrics?.vo2_max,
+        training_effect_aerobic: watchMetrics?.training_effect_aerobic,
+        training_effect_anaerobic: watchMetrics?.training_effect_anaerobic,
+        recovery_time_hours: watchMetrics?.recovery_time_hours,
+        detected_surface_type: watchMetrics?.detected_surface_type,
+        temperature_f: watchMetrics?.temperature_f,
+        calories: watchMetrics?.calories,
+        treadmill_brand: watchMetrics?.treadmill_brand || treadmillType,
+        treadmill_model: watchMetrics?.treadmill_model,
       })
       setFeedback('Run saved!')
       setTimeout(() => navigate('/'), 1500)
@@ -145,7 +172,36 @@ export default function TreadmillRun() {
               <input value={incline} onChange={e => setIncline(e.target.value)} placeholder="Incline %" type="number" step="0.5"
                 style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', borderRadius: 10, padding: '10px', fontSize: 14 }} />
             </div>
+            <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+              <input value={manualLapDistance} onChange={e => setManualLapDistance(e.target.value)} type="number" step="0.01" placeholder="Lap miles"
+                style={{ flex: 1, background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', borderRadius: 10, padding: '10px', fontSize: 14 }} />
+              <button onClick={() => setManualLaps(prev => [...prev, Number(manualLapDistance) || 0])} style={{ background: 'var(--accent)', color: '#000', border: 'none', borderRadius: 10, padding: '10px 14px', fontWeight: 700 }}>Log Lap</button>
+            </div>
+            {trackSuggestion && (
+              <div style={{ marginTop: 8, background: 'rgba(234,179,8,0.15)', border: '1px solid rgba(234,179,8,0.35)', borderRadius: 10, padding: 8 }}>
+                <p style={{ fontSize: 12, color: 'var(--text-primary)' }}>You are logging 400m-style laps. Switch to track mode?</p>
+                <button onClick={() => setTrackMode(true)} style={{ marginTop: 6, background: 'var(--accent)', color: '#000', border: 'none', borderRadius: 8, padding: '6px 10px', fontSize: 12, fontWeight: 700 }}>Enable Track Mode</button>
+              </div>
+            )}
           </div>
+
+          {watchMetrics && (
+            <div style={{ width: '100%', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              {[
+                ['Avg HR', watchMetrics.avg_heart_rate && `${watchMetrics.avg_heart_rate} bpm`],
+                ['Max HR', watchMetrics.max_heart_rate && `${watchMetrics.max_heart_rate} bpm`],
+                ['Cadence', watchMetrics.cadence_spm && `${watchMetrics.cadence_spm} spm`],
+                ['VO2 Max', watchMetrics.vo2_max],
+                ['Calories', watchMetrics.calories],
+                ['Temp', watchMetrics.temperature_f && `${watchMetrics.temperature_f}°F`],
+              ].filter(([,v]) => v).map(([k,v]) => (
+                <div key={k} style={{ background: 'var(--bg-card)', borderRadius: 10, padding: 10 }}>
+                  <p style={{ color: 'var(--text-muted)', fontSize: 11 }}>{k}</p>
+                  <p style={{ color: 'var(--text-primary)', fontWeight: 700, fontSize: 13 }}>{v}</p>
+                </div>
+              ))}
+            </div>
+          )}
 
           <div style={{ display: 'flex', gap: 12, width: '100%' }}>
             {status === 'running' ? (
