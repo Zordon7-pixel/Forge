@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { Flame } from 'lucide-react'
 import api from '../lib/api'
 
 function fmtPace(durationSeconds, distance) {
@@ -308,17 +309,23 @@ export default function Dashboard() {
       </div>
 
       {/* Ready to Run CTA */}
-      <div 
-        onClick={() => navigate('/log-run')} 
-        className="bg-[var(--accent)] rounded-2xl p-5 cursor-pointer hover:opacity-90 transition-opacity"
-      >
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-black font-bold text-lg">Ready to Run?</p>
-            <p className="text-black/70 text-sm mt-0.5">Start your warm-up and today's session</p>
-          </div>
-          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="rgba(0,0,0,0.6)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-        </div>
+      <div className="rounded-2xl p-6 flex flex-col items-center" style={{ background: 'var(--bg-card)' }}>
+        <h2 className="text-2xl font-black mb-1" style={{ color: 'var(--text-primary)' }}>Ready to Run?</h2>
+        <p className="text-sm mb-10 text-center" style={{ color: 'var(--text-muted)' }}>Dynamic warm-up reduces injury risk and improves performance.</p>
+        <button
+          onClick={() => navigate('/log-run?warmup=true')}
+          className="rounded-full w-28 h-28 mb-6 font-black flex flex-col items-center justify-center"
+          style={{ background: 'var(--accent)', color: '#000', border: 'none', cursor: 'pointer' }}
+        >
+          <Flame className="mb-1" />
+          <span className="text-xs font-black">Start Warm-Up</span>
+        </button>
+        <button
+          onClick={() => navigate('/log-run')}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 14, padding: '8px 0' }}
+        >
+          Skip warm-up
+        </button>
       </div>
 
       {/* Training Readiness */}

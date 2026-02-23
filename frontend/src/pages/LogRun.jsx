@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
-import { Flame, MapPin, Mountain, RefreshCw, Gauge, Pencil } from 'lucide-react'
+import { Link, useNavigate, useLocation } from 'react-router-dom'
+import { MapPin, Mountain, RefreshCw, Gauge, Pencil } from 'lucide-react'
 import api from '../lib/api'
 import { parseDuration, formatDurationDisplay } from '../lib/parseDuration'
 import PostRunCheckIn from '../components/PostRunCheckIn'
@@ -144,7 +144,11 @@ function WorkoutWatchModal({ workout, onClose }) {
 
 export default function LogRun() {
   const navigate = useNavigate()
-  const [warmUpState, setWarmUpState] = useState('gate')
+  const location = useLocation()
+  const [warmUpState, setWarmUpState] = useState(() => {
+    const params = new URLSearchParams(window.location.search)
+    return params.get('warmup') === 'true' ? 'warmup' : 'done'
+  })
   const [activeTab, setActiveTab] = useState('today')
   const [countdown, setCountdown] = useState(3)
   const [surface, setSurface] = useState('road')
@@ -277,17 +281,6 @@ export default function LogRun() {
     await api.delete(`/runs/${selectedRun.id}`)
     setRecentRuns(prev => prev.filter(r => r.id !== selectedRun.id))
     setSelectedRun(null)
-  }
-
-  if (warmUpState === 'gate') {
-    return (
-      <div className="rounded-2xl p-6 flex flex-col items-center" style={{ background: 'var(--bg-card)' }}>
-        <h2 className="text-2xl font-black mb-1" style={{ color: 'var(--text-primary)' }}>Ready to Run?</h2>
-        <p className="text-sm mb-10 text-center" style={{ color: 'var(--text-muted)' }}>Dynamic warm-up reduces injury risk and improves performance.</p>
-        <button onClick={() => setWarmUpState('warmup')} className="rounded-full w-28 h-28 mb-6 font-black" style={{ background: 'var(--accent)', color: '#000', border: 'none' }}><Flame className="mx-auto mb-1" />Start Warm-Up</button>
-        <button onClick={() => setWarmUpState('done')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 14, padding: '8px 0' }}>Skip warm-up →</button>
-      </div>
-    )
   }
 
   if (warmUpState === 'warmup') {
