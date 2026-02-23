@@ -53,6 +53,7 @@ app.use('/api/lifts', require('./routes/lifts'));
 app.use('/api/workouts', require('./routes/workouts'));
 app.use('/api/exercises', require('./routes/exercises'));
 app.use('/api/plans', require('./routes/plans'));
+app.use('/api/plan', require('./routes/plans'));
 app.use('/api/coach', require('./routes/coach'));
 app.use('/api/diagnostics', require('./routes/diagnostics'));
 app.use('/api/feedback', require('./routes/feedback'));
@@ -66,6 +67,7 @@ app.use('/api/community', require('./routes/community'));
 app.use('/api/journal', require('./routes/journal'));
 app.use('/api/milestones', require('./routes/milestones'));
 app.use('/api/watch-sync', require('./routes/watchSync'));
+app.use('/api/races', require('./routes/races'));
 
 // Serve frontend
 const dist = path.join(__dirname, '../../frontend/dist');

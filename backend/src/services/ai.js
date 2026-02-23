@@ -1,9 +1,42 @@
 const Anthropic = require('@anthropic-ai/sdk');
+const crypto = require('crypto');
 
 let client;
 function getClient() {
   if (!client) client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   return client;
+}
+
+const aiCache = new Map();
+const TTL = {
+  runBrief: 4 * 60 * 60 * 1000,
+  workoutRecommendation: 4 * 60 * 60 * 1000,
+  liftPlan: 60 * 60 * 1000,
+  sessionFeedback: Infinity,
+  loadWarning: 2 * 60 * 60 * 1000,
+};
+
+function makeCacheKey(prefix, payload) {
+  const hash = crypto.createHash('sha256').update(JSON.stringify(payload || {})).digest('hex');
+  return `${prefix}:${hash}`;
+}
+
+function getCached(cacheKey) {
+  const hit = aiCache.get(cacheKey);
+  if (!hit) return null;
+  if (hit.expiresAt !== Infinity && Date.now() > hit.expiresAt) {
+    aiCache.delete(cacheKey);
+    return null;
+  }
+  console.log('[AI Cache] hit for', cacheKey);
+  return hit.value;
+}
+
+function setCached(cacheKey, value, ttlMs) {
+  aiCache.set(cacheKey, {
+    value,
+    expiresAt: ttlMs === Infinity ? Infinity : Date.now() + ttlMs,
+  });
 }
 
 async function generateTrainingPlan(profile) {
@@ -14,7 +47,6 @@ async function generateTrainingPlan(profile) {
     base_building: 'building aerobic base mileage',
   }[profile.goal_type] || 'building fitness';
 
-  // Get schedule preferences
   const scheduleInfo = profile.schedule_type ? `
 - Schedule style: ${profile.schedule_type} (flexible/structured/adaptive)
 - Lifestyle: ${profile.lifestyle || 'works_fulltime'}
@@ -33,22 +65,7 @@ async function generateTrainingPlan(profile) {
 
 Return ONLY valid JSON in this exact format, no other text:
 {
-  "weeks": [
-    {
-      "week": 1,
-      "theme": "short theme name",
-      "total_miles": 0,
-      "days": [
-        {"day": "Mon", "type": "easy", "distance_miles": 0, "duration_min": 0, "description": "brief description", "rest": false},
-        {"day": "Tue", "type": "rest", "distance_miles": 0, "duration_min": 0, "description": "Rest day", "rest": true},
-        {"day": "Wed", "type": "easy", "distance_miles": 0, "duration_min": 0, "description": "...", "rest": false},
-        {"day": "Thu", "type": "rest", "distance_miles": 0, "duration_min": 0, "description": "Rest day", "rest": true},
-        {"day": "Fri", "type": "easy", "distance_miles": 0, "duration_min": 0, "description": "...", "rest": false},
-        {"day": "Sat", "type": "long", "distance_miles": 0, "duration_min": 0, "description": "...", "rest": false},
-        {"day": "Sun", "type": "rest", "distance_miles": 0, "duration_min": 0, "description": "Rest day", "rest": true}
-      ]
-    }
-  ]
+  "weeks": [{"week":1,"theme":"short theme name","total_miles":0,"days":[{"day":"Mon","type":"easy","distance_miles":0,"duration_min":0,"description":"brief description","rest":false}]}]
 }
 Types can be: easy, tempo, long, intervals, recovery, rest, cross_train
 Increase mileage ~10% per week max. Week 4 should be a recovery week (reduce ~20%).`;
@@ -82,7 +99,6 @@ async function generateRunFeedback(run, profile) {
     ? `${Math.floor(durationMin / run.distance_miles)}:${String(Math.round((durationMin / run.distance_miles % 1) * 60)).padStart(2, '0')}/mi`
     : 'unknown pace';
 
-  // Get schedule preferences
   const scheduleContext = profile.schedule_type ? `
 - Schedule style: ${profile.schedule_type}
 - Lifestyle: ${profile.lifestyle || 'works_fulltime'}
@@ -121,20 +137,12 @@ async function generateWorkoutFeedback(session, sets, profile) {
       if (!exerciseMap[s.exercise_name]) exerciseMap[s.exercise_name] = [];
       exerciseMap[s.exercise_name].push(s);
     }
-
     const exerciseSummary = Object.entries(exerciseMap)
-      .map(([name, exSets]) => {
-        const setLines = exSets
-          .map(s => `Set ${s.set_number}: ${s.reps} reps @ ${s.weight_lbs} lbs`)
-          .join(', ');
-        return `${name}: ${setLines}`;
-      })
+      .map(([name, exSets]) => `${name}: ${exSets.map(s => `Set ${s.set_number}: ${s.reps} reps @ ${s.weight_lbs} lbs`).join(', ')}`)
       .join('\n');
 
     const durationMin = session.total_seconds ? Math.round(session.total_seconds / 60) : null;
-    const muscleGroups = Array.isArray(session.muscle_groups)
-      ? session.muscle_groups.join(', ')
-      : session.muscle_groups;
+    const muscleGroups = Array.isArray(session.muscle_groups) ? session.muscle_groups.join(', ') : session.muscle_groups;
     const voice = profile?.coach_personality || 'mentor';
 
     const voiceDesc = {
@@ -159,28 +167,44 @@ async function generateWorkoutFeedback(session, sets, profile) {
   }
 }
 
-async function generateRunBrief({ run, profile, recentRuns, recentLifts }) {
+async function generateRunBrief({ run, profile, recentRuns, recentLifts, userId }) {
   try {
-    const prompt = `Return JSON only with keys: why, effort, bpmRange, cadence. Athlete ${profile?.name || 'athlete'} goal ${profile?.goal_type || 'fitness'}. Latest planned/session run: ${JSON.stringify(run || {})}. Recent runs: ${JSON.stringify((recentRuns || []).slice(0,5))}. Recent workouts: ${JSON.stringify((recentLifts || []).slice(0,3))}.`; 
+    const cacheKey = makeCacheKey('run-brief', { userId, run, recentRuns: (recentRuns || []).slice(0, 5), recentLifts: (recentLifts || []).slice(0, 3) });
+    const cached = getCached(cacheKey);
+    if (cached) return cached;
+
+    const prompt = `Return JSON only with keys: why, effort, bpmRange, cadence. Athlete ${profile?.name || 'athlete'} goal ${profile?.goal_type || 'fitness'}. Latest planned/session run: ${JSON.stringify(run || {})}. Recent runs: ${JSON.stringify((recentRuns || []).slice(0,5))}. Recent workouts: ${JSON.stringify((recentLifts || []).slice(0,3))}.`;
     const msg = await getClient().messages.create({ model: 'claude-haiku-4-5', max_tokens: 220, messages: [{ role: 'user', content: prompt }] });
     const text = msg.content?.[0]?.text || '{}';
     const jsonMatch = text.match(/\{[\s\S]*\}/);
-    return jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+    const result = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+    if (result) setCached(cacheKey, result, TTL.runBrief);
+    return result;
   } catch { return null; }
 }
 
-async function generateLiftPlan({ bodyPart, timeAvailable, profile, recentSets, recentRuns }) {
+async function generateLiftPlan({ bodyPart, timeAvailable, profile, recentSets, recentRuns, userId }) {
   try {
+    const cacheKey = makeCacheKey('lift-plan', { userId, bodyPart, timeAvailable, recentSets: (recentSets || []).slice(0, 12), recentRuns: (recentRuns || []).slice(0, 4) });
+    const cached = getCached(cacheKey);
+    if (cached) return cached;
+
     const prompt = `Return JSON only with keys: workoutName, exercises(array of {name,sets,reps,rest}), estimatedTime. Body part: ${bodyPart}. Time available: ${timeAvailable}. Athlete: ${profile?.name || 'athlete'}. Recent sets: ${JSON.stringify((recentSets || []).slice(0,12))}. Recent runs: ${JSON.stringify((recentRuns || []).slice(0,4))}.`;
     const msg = await getClient().messages.create({ model: 'claude-haiku-4-5', max_tokens: 320, messages: [{ role: 'user', content: prompt }] });
     const text = msg.content?.[0]?.text || '{}';
     const jsonMatch = text.match(/\{[\s\S]*\}/);
-    return jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+    const result = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+    if (result) setCached(cacheKey, result, TTL.liftPlan);
+    return result;
   } catch { return null; }
 }
 
-async function generateSessionFeedback({ sessionType, sessionData, profile }) {
+async function generateSessionFeedback({ sessionType, sessionData, profile, userId }) {
   try {
+    const cacheKey = makeCacheKey('session-feedback', { userId, sessionType, sessionData });
+    const cached = getCached(cacheKey);
+    if (cached) return cached;
+
     const prompt = `You are FORGE AI coach. Return JSON only with keys: analysis, didWell, suggestion, recovery.
 Session type: ${sessionType}.
 Athlete: ${profile?.name || 'Athlete'}, goal: ${profile?.goal_type || 'fitness'}.
@@ -193,21 +217,85 @@ Rules: analysis must be 2-3 sentences. didWell one sentence. suggestion one sent
     });
     const text = msg.content?.[0]?.text || '{}';
     const jsonMatch = text.match(/\{[\s\S]*\}/);
-    return jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+    const result = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+    if (result) setCached(cacheKey, result, TTL.sessionFeedback);
+    return result;
   } catch (e) {
     console.error('generateSessionFeedback error:', e.message);
     return null;
   }
 }
 
-async function generateWorkoutRecommendation({ profile, recentRuns, recentWorkouts }) {
+async function generateWorkoutRecommendation({ profile, recentRuns, recentWorkouts, userId }) {
   try {
+    const cacheKey = makeCacheKey('workout-recommendation', { userId, recentRuns: (recentRuns || []).slice(0, 5), recentWorkouts: (recentWorkouts || []).slice(0, 5), goal: profile?.goal_type });
+    const cached = getCached(cacheKey);
+    if (cached) return cached;
+
     const prompt = `Return JSON only with keys: workoutName,target,warmup(array),main(array of {name,sets,reps,rest}),recovery(array),explanation,restExplanation. Athlete:${profile?.name || 'athlete'} goal ${profile?.goal_type || 'fitness'}. recent runs ${JSON.stringify((recentRuns || []).slice(0,5))}. recent workouts ${JSON.stringify((recentWorkouts || []).slice(0,5))}.`;
     const msg = await getClient().messages.create({ model: 'claude-haiku-4-5', max_tokens: 420, messages: [{ role: 'user', content: prompt }] });
     const text = msg.content?.[0]?.text || '{}';
     const jsonMatch = text.match(/\{[\s\S]*\}/);
-    return jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+    const result = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+    if (result) setCached(cacheKey, result, TTL.workoutRecommendation);
+    return result;
   } catch { return null; }
 }
 
-module.exports = { generateTrainingPlan, generateRunFeedback, generateWorkoutFeedback, generateRunBrief, generateLiftPlan, generateWorkoutRecommendation, generateSessionFeedback };
+async function generateLoadWarning(loadData, userId) {
+  try {
+    const cacheKey = makeCacheKey('load-warning', { userId, loadData });
+    const cached = getCached(cacheKey);
+    if (cached) return cached;
+
+    const prompt = `You are a running performance coach. Return JSON only with keys: warning, recommendation, suggestedAction.
+Data: ${JSON.stringify(loadData)}
+Rules:
+- warning: concise risk summary
+- recommendation: concrete next step
+- suggestedAction: one of rest|easy_day|reduce_miles|ok`;
+
+    const msg = await getClient().messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 220,
+      messages: [{ role: 'user', content: prompt }],
+    });
+
+    const text = msg.content?.[0]?.text || '{}';
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    const result = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+    if (result) setCached(cacheKey, result, TTL.loadWarning);
+    return result;
+  } catch (e) {
+    console.error('generateLoadWarning error:', e.message);
+    return null;
+  }
+}
+
+async function generateRaceAdjustment({ profile, race, currentPlan }) {
+  try {
+    const prompt = `Return JSON only with key weeks (array). Athlete profile: ${JSON.stringify({ goal: profile?.goal_type, weekly: profile?.weekly_miles_current, runDays: profile?.run_days_per_week })}. Race: ${JSON.stringify(race)}. Current plan: ${JSON.stringify(currentPlan)}. Rebalance with taper starting 2 weeks out when race <= 60 days.`;
+    const msg = await getClient().messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 700,
+      messages: [{ role: 'user', content: prompt }],
+    });
+    const text = msg.content?.[0]?.text || '{}';
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    return jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+  } catch {
+    return null;
+  }
+}
+
+module.exports = {
+  generateTrainingPlan,
+  generateRunFeedback,
+  generateWorkoutFeedback,
+  generateRunBrief,
+  generateLiftPlan,
+  generateWorkoutRecommendation,
+  generateSessionFeedback,
+  generateLoadWarning,
+  generateRaceAdjustment,
+};

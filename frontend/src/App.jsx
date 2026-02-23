@@ -5,6 +5,7 @@ import Login from './pages/Login'
 import Register from './pages/Register'
 import Onboarding from './pages/Onboarding'
 import Dashboard from './pages/Dashboard'
+import Landing from './pages/Landing'
 import LogRun from './pages/LogRun'
 import LogLift from './pages/LogLift'
 import Plan from './pages/Plan'
@@ -23,6 +24,7 @@ import Badges from './pages/Badges'
 import Challenges from './pages/Challenges'
 import Community from './pages/Community'
 import Journal from './pages/Journal'
+import Races from './pages/Races'
 
 function PrivateRoute({ children }) {
   if (!isLoggedIn()) return <Navigate to="/login" replace />
@@ -43,11 +45,11 @@ export default function App() {
 
         <Route
           path="/"
-          element={
+          element={isLoggedIn() ? (
             <PrivateRoute>
               <Dashboard />
             </PrivateRoute>
-          }
+          ) : <Landing />}
         />
         <Route
           path="/log-run"
@@ -102,6 +104,14 @@ export default function App() {
           element={
             <PrivateRoute>
               <History />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/races"
+          element={
+            <PrivateRoute>
+              <Races />
             </PrivateRoute>
           }
         />

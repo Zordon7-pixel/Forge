@@ -7,6 +7,8 @@ export default function Settings() {
   const navigate = useNavigate()
   const [distanceUnit, setDistanceUnit] = useState('miles')
   const [saved, setSaved] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  const [uploadStatus, setUploadStatus] = useState(null)
 
   useEffect(() => {
     api.get('/users/settings').then(r => {
@@ -67,6 +69,35 @@ export default function Settings() {
         <p style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.6 }}>
           Your data lives on FORGE servers. We never sell your information. Import from Strava and Apple Health coming soon.
         </p>
+      </div>
+
+      <div style={card}>
+        <span style={label}>Import Activity</span>
+        <input
+          type="file"
+          accept=".gpx,.json"
+          onChange={async (e) => {
+            const file = e.target.files?.[0]
+            if (!file) return
+            setUploading(true)
+            setUploadStatus(null)
+            const form = new FormData()
+            form.append('file', file)
+            try {
+              const res = await api.post('/watch-sync/upload', form, { headers: { 'Content-Type': 'multipart/form-data' } })
+              setUploadStatus({ ok: true, text: res.data?.message || 'Activity imported successfully' })
+            } catch (err) {
+              setUploadStatus({ ok: false, text: "We couldn't parse this file. Supported: GPX, Garmin JSON export" })
+            } finally {
+              setUploading(false)
+            }
+          }}
+          style={{ width: '100%', fontSize: 13, color: 'var(--text-muted)' }}
+        />
+        {uploading && <p style={{ fontSize: 12, marginTop: 10, color: 'var(--text-muted)' }}>Uploading...</p>}
+        {uploadStatus && (
+          <p style={{ fontSize: 12, marginTop: 10, color: uploadStatus.ok ? '#22c55e' : '#ef4444' }}>{uploadStatus.text}</p>
+        )}
       </div>
 
       {/* App version */}

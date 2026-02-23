@@ -24,7 +24,7 @@ router.post('/session-feedback', auth, async (req, res) => {
 
   if (!sessionData) return res.status(404).json({ error: 'Session not found' });
 
-  const feedback = await generateSessionFeedback({ sessionType, sessionData, profile });
+  const feedback = await generateSessionFeedback({ sessionType, sessionData, profile, userId: athleteId });
   if (!feedback) {
     return res.json({
       feedback: {
@@ -53,7 +53,7 @@ router.get('/run-brief', auth, async (req, res) => {
     cadence: '170–175 spm'
   };
 
-  const brief = await generateRunBrief({ run, profile, recentRuns, recentLifts }) || fallback;
+  const brief = await generateRunBrief({ run, profile, recentRuns, recentLifts, userId: req.user.id }) || fallback;
   res.json(brief);
 });
 
@@ -64,7 +64,7 @@ router.post('/lift-plan', auth, async (req, res) => {
   const recentSets = db.prepare('SELECT * FROM workout_sets WHERE user_id=? ORDER BY logged_at DESC LIMIT 40').all(athleteId);
   const recentRuns = db.prepare('SELECT * FROM runs WHERE user_id=? ORDER BY date DESC, created_at DESC LIMIT 10').all(athleteId);
 
-  const plan = await generateLiftPlan({ bodyPart, timeAvailable, profile, recentSets, recentRuns }) || {
+  const plan = await generateLiftPlan({ bodyPart, timeAvailable, profile, recentSets, recentRuns, userId: athleteId }) || {
     workoutName: `${bodyPart || 'Full Body'} Focus`,
     exercises: [
       { name: 'Compound Movement', sets: 3, reps: '8-10', rest: '90s' },
@@ -83,7 +83,7 @@ router.get('/workout-recommendation', auth, async (req, res) => {
   const recentRuns = db.prepare('SELECT * FROM runs WHERE user_id=? ORDER BY date DESC, created_at DESC LIMIT 10').all(userId);
   const recentWorkouts = db.prepare('SELECT * FROM workout_sessions WHERE user_id=? ORDER BY started_at DESC LIMIT 8').all(userId);
 
-  const recommendation = await generateWorkoutRecommendation({ profile, recentRuns, recentWorkouts }) || {
+  const recommendation = await generateWorkoutRecommendation({ profile, recentRuns, recentWorkouts, userId }) || {
     workoutName: 'Upper Body and Core — Recovery Focus',
     target: 'Upper Body and Core',
     warmup: ['Band pull-aparts x 20', 'Shoulder circles x 30s'],

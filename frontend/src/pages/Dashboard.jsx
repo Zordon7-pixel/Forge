@@ -182,11 +182,16 @@ export default function Dashboard() {
   const [otherActivities, setOtherActivities] = useState([])
   const [streakStats, setStreakStats] = useState({ currentStreak: 0, bestStreak: 0 })
   const [milestones, setMilestones] = useState([])
+  const [compliance, setCompliance] = useState(null)
+  const [showComplianceDetails, setShowComplianceDetails] = useState(false)
+  const [loadAnalysis, setLoadAnalysis] = useState(null)
+  const [nextRace, setNextRace] = useState(null)
+  const [loadWarningDismissedUntil, setLoadWarningDismissedUntil] = useState(Number(localStorage.getItem('forge_load_warning_dismissed_until') || 0))
 
   useEffect(() => {
     ;(async () => {
       try {
-        const [statsRes, runsRes, liftsRes, warningRes, meRes, checkinRes, goalRes, streakRes, milestoneRes] = await Promise.all([
+        const [statsRes, runsRes, liftsRes, warningRes, meRes, checkinRes, goalRes, streakRes, milestoneRes, complianceRes, loadRes, nextRaceRes] = await Promise.all([
           api.get('/auth/me/stats'),
           api.get('/runs', { params: { limit: 5 } }),
           api.get('/lifts'),
@@ -196,6 +201,9 @@ export default function Dashboard() {
           api.get('/users/goal').catch(() => ({ data: null })),
           api.get('/auth/me/streak').catch(() => ({ data: { currentStreak: 0, bestStreak: 0 } })),
           api.get('/milestones/new').catch(() => ({ data: { milestones: [] } })),
+          api.get('/plans/compliance').catch(() => ({ data: null })),
+          api.get('/runs/load-analysis').catch(() => ({ data: null })),
+          api.get('/races/next').catch(() => ({ data: { race: null } })),
         ])
         setStats(statsRes.data)
         const runsList = Array.isArray(runsRes.data) ? runsRes.data : runsRes.data?.runs || []
@@ -215,6 +223,9 @@ export default function Dashboard() {
         }
         setStreakStats(streakRes.data || { currentStreak: 0, bestStreak: 0 })
         setMilestones(milestoneRes.data?.milestones || [])
+        setCompliance(complianceRes.data)
+        setLoadAnalysis(loadRes.data)
+        setNextRace(nextRaceRes.data?.race || null)
       } finally {
         setLoading(false)
       }
@@ -318,6 +329,9 @@ export default function Dashboard() {
     return combined.slice(0, 4)
   }, [runs, lifts, otherActivities])
 
+  const showLoadWarning = loadAnalysis && ['elevated', 'high', 'danger'].includes(loadAnalysis.loadStatus) && Date.now() > loadWarningDismissedUntil
+  const complianceColor = compliance?.score >= 80 ? '#22c55e' : compliance?.score >= 50 ? '#EAB308' : '#ef4444'
+
   if (loading) return <LoadingRunner message="Getting ready" />
 
   return (
@@ -351,6 +365,48 @@ export default function Dashboard() {
           <WatchSyncWidget />
         </div>
       </div>
+
+      {showLoadWarning && (
+        <div className="rounded-xl p-3" style={{
+          background: loadAnalysis.loadStatus === 'danger' ? 'rgba(239,68,68,0.12)' : loadAnalysis.loadStatus === 'high' ? 'rgba(249,115,22,0.12)' : 'rgba(234,179,8,0.12)',
+          border: `1px solid ${loadAnalysis.loadStatus === 'danger' ? 'rgba(239,68,68,0.35)' : loadAnalysis.loadStatus === 'high' ? 'rgba(249,115,22,0.35)' : 'rgba(234,179,8,0.35)'}`
+        }}>
+          <p className="text-xs font-bold uppercase" style={{ color: 'var(--text-primary)' }}>{loadAnalysis.loadStatus} load</p>
+          <p className="text-sm mt-1" style={{ color: 'var(--text-primary)' }}>{loadAnalysis.warning || loadAnalysis.recommendation}</p>
+          <div className="mt-2 flex gap-2">
+            <button className="rounded-lg px-3 py-1.5 text-xs font-bold" style={{ background: 'var(--accent)', color: '#000' }} onClick={() => navigate('/plan', { state: { suggestEasyDay: true } })}>Take Easy Day</button>
+            <button className="rounded-lg px-3 py-1.5 text-xs" style={{ background: 'var(--bg-input)', color: 'var(--text-muted)', border: '1px solid var(--border-subtle)' }} onClick={() => {
+              const until = Date.now() + 24 * 60 * 60 * 1000
+              localStorage.setItem('forge_load_warning_dismissed_until', String(until))
+              setLoadWarningDismissedUntil(until)
+            }}>OK</button>
+          </div>
+        </div>
+      )}
+
+      {nextRace && (() => { const days = Math.ceil((new Date(`${nextRace.race_date}T12:00:00`).getTime() - Date.now()) / 86400000); return days > 0 && days <= 60 ? (
+        <div className="rounded-xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+          <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Next Race</p>
+          <p className="text-base font-bold" style={{ color: 'var(--text-primary)' }}>{nextRace.race_name}</p>
+          <p className="text-sm" style={{ color: 'var(--accent)' }}>{days} days to go</p>
+        </div>
+      ) : null })()}
+
+      {compliance && (
+        <div className="rounded-xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }} onClick={() => setShowComplianceDetails(!showComplianceDetails)}>
+          <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>This Week: {compliance.completed}/{compliance.planned} sessions — {compliance.score}%</p>
+          <div className="w-full h-2 rounded-full mt-2" style={{ background: 'var(--bg-input)' }}>
+            <div className="h-2 rounded-full" style={{ width: `${compliance.score}%`, background: complianceColor }} />
+          </div>
+          {showComplianceDetails && (
+            <div className="mt-3 space-y-1">
+              {(compliance.sessions || []).map((s, i) => (
+                <p key={i} className="text-xs" style={{ color: s.completed ? '#22c55e' : '#ef4444' }}>{s.day}: {s.type} {s.completed ? 'hit' : 'missed'}</p>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {milestones.length > 0 && (
         <div className="space-y-2">

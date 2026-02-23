@@ -370,6 +370,30 @@ addWatchCol('treadmill_model', 'TEXT');
 addWatchCol('raw_payload', 'TEXT');
 
 db.exec(`
+  CREATE TABLE IF NOT EXISTS race_events (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    race_name TEXT NOT NULL,
+    race_date TEXT NOT NULL,
+    distance_miles REAL NOT NULL,
+    location TEXT,
+    goal_time_seconds INTEGER,
+    status TEXT DEFAULT 'upcoming',
+    notes TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS daily_checkins (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    checkin_date TEXT NOT NULL,
+    feeling INTEGER DEFAULT 3,
+    time_available INTEGER DEFAULT 60,
+    life_flags TEXT DEFAULT '[]',
+    created_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(user_id, checkin_date)
+  );
+
   CREATE TABLE IF NOT EXISTS community_workouts (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,

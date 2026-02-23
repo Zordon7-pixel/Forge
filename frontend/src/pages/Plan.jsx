@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import api from '../lib/api'
 
 const badgeStyles = {
@@ -11,15 +11,22 @@ const badgeStyles = {
 
 export default function Plan() {
   const navigate = useNavigate()
+  const location = useLocation()
   const [plan, setPlan] = useState(null)
   const [loading, setLoading] = useState(true)
   const [regenerating, setRegenerating] = useState(false)
   const [runBriefs, setRunBriefs] = useState({})
+  const [compliance, setCompliance] = useState(null)
+  const [reschedulingId, setReschedulingId] = useState(null)
 
   const loadPlan = async () => {
     try {
-      const res = await api.get('/plans/current')
+      const [res, comp] = await Promise.all([
+        api.get('/plans/current'),
+        api.get('/plans/compliance').catch(() => ({ data: null }))
+      ])
       setPlan(res.data?.plan || res.data || null)
+      setCompliance(comp.data)
     } finally {
       setLoading(false)
     }
@@ -27,7 +34,10 @@ export default function Plan() {
 
   useEffect(() => { loadPlan() }, [])
 
+  const showEasyDaySuggestion = Boolean(location.state?.suggestEasyDay)
+
   const weeklyStructure = useMemo(() => {
+    if (plan?.plan_json?.weeks?.[0]?.days) return plan.plan_json.weeks[0].days
     if (!plan?.weekly_structure) return []
     if (Array.isArray(plan.weekly_structure)) return plan.weekly_structure
     try { return JSON.parse(plan.weekly_structure) } catch { return [] }
@@ -78,6 +88,37 @@ export default function Plan() {
         <h2 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{plan.title || 'Your Plan'}</h2>
         <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>Goal: {plan.goal || '--'}</p>
       </div>
+
+      {showEasyDaySuggestion && (
+        <div className="rounded-xl p-3" style={{ background: 'rgba(234,179,8,0.12)', border: '1px solid rgba(234,179,8,0.3)' }}>
+          <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Recovery suggestion: replace today with an easy 20-30 minute run.</p>
+        </div>
+      )}
+
+      {compliance?.missed?.length > 0 && (
+        <div className="rounded-xl p-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+          <p className="text-sm font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>Missed sessions</p>
+          <div className="space-y-2">
+            {compliance.missed.map((m) => (
+              <div key={m.sessionId} className="flex items-center justify-between">
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{m.day} · {m.type} {m.distance ? `· ${m.distance} mi` : ''}</p>
+                <button
+                  onClick={async () => {
+                    setReschedulingId(m.sessionId)
+                    await api.post('/plans/reschedule-missed', { originalDate: m.date, sessionId: m.sessionId })
+                    await loadPlan()
+                    setReschedulingId(null)
+                  }}
+                  className="rounded-lg px-2 py-1 text-xs font-semibold"
+                  style={{ background: 'var(--accent)', color: '#000' }}
+                >
+                  {reschedulingId === m.sessionId ? 'Rescheduling...' : 'Reschedule'}
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="space-y-3">
         {weeklyStructure.map((day, idx) => {

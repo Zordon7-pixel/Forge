@@ -2,11 +2,71 @@ const router = require('express').Router();
 const db     = require('../db');
 const auth   = require('../middleware/auth');
 const { v4: uuidv4 } = require('uuid');
-const { generateRunFeedback } = require('../services/ai');
+const { generateRunFeedback, generateLoadWarning } = require('../services/ai');
 
 router.get('/', auth, (req, res) => {
   const runs = db.prepare('SELECT * FROM runs WHERE user_id = ? ORDER BY date DESC, created_at DESC LIMIT 50').all(req.user.id);
   res.json({ runs });
+});
+
+router.get('/load-analysis', auth, async (req, res) => {
+  const now = new Date();
+  const day = now.getDay();
+  const monday = new Date(now);
+  monday.setHours(0, 0, 0, 0);
+  monday.setDate(now.getDate() - (day === 0 ? 6 : day - 1));
+
+  const lastMonday = new Date(monday);
+  lastMonday.setDate(monday.getDate() - 7);
+  const nextMonday = new Date(monday);
+  nextMonday.setDate(monday.getDate() + 7);
+
+  const thisWeekStart = monday.toISOString().slice(0, 10);
+  const thisWeekEnd = nextMonday.toISOString().slice(0, 10);
+  const lastWeekStart = lastMonday.toISOString().slice(0, 10);
+
+  const thisWeekMiles = db.prepare('SELECT COALESCE(SUM(distance_miles),0) as miles FROM runs WHERE user_id=? AND date>=? AND date<?').get(req.user.id, thisWeekStart, thisWeekEnd).miles || 0;
+  const lastWeekMiles = db.prepare('SELECT COALESCE(SUM(distance_miles),0) as miles FROM runs WHERE user_id=? AND date>=? AND date<?').get(req.user.id, lastWeekStart, thisWeekStart).miles || 0;
+
+  const increasePercent = lastWeekMiles > 0 ? ((thisWeekMiles - lastWeekMiles) / lastWeekMiles) * 100 : (thisWeekMiles > 0 ? 100 : 0);
+
+  const runs = db.prepare('SELECT date, perceived_effort FROM runs WHERE user_id=? AND date>=? AND date<? ORDER BY date ASC').all(req.user.id, thisWeekStart, thisWeekEnd);
+  let hardStreak = 0;
+  let maxHardStreak = 0;
+  for (const r of runs) {
+    if (Number(r.perceived_effort || 0) >= 7) {
+      hardStreak += 1;
+      maxHardStreak = Math.max(maxHardStreak, hardStreak);
+    } else {
+      hardStreak = 0;
+    }
+  }
+
+  let loadStatus = 'optimal';
+  if (increasePercent > 30 || maxHardStreak >= 4) loadStatus = 'danger';
+  else if (maxHardStreak >= 3) loadStatus = 'danger';
+  else if (increasePercent > 20) loadStatus = 'high';
+  else if (increasePercent > 10) loadStatus = 'elevated';
+
+  const baselineRecommendation = loadStatus === 'danger'
+    ? 'Recovery day recommended immediately to prevent overtraining.'
+    : loadStatus === 'high'
+      ? 'Reduce next 2 sessions and keep effort easy.'
+      : loadStatus === 'elevated'
+        ? 'Keep easy days easy and monitor fatigue.'
+        : 'Load progression looks healthy.';
+
+  const ai = (loadStatus === 'optimal') ? null : await generateLoadWarning({ thisWeekMiles, lastWeekMiles, increasePercent, loadStatus, maxHardStreak }, req.user.id);
+
+  res.json({
+    thisWeekMiles: Number(thisWeekMiles.toFixed(2)),
+    lastWeekMiles: Number(lastWeekMiles.toFixed(2)),
+    increasePercent: Number(increasePercent.toFixed(1)),
+    loadStatus,
+    warning: ai?.warning || null,
+    recommendation: ai?.recommendation || baselineRecommendation,
+    suggestedAction: ai?.suggestedAction || (loadStatus === 'optimal' ? 'ok' : 'easy_day'),
+  });
 });
 
 router.post('/', auth, (req, res) => {

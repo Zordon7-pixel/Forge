@@ -2,6 +2,10 @@ const router = require('express').Router();
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
 const auth = require('../middleware/auth');
+const multer = require('multer');
+const { parseStringPromise } = require('xml2js');
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 function normalizeActivityType(rawType = '') {
   const v = String(rawType || '').toLowerCase().trim();
@@ -11,7 +15,7 @@ function normalizeActivityType(rawType = '') {
   if (v === 'treadmill') return { normalized: 'treadmill', section: 'run', runType: 'treadmill', surface: 'treadmill' };
   if (['walk', 'outdoor walk'].includes(v)) return { normalized: 'walk_outdoor', section: 'run', runType: 'walk', surface: 'outdoor' };
   if (v === 'indoor walk') return { normalized: 'walk_indoor', section: 'run', runType: 'walk', surface: 'treadmill' };
-  if (['strength training', 'weightlifting'].includes(v)) return { normalized: 'strength', section: 'lift', liftCategory: 'strength' };
+  if (['strength training', 'weightlifting', 'lift', 'strength'].includes(v)) return { normalized: 'strength', section: 'lift', liftCategory: 'strength' };
   if (v === 'hiit') return { normalized: 'hiit', section: 'lift', liftCategory: 'hiit' };
   if (['cycling', 'indoor cycling'].includes(v)) return { normalized: 'cycling', section: 'other' };
   if (v === 'swimming') return { normalized: 'swimming', section: 'other' };
@@ -24,12 +28,19 @@ function asNum(value, fallback = null) {
   return Number.isFinite(n) ? n : fallback;
 }
 
-router.post('/', auth, (req, res) => {
-  const payload = req.body || {};
+function haversineMiles(lat1, lon1, lat2, lon2) {
+  const R = 3958.8;
+  const toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+function ingestActivity(userId, payload = {}) {
   const mapped = normalizeActivityType(payload.activity_type);
   const now = new Date().toISOString();
   const watchSyncId = uuidv4();
-
   const activityName = payload.activity_name || payload.activity_type || 'Watch activity';
 
   db.prepare(`INSERT INTO watch_sync (
@@ -45,7 +56,7 @@ router.post('/', auth, (req, res) => {
     treadmill_brand, treadmill_model, watch_mode, raw_payload, synced_at
   ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
     watchSyncId,
-    req.user.id,
+    userId,
     payload.activity_type || null,
     activityName,
     mapped.normalized,
@@ -103,41 +114,15 @@ router.post('/', auth, (req, res) => {
       recovery_time_hours, detected_surface_type, temperature_f, calories,
       treadmill_brand, treadmill_model
     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
-      runId,
-      req.user.id,
-      runDate,
-      mapped.runType || payload.type || 'easy',
-      asNum(payload.distance_miles, 0),
-      asNum(payload.duration_seconds, 0),
-      asNum(payload.perceived_effort, 5),
-      payload.notes || 'Synced from watch',
-      resolvedSurface,
-      resolvedSurface,
-      asNum(payload.incline_pct, 0),
-      asNum(payload.belt_speed_mph || payload.treadmill_speed, 0),
-      JSON.stringify(payload.route_coords || []),
-      payload.watch_mode || 'watch-sync',
-      watchSyncId,
-      payload.activity_type || null,
-      mapped.normalized,
-      asNum(payload.avg_heart_rate),
-      asNum(payload.max_heart_rate),
-      asNum(payload.min_heart_rate),
-      JSON.stringify(payload.heart_rate_zones || []),
-      asNum(payload.cadence_spm),
-      asNum(payload.elevation_gain),
-      asNum(payload.elevation_loss),
-      asNum(payload.avg_pace),
-      JSON.stringify(payload.pace_splits || []),
-      asNum(payload.vo2_max),
-      asNum(payload.training_effect_aerobic),
-      asNum(payload.training_effect_anaerobic),
-      asNum(payload.recovery_time_hours),
-      payload.surface_type || null,
-      asNum(payload.temperature_f),
-      asNum(payload.calories, 0),
-      payload.treadmill_brand || null,
-      payload.treadmill_model || null
+      runId, userId, runDate, mapped.runType || payload.type || 'easy',
+      asNum(payload.distance_miles, 0), asNum(payload.duration_seconds, 0), asNum(payload.perceived_effort, 5), payload.notes || 'Synced from watch',
+      resolvedSurface, resolvedSurface, asNum(payload.incline_pct, 0), asNum(payload.belt_speed_mph || payload.treadmill_speed, 0), JSON.stringify(payload.route_coords || []), payload.watch_mode || 'watch-sync',
+      watchSyncId, payload.activity_type || null, mapped.normalized,
+      asNum(payload.avg_heart_rate), asNum(payload.max_heart_rate), asNum(payload.min_heart_rate), JSON.stringify(payload.heart_rate_zones || []),
+      asNum(payload.cadence_spm), asNum(payload.elevation_gain), asNum(payload.elevation_loss), asNum(payload.avg_pace),
+      JSON.stringify(payload.pace_splits || []), asNum(payload.vo2_max), asNum(payload.training_effect_aerobic), asNum(payload.training_effect_anaerobic),
+      asNum(payload.recovery_time_hours), payload.surface_type || null, asNum(payload.temperature_f), asNum(payload.calories, 0),
+      payload.treadmill_brand || null, payload.treadmill_model || null
     );
   } else if (mapped.section === 'lift') {
     const liftId = uuidv4();
@@ -151,39 +136,101 @@ router.post('/', auth, (req, res) => {
       workout_duration_seconds, calories,
       recovery_heart_rate, category
     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
-      liftId,
-      req.user.id,
-      payload.date || now.slice(0, 10),
-      JSON.stringify(payload.muscle_groups || []),
-      payload.intensity || 'moderate',
-      payload.notes || 'Synced from watch',
-      payload.exercise_name || (mapped.liftCategory === 'hiit' ? 'HIIT Session' : 'Strength Session'),
-      asNum(payload.sets),
-      asNum(payload.reps),
-      asNum(payload.weight_lbs),
-      watchSyncId,
-      payload.activity_type || null,
-      mapped.normalized,
-      asNum(payload.avg_heart_rate),
-      asNum(payload.max_heart_rate),
-      asNum(payload.min_heart_rate),
-      JSON.stringify(payload.set_heart_rate || []),
-      JSON.stringify(payload.rest_heart_rate || []),
-      asNum(payload.workout_duration_seconds),
-      asNum(payload.calories),
-      asNum(payload.recovery_heart_rate),
-      mapped.liftCategory || 'strength'
+      liftId, userId, payload.date || now.slice(0, 10), JSON.stringify(payload.muscle_groups || []), payload.intensity || 'moderate', payload.notes || 'Synced from watch',
+      payload.exercise_name || (mapped.liftCategory === 'hiit' ? 'HIIT Session' : 'Strength Session'), asNum(payload.sets), asNum(payload.reps), asNum(payload.weight_lbs),
+      watchSyncId, payload.activity_type || null, mapped.normalized,
+      asNum(payload.avg_heart_rate), asNum(payload.max_heart_rate), asNum(payload.min_heart_rate),
+      JSON.stringify(payload.set_heart_rate || []), JSON.stringify(payload.rest_heart_rate || []),
+      asNum(payload.workout_duration_seconds), asNum(payload.calories),
+      asNum(payload.recovery_heart_rate), mapped.liftCategory || 'strength'
     );
   }
 
-  res.status(201).json({
-    id: watchSyncId,
-    created_record_id: createdRecordId,
-    normalized_type: mapped.normalized,
-    routed_section: mapped.section,
-    activity_name: activityName,
-    synced_at: now,
-  });
+  return { id: watchSyncId, created_record_id: createdRecordId, normalized_type: mapped.normalized, routed_section: mapped.section, activity_name: activityName, synced_at: now };
+}
+
+router.post('/', auth, (req, res) => {
+  const result = ingestActivity(req.user.id, req.body || {});
+  res.status(201).json(result);
+});
+
+router.post('/upload', auth, upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    const filename = req.file.originalname || 'activity';
+    const lower = filename.toLowerCase();
+    let payload;
+
+    if (lower.endsWith('.gpx')) {
+      const xml = req.file.buffer.toString('utf8');
+      const parsed = await parseStringPromise(xml);
+      const points = parsed?.gpx?.trk?.[0]?.trkseg?.[0]?.trkpt || [];
+      if (!points.length) return res.status(400).json({ error: 'No track points found in GPX' });
+
+      const route = [];
+      let distance = 0;
+      let elevationGain = 0;
+      let elevationLoss = 0;
+      let prev = null;
+
+      for (const p of points) {
+        const lat = Number(p.$?.lat);
+        const lon = Number(p.$?.lon);
+        const ele = Number(p.ele?.[0] || 0);
+        const time = p.time?.[0] || null;
+        if (Number.isFinite(lat) && Number.isFinite(lon)) route.push({ lat, lng: lon, ele, time });
+        if (prev && Number.isFinite(lat) && Number.isFinite(lon)) {
+          distance += haversineMiles(prev.lat, prev.lon, lat, lon);
+          const diff = ele - prev.ele;
+          if (diff > 0) elevationGain += diff;
+          if (diff < 0) elevationLoss += Math.abs(diff);
+        }
+        prev = { lat, lon, ele };
+      }
+
+      const startTime = new Date(points[0]?.time?.[0] || Date.now());
+      const endTime = new Date(points[points.length - 1]?.time?.[0] || Date.now());
+      const durationSeconds = Math.max(0, Math.round((endTime.getTime() - startTime.getTime()) / 1000));
+
+      payload = {
+        activity_type: 'run',
+        activity_name: filename.replace(/\.gpx$/i, ''),
+        date: startTime.toISOString().slice(0, 10),
+        distance_miles: Number(distance.toFixed(2)),
+        duration_seconds: durationSeconds,
+        avg_pace: distance > 0 ? durationSeconds / distance : null,
+        elevation_gain: Number(elevationGain.toFixed(1)),
+        elevation_loss: Number(elevationLoss.toFixed(1)),
+        route_coords: route,
+        watch_mode: 'file-upload',
+      };
+    } else if (lower.endsWith('.json')) {
+      const raw = JSON.parse(req.file.buffer.toString('utf8'));
+      const type = raw.type || raw.activity_type || raw.sport || 'run';
+      const distanceMeters = Number(raw.distance || raw.distance_m || raw.distanceMeters || 0);
+      const distanceMiles = distanceMeters > 0 ? distanceMeters / 1609.34 : Number(raw.distance_miles || 0);
+      const duration = Number(raw.duration || raw.duration_seconds || raw.elapsed_time || 0);
+
+      payload = {
+        activity_type: String(type),
+        activity_name: raw.name || raw.activity_name || filename.replace(/\.json$/i, ''),
+        date: (raw.date || raw.start_date || new Date().toISOString()).slice(0, 10),
+        distance_miles: Number(distanceMiles.toFixed(2)),
+        duration_seconds: duration,
+        avg_heart_rate: Number(raw.avg_heart_rate || raw.hr_avg || 0) || null,
+        cadence_spm: Number(raw.cadence || raw.avg_cadence || 0) || null,
+        calories: Number(raw.calories || 0) || null,
+        watch_mode: 'file-upload',
+      };
+    } else {
+      return res.status(400).json({ error: "We couldn't parse this file. Supported: GPX, Garmin JSON export" });
+    }
+
+    const result = ingestActivity(req.user.id, payload);
+    res.status(201).json({ ...result, message: `Activity imported — ${result.activity_name} added to your ${result.routed_section === 'lift' ? 'Lift' : 'Run'} history` });
+  } catch (e) {
+    res.status(400).json({ error: "We couldn't parse this file. Supported: GPX, Garmin JSON export" });
+  }
 });
 
 router.get('/recent', auth, (req, res) => {
@@ -195,7 +242,7 @@ router.get('/recent', auth, (req, res) => {
 router.get('/status', auth, (req, res) => {
   const lastSync = db.prepare(`SELECT synced_at FROM watch_sync WHERE user_id=? ORDER BY synced_at DESC LIMIT 1`).get(req.user.id);
   const activityCount = db.prepare(`SELECT COUNT(*) as count FROM watch_sync WHERE user_id=?`).get(req.user.id);
-  
+
   res.json({
     lastSynced: lastSync?.synced_at || null,
     activityCount: activityCount?.count || 0
