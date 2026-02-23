@@ -22,6 +22,38 @@ export default function Challenges() {
   const [expandedId, setExpandedId] = useState(null)
   const [showBrowse, setShowBrowse] = useState(true)
   const [feed, setFeed] = useState([])
+  const [showCreate, setShowCreate] = useState(false)
+  const [createForm, setCreateForm] = useState({ name: '', type: 'running', target_value: '', description: '' })
+  const [creating, setCreating] = useState(false)
+
+  const CHALLENGE_TEMPLATES = [
+    { type: 'running',    label: 'Running',        unit: 'miles',   placeholder: 'e.g. 50',   hint: 'Total miles to run' },
+    { type: 'walking',    label: 'Walking',         unit: 'miles',   placeholder: 'e.g. 30',   hint: 'Total miles to walk' },
+    { type: 'steps',      label: 'Steps',           unit: 'steps',   placeholder: 'e.g. 100000', hint: 'Total steps to hit' },
+    { type: 'gym_time',   label: 'Gym Time',        unit: 'minutes', placeholder: 'e.g. 600',  hint: 'Total minutes in the gym' },
+    { type: 'streak',     label: 'Workout Streak',  unit: 'days',    placeholder: 'e.g. 30',   hint: 'Consecutive active days' },
+    { type: 'elevation',  label: 'Elevation Climb', unit: 'feet',    placeholder: 'e.g. 10000', hint: 'Total feet of elevation gain' },
+    { type: 'workouts',   label: 'Most Workouts',   unit: 'sessions', placeholder: 'e.g. 20', hint: 'Total workout sessions' },
+    { type: 'custom',     label: 'Custom',          unit: 'units',   placeholder: 'e.g. 100',  hint: 'Your own challenge metric' },
+  ]
+
+  async function submitCreate() {
+    const tmpl = CHALLENGE_TEMPLATES.find(t => t.type === createForm.type)
+    if (!createForm.name.trim() || !createForm.target_value) return
+    setCreating(true)
+    try {
+      await api.post('/challenges/create', {
+        name: createForm.name,
+        description: createForm.description,
+        type: createForm.type,
+        target_value: Number(createForm.target_value),
+        unit: tmpl?.unit || 'units',
+      })
+      setShowCreate(false)
+      setCreateForm({ name: '', type: 'running', target_value: '', description: '' })
+      await loadData()
+    } finally { setCreating(false) }
+  }
 
   async function loadData() {
     setLoading(true)
@@ -242,6 +274,60 @@ export default function Challenges() {
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+        </section>
+
+        {/* Create Challenge */}
+        <section style={{ borderRadius: 14, border: '1px solid var(--border-subtle)', overflow: 'hidden' }}>
+          <button
+            onClick={() => setShowCreate(v => !v)}
+            style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', background: 'var(--bg-card)', border: 'none', cursor: 'pointer' }}
+          >
+            <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>Create a Challenge</span>
+            {showCreate ? <ChevronUp size={16} color="var(--text-muted)" /> : <ChevronDown size={16} color="var(--text-muted)" />}
+          </button>
+
+          {showCreate && (
+            <div style={{ background: 'var(--bg-card)', padding: '0 16px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div>
+                <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 10 }}>Challenge Type</p>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  {CHALLENGE_TEMPLATES.map(t => (
+                    <button key={t.type} onClick={() => setCreateForm(f => ({ ...f, type: t.type, name: f.name || t.label + ' Challenge' }))}
+                      style={{ padding: '7px 14px', borderRadius: 20, fontSize: 12, fontWeight: 700, border: 'none', cursor: 'pointer',
+                        background: createForm.type === t.type ? 'var(--accent)' : 'var(--bg-input)',
+                        color: createForm.type === t.type ? '#000' : 'var(--text-muted)' }}>
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+                <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6 }}>
+                  {CHALLENGE_TEMPLATES.find(t => t.type === createForm.type)?.hint}
+                </p>
+              </div>
+              <div>
+                <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6 }}>Challenge Name</p>
+                <input value={createForm.name} onChange={e => setCreateForm(f => ({ ...f, name: e.target.value }))} placeholder="Name your challenge"
+                  style={{ width: '100%', background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', borderRadius: 10, padding: '10px 12px', fontSize: 14, color: 'var(--text-primary)', boxSizing: 'border-box' }} />
+              </div>
+              <div>
+                <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6 }}>
+                  Target ({CHALLENGE_TEMPLATES.find(t => t.type === createForm.type)?.unit})
+                </p>
+                <input type="number" value={createForm.target_value} onChange={e => setCreateForm(f => ({ ...f, target_value: e.target.value }))}
+                  placeholder={CHALLENGE_TEMPLATES.find(t => t.type === createForm.type)?.placeholder}
+                  style={{ width: '100%', background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', borderRadius: 10, padding: '10px 12px', fontSize: 14, color: 'var(--text-primary)', boxSizing: 'border-box' }} />
+              </div>
+              <div>
+                <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6 }}>Description (optional)</p>
+                <textarea rows={2} value={createForm.description} onChange={e => setCreateForm(f => ({ ...f, description: e.target.value }))} placeholder="What's this challenge about?"
+                  style={{ width: '100%', background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', borderRadius: 10, padding: '10px 12px', fontSize: 14, color: 'var(--text-primary)', boxSizing: 'border-box', resize: 'none' }} />
+              </div>
+              <button onClick={submitCreate} disabled={creating || !createForm.name.trim() || !createForm.target_value}
+                style={{ width: '100%', background: 'var(--accent)', color: '#000', fontWeight: 900, borderRadius: 12, padding: '14px', border: 'none', cursor: 'pointer', fontSize: 15, opacity: creating ? 0.6 : 1 }}>
+                {creating ? 'Creating...' : 'Create Challenge'}
+              </button>
             </div>
           )}
         </section>

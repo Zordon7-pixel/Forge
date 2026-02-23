@@ -109,6 +109,19 @@ router.get('/steps/week', auth, (req, res) => {
   })
 })
 
+// POST /api/challenges/create — create a custom challenge and auto-join it
+router.post('/create', auth, (req, res) => {
+  const { name, description, type, target_value, unit, end_date } = req.body
+  if (!name || !target_value || !unit) return res.status(400).json({ error: 'name, target_value, and unit required' })
+  const id = `custom-${uuidv4()}`
+  db.prepare('INSERT INTO challenges (id, name, description, type, target_value, unit, badge_color, is_featured, sort_order) VALUES (?,?,?,?,?,?,?,0,99)')
+    .run(id, name, description || '', type || 'custom', Number(target_value), unit, '#EAB308')
+  // Auto-join
+  db.prepare('INSERT OR IGNORE INTO user_challenges (id, user_id, challenge_id, progress) VALUES (?,?,?,0)')
+    .run(uuidv4(), req.user.id, id)
+  res.status(201).json({ ok: true, challenge_id: id })
+})
+
 // GET /api/challenges/feed — community activity feed (all users' recent runs + lifts)
 router.get('/feed', auth, (req, res) => {
   const runs = db.prepare(`
