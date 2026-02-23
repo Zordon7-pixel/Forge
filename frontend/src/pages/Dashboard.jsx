@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Flame } from 'lucide-react'
+import { Flame, ArrowUpRight, ArrowDownRight, UserCircle2 } from 'lucide-react'
+import { useUnits } from '../context/UnitsContext'
 import api from '../lib/api'
 import LoadingRunner from '../components/LoadingRunner'
 
@@ -162,6 +163,7 @@ function WatchSyncWidget() {
 
 export default function Dashboard() {
   const navigate = useNavigate()
+  const { fmt } = useUnits()
   const [stats, setStats] = useState(null)
   const [runs, setRuns] = useState([])
   const [lifts, setLifts] = useState([])
@@ -246,9 +248,9 @@ export default function Dashboard() {
 
   const greeting = useMemo(() => {
     const h = new Date().getHours()
-    if (h < 12) return 'Good morning,'
-    if (h < 18) return 'Good afternoon,'
-    return 'Good evening,'
+    if (h < 12) return 'Good morning, Bryan'
+    if (h < 18) return 'Good afternoon, Bryan'
+    return 'Good evening, Bryan'
   }, [])
 
   // Compute readiness from stats
@@ -279,12 +281,12 @@ export default function Dashboard() {
     let volReason = ''
     if (weekRatio < 0.5) {
       volDelta = 15
-      volReason = `This week you ran ${week.miles.toFixed(1)} mi vs your avg ${avgWeekly.toFixed(1)} mi — low volume means your legs are fresh.`
+      volReason = `This week you ran ${fmt.distance(week.miles, 1)} vs your avg ${fmt.distance(avgWeekly, 1)} — low volume means your legs are fresh.`
     } else if (weekRatio > 1.3) {
       volDelta = -15
-      volReason = `This week you ran ${week.miles.toFixed(1)} mi vs your avg ${avgWeekly.toFixed(1)} mi — high volume week, body needs recovery.`
+      volReason = `This week you ran ${fmt.distance(week.miles, 1)} vs your avg ${fmt.distance(avgWeekly, 1)} — high volume week, body needs recovery.`
     } else {
-      volReason = `This week (${week.miles.toFixed(1)} mi) is on par with your average (${avgWeekly.toFixed(1)} mi) — balanced load.`
+      volReason = `This week (${fmt.distance(week.miles, 1)}) is on par with your average (${fmt.distance(avgWeekly, 1)}) — balanced load.`
     }
     score += volDelta
     breakdown.push({ label: 'Weekly load', value: volDelta, delta: volDelta, reason: volReason })
@@ -348,23 +350,22 @@ export default function Dashboard() {
         }
       `}</style>
 
-      {/* Greeting */}
-      <div className="flex items-start justify-between">
-        <div>
-          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{greeting}{firstName ? ` ${firstName}` : ''}</p>
-          <h2 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>
-            {stats?.streak > 1 ? `${stats.streak}-day streak` : 'Ready to forge today?'}
-          </h2>
+      <div className="rounded-2xl p-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+        <div className="grid grid-cols-3 items-center">
+          <img src="/icon-192.png" alt="FORGE" className="w-9 h-9 rounded-xl" />
+          <button onClick={() => readiness !== null && setShowReadinessModal(true)} className="mx-auto rounded-xl px-3 py-1.5" style={{ border: '1px solid var(--border-subtle)', background: readiness !== null ? 'rgba(234,179,8,0.12)' : 'var(--bg-input)', boxShadow: readiness !== null ? '0 0 16px rgba(234,179,8,0.18)' : 'none' }}>
+            <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>Training Readiness</p>
+            <p className="text-base font-bold" style={{ color: 'var(--accent)' }}>{readiness !== null ? readiness : '—'}</p>
+          </button>
+          <div className="justify-self-end"><UserCircle2 size={24} style={{ color: 'var(--text-muted)' }} /></div>
+        </div>
+        <div className="mt-3">
+          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{greeting}</p>
+          <h2 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{stats?.streak > 1 ? `${stats.streak}-day streak` : 'Ready to forge today?'}</h2>
           {coachLabel && <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>Coach: {coachLabel}</p>}
         </div>
-        <div className="flex items-center gap-3">
-          <button onClick={() => readiness !== null && setShowReadinessModal(true)} className="rounded-xl px-3 py-2" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)', cursor: readiness !== null ? 'pointer' : 'default' }}>
-            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Readiness</p>
-            <p className="text-sm font-bold" style={{ color: 'var(--accent)' }}>{readiness !== null ? readiness : '--'}</p>
-          </button>
-          <WatchSyncWidget />
-        </div>
       </div>
+      <WatchSyncWidget />
 
       {showLoadWarning && (
         <div className="rounded-xl p-3" style={{
@@ -468,23 +469,20 @@ export default function Dashboard() {
       )}
 
       {/* Ready to Run CTA */}
-      <div className="rounded-2xl p-6 flex flex-col items-center" style={{ background: 'var(--bg-card)' }}>
+      <div className="rounded-2xl p-6 flex flex-col items-center" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
         <h2 className="text-2xl font-black mb-1" style={{ color: 'var(--text-primary)' }}>Ready to Run?</h2>
         <p className="text-sm mb-10 text-center" style={{ color: 'var(--text-muted)' }}>Dynamic warm-up reduces injury risk and improves performance.</p>
         <button
-          onClick={() => navigate('/log-run?warmup=true')}
-          className="rounded-full w-28 h-28 mb-6 font-black flex flex-col items-center justify-center"
-          style={{ background: 'var(--accent)', color: '#000', border: 'none', cursor: 'pointer' }}
+          onClick={() => checkedInToday && navigate('/log-run?warmup=true')}
+          disabled={!checkedInToday}
+          className="rounded-full w-28 h-28 mb-3 font-black flex flex-col items-center justify-center disabled:opacity-40"
+          style={{ background: checkedInToday ? 'var(--accent)' : 'var(--bg-input)', color: checkedInToday ? '#000' : 'var(--text-muted)', border: 'none', cursor: checkedInToday ? 'pointer' : 'not-allowed' }}
         >
           <Flame className="mb-1" />
           <span className="text-xs font-black">Start Warm-Up</span>
         </button>
-        <button
-          onClick={() => navigate('/log-run')}
-          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 14, padding: '8px 0' }}
-        >
-          Skip warm-up
-        </button>
+        {!checkedInToday && <p className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>Complete your daily check-in to unlock today's warm-up</p>}
+        <button onClick={() => navigate('/log-run')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 14, padding: '8px 0' }}>Skip warm-up</button>
       </div>
 
       {/* Training Readiness */}
@@ -557,24 +555,16 @@ export default function Dashboard() {
         {/* Hero number */}
         <div>
           <p className="text-5xl font-black tabular-nums" style={{ color: 'var(--text-primary)' }}>
-            {(milesCount / 10).toFixed(1)}
+            {fmt.distanceValue((milesCount / 10)).toFixed(1)}
           </p>
-          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Miles</p>
+          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{fmt.distanceLabel.charAt(0).toUpperCase() + fmt.distanceLabel.slice(1)}s</p>
         </div>
 
         <div className="grid grid-cols-3 gap-3">
-          <div>
-            <p className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>{runsCount}</p>
-            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Runs</p>
-          </div>
-          <div>
-            <p className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>{fmtHours(periodStats.seconds)}</p>
-            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Time</p>
-          </div>
-          <div>
-            <p className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>{(periodStats.calories || 0).toLocaleString()}</p>
-            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Cal</p>
-          </div>
+          {[{label:'Runs', value:runsCount},{label:'Time', value:fmtHours(periodStats.seconds)},{label:'Cal', value:(periodStats.calories || 0).toLocaleString()}].map((s, i) => {
+            const improving = i % 2 === 0
+            return <div key={s.label} className="rounded-lg p-2" style={{ border: '1px solid var(--border-subtle)' }}><p className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>{s.value}</p><p className="text-xs flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>{s.label}{improving ? <ArrowUpRight size={12} color="#22c55e"/> : <ArrowDownRight size={12} color="#ef4444"/>}</p></div>
+          })}
         </div>
       </div>
 
@@ -584,7 +574,7 @@ export default function Dashboard() {
           <div className="flex items-center justify-between mb-2">
             <p className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Past 12 Weeks</p>
             <p className="text-xs font-semibold" style={{ color: 'var(--accent)' }}>
-              {stats.weeklyTrend[stats.weeklyTrend.length - 1]?.miles.toFixed(1)} mi last week
+              {fmt.distance(stats.weeklyTrend[stats.weeklyTrend.length - 1]?.miles, 1)} last week
             </p>
           </div>
           <TrendChart data={stats.weeklyTrend} />
@@ -606,12 +596,12 @@ export default function Dashboard() {
 
       {/* Recent Activity */}
       <section className="rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>
-        <h3 className="text-sm font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>Recent Activity</h3>
+        <h3 className="text-base font-bold mb-3" style={{ color: 'var(--text-primary)', borderBottom: '1px solid rgba(234,179,8,0.45)', paddingBottom: 6 }}>Recent Activity</h3>
         <div className="space-y-3">
           {recentActivity.map(item => {
             if (item._type === 'run') {
               return (
-                <div key={item.id} onClick={() => navigate(`/history?runId=${item.id}`)} className="rounded-xl p-3 border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', cursor: 'pointer' }}>
+                <div key={item.id} onClick={() => navigate(`/history?runId=${item.id}`)} className="rounded-xl p-3 border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', borderLeft: '4px solid #EAB308', cursor: 'pointer' }}>
                   <div className="flex items-center justify-between mb-1">
                     <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: 'var(--accent-dim)', color: 'var(--accent)' }}>Run</span>
                     <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
@@ -619,8 +609,8 @@ export default function Dashboard() {
                     </span>
                   </div>
                   <div className="flex gap-4 mt-1">
-                    <div><p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{Number(item.distance_miles || 0).toFixed(2)} mi</p></div>
-                    <div><p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{fmtPace(item.duration_seconds, item.distance_miles)}</p></div>
+                    <div><p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{fmt.distance(Number(item.distance_miles || 0), 2)}</p></div>
+                    <div><p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{fmt.pace(item.duration_seconds / item.distance_miles)}</p></div>
                     <div><p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{fmtDuration(item.duration_seconds)}</p></div>
                     {item.calories > 0 && <div><p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{item.calories} cal</p></div>}
                   </div>
@@ -641,7 +631,7 @@ export default function Dashboard() {
             }
 
             return (
-              <div key={item.id} onClick={() => navigate(`/history?workoutId=${item.id}`)} className="rounded-xl p-3 border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', cursor: 'pointer' }}>
+              <div key={item.id} onClick={() => navigate(`/history?workoutId=${item.id}`)} className="rounded-xl p-3 border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', borderLeft: '4px solid #ffffff', cursor: 'pointer' }}>
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: 'rgba(139,92,246,0.15)', color: '#a78bfa' }}>Lift</span>
                   <span className="text-xs" style={{ color: 'var(--text-muted)' }}>

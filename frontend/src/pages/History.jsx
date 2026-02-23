@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useLocation, Link } from 'react-router-dom'
 import { Pencil, Trash2 } from 'lucide-react'
+import { useUnits } from '../context/UnitsContext'
 import api from '../lib/api'
 import EditRunModal from '../components/EditRunModal'
 import EditLiftModal from '../components/EditLiftModal'
@@ -36,6 +37,7 @@ function formatWorkoutDuration(totalSeconds = 0) {
 
 export default function History() {
   const location = useLocation()
+  const { fmt } = useUnits()
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState('all')
   const [period, setPeriod] = useState('all')
@@ -144,18 +146,28 @@ export default function History() {
   const avgPace = useMemo(() => {
     const validRuns = filteredRuns.filter(r => r.distance_miles && r.duration_seconds)
     if (!validRuns.length) return '--'
-    const avgPaceMin = validRuns.reduce((s, r) => s + r.duration_seconds / 60 / r.distance_miles, 0) / validRuns.length
-    const m = Math.floor(avgPaceMin)
-    const s = Math.round((avgPaceMin - m) * 60)
-    return `${m}:${String(s).padStart(2, '0')} /mi`
-  }, [filteredRuns])
+    const avgPaceSeconds = validRuns.reduce((s, r) => s + r.duration_seconds / r.distance_miles, 0) / validRuns.length
+    return fmt.pace(avgPaceSeconds)
+  }, [filteredRuns, fmt])
+
+  const weeklyMileage = useMemo(() => {
+    const out = []
+    for (let i = 7; i >= 0; i -= 1) {
+      const start = new Date(); start.setDate(start.getDate() - i * 7)
+      const end = new Date(start); end.setDate(end.getDate() + 6)
+      const miles = runs.filter((r) => { const d = new Date((r.date || r.created_at || '') + 'T12:00:00'); return d >= start && d <= end }).reduce((sum, r) => sum + Number(r.distance_miles || 0), 0)
+      out.push({ week: `${start.getMonth()+1}/${start.getDate()}`, miles: Number(miles.toFixed(1)) })
+    }
+    return out
+  }, [runs])
+  const paceTrend = useMemo(() => filteredRuns.slice(0, 20).reverse().map((r, i) => ({ idx: i + 1, pace: r.distance_miles ? Number((r.duration_seconds / 60 / r.distance_miles).toFixed(2)) : 0 })).filter((x) => x.pace > 0), [filteredRuns])
 
   if (loading) return <LoadingRunner message="Loading history" />
 
   return (
     <div>
       <div className="mb-4 grid grid-cols-3 gap-2">
-        {[['Miles', `${periodMiles.toFixed(1)} mi`], ['Avg Pace', avgPace], ['Lifts', `${filteredLifts.length + filteredWorkoutSessions.length}`]].map(([l, v]) => (
+        {[['Distance', fmt.distance(periodMiles, 1)], ['Avg Pace', avgPace], ['Lifts', `${filteredLifts.length + filteredWorkoutSessions.length}`]].map(([l, v]) => (
           <div key={l} className="rounded-xl p-3 text-center" style={{ background: 'var(--bg-card)' }}>
             <p className="text-xs" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>{l}</p>
             <p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{v}</p>
@@ -164,6 +176,23 @@ export default function History() {
       </div>
 
       <Link to="/journal" className="mb-3 inline-block text-sm" style={{ color: 'var(--accent)' }}>View Journal</Link>
+
+      <div className="grid grid-cols-1 gap-3 mb-4">
+        <div className="rounded-xl p-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+          <div style={{ width: '100%', height: 180 }}>
+            <ResponsiveContainer>
+              <BarChart data={weeklyMileage}><XAxis dataKey="week" stroke="#fff" tick={{ fontSize: 10 }} /><YAxis stroke="#fff" tick={{ fontSize: 10 }} /><Tooltip /><Bar dataKey="miles" fill="#EAB308" /></BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+        <div className="rounded-xl p-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+          <div style={{ width: '100%', height: 180 }}>
+            <ResponsiveContainer>
+              <LineChart data={paceTrend}><XAxis dataKey="idx" stroke="#fff" tick={{ fontSize: 10 }} /><YAxis stroke="#fff" tick={{ fontSize: 10 }} /><Tooltip /><Line type="monotone" dataKey="pace" stroke="#EAB308" strokeWidth={2} dot={false} /></LineChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      </div>
 
       <div className="mb-4">
         <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 4, marginBottom: 12 }}>
@@ -275,7 +304,7 @@ export default function History() {
               </div>
 
               <p className="text-sm" style={{ color: 'var(--text-primary)' }}>
-                {Number(run.distance_miles || 0).toFixed(2)} mi · {formatDuration(run.duration_seconds)} · {formatPace(run.duration_seconds, run.distance_miles)}
+                {fmt.distance(Number(run.distance_miles || 0), 2)} · {formatDuration(run.duration_seconds)} · {fmt.pace(run.duration_seconds / run.distance_miles)}
                 {run.calories > 0 && <span> · {run.calories} cal</span>}
               </p>
 

@@ -83,7 +83,8 @@ router.put('/me/profile', auth, (req, res) => {
     weekly_workout_days,
     age,
     weight_lbs,
-    max_heart_rate
+    max_heart_rate,
+    units
   } = req.body;
 
   const mappedWeekly = weekly_miles ?? weekly_miles_current;
@@ -112,6 +113,7 @@ router.put('/me/profile', auth, (req, res) => {
     age = COALESCE(?, age),
     weight_lbs = COALESCE(?, weight_lbs),
     max_heart_rate = COALESCE(?, max_heart_rate),
+    units = COALESCE(?, units),
     onboarded = 1
     WHERE id = ?`).run(
     name ?? null,
@@ -134,6 +136,7 @@ router.put('/me/profile', auth, (req, res) => {
     age ?? null,
     weight_lbs ?? null,
     max_heart_rate ?? null,
+    units ?? null,
     req.user.id
   );
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);

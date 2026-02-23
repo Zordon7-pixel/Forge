@@ -1,8 +1,8 @@
 import React from 'react'
 
-const PRIMARY_COLOR = '#EF4444'
-const SECONDARY_COLOR = '#EAB308'
-const BASE_FILL = '#000'
+const PRIMARY_COLOR = '#EAB308'
+const SECONDARY_COLOR = '#c9a634'
+const BASE_FILL = '#4b5563'
 const STROKE = 'rgba(255,255,255,0.85)'
 
 const FRONT_MUSCLES = [

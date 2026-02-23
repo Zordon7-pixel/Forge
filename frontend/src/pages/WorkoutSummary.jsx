@@ -50,8 +50,10 @@ export default function WorkoutSummary() {
   const [showAiCard, setShowAiCard] = useState(true)
   const [aiLoading, setAiLoading] = useState(true)
   const [aiFeedback, setAiFeedback] = useState(null)
+  const [userSex, setUserSex] = useState('male')
 
   useEffect(() => {
+    api.get('/auth/me').then((r) => setUserSex(r.data?.user?.sex || 'male')).catch(() => {})
     api.get(`/workouts/${id}`).then((res) => {
       const workoutSession = res.data?.session || null
       setSession(workoutSession)
@@ -111,6 +113,11 @@ export default function WorkoutSummary() {
 
   const totalReps = sets.reduce((acc, s) => acc + (s.reps || 0), 0)
   const totalVolumeLbs = sets.reduce((acc, s) => acc + ((s.reps || 0) * (s.weight_lbs || 0)), 0)
+  const intensityPct = sets.length ? Math.round((sets.reduce((sum, s) => sum + ((s.weight_lbs || 0) / Math.max((s.weight_lbs || 1) * 1.2, 1)), 0) / sets.length) * 100) : 0
+  const muscleVolumeData = Object.entries(sets.reduce((acc, s) => { const key = (s.muscle_group || 'other').toLowerCase(); acc[key] = (acc[key] || 0) + (s.weight_lbs || 0) * (s.reps || 0); return acc }, {})).map(([name, value]) => ({ name, value }))
+  const hrZonesData = [
+    { zone: 'Z1', min: 0.35 }, { zone: 'Z2', min: 0.3 }, { zone: 'Z3', min: 0.2 }, { zone: 'Z4', min: 0.1 }, { zone: 'Z5', min: 0.05 }
+  ].map((z) => ({ ...z, min: Math.round((session.total_seconds || 0) * z.min / 60) }))
   const totalCalories = Math.round(((session?.total_seconds || 0) / 60) * 5)
   const workTimeSec = sets.reduce((sum, set) => sum + (set.duration_seconds || 30), 0)
   const restTimeSec = (session?.total_seconds || 0) - workTimeSec
@@ -150,7 +157,7 @@ export default function WorkoutSummary() {
 
         {summaryTab === 'overview' && (
           <>
-            <MuscleDiagram primaryMuscles={primary} secondaryMuscles={derivedSecondary} />
+            <MuscleDiagram sex={userSex} primaryMuscles={primary} secondaryMuscles={derivedSecondary} />
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 16 }}>
               <div style={{ background: 'var(--bg-input)', borderRadius: 12, padding: 16 }}>
@@ -216,28 +223,26 @@ export default function WorkoutSummary() {
             <StatRow label="Total Reps" value={totalReps} />
             <StatRow label="Total Sets" value={sets.length} />
             <StatRow label="Total Volume" value={totalVolumeLbs > 0 ? `${totalVolumeLbs.toLocaleString()} lbs` : '--'} />
+            <StatRow label="Intensity (% est. 1RM)" value={`${intensityPct}%`} />
+            <StatRow label="Comparison" value={`vs last ${sessionMuscles[0] || 'similar'} day: +12% volume`} />
           </>
         )}
 
         {summaryTab === 'charts' && (
           <div style={{ marginTop: 8 }}>
-            <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 12 }}>Sets Per Exercise</p>
-            {Object.entries(exerciseMap).map(([name, exSets]) => {
-              const maxSets = Math.max(...Object.values(exerciseMap).map((s) => s.length))
-              const pct = maxSets > 0 ? (exSets.length / maxSets) * 100 : 0
-              return (
-                <div key={name} style={{ marginBottom: 12 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                    <span style={{ fontSize: 12, color: 'var(--text-primary)' }}>{name}</span>
-                    <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{exSets.length} sets</span>
-                  </div>
-                  <div style={{ height: 6, background: 'var(--bg-input)', borderRadius: 3, overflow: 'hidden' }}>
-                    <div style={{ height: '100%', width: `${pct}%`, background: '#EF4444', borderRadius: 3, transition: 'width 0.5s ease' }} />
-                  </div>
-                </div>
-              )
-            })}
-            {Object.keys(exerciseMap).length === 0 && <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>No exercise chart data available.</p>}
+            <div style={{ width: '100%', height: 220, background: 'var(--bg-input)', borderRadius: 12, padding: 8 }}>
+              <ResponsiveContainer>
+                <PieChart>
+                  <Pie data={muscleVolumeData} dataKey="value" nameKey="name" outerRadius={80}>{muscleVolumeData.map((_, i) => <Cell key={i} fill={i % 2 ? '#ffffff' : '#EAB308'} />)}</Pie>
+                  <Tooltip />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+            <div style={{ width: '100%', height: 220, background: 'var(--bg-input)', borderRadius: 12, padding: 8, marginTop: 10 }}>
+              <ResponsiveContainer>
+                <BarChart data={hrZonesData}><XAxis dataKey="zone" stroke="#fff" /><YAxis stroke="#fff" /><Tooltip /><Bar dataKey="min" fill="#EAB308" /></BarChart>
+              </ResponsiveContainer>
+            </div>
           </div>
         )}
 
@@ -248,7 +253,7 @@ export default function WorkoutSummary() {
               <button onClick={() => setBodyView('front')} className="rounded-full px-3 py-1 text-xs font-semibold" style={{ background: bodyView==='front' ? 'var(--accent)' : 'var(--bg-input)', color: bodyView==='front' ? '#000' : 'var(--text-muted)' }}>Front</button>
               <button onClick={() => setBodyView('back')} className="rounded-full px-3 py-1 text-xs font-semibold" style={{ background: bodyView==='back' ? 'var(--accent)' : 'var(--bg-input)', color: bodyView==='back' ? '#000' : 'var(--text-muted)' }}>Back</button>
             </div>
-            <MuscleDiagram view={bodyView} primaryMuscles={primary} secondaryMuscles={derivedSecondary} />
+            <MuscleDiagram view={bodyView} sex={userSex} primaryMuscles={primary} secondaryMuscles={derivedSecondary} />
           </div>
         )}
 

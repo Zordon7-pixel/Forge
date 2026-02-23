@@ -28,16 +28,23 @@ router.put('/goal', auth, (req, res) => {
 router.get('/settings', auth, (req, res) => {
   try { db.exec("ALTER TABLE users ADD COLUMN distance_unit TEXT DEFAULT 'miles'") } catch(_) {}
   try { db.exec("ALTER TABLE users ADD COLUMN theme TEXT DEFAULT 'dark'") } catch(_) {}
-  const user = db.prepare('SELECT distance_unit, theme FROM users WHERE id = ?').get(req.user.id)
-  res.json({ distance_unit: user?.distance_unit || 'miles', theme: user?.theme || 'dark' })
+  try { db.exec("ALTER TABLE users ADD COLUMN units TEXT DEFAULT 'imperial'") } catch(_) {}
+  const user = db.prepare('SELECT distance_unit, theme, units FROM users WHERE id = ?').get(req.user.id)
+  res.json({ distance_unit: user?.distance_unit || 'miles', theme: user?.theme || 'dark', units: user?.units || 'imperial' })
 })
 
 // PUT /api/users/settings
 router.put('/settings', auth, (req, res) => {
   try { db.exec("ALTER TABLE users ADD COLUMN distance_unit TEXT DEFAULT 'miles'") } catch(_) {}
   try { db.exec("ALTER TABLE users ADD COLUMN theme TEXT DEFAULT 'dark'") } catch(_) {}
-  const { distance_unit, theme } = req.body
-  db.prepare("UPDATE users SET distance_unit = ?, theme = ? WHERE id = ?").run(distance_unit || 'miles', theme || 'dark', req.user.id)
+  try { db.exec("ALTER TABLE users ADD COLUMN units TEXT DEFAULT 'imperial'") } catch(_) {}
+  const { distance_unit, theme, units } = req.body
+  db.prepare("UPDATE users SET distance_unit = ?, theme = ?, units = ? WHERE id = ?").run(
+    distance_unit || 'miles',
+    theme || 'dark',
+    units || 'imperial',
+    req.user.id
+  )
   res.json({ ok: true })
 })
 

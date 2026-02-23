@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { MapContainer, Marker, Polyline, TileLayer } from 'react-leaflet'
+import { useUnits } from '../context/UnitsContext'
 import api from '../lib/api'
 import PostRunCheckIn from '../components/PostRunCheckIn'
 import AICoachFeedbackCard from '../components/AICoachFeedbackCard'
@@ -34,6 +35,7 @@ function getZone(hr, maxHr) {
 export default function ActiveRun() {
   const location = useLocation()
   const navigate = useNavigate()
+  const { fmt } = useUnits()
   const selectedCountdown = location?.state?.countdown ?? 3
   const [countdownVal, setCountdownVal] = useState(selectedCountdown)
   const [countingDown, setCountingDown] = useState(selectedCountdown > 0)
@@ -129,11 +131,9 @@ export default function ActiveRun() {
   const pace = useMemo(() => {
     const dist = gpsAvailable ? distanceMiles : Number(manualDistance || distanceMiles || 0)
     if (!dist || !elapsed) return '--'
-    const p = elapsed / 60 / dist
-    const m = Math.floor(p)
-    const s = Math.round((p - m) * 60)
-    return `${m}:${String(s).padStart(2, '0')} /mi`
-  }, [distanceMiles, elapsed, manualDistance, gpsAvailable])
+    const secondsPerMile = elapsed / dist
+    return fmt.pace(secondsPerMile)
+  }, [distanceMiles, elapsed, manualDistance, gpsAvailable, fmt])
 
   const timeDisplay = useMemo(() => {
     const h = Math.floor(elapsed / 3600), m = Math.floor((elapsed % 3600) / 60), s = elapsed % 60
@@ -141,11 +141,17 @@ export default function ActiveRun() {
     return `${m}:${String(s).padStart(2, '0')}`
   }, [elapsed])
 
+  const { units } = useUnits()
+  
   const saveRun = async () => {
     setSaving(true)
     try {
       const runSurface = runEnvironment === 'indoor' && surface === 'treadmill' ? 'treadmill' : surface
-      const finalDistance = gpsAvailable ? distanceMiles : Number(manualDistance || 0)
+      let finalDistance = gpsAvailable ? distanceMiles : Number(manualDistance || 0)
+      // Convert manual distance from user's unit to miles for backend
+      if (!gpsAvailable && units === 'metric') {
+        finalDistance = fmt.milesFromKm(finalDistance)
+      }
       const res = await api.post('/runs', {
         date: new Date().toISOString().slice(0, 10),
         type: runType,
@@ -193,7 +199,7 @@ export default function ActiveRun() {
 
       <div className="grid grid-cols-3 gap-2 mb-4">
         <div className="rounded-xl p-3 text-center" style={{ background: 'var(--bg-input)' }}><p className="text-xs" style={{ color: 'var(--text-muted)' }}>Time</p><p className="font-bold" style={{ color: 'var(--text-primary)' }}>{timeDisplay}</p></div>
-        <div className="rounded-xl p-3 text-center" style={{ background: 'var(--bg-input)' }}><p className="text-xs" style={{ color: 'var(--text-muted)' }}>Distance</p><p className="font-bold" style={{ color: 'var(--text-primary)' }}>{distanceMiles.toFixed(2)} mi</p></div>
+        <div className="rounded-xl p-3 text-center" style={{ background: 'var(--bg-input)' }}><p className="text-xs" style={{ color: 'var(--text-muted)' }}>Distance</p><p className="font-bold" style={{ color: 'var(--text-primary)' }}>{fmt.distance(distanceMiles, 2)}</p></div>
         <div className="rounded-xl p-3 text-center" style={{ background: 'var(--bg-input)' }}><p className="text-xs" style={{ color: 'var(--text-muted)' }}>Pace</p><p className="font-bold" style={{ color: 'var(--text-primary)' }}>{pace}</p></div>
       </div>
 
@@ -222,8 +228,8 @@ export default function ActiveRun() {
 
       {awaitingManualDistance && (
         <div className="rounded-xl p-3" style={{ background: 'var(--bg-input)' }}>
-          <p className="text-sm font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>How far did you run?</p>
-          <input value={manualDistance} onChange={e => setManualDistance(e.target.value)} type="number" min="0" step="0.1" className="w-full rounded-xl px-3 py-2" style={{ background: 'var(--bg-base)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }} placeholder="Miles" />
+          <p className="text-sm font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>How far did you run? ({fmt.distanceLabel})</p>
+          <input value={manualDistance} onChange={e => setManualDistance(e.target.value)} type="number" min="0" step="0.1" className="w-full rounded-xl px-3 py-2" style={{ background: 'var(--bg-base)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }} placeholder={fmt.distanceLabel} />
           <button onClick={saveRun} className="w-full mt-2 rounded-xl py-2 font-semibold" style={{ background: 'var(--accent)', color: '#000' }}>Save Run</button>
         </div>
       )}

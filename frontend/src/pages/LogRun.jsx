@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { MapPin, Mountain, RefreshCw, Gauge, Pencil } from 'lucide-react'
+import { useUnits } from '../context/UnitsContext'
 import api from '../lib/api'
 import { parseDuration, formatDurationDisplay } from '../lib/parseDuration'
 import PostRunCheckIn from '../components/PostRunCheckIn'
@@ -147,6 +148,7 @@ function WorkoutWatchModal({ workout, onClose }) {
 export default function LogRun() {
   const navigate = useNavigate()
   const location = useLocation()
+  const { units, fmt } = useUnits()
   const [warmUpState, setWarmUpState] = useState(() => {
     const params = new URLSearchParams(window.location.search)
     return params.get('warmup') === 'true' ? 'warmup' : 'done'
@@ -260,7 +262,9 @@ export default function LogRun() {
         navigate('/run/treadmill', { state: { treadmillType } })
         return
       }
-      const runRes = await api.post('/runs', { date, type: runType, surface: resolvedSurface, run_surface: resolvedSurface, distance_miles: Number(distance), duration_seconds: seconds, notes, perceived_effort: Number(effort), treadmill_type: treadmillType })
+      // Convert distance to miles for backend
+      const distanceMiles = units === 'metric' ? fmt.milesFromKm(Number(distance)) : Number(distance)
+      const runRes = await api.post('/runs', { date, type: runType, surface: resolvedSurface, run_surface: resolvedSurface, distance_miles: distanceMiles, duration_seconds: seconds, notes, perceived_effort: Number(effort), treadmill_type: treadmillType })
       const runId = runRes.data?.id || runRes.data?.run?.id
       if (runId) api.post('/prs/auto-detect', { run_id: runId }).catch(() => {})
       api.post('/badges/check', {}).catch(() => {})
@@ -472,7 +476,7 @@ export default function LogRun() {
             <div className="rounded-2xl p-4" style={{ background: 'var(--bg-base)', border: '1px solid var(--border-subtle)' }}>
               <div className="text-center py-6">
                 <input type="number" step="0.1" min="0" required className="text-5xl font-bold bg-transparent text-center w-32 focus:outline-none" style={{ color: 'var(--accent)' }} value={distance} onChange={e => setDistance(e.target.value)} placeholder="0.0" />
-                <div className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>miles</div>
+                <div className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>Distance ({fmt.distanceLabel})</div>
                 {estimatedTime && <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>Estimated time: {estimatedTime.low}–{estimatedTime.high} min based on your recent {Math.floor(estimatedTime.avg)}:{String(Math.round((estimatedTime.avg%1)*60)).padStart(2,'0')}/mi average pace</p>}
               </div>
             </div>
