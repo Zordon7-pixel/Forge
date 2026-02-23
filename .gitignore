@@ -1,3 +1,27 @@
+# Dependencies
 node_modules/
+
+# Database files — NEVER commit
 *.db
+*.db-shm
+*.db-wal
+
+# Environment files — NEVER commit
+.env
+.env.local
+.env.development
+.env.production
+.env.staging
+.env*.local
 backend/.env
+frontend/.env
+
+# Build artifacts (keep frontend/dist — needed for Railway)
+# frontend/dist/ is intentionally tracked for Railway deployment
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
+npm-debug.log*
