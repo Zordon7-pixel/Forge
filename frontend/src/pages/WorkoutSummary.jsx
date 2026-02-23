@@ -4,6 +4,7 @@ import api from '../lib/api'
 import MuscleDiagram from '../components/MuscleDiagram'
 import { getMuscleBreakdown } from '../lib/muscleMap'
 import PhotoUploader from '../components/PhotoUploader'
+import AICoachFeedbackCard from '../components/AICoachFeedbackCard'
 
 function fmtDuration(s) {
   if (!s && s !== 0) return '--'
@@ -46,6 +47,9 @@ export default function WorkoutSummary() {
   const [summaryTab, setSummaryTab] = useState('overview')
   const [bodyView, setBodyView] = useState('front')
   const [sets, setSets] = useState([])
+  const [showAiCard, setShowAiCard] = useState(true)
+  const [aiLoading, setAiLoading] = useState(true)
+  const [aiFeedback, setAiFeedback] = useState(null)
 
   useEffect(() => {
     api.get(`/workouts/${id}`).then((res) => {
@@ -59,6 +63,11 @@ export default function WorkoutSummary() {
   useEffect(() => {
     if (session?.id) {
       api.get(`/workouts/${session.id}/sets`).then((r) => setSets(r.data.sets || [])).catch(() => setSets([]))
+      setAiLoading(true)
+      api.post('/ai/session-feedback', { sessionType: 'lift', sessionId: session.id })
+        .then((r) => setAiFeedback(r.data?.feedback || null))
+        .catch(() => setAiFeedback({ analysis: 'Solid work completing your lift session.', didWell: 'You finished the workout and logged your effort.', suggestion: 'Keep technique crisp and add small progress next session.', recovery: 'easy day' }))
+        .finally(() => setAiLoading(false))
     }
   }, [session?.id])
 
@@ -271,6 +280,7 @@ export default function WorkoutSummary() {
       <Link to="/" className="block w-full rounded-2xl py-4 text-center font-bold border" style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-muted)' }}>
         Back to Home
       </Link>
+      <AICoachFeedbackCard open={showAiCard} loading={aiLoading} feedback={aiFeedback} sessionId={session?.id} onClose={() => setShowAiCard(false)} />
     </div>
   )
 }

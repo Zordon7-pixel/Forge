@@ -36,7 +36,7 @@ router.post('/register', (req, res) => {
 });
 
 router.get('/me', auth, (req, res) => {
-  const user = db.prepare('SELECT id, name, email, sex, weekly_miles_current, goal_type, goal_race_date, goal_race_distance, injury_notes, comeback_mode, onboarded, coach_personality, run_days_per_week, lift_days_per_week, injury_mode, injury_description, injury_date, injury_limitations FROM users WHERE id = ?').get(req.user.id);
+  const user = db.prepare('SELECT id, name, email, sex, age, weight_lbs, max_heart_rate, weekly_miles_current, goal_type, goal_race_date, goal_race_distance, injury_notes, comeback_mode, onboarded, coach_personality, run_days_per_week, lift_days_per_week, injury_mode, injury_description, injury_date, injury_limitations FROM users WHERE id = ?').get(req.user.id);
   if (!user) return res.status(404).json({ error: 'User not found' });
 
   const normalized = {
@@ -46,8 +46,9 @@ router.get('/me', auth, (req, res) => {
     injury_status: user.injury_notes ? 'recovering' : 'none',
     injury_detail: user.injury_notes,
     fitness_level: user.comeback_mode ? 'intermediate' : 'beginner',
-    age: null,
-    weight_lbs: null,
+    age: user.age ?? null,
+    weight_lbs: user.weight_lbs ?? null,
+    max_heart_rate: user.max_heart_rate ?? null,
     injury_mode: !!user.injury_mode,
     injury_description: user.injury_description || '',
     injury_date: user.injury_date || '',
@@ -79,7 +80,10 @@ router.put('/me/profile', auth, (req, res) => {
     preferred_workout_time,
     preferred_workout_days,
     missed_workout_pref,
-    weekly_workout_days
+    weekly_workout_days,
+    age,
+    weight_lbs,
+    max_heart_rate
   } = req.body;
 
   const mappedWeekly = weekly_miles ?? weekly_miles_current;
@@ -105,6 +109,9 @@ router.put('/me/profile', auth, (req, res) => {
     preferred_workout_days = COALESCE(?, preferred_workout_days),
     missed_workout_pref = COALESCE(?, missed_workout_pref),
     weekly_workout_days = COALESCE(?, weekly_workout_days),
+    age = COALESCE(?, age),
+    weight_lbs = COALESCE(?, weight_lbs),
+    max_heart_rate = COALESCE(?, max_heart_rate),
     onboarded = 1
     WHERE id = ?`).run(
     name ?? null,
@@ -124,6 +131,9 @@ router.put('/me/profile', auth, (req, res) => {
     preferred_workout_days ? JSON.stringify(preferred_workout_days) : null,
     missed_workout_pref ?? null,
     weekly_workout_days ?? null,
+    age ?? null,
+    weight_lbs ?? null,
+    max_heart_rate ?? null,
     req.user.id
   );
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
@@ -232,6 +242,51 @@ router.get('/me/stats', auth, (req, res) => {
     streak,
     calendarDays
   });
+});
+
+router.get('/me/streak', auth, (req, res) => {
+  const userId = req.user.id;
+  const runDates = db.prepare("SELECT date, created_at FROM runs WHERE user_id=?").all(userId)
+    .map(r => (r.date || r.created_at || '').slice(0, 10))
+    .filter(Boolean);
+  const liftDates = db.prepare("SELECT started_at FROM workout_sessions WHERE user_id=? AND ended_at IS NOT NULL").all(userId)
+    .map(s => (s.started_at || '').slice(0, 10))
+    .filter(Boolean);
+
+  const uniqueDates = [...new Set([...runDates, ...liftDates])].sort();
+
+  const calcCurrent = () => {
+    const dateSet = new Set(uniqueDates);
+    let streak = 0;
+    const now = new Date();
+    const today = now.toISOString().slice(0, 10);
+    const yesterday = new Date(now.getTime() - 86400000).toISOString().slice(0, 10);
+    let check = dateSet.has(today) ? today : dateSet.has(yesterday) ? yesterday : null;
+    while (check && dateSet.has(check)) {
+      streak += 1;
+      const d = new Date(check);
+      d.setDate(d.getDate() - 1);
+      check = d.toISOString().slice(0, 10);
+    }
+    return streak;
+  };
+
+  const calcBest = () => {
+    if (!uniqueDates.length) return 0;
+    let best = 1;
+    let cur = 1;
+    for (let i = 1; i < uniqueDates.length; i++) {
+      const prev = new Date(uniqueDates[i - 1]);
+      const curr = new Date(uniqueDates[i]);
+      const diffDays = Math.round((curr - prev) / 86400000);
+      if (diffDays === 1) cur += 1;
+      else cur = 1;
+      if (cur > best) best = cur;
+    }
+    return best;
+  };
+
+  res.json({ currentStreak: calcCurrent(), bestStreak: calcBest() });
 });
 
 router.get('/me/ai-usage', auth, (req, res) => {

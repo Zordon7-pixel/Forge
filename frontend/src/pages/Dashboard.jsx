@@ -180,11 +180,13 @@ export default function Dashboard() {
   const [selectedCalendarDay, setSelectedCalendarDay] = useState(null)
   const [watchSyncNotice, setWatchSyncNotice] = useState(null)
   const [otherActivities, setOtherActivities] = useState([])
+  const [streakStats, setStreakStats] = useState({ currentStreak: 0, bestStreak: 0 })
+  const [milestones, setMilestones] = useState([])
 
   useEffect(() => {
     ;(async () => {
       try {
-        const [statsRes, runsRes, liftsRes, warningRes, meRes, checkinRes, goalRes] = await Promise.all([
+        const [statsRes, runsRes, liftsRes, warningRes, meRes, checkinRes, goalRes, streakRes, milestoneRes] = await Promise.all([
           api.get('/auth/me/stats'),
           api.get('/runs', { params: { limit: 5 } }),
           api.get('/lifts'),
@@ -192,6 +194,8 @@ export default function Dashboard() {
           api.get('/auth/me'),
           api.get('/checkin/today').catch(() => ({ data: null })),
           api.get('/users/goal').catch(() => ({ data: null })),
+          api.get('/auth/me/streak').catch(() => ({ data: { currentStreak: 0, bestStreak: 0 } })),
+          api.get('/milestones/new').catch(() => ({ data: { milestones: [] } })),
         ])
         setStats(statsRes.data)
         const runsList = Array.isArray(runsRes.data) ? runsRes.data : runsRes.data?.runs || []
@@ -209,6 +213,8 @@ export default function Dashboard() {
           setGoalMode(goalRes.data.mode || 'auto')
           setManualGoalMiles(goalRes.data.miles || null)
         }
+        setStreakStats(streakRes.data || { currentStreak: 0, bestStreak: 0 })
+        setMilestones(milestoneRes.data?.milestones || [])
       } finally {
         setLoading(false)
       }
@@ -296,6 +302,7 @@ export default function Dashboard() {
   const periodStats = stats?.[period] || {}
   const milesCount = useCountUp(Math.round((periodStats.miles || 0) * 10), 900)
   const runsCount = useCountUp(periodStats.count || 0, 900)
+  const streakCount = useCountUp(streakStats.currentStreak || 0, 900)
 
   // Combined recent activity
   const recentActivity = useMemo(() => {
@@ -343,6 +350,25 @@ export default function Dashboard() {
           </button>
           <WatchSyncWidget />
         </div>
+      </div>
+
+      {milestones.length > 0 && (
+        <div className="space-y-2">
+          {milestones.map((m) => (
+            <div key={m.key} className="rounded-xl p-3 flex items-center justify-between" style={{ background: 'rgba(234,179,8,0.12)', border: '1px solid rgba(234,179,8,0.3)' }}>
+              <div>
+                <p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{m.title}</p>
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{m.description}</p>
+              </div>
+              <button onClick={() => setMilestones(prev => prev.filter(x => x.key !== m.key))} className="text-xs" style={{ color: 'var(--text-muted)' }}>Dismiss</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>
+        <div className="flex items-center gap-2 mb-1"><Flame size={18} style={{ color: 'var(--accent)' }} /><p className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>{streakStats.currentStreak > 0 ? `${streakCount}-day streak` : 'Start your streak today'}</p></div>
+        <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Best: {streakStats.bestStreak || 0} days</p>
       </div>
 
       {!checkedInToday && (

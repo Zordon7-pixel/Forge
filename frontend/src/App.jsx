@@ -21,6 +21,8 @@ import StretchSession from './pages/StretchSession'
 import PRWall from './pages/PRWall'
 import Badges from './pages/Badges'
 import Challenges from './pages/Challenges'
+import Community from './pages/Community'
+import Journal from './pages/Journal'
 
 function PrivateRoute({ children }) {
   if (!isLoggedIn()) return <Navigate to="/login" replace />
@@ -124,6 +126,22 @@ export default function App() {
           element={
             <PrivateRoute>
               <Challenges />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/community"
+          element={
+            <PrivateRoute>
+              <Community />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/journal"
+          element={
+            <PrivateRoute>
+              <Journal />
             </PrivateRoute>
           }
         />

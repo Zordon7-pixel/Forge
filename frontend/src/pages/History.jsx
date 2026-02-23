@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useLocation } from 'react-router-dom'
+import { useLocation, Link } from 'react-router-dom'
 import { Pencil, Trash2 } from 'lucide-react'
 import api from '../lib/api'
 import EditRunModal from '../components/EditRunModal'
@@ -162,6 +162,8 @@ export default function History() {
           </div>
         ))}
       </div>
+
+      <Link to="/journal" className="mb-3 inline-block text-sm" style={{ color: 'var(--accent)' }}>View Journal</Link>
 
       <div className="mb-4">
         <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 4, marginBottom: 12 }}>

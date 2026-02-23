@@ -20,6 +20,13 @@ function fmtPace(durationSeconds, distance) {
 }
 
 const EFFORT_LABELS = ['', 'Very Easy', 'Easy', 'Easy-Moderate', 'Moderate', 'Moderate-Hard', 'Hard', 'Hard', 'Very Hard', 'Very Hard', 'Max']
+const ZONES = [
+  { key: 'Z1', min: 0.5, max: 0.6, name: 'Recovery', color: '#6B7280' },
+  { key: 'Z2', min: 0.6, max: 0.7, name: 'Aerobic Base', color: '#3B82F6' },
+  { key: 'Z3', min: 0.7, max: 0.8, name: 'Tempo', color: '#22C55E' },
+  { key: 'Z4', min: 0.8, max: 0.9, name: 'Threshold', color: '#EAB308' },
+  { key: 'Z5', min: 0.9, max: 1.01, name: 'Max Effort', color: '#EF4444' },
+]
 
 export default function RunDetailModal({ run, onClose, onFeedbackGenerated }) {
   const [feedback, setFeedback] = useState(run.ai_feedback || '')
@@ -41,6 +48,10 @@ export default function RunDetailModal({ run, onClose, onFeedbackGenerated }) {
   }
 
   const date = new Date(run.date || run.created_at).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
+  const hr = run.avg_hr || run.avg_heart_rate || null
+  const maxHr = run.max_heart_rate || 190
+  const hrPct = hr && maxHr ? hr / maxHr : null
+  const zone = hrPct ? (ZONES.find(z => hrPct >= z.min && hrPct < z.max) || ZONES[4]) : null
 
   const stats = [
     { label: 'Distance', value: run.distance_miles ? `${Number(run.distance_miles).toFixed(2)} mi` : '--' },
@@ -68,6 +79,14 @@ export default function RunDetailModal({ run, onClose, onFeedbackGenerated }) {
             </div>
           ))}
         </div>
+
+        {zone && (
+          <div className="rounded-xl p-3 mb-5" style={{ background: 'var(--bg-input)' }}>
+            <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Heart Rate Zone</p>
+            <div className="flex items-center gap-2"><p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{hr} bpm</p><span className="rounded-full px-2 py-1 text-xs" style={{ background: `${zone.color}22`, color: zone.color }}>{zone.key} · {zone.name}</span></div>
+            <div className="mt-2 h-1.5 rounded-full" style={{ background: 'var(--bg-base)' }}><div className="h-full rounded-full" style={{ width: `${Math.min(100, hrPct * 100)}%`, background: zone.color }} /></div>
+          </div>
+        )}
 
         {run.notes && (
           <div className="rounded-xl p-3 mb-5" style={{ background: 'var(--bg-input)' }}>

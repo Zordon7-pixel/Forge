@@ -2,7 +2,42 @@ const router = require('express').Router();
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
 const auth = require('../middleware/auth');
-const { generateRunBrief, generateLiftPlan, generateWorkoutRecommendation } = require('../services/ai');
+const { generateRunBrief, generateLiftPlan, generateWorkoutRecommendation, generateSessionFeedback } = require('../services/ai');
+
+router.post('/session-feedback', auth, async (req, res) => {
+  const { sessionType, sessionId, userId } = req.body || {};
+  const athleteId = userId || req.user.id;
+  if (!sessionType || !sessionId) return res.status(400).json({ error: 'sessionType and sessionId are required' });
+
+  const profile = db.prepare('SELECT * FROM users WHERE id=?').get(athleteId);
+  let sessionData = null;
+
+  if (sessionType === 'run') {
+    sessionData = db.prepare('SELECT * FROM runs WHERE id=? AND user_id=?').get(sessionId, athleteId);
+  } else if (sessionType === 'lift') {
+    const session = db.prepare('SELECT * FROM workout_sessions WHERE id=? AND user_id=?').get(sessionId, athleteId);
+    const sets = db.prepare('SELECT * FROM workout_sets WHERE session_id=? ORDER BY logged_at ASC').all(sessionId);
+    sessionData = session ? { ...session, sets } : null;
+  } else {
+    return res.status(400).json({ error: 'sessionType must be run or lift' });
+  }
+
+  if (!sessionData) return res.status(404).json({ error: 'Session not found' });
+
+  const feedback = await generateSessionFeedback({ sessionType, sessionData, profile });
+  if (!feedback) {
+    return res.json({
+      feedback: {
+        analysis: 'Solid work getting this session done. Consistency is the biggest long-term driver of progress.',
+        didWell: 'You showed up and completed your planned work.',
+        suggestion: 'Aim for smooth pacing and controlled effort in your next session.',
+        recovery: 'easy day'
+      }
+    });
+  }
+
+  res.json({ feedback });
+});
 
 router.get('/run-brief', auth, async (req, res) => {
   const { sessionId } = req.query;

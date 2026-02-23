@@ -63,6 +63,8 @@ app.use('/api/challenges', require('./routes/challenges'));
 app.use('/api/social', require('./routes/social'));
 app.use('/api/ai', require('./routes/ai'));
 app.use('/api/community', require('./routes/community'));
+app.use('/api/journal', require('./routes/journal'));
+app.use('/api/milestones', require('./routes/milestones'));
 app.use('/api/watch-sync', require('./routes/watchSync'));
 
 // Serve frontend

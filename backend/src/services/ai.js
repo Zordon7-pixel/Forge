@@ -179,6 +179,27 @@ async function generateLiftPlan({ bodyPart, timeAvailable, profile, recentSets, 
   } catch { return null; }
 }
 
+async function generateSessionFeedback({ sessionType, sessionData, profile }) {
+  try {
+    const prompt = `You are FORGE AI coach. Return JSON only with keys: analysis, didWell, suggestion, recovery.
+Session type: ${sessionType}.
+Athlete: ${profile?.name || 'Athlete'}, goal: ${profile?.goal_type || 'fitness'}.
+Session data: ${JSON.stringify(sessionData || {})}.
+Rules: analysis must be 2-3 sentences. didWell one sentence. suggestion one sentence. recovery must be exactly one of: easy day, rest, can train hard tomorrow.`;
+    const msg = await getClient().messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 260,
+      messages: [{ role: 'user', content: prompt }],
+    });
+    const text = msg.content?.[0]?.text || '{}';
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    return jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+  } catch (e) {
+    console.error('generateSessionFeedback error:', e.message);
+    return null;
+  }
+}
+
 async function generateWorkoutRecommendation({ profile, recentRuns, recentWorkouts }) {
   try {
     const prompt = `Return JSON only with keys: workoutName,target,warmup(array),main(array of {name,sets,reps,rest}),recovery(array),explanation,restExplanation. Athlete:${profile?.name || 'athlete'} goal ${profile?.goal_type || 'fitness'}. recent runs ${JSON.stringify((recentRuns || []).slice(0,5))}. recent workouts ${JSON.stringify((recentWorkouts || []).slice(0,5))}.`;
@@ -189,4 +210,4 @@ async function generateWorkoutRecommendation({ profile, recentRuns, recentWorkou
   } catch { return null; }
 }
 
-module.exports = { generateTrainingPlan, generateRunFeedback, generateWorkoutFeedback, generateRunBrief, generateLiftPlan, generateWorkoutRecommendation };
+module.exports = { generateTrainingPlan, generateRunFeedback, generateWorkoutFeedback, generateRunBrief, generateLiftPlan, generateWorkoutRecommendation, generateSessionFeedback };

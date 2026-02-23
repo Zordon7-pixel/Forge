@@ -276,6 +276,11 @@ export default function Profile() {
             <ChevronRight size={16} className="text-[var(--text-muted)]" />
           </div>
 
+          <div onClick={() => navigate('/journal')} className="flex items-center justify-between rounded-xl p-4 cursor-pointer transition-colors mt-2" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+            <span className="text-sm font-medium text-[var(--text-primary)]">Journal</span>
+            <ChevronRight size={16} className="text-[var(--text-muted)]" />
+          </div>
+
           <button type="button" onClick={logout} className="w-full bg-transparent py-3 font-medium mt-2" style={{ color: 'var(--text-muted)', border: 'none' }}>Log Out</button>
     </div>
   )
