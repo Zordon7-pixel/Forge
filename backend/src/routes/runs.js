@@ -108,7 +108,15 @@ router.post('/', auth, (req, res) => {
   }
 
   const run = db.prepare('SELECT * FROM runs WHERE id = ?').get(id);
-  const prResult = autoUpdatePRs(db, req.user.id, run) || { newPRs: [], discrepancies: [] }
+  
+  // Fire and forget PR auto-detection — wrapped in try/catch to prevent run save from failing
+  let prResult = { newPRs: [], discrepancies: [] };
+  try {
+    prResult = autoUpdatePRs(db, req.user.id, run) || { newPRs: [], discrepancies: [] };
+  } catch (err) {
+    console.error('PR auto-detect error:', err);
+  }
+  
   res.status(201).json({ run, newPRs: prResult.newPRs, discrepancies: prResult.discrepancies });
 
   // Async: generate AI feedback — check limits first
