@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import api from '../lib/api'
 import LoadingRunner from '../components/LoadingRunner'
+import { Pencil } from 'lucide-react'
 
 const baseCardStyle = {
   background: 'var(--bg-card)',
@@ -53,13 +54,60 @@ function formatValue(pr) {
   return `${value} ${pr?.unit || ''}`.trim()
 }
 
+function secondsToHMS(seconds) {
+  if (!seconds || seconds < 0) return '--'
+  const hours = Math.floor(seconds / 3600)
+  const mins = Math.floor((seconds % 3600) / 60)
+  const secs = Math.round(seconds % 60)
+  
+  if (hours > 0) {
+    return `${hours}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`
+  }
+  return `${mins}:${String(secs).padStart(2, '0')}`
+}
+
+function secondsToMinPerMile(seconds, distance) {
+  if (!seconds || !distance || distance <= 0) return null
+  return seconds / 60 / distance
+}
+
+function hmsToSeconds(hms) {
+  if (!hms) return 0
+  const parts = hms.split(':').map(p => parseInt(p, 10))
+  if (parts.length === 3) {
+    return parts[0] * 3600 + parts[1] * 60 + parts[2]
+  }
+  if (parts.length === 2) {
+    return parts[0] * 60 + parts[1]
+  }
+  return parseInt(hms, 10) || 0
+}
+
+function isSuspiciousPace(paceMinPerMile) {
+  if (!paceMinPerMile) return false
+  // World record thresholds (min/mile)
+  const wrThresholds = {
+    '1 Mile': 3.717, // 3:43/mi
+    '5K': 4.067, // 4:04/mi (12:38 total / 3.107 mi)
+    '10K': 4.25, // 4:15/mi (26:24 total / 6.214 mi)
+    '15K': 4.383, // 4:23/mi (57:31 / 9.321)
+    'Half Marathon': 4.393, // 4:23/mi (57:31 / 13.109)
+    'Marathon': 4.6 // 4:36/mi (2:00:35 / 26.219)
+  }
+  // For now, return true if pace is absurdly fast (less than 3:30/mi)
+  return paceMinPerMile < 3.5
+}
+
 export default function PRWall() {
   const [prs, setPrs] = useState([])
   const [totalMiles, setTotalMiles] = useState(0)
+  const [timePRs, setTimePRs] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
   const [showModal, setShowModal] = useState(false)
+  const [editingTimePR, setEditingTimePR] = useState(null)
+  const [timeEditForm, setTimeEditForm] = useState({ time_hms: '', date: new Date().toISOString().slice(0, 10) })
   const [form, setForm] = useState({
     category: 'run',
     label: RUNNING_PR_LABELS[0].label,
@@ -79,16 +127,19 @@ export default function PRWall() {
         await api.post('/prs/auto-detect', { run_id: runs[0].id }).catch(() => {})
       }
 
-      const [prsRes, allRunsRes] = await Promise.all([
+      const [prsRes, allRunsRes, timePRRes] = await Promise.all([
         api.get('/prs'),
-        api.get('/runs')
+        api.get('/runs'),
+        api.get('/prs/time').catch(() => ({ data: { times: [] } }))
       ])
 
       const prList = prsRes.data?.prs || []
       const allRuns = allRunsRes.data?.runs || []
+      const times = timePRRes.data?.times || []
       const miles = allRuns.reduce((sum, run) => sum + (Number(run.distance_miles) || 0), 0)
 
       setPrs(prList)
+      setTimePRs(times)
       setTotalMiles(miles)
     } catch (e) {
       setError(e?.response?.data?.error || 'Could not load PRs right now.')
@@ -133,6 +184,28 @@ export default function PRWall() {
       setPrs(prev => prev.filter(pr => pr.id !== id))
     } catch {
       setError('Could not delete PR.')
+    }
+  }
+
+  const saveTimePR = async (distance, distanceMiles) => {
+    try {
+      const timeSeconds = hmsToSeconds(timeEditForm.time_hms)
+      if (timeSeconds <= 0) {
+        setError('Invalid time format')
+        return
+      }
+
+      await api.post('/prs/manual', {
+        distance_miles: distanceMiles,
+        time_seconds: timeSeconds,
+        date: timeEditForm.date
+      })
+
+      setEditingTimePR(null)
+      setTimeEditForm({ time_hms: '', date: new Date().toISOString().slice(0, 10) })
+      await loadData()
+    } catch (e) {
+      setError(e?.response?.data?.error || 'Could not save time PR.')
     }
   }
 
@@ -186,6 +259,118 @@ export default function PRWall() {
                   </div>
                 ))
               )}
+            </div>
+          </section>
+
+          <section className="mb-6">
+            <h2 className="mb-3 text-lg font-bold">Time PRs</h2>
+            <div className="grid grid-cols-1 gap-3">
+              {[
+                { label: '1 Mile', target: 1.0 },
+                { label: '5K', target: 3.107 },
+                { label: '10K', target: 6.214 },
+                { label: '15K', target: 9.321 },
+                { label: 'Half Marathon', target: 13.109 },
+                { label: 'Marathon', target: 26.219 }
+              ].map(dist => {
+                const pr = timePRs.find(t => t.distance === dist.label)
+
+                if (editingTimePR === dist.label) {
+                  return (
+                    <div key={dist.label} style={baseCardStyle}>
+                      <p style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 1 }}>{dist.label}</p>
+                      <div className="space-y-2 mb-3">
+                        <input
+                          type="text"
+                          placeholder="HH:MM:SS or MM:SS"
+                          value={timeEditForm.time_hms}
+                          onChange={e => setTimeEditForm(prev => ({ ...prev, time_hms: e.target.value }))}
+                          className="w-full rounded-lg border px-2 py-1 text-sm"
+                          style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }}
+                        />
+                        <input
+                          type="date"
+                          value={timeEditForm.date}
+                          onChange={e => setTimeEditForm(prev => ({ ...prev, date: e.target.value }))}
+                          className="w-full rounded-lg border px-2 py-1 text-sm"
+                          style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }}
+                        />
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => saveTimePR(dist.label, dist.target)}
+                            className="flex-1 rounded-lg px-2 py-1 text-xs font-bold"
+                            style={{ background: 'var(--accent)', color: '#000', border: 'none', cursor: 'pointer' }}
+                          >
+                            Save
+                          </button>
+                          <button
+                            onClick={() => {
+                              setEditingTimePR(null)
+                              setTimeEditForm({ time_hms: '', date: new Date().toISOString().slice(0, 10) })
+                            }}
+                            className="flex-1 rounded-lg border px-2 py-1 text-xs"
+                            style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-muted)', background: 'none', cursor: 'pointer' }}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                }
+
+                if (!pr || !pr.best_time_seconds) {
+                  return (
+                    <div key={dist.label} style={baseCardStyle}>
+                      <div className="mb-2 flex items-center justify-between">
+                        <p style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1 }}>{dist.label}</p>
+                        <button
+                          onClick={() => {
+                            setEditingTimePR(dist.label)
+                            setTimeEditForm({ time_hms: '', date: new Date().toISOString().slice(0, 10) })
+                          }}
+                          className="rounded-lg p-1.5"
+                          style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}
+                        >
+                          <Pencil size={14} />
+                        </button>
+                      </div>
+                      <p style={{ fontSize: 22, fontWeight: 900, color: 'var(--text-muted)' }}>--</p>
+                      <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>No PR yet — log a run to set it</p>
+                    </div>
+                  )
+                }
+
+                const pacePerMile = secondsToMinPerMile(pr.best_time_seconds, dist.target)
+                const paceStr = pacePerMile ? `${Math.floor(pacePerMile)}:${String(Math.round((pacePerMile - Math.floor(pacePerMile)) * 60)).padStart(2, '0')}/mi` : 'N/A'
+                const suspicious = isSuspiciousPace(pacePerMile)
+
+                return (
+                  <div key={dist.label} style={baseCardStyle}>
+                    <div className="mb-1 flex items-center justify-between">
+                      <p style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1 }}>{dist.label}</p>
+                      <button
+                        onClick={() => {
+                          setEditingTimePR(dist.label)
+                          setTimeEditForm({ time_hms: secondsToHMS(pr.best_time_seconds), date: pr.date })
+                        }}
+                        className="rounded-lg p-1.5"
+                        style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}
+                      >
+                        <Pencil size={14} />
+                      </button>
+                    </div>
+                    <p style={{ fontSize: 28, fontWeight: 900, color: 'var(--accent)' }}>
+                      {secondsToHMS(pr.best_time_seconds)}
+                    </p>
+                    <div className="mt-2 flex items-center gap-2">
+                      <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>{paceStr}</p>
+                      {suspicious && <span style={{ fontSize: 10, color: 'var(--accent)' }}>(check data)</span>}
+                    </div>
+                    <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>{new Date(pr.date).toLocaleDateString()}</p>
+                  </div>
+                )
+              })}
             </div>
           </section>
 
