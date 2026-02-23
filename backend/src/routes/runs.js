@@ -98,13 +98,25 @@ router.post('/', auth, (req, res) => {
     watch_sync_id || null, watch_activity_type || null, watch_normalized_type || null, gps_available === false ? 0 : 1
   );
 
-  // Get user weight for calorie calc (default 185 if not set)
+  // Get user weight for calorie calc
   const userProfile = db.prepare('SELECT weight_lbs FROM users WHERE id=?').get(req.user.id);
   const weightLbs = userProfile?.weight_lbs || 185;
   const computedCalories = Math.round(0.75 * weightLbs * (distance_miles || 0));
   const resolvedCalories = Number(calories || 0) > 0 ? Number(calories) : computedCalories;
   if (resolvedCalories > 0) {
     db.prepare('UPDATE runs SET calories=? WHERE id=?').run(resolvedCalories, id);
+  }
+
+  // MET-based calories_burned calculation
+  if ((duration_seconds || 0) > 0 && (distance_miles || 0) > 0) {
+    const durationHours = (duration_seconds || 0) / 3600;
+    const paceMinsPerMile = ((duration_seconds || 0) / 60) / (distance_miles || 1);
+    const met = paceMinsPerMile < 8 ? 12.0 : paceMinsPerMile <= 10 ? 10.0 : 8.0;
+    const weightKg = weightLbs / 2.205;
+    const calories_burned = Math.round(met * weightKg * durationHours);
+    if (calories_burned > 0) {
+      db.prepare('UPDATE runs SET calories_burned=? WHERE id=?').run(calories_burned, id);
+    }
   }
 
   const run = db.prepare('SELECT * FROM runs WHERE id = ?').get(id);

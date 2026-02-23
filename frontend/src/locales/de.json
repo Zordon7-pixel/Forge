@@ -143,5 +143,38 @@
     "mark_cleared": "Als Geheilt Markieren",
     "injury_history": "Verletzungsverlauf",
     "no_active_injuries": "Keine aktiven Verletzungen"
+  },
+  "recap": {
+    "title": "Wochenrückblick",
+    "loading": "Rückblick laden",
+    "thisWeek": "Diese Woche",
+    "thisMonth": "Diesen Monat",
+    "weekly": "Wöchentlich",
+    "monthly": "Monatlich",
+    "totalMiles": "Gesamtmeilen",
+    "totalRuns": "Läufe",
+    "totalWorkouts": "Trainings",
+    "activeMinutes": "Aktive Zeit",
+    "vsLastWeek": "vs. letzte Woche",
+    "bestRun": "Bester Lauf",
+    "streakDays": "Tage in Folge",
+    "keepItUp": "Weiter so",
+    "monthlyProgress": "Monatlicher Fortschritt",
+    "monthlyGoal": "Monatliches Ziel",
+    "ofMonthlyGoal": "des Monatsziels",
+    "avgPace": "Ø Tempo",
+    "noData": "Keine Aktivität in diesem Zeitraum",
+    "logToSee": "Erfasse einen Lauf oder ein Training",
+    "viewHistory": "Vollständigen Verlauf anzeigen",
+    "combined": "Läufe + Krafttraining",
+    "runsThisWeek": "in diesem Zeitraum",
+    "workoutsThisWeek": "Krafteinheiten",
+    "date": "Datum"
+  },
+  "calories": {
+    "title": "Kalorien",
+    "burned": "Verbrannte Kalorien",
+    "weekly": "Wöchentliche Kalorien",
+    "thisSession": "Diese Einheit"
   }
 }

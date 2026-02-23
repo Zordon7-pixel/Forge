@@ -143,5 +143,38 @@
     "mark_cleared": "Mark Cleared",
     "injury_history": "Injury History",
     "no_active_injuries": "No active injuries"
+  },
+  "recap": {
+    "title": "Weekly Recap",
+    "loading": "Loading recap",
+    "thisWeek": "This Week",
+    "thisMonth": "This Month",
+    "weekly": "Weekly",
+    "monthly": "Monthly",
+    "totalMiles": "Total Miles",
+    "totalRuns": "Runs",
+    "totalWorkouts": "Workouts",
+    "activeMinutes": "Active Time",
+    "vsLastWeek": "vs last week",
+    "bestRun": "Best Run",
+    "streakDays": "day streak",
+    "keepItUp": "Keep the momentum going",
+    "monthlyProgress": "Monthly Progress",
+    "monthlyGoal": "Monthly Goal",
+    "ofMonthlyGoal": "of monthly goal",
+    "avgPace": "Avg Pace",
+    "noData": "No activity this period yet",
+    "logToSee": "Log a run or workout to see your recap",
+    "viewHistory": "View Full History",
+    "combined": "runs + lifts",
+    "runsThisWeek": "this period",
+    "workoutsThisWeek": "strength sessions",
+    "date": "date"
+  },
+  "calories": {
+    "title": "Calories",
+    "burned": "Calories Burned",
+    "weekly": "Weekly Calories",
+    "thisSession": "This Session"
   }
 }

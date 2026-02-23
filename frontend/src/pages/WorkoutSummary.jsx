@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip, BarChart, XAxis, YAxis, Bar } from 'recharts'
+import { Flame } from 'lucide-react'
 import api from '../lib/api'
 import MuscleDiagram from '../components/MuscleDiagram'
 import { getMuscleBreakdown } from '../lib/muscleMap'
@@ -182,8 +183,13 @@ export default function WorkoutSummary() {
                 <p style={{ fontSize: 22, fontWeight: 900, color: 'var(--text-primary)' }}>{fmtDuration(session.total_seconds)}</p>
               </div>
               <div style={{ background: 'var(--bg-input)', borderRadius: 12, padding: 16 }}>
-                <p style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>Calories</p>
-                <p style={{ fontSize: 22, fontWeight: 900, color: 'var(--text-primary)' }}>{totalCalories || '--'}</p>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
+                  <Flame size={11} color="#EAB308" />
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, margin: 0 }}>Calories</p>
+                </div>
+                <p style={{ fontSize: 22, fontWeight: 900, color: 'var(--text-primary)' }}>
+                  {session?.calories_burned || totalCalories || '--'}
+                </p>
               </div>
               <div style={{ background: 'var(--bg-input)', borderRadius: 12, padding: 16 }}>
                 <p style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>Total Sets</p>
@@ -233,8 +239,8 @@ export default function WorkoutSummary() {
 
             <SectionHeader label="Nutrition" />
             <StatRow label="Resting Cal" value={Math.round((session.total_seconds || 0) / 60)} />
-            <StatRow label="Active Cal" value={totalCalories} />
-            <StatRow label="Total Cal Burned" value={totalCalories + Math.round((session.total_seconds || 0) / 60)} />
+            <StatRow label="Active Cal" value={session?.calories_burned || totalCalories} />
+            <StatRow label="Total Cal Burned" value={session?.calories_burned || (totalCalories + Math.round((session.total_seconds || 0) / 60))} />
 
             <SectionHeader label="Workout Details" />
             <StatRow label="Total Reps" value={totalReps} />

@@ -29,6 +29,7 @@ import Races from './pages/Races'
 import Gear from './pages/Gear'
 import ResetPassword from './pages/ResetPassword'
 import Injury from './pages/Injury'
+import WeeklyRecap from './pages/WeeklyRecap'
 
 function PrivateRoute({ children }) {
   if (!isLoggedIn()) return <Navigate to="/login" replace />
@@ -213,6 +214,14 @@ export default function App() {
           element={
             <PrivateRoute>
               <Injury />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/recap"
+          element={
+            <PrivateRoute>
+              <WeeklyRecap />
             </PrivateRoute>
           }
         />

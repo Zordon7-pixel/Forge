@@ -586,4 +586,11 @@ db.exec(`
   );
 `);
 
+// calories_burned columns
+const runColsFinal = db.prepare("PRAGMA table_info(runs)").all().map(c => c.name);
+if (!runColsFinal.includes('calories_burned')) db.prepare("ALTER TABLE runs ADD COLUMN calories_burned INTEGER").run();
+
+const workoutSessionCols = db.prepare("PRAGMA table_info(workout_sessions)").all().map(c => c.name);
+if (!workoutSessionCols.includes('calories_burned')) db.prepare("ALTER TABLE workout_sessions ADD COLUMN calories_burned INTEGER").run();
+
 module.exports = db;

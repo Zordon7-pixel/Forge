@@ -143,5 +143,38 @@
     "mark_cleared": "Marquer comme Gueri",
     "injury_history": "Historique des Blessures",
     "no_active_injuries": "Aucune blessure active"
+  },
+  "recap": {
+    "title": "Bilan Hebdomadaire",
+    "loading": "Chargement du bilan",
+    "thisWeek": "Cette Semaine",
+    "thisMonth": "Ce Mois",
+    "weekly": "Hebdomadaire",
+    "monthly": "Mensuel",
+    "totalMiles": "Miles Totaux",
+    "totalRuns": "Courses",
+    "totalWorkouts": "Entraînements",
+    "activeMinutes": "Temps Actif",
+    "vsLastWeek": "vs semaine dernière",
+    "bestRun": "Meilleure Course",
+    "streakDays": "jours consécutifs",
+    "keepItUp": "Continue sur ta lancée",
+    "monthlyProgress": "Progression Mensuelle",
+    "monthlyGoal": "Objectif Mensuel",
+    "ofMonthlyGoal": "de l'objectif mensuel",
+    "avgPace": "Allure Moyenne",
+    "noData": "Aucune activité sur cette période",
+    "logToSee": "Enregistre une course ou un entraînement pour voir ton bilan",
+    "viewHistory": "Voir l'Historique Complet",
+    "combined": "courses + muscu",
+    "runsThisWeek": "cette période",
+    "workoutsThisWeek": "séances de force",
+    "date": "date"
+  },
+  "calories": {
+    "title": "Calories",
+    "burned": "Calories Brûlées",
+    "weekly": "Calories Hebdomadaires",
+    "thisSession": "Cette Séance"
   }
 }

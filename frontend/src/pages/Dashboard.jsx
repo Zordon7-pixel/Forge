@@ -213,6 +213,7 @@ export default function Dashboard() {
   const [nextRace, setNextRace] = useState(null)
   const [loadWarningDismissedUntil, setLoadWarningDismissedUntil] = useState(Number(localStorage.getItem('forge_load_warning_dismissed_until') || 0))
   const [shoeAlerts, setShoeAlerts] = useState([])
+  const [weeklyCalories, setWeeklyCalories] = useState(0)
 
   useEffect(() => {
     ;(async () => {
@@ -257,6 +258,8 @@ export default function Dashboard() {
         setLoadAnalysis(loadRes.data)
         setNextRace(nextRaceRes.data?.race || null)
         setShoeAlerts((gearRes.data?.shoes || []).filter(s => s.alert))
+        // Fetch weekly calories from recap
+        api.get('/recap/weekly').then(r => setWeeklyCalories(r.data?.totalCalories || 0)).catch(() => {})
       } finally {
         setLoading(false)
       }
@@ -568,7 +571,11 @@ export default function Dashboard() {
         </div>
 
         <div className="grid grid-cols-3 gap-3">
-          {[{label:'Runs', value:runsCount},{label:'Time', value:fmtHours(periodStats.seconds)},{label:'Cal', value:(periodStats.calories || 0).toLocaleString()}].map((s, i) => {
+          {[
+            {label:'Runs', value:runsCount},
+            {label:'Time', value:fmtHours(periodStats.seconds)},
+            {label:'Cal', value: period === 'week' ? weeklyCalories.toLocaleString() : (periodStats.calories || 0).toLocaleString()},
+          ].map((s, i) => {
             const improving = i % 2 === 0
             return <div key={s.label} className="rounded-lg p-2" style={{ border: '1px solid var(--border-subtle)' }}><p className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>{s.value}</p><p className="text-xs flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>{s.label}{improving ? <ArrowUpRight size={12} color="#22c55e"/> : <ArrowDownRight size={12} color="#ef4444"/>}</p></div>
           })}

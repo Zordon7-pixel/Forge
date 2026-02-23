@@ -39,7 +39,18 @@ router.put('/:id/end', auth, (req, res) => {
   
   db.prepare('UPDATE workout_sessions SET ended_at=?, notes=?, total_seconds=? WHERE id=?')
     .run(ended_at, notes || null, total_seconds, req.params.id);
-  res.json({ ok: true, total_seconds });
+
+  // MET-based calories_burned for strength training
+  const userProfile = db.prepare('SELECT weight_lbs FROM users WHERE id=?').get(req.user.id);
+  const weightKg = (userProfile?.weight_lbs || 154.35) / 2.205; // 154.35 lbs ≈ 70kg default
+  const MET_STRENGTH = 5.0;
+  const durationHours = (total_seconds > 0 ? total_seconds : 45 * 60) / 3600;
+  const calories_burned = Math.round(MET_STRENGTH * weightKg * durationHours);
+  if (calories_burned > 0) {
+    db.prepare('UPDATE workout_sessions SET calories_burned=? WHERE id=?').run(calories_burned, req.params.id);
+  }
+
+  res.json({ ok: true, total_seconds, calories_burned });
 });
 
 // Log a set during workout

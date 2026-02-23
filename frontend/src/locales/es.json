@@ -143,5 +143,38 @@
     "mark_cleared": "Marcar como Curado",
     "injury_history": "Historial de Lesiones",
     "no_active_injuries": "Sin lesiones activas"
+  },
+  "recap": {
+    "title": "Resumen Semanal",
+    "loading": "Cargando resumen",
+    "thisWeek": "Esta Semana",
+    "thisMonth": "Este Mes",
+    "weekly": "Semanal",
+    "monthly": "Mensual",
+    "totalMiles": "Millas Totales",
+    "totalRuns": "Carreras",
+    "totalWorkouts": "Entrenamientos",
+    "activeMinutes": "Tiempo Activo",
+    "vsLastWeek": "vs semana pasada",
+    "bestRun": "Mejor Carrera",
+    "streakDays": "días seguidos",
+    "keepItUp": "Mantén el impulso",
+    "monthlyProgress": "Progreso Mensual",
+    "monthlyGoal": "Meta Mensual",
+    "ofMonthlyGoal": "de la meta mensual",
+    "avgPace": "Ritmo Promedio",
+    "noData": "Sin actividad en este período",
+    "logToSee": "Registra una carrera o entrenamiento para ver tu resumen",
+    "viewHistory": "Ver Historial Completo",
+    "combined": "carreras + pesas",
+    "runsThisWeek": "este período",
+    "workoutsThisWeek": "sesiones de fuerza",
+    "date": "fecha"
+  },
+  "calories": {
+    "title": "Calorías",
+    "burned": "Calorías Quemadas",
+    "weekly": "Calorías Semanales",
+    "thisSession": "Esta Sesión"
   }
 }

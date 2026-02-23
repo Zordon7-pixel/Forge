@@ -183,7 +183,18 @@ export default function History() {
         ))}
       </div>
 
-      <Link to="/journal" className="mb-3 inline-block text-sm" style={{ color: 'var(--accent)' }}>View Journal</Link>
+      <div className="mb-3 flex items-center gap-3">
+        <Link to="/recap"
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+            padding: '8px 16px', borderRadius: 20,
+            background: '#EAB308', color: '#000',
+            fontWeight: 700, fontSize: 13, textDecoration: 'none',
+          }}>
+          Weekly Recap
+        </Link>
+        <Link to="/journal" className="text-sm" style={{ color: 'var(--accent)' }}>View Journal</Link>
+      </div>
 
       <div className="grid grid-cols-1 gap-3 mb-4">
         <div className="rounded-xl p-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
@@ -313,7 +324,7 @@ export default function History() {
 
               <p className="text-sm" style={{ color: 'var(--text-primary)' }}>
                 {fmt.distance(Number(run.distance_miles || 0), 2)} · {formatDuration(run.duration_seconds)} · {fmt.pace(run.duration_seconds / run.distance_miles)}
-                {run.calories > 0 && <span> · {run.calories} cal</span>}
+                {(run.calories_burned || run.calories) > 0 && <span> · {run.calories_burned || run.calories} cal</span>}
               </p>
 
               {run.notes && <p className="mt-1 text-xs italic" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>&quot;{run.notes}&quot;</p>}
@@ -346,7 +357,10 @@ export default function History() {
                 <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{new Date(session.started_at || session.created_at).toLocaleDateString()}</p>
                 <span className="text-xs" style={{ color: 'var(--text-muted)' }}>View Details</span>
               </div>
-              <p className="mt-1 text-sm" style={{ color: 'var(--text-primary)' }}>Duration: {session.total_seconds ? formatWorkoutDuration(session.total_seconds) : '--'}</p>
+              <p className="mt-1 text-sm" style={{ color: 'var(--text-primary)' }}>
+                Duration: {session.total_seconds ? formatWorkoutDuration(session.total_seconds) : '--'}
+                {session.calories_burned > 0 && <span> · {session.calories_burned} cal</span>}
+              </p>
               {Array.isArray(session.muscle_groups) && session.muscle_groups.length > 0 && (
                 <div className="mt-2 flex flex-wrap gap-2">
                   {session.muscle_groups.map(tag => (
