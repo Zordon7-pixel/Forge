@@ -161,6 +161,8 @@ router.get('/feed', auth, (req, res) => {
 
     return {
       ...item,
+      notes: cleanText(item.notes || ''),
+      user_name: cleanText(item.user_name || ''),
       like_count: likes.cnt,
       user_liked: !!userLiked,
       comment_count: commentCount.cnt,
