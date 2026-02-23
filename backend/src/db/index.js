@@ -170,5 +170,7 @@ if (!userCols2.includes('injury_mode')) db.prepare("ALTER TABLE users ADD COLUMN
 if (!userCols2.includes('injury_description')) db.prepare("ALTER TABLE users ADD COLUMN injury_description TEXT DEFAULT ''").run();
 if (!userCols2.includes('injury_date')) db.prepare("ALTER TABLE users ADD COLUMN injury_date TEXT DEFAULT ''").run();
 if (!userCols2.includes('injury_limitations')) db.prepare("ALTER TABLE users ADD COLUMN injury_limitations TEXT DEFAULT ''").run();
+if (!userCols2.includes('distance_unit')) db.prepare("ALTER TABLE users ADD COLUMN distance_unit TEXT DEFAULT 'miles'").run();
+if (!userCols2.includes('theme')) db.prepare("ALTER TABLE users ADD COLUMN theme TEXT DEFAULT 'dark'").run();
 
 module.exports = db;
