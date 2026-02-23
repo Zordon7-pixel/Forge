@@ -15,6 +15,8 @@ import WorkoutSummary from './pages/WorkoutSummary'
 import ActiveRun from './pages/ActiveRun'
 import TreadmillRun from './pages/TreadmillRun'
 import DailyCheckIn from './pages/DailyCheckIn'
+import Stretches from './pages/Stretches'
+import StretchSession from './pages/StretchSession'
 
 function PrivateRoute({ children }) {
   if (!isLoggedIn()) return <Navigate to="/login" replace />
@@ -102,6 +104,22 @@ export default function App() {
           element={
             <PrivateRoute>
               <Profile />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/stretches"
+          element={
+            <PrivateRoute>
+              <Stretches />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/stretches/session"
+          element={
+            <PrivateRoute>
+              <StretchSession />
             </PrivateRoute>
           }
         />

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
+import { Zap } from 'lucide-react'
 import { getUser } from '../lib/auth'
 import { useTheme } from '../context/ThemeContext'
 import HelpDesk from './HelpDesk'
@@ -9,6 +10,7 @@ const NAV_ITEMS = [
   { to: '/', end: true, icon: '/nav-home.png', label: 'Home' },
   { to: '/log-run', icon: '/nav-run.png', label: 'Run' },
   { to: '/log-lift', icon: '/nav-lift.png', label: 'Lift' },
+  { to: '/stretches', label: 'Stretches', iconComponent: Zap },
   { to: '/history', icon: '/nav-history.png', label: 'History' },
   { to: '/profile', icon: '/nav-profile.png', label: 'Profile' },
 ]
@@ -55,17 +57,24 @@ export default function Layout({ children }) {
       <FeedbackButton externalOpen={showFeedback} onClose={() => setShowFeedback(false)} />
 
       {!isWorkout && (
-        <nav className="fixed bottom-0 left-1/2 z-30 grid w-full max-w-[480px] -translate-x-1/2 grid-cols-5 border-t px-1 py-1" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}>
-          {NAV_ITEMS.map(({ to, end, icon, label }) => (
+        <nav className="fixed bottom-0 left-1/2 z-30 grid w-full max-w-[480px] -translate-x-1/2 grid-cols-6 border-t px-1 py-1" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}>
+          {NAV_ITEMS.map(({ to, end, icon, iconComponent: IconComponent, label }) => (
             <NavLink key={to} to={to} end={end} className="flex flex-col items-center justify-center">
               {({ isActive }) => (
                 <span className="flex flex-col items-center justify-center gap-0.5 px-2 py-1.5 rounded-xl transition-all duration-200 w-full" style={isActive ? { background: 'rgba(234,179,8,0.18)', boxShadow: '0 0 0 1px rgba(234,179,8,0.3)' } : {}}>
-                  <img
-                    src={icon}
-                    alt={label}
-                    className={`w-7 h-7 object-contain transition-all duration-200 mix-blend-lighten ${isActive ? 'scale-110' : 'opacity-50'}`}
-                    style={isActive ? { filter: 'drop-shadow(0 0 6px rgba(234,179,8,0.8)) sepia(1) saturate(5) hue-rotate(0deg)' } : {}}
-                  />
+                  {IconComponent ? (
+                    <IconComponent
+                      className={`w-6 h-6 transition-all duration-200 ${isActive ? 'scale-110' : 'opacity-50'}`}
+                      style={{ color: isActive ? 'var(--accent)' : 'var(--text-muted)' }}
+                    />
+                  ) : (
+                    <img
+                      src={icon}
+                      alt={label}
+                      className={`w-7 h-7 object-contain transition-all duration-200 mix-blend-lighten ${isActive ? 'scale-110' : 'opacity-50'}`}
+                      style={isActive ? { filter: 'drop-shadow(0 0 6px rgba(234,179,8,0.8)) sepia(1) saturate(5) hue-rotate(0deg)' } : {}}
+                    />
+                  )}
                   <span className="text-[10px] font-medium transition-colors duration-200" style={{ color: isActive ? 'var(--accent)' : 'var(--text-muted)' }}>
                     {label}
                   </span>

@@ -1,0 +1,159 @@
+import { useEffect, useMemo, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
+import { postRunStretches, preRunStretches } from '../data/stretches'
+
+export default function StretchSession() {
+  const navigate = useNavigate()
+  const location = useLocation()
+
+  const typeFromQuery = new URLSearchParams(location.search).get('type')
+  const sessionType = location.state?.type || typeFromQuery || 'pre'
+  const isPre = sessionType !== 'post'
+
+  const stretches = useMemo(() => (isPre ? preRunStretches : postRunStretches), [isPre])
+
+  const [current, setCurrent] = useState(0)
+  const [secondsLeft, setSecondsLeft] = useState(stretches[0].duration)
+  const [paused, setPaused] = useState(false)
+  const [transitioning, setTransitioning] = useState(false)
+  const [nextName, setNextName] = useState('')
+  const [done, setDone] = useState(false)
+
+  useEffect(() => {
+    setCurrent(0)
+    setSecondsLeft(stretches[0].duration)
+    setPaused(false)
+    setTransitioning(false)
+    setNextName('')
+    setDone(false)
+  }, [stretches])
+
+  useEffect(() => {
+    if (paused || transitioning || done) return
+
+    const timer = setInterval(() => {
+      setSecondsLeft(prev => {
+        if (prev <= 1) {
+          clearInterval(timer)
+          if (current >= stretches.length - 1) {
+            setDone(true)
+            return 0
+          }
+
+          const upcoming = stretches[current + 1]
+          setNextName(upcoming.name)
+          setTransitioning(true)
+
+          setTimeout(() => {
+            setCurrent(prevCurrent => prevCurrent + 1)
+            setSecondsLeft(upcoming.duration)
+            setTransitioning(false)
+            setNextName('')
+          }, 2000)
+
+          return 0
+        }
+        return prev - 1
+      })
+    }, 1000)
+
+    return () => clearInterval(timer)
+  }, [paused, transitioning, done, current, stretches])
+
+  const currentStretch = stretches[current]
+  const nextStretch = stretches[current + 1]
+  const progress = Math.round((current / stretches.length) * 100)
+
+  const skipToNext = () => {
+    if (current >= stretches.length - 1) {
+      setDone(true)
+      setSecondsLeft(0)
+      return
+    }
+
+    const upcoming = stretches[current + 1]
+    setNextName(upcoming.name)
+    setTransitioning(true)
+    setSecondsLeft(0)
+
+    setTimeout(() => {
+      setCurrent(prev => prev + 1)
+      setSecondsLeft(upcoming.duration)
+      setTransitioning(false)
+      setNextName('')
+    }, 2000)
+  }
+
+  return (
+    <div className="bg-[#0f1117] min-h-screen text-white rounded-2xl">
+      <div className="mx-auto flex min-h-screen max-w-[480px] flex-col p-4">
+        <div className="mb-4 h-2 w-full rounded-full bg-[#1f2433]">
+          <div className="h-2 rounded-full bg-yellow-500 transition-all" style={{ width: `${done ? 100 : progress}%` }} />
+        </div>
+
+        <header className="mb-6 flex items-center justify-between">
+          <button onClick={() => navigate(-1)} className="text-slate-300">← Back</button>
+          <div className="text-center">
+            <h1 className="text-lg font-bold">{isPre ? 'Pre-Run Warmup' : 'Post-Run Recovery'}</h1>
+            <p className="text-xs text-slate-400">{Math.min(current + 1, stretches.length)} / {stretches.length}</p>
+          </div>
+          <div className="w-12" />
+        </header>
+
+        {transitioning ? (
+          <div className="my-auto rounded-2xl border border-[#2a2d3e] bg-[#151823] p-8 text-center">
+            <p className="text-sm text-slate-400">Next up:</p>
+            <p className="mt-2 text-2xl font-black text-yellow-500">{nextName}</p>
+          </div>
+        ) : done ? (
+          <div className="my-auto rounded-2xl border border-emerald-600 bg-[#151823] p-8 text-center">
+            <p className="text-3xl font-black text-emerald-400">Session Complete ✓</p>
+            <p className="mt-2 text-sm text-slate-300">
+              {isPre ? 'You are warmed up with dynamic movement only. Ready to run strong.' : 'Recovery complete. Hold static stretches after each run to reduce tightness.'}
+            </p>
+            <button
+              onClick={() => navigate('/log-run')}
+              className="mt-5 rounded-xl bg-yellow-500 px-5 py-3 font-bold text-black"
+            >
+              Complete ✓
+            </button>
+          </div>
+        ) : (
+          <>
+            <div className="rounded-2xl border border-[#2a2d3e] bg-[#151823] p-5">
+              <span className="rounded-full bg-slate-700 px-2 py-1 text-xs text-slate-200">{currentStretch.muscle}</span>
+              <h2 className="mt-3 text-3xl font-black text-white">{currentStretch.name}</h2>
+              <p className="mt-3 text-sm text-slate-400">{currentStretch.cue}</p>
+              <p className="mt-3 text-sm font-semibold text-slate-300">{currentStretch.reps}</p>
+
+              <button
+                onClick={() => window.open(currentStretch.videoUrl, '_blank', 'noopener,noreferrer')}
+                className="mt-4 border border-[#2a2d3e] text-slate-300 rounded-lg px-4 py-2 text-sm flex items-center gap-2"
+              >
+                ▶ Watch How
+              </button>
+            </div>
+
+            <div className="my-8 text-center">
+              <p className="text-7xl font-black text-yellow-500">{secondsLeft}</p>
+              <div className="mt-3 flex items-center justify-center gap-4">
+                <button onClick={() => setPaused(prev => !prev)} className="rounded-lg border border-[#2a2d3e] px-3 py-1 text-xs text-slate-300">
+                  {paused ? 'Resume' : 'Pause'}
+                </button>
+                <button onClick={skipToNext} className="text-xs text-slate-400 underline">Skip</button>
+              </div>
+            </div>
+
+            <footer className="mt-auto pb-4 text-center">
+              {current === stretches.length - 1 ? (
+                <button onClick={() => setDone(true)} className="rounded-xl bg-emerald-500 px-5 py-3 font-bold text-black">Complete ✓</button>
+              ) : (
+                <p className="text-sm text-slate-400">Up next: {nextStretch?.name} →</p>
+              )}
+            </footer>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
