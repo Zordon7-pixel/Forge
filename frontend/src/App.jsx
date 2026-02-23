@@ -19,6 +19,7 @@ import DailyCheckIn from './pages/DailyCheckIn'
 import Stretches from './pages/Stretches'
 import StretchSession from './pages/StretchSession'
 import PRWall from './pages/PRWall'
+import Badges from './pages/Badges'
 
 function PrivateRoute({ children }) {
   if (!isLoggedIn()) return <Navigate to="/login" replace />
@@ -106,6 +107,14 @@ export default function App() {
           element={
             <PrivateRoute>
               <PRWall />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/badges"
+          element={
+            <PrivateRoute>
+              <Badges />
             </PrivateRoute>
           }
         />

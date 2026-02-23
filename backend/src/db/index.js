@@ -97,6 +97,28 @@ db.exec(`
     achieved_at TEXT DEFAULT (datetime('now')),
     notes TEXT
   );
+
+  CREATE TABLE IF NOT EXISTS badges (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    slug TEXT UNIQUE NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT,
+    icon TEXT,
+    category TEXT,
+    requirement_type TEXT,
+    requirement_value REAL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS user_badges (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL,
+    badge_id INTEGER NOT NULL,
+    earned_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (badge_id) REFERENCES badges(id),
+    UNIQUE(user_id, badge_id)
+  );
 `);
 
 // Add is_pro column to users if not exists
@@ -143,6 +165,7 @@ if (!runCols.includes('incline_pct')) db.prepare("ALTER TABLE runs ADD COLUMN in
 if (!runCols.includes('treadmill_speed')) db.prepare("ALTER TABLE runs ADD COLUMN treadmill_speed REAL DEFAULT 0").run();
 if (!runCols.includes('pain_level')) db.prepare("ALTER TABLE runs ADD COLUMN pain_level TEXT").run();
 if (!runCols.includes('post_energy')) db.prepare("ALTER TABLE runs ADD COLUMN post_energy TEXT").run();
+if (!runCols.includes('surface')) db.prepare("ALTER TABLE runs ADD COLUMN surface TEXT DEFAULT 'road'").run();
 
 const liftCols = db.prepare("PRAGMA table_info(lifts)").all().map(c => c.name);
 if (!liftCols.includes('exercise_name')) {
@@ -172,5 +195,11 @@ if (!userCols2.includes('injury_date')) db.prepare("ALTER TABLE users ADD COLUMN
 if (!userCols2.includes('injury_limitations')) db.prepare("ALTER TABLE users ADD COLUMN injury_limitations TEXT DEFAULT ''").run();
 if (!userCols2.includes('distance_unit')) db.prepare("ALTER TABLE users ADD COLUMN distance_unit TEXT DEFAULT 'miles'").run();
 if (!userCols2.includes('theme')) db.prepare("ALTER TABLE users ADD COLUMN theme TEXT DEFAULT 'dark'").run();
+
+// Add username column to users if not exists
+const userCols3 = db.prepare("PRAGMA table_info(users)").all().map(c => c.name);
+if (!userCols3.includes('username')) {
+  db.prepare("ALTER TABLE users ADD COLUMN username TEXT DEFAULT NULL").run();
+}
 
 module.exports = db;

@@ -23,6 +23,7 @@ app.use('/api/diagnostics', require('./routes/diagnostics'));
 app.use('/api/feedback', require('./routes/feedback'));
 app.use('/api/checkin', require('./routes/checkin'));
 app.use('/api/prs', require('./routes/prs'));
+app.use('/api/badges', require('./routes/badges'));
 
 // Serve frontend
 const dist = path.join(__dirname, '../../frontend/dist');
