@@ -176,6 +176,9 @@ function WatchSyncWidget() {
           <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#22c55e', animation: 'watchPulse 2s ease infinite' }} />
         )}
       </button>
+      <p style={{ fontSize: 9, color: 'var(--text-muted)', textAlign: 'center', marginTop: 2 }}>
+        + Meta Glasses (soon)
+      </p>
     </div>
   )
 }

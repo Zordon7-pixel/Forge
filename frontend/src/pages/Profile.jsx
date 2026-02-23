@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ChevronRight, Settings as SettingsIcon, User, Dumbbell, HeartPulse } from 'lucide-react'
+import { ChevronRight, Settings as SettingsIcon, User, Dumbbell, HeartPulse, Eye } from 'lucide-react'
 import api from '../lib/api'
 
 const personalityOptions = [
@@ -9,6 +9,66 @@ const personalityOptions = [
   { key: 'drill_sergeant', label: 'Drill Sergeant', description: 'No excuses, maximum output' },
   { key: 'training_partner', label: 'Training Partner', description: 'Supportive, runs with you mentally' }
 ]
+
+function MetaGlassesCard() {
+  const [status, setStatus] = useState(null)
+  const [dismissed, setDismissed] = useState(() => localStorage.getItem('meta_glasses_dismissed') === 'true')
+
+  useEffect(() => {
+    api.get('/watch-sync/meta/status').then(r => setStatus(r.data)).catch(() => {})
+  }, [])
+
+  if (dismissed) return null
+
+  return (
+    <div style={{
+      background: 'var(--bg-card)', borderRadius: 16, padding: 16,
+      border: '1px solid var(--border-subtle)', marginBottom: 12,
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ width: 36, height: 36, borderRadius: 10, background: 'rgba(234,179,8,0.1)', border: '1px solid rgba(234,179,8,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Eye size={18} color="#EAB308" />
+          </div>
+          <div>
+            <p style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>Meta Ray-Ban Glasses</p>
+            <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '2px 0 0' }}>Smart glasses integration</p>
+          </div>
+        </div>
+        <span style={{ fontSize: 10, fontWeight: 700, color: '#EAB308', background: 'rgba(234,179,8,0.1)', padding: '3px 8px', borderRadius: 6, border: '1px solid rgba(234,179,8,0.3)' }}>
+          Coming Soon
+        </span>
+      </div>
+
+      <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12, lineHeight: 1.5 }}>
+        When Meta opens their API, FORGE will automatically sync: activity detection, step tracking, ambient audio coaching, and POV workout capture.
+      </p>
+
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
+        {['Activity Detection', 'Step Tracking', 'Voice Coaching', 'POV Capture'].map(cap => (
+          <span key={cap} style={{ fontSize: 10, padding: '3px 8px', borderRadius: 20, background: 'var(--bg-input)', color: 'var(--text-muted)', border: '1px solid var(--border-subtle)' }}>
+            {cap}
+          </span>
+        ))}
+      </div>
+
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button
+          style={{ flex: 1, padding: '8px 0', borderRadius: 10, background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)', fontSize: 13, fontWeight: 600, cursor: 'not-allowed', opacity: 0.6 }}
+          disabled
+        >
+          Connect Meta Account
+        </button>
+        <button
+          onClick={() => { localStorage.setItem('meta_glasses_dismissed', 'true'); setDismissed(true) }}
+          style={{ padding: '8px 12px', borderRadius: 10, background: 'none', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)', fontSize: 12, cursor: 'pointer' }}
+        >
+          Dismiss
+        </button>
+      </div>
+    </div>
+  )
+}
 
 export default function Profile() {
   const navigate = useNavigate()
@@ -279,6 +339,11 @@ export default function Profile() {
           <div onClick={() => navigate('/journal')} className="flex items-center justify-between rounded-xl p-4 cursor-pointer transition-colors mt-2" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
             <span className="text-sm font-medium text-[var(--text-primary)]">Journal</span>
             <ChevronRight size={16} className="text-[var(--text-muted)]" />
+          </div>
+
+          <div style={{ marginTop: 16 }}>
+            <p style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 }}>Connected Devices</p>
+            <MetaGlassesCard />
           </div>
 
           <button type="button" onClick={logout} className="w-full bg-transparent py-3 font-medium mt-2" style={{ color: 'var(--text-muted)', border: 'none' }}>Log Out</button>
