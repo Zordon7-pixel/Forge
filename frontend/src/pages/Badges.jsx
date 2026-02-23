@@ -127,7 +127,7 @@ function SeasonalBadgeCard({ badge, onClick }) {
   const Icon = getSeasonalIcon(badge) || FALLBACK_ICON
 
   return (
-    <div style={{
+    <div onClick={onClick} style={{
       borderRadius: 16,
       padding: 16,
       background: isEarned ? `${color}18` : 'var(--bg-input)',
@@ -135,6 +135,7 @@ function SeasonalBadgeCard({ badge, onClick }) {
       boxShadow: isEarned ? `0 0 20px ${color}44` : isActive ? `0 0 10px ${color}22` : 'none',
       position: 'relative',
       overflow: 'hidden',
+      cursor: 'pointer',
     }}>
       {/* Active glow top bar */}
       {isActive && !isEarned && (
@@ -271,14 +272,14 @@ export default function Badges() {
 
       {/* Tab bar */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
-        {['achievements', 'seasonal'].map(t => (
+        {['achievements', 'seasonal', 'leaderboard'].map(t => (
           <button key={t} onClick={() => setTab(t)}
             style={{
               flex: 1, padding: '8px 0', borderRadius: 10, fontSize: 13, fontWeight: 700, border: 'none', cursor: 'pointer',
               background: tab === t ? 'var(--accent)' : 'var(--bg-input)',
               color: tab === t ? '#000' : 'var(--text-muted)',
             }}>
-            {t === 'achievements' ? 'Achievements' : 'Seasonal'}
+            {t === 'achievements' ? 'Achievements' : t === 'seasonal' ? 'Seasonal' : 'Leaderboard'}
           </button>
         ))}
       </div>
@@ -329,58 +330,60 @@ export default function Badges() {
           <p style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>
             Complete challenges tied to real events and seasons. Active challenges are live right now.
           </p>
-          {seasonal.map(b => <SeasonalBadgeCard key={b.slug} badge={b} />)}
+          {seasonal.map(b => <SeasonalBadgeCard key={b.slug} badge={b} onClick={() => setSelectedSeasonal(b)} />)}
         </div>
       )}
 
       {/* Leaderboard */}
-      <section className="pb-4">
-        <h3 className="text-sm font-bold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>
-          Leaderboard
-        </h3>
-        <div className="rounded-2xl overflow-hidden" style={{ border: '1.5px solid var(--border-subtle)' }}>
-          {/* Header row */}
-          <div className="grid grid-cols-4 px-4 py-2"
-            style={{ background: 'rgba(234,179,8,0.08)', borderBottom: '1px solid var(--border-subtle)' }}>
-            <span className="text-xs font-bold" style={{ color: '#EAB308' }}>Rank</span>
-            <span className="text-xs font-bold col-span-2" style={{ color: '#EAB308' }}>Runner</span>
-            <span className="text-xs font-bold text-right" style={{ color: '#EAB308' }}>Miles</span>
+      {tab === 'leaderboard' && (
+        <section className="pb-4">
+          <h3 className="text-sm font-bold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>
+            Leaderboard
+          </h3>
+          <div className="rounded-2xl overflow-hidden" style={{ border: '1.5px solid var(--border-subtle)' }}>
+            {/* Header row */}
+            <div className="grid grid-cols-4 px-4 py-2"
+              style={{ background: 'rgba(234,179,8,0.08)', borderBottom: '1px solid var(--border-subtle)' }}>
+              <span className="text-xs font-bold" style={{ color: '#EAB308' }}>Rank</span>
+              <span className="text-xs font-bold col-span-2" style={{ color: '#EAB308' }}>Runner</span>
+              <span className="text-xs font-bold text-right" style={{ color: '#EAB308' }}>Miles</span>
+            </div>
+            {leaderboard.length === 0 && (
+              <div className="px-4 py-6 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
+                No data yet. Log some runs to appear here.
+              </div>
+            )}
+            {leaderboard.map((row, i) => (
+              <div
+                key={row.id}
+                className="grid grid-cols-4 px-4 py-3 items-center"
+                style={{
+                  background: i % 2 === 0 ? 'var(--bg-card)' : 'transparent',
+                  borderBottom: i < leaderboard.length - 1 ? '1px solid var(--border-subtle)' : 'none',
+                }}
+              >
+                {/* Rank */}
+                <span className="text-sm font-black" style={{ color: i < 3 ? '#EAB308' : 'var(--text-muted)' }}>
+                  {i + 1}
+                </span>
+                {/* Runner name */}
+                <span className="text-sm font-semibold col-span-2 truncate" style={{ color: 'var(--text-primary)' }}>
+                  {row.runner || 'Athlete'}
+                  {row.badge_count > 0 && (
+                    <span className="ml-1 text-xs font-normal" style={{ color: '#EAB308' }}>
+                      {row.badge_count} badges
+                    </span>
+                  )}
+                </span>
+                {/* Miles */}
+                <span className="text-sm font-bold text-right" style={{ color: 'var(--text-primary)' }}>
+                  {Number(row.total_miles).toFixed(1)}
+                </span>
+              </div>
+            ))}
           </div>
-          {leaderboard.length === 0 && (
-            <div className="px-4 py-6 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
-              No data yet. Log some runs to appear here.
-            </div>
-          )}
-          {leaderboard.map((row, i) => (
-            <div
-              key={row.id}
-              className="grid grid-cols-4 px-4 py-3 items-center"
-              style={{
-                background: i % 2 === 0 ? 'var(--bg-card)' : 'transparent',
-                borderBottom: i < leaderboard.length - 1 ? '1px solid var(--border-subtle)' : 'none',
-              }}
-            >
-              {/* Rank */}
-              <span className="text-sm font-black" style={{ color: i < 3 ? '#EAB308' : 'var(--text-muted)' }}>
-                {i + 1}
-              </span>
-              {/* Runner name */}
-              <span className="text-sm font-semibold col-span-2 truncate" style={{ color: 'var(--text-primary)' }}>
-                {row.runner || 'Athlete'}
-                {row.badge_count > 0 && (
-                  <span className="ml-1 text-xs font-normal" style={{ color: '#EAB308' }}>
-                    {row.badge_count} badges
-                  </span>
-                )}
-              </span>
-              {/* Miles */}
-              <span className="text-sm font-bold text-right" style={{ color: 'var(--text-primary)' }}>
-                {Number(row.total_miles).toFixed(1)}
-              </span>
-            </div>
-          ))}
-        </div>
-      </section>
+        </section>
+      )}
     </div>
   )
 }
