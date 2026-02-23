@@ -135,7 +135,7 @@ function WorkoutWatchModal({ workout, onClose }) {
         >
           Copy Workout
         </button>
-        <p className="text-sm mb-4" style={{ color: 'var(--text-muted)' }}>📱 Automatic watch sync is coming in the FORGE mobile app</p>
+        <p className="text-sm mb-4" style={{ color: 'var(--text-muted)' }}>Automatic watch sync is coming in the FORGE mobile app</p>
         <button onClick={onClose} className="w-full rounded-xl py-2" style={{ background: 'var(--bg-base)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>Close</button>
       </div>
     </div>
@@ -428,7 +428,7 @@ export default function LogRun() {
 
             {panelPrefs.notes && <div className="rounded-xl p-4 mb-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}><h4 className="font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>Notes</h4><textarea rows={5} value={editingNotes} onChange={e => setEditingNotes(e.target.value)} className="w-full rounded-xl border px-3 py-2" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-base)', color: 'var(--text-primary)' }} /><button onClick={saveNotes} className="mt-2 rounded-lg px-3 py-2 text-sm font-semibold" style={{ background: 'var(--accent)', color: '#000', border: 'none' }}>Save Notes</button></div>}
 
-            <button onClick={deleteRun} className="w-full rounded-xl py-3 font-bold" style={{ background: 'var(--bg-card)', color: 'var(--accent)', border: '1px solid var(--accent)' }}>🗑️ Delete Run</button>
+            <button onClick={deleteRun} className="w-full rounded-xl py-3 font-bold" style={{ background: 'var(--bg-card)', color: 'var(--accent)', border: '1px solid var(--accent)' }}>Delete Run</button>
           </div>
 
           {showCustomize && (

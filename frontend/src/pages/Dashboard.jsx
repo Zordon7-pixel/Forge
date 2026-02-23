@@ -317,7 +317,7 @@ export default function Dashboard() {
             <p className="text-black font-bold text-lg">Ready to Run?</p>
             <p className="text-black/70 text-sm mt-0.5">Start your warm-up and today's session</p>
           </div>
-          <div className="text-3xl">🏃</div>
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="rgba(0,0,0,0.6)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
         </div>
       </div>
 
