@@ -1,15 +1,15 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ChevronRight, Settings as SettingsIcon } from 'lucide-react'
+import { ChevronRight, Settings as SettingsIcon, User, Dumbbell, HeartPulse } from 'lucide-react'
 import api from '../lib/api'
 import PRWall from './PRWall'
 import Badges from './Badges'
 
 const personalityOptions = [
-  { key: 'mentor', label: 'Mentor' },
-  { key: 'hype_coach', label: 'Hype Coach' },
-  { key: 'drill_sergeant', label: 'Drill Sergeant' },
-  { key: 'training_partner', label: 'Training Partner' }
+  { key: 'mentor', label: 'Mentor', description: 'Guidance and wisdom, no pressure' },
+  { key: 'hype_coach', label: 'Hype Coach', description: 'High energy, keeps you fired up' },
+  { key: 'drill_sergeant', label: 'Drill Sergeant', description: 'No excuses, maximum output' },
+  { key: 'training_partner', label: 'Training Partner', description: 'Supportive, runs with you mentally' }
 ]
 
 export default function Profile() {
@@ -22,6 +22,7 @@ export default function Profile() {
   const [form, setForm] = useState({
     name: '', email: '', age: '', weight_lbs: '', sex: 'male', fitness_level: 'beginner', primary_goal: 'general_fitness', injury_status: 'none', injury_detail: '', coach_personality: 'mentor', weekly_miles: ''
   })
+  const [profileStats, setProfileStats] = useState(null)
   const [injuryMode, setInjuryMode] = useState(false)
   const [injuryDescription, setInjuryDescription] = useState('')
   const [injuryLimitations, setInjuryLimitations] = useState('')
@@ -29,7 +30,10 @@ export default function Profile() {
   useEffect(() => {
     ;(async () => {
       try {
-        const res = await api.get('/auth/me')
+        const [res, statsRes] = await Promise.all([
+          api.get('/auth/me'),
+          api.get('/auth/me/stats').catch(() => null)
+        ])
         const user = res.data?.user || res.data || {}
         setForm({
           name: user.name || '',
@@ -44,6 +48,7 @@ export default function Profile() {
           coach_personality: user.coach_personality || 'mentor',
           weekly_miles: user.weekly_miles ?? user.weekly_miles_current ?? ''
         })
+        setProfileStats(statsRes?.data || null)
         setInjuryMode(!!user.injury_mode)
         setInjuryDescription(user.injury_description || '')
         setInjuryLimitations(user.injury_limitations || '')
@@ -92,6 +97,12 @@ export default function Profile() {
 
   if (loading) return <div className="rounded-xl p-4" style={{ background: 'var(--bg-card)', color: 'var(--text-muted)' }}>Loading profile...</div>
 
+  const sectionStyle = { background: 'var(--bg-card)', borderRadius: 16, padding: 20, marginBottom: 12 }
+  const sectionLabel = { fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 14 }
+  const inputStyle = { background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', borderRadius: 10, padding: '12px 14px', fontSize: 14, color: 'var(--text-primary)', width: '100%', boxSizing: 'border-box' }
+  const pillActive = { background: 'var(--accent)', color: '#000', border: 'none', borderRadius: 20, padding: '8px 16px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }
+  const pillInactive = { background: 'var(--bg-input)', color: 'var(--text-muted)', border: '1px solid var(--border-subtle)', borderRadius: 20, padding: '8px 16px', fontSize: 13, fontWeight: 400, cursor: 'pointer' }
+
   return (
     <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>
       <h2 className="mb-4 text-xl font-bold" style={{ color: 'var(--text-primary)' }}>Profile</h2>
@@ -115,107 +126,179 @@ export default function Profile() {
 
       {activeTab === 'profile' && (
         <>
-      <form onSubmit={save} className="space-y-3">
-        <input type="text" placeholder="Name" value={form.name} onChange={e => update('name', e.target.value)} className="w-full rounded-xl border px-4 py-3" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }} />
-        <input type="email" value={form.email} readOnly className="w-full rounded-xl border px-4 py-3" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-muted)' }} />
-
-        <div className="grid grid-cols-3 gap-3">
-          <input type="number" min="0" placeholder="Age" value={form.age} onChange={e => update('age', e.target.value)} className="rounded-xl border px-3 py-3" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }} />
-          <input type="number" min="0" step="0.1" placeholder="Weight" value={form.weight_lbs} onChange={e => update('weight_lbs', e.target.value)} className="rounded-xl border px-3 py-3" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }} />
-          <input type="number" min="0" step="0.1" placeholder="Weekly mi" value={form.weekly_miles} onChange={e => update('weekly_miles', e.target.value)} className="rounded-xl border px-3 py-3" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }} />
-        </div>
-
-        <div className="grid grid-cols-2 gap-3">
-          {['male', 'female'].map(s => (
-            <button key={s} type="button" onClick={() => update('sex', s)}
-              className="rounded-xl border p-3 text-sm font-medium capitalize transition"
-              style={form.sex === s
-                ? { borderColor: 'var(--accent)', background: 'var(--accent-dim)', color: 'var(--accent)' }
-                : { borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-muted)' }}>
-              {s === 'male' ? 'Male' : 'Female'}
-            </button>
-          ))}
-        </div>
-
-        <select value={form.fitness_level} onChange={e => update('fitness_level', e.target.value)} className="w-full rounded-xl border px-4 py-3" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }}>
-          <option value="beginner">Beginner</option><option value="intermediate">Intermediate</option><option value="advanced">Advanced</option>
-        </select>
-
-        <select value={form.primary_goal} onChange={e => update('primary_goal', e.target.value)} className="w-full rounded-xl border px-4 py-3" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }}>
-          <option value="get_faster">Get Faster</option><option value="run_longer">Run Longer</option><option value="lose_fat">Lose Fat</option><option value="general_fitness">General Fitness</option>
-        </select>
-
-        <div className="space-y-2">
-          {['none', 'recovering', 'chronic'].map(status => (
-            <label key={status} className="flex items-center gap-2 text-sm capitalize" style={{ color: 'var(--text-primary)' }}>
-              <input type="radio" name="injury_status" value={status} checked={form.injury_status === status} onChange={e => update('injury_status', e.target.value)} />
-              {status}
-            </label>
-          ))}
-        </div>
-
-        {form.injury_status !== 'none' && <textarea rows={3} placeholder="Injury details" value={form.injury_detail} onChange={e => update('injury_detail', e.target.value)} className="w-full rounded-xl border px-4 py-3" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }} />}
-
-        <div className="grid grid-cols-2 gap-3">
-          {personalityOptions.map(option => (
-            <button key={option.key} type="button" onClick={() => update('coach_personality', option.key)} className="rounded-xl border p-3 text-left text-sm transition"
-              style={form.coach_personality === option.key ? { borderColor: 'var(--accent)', background: 'var(--accent-dim)', color: 'var(--text-primary)' } : { borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-muted)' }}>
-              {option.label}
-            </button>
-          ))}
-        </div>
-
-
-        {/* I'm Hurt / Injury Mode */}
-        <div style={{ background: injuryMode ? 'rgba(239,68,68,0.1)' : 'var(--bg-card)', borderRadius: 16, padding: 16, border: `1px solid ${injuryMode ? 'rgba(239,68,68,0.4)' : 'var(--border-subtle)'}` }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-            <div>
-              <p style={{ fontWeight: 700, color: injuryMode ? '#ef4444' : 'var(--text-primary)' }}>
-                {injuryMode ? 'Injury Mode ON' : "I'm Hurt"}
-              </p>
-              <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
-                {injuryMode ? 'Your plan is adjusted for recovery' : "Tell FORGE about an injury — it'll rebuild your plan around what you can do"}
-              </p>
+          <div style={{ background: 'var(--bg-card)', borderRadius: 20, padding: 24, marginBottom: 16, textAlign: 'center', border: '1px solid var(--border-subtle)' }}>
+            <div style={{ width: 72, height: 72, borderRadius: '50%', background: 'var(--bg-base)', border: '3px solid var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px', fontSize: 28, fontWeight: 900, color: 'var(--accent)' }}>
+              {(form.name || 'U')[0].toUpperCase()}
             </div>
-            <button onClick={() => setInjuryMode(!injuryMode)}
+            <p style={{ fontSize: 20, fontWeight: 800, color: 'var(--text-primary)', marginBottom: 2 }}>{form.name || 'Athlete'}</p>
+            <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>{form.email}</p>
+            {profileStats && (
+              <div style={{ display: 'flex', justifyContent: 'center', gap: 24, marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border-subtle)' }}>
+                {[
+                  { label: 'Total Runs', value: profileStats.all?.runs ?? 0 },
+                  { label: 'Total Miles', value: (profileStats.all?.miles ?? 0).toFixed(1) },
+                  { label: 'This Week', value: `${(profileStats.week?.miles ?? 0).toFixed(1)} mi` }
+                ].map(s => (
+                  <div key={s.label} style={{ textAlign: 'center' }}>
+                    <p style={{ fontSize: 18, fontWeight: 800, color: 'var(--text-primary)' }}>{s.value}</p>
+                    <p style={{ fontSize: 11, color: 'var(--text-muted)' }}>{s.label}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <form onSubmit={save}>
+            <div style={sectionStyle}>
+              <div style={{ ...sectionLabel, display: 'flex', alignItems: 'center', gap: 8 }}><User size={14} /> Identity</div>
+              <div style={{ marginBottom: 12 }}>
+                <input type="text" placeholder="Full name" value={form.name} onChange={e => update('name', e.target.value)} style={inputStyle} />
+              </div>
+              <div style={{ marginBottom: 12 }}>
+                <input type="email" value={form.email} readOnly style={{ ...inputStyle, color: 'var(--text-muted)' }} />
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
+                <input type="number" min="0" placeholder="Age" value={form.age} onChange={e => update('age', e.target.value)} style={inputStyle} />
+                <input type="number" min="0" step="0.1" placeholder="Weight (lbs)" value={form.weight_lbs} onChange={e => update('weight_lbs', e.target.value)} style={inputStyle} />
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                {['male', 'female'].map(s => (
+                  <button key={s} type="button" onClick={() => update('sex', s)} style={form.sex === s ? { ...pillActive, flex: 1 } : { ...pillInactive, flex: 1 }}>
+                    {s === 'male' ? 'Male' : 'Female'}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div style={sectionStyle}>
+              <div style={{ ...sectionLabel, display: 'flex', alignItems: 'center', gap: 8 }}><Dumbbell size={14} /> Training</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: 8, marginBottom: 12 }}>
+                {[
+                  { key: 'beginner', label: 'Beginner' },
+                  { key: 'intermediate', label: 'Intermediate' },
+                  { key: 'advanced', label: 'Advanced' }
+                ].map(level => (
+                  <button key={level.key} type="button" onClick={() => update('fitness_level', level.key)} style={form.fitness_level === level.key ? pillActive : pillInactive}>
+                    {level.label}
+                  </button>
+                ))}
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 12 }}>
+                {[
+                  { key: 'get_faster', label: 'Get Faster' },
+                  { key: 'run_longer', label: 'Run Longer' },
+                  { key: 'lose_fat', label: 'Lose Fat' },
+                  { key: 'general_fitness', label: 'General Fitness' }
+                ].map(goal => (
+                  <button key={goal.key} type="button" onClick={() => update('primary_goal', goal.key)} style={form.primary_goal === goal.key ? pillActive : pillInactive}>
+                    {goal.label}
+                  </button>
+                ))}
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input type="number" min="0" step="0.1" placeholder="0.0" value={form.weekly_miles} onChange={e => update('weekly_miles', e.target.value)} style={inputStyle} />
+                <span style={{ color: 'var(--text-muted)', fontSize: 13, whiteSpace: 'nowrap' }}>miles/week</span>
+              </div>
+            </div>
+
+            <div style={sectionStyle}>
+              <div style={{ ...sectionLabel, display: 'flex', alignItems: 'center', gap: 8 }}><HeartPulse size={14} /> Your Coach</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                {personalityOptions.map(option => (
+                  <button
+                    key={option.key}
+                    type="button"
+                    onClick={() => update('coach_personality', option.key)}
+                    style={form.coach_personality === option.key
+                      ? {
+                        textAlign: 'left',
+                        background: 'var(--accent-dim)',
+                        border: '1px solid var(--accent)',
+                        borderRadius: 12,
+                        padding: 12,
+                        color: 'var(--text-primary)'
+                      }
+                      : {
+                        textAlign: 'left',
+                        background: 'var(--bg-input)',
+                        border: '1px solid var(--border-subtle)',
+                        borderRadius: 12,
+                        padding: 12,
+                        color: 'var(--text-muted)'
+                      }}
+                  >
+                    <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 3, color: form.coach_personality === option.key ? 'var(--text-primary)' : 'var(--text-primary)' }}>{option.label}</div>
+                    <div style={{ fontSize: 12, lineHeight: 1.3 }}>{option.description}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div
               style={{
-                padding: '8px 16px', borderRadius: 10, fontWeight: 700, fontSize: 14, border: 'none', cursor: 'pointer',
-                background: injuryMode ? '#ef4444' : 'var(--bg-input)',
-                color: injuryMode ? '#fff' : 'var(--text-muted)'
-              }}>
-              {injuryMode ? 'ON' : 'OFF'}
-            </button>
-          </div>
-          {injuryMode && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
-              <input value={injuryDescription} onChange={e => setInjuryDescription(e.target.value)}
-                placeholder="What's injured? (e.g. right knee, lower back)"
-                style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', borderRadius: 10, padding: '12px', fontSize: 14, width: '100%', boxSizing: 'border-box' }} />
-              <input value={injuryLimitations} onChange={e => setInjuryLimitations(e.target.value)}
-                placeholder="What can you still do? (e.g. upper body only, easy walking)"
-                style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', borderRadius: 10, padding: '12px', fontSize: 14, width: '100%', boxSizing: 'border-box' }} />
+                ...sectionStyle,
+                border: injuryMode ? '1px solid var(--accent-red)' : '1px solid var(--border-subtle)',
+                background: injuryMode ? 'var(--accent-red-dim)' : 'var(--bg-card)'
+              }}
+            >
+              <div style={{ ...sectionLabel, marginBottom: 10 }}>Injury Mode</div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: injuryMode ? 12 : 0, gap: 10 }}>
+                <div>
+                  <p style={{ fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>{injuryMode ? 'Recovery Plan Enabled' : 'Off'}</p>
+                  <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>Adjust training around injuries and current limitations.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setInjuryMode(!injuryMode)}
+                  style={injuryMode ? { ...pillActive, whiteSpace: 'nowrap' } : { ...pillInactive, whiteSpace: 'nowrap' }}
+                >
+                  {injuryMode ? 'ON' : 'OFF'}
+                </button>
+              </div>
+
+              {injuryMode && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <input value={injuryDescription} onChange={e => setInjuryDescription(e.target.value)} placeholder="What is injured?" style={inputStyle} />
+                  <input value={injuryLimitations} onChange={e => setInjuryLimitations(e.target.value)} placeholder="Current limitations" style={inputStyle} />
+                </div>
+              )}
             </div>
-          )}
-        </div>
 
-        {error && <p className="text-sm" style={{ color: 'var(--accent)' }}>{error}</p>}
-        {saved && <p className="text-sm text-green-400">Saved</p>}
+            {form.injury_status !== 'none' && (
+              <div style={sectionStyle}>
+                <div style={sectionLabel}>Injury Details</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: 8, marginBottom: 10 }}>
+                  {['none', 'recovering', 'chronic'].map(status => (
+                    <button key={status} type="button" onClick={() => update('injury_status', status)} style={form.injury_status === status ? pillActive : pillInactive}>
+                      {status.charAt(0).toUpperCase() + status.slice(1)}
+                    </button>
+                  ))}
+                </div>
+                <textarea rows={3} placeholder="Injury details" value={form.injury_detail} onChange={e => update('injury_detail', e.target.value)} style={{ ...inputStyle, resize: 'vertical' }} />
+              </div>
+            )}
 
-        <button type="submit" disabled={saving} className="w-full rounded-xl py-3 font-semibold disabled:opacity-70" style={{ background: 'var(--accent)', color: 'black' }}>{saving ? 'Saving...' : 'Save Changes'}</button>
-      </form>
+            {error && <p className="text-sm" style={{ color: 'var(--accent)' }}>{error}</p>}
+            {saved && <p className="text-sm" style={{ color: 'var(--text-primary)' }}>Saved</p>}
 
-        <div 
-          onClick={() => navigate('/settings')} 
-          className="flex items-center justify-between bg-[var(--bg-card)] border border-[var(--border-subtle)] rounded-xl p-4 cursor-pointer hover:border-yellow-500/40 transition-colors mt-4"
-        >
-          <div className="flex items-center gap-3">
-            <SettingsIcon size={18} className="text-[var(--accent)]" />
-            <span className="text-sm font-medium text-[var(--text-primary)]">Settings</span>
+            <button type="submit" disabled={saving} className="w-full rounded-xl py-3 font-semibold disabled:opacity-70" style={{ background: 'var(--accent)', color: '#000', marginTop: 8 }}>{saving ? 'Saving...' : 'Save Changes'}</button>
+          </form>
+
+          <div
+            onClick={() => navigate('/settings')}
+            className="flex items-center justify-between rounded-xl p-4 cursor-pointer transition-colors mt-4"
+            style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}
+          >
+            <div className="flex items-center gap-3">
+              <SettingsIcon size={18} className="text-[var(--accent)]" />
+              <span className="text-sm font-medium text-[var(--text-primary)]">Settings</span>
+            </div>
+            <ChevronRight size={16} className="text-[var(--text-muted)]" />
           </div>
-          <ChevronRight size={16} className="text-[var(--text-muted)]" />
-        </div>
 
-        <button type="button" onClick={logout} className="w-full rounded-xl border bg-transparent py-3 font-semibold mt-3" style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}>Log Out</button>
+          <button type="button" onClick={logout} className="w-full bg-transparent py-3 font-medium mt-2" style={{ color: 'var(--text-muted)', border: 'none' }}>Log Out</button>
         </>
       )}
 

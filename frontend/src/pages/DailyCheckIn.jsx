@@ -91,34 +91,26 @@ export default function DailyCheckIn({ onComplete }) {
 
       <div style={{ marginBottom: 24 }}>
         <p style={{ fontWeight: 700, color: 'var(--text-primary)', marginBottom: 12 }}>How are you feeling?</p>
-        <div style={{ display: 'flex', gap: 12, overflowX: 'auto', paddingBottom: 8 }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
           {FEELINGS.map(f => (
-            <div key={f.value} style={{ flexShrink: 0, width: 100, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
-              <button onClick={() => setFeeling(f.value)}
-                style={{
-                  width: 100, height: 100, padding: 0, borderRadius: 18,
-                  border: `2px solid ${feeling === f.value ? 'var(--accent)' : 'transparent'}`,
-                  background: 'transparent', cursor: 'pointer', overflow: 'hidden',
-                  boxShadow: feeling === f.value ? '0 0 16px rgba(234,179,8,0.6)' : 'none',
-                  transition: 'box-shadow 0.2s, border-color 0.2s',
-                }}>
-                <img src={f.img} alt={f.label}
-                  style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', borderRadius: 16,
-                    filter: feeling === f.value ? 'brightness(1.15)' : 'brightness(0.75)',
-                    transition: 'filter 0.2s' }} />
-              </button>
-              <span style={{
-                fontSize: 12, fontWeight: 700, textAlign: 'center',
+            <button key={f.value} onClick={() => setFeeling(f.value)}
+              style={{
+                flex: '1 1 calc(20% - 8px)', minWidth: 60,
+                padding: '12px 8px', borderRadius: 12,
+                border: `2px solid ${feeling === f.value ? 'var(--accent)' : 'var(--border-subtle)'}`,
+                background: feeling === f.value ? 'var(--accent-dim)' : 'var(--bg-card)',
                 color: feeling === f.value ? 'var(--accent)' : 'var(--text-muted)',
-                transition: 'color 0.2s', whiteSpace: 'nowrap',
-              }}>{f.label}</span>
-            </div>
+                fontWeight: 700, fontSize: 13, cursor: 'pointer', textAlign: 'center',
+                transition: 'border-color 0.2s, background 0.2s, color 0.2s',
+              }}>
+              {f.label}
+            </button>
           ))}
         </div>
       </div>
 
       <div style={{ marginBottom: 24 }}>
-        <p style={{ fontWeight: 700, color: 'var(--text-primary)', marginBottom: 12 }}>How much time do you have?</p>
+        <p style={{ fontWeight: 700, color: 'var(--text-primary)', marginBottom: 12 }}>How much time do you have to workout?</p>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
           {TIME_OPTIONS.map(t => (
             <button key={t.value} onClick={() => setTimeAvailable(t.value)}

@@ -70,7 +70,7 @@ function TrendChart({ data = [] }) {
 }
 
 // Readiness score circular gauge
-function ReadinessGauge({ score }) {
+function ReadinessGauge({ score, onClick }) {
   const r = 28, cx = 36, cy = 36
   const circumference = 2 * Math.PI * r
   const dash = (score / 100) * circumference
@@ -78,23 +78,26 @@ function ReadinessGauge({ score }) {
   const label = score >= 80 ? 'Optimal' : score >= 60 ? 'Good' : score >= 40 ? 'Moderate' : 'Low'
 
   return (
-    <div className="flex items-center gap-4">
-      <svg width="72" height="72" viewBox="0 0 72 72">
-        <circle cx={cx} cy={cy} r={r} fill="none" stroke="var(--border-subtle)" strokeWidth="5" />
-        <circle cx={cx} cy={cy} r={r} fill="none" stroke={color} strokeWidth="5"
-          strokeDasharray={`${dash} ${circumference}`}
-          strokeLinecap="round"
-          transform={`rotate(-90 ${cx} ${cy})`} />
-        <text x={cx} y={cy+1} textAnchor="middle" dominantBaseline="middle"
-          fontSize="13" fontWeight="bold" fill={color}>{score}</text>
-      </svg>
-      <div>
-        <p className="font-bold text-base" style={{ color: 'var(--text-primary)' }}>{label}</p>
-        <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>Training readiness</p>
-        <p className="text-xs mt-1" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>
-          {score >= 75 ? 'Go hard today.' : score >= 50 ? 'Moderate effort.' : 'Take it easy today.'}
-        </p>
+    <div onClick={onClick} style={{ cursor: 'pointer' }} className="flex flex-col">
+      <div className="flex items-center gap-4">
+        <svg width="72" height="72" viewBox="0 0 72 72">
+          <circle cx={cx} cy={cy} r={r} fill="none" stroke="var(--border-subtle)" strokeWidth="5" />
+          <circle cx={cx} cy={cy} r={r} fill="none" stroke={color} strokeWidth="5"
+            strokeDasharray={`${dash} ${circumference}`}
+            strokeLinecap="round"
+            transform={`rotate(-90 ${cx} ${cy})`} />
+          <text x={cx} y={cy+1} textAnchor="middle" dominantBaseline="middle"
+            fontSize="13" fontWeight="bold" fill={color}>{score}</text>
+        </svg>
+        <div>
+          <p className="font-bold text-base" style={{ color: 'var(--text-primary)' }}>{label}</p>
+          <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>Training readiness</p>
+          <p className="text-xs mt-1" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>
+            {score >= 75 ? 'Go hard today.' : score >= 50 ? 'Moderate effort.' : 'Take it easy today.'}
+          </p>
+        </div>
       </div>
+      <p className="text-xs mt-2" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>Tap to see breakdown</p>
     </div>
   )
 }
@@ -180,6 +183,7 @@ export default function Dashboard() {
   const [manualGoalMiles, setManualGoalMiles] = useState(null)
   const [editingGoal, setEditingGoal] = useState(false)
   const [goalInput, setGoalInput] = useState('')
+  const [showReadinessModal, setShowReadinessModal] = useState(false)
 
   useEffect(() => {
     ;(async () => {
@@ -221,19 +225,47 @@ export default function Dashboard() {
   }, [])
 
   // Compute readiness from stats
-  const readiness = useMemo(() => {
-    if (!stats) return 50
+  const { readiness, readinessBreakdown } = useMemo(() => {
+    if (!stats) return { readiness: 50, readinessBreakdown: [] }
     const { streak, week, all } = stats
     let score = 50
-    // Streak bonus (up to +20)
-    score += Math.min(streak * 4, 20)
-    // Volume: if this week is reasonable vs average
+    const breakdown = []
+
+    breakdown.push({ label: 'Base score', value: 50, delta: 0, reason: 'Starting point for all athletes.' })
+
+    // Streak bonus
+    const streakBonus = Math.min(streak * 4, 20)
+    score += streakBonus
+    breakdown.push({
+      label: 'Consistency streak',
+      value: streakBonus,
+      delta: streakBonus,
+      reason: streak > 0
+        ? `${streak}-day active streak adds +${streakBonus} pts. Staying consistent pays off.`
+        : 'No active streak. Logging runs builds your streak bonus.'
+    })
+
+    // Volume
     const avgWeekly = all.miles / Math.max(stats.weeklyTrend?.filter(w => w.miles > 0).length, 1)
     const weekRatio = avgWeekly > 0 ? week.miles / avgWeekly : 0
-    if (weekRatio < 0.5) score += 15 // low week = well rested
-    else if (weekRatio > 1.3) score -= 15 // high week = tired
-    // Cap 1-99
-    return Math.max(1, Math.min(99, Math.round(score)))
+    let volDelta = 0
+    let volReason = ''
+    if (weekRatio < 0.5) {
+      volDelta = 15
+      volReason = `This week you ran ${week.miles.toFixed(1)} mi vs your avg ${avgWeekly.toFixed(1)} mi — low volume means your legs are fresh.`
+    } else if (weekRatio > 1.3) {
+      volDelta = -15
+      volReason = `This week you ran ${week.miles.toFixed(1)} mi vs your avg ${avgWeekly.toFixed(1)} mi — high volume week, body needs recovery.`
+    } else {
+      volReason = `This week (${week.miles.toFixed(1)} mi) is on par with your average (${avgWeekly.toFixed(1)} mi) — balanced load.`
+    }
+    score += volDelta
+    breakdown.push({ label: 'Weekly load', value: volDelta, delta: volDelta, reason: volReason })
+
+    return {
+      readiness: Math.max(1, Math.min(99, Math.round(score))),
+      readinessBreakdown: breakdown
+    }
   }, [stats])
 
   // Monthly challenge
@@ -330,7 +362,7 @@ export default function Dashboard() {
 
       {/* Training Readiness */}
       <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>
-        <ReadinessGauge score={readiness} />
+        <ReadinessGauge score={readiness} onClick={() => setShowReadinessModal(true)} />
       </div>
 
       {/* 7-day calendar */}
@@ -561,6 +593,53 @@ export default function Dashboard() {
           )}
         </div>
       </section>
+
+      {/* Readiness Breakdown Modal */}
+      {showReadinessModal && (
+        <div
+          onClick={() => setShowReadinessModal(false)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 50, display: 'flex', alignItems: 'flex-end' }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{ background: 'var(--bg-card)', borderRadius: '20px 20px 0 0', padding: 24, width: '100%', maxHeight: '70vh', overflowY: 'auto' }}
+          >
+            {/* Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+              <div>
+                <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>Training Readiness</p>
+                <p style={{ fontSize: 28, fontWeight: 900, color: 'var(--accent)' }}>{readiness} <span style={{ fontSize: 14, fontWeight: 400, color: 'var(--text-muted)' }}>/ 100</span></p>
+                <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 2 }}>{readiness >= 80 ? 'Go hard today.' : readiness >= 60 ? 'Moderate effort — push but listen to your body.' : readiness >= 40 ? 'Take it easy — a recovery run or rest day is smart.' : 'Rest today. Your body is telling you something.'}</p>
+              </div>
+              <button onClick={() => setShowReadinessModal(false)} style={{ background: 'var(--bg-input)', border: 'none', borderRadius: 10, padding: '8px 14px', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 13 }}>Close</button>
+            </div>
+
+            {/* Factor breakdown */}
+            <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 12 }}>Score Breakdown</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {readinessBreakdown.map((f, i) => (
+                <div key={i} style={{ background: 'var(--bg-base)', borderRadius: 12, padding: 14 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                    <p style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{f.label}</p>
+                    <p style={{ fontSize: 13, fontWeight: 700, color: f.delta > 0 ? '#22c55e' : f.delta < 0 ? '#ef4444' : 'var(--text-muted)' }}>
+                      {f.delta > 0 ? `+${f.delta}` : f.delta < 0 ? `${f.delta}` : `${f.value}`}
+                    </p>
+                  </div>
+                  <p style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>{f.reason}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* What improves it */}
+            <div style={{ marginTop: 20, padding: 14, background: 'var(--bg-base)', borderRadius: 12, borderLeft: '3px solid var(--accent)' }}>
+              <p style={{ fontSize: 12, fontWeight: 700, color: 'var(--accent)', marginBottom: 6 }}>How to improve your score</p>
+              <p style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6 }}>
+                Log runs consistently to build your streak. Keep weekly mileage within 10–20% of your average. Connect your Garmin for HRV and sleep data — that unlocks a much more accurate score.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
