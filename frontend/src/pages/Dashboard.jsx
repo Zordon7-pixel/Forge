@@ -12,9 +12,11 @@ function fmtPace(durationSeconds, distance) {
 }
 
 function fmtDuration(s) {
-  if (!s) return '0:00'
-  const m = Math.floor(s / 60), sec = s % 60
-  return `${m}:${String(sec).padStart(2,'0')}`
+  if (!s) return '0 min'
+  const h = Math.floor(s / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  if (h > 0) return m > 0 ? `${h}h ${m}min` : `${h}h`
+  return `${m} min`
 }
 
 function fmtHours(s) {
@@ -634,7 +636,7 @@ export default function Dashboard() {
                   {selectedCalendarDay.run.duration > 0 && (
                     <div>
                       <p style={{ fontSize: 22, fontWeight: 900, color: 'var(--text-primary)' }}>
-                        {Math.floor(selectedCalendarDay.run.duration / 60)}:{String(selectedCalendarDay.run.duration % 60).padStart(2, '0')}
+                        {fmtDuration(selectedCalendarDay.run.duration)}
                       </p>
                       <p style={{ fontSize: 11, color: 'var(--text-muted)' }}>duration</p>
                     </div>

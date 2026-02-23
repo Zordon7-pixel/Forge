@@ -2,8 +2,6 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ChevronRight, Settings as SettingsIcon, User, Dumbbell, HeartPulse } from 'lucide-react'
 import api from '../lib/api'
-import PRWall from './PRWall'
-import Badges from './Badges'
 
 const personalityOptions = [
   { key: 'mentor', label: 'Mentor', description: 'Guidance and wisdom, no pressure' },
@@ -14,7 +12,6 @@ const personalityOptions = [
 
 export default function Profile() {
   const navigate = useNavigate()
-  const [activeTab, setActiveTab] = useState('profile')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -107,25 +104,6 @@ export default function Profile() {
     <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>
       <h2 className="mb-4 text-xl font-bold" style={{ color: 'var(--text-primary)' }}>Profile</h2>
 
-      <div className="flex gap-2 mb-6">
-        {['profile', 'prs', 'badges'].map(t => (
-          <button
-            key={t}
-            onClick={() => setActiveTab(t)}
-            className="px-4 py-2 rounded-full text-xs font-bold transition-colors"
-            style={{
-              background: activeTab === t ? 'var(--accent)' : 'var(--bg-card)',
-              color: activeTab === t ? '#000' : 'var(--text-muted)',
-              border: activeTab === t ? 'none' : '1px solid var(--border-subtle)'
-            }}
-          >
-            {t === 'profile' ? 'Profile' : t === 'prs' ? 'PRs' : 'Badges'}
-          </button>
-        ))}
-      </div>
-
-      {activeTab === 'profile' && (
-        <>
           <div style={{ background: 'var(--bg-card)', borderRadius: 20, padding: 24, marginBottom: 16, textAlign: 'center', border: '1px solid var(--border-subtle)' }}>
             <div style={{ width: 72, height: 72, borderRadius: '50%', background: 'var(--bg-base)', border: '3px solid var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px', fontSize: 28, fontWeight: 900, color: 'var(--accent)' }}>
               {(form.name || 'U')[0].toUpperCase()}
@@ -299,11 +277,6 @@ export default function Profile() {
           </div>
 
           <button type="button" onClick={logout} className="w-full bg-transparent py-3 font-medium mt-2" style={{ color: 'var(--text-muted)', border: 'none' }}>Log Out</button>
-        </>
-      )}
-
-      {activeTab === 'prs' && <PRWall />}
-      {activeTab === 'badges' && <Badges />}
     </div>
   )
 }

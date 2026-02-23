@@ -11,7 +11,8 @@ const NAV_ITEMS = [
   { to: '/', end: true, icon: '/nav-home.png', label: 'Home' },
   { to: '/log-run', icon: '/nav-run.png', label: 'Run' },
   { to: '/log-lift', icon: '/nav-lift.png', label: 'Lift' },
-  { to: '/prs', label: 'PR Wall', iconComponent: Trophy },
+  { to: '/challenges', label: 'Challenges', iconComponent: Trophy },
+  { to: '/prs', label: 'PR Wall', iconComponent: SlidersHorizontal },
   { to: '/badges', label: 'Badges', iconComponent: Medal },
   { to: '/history', icon: '/nav-history.png', label: 'History' },
   { to: '/profile', icon: '/nav-profile.png', label: 'Profile' },
@@ -62,7 +63,7 @@ export default function Layout({ children }) {
       <FeedbackButton externalOpen={showFeedback} onClose={() => setShowFeedback(false)} />
 
       {!isWorkout && (
-        <nav className="fixed bottom-0 left-1/2 z-30 grid w-full max-w-[480px] -translate-x-1/2 grid-cols-7 border-t px-1 py-1" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}>
+        <nav className="fixed bottom-0 left-1/2 z-30 grid w-full max-w-[480px] -translate-x-1/2 grid-cols-8 border-t px-1 py-1" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}>
           {NAV_ITEMS.map(({ to, end, icon, iconComponent: IconComponent, label }) => (
             <NavLink key={to} to={to} end={end} className="flex flex-col items-center justify-center"
               onClick={to === '/' ? (e) => { e.preventDefault(); navigate('/') } : undefined}>
