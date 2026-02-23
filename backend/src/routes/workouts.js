@@ -2,6 +2,7 @@ const router = require('express').Router();
 const db = require('../db');
 const auth = require('../middleware/auth');
 const { v4: uuidv4 } = require('uuid');
+const { generateWorkoutFeedback } = require('../services/ai');
 
 // Start a workout session
 router.post('/start', auth, (req, res) => {

@@ -236,5 +236,6 @@ if (!userCols3.includes('username')) {
 }
 
 try { db.exec('ALTER TABLE users ADD COLUMN step_goal INTEGER DEFAULT 10000') } catch (_) {}
+try { db.prepare('ALTER TABLE workout_sessions ADD COLUMN ai_feedback TEXT').run() } catch (_) {}
 
 module.exports = db;

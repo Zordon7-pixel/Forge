@@ -114,4 +114,49 @@ Keep it under 60 words total. No headers, no bullet points — just natural coac
   }
 }
 
-module.exports = { generateTrainingPlan, generateRunFeedback };
+async function generateWorkoutFeedback(session, sets, profile) {
+  try {
+    const exerciseMap = {};
+    for (const s of sets) {
+      if (!exerciseMap[s.exercise_name]) exerciseMap[s.exercise_name] = [];
+      exerciseMap[s.exercise_name].push(s);
+    }
+
+    const exerciseSummary = Object.entries(exerciseMap)
+      .map(([name, exSets]) => {
+        const setLines = exSets
+          .map(s => `Set ${s.set_number}: ${s.reps} reps @ ${s.weight_lbs} lbs`)
+          .join(', ');
+        return `${name}: ${setLines}`;
+      })
+      .join('\n');
+
+    const durationMin = session.total_seconds ? Math.round(session.total_seconds / 60) : null;
+    const muscleGroups = Array.isArray(session.muscle_groups)
+      ? session.muscle_groups.join(', ')
+      : session.muscle_groups;
+    const voice = profile?.coach_personality || 'mentor';
+
+    const voiceDesc = {
+      mentor: 'supportive and encouraging',
+      drill_sergeant: 'tough and direct',
+      scientist: 'data-driven and analytical',
+      friend: 'casual and motivating',
+      zen: 'calm and mindful',
+    }[voice] || 'supportive';
+
+    const prompt = `You are a strength and conditioning coach, ${voiceDesc}. Give specific, actionable feedback on this workout in 2-3 sentences. Be specific to the actual exercises and weights used. End with one concrete suggestion for next session.\n\nAthlete profile: ${profile?.name || 'Athlete'}, ${profile?.weight_lbs ? `${profile.weight_lbs} lbs` : ''}, goal: ${profile?.goal_type || 'general fitness'}\nDuration: ${durationMin ? `${durationMin} minutes` : 'not recorded'}\nMuscle groups: ${muscleGroups || 'not specified'}\nExercises:\n${exerciseSummary}\nNotes: ${session.notes || 'none'}`;
+
+    const msg = await getClient().messages.create({
+      model: 'claude-3-5-sonnet-20241022',
+      max_tokens: 200,
+      messages: [{ role: 'user', content: prompt }],
+    });
+    return msg.content[0]?.text || null;
+  } catch (e) {
+    console.error('generateWorkoutFeedback error:', e.message);
+    return null;
+  }
+}
+
+module.exports = { generateTrainingPlan, generateRunFeedback, generateWorkoutFeedback };

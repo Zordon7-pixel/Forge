@@ -87,6 +87,31 @@ function updateRunHandler(req, res) {
 router.put('/:id', auth, updateRunHandler);
 router.patch('/:id', auth, updateRunHandler);
 
+router.post('/:id/feedback', auth, async (req, res) => {
+  const run = db.prepare('SELECT * FROM runs WHERE id=? AND user_id=?').get(req.params.id, req.user.id);
+  if (!run) return res.status(404).json({ error: 'Not found' });
+
+  if (run.ai_feedback) return res.json({ feedback: run.ai_feedback });
+
+  const profile = db.prepare('SELECT * FROM users WHERE id=?').get(req.user.id);
+  const today = new Date().toISOString().slice(0, 10);
+  const monthStart = `${new Date().toISOString().slice(0, 7)}-01`;
+  const dailyCount = db.prepare("SELECT COUNT(*) as cnt FROM ai_usage WHERE user_id=? AND created_at>=?").get(req.user.id, today).cnt;
+  const monthlyCount = db.prepare("SELECT COUNT(*) as cnt FROM ai_usage WHERE user_id=? AND created_at>=?").get(req.user.id, monthStart).cnt;
+  const canCallAI = dailyCount < 10 && (profile?.is_pro || monthlyCount < 5);
+
+  if (!canCallAI) return res.status(429).json({ error: 'AI limit reached for today.' });
+
+  db.prepare('INSERT INTO ai_usage (id, user_id, call_type) VALUES (?,?,?)').run(uuidv4(), req.user.id, 'run_feedback');
+
+  const feedback = await generateRunFeedback(run, profile);
+  if (feedback) {
+    db.prepare('UPDATE runs SET ai_feedback=? WHERE id=?').run(feedback, run.id);
+  }
+
+  res.json({ feedback: feedback || 'Could not generate feedback right now.' });
+});
+
 router.delete('/:id', auth, (req, res) => {
   const run = db.prepare('SELECT * FROM runs WHERE id=? AND user_id=?').get(req.params.id, req.user.id);
   if (!run) return res.status(404).json({ error: 'Not found' });
