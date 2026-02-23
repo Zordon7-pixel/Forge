@@ -84,6 +84,19 @@ db.exec(`
     weight_lbs REAL,
     logged_at TEXT DEFAULT (datetime('now'))
   );
+
+  CREATE TABLE IF NOT EXISTS personal_records (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    category TEXT NOT NULL,
+    label TEXT NOT NULL,
+    value REAL NOT NULL,
+    unit TEXT NOT NULL,
+    run_id TEXT,
+    lift_id TEXT,
+    achieved_at TEXT DEFAULT (datetime('now')),
+    notes TEXT
+  );
 `);
 
 // Add is_pro column to users if not exists

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import api from '../lib/api'
 
 const badgeStyles = {
@@ -9,6 +10,7 @@ const badgeStyles = {
 }
 
 export default function Plan() {
+  const navigate = useNavigate()
   const [plan, setPlan] = useState(null)
   const [loading, setLoading] = useState(true)
   const [regenerating, setRegenerating] = useState(false)
@@ -79,6 +81,42 @@ export default function Plan() {
                 <span className="rounded-full px-2 py-1 text-xs" style={badgeStyles[typeKey]}>{day.workout_type || day.type || 'Run'}</span>
               </div>
               <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{day.description || 'No description.'}</p>
+              {isToday && (
+                <div style={{ marginTop: 12 }}>
+                  {(() => {
+                    const type = (day.workout_type || day.type || '').toLowerCase()
+                    const isRest = type.includes('rest')
+                    const isStrength = type.includes('strength') || type.includes('lift') || type.includes('cross')
+                    
+                    return (
+                      <button
+                        onClick={() => {
+                          if (!isRest) {
+                            if (isStrength) {
+                              navigate('/log-lift')
+                            } else {
+                              navigate('/log-run')
+                            }
+                          }
+                        }}
+                        style={{
+                          width: '100%',
+                          padding: '14px',
+                          background: isRest ? 'var(--bg-input)' : 'var(--accent)',
+                          color: isRest ? 'var(--text-muted)' : '#000',
+                          fontWeight: 900,
+                          fontSize: 15,
+                          borderRadius: 12,
+                          border: 'none',
+                          cursor: isRest ? 'default' : 'pointer',
+                        }}
+                      >
+                        {isRest ? 'Rest Day — Take it easy' : isStrength ? 'Log Workout' : 'Start Run'}
+                      </button>
+                    )
+                  })()}
+                </div>
+              )}
             </div>
           )
         })}
