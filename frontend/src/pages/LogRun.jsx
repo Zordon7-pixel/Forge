@@ -270,7 +270,7 @@ export default function LogRun() {
       }
       // Convert distance to miles for backend
       const distanceMiles = units === 'metric' ? fmt.milesFromKm(Number(distance)) : Number(distance)
-      const runRes = await api.post('/runs', { date, type: runType, surface: resolvedSurface, run_surface: resolvedSurface, distance_miles: distanceMiles, duration_seconds: seconds, notes, perceived_effort: Number(effort), treadmill_type: treadmillType, shoe_id: selectedShoeId || null })
+      const runRes = await api.post('/runs', { date, type: runType, surface: resolvedSurface, run_surface: resolvedSurface, distance_miles: distanceMiles, duration_seconds: seconds, notes, perceived_effort: Number(effort), treadmill_brand: treadmillType, shoe_id: selectedShoeId || null })
       const runId = runRes.data?.id || runRes.data?.run?.id
       if (runId) api.post('/prs/auto-detect', { run_id: runId }).catch(() => {})
       api.post('/badges/check', {}).catch(() => {})

@@ -255,7 +255,7 @@ export default function Badges() {
         <div>
           <h2 className="text-2xl font-black" style={{ color: 'var(--text-primary)' }}>Badge Wall</h2>
           <p className="text-sm mt-0.5" style={{ color: 'var(--text-muted)' }}>
-            {tab === 'achievements' ? `${earnedCount} of ${badges.length} earned` : `${seasonal.filter(b => b.earned).length} of ${seasonal.length} seasonal`}
+            {tab === 'achievements' ? `${earnedCount} of ${badges.length} earned` : tab === 'seasonal' ? `${seasonal.filter(b => b.earned).length} of ${seasonal.length} seasonal` : 'Top athletes this week'}
           </p>
         </div>
         {tab === 'achievements' && (
