@@ -53,6 +53,34 @@ router.get('/:id/sets', auth, (req, res) => {
   res.json({ sets });
 });
 
+router.post('/:id/feedback', auth, async (req, res) => {
+  const session = db.prepare('SELECT * FROM workout_sessions WHERE id=? AND user_id=?').get(req.params.id, req.user.id);
+  if (!session) return res.status(404).json({ error: 'Not found' });
+
+  if (session.ai_feedback) return res.json({ feedback: session.ai_feedback });
+
+  const profile = db.prepare('SELECT * FROM users WHERE id=?').get(req.user.id);
+  const today = new Date().toISOString().slice(0, 10);
+  const monthStart = `${new Date().toISOString().slice(0, 7)}-01`;
+  const dailyCount = db.prepare("SELECT COUNT(*) as cnt FROM ai_usage WHERE user_id=? AND created_at>=?").get(req.user.id, today).cnt;
+  const monthlyCount = db.prepare("SELECT COUNT(*) as cnt FROM ai_usage WHERE user_id=? AND created_at>=?").get(req.user.id, monthStart).cnt;
+  const canCallAI = dailyCount < 10 && (profile?.is_pro || monthlyCount < 5);
+
+  if (!canCallAI) return res.status(429).json({ error: 'AI limit reached for today. Try again tomorrow.' });
+
+  const sets = db.prepare('SELECT * FROM workout_sets WHERE session_id=? ORDER BY logged_at ASC').all(req.params.id);
+  const sessionData = { ...session, muscle_groups: JSON.parse(session.muscle_groups || '[]') };
+
+  db.prepare('INSERT INTO ai_usage (id, user_id, call_type) VALUES (?,?,?)').run(uuidv4(), req.user.id, 'workout_feedback');
+
+  const feedback = await generateWorkoutFeedback(sessionData, sets, profile);
+  if (feedback) {
+    db.prepare('UPDATE workout_sessions SET ai_feedback=? WHERE id=?').run(feedback, req.params.id);
+  }
+
+  res.json({ feedback: feedback || 'Could not generate feedback right now.' });
+});
+
 // Get workout summary
 router.get('/:id', auth, (req, res) => {
   const session = db.prepare('SELECT * FROM workout_sessions WHERE id=? AND user_id=?').get(req.params.id, req.user.id);

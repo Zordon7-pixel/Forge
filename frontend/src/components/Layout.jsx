@@ -8,12 +8,12 @@ import FeedbackButton from './FeedbackButton'
 import PullToRefresh from './PullToRefresh'
 
 const NAV_ITEMS = [
-  { to: '/', end: true, icon: '/nav-home.png', label: 'Home' },
-  { to: '/log-run', icon: '/nav-run.png', label: 'Run' },
-  { to: '/log-lift', icon: '/nav-lift.png', label: 'Lift' },
-  { to: '/challenges', label: 'Challenges', iconComponent: Trophy },
-  { to: '/history', icon: '/nav-history.png', label: 'History' },
-  { to: '/profile', icon: '/nav-profile.png', label: 'Profile' },
+  { to: '/', end: true, icon: '/nav-home.png', label: 'Home', color: '#EAB308' },
+  { to: '/log-run', icon: '/nav-run.png', label: 'Run', color: '#22C55E' },
+  { to: '/log-lift', icon: '/nav-lift.png', label: 'Lift', color: '#F97316' },
+  { to: '/challenges', label: 'Challenges', iconComponent: Trophy, color: '#A855F7' },
+  { to: '/history', icon: '/nav-history.png', label: 'History', color: '#3B82F6' },
+  { to: '/profile', icon: '/nav-profile.png', label: 'Profile', color: '#EC4899' },
 ]
 
 export default function Layout({ children }) {
@@ -61,26 +61,27 @@ export default function Layout({ children }) {
       <FeedbackButton externalOpen={showFeedback} onClose={() => setShowFeedback(false)} />
 
       {!isWorkout && (
-        <nav className="fixed bottom-0 left-1/2 z-30 grid w-full max-w-[480px] -translate-x-1/2 grid-cols-5 border-t px-1 py-1" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}>
-          {NAV_ITEMS.map(({ to, end, icon, iconComponent: IconComponent, label }) => (
+        <nav className="fixed bottom-0 left-1/2 z-30 grid w-full max-w-[480px] -translate-x-1/2 grid-cols-6 border-t px-1 py-1" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}>
+          {NAV_ITEMS.map(({ to, end, icon, iconComponent: IconComponent, label, color }) => (
             <NavLink key={to} to={to} end={end} className="flex flex-col items-center justify-center"
               onClick={to === '/' ? (e) => { e.preventDefault(); navigate('/') } : undefined}>
               {({ isActive }) => (
-                <span className="flex flex-col items-center justify-center gap-0.5 px-2 py-1.5 rounded-xl transition-all duration-200 w-full" style={isActive ? { background: 'rgba(234,179,8,0.18)', boxShadow: '0 0 0 1px rgba(234,179,8,0.3)' } : {}}>
+                <span className="flex flex-col items-center justify-center gap-0.5 px-1 py-1.5 rounded-xl transition-all duration-200 w-full"
+                  style={isActive ? { background: `${color}22`, boxShadow: `0 0 0 1px ${color}55` } : {}}>
                   {IconComponent ? (
                     <IconComponent
-                      className={`w-6 h-6 transition-all duration-200 ${isActive ? 'scale-110' : 'opacity-50'}`}
-                      style={{ color: isActive ? 'var(--accent)' : 'var(--text-muted)' }}
+                      className={`w-5 h-5 transition-all duration-200 ${isActive ? 'scale-110' : ''}`}
+                      style={{ color: isActive ? color : `${color}99` }}
                     />
                   ) : (
                     <img
                       src={icon}
                       alt={label}
-                      className={`w-7 h-7 object-contain transition-all duration-200 mix-blend-lighten ${isActive ? 'scale-110' : 'opacity-50'}`}
-                      style={isActive ? { filter: 'drop-shadow(0 0 6px rgba(234,179,8,0.8)) sepia(1) saturate(5) hue-rotate(0deg)' } : {}}
+                      className={`w-6 h-6 object-contain transition-all duration-200 mix-blend-lighten ${isActive ? 'scale-110' : ''}`}
+                      style={{ filter: isActive ? `drop-shadow(0 0 6px ${color})` : 'none', opacity: isActive ? 1 : 0.45 }}
                     />
                   )}
-                  <span className="text-[10px] font-medium transition-colors duration-200" style={{ color: isActive ? 'var(--accent)' : 'var(--text-muted)' }}>
+                  <span className="text-[9px] font-medium transition-colors duration-200" style={{ color: isActive ? color : `${color}99` }}>
                     {label}
                   </span>
                 </span>
