@@ -6,6 +6,7 @@ import EditLiftModal from '../components/EditLiftModal'
 import MissedWorkoutModal from '../components/MissedWorkoutModal'
 import RunDetailModal from '../components/RunDetailModal'
 import WorkoutDetailModal from '../components/WorkoutDetailModal'
+import LoadingRunner from '../components/LoadingRunner'
 
 function getRunDate(run) {
   return run.date || run.created_at?.slice(0, 10) || ''
@@ -33,6 +34,7 @@ function formatWorkoutDuration(totalSeconds = 0) {
 }
 
 export default function History() {
+  const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState('all')
   const [period, setPeriod] = useState('all')
   const [runs, setRuns] = useState([])
@@ -59,6 +61,7 @@ export default function History() {
       setRuns([...(Array.isArray(runsRes.data) ? runsRes.data : runsRes.data?.runs || [])].sort((a, b) => getRunDate(b).localeCompare(getRunDate(a))))
       setLifts([...(Array.isArray(liftsRes.data) ? liftsRes.data : liftsRes.data?.lifts || [])].sort((a, b) => (b.date || b.created_at || '').localeCompare(a.date || a.created_at || '')))
       setWorkoutSessions([...(workoutsRes.data?.sessions || [])].sort((a, b) => (b.started_at || '').localeCompare(a.started_at || '')))
+      setLoading(false)
     })()
   }, [])
 
@@ -127,6 +130,8 @@ export default function History() {
     const s = Math.round((avgPaceMin - m) * 60)
     return `${m}:${String(s).padStart(2, '0')} /mi`
   }, [filteredRuns])
+
+  if (loading) return <LoadingRunner message="Loading history" />
 
   return (
     <div>

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import LoadingRunner from '../components/LoadingRunner'
 import {
   Flame, Trophy, Star, Zap, Award, Medal, Crown, Lock
 } from 'lucide-react'
@@ -124,12 +125,7 @@ export default function Badges() {
   const earnedCount = badges.filter(b => b.earned).length
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center py-20">
-        <div className="h-6 w-6 animate-spin rounded-full border-2 border-t-transparent"
-          style={{ borderColor: '#EAB308', borderTopColor: 'transparent' }} />
-      </div>
-    )
+    return <LoadingRunner message="Loading badges" />
   }
 
   return (

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import api from '../lib/api'
+import LoadingRunner from '../components/LoadingRunner'
 
 const baseCardStyle = {
   background: 'var(--bg-card)',
@@ -128,7 +129,7 @@ export default function PRWall() {
 
       {error && <p className="mb-4 text-sm" style={{ color: 'var(--accent)' }}>{error}</p>}
       {loading ? (
-        <p style={{ color: 'var(--text-muted)' }}>Loading your records...</p>
+        <LoadingRunner message="Loading records" />
       ) : (
         <>
           <section className="mb-6">

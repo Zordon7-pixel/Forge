@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Flame } from 'lucide-react'
 import api from '../lib/api'
+import LoadingRunner from '../components/LoadingRunner'
 
 function fmtPace(durationSeconds, distance) {
   if (!durationSeconds || !distance) return '--'
@@ -303,11 +304,7 @@ export default function Dashboard() {
     return combined.slice(0, 4)
   }, [runs, lifts])
 
-  if (loading) return (
-    <div className="flex items-center justify-center py-20">
-      <div className="h-8 w-8 animate-spin rounded-full border-2 border-t-transparent" style={{ borderColor: 'var(--accent)', borderTopColor: 'transparent' }} />
-    </div>
-  )
+  if (loading) return <LoadingRunner message="Getting ready" />
 
   return (
     <div className="space-y-4">

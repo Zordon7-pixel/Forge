@@ -3,6 +3,7 @@ import { CheckCircle2, Footprints, ChevronDown, ChevronUp } from 'lucide-react'
 import api from '../lib/api'
 import PRWall from './PRWall'
 import Badges from './Badges'
+import LoadingRunner from '../components/LoadingRunner'
 
 function fmtValue(value, unit) {
   if (unit === 'miles') return `${Number(value).toFixed(value % 1 === 0 ? 0 : 1)} miles`
@@ -112,11 +113,7 @@ export default function Challenges() {
 
   function renderChallengesTab() {
     if (loading) {
-      return (
-        <div className="rounded-xl p-4" style={{ background: 'var(--bg-card)', color: 'var(--text-muted)' }}>
-          Loading challenges...
-        </div>
-      )
+      return <LoadingRunner message="Loading challenges" />
     }
 
     return (
