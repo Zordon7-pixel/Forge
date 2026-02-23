@@ -110,5 +110,28 @@
     "name": "Nombre Completo",
     "noAccount": "¿No tienes una cuenta?",
     "hasAccount": "¿Ya tienes una cuenta?"
+  },
+  "stretches": {
+    "title": "Estiramientos",
+    "subtitle": "Elige una categoría para comenzar",
+    "aiRecommended": "Recomendado por IA",
+    "aiRecommendedDesc": "Basado en tu último entrenamiento",
+    "categories": "Categorías",
+    "recommendedFor": "Recomendado para Ti",
+    "begin": "Iniciar Sesión",
+    "stretchesReady": "estiramientos listos",
+    "secsRemaining": "segundos restantes",
+    "nextUp": "El siguiente en",
+    "routineComplete": "Sesión Completa",
+    "stretchComplete": "Estiramiento Completo",
+    "finish": "Terminar",
+    "completionTitle": "Bien Hecho",
+    "completionSubtitle": "estiramientos completados",
+    "startAnother": "Iniciar Otra Sesión",
+    "hipFocused": "Enfoque de Cadera",
+    "legFocused": "Enfoque de Piernas",
+    "fullBody": "Cuerpo Completo",
+    "upperBody": "Tren Superior",
+    "lowerBack": "Espalda Baja"
   }
 }

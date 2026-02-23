@@ -110,5 +110,28 @@
     "name": "Nome Completo",
     "noAccount": "Não tem uma conta?",
     "hasAccount": "Já tem uma conta?"
+  },
+  "stretches": {
+    "title": "Alongamentos",
+    "subtitle": "Escolha uma categoria para começar",
+    "aiRecommended": "Recomendado pela IA",
+    "aiRecommendedDesc": "Baseado no seu último treino",
+    "categories": "Categorias",
+    "recommendedFor": "Recomendado para Você",
+    "begin": "Iniciar Sessão",
+    "stretchesReady": "alongamentos prontos",
+    "secsRemaining": "segundos restantes",
+    "nextUp": "Próximo em",
+    "routineComplete": "Sessão Completa",
+    "stretchComplete": "Alongamento Completo",
+    "finish": "Terminar",
+    "completionTitle": "Muito Bem",
+    "completionSubtitle": "alongamentos concluídos",
+    "startAnother": "Iniciar Outra Sessão",
+    "hipFocused": "Foco no Quadril",
+    "legFocused": "Foco nas Pernas",
+    "fullBody": "Corpo Inteiro",
+    "upperBody": "Membros Superiores",
+    "lowerBack": "Lombar"
   }
 }

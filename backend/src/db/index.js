@@ -548,4 +548,18 @@ db.exec(`
   );
 `);
 
+// Stretches table — category-based guided stretch sessions
+db.prepare(`CREATE TABLE IF NOT EXISTS stretches (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  category TEXT NOT NULL,
+  duration INTEGER DEFAULT 30,
+  duration_label TEXT,
+  cue TEXT,
+  created_at TEXT DEFAULT (datetime('now'))
+)`).run();
+
+const stretchCols = db.prepare("PRAGMA table_info(stretches)").all().map(c => c.name);
+if (!stretchCols.includes('category')) db.prepare("ALTER TABLE stretches ADD COLUMN category TEXT").run();
+
 module.exports = db;

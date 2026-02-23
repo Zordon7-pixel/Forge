@@ -70,6 +70,7 @@ app.use('/api/watch-sync', require('./routes/watchSync'));
 app.use('/api/races', require('./routes/races'));
 app.use('/api/routes', require('./routes/routes'));
 app.use('/api/gear', require('./routes/gear'));
+app.use('/api/stretches', require('./routes/stretches'));
 
 // Serve frontend
 const dist = path.join(__dirname, '../../frontend/dist');

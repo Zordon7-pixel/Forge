@@ -110,5 +110,28 @@
     "name": "フルネーム",
     "noAccount": "アカウントをお持ちでないですか？",
     "hasAccount": "すでにアカウントをお持ちですか？"
+  },
+  "stretches": {
+    "title": "ストレッチ",
+    "subtitle": "カテゴリを選んで始めましょう",
+    "aiRecommended": "AIのおすすめ",
+    "aiRecommendedDesc": "最近のワークアウトに基づいて",
+    "categories": "カテゴリ",
+    "recommendedFor": "あなたへのおすすめ",
+    "begin": "セッション開始",
+    "stretchesReady": "件のストレッチ準備完了",
+    "secsRemaining": "秒残り",
+    "nextUp": "次のストレッチまで",
+    "routineComplete": "セッション完了",
+    "stretchComplete": "ストレッチ完了",
+    "finish": "終了",
+    "completionTitle": "お疲れ様でした",
+    "completionSubtitle": "件のストレッチ完了",
+    "startAnother": "別のセッションを始める",
+    "hipFocused": "股関節",
+    "legFocused": "脚部",
+    "fullBody": "全身",
+    "upperBody": "上半身",
+    "lowerBack": "腰部"
   }
 }

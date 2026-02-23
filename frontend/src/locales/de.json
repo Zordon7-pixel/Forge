@@ -110,5 +110,28 @@
     "name": "Vollständiger Name",
     "noAccount": "Noch kein Konto?",
     "hasAccount": "Bereits ein Konto?"
+  },
+  "stretches": {
+    "title": "Dehnübungen",
+    "subtitle": "Wähle eine Kategorie, um zu beginnen",
+    "aiRecommended": "KI-Empfehlung",
+    "aiRecommendedDesc": "Basierend auf deinem letzten Training",
+    "categories": "Kategorien",
+    "recommendedFor": "Empfohlen für Dich",
+    "begin": "Einheit starten",
+    "stretchesReady": "Dehnübungen bereit",
+    "secsRemaining": "Sekunden verbleibend",
+    "nextUp": "Nächste in",
+    "routineComplete": "Einheit abgeschlossen",
+    "stretchComplete": "Dehnung abgeschlossen",
+    "finish": "Fertigstellen",
+    "completionTitle": "Gut gemacht",
+    "completionSubtitle": "Dehnübungen abgeschlossen",
+    "startAnother": "Neue Einheit starten",
+    "hipFocused": "Hüftfokus",
+    "legFocused": "Beinfokus",
+    "fullBody": "Ganzkörper",
+    "upperBody": "Oberkörper",
+    "lowerBack": "Unterer Rücken"
   }
 }

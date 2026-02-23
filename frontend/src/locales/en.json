@@ -110,5 +110,28 @@
     "name": "Full Name",
     "noAccount": "Don't have an account?",
     "hasAccount": "Already have an account?"
+  },
+  "stretches": {
+    "title": "Stretches",
+    "subtitle": "Choose a category to get started",
+    "aiRecommended": "AI Recommended",
+    "aiRecommendedDesc": "Based on your last workout",
+    "categories": "Categories",
+    "recommendedFor": "Recommended for You",
+    "begin": "Begin Session",
+    "stretchesReady": "stretches ready",
+    "secsRemaining": "seconds remaining",
+    "nextUp": "Next up in",
+    "routineComplete": "Session Complete",
+    "stretchComplete": "Stretch Complete",
+    "finish": "Finish",
+    "completionTitle": "Well Done",
+    "completionSubtitle": "stretches completed",
+    "startAnother": "Start Another Session",
+    "hipFocused": "Hip-Focused",
+    "legFocused": "Leg-Focused",
+    "fullBody": "Full-Body",
+    "upperBody": "Upper-Body",
+    "lowerBack": "Lower-Back"
   }
 }
