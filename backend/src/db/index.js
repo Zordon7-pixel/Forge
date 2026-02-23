@@ -94,6 +94,9 @@ if (!cols.includes('is_pro')) {
 if (!cols.includes('sex')) {
   db.prepare("ALTER TABLE users ADD COLUMN sex TEXT DEFAULT 'male'").run();
 }
+if (!cols.includes('weight_lbs')) {
+  db.prepare("ALTER TABLE users ADD COLUMN weight_lbs REAL").run();
+}
 
 // Exercise library table (shared across all users)
 db.exec(`
@@ -164,6 +167,11 @@ if (exerciseCount === 0) {
   const { v4: uuidv4 } = require('uuid');
   const insertEx = db.prepare('INSERT INTO exercises (id, name, muscle_group) VALUES (?, ?, ?)');
   defaultExercises.forEach(ex => insertEx.run(uuidv4(), ex.name, ex.group));
+}
+
+const runCols = db.prepare("PRAGMA table_info(runs)").all().map(c => c.name);
+if (!runCols.includes('calories')) {
+  db.prepare("ALTER TABLE runs ADD COLUMN calories INTEGER DEFAULT 0").run();
 }
 
 const liftCols = db.prepare("PRAGMA table_info(lifts)").all().map(c => c.name);

@@ -17,6 +17,15 @@ router.post('/', auth, (req, res) => {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
     id, req.user.id, date, type, distance_miles || 0, duration_seconds || 0, perceived_effort || 5, notes || null
   );
+
+  // Get user weight for calorie calc (default 185 if not set)
+  const userProfile = db.prepare('SELECT weight_lbs FROM users WHERE id=?').get(req.user.id);
+  const weightLbs = userProfile?.weight_lbs || 185;
+  const calories = Math.round(0.75 * weightLbs * (distance_miles || 0));
+  if (calories > 0) {
+    db.prepare('UPDATE runs SET calories=? WHERE id=?').run(calories, id);
+  }
+
   const run = db.prepare('SELECT * FROM runs WHERE id = ?').get(id);
   res.status(201).json(run);
 

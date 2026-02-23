@@ -108,6 +108,88 @@ router.put('/me/profile', auth, (req, res) => {
   res.json({ token: sign(user), user });
 });
 
+// GET /api/auth/me/stats — summary stats for various time periods
+router.get('/me/stats', auth, (req, res) => {
+  const userId = req.user.id;
+  const now = new Date();
+
+  // Helper: get runs for a time window
+  const getRuns = (daysBack) => {
+    const since = new Date(now - daysBack * 86400000).toISOString().slice(0, 10);
+    return db.prepare('SELECT * FROM runs WHERE user_id=? AND date >= ? ORDER BY date DESC').all(userId, since);
+  };
+
+  const getWorkouts = (daysBack) => {
+    const since = new Date(now - daysBack * 86400000).toISOString();
+    return db.prepare('SELECT * FROM workout_sessions WHERE user_id=? AND started_at >= ? AND ended_at IS NOT NULL').all(userId, since);
+  };
+
+  const weekRuns = getRuns(7);
+  const monthRuns = getRuns(30);
+  const yearRuns = getRuns(365);
+  const allRuns = db.prepare('SELECT * FROM runs WHERE user_id=? ORDER BY date DESC').all(userId);
+
+  const summarize = (runs) => {
+    const miles = runs.reduce((s, r) => s + Number(r.distance_miles || 0), 0);
+    const seconds = runs.reduce((s, r) => s + Number(r.duration_seconds || 0), 0);
+    const calsBurned = runs.reduce((s, r) => s + Math.round(0.75 * 185 * Number(r.distance_miles || 0)), 0); // ~185lb default
+    return { count: runs.length, miles: Math.round(miles * 100) / 100, seconds, calories: calsBurned };
+  };
+
+  // Weekly mileage for past 12 weeks (for trend chart)
+  const weeklyTrend = [];
+  for (let w = 11; w >= 0; w--) {
+    const wStart = new Date(now - (w + 1) * 7 * 86400000).toISOString().slice(0, 10);
+    const wEnd = new Date(now - w * 7 * 86400000).toISOString().slice(0, 10);
+    const wRuns = db.prepare('SELECT distance_miles FROM runs WHERE user_id=? AND date >= ? AND date < ?').all(userId, wStart, wEnd);
+    const wMiles = wRuns.reduce((s, r) => s + Number(r.distance_miles || 0), 0);
+    weeklyTrend.push({ week: wStart, miles: Math.round(wMiles * 100) / 100 });
+  }
+
+  // Activity streak (consecutive days with any run OR workout_session)
+  const allDates = new Set([
+    ...allRuns.map(r => r.date?.slice(0, 10) || r.created_at?.slice(0, 10)),
+    ...db.prepare('SELECT started_at FROM workout_sessions WHERE user_id=? AND ended_at IS NOT NULL').all(userId).map(s => s.started_at.slice(0, 10))
+  ]);
+
+  const today = now.toISOString().slice(0, 10);
+  const yesterday = new Date(now - 86400000).toISOString().slice(0, 10);
+  let streak = 0;
+  if (allDates.has(today) || allDates.has(yesterday)) {
+    let check = allDates.has(today) ? today : yesterday;
+    while (allDates.has(check)) {
+      streak++;
+      const d = new Date(check);
+      d.setDate(d.getDate() - 1);
+      check = d.toISOString().slice(0, 10);
+    }
+  }
+
+  // Last 7 days activity calendar
+  const calendarDays = [];
+  for (let d = 6; d >= 0; d--) {
+    const dateStr = new Date(now - d * 86400000).toISOString().slice(0, 10);
+    const dayName = new Date(now - d * 86400000).toLocaleDateString('en-US', { weekday: 'short' });
+    calendarDays.push({
+      date: dateStr,
+      day: dayName,
+      hasRun: allRuns.some(r => (r.date || r.created_at || '').slice(0, 10) === dateStr),
+      hasLift: allDates.has(dateStr),
+      isToday: dateStr === today
+    });
+  }
+
+  res.json({
+    week: summarize(weekRuns),
+    month: summarize(monthRuns),
+    year: summarize(yearRuns),
+    all: summarize(allRuns),
+    weeklyTrend,
+    streak,
+    calendarDays
+  });
+});
+
 router.get('/me/ai-usage', auth, (req, res) => {
   const today = new Date().toISOString().slice(0, 10);
   const month = new Date().toISOString().slice(0, 7);
