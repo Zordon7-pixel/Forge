@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import api from '../lib/api'
 
 function fmtPace(durationSeconds, distance) {
@@ -100,6 +101,7 @@ function ReadinessGauge({ score }) {
 const PERIOD_LABELS = { day: 'Today', week: 'This Week', month: 'This Month', year: 'This Year', all: 'All Time' }
 
 export default function Dashboard() {
+  const navigate = useNavigate()
   const [stats, setStats] = useState(null)
   const [runs, setRuns] = useState([])
   const [lifts, setLifts] = useState([])
@@ -224,6 +226,20 @@ export default function Dashboard() {
           {stats?.streak > 1 ? `${stats.streak}-day streak` : 'Ready to forge today?'}
         </h2>
         {coachLabel && <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>Coach: {coachLabel}</p>}
+      </div>
+
+      {/* Ready to Run CTA */}
+      <div 
+        onClick={() => navigate('/log-run')} 
+        className="bg-[var(--accent)] rounded-2xl p-5 cursor-pointer hover:opacity-90 transition-opacity"
+      >
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-black font-bold text-lg">Ready to Run?</p>
+            <p className="text-black/70 text-sm mt-0.5">Start your warm-up and today's session</p>
+          </div>
+          <div className="text-3xl">🏃</div>
+        </div>
       </div>
 
       {/* Training Readiness */}

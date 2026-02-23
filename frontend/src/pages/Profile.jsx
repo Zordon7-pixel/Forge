@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { ChevronRight, Settings as SettingsIcon } from 'lucide-react'
 import api from '../lib/api'
 
 const personalityOptions = [
@@ -179,8 +180,20 @@ export default function Profile() {
         {saved && <p className="text-sm text-green-400">Saved</p>}
 
         <button type="submit" disabled={saving} className="w-full rounded-xl py-3 font-semibold disabled:opacity-70" style={{ background: 'var(--accent)', color: 'black' }}>{saving ? 'Saving...' : 'Save Changes'}</button>
-        <button type="button" onClick={logout} className="w-full rounded-xl border bg-transparent py-3 font-semibold" style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}>Log Out</button>
       </form>
+
+      <div 
+        onClick={() => navigate('/settings')} 
+        className="flex items-center justify-between bg-[var(--bg-card)] border border-[var(--border-subtle)] rounded-xl p-4 cursor-pointer hover:border-yellow-500/40 transition-colors mt-4"
+      >
+        <div className="flex items-center gap-3">
+          <SettingsIcon size={18} className="text-[var(--accent)]" />
+          <span className="text-sm font-medium text-[var(--text-primary)]">Settings</span>
+        </div>
+        <ChevronRight size={16} className="text-[var(--text-muted)]" />
+      </div>
+
+      <button type="button" onClick={logout} className="w-full rounded-xl border bg-transparent py-3 font-semibold mt-3" style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}>Log Out</button>
     </div>
   )
 }
