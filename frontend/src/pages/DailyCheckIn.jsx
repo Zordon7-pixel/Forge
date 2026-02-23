@@ -62,7 +62,7 @@ export default function DailyCheckIn({ onComplete }) {
 
   if (alreadyDone) {
     return (
-      <div style={{ minHeight: '100vh', background: 'var(--bg-base)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24, gap: 16 }}>
+      <div style={{ minHeight: '100vh', background: 'var(--bg-base)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24, gap: 16, maxWidth: 480, margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
         <p style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', textAlign: 'center' }}>You've already checked in today</p>
         <button onClick={() => navigate('/')}
           style={{ background: 'var(--accent)', color: '#000', fontWeight: 700, borderRadius: 14, padding: '16px 32px', border: 'none', cursor: 'pointer' }}>
@@ -74,7 +74,7 @@ export default function DailyCheckIn({ onComplete }) {
 
   if (adjustment) {
     return (
-      <div style={{ minHeight: '100vh', background: 'var(--bg-base)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24, gap: 20, textAlign: 'center' }}>
+      <div style={{ minHeight: '100vh', background: 'var(--bg-base)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24, gap: 20, textAlign: 'center', maxWidth: 480, margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
         <p style={{ fontSize: 16, lineHeight: 1.6, color: 'var(--text-primary)', maxWidth: 320 }}>{adjustment}</p>
         <button onClick={() => { onComplete?.(); navigate('/') }}
           style={{ background: 'var(--accent)', color: '#000', fontWeight: 900, borderRadius: 14, padding: '18px 48px', border: 'none', cursor: 'pointer', fontSize: 16 }}>
@@ -85,32 +85,32 @@ export default function DailyCheckIn({ onComplete }) {
   }
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg-base)', padding: 20, paddingBottom: 100 }}>
+    <div style={{ minHeight: '100vh', background: 'var(--bg-base)', padding: '24px 20px', paddingBottom: 100, maxWidth: 480, margin: '0 auto', boxSizing: 'border-box', width: '100%' }}>
       <h1 style={{ fontWeight: 900, fontSize: 26, color: 'var(--text-primary)', marginBottom: 4 }}>Morning Check-In</h1>
       <p style={{ color: 'var(--text-muted)', fontSize: 14, marginBottom: 28 }}>3 taps — I'll adjust your plan around your day.</p>
 
       <div style={{ marginBottom: 24 }}>
         <p style={{ fontWeight: 700, color: 'var(--text-primary)', marginBottom: 12 }}>How are you feeling?</p>
-        <div style={{ display: 'flex', gap: 10 }}>
+        <div style={{ display: 'flex', gap: 12, overflowX: 'auto', paddingBottom: 8 }}>
           {FEELINGS.map(f => (
-            <div key={f.value} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+            <div key={f.value} style={{ flexShrink: 0, width: 100, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
               <button onClick={() => setFeeling(f.value)}
                 style={{
-                  width: '100%', padding: 0, borderRadius: 16,
+                  width: 100, height: 100, padding: 0, borderRadius: 18,
                   border: `2px solid ${feeling === f.value ? 'var(--accent)' : 'transparent'}`,
                   background: 'transparent', cursor: 'pointer', overflow: 'hidden',
                   boxShadow: feeling === f.value ? '0 0 16px rgba(234,179,8,0.6)' : 'none',
                   transition: 'box-shadow 0.2s, border-color 0.2s',
                 }}>
                 <img src={f.img} alt={f.label}
-                  style={{ width: '100%', display: 'block', borderRadius: 14,
-                    filter: feeling === f.value ? 'brightness(1.15)' : 'brightness(0.7)',
+                  style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', borderRadius: 16,
+                    filter: feeling === f.value ? 'brightness(1.15)' : 'brightness(0.75)',
                     transition: 'filter 0.2s' }} />
               </button>
               <span style={{
-                fontSize: 11, fontWeight: 700, textAlign: 'center',
+                fontSize: 12, fontWeight: 700, textAlign: 'center',
                 color: feeling === f.value ? 'var(--accent)' : 'var(--text-muted)',
-                transition: 'color 0.2s',
+                transition: 'color 0.2s', whiteSpace: 'nowrap',
               }}>{f.label}</span>
             </div>
           ))}
