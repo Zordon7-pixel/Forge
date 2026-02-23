@@ -135,22 +135,22 @@ export default function DailyCheckIn({ onComplete }) {
 
       <div style={{ marginBottom: 24 }}>
         <p style={{ fontWeight: 700, color: 'var(--text-primary)', marginBottom: 12 }}>How are you feeling?</p>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 4 }}>
           {FEELINGS.map(f => (
             <button key={f.value} onClick={() => setFeeling(f.value)}
               style={{
                 flex: 1,
                 display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
-                padding: '10px 4px', borderRadius: 14,
-                border: `2px solid ${feeling === f.value ? 'var(--accent)' : 'var(--border-subtle)'}`,
-                background: feeling === f.value ? 'var(--accent-dim)' : 'var(--bg-card)',
+                padding: '8px 2px', borderRadius: 14,
+                border: 'none',
+                background: feeling === f.value ? 'var(--accent-dim)' : 'transparent',
                 cursor: 'pointer',
-                transition: 'border-color 0.2s, background 0.2s',
               }}>
               <img src={f.img} alt={f.label}
                 style={{
-                  width: 36, height: 36, objectFit: 'cover', borderRadius: '50%',
-                  filter: feeling === f.value ? 'brightness(1.1)' : 'brightness(0.8)',
+                  width: 54, height: 54, objectFit: 'cover', borderRadius: '50%',
+                  filter: feeling === f.value ? 'brightness(1.15)' : 'brightness(0.75)',
+                  transition: 'filter 0.2s',
                 }} />
               <span style={{
                 fontSize: 11, fontWeight: 700,
