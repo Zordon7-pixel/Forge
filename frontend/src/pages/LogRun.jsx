@@ -150,6 +150,7 @@ export default function LogRun() {
 
       const runId = runRes.data?.id || runRes.data?.run?.id
       if (runId) api.post('/prs/auto-detect', { run_id: runId }).catch(() => {})
+      api.post('/badges/check', {}).catch(() => {})
       if (!runId) {
         setFeedback('Feedback coming soon...')
         setShowRecoveryPrompt(true)
