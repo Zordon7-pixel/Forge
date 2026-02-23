@@ -1,8 +1,11 @@
 [phases.setup]
-nixPkgs = ["nodejs_20", "python3", "gcc", "gnumake"]
+nixPkgs = ["nodejs_20"]
 
 [phases.install]
-cmds = ["cd backend && npm install --build-from-source"]
+cmds = [
+  "cd backend && npm install",
+  "cd frontend && npm install && npm run build"
+]
 
 [start]
 cmd = "cd backend && node src/db/seed.js; node src/app.js"
