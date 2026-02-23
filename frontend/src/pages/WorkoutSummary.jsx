@@ -51,6 +51,8 @@ export default function WorkoutSummary() {
   const [aiLoading, setAiLoading] = useState(true)
   const [aiFeedback, setAiFeedback] = useState(null)
   const [userSex, setUserSex] = useState('male')
+  const [routeShared, setRouteShared] = useState(false)
+  const [sharingRoute, setSharingRoute] = useState(false)
 
   useEffect(() => {
     api.get('/auth/me').then((r) => setUserSex(r.data?.user?.sex || 'male')).catch(() => {})
@@ -121,6 +123,20 @@ export default function WorkoutSummary() {
   const totalCalories = Math.round(((session?.total_seconds || 0) / 60) * 5)
   const workTimeSec = sets.reduce((sum, set) => sum + (set.duration_seconds || 30), 0)
   const restTimeSec = (session?.total_seconds || 0) - workTimeSec
+
+  const routeCoords = useMemo(() => {
+    if (!session?.route_coords) return null
+    if (Array.isArray(session.route_coords)) return session.route_coords
+    try {
+      const parsed = JSON.parse(session.route_coords || '[]')
+      return Array.isArray(parsed) ? parsed : []
+    } catch {
+      return []
+    }
+  }, [session?.route_coords])
+  const distanceMiles = session?.distance_miles ?? session?.distance ?? null
+  const durationSeconds = session?.duration_seconds ?? session?.total_seconds ?? null
+  const workoutSurface = session?.surface || session?.run_surface || session?.detected_surface_type || null
 
   if (loading) return <div className="p-4" style={{ color: 'var(--text-muted)' }}>Loading summary...</div>
   if (!session) return null
@@ -281,6 +297,44 @@ export default function WorkoutSummary() {
           {saving ? 'Saving...' : saved ? 'Saved' : 'Save Notes'}
         </button>
       </div>
+
+      {routeCoords && routeCoords.length >= 2 && !routeShared && (
+        <button
+          onClick={async () => {
+            setSharingRoute(true)
+            try {
+              const title = `${distanceMiles?.toFixed ? distanceMiles.toFixed(2) : Number(distanceMiles || 0).toFixed(2)} mi Run`
+              await api.post('/routes', {
+                title,
+                description: '',
+                route_coords: routeCoords,
+                distance_miles: distanceMiles,
+                duration_seconds: durationSeconds,
+                surface: workoutSurface || 'road',
+              })
+              setRouteShared(true)
+            } catch (e) {
+              console.error('Failed to share route', e)
+            } finally {
+              setSharingRoute(false)
+            }
+          }}
+          disabled={sharingRoute}
+          style={{
+            width: '100%', padding: '12px 0',
+            background: 'var(--bg-input)', color: 'var(--text-primary)',
+            border: '1px solid var(--border-subtle)', borderRadius: 12,
+            fontSize: 14, fontWeight: 600, cursor: 'pointer', marginTop: 8,
+          }}
+        >
+          {sharingRoute ? 'Sharing...' : 'Share Route to Community'}
+        </button>
+      )}
+      {routeShared && (
+        <p style={{ textAlign: 'center', fontSize: 13, color: '#22c55e', marginTop: 8 }}>
+          Route shared to community
+        </p>
+      )}
 
       <Link to="/" className="block w-full rounded-2xl py-4 text-center font-bold border" style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-muted)' }}>
         Back to Home

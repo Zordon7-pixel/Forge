@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
 import LoadingRunner from '../components/LoadingRunner'
+import AchievementUnlock from '../components/AchievementUnlock'
 import {
-  Flame, Trophy, Star, Zap, Award, Medal, Crown, Lock, Sun, Heart
+  Flame, Trophy, Star, Zap, Award, Medal, Crown, Lock, Sun, Heart, Snowflake, Flower2, Leaf, Ghost, Gift, Flag, Mountain, Utensils, Wind
 } from 'lucide-react'
 import api from '../lib/api'
 
@@ -15,17 +16,22 @@ const ICON_MAP = {
   Crown,
 }
 
-const SEASONAL_ICON_MAP = {
-  Flame,
-  Trophy,
-  Star,
-  Zap,
-  Award,
-  Medal,
-  Crown,
-  Sun: Star,
-  Heart: Zap,
-  Flower2: Star,
+const FALLBACK_ICON = Award
+
+function getSeasonalIcon(badge) {
+  const s = ((badge.name || '') + ' ' + (badge.slug || '')).toLowerCase()
+  if (s.includes('winter') || s.includes('frost') || s.includes('snow') || s.includes('blizzard')) return Snowflake
+  if (s.includes('spring') || s.includes('bloom') || s.includes('cherry') || s.includes('flower')) return Flower2
+  if (s.includes('summer') || s.includes('solstice') || s.includes('heat')) return Sun
+  if (s.includes('fall') || s.includes('autumn') || s.includes('harvest') || s.includes('leaf')) return Leaf
+  if (s.includes('valentine') || s.includes('heart') || s.includes('love')) return Heart
+  if (s.includes('halloween') || s.includes('spooky') || s.includes('hustle') || s.includes('ghost')) return Ghost
+  if (s.includes('holiday') || s.includes('christmas') || s.includes('gift') || s.includes('new year') || s.includes('warrior')) return Gift
+  if (s.includes('independence') || s.includes('sprint') || s.includes('july') || s.includes('patriot')) return Flag
+  if (s.includes('marathon') || s.includes('race') || s.includes('trophy') || s.includes('trot') || s.includes('turkey')) return Trophy
+  if (s.includes('trail') || s.includes('mountain') || s.includes('hike')) return Mountain
+  if (s.includes('thanks') || s.includes('turkey')) return Utensils
+  return FALLBACK_ICON
 }
 
 function BadgeIcon({ name, size = 28, color }) {
@@ -95,7 +101,7 @@ function BadgeCard({ badge }) {
   )
 }
 
-function SeasonalBadgeCard({ badge }) {
+function SeasonalBadgeCard({ badge, onClick }) {
   const pct = badge.requirement_value > 0 ? Math.min(100, (badge.progress / badge.requirement_value) * 100) : 0
   const color = badge.color || '#EAB308'
   const isEarned = badge.status === 'earned'
@@ -118,7 +124,7 @@ function SeasonalBadgeCard({ badge }) {
     return `${fmt(badge.window_start_full)} - ${fmt(badge.window_end_full)}`
   })()
 
-  const Icon = SEASONAL_ICON_MAP[badge.icon] || Award
+  const Icon = getSeasonalIcon(badge) || FALLBACK_ICON
 
   return (
     <div style={{
@@ -189,6 +195,8 @@ export default function Badges() {
   const [leaderboard, setLeaderboard] = useState([])
   const [loading, setLoading] = useState(true)
   const [checking, setChecking] = useState(false)
+  const [unlockQueue, setUnlockQueue] = useState([])
+  const [selectedSeasonal, setSelectedSeasonal] = useState(null)
 
   useEffect(() => {
     loadData()
@@ -214,13 +222,20 @@ export default function Badges() {
 
   async function checkBadges() {
     setChecking(true)
+    const prevEarned = new Set(badges.filter(b => b.earned).map(b => b.id))
     try {
-      await api.post('/badges/check', {})
+      const res = await api.post('/badges/check', {})
+      const awarded = res.data?.awarded || []
+      if (awarded.length > 0) {
+        setUnlockQueue(awarded)
+      }
       await loadData()
     } finally {
       setChecking(false)
     }
   }
+
+  const dismissUnlock = () => setUnlockQueue(prev => prev.slice(1))
 
   const achievements = badges.filter(b => b.category === 'achievement')
   const monthly = badges.filter(b => b.category === 'monthly')

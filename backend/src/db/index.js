@@ -37,6 +37,20 @@ db.exec(`
     created_at TEXT DEFAULT (datetime('now'))
   );
 
+  CREATE TABLE IF NOT EXISTS gear_shoes (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    brand TEXT NOT NULL,
+    model TEXT NOT NULL,
+    nickname TEXT,
+    color TEXT,
+    purchase_date TEXT,
+    recommended_miles INTEGER DEFAULT 450,
+    is_retired INTEGER DEFAULT 0,
+    is_active INTEGER DEFAULT 1,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
   CREATE TABLE IF NOT EXISTS lifts (
     id TEXT PRIMARY KEY,
     user_id TEXT REFERENCES users(id),
@@ -183,6 +197,30 @@ db.exec(`
     mime_type TEXT DEFAULT 'image/jpeg',
     created_at TEXT DEFAULT (datetime('now'))
   );
+
+  CREATE TABLE IF NOT EXISTS shared_routes (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    run_id TEXT,
+    title TEXT NOT NULL,
+    description TEXT,
+    route_coords TEXT DEFAULT '[]',
+    distance_miles REAL DEFAULT 0,
+    duration_seconds INTEGER DEFAULT 0,
+    avg_pace REAL,
+    surface TEXT,
+    city TEXT,
+    likes_count INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS route_likes (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    route_id TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(user_id, route_id)
+  );
 `);
 
 // Add is_pro column to users if not exists
@@ -257,6 +295,9 @@ try { db.prepare("ALTER TABLE runs ADD COLUMN cadence_avg REAL").run() } catch (
 try { db.prepare("ALTER TABLE runs ADD COLUMN vo2max REAL").run() } catch (_) {}
 try { db.prepare("ALTER TABLE runs ADD COLUMN temperature_c REAL").run() } catch (_) {}
 try { db.prepare("ALTER TABLE runs ADD COLUMN calories_watch INTEGER").run() } catch (_) {}
+
+const runCols2 = db.prepare("PRAGMA table_info(runs)").all().map(c => c.name);
+if (!runCols2.includes('shoe_id')) db.prepare("ALTER TABLE runs ADD COLUMN shoe_id TEXT").run();
 
 const liftCols = db.prepare("PRAGMA table_info(lifts)").all().map(c => c.name);
 if (!liftCols.includes('exercise_name')) {

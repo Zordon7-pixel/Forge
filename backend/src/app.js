@@ -68,6 +68,8 @@ app.use('/api/journal', require('./routes/journal'));
 app.use('/api/milestones', require('./routes/milestones'));
 app.use('/api/watch-sync', require('./routes/watchSync'));
 app.use('/api/races', require('./routes/races'));
+app.use('/api/routes', require('./routes/routes'));
+app.use('/api/gear', require('./routes/gear'));
 
 // Serve frontend
 const dist = path.join(__dirname, '../../frontend/dist');
