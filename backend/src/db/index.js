@@ -140,4 +140,13 @@ if (!liftCols.includes('weight_lbs')) {
   db.prepare("ALTER TABLE lifts ADD COLUMN weight_lbs REAL").run();
 }
 
+// Schedule preference columns
+const userCols2 = db.prepare("PRAGMA table_info(users)").all().map(c => c.name);
+if (!userCols2.includes('schedule_type')) db.prepare("ALTER TABLE users ADD COLUMN schedule_type TEXT DEFAULT 'adaptive'").run();
+if (!userCols2.includes('lifestyle')) db.prepare("ALTER TABLE users ADD COLUMN lifestyle TEXT DEFAULT 'works_fulltime'").run();
+if (!userCols2.includes('preferred_workout_time')) db.prepare("ALTER TABLE users ADD COLUMN preferred_workout_time TEXT DEFAULT 'evening'").run();
+if (!userCols2.includes('preferred_workout_days')) db.prepare("ALTER TABLE users ADD COLUMN preferred_workout_days TEXT DEFAULT '[]'").run();
+if (!userCols2.includes('missed_workout_pref')) db.prepare("ALTER TABLE users ADD COLUMN missed_workout_pref TEXT DEFAULT 'adjust_week'").run();
+if (!userCols2.includes('weekly_workout_days')) db.prepare("ALTER TABLE users ADD COLUMN weekly_workout_days INTEGER DEFAULT 4").run();
+
 module.exports = db;

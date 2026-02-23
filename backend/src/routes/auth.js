@@ -69,7 +69,13 @@ router.put('/me/profile', auth, (req, res) => {
     coach_personality,
     run_days_per_week,
     lift_days_per_week,
-    sex
+    sex,
+    schedule_type,
+    lifestyle,
+    preferred_workout_time,
+    preferred_workout_days,
+    missed_workout_pref,
+    weekly_workout_days
   } = req.body;
 
   const mappedWeekly = weekly_miles ?? weekly_miles_current;
@@ -89,6 +95,12 @@ router.put('/me/profile', auth, (req, res) => {
     run_days_per_week = COALESCE(?, run_days_per_week),
     lift_days_per_week = COALESCE(?, lift_days_per_week),
     sex = COALESCE(?, sex),
+    schedule_type = COALESCE(?, schedule_type),
+    lifestyle = COALESCE(?, lifestyle),
+    preferred_workout_time = COALESCE(?, preferred_workout_time),
+    preferred_workout_days = COALESCE(?, preferred_workout_days),
+    missed_workout_pref = COALESCE(?, missed_workout_pref),
+    weekly_workout_days = COALESCE(?, weekly_workout_days),
     onboarded = 1
     WHERE id = ?`).run(
     name ?? null,
@@ -102,6 +114,12 @@ router.put('/me/profile', auth, (req, res) => {
     run_days_per_week ?? null,
     lift_days_per_week ?? null,
     sex ?? null,
+    schedule_type ?? null,
+    lifestyle ?? null,
+    preferred_workout_time ?? null,
+    preferred_workout_days ? JSON.stringify(preferred_workout_days) : null,
+    missed_workout_pref ?? null,
+    weekly_workout_days ?? null,
     req.user.id
   );
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);

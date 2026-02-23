@@ -14,6 +14,14 @@ async function generateTrainingPlan(profile) {
     base_building: 'building aerobic base mileage',
   }[profile.goal_type] || 'building fitness';
 
+  // Get schedule preferences
+  const scheduleInfo = profile.schedule_type ? `
+- Schedule style: ${profile.schedule_type} (flexible/structured/adaptive)
+- Lifestyle: ${profile.lifestyle || 'works_fulltime'}
+- Preferred workout time: ${profile.preferred_workout_time || 'evening'}
+- Preferred workout days per week: ${profile.weekly_workout_days || 4}
+- If missed workout: ${profile.missed_workout_pref || 'adjust_week'}` : '';
+
   const prompt = `You are an expert running coach. Create a 4-week training plan for this athlete:
 - Name: ${profile.name}
 - Current weekly miles: ${profile.weekly_miles_current}
@@ -21,7 +29,7 @@ async function generateTrainingPlan(profile) {
 - Run days per week: ${profile.run_days_per_week}
 - Lift days per week: ${profile.lift_days_per_week}
 - Injury notes: ${profile.injury_notes || 'none'}
-- Comeback mode: ${profile.comeback_mode ? 'YES — be very conservative, no speed work for first 2 weeks' : 'no'}
+- Comeback mode: ${profile.comeback_mode ? 'YES — be very conservative, no speed work for first 2 weeks' : 'no'}${scheduleInfo}
 
 Return ONLY valid JSON in this exact format, no other text:
 {
@@ -74,6 +82,12 @@ async function generateRunFeedback(run, profile) {
     ? `${Math.floor(durationMin / run.distance_miles)}:${String(Math.round((durationMin / run.distance_miles % 1) * 60)).padStart(2, '0')}/mi`
     : 'unknown pace';
 
+  // Get schedule preferences
+  const scheduleContext = profile.schedule_type ? `
+- Schedule style: ${profile.schedule_type}
+- Lifestyle: ${profile.lifestyle || 'works_fulltime'}
+- Preferred training time: ${profile.preferred_workout_time || 'evening'}` : '';
+
   const prompt = `You are a running coach with a ${voice} personality.
 Give 2-3 sentences of feedback on this run. Be specific to the data. Do NOT mention BMI or weight loss.
 
@@ -83,7 +97,7 @@ Run data:
 - Duration: ${durationMin} min (${pace})
 - Perceived effort: ${run.perceived_effort}/10
 - Notes from athlete: ${run.notes || 'none'}
-- Athlete context: ${profile.injury_notes || 'healthy'}, goal: ${profile.goal_type}, weekly base: ${profile.weekly_miles_current} mi/week
+- Athlete context: ${profile.injury_notes || 'healthy'}, goal: ${profile.goal_type}, weekly base: ${profile.weekly_miles_current} mi/week${scheduleContext}
 
 Keep it under 60 words total. No headers, no bullet points — just natural coaching feedback.`;
 

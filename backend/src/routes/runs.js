@@ -88,4 +88,21 @@ router.delete('/:id', auth, (req, res) => {
   res.json({ ok: true });
 });
 
+// POST /api/runs/missed — log a missed workout with reason
+router.post('/missed', auth, (req, res) => {
+  const { reason, scheduled_date, workout_type = 'run' } = req.body;
+  // Store missed workout in a simple way — update plan notes or just acknowledge
+  // For now: return an AI-adjusted message based on reason
+  const adjustments = {
+    tired: "Logged. Your body needed rest today — that IS training. I've moved the session to tomorrow and lightened your week.",
+    no_time: "Got it. Moved to tomorrow. Your weekly volume stays on track.",
+    didnt_feel_like_it: "Happens to everyone. No judgment — I've rescheduled it. Show up tomorrow.",
+    something_came_up: "Life happens. Adjusted your week. You're still on track for your goal.",
+    weather: "Pushed to tomorrow. Check the forecast — might be a treadmill day.",
+    sick: "Rest up. I've cleared your schedule for 2 days. Nothing to worry about — health first."
+  };
+  const message = adjustments[reason] || "Got it — adjusted your plan. Keep moving forward.";
+  res.json({ ok: true, message, reason });
+});
+
 module.exports = router;

@@ -3,6 +3,7 @@ import { Pencil, Trash2 } from 'lucide-react'
 import api from '../lib/api'
 import EditRunModal from '../components/EditRunModal'
 import EditLiftModal from '../components/EditLiftModal'
+import MissedWorkoutModal from '../components/MissedWorkoutModal'
 
 function getRunDate(run) {
   return run.date || run.created_at?.slice(0, 10) || ''
@@ -30,6 +31,7 @@ export default function History() {
   const [expanded, setExpanded] = useState({})
   const [editingRun, setEditingRun] = useState(null)
   const [editingLift, setEditingLift] = useState(null)
+  const [showMissedModal, setShowMissedModal] = useState(false)
 
   useEffect(() => {
     ;(async () => {
@@ -167,6 +169,12 @@ export default function History() {
               <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Lace up and log your next run.</p>
             </div>
           )}
+
+          <button onClick={() => setShowMissedModal(true)}
+            className="w-full py-3 rounded-xl text-sm mt-2"
+            style={{ background: 'var(--bg-input)', color: 'var(--text-muted)' }}>
+            Miss a workout? Let me know — I'll adjust your plan
+          </button>
         </div>
       )}
 
@@ -206,6 +214,7 @@ export default function History() {
 
       {editingRun && <EditRunModal run={editingRun} onSave={updateRunInState} onClose={() => setEditingRun(null)} />}
       {editingLift && <EditLiftModal lift={editingLift} onSave={updateLiftInState} onClose={() => setEditingLift(null)} />}
+      {showMissedModal && <MissedWorkoutModal onClose={() => setShowMissedModal(false)} />}
     </div>
   )
 }
