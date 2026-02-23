@@ -50,8 +50,7 @@ export default function ActiveWorkout() {
   const [restRunning, setRestRunning] = useState(false)
   const restRef = useRef(null)
 
-  const [showHR, setShowHR] = useState(false)
-  const [hr, setHr] = useState('')
+  const [hrInfo, setHrInfo] = useState(null)
 
   const [ending, setEnding] = useState(false)
 
@@ -75,6 +74,15 @@ export default function ActiveWorkout() {
       setSets(res.data?.sets || [])
     }).catch(() => {})
   }, [id])
+
+  useEffect(() => {
+    api.get('/runs').then((r) => {
+      const latest = (r.data?.runs || [])[0]
+      if (latest?.avg_heart_rate) {
+        setHrInfo({ bpm: latest.avg_heart_rate, ts: latest.created_at || latest.date })
+      }
+    }).catch(() => {})
+  }, [])
 
   useEffect(() => {
     if (restRunning && restSeconds > 0) {
@@ -131,6 +139,7 @@ export default function ActiveWorkout() {
         <div>
           <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Workout Time</p>
           <p className="text-3xl font-bold tabular-nums" style={{ color: 'var(--accent)' }}>{fmtDuration(elapsed)}</p>
+          <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>{hrInfo ? `HR: ${hrInfo.bpm} bpm · ${Math.max(1, Math.round((Date.now()-new Date(hrInfo.ts).getTime())/60000))} min ago` : 'No watch data yet — sync your watch to unlock this'}</p>
         </div>
         <button onClick={endWorkout} disabled={ending} className="rounded-xl px-5 py-3 font-bold text-sm" style={{ background: 'rgba(239,68,68,0.15)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)' }}>
           {ending ? 'Ending...' : 'End Workout'}
@@ -141,18 +150,7 @@ export default function ActiveWorkout() {
         <button onClick={() => setShowRest(v => !v)} className="rounded-full px-3 py-1.5 text-xs font-medium border transition-all" style={showRest ? { background: 'var(--accent-dim)', borderColor: 'var(--accent)', color: 'var(--accent)' } : { background: 'var(--bg-card)', borderColor: 'var(--border-subtle)', color: 'var(--text-muted)' }}>
           Rest Timer
         </button>
-        <button onClick={() => setShowHR(v => !v)} className="rounded-full px-3 py-1.5 text-xs font-medium border transition-all" style={showHR ? { background: 'var(--accent-dim)', borderColor: 'var(--accent)', color: 'var(--accent)' } : { background: 'var(--bg-card)', borderColor: 'var(--border-subtle)', color: 'var(--text-muted)' }}>
-          Heart Rate
-        </button>
       </div>
-
-      {showHR && (
-        <div className="rounded-xl p-3 flex items-center gap-3" style={{ background: 'var(--bg-card)' }}>
-          <span className="text-sm" style={{ color: 'var(--text-muted)' }}>HR (bpm)</span>
-          <input type="number" min="40" max="220" placeholder="e.g. 145" value={hr} onChange={e => setHr(e.target.value)} className="w-24 rounded-lg px-3 py-2 text-center font-bold border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }} />
-          <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Auto-sync coming soon</span>
-        </div>
-      )}
 
       {showRest && (
         <div className="rounded-xl p-3 space-y-2" style={{ background: 'var(--bg-card)' }}>

@@ -182,6 +182,7 @@ export default function Dashboard() {
   const [coachLabel, setCoachLabel] = useState('')
   const [firstName, setFirstName] = useState('')
   const [checkedInToday, setCheckedInToday] = useState(false)
+  const [hasWatchData, setHasWatchData] = useState(false)
   const [goalMode, setGoalMode] = useState('auto') // 'auto' | 'manual'
   const [manualGoalMiles, setManualGoalMiles] = useState(null)
   const [editingGoal, setEditingGoal] = useState(false)
@@ -202,7 +203,9 @@ export default function Dashboard() {
           api.get('/users/goal').catch(() => ({ data: null })),
         ])
         setStats(statsRes.data)
-        setRuns(Array.isArray(runsRes.data) ? runsRes.data : runsRes.data?.runs || [])
+        const runsList = Array.isArray(runsRes.data) ? runsRes.data : runsRes.data?.runs || []
+        setRuns(runsList)
+        setHasWatchData(runsList.some((r) => r.avg_heart_rate || r.watch_mode || r.route_coords))
         setLifts(Array.isArray(liftsRes.data) ? liftsRes.data : liftsRes.data?.lifts || [])
         setWarning(warningRes.data?.warning === true)
         const coaches = { mentor: 'Mentor', hype_coach: 'Hype Coach', drill_sergeant: 'Drill Sergeant', training_partner: 'Training Partner' }
@@ -230,7 +233,7 @@ export default function Dashboard() {
 
   // Compute readiness from stats
   const { readiness, readinessBreakdown } = useMemo(() => {
-    if (!stats) return { readiness: 50, readinessBreakdown: [] }
+    if (!stats || !checkedInToday || !hasWatchData) return { readiness: null, readinessBreakdown: [] }
     const { streak, week, all } = stats
     let score = 50
     const breakdown = []
@@ -270,7 +273,7 @@ export default function Dashboard() {
       readiness: Math.max(1, Math.min(99, Math.round(score))),
       readinessBreakdown: breakdown
     }
-  }, [stats])
+  }, [stats, checkedInToday, hasWatchData])
 
   // Monthly challenge
   const monthlyGoal = useMemo(() => {
@@ -320,14 +323,6 @@ export default function Dashboard() {
         }
       `}</style>
 
-      {!checkedInToday && (
-        <a href="/checkin"
-          style={{ display: 'block', background: 'rgba(234,179,8,0.12)', border: '1px solid rgba(234,179,8,0.3)', borderRadius: 14, padding: '12px 16px', marginBottom: 12, textDecoration: 'none' }}>
-          <p style={{ color: 'var(--accent)', fontWeight: 700, fontSize: 14, margin: 0 }}>Quick check-in — 3 taps</p>
-          <p style={{ color: 'var(--text-muted)', fontSize: 12, margin: '2px 0 0' }}>Help me adjust today's plan around your day</p>
-        </a>
-      )}
-
       {/* Greeting */}
       <div className="flex items-start justify-between">
         <div>
@@ -337,8 +332,22 @@ export default function Dashboard() {
           </h2>
           {coachLabel && <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>Coach: {coachLabel}</p>}
         </div>
-        <WatchSyncWidget />
+        <div className="flex items-center gap-3">
+          <button onClick={() => readiness !== null && setShowReadinessModal(true)} className="rounded-xl px-3 py-2" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)', cursor: readiness !== null ? 'pointer' : 'default' }}>
+            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Readiness</p>
+            <p className="text-sm font-bold" style={{ color: 'var(--accent)' }}>{readiness !== null ? readiness : '--'}</p>
+          </button>
+          <WatchSyncWidget />
+        </div>
       </div>
+
+      {!checkedInToday && (
+        <a href="/checkin"
+          style={{ display: 'block', background: 'rgba(234,179,8,0.12)', border: '1px solid rgba(234,179,8,0.3)', borderRadius: 14, padding: '12px 16px', marginBottom: 12, textDecoration: 'none' }}>
+          <p style={{ color: 'var(--accent)', fontWeight: 700, fontSize: 14, margin: 0 }}>Quick check-in — 3 taps</p>
+          <p style={{ color: 'var(--text-muted)', fontSize: 12, margin: '2px 0 0' }}>Help me adjust today's plan around your day</p>
+        </a>
+      )}
 
       {/* Ready to Run CTA */}
       <div className="rounded-2xl p-6 flex flex-col items-center" style={{ background: 'var(--bg-card)' }}>
@@ -362,7 +371,14 @@ export default function Dashboard() {
 
       {/* Training Readiness */}
       <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>
-        <ReadinessGauge score={readiness} onClick={() => setShowReadinessModal(true)} />
+        {readiness === null ? (
+          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Complete your daily check-in and sync your watch to unlock your Training Readiness score</p>
+        ) : (
+          <>
+            <ReadinessGauge score={readiness} onClick={() => setShowReadinessModal(true)} />
+            <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>Based on your HRV, sleep, soreness, and energy levels</p>
+          </>
+        )}
       </div>
 
       {/* 7-day calendar */}
@@ -403,10 +419,10 @@ export default function Dashboard() {
         {/* Period tabs — pill-style: All | D | W | M */}
         <div className="flex gap-2">
           {[
-            { key: 'all', label: 'All' },
             { key: 'day',   label: 'D'   },
             { key: 'week',  label: 'W'   },
             { key: 'month', label: 'M'   },
+            { key: 'all', label: 'All' },
           ].map(({ key, label }) => (
             <button key={key} onClick={() => setPeriod(key)}
               className="px-4 py-1.5 rounded-full text-xs font-semibold transition-all"
@@ -463,94 +479,6 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Monthly Challenge */}
-      {monthlyGoal && (
-        <div className="rounded-2xl p-5 mb-4" style={{ background: 'var(--bg-card)' }}>
-          {/* Header row */}
-          <div className="flex items-center justify-between mb-3">
-            <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Monthly Challenge</p>
-            {/* Auto / Manual toggle */}
-            <div className="flex rounded-lg overflow-hidden" style={{ border: '1px solid var(--border-subtle)' }}>
-              {['auto', 'manual'].map(m => (
-                <button key={m} onClick={() => {
-                  setGoalMode(m)
-                  api.put('/users/goal', { miles: manualGoalMiles, mode: m }).catch(() => {})
-                  if (m === 'manual' && !manualGoalMiles) setEditingGoal(true)
-                }}
-                  style={{
-                    padding: '4px 12px', fontSize: 11, fontWeight: 700, border: 'none', cursor: 'pointer',
-                    background: goalMode === m ? 'var(--accent)' : 'var(--bg-input)',
-                    color: goalMode === m ? '#000' : 'var(--text-muted)',
-                    textTransform: 'capitalize',
-                  }}>
-                  {m}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Goal display / edit */}
-          {editingGoal ? (
-            <div className="flex gap-2 mb-3 items-center">
-              <input
-                type="number"
-                value={goalInput}
-                onChange={e => setGoalInput(e.target.value)}
-                placeholder="e.g. 100"
-                autoFocus
-                style={{
-                  flex: 1, background: 'var(--bg-input)', border: '1px solid var(--accent)',
-                  borderRadius: 8, padding: '8px 12px', color: 'var(--text-primary)',
-                  fontSize: 14, outline: 'none',
-                }}
-              />
-              <button onClick={async () => {
-                const miles = parseFloat(goalInput)
-                if (!miles || miles <= 0) return
-                setManualGoalMiles(miles)
-                setEditingGoal(false)
-                await api.put('/users/goal', { miles, mode: 'manual' }).catch(() => {})
-              }}
-                style={{
-                  background: 'var(--accent)', color: '#000', fontWeight: 700,
-                  borderRadius: 8, padding: '8px 16px', border: 'none', cursor: 'pointer', fontSize: 13,
-                }}>
-                Set
-              </button>
-              <button onClick={() => setEditingGoal(false)}
-                style={{ color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13 }}>
-                Cancel
-              </button>
-            </div>
-          ) : (
-            <div className="flex items-center justify-between mb-1">
-              <div className="flex items-baseline gap-2">
-                <p className="text-2xl font-black" style={{ color: 'var(--text-primary)' }}>{monthlyGoal.miles.toFixed(1)}</p>
-                <p className="text-sm" style={{ color: 'var(--text-muted)' }}>/ {monthlyGoal.goal} mi</p>
-              </div>
-              {goalMode === 'manual' && (
-                <button onClick={() => { setGoalInput(String(manualGoalMiles || '')); setEditingGoal(true) }}
-                  style={{ color: 'var(--text-muted)', fontSize: 12, background: 'none', border: 'none', cursor: 'pointer' }}>
-                  Edit goal
-                </button>
-              )}
-            </div>
-          )}
-
-          {/* Progress bar */}
-          <div className="rounded-full overflow-hidden mb-2" style={{ height: 8, background: 'var(--bg-input)' }}>
-            <div className="h-full rounded-full transition-all" style={{ width: `${monthlyGoal.pct}%`, background: 'var(--accent)' }} />
-          </div>
-
-          <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-            {monthlyGoal.miles >= monthlyGoal.goal
-              ? 'Challenge complete!'
-              : `${(monthlyGoal.goal - monthlyGoal.miles).toFixed(1)} mi to go`}
-            {goalMode === 'auto' && <span style={{ opacity: 0.5 }}> · Auto goal</span>}
-          </p>
-        </div>
-      )}
-
       {/* AI Warning */}
       {warning && (
         <div className="rounded-xl border p-3 text-sm" style={{ borderColor: 'rgba(234,179,8,0.3)', background: 'rgba(234,179,8,0.08)', color: 'var(--accent)' }}>
@@ -563,7 +491,7 @@ export default function Dashboard() {
         <h3 className="text-sm font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>Recent Activity</h3>
         <div className="space-y-3">
           {recentActivity.map(item => item._type === 'run' ? (
-            <div key={item.id} className="rounded-xl p-3 border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)' }}>
+            <div key={item.id} onClick={() => navigate(`/history?runId=${item.id}`)} className="rounded-xl p-3 border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', cursor: 'pointer' }}>
               <div className="flex items-center justify-between mb-1">
                 <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: 'var(--accent-dim)', color: 'var(--accent)' }}>Run</span>
                 <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
@@ -578,7 +506,7 @@ export default function Dashboard() {
               </div>
             </div>
           ) : (
-            <div key={item.id} className="rounded-xl p-3 border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)' }}>
+            <div key={item.id} onClick={() => navigate(`/history?workoutId=${item.id}`)} className="rounded-xl p-3 border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', cursor: 'pointer' }}>
               <div className="flex items-center justify-between mb-1">
                 <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: 'rgba(139,92,246,0.15)', color: '#a78bfa' }}>Lift</span>
                 <span className="text-xs" style={{ color: 'var(--text-muted)' }}>

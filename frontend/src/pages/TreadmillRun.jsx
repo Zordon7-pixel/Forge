@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import api from '../lib/api'
 
 const C = { accent: '#EAB308', card: 'var(--bg-card)', input: 'var(--bg-input)', muted: 'var(--text-muted)', primary: 'var(--text-primary)' }
@@ -12,11 +12,13 @@ function fmtTime(s) {
 
 export default function TreadmillRun() {
   const navigate = useNavigate()
+  const location = useLocation()
   const [status, setStatus] = useState('idle') // idle | running | paused | done
   const [elapsed, setElapsed] = useState(0)
   const [distance, setDistance] = useState('')
-  const [speed, setSpeed] = useState('')
-  const [incline, setIncline] = useState('0')
+  const [speed, setSpeed] = useState(location.state?.speed || '')
+  const [incline, setIncline] = useState(location.state?.incline || '0')
+  const [treadmillType, setTreadmillType] = useState(location.state?.treadmillType || 'Generic')
   const [effort, setEffort] = useState(5)
   const [notes, setNotes] = useState('')
   const [saving, setSaving] = useState(false)
@@ -55,7 +57,7 @@ export default function TreadmillRun() {
         run_surface: 'treadmill',
         distance_miles: Number(distance),
         duration_seconds: elapsed,
-        notes: notes || `Treadmill run. Speed: ${speed || '?'} mph, Incline: ${incline}%.`,
+        notes: notes || `Treadmill run (${treadmillType}). Speed: ${speed || '?'} mph, Incline: ${incline}%.`,
         perceived_effort: effort,
         treadmill_speed: Number(speed) || 0,
         incline_pct: Number(incline) || 0,
@@ -89,6 +91,12 @@ export default function TreadmillRun() {
         <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div style={{ background: 'var(--bg-card)', borderRadius: 16, padding: 16 }}>
             <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 12 }}>Set from treadmill display (optional)</p>
+            <div style={{ marginBottom: 10 }}>
+              <label style={{ color: 'var(--text-muted)', fontSize: 12, display: 'block', marginBottom: 4 }}>Treadmill Type</label>
+              <select value={treadmillType} onChange={e => setTreadmillType(e.target.value)} style={{ width: '100%', background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', borderRadius: 12, padding: '12px', fontSize: 14 }}>
+                {['Generic','Peloton','NordicTrack','Precor','Life Fitness','Other'].map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <div>
                 <label style={{ color: 'var(--text-muted)', fontSize: 12, display: 'block', marginBottom: 4 }}>Speed (mph)</label>

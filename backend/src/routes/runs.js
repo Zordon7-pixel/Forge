@@ -10,13 +10,13 @@ router.get('/', auth, (req, res) => {
 });
 
 router.post('/', auth, (req, res) => {
-  const { date, type, distance_miles, duration_seconds, perceived_effort, notes, run_surface, surface, incline_pct, treadmill_speed } = req.body;
+  const { date, type, distance_miles, duration_seconds, perceived_effort, notes, run_surface, surface, incline_pct, treadmill_speed, route_coords, watch_mode } = req.body;
   if (!date || !type) return res.status(400).json({ error: 'date and type required' });
   const id = uuidv4();
   const resolvedSurface = surface || run_surface || 'road';
-  db.prepare(`INSERT INTO runs (id, user_id, date, type, distance_miles, duration_seconds, perceived_effort, notes, run_surface, surface, incline_pct, treadmill_speed)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-    id, req.user.id, date, type, distance_miles || 0, duration_seconds || 0, perceived_effort || 5, notes || null, resolvedSurface, resolvedSurface, incline_pct || 0, treadmill_speed || 0
+  db.prepare(`INSERT INTO runs (id, user_id, date, type, distance_miles, duration_seconds, perceived_effort, notes, run_surface, surface, incline_pct, treadmill_speed, route_coords, watch_mode)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    id, req.user.id, date, type, distance_miles || 0, duration_seconds || 0, perceived_effort || 5, notes || null, resolvedSurface, resolvedSurface, incline_pct || 0, treadmill_speed || 0, JSON.stringify(route_coords || []), watch_mode || null
   );
 
   // Get user weight for calorie calc (default 185 if not set)

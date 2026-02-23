@@ -14,6 +14,7 @@ export default function Plan() {
   const [plan, setPlan] = useState(null)
   const [loading, setLoading] = useState(true)
   const [regenerating, setRegenerating] = useState(false)
+  const [runBriefs, setRunBriefs] = useState({})
 
   const loadPlan = async () => {
     try {
@@ -31,6 +32,19 @@ export default function Plan() {
     if (Array.isArray(plan.weekly_structure)) return plan.weekly_structure
     try { return JSON.parse(plan.weekly_structure) } catch { return [] }
   }, [plan])
+
+
+  useEffect(() => {
+    const runDays = weeklyStructure.filter((d) => {
+      const t = (d.workout_type || d.type || '').toLowerCase()
+      return !t.includes('rest') && !t.includes('strength') && !t.includes('cross')
+    })
+    runDays.forEach((d, i) => {
+      api.get(`/ai/run-brief?sessionId=${d.id || i}`).then((r) => {
+        setRunBriefs((prev) => ({ ...prev, [d.id || i]: r.data }))
+      }).catch(() => {})
+    })
+  }, [weeklyStructure])
 
   const regenerate = async () => {
     setRegenerating(true)
@@ -81,6 +95,12 @@ export default function Plan() {
                 <span className="rounded-full px-2 py-1 text-xs" style={badgeStyles[typeKey]}>{day.workout_type || day.type || 'Run'}</span>
               </div>
               <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{day.description || 'No description.'}</p>
+              {runBriefs[day.id || idx] && (
+                <div className="mt-2 rounded-lg p-2" style={{ background: 'var(--bg-input)' }}>
+                  <p className="text-xs" style={{ color: 'var(--text-primary)' }}>{runBriefs[day.id || idx].why}</p>
+                  <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Effort: {runBriefs[day.id || idx].effort} · BPM: {runBriefs[day.id || idx].bpmRange} · Cadence: {runBriefs[day.id || idx].cadence}</p>
+                </div>
+              )}
               {isToday && (
                 <div style={{ marginTop: 12 }}>
                   {(() => {

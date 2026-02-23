@@ -44,6 +44,7 @@ export default function WorkoutSummary() {
   const [saved, setSaved] = useState(false)
   const [loading, setLoading] = useState(true)
   const [summaryTab, setSummaryTab] = useState('overview')
+  const [bodyView, setBodyView] = useState('front')
   const [sets, setSets] = useState([])
 
   useEffect(() => {
@@ -115,7 +116,7 @@ export default function WorkoutSummary() {
         <h2 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>Summary</h2>
 
         <div style={{ display: 'flex', borderBottom: '1px solid var(--border-subtle)', marginTop: 12, marginBottom: 20 }}>
-          {['overview', 'stats', 'charts'].map((t) => (
+          {['overview', 'stats', 'charts', 'muscles'].map((t) => (
             <button
               key={t}
               onClick={() => setSummaryTab(t)}
@@ -228,6 +229,17 @@ export default function WorkoutSummary() {
               )
             })}
             {Object.keys(exerciseMap).length === 0 && <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>No exercise chart data available.</p>}
+          </div>
+        )}
+
+
+        {summaryTab === 'muscles' && (
+          <div style={{ marginTop: 8 }}>
+            <div className="flex gap-2 mb-3"> 
+              <button onClick={() => setBodyView('front')} className="rounded-full px-3 py-1 text-xs font-semibold" style={{ background: bodyView==='front' ? 'var(--accent)' : 'var(--bg-input)', color: bodyView==='front' ? '#000' : 'var(--text-muted)' }}>Front</button>
+              <button onClick={() => setBodyView('back')} className="rounded-full px-3 py-1 text-xs font-semibold" style={{ background: bodyView==='back' ? 'var(--accent)' : 'var(--bg-input)', color: bodyView==='back' ? '#000' : 'var(--text-muted)' }}>Back</button>
+            </div>
+            <MuscleDiagram view={bodyView} primaryMuscles={primary} secondaryMuscles={derivedSecondary} />
           </div>
         )}
 

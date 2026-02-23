@@ -15,6 +15,7 @@ function fmtValue(value, unit) {
 
 export default function Challenges() {
   const [activeTab, setActiveTab] = useState('challenges')
+  const [monthlyGoal, setMonthlyGoal] = useState(null)
   const [loading, setLoading] = useState(true)
   const [challenges, setChallenges] = useState([])
   const [myChallenges, setMyChallenges] = useState([])
@@ -65,12 +66,14 @@ export default function Challenges() {
   async function loadData() {
     setLoading(true)
     try {
-      const [allRes, myRes, todayRes, weekRes, feedRes] = await Promise.all([
+      const [allRes, myRes, todayRes, weekRes, feedRes, runsRes, goalRes] = await Promise.all([
         api.get('/challenges'),
         api.get('/challenges/my'),
         api.get('/challenges/steps/today'),
         api.get('/challenges/steps/week'),
         api.get('/challenges/feed'),
+        api.get('/runs'),
+        api.get('/users/goal').catch(() => ({ data: {} })),
       ])
       setChallenges(allRes.data?.challenges || [])
       setMyChallenges(myRes.data?.challenges || [])
@@ -78,6 +81,16 @@ export default function Challenges() {
       setWeek(weekRes.data || { days: [], weekTotal: 0, goal: 10000 })
       setFeed(feedRes.data?.feed || [])
       setFeedLastUpdated(new Date())
+      const runs = Array.isArray(runsRes.data) ? runsRes.data : runsRes.data?.runs || []
+      const now = new Date();
+      const month = now.getMonth();
+      const year = now.getFullYear();
+      const monthMiles = runs.filter((r) => {
+        const d = new Date((r.date || r.created_at || '') + 'T12:00:00')
+        return d.getMonth() === month && d.getFullYear() === year
+      }).reduce((sum, r) => sum + Number(r.distance_miles || 0), 0)
+      const goal = Number(goalRes.data?.miles || 100)
+      setMonthlyGoal({ miles: monthMiles, goal, pct: Math.min(100, (monthMiles / goal) * 100) })
     } finally {
       setLoading(false)
     }
@@ -185,6 +198,14 @@ export default function Challenges() {
             })}
           </div>
         </section>
+
+        {monthlyGoal && (
+          <section className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+            <h3 className="text-sm font-bold uppercase tracking-wider mb-2" style={{ color: 'var(--text-muted)' }}>Monthly Challenge</h3>
+            <p className="text-xl font-black" style={{ color: 'var(--text-primary)' }}>{monthlyGoal.miles.toFixed(1)} / {monthlyGoal.goal} miles</p>
+            <div className="h-2 rounded-full mt-2" style={{ background: 'var(--bg-input)' }}><div className="h-2 rounded-full" style={{ width: `${monthlyGoal.pct}%`, background: 'var(--accent)' }} /></div>
+          </section>
+        )}
 
         <section className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
           <div className="mb-3 flex items-center gap-2">

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import { Pencil, Trash2 } from 'lucide-react'
 import api from '../lib/api'
 import EditRunModal from '../components/EditRunModal'
@@ -34,6 +35,7 @@ function formatWorkoutDuration(totalSeconds = 0) {
 }
 
 export default function History() {
+  const location = useLocation()
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState('all')
   const [period, setPeriod] = useState('all')
@@ -64,6 +66,23 @@ export default function History() {
       setLoading(false)
     })()
   }, [])
+
+
+  useEffect(() => {
+    if (!loading) {
+      const params = new URLSearchParams(location.search)
+      const runId = params.get('runId')
+      const workoutId = params.get('workoutId')
+      if (runId) {
+        const r = runs.find((x) => x.id === runId)
+        if (r) setSelectedRun(r)
+      }
+      if (workoutId) {
+        const w = workoutSessions.find((x) => x.id === workoutId)
+        if (w) setSelectedWorkout(w)
+      }
+    }
+  }, [loading, location.search, runs, workoutSessions])
 
   const deleteRun = async (id, e) => {
     e.stopPropagation()

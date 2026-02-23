@@ -61,6 +61,8 @@ app.use('/api/prs', require('./routes/prs'));
 app.use('/api/badges', require('./routes/badges'));
 app.use('/api/challenges', require('./routes/challenges'));
 app.use('/api/social', require('./routes/social'));
+app.use('/api/ai', require('./routes/ai'));
+app.use('/api/community', require('./routes/community'));
 
 // Serve frontend
 const dist = path.join(__dirname, '../../frontend/dist');

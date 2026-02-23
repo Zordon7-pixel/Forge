@@ -71,6 +71,10 @@ export default function LogLift() {
   const [showExercisePicker, setShowExercisePicker] = useState(false)
   const [selectedExercise, setSelectedExercise] = useState(null)
   const [userSex, setUserSex] = useState('male')
+  const [timeAvailable, setTimeAvailable] = useState('')
+  const [liftPlan, setLiftPlan] = useState(null)
+  const [activeTab, setActiveTab] = useState('manual')
+  const [aiRecommendation, setAiRecommendation] = useState(null)
 
   useEffect(() => {
     api.get('/auth/me').then(res => {
@@ -79,6 +83,18 @@ export default function LogLift() {
   }, [])
 
   const selectedMuscleGroup = selected[0] || ''
+
+  useEffect(() => {
+    if (selectedMuscleGroup && timeAvailable && !selectedExercise) {
+      setShowExercisePicker(true)
+    }
+  }, [selectedMuscleGroup, timeAvailable])
+
+  useEffect(() => {
+    api.get('/ai/workout-recommendation?date=today').then((r) => setAiRecommendation(r.data?.recommendation || null)).catch(() => {})
+  }, [])
+
+
 
   const toggle = (key) => setSelected(prev => {
     const next = prev.includes(key) ? prev.filter(x => x !== key) : [...prev, key]
@@ -111,6 +127,25 @@ export default function LogLift() {
         <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Select the muscle groups you are targeting today</p>
       </div>
 
+      <div className="flex gap-2">
+        {['manual','ai'].map((t) => (
+          <button key={t} onClick={() => setActiveTab(t)} className="rounded-full px-4 py-2 text-xs font-bold" style={{ background: activeTab===t ? 'var(--accent)' : 'var(--bg-input)', color: activeTab===t ? '#000' : 'var(--text-muted)' }}>{t === 'manual' ? 'Manual' : 'AI Recommends'}</button>
+        ))}
+      </div>
+
+      {activeTab === 'ai' && aiRecommendation && (
+        <div className="rounded-2xl p-4" style={{ background: '#f8f2df', color: '#111', border: '1px solid #d6c9a0' }}>
+          <p className="text-lg font-bold">{aiRecommendation.workoutName} — {aiRecommendation.target}</p>
+          <p className="text-sm mt-2"><strong>Warmup:</strong> {(aiRecommendation.warmup || []).join(', ')}</p>
+          <p className="text-sm mt-2"><strong>Main:</strong> {(aiRecommendation.main || []).map((m) => `${m.name} ${m.sets}x${m.reps} (${m.rest})`).join(' • ')}</p>
+          <p className="text-sm mt-2"><strong>Recovery:</strong> {(aiRecommendation.recovery || []).join(', ')}</p>
+          <p className="text-sm mt-2">{aiRecommendation.explanation}</p>
+          <p className="text-xs mt-1">{aiRecommendation.restExplanation}</p>
+        </div>
+      )}
+
+      {activeTab === 'manual' && (
+      <>
       {/* 3-column silhouette grid */}
       <div className="grid grid-cols-3 gap-3">
         {MUSCLE_GROUPS.map(({ key, label }) => {
@@ -165,19 +200,21 @@ export default function LogLift() {
       </div>
 
       {selectedMuscleGroup && (
-        <div>
-          <button
-            onClick={() => setShowExercisePicker(true)}
-            className="w-full mt-2 py-3 px-4 rounded-xl text-sm font-semibold text-left flex items-center justify-between"
-            style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>
-            <span>{selectedExercise ? selectedExercise.name : 'Choose exercise...'}</span>
-            <span style={{ color: 'var(--text-muted)' }}>›</span>
-          </button>
-          {selectedExercise && (
-            <p className="text-xs mt-1 px-1" style={{ color: 'var(--text-muted)' }}>
-              {selectedExercise.secondary_muscles && `Also targets: ${selectedExercise.secondary_muscles}`}
-            </p>
-          )}
+        <div className="space-y-2">
+          <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>How much time do you have?</p>
+          <div className="flex flex-wrap gap-2">
+            {['15','30','45','60','90+'].map((t) => (
+              <button key={t} type="button" onClick={async () => {
+                setTimeAvailable(t)
+                const r = await api.post('/ai/lift-plan', { bodyPart: selectedMuscleGroup, timeAvailable: t, userId: 'me' }).catch(() => null)
+                setLiftPlan(r?.data?.plan || null)
+              }} className="rounded-full px-3 py-1 text-xs font-semibold" style={{ background: timeAvailable===t ? 'var(--accent)' : 'var(--bg-input)', color: timeAvailable===t ? '#000' : 'var(--text-muted)' }}>
+                {t} min
+              </button>
+            ))}
+          </div>
+          {selectedExercise && <p className="text-sm" style={{ color: 'var(--text-primary)' }}>Exercise: {selectedExercise.name}</p>}
+          {liftPlan && <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{liftPlan.workoutName} · Estimated: {liftPlan.estimatedTime}</p>}
         </div>
       )}
 
@@ -199,6 +236,8 @@ export default function LogLift() {
       >
         {loading ? 'Starting...' : 'Begin Workout'}
       </button>
+      </>
+      )}
     </div>
   )
 }

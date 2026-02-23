@@ -227,6 +227,9 @@ if (!runCols.includes('treadmill_speed')) db.prepare("ALTER TABLE runs ADD COLUM
 if (!runCols.includes('pain_level')) db.prepare("ALTER TABLE runs ADD COLUMN pain_level TEXT").run();
 if (!runCols.includes('post_energy')) db.prepare("ALTER TABLE runs ADD COLUMN post_energy TEXT").run();
 if (!runCols.includes('surface')) db.prepare("ALTER TABLE runs ADD COLUMN surface TEXT DEFAULT 'road'").run();
+if (!runCols.includes('route_coords')) db.prepare("ALTER TABLE runs ADD COLUMN route_coords TEXT DEFAULT '[]'").run();
+if (!runCols.includes('avg_heart_rate')) db.prepare("ALTER TABLE runs ADD COLUMN avg_heart_rate INTEGER").run();
+if (!runCols.includes('watch_mode')) db.prepare("ALTER TABLE runs ADD COLUMN watch_mode TEXT").run();
 
 const liftCols = db.prepare("PRAGMA table_info(lifts)").all().map(c => c.name);
 if (!liftCols.includes('exercise_name')) {
@@ -287,5 +290,36 @@ const seasonalBadges = [
 
 const seasonalStmt = db.prepare("INSERT OR IGNORE INTO badges (slug, name, description, icon, category, requirement_type, requirement_value, window_start, window_end, color) VALUES (?,?,?,?,?,?,?,?,?,?)")
 seasonalBadges.forEach(b => seasonalStmt.run(b.slug, b.name, b.description, b.icon, b.category, b.requirement_type, b.requirement_value, b.window_start, b.window_end, b.color))
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS community_workouts (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    workout_name TEXT NOT NULL,
+    target TEXT,
+    warmup_json TEXT DEFAULT '[]',
+    main_json TEXT DEFAULT '[]',
+    recovery_json TEXT DEFAULT '[]',
+    explanation TEXT,
+    rest_notes TEXT,
+    usage_count INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS watch_sync (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    hrv REAL,
+    sleep_quality INTEGER,
+    energy INTEGER,
+    soreness INTEGER,
+    current_hr INTEGER,
+    watch_mode TEXT,
+    treadmill_type TEXT,
+    incline_pct REAL,
+    speed_mph REAL,
+    synced_at TEXT DEFAULT (datetime('now'))
+  );
+`);
 
 module.exports = db;

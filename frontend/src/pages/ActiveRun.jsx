@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { MapContainer, Marker, Polyline, TileLayer } from 'react-leaflet'
+import L from 'leaflet'
 import api from '../lib/api'
 import PostRunCheckIn from '../components/PostRunCheckIn'
 
@@ -28,6 +30,8 @@ export default function ActiveRun() {
   const [saving, setSaving] = useState(false)
   const [showPostCheckIn, setShowPostCheckIn] = useState(false)
   const [savedRunId, setSavedRunId] = useState(null)
+  const [mapMyRun, setMapMyRun] = useState(false)
+  const [routeCoords, setRouteCoords] = useState([])
   const watchRef = useRef(null)
   const lastPointRef = useRef(null)
 
@@ -48,6 +52,7 @@ export default function ActiveRun() {
           const segment = haversineMiles(lastPointRef.current, point)
           if (segment > 0 && segment < 0.25) setDistanceMiles(v => v + segment)
         }
+        if (mapMyRun) setRouteCoords((prev) => [...prev, [point.lat, point.lon]])
         lastPointRef.current = point
       },
       err => {
@@ -108,7 +113,8 @@ export default function ActiveRun() {
         distance_miles: distanceMiles,
         duration_seconds: elapsed,
         notes: '',
-        perceived_effort: 5
+        perceived_effort: 5,
+        route_coords: routeCoords.map(([lat, lon]) => ({ lat, lon }))
       })
       const runId = res.data?.id || res.data?.run?.id
       if (runId) {
@@ -158,18 +164,33 @@ export default function ActiveRun() {
         </div>
       </div>
 
+      {mapMyRun && routeCoords.length > 0 && (
+        <div className="mb-4 rounded-xl overflow-hidden" style={{ height: 240 }}>
+          <MapContainer center={routeCoords[routeCoords.length - 1]} zoom={15} style={{ height: '100%', width: '100%' }}>
+            <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+            <Marker position={routeCoords[routeCoords.length - 1]} />
+            <Polyline positions={routeCoords} pathOptions={{ color: '#EAB308', weight: 4 }} />
+          </MapContainer>
+        </div>
+      )}
+
       {!running && !countingDown && (
-        <button
-          onClick={() => {
-            setCountdownVal(selectedCountdown)
-            setCountingDown(selectedCountdown > 0)
-            if (selectedCountdown === 0) startGPS()
-          }}
-          className="w-full rounded-xl py-3 font-black"
-          style={{ background: 'var(--accent)', color: '#000' }}
-        >
-          Start Run
-        </button>
+        <>
+          <button onClick={() => setMapMyRun(v => !v)} className="w-full rounded-xl py-2 font-semibold mb-2" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}>
+            {mapMyRun ? 'Map my run: On' : 'Map my run: Off'}
+          </button>
+          <button
+            onClick={() => {
+              setCountdownVal(selectedCountdown)
+              setCountingDown(selectedCountdown > 0)
+              if (selectedCountdown === 0) startGPS()
+            }}
+            className="w-full rounded-xl py-3 font-black"
+            style={{ background: 'var(--accent)', color: '#000' }}
+          >
+            Start Run
+          </button>
+        </>
       )}
 
       {running && (

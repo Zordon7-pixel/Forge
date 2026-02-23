@@ -20,9 +20,10 @@ const WARM_UP_STEPS = [
 
 const SURFACE_OPTIONS = [
   { value: 'road', label: 'Road', icon: MapPin },
-  { value: 'trail', label: 'Trail', icon: Mountain },
   { value: 'track', label: 'Track', icon: RefreshCw },
+  { value: 'trail', label: 'Trail', icon: Mountain },
   { value: 'treadmill', label: 'Treadmill', icon: Gauge },
+  { value: 'other', label: 'Other', icon: MapPin },
 ]
 
 const PANEL_KEY = 'forge_run_detail_panels'
@@ -153,6 +154,10 @@ export default function LogRun() {
   const [activeTab, setActiveTab] = useState('today')
   const [countdown, setCountdown] = useState(3)
   const [surface, setSurface] = useState('road')
+  const [runType, setRunType] = useState('easy')
+  const [environment, setEnvironment] = useState('outside')
+  const [treadmillType, setTreadmillType] = useState('Generic')
+  const [runBrief, setRunBrief] = useState(null)
 
   const [date, setDate] = useState(todayISO())
   const [distance, setDistance] = useState('')
@@ -222,6 +227,24 @@ export default function LogRun() {
       .finally(() => setWeekPlanLoading(false))
   }, [activeTab, weekPlan])
 
+
+  useEffect(() => {
+    const sid = selectedRun?.id || todayWorkout?.id
+    if (!sid) return
+    api.get(`/ai/run-brief?sessionId=${sid}`).then((r) => setRunBrief(r.data || null)).catch(() => setRunBrief(null))
+  }, [selectedRun?.id, todayWorkout?.id])
+
+  const estimatedTime = useMemo(() => {
+    const dist = Number(distance || todayWorkout?.distanceLabel?.split(' ')[0] || 0)
+    if (!dist || recentRuns.length === 0) return null
+    const paces = recentRuns.filter(r => r.distance_miles > 0 && r.duration_seconds > 0).map(r => r.duration_seconds / 60 / r.distance_miles)
+    if (!paces.length) return null
+    const avg = paces.reduce((a,b)=>a+b,0) / paces.length
+    const low = Math.round((avg * 0.95) * dist)
+    const high = Math.round((avg * 1.05) * dist)
+    return { low, high, avg }
+  }, [distance, todayWorkout, recentRuns])
+
   const onSubmit = async e => {
     e.preventDefault()
     setError('')
@@ -231,8 +254,12 @@ export default function LogRun() {
 
     try {
       setLoading(true)
-      const runType = surface === 'treadmill' ? 'treadmill' : surface === 'trail' ? 'trail' : 'easy'
-      const runRes = await api.post('/runs', { date, type: runType, surface, run_surface: surface, distance_miles: Number(distance), duration_seconds: seconds, notes, perceived_effort: Number(effort) })
+      const resolvedSurface = environment === 'inside' ? 'treadmill' : surface
+      if (resolvedSurface === 'treadmill') {
+        navigate('/run/treadmill', { state: { treadmillType } })
+        return
+      }
+      const runRes = await api.post('/runs', { date, type: runType, surface: resolvedSurface, run_surface: resolvedSurface, distance_miles: Number(distance), duration_seconds: seconds, notes, perceived_effort: Number(effort), treadmill_type: treadmillType })
       const runId = runRes.data?.id || runRes.data?.run?.id
       if (runId) api.post('/prs/auto-detect', { run_id: runId }).catch(() => {})
       api.post('/badges/check', {}).catch(() => {})
@@ -321,6 +348,12 @@ export default function LogRun() {
 
         {activeTab === 'today' && (
           <div>
+            {runBrief && (
+              <div className="rounded-xl p-3 mb-3" style={{ background: 'var(--bg-base)', border: '1px solid var(--border-subtle)' }}>
+                <p className="text-sm" style={{ color: 'var(--text-primary)' }}>{runBrief.why}</p>
+                <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>Effort: {runBrief.effort} · BPM: {runBrief.bpmRange} · Cadence: {runBrief.cadence}</p>
+              </div>
+            )}
             {todayLoading ? <p style={{ color: 'var(--text-muted)' }}>Loading workout...</p> : todayWorkout ? (
               <div className="rounded-2xl p-4" style={{ background: 'var(--bg-base)', border: '1px solid var(--border-subtle)' }}>
                 <span className="inline-block rounded-full px-3 py-1 text-xs font-bold mb-3" style={{ background: 'var(--accent)', color: '#000' }}>{todayWorkout.typeLabel}</span>
@@ -414,9 +447,24 @@ export default function LogRun() {
         {activeTab === 'log' && (
           <form onSubmit={onSubmit} className="space-y-4">
             <div className="rounded-2xl p-4" style={{ background: 'var(--bg-base)', border: '1px solid var(--border-subtle)' }}>
+              <p className="text-sm mb-2" style={{ color: 'var(--text-primary)' }}>Run type</p>
+              <div className="flex gap-2 mb-4">{['easy','tempo','long','walk'].map((t)=><button key={t} type="button" onClick={()=>setRunType(t)} className="rounded-full px-3 py-1 text-xs font-semibold" style={{background:runType===t?'var(--accent)':'var(--bg-card)',color:runType===t?'#000':'var(--text-muted)',border:'1px solid var(--border-subtle)'}}>{t === 'walk' ? 'Walk' : t.charAt(0).toUpperCase()+t.slice(1)}</button>)}</div>
+              <p className="text-sm mb-2" style={{ color: 'var(--text-primary)' }}>Are you running outside or inside?</p>
+              <div className="flex gap-2">{['outside','inside'].map((e)=><button key={e} type="button" onClick={()=>setEnvironment(e)} className="rounded-full px-3 py-1 text-xs font-semibold" style={{background:environment===e?'var(--accent)':'var(--bg-card)',color:environment===e?'#000':'var(--text-muted)',border:'1px solid var(--border-subtle)'}}>{e.charAt(0).toUpperCase()+e.slice(1)}</button>)}</div>
+              {environment === 'inside' && (
+                <div className="mt-3">
+                  <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>What treadmill are you using?</p>
+                  <select value={treadmillType} onChange={(e)=>setTreadmillType(e.target.value)} className="w-full rounded-xl px-3 py-2" style={{background:'var(--bg-card)',color:'var(--text-primary)',border:'1px solid var(--border-subtle)'}}>
+                    {['Generic','Peloton','NordicTrack','Precor','Life Fitness','Other'].map(o=><option key={o} value={o}>{o}</option>)}
+                  </select>
+                </div>
+              )}
+            </div>
+            <div className="rounded-2xl p-4" style={{ background: 'var(--bg-base)', border: '1px solid var(--border-subtle)' }}>
               <div className="text-center py-6">
                 <input type="number" step="0.1" min="0" required className="text-5xl font-bold bg-transparent text-center w-32 focus:outline-none" style={{ color: 'var(--accent)' }} value={distance} onChange={e => setDistance(e.target.value)} placeholder="0.0" />
                 <div className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>miles</div>
+                {estimatedTime && <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>Estimated time: {estimatedTime.low}–{estimatedTime.high} min based on your recent {Math.floor(estimatedTime.avg)}:{String(Math.round((estimatedTime.avg%1)*60)).padStart(2,'0')}/mi average pace</p>}
               </div>
             </div>
 
