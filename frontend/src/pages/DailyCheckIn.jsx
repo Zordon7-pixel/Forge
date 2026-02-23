@@ -3,11 +3,11 @@ import { useNavigate } from 'react-router-dom'
 import api from '../lib/api'
 
 const FEELINGS = [
-  { value: 1, label: 'Exhausted', icon: '😴' },
-  { value: 2, label: 'Tired', icon: '😔' },
-  { value: 3, label: 'Okay', icon: '😐' },
-  { value: 4, label: 'Good', icon: '🙂' },
-  { value: 5, label: 'Great', icon: '💪' },
+  { value: 1, label: 'Exhausted', img: '/checkin/exhausted.png' },
+  { value: 2, label: 'Tired',     img: '/checkin/tired.png' },
+  { value: 3, label: 'Okay',      img: '/checkin/okay.png' },
+  { value: 4, label: 'Good',      img: '/checkin/good.jpg' },
+  { value: 5, label: 'Great',     img: '/checkin/great.png' },
 ]
 
 const TIME_OPTIONS = [
@@ -75,7 +75,6 @@ export default function DailyCheckIn({ onComplete }) {
   if (adjustment) {
     return (
       <div style={{ minHeight: '100vh', background: 'var(--bg-base)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24, gap: 20, textAlign: 'center' }}>
-        <p style={{ fontSize: 42 }}>👊</p>
         <p style={{ fontSize: 16, lineHeight: 1.6, color: 'var(--text-primary)', maxWidth: 320 }}>{adjustment}</p>
         <button onClick={() => { onComplete?.(); navigate('/') }}
           style={{ background: 'var(--accent)', color: '#000', fontWeight: 900, borderRadius: 14, padding: '18px 48px', border: 'none', cursor: 'pointer', fontSize: 16 }}>
@@ -96,12 +95,16 @@ export default function DailyCheckIn({ onComplete }) {
           {FEELINGS.map(f => (
             <button key={f.value} onClick={() => setFeeling(f.value)}
               style={{
-                flex: 1, padding: '12px 4px', borderRadius: 14, border: `2px solid ${feeling === f.value ? 'var(--accent)' : 'var(--border-subtle)'}`,
-                background: feeling === f.value ? 'var(--accent-dim)' : 'var(--bg-card)',
-                cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
+                flex: 1, padding: 0, borderRadius: 14,
+                border: `2px solid ${feeling === f.value ? 'var(--accent)' : 'transparent'}`,
+                background: 'transparent', cursor: 'pointer', overflow: 'hidden',
+                boxShadow: feeling === f.value ? '0 0 12px rgba(234,179,8,0.5)' : 'none',
+                transition: 'box-shadow 0.2s, border-color 0.2s',
               }}>
-              <span style={{ fontSize: 22 }}>{f.icon}</span>
-              <span style={{ fontSize: 9, fontWeight: 600, color: feeling === f.value ? 'var(--accent)' : 'var(--text-muted)' }}>{f.label}</span>
+              <img src={f.img} alt={f.label}
+                style={{ width: '100%', display: 'block', borderRadius: 12,
+                  filter: feeling === f.value ? 'brightness(1.1)' : 'brightness(0.75)',
+                  transition: 'filter 0.2s' }} />
             </button>
           ))}
         </div>
