@@ -62,9 +62,9 @@ export default function PRWall() {
   const [showModal, setShowModal] = useState(false)
   const [form, setForm] = useState({
     category: 'run',
-    label: '',
+    label: RUNNING_PR_LABELS[0].label,
     value: '',
-    unit: 'mi',
+    unit: RUNNING_PR_LABELS[0].unit,
     achieved_at: new Date().toISOString().slice(0, 10),
     notes: ''
   })
@@ -251,62 +251,108 @@ export default function PRWall() {
       )}
 
       {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
-          <div className="w-full max-w-md rounded-2xl border p-5" style={{ background: 'var(--bg-card)', borderColor: 'var(--border-subtle)' }}>
-            <h3 className="text-xl font-black">Add Personal Record</h3>
-            <form className="mt-4 space-y-3" onSubmit={submitPR}>
-              <select
-                value={form.category}
-                onChange={e => setForm(prev => ({ ...prev, category: e.target.value }))}
-                className="w-full rounded-xl border px-3 py-2"
-                style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }}
-              >
-                <option value="run">Running</option>
-                <option value="lift">Lifting</option>
-              </select>
-              <input
-                required
-                placeholder="Label (e.g. 5K PR, Bench Press Max)"
-                value={form.label}
-                onChange={e => setForm(prev => ({ ...prev, label: e.target.value }))}
-                className="w-full rounded-xl border px-3 py-2"
-                style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }}
-              />
-              <input
-                required
-                type="number"
-                step="0.01"
-                placeholder="Value"
-                value={form.value}
-                onChange={e => setForm(prev => ({ ...prev, value: e.target.value }))}
-                className="w-full rounded-xl border px-3 py-2"
-                style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }}
-              />
-              <input
-                required
-                placeholder="Unit (mi, lbs, reps, min/mi)"
-                value={form.unit}
-                onChange={e => setForm(prev => ({ ...prev, unit: e.target.value }))}
-                className="w-full rounded-xl border px-3 py-2"
-                style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }}
-              />
-              <input
-                type="date"
-                value={form.achieved_at}
-                onChange={e => setForm(prev => ({ ...prev, achieved_at: e.target.value }))}
-                className="w-full rounded-xl border px-3 py-2"
-                style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }}
-              />
-              <input
-                placeholder="Notes (optional)"
-                value={form.notes}
-                onChange={e => setForm(prev => ({ ...prev, notes: e.target.value }))}
-                className="w-full rounded-xl border px-3 py-2"
-                style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }}
-              />
-              <div className="mt-2 flex gap-2">
-                <button type="submit" className="flex-1 rounded-xl px-4 py-2 font-bold" style={{ background: 'var(--accent)', color: '#000' }}>Save PR</button>
-                <button type="button" onClick={() => setShowModal(false)} className="flex-1 rounded-xl border px-4 py-2" style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-muted)' }}>Cancel</button>
+        <div className="fixed inset-0 z-50 flex items-end" style={{ background: 'rgba(0,0,0,0.75)' }}>
+          <div className="w-full rounded-t-2xl p-5 pb-10" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+            <h3 className="text-xl font-black mb-4" style={{ color: 'var(--text-primary)' }}>Add Personal Record</h3>
+            <form className="space-y-3" onSubmit={submitPR}>
+
+              {/* Category toggle */}
+              <div className="flex gap-2">
+                {[{ val: 'run', label: 'Running' }, { val: 'lift', label: 'Lifting' }].map(opt => (
+                  <button
+                    key={opt.val}
+                    type="button"
+                    onClick={() => {
+                      const labels = opt.val === 'run' ? RUNNING_PR_LABELS : LIFTING_PR_LABELS
+                      setForm(prev => ({ ...prev, category: opt.val, label: labels[0].label, unit: labels[0].unit }))
+                    }}
+                    style={{
+                      flex: 1, padding: '10px 0', borderRadius: 12, fontWeight: 700, fontSize: 14,
+                      background: form.category === opt.val ? 'var(--accent)' : 'var(--bg-input)',
+                      color: form.category === opt.val ? '#000' : 'var(--text-muted)',
+                      border: 'none', cursor: 'pointer'
+                    }}
+                  >{opt.label}</button>
+                ))}
+              </div>
+
+              {/* Label dropdown — running or lifting options */}
+              <div>
+                <p className="text-xs font-semibold mb-1" style={{ color: 'var(--text-muted)' }}>
+                  {form.category === 'run' ? 'Race / Distance' : 'Exercise'}
+                </p>
+                <select
+                  required
+                  value={form.label}
+                  onChange={e => {
+                    const labels = form.category === 'run' ? RUNNING_PR_LABELS : LIFTING_PR_LABELS
+                    const match = labels.find(l => l.label === e.target.value)
+                    setForm(prev => ({ ...prev, label: e.target.value, unit: match?.unit || prev.unit }))
+                  }}
+                  className="w-full rounded-xl border px-3 py-2.5"
+                  style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)', fontSize: 14 }}
+                >
+                  {(form.category === 'run' ? RUNNING_PR_LABELS : LIFTING_PR_LABELS).map(opt => (
+                    <option key={opt.label} value={opt.label}>{opt.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Value + unit */}
+              <div className="flex gap-3">
+                <div style={{ flex: 2 }}>
+                  <p className="text-xs font-semibold mb-1" style={{ color: 'var(--text-muted)' }}>
+                    {form.category === 'run'
+                      ? (form.unit === 'mi' ? 'Distance (miles)' : 'Pace (min per mile, e.g. 8.5 = 8:30)')
+                      : (form.unit === 'reps' ? 'Max Reps' : 'Max Weight (lbs)')}
+                  </p>
+                  <input
+                    required
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder={form.unit === 'min/mi' ? 'e.g. 7.5' : form.unit === 'mi' ? 'e.g. 13.1' : 'e.g. 225'}
+                    value={form.value}
+                    onChange={e => setForm(prev => ({ ...prev, value: e.target.value }))}
+                    className="w-full rounded-xl border px-3 py-2.5"
+                    style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)', fontSize: 14 }}
+                  />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <p className="text-xs font-semibold mb-1" style={{ color: 'var(--text-muted)' }}>Unit</p>
+                  <div className="w-full rounded-xl border px-3 py-2.5 text-sm" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-base)', color: 'var(--text-muted)' }}>
+                    {form.unit}
+                  </div>
+                </div>
+              </div>
+
+              {/* Date */}
+              <div>
+                <p className="text-xs font-semibold mb-1" style={{ color: 'var(--text-muted)' }}>Date Achieved</p>
+                <input
+                  type="date"
+                  value={form.achieved_at}
+                  onChange={e => setForm(prev => ({ ...prev, achieved_at: e.target.value }))}
+                  className="w-full rounded-xl border px-3 py-2.5"
+                  style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)', fontSize: 14 }}
+                />
+              </div>
+
+              {/* Notes */}
+              <div>
+                <p className="text-xs font-semibold mb-1" style={{ color: 'var(--text-muted)' }}>Notes (optional)</p>
+                <input
+                  placeholder={form.category === 'run' ? 'e.g. Chicago Marathon, felt strong' : 'e.g. competition lift, belt + sleeves'}
+                  value={form.notes}
+                  onChange={e => setForm(prev => ({ ...prev, notes: e.target.value }))}
+                  className="w-full rounded-xl border px-3 py-2.5"
+                  style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)', fontSize: 14 }}
+                />
+              </div>
+
+              <div className="flex gap-2 pt-1">
+                <button type="submit" className="flex-1 rounded-xl px-4 py-3 font-bold text-sm" style={{ background: 'var(--accent)', color: '#000', border: 'none', cursor: 'pointer' }}>Save PR</button>
+                <button type="button" onClick={() => setShowModal(false)} className="flex-1 rounded-xl border px-4 py-3 text-sm" style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-muted)', background: 'none', cursor: 'pointer' }}>Cancel</button>
               </div>
             </form>
           </div>
