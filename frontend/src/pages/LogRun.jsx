@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import api from '../lib/api'
 import { parseDuration, formatDurationDisplay } from '../lib/parseDuration'
+import PostRunCheckIn from '../components/PostRunCheckIn'
 
 function todayISO() {
   return new Date().toISOString().slice(0, 10)
@@ -22,6 +23,8 @@ export default function LogRun() {
   const [feedback, setFeedback] = useState('')
   const [error, setError] = useState('')
   const [showRecoveryPrompt, setShowRecoveryPrompt] = useState(false)
+  const [showPostCheckIn, setShowPostCheckIn] = useState(false)
+  const [savedRunId, setSavedRunId] = useState(null)
 
   const onSubmit = async e => {
     e.preventDefault()
@@ -47,11 +50,15 @@ export default function LogRun() {
       })
 
       const runId = runRes.data?.id || runRes.data?.run?.id
+      if (runId) api.post('/prs/auto-detect', { run_id: runId }).catch(() => {})
       if (!runId) {
         setFeedback('Feedback coming soon...')
         setShowRecoveryPrompt(true)
         return
       }
+
+      setSavedRunId(runId)
+      setShowPostCheckIn(true)
 
       setPolling(true)
       let attempts = 0
@@ -199,6 +206,10 @@ export default function LogRun() {
 
         <Link to="/" className="mt-5 inline-block text-sm" style={{ color: 'var(--text-muted)' }}>← Back</Link>
       </div>
+
+      {showPostCheckIn && savedRunId && (
+        <PostRunCheckIn runId={savedRunId} onDone={() => { setShowPostCheckIn(false); navigate('/') }} />
+      )}
 
       {showRecoveryPrompt && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">

@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
+import api from '../lib/api'
+import PostRunCheckIn from '../components/PostRunCheckIn'
 
 function haversineMiles(a, b) {
   const R = 3958.8
@@ -15,6 +17,7 @@ function haversineMiles(a, b) {
 
 export default function ActiveRun() {
   const location = useLocation()
+  const navigate = useNavigate()
   const selectedCountdown = location?.state?.countdown ?? 3
   const [countdownVal, setCountdownVal] = useState(selectedCountdown)
   const [countingDown, setCountingDown] = useState(selectedCountdown > 0)
@@ -22,6 +25,9 @@ export default function ActiveRun() {
   const [elapsed, setElapsed] = useState(0)
   const [distanceMiles, setDistanceMiles] = useState(0)
   const [gpsError, setGpsError] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [showPostCheckIn, setShowPostCheckIn] = useState(false)
+  const [savedRunId, setSavedRunId] = useState(null)
   const watchRef = useRef(null)
   const lastPointRef = useRef(null)
 
@@ -92,6 +98,38 @@ export default function ActiveRun() {
     return `${m}:${String(s).padStart(2, '0')}`
   }, [elapsed])
 
+  const saveRun = async () => {
+    setSaving(true)
+    try {
+      const res = await api.post('/runs', {
+        date: new Date().toISOString().slice(0, 10),
+        type: 'easy',
+        run_surface: 'outdoor',
+        distance_miles: distanceMiles,
+        duration_seconds: elapsed,
+        notes: '',
+        perceived_effort: 5
+      })
+      const runId = res.data?.id || res.data?.run?.id
+      if (runId) {
+        setSavedRunId(runId)
+        setShowPostCheckIn(true)
+      }
+    } catch (err) {
+      console.error('Failed to save run:', err)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const finishRun = () => {
+    setRunning(false)
+    if (watchRef.current != null && navigator?.geolocation) {
+      navigator.geolocation.clearWatch(watchRef.current)
+    }
+    saveRun()
+  }
+
   return (
     <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>
       {countingDown && (
@@ -134,7 +172,22 @@ export default function ActiveRun() {
         </button>
       )}
 
+      {running && (
+        <button
+          onClick={finishRun}
+          disabled={saving}
+          className="w-full rounded-xl py-3 font-black"
+          style={{ background: 'var(--accent)', color: '#000', opacity: saving ? 0.5 : 1 }}
+        >
+          {saving ? 'Saving...' : 'Finish Run'}
+        </button>
+      )}
+
       {gpsError && <p className="mt-3 text-sm" style={{ color: 'var(--accent)' }}>{gpsError}</p>}
+
+      {showPostCheckIn && savedRunId && (
+        <PostRunCheckIn runId={savedRunId} onDone={() => { setShowPostCheckIn(false); navigate('/') }} />
+      )}
 
       <Link to="/log-run" className="mt-5 inline-block text-sm" style={{ color: 'var(--text-muted)' }}>← Back</Link>
     </div>

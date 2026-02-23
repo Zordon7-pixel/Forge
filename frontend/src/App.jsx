@@ -17,6 +17,7 @@ import TreadmillRun from './pages/TreadmillRun'
 import DailyCheckIn from './pages/DailyCheckIn'
 import Stretches from './pages/Stretches'
 import StretchSession from './pages/StretchSession'
+import PRWall from './pages/PRWall'
 
 function PrivateRoute({ children }) {
   if (!isLoggedIn()) return <Navigate to="/login" replace />
@@ -96,6 +97,14 @@ export default function App() {
           element={
             <PrivateRoute>
               <History />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/prs"
+          element={
+            <PrivateRoute>
+              <PRWall />
             </PrivateRoute>
           }
         />

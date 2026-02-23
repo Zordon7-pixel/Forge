@@ -24,4 +24,21 @@ router.put('/goal', auth, (req, res) => {
   res.json({ ok: true });
 });
 
+// GET /api/users/settings
+router.get('/settings', auth, (req, res) => {
+  try { db.exec("ALTER TABLE users ADD COLUMN distance_unit TEXT DEFAULT 'miles'") } catch(_) {}
+  try { db.exec("ALTER TABLE users ADD COLUMN theme TEXT DEFAULT 'dark'") } catch(_) {}
+  const user = db.prepare('SELECT distance_unit, theme FROM users WHERE id = ?').get(req.user.id)
+  res.json({ distance_unit: user?.distance_unit || 'miles', theme: user?.theme || 'dark' })
+})
+
+// PUT /api/users/settings
+router.put('/settings', auth, (req, res) => {
+  try { db.exec("ALTER TABLE users ADD COLUMN distance_unit TEXT DEFAULT 'miles'") } catch(_) {}
+  try { db.exec("ALTER TABLE users ADD COLUMN theme TEXT DEFAULT 'dark'") } catch(_) {}
+  const { distance_unit, theme } = req.body
+  db.prepare("UPDATE users SET distance_unit = ?, theme = ? WHERE id = ?").run(distance_unit || 'miles', theme || 'dark', req.user.id)
+  res.json({ ok: true })
+})
+
 module.exports = router;

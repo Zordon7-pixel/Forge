@@ -141,6 +141,8 @@ if (!runCols.includes('calories')) {
 if (!runCols.includes('run_surface')) db.prepare("ALTER TABLE runs ADD COLUMN run_surface TEXT DEFAULT 'outdoor'").run();
 if (!runCols.includes('incline_pct')) db.prepare("ALTER TABLE runs ADD COLUMN incline_pct REAL DEFAULT 0").run();
 if (!runCols.includes('treadmill_speed')) db.prepare("ALTER TABLE runs ADD COLUMN treadmill_speed REAL DEFAULT 0").run();
+if (!runCols.includes('pain_level')) db.prepare("ALTER TABLE runs ADD COLUMN pain_level TEXT").run();
+if (!runCols.includes('post_energy')) db.prepare("ALTER TABLE runs ADD COLUMN post_energy TEXT").run();
 
 const liftCols = db.prepare("PRAGMA table_info(lifts)").all().map(c => c.name);
 if (!liftCols.includes('exercise_name')) {
