@@ -1,0 +1,27 @@
+const router = require('express').Router();
+const db = require('../db');
+const auth = require('../middleware/auth');
+
+// GET /api/users/goal — get monthly goal setting
+router.get('/goal', auth, (req, res) => {
+  // Ensure columns exist
+  try { db.exec('ALTER TABLE users ADD COLUMN monthly_goal_miles REAL') } catch(_) {}
+  try { db.exec('ALTER TABLE users ADD COLUMN monthly_goal_mode TEXT DEFAULT \'auto\'') } catch(_) {}
+  
+  const user = db.prepare('SELECT monthly_goal_miles, monthly_goal_mode FROM users WHERE id = ?').get(req.user.id);
+  res.json({ miles: user?.monthly_goal_miles || null, mode: user?.monthly_goal_mode || 'auto' });
+});
+
+// PUT /api/users/goal — save monthly goal setting
+router.put('/goal', auth, (req, res) => {
+  // Ensure columns exist
+  try { db.exec('ALTER TABLE users ADD COLUMN monthly_goal_miles REAL') } catch(_) {}
+  try { db.exec('ALTER TABLE users ADD COLUMN monthly_goal_mode TEXT DEFAULT \'auto\'') } catch(_) {}
+  
+  const { miles, mode } = req.body;
+  db.prepare('UPDATE users SET monthly_goal_miles = ?, monthly_goal_mode = ? WHERE id = ?')
+    .run(miles || null, mode || 'auto', req.user.id);
+  res.json({ ok: true });
+});
+
+module.exports = router;

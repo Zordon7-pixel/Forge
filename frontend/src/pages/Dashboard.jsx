@@ -109,17 +109,22 @@ export default function Dashboard() {
   const [coachLabel, setCoachLabel] = useState('')
   const [firstName, setFirstName] = useState('')
   const [checkedInToday, setCheckedInToday] = useState(false)
+  const [goalMode, setGoalMode] = useState('auto') // 'auto' | 'manual'
+  const [manualGoalMiles, setManualGoalMiles] = useState(null)
+  const [editingGoal, setEditingGoal] = useState(false)
+  const [goalInput, setGoalInput] = useState('')
 
   useEffect(() => {
     ;(async () => {
       try {
-        const [statsRes, runsRes, liftsRes, warningRes, meRes, checkinRes] = await Promise.all([
+        const [statsRes, runsRes, liftsRes, warningRes, meRes, checkinRes, goalRes] = await Promise.all([
           api.get('/auth/me/stats'),
           api.get('/runs', { params: { limit: 5 } }),
           api.get('/lifts'),
           api.get('/coach/warning'),
           api.get('/auth/me'),
           api.get('/checkin/today').catch(() => ({ data: null })),
+          api.get('/users/goal').catch(() => ({ data: null })),
         ])
         setStats(statsRes.data)
         setRuns(Array.isArray(runsRes.data) ? runsRes.data : runsRes.data?.runs || [])
@@ -131,6 +136,10 @@ export default function Dashboard() {
         const name = meRes.data?.user?.name || ''
         setFirstName(name.split(' ')[0])
         if (checkinRes.data) setCheckedInToday(true)
+        if (goalRes.data) {
+          setGoalMode(goalRes.data.mode || 'auto')
+          setManualGoalMiles(goalRes.data.miles || null)
+        }
       } finally {
         setLoading(false)
       }
@@ -164,12 +173,16 @@ export default function Dashboard() {
   const monthlyGoal = useMemo(() => {
     if (!stats) return null
     const monthMiles = stats.month?.miles || 0
-    // Auto-set goal: round up to next 25-mile milestone
-    const goal = Math.max(25, Math.ceil(monthMiles / 25) * 25 + (monthMiles >= 25 ? 25 : 0))
-    const capped = Math.max(goal, 25)
-    const pct = Math.min((monthMiles / capped) * 100, 100)
-    return { miles: monthMiles, goal: capped, pct }
-  }, [stats])
+    let goal
+    if (goalMode === 'manual' && manualGoalMiles) {
+      goal = manualGoalMiles
+    } else {
+      // Auto: round up to next 25-mile milestone
+      goal = Math.max(25, Math.ceil(monthMiles / 25) * 25 + (monthMiles >= 25 ? 25 : 0))
+    }
+    const pct = Math.min((monthMiles / goal) * 100, 100)
+    return { miles: monthMiles, goal, pct }
+  }, [stats, goalMode, manualGoalMiles])
 
   const periodStats = stats?.[period] || {}
   const milesCount = useCountUp(Math.round((periodStats.miles || 0) * 10), 900)
@@ -310,24 +323,88 @@ export default function Dashboard() {
 
       {/* Monthly Challenge */}
       {monthlyGoal && (
-        <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>
-          <div className="flex items-center justify-between mb-2">
+        <div className="rounded-2xl p-5 mb-4" style={{ background: 'var(--bg-card)' }}>
+          {/* Header row */}
+          <div className="flex items-center justify-between mb-3">
             <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Monthly Challenge</p>
-            <span className="text-xs px-2 py-1 rounded-full font-semibold"
-              style={{ background: 'var(--accent-dim)', color: 'var(--accent)' }}>
-              {monthlyGoal.goal} mi goal
-            </span>
+            {/* Auto / Manual toggle */}
+            <div className="flex rounded-lg overflow-hidden" style={{ border: '1px solid var(--border-subtle)' }}>
+              {['auto', 'manual'].map(m => (
+                <button key={m} onClick={() => {
+                  setGoalMode(m)
+                  api.put('/users/goal', { miles: manualGoalMiles, mode: m }).catch(() => {})
+                  if (m === 'manual' && !manualGoalMiles) setEditingGoal(true)
+                }}
+                  style={{
+                    padding: '4px 12px', fontSize: 11, fontWeight: 700, border: 'none', cursor: 'pointer',
+                    background: goalMode === m ? 'var(--accent)' : 'var(--bg-input)',
+                    color: goalMode === m ? '#000' : 'var(--text-muted)',
+                    textTransform: 'capitalize',
+                  }}>
+                  {m}
+                </button>
+              ))}
+            </div>
           </div>
-          <div className="flex items-center gap-2 mb-2">
-            <p className="text-2xl font-black" style={{ color: 'var(--text-primary)' }}>{monthlyGoal.miles.toFixed(1)}</p>
-            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>/ {monthlyGoal.goal} mi</p>
+
+          {/* Goal display / edit */}
+          {editingGoal ? (
+            <div className="flex gap-2 mb-3 items-center">
+              <input
+                type="number"
+                value={goalInput}
+                onChange={e => setGoalInput(e.target.value)}
+                placeholder="e.g. 100"
+                autoFocus
+                style={{
+                  flex: 1, background: 'var(--bg-input)', border: '1px solid var(--accent)',
+                  borderRadius: 8, padding: '8px 12px', color: 'var(--text-primary)',
+                  fontSize: 14, outline: 'none',
+                }}
+              />
+              <button onClick={async () => {
+                const miles = parseFloat(goalInput)
+                if (!miles || miles <= 0) return
+                setManualGoalMiles(miles)
+                setEditingGoal(false)
+                await api.put('/users/goal', { miles, mode: 'manual' }).catch(() => {})
+              }}
+                style={{
+                  background: 'var(--accent)', color: '#000', fontWeight: 700,
+                  borderRadius: 8, padding: '8px 16px', border: 'none', cursor: 'pointer', fontSize: 13,
+                }}>
+                Set
+              </button>
+              <button onClick={() => setEditingGoal(false)}
+                style={{ color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13 }}>
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center justify-between mb-1">
+              <div className="flex items-baseline gap-2">
+                <p className="text-2xl font-black" style={{ color: 'var(--text-primary)' }}>{monthlyGoal.miles.toFixed(1)}</p>
+                <p className="text-sm" style={{ color: 'var(--text-muted)' }}>/ {monthlyGoal.goal} mi</p>
+              </div>
+              {goalMode === 'manual' && (
+                <button onClick={() => { setGoalInput(String(manualGoalMiles || '')); setEditingGoal(true) }}
+                  style={{ color: 'var(--text-muted)', fontSize: 12, background: 'none', border: 'none', cursor: 'pointer' }}>
+                  Edit goal
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Progress bar */}
+          <div className="rounded-full overflow-hidden mb-2" style={{ height: 8, background: 'var(--bg-input)' }}>
+            <div className="h-full rounded-full transition-all" style={{ width: `${monthlyGoal.pct}%`, background: 'var(--accent)' }} />
           </div>
-          <div className="h-2 rounded-full overflow-hidden" style={{ background: 'var(--bg-input)' }}>
-            <div className="h-full rounded-full transition-all duration-700"
-              style={{ width: `${monthlyGoal.pct}%`, background: 'var(--accent)' }} />
-          </div>
-          <p className="text-xs mt-1.5" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>
-            {monthlyGoal.miles >= monthlyGoal.goal ? 'Challenge complete!' : `${(monthlyGoal.goal - monthlyGoal.miles).toFixed(1)} mi to go`}
+
+          <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+            {monthlyGoal.miles >= monthlyGoal.goal
+              ? 'Challenge complete!'
+              : `${(monthlyGoal.goal - monthlyGoal.miles).toFixed(1)} mi to go`}
+            {goalMode === 'auto' && <span style={{ opacity: 0.5 }}> · Auto goal</span>}
           </p>
         </div>
       )}

@@ -12,6 +12,7 @@ app.use(cors());
 app.use(express.json());
 
 app.use('/api/auth',  require('./routes/auth'));
+app.use('/api/users', require('./routes/users'));
 app.use('/api/runs',  require('./routes/runs'));
 app.use('/api/lifts', require('./routes/lifts'));
 app.use('/api/workouts', require('./routes/workouts'));
