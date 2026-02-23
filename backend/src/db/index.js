@@ -125,6 +125,9 @@ const runCols = db.prepare("PRAGMA table_info(runs)").all().map(c => c.name);
 if (!runCols.includes('calories')) {
   db.prepare("ALTER TABLE runs ADD COLUMN calories INTEGER DEFAULT 0").run();
 }
+if (!runCols.includes('run_surface')) db.prepare("ALTER TABLE runs ADD COLUMN run_surface TEXT DEFAULT 'outdoor'").run();
+if (!runCols.includes('incline_pct')) db.prepare("ALTER TABLE runs ADD COLUMN incline_pct REAL DEFAULT 0").run();
+if (!runCols.includes('treadmill_speed')) db.prepare("ALTER TABLE runs ADD COLUMN treadmill_speed REAL DEFAULT 0").run();
 
 const liftCols = db.prepare("PRAGMA table_info(lifts)").all().map(c => c.name);
 if (!liftCols.includes('exercise_name')) {
@@ -148,5 +151,9 @@ if (!userCols2.includes('preferred_workout_time')) db.prepare("ALTER TABLE users
 if (!userCols2.includes('preferred_workout_days')) db.prepare("ALTER TABLE users ADD COLUMN preferred_workout_days TEXT DEFAULT '[]'").run();
 if (!userCols2.includes('missed_workout_pref')) db.prepare("ALTER TABLE users ADD COLUMN missed_workout_pref TEXT DEFAULT 'adjust_week'").run();
 if (!userCols2.includes('weekly_workout_days')) db.prepare("ALTER TABLE users ADD COLUMN weekly_workout_days INTEGER DEFAULT 4").run();
+if (!userCols2.includes('injury_mode')) db.prepare("ALTER TABLE users ADD COLUMN injury_mode INTEGER DEFAULT 0").run();
+if (!userCols2.includes('injury_description')) db.prepare("ALTER TABLE users ADD COLUMN injury_description TEXT DEFAULT ''").run();
+if (!userCols2.includes('injury_date')) db.prepare("ALTER TABLE users ADD COLUMN injury_date TEXT DEFAULT ''").run();
+if (!userCols2.includes('injury_limitations')) db.prepare("ALTER TABLE users ADD COLUMN injury_limitations TEXT DEFAULT ''").run();
 
 module.exports = db;

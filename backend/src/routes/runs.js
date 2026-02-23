@@ -10,12 +10,12 @@ router.get('/', auth, (req, res) => {
 });
 
 router.post('/', auth, (req, res) => {
-  const { date, type, distance_miles, duration_seconds, perceived_effort, notes } = req.body;
+  const { date, type, distance_miles, duration_seconds, perceived_effort, notes, run_surface, incline_pct, treadmill_speed } = req.body;
   if (!date || !type) return res.status(400).json({ error: 'date and type required' });
   const id = uuidv4();
-  db.prepare(`INSERT INTO runs (id, user_id, date, type, distance_miles, duration_seconds, perceived_effort, notes)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
-    id, req.user.id, date, type, distance_miles || 0, duration_seconds || 0, perceived_effort || 5, notes || null
+  db.prepare(`INSERT INTO runs (id, user_id, date, type, distance_miles, duration_seconds, perceived_effort, notes, run_surface, incline_pct, treadmill_speed)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    id, req.user.id, date, type, distance_miles || 0, duration_seconds || 0, perceived_effort || 5, notes || null, run_surface || 'outdoor', incline_pct || 0, treadmill_speed || 0
   );
 
   // Get user weight for calorie calc (default 185 if not set)
@@ -58,7 +58,7 @@ router.put('/:id', auth, (req, res) => {
   if (!run) return res.status(404).json({ error: 'Run not found' });
 
   const {
-    date, distance_miles, duration_seconds, notes, perceived_effort, type
+    date, distance_miles, duration_seconds, notes, perceived_effort, type, run_surface, incline_pct, treadmill_speed
   } = req.body;
 
   const userProfile = db.prepare('SELECT weight_lbs FROM users WHERE id=?').get(req.user.id);
@@ -73,9 +73,12 @@ router.put('/:id', auth, (req, res) => {
     notes = COALESCE(?, notes),
     perceived_effort = COALESCE(?, perceived_effort),
     type = COALESCE(?, type),
+    run_surface = COALESCE(?, run_surface),
+    incline_pct = COALESCE(?, incline_pct),
+    treadmill_speed = COALESCE(?, treadmill_speed),
     calories = ?
     WHERE id=? AND user_id=?
-  `).run(date, distance_miles, duration_seconds, notes, perceived_effort, type, calories, req.params.id, req.user.id);
+  `).run(date, distance_miles, duration_seconds, notes, perceived_effort, type, run_surface, incline_pct, treadmill_speed, calories, req.params.id, req.user.id);
 
   const updated = db.prepare('SELECT * FROM runs WHERE id=?').get(req.params.id);
   res.json(updated);

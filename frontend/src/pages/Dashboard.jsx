@@ -108,16 +108,18 @@ export default function Dashboard() {
   const [period, setPeriod] = useState('week')
   const [coachLabel, setCoachLabel] = useState('')
   const [firstName, setFirstName] = useState('')
+  const [checkedInToday, setCheckedInToday] = useState(false)
 
   useEffect(() => {
     ;(async () => {
       try {
-        const [statsRes, runsRes, liftsRes, warningRes, meRes] = await Promise.all([
+        const [statsRes, runsRes, liftsRes, warningRes, meRes, checkinRes] = await Promise.all([
           api.get('/auth/me/stats'),
           api.get('/runs', { params: { limit: 5 } }),
           api.get('/lifts'),
           api.get('/coach/warning'),
           api.get('/auth/me'),
+          api.get('/checkin/today').catch(() => ({ data: null })),
         ])
         setStats(statsRes.data)
         setRuns(Array.isArray(runsRes.data) ? runsRes.data : runsRes.data?.runs || [])
@@ -128,6 +130,7 @@ export default function Dashboard() {
         setCoachLabel(coaches[cp] || cp || '')
         const name = meRes.data?.user?.name || ''
         setFirstName(name.split(' ')[0])
+        if (checkinRes.data) setCheckedInToday(true)
       } finally {
         setLoading(false)
       }
@@ -193,6 +196,14 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-4">
+      {!checkedInToday && (
+        <a href="/checkin"
+          style={{ display: 'block', background: 'rgba(234,179,8,0.12)', border: '1px solid rgba(234,179,8,0.3)', borderRadius: 14, padding: '12px 16px', marginBottom: 12, textDecoration: 'none' }}>
+          <p style={{ color: 'var(--accent)', fontWeight: 700, fontSize: 14, margin: 0 }}>Quick check-in — 3 taps</p>
+          <p style={{ color: 'var(--text-muted)', fontSize: 12, margin: '2px 0 0' }}>Help me adjust today's plan around your day</p>
+        </a>
+      )}
+
       {/* Greeting */}
       <div>
         <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{greeting}{firstName ? ` ${firstName}` : ''}</p>

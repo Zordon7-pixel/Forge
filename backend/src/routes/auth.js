@@ -36,7 +36,7 @@ router.post('/register', (req, res) => {
 });
 
 router.get('/me', auth, (req, res) => {
-  const user = db.prepare('SELECT id, name, email, sex, weekly_miles_current, goal_type, goal_race_date, goal_race_distance, injury_notes, comeback_mode, onboarded, coach_personality, run_days_per_week, lift_days_per_week FROM users WHERE id = ?').get(req.user.id);
+  const user = db.prepare('SELECT id, name, email, sex, weekly_miles_current, goal_type, goal_race_date, goal_race_distance, injury_notes, comeback_mode, onboarded, coach_personality, run_days_per_week, lift_days_per_week, injury_mode, injury_description, injury_date, injury_limitations FROM users WHERE id = ?').get(req.user.id);
   if (!user) return res.status(404).json({ error: 'User not found' });
 
   const normalized = {
@@ -47,7 +47,11 @@ router.get('/me', auth, (req, res) => {
     injury_detail: user.injury_notes,
     fitness_level: user.comeback_mode ? 'intermediate' : 'beginner',
     age: null,
-    weight_lbs: null
+    weight_lbs: null,
+    injury_mode: !!user.injury_mode,
+    injury_description: user.injury_description || '',
+    injury_date: user.injury_date || '',
+    injury_limitations: user.injury_limitations || ''
   };
 
   res.json({ user: normalized });
@@ -124,6 +128,14 @@ router.put('/me/profile', auth, (req, res) => {
   );
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
   res.json({ token: sign(user), user });
+});
+
+
+router.post('/injury', auth, (req, res) => {
+  const { injury_mode, injury_description, injury_date, injury_limitations } = req.body;
+  db.prepare(`UPDATE users SET injury_mode=?, injury_description=?, injury_date=?, injury_limitations=? WHERE id=?`)
+    .run(injury_mode ? 1 : 0, injury_description || '', injury_date || '', injury_limitations || '', req.user.id);
+  res.json({ ok: true });
 });
 
 // GET /api/auth/me/stats — summary stats for various time periods

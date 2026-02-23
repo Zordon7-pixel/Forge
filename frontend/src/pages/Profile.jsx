@@ -18,6 +18,9 @@ export default function Profile() {
   const [form, setForm] = useState({
     name: '', email: '', age: '', weight_lbs: '', sex: 'male', fitness_level: 'beginner', primary_goal: 'general_fitness', injury_status: 'none', injury_detail: '', coach_personality: 'mentor', weekly_miles: ''
   })
+  const [injuryMode, setInjuryMode] = useState(false)
+  const [injuryDescription, setInjuryDescription] = useState('')
+  const [injuryLimitations, setInjuryLimitations] = useState('')
 
   useEffect(() => {
     ;(async () => {
@@ -37,6 +40,9 @@ export default function Profile() {
           coach_personality: user.coach_personality || 'mentor',
           weekly_miles: user.weekly_miles ?? user.weekly_miles_current ?? ''
         })
+        setInjuryMode(!!user.injury_mode)
+        setInjuryDescription(user.injury_description || '')
+        setInjuryLimitations(user.injury_limitations || '')
       } finally { setLoading(false) }
     })()
   }, [])
@@ -61,6 +67,12 @@ export default function Profile() {
         goal_type: form.primary_goal,
         injury_notes: form.injury_detail,
         comeback_mode: form.injury_status !== 'none' ? 1 : 0
+      })
+      await api.post('/auth/injury', {
+        injury_mode: injuryMode,
+        injury_description: injuryDescription,
+        injury_date: injuryMode ? new Date().toISOString().slice(0, 10) : '',
+        injury_limitations: injuryLimitations,
       })
       setSaved(true)
       setTimeout(() => setSaved(false), 1800)
@@ -128,6 +140,39 @@ export default function Profile() {
               {option.label}
             </button>
           ))}
+        </div>
+
+
+        {/* I'm Hurt / Injury Mode */}
+        <div style={{ background: injuryMode ? 'rgba(239,68,68,0.1)' : 'var(--bg-card)', borderRadius: 16, padding: 16, border: `1px solid ${injuryMode ? 'rgba(239,68,68,0.4)' : 'var(--border-subtle)'}` }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+            <div>
+              <p style={{ fontWeight: 700, color: injuryMode ? '#ef4444' : 'var(--text-primary)' }}>
+                {injuryMode ? 'Injury Mode ON' : "I'm Hurt"}
+              </p>
+              <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+                {injuryMode ? 'Your plan is adjusted for recovery' : "Tell FORGE about an injury — it'll rebuild your plan around what you can do"}
+              </p>
+            </div>
+            <button onClick={() => setInjuryMode(!injuryMode)}
+              style={{
+                padding: '8px 16px', borderRadius: 10, fontWeight: 700, fontSize: 14, border: 'none', cursor: 'pointer',
+                background: injuryMode ? '#ef4444' : 'var(--bg-input)',
+                color: injuryMode ? '#fff' : 'var(--text-muted)'
+              }}>
+              {injuryMode ? 'ON' : 'OFF'}
+            </button>
+          </div>
+          {injuryMode && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
+              <input value={injuryDescription} onChange={e => setInjuryDescription(e.target.value)}
+                placeholder="What's injured? (e.g. right knee, lower back)"
+                style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', borderRadius: 10, padding: '12px', fontSize: 14, width: '100%', boxSizing: 'border-box' }} />
+              <input value={injuryLimitations} onChange={e => setInjuryLimitations(e.target.value)}
+                placeholder="What can you still do? (e.g. upper body only, easy walking)"
+                style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', borderRadius: 10, padding: '12px', fontSize: 14, width: '100%', boxSizing: 'border-box' }} />
+            </div>
+          )}
         </div>
 
         {error && <p className="text-sm" style={{ color: 'var(--accent)' }}>{error}</p>}

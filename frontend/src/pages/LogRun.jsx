@@ -10,6 +10,7 @@ function todayISO() {
 export default function LogRun() {
   const navigate = useNavigate()
   const [countdown, setCountdown] = useState(3)
+  const [surface, setSurface] = useState('outdoor')
 
   const [date, setDate] = useState(todayISO())
   const [distance, setDistance] = useState('')
@@ -36,7 +37,8 @@ export default function LogRun() {
       setLoading(true)
       const runRes = await api.post('/runs', {
         date,
-        type: 'easy',
+        type: surface === 'outdoor' ? 'easy' : surface,
+        run_surface: surface,
         distance_miles: Number(distance),
         duration_seconds: seconds,
         notes,
@@ -71,31 +73,63 @@ export default function LogRun() {
 
   return (
     <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>
-      <div className="rounded-2xl p-5 mb-6" style={{ background: 'var(--accent)' }}>
-        <h2 className="text-2xl font-black text-black mb-1">Start Live Run</h2>
-        <p className="text-sm text-black opacity-70 mb-4">GPS tracking · live pace · auto-saved</p>
-
-        <div className="flex gap-2 mb-4 items-center flex-wrap">
-          <span className="text-xs text-black opacity-60 self-center">Countdown:</span>
-          {[0, 3, 5, 10].map(n => (
-            <button
-              key={n}
-              onClick={() => setCountdown(n)}
-              className="px-3 py-1 rounded-lg text-xs font-bold"
-              style={{ background: countdown === n ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0.1)', color: '#000' }}
-            >
-              {n === 0 ? 'Off' : `${n}s`}
-            </button>
-          ))}
-        </div>
-
-        <button
-          onClick={() => navigate('/run/active', { state: { countdown } })}
-          className="w-full py-4 rounded-xl bg-black text-white font-black text-lg"
-        >
-          Go
-        </button>
+      {/* Run surface selector */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 16 }}>
+        {[
+          { value: 'outdoor', label: 'Outdoor', icon: '🛤' },
+          { value: 'treadmill', label: 'Treadmill', icon: '⚙️' },
+          { value: 'track', label: 'Track', icon: '🏟' },
+          { value: 'trail', label: 'Trail', icon: '🌲' },
+        ].map(opt => (
+          <button key={opt.value} onClick={() => setSurface(opt.value)}
+            style={{
+              padding: '10px 4px',
+              borderRadius: 12,
+              border: `2px solid ${surface === opt.value ? 'var(--accent)' : 'var(--border-subtle)'}`,
+              background: surface === opt.value ? 'var(--accent-dim)' : 'var(--bg-input)',
+              color: surface === opt.value ? 'var(--accent)' : 'var(--text-muted)',
+              fontWeight: 700, fontSize: 11, cursor: 'pointer',
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
+            }}>
+            <span style={{ fontSize: 18 }}>{opt.icon}</span>
+            <span>{opt.label}</span>
+          </button>
+        ))}
       </div>
+
+      {surface === 'treadmill' ? (
+        <button onClick={() => navigate('/run/treadmill')}
+          style={{ background: 'var(--accent)', color: '#000', fontWeight: 900, fontSize: 18, borderRadius: 16, padding: '20px', border: 'none', cursor: 'pointer', width: '100%', marginBottom: 20 }}>
+          Start Treadmill Run
+          <div style={{ fontSize: 13, fontWeight: 400, opacity: 0.7, marginTop: 4 }}>Timer + speed/incline tracking</div>
+        </button>
+      ) : (
+        <div className="rounded-2xl p-5 mb-6" style={{ background: 'var(--accent)' }}>
+          <h2 className="text-2xl font-black text-black mb-1">Start Live Run</h2>
+          <p className="text-sm text-black opacity-70 mb-4">GPS tracking · live pace · auto-saved</p>
+
+          <div className="flex gap-2 mb-4 items-center flex-wrap">
+            <span className="text-xs text-black opacity-60 self-center">Countdown:</span>
+            {[0, 3, 5, 10].map(n => (
+              <button
+                key={n}
+                onClick={() => setCountdown(n)}
+                className="px-3 py-1 rounded-lg text-xs font-bold"
+                style={{ background: countdown === n ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0.1)', color: '#000' }}
+              >
+                {n === 0 ? 'Off' : `${n}s`}
+              </button>
+            ))}
+          </div>
+
+          <button
+            onClick={() => navigate('/run/active', { state: { countdown } })}
+            className="w-full py-4 rounded-xl bg-black text-white font-black text-lg"
+          >
+            Go
+          </button>
+        </div>
+      )}
 
       <div className="opacity-70">
         <p className="text-xs text-center mb-3 font-medium" style={{ color: 'var(--text-muted)' }}>
