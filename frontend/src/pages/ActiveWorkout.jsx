@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import api from '../lib/api'
+import ExercisePickerModal from '../components/ExercisePickerModal'
 
 const REST_PRESETS = [30, 60, 90, 120, 180]
 
@@ -31,34 +32,27 @@ export default function ActiveWorkout() {
   const { id } = useParams()
   const navigate = useNavigate()
 
-  // Workout timer
   const [elapsed, setElapsed] = useState(0)
   const workoutTimerRef = useRef(null)
 
-  // Current exercise
   const [activeGroup, setActiveGroup] = useState('')
   const [muscleGroups, setMuscleGroups] = useState([])
-  const [exercises, setExercises] = useState([])
-  const [selectedExercise, setSelectedExercise] = useState('')
-  const [showExPicker, setShowExPicker] = useState(false)
+  const [selectedExercise, setSelectedExercise] = useState(null)
+  const [showExercisePicker, setShowExercisePicker] = useState(false)
   const [reps, setReps] = useState('')
   const [weight, setWeight] = useState('')
   const [setNumber, setSetNumber] = useState(1)
 
-  // Sets logged this session
   const [sets, setSets] = useState([])
 
-  // Rest timer
   const [showRest, setShowRest] = useState(true)
   const [restSeconds, setRestSeconds] = useState(0)
   const [restRunning, setRestRunning] = useState(false)
   const restRef = useRef(null)
 
-  // HR
   const [showHR, setShowHR] = useState(false)
   const [hr, setHr] = useState('')
 
-  // End workout
   const [ending, setEnding] = useState(false)
 
   useEffect(() => {
@@ -72,7 +66,6 @@ export default function ActiveWorkout() {
       setMuscleGroups(groups)
       if (groups.length > 0) {
         setActiveGroup(groups[0])
-        setShowExPicker(true)
       }
     }).catch(() => {})
   }, [id])
@@ -82,13 +75,6 @@ export default function ActiveWorkout() {
       setSets(res.data?.sets || [])
     }).catch(() => {})
   }, [id])
-
-  useEffect(() => {
-    if (!activeGroup) return
-    api.get('/exercises', { params: { muscle_group: activeGroup } })
-      .then(res => setExercises(res.data?.exercises || []))
-      .catch(() => {})
-  }, [activeGroup])
 
   useEffect(() => {
     if (restRunning && restSeconds > 0) {
@@ -107,10 +93,10 @@ export default function ActiveWorkout() {
   }
 
   const logSet = async () => {
-    if (!selectedExercise || !reps || !weight) return
+    if (!selectedExercise?.name || !reps || !weight) return
     try {
       const res = await api.post(`/workouts/${id}/sets`, {
-        exercise_name: selectedExercise,
+        exercise_name: selectedExercise.name,
         muscle_group: activeGroup,
         reps: Number(reps),
         weight_lbs: Number(weight),
@@ -135,8 +121,9 @@ export default function ActiveWorkout() {
     }
   }
 
-  const lastSet = [...sets].reverse().find(s => s.exercise_name === selectedExercise)
-  const exerciseSets = sets.filter(s => s.exercise_name === selectedExercise)
+  const currentExerciseName = selectedExercise?.name || ''
+  const lastSet = [...sets].reverse().find(s => s.exercise_name === currentExerciseName)
+  const exerciseSets = sets.filter(s => s.exercise_name === currentExerciseName)
 
   return (
     <div className="space-y-4 pb-4">
@@ -193,7 +180,7 @@ export default function ActiveWorkout() {
       {muscleGroups.length > 0 && (
         <div className="flex gap-2 overflow-x-auto pb-1">
           {muscleGroups.map(g => (
-            <button key={g} onClick={() => { setActiveGroup(g); setSelectedExercise(''); setShowExPicker(true); setSetNumber(1) }} className="rounded-full px-4 py-1.5 text-sm capitalize font-medium whitespace-nowrap border flex-shrink-0" style={activeGroup === g ? { background: 'var(--accent)', borderColor: 'var(--accent)', color: 'black' } : { background: 'var(--bg-card)', borderColor: 'var(--border-subtle)', color: 'var(--text-muted)' }}>
+            <button key={g} onClick={() => { setActiveGroup(g); setSelectedExercise(null); setSetNumber(1) }} className="rounded-full px-4 py-1.5 text-sm capitalize font-medium whitespace-nowrap border flex-shrink-0" style={activeGroup === g ? { background: 'var(--accent)', borderColor: 'var(--accent)', color: 'black' } : { background: 'var(--bg-card)', borderColor: 'var(--border-subtle)', color: 'var(--text-muted)' }}>
               {g}
             </button>
           ))}
@@ -201,26 +188,21 @@ export default function ActiveWorkout() {
       )}
 
       <div className="rounded-2xl p-4 space-y-3" style={{ background: 'var(--bg-card)' }}>
-        {selectedExercise ? (
-          <div className="flex items-center justify-between">
-            <span className="font-bold text-base" style={{ color: 'var(--accent)' }}>{selectedExercise}</span>
-            <button onClick={() => { setSelectedExercise(''); setShowExPicker(true) }} className="text-xs" style={{ color: 'var(--text-muted)' }}>change</button>
-          </div>
-        ) : (
-          <div>
-            <p className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>
-              {activeGroup ? `Select ${activeGroup} exercise` : 'Select a muscle group above first'}
-            </p>
-            {showExPicker && exercises.length > 0 && (
-              <div className="rounded-xl border overflow-hidden max-h-48 overflow-y-auto" style={{ borderColor: 'var(--border-subtle)' }}>
-                {exercises.map(ex => (
-                  <button key={ex.id} onClick={() => { setSelectedExercise(ex.name); setShowExPicker(false); setSetNumber(1) }} className="w-full px-4 py-3 text-left text-sm border-b" style={{ background: 'var(--bg-card)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}>
-                    {ex.name}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+        <div className="flex items-center justify-between">
+          <span className="font-bold text-base" style={{ color: 'var(--accent)' }}>
+            Current: {currentExerciseName || 'None selected'}
+          </span>
+          <button onClick={() => setShowExercisePicker(true)} className="text-xs" style={{ color: 'var(--text-muted)' }}>
+            {currentExerciseName ? 'Change Exercise' : 'Choose Exercise'}
+          </button>
+        </div>
+
+        {showExercisePicker && (
+          <ExercisePickerModal
+            muscleGroup={activeGroup}
+            onSelect={(ex) => { setSelectedExercise(ex); setSetNumber(1); setShowExercisePicker(false) }}
+            onClose={() => setShowExercisePicker(false)}
+          />
         )}
 
         {lastSet && (
@@ -243,7 +225,7 @@ export default function ActiveWorkout() {
           </div>
         )}
 
-        {selectedExercise && (
+        {currentExerciseName && (
           <div className="flex gap-3 items-end">
             <div className="flex-1">
               <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Reps</p>

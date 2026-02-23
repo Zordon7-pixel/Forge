@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../lib/api'
+import ExercisePickerModal from '../components/ExercisePickerModal'
 
 const MUSCLE_GROUPS = ['chest', 'back', 'legs', 'shoulders', 'arms', 'core']
 
@@ -9,14 +10,28 @@ export default function LogLift() {
   const [selected, setSelected] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [showExercisePicker, setShowExercisePicker] = useState(false)
+  const [selectedExercise, setSelectedExercise] = useState(null)
 
-  const toggle = (g) => setSelected(prev => prev.includes(g) ? prev.filter(x => x !== g) : [...prev, g])
+  const selectedMuscleGroup = selected[0] || ''
+
+  const toggle = (g) => setSelected(prev => {
+    const next = prev.includes(g) ? prev.filter(x => x !== g) : [...prev, g]
+    const nextPrimary = next[0] || ''
+    if (selectedExercise && selectedExercise.muscle_group !== nextPrimary) {
+      setSelectedExercise(null)
+    }
+    return next
+  })
 
   const begin = async () => {
     setLoading(true)
     setError('')
     try {
-      const res = await api.post('/workouts/start', { muscle_groups: selected })
+      const res = await api.post('/workouts/start', {
+        muscle_groups: selected,
+        exercise_name: selectedExercise?.name || ''
+      })
       navigate(`/workout/active/${res.data.session.id}`)
     } catch (err) {
       setError('Could not start workout. Try again.')
@@ -45,6 +60,31 @@ export default function LogLift() {
           </button>
         ))}
       </div>
+
+      {selectedMuscleGroup && (
+        <div>
+          <button
+            onClick={() => setShowExercisePicker(true)}
+            className="w-full mt-2 py-3 px-4 rounded-xl text-sm font-semibold text-left flex items-center justify-between"
+            style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>
+            <span>{selectedExercise ? selectedExercise.name : 'Choose exercise...'}</span>
+            <span style={{ color: 'var(--text-muted)' }}>›</span>
+          </button>
+          {selectedExercise && (
+            <p className="text-xs mt-1 px-1" style={{ color: 'var(--text-muted)' }}>
+              {selectedExercise.secondary_muscles && `Also targets: ${selectedExercise.secondary_muscles}`}
+            </p>
+          )}
+        </div>
+      )}
+
+      {showExercisePicker && (
+        <ExercisePickerModal
+          muscleGroup={selectedMuscleGroup}
+          onSelect={(ex) => { setSelectedExercise(ex); setShowExercisePicker(false) }}
+          onClose={() => setShowExercisePicker(false)}
+        />
+      )}
 
       {error && <p className="text-sm" style={{ color: 'var(--accent)' }}>{error}</p>}
 

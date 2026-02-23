@@ -5,6 +5,7 @@ const path    = require('path');
 
 // Seed demo data on startup
 try { require('./db/seed').runSeed(); } catch (e) { console.error('Seed error:', e.message); }
+try { require('./db/exercises-seed').seedExercises(); } catch(e) { console.error('Exercise seed error:', e.message); }
 
 const app = express();
 app.use(cors());
