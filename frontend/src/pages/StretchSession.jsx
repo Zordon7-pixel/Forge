@@ -107,7 +107,7 @@ export default function StretchSession() {
           </div>
         ) : done ? (
           <div className="my-auto rounded-2xl border border-emerald-600 bg-[#151823] p-8 text-center">
-            <p className="text-3xl font-black text-emerald-400">Session Complete ✓</p>
+            <p className="text-3xl font-black text-emerald-400">Session Complete — Done</p>
             <p className="mt-2 text-sm text-slate-300">
               {isPre ? 'You are warmed up with dynamic movement only. Ready to run strong.' : 'Recovery complete. Hold static stretches after each run to reduce tightness.'}
             </p>
@@ -115,7 +115,7 @@ export default function StretchSession() {
               onClick={() => navigate('/log-run')}
               className="mt-5 rounded-xl bg-yellow-500 px-5 py-3 font-bold text-black"
             >
-              Complete ✓
+              Done
             </button>
           </div>
         ) : (
@@ -146,7 +146,7 @@ export default function StretchSession() {
 
             <footer className="mt-auto pb-4 text-center">
               {current === stretches.length - 1 ? (
-                <button onClick={() => setDone(true)} className="rounded-xl bg-emerald-500 px-5 py-3 font-bold text-black">Complete ✓</button>
+                <button onClick={() => setDone(true)} className="rounded-xl bg-emerald-500 px-5 py-3 font-bold text-black">Done</button>
               ) : (
                 <p className="text-sm text-slate-400">Up next: {nextStretch?.name} →</p>
               )}

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { CheckCircle, XCircle } from 'lucide-react'
 import api from '../lib/api'
 
 export default function HelpDesk({ externalOpen, onClose }) {
@@ -43,7 +44,14 @@ export default function HelpDesk({ externalOpen, onClose }) {
       <div className="w-full max-w-xl rounded-xl border p-5 shadow-2xl" style={{ background: 'var(--bg-card)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}>
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-bold">System Health</h2>
-          {!loading && diagnostics && <span className="text-sm font-medium" style={{ color: diagnostics.ok ? '#22c55e' : '#ef4444' }}>{diagnostics.ok ? 'All systems healthy 🟢' : 'Issues detected 🔴'}</span>}
+          {!loading && diagnostics && (
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium" style={{ color: diagnostics.ok ? '#22c55e' : '#ef4444' }}>
+                {diagnostics.ok ? 'All systems healthy' : 'Issues detected'}
+              </span>
+              <span style={{ display:'inline-block', width:8, height:8, borderRadius:'50%', background: diagnostics.ok ? '#22c55e' : '#ef4444' }} />
+            </div>
+          )}
         </div>
 
         {loading ? (
@@ -58,7 +66,13 @@ export default function HelpDesk({ externalOpen, onClose }) {
                     <div className="font-medium">{check.name}</div>
                     <div className="text-xs" style={{ color: 'var(--text-muted)' }}>{check.detail}</div>
                   </div>
-                  <div>{check.ok ? '✅' : '❌'}</div>
+                  <div>
+                    {check.ok ? (
+                      <CheckCircle size={14} style={{ color:'#22c55e' }} />
+                    ) : (
+                      <XCircle size={14} style={{ color:'#ef4444' }} />
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
