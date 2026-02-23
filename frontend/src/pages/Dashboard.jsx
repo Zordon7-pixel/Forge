@@ -107,6 +107,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [period, setPeriod] = useState('week')
   const [coachLabel, setCoachLabel] = useState('')
+  const [firstName, setFirstName] = useState('')
 
   useEffect(() => {
     ;(async () => {
@@ -125,6 +126,8 @@ export default function Dashboard() {
         const coaches = { mentor: 'Mentor', hype_coach: 'Hype Coach', drill_sergeant: 'Drill Sergeant', training_partner: 'Training Partner' }
         const cp = meRes.data?.user?.coach_personality
         setCoachLabel(coaches[cp] || cp || '')
+        const name = meRes.data?.user?.name || ''
+        setFirstName(name.split(' ')[0])
       } finally {
         setLoading(false)
       }
@@ -192,7 +195,7 @@ export default function Dashboard() {
     <div className="space-y-4">
       {/* Greeting */}
       <div>
-        <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{greeting}</p>
+        <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{greeting}{firstName ? ` ${firstName}` : ''}</p>
         <h2 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>
           {stats?.streak > 1 ? `${stats.streak}-day streak` : 'Ready to forge today?'}
         </h2>
