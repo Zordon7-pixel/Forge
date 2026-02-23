@@ -71,8 +71,10 @@ export default function LogLift() {
   const [userSex, setUserSex] = useState('male')
   const [timeAvailable, setTimeAvailable] = useState('')
   const [liftPlan, setLiftPlan] = useState(null)
-  const [activeTab, setActiveTab] = useState('manual')
+  const [activeTab, setActiveTab] = useState('ai')
   const [aiRecommendation, setAiRecommendation] = useState(null)
+  const [aiLoading, setAiLoading] = useState(false)
+  const [aiError, setAiError] = useState(null)
   const [sharedWorkoutId, setSharedWorkoutId] = useState(null)
   const [sharingWorkout, setSharingWorkout] = useState(false)
 
@@ -85,7 +87,15 @@ export default function LogLift() {
   const selectedMuscleGroup = selected[0] || ''
 
   useEffect(() => {
-    api.get('/ai/workout-recommendation?date=today').then((r) => setAiRecommendation(r.data?.recommendation || null)).catch(() => {})
+    setAiLoading(true)
+    setAiError(null)
+    api.get('/ai/workout-recommendation?date=today').then((r) => {
+      setAiRecommendation(r.data?.recommendation || null)
+    }).catch((err) => {
+      console.error('Failed to fetch AI recommendation:', err)
+      setAiError('Could not generate recommendation')
+      setAiRecommendation(null)
+    }).finally(() => setAiLoading(false))
   }, [])
 
 
@@ -141,23 +151,42 @@ export default function LogLift() {
         ))}
       </div>
 
-      {activeTab === 'ai' && aiRecommendation && (
-        <div className="rounded-2xl p-4" style={{ background: '#f8f2df', color: '#111', border: '1px solid #d6c9a0' }}>
-          <p className="text-lg font-bold">{aiRecommendation.workoutName} — {aiRecommendation.target}</p>
-          <p className="text-sm mt-2"><strong>Warmup:</strong> {(aiRecommendation.warmup || []).join(', ')}</p>
-          <p className="text-sm mt-2"><strong>Main:</strong> {(aiRecommendation.main || []).map((m) => `${m.name} ${m.sets}x${m.reps} (${m.rest})`).join(' • ')}</p>
-          <p className="text-sm mt-2"><strong>Recovery:</strong> {(aiRecommendation.recovery || []).join(', ')}</p>
-          <p className="text-sm mt-2">{aiRecommendation.explanation}</p>
-          <p className="text-xs mt-1">{aiRecommendation.restExplanation}</p>
-          <button
-            onClick={shareWorkout}
-            disabled={sharingWorkout || sharedWorkoutId}
-            className="mt-3 w-full rounded-xl py-2 font-semibold text-sm"
-            style={{ background: sharedWorkoutId ? 'var(--bg-base)' : 'var(--accent)', color: sharedWorkoutId ? 'var(--text-muted)' : '#000', border: 'none', cursor: sharedWorkoutId ? 'default' : 'pointer', opacity: sharingWorkout ? 0.6 : 1 }}
-          >
-            {sharingWorkout ? 'Sharing...' : sharedWorkoutId ? 'Shared' : 'Share to Community'}
-          </button>
-        </div>
+      {activeTab === 'ai' && (
+        <>
+          {aiLoading && (
+            <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', color: 'var(--text-muted)' }}>
+              <p className="text-sm">Generating your personalized workout...</p>
+            </div>
+          )}
+          {aiError && (
+            <div className="rounded-2xl p-4" style={{ background: 'rgba(239,68,68,0.1)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)' }}>
+              <p className="text-sm">{aiError}</p>
+            </div>
+          )}
+          {!aiLoading && !aiRecommendation && !aiError && (
+            <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', color: 'var(--text-muted)' }}>
+              <p className="text-sm">No recommendation available yet. Check back later.</p>
+            </div>
+          )}
+          {aiRecommendation && (
+            <div className="rounded-2xl p-4" style={{ background: '#f8f2df', color: '#111', border: '1px solid #d6c9a0' }}>
+              <p className="text-lg font-bold">{aiRecommendation.workoutName} — {aiRecommendation.target}</p>
+              <p className="text-sm mt-2"><strong>Warmup:</strong> {(aiRecommendation.warmup || []).join(', ')}</p>
+              <p className="text-sm mt-2"><strong>Main:</strong> {(aiRecommendation.main || []).map((m) => `${m.name} ${m.sets}x${m.reps} (${m.rest})`).join(' • ')}</p>
+              <p className="text-sm mt-2"><strong>Recovery:</strong> {(aiRecommendation.recovery || []).join(', ')}</p>
+              <p className="text-sm mt-2">{aiRecommendation.explanation}</p>
+              <p className="text-xs mt-1">{aiRecommendation.restExplanation}</p>
+              <button
+                onClick={shareWorkout}
+                disabled={sharingWorkout || sharedWorkoutId}
+                className="mt-3 w-full rounded-xl py-2 font-semibold text-sm"
+                style={{ background: sharedWorkoutId ? 'var(--bg-base)' : 'var(--accent)', color: sharedWorkoutId ? 'var(--text-muted)' : '#000', border: 'none', cursor: sharedWorkoutId ? 'default' : 'pointer', opacity: sharingWorkout ? 0.6 : 1 }}
+              >
+                {sharingWorkout ? 'Sharing...' : sharedWorkoutId ? 'Shared' : 'Share to Community'}
+              </button>
+            </div>
+          )}
+        </>
       )}
 
       {activeTab === 'manual' && (

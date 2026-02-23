@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 
 router.post('/', auth, (req, res) => {
-  const { type = 'bug', message, page } = req.body || {};
+  const { type = 'bug', message, page, severity, category } = req.body || {};
   if (!message) return res.status(400).json({ error: 'message required' });
 
   // Log to Control Room
@@ -15,9 +15,9 @@ router.post('/', auth, (req, res) => {
       id: `act-feedback-${Date.now()}`,
       timestamp: new Date().toISOString(),
       type: 'feedback',
-      icon: type === 'bug' ? '🐛' : type === 'praise' ? '⭐' : '💡',
+      icon: 'feedback',
       message: `FORGE feedback [${type}]: ${message.slice(0,80)}`,
-      detail: `Page: ${page || 'unknown'}`
+      detail: `Page: ${page || 'unknown'}${severity ? ` | Severity: ${severity}` : ''}${category ? ` | Category: ${category}` : ''}`
     });
     fs.writeFileSync(actPath, JSON.stringify(data, null, 2));
   } catch(e) {}

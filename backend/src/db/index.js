@@ -304,6 +304,12 @@ if (!userCols3.includes('username')) {
   db.prepare("ALTER TABLE users ADD COLUMN username TEXT DEFAULT NULL").run();
 }
 
+// Add units preference column (metric/imperial)
+const userCols4 = db.prepare("PRAGMA table_info(users)").all().map(c => c.name);
+if (!userCols4.includes('units')) {
+  db.prepare("ALTER TABLE users ADD COLUMN units TEXT DEFAULT 'imperial'").run();
+}
+
 try { db.exec('ALTER TABLE users ADD COLUMN step_goal INTEGER DEFAULT 10000') } catch (_) {}
 try { db.prepare('ALTER TABLE workout_sessions ADD COLUMN ai_feedback TEXT').run() } catch (_) {}
 try { db.prepare('ALTER TABLE saved_workouts ADD COLUMN community_workout_id TEXT').run() } catch (_) {}

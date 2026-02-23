@@ -36,7 +36,7 @@ router.post('/register', (req, res) => {
 });
 
 router.get('/me', auth, (req, res) => {
-  const user = db.prepare('SELECT id, name, email, sex, age, weight_lbs, max_heart_rate, weekly_miles_current, goal_type, goal_race_date, goal_race_distance, injury_notes, comeback_mode, onboarded, coach_personality, run_days_per_week, lift_days_per_week, injury_mode, injury_description, injury_date, injury_limitations FROM users WHERE id = ?').get(req.user.id);
+  const user = db.prepare('SELECT id, name, email, sex, age, weight_lbs, max_heart_rate, weekly_miles_current, goal_type, goal_race_date, goal_race_distance, injury_notes, comeback_mode, onboarded, coach_personality, run_days_per_week, lift_days_per_week, injury_mode, injury_description, injury_date, injury_limitations, units FROM users WHERE id = ?').get(req.user.id);
   if (!user) return res.status(404).json({ error: 'User not found' });
 
   const normalized = {

@@ -26,11 +26,18 @@ export default function PhotoUploader({ activityId, activityType, existingPhoto 
       try {
         await api.post(`/social/${activityType}/${activityId}/photo`, { data: dataUrl, mime_type: 'image/jpeg' })
         setDone(true)
-      } catch {
+      } catch (err) {
+        console.error('Photo upload error:', err)
         alert('Photo upload failed. Try a smaller image.')
+        setPreview(null)
       } finally {
         setUploading(false)
       }
+      URL.revokeObjectURL(url)
+    }
+    img.onerror = () => {
+      console.error('Failed to load image')
+      alert('Could not load image. Try another file.')
       URL.revokeObjectURL(url)
     }
     img.src = url

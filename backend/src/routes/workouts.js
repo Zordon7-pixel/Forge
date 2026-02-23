@@ -14,13 +14,21 @@ router.post('/start', auth, (req, res) => {
   res.status(201).json({ session: { id, started_at, muscle_groups: muscle_groups || [] } });
 });
 
-// End a workout session
+// End a workout session or update notes
 router.put('/:id/end', auth, (req, res) => {
   const { notes } = req.body;
   const session = db.prepare('SELECT * FROM workout_sessions WHERE id=? AND user_id=?').get(req.params.id, req.user.id);
   if (!session) return res.status(404).json({ error: 'Session not found' });
-  const ended_at = new Date().toISOString();
-  const total_seconds = Math.round((new Date(ended_at) - new Date(session.started_at)) / 1000);
+  
+  let total_seconds = session.total_seconds;
+  let ended_at = session.ended_at;
+  
+  // Only set end time and duration if this is the first call (ended_at is null)
+  if (!session.ended_at) {
+    ended_at = new Date().toISOString();
+    total_seconds = Math.round((new Date(ended_at) - new Date(session.started_at)) / 1000);
+  }
+  
   db.prepare('UPDATE workout_sessions SET ended_at=?, notes=?, total_seconds=? WHERE id=?')
     .run(ended_at, notes || null, total_seconds, req.params.id);
   res.json({ ok: true, total_seconds });
