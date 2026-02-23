@@ -36,9 +36,9 @@ function getReadinessColor(score) {
   return '#22c55e' // green
 }
 
-function getReadinessMessage(score) {
+function getReadinessMessage(score, t) {
   if (score < 50) return t('run.takeItEasy')
-  if (score < 75) return 'Good to Go'
+  if (score < 75) return t('run.goodToGo')
   return t('run.youAreReady')
 }
 
@@ -254,6 +254,7 @@ function WarmupSteps({ stepIndex, onNext, onSkip }) {
 
 // ===== POST-WARMUP READINESS SCREEN =====
 function WarmupDone({ onStartRun }) {
+  const { t } = useTranslation()
   const [stats, setStats] = useState(null)
   const [checkin, setCheckin] = useState(null)
   const [plan, setPlan] = useState(null)
@@ -281,7 +282,7 @@ function WarmupDone({ onStartRun }) {
 
   const readinessScore = computeReadiness(stats, checkin)
   const readinessColor = getReadinessColor(readinessScore)
-  const readinessMessage = getReadinessMessage(readinessScore)
+  const readinessMessage = getReadinessMessage(readinessScore, t)
   const readinessAdvice = getReadinessAdvice(readinessScore, stats, checkin)
 
   const weekMiles = Number(stats?.week?.miles || 0)
@@ -472,27 +473,19 @@ function WarmupDone({ onStartRun }) {
               </p>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-              {checkin.energy && (
+              {checkin.feeling && (
                 <div>
-                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 4px' }}>Energy</p>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 4px' }}>Feeling</p>
                   <p style={{ fontSize: 14, fontWeight: 700, color: 'var(--accent)', margin: 0 }}>
-                    {checkin.energy}/5
+                    {checkin.feeling}/5
                   </p>
                 </div>
               )}
-              {checkin.mood && (
+              {checkin.time_available && (
                 <div>
-                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 4px' }}>Mood</p>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 4px' }}>Time Available</p>
                   <p style={{ fontSize: 14, fontWeight: 700, color: 'var(--accent)', margin: 0 }}>
-                    {checkin.mood}/5
-                  </p>
-                </div>
-              )}
-              {checkin.soreness && (
-                <div>
-                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 4px' }}>Soreness</p>
-                  <p style={{ fontSize: 14, fontWeight: 700, color: 'var(--accent)', margin: 0 }}>
-                    {checkin.soreness}/5
+                    {checkin.time_available} min
                   </p>
                 </div>
               )}

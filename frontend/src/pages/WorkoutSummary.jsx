@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
+import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip, BarChart, XAxis, YAxis, Bar } from 'recharts'
 import api from '../lib/api'
 import MuscleDiagram from '../components/MuscleDiagram'
 import { getMuscleBreakdown } from '../lib/muscleMap'
@@ -119,7 +120,7 @@ export default function WorkoutSummary() {
   const muscleVolumeData = Object.entries(sets.reduce((acc, s) => { const key = (s.muscle_group || 'other').toLowerCase(); acc[key] = (acc[key] || 0) + (s.weight_lbs || 0) * (s.reps || 0); return acc }, {})).map(([name, value]) => ({ name, value }))
   const hrZonesData = [
     { zone: 'Z1', min: 0.35 }, { zone: 'Z2', min: 0.3 }, { zone: 'Z3', min: 0.2 }, { zone: 'Z4', min: 0.1 }, { zone: 'Z5', min: 0.05 }
-  ].map((z) => ({ ...z, min: Math.round((session.total_seconds || 0) * z.min / 60) }))
+  ].map((z) => ({ ...z, min: Math.round((session?.total_seconds || 0) * z.min / 60) }))
   const totalCalories = Math.round(((session?.total_seconds || 0) / 60) * 5)
   const workTimeSec = sets.reduce((sum, set) => sum + (set.duration_seconds || 30), 0)
   const restTimeSec = (session?.total_seconds || 0) - workTimeSec

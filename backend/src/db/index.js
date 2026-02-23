@@ -427,9 +427,11 @@ addWatchCol('set_heart_rate_json', "TEXT DEFAULT '[]'");
 addWatchCol('rest_heart_rate_json', "TEXT DEFAULT '[]'");
 addWatchCol('workout_duration_seconds', 'INTEGER');
 addWatchCol('recovery_heart_rate', 'INTEGER');
+addWatchCol('incline_pct', 'REAL');
 addWatchCol('belt_speed_mph', 'REAL');
 addWatchCol('treadmill_brand', 'TEXT');
 addWatchCol('treadmill_model', 'TEXT');
+addWatchCol('watch_mode', 'TEXT');
 addWatchCol('raw_payload', 'TEXT');
 
 db.exec(`
