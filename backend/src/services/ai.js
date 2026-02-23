@@ -72,7 +72,7 @@ Increase mileage ~10% per week max. Week 4 should be a recovery week (reduce ~20
 
   try {
     const res = await getClient().messages.create({
-      model: 'claude-3-5-sonnet-20241022',
+      model: 'claude-haiku-4-5',
       max_tokens: 2000,
       messages: [{ role: 'user', content: prompt }],
     });
@@ -119,7 +119,7 @@ Keep it under 60 words total. No headers, no bullet points — just natural coac
 
   try {
     const res = await getClient().messages.create({
-      model: 'claude-3-5-sonnet-20241022',
+      model: 'claude-haiku-4-5',
       max_tokens: 150,
       messages: [{ role: 'user', content: prompt }],
     });
@@ -156,7 +156,7 @@ async function generateWorkoutFeedback(session, sets, profile) {
     const prompt = `You are a strength and conditioning coach, ${voiceDesc}. Give specific, actionable feedback on this workout in 2-3 sentences. Be specific to the actual exercises and weights used. End with one concrete suggestion for next session.\n\nAthlete profile: ${profile?.name || 'Athlete'}, ${profile?.weight_lbs ? `${profile.weight_lbs} lbs` : ''}, goal: ${profile?.goal_type || 'general fitness'}\nDuration: ${durationMin ? `${durationMin} minutes` : 'not recorded'}\nMuscle groups: ${muscleGroups || 'not specified'}\nExercises:\n${exerciseSummary}\nNotes: ${session.notes || 'none'}`;
 
     const msg = await getClient().messages.create({
-      model: 'claude-3-5-sonnet-20241022',
+      model: 'claude-haiku-4-5',
       max_tokens: 200,
       messages: [{ role: 'user', content: prompt }],
     });

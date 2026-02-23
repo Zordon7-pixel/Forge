@@ -32,7 +32,7 @@ app.use(cors({
   credentials: true
 }));
 
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '10mb' }));
 
 // Security headers
 app.use(helmet({ contentSecurityPolicy: false }));

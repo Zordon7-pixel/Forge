@@ -3,6 +3,7 @@ const db     = require('../db');
 const auth   = require('../middleware/auth');
 const { v4: uuidv4 } = require('uuid');
 const { generateRunFeedback, generateLoadWarning } = require('../services/ai');
+const autoUpdatePRs = require('../services/prAuto');
 
 router.get('/', auth, (req, res) => {
   const runs = db.prepare('SELECT * FROM runs WHERE user_id = ? ORDER BY date DESC, created_at DESC LIMIT 50').all(req.user.id);
@@ -107,7 +108,8 @@ router.post('/', auth, (req, res) => {
   }
 
   const run = db.prepare('SELECT * FROM runs WHERE id = ?').get(id);
-  res.status(201).json(run);
+  const prResult = autoUpdatePRs(db, req.user.id, run) || { newPRs: [], discrepancies: [] }
+  res.status(201).json({ run, newPRs: prResult.newPRs, discrepancies: prResult.discrepancies });
 
   // Async: generate AI feedback — check limits first
   const today = new Date().toISOString().slice(0, 10);

@@ -95,7 +95,10 @@ db.exec(`
     run_id TEXT,
     lift_id TEXT,
     achieved_at TEXT DEFAULT (datetime('now')),
-    notes TEXT
+    notes TEXT,
+    source TEXT DEFAULT 'auto',
+    discrepancy INTEGER DEFAULT 0,
+    auto_value REAL
   );
 
   CREATE TABLE IF NOT EXISTS badges (
@@ -281,6 +284,11 @@ if (!liftCols.includes('calories')) db.prepare("ALTER TABLE lifts ADD COLUMN cal
 if (!liftCols.includes('recovery_heart_rate')) db.prepare("ALTER TABLE lifts ADD COLUMN recovery_heart_rate INTEGER").run();
 if (!liftCols.includes('category')) db.prepare("ALTER TABLE lifts ADD COLUMN category TEXT DEFAULT 'strength'").run();
 
+const prCols = db.prepare("PRAGMA table_info(personal_records)").all().map(c => c.name);
+if (!prCols.includes('source')) db.prepare("ALTER TABLE personal_records ADD COLUMN source TEXT DEFAULT 'auto'").run();
+if (!prCols.includes('discrepancy')) db.prepare("ALTER TABLE personal_records ADD COLUMN discrepancy INTEGER DEFAULT 0").run();
+if (!prCols.includes('auto_value')) db.prepare("ALTER TABLE personal_records ADD COLUMN auto_value REAL").run();
+
 // Schedule preference columns
 const userCols2 = db.prepare("PRAGMA table_info(users)").all().map(c => c.name);
 if (!userCols2.includes('schedule_type')) db.prepare("ALTER TABLE users ADD COLUMN schedule_type TEXT DEFAULT 'adaptive'").run();
@@ -336,6 +344,14 @@ const seasonalBadges = [
 
 const seasonalStmt = db.prepare("INSERT OR IGNORE INTO badges (slug, name, description, icon, category, requirement_type, requirement_value, window_start, window_end, color) VALUES (?,?,?,?,?,?,?,?,?,?)")
 seasonalBadges.forEach(b => seasonalStmt.run(b.slug, b.name, b.description, b.icon, b.category, b.requirement_type, b.requirement_value, b.window_start, b.window_end, b.color))
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS watch_sync (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    synced_at TEXT DEFAULT (datetime('now'))
+  );
+`);
 
 const watchCols = db.prepare("PRAGMA table_info(watch_sync)").all().map(c => c.name);
 const addWatchCol = (name, sqlType) => { if (!watchCols.includes(name)) db.prepare(`ALTER TABLE watch_sync ADD COLUMN ${name} ${sqlType}`).run(); };

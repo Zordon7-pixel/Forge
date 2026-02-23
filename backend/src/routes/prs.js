@@ -2,6 +2,7 @@ const router = require('express').Router()
 const db = require('../db')
 const auth = require('../middleware/auth')
 const { v4: uuidv4 } = require('uuid')
+const autoUpdatePRs = require('../services/prAuto')
 
 // GET /api/prs — get all PRs for user
 router.get('/', auth, (req, res) => {

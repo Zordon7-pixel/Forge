@@ -1,6 +1,167 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
+import { CheckCircle2 } from 'lucide-react'
 import { postRunStretches, preRunStretches } from '../data/stretches'
+
+// Animated stick figure component
+function StretchFigure({ stretchName, active }) {
+  const getAnimType = (name) => {
+    const lower = name.toLowerCase()
+    if (lower.includes('hip') || lower.includes('lunge')) return 'hip'
+    if (lower.includes('quad')) return 'quad'
+    if (lower.includes('hamstring')) return 'hamstring'
+    if (lower.includes('calf')) return 'calf'
+    if (lower.includes('shoulder') || lower.includes('arm') || lower.includes('cross')) return 'shoulder'
+    if (lower.includes('neck')) return 'neck'
+    if (lower.includes('glute') || lower.includes('pigeon')) return 'glute'
+    if (lower.includes('back') || lower.includes('cat') || lower.includes('spine')) return 'back'
+    if (lower.includes('ankle') || lower.includes('roll')) return 'ankle'
+    return 'sway'
+  }
+
+  const animType = getAnimType(stretchName)
+
+  return (
+    <>
+      <style>{`
+        @keyframes hip-body { 0%,100% { transform: rotate(0deg); } 50% { transform: rotate(12deg); transform-origin: 50px 25px; } }
+        @keyframes hip-lleg { 0%,100% { transform: translateX(0); } 50% { transform: translateX(-8px); } }
+        @keyframes hip-rleg { 0%,100% { transform: translateX(0); } 50% { transform: translateX(8px); } }
+        
+        @keyframes quad-lleg { 0%,100% { transform: rotate(0deg); } 50% { transform: rotate(-35deg); transform-origin: 50px 75px; } }
+        @keyframes quad-rleg { 0%,100% { transform: rotate(0deg); } 50% { transform: rotate(0deg); } }
+        
+        @keyframes hamstring-body { 0%,100% { transform: rotate(0deg); } 50% { transform: rotate(18deg); transform-origin: 50px 25px; } }
+        @keyframes hamstring-lleg { 0%,100% { transform: rotate(0deg); } 50% { transform: rotate(0deg); } }
+        @keyframes hamstring-rleg { 0%,100% { transform: rotate(0deg); } 50% { transform: rotate(0deg); } }
+        
+        @keyframes calf-lleg { 0%,100% { transform: rotate(0deg); } 50% { transform: rotate(15deg); transform-origin: 50px 75px; } }
+        @keyframes calf-rleg { 0%,100% { transform: rotate(0deg); } 50% { transform: rotate(-15deg); transform-origin: 50px 75px; } }
+        
+        @keyframes shoulder-larm { 0%,100% { transform: rotate(0deg); } 50% { transform: rotate(-40deg); transform-origin: 50px 40px; } }
+        @keyframes shoulder-rarm { 0%,100% { transform: rotate(0deg); } 50% { transform: rotate(-40deg); transform-origin: 50px 40px; } }
+        
+        @keyframes neck-head { 0%,100% { transform: rotate(0deg); } 25% { transform: rotate(15deg); } 75% { transform: rotate(-15deg); } }
+        
+        @keyframes glute-lleg { 0%,100% { transform: rotate(0deg); } 50% { transform: rotate(45deg); transform-origin: 50px 75px; } }
+        @keyframes glute-rleg { 0%,100% { transform: rotate(0deg); } 50% { transform: rotate(-10deg); transform-origin: 50px 75px; } }
+        
+        @keyframes back-body { 0%,100% { transform: rotate(0deg); } 50% { transform: rotate(-15deg); transform-origin: 50px 40px; } }
+        
+        @keyframes ankle-lleg { 0%,100% { transform: rotate(0deg); } 50% { transform: rotate(12deg); transform-origin: 30px 115px; } }
+        @keyframes ankle-rleg { 0%,100% { transform: rotate(0deg); } 50% { transform: rotate(-12deg); transform-origin: 70px 115px; } }
+        
+        @keyframes sway-body { 0%,100% { transform: rotate(0deg); } 50% { transform: rotate(5deg); transform-origin: 50px 25px; } }
+        @keyframes sway-larm { 0%,100% { transform: translateY(0); } 50% { transform: translateY(3px); } }
+        @keyframes sway-rarm { 0%,100% { transform: translateY(0); } 50% { transform: translateY(3px); } }
+        
+        .animate-hip-body { animation: hip-body 2.5s ease-in-out infinite; }
+        .animate-hip-lleg { animation: hip-lleg 2.5s ease-in-out infinite; }
+        .animate-hip-rleg { animation: hip-rleg 2.5s ease-in-out infinite; }
+        
+        .animate-quad-lleg { animation: quad-lleg 2.5s ease-in-out infinite; }
+        .animate-quad-rleg { animation: quad-rleg 2.5s ease-in-out infinite; }
+        
+        .animate-hamstring-body { animation: hamstring-body 2.5s ease-in-out infinite; }
+        
+        .animate-calf-lleg { animation: calf-lleg 2.5s ease-in-out infinite; }
+        .animate-calf-rleg { animation: calf-rleg 2.5s ease-in-out infinite; }
+        
+        .animate-shoulder-larm { animation: shoulder-larm 2.5s ease-in-out infinite; }
+        .animate-shoulder-rarm { animation: shoulder-rarm 2.5s ease-in-out infinite; }
+        
+        .animate-neck-head { animation: neck-head 3s ease-in-out infinite; }
+        
+        .animate-glute-lleg { animation: glute-lleg 2.5s ease-in-out infinite; }
+        .animate-glute-rleg { animation: glute-rleg 2.5s ease-in-out infinite; }
+        
+        .animate-back-body { animation: back-body 2.5s ease-in-out infinite; }
+        
+        .animate-ankle-lleg { animation: ankle-lleg 2.5s ease-in-out infinite; }
+        .animate-ankle-rleg { animation: ankle-rleg 2.5s ease-in-out infinite; }
+        
+        .animate-sway-body { animation: sway-body 3s ease-in-out infinite; }
+        .animate-sway-larm { animation: sway-larm 3s ease-in-out infinite; }
+        .animate-sway-rarm { animation: sway-rarm 3s ease-in-out infinite; }
+      `}</style>
+      
+      <div style={{ width: 160, height: 200, margin: '0 auto' }}>
+        <svg viewBox="0 0 100 140" style={{ width: '100%', height: '100%' }}>
+          {/* Head */}
+          <circle 
+            cx="50" 
+            cy="15" 
+            r="10" 
+            fill="none" 
+            stroke="#EAB308" 
+            strokeWidth="2.5"
+            className={active && animType === 'neck' ? `animate-neck-head` : ''}
+          />
+          
+          {/* Body */}
+          <line 
+            x1="50" 
+            y1="25" 
+            x2="50" 
+            y2="75" 
+            stroke="#6b7280" 
+            strokeWidth="2.5"
+            className={active ? `animate-${animType}-body` : ''}
+            style={{ transformOrigin: '50px 25px' }}
+          />
+          
+          {/* Left Arm */}
+          <line 
+            x1="50" 
+            y1="40" 
+            x2="25" 
+            y2="60" 
+            stroke="#6b7280" 
+            strokeWidth="2.5"
+            className={active ? `animate-${animType}-larm` : ''}
+            style={{ transformOrigin: '50px 40px' }}
+          />
+          
+          {/* Right Arm */}
+          <line 
+            x1="50" 
+            y1="40" 
+            x2="75" 
+            y2="60" 
+            stroke="#6b7280" 
+            strokeWidth="2.5"
+            className={active ? `animate-${animType}-rarm` : ''}
+            style={{ transformOrigin: '50px 40px' }}
+          />
+          
+          {/* Left Leg */}
+          <line 
+            x1="50" 
+            y1="75" 
+            x2="30" 
+            y2="115" 
+            stroke="#6b7280" 
+            strokeWidth="2.5"
+            className={active ? `animate-${animType}-lleg` : ''}
+            style={{ transformOrigin: '50px 75px' }}
+          />
+          
+          {/* Right Leg */}
+          <line 
+            x1="50" 
+            y1="75" 
+            x2="70" 
+            y2="115" 
+            stroke="#6b7280" 
+            strokeWidth="2.5"
+            className={active ? `animate-${animType}-rleg` : ''}
+            style={{ transformOrigin: '50px 75px' }}
+          />
+        </svg>
+      </div>
+    </>
+  )
+}
 
 export default function StretchSession() {
   const navigate = useNavigate()
