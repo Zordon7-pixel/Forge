@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ChevronRight, Settings as SettingsIcon } from 'lucide-react'
 import api from '../lib/api'
+import PRWall from './PRWall'
+import Badges from './Badges'
 
 const personalityOptions = [
   { key: 'mentor', label: 'Mentor' },
@@ -12,6 +14,7 @@ const personalityOptions = [
 
 export default function Profile() {
   const navigate = useNavigate()
+  const [activeTab, setActiveTab] = useState('profile')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -93,6 +96,25 @@ export default function Profile() {
     <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>
       <h2 className="mb-4 text-xl font-bold" style={{ color: 'var(--text-primary)' }}>Profile</h2>
 
+      <div className="flex gap-2 mb-6">
+        {['profile', 'prs', 'badges'].map(t => (
+          <button
+            key={t}
+            onClick={() => setActiveTab(t)}
+            className="px-4 py-2 rounded-full text-xs font-bold transition-colors"
+            style={{
+              background: activeTab === t ? 'var(--accent)' : 'var(--bg-card)',
+              color: activeTab === t ? '#000' : 'var(--text-muted)',
+              border: activeTab === t ? 'none' : '1px solid var(--border-subtle)'
+            }}
+          >
+            {t === 'profile' ? 'Profile' : t === 'prs' ? 'PRs' : 'Badges'}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === 'profile' && (
+        <>
       <form onSubmit={save} className="space-y-3">
         <input type="text" placeholder="Name" value={form.name} onChange={e => update('name', e.target.value)} className="w-full rounded-xl border px-4 py-3" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }} />
         <input type="email" value={form.email} readOnly className="w-full rounded-xl border px-4 py-3" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-muted)' }} />
@@ -182,18 +204,23 @@ export default function Profile() {
         <button type="submit" disabled={saving} className="w-full rounded-xl py-3 font-semibold disabled:opacity-70" style={{ background: 'var(--accent)', color: 'black' }}>{saving ? 'Saving...' : 'Save Changes'}</button>
       </form>
 
-      <div 
-        onClick={() => navigate('/settings')} 
-        className="flex items-center justify-between bg-[var(--bg-card)] border border-[var(--border-subtle)] rounded-xl p-4 cursor-pointer hover:border-yellow-500/40 transition-colors mt-4"
-      >
-        <div className="flex items-center gap-3">
-          <SettingsIcon size={18} className="text-[var(--accent)]" />
-          <span className="text-sm font-medium text-[var(--text-primary)]">Settings</span>
+        <div 
+          onClick={() => navigate('/settings')} 
+          className="flex items-center justify-between bg-[var(--bg-card)] border border-[var(--border-subtle)] rounded-xl p-4 cursor-pointer hover:border-yellow-500/40 transition-colors mt-4"
+        >
+          <div className="flex items-center gap-3">
+            <SettingsIcon size={18} className="text-[var(--accent)]" />
+            <span className="text-sm font-medium text-[var(--text-primary)]">Settings</span>
+          </div>
+          <ChevronRight size={16} className="text-[var(--text-muted)]" />
         </div>
-        <ChevronRight size={16} className="text-[var(--text-muted)]" />
-      </div>
 
-      <button type="button" onClick={logout} className="w-full rounded-xl border bg-transparent py-3 font-semibold mt-3" style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}>Log Out</button>
+        <button type="button" onClick={logout} className="w-full rounded-xl border bg-transparent py-3 font-semibold mt-3" style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}>Log Out</button>
+        </>
+      )}
+
+      {activeTab === 'prs' && <PRWall />}
+      {activeTab === 'badges' && <Badges />}
     </div>
   )
 }
