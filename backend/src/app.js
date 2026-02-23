@@ -2,16 +2,51 @@ require('dotenv').config();
 const express = require('express');
 const cors    = require('cors');
 const path    = require('path');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
+
+// Refuse to start without JWT_SECRET
+if (!process.env.JWT_SECRET) {
+  console.error('[SECURITY] JWT_SECRET env var not set. Refusing to start.');
+  process.exit(1);
+}
 
 // Seed demo data on startup
 try { require('./db/seed').runSeed(); } catch (e) { console.error('Seed error:', e.message); }
 try { require('./db/exercises-seed').seedExercises(); } catch(e) { console.error('Exercise seed error:', e.message); }
 
 const app = express();
-app.use(cors());
-app.use(express.json());
 
-app.use('/api/auth',  require('./routes/auth'));
+// CORS — restrict to known origin in production
+const allowedOrigins = process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(',').map(s => s.trim())
+  : ['http://localhost:4000', 'http://localhost:4001', 'http://localhost:4002',
+     'http://localhost:5173', 'http://100.102.219.60:4000', 'http://100.102.219.60:4001', 'http://100.102.219.60:4002'];
+
+app.use(cors({
+  origin: function(origin, callback) {
+    // Allow same-origin requests (no origin header) and allowed origins
+    if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error('Not allowed by CORS'));
+  },
+  credentials: true
+}));
+
+app.use(express.json({ limit: '1mb' }));
+
+// Security headers
+app.use(helmet({ contentSecurityPolicy: false }));
+
+// Rate limiting — auth endpoints
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  message: { error: 'Too many requests. Try again in 15 minutes.' },
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
+app.use('/api/auth', authLimiter, require('./routes/auth'));
 app.use('/api/users', require('./routes/users'));
 app.use('/api/runs',  require('./routes/runs'));
 app.use('/api/lifts', require('./routes/lifts'));
