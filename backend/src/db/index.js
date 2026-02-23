@@ -562,4 +562,14 @@ db.prepare(`CREATE TABLE IF NOT EXISTS stretches (
 const stretchCols = db.prepare("PRAGMA table_info(stretches)").all().map(c => c.name);
 if (!stretchCols.includes('category')) db.prepare("ALTER TABLE stretches ADD COLUMN category TEXT").run();
 
+db.exec(`
+  CREATE TABLE IF NOT EXISTS password_reset_tokens (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    token TEXT NOT NULL UNIQUE,
+    expires_at TEXT NOT NULL,
+    used INTEGER DEFAULT 0
+  );
+`);
+
 module.exports = db;

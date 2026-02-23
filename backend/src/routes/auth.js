@@ -1,6 +1,7 @@
 const router  = require('express').Router();
 const bcrypt  = require('bcryptjs');
 const jwt     = require('jsonwebtoken');
+const crypto  = require('crypto');
 const db      = require('../db');
 const auth    = require('../middleware/auth');
 const { v4: uuidv4 } = require('uuid');
@@ -33,6 +34,30 @@ router.post('/register', (req, res) => {
     .run(id, name.trim(), emailNorm, bcrypt.hashSync(password, 10));
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
   res.status(201).json({ token: sign(user), user: { id: user.id, name: user.name, email: user.email, onboarded: 0 } });
+});
+
+router.post('/forgot-password', (req, res) => {
+  const { email } = req.body;
+  if (!email?.trim()) return res.status(400).json({ error: 'Email is required.' });
+  const user = db.prepare('SELECT id, email FROM users WHERE LOWER(email) = ?').get(email.trim().toLowerCase());
+  if (user) {
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 3600000).toISOString();
+    db.prepare('INSERT INTO password_reset_tokens (id, user_id, token, expires_at) VALUES (?, ?, ?, ?)').run(uuidv4(), user.id, token, expiresAt);
+    console.log(`PASSWORD RESET LINK: /reset-password?token=${token}`);
+  }
+  res.json({ ok: true });
+});
+
+router.post('/reset-password', (req, res) => {
+  const { token, password } = req.body;
+  if (!token || !password) return res.status(400).json({ error: 'Token and new password are required.' });
+  if (password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+  const record = db.prepare('SELECT * FROM password_reset_tokens WHERE token = ? AND used = 0 AND expires_at > ?').get(token, new Date().toISOString());
+  if (!record) return res.status(400).json({ error: 'Reset link is invalid or expired.' });
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(bcrypt.hashSync(password, 10), record.user_id);
+  db.prepare('UPDATE password_reset_tokens SET used = 1 WHERE id = ?').run(record.id);
+  res.json({ ok: true });
 });
 
 router.get('/me', auth, (req, res) => {

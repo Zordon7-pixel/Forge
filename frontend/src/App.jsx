@@ -27,6 +27,7 @@ import Community from './pages/Community'
 import Journal from './pages/Journal'
 import Races from './pages/Races'
 import Gear from './pages/Gear'
+import ResetPassword from './pages/ResetPassword'
 
 function PrivateRoute({ children }) {
   if (!isLoggedIn()) return <Navigate to="/login" replace />
@@ -43,6 +44,7 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/onboarding" element={<Onboarding />} />
 
         <Route
