@@ -90,23 +90,29 @@ export default function LogRun() {
         {/* Run surface selector */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 16 }}>
           {[
-            { value: 'outdoor', label: 'Outdoor', icon: '🛤' },
-            { value: 'treadmill', label: 'Treadmill', icon: '⚙️' },
-            { value: 'track', label: 'Track', icon: '🏟' },
-            { value: 'trail', label: 'Trail', icon: '🌲' },
+            { value: 'outdoor', label: 'Road', img: '/terrain/road.jpg' },
+            { value: 'treadmill', label: 'Treadmill', img: '/terrain/treadmill.jpg' },
+            { value: 'track', label: 'Track', img: '/terrain/track.jpg' },
+            { value: 'trail', label: 'Trail', img: '/terrain/trail.jpg' },
           ].map(opt => (
             <button key={opt.value} onClick={() => setSurface(opt.value)}
               style={{
-                padding: '10px 4px',
+                padding: 0,
                 borderRadius: 12,
                 border: `2px solid ${surface === opt.value ? 'var(--accent)' : 'var(--border-subtle)'}`,
-                background: surface === opt.value ? 'var(--accent-dim)' : 'var(--bg-input)',
+                background: 'var(--bg-input)',
                 color: surface === opt.value ? 'var(--accent)' : 'var(--text-muted)',
                 fontWeight: 700, fontSize: 11, cursor: 'pointer',
-                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
+                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0,
+                overflow: 'hidden',
               }}>
-              <span style={{ fontSize: 18 }}>{opt.icon}</span>
-              <span>{opt.label}</span>
+              <div style={{ width: '100%', height: 64, overflow: 'hidden', position: 'relative' }}>
+                <img src={opt.img} alt={opt.label}
+                  style={{ width: '100%', height: '100%', objectFit: 'cover',
+                    filter: surface === opt.value ? 'brightness(1)' : 'brightness(0.55)',
+                    transition: 'filter 0.2s' }} />
+              </div>
+              <span style={{ padding: '5px 4px', display: 'block', width: '100%', textAlign: 'center' }}>{opt.label}</span>
             </button>
           ))}
         </div>
