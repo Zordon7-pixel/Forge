@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Flame, ArrowUpRight, ArrowDownRight, Watch } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import AchievementUnlock from '../components/AchievementUnlock'
 import { useUnits } from '../context/UnitsContext'
 import api from '../lib/api'
@@ -107,7 +108,7 @@ function ReadinessGauge({ score, onClick }) {
   )
 }
 
-const PERIOD_LABELS = { day: 'Today', week: 'This Week', month: 'This Month', year: 'This Year', all: 'All Time' }
+const PERIOD_LABELS = { day: 'Today', week: t('dashboard.thisWeek'), month: 'This Month', year: 'This Year', all: 'All Time' }
 
 // Watch Sync Widget
 function WatchSyncWidget() {
@@ -186,6 +187,7 @@ function WatchSyncWidget() {
 export default function Dashboard() {
   const navigate = useNavigate()
   const { fmt } = useUnits()
+  const { t } = useTranslation()
   const [stats, setStats] = useState(null)
   const [runs, setRuns] = useState([])
   const [lifts, setLifts] = useState([])
@@ -407,7 +409,7 @@ export default function Dashboard() {
 
       {compliance && (
         <div className="rounded-xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }} onClick={() => setShowComplianceDetails(!showComplianceDetails)}>
-          <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>This Week: {compliance.completed}/{compliance.planned} sessions — {compliance.score}%</p>
+          <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{t('dashboard.thisWeek')}: {compliance.completed}/{compliance.planned} sessions — {compliance.score}%</p>
           <div className="w-full h-2 rounded-full mt-2" style={{ background: 'var(--bg-input)' }}>
             <div className="h-2 rounded-full" style={{ width: `${compliance.score}%`, background: complianceColor }} />
           </div>
@@ -505,7 +507,7 @@ export default function Dashboard() {
       {/* 7-day calendar */}
       {stats?.calendarDays && (
         <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>
-          <p className="text-xs font-medium mb-3" style={{ color: 'var(--text-muted)' }}>This Week</p>
+          <p className="text-xs font-medium mb-3" style={{ color: 'var(--text-muted)' }}>{t('dashboard.thisWeek')}</p>
           <div className="grid grid-cols-7 gap-1">
             {stats.calendarDays.map((day) => (
               <div key={day.date} className="flex flex-col items-center gap-1"
@@ -661,7 +663,7 @@ export default function Dashboard() {
             )
           })}
           {recentActivity.length === 0 && (
-            <p className="text-sm py-4 text-center" style={{ color: 'var(--text-muted)' }}>No activity yet. Start moving!</p>
+            <p className="text-sm py-4 text-center" style={{ color: 'var(--text-muted)' }}>{t('dashboard.noActivity')}</p>
           )}
         </div>
       </section>

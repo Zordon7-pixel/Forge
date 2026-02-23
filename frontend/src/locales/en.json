@@ -1,0 +1,113 @@
+{
+  "nav": {
+    "home": "Home",
+    "run": "Run",
+    "lift": "Lift",
+    "challenges": "Challenges",
+    "community": "Community",
+    "history": "History",
+    "profile": "Profile"
+  },
+  "dashboard": {
+    "thisWeek": "This Week",
+    "miles": "miles",
+    "streak": "day streak",
+    "noActivity": "No activity yet this week",
+    "startRun": "Start a Run",
+    "logWorkout": "Log a Workout"
+  },
+  "run": {
+    "warmup": "Warm-Up",
+    "step": "Step",
+    "of": "of",
+    "next": "Next",
+    "finishWarmup": "Finish Warm-Up",
+    "skipWarmup": "Skip warmup",
+    "startRun": "Start Run",
+    "logRun": "Log Run",
+    "distance": "Distance",
+    "duration": "Duration",
+    "pace": "Pace",
+    "effort": "Effort",
+    "surface": "Surface",
+    "notes": "Notes",
+    "submit": "Save Run",
+    "plan": "Plan",
+    "readiness": "Readiness",
+    "youAreReady": "You're Ready",
+    "takeItEasy": "Take It Easy",
+    "thisWeekMiles": "This Week",
+    "todayPlan": "Today's Plan",
+    "feeling": "How You're Feeling"
+  },
+  "lift": {
+    "title": "Start Workout",
+    "manual": "Manual",
+    "aiRecommends": "AI Recommends",
+    "selectMuscles": "Select the muscle groups you are targeting today",
+    "beginWorkout": "Begin Workout",
+    "startWorkout": "Start Workout",
+    "generating": "Generating your personalized workout...",
+    "endWorkout": "End Workout",
+    "restTimer": "Rest Timer",
+    "reps": "Reps",
+    "weight": "Weight (lbs)",
+    "exercise": "Exercise",
+    "todaysPlan": "Today's Plan"
+  },
+  "history": {
+    "title": "History",
+    "runs": "Runs",
+    "workouts": "Workouts",
+    "races": "Races",
+    "noRuns": "No runs logged yet",
+    "noWorkouts": "No workouts logged yet",
+    "noRaces": "No races yet"
+  },
+  "profile": {
+    "title": "Profile",
+    "editProfile": "Edit Profile",
+    "save": "Save",
+    "cancel": "Cancel",
+    "name": "Name",
+    "email": "Email",
+    "connectedDevices": "Connected Devices",
+    "comingSoon": "Coming Soon"
+  },
+  "settings": {
+    "title": "Settings",
+    "language": "Language",
+    "theme": "Theme",
+    "darkMode": "Dark Mode",
+    "lightMode": "Light Mode",
+    "units": "Units",
+    "imperial": "Imperial",
+    "metric": "Metric"
+  },
+  "common": {
+    "loading": "Loading...",
+    "error": "Something went wrong",
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "edit": "Edit",
+    "back": "Back",
+    "done": "Done",
+    "next": "Next",
+    "skip": "Skip",
+    "today": "Today",
+    "week": "Week",
+    "miles": "mi",
+    "lbs": "lbs"
+  },
+  "auth": {
+    "login": "Log In",
+    "register": "Sign Up",
+    "logout": "Log Out",
+    "email": "Email",
+    "password": "Password",
+    "name": "Full Name",
+    "noAccount": "Don't have an account?",
+    "hasAccount": "Already have an account?"
+  }
+}

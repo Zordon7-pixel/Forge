@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ChevronRight, Settings as SettingsIcon, User, Dumbbell, HeartPulse, Eye } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import api from '../lib/api'
 
 const personalityOptions = [
@@ -72,6 +73,7 @@ function MetaGlassesCard() {
 
 export default function Profile() {
   const navigate = useNavigate()
+  const { t } = useTranslation()
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -152,7 +154,7 @@ export default function Profile() {
     navigate('/login')
   }
 
-  if (loading) return <div className="rounded-xl p-4" style={{ background: 'var(--bg-card)', color: 'var(--text-muted)' }}>Loading profile...</div>
+  if (loading) return <div className="rounded-xl p-4" style={{ background: 'var(--bg-card)', color: 'var(--text-muted)' }}>{t('common.loading')}</div>
 
   const sectionStyle = { background: 'var(--bg-card)', borderRadius: 16, padding: 20, marginBottom: 12 }
   const sectionLabel = { fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 14 }
@@ -162,7 +164,7 @@ export default function Profile() {
 
   return (
     <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>
-      <h2 className="mb-4 text-xl font-bold" style={{ color: 'var(--text-primary)' }}>Profile</h2>
+      <h2 className="mb-4 text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{t('profile.title')}</h2>
 
           <div style={{ background: 'var(--bg-card)', borderRadius: 20, padding: 24, marginBottom: 16, textAlign: 'center', border: '1px solid var(--border-subtle)' }}>
             <div style={{ width: 72, height: 72, borderRadius: '50%', background: 'var(--bg-base)', border: '3px solid var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px', fontSize: 28, fontWeight: 900, color: 'var(--accent)' }}>
@@ -321,7 +323,7 @@ export default function Profile() {
             {error && <p className="text-sm" style={{ color: 'var(--accent)' }}>{error}</p>}
             {saved && <p className="text-sm" style={{ color: 'var(--text-primary)' }}>Saved</p>}
 
-            <button type="submit" disabled={saving} className="w-full rounded-xl py-3 font-semibold disabled:opacity-70" style={{ background: 'var(--accent)', color: '#000', marginTop: 8 }}>{saving ? 'Saving...' : 'Save Changes'}</button>
+            <button type="submit" disabled={saving} className="w-full rounded-xl py-3 font-semibold disabled:opacity-70" style={{ background: 'var(--accent)', color: '#000', marginTop: 8 }}>{saving ? t('common.loading') : t('profile.save')}</button>
           </form>
 
           <div

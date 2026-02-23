@@ -1,0 +1,113 @@
+{
+  "nav": {
+    "home": "Accueil",
+    "run": "Courir",
+    "lift": "Musculation",
+    "challenges": "Défis",
+    "community": "Communauté",
+    "history": "Historique",
+    "profile": "Profil"
+  },
+  "dashboard": {
+    "thisWeek": "Cette Semaine",
+    "miles": "miles",
+    "streak": "jours consécutifs",
+    "noActivity": "Aucune activité cette semaine",
+    "startRun": "Commencer un Course",
+    "logWorkout": "Enregistrer un Entraînement"
+  },
+  "run": {
+    "warmup": "Échauffement",
+    "step": "Étape",
+    "of": "de",
+    "next": "Suivant",
+    "finishWarmup": "Terminer l'Échauffement",
+    "skipWarmup": "Passer l'échauffement",
+    "startRun": "Commencer la Course",
+    "logRun": "Enregistrer la Course",
+    "distance": "Distance",
+    "duration": "Durée",
+    "pace": "Allure",
+    "effort": "Effort",
+    "surface": "Surface",
+    "notes": "Notes",
+    "submit": "Sauvegarder la Course",
+    "plan": "Plan",
+    "readiness": "Préparation",
+    "youAreReady": "Tu es Prêt",
+    "takeItEasy": "Prends ton Temps",
+    "thisWeekMiles": "Cette Semaine",
+    "todayPlan": "Plan du Jour",
+    "feeling": "Comment tu te Sens"
+  },
+  "lift": {
+    "title": "Commencer l'Entraînement",
+    "manual": "Manuel",
+    "aiRecommends": "IA Recommande",
+    "selectMuscles": "Sélectionne les groupes musculaires que tu vas travailler aujourd'hui",
+    "beginWorkout": "Commencer l'Entraînement",
+    "startWorkout": "Démarrer l'Entraînement",
+    "generating": "Génération de ton entraînement personnalisé...",
+    "endWorkout": "Terminer l'Entraînement",
+    "restTimer": "Minuteur de Pause",
+    "reps": "Répétitions",
+    "weight": "Poids (lbs)",
+    "exercise": "Exercice",
+    "todaysPlan": "Plan du Jour"
+  },
+  "history": {
+    "title": "Historique",
+    "runs": "Courses",
+    "workouts": "Entraînements",
+    "races": "Compétitions",
+    "noRuns": "Aucune course enregistrée",
+    "noWorkouts": "Aucun entraînement enregistré",
+    "noRaces": "Aucune compétition pour le moment"
+  },
+  "profile": {
+    "title": "Profil",
+    "editProfile": "Modifier le Profil",
+    "save": "Enregistrer",
+    "cancel": "Annuler",
+    "name": "Nom",
+    "email": "E-mail",
+    "connectedDevices": "Appareils Connectés",
+    "comingSoon": "Bientôt Disponible"
+  },
+  "settings": {
+    "title": "Paramètres",
+    "language": "Langue",
+    "theme": "Thème",
+    "darkMode": "Mode Sombre",
+    "lightMode": "Mode Clair",
+    "units": "Unités",
+    "imperial": "Impérial",
+    "metric": "Métrique"
+  },
+  "common": {
+    "loading": "Chargement...",
+    "error": "Une erreur s'est produite",
+    "save": "Enregistrer",
+    "cancel": "Annuler",
+    "delete": "Supprimer",
+    "edit": "Modifier",
+    "back": "Retour",
+    "done": "Terminé",
+    "next": "Suivant",
+    "skip": "Passer",
+    "today": "Aujourd'hui",
+    "week": "Semaine",
+    "miles": "mi",
+    "lbs": "lbs"
+  },
+  "auth": {
+    "login": "Connexion",
+    "register": "S'inscrire",
+    "logout": "Déconnexion",
+    "email": "E-mail",
+    "password": "Mot de passe",
+    "name": "Nom Complet",
+    "noAccount": "Pas de compte ?",
+    "hasAccount": "Déjà un compte ?"
+  }
+}

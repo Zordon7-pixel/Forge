@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { Trophy, Users, Activity } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { isLoggedIn } from '../lib/auth'
 import { useTheme } from '../context/ThemeContext'
 import HelpDesk from './HelpDesk'
@@ -8,18 +9,19 @@ import FeedbackButton from './FeedbackButton'
 import PullToRefresh from './PullToRefresh'
 import api from '../lib/api'
 
-const NAV_ITEMS = [
-  { to: '/run', label: 'Run', iconComponent: Activity, color: '#EAB308' },
-  { to: '/', end: true, icon: '/nav-home.png', label: 'Home', color: '#EAB308' },
-  { to: '/log-lift', icon: '/nav-lift.png', label: 'Lift', color: '#F97316' },
-  { to: '/challenges', label: 'Challenges', iconComponent: Trophy, color: '#A855F7' },
-  { to: '/community', label: 'Community', iconComponent: Users, color: '#EAB308' },
-  { to: '/history', icon: '/nav-history.png', label: 'History', color: '#3B82F6' },
-  { to: '/profile', icon: '/nav-profile.png', label: 'Profile', color: '#EC4899' },
+const NAV_ITEMS = (t) => [
+  { to: '/run', label: t('nav.run'), iconComponent: Activity, color: '#EAB308' },
+  { to: '/', end: true, icon: '/nav-home.png', label: t('nav.home'), color: '#EAB308' },
+  { to: '/log-lift', icon: '/nav-lift.png', label: t('nav.lift'), color: '#F97316' },
+  { to: '/challenges', label: t('nav.challenges'), iconComponent: Trophy, color: '#A855F7' },
+  { to: '/community', label: t('nav.community'), iconComponent: Users, color: '#EAB308' },
+  { to: '/history', icon: '/nav-history.png', label: t('nav.history'), color: '#3B82F6' },
+  { to: '/profile', icon: '/nav-profile.png', label: t('nav.profile'), color: '#EC4899' },
 ]
 
 function TrainingReadinessWidget() {
   const navigate = useNavigate()
+  const { t } = useTranslation()
   const [score, setScore] = useState(null)
 
   useEffect(() => {
@@ -89,7 +91,7 @@ function TrainingReadinessWidget() {
         cursor: 'pointer',
       }}
     >
-      <p style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: 0.6, color: 'var(--text-muted)' }}>Training Readiness</p>
+      <p style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: 0.6, color: 'var(--text-muted)' }}>{t('run.readiness')}</p>
       {score !== null ? (
         <p style={{ fontSize: 13, fontWeight: 800, color: '#EAB308' }}>{score}</p>
       ) : (
@@ -103,6 +105,7 @@ export default function Layout({ children }) {
   const [showHelp, setShowHelp] = useState(false)
   const [showFeedback, setShowFeedback] = useState(false)
   const { theme, toggle } = useTheme()
+  const { t } = useTranslation()
   const location = useLocation()
   const navigate = useNavigate()
   const isWorkout = location.pathname.startsWith('/workout/')
@@ -146,7 +149,7 @@ export default function Layout({ children }) {
 
       {!isWorkout && (
         <nav className="fixed bottom-0 left-1/2 z-30 grid w-full max-w-[480px] -translate-x-1/2 grid-cols-7 border-t px-1 py-1" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}>
-          {NAV_ITEMS.map(({ to, end, icon, iconComponent: IconComponent, label, color }) => (
+          {NAV_ITEMS(t).map(({ to, end, icon, iconComponent: IconComponent, label, color }) => (
             <NavLink key={to} to={to} end={end} className="flex flex-col items-center justify-center"
               onClick={to === '/' ? (e) => { e.preventDefault(); navigate('/') } : undefined}>
               {({ isActive }) => (

@@ -1,11 +1,22 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ChevronRight } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { useUnits } from '../context/UnitsContext'
 import api from '../lib/api'
 
+const LANGUAGES = [
+  { code: 'en', name: 'English', flag: '🇺🇸' },
+  { code: 'es', name: 'Español', flag: '🇪🇸' },
+  { code: 'pt-BR', name: 'Português (BR)', flag: '🇧🇷' },
+  { code: 'de', name: 'Deutsch', flag: '🇩🇪' },
+  { code: 'fr', name: 'Français', flag: '🇫🇷' },
+  { code: 'ja', name: '日本語', flag: '🇯🇵' },
+]
+
 export default function Settings() {
   const navigate = useNavigate()
+  const { t, i18n } = useTranslation()
   const { units, setUnits } = useUnits()
   const [distanceUnit, setDistanceUnit] = useState('miles')
   const [saved, setSaved] = useState(false)
@@ -36,13 +47,43 @@ export default function Settings() {
 
   return (
     <div>
-      <h1 style={{ fontWeight: 900, fontSize: 24, color: 'var(--text-primary)', marginBottom: 24 }}>Settings</h1>
+      <h1 style={{ fontWeight: 900, fontSize: 24, color: 'var(--text-primary)', marginBottom: 24 }}>{t('settings.title')}</h1>
+
+      {/* Language Selector */}
+      <div style={card}>
+        <span style={label}>{t('settings.language')}</span>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10 }}>
+          {LANGUAGES.map((lang) => (
+            <button
+              key={lang.code}
+              onClick={() => i18n.changeLanguage(lang.code)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '12px 14px',
+                borderRadius: 12,
+                border: `2px solid ${i18n.language === lang.code ? '#EAB308' : 'var(--border-subtle)'}`,
+                background: i18n.language === lang.code ? 'rgba(234, 179, 8, 0.15)' : 'var(--bg-input)',
+                color: 'var(--text-primary)',
+                fontWeight: 600,
+                fontSize: 14,
+                cursor: 'pointer',
+                textAlign: 'left',
+              }}
+            >
+              <span style={{ fontSize: 18 }}>{lang.flag}</span>
+              <span>{lang.name}</span>
+            </button>
+          ))}
+        </div>
+      </div>
 
       {/* Units System */}
       <div style={card}>
-        <span style={label}>Measurement System</span>
+        <span style={label}>{t('settings.units')}</span>
         <div style={{ display: 'flex', gap: 10 }}>
-          {[['imperial', 'Imperial'], ['metric', 'Metric']].map(([val, text]) => (
+          {[['imperial', t('settings.imperial')], ['metric', t('settings.metric')]].map(([val, text]) => (
             <button key={val} onClick={() => saveUnits(val)}
               style={{
                 flex: 1, padding: '14px', borderRadius: 12, border: `2px solid ${units === val ? 'var(--accent)' : 'var(--border-subtle)'}`,
@@ -80,7 +121,7 @@ export default function Settings() {
         <span style={label}>Account</span>
         <button onClick={() => navigate('/profile')}
           style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
-          <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)' }}>Edit Profile</span>
+          <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)' }}>{t('profile.editProfile')}</span>
           <ChevronRight size={18} style={{ color: 'var(--text-muted)' }} />
         </button>
       </div>

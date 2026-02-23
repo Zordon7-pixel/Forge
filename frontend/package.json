@@ -8,13 +8,16 @@
   },
   "dependencies": {
     "axios": "^1.7.9",
+    "i18next": "^25.8.13",
+    "i18next-browser-languagedetector": "^8.2.1",
+    "leaflet": "^1.9.4",
     "lucide-react": "^0.474.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "react-i18next": "^16.5.4",
+    "react-leaflet": "^4.2.1",
     "react-router-dom": "^7.1.5",
-    "recharts": "^2.15.1",
-    "leaflet": "^1.9.4",
-    "react-leaflet": "^4.2.1"
+    "recharts": "^2.15.1"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.4",

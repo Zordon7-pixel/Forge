@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useLocation, Link } from 'react-router-dom'
 import { Pencil, Trash2 } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { useUnits } from '../context/UnitsContext'
 import api from '../lib/api'
 import EditRunModal from '../components/EditRunModal'
@@ -38,6 +39,7 @@ function formatWorkoutDuration(totalSeconds = 0) {
 export default function History() {
   const location = useLocation()
   const { fmt } = useUnits()
+  const { t, i18n } = useTranslation()
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState('all')
   const [period, setPeriod] = useState('all')
@@ -284,7 +286,7 @@ export default function History() {
       </div>
 
       <div className="mb-4 flex border-b" style={{ borderColor: 'var(--border-subtle)' }}>
-        {[['all', 'All'], ['runs', 'Runs'], ['lifts', 'Lifts'], ['races', 'Races']].map(([value, label]) => (
+        {[['all', 'All'], ['runs', t('history.runs')], ['lifts', t('history.workouts')], ['races', t('history.races')]].map(([value, label]) => (
           <button
             key={value}
             onClick={() => setTab(value)}
@@ -321,7 +323,7 @@ export default function History() {
           {filteredRuns.length === 0 && tab !== 'lifts' && (
             <div className="flex flex-col items-center justify-center gap-4 py-12">
               <img src="/empty-runs.png" alt="" className="w-64 h-64 object-contain" />
-              <p className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>No runs logged for this period.</p>
+              <p className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>{t('history.noRuns')}</p>
               <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Lace up and log your next run.</p>
             </div>
           )}
@@ -336,7 +338,7 @@ export default function History() {
 
       {(tab === 'all' || tab === 'lifts') && (
         <div className="space-y-3">
-          <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Workouts & Lifts</p>
+          <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{t('history.workouts')} & {t('history.races')}</p>
 
           {filteredWorkoutSessions.map(session => (
             <div key={session.id} onClick={() => setSelectedWorkout(session)} className="cursor-pointer rounded-xl p-4" style={{ background: 'var(--bg-card)' }}>
@@ -390,7 +392,7 @@ export default function History() {
       {(tab === 'all' || tab === 'races') && (
         <div className="space-y-3">
           {races.length === 0 ? (
-            <p className="text-center py-8" style={{ color: 'var(--text-muted)', fontSize: 14 }}>No races yet. Add one from the Races page.</p>
+            <p className="text-center py-8" style={{ color: 'var(--text-muted)', fontSize: 14 }}>{t('history.noRaces')}</p>
           ) : (
             races.map(r => (
               <div key={r.id} className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>

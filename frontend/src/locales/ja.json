@@ -1,0 +1,113 @@
+{
+  "nav": {
+    "home": "ホーム",
+    "run": "ラン",
+    "lift": "トレーニング",
+    "challenges": "チャレンジ",
+    "community": "コミュニティ",
+    "history": "履歴",
+    "profile": "プロフィール"
+  },
+  "dashboard": {
+    "thisWeek": "今週",
+    "miles": "マイル",
+    "streak": "日連続",
+    "noActivity": "今週はまだアクティビティがありません",
+    "startRun": "ランを始める",
+    "logWorkout": "ワークアウトを記録"
+  },
+  "run": {
+    "warmup": "ウォームアップ",
+    "step": "ステップ",
+    "of": "/",
+    "next": "次へ",
+    "finishWarmup": "ウォームアップ終了",
+    "skipWarmup": "ウォームアップをスキップ",
+    "startRun": "ラン開始",
+    "logRun": "ランを記録",
+    "distance": "距離",
+    "duration": "時間",
+    "pace": "ペース",
+    "effort": " Effort",
+    "surface": "路面",
+    "notes": "メモ",
+    "submit": "ランを保存",
+    "plan": "プラン",
+    "readiness": "調子の確認",
+    "youAreReady": "準備OK",
+    "takeItEasy": "無理せず",
+    "thisWeekMiles": "今週",
+    "todayPlan": "今日のプラン",
+    "feeling": "今日の調子は？"
+  },
+  "lift": {
+    "title": "ワークアウト開始",
+    "manual": "手動",
+    "aiRecommends": "AIおすすめ",
+    "selectMuscles": "今日トレーニングする部位を選択",
+    "beginWorkout": "ワークアウト開始",
+    "startWorkout": "ワークアウト開始",
+    "generating": "パーソナライズワークアウトを生成中...",
+    "endWorkout": "ワークアウト終了",
+    "restTimer": "レストタイマー",
+    "reps": "レップ",
+    "weight": "重量 (lbs)",
+    "exercise": "エクササイズ",
+    "todaysPlan": "今日のプラン"
+  },
+  "history": {
+    "title": "履歴",
+    "runs": "ラン",
+    "workouts": "ワークアウト",
+    "races": "レース",
+    "noRuns": "ランの記録はありません",
+    "noWorkouts": "ワークアウトの記録はありません",
+    "noRaces": "レースはまだありません"
+  },
+  "profile": {
+    "title": "プロフィール",
+    "editProfile": "プロフィール編集",
+    "save": "保存",
+    "cancel": "キャンセル",
+    "name": "名前",
+    "email": "メール",
+    "connectedDevices": "接続デバイス",
+    "comingSoon": "近日公開"
+  },
+  "settings": {
+    "title": "設定",
+    "language": "言語",
+    "theme": "テーマ",
+    "darkMode": "ダークモード",
+    "lightMode": "ライトモード",
+    "units": "単位",
+    "imperial": "インペリアル",
+    "metric": "メートル法"
+  },
+  "common": {
+    "loading": "読み込み中...",
+    "error": "エラーが発生しました",
+    "save": "保存",
+    "cancel": "キャンセル",
+    "delete": "削除",
+    "edit": "編集",
+    "back": "戻る",
+    "done": "完了",
+    "next": "次へ",
+    "skip": "スキップ",
+    "today": "今日",
+    "week": "週",
+    "miles": "mi",
+    "lbs": "lbs"
+  },
+  "auth": {
+    "login": "ログイン",
+    "register": "登録",
+    "logout": "ログアウト",
+    "email": "メール",
+    "password": "パスワード",
+    "name": "フルネーム",
+    "noAccount": "アカウントをお持ちでないですか？",
+    "hasAccount": "すでにアカウントをお持ちですか？"
+  }
+}

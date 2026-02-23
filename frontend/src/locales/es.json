@@ -1,0 +1,113 @@
+{
+  "nav": {
+    "home": "Inicio",
+    "run": "Correr",
+    "lift": "Entrenar",
+    "challenges": "Desafíos",
+    "community": "Comunidad",
+    "history": "Historial",
+    "profile": "Perfil"
+  },
+  "dashboard": {
+    "thisWeek": "Esta Semana",
+    "miles": "millas",
+    "streak": "días seguidos",
+    "noActivity": "Sin actividad esta semana",
+    "startRun": "Iniciar una Carrera",
+    "logWorkout": "Registrar Entrenamiento"
+  },
+  "run": {
+    "warmup": "Calentamiento",
+    "step": "Paso",
+    "of": "de",
+    "next": "Siguiente",
+    "finishWarmup": "Terminar Calentamiento",
+    "skipWarmup": "Saltar calentamiento",
+    "startRun": "Iniciar Carrera",
+    "logRun": "Registrar Carrera",
+    "distance": "Distancia",
+    "duration": "Duración",
+    "pace": "Ritmo",
+    "effort": "Esfuerzo",
+    "surface": "Superficie",
+    "notes": "Notas",
+    "submit": "Guardar Carrera",
+    "plan": "Plan",
+    "readiness": "Preparación",
+    "youAreReady": "Estás Listo",
+    "takeItEasy": "Tómatelo con Calma",
+    "thisWeekMiles": "Esta Semana",
+    "todayPlan": "Plan de Hoy",
+    "feeling": "Cómo Te Sientes"
+  },
+  "lift": {
+    "title": "Iniciar Entrenamiento",
+    "manual": "Manual",
+    "aiRecommends": "IA Recomienda",
+    "selectMuscles": "Selecciona los grupos musculares que trabajarás hoy",
+    "beginWorkout": "Comenzar Entrenamiento",
+    "startWorkout": "Iniciar Entrenamiento",
+    "generating": "Generando tu entrenamiento personalizado...",
+    "endWorkout": "Terminar Entrenamiento",
+    "restTimer": "Temporizador de Descanso",
+    "reps": "Repeticiones",
+    "weight": "Peso (lbs)",
+    "exercise": "Ejercicio",
+    "todaysPlan": "Plan de Hoy"
+  },
+  "history": {
+    "title": "Historial",
+    "runs": "Carreras",
+    "workouts": "Entrenamientos",
+    "races": "Competiciones",
+    "noRuns": "No hay carreras registradas",
+    "noWorkouts": "No hay entrenamientos registrados",
+    "noRaces": "No hay competiciones todavía"
+  },
+  "profile": {
+    "title": "Perfil",
+    "editProfile": "Editar Perfil",
+    "save": "Guardar",
+    "cancel": "Cancelar",
+    "name": "Nombre",
+    "email": "Correo Electrónico",
+    "connectedDevices": "Dispositivos Conectados",
+    "comingSoon": "Próximamente"
+  },
+  "settings": {
+    "title": "Configuración",
+    "language": "Idioma",
+    "theme": "Tema",
+    "darkMode": "Modo Oscuro",
+    "lightMode": "Modo Claro",
+    "units": "Unidades",
+    "imperial": "Imperial",
+    "metric": "Métrico"
+  },
+  "common": {
+    "loading": "Cargando...",
+    "error": "Algo salió mal",
+    "save": "Guardar",
+    "cancel": "Cancelar",
+    "delete": "Eliminar",
+    "edit": "Editar",
+    "back": "Atrás",
+    "done": "Listo",
+    "next": "Siguiente",
+    "skip": "Saltar",
+    "today": "Hoy",
+    "week": "Semana",
+    "miles": "mi",
+    "lbs": "lbs"
+  },
+  "auth": {
+    "login": "Iniciar Sesión",
+    "register": "Registrarse",
+    "logout": "Cerrar Sesión",
+    "email": "Correo Electrónico",
+    "password": "Contraseña",
+    "name": "Nombre Completo",
+    "noAccount": "¿No tienes una cuenta?",
+    "hasAccount": "¿Ya tienes una cuenta?"
+  }
+}

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ChevronRight, TrendingUp, Calendar, Zap, Heart } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import api from '../lib/api'
 import Plan from './Plan'
 import LoadingRunner from '../components/LoadingRunner'
@@ -36,9 +37,9 @@ function getReadinessColor(score) {
 }
 
 function getReadinessMessage(score) {
-  if (score < 50) return 'Take It Easy'
+  if (score < 50) return t('run.takeItEasy')
   if (score < 75) return 'Good to Go'
-  return "You're Ready"
+  return t('run.youAreReady')
 }
 
 function getReadinessAdvice(score, stats, checkin) {
@@ -53,6 +54,7 @@ function getReadinessAdvice(score, stats, checkin) {
 
 // ===== WARMUP STEPS SCREEN =====
 function WarmupSteps({ stepIndex, onNext, onSkip }) {
+  const { t } = useTranslation()
   const step = WARM_UP_STEPS[stepIndex]
   const progress = ((stepIndex + 1) / WARM_UP_STEPS.length) * 100
 
@@ -111,7 +113,7 @@ function WarmupSteps({ stepIndex, onNext, onSkip }) {
             margin: '4px 0 0',
           }}
         >
-          Step {stepIndex + 1} of {WARM_UP_STEPS.length}
+          {t('run.step')} {stepIndex + 1} {t('run.of')} {WARM_UP_STEPS.length}
         </p>
       </div>
 
@@ -211,7 +213,7 @@ function WarmupSteps({ stepIndex, onNext, onSkip }) {
             onMouseEnter={e => (e.target.style.boxShadow = '0 12px 32px rgba(234, 179, 8, 0.5)')}
             onMouseLeave={e => (e.target.style.boxShadow = '0 8px 24px rgba(234, 179, 8, 0.3)')}
           >
-            {stepIndex === WARM_UP_STEPS.length - 1 ? 'Finish Warm-Up' : 'Next'}
+            {stepIndex === WARM_UP_STEPS.length - 1 ? t('run.finishWarmup') : t('run.next')}
           </button>
 
           {/* Skip link */}
@@ -231,7 +233,7 @@ function WarmupSteps({ stepIndex, onNext, onSkip }) {
             onMouseEnter={e => (e.target.style.color = 'var(--text-primary)')}
             onMouseLeave={e => (e.target.style.color = 'var(--text-muted)')}
           >
-            Skip warmup
+            {t('run.skipWarmup')}
           </button>
         </div>
       </div>
@@ -321,7 +323,7 @@ function WarmupDone({ onStartRun }) {
               letterSpacing: 1,
             }}
           >
-            Training Readiness
+            {t('run.readiness')}
           </p>
           <p
             style={{
@@ -390,7 +392,7 @@ function WarmupDone({ onStartRun }) {
                   letterSpacing: 0.8,
                 }}
               >
-                Today's Plan
+                {t('run.todayPlan')}
               </p>
             </div>
             <p
@@ -466,7 +468,7 @@ function WarmupDone({ onStartRun }) {
                   letterSpacing: 0.8,
                 }}
               >
-                How You're Feeling
+                {t('run.feeling')}
               </p>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
@@ -520,7 +522,7 @@ function WarmupDone({ onStartRun }) {
           onMouseEnter={e => (e.target.style.boxShadow = '0 12px 32px rgba(234, 179, 8, 0.5)')}
           onMouseLeave={e => (e.target.style.boxShadow = '0 8px 24px rgba(234, 179, 8, 0.3)')}
         >
-          Start Run
+          {t('run.startRun')}
         </button>
       </div>
     </div>
@@ -530,6 +532,7 @@ function WarmupDone({ onStartRun }) {
 // ===== MAIN RUN HUB COMPONENT =====
 export default function RunHub() {
   const navigate = useNavigate()
+  const { t } = useTranslation()
   const [tab, setTab] = useState('run') // 'run' | 'plan'
   const [runState, setRunState] = useState('warmup-steps') // 'warmup-steps' | 'warmup-done' | 'run-form'
   const [stepIndex, setStepIndex] = useState(0)
