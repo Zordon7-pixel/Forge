@@ -42,6 +42,12 @@ router.post('/:id/join', auth, (req, res) => {
     weekAgo.setDate(weekAgo.getDate() - 7)
     const steps = db.prepare('SELECT COALESCE(SUM(steps),0) as s FROM step_logs WHERE user_id = ? AND log_date >= ?').get(req.user.id, weekAgo.toISOString().slice(0, 10))
     progress = Math.min(steps.s, challenge.target_value)
+  } else if (challenge.type === 'step_streak') {
+    const goal = db.prepare('SELECT step_goal FROM users WHERE id = ?').get(req.user.id)?.step_goal || 10000
+    const weekAgo = new Date()
+    weekAgo.setDate(weekAgo.getDate() - 6)
+    const count = db.prepare('SELECT COUNT(*) as c FROM step_logs WHERE user_id = ? AND log_date >= ? AND steps >= ?').get(req.user.id, weekAgo.toISOString().slice(0, 10), goal)
+    progress = Math.min(count.c || 0, challenge.target_value)
   }
 
   db.prepare('INSERT OR IGNORE INTO user_challenges (id, user_id, challenge_id, progress) VALUES (?,?,?,?)').run(uuidv4(), req.user.id, req.params.id, progress)
@@ -51,10 +57,17 @@ router.post('/:id/join', auth, (req, res) => {
 router.post('/sync', auth, (req, res) => {
   const joined = db.prepare('SELECT uc.*, c.type, c.unit, c.target_value FROM user_challenges uc JOIN challenges c ON c.id = uc.challenge_id WHERE uc.user_id = ?').all(req.user.id)
   const totalMiles = db.prepare('SELECT COALESCE(SUM(distance_miles),0) as m FROM runs WHERE user_id = ?').get(req.user.id)?.m || 0
+  const stepGoal = db.prepare('SELECT step_goal FROM users WHERE id = ?').get(req.user.id)?.step_goal || 10000
+  const weekAgo = new Date()
+  weekAgo.setDate(weekAgo.getDate() - 6)
+  const weeklySteps = db.prepare('SELECT COALESCE(SUM(steps),0) as s FROM step_logs WHERE user_id = ? AND log_date >= ?').get(req.user.id, weekAgo.toISOString().slice(0, 10))?.s || 0
+  const streakDays = db.prepare('SELECT COUNT(*) as c FROM step_logs WHERE user_id = ? AND log_date >= ? AND steps >= ?').get(req.user.id, weekAgo.toISOString().slice(0, 10), stepGoal)?.c || 0
 
   for (const uc of joined) {
     let progress = uc.progress
     if (uc.unit === 'miles') progress = Math.min(totalMiles, uc.target_value)
+    else if (uc.type === 'step_weekly') progress = Math.min(weeklySteps, uc.target_value)
+    else if (uc.type === 'step_streak') progress = Math.min(streakDays, uc.target_value)
     const completed = progress >= uc.target_value ? new Date().toISOString() : null
     db.prepare('UPDATE user_challenges SET progress = ?, completed_at = ? WHERE user_id = ? AND challenge_id = ?').run(progress, completed || uc.completed_at, req.user.id, uc.challenge_id)
   }
