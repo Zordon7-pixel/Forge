@@ -1,6 +1,6 @@
 const router = require('express').Router();
 const { v4: uuidv4 } = require('uuid');
-const db = require('../db');
+const { dbGet, dbAll, dbRun } = require('../db');
 const auth = require('../middleware/auth');
 const { generateRunBrief, generateLiftPlan, generateWorkoutRecommendation, generateSessionFeedback } = require('../services/ai');
 
@@ -9,14 +9,14 @@ router.post('/session-feedback', auth, async (req, res) => {
   const athleteId = userId || req.user.id;
   if (!sessionType || !sessionId) return res.status(400).json({ error: 'sessionType and sessionId are required' });
 
-  const profile = db.prepare('SELECT * FROM users WHERE id=?').get(athleteId);
+  const profile = await dbGet('SELECT * FROM users WHERE id=?', [athleteId]);
   let sessionData = null;
 
   if (sessionType === 'run') {
-    sessionData = db.prepare('SELECT * FROM runs WHERE id=? AND user_id=?').get(sessionId, athleteId);
+    sessionData = await dbGet('SELECT * FROM runs WHERE id=? AND user_id=?', [sessionId, athleteId]);
   } else if (sessionType === 'lift') {
-    const session = db.prepare('SELECT * FROM workout_sessions WHERE id=? AND user_id=?').get(sessionId, athleteId);
-    const sets = db.prepare('SELECT * FROM workout_sets WHERE session_id=? ORDER BY logged_at ASC').all(sessionId);
+    const session = await dbGet('SELECT * FROM workout_sessions WHERE id=? AND user_id=?', [sessionId, athleteId]);
+    const sets = await dbAll('SELECT * FROM workout_sets WHERE session_id=? ORDER BY logged_at ASC', [sessionId]);
     sessionData = session ? { ...session, sets } : null;
   } else {
     return res.status(400).json({ error: 'sessionType must be run or lift' });
@@ -41,10 +41,12 @@ router.post('/session-feedback', auth, async (req, res) => {
 
 router.get('/run-brief', auth, async (req, res) => {
   const { sessionId } = req.query;
-  const run = sessionId ? db.prepare('SELECT * FROM runs WHERE id=? AND user_id=?').get(sessionId, req.user.id) : null;
-  const profile = db.prepare('SELECT * FROM users WHERE id=?').get(req.user.id);
-  const recentRuns = db.prepare('SELECT * FROM runs WHERE user_id=? ORDER BY date DESC, created_at DESC LIMIT 8').all(req.user.id);
-  const recentLifts = db.prepare('SELECT * FROM workout_sessions WHERE user_id=? AND ended_at IS NOT NULL ORDER BY started_at DESC LIMIT 5').all(req.user.id);
+  const [run, profile, recentRuns, recentLifts] = await Promise.all([
+    sessionId ? dbGet('SELECT * FROM runs WHERE id=? AND user_id=?', [sessionId, req.user.id]) : Promise.resolve(null),
+    dbGet('SELECT * FROM users WHERE id=?', [req.user.id]),
+    dbAll('SELECT * FROM runs WHERE user_id=? ORDER BY date DESC, created_at DESC LIMIT 8', [req.user.id]),
+    dbAll('SELECT * FROM workout_sessions WHERE user_id=? AND ended_at IS NOT NULL ORDER BY started_at DESC LIMIT 5', [req.user.id])
+  ]);
 
   const fallback = {
     why: 'This run supports your weekly progression while managing fatigue.',
@@ -60,9 +62,11 @@ router.get('/run-brief', auth, async (req, res) => {
 router.post('/lift-plan', auth, async (req, res) => {
   const { bodyPart, timeAvailable, userId } = req.body || {};
   const athleteId = userId || req.user.id;
-  const profile = db.prepare('SELECT * FROM users WHERE id=?').get(athleteId);
-  const recentSets = db.prepare('SELECT * FROM workout_sets WHERE user_id=? ORDER BY logged_at DESC LIMIT 40').all(athleteId);
-  const recentRuns = db.prepare('SELECT * FROM runs WHERE user_id=? ORDER BY date DESC, created_at DESC LIMIT 10').all(athleteId);
+  const [profile, recentSets, recentRuns] = await Promise.all([
+    dbGet('SELECT * FROM users WHERE id=?', [athleteId]),
+    dbAll('SELECT * FROM workout_sets WHERE user_id=? ORDER BY logged_at DESC LIMIT 40', [athleteId]),
+    dbAll('SELECT * FROM runs WHERE user_id=? ORDER BY date DESC, created_at DESC LIMIT 10', [athleteId])
+  ]);
 
   const plan = await generateLiftPlan({ bodyPart, timeAvailable, profile, recentSets, recentRuns, userId: athleteId }) || {
     workoutName: `${bodyPart || 'Full Body'} Focus`,
@@ -79,9 +83,11 @@ router.post('/lift-plan', auth, async (req, res) => {
 
 router.get('/workout-recommendation', auth, async (req, res) => {
   const userId = req.query.userId || req.user.id;
-  const profile = db.prepare('SELECT * FROM users WHERE id=?').get(userId);
-  const recentRuns = db.prepare('SELECT * FROM runs WHERE user_id=? ORDER BY date DESC, created_at DESC LIMIT 10').all(userId);
-  const recentWorkouts = db.prepare('SELECT * FROM workout_sessions WHERE user_id=? ORDER BY started_at DESC LIMIT 8').all(userId);
+  const [profile, recentRuns, recentWorkouts] = await Promise.all([
+    dbGet('SELECT * FROM users WHERE id=?', [userId]),
+    dbAll('SELECT * FROM runs WHERE user_id=? ORDER BY date DESC, created_at DESC LIMIT 10', [userId]),
+    dbAll('SELECT * FROM workout_sessions WHERE user_id=? ORDER BY started_at DESC LIMIT 8', [userId])
+  ]);
 
   const recommendation = await generateWorkoutRecommendation({ profile, recentRuns, recentWorkouts, userId }) || {
     workoutName: 'Upper Body and Core — Recovery Focus',
@@ -98,19 +104,16 @@ router.get('/workout-recommendation', auth, async (req, res) => {
 
 router.post('/community-share', auth, async (req, res) => {
   const { workoutData } = req.body || {};
-  
-  if (!workoutData) {
-    return res.status(400).json({ error: 'workoutData is required' });
-  }
+  if (!workoutData) return res.status(400).json({ error: 'workoutData is required' });
 
   const id = uuidv4();
   try {
-    db.prepare(`INSERT INTO community_workouts
-      (id, user_id, workout_name, target, warmup_json, main_json, recovery_json, explanation, rest_notes)
-      VALUES (?,?,?,?,?,?,?,?,?)`)
-      .run(
-        id,
-        req.user.id,
+    await dbRun(
+      `INSERT INTO community_workouts
+        (id, user_id, workout_name, target, warmup_json, main_json, recovery_json, explanation, rest_notes)
+        VALUES (?,?,?,?,?,?,?,?,?)`,
+      [
+        id, req.user.id,
         workoutData.workoutName || 'AI Workout',
         workoutData.target || '',
         JSON.stringify(workoutData.warmup || []),
@@ -118,8 +121,8 @@ router.post('/community-share', auth, async (req, res) => {
         JSON.stringify(workoutData.recovery || []),
         workoutData.explanation || '',
         workoutData.restExplanation || ''
-      );
-
+      ]
+    );
     res.status(201).json({ id, success: true });
   } catch (err) {
     console.error('Error sharing workout:', err);

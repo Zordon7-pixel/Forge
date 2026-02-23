@@ -1,45 +1,61 @@
 const router = require('express').Router();
-const db = require('../db');
+const { dbGet, dbAll, dbRun } = require('../db');
 const auth = require('../middleware/auth');
 const { v4: uuidv4 } = require('uuid');
 
-router.get('/', auth, (req, res) => {
-  const items = db.prepare('SELECT * FROM race_events WHERE user_id=? ORDER BY race_date ASC').all(req.user.id);
-  res.json({ races: items });
+router.get('/', auth, async (req, res) => {
+  try {
+    const items = await dbAll('SELECT * FROM race_events WHERE user_id=? ORDER BY race_date ASC', [req.user.id]);
+    res.json({ races: items });
+  } catch (err) { res.status(500).json({ error: 'Failed to fetch races' }); }
 });
 
-router.get('/next', auth, (req, res) => {
-  const today = new Date().toISOString().slice(0, 10);
-  const race = db.prepare("SELECT * FROM race_events WHERE user_id=? AND status='upcoming' AND race_date>=? ORDER BY race_date ASC LIMIT 1").get(req.user.id, today);
-  res.json({ race: race || null });
+router.get('/next', auth, async (req, res) => {
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const race = await dbGet("SELECT * FROM race_events WHERE user_id=? AND status='upcoming' AND race_date>=? ORDER BY race_date ASC LIMIT 1", [req.user.id, today]);
+    res.json({ race: race || null });
+  } catch (err) { res.status(500).json({ error: 'Failed to fetch next race' }); }
 });
 
-router.post('/', auth, (req, res) => {
-  const { race_name, race_date, distance_miles, location, goal_time_seconds, status = 'upcoming', notes } = req.body || {};
-  if (!race_name || !race_date || !distance_miles) return res.status(400).json({ error: 'race_name, race_date, distance_miles are required' });
+router.post('/', auth, async (req, res) => {
+  try {
+    const { race_name, race_date, distance_miles, location, goal_time_seconds, status = 'upcoming', notes } = req.body || {};
+    if (!race_name || !race_date || !distance_miles) return res.status(400).json({ error: 'race_name, race_date, distance_miles are required' });
 
-  const id = uuidv4();
-  db.prepare(`INSERT INTO race_events (id, user_id, race_name, race_date, distance_miles, location, goal_time_seconds, status, notes)
-    VALUES (?,?,?,?,?,?,?,?,?)`).run(id, req.user.id, race_name, race_date, Number(distance_miles), location || null, goal_time_seconds || null, status, notes || null);
+    const id = uuidv4();
+    await dbRun(
+      `INSERT INTO race_events (id, user_id, race_name, race_date, distance_miles, location, goal_time_seconds, status, notes)
+       VALUES (?,?,?,?,?,?,?,?,?)`,
+      [id, req.user.id, race_name, race_date, Number(distance_miles), location || null, goal_time_seconds || null, status, notes || null]
+    );
 
-  const race = db.prepare('SELECT * FROM race_events WHERE id=?').get(id);
-  res.status(201).json({ race });
+    const race = await dbGet('SELECT * FROM race_events WHERE id=?', [id]);
+    res.status(201).json({ race });
+  } catch (err) { res.status(500).json({ error: 'Failed to add race' }); }
 });
 
-router.patch('/:id', auth, (req, res) => {
-  const race = db.prepare('SELECT * FROM race_events WHERE id=? AND user_id=?').get(req.params.id, req.user.id);
-  if (!race) return res.status(404).json({ error: 'Race not found' });
+router.patch('/:id', auth, async (req, res) => {
+  try {
+    const race = await dbGet('SELECT * FROM race_events WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
+    if (!race) return res.status(404).json({ error: 'Race not found' });
 
-  const next = { ...race, ...req.body };
-  db.prepare(`UPDATE race_events SET race_name=?, race_date=?, distance_miles=?, location=?, goal_time_seconds=?, status=?, notes=? WHERE id=? AND user_id=?`)
-    .run(next.race_name, next.race_date, next.distance_miles, next.location, next.goal_time_seconds, next.status, next.notes, req.params.id, req.user.id);
+    const next = { ...race, ...req.body };
+    await dbRun(
+      `UPDATE race_events SET race_name=?, race_date=?, distance_miles=?, location=?, goal_time_seconds=?, status=?, notes=? WHERE id=? AND user_id=?`,
+      [next.race_name, next.race_date, next.distance_miles, next.location, next.goal_time_seconds, next.status, next.notes, req.params.id, req.user.id]
+    );
 
-  res.json({ race: db.prepare('SELECT * FROM race_events WHERE id=?').get(req.params.id) });
+    const updated = await dbGet('SELECT * FROM race_events WHERE id=?', [req.params.id]);
+    res.json({ race: updated });
+  } catch (err) { res.status(500).json({ error: 'Update failed' }); }
 });
 
-router.delete('/:id', auth, (req, res) => {
-  db.prepare('DELETE FROM race_events WHERE id=? AND user_id=?').run(req.params.id, req.user.id);
-  res.json({ ok: true });
+router.delete('/:id', auth, async (req, res) => {
+  try {
+    await dbRun('DELETE FROM race_events WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: 'Delete failed' }); }
 });
 
 module.exports = router;
