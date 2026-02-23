@@ -170,6 +170,9 @@ export default function LogRun() {
 
   const [todayWorkout, setTodayWorkout] = useState(null)
   const [todayLoading, setTodayLoading] = useState(false)
+  const [weekPlan, setWeekPlan] = useState(null)
+  const [weekPlanLoading, setWeekPlanLoading] = useState(false)
+  const [selectedDay, setSelectedDay] = useState(null)
   const [showWatchModal, setShowWatchModal] = useState(false)
 
   const [selectedRun, setSelectedRun] = useState(null)
@@ -212,6 +215,18 @@ export default function LogRun() {
   useEffect(() => {
     localStorage.setItem(PANEL_KEY, JSON.stringify(panelPrefs))
   }, [panelPrefs])
+
+  useEffect(() => {
+    if (activeTab !== 'week' || weekPlan) return
+    setWeekPlanLoading(true)
+    api.get('/plans')
+      .then(res => {
+        const planJson = res.data?.plan?.plan_json
+        if (planJson?.weeks?.length) setWeekPlan(planJson.weeks[0].days || [])
+      })
+      .catch(() => {})
+      .finally(() => setWeekPlanLoading(false))
+  }, [activeTab, weekPlan])
 
   const onSubmit = async e => {
     e.preventDefault()
@@ -305,7 +320,7 @@ export default function LogRun() {
     <>
       <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>
         <div className="flex gap-2 mb-5 flex-wrap">
-          {[{ key: 'today', label: 'Today' }, { key: 'log', label: 'Manual' }, { key: 'gps', label: 'GPS' }, { key: 'history', label: 'History' }].map(tab => (
+          {[{ key: 'today', label: 'Today' }, { key: 'week', label: 'Week' }, { key: 'log', label: 'Manual' }, { key: 'gps', label: 'GPS' }, { key: 'history', label: 'History' }].map(tab => (
             <button key={tab.key} onClick={() => setActiveTab(tab.key)} style={{ padding: '5px 18px', borderRadius: 999, border: activeTab === tab.key ? '1.5px solid var(--accent)' : '1.5px solid var(--border-subtle)', background: activeTab === tab.key ? 'var(--accent)' : 'transparent', color: activeTab === tab.key ? '#000' : 'var(--text-muted)', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>{tab.label}</button>
           ))}
         </div>
@@ -324,6 +339,79 @@ export default function LogRun() {
               <div className="rounded-2xl p-4" style={{ background: 'var(--bg-base)', border: '1px solid var(--border-subtle)' }}>
                 <p style={{ color: 'var(--text-muted)' }}>No workout scheduled today — rest up or log a free run.</p>
                 <button onClick={() => setActiveTab('log')} className="mt-4 rounded-xl px-4 py-2 font-semibold" style={{ background: 'var(--accent)', color: '#000', border: 'none', cursor: 'pointer' }}>Log Free Run</button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'week' && (
+          <div>
+            {weekPlanLoading && <p style={{ color: 'var(--text-muted)', fontSize: 14 }}>Loading your week...</p>}
+            {!weekPlanLoading && !weekPlan && (
+              <div style={{ textAlign: 'center', padding: '24px 0', color: 'var(--text-muted)', fontSize: 14 }}>
+                No training plan yet. Go to your Plan tab to generate one.
+              </div>
+            )}
+            {weekPlan && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {(() => {
+                  const todayShort = new Date().toLocaleDateString('en-US', { weekday: 'short' })
+                  return weekPlan.map((day, i) => {
+                    const isToday = day.day === todayShort
+                    const isExpanded = selectedDay === i
+                    const typeColor = day.rest ? 'var(--text-muted)' : day.type === 'long' ? '#3b82f6' : 'var(--accent)'
+                    return (
+                      <div key={i}
+                        onClick={() => setSelectedDay(isExpanded ? null : i)}
+                        style={{
+                          borderRadius: 14, padding: '12px 16px', cursor: 'pointer',
+                          background: isToday ? 'var(--accent-dim)' : 'var(--bg-base)',
+                          border: `1.5px solid ${isToday ? 'var(--accent)' : 'var(--border-subtle)'}`,
+                          transition: 'background 0.15s',
+                        }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                            <div style={{ width: 36, textAlign: 'center' }}>
+                              <p style={{ fontSize: 12, fontWeight: 700, color: isToday ? 'var(--accent)' : 'var(--text-muted)' }}>{day.day}</p>
+                              {isToday && <p style={{ fontSize: 9, color: 'var(--accent)', fontWeight: 700 }}>TODAY</p>}
+                            </div>
+                            <div>
+                              <p style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', textTransform: 'capitalize' }}>
+                                {day.rest ? 'Rest Day' : day.type === 'long' ? 'Long Run' : day.type === 'easy' ? 'Easy Run' : String(day.type).replace(/_/g,' ')}
+                              </p>
+                              {!day.rest && day.distance_miles > 0 && (
+                                <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>{Number(day.distance_miles).toFixed(1)} miles</p>
+                              )}
+                            </div>
+                          </div>
+                          <span style={{ fontSize: 11, fontWeight: 700, color: typeColor, background: day.rest ? 'var(--bg-card)' : 'transparent',
+                            padding: '3px 8px', borderRadius: 8, border: `1px solid ${typeColor}` }}>
+                            {day.rest ? 'Rest' : day.type === 'long' ? 'Long' : 'Easy'}
+                          </span>
+                        </div>
+
+                        {isExpanded && (
+                          <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border-subtle)' }}>
+                            {day.description && <p style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.6, marginBottom: 12 }}>{day.description}</p>}
+                            {!day.rest && (
+                              <div style={{ display: 'flex', gap: 16, marginBottom: 12 }}>
+                                {day.distance_miles > 0 && <div><p style={{ fontSize: 18, fontWeight: 900, color: 'var(--text-primary)' }}>{Number(day.distance_miles).toFixed(1)}</p><p style={{ fontSize: 11, color: 'var(--text-muted)' }}>miles</p></div>}
+                                {day.duration_min > 0 && <div><p style={{ fontSize: 18, fontWeight: 900, color: 'var(--text-primary)' }}>{day.duration_min}</p><p style={{ fontSize: 11, color: 'var(--text-muted)' }}>minutes</p></div>}
+                                {day.pace_target && <div><p style={{ fontSize: 18, fontWeight: 900, color: 'var(--text-primary)' }}>{day.pace_target}</p><p style={{ fontSize: 11, color: 'var(--text-muted)' }}>target pace</p></div>}
+                              </div>
+                            )}
+                            {!day.rest && isToday && (
+                              <button onClick={e => { e.stopPropagation(); setActiveTab('gps') }}
+                                style={{ width: '100%', background: 'var(--accent)', color: '#000', fontWeight: 900, borderRadius: 10, padding: '12px', border: 'none', cursor: 'pointer', fontSize: 14 }}>
+                                Start This Run
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })
+                })()}
               </div>
             )}
           </div>
