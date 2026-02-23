@@ -189,11 +189,12 @@ export default function Dashboard() {
   const [loadAnalysis, setLoadAnalysis] = useState(null)
   const [nextRace, setNextRace] = useState(null)
   const [loadWarningDismissedUntil, setLoadWarningDismissedUntil] = useState(Number(localStorage.getItem('forge_load_warning_dismissed_until') || 0))
+  const [shoeAlerts, setShoeAlerts] = useState([])
 
   useEffect(() => {
     ;(async () => {
       try {
-        const [statsRes, runsRes, liftsRes, warningRes, checkinRes, goalRes, streakRes, milestoneRes, complianceRes, loadRes, nextRaceRes] = await Promise.all([
+        const [statsRes, runsRes, liftsRes, warningRes, checkinRes, goalRes, streakRes, milestoneRes, complianceRes, loadRes, nextRaceRes, gearRes] = await Promise.all([
           api.get('/auth/me/stats'),
           api.get('/runs', { params: { limit: 5 } }),
           api.get('/lifts'),
@@ -205,6 +206,7 @@ export default function Dashboard() {
           api.get('/plans/compliance').catch(() => ({ data: null })),
           api.get('/runs/load-analysis').catch(() => ({ data: null })),
           api.get('/races/next').catch(() => ({ data: { race: null } })),
+          api.get('/gear/shoes').catch(() => ({ data: { shoes: [] } })),
         ])
         setStats(statsRes.data)
         const runsList = Array.isArray(runsRes.data) ? runsRes.data : runsRes.data?.runs || []
@@ -231,6 +233,7 @@ export default function Dashboard() {
         setCompliance(complianceRes.data)
         setLoadAnalysis(loadRes.data)
         setNextRace(nextRaceRes.data?.race || null)
+        setShoeAlerts((gearRes.data?.shoes || []).filter(s => s.alert))
       } finally {
         setLoading(false)
       }
@@ -581,6 +584,16 @@ export default function Dashboard() {
           Heavy legs detected — consider a rest day or easy run today
         </div>
       )}
+
+      {/* Shoe Alerts */}
+      {shoeAlerts.map(shoe => (
+        <div key={shoe.id} style={{ background: 'rgba(249,115,22,0.08)', border: '1px solid rgba(249,115,22,0.3)', borderRadius: 12, padding: '10px 14px' }}>
+          <p style={{ fontSize: 13, fontWeight: 700, color: '#f97316', margin: 0 }}>
+            {shoe.brand} {shoe.model} is at {shoe.pct_used}% — {shoe.pct_used >= 100 ? 'replace now' : 'start looking for a replacement'}
+          </p>
+          <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '2px 0 0' }}>{shoe.total_miles} of {shoe.recommended_miles} miles used</p>
+        </div>
+      ))}
 
       {/* Recent Activity */}
       <section className="rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>

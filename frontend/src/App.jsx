@@ -25,6 +25,7 @@ import Challenges from './pages/Challenges'
 import Community from './pages/Community'
 import Journal from './pages/Journal'
 import Races from './pages/Races'
+import Gear from './pages/Gear'
 
 function PrivateRoute({ children }) {
   if (!isLoggedIn()) return <Navigate to="/login" replace />
@@ -112,6 +113,14 @@ export default function App() {
           element={
             <PrivateRoute>
               <Races />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/gear"
+          element={
+            <PrivateRoute>
+              <Gear />
             </PrivateRoute>
           }
         />
