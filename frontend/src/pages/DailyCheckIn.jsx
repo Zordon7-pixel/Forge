@@ -34,6 +34,8 @@ export default function DailyCheckIn({ onComplete }) {
   const [lifeFlags, setLifeFlags] = useState([])
   const [saving, setSaving] = useState(false)
   const [adjustment, setAdjustment] = useState(null)
+  const [todayPlan, setTodayPlan] = useState(null)
+  const [showStretchGate, setShowStretchGate] = useState(false)
   const [alreadyDone, setAlreadyDone] = useState(false)
 
   useEffect(() => {
@@ -55,6 +57,11 @@ export default function DailyCheckIn({ onComplete }) {
     setSaving(true)
     try {
       const res = await api.post('/checkin', { feeling, time_available: timeAvailable, life_flags: lifeFlags })
+      // Also fetch today's plan to show after adjustment
+      try {
+        const planRes = await api.get('/plans/today')
+        if (planRes.data?.today) setTodayPlan(planRes.data.today)
+      } catch (_) {}
       if (res.data.adjustment) setAdjustment(res.data.adjustment)
       else { onComplete?.(); navigate('/') }
     } finally { setSaving(false) }
@@ -72,11 +79,48 @@ export default function DailyCheckIn({ onComplete }) {
     )
   }
 
+  if (showStretchGate) {
+    const workoutRoute = todayPlan?.type === 'strength' ? '/log-lift' : '/log-run'
+    return (
+      <div style={{ minHeight: '100vh', background: 'var(--bg-base)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24, gap: 20, textAlign: 'center', maxWidth: 480, margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
+        <div style={{ background: 'var(--bg-card)', borderRadius: 20, padding: 32, width: '100%' }}>
+          <p style={{ fontSize: 22, fontWeight: 900, color: 'var(--text-primary)', marginBottom: 8 }}>Let's stretch first</p>
+          <p style={{ fontSize: 14, color: 'var(--text-muted)', lineHeight: 1.6, marginBottom: 28 }}>
+            A quick pre-run stretch reduces injury risk and gets your muscles ready. Takes about 5 minutes.
+          </p>
+          <button
+            onClick={() => navigate('/stretches/session?type=pre')}
+            style={{ width: '100%', background: 'var(--accent)', color: '#000', fontWeight: 900, borderRadius: 14, padding: '18px', border: 'none', cursor: 'pointer', fontSize: 16, marginBottom: 12 }}
+          >
+            Start Stretching
+          </button>
+          <button
+            onClick={() => { onComplete?.(); navigate(workoutRoute) }}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 14, padding: '8px 0' }}
+          >
+            Skip, go straight to workout
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   if (adjustment) {
     return (
       <div style={{ minHeight: '100vh', background: 'var(--bg-base)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24, gap: 20, textAlign: 'center', maxWidth: 480, margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
-        <p style={{ fontSize: 16, lineHeight: 1.6, color: 'var(--text-primary)', maxWidth: 320 }}>{adjustment}</p>
-        <button onClick={() => { onComplete?.(); navigate('/') }}
+        <p style={{ fontSize: 16, lineHeight: 1.6, color: 'var(--text-primary)', maxWidth: 340 }}>{adjustment}</p>
+        {todayPlan && (
+          <div style={{ background: 'var(--bg-card)', borderRadius: 16, padding: 20, width: '100%', textAlign: 'left' }}>
+            <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 10 }}>Today's Workout</p>
+            <p style={{ fontSize: 18, fontWeight: 800, color: 'var(--text-primary)', marginBottom: 4, textTransform: 'capitalize' }}>
+              {todayPlan.type || 'Run'}
+            </p>
+            {todayPlan.distance && <p style={{ fontSize: 14, color: 'var(--text-muted)' }}>{todayPlan.distance} miles</p>}
+            {todayPlan.pace && <p style={{ fontSize: 14, color: 'var(--text-muted)' }}>{todayPlan.pace}</p>}
+            {todayPlan.notes && <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 8, lineHeight: 1.5 }}>{todayPlan.notes}</p>}
+          </div>
+        )}
+        <button onClick={() => setShowStretchGate(true)}
           style={{ background: 'var(--accent)', color: '#000', fontWeight: 900, borderRadius: 14, padding: '18px 48px', border: 'none', cursor: 'pointer', fontSize: 16 }}>
           Let's go
         </button>
