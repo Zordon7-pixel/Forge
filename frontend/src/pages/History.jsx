@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Trash2 } from 'lucide-react'
+import { Pencil, Trash2 } from 'lucide-react'
 import api from '../lib/api'
+import EditRunModal from '../components/EditRunModal'
+import EditLiftModal from '../components/EditLiftModal'
 
 function getRunDate(run) {
   return run.date || run.created_at?.slice(0, 10) || ''
@@ -26,6 +28,8 @@ export default function History() {
   const [runs, setRuns] = useState([])
   const [lifts, setLifts] = useState([])
   const [expanded, setExpanded] = useState({})
+  const [editingRun, setEditingRun] = useState(null)
+  const [editingLift, setEditingLift] = useState(null)
 
   useEffect(() => {
     ;(async () => {
@@ -47,6 +51,16 @@ export default function History() {
     if (!confirm('Delete this lift?')) return
     await api.delete(`/lifts/${id}`)
     setLifts(prev => prev.filter(l => l.id !== id))
+  }
+
+  const updateRunInState = updated => {
+    setRuns(prev => prev.map(r => (r.id === updated.id ? { ...r, ...updated } : r)))
+    setEditingRun(null)
+  }
+
+  const updateLiftInState = updated => {
+    setLifts(prev => prev.map(l => (l.id === updated.id ? { ...l, ...updated } : l)))
+    setEditingLift(null)
   }
 
   const filterByPeriod = (items, dateKey) => {
@@ -123,6 +137,7 @@ export default function History() {
                 <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{new Date(getRunDate(run)).toLocaleDateString()}</p>
                 <div className="flex items-center gap-2">
                   {run.perceived_effort ? <span className="rounded-full px-2 py-1 text-xs" style={{ background: 'var(--bg-input)', color: 'var(--text-muted)' }}>Effort {run.perceived_effort}/10</span> : null}
+                  <button onClick={e => { e.stopPropagation(); setEditingRun(run) }} className="transition-colors" style={{ color: 'var(--text-muted)' }}><Pencil size={14} /></button>
                   <button onClick={e => deleteRun(run.id, e)} className="transition-colors" style={{ color: 'var(--text-muted)' }}><Trash2 size={14} /></button>
                 </div>
               </div>
@@ -165,7 +180,10 @@ export default function History() {
               <div key={lift.id} className="cursor-pointer rounded-xl p-4" style={{ background: 'var(--bg-card)' }}>
                 <div className="flex items-center justify-between">
                   <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{new Date(lift.date || lift.created_at).toLocaleDateString()}</p>
-                  <button onClick={e => deleteLift(lift.id, e)} className="transition-colors" style={{ color: 'var(--text-muted)' }}><Trash2 size={14} /></button>
+                  <div className="flex items-center gap-2">
+                    <button onClick={e => { e.stopPropagation(); setEditingLift(lift) }} className="transition-colors" style={{ color: 'var(--text-muted)' }}><Pencil size={14} /></button>
+                    <button onClick={e => deleteLift(lift.id, e)} className="transition-colors" style={{ color: 'var(--text-muted)' }}><Trash2 size={14} /></button>
+                  </div>
                 </div>
                 <p className="mt-1 font-semibold" style={{ color: 'var(--text-primary)' }}>{lift.exercise_name}</p>
                 <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>{lift.sets} × {lift.reps} @ {lift.weight_lbs} lbs</p>
@@ -185,6 +203,9 @@ export default function History() {
           )}
         </div>
       )}
+
+      {editingRun && <EditRunModal run={editingRun} onSave={updateRunInState} onClose={() => setEditingRun(null)} />}
+      {editingLift && <EditLiftModal lift={editingLift} onSave={updateLiftInState} onClose={() => setEditingLift(null)} />}
     </div>
   )
 }

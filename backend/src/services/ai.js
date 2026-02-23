@@ -47,7 +47,7 @@ Increase mileage ~10% per week max. Week 4 should be a recovery week (reduce ~20
 
   try {
     const res = await getClient().messages.create({
-      model: 'claude-3-5-haiku-20241022',
+      model: 'claude-3-5-sonnet-20241022',
       max_tokens: 2000,
       messages: [{ role: 'user', content: prompt }],
     });
@@ -89,7 +89,7 @@ Keep it under 60 words total. No headers, no bullet points — just natural coac
 
   try {
     const res = await getClient().messages.create({
-      model: 'claude-3-5-haiku-20241022',
+      model: 'claude-3-5-sonnet-20241022',
       max_tokens: 150,
       messages: [{ role: 'user', content: prompt }],
     });

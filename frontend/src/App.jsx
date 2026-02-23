@@ -12,6 +12,7 @@ import History from './pages/History'
 import Profile from './pages/Profile'
 import ActiveWorkout from './pages/ActiveWorkout'
 import WorkoutSummary from './pages/WorkoutSummary'
+import ActiveRun from './pages/ActiveRun'
 
 function PrivateRoute({ children }) {
   if (!isLoggedIn()) return <Navigate to="/login" replace />
@@ -51,6 +52,14 @@ export default function App() {
           element={
             <PrivateRoute>
               <LogLift />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/run/active"
+          element={
+            <PrivateRoute>
+              <ActiveRun />
             </PrivateRoute>
           }
         />

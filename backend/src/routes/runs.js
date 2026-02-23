@@ -52,6 +52,35 @@ router.post('/', auth, (req, res) => {
   }
 });
 
+// PUT /api/runs/:id — edit a run
+router.put('/:id', auth, (req, res) => {
+  const run = db.prepare('SELECT * FROM runs WHERE id=? AND user_id=?').get(req.params.id, req.user.id);
+  if (!run) return res.status(404).json({ error: 'Run not found' });
+
+  const {
+    date, distance_miles, duration_seconds, notes, perceived_effort, type
+  } = req.body;
+
+  const userProfile = db.prepare('SELECT weight_lbs FROM users WHERE id=?').get(req.user.id);
+  const weightLbs = userProfile?.weight_lbs || 185;
+  const newDist = distance_miles !== undefined ? Number(distance_miles) : run.distance_miles;
+  const calories = Math.round(0.75 * weightLbs * newDist);
+
+  db.prepare(`UPDATE runs SET
+    date = COALESCE(?, date),
+    distance_miles = COALESCE(?, distance_miles),
+    duration_seconds = COALESCE(?, duration_seconds),
+    notes = COALESCE(?, notes),
+    perceived_effort = COALESCE(?, perceived_effort),
+    type = COALESCE(?, type),
+    calories = ?
+    WHERE id=? AND user_id=?
+  `).run(date, distance_miles, duration_seconds, notes, perceived_effort, type, calories, req.params.id, req.user.id);
+
+  const updated = db.prepare('SELECT * FROM runs WHERE id=?').get(req.params.id);
+  res.json(updated);
+});
+
 router.delete('/:id', auth, (req, res) => {
   const run = db.prepare('SELECT * FROM runs WHERE id=? AND user_id=?').get(req.params.id, req.user.id);
   if (!run) return res.status(404).json({ error: 'Not found' });

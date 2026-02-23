@@ -30,6 +30,27 @@ router.post('/', auth, (req, res) => {
   res.status(201).json({ ...lift, muscle_groups: JSON.parse(lift.muscle_groups || '[]') });
 });
 
+// PUT /api/lifts/:id — edit a lift
+router.put('/:id', auth, (req, res) => {
+  const lift = db.prepare('SELECT * FROM lifts WHERE id=? AND user_id=?').get(req.params.id, req.user.id);
+  if (!lift) return res.status(404).json({ error: 'Lift not found' });
+
+  const { exercise_name, sets, reps, weight_lbs, notes, date } = req.body;
+
+  db.prepare(`UPDATE lifts SET
+    exercise_name = COALESCE(?, exercise_name),
+    sets = COALESCE(?, sets),
+    reps = COALESCE(?, reps),
+    weight_lbs = COALESCE(?, weight_lbs),
+    notes = COALESCE(?, notes),
+    date = COALESCE(?, date)
+    WHERE id=? AND user_id=?
+  `).run(exercise_name, sets, reps, weight_lbs, notes, date, req.params.id, req.user.id);
+
+  const updated = db.prepare('SELECT * FROM lifts WHERE id=?').get(req.params.id);
+  res.json(updated);
+});
+
 router.delete('/:id', auth, (req, res) => {
   const lift = db.prepare('SELECT * FROM lifts WHERE id=? AND user_id=?').get(req.params.id, req.user.id);
   if (!lift) return res.status(404).json({ error: 'Not found' });
