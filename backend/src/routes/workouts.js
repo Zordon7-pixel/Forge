@@ -9,9 +9,17 @@ router.post('/start', auth, (req, res) => {
   const { muscle_groups } = req.body;
   const id = uuidv4();
   const started_at = new Date().toISOString();
-  db.prepare('INSERT INTO workout_sessions (id, user_id, started_at, muscle_groups) VALUES (?, ?, ?, ?)')
-    .run(id, req.user.id, started_at, JSON.stringify(muscle_groups || []));
-  res.status(201).json({ session: { id, started_at, muscle_groups: muscle_groups || [] } });
+  try {
+    db.prepare('INSERT INTO workout_sessions (id, user_id, started_at, muscle_groups) VALUES (?, ?, ?, ?)')
+      .run(id, req.user.id, started_at, JSON.stringify(muscle_groups || []));
+    res.status(201).json({ session: { id, started_at, muscle_groups: muscle_groups || [] } });
+  } catch (err) {
+    if (err.message && err.message.includes('FOREIGN KEY')) {
+      return res.status(401).json({ error: 'Session expired. Please log out and back in.' });
+    }
+    console.error('Workout start error:', err);
+    res.status(500).json({ error: 'Could not start workout.' });
+  }
 });
 
 // End a workout session or update notes

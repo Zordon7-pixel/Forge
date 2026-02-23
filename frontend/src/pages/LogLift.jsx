@@ -133,7 +133,7 @@ export default function LogLift() {
       })
       navigate(`/workout/active/${res.data.session.id}`)
     } catch (err) {
-      setError('Could not start workout. Try again.')
+      setError(err?.response?.data?.error || 'Could not start workout. Try again.')
       setLoading(false)
     }
   }
