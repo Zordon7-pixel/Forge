@@ -111,26 +111,6 @@ export default function LogLift() {
         <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Select the muscle groups you are targeting today</p>
       </div>
 
-      {/* Gender-appropriate body display */}
-      <div className="flex justify-center gap-6 mb-2">
-        <div className="flex flex-col items-center gap-1">
-          <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Front</span>
-          <img
-            src={userSex === 'female' ? '/body-female-front.png' : '/body-male-front.png'}
-            alt="Body front"
-            style={{ height: 160, objectFit: 'contain', opacity: 0.85 }}
-          />
-        </div>
-        <div className="flex flex-col items-center gap-1">
-          <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Back</span>
-          <img
-            src={userSex === 'female' ? '/body-female-back.png' : '/body-male-back.png'}
-            alt="Body back"
-            style={{ height: 160, objectFit: 'contain', opacity: 0.85 }}
-          />
-        </div>
-      </div>
-
       {/* 3-column silhouette grid */}
       <div className="grid grid-cols-3 gap-3">
         {MUSCLE_GROUPS.map(({ key, label }) => {

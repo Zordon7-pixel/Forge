@@ -1,40 +1,31 @@
 import React from 'react'
 
-// Maps muscle_group keys to which SVG path IDs to highlight
 const MUSCLE_HIGHLIGHT_MAP = {
   chest: { front: ['chest-l', 'chest-r'], back: [] },
   back: { front: [], back: ['lat-l', 'lat-r', 'trap-upper', 'trap-lower', 'rhomboid'] },
   legs: { front: ['quad-l', 'quad-r', 'inner-quad-l', 'inner-quad-r'], back: ['hamstring-l', 'hamstring-r', 'glute-l', 'glute-r', 'calf-l', 'calf-r'] },
   shoulders: { front: ['shoulder-front-l', 'shoulder-front-r'], back: ['shoulder-rear-l', 'shoulder-rear-r', 'trap-upper'] },
-  arms: { front: ['bicep-l', 'bicep-r', 'forearm-l', 'forearm-r'], back: ['tricep-l', 'tricep-r'] },
+  arms: { front: ['bicep-l', 'bicep-r', 'forearm-l', 'forearm-r'], back: ['tricep-l', 'tricep-r', 'forearm-l', 'forearm-r'] },
   core: { front: ['abs', 'oblique-l', 'oblique-r'], back: ['lower-back'] }
 }
 
-const SECONDARY_MAP = {
-  chest: { front: ['shoulder-front-l', 'shoulder-front-r', 'bicep-l', 'bicep-r'], back: [] },
-  back: { front: ['bicep-l', 'bicep-r'], back: ['shoulder-rear-l', 'shoulder-rear-r'] },
-  legs: { front: ['inner-quad-l', 'inner-quad-r'], back: ['lower-back'] },
-  shoulders: { front: ['chest-l', 'chest-r'], back: [] },
-  arms: { front: [], back: [] },
-  core: { front: [], back: ['glute-l', 'glute-r'] }
-}
+const PRIMARY_COLOR = '#EF4444'
+const SECONDARY_COLOR = '#EAB308'
+const UNTARGETED_COLOR = 'rgba(255,255,255,0.08)'
+const OUTLINE_COLOR = 'rgba(255,255,255,0.15)'
 
 function BodyFront({ primaryIds = [], secondaryIds = [] }) {
-  const accent = '#EAB308'
-  const accentDim = 'rgba(234,179,8,0.25)'
-  const muscleBase = 'transparent'
-
-  const fill = id => {
-    if (primaryIds.includes(id)) return accent
-    if (secondaryIds.includes(id)) return accentDim
-    return muscleBase
+  const fill = (id) => {
+    if (primaryIds.includes(id)) return PRIMARY_COLOR
+    if (secondaryIds.includes(id)) return SECONDARY_COLOR
+    return UNTARGETED_COLOR
   }
 
   return (
     <svg viewBox="0 0 120 280" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-full h-full">
-      <ellipse cx="60" cy="30" rx="18" ry="22" fill="rgba(255,255,255,0.08)" stroke="rgba(255,255,255,0.15)" strokeWidth="1" />
-      <rect x="54" y="50" width="12" height="14" rx="4" fill="rgba(255,255,255,0.08)" stroke="rgba(255,255,255,0.15)" strokeWidth="1" />
-      <path d="M30 64 Q25 70 24 90 L24 150 Q24 158 30 162 L90 162 Q96 158 96 150 L96 90 Q95 70 90 64 Z" fill="transparent" stroke="rgba(255,255,255,0.15)" strokeWidth="1" />
+      <ellipse cx="60" cy="30" rx="18" ry="22" fill={UNTARGETED_COLOR} stroke={OUTLINE_COLOR} strokeWidth="1" />
+      <rect x="54" y="50" width="12" height="14" rx="4" fill={UNTARGETED_COLOR} stroke={OUTLINE_COLOR} strokeWidth="1" />
+      <path d="M30 64 Q25 70 24 90 L24 150 Q24 158 30 162 L90 162 Q96 158 96 150 L96 90 Q95 70 90 64 Z" fill={UNTARGETED_COLOR} stroke={OUTLINE_COLOR} strokeWidth="1" />
 
       <ellipse id="shoulder-front-l" cx="22" cy="76" rx="11" ry="9" fill={fill('shoulder-front-l')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
       <ellipse id="shoulder-front-r" cx="98" cy="76" rx="11" ry="9" fill={fill('shoulder-front-r')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
@@ -43,13 +34,6 @@ function BodyFront({ primaryIds = [], secondaryIds = [] }) {
       <path id="chest-r" d="M90 68 Q85 65 65 68 L65 100 Q72 105 90 100 Z" fill={fill('chest-r')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
 
       <rect id="abs" x="47" y="105" width="26" height="45" rx="4" fill={fill('abs')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
-      {fill('abs') !== muscleBase && (
-        <>
-          <line x1="47" y1="120" x2="73" y2="120" stroke="rgba(0,0,0,0.3)" strokeWidth="0.5" />
-          <line x1="47" y1="135" x2="73" y2="135" stroke="rgba(0,0,0,0.3)" strokeWidth="0.5" />
-          <line x1="60" y1="105" x2="60" y2="150" stroke="rgba(0,0,0,0.3)" strokeWidth="0.5" />
-        </>
-      )}
 
       <path id="oblique-l" d="M30 100 Q35 105 47 108 L47 148 Q40 150 28 142 Z" fill={fill('oblique-l')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
       <path id="oblique-r" d="M90 100 Q85 105 73 108 L73 148 Q80 150 92 142 Z" fill={fill('oblique-r')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
@@ -60,39 +44,35 @@ function BodyFront({ primaryIds = [], secondaryIds = [] }) {
       <rect id="forearm-l" x="6" y="130" width="10" height="36" rx="4" fill={fill('forearm-l')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
       <rect id="forearm-r" x="104" y="130" width="10" height="36" rx="4" fill={fill('forearm-r')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
 
-      <path d="M28 158 Q24 172 26 185 L42 185 Q46 172 46 160 Z" fill="transparent" stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
-      <path d="M92 158 Q96 172 94 185 L78 185 Q74 172 74 160 Z" fill="transparent" stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
+      <path d="M28 158 Q24 172 26 185 L42 185 Q46 172 46 160 Z" fill={UNTARGETED_COLOR} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
+      <path d="M92 158 Q96 172 94 185 L78 185 Q74 172 74 160 Z" fill={UNTARGETED_COLOR} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
 
       <path id="quad-l" d="M27 187 Q24 200 26 230 L42 230 Q44 200 43 187 Z" fill={fill('quad-l')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
       <path id="quad-r" d="M93 187 Q96 200 94 230 L78 230 Q76 200 77 187 Z" fill={fill('quad-r')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
       <path id="inner-quad-l" d="M43 187 Q46 200 46 230 L54 230 Q54 200 50 187 Z" fill={fill('inner-quad-l')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
       <path id="inner-quad-r" d="M77 187 Q74 200 74 230 L66 230 Q66 200 70 187 Z" fill={fill('inner-quad-r')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
 
-      <ellipse cx="35" cy="234" rx="10" ry="6" fill="rgba(255,255,255,0.08)" stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
-      <ellipse cx="85" cy="234" rx="10" ry="6" fill="rgba(255,255,255,0.08)" stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
+      <ellipse cx="35" cy="234" rx="10" ry="6" fill={UNTARGETED_COLOR} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
+      <ellipse cx="85" cy="234" rx="10" ry="6" fill={UNTARGETED_COLOR} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
 
-      <path d="M26 240 Q25 255 26 275 L44 275 Q45 255 44 240 Z" fill="transparent" stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
-      <path d="M76 240 Q75 255 76 275 L94 275 Q95 255 94 240 Z" fill="transparent" stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
+      <path d="M26 240 Q25 255 26 275 L44 275 Q45 255 44 240 Z" fill={UNTARGETED_COLOR} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
+      <path d="M76 240 Q75 255 76 275 L94 275 Q95 255 94 240 Z" fill={UNTARGETED_COLOR} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
     </svg>
   )
 }
 
 function BodyBack({ primaryIds = [], secondaryIds = [] }) {
-  const accent = '#EAB308'
-  const accentDim = 'rgba(234,179,8,0.25)'
-  const muscleBase = 'transparent'
-
-  const fill = id => {
-    if (primaryIds.includes(id)) return accent
-    if (secondaryIds.includes(id)) return accentDim
-    return muscleBase
+  const fill = (id) => {
+    if (primaryIds.includes(id)) return PRIMARY_COLOR
+    if (secondaryIds.includes(id)) return SECONDARY_COLOR
+    return UNTARGETED_COLOR
   }
 
   return (
     <svg viewBox="0 0 120 280" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-full h-full">
-      <ellipse cx="60" cy="30" rx="18" ry="22" fill="rgba(255,255,255,0.08)" stroke="rgba(255,255,255,0.15)" strokeWidth="1" />
-      <rect x="54" y="50" width="12" height="14" rx="4" fill="rgba(255,255,255,0.08)" stroke="rgba(255,255,255,0.15)" strokeWidth="1" />
-      <path d="M30 64 Q25 70 24 90 L24 150 Q24 158 30 162 L90 162 Q96 158 96 150 L96 90 Q95 70 90 64 Z" fill="transparent" stroke="rgba(255,255,255,0.15)" strokeWidth="1" />
+      <ellipse cx="60" cy="30" rx="18" ry="22" fill={UNTARGETED_COLOR} stroke={OUTLINE_COLOR} strokeWidth="1" />
+      <rect x="54" y="50" width="12" height="14" rx="4" fill={UNTARGETED_COLOR} stroke={OUTLINE_COLOR} strokeWidth="1" />
+      <path d="M30 64 Q25 70 24 90 L24 150 Q24 158 30 162 L90 162 Q96 158 96 150 L96 90 Q95 70 90 64 Z" fill={UNTARGETED_COLOR} stroke={OUTLINE_COLOR} strokeWidth="1" />
 
       <ellipse id="shoulder-rear-l" cx="22" cy="76" rx="11" ry="9" fill={fill('shoulder-rear-l')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
       <ellipse id="shoulder-rear-r" cx="98" cy="76" rx="11" ry="9" fill={fill('shoulder-rear-r')} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
@@ -124,91 +104,55 @@ function BodyBack({ primaryIds = [], secondaryIds = [] }) {
   )
 }
 
-export default function MuscleDiagram({ primaryMuscles = [], secondaryMuscles = [], sex = 'male' }) {
-  const getPrimary = view => {
+export default function MuscleDiagram({ primaryMuscles = [], secondaryMuscles = [] }) {
+  const normalizedPrimary = primaryMuscles.map((m) => String(m).toLowerCase())
+  const normalizedSecondary = secondaryMuscles.map((m) => String(m).toLowerCase())
+
+  const getIds = (groups, view) => {
     const ids = []
-    for (const m of primaryMuscles) {
-      const key = m.toLowerCase()
+    for (const key of groups) {
       const mapped = MUSCLE_HIGHLIGHT_MAP[key]
       if (mapped) ids.push(...(mapped[view] || []))
     }
     return [...new Set(ids)]
   }
 
-  const getSecondary = view => {
-    const ids = []
-    for (const m of secondaryMuscles) {
-      const key = m.toLowerCase()
-      const mapped = SECONDARY_MAP[key]
-      if (mapped) ids.push(...(mapped[view] || []))
-    }
-    for (const m of primaryMuscles) {
-      const key = m.toLowerCase()
-      const mapped = SECONDARY_MAP[key]
-      if (mapped) ids.push(...(mapped[view] || []))
-    }
-    return [...new Set(ids)].filter(id => !getPrimary(view).includes(id))
-  }
-
-  const frontPrimary = getPrimary('front')
-  const frontSecondary = getSecondary('front')
-  const backPrimary = getPrimary('back')
-  const backSecondary = getSecondary('back')
+  const frontPrimary = getIds(normalizedPrimary, 'front')
+  const backPrimary = getIds(normalizedPrimary, 'back')
+  const frontSecondary = getIds(normalizedSecondary, 'front').filter((id) => !frontPrimary.includes(id))
+  const backSecondary = getIds(normalizedSecondary, 'back').filter((id) => !backPrimary.includes(id))
 
   return (
     <div>
-      <div className="flex items-center gap-4 mb-3">
-        <div className="flex items-center gap-1.5">
-          <div className="w-3 h-3 rounded-full" style={{ background: '#EAB308' }} />
-          <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Primary</span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <div className="w-3 h-3 rounded-full" style={{ background: 'rgba(234,179,8,0.25)', border: '1px solid #EAB308' }} />
-          <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Secondary</span>
-        </div>
-      </div>
-
       <div className="flex gap-4 justify-center">
         <div className="flex flex-col items-center gap-1 flex-1">
           <span className="text-xs font-medium" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>Front</span>
-          <div className="h-48 relative w-full">
-            <img
-              src={sex === 'female' ? '/body-female-front.png' : '/body-male-front.png'}
-              alt="Body"
-              className="absolute inset-0 w-full h-full"
-              style={{ objectFit: 'contain', opacity: 0.55 }}
-            />
-            <div className="absolute inset-0">
-              <BodyFront primaryIds={frontPrimary} secondaryIds={frontSecondary} />
-            </div>
+          <div className="h-48 w-full">
+            <BodyFront primaryIds={frontPrimary} secondaryIds={frontSecondary} />
           </div>
         </div>
         <div className="flex flex-col items-center gap-1 flex-1">
           <span className="text-xs font-medium" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>Back</span>
-          <div className="h-48 relative w-full">
-            <img
-              src={sex === 'female' ? '/body-female-back.png' : '/body-male-back.png'}
-              alt="Body"
-              className="absolute inset-0 w-full h-full"
-              style={{ objectFit: 'contain', opacity: 0.55 }}
-            />
-            <div className="absolute inset-0">
-              <BodyBack primaryIds={backPrimary} secondaryIds={backSecondary} />
-            </div>
+          <div className="h-48 w-full">
+            <BodyBack primaryIds={backPrimary} secondaryIds={backSecondary} />
           </div>
         </div>
       </div>
 
-      {(primaryMuscles.length > 0 || secondaryMuscles.length > 0) && (
-        <div className="mt-3 flex flex-wrap gap-2">
-          {primaryMuscles.map(m => (
-            <span key={m} className="text-xs px-2 py-1 rounded-full font-medium capitalize" style={{ background: 'var(--accent-dim)', color: 'var(--accent)' }}>{m}</span>
-          ))}
-          {secondaryMuscles.map(m => (
-            <span key={m} className="text-xs px-2 py-1 rounded-full capitalize" style={{ background: 'var(--bg-input)', color: 'var(--text-muted)' }}>{m}</span>
-          ))}
+      <div style={{ display: 'flex', justifyContent: 'center', gap: 20, marginTop: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <div style={{ width: 10, height: 10, borderRadius: '50%', background: '#EF4444' }} />
+          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Primary</span>
         </div>
-      )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <div style={{ width: 10, height: 10, borderRadius: '50%', background: '#EAB308' }} />
+          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Secondary</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <div style={{ width: 10, height: 10, borderRadius: '50%', background: 'rgba(255,255,255,0.2)' }} />
+          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Untargeted</span>
+        </div>
+      </div>
     </div>
   )
 }

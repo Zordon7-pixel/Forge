@@ -188,13 +188,6 @@ export default function LogRun() {
   }, [warmUpState])
 
   useEffect(() => {
-    if (activeTab === 'history' && recentRuns.length === 0) {
-      setRunsLoading(true)
-      api.get('/runs').then(res => setRecentRuns(res.data?.runs || [])).catch(() => {}).finally(() => setRunsLoading(false))
-    }
-  }, [activeTab, recentRuns.length])
-
-  useEffect(() => {
     if (activeTab !== 'today' || todayWorkout) return
     setTodayLoading(true)
     api.get('/plans/today')
@@ -321,7 +314,7 @@ export default function LogRun() {
     <>
       <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>
         <div className="flex gap-2 mb-5 flex-wrap">
-          {[{ key: 'today', label: 'Today' }, { key: 'week', label: 'Week' }, { key: 'log', label: 'Manual' }, { key: 'gps', label: 'GPS' }, { key: 'history', label: 'History' }].map(tab => (
+          {[{ key: 'today', label: 'Today' }, { key: 'week', label: 'Week' }, { key: 'log', label: 'Manual' }].map(tab => (
             <button key={tab.key} onClick={() => setActiveTab(tab.key)} style={{ padding: '5px 18px', borderRadius: 999, border: activeTab === tab.key ? '1.5px solid var(--accent)' : '1.5px solid var(--border-subtle)', background: activeTab === tab.key ? 'var(--accent)' : 'transparent', color: activeTab === tab.key ? '#000' : 'var(--text-muted)', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>{tab.label}</button>
           ))}
         </div>
@@ -402,7 +395,7 @@ export default function LogRun() {
                               </div>
                             )}
                             {!day.rest && isToday && (
-                              <button onClick={e => { e.stopPropagation(); setActiveTab('gps') }}
+                              <button onClick={e => { e.stopPropagation(); navigate('/run/active', { state: { countdown } }) }}
                                 style={{ width: '100%', background: 'var(--accent)', color: '#000', fontWeight: 900, borderRadius: 10, padding: '12px', border: 'none', cursor: 'pointer', fontSize: 14 }}>
                                 Start This Run
                               </button>
@@ -461,34 +454,6 @@ export default function LogRun() {
               </div>
             )}
           </form>
-        )}
-
-        {activeTab === 'gps' && (
-          <div>
-            <div className="rounded-2xl p-5" style={{ background: 'var(--accent)' }}>
-              <h2 className="text-2xl font-black mb-1" style={{ color: '#000' }}>Start Live Run</h2>
-              <p className="text-sm mb-4" style={{ color: '#000' }}>GPS tracking · live pace · auto-saved</p>
-              <div className="flex gap-2 mb-4 items-center flex-wrap">
-                {[0, 3, 5, 10].map(n => <button key={n} onClick={() => setCountdown(n)} style={{ padding: '4px 12px', borderRadius: 8, background: countdown === n ? 'var(--bg-card)' : 'var(--bg-base)', color: '#000', fontWeight: 700, fontSize: 12, border: 'none', cursor: 'pointer' }}>{n === 0 ? 'Off' : `${n}s`}</button>)}
-              </div>
-              <button onClick={() => navigate('/run/active', { state: { countdown } })} className="w-full py-4 rounded-xl font-black text-lg" style={{ background: 'var(--bg-base)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>Go</button>
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'history' && (
-          <div>
-            {runsLoading ? <p style={{ color: 'var(--text-muted)' }}>Loading runs...</p> : recentRuns.length === 0 ? <p className="text-center py-10 text-sm" style={{ color: 'var(--text-muted)' }}>No runs logged yet.</p> : (
-              <div className="space-y-2">
-                {recentRuns.slice(0, 20).map(run => (
-                  <button key={run.id} onClick={() => { setSelectedRun(run); setEditingNotes(run.notes || '') }} className="w-full text-left rounded-xl p-3" style={{ background: 'var(--bg-base)', border: '1px solid var(--border-subtle)' }}>
-                    <div className="flex justify-between items-start"><div><span className="font-bold text-sm" style={{ color: 'var(--text-primary)' }}>{run.date}</span><span className="ml-2 text-xs capitalize" style={{ color: 'var(--text-muted)' }}>{run.surface || run.run_surface || run.type || ''}</span></div><span className="text-sm font-semibold" style={{ color: 'var(--accent)' }}>{run.distance_miles ? `${run.distance_miles} mi` : '—'}</span></div>
-                    <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>{run.duration_seconds ? formatRunDuration(run.duration_seconds) : ''}{run.perceived_effort ? ` · Effort ${run.perceived_effort}/10` : ''}</div>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
         )}
 
         <Link to="/" className="mt-5 inline-block text-sm" style={{ color: 'var(--text-muted)' }}>← Back</Link>
