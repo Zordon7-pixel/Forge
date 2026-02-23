@@ -154,6 +154,7 @@ router.get('/me/stats', auth, (req, res) => {
     return db.prepare('SELECT * FROM workout_sessions WHERE user_id=? AND started_at >= ? AND ended_at IS NOT NULL').all(userId, since);
   };
 
+  const dayRuns = getRuns(1);
   const weekRuns = getRuns(7);
   const monthRuns = getRuns(30);
   const yearRuns = getRuns(365);
@@ -210,6 +211,7 @@ router.get('/me/stats', auth, (req, res) => {
   }
 
   res.json({
+    day: summarize(dayRuns),
     week: summarize(weekRuns),
     month: summarize(monthRuns),
     year: summarize(yearRuns),

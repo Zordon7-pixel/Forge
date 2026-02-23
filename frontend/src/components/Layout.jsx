@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { NavLink, useLocation } from 'react-router-dom'
+import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { Trophy, SlidersHorizontal } from 'lucide-react'
 import { getUser } from '../lib/auth'
 import { useTheme } from '../context/ThemeContext'
@@ -23,6 +23,7 @@ export default function Layout({ children }) {
   const [showFeedback, setShowFeedback] = useState(false)
   const { theme, toggle } = useTheme()
   const location = useLocation()
+  const navigate = useNavigate()
   const isWorkout = location.pathname.startsWith('/workout/')
 
   return (
@@ -60,7 +61,8 @@ export default function Layout({ children }) {
       {!isWorkout && (
         <nav className="fixed bottom-0 left-1/2 z-30 grid w-full max-w-[480px] -translate-x-1/2 grid-cols-7 border-t px-1 py-1" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}>
           {NAV_ITEMS.map(({ to, end, icon, iconComponent: IconComponent, label }) => (
-            <NavLink key={to} to={to} end={end} className="flex flex-col items-center justify-center">
+            <NavLink key={to} to={to} end={end} className="flex flex-col items-center justify-center"
+              onClick={to === '/' ? (e) => { e.preventDefault(); navigate('/') } : undefined}>
               {({ isActive }) => (
                 <span className="flex flex-col items-center justify-center gap-0.5 px-2 py-1.5 rounded-xl transition-all duration-200 w-full" style={isActive ? { background: 'rgba(234,179,8,0.18)', boxShadow: '0 0 0 1px rgba(234,179,8,0.3)' } : {}}>
                   {IconComponent ? (

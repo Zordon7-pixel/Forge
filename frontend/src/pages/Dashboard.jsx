@@ -97,7 +97,7 @@ function ReadinessGauge({ score }) {
   )
 }
 
-const PERIOD_LABELS = { week: 'This Week', month: 'This Month', year: 'This Year', all: 'All Time' }
+const PERIOD_LABELS = { day: 'Today', week: 'This Week', month: 'This Month', year: 'This Year', all: 'All Time' }
 
 export default function Dashboard() {
   const [stats, setStats] = useState(null)
@@ -263,15 +263,20 @@ export default function Dashboard() {
 
       {/* Stats with period selector */}
       <div className="rounded-2xl p-4 space-y-3" style={{ background: 'var(--bg-card)' }}>
-        {/* Period tabs */}
-        <div className="flex rounded-xl overflow-hidden border" style={{ borderColor: 'var(--border-subtle)' }}>
-          {['week', 'month', 'year', 'all'].map(p => (
-            <button key={p} onClick={() => setPeriod(p)}
-              className="flex-1 py-2 text-xs font-semibold uppercase transition-all"
-              style={period === p
-                ? { background: 'var(--accent)', color: 'black' }
-                : { background: 'var(--bg-input)', color: 'var(--text-muted)' }}>
-              {p === 'week' ? 'W' : p === 'month' ? 'M' : p === 'year' ? 'Y' : 'All'}
+        {/* Period tabs — pill-style: All | D | W | M */}
+        <div className="flex gap-2">
+          {[
+            { key: 'all', label: 'All' },
+            { key: 'day',   label: 'D'   },
+            { key: 'week',  label: 'W'   },
+            { key: 'month', label: 'M'   },
+          ].map(({ key, label }) => (
+            <button key={key} onClick={() => setPeriod(key)}
+              className="px-4 py-1.5 rounded-full text-xs font-semibold transition-all"
+              style={period === key
+                ? { background: 'var(--accent)', color: '#000' }
+                : { background: 'var(--bg-input)', color: 'var(--text-muted)', border: '1px solid var(--border-subtle)' }}>
+              {label}
             </button>
           ))}
         </div>
