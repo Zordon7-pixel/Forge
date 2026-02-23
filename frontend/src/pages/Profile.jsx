@@ -239,8 +239,8 @@ export default function Profile() {
             <div
               style={{
                 ...sectionStyle,
-                border: injuryMode ? '1px solid var(--accent-red)' : '1px solid var(--border-subtle)',
-                background: injuryMode ? 'var(--accent-red-dim)' : 'var(--bg-card)'
+                border: injuryMode ? '1px solid var(--accent)' : '1px solid var(--border-subtle)',
+                background: injuryMode ? 'var(--accent-dim)' : 'var(--bg-card)'
               }}
             >
               <div style={{ ...sectionLabel, marginBottom: 10 }}>Injury Mode</div>
@@ -266,19 +266,19 @@ export default function Profile() {
               )}
             </div>
 
-            {form.injury_status !== 'none' && (
-              <div style={sectionStyle}>
-                <div style={sectionLabel}>Injury Details</div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: 8, marginBottom: 10 }}>
-                  {['none', 'recovering', 'chronic'].map(status => (
-                    <button key={status} type="button" onClick={() => update('injury_status', status)} style={form.injury_status === status ? pillActive : pillInactive}>
-                      {status.charAt(0).toUpperCase() + status.slice(1)}
-                    </button>
-                  ))}
-                </div>
-                <textarea rows={3} placeholder="Injury details" value={form.injury_detail} onChange={e => update('injury_detail', e.target.value)} style={{ ...inputStyle, resize: 'vertical' }} />
+            <div style={sectionStyle}>
+              <div style={sectionLabel}>Injury Details</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: 8, marginBottom: 10 }}>
+                {['none', 'recovering', 'chronic'].map(status => (
+                  <button key={status} type="button" onClick={() => update('injury_status', status)} style={form.injury_status === status ? pillActive : pillInactive}>
+                    {status.charAt(0).toUpperCase() + status.slice(1)}
+                  </button>
+                ))}
               </div>
-            )}
+              {form.injury_status !== 'none' && (
+                <textarea rows={3} placeholder="Injury details" value={form.injury_detail} onChange={e => update('injury_detail', e.target.value)} style={{ ...inputStyle, resize: 'vertical' }} />
+              )}
+            </div>
 
             {error && <p className="text-sm" style={{ color: 'var(--accent)' }}>{error}</p>}
             {saved && <p className="text-sm" style={{ color: 'var(--text-primary)' }}>Saved</p>}
