@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import api from '../lib/api'
 import ExercisePickerModal from '../components/ExercisePickerModal'
 
@@ -31,9 +31,13 @@ function playAlarm() {
 export default function ActiveWorkout() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const location = useLocation()
+  const plannedExercises = location.state?.exercises || []
+  const workoutName = location.state?.workoutName || ''
 
   const [elapsed, setElapsed] = useState(0)
   const workoutTimerRef = useRef(null)
+  const [queueIndex, setQueueIndex] = useState(0)
 
   const [activeGroup, setActiveGroup] = useState('')
   const [muscleGroups, setMuscleGroups] = useState([])
@@ -85,6 +89,14 @@ export default function ActiveWorkout() {
   }, [])
 
   useEffect(() => {
+    if (plannedExercises.length > 0) {
+      const first = plannedExercises[0]
+      setSelectedExercise({ name: first.name })
+      setReps(String(first.reps || ''))
+    }
+  }, [])
+
+  useEffect(() => {
     if (restRunning && restSeconds > 0) {
       restRef.current = setTimeout(() => setRestSeconds(s => s - 1), 1000)
     } else if (restRunning && restSeconds === 0) {
@@ -111,10 +123,25 @@ export default function ActiveWorkout() {
         set_number: setNumber
       })
       setSets(prev => [...prev, res.data.set])
-      setSetNumber(s => s + 1)
+      const nextSetNumber = setNumber + 1
+      setSetNumber(nextSetNumber)
       setReps('')
       setWeight('')
       startRest(90)
+
+      // Auto-advance to next planned exercise after completing all sets
+      const currentPlanned = plannedExercises[queueIndex]
+      if (currentPlanned && nextSetNumber > Number(currentPlanned.sets)) {
+        const nextIndex = queueIndex + 1
+        if (nextIndex < plannedExercises.length) {
+          const next = plannedExercises[nextIndex]
+          setQueueIndex(nextIndex)
+          setSelectedExercise({ name: next.name })
+          setReps(String(next.reps || ''))
+          setWeight('')
+          setSetNumber(1)
+        }
+      }
     } catch {}
   }
 
@@ -145,6 +172,29 @@ export default function ActiveWorkout() {
           {ending ? 'Ending...' : 'End Workout'}
         </button>
       </div>
+
+      {plannedExercises.length > 0 && (
+        <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>
+          {workoutName && <p className="text-xs font-bold mb-3 uppercase tracking-widest" style={{ color: 'var(--accent)' }}>{workoutName}</p>}
+          <div className="space-y-2">
+            {plannedExercises.map((ex, i) => {
+              const isCurrent = i === queueIndex
+              const isDone = i < queueIndex
+              return (
+                <div key={i} className="flex items-center gap-3 rounded-xl px-3 py-2" style={{
+                  background: isCurrent ? 'rgba(234,179,8,0.08)' : 'transparent',
+                  borderLeft: isCurrent ? '3px solid var(--accent)' : '3px solid transparent',
+                  opacity: isDone ? 0.4 : 1
+                }}>
+                  <span className="flex-1 text-sm font-semibold" style={{ color: isCurrent ? 'var(--accent)' : 'var(--text-primary)', textDecoration: isDone ? 'line-through' : 'none' }}>{ex.name}</span>
+                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{ex.sets}x{ex.reps}</span>
+                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{ex.rest}</span>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       <div className="flex gap-2">
         <button onClick={() => setShowRest(v => !v)} className="rounded-full px-3 py-1.5 text-xs font-medium border transition-all" style={showRest ? { background: 'var(--accent-dim)', borderColor: 'var(--accent)', color: 'var(--accent)' } : { background: 'var(--bg-card)', borderColor: 'var(--border-subtle)', color: 'var(--text-muted)' }}>

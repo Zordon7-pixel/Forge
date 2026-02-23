@@ -75,8 +75,6 @@ export default function LogLift() {
   const [aiRecommendation, setAiRecommendation] = useState(null)
   const [aiLoading, setAiLoading] = useState(false)
   const [aiError, setAiError] = useState(null)
-  const [sharedWorkoutId, setSharedWorkoutId] = useState(null)
-  const [sharingWorkout, setSharingWorkout] = useState(false)
 
   useEffect(() => {
     api.get('/auth/me').then(res => {
@@ -109,17 +107,22 @@ export default function LogLift() {
     return next
   })
 
-  const shareWorkout = async () => {
-    if (!aiRecommendation) return
-    setSharingWorkout(true)
+  const beginAI = async () => {
+    setLoading(true)
+    setError('')
     try {
-      const res = await api.post('/ai/community-share', { workoutData: aiRecommendation })
-      setSharedWorkoutId(res.data.id)
+      const targetStr = aiRecommendation?.target || ''
+      const muscleGroups = targetStr.split(/[,\/\s]+/).map(s => s.trim().toLowerCase()).filter(Boolean)
+      const res = await api.post('/workouts/start', { muscle_groups: muscleGroups.length ? muscleGroups : ['full'] })
+      navigate(`/workout/active/${res.data.session.id}`, {
+        state: {
+          exercises: aiRecommendation?.main || [],
+          workoutName: aiRecommendation?.workoutName || ''
+        }
+      })
     } catch (err) {
-      console.error('Failed to share workout:', err)
-      setError('Could not share workout. Try again.')
-    } finally {
-      setSharingWorkout(false)
+      setError(err?.response?.data?.error || 'Could not start workout. Try again.')
+      setLoading(false)
     }
   }
 
@@ -177,12 +180,12 @@ export default function LogLift() {
               <p className="text-sm mt-2">{aiRecommendation.explanation}</p>
               <p className="text-xs mt-1">{aiRecommendation.restExplanation}</p>
               <button
-                onClick={shareWorkout}
-                disabled={sharingWorkout || sharedWorkoutId}
-                className="mt-3 w-full rounded-xl py-2 font-semibold text-sm"
-                style={{ background: sharedWorkoutId ? 'var(--bg-base)' : 'var(--accent)', color: sharedWorkoutId ? 'var(--text-muted)' : '#000', border: 'none', cursor: sharedWorkoutId ? 'default' : 'pointer', opacity: sharingWorkout ? 0.6 : 1 }}
+                onClick={beginAI}
+                disabled={loading}
+                className="mt-3 w-full rounded-2xl py-4 text-base font-bold"
+                style={{ background: 'var(--accent)', color: '#000', border: 'none', cursor: 'pointer', opacity: loading ? 0.6 : 1 }}
               >
-                {sharingWorkout ? 'Sharing...' : sharedWorkoutId ? 'Shared' : 'Share to Community'}
+                {loading ? 'Starting...' : 'Start Workout'}
               </button>
             </div>
           )}
