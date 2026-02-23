@@ -21,20 +21,23 @@ export default function Challenges() {
   const [stepInput, setStepInput] = useState('')
   const [expandedId, setExpandedId] = useState(null)
   const [showBrowse, setShowBrowse] = useState(true)
+  const [feed, setFeed] = useState([])
 
   async function loadData() {
     setLoading(true)
     try {
-      const [allRes, myRes, todayRes, weekRes] = await Promise.all([
+      const [allRes, myRes, todayRes, weekRes, feedRes] = await Promise.all([
         api.get('/challenges'),
         api.get('/challenges/my'),
         api.get('/challenges/steps/today'),
         api.get('/challenges/steps/week'),
+        api.get('/challenges/feed'),
       ])
       setChallenges(allRes.data?.challenges || [])
       setMyChallenges(myRes.data?.challenges || [])
       setToday(todayRes.data || { steps: 0, goal: 10000, date: '' })
       setWeek(weekRes.data || { days: [], weekTotal: 0, goal: 10000 })
+      setFeed(feedRes.data?.feed || [])
     } finally {
       setLoading(false)
     }
@@ -249,17 +252,17 @@ export default function Challenges() {
   return (
     <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>
       <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
-        {['challenges', 'prs', 'badges'].map(t => (
+        {['challenges', 'prs', 'badges', 'feed'].map(t => (
           <button
             key={t}
             onClick={() => setActiveTab(t)}
             style={{
-              padding: '8px 16px', borderRadius: 20, fontSize: 13, fontWeight: 700, border: 'none', cursor: 'pointer',
+              padding: '8px 14px', borderRadius: 20, fontSize: 13, fontWeight: 700, border: 'none', cursor: 'pointer',
               background: activeTab === t ? 'var(--accent)' : 'var(--bg-card)',
               color: activeTab === t ? '#000' : 'var(--text-muted)',
             }}
           >
-            {t === 'challenges' ? 'Challenges' : t === 'prs' ? 'PRs' : 'Badges'}
+            {t === 'challenges' ? 'Challenges' : t === 'prs' ? 'PRs' : t === 'badges' ? 'Badges' : 'Feed'}
           </button>
         ))}
       </div>
@@ -267,6 +270,46 @@ export default function Challenges() {
       {activeTab === 'challenges' && renderChallengesTab()}
       {activeTab === 'prs' && <PRWall />}
       {activeTab === 'badges' && <Badges />}
+      {activeTab === 'feed' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 4 }}>Community Activity</p>
+          {feed.length === 0 && (
+            <div style={{ textAlign: 'center', padding: 32, color: 'var(--text-muted)', fontSize: 14 }}>
+              No activity yet. Log a run or workout to show up here.
+            </div>
+          )}
+          {feed.map(item => (
+            <div key={item.id} style={{ background: 'var(--bg-base)', borderRadius: 14, padding: 16 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: 14, color: '#000', flexShrink: 0 }}>
+                    {(item.user_name || 'A')[0].toUpperCase()}
+                  </div>
+                  <div>
+                    <p style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{item.user_name || 'Athlete'}</p>
+                    <p style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                      {new Date(item._ts).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+                    </p>
+                  </div>
+                </div>
+                <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--accent)', background: 'var(--accent-dim)', padding: '3px 8px', borderRadius: 8, textTransform: 'uppercase' }}>
+                  {item._type === 'run' ? (item.surface || 'Run') : 'Lift'}
+                </span>
+              </div>
+              {item._type === 'run' && (
+                <div style={{ display: 'flex', gap: 20 }}>
+                  {item.distance_miles && <div><p style={{ fontSize: 18, fontWeight: 900, color: 'var(--text-primary)' }}>{Number(item.distance_miles).toFixed(2)}</p><p style={{ fontSize: 11, color: 'var(--text-muted)' }}>miles</p></div>}
+                  {item.duration_seconds > 0 && <div><p style={{ fontSize: 18, fontWeight: 900, color: 'var(--text-primary)' }}>{Math.floor(item.duration_seconds/3600) > 0 ? `${Math.floor(item.duration_seconds/3600)}h ${Math.floor((item.duration_seconds%3600)/60)}min` : `${Math.floor(item.duration_seconds/60)} min`}</p><p style={{ fontSize: 11, color: 'var(--text-muted)' }}>time</p></div>}
+                </div>
+              )}
+              {item._type === 'lift' && (
+                <div><p style={{ fontSize: 18, fontWeight: 900, color: 'var(--text-primary)' }}>{item.set_count || 0}</p><p style={{ fontSize: 11, color: 'var(--text-muted)' }}>sets logged</p></div>
+              )}
+              {item.notes && <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8, lineHeight: 1.5 }}>{item.notes}</p>}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

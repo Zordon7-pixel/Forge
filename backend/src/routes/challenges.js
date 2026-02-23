@@ -109,4 +109,35 @@ router.get('/steps/week', auth, (req, res) => {
   })
 })
 
+// GET /api/challenges/feed — community activity feed (all users' recent runs + lifts)
+router.get('/feed', auth, (req, res) => {
+  const runs = db.prepare(`
+    SELECT r.id, r.user_id, r.distance_miles, r.duration_seconds, r.date, r.type, r.surface, r.notes,
+           r.created_at, u.name as user_name
+    FROM runs r
+    JOIN users u ON u.id = r.user_id
+    ORDER BY r.created_at DESC LIMIT 50
+  `).all()
+
+  const lifts = db.prepare(`
+    SELECT ws.id, ws.user_id, ws.started_at, ws.ended_at, ws.notes,
+           u.name as user_name,
+           COUNT(sets.id) as set_count
+    FROM workout_sessions ws
+    JOIN users u ON u.id = ws.user_id
+    LEFT JOIN workout_sets sets ON sets.session_id = ws.id
+    WHERE ws.ended_at IS NOT NULL
+    GROUP BY ws.id
+    ORDER BY ws.started_at DESC LIMIT 50
+  `).all()
+
+  // Merge and sort by date
+  const feed = [
+    ...runs.map(r => ({ ...r, _type: 'run', _ts: r.created_at || r.date })),
+    ...lifts.map(l => ({ ...l, _type: 'lift', _ts: l.started_at }))
+  ].sort((a, b) => new Date(b._ts) - new Date(a._ts)).slice(0, 30)
+
+  res.json({ feed })
+})
+
 module.exports = router
