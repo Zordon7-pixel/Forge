@@ -9,6 +9,7 @@ import Landing from './pages/Landing'
 import LogRun from './pages/LogRun'
 import LogLift from './pages/LogLift'
 import Plan from './pages/Plan'
+import RunHub from './pages/RunHub'
 import History from './pages/History'
 import Profile from './pages/Profile'
 import Settings from './pages/Settings'
@@ -51,6 +52,14 @@ export default function App() {
               <Dashboard />
             </PrivateRoute>
           ) : <Landing />}
+        />
+        <Route
+          path="/run"
+          element={
+            <PrivateRoute>
+              <RunHub />
+            </PrivateRoute>
+          }
         />
         <Route
           path="/log-run"

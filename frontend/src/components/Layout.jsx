@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
-import { Trophy, Users } from 'lucide-react'
+import { Trophy, Users, Activity } from 'lucide-react'
 import { isLoggedIn } from '../lib/auth'
 import { useTheme } from '../context/ThemeContext'
 import HelpDesk from './HelpDesk'
@@ -9,6 +9,7 @@ import PullToRefresh from './PullToRefresh'
 import api from '../lib/api'
 
 const NAV_ITEMS = [
+  { to: '/run', label: 'Run', iconComponent: Activity, color: '#EAB308' },
   { to: '/', end: true, icon: '/nav-home.png', label: 'Home', color: '#EAB308' },
   { to: '/log-lift', icon: '/nav-lift.png', label: 'Lift', color: '#F97316' },
   { to: '/challenges', label: 'Challenges', iconComponent: Trophy, color: '#A855F7' },
@@ -144,7 +145,7 @@ export default function Layout({ children }) {
       <FeedbackButton externalOpen={showFeedback} onClose={() => setShowFeedback(false)} />
 
       {!isWorkout && (
-        <nav className="fixed bottom-0 left-1/2 z-30 grid w-full max-w-[480px] -translate-x-1/2 grid-cols-6 border-t px-1 py-1" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}>
+        <nav className="fixed bottom-0 left-1/2 z-30 grid w-full max-w-[480px] -translate-x-1/2 grid-cols-7 border-t px-1 py-1" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}>
           {NAV_ITEMS.map(({ to, end, icon, iconComponent: IconComponent, label, color }) => (
             <NavLink key={to} to={to} end={end} className="flex flex-col items-center justify-center"
               onClick={to === '/' ? (e) => { e.preventDefault(); navigate('/') } : undefined}>
