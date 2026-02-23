@@ -169,11 +169,23 @@ export default function PRWall() {
             <div className="grid grid-cols-1 gap-3">
               {liftingLabels.map(label => {
                 const pr = liftingPRs.find(item => item.label === label)
+
+                const openEntryModal = () => {
+                  setForm({ category: 'lift', label, value: pr ? String(pr.value) : '', unit: 'lbs', achieved_at: new Date().toISOString().slice(0, 10), notes: '' })
+                  setShowModal(true)
+                }
+
                 if (!pr) {
                   return (
                     <div key={label} style={baseCardStyle}>
-                      <p style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 1 }}>{label}</p>
-                      <p style={{ color: 'var(--text-muted)' }}>Add this PR manually.</p>
+                      <div className="flex items-center justify-between mb-2">
+                        <p style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1 }}>{label}</p>
+                        <button onClick={openEntryModal} className="rounded-lg px-3 py-1 text-xs font-bold" style={{ background: 'var(--accent)', color: '#000', border: 'none', cursor: 'pointer' }}>
+                          + Add
+                        </button>
+                      </div>
+                      <p style={{ fontSize: 22, fontWeight: 900, color: 'var(--text-muted)' }}>--</p>
+                      <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>No record yet</p>
                     </div>
                   )
                 }
@@ -181,9 +193,14 @@ export default function PRWall() {
                   <div key={pr.id} style={baseCardStyle}>
                     <div className="mb-1 flex items-center justify-between gap-2">
                       <p style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 1 }}>{pr.label}</p>
-                      {!pr.lift_id && (
-                        <button onClick={() => removePR(pr.id)} className="text-xs" style={{ color: 'var(--text-muted)' }}>Delete</button>
-                      )}
+                      <div className="flex items-center gap-2">
+                        <button onClick={openEntryModal} className="rounded-lg px-3 py-1 text-xs font-bold" style={{ background: 'var(--accent)', color: '#000', border: 'none', cursor: 'pointer' }}>
+                          Update
+                        </button>
+                        {!pr.lift_id && (
+                          <button onClick={() => removePR(pr.id)} className="text-xs" style={{ color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer' }}>Delete</button>
+                        )}
+                      </div>
                     </div>
                     <p style={{ fontSize: 28, fontWeight: 900, color: 'var(--accent)' }}>{formatValue(pr)}</p>
                     <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>{new Date(pr.achieved_at).toLocaleDateString()}</p>

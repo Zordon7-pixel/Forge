@@ -159,4 +159,75 @@ router.get('/leaderboard', auth, (req, res) => {
   res.json({ leaderboard: top })
 })
 
+// GET /api/badges/seasonal — seasonal badges with progress and earned status
+router.get('/seasonal', auth, (req, res) => {
+  const now = new Date()
+  const year = now.getFullYear()
+  const todayStr = now.toISOString().slice(0, 10)
+
+  const badges = db.prepare("SELECT * FROM badges WHERE category='seasonal' ORDER BY window_start ASC").all()
+
+  const enriched = badges.map(badge => {
+    // Build full date strings for current year
+    const start = `${year}-${badge.window_start}`
+    const end = `${year}-${badge.window_end}`
+    const startDate = new Date(start)
+    const endDate = new Date(end)
+    endDate.setHours(23, 59, 59)
+
+    // Determine status
+    let status = 'upcoming'
+    let daysRemaining = null
+    let daysUntilStart = null
+    if (now >= startDate && now <= endDate) {
+      status = 'active'
+      daysRemaining = Math.ceil((endDate - now) / (1000 * 60 * 60 * 24))
+    } else if (now > endDate) {
+      status = 'past'
+    } else {
+      daysUntilStart = Math.ceil((startDate - now) / (1000 * 60 * 60 * 24))
+    }
+
+    // Check if earned
+    const userBadge = db.prepare("SELECT * FROM user_badges WHERE user_id=? AND badge_id=?").get(req.user.id, badge.id)
+    if (userBadge) status = 'earned'
+
+    // Calculate progress
+    let progress = 0
+    if (badge.requirement_type === 'miles_in_window') {
+      const result = db.prepare("SELECT COALESCE(SUM(distance_miles),0) as total FROM runs WHERE user_id=? AND date >= ? AND date <= ?").get(req.user.id, start, end)
+      progress = result.total || 0
+    } else if (badge.requirement_type === 'workouts_in_window') {
+      const result = db.prepare("SELECT COUNT(*) as cnt FROM workout_sessions WHERE user_id=? AND started_at >= ? AND started_at <= ? AND ended_at IS NOT NULL").get(req.user.id, start, end)
+      progress = result.cnt || 0
+    }
+
+    // Auto-award if progress meets requirement and not yet earned
+    if (!userBadge && progress >= badge.requirement_value) {
+      try {
+        db.prepare("INSERT OR IGNORE INTO user_badges (user_id, badge_id) VALUES (?,?)").run(req.user.id, badge.id)
+        status = 'earned'
+      } catch {}
+    }
+
+    return {
+      ...badge,
+      window_start_full: start,
+      window_end_full: end,
+      status,
+      progress: Math.min(progress, badge.requirement_value),
+      days_remaining: daysRemaining,
+      days_until_start: daysUntilStart,
+      earned: status === 'earned',
+      earned_at: userBadge?.earned_at || null,
+    }
+  })
+
+  // Sort: active first, then upcoming, then earned, then past
+  const order = { active: 0, upcoming: 1, earned: 2, past: 3 }
+  enriched.sort((a, b) => (order[a.status] ?? 4) - (order[b.status] ?? 4))
+
+  res.json({ badges: enriched })
+})
+
 module.exports = router

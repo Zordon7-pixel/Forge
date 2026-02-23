@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import LoadingRunner from '../components/LoadingRunner'
 import {
-  Flame, Trophy, Star, Zap, Award, Medal, Crown, Lock
+  Flame, Trophy, Star, Zap, Award, Medal, Crown, Lock, Sun, Heart
 } from 'lucide-react'
 import api from '../lib/api'
 
@@ -13,6 +13,19 @@ const ICON_MAP = {
   Award,
   Medal,
   Crown,
+}
+
+const SEASONAL_ICON_MAP = {
+  Flame,
+  Trophy,
+  Star,
+  Zap,
+  Award,
+  Medal,
+  Crown,
+  Sun: Star,
+  Heart: Zap,
+  Flower2: Star,
 }
 
 function BadgeIcon({ name, size = 28, color }) {
@@ -76,6 +89,93 @@ function BadgeCard({ badge }) {
       {earned && earnedDate && (
         <p className="text-[10px] mt-1 font-medium" style={{ color: '#EAB308', opacity: 0.7 }}>
           {earnedDate}
+        </p>
+      )}
+    </div>
+  )
+}
+
+function SeasonalBadgeCard({ badge }) {
+  const pct = badge.requirement_value > 0 ? Math.min(100, (badge.progress / badge.requirement_value) * 100) : 0
+  const color = badge.color || '#EAB308'
+  const isEarned = badge.status === 'earned'
+  const isActive = badge.status === 'active'
+
+  const statusLabel = isEarned ? 'Earned' :
+    isActive ? `${badge.days_remaining}d left` :
+    badge.status === 'upcoming' ? `Starts in ${badge.days_until_start}d` :
+    'Past'
+
+  const reqLabel = badge.requirement_type === 'miles_in_window'
+    ? `${badge.progress.toFixed(1)} / ${badge.requirement_value} miles`
+    : `${badge.progress} / ${badge.requirement_value} workouts`
+
+  const windowLabel = (() => {
+    const fmt = (s) => {
+      const d = new Date(s + 'T12:00:00')
+      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    }
+    return `${fmt(badge.window_start_full)} - ${fmt(badge.window_end_full)}`
+  })()
+
+  const Icon = SEASONAL_ICON_MAP[badge.icon] || Award
+
+  return (
+    <div style={{
+      borderRadius: 16,
+      padding: 16,
+      background: isEarned ? `${color}18` : 'var(--bg-input)',
+      border: `1.5px solid ${isEarned ? color : isActive ? color + '55' : 'var(--border-subtle)'}`,
+      boxShadow: isEarned ? `0 0 20px ${color}44` : isActive ? `0 0 10px ${color}22` : 'none',
+      position: 'relative',
+      overflow: 'hidden',
+    }}>
+      {/* Active glow top bar */}
+      {isActive && !isEarned && (
+        <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, background: color, borderRadius: '16px 16px 0 0' }} />
+      )}
+
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14 }}>
+        {/* Icon circle */}
+        <div style={{
+          width: 52, height: 52, borderRadius: '50%', flexShrink: 0,
+          background: isEarned ? color : `${color}33`,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          boxShadow: isEarned ? `0 0 12px ${color}66` : 'none',
+        }}>
+          <Icon size={24} color={isEarned ? '#000' : color} strokeWidth={2} />
+        </div>
+
+        <div style={{ flex: 1 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <p style={{ fontSize: 14, fontWeight: 800, color: 'var(--text-primary)', lineHeight: 1.2 }}>{badge.name}</p>
+            <span style={{
+              fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 20,
+              background: isEarned ? color : isActive ? `${color}33` : 'var(--bg-base)',
+              color: isEarned ? '#000' : isActive ? color : 'var(--text-muted)',
+            }}>{statusLabel}</span>
+          </div>
+          <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>{badge.description}</p>
+          <p style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 3, fontWeight: 600 }}>{windowLabel}</p>
+        </div>
+      </div>
+
+      {/* Progress bar */}
+      {!isEarned && (
+        <div style={{ marginTop: 12 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
+            <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{reqLabel}</span>
+            <span style={{ fontSize: 10, fontWeight: 700, color: isActive ? color : 'var(--text-muted)' }}>{Math.round(pct)}%</span>
+          </div>
+          <div style={{ height: 5, background: 'var(--bg-base)', borderRadius: 3, overflow: 'hidden' }}>
+            <div style={{ height: '100%', width: `${pct}%`, background: color, borderRadius: 3, transition: 'width 0.6s ease' }} />
+          </div>
+        </div>
+      )}
+
+      {isEarned && (
+        <p style={{ fontSize: 11, color, fontWeight: 700, marginTop: 10 }}>
+          Completed {badge.earned_at ? new Date(badge.earned_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : ''}
         </p>
       )}
     </div>

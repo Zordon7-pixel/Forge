@@ -266,4 +266,26 @@ if (!userCols3.includes('username')) {
 try { db.exec('ALTER TABLE users ADD COLUMN step_goal INTEGER DEFAULT 10000') } catch (_) {}
 try { db.prepare('ALTER TABLE workout_sessions ADD COLUMN ai_feedback TEXT').run() } catch (_) {}
 
+// Add seasonal columns to badges if missing
+try { db.prepare("ALTER TABLE badges ADD COLUMN window_start TEXT").run() } catch (_) {}
+try { db.prepare("ALTER TABLE badges ADD COLUMN window_end TEXT").run() } catch (_) {}
+try { db.prepare("ALTER TABLE badges ADD COLUMN color TEXT DEFAULT '#EAB308'").run() } catch (_) {}
+
+// Seed seasonal badges
+const seasonalBadges = [
+  { slug: 'cherry-blossom', name: 'Cherry Blossom Run', description: 'Run 20 miles during cherry blossom season.', icon: 'Flower2', category: 'seasonal', requirement_type: 'miles_in_window', requirement_value: 20, window_start: '03-20', window_end: '04-20', color: '#f472b6' },
+  { slug: 'chinese-new-year', name: 'Year of the Snake', description: 'Complete 12 workouts during Lunar New Year celebrations.', icon: 'Zap', category: 'seasonal', requirement_type: 'workouts_in_window', requirement_value: 12, window_start: '01-29', window_end: '02-28', color: '#ef4444' },
+  { slug: 'st-patrick', name: 'Lucky Miles', description: 'Run 3.1 miles during St. Patrick\'s Day week.', icon: 'Star', category: 'seasonal', requirement_type: 'miles_in_window', requirement_value: 3.1, window_start: '03-10', window_end: '03-17', color: '#22c55e' },
+  { slug: 'independence', name: 'Independence Sprint', description: 'Run 7.6 miles during Independence Day week.', icon: 'Flame', category: 'seasonal', requirement_type: 'miles_in_window', requirement_value: 7.6, window_start: '07-01', window_end: '07-07', color: '#3b82f6' },
+  { slug: 'turkey-trot', name: 'Turkey Trot', description: 'Run 3.1 miles during Thanksgiving week.', icon: 'Trophy', category: 'seasonal', requirement_type: 'miles_in_window', requirement_value: 3.1, window_start: '11-24', window_end: '11-30', color: '#f97316' },
+  { slug: 'winter-grind', name: 'Winter Grind', description: 'Log 20 workouts in December.', icon: 'Medal', category: 'seasonal', requirement_type: 'workouts_in_window', requirement_value: 20, window_start: '12-01', window_end: '12-31', color: '#60a5fa' },
+  { slug: 'summer-solstice', name: 'Solstice Warrior', description: 'Run 6.2 miles during the longest week of the year.', icon: 'Sun', category: 'seasonal', requirement_type: 'miles_in_window', requirement_value: 6.2, window_start: '06-18', window_end: '06-24', color: '#fbbf24' },
+  { slug: 'valentines', name: 'Heart Mileage', description: 'Run 14 miles during Valentine\'s week.', icon: 'Heart', category: 'seasonal', requirement_type: 'miles_in_window', requirement_value: 14, window_start: '02-10', window_end: '02-14', color: '#f43f5e' },
+  { slug: 'halloween', name: 'Halloween Hustle', description: 'Log 31 workouts during October.', icon: 'Zap', category: 'seasonal', requirement_type: 'workouts_in_window', requirement_value: 31, window_start: '10-01', window_end: '10-31', color: '#f97316' },
+  { slug: 'new-year-warrior', name: 'New Year Warrior', description: 'Log 20 workouts in January to start the year strong.', icon: 'Crown', category: 'seasonal', requirement_type: 'workouts_in_window', requirement_value: 20, window_start: '01-01', window_end: '01-31', color: '#a855f7' },
+]
+
+const seasonalStmt = db.prepare("INSERT OR IGNORE INTO badges (slug, name, description, icon, category, requirement_type, requirement_value, window_start, window_end, color) VALUES (?,?,?,?,?,?,?,?,?,?)")
+seasonalBadges.forEach(b => seasonalStmt.run(b.slug, b.name, b.description, b.icon, b.category, b.requirement_type, b.requirement_value, b.window_start, b.window_end, b.color))
+
 module.exports = db;
