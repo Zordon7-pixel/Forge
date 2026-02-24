@@ -29,7 +29,7 @@ export default function Onboarding() {
     if (!form.weightLbs || form.weightLbs < 50 || form.weightLbs > 500) return setError('Please enter a valid weight.'), setSaving(false)
 
     try {
-      await api.put('/auth/me/profile', {
+      const { data } = await api.put('/auth/me/profile', {
         age: Number(form.age), weight_lbs: Number(form.weightLbs), height_ft: Number(form.heightFt), height_in: Number(form.heightIn), weekly_miles: Number(form.weeklyMiles),
         fitness_level: form.fitnessLevel, primary_goal: form.primaryGoal, injury_status: form.injuryStatus, injury_detail: form.injuryDetail, coach_personality: form.coachPersonality,
         schedule_type: scheduleType,
@@ -37,6 +37,8 @@ export default function Onboarding() {
         preferred_workout_time: preferredWorkoutTime,
         missed_workout_pref: missedWorkoutPref
       })
+      // Save the new token (contains onboarded=1) — without this, PrivateRoute loops back to /onboarding
+      if (data?.token) localStorage.setItem('forge_token', data.token)
       await api.post('/plans/generate')
       window.location.href = '/'
     } catch (err) {
