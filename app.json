@@ -1,0 +1,27 @@
+{
+  "expo": {
+    "name": "FORGE",
+    "slug": "forge",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "resizeMode": "contain",
+      "backgroundColor": "#0f1117"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "bundleIdentifier": "com.forgeathlete.app",
+      "infoPlist": {
+        "NSHealthShareUsageDescription": "FORGE reads Apple Health workout data to import your performance history.",
+        "NSHealthUpdateUsageDescription": "FORGE writes run and strength workout data to Apple Health.",
+        "NSLocationWhenInUseUsageDescription": "FORGE uses your location during run tracking to calculate distance and pace."
+      }
+    },
+    "android": {
+      "package": "com.forgeathlete.app"
+    }
+  }
+}
