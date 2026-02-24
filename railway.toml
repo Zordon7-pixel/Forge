@@ -1,6 +1,5 @@
 [build]
 builder = "NIXPACKS"
-buildCommand = ""
 
 [deploy]
 startCommand = "cd backend && node src/db/seed.js; node src/app.js"
