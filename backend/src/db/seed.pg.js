@@ -2,6 +2,11 @@ const pg = require('./postgres');
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 
+// Lifetime Pro accounts — these emails get is_pro=1 on every deploy (idempotent)
+const PRO_EMAILS = [
+  'bryanmadera@me.com', // Bryan — founder, lifetime Pro forever
+];
+
 /**
  * Idempotent seed for PostgreSQL
  * Checks if demo user exists before seeding
@@ -109,6 +114,22 @@ async function runSeed() {
   } catch (error) {
     console.error('❌ Seed failed:', error.message);
     throw error;
+  }
+
+  // Grant lifetime Pro to whitelisted emails (runs every deploy — idempotent)
+  try {
+    for (const email of PRO_EMAILS) {
+      const result = await pg.query(
+        'UPDATE users SET is_pro=1 WHERE email = $1',
+        [email]
+      );
+      if (result.rowCount > 0) {
+        console.log(`⭐ Pro granted: ${email}`);
+      }
+    }
+  } catch (err) {
+    // Non-fatal — log and continue
+    console.warn('Pro grant step skipped:', err.message);
   }
 }
 
