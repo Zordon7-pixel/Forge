@@ -2,6 +2,11 @@ const { dbGet, dbRun } = require('./index');
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 
+// Lifetime Pro accounts — granted is_pro=1 on every deploy (idempotent)
+const PRO_EMAILS = [
+  'bryanmadera@me.com', // Bryan — founder, lifetime Pro forever
+];
+
 function rand(min, max) { return Math.random() * (max - min) + min; }
 
 async function runSeed() {
@@ -114,6 +119,16 @@ async function runSeed() {
       'INSERT INTO training_plans (id, user_id, week_start, plan_json) VALUES (?,?,?,?)',
       [uuidv4(), userId, monday, JSON.stringify(plan)]
     );
+  }
+
+  // Grant lifetime Pro to whitelisted founder accounts (idempotent)
+  for (const email of PRO_EMAILS) {
+    try {
+      await dbRun('UPDATE users SET is_pro=1 WHERE email=?', [email]);
+      console.log(`⭐ Pro granted: ${email}`);
+    } catch (e) {
+      console.warn(`Pro grant skipped for ${email}:`, e.message);
+    }
   }
 
   console.log('FORGE seed ensured. Login: demo@forge.app / demo1234');
