@@ -4,6 +4,3 @@ builder = "NIXPACKS"
 [deploy]
 startCommand = "cd backend && node src/db/seed.js; node src/app.js"
 restartPolicyType = "always"
-
-[[services]]
-name = "forge"
