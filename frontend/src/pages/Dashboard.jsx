@@ -108,8 +108,6 @@ function ReadinessGauge({ score, onClick }) {
   )
 }
 
-const PERIOD_LABELS = { day: 'Today', week: t('dashboard.thisWeek'), month: 'This Month', year: 'This Year', all: 'All Time' }
-
 // Watch Sync Widget
 function WatchSyncWidget() {
   const [syncStatus, setSyncStatus] = useState(null)
@@ -188,6 +186,7 @@ export default function Dashboard() {
   const navigate = useNavigate()
   const { fmt } = useUnits()
   const { t } = useTranslation()
+  const PERIOD_LABELS = { day: 'Today', week: t('dashboard.thisWeek'), month: 'This Month', year: 'This Year', all: 'All Time' }
   const [stats, setStats] = useState(null)
   const [runs, setRuns] = useState([])
   const [lifts, setLifts] = useState([])
