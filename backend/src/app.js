@@ -14,6 +14,11 @@ if (!process.env.JWT_SECRET) {
 const { initDb } = require('./db');
 const app = express();
 
+// Serve frontend static files FIRST — before CORS or any middleware
+// (static assets are same-origin, no need to CORS-restrict them)
+const dist = path.join(__dirname, '../../frontend/dist');
+app.use(express.static(dist));
+
 // CORS — restrict to known origin in production
 const allowedOrigins = process.env.CORS_ORIGIN
   ? process.env.CORS_ORIGIN.split(',').map(s => s.trim())
@@ -68,9 +73,7 @@ app.use('/api/stretches',   require('./routes/stretches'));
 app.use('/api/injury',      require('./routes/injury'));
 app.use('/api/recap',       require('./routes/recap'));
 
-// Serve frontend
-const dist = path.join(__dirname, '../../frontend/dist');
-app.use(express.static(dist));
+// SPA fallback — serve index.html for all non-API routes
 app.get('*', (req, res) => res.sendFile(path.join(dist, 'index.html')));
 
 const PORT = process.env.PORT || 4002;
