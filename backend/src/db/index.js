@@ -292,6 +292,24 @@ async function initDb() {
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
     `);
+    await client.query('ALTER TABLE training_plans ADD COLUMN IF NOT EXISTS name TEXT');
+    await client.query('ALTER TABLE training_plans ADD COLUMN IF NOT EXISTS type TEXT');
+    await client.query('ALTER TABLE training_plans ADD COLUMN IF NOT EXISTS weeks INTEGER');
+    await client.query('ALTER TABLE training_plans ADD COLUMN IF NOT EXISTS description TEXT');
+    await client.query('ALTER TABLE training_plans ADD COLUMN IF NOT EXISTS plan_data JSONB');
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS user_plans (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        plan_id TEXT NOT NULL REFERENCES training_plans(id) ON DELETE CASCADE,
+        started_at TEXT DEFAULT to_char(NOW(), 'YYYY-MM-DD'),
+        current_week INTEGER DEFAULT 1,
+        status TEXT DEFAULT 'active',
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        progress_json TEXT DEFAULT '{}'
+      );
+    `);
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS ai_usage (
@@ -745,6 +763,127 @@ async function initDb() {
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (slug) DO NOTHING`,
         b
       );
+    }
+
+    const defaultPlans = [
+      {
+        id: 'plan-5k-default',
+        name: '5K Builder',
+        type: '5K',
+        weeks: 8,
+        description: 'Runner-first 5K progression with strength for injury prevention.',
+        planData: {
+          weeks: Array.from({ length: 8 }).map((_, i) => ({
+            week: i + 1,
+            sessions: [
+              { id: `w${i + 1}-mon`, day: 'Mon', type: 'rest', title: 'Rest + mobility' },
+              { id: `w${i + 1}-tue`, day: 'Tue', type: 'run', title: 'Easy run', distance_miles: 2 + i * 0.2 },
+              { id: `w${i + 1}-wed`, day: 'Wed', type: 'strength', title: 'Strength injury prevention' },
+              { id: `w${i + 1}-thu`, day: 'Thu', type: 'run', title: 'Quality intervals', distance_miles: 2.5 + i * 0.25 },
+              { id: `w${i + 1}-fri`, day: 'Fri', type: 'rest', title: 'Recovery walk' },
+              { id: `w${i + 1}-sat`, day: 'Sat', type: 'run', title: 'Long easy run', distance_miles: 3 + i * 0.4 },
+              { id: `w${i + 1}-sun`, day: 'Sun', type: 'run', title: 'Shakeout', distance_miles: 1.5 + i * 0.1 },
+            ],
+          })),
+        },
+      },
+      {
+        id: 'plan-10k-default',
+        name: '10K Progression',
+        type: '10K',
+        weeks: 10,
+        description: 'Build sustainable 10K fitness through controlled volume.',
+        planData: {
+          weeks: Array.from({ length: 10 }).map((_, i) => ({
+            week: i + 1,
+            sessions: [
+              { id: `10k-${i + 1}-mon`, day: 'Mon', type: 'rest', title: 'Rest + mobility' },
+              { id: `10k-${i + 1}-tue`, day: 'Tue', type: 'run', title: 'Easy run', distance_miles: 3 + i * 0.25 },
+              { id: `10k-${i + 1}-wed`, day: 'Wed', type: 'strength', title: 'Strength injury prevention' },
+              { id: `10k-${i + 1}-thu`, day: 'Thu', type: 'run', title: 'Tempo', distance_miles: 3.5 + i * 0.25 },
+              { id: `10k-${i + 1}-fri`, day: 'Fri', type: 'rest', title: 'Rest' },
+              { id: `10k-${i + 1}-sat`, day: 'Sat', type: 'run', title: 'Long run', distance_miles: 4 + i * 0.5 },
+              { id: `10k-${i + 1}-sun`, day: 'Sun', type: 'run', title: 'Recovery run', distance_miles: 2 + i * 0.15 },
+            ],
+          })),
+        },
+      },
+      {
+        id: 'plan-half-default',
+        name: 'Half Marathon Build',
+        type: 'Half Marathon',
+        weeks: 12,
+        description: 'Structured half marathon prep with durable weekly rhythm.',
+        planData: {
+          weeks: Array.from({ length: 12 }).map((_, i) => ({
+            week: i + 1,
+            sessions: [
+              { id: `half-${i + 1}-mon`, day: 'Mon', type: 'rest', title: 'Rest' },
+              { id: `half-${i + 1}-tue`, day: 'Tue', type: 'run', title: 'Easy run', distance_miles: 3.5 + i * 0.25 },
+              { id: `half-${i + 1}-wed`, day: 'Wed', type: 'strength', title: 'Strength injury prevention' },
+              { id: `half-${i + 1}-thu`, day: 'Thu', type: 'run', title: 'Tempo/threshold', distance_miles: 4 + i * 0.3 },
+              { id: `half-${i + 1}-fri`, day: 'Fri', type: 'rest', title: 'Rest' },
+              { id: `half-${i + 1}-sat`, day: 'Sat', type: 'run', title: 'Long run', distance_miles: 6 + i * 0.6 },
+              { id: `half-${i + 1}-sun`, day: 'Sun', type: 'run', title: 'Recovery run', distance_miles: 2 + i * 0.2 },
+            ],
+          })),
+        },
+      },
+      {
+        id: 'plan-marathon-default',
+        name: 'Marathon Builder',
+        type: 'Marathon',
+        weeks: 16,
+        description: 'Marathon progression anchored in easy mileage and long-run durability.',
+        planData: {
+          weeks: Array.from({ length: 16 }).map((_, i) => ({
+            week: i + 1,
+            sessions: [
+              { id: `m-${i + 1}-mon`, day: 'Mon', type: 'rest', title: 'Rest + mobility' },
+              { id: `m-${i + 1}-tue`, day: 'Tue', type: 'run', title: 'Easy run', distance_miles: 4 + i * 0.25 },
+              { id: `m-${i + 1}-wed`, day: 'Wed', type: 'strength', title: 'Strength injury prevention' },
+              { id: `m-${i + 1}-thu`, day: 'Thu', type: 'run', title: 'Marathon pace work', distance_miles: 5 + i * 0.35 },
+              { id: `m-${i + 1}-fri`, day: 'Fri', type: 'rest', title: 'Recovery day' },
+              { id: `m-${i + 1}-sat`, day: 'Sat', type: 'run', title: 'Long run', distance_miles: 8 + i * 0.8 },
+              { id: `m-${i + 1}-sun`, day: 'Sun', type: 'run', title: 'Recovery run', distance_miles: 3 + i * 0.2 },
+            ],
+          })),
+        },
+      },
+      {
+        id: 'plan-strength-default',
+        name: 'Strength Beginner',
+        type: 'Strength Beginner',
+        weeks: 8,
+        description: 'Two short strength sessions weekly to keep runners resilient.',
+        planData: {
+          weeks: Array.from({ length: 8 }).map((_, i) => ({
+            week: i + 1,
+            sessions: [
+              { id: `sb-${i + 1}-mon`, day: 'Mon', type: 'strength', title: 'Lower body stability' },
+              { id: `sb-${i + 1}-tue`, day: 'Tue', type: 'run', title: 'Easy run', distance_miles: 2.5 + i * 0.2 },
+              { id: `sb-${i + 1}-wed`, day: 'Wed', type: 'rest', title: 'Rest' },
+              { id: `sb-${i + 1}-thu`, day: 'Thu', type: 'strength', title: 'Core + posterior chain' },
+              { id: `sb-${i + 1}-fri`, day: 'Fri', type: 'run', title: 'Moderate run', distance_miles: 3 + i * 0.25 },
+              { id: `sb-${i + 1}-sat`, day: 'Sat', type: 'run', title: 'Long run', distance_miles: 4 + i * 0.35 },
+              { id: `sb-${i + 1}-sun`, day: 'Sun', type: 'rest', title: 'Rest' },
+            ],
+          })),
+        },
+      },
+    ];
+
+    for (const p of defaultPlans) {
+      await client.query(`
+        INSERT INTO training_plans (id, user_id, week_start, plan_json, name, type, weeks, description, plan_data)
+        VALUES ($1, NULL, to_char(NOW(), 'YYYY-MM-DD'), $2, $3, $4, $5, $6, $7::jsonb)
+        ON CONFLICT (id) DO UPDATE SET
+          name = EXCLUDED.name,
+          type = EXCLUDED.type,
+          weeks = EXCLUDED.weeks,
+          description = EXCLUDED.description,
+          plan_data = EXCLUDED.plan_data
+      `, [p.id, JSON.stringify({ weeks: p.planData.weeks }), p.name, p.type, p.weeks, p.description, JSON.stringify(p.planData)]);
     }
 
     await client.query('COMMIT');

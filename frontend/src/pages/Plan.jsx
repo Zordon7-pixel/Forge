@@ -1,243 +1,186 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
-import { X } from 'lucide-react'
+import { CheckCircle2, Circle } from 'lucide-react'
 import api from '../lib/api'
 
-const badgeStyles = {
-  run: { background: 'var(--accent-dim)', color: 'var(--accent)' },
-  rest: { background: 'rgba(107,114,128,0.15)', color: 'var(--text-muted)' },
-  'cross-train': { background: 'rgba(245,158,11,0.18)', color: '#f59e0b' },
-  strength: { background: 'var(--accent-dim)', color: 'var(--accent)' }
+function sessionLabel(session = {}) {
+  if (session.type === 'run') {
+    const miles = Number(session.distance_miles || 0)
+    if (miles > 0) return `${session.title || 'Run'} · ${miles.toFixed(1)} mi`
+  }
+  return session.title || String(session.type || 'session').replace('_', ' ')
 }
 
 export default function Plan() {
-  const navigate = useNavigate()
-  const location = useLocation()
-  const [plan, setPlan] = useState(null)
+  const [plans, setPlans] = useState([])
+  const [myPlan, setMyPlan] = useState(null)
+  const [myUserPlan, setMyUserPlan] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [regenerating, setRegenerating] = useState(false)
-  const [runBriefs, setRunBriefs] = useState({})
-  const [compliance, setCompliance] = useState(null)
-  const [reschedulingId, setReschedulingId] = useState(null)
-  const [activeInjury, setActiveInjury] = useState(null)
-  const [injuryDismissed, setInjuryDismissed] = useState(false)
+  const [assigningId, setAssigningId] = useState(null)
+  const [updating, setUpdating] = useState(false)
 
-  const loadPlan = async () => {
+  const loadAll = async () => {
+    setLoading(true)
     try {
-      const [res, comp, injuryRes] = await Promise.all([
-        api.get('/plans/current'),
-        api.get('/plans/compliance').catch(() => ({ data: null })),
-        api.get('/injury/active').catch(() => ({ data: { injuries: [] } })),
+      const [plansRes, myRes] = await Promise.all([
+        api.get('/plans'),
+        api.get('/plans/my'),
       ])
-      setPlan(res.data?.plan || res.data || null)
-      setCompliance(comp.data)
-      const injury = (injuryRes.data?.injuries || [])[0] || null
-      setActiveInjury(injury)
-      setInjuryDismissed(injury ? localStorage.getItem(`forge-plan-injury-dismissed-${injury.id}`) === '1' : false)
+      setPlans(plansRes.data?.plans || [])
+      setMyPlan(myRes.data?.plan || null)
+      setMyUserPlan(myRes.data?.user_plan || null)
     } finally {
       setLoading(false)
     }
   }
 
-  useEffect(() => { loadPlan() }, [])
-
-  const showEasyDaySuggestion = Boolean(location.state?.suggestEasyDay)
-
-  const weeklyStructure = useMemo(() => {
-    if (plan?.plan_json?.weeks?.[0]?.days) return plan.plan_json.weeks[0].days
-    if (!plan?.weekly_structure) return []
-    if (Array.isArray(plan.weekly_structure)) return plan.weekly_structure
-    try { return JSON.parse(plan.weekly_structure) } catch { return [] }
-  }, [plan])
-
-  const adjustedWeeklyStructure = useMemo(() => {
-    if (!activeInjury) return weeklyStructure
-    const intenseKeys = ['tempo', 'interval', 'threshold', 'speed', 'hill', 'long']
-    return weeklyStructure.map((day) => {
-      const rawType = String(day.workout_type || day.type || '').toLowerCase()
-      const isRun = !rawType.includes('rest') && !rawType.includes('strength') && !rawType.includes('cross')
-      const isIntense = intenseKeys.some((k) => rawType.includes(k))
-      if (isRun && isIntense) {
-        return {
-          ...day,
-          workout_type: 'Recovery',
-          type: 'recovery',
-          distance_miles: 0,
-          description: 'Low-impact recovery work, mobility, and PT.',
-        }
-      }
-      return day
-    })
-  }, [weeklyStructure, activeInjury])
-
-
   useEffect(() => {
-    const runDays = adjustedWeeklyStructure.filter((d) => {
-      const t = (d.workout_type || d.type || '').toLowerCase()
-      return !t.includes('rest') && !t.includes('strength') && !t.includes('cross')
-    })
-    runDays.forEach((d, i) => {
-      api.get(`/ai/run-brief?sessionId=${d.id || i}`).then((r) => {
-        setRunBriefs((prev) => ({ ...prev, [d.id || i]: r.data }))
-      }).catch(() => {})
-    })
-  }, [adjustedWeeklyStructure])
+    loadAll()
+  }, [])
 
-  const regenerate = async () => {
-    setRegenerating(true)
-    try { await api.post('/plans/generate'); await loadPlan() } finally { setRegenerating(false) }
+  const assignPlan = async (planId) => {
+    setAssigningId(planId)
+    try {
+      await api.post(`/plans/assign/${planId}`)
+      await loadAll()
+    } finally {
+      setAssigningId(null)
+    }
   }
 
-  const todayName = new Date().toLocaleDateString('en-US', { weekday: 'long' })
+  const currentWeek = Math.max(1, Number(myUserPlan?.current_week || 1))
+  const weekData = useMemo(() => {
+    const weeks = myPlan?.plan_data?.weeks || []
+    return weeks[currentWeek - 1] || weeks[0] || null
+  }, [myPlan, currentWeek])
+  const completedSet = new Set(myUserPlan?.progress?.completedSessionIds || [])
+  const totalInWeek = (weekData?.sessions || []).filter((s) => s.type !== 'rest').length
+  const completedInWeek = (weekData?.sessions || []).filter((s) => s.type !== 'rest' && completedSet.has(String(s.id))).length
+  const weekProgress = totalInWeek > 0 ? Math.round((completedInWeek / totalInWeek) * 100) : 0
 
-  if (loading) return <div className="rounded-xl p-4" style={{ background: 'var(--bg-card)', color: 'var(--text-muted)' }}>Loading your training data...</div>
+  const toggleSession = async (sessionId) => {
+    const isCompleted = completedSet.has(String(sessionId))
+    setUpdating(true)
+    try {
+      await api.put('/plans/my/progress', isCompleted
+        ? { unset_session_id: sessionId, current_week: currentWeek }
+        : { completed_session_id: sessionId, current_week: currentWeek }
+      )
+      await loadAll()
+    } finally {
+      setUpdating(false)
+    }
+  }
 
-  if (!plan) {
-    return (
-      <div className="flex flex-col items-center justify-center gap-4 py-12">
-        <img src="/empty-plan.png" alt="" className="w-64 h-64 object-contain" />
-        <p className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>No training plan yet.</p>
-        <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Generate one to get started.</p>
-        <button
-          onClick={regenerate}
-          className="mt-2 rounded-xl px-6 py-3 font-semibold text-black"
-          style={{ background: 'var(--accent)' }}
-        >
-          Generate Plan
-        </button>
-      </div>
-    )
+  const goToWeek = async (nextWeek) => {
+    setUpdating(true)
+    try {
+      await api.put('/plans/my/progress', { current_week: nextWeek })
+      await loadAll()
+    } finally {
+      setUpdating(false)
+    }
+  }
+
+  if (loading) {
+    return <div className="rounded-xl p-4" style={{ background: 'var(--bg-card)', color: 'var(--text-muted)' }}>Loading training plans...</div>
   }
 
   return (
     <div className="space-y-4">
-      <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>
-        <h2 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{plan.title || 'Your Plan'}</h2>
-        <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>Goal: {plan.goal || '--'}</p>
+      <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+        <h2 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>Training Plans</h2>
+        <p className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>Running-first plans. Strength sessions focus on injury prevention only.</p>
       </div>
 
-      {showEasyDaySuggestion && (
-        <div className="rounded-xl p-3" style={{ background: 'rgba(234,179,8,0.12)', border: '1px solid rgba(234,179,8,0.3)' }}>
-          <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Recovery suggestion: replace today with an easy 20-30 minute run.</p>
+      {!myPlan && (
+        <div className="grid gap-3">
+          {plans.map((plan) => (
+            <div key={plan.id} className="rounded-xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+              <p className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>{plan.name}</p>
+              <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>{plan.type} · {plan.weeks} weeks</p>
+              <p className="text-sm mt-2" style={{ color: 'var(--text-muted)' }}>{plan.description}</p>
+              <button
+                onClick={() => assignPlan(plan.id)}
+                disabled={assigningId === plan.id}
+                className="mt-3 rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-60"
+                style={{ background: 'var(--accent)', color: '#000' }}
+              >
+                {assigningId === plan.id ? 'Assigning...' : 'Assign Plan'}
+              </button>
+            </div>
+          ))}
         </div>
       )}
 
-      {!injuryDismissed && activeInjury && (
-        <div className="rounded-xl p-3" style={{ background: 'rgba(234,179,8,0.2)', border: '1px solid #EAB308' }}>
-          <div className="flex items-start justify-between gap-2">
-            <div>
-              <p className="text-sm font-semibold" style={{ color: '#0f1117' }}>
-                Recovery Mode — {activeInjury.body_part || 'Injury'} — Est. return: {activeInjury.date || '--'}
-              </p>
-              <p className="text-xs mt-1" style={{ color: '#0f1117' }}>
-                Your plan has been adjusted for recovery. Focus on PT and low-impact activity.
-              </p>
+      {myPlan && (
+        <div className="space-y-3">
+          <div className="rounded-xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+            <p className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>{myPlan.name}</p>
+            <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+              {myPlan.type} · Week {currentWeek} of {myPlan.weeks}
+            </p>
+            <div className="mt-3 h-2 rounded-full" style={{ background: 'var(--bg-input)' }}>
+              <div className="h-2 rounded-full" style={{ width: `${weekProgress}%`, background: '#EAB308' }} />
             </div>
+            <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>{weekProgress}% complete this week</p>
+          </div>
+
+          <div className="flex gap-2">
             <button
-              onClick={() => {
-                localStorage.setItem(`forge-plan-injury-dismissed-${activeInjury.id}`, '1')
-                setInjuryDismissed(true)
-              }}
-              aria-label="Dismiss recovery banner"
-              style={{ background: 'transparent', color: '#0f1117' }}
+              onClick={() => goToWeek(Math.max(1, currentWeek - 1))}
+              disabled={currentWeek <= 1 || updating}
+              className="rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
+              style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}
             >
-              <X size={16} />
+              Previous Week
+            </button>
+            <button
+              onClick={() => goToWeek(Math.min(Number(myPlan.weeks || currentWeek), currentWeek + 1))}
+              disabled={currentWeek >= Number(myPlan.weeks || currentWeek) || updating}
+              className="rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
+              style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}
+            >
+              Next Week
             </button>
           </div>
-        </div>
-      )}
 
-      {compliance?.missed?.length > 0 && (
-        <div className="rounded-xl p-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-          <p className="text-sm font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>Missed sessions</p>
-          <div className="space-y-2">
-            {compliance.missed.map((m) => (
-              <div key={m.sessionId} className="flex items-center justify-between">
-                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{m.day} · {m.type} {m.distance ? `· ${m.distance} mi` : ''}</p>
+          <div className="rounded-xl p-4 space-y-2" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+            {(weekData?.sessions || []).map((session) => {
+              const isDone = completedSet.has(String(session.id))
+              return (
                 <button
-                  onClick={async () => {
-                    setReschedulingId(m.sessionId)
-                    await api.post('/plans/reschedule-missed', { originalDate: m.date, sessionId: m.sessionId })
-                    await loadPlan()
-                    setReschedulingId(null)
-                  }}
-                  className="rounded-lg px-2 py-1 text-xs font-semibold"
-                  style={{ background: 'var(--accent)', color: '#000' }}
+                  key={session.id}
+                  onClick={() => session.type !== 'rest' && toggleSession(session.id)}
+                  disabled={updating || session.type === 'rest'}
+                  className="w-full rounded-lg p-3 flex items-center justify-between disabled:opacity-70"
+                  style={{ background: 'var(--bg-input)' }}
                 >
-                  {reschedulingId === m.sessionId ? 'Rescheduling...' : 'Reschedule'}
+                  <div className="text-left">
+                    <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{session.day}</p>
+                    <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{sessionLabel(session)}</p>
+                  </div>
+                  {session.type === 'rest'
+                    ? <p className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>REST</p>
+                    : isDone
+                      ? <CheckCircle2 size={18} color="#EAB308" />
+                      : <Circle size={18} color="var(--text-muted)" />}
                 </button>
-              </div>
-            ))}
+              )
+            })}
           </div>
+
+          <button
+            onClick={() => {
+              setMyPlan(null)
+              setMyUserPlan(null)
+            }}
+            className="rounded-lg px-4 py-2 text-sm font-semibold"
+            style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}
+          >
+            Change Plan
+          </button>
         </div>
       )}
-
-      <div className="space-y-3">
-        {adjustedWeeklyStructure.map((day, idx) => {
-          const rawType = (day.workout_type || day.type || '').toString().toLowerCase()
-          const typeKey = rawType.includes('cross') ? 'cross-train' : rawType.includes('strength') ? 'strength' : rawType.includes('rest') ? 'rest' : 'run'
-          const isToday = (day.day || '').toLowerCase().includes(todayName.toLowerCase())
-
-          return (
-            <div key={idx} className="rounded-xl border p-4" style={isToday ? { borderColor: 'var(--accent)', background: 'linear-gradient(135deg, rgba(234,179,8,0.12) 0%, var(--bg-card) 100%)' } : { borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}>
-              <div className="mb-2 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <p className="font-semibold" style={{ color: 'var(--text-primary)' }}>{day.day || `Day ${idx + 1}`}</p>
-                  {isToday ? <span className="rounded-full px-2 py-0.5 text-xs font-bold" style={{ background: 'var(--accent)', color: 'black' }}>TODAY</span> : null}
-                </div>
-                <span className="rounded-full px-2 py-1 text-xs" style={badgeStyles[typeKey]}>{String(day.workout_type || day.type || 'Run').replace(/_/g, ' ')}</span>
-              </div>
-              <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{day.description || 'No description.'}</p>
-              {runBriefs[day.id || idx] && (
-                <div className="mt-2 rounded-lg p-2" style={{ background: 'var(--bg-input)' }}>
-                  <p className="text-xs" style={{ color: 'var(--text-primary)' }}>{runBriefs[day.id || idx].why}</p>
-                  <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Effort: {runBriefs[day.id || idx].effort} · BPM: {runBriefs[day.id || idx].bpmRange} · Cadence: {runBriefs[day.id || idx].cadence}</p>
-                </div>
-              )}
-              {isToday && (
-                <div style={{ marginTop: 12 }}>
-                  {(() => {
-                    const type = (day.workout_type || day.type || '').toLowerCase()
-                    const isRest = type.includes('rest')
-                    const isStrength = type.includes('strength') || type.includes('lift') || type.includes('cross')
-                    
-                    return (
-                      <button
-                        onClick={() => {
-                          if (!isRest) {
-                            if (isStrength) {
-                              navigate('/log-lift')
-                            } else {
-                              navigate('/log-run')
-                            }
-                          }
-                        }}
-                        style={{
-                          width: '100%',
-                          padding: '14px',
-                          background: isRest ? 'var(--bg-input)' : 'var(--accent)',
-                          color: isRest ? 'var(--text-muted)' : '#000',
-                          fontWeight: 900,
-                          fontSize: 15,
-                          borderRadius: 12,
-                          border: 'none',
-                          cursor: isRest ? 'default' : 'pointer',
-                        }}
-                      >
-                        {isRest ? 'Rest Day — Take it easy' : isStrength ? 'Log Workout' : 'Start Run'}
-                      </button>
-                    )
-                  })()}
-                </div>
-              )}
-            </div>
-          )
-        })}
-      </div>
-
-      <button onClick={regenerate} disabled={regenerating} className="w-full rounded-xl border py-3 font-semibold disabled:opacity-60" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)', color: 'var(--text-primary)' }}>
-        {regenerating ? 'Regenerating...' : 'Regenerate Plan'}
-      </button>
     </div>
   )
 }

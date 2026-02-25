@@ -246,10 +246,14 @@ export default function LogRun() {
   useEffect(() => {
     if (activeTab !== 'week' || weekPlan) return
     setWeekPlanLoading(true)
-    api.get('/plans')
+    api.get('/plans/my')
       .then(res => {
-        const planJson = res.data?.plan?.plan_json
-        if (planJson?.weeks?.length) setWeekPlan(planJson.weeks[0].days || [])
+        const planJson = res.data?.plan?.plan_data || res.data?.plan?.plan_json
+        const currentWeek = Math.max(1, Number(res.data?.user_plan?.current_week || 1))
+        if (planJson?.weeks?.length) {
+          const week = planJson.weeks[currentWeek - 1] || planJson.weeks[0]
+          setWeekPlan(week?.days || week?.sessions || [])
+        }
       })
       .catch(() => {})
       .finally(() => setWeekPlanLoading(false))

@@ -97,13 +97,29 @@ CREATE INDEX IF NOT EXISTS idx_lifts_user_date ON lifts(user_id, date DESC);
 
 CREATE TABLE IF NOT EXISTS training_plans (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  week_start TEXT NOT NULL,
-  plan_json TEXT NOT NULL,
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  week_start TEXT,
+  plan_json TEXT,
+  name TEXT,
+  type TEXT,
+  weeks INTEGER,
+  description TEXT,
+  plan_data JSONB,
   created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_training_plans_user_id ON training_plans(user_id);
+
+CREATE TABLE IF NOT EXISTS user_plans (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  plan_id UUID NOT NULL REFERENCES training_plans(id) ON DELETE CASCADE,
+  started_at TEXT,
+  current_week INTEGER DEFAULT 1,
+  status TEXT DEFAULT 'active',
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  progress_json TEXT DEFAULT '{}'
+);
 
 CREATE TABLE IF NOT EXISTS watch_sync (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
