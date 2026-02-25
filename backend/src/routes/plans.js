@@ -202,8 +202,8 @@ router.post('/generate', auth, checkAiLimit('plan_generate'), async (req, res) =
   try {
     const profile = await dbGet('SELECT * FROM users WHERE id = ?', [req.user.id]);
     if (!profile) return res.status(404).json({ error: 'User not found' });
-
-    const planData = await generateTrainingPlan(profile);
+    const target = req.body?.target || null;
+    const planData = await generateTrainingPlan(profile, target);
     const id = uuidv4();
     const weekStart = getMonday();
 

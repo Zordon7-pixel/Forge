@@ -37,6 +37,7 @@ export default function DailyCheckIn({ onComplete }) {
   const [todayPlan, setTodayPlan] = useState(null)
   const [showStretchGate, setShowStretchGate] = useState(false)
   const [alreadyDone, setAlreadyDone] = useState(false)
+  const [sleepHours, setSleepHours] = useState('')
 
   useEffect(() => {
     api.get('/checkin/today').then(r => {
@@ -56,7 +57,12 @@ export default function DailyCheckIn({ onComplete }) {
     if (!feeling || !timeAvailable) return
     setSaving(true)
     try {
-      const res = await api.post('/checkin', { feeling, time_available: timeAvailable, life_flags: lifeFlags })
+      const res = await api.post('/checkin', {
+        feeling,
+        time_available: timeAvailable,
+        life_flags: lifeFlags,
+        sleep_hours: sleepHours === '' ? null : Number(sleepHours),
+      })
       // Also fetch today's plan to show after adjustment
       try {
         const planRes = await api.get('/plans/today')
@@ -198,6 +204,49 @@ export default function DailyCheckIn({ onComplete }) {
             </button>
           ))}
         </div>
+      </div>
+
+      <div style={{ marginBottom: 24 }}>
+        <p style={{ fontWeight: 700, color: 'var(--text-primary)', marginBottom: 12 }}>Hours of sleep last night?</p>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
+          {['4', '5', '6', '7', '8', '9'].map((h, idx) => (
+            <button
+              key={h}
+              onClick={() => setSleepHours(h)}
+              style={{
+                padding: '10px 14px',
+                borderRadius: 12,
+                border: `2px solid ${sleepHours === h ? 'var(--accent)' : 'var(--border-subtle)'}`,
+                background: sleepHours === h ? 'var(--accent-dim)' : 'var(--bg-card)',
+                color: sleepHours === h ? 'var(--accent)' : 'var(--text-muted)',
+                fontWeight: 700,
+                fontSize: 14,
+                cursor: 'pointer',
+              }}
+            >
+              {idx < 5 ? `${h}h` : '9h+'}
+            </button>
+          ))}
+        </div>
+        <input
+          type="number"
+          min="0"
+          max="14"
+          step="0.5"
+          placeholder="Custom sleep hours"
+          value={sleepHours}
+          onChange={(e) => setSleepHours(e.target.value)}
+          style={{
+            width: '100%',
+            padding: '10px 12px',
+            borderRadius: 10,
+            background: 'var(--bg-input)',
+            color: 'var(--text-primary)',
+            border: '1px solid var(--border-subtle)',
+            fontSize: 14,
+            boxSizing: 'border-box',
+          }}
+        />
       </div>
 
       <button onClick={submit} disabled={!feeling || !timeAvailable || saving}

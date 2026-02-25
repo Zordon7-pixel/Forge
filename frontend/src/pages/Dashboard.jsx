@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Flame, ArrowUpRight, ArrowDownRight, Watch } from 'lucide-react'
+import { Flame, ArrowUpRight, ArrowDownRight, Watch, Footprints, Dumbbell, X, AlertTriangle } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import AchievementUnlock from '../components/AchievementUnlock'
 import { useUnits } from '../context/UnitsContext'
@@ -108,6 +108,14 @@ function ReadinessGauge({ score, onClick }) {
   )
 }
 
+function getWeekKey() {
+  const now = new Date()
+  const weekStart = new Date(Date.UTC(now.getFullYear(), 0, 1))
+  const dayOffset = Math.floor((now - weekStart) / 86400000)
+  const weekNumber = Math.ceil((dayOffset + weekStart.getUTCDay() + 1) / 7)
+  return `${now.getFullYear()}-${String(weekNumber).padStart(2, '0')}`
+}
+
 // Watch Sync Widget
 function WatchSyncWidget() {
   const [syncStatus, setSyncStatus] = useState(null)
@@ -186,7 +194,6 @@ export default function Dashboard() {
   const navigate = useNavigate()
   const { fmt } = useUnits()
   const { t } = useTranslation()
-  const PERIOD_LABELS = { day: 'Today', week: t('dashboard.thisWeek'), month: 'This Month', year: 'This Year', all: 'All Time' }
   const [stats, setStats] = useState(null)
   const [runs, setRuns] = useState([])
   const [lifts, setLifts] = useState([])
@@ -213,11 +220,16 @@ export default function Dashboard() {
   const [loadWarningDismissedUntil, setLoadWarningDismissedUntil] = useState(Number(localStorage.getItem('forge_load_warning_dismissed_until') || 0))
   const [shoeAlerts, setShoeAlerts] = useState([])
   const [weeklyCalories, setWeeklyCalories] = useState(0)
+  const [checkinData, setCheckinData] = useState(null)
+  const [activeInjury, setActiveInjury] = useState(null)
+  const [injuryBannerDismissed, setInjuryBannerDismissed] = useState(false)
+  const [weeklyRecap, setWeeklyRecap] = useState(null)
+  const [showWeeklyRecap, setShowWeeklyRecap] = useState(false)
 
   useEffect(() => {
     ;(async () => {
       try {
-        const [statsRes, runsRes, liftsRes, warningRes, checkinRes, goalRes, streakRes, milestoneRes, complianceRes, loadRes, nextRaceRes, gearRes] = await Promise.all([
+        const [statsRes, runsRes, liftsRes, warningRes, checkinRes, goalRes, streakRes, milestoneRes, complianceRes, loadRes, nextRaceRes, gearRes, injuryRes] = await Promise.all([
           api.get('/auth/me/stats'),
           api.get('/runs', { params: { limit: 5 } }),
           api.get('/lifts'),
@@ -230,6 +242,7 @@ export default function Dashboard() {
           api.get('/runs/load-analysis').catch(() => ({ data: null })),
           api.get('/races/next').catch(() => ({ data: { race: null } })),
           api.get('/gear/shoes').catch(() => ({ data: { shoes: [] } })),
+          api.get('/injury/active').catch(() => ({ data: { injuries: [] } })),
         ])
         setStats(statsRes.data)
         const runsList = Array.isArray(runsRes.data) ? runsRes.data : runsRes.data?.runs || []
@@ -237,7 +250,10 @@ export default function Dashboard() {
         setHasWatchData(runsList.some((r) => r.avg_heart_rate || r.watch_mode || r.route_coords))
         setLifts(Array.isArray(liftsRes.data) ? liftsRes.data : liftsRes.data?.lifts || [])
         setWarning(warningRes.data?.warning === true)
-        if (checkinRes.data) setCheckedInToday(true)
+        if (checkinRes.data) {
+          setCheckedInToday(true)
+          setCheckinData(checkinRes.data)
+        }
         if (goalRes.data) {
           setGoalMode(goalRes.data.mode || 'auto')
           setManualGoalMiles(goalRes.data.miles || null)
@@ -256,9 +272,18 @@ export default function Dashboard() {
         setCompliance(complianceRes.data)
         setLoadAnalysis(loadRes.data)
         setNextRace(nextRaceRes.data?.race || null)
-        setShoeAlerts((gearRes.data?.shoes || []).filter(s => s.alert))
+        setShoeAlerts((gearRes.data?.shoes || []).filter((s) => Number(s.total_miles || 0) > 450))
+        setActiveInjury((injuryRes.data?.injuries || [])[0] || null)
         // Fetch weekly calories from recap
-        api.get('/recap/weekly').then(r => setWeeklyCalories(r.data?.totalCalories || 0)).catch(() => {})
+        api.get('/recap/weekly').then((r) => {
+          setWeeklyCalories(r.data?.totalCalories || 0)
+          const isSunday = new Date().getDay() === 0
+          const weekKey = `recap-seen-${getWeekKey()}`
+          if (isSunday && localStorage.getItem(weekKey) !== '1') {
+            setWeeklyRecap(r.data || null)
+            setShowWeeklyRecap(true)
+          }
+        }).catch(() => {})
       } finally {
         setLoading(false)
       }
@@ -276,6 +301,10 @@ export default function Dashboard() {
       })
       .catch(() => {})
   }, [])
+
+  useEffect(() => {
+    setInjuryBannerDismissed(false)
+  }, [activeInjury?.id])
 
 
   // Compute readiness from stats
@@ -316,11 +345,27 @@ export default function Dashboard() {
     score += volDelta
     breakdown.push({ label: 'Weekly load', value: volDelta, delta: volDelta, reason: volReason })
 
+    const sleepHours = Number(checkinData?.sleep_hours || 0)
+    if (sleepHours > 0) {
+      const sleepDelta = sleepHours < 6 ? -12 : sleepHours >= 8 ? 5 : 0
+      score += sleepDelta
+      breakdown.push({
+        label: 'Sleep',
+        value: sleepDelta,
+        delta: sleepDelta,
+        reason: sleepHours < 6
+          ? `${sleepHours}h sleep lowers readiness today.`
+          : sleepHours >= 8
+            ? `${sleepHours}h sleep boosts recovery readiness.`
+            : `${sleepHours}h sleep is neutral for readiness.`,
+      })
+    }
+
     return {
       readiness: Math.max(1, Math.min(99, Math.round(score))),
       readinessBreakdown: breakdown
     }
-  }, [stats, checkedInToday, hasWatchData])
+  }, [stats, checkedInToday, hasWatchData, checkinData, fmt])
 
   // Monthly challenge
   const monthlyGoal = useMemo(() => {
@@ -358,6 +403,8 @@ export default function Dashboard() {
 
   const showLoadWarning = loadAnalysis && ['elevated', 'high', 'danger'].includes(loadAnalysis.loadStatus) && Date.now() > loadWarningDismissedUntil
   const complianceColor = compliance?.score >= 80 ? '#22c55e' : compliance?.score >= 50 ? '#EAB308' : '#ef4444'
+  const periodLabels = { day: 'Today', week: t('dashboard.thisWeek'), month: 'This Month', year: 'This Year', all: 'All Time' }
+  const injuryDismissed = injuryBannerDismissed || (activeInjury && localStorage.getItem(`forge-injury-dismissed-${activeInjury.id}`) === '1')
 
   if (loading) return <LoadingRunner message="Getting ready" />
 
@@ -381,7 +428,77 @@ export default function Dashboard() {
         }
       `}</style>
 
+      {!injuryDismissed && activeInjury && (
+        <div className="rounded-xl p-4" style={{ background: 'rgba(234,179,8,0.2)', border: '1px solid #EAB308' }}>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-bold" style={{ color: '#0f1117' }}>
+                Recovery Mode — {activeInjury.body_part || 'Injury'} — Est. return: {activeInjury.date || '--'}
+              </p>
+              <p className="text-xs mt-1" style={{ color: '#0f1117' }}>
+                Your plan has been adjusted for recovery. Focus on PT and low-impact activity.
+              </p>
+            </div>
+            <button
+              onClick={() => {
+                localStorage.setItem(`forge-injury-dismissed-${activeInjury.id}`, '1')
+                setInjuryBannerDismissed(true)
+              }}
+              className="rounded-md p-1"
+              style={{ background: 'transparent', color: '#0f1117' }}
+              aria-label="Dismiss injury warning"
+            >
+              <X size={16} />
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="rounded-2xl p-4" style={{ background: '#1a1d2e', border: '1px solid #2a2d3e' }}>
+        <p className="text-xs mb-3" style={{ color: '#EAB308' }}>Quick Log</p>
+        <div className="grid grid-cols-2 gap-3">
+          <button
+            onClick={() => navigate('/log-run')}
+            className="rounded-xl px-4 py-5 font-black text-base flex items-center justify-center gap-2"
+            style={{ background: '#EAB308', color: '#0f1117', minHeight: 72 }}
+          >
+            <Footprints size={20} /> Log Run
+          </button>
+          <button
+            onClick={() => navigate('/log-lift')}
+            className="rounded-xl px-4 py-5 font-black text-base flex items-center justify-center gap-2"
+            style={{ background: '#EAB308', color: '#0f1117', minHeight: 72 }}
+          >
+            <Dumbbell size={20} /> Log Lift
+          </button>
+        </div>
+      </div>
+
       <WatchSyncWidget />
+
+      {showWeeklyRecap && weeklyRecap && (
+        <div className="rounded-xl p-4" style={{ background: '#1a1d2e', border: '1px solid #2a2d3e' }}>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-bold" style={{ color: '#EAB308' }}>Weekly Recap</p>
+              <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+                {weeklyRecap.totalMiles?.toFixed?.(1) || 0} mi · {weeklyRecap.totalRuns || 0} runs · {(weeklyRecap.totalCalories || 0).toLocaleString()} cal
+              </p>
+            </div>
+            <button
+              onClick={() => {
+                localStorage.setItem(`recap-seen-${getWeekKey()}`, '1')
+                setShowWeeklyRecap(false)
+              }}
+              style={{ background: 'transparent', color: 'var(--text-muted)' }}
+              className="p-1"
+              aria-label="Dismiss weekly recap"
+            >
+              <X size={16} />
+            </button>
+          </div>
+        </div>
+      )}
 
       {showLoadWarning && (
         <div className="rounded-xl p-3" style={{
@@ -501,7 +618,9 @@ export default function Dashboard() {
         ) : (
           <>
             <ReadinessGauge score={readiness} onClick={() => setShowReadinessModal(true)} />
-            <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>Based on your HRV, sleep, soreness, and energy levels</p>
+            <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>
+              Based on your HRV, sleep, soreness, and energy levels{checkinData?.sleep_hours ? ` · Sleep: ${checkinData.sleep_hours}h` : ''}
+            </p>
           </>
         )}
       </div>
@@ -559,7 +678,7 @@ export default function Dashboard() {
           ))}
         </div>
 
-        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{PERIOD_LABELS[period]}</p>
+        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{periodLabels[period]}</p>
 
         {/* Hero number */}
         <div>
@@ -609,11 +728,11 @@ export default function Dashboard() {
 
       {/* Shoe Alerts */}
       {shoeAlerts.map(shoe => (
-        <div key={shoe.id} style={{ background: 'rgba(249,115,22,0.08)', border: '1px solid rgba(249,115,22,0.3)', borderRadius: 12, padding: '10px 14px' }}>
-          <p style={{ fontSize: 13, fontWeight: 700, color: '#f97316', margin: 0 }}>
-            {shoe.brand} {shoe.model} is at {shoe.pct_used}% — {shoe.pct_used >= 100 ? 'replace now' : 'start looking for a replacement'}
+        <div key={shoe.id} style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 12, padding: '10px 14px' }}>
+          <p style={{ fontSize: 13, fontWeight: 700, color: '#ef4444', margin: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <AlertTriangle size={14} /> Your {shoe.nickname || `${shoe.brand} ${shoe.model}`} has {Number(shoe.total_miles || 0).toFixed(0)} miles — time to replace soon
           </p>
-          <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '2px 0 0' }}>{shoe.total_miles} of {shoe.recommended_miles} miles used</p>
+          <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '2px 0 0' }}>{shoe.total_miles} of 500 miles</p>
         </div>
       ))}
 

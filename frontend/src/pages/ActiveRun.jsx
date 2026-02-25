@@ -5,6 +5,7 @@ import { useUnits } from '../context/UnitsContext'
 import api from '../lib/api'
 import PostRunCheckIn from '../components/PostRunCheckIn'
 import AICoachFeedbackCard from '../components/AICoachFeedbackCard'
+import WorkoutCard from '../components/WorkoutCard'
 
 function haversineMiles(a, b) {
   const R = 3958.8
@@ -232,6 +233,19 @@ export default function ActiveRun() {
           <input value={manualDistance} onChange={e => setManualDistance(e.target.value)} type="number" min="0" step="0.1" className="w-full rounded-xl px-3 py-2" style={{ background: 'var(--bg-base)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }} placeholder={fmt.distanceLabel} />
           <button onClick={saveRun} className="w-full mt-2 rounded-xl py-2 font-semibold" style={{ background: 'var(--accent)', color: '#000' }}>Save Run</button>
         </div>
+      )}
+
+      {!running && !countingDown && savedRunId && (
+        <WorkoutCard
+          workoutType="Run"
+          date={new Date().toISOString()}
+          stats={{
+            distance: fmt.distance(gpsAvailable ? distanceMiles : Number(manualDistance || 0), 2),
+            pace,
+            duration: timeDisplay,
+          }}
+          summaryText={`FORGE Run · ${fmt.distance(gpsAvailable ? distanceMiles : Number(manualDistance || 0), 2)} · ${pace} · ${timeDisplay}`}
+        />
       )}
 
       {showPostCheckIn && savedRunId && <PostRunCheckIn runId={savedRunId} onDone={() => { setShowPostCheckIn(false); navigate('/') }} />}

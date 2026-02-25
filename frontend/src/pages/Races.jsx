@@ -18,7 +18,8 @@ export default function Races() {
   const [races, setRaces] = useState([])
   const [form, setForm] = useState({ race_name: '', race_date: '', distance_key: '5K', distance_miles: 3.1, location: '', goal_time: '' })
   const [message, setMessage] = useState('')
-  const [aiPrompt, setAiPrompt] = useState(null)
+  const [planPromptRace, setPlanPromptRace] = useState(null)
+  const [generatingPlanId, setGeneratingPlanId] = useState(null)
 
   const load = () => api.get('/races').then((r) => setRaces(r.data.races || []))
   useEffect(() => { load() }, [])
@@ -39,8 +40,7 @@ export default function Races() {
     const res = await api.post('/races', payload)
     setMessage('Race added')
     const race = res.data.race
-    const d = daysTo(race.race_date)
-    if (d > 0 && d <= 60) setAiPrompt({ race, days: d })
+    setPlanPromptRace(race)
     setForm({ race_name: '', race_date: '', distance_key: '5K', distance_miles: 3.1, location: '', goal_time: '' })
     load()
   }
@@ -49,18 +49,35 @@ export default function Races() {
     <div className="space-y-4">
       <h1 className="text-2xl font-black" style={{ color: 'var(--text-primary)' }}>Races</h1>
 
-      {aiPrompt && (
+      {planPromptRace && (
         <div className="rounded-xl p-4" style={{ background: 'rgba(234,179,8,0.12)', border: '1px solid rgba(234,179,8,0.3)' }}>
           <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-            With {aiPrompt.days} days to your {aiPrompt.race.race_name}, I'd suggest a taper starting 2 weeks out. Want me to adjust your plan?
+            Build a training plan for this race?
           </p>
           <div className="flex gap-2 mt-3">
-            <button className="rounded-lg px-3 py-1.5 text-xs font-bold" style={{ background: 'var(--accent)', color: '#000' }} onClick={async () => {
-              await api.post('/plans/race-adjust', { raceId: aiPrompt.race.id })
-              setAiPrompt(null)
-              setMessage('Plan adjusted for race taper')
-            }}>Adjust Plan</button>
-            <button className="rounded-lg px-3 py-1.5 text-xs" style={{ background: 'var(--bg-input)', color: 'var(--text-muted)', border: '1px solid var(--border-subtle)' }} onClick={() => setAiPrompt(null)}>Not now</button>
+            <button
+              className="rounded-lg px-3 py-1.5 text-xs font-bold"
+              style={{ background: 'var(--accent)', color: '#000' }}
+              onClick={async () => {
+                try {
+                  setGeneratingPlanId(planPromptRace.id)
+                  await api.post('/plans/generate', {
+                    target: {
+                      raceDate: planPromptRace.race_date,
+                      distanceMiles: Number(planPromptRace.distance_miles),
+                      raceName: planPromptRace.race_name,
+                    },
+                  })
+                  setPlanPromptRace(null)
+                  setMessage(`Your training plan has been updated around ${planPromptRace.race_name}`)
+                } finally {
+                  setGeneratingPlanId(null)
+                }
+              }}
+            >
+              {generatingPlanId === planPromptRace.id ? 'Generating...' : 'Generate Race Plan'}
+            </button>
+            <button className="rounded-lg px-3 py-1.5 text-xs" style={{ background: 'var(--bg-input)', color: 'var(--text-muted)', border: '1px solid var(--border-subtle)' }} onClick={() => setPlanPromptRace(null)}>Not now</button>
           </div>
         </div>
       )}
@@ -92,6 +109,27 @@ export default function Races() {
             <p className="font-bold">{r.race_name}</p>
             <p className="text-xs" style={{ color: 'var(--accent)' }}>{d} days to go</p>
             <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{r.distance_miles} mi {r.location ? `· ${r.location}` : ''}</p>
+            <button
+              className="mt-2 rounded-lg px-3 py-1.5 text-xs font-bold"
+              style={{ background: '#EAB308', color: '#0f1117' }}
+              onClick={async () => {
+                try {
+                  setGeneratingPlanId(r.id)
+                  await api.post('/plans/generate', {
+                    target: {
+                      raceDate: r.race_date,
+                      distanceMiles: Number(r.distance_miles),
+                      raceName: r.race_name,
+                    },
+                  })
+                  setMessage(`Your training plan has been updated around ${r.race_name}`)
+                } finally {
+                  setGeneratingPlanId(null)
+                }
+              }}
+            >
+              {generatingPlanId === r.id ? 'Generating...' : 'Generate Race Plan'}
+            </button>
           </div>
         })}
       </section>

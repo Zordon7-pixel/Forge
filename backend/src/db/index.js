@@ -561,11 +561,13 @@ async function initDb() {
         checkin_date TEXT NOT NULL,
         feeling INTEGER DEFAULT 3,
         time_available INTEGER DEFAULT 60,
+        sleep_hours REAL,
         life_flags TEXT DEFAULT '[]',
         created_at TIMESTAMPTZ DEFAULT NOW(),
         UNIQUE(user_id, checkin_date)
       );
     `);
+    await client.query('ALTER TABLE daily_checkins ADD COLUMN IF NOT EXISTS sleep_hours REAL');
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS community_workouts (
@@ -579,6 +581,20 @@ async function initDb() {
         explanation TEXT,
         rest_notes TEXT,
         usage_count INTEGER DEFAULT 0,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS community_posts (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        workout_id TEXT,
+        run_id TEXT,
+        title TEXT NOT NULL,
+        body TEXT,
+        workout_type TEXT,
+        stats_json TEXT DEFAULT '{}',
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
     `);

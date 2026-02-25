@@ -2,14 +2,23 @@ import { useEffect, useState } from 'react'
 import { Heart } from 'lucide-react'
 import api from '../lib/api'
 
+const QUOTES = [
+  'The body achieves what the mind believes.',
+  'Small daily progress creates big race-day results.',
+  'Discipline beats motivation on hard days.',
+  'One workout does not define you. Consistency does.',
+  'Show up today. Future you is watching.',
+]
+
 export default function Community() {
-  const [activeTab, setActiveTab] = useState('workouts')
+  const [activeTab, setActiveTab] = useState('feed')
 
   return (
     <div className="space-y-3">
       <h2 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>Community</h2>
-      <div className="flex gap-2">
+      <div className="flex gap-2 flex-wrap">
         {[
+          { key: 'feed', label: 'Feed' },
           { key: 'workouts', label: 'Workouts' },
           { key: 'routes', label: 'Routes' },
         ].map(tab => (
@@ -24,7 +33,80 @@ export default function Community() {
         ))}
       </div>
 
-      {activeTab === 'workouts' ? <WorkoutsTab /> : <RoutesTab />}
+      {activeTab === 'feed' ? <FeedTab /> : activeTab === 'workouts' ? <WorkoutsTab /> : <RoutesTab />}
+    </div>
+  )
+}
+
+function FeedTab() {
+  const [posts, setPosts] = useState([])
+  const [highlights, setHighlights] = useState([])
+
+  useEffect(() => {
+    api.get('/community/posts').then((r) => setPosts(r.data?.posts || [])).catch(() => setPosts([]))
+    Promise.all([
+      api.get('/runs').catch(() => ({ data: { runs: [] } })),
+      api.get('/workouts').catch(() => ({ data: { sessions: [] } })),
+    ]).then(([runsRes, workoutsRes]) => {
+      const runs = (runsRes.data?.runs || []).slice(0, 3).map((r) => ({
+        id: `run-${r.id}`,
+        title: `Run · ${Number(r.distance_miles || 0).toFixed(2)} mi`,
+        sub: r.date || r.created_at,
+      }))
+      const lifts = (workoutsRes.data?.sessions || []).slice(0, 2).map((s) => ({
+        id: `lift-${s.id}`,
+        title: `Lift · ${Math.round((s.total_seconds || 0) / 60)} min`,
+        sub: s.started_at,
+      }))
+      setHighlights([...runs, ...lifts])
+    }).catch(() => setHighlights([]))
+  }, [])
+
+  if (posts.length === 0) {
+    return (
+      <div className="space-y-3">
+        <div className="rounded-xl p-4" style={{ background: '#1a1d2e', border: '1px solid #2a2d3e' }}>
+          <p className="text-sm font-semibold" style={{ color: '#EAB308' }}>Inspiration Mode</p>
+          <div className="space-y-2 mt-3">
+            {QUOTES.slice(0, 4).map((q, idx) => (
+              <p key={idx} className="text-sm" style={{ color: 'var(--text-primary)' }}>&quot;{q}&quot;</p>
+            ))}
+          </div>
+          <button
+            className="mt-4 rounded-lg px-3 py-2 text-xs font-bold"
+            style={{ background: '#EAB308', color: '#0f1117' }}
+          >
+            Be the first to share
+          </button>
+        </div>
+
+        <div className="rounded-xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+          <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Your Highlights</p>
+          <div className="space-y-2 mt-3">
+            {highlights.map((h) => (
+              <div key={h.id} className="rounded-lg p-2" style={{ background: 'var(--bg-input)' }}>
+                <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{h.title}</p>
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{new Date(h.sub).toLocaleDateString()}</p>
+              </div>
+            ))}
+            {highlights.length === 0 && <p className="text-xs" style={{ color: 'var(--text-muted)' }}>No recent workouts yet.</p>}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-3">
+      {posts.map((p) => (
+        <div key={p.id} className="rounded-xl p-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+          <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{p.title}</p>
+          {p.body && <p className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>{p.body}</p>}
+          <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>
+            by {p.user_name || 'Athlete'} · {new Date(p.created_at).toLocaleDateString()}
+          </p>
+        </div>
+      ))}
     </div>
   )
 }

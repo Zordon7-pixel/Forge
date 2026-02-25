@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
+import { X } from 'lucide-react'
 import api from '../lib/api'
 
 const badgeStyles = {
@@ -18,15 +19,21 @@ export default function Plan() {
   const [runBriefs, setRunBriefs] = useState({})
   const [compliance, setCompliance] = useState(null)
   const [reschedulingId, setReschedulingId] = useState(null)
+  const [activeInjury, setActiveInjury] = useState(null)
+  const [injuryDismissed, setInjuryDismissed] = useState(false)
 
   const loadPlan = async () => {
     try {
-      const [res, comp] = await Promise.all([
+      const [res, comp, injuryRes] = await Promise.all([
         api.get('/plans/current'),
-        api.get('/plans/compliance').catch(() => ({ data: null }))
+        api.get('/plans/compliance').catch(() => ({ data: null })),
+        api.get('/injury/active').catch(() => ({ data: { injuries: [] } })),
       ])
       setPlan(res.data?.plan || res.data || null)
       setCompliance(comp.data)
+      const injury = (injuryRes.data?.injuries || [])[0] || null
+      setActiveInjury(injury)
+      setInjuryDismissed(injury ? localStorage.getItem(`forge-plan-injury-dismissed-${injury.id}`) === '1' : false)
     } finally {
       setLoading(false)
     }
@@ -43,9 +50,29 @@ export default function Plan() {
     try { return JSON.parse(plan.weekly_structure) } catch { return [] }
   }, [plan])
 
+  const adjustedWeeklyStructure = useMemo(() => {
+    if (!activeInjury) return weeklyStructure
+    const intenseKeys = ['tempo', 'interval', 'threshold', 'speed', 'hill', 'long']
+    return weeklyStructure.map((day) => {
+      const rawType = String(day.workout_type || day.type || '').toLowerCase()
+      const isRun = !rawType.includes('rest') && !rawType.includes('strength') && !rawType.includes('cross')
+      const isIntense = intenseKeys.some((k) => rawType.includes(k))
+      if (isRun && isIntense) {
+        return {
+          ...day,
+          workout_type: 'Recovery',
+          type: 'recovery',
+          distance_miles: 0,
+          description: 'Low-impact recovery work, mobility, and PT.',
+        }
+      }
+      return day
+    })
+  }, [weeklyStructure, activeInjury])
+
 
   useEffect(() => {
-    const runDays = weeklyStructure.filter((d) => {
+    const runDays = adjustedWeeklyStructure.filter((d) => {
       const t = (d.workout_type || d.type || '').toLowerCase()
       return !t.includes('rest') && !t.includes('strength') && !t.includes('cross')
     })
@@ -54,7 +81,7 @@ export default function Plan() {
         setRunBriefs((prev) => ({ ...prev, [d.id || i]: r.data }))
       }).catch(() => {})
     })
-  }, [weeklyStructure])
+  }, [adjustedWeeklyStructure])
 
   const regenerate = async () => {
     setRegenerating(true)
@@ -95,6 +122,31 @@ export default function Plan() {
         </div>
       )}
 
+      {!injuryDismissed && activeInjury && (
+        <div className="rounded-xl p-3" style={{ background: 'rgba(234,179,8,0.2)', border: '1px solid #EAB308' }}>
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <p className="text-sm font-semibold" style={{ color: '#0f1117' }}>
+                Recovery Mode — {activeInjury.body_part || 'Injury'} — Est. return: {activeInjury.date || '--'}
+              </p>
+              <p className="text-xs mt-1" style={{ color: '#0f1117' }}>
+                Your plan has been adjusted for recovery. Focus on PT and low-impact activity.
+              </p>
+            </div>
+            <button
+              onClick={() => {
+                localStorage.setItem(`forge-plan-injury-dismissed-${activeInjury.id}`, '1')
+                setInjuryDismissed(true)
+              }}
+              aria-label="Dismiss recovery banner"
+              style={{ background: 'transparent', color: '#0f1117' }}
+            >
+              <X size={16} />
+            </button>
+          </div>
+        </div>
+      )}
+
       {compliance?.missed?.length > 0 && (
         <div className="rounded-xl p-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
           <p className="text-sm font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>Missed sessions</p>
@@ -121,7 +173,7 @@ export default function Plan() {
       )}
 
       <div className="space-y-3">
-        {weeklyStructure.map((day, idx) => {
+        {adjustedWeeklyStructure.map((day, idx) => {
           const rawType = (day.workout_type || day.type || '').toString().toLowerCase()
           const typeKey = rawType.includes('cross') ? 'cross-train' : rawType.includes('strength') ? 'strength' : rawType.includes('rest') ? 'rest' : 'run'
           const isToday = (day.day || '').toLowerCase().includes(todayName.toLowerCase())

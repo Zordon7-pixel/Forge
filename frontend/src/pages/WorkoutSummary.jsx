@@ -7,6 +7,7 @@ import MuscleDiagram from '../components/MuscleDiagram'
 import { getMuscleBreakdown } from '../lib/muscleMap'
 import PhotoUploader from '../components/PhotoUploader'
 import AICoachFeedbackCard from '../components/AICoachFeedbackCard'
+import WorkoutCard from '../components/WorkoutCard'
 
 function fmtDuration(s) {
   if (!s && s !== 0) return '--'
@@ -55,6 +56,8 @@ export default function WorkoutSummary() {
   const [userSex, setUserSex] = useState('male')
   const [routeShared, setRouteShared] = useState(false)
   const [sharingRoute, setSharingRoute] = useState(false)
+  const [sharingCommunity, setSharingCommunity] = useState(false)
+  const [sharedCommunity, setSharedCommunity] = useState(false)
 
   useEffect(() => {
     api.get('/auth/me').then((r) => setUserSex(r.data?.user?.sex || 'male')).catch(() => {})
@@ -139,6 +142,13 @@ export default function WorkoutSummary() {
   const distanceMiles = session?.distance_miles ?? session?.distance ?? null
   const durationSeconds = session?.duration_seconds ?? session?.total_seconds ?? null
   const workoutSurface = session?.surface || session?.run_surface || session?.detected_surface_type || null
+  const cardStats = {
+    exercises: Object.keys(exerciseMap).length,
+    sets: sets.length,
+    reps: totalReps,
+    volume: totalVolumeLbs > 0 ? `${totalVolumeLbs.toLocaleString()} lbs` : '--',
+  }
+  const shareSummaryText = `FORGE Lift · ${new Date(session.started_at || Date.now()).toLocaleDateString()} · ${Object.keys(exerciseMap).length} exercises · ${sets.length} sets · ${totalReps} reps`
 
   if (loading) return <div className="p-4" style={{ color: 'var(--text-muted)' }}>Loading summary...</div>
   if (!session) return null
@@ -304,6 +314,47 @@ export default function WorkoutSummary() {
           {saving ? 'Saving...' : saved ? 'Saved' : 'Save Notes'}
         </button>
       </div>
+
+      <WorkoutCard
+        workoutType="Lift Session"
+        date={session.started_at}
+        stats={cardStats}
+        summaryText={shareSummaryText}
+      />
+
+      <button
+        onClick={async () => {
+          setSharingCommunity(true)
+          try {
+            await api.post('/community/posts', {
+              title: `${Object.keys(exerciseMap).length} exercise lift session`,
+              body: `Logged ${sets.length} sets and ${totalReps} reps.`,
+              workout_type: 'lift',
+              workout_id: session.id,
+              stats: cardStats,
+            })
+            setSharedCommunity(true)
+          } catch (e) {
+            console.error('Failed to share workout to community', e)
+          } finally {
+            setSharingCommunity(false)
+          }
+        }}
+        disabled={sharingCommunity || sharedCommunity}
+        style={{
+          width: '100%',
+          padding: '12px 0',
+          background: '#EAB308',
+          color: '#0f1117',
+          borderRadius: 12,
+          fontSize: 14,
+          fontWeight: 700,
+          cursor: 'pointer',
+          opacity: sharingCommunity ? 0.7 : 1,
+        }}
+      >
+        {sharedCommunity ? 'Shared to Community' : sharingCommunity ? 'Sharing...' : 'Share to Community'}
+      </button>
 
       {routeCoords && routeCoords.length >= 2 && !routeShared && (
         <button

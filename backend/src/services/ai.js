@@ -39,7 +39,7 @@ function setCached(cacheKey, value, ttlMs) {
   });
 }
 
-async function generateTrainingPlan(profile) {
+async function generateTrainingPlan(profile, target = null) {
   const goalDesc = {
     comeback:      'returning from injury, needs conservative build-up',
     race:          `training for a ${profile.goal_race_distance || 'race'} on ${profile.goal_race_date || 'an upcoming date'}`,
@@ -54,6 +54,10 @@ async function generateTrainingPlan(profile) {
 - Preferred workout days per week: ${profile.weekly_workout_days || 4}
 - If missed workout: ${profile.missed_workout_pref || 'adjust_week'}` : '';
 
+  const raceTargetLine = target?.raceDate || target?.distanceMiles
+    ? `- Race target override: ${target.distanceMiles ? `${target.distanceMiles} miles` : 'race'} on ${target.raceDate || 'upcoming date'}`
+    : '';
+
   const prompt = `You are an expert running coach. Create a 4-week training plan for this athlete:
 - Name: ${profile.name}
 - Current weekly miles: ${profile.weekly_miles_current}
@@ -61,7 +65,8 @@ async function generateTrainingPlan(profile) {
 - Run days per week: ${profile.run_days_per_week}
 - Lift days per week: ${profile.lift_days_per_week}
 - Injury notes: ${profile.injury_notes || 'none'}
-- Comeback mode: ${profile.comeback_mode ? 'YES — be very conservative, no speed work for first 2 weeks' : 'no'}${scheduleInfo}
+- Comeback mode: ${profile.comeback_mode ? 'YES — be very conservative, no speed work for first 2 weeks' : 'no'}
+${raceTargetLine}${scheduleInfo}
 
 Return ONLY valid JSON in this exact format, no other text:
 {

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Package, Plus, X } from 'lucide-react'
+import { Package, Plus, X, AlertTriangle } from 'lucide-react'
 import api from '../lib/api'
 import LoadingRunner from '../components/LoadingRunner'
 
@@ -93,14 +93,15 @@ export default function Gear() {
         </div>
       ) : (
         shoes.map(shoe => {
-          const pct = shoe.pct_used
-          const barColor = pct >= 100 ? '#ef4444' : pct >= 80 ? '#f97316' : '#EAB308'
+          const miles = Number(shoe.total_miles || 0)
+          const pct = Math.min(100, (miles / 500) * 100)
+          const barColor = miles >= 500 ? '#ef4444' : miles >= 400 ? '#EAB308' : '#22c55e'
           return (
             <div key={shoe.id} style={{ background: 'var(--bg-card)', borderRadius: 16, padding: 16, border: `1.5px solid ${shoe.alert ? 'rgba(249,115,22,0.4)' : 'var(--border-subtle)'}`, boxShadow: shoe.alert ? '0 0 10px rgba(249,115,22,0.15)' : 'none' }}>
-              {shoe.alert && (
-                <div style={{ background: 'rgba(249,115,22,0.1)', borderRadius: 8, padding: '6px 10px', marginBottom: 10 }}>
-                  <p style={{ fontSize: 12, color: '#f97316', fontWeight: 700, margin: 0 }}>
-                    {pct >= 100 ? 'Past recommended life — replace now' : `${pct}% used — start shopping for a replacement`}
+              {miles >= 500 && (
+                <div style={{ background: 'rgba(239,68,68,0.1)', borderRadius: 8, padding: '6px 10px', marginBottom: 10 }}>
+                  <p style={{ fontSize: 12, color: '#ef4444', fontWeight: 700, margin: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <AlertTriangle size={14} /> Replace soon
                   </p>
                 </div>
               )}
@@ -110,19 +111,19 @@ export default function Gear() {
                   {shoe.nickname && <p style={{ fontSize: 12, color: 'var(--accent)', margin: '2px 0 0' }}>{shoe.nickname}</p>}
                   {shoe.purchase_date && <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '2px 0 0' }}>Since {new Date(shoe.purchase_date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</p>}
                 </div>
-                <p style={{ fontSize: 24, fontWeight: 900, color: barColor, margin: 0 }}>{pct}%</p>
+                <p style={{ fontSize: 24, fontWeight: 900, color: barColor, margin: 0 }}>{Math.round((miles / 500) * 100)}%</p>
               </div>
               <div style={{ margin: '12px 0 6px' }}>
                 <div style={{ height: 8, background: 'var(--bg-input)', borderRadius: 4, overflow: 'hidden' }}>
-                  <div style={{ height: '100%', width: `${Math.min(100, pct)}%`, background: barColor, borderRadius: 4, transition: 'width 0.6s ease' }} />
+                  <div style={{ height: '100%', width: `${pct}%`, background: barColor, borderRadius: 4, transition: 'width 0.6s ease' }} />
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
-                  <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{shoe.total_miles} mi logged</span>
-                  <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{shoe.recommended_miles} mi life</span>
+                  <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{shoe.total_miles} / 500 mi</span>
+                  <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>500 mi threshold</span>
                 </div>
               </div>
               <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '0 0 12px' }}>
-                {shoe.miles_remaining > 0 ? `~${Math.round(shoe.miles_remaining)} miles remaining` : 'Past recommended life'}
+                {miles < 500 ? `~${Math.max(0, Math.round(500 - miles))} miles remaining` : 'Over threshold'}
               </p>
               <div style={{ display: 'flex', gap: 8 }}>
                 <button onClick={() => retire(shoe.id)} style={{ fontSize: 12, padding: '6px 12px', borderRadius: 8, background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)', cursor: 'pointer' }}>Retire</button>

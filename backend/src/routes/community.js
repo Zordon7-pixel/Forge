@@ -3,6 +3,49 @@ const { v4: uuidv4 } = require('uuid');
 const { dbGet, dbAll, dbRun } = require('../db');
 const auth = require('../middleware/auth');
 
+router.get('/posts', auth, async (req, res) => {
+  try {
+    const limit = Math.min(30, Math.max(1, Number(req.query.limit || 20)));
+    const posts = await dbAll(`
+      SELECT p.*, u.name as user_name
+      FROM community_posts p
+      LEFT JOIN users u ON u.id = p.user_id
+      ORDER BY p.created_at DESC
+      LIMIT ?
+    `, [limit]);
+    res.json({
+      posts: posts.map((p) => {
+        let stats = {};
+        try { stats = JSON.parse(p.stats_json || '{}'); } catch {}
+        return { ...p, stats };
+      }),
+    });
+  } catch (err) { res.status(500).json({ error: 'Failed to fetch posts' }); }
+});
+
+router.post('/posts', auth, async (req, res) => {
+  try {
+    const {
+      title,
+      body = '',
+      workout_type = 'workout',
+      stats = {},
+      workout_id = null,
+      run_id = null,
+    } = req.body || {};
+    if (!title) return res.status(400).json({ error: 'title is required' });
+
+    const id = uuidv4();
+    await dbRun(
+      `INSERT INTO community_posts (id, user_id, workout_id, run_id, title, body, workout_type, stats_json)
+       VALUES (?,?,?,?,?,?,?,?)`,
+      [id, req.user.id, workout_id, run_id, title, body, workout_type, JSON.stringify(stats || {})]
+    );
+    const post = await dbGet('SELECT * FROM community_posts WHERE id=?', [id]);
+    res.status(201).json({ post: { ...post, stats: stats || {} } });
+  } catch (err) { res.status(500).json({ error: 'Failed to create post' }); }
+});
+
 router.get('/workouts', auth, async (req, res) => {
   try {
     const sort = req.query.sort === 'popular' ? 'popular' : 'newest';

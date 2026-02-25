@@ -5,18 +5,19 @@ const auth = require('../middleware/auth');
 // POST /api/checkin — daily life check-in
 router.post('/', auth, async (req, res) => {
   try {
-    const { feeling, time_available, life_flags = [] } = req.body;
+    const { feeling, time_available, life_flags = [], sleep_hours } = req.body;
     const today = new Date().toISOString().slice(0,10);
+    const parsedSleep = sleep_hours === null || sleep_hours === undefined || sleep_hours === '' ? null : Number(sleep_hours);
 
     const existing = await dbGet('SELECT id FROM daily_checkins WHERE user_id=? AND checkin_date=?', [req.user.id, today]);
     if (existing) {
-      await dbRun('UPDATE daily_checkins SET feeling=?, time_available=?, life_flags=? WHERE id=?',
-        [feeling, time_available, JSON.stringify(life_flags), existing.id]);
+      await dbRun('UPDATE daily_checkins SET feeling=?, time_available=?, sleep_hours=?, life_flags=? WHERE id=?',
+        [feeling, time_available, parsedSleep, JSON.stringify(life_flags), existing.id]);
     } else {
       const id = require('crypto').randomBytes(8).toString('hex');
       await dbRun(
-        'INSERT INTO daily_checkins (id, user_id, checkin_date, feeling, time_available, life_flags) VALUES (?,?,?,?,?,?)',
-        [id, req.user.id, today, feeling, time_available, JSON.stringify(life_flags)]
+        'INSERT INTO daily_checkins (id, user_id, checkin_date, feeling, time_available, sleep_hours, life_flags) VALUES (?,?,?,?,?,?,?)',
+        [id, req.user.id, today, feeling, time_available, parsedSleep, JSON.stringify(life_flags)]
       );
     }
 
@@ -43,7 +44,11 @@ router.post('/', auth, async (req, res) => {
       }
     }
 
-    res.json({ ok: true, adjustment, feeling: feelingLabels[feeling] || 'Noted' });
+    const readiness_delta = parsedSleep !== null
+      ? parsedSleep < 6 ? -12 : parsedSleep >= 8 ? 5 : 0
+      : 0;
+
+    res.json({ ok: true, adjustment, feeling: feelingLabels[feeling] || 'Noted', readiness_delta });
   } catch (err) { res.status(500).json({ error: 'Check-in failed' }); }
 });
 
