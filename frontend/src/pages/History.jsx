@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { ResponsiveContainer, BarChart, LineChart, XAxis, YAxis, Tooltip, Bar, Line } from 'recharts'
 import { useLocation, Link } from 'react-router-dom'
 import { Pencil, Trash2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
