@@ -10,8 +10,8 @@ import PullToRefresh from './PullToRefresh'
 import api from '../lib/api'
 
 const NAV_ITEMS = (t) => [
-  { to: '/run', label: t('nav.run'), iconComponent: Activity, color: '#EAB308' },
   { to: '/', end: true, icon: '/nav-home.png', label: t('nav.home'), color: '#EAB308' },
+  { to: '/run', label: t('nav.run'), iconComponent: Activity, color: '#EAB308' },
   { to: '/log-lift', icon: '/nav-lift.png', label: t('nav.lift'), color: '#F97316' },
   { to: '/challenges', label: t('nav.challenges'), iconComponent: Trophy, color: '#A855F7' },
   { to: '/community', label: t('nav.community'), iconComponent: Users, color: '#EAB308' },
