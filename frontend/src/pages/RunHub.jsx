@@ -259,6 +259,7 @@ function WarmupDone({ onStartRun }) {
   const [checkin, setCheckin] = useState(null)
   const [plan, setPlan] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [checkInCompleted, setCheckInCompleted] = useState(false)
 
   useEffect(() => {
     const load = async () => {
@@ -269,7 +270,9 @@ function WarmupDone({ onStartRun }) {
           api.get('/plans/current').catch(() => ({ data: null })),
         ])
         setStats(statsRes?.data)
-        setCheckin(checkinRes?.data)
+        const checkinData = checkinRes?.data
+        setCheckin(checkinData)
+        setCheckInCompleted(Boolean(checkinData?.completed ?? checkinData?.id ?? checkinData))
         setPlan(planRes?.data?.plan || planRes?.data)
       } finally {
         setLoading(false)
@@ -279,6 +282,18 @@ function WarmupDone({ onStartRun }) {
   }, [])
 
   if (loading) return <LoadingRunner message="Assessing readiness" />
+
+  if (!checkInCompleted) {
+    return (
+      <div style={{ minHeight: '100vh', padding: '24px 16px', background: 'var(--bg-base)' }}>
+        <div className="max-w-[480px] mx-auto rounded-2xl p-5" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+          <h2 style={{ color: 'var(--text-primary)', fontSize: 24, fontWeight: 900, margin: '0 0 10px' }}>Morning Check-In Required</h2>
+          <p style={{ color: 'var(--text-muted)', fontSize: 14, margin: '0 0 16px' }}>Complete your morning check-in before starting a run.</p>
+          <button onClick={() => window.location.href = '/checkin'} style={{ width: '100%', background: '#EAB308', border: 'none', borderRadius: 12, padding: '12px 0', fontWeight: 800, cursor: 'pointer' }}>Go to Check-In</button>
+        </div>
+      </div>
+    )
+  }
 
   const readinessScore = computeReadiness(stats, checkin)
   const readinessColor = getReadinessColor(readinessScore)
@@ -405,7 +420,7 @@ function WarmupDone({ onStartRun }) {
                 textTransform: 'capitalize',
               }}
             >
-              {todayPlan.workout_type || todayPlan.type || 'Rest Day'}
+              {String(todayPlan.workout_type || todayPlan.type || 'Rest Day').replace(/_/g, ' ')}
             </p>
             {todayPlan.distance && (
               <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>

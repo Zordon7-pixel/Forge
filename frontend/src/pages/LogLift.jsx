@@ -18,6 +18,38 @@ function BodySVG({ highlight, sex = 'male' }) {
   const hi = (part) => highlight === 'full' || highlight === part ? BODY_ACCENT : BODY_GRAY
   const isFemale = sex === 'female'
 
+
+  const generateManualWorkout = async () => {
+    if (!selectedMuscleGroup || !selectedExercise?.name) return
+    setManualAiLoading(true)
+    setManualAiError('')
+    try {
+      const r = await api.post('/ai/workout', { bodyPart: selectedMuscleGroup, exercise: selectedExercise.name })
+      setManualAiPlan(r.data?.recommendation || null)
+    } catch (err) {
+      setManualAiError(err?.response?.data?.error || 'Could not generate AI workout')
+    } finally {
+      setManualAiLoading(false)
+    }
+  }
+
+  const acceptManualAiWorkout = async () => {
+    if (!manualAiPlan) return
+    setLoading(true)
+    setError('')
+    try {
+      const muscleGroups = [selectedMuscleGroup || 'full']
+      const res = await api.post('/workouts/start', { muscle_groups: muscleGroups, exercise_name: selectedExercise?.name || '' })
+      navigate(`/workout/active/${res.data.session.id}`, {
+        state: { exercises: manualAiPlan?.main || [], workoutName: manualAiPlan?.workoutName || '' }
+      })
+    } catch (err) {
+      setError(err?.response?.data?.error || 'Could not start workout. Try again.')
+      setLoading(false)
+    }
+  }
+
+  const pretty = (v='') => String(v).replace(/_/g, ' ').replace(/\w/g, c => c.toUpperCase())
   return (
     <svg viewBox="0 0 60 90" width="52" height="78" xmlns="http://www.w3.org/2000/svg">
       {/* Head */}
@@ -75,6 +107,10 @@ export default function LogLift() {
   const [aiRecommendation, setAiRecommendation] = useState(null)
   const [aiLoading, setAiLoading] = useState(false)
   const [aiError, setAiError] = useState(null)
+  const [exerciseInput, setExerciseInput] = useState('')
+  const [manualAiPlan, setManualAiPlan] = useState(null)
+  const [manualAiLoading, setManualAiLoading] = useState(false)
+  const [manualAiError, setManualAiError] = useState('')
 
   useEffect(() => {
     api.get('/auth/me').then(res => {
@@ -103,6 +139,7 @@ export default function LogLift() {
     const nextPrimary = next[0] || ''
     if (selectedExercise && selectedExercise.muscle_group !== nextPrimary) {
       setSelectedExercise(null)
+      setExerciseInput('')
     }
     return next
   })
@@ -141,6 +178,38 @@ export default function LogLift() {
     }
   }
 
+  const generateManualWorkout = async () => {
+    if (!selectedMuscleGroup || !selectedExercise?.name) return
+    setManualAiLoading(true)
+    setManualAiError('')
+    try {
+      const r = await api.post('/ai/workout', { bodyPart: selectedMuscleGroup, exercise: selectedExercise.name })
+      setManualAiPlan(r.data?.recommendation || null)
+    } catch (err) {
+      setManualAiError(err?.response?.data?.error || 'Could not generate AI workout')
+    } finally {
+      setManualAiLoading(false)
+    }
+  }
+
+  const acceptManualAiWorkout = async () => {
+    if (!manualAiPlan) return
+    setLoading(true)
+    setError('')
+    try {
+      const muscleGroups = [selectedMuscleGroup || 'full']
+      const res = await api.post('/workouts/start', { muscle_groups: muscleGroups, exercise_name: selectedExercise?.name || '' })
+      navigate(`/workout/active/${res.data.session.id}`, {
+        state: { exercises: manualAiPlan?.main || [], workoutName: manualAiPlan?.workoutName || '' }
+      })
+    } catch (err) {
+      setError(err?.response?.data?.error || 'Could not start workout. Try again.')
+      setLoading(false)
+    }
+  }
+
+  const pretty = (v = '') => String(v).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+
   return (
     <div className="space-y-6 py-4">
       <div>
@@ -172,8 +241,14 @@ export default function LogLift() {
             </div>
           )}
           {aiRecommendation && (
-            <div className="rounded-2xl p-4" style={{ background: '#f8f2df', color: '#111', border: '1px solid #d6c9a0' }}>
-              <p className="text-lg font-bold">{aiRecommendation.workoutName} — {aiRecommendation.target}</p>
+            <div className="rounded-2xl p-4" style={{
+              background: '#F5F0E8', color: '#1a1a2e', border: '1px solid #d6c9a0', position: 'relative',
+              fontFamily: 'Caveat, cursive',
+              backgroundImage: 'repeating-linear-gradient(to bottom, transparent 0 27px, rgba(26,26,46,0.12) 27px 28px)'
+            }}>
+              <div style={{ position: 'absolute', top: 8, right: 10, fontSize: 11, fontWeight: 700, border: '1px solid #1a1a2e66', borderRadius: 999, padding: '2px 8px' }}>FORGE</div>
+              <div style={{ position: 'absolute', left: 0, right: 0, bottom: -1, height: 14, background: 'linear-gradient(135deg, #eadfcd 25%, transparent 25%) 0 0/12px 12px, linear-gradient(225deg, #eadfcd 25%, transparent 25%) 6px 0/12px 12px' }} />
+              <p className="text-lg font-bold">{aiRecommendation.workoutName} — {pretty(aiRecommendation.target)}</p>
               <p className="text-sm mt-2"><strong>Warmup:</strong> {(aiRecommendation.warmup || []).join(', ')}</p>
               <p className="text-sm mt-2"><strong>Main:</strong> {(aiRecommendation.main || []).map((m) => `${m.name} ${m.sets}x${m.reps} (${m.rest})`).join(' • ')}</p>
               <p className="text-sm mt-2"><strong>Recovery:</strong> {(aiRecommendation.recovery || []).join(', ')}</p>
@@ -183,7 +258,7 @@ export default function LogLift() {
                 onClick={beginAI}
                 disabled={loading}
                 className="mt-3 w-full rounded-2xl py-4 text-base font-bold"
-                style={{ background: 'var(--accent)', color: '#000', border: 'none', cursor: 'pointer', opacity: loading ? 0.6 : 1 }}
+                style={{ background: 'var(--accent)', color: '#000', border: 'none', cursor: 'pointer', opacity: loading ? 0.6 : 1, fontFamily: 'inherit' }}
               >
                 {loading ? 'Starting...' : 'Start Workout'}
               </button>
@@ -261,8 +336,38 @@ export default function LogLift() {
               </button>
             ))}
           </div>
+          <div>
+            <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Exercise</p>
+            <input
+              value={exerciseInput}
+              onChange={(e) => { setExerciseInput(e.target.value); setSelectedExercise(e.target.value ? { name: e.target.value, muscle_group: selectedMuscleGroup } : null) }}
+              placeholder="e.g. Incline Dumbbell Press"
+              className="w-full mt-1 rounded-xl px-3 py-2"
+              style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}
+            />
+          </div>
           {selectedExercise && <p className="text-sm" style={{ color: 'var(--text-primary)' }}>Exercise: {selectedExercise.name}</p>}
           {liftPlan && <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{liftPlan.workoutName} · Estimated: {liftPlan.estimatedTime}</p>}
+          {selectedMuscleGroup && selectedExercise?.name && (
+            <button type="button" onClick={generateManualWorkout} disabled={manualAiLoading} className="rounded-xl px-4 py-2 text-sm font-bold" style={{ background: '#EAB308', color: '#000', border: 'none' }}>
+              {manualAiLoading ? 'Generating...' : `Generate AI Workout for ${pretty(selectedMuscleGroup)}`}
+            </button>
+          )}
+          {manualAiError && <p className="text-xs" style={{ color: '#ef4444' }}>{manualAiError}</p>}
+          {manualAiPlan && (
+            <div className="rounded-2xl p-4" style={{
+              background: '#F5F0E8', color: '#1a1a2e', border: '1px solid #d6c9a0', position: 'relative', fontFamily: 'Caveat, cursive',
+              backgroundImage: 'repeating-linear-gradient(to bottom, transparent 0 27px, rgba(26,26,46,0.12) 27px 28px)'
+            }}>
+              <div style={{ position: 'absolute', top: 8, right: 10, fontSize: 11, fontWeight: 700, border: '1px solid #1a1a2e66', borderRadius: 999, padding: '2px 8px' }}>FORGE</div>
+              <p className="text-lg font-bold">{manualAiPlan.workoutName}</p>
+              <p className="text-sm mt-2"><strong>Main:</strong> {(manualAiPlan.main || []).map((m) => `${m.name} ${m.sets}x${m.reps} (${m.rest})`).join(' • ')}</p>
+              <div className="flex gap-2 mt-3">
+                <button type="button" onClick={acceptManualAiWorkout} className="flex-1 rounded-xl py-2 font-bold" style={{ background: 'var(--accent)', color: '#000', border: 'none', fontFamily: 'inherit' }}>Accept Workout</button>
+                <button type="button" onClick={generateManualWorkout} className="flex-1 rounded-xl py-2 font-bold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', fontFamily: 'inherit' }}>Regenerate</button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

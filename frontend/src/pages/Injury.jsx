@@ -141,7 +141,7 @@ export default function Injury() {
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', textTransform: 'capitalize' }}>
-                      {injury.body_part}
+                      {String(injury.body_part || '').replace(/_/g, ' ')}
                     </span>
                     <span
                       style={{
@@ -309,7 +309,7 @@ export default function Injury() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <CheckCircle2 size={14} color="#22c55e" />
                   <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', textTransform: 'capitalize' }}>
-                    {injury.body_part}
+                    {String(injury.body_part || '').replace(/_/g, ' ')}
                   </span>
                   <span
                     style={{

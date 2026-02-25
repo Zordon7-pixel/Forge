@@ -185,7 +185,7 @@ export default function Plan() {
                   <p className="font-semibold" style={{ color: 'var(--text-primary)' }}>{day.day || `Day ${idx + 1}`}</p>
                   {isToday ? <span className="rounded-full px-2 py-0.5 text-xs font-bold" style={{ background: 'var(--accent)', color: 'black' }}>TODAY</span> : null}
                 </div>
-                <span className="rounded-full px-2 py-1 text-xs" style={badgeStyles[typeKey]}>{day.workout_type || day.type || 'Run'}</span>
+                <span className="rounded-full px-2 py-1 text-xs" style={badgeStyles[typeKey]}>{String(day.workout_type || day.type || 'Run').replace(/_/g, ' ')}</span>
               </div>
               <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{day.description || 'No description.'}</p>
               {runBriefs[day.id || idx] && (

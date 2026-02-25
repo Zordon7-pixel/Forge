@@ -148,7 +148,8 @@ export default function WorkoutSummary() {
     reps: totalReps,
     volume: totalVolumeLbs > 0 ? `${totalVolumeLbs.toLocaleString()} lbs` : '--',
   }
-  const shareSummaryText = `FORGE Lift · ${new Date(session.started_at || Date.now()).toLocaleDateString()} · ${Object.keys(exerciseMap).length} exercises · ${sets.length} sets · ${totalReps} reps`
+  const safeStartedAt = session?.started_at || Date.now()
+  const shareSummaryText = `FORGE Lift · ${new Date(safeStartedAt).toLocaleDateString()} · ${Object.keys(exerciseMap).length} exercises · ${sets.length} sets · ${totalReps} reps`
 
   if (loading) return <div className="p-4" style={{ color: 'var(--text-muted)' }}>Loading summary...</div>
   if (!session) return null
@@ -317,7 +318,7 @@ export default function WorkoutSummary() {
 
       <WorkoutCard
         workoutType="Lift Session"
-        date={session.started_at}
+        date={safeStartedAt}
         stats={cardStats}
         summaryText={shareSummaryText}
       />

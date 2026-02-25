@@ -115,7 +115,14 @@ export default function Layout({ children }) {
       <div className="mx-auto w-full max-w-[480px] px-4">
         <header className="sticky top-0 z-20 border-b py-4 backdrop-blur" style={{ borderColor: 'var(--border-subtle)', background: 'color-mix(in srgb, var(--bg-base) 90%, transparent)' }}>
           <div className="relative flex items-center justify-between">
-            <img src="/icon-192.png" alt="FORGE" className="w-9 h-9 rounded-xl object-cover" />
+            <button
+              type="button"
+              onClick={() => navigate('/')}
+              style={{ background: "none", border: "none", padding: 0, cursor: "pointer" }}
+              aria-label="Go Home"
+            >
+              <img src="/icon-192.png" alt="FORGE" className="w-9 h-9 rounded-xl object-cover" />
+            </button>
             <TrainingReadinessWidget />
             <div className="flex items-center gap-3">
               <button onClick={toggle} className="transition-colors hover:opacity-80 text-xs" style={{ color: 'var(--text-muted)' }} title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}>

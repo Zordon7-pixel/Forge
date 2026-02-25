@@ -314,12 +314,9 @@ export default function StretchSession() {
                 <p className="mt-3 text-sm text-slate-400">{currentStretch.cue}</p>
                 <p className="mt-3 text-sm font-semibold text-slate-300">{currentStretch.reps}</p>
 
-                <button
-                  onClick={() => window.open(currentStretch.videoUrl, '_blank', 'noopener,noreferrer')}
-                  className="mt-4 border border-[#2a2d3e] text-slate-300 rounded-lg px-4 py-2 text-sm flex items-center gap-2"
-                >
-                  ▶ Watch How
-                </button>
+                <div className="mt-4 text-xs" style={{ color: '#EAB308', fontWeight: 700 }}>
+                  Follow the stick figure motion cues below.
+                </div>
               </div>
 
               <div className="my-8 flex flex-col items-center">

@@ -247,6 +247,24 @@ async function generateWorkoutRecommendation({ profile, recentRuns, recentWorkou
   } catch { return null; }
 }
 
+async function generateBodyPartWorkout({ bodyPart, exercise, profile, userId }) {
+  try {
+    const cacheKey = makeCacheKey('body-part-workout', { userId, bodyPart, exercise, goal: profile?.goal_type });
+    const cached = getCached(cacheKey);
+    if (cached) return cached;
+
+    const prompt = `Return JSON only with keys: workoutName,target,warmup(array),main(array of {name,sets,reps,rest}),recovery(array),explanation,restExplanation. Build a focused lifting workout with 4-6 exercises. Body part: ${bodyPart}. Anchor exercise: ${exercise}. Athlete: ${profile?.name || 'athlete'} goal ${profile?.goal_type || 'fitness'}.`;
+    const msg = await getClient().messages.create({ model: 'claude-haiku-4-5', max_tokens: 500, messages: [{ role: 'user', content: prompt }] });
+    const text = msg.content?.[0]?.text || '{}';
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    const result = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+    if (result) setCached(cacheKey, result, TTL.liftPlan);
+    return result;
+  } catch {
+    return null;
+  }
+}
+
 async function generateLoadWarning(loadData, userId) {
   try {
     const cacheKey = makeCacheKey('load-warning', { userId, loadData });
@@ -301,6 +319,7 @@ module.exports = {
   generateLiftPlan,
   generateWorkoutRecommendation,
   generateSessionFeedback,
+  generateBodyPartWorkout,
   generateLoadWarning,
   generateRaceAdjustment,
 };

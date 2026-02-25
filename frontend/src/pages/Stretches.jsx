@@ -36,6 +36,33 @@ const CATEGORY_KEY = {
 const RING_R    = 44
 const RING_CIRC = 2 * Math.PI * RING_R
 
+function MiniStickFigure() {
+  return (
+    <>
+      <style>{`
+        @keyframes stick-sway { 0%,100% { transform: rotate(-8deg); } 50% { transform: rotate(8deg); } }
+        @keyframes arrow-pulse { 0%,100% { opacity: 0.35; } 50% { opacity: 1; } }
+        .stick-sway { animation: stick-sway 2.2s ease-in-out infinite; transform-origin: 50px 30px; }
+        .arrow-pulse { animation: arrow-pulse 1.2s ease-in-out infinite; }
+      `}</style>
+      <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16 }}>
+        <svg viewBox="0 0 120 120" width="120" height="120" aria-label="Stretch movement guide">
+          <text x="20" y="62" className="arrow-pulse" fill="#EAB308" fontSize="18">↔</text>
+          <text x="84" y="62" className="arrow-pulse" fill="#EAB308" fontSize="18">↔</text>
+          <g className="stick-sway">
+            <circle cx="60" cy="20" r="9" fill="none" stroke="#EAB308" strokeWidth="3" />
+            <line x1="60" y1="29" x2="60" y2="66" stroke="#9ca3af" strokeWidth="3" />
+            <line x1="60" y1="42" x2="40" y2="56" stroke="#9ca3af" strokeWidth="3" />
+            <line x1="60" y1="42" x2="80" y2="56" stroke="#9ca3af" strokeWidth="3" />
+            <line x1="60" y1="66" x2="46" y2="98" stroke="#9ca3af" strokeWidth="3" />
+            <line x1="60" y1="66" x2="74" y2="98" stroke="#9ca3af" strokeWidth="3" />
+          </g>
+        </svg>
+      </div>
+    </>
+  )
+}
+
 function CountdownRing({ total, remaining }) {
   const pct    = remaining / total
   const offset = RING_CIRC * (1 - pct)
@@ -162,6 +189,8 @@ function StretchSession({ stretches, onDone, onBack }) {
         <p style={{ color: 'var(--text-muted)', fontSize: 14, lineHeight: 1.75, textAlign: 'center', marginBottom: 32, padding: '0 8px' }}>
           {stretch.cue}
         </p>
+
+        <MiniStickFigure />
 
         {/* Timer */}
         {phase === 'active' && (

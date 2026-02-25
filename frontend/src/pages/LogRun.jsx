@@ -192,10 +192,29 @@ export default function LogRun() {
   const [editingNotes, setEditingNotes] = useState('')
   const [activeShoes, setActiveShoes] = useState([])
   const [selectedShoeId, setSelectedShoeId] = useState('')
+  const [checkingCheckIn, setCheckingCheckIn] = useState(true)
+  const [checkInCompleted, setCheckInCompleted] = useState(false)
 
   useEffect(() => {
     if (warmUpState === 'done') setActiveTab('today')
   }, [warmUpState])
+
+  useEffect(() => {
+    let active = true
+    const check = async () => {
+      try {
+        const { data } = await api.get('/checkin/today')
+        const completed = Boolean(data?.completed ?? data?.id ?? data)
+        if (active) setCheckInCompleted(completed)
+      } catch {
+        if (active) setCheckInCompleted(false)
+      } finally {
+        if (active) setCheckingCheckIn(false)
+      }
+    }
+    check()
+    return () => { active = false }
+  }, [])
 
   useEffect(() => {
     if (activeTab !== 'today' || todayWorkout) return
@@ -328,6 +347,20 @@ export default function LogRun() {
     await api.delete(`/runs/${selectedRun.id}`)
     setRecentRuns(prev => prev.filter(r => r.id !== selectedRun.id))
     setSelectedRun(null)
+  }
+
+  if (checkingCheckIn) {
+    return <div className="p-4" style={{ color: 'var(--text-muted)' }}>Checking today's check-in...</div>
+  }
+
+  if (!checkInCompleted) {
+    return (
+      <div className="rounded-2xl p-6" style={{ background: 'var(--bg-card)' }}>
+        <h2 className="text-xl font-black mb-2" style={{ color: 'var(--text-primary)' }}>Morning Check-In Required</h2>
+        <p className="text-sm mb-5" style={{ color: 'var(--text-muted)' }}>Complete your morning check-in before starting a run.</p>
+        <button onClick={() => navigate('/checkin')} className="w-full rounded-xl py-3 font-bold" style={{ background: 'var(--accent)', color: '#000', border: 'none', cursor: 'pointer' }}>Go to Check-In</button>
+      </div>
+    )
   }
 
   if (warmUpState === 'warmup') {

@@ -23,7 +23,7 @@ export default class ErrorBoundary extends React.Component {
             {this.state.error?.message}{'\n\n'}{this.state.error?.stack}
           </pre>
           <button
-            onClick={() => window.location.reload()}
+            onClick={() => { window.location.href = '/' }}
             style={{ background: '#EAB308', color: '#000', border: 'none', borderRadius: 8, padding: '10px 24px', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}
           >
             Reload

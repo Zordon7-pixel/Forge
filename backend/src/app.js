@@ -74,7 +74,12 @@ app.use('/api/injury',      require('./routes/injury'));
 app.use('/api/recap',       require('./routes/recap'));
 
 // SPA fallback — serve index.html for all non-API routes
-app.get('*', (req, res) => res.sendFile(path.join(dist, 'index.html')));
+app.get('*', (req, res) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+  res.sendFile(path.join(dist, 'index.html'));
+});
 
 const PORT = process.env.PORT || 4002;
 

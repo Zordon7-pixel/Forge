@@ -2,7 +2,7 @@ const router = require('express').Router();
 const { v4: uuidv4 } = require('uuid');
 const { dbGet, dbAll, dbRun } = require('../db');
 const auth = require('../middleware/auth');
-const { generateRunBrief, generateLiftPlan, generateWorkoutRecommendation, generateSessionFeedback } = require('../services/ai');
+const { generateRunBrief, generateLiftPlan, generateWorkoutRecommendation, generateSessionFeedback, generateBodyPartWorkout } = require('../services/ai');
 
 router.post('/session-feedback', auth, async (req, res) => {
   const { sessionType, sessionId, userId } = req.body || {};
@@ -97,6 +97,30 @@ router.get('/workout-recommendation', auth, async (req, res) => {
     recovery: ['Child\'s pose 60s', 'Thoracic rotations 8/side'],
     explanation: 'Lower body fatigue is high, so this session keeps leg stress low.',
     restExplanation: 'Longer rest on compounds to preserve quality sets.'
+  };
+
+  res.json({ recommendation });
+});
+
+router.post('/workout', auth, async (req, res) => {
+  const { bodyPart, exercise, userId } = req.body || {};
+  if (!bodyPart || !exercise) return res.status(400).json({ error: 'bodyPart and exercise are required' });
+  const athleteId = userId || req.user.id;
+
+  const profile = await dbGet('SELECT * FROM users WHERE id=?', [athleteId]);
+  const recommendation = await generateBodyPartWorkout({ bodyPart, exercise, profile, userId: athleteId }) || {
+    workoutName: `${String(bodyPart)} Builder`,
+    target: String(bodyPart),
+    warmup: ['Dynamic mobility x 5 min'],
+    main: [
+      { name: String(exercise), sets: 4, reps: '8-10', rest: '90s' },
+      { name: `${String(bodyPart)} Accessory`, sets: 3, reps: '10-12', rest: '60s' },
+      { name: 'Stability Finisher', sets: 2, reps: '12-15', rest: '45s' },
+      { name: 'Core Hold', sets: 2, reps: '30-45s', rest: '45s' }
+    ],
+    recovery: ['Light stretch 5 min'],
+    explanation: 'Focused session generated from your selected body part and exercise.',
+    restExplanation: 'Longer rests on heavier sets, shorter rests on accessories.'
   };
 
   res.json({ recommendation });
