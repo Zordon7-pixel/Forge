@@ -147,3 +147,39 @@ CREATE TABLE IF NOT EXISTS watch_sync (
   raw_payload TEXT,
   synced_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS follows (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  follower_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  following_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(follower_id, following_id)
+);
+
+CREATE TABLE IF NOT EXISTS activity_feed (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  shop_id UUID,
+  type TEXT NOT NULL,
+  data JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS activity_likes (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  activity_id UUID NOT NULL,
+  activity_type TEXT DEFAULT 'feed',
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(activity_id, activity_type, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS activity_comments (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  activity_id UUID NOT NULL,
+  activity_type TEXT DEFAULT 'feed',
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  text TEXT,
+  content TEXT,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);

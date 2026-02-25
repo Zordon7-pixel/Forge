@@ -427,6 +427,7 @@ async function initDb() {
         UNIQUE(activity_id, activity_type, user_id)
       );
     `);
+    await client.query("ALTER TABLE activity_likes ADD COLUMN IF NOT EXISTS activity_type TEXT DEFAULT 'feed'");
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS activity_comments (
@@ -435,6 +436,30 @@ async function initDb() {
         activity_type TEXT NOT NULL,
         user_id TEXT NOT NULL,
         content TEXT NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    await client.query("ALTER TABLE activity_comments ADD COLUMN IF NOT EXISTS activity_type TEXT DEFAULT 'feed'");
+    await client.query("ALTER TABLE activity_comments ADD COLUMN IF NOT EXISTS text TEXT");
+    await client.query("UPDATE activity_comments SET text = content WHERE text IS NULL");
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS follows (
+        id TEXT PRIMARY KEY,
+        follower_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        following_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(follower_id, following_id)
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS activity_feed (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        shop_id TEXT,
+        type TEXT NOT NULL,
+        data JSONB NOT NULL DEFAULT '{}'::jsonb,
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
     `);

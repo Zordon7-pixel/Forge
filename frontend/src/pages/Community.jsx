@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Heart } from 'lucide-react'
+import { Heart, MessageCircle, UserPlus, UserCheck } from 'lucide-react'
 import api from '../lib/api'
 
 const QUOTES = [
@@ -41,11 +41,25 @@ export default function Community() {
 
 function FeedTab() {
   const navigate = useNavigate()
-  const [posts, setPosts] = useState([])
+  const [items, setItems] = useState([])
+  const [suggestedUsers, setSuggestedUsers] = useState([])
   const [highlights, setHighlights] = useState([])
+  const [commentInputs, setCommentInputs] = useState({})
+  const [openComments, setOpenComments] = useState({})
+  const [commentsByActivity, setCommentsByActivity] = useState({})
+
+  const loadFeed = () => {
+    api.get('/social/feed').then((r) => {
+      setItems(r.data?.items || [])
+      setSuggestedUsers(r.data?.suggested_users || [])
+    }).catch(() => {
+      setItems([])
+      setSuggestedUsers([])
+    })
+  }
 
   useEffect(() => {
-    api.get('/community/posts').then((r) => setPosts(r.data?.posts || [])).catch(() => setPosts([]))
+    loadFeed()
     Promise.all([
       api.get('/runs').catch(() => ({ data: { runs: [] } })),
       api.get('/workouts').catch(() => ({ data: { sessions: [] } })),
@@ -64,9 +78,70 @@ function FeedTab() {
     }).catch(() => setHighlights([]))
   }, [])
 
-  if (posts.length === 0) {
+  const toggleFollow = async (userId, isFollowing) => {
+    try {
+      if (isFollowing) await api.delete(`/social/unfollow/${userId}`)
+      else await api.post(`/social/follow/${userId}`)
+      setItems((prev) => prev.map((it) => (it.user_id === userId ? { ...it, is_following: !isFollowing } : it)))
+      setSuggestedUsers((prev) => prev.map((u) => (u.id === userId ? { ...u, is_following: !isFollowing } : u)))
+    } catch {}
+  }
+
+  const toggleLike = async (activityId) => {
+    try {
+      const res = await api.post(`/social/like/${activityId}`)
+      setItems((prev) => prev.map((it) => (
+        it.id === activityId ? { ...it, liked: Boolean(res.data?.liked), likes_count: Number(res.data?.likes_count || 0) } : it
+      )))
+    } catch {}
+  }
+
+  const fetchComments = async (activityId) => {
+    try {
+      const res = await api.get(`/social/comment/${activityId}`)
+      setCommentsByActivity((prev) => ({ ...prev, [activityId]: res.data?.comments || [] }))
+    } catch {
+      setCommentsByActivity((prev) => ({ ...prev, [activityId]: [] }))
+    }
+  }
+
+  const submitComment = async (activityId) => {
+    const text = String(commentInputs[activityId] || '').trim()
+    if (!text) return
+    try {
+      await api.post(`/social/comment/${activityId}`, { text })
+      setCommentInputs((prev) => ({ ...prev, [activityId]: '' }))
+      setItems((prev) => prev.map((it) => (
+        it.id === activityId ? { ...it, comments_count: Number(it.comments_count || 0) + 1 } : it
+      )))
+      await fetchComments(activityId)
+    } catch {}
+  }
+
+  if (items.length === 0) {
     return (
       <div className="space-y-3">
+        {suggestedUsers.length > 0 && (
+          <div className="rounded-xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+            <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Athletes to Follow</p>
+            <div className="space-y-2 mt-3">
+              {suggestedUsers.slice(0, 3).map((u) => (
+                <div key={u.id} className="flex items-center justify-between">
+                  <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{u.name}</p>
+                  <button
+                    onClick={() => toggleFollow(u.id, Boolean(u.is_following))}
+                    className="rounded-lg px-3 py-1.5 text-xs font-semibold flex items-center gap-1"
+                    style={{ background: 'var(--accent)', color: '#000' }}
+                  >
+                    {u.is_following ? <UserCheck size={13} /> : <UserPlus size={13} />}
+                    {u.is_following ? 'Following' : 'Follow'}
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div className="rounded-xl p-4" style={{ background: '#1a1d2e', border: '1px solid #2a2d3e' }}>
           <p className="text-sm font-semibold" style={{ color: '#EAB308' }}>Inspiration Mode</p>
           <div className="space-y-2 mt-3">
@@ -101,15 +176,113 @@ function FeedTab() {
 
   return (
     <div className="space-y-3">
-      {posts.map((p) => (
-        <div key={p.id} className="rounded-xl p-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-          <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{p.title}</p>
-          {p.body && <p className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>{p.body}</p>}
-          <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>
-            by {p.user_name || 'Athlete'} · {new Date(p.created_at).toLocaleDateString()}
-          </p>
+      {suggestedUsers.length > 0 && (
+        <div className="rounded-xl p-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+          <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Athletes to Follow</p>
+          <div className="flex flex-wrap gap-2 mt-3">
+            {suggestedUsers.slice(0, 6).map((u) => (
+              <button
+                key={u.id}
+                onClick={() => toggleFollow(u.id, Boolean(u.is_following))}
+                className="rounded-full px-3 py-1.5 text-xs font-semibold flex items-center gap-1"
+                style={{ background: u.is_following ? 'var(--bg-input)' : 'var(--accent)', color: u.is_following ? 'var(--text-primary)' : '#000' }}
+              >
+                {u.is_following ? <UserCheck size={13} /> : <UserPlus size={13} />}
+                {u.name}
+              </button>
+            ))}
+          </div>
         </div>
-      ))}
+      )}
+
+      {items.map((p) => {
+        const runData = p.type === 'run' ? p.data || {} : {}
+        const liftData = p.type === 'lift' ? p.data || {} : {}
+        const badgeData = p.type === 'achievement' ? p.data || {} : {}
+        const desc = p.type === 'run'
+          ? `${Number(runData.distance_miles || 0).toFixed(2)} mi · ${runData.run_type || 'run'}`
+          : p.type === 'lift'
+            ? `${liftData.exercise_name || 'Strength session'}${liftData.sets ? ` · ${liftData.sets} sets` : ''}`
+            : p.type === 'achievement'
+              ? `${badgeData.badge_name || 'New badge unlocked'}`
+              : p.data?.text || 'Activity update'
+
+        return (
+          <div key={p.id} className="rounded-xl p-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                {p.user_name || 'Athlete'} · {String(p.type || 'activity').replace('_', ' ')}
+              </p>
+              {p.user_id && (
+                <button
+                  onClick={() => toggleFollow(p.user_id, Boolean(p.is_following))}
+                  className="rounded-lg px-2 py-1 text-xs font-semibold flex items-center gap-1"
+                  style={{ background: p.is_following ? 'var(--bg-input)' : 'var(--accent)', color: p.is_following ? 'var(--text-primary)' : '#000' }}
+                >
+                  {p.is_following ? <UserCheck size={12} /> : <UserPlus size={12} />}
+                  {p.is_following ? 'Following' : 'Follow'}
+                </button>
+              )}
+            </div>
+
+            <p className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>{desc}</p>
+            <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>
+              {new Date(p.created_at).toLocaleDateString()}
+            </p>
+
+            <div className="mt-3 flex items-center gap-3">
+              <button onClick={() => toggleLike(p.id)} className="flex items-center gap-1 text-xs" style={{ color: p.liked ? '#EAB308' : 'var(--text-muted)' }}>
+                <Heart size={13} fill={p.liked ? '#EAB308' : 'none'} />
+                {Number(p.likes_count || 0)}
+              </button>
+              <button
+                onClick={async () => {
+                  const nextOpen = !openComments[p.id]
+                  setOpenComments((prev) => ({ ...prev, [p.id]: nextOpen }))
+                  if (nextOpen) await fetchComments(p.id)
+                }}
+                className="flex items-center gap-1 text-xs"
+                style={{ color: 'var(--text-muted)' }}
+              >
+                <MessageCircle size={13} />
+                {Number(p.comments_count || 0)}
+              </button>
+            </div>
+
+            {openComments[p.id] && (
+              <div className="mt-3 space-y-2">
+                {(commentsByActivity[p.id] || []).map((c) => (
+                  <div key={c.id} className="rounded-lg p-2" style={{ background: 'var(--bg-input)' }}>
+                    <p className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>{c.user_name || 'Athlete'}</p>
+                    <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{c.text}</p>
+                  </div>
+                ))}
+                <div className="flex gap-2">
+                  <input
+                    value={commentInputs[p.id] || ''}
+                    onChange={(e) => setCommentInputs((prev) => ({ ...prev, [p.id]: e.target.value }))}
+                    placeholder="Add comment"
+                    className="flex-1 rounded-lg px-2 py-1.5 text-xs"
+                    style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}
+                  />
+                  <button
+                    onClick={() => submitComment(p.id)}
+                    className="rounded-lg px-2 py-1.5 text-xs font-semibold"
+                    style={{ background: 'var(--accent)', color: '#000' }}
+                  >
+                    Send
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )
+      })}
+      {items.length === 0 && (
+        <div className="rounded-xl p-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Follow athletes to populate your feed.</p>
+        </div>
+      )}
     </div>
   )
 }
