@@ -12,6 +12,7 @@ const LogRun = lazy(() => import('./pages/LogRun'))
 const LogLift = lazy(() => import('./pages/LogLift'))
 const Plan = lazy(() => import('./pages/Plan'))
 const RunHub = lazy(() => import('./pages/RunHub'))
+const Warmup = lazy(() => import('./pages/Warmup'))
 const History = lazy(() => import('./pages/History'))
 const Profile = lazy(() => import('./pages/Profile'))
 const Settings = lazy(() => import('./pages/Settings'))
@@ -72,6 +73,14 @@ export default function App() {
           element={
             <PrivateRoute>
               <RunHub />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/warmup"
+          element={
+            <PrivateRoute>
+              <Warmup />
             </PrivateRoute>
           }
         />

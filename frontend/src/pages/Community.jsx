@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Heart } from 'lucide-react'
 import api from '../lib/api'
 
@@ -39,6 +40,7 @@ export default function Community() {
 }
 
 function FeedTab() {
+  const navigate = useNavigate()
   const [posts, setPosts] = useState([])
   const [highlights, setHighlights] = useState([])
 
@@ -73,6 +75,7 @@ function FeedTab() {
             ))}
           </div>
           <button
+            onClick={() => navigate('/log-run')}
             className="mt-4 rounded-lg px-3 py-2 text-xs font-bold"
             style={{ background: '#EAB308', color: '#0f1117' }}
           >

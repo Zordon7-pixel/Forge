@@ -673,6 +673,19 @@ async function initDb() {
       );
     `);
 
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS app_feedback (
+        id TEXT PRIMARY KEY,
+        user_id TEXT,
+        type TEXT DEFAULT 'bug',
+        message TEXT NOT NULL,
+        page TEXT,
+        severity TEXT,
+        category TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+
     // Seed core badges (ON CONFLICT DO NOTHING = INSERT OR IGNORE)
     const coreBadges = [
       ['first-run',   'First Run',          'You completed your first run!',  'Flame',   'achievement', 'run_count',   1,    null, null, '#EAB308'],

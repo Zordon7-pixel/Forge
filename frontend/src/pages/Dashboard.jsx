@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Flame, ArrowUpRight, ArrowDownRight, Watch, Footprints, Dumbbell, X, AlertTriangle } from 'lucide-react'
+import { Flame, ArrowUpRight, ArrowDownRight, Watch, Footprints, X, AlertTriangle } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import AchievementUnlock from '../components/AchievementUnlock'
 import { useUnits } from '../context/UnitsContext'
@@ -117,7 +117,7 @@ function getWeekKey() {
 }
 
 // Watch Sync Widget
-function WatchSyncWidget() {
+function WatchSyncWidget({ onSyncPayload }) {
   const [syncStatus, setSyncStatus] = useState(null)
   const [syncing, setSyncing] = useState(false)
   const [justSynced, setJustSynced] = useState(false)
@@ -125,26 +125,30 @@ function WatchSyncWidget() {
   useEffect(() => {
     const token = localStorage.getItem('forge_token')
     if (!token) return
+    const applyStatus = (data) => {
+      setSyncStatus((prev) => {
+        if (data && prev && data.synced_at !== prev?.synced_at) {
+          setJustSynced(true)
+          setTimeout(() => setJustSynced(false), 3000)
+        }
+        return data
+      })
+      onSyncPayload?.(data)
+    }
     fetch('/api/watch-sync/status', { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.ok ? r.json() : null)
-      .then(d => setSyncStatus(d))
+      .then(applyStatus)
       .catch(() => {})
     
     // Poll every 10 seconds while page is open
     const interval = setInterval(() => {
       fetch('/api/watch-sync/status', { headers: { Authorization: `Bearer ${token}` } })
         .then(r => r.ok ? r.json() : null)
-        .then(d => {
-          if (d && syncStatus && d.synced_at !== syncStatus?.synced_at) {
-            setJustSynced(true)
-            setTimeout(() => setJustSynced(false), 3000)
-          }
-          setSyncStatus(d)
-        })
+        .then(applyStatus)
         .catch(() => {})
     }, 10000)
     return () => clearInterval(interval)
-  }, [])
+  }, [onSyncPayload])
 
   const watchBrand = syncStatus?.treadmill_brand || syncStatus?.watch_mode || null
   const hasData = syncStatus && (syncStatus.avg_heart_rate || syncStatus.distance_miles)
@@ -221,6 +225,8 @@ export default function Dashboard() {
   const [shoeAlerts, setShoeAlerts] = useState([])
   const [weeklyCalories, setWeeklyCalories] = useState(0)
   const [checkinData, setCheckinData] = useState(null)
+  const [dailySteps, setDailySteps] = useState(null)
+  const [dailyStepsSource, setDailyStepsSource] = useState('manual')
   const [activeInjury, setActiveInjury] = useState(null)
   const [injuryBannerDismissed, setInjuryBannerDismissed] = useState(false)
   const [weeklyRecap, setWeeklyRecap] = useState(null)
@@ -250,6 +256,17 @@ export default function Dashboard() {
         setHasWatchData(runsList.some((r) => r.avg_heart_rate || r.watch_mode || r.route_coords))
         setLifts(Array.isArray(liftsRes.data) ? liftsRes.data : liftsRes.data?.lifts || [])
         setWarning(warningRes.data?.warning === true)
+        const checkinSteps = checkinRes.data?.step_count ?? checkinRes.data?.steps
+        if (Number.isFinite(Number(checkinSteps))) {
+          setDailySteps(Number(checkinSteps))
+          setDailyStepsSource('manual')
+        } else {
+          const statsSteps = statsRes.data?.day?.steps ?? statsRes.data?.today?.steps
+          if (Number.isFinite(Number(statsSteps))) {
+            setDailySteps(Number(statsSteps))
+            setDailyStepsSource('manual')
+          }
+        }
         if (checkinRes.data) {
           setCheckedInToday(true)
           setCheckinData(checkinRes.data)
@@ -405,6 +422,15 @@ export default function Dashboard() {
   const complianceColor = compliance?.score >= 80 ? '#22c55e' : compliance?.score >= 50 ? '#EAB308' : '#ef4444'
   const periodLabels = { day: 'Today', week: t('dashboard.thisWeek'), month: 'This Month', year: 'This Year', all: 'All Time' }
   const injuryDismissed = injuryBannerDismissed || (activeInjury && localStorage.getItem(`forge-injury-dismissed-${activeInjury.id}`) === '1')
+  const handleWatchSyncPayload = useCallback((payload) => {
+    if (!payload) return
+    const syncedSteps = payload.step_count ?? payload.steps
+    const numericSteps = Number(syncedSteps)
+    if (Number.isFinite(numericSteps) && numericSteps >= 0) {
+      setDailySteps(Math.round(numericSteps))
+      setDailyStepsSource('watch')
+    }
+  }, [])
 
   if (loading) return <LoadingRunner message="Getting ready" />
 
@@ -453,28 +479,6 @@ export default function Dashboard() {
           </div>
         </div>
       )}
-
-      <div className="rounded-2xl p-4" style={{ background: '#1a1d2e', border: '1px solid #2a2d3e' }}>
-        <p className="text-xs mb-3" style={{ color: '#EAB308' }}>Quick Log</p>
-        <div className="grid grid-cols-2 gap-3">
-          <button
-            onClick={() => navigate('/log-run')}
-            className="rounded-xl px-4 py-5 font-black text-base flex items-center justify-center gap-2"
-            style={{ background: '#EAB308', color: '#0f1117', minHeight: 72 }}
-          >
-            <Footprints size={20} /> Log Run
-          </button>
-          <button
-            onClick={() => navigate('/log-lift')}
-            className="rounded-xl px-4 py-5 font-black text-base flex items-center justify-center gap-2"
-            style={{ background: '#EAB308', color: '#0f1117', minHeight: 72 }}
-          >
-            <Dumbbell size={20} /> Log Lift
-          </button>
-        </div>
-      </div>
-
-      <WatchSyncWidget />
 
       {showWeeklyRecap && weeklyRecap && (
         <div className="rounded-xl p-4" style={{ background: '#1a1d2e', border: '1px solid #2a2d3e' }}>
@@ -601,7 +605,7 @@ export default function Dashboard() {
         <h2 className="text-2xl font-black mb-1" style={{ color: 'var(--text-primary)' }}>Ready to Run?</h2>
         <p className="text-sm mb-10 text-center" style={{ color: 'var(--text-muted)' }}>Dynamic warm-up reduces injury risk and improves performance.</p>
         <button
-          onClick={() => navigate('/log-run?warmup=true')}
+          onClick={() => navigate('/warmup')}
           className="rounded-full w-28 h-28 mb-3 font-black flex flex-col items-center justify-center"
           style={{ background: 'var(--accent)', color: '#000', border: 'none', cursor: 'pointer' }}
         >
@@ -623,7 +627,20 @@ export default function Dashboard() {
             </p>
           </>
         )}
+        {dailySteps !== null && (
+          <div className="mt-3 pt-3" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+            <p className="text-xs flex items-center gap-2" style={{ color: 'var(--text-muted)' }}>
+              <Footprints size={14} />
+              <span>
+                <strong style={{ color: 'var(--text-primary)' }}>{Number(dailySteps).toLocaleString()} steps</strong>
+                {dailyStepsSource === 'watch' && <span style={{ marginLeft: 6, fontSize: 11, color: '#22c55e' }}>⌚ synced</span>}
+              </span>
+            </p>
+          </div>
+        )}
       </div>
+
+      <WatchSyncWidget onSyncPayload={handleWatchSyncPayload} />
 
       {/* 7-day calendar */}
       {stats?.calendarDays && (
