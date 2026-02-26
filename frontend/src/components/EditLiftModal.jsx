@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import api from '../lib/api'
+import { validateWorkoutSet } from '../utils/validation'
 
 export default function EditLiftModal({ lift, onSave, onClose }) {
   const [exerciseName, setExerciseName] = useState(lift.exercise_name || '')
@@ -9,9 +10,15 @@ export default function EditLiftModal({ lift, onSave, onClose }) {
   const [date, setDate] = useState(lift.date || lift.created_at?.slice(0, 10) || '')
   const [notes, setNotes] = useState(lift.notes || '')
   const [error, setError] = useState('')
+  const [fieldErrors, setFieldErrors] = useState({})
   const [saving, setSaving] = useState(false)
 
   const save = async () => {
+    const { errors } = validateWorkoutSet({ reps, weight: weightLbs })
+    if (!Number.isFinite(Number(sets)) || Number(sets) <= 0) errors.sets = 'Sets must be a positive number.'
+    setFieldErrors(errors)
+    if (Object.keys(errors).length) return
+
     setSaving(true)
     setError('')
     try {
@@ -48,14 +55,17 @@ export default function EditLiftModal({ lift, onSave, onClose }) {
           <div>
             <label className="text-xs mb-1 block" style={{ color: 'var(--text-muted)' }}>Sets</label>
             <input className="w-full px-4 py-3 rounded-xl text-sm outline-none" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }} value={sets} onChange={e => setSets(e.target.value)} inputMode="numeric" />
+            {fieldErrors.sets && <p className="text-xs mt-1" style={{ color: '#ef4444' }}>{fieldErrors.sets}</p>}
           </div>
           <div>
             <label className="text-xs mb-1 block" style={{ color: 'var(--text-muted)' }}>Reps</label>
             <input className="w-full px-4 py-3 rounded-xl text-sm outline-none" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }} value={reps} onChange={e => setReps(e.target.value)} inputMode="numeric" />
+            {fieldErrors.reps && <p className="text-xs mt-1" style={{ color: '#ef4444' }}>{fieldErrors.reps}</p>}
           </div>
           <div>
             <label className="text-xs mb-1 block" style={{ color: 'var(--text-muted)' }}>Weight</label>
             <input className="w-full px-4 py-3 rounded-xl text-sm outline-none" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }} value={weightLbs} onChange={e => setWeightLbs(e.target.value)} inputMode="decimal" />
+            {fieldErrors.weight && <p className="text-xs mt-1" style={{ color: '#ef4444' }}>{fieldErrors.weight}</p>}
           </div>
         </div>
 

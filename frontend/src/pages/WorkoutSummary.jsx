@@ -8,6 +8,7 @@ import { getMuscleBreakdown } from '../lib/muscleMap'
 import PhotoUploader from '../components/PhotoUploader'
 import AICoachFeedbackCard from '../components/AICoachFeedbackCard'
 import WorkoutCard from '../components/WorkoutCard'
+import { getPaceZone } from '../lib/athleteLanguage'
 
 function fmtDuration(s) {
   if (!s && s !== 0) return '--'
@@ -141,6 +142,8 @@ export default function WorkoutSummary() {
   }, [session?.route_coords])
   const distanceMiles = session?.distance_miles ?? session?.distance ?? null
   const durationSeconds = session?.duration_seconds ?? session?.total_seconds ?? null
+  const paceMinPerMile = distanceMiles && durationSeconds ? (Number(durationSeconds) / 60) / Number(distanceMiles) : null
+  const paceZone = getPaceZone(paceMinPerMile)
   const workoutSurface = session?.surface || session?.run_surface || session?.detected_surface_type || null
   const cardStats = {
     exercises: Object.keys(exerciseMap).length,
@@ -213,6 +216,13 @@ export default function WorkoutSummary() {
             </div>
 
             <div style={{ marginTop: 20 }}>
+              {paceZone && (
+                <div style={{ background: 'var(--bg-input)', borderRadius: 12, padding: 14, marginBottom: 10, borderLeft: `3px solid ${paceZone.color}` }}>
+                  <p style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
+                    You ran in Zone {paceZone.zone} ({paceZone.label}) - {paceZone.description}
+                  </p>
+                </div>
+              )}
               <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 10 }}>Exercises</p>
               {Object.entries(exerciseMap).map(([name, exSets]) => (
                 <div key={name} style={{ background: 'var(--bg-input)', borderRadius: 12, padding: 14, marginBottom: 8 }}>

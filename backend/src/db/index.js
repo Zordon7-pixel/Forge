@@ -729,6 +729,18 @@ async function initDb() {
       );
     `);
 
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS push_subscriptions (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        endpoint TEXT NOT NULL,
+        keys_p256dh TEXT NOT NULL,
+        keys_auth TEXT NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(user_id, endpoint)
+      );
+    `);
+
     // Seed core badges (ON CONFLICT DO NOTHING = INSERT OR IGNORE)
     const coreBadges = [
       ['first-run',   'First Run',          'You completed your first run!',  'Flame',   'achievement', 'run_count',   1,    null, null, '#EAB308'],

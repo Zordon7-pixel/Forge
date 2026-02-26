@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { CheckCircle2, Footprints, ChevronDown, ChevronUp, Heart, MessageCircle, Camera, Flame } from 'lucide-react'
 import api from '../lib/api'
 import PRWall from './PRWall'
@@ -6,6 +6,7 @@ import Badges from './Badges'
 import LoadingRunner from '../components/LoadingRunner'
 import CommentSheet from '../components/CommentSheet'
 import PhotoViewer from '../components/PhotoViewer'
+import { scrollToFirstError, validateGoalSetting } from '../utils/validation'
 
 function fmtValue(value, unit) {
   if (unit === 'miles') return `${Number(value).toFixed(value % 1 === 0 ? 0 : 1)} miles`
@@ -31,9 +32,13 @@ export default function Challenges() {
   const [photoViewer, setPhotoViewer] = useState(null)
   const [photoCache, setPhotoCache] = useState({})
   const [showCreate, setShowCreate] = useState(false)
-  const [createForm, setCreateForm] = useState({ name: '', type: 'running', target_value: '', description: '' })
+  const [createForm, setCreateForm] = useState({ name: '', type: 'running', target_value: '', target_date: '', description: '' })
   const [creating, setCreating] = useState(false)
   const [streakData, setStreakData] = useState(null)
+  const [createErrors, setCreateErrors] = useState({})
+  const goalNameErrorRef = useRef(null)
+  const targetValueErrorRef = useRef(null)
+  const targetDateErrorRef = useRef(null)
 
   const CHALLENGE_TEMPLATES = [
     { type: 'running',    label: 'Running',        unit: 'miles',   placeholder: 'e.g. 50',   hint: 'Total miles to run' },
@@ -48,7 +53,19 @@ export default function Challenges() {
 
   async function submitCreate() {
     const tmpl = CHALLENGE_TEMPLATES.find(t => t.type === createForm.type)
-    if (!createForm.name.trim() || !createForm.target_value) return
+    const { errors } = validateGoalSetting({
+      name: createForm.name,
+      targetValue: createForm.target_value,
+      targetDate: createForm.target_date,
+    })
+    setCreateErrors(errors)
+    if (Object.keys(errors).length) {
+      scrollToFirstError(
+        { name: goalNameErrorRef, target_value: targetValueErrorRef, target_date: targetDateErrorRef },
+        ['name', 'target_value', 'target_date']
+      )
+      return
+    }
     setCreating(true)
     try {
       await api.post('/challenges/create', {
@@ -56,10 +73,12 @@ export default function Challenges() {
         description: createForm.description,
         type: createForm.type,
         target_value: Number(createForm.target_value),
+        target_date: createForm.target_date,
         unit: tmpl?.unit || 'units',
       })
       setShowCreate(false)
-      setCreateForm({ name: '', type: 'running', target_value: '', description: '' })
+      setCreateForm({ name: '', type: 'running', target_value: '', target_date: '', description: '' })
+      setCreateErrors({})
       await loadData()
     } finally { setCreating(false) }
   }
@@ -382,6 +401,7 @@ export default function Challenges() {
                 <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6 }}>Challenge Name</p>
                 <input value={createForm.name} onChange={e => setCreateForm(f => ({ ...f, name: e.target.value }))} placeholder="Name your challenge"
                   style={{ width: '100%', background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', borderRadius: 10, padding: '10px 12px', fontSize: 14, color: 'var(--text-primary)', boxSizing: 'border-box' }} />
+                {createErrors.name && <p ref={goalNameErrorRef} style={{ fontSize: 12, color: '#ef4444', marginTop: 6 }}>{createErrors.name}</p>}
               </div>
               <div>
                 <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6 }}>
@@ -390,13 +410,20 @@ export default function Challenges() {
                 <input type="number" value={createForm.target_value} onChange={e => setCreateForm(f => ({ ...f, target_value: e.target.value }))}
                   placeholder={CHALLENGE_TEMPLATES.find(t => t.type === createForm.type)?.placeholder}
                   style={{ width: '100%', background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', borderRadius: 10, padding: '10px 12px', fontSize: 14, color: 'var(--text-primary)', boxSizing: 'border-box' }} />
+                {createErrors.target_value && <p ref={targetValueErrorRef} style={{ fontSize: 12, color: '#ef4444', marginTop: 6 }}>{createErrors.target_value}</p>}
+              </div>
+              <div>
+                <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6 }}>Target Date</p>
+                <input type="date" value={createForm.target_date} onChange={e => setCreateForm(f => ({ ...f, target_date: e.target.value }))}
+                  style={{ width: '100%', background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', borderRadius: 10, padding: '10px 12px', fontSize: 14, color: 'var(--text-primary)', boxSizing: 'border-box' }} />
+                {createErrors.target_date && <p ref={targetDateErrorRef} style={{ fontSize: 12, color: '#ef4444', marginTop: 6 }}>{createErrors.target_date}</p>}
               </div>
               <div>
                 <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6 }}>Description (optional)</p>
                 <textarea rows={2} value={createForm.description} onChange={e => setCreateForm(f => ({ ...f, description: e.target.value }))} placeholder="What's this challenge about?"
                   style={{ width: '100%', background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', borderRadius: 10, padding: '10px 12px', fontSize: 14, color: 'var(--text-primary)', boxSizing: 'border-box', resize: 'none' }} />
               </div>
-              <button onClick={submitCreate} disabled={creating || !createForm.name.trim() || !createForm.target_value}
+              <button onClick={submitCreate} disabled={creating}
                 style={{ width: '100%', background: 'var(--accent)', color: '#000', fontWeight: 900, borderRadius: 12, padding: '14px', border: 'none', cursor: 'pointer', fontSize: 15, opacity: creating ? 0.6 : 1 }}>
                 {creating ? 'Creating...' : 'Create Challenge'}
               </button>

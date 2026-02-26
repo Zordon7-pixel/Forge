@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../lib/api'
 import { queueRequest } from '../lib/offlineQueue'
+import { getVolumeLoad, getProgressiveOverloadTip } from '../lib/athleteLanguage'
 
 const MUSCLE_GROUPS = [
   { key: 'chest', label: 'Chest' },
@@ -113,11 +114,18 @@ export default function LogLift() {
   const [manualAiLoading, setManualAiLoading] = useState(false)
   const [manualAiError, setManualAiError] = useState('')
   const [feedback, setFeedback] = useState('')
+  const [recentLifts, setRecentLifts] = useState([])
 
   useEffect(() => {
     api.get('/auth/me').then(res => {
       setUserSex(res.data.user?.sex || 'male')
     }).catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    api.get('/lifts')
+      .then((res) => setRecentLifts(res.data?.lifts || []))
+      .catch(() => setRecentLifts([]))
   }, [])
 
   const selectedMuscleGroup = selected[0] || ''
@@ -263,6 +271,18 @@ export default function LogLift() {
   }
 
   const pretty = (v = '') => String(v).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+  const latestLift = recentLifts[0] || null
+  const previousLift = useMemo(() => {
+    if (!latestLift) return null
+    return recentLifts.slice(1).find((lift) => lift.exercise_name === latestLift.exercise_name) || recentLifts[1] || null
+  }, [latestLift, recentLifts])
+  const latestVolume = latestLift ? getVolumeLoad(latestLift.sets, latestLift.reps, latestLift.weight_lbs) : null
+  const overloadTip = latestLift
+    ? getProgressiveOverloadTip(
+        previousLift ? { sets: previousLift.sets, reps: previousLift.reps, weight: previousLift.weight_lbs } : null,
+        { sets: latestLift.sets, reps: latestLift.reps, weight: latestLift.weight_lbs }
+      )
+    : ''
 
   return (
     <div className="space-y-6 py-4">
@@ -270,6 +290,20 @@ export default function LogLift() {
         <h2 className="text-2xl font-bold mb-1" style={{ color: 'var(--text-primary)' }}>Start Workout</h2>
         <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Select the muscle groups you are targeting today</p>
       </div>
+
+      {latestLift && latestVolume && (
+        <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+          <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Last Logged Lift</p>
+          <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{latestLift.exercise_name || 'Lift'}</p>
+          <p className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>
+            {latestLift.sets} x {latestLift.reps} @ {latestLift.weight_lbs} lbs
+          </p>
+          <p className="text-sm mt-1" style={{ color: 'var(--text-primary)' }}>
+            Volume: {latestVolume.totalLbs.toLocaleString()} lbs - {latestVolume.label} effort
+          </p>
+          <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>{overloadTip}</p>
+        </div>
+      )}
 
       <div className="flex gap-2">
         {['manual','ai'].map((t) => (

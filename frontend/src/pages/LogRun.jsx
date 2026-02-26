@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { MapPin, Mountain, RefreshCw, Gauge, Pencil } from 'lucide-react'
 import { useUnits } from '../context/UnitsContext'
@@ -7,6 +7,7 @@ import { parseDuration, formatDurationDisplay } from '../lib/parseDuration'
 import PostRunCheckIn from '../components/PostRunCheckIn'
 import PhotoUploader from '../components/PhotoUploader'
 import { queueRequest } from '../lib/offlineQueue'
+import { scrollToFirstError, validateRunLog } from '../utils/validation'
 
 function todayISO() {
   return new Date().toISOString().slice(0, 10)
@@ -172,6 +173,8 @@ export default function LogRun() {
   const [polling, setPolling] = useState(false)
   const [feedback, setFeedback] = useState('')
   const [error, setError] = useState('')
+  const [fieldErrors, setFieldErrors] = useState({})
+  const [fieldWarnings, setFieldWarnings] = useState({})
   const [showRecoveryPrompt, setShowRecoveryPrompt] = useState(false)
   const [showPostCheckIn, setShowPostCheckIn] = useState(false)
   const [savedRunId, setSavedRunId] = useState(null)
@@ -195,6 +198,8 @@ export default function LogRun() {
   const [selectedShoeId, setSelectedShoeId] = useState('')
   const [checkingCheckIn, setCheckingCheckIn] = useState(true)
   const [checkInCompleted, setCheckInCompleted] = useState(false)
+  const distanceErrorRef = useRef(null)
+  const durationErrorRef = useRef(null)
 
   useEffect(() => {
     if (warmUpState === 'done') setActiveTab('today')
@@ -283,7 +288,18 @@ export default function LogRun() {
     setError('')
     setFeedback('')
     const seconds = parseDuration(duration)
-    if (!seconds) return setError('Please enter a valid duration.')
+    const distanceMiles = units === 'metric' ? fmt.milesFromKm(Number(distance)) : Number(distance)
+    const { errors: validationErrors, warnings } = validateRunLog({
+      distance,
+      durationSeconds: seconds,
+      distanceMiles,
+    })
+    setFieldErrors(validationErrors)
+    setFieldWarnings(warnings)
+    if (Object.keys(validationErrors).length) {
+      scrollToFirstError({ distance: distanceErrorRef, duration: durationErrorRef }, ['distance', 'duration'])
+      return
+    }
 
     try {
       setLoading(true)
@@ -292,8 +308,6 @@ export default function LogRun() {
         navigate('/run/treadmill', { state: { treadmillType } })
         return
       }
-      // Convert distance to miles for backend
-      const distanceMiles = units === 'metric' ? fmt.milesFromKm(Number(distance)) : Number(distance)
       const runPayload = { date, type: runType, surface: resolvedSurface, run_surface: resolvedSurface, distance_miles: distanceMiles, duration_seconds: seconds, notes, perceived_effort: Number(effort), treadmill_brand: treadmillType, shoe_id: selectedShoeId || null }
       if (!navigator.onLine) {
         await queueRequest('/api/runs', 'POST', runPayload)
@@ -329,7 +343,6 @@ export default function LogRun() {
     } catch (err) {
       if (!err?.response) {
         const resolvedSurface = environment === 'inside' ? 'treadmill' : surface
-        const distanceMiles = units === 'metric' ? fmt.milesFromKm(Number(distance)) : Number(distance)
         const runPayload = { date, type: runType, surface: resolvedSurface, run_surface: resolvedSurface, distance_miles: distanceMiles, duration_seconds: seconds, notes, perceived_effort: Number(effort), treadmill_brand: treadmillType, shoe_id: selectedShoeId || null }
         await queueRequest('/api/runs', 'POST', runPayload)
         setFeedback('Saved offline — will sync when connected')
@@ -537,6 +550,7 @@ export default function LogRun() {
               <div className="text-center py-6">
                 <input type="number" step="0.1" min="0" required className="text-5xl font-bold bg-transparent text-center w-32 focus:outline-none" style={{ color: 'var(--accent)' }} value={distance} onChange={e => setDistance(e.target.value)} placeholder="0.0" />
                 <div className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>Distance ({fmt.distanceLabel})</div>
+                {fieldErrors.distance && <p ref={distanceErrorRef} className="text-xs mt-2" style={{ color: '#ef4444' }}>{fieldErrors.distance}</p>}
                 {estimatedTime && <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>Estimated time: {estimatedTime.low}–{estimatedTime.high} min based on your recent {Math.floor(estimatedTime.avg)}:{String(Math.round((estimatedTime.avg%1)*60)).padStart(2,'0')}/mi average pace</p>}
               </div>
             </div>
@@ -545,6 +559,8 @@ export default function LogRun() {
               <div className="flex gap-2 justify-center">
                 <input type="text" required value={duration} onChange={e => setDuration(e.target.value)} onBlur={() => { const sec = parseDuration(duration); if (sec) setDuration(formatDurationDisplay(sec)) }} placeholder="MM:SS or HH:MM:SS" className="w-full max-w-xs rounded-full border px-4 py-3 text-center text-xl font-bold" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)', color: 'var(--text-primary)' }} />
               </div>
+              {fieldErrors.duration && <p ref={durationErrorRef} className="text-xs mt-2 text-center" style={{ color: '#ef4444' }}>{fieldErrors.duration}</p>}
+              {fieldWarnings.pace && <p className="text-xs mt-2 text-center" style={{ color: '#f59e0b' }}>{fieldWarnings.pace}</p>}
             </div>
 
             <div className="rounded-2xl p-4" style={{ background: 'var(--bg-base)', border: '1px solid var(--border-subtle)' }}>

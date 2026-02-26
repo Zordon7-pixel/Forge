@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../lib/api'
+import { scrollToFirstError, validateCheckIn } from '../utils/validation'
 
 const FEELINGS = [
   { value: 1, label: 'Exhausted', img: '/checkin/exhausted.png' },
@@ -38,6 +39,8 @@ export default function DailyCheckIn({ onComplete }) {
   const [showStretchGate, setShowStretchGate] = useState(false)
   const [alreadyDone, setAlreadyDone] = useState(false)
   const [sleepHours, setSleepHours] = useState('')
+  const [fieldErrors, setFieldErrors] = useState({})
+  const feelingErrorRef = useRef(null)
 
   useEffect(() => {
     api.get('/checkin/today').then(r => {
@@ -54,7 +57,13 @@ export default function DailyCheckIn({ onComplete }) {
   }
 
   const submit = async () => {
-    if (!feeling || !timeAvailable) return
+    const { errors } = validateCheckIn({ feeling })
+    if (!timeAvailable) errors.time_available = 'Select available workout time.'
+    setFieldErrors(errors)
+    if (Object.keys(errors).length) {
+      scrollToFirstError({ feeling: feelingErrorRef }, ['feeling'])
+      return
+    }
     setSaving(true)
     try {
       const res = await api.post('/checkin', {
@@ -170,6 +179,7 @@ export default function DailyCheckIn({ onComplete }) {
             </div>
           ))}
         </div>
+        {fieldErrors.feeling && <p ref={feelingErrorRef} style={{ fontSize: 12, color: '#ef4444', marginTop: 8 }}>{fieldErrors.feeling}</p>}
       </div>
 
       <div style={{ marginBottom: 24 }}>
@@ -187,6 +197,7 @@ export default function DailyCheckIn({ onComplete }) {
             </button>
           ))}
         </div>
+        {fieldErrors.time_available && <p style={{ fontSize: 12, color: '#ef4444', marginTop: 8 }}>{fieldErrors.time_available}</p>}
       </div>
 
       <div style={{ marginBottom: 32 }}>
@@ -249,9 +260,9 @@ export default function DailyCheckIn({ onComplete }) {
         />
       </div>
 
-      <button onClick={submit} disabled={!feeling || !timeAvailable || saving}
+      <button onClick={submit} disabled={saving}
         style={{
-          width: '100%', background: feeling && timeAvailable ? 'var(--accent)' : 'var(--bg-input)',
+          width: '100%', background: !saving ? 'var(--accent)' : 'var(--bg-input)',
           color: '#000', fontWeight: 900, fontSize: 17, borderRadius: 16, padding: '18px', border: 'none', cursor: 'pointer',
           opacity: saving ? 0.6 : 1
         }}>

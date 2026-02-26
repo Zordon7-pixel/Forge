@@ -1,7 +1,8 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import api from '../lib/api'
 import ExercisePickerModal from '../components/ExercisePickerModal'
+import { getWeightDropWarning, scrollToFirstError, validateWorkoutSet } from '../utils/validation'
 
 const REST_PRESETS = [30, 60, 90, 120, 180]
 
@@ -48,6 +49,9 @@ export default function ActiveWorkout() {
   const [setNumber, setSetNumber] = useState(1)
 
   const [sets, setSets] = useState([])
+  const [recentLifts, setRecentLifts] = useState([])
+  const [formErrors, setFormErrors] = useState({})
+  const [formWarning, setFormWarning] = useState('')
 
   const [showRest, setShowRest] = useState(true)
   const [restSeconds, setRestSeconds] = useState(0)
@@ -57,6 +61,9 @@ export default function ActiveWorkout() {
   const [hrInfo, setHrInfo] = useState(null)
 
   const [ending, setEnding] = useState(false)
+  const repsErrorRef = useRef(null)
+  const weightErrorRef = useRef(null)
+  const endErrorRef = useRef(null)
 
   useEffect(() => {
     workoutTimerRef.current = setInterval(() => setElapsed(e => e + 1), 1000)
@@ -78,6 +85,10 @@ export default function ActiveWorkout() {
       setSets(res.data?.sets || [])
     }).catch(() => {})
   }, [id])
+
+  useEffect(() => {
+    api.get('/lifts').then((r) => setRecentLifts(r.data?.lifts || [])).catch(() => setRecentLifts([]))
+  }, [])
 
   useEffect(() => {
     api.get('/runs').then((r) => {
@@ -106,6 +117,18 @@ export default function ActiveWorkout() {
     return () => clearTimeout(restRef.current)
   }, [restRunning, restSeconds])
 
+  const weightDropWarning = useMemo(() => {
+    return getWeightDropWarning({
+      exerciseName: selectedExercise?.name,
+      nextWeight: weight,
+      recentLifts,
+    })
+  }, [selectedExercise?.name, weight, recentLifts])
+
+  useEffect(() => {
+    setFormWarning(weightDropWarning)
+  }, [weightDropWarning])
+
   const startRest = (s) => {
     clearTimeout(restRef.current)
     setRestSeconds(s)
@@ -113,7 +136,16 @@ export default function ActiveWorkout() {
   }
 
   const logSet = async () => {
-    if (!selectedExercise?.name || !reps || !weight) return
+    if (!selectedExercise?.name) return
+    const { errors } = validateWorkoutSet({ reps, weight })
+    setFormErrors(errors)
+    if (Object.keys(errors).length) {
+      scrollToFirstError(
+        { reps: repsErrorRef, weight: weightErrorRef },
+        ['reps', 'weight']
+      )
+      return
+    }
     try {
       const res = await api.post(`/workouts/${id}/sets`, {
         exercise_name: selectedExercise.name,
@@ -127,6 +159,8 @@ export default function ActiveWorkout() {
       setSetNumber(nextSetNumber)
       setReps('')
       setWeight('')
+      setFormErrors({})
+      setFormWarning('')
       startRest(90)
 
       // Auto-advance to next planned exercise after completing all sets
@@ -146,6 +180,11 @@ export default function ActiveWorkout() {
   }
 
   const endWorkout = async () => {
+    if (sets.length < 1) {
+      setFormErrors({ workout: 'Log at least 1 set before ending workout.' })
+      scrollToFirstError({ workout: endErrorRef }, ['workout'])
+      return
+    }
     setEnding(true)
     clearInterval(workoutTimerRef.current)
     try {
@@ -278,17 +317,26 @@ export default function ActiveWorkout() {
             <div className="flex-1">
               <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Reps</p>
               <input type="number" min="1" placeholder="0" value={reps} onChange={e => setReps(e.target.value)} className="w-full rounded-xl px-3 py-3 text-center text-xl font-bold border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }} />
+              {formErrors.reps && <p ref={repsErrorRef} className="text-xs mt-1" style={{ color: '#ef4444' }}>{formErrors.reps}</p>}
             </div>
             <div className="flex-1">
               <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Weight (lbs)</p>
               <input type="number" min="0" step="2.5" placeholder="0" value={weight} onChange={e => setWeight(e.target.value)} className="w-full rounded-xl px-3 py-3 text-center text-xl font-bold border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }} />
+              {formErrors.weight && <p ref={weightErrorRef} className="text-xs mt-1" style={{ color: '#ef4444' }}>{formErrors.weight}</p>}
+              {formWarning && <p className="text-xs mt-1" style={{ color: '#f59e0b' }}>{formWarning}</p>}
             </div>
-            <button onClick={logSet} disabled={!reps || !weight} className="rounded-xl px-4 py-3 font-bold text-sm disabled:opacity-40" style={{ background: 'var(--accent)', color: 'black' }}>
+            <button onClick={logSet} className="rounded-xl px-4 py-3 font-bold text-sm" style={{ background: 'var(--accent)', color: 'black' }}>
               + Set {setNumber}
             </button>
           </div>
         )}
       </div>
+
+      {formErrors.workout && (
+        <p ref={endErrorRef} className="text-xs" style={{ color: '#ef4444' }}>
+          {formErrors.workout}
+        </p>
+      )}
 
       {sets.length > 0 && (
         <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>

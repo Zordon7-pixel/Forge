@@ -1,0 +1,23 @@
+{
+  "expo": {
+    "name": "FORGE",
+    "slug": "forge-app",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#111827"
+    },
+    "ios": {
+      "bundleIdentifier": "com.zordon.forge",
+      "buildNumber": "1",
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSHealthShareUsageDescription": "FORGE reads health data to personalize training recommendations.",
+        "NSHealthUpdateUsageDescription": "FORGE writes workout data to keep your health records up to date."
+      }
+    }
+  }
+}

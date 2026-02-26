@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo, useRef } from 'react'
 import { AlertTriangle, CheckCircle2, Activity } from 'lucide-react'
 import api from '../lib/api'
+import { getRecurringInjuryWarning, scrollToFirstError, validateInjuryLog } from '../utils/validation'
 
 const BODY_PARTS = ['knee', 'hip', 'ankle', 'shin', 'calf', 'hamstring', 'lower back', 'shoulder', 'other']
 
@@ -20,13 +21,17 @@ export default function Injury() {
   const today = new Date().toISOString().slice(0, 10)
   const [active, setActive] = useState([])
   const [history, setHistory] = useState([])
+  const [allInjuries, setAllInjuries] = useState([])
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [message, setMessage] = useState('')
+  const [fieldErrors, setFieldErrors] = useState({})
+  const bodyPartErrorRef = useRef(null)
+  const painErrorRef = useRef(null)
 
   const [form, setForm] = useState({
-    body_part: 'knee',
-    pain_level: 5,
+    body_part: '',
+    pain_level: '',
     notes: '',
     date: today,
   })
@@ -39,6 +44,7 @@ export default function Injury() {
       ])
       setActive(activeRes.data.injuries || [])
       const all = allRes.data.injuries || []
+      setAllInjuries(all)
       setHistory(all.filter(i => i.cleared === 1))
     } catch (_) {}
     setLoading(false)
@@ -46,8 +52,19 @@ export default function Injury() {
 
   useEffect(() => { loadData() }, [])
 
+  const recurringWarning = useMemo(() => {
+    return getRecurringInjuryWarning({ bodyPart: form.body_part, injuries: allInjuries })
+  }, [form.body_part, allInjuries])
+
   const submit = async (e) => {
     e.preventDefault()
+    const { errors } = validateInjuryLog({ bodyPart: form.body_part, severity: form.pain_level })
+    setFieldErrors(errors)
+    if (Object.keys(errors).length) {
+      scrollToFirstError({ body_part: bodyPartErrorRef, pain_level: painErrorRef }, ['body_part', 'pain_level'])
+      return
+    }
+
     setSubmitting(true)
     try {
       await api.post('/injury', {
@@ -56,7 +73,8 @@ export default function Injury() {
         notes: form.notes,
         date: form.date,
       })
-      setForm({ body_part: 'knee', pain_level: 5, notes: '', date: today })
+      setForm({ body_part: '', pain_level: '', notes: '', date: today })
+      setFieldErrors({})
       setMessage('Injury logged')
       await loadData()
       setTimeout(() => setMessage(''), 2000)
@@ -204,32 +222,36 @@ export default function Injury() {
               onChange={e => setForm(prev => ({ ...prev, body_part: e.target.value }))}
               style={inputStyle}
             >
+              <option value="">Select body part</option>
               {BODY_PARTS.map(part => (
                 <option key={part} value={part}>
                   {part.charAt(0).toUpperCase() + part.slice(1)}
                 </option>
               ))}
             </select>
+            {fieldErrors.body_part && <p ref={bodyPartErrorRef} style={{ fontSize: 12, color: '#ef4444', marginTop: 6 }}>{fieldErrors.body_part}</p>}
+            {recurringWarning && <p style={{ fontSize: 12, color: '#f59e0b', marginTop: 6 }}>{recurringWarning}</p>}
           </div>
 
           <div>
             <label style={{ fontSize: 12, color: 'var(--text-muted)', display: 'block', marginBottom: 6 }}>
-              Pain Level: <span style={{ fontWeight: 700, color: painColor(form.pain_level) }}>{form.pain_level}/10</span>
+              Pain Level: <span style={{ fontWeight: 700, color: painColor(Number(form.pain_level) || 1) }}>{Number(form.pain_level) || 1}/10</span>
             </label>
             <input
               type="range"
               min={1}
               max={10}
               step={1}
-              value={form.pain_level}
+              value={form.pain_level || 1}
               onChange={e => setForm(prev => ({ ...prev, pain_level: Number(e.target.value) }))}
-              style={{ width: '100%', accentColor: painColor(form.pain_level) }}
+              style={{ width: '100%', accentColor: painColor(Number(form.pain_level) || 1) }}
             />
             <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 2 }}>
               <span style={{ fontSize: 11, color: '#22c55e' }}>1 Mild</span>
               <span style={{ fontSize: 11, color: '#EAB308' }}>5 Moderate</span>
               <span style={{ fontSize: 11, color: '#ef4444' }}>10 Severe</span>
             </div>
+            {fieldErrors.pain_level && <p ref={painErrorRef} style={{ fontSize: 12, color: '#ef4444', marginTop: 6 }}>{fieldErrors.pain_level}</p>}
           </div>
 
           <div>

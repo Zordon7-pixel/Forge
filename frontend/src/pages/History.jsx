@@ -11,6 +11,7 @@ import MissedWorkoutModal from '../components/MissedWorkoutModal'
 import RunDetailModal from '../components/RunDetailModal'
 import WorkoutDetailModal from '../components/WorkoutDetailModal'
 import LoadingRunner from '../components/LoadingRunner'
+import { getPaceZone } from '../lib/athleteLanguage'
 
 function getRunDate(run) {
   return run.date || run.created_at?.slice(0, 10) || ''
@@ -314,14 +315,21 @@ export default function History() {
         <div className="space-y-3 mb-3">
           {filteredRuns.map(run => (
             <div key={run.id} onClick={() => setSelectedRun(run)} className="cursor-pointer rounded-xl p-4" style={{ background: 'var(--bg-card)' }}>
+              {(() => {
+                const paceMinPerMile = run.distance_miles ? run.duration_seconds / 60 / run.distance_miles : null
+                const paceZone = getPaceZone(paceMinPerMile)
+                return (
               <div className="mb-2 flex items-center justify-between">
                 <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{new Date(getRunDate(run)).toLocaleDateString()}</p>
                 <div className="flex items-center gap-2">
+                  {paceZone ? <span className="rounded-full px-2 py-1 text-xs font-semibold" style={{ background: `${paceZone.color}22`, color: paceZone.color }}>{`Zone ${paceZone.zone}`}</span> : null}
                   {run.perceived_effort ? <span className="rounded-full px-2 py-1 text-xs" style={{ background: 'var(--bg-input)', color: 'var(--text-muted)' }}>Effort {run.perceived_effort}/10</span> : null}
                   <button onClick={e => { e.stopPropagation(); setEditingRun(run) }} className="transition-colors" style={{ color: 'var(--text-muted)' }}><Pencil size={14} /></button>
                   <button onClick={e => deleteRun(run.id, e)} className="transition-colors" style={{ color: 'var(--text-muted)' }}><Trash2 size={14} /></button>
                 </div>
               </div>
+                )
+              })()}
 
               <p className="text-sm" style={{ color: 'var(--text-primary)' }}>
                 {fmt.distance(Number(run.distance_miles || 0), 2)} · {formatDuration(run.duration_seconds)} · {fmt.pace(run.duration_seconds / run.distance_miles)}
