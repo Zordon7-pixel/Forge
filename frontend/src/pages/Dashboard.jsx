@@ -6,6 +6,7 @@ import AchievementUnlock from '../components/AchievementUnlock'
 import { useUnits } from '../context/UnitsContext'
 import api from '../lib/api'
 import LoadingRunner from '../components/LoadingRunner'
+import { useOnlineStatus } from '../lib/useOnlineStatus'
 
 function fmtPace(durationSeconds, distance) {
   if (!durationSeconds || !distance) return '--'
@@ -231,6 +232,8 @@ export default function Dashboard() {
   const [injuryBannerDismissed, setInjuryBannerDismissed] = useState(false)
   const [weeklyRecap, setWeeklyRecap] = useState(null)
   const [showWeeklyRecap, setShowWeeklyRecap] = useState(false)
+  const [showSyncedFlash, setShowSyncedFlash] = useState(false)
+  const { isOnline, queueCount } = useOnlineStatus()
 
   useEffect(() => {
     ;(async () => {
@@ -322,6 +325,39 @@ export default function Dashboard() {
   useEffect(() => {
     setInjuryBannerDismissed(false)
   }, [activeInjury?.id])
+
+  useEffect(() => {
+    let timeoutId
+    const triggerFlash = (flushedCount) => {
+      if (!flushedCount || flushedCount < 1) return
+      setShowSyncedFlash(true)
+      clearTimeout(timeoutId)
+      timeoutId = setTimeout(() => setShowSyncedFlash(false), 2500)
+    }
+
+    const onFlushed = (event) => {
+      triggerFlash(Number(event?.detail?.flushedCount || 0))
+    }
+
+    const onServiceWorkerMessage = (event) => {
+      if (event?.data?.type === 'OFFLINE_QUEUE_FLUSHED') {
+        triggerFlash(Number(event?.data?.flushedCount || 0))
+      }
+    }
+
+    window.addEventListener('offline-queue-flushed', onFlushed)
+    if (navigator.serviceWorker) {
+      navigator.serviceWorker.addEventListener('message', onServiceWorkerMessage)
+    }
+
+    return () => {
+      clearTimeout(timeoutId)
+      window.removeEventListener('offline-queue-flushed', onFlushed)
+      if (navigator.serviceWorker) {
+        navigator.serviceWorker.removeEventListener('message', onServiceWorkerMessage)
+      }
+    }
+  }, [])
 
 
   // Compute readiness from stats
@@ -436,6 +472,16 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-4">
+      {showSyncedFlash && (
+        <div className="rounded-xl p-2 text-sm font-semibold" style={{ background: 'rgba(34,197,94,0.18)', border: '1px solid rgba(34,197,94,0.45)', color: '#16a34a' }}>
+          Synced!
+        </div>
+      )}
+      {(!isOnline || queueCount > 0) && (
+        <div className="rounded-xl p-2 text-sm font-semibold" style={{ background: 'rgba(234,179,8,0.14)', border: '1px solid rgba(234,179,8,0.35)', color: 'var(--text-primary)' }}>
+          {isOnline ? `${queueCount} workouts queued for sync` : `📴 Offline — ${queueCount} workouts queued for sync`}
+        </div>
+      )}
       {milestoneUnlock && (
         <AchievementUnlock
           badge={milestoneUnlock}

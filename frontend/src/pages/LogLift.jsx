@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../lib/api'
+import { queueRequest } from '../lib/offlineQueue'
 
 const MUSCLE_GROUPS = [
   { key: 'chest', label: 'Chest' },
@@ -111,6 +112,7 @@ export default function LogLift() {
   const [manualAiPlan, setManualAiPlan] = useState(null)
   const [manualAiLoading, setManualAiLoading] = useState(false)
   const [manualAiError, setManualAiError] = useState('')
+  const [feedback, setFeedback] = useState('')
 
   useEffect(() => {
     api.get('/auth/me').then(res => {
@@ -147,10 +149,19 @@ export default function LogLift() {
   const beginAI = async () => {
     setLoading(true)
     setError('')
+    setFeedback('')
     try {
       const targetStr = aiRecommendation?.target || ''
       const muscleGroups = targetStr.split(/[,\/\s]+/).map(s => s.trim().toLowerCase()).filter(Boolean)
-      const res = await api.post('/workouts/start', { muscle_groups: muscleGroups.length ? muscleGroups : ['full'] })
+      const payload = { muscle_groups: muscleGroups.length ? muscleGroups : ['full'] }
+      if (!navigator.onLine) {
+        await queueRequest('/api/workouts/start', 'POST', payload)
+        setFeedback('Saved offline — will sync when connected')
+        setLoading(false)
+        return
+      }
+
+      const res = await api.post('/workouts/start', payload)
       navigate(`/workout/active/${res.data.session.id}`, {
         state: {
           exercises: aiRecommendation?.main || [],
@@ -158,7 +169,16 @@ export default function LogLift() {
         }
       })
     } catch (err) {
+      if (!err?.response) {
+        const targetStr = aiRecommendation?.target || ''
+        const muscleGroups = targetStr.split(/[,\/\s]+/).map(s => s.trim().toLowerCase()).filter(Boolean)
+        await queueRequest('/api/workouts/start', 'POST', { muscle_groups: muscleGroups.length ? muscleGroups : ['full'] })
+        setFeedback('Saved offline — will sync when connected')
+        setError('')
+        return
+      }
       setError(err?.response?.data?.error || 'Could not start workout. Try again.')
+    } finally {
       setLoading(false)
     }
   }
@@ -166,14 +186,32 @@ export default function LogLift() {
   const begin = async () => {
     setLoading(true)
     setError('')
+    setFeedback('')
     try {
-      const res = await api.post('/workouts/start', {
+      const payload = {
         muscle_groups: selected,
         exercise_name: selectedExercise?.name || ''
-      })
+      }
+      if (!navigator.onLine) {
+        await queueRequest('/api/workouts/start', 'POST', payload)
+        setFeedback('Saved offline — will sync when connected')
+        return
+      }
+
+      const res = await api.post('/workouts/start', payload)
       navigate(`/workout/active/${res.data.session.id}`)
     } catch (err) {
+      if (!err?.response) {
+        await queueRequest('/api/workouts/start', 'POST', {
+          muscle_groups: selected,
+          exercise_name: selectedExercise?.name || ''
+        })
+        setFeedback('Saved offline — will sync when connected')
+        setError('')
+        return
+      }
       setError(err?.response?.data?.error || 'Could not start workout. Try again.')
+    } finally {
       setLoading(false)
     }
   }
@@ -196,14 +234,30 @@ export default function LogLift() {
     if (!manualAiPlan) return
     setLoading(true)
     setError('')
+    setFeedback('')
     try {
       const muscleGroups = [selectedMuscleGroup || 'full']
-      const res = await api.post('/workouts/start', { muscle_groups: muscleGroups, exercise_name: selectedExercise?.name || '' })
+      const payload = { muscle_groups: muscleGroups, exercise_name: selectedExercise?.name || '' }
+      if (!navigator.onLine) {
+        await queueRequest('/api/workouts/start', 'POST', payload)
+        setFeedback('Saved offline — will sync when connected')
+        return
+      }
+
+      const res = await api.post('/workouts/start', payload)
       navigate(`/workout/active/${res.data.session.id}`, {
         state: { exercises: manualAiPlan?.main || [], workoutName: manualAiPlan?.workoutName || '' }
       })
     } catch (err) {
+      if (!err?.response) {
+        const muscleGroups = [selectedMuscleGroup || 'full']
+        await queueRequest('/api/workouts/start', 'POST', { muscle_groups: muscleGroups, exercise_name: selectedExercise?.name || '' })
+        setFeedback('Saved offline — will sync when connected')
+        setError('')
+        return
+      }
       setError(err?.response?.data?.error || 'Could not start workout. Try again.')
+    } finally {
       setLoading(false)
     }
   }
@@ -372,6 +426,7 @@ export default function LogLift() {
       )}
 
       {error && <p className="text-sm" style={{ color: 'var(--accent)' }}>{error}</p>}
+      {feedback && <p className="text-sm" style={{ color: 'var(--text-primary)' }}>{feedback}</p>}
 
       <button
         onClick={begin}

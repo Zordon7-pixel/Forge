@@ -6,6 +6,7 @@ import api from '../lib/api'
 import { parseDuration, formatDurationDisplay } from '../lib/parseDuration'
 import PostRunCheckIn from '../components/PostRunCheckIn'
 import PhotoUploader from '../components/PhotoUploader'
+import { queueRequest } from '../lib/offlineQueue'
 
 function todayISO() {
   return new Date().toISOString().slice(0, 10)
@@ -293,7 +294,14 @@ export default function LogRun() {
       }
       // Convert distance to miles for backend
       const distanceMiles = units === 'metric' ? fmt.milesFromKm(Number(distance)) : Number(distance)
-      const runRes = await api.post('/runs', { date, type: runType, surface: resolvedSurface, run_surface: resolvedSurface, distance_miles: distanceMiles, duration_seconds: seconds, notes, perceived_effort: Number(effort), treadmill_brand: treadmillType, shoe_id: selectedShoeId || null })
+      const runPayload = { date, type: runType, surface: resolvedSurface, run_surface: resolvedSurface, distance_miles: distanceMiles, duration_seconds: seconds, notes, perceived_effort: Number(effort), treadmill_brand: treadmillType, shoe_id: selectedShoeId || null }
+      if (!navigator.onLine) {
+        await queueRequest('/api/runs', 'POST', runPayload)
+        setFeedback('Saved offline — will sync when connected')
+        return
+      }
+
+      const runRes = await api.post('/runs', runPayload)
       const runId = runRes.data?.id || runRes.data?.run?.id
       if (runId) api.post('/prs/auto-detect', { run_id: runId }).catch(() => {})
       api.post('/badges/check', {}).catch(() => {})
@@ -319,6 +327,15 @@ export default function LogRun() {
       setFeedback(aiFeedback || 'Your coach is thinking... check back after your next run.')
       setShowRecoveryPrompt(true)
     } catch (err) {
+      if (!err?.response) {
+        const resolvedSurface = environment === 'inside' ? 'treadmill' : surface
+        const distanceMiles = units === 'metric' ? fmt.milesFromKm(Number(distance)) : Number(distance)
+        const runPayload = { date, type: runType, surface: resolvedSurface, run_surface: resolvedSurface, distance_miles: distanceMiles, duration_seconds: seconds, notes, perceived_effort: Number(effort), treadmill_brand: treadmillType, shoe_id: selectedShoeId || null }
+        await queueRequest('/api/runs', 'POST', runPayload)
+        setFeedback('Saved offline — will sync when connected')
+        setError('')
+        return
+      }
       setError(err?.response?.data?.error || 'Could not save run. Check your connection and try again.')
     } finally {
       setLoading(false)
