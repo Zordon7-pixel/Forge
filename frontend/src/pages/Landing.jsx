@@ -43,6 +43,8 @@ export default function Landing() {
           <div className="flex gap-4">
             <Link to="/login">Sign In</Link>
             <Link to="/register">Create Account</Link>
+            <Link to="/privacy">Privacy</Link>
+            <Link to="/terms">Terms</Link>
           </div>
         </footer>
       </div>

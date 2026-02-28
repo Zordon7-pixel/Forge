@@ -34,6 +34,13 @@ export default function Register() {
           <button type="submit" disabled={loading} className="w-full rounded-xl py-3 font-semibold transition hover:opacity-90 disabled:opacity-70" style={{ background: 'var(--accent)', color: 'black' }}>{loading ? t('common.loading') : t('auth.register')}</button>
         </form>
 
+        <p className="mt-4 text-center text-xs leading-6" style={{ color: 'var(--text-muted)' }}>
+          By creating an account you agree to our{' '}
+          <Link to="/terms" className="font-semibold hover:underline" style={{ color: 'var(--accent)' }}>Terms of Service</Link>
+          {' '}and{' '}
+          <Link to="/privacy" className="font-semibold hover:underline" style={{ color: 'var(--accent)' }}>Privacy Policy</Link>
+        </p>
+
         {error && <p className="mt-3 text-sm" style={{ color: 'var(--accent)' }}>{error}</p>}
 
         <p className="mt-5 text-center text-sm" style={{ color: 'var(--text-muted)' }}>

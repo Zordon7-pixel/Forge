@@ -8,6 +8,8 @@ const Register = lazy(() => import('./pages/Register'))
 const Onboarding = lazy(() => import('./pages/Onboarding'))
 const Dashboard = lazy(() => import('./pages/Dashboard'))
 const Landing = lazy(() => import('./pages/Landing'))
+const Privacy = lazy(() => import('./pages/Privacy'))
+const Terms = lazy(() => import('./pages/Terms'))
 const LogRun = lazy(() => import('./pages/LogRun'))
 const LogLift = lazy(() => import('./pages/LogLift'))
 const Plan = lazy(() => import('./pages/Plan'))
@@ -57,6 +59,8 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
+        <Route path="/privacy" element={<Privacy />} />
+        <Route path="/terms" element={<Terms />} />
         <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/onboarding" element={<Onboarding />} />
 
