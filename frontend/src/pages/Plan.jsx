@@ -14,22 +14,29 @@ export default function Plan() {
   const [plans, setPlans] = useState([])
   const [myPlan, setMyPlan] = useState(null)
   const [myUserPlan, setMyUserPlan] = useState(null)
+  const [adaptivePlan, setAdaptivePlan] = useState(null)
+  const [adaptiveLoading, setAdaptiveLoading] = useState(false)
+  const [acceptingAdaptive, setAcceptingAdaptive] = useState(false)
   const [loading, setLoading] = useState(true)
   const [assigningId, setAssigningId] = useState(null)
   const [updating, setUpdating] = useState(false)
 
   const loadAll = async () => {
     setLoading(true)
+    setAdaptiveLoading(true)
     try {
-      const [plansRes, myRes] = await Promise.all([
+      const [plansRes, myRes, adaptiveRes] = await Promise.all([
         api.get('/plans'),
         api.get('/plans/my'),
+        api.get('/plans/adaptive/recommend').catch(() => ({ data: null })),
       ])
       setPlans(plansRes.data?.plans || [])
       setMyPlan(myRes.data?.plan || null)
       setMyUserPlan(myRes.data?.user_plan || null)
+      setAdaptivePlan(adaptiveRes?.data || null)
     } finally {
       setLoading(false)
+      setAdaptiveLoading(false)
     }
   }
 
@@ -81,12 +88,75 @@ export default function Plan() {
     }
   }
 
+  const acceptAdaptive = async () => {
+    setAcceptingAdaptive(true)
+    try {
+      await api.post('/plans/adaptive/accept')
+      await loadAll()
+    } finally {
+      setAcceptingAdaptive(false)
+    }
+  }
+
+  const intensityMeta = useMemo(() => {
+    const key = String(adaptivePlan?.intensity || 'normal').toLowerCase()
+    if (key === 'recovery') return { label: '🔴 Recovery', color: '#EF4444' }
+    if (key === 'reduced') return { label: '🟡 Reduced', color: '#EAB308' }
+    if (key === 'increased') return { label: '💪 Increased', color: '#22C55E' }
+    return { label: '🟢 Normal', color: '#16A34A' }
+  }, [adaptivePlan?.intensity])
+
   if (loading) {
     return <div className="rounded-xl p-4" style={{ background: 'var(--bg-card)', color: 'var(--text-muted)' }}>Loading training plans...</div>
   }
 
   return (
     <div className="space-y-4">
+      <div className="rounded-2xl p-4 space-y-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>Adaptive Plan</h2>
+            <p className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>This week&apos;s recommended plan based on your check-ins.</p>
+          </div>
+          <span className="text-xs font-bold rounded-full px-3 py-1" style={{ background: 'var(--bg-input)', color: intensityMeta.color }}>
+            {intensityMeta.label}
+          </span>
+        </div>
+
+        {adaptiveLoading && <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Loading adaptive recommendation...</p>}
+        {!adaptiveLoading && !adaptivePlan && <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Adaptive recommendation is not available yet.</p>}
+        {!adaptiveLoading && adaptivePlan && (
+          <>
+            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{adaptivePlan.reason || adaptivePlan.recommendation}</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {(adaptivePlan.sessions || []).map((session) => (
+                <div
+                  key={session.id}
+                  className="rounded-lg p-3"
+                  style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}
+                >
+                  <p className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>{session.day}</p>
+                  <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{session.title}</p>
+                  <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                    {session.type === 'run' && Number(session.distance_miles || 0) > 0
+                      ? `${Number(session.distance_miles).toFixed(1)} mi`
+                      : session.type === 'rest' ? 'Rest day' : 'Strength session'}
+                  </p>
+                </div>
+              ))}
+            </div>
+            <button
+              onClick={acceptAdaptive}
+              disabled={acceptingAdaptive}
+              className="rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-60"
+              style={{ background: 'var(--accent)', color: '#000' }}
+            >
+              {acceptingAdaptive ? 'Saving...' : 'Accept Plan'}
+            </button>
+          </>
+        )}
+      </div>
+
       <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
         <h2 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>Training Plans</h2>
         <p className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>Running-first plans. Strength sessions focus on injury prevention only.</p>

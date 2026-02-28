@@ -68,11 +68,13 @@ app.use('/api/community',   require('./routes/community'));
 app.use('/api/journal',     require('./routes/journal'));
 app.use('/api/milestones',  require('./routes/milestones'));
 app.use('/api/watch-sync',  require('./routes/watchSync'));
+app.use('/api/import',      require('./routes/import'));
 app.use('/api/races',       require('./routes/races'));
 app.use('/api/routes',      require('./routes/routes'));
 app.use('/api/gear',        require('./routes/gear'));
 app.use('/api/stretches',   require('./routes/stretches'));
 app.use('/api/injury',      require('./routes/injury'));
+app.use('/api/pt',          require('./routes/pt'));
 app.use('/api/recap',       require('./routes/recap'));
 app.use('/api/payments',    require('./routes/payments'));
 

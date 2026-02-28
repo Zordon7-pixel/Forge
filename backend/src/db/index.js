@@ -740,6 +740,31 @@ async function initDb() {
     `);
 
     await client.query(`
+      CREATE TABLE IF NOT EXISTS pt_exercises (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        date TEXT NOT NULL,
+        name TEXT NOT NULL,
+        sets INTEGER DEFAULT 3,
+        reps INTEGER DEFAULT 10,
+        completed INTEGER DEFAULT 0,
+        notes TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS pt_milestones (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        type TEXT NOT NULL,
+        date TEXT NOT NULL,
+        notes TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+
+    await client.query(`
       CREATE TABLE IF NOT EXISTS app_feedback (
         id TEXT PRIMARY KEY,
         user_id TEXT,

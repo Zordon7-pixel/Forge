@@ -70,6 +70,178 @@ async function getActivePlanForUser(userId) {
   return null;
 }
 
+function clamp(n, min, max) {
+  return Math.max(min, Math.min(max, n));
+}
+
+function parseLifeFlags(raw) {
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw !== 'string') return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function normalizeGoalType(goalType = '') {
+  const g = String(goalType || '').toLowerCase();
+  if (g.includes('5k')) return '5k';
+  if (g.includes('10k')) return '10k';
+  if (g.includes('half')) return 'half';
+  if (g.includes('marathon')) return 'marathon';
+  if (g.includes('run_longer')) return '10k';
+  if (g.includes('get_faster')) return '5k';
+  return 'fitness';
+}
+
+function getBaseDistances(goalType) {
+  switch (normalizeGoalType(goalType)) {
+    case '5k': return [2.0, 2.5, 3.0, 1.5, 2.2];
+    case '10k': return [3.0, 3.8, 5.0, 2.2, 3.1];
+    case 'half': return [4.0, 5.0, 7.5, 3.0, 4.5];
+    case 'marathon': return [5.0, 6.0, 10.0, 3.5, 5.5];
+    default: return [2.2, 2.8, 4.0, 1.8, 2.5];
+  }
+}
+
+function getIntensityMultiplier(intensity) {
+  if (intensity === 'recovery') return 0.6;
+  if (intensity === 'reduced') return 0.85;
+  if (intensity === 'increased') return 1.1;
+  return 1;
+}
+
+function generateSessions(intensity, user = {}) {
+  const runDays = clamp(Number(user.run_days_per_week || 3), 2, 6);
+  const liftDays = clamp(Number(user.lift_days_per_week || 2), 0, 4);
+  const dayLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const runDayOrder = [1, 3, 5, 6, 2, 0, 4];
+  const liftDayOrder = [0, 2, 4, 6, 1, 3, 5];
+
+  const sessions = dayLabels.map((day) => ({
+    id: `adaptive-${day.toLowerCase()}`,
+    day,
+    type: 'rest',
+    title: 'Recovery / Rest',
+    distance_miles: 0,
+  }));
+
+  const selectedRunDays = runDayOrder.slice(0, runDays);
+  const selectedLiftDays = [];
+  for (const idx of liftDayOrder) {
+    if (selectedLiftDays.length >= liftDays) break;
+    if (selectedRunDays.includes(idx)) continue;
+    selectedLiftDays.push(idx);
+  }
+
+  const runTemplates = [
+    { title: 'Easy run', type: 'run' },
+    { title: 'Quality run', type: 'run' },
+    { title: 'Long run', type: 'run' },
+    { title: 'Recovery run', type: 'run' },
+    { title: 'Steady run', type: 'run' },
+    { title: 'Easy run', type: 'run' },
+  ];
+  const baseDistances = getBaseDistances(user.goal_type);
+  const intensityFactor = getIntensityMultiplier(intensity);
+
+  for (let i = 0; i < selectedRunDays.length; i += 1) {
+    const dayIdx = selectedRunDays[i];
+    const template = runTemplates[i] || runTemplates[runTemplates.length - 1];
+    const base = baseDistances[Math.min(i, baseDistances.length - 1)];
+    sessions[dayIdx] = {
+      id: `adaptive-run-${dayLabels[dayIdx].toLowerCase()}`,
+      day: dayLabels[dayIdx],
+      type: template.type,
+      title: template.title,
+      distance_miles: Math.max(1, Math.round(base * intensityFactor * 10) / 10),
+    };
+  }
+
+  for (const dayIdx of selectedLiftDays) {
+    sessions[dayIdx] = {
+      id: `adaptive-lift-${dayLabels[dayIdx].toLowerCase()}`,
+      day: dayLabels[dayIdx],
+      type: 'strength',
+      title: 'Strength injury prevention',
+      distance_miles: 0,
+    };
+  }
+
+  return sessions;
+}
+
+function getAdaptiveWeek(user, recentRuns, recentLifts, checkins, activeInjuries) {
+  const avgFeeling = checkins.reduce((s, c) => s + Number(c.feeling || 0), 0) / (checkins.length || 1);
+  const avgSleep = checkins.reduce((s, c) => s + Number(c.sleep_hours || 7), 0) / (checkins.length || 1);
+  const hasInjury = activeInjuries.length > 0;
+  const recentVolume = recentRuns.length;
+
+  let intensity = 'normal';
+  if (avgFeeling < 2.5 || avgSleep < 6) intensity = 'reduced';
+  if (avgFeeling >= 4 && avgSleep >= 7.5 && recentVolume < 3) intensity = 'increased';
+  if (hasInjury) intensity = 'recovery';
+
+  const lowSleepNights = checkins.filter((c) => Number(c.sleep_hours || 7) < 6).length;
+  const lowFeelingDays = checkins.filter((c) => Number(c.feeling || 3) <= 2).length;
+  const lifeFlags = checkins.flatMap((c) => parseLifeFlags(c.life_flags));
+  const uniqueFlags = [...new Set(lifeFlags)];
+  const flagsLabel = uniqueFlags.slice(0, 2).join(', ');
+
+  let reason = 'Balanced check-ins and load support a normal week.';
+  let recommendation = 'Keep consistency and execute this week as planned.';
+  if (intensity === 'recovery') {
+    reason = `Active injury logged — shifting to recovery week with lighter work.`;
+    recommendation = 'Protect recovery and avoid intensity until pain settles.';
+  } else if (intensity === 'reduced') {
+    reason = `${lowSleepNights || lowFeelingDays} recovery signal(s) detected${flagsLabel ? ` (${flagsLabel})` : ''} — lighter week recommended.`;
+    recommendation = "You've had low readiness markers, so this week reduces stress.";
+  } else if (intensity === 'increased') {
+    reason = "You've been sleeping well and feeling great with room to build load.";
+    recommendation = "You're ready for a controlled mileage bump this week.";
+  }
+
+  return {
+    intensity,
+    recommendation,
+    sessions: generateSessions(intensity, user),
+    reason,
+    stats: {
+      avgFeeling: Math.round(avgFeeling * 10) / 10,
+      avgSleep: Math.round(avgSleep * 10) / 10,
+      recentRuns: recentRuns.length,
+      recentLifts: recentLifts.length,
+      activeInjuries: activeInjuries.length,
+    },
+  };
+}
+
+async function buildAdaptiveRecommendation(userId) {
+  const today = new Date();
+  const start = new Date(today);
+  start.setDate(start.getDate() - 6);
+  const startDate = start.toISOString().slice(0, 10);
+
+  const [user, checkins, activeInjuries, recentRuns, recentLifts] = await Promise.all([
+    dbGet('SELECT id, goal_type, goal_race_date, run_days_per_week, lift_days_per_week FROM users WHERE id=?', [userId]),
+    dbAll(
+      'SELECT feeling, sleep_hours, life_flags, checkin_date FROM daily_checkins WHERE user_id=? AND checkin_date >= ? ORDER BY checkin_date DESC LIMIT 7',
+      [userId, startDate]
+    ),
+    dbAll('SELECT * FROM injury_logs WHERE user_id=? AND cleared=0 ORDER BY date DESC', [userId]),
+    dbAll('SELECT id, date FROM runs WHERE user_id=? AND date >= ? ORDER BY date DESC', [userId, startDate]),
+    dbAll(
+      "SELECT id, started_at, ended_at FROM workout_sessions WHERE user_id=? AND started_at >= ? AND ended_at IS NOT NULL ORDER BY started_at DESC",
+      [userId, `${startDate}T00:00:00`]
+    ),
+  ]);
+
+  if (!user) return null;
+  return getAdaptiveWeek(user, recentRuns || [], recentLifts || [], checkins || [], activeInjuries || []);
+}
+
 router.get('/', auth, async (req, res) => {
   try {
     const rows = await dbAll(`
@@ -81,6 +253,56 @@ router.get('/', auth, async (req, res) => {
     const plans = rows.map((row) => ({ ...row, plan_data: parsePlan(row) || { weeks: [] } }));
     res.json({ plans });
   } catch (err) { res.status(500).json({ error: 'Failed to fetch plan' }); }
+});
+
+router.get('/adaptive/recommend', auth, async (req, res) => {
+  try {
+    const adaptive = await buildAdaptiveRecommendation(req.user.id);
+    if (!adaptive) return res.status(404).json({ error: 'User not found' });
+    res.json(adaptive);
+  } catch {
+    res.status(500).json({ error: 'Failed to build adaptive recommendation' });
+  }
+});
+
+router.post('/adaptive/accept', auth, async (req, res) => {
+  try {
+    const adaptive = await buildAdaptiveRecommendation(req.user.id);
+    if (!adaptive) return res.status(404).json({ error: 'User not found' });
+
+    const weekStart = getMonday();
+    const planId = uuidv4();
+    const userPlanId = uuidv4();
+    const planData = { weeks: [{ week: 1, sessions: adaptive.sessions }] };
+    const intensityLabel = adaptive.intensity.charAt(0).toUpperCase() + adaptive.intensity.slice(1);
+    const planName = `Adaptive Week - ${weekStart}`;
+
+    await dbRun("UPDATE user_plans SET status = 'inactive' WHERE user_id = ? AND status = 'active'", [req.user.id]);
+    await dbRun(
+      `INSERT INTO training_plans (id, user_id, week_start, plan_json, name, type, weeks, description, plan_data)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        planId,
+        req.user.id,
+        weekStart,
+        JSON.stringify(planData),
+        planName,
+        'Adaptive',
+        1,
+        `${intensityLabel} intensity recommendation for this week.`,
+        JSON.stringify(planData),
+      ]
+    );
+    await dbRun(
+      `INSERT INTO user_plans (id, user_id, plan_id, started_at, current_week, status, progress_json)
+       VALUES (?,?,?,?,?,?,?)`,
+      [userPlanId, req.user.id, planId, weekStart, 1, 'active', JSON.stringify({ completedSessionIds: [] })]
+    );
+
+    res.status(201).json({ ok: true, user_plan_id: userPlanId, plan_id: planId, ...adaptive });
+  } catch {
+    res.status(500).json({ error: 'Failed to accept adaptive plan' });
+  }
 });
 
 router.post('/assign/:planId', auth, async (req, res) => {
