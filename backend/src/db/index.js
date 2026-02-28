@@ -83,6 +83,10 @@ async function initDb() {
         step_goal INTEGER DEFAULT 10000,
         monthly_goal_miles REAL,
         monthly_goal_mode TEXT DEFAULT 'auto',
+        stripe_customer_id TEXT,
+        stripe_subscription_id TEXT,
+        subscription_status TEXT DEFAULT 'free',
+        subscription_ends_at TEXT,
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
     `);
@@ -181,6 +185,25 @@ async function initDb() {
     try {
       await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS monthly_goal_mode TEXT DEFAULT 'auto'");
       console.log('monthly_goal_mode');
+    } catch (err) {}
+    try {
+      await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_customer_id TEXT');
+      console.log('stripe_customer_id');
+    } catch (err) {}
+    try {
+      await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_subscription_id TEXT');
+      console.log('stripe_subscription_id');
+    } catch (err) {}
+    try {
+      await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_status TEXT DEFAULT 'free'");
+      console.log('subscription_status');
+    } catch (err) {}
+    try {
+      await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_ends_at TEXT');
+      console.log('subscription_ends_at');
+    } catch (err) {}
+    try {
+      await client.query("UPDATE users SET subscription_status = 'free' WHERE subscription_status IS NULL");
     } catch (err) {}
     try {
       await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS fitness_level TEXT DEFAULT 'beginner'");

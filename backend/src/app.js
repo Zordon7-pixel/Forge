@@ -34,6 +34,8 @@ app.use(cors({
   credentials: true
 }));
 
+// Stripe webhooks require the raw request body for signature verification.
+app.use('/api/payments/webhook', express.raw({ type: 'application/json' }));
 app.use(express.json({ limit: '10mb' }));
 app.use(helmet({ contentSecurityPolicy: false }));
 
@@ -72,6 +74,7 @@ app.use('/api/gear',        require('./routes/gear'));
 app.use('/api/stretches',   require('./routes/stretches'));
 app.use('/api/injury',      require('./routes/injury'));
 app.use('/api/recap',       require('./routes/recap'));
+app.use('/api/payments',    require('./routes/payments'));
 
 // SPA fallback — serve index.html for all non-API routes
 app.get('*', (req, res) => {
