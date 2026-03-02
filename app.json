@@ -1,7 +1,8 @@
 {
   "expo": {
     "name": "FORGE",
-    "slug": "forge",
+    "slug": "forge-athlete",
+    "owner": "zordon7",
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
@@ -16,11 +17,16 @@
       "react-native-health-connect"
     ],
     "ios": {
-      "bundleIdentifier": "com.forgeathlete.app",
+      "bundleIdentifier": "com.zordontech.forge",
+      "buildNumber": "1",
+      "supportsTablet": false,
       "infoPlist": {
         "NSHealthShareUsageDescription": "FORGE reads Apple Health workout data to import your performance history.",
         "NSHealthUpdateUsageDescription": "FORGE writes run and strength workout data to Apple Health.",
         "NSLocationWhenInUseUsageDescription": "FORGE uses your location during run tracking to calculate distance and pace."
+      },
+      "entitlements": {
+        "com.apple.developer.healthkit": true
       }
     },
     "android": {
