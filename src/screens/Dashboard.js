@@ -1,14 +1,24 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
+import { Linking, Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { ArrowRight, Dumbbell, Route } from 'lucide-react-native';
+import { Activity, ArrowRight, Dumbbell, Route, ShieldAlert } from 'lucide-react-native';
 
 import api from '../lib/api';
+import useHealthData from '../hooks/useHealthData';
 
 export default function Dashboard({ navigation }) {
   const [runs, setRuns] = useState([]);
   const [workouts, setWorkouts] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
+  const {
+    workouts: healthWorkouts,
+    steps,
+    heartRate,
+    loading: healthLoading,
+    error: healthError,
+    lastSynced,
+    refresh: refreshHealth
+  } = useHealthData();
 
   const loadDashboard = useCallback(async () => {
     setRefreshing(true);
@@ -28,7 +38,8 @@ export default function Dashboard({ navigation }) {
   useFocusEffect(
     useCallback(() => {
       loadDashboard();
-    }, [loadDashboard])
+      refreshHealth();
+    }, [loadDashboard, refreshHealth])
   );
 
   const weekStats = useMemo(() => {
@@ -41,10 +52,19 @@ export default function Dashboard({ navigation }) {
     };
   }, [runs, workouts]);
 
+  const refreshAll = useCallback(async () => {
+    await Promise.all([loadDashboard(), refreshHealth()]);
+  }, [loadDashboard, refreshHealth]);
+
+  const isPermissionError = /denied|permission|authorize/i.test(String(healthError?.message || healthError || ''));
+  const lastHealthWorkout = healthWorkouts[0];
+
   return (
     <ScrollView
       className="flex-1 bg-forge-bg px-4 pt-6"
-      refreshControl={<RefreshControl tintColor="#EAB308" refreshing={refreshing} onRefresh={loadDashboard} />}
+      refreshControl={
+        <RefreshControl tintColor="#EAB308" refreshing={refreshing || healthLoading} onRefresh={refreshAll} />
+      }
     >
       <Text className="text-2xl font-bold text-forge-text">Dashboard</Text>
       <Text className="mt-1 text-forge-subtext">Performance snapshot for this week.</Text>
@@ -65,6 +85,47 @@ export default function Dashboard({ navigation }) {
             <Text className="text-xs text-forge-subtext">Lifts</Text>
           </View>
         </View>
+      </View>
+
+      <View className="mt-5 rounded-2xl border border-forge-border bg-forge-card p-4">
+        <View className="flex-row items-center justify-between">
+          <Text className="text-base font-semibold text-forge-text">Health</Text>
+          <View className="flex-row items-center gap-1">
+            <Activity size={14} color="#EAB308" />
+            <Text className="text-xs text-forge-subtext">
+              {lastSynced ? `Synced ${new Date(lastSynced).toLocaleTimeString()}` : 'Not synced yet'}
+            </Text>
+          </View>
+        </View>
+        <View className="mt-4 flex-row justify-between">
+          <View>
+            <Text className="text-xl font-semibold text-forge-accent">{Number(steps || 0).toLocaleString()}</Text>
+            <Text className="text-xs text-forge-subtext">Today Steps</Text>
+          </View>
+          <View>
+            <Text className="text-xl font-semibold text-forge-accent">{heartRate ? Math.round(heartRate) : '--'}</Text>
+            <Text className="text-xs text-forge-subtext">Resting HR</Text>
+          </View>
+          <View className="max-w-[44%]">
+            <Text className="text-xs font-semibold uppercase tracking-wide text-forge-subtext">Last workout</Text>
+            <Text className="mt-1 text-sm text-forge-text">{lastHealthWorkout?.title || 'No health workout found'}</Text>
+          </View>
+        </View>
+        {!!healthError && (
+          <View className="mt-4 rounded-xl border border-forge-border bg-forge-bg px-3 py-3">
+            <View className="flex-row items-center gap-2">
+              <ShieldAlert size={16} color="#EAB308" />
+              <Text className="text-sm text-forge-subtext">
+                {isPermissionError ? 'Health permission not granted.' : 'Unable to sync health data.'}
+              </Text>
+            </View>
+            {isPermissionError && (
+              <Pressable onPress={Linking.openSettings} className="mt-2 self-start rounded-lg bg-forge-accent px-3 py-2">
+                <Text className="text-xs font-semibold text-black">Open Settings</Text>
+              </Pressable>
+            )}
+          </View>
+        )}
       </View>
 
       <View className="mt-5 flex-row gap-3">
