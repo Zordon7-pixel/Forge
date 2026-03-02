@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Alert, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { Plus, Save, Trash2 } from 'lucide-react-native';
 
 import api from '../lib/api';
 import { syncLiftToHealth } from '../lib/health';
+import WorkoutBroadcast from '../services/WorkoutBroadcast';
 
 const createSet = () => ({ reps: '', weight: '' });
 
@@ -11,6 +12,35 @@ export default function LogLift({ navigation }) {
   const [name, setName] = useState('');
   const [sets, setSets] = useState([createSet()]);
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    return () => {
+      WorkoutBroadcast.stop();
+    };
+  }, []);
+
+  useEffect(() => {
+    const hasStarted = Boolean(name.trim()) || sets.some((set) => set.reps || set.weight);
+
+    if (!hasStarted) {
+      WorkoutBroadcast.stop();
+      return;
+    }
+
+    WorkoutBroadcast.start({
+      workoutType: 'lift',
+      getPayload: () => ({
+        status: 'running',
+        exercise: name || 'Lift Session',
+        sets: sets.length,
+        completedSets: sets.filter((set) => Number(set.reps) > 0).length,
+        elapsed: 0,
+        distance: 0,
+        pace: '0:00',
+        heartRate: null
+      })
+    });
+  }, [name, sets]);
 
   const updateSet = (index, key, value) => {
     setSets((prev) => prev.map((set, i) => (i === index ? { ...set, [key]: value } : set)));
@@ -37,6 +67,7 @@ export default function LogLift({ navigation }) {
 
     try {
       setSaving(true);
+      WorkoutBroadcast.stop();
       await api.post('/workouts', payload);
       try {
         await syncLiftToHealth(payload);

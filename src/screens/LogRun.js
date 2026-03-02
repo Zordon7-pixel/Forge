@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Pressable, ScrollView, Text, View } from 'react-native';
 import * as Location from 'expo-location';
-import { Pause, Play, Save, Square } from 'lucide-react-native';
+import { Pause, Play, Save, Square, Watch } from 'lucide-react-native';
 
 import api from '../lib/api';
 import { syncRunToHealth } from '../lib/health';
+import WorkoutBroadcast from '../services/WorkoutBroadcast';
 
 const metersToMiles = (meters) => meters / 1609.34;
 const toRadians = (value) => (value * Math.PI) / 180;
@@ -20,17 +21,59 @@ const calcDistanceMeters = (a, b) => {
   return 2 * earthRadius * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
 };
 
+const formatDuration = (elapsed) => `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`;
+
 export default function LogRun() {
   const [status, setStatus] = useState('idle');
   const [elapsed, setElapsed] = useState(0);
   const [distanceMeters, setDistanceMeters] = useState(0);
   const [saving, setSaving] = useState(false);
+  const [connection, setConnection] = useState(WorkoutBroadcast.getConnectionState());
+
   const watchRef = useRef(null);
   const timerRef = useRef(null);
   const previousCoordsRef = useRef(null);
 
+  const elapsedRef = useRef(0);
+  const distanceRef = useRef(0);
+  const paceRef = useRef('0:00');
+  const statusRef = useRef('idle');
+
+  useEffect(() => {
+    elapsedRef.current = elapsed;
+  }, [elapsed]);
+
+  useEffect(() => {
+    distanceRef.current = distanceMeters;
+  }, [distanceMeters]);
+
+  useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
+
+  useEffect(() => {
+    const unsubscribeConnection = WorkoutBroadcast.subscribeConnection(setConnection);
+    const unsubscribeControls = WorkoutBroadcast.subscribeControls(async ({ action }) => {
+      if (action === 'start') {
+        await handleStart();
+      }
+      if (action === 'pause') {
+        handlePause();
+      }
+      if (action === 'stop') {
+        handleStop();
+      }
+    });
+
+    return () => {
+      unsubscribeConnection();
+      unsubscribeControls();
+    };
+  }, []);
+
   useEffect(() => {
     return () => {
+      WorkoutBroadcast.stop();
       if (watchRef.current) {
         watchRef.current.remove();
       }
@@ -49,6 +92,33 @@ export default function LogRun() {
     const seconds = Math.round((paceMin - minutes) * 60);
     return `${minutes}:${String(seconds).padStart(2, '0')}`;
   }, [elapsed, distanceMiles]);
+
+  useEffect(() => {
+    paceRef.current = pace;
+  }, [pace]);
+
+  const getBroadcastPayload = () => {
+    const miles = metersToMiles(distanceRef.current);
+    return {
+      status: statusRef.current,
+      pace: paceRef.current,
+      distance: miles,
+      distanceMiles: miles,
+      elapsed: elapsedRef.current,
+      heartRate: null
+    };
+  };
+
+  const startBroadcast = async () => {
+    await WorkoutBroadcast.start({
+      workoutType: 'run',
+      getPayload: getBroadcastPayload
+    });
+  };
+
+  const stopBroadcast = () => {
+    WorkoutBroadcast.stop();
+  };
 
   const startTimer = () => {
     if (timerRef.current) clearInterval(timerRef.current);
@@ -88,9 +158,9 @@ export default function LogRun() {
   };
 
   const handleStart = async () => {
-    if (status === 'running') return;
+    if (statusRef.current === 'running') return;
 
-    if (status === 'idle') {
+    if (statusRef.current === 'idle') {
       setDistanceMeters(0);
       setElapsed(0);
       previousCoordsRef.current = null;
@@ -98,13 +168,15 @@ export default function LogRun() {
       if (!trackingStarted) return;
     }
 
-    if (status === 'paused') {
+    if (statusRef.current === 'paused') {
       const trackingStarted = await startTracking();
       if (!trackingStarted) return;
     }
 
     startTimer();
     setStatus('running');
+    statusRef.current = 'running';
+    await startBroadcast();
   };
 
   const handlePause = () => {
@@ -114,6 +186,8 @@ export default function LogRun() {
       watchRef.current = null;
     }
     setStatus('paused');
+    statusRef.current = 'paused';
+    stopBroadcast();
   };
 
   const handleStop = () => {
@@ -123,6 +197,8 @@ export default function LogRun() {
       watchRef.current = null;
     }
     setStatus('stopped');
+    statusRef.current = 'stopped';
+    stopBroadcast();
   };
 
   const handleSave = async () => {
@@ -141,6 +217,7 @@ export default function LogRun() {
 
     try {
       setSaving(true);
+      stopBroadcast();
       await api.post('/runs', run);
       try {
         await syncRunToHealth(run);
@@ -149,6 +226,7 @@ export default function LogRun() {
       }
       Alert.alert('Saved', 'Run logged successfully.');
       setStatus('idle');
+      statusRef.current = 'idle';
       setElapsed(0);
       setDistanceMeters(0);
     } catch (error) {
@@ -158,10 +236,23 @@ export default function LogRun() {
     }
   };
 
+  const isWatchReachable = Boolean(connection?.reachable || connection?.connected);
+
   return (
     <ScrollView className="flex-1 bg-forge-bg px-4 pt-6">
-      <Text className="text-2xl font-bold text-forge-text">Log Run</Text>
-      <Text className="mt-1 text-forge-subtext">Track distance, pace, and duration in real time.</Text>
+      <View className="flex-row items-center justify-between">
+        <View>
+          <Text className="text-2xl font-bold text-forge-text">Log Run</Text>
+          <Text className="mt-1 text-forge-subtext">Track distance, pace, and duration in real time.</Text>
+        </View>
+
+        <View className={`flex-row items-center gap-1 rounded-full border px-3 py-1 ${isWatchReachable ? 'border-forge-accent bg-forge-card' : 'border-forge-border bg-forge-card'}`}>
+          <Watch size={14} color={isWatchReachable ? '#EAB308' : '#64748b'} />
+          <Text className={`text-xs font-medium ${isWatchReachable ? 'text-forge-accent' : 'text-forge-subtext'}`}>
+            {isWatchReachable ? 'Watch On' : 'Watch Off'}
+          </Text>
+        </View>
+      </View>
 
       <View className="mt-6 rounded-2xl border border-forge-border bg-forge-card p-5">
         <Text className="text-sm text-forge-subtext">Distance</Text>
@@ -170,7 +261,7 @@ export default function LogRun() {
         <View className="mt-4 flex-row justify-between">
           <View>
             <Text className="text-xs text-forge-subtext">Duration</Text>
-            <Text className="mt-1 text-lg font-medium text-forge-text">{Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, '0')}</Text>
+            <Text className="mt-1 text-lg font-medium text-forge-text">{formatDuration(elapsed)}</Text>
           </View>
           <View>
             <Text className="text-xs text-forge-subtext">Pace</Text>
