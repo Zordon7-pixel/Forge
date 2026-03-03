@@ -28,8 +28,10 @@ export default function Dashboard({ navigation }) {
         api.get('/workouts?limit=5')
       ]);
 
-      setRuns(runsRes?.data?.runs || runsRes?.data || []);
-      setWorkouts(liftsRes?.data?.workouts || liftsRes?.data || []);
+      const runsData = runsRes?.data?.runs || runsRes?.data || [];
+      const workoutsData = liftsRes?.data?.workouts || liftsRes?.data || [];
+      setRuns(Array.isArray(runsData) ? runsData : []);
+      setWorkouts(Array.isArray(workoutsData) ? workoutsData : []);
     } finally {
       setRefreshing(false);
     }
