@@ -8,6 +8,7 @@ import {
   View,
   useWindowDimensions
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import Svg, { Defs, LinearGradient, Polygon, Polyline, Stop } from 'react-native-svg';
 
@@ -106,6 +107,7 @@ const getWeeksMileage = (runs) => {
 };
 
 export default function Dashboard({ navigation }) {
+  const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const [refreshing, setRefreshing] = useState(false);
   const [runs, setRuns] = useState([]);
@@ -301,7 +303,7 @@ export default function Dashboard({ navigation }) {
   return (
     <ScrollView
       style={styles.container}
-      contentContainerStyle={styles.content}
+      contentContainerStyle={[styles.content, { paddingTop: insets.top + 12 }]}
       refreshControl={<RefreshControl tintColor="#EAB308" refreshing={refreshing} onRefresh={loadDashboard} />}
     >
       <View style={styles.headerRow}>
@@ -480,7 +482,6 @@ const styles = StyleSheet.create({
   },
   content: {
     paddingHorizontal: 16,
-    paddingTop: 20,
     paddingBottom: 24
   },
   headerRow: {
