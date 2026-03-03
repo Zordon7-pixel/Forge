@@ -38,6 +38,11 @@
         "android.permission.health.READ_HEART_RATE",
         "android.permission.health.READ_ACTIVE_CALORIES_BURNED"
       ]
+    },
+    "extra": {
+      "eas": {
+        "projectId": "6aeb5fbb-2697-4cf4-b9b3-afe60c63e9e1"
+      }
     }
   }
 }
