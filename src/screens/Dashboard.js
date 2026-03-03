@@ -10,8 +10,36 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
-import Svg, { Defs, LinearGradient, Polygon, Polyline, Stop } from 'react-native-svg';
+import Svg, { Circle, Defs, LinearGradient, Polygon, Polyline, Stop } from 'react-native-svg';
 import { HelpCircle, MessageSquare, Moon, Sun } from 'lucide-react-native';
+
+// Circular readiness gauge — matches web ReadinessGauge
+function ReadinessGauge({ score }) {
+  const cx = 60, cy = 60, r = 48;
+  const circumference = 2 * Math.PI * r;
+  const pct = Math.max(0, Math.min(100, Number(score) || 0));
+  const dash = (pct / 100) * circumference;
+  const color = pct >= 80 ? '#22c55e' : pct >= 50 ? '#EAB308' : '#ef4444';
+  return (
+    <View style={{ alignItems: 'center' }}>
+      <Svg width={120} height={120}>
+        <Circle cx={cx} cy={cy} r={r} fill="none" stroke="#2c3345" strokeWidth="8" />
+        <Circle
+          cx={cx} cy={cy} r={r}
+          fill="none" stroke={color} strokeWidth="8"
+          strokeDasharray={`${dash} ${circumference - dash}`}
+          strokeLinecap="round"
+          rotation="-90"
+          originX={cx} originY={cy}
+        />
+      </Svg>
+      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
+        <Text style={{ fontSize: 26, fontWeight: '900', color: color }}>{score}</Text>
+        <Text style={{ fontSize: 9, color: '#64748b', letterSpacing: 1, textTransform: 'uppercase' }}>Readiness</Text>
+      </View>
+    </View>
+  );
+}
 
 import api from '../lib/api';
 
@@ -363,12 +391,22 @@ export default function Dashboard({ navigation }) {
         </View>
       )}
 
+      {/* Next Race — before compliance, within 60 days */}
+      {upcomingRace && Math.ceil((upcomingRace._date - new Date()) / 86400000) <= 60 && (
+        <View style={styles.nextRaceCard}>
+          <Text style={styles.metaLabel}>Next Race</Text>
+          <Text style={styles.nextRaceTitle}>{upcomingRace.name || upcomingRace.race_name || 'Race'}</Text>
+          <Text style={styles.nextRaceDays}>
+            {Math.max(0, Math.ceil((upcomingRace._date - new Date()) / 86400000))} days to go
+          </Text>
+        </View>
+      )}
+
       {/* This Week + compliance progress */}
       {compliance ? (
         <View style={styles.card}>
-          <Text style={styles.metaLabel}>This Week</Text>
           <Text style={styles.weekSummaryText}>
-            {compliance.completed}/{compliance.planned} sessions — {compliance.score}%
+            This Week: {compliance.completed}/{compliance.planned} sessions — {compliance.score}%
           </Text>
           <View style={styles.progressTrack}>
             <View style={[styles.progressFill, { width: `${Math.min(compliance.score, 100)}%` }]} />
@@ -376,9 +414,8 @@ export default function Dashboard({ navigation }) {
         </View>
       ) : (
         <View style={styles.card}>
-          <Text style={styles.metaLabel}>This Week</Text>
           <Text style={styles.weekSummaryText}>
-            {weeklySessions}/{plannedSessions} sessions — {weekPct}%
+            This Week: {weeklySessions}/{plannedSessions} sessions — {weekPct}%
           </Text>
           <View style={styles.progressTrack}>
             <View style={[styles.progressFill, { width: `${Math.min(weekPct, 100)}%` }]} />
@@ -406,30 +443,36 @@ export default function Dashboard({ navigation }) {
         </Pressable>
       </View>
 
-      {upcomingRace && (
-        <View style={styles.nextRaceCard}>
-          <Text style={styles.metaLabel}>Next Race</Text>
-          <Text style={styles.nextRaceTitle}>{upcomingRace.name || 'Race'}</Text>
-          <Text style={styles.nextRaceDays}>
-            {Math.max(0, Math.ceil((upcomingRace._date - new Date()) / 86400000))} days to go
-          </Text>
-        </View>
-      )}
+      {/* Training Readiness card — circular gauge */}
+      <View style={styles.card}>
+        {readiness === '--' ? (
+          <Text style={styles.metaLabel}>Complete your daily check-in and sync your watch to unlock your Training Readiness score</Text>
+        ) : (
+          <>
+            <ReadinessGauge score={readiness} />
+            <Text style={[styles.metaLabel, { textAlign: 'center', marginTop: 8 }]}>
+              Based on your HRV, sleep, soreness, and energy levels
+            </Text>
+          </>
+        )}
+      </View>
 
+      {/* Stats with period selector */}
       <View style={styles.card}>
         <View style={styles.toggleRow}>
-          {['D', 'W', 'M', 'All'].map((value) => (
+          {[{key:'D',label:'D'},{key:'W',label:'W'},{key:'M',label:'M'},{key:'All',label:'All'}].map(({key,label}) => (
             <Pressable
-              key={value}
-              onPress={() => setPeriod(value)}
-              style={[styles.toggleButton, period === value && styles.toggleButtonActive]}
+              key={key}
+              onPress={() => setPeriod(key)}
+              style={[styles.toggleButton, period === key && styles.toggleButtonActive]}
             >
-              <Text style={[styles.toggleText, period === value && styles.toggleTextActive]}>{value}</Text>
+              <Text style={[styles.toggleText, period === key && styles.toggleTextActive]}>{label}</Text>
             </Pressable>
           ))}
         </View>
 
-        <Text style={styles.bigMiles}>{periodMiles.toFixed(1)} mi</Text>
+        <Text style={styles.bigMiles}>{periodMiles.toFixed(1)}</Text>
+        <Text style={styles.bigMilesLabel}>Miles</Text>
 
         <View style={styles.statsRow}>
           <View style={styles.statBlock}>
@@ -447,6 +490,7 @@ export default function Dashboard({ navigation }) {
         </View>
       </View>
 
+      {/* 12-week trend chart — separate card */}
       <View style={styles.card}>
         <View style={styles.rowBetween}>
           <Text style={styles.sectionLabel}>Past 12 Weeks</Text>
@@ -504,44 +548,52 @@ export default function Dashboard({ navigation }) {
         </View>
       </View>
 
-      <Text style={styles.recentTitle}>Recent Activity</Text>
-      <View style={styles.activityList}>
-        {recentActivity.map((item, index) => (
-          <Pressable key={`${item._type}-${item.id || index}`} style={styles.activityCard}>
-            <View style={styles.rowBetween}>
-              <View style={styles.activityLeft}>
-                <View style={[styles.typePill, item._type === 'run' ? styles.runPill : styles.liftPill]}>
-                  <Text style={[styles.typePillText, item._type === 'run' ? styles.runPillText : styles.liftPillText]}>
-                    {item._type === 'run' ? 'Run' : 'Lift'}
-                  </Text>
+      {/* Recent Activity — matches web section card with yellow title border */}
+      <View style={styles.recentSection}>
+        <Text style={styles.recentTitle}>Recent Activity</Text>
+        <View style={styles.activityList}>
+          {recentActivity.map((item, index) => (
+            <Pressable
+              key={`${item._type}-${item.id || index}`}
+              style={[styles.activityCard, item._type === 'run' ? styles.activityCardRun : styles.activityCardLift]}
+            >
+              <View style={styles.rowBetween}>
+                <View style={{ flex: 1 }}>
+                  <View style={styles.rowBetween}>
+                    <View style={[styles.typePill, item._type === 'run' ? styles.runPill : styles.liftPill]}>
+                      <Text style={[styles.typePillText, item._type === 'run' ? styles.runPillText : styles.liftPillText]}>
+                        {item._type === 'run' ? 'Run' : 'Lift'}
+                      </Text>
+                    </View>
+                    <Text style={styles.activityDate}>
+                      {item._date ? item._date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '--'}
+                    </Text>
+                  </View>
+
+                  {item._type === 'run' ? (
+                    <View style={styles.activityStatsRow}>
+                      <Text style={styles.activityStat}>{getDistanceMiles(item).toFixed(2)} mi</Text>
+                      <Text style={styles.activityStat}>{formatPace(getDurationSeconds(item), getDistanceMiles(item))}</Text>
+                      <Text style={styles.activityStat}>{formatDuration(getDurationSeconds(item))}</Text>
+                      {getCalories(item) > 0 && <Text style={styles.activityStat}>{Math.round(getCalories(item))} cal</Text>}
+                    </View>
+                  ) : (
+                    <Text style={styles.activityText}>
+                      {item.exercise_name || item.name || 'Workout'}
+                      {item.sets ? `  ·  ${item.sets} sets · ${item.reps} reps · ${item.weight_lbs} lbs` : ''}
+                    </Text>
+                  )}
                 </View>
-
-                {item._type === 'run' ? (
-                  <Text style={styles.activityText}>
-                    {getDistanceMiles(item).toFixed(2)} mi - {formatPace(getDurationSeconds(item), getDistanceMiles(item))} -{' '}
-                    {formatDuration(getDurationSeconds(item))} - {Math.round(getCalories(item))} cal
-                  </Text>
-                ) : (
-                  <Text style={styles.activityText}>
-                    {item.name || item.exercise_name || 'Lift Session'} -
-                    {' '}{Array.isArray(item.sets) ? item.sets.length : Number(item.set_count || 0)} sets/
-                    {Array.isArray(item.sets)
-                      ? item.sets.reduce((sum, set) => sum + Number(set.reps || 0), 0)
-                      : Number(item.total_reps || 0)} reps
-                  </Text>
-                )}
               </View>
+            </Pressable>
+          ))}
 
-              <Text style={styles.activityDate}>{formatShortDate(getDateValue(item))}</Text>
+          {!recentActivity.length && (
+            <View style={styles.activityCard}>
+              <Text style={styles.emptyText}>No recent activity yet.</Text>
             </View>
-          </Pressable>
-        ))}
-
-        {!recentActivity.length && (
-          <View style={styles.activityCard}>
-            <Text style={styles.emptyText}>No recent activity yet.</Text>
-          </View>
-        )}
+          )}
+        </View>
       </View>
 
       <Pressable onPress={() => navigation.navigate('LogRun')} style={styles.logRunButton}>
@@ -761,8 +813,14 @@ const styles = StyleSheet.create({
   },
   bigMiles: {
     color: COLORS.text,
-    fontSize: 34,
-    fontWeight: '800'
+    fontSize: 48,
+    fontWeight: '900',
+    marginTop: 4
+  },
+  bigMilesLabel: {
+    color: COLORS.subtext,
+    fontSize: 13,
+    marginBottom: 8
   },
   statsRow: {
     flexDirection: 'row',
@@ -854,27 +912,49 @@ const styles = StyleSheet.create({
   dayMarkerActive: {
     color: '#000000'
   },
-  recentTitle: {
-    color: COLORS.text,
-    fontSize: 18,
-    fontWeight: '700',
-    marginBottom: 10,
-    marginTop: 2
-  },
-  activityList: {
+  recentSection: {
+    backgroundColor: COLORS.card,
+    borderColor: COLORS.border,
+    borderWidth: 1,
+    borderRadius: 16,
+    padding: 14,
     marginBottom: 12
   },
+  recentTitle: {
+    color: COLORS.text,
+    fontSize: 16,
+    fontWeight: '700',
+    marginBottom: 12,
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(234,179,8,0.45)'
+  },
+  activityList: {
+    gap: 8
+  },
   activityCard: {
-    backgroundColor: COLORS.card,
+    backgroundColor: COLORS.input,
     borderColor: COLORS.border,
     borderWidth: 1,
     borderRadius: 12,
     padding: 12,
-    marginBottom: 8
+    borderLeftWidth: 4
   },
-  activityLeft: {
-    flex: 1,
-    paddingRight: 8
+  activityCardRun: {
+    borderLeftColor: COLORS.accent
+  },
+  activityCardLift: {
+    borderLeftColor: COLORS.text
+  },
+  activityStatsRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 6
+  },
+  activityStat: {
+    color: COLORS.text,
+    fontSize: 13,
+    fontWeight: '700'
   },
   typePill: {
     borderRadius: 999,
