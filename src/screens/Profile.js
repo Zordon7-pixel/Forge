@@ -11,7 +11,7 @@ import {
   View
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { BookOpen, ChevronRight, Eye, HeartPulse, Settings as SettingsIcon } from 'lucide-react-native';
+import { Activity, BookOpen, ChevronRight, Eye, HeartPulse, Settings as SettingsIcon } from 'lucide-react-native';
 
 import api from '../lib/api';
 import { AuthContext } from '../context/AuthContext';
@@ -368,6 +368,21 @@ export default function Profile({ navigation }) {
             <Text style={styles.menuText}>Injury Log</Text>
           </View>
           <ChevronRight size={16} color="#94a3b8" />
+        </Pressable>
+      </View>
+
+      {/* Connected Devices — Garmin */}
+      <View style={styles.sectionCard}>
+        <Text style={styles.sectionLabel}>CONNECTED DEVICES</Text>
+        <Pressable style={styles.menuRow} onPress={() => navigation.navigate('GarminSync')}>
+          <View style={styles.menuLeft}>
+            <Activity size={16} color="#94a3b8" />
+            <Text style={styles.menuText}>Garmin Connect</Text>
+          </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#94a3b8' }} />
+            <ChevronRight size={16} color="#94a3b8" />
+          </View>
         </Pressable>
       </View>
 
