@@ -4,6 +4,7 @@ import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 
 import { Plus, Save, Trash2 } from 'lucide-react-native';
 
 import api from '../lib/api';
+import AppHeader from '../components/AppHeader';
 import { syncLiftToHealth } from '../lib/health';
 import WorkoutBroadcast from '../services/WorkoutBroadcast';
 
@@ -114,6 +115,7 @@ export default function LogLift({ navigation }) {
 
   return (
     <ScrollView style={[styles.container, { paddingTop: insets.top }]} contentContainerStyle={styles.content}>
+      <AppHeader />
       <Text style={styles.title}>Start Workout</Text>
       <Text style={styles.subtitle}>Select the muscle groups you are targeting today</Text>
 

@@ -4,6 +4,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 
 import api from '../lib/api';
+import AppHeader from '../components/AppHeader';
 
 const COLORS = {
   background: '#0f1117',
@@ -80,6 +81,7 @@ export default function RunHub({ navigation }) {
 
   return (
     <ScrollView style={[styles.container, { paddingTop: insets.top }]} contentContainerStyle={styles.content}>
+      <AppHeader />
       <View style={styles.headerCard}>
         <Text style={styles.title}>Run Hub</Text>
         <Text style={styles.subtitle}>Your last run translated into runner language.</Text>

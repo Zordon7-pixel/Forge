@@ -605,14 +605,6 @@ export default function Dashboard({ navigation }) {
         </View>
       </View>
 
-      <Pressable onPress={() => navigation.navigate('LogRun')} style={styles.logRunButton}>
-        <Text style={styles.logRunButtonText}>Log Run</Text>
-      </Pressable>
-
-      <Pressable onPress={() => navigation.navigate('LogLift')} style={styles.logLiftButton}>
-        <Text style={styles.logLiftButtonText}>Log Lift</Text>
-      </Pressable>
-
       <View style={styles.footerPad} />
     </ScrollView>
   );

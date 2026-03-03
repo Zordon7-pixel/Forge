@@ -5,6 +5,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { Award } from 'lucide-react-native';
 
 import api from '../lib/api';
+import AppHeader from '../components/AppHeader';
 
 const COLORS = {
   background: '#0f1117',
@@ -142,6 +143,7 @@ export default function Challenges() {
     <ScrollView
       style={[styles.container, { paddingTop: insets.top }]}
       contentContainerStyle={styles.content}
+      stickyHeaderIndices={[0]}
       refreshControl={<RefreshControl tintColor="#EAB308" refreshing={refreshing} onRefresh={load} />}
     >
       <Text style={styles.title}>Challenges</Text>

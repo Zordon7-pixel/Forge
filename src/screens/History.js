@@ -6,6 +6,7 @@ import { Pencil, Trash2 } from 'lucide-react-native';
 import Svg, { Line, Polyline, Rect } from 'react-native-svg';
 
 import api from '../lib/api';
+import AppHeader from '../components/AppHeader';
 
 const COLORS = {
   background: '#0f1117',
@@ -242,6 +243,7 @@ export default function History() {
     <ScrollView
       style={[styles.container, { paddingTop: insets.top }]}
       contentContainerStyle={styles.content}
+      stickyHeaderIndices={[0]}
       refreshControl={<RefreshControl tintColor="#EAB308" refreshing={refreshing} onRefresh={load} />}
     >
       <View style={styles.headerCard}>

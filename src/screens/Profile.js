@@ -14,6 +14,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { Activity, BookOpen, ChevronRight, Eye, HeartPulse, Settings as SettingsIcon } from 'lucide-react-native';
 
 import api from '../lib/api';
+import AppHeader from '../components/AppHeader';
 import { AuthContext } from '../context/AuthContext';
 
 const COLORS = {
@@ -161,6 +162,7 @@ export default function Profile({ navigation }) {
 
   return (
     <ScrollView style={[styles.container, { paddingTop: insets.top }]} contentContainerStyle={styles.content}>
+      <AppHeader />
       <View style={styles.headerCard}>
         <View style={styles.avatar}>
           <Text style={styles.avatarText}>{initials}</Text>
