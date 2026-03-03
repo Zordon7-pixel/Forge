@@ -1,10 +1,21 @@
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { Calendar, Home, Plus, User } from 'lucide-react-native';
+import {
+  Activity,
+  Clock3,
+  Dumbbell,
+  LayoutDashboard,
+  Trophy,
+  User,
+  Users
+} from 'lucide-react-native';
 
 import Dashboard from '../screens/Dashboard';
+import RunHub from '../screens/RunHub';
+import LogLift from '../screens/LogLift';
+import Challenges from '../screens/Challenges';
+import Community from '../screens/Community';
 import History from '../screens/History';
-import LogRun from '../screens/LogRun';
 import Profile from '../screens/Profile';
 
 const Tab = createBottomTabNavigator();
@@ -20,35 +31,61 @@ export default function MainTabs() {
       screenOptions={{
         headerShown: false,
         tabBarStyle: {
-          backgroundColor: '#171c27',
+          backgroundColor: '#0f1117',
           borderTopColor: '#2c3345',
-          height: 64,
+          borderTopWidth: 1,
+          height: 66,
           paddingTop: 8,
           paddingBottom: 8
         },
         tabBarActiveTintColor: '#EAB308',
-        tabBarInactiveTintColor: '#94a3b8'
+        tabBarInactiveTintColor: '#64748b',
+        tabBarLabelStyle: {
+          fontSize: 11,
+          fontWeight: '600'
+        }
       }}
     >
       <Tab.Screen
-        name="Dashboard"
+        name="Home"
         component={Dashboard}
         options={{
-          tabBarIcon: ({ color }) => <Home color={color} {...iconProps} />
+          tabBarIcon: ({ color }) => <LayoutDashboard color={color} {...iconProps} />
         }}
       />
       <Tab.Screen
-        name="Log"
-        component={LogRun}
+        name="Run"
+        component={RunHub}
         options={{
-          tabBarIcon: ({ color }) => <Plus color={color} {...iconProps} />
+          tabBarIcon: ({ color }) => <Activity color={color} {...iconProps} />
+        }}
+      />
+      <Tab.Screen
+        name="Lift"
+        component={LogLift}
+        options={{
+          tabBarIcon: ({ color }) => <Dumbbell color={color} {...iconProps} />
+        }}
+      />
+      <Tab.Screen
+        name="Challenges"
+        component={Challenges}
+        options={{
+          tabBarIcon: ({ color }) => <Trophy color={color} {...iconProps} />
+        }}
+      />
+      <Tab.Screen
+        name="Community"
+        component={Community}
+        options={{
+          tabBarIcon: ({ color }) => <Users color={color} {...iconProps} />
         }}
       />
       <Tab.Screen
         name="History"
         component={History}
         options={{
-          tabBarIcon: ({ color }) => <Calendar color={color} {...iconProps} />
+          tabBarIcon: ({ color }) => <Clock3 color={color} {...iconProps} />
         }}
       />
       <Tab.Screen

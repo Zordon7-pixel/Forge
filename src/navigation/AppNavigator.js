@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { NavigationContainer, DefaultTheme } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 
@@ -9,6 +9,8 @@ import Register from '../screens/Register';
 import LogRun from '../screens/LogRun';
 import LogLift from '../screens/LogLift';
 import GarminSync from '../screens/GarminSync';
+import Settings from '../screens/Settings';
+import Journal from '../screens/Journal';
 import { clearToken, getToken, setToken } from '../lib/storage';
 
 const Stack = createStackNavigator();
@@ -62,7 +64,7 @@ export default function AppNavigator() {
 
   if (loading) {
     return (
-      <View className="flex-1 items-center justify-center bg-forge-bg">
+      <View style={styles.loadingWrap}>
         <ActivityIndicator color="#EAB308" size="large" />
       </View>
     );
@@ -85,6 +87,8 @@ export default function AppNavigator() {
               <Stack.Screen name="LogRun" component={LogRun} options={{ title: 'Log Run' }} />
               <Stack.Screen name="LogLift" component={LogLift} options={{ title: 'Log Lift' }} />
               <Stack.Screen name="GarminSync" component={GarminSync} options={{ title: 'Garmin Connect' }} />
+              <Stack.Screen name="Settings" component={Settings} options={{ title: 'Settings' }} />
+              <Stack.Screen name="Journal" component={Journal} options={{ title: 'Journal' }} />
             </>
           ) : (
             <>
@@ -97,3 +101,12 @@ export default function AppNavigator() {
     </AuthContext.Provider>
   );
 }
+
+const styles = StyleSheet.create({
+  loadingWrap: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#0f1117'
+  }
+});
