@@ -116,17 +116,24 @@ export default function Dashboard({ navigation }) {
   const [user, setUser] = useState(null);
   const [stats, setStats] = useState(null);
   const [readiness, setReadiness] = useState('--');
+  const [compliance, setCompliance] = useState(null);
+  const [activeInjury, setActiveInjury] = useState(null);
+  const [injuryDismissed, setInjuryDismissed] = useState(false);
+  const [checkedInToday, setCheckedInToday] = useState(false);
 
   const loadDashboard = useCallback(async () => {
     setRefreshing(true);
     try {
-      const [runsRes, liftsRes, racesRes, meRes, statsRes, readinessRes] = await Promise.all([
+      const [runsRes, liftsRes, racesRes, meRes, statsRes, readinessRes, complianceRes, injuryRes, checkinRes] = await Promise.all([
         api.get('/runs').catch(() => ({ data: [] })),
         api.get('/lifts').catch(() => ({ data: [] })),
         api.get('/races').catch(() => ({ data: { races: [] } })),
         api.get('/auth/me').catch(() => ({ data: {} })),
         api.get('/auth/me/stats').catch(() => ({ data: {} })),
-        api.get('/checkin/streak').catch(() => ({ data: null }))
+        api.get('/checkin/streak').catch(() => ({ data: null })),
+        api.get('/plans/compliance').catch(() => ({ data: null })),
+        api.get('/injury/active').catch(() => ({ data: { injuries: [] } })),
+        api.get('/checkin/today').catch(() => ({ data: null }))
       ]);
 
       const runsData = Array.isArray(runsRes?.data) ? runsRes.data : runsRes?.data?.runs || [];
@@ -146,6 +153,10 @@ export default function Dashboard({ navigation }) {
 
       const score = readinessData?.readiness ?? readinessData?.readiness_score ?? readinessData?.score;
       setReadiness(Number.isFinite(Number(score)) ? String(score) : '--');
+      setCompliance(complianceRes?.data || null);
+      setActiveInjury((injuryRes?.data?.injuries || [])[0] || null);
+      setInjuryDismissed(false);
+      setCheckedInToday(!!checkinRes?.data);
     } finally {
       setRefreshing(false);
     }
@@ -317,6 +328,66 @@ export default function Dashboard({ navigation }) {
         </Pressable>
       </View>
 
+      {/* Injury / Recovery Mode Banner */}
+      {activeInjury && !injuryDismissed && (
+        <View style={styles.injuryBanner}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.injuryTitle}>
+              Recovery Mode — {activeInjury.body_part || 'Injury'} — Est. return: {activeInjury.date || '--'}
+            </Text>
+            <Text style={styles.injurySubtext}>
+              Your plan has been adjusted for recovery. Focus on PT and low-impact activity.
+            </Text>
+          </View>
+          <Pressable onPress={() => setInjuryDismissed(true)} style={styles.injuryDismiss}>
+            <Text style={{ color: '#0f1117', fontSize: 16, fontWeight: '700' }}>✕</Text>
+          </Pressable>
+        </View>
+      )}
+
+      {/* This Week + compliance progress */}
+      {compliance ? (
+        <View style={styles.card}>
+          <Text style={styles.metaLabel}>This Week</Text>
+          <Text style={styles.weekSummaryText}>
+            {compliance.completed}/{compliance.planned} sessions — {compliance.score}%
+          </Text>
+          <View style={styles.progressTrack}>
+            <View style={[styles.progressFill, { width: `${Math.min(compliance.score, 100)}%` }]} />
+          </View>
+        </View>
+      ) : (
+        <View style={styles.card}>
+          <Text style={styles.metaLabel}>This Week</Text>
+          <Text style={styles.weekSummaryText}>
+            {weeklySessions}/{plannedSessions} sessions — {weekPct}%
+          </Text>
+          <View style={styles.progressTrack}>
+            <View style={[styles.progressFill, { width: `${Math.min(weekPct, 100)}%` }]} />
+          </View>
+        </View>
+      )}
+
+      {/* Quick Check-in CTA */}
+      {!checkedInToday && (
+        <Pressable style={styles.checkinCard} onPress={() => {}}>
+          <Text style={styles.checkinTitle}>Quick check-in — 3 taps</Text>
+          <Text style={styles.checkinSub}>Help me adjust today's plan around your day</Text>
+        </Pressable>
+      )}
+
+      {/* Ready to Run */}
+      <View style={styles.warmupCard}>
+        <Text style={styles.warmupTitle}>Ready to Run?</Text>
+        <Text style={styles.warmupSub}>Dynamic warm-up reduces injury risk and improves performance.</Text>
+        <Pressable style={styles.warmupButton} onPress={() => navigation.navigate('Run')}>
+          <Text style={styles.warmupButtonText}>Start Warm-Up</Text>
+        </Pressable>
+        <Pressable onPress={() => navigation.navigate('LogRun')}>
+          <Text style={styles.warmupSkip}>Skip warm-up</Text>
+        </Pressable>
+      </View>
+
       {upcomingRace && (
         <View style={styles.nextRaceCard}>
           <Text style={styles.metaLabel}>Next Race</Text>
@@ -326,13 +397,6 @@ export default function Dashboard({ navigation }) {
           </Text>
         </View>
       )}
-
-      <View style={styles.card}>
-        <Text style={styles.metaLabel}>This Week</Text>
-        <Text style={styles.weekSummaryText}>
-          {weeklySessions}/{plannedSessions} sessions - {weekPct}%
-        </Text>
-      </View>
 
       <View style={styles.card}>
         <View style={styles.toggleRow}>
@@ -526,6 +590,102 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     padding: 14,
     marginBottom: 12
+  },
+  injuryBanner: {
+    backgroundColor: 'rgba(234,179,8,0.2)',
+    borderWidth: 1,
+    borderColor: '#EAB308',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 12,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+  },
+  injuryTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0f1117',
+    marginBottom: 2,
+  },
+  injurySubtext: {
+    fontSize: 11,
+    color: '#0f1117',
+  },
+  injuryDismiss: {
+    padding: 4,
+  },
+  progressTrack: {
+    height: 6,
+    backgroundColor: '#1e2433',
+    borderRadius: 3,
+    marginTop: 8,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: 6,
+    backgroundColor: '#EAB308',
+    borderRadius: 3,
+  },
+  checkinCard: {
+    backgroundColor: 'rgba(234,179,8,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(234,179,8,0.3)',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 12,
+  },
+  checkinTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#EAB308',
+    marginBottom: 2,
+  },
+  checkinSub: {
+    fontSize: 12,
+    color: '#94a3b8',
+  },
+  warmupCard: {
+    backgroundColor: '#171c27',
+    borderWidth: 1,
+    borderColor: '#2c3345',
+    borderRadius: 16,
+    padding: 24,
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  warmupTitle: {
+    fontSize: 22,
+    fontWeight: '900',
+    color: '#FFFFFF',
+    marginBottom: 6,
+  },
+  warmupSub: {
+    fontSize: 13,
+    color: '#94a3b8',
+    textAlign: 'center',
+    marginBottom: 24,
+    lineHeight: 18,
+  },
+  warmupButton: {
+    width: 110,
+    height: 110,
+    borderRadius: 55,
+    backgroundColor: '#EAB308',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  warmupButtonText: {
+    fontSize: 12,
+    fontWeight: '900',
+    color: '#000',
+    textAlign: 'center',
+  },
+  warmupSkip: {
+    fontSize: 14,
+    color: '#94a3b8',
+    paddingVertical: 8,
   },
   nextRaceCard: {
     backgroundColor: COLORS.card,
