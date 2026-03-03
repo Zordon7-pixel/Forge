@@ -129,20 +129,27 @@ export default function Profile({ navigation }) {
   const onSave = async () => {
     try {
       setSaving(true);
-      await api.put('/auth/me/profile', {
-        name: form.name,
-        age: form.age === '' ? null : Number(form.age),
-        weight_lbs: form.weight_lbs === '' ? null : Number(form.weight_lbs),
-        sex: form.sex,
-        fitness_level: form.fitness_level,
-        goals: form.goals,
-        primary_goal: form.goals[0] || 'general_fitness',
-        weekly_miles: form.weekly_miles === '' ? null : Number(form.weekly_miles),
-        coach_personality: form.coach_personality,
-        injury_mode: form.injury_mode,
-        injury_status: form.injury_mode ? form.injury_status : 'none',
-        injury_detail: form.injury_mode ? form.injury_detail : ''
-      });
+      await Promise.all([
+        api.put('/auth/me/profile', {
+          name: form.name,
+          age: form.age === '' ? null : Number(form.age),
+          weight_lbs: form.weight_lbs === '' ? null : Number(form.weight_lbs),
+          sex: form.sex,
+          fitness_level: form.fitness_level,
+          goals: form.goals,
+          primary_goal: form.goals[0] || 'general_fitness',
+          weekly_miles: form.weekly_miles === '' ? null : Number(form.weekly_miles),
+          coach_personality: form.coach_personality,
+          injury_status: form.injury_mode ? form.injury_status : 'none',
+          injury_detail: form.injury_mode ? form.injury_detail : ''
+        }),
+        api.post('/auth/injury', {
+          injury_mode: form.injury_mode,
+          injury_description: form.injury_mode ? form.injury_detail : '',
+          injury_date: '',
+          injury_limitations: ''
+        })
+      ]);
       Alert.alert('Saved', 'Profile updated.');
       loadProfile();
     } catch (error) {
