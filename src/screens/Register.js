@@ -52,7 +52,7 @@ export default function Register({ navigation }) {
           <Text style={styles.label}>Name</Text>
           <TextInput
             style={styles.input}
-            placeholder="Bryan Madera"
+            placeholder="Your name"
             placeholderTextColor="#64748b"
             autoCapitalize="words"
             value={name}
