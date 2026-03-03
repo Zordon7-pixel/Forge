@@ -25,6 +25,22 @@ export default function LogLift({ navigation }) {
   const [name, setName] = useState('');
   const [sets, setSets] = useState([createSet()]);
   const [saving, setSaving] = useState(false);
+  const [liftMode, setLiftMode] = useState('ai');
+  const [lastLift, setLastLift] = useState(null);
+  const [aiRec, setAiRec] = useState(null);
+  const [aiLoading, setAiLoading] = useState(true);
+
+  useEffect(() => {
+    api.get('/lifts').then(res => {
+      const lifts = Array.isArray(res.data) ? res.data : res.data?.lifts || [];
+      setLastLift(lifts[0] || null);
+    }).catch(() => {});
+    api.get('/ai/workout-recommendation?date=today').then(res => {
+      setAiRec(res.data?.recommendation || null);
+    }).catch(() => {
+      setAiRec(null);
+    }).finally(() => setAiLoading(false));
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -98,10 +114,82 @@ export default function LogLift({ navigation }) {
 
   return (
     <ScrollView style={[styles.container, { paddingTop: insets.top }]} contentContainerStyle={styles.content}>
-      <Text style={styles.title}>Log Lift</Text>
-      <Text style={styles.subtitle}>Record exercise sets, reps, and weight.</Text>
+      <Text style={styles.title}>Start Workout</Text>
+      <Text style={styles.subtitle}>Select the muscle groups you are targeting today</Text>
 
-      <View style={styles.card}>
+      {/* Last Logged Lift */}
+      {lastLift && (
+        <View style={styles.lastLiftCard}>
+          <Text style={styles.lastLiftLabel}>Last Logged Lift</Text>
+          <Text style={styles.lastLiftName}>{lastLift.exercise_name || 'Lift'}</Text>
+          <Text style={styles.lastLiftStats}>
+            {lastLift.sets} x {lastLift.reps} @ {lastLift.weight_lbs} lbs
+          </Text>
+          {lastLift.weight_lbs && (
+            <Text style={styles.lastLiftTip}>
+              Volume dipped from last session — try adding 5 lbs next time.
+            </Text>
+          )}
+        </View>
+      )}
+
+      {/* Manual | AI Recommends tabs */}
+      <View style={styles.modeTabs}>
+        {['Manual', 'AI Recommends'].map((mode) => {
+          const key = mode === 'AI Recommends' ? 'ai' : 'Manual';
+          const active = liftMode === key;
+          return (
+            <Pressable
+              key={mode}
+              onPress={() => setLiftMode(key)}
+              style={[styles.modeTab, active && styles.modeTabActive]}
+            >
+              <Text style={[styles.modeTabText, active && styles.modeTabTextActive]}>{mode}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
+      {/* AI Recommendation Card */}
+      {liftMode === 'ai' && (
+        <View style={styles.aiCard}>
+          {aiLoading ? (
+            <Text style={styles.aiLoadingText}>Generating your workout...</Text>
+          ) : aiRec ? (
+            <>
+              <View style={styles.aiCardHeader}>
+                <Text style={styles.aiCardTitle}>
+                  {aiRec.workoutName || 'AI Recommended Workout'}
+                </Text>
+                <View style={styles.forgeBadge}>
+                  <Text style={styles.forgeBadgeText}>FORGE</Text>
+                </View>
+              </View>
+              {aiRec.warmup ? <Text style={styles.aiSection}><Text style={styles.aiSectionLabel}>Warmup: </Text>{aiRec.warmup}</Text> : null}
+              {aiRec.main?.length > 0 && (
+                <Text style={styles.aiSection}>
+                  <Text style={styles.aiSectionLabel}>Main: </Text>
+                  {aiRec.main.map(e => typeof e === 'string' ? e : e.exercise || e.name || '').join(', ')}
+                </Text>
+              )}
+              {aiRec.recovery ? <Text style={styles.aiSection}><Text style={styles.aiSectionLabel}>Recovery: </Text>{aiRec.recovery}</Text> : null}
+              {aiRec.notes && <Text style={styles.aiNotes}>{aiRec.notes}</Text>}
+              <Pressable style={styles.aiStartButton} onPress={() => {
+                if (aiRec.workoutName) setName(aiRec.workoutName);
+                setLiftMode('Manual');
+              }}>
+                <Text style={styles.aiStartButtonText}>Start Workout</Text>
+              </Pressable>
+            </>
+          ) : (
+            <Text style={styles.aiLoadingText}>No recommendation available. Try Manual mode.</Text>
+          )}
+        </View>
+      )}
+
+      {/* Manual Form */}
+      {liftMode === 'Manual' && (
+        <View style={styles.card}>
         <Text style={styles.label}>Exercise Name</Text>
         <TextInput
           value={name}
@@ -155,6 +243,7 @@ export default function LogLift({ navigation }) {
         <Save size={18} color={COLORS.background} />
         <Text style={styles.primaryButtonText}>{saving ? 'Saving...' : 'Save Workout'}</Text>
       </Pressable>
+      )}
     </ScrollView>
   );
 }
@@ -169,6 +258,72 @@ const styles = StyleSheet.create({
     paddingTop: 24,
     paddingBottom: 32
   },
+  lastLiftCard: {
+    backgroundColor: COLORS.card,
+    borderColor: COLORS.border,
+    borderWidth: 1,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 12
+  },
+  lastLiftLabel: { fontSize: 11, color: COLORS.subtext, marginBottom: 4 },
+  lastLiftName: { fontSize: 15, fontWeight: '700', color: COLORS.text },
+  lastLiftStats: { fontSize: 13, color: COLORS.subtext, marginTop: 4 },
+  lastLiftTip: { fontSize: 12, color: COLORS.subtext, marginTop: 6, lineHeight: 18 },
+  modeTabs: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 14
+  },
+  modeTab: {
+    paddingVertical: 8,
+    paddingHorizontal: 18,
+    borderRadius: 999,
+    backgroundColor: COLORS.card,
+    borderWidth: 1,
+    borderColor: COLORS.border
+  },
+  modeTabActive: {
+    backgroundColor: COLORS.accent,
+    borderColor: COLORS.accent
+  },
+  modeTabText: { fontSize: 13, fontWeight: '700', color: COLORS.subtext },
+  modeTabTextActive: { color: '#000' },
+  aiCard: {
+    borderWidth: 1.5,
+    borderColor: COLORS.accent,
+    borderStyle: 'dashed',
+    borderRadius: 16,
+    padding: 18,
+    marginBottom: 14,
+    backgroundColor: COLORS.card
+  },
+  aiCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12
+  },
+  aiCardTitle: { fontSize: 15, fontWeight: '700', color: COLORS.text, flex: 1, marginRight: 8 },
+  forgeBadge: {
+    backgroundColor: COLORS.accent,
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 3
+  },
+  forgeBadgeText: { fontSize: 10, fontWeight: '900', color: '#000' },
+  aiSection: { fontSize: 13, color: COLORS.text, marginBottom: 8, lineHeight: 20 },
+  aiSectionLabel: { fontWeight: '700', fontStyle: 'italic' },
+  aiNotes: { fontSize: 12, color: COLORS.subtext, marginTop: 4, marginBottom: 12, lineHeight: 18 },
+  aiLoadingText: { fontSize: 13, color: COLORS.subtext, textAlign: 'center', paddingVertical: 12 },
+  aiStartButton: {
+    backgroundColor: COLORS.accent,
+    borderRadius: 12,
+    paddingVertical: 13,
+    alignItems: 'center',
+    marginTop: 8
+  },
+  aiStartButtonText: { fontSize: 15, fontWeight: '700', color: '#000' },
   title: {
     color: COLORS.text,
     fontSize: 30,

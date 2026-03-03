@@ -82,9 +82,19 @@ export default function Community() {
       const liked = Boolean(res?.data?.liked);
       const likesCount = Number(res?.data?.likes_count || 0);
       setFeed((prev) => prev.map((item) => (item.id === activityId ? { ...item, liked, likes_count: likesCount } : item)));
-    } catch {
-      // no-op
-    }
+    } catch {}
+  };
+
+  const toggleFollow = async (userId, isFollowing) => {
+    try {
+      if (isFollowing) {
+        await api.delete(`/social/unfollow/${userId}`);
+      } else {
+        await api.post(`/social/follow/${userId}`);
+      }
+      setSuggestedUsers((prev) => prev.map((u) => u.id === userId ? { ...u, is_following: !isFollowing } : u));
+      setFeed((prev) => prev.map((item) => item.user_id === userId ? { ...item, is_following: !isFollowing } : item));
+    } catch {}
   };
 
   return (
@@ -105,10 +115,28 @@ export default function Community() {
 
       {tab === 'Feed' && (
         <>
-          <View style={styles.quoteCard}>
-            <Text style={styles.quoteLabel}>Motivation</Text>
-            <Text style={styles.quoteText}>{quote}</Text>
-          </View>
+          {/* Athletes to Follow */}
+          {suggestedUsers.length > 0 && (
+            <View style={styles.athletesCard}>
+              <Text style={styles.athletesTitle}>Athletes to Follow</Text>
+              {suggestedUsers.map((user, index) => (
+                <View key={`su-${user.id || index}`} style={styles.athleteRow}>
+                  <View style={styles.avatarSmall}>
+                    <Text style={styles.avatarText}>{getInitials(user.name)}</Text>
+                  </View>
+                  <Text style={styles.athleteName}>{user.name || 'Athlete'}</Text>
+                  <Pressable
+                    style={[styles.followButton, user.is_following && styles.followingButton]}
+                    onPress={() => toggleFollow(user.id, Boolean(user.is_following))}
+                  >
+                    <Text style={[styles.followButtonText, user.is_following && styles.followingButtonText]}>
+                      {user.is_following ? 'Following' : 'Follow'}
+                    </Text>
+                  </Pressable>
+                </View>
+              ))}
+            </View>
+          )}
 
           {feed.map((item, index) => (
             <View key={`feed-${item.id || index}`} style={styles.card}>
@@ -120,6 +148,16 @@ export default function Community() {
                   <Text style={styles.feedUser}>{item.user_name || item.user?.name || 'Athlete'}</Text>
                   <Text style={styles.feedType}>{item.type || 'activity'}</Text>
                 </View>
+                {item.user_id && (
+                  <Pressable
+                    style={[styles.followButton, item.is_following && styles.followingButton]}
+                    onPress={() => toggleFollow(item.user_id, Boolean(item.is_following))}
+                  >
+                    <Text style={[styles.followButtonText, item.is_following && styles.followingButtonText]}>
+                      {item.is_following ? 'Following' : 'Follow'}
+                    </Text>
+                  </Pressable>
+                )}
               </View>
 
               <Text style={styles.feedStats}>
@@ -366,15 +404,39 @@ const styles = StyleSheet.create({
     marginTop: 6,
     marginBottom: 8
   },
+  athletesCard: {
+    backgroundColor: COLORS.card,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 12
+  },
+  athletesTitle: { fontSize: 13, fontWeight: '700', color: COLORS.text, marginBottom: 10 },
+  athleteRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+    gap: 10
+  },
+  athleteName: { flex: 1, color: COLORS.text, fontSize: 13, fontWeight: '600' },
   followButton: {
     backgroundColor: COLORS.accent,
     borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 7
+    paddingHorizontal: 12,
+    paddingVertical: 6
   },
   followButtonText: {
     color: '#000000',
     fontSize: 12,
     fontWeight: '700'
+  },
+  followingButton: {
+    backgroundColor: COLORS.input,
+    borderWidth: 1,
+    borderColor: COLORS.border
+  },
+  followingButtonText: {
+    color: COLORS.text
   }
 });
