@@ -1,5 +1,6 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import {
+  Image,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -348,13 +349,16 @@ export default function Dashboard({ navigation }) {
       refreshControl={<RefreshControl tintColor="#EAB308" refreshing={refreshing} onRefresh={loadDashboard} />}
     >
       <View style={styles.headerRow}>
-        {/* Left: FORGE logo */}
-        <View style={styles.logoMark} />
+        {/* Left: FORGE logo image */}
+        <Image
+          source={require('../../assets/icon.png')}
+          style={styles.logoMark}
+        />
 
-        {/* Center: Training Readiness */}
+        {/* Center: READINESS label + yellow bar */}
         <View style={styles.readinessCenter}>
           <Text style={styles.readinessLabel}>READINESS</Text>
-          <Text style={styles.readinessScore}>{readiness}</Text>
+          <View style={styles.readinessBar} />
         </View>
 
         {/* Right: icons */}
@@ -443,18 +447,47 @@ export default function Dashboard({ navigation }) {
         </Pressable>
       </View>
 
-      {/* Training Readiness card — circular gauge */}
+      {/* Training Readiness — text unlock prompt or gauge */}
+      {readiness === '--' ? (
+        <Text style={styles.readinessUnlock}>
+          Complete your daily check-in and sync your watch to unlock
+        </Text>
+      ) : (
+        <View style={styles.card}>
+          <ReadinessGauge score={readiness} />
+          <Text style={[styles.metaLabel, { textAlign: 'center', marginTop: 8 }]}>
+            Based on your HRV, sleep, soreness, and energy levels
+          </Text>
+        </View>
+      )}
+
+      {/* 7-day calendar — BEFORE stats */}
       <View style={styles.card}>
-        {readiness === '--' ? (
-          <Text style={styles.metaLabel}>Complete your daily check-in and sync your watch to unlock your Training Readiness score</Text>
-        ) : (
-          <>
-            <ReadinessGauge score={readiness} />
-            <Text style={[styles.metaLabel, { textAlign: 'center', marginTop: 8 }]}>
-              Based on your HRV, sleep, soreness, and energy levels
-            </Text>
-          </>
-        )}
+        <Text style={styles.metaLabel}>This Week</Text>
+        <View style={styles.calendarRow}>
+          {calendarDays.map((dayItem, index) => {
+            let markerText = '';
+            if (dayItem.hasRun && dayItem.hasLift) markerText = 'R+L';
+            else if (dayItem.hasRun) markerText = 'R';
+            else if (dayItem.hasLift) markerText = 'L';
+            const dayAbbr = dayItem.day.toLocaleDateString('en-US', { weekday: 'short' }).slice(0, 3);
+            return (
+              <View key={`${dayItem.day.toISOString()}-${index}`} style={styles.dayCol}>
+                <Text style={styles.dayLabel}>{dayAbbr}</Text>
+                <View
+                  style={[
+                    styles.dayCircle,
+                    markerText ? styles.dayCircleActive : null,
+                    dayItem.isToday ? styles.dayCircleToday : null,
+                    markerText === 'R+L' ? styles.dayCircleWide : null
+                  ]}
+                >
+                  <Text style={[styles.dayMarker, markerText ? styles.dayMarkerActive : null]}>{markerText || '·'}</Text>
+                </View>
+              </View>
+            );
+          })}
+        </View>
       </View>
 
       {/* Stats with period selector */}
@@ -470,9 +503,12 @@ export default function Dashboard({ navigation }) {
             </Pressable>
           ))}
         </View>
+        <Text style={styles.periodLabel}>
+          {period === 'D' ? 'Today' : period === 'W' ? 'This Week' : period === 'M' ? 'This Month' : 'All Time'}
+        </Text>
 
         <Text style={styles.bigMiles}>{periodMiles.toFixed(1)}</Text>
-        <Text style={styles.bigMilesLabel}>Miles</Text>
+        <Text style={styles.bigMilesLabel}>Mis</Text>
 
         <View style={styles.statsRow}>
           <View style={styles.statBlock}>
@@ -516,33 +552,6 @@ export default function Dashboard({ navigation }) {
               <Text key={point.start.toISOString()} style={styles.axisLabel}>
                 {showLabel ? point.label : ' '}
               </Text>
-            );
-          })}
-        </View>
-      </View>
-
-      <View style={styles.card}>
-        <View style={styles.calendarRow}>
-          {calendarDays.map((dayItem, index) => {
-            let markerText = '';
-            if (dayItem.hasRun && dayItem.hasLift) markerText = 'R+L';
-            else if (dayItem.hasRun) markerText = 'R';
-            else if (dayItem.hasLift) markerText = 'L';
-
-            return (
-              <View key={`${dayItem.day.toISOString()}-${index}`} style={styles.dayCol}>
-                <Text style={styles.dayLabel}>{DAY_LABELS[index]}</Text>
-                <View
-                  style={[
-                    styles.dayCircle,
-                    markerText ? styles.dayCircleActive : null,
-                    dayItem.isToday ? styles.dayCircleToday : null,
-                    markerText === 'R+L' ? styles.dayCircleWide : null
-                  ]}
-                >
-                  <Text style={[styles.dayMarker, markerText ? styles.dayMarkerActive : null]}>{markerText}</Text>
-                </View>
-              </View>
             );
           })}
         </View>
@@ -627,8 +636,7 @@ const styles = StyleSheet.create({
   logoMark: {
     width: 36,
     height: 36,
-    borderRadius: 10,
-    backgroundColor: COLORS.accent
+    borderRadius: 10
   },
   readinessCenter: {
     alignItems: 'center',
@@ -639,12 +647,27 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#64748b',
     letterSpacing: 1,
-    textTransform: 'uppercase'
+    textTransform: 'uppercase',
+    marginBottom: 3
   },
-  readinessScore: {
-    fontSize: 22,
-    fontWeight: '900',
-    color: COLORS.accent
+  readinessBar: {
+    width: 32,
+    height: 3,
+    borderRadius: 2,
+    backgroundColor: COLORS.accent
+  },
+  readinessUnlock: {
+    fontSize: 13,
+    color: COLORS.subtext,
+    textAlign: 'left',
+    marginBottom: 12,
+    lineHeight: 18
+  },
+  periodLabel: {
+    fontSize: 12,
+    color: COLORS.subtext,
+    marginBottom: 4,
+    marginTop: 2
   },
   headerIcons: {
     flexDirection: 'row',
@@ -828,7 +851,11 @@ const styles = StyleSheet.create({
     gap: 16
   },
   statBlock: {
-    flex: 1
+    flex: 1,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 8,
+    padding: 8
   },
   statValue: {
     color: COLORS.text,
@@ -967,7 +994,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.accent
   },
   liftPill: {
-    backgroundColor: COLORS.border
+    backgroundColor: 'rgba(139,92,246,0.15)'
   },
   typePillText: {
     fontSize: 11,
@@ -977,7 +1004,7 @@ const styles = StyleSheet.create({
     color: '#000000'
   },
   liftPillText: {
-    color: COLORS.subtext
+    color: '#a78bfa'
   },
   activityText: {
     color: COLORS.text,
