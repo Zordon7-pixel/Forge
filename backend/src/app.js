@@ -79,6 +79,9 @@ app.use('/api/pt',          require('./routes/pt'));
 app.use('/api/recap',       require('./routes/recap'));
 app.use('/api/payments',    require('./routes/payments'));
 
+// Public pages
+app.use('/privacy', require('./routes/privacy'));
+
 // SPA fallback — serve index.html for all non-API routes
 app.get('*', (req, res) => {
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
