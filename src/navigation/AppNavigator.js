@@ -8,6 +8,7 @@ import Login from '../screens/Login';
 import Register from '../screens/Register';
 import LogRun from '../screens/LogRun';
 import LogLift from '../screens/LogLift';
+import GarminSync from '../screens/GarminSync';
 import { clearToken, getToken, setToken } from '../lib/storage';
 
 const Stack = createStackNavigator();
@@ -83,6 +84,7 @@ export default function AppNavigator() {
               <Stack.Screen name="Main" component={MainTabs} options={{ headerShown: false }} />
               <Stack.Screen name="LogRun" component={LogRun} options={{ title: 'Log Run' }} />
               <Stack.Screen name="LogLift" component={LogLift} options={{ title: 'Log Lift' }} />
+              <Stack.Screen name="GarminSync" component={GarminSync} options={{ title: 'Garmin Connect' }} />
             </>
           ) : (
             <>
