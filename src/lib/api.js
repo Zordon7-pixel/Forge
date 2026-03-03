@@ -3,7 +3,7 @@ import axios from 'axios';
 import { getToken } from './storage';
 
 const api = axios.create({
-  baseURL: 'http://100.102.219.60:4002/api',
+  baseURL: 'https://forge-production-773f.up.railway.app/api',
   timeout: 15000
 });
 
