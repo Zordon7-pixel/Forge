@@ -54,6 +54,8 @@ CREATE TABLE IF NOT EXISTS runs (
   detected_surface_type TEXT,
   temperature_f REAL,
   calories INTEGER DEFAULT 0,
+  pain_level TEXT,
+  post_energy TEXT,
   treadmill_brand TEXT,
   treadmill_model TEXT,
   watch_mode TEXT,
@@ -124,6 +126,7 @@ CREATE TABLE IF NOT EXISTS user_plans (
 CREATE TABLE IF NOT EXISTS watch_sync (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  garmin_activity_id TEXT,
   activity_type TEXT,
   activity_name TEXT,
   normalized_type TEXT,
@@ -162,6 +165,18 @@ CREATE TABLE IF NOT EXISTS watch_sync (
   watch_mode TEXT,
   raw_payload TEXT,
   synced_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_watch_sync_user_garmin_id ON watch_sync(user_id, garmin_activity_id);
+
+CREATE TABLE IF NOT EXISTS user_settings (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  key TEXT NOT NULL,
+  value TEXT,
+  updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(user_id, key)
 );
 
 CREATE TABLE IF NOT EXISTS follows (

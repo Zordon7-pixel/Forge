@@ -158,7 +158,16 @@ async function updateRunHandler(req, res) {
     const run = await dbGet('SELECT * FROM runs WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
     if (!run) return res.status(404).json({ error: 'Run not found' });
 
-    const { date, distance_miles, duration_seconds, notes, perceived_effort, type, run_surface, incline_pct, treadmill_speed } = req.body;
+    const { date, distance_miles, duration_seconds, notes, perceived_effort, type, run_surface, incline_pct, treadmill_speed, pain_level, post_energy } = req.body;
+    const validPainLevels = ['none', 'mild', 'moderate', 'severe'];
+    const validEnergyLevels = ['low', 'medium', 'high'];
+
+    if (pain_level !== undefined && pain_level !== null && !validPainLevels.includes(String(pain_level))) {
+      return res.status(400).json({ error: 'Invalid pain_level' });
+    }
+    if (post_energy !== undefined && post_energy !== null && !validEnergyLevels.includes(String(post_energy))) {
+      return res.status(400).json({ error: 'Invalid post_energy' });
+    }
 
     const userProfile = await dbGet('SELECT weight_lbs FROM users WHERE id=?', [req.user.id]);
     const weightLbs = userProfile?.weight_lbs || 185;
@@ -175,11 +184,14 @@ async function updateRunHandler(req, res) {
       run_surface = COALESCE(?, run_surface),
       incline_pct = COALESCE(?, incline_pct),
       treadmill_speed = COALESCE(?, treadmill_speed),
+      pain_level = COALESCE(?, pain_level),
+      post_energy = COALESCE(?, post_energy),
       calories = ?
       WHERE id=? AND user_id=?`, [
       date ?? null, distance_miles ?? null, duration_seconds ?? null,
       notes ?? null, perceived_effort ?? null, type ?? null,
       run_surface ?? null, incline_pct ?? null, treadmill_speed ?? null,
+      pain_level ?? null, post_energy ?? null,
       calories, req.params.id, req.user.id
     ]);
 

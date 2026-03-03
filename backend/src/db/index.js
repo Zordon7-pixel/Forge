@@ -261,6 +261,8 @@ async function initDb() {
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
     `);
+    await client.query("ALTER TABLE runs ADD COLUMN IF NOT EXISTS pain_level TEXT");
+    await client.query("ALTER TABLE runs ADD COLUMN IF NOT EXISTS post_energy TEXT");
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS gear_shoes (
@@ -564,6 +566,7 @@ async function initDb() {
       CREATE TABLE IF NOT EXISTS watch_sync (
         id TEXT PRIMARY KEY,
         user_id TEXT NOT NULL,
+        garmin_activity_id TEXT,
         activity_type TEXT,
         activity_name TEXT,
         normalized_type TEXT,
@@ -602,6 +605,20 @@ async function initDb() {
         watch_mode TEXT,
         raw_payload TEXT,
         synced_at TEXT DEFAULT to_char(NOW(), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+      );
+    `);
+    await client.query('ALTER TABLE watch_sync ADD COLUMN IF NOT EXISTS garmin_activity_id TEXT');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_watch_sync_user_garmin_id ON watch_sync(user_id, garmin_activity_id)');
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS user_settings (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        key TEXT NOT NULL,
+        value TEXT,
+        updated_at TEXT DEFAULT to_char(NOW(), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(user_id, key)
       );
     `);
 

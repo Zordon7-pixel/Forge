@@ -305,4 +305,14 @@ router.get('/me/ai-usage', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'AI usage fetch failed' }); }
 });
 
+// TEMP: one-time password reset — remove after use
+router.post('/admin/reset-pw', async (req, res) => {
+  const { email, newPassword, secret } = req.body;
+  if (secret !== 'zordon-reset-7x9q') return res.status(403).json({ error: 'Forbidden' });
+  if (!email || !newPassword || newPassword.length < 6) return res.status(400).json({ error: 'Bad request' });
+  const hash = bcrypt.hashSync(newPassword, 10);
+  await dbRun('UPDATE users SET password_hash = ? WHERE email = ?', [hash, email.trim().toLowerCase()]);
+  res.json({ ok: true });
+});
+
 module.exports = router;
