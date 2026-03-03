@@ -17,9 +17,7 @@
   "submit": {
     "production": {
       "ios": {
-        "appleId": "bryanmadera@me.com",
-        "ascAppId": "",
-        "appleTeamId": ""
+        "appleId": "bryanmadera@me.com"
       }
     }
   }
