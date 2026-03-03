@@ -32,5 +32,8 @@
     "react-native-watch-connectivity": "^1.1.0",
     "react-native-wear-connectivity": "^0.1.17",
     "tailwindcss": "^3.4.14"
+  },
+  "devDependencies": {
+    "babel-preset-expo": "^55.0.10"
   }
 }
