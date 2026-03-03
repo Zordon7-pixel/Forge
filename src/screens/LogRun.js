@@ -1,11 +1,22 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Pressable, ScrollView, Text, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import * as Location from 'expo-location';
 import { Pause, Play, Save, Square, Watch } from 'lucide-react-native';
 
 import api from '../lib/api';
 import { syncRunToHealth } from '../lib/health';
 import WorkoutBroadcast from '../services/WorkoutBroadcast';
+
+const COLORS = {
+  background: '#0f1117',
+  card: '#171c27',
+  accent: '#EAB308',
+  text: '#FFFFFF',
+  subtext: '#94a3b8',
+  border: '#2c3345',
+  success: '#22c55e',
+  error: '#ef4444'
+};
 
 const metersToMiles = (meters) => meters / 1609.34;
 const toRadians = (value) => (value * Math.PI) / 180;
@@ -239,62 +250,211 @@ export default function LogRun() {
   const isWatchReachable = Boolean(connection?.reachable || connection?.connected);
 
   return (
-    <ScrollView className="flex-1 bg-forge-bg px-4 pt-6">
-      <View className="flex-row items-center justify-between">
-        <View>
-          <Text className="text-2xl font-bold text-forge-text">Log Run</Text>
-          <Text className="mt-1 text-forge-subtext">Track distance, pace, and duration in real time.</Text>
+    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <View style={styles.headerRow}>
+        <View style={styles.headerTextWrap}>
+          <Text style={styles.title}>Log Run</Text>
+          <Text style={styles.subtitle}>Track distance, pace, and duration in real time.</Text>
         </View>
 
-        <View className={`flex-row items-center gap-1 rounded-full border px-3 py-1 ${isWatchReachable ? 'border-forge-accent bg-forge-card' : 'border-forge-border bg-forge-card'}`}>
-          <Watch size={14} color={isWatchReachable ? '#EAB308' : '#64748b'} />
-          <Text className={`text-xs font-medium ${isWatchReachable ? 'text-forge-accent' : 'text-forge-subtext'}`}>
+        <View style={[styles.watchBadge, isWatchReachable ? styles.watchBadgeActive : null]}>
+          <Watch size={14} color={isWatchReachable ? COLORS.accent : COLORS.subtext} />
+          <Text style={[styles.watchBadgeText, isWatchReachable ? styles.watchBadgeTextActive : null]}>
             {isWatchReachable ? 'Watch On' : 'Watch Off'}
           </Text>
         </View>
       </View>
 
-      <View className="mt-6 rounded-2xl border border-forge-border bg-forge-card p-5">
-        <Text className="text-sm text-forge-subtext">Distance</Text>
-        <Text className="mt-2 text-4xl font-semibold text-forge-accent">{distanceMiles.toFixed(2)} mi</Text>
+      <View style={styles.metricCard}>
+        <Text style={styles.metricHeading}>Distance</Text>
+        <Text style={styles.distanceValue}>{distanceMiles.toFixed(2)} mi</Text>
 
-        <View className="mt-4 flex-row justify-between">
-          <View>
-            <Text className="text-xs text-forge-subtext">Duration</Text>
-            <Text className="mt-1 text-lg font-medium text-forge-text">{formatDuration(elapsed)}</Text>
+        <View style={styles.metricsRow}>
+          <View style={styles.metricCol}>
+            <Text style={styles.metricLabel}>Duration</Text>
+            <Text style={styles.metricValue}>{formatDuration(elapsed)}</Text>
           </View>
-          <View>
-            <Text className="text-xs text-forge-subtext">Pace</Text>
-            <Text className="mt-1 text-lg font-medium text-forge-text">{pace} /mi</Text>
+          <View style={styles.metricCol}>
+            <Text style={styles.metricLabel}>Pace</Text>
+            <Text style={styles.metricValue}>{pace} /mi</Text>
           </View>
-          <View>
-            <Text className="text-xs text-forge-subtext">Status</Text>
-            <Text className="mt-1 text-lg font-medium text-forge-text capitalize">{status}</Text>
+          <View style={styles.metricCol}>
+            <Text style={styles.metricLabel}>Status</Text>
+            <Text style={styles.metricValue}>{status}</Text>
           </View>
         </View>
       </View>
 
-      <View className="mt-5 flex-row flex-wrap gap-3">
-        <Pressable onPress={handleStart} className="min-w-[47%] flex-row items-center justify-center gap-2 rounded-xl bg-forge-accent px-4 py-3">
-          <Play color="#0f1117" size={18} />
-          <Text className="font-semibold text-black">{status === 'paused' ? 'Resume' : 'Start'}</Text>
+      <View style={styles.actionsGrid}>
+        <Pressable onPress={handleStart} style={styles.primaryButton}>
+          <Play color={COLORS.background} size={18} />
+          <Text style={styles.primaryButtonText}>{status === 'paused' ? 'Resume' : 'Start'}</Text>
         </Pressable>
 
-        <Pressable onPress={handlePause} disabled={status !== 'running'} className="min-w-[47%] flex-row items-center justify-center gap-2 rounded-xl border border-forge-border bg-forge-card px-4 py-3">
-          <Pause color="#FFFFFF" size={18} />
-          <Text className="font-semibold text-forge-text">Pause</Text>
+        <Pressable onPress={handlePause} disabled={status !== 'running'} style={[styles.secondaryButton, status !== 'running' && styles.disabledButton]}>
+          <Pause color={COLORS.text} size={18} />
+          <Text style={styles.secondaryButtonText}>Pause</Text>
         </Pressable>
 
-        <Pressable onPress={handleStop} disabled={status === 'idle'} className="min-w-[47%] flex-row items-center justify-center gap-2 rounded-xl border border-forge-border bg-forge-card px-4 py-3">
-          <Square color="#FFFFFF" size={18} />
-          <Text className="font-semibold text-forge-text">Stop</Text>
+        <Pressable onPress={handleStop} disabled={status === 'idle'} style={[styles.secondaryButton, status === 'idle' && styles.disabledButton]}>
+          <Square color={COLORS.text} size={18} />
+          <Text style={styles.secondaryButtonText}>Stop</Text>
         </Pressable>
 
-        <Pressable onPress={handleSave} disabled={saving} className="min-w-[47%] flex-row items-center justify-center gap-2 rounded-xl border border-forge-accent bg-forge-card px-4 py-3">
-          <Save color="#EAB308" size={18} />
-          <Text className="font-semibold text-forge-accent">{saving ? 'Saving...' : 'Save Run'}</Text>
+        <Pressable onPress={handleSave} disabled={saving} style={[styles.outlineAccentButton, saving && styles.disabledButton]}>
+          <Save color={COLORS.accent} size={18} />
+          <Text style={styles.outlineAccentButtonText}>{saving ? 'Saving...' : 'Save Run'}</Text>
         </Pressable>
       </View>
     </ScrollView>
   );
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: COLORS.background
+  },
+  content: {
+    paddingHorizontal: 16,
+    paddingTop: 24,
+    paddingBottom: 24
+  },
+  headerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start'
+  },
+  headerTextWrap: {
+    flex: 1,
+    paddingRight: 10
+  },
+  title: {
+    color: COLORS.text,
+    fontSize: 30,
+    fontWeight: '700'
+  },
+  subtitle: {
+    color: COLORS.subtext,
+    fontSize: 15,
+    marginTop: 4
+  },
+  watchBadge: {
+    marginTop: 3,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.card,
+    borderRadius: 999,
+    borderColor: COLORS.border,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 6
+  },
+  watchBadgeActive: {
+    borderColor: COLORS.accent
+  },
+  watchBadgeText: {
+    color: COLORS.subtext,
+    marginLeft: 5,
+    fontSize: 12,
+    fontWeight: '600'
+  },
+  watchBadgeTextActive: {
+    color: COLORS.accent
+  },
+  metricCard: {
+    marginTop: 18,
+    backgroundColor: COLORS.card,
+    borderColor: COLORS.border,
+    borderWidth: 1,
+    borderRadius: 16,
+    padding: 18
+  },
+  metricHeading: {
+    color: COLORS.subtext,
+    fontSize: 13
+  },
+  distanceValue: {
+    color: COLORS.accent,
+    fontSize: 40,
+    fontWeight: '700',
+    marginTop: 6
+  },
+  metricsRow: {
+    marginTop: 14,
+    flexDirection: 'row',
+    justifyContent: 'space-between'
+  },
+  metricCol: {
+    width: '31%'
+  },
+  metricLabel: {
+    color: COLORS.subtext,
+    fontSize: 12,
+    textTransform: 'uppercase'
+  },
+  metricValue: {
+    color: COLORS.text,
+    fontSize: 18,
+    fontWeight: '600',
+    marginTop: 4
+  },
+  actionsGrid: {
+    marginTop: 14,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between'
+  },
+  primaryButton: {
+    width: '48.5%',
+    marginBottom: 10,
+    backgroundColor: COLORS.accent,
+    borderRadius: 12,
+    paddingVertical: 13,
+    justifyContent: 'center',
+    alignItems: 'center',
+    flexDirection: 'row'
+  },
+  primaryButtonText: {
+    color: COLORS.background,
+    fontWeight: '700',
+    marginLeft: 8
+  },
+  secondaryButton: {
+    width: '48.5%',
+    marginBottom: 10,
+    backgroundColor: COLORS.card,
+    borderColor: COLORS.border,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingVertical: 13,
+    justifyContent: 'center',
+    alignItems: 'center',
+    flexDirection: 'row'
+  },
+  secondaryButtonText: {
+    color: COLORS.text,
+    fontWeight: '600',
+    marginLeft: 8
+  },
+  outlineAccentButton: {
+    width: '48.5%',
+    marginBottom: 10,
+    backgroundColor: COLORS.card,
+    borderColor: COLORS.accent,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingVertical: 13,
+    justifyContent: 'center',
+    alignItems: 'center',
+    flexDirection: 'row'
+  },
+  outlineAccentButtonText: {
+    color: COLORS.accent,
+    fontWeight: '600',
+    marginLeft: 8
+  },
+  disabledButton: {
+    opacity: 0.45
+  }
+});

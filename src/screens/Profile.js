@@ -1,5 +1,5 @@
 import React, { useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { Alert, Platform, Pressable, ScrollView, Text, View } from 'react-native';
+import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { Activity, ChevronRight, Link2, LogOut, ShieldCheck } from 'lucide-react-native';
 
@@ -7,6 +7,17 @@ import api from '../lib/api';
 import { requestPermissions } from '../lib/health';
 import { AuthContext } from '../navigation/AppNavigator';
 import { isConnected as isGarminConnected } from '../services/GarminConnect';
+
+const COLORS = {
+  background: '#0f1117',
+  card: '#171c27',
+  accent: '#EAB308',
+  text: '#FFFFFF',
+  subtext: '#94a3b8',
+  border: '#2c3345',
+  success: '#22c55e',
+  error: '#ef4444'
+};
 
 export default function Profile({ navigation }) {
   const { signOut } = useContext(AuthContext);
@@ -70,46 +81,156 @@ export default function Profile({ navigation }) {
   };
 
   return (
-    <ScrollView className="flex-1 bg-forge-bg px-4 pt-6">
-      <Text className="text-2xl font-bold text-forge-text">Profile</Text>
-      <Text className="mt-1 text-forge-subtext">Training summary and integrations.</Text>
+    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <Text style={styles.title}>Profile</Text>
+      <Text style={styles.subtitle}>Training summary and integrations.</Text>
 
-      <View className="mt-5 rounded-2xl border border-forge-border bg-forge-card p-4">
-        <View className="flex-row items-center gap-2">
-          <Activity size={18} color="#EAB308" />
-          <Text className="text-base font-semibold text-forge-text">Stats</Text>
+      <View style={styles.card}>
+        <View style={styles.rowStart}>
+          <Activity size={18} color={COLORS.accent} />
+          <Text style={styles.cardTitle}>Stats</Text>
         </View>
-        <View className="mt-4 gap-2">
-          <Text className="text-forge-subtext">Total Runs: <Text className="text-forge-text">{stats.totalRuns}</Text></Text>
-          <Text className="text-forge-subtext">Total Miles: <Text className="text-forge-text">{stats.totalMiles}</Text></Text>
-          <Text className="text-forge-subtext">Total Workouts: <Text className="text-forge-text">{stats.totalWorkouts}</Text></Text>
+        <View style={styles.statRows}>
+          <Text style={styles.statText}>
+            Total Runs: <Text style={styles.statValue}>{stats.totalRuns}</Text>
+          </Text>
+          <Text style={styles.statText}>
+            Total Miles: <Text style={styles.statValue}>{stats.totalMiles}</Text>
+          </Text>
+          <Text style={styles.statText}>
+            Total Workouts: <Text style={styles.statValue}>{stats.totalWorkouts}</Text>
+          </Text>
         </View>
       </View>
 
-      <Pressable onPress={handleHealthConnect} className="mt-4 flex-row items-center justify-center gap-2 rounded-xl border border-forge-border bg-forge-card px-4 py-3">
-        <ShieldCheck size={18} color="#EAB308" />
-        <Text className="font-semibold text-forge-text">Connect Apple Health</Text>
+      <Pressable onPress={handleHealthConnect} style={styles.secondaryButton}>
+        <ShieldCheck size={18} color={COLORS.accent} />
+        <Text style={styles.secondaryButtonText}>Connect Apple Health</Text>
       </Pressable>
 
-      <Pressable
-        onPress={() => navigation.navigate('GarminSync')}
-        className="mt-3 flex-row items-center justify-between rounded-xl border border-forge-border bg-forge-card px-4 py-3"
-      >
-        <View className="flex-row items-center gap-2">
-          <Link2 size={18} color="#EAB308" />
-          <Text className="font-semibold text-forge-text">Garmin Connect</Text>
+      <Pressable onPress={() => navigation.navigate('GarminSync')} style={styles.garminButton}>
+        <View style={styles.rowStart}>
+          <Link2 size={18} color={COLORS.accent} />
+          <Text style={styles.secondaryButtonText}>Garmin Connect</Text>
         </View>
-        <View className="flex-row items-center gap-2">
-          <View className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: garminConnected ? '#22c55e' : '#64748b' }} />
-          <Text className="text-sm text-forge-subtext">{garminConnected ? 'Connected' : 'Not connected'}</Text>
-          <ChevronRight size={16} color="#94a3b8" />
+        <View style={styles.rowStart}>
+          <View style={[styles.statusDot, { backgroundColor: garminConnected ? COLORS.success : COLORS.subtext }]} />
+          <Text style={styles.garminStatus}>{garminConnected ? 'Connected' : 'Not connected'}</Text>
+          <ChevronRight size={16} color={COLORS.subtext} />
         </View>
       </Pressable>
 
-      <Pressable onPress={signOut} className="mt-3 mb-8 flex-row items-center justify-center gap-2 rounded-xl bg-forge-accent px-4 py-3">
-        <LogOut size={18} color="#0f1117" />
-        <Text className="font-semibold text-black">Logout</Text>
+      <Pressable onPress={signOut} style={styles.primaryButton}>
+        <LogOut size={18} color={COLORS.background} />
+        <Text style={styles.primaryButtonText}>Logout</Text>
       </Pressable>
     </ScrollView>
   );
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: COLORS.background
+  },
+  content: {
+    paddingHorizontal: 16,
+    paddingTop: 24,
+    paddingBottom: 32
+  },
+  title: {
+    color: COLORS.text,
+    fontSize: 30,
+    fontWeight: '700'
+  },
+  subtitle: {
+    color: COLORS.subtext,
+    marginTop: 4,
+    fontSize: 15
+  },
+  card: {
+    marginTop: 16,
+    backgroundColor: COLORS.card,
+    borderColor: COLORS.border,
+    borderWidth: 1,
+    borderRadius: 16,
+    padding: 16
+  },
+  rowStart: {
+    flexDirection: 'row',
+    alignItems: 'center'
+  },
+  cardTitle: {
+    color: COLORS.text,
+    fontSize: 17,
+    fontWeight: '600',
+    marginLeft: 8
+  },
+  statRows: {
+    marginTop: 12
+  },
+  statText: {
+    color: COLORS.subtext,
+    marginTop: 6,
+    fontSize: 14
+  },
+  statValue: {
+    color: COLORS.text,
+    fontWeight: '600'
+  },
+  secondaryButton: {
+    marginTop: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.card,
+    paddingVertical: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
+    flexDirection: 'row'
+  },
+  secondaryButtonText: {
+    color: COLORS.text,
+    fontWeight: '600',
+    marginLeft: 8,
+    fontSize: 15
+  },
+  garminButton: {
+    marginTop: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.card,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center'
+  },
+  statusDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginRight: 7
+  },
+  garminStatus: {
+    color: COLORS.subtext,
+    fontSize: 13,
+    marginRight: 7
+  },
+  primaryButton: {
+    marginTop: 10,
+    borderRadius: 12,
+    backgroundColor: COLORS.accent,
+    paddingVertical: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
+    flexDirection: 'row'
+  },
+  primaryButtonText: {
+    color: COLORS.background,
+    fontWeight: '700',
+    marginLeft: 8,
+    fontSize: 15
+  }
+});

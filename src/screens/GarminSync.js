@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from 'react';
-import { Alert, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { Link2, RefreshCw, ShieldCheck, ShieldX, Unplug } from 'lucide-react-native';
 
@@ -10,6 +10,17 @@ import {
   isConnected,
   syncActivities
 } from '../services/GarminConnect';
+
+const COLORS = {
+  background: '#0f1117',
+  card: '#171c27',
+  accent: '#EAB308',
+  text: '#FFFFFF',
+  subtext: '#94a3b8',
+  border: '#2c3345',
+  success: '#22c55e',
+  error: '#ef4444'
+};
 
 export default function GarminSync() {
   const [email, setEmail] = useState('');
@@ -81,40 +92,40 @@ export default function GarminSync() {
   };
 
   const statusLabel = connected ? 'Connected' : 'Not Connected';
-  const statusColor = connected ? '#22c55e' : '#64748b';
+  const statusColor = connected ? COLORS.success : COLORS.subtext;
   const syncTimestamp = syncMeta?.lastSyncedAt ? new Date(syncMeta.lastSyncedAt).toLocaleString() : 'Never';
   const importedCount = syncMeta?.importedCount ?? 0;
 
   return (
-    <ScrollView className="flex-1 bg-forge-bg px-4 pt-6">
-      <Text className="text-2xl font-bold text-forge-text">Garmin Connect</Text>
-      <Text className="mt-1 text-forge-subtext">Link Garmin and import workouts into FORGE.</Text>
+    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <Text style={styles.title}>Garmin Connect</Text>
+      <Text style={styles.subtitle}>Link Garmin and import workouts into FORGE.</Text>
 
-      <View className="mt-5 rounded-2xl border border-forge-border bg-forge-card p-4">
-        <View className="flex-row items-center justify-between">
-          <View className="flex-row items-center gap-2">
-            {connected ? <ShieldCheck size={18} color="#EAB308" /> : <ShieldX size={18} color="#EAB308" />}
-            <Text className="text-base font-semibold text-forge-text">Connection Status</Text>
+      <View style={styles.card}>
+        <View style={styles.rowBetween}>
+          <View style={styles.rowStart}>
+            {connected ? <ShieldCheck size={18} color={COLORS.accent} /> : <ShieldX size={18} color={COLORS.accent} />}
+            <Text style={styles.cardTitle}>Connection Status</Text>
           </View>
-          <View className="flex-row items-center gap-2">
-            <View className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: statusColor }} />
-            <Text className="text-sm text-forge-subtext">{loadingState ? 'Checking...' : statusLabel}</Text>
+          <View style={styles.rowStart}>
+            <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
+            <Text style={styles.statusText}>{loadingState ? 'Checking...' : statusLabel}</Text>
           </View>
         </View>
 
-        <View className="mt-4 rounded-xl border border-forge-border bg-forge-bg px-3 py-3">
-          <Text className="text-xs uppercase tracking-wide text-forge-subtext">Last synced</Text>
-          <Text className="mt-1 text-sm text-forge-text">{syncTimestamp}</Text>
-          <Text className="mt-2 text-xs uppercase tracking-wide text-forge-subtext">Imported activities</Text>
-          <Text className="mt-1 text-sm text-forge-text">{importedCount}</Text>
+        <View style={styles.metaBox}>
+          <Text style={styles.metaHeading}>Last synced</Text>
+          <Text style={styles.metaValue}>{syncTimestamp}</Text>
+          <Text style={styles.metaHeading}>Imported activities</Text>
+          <Text style={styles.metaValue}>{importedCount}</Text>
         </View>
       </View>
 
       {!connected && (
-        <View className="mt-4 rounded-2xl border border-forge-border bg-forge-card p-4">
-          <View className="flex-row items-center gap-2">
-            <Link2 size={18} color="#EAB308" />
-            <Text className="text-base font-semibold text-forge-text">Link Account</Text>
+        <View style={styles.card}>
+          <View style={styles.rowStart}>
+            <Link2 size={18} color={COLORS.accent} />
+            <Text style={styles.cardTitle}>Link Account</Text>
           </View>
 
           <TextInput
@@ -123,46 +134,35 @@ export default function GarminSync() {
             autoCapitalize="none"
             keyboardType="email-address"
             placeholder="Garmin email"
-            placeholderTextColor="#64748b"
-            className="mt-4 rounded-xl border border-forge-border bg-forge-bg px-4 py-3 text-forge-text"
+            placeholderTextColor={COLORS.subtext}
+            style={styles.input}
           />
           <TextInput
             value={password}
             onChangeText={setPassword}
             secureTextEntry
             placeholder="Garmin password"
-            placeholderTextColor="#64748b"
-            className="mt-3 rounded-xl border border-forge-border bg-forge-bg px-4 py-3 text-forge-text"
+            placeholderTextColor={COLORS.subtext}
+            style={[styles.input, styles.inputSpacing]}
           />
 
-          <Pressable
-            onPress={handleConnect}
-            disabled={connecting}
-            className="mt-4 flex-row items-center justify-center gap-2 rounded-xl bg-forge-accent px-4 py-3"
-          >
-            <Link2 size={18} color="#0f1117" />
-            <Text className="font-semibold text-black">{connecting ? 'Connecting...' : 'Connect Account'}</Text>
+          <Pressable onPress={handleConnect} disabled={connecting} style={[styles.primaryButton, connecting && styles.disabledButton]}>
+            <Link2 size={18} color={COLORS.background} />
+            <Text style={styles.primaryButtonText}>{connecting ? 'Connecting...' : 'Connect Account'}</Text>
           </Pressable>
         </View>
       )}
 
       {connected && (
-        <View className="mt-4 gap-3 pb-8">
-          <Pressable
-            onPress={handleSync}
-            disabled={syncing}
-            className="flex-row items-center justify-center gap-2 rounded-xl bg-forge-accent px-4 py-3"
-          >
-            <RefreshCw size={18} color="#0f1117" />
-            <Text className="font-semibold text-black">{syncing ? 'Syncing...' : 'Sync Now'}</Text>
+        <View style={styles.actionsWrap}>
+          <Pressable onPress={handleSync} disabled={syncing} style={[styles.primaryButton, syncing && styles.disabledButton]}>
+            <RefreshCw size={18} color={COLORS.background} />
+            <Text style={styles.primaryButtonText}>{syncing ? 'Syncing...' : 'Sync Now'}</Text>
           </Pressable>
 
-          <Pressable
-            onPress={handleDisconnect}
-            className="flex-row items-center justify-center gap-2 rounded-xl border border-forge-border bg-forge-card px-4 py-3"
-          >
-            <Unplug size={18} color="#EAB308" />
-            <Text className="font-semibold text-forge-text">Disconnect</Text>
+          <Pressable onPress={handleDisconnect} style={styles.secondaryButton}>
+            <Unplug size={18} color={COLORS.accent} />
+            <Text style={styles.secondaryButtonText}>Disconnect</Text>
           </Pressable>
         </View>
       )}
@@ -170,3 +170,130 @@ export default function GarminSync() {
   );
 }
 
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: COLORS.background
+  },
+  content: {
+    paddingHorizontal: 16,
+    paddingTop: 24,
+    paddingBottom: 32
+  },
+  title: {
+    color: COLORS.text,
+    fontSize: 30,
+    fontWeight: '700'
+  },
+  subtitle: {
+    color: COLORS.subtext,
+    marginTop: 4,
+    fontSize: 15
+  },
+  card: {
+    marginTop: 16,
+    backgroundColor: COLORS.card,
+    borderColor: COLORS.border,
+    borderWidth: 1,
+    borderRadius: 16,
+    padding: 16
+  },
+  rowBetween: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center'
+  },
+  rowStart: {
+    flexDirection: 'row',
+    alignItems: 'center'
+  },
+  cardTitle: {
+    color: COLORS.text,
+    fontSize: 17,
+    fontWeight: '600',
+    marginLeft: 8
+  },
+  statusDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginRight: 6
+  },
+  statusText: {
+    color: COLORS.subtext,
+    fontSize: 13
+  },
+  metaBox: {
+    marginTop: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.background,
+    padding: 12
+  },
+  metaHeading: {
+    color: COLORS.subtext,
+    fontSize: 11,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+    marginBottom: 4
+  },
+  metaValue: {
+    color: COLORS.text,
+    fontSize: 14,
+    marginBottom: 10
+  },
+  input: {
+    marginTop: 14,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.background,
+    borderRadius: 12,
+    color: COLORS.text,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 15
+  },
+  inputSpacing: {
+    marginTop: 10
+  },
+  primaryButton: {
+    marginTop: 14,
+    borderRadius: 12,
+    backgroundColor: COLORS.accent,
+    paddingVertical: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
+    flexDirection: 'row'
+  },
+  primaryButtonText: {
+    color: COLORS.background,
+    fontWeight: '700',
+    marginLeft: 8,
+    fontSize: 15
+  },
+  actionsWrap: {
+    marginTop: 16
+  },
+  secondaryButton: {
+    marginTop: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.card,
+    paddingVertical: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
+    flexDirection: 'row'
+  },
+  secondaryButtonText: {
+    color: COLORS.text,
+    fontWeight: '600',
+    marginLeft: 8,
+    fontSize: 15
+  },
+  disabledButton: {
+    opacity: 0.7
+  }
+});

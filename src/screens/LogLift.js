@@ -1,10 +1,21 @@
 import React, { useEffect, useState } from 'react';
-import { Alert, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Plus, Save, Trash2 } from 'lucide-react-native';
 
 import api from '../lib/api';
 import { syncLiftToHealth } from '../lib/health';
 import WorkoutBroadcast from '../services/WorkoutBroadcast';
+
+const COLORS = {
+  background: '#0f1117',
+  card: '#171c27',
+  accent: '#EAB308',
+  text: '#FFFFFF',
+  subtext: '#94a3b8',
+  border: '#2c3345',
+  success: '#22c55e',
+  error: '#ef4444'
+};
 
 const createSet = () => ({ reps: '', weight: '' });
 
@@ -84,64 +95,165 @@ export default function LogLift({ navigation }) {
   };
 
   return (
-    <ScrollView className="flex-1 bg-forge-bg px-4 pt-6">
-      <Text className="text-2xl font-bold text-forge-text">Log Lift</Text>
-      <Text className="mt-1 text-forge-subtext">Record exercise sets, reps, and weight.</Text>
+    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <Text style={styles.title}>Log Lift</Text>
+      <Text style={styles.subtitle}>Record exercise sets, reps, and weight.</Text>
 
-      <View className="mt-5 rounded-2xl border border-forge-border bg-forge-card p-4">
-        <Text className="text-sm text-forge-subtext">Exercise Name</Text>
+      <View style={styles.card}>
+        <Text style={styles.label}>Exercise Name</Text>
         <TextInput
           value={name}
           onChangeText={setName}
           placeholder="Bench Press"
-          placeholderTextColor="#64748b"
-          className="mt-2 rounded-xl border border-forge-border bg-forge-bg px-4 py-3 text-forge-text"
+          placeholderTextColor={COLORS.subtext}
+          style={styles.input}
         />
       </View>
 
-      <View className="mt-4 gap-3">
+      <View style={styles.listWrap}>
         {sets.map((set, index) => (
-          <View key={`set-${index}`} className="rounded-2xl border border-forge-border bg-forge-card p-4">
-            <View className="flex-row items-center justify-between">
-              <Text className="font-medium text-forge-text">Set {index + 1}</Text>
+          <View key={`set-${index}`} style={styles.card}>
+            <View style={styles.rowBetween}>
+              <Text style={styles.setTitle}>Set {index + 1}</Text>
               {sets.length > 1 && (
                 <Pressable onPress={() => removeSet(index)}>
-                  <Trash2 color="#94a3b8" size={16} />
+                  <Trash2 color={COLORS.subtext} size={16} />
                 </Pressable>
               )}
             </View>
 
-            <View className="mt-3 flex-row gap-3">
+            <View style={styles.inputsRow}>
               <TextInput
                 value={set.reps}
                 onChangeText={(v) => updateSet(index, 'reps', v)}
                 keyboardType="numeric"
                 placeholder="Reps"
-                placeholderTextColor="#64748b"
-                className="flex-1 rounded-xl border border-forge-border bg-forge-bg px-4 py-3 text-forge-text"
+                placeholderTextColor={COLORS.subtext}
+                style={[styles.input, styles.halfInput]}
               />
               <TextInput
                 value={set.weight}
                 onChangeText={(v) => updateSet(index, 'weight', v)}
                 keyboardType="numeric"
                 placeholder="Weight"
-                placeholderTextColor="#64748b"
-                className="flex-1 rounded-xl border border-forge-border bg-forge-bg px-4 py-3 text-forge-text"
+                placeholderTextColor={COLORS.subtext}
+                style={[styles.input, styles.halfInput]}
               />
             </View>
           </View>
         ))}
       </View>
 
-      <Pressable onPress={addSet} className="mt-4 flex-row items-center justify-center gap-2 rounded-xl border border-forge-border bg-forge-card px-4 py-3">
-        <Plus size={18} color="#EAB308" />
-        <Text className="font-semibold text-forge-text">Add Set</Text>
+      <Pressable onPress={addSet} style={styles.secondaryButton}>
+        <Plus size={18} color={COLORS.accent} />
+        <Text style={styles.secondaryButtonText}>Add Set</Text>
       </Pressable>
 
-      <Pressable onPress={handleSave} disabled={saving} className="mt-3 mb-8 flex-row items-center justify-center gap-2 rounded-xl bg-forge-accent px-4 py-3">
-        <Save size={18} color="#0f1117" />
-        <Text className="font-semibold text-black">{saving ? 'Saving...' : 'Save Workout'}</Text>
+      <Pressable onPress={handleSave} disabled={saving} style={[styles.primaryButton, saving && styles.disabledButton]}>
+        <Save size={18} color={COLORS.background} />
+        <Text style={styles.primaryButtonText}>{saving ? 'Saving...' : 'Save Workout'}</Text>
       </Pressable>
     </ScrollView>
   );
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: COLORS.background
+  },
+  content: {
+    paddingHorizontal: 16,
+    paddingTop: 24,
+    paddingBottom: 32
+  },
+  title: {
+    color: COLORS.text,
+    fontSize: 30,
+    fontWeight: '700'
+  },
+  subtitle: {
+    color: COLORS.subtext,
+    marginTop: 4,
+    fontSize: 15
+  },
+  card: {
+    marginTop: 14,
+    backgroundColor: COLORS.card,
+    borderColor: COLORS.border,
+    borderWidth: 1,
+    borderRadius: 16,
+    padding: 14
+  },
+  label: {
+    color: COLORS.subtext,
+    fontSize: 13,
+    marginBottom: 8
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.background,
+    borderRadius: 12,
+    color: COLORS.text,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 15
+  },
+  listWrap: {
+    marginTop: 2
+  },
+  rowBetween: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center'
+  },
+  setTitle: {
+    color: COLORS.text,
+    fontWeight: '600',
+    fontSize: 16
+  },
+  inputsRow: {
+    marginTop: 12,
+    flexDirection: 'row',
+    justifyContent: 'space-between'
+  },
+  halfInput: {
+    width: '48%'
+  },
+  secondaryButton: {
+    marginTop: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.card,
+    paddingVertical: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
+    flexDirection: 'row'
+  },
+  secondaryButtonText: {
+    color: COLORS.text,
+    fontWeight: '600',
+    marginLeft: 8,
+    fontSize: 15
+  },
+  primaryButton: {
+    marginTop: 10,
+    borderRadius: 12,
+    backgroundColor: COLORS.accent,
+    paddingVertical: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
+    flexDirection: 'row'
+  },
+  primaryButtonText: {
+    color: COLORS.background,
+    fontWeight: '700',
+    marginLeft: 8,
+    fontSize: 15
+  },
+  disabledButton: {
+    opacity: 0.7
+  }
+});
