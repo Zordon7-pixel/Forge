@@ -7,6 +7,7 @@
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "splash": {
+      "image": "./assets/splash.png",
       "resizeMode": "contain",
       "backgroundColor": "#0f1117"
     },
@@ -19,12 +20,13 @@
     ],
     "ios": {
       "bundleIdentifier": "com.zordontech.forge",
-      "buildNumber": "1",
+      "buildNumber": "2",
       "supportsTablet": false,
       "infoPlist": {
         "NSHealthShareUsageDescription": "FORGE reads Apple Health workout data to import your performance history.",
         "NSHealthUpdateUsageDescription": "FORGE writes run and strength workout data to Apple Health.",
-        "NSLocationWhenInUseUsageDescription": "FORGE uses your location during run tracking to calculate distance and pace."
+        "NSLocationWhenInUseUsageDescription": "FORGE uses your location during run tracking to calculate distance and pace.",
+        "ITSAppUsesNonExemptEncryption": false
       },
       "entitlements": {
         "com.apple.developer.healthkit": true
@@ -43,6 +45,7 @@
       "eas": {
         "projectId": "6aeb5fbb-2697-4cf4-b9b3-afe60c63e9e1"
       }
-    }
+    },
+    "icon": "./assets/icon.png"
   }
 }
