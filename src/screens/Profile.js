@@ -13,7 +13,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { BookOpen, ChevronRight, Eye, HeartPulse, Settings as SettingsIcon } from 'lucide-react-native';
 
 import api from '../lib/api';
-import { AuthContext } from '../navigation/AppNavigator';
+import { AuthContext } from '../context/AuthContext';
 
 const COLORS = {
   background: '#0f1117',

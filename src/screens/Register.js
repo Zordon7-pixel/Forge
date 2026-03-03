@@ -3,7 +3,7 @@ import { Alert, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, Tex
 import { ArrowRight } from 'lucide-react-native';
 
 import api from '../lib/api';
-import { AuthContext } from '../navigation/AppNavigator';
+import { AuthContext } from '../context/AuthContext';
 
 export default function Register({ navigation }) {
   const { signIn } = useContext(AuthContext);

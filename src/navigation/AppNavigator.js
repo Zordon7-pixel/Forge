@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { NavigationContainer, DefaultTheme } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
@@ -12,14 +12,9 @@ import GarminSync from '../screens/GarminSync';
 import Settings from '../screens/Settings';
 import Journal from '../screens/Journal';
 import { clearToken, getToken, setToken } from '../lib/storage';
+import { AuthContext } from '../context/AuthContext';
 
 const Stack = createStackNavigator();
-
-export const AuthContext = createContext({
-  token: null,
-  signIn: async () => {},
-  signOut: async () => {}
-});
 
 const theme = {
   ...DefaultTheme,
