@@ -11,6 +11,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import Svg, { Defs, LinearGradient, Polygon, Polyline, Stop } from 'react-native-svg';
+import { HelpCircle, MessageSquare, Moon, Sun } from 'lucide-react-native';
 
 import api from '../lib/api';
 
@@ -120,6 +121,7 @@ export default function Dashboard({ navigation }) {
   const [activeInjury, setActiveInjury] = useState(null);
   const [injuryDismissed, setInjuryDismissed] = useState(false);
   const [checkedInToday, setCheckedInToday] = useState(false);
+  const [darkMode, setDarkMode] = useState(true);
 
   const loadDashboard = useCallback(async () => {
     setRefreshing(true);
@@ -318,14 +320,30 @@ export default function Dashboard({ navigation }) {
       refreshControl={<RefreshControl tintColor="#EAB308" refreshing={refreshing} onRefresh={loadDashboard} />}
     >
       <View style={styles.headerRow}>
-        <View style={styles.brandRow}>
-          <View style={styles.logoMark} />
-          <Text style={styles.brandText}>FORGE</Text>
+        {/* Left: FORGE logo */}
+        <View style={styles.logoMark} />
+
+        {/* Center: Training Readiness */}
+        <View style={styles.readinessCenter}>
+          <Text style={styles.readinessLabel}>READINESS</Text>
+          <Text style={styles.readinessScore}>{readiness}</Text>
         </View>
 
-        <Pressable style={styles.readinessPill}>
-          <Text style={styles.readinessText}>READINESS {readiness}</Text>
-        </Pressable>
+        {/* Right: icons */}
+        <View style={styles.headerIcons}>
+          <Pressable onPress={() => setDarkMode(d => !d)} hitSlop={8}>
+            {darkMode
+              ? <Moon size={18} color="#64748b" />
+              : <Sun size={18} color="#64748b" />
+            }
+          </Pressable>
+          <Pressable hitSlop={8}>
+            <MessageSquare size={18} color="#64748b" />
+          </Pressable>
+          <Pressable hitSlop={8}>
+            <HelpCircle size={18} color="#64748b" />
+          </Pressable>
+        </View>
       </View>
 
       {/* Injury / Recovery Mode Banner */}
@@ -554,34 +572,32 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 14
   },
-  brandRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10
-  },
   logoMark: {
-    width: 28,
-    height: 28,
-    borderRadius: 6,
+    width: 36,
+    height: 36,
+    borderRadius: 10,
     backgroundColor: COLORS.accent
   },
-  brandText: {
-    color: COLORS.text,
+  readinessCenter: {
+    alignItems: 'center',
+    flex: 1
+  },
+  readinessLabel: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#64748b',
+    letterSpacing: 1,
+    textTransform: 'uppercase'
+  },
+  readinessScore: {
     fontSize: 22,
-    fontWeight: '800',
-    letterSpacing: 0.8
+    fontWeight: '900',
+    color: COLORS.accent
   },
-  readinessPill: {
-    borderWidth: 1,
-    borderColor: COLORS.accent,
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 6
-  },
-  readinessText: {
-    color: COLORS.accent,
-    fontSize: 11,
-    fontWeight: '700'
+  headerIcons: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14
   },
   card: {
     backgroundColor: COLORS.card,
