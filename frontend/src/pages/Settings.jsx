@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ChevronRight } from 'lucide-react'
+import { ChevronRight, Link2, RefreshCw, Unplug, User, Watch } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useUnits } from '../context/UnitsContext'
 import api from '../lib/api'
@@ -60,6 +60,11 @@ export default function Settings() {
   const [importing, setImporting] = useState(false)
   const [importProgress, setImportProgress] = useState('')
   const [importNotice, setImportNotice] = useState(null)
+  const [garminStatus, setGarminStatus] = useState({ connected: false, lastSync: null, activityCount: 0, displayName: '' })
+  const [garminAuth, setGarminAuth] = useState({ username: '', password: '' })
+  const [garminLoading, setGarminLoading] = useState(false)
+  const [garminSyncing, setGarminSyncing] = useState(false)
+  const [garminNotice, setGarminNotice] = useState(null)
   const manualFileRef = useRef(null)
 
   const isIOSSafari = typeof navigator !== 'undefined'
@@ -72,6 +77,14 @@ export default function Settings() {
     api.get('/users/settings').then(r => {
       setDistanceUnit(r.data.distance_unit || 'miles')
     }).catch(() => {})
+    api.get('/garmin/status').then((r) => {
+      setGarminStatus({
+        connected: Boolean(r.data?.connected),
+        lastSync: r.data?.lastSync || null,
+        activityCount: Number(r.data?.activityCount || 0),
+        displayName: r.data?.displayName || '',
+      })
+    }).catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -79,6 +92,12 @@ export default function Settings() {
     const id = setTimeout(() => setImportNotice(null), 5000)
     return () => clearTimeout(id)
   }, [importNotice])
+
+  useEffect(() => {
+    if (!garminNotice) return
+    const id = setTimeout(() => setGarminNotice(null), 4000)
+    return () => clearTimeout(id)
+  }, [garminNotice])
 
   const save = async (unit) => {
     setDistanceUnit(unit)
@@ -153,6 +172,64 @@ export default function Settings() {
       await runImport('/import/workouts', workouts)
     } catch (err) {
       setImportNotice({ ok: false, text: 'Could not parse file. Expected Garmin/Strava CSV or workout JSON.' })
+    }
+  }
+
+  const loadGarminStatus = async () => {
+    const { data } = await api.get('/garmin/status')
+    setGarminStatus({
+      connected: Boolean(data?.connected),
+      lastSync: data?.lastSync || null,
+      activityCount: Number(data?.activityCount || 0),
+      displayName: data?.displayName || '',
+    })
+  }
+
+  const handleGarminConnect = async (event) => {
+    event.preventDefault()
+    if (!garminAuth.username || !garminAuth.password) {
+      setGarminNotice({ ok: false, text: 'Enter your Garmin username and password.' })
+      return
+    }
+    setGarminLoading(true)
+    try {
+      const { data } = await api.post('/garmin/connect', garminAuth)
+      setGarminNotice({ ok: true, text: 'Garmin account connected.' })
+      setGarminAuth((prev) => ({ ...prev, password: '' }))
+      await loadGarminStatus()
+      if (data?.displayName) {
+        setGarminStatus((prev) => ({ ...prev, displayName: data.displayName, connected: true }))
+      }
+    } catch (err) {
+      setGarminNotice({ ok: false, text: err?.response?.data?.error || 'Connection failed.' })
+    } finally {
+      setGarminLoading(false)
+    }
+  }
+
+  const handleGarminSync = async () => {
+    setGarminSyncing(true)
+    try {
+      const { data } = await api.post('/garmin/sync')
+      setGarminNotice({ ok: true, text: `Synced ${Number(data?.synced || 0)} activities.` })
+      await loadGarminStatus()
+    } catch (err) {
+      setGarminNotice({ ok: false, text: err?.response?.data?.error || 'Sync failed.' })
+    } finally {
+      setGarminSyncing(false)
+    }
+  }
+
+  const handleGarminDisconnect = async () => {
+    setGarminLoading(true)
+    try {
+      await api.delete('/garmin/disconnect')
+      setGarminStatus({ connected: false, lastSync: null, activityCount: 0, displayName: '' })
+      setGarminNotice({ ok: true, text: 'Garmin disconnected.' })
+    } catch (err) {
+      setGarminNotice({ ok: false, text: err?.response?.data?.error || 'Disconnect failed.' })
+    } finally {
+      setGarminLoading(false)
     }
   }
 
@@ -300,6 +377,148 @@ export default function Settings() {
         </div>
 
         {importProgress && <p style={{ fontSize: 12, marginTop: 10, color: 'var(--text-muted)' }}>{importProgress}</p>}
+      </div>
+
+      <div style={{
+        background: 'linear-gradient(160deg, #0b0b0b 0%, #111111 100%)',
+        borderRadius: 16,
+        padding: 20,
+        marginBottom: 16,
+        border: '1px solid rgba(234,179,8,0.35)',
+        boxShadow: '0 8px 22px rgba(0,0,0,0.28)'
+      }}>
+        <span style={{ ...label, color: '#fcd34d' }}>Garmin Connect</span>
+        {!garminStatus.connected ? (
+          <form onSubmit={handleGarminConnect} style={{ display: 'grid', gap: 10 }}>
+            <p style={{ margin: 0, color: '#fde68a', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Watch size={15} />
+              Connect Garmin to auto-sync activities from the last 30 days.
+            </p>
+            <div style={{ position: 'relative' }}>
+              <User size={14} style={{ position: 'absolute', top: 11, left: 10, color: '#fbbf24' }} />
+              <input
+                value={garminAuth.username}
+                onChange={(e) => setGarminAuth((prev) => ({ ...prev, username: e.target.value }))}
+                placeholder='Garmin username'
+                autoComplete='username'
+                style={{
+                  width: '100%',
+                  padding: '10px 10px 10px 32px',
+                  borderRadius: 10,
+                  border: '1px solid rgba(234,179,8,0.35)',
+                  background: '#151515',
+                  color: '#fef3c7',
+                  fontSize: 13,
+                }}
+              />
+            </div>
+            <div style={{ position: 'relative' }}>
+              <Link2 size={14} style={{ position: 'absolute', top: 11, left: 10, color: '#fbbf24' }} />
+              <input
+                type='password'
+                value={garminAuth.password}
+                onChange={(e) => setGarminAuth((prev) => ({ ...prev, password: e.target.value }))}
+                placeholder='Garmin password'
+                autoComplete='current-password'
+                style={{
+                  width: '100%',
+                  padding: '10px 10px 10px 32px',
+                  borderRadius: 10,
+                  border: '1px solid rgba(234,179,8,0.35)',
+                  background: '#151515',
+                  color: '#fef3c7',
+                  fontSize: 13,
+                }}
+              />
+            </div>
+            <button
+              type='submit'
+              disabled={garminLoading}
+              style={{
+                width: '100%',
+                border: '1px solid #fbbf24',
+                borderRadius: 10,
+                padding: '10px 12px',
+                fontSize: 13,
+                fontWeight: 800,
+                background: '#facc15',
+                color: '#111111',
+                cursor: 'pointer',
+                opacity: garminLoading ? 0.6 : 1,
+              }}
+            >
+              {garminLoading ? 'Connecting...' : 'Connect'}
+            </button>
+          </form>
+        ) : (
+          <div style={{ display: 'grid', gap: 10 }}>
+            <p style={{ margin: 0, color: '#fde68a', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Watch size={15} />
+              Connected as <strong style={{ color: '#fef3c7' }}>{garminStatus.displayName || 'Garmin user'}</strong>
+            </p>
+            <p style={{ margin: 0, fontSize: 12, color: '#fcd34d' }}>
+              Last sync: {garminStatus.lastSync ? new Date(garminStatus.lastSync).toLocaleString() : 'Never'}
+            </p>
+            <p style={{ margin: 0, fontSize: 12, color: '#fcd34d' }}>
+              Imported activities: {garminStatus.activityCount}
+            </p>
+            <button
+              onClick={handleGarminSync}
+              disabled={garminSyncing}
+              style={{
+                width: '100%',
+                border: '1px solid #fbbf24',
+                borderRadius: 10,
+                padding: '10px 12px',
+                fontSize: 13,
+                fontWeight: 800,
+                background: '#facc15',
+                color: '#111111',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 8,
+                opacity: garminSyncing ? 0.6 : 1,
+              }}
+            >
+              <RefreshCw size={14} />
+              {garminSyncing ? 'Syncing...' : 'Sync Now'}
+            </button>
+            <button
+              onClick={handleGarminDisconnect}
+              disabled={garminLoading}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: '#fbbf24',
+                fontSize: 12,
+                textDecoration: 'underline',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 6,
+              }}
+            >
+              <Unplug size={13} />
+              Disconnect
+            </button>
+          </div>
+        )}
+        {garminNotice && (
+          <div style={{
+            marginTop: 10,
+            borderRadius: 10,
+            padding: '9px 10px',
+            fontSize: 12,
+            border: `1px solid ${garminNotice.ok ? 'rgba(250,204,21,0.45)' : 'rgba(248,113,113,0.55)'}`,
+            color: garminNotice.ok ? '#fef08a' : '#fca5a5',
+            background: garminNotice.ok ? 'rgba(250,204,21,0.08)' : 'rgba(239,68,68,0.1)',
+          }}>
+            {garminNotice.text}
+          </div>
+        )}
       </div>
 
       {/* Data */}

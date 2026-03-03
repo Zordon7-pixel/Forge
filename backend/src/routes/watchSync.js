@@ -6,6 +6,18 @@ const multer = require('multer');
 const { parseStringPromise } = require('xml2js');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+let watchSyncSchemaReady = null;
+
+async function ensureWatchSyncSchema() {
+  if (!watchSyncSchemaReady) {
+    watchSyncSchemaReady = dbRun('ALTER TABLE watch_sync ADD COLUMN IF NOT EXISTS garmin_activity_id TEXT')
+      .catch((err) => {
+        watchSyncSchemaReady = null;
+        throw err;
+      });
+  }
+  return watchSyncSchemaReady;
+}
 
 function normalizeActivityType(rawType = '') {
   const v = String(rawType || '').toLowerCase().trim();
@@ -37,6 +49,7 @@ function haversineMiles(lat1, lon1, lat2, lon2) {
 }
 
 async function ingestActivity(userId, payload = {}) {
+  await ensureWatchSyncSchema();
   const mapped = normalizeActivityType(payload.activity_type);
   const now = new Date().toISOString();
   const watchSyncId = uuidv4();
@@ -52,8 +65,8 @@ async function ingestActivity(userId, payload = {}) {
     calories, exercise_name, sets, reps, weight_lbs,
     set_heart_rate_json, rest_heart_rate_json, workout_duration_seconds,
     recovery_heart_rate, incline_pct, belt_speed_mph,
-    treadmill_brand, treadmill_model, watch_mode, raw_payload, synced_at
-  ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [
+    treadmill_brand, treadmill_model, watch_mode, garmin_activity_id, raw_payload, synced_at
+  ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [
     watchSyncId, userId,
     payload.activity_type || null, activityName, mapped.normalized, mapped.section,
     asNum(payload.distance_miles, 0), asNum(payload.duration_seconds, 0), asNum(payload.avg_pace),
@@ -70,7 +83,7 @@ async function ingestActivity(userId, payload = {}) {
     asNum(payload.workout_duration_seconds), asNum(payload.recovery_heart_rate),
     asNum(payload.incline_pct), asNum(payload.belt_speed_mph),
     payload.treadmill_brand || null, payload.treadmill_model || null,
-    payload.watch_mode || null, JSON.stringify(payload), now
+    payload.watch_mode || null, payload.garmin_activity_id ? String(payload.garmin_activity_id) : null, JSON.stringify(payload), now
   ]);
 
   let createdRecordId = null;
@@ -227,3 +240,4 @@ router.get('/meta/status', auth, async (req, res) => {
 });
 
 module.exports = router;
+module.exports.ingestActivity = ingestActivity;
