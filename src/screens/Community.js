@@ -1,3 +1,4 @@
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import React, { useCallback, useMemo, useState } from 'react';
 import {
   Pressable,
@@ -45,6 +46,7 @@ const getInitials = (name) => {
 };
 
 export default function Community() {
+  const insets = useSafeAreaInsets();
   const [tab, setTab] = useState('Feed');
   const [refreshing, setRefreshing] = useState(false);
   const [feed, setFeed] = useState([]);
@@ -87,7 +89,7 @@ export default function Community() {
 
   return (
     <ScrollView
-      style={styles.container}
+      style={[styles.container, { paddingTop: insets.top }]}
       contentContainerStyle={styles.content}
       refreshControl={<RefreshControl tintColor="#EAB308" refreshing={refreshing} onRefresh={load} />}
     >

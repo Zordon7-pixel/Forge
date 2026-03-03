@@ -1,3 +1,4 @@
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import React, { useCallback, useMemo, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
@@ -25,6 +26,7 @@ const parseDate = (raw) => {
 };
 
 export default function Challenges() {
+  const insets = useSafeAreaInsets();
   const [tab, setTab] = useState('Challenges');
   const [refreshing, setRefreshing] = useState(false);
   const [challenges, setChallenges] = useState([]);
@@ -113,7 +115,7 @@ export default function Challenges() {
 
   return (
     <ScrollView
-      style={styles.container}
+      style={[styles.container, { paddingTop: insets.top }]}
       contentContainerStyle={styles.content}
       refreshControl={<RefreshControl tintColor="#EAB308" refreshing={refreshing} onRefresh={load} />}
     >

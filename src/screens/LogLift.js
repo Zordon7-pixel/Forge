@@ -1,3 +1,4 @@
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import React, { useEffect, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Plus, Save, Trash2 } from 'lucide-react-native';
@@ -20,6 +21,7 @@ const COLORS = {
 const createSet = () => ({ reps: '', weight: '' });
 
 export default function LogLift({ navigation }) {
+  const insets = useSafeAreaInsets();
   const [name, setName] = useState('');
   const [sets, setSets] = useState([createSet()]);
   const [saving, setSaving] = useState(false);
@@ -95,7 +97,7 @@ export default function LogLift({ navigation }) {
   };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <ScrollView style={[styles.container, { paddingTop: insets.top }]} contentContainerStyle={styles.content}>
       <Text style={styles.title}>Log Lift</Text>
       <Text style={styles.subtitle}>Record exercise sets, reps, and weight.</Text>
 

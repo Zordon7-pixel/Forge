@@ -1,3 +1,4 @@
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import React, { useCallback, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
@@ -43,6 +44,7 @@ const getPaceZone = (paceMinPerMile) => {
 };
 
 export default function RunHub({ navigation }) {
+  const insets = useSafeAreaInsets();
   const [loading, setLoading] = useState(true);
   const [latestRun, setLatestRun] = useState(null);
 
@@ -77,7 +79,7 @@ export default function RunHub({ navigation }) {
   }, [latestRun]);
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <ScrollView style={[styles.container, { paddingTop: insets.top }]} contentContainerStyle={styles.content}>
       <View style={styles.headerCard}>
         <Text style={styles.title}>Run Hub</Text>
         <Text style={styles.subtitle}>Your last run translated into runner language.</Text>

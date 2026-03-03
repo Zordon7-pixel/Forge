@@ -1,3 +1,4 @@
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import React from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
@@ -12,8 +13,9 @@ const COLORS = {
 };
 
 export default function Settings() {
+  const insets = useSafeAreaInsets();
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <ScrollView style={[styles.container, { paddingTop: insets.top }]} contentContainerStyle={styles.content}>
       <Text style={styles.title}>Settings</Text>
       {['Account', 'Notifications', 'Units'].map((section) => (
         <View key={section} style={styles.card}>

@@ -1,3 +1,4 @@
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import React, { useCallback, useMemo, useState } from 'react';
 import { Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
@@ -94,6 +95,7 @@ const weeklyMileage = (runs) => {
 };
 
 export default function History() {
+  const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const [refreshing, setRefreshing] = useState(false);
   const [period, setPeriod] = useState('All');
@@ -238,7 +240,7 @@ export default function History() {
 
   return (
     <ScrollView
-      style={styles.container}
+      style={[styles.container, { paddingTop: insets.top }]}
       contentContainerStyle={styles.content}
       refreshControl={<RefreshControl tintColor="#EAB308" refreshing={refreshing} onRefresh={load} />}
     >

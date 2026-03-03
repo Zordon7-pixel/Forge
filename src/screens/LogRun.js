@@ -1,3 +1,4 @@
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import * as Location from 'expo-location';
@@ -35,6 +36,7 @@ const calcDistanceMeters = (a, b) => {
 const formatDuration = (elapsed) => `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`;
 
 export default function LogRun() {
+  const insets = useSafeAreaInsets();
   const [status, setStatus] = useState('idle');
   const [elapsed, setElapsed] = useState(0);
   const [distanceMeters, setDistanceMeters] = useState(0);
@@ -250,7 +252,7 @@ export default function LogRun() {
   const isWatchReachable = Boolean(connection?.reachable || connection?.connected);
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <ScrollView style={[styles.container, { paddingTop: insets.top }]} contentContainerStyle={styles.content}>
       <View style={styles.headerRow}>
         <View style={styles.headerTextWrap}>
           <Text style={styles.title}>Log Run</Text>

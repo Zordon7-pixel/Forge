@@ -34,9 +34,7 @@ export default function MainTabs() {
           backgroundColor: '#0f1117',
           borderTopColor: '#2c3345',
           borderTopWidth: 1,
-          height: 66,
           paddingTop: 8,
-          paddingBottom: 8
         },
         tabBarActiveTintColor: '#EAB308',
         tabBarInactiveTintColor: '#64748b',

@@ -1,3 +1,4 @@
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import React, { useCallback, useContext, useMemo, useState } from 'react';
 import {
   Alert,
@@ -42,6 +43,7 @@ const goalOptions = [
 ];
 
 export default function Profile({ navigation }) {
+  const insets = useSafeAreaInsets();
   const { signOut } = useContext(AuthContext);
   const [saving, setSaving] = useState(false);
   const [dismissMeta, setDismissMeta] = useState(false);
@@ -151,7 +153,7 @@ export default function Profile({ navigation }) {
   };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <ScrollView style={[styles.container, { paddingTop: insets.top }]} contentContainerStyle={styles.content}>
       <View style={styles.headerCard}>
         <View style={styles.avatar}>
           <Text style={styles.avatarText}>{initials}</Text>
