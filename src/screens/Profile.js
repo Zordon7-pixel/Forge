@@ -129,7 +129,7 @@ export default function Profile({ navigation }) {
   const onSave = async () => {
     try {
       setSaving(true);
-      await api.put('/auth/me', {
+      await api.put('/auth/me/profile', {
         name: form.name,
         age: form.age === '' ? null : Number(form.age),
         weight_lbs: form.weight_lbs === '' ? null : Number(form.weight_lbs),
