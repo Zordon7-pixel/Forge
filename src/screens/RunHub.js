@@ -6,44 +6,63 @@ import { useFocusEffect } from '@react-navigation/native';
 import api from '../lib/api';
 import AppHeader from '../components/AppHeader';
 
-const COLORS = {
-  background: '#0f1117',
-  card: '#171c27',
-  accent: '#EAB308',
-  text: '#FFFFFF',
-  subtext: '#94a3b8',
-  border: '#2c3345',
-  success: '#22c55e',
-  error: '#ef4444',
-  input: '#1e2433'
+// ─── Colors (FORGE design system) ───────────────────────────────────────────
+const C = {
+  bg:     '#0d1117',
+  card:   '#161b22',
+  accent: '#eab308',
+  text:   '#ffffff',
+  muted:  '#8b949e',
+  border: '#21262d',
+  green:  '#22c55e',
+  red:    '#ef4444',
+  input:  '#0d1117',
 };
 
-const getDistance = (run) => Number(run?.distance_miles ?? run?.distance ?? 0);
-const getDuration = (run) => Number(run?.duration_seconds ?? run?.duration ?? 0);
+// ─── Pace zones — matches web athleteLanguage.js exactly ────────────────────
+const PACE_ZONES = [
+  { zone: 1, label: 'Easy',      description: 'Conversational pace — builds aerobic base',           color: '#4CAF50' },
+  { zone: 2, label: 'Moderate',  description: 'Steady aerobic work — improves endurance efficiency', color: '#8BC34A' },
+  { zone: 3, label: 'Tempo',     description: 'Comfortably hard — strengthens sustained speed',      color: '#FFC107' },
+  { zone: 4, label: 'Threshold', description: 'Controlled discomfort — raises lactate threshold',    color: '#FF9800' },
+  { zone: 5, label: 'Race Pace', description: 'High intensity effort — race-specific speed',         color: '#F44336' },
+];
 
-const formatPace = (seconds, miles) => {
+function getPaceZone(paceMinPerMile) {
+  const pace = Number(paceMinPerMile);
+  if (!pace || pace <= 0) return null;
+  if (pace > 10.5) return PACE_ZONES[0];
+  if (pace >= 9 && pace <= 10.5) return PACE_ZONES[1];
+  if (pace >= 7.5 && pace < 9)   return PACE_ZONES[2];
+  if (pace >= 6.5 && pace < 7.5) return PACE_ZONES[3];
+  return PACE_ZONES[4];
+}
+
+function getDistance(run)  { return Number(run?.distance_miles ?? run?.distance ?? 0); }
+function getDuration(run)  { return Number(run?.duration_seconds ?? run?.duration ?? 0); }
+
+function formatPace(seconds, miles) {
   if (!seconds || !miles) return '--';
   const pace = seconds / 60 / miles;
   const mins = Math.floor(pace);
   const secs = Math.round((pace - mins) * 60);
   return `${mins}:${String(secs).padStart(2, '0')} /mi`;
-};
+}
 
-const getPaceZone = (paceMinPerMile) => {
-  if (paceMinPerMile < 7) return { zone: 5, label: 'Max Effort', color: '#ef4444' };
-  if (paceMinPerMile < 8.5) return { zone: 4, label: 'Threshold', color: '#f97316' };
-  if (paceMinPerMile < 10) return { zone: 3, label: 'Tempo', color: '#EAB308' };
-  if (paceMinPerMile <= 12) {
-    return {
-      zone: 2,
-      label: 'Moderate',
-      color: '#22c55e',
-      detail: 'steady aerobic work - improves endurance efficiency'
-    };
-  }
-  return { zone: 1, label: 'Recovery', color: '#94a3b8' };
-};
+function formatDistance(miles) {
+  return miles ? `${Number(miles).toFixed(2)} mi` : '--';
+}
 
+function formatDuration(seconds) {
+  const s = Math.max(0, Math.round(Number(seconds || 0)));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}:${String(sec).padStart(2, '0')}`;
+}
+
+// ─── Component ───────────────────────────────────────────────────────────────
 export default function RunHub({ navigation }) {
   const insets = useSafeAreaInsets();
   const [loading, setLoading] = useState(true);
@@ -60,116 +79,168 @@ export default function RunHub({ navigation }) {
     }
   }, []);
 
-  useFocusEffect(
-    useCallback(() => {
-      load();
-    }, [load])
-  );
+  useFocusEffect(useCallback(() => { load(); }, [load]));
 
-  const pace = useMemo(() => {
+  const paceZone = useMemo(() => {
+    if (!latestRun) return null;
+    const dist = getDistance(latestRun);
+    const dur  = getDuration(latestRun);
+    if (!dist || !dur) return null;
+    return getPaceZone(dur / 60 / dist);
+  }, [latestRun]);
+
+  const paceText = useMemo(() => {
     if (!latestRun) return '--';
     return formatPace(getDuration(latestRun), getDistance(latestRun));
   }, [latestRun]);
 
-  const zone = useMemo(() => {
-    if (!latestRun) return null;
-    const distance = getDistance(latestRun);
-    const duration = getDuration(latestRun);
-    if (!distance || !duration) return null;
-    return getPaceZone(duration / 60 / distance);
-  }, [latestRun]);
-
   return (
-    <ScrollView style={[styles.container, { paddingTop: insets.top }]} contentContainerStyle={styles.content}>
+    <ScrollView
+      style={[styles.container, { paddingTop: insets.top }]}
+      contentContainerStyle={styles.content}
+    >
       <AppHeader />
-      <View style={styles.headerCard}>
+
+      {/* Header card */}
+      <View style={styles.card}>
         <Text style={styles.title}>Run Hub</Text>
         <Text style={styles.subtitle}>Your last run translated into runner language.</Text>
       </View>
 
+      {/* Pace zone card */}
       <View style={styles.card}>
         {loading ? (
-          <Text style={styles.muted}>Loading run stats...</Text>
+          <Text style={styles.muted}>Loading run stats…</Text>
         ) : !latestRun ? (
           <Text style={styles.muted}>No runs yet. Log one to see your pace zone.</Text>
         ) : (
           <>
-            <Text style={styles.muted}>Latest Pace</Text>
+            <Text style={styles.statLabel}>Latest Pace</Text>
             <Text style={styles.paceText}>
-              {pace}
-              {zone ? <Text style={{ color: zone.color }}> · Zone {zone.zone} {zone.label}</Text> : null}
+              {paceText}
+              {paceZone ? (
+                <Text style={{ color: paceZone.color }}>
+                  {' '}· Zone {paceZone.zone} {paceZone.label}
+                </Text>
+              ) : null}
             </Text>
-            {zone?.detail ? <Text style={[styles.zoneDetail, { color: zone.color }]}>{zone.detail}</Text> : null}
+            {paceZone ? (
+              <Text style={[styles.zoneDesc, { color: paceZone.color }]}>
+                {paceZone.description}
+              </Text>
+            ) : null}
+
+            {/* Quick stats row */}
+            <View style={styles.statsRow}>
+              <View style={styles.statBox}>
+                <Text style={styles.statValue}>{formatDistance(getDistance(latestRun))}</Text>
+                <Text style={styles.statKey}>Distance</Text>
+              </View>
+              <View style={styles.statBox}>
+                <Text style={styles.statValue}>{formatDuration(getDuration(latestRun))}</Text>
+                <Text style={styles.statKey}>Duration</Text>
+              </View>
+              {latestRun.date ? (
+                <View style={styles.statBox}>
+                  <Text style={styles.statValue}>
+                    {new Date(`${latestRun.date}T12:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                  </Text>
+                  <Text style={styles.statKey}>Date</Text>
+                </View>
+              ) : null}
+            </View>
           </>
         )}
       </View>
 
-      <Pressable onPress={() => navigation.navigate('LogRun')} style={styles.ctaButton}>
-        <Text style={styles.ctaButtonText}>Open Run Logger</Text>
+      {/* CTA */}
+      <Pressable
+        onPress={() => navigation.navigate('LogRun')}
+        style={({ pressed }) => [styles.ctaButton, pressed && { opacity: 0.85 }]}
+      >
+        <Text style={styles.ctaText}>Open Run Logger</Text>
       </Pressable>
     </ScrollView>
   );
 }
 
+// ─── Styles ──────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: COLORS.background
+    backgroundColor: C.bg,
   },
   content: {
     paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 24
-  },
-  headerCard: {
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 16,
-    backgroundColor: COLORS.card,
-    padding: 16,
-    marginBottom: 12
-  },
-  title: {
-    color: COLORS.text,
-    fontSize: 28,
-    fontWeight: '800'
-  },
-  subtitle: {
-    color: COLORS.subtext,
-    fontSize: 13,
-    marginTop: 4
+    paddingTop: 12,
+    paddingBottom: 32,
   },
   card: {
+    backgroundColor: C.card,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: C.border,
     borderRadius: 16,
-    backgroundColor: COLORS.card,
     padding: 16,
-    marginBottom: 12
+    marginBottom: 12,
   },
-  muted: {
-    color: COLORS.subtext,
-    fontSize: 13
+  title: {
+    color: C.text,
+    fontSize: 26,
+    fontWeight: '800',
+    marginBottom: 4,
+  },
+  subtitle: {
+    color: C.muted,
+    fontSize: 13,
+  },
+  statLabel: {
+    color: C.muted,
+    fontSize: 12,
+    marginBottom: 4,
   },
   paceText: {
-    color: COLORS.text,
-    fontSize: 19,
+    color: C.text,
+    fontSize: 20,
     fontWeight: '700',
-    marginTop: 6
   },
-  zoneDetail: {
+  zoneDesc: {
+    fontSize: 13,
     marginTop: 8,
-    fontSize: 12
+    lineHeight: 18,
+  },
+  statsRow: {
+    flexDirection: 'row',
+    marginTop: 16,
+    gap: 8,
+  },
+  statBox: {
+    flex: 1,
+    backgroundColor: C.bg,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: C.border,
+    padding: 10,
+    alignItems: 'center',
+  },
+  statValue: {
+    color: C.text,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  statKey: {
+    color: C.muted,
+    fontSize: 11,
+    marginTop: 2,
   },
   ctaButton: {
-    backgroundColor: COLORS.accent,
+    backgroundColor: C.accent,
     borderRadius: 12,
     paddingVertical: 14,
-    alignItems: 'center'
+    alignItems: 'center',
   },
-  ctaButtonText: {
+  ctaText: {
     color: '#000000',
     fontSize: 15,
-    fontWeight: '700'
-  }
+    fontWeight: '700',
+  },
 });
