@@ -50,13 +50,6 @@ export default function Challenges() {
     } catch {}
   };
 
-  const joinChallenge = async (id) => {
-    try {
-      await api.post(`/challenges/${id}/join`);
-      load();
-    } catch {}
-  };
-
   const load = useCallback(async () => {
     setRefreshing(true);
     try {
