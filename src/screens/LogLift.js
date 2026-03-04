@@ -191,6 +191,7 @@ export default function LogLift({ navigation }) {
 
       {/* Manual Form */}
       {liftMode === 'Manual' && (
+        <>
         <View style={styles.card}>
         <Text style={styles.label}>Exercise Name</Text>
         <TextInput
@@ -245,6 +246,7 @@ export default function LogLift({ navigation }) {
         <Save size={18} color={COLORS.background} />
         <Text style={styles.primaryButtonText}>{saving ? 'Saving...' : 'Save Workout'}</Text>
       </Pressable>
+        </>
       )}
     </ScrollView>
   );
