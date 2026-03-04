@@ -11,6 +11,10 @@
       "ios": { "buildConfiguration": "Release" }
     },
     "production": {
+      "env": {
+        "LANG": "en_US.UTF-8",
+        "LC_ALL": "en_US.UTF-8"
+      },
       "ios": {
         "buildConfiguration": "Release",
         "image": "macos-sequoia-15.3-xcode-16.2"
