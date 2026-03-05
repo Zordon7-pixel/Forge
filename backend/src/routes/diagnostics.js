@@ -65,22 +65,6 @@ router.post('/heal', auth, async (req, res) => {
     actions.push(`⚠️ User count check failed: ${e.message}`);
   }
 
-  // Log to Control Room
-  try {
-    const actPath = '/Users/zordon/.openclaw/workspace/second-brain/data/activity.json';
-    const fs = require('fs');
-    const data = JSON.parse(fs.readFileSync(actPath, 'utf8'));
-    data.activity.push({
-      id: `act-heal-${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      type: 'diagnostic',
-      icon: '🔧',
-      message: `FORGE self-heal ran: ${actions.length} action(s)`,
-      detail: actions.join('; '),
-    });
-    fs.writeFileSync(actPath, JSON.stringify(data, null, 2));
-  } catch (e) {}
-
   if (actions.length === 0) actions.push('No issues found — everything looks healthy');
   res.json({ ok: true, actions });
 });

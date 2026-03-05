@@ -50,7 +50,6 @@ router.post('/forgot-password', async (req, res) => {
       const expiresAt = new Date(Date.now() + 3600000).toISOString();
       await dbRun('INSERT INTO password_reset_tokens (id, user_id, token, expires_at) VALUES (?, ?, ?, ?)',
         [uuidv4(), user.id, token, expiresAt]);
-      console.log(`PASSWORD RESET LINK: /reset-password?token=${token}`);
     }
     res.json({ ok: true });
   } catch (err) { res.json({ ok: true }); }

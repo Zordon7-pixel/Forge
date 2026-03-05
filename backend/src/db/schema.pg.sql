@@ -25,7 +25,7 @@ CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 
 CREATE TABLE IF NOT EXISTS runs (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   date TEXT NOT NULL,
   type TEXT NOT NULL,
   distance_miles REAL DEFAULT 0,
@@ -70,7 +70,7 @@ CREATE INDEX IF NOT EXISTS idx_runs_user_date ON runs(user_id, date DESC);
 
 CREATE TABLE IF NOT EXISTS lifts (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   date TEXT NOT NULL,
   muscle_groups TEXT DEFAULT '[]',
   intensity TEXT DEFAULT 'moderate',
@@ -125,7 +125,7 @@ CREATE TABLE IF NOT EXISTS user_plans (
 
 CREATE TABLE IF NOT EXISTS watch_sync (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   garmin_activity_id TEXT,
   activity_type TEXT,
   activity_name TEXT,

@@ -115,7 +115,7 @@ router.delete('/saved/:id', auth, async (req, res) => {
   try {
     const row = await dbGet('SELECT * FROM saved_workouts WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
     if (!row) return res.status(404).json({ error: 'Not found' });
-    await dbRun('DELETE FROM saved_workouts WHERE id=?', [req.params.id]);
+    await dbRun('DELETE FROM saved_workouts WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: 'Delete failed' }); }
 });
