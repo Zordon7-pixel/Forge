@@ -623,6 +623,26 @@ async function initDb() {
     `);
 
     await client.query(`
+      CREATE TABLE IF NOT EXISTS garmin_sleep (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        calendar_date TEXT NOT NULL,
+        sleep_start_gmt TEXT,
+        sleep_end_gmt TEXT,
+        deep_sleep_seconds INTEGER,
+        light_sleep_seconds INTEGER,
+        rem_sleep_seconds INTEGER,
+        awake_seconds INTEGER,
+        unmeasurable_seconds INTEGER,
+        confirmation_type TEXT,
+        retro INTEGER DEFAULT 0,
+        synced_at TEXT DEFAULT to_char(NOW(), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+      );
+    `);
+    await client.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_garmin_sleep_user_date ON garmin_sleep(user_id, calendar_date)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_garmin_sleep_user_synced ON garmin_sleep(user_id, synced_at DESC)');
+
+    await client.query(`
       CREATE TABLE IF NOT EXISTS race_events (
         id TEXT PRIMARY KEY,
         user_id TEXT NOT NULL,

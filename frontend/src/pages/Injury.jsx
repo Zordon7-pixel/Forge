@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Activity, AlertTriangle, CheckCircle2, Circle, Dumbbell, Lock, Plus, TrendingUp } from 'lucide-react'
+import { Activity, AlertTriangle, CheckCircle2, Circle, Dumbbell, Lock, MoonStar, Plus, TrendingUp } from 'lucide-react'
 import api from '../lib/api'
 import { getRecurringInjuryWarning, scrollToFirstError, validateInjuryLog } from '../utils/validation'
 
@@ -48,6 +48,36 @@ function formatDayLabel(dateStr) {
   return dt.toLocaleDateString(undefined, { weekday: 'short' }).slice(0, 1)
 }
 
+function totalSleepSeconds(row) {
+  return Number(row?.deep_sleep_seconds || 0)
+    + Number(row?.light_sleep_seconds || 0)
+    + Number(row?.rem_sleep_seconds || 0)
+}
+
+function formatSleepHours(totalSeconds) {
+  if (!totalSeconds || totalSeconds <= 0) return '0.0h'
+  return `${(totalSeconds / 3600).toFixed(1)}h`
+}
+
+function buildSleepSeries(rows, days) {
+  const byDate = new Map((rows || []).map((row) => [row.calendar_date, row]))
+  const series = []
+  for (let i = days - 1; i >= 0; i -= 1) {
+    const dt = new Date()
+    dt.setHours(0, 0, 0, 0)
+    dt.setDate(dt.getDate() - i)
+    const date = dt.toISOString().slice(0, 10)
+    const row = byDate.get(date) || null
+    series.push({
+      date,
+      label: formatDayLabel(date),
+      row,
+      totalSeconds: row ? totalSleepSeconds(row) : null,
+    })
+  }
+  return series
+}
+
 export default function Injury() {
   const today = new Date().toISOString().slice(0, 10)
 
@@ -57,6 +87,7 @@ export default function Injury() {
   const [allInjuries, setAllInjuries] = useState([])
   const [ptExercises, setPtExercises] = useState([])
   const [milestones, setMilestones] = useState([])
+  const [sleepNights, setSleepNights] = useState([])
   const [readiness, setReadiness] = useState({ score: 0, days_since_injury: 0, avg_pain_3d: 0, avg_pain_7d: 0 })
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
@@ -80,12 +111,13 @@ export default function Injury() {
 
   const loadData = async () => {
     try {
-      const [activeRes, allRes, ptRes, milestoneRes, readinessRes] = await Promise.all([
+      const [activeRes, allRes, ptRes, milestoneRes, readinessRes, sleepRes] = await Promise.all([
         api.get('/injury/active'),
         api.get('/injury'),
         api.get('/pt/exercises'),
         api.get('/pt/milestones'),
         api.get('/pt/readiness'),
+        api.get('/garmin/sleep').catch(() => ({ data: { sleep: [] } })),
       ])
       setActive(activeRes.data?.injuries || [])
       const all = allRes.data?.injuries || []
@@ -94,6 +126,7 @@ export default function Injury() {
       setPtExercises(ptRes.data?.exercises || [])
       setMilestones(milestoneRes.data?.milestones || [])
       setReadiness(readinessRes.data || { score: 0, days_since_injury: 0, avg_pain_3d: 0, avg_pain_7d: 0 })
+      setSleepNights(Array.isArray(sleepRes.data?.sleep) ? sleepRes.data.sleep : [])
     } catch (_) {}
     setLoading(false)
   }
@@ -153,6 +186,43 @@ export default function Injury() {
 
   const allMilestonesAchieved = MILESTONE_FLOW.every(m => !!milestonesByType[m.type])
   const firstWalkAchieved = !!milestonesByType.first_walk
+  const sleepTrend7 = useMemo(() => buildSleepSeries(sleepNights, 7), [sleepNights])
+  const sleepTrend30 = useMemo(() => buildSleepSeries(sleepNights, 30), [sleepNights])
+
+  const latestSleep = useMemo(() => (
+    [...sleepNights]
+      .sort((a, b) => String(b.calendar_date || '').localeCompare(String(a.calendar_date || '')))
+      .find((row) => totalSleepSeconds(row) > 0) || null
+  ), [sleepNights])
+
+  const avgSleepHours7 = useMemo(() => {
+    const values = sleepTrend7.map(d => d.totalSeconds).filter(v => Number.isFinite(v) && v > 0)
+    if (!values.length) return 0
+    return values.reduce((sum, v) => sum + v, 0) / values.length / 3600
+  }, [sleepTrend7])
+
+  const avgSleepHours30 = useMemo(() => {
+    const values = sleepTrend30.map(d => d.totalSeconds).filter(v => Number.isFinite(v) && v > 0)
+    if (!values.length) return 0
+    return values.reduce((sum, v) => sum + v, 0) / values.length / 3600
+  }, [sleepTrend30])
+
+  const consistentSleepStreak = useMemo(() => {
+    let streak = 0
+    for (let i = sleepTrend30.length - 1; i >= 0; i -= 1) {
+      const hours = Number(sleepTrend30[i].totalSeconds || 0) / 3600
+      if (hours >= 7) streak += 1
+      else break
+    }
+    return streak
+  }, [sleepTrend30])
+
+  const recoverySleepSignal = useMemo(() => {
+    const readinessScore = Number(readiness.score || 0)
+    if (avgSleepHours7 >= 7.5 && readinessScore >= 70) return 'Strong recovery signal: sleep + readiness are aligned.'
+    if (avgSleepHours7 >= 6.5 && readinessScore >= 50) return 'Stable recovery signal: keep your sleep window consistent.'
+    return 'Recovery signal is low: prioritize 7+ hours and lower intensity when possible.'
+  }, [avgSleepHours7, readiness.score])
 
   const adaptiveSuggestion = useMemo(() => {
     if (allMilestonesAchieved) return '🎉 Cleared for full training'
@@ -297,10 +367,11 @@ export default function Injury() {
         PT Recovery Module
       </h1>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8, marginBottom: 14 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 8, marginBottom: 14 }}>
         {[
           { key: 'pain', label: 'Pain Log' },
           { key: 'pt', label: 'PT Exercises' },
+          { key: 'sleep', label: 'Sleep' },
           { key: 'progress', label: 'Recovery Progress' },
         ].map(tab => (
           <button
@@ -683,6 +754,110 @@ export default function Injury() {
                   + {name}
                 </button>
               ))}
+            </div>
+          </div>
+        </>
+      )}
+
+      {activeTab === 'sleep' && (
+        <>
+          <div style={cardStyle}>
+            <div style={sectionLabel}>
+              <MoonStar size={14} />
+              Sleep Recovery Summary
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
+              <div style={{ border: '1px solid var(--border-subtle)', borderRadius: 12, padding: 12, background: 'var(--bg-base)' }}>
+                <p style={{ margin: 0, fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.8 }}>Last Night</p>
+                <p style={{ margin: '6px 0 2px', fontSize: 24, fontWeight: 900, color: 'var(--text-primary)' }}>
+                  {formatSleepHours(totalSleepSeconds(latestSleep))}
+                </p>
+                <p style={{ margin: 0, fontSize: 12, color: 'var(--text-muted)' }}>{latestSleep?.calendar_date ? formatDate(latestSleep.calendar_date) : 'No Garmin sleep data yet'}</p>
+              </div>
+              <div style={{ border: '1px solid var(--border-subtle)', borderRadius: 12, padding: 12, background: 'var(--bg-base)' }}>
+                <p style={{ margin: 0, fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.8 }}>30-Day Avg</p>
+                <p style={{ margin: '6px 0 2px', fontSize: 24, fontWeight: 900, color: avgSleepHours30 >= 7 ? '#22c55e' : '#EAB308' }}>
+                  {avgSleepHours30 ? `${avgSleepHours30.toFixed(1)}h` : '--'}
+                </p>
+                <p style={{ margin: 0, fontSize: 12, color: 'var(--text-muted)' }}>7-day avg: {avgSleepHours7 ? `${avgSleepHours7.toFixed(1)}h` : '--'}</p>
+              </div>
+            </div>
+
+            <div style={{ marginTop: 12, borderRadius: 12, border: `1px solid ${consistentSleepStreak >= 4 ? 'rgba(34,197,94,0.35)' : 'var(--border-subtle)'}`, padding: '10px 12px', background: consistentSleepStreak >= 4 ? 'rgba(34,197,94,0.08)' : 'var(--bg-base)' }}>
+              <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: consistentSleepStreak >= 4 ? '#22c55e' : 'var(--text-primary)' }}>
+                {consistentSleepStreak >= 4 ? 'Consistency Badge: Sleep Streak Active' : 'Consistency Badge: Build Your Streak'}
+              </p>
+              <p style={{ margin: '4px 0 0', fontSize: 12, color: 'var(--text-muted)' }}>
+                {consistentSleepStreak} consecutive {consistentSleepStreak === 1 ? 'night' : 'nights'} with 7h+ sleep
+              </p>
+            </div>
+          </div>
+
+          <div style={cardStyle}>
+            <div style={sectionLabel}>Nightly Breakdown (30 Nights)</div>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 11, color: '#6366f1' }}>Deep</span>
+              <span style={{ fontSize: 11, color: '#60a5fa' }}>Light</span>
+              <span style={{ fontSize: 11, color: '#a855f7' }}>REM</span>
+              <span style={{ fontSize: 11, color: '#f59e0b' }}>Awake</span>
+              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Gap = OFF_WRIST / no data</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'end', gap: 4, height: 128 }}>
+              {sleepTrend30.map((day) => {
+                if (!day.row) {
+                  return (
+                    <div key={day.date} style={{ flex: 1, borderRadius: 6, border: '1px dashed var(--border-subtle)', height: 22, background: 'var(--bg-base)' }} title={`${day.date}: no sleep data`} />
+                  )
+                }
+                const deep = Number(day.row.deep_sleep_seconds || 0)
+                const light = Number(day.row.light_sleep_seconds || 0)
+                const rem = Number(day.row.rem_sleep_seconds || 0)
+                const awake = Number(day.row.awake_seconds || 0)
+                const total = Math.max(1, deep + light + rem + awake)
+                const maxHeight = 116
+                return (
+                  <div key={day.date} style={{ flex: 1, borderRadius: 6, overflow: 'hidden', border: '1px solid var(--border-subtle)', height: maxHeight, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', background: 'var(--bg-base)' }} title={`${day.date}: ${formatSleepHours(day.totalSeconds || 0)}`}>
+                    <div style={{ height: `${Math.round((awake / total) * maxHeight)}px`, background: '#f59e0b', opacity: 0.8 }} />
+                    <div style={{ height: `${Math.round((rem / total) * maxHeight)}px`, background: '#a855f7', opacity: 0.9 }} />
+                    <div style={{ height: `${Math.round((light / total) * maxHeight)}px`, background: '#60a5fa', opacity: 0.9 }} />
+                    <div style={{ height: `${Math.round((deep / total) * maxHeight)}px`, background: '#6366f1', opacity: 0.95 }} />
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+
+          <div style={cardStyle}>
+            <div style={sectionLabel}>7-Day Sleep Trend</div>
+            <div style={{ display: 'flex', alignItems: 'end', gap: 8, height: 120 }}>
+              {sleepTrend7.map((day) => {
+                const hours = Number(day.totalSeconds || 0) / 3600
+                const barHeight = day.totalSeconds ? Math.max(8, Math.round((hours / 10) * 90)) : 6
+                return (
+                  <div key={day.date} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{day.totalSeconds ? `${hours.toFixed(1)}h` : '-'}</div>
+                    <div style={{ width: '100%', maxWidth: 28, height: barHeight, borderRadius: 8, background: day.totalSeconds ? (hours >= 7 ? '#22c55e' : '#EAB308') : 'transparent', border: day.totalSeconds ? 'none' : '1px dashed var(--border-subtle)', opacity: 0.9 }} />
+                    <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{day.label}</span>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+
+          <div style={cardStyle}>
+            <div style={sectionLabel}>30-Day Sleep Trend + PT Recovery</div>
+            <div style={{ display: 'flex', alignItems: 'end', gap: 4, height: 84, marginBottom: 10 }}>
+              {sleepTrend30.map((day) => {
+                const hours = Number(day.totalSeconds || 0) / 3600
+                const height = day.totalSeconds ? Math.max(4, Math.round((hours / 10) * 72)) : 2
+                return (
+                  <div key={day.date} style={{ flex: 1, height, borderRadius: 3, background: day.totalSeconds ? (hours >= 7 ? '#22c55e' : '#EAB308') : 'var(--border-subtle)', opacity: day.totalSeconds ? 0.9 : 0.4 }} />
+                )
+              })}
+            </div>
+            <div style={{ border: '1px solid var(--border-subtle)', borderRadius: 12, padding: '10px 12px', background: 'var(--bg-base)' }}>
+              <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>PT Recovery Tie-In</p>
+              <p style={{ margin: '6px 0 0', fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.4 }}>{recoverySleepSignal}</p>
             </div>
           </div>
         </>

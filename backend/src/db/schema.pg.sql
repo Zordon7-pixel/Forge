@@ -179,6 +179,25 @@ CREATE TABLE IF NOT EXISTS user_settings (
   UNIQUE(user_id, key)
 );
 
+CREATE TABLE IF NOT EXISTS garmin_sleep (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  calendar_date TEXT NOT NULL,
+  sleep_start_gmt TIMESTAMPTZ,
+  sleep_end_gmt TIMESTAMPTZ,
+  deep_sleep_seconds INTEGER,
+  light_sleep_seconds INTEGER,
+  rem_sleep_seconds INTEGER,
+  awake_seconds INTEGER,
+  unmeasurable_seconds INTEGER,
+  confirmation_type TEXT,
+  retro INTEGER DEFAULT 0,
+  synced_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_garmin_sleep_user_date ON garmin_sleep(user_id, calendar_date);
+CREATE INDEX IF NOT EXISTS idx_garmin_sleep_user_synced ON garmin_sleep(user_id, synced_at DESC);
+
 CREATE TABLE IF NOT EXISTS follows (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   follower_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
