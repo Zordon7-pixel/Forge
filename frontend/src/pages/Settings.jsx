@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ChevronRight, Link2, RefreshCw, Unplug, User, Watch } from 'lucide-react'
+import { ChevronRight, Link2, Moon, RefreshCw, Sun, Unplug, User, Watch } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useUnits } from '../context/UnitsContext'
+import { useTheme } from '../context/ThemeContext'
 import api from '../lib/api'
 import { parseGarminCSV, parseStravaCSV, requestAppleHealth } from '../lib/healthImport'
 
@@ -55,6 +56,7 @@ export default function Settings() {
   const navigate = useNavigate()
   const { t, i18n } = useTranslation()
   const { units, setUnits } = useUnits()
+  const { theme, toggle: toggleTheme } = useTheme()
   const [distanceUnit, setDistanceUnit] = useState('miles')
   const [saved, setSaved] = useState(false)
   const [importing, setImporting] = useState(false)
@@ -239,6 +241,28 @@ export default function Settings() {
   return (
     <div>
       <h1 style={{ fontWeight: 900, fontSize: 24, color: 'var(--text-primary)', marginBottom: 24 }}>{t('settings.title')}</h1>
+
+      {/* Appearance */}
+      <div style={card}>
+        <span style={label}>Appearance</span>
+        <div style={{ display: 'flex', gap: 10 }}>
+          {[['dark', 'Dark', Moon], ['light', 'Light', Sun]].map(([val, text, Icon]) => (
+            <button key={val} onClick={() => { if (theme !== val) toggleTheme() }}
+              style={{
+                flex: 1, padding: '14px', borderRadius: 12,
+                border: `2px solid ${theme === val ? 'var(--accent)' : 'var(--border-subtle)'}`,
+                background: theme === val ? 'var(--accent-dim)' : 'var(--bg-input)',
+                color: theme === val ? 'var(--accent)' : 'var(--text-muted)',
+                fontWeight: 700, fontSize: 15, cursor: 'pointer',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+              }}
+            >
+              <Icon size={16} />
+              {text}
+            </button>
+          ))}
+        </div>
+      </div>
 
       {/* Language Selector */}
       <div style={card}>
