@@ -28,7 +28,6 @@ const StretchSession = lazy(() => import('./pages/StretchSession'))
 const PRWall = lazy(() => import('./pages/PRWall'))
 const Badges = lazy(() => import('./pages/Badges'))
 const Challenges = lazy(() => import('./pages/Challenges'))
-const Community = lazy(() => import('./pages/Community'))
 const Journal = lazy(() => import('./pages/Journal'))
 const Races = lazy(() => import('./pages/Races'))
 const Gear = lazy(() => import('./pages/Gear'))
@@ -188,7 +187,7 @@ export default function App() {
           path="/community"
           element={
             <PrivateRoute>
-              <Community />
+              <Navigate to="/challenges" replace />
             </PrivateRoute>
           }
         />

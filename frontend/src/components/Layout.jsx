@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
-import { Trophy, Users, Activity } from 'lucide-react'
+import { Trophy, Activity } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { isLoggedIn } from '../lib/auth'
+import { getUser, isLoggedIn } from '../lib/auth'
 import { useTheme } from '../context/ThemeContext'
 import HelpDesk from './HelpDesk'
 import FeedbackButton from './FeedbackButton'
@@ -14,10 +14,20 @@ const NAV_ITEMS = (t) => [
   { to: '/run', label: t('nav.run'), iconComponent: Activity, color: '#EAB308' },
   { to: '/log-lift', icon: '/nav-lift.png', label: t('nav.lift'), color: '#F97316' },
   { to: '/challenges', label: t('nav.challenges'), iconComponent: Trophy, color: '#A855F7' },
-  { to: '/community', label: t('nav.community'), iconComponent: Users, color: '#EAB308' },
   { to: '/history', icon: '/nav-history.png', label: t('nav.history'), color: '#3B82F6' },
-  { to: '/profile', icon: '/nav-profile.png', label: t('nav.profile'), color: '#EC4899' },
 ]
+
+function getAvatarLabel(user) {
+  const name = String(user?.name || user?.full_name || '').trim()
+  if (name) {
+    const parts = name.split(/\s+/).filter(Boolean)
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
+    return `${parts[0][0] || ''}${parts[parts.length - 1][0] || ''}`.toUpperCase()
+  }
+  const email = String(user?.email || '').trim()
+  if (email) return email[0].toUpperCase()
+  return '?'
+}
 
 function TrainingReadinessWidget() {
   const navigate = useNavigate()
@@ -109,6 +119,7 @@ export default function Layout({ children }) {
   const location = useLocation()
   const navigate = useNavigate()
   const isWorkout = location.pathname.startsWith('/workout/')
+  const avatarLabel = getAvatarLabel(getUser())
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg-base)', color: 'var(--text-primary)' }}>
@@ -142,6 +153,16 @@ export default function Layout({ children }) {
                 </svg>
               </button>
               <button onClick={() => setShowHelp(true)} className="transition-colors hover:opacity-80 text-xs font-bold" style={{ color: 'var(--text-muted)' }} title="Help & diagnostics">?</button>
+              <button
+                type="button"
+                onClick={() => navigate('/profile')}
+                className="flex h-8 w-8 items-center justify-center rounded-full text-xs font-black transition-opacity hover:opacity-85"
+                style={{ background: 'var(--accent)', color: '#000', border: '1px solid var(--border-subtle)' }}
+                aria-label="Go to profile"
+                title="Profile"
+              >
+                {avatarLabel}
+              </button>
             </div>
           </div>
         </header>
@@ -155,7 +176,7 @@ export default function Layout({ children }) {
       <FeedbackButton externalOpen={showFeedback} onClose={() => setShowFeedback(false)} />
 
       {!isWorkout && (
-        <nav className="fixed bottom-0 left-1/2 z-30 grid w-full max-w-[480px] -translate-x-1/2 grid-cols-7 border-t px-1 py-1" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}>
+        <nav className="fixed bottom-0 left-1/2 z-30 grid w-full max-w-[480px] -translate-x-1/2 grid-cols-5 border-t px-1 py-1" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}>
           {NAV_ITEMS(t).map(({ to, end, icon, iconComponent: IconComponent, label, color }) => (
             <NavLink key={to} to={to} end={end} className="flex flex-col items-center justify-center"
               onClick={to === '/' ? (e) => { e.preventDefault(); navigate('/') } : undefined}>
