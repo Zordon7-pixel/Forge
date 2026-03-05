@@ -236,9 +236,8 @@ export default function Dashboard() {
   const [nextRecommendation, setNextRecommendation] = useState(null)
   const { isOnline, queueCount } = useOnlineStatus()
 
-  useEffect(() => {
-    ;(async () => {
-      try {
+  const fetchDashboardData = useCallback(async () => {
+    try {
         const [statsRes, runsRes, liftsRes, warningRes, checkinRes, goalRes, streakRes, milestoneRes, complianceRes, loadRes, nextRaceRes, gearRes, injuryRes, recapRes, recommendationRes] = await Promise.all([
           api.get('/auth/me/stats'),
           api.get('/runs', { params: { limit: 5 } }),
@@ -305,11 +304,19 @@ export default function Dashboard() {
           setWeeklyRecap(recapRes.data || null)
           setShowWeeklyRecap(Boolean(recapRes.data))
         }
-      } finally {
+    } finally {
         setLoading(false)
       }
-    })()
   }, [])
+
+  useEffect(() => {
+    fetchDashboardData()
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') fetchDashboardData()
+    }
+    document.addEventListener('visibilitychange', handleVisibility)
+    return () => document.removeEventListener('visibilitychange', handleVisibility)
+  }, [fetchDashboardData])
 
   useEffect(() => {
     const lastSeen = localStorage.getItem('forge_last_watch_sync_seen_at') || '1970-01-01T00:00:00'
