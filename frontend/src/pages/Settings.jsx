@@ -56,7 +56,7 @@ export default function Settings() {
   const navigate = useNavigate()
   const { t, i18n } = useTranslation()
   const { units, setUnits } = useUnits()
-  const { theme, toggle: toggleTheme } = useTheme()
+  const { theme, toggle: toggleTheme, setTheme } = useTheme()
   const [distanceUnit, setDistanceUnit] = useState('miles')
   const [saved, setSaved] = useState(false)
   const [importing, setImporting] = useState(false)
@@ -244,10 +244,10 @@ export default function Settings() {
 
       {/* Appearance */}
       <div style={card}>
-        <span style={label}>Appearance</span>
+        <span style={label}>{t('settings.appearance')}</span>
         <div style={{ display: 'flex', gap: 10 }}>
-          {[['dark', 'Dark', Moon], ['light', 'Light', Sun]].map(([val, text, Icon]) => (
-            <button key={val} onClick={() => { if (theme !== val) toggleTheme() }}
+          {[['dark', Moon], ['light', Sun]].map(([val, Icon]) => (
+            <button key={val} onClick={() => setTheme(val)}
               style={{
                 flex: 1, padding: '14px', borderRadius: 12,
                 border: `2px solid ${theme === val ? 'var(--accent)' : 'var(--border-subtle)'}`,
@@ -258,7 +258,7 @@ export default function Settings() {
               }}
             >
               <Icon size={16} />
-              {text}
+              {t(`settings.${val}`)}
             </button>
           ))}
         </div>

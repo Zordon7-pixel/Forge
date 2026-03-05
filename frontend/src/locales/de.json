@@ -83,7 +83,10 @@
     "lightMode": "Hellmodus",
     "units": "Einheiten",
     "imperial": "Imperial",
-    "metric": "Metrisch"
+    "metric": "Metrisch",
+    "appearance": "Erscheinungsbild",
+    "dark": "Dunkel",
+    "light": "Hell"
   },
   "common": {
     "loading": "Wird geladen...",

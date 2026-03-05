@@ -83,7 +83,10 @@
     "lightMode": "Light Mode",
     "units": "Units",
     "imperial": "Imperial",
-    "metric": "Metric"
+    "metric": "Metric",
+    "appearance": "Appearance",
+    "dark": "Dark",
+    "light": "Light"
   },
   "common": {
     "loading": "Loading...",

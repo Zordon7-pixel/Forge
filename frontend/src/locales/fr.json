@@ -83,7 +83,10 @@
     "lightMode": "Mode Clair",
     "units": "Unités",
     "imperial": "Impérial",
-    "metric": "Métrique"
+    "metric": "Métrique",
+    "appearance": "Apparence",
+    "dark": "Sombre",
+    "light": "Clair"
   },
   "common": {
     "loading": "Chargement...",
