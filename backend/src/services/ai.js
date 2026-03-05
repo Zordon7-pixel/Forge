@@ -14,6 +14,7 @@ const TTL = {
   liftPlan: 60 * 60 * 1000,
   sessionFeedback: Infinity,
   loadWarning: 2 * 60 * 60 * 1000,
+  weeklyInsight: 6 * 60 * 60 * 1000,
 };
 
 function makeCacheKey(prefix, payload) {
@@ -311,6 +312,49 @@ async function generateRaceAdjustment({ profile, race, currentPlan }) {
   }
 }
 
+async function generateWeeklyInsight({ userId, weekLabel, summary }) {
+  try {
+    if (!process.env.ANTHROPIC_API_KEY) return null;
+    const cacheKey = makeCacheKey('weekly-insight', { userId, weekLabel, summary });
+    const cached = getCached(cacheKey);
+    if (cached) return cached;
+
+    const prompt = `You are FORGE run coach. Return JSON only with key insight.
+Context:
+- Week: ${weekLabel}
+- Total miles: ${summary?.totalMiles || 0}
+- Total runs: ${summary?.totalRuns || 0}
+- Avg pace: ${summary?.avgPace || 'n/a'}
+- Longest run: ${summary?.longestRun || 0}
+- Lift sessions: ${summary?.liftSessions || 0}
+- Lift volume: ${summary?.totalLiftVolume || 0}
+- PRs this week: ${JSON.stringify(summary?.prsThisWeek || [])}
+- Injury risk flag: ${summary?.injuryRiskFlag ? 'yes' : 'no'} (${summary?.injuryRiskReason || 'none'})
+- Mileage vs last week: ${summary?.mileageVsLastWeek ?? 0}%
+Rules:
+- 1-2 short sentences
+- Runner-first coaching tone
+- Mention strength only as injury prevention support
+- Keep under 45 words`;
+
+    const msg = await getClient().messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 150,
+      messages: [{ role: 'user', content: prompt }],
+    });
+
+    const text = msg.content?.[0]?.text || '{}';
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    const result = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+    const insight = typeof result?.insight === 'string' ? result.insight.trim() : null;
+    if (insight) setCached(cacheKey, insight, TTL.weeklyInsight);
+    return insight;
+  } catch (e) {
+    console.error('generateWeeklyInsight error:', e.message);
+    return null;
+  }
+}
+
 module.exports = {
   generateTrainingPlan,
   generateRunFeedback,
@@ -322,4 +366,5 @@ module.exports = {
   generateBodyPartWorkout,
   generateLoadWarning,
   generateRaceAdjustment,
+  generateWeeklyInsight,
 };

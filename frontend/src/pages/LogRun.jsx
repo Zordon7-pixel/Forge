@@ -61,6 +61,14 @@ function formatPace(seconds, distance) {
   return `${m}:${String(s).padStart(2, '0')}/mi`
 }
 
+function parsePaceToSecondsPerMile(pace) {
+  if (!pace || typeof pace !== 'string') return null
+  const clean = pace.trim().toLowerCase().replace('/mi', '')
+  const [m, s] = clean.split(':').map(Number)
+  if (!Number.isFinite(m) || !Number.isFinite(s)) return null
+  return (m * 60) + s
+}
+
 function parseSplits(run) {
   const raw = run?.splits || run?.splits_json || run?.gps_splits
   if (!raw) return []
@@ -150,6 +158,7 @@ function WorkoutWatchModal({ workout, onClose }) {
 export default function LogRun() {
   const navigate = useNavigate()
   const location = useLocation()
+  const query = useMemo(() => new URLSearchParams(location.search), [location.search])
   const { units, fmt } = useUnits()
   const [warmUpState, setWarmUpState] = useState(() => {
     const params = new URLSearchParams(window.location.search)
@@ -158,15 +167,28 @@ export default function LogRun() {
   const [activeTab, setActiveTab] = useState('today')
   const [countdown, setCountdown] = useState(3)
   const [surface, setSurface] = useState('road')
-  const [runType, setRunType] = useState('easy')
+  const [runType, setRunType] = useState(() => {
+    const qType = query.get('type')
+    if (qType === 'moderate_run') return 'tempo'
+    if (qType === 'long_run') return 'long'
+    if (qType === 'easy_run') return 'easy'
+    return 'easy'
+  })
   const [environment, setEnvironment] = useState('outside')
   const [treadmillType, setTreadmillType] = useState('Generic')
   const [runBrief, setRunBrief] = useState(null)
   const [trackWorkout, setTrackWorkout] = useState('no')
 
   const [date, setDate] = useState(todayISO())
-  const [distance, setDistance] = useState('')
-  const [duration, setDuration] = useState('30:00')
+  const [distance, setDistance] = useState(() => query.get('distance') || '')
+  const [duration, setDuration] = useState(() => {
+    const rawDistance = Number(query.get('distance') || 0)
+    const paceSec = parsePaceToSecondsPerMile(query.get('pace'))
+    if (rawDistance > 0 && paceSec) {
+      return formatRunDuration(Math.round(rawDistance * paceSec))
+    }
+    return '30:00'
+  })
   const [notes, setNotes] = useState('')
   const [effort, setEffort] = useState(5)
   const [loading, setLoading] = useState(false)

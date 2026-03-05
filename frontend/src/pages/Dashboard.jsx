@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Flame, ArrowUpRight, ArrowDownRight, Watch, Footprints, X, AlertTriangle } from 'lucide-react'
+import { Flame, ArrowUpRight, ArrowDownRight, Watch, Footprints, X, AlertTriangle, Brain, ChevronRight } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import AchievementUnlock from '../components/AchievementUnlock'
 import { useUnits } from '../context/UnitsContext'
@@ -233,12 +233,13 @@ export default function Dashboard() {
   const [weeklyRecap, setWeeklyRecap] = useState(null)
   const [showWeeklyRecap, setShowWeeklyRecap] = useState(false)
   const [showSyncedFlash, setShowSyncedFlash] = useState(false)
+  const [nextRecommendation, setNextRecommendation] = useState(null)
   const { isOnline, queueCount } = useOnlineStatus()
 
   useEffect(() => {
     ;(async () => {
       try {
-        const [statsRes, runsRes, liftsRes, warningRes, checkinRes, goalRes, streakRes, milestoneRes, complianceRes, loadRes, nextRaceRes, gearRes, injuryRes] = await Promise.all([
+        const [statsRes, runsRes, liftsRes, warningRes, checkinRes, goalRes, streakRes, milestoneRes, complianceRes, loadRes, nextRaceRes, gearRes, injuryRes, recapRes, recommendationRes] = await Promise.all([
           api.get('/auth/me/stats'),
           api.get('/runs', { params: { limit: 5 } }),
           api.get('/lifts'),
@@ -252,6 +253,8 @@ export default function Dashboard() {
           api.get('/races/next').catch(() => ({ data: { race: null } })),
           api.get('/gear/shoes').catch(() => ({ data: { shoes: [] } })),
           api.get('/injury/active').catch(() => ({ data: { injuries: [] } })),
+          api.get('/recap/weekly').catch(() => ({ data: null })),
+          api.get('/runs/next-recommendation').catch(() => ({ data: null })),
         ])
         setStats(statsRes.data)
         const runsList = Array.isArray(runsRes.data) ? runsRes.data : runsRes.data?.runs || []
@@ -294,16 +297,14 @@ export default function Dashboard() {
         setNextRace(nextRaceRes.data?.race || null)
         setShoeAlerts((gearRes.data?.shoes || []).filter((s) => Number(s.total_miles || 0) > 450))
         setActiveInjury((injuryRes.data?.injuries || [])[0] || null)
-        // Fetch weekly calories from recap
-        api.get('/recap/weekly').then((r) => {
-          setWeeklyCalories(r.data?.totalCalories || 0)
-          const isSunday = new Date().getDay() === 0
-          const weekKey = `recap-seen-${getWeekKey()}`
-          if (isSunday && localStorage.getItem(weekKey) !== '1') {
-            setWeeklyRecap(r.data || null)
-            setShowWeeklyRecap(true)
-          }
-        }).catch(() => {})
+        setWeeklyCalories(recapRes.data?.totalCalories || 0)
+        setNextRecommendation(recommendationRes.data || null)
+        const isSunday = new Date().getDay() === 0
+        const weekKey = `recap-seen-${getWeekKey()}`
+        if (isSunday && localStorage.getItem(weekKey) !== '1') {
+          setWeeklyRecap(recapRes.data || null)
+          setShowWeeklyRecap(Boolean(recapRes.data))
+        }
       } finally {
         setLoading(false)
       }
@@ -548,6 +549,57 @@ export default function Dashboard() {
             </button>
           </div>
         </div>
+      )}
+
+      {weeklyRecap && (
+        <button
+          onClick={() => navigate('/recap/weekly')}
+          className="w-full rounded-xl p-4"
+          style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', textAlign: 'left' }}
+        >
+          <div className="flex items-center justify-between">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Brain size={16} color="#EAB308" />
+              <p className="text-xs font-bold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.8 }}>Weekly AI Recap</p>
+            </div>
+            <ChevronRight size={16} color="var(--text-muted)" />
+          </div>
+          <p className="text-sm font-semibold mt-2" style={{ color: 'var(--text-primary)' }}>
+            {Number(weeklyRecap.totalMiles || 0).toFixed(1)} mi · {weeklyRecap.totalRuns || 0} runs · {weeklyRecap.avgPace ? `${weeklyRecap.avgPace}/mi` : 'Pace n/a'}
+          </p>
+          {weeklyRecap.injuryRiskFlag && (
+            <p className="text-xs mt-1" style={{ color: '#F97316' }}>{weeklyRecap.injuryRiskReason || 'Elevated injury risk this week'}</p>
+          )}
+        </button>
+      )}
+
+      {nextRecommendation && (
+        <button
+          onClick={() => {
+            if (nextRecommendation.recommendationType === 'rest') return navigate('/plan')
+            if (nextRecommendation.recommendationType === 'strength') return navigate('/log-lift')
+            const params = new URLSearchParams()
+            if (Number(nextRecommendation.suggestedDistance || 0) > 0) params.set('distance', String(nextRecommendation.suggestedDistance))
+            if (nextRecommendation.recommendationType) params.set('type', String(nextRecommendation.recommendationType))
+            if (nextRecommendation.suggestedPace) params.set('pace', String(nextRecommendation.suggestedPace))
+            navigate(`/log-run${params.toString() ? `?${params.toString()}` : ''}`)
+          }}
+          className="w-full rounded-xl p-4"
+          style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', textAlign: 'left' }}
+        >
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-bold uppercase" style={{ color: '#EAB308', letterSpacing: 0.8 }}>Today&apos;s Recommendation</p>
+            <ChevronRight size={16} color="var(--text-muted)" />
+          </div>
+          <p className="text-base font-bold mt-2 capitalize" style={{ color: 'var(--text-primary)' }}>
+            {String(nextRecommendation.recommendationType || '').replace('_', ' ')}
+          </p>
+          <p className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>
+            {Number(nextRecommendation.suggestedDistance || 0) > 0 ? `${nextRecommendation.suggestedDistance} mi` : 'No distance target'}
+            {nextRecommendation.suggestedPace && nextRecommendation.suggestedPace !== '--' ? ` · ${nextRecommendation.suggestedPace}` : ''}
+          </p>
+          <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>{nextRecommendation.reason}</p>
+        </button>
       )}
 
       {showLoadWarning && (

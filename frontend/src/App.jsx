@@ -249,6 +249,14 @@ export default function App() {
           }
         />
         <Route
+          path="/recap/weekly"
+          element={
+            <PrivateRoute>
+              <WeeklyRecap />
+            </PrivateRoute>
+          }
+        />
+        <Route
           path="/workout/active/:id"
           element={
             <PrivateRoute>

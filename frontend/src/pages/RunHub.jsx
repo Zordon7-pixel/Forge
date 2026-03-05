@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { ChevronRight, Lightbulb } from 'lucide-react'
 import { useUnits } from '../context/UnitsContext'
 import api from '../lib/api'
 import { getPaceZone } from '../lib/athleteLanguage'
@@ -7,15 +8,23 @@ import { getPaceZone } from '../lib/athleteLanguage'
 export default function RunHub() {
   const { fmt } = useUnits()
   const [latestRun, setLatestRun] = useState(null)
+  const [recommendation, setRecommendation] = useState(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    api.get('/runs')
-      .then((res) => {
-        const runs = Array.isArray(res.data) ? res.data : res.data?.runs || []
+    Promise.all([
+      api.get('/runs'),
+      api.get('/runs/next-recommendation').catch(() => ({ data: null })),
+    ])
+      .then(([runsRes, recRes]) => {
+        const runs = Array.isArray(runsRes.data) ? runsRes.data : runsRes.data?.runs || []
         setLatestRun(runs[0] || null)
+        setRecommendation(recRes.data || null)
       })
-      .catch(() => setLatestRun(null))
+      .catch(() => {
+        setLatestRun(null)
+        setRecommendation(null)
+      })
       .finally(() => setLoading(false))
   }, [])
 
@@ -29,6 +38,17 @@ export default function RunHub() {
     if (!latestRun?.duration_seconds || !latestRun?.distance_miles) return '--'
     return fmt.pace(latestRun.duration_seconds / latestRun.distance_miles)
   }, [latestRun, fmt])
+
+  const recommendationTarget = useMemo(() => {
+    if (!recommendation) return '/log-run'
+    if (recommendation.recommendationType === 'strength') return '/log-lift'
+    if (recommendation.recommendationType === 'rest') return '/plan'
+    const params = new URLSearchParams()
+    if (Number(recommendation.suggestedDistance || 0) > 0) params.set('distance', String(recommendation.suggestedDistance))
+    if (recommendation.recommendationType) params.set('type', String(recommendation.recommendationType))
+    if (recommendation.suggestedPace) params.set('pace', String(recommendation.suggestedPace))
+    return `/log-run${params.toString() ? `?${params.toString()}` : ''}`
+  }, [recommendation])
 
   return (
     <div className="space-y-4 py-2">
@@ -57,6 +77,29 @@ export default function RunHub() {
           </>
         )}
       </div>
+
+      {recommendation && (
+        <Link
+          to={recommendationTarget}
+          className="block rounded-2xl p-4"
+          style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', textDecoration: 'none' }}
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Lightbulb size={15} color="#EAB308" />
+              <p className="text-xs font-semibold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.8 }}>
+                Today&apos;s Recommendation
+              </p>
+            </div>
+            <ChevronRight size={15} color="var(--text-muted)" />
+          </div>
+          <p className="text-sm font-bold mt-2 capitalize" style={{ color: 'var(--text-primary)' }}>
+            {String(recommendation.recommendationType || '').replace('_', ' ')}
+            {Number(recommendation.suggestedDistance || 0) > 0 ? ` · ${recommendation.suggestedDistance} mi` : ''}
+          </p>
+          <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>{recommendation.reason}</p>
+        </Link>
+      )}
 
       <Link
         to="/log-run"

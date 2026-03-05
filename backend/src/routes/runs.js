@@ -5,6 +5,33 @@ const { v4: uuidv4 } = require('uuid');
 const { generateRunFeedback, generateLoadWarning } = require('../services/ai');
 const autoUpdatePRs = require('../services/prAuto');
 
+function startOfDay(d) {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+function startOfWeekMonday(d) {
+  const day = d.getDay();
+  const mondayOffset = day === 0 ? -6 : 1 - day;
+  const monday = new Date(d);
+  monday.setDate(d.getDate() + mondayOffset);
+  return startOfDay(monday);
+}
+
+function paceFromSeconds(distanceMiles, seconds) {
+  if (!distanceMiles || !seconds) return '--';
+  const paceSec = seconds / distanceMiles;
+  const m = Math.floor(paceSec / 60);
+  const s = Math.round(paceSec % 60);
+  return `${m}:${String(s).padStart(2, '0')}/mi`;
+}
+
+function daysSince(dateString, today = new Date()) {
+  const d = new Date(`${dateString}T12:00:00`);
+  const a = startOfDay(today);
+  const b = startOfDay(d);
+  return Math.floor((a.getTime() - b.getTime()) / 86400000);
+}
+
 router.get('/', auth, async (req, res) => {
   try {
     const runs = await dbAll('SELECT * FROM runs WHERE user_id = ? ORDER BY date DESC, created_at DESC LIMIT 50', [req.user.id]);
@@ -65,6 +92,87 @@ router.get('/load-analysis', auth, async (req, res) => {
       suggestedAction: ai?.suggestedAction || (loadStatus === 'optimal' ? 'ok' : 'easy_day'),
     });
   } catch (err) { res.status(500).json({ error: 'Load analysis failed' }); }
+});
+
+router.get('/next-recommendation', auth, async (req, res) => {
+  try {
+    const today = new Date();
+    const fourteenDaysAgo = new Date(today);
+    fourteenDaysAgo.setDate(today.getDate() - 14);
+    const fourteenDaysAgoStr = fourteenDaysAgo.toISOString().slice(0, 10);
+    const todayExclusive = new Date(today);
+    todayExclusive.setDate(today.getDate() + 1);
+    const todayExclusiveStr = todayExclusive.toISOString().slice(0, 10);
+
+    const thisWeekStart = startOfWeekMonday(today);
+    const lastWeekStart = new Date(thisWeekStart);
+    lastWeekStart.setDate(thisWeekStart.getDate() - 7);
+    const nextWeekStart = new Date(thisWeekStart);
+    nextWeekStart.setDate(thisWeekStart.getDate() + 7);
+
+    const [recentRuns, thisWeekRow, lastWeekRow, recentPrRow] = await Promise.all([
+      dbAll('SELECT date, distance_miles, duration_seconds FROM runs WHERE user_id=? AND date>=? AND date<? ORDER BY date DESC, created_at DESC', [req.user.id, fourteenDaysAgoStr, todayExclusiveStr]),
+      dbGet('SELECT COALESCE(SUM(distance_miles),0) as miles, COUNT(*) as count FROM runs WHERE user_id=? AND date>=? AND date<?', [req.user.id, thisWeekStart.toISOString().slice(0, 10), nextWeekStart.toISOString().slice(0, 10)]),
+      dbGet('SELECT COALESCE(SUM(distance_miles),0) as miles FROM runs WHERE user_id=? AND date>=? AND date<?', [req.user.id, lastWeekStart.toISOString().slice(0, 10), thisWeekStart.toISOString().slice(0, 10)]),
+      dbGet('SELECT label, achieved_at FROM personal_records WHERE user_id=? AND achieved_at>=? ORDER BY achieved_at DESC LIMIT 1', [req.user.id, new Date(today.getTime() - (3 * 86400000)).toISOString().slice(0, 10)]),
+    ]);
+
+    const avgDistance = recentRuns.length > 0
+      ? recentRuns.reduce((s, r) => s + Number(r.distance_miles || 0), 0) / recentRuns.length
+      : 3;
+    const validPaceRuns = recentRuns.filter(r => Number(r.distance_miles || 0) > 0 && Number(r.duration_seconds || 0) > 0);
+    const avgPaceSeconds = validPaceRuns.length > 0
+      ? validPaceRuns.reduce((acc, r) => acc + (Number(r.duration_seconds) / Number(r.distance_miles)), 0) / validPaceRuns.length
+      : 600;
+    const suggestedPace = paceFromSeconds(1, avgPaceSeconds || 600);
+
+    const lastRun = recentRuns[0] || null;
+    const lastRunDaysAgo = lastRun?.date ? daysSince(lastRun.date, today) : null;
+    const thisWeekMileage = Number(thisWeekRow?.miles || 0);
+    const thisWeekRunCount = Number(thisWeekRow?.count || 0);
+    const lastWeekMileage = Number(lastWeekRow?.miles || 0);
+    const recentPrSet = Boolean(recentPrRow?.label);
+
+    let recommendationType = 'easy_run';
+    let reason = 'Build consistency with a controlled easy run.';
+    let suggestedDistance = Number(Math.max(1.5, avgDistance * 0.7).toFixed(1));
+
+    if (lastRunDaysAgo !== null && lastRunDaysAgo <= 1) {
+      recommendationType = 'rest';
+      reason = 'You ran today or yesterday. Recovery now will improve your next quality run.';
+      suggestedDistance = 0;
+    } else if (lastRunDaysAgo !== null && lastRunDaysAgo >= 2) {
+      recommendationType = 'easy_run';
+      reason = 'You have had at least 2 days off running. Restart with an easy aerobic run at about 70% effort.';
+      suggestedDistance = Number(Math.max(1.5, avgDistance * 0.7).toFixed(1));
+    } else if (lastWeekMileage > 0 && thisWeekMileage < (lastWeekMileage * 0.5)) {
+      recommendationType = 'moderate_run';
+      reason = 'This week is under 50% of last week mileage. A moderate run helps you rebuild training rhythm.';
+      suggestedDistance = Number(Math.max(2, avgDistance * 0.9).toFixed(1));
+    } else if (thisWeekRunCount >= 3) {
+      recommendationType = 'strength';
+      reason = 'You already logged 3+ runs this week. Use today for strength or mobility to support injury prevention.';
+      suggestedDistance = 0;
+    } else if (recentPrSet) {
+      recommendationType = 'easy_run';
+      reason = `Recent PR (${recentPrRow.label}) in the last 3 days. Keep this session easy to absorb the work.`;
+      suggestedDistance = Number(Math.max(1.5, avgDistance * 0.6).toFixed(1));
+    }
+
+    if (recommendationType === 'strength' || recommendationType === 'rest') {
+      res.json({ recommendationType, reason, suggestedDistance: 0, suggestedPace: '--' });
+      return;
+    }
+
+    res.json({
+      recommendationType,
+      reason,
+      suggestedDistance,
+      suggestedPace,
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Recommendation failed' });
+  }
 });
 
 router.post('/', auth, async (req, res) => {
