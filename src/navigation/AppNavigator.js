@@ -11,6 +11,7 @@ import LogLift from '../screens/LogLift';
 import GarminSync from '../screens/GarminSync';
 import Settings from '../screens/Settings';
 import Journal from '../screens/Journal';
+import Profile from '../screens/Profile';
 import { clearToken, getToken, setToken } from '../lib/storage';
 import { AuthContext } from '../context/AuthContext';
 
@@ -84,6 +85,7 @@ export default function AppNavigator() {
               <Stack.Screen name="GarminSync" component={GarminSync} options={{ title: 'Garmin Connect' }} />
               <Stack.Screen name="Settings" component={Settings} options={{ title: 'Settings' }} />
               <Stack.Screen name="Journal" component={Journal} options={{ title: 'Journal' }} />
+              <Stack.Screen name="Profile" component={Profile} options={{ title: 'Profile' }} />
             </>
           ) : (
             <>

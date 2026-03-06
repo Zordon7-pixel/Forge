@@ -5,18 +5,14 @@ import {
   Clock3,
   Dumbbell,
   LayoutDashboard,
-  Trophy,
-  User,
-  Users
+  Trophy
 } from 'lucide-react-native';
 
 import Dashboard from '../screens/Dashboard';
 import RunHub from '../screens/RunHub';
 import LogLift from '../screens/LogLift';
 import Challenges from '../screens/Challenges';
-import Community from '../screens/Community';
 import History from '../screens/History';
-import Profile from '../screens/Profile';
 
 const Tab = createBottomTabNavigator();
 
@@ -73,24 +69,10 @@ export default function MainTabs() {
         }}
       />
       <Tab.Screen
-        name="Community"
-        component={Community}
-        options={{
-          tabBarIcon: ({ color }) => <Users color={color} {...iconProps} />
-        }}
-      />
-      <Tab.Screen
         name="History"
         component={History}
         options={{
           tabBarIcon: ({ color }) => <Clock3 color={color} {...iconProps} />
-        }}
-      />
-      <Tab.Screen
-        name="Profile"
-        component={Profile}
-        options={{
-          tabBarIcon: ({ color }) => <User color={color} {...iconProps} />
         }}
       />
     </Tab.Navigator>

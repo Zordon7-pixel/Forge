@@ -5,7 +5,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { Award } from 'lucide-react-native';
 
 import api from '../lib/api';
-import AppHeader from '../components/AppHeader';
+import Community from './Community';
 
 const COLORS = {
   background: '#0f1117',
@@ -28,6 +28,7 @@ const parseDate = (raw) => {
 
 export default function Challenges() {
   const insets = useSafeAreaInsets();
+  const [sectionTab, setSectionTab] = useState('Challenges');
   const [tab, setTab] = useState('Challenges');
   const [refreshing, setRefreshing] = useState(false);
   const [challenges, setChallenges] = useState([]);
@@ -132,6 +133,27 @@ export default function Challenges() {
     }
   };
 
+  if (sectionTab === 'Community') {
+    return (
+      <View style={[styles.container, { paddingTop: insets.top }]}>
+        <View style={styles.headerShell}>
+          <Text style={styles.title}>Challenges</Text>
+          <View style={styles.sectionTabRow}>
+            {['Challenges', 'Community'].map((value) => (
+              <Pressable key={value} style={styles.sectionTab} onPress={() => setSectionTab(value)}>
+                <Text style={[styles.sectionTabText, sectionTab === value && styles.sectionTabTextActive]}>{value}</Text>
+                <View style={[styles.sectionTabUnderline, sectionTab === value && styles.sectionTabUnderlineActive]} />
+              </Pressable>
+            ))}
+          </View>
+        </View>
+        <View style={styles.communityWrap}>
+          <Community />
+        </View>
+      </View>
+    );
+  }
+
   return (
     <ScrollView
       style={[styles.container, { paddingTop: insets.top }]}
@@ -140,9 +162,17 @@ export default function Challenges() {
       refreshControl={<RefreshControl tintColor="#EAB308" refreshing={refreshing} onRefresh={load} />}
     >
       <Text style={styles.title}>Challenges</Text>
+      <View style={styles.sectionTabRow}>
+        {['Challenges', 'Community'].map((value) => (
+          <Pressable key={value} style={styles.sectionTab} onPress={() => setSectionTab(value)}>
+            <Text style={[styles.sectionTabText, sectionTab === value && styles.sectionTabTextActive]}>{value}</Text>
+            <View style={[styles.sectionTabUnderline, sectionTab === value && styles.sectionTabUnderlineActive]} />
+          </Pressable>
+        ))}
+      </View>
 
       <View style={styles.tabRow}>
-        {['Challenges', 'PRs', 'Badges', 'Feed'].map((value) => (
+        {['Challenges', 'PRs', 'Badges'].map((value) => (
           <Pressable key={value} onPress={() => setTab(value)} style={[styles.tab, tab === value && styles.tabActive]}>
             <Text style={[styles.tabText, tab === value && styles.tabTextActive]}>{value}</Text>
           </Pressable>
@@ -257,7 +287,7 @@ export default function Challenges() {
         </View>
       )}
 
-      {tab === 'PR Wall' && (
+      {tab === 'PRs' && (
         <>
           {prs.map((pr, index) => (
             <View key={`pr-${pr.id || index}`} style={styles.card}>
@@ -295,6 +325,40 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontWeight: '800',
     marginBottom: 10
+  },
+  headerShell: {
+    paddingHorizontal: 16,
+    paddingTop: 16
+  },
+  sectionTabRow: {
+    flexDirection: 'row',
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+    marginBottom: 12
+  },
+  sectionTab: {
+    marginRight: 22,
+    paddingBottom: 9
+  },
+  sectionTabText: {
+    color: COLORS.subtext,
+    fontSize: 14,
+    fontWeight: '700',
+    marginBottom: 7
+  },
+  sectionTabTextActive: {
+    color: COLORS.text
+  },
+  sectionTabUnderline: {
+    height: 3,
+    borderRadius: 2,
+    backgroundColor: 'transparent'
+  },
+  sectionTabUnderlineActive: {
+    backgroundColor: COLORS.accent
+  },
+  communityWrap: {
+    flex: 1
   },
   tabRow: {
     flexDirection: 'row',
