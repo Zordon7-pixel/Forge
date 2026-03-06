@@ -10,7 +10,7 @@ import {
   useWindowDimensions
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import Svg, { Circle, Defs, LinearGradient, Polygon, Polyline, Stop } from 'react-native-svg';
 import { HelpCircle, MessageSquare, Moon, Sun } from 'lucide-react-native';
 
@@ -136,7 +136,8 @@ const getWeeksMileage = (runs) => {
   return out;
 };
 
-export default function Dashboard({ navigation }) {
+export default function Dashboard() {
+  const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const [refreshing, setRefreshing] = useState(false);
@@ -148,7 +149,6 @@ export default function Dashboard({ navigation }) {
   const [readiness, setReadiness] = useState('--');
   const [compliance, setCompliance] = useState(null);
   const [activeInjury, setActiveInjury] = useState(null);
-  const [injuryDismissed, setInjuryDismissed] = useState(false);
   const [checkedInToday, setCheckedInToday] = useState(false);
   const [darkMode, setDarkMode] = useState(true);
 
@@ -186,7 +186,6 @@ export default function Dashboard({ navigation }) {
       setReadiness(Number.isFinite(Number(score)) ? String(score) : '--');
       setCompliance(complianceRes?.data || null);
       setActiveInjury((injuryRes?.data?.injuries || [])[0] || null);
-      setInjuryDismissed(false);
       setCheckedInToday(!!checkinRes?.data);
     } finally {
       setRefreshing(false);
@@ -198,6 +197,31 @@ export default function Dashboard({ navigation }) {
       loadDashboard();
     }, [loadDashboard])
   );
+
+  const dismissActiveInjury = useCallback(async () => {
+    try {
+      await api.delete('/injury/active');
+    } catch {
+      await api.post('/injury/resolve').catch(() => {});
+    } finally {
+      setActiveInjury(null);
+    }
+  }, []);
+
+  const openQuickCheckin = useCallback(() => {
+    const checkinRouteNames = ['CheckIn', 'QuickCheckin', 'QuickCheckIn'];
+    let navigatorRef = navigation;
+    const routeNames = new Set();
+
+    while (navigatorRef) {
+      const state = navigatorRef.getState?.();
+      (state?.routeNames || []).forEach((name) => routeNames.add(name));
+      navigatorRef = navigatorRef.getParent?.();
+    }
+
+    const target = checkinRouteNames.find((name) => routeNames.has(name)) || 'Profile';
+    navigation.navigate(target);
+  }, [navigation]);
 
   const upcomingRace = useMemo(() => {
     const today = new Date();
@@ -379,7 +403,7 @@ export default function Dashboard({ navigation }) {
       </View>
 
       {/* Injury / Recovery Mode Banner */}
-      {activeInjury && !injuryDismissed && (
+      {activeInjury && (
         <View style={styles.injuryBanner}>
           <View style={{ flex: 1 }}>
             <Text style={styles.injuryTitle}>
@@ -389,7 +413,7 @@ export default function Dashboard({ navigation }) {
               Your plan has been adjusted for recovery. Focus on PT and low-impact activity.
             </Text>
           </View>
-          <Pressable onPress={() => setInjuryDismissed(true)} style={styles.injuryDismiss}>
+          <Pressable onPress={dismissActiveInjury} style={styles.injuryDismiss}>
             <Text style={{ color: '#0f1117', fontSize: 16, fontWeight: '700' }}>✕</Text>
           </Pressable>
         </View>
@@ -429,7 +453,7 @@ export default function Dashboard({ navigation }) {
 
       {/* Quick Check-in CTA */}
       {!checkedInToday && (
-        <Pressable style={styles.checkinCard} onPress={() => {}}>
+        <Pressable style={styles.checkinCard} onPress={openQuickCheckin}>
           <Text style={styles.checkinTitle}>Quick check-in — 3 taps</Text>
           <Text style={styles.checkinSub}>Help me adjust today's plan around your day</Text>
         </Pressable>
@@ -1040,3 +1064,4 @@ const styles = StyleSheet.create({
     height: 10
   }
 });
+// v1.0.1 1772771761

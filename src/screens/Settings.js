@@ -112,6 +112,9 @@ export default function Settings({ navigation }) {
     if (!value) {
       setInjurySaving(true);
       await api.post('/auth/injury', { injury_mode: false, injury_description: '', injury_date: '', injury_limitations: '' }).catch(() => {});
+      await api.delete('/injury/active').catch(async () => {
+        await api.post('/injury/resolve').catch(() => {});
+      });
       setInjurySaving(false);
       flash();
     }
