@@ -666,11 +666,12 @@ export default function Dashboard() {
       )}
 
       {!checkedInToday && (
-        <a href="/checkin"
-          style={{ display: 'block', background: 'rgba(234,179,8,0.12)', border: '1px solid rgba(234,179,8,0.3)', borderRadius: 14, padding: '12px 16px', marginBottom: 12, textDecoration: 'none' }}>
+        <button
+          onClick={() => navigate('/checkin')}
+          style={{ display: 'block', width: '100%', textAlign: 'left', background: 'rgba(234,179,8,0.12)', border: '1px solid rgba(234,179,8,0.3)', borderRadius: 14, padding: '12px 16px', marginBottom: 12, cursor: 'pointer' }}>
           <p style={{ color: 'var(--accent)', fontWeight: 700, fontSize: 14, margin: 0 }}>Quick check-in — 3 taps</p>
           <p style={{ color: 'var(--text-muted)', fontSize: 12, margin: '2px 0 0' }}>Help me adjust today's plan around your day</p>
-        </a>
+        </button>
       )}
 
       {watchSyncNotice && (
