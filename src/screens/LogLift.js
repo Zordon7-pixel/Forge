@@ -20,6 +20,45 @@ const COLORS = {
 };
 
 const createSet = () => ({ reps: '', weight: '' });
+const WEEK_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+function buildWeeklyPlan(rec) {
+  if (Array.isArray(rec?.weeklyPlan) && rec.weeklyPlan.length >= 6) {
+    return rec.weeklyPlan.slice(0, 7).map((workout, index) => ({
+      id: String(workout.id || `${index}`),
+      day: workout.day || WEEK_DAYS[index] || `Day ${index + 1}`,
+      workoutName: workout.workoutName || workout.name || `Workout ${index + 1}`,
+      main: Array.isArray(workout.main) ? workout.main : [],
+      warmup: workout.warmup || rec?.warmup || '',
+      recovery: workout.recovery || rec?.recovery || '',
+      target: workout.target || rec?.target || '',
+    }));
+  }
+
+  const firstExercise = rec?.main?.[0];
+  const baseName = rec?.workoutName || 'AI Workout';
+  const mainName = typeof firstExercise === 'string'
+    ? firstExercise
+    : firstExercise?.exercise || firstExercise?.name || 'Compound Lift';
+  const templates = [
+    { name: `${baseName} A`, target: rec?.target || 'Upper Body', exercise: mainName },
+    { name: `${baseName} B`, target: 'Lower Body', exercise: 'Back Squat' },
+    { name: `${baseName} C`, target: 'Pull Focus', exercise: 'Barbell Row' },
+    { name: `${baseName} D`, target: 'Push Focus', exercise: 'Overhead Press' },
+    { name: `${baseName} E`, target: 'Posterior Chain', exercise: 'Romanian Deadlift' },
+    { name: `${baseName} F`, target: 'Core + Accessory', exercise: 'Weighted Carry' },
+    { name: `${baseName} G`, target: 'Recovery Lift', exercise: 'Single-Leg Work' },
+  ];
+  return templates.map((template, index) => ({
+    id: String(index),
+    day: WEEK_DAYS[index],
+    workoutName: template.name,
+    target: template.target,
+    warmup: rec?.warmup || '',
+    recovery: rec?.recovery || '',
+    main: [{ name: template.exercise, sets: 3, reps: '8-12' }],
+  }));
+}
 
 export default function LogLift({ navigation }) {
   const insets = useSafeAreaInsets();
@@ -29,6 +68,7 @@ export default function LogLift({ navigation }) {
   const [liftMode, setLiftMode] = useState('ai');
   const [lastLift, setLastLift] = useState(null);
   const [aiRec, setAiRec] = useState(null);
+  const [weeklyPlan, setWeeklyPlan] = useState([]);
   const [aiLoading, setAiLoading] = useState(true);
 
   useEffect(() => {
@@ -37,9 +77,12 @@ export default function LogLift({ navigation }) {
       setLastLift(lifts[0] || null);
     }).catch(() => {});
     api.get('/ai/workout-recommendation?date=today').then(res => {
-      setAiRec(res.data?.recommendation || null);
+      const recommendation = res.data?.recommendation || null;
+      setAiRec(recommendation);
+      setWeeklyPlan(buildWeeklyPlan(recommendation));
     }).catch(() => {
       setAiRec(null);
+      setWeeklyPlan([]);
     }).finally(() => setAiLoading(false));
   }, []);
 
@@ -78,6 +121,23 @@ export default function LogLift({ navigation }) {
 
   const addSet = () => setSets((prev) => [...prev, createSet()]);
   const removeSet = (index) => setSets((prev) => prev.filter((_, i) => i !== index));
+  const startPlannedWorkout = (workout) => {
+    const workoutName = workout?.workoutName || workout?.name || aiRec?.workoutName || '';
+    setName(workoutName);
+    const firstMain = workout?.main?.[0];
+    const parsedSets = Number(firstMain?.sets || 0);
+    const parsedWeight = Number(firstMain?.weight || firstMain?.weight_lbs || 0);
+    const parsedReps = Number(firstMain?.reps || String(firstMain?.reps || '').split('-')[0] || 0);
+    if (parsedSets > 0) {
+      setSets(Array.from({ length: parsedSets }, () => ({
+        reps: parsedReps > 0 ? String(parsedReps) : '',
+        weight: parsedWeight > 0 ? String(parsedWeight) : '',
+      })));
+    } else {
+      setSets([createSet()]);
+    }
+    setLiftMode('Manual');
+  };
 
   const handleSave = async () => {
     const cleanSets = sets
@@ -160,28 +220,32 @@ export default function LogLift({ navigation }) {
           ) : aiRec ? (
             <>
               <View style={styles.aiCardHeader}>
-                <Text style={styles.aiCardTitle}>
-                  {aiRec.workoutName || 'AI Recommended Workout'}
-                </Text>
+                <Text style={styles.aiCardTitle}>Your Weekly AI Plan</Text>
                 <View style={styles.forgeBadge}>
                   <Text style={styles.forgeBadgeText}>FORGE</Text>
                 </View>
               </View>
-              {aiRec.warmup ? <Text style={styles.aiSection}><Text style={styles.aiSectionLabel}>Warmup: </Text>{aiRec.warmup}</Text> : null}
-              {aiRec.main?.length > 0 && (
-                <Text style={styles.aiSection}>
-                  <Text style={styles.aiSectionLabel}>Main: </Text>
-                  {aiRec.main.map(e => typeof e === 'string' ? e : e.exercise || e.name || '').join(', ')}
-                </Text>
-              )}
-              {aiRec.recovery ? <Text style={styles.aiSection}><Text style={styles.aiSectionLabel}>Recovery: </Text>{aiRec.recovery}</Text> : null}
-              {aiRec.notes && <Text style={styles.aiNotes}>{aiRec.notes}</Text>}
-              <Pressable style={styles.aiStartButton} onPress={() => {
-                if (aiRec.workoutName) setName(aiRec.workoutName);
-                setLiftMode('Manual');
-              }}>
-                <Text style={styles.aiStartButtonText}>Start Workout</Text>
-              </Pressable>
+              <Text style={styles.aiNotes}>Pick one of your {weeklyPlan.length || 7} workouts to start.</Text>
+              <ScrollView style={styles.planList} nestedScrollEnabled={true} showsVerticalScrollIndicator={false}>
+                {weeklyPlan.map((workout) => (
+                  <Pressable
+                    key={workout.id}
+                    onPress={() => startPlannedWorkout(workout)}
+                    style={styles.planRow}
+                  >
+                    <View style={styles.planDayBadge}>
+                      <Text style={styles.planDayText}>{workout.day}</Text>
+                    </View>
+                    <View style={styles.planMeta}>
+                      <Text style={styles.planName}>{workout.workoutName}</Text>
+                      <Text style={styles.planSub}>
+                        {workout.target || 'Strength'} · {(workout.main || []).map((item) => typeof item === 'string' ? item : item.name || item.exercise).filter(Boolean).slice(0, 2).join(', ') || 'Open plan'}
+                      </Text>
+                    </View>
+                    <Text style={styles.planCta}>Start</Text>
+                  </Pressable>
+                ))}
+              </ScrollView>
             </>
           ) : (
             <Text style={styles.aiLoadingText}>No recommendation available. Try Manual mode.</Text>
@@ -320,6 +384,28 @@ const styles = StyleSheet.create({
   aiSectionLabel: { fontWeight: '700', fontStyle: 'italic' },
   aiNotes: { fontSize: 12, color: COLORS.subtext, marginTop: 4, marginBottom: 12, lineHeight: 18 },
   aiLoadingText: { fontSize: 13, color: COLORS.subtext, textAlign: 'center', paddingVertical: 12 },
+  planList: { maxHeight: 360, gap: 8 },
+  planRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.background,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 12,
+    padding: 10
+  },
+  planDayBadge: {
+    backgroundColor: '#2a2f3f',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    marginRight: 10
+  },
+  planDayText: { color: COLORS.accent, fontSize: 11, fontWeight: '800' },
+  planMeta: { flex: 1 },
+  planName: { color: COLORS.text, fontSize: 13, fontWeight: '700' },
+  planSub: { color: COLORS.subtext, fontSize: 11, marginTop: 2 },
+  planCta: { color: COLORS.accent, fontSize: 12, fontWeight: '800' },
   aiStartButton: {
     backgroundColor: COLORS.accent,
     borderRadius: 12,

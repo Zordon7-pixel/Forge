@@ -2,6 +2,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import React, { useCallback, useMemo, useState } from 'react';
 import {
   Alert,
+  Modal,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -92,6 +93,11 @@ function parseMuscleGroups(lift) {
   } catch {
     return [];
   }
+}
+
+function toDateInput(raw) {
+  const parsed = parseDate({ date: raw });
+  return parsed ? parsed.toISOString().slice(0, 10) : '';
 }
 
 // ─── Date filtering ───────────────────────────────────────────────────────────
@@ -206,6 +212,19 @@ export default function History({ navigation }) {
   const [lifts,    setLifts]    = useState([]);
   const [workouts, setWorkouts] = useState([]);
   const [races,    setRaces]    = useState([]);
+  const [editingRun, setEditingRun] = useState(null);
+  const [runDistance, setRunDistance] = useState('');
+  const [runDuration, setRunDuration] = useState('');
+  const [runDate, setRunDate] = useState('');
+  const [runSaving, setRunSaving] = useState(false);
+  const [editingLift, setEditingLift] = useState(null);
+  const [liftSource, setLiftSource] = useState('lift');
+  const [liftExercise, setLiftExercise] = useState('');
+  const [liftSets, setLiftSets] = useState('');
+  const [liftReps, setLiftReps] = useState('');
+  const [liftWeight, setLiftWeight] = useState('');
+  const [liftDate, setLiftDate] = useState('');
+  const [liftSaving, setLiftSaving] = useState(false);
 
   // ── Load ──
   const load = useCallback(async () => {
@@ -304,6 +323,114 @@ export default function History({ navigation }) {
     [{ text: 'OK' }]
   );
 
+  const openRunEdit = (run) => {
+    setEditingRun(run);
+    setRunDistance(String(distanceMiles(run) || ''));
+    setRunDuration(String(Math.round(durationSeconds(run) || 0)));
+    setRunDate(toDateInput(run?.date || run?.created_at));
+  };
+
+  const closeRunEdit = () => {
+    setEditingRun(null);
+    setRunDistance('');
+    setRunDuration('');
+    setRunDate('');
+    setRunSaving(false);
+  };
+
+  const saveRunEdit = async () => {
+    if (!editingRun?.id) return;
+    const distance = Number(runDistance);
+    const duration = Number(runDuration);
+    if (!Number.isFinite(distance) || distance <= 0 || !Number.isFinite(duration) || duration <= 0 || !runDate) {
+      Alert.alert('Invalid Data', 'Distance, duration, and date are required.');
+      return;
+    }
+    setRunSaving(true);
+    try {
+      const res = await api.put(`/runs/${editingRun.id}`, {
+        distance_miles: distance,
+        duration_seconds: Math.round(duration),
+        date: runDate,
+      });
+      const updated = res?.data || {};
+      setRuns((prev) => prev.map((run) => (run.id === editingRun.id ? { ...run, ...updated } : run)));
+      closeRunEdit();
+    } catch (error) {
+      Alert.alert('Save Failed', error?.response?.data?.error || 'Could not update run.');
+      setRunSaving(false);
+    }
+  };
+
+  const openLiftEdit = async (lift, source) => {
+    setEditingLift(lift);
+    setLiftSource(source);
+    setLiftExercise(lift.exercise_name || lift.name || '');
+    setLiftSets(String(lift.sets || ''));
+    setLiftReps(String(lift.reps || ''));
+    setLiftWeight(String(lift.weight_lbs || lift.weight || ''));
+    setLiftDate(toDateInput(lift?.date || lift?.started_at || lift?.created_at));
+
+    if (source === 'workout' && lift?.id) {
+      try {
+        const detailsRes = await api.get(`/workouts/${lift.id}`);
+        const firstSet = detailsRes?.data?.sets?.[0];
+        if (firstSet) {
+          setLiftExercise(firstSet.exercise_name || '');
+          setLiftReps(String(firstSet.reps || ''));
+          setLiftWeight(String(firstSet.weight_lbs || ''));
+          setLiftSets(String(detailsRes?.data?.sets?.length || ''));
+        }
+      } catch {}
+    }
+  };
+
+  const closeLiftEdit = () => {
+    setEditingLift(null);
+    setLiftSource('lift');
+    setLiftExercise('');
+    setLiftSets('');
+    setLiftReps('');
+    setLiftWeight('');
+    setLiftDate('');
+    setLiftSaving(false);
+  };
+
+  const saveLiftEdit = async () => {
+    if (!editingLift?.id) return;
+    const parsedSets = Number(liftSets);
+    const parsedReps = Number(liftReps);
+    const parsedWeight = Number(liftWeight);
+    if (!liftExercise.trim() || !Number.isFinite(parsedSets) || parsedSets <= 0 || !Number.isFinite(parsedReps) || parsedReps <= 0 || !Number.isFinite(parsedWeight) || parsedWeight < 0 || !liftDate) {
+      Alert.alert('Invalid Data', 'Exercise, sets, reps, weight, and date are required.');
+      return;
+    }
+    const payload = {
+      exercise_name: liftExercise.trim(),
+      sets: Math.round(parsedSets),
+      reps: Math.round(parsedReps),
+      weight_lbs: parsedWeight,
+      date: liftDate,
+    };
+    setLiftSaving(true);
+    try {
+      let res;
+      if (liftSource === 'workout') {
+        res = await api.put(`/workouts/${editingLift.id}`, payload);
+        const updated = res?.data?.session || res?.data || {};
+        setWorkouts((prev) => prev.map((item) => (item.id === editingLift.id ? { ...item, ...updated, ...payload } : item)));
+      } else {
+        res = await api.put(`/lifts/${editingLift.id}`, payload);
+        const updated = res?.data || {};
+        setLifts((prev) => prev.map((item) => (item.id === editingLift.id ? { ...item, ...updated } : item)));
+      }
+      closeLiftEdit();
+    } catch (error) {
+      Alert.alert('Save Failed', error?.response?.data?.error || 'Could not update lift.');
+      setLiftSaving(false);
+    }
+  };
+
   // ─── Render helpers ───────────────────────────────────────────────────────
   const renderRunCard = (run, index) => {
     const pz = run.distance_miles && run.duration_seconds
@@ -339,7 +466,7 @@ export default function History({ navigation }) {
           <Text style={styles.itemSub}>{formatDate(run)}</Text>
         </View>
         <View style={styles.actionRow}>
-          <Pressable onPress={() => Alert.alert('Edit', 'Edit run — coming soon.')} style={styles.actionBtn}>
+          <Pressable onPress={() => openRunEdit(run)} style={styles.actionBtn}>
             <Pencil size={14} color={C.muted} />
           </Pressable>
           <Pressable onPress={() => deleteRun(run.id)} style={styles.actionBtn}>
@@ -382,7 +509,7 @@ export default function History({ navigation }) {
           <Text style={styles.itemSub}>{formatDate(lift)}</Text>
         </View>
         <View style={styles.actionRow}>
-          <Pressable onPress={() => Alert.alert('Edit', 'Edit lift — coming soon.')} style={styles.actionBtn}>
+          <Pressable onPress={() => openLiftEdit(lift, source)} style={styles.actionBtn}>
             <Pencil size={14} color={C.muted} />
           </Pressable>
           <Pressable onPress={() => deleteLift(lift.id, source)} style={styles.actionBtn}>
@@ -574,6 +701,101 @@ export default function History({ navigation }) {
           {filteredRaces.length === 0 ? <EmptyState message="No races logged." sub="Add a race to track your goals." /> : null}
         </>
       )}
+
+      <Modal transparent visible={Boolean(editingRun)} animationType="fade" onRequestClose={closeRunEdit}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Edit Run</Text>
+            <TextInput
+              value={runDistance}
+              onChangeText={setRunDistance}
+              keyboardType="decimal-pad"
+              placeholder="Distance (miles)"
+              placeholderTextColor={C.muted}
+              style={styles.modalInput}
+            />
+            <TextInput
+              value={runDuration}
+              onChangeText={setRunDuration}
+              keyboardType="number-pad"
+              placeholder="Duration (seconds)"
+              placeholderTextColor={C.muted}
+              style={styles.modalInput}
+            />
+            <TextInput
+              value={runDate}
+              onChangeText={setRunDate}
+              placeholder="Date (YYYY-MM-DD)"
+              placeholderTextColor={C.muted}
+              style={styles.modalInput}
+            />
+            <View style={styles.modalActionRow}>
+              <Pressable style={styles.modalCancelBtn} onPress={closeRunEdit}>
+                <Text style={styles.modalCancelText}>Cancel</Text>
+              </Pressable>
+              <Pressable style={[styles.modalSaveBtn, runSaving && styles.modalSaveBtnDisabled]} onPress={saveRunEdit} disabled={runSaving}>
+                <Text style={styles.modalSaveText}>{runSaving ? 'Saving...' : 'Save'}</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal transparent visible={Boolean(editingLift)} animationType="fade" onRequestClose={closeLiftEdit}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Edit Lift</Text>
+            <TextInput
+              value={liftExercise}
+              onChangeText={setLiftExercise}
+              placeholder="Exercise Name"
+              placeholderTextColor={C.muted}
+              style={styles.modalInput}
+            />
+            <View style={styles.modalInputRow}>
+              <TextInput
+                value={liftSets}
+                onChangeText={setLiftSets}
+                keyboardType="number-pad"
+                placeholder="Sets"
+                placeholderTextColor={C.muted}
+                style={[styles.modalInput, styles.modalInputHalf]}
+              />
+              <TextInput
+                value={liftReps}
+                onChangeText={setLiftReps}
+                keyboardType="number-pad"
+                placeholder="Reps"
+                placeholderTextColor={C.muted}
+                style={[styles.modalInput, styles.modalInputHalf]}
+              />
+            </View>
+            <TextInput
+              value={liftWeight}
+              onChangeText={setLiftWeight}
+              keyboardType="decimal-pad"
+              placeholder="Weight (lbs)"
+              placeholderTextColor={C.muted}
+              style={styles.modalInput}
+            />
+            <TextInput
+              value={liftDate}
+              onChangeText={setLiftDate}
+              placeholder="Date (YYYY-MM-DD)"
+              placeholderTextColor={C.muted}
+              style={styles.modalInput}
+            />
+            <View style={styles.modalActionRow}>
+              <Pressable style={styles.modalCancelBtn} onPress={closeLiftEdit}>
+                <Text style={styles.modalCancelText}>Cancel</Text>
+              </Pressable>
+              <Pressable style={[styles.modalSaveBtn, liftSaving && styles.modalSaveBtnDisabled]} onPress={saveLiftEdit} disabled={liftSaving}>
+                <Text style={styles.modalSaveText}>{liftSaving ? 'Saving...' : 'Save'}</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 }
@@ -662,4 +884,18 @@ const styles = StyleSheet.create({
   emptyState: { alignItems: 'center', paddingVertical: 40 },
   emptyTitle: { color: C.text,  fontSize: 15, fontWeight: '600', marginBottom: 6 },
   emptySub:   { color: C.muted, fontSize: 13 },
+
+  // Edit modals
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', padding: 20 },
+  modalCard: { backgroundColor: C.card, borderWidth: 1, borderColor: C.border, borderRadius: 14, padding: 14 },
+  modalTitle: { color: C.text, fontSize: 17, fontWeight: '700', marginBottom: 12 },
+  modalInput: { backgroundColor: C.input, borderWidth: 1, borderColor: C.border, borderRadius: 10, color: C.text, paddingHorizontal: 10, paddingVertical: 9, marginBottom: 10, fontSize: 14 },
+  modalInputRow: { flexDirection: 'row', gap: 8 },
+  modalInputHalf: { flex: 1 },
+  modalActionRow: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8, marginTop: 2 },
+  modalCancelBtn: { borderWidth: 1, borderColor: C.border, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 8 },
+  modalCancelText: { color: C.muted, fontWeight: '700' },
+  modalSaveBtn: { backgroundColor: C.accent, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 8 },
+  modalSaveBtnDisabled: { opacity: 0.6 },
+  modalSaveText: { color: '#000', fontWeight: '700' },
 });

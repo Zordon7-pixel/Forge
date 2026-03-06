@@ -67,6 +67,8 @@ export default function RunHub({ navigation }) {
   const insets = useSafeAreaInsets();
   const [loading, setLoading] = useState(true);
   const [latestRun, setLatestRun] = useState(null);
+  const [recentRuns, setRecentRuns] = useState([]);
+  const [weekMiles, setWeekMiles] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -74,6 +76,21 @@ export default function RunHub({ navigation }) {
       const res = await api.get('/runs').catch(() => ({ data: [] }));
       const runs = Array.isArray(res?.data) ? res.data : res?.data?.runs || [];
       setLatestRun(runs[0] || null);
+      setRecentRuns(runs.slice(0, 3));
+      const now = new Date();
+      const day = now.getDay();
+      const mondayOffset = day === 0 ? -6 : 1 - day;
+      const monday = new Date(now);
+      monday.setDate(now.getDate() + mondayOffset);
+      monday.setHours(0, 0, 0, 0);
+      const weekTotal = runs.reduce((sum, run) => {
+        const raw = run?.date || run?.created_at;
+        if (!raw) return sum;
+        const d = new Date(raw.length === 10 ? `${raw}T12:00:00` : raw);
+        if (Number.isNaN(d.getTime())) return sum;
+        return d >= monday ? sum + getDistance(run) : sum;
+      }, 0);
+      setWeekMiles(Number(weekTotal.toFixed(2)));
     } finally {
       setLoading(false);
     }
@@ -160,6 +177,25 @@ export default function RunHub({ navigation }) {
       >
         <Text style={styles.ctaText}>Open Run Logger</Text>
       </Pressable>
+
+      <View style={styles.card}>
+        <Text style={styles.statLabel}>This Week Total</Text>
+        <Text style={styles.weekMiles}>{weekMiles.toFixed(2)} mi</Text>
+      </View>
+
+      <View style={styles.card}>
+        <Text style={styles.statLabel}>Last 3 Runs</Text>
+        {!recentRuns.length && !loading ? (
+          <Text style={styles.muted}>No runs logged yet.</Text>
+        ) : (
+          recentRuns.map((run, index) => (
+            <View key={run.id || `run-preview-${index}`} style={styles.previewRow}>
+              <Text style={styles.previewMain}>{formatDistance(getDistance(run))}</Text>
+              <Text style={styles.previewSub}>{formatPace(getDuration(run), getDistance(run))}</Text>
+            </View>
+          ))
+        )}
+      </View>
     </ScrollView>
   );
 }
@@ -242,5 +278,28 @@ const styles = StyleSheet.create({
     color: '#000000',
     fontSize: 15,
     fontWeight: '700',
+  },
+  weekMiles: {
+    color: C.accent,
+    fontSize: 22,
+    fontWeight: '800',
+  },
+  previewRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderTopWidth: 1,
+    borderTopColor: C.border,
+    paddingTop: 10,
+    marginTop: 10,
+  },
+  previewMain: {
+    color: C.text,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  previewSub: {
+    color: C.muted,
+    fontSize: 13,
   },
 });

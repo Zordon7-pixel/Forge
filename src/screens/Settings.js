@@ -44,7 +44,7 @@ const LANGUAGES = [
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function Settings({ navigation }) {
   const insets = useSafeAreaInsets();
-  const { logout } = useContext(AuthContext) || {};
+  const { signOut } = useContext(AuthContext) || {};
 
   // Settings state
   const [units,    setUnits]    = useState('imperial');   // 'imperial' | 'metric'
@@ -63,6 +63,7 @@ export default function Settings({ navigation }) {
   const [garminLoading,  setGarminLoading]  = useState(false);
   const [garminSyncing,  setGarminSyncing]  = useState(false);
   const [garminNotice,   setGarminNotice]   = useState(null);
+  const [deletingAccount, setDeletingAccount] = useState(false);
 
   // ── Load ──
   const load = useCallback(async () => {
@@ -180,9 +181,37 @@ export default function Settings({ navigation }) {
   const handleLogout = () => {
     Alert.alert('Sign Out', 'Sign out of FORGE?', [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Sign Out', style: 'destructive', onPress: () => logout?.() },
+      { text: 'Sign Out', style: 'destructive', onPress: () => signOut?.() },
     ]);
   };
+
+  const handleDeleteAccount = () => {
+    if (deletingAccount) return;
+    Alert.alert(
+      'Delete Account',
+      'This will permanently delete your account and all data',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete Account',
+          style: 'destructive',
+          onPress: async () => {
+            setDeletingAccount(true);
+            try {
+              await api.delete('/auth/account');
+              signOut?.();
+            } catch (error) {
+              Alert.alert('Delete Failed', error?.response?.data?.error || 'Could not delete account.');
+            } finally {
+              setDeletingAccount(false);
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  const deleteButtonLabel = deletingAccount ? 'Deleting Account...' : 'Delete Account';
 
   // ─── Render ───────────────────────────────────────────────────────────────
   return (
@@ -398,12 +427,14 @@ export default function Settings({ navigation }) {
         </Text>
       </View>
 
-      {/* ── Sign Out ── */}
       <Pressable onPress={handleLogout} style={styles.signOutBtn}>
         <Text style={styles.signOutText}>Sign Out</Text>
       </Pressable>
 
-      {/* ── App version ── */}
+      <Pressable onPress={handleDeleteAccount} style={[styles.deleteAccountBtn, deletingAccount && styles.deleteAccountBtnDisabled]} disabled={deletingAccount}>
+        <Text style={styles.deleteAccountText}>{deleteButtonLabel}</Text>
+      </Pressable>
+
       <Text style={styles.versionText}>FORGE v1.0 · Built to adapt.</Text>
     </ScrollView>
   );
@@ -482,5 +513,8 @@ const styles = StyleSheet.create({
 
   signOutBtn:  { backgroundColor: C.card, borderWidth: 1, borderColor: C.red, borderRadius: 14, paddingVertical: 14, alignItems: 'center', marginTop: 6 },
   signOutText: { color: C.red, fontSize: 14, fontWeight: '700' },
+  deleteAccountBtn: { backgroundColor: C.card, borderWidth: 1, borderColor: '#b91c1c', borderRadius: 14, paddingVertical: 14, alignItems: 'center', marginTop: 10 },
+  deleteAccountBtnDisabled: { opacity: 0.6 },
+  deleteAccountText: { color: '#fecaca', fontSize: 14, fontWeight: '700' },
   versionText: { textAlign: 'center', fontSize: 12, color: C.muted, opacity: 0.5, marginTop: 24 },
 });

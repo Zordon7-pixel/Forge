@@ -1,6 +1,6 @@
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import React, { useCallback, useMemo, useState } from 'react';
-import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { Award } from 'lucide-react-native';
 
@@ -39,6 +39,11 @@ export default function Challenges() {
   const [stepInput, setStepInput] = useState('');
   const [showBrowse, setShowBrowse] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
+  const [challengeName, setChallengeName] = useState('');
+  const [challengeType, setChallengeType] = useState('steps');
+  const [challengeGoal, setChallengeGoal] = useState('');
+  const [challengeDuration, setChallengeDuration] = useState('');
+  const [createSaving, setCreateSaving] = useState(false);
 
   const logSteps = async () => {
     const steps = Number(stepInput);
@@ -130,6 +135,36 @@ export default function Challenges() {
       load();
     } catch {
       // no-op to keep flow lightweight
+    }
+  };
+
+  const createChallenge = async () => {
+    const name = challengeName.trim();
+    const goal = Number(challengeGoal);
+    const duration = Number(challengeDuration);
+    if (!name || !Number.isFinite(goal) || goal <= 0 || !Number.isFinite(duration) || duration <= 0) {
+      Alert.alert('Invalid Challenge', 'Enter a name, goal, and duration in days.');
+      return;
+    }
+    setCreateSaving(true);
+    try {
+      await api.post('/challenges/create', {
+        name,
+        type: challengeType,
+        goal,
+        duration_days: Math.round(duration)
+      });
+      setChallengeName('');
+      setChallengeGoal('');
+      setChallengeDuration('');
+      setChallengeType('steps');
+      setShowCreate(false);
+      await load();
+      Alert.alert('Created', 'Your challenge was created.');
+    } catch (error) {
+      Alert.alert('Create Failed', error?.response?.data?.error || 'Could not create challenge.');
+    } finally {
+      setCreateSaving(false);
     }
   };
 
@@ -260,7 +295,53 @@ export default function Challenges() {
           </Pressable>
           {showCreate && (
             <View style={styles.card}>
-              <Text style={styles.emptyText}>Custom challenge creation coming soon.</Text>
+              <Text style={styles.formLabel}>Name</Text>
+              <TextInput
+                value={challengeName}
+                onChangeText={setChallengeName}
+                placeholder="Spring Push"
+                placeholderTextColor={COLORS.subtext}
+                style={styles.formInput}
+              />
+              <Text style={styles.formLabel}>Type</Text>
+              <View style={styles.typeRow}>
+                {['steps', 'miles', 'workouts'].map((value) => (
+                  <Pressable
+                    key={value}
+                    onPress={() => setChallengeType(value)}
+                    style={[styles.typeChip, challengeType === value && styles.typeChipActive]}
+                  >
+                    <Text style={[styles.typeChipText, challengeType === value && styles.typeChipTextActive]}>{value}</Text>
+                  </Pressable>
+                ))}
+              </View>
+              <View style={styles.formRow}>
+                <View style={styles.formHalf}>
+                  <Text style={styles.formLabel}>Goal</Text>
+                  <TextInput
+                    value={challengeGoal}
+                    onChangeText={setChallengeGoal}
+                    keyboardType="numeric"
+                    placeholder="50"
+                    placeholderTextColor={COLORS.subtext}
+                    style={styles.formInput}
+                  />
+                </View>
+                <View style={styles.formHalf}>
+                  <Text style={styles.formLabel}>Duration (days)</Text>
+                  <TextInput
+                    value={challengeDuration}
+                    onChangeText={setChallengeDuration}
+                    keyboardType="numeric"
+                    placeholder="30"
+                    placeholderTextColor={COLORS.subtext}
+                    style={styles.formInput}
+                  />
+                </View>
+              </View>
+              <Pressable style={[styles.createBtn, createSaving && styles.createBtnDisabled]} onPress={createChallenge} disabled={createSaving}>
+                <Text style={styles.createBtnText}>{createSaving ? 'Creating...' : 'Create Challenge'}</Text>
+              </Pressable>
             </View>
           )}
         </>
@@ -526,6 +607,43 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginBottom: 10
   },
+  formLabel: { color: COLORS.subtext, fontSize: 12, marginBottom: 6 },
+  formInput: {
+    backgroundColor: COLORS.input,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 10,
+    color: COLORS.text,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    marginBottom: 10
+  },
+  typeRow: { flexDirection: 'row', gap: 8, marginBottom: 10 },
+  typeChip: {
+    backgroundColor: COLORS.input,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 6
+  },
+  typeChipActive: {
+    backgroundColor: COLORS.accent,
+    borderColor: COLORS.accent
+  },
+  typeChipText: { color: COLORS.subtext, fontSize: 12, fontWeight: '700' },
+  typeChipTextActive: { color: '#000' },
+  formRow: { flexDirection: 'row', gap: 8 },
+  formHalf: { flex: 1 },
+  createBtn: {
+    marginTop: 4,
+    borderRadius: 10,
+    backgroundColor: COLORS.accent,
+    paddingVertical: 10,
+    alignItems: 'center'
+  },
+  createBtnDisabled: { opacity: 0.65 },
+  createBtnText: { color: '#000', fontWeight: '800', fontSize: 13 },
   badgesGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',

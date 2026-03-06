@@ -140,7 +140,7 @@ export default function GarminSync() {
           <TextInput
             value={password}
             onChangeText={setPassword}
-            secureTextEntry
+            secureTextEntry={true}
             placeholder="Garmin password"
             placeholderTextColor={COLORS.subtext}
             style={[styles.input, styles.inputSpacing]}
