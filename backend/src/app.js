@@ -14,6 +14,9 @@ if (!process.env.JWT_SECRET) {
 const { initDb } = require('./db');
 const app = express();
 
+// Trust Railway's reverse proxy so express-rate-limit can read X-Forwarded-For correctly
+app.set('trust proxy', 1);
+
 // Serve frontend static files FIRST — before CORS or any middleware
 // (static assets are same-origin, no need to CORS-restrict them)
 const dist = path.join(__dirname, '../../frontend/dist');
