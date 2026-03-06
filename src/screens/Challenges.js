@@ -337,12 +337,13 @@ const styles = StyleSheet.create({
     marginBottom: 12
   },
   sectionTab: {
-    marginRight: 22,
+    flex: 1,
+    alignItems: 'center',
     paddingBottom: 9
   },
   sectionTabText: {
-    color: COLORS.subtext,
-    fontSize: 14,
+    color: '#cbd5e1',
+    fontSize: 15,
     fontWeight: '700',
     marginBottom: 7
   },
@@ -351,14 +352,17 @@ const styles = StyleSheet.create({
   },
   sectionTabUnderline: {
     height: 3,
+    width: '100%',
     borderRadius: 2,
-    backgroundColor: 'transparent'
+    backgroundColor: '#ffffff22'
   },
   sectionTabUnderlineActive: {
     backgroundColor: COLORS.accent
   },
   communityWrap: {
-    flex: 1
+    flex: 1,
+    minHeight: 560,
+    width: '100%'
   },
   tabRow: {
     flexDirection: 'row',

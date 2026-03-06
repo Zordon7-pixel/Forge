@@ -463,7 +463,7 @@ export default function Dashboard() {
       <View style={styles.warmupCard}>
         <Text style={styles.warmupTitle}>Ready to Run?</Text>
         <Text style={styles.warmupSub}>Dynamic warm-up reduces injury risk and improves performance.</Text>
-        <Pressable style={styles.warmupButton} onPress={() => navigation.navigate('Run')}>
+        <Pressable style={styles.warmupButton} onPress={() => navigation.navigate('Warmup')}>
           <Text style={styles.warmupButtonText}>Start Warm-Up</Text>
         </Pressable>
         <Pressable onPress={() => navigation.navigate('LogRun')}>
