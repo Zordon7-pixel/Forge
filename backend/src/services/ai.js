@@ -74,7 +74,11 @@ Return ONLY valid JSON in this exact format, no other text:
   "weeks": [{"week":1,"theme":"short theme name","total_miles":0,"days":[{"day":"Mon","type":"easy","distance_miles":0,"duration_min":0,"description":"brief description","rest":false}]}]
 }
 Types can be: easy, tempo, long, intervals, recovery, rest, cross_train
-Increase mileage ~10% per week max. Week 4 should be a recovery week (reduce ~20%).`;
+Rules:
+- Include at least 6 training sessions each week (non-rest days)
+- Include 1-2 hybrid cardio + weight sessions weekly, marked as type "cross_train" with titles like Weighted Circuit, Kettlebell Cardio, Rucking, or Sled Push Intervals
+- Keep at least 1 full rest day each week
+- Increase mileage ~10% per week max. Week 4 should be a recovery week (reduce ~20%).`;
 
   try {
     const res = await getClient().messages.create({

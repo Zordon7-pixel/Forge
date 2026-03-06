@@ -551,6 +551,101 @@ router.post('/race-adjust', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'Race adjust failed' }); }
 });
 
+const HYBRID_SESSION_TEMPLATES = [
+  { title: 'Weighted Circuit', description: 'Alternating loaded carries and fast cardio intervals.' },
+  { title: 'Kettlebell Cardio', description: 'Kettlebell swings with short aerobic repeats.' },
+  { title: 'Rucking', description: 'Brisk weighted walk focused on steady effort.' },
+  { title: 'Sled Push Intervals', description: 'Short sled pushes with controlled recovery.' },
+];
+
+function isRestDay(day = {}) {
+  const type = String(day.type || day.workout_type || '').toLowerCase();
+  return day.rest === true || type.includes('rest');
+}
+
+function isHybridSession(day = {}) {
+  const text = `${day.title || ''} ${day.description || ''} ${day.workout_type || ''} ${day.type || ''}`.toLowerCase();
+  return text.includes('weighted circuit')
+    || text.includes('kettlebell cardio')
+    || text.includes('ruck')
+    || text.includes('sled push')
+    || text.includes('hybrid');
+}
+
+function createHybridSession(dayLabel, index) {
+  const template = HYBRID_SESSION_TEMPLATES[index % HYBRID_SESSION_TEMPLATES.length];
+  return {
+    day: dayLabel,
+    type: 'cross_train',
+    workout_type: 'hybrid',
+    title: template.title,
+    distance_miles: 2,
+    duration_min: 30,
+    description: template.description,
+    rest: false,
+  };
+}
+
+function createEasySession(dayLabel) {
+  return {
+    day: dayLabel,
+    type: 'easy',
+    workout_type: 'run',
+    title: 'Easy aerobic run',
+    distance_miles: 2,
+    duration_min: 25,
+    description: 'Easy effort run to support consistent weekly frequency.',
+    rest: false,
+  };
+}
+
+function enforceWeekSessionRules(week = {}) {
+  const dayOrder = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const sourceDays = Array.isArray(week.days) ? [...week.days] : Array.isArray(week.sessions) ? [...week.sessions] : [];
+  const days = dayOrder.map((label, idx) => {
+    const existing = sourceDays[idx] || {};
+    return { ...existing, day: existing.day || label };
+  });
+
+  const nonRestIndexes = [];
+  for (let i = 0; i < days.length; i += 1) {
+    if (!isRestDay(days[i])) nonRestIndexes.push(i);
+  }
+
+  while (nonRestIndexes.length < 6) {
+    const restIndex = days.findIndex((d) => isRestDay(d));
+    if (restIndex < 0) break;
+    days[restIndex] = createEasySession(days[restIndex].day || dayOrder[restIndex]);
+    nonRestIndexes.push(restIndex);
+  }
+
+  let hybridIndexes = nonRestIndexes.filter((idx) => isHybridSession(days[idx]));
+  if (hybridIndexes.length < 1) {
+    const targetIndex = nonRestIndexes[Math.max(0, nonRestIndexes.length - 1)];
+    days[targetIndex] = createHybridSession(days[targetIndex].day || dayOrder[targetIndex], 0);
+    hybridIndexes = nonRestIndexes.filter((idx) => isHybridSession(days[idx]));
+  }
+  if (hybridIndexes.length < 2 && nonRestIndexes.length >= 6) {
+    const targetIndex = nonRestIndexes.find((idx) => idx !== hybridIndexes[0]);
+    if (targetIndex !== undefined) {
+      days[targetIndex] = createHybridSession(days[targetIndex].day || dayOrder[targetIndex], 1);
+    }
+  }
+
+  const finalNonRest = days.filter((d) => !isRestDay(d)).length;
+  if (finalNonRest === 7) {
+    const sundayIndex = dayOrder.indexOf('Sun');
+    days[sundayIndex] = { day: 'Sun', type: 'rest', workout_type: 'rest', distance_miles: 0, duration_min: 0, description: 'Rest and recovery', rest: true };
+  }
+
+  return { ...week, days };
+}
+
+function enforcePlanSessionRules(planData = {}) {
+  const weeks = Array.isArray(planData.weeks) ? planData.weeks.map((week) => enforceWeekSessionRules(week)) : [];
+  return { ...planData, weeks };
+}
+
 router.post('/generate', auth, checkAiLimit('plan_generate'), async (req, res) => {
   try {
     const profile = await dbGet('SELECT * FROM users WHERE id = ?', [req.user.id]);
@@ -561,15 +656,16 @@ router.post('/generate', auth, checkAiLimit('plan_generate'), async (req, res) =
     const weekStart = getMonday();
 
     if (!planData) {
-      const fallback = generateFallbackPlan(profile);
+      const fallback = enforcePlanSessionRules(generateFallbackPlan(profile));
       await dbRun('INSERT INTO training_plans (id, user_id, week_start, plan_json) VALUES (?, ?, ?, ?)',
         [id, req.user.id, weekStart, JSON.stringify(fallback)]);
       return res.json({ plan: { id, user_id: req.user.id, week_start: weekStart, plan_json: fallback } });
     }
 
+    const constrainedPlan = enforcePlanSessionRules(planData);
     await dbRun('INSERT INTO training_plans (id, user_id, week_start, plan_json) VALUES (?, ?, ?, ?)',
-      [id, req.user.id, weekStart, JSON.stringify(planData)]);
-    res.json({ plan: { id, user_id: req.user.id, week_start: weekStart, plan_json: planData } });
+      [id, req.user.id, weekStart, JSON.stringify(constrainedPlan)]);
+    res.json({ plan: { id, user_id: req.user.id, week_start: weekStart, plan_json: constrainedPlan } });
   } catch (err) { res.status(500).json({ error: 'Plan generation failed' }); }
 });
 
