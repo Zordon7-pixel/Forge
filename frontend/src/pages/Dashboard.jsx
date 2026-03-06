@@ -465,7 +465,7 @@ export default function Dashboard() {
   const showLoadWarning = loadAnalysis && ['elevated', 'high', 'danger'].includes(loadAnalysis.loadStatus) && Date.now() > loadWarningDismissedUntil
   const complianceColor = compliance?.score >= 80 ? '#22c55e' : compliance?.score >= 50 ? '#EAB308' : '#ef4444'
   const periodLabels = { day: 'Today', week: t('dashboard.thisWeek'), month: 'This Month', year: 'This Year', all: 'All Time' }
-  const injuryDismissed = injuryBannerDismissed || (activeInjury && localStorage.getItem(`forge-injury-dismissed-${activeInjury.id}`) === '1')
+  const injuryDismissed = injuryBannerDismissed || (activeInjury && activeInjury.id && localStorage.getItem(`forge-injury-dismissed-${activeInjury.id}`) === '1')
   const handleWatchSyncPayload = useCallback((payload) => {
     if (!payload) return
     const syncedSteps = payload.step_count ?? payload.steps
@@ -508,7 +508,7 @@ export default function Dashboard() {
         }
       `}</style>
 
-      {!injuryDismissed && activeInjury && (
+      {!injuryDismissed && activeInjury && activeInjury.id && (
         <div className="rounded-xl p-4" style={{ background: 'rgba(234,179,8,0.2)', border: '1px solid #EAB308' }}>
           <div className="flex items-start justify-between gap-3">
             <div>

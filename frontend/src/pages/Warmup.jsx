@@ -245,22 +245,31 @@ function WarmupDone({ onStartRun }) {
   const [stats, setStats] = useState(null)
   const [checkin, setCheckin] = useState(null)
   const [plan, setPlan] = useState(null)
+  const [recommendedStretches, setRecommendedStretches] = useState(null)
   const [loading, setLoading] = useState(true)
   const [checkInCompleted, setCheckInCompleted] = useState(false)
 
   useEffect(() => {
     const load = async () => {
       try {
-        const [statsRes, checkinRes, planRes] = await Promise.all([
+        const [statsRes, checkinRes, planRes, stretchRes] = await Promise.all([
           api.get('/auth/me/stats').catch(() => ({ data: null })),
           api.get('/checkin/today').catch(() => ({ data: null })),
           api.get('/plans/current').catch(() => ({ data: null })),
+          api.get('/stretches/recommended').catch(() => ({ data: null })),
         ])
         setStats(statsRes?.data)
         const checkinData = checkinRes?.data
         setCheckin(checkinData)
         setCheckInCompleted(Boolean(checkinData?.completed ?? checkinData?.id ?? checkinData))
         setPlan(planRes?.data?.plan || planRes?.data)
+        if (stretchRes?.data?.stretches?.length > 0) {
+          setRecommendedStretches({
+            category: stretchRes.data.recommendedCategory || 'Pre-Run',
+            reason: stretchRes.data.reason || 'Prepare your body for the run ahead',
+            stretches: stretchRes.data.stretches
+          })
+        }
       } finally {
         setLoading(false)
       }
@@ -486,6 +495,52 @@ function WarmupDone({ onStartRun }) {
                 </div>
               )}
             </div>
+          </div>
+        )}
+
+        {recommendedStretches && recommendedStretches.stretches?.length > 0 && (
+          <div
+            style={{
+              background: 'var(--bg-card)',
+              borderRadius: 16,
+              padding: 16,
+              border: '1px solid var(--border-subtle)',
+            }}
+          >
+            <p
+              style={{
+                fontSize: 13,
+                fontWeight: 600,
+                color: 'var(--text-muted)',
+                textTransform: 'uppercase',
+                margin: '0 0 8px',
+                letterSpacing: 0.8,
+              }}
+            >
+              {t('stretches.suggested') || 'Suggested Stretches'}
+            </p>
+            <p style={{ fontSize: 14, color: 'var(--text-primary)', margin: '0 0 12px', fontWeight: 700 }}>
+              {recommendedStretches.category}
+            </p>
+            <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '0 0 12px' }}>
+              {recommendedStretches.reason}
+            </p>
+            <button
+              onClick={() => navigate('/stretches')}
+              style={{
+                width: '100%',
+                background: 'transparent',
+                border: '1px solid var(--accent)',
+                color: 'var(--accent)',
+                fontWeight: 700,
+                borderRadius: 12,
+                padding: '10px 0',
+                cursor: 'pointer',
+                fontSize: 14,
+              }}
+            >
+              Do Stretches
+            </button>
           </div>
         )}
 

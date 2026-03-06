@@ -135,7 +135,7 @@ export default function Layout({ children }) {
               <img src="/icon-192.png" alt="FORGE" className="w-9 h-9 rounded-xl object-cover" />
             </button>
             <TrainingReadinessWidget />
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3" style={{ zIndex: 10 }}>
               <button onClick={toggle} className="transition-colors hover:opacity-80 text-xs" style={{ color: 'var(--text-muted)' }} title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}>
                 {theme === 'dark' ? (
                   <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -157,7 +157,7 @@ export default function Layout({ children }) {
                 type="button"
                 onClick={() => navigate('/profile')}
                 className="flex h-8 w-8 items-center justify-center rounded-full text-xs font-black transition-opacity hover:opacity-85"
-                style={{ background: 'var(--accent)', color: '#000', border: '1px solid var(--border-subtle)' }}
+                style={{ background: 'var(--accent)', color: '#000', border: '1px solid var(--border-subtle)', position: 'relative', zIndex: 15 }}
                 aria-label="Go to profile"
                 title="Profile"
               >
