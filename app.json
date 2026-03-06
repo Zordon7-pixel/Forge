@@ -20,7 +20,7 @@
     ],
     "ios": {
       "bundleIdentifier": "com.zordontech.forge",
-      "buildNumber": "3",
+      "buildNumber": "4",
       "supportsTablet": false,
       "infoPlist": {
         "NSHealthShareUsageDescription": "FORGE reads Apple Health workout data to import your performance history.",
