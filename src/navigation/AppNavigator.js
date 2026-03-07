@@ -22,6 +22,10 @@ import ActiveWorkout from '../screens/ActiveWorkout';
 import WorkoutSummary from '../screens/WorkoutSummary';
 import Injury from '../screens/Injury';
 import Races from '../screens/Races';
+import Stretches from '../screens/Stretches';
+import StretchSession from '../screens/StretchSession';
+import PRWall from '../screens/PRWall';
+import WeeklyRecap from '../screens/WeeklyRecap';
 import { clearToken, getToken, setToken } from '../lib/storage';
 import { AuthContext } from '../context/AuthContext';
 import api from '../lib/api';
@@ -145,6 +149,10 @@ export default function AppNavigator() {
                   <Stack.Screen name="WorkoutSummary" component={WorkoutSummary} options={{ title: 'Workout Summary' }} />
                   <Stack.Screen name="Injury" component={Injury} options={{ title: 'Injury Tracking' }} />
                   <Stack.Screen name="Races" component={Races} options={{ title: 'Races' }} />
+                  <Stack.Screen name="Stretches" component={Stretches} options={{ title: 'Stretches' }} />
+                  <Stack.Screen name="StretchSession" component={StretchSession} options={{ title: 'Stretch Session' }} />
+                  <Stack.Screen name="PRWall" component={PRWall} options={{ title: 'PR Wall' }} />
+                  <Stack.Screen name="WeeklyRecap" component={WeeklyRecap} options={{ title: 'Weekly Recap' }} />
                 </>
               )}
             </>
