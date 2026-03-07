@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
-import { Trophy, Activity } from 'lucide-react'
+import { Trophy, Activity, User } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { getUser, isLoggedIn } from '../lib/auth'
 import { useTheme } from '../context/ThemeContext'
@@ -13,8 +13,8 @@ const NAV_ITEMS = (t) => [
   { to: '/', end: true, icon: '/nav-home.png', label: t('nav.home'), color: '#EAB308' },
   { to: '/run', label: t('nav.run'), iconComponent: Activity, color: '#EAB308' },
   { to: '/log-lift', icon: '/nav-lift.png', label: t('nav.lift'), color: '#F97316' },
-  { to: '/challenges', label: t('nav.challenges'), iconComponent: Trophy, color: '#A855F7' },
   { to: '/history', icon: '/nav-history.png', label: t('nav.history'), color: '#3B82F6' },
+  { to: '/profile', label: t('nav.profile') || 'Profile', iconComponent: User, color: '#A855F7' },
 ]
 
 function getAvatarLabel(user) {

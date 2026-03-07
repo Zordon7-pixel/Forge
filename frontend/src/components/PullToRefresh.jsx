@@ -26,8 +26,9 @@ export default function PullToRefresh({ children }) {
       if (diff > 0 && window.scrollY === 0) {
         setPulling(true)
         setPullDistance(Math.min(diff, THRESHOLD + 20))
-        // Prevent default scroll bounce when pulling
-        if (diff > 10) e.preventDefault()
+        // Only preventDefault for deliberate pulls (>30px) — prevents cancelling
+        // legitimate button taps where the finger moves slightly during press
+        if (diff > 30) e.preventDefault()
       }
     }
 
