@@ -304,4 +304,38 @@ router.get('/me/ai-usage', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'AI usage fetch failed' }); }
 });
 
+router.delete('/account', auth, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const cleanupQueries = [
+      ['DELETE FROM password_reset_tokens WHERE user_id = ?', [userId]],
+      ['DELETE FROM ai_usage WHERE user_id = ?', [userId]],
+      ['DELETE FROM user_challenges WHERE user_id = ?', [userId]],
+      ['DELETE FROM step_logs WHERE user_id = ?', [userId]],
+      ['DELETE FROM user_badges WHERE user_id = ?', [userId]],
+      ['DELETE FROM activity_likes WHERE user_id = ?', [userId]],
+      ['DELETE FROM activity_comments WHERE user_id = ?', [userId]],
+      ['DELETE FROM activity_media WHERE user_id = ?', [userId]],
+      ['DELETE FROM saved_workouts WHERE user_id = ?', [userId]],
+      ['DELETE FROM community_workouts WHERE user_id = ?', [userId]],
+      ['DELETE FROM workout_sets WHERE user_id = ?', [userId]],
+      ['DELETE FROM workout_sessions WHERE user_id = ?', [userId]],
+      ['DELETE FROM lifts WHERE user_id = ?', [userId]],
+      ['DELETE FROM runs WHERE user_id = ?', [userId]],
+      ['DELETE FROM personal_records WHERE user_id = ?', [userId]],
+      ['DELETE FROM checkins WHERE user_id = ?', [userId]],
+      ['DELETE FROM garmin_accounts WHERE user_id = ?', [userId]],
+    ];
+
+    for (const [sql, params] of cleanupQueries) {
+      try { await dbRun(sql, params); } catch {}
+    }
+
+    await dbRun('DELETE FROM users WHERE id = ?', [userId]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete account' });
+  }
+});
+
 module.exports = router;

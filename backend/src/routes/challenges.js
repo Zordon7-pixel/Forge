@@ -148,18 +148,37 @@ router.get('/steps/week', auth, async (req, res) => {
 // POST /api/challenges/create — create a custom challenge and auto-join it
 router.post('/create', auth, async (req, res) => {
   try {
-    const { name, description, type, target_value, unit, end_date } = req.body;
-    if (!name || !target_value || !unit) return res.status(400).json({ error: 'name, target_value, and unit required' });
+    const {
+      name,
+      description,
+      type,
+      goal,
+      duration_days,
+      target_value,
+      unit,
+      end_date,
+    } = req.body;
+    const resolvedTarget = Number(goal ?? target_value);
+    const typeToUnit = { steps: 'steps', miles: 'miles', workouts: 'workouts' };
+    const resolvedUnit = unit || typeToUnit[type] || 'points';
+    const resolvedType = type || 'custom';
+    if (!name || !Number.isFinite(resolvedTarget) || resolvedTarget <= 0) {
+      return res.status(400).json({ error: 'name and goal/target_value are required' });
+    }
     const id = `custom-${uuidv4()}`;
     const cleanedName = cleanText(name);
-    const cleanedDescription = cleanText(description || '');
+    const normalizedDuration = Number(duration_days);
+    const fallbackDescription = Number.isFinite(normalizedDuration) && normalizedDuration > 0
+      ? `Custom ${normalizedDuration}-day challenge`
+      : '';
+    const cleanedDescription = cleanText(description || fallbackDescription);
     await dbRun(
       'INSERT INTO challenges (id, name, description, type, target_value, unit, badge_color, is_featured, sort_order) VALUES (?,?,?,?,?,?,?,0,99)',
-      [id, cleanedName, cleanedDescription, type || 'custom', Number(target_value), unit, '#EAB308']
+      [id, cleanedName, cleanedDescription, resolvedType, resolvedTarget, resolvedUnit, '#EAB308']
     );
     await dbRun('INSERT INTO user_challenges (id, user_id, challenge_id, progress) VALUES (?,?,?,0) ON CONFLICT (user_id, challenge_id) DO NOTHING',
       [uuidv4(), req.user.id, id]);
-    res.status(201).json({ ok: true, challenge_id: id });
+    res.status(201).json({ ok: true, challenge_id: id, end_date: end_date || null });
   } catch (err) { res.status(500).json({ error: 'Failed to create challenge' }); }
 });
 
