@@ -26,6 +26,9 @@ import Stretches from '../screens/Stretches';
 import StretchSession from '../screens/StretchSession';
 import PRWall from '../screens/PRWall';
 import WeeklyRecap from '../screens/WeeklyRecap';
+import Gear from '../screens/Gear';
+import TreadmillRun from '../screens/TreadmillRun';
+import Badges from '../screens/Badges';
 import { clearToken, getToken, setToken } from '../lib/storage';
 import { AuthContext } from '../context/AuthContext';
 import api from '../lib/api';
@@ -153,6 +156,9 @@ export default function AppNavigator() {
                   <Stack.Screen name="StretchSession" component={StretchSession} options={{ title: 'Stretch Session' }} />
                   <Stack.Screen name="PRWall" component={PRWall} options={{ title: 'PR Wall' }} />
                   <Stack.Screen name="WeeklyRecap" component={WeeklyRecap} options={{ title: 'Weekly Recap' }} />
+                  <Stack.Screen name="Gear" component={Gear} options={{ title: 'Gear' }} />
+                  <Stack.Screen name="TreadmillRun" component={TreadmillRun} options={{ title: 'Treadmill Run' }} />
+                  <Stack.Screen name="Badges" component={Badges} options={{ title: 'Badges' }} />
                 </>
               )}
             </>

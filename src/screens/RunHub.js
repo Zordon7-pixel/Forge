@@ -177,6 +177,12 @@ export default function RunHub({ navigation }) {
       >
         <Text style={styles.ctaText}>Open Run Logger</Text>
       </Pressable>
+      <Pressable
+        onPress={() => navigation.navigate('TreadmillRun')}
+        style={({ pressed }) => [styles.ctaOutlineButton, pressed && { opacity: 0.85 }]}
+      >
+        <Text style={styles.ctaOutlineText}>Log Treadmill Run</Text>
+      </Pressable>
 
       <View style={styles.card}>
         <Text style={styles.statLabel}>This Week Total</Text>
@@ -273,10 +279,24 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingVertical: 14,
     alignItems: 'center',
+    marginBottom: 8,
   },
   ctaText: {
     color: '#000000',
     fontSize: 15,
+    fontWeight: '700',
+  },
+  ctaOutlineButton: {
+    borderRadius: 12,
+    paddingVertical: 13,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: C.border,
+    backgroundColor: C.card,
+  },
+  ctaOutlineText: {
+    color: C.text,
+    fontSize: 14,
     fontWeight: '700',
   },
   weekMiles: {
