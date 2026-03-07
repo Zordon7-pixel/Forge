@@ -337,9 +337,9 @@ export default function LogLift() {
               <div style={{ position: 'absolute', top: 8, right: 10, fontSize: 11, fontWeight: 700, border: '1px solid #1a1a2e66', borderRadius: 999, padding: '2px 8px' }}>FORGE</div>
               <div style={{ position: 'absolute', left: 0, right: 0, bottom: -1, height: 14, background: 'linear-gradient(135deg, #eadfcd 25%, transparent 25%) 0 0/12px 12px, linear-gradient(225deg, #eadfcd 25%, transparent 25%) 6px 0/12px 12px' }} />
               <p className="text-lg font-bold">{aiRecommendation.workoutName} — {pretty(aiRecommendation.target)}</p>
-              <p className="text-sm mt-2"><strong>Warmup:</strong> {(aiRecommendation.warmup || []).join(', ')}</p>
-              <p className="text-sm mt-2"><strong>Main:</strong> {(aiRecommendation.main || []).map((m) => `${m.name} ${m.sets}x${m.reps} (${m.rest})`).join(' • ')}</p>
-              <p className="text-sm mt-2"><strong>Recovery:</strong> {(aiRecommendation.recovery || []).join(', ')}</p>
+              <p className="text-sm mt-3 leading-relaxed"><strong>Warmup:</strong> {(aiRecommendation.warmup || []).join(', ')}</p>
+              <p className="text-sm mt-3 leading-relaxed"><strong>Main:</strong> {(aiRecommendation.main || []).map((m) => `${m.name} ${m.sets}x${m.reps} (${m.rest})`).join(' • ')}</p>
+              <p className="text-sm mt-3 leading-relaxed"><strong>Recovery:</strong> {(aiRecommendation.recovery || []).join(', ')}</p>
               <p className="text-sm mt-2">{aiRecommendation.explanation}</p>
               <p className="text-xs mt-1">{aiRecommendation.restExplanation}</p>
               <button
@@ -449,7 +449,7 @@ export default function LogLift() {
             }}>
               <div style={{ position: 'absolute', top: 8, right: 10, fontSize: 11, fontWeight: 700, border: '1px solid #1a1a2e66', borderRadius: 999, padding: '2px 8px' }}>FORGE</div>
               <p className="text-lg font-bold">{manualAiPlan.workoutName}</p>
-              <p className="text-sm mt-2"><strong>Main:</strong> {(manualAiPlan.main || []).map((m) => `${m.name} ${m.sets}x${m.reps} (${m.rest})`).join(' • ')}</p>
+              <p className="text-sm mt-3 leading-relaxed"><strong>Main:</strong> {(manualAiPlan.main || []).map((m) => `${m.name} ${m.sets}x${m.reps} (${m.rest})`).join(' • ')}</p>
               <div className="flex gap-2 mt-3">
                 <button type="button" onClick={acceptManualAiWorkout} className="flex-1 rounded-xl py-2 font-bold" style={{ background: 'var(--accent)', color: '#000', border: 'none', fontFamily: 'inherit' }}>Accept Workout</button>
                 <button type="button" onClick={generateManualWorkout} className="flex-1 rounded-xl py-2 font-bold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', fontFamily: 'inherit' }}>Regenerate</button>

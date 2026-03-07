@@ -188,7 +188,7 @@ export default function Profile() {
             )}
           </div>
 
-          <form onSubmit={save}>
+          <form id="profile-form" onSubmit={save}>
             <div style={sectionStyle}>
               <div style={{ ...sectionLabel, display: 'flex', alignItems: 'center', gap: 8 }}><User size={14} /> Identity</div>
               <div style={{ marginBottom: 12 }}>
@@ -322,9 +322,12 @@ export default function Profile() {
 
             {error && <p className="text-sm" style={{ color: 'var(--accent)' }}>{error}</p>}
             {saved && <p className="text-sm" style={{ color: 'var(--text-primary)' }}>Saved</p>}
-
-            <button type="submit" disabled={saving} className="w-full rounded-xl py-3 font-semibold disabled:opacity-70" style={{ background: 'var(--accent)', color: '#000', marginTop: 8 }}>{saving ? t('common.loading') : t('profile.save')}</button>
           </form>
+
+          {/* Sticky save button - stays visible while scrolling */}
+          <div style={{ position: 'sticky', bottom: 120, zIndex: 20, background: 'var(--bg-base)', paddingTop: 8, paddingBottom: 8 }}>
+            <button form="profile-form" type="submit" disabled={saving} className="w-full rounded-xl py-3 font-semibold disabled:opacity-70" style={{ background: 'var(--accent)', color: '#000' }}>{saving ? t('common.loading') : t('profile.save')}</button>
+          </div>
 
           <div
             onClick={() => navigate('/settings')}

@@ -123,7 +123,7 @@ export default function Layout({ children }) {
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg-base)', color: 'var(--text-primary)' }}>
-      <div className="mx-auto w-full max-w-[480px] px-4">
+      <div className="mx-auto w-full max-w-[480px] px-4 pb-28">
         <header className="sticky top-0 z-20 border-b py-4 backdrop-blur" style={{ borderColor: 'var(--border-subtle)', background: 'color-mix(in srgb, var(--bg-base) 90%, transparent)' }}>
           <div className="relative flex items-center justify-between">
             <button
