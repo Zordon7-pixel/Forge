@@ -393,7 +393,10 @@ export default function Challenges() {
   }
 
   return (
-    <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>
+    <div
+      className="rounded-2xl p-4"
+      style={{ background: 'var(--bg-card)', paddingBottom: 'calc(8rem + env(safe-area-inset-bottom))' }}
+    >
       <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
         {['challenges', 'community'].map(t => (
           <button

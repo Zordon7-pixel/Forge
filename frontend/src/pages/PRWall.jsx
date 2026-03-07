@@ -98,6 +98,32 @@ function isSuspiciousPace(paceMinPerMile) {
   return paceMinPerMile < 3.5
 }
 
+function clampFutureDateISO(dateValue) {
+  const parsed = new Date(dateValue)
+  if (Number.isNaN(parsed.getTime())) return null
+  const today = new Date()
+  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate())
+  const parsedStart = new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate())
+  if (parsedStart > todayStart) return todayStart.toISOString().slice(0, 10)
+  return parsedStart.toISOString().slice(0, 10)
+}
+
+function isFutureDate(dateValue) {
+  const parsed = new Date(dateValue)
+  if (Number.isNaN(parsed.getTime())) return false
+  const today = new Date()
+  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate())
+  const parsedStart = new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate())
+  return parsedStart > todayStart
+}
+
+function formatPRDate(dateValue) {
+  const clamped = clampFutureDateISO(dateValue)
+  if (!clamped) return 'Recent'
+  if (isFutureDate(dateValue)) return 'Recent'
+  return new Date(clamped).toLocaleDateString()
+}
+
 export default function PRWall() {
   const [prs, setPrs] = useState([])
   const [totalMiles, setTotalMiles] = useState(0)
@@ -161,6 +187,7 @@ export default function PRWall() {
     try {
       await api.post('/prs', {
         ...form,
+        achieved_at: clampFutureDateISO(form.achieved_at) || new Date().toISOString().slice(0, 10),
         value: Number(form.value)
       })
       setShowModal(false)
@@ -198,7 +225,7 @@ export default function PRWall() {
       await api.post('/prs/manual', {
         distance_miles: distanceMiles,
         time_seconds: timeSeconds,
-        date: timeEditForm.date
+        date: clampFutureDateISO(timeEditForm.date) || new Date().toISOString().slice(0, 10)
       })
 
       setEditingTimePR(null)
@@ -210,7 +237,7 @@ export default function PRWall() {
   }
 
   return (
-    <div>
+    <div style={{ paddingBottom: 'calc(8rem + env(safe-area-inset-bottom))' }}>
       <div className="mb-5 flex items-start justify-between gap-3">
         <div>
           <h1 className="text-3xl font-black" style={{ color: 'var(--text-primary)' }}>PR Wall</h1>
@@ -255,7 +282,7 @@ export default function PRWall() {
                       )}
                     </div>
                     <p style={{ fontSize: 28, fontWeight: 900, color: 'var(--accent)' }}>{formatValue(pr)}</p>
-                    <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>{new Date(pr.achieved_at).toLocaleDateString()}</p>
+                    <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>{formatPRDate(pr.achieved_at)}</p>
                   </div>
                 ))
               )}
@@ -367,7 +394,7 @@ export default function PRWall() {
                       <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>{paceStr}</p>
                       {suspicious && <span style={{ fontSize: 10, color: 'var(--accent)' }}>(check data)</span>}
                     </div>
-                    <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>{new Date(pr.date).toLocaleDateString()}</p>
+                    <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>{formatPRDate(pr.date)}</p>
                   </div>
                 )
               })}
@@ -413,7 +440,7 @@ export default function PRWall() {
                       </div>
                     </div>
                     <p style={{ fontSize: 28, fontWeight: 900, color: 'var(--accent)' }}>{formatValue(pr)}</p>
-                    <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>{new Date(pr.achieved_at).toLocaleDateString()}</p>
+                    <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>{formatPRDate(pr.achieved_at)}</p>
                   </div>
                 )
               })}
@@ -427,7 +454,7 @@ export default function PRWall() {
                     )}
                   </div>
                   <p style={{ fontSize: 28, fontWeight: 900, color: 'var(--accent)' }}>{formatValue(pr)}</p>
-                  <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>{new Date(pr.achieved_at).toLocaleDateString()}</p>
+                  <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>{formatPRDate(pr.achieved_at)}</p>
                 </div>
               ))}
             </div>
