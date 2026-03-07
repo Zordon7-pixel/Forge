@@ -2,6 +2,7 @@ import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import {
   Activity,
+  CalendarDays,
   Clock3,
   Dumbbell,
   LayoutDashboard,
@@ -13,6 +14,7 @@ import RunHub from '../screens/RunHub';
 import LogLift from '../screens/LogLift';
 import Challenges from '../screens/Challenges';
 import History from '../screens/History';
+import Plan from '../screens/Plan';
 
 const Tab = createBottomTabNavigator();
 
@@ -59,6 +61,13 @@ export default function MainTabs() {
         component={LogLift}
         options={{
           tabBarIcon: ({ color }) => <Dumbbell color={color} {...iconProps} />
+        }}
+      />
+      <Tab.Screen
+        name="Plan"
+        component={Plan}
+        options={{
+          tabBarIcon: ({ color }) => <CalendarDays color={color} {...iconProps} />
         }}
       />
       <Tab.Screen

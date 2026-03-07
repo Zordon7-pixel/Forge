@@ -67,6 +67,9 @@ export default function Login({ navigation }) {
             value={password}
             onChangeText={setPassword}
           />
+          <Pressable onPress={() => navigation.navigate('ForgotPassword')} style={styles.forgotLink}>
+            <Text style={styles.forgotText}>Forgot Password?</Text>
+          </Pressable>
         </View>
 
         {/* Sign In Button */}
@@ -167,4 +170,13 @@ const styles = StyleSheet.create({
     color: '#EAB308',
     fontWeight: '600',
   },
+  forgotLink: {
+    alignSelf: 'flex-end',
+    marginTop: 8,
+  },
+  forgotText: {
+    color: '#EAB308',
+    fontWeight: '600',
+    fontSize: 13,
+  }
 });
