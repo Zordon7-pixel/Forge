@@ -1,5 +1,5 @@
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Plus, Save, Trash2 } from 'lucide-react-native';
 
@@ -21,6 +21,21 @@ const COLORS = {
 
 const createSet = () => ({ reps: '', weight: '' });
 const WEEK_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const MUSCLE_FILTERS = ['All', 'Chest', 'Back', 'Shoulders', 'Arms', 'Legs', 'Core'];
+const EXERCISE_LIBRARY = [
+  { name: 'Bench Press', group: 'Chest' },
+  { name: 'Incline Dumbbell Press', group: 'Chest' },
+  { name: 'Barbell Row', group: 'Back' },
+  { name: 'Lat Pulldown', group: 'Back' },
+  { name: 'Overhead Press', group: 'Shoulders' },
+  { name: 'Lateral Raise', group: 'Shoulders' },
+  { name: 'Barbell Curl', group: 'Arms' },
+  { name: 'Skull Crushers', group: 'Arms' },
+  { name: 'Back Squat', group: 'Legs' },
+  { name: 'Romanian Deadlift', group: 'Legs' },
+  { name: 'Plank', group: 'Core' },
+  { name: 'Hanging Leg Raise', group: 'Core' },
+];
 
 function buildWeeklyPlan(rec) {
   if (Array.isArray(rec?.weeklyPlan) && rec.weeklyPlan.length >= 6) {
@@ -70,6 +85,7 @@ export default function LogLift({ navigation }) {
   const [aiRec, setAiRec] = useState(null);
   const [weeklyPlan, setWeeklyPlan] = useState([]);
   const [aiLoading, setAiLoading] = useState(true);
+  const [muscleFilter, setMuscleFilter] = useState('All');
 
   useEffect(() => {
     api.get('/lifts').then(res => {
@@ -121,6 +137,10 @@ export default function LogLift({ navigation }) {
 
   const addSet = () => setSets((prev) => [...prev, createSet()]);
   const removeSet = (index) => setSets((prev) => prev.filter((_, i) => i !== index));
+  const filteredExercises = useMemo(
+    () => EXERCISE_LIBRARY.filter((exercise) => muscleFilter === 'All' || exercise.group === muscleFilter),
+    [muscleFilter]
+  );
   const startPlannedWorkout = (workout) => {
     const workoutName = workout?.workoutName || workout?.name || aiRec?.workoutName || '';
     setName(workoutName);
@@ -178,6 +198,36 @@ export default function LogLift({ navigation }) {
       <AppHeader />
       <Text style={styles.title}>Start Workout</Text>
       <Text style={styles.subtitle}>Select the muscle groups you are targeting today</Text>
+
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
+        {MUSCLE_FILTERS.map((filter) => {
+          const active = filter === muscleFilter;
+          return (
+            <Pressable
+              key={filter}
+              onPress={() => setMuscleFilter(filter)}
+              style={[styles.filterChip, active && styles.filterChipActive]}
+            >
+              <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>{filter}</Text>
+            </Pressable>
+          );
+        })}
+      </ScrollView>
+
+      <View style={styles.exerciseRow}>
+        {filteredExercises.slice(0, 6).map((exercise) => (
+          <Pressable
+            key={exercise.name}
+            onPress={() => {
+              setName(exercise.name);
+              setLiftMode('Manual');
+            }}
+            style={styles.exerciseChip}
+          >
+            <Text style={styles.exerciseChipText}>{exercise.name}</Text>
+          </Pressable>
+        ))}
+      </View>
 
       {/* Last Logged Lift */}
       {lastLift && (
@@ -423,6 +473,51 @@ const styles = StyleSheet.create({
     color: COLORS.subtext,
     marginTop: 4,
     fontSize: 15
+  },
+  filterRow: {
+    gap: 8,
+    paddingTop: 10,
+    paddingBottom: 8,
+    paddingRight: 10
+  },
+  filterChip: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.card,
+    paddingHorizontal: 12,
+    paddingVertical: 7
+  },
+  filterChipActive: {
+    borderColor: COLORS.accent,
+    backgroundColor: '#3a3211'
+  },
+  filterChipText: {
+    color: COLORS.subtext,
+    fontSize: 12,
+    fontWeight: '700'
+  },
+  filterChipTextActive: {
+    color: COLORS.accent
+  },
+  exerciseRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 12
+  },
+  exerciseChip: {
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: '#111827',
+    paddingHorizontal: 10,
+    paddingVertical: 7
+  },
+  exerciseChipText: {
+    color: COLORS.text,
+    fontSize: 12,
+    fontWeight: '600'
   },
   card: {
     marginTop: 14,

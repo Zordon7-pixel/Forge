@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { NavigationContainer, DefaultTheme } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 
@@ -32,6 +32,7 @@ import Badges from '../screens/Badges';
 import { clearToken, getToken, setToken } from '../lib/storage';
 import { AuthContext } from '../context/AuthContext';
 import api from '../lib/api';
+import { subscribeSyncStatus } from '../utils/offlineQueue';
 
 const Stack = createStackNavigator();
 
@@ -53,6 +54,7 @@ export default function AppNavigator() {
   const [onboardingComplete, setOnboardingComplete] = useState(false);
   const [loading, setLoading] = useState(true);
   const [profileLoading, setProfileLoading] = useState(false);
+  const [syncStatus, setSyncStatus] = useState({ syncing: false, pending: 0, last: 'idle' });
 
   const isOnboardingComplete = useCallback((nextUser) => {
     if (!nextUser || typeof nextUser !== 'object') return false;
@@ -113,6 +115,11 @@ export default function AppNavigator() {
     refreshUser();
   }, [refreshUser]);
 
+  useEffect(() => {
+    const unsubscribe = subscribeSyncStatus(setSyncStatus);
+    return unsubscribe;
+  }, []);
+
   if (loading || (token && profileLoading)) {
     return (
       <View style={styles.loadingWrap}>
@@ -124,6 +131,14 @@ export default function AppNavigator() {
   return (
     <AuthContext.Provider value={authValue}>
       <NavigationContainer theme={theme}>
+        {syncStatus?.syncing || syncStatus?.pending > 0 ? (
+          <View style={styles.syncBanner}>
+            <ActivityIndicator color="#000000" size="small" />
+            <Text style={styles.syncBannerText}>
+              {syncStatus?.syncing ? 'Syncing offline changes...' : `Pending sync: ${syncStatus?.pending}`}
+            </Text>
+          </View>
+        ) : null}
         <Stack.Navigator
           screenOptions={{
             headerStyle: { backgroundColor: '#171c27' },
@@ -182,5 +197,27 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#0f1117'
+  },
+  syncBanner: {
+    position: 'absolute',
+    top: 10,
+    left: 12,
+    right: 12,
+    zIndex: 1000,
+    borderRadius: 999,
+    backgroundColor: '#EAB308',
+    borderWidth: 1,
+    borderColor: '#fcd34d',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8
+  },
+  syncBannerText: {
+    color: '#000000',
+    fontSize: 12,
+    fontWeight: '800'
   }
 });
