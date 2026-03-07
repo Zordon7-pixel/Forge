@@ -520,9 +520,13 @@ export default function Dashboard() {
               </p>
             </div>
             <button
-              onClick={() => {
+              onClick={async () => {
+                try {
+                  await api.delete('/injury/active')
+                } catch (_) {}
                 localStorage.setItem(`forge-injury-dismissed-${activeInjury.id}`, '1')
                 setInjuryBannerDismissed(true)
+                setActiveInjury(null)
               }}
               className="rounded-md p-1"
               style={{ background: 'transparent', color: '#0f1117' }}
@@ -711,7 +715,7 @@ export default function Dashboard() {
         <h2 className="text-2xl font-black mb-1" style={{ color: 'var(--text-primary)' }}>Ready to Run?</h2>
         <p className="text-sm mb-10 text-center" style={{ color: 'var(--text-muted)' }}>Dynamic warm-up reduces injury risk and improves performance.</p>
         <button
-          onClick={() => navigate('/warmup')}
+          onClick={() => navigate('/stretches/session?type=pre')}
           className="rounded-full w-28 h-28 mb-3 font-black flex flex-col items-center justify-center"
           style={{ background: 'var(--accent)', color: '#000', border: 'none', cursor: 'pointer' }}
         >
