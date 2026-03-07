@@ -770,11 +770,14 @@ export default function Dashboard() {
                     borderWidth: day.isToday ? 2 : 1
                   }}>
                   {day.hasRun && day.hasLift ? (
-                    <span className="text-xs font-bold text-black">R+L</span>
+                    <div className="flex items-center gap-1">
+                      <span className="inline-block h-2 w-2 rounded-full" style={{ background: '#0f1117' }} aria-label="Run logged" />
+                      <span className="inline-block h-2 w-2 rounded-full" style={{ background: '#F97316' }} aria-label="Lift logged" />
+                    </div>
                   ) : day.hasRun ? (
-                    <span className="text-xs font-bold text-black">R</span>
+                    <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: '#0f1117' }} aria-label="Run logged" />
                   ) : day.hasLift ? (
-                    <span className="text-xs font-bold text-black">L</span>
+                    <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: '#F97316' }} aria-label="Lift logged" />
                   ) : (
                     <span className="text-xs" style={{ color: 'var(--text-muted)', opacity: 0.4 }}>·</span>
                   )}

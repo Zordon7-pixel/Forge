@@ -175,7 +175,11 @@ export default function History() {
   if (loading) return <LoadingRunner message="Loading history" />
 
   return (
-    <div>
+    <div className="pt-2">
+      <div className="mb-4">
+        <h1 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>History</h1>
+        <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Review your runs, lifts, and race efforts.</p>
+      </div>
       <div className="mb-4 grid grid-cols-3 gap-2">
         {[['Distance', fmt.distance(periodMiles, 1)], ['Avg Pace', avgPace], ['Lifts', `${filteredLifts.length + filteredWorkoutSessions.length}`]].map(([l, v]) => (
           <div key={l} className="rounded-xl p-3 text-center" style={{ background: 'var(--bg-card)' }}>

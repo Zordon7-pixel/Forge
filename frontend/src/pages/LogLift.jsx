@@ -271,6 +271,24 @@ export default function LogLift() {
   }
 
   const pretty = (v = '') => String(v).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+  const aiRecommendationTitle = useMemo(() => {
+    if (!aiRecommendation) return ''
+    const prettyTarget = String(aiRecommendation.target || '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+    const pieces = [aiRecommendation.workoutName, prettyTarget].filter(Boolean)
+    const seen = new Set()
+    const cleaned = []
+    pieces
+      .flatMap((part) => String(part).split(/[—-]/))
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .forEach((part) => {
+        const key = part.toLowerCase()
+        if (seen.has(key)) return
+        seen.add(key)
+        cleaned.push(part)
+      })
+    return cleaned.join(' — ')
+  }, [aiRecommendation])
   const latestLift = recentLifts[0] || null
   const previousLift = useMemo(() => {
     if (!latestLift) return null
@@ -336,7 +354,7 @@ export default function LogLift() {
             }}>
               <div style={{ position: 'absolute', top: 8, right: 10, fontSize: 11, fontWeight: 700, border: '1px solid #1a1a2e66', borderRadius: 999, padding: '2px 8px' }}>FORGE</div>
               <div style={{ position: 'absolute', left: 0, right: 0, bottom: -1, height: 14, background: 'linear-gradient(135deg, #eadfcd 25%, transparent 25%) 0 0/12px 12px, linear-gradient(225deg, #eadfcd 25%, transparent 25%) 6px 0/12px 12px' }} />
-              <p className="text-lg font-bold">{aiRecommendation.workoutName} — {pretty(aiRecommendation.target)}</p>
+              <p className="text-lg font-bold">{aiRecommendationTitle}</p>
               <p className="text-sm mt-3 leading-relaxed"><strong>Warmup:</strong> {(aiRecommendation.warmup || []).join(', ')}</p>
               <p className="text-sm mt-3 leading-relaxed"><strong>Main:</strong> {(aiRecommendation.main || []).map((m) => `${m.name} ${m.sets}x${m.reps} (${m.rest})`).join(' • ')}</p>
               <p className="text-sm mt-3 leading-relaxed"><strong>Recovery:</strong> {(aiRecommendation.recovery || []).join(', ')}</p>

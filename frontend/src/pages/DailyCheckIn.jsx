@@ -264,7 +264,8 @@ export default function DailyCheckIn({ onComplete }) {
         style={{
           width: '100%', background: !saving ? 'var(--accent)' : 'var(--bg-input)',
           color: '#000', fontWeight: 900, fontSize: 17, borderRadius: 16, padding: '18px', border: 'none', cursor: 'pointer',
-          opacity: saving ? 0.6 : 1
+          opacity: saving ? 0.6 : 1,
+          marginBottom: 80,
         }}>
         {saving ? 'Adjusting your plan...' : 'Done'}
       </button>

@@ -101,6 +101,38 @@ export default function RunHub() {
         </Link>
       )}
 
+      {latestRun && (
+        <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+          <p className="text-xs font-semibold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.8 }}>Recent Run Snapshot</p>
+          <div className="mt-3 grid grid-cols-3 gap-2">
+            <div className="rounded-xl p-2 text-center" style={{ background: 'var(--bg-input)' }}>
+              <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Distance</p>
+              <p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{fmt.distance(Number(latestRun.distance_miles || 0), 2)}</p>
+            </div>
+            <div className="rounded-xl p-2 text-center" style={{ background: 'var(--bg-input)' }}>
+              <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Duration</p>
+              <p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{Math.round(Number(latestRun.duration_seconds || 0) / 60)} min</p>
+            </div>
+            <div className="rounded-xl p-2 text-center" style={{ background: 'var(--bg-input)' }}>
+              <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Effort</p>
+              <p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{latestRun.perceived_effort ? `${latestRun.perceived_effort}/10` : '--'}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+        <p className="text-xs font-semibold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.8 }}>Quick Actions</p>
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          <Link to="/warmup" className="rounded-xl py-2 text-center text-sm font-semibold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', textDecoration: 'none' }}>
+            Start Warm-Up
+          </Link>
+          <Link to="/history" className="rounded-xl py-2 text-center text-sm font-semibold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', textDecoration: 'none' }}>
+            View History
+          </Link>
+        </div>
+      </div>
+
       <Link
         to="/log-run"
         className="block w-full rounded-xl py-3 text-center font-semibold"
