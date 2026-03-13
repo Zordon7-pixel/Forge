@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { CheckCircle2, Footprints, ChevronDown, ChevronUp, Flame } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { CheckCircle2, Footprints, ChevronDown, ChevronUp, Flame, Lock } from 'lucide-react'
 import api from '../lib/api'
 import Community from './Community'
 import LoadingRunner from '../components/LoadingRunner'
 import { scrollToFirstError, validateGoalSetting } from '../utils/validation'
+import { useProContext } from '../context/ProContext'
 
 function fmtValue(value, unit) {
   if (unit === 'miles') return `${Number(value).toFixed(value % 1 === 0 ? 0 : 1)} miles`
@@ -12,6 +14,8 @@ function fmtValue(value, unit) {
 }
 
 export default function Challenges() {
+  const navigate = useNavigate()
+  const { isPro, loading: proLoading } = useProContext()
   const [activeTab, setActiveTab] = useState('challenges')
   const [monthlyGoal, setMonthlyGoal] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -393,28 +397,70 @@ export default function Challenges() {
   }
 
   return (
-    <div
-      className="rounded-2xl p-4"
-      style={{ background: 'var(--bg-card)', paddingBottom: 'calc(8rem + env(safe-area-inset-bottom))' }}
-    >
-      <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
-        {['challenges', 'community'].map(t => (
-          <button
-            key={t}
-            onClick={() => setActiveTab(t)}
+    <div style={{ position: 'relative' }}>
+      <div
+        className="rounded-2xl p-4"
+        style={{
+          background: 'var(--bg-card)',
+          paddingBottom: 'calc(8rem + env(safe-area-inset-bottom))',
+          filter: !proLoading && !isPro ? 'blur(4px)' : 'none',
+          pointerEvents: !proLoading && !isPro ? 'none' : 'auto',
+        }}
+      >
+        <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
+          {['challenges', 'community'].map(t => (
+            <button
+              key={t}
+              onClick={() => setActiveTab(t)}
+              style={{
+                padding: '8px 14px', borderRadius: 20, fontSize: 13, fontWeight: 700, border: 'none', cursor: 'pointer',
+                background: activeTab === t ? 'var(--accent)' : 'var(--bg-card)',
+                color: activeTab === t ? '#000' : 'var(--text-muted)',
+              }}
+            >
+              {t === 'challenges' ? 'Challenges' : 'Community'}
+            </button>
+          ))}
+        </div>
+
+        {activeTab === 'challenges' && renderChallengesTab()}
+        {activeTab === 'community' && <Community />}
+      </div>
+      {!proLoading && !isPro && (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            backdropFilter: 'blur(4px)',
+            zIndex: 10,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <div
             style={{
-              padding: '8px 14px', borderRadius: 20, fontSize: 13, fontWeight: 700, border: 'none', cursor: 'pointer',
-              background: activeTab === t ? 'var(--accent)' : 'var(--bg-card)',
-              color: activeTab === t ? '#000' : 'var(--text-muted)',
+              background: 'var(--bg-card)',
+              border: '1px solid var(--border-subtle)',
+              borderRadius: 16,
+              padding: 32,
+              textAlign: 'center',
+              maxWidth: 320,
             }}
           >
-            {t === 'challenges' ? 'Challenges' : 'Community'}
-          </button>
-        ))}
-      </div>
-
-      {activeTab === 'challenges' && renderChallengesTab()}
-      {activeTab === 'community' && <Community />}
+            <Lock size={32} color="#EAB308" style={{ margin: '0 auto 12px' }} />
+            <h3 style={{ color: 'var(--text-primary)', fontWeight: 800, fontSize: 20 }}>Challenges</h3>
+            <p style={{ color: 'var(--text-primary)', fontWeight: 700, marginTop: 8 }}>Challenges are a Pro feature</p>
+            <p style={{ color: 'var(--text-muted)', marginTop: 8 }}>Join Pro to compete in challenges and earn exclusive badges.</p>
+            <button
+              onClick={() => navigate('/upgrade')}
+              style={{ background: '#EAB308', color: '#000', fontWeight: 700, padding: '12px 24px', borderRadius: 8, border: 'none', cursor: 'pointer', marginTop: 16 }}
+            >
+              Upgrade to Pro
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

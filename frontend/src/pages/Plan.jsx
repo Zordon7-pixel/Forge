@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
-import { CheckCircle2, Circle } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { CheckCircle2, Circle, Lock } from 'lucide-react'
 import api from '../lib/api'
+import { useProContext } from '../context/ProContext'
 
 function sessionLabel(session = {}) {
   if (session.type === 'run') {
@@ -11,6 +13,8 @@ function sessionLabel(session = {}) {
 }
 
 export default function Plan() {
+  const navigate = useNavigate()
+  const { isPro, loading: proLoading } = useProContext()
   const [plans, setPlans] = useState([])
   const [myPlan, setMyPlan] = useState(null)
   const [myUserPlan, setMyUserPlan] = useState(null)
@@ -107,11 +111,53 @@ export default function Plan() {
   }, [adaptivePlan?.intensity])
 
   if (loading) {
-    return <div className="rounded-xl p-4" style={{ background: 'var(--bg-card)', color: 'var(--text-muted)' }}>Loading training plans...</div>
+    return (
+      <div style={{ position: 'relative' }}>
+        <div style={{ filter: !proLoading && !isPro ? 'blur(4px)' : 'none', pointerEvents: !proLoading && !isPro ? 'none' : 'auto' }}>
+          <div className="rounded-xl p-4" style={{ background: 'var(--bg-card)', color: 'var(--text-muted)' }}>Loading training plans...</div>
+        </div>
+        {!proLoading && !isPro && (
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              backdropFilter: 'blur(4px)',
+              zIndex: 10,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <div
+              style={{
+                background: 'var(--bg-card)',
+                border: '1px solid var(--border-subtle)',
+                borderRadius: 16,
+                padding: 32,
+                textAlign: 'center',
+                maxWidth: 320,
+              }}
+            >
+              <Lock size={32} color="#EAB308" style={{ margin: '0 auto 12px' }} />
+              <h3 style={{ color: 'var(--text-primary)', fontWeight: 800, fontSize: 20 }}>AI Training Plans</h3>
+              <p style={{ color: 'var(--text-primary)', fontWeight: 700, marginTop: 8 }}>AI Training Plans are a Pro feature</p>
+              <p style={{ color: 'var(--text-muted)', marginTop: 8 }}>Upgrade to unlock unlimited AI-generated training plans.</p>
+              <button
+                onClick={() => navigate('/upgrade')}
+                style={{ background: '#EAB308', color: '#000', fontWeight: 700, padding: '12px 24px', borderRadius: 8, border: 'none', cursor: 'pointer', marginTop: 16 }}
+              >
+                Upgrade to Pro
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    )
   }
 
   return (
-    <div className="space-y-4">
+    <div style={{ position: 'relative' }}>
+      <div className="space-y-4" style={{ filter: !proLoading && !isPro ? 'blur(4px)' : 'none', pointerEvents: !proLoading && !isPro ? 'none' : 'auto' }}>
       <div className="rounded-2xl p-4 space-y-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
         <div className="flex items-start justify-between gap-3">
           <div>
@@ -249,6 +295,42 @@ export default function Plan() {
           >
             Change Plan
           </button>
+        </div>
+      )}
+      </div>
+      {!proLoading && !isPro && (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            backdropFilter: 'blur(4px)',
+            zIndex: 10,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <div
+            style={{
+              background: 'var(--bg-card)',
+              border: '1px solid var(--border-subtle)',
+              borderRadius: 16,
+              padding: 32,
+              textAlign: 'center',
+              maxWidth: 320,
+            }}
+          >
+            <Lock size={32} color="#EAB308" style={{ margin: '0 auto 12px' }} />
+            <h3 style={{ color: 'var(--text-primary)', fontWeight: 800, fontSize: 20 }}>AI Training Plans</h3>
+            <p style={{ color: 'var(--text-primary)', fontWeight: 700, marginTop: 8 }}>AI Training Plans are a Pro feature</p>
+            <p style={{ color: 'var(--text-muted)', marginTop: 8 }}>Upgrade to unlock unlimited AI-generated training plans.</p>
+            <button
+              onClick={() => navigate('/upgrade')}
+              style={{ background: '#EAB308', color: '#000', fontWeight: 700, padding: '12px 24px', borderRadius: 8, border: 'none', cursor: 'pointer', marginTop: 16 }}
+            >
+              Upgrade to Pro
+            </button>
+          </div>
         </div>
       )}
     </div>

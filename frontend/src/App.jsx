@@ -2,6 +2,7 @@ import React, { Suspense, lazy } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { isLoggedIn, getUser } from './lib/auth'
 import Layout from './components/Layout'
+import { ProProvider } from './context/ProContext'
 
 const Login = lazy(() => import('./pages/Login'))
 const Register = lazy(() => import('./pages/Register'))
@@ -34,6 +35,7 @@ const Gear = lazy(() => import('./pages/Gear'))
 const ResetPassword = lazy(() => import('./pages/ResetPassword'))
 const Injury = lazy(() => import('./pages/Injury'))
 const WeeklyRecap = lazy(() => import('./pages/WeeklyRecap'))
+const Upgrade = lazy(() => import('./pages/Upgrade'))
 
 const PageFallback = () => (
   <div style={{ minHeight: '100vh', background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -54,8 +56,9 @@ function PrivateRoute({ children }) {
 export default function App() {
   return (
     <BrowserRouter>
-      <Suspense fallback={<PageFallback />}>
-      <Routes>
+      <ProProvider>
+        <Suspense fallback={<PageFallback />}>
+          <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
         <Route path="/privacy" element={<Privacy />} />
@@ -240,6 +243,14 @@ export default function App() {
           }
         />
         <Route
+          path="/upgrade"
+          element={
+            <PrivateRoute>
+              <Upgrade />
+            </PrivateRoute>
+          }
+        />
+        <Route
           path="/recap"
           element={
             <PrivateRoute>
@@ -273,8 +284,9 @@ export default function App() {
         />
 
         <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-      </Suspense>
+          </Routes>
+        </Suspense>
+      </ProProvider>
     </BrowserRouter>
   )
 }
