@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import api from '../lib/api'
 import LoadingRunner from '../components/LoadingRunner'
-import { Pencil } from 'lucide-react'
+import { Lock, Pencil } from 'lucide-react'
+import { useProContext } from '../context/ProContext'
 
 const baseCardStyle = {
   background: 'var(--bg-card)',
@@ -125,6 +127,8 @@ function formatPRDate(dateValue) {
 }
 
 export default function PRWall() {
+  const navigate = useNavigate()
+  const { isPro, loading: proLoading } = useProContext()
   const [prs, setPrs] = useState([])
   const [totalMiles, setTotalMiles] = useState(0)
   const [timePRs, setTimePRs] = useState([])
@@ -237,7 +241,8 @@ export default function PRWall() {
   }
 
   return (
-    <div style={{ paddingBottom: 'calc(8rem + env(safe-area-inset-bottom))' }}>
+    <div style={{ paddingBottom: 'calc(8rem + env(safe-area-inset-bottom))', position: 'relative' }}>
+      <div style={{ filter: !proLoading && !isPro ? 'blur(4px)' : 'none', pointerEvents: !proLoading && !isPro ? 'none' : 'auto' }}>
       <div className="mb-5 flex items-start justify-between gap-3">
         <div>
           <h1 className="text-3xl font-black" style={{ color: 'var(--text-primary)' }}>PR Wall</h1>
@@ -460,6 +465,43 @@ export default function PRWall() {
             </div>
           </section>
         </>
+      )}
+      </div>
+
+      {!proLoading && !isPro && (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            backdropFilter: 'blur(4px)',
+            zIndex: 10,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <div
+            style={{
+              background: 'var(--bg-card)',
+              border: '1px solid var(--border-subtle)',
+              borderRadius: 16,
+              padding: 28,
+              textAlign: 'center',
+              maxWidth: 320,
+            }}
+          >
+            <Lock size={32} color="#EAB308" style={{ margin: '0 auto 12px' }} />
+            <h3 style={{ color: 'var(--text-primary)', fontWeight: 800, fontSize: 20 }}>PR Wall</h3>
+            <p style={{ color: 'var(--text-primary)', fontWeight: 700, marginTop: 8 }}>PR Wall is a Pro feature</p>
+            <p style={{ color: 'var(--text-muted)', marginTop: 8 }}>Upgrade to Pro to unlock personal-record tracking.</p>
+            <button
+              onClick={() => navigate('/upgrade')}
+              style={{ background: '#EAB308', color: '#000', fontWeight: 700, padding: '12px 24px', borderRadius: 8, border: 'none', cursor: 'pointer', marginTop: 16 }}
+            >
+              Upgrade to Pro
+            </button>
+          </div>
+        </div>
       )}
 
       {showModal && (

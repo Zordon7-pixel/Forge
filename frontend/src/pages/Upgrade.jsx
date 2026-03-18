@@ -1,36 +1,47 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Check, X } from 'lucide-react'
-import api from '../lib/api'
 import { useProContext } from '../context/ProContext'
+import { startStripeSubscription } from '../services/StripeService'
 
 const freeFeatures = [
-  'Unlimited workout logging',
-  'Basic progress charts',
-  '1 AI plan/month',
+  'Basic workout logging',
+  'Manual run and lift entries',
+  'Standard training timeline',
 ]
 
 const proFeatures = [
-  'Unlimited AI training plans',
-  'Full Challenges access',
-  'Weekly Recap and insights',
-  'Priority support',
-  'Early access to new features',
+  'Apple Health sync',
+  'PR Wall',
+  'Weekly Recap',
+  'Advanced analytics',
+]
+
+const plans = [
+  { id: 'monthly', label: 'Monthly', price: '$9.99' },
+  { id: 'annual', label: 'Annual', price: '$99.99' },
 ]
 
 export default function Upgrade() {
   const navigate = useNavigate()
-  const { isPro, loading } = useProContext()
+  const { isPro, loading, refreshPro } = useProContext()
+  const [selectedPlan, setSelectedPlan] = useState('monthly')
   const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState('')
+
+  const selectedPlanLabel = useMemo(
+    () => plans.find((plan) => plan.id === selectedPlan)?.label || 'Monthly',
+    [selectedPlan]
+  )
 
   const startCheckout = async () => {
     setSubmitting(true)
+    setError('')
     try {
-      const res = await api.post('/payments/create-subscription-session')
-      const url = res?.data?.url
-      if (url) {
-        window.location.href = url
-      }
+      await startStripeSubscription(selectedPlan)
+      await refreshPro()
+    } catch (err) {
+      setError(err?.message || 'Unable to start subscription flow right now.')
     } finally {
       setSubmitting(false)
     }
@@ -39,7 +50,7 @@ export default function Upgrade() {
   if (loading) {
     return (
       <div style={{ minHeight: 'calc(100vh - 120px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <p style={{ color: 'var(--text-muted)' }}>Loading Pro status...</p>
+        <p style={{ color: 'var(--text-muted)' }}>Loading subscription status...</p>
       </div>
     )
   }
@@ -51,8 +62,8 @@ export default function Upgrade() {
           className="rounded-2xl p-8"
           style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', textAlign: 'center', maxWidth: 420, width: '100%' }}
         >
-          <h1 className="text-2xl font-black" style={{ color: 'var(--text-primary)' }}>You are already Pro</h1>
-          <p className="mt-2" style={{ color: 'var(--text-muted)' }}>All premium features are unlocked on your account.</p>
+          <h1 className="text-2xl font-black" style={{ color: 'var(--text-primary)' }}>You are on FORGE Pro</h1>
+          <p className="mt-2" style={{ color: 'var(--text-muted)' }}>Apple Health sync and premium insights are unlocked.</p>
           <button
             onClick={() => navigate(-1)}
             className="mt-6 rounded-lg px-5 py-3 text-sm font-bold"
@@ -68,8 +79,8 @@ export default function Upgrade() {
   return (
     <div style={{ minHeight: 'calc(100vh - 120px)', background: 'var(--bg-base)' }}>
       <div className="mx-auto w-full max-w-5xl px-4 py-8">
-        <h1 className="text-3xl font-black" style={{ color: 'var(--text-primary)' }}>Upgrade to FORGE Pro</h1>
-        <p className="mt-2 text-sm" style={{ color: 'var(--text-muted)' }}>Unlock advanced tools built for serious progress.</p>
+        <h1 className="text-3xl font-black" style={{ color: 'var(--text-primary)' }}>FORGE Subscription</h1>
+        <p className="mt-2 text-sm" style={{ color: 'var(--text-muted)' }}>Free tier supports basic workout logging. Pro unlocks Apple Health sync and premium insights.</p>
 
         <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2">
           <section className="rounded-2xl p-5" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
@@ -82,7 +93,7 @@ export default function Upgrade() {
                   <p className="text-sm" style={{ color: 'var(--text-primary)' }}>{feature}</p>
                 </div>
               ))}
-              {proFeatures.slice(0, 2).map((feature) => (
+              {proFeatures.map((feature) => (
                 <div key={feature} className="flex items-center gap-2 opacity-80">
                   <X size={16} color="var(--text-muted)" />
                   <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{feature}</p>
@@ -93,7 +104,7 @@ export default function Upgrade() {
 
           <section className="rounded-2xl p-5" style={{ background: 'var(--bg-card)', border: '1px solid rgba(234,179,8,0.45)' }}>
             <p className="text-xs font-bold uppercase tracking-wider" style={{ color: '#EAB308' }}>Pro</p>
-            <p className="mt-2 text-2xl font-black" style={{ color: 'var(--text-primary)' }}>$4.99/mo</p>
+            <p className="mt-2 text-2xl font-black" style={{ color: 'var(--text-primary)' }}>{plans.find((plan) => plan.id === selectedPlan)?.price}</p>
             <div className="mt-4 space-y-3">
               {proFeatures.map((feature) => (
                 <div key={feature} className="flex items-center gap-2">
@@ -105,6 +116,24 @@ export default function Upgrade() {
           </section>
         </div>
 
+        <div className="mt-6">
+          <p className="mb-2 text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Choose plan</p>
+          <div className="flex flex-wrap gap-2">
+            {plans.map((plan) => (
+              <button
+                key={plan.id}
+                onClick={() => setSelectedPlan(plan.id)}
+                className="rounded-full px-4 py-2 text-sm font-semibold"
+                style={selectedPlan === plan.id
+                  ? { background: '#EAB308', color: '#000', border: '1px solid #EAB308' }
+                  : { background: 'var(--bg-input)', color: 'var(--text-muted)', border: '1px solid var(--border-subtle)' }}
+              >
+                {plan.label} ({plan.price})
+              </button>
+            ))}
+          </div>
+        </div>
+
         <div className="mt-7 flex flex-col items-start gap-3">
           <button
             onClick={startCheckout}
@@ -112,8 +141,9 @@ export default function Upgrade() {
             className="rounded-lg px-6 py-3 text-sm font-bold disabled:opacity-60"
             style={{ background: '#EAB308', color: '#000', border: 'none', cursor: 'pointer' }}
           >
-            {submitting ? 'Redirecting...' : 'Upgrade to Pro'}
+            {submitting ? 'Starting...' : `Continue with ${selectedPlanLabel}`}
           </button>
+          {error && <p className="text-sm" style={{ color: '#f87171' }}>{error}</p>}
           <button
             onClick={() => navigate(-1)}
             className="text-sm underline"

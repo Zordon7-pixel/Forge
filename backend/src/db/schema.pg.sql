@@ -18,6 +18,11 @@ CREATE TABLE IF NOT EXISTS users (
   coach_personality TEXT DEFAULT 'mentor',
   run_days_per_week INTEGER DEFAULT 3,
   lift_days_per_week INTEGER DEFAULT 2,
+  is_pro INTEGER DEFAULT 0,
+  stripe_customer_id TEXT,
+  stripe_subscription_id TEXT,
+  subscription_status TEXT DEFAULT 'free',
+  subscription_ends_at TEXT,
   created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 

@@ -25,7 +25,8 @@
     "react-leaflet": "^4.2.1",
     "react-router-dom": "^6.28.0",
     "recharts": "^2.15.1",
-    "react-native-health": "^1.19.0"
+    "react-native-health": "^1.19.0",
+    "@stripe/stripe-react-native": "^0.54.0"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.4",

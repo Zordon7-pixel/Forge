@@ -39,6 +39,7 @@ app.use(cors({
 
 // Stripe webhooks require the raw request body for signature verification.
 app.use('/api/payments/webhook', express.raw({ type: 'application/json' }));
+app.use('/api/stripe/webhook', express.raw({ type: 'application/json' }));
 app.use(express.json({ limit: '10mb' }));
 app.use(helmet({ contentSecurityPolicy: false }));
 
@@ -81,6 +82,7 @@ app.use('/api/injury',      require('./routes/injury'));
 app.use('/api/pt',          require('./routes/pt'));
 app.use('/api/recap',       require('./routes/recap'));
 app.use('/api/payments',    require('./routes/payments'));
+app.use('/api/stripe',      require('./routes/stripe'));
 
 // Public pages
 app.use('/privacy', require('./routes/privacy'));

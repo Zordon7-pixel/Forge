@@ -13,10 +13,10 @@ export function ProProvider({ children }) {
 
   const refreshPro = useCallback(async () => {
     try {
-      const res = await api.get('/payments/status')
+      const res = await api.get('/stripe/status').catch(() => api.get('/payments/status'))
       const status = String(res?.data?.subscription_status || '').toLowerCase()
       const hasProFlag = Number(res?.data?.is_pro) === 1
-      const pro = status === 'active' || status === 'trialing' || hasProFlag
+      const pro = status === 'pro' || status === 'active' || status === 'trialing' || hasProFlag
       setIsPro(pro)
       return pro
     } catch {

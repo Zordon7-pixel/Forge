@@ -206,6 +206,12 @@ async function initDb() {
       await client.query("UPDATE users SET subscription_status = 'free' WHERE subscription_status IS NULL");
     } catch (err) {}
     try {
+      await client.query("UPDATE users SET subscription_status = 'pro' WHERE subscription_status IN ('active', 'trialing')");
+    } catch (err) {}
+    try {
+      await client.query("UPDATE users SET subscription_status = 'cancelled' WHERE subscription_status IN ('canceled', 'past_due', 'unpaid')");
+    } catch (err) {}
+    try {
       await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS fitness_level TEXT DEFAULT 'beginner'");
       console.log('fitness_level');
     } catch (err) {}

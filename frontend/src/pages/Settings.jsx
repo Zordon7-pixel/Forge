@@ -4,6 +4,7 @@ import { ChevronRight, Link2, Moon, RefreshCw, Sun, Unplug, User, Watch } from '
 import { useTranslation } from 'react-i18next'
 import { useUnits } from '../context/UnitsContext'
 import { useTheme } from '../context/ThemeContext'
+import { useProContext } from '../context/ProContext'
 import api from '../lib/api'
 import { parseGarminCSV, parseStravaCSV, requestAppleHealth } from '../lib/healthImport'
 
@@ -57,6 +58,7 @@ export default function Settings() {
   const { t, i18n } = useTranslation()
   const { units, setUnits } = useUnits()
   const { theme, toggle: toggleTheme, setTheme } = useTheme()
+  const { isPro } = useProContext()
   const [distanceUnit, setDistanceUnit] = useState('miles')
   const [saved, setSaved] = useState(false)
   const [importing, setImporting] = useState(false)
@@ -136,6 +138,10 @@ export default function Settings() {
   }
 
   const handleAppleHealthImport = async () => {
+    if (!isPro) {
+      setImportNotice({ ok: false, text: 'Apple Health sync is available on the Pro tier.' })
+      return
+    }
     if (!supportsAppleHealth) {
       setImportNotice({ ok: false, text: 'Apple Health import is only supported on iOS Safari with Web Health API access.' })
       return
@@ -358,7 +364,7 @@ export default function Settings() {
           </p>
           <button
             onClick={handleAppleHealthImport}
-            disabled={importing || !supportsAppleHealth}
+            disabled={importing || !supportsAppleHealth || !isPro}
             style={{
               width: '100%',
               border: '1px solid var(--border-subtle)',
@@ -366,12 +372,12 @@ export default function Settings() {
               padding: '10px 12px',
               fontSize: 13,
               fontWeight: 700,
-              background: supportsAppleHealth ? 'var(--bg-input)' : 'rgba(148,163,184,0.1)',
-              color: supportsAppleHealth ? 'var(--text-primary)' : 'var(--text-muted)',
-              cursor: supportsAppleHealth ? 'pointer' : 'not-allowed',
+              background: supportsAppleHealth && isPro ? 'var(--bg-input)' : 'rgba(148,163,184,0.1)',
+              color: supportsAppleHealth && isPro ? 'var(--text-primary)' : 'var(--text-muted)',
+              cursor: supportsAppleHealth && isPro ? 'pointer' : 'not-allowed',
             }}
           >
-            {supportsAppleHealth ? 'Import from Apple Health' : 'Apple Health unavailable on this browser'}
+            {!isPro ? 'Apple Health sync requires Pro' : (supportsAppleHealth ? 'Import from Apple Health' : 'Apple Health unavailable on this browser')}
           </button>
         </div>
 

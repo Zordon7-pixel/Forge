@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Flame, ArrowUpRight, ArrowDownRight, Watch, Footprints, X, AlertTriangle, Brain, ChevronRight } from 'lucide-react'
+import { Flame, ArrowUpRight, ArrowDownRight, Watch, Footprints, X, AlertTriangle, Brain, ChevronRight, Lock } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import AchievementUnlock from '../components/AchievementUnlock'
 import { useUnits } from '../context/UnitsContext'
@@ -8,6 +8,7 @@ import api from '../lib/api'
 import LoadingRunner from '../components/LoadingRunner'
 import { useOnlineStatus } from '../lib/useOnlineStatus'
 import HealthService from '../services/HealthService'
+import { useProContext } from '../context/ProContext'
 
 function fmtPace(durationSeconds, distance) {
   if (!durationSeconds || !distance) return '--'
@@ -237,6 +238,7 @@ export default function Dashboard() {
   const [nextRecommendation, setNextRecommendation] = useState(null)
   const [healthSync, setHealthSync] = useState({ loading: true, available: false, reason: null, metrics: null })
   const { isOnline, queueCount } = useOnlineStatus()
+  const { isPro, loading: proLoading } = useProContext()
 
   const fetchDashboardData = useCallback(async () => {
     try {
@@ -783,13 +785,26 @@ export default function Dashboard() {
           {healthSync.loading && <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Syncing...</p>}
         </div>
 
-        {!healthSync.loading && !healthSync.available && (
+        {!proLoading && !isPro && (
+          <div>
+            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Apple Health sync is available on the Pro tier.</p>
+            <button
+              onClick={() => navigate('/upgrade')}
+              className="mt-3 rounded-lg px-3 py-2 text-xs font-bold"
+              style={{ background: '#EAB308', color: '#000', border: 'none', cursor: 'pointer' }}
+            >
+              Upgrade to Pro
+            </button>
+          </div>
+        )}
+
+        {isPro && !healthSync.loading && !healthSync.available && (
           <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
             {healthSync.reason || 'Apple Health is not available right now.'}
           </p>
         )}
 
-        {healthSync.metrics && (
+        {isPro && healthSync.metrics && (
           <div className="grid grid-cols-2 gap-3">
             <div className="rounded-lg p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
               <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Total miles this week</p>
@@ -853,6 +868,9 @@ export default function Dashboard() {
         </div>
       )}
 
+      {/* Advanced analytics (Pro) */}
+      <div style={{ position: 'relative' }}>
+      <div style={{ filter: !proLoading && !isPro ? 'blur(4px)' : 'none', pointerEvents: !proLoading && !isPro ? 'none' : 'auto' }}>
       {/* Stats with period selector */}
       <div className="rounded-2xl p-4 space-y-3" style={{ background: 'var(--bg-card)' }}>
         {/* Period tabs — pill-style: All | D | W | M */}
@@ -913,6 +931,34 @@ export default function Dashboard() {
           </div>
         </div>
       )}
+      </div>
+      {!proLoading && !isPro && (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <div
+            className="rounded-2xl p-4"
+            style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', textAlign: 'center', maxWidth: 300 }}
+          >
+            <Lock size={24} color="#EAB308" style={{ margin: '0 auto 8px' }} />
+            <p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>Advanced analytics is Pro-only</p>
+            <button
+              onClick={() => navigate('/upgrade')}
+              className="mt-3 rounded-lg px-3 py-2 text-xs font-bold"
+              style={{ background: '#EAB308', color: '#000', border: 'none', cursor: 'pointer' }}
+            >
+              Upgrade to Pro
+            </button>
+          </div>
+        </div>
+      )}
+      </div>
 
       {/* AI Warning */}
       {warning && (
