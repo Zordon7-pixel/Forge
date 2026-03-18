@@ -7,6 +7,7 @@ import { useUnits } from '../context/UnitsContext'
 import api from '../lib/api'
 import LoadingRunner from '../components/LoadingRunner'
 import { useOnlineStatus } from '../lib/useOnlineStatus'
+import HealthService from '../services/HealthService'
 
 function fmtPace(durationSeconds, distance) {
   if (!durationSeconds || !distance) return '--'
@@ -234,6 +235,7 @@ export default function Dashboard() {
   const [showWeeklyRecap, setShowWeeklyRecap] = useState(false)
   const [showSyncedFlash, setShowSyncedFlash] = useState(false)
   const [nextRecommendation, setNextRecommendation] = useState(null)
+  const [healthSync, setHealthSync] = useState({ loading: true, available: false, reason: null, metrics: null })
   const { isOnline, queueCount } = useOnlineStatus()
 
   const fetchDashboardData = useCallback(async () => {
@@ -317,6 +319,29 @@ export default function Dashboard() {
     document.addEventListener('visibilitychange', handleVisibility)
     return () => document.removeEventListener('visibilitychange', handleVisibility)
   }, [fetchDashboardData])
+
+  useEffect(() => {
+    let active = true
+
+    HealthService.getHealthSummary()
+      .then((result) => {
+        if (!active) return
+        setHealthSync({ loading: false, ...result })
+      })
+      .catch(() => {
+        if (!active) return
+        setHealthSync({
+          loading: false,
+          available: false,
+          reason: 'Unable to read Apple Health data on this device.',
+          metrics: null,
+        })
+      })
+
+    return () => {
+      active = false
+    }
+  }, [])
 
   useEffect(() => {
     const lastSeen = localStorage.getItem('forge_last_watch_sync_seen_at') || '1970-01-01T00:00:00'
@@ -751,6 +776,46 @@ export default function Dashboard() {
       </div>
 
       <WatchSyncWidget onSyncPayload={handleWatchSyncPayload} />
+
+      <section className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+        <div className="mb-3 flex items-center justify-between">
+          <p className="text-sm font-bold uppercase tracking-wide" style={{ color: '#EAB308' }}>Health Sync</p>
+          {healthSync.loading && <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Syncing...</p>}
+        </div>
+
+        {!healthSync.loading && !healthSync.available && (
+          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+            {healthSync.reason || 'Apple Health is not available right now.'}
+          </p>
+        )}
+
+        {healthSync.metrics && (
+          <div className="grid grid-cols-2 gap-3">
+            <div className="rounded-lg p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
+              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Total miles this week</p>
+              <p className="text-lg font-black" style={{ color: 'var(--text-primary)' }}>{healthSync.metrics.totalMilesThisWeek.toFixed(2)}</p>
+            </div>
+            <div className="rounded-lg p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
+              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Avg heart rate from last run</p>
+              <p className="text-lg font-black" style={{ color: 'var(--text-primary)' }}>
+                {healthSync.metrics.avgHeartRateFromLastRun ? `${healthSync.metrics.avgHeartRateFromLastRun} bpm` : '--'}
+              </p>
+            </div>
+            <div className="rounded-lg p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
+              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Calories burned today</p>
+              <p className="text-lg font-black" style={{ color: 'var(--text-primary)' }}>
+                {Number(healthSync.metrics.caloriesBurnedToday || 0).toLocaleString()}
+              </p>
+            </div>
+            <div className="rounded-lg p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
+              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Steps today</p>
+              <p className="text-lg font-black" style={{ color: 'var(--text-primary)' }}>
+                {Number(healthSync.metrics.stepsToday || 0).toLocaleString()}
+              </p>
+            </div>
+          </div>
+        )}
+      </section>
 
       {/* 7-day calendar */}
       {stats?.calendarDays && (
