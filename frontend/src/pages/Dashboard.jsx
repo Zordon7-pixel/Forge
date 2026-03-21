@@ -328,6 +328,9 @@ export default function Dashboard() {
     HealthService.getHealthSummary()
       .then((result) => {
         if (!active) return
+        if (result?.available && result?.metrics) {
+          HealthService.syncToProfile(result.metrics).catch((e) => console.warn('[HealthSync] profile sync failed:', e?.message))
+        }
         setHealthSync({ loading: false, ...result })
       })
       .catch(() => {

@@ -1,3 +1,5 @@
+import api from '../lib/api'
+
 const IOS_UA_REGEX = /iP(ad|hone|od)/i
 
 function isIOSDevice() {
@@ -111,6 +113,17 @@ class HealthService {
     }
 
     return this.getSamples({ ...options, type: 'Workout' })
+  }
+
+  async syncToProfile(metrics) {
+    if (!metrics) return null
+    const { data } = await api.post('/health/sync', {
+      steps_today: metrics.stepsToday,
+      calories_today: metrics.caloriesBurnedToday,
+      avg_heart_rate_last_run: metrics.avgHeartRateFromLastRun,
+      total_miles_this_week: metrics.totalMilesThisWeek,
+    })
+    return data
   }
 
   async getHealthSummary() {
