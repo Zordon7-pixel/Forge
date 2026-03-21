@@ -1,5 +1,3 @@
-import api from '../lib/api'
-
 const IOS_UA_REGEX = /iP(ad|hone|od)/i
 
 function isIOSDevice() {
@@ -189,20 +187,6 @@ class HealthService {
         stepsToday: Math.round(stepsToday),
       },
     }
-  }
-
-  async syncToProfile(metrics) {
-    if (!metrics) return null
-
-    const payload = {
-      steps_today: metrics.stepsToday,
-      calories_today: metrics.caloriesBurnedToday,
-      avg_heart_rate_last_run: metrics.avgHeartRateFromLastRun,
-      total_miles_this_week: metrics.totalMilesThisWeek,
-    }
-
-    const { data } = await api.post('/health/sync', payload)
-    return data
   }
 }
 

@@ -329,9 +329,6 @@ export default function Dashboard() {
       .then((result) => {
         if (!active) return
         setHealthSync({ loading: false, ...result })
-        if (result?.available && result?.metrics) {
-          HealthService.syncToProfile(result.metrics).catch(() => {})
-        }
       })
       .catch(() => {
         if (!active) return
