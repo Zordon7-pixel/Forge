@@ -108,6 +108,16 @@ router.put('/me/profile', auth, async (req, res) => {
       missed_workout_pref, weekly_workout_days, age, weight_lbs, max_heart_rate, units
     } = req.body;
 
+    if (age !== undefined && age !== null && (Number(age) < 10 || Number(age) > 110)) {
+      return res.status(400).json({ error: 'Age must be between 10 and 110.' });
+    }
+    if (weight_lbs !== undefined && weight_lbs !== null && (Number(weight_lbs) < 50 || Number(weight_lbs) > 700)) {
+      return res.status(400).json({ error: 'Weight must be between 50 and 700 lbs.' });
+    }
+    if (max_heart_rate !== undefined && max_heart_rate !== null && (Number(max_heart_rate) < 100 || Number(max_heart_rate) > 220)) {
+      return res.status(400).json({ error: 'Max heart rate must be between 100 and 220 bpm.' });
+    }
+
     const mappedWeekly = weekly_miles ?? weekly_miles_current;
     const mappedGoal = primary_goal ?? goal_type;
     const mappedInjury = injury_detail ?? injury_notes;

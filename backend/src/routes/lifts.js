@@ -46,7 +46,7 @@ router.delete('/:id', auth, async (req, res) => {
   try {
     const lift = await dbGet('SELECT * FROM lifts WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
     if (!lift) return res.status(404).json({ error: 'Not found' });
-    await dbRun('DELETE FROM lifts WHERE id=?', [req.params.id]);
+    await dbRun('DELETE FROM lifts WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: 'Delete failed' }); }
 });

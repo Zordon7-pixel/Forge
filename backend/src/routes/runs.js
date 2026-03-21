@@ -187,6 +187,12 @@ router.post('/', auth, async (req, res) => {
       watch_sync_id, watch_activity_type, watch_normalized_type, gps_available
     } = req.body;
     if (!date || !type) return res.status(400).json({ error: 'date and type required' });
+    if (perceived_effort !== undefined && perceived_effort !== null) {
+      const pe = Number(perceived_effort);
+      if (!Number.isFinite(pe) || pe < 1 || pe > 10) {
+        return res.status(400).json({ error: 'perceived_effort must be between 1 and 10' });
+      }
+    }
 
     const id = uuidv4();
     const resolvedSurface = surface || run_surface || 'road';
@@ -338,7 +344,7 @@ router.delete('/:id', auth, async (req, res) => {
   try {
     const run = await dbGet('SELECT * FROM runs WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
     if (!run) return res.status(404).json({ error: 'Not found' });
-    await dbRun('DELETE FROM runs WHERE id=?', [req.params.id]);
+    await dbRun('DELETE FROM runs WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: 'Delete failed' }); }
 });

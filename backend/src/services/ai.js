@@ -7,6 +7,12 @@ function getClient() {
   return client;
 }
 
+// Strip newlines and limit length to prevent prompt injection via user-controlled fields
+function sanitize(val, maxLen = 200) {
+  if (val === null || val === undefined) return '';
+  return String(val).replace(/[\r\n]+/g, ' ').trim().slice(0, maxLen);
+}
+
 const aiCache = new Map();
 const TTL = {
   runBrief: 4 * 60 * 60 * 1000,
@@ -49,23 +55,23 @@ async function generateTrainingPlan(profile, target = null) {
   }[profile.goal_type] || 'building fitness';
 
   const scheduleInfo = profile.schedule_type ? `
-- Schedule style: ${profile.schedule_type} (flexible/structured/adaptive)
-- Lifestyle: ${profile.lifestyle || 'works_fulltime'}
-- Preferred workout time: ${profile.preferred_workout_time || 'evening'}
-- Preferred workout days per week: ${profile.weekly_workout_days || 4}
-- If missed workout: ${profile.missed_workout_pref || 'adjust_week'}` : '';
+- Schedule style: ${sanitize(profile.schedule_type, 30)} (flexible/structured/adaptive)
+- Lifestyle: ${sanitize(profile.lifestyle, 30) || 'works_fulltime'}
+- Preferred workout time: ${sanitize(profile.preferred_workout_time, 30) || 'evening'}
+- Preferred workout days per week: ${Number(profile.weekly_workout_days) || 4}
+- If missed workout: ${sanitize(profile.missed_workout_pref, 30) || 'adjust_week'}` : '';
 
   const raceTargetLine = target?.raceDate || target?.distanceMiles
     ? `- Race target override: ${target.distanceMiles ? `${target.distanceMiles} miles` : 'race'} on ${target.raceDate || 'upcoming date'}`
     : '';
 
   const prompt = `You are an expert running coach. Create a 4-week training plan for this athlete:
-- Name: ${profile.name}
-- Current weekly miles: ${profile.weekly_miles_current}
+- Name: ${sanitize(profile.name, 50)}
+- Current weekly miles: ${Number(profile.weekly_miles_current) || 0}
 - Goal: ${goalDesc}
-- Run days per week: ${profile.run_days_per_week}
-- Lift days per week: ${profile.lift_days_per_week}
-- Injury notes: ${profile.injury_notes || 'none'}
+- Run days per week: ${Number(profile.run_days_per_week) || 3}
+- Lift days per week: ${Number(profile.lift_days_per_week) || 2}
+- Injury notes: ${sanitize(profile.injury_notes) || 'none'}
 - Comeback mode: ${profile.comeback_mode ? 'YES — be very conservative, no speed work for first 2 weeks' : 'no'}
 ${raceTargetLine}${scheduleInfo}
 
@@ -82,8 +88,8 @@ Rules:
 
   try {
     const res = await getClient().messages.create({
-      model: 'claude-haiku-4-5',
-      max_tokens: 2000,
+      model: 'claude-sonnet-4-6',
+      max_tokens: 4000,
       messages: [{ role: 'user', content: prompt }],
     });
     const text = res.content[0].text.trim();
@@ -96,36 +102,20 @@ Rules:
 }
 
 async function generateRunFeedback(run, profile) {
-  const personalities = {
-    mentor:          'calm, analytical, and encouraging — like a wise coach who believes in you',
-    hype_coach:      'energetic, loud, and motivating — celebrate every win',
-    drill_sergeant:  'direct, no excuses, push harder — but also strategic',
-    training_partner: 'peer-to-peer, relatable, like a training partner who ran the same route',
-  };
-  const voice = personalities[profile.coach_personality] || personalities.mentor;
-
   const durationMin = Math.round((run.duration_seconds || 0) / 60);
   const pace = run.distance_miles > 0 && durationMin > 0
     ? `${Math.floor(durationMin / run.distance_miles)}:${String(Math.round((durationMin / run.distance_miles % 1) * 60)).padStart(2, '0')}/mi`
     : 'unknown pace';
 
-  const scheduleContext = profile.schedule_type ? `
-- Schedule style: ${profile.schedule_type}
-- Lifestyle: ${profile.lifestyle || 'works_fulltime'}
-- Preferred training time: ${profile.preferred_workout_time || 'evening'}` : '';
+  const injuryCtx = sanitize(profile.injury_notes) ? `, currently managing: ${sanitize(profile.injury_notes)}` : '';
+  const notesCtx = sanitize(run.notes) ? `\nAthlete note: "${sanitize(run.notes)}"` : '';
 
-  const prompt = `You are a running coach with a ${voice} personality.
-Give 2-3 sentences of feedback on this run. Be specific to the data. Do NOT mention BMI or weight loss.
+  const prompt = `You are a sharp, experienced running coach reviewing a training log entry. Write 2-3 sentences of feedback. Sound like a knowledgeable training partner — direct, specific to the numbers, no fluff. Don't open with praise like "Great job" or "Well done". Don't mention weight or BMI. Reference the actual pace and effort.
 
-Run data:
-- Type: ${run.type}
-- Distance: ${run.distance_miles} miles
-- Duration: ${durationMin} min (${pace})
-- Perceived effort: ${run.perceived_effort}/10
-- Notes from athlete: ${run.notes || 'none'}
-- Athlete context: ${profile.injury_notes || 'healthy'}, goal: ${profile.goal_type}, weekly base: ${profile.weekly_miles_current} mi/week${scheduleContext}
+${run.type} run — ${run.distance_miles} miles in ${durationMin} min (${pace}), effort ${run.perceived_effort}/10${notesCtx}
+Context: ${Number(profile.weekly_miles_current) || 0} mi/week base, goal: ${sanitize(profile.goal_type, 30) || 'fitness'}${injuryCtx}
 
-Keep it under 60 words total. No headers, no bullet points — just natural coaching feedback.`;
+Under 60 words. No headers. No bullet points.`;
 
   try {
     const res = await getClient().messages.create({
@@ -153,17 +143,15 @@ async function generateWorkoutFeedback(session, sets, profile) {
 
     const durationMin = session.total_seconds ? Math.round(session.total_seconds / 60) : null;
     const muscleGroups = Array.isArray(session.muscle_groups) ? session.muscle_groups.join(', ') : session.muscle_groups;
-    const voice = profile?.coach_personality || 'mentor';
+    const notesCtx = sanitize(session.notes) ? `\nNotes: ${sanitize(session.notes)}` : '';
 
-    const voiceDesc = {
-      mentor: 'supportive and encouraging',
-      drill_sergeant: 'tough and direct',
-      scientist: 'data-driven and analytical',
-      friend: 'casual and motivating',
-      zen: 'calm and mindful',
-    }[voice] || 'supportive';
+    const prompt = `You are a strength coach reviewing a completed session. Write 2-3 sentences of feedback — specific to the exercises and numbers, not generic. End with one concrete suggestion for next time. Sound like a coach who actually looked at the data, not a bot. Don't open with "Great work" or similar.
 
-    const prompt = `You are a strength and conditioning coach, ${voiceDesc}. Give specific, actionable feedback on this workout in 2-3 sentences. Be specific to the actual exercises and weights used. End with one concrete suggestion for next session.\n\nAthlete profile: ${profile?.name || 'Athlete'}, ${profile?.weight_lbs ? `${profile.weight_lbs} lbs` : ''}, goal: ${profile?.goal_type || 'general fitness'}\nDuration: ${durationMin ? `${durationMin} minutes` : 'not recorded'}\nMuscle groups: ${muscleGroups || 'not specified'}\nExercises:\n${exerciseSummary}\nNotes: ${session.notes || 'none'}`;
+${durationMin ? `${durationMin} min session` : 'Session'} — ${muscleGroups || 'not specified'}
+Exercises: ${exerciseSummary}
+Goal: ${sanitize(profile?.goal_type, 30) || 'general fitness'}${notesCtx}
+
+Under 80 words. No headers. No bullet points.`;
 
     const msg = await getClient().messages.create({
       model: 'claude-haiku-4-5',
@@ -183,7 +171,7 @@ async function generateRunBrief({ run, profile, recentRuns, recentLifts, userId 
     const cached = getCached(cacheKey);
     if (cached) return cached;
 
-    const prompt = `Return JSON only with keys: why, effort, bpmRange, cadence. Athlete ${profile?.name || 'athlete'} goal ${profile?.goal_type || 'fitness'}. Latest planned/session run: ${JSON.stringify(run || {})}. Recent runs: ${JSON.stringify((recentRuns || []).slice(0,5))}. Recent workouts: ${JSON.stringify((recentLifts || []).slice(0,3))}.`;
+    const prompt = `Return JSON only with keys: why, effort, bpmRange, cadence. Athlete ${sanitize(profile?.name, 50) || 'athlete'} goal ${sanitize(profile?.goal_type, 30) || 'fitness'}. Latest planned/session run: ${JSON.stringify(run || {})}. Recent runs: ${JSON.stringify((recentRuns || []).slice(0,5))}. Recent workouts: ${JSON.stringify((recentLifts || []).slice(0,3))}.`;
     const msg = await getClient().messages.create({ model: 'claude-haiku-4-5', max_tokens: 220, messages: [{ role: 'user', content: prompt }] });
     const text = msg.content?.[0]?.text || '{}';
     const jsonMatch = text.match(/\{[\s\S]*\}/);
@@ -199,7 +187,7 @@ async function generateLiftPlan({ bodyPart, timeAvailable, profile, recentSets, 
     const cached = getCached(cacheKey);
     if (cached) return cached;
 
-    const prompt = `Return JSON only with keys: workoutName, exercises(array of {name,sets,reps,rest}), estimatedTime. Body part: ${bodyPart}. Time available: ${timeAvailable}. Athlete: ${profile?.name || 'athlete'}. Recent sets: ${JSON.stringify((recentSets || []).slice(0,12))}. Recent runs: ${JSON.stringify((recentRuns || []).slice(0,4))}.`;
+    const prompt = `Return JSON only with keys: workoutName, exercises(array of {name,sets,reps,rest}), estimatedTime. Body part: ${sanitize(bodyPart, 50)}. Time available: ${sanitize(timeAvailable, 20)}. Athlete: ${sanitize(profile?.name, 50) || 'athlete'}. Recent sets: ${JSON.stringify((recentSets || []).slice(0,12))}. Recent runs: ${JSON.stringify((recentRuns || []).slice(0,4))}.`;
     const msg = await getClient().messages.create({ model: 'claude-haiku-4-5', max_tokens: 320, messages: [{ role: 'user', content: prompt }] });
     const text = msg.content?.[0]?.text || '{}';
     const jsonMatch = text.match(/\{[\s\S]*\}/);
@@ -215,11 +203,17 @@ async function generateSessionFeedback({ sessionType, sessionData, profile, user
     const cached = getCached(cacheKey);
     if (cached) return cached;
 
-    const prompt = `You are FORGE AI coach. Return JSON only with keys: analysis, didWell, suggestion, recovery.
-Session type: ${sessionType}.
-Athlete: ${profile?.name || 'Athlete'}, goal: ${profile?.goal_type || 'fitness'}.
-Session data: ${JSON.stringify(sessionData || {})}.
-Rules: analysis must be 2-3 sentences. didWell one sentence. suggestion one sentence. recovery must be exactly one of: easy day, rest, can train hard tomorrow.`;
+    const prompt = `Return JSON only with these exact keys: analysis, didWell, suggestion, recovery.
+
+Session: ${sanitize(sessionType, 30)}
+Goal: ${sanitize(profile?.goal_type, 30) || 'fitness'}
+Data: ${JSON.stringify(sessionData || {})}
+
+Rules:
+- analysis: 2 sentences — what actually happened in this session and what it means for training. Be specific to the numbers. Sound like a coach, not an app.
+- didWell: 1 sentence — call out one specific thing from the data that was genuinely good.
+- suggestion: 1 sentence — one concrete, actionable thing for the next session.
+- recovery: exactly one of: "easy day", "rest", "can train hard tomorrow"`;
     const msg = await getClient().messages.create({
       model: 'claude-haiku-4-5',
       max_tokens: 260,
@@ -242,7 +236,7 @@ async function generateWorkoutRecommendation({ profile, recentRuns, recentWorkou
     const cached = getCached(cacheKey);
     if (cached) return cached;
 
-    const prompt = `Return JSON only with keys: workoutName,target,warmup(array),main(array of {name,sets,reps,rest}),recovery(array),explanation,restExplanation. Athlete:${profile?.name || 'athlete'} goal ${profile?.goal_type || 'fitness'}. recent runs ${JSON.stringify((recentRuns || []).slice(0,5))}. recent workouts ${JSON.stringify((recentWorkouts || []).slice(0,5))}.`;
+    const prompt = `Return JSON only with keys: workoutName,target,warmup(array),main(array of {name,sets,reps,rest}),recovery(array),explanation,restExplanation. Athlete:${sanitize(profile?.name, 50) || 'athlete'} goal ${sanitize(profile?.goal_type, 30) || 'fitness'}. recent runs ${JSON.stringify((recentRuns || []).slice(0,5))}. recent workouts ${JSON.stringify((recentWorkouts || []).slice(0,5))}.`;
     const msg = await getClient().messages.create({ model: 'claude-haiku-4-5', max_tokens: 420, messages: [{ role: 'user', content: prompt }] });
     const text = msg.content?.[0]?.text || '{}';
     const jsonMatch = text.match(/\{[\s\S]*\}/);
@@ -258,7 +252,7 @@ async function generateBodyPartWorkout({ bodyPart, exercise, profile, userId }) 
     const cached = getCached(cacheKey);
     if (cached) return cached;
 
-    const prompt = `Return JSON only with keys: workoutName,target,warmup(array),main(array of {name,sets,reps,rest}),recovery(array),explanation,restExplanation. Build a focused lifting workout with 4-6 exercises. Body part: ${bodyPart}. Anchor exercise: ${exercise}. Athlete: ${profile?.name || 'athlete'} goal ${profile?.goal_type || 'fitness'}.`;
+    const prompt = `Return JSON only with keys: workoutName,target,warmup(array),main(array of {name,sets,reps,rest}),recovery(array),explanation,restExplanation. Build a focused lifting workout with 4-6 exercises. Body part: ${sanitize(bodyPart, 50)}. Anchor exercise: ${sanitize(exercise, 50)}. Athlete: ${sanitize(profile?.name, 50) || 'athlete'} goal ${sanitize(profile?.goal_type, 30) || 'fitness'}.`;
     const msg = await getClient().messages.create({ model: 'claude-haiku-4-5', max_tokens: 500, messages: [{ role: 'user', content: prompt }] });
     const text = msg.content?.[0]?.text || '{}';
     const jsonMatch = text.match(/\{[\s\S]*\}/);
@@ -276,11 +270,10 @@ async function generateLoadWarning(loadData, userId) {
     const cached = getCached(cacheKey);
     if (cached) return cached;
 
-    const prompt = `You are a running performance coach. Return JSON only with keys: warning, recommendation, suggestedAction.
+    const prompt = `Return JSON only with keys: warning, recommendation, suggestedAction.
 Data: ${JSON.stringify(loadData)}
-Rules:
-- warning: concise risk summary
-- recommendation: concrete next step
+- warning: 1 sentence, plain language — say what the actual risk is, not just that there is one
+- recommendation: 1 sentence — tell them exactly what to do next, not generic advice
 - suggestedAction: one of rest|easy_day|reduce_miles|ok`;
 
     const msg = await getClient().messages.create({
@@ -304,7 +297,7 @@ async function generateRaceAdjustment({ profile, race, currentPlan }) {
   try {
     const prompt = `Return JSON only with key weeks (array). Athlete profile: ${JSON.stringify({ goal: profile?.goal_type, weekly: profile?.weekly_miles_current, runDays: profile?.run_days_per_week })}. Race: ${JSON.stringify(race)}. Current plan: ${JSON.stringify(currentPlan)}. Rebalance with taper starting 2 weeks out when race <= 60 days.`;
     const msg = await getClient().messages.create({
-      model: 'claude-haiku-4-5',
+      model: 'claude-sonnet-4-6',
       max_tokens: 700,
       messages: [{ role: 'user', content: prompt }],
     });
@@ -323,26 +316,19 @@ async function generateWeeklyInsight({ userId, weekLabel, summary }) {
     const cached = getCached(cacheKey);
     if (cached) return cached;
 
-    const prompt = `You are FORGE run coach. Return JSON only with key insight.
-Context:
-- Week: ${weekLabel}
-- Total miles: ${summary?.totalMiles || 0}
-- Total runs: ${summary?.totalRuns || 0}
-- Avg pace: ${summary?.avgPace || 'n/a'}
-- Longest run: ${summary?.longestRun || 0}
-- Lift sessions: ${summary?.liftSessions || 0}
-- Lift volume: ${summary?.totalLiftVolume || 0}
-- PRs this week: ${JSON.stringify(summary?.prsThisWeek || [])}
-- Injury risk flag: ${summary?.injuryRiskFlag ? 'yes' : 'no'} (${summary?.injuryRiskReason || 'none'})
-- Mileage vs last week: ${summary?.mileageVsLastWeek ?? 0}%
-Rules:
-- 1-2 short sentences
-- Runner-first coaching tone
-- Mention strength only as injury prevention support
-- Keep under 45 words`;
+    const prompt = `Return JSON only with key insight.
+
+Week: ${sanitize(weekLabel, 30)}
+Miles: ${Number(summary?.totalMiles) || 0} across ${Number(summary?.totalRuns) || 0} runs, avg pace ${sanitize(summary?.avgPace, 20) || 'n/a'}, longest ${Number(summary?.longestRun) || 0} mi
+Lifts: ${Number(summary?.liftSessions) || 0} sessions, volume ${Number(summary?.totalLiftVolume) || 0} lbs
+PRs: ${JSON.stringify(summary?.prsThisWeek || [])}
+Mileage vs last week: ${summary?.mileageVsLastWeek ?? 0}%
+${summary?.injuryRiskFlag ? `Injury risk: ${sanitize(summary?.injuryRiskReason, 100) || 'flagged'}` : ''}
+
+Write 1-2 sentences. Pick the most meaningful pattern in the data — something they might not have noticed themselves. Don't just summarise numbers they can already see. Sound like a coach who's been watching their training, not an automated report. Under 45 words.`;
 
     const msg = await getClient().messages.create({
-      model: 'claude-haiku-4-5',
+      model: 'claude-sonnet-4-6',
       max_tokens: 150,
       messages: [{ role: 'user', content: prompt }],
     });
