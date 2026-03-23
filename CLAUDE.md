@@ -141,6 +141,7 @@ git push origin main   # Railway auto-builds and deploys
 | Prompt injection | services/ai.js | User input interpolated raw into prompts |
 | Sign-in race condition | AppNavigator.js | profileLoading not set before token |
 | Lift weight zero accepted | History.js | `< 0` should be `<= 0` |
+| [H2] hashFile symlink bypass (2026-03-23, commit 8bbd950e) | lib/vault.js | path.resolve() doesn't follow symlinks — fixed with fs.realpathSync() before boundary check |
 
 ---
 
