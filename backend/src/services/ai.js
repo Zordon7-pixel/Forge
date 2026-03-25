@@ -345,7 +345,79 @@ Write 1-2 sentences. Pick the most meaningful pattern in the data — something 
   }
 }
 
+async function generateComebackPlan({ injuryType, weeksOut, ptMilestone, targetRace, targetWeeks, currentFitness }) {
+  try {
+    const safeInjuryType = sanitize(injuryType, 100);
+    const safeWeeksOut = Number(weeksOut) || 0;
+    const safePtMilestone = sanitize(ptMilestone, 200);
+    const safeTargetRace = sanitize(targetRace, 120);
+    const safeTargetWeeks = Number.isInteger(Number(targetWeeks)) ? Number(targetWeeks) : null;
+    const safeCurrentFitness = sanitize(currentFitness, 20).toLowerCase();
+
+    const raceContext = safeTargetRace
+      ? `- Target race: ${safeTargetRace}${safeTargetWeeks ? ` (in ${safeTargetWeeks} weeks)` : ''}`
+      : '- Target race: none specified';
+
+    const prompt = `You are an expert running coach and return-to-running specialist.
+Generate a conservative, injury-aware comeback plan as strict JSON only.
+
+Athlete context:
+- Injury type: ${safeInjuryType}
+- Weeks out from running: ${safeWeeksOut}
+- PT milestone reached: ${safePtMilestone}
+- Current fitness: ${safeCurrentFitness}
+${raceContext}
+
+Return ONLY valid JSON in this exact schema and key order:
+{
+  "plan_title": "string",
+  "summary": "string",
+  "weeks": [
+    {
+      "week": 1,
+      "theme": "string",
+      "runs": [
+        {
+          "day": "Mon",
+          "type": "walk-run|easy|recovery|cross_train|rest",
+          "duration_min": 20,
+          "notes": "string"
+        }
+      ],
+      "weekly_mileage_target": 8,
+      "milestone_check": "string",
+      "warning": "string or null"
+    }
+  ],
+  "general_warnings": ["string"],
+  "return_to_full_training_estimate": "string"
+}
+
+Rules:
+- Provide 4 to 8 weeks depending on risk and current fitness; be conservative.
+- Keep progression gradual (around 10% max weekly mileage increase unless warning indicates hold/reduce).
+- Include at least 4 entries in runs per week, allowing rest or cross_train entries.
+- Make warnings specific and safety-focused; use null when no special warning for a week.
+- Reference the PT milestone and injury type in progression logic.
+- No markdown, no explanations, JSON only.`;
+
+    const res = await getClient().messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 2600,
+      messages: [{ role: 'user', content: prompt }],
+    });
+
+    const text = res.content?.[0]?.text?.trim() || '{}';
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    return jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+  } catch (e) {
+    console.error('generateComebackPlan error:', e.message);
+    return null;
+  }
+}
+
 module.exports = {
+  sanitize,
   generateTrainingPlan,
   generateRunFeedback,
   generateWorkoutFeedback,
@@ -357,4 +429,5 @@ module.exports = {
   generateLoadWarning,
   generateRaceAdjustment,
   generateWeeklyInsight,
+  generateComebackPlan,
 };

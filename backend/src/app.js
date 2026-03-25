@@ -4,6 +4,7 @@ const cors    = require('cors');
 const path    = require('path');
 const helmet  = require('helmet');
 const rateLimit = require('express-rate-limit');
+const comebackRouter = require('./routes/comeback');
 
 // Refuse to start without JWT_SECRET
 if (!process.env.JWT_SECRET) {
@@ -84,6 +85,7 @@ app.use('/api/pt',          require('./routes/pt'));
 app.use('/api/recap',       require('./routes/recap'));
 app.use('/api/payments',    require('./routes/payments'));
 app.use('/api/stripe',      require('./routes/stripe'));
+app.use('/api',             comebackRouter);
 
 // Public pages
 app.use('/privacy', require('./routes/privacy'));
