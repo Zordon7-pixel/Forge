@@ -21,6 +21,7 @@ import DailyCheckIn from '../screens/DailyCheckIn';
 import ActiveWorkout from '../screens/ActiveWorkout';
 import WorkoutSummary from '../screens/WorkoutSummary';
 import Injury from '../screens/Injury';
+import ComebackPlanScreen from '../screens/ComebackPlanScreen';
 import Races from '../screens/Races';
 import Stretches from '../screens/Stretches';
 import StretchSession from '../screens/StretchSession';
@@ -166,6 +167,7 @@ export default function AppNavigator() {
                   <Stack.Screen name="ActiveWorkout" component={ActiveWorkout} options={{ title: 'Active Workout' }} />
                   <Stack.Screen name="WorkoutSummary" component={WorkoutSummary} options={{ title: 'Workout Summary' }} />
                   <Stack.Screen name="Injury" component={Injury} options={{ title: 'Injury Tracking' }} />
+                  <Stack.Screen name="ComebackPlan" component={ComebackPlanScreen} options={{ title: 'Comeback Plan' }} />
                   <Stack.Screen name="Races" component={Races} options={{ title: 'Races' }} />
                   <Stack.Screen name="Stretches" component={Stretches} options={{ title: 'Stretches' }} />
                   <Stack.Screen name="StretchSession" component={StretchSession} options={{ title: 'Stretch Session' }} />

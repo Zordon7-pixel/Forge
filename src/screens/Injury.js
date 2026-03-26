@@ -46,7 +46,7 @@ const daysSince = (input) => {
   return Math.max(0, Math.floor((now.getTime() - start.getTime()) / 86400000));
 };
 
-export default function Injury() {
+export default function Injury({ navigation }) {
   const today = new Date().toISOString().slice(0, 10);
 
   const [form, setForm] = useState({
@@ -188,6 +188,10 @@ export default function Injury() {
         ))}
         {activeInjuries.length === 0 && <Text style={styles.empty}>No active injuries.</Text>}
       </View>
+
+      <Pressable onPress={() => navigation.navigate('ComebackPlan')} style={styles.comebackLink}>
+        <Text style={styles.comebackLinkText}>Build My Comeback Plan →</Text>
+      </Pressable>
     </ScrollView>
   );
 }
@@ -318,5 +322,18 @@ const styles = StyleSheet.create({
   empty: {
     color: COLORS.subtext,
     fontSize: 13
+  },
+  comebackLink: {
+    borderWidth: 1,
+    borderColor: '#00e5a0',
+    borderRadius: 12,
+    backgroundColor: '#04261c',
+    paddingVertical: 14,
+    alignItems: 'center'
+  },
+  comebackLinkText: {
+    color: '#00e5a0',
+    fontWeight: '800',
+    fontSize: 15
   }
 });
