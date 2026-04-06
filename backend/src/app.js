@@ -18,10 +18,8 @@ const app = express();
 // Trust Railway's reverse proxy so express-rate-limit can read X-Forwarded-For correctly
 app.set('trust proxy', 1);
 
-// Serve frontend static files FIRST — before CORS or any middleware
-// (static assets are same-origin, no need to CORS-restrict them)
+// Frontend static files served AFTER API routes to avoid intercepting /api/* paths
 const dist = path.join(__dirname, '../../frontend/dist');
-app.use(express.static(dist));
 
 // CORS — restrict to known origin in production
 const allowedOrigins = process.env.CORS_ORIGIN
@@ -90,6 +88,9 @@ app.use('/api',             comebackRouter);
 
 // Public pages
 app.use('/privacy', require('./routes/privacy'));
+
+// Serve frontend static files after all API routes
+app.use(express.static(dist));
 
 // SPA fallback — serve index.html for all non-API routes
 app.get('*', (req, res) => {
