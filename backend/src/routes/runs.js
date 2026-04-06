@@ -4,6 +4,14 @@ const auth   = require('../middleware/auth');
 const { v4: uuidv4 } = require('uuid');
 const { generateRunFeedback, generateLoadWarning } = require('../services/ai');
 const autoUpdatePRs = require('../services/prAuto');
+const {
+  DISTANCE_CONFIG,
+  normalizeSex,
+  getAgeBracket,
+  equivalentRaceSeconds,
+  computeAgeGradedScore,
+  getCompetitiveTier,
+} = require('../lib/ageGrading');
 
 function startOfDay(d) {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
@@ -30,6 +38,13 @@ function daysSince(dateString, today = new Date()) {
   const a = startOfDay(today);
   const b = startOfDay(d);
   return Math.floor((a.getTime() - b.getTime()) / 86400000);
+}
+
+function isoDateDaysAgo(days) {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - days);
+  return d.toISOString().slice(0, 10);
 }
 
 router.get('/', auth, async (req, res) => {
@@ -172,6 +187,145 @@ router.get('/next-recommendation', auth, async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ error: 'Recommendation failed' });
+  }
+});
+
+router.get('/age-graded-performance', auth, async (req, res) => {
+  try {
+    const since365 = isoDateDaysAgo(365);
+    const since90 = isoDateDaysAgo(90);
+
+    const [profile, userRuns, seniorRuns] = await Promise.all([
+      dbGet('SELECT age, sex FROM users WHERE id=?', [req.user.id]),
+      dbAll(
+        `SELECT date, distance_miles, duration_seconds
+         FROM runs
+         WHERE user_id=? AND date>=? AND duration_seconds>0 AND distance_miles>0
+         ORDER BY date DESC`,
+        [req.user.id, since365]
+      ),
+      dbAll(
+        `SELECT r.user_id, r.date, r.distance_miles, r.duration_seconds, u.age, u.sex
+         FROM runs r
+         INNER JOIN users u ON u.id = r.user_id
+         WHERE u.age>=40 AND r.date>=? AND r.duration_seconds>0 AND r.distance_miles>0`,
+        [since365]
+      ),
+    ]);
+
+    const userAge = Number(profile?.age);
+    const ageProvided = Number.isFinite(userAge) && userAge >= 10 && userAge <= 110;
+    const userSex = normalizeSex(profile?.sex);
+    const userAgeBracket = ageProvided ? getAgeBracket(userAge) : null;
+    const canBenchmarkSeniors = ageProvided && userAge >= 40;
+
+    const peerBestByDistance = { '5k': new Map(), '10k': new Map() };
+    const activeSeniorUsers90d = new Set();
+    const distanceKeys = Object.keys(DISTANCE_CONFIG);
+
+    for (const row of seniorRuns) {
+      const peerAge = Number(row.age);
+      if (!Number.isFinite(peerAge) || peerAge < 40) continue;
+
+      const peerSex = normalizeSex(row.sex);
+      for (const distanceKey of distanceKeys) {
+        const normalizedSeconds = equivalentRaceSeconds(row.duration_seconds, row.distance_miles, distanceKey);
+        if (!normalizedSeconds) continue;
+        if (String(row.date || '') >= since90) activeSeniorUsers90d.add(row.user_id);
+
+        const score = computeAgeGradedScore(distanceKey, peerSex, peerAge, normalizedSeconds);
+        if (!score) continue;
+
+        const previous = peerBestByDistance[distanceKey].get(row.user_id);
+        if (!previous || score > previous.score) {
+          peerBestByDistance[distanceKey].set(row.user_id, {
+            userId: row.user_id,
+            score,
+            ageBracket: getAgeBracket(peerAge),
+          });
+        }
+      }
+    }
+
+    const distances = distanceKeys.map((distanceKey) => {
+      const config = DISTANCE_CONFIG[distanceKey];
+      let best = null;
+
+      for (const run of userRuns) {
+        const normalizedSeconds = equivalentRaceSeconds(run.duration_seconds, run.distance_miles, distanceKey);
+        if (!normalizedSeconds) continue;
+        if (!best || normalizedSeconds < best.normalizedSeconds) {
+          best = {
+            date: run.date,
+            durationSeconds: Number(run.duration_seconds || 0),
+            normalizedSeconds,
+          };
+        }
+      }
+
+      if (!best) {
+        return { key: distanceKey, label: config.label, hasResult: false };
+      }
+
+      const score = ageProvided
+        ? computeAgeGradedScore(distanceKey, userSex, userAge, best.normalizedSeconds)
+        : null;
+      const tier = score ? getCompetitiveTier(score) : null;
+
+      let percentile = null;
+      let rank = null;
+      let fieldSize = null;
+      let peerGroup = null;
+      if (canBenchmarkSeniors && score) {
+        const allPeers = Array.from(peerBestByDistance[distanceKey].values());
+        const agePeers = allPeers.filter((peer) => peer.ageBracket === userAgeBracket);
+        const pool = agePeers.length >= 8 ? agePeers : allPeers;
+        const competitors = pool.filter((peer) => peer.userId !== req.user.id);
+
+        const betterCount = competitors.filter((peer) => peer.score > score).length;
+        const position = betterCount + 1;
+        const participants = competitors.length + 1;
+
+        rank = position;
+        fieldSize = participants;
+        percentile = participants <= 1
+          ? 100
+          : Math.max(0, Math.min(100, Math.round(((participants - position) / (participants - 1)) * 100)));
+        peerGroup = agePeers.length >= 8 ? userAgeBracket : 'All seniors 40+';
+      }
+
+      return {
+        key: distanceKey,
+        label: config.label,
+        hasResult: true,
+        bestDate: best.date,
+        bestDurationSeconds: Math.round(best.durationSeconds),
+        normalizedDurationSeconds: Math.round(best.normalizedSeconds),
+        ageGradedScore: score,
+        competitiveTier: tier?.label || null,
+        competitiveTierKey: tier?.key || null,
+        percentile,
+        rank,
+        fieldSize,
+        peerGroup,
+      };
+    });
+
+    res.json({
+      ageProvided,
+      seniorEligible: canBenchmarkSeniors,
+      athlete: {
+        age: ageProvided ? Math.round(userAge) : null,
+        sex: userSex,
+        ageBracket: userAgeBracket,
+      },
+      community: {
+        activeSeniorRunners90d: activeSeniorUsers90d.size,
+      },
+      distances,
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to compute age-graded performance' });
   }
 });
 

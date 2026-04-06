@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Flame, ArrowUpRight, ArrowDownRight, Watch, Footprints, X, AlertTriangle, Brain, ChevronRight, Lock } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import AchievementUnlock from '../components/AchievementUnlock'
+import AgeGradedPerformanceCard from '../components/AgeGradedPerformanceCard'
 import { useUnits } from '../context/UnitsContext'
 import api from '../lib/api'
 import LoadingRunner from '../components/LoadingRunner'
@@ -236,13 +237,14 @@ export default function Dashboard() {
   const [showWeeklyRecap, setShowWeeklyRecap] = useState(false)
   const [showSyncedFlash, setShowSyncedFlash] = useState(false)
   const [nextRecommendation, setNextRecommendation] = useState(null)
+  const [ageGradedPerformance, setAgeGradedPerformance] = useState(null)
   const [healthSync, setHealthSync] = useState({ loading: true, available: false, reason: null, metrics: null })
   const { isOnline, queueCount } = useOnlineStatus()
   const { isPro, loading: proLoading } = useProContext()
 
   const fetchDashboardData = useCallback(async () => {
     try {
-        const [statsRes, runsRes, liftsRes, warningRes, checkinRes, goalRes, streakRes, milestoneRes, complianceRes, loadRes, nextRaceRes, gearRes, injuryRes, recapRes, recommendationRes] = await Promise.all([
+        const [statsRes, runsRes, liftsRes, warningRes, checkinRes, goalRes, streakRes, milestoneRes, complianceRes, loadRes, nextRaceRes, gearRes, injuryRes, recapRes, recommendationRes, ageGradedRes] = await Promise.all([
           api.get('/auth/me/stats'),
           api.get('/runs', { params: { limit: 5 } }),
           api.get('/lifts'),
@@ -258,6 +260,7 @@ export default function Dashboard() {
           api.get('/injury/active').catch(() => ({ data: { injuries: [] } })),
           api.get('/recap/weekly').catch(() => ({ data: null })),
           api.get('/runs/next-recommendation').catch(() => ({ data: null })),
+          api.get('/runs/age-graded-performance').catch(() => ({ data: null })),
         ])
         setStats(statsRes.data)
         const runsList = Array.isArray(runsRes.data) ? runsRes.data : runsRes.data?.runs || []
@@ -302,6 +305,7 @@ export default function Dashboard() {
         setActiveInjury((injuryRes.data?.injuries || [])[0] || null)
         setWeeklyCalories(recapRes.data?.totalCalories || 0)
         setNextRecommendation(recommendationRes.data || null)
+        setAgeGradedPerformance(ageGradedRes.data || null)
         const isSunday = new Date().getDay() === 0
         const weekKey = `recap-seen-${getWeekKey()}`
         if (isSunday && localStorage.getItem(weekKey) !== '1') {
@@ -641,6 +645,13 @@ export default function Dashboard() {
           </p>
           <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>{nextRecommendation.reason}</p>
         </button>
+      )}
+
+      {ageGradedPerformance && (
+        <AgeGradedPerformanceCard
+          data={ageGradedPerformance}
+          onOpenProfile={() => navigate('/profile')}
+        />
       )}
 
       {showLoadWarning && (
