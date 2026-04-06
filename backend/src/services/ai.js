@@ -88,7 +88,7 @@ Rules:
 
   try {
     const res = await getClient().messages.create({
-      model: 'claude-sonnet-4-6',
+      model: 'claude-haiku-4-5',
       max_tokens: 4000,
       messages: [{ role: 'user', content: prompt }],
     });
@@ -297,7 +297,7 @@ async function generateRaceAdjustment({ profile, race, currentPlan }) {
   try {
     const prompt = `Return JSON only with key weeks (array). Athlete profile: ${JSON.stringify({ goal: profile?.goal_type, weekly: profile?.weekly_miles_current, runDays: profile?.run_days_per_week })}. Race: ${JSON.stringify(race)}. Current plan: ${JSON.stringify(currentPlan)}. Rebalance with taper starting 2 weeks out when race <= 60 days.`;
     const msg = await getClient().messages.create({
-      model: 'claude-sonnet-4-6',
+      model: 'claude-haiku-4-5',
       max_tokens: 700,
       messages: [{ role: 'user', content: prompt }],
     });
@@ -328,7 +328,7 @@ ${summary?.injuryRiskFlag ? `Injury risk: ${sanitize(summary?.injuryRiskReason, 
 Write 1-2 sentences. Pick the most meaningful pattern in the data — something they might not have noticed themselves. Don't just summarise numbers they can already see. Sound like a coach who's been watching their training, not an automated report. Under 45 words.`;
 
     const msg = await getClient().messages.create({
-      model: 'claude-sonnet-4-6',
+      model: 'claude-haiku-4-5',
       max_tokens: 150,
       messages: [{ role: 'user', content: prompt }],
     });
@@ -402,7 +402,7 @@ Rules:
 - No markdown, no explanations, JSON only.`;
 
     const res = await getClient().messages.create({
-      model: 'claude-sonnet-4-6',
+      model: 'claude-haiku-4-5',
       max_tokens: 2600,
       messages: [{ role: 'user', content: prompt }],
     });
