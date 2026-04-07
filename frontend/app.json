@@ -2,7 +2,7 @@
   "expo": {
     "name": "FORGE",
     "slug": "forge-app",
-    "version": "1.0.0",
+    "version": "1.0.2",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "splash": {
@@ -12,13 +12,19 @@
     },
     "ios": {
       "bundleIdentifier": "com.zordon.forge",
-      "buildNumber": "3",
+      "buildNumber": "4",
       "ascAppId": "6759941190",
       "supportsTablet": true,
       "infoPlist": {
         "NSHealthShareUsageDescription": "FORGE reads health data to personalize training recommendations.",
         "NSHealthUpdateUsageDescription": "FORGE writes workout data to keep your health records up to date."
       }
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "798c53bf-217c-474e-b180-f423d588e57c"
+      }
+    },
+    "owner": "zordon"
   }
 }
