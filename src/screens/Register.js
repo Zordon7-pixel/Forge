@@ -1,5 +1,5 @@
 import React, { useContext, useState } from 'react';
-import { Alert, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View, Image } from 'react-native';
+import { Alert, Keyboard, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View, Image } from 'react-native';
 import { ArrowRight } from 'lucide-react-native';
 
 import api from '../lib/api';
@@ -13,6 +13,7 @@ export default function Register({ navigation }) {
   const [loading, setLoading] = useState(false);
 
   const handleRegister = async () => {
+    Keyboard.dismiss();
     if (!name || !email || !password) {
       Alert.alert('Missing Fields', 'Name, email, and password are required.');
       return;

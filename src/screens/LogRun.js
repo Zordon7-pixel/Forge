@@ -1,6 +1,6 @@
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Keyboard, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import * as Location from 'expo-location';
 import { Pause, Play, Save, Square, Watch } from 'lucide-react-native';
 
@@ -229,6 +229,7 @@ export default function LogRun() {
     };
 
     try {
+      Keyboard.dismiss();
       setSaving(true);
       stopBroadcast();
       await api.post('/runs', run);
