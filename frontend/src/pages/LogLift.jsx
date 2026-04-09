@@ -435,7 +435,7 @@ export default function LogLift() {
             {['15','30','45','60','90+'].map((t) => (
               <button key={t} type="button" onClick={async () => {
                 setTimeAvailable(t)
-                const r = await api.post('/ai/lift-plan', { bodyPart: selectedMuscleGroup, timeAvailable: t, userId: 'me' }).catch(() => null)
+                const r = await api.post('/ai/lift-plan', { bodyPart: selectedMuscleGroup, timeAvailable: t }).catch(() => null)
                 setLiftPlan(r?.data?.plan || null)
               }} className="rounded-full px-3 py-1 text-xs font-semibold" style={{ background: timeAvailable===t ? 'var(--accent)' : 'var(--bg-input)', color: timeAvailable===t ? '#000' : 'var(--text-muted)' }}>
                 {t} min

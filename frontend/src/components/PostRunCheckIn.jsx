@@ -62,7 +62,7 @@ export default function PostRunCheckIn({ runId, onDone }) {
         perceived_effort: effort,
         pain_level: pain,
         post_energy: energy,
-      }).catch(() => {})
+      })
     } finally {
       setSaving(false)
       onDone()

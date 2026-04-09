@@ -326,7 +326,7 @@ function WorkoutsTab() {
           <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{w.target} · Used {w.usage_count || 0} times</p>
           <p className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>{(w.main || []).slice(0, 2).map(m => m.name || m).join(' · ')}</p>
           <button
-            onClick={() => api.post(`/community/workouts/${w.id}/save`).catch(() => {})}
+            onClick={() => api.post(`/community/workouts/${w.id}/save`).then(() => alert('Saved!')).catch(() => alert('Failed to save workout'))}
             className="mt-2 rounded-lg px-3 py-1.5 text-xs font-semibold"
             style={{ background: 'var(--accent)', color: '#000' }}
           >
