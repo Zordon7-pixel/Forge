@@ -32,7 +32,7 @@ router.delete('/:id', auth, async (req, res) => {
   try {
     const pr = await dbGet('SELECT * FROM personal_records WHERE id = ? AND user_id = ?', [req.params.id, req.user.id]);
     if (!pr) return res.status(404).json({ error: 'Not found' });
-    await dbRun('DELETE FROM personal_records WHERE id = ?', [req.params.id]);
+    await dbRun('DELETE FROM personal_records WHERE id = ? AND user_id = ?', [req.params.id, req.user.id]);
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: 'Delete failed' }); }
 });
@@ -50,7 +50,7 @@ router.post('/auto-detect', auth, async (req, res) => {
       if (!longestRun.max || run.distance_miles > longestRun.max) {
         const existing = await dbGet(`SELECT * FROM personal_records WHERE user_id = ? AND category = 'run' AND label = 'Longest Run'`, [req.user.id]);
         if (!existing || run.distance_miles > existing.value) {
-          if (existing) await dbRun('DELETE FROM personal_records WHERE id = ?', [existing.id]);
+          if (existing) await dbRun('DELETE FROM personal_records WHERE id = ? AND user_id = ?', [existing.id, req.user.id]);
           const id = uuidv4();
           await dbRun(
             `INSERT INTO personal_records (id, user_id, category, label, value, unit, run_id, achieved_at) VALUES (?, ?, 'run', 'Longest Run', ?, 'mi', ?, ?)`,
@@ -69,7 +69,7 @@ router.post('/auto-detect', auth, async (req, res) => {
       if (!fastestPace.min || pace < fastestPace.min) {
         const existing = await dbGet(`SELECT * FROM personal_records WHERE user_id = ? AND category = 'run' AND label = 'Fastest Pace'`, [req.user.id]);
         if (!existing || pace < existing.value) {
-          if (existing) await dbRun('DELETE FROM personal_records WHERE id = ?', [existing.id]);
+          if (existing) await dbRun('DELETE FROM personal_records WHERE id = ? AND user_id = ?', [existing.id, req.user.id]);
           const id = uuidv4();
           await dbRun(
             `INSERT INTO personal_records (id, user_id, category, label, value, unit, run_id, achieved_at) VALUES (?, ?, 'run', 'Fastest Pace', ?, 'min/mi', ?, ?)`,

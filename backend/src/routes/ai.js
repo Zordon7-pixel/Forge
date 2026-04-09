@@ -5,8 +5,8 @@ const auth = require('../middleware/auth');
 const { generateRunBrief, generateLiftPlan, generateWorkoutRecommendation, generateSessionFeedback, generateBodyPartWorkout } = require('../services/ai');
 
 router.post('/session-feedback', auth, async (req, res) => {
-  const { sessionType, sessionId, userId } = req.body || {};
-  const athleteId = userId || req.user.id;
+  const { sessionType, sessionId } = req.body || {};
+  const athleteId = req.user.id;
   if (!sessionType || !sessionId) return res.status(400).json({ error: 'sessionType and sessionId are required' });
 
   const profile = await dbGet('SELECT * FROM users WHERE id=?', [athleteId]);
@@ -60,8 +60,8 @@ router.get('/run-brief', auth, async (req, res) => {
 });
 
 router.post('/lift-plan', auth, async (req, res) => {
-  const { bodyPart, timeAvailable, userId } = req.body || {};
-  const athleteId = userId || req.user.id;
+  const { bodyPart, timeAvailable } = req.body || {};
+  const athleteId = req.user.id;
   const [profile, recentSets, recentRuns] = await Promise.all([
     dbGet('SELECT * FROM users WHERE id=?', [athleteId]),
     dbAll('SELECT * FROM workout_sets WHERE user_id=? ORDER BY logged_at DESC LIMIT 40', [athleteId]),
@@ -82,7 +82,7 @@ router.post('/lift-plan', auth, async (req, res) => {
 });
 
 router.get('/workout-recommendation', auth, async (req, res) => {
-  const userId = req.query.userId || req.user.id;
+  const userId = req.user.id;
   const [profile, recentRuns, recentWorkouts] = await Promise.all([
     dbGet('SELECT * FROM users WHERE id=?', [userId]),
     dbAll('SELECT * FROM runs WHERE user_id=? ORDER BY date DESC, created_at DESC LIMIT 10', [userId]),
@@ -103,9 +103,9 @@ router.get('/workout-recommendation', auth, async (req, res) => {
 });
 
 router.post('/workout', auth, async (req, res) => {
-  const { bodyPart, exercise, userId } = req.body || {};
+  const { bodyPart, exercise } = req.body || {};
   if (!bodyPart || !exercise) return res.status(400).json({ error: 'bodyPart and exercise are required' });
-  const athleteId = userId || req.user.id;
+  const athleteId = req.user.id;
 
   const profile = await dbGet('SELECT * FROM users WHERE id=?', [athleteId]);
   const recommendation = await generateBodyPartWorkout({ bodyPart, exercise, profile, userId: athleteId }) || {

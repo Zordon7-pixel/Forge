@@ -83,7 +83,7 @@ router.delete('/:id', auth, async (req, res) => {
     const route = await dbGet('SELECT * FROM shared_routes WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
     if (!route) return res.status(404).json({ error: 'Not found' });
     await dbRun('DELETE FROM route_likes WHERE route_id=?', [req.params.id]);
-    await dbRun('DELETE FROM shared_routes WHERE id=?', [req.params.id]);
+    await dbRun('DELETE FROM shared_routes WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: 'Delete failed' }); }
 });
