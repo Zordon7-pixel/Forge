@@ -14,7 +14,8 @@ router.post('/start', auth, async (req, res) => {
     res.status(201).json({ session: { id, started_at, muscle_groups: muscle_groups || [] } });
   } catch (err) {
     if (err.message && err.message.includes('FOREIGN KEY')) {
-      return res.status(401).json({ error: 'Session expired. Please log out and back in.' });
+      console.error('[workouts/start] FOREIGN KEY error — user may not exist in DB:', req.user.id);
+      return res.status(400).json({ error: 'Account not found. Please log out and re-register.' });
     }
     res.status(500).json({ error: 'Could not start workout.' });
   }

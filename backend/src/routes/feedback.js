@@ -30,7 +30,7 @@ router.get('/', auth, async (req, res) => {
     );
     res.json({ feedback: rows });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Failed to fetch feedback' });
   }
 });
 

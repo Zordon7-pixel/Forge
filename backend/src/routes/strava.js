@@ -312,9 +312,9 @@ router.get('/callback', async (req, res) => {
     return res.json({ ok: true, athlete_name: athleteName });
   } catch (err) {
     if (deepLink) {
-      return res.redirect(appendQueryParams(deepLink, { ok: 0, error: err.message || 'token_exchange_failed' }));
+      return res.redirect(appendQueryParams(deepLink, { ok: 0, error: 'token_exchange_failed' }));
     }
-    return res.status(Number(err.status || 500)).json({ ok: false, error: err.message || 'Strava callback failed' });
+    return res.status(Number(err.status || 500)).json({ ok: false, error: 'Strava callback failed' });
   }
 });
 

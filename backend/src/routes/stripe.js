@@ -161,7 +161,7 @@ router.post('/webhook', async (req, res) => {
     try {
       event = stripe.webhooks.constructEvent(req.body, signature, process.env.STRIPE_WEBHOOK_SECRET);
     } catch (err) {
-      return res.status(400).json({ error: `Webhook Error: ${err.message}` });
+      return res.status(400).json({ error: 'Webhook signature verification failed' });
     }
 
     if (event.type === 'customer.subscription.created' || event.type === 'customer.subscription.deleted') {
