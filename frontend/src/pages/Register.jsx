@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import api from '../lib/api'
+import { setToken } from '../lib/tokenStore'
 
 export default function Register() {
   const { t } = useTranslation()
@@ -15,7 +16,7 @@ export default function Register() {
     e.preventDefault(); setError(''); setLoading(true)
     try {
       const response = await api.post('/auth/register', { name, email, password })
-      localStorage.setItem('forge_token', response.data.token)
+      setToken(response.data.token)
       window.location.href = '/onboarding'
     } catch (err) { setError(err?.response?.data?.error || 'Registration failed. Please try again.') }
     finally { setLoading(false) }

@@ -1,6 +1,8 @@
+import { getToken, clearToken } from './tokenStore'
+
 export function getUser() {
   try {
-    const token = localStorage.getItem('forge_token')
+    const token = getToken()
     if (!token) return null
 
     const payload = token.split('.')[1]
@@ -15,7 +17,7 @@ export function getUser() {
 
 export function isLoggedIn() {
   try {
-    const token = localStorage.getItem('forge_token')
+    const token = getToken()
     if (!token) return false
 
     const user = getUser()
@@ -26,5 +28,5 @@ export function isLoggedIn() {
 }
 
 export function logout() {
-  localStorage.removeItem('forge_token')
+  clearToken()
 }

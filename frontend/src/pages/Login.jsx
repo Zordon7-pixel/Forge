@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import api from '../lib/api'
+import { setToken } from '../lib/tokenStore'
 
 export default function Login() {
   const { t } = useTranslation()
@@ -19,7 +20,7 @@ export default function Login() {
     e.preventDefault(); setError(''); setLoading(true)
     try {
       const response = await api.post('/auth/login', { email, password })
-      localStorage.setItem('forge_token', response.data.token)
+      setToken(response.data.token)
       window.location.href = '/'
     } catch { setError('Wrong email or password.') }
     finally { setLoading(false) }

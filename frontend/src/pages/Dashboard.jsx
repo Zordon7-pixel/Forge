@@ -6,6 +6,7 @@ import AchievementUnlock from '../components/AchievementUnlock'
 import AgeGradedPerformanceCard from '../components/AgeGradedPerformanceCard'
 import { useUnits } from '../context/UnitsContext'
 import api from '../lib/api'
+import { getToken } from '../lib/tokenStore'
 import LoadingRunner from '../components/LoadingRunner'
 import { useOnlineStatus } from '../lib/useOnlineStatus'
 import HealthService from '../services/HealthService'
@@ -127,7 +128,7 @@ function WatchSyncWidget({ onSyncPayload }) {
   const [justSynced, setJustSynced] = useState(false)
 
   useEffect(() => {
-    const token = localStorage.getItem('forge_token')
+    const token = getToken()
     if (!token) return
     const applyStatus = (data) => {
       setSyncStatus((prev) => {

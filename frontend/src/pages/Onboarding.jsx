@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import api from '../lib/api'
+import { setToken } from '../lib/tokenStore'
 
 const personalityOptions = [
   { key: 'mentor', label: 'Mentor' },
@@ -38,7 +39,7 @@ export default function Onboarding() {
         missed_workout_pref: missedWorkoutPref
       })
       // Save the new token (contains onboarded=1) — without this, PrivateRoute loops back to /onboarding
-      if (data?.token) localStorage.setItem('forge_token', data.token)
+      if (data?.token) setToken(data.token)
       await api.post('/plans/generate')
       window.location.href = '/'
     } catch (err) {

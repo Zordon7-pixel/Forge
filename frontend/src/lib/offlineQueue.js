@@ -1,3 +1,5 @@
+import { getToken } from './tokenStore'
+
 const DB_NAME = 'forge-offline-queue'
 const DB_VERSION = 1
 const STORE_NAME = 'requests'
@@ -56,7 +58,7 @@ export async function queueRequest(url, method, body) {
 function buildHeaders() {
   const headers = { 'Content-Type': 'application/json' }
   if (hasWindow()) {
-    const token = localStorage.getItem('forge_token')
+    const token = getToken()
     if (token) headers.Authorization = `Bearer ${token}`
   }
   return headers
