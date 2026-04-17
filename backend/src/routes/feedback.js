@@ -26,7 +26,8 @@ router.post('/', auth, async (req, res) => {
 router.get('/', auth, async (req, res) => {
   try {
     const rows = await dbAll(
-      `SELECT * FROM app_feedback ORDER BY created_at DESC LIMIT 50`
+      `SELECT * FROM app_feedback WHERE user_id = ? ORDER BY created_at DESC LIMIT 50`,
+      [req.user.id]
     );
     res.json({ feedback: rows });
   } catch (err) {

@@ -229,6 +229,7 @@ router.post('/comment/:activityId', auth, async (req, res) => {
     `, [id]);
     res.status(201).json({ comment });
   } catch (err) {
+    console.error('[social] comment failed:', err.message);
     res.status(500).json({ error: 'Comment failed' });
   }
 });

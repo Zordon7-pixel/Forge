@@ -13,6 +13,20 @@ function sanitize(val, maxLen = 200) {
   return String(val).replace(/[\r\n]+/g, ' ').trim().slice(0, maxLen);
 }
 
+// Deep-sanitize all string values in an object/array before prompt interpolation
+function sanitizeObj(obj, maxLen = 200) {
+  if (obj === null || obj === undefined) return obj;
+  if (typeof obj === 'string') return sanitize(obj, maxLen);
+  if (typeof obj === 'number' || typeof obj === 'boolean') return obj;
+  if (Array.isArray(obj)) return obj.map(item => sanitizeObj(item, maxLen));
+  if (typeof obj === 'object') {
+    const out = {};
+    for (const [k, v] of Object.entries(obj)) out[k] = sanitizeObj(v, maxLen);
+    return out;
+  }
+  return obj;
+}
+
 const aiCache = new Map();
 const TTL = {
   runBrief: 4 * 60 * 60 * 1000,
@@ -171,7 +185,7 @@ async function generateRunBrief({ run, profile, recentRuns, recentLifts, userId 
     const cached = getCached(cacheKey);
     if (cached) return cached;
 
-    const prompt = `Return JSON only with keys: why, effort, bpmRange, cadence. Athlete ${sanitize(profile?.name, 50) || 'athlete'} goal ${sanitize(profile?.goal_type, 30) || 'fitness'}. Latest planned/session run: ${JSON.stringify(run || {})}. Recent runs: ${JSON.stringify((recentRuns || []).slice(0,5))}. Recent workouts: ${JSON.stringify((recentLifts || []).slice(0,3))}.`;
+    const prompt = `Return JSON only with keys: why, effort, bpmRange, cadence. Athlete ${sanitize(profile?.name, 50) || 'athlete'} goal ${sanitize(profile?.goal_type, 30) || 'fitness'}. Latest planned/session run: ${JSON.stringify(sanitizeObj(run || {}))}. Recent runs: ${JSON.stringify(sanitizeObj((recentRuns || []).slice(0,5)))}. Recent workouts: ${JSON.stringify(sanitizeObj((recentLifts || []).slice(0,3)))}.`;
     const msg = await getClient().messages.create({ model: 'claude-haiku-4-5', max_tokens: 220, messages: [{ role: 'user', content: prompt }] });
     const text = msg.content?.[0]?.text || '{}';
     const jsonMatch = text.match(/\{[\s\S]*\}/);
@@ -187,7 +201,7 @@ async function generateLiftPlan({ bodyPart, timeAvailable, profile, recentSets, 
     const cached = getCached(cacheKey);
     if (cached) return cached;
 
-    const prompt = `Return JSON only with keys: workoutName, exercises(array of {name,sets,reps,rest}), estimatedTime. Body part: ${sanitize(bodyPart, 50)}. Time available: ${sanitize(timeAvailable, 20)}. Athlete: ${sanitize(profile?.name, 50) || 'athlete'}. Recent sets: ${JSON.stringify((recentSets || []).slice(0,12))}. Recent runs: ${JSON.stringify((recentRuns || []).slice(0,4))}.`;
+    const prompt = `Return JSON only with keys: workoutName, exercises(array of {name,sets,reps,rest}), estimatedTime. Body part: ${sanitize(bodyPart, 50)}. Time available: ${sanitize(timeAvailable, 20)}. Athlete: ${sanitize(profile?.name, 50) || 'athlete'}. Recent sets: ${JSON.stringify(sanitizeObj((recentSets || []).slice(0,12)))}. Recent runs: ${JSON.stringify(sanitizeObj((recentRuns || []).slice(0,4)))}.`;
     const msg = await getClient().messages.create({ model: 'claude-haiku-4-5', max_tokens: 320, messages: [{ role: 'user', content: prompt }] });
     const text = msg.content?.[0]?.text || '{}';
     const jsonMatch = text.match(/\{[\s\S]*\}/);
@@ -236,7 +250,7 @@ async function generateWorkoutRecommendation({ profile, recentRuns, recentWorkou
     const cached = getCached(cacheKey);
     if (cached) return cached;
 
-    const prompt = `Return JSON only with keys: workoutName,target,warmup(array),main(array of {name,sets,reps,rest}),recovery(array),explanation,restExplanation. Athlete:${sanitize(profile?.name, 50) || 'athlete'} goal ${sanitize(profile?.goal_type, 30) || 'fitness'}. recent runs ${JSON.stringify((recentRuns || []).slice(0,5))}. recent workouts ${JSON.stringify((recentWorkouts || []).slice(0,5))}.`;
+    const prompt = `Return JSON only with keys: workoutName,target,warmup(array),main(array of {name,sets,reps,rest}),recovery(array),explanation,restExplanation. Athlete:${sanitize(profile?.name, 50) || 'athlete'} goal ${sanitize(profile?.goal_type, 30) || 'fitness'}. recent runs ${JSON.stringify(sanitizeObj((recentRuns || []).slice(0,5)))}. recent workouts ${JSON.stringify(sanitizeObj((recentWorkouts || []).slice(0,5)))}.`;
     const msg = await getClient().messages.create({ model: 'claude-haiku-4-5', max_tokens: 420, messages: [{ role: 'user', content: prompt }] });
     const text = msg.content?.[0]?.text || '{}';
     const jsonMatch = text.match(/\{[\s\S]*\}/);
@@ -295,7 +309,7 @@ Data: ${JSON.stringify(loadData)}
 
 async function generateRaceAdjustment({ profile, race, currentPlan }) {
   try {
-    const prompt = `Return JSON only with key weeks (array). Athlete profile: ${JSON.stringify({ goal: profile?.goal_type, weekly: profile?.weekly_miles_current, runDays: profile?.run_days_per_week })}. Race: ${JSON.stringify(race)}. Current plan: ${JSON.stringify(currentPlan)}. Rebalance with taper starting 2 weeks out when race <= 60 days.`;
+    const prompt = `Return JSON only with key weeks (array). Athlete profile: ${JSON.stringify(sanitizeObj({ goal: profile?.goal_type, weekly: profile?.weekly_miles_current, runDays: profile?.run_days_per_week }))}. Race: ${JSON.stringify(sanitizeObj(race))}. Current plan: ${JSON.stringify(sanitizeObj(currentPlan))}. Rebalance with taper starting 2 weeks out when race <= 60 days.`;
     const msg = await getClient().messages.create({
       model: 'claude-haiku-4-5',
       max_tokens: 700,
