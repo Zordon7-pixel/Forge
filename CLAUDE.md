@@ -142,6 +142,7 @@ git push origin main   # Railway auto-builds and deploys
 | Sign-in race condition | AppNavigator.js | profileLoading not set before token |
 | Lift weight zero accepted | History.js | `< 0` should be `<= 0` |
 | [H2] hashFile symlink bypass (2026-03-23, commit 8bbd950e) | lib/vault.js | path.resolve() doesn't follow symlinks — fixed with fs.realpathSync() before boundary check |
+| Activity photo hijack (2026-04-17, commit 9997eeb3) | routes/social.js | POST photo: SELECT+UPDATE scoped to `AND user_id=?`; 403 if another user owns the record |
 
 ---
 
@@ -155,3 +156,11 @@ git push origin main   # Railway auto-builds and deploys
 - [ ] New routes have `auth` middleware
 - [ ] No raw user input interpolated into SQL (parameterized only)
 - [ ] React Native: new form fields validate before submit
+
+---
+
+## Dispatch Log
+
+| Date | Agent | Action | Commit |
+|------|-------|--------|--------|
+| 2026-04-17 | forge-security-fixes (Sonnet 4.6) | Fixed C1 activity photo hijack — SELECT+UPDATE scoped to `AND user_id=?`, 403 guard added; fixed M1 silent catches (5 catch blocks); committed 4 audited-clean diffs (aiLimit, health, ai, feedback) | `9997eeb3` |
