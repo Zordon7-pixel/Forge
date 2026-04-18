@@ -373,7 +373,7 @@ router.post('/', auth, async (req, res) => {
     const computedCalories = Math.round(0.75 * weightLbs * (distance_miles || 0));
     const resolvedCalories = Number(calories || 0) > 0 ? Number(calories) : computedCalories;
     if (resolvedCalories > 0) {
-      await dbRun('UPDATE runs SET calories=? WHERE id=?', [resolvedCalories, id]);
+      await dbRun('UPDATE runs SET calories=? WHERE id=? AND user_id=?', [resolvedCalories, id, req.user.id]);
     }
 
     if ((duration_seconds || 0) > 0 && (distance_miles || 0) > 0) {
@@ -383,7 +383,7 @@ router.post('/', auth, async (req, res) => {
       const weightKg = weightLbs / 2.205;
       const calories_burned = Math.round(met * weightKg * durationHours);
       if (calories_burned > 0) {
-        await dbRun('UPDATE runs SET calories_burned=? WHERE id=?', [calories_burned, id]);
+        await dbRun('UPDATE runs SET calories_burned=? WHERE id=? AND user_id=?', [calories_burned, id, req.user.id]);
       }
     }
 
@@ -412,10 +412,10 @@ router.post('/', auth, async (req, res) => {
         await dbRun("INSERT INTO ai_usage (id, user_id, call_type) VALUES (?, ?, ?)", [uuidv4(), req.user.id, 'run_feedback']);
         const profile = await dbGet('SELECT * FROM users WHERE id = ?', [req.user.id]);
         generateRunFeedback(run, profile).then(async feedback => {
-          if (feedback) await dbRun('UPDATE runs SET ai_feedback = ? WHERE id = ?', [feedback, id]);
+          if (feedback) await dbRun('UPDATE runs SET ai_feedback = ? WHERE id = ? AND user_id = ?', [feedback, id, req.user.id]);
         }).catch(() => {});
       }
-    } catch (e) {}
+    } catch (e) { console.error('AI usage tracking failed:', e); }
   } catch (err) {
     if (!res.headersSent) res.status(500).json({ error: 'Failed to save run' });
   }

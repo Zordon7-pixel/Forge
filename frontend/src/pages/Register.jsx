@@ -14,6 +14,9 @@ export default function Register() {
 
   const onSubmit = async e => {
     e.preventDefault(); setError(''); setLoading(true)
+    if (!email || !password) { setError('Email and password are required.'); setLoading(false); return }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { setError('Please enter a valid email address'); setLoading(false); return }
+    if (password.length < 6) { setError('Password must be at least 6 characters'); setLoading(false); return }
     try {
       const response = await api.post('/auth/register', { name, email, password })
       setToken(response.data.token)
