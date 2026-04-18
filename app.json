@@ -3,7 +3,7 @@
     "name": "FORGE",
     "slug": "forge-athlete",
     "owner": "zordon",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "splash": {
@@ -16,11 +16,12 @@
     ],
     "plugins": [
       "react-native-health-connect",
-      "expo-secure-store"
+      "expo-secure-store",
+      "expo-location"
     ],
     "ios": {
       "bundleIdentifier": "com.zordontech.forge",
-      "buildNumber": "3",
+      "buildNumber": "1",
       "supportsTablet": false,
       "infoPlist": {
         "NSHealthShareUsageDescription": "FORGE reads Apple Health workout data to import your performance history.",
