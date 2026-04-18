@@ -18,6 +18,14 @@ export default function Register({ navigation }) {
       Alert.alert('Missing Fields', 'Name, email, and password are required.');
       return;
     }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      Alert.alert('Invalid Email', 'Please enter a valid email address.');
+      return;
+    }
+    if (password.length < 6) {
+      Alert.alert('Weak Password', 'Password must be at least 6 characters.');
+      return;
+    }
     try {
       setLoading(true);
       const response = await api.post('/auth/register', { name, email, password });
