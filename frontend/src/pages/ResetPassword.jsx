@@ -50,7 +50,7 @@ export default function ResetPassword() {
             <p className="mb-6 text-sm" style={{ color: 'var(--text-muted)' }}>Choose a new password for your account.</p>
 
             {!token && (
-              <p className="mb-4 text-sm" style={{ color: 'var(--accent)' }}>Missing reset token. Please use the link from the console.</p>
+              <p className="mb-4 text-sm" style={{ color: 'var(--accent)' }}>Missing reset token. Please use the link from your reset email.</p>
             )}
 
             <form onSubmit={submit} className="space-y-4">

@@ -118,16 +118,28 @@ function sanitize(val, maxLen = 200) {
 | `JWT_SECRET` | YES | |
 | `DATABASE_URL` | YES | PostgreSQL on Railway |
 | `ANTHROPIC_API_KEY` | YES | For all AI features |
+| `APP_URL` | For reset email | Base URL used in password reset links |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `SMTP_SECURE` | For reset email | SMTP delivery for forgot-password emails |
+| `EMAIL_FROM` | For reset email | From address for forgot-password emails |
 | `PORT` | No | Defaults to 4002 |
 
 ---
 
 ## Deploy Process
 
+**Backend (Railway):**
 ```bash
 git push origin main   # Railway auto-builds and deploys
 # Health: https://forge-production-773f.up.railway.app/
 ```
+
+**iOS (TestFlight):** Use `scripts/deploy-ios.sh` — fully non-interactive.
+See `DEPLOY-IOS.md` for the one-time EAS credential setup.
+
+> **Hard rule for any agent (Zordon, Hermes, Codex):** Bryan does not run terminal
+> commands. If `eas build` complains about missing credentials, that's a one-time
+> setup gap — fix it per `DEPLOY-IOS.md`, do NOT punt to Bryan with "run this in
+> your terminal." Always pass `--non-interactive` so failures are loud, not prompts.
 
 ---
 

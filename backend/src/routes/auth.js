@@ -5,12 +5,28 @@ const crypto  = require('crypto');
 const { dbGet, dbAll, dbRun } = require('../db');
 const auth    = require('../middleware/auth');
 const { v4: uuidv4 } = require('uuid');
+const { isMailConfigured, sendPasswordResetEmail } = require('../services/mail');
 
 const sign = (user) => jwt.sign(
   { id: user.id, name: user.name, email: user.email, onboarded: user.onboarded, coach_personality: user.coach_personality },
   process.env.JWT_SECRET,
   { expiresIn: '30d' }
 );
+
+const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+const forgotPasswordResponses = {
+  emailSent: {
+    ok: true,
+    status: 'email_sent',
+    message: 'If an account exists for that email, a password reset link has been sent.'
+  },
+  emailUnavailable: {
+    ok: false,
+    status: 'email_unavailable',
+    message: 'Password reset email is currently unavailable. Please try again later.'
+  }
+};
 
 router.post('/login', async (req, res) => {
   try {
@@ -43,16 +59,36 @@ router.post('/register', async (req, res) => {
 router.post('/forgot-password', async (req, res) => {
   try {
     const { email } = req.body;
-    if (!email?.trim()) return res.status(400).json({ error: 'Email is required.' });
-    const user = await dbGet('SELECT id, email FROM users WHERE LOWER(email) = ?', [email.trim().toLowerCase()]);
+    const emailNorm = email?.trim().toLowerCase();
+
+    if (!emailNorm) return res.status(400).json({ error: 'Email is required.' });
+    if (!emailRegex.test(emailNorm)) return res.status(400).json({ error: 'Please enter a valid email address.' });
+
+    if (!isMailConfigured()) {
+      return res.status(503).json(forgotPasswordResponses.emailUnavailable);
+    }
+
+    const user = await dbGet('SELECT id, email FROM users WHERE LOWER(email) = ?', [emailNorm]);
+
     if (user) {
       const token = crypto.randomBytes(32).toString('hex');
       const expiresAt = new Date(Date.now() + 3600000).toISOString();
+
       await dbRun('INSERT INTO password_reset_tokens (id, user_id, token, expires_at) VALUES (?, ?, ?, ?)',
         [uuidv4(), user.id, token, expiresAt]);
+
+      await sendPasswordResetEmail({ to: user.email, token });
     }
-    res.json({ ok: true });
-  } catch (err) { res.json({ ok: true }); }
+
+    return res.json(forgotPasswordResponses.emailSent);
+  } catch (err) {
+    console.error('Forgot password failed:', err);
+    return res.status(500).json({
+      ok: false,
+      status: 'error',
+      error: 'Unable to process password reset right now.'
+    });
+  }
 });
 
 router.post('/reset-password', async (req, res) => {
@@ -60,11 +96,11 @@ router.post('/reset-password', async (req, res) => {
     const { token, password } = req.body;
     if (!token || !password) return res.status(400).json({ error: 'Token and new password are required.' });
     if (password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters.' });
-    const record = await dbGet('SELECT * FROM password_reset_tokens WHERE token = ? AND used = 0 AND expires_at > ?',
+    const record = await dbGet('SELECT * FROM password_reset_tokens WHERE token=*** AND used = 0 AND expires_at > ?',
       [token, new Date().toISOString()]);
     if (!record) return res.status(400).json({ error: 'Reset link is invalid or expired.' });
-    await dbRun('UPDATE users SET password_hash = ? WHERE id = ?', [bcrypt.hashSync(password, 10), record.user_id]);
-    await dbRun('UPDATE password_reset_tokens SET used = 1 WHERE id = ?', [record.id]);
+    await dbRun('UPDATE users SET password_hash=*** WHERE id = ?', [bcrypt.hashSync(password, 10), record.user_id]);
+    await dbRun('UPDATE password_reset_tokens SET used = 1 WHERE user_id = ? AND used = 0', [record.user_id]);
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: 'Reset failed' }); }
 });

@@ -14,6 +14,7 @@ export default function Login() {
   const [forgotMode, setForgotMode] = useState(false)
   const [forgotEmail, setForgotEmail] = useState('')
   const [forgotMsg, setForgotMsg] = useState('')
+  const [forgotMsgType, setForgotMsgType] = useState('info')
   const [forgotLoading, setForgotLoading] = useState(false)
 
   const onSubmit = async e => {
@@ -27,12 +28,22 @@ export default function Login() {
   }
 
   const onForgot = async e => {
-    e.preventDefault(); setForgotMsg(''); setForgotLoading(true)
+    e.preventDefault()
+    setForgotMsg('')
+    setForgotMsgType('info')
+    setForgotLoading(true)
+
     try {
-      await api.post('/auth/forgot-password', { email: forgotEmail })
-      setForgotMsg('If that email exists, a reset link has been logged to the server console.')
-    } catch { setForgotMsg('Something went wrong. Please try again.') }
-    finally { setForgotLoading(false) }
+      const response = await api.post('/auth/forgot-password', { email: forgotEmail })
+      setForgotMsg(response.data?.message || 'If an account exists for that email, a password reset link has been sent.')
+      setForgotMsgType(response.data?.status === 'email_unavailable' ? 'error' : 'info')
+    } catch (err) {
+      const data = err?.response?.data
+      setForgotMsg(data?.message || data?.error || 'Something went wrong. Please try again.')
+      setForgotMsgType('error')
+    } finally {
+      setForgotLoading(false)
+    }
   }
 
   const inputStyle = { borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }
@@ -59,7 +70,7 @@ export default function Login() {
               <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
                 {t('auth.noAccount')} <Link to="/register" className="font-semibold hover:underline" style={{ color: 'var(--accent)' }}>{t('auth.register')}</Link>
               </p>
-              <button type="button" onClick={() => { setForgotMode(true); setForgotMsg('') }}
+              <button type="button" onClick={() => { setForgotMode(true); setForgotMsg(''); setForgotMsgType('info') }}
                 className="text-sm hover:underline" style={{ color: 'var(--text-muted)' }}>
                 Forgot password?
               </button>
@@ -68,14 +79,18 @@ export default function Login() {
         ) : (
           <>
             <h1 className="mb-1 text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>Reset Password</h1>
-            <p className="mb-6 text-sm" style={{ color: 'var(--text-muted)' }}>Enter your email and we will log a reset link to the server console.</p>
+            <p className="mb-6 text-sm" style={{ color: 'var(--text-muted)' }}>Enter your email and, if an account exists, we will send a password reset link.</p>
 
             <form onSubmit={onForgot} className="space-y-4">
               <input type="email" required placeholder="Your email address" className="w-full rounded-xl border px-4 py-3 outline-none placeholder:text-gray-500 focus:ring-2" style={inputStyle} value={forgotEmail} onChange={e => setForgotEmail(e.target.value)} />
               <button type="submit" disabled={forgotLoading} className="w-full rounded-xl py-3 font-semibold transition hover:opacity-90 disabled:opacity-70" style={btnStyle}>{forgotLoading ? 'Sending...' : 'Send Reset Link'}</button>
             </form>
 
-            {forgotMsg && <p className="mt-3 text-sm" style={{ color: 'var(--accent)' }}>{forgotMsg}</p>}
+            {forgotMsg && (
+              <p className="mt-3 text-sm" style={{ color: forgotMsgType === 'error' ? 'var(--accent)' : 'var(--text-muted)' }}>
+                {forgotMsg}
+              </p>
+            )}
 
             <button type="button" onClick={() => setForgotMode(false)}
               className="mt-4 w-full text-sm hover:underline" style={{ color: 'var(--text-muted)' }}>
