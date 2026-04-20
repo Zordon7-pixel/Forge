@@ -30,6 +30,7 @@ import WeeklyRecap from '../screens/WeeklyRecap';
 import Gear from '../screens/Gear';
 import TreadmillRun from '../screens/TreadmillRun';
 import Badges from '../screens/Badges';
+import Welcome from '../screens/Welcome';
 import { clearToken, getToken, setToken } from '../lib/storage';
 import { AuthContext } from '../context/AuthContext';
 import api from '../lib/api';
@@ -64,7 +65,7 @@ export default function AppNavigator() {
     if (nextUser.onboarded !== undefined) return Boolean(nextUser.onboarded);
     if (nextUser.profile_completed !== undefined) return Boolean(nextUser.profile_completed);
 
-    return Boolean(nextUser.age && (nextUser.primary_goal || (Array.isArray(nextUser.goals) && nextUser.goals.length > 0)));
+    return Boolean(nextUser.age && (nextUser.primary_goal || nextUser.goal_type || (Array.isArray(nextUser.goals) && nextUser.goals.length > 0)));
   }, []);
 
   const refreshUser = useCallback(async () => {
@@ -76,10 +77,16 @@ export default function AppNavigator() {
 
     setProfileLoading(true);
     try {
-      const response = await api.get('/auth/me').catch(() => ({ data: {} }));
+      const response = await api.get('/auth/me');
       const nextUser = response?.data?.user || response?.data || {};
       setUser(nextUser);
       setOnboardingComplete(isOnboardingComplete(nextUser));
+    } catch {
+      // Token is invalid/expired — sign out so user sees Welcome, not onboarding
+      await clearToken();
+      setAuthToken(null);
+      setUser(null);
+      setOnboardingComplete(false);
     } finally {
       setProfileLoading(false);
     }
@@ -181,6 +188,7 @@ export default function AppNavigator() {
             </>
           ) : (
             <>
+              <Stack.Screen name="Welcome" component={Welcome} options={{ headerShown: false }} />
               <Stack.Screen name="Login" component={Login} options={{ headerShown: false }} />
               <Stack.Screen name="Register" component={Register} options={{ headerShown: false }} />
               <Stack.Screen name="ForgotPassword" component={ForgotPassword} options={{ headerShown: false }} />
