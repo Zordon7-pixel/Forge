@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
-import { Trophy, Activity, User } from 'lucide-react'
+import { Trophy, Activity, User, Users } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { getUser, isLoggedIn } from '../lib/auth'
 import { useTheme } from '../context/ThemeContext'
@@ -12,6 +12,7 @@ import api from '../lib/api'
 const NAV_ITEMS = (t) => [
   { to: '/', end: true, icon: '/nav-home.png', label: t('nav.home'), color: '#EAB308' },
   { to: '/run', label: t('nav.run'), iconComponent: Activity, color: '#EAB308' },
+  { to: '/community', label: t('nav.community') || 'Community', iconComponent: Users, color: '#22C55E' },
   { to: '/log-lift', icon: '/nav-lift.png', label: t('nav.lift'), color: '#F97316' },
   { to: '/history', icon: '/nav-history.png', label: t('nav.history'), color: '#3B82F6' },
   { to: '/profile', label: t('nav.profile') || 'Profile', iconComponent: User, color: '#A855F7' },
@@ -176,7 +177,7 @@ export default function Layout({ children }) {
       <FeedbackButton externalOpen={showFeedback} onClose={() => setShowFeedback(false)} />
 
       {!isWorkout && (
-        <nav className="fixed bottom-0 left-1/2 z-30 grid w-full max-w-[480px] -translate-x-1/2 grid-cols-5 border-t px-1 py-1" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}>
+        <nav className="fixed bottom-0 left-1/2 z-30 grid w-full max-w-[480px] -translate-x-1/2 grid-cols-6 border-t px-1 py-1" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}>
           {NAV_ITEMS(t).map(({ to, end, icon, iconComponent: IconComponent, label, color }) => (
             <NavLink key={to} to={to} end={end} className="flex flex-col items-center justify-center"
               onClick={to === '/' ? (e) => { e.preventDefault(); navigate('/') } : undefined}>
@@ -196,7 +197,7 @@ export default function Layout({ children }) {
                       style={{ filter: isActive ? `drop-shadow(0 0 6px ${color})` : 'none', opacity: isActive ? 1 : 0.45 }}
                     />
                   )}
-                  <span className="text-[9px] font-medium transition-colors duration-200" style={{ color: isActive ? color : `${color}99` }}>
+                  <span className="text-[8px] font-medium transition-colors duration-200" style={{ color: isActive ? color : `${color}99` }}>
                     {label}
                   </span>
                 </span>

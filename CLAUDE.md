@@ -141,6 +141,10 @@ See `DEPLOY-IOS.md` for the one-time EAS credential setup.
 > setup gap — fix it per `DEPLOY-IOS.md`, do NOT punt to Bryan with "run this in
 > your terminal." Always pass `--non-interactive` so failures are loud, not prompts.
 
+Before saying a fix is shipped, record whether it is only patched in source,
+actually deployed successfully, visibly fixed in live production, and Bryan-verified.
+Use `FORGE-RELEASE-CHECKLIST.md` for that release status handoff.
+
 ---
 
 ## Recently Fixed Bugs — Do NOT Reintroduce

@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { CheckCircle2, Footprints, ChevronDown, ChevronUp, Flame, Lock } from 'lucide-react'
 import api from '../lib/api'
-import Community from './Community'
 import LoadingRunner from '../components/LoadingRunner'
 import { scrollToFirstError, validateGoalSetting } from '../utils/validation'
 import { useProContext } from '../context/ProContext'
@@ -16,7 +15,6 @@ function fmtValue(value, unit) {
 export default function Challenges() {
   const navigate = useNavigate()
   const { isPro, loading: proLoading } = useProContext()
-  const [activeTab, setActiveTab] = useState('challenges')
   const [monthlyGoal, setMonthlyGoal] = useState(null)
   const [loading, setLoading] = useState(true)
   const [challenges, setChallenges] = useState([])
@@ -407,24 +405,7 @@ export default function Challenges() {
           pointerEvents: !proLoading && !isPro ? 'none' : 'auto',
         }}
       >
-        <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
-          {['challenges', 'community'].map(t => (
-            <button
-              key={t}
-              onClick={() => setActiveTab(t)}
-              style={{
-                padding: '8px 14px', borderRadius: 20, fontSize: 13, fontWeight: 700, border: 'none', cursor: 'pointer',
-                background: activeTab === t ? 'var(--accent)' : 'var(--bg-card)',
-                color: activeTab === t ? '#000' : 'var(--text-muted)',
-              }}
-            >
-              {t === 'challenges' ? 'Challenges' : 'Community'}
-            </button>
-          ))}
-        </div>
-
-        {activeTab === 'challenges' && renderChallengesTab()}
-        {activeTab === 'community' && <Community />}
+        {renderChallengesTab()}
       </div>
       {!proLoading && !isPro && (
         <div
