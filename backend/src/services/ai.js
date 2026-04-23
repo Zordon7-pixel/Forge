@@ -35,6 +35,7 @@ const TTL = {
   sessionFeedback: Infinity,
   loadWarning: 2 * 60 * 60 * 1000,
   weeklyInsight: 6 * 60 * 60 * 1000,
+  substitute: 4 * 60 * 60 * 1000,
 };
 
 function makeCacheKey(prefix, payload) {
@@ -430,6 +431,42 @@ Rules:
   }
 }
 
+async function generateExerciseSubstitutions(exerciseName, reason, equipmentAvailable) {
+  try {
+    const safeName = sanitize(exerciseName, 100);
+    const safeReason = sanitize(reason, 200);
+    const safeEquipment = sanitize(equipmentAvailable, 200);
+
+    const cacheKey = makeCacheKey('substitute', { exerciseName: safeName, reason: safeReason, equipmentAvailable: safeEquipment });
+    const cached = getCached(cacheKey);
+    if (cached) return cached;
+
+    const reasonLine = safeReason ? `\nReason for substitution: ${safeReason}` : '';
+    const equipmentLine = safeEquipment ? `\nAvailable equipment: ${safeEquipment}` : '';
+
+    const prompt = `Return JSON only with key alternatives (array of 2-3 objects, each with keys: name, target_muscles, why_similar, equipment_needed).
+
+Exercise to substitute: ${safeName}${reasonLine}${equipmentLine}
+
+Find 2-3 alternative exercises that target the same primary muscle groups with a similar training stimulus. Be specific about why each is a good substitute.`;
+
+    const msg = await getClient().messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 400,
+      messages: [{ role: 'user', content: prompt }],
+    });
+
+    const text = msg.content?.[0]?.text || '{}';
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    const result = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+    if (result) setCached(cacheKey, result, TTL.substitute);
+    return result;
+  } catch (e) {
+    console.error('generateExerciseSubstitutions error:', e.message);
+    return null;
+  }
+}
+
 module.exports = {
   sanitize,
   generateTrainingPlan,
@@ -444,4 +481,5 @@ module.exports = {
   generateRaceAdjustment,
   generateWeeklyInsight,
   generateComebackPlan,
+  generateExerciseSubstitutions,
 };
