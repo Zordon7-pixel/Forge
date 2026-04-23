@@ -521,6 +521,58 @@ Rules:
   }
 }
 
+async function generatePostSessionInsight({ sessionType, comparisons, profile, userId }) {
+  try {
+    const cacheKey = makeCacheKey('post-session-insight', { userId, sessionType, comparisons });
+    const cached = getCached(cacheKey);
+    if (cached) return cached;
+
+    let dataBlock = '';
+    if (sessionType === 'run') {
+      const c = comparisons;
+      dataBlock = `Run completed: ${c.distance} mi in ${c.durationMin} min (${c.pace}/mi), effort ${c.effort}/10
+Recent 5 runs avg pace: ${c.recentAvgPace || 'n/a'}, avg distance: ${c.recentAvgDistance || 'n/a'} mi
+Pace trend (last 5): ${c.paceTrend || 'n/a'}
+Distance trend: ${c.distanceTrend || 'n/a'}
+${c.isPR ? `NEW PR: ${c.prLabel}` : 'No PR this session'}
+Weekly mileage so far: ${c.weeklyMileage || 0} mi`;
+    } else {
+      const c = comparisons;
+      dataBlock = `Lift session completed: ${c.exerciseCount} exercises, total volume ${c.totalVolume} lbs
+${c.exerciseComparisons.map(e =>
+  `${sanitize(e.name, 50)}: ${e.currentVolume} lbs today vs ${e.prevAvgVolume} lbs avg (last 3) → ${e.volumeChange}`
+).join('\n')}
+${c.progressiveOverloads.length ? `Progressive overload achieved: ${c.progressiveOverloads.map(p => sanitize(p, 50)).join(', ')}` : 'No progressive overload flags'}`;
+    }
+
+    const prompt = `You are a sharp, data-driven fitness coach. Write 2-3 sentences of specific, data-driven feedback about this completed session. Reference actual numbers and comparisons. No motivational fluff — sound like a coach who looked at the data.
+
+Session type: ${sanitize(sessionType, 10)}
+Athlete goal: ${sanitize(profile?.goal_type, 30) || 'fitness'}
+${dataBlock}
+
+Rules:
+- Reference specific numbers from the comparisons (pace changes, volume changes, PRs)
+- If there's a trend, call it out
+- If there's a PR or progressive overload, highlight it
+- End with one concrete observation about what to focus on next
+- Under 60 words. No headers. No bullet points.`;
+
+    const msg = await getClient().messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 180,
+      messages: [{ role: 'user', content: prompt }],
+    });
+
+    const result = msg.content?.[0]?.text?.trim() || null;
+    if (result) setCached(cacheKey, result, TTL.sessionFeedback);
+    return result;
+  } catch (e) {
+    console.error('generatePostSessionInsight error:', e.message);
+    return null;
+  }
+}
+
 module.exports = {
   sanitize,
   generateTrainingPlan,
@@ -537,4 +589,5 @@ module.exports = {
   generateComebackPlan,
   generateExerciseSubstitutions,
   generateRecoveryAdjustment,
+  generatePostSessionInsight,
 };

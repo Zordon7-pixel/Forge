@@ -4,6 +4,50 @@ const auth = require('../middleware/auth');
 const { v4: uuidv4 } = require('uuid');
 const { generateWorkoutFeedback } = require('../services/ai');
 
+router.post('/strength', auth, async (req, res) => {
+  try {
+    const { name, exercises, sets, total_volume, exercises_completed, personal_records_hit, completed_at } = req.body;
+    const id = uuidv4();
+    const started_at = completed_at || new Date().toISOString();
+    const muscleGroups = [];
+
+    await dbRun(
+      'INSERT INTO workout_sessions (id, user_id, started_at, ended_at, muscle_groups, notes, total_seconds) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [id, req.user.id, started_at, started_at, JSON.stringify(muscleGroups), name || 'Strength Session', 0]
+    );
+
+    if (Array.isArray(sets)) {
+      for (const s of sets) {
+        const mg = s.muscle_group || null;
+        if (mg && !muscleGroups.includes(mg)) muscleGroups.push(mg);
+        await dbRun(
+          'INSERT INTO workout_sets (id, session_id, user_id, exercise_name, muscle_group, set_number, reps, weight_lbs) VALUES (?,?,?,?,?,?,?,?)',
+          [uuidv4(), id, req.user.id, s.exercise_name || 'Unknown', mg, s.set_number || 1, s.reps || null, s.weight_lbs || null]
+        );
+      }
+      if (muscleGroups.length) {
+        await dbRun('UPDATE workout_sessions SET muscle_groups=? WHERE id=?', [JSON.stringify(muscleGroups), id]);
+      }
+    }
+
+    const profile = await dbGet('SELECT weight_lbs FROM users WHERE id=?', [req.user.id]);
+    const weightKg = (profile?.weight_lbs || 154.35) / 2.205;
+    const MET_STRENGTH = 5.0;
+    const durationHours = 45 / 60;
+    const calories_burned = Math.round(MET_STRENGTH * weightKg * durationHours);
+    if (calories_burned > 0) {
+      await dbRun('UPDATE workout_sessions SET calories_burned=? WHERE id=?', [calories_burned, id]);
+    }
+
+    res.status(201).json({
+      session: { id, name, total_volume, exercises_completed, personal_records_hit },
+    });
+  } catch (err) {
+    console.error('[workouts/strength] Error:', err.message);
+    res.status(500).json({ error: 'Could not save strength workout.' });
+  }
+});
+
 router.post('/start', auth, async (req, res) => {
   try {
     const { muscle_groups } = req.body;
