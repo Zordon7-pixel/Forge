@@ -3,6 +3,8 @@ const { dbGet, dbAll, dbRun } = require('../db');
 const auth = require('../middleware/auth');
 const { v4: uuidv4 } = require('uuid');
 const { generateExerciseSubstitutions, generateRecoveryAdjustment, generateNextGoalSuggestions, sanitize } = require('../services/ai');
+const { requirePremium } = require('../middleware/premiumGate');
+const { checkAiLimit } = require('../middleware/aiLimit');
 
 // GET /warning — check if dangerous training combo exists
 router.get('/warning', auth, async (req, res) => {
@@ -35,8 +37,8 @@ router.get('/feedback/:run_id', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'Feedback fetch failed' }); }
 });
 
-// POST /substitute — get exercise substitution suggestions
-router.post('/substitute', auth, async (req, res) => {
+// POST /substitute — get exercise substitution suggestions (Premium only)
+router.post('/substitute', auth, requirePremium('Exercise substitutions'), async (req, res) => {
   try {
     const { exercise_name, reason, equipment_available } = req.body;
 
@@ -70,8 +72,8 @@ router.post('/substitute', auth, async (req, res) => {
   }
 });
 
-// POST /coach/adjust-today — recovery-informed plan adjustment
-router.post('/adjust-today', auth, async (req, res) => {
+// POST /coach/adjust-today — recovery-informed plan adjustment (AI-limited for free users)
+router.post('/adjust-today', auth, checkAiLimit('adjust_today'), async (req, res) => {
   try {
     const today = new Date().toISOString().slice(0, 10);
 
@@ -166,8 +168,8 @@ router.post('/adjust-today', auth, async (req, res) => {
   }
 });
 
-// POST /coach/next-goal — AI-generated progression goals after completing a milestone
-router.post('/next-goal', auth, async (req, res) => {
+// POST /coach/next-goal — AI-generated progression goals (Premium only)
+router.post('/next-goal', auth, requirePremium('Goal cascades'), async (req, res) => {
   try {
     const { completed_goal } = req.body;
     if (!completed_goal || typeof completed_goal !== 'string' || !completed_goal.trim()) {

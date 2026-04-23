@@ -1,10 +1,9 @@
 const { dbGet, dbRun } = require('../db');
 const { v4: uuidv4 } = require('uuid');
 
-// Free plan: AI available on up to 4 distinct days per week (Mon–Sun).
-// Once a free user has used AI on 4 different days this week, they're locked until next week.
-// Pro users: unlimited (no weekly day cap, no daily hard cap).
-const FREE_DAYS_PER_WEEK_CAP = 4;
+// Free plan: 3 AI calls per week (Mon–Sun).
+// Pro users: unlimited.
+const FREE_CALLS_PER_WEEK_CAP = 3;
 
 function checkAiLimit(callType) {
   return async (req, res, next) => {
@@ -19,8 +18,7 @@ function checkAiLimit(callType) {
         return next();
       }
 
-      // Free users: check how many distinct days this week they've used AI
-      // Week = Monday–Sunday
+      // Free users: check total AI calls this week (Mon–Sun)
       const now = new Date();
       const dayOfWeek = now.getDay(); // 0=Sun, 1=Mon...6=Sat
       const daysFromMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
@@ -30,25 +28,17 @@ function checkAiLimit(callType) {
       const weekStartISO = weekStart.toISOString();
 
       const weeklyRow = await dbGet(
-        "SELECT COUNT(DISTINCT DATE(created_at)) as distinct_days FROM ai_usage WHERE user_id = ? AND created_at >= ?",
+        "SELECT COUNT(*) as call_count FROM ai_usage WHERE user_id = ? AND created_at >= ?",
         [userId, weekStartISO]
       );
-      const distinctDaysThisWeek = Number(weeklyRow?.distinct_days || 0);
+      const callsThisWeek = Number(weeklyRow?.call_count || 0);
 
-      // Check if today is already one of those days (if so, usage is still allowed today)
-      const today = now.toISOString().slice(0, 10);
-      const todayRow = await dbGet(
-        "SELECT COUNT(*) as cnt FROM ai_usage WHERE user_id = ? AND created_at >= ?",
-        [userId, today + 'T00:00:00']
-      );
-      const usedToday = Number(todayRow?.cnt || 0) > 0;
-
-      if (!usedToday && distinctDaysThisWeek >= FREE_DAYS_PER_WEEK_CAP) {
+      if (callsThisWeek >= FREE_CALLS_PER_WEEK_CAP) {
         return res.status(402).json({
-          error: `You've used AI on ${FREE_DAYS_PER_WEEK_CAP} days this week. Upgrade to Pro for unlimited daily coaching.`,
-          limit: 'weekly_days',
-          days_used: distinctDaysThisWeek,
-          days_cap: FREE_DAYS_PER_WEEK_CAP,
+          error: `You've used all ${FREE_CALLS_PER_WEEK_CAP} free AI coaching calls this week. Upgrade to Pro for unlimited coaching.`,
+          limit: 'weekly_calls',
+          calls_used: callsThisWeek,
+          calls_cap: FREE_CALLS_PER_WEEK_CAP,
           limit_reset: 'next Monday',
           upgrade: true
         });

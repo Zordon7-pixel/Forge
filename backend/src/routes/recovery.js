@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const { dbAll, dbGet } = require('../db');
 const auth = require('../middleware/auth');
+const { requirePremium } = require('../middleware/premiumGate');
 
 // ── Score normalization helpers ──────────────────────────────────────────────
 // Each provider has different scales. We normalize everything to 0-100.
@@ -45,8 +46,8 @@ const SOURCE_WEIGHTS = {
 };
 
 // ── GET /recovery/unified ────────────────────────────────────────────────────
-// Aggregates latest data from all connected wearable sources
-router.get('/unified', auth, async (req, res) => {
+// Full unified recovery dashboard (Premium only)
+router.get('/unified', auth, requirePremium('Full recovery dashboard'), async (req, res) => {
   try {
     const days = Math.min(Number(req.query?.days || 7), 30);
     const startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);

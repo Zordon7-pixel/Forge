@@ -41,6 +41,26 @@ router.post('/:id/join', auth, async (req, res) => {
     const challenge = await dbGet('SELECT * FROM challenges WHERE id = ?', [req.params.id]);
     if (!challenge) return res.status(404).json({ error: 'Not found' });
 
+    // Free users: limited to 1 seasonal challenge
+    if (challenge.is_seasonal) {
+      const user = await dbGet('SELECT is_pro FROM users WHERE id = ?', [req.user.id]);
+      if (!user?.is_pro) {
+        const seasonalCount = await dbGet(
+          `SELECT COUNT(*) as cnt FROM user_challenges uc
+           JOIN challenges c ON c.id = uc.challenge_id
+           WHERE uc.user_id = ? AND c.is_seasonal = 1`,
+          [req.user.id]
+        );
+        if (Number(seasonalCount?.cnt || 0) >= 1) {
+          return res.status(402).json({
+            error: 'Free accounts can join 1 seasonal challenge. Upgrade to Pro for unlimited access.',
+            feature: 'Unlimited seasonal challenges',
+            upgrade: true,
+          });
+        }
+      }
+    }
+
     let progress = 0;
     if (challenge.unit === 'miles') {
       const totalMiles = await dbGet('SELECT COALESCE(SUM(distance_miles),0) as m FROM runs WHERE user_id = ?', [req.user.id]);

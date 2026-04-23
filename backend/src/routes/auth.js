@@ -111,7 +111,7 @@ router.get('/me', auth, async (req, res) => {
       `SELECT id, name, email, sex, age, weight_lbs, max_heart_rate, weekly_miles_current, goal_type,
        goal_race_date, goal_race_distance, injury_notes, comeback_mode, onboarded, coach_personality,
        run_days_per_week, lift_days_per_week, injury_mode, injury_description, injury_date,
-       injury_limitations, units FROM users WHERE id = ?`,
+       injury_limitations, units, is_pro, subscription_status FROM users WHERE id = ?`,
       [req.user.id]
     );
     if (!user) return res.status(404).json({ error: 'User not found' });
@@ -128,7 +128,9 @@ router.get('/me', auth, async (req, res) => {
       injury_mode: !!user.injury_mode,
       injury_description: user.injury_description || '',
       injury_date: user.injury_date || '',
-      injury_limitations: user.injury_limitations || ''
+      injury_limitations: user.injury_limitations || '',
+      is_pro: !!user.is_pro,
+      subscription_status: user.subscription_status || 'free'
     };
     res.json({ user: normalized });
   } catch (err) { res.status(500).json({ error: 'Failed to fetch profile' }); }

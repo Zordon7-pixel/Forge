@@ -3,6 +3,7 @@ const router = require('express').Router();
 const { v4: uuidv4 } = require('uuid');
 const { dbGet, dbAll, dbRun } = require('../db');
 const auth = require('../middleware/auth');
+const { requirePremium } = require('../middleware/premiumGate');
 
 // ── WHOOP API endpoints ──────────────────────────────────────────────────────
 const WHOOP_AUTH_URL = 'https://api.prod.whoop.com/oauth/oauth2/auth';
@@ -261,8 +262,8 @@ async function getAuthenticatedTokens(userId) {
 
 // ── Routes ───────────────────────────────────────────────────────────────────
 
-// GET /whoop/auth — redirect user to WHOOP OAuth consent screen
-router.get('/auth', auth, async (req, res) => {
+// GET /whoop/auth — redirect user to WHOOP OAuth consent screen (Premium only)
+router.get('/auth', auth, requirePremium('WHOOP sync'), async (req, res) => {
   const missing = getMissingEnv();
   if (missing.length) return res.status(500).json({ error: `Missing env vars: ${missing.join(', ')}` });
 
@@ -368,8 +369,8 @@ router.get('/status', auth, async (req, res) => {
   }
 });
 
-// POST /whoop/sync — pull recovery, strain, sleep data
-router.post('/sync', auth, async (req, res) => {
+// POST /whoop/sync — pull recovery, strain, sleep data (Premium only)
+router.post('/sync', auth, requirePremium('WHOOP sync'), async (req, res) => {
   try {
     await ensureSchema();
     const tokens = await getAuthenticatedTokens(req.user.id);

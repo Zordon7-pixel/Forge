@@ -3,6 +3,12 @@ const Stripe = require('stripe');
 const { dbGet, dbRun } = require('../db');
 const auth = require('../middleware/auth');
 
+// ── Pricing tiers ────────────────────────────────────────────────────────────
+const PRICING = {
+  monthly: { amount: 999, display: '$9.99', interval: 'month', label: 'Monthly' },
+  annual:  { amount: 5999, display: '$59.99', interval: 'year', label: 'Annual', savings: '50%' },
+};
+
 function getStripeClient() {
   if (!process.env.STRIPE_SECRET_KEY) {
     throw new Error('STRIPE_SECRET_KEY is not configured');
@@ -220,6 +226,38 @@ router.get('/status', auth, async (req, res) => {
     console.error('[stripe/status]', err.message);
     return res.status(500).json({ error: 'Failed to load subscription status' });
   }
+});
+
+// GET /api/stripe/pricing — public pricing info (no auth required)
+router.get('/pricing', (req, res) => {
+  res.json({
+    plans: [
+      {
+        id: 'monthly',
+        name: PRICING.monthly.label,
+        price: PRICING.monthly.display,
+        amount_cents: PRICING.monthly.amount,
+        interval: PRICING.monthly.interval,
+      },
+      {
+        id: 'annual',
+        name: PRICING.annual.label,
+        price: PRICING.annual.display,
+        amount_cents: PRICING.annual.amount,
+        interval: PRICING.annual.interval,
+        savings: PRICING.annual.savings,
+      },
+    ],
+    features: [
+      'Unlimited AI coaching',
+      'Exercise substitutions',
+      'Full recovery dashboard',
+      'Goal cascades',
+      'WHOOP & Oura sync',
+      'Unlimited seasonal challenges',
+      'Full AI weekly recap analysis',
+    ],
+  });
 });
 
 module.exports = router;

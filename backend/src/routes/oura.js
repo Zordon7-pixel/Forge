@@ -3,6 +3,7 @@ const router = require('express').Router();
 const { v4: uuidv4 } = require('uuid');
 const { dbGet, dbAll, dbRun } = require('../db');
 const auth = require('../middleware/auth');
+const { requirePremium } = require('../middleware/premiumGate');
 
 // ── Oura API v2 endpoints ────────────────────────────────────────────────────
 const OURA_AUTH_URL = 'https://cloud.ouraring.com/oauth/authorize';
@@ -260,8 +261,8 @@ async function getAuthenticatedTokens(userId) {
 
 // ── Routes ───────────────────────────────────────────────────────────────────
 
-// GET /oura/auth — redirect user to Oura OAuth consent screen
-router.get('/auth', auth, async (req, res) => {
+// GET /oura/auth — redirect user to Oura OAuth consent screen (Premium only)
+router.get('/auth', auth, requirePremium('Oura sync'), async (req, res) => {
   const missing = getMissingEnv();
   if (missing.length) return res.status(500).json({ error: `Missing env vars: ${missing.join(', ')}` });
 
@@ -365,8 +366,8 @@ router.get('/status', auth, async (req, res) => {
   }
 });
 
-// POST /oura/sync — pull sleep, readiness, and HRV data
-router.post('/sync', auth, async (req, res) => {
+// POST /oura/sync — pull sleep, readiness, and HRV data (Premium only)
+router.post('/sync', auth, requirePremium('Oura sync'), async (req, res) => {
   try {
     await ensureSchema();
     const tokens = await getAuthenticatedTokens(req.user.id);

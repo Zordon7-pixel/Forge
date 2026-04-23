@@ -59,7 +59,7 @@ function deterministicWeeklyInsight(summary) {
   return 'Your training load looks steady and sustainable. Keep stacking easy miles and use strength sessions as injury-prevention support.';
 }
 
-async function buildWeeklyRecap(userId) {
+async function buildWeeklyRecap(userId, { isPro = false } = {}) {
   const today = new Date();
   const weekStartDate = new Date(today);
   weekStartDate.setDate(today.getDate() - 6);
@@ -130,8 +130,14 @@ async function buildWeeklyRecap(userId) {
     mileageVsLastWeek,
   };
 
-  const aiInsight = await generateWeeklyInsight({ userId, weekLabel, summary });
-  const insight = aiInsight || deterministicWeeklyInsight(summary);
+  // Free users: deterministic summary only; Pro users: full AI analysis
+  let insight;
+  if (isPro) {
+    const aiInsight = await generateWeeklyInsight({ userId, weekLabel, summary });
+    insight = aiInsight || deterministicWeeklyInsight(summary);
+  } else {
+    insight = deterministicWeeklyInsight(summary);
+  }
 
   return {
     ...summary,
@@ -238,7 +244,10 @@ async function buildRecap(userId, start, end, prevStart, prevEnd) {
 // GET /api/recap/weekly
 router.get('/weekly', auth, async (req, res) => {
   try {
-    res.json(await buildWeeklyRecap(req.user.id));
+    const user = await dbGet('SELECT is_pro FROM users WHERE id = ?', [req.user.id]);
+    const recap = await buildWeeklyRecap(req.user.id, { isPro: !!user?.is_pro });
+    recap.is_pro = !!user?.is_pro;
+    res.json(recap);
   } catch (err) { res.status(500).json({ error: 'Weekly recap failed' }); }
 });
 
