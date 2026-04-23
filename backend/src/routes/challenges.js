@@ -233,4 +233,73 @@ router.get('/feed', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'Failed to fetch feed' }); }
 });
 
+// GET /api/challenges/seasonal — currently active seasonal challenges
+router.get('/seasonal', auth, async (req, res) => {
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+
+    // Fetch seasonal challenges that are currently active or upcoming (within 30 days)
+    const thirtyDaysOut = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+    const seasonalChallenges = await dbAll(
+      `SELECT * FROM challenges WHERE is_seasonal = 1 AND (
+        (start_date <= ? AND end_date >= ?) OR
+        (start_date <= ? AND start_date >= ?)
+      ) ORDER BY start_date ASC`,
+      [today, today, thirtyDaysOut, today]
+    );
+
+    // Enrich with user progress
+    const enriched = await Promise.all(seasonalChallenges.map(async (c) => {
+      const uc = await dbGet(
+        'SELECT progress, completed_at FROM user_challenges WHERE user_id = ? AND challenge_id = ?',
+        [req.user.id, c.id]
+      );
+
+      const startDate = new Date(c.start_date);
+      const endDate = new Date(c.end_date);
+      endDate.setHours(23, 59, 59, 999);
+      const now = new Date();
+
+      let status = 'upcoming';
+      let daysRemaining = null;
+      if (now >= startDate && now <= endDate) {
+        status = 'active';
+        daysRemaining = Math.ceil((endDate - now) / 86400000);
+      } else if (now > endDate) {
+        status = 'expired';
+      }
+
+      if (uc?.completed_at) status = 'completed';
+
+      return {
+        ...c,
+        joined: !!uc,
+        progress: uc?.progress || 0,
+        completed_at: uc?.completed_at || null,
+        status,
+        days_remaining: daysRemaining,
+      };
+    }));
+
+    // Leaderboard for active seasonal challenges
+    const activeIds = enriched.filter(c => c.status === 'active').map(c => c.id);
+    let leaderboard = [];
+    if (activeIds.length > 0) {
+      leaderboard = await dbAll(`
+        SELECT uc.challenge_id, u.id as user_id, COALESCE(u.username, u.name) as user_name, uc.progress
+        FROM user_challenges uc
+        JOIN users u ON u.id = uc.user_id
+        WHERE uc.challenge_id = ?
+        ORDER BY uc.progress DESC
+        LIMIT 10
+      `, [activeIds[0]]);
+    }
+
+    res.json({ challenges: enriched, leaderboard });
+  } catch (err) {
+    console.error('Seasonal challenges error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch seasonal challenges' });
+  }
+});
+
 module.exports = router;

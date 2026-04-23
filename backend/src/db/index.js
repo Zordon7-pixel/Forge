@@ -442,6 +442,11 @@ async function initDb() {
       );
     `);
 
+    // Seasonal challenge columns
+    await client.query('ALTER TABLE challenges ADD COLUMN IF NOT EXISTS start_date TEXT');
+    await client.query('ALTER TABLE challenges ADD COLUMN IF NOT EXISTS end_date TEXT');
+    await client.query('ALTER TABLE challenges ADD COLUMN IF NOT EXISTS is_seasonal INTEGER DEFAULT 0');
+
     await client.query(`
       CREATE TABLE IF NOT EXISTS user_challenges (
         id TEXT PRIMARY KEY,
