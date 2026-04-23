@@ -1,7 +1,8 @@
 const router = require('express').Router();
-const { dbGet, dbAll } = require('../db');
+const { dbGet, dbAll, dbRun } = require('../db');
 const auth = require('../middleware/auth');
-const { generateExerciseSubstitutions, generateRecoveryAdjustment, sanitize } = require('../services/ai');
+const { v4: uuidv4 } = require('uuid');
+const { generateExerciseSubstitutions, generateRecoveryAdjustment, generateNextGoalSuggestions, sanitize } = require('../services/ai');
 
 // GET /warning — check if dangerous training combo exists
 router.get('/warning', auth, async (req, res) => {
@@ -162,6 +163,89 @@ router.post('/adjust-today', auth, async (req, res) => {
   } catch (err) {
     console.error('Adjust-today route error:', err.message);
     res.status(500).json({ error: 'Plan adjustment failed' });
+  }
+});
+
+// POST /coach/next-goal — AI-generated progression goals after completing a milestone
+router.post('/next-goal', auth, async (req, res) => {
+  try {
+    const { completed_goal } = req.body;
+    if (!completed_goal || typeof completed_goal !== 'string' || !completed_goal.trim()) {
+      return res.status(400).json({ error: 'completed_goal is required' });
+    }
+    if (completed_goal.length > 300) {
+      return res.status(400).json({ error: 'completed_goal must be 300 characters or less' });
+    }
+
+    const profile = await dbGet('SELECT * FROM users WHERE id=?', [req.user.id]);
+
+    // Gather recent activity for context
+    const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
+    const [recentRuns, recentLifts] = await Promise.all([
+      dbAll('SELECT date, distance_miles, duration_seconds, type FROM runs WHERE user_id=? AND date>=? ORDER BY date DESC LIMIT 10', [req.user.id, sevenDaysAgo]),
+      dbAll('SELECT started_at, muscle_groups FROM workout_sessions WHERE user_id=? AND ended_at IS NOT NULL ORDER BY started_at DESC LIMIT 5', [req.user.id])
+    ]);
+
+    const result = await generateNextGoalSuggestions({
+      completedGoal: sanitize(completed_goal.trim(), 300),
+      profile,
+      recentActivity: { runs: recentRuns, lifts: recentLifts },
+      userId: req.user.id,
+    });
+
+    if (!result || !Array.isArray(result.goals)) {
+      return res.status(500).json({ error: 'Failed to generate goal suggestions' });
+    }
+
+    // Store suggested goals
+    for (const goal of result.goals) {
+      await dbRun(
+        'INSERT INTO suggested_goals (id, user_id, source_milestone, title, description, type, target_value, target_unit, difficulty) VALUES (?,?,?,?,?,?,?,?,?)',
+        [uuidv4(), req.user.id, sanitize(completed_goal.trim(), 300), sanitize(goal.title, 100), sanitize(goal.description, 200), sanitize(goal.type, 20), Number(goal.target_value) || 0, sanitize(goal.target_unit, 20), sanitize(goal.difficulty, 20)]
+      );
+    }
+
+    res.json({ goals: result.goals });
+  } catch (err) {
+    console.error('Next-goal route error:', err.message);
+    res.status(500).json({ error: 'Goal suggestion failed' });
+  }
+});
+
+// GET /coach/next-goal — fetch pending suggested goals for the user
+router.get('/next-goal', auth, async (req, res) => {
+  try {
+    const goals = await dbAll(
+      "SELECT * FROM suggested_goals WHERE user_id=? AND status='suggested' ORDER BY created_at DESC LIMIT 10",
+      [req.user.id]
+    );
+    res.json({ goals });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch suggested goals' });
+  }
+});
+
+// POST /coach/next-goal/:id/accept — accept a suggested goal (creates a challenge)
+router.post('/next-goal/:id/accept', auth, async (req, res) => {
+  try {
+    const goal = await dbGet('SELECT * FROM suggested_goals WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
+    if (!goal) return res.status(404).json({ error: 'Goal not found' });
+
+    const challengeId = `goal-${uuidv4()}`;
+    await dbRun(
+      'INSERT INTO challenges (id, name, description, type, target_value, unit, badge_color, is_featured, sort_order) VALUES (?,?,?,?,?,?,?,0,50)',
+      [challengeId, goal.title, goal.description, goal.type, goal.target_value || 1, goal.target_unit || 'units', '#EAB308']
+    );
+    await dbRun(
+      'INSERT INTO user_challenges (id, user_id, challenge_id, progress) VALUES (?,?,?,0) ON CONFLICT (user_id, challenge_id) DO NOTHING',
+      [uuidv4(), req.user.id, challengeId]
+    );
+    await dbRun("UPDATE suggested_goals SET status='accepted' WHERE id=? AND user_id=?", [req.params.id, req.user.id]);
+
+    res.json({ ok: true, challenge_id: challengeId });
+  } catch (err) {
+    console.error('Accept goal error:', err.message);
+    res.status(500).json({ error: 'Failed to accept goal' });
   }
 });
 

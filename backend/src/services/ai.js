@@ -573,6 +573,53 @@ Rules:
   }
 }
 
+async function generateNextGoalSuggestions({ completedGoal, profile, recentActivity, userId }) {
+  try {
+    const cacheKey = makeCacheKey('next-goal', { userId, completedGoal });
+    const cached = getCached(cacheKey);
+    if (cached) return cached;
+
+    const safeGoal = sanitize(completedGoal, 300);
+    const safeGoalType = sanitize(profile?.goal_type, 30) || 'fitness';
+    const safeFitnessLevel = sanitize(profile?.fitness_level, 20) || 'intermediate';
+
+    const prompt = `You are an expert fitness coach. An athlete just completed a goal or milestone. Suggest 2-3 logical progression goals they should pursue next.
+
+Completed goal/milestone: ${safeGoal}
+Athlete profile: goal type ${safeGoalType}, fitness level ${safeFitnessLevel}, weekly miles ${Number(profile?.weekly_miles_current) || 0}
+Recent activity summary: ${sanitize(JSON.stringify(recentActivity || {}), 500)}
+
+Return ONLY valid JSON with key "goals" — an array of 2-3 objects, each with:
+- title: short goal name (under 40 chars)
+- description: 1 sentence explaining the goal
+- type: one of "strength", "endurance", "speed", "hybrid"
+- target_value: numeric target (miles, lbs, minutes, etc.)
+- target_unit: the unit for target_value
+- difficulty: one of "moderate", "challenging", "ambitious"
+
+Rules:
+- Goals must be logical progressions from what was just achieved
+- Include variety — don't suggest 3 of the same type
+- Be specific with numbers, not vague
+- Each goal should be achievable in 4-12 weeks`;
+
+    const msg = await getClient().messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 500,
+      messages: [{ role: 'user', content: prompt }],
+    });
+
+    const text = msg.content?.[0]?.text || '{}';
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    const result = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+    if (result) setCached(cacheKey, result, 4 * 60 * 60 * 1000);
+    return result;
+  } catch (e) {
+    console.error('generateNextGoalSuggestions error:', e.message);
+    return null;
+  }
+}
+
 module.exports = {
   sanitize,
   generateTrainingPlan,
@@ -590,4 +637,5 @@ module.exports = {
   generateExerciseSubstitutions,
   generateRecoveryAdjustment,
   generatePostSessionInsight,
+  generateNextGoalSuggestions,
 };

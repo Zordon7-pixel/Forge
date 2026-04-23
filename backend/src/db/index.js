@@ -617,6 +617,18 @@ async function initDb() {
     await client.query('CREATE INDEX IF NOT EXISTS idx_watch_sync_user_garmin_id ON watch_sync(user_id, garmin_activity_id)');
 
     await client.query(`
+      CREATE TABLE IF NOT EXISTS health_sync (
+        id SERIAL PRIMARY KEY,
+        user_id TEXT UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+        steps_today INTEGER,
+        calories_today INTEGER,
+        avg_heart_rate_last_run INTEGER,
+        total_miles_this_week NUMERIC(10,2),
+        synced_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+
+    await client.query(`
       CREATE TABLE IF NOT EXISTS user_settings (
         id TEXT PRIMARY KEY,
         user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -803,6 +815,22 @@ async function initDb() {
         type TEXT NOT NULL,
         date TEXT NOT NULL,
         notes TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS suggested_goals (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        source_milestone TEXT,
+        title TEXT NOT NULL,
+        description TEXT,
+        type TEXT DEFAULT 'endurance',
+        target_value REAL,
+        target_unit TEXT,
+        difficulty TEXT DEFAULT 'moderate',
+        status TEXT DEFAULT 'suggested',
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
     `);
