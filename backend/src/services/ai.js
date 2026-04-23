@@ -36,6 +36,7 @@ const TTL = {
   loadWarning: 2 * 60 * 60 * 1000,
   weeklyInsight: 6 * 60 * 60 * 1000,
   substitute: 4 * 60 * 60 * 1000,
+  recoveryAdjustment: 24 * 60 * 60 * 1000,
 };
 
 function makeCacheKey(prefix, payload) {
@@ -467,6 +468,59 @@ Find 2-3 alternative exercises that target the same primary muscle groups with a
   }
 }
 
+async function generateRecoveryAdjustment({ checkin, readinessScore, activeInjury, recentLoad, profile, userId }) {
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const cacheKey = makeCacheKey('recovery-adjustment', { userId, date: today });
+    const cached = getCached(cacheKey);
+    if (cached) return cached;
+
+    const feelingLabels = ['', 'Exhausted', 'Tired', 'Okay', 'Good', 'Great'];
+    const feeling = checkin?.feeling ? feelingLabels[checkin.feeling] || String(checkin.feeling) : 'unknown';
+    const sleepHours = checkin?.sleep_hours != null ? Number(checkin.sleep_hours) : null;
+    const lifeFlags = (() => {
+      try { return JSON.parse(checkin?.life_flags || '[]'); } catch { return []; }
+    })();
+
+    const injuryCtx = activeInjury
+      ? `Active injury: ${sanitize(activeInjury.body_part, 50)}, pain level ${Number(activeInjury.pain_level) || 'unknown'}/10`
+      : 'No active injuries';
+
+    const prompt = `You are an expert running and strength coach. An athlete needs today's training adjusted based on recovery signals. Return JSON only with keys: recommendation, adjusted_intensity, skip_reason.
+
+Recovery signals:
+- Feeling: ${feeling}
+- Sleep: ${sleepHours != null ? `${sleepHours} hours` : 'not reported'}
+- Soreness: ${lifeFlags.includes('sore') ? 'yes' : 'no'}
+- Life flags: ${lifeFlags.length ? lifeFlags.join(', ') : 'none'}
+- Readiness score: ${Number(readinessScore) || 'unknown'}/100
+- ${injuryCtx}
+- Recent training load (last 7 days): ${sanitize(JSON.stringify(recentLoad), 500)}
+- Goal: ${sanitize(profile?.goal_type, 30) || 'fitness'}
+
+Rules:
+- recommendation: 2-3 sentences explaining what to do today and why. Reference specific signals. Sound like a coach, not an app.
+- adjusted_intensity: exactly one of "light", "moderate", or "hard"
+- skip_reason: if readiness < 30 or feeling is Exhausted AND sore, provide a reason to skip. Otherwise null.
+- Be conservative with injuries. Be honest about sleep debt.`;
+
+    const msg = await getClient().messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 300,
+      messages: [{ role: 'user', content: prompt }],
+    });
+
+    const text = msg.content?.[0]?.text || '{}';
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    const result = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+    if (result) setCached(cacheKey, result, TTL.recoveryAdjustment);
+    return result;
+  } catch (e) {
+    console.error('generateRecoveryAdjustment error:', e.message);
+    return null;
+  }
+}
+
 module.exports = {
   sanitize,
   generateTrainingPlan,
@@ -482,4 +536,5 @@ module.exports = {
   generateWeeklyInsight,
   generateComebackPlan,
   generateExerciseSubstitutions,
+  generateRecoveryAdjustment,
 };
