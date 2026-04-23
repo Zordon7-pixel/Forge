@@ -54,8 +54,14 @@ router.get('/new', auth, async (req, res) => {
     if (runs.some(r => Number(r.distance_miles) >= 3.1)) add('first_5k', 'First 5K', 'Completed your first 5K distance run.');
     if (runs.some(r => Number(r.distance_miles) >= 6.2)) add('first_10k', 'First 10K', 'Completed your first 10K distance run.');
     if (runs.some(r => Number(r.distance_miles) >= 13.1)) add('first_half', 'First Half Marathon', 'Completed your first half marathon distance.');
-    if (currentStreak >= 7) add('streak_7', '7-Day Streak', 'You reached a 7-day activity streak.');
-    if (currentStreak >= 30) add('streak_30', '30-Day Streak', 'You reached a 30-day activity streak.');
+    // Extended streak milestones
+    const STREAK_THRESHOLDS = [7, 14, 30, 60, 90, 180, 365];
+    const streakLabels = { 7: '7-Day', 14: '14-Day', 30: '30-Day', 60: '60-Day', 90: '90-Day', 180: '180-Day', 365: '365-Day' };
+    for (const threshold of STREAK_THRESHOLDS) {
+      if (currentStreak >= threshold) {
+        add(`streak_${threshold}`, `${streakLabels[threshold]} Streak`, `You reached a ${streakLabels[threshold].toLowerCase()} activity streak!`);
+      }
+    }
     if (totalMiles >= 100) add('miles_100', '100 Miles Total', 'You have logged 100 total running miles.');
     if (totalMiles >= 500) add('miles_500', '500 Miles Total', 'You have logged 500 total running miles.');
     if (runs.length > 0) {
@@ -91,8 +97,49 @@ router.get('/new', auth, async (req, res) => {
       )
     ));
 
-    res.json({ milestones });
+    // Persist streak data to user profile
+    const earnedStreakMilestones = STREAK_THRESHOLDS.filter(t => currentStreak >= t);
+    await dbRun(
+      'UPDATE users SET current_streak=?, longest_streak=GREATEST(COALESCE(longest_streak,0),?), streak_milestones=?, streak_updated_at=? WHERE id=?',
+      [currentStreak, best, JSON.stringify(earnedStreakMilestones), new Date().toISOString(), userId]
+    );
+
+    res.json({ milestones, streak: { current: currentStreak, best, milestones: earnedStreakMilestones } });
   } catch (err) { res.status(500).json({ error: 'Milestones fetch failed' }); }
+});
+
+// GET /api/milestones/streak — current streak data for dashboard display
+router.get('/streak', auth, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { best, currentStreak } = await getStreak(userId);
+    const user = await dbGet('SELECT longest_streak, streak_milestones FROM users WHERE id=?', [userId]);
+
+    const STREAK_THRESHOLDS = [7, 14, 30, 60, 90, 180, 365];
+    const nextMilestone = STREAK_THRESHOLDS.find(t => t > currentStreak) || null;
+    const daysToNext = nextMilestone ? nextMilestone - currentStreak : null;
+
+    // Check if streak just hit a milestone threshold
+    let milestoneJustHit = null;
+    const earnedMilestones = STREAK_THRESHOLDS.filter(t => currentStreak >= t);
+    let previousMilestones = [];
+    try { previousMilestones = JSON.parse(user?.streak_milestones || '[]'); } catch {}
+    const newMilestones = earnedMilestones.filter(t => !previousMilestones.includes(t));
+    if (newMilestones.length > 0) {
+      milestoneJustHit = Math.max(...newMilestones);
+    }
+
+    res.json({
+      current_streak: currentStreak,
+      longest_streak: Math.max(best, user?.longest_streak || 0),
+      next_milestone: nextMilestone,
+      days_to_next: daysToNext,
+      milestone_just_hit: milestoneJustHit,
+      earned_milestones: earnedMilestones,
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch streak data' });
+  }
 });
 
 module.exports = router;

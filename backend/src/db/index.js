@@ -215,6 +215,22 @@ async function initDb() {
       await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS fitness_level TEXT DEFAULT 'beginner'");
       console.log('fitness_level');
     } catch (err) {}
+    try {
+      await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS current_streak INTEGER DEFAULT 0');
+      console.log('current_streak');
+    } catch (err) {}
+    try {
+      await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS longest_streak INTEGER DEFAULT 0');
+      console.log('longest_streak');
+    } catch (err) {}
+    try {
+      await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS streak_milestones TEXT DEFAULT '[]'");
+      console.log('streak_milestones');
+    } catch (err) {}
+    try {
+      await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS streak_updated_at TEXT');
+      console.log('streak_updated_at');
+    } catch (err) {}
     console.log('✅ Schema migration: users table columns ensured');
 
     await client.query(`
