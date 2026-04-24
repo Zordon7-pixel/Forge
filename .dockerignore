@@ -1,0 +1,14 @@
+node_modules
+**/node_modules
+frontend/dist
+frontend/ios
+frontend/android
+backend/data
+*.db
+*.db-shm
+*.db-wal
+.env
+**/.env
+.git
+.github
+.vscode
