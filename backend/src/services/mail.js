@@ -30,6 +30,11 @@ function isMailConfigured() {
 
 let transporter;
 
+function isResendSmtp(config) {
+  return String(config.host || '').toLowerCase() === 'smtp.resend.com' &&
+    String(config.user || '').toLowerCase() === 'resend';
+}
+
 function getTransporter() {
   if (!isMailConfigured()) {
     throw new Error('SMTP mailer is not configured.');
@@ -45,6 +50,9 @@ function getTransporter() {
         user: config.user,
         pass: config.pass,
       },
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
+      socketTimeout: 15000,
     });
   }
 
@@ -59,25 +67,58 @@ function buildPasswordResetUrl(token) {
 }
 
 async function sendPasswordResetEmail({ to, token }) {
-  const { from } = getMailConfig();
+  const config = getMailConfig();
+  const { from } = config;
   const resetUrl = buildPasswordResetUrl(token);
+  const text = [
+    'We received a request to reset your Forge password.',
+    '',
+    `Reset your password: ${resetUrl}`,
+    '',
+    'This link expires in 1 hour. If you did not request this, you can ignore this email.',
+  ].join('\n');
+  const html = `
+      <p>We received a request to reset your Forge password.</p>
+      <p><a href="${resetUrl}">Reset your password</a></p>
+      <p>This link expires in 1 hour. If you did not request this, you can ignore this email.</p>
+    `;
+
+  if (isResendSmtp(config)) {
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${config.pass}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from,
+        to,
+        subject: 'Reset your Forge password',
+        text,
+        html,
+      }),
+    });
+
+    if (!response.ok) {
+      let detail = '';
+      try {
+        const data = await response.json();
+        detail = data?.message || data?.error || JSON.stringify(data);
+      } catch {
+        detail = await response.text().catch(() => '');
+      }
+      throw new Error(`Resend email failed (${response.status})${detail ? `: ${detail}` : ''}`);
+    }
+
+    return;
+  }
 
   await getTransporter().sendMail({
     from,
     to,
     subject: 'Reset your Forge password',
-    text: [
-      'We received a request to reset your Forge password.',
-      '',
-      `Reset your password: ${resetUrl}`,
-      '',
-      'This link expires in 1 hour. If you did not request this, you can ignore this email.',
-    ].join('\n'),
-    html: `
-      <p>We received a request to reset your Forge password.</p>
-      <p><a href="${resetUrl}">Reset your password</a></p>
-      <p>This link expires in 1 hour. If you did not request this, you can ignore this email.</p>
-    `,
+    text,
+    html,
   });
 }
 
