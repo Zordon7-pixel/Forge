@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Flame, ArrowUpRight, ArrowDownRight, Watch, Footprints, X, AlertTriangle, Brain, ChevronRight, Lock } from 'lucide-react'
+import { ArrowUpRight, ArrowDownRight, Watch, Footprints, X, AlertTriangle, Brain, ChevronRight, Lock } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import AchievementUnlock from '../components/AchievementUnlock'
 import AgeGradedPerformanceCard from '../components/AgeGradedPerformanceCard'
@@ -113,6 +113,198 @@ function ReadinessGauge({ score, onClick }) {
   )
 }
 
+function getRecommendationLabel(recommendation) {
+  return recommendation
+    ? String(recommendation.recommendationType || 'workout').replace('_', ' ')
+    : 'workout'
+}
+
+function DailyCoachFlow({ checkedInToday, readiness, recommendation, onCheckIn, onStartWorkout, onReflect, onDetails }) {
+  const recommendationLabel = recommendation
+    ? getRecommendationLabel(recommendation)
+    : 'workout'
+  const steps = [
+    { key: 'checkin', label: 'Check in', done: checkedInToday, action: onCheckIn },
+    { key: 'train', label: recommendation ? recommendationLabel : 'train', done: false, action: onStartWorkout },
+    { key: 'reflect', label: 'reflect', done: false, action: onReflect },
+  ]
+
+  return (
+    <section className="rounded-2xl p-5" style={{ background: 'var(--bg-card)', border: '1px solid rgba(234,179,8,0.42)' }}>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-bold uppercase" style={{ color: '#EAB308', letterSpacing: 0.8 }}>Today</p>
+          <h2 className="mt-1 text-2xl font-black" style={{ color: 'var(--text-primary)' }}>
+            {checkedInToday ? 'Train from the plan' : 'Start with readiness'}
+          </h2>
+          <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
+            {readiness !== null ? `Readiness ${readiness}. ` : ''}
+            {recommendation ? `${recommendationLabel}${Number(recommendation.suggestedDistance || 0) > 0 ? ` · ${recommendation.suggestedDistance} mi` : ''}` : 'Check in to unlock the next move.'}
+          </p>
+        </div>
+        <div className="flex flex-col gap-2">
+          <button
+            onClick={checkedInToday ? onStartWorkout : onCheckIn}
+            className="rounded-xl px-3 py-2 text-xs font-black"
+            style={{ background: 'var(--accent)', color: '#000', border: 'none' }}
+          >
+            {checkedInToday ? 'Start' : 'Check in'}
+          </button>
+          <button
+            onClick={onDetails}
+            className="rounded-xl px-3 py-2 text-xs font-bold"
+            style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}
+          >
+            Details
+          </button>
+        </div>
+      </div>
+      <div className="mt-4 grid grid-cols-3 gap-2">
+        {steps.map((step, index) => (
+          <button
+            key={step.key}
+            type="button"
+            onClick={step.action}
+            className="rounded-xl px-2 py-3 text-left"
+            style={{ background: step.done ? 'rgba(34,197,94,0.12)' : 'var(--bg-input)', border: `1px solid ${step.done ? 'rgba(34,197,94,0.35)' : 'var(--border-subtle)'}` }}
+          >
+            <span className="text-[10px] font-bold" style={{ color: step.done ? '#22c55e' : 'var(--text-muted)' }}>{index + 1}</span>
+            <p className="mt-1 text-xs font-semibold capitalize" style={{ color: 'var(--text-primary)' }}>{step.label}</p>
+          </button>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function TodayDetailSheet({
+  open,
+  onClose,
+  checkedInToday,
+  readiness,
+  readinessBreakdown,
+  recommendation,
+  checkinData,
+  dailySteps,
+  dailyStepsSource,
+  activeInjury,
+  watchSyncNotice,
+  compliance,
+  onCheckIn,
+  onStartWorkout,
+  onWarmup,
+  onReflect,
+  onOpenReadiness,
+}) {
+  if (!open) return null
+  const recommendationLabel = recommendation ? getRecommendationLabel(recommendation) : null
+  const topFactors = (readinessBreakdown || []).filter((item) => item.label !== 'Base score').slice(0, 2)
+  const planSignals = [
+    !checkedInToday ? 'Today starts with check-in data so Forge can adjust effort before you train.' : null,
+    activeInjury ? `Recovery mode is active for ${activeInjury.body_part || 'your injury'}, so workouts are softened until return.` : null,
+    watchSyncNotice ? 'A new watch activity was synced and may change load, recovery, and the next workout.' : null,
+    compliance && compliance.completed < compliance.planned ? 'Missed planned sessions this week can shift the next run toward base or recovery work.' : null,
+    checkinData?.sleep_hours ? `${checkinData.sleep_hours}h sleep is included in today's readiness.` : null,
+    dailySteps !== null ? `${Number(dailySteps).toLocaleString()} steps${dailyStepsSource === 'watch' ? ' from watch sync' : ''} are part of the daily context.` : null,
+  ].filter(Boolean)
+
+  return (
+    <div
+      onClick={onClose}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.72)', zIndex: 50, display: 'flex', alignItems: 'flex-end' }}
+    >
+      <div
+        onClick={(event) => event.stopPropagation()}
+        style={{ background: 'var(--bg-card)', borderRadius: '20px 20px 0 0', padding: 24, width: '100%', maxHeight: '82vh', overflowY: 'auto' }}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-bold uppercase" style={{ color: '#EAB308', letterSpacing: 0.8 }}>Today</p>
+            <h2 className="mt-1 text-2xl font-black" style={{ color: 'var(--text-primary)' }}>
+              {checkedInToday ? 'Plan locked for today' : 'Check in before training'}
+            </h2>
+          </div>
+          <button onClick={onClose} className="rounded-lg px-3 py-2 text-xs" style={{ background: 'var(--bg-input)', color: 'var(--text-muted)' }}>
+            Close
+          </button>
+        </div>
+
+        <div className="mt-5 grid grid-cols-2 gap-3">
+          <div className="rounded-xl p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
+            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Readiness</p>
+            <p className="mt-1 text-xl font-black" style={{ color: readiness === null ? 'var(--text-muted)' : 'var(--text-primary)' }}>
+              {readiness === null ? '--' : readiness}
+            </p>
+          </div>
+          <div className="rounded-xl p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
+            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Workout</p>
+            <p className="mt-1 text-sm font-bold capitalize" style={{ color: 'var(--text-primary)' }}>
+              {recommendationLabel || 'After check-in'}
+            </p>
+            {recommendation && Number(recommendation.suggestedDistance || 0) > 0 && (
+              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{recommendation.suggestedDistance} mi</p>
+            )}
+          </div>
+        </div>
+
+        <section className="mt-5">
+          <p className="text-xs font-bold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.8 }}>Why this plan</p>
+          <div className="mt-2 space-y-2">
+            {recommendation?.reason && (
+              <p className="rounded-xl p-3 text-sm" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}>
+                {recommendation.reason}
+              </p>
+            )}
+            {topFactors.length > 0 ? topFactors.map((factor) => (
+              <p key={factor.label} className="rounded-xl p-3 text-sm" style={{ background: 'var(--bg-input)', color: 'var(--text-muted)' }}>
+                <strong style={{ color: 'var(--text-primary)' }}>{factor.label}:</strong> {factor.reason}
+              </p>
+            )) : (
+              <p className="rounded-xl p-3 text-sm" style={{ background: 'var(--bg-input)', color: 'var(--text-muted)' }}>
+                Complete check-in and sync a watch to unlock the readiness explanation.
+              </p>
+            )}
+          </div>
+        </section>
+
+        <section className="mt-5">
+          <p className="text-xs font-bold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.8 }}>Actions</p>
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            <button onClick={onCheckIn} className="rounded-xl px-3 py-3 text-sm font-bold" style={{ background: checkedInToday ? 'var(--bg-input)' : 'var(--accent)', color: checkedInToday ? 'var(--text-primary)' : '#000' }}>
+              {checkedInToday ? 'Edit check-in' : 'Check in'}
+            </button>
+            <button onClick={onStartWorkout} className="rounded-xl px-3 py-3 text-sm font-bold" style={{ background: 'var(--accent)', color: '#000' }}>
+              Start/log
+            </button>
+            <button onClick={onWarmup} className="rounded-xl px-3 py-3 text-sm font-bold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>
+              Warm-up
+            </button>
+            <button onClick={onReflect} className="rounded-xl px-3 py-3 text-sm font-bold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>
+              Reflect
+            </button>
+          </div>
+          {readiness !== null && (
+            <button onClick={onOpenReadiness} className="mt-2 w-full rounded-xl px-3 py-3 text-sm font-bold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>
+              Readiness breakdown
+            </button>
+          )}
+        </section>
+
+        <section className="mt-5">
+          <p className="text-xs font-bold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.8 }}>Adjustment history</p>
+          <div className="mt-2 space-y-2">
+            {(planSignals.length ? planSignals : ['Forge has not detected any missed-session, recovery-mode, or new sync signals today.']).map((signal) => (
+              <p key={signal} className="rounded-xl p-3 text-sm" style={{ background: 'var(--bg-input)', color: 'var(--text-muted)' }}>
+                {signal}
+              </p>
+            ))}
+          </div>
+        </section>
+      </div>
+    </div>
+  )
+}
+
 function getWeekKey() {
   const now = new Date()
   const weekStart = new Date(Date.UTC(now.getFullYear(), 0, 1))
@@ -192,9 +384,6 @@ function WatchSyncWidget({ onSyncPayload }) {
           <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#22c55e', animation: 'watchPulse 2s ease infinite' }} />
         )}
       </button>
-      <p style={{ fontSize: 9, color: 'var(--text-muted)', textAlign: 'center', marginTop: 2 }}>
-        + Meta Glasses (soon)
-      </p>
     </div>
   )
 }
@@ -237,9 +426,12 @@ export default function Dashboard() {
   const [weeklyRecap, setWeeklyRecap] = useState(null)
   const [showWeeklyRecap, setShowWeeklyRecap] = useState(false)
   const [showSyncedFlash, setShowSyncedFlash] = useState(false)
+  const [showTodayDetail, setShowTodayDetail] = useState(false)
+  const [showMoreInsights, setShowMoreInsights] = useState(false)
   const [nextRecommendation, setNextRecommendation] = useState(null)
   const [ageGradedPerformance, setAgeGradedPerformance] = useState(null)
   const [healthSync, setHealthSync] = useState({ loading: true, available: false, reason: null, metrics: null })
+  const [healthSyncNotice, setHealthSyncNotice] = useState('')
   const { isOnline, queueCount } = useOnlineStatus()
   const { isPro, loading: proLoading } = useProContext()
 
@@ -329,27 +521,54 @@ export default function Dashboard() {
 
   useEffect(() => {
     let active = true
+    let retryTimer = null
 
-    HealthService.getHealthSummary()
-      .then((result) => {
+    const syncHealthSummary = async (attempt = 0) => {
+      try {
+        const result = await HealthService.getHealthSummary()
         if (!active) return
+
         if (result?.available && result?.metrics) {
-          HealthService.syncToProfile(result.metrics).catch((e) => console.warn('[HealthSync] profile sync failed:', e?.message))
+          try {
+            await HealthService.syncToProfile(result.metrics)
+            if (active) setHealthSyncNotice('')
+          } catch (error) {
+            console.warn('[HealthSync] profile sync failed:', error?.message)
+            if (!active) return
+
+            if (attempt === 0) {
+              setHealthSyncNotice('Apple Health connected, but profile sync is retrying in the background.')
+              retryTimer = setTimeout(() => {
+                retryTimer = null
+                syncHealthSummary(1)
+              }, 10000)
+            } else {
+              setHealthSyncNotice('Apple Health connected, but the latest metrics were not saved to your profile yet.')
+            }
+          }
+        } else {
+          setHealthSyncNotice('')
         }
+
         setHealthSync({ loading: false, ...result })
-      })
-      .catch(() => {
+      } catch (error) {
+        console.warn('[HealthSync] summary failed:', error?.message)
         if (!active) return
+        setHealthSyncNotice('')
         setHealthSync({
           loading: false,
           available: false,
           reason: 'Unable to read Apple Health data on this device.',
           metrics: null,
         })
-      })
+      }
+    }
+
+    syncHealthSummary()
 
     return () => {
       active = false
+      if (retryTimer) clearTimeout(retryTimer)
     }
   }, [])
 
@@ -511,6 +730,17 @@ export default function Dashboard() {
     }
   }, [])
 
+  const handleStartWorkout = useCallback(() => {
+    if (!nextRecommendation) return navigate('/run')
+    if (nextRecommendation.recommendationType === 'rest') return navigate('/plan')
+    if (nextRecommendation.recommendationType === 'strength') return navigate('/log-lift')
+    const params = new URLSearchParams()
+    if (Number(nextRecommendation.suggestedDistance || 0) > 0) params.set('distance', String(nextRecommendation.suggestedDistance))
+    if (nextRecommendation.recommendationType) params.set('type', String(nextRecommendation.recommendationType))
+    if (nextRecommendation.suggestedPace) params.set('pace', String(nextRecommendation.suggestedPace))
+    navigate(`/log-run${params.toString() ? `?${params.toString()}` : ''}`)
+  }, [navigate, nextRecommendation])
+
   if (loading) return <LoadingRunner message="Getting ready" />
 
   return (
@@ -597,6 +827,80 @@ export default function Dashboard() {
         </div>
       )}
 
+      <DailyCoachFlow
+        checkedInToday={checkedInToday}
+        readiness={readiness}
+        recommendation={nextRecommendation}
+        onCheckIn={() => navigate('/checkin')}
+        onStartWorkout={handleStartWorkout}
+        onReflect={() => navigate('/history')}
+        onDetails={() => setShowTodayDetail(true)}
+      />
+
+      <TodayDetailSheet
+        open={showTodayDetail}
+        onClose={() => setShowTodayDetail(false)}
+        checkedInToday={checkedInToday}
+        readiness={readiness}
+        readinessBreakdown={readinessBreakdown}
+        recommendation={nextRecommendation}
+        checkinData={checkinData}
+        dailySteps={dailySteps}
+        dailyStepsSource={dailyStepsSource}
+        activeInjury={activeInjury}
+        watchSyncNotice={watchSyncNotice}
+        compliance={compliance}
+        onCheckIn={() => navigate('/checkin')}
+        onStartWorkout={handleStartWorkout}
+        onWarmup={() => navigate('/warmup')}
+        onReflect={() => navigate('/history')}
+        onOpenReadiness={() => {
+          setShowTodayDetail(false)
+          setShowReadinessModal(true)
+        }}
+      />
+
+      {/* Training Readiness */}
+      <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>
+        {readiness === null ? (
+          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Complete your daily check-in and sync your watch to unlock your Training Readiness score</p>
+        ) : (
+          <>
+            <ReadinessGauge score={readiness} onClick={() => setShowReadinessModal(true)} />
+            <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>
+              Based on your HRV, sleep, soreness, and energy levels{checkinData?.sleep_hours ? ` · Sleep: ${checkinData.sleep_hours}h` : ''}
+            </p>
+          </>
+        )}
+        {dailySteps !== null && (
+          <div className="mt-3 pt-3" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+            <p className="text-xs flex items-center gap-2" style={{ color: 'var(--text-muted)' }}>
+              <Footprints size={14} />
+              <span>
+                <strong style={{ color: 'var(--text-primary)' }}>{Number(dailySteps).toLocaleString()} steps</strong>
+                {dailyStepsSource === 'watch' && <span style={{ marginLeft: 6, fontSize: 11, color: '#22c55e' }}>⌚ synced</span>}
+              </span>
+            </p>
+          </div>
+        )}
+      </div>
+
+      <button
+        type="button"
+        onClick={() => setShowMoreInsights((value) => !value)}
+        className="w-full rounded-xl px-4 py-3 text-sm font-bold"
+        style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)', textAlign: 'left' }}
+      >
+        <span className="flex items-center justify-between">
+          <span>More insights</span>
+          <ChevronRight size={16} style={{ transform: showMoreInsights ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s ease' }} />
+        </span>
+      </button>
+
+      {showMoreInsights && (
+        <div className="space-y-4">
+      <WatchSyncWidget onSyncPayload={handleWatchSyncPayload} />
+
       {weeklyRecap && (
         <button
           onClick={() => navigate('/recap/weekly')}
@@ -616,35 +920,6 @@ export default function Dashboard() {
           {weeklyRecap.injuryRiskFlag && (
             <p className="text-xs mt-1" style={{ color: '#F97316' }}>{weeklyRecap.injuryRiskReason || 'Elevated injury risk this week'}</p>
           )}
-        </button>
-      )}
-
-      {nextRecommendation && (
-        <button
-          onClick={() => {
-            if (nextRecommendation.recommendationType === 'rest') return navigate('/plan')
-            if (nextRecommendation.recommendationType === 'strength') return navigate('/log-lift')
-            const params = new URLSearchParams()
-            if (Number(nextRecommendation.suggestedDistance || 0) > 0) params.set('distance', String(nextRecommendation.suggestedDistance))
-            if (nextRecommendation.recommendationType) params.set('type', String(nextRecommendation.recommendationType))
-            if (nextRecommendation.suggestedPace) params.set('pace', String(nextRecommendation.suggestedPace))
-            navigate(`/log-run${params.toString() ? `?${params.toString()}` : ''}`)
-          }}
-          className="w-full rounded-xl p-4"
-          style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', textAlign: 'left' }}
-        >
-          <div className="flex items-center justify-between">
-            <p className="text-xs font-bold uppercase" style={{ color: '#EAB308', letterSpacing: 0.8 }}>Today&apos;s Recommendation</p>
-            <ChevronRight size={16} color="var(--text-muted)" />
-          </div>
-          <p className="text-base font-bold mt-2 capitalize" style={{ color: 'var(--text-primary)' }}>
-            {String(nextRecommendation.recommendationType || '').replace('_', ' ')}
-          </p>
-          <p className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>
-            {Number(nextRecommendation.suggestedDistance || 0) > 0 ? `${nextRecommendation.suggestedDistance} mi` : 'No distance target'}
-            {nextRecommendation.suggestedPace && nextRecommendation.suggestedPace !== '--' ? ` · ${nextRecommendation.suggestedPace}` : ''}
-          </p>
-          <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>{nextRecommendation.reason}</p>
         </button>
       )}
 
@@ -711,15 +986,6 @@ export default function Dashboard() {
         </div>
       )}
 
-      {!checkedInToday && (
-        <button
-          onClick={() => navigate('/checkin')}
-          style={{ display: 'block', width: '100%', textAlign: 'left', background: 'rgba(234,179,8,0.12)', border: '1px solid rgba(234,179,8,0.3)', borderRadius: 14, padding: '12px 16px', marginBottom: 12, cursor: 'pointer' }}>
-          <p style={{ color: 'var(--accent)', fontWeight: 700, fontSize: 14, margin: 0 }}>Quick check-in — 3 taps</p>
-          <p style={{ color: 'var(--text-muted)', fontSize: 12, margin: '2px 0 0' }}>Help me adjust today's plan around your day</p>
-        </button>
-      )}
-
       {watchSyncNotice && (
         <div className="rounded-xl p-3" style={{ background: 'rgba(234,179,8,0.12)', border: '1px solid rgba(234,179,8,0.3)' }}>
           <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
@@ -752,48 +1018,6 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Ready to Run CTA */}
-      <div className="rounded-2xl p-6 flex flex-col items-center" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-        <h2 className="text-2xl font-black mb-1" style={{ color: 'var(--text-primary)' }}>Ready to Run?</h2>
-        <p className="text-sm mb-10 text-center" style={{ color: 'var(--text-muted)' }}>Dynamic warm-up reduces injury risk and improves performance.</p>
-        <button
-          onClick={() => navigate('/stretches/session?type=pre')}
-          className="rounded-full w-28 h-28 mb-3 font-black flex flex-col items-center justify-center"
-          style={{ background: 'var(--accent)', color: '#000', border: 'none', cursor: 'pointer' }}
-        >
-          <Flame className="mb-1" />
-          <span className="text-xs font-black">Start Warm-Up</span>
-        </button>
-        <button onClick={() => navigate('/log-run')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 14, padding: '8px 0' }}>Skip warm-up</button>
-      </div>
-
-      {/* Training Readiness */}
-      <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>
-        {readiness === null ? (
-          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Complete your daily check-in and sync your watch to unlock your Training Readiness score</p>
-        ) : (
-          <>
-            <ReadinessGauge score={readiness} onClick={() => setShowReadinessModal(true)} />
-            <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>
-              Based on your HRV, sleep, soreness, and energy levels{checkinData?.sleep_hours ? ` · Sleep: ${checkinData.sleep_hours}h` : ''}
-            </p>
-          </>
-        )}
-        {dailySteps !== null && (
-          <div className="mt-3 pt-3" style={{ borderTop: '1px solid var(--border-subtle)' }}>
-            <p className="text-xs flex items-center gap-2" style={{ color: 'var(--text-muted)' }}>
-              <Footprints size={14} />
-              <span>
-                <strong style={{ color: 'var(--text-primary)' }}>{Number(dailySteps).toLocaleString()} steps</strong>
-                {dailyStepsSource === 'watch' && <span style={{ marginLeft: 6, fontSize: 11, color: '#22c55e' }}>⌚ synced</span>}
-              </span>
-            </p>
-          </div>
-        )}
-      </div>
-
-      <WatchSyncWidget onSyncPayload={handleWatchSyncPayload} />
-
       <section className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
         <div className="mb-3 flex items-center justify-between">
           <p className="text-sm font-bold uppercase tracking-wide" style={{ color: '#EAB308' }}>Health Sync</p>
@@ -820,29 +1044,34 @@ export default function Dashboard() {
         )}
 
         {isPro && healthSync.metrics && (
-          <div className="grid grid-cols-2 gap-3">
-            <div className="rounded-lg p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
-              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Total miles this week</p>
-              <p className="text-lg font-black" style={{ color: 'var(--text-primary)' }}>{healthSync.metrics.totalMilesThisWeek.toFixed(2)}</p>
+          <div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-lg p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Total miles this week</p>
+                <p className="text-lg font-black" style={{ color: 'var(--text-primary)' }}>{healthSync.metrics.totalMilesThisWeek.toFixed(2)}</p>
+              </div>
+              <div className="rounded-lg p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Avg heart rate from last run</p>
+                <p className="text-lg font-black" style={{ color: 'var(--text-primary)' }}>
+                  {healthSync.metrics.avgHeartRateFromLastRun ? `${healthSync.metrics.avgHeartRateFromLastRun} bpm` : '--'}
+                </p>
+              </div>
+              <div className="rounded-lg p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Calories burned today</p>
+                <p className="text-lg font-black" style={{ color: 'var(--text-primary)' }}>
+                  {Number(healthSync.metrics.caloriesBurnedToday || 0).toLocaleString()}
+                </p>
+              </div>
+              <div className="rounded-lg p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Steps today</p>
+                <p className="text-lg font-black" style={{ color: 'var(--text-primary)' }}>
+                  {Number(healthSync.metrics.stepsToday || 0).toLocaleString()}
+                </p>
+              </div>
             </div>
-            <div className="rounded-lg p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
-              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Avg heart rate from last run</p>
-              <p className="text-lg font-black" style={{ color: 'var(--text-primary)' }}>
-                {healthSync.metrics.avgHeartRateFromLastRun ? `${healthSync.metrics.avgHeartRateFromLastRun} bpm` : '--'}
-              </p>
-            </div>
-            <div className="rounded-lg p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
-              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Calories burned today</p>
-              <p className="text-lg font-black" style={{ color: 'var(--text-primary)' }}>
-                {Number(healthSync.metrics.caloriesBurnedToday || 0).toLocaleString()}
-              </p>
-            </div>
-            <div className="rounded-lg p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
-              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Steps today</p>
-              <p className="text-lg font-black" style={{ color: 'var(--text-primary)' }}>
-                {Number(healthSync.metrics.stepsToday || 0).toLocaleString()}
-              </p>
-            </div>
+            {healthSyncNotice && (
+              <p className="mt-3 text-xs" style={{ color: '#F97316' }}>{healthSyncNotice}</p>
+            )}
           </div>
         )}
       </section>
@@ -991,6 +1220,8 @@ export default function Dashboard() {
           <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '2px 0 0' }}>{shoe.total_miles} of 500 miles</p>
         </div>
       ))}
+        </div>
+      )}
 
       {/* Recent Activity */}
       <section className="rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>

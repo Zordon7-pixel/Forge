@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { CheckCircle, XCircle } from 'lucide-react'
+import { CheckCircle, LifeBuoy, MessageSquare, ShieldAlert, XCircle } from 'lucide-react'
 import api from '../lib/api'
 
 export default function HelpDesk({ externalOpen, onClose }) {
@@ -43,7 +43,7 @@ export default function HelpDesk({ externalOpen, onClose }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
       <div className="w-full max-w-xl rounded-xl border p-5 shadow-2xl" style={{ background: 'var(--bg-card)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}>
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-bold">System Health</h2>
+          <h2 className="text-lg font-bold">{diagnostics ? 'Admin Diagnostics' : 'Help'}</h2>
           {!loading && diagnostics && (
             <div className="flex items-center gap-2">
               <span className="text-sm font-medium" style={{ color: diagnostics.ok ? '#22c55e' : '#ef4444' }}>
@@ -58,24 +58,50 @@ export default function HelpDesk({ externalOpen, onClose }) {
           <div className="flex items-center justify-center py-10"><div className="h-7 w-7 animate-spin rounded-full border-2 border-white/20 border-t-transparent" style={{ borderTopColor: 'var(--accent)' }} /></div>
         ) : (
           <>
-            {error && <div className="mb-4 rounded-lg border px-3 py-2 text-sm" style={{ borderColor: 'var(--accent)', background: 'var(--accent-dim)', color: 'var(--accent)' }}>{error}</div>}
-            <div className="mb-4 grid gap-2">
-              {(diagnostics?.checks || []).map(check => (
-                <div key={check.name} className="flex items-start justify-between gap-3 rounded-lg border px-3 py-2" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)' }}>
-                  <div className="text-sm">
-                    <div className="font-medium">{check.name}</div>
-                    <div className="text-xs" style={{ color: 'var(--text-muted)' }}>{check.detail}</div>
-                  </div>
-                  <div>
-                    {check.ok ? (
-                      <CheckCircle size={14} style={{ color:'#22c55e' }} />
-                    ) : (
-                      <XCircle size={14} style={{ color:'#ef4444' }} />
-                    )}
-                  </div>
+            {error && diagnostics && (
+              <div className="mb-4 rounded-lg border px-3 py-2 text-sm" style={{ borderColor: 'var(--accent)', background: 'var(--accent-dim)', color: 'var(--accent)' }}>
+                <div className="flex items-start gap-2">
+                  <ShieldAlert size={16} />
+                  <span>{error}</span>
                 </div>
-              ))}
-            </div>
+              </div>
+            )}
+            {diagnostics ? (
+              <div className="mb-4 grid gap-2">
+                {(diagnostics?.checks || []).map(check => (
+                  <div key={check.name} className="flex items-start justify-between gap-3 rounded-lg border px-3 py-2" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)' }}>
+                    <div className="text-sm">
+                      <div className="font-medium">{check.name}</div>
+                      <div className="text-xs" style={{ color: 'var(--text-muted)' }}>{check.detail}</div>
+                    </div>
+                    <div>
+                      {check.ok ? (
+                        <CheckCircle size={14} style={{ color:'#22c55e' }} />
+                      ) : (
+                        <XCircle size={14} style={{ color:'#ef4444' }} />
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="mb-4 grid gap-3">
+                <div className="rounded-lg border p-3" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)' }}>
+                  <div className="flex items-center gap-2">
+                    <LifeBuoy size={16} style={{ color: 'var(--accent)' }} />
+                    <p className="text-sm font-semibold">Need help?</p>
+                  </div>
+                  <p className="mt-2 text-sm" style={{ color: 'var(--text-muted)' }}>Send feedback from the header and include what you were doing when the issue happened.</p>
+                </div>
+                <div className="rounded-lg border p-3" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)' }}>
+                  <div className="flex items-center gap-2">
+                    <MessageSquare size={16} style={{ color: 'var(--accent)' }} />
+                    <p className="text-sm font-semibold">Coach flow</p>
+                  </div>
+                  <p className="mt-2 text-sm" style={{ color: 'var(--text-muted)' }}>Check in, follow the workout, then log how it felt. Forge adjusts from there.</p>
+                </div>
+              </div>
+            )}
             {actions.length > 0 && (
               <div className="mb-4 rounded-lg border px-3 py-2" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)' }}>
                 <div className="mb-1 text-sm font-semibold">Actions taken</div>
@@ -84,7 +110,9 @@ export default function HelpDesk({ externalOpen, onClose }) {
             )}
             <div className="flex justify-end gap-2">
               <button onClick={handleClose} className="rounded-lg border px-4 py-2 text-sm" style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}>Close</button>
-              <button onClick={runAutoFix} disabled={healing} className="rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-60" style={{ background: 'var(--accent)', color: 'black' }}>{healing ? 'Running…' : 'Run Auto-Fix'}</button>
+              {diagnostics && (
+                <button onClick={runAutoFix} disabled={healing} className="rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-60" style={{ background: 'var(--accent)', color: 'black' }}>{healing ? 'Running...' : 'Run Auto-Fix'}</button>
+              )}
             </div>
           </>
         )}

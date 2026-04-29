@@ -1,7 +1,7 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'app.forgeathlete',
+  appId: 'com.zordon.forge',
   appName: 'FORGE',
   webDir: 'dist',
   server: {

@@ -342,7 +342,7 @@ export default function LogRun() {
       if (runId) api.post('/prs/auto-detect', { run_id: runId }).catch(() => {})
       api.post('/badges/check', {}).catch(() => {})
       if (!runId) {
-        setFeedback('Feedback coming soon...')
+        setFeedback('Run saved. Your coach will update after the next sync.')
         setShowRecoveryPrompt(true)
         return
       }

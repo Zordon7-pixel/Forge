@@ -7,9 +7,13 @@ function isNative() {
   return typeof Capacitor !== 'undefined' && typeof Capacitor.isNativePlatform === 'function' && Capacitor.isNativePlatform()
 }
 
+function importNativeModule(name) {
+  return new Function('name', 'return import(name)')(name)
+}
+
 async function loadNativeStripeSdk() {
   try {
-    const mod = await import('@stripe/stripe-react-native')
+    const mod = await importNativeModule('@stripe/stripe-react-native')
     return mod
   } catch {
     return null

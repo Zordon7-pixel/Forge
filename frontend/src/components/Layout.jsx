@@ -137,7 +137,7 @@ export default function Layout({ children }) {
             </button>
             <TrainingReadinessWidget />
             <div className="flex items-center gap-3" style={{ zIndex: 10 }}>
-              <button onClick={toggle} className="transition-colors hover:opacity-80 text-xs" style={{ color: 'var(--text-muted)' }} title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}>
+              <button onClick={toggle} className="transition-colors hover:opacity-80 text-xs" style={{ color: 'var(--text-muted)' }} title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'} aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}>
                 {theme === 'dark' ? (
                   <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364-6.364l-.707.707M6.343 17.657l-.707.707M17.657 17.657l-.707-.707M6.343 6.343l-.707-.707M12 8a4 4 0 100 8 4 4 0 000-8z" />
@@ -148,12 +148,12 @@ export default function Layout({ children }) {
                   </svg>
                 )}
               </button>
-              <button onClick={() => setShowFeedback(true)} className="transition-colors hover:opacity-80" style={{ color: 'var(--text-muted)' }} title="Send feedback">
+              <button onClick={() => setShowFeedback(true)} className="transition-colors hover:opacity-80" style={{ color: 'var(--text-muted)' }} title="Send feedback" aria-label="Send feedback">
                 <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
                 </svg>
               </button>
-              <button onClick={() => setShowHelp(true)} className="transition-colors hover:opacity-80 text-xs font-bold" style={{ color: 'var(--text-muted)' }} title="Help & diagnostics">?</button>
+              <button onClick={() => setShowHelp(true)} className="transition-colors hover:opacity-80 text-xs font-bold" style={{ color: 'var(--text-muted)' }} title="Help & diagnostics" aria-label="Help and diagnostics">?</button>
               <button
                 type="button"
                 onClick={() => navigate('/profile')}

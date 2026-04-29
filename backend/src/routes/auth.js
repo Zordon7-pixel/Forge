@@ -6,6 +6,13 @@ const { dbGet, dbAll, dbRun } = require('../db');
 const auth    = require('../middleware/auth');
 const { v4: uuidv4 } = require('uuid');
 const { isMailConfigured, sendPasswordResetEmail } = require('../services/mail');
+const {
+  ACCOUNT_DELETE_QUERIES,
+  ACCOUNT_EXPORT_TABLES,
+  bindUserId,
+  buildExportSql,
+} = require('../lib/accountDataCoverage');
+const backendPackage = require('../../package.json');
 
 const sign = (user) => jwt.sign(
   { id: user.id, name: user.name, email: user.email, onboarded: user.onboarded, coach_personality: user.coach_personality },
@@ -77,7 +84,12 @@ router.post('/forgot-password', async (req, res) => {
       await dbRun('INSERT INTO password_reset_tokens (id, user_id, token, expires_at) VALUES (?, ?, ?, ?)',
         [uuidv4(), user.id, token, expiresAt]);
 
-      await sendPasswordResetEmail({ to: user.email, token });
+      try {
+        await sendPasswordResetEmail({ to: user.email, token });
+      } catch (mailErr) {
+        console.error('[auth/forgot-password] email failed:', mailErr.message);
+        return res.status(503).json(forgotPasswordResponses.emailUnavailable);
+      }
     }
 
     return res.json(forgotPasswordResponses.emailSent);
@@ -96,13 +108,16 @@ router.post('/reset-password', async (req, res) => {
     const { token, password } = req.body;
     if (!token || !password) return res.status(400).json({ error: 'Token and new password are required.' });
     if (password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters.' });
-    const record = await dbGet('SELECT * FROM password_reset_tokens WHERE token=*** AND used = 0 AND expires_at > ?',
+    const record = await dbGet('SELECT * FROM password_reset_tokens WHERE token = ? AND used = 0 AND expires_at > ?',
       [token, new Date().toISOString()]);
     if (!record) return res.status(400).json({ error: 'Reset link is invalid or expired.' });
-    await dbRun('UPDATE users SET password_hash=*** WHERE id = ?', [bcrypt.hashSync(password, 10), record.user_id]);
+    await dbRun('UPDATE users SET password_hash = ? WHERE id = ?', [bcrypt.hashSync(password, 10), record.user_id]);
     await dbRun('UPDATE password_reset_tokens SET used = 1 WHERE user_id = ? AND used = 0', [record.user_id]);
     res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: 'Reset failed' }); }
+  } catch (err) {
+    console.error('[auth/reset-password] failed:', err.message);
+    res.status(500).json({ error: 'Reset failed' });
+  }
 });
 
 router.get('/me', auth, async (req, res) => {
@@ -352,31 +367,85 @@ router.get('/me/ai-usage', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'AI usage fetch failed' }); }
 });
 
+router.get('/me/export', auth, async (req, res) => {
+  const userId = req.user.id;
+  const safeAll = async (sql, params = [userId]) => {
+    try {
+      return await dbAll(sql, params);
+    } catch {
+      return [];
+    }
+  };
+
+  try {
+    const user = await dbGet(
+      `SELECT id, name, email, onboarded, sex, age, weight_lbs, max_heart_rate,
+        weekly_miles_current, goal_type, fitness_level, injury_mode,
+        injury_description, injury_limitations, distance_unit, theme,
+        created_at
+       FROM users WHERE id = ?`,
+      [userId]
+    );
+
+    if (!user) return res.status(404).json({ error: 'Account not found' });
+
+    const exportData = {
+      exported_at: new Date().toISOString(),
+      metadata: {
+        app: 'forge',
+        backend_version: backendPackage.version || 'unknown',
+        categories_included: ACCOUNT_EXPORT_TABLES.map(({ key }) => key),
+        secrets_excluded: [
+          'password_hash',
+          'password_reset_tokens',
+          'garmin_credentials',
+          'strava access/refresh tokens',
+          'whoop encrypted tokens',
+          'oura encrypted tokens',
+          'push subscription auth keys',
+          'activity media binary data',
+        ],
+      },
+      account: user,
+    };
+
+    for (const dataset of ACCOUNT_EXPORT_TABLES) {
+      exportData[dataset.key] = await safeAll(buildExportSql(dataset));
+    }
+
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Disposition', `attachment; filename="forge-export-${new Date().toISOString().slice(0, 10)}.json"`);
+    res.json(exportData);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to export account data' });
+  }
+});
+
 router.delete('/account', auth, async (req, res) => {
   try {
     const userId = req.user.id;
-    const cleanupQueries = [
-      ['DELETE FROM password_reset_tokens WHERE user_id = ?', [userId]],
-      ['DELETE FROM ai_usage WHERE user_id = ?', [userId]],
-      ['DELETE FROM user_challenges WHERE user_id = ?', [userId]],
-      ['DELETE FROM step_logs WHERE user_id = ?', [userId]],
-      ['DELETE FROM user_badges WHERE user_id = ?', [userId]],
-      ['DELETE FROM activity_likes WHERE user_id = ?', [userId]],
-      ['DELETE FROM activity_comments WHERE user_id = ?', [userId]],
-      ['DELETE FROM activity_media WHERE user_id = ?', [userId]],
-      ['DELETE FROM saved_workouts WHERE user_id = ?', [userId]],
-      ['DELETE FROM community_workouts WHERE user_id = ?', [userId]],
-      ['DELETE FROM workout_sets WHERE user_id = ?', [userId]],
-      ['DELETE FROM workout_sessions WHERE user_id = ?', [userId]],
-      ['DELETE FROM lifts WHERE user_id = ?', [userId]],
-      ['DELETE FROM runs WHERE user_id = ?', [userId]],
-      ['DELETE FROM personal_records WHERE user_id = ?', [userId]],
-      ['DELETE FROM checkins WHERE user_id = ?', [userId]],
-      ['DELETE FROM garmin_accounts WHERE user_id = ?', [userId]],
-    ];
+    const { password, confirm } = req.body || {};
 
-    for (const [sql, params] of cleanupQueries) {
-      try { await dbRun(sql, params); } catch {}
+    if (confirm !== 'DELETE') {
+      return res.status(400).json({ error: 'Type DELETE to confirm account deletion.' });
+    }
+    if (!password) {
+      return res.status(400).json({ error: 'Password confirmation is required.' });
+    }
+
+    const user = await dbGet('SELECT id, password_hash FROM users WHERE id = ?', [userId]);
+    if (!user) return res.status(404).json({ error: 'Account not found' });
+    if (!bcrypt.compareSync(String(password), user.password_hash)) {
+      return res.status(401).json({ error: 'Password confirmation failed.' });
+    }
+
+    for (const [sql, params] of ACCOUNT_DELETE_QUERIES) {
+      try {
+        await dbRun(sql, bindUserId(params, userId));
+      } catch (deleteErr) {
+        const table = sql.match(/^DELETE FROM\s+([a-zA-Z0-9_]+)/)?.[1] || 'unknown_table';
+        console.error(`[auth/delete-account] failed deleting ${table}:`, deleteErr.message);
+      }
     }
 
     await dbRun('DELETE FROM users WHERE id = ?', [userId]);

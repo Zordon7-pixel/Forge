@@ -10,6 +10,23 @@ function parseJson(value, fallback = {}) {
   try { return JSON.parse(value); } catch { return fallback; }
 }
 
+const PHOTO_ACTIVITY_TABLES = {
+  run: 'runs',
+  lift: 'lifts',
+  feed: 'activity_feed',
+  post: 'community_posts',
+  community_post: 'community_posts',
+};
+
+async function requireOwnedPhotoActivity(activityType, activityId, userId) {
+  const table = PHOTO_ACTIVITY_TABLES[activityType];
+  if (!table) return { error: 'Invalid activity type', status: 400 };
+  const activity = await dbGet(`SELECT id, user_id FROM ${table} WHERE id = ?`, [activityId]);
+  if (!activity) return { error: 'Activity not found', status: 404 };
+  if (activity.user_id !== userId) return { error: 'Activity photo is restricted to the activity owner', status: 403 };
+  return { activity };
+}
+
 async function buildActivityRows(userIds = [], limit = 30) {
   if (!userIds.length) return [];
   const safeLimit = Math.min(100, Math.max(1, Number(limit || 30)));
@@ -243,6 +260,9 @@ router.post('/:activity_type/:activity_id/photo', auth, async (req, res) => {
     if (data.length > 1000000) return res.status(400).json({ error: 'Photo too large — must be under 1MB' });
     if (!['image/jpeg', 'image/png', 'image/webp'].includes(mimeType)) return res.status(400).json({ error: 'Invalid image type' });
 
+    const ownership = await requireOwnedPhotoActivity(activity_type, activity_id, req.user.id);
+    if (ownership.error) return res.status(ownership.status).json({ error: ownership.error });
+
     const existing = await dbGet(
       'SELECT id FROM activity_media WHERE activity_id = ? AND activity_type = ? LIMIT 1',
       [activity_id, activity_type]
@@ -250,8 +270,8 @@ router.post('/:activity_type/:activity_id/photo', auth, async (req, res) => {
 
     let mediaId = existing?.id;
     if (existing) {
-      await dbRun('UPDATE activity_media SET data = ?, mime_type = ?, user_id = ? WHERE id = ?',
-        [data, mimeType, req.user.id, existing.id]);
+      await dbRun('UPDATE activity_media SET data = ?, mime_type = ? WHERE id = ? AND activity_id = ? AND activity_type = ?',
+        [data, mimeType, existing.id, activity_id, activity_type]);
     } else {
       mediaId = uuidv4();
       await dbRun(
@@ -262,7 +282,8 @@ router.post('/:activity_type/:activity_id/photo', auth, async (req, res) => {
 
     const media = await dbGet('SELECT id, data, mime_type FROM activity_media WHERE id = ?', [mediaId]);
     res.json({ media });
-  } catch {
+  } catch (err) {
+    console.error('[social/photo] save failed:', err.message);
     res.status(500).json({ error: 'Failed to save photo' });
   }
 });
@@ -275,7 +296,8 @@ router.get('/:activity_type/:activity_id/photo', auth, async (req, res) => {
       [activity_id, activity_type]
     );
     res.json({ media: media || null });
-  } catch {
+  } catch (err) {
+    console.error('[social/photo] fetch failed:', err.message);
     res.status(500).json({ error: 'Failed to fetch photo' });
   }
 });
@@ -302,7 +324,8 @@ router.post('/like', auth, async (req, res) => {
       [activityId, activityType]
     );
     res.json({ liked: !existing, count: Number(countRow?.cnt || 0) });
-  } catch {
+  } catch (err) {
+    console.error('[social/like] failed:', err.message);
     res.status(500).json({ error: 'Like failed' });
   }
 });
@@ -320,7 +343,8 @@ router.get('/:activity_type/:activity_id/comments', auth, async (req, res) => {
       LIMIT 100
     `, [activityId, activityType]);
     res.json({ comments: rows });
-  } catch {
+  } catch (err) {
+    console.error('[social/comments] fetch failed:', err.message);
     res.status(500).json({ error: 'Failed to fetch comments' });
   }
 });
@@ -345,7 +369,8 @@ router.post('/:activity_type/:activity_id/comments', auth, async (req, res) => {
       WHERE c.id = ?
     `, [id]);
     res.status(201).json({ comment: row });
-  } catch {
+  } catch (err) {
+    console.error('[social/comments] create failed:', err.message);
     res.status(500).json({ error: 'Comment failed' });
   }
 });

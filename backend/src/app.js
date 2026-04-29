@@ -31,7 +31,7 @@ const allowedOrigins = process.env.CORS_ORIGIN
 app.use(cors({
   origin: function(origin, callback) {
     if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
-    return callback(new Error('Not allowed by CORS'));
+    return callback(null, false);
   },
   credentials: true
 }));
@@ -50,7 +50,11 @@ const authLimiter = rateLimit({
   legacyHeaders: false
 });
 
-app.use('/api/auth',        authLimiter, require('./routes/auth'));
+app.use('/api/auth/login',           authLimiter);
+app.use('/api/auth/register',        authLimiter);
+app.use('/api/auth/forgot-password', authLimiter);
+app.use('/api/auth/reset-password',  authLimiter);
+app.use('/api/auth',        require('./routes/auth'));
 app.use('/api/users',       require('./routes/users'));
 app.use('/api/runs',        require('./routes/runs'));
 app.use('/api/lifts',       require('./routes/lifts'));
@@ -60,6 +64,7 @@ app.use('/api/plans',       require('./routes/plans'));
 app.use('/api/plan',        require('./routes/plans'));
 app.use('/api/coach',       require('./routes/coach'));
 app.use('/api/diagnostics', require('./routes/diagnostics'));
+app.use('/api/meta',        require('./routes/meta'));
 app.use('/api/feedback',    require('./routes/feedback'));
 app.use('/api/checkin',     require('./routes/checkin'));
 app.use('/api/prs',         require('./routes/prs'));

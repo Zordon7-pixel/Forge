@@ -174,6 +174,16 @@ CREATE TABLE IF NOT EXISTS watch_sync (
 
 CREATE INDEX IF NOT EXISTS idx_watch_sync_user_garmin_id ON watch_sync(user_id, garmin_activity_id);
 
+CREATE TABLE IF NOT EXISTS health_sync (
+  id BIGSERIAL PRIMARY KEY,
+  user_id UUID UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  steps_today INTEGER,
+  calories_today INTEGER,
+  avg_heart_rate_last_run INTEGER,
+  total_miles_this_week NUMERIC(10,2),
+  synced_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS user_settings (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,

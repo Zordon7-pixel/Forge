@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ChevronRight, Link2, Moon, RefreshCw, Sun, Unplug, User, Watch } from 'lucide-react'
+import { ChevronRight, Download, Link2, Moon, RefreshCw, Shield, Sun, Trash2, Unplug, User, Watch } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useUnits } from '../context/UnitsContext'
 import { useTheme } from '../context/ThemeContext'
 import { useProContext } from '../context/ProContext'
 import api from '../lib/api'
 import { parseGarminCSV, parseStravaCSV, requestAppleHealth } from '../lib/healthImport'
+import TestFlightDebugPanel from '../components/TestFlightDebugPanel'
 
 const LANGUAGES = [
   { code: 'en', name: 'English', flag: '🇺🇸' },
@@ -57,9 +58,8 @@ export default function Settings() {
   const navigate = useNavigate()
   const { t, i18n } = useTranslation()
   const { units, setUnits } = useUnits()
-  const { theme, toggle: toggleTheme, setTheme } = useTheme()
+  const { theme, setTheme } = useTheme()
   const { isPro } = useProContext()
-  const [distanceUnit, setDistanceUnit] = useState('miles')
   const [saved, setSaved] = useState(false)
   const [importing, setImporting] = useState(false)
   const [importProgress, setImportProgress] = useState('')
@@ -69,18 +69,27 @@ export default function Settings() {
   const [garminLoading, setGarminLoading] = useState(false)
   const [garminSyncing, setGarminSyncing] = useState(false)
   const [garminNotice, setGarminNotice] = useState(null)
+  const [deviceStatuses, setDeviceStatuses] = useState({})
+  const [deviceSyncing, setDeviceSyncing] = useState({})
+  const [privacyNotice, setPrivacyNotice] = useState(null)
+  const [exporting, setExporting] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteConfirm, setDeleteConfirm] = useState('')
+  const [deletePassword, setDeletePassword] = useState('')
+  const [showDeleteAccount, setShowDeleteAccount] = useState(false)
+  const [debugTapCount, setDebugTapCount] = useState(0)
+  const [showDebugPanel, setShowDebugPanel] = useState(false)
   const manualFileRef = useRef(null)
+  const debugTapTimerRef = useRef(null)
 
   const isIOSSafari = typeof navigator !== 'undefined'
     && /iP(ad|hone|od)/.test(navigator.userAgent)
     && /WebKit/.test(navigator.userAgent)
+  const isNativeRuntime = typeof window !== 'undefined' && Boolean(window.Capacitor?.isNativePlatform?.())
 
-  const supportsAppleHealth = isIOSSafari && typeof navigator !== 'undefined' && Boolean(navigator.health)
+  const supportsAppleHealth = isIOSSafari && !isNativeRuntime && typeof navigator !== 'undefined' && Boolean(navigator.health)
 
   useEffect(() => {
-    api.get('/users/settings').then(r => {
-      setDistanceUnit(r.data.distance_unit || 'miles')
-    }).catch(() => {})
     api.get('/garmin/status').then((r) => {
       setGarminStatus({
         connected: Boolean(r.data?.connected),
@@ -89,6 +98,7 @@ export default function Settings() {
         displayName: r.data?.displayName || '',
       })
     }).catch(() => {})
+    loadDeviceStatuses()
   }, [])
 
   useEffect(() => {
@@ -103,12 +113,13 @@ export default function Settings() {
     return () => clearTimeout(id)
   }, [garminNotice])
 
-  const save = async (unit) => {
-    setDistanceUnit(unit)
-    await api.put('/users/settings', { distance_unit: unit }).catch(() => {})
-    setSaved(true)
-    setTimeout(() => setSaved(false), 2000)
-  }
+  useEffect(() => {
+    if (!privacyNotice) return
+    const id = setTimeout(() => setPrivacyNotice(null), 6000)
+    return () => clearTimeout(id)
+  }, [privacyNotice])
+
+  useEffect(() => () => clearTimeout(debugTapTimerRef.current), [])
 
   const saveUnits = async (newUnits) => {
     await setUnits(newUnits)
@@ -135,6 +146,19 @@ export default function Settings() {
       setImportProgress('')
       setImporting(false)
     }
+  }
+
+  const handleVersionTap = () => {
+    clearTimeout(debugTapTimerRef.current)
+    setDebugTapCount((count) => {
+      const next = count + 1
+      if (next >= 7) {
+        setShowDebugPanel(true)
+        return 0
+      }
+      debugTapTimerRef.current = setTimeout(() => setDebugTapCount(0), 1800)
+      return next
+    })
   }
 
   const handleAppleHealthImport = async () => {
@@ -193,6 +217,15 @@ export default function Settings() {
     })
   }
 
+  const loadDeviceStatuses = async () => {
+    const entries = await Promise.all([
+      ['strava', api.get('/strava/status').catch(() => ({ data: { connected: false } }))],
+      ['whoop', api.get('/whoop/status').catch(() => ({ data: { connected: false } }))],
+      ['oura', api.get('/oura/status').catch(() => ({ data: { connected: false } }))],
+    ])
+    setDeviceStatuses(Object.fromEntries(entries.map(([key, res]) => [key, res.data || { connected: false }])))
+  }
+
   const handleGarminConnect = async (event) => {
     event.preventDefault()
     if (!garminAuth.username || !garminAuth.password) {
@@ -241,323 +274,330 @@ export default function Settings() {
     }
   }
 
-  const card = { background: 'var(--bg-card)', borderRadius: 16, padding: '20px', marginBottom: 16, border: '1px solid var(--border-subtle)' }
+  const handleDeviceDisconnect = async (device) => {
+    try {
+      await api.delete(`/${device}/disconnect`)
+      setDeviceStatuses((prev) => ({ ...prev, [device]: { connected: false } }))
+      setPrivacyNotice({ ok: true, text: `${device.toUpperCase()} disconnected.` })
+    } catch (err) {
+      setPrivacyNotice({ ok: false, text: err?.response?.data?.error || `Could not disconnect ${device}.` })
+    }
+  }
+
+  const handleDeviceConnect = async (device) => {
+    try {
+      const { data } = await api.get(`/${device}/auth`, { params: { json: 1 } })
+      if (data?.url) {
+        window.location.href = data.url
+        return
+      }
+      setPrivacyNotice({ ok: false, text: `Could not start ${device.toUpperCase()} connection.` })
+    } catch (err) {
+      setPrivacyNotice({ ok: false, text: err?.response?.data?.error || `Could not start ${device.toUpperCase()} connection.` })
+    }
+  }
+
+  const handleDeviceSync = async (device) => {
+    setDeviceSyncing((prev) => ({ ...prev, [device]: true }))
+    try {
+      const { data } = await api.post(`/${device}/sync`)
+      await loadDeviceStatuses()
+      setPrivacyNotice({ ok: true, text: `${device.toUpperCase()} synced ${Number(data?.synced ?? data?.imported ?? 0)} records.` })
+    } catch (err) {
+      setPrivacyNotice({ ok: false, text: err?.response?.data?.error || `Could not sync ${device.toUpperCase()}.` })
+    } finally {
+      setDeviceSyncing((prev) => ({ ...prev, [device]: false }))
+    }
+  }
+
+  const handleExportData = async () => {
+    setExporting(true)
+    try {
+      const { data } = await api.get('/auth/me/export')
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `forge-export-${new Date().toISOString().slice(0, 10)}.json`
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      URL.revokeObjectURL(url)
+      setPrivacyNotice({ ok: true, text: 'Data export downloaded.' })
+    } catch (err) {
+      setPrivacyNotice({ ok: false, text: err?.response?.data?.error || 'Could not export data.' })
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  const handleDeleteAccount = async () => {
+    if (deleteConfirm !== 'DELETE') {
+      setPrivacyNotice({ ok: false, text: 'Type DELETE to confirm account deletion.' })
+      return
+    }
+    setDeleting(true)
+    try {
+      await api.delete('/auth/account', { data: { confirm: deleteConfirm, password: deletePassword } })
+      localStorage.clear()
+      navigate('/login')
+    } catch (err) {
+      setPrivacyNotice({ ok: false, text: err?.response?.data?.error || 'Could not delete account.' })
+      setDeleting(false)
+    }
+  }
+
+  const card = { background: 'var(--bg-card)', borderRadius: 16, padding: '20px', border: '1px solid var(--border-subtle)' }
+  const section = { marginBottom: 18 }
+  const sectionTitle = { fontSize: 18, fontWeight: 900, color: 'var(--text-primary)', margin: '0 0 10px' }
+  const sectionGrid = { display: 'grid', gap: 12 }
   const label = { fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text-muted)', marginBottom: 12, display: 'block' }
+  const statusText = (value) => value ? new Date(value).toLocaleString() : 'Never'
+  const deviceRows = [
+    {
+      key: 'strava',
+      name: 'Strava',
+      connected: Boolean(deviceStatuses.strava?.connected),
+      detail: deviceStatuses.strava?.athlete_name || '',
+      lastSync: deviceStatuses.strava?.last_sync,
+      connect: () => handleDeviceConnect('strava'),
+      sync: () => handleDeviceSync('strava'),
+      revoke: () => handleDeviceDisconnect('strava'),
+    },
+    {
+      key: 'whoop',
+      name: 'WHOOP',
+      connected: Boolean(deviceStatuses.whoop?.connected),
+      detail: deviceStatuses.whoop?.displayName || '',
+      lastSync: deviceStatuses.whoop?.lastSync,
+      connect: () => handleDeviceConnect('whoop'),
+      sync: () => handleDeviceSync('whoop'),
+      revoke: () => handleDeviceDisconnect('whoop'),
+    },
+    {
+      key: 'oura',
+      name: 'Oura',
+      connected: Boolean(deviceStatuses.oura?.connected),
+      detail: deviceStatuses.oura?.displayName || '',
+      lastSync: deviceStatuses.oura?.lastSync,
+      connect: () => handleDeviceConnect('oura'),
+      sync: () => handleDeviceSync('oura'),
+      revoke: () => handleDeviceDisconnect('oura'),
+    },
+  ]
 
   return (
     <div>
       <h1 style={{ fontWeight: 900, fontSize: 24, color: 'var(--text-primary)', marginBottom: 24 }}>{t('settings.title')}</h1>
 
-      {/* Appearance */}
-      <div style={card}>
-        <span style={label}>{t('settings.appearance')}</span>
-        <div style={{ display: 'flex', gap: 10 }}>
-          {[['dark', Moon], ['light', Sun]].map(([val, Icon]) => (
-            <button key={val} onClick={() => setTheme(val)}
-              style={{
-                flex: 1, padding: '14px', borderRadius: 12,
-                border: `2px solid ${theme === val ? 'var(--accent)' : 'var(--border-subtle)'}`,
-                background: theme === val ? 'var(--accent-dim)' : 'var(--bg-input)',
-                color: theme === val ? 'var(--accent)' : 'var(--text-muted)',
-                fontWeight: 700, fontSize: 15, cursor: 'pointer',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-              }}
-            >
-              <Icon size={16} />
-              {t(`settings.${val}`)}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Language Selector */}
-      <div style={card}>
-        <span style={label}>{t('settings.language')}</span>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10 }}>
-          {LANGUAGES.map((lang) => (
-            <button
-              key={lang.code}
-              onClick={() => i18n.changeLanguage(lang.code)}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                padding: '12px 14px',
-                borderRadius: 12,
-                border: `2px solid ${i18n.language === lang.code ? '#EAB308' : 'var(--border-subtle)'}`,
-                background: i18n.language === lang.code ? 'rgba(234, 179, 8, 0.15)' : 'var(--bg-input)',
-                color: 'var(--text-primary)',
-                fontWeight: 600,
-                fontSize: 14,
-                cursor: 'pointer',
-                textAlign: 'left',
-              }}
-            >
-              <span style={{ fontSize: 18 }}>{lang.flag}</span>
-              <span>{lang.name}</span>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Units System */}
-      <div style={card}>
-        <span style={label}>{t('settings.units')}</span>
-        <div style={{ display: 'flex', gap: 10 }}>
-          {[['imperial', t('settings.imperial')], ['metric', t('settings.metric')]].map(([val, text]) => (
-            <button key={val} onClick={() => saveUnits(val)}
-              style={{
-                flex: 1, padding: '14px', borderRadius: 12, border: `2px solid ${units === val ? 'var(--accent)' : 'var(--border-subtle)'}`,
-                background: units === val ? 'var(--accent-dim)' : 'var(--bg-input)',
-                color: units === val ? 'var(--accent)' : 'var(--text-muted)',
-                fontWeight: 700, fontSize: 14, cursor: 'pointer',
-              }}>{text}</button>
-          ))}
-        </div>
-        <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 10 }}>
-          {units === 'imperial' ? 'Miles, lbs, °F' : 'Kilometers, kg, °C'}
-        </p>
-        {saved && <p style={{ fontSize: 12, color: '#22c55e', marginTop: 10 }}>Saved</p>}
-      </div>
-
-      {/* Distance Units (legacy) */}
-      <div style={card}>
-        <span style={label}>Distance Units (Legacy)</span>
-        <div style={{ display: 'flex', gap: 10 }}>
-          {[['miles', 'Miles'], ['km', 'Kilometers']].map(([val, text]) => (
-            <button key={val} onClick={() => save(val)}
-              style={{
-                flex: 1, padding: '14px', borderRadius: 12, border: `2px solid ${distanceUnit === val ? 'var(--accent)' : 'var(--border-subtle)'}`,
-                background: distanceUnit === val ? 'var(--accent-dim)' : 'var(--bg-input)',
-                color: distanceUnit === val ? 'var(--accent)' : 'var(--text-muted)',
-                fontWeight: 700, fontSize: 14, cursor: 'pointer',
-              }}>{text}</button>
-          ))}
-        </div>
-        {saved && <p style={{ fontSize: 12, color: '#22c55e', marginTop: 10 }}>Saved</p>}
-      </div>
-
-      {/* Profile link */}
-      <div style={card}>
-        <span style={label}>Account</span>
-        <button onClick={() => navigate('/profile')}
-          style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
-          <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)' }}>{t('profile.editProfile')}</span>
-          <ChevronRight size={18} style={{ color: 'var(--text-muted)' }} />
-        </button>
-      </div>
-
-      {/* Notifications (placeholder) */}
-      <div style={card}>
-        <span style={label}>Notifications</span>
-        <p style={{ fontSize: 14, color: 'var(--text-muted)' }}>Push notifications — coming soon.</p>
-      </div>
-
-      {/* Connect / Import */}
-      <div style={card}>
-        <span style={label}>Connect / Import Data</span>
-
-        <div style={{ border: '1px solid var(--border-subtle)', borderRadius: 12, padding: 14, marginBottom: 12 }}>
-          <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>Import from Apple Health</p>
-          <p style={{ margin: '8px 0 10px', fontSize: 12, color: 'var(--text-muted)' }}>
-            iOS Safari only. Requests access to steps, distance, heart rate, and workouts from the last 30 days.
-          </p>
-          <button
-            onClick={handleAppleHealthImport}
-            disabled={importing || !supportsAppleHealth || !isPro}
-            style={{
-              width: '100%',
-              border: '1px solid var(--border-subtle)',
-              borderRadius: 10,
-              padding: '10px 12px',
-              fontSize: 13,
-              fontWeight: 700,
-              background: supportsAppleHealth && isPro ? 'var(--bg-input)' : 'rgba(148,163,184,0.1)',
-              color: supportsAppleHealth && isPro ? 'var(--text-primary)' : 'var(--text-muted)',
-              cursor: supportsAppleHealth && isPro ? 'pointer' : 'not-allowed',
-            }}
-          >
-            {!isPro ? 'Apple Health sync requires Pro' : (supportsAppleHealth ? 'Import from Apple Health' : 'Apple Health unavailable on this browser')}
-          </button>
-        </div>
-
-        <div style={{ border: '1px solid var(--border-subtle)', borderRadius: 12, padding: 14 }}>
-          <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>Import from Garmin/Strava CSV</p>
-          <p style={{ margin: '8px 0 10px', fontSize: 12, color: 'var(--text-muted)' }}>
-            Export your Garmin data as CSV → upload here
-          </p>
-          <input ref={manualFileRef} type="file" accept=".csv,.json" onChange={handleManualImport} style={{ display: 'none' }} />
-          <button
-            onClick={() => manualFileRef.current?.click()}
-            disabled={importing}
-            style={{
-              width: '100%',
-              border: '1px solid var(--border-subtle)',
-              borderRadius: 10,
-              padding: '10px 12px',
-              fontSize: 13,
-              fontWeight: 700,
-              background: 'var(--bg-input)',
-              color: 'var(--text-primary)',
-              cursor: 'pointer',
-            }}
-          >
-            Import from Garmin/Strava CSV
-          </button>
-        </div>
-
-        {importProgress && <p style={{ fontSize: 12, marginTop: 10, color: 'var(--text-muted)' }}>{importProgress}</p>}
-      </div>
-
-      <div style={{
-        background: 'linear-gradient(160deg, #0b0b0b 0%, #111111 100%)',
-        borderRadius: 16,
-        padding: 20,
-        marginBottom: 16,
-        border: '1px solid rgba(234,179,8,0.35)',
-        boxShadow: '0 8px 22px rgba(0,0,0,0.28)'
-      }}>
-        <span style={{ ...label, color: '#fcd34d' }}>Garmin Connect</span>
-        {!garminStatus.connected ? (
-          <form onSubmit={handleGarminConnect} style={{ display: 'grid', gap: 10 }}>
-            <p style={{ margin: 0, color: '#fde68a', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Watch size={15} />
-              Connect Garmin to auto-sync activities from the last 30 days.
-            </p>
-            <div style={{ position: 'relative' }}>
-              <User size={14} style={{ position: 'absolute', top: 11, left: 10, color: '#fbbf24' }} />
-              <input
-                value={garminAuth.username}
-                onChange={(e) => setGarminAuth((prev) => ({ ...prev, username: e.target.value }))}
-                placeholder='Garmin username'
-                autoComplete='username'
-                style={{
-                  width: '100%',
-                  padding: '10px 10px 10px 32px',
-                  borderRadius: 10,
-                  border: '1px solid rgba(234,179,8,0.35)',
-                  background: '#151515',
-                  color: '#fef3c7',
-                  fontSize: 13,
-                }}
-              />
+      <section style={section}>
+        <h2 style={sectionTitle}>Preferences</h2>
+        <div style={sectionGrid}>
+          <div style={card}>
+            <span style={label}>{t('settings.appearance')}</span>
+            <div style={{ display: 'flex', gap: 10 }}>
+              {[['dark', Moon], ['light', Sun]].map(([val, Icon]) => (
+                <button key={val} onClick={() => setTheme(val)}
+                  style={{ flex: 1, padding: '14px', borderRadius: 12, border: `2px solid ${theme === val ? 'var(--accent)' : 'var(--border-subtle)'}`, background: theme === val ? 'var(--accent-dim)' : 'var(--bg-input)', color: theme === val ? 'var(--accent)' : 'var(--text-muted)', fontWeight: 700, fontSize: 15, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
+                >
+                  <Icon size={16} />
+                  {t(`settings.${val}`)}
+                </button>
+              ))}
             </div>
-            <div style={{ position: 'relative' }}>
-              <Link2 size={14} style={{ position: 'absolute', top: 11, left: 10, color: '#fbbf24' }} />
-              <input
-                type='password'
-                value={garminAuth.password}
-                onChange={(e) => setGarminAuth((prev) => ({ ...prev, password: e.target.value }))}
-                placeholder='Garmin password'
-                autoComplete='current-password'
-                style={{
-                  width: '100%',
-                  padding: '10px 10px 10px 32px',
-                  borderRadius: 10,
-                  border: '1px solid rgba(234,179,8,0.35)',
-                  background: '#151515',
-                  color: '#fef3c7',
-                  fontSize: 13,
-                }}
-              />
+          </div>
+
+          <div style={card}>
+            <span style={label}>{t('settings.language')}</span>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
+              {LANGUAGES.map((lang) => (
+                <button
+                  key={lang.code}
+                  onClick={() => i18n.changeLanguage(lang.code)}
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 14px', borderRadius: 12, border: `2px solid ${i18n.language === lang.code ? '#EAB308' : 'var(--border-subtle)'}`, background: i18n.language === lang.code ? 'rgba(234, 179, 8, 0.15)' : 'var(--bg-input)', color: 'var(--text-primary)', fontWeight: 600, fontSize: 14, cursor: 'pointer', textAlign: 'left' }}
+                >
+                  <span style={{ fontSize: 18 }}>{lang.flag}</span>
+                  <span>{lang.name}</span>
+                </button>
+              ))}
             </div>
-            <button
-              type='submit'
-              disabled={garminLoading}
-              style={{
-                width: '100%',
-                border: '1px solid #fbbf24',
-                borderRadius: 10,
-                padding: '10px 12px',
-                fontSize: 13,
-                fontWeight: 800,
-                background: '#facc15',
-                color: '#111111',
-                cursor: 'pointer',
-                opacity: garminLoading ? 0.6 : 1,
-              }}
-            >
-              {garminLoading ? 'Connecting...' : 'Connect'}
-            </button>
-          </form>
-        ) : (
-          <div style={{ display: 'grid', gap: 10 }}>
-            <p style={{ margin: 0, color: '#fde68a', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Watch size={15} />
-              Connected as <strong style={{ color: '#fef3c7' }}>{garminStatus.displayName || 'Garmin user'}</strong>
+          </div>
+
+          <div style={card}>
+            <span style={label}>{t('settings.units')}</span>
+            <div style={{ display: 'flex', gap: 10 }}>
+              {[['imperial', t('settings.imperial')], ['metric', t('settings.metric')]].map(([val, text]) => (
+                <button key={val} onClick={() => saveUnits(val)}
+                  style={{ flex: 1, padding: '14px', borderRadius: 12, border: `2px solid ${units === val ? 'var(--accent)' : 'var(--border-subtle)'}`, background: units === val ? 'var(--accent-dim)' : 'var(--bg-input)', color: units === val ? 'var(--accent)' : 'var(--text-muted)', fontWeight: 700, fontSize: 14, cursor: 'pointer' }}
+                >
+                  {text}
+                </button>
+              ))}
+            </div>
+            <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 10 }}>
+              {units === 'imperial' ? 'Miles, lbs, °F' : 'Kilometers, kg, °C'}
             </p>
-            <p style={{ margin: 0, fontSize: 12, color: '#fcd34d' }}>
-              Last sync: {garminStatus.lastSync ? new Date(garminStatus.lastSync).toLocaleString() : 'Never'}
-            </p>
-            <p style={{ margin: 0, fontSize: 12, color: '#fcd34d' }}>
-              Imported activities: {garminStatus.activityCount}
-            </p>
-            <button
-              onClick={handleGarminSync}
-              disabled={garminSyncing}
-              style={{
-                width: '100%',
-                border: '1px solid #fbbf24',
-                borderRadius: 10,
-                padding: '10px 12px',
-                fontSize: 13,
-                fontWeight: 800,
-                background: '#facc15',
-                color: '#111111',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 8,
-                opacity: garminSyncing ? 0.6 : 1,
-              }}
-            >
-              <RefreshCw size={14} />
-              {garminSyncing ? 'Syncing...' : 'Sync Now'}
-            </button>
-            <button
-              onClick={handleGarminDisconnect}
-              disabled={garminLoading}
-              style={{
-                background: 'transparent',
-                border: 'none',
-                color: '#fbbf24',
-                fontSize: 12,
-                textDecoration: 'underline',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 6,
-              }}
-            >
-              <Unplug size={13} />
-              Disconnect
+            {saved && <p style={{ fontSize: 12, color: '#22c55e', marginTop: 10 }}>Saved</p>}
+          </div>
+        </div>
+      </section>
+
+      <section style={section}>
+        <h2 style={sectionTitle}>Devices</h2>
+        <div style={sectionGrid}>
+          <div style={card}>
+            <span style={label}>Garmin</span>
+            {!garminStatus.connected ? (
+              <form onSubmit={handleGarminConnect} style={{ display: 'grid', gap: 10 }}>
+                <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Watch size={15} />
+                  Status: Not connected
+                </p>
+                <div style={{ position: 'relative' }}>
+                  <User size={14} style={{ position: 'absolute', top: 11, left: 10, color: 'var(--text-muted)' }} />
+                  <input value={garminAuth.username} onChange={(e) => setGarminAuth((prev) => ({ ...prev, username: e.target.value }))} placeholder="Garmin username" autoComplete="username" style={{ width: '100%', padding: '10px 10px 10px 32px', borderRadius: 10, border: '1px solid var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)', fontSize: 13 }} />
+                </div>
+                <div style={{ position: 'relative' }}>
+                  <Link2 size={14} style={{ position: 'absolute', top: 11, left: 10, color: 'var(--text-muted)' }} />
+                  <input type="password" value={garminAuth.password} onChange={(e) => setGarminAuth((prev) => ({ ...prev, password: e.target.value }))} placeholder="Garmin password" autoComplete="current-password" style={{ width: '100%', padding: '10px 10px 10px 32px', borderRadius: 10, border: '1px solid var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)', fontSize: 13 }} />
+                </div>
+                <button type="submit" disabled={garminLoading} style={{ width: '100%', border: '1px solid var(--accent)', borderRadius: 10, padding: '10px 12px', fontSize: 13, fontWeight: 800, background: 'var(--accent)', color: '#111111', cursor: 'pointer', opacity: garminLoading ? 0.6 : 1 }}>
+                  {garminLoading ? 'Connecting...' : 'Connect Garmin'}
+                </button>
+              </form>
+            ) : (
+              <div style={{ display: 'grid', gap: 10 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                  <div>
+                    <p style={{ margin: 0, fontSize: 14, fontWeight: 800, color: 'var(--text-primary)' }}>{garminStatus.displayName || 'Garmin user'}</p>
+                    <p style={{ margin: '3px 0 0', fontSize: 12, color: 'var(--text-muted)' }}>Status: Connected</p>
+                    <p style={{ margin: '3px 0 0', fontSize: 12, color: 'var(--text-muted)' }}>Last sync: {statusText(garminStatus.lastSync)}</p>
+                    <p style={{ margin: '3px 0 0', fontSize: 12, color: 'var(--text-muted)' }}>Imported activities: {garminStatus.activityCount}</p>
+                  </div>
+                  <Shield size={18} style={{ color: '#22c55e', flexShrink: 0 }} />
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                  <button onClick={handleGarminSync} disabled={garminSyncing} style={{ border: '1px solid var(--accent)', borderRadius: 10, padding: '10px 12px', fontSize: 13, fontWeight: 800, background: 'var(--accent)', color: '#111111', cursor: 'pointer', opacity: garminSyncing ? 0.6 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                    <RefreshCw size={14} />
+                    {garminSyncing ? 'Syncing...' : 'Sync'}
+                  </button>
+                  <button onClick={handleGarminDisconnect} disabled={garminLoading} style={{ border: '1px solid var(--border-subtle)', borderRadius: 10, padding: '10px 12px', fontSize: 13, fontWeight: 700, background: 'var(--bg-input)', color: 'var(--text-primary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                    <Unplug size={14} />
+                    Revoke
+                  </button>
+                </div>
+              </div>
+            )}
+            {garminNotice && (
+              <div style={{ marginTop: 10, borderRadius: 10, padding: '9px 10px', fontSize: 12, border: `1px solid ${garminNotice.ok ? 'rgba(34,197,94,0.35)' : 'rgba(239,68,68,0.35)'}`, color: garminNotice.ok ? '#86efac' : '#fca5a5', background: garminNotice.ok ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.1)' }}>
+                {garminNotice.text}
+              </div>
+            )}
+          </div>
+
+          {deviceRows.map((device) => (
+            <div key={device.key} style={card}>
+              <span style={label}>{device.name}</span>
+              <div style={{ display: 'grid', gap: 10 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                  <div>
+                    <p style={{ margin: 0, fontSize: 14, fontWeight: 800, color: 'var(--text-primary)' }}>{device.detail || device.name}</p>
+                    <p style={{ margin: '3px 0 0', fontSize: 12, color: 'var(--text-muted)' }}>Status: {device.connected ? 'Connected' : 'Not connected'}</p>
+                    <p style={{ margin: '3px 0 0', fontSize: 12, color: 'var(--text-muted)' }}>Last sync: {statusText(device.lastSync)}</p>
+                  </div>
+                  <Shield size={18} style={{ color: device.connected ? '#22c55e' : 'var(--text-muted)', flexShrink: 0 }} />
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: device.connected ? '1fr 1fr' : '1fr', gap: 8 }}>
+                  {!device.connected ? (
+                    <button type="button" onClick={device.connect} style={{ border: '1px solid var(--accent)', borderRadius: 10, padding: '10px 12px', background: 'var(--accent)', color: '#111111', fontSize: 13, fontWeight: 800, cursor: 'pointer' }}>
+                      Connect {device.name}
+                    </button>
+                  ) : (
+                    <>
+                      <button type="button" onClick={device.sync} disabled={Boolean(deviceSyncing[device.key])} style={{ border: '1px solid var(--accent)', borderRadius: 10, padding: '10px 12px', background: 'var(--accent)', color: '#111111', fontSize: 13, fontWeight: 800, cursor: 'pointer', opacity: deviceSyncing[device.key] ? 0.6 : 1 }}>
+                        {deviceSyncing[device.key] ? 'Syncing...' : 'Sync'}
+                      </button>
+                      <button type="button" onClick={device.revoke} style={{ border: '1px solid var(--border-subtle)', borderRadius: 10, padding: '10px 12px', background: 'var(--bg-input)', color: 'var(--text-primary)', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+                        Revoke
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+
+          <div style={card}>
+            <span style={label}>Apple Health</span>
+            <p style={{ margin: 0, fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.6 }}>Status: {supportsAppleHealth && isPro ? 'Available on this device' : 'Unavailable on this browser or plan'}</p>
+            <button onClick={handleAppleHealthImport} disabled={importing || !supportsAppleHealth || !isPro} style={{ width: '100%', marginTop: 12, border: '1px solid var(--border-subtle)', borderRadius: 10, padding: '10px 12px', fontSize: 13, fontWeight: 700, background: supportsAppleHealth && isPro ? 'var(--bg-input)' : 'rgba(148,163,184,0.1)', color: supportsAppleHealth && isPro ? 'var(--text-primary)' : 'var(--text-muted)', cursor: supportsAppleHealth && isPro ? 'pointer' : 'not-allowed' }}>
+              {!isPro ? 'Apple Health sync requires Pro' : (supportsAppleHealth ? 'Import from Apple Health' : 'Apple Health unavailable on this browser')}
             </button>
           </div>
-        )}
-        {garminNotice && (
-          <div style={{
-            marginTop: 10,
-            borderRadius: 10,
-            padding: '9px 10px',
-            fontSize: 12,
-            border: `1px solid ${garminNotice.ok ? 'rgba(250,204,21,0.45)' : 'rgba(248,113,113,0.55)'}`,
-            color: garminNotice.ok ? '#fef08a' : '#fca5a5',
-            background: garminNotice.ok ? 'rgba(250,204,21,0.08)' : 'rgba(239,68,68,0.1)',
-          }}>
-            {garminNotice.text}
-          </div>
-        )}
-      </div>
 
-      {/* Data */}
-      <div style={card}>
-        <span style={label}>Data & Privacy</span>
-        <p style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.6 }}>
-          Your data lives on FORGE servers. We never sell your information.
-        </p>
-      </div>
+          <div style={card}>
+            <span style={label}>File Import</span>
+            <p style={{ margin: 0, fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.6 }}>Upload Garmin or Strava CSV, or workout JSON.</p>
+            <input ref={manualFileRef} type="file" accept=".csv,.json" onChange={handleManualImport} style={{ display: 'none' }} />
+            <button onClick={() => manualFileRef.current?.click()} disabled={importing} style={{ width: '100%', marginTop: 12, border: '1px solid var(--border-subtle)', borderRadius: 10, padding: '10px 12px', fontSize: 13, fontWeight: 700, background: 'var(--bg-input)', color: 'var(--text-primary)', cursor: 'pointer', opacity: importing ? 0.7 : 1 }}>
+              {importing ? 'Importing...' : 'Import File'}
+            </button>
+            {importProgress && <p style={{ fontSize: 12, marginTop: 10, color: 'var(--text-muted)' }}>{importProgress}</p>}
+          </div>
+        </div>
+      </section>
+
+      <section style={section}>
+        <h2 style={sectionTitle}>Privacy</h2>
+        <div style={sectionGrid}>
+          <div style={card}>
+            <span style={label}>Data Export</span>
+            <p style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.6, marginTop: 0 }}>Download your account, training, device, and community data as JSON.</p>
+            <button type="button" onClick={handleExportData} disabled={exporting} style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, border: '1px solid var(--border-subtle)', borderRadius: 12, padding: '11px 12px', background: 'var(--bg-input)', color: 'var(--text-primary)', fontSize: 13, fontWeight: 700, cursor: 'pointer', opacity: exporting ? 0.7 : 1 }}>
+              <Download size={14} />
+              {exporting ? 'Exporting...' : 'Export My Data'}
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section style={section}>
+        <h2 style={sectionTitle}>Account</h2>
+        <div style={sectionGrid}>
+          <div style={card}>
+            <span style={label}>Profile</span>
+            <button onClick={() => navigate('/profile')} style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+              <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)' }}>{t('profile.editProfile')}</span>
+              <ChevronRight size={18} style={{ color: 'var(--text-muted)' }} />
+            </button>
+          </div>
+
+          <div style={card}>
+            <span style={label}>Delete Account</span>
+            <p style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.6, marginTop: 0 }}>Permanently delete your account and training history.</p>
+            <button type="button" onClick={() => setShowDeleteAccount((value) => !value)} style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, border: '1px solid rgba(239,68,68,0.4)', borderRadius: 12, padding: '11px 12px', background: 'rgba(239,68,68,0.08)', color: '#fca5a5', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+              <Trash2 size={14} />
+              Delete Account
+            </button>
+            {showDeleteAccount && (
+              <div style={{ border: '1px solid rgba(239,68,68,0.35)', borderRadius: 12, padding: 12, background: 'rgba(239,68,68,0.08)', marginTop: 10 }}>
+                <p style={{ margin: 0, fontSize: 12, color: '#fca5a5' }}>Type DELETE and confirm your password to continue.</p>
+                <input value={deleteConfirm} onChange={(e) => setDeleteConfirm(e.target.value)} placeholder="DELETE" aria-label="Delete account confirmation" style={{ width: '100%', marginTop: 10, padding: '10px 12px', borderRadius: 10, border: '1px solid rgba(239,68,68,0.35)', background: 'var(--bg-input)', color: 'var(--text-primary)' }} />
+                <input type="password" value={deletePassword} onChange={(e) => setDeletePassword(e.target.value)} placeholder="Current password" aria-label="Current password" autoComplete="current-password" style={{ width: '100%', marginTop: 10, padding: '10px 12px', borderRadius: 10, border: '1px solid rgba(239,68,68,0.35)', background: 'var(--bg-input)', color: 'var(--text-primary)' }} />
+                <button type="button" onClick={handleDeleteAccount} disabled={deleting} style={{ width: '100%', marginTop: 10, border: 'none', borderRadius: 10, padding: '10px 12px', background: '#ef4444', color: '#fff', fontWeight: 800, cursor: 'pointer', opacity: deleting ? 0.7 : 1 }}>
+                  {deleting ? 'Deleting...' : 'Permanently Delete Account'}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
+
+      {privacyNotice && (
+        <div style={{ marginBottom: 16, borderRadius: 10, padding: '9px 10px', fontSize: 12, border: `1px solid ${privacyNotice.ok ? 'rgba(34,197,94,0.35)' : 'rgba(239,68,68,0.35)'}`, color: privacyNotice.ok ? '#86efac' : '#fca5a5', background: privacyNotice.ok ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.1)' }}>
+          {privacyNotice.text}
+        </div>
+      )}
 
       {importNotice && (
         <div style={{
@@ -574,9 +614,11 @@ export default function Settings() {
       )}
 
       {/* App version */}
-      <p style={{ textAlign: 'center', fontSize: 12, color: 'var(--text-muted)', opacity: 0.5, marginTop: 24 }}>
+      <button type="button" onClick={handleVersionTap} style={{ display: 'block', width: '100%', textAlign: 'center', fontSize: 12, color: 'var(--text-muted)', opacity: 0.5, marginTop: 24, background: 'none', border: 'none', padding: 0, cursor: 'default' }} aria-label="App version">
         FORGE v1.0 · Built to adapt.
-      </p>
+      </button>
+
+      <TestFlightDebugPanel open={showDebugPanel} onClose={() => setShowDebugPanel(false)} />
     </div>
   )
 }

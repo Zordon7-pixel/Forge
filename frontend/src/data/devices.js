@@ -6,23 +6,15 @@ export const DEVICES_REGISTRY = [
     id: 'apple-watch',
     name: 'Apple Watch',
     type: 'smartwatch',
-    status: 'coming_soon', // 'connected' | 'available' | 'coming_soon'
+    status: 'available', // 'connected' | 'available' | 'coming_soon'
     icon: 'Watch',
     capabilities: ['heart-rate', 'gps', 'pace', 'cadence', 'elevation'],
-  },
-  {
-    id: 'meta-glasses',
-    name: 'Meta Ray-Ban Glasses',
-    type: 'ar-glasses',
-    status: 'connected', // Assumes user has synced; fetch real status from /api/devices/meta-glasses
-    icon: 'Glasses',
-    capabilities: ['route-guidance', 'real-time-metrics', 'voice-control'],
   },
   {
     id: 'garmin',
     name: 'Garmin',
     type: 'smartwatch',
-    status: 'coming_soon',
+    status: 'available',
     icon: 'Watch',
     capabilities: ['heart-rate', 'gps', 'training-load', 'recovery-time'],
   },
@@ -30,17 +22,17 @@ export const DEVICES_REGISTRY = [
     id: 'whoop',
     name: 'Whoop',
     type: 'wearable',
-    status: 'coming_soon',
+    status: 'available',
     icon: 'Zap',
     capabilities: ['recovery', 'strain', 'sleep-tracking'],
   },
   {
-    id: 'polar',
-    name: 'Polar',
-    type: 'smartwatch',
-    status: 'coming_soon',
+    id: 'oura',
+    name: 'Oura',
+    type: 'ring',
+    status: 'available',
     icon: 'Heart',
-    capabilities: ['heart-rate', 'training-zones', 'recovery'],
+    capabilities: ['readiness', 'sleep-tracking', 'hrv'],
   },
 ]
 

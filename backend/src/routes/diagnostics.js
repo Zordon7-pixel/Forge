@@ -2,8 +2,25 @@ const router = require('express').Router();
 const auth = require('../middleware/auth');
 const { pool, dbGet, dbAll } = require('../db');
 
-// GET /api/diagnostics — health check (any logged-in user)
-router.get('/', auth, async (req, res) => {
+function diagnosticsAdmins() {
+  return String(process.env.DIAGNOSTICS_ADMIN_EMAILS || process.env.ADMIN_EMAILS || '')
+    .split(',')
+    .map(email => email.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function requireDiagnosticsAdmin(req, res, next) {
+  const admins = diagnosticsAdmins();
+  const email = String(req.user?.email || '').toLowerCase();
+  if (email === 'demo@forge.app' && process.env.DIAGNOSTICS_ALLOW_DEMO_ADMIN !== 'true') {
+    return res.status(403).json({ error: 'Diagnostics are restricted to admins.' });
+  }
+  if (admins.length > 0 && admins.includes(email)) return next();
+  return res.status(403).json({ error: 'Diagnostics are restricted to admins.' });
+}
+
+// GET /api/diagnostics — health check (admin only)
+router.get('/', auth, requireDiagnosticsAdmin, async (req, res) => {
   const checks = [];
 
   // 1. DB connection check (replaces SQLite PRAGMA integrity_check)
@@ -45,8 +62,8 @@ router.get('/', auth, async (req, res) => {
   res.json({ ok: checks.every((c) => c.ok), canHeal: checks.some((c) => !c.ok), checks });
 });
 
-// POST /api/diagnostics/heal — auto-fix
-router.post('/heal', auth, async (req, res) => {
+// POST /api/diagnostics/heal — auto-fix (admin only)
+router.post('/heal', auth, requireDiagnosticsAdmin, async (req, res) => {
   const actions = [];
 
   // Re-seed if users missing
@@ -68,5 +85,7 @@ router.post('/heal', auth, async (req, res) => {
   if (actions.length === 0) actions.push('No issues found — everything looks healthy');
   res.json({ ok: true, actions });
 });
+
+router.requireDiagnosticsAdmin = requireDiagnosticsAdmin;
 
 module.exports = router;

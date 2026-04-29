@@ -51,7 +51,7 @@ export default function RunHub() {
   }, [recommendation])
 
   return (
-    <div className="space-y-4 py-2">
+    <div className="space-y-4 py-2 pb-16">
       <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>
         <h2 className="text-2xl font-bold mb-1" style={{ color: 'var(--text-primary)' }}>Run Hub</h2>
         <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Your last run translated into runner language.</p>
@@ -61,7 +61,18 @@ export default function RunHub() {
         {loading ? (
           <p style={{ color: 'var(--text-muted)' }}>Loading run stats...</p>
         ) : !latestRun ? (
-          <p style={{ color: 'var(--text-muted)' }}>No runs yet. Log one to see your pace zone.</p>
+          <div>
+            <p className="text-base font-bold" style={{ color: 'var(--text-primary)' }}>First run sets your baseline</p>
+            <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>Warm up, log the run, then Forge will translate your pace and adjust the next recommendation.</p>
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <Link to="/warmup" className="rounded-xl py-2 text-center text-sm font-semibold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', textDecoration: 'none' }}>
+                Warm Up
+              </Link>
+              <Link to="/log-run" className="rounded-xl py-2 text-center text-sm font-semibold" style={{ background: 'var(--accent)', color: '#000', textDecoration: 'none' }}>
+                Log Run
+              </Link>
+            </div>
+          </div>
         ) : (
           <>
             <p className="text-sm mb-1" style={{ color: 'var(--text-muted)' }}>Latest Pace</p>

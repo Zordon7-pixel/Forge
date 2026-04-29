@@ -47,11 +47,22 @@ function FeedTab() {
   const [commentInputs, setCommentInputs] = useState({})
   const [openComments, setOpenComments] = useState({})
   const [commentsByActivity, setCommentsByActivity] = useState({})
+  const [socialError, setSocialError] = useState('')
+
+  const dedupeUsers = (users) => {
+    const seen = new Set()
+    return (Array.isArray(users) ? users : []).filter((user) => {
+      const key = user?.id || String(user?.name || '').trim().toLowerCase()
+      if (!key || seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+  }
 
   const loadFeed = () => {
     api.get('/social/feed').then((r) => {
       setItems(r.data?.items || [])
-      setSuggestedUsers(r.data?.suggested_users || [])
+      setSuggestedUsers(dedupeUsers(r.data?.suggested_users))
     }).catch(() => {
       setItems([])
       setSuggestedUsers([])
@@ -80,20 +91,26 @@ function FeedTab() {
 
   const toggleFollow = async (userId, isFollowing) => {
     try {
+      setSocialError('')
       if (isFollowing) await api.delete(`/social/unfollow/${userId}`)
       else await api.post(`/social/follow/${userId}`)
       setItems((prev) => prev.map((it) => (it.user_id === userId ? { ...it, is_following: !isFollowing } : it)))
       setSuggestedUsers((prev) => prev.map((u) => (u.id === userId ? { ...u, is_following: !isFollowing } : u)))
-    } catch {}
+    } catch {
+      setSocialError('Could not update follow status.')
+    }
   }
 
   const toggleLike = async (activityId) => {
     try {
+      setSocialError('')
       const res = await api.post(`/social/like/${activityId}`)
       setItems((prev) => prev.map((it) => (
         it.id === activityId ? { ...it, liked: Boolean(res.data?.liked), likes_count: Number(res.data?.likes_count || 0) } : it
       )))
-    } catch {}
+    } catch {
+      setSocialError('Could not update like.')
+    }
   }
 
   const fetchComments = async (activityId) => {
@@ -115,7 +132,9 @@ function FeedTab() {
         it.id === activityId ? { ...it, comments_count: Number(it.comments_count || 0) + 1 } : it
       )))
       await fetchComments(activityId)
-    } catch {}
+    } catch {
+      setSocialError('Could not post comment.')
+    }
   }
 
   if (items.length === 0) {
@@ -194,6 +213,9 @@ function FeedTab() {
           </div>
         </div>
       )}
+      {socialError && (
+        <p className="text-xs" style={{ color: 'var(--accent)' }}>{socialError}</p>
+      )}
 
       {items.map((p) => {
         const runData = p.type === 'run' ? p.data || {} : {}
@@ -231,7 +253,7 @@ function FeedTab() {
             </p>
 
             <div className="mt-3 flex items-center gap-3">
-              <button onClick={() => toggleLike(p.id)} className="flex items-center gap-1 text-xs" style={{ color: p.liked ? '#EAB308' : 'var(--text-muted)' }}>
+              <button type="button" aria-label={`${p.liked ? 'Unlike' : 'Like'} activity with ${Number(p.likes_count || 0)} likes`} onClick={() => toggleLike(p.id)} className="flex items-center gap-1 text-xs" style={{ color: p.liked ? '#EAB308' : 'var(--text-muted)' }}>
                 <Heart size={13} fill={p.liked ? '#EAB308' : 'none'} />
                 {Number(p.likes_count || 0)}
               </button>
@@ -241,6 +263,7 @@ function FeedTab() {
                   setOpenComments((prev) => ({ ...prev, [p.id]: nextOpen }))
                   if (nextOpen) await fetchComments(p.id)
                 }}
+                aria-label={`Show comments, ${Number(p.comments_count || 0)} comments`}
                 className="flex items-center gap-1 text-xs"
                 style={{ color: 'var(--text-muted)' }}
               >
@@ -291,6 +314,7 @@ function WorkoutsTab() {
   const [sort, setSort] = useState('popular')
   const [target, setTarget] = useState('')
   const [items, setItems] = useState([])
+  const [saveStatus, setSaveStatus] = useState({})
 
   useEffect(() => {
     api
@@ -326,12 +350,17 @@ function WorkoutsTab() {
           <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{w.target} · Used {w.usage_count || 0} times</p>
           <p className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>{(w.main || []).slice(0, 2).map(m => m.name || m).join(' · ')}</p>
           <button
-            onClick={() => api.post(`/community/workouts/${w.id}/save`).then(() => alert('Saved!')).catch(() => alert('Failed to save workout'))}
+            onClick={() => api.post(`/community/workouts/${w.id}/save`)
+              .then(() => setSaveStatus(prev => ({ ...prev, [w.id]: 'Saved to your plan.' })))
+              .catch(() => setSaveStatus(prev => ({ ...prev, [w.id]: 'Could not save workout.' })))}
             className="mt-2 rounded-lg px-3 py-1.5 text-xs font-semibold"
             style={{ background: 'var(--accent)', color: '#000' }}
           >
             Save to My Plan
           </button>
+          {saveStatus[w.id] && (
+            <p className="mt-2 text-xs" style={{ color: saveStatus[w.id].startsWith('Saved') ? 'var(--text-muted)' : 'var(--accent)' }}>{saveStatus[w.id]}</p>
+          )}
         </div>
       ))}
       {items.length === 0 && (
@@ -408,6 +437,8 @@ function RouteCard({ route, onLike }) {
           </p>
         </div>
         <button
+          type="button"
+          aria-label={`${route.liked ? 'Unlike' : 'Like'} route ${route.title || ''} with ${Number(route.likes_count || 0)} likes`}
           onClick={() => onLike(route.id)}
           style={{
             background: route.liked ? 'rgba(234,179,8,0.15)' : 'var(--bg-input)',

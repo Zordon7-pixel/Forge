@@ -157,16 +157,18 @@ router.post('/:id/sets', auth, async (req, res) => {
   try {
     const { exercise_name, muscle_group, reps, weight_lbs, set_number } = req.body;
     if (!exercise_name) return res.status(400).json({ error: 'exercise_name required' });
+    const session = await dbGet('SELECT muscle_groups FROM workout_sessions WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
+    if (!session) return res.status(404).json({ error: 'Session not found' });
+
     const id = uuidv4();
     await dbRun('INSERT INTO workout_sets (id, session_id, user_id, exercise_name, muscle_group, set_number, reps, weight_lbs) VALUES (?,?,?,?,?,?,?,?)',
       [id, req.params.id, req.user.id, exercise_name, muscle_group || null, set_number || 1, reps || null, weight_lbs || null]);
 
-    const session = await dbGet('SELECT muscle_groups FROM workout_sessions WHERE id=?', [req.params.id]);
     let groups = [];
     try { groups = JSON.parse(session?.muscle_groups || '[]'); } catch {}
     if (muscle_group && !groups.includes(muscle_group)) {
       groups.push(muscle_group);
-      await dbRun('UPDATE workout_sessions SET muscle_groups=? WHERE id=?', [JSON.stringify(groups), req.params.id]);
+      await dbRun('UPDATE workout_sessions SET muscle_groups=? WHERE id=? AND user_id=?', [JSON.stringify(groups), req.params.id, req.user.id]);
     }
 
     const set = await dbGet('SELECT * FROM workout_sets WHERE id=?', [id]);

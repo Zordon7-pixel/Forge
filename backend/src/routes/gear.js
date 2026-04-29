@@ -59,8 +59,8 @@ router.patch('/shoes/:id', auth, async (req, res) => {
     const updates = Object.entries(req.body).filter(([k]) => allowed.includes(k));
     if (!updates.length) return res.status(400).json({ error: 'Nothing to update' });
     await dbRun(
-      `UPDATE gear_shoes SET ${updates.map(([k]) => k+'=?').join(', ')} WHERE id=?`,
-      [...updates.map(([,v]) => v), req.params.id]
+      `UPDATE gear_shoes SET ${updates.map(([k]) => k+'=?').join(', ')} WHERE id=? AND user_id=?`,
+      [...updates.map(([,v]) => v), req.params.id, req.user.id]
     );
     const updated = await dbGet('SELECT * FROM gear_shoes WHERE id=?', [req.params.id]);
     res.json(updated);

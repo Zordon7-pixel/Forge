@@ -151,9 +151,12 @@ router.post('/adjust-today', auth, checkAiLimit('adjust_today'), async (req, res
       return res.status(500).json({ error: 'Failed to generate adjustment' });
     }
 
+    const ALLOWED_INTENSITIES = ['light', 'moderate', 'hard'];
+    const validatedIntensity = ALLOWED_INTENSITIES.includes(result.adjusted_intensity) ? result.adjusted_intensity : 'moderate';
+
     res.json({
       recommendation: result.recommendation,
-      adjusted_intensity: result.adjusted_intensity,
+      adjusted_intensity: validatedIntensity,
       skip_reason: result.skip_reason || null,
       readiness_score: readinessScore,
       checkin_summary: checkin ? {

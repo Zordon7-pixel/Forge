@@ -4,7 +4,8 @@
   "main": "src/app.js",
   "scripts": {
     "start": "node src/app.js",
-    "dev": "node src/app.js"
+    "dev": "node src/app.js",
+    "check:account-data": "node scripts/check-account-data-coverage.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",

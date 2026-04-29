@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ChevronRight, Settings as SettingsIcon, User, Dumbbell, HeartPulse, Eye, Activity } from 'lucide-react'
+import { ChevronRight, Settings as SettingsIcon, User, Dumbbell, HeartPulse, Activity } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import api from '../lib/api'
 import { clearToken } from '../lib/tokenStore'
@@ -12,64 +12,19 @@ const personalityOptions = [
   { key: 'training_partner', label: 'Training Partner', description: 'Supportive, runs with you mentally' }
 ]
 
-function MetaGlassesCard() {
-  const [status, setStatus] = useState(null)
-  const [dismissed, setDismissed] = useState(() => localStorage.getItem('meta_glasses_dismissed') === 'true')
+const PROFILE_LIMITS = {
+  age: { min: 10, max: 110, label: 'Age' },
+  weight_lbs: { min: 50, max: 700, label: 'Weight' },
+  max_heart_rate: { min: 100, max: 220, label: 'Max heart rate' },
+  weekly_miles: { min: 0, max: 300, label: 'Weekly miles' },
+}
 
-  useEffect(() => {
-    api.get('/watch-sync/meta/status').then(r => setStatus(r.data)).catch(() => {})
-  }, [])
-
-  if (dismissed) return null
-
-  return (
-    <div style={{
-      background: 'var(--bg-card)', borderRadius: 16, padding: 16,
-      border: '1px solid var(--border-subtle)', marginBottom: 12,
-    }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{ width: 36, height: 36, borderRadius: 10, background: 'rgba(234,179,8,0.1)', border: '1px solid rgba(234,179,8,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <Eye size={18} color="#EAB308" />
-          </div>
-          <div>
-            <p style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>Meta Ray-Ban Glasses</p>
-            <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '2px 0 0' }}>Smart glasses integration</p>
-          </div>
-        </div>
-        <span style={{ fontSize: 10, fontWeight: 700, color: '#EAB308', background: 'rgba(234,179,8,0.1)', padding: '3px 8px', borderRadius: 6, border: '1px solid rgba(234,179,8,0.3)' }}>
-          Coming Soon
-        </span>
-      </div>
-
-      <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12, lineHeight: 1.5 }}>
-        When Meta opens their API, FORGE will automatically sync: activity detection, step tracking, ambient audio coaching, and POV workout capture.
-      </p>
-
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
-        {['Activity Detection', 'Step Tracking', 'Voice Coaching', 'POV Capture'].map(cap => (
-          <span key={cap} style={{ fontSize: 10, padding: '3px 8px', borderRadius: 20, background: 'var(--bg-input)', color: 'var(--text-muted)', border: '1px solid var(--border-subtle)' }}>
-            {cap}
-          </span>
-        ))}
-      </div>
-
-      <div style={{ display: 'flex', gap: 8 }}>
-        <button
-          style={{ flex: 1, padding: '8px 0', borderRadius: 10, background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)', fontSize: 13, fontWeight: 600, cursor: 'not-allowed', opacity: 0.6 }}
-          disabled
-        >
-          Connect Meta Account
-        </button>
-        <button
-          onClick={() => { localStorage.setItem('meta_glasses_dismissed', 'true'); setDismissed(true) }}
-          style={{ padding: '8px 12px', borderRadius: 10, background: 'none', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)', fontSize: 12, cursor: 'pointer' }}
-        >
-          Dismiss
-        </button>
-      </div>
-    </div>
-  )
+function validateNumberRange(value, { min, max, label }) {
+  if (value === '') return ''
+  const number = Number(value)
+  if (!Number.isFinite(number)) return `${label} must be a number.`
+  if (number < min || number > max) return `${label} must be between ${min} and ${max}.`
+  return ''
 }
 
 export default function Profile() {
@@ -80,7 +35,7 @@ export default function Profile() {
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState('')
   const [form, setForm] = useState({
-    name: '', email: '', age: '', weight_lbs: '', sex: 'male', fitness_level: 'beginner', primary_goal: 'general_fitness', injury_status: 'none', injury_detail: '', coach_personality: 'mentor', weekly_miles: ''
+    name: '', email: '', age: '', weight_lbs: '', max_heart_rate: '', sex: 'male', fitness_level: 'beginner', primary_goal: 'general_fitness', injury_status: 'none', injury_detail: '', coach_personality: 'mentor', weekly_miles: ''
   })
   const [profileStats, setProfileStats] = useState(null)
   const [injuryMode, setInjuryMode] = useState(false)
@@ -100,6 +55,7 @@ export default function Profile() {
           email: user.email || '',
           age: user.age ?? '',
           weight_lbs: user.weight_lbs ?? '',
+          max_heart_rate: user.max_heart_rate ?? '',
           sex: user.sex || 'male',
           fitness_level: user.fitness_level || (user.comeback_mode ? 'intermediate' : 'beginner'),
           primary_goal: user.primary_goal || user.goal_type || 'general_fitness',
@@ -120,22 +76,35 @@ export default function Profile() {
 
   const save = async e => {
     e.preventDefault(); setError(''); setSaving(true); setSaved(false)
+    const validationError =
+      validateNumberRange(form.age, PROFILE_LIMITS.age) ||
+      validateNumberRange(form.weight_lbs, PROFILE_LIMITS.weight_lbs) ||
+      validateNumberRange(form.max_heart_rate, PROFILE_LIMITS.max_heart_rate) ||
+      validateNumberRange(form.weekly_miles, PROFILE_LIMITS.weekly_miles)
+    if (validationError) {
+      setError(validationError)
+      setSaving(false)
+      return
+    }
+
     try {
+      const injuryStatus = injuryMode ? (form.injury_status === 'none' ? 'recovering' : form.injury_status) : 'none'
       await api.put('/auth/me/profile', {
         name: form.name,
         age: form.age === '' ? null : Number(form.age),
         weight_lbs: form.weight_lbs === '' ? null : Number(form.weight_lbs),
+        max_heart_rate: form.max_heart_rate === '' ? null : Number(form.max_heart_rate),
         sex: form.sex,
         fitness_level: form.fitness_level,
         primary_goal: form.primary_goal,
-        injury_status: form.injury_status,
-        injury_detail: form.injury_detail,
+        injury_status: injuryStatus,
+        injury_detail: injuryMode ? (injuryDescription || form.injury_detail) : '',
         coach_personality: form.coach_personality,
         weekly_miles: form.weekly_miles === '' ? null : Number(form.weekly_miles),
         weekly_miles_current: form.weekly_miles === '' ? null : Number(form.weekly_miles),
         goal_type: form.primary_goal,
-        injury_notes: form.injury_detail,
-        comeback_mode: form.injury_status !== 'none' ? 1 : 0
+        injury_notes: injuryMode ? (injuryDescription || form.injury_detail) : '',
+        comeback_mode: injuryStatus !== 'none' ? 1 : 0
       })
       await api.post('/auth/injury', {
         injury_mode: injuryMode,
@@ -193,14 +162,17 @@ export default function Profile() {
             <div style={sectionStyle}>
               <div style={{ ...sectionLabel, display: 'flex', alignItems: 'center', gap: 8 }}><User size={14} /> Identity</div>
               <div style={{ marginBottom: 12 }}>
-                <input type="text" placeholder="Full name" value={form.name} onChange={e => update('name', e.target.value)} style={inputStyle} />
+                <input type="text" aria-label="Full name" placeholder="Full name" value={form.name} onChange={e => update('name', e.target.value)} style={inputStyle} />
               </div>
               <div style={{ marginBottom: 12 }}>
-                <input type="email" value={form.email} readOnly style={{ ...inputStyle, color: 'var(--text-muted)' }} />
+                <input type="email" aria-label="Email" value={form.email} readOnly style={{ ...inputStyle, color: 'var(--text-muted)' }} />
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
-                <input type="number" min="0" placeholder="Age" value={form.age} onChange={e => update('age', e.target.value)} style={inputStyle} />
-                <input type="number" min="0" step="0.1" placeholder="Weight (lbs)" value={form.weight_lbs} onChange={e => update('weight_lbs', e.target.value)} style={inputStyle} />
+                <input type="number" aria-label="Age" min={PROFILE_LIMITS.age.min} max={PROFILE_LIMITS.age.max} placeholder="Age" value={form.age} onChange={e => update('age', e.target.value)} style={inputStyle} />
+                <input type="number" aria-label="Weight in pounds" min={PROFILE_LIMITS.weight_lbs.min} max={PROFILE_LIMITS.weight_lbs.max} step="0.1" placeholder="Weight (lbs)" value={form.weight_lbs} onChange={e => update('weight_lbs', e.target.value)} style={inputStyle} />
+              </div>
+              <div style={{ marginBottom: 12 }}>
+                <input type="number" aria-label="Max heart rate" min={PROFILE_LIMITS.max_heart_rate.min} max={PROFILE_LIMITS.max_heart_rate.max} placeholder="Max heart rate" value={form.max_heart_rate} onChange={e => update('max_heart_rate', e.target.value)} style={inputStyle} />
               </div>
               <div style={{ display: 'flex', gap: 8 }}>
                 {['male', 'female'].map(s => (
@@ -239,7 +211,7 @@ export default function Profile() {
               </div>
 
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <input type="number" min="0" step="0.1" placeholder="0.0" value={form.weekly_miles} onChange={e => update('weekly_miles', e.target.value)} style={inputStyle} />
+                <input type="number" aria-label="Weekly miles" min={PROFILE_LIMITS.weekly_miles.min} max={PROFILE_LIMITS.weekly_miles.max} step="0.1" placeholder="0.0" value={form.weekly_miles} onChange={e => update('weekly_miles', e.target.value)} style={inputStyle} />
                 <span style={{ color: 'var(--text-muted)', fontSize: 13, whiteSpace: 'nowrap' }}>miles/week</span>
               </div>
             </div>
@@ -301,23 +273,9 @@ export default function Profile() {
 
               {injuryMode && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <input value={injuryDescription} onChange={e => setInjuryDescription(e.target.value)} placeholder="What is injured?" style={inputStyle} />
-                  <input value={injuryLimitations} onChange={e => setInjuryLimitations(e.target.value)} placeholder="Current limitations" style={inputStyle} />
+                  <input aria-label="Injury description" value={injuryDescription} onChange={e => setInjuryDescription(e.target.value)} placeholder="What is injured?" style={inputStyle} />
+                  <input aria-label="Injury limitations" value={injuryLimitations} onChange={e => setInjuryLimitations(e.target.value)} placeholder="Current limitations" style={inputStyle} />
                 </div>
-              )}
-            </div>
-
-            <div style={sectionStyle}>
-              <div style={sectionLabel}>Injury Details</div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: 8, marginBottom: 10 }}>
-                {['none', 'recovering', 'chronic'].map(status => (
-                  <button key={status} type="button" onClick={() => update('injury_status', status)} style={form.injury_status === status ? pillActive : pillInactive}>
-                    {status.charAt(0).toUpperCase() + status.slice(1)}
-                  </button>
-                ))}
-              </div>
-              {form.injury_status !== 'none' && (
-                <textarea rows={3} placeholder="Injury details" value={form.injury_detail} onChange={e => update('injury_detail', e.target.value)} style={{ ...inputStyle, resize: 'vertical' }} />
               )}
             </div>
 
@@ -326,7 +284,7 @@ export default function Profile() {
           </form>
 
           {/* Sticky save button - stays visible while scrolling */}
-          <div style={{ position: 'sticky', bottom: 120, zIndex: 20, background: 'var(--bg-base)', paddingTop: 8, paddingBottom: 8 }}>
+          <div style={{ position: 'sticky', bottom: 80, zIndex: 20, background: 'var(--bg-base)', paddingTop: 8, paddingBottom: 8 }}>
             <button form="profile-form" type="submit" disabled={saving} className="w-full rounded-xl py-3 font-semibold disabled:opacity-70" style={{ background: 'var(--accent)', color: '#000' }}>{saving ? t('common.loading') : t('profile.save')}</button>
           </div>
 
@@ -356,11 +314,6 @@ export default function Profile() {
               </div>
               <ChevronRight size={16} className="text-[var(--text-muted)]" />
             </div>
-          </div>
-
-          <div style={{ marginTop: 16 }}>
-            <p style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 }}>Connected Devices</p>
-            <MetaGlassesCard />
           </div>
 
           <button type="button" onClick={logout} className="w-full bg-transparent py-3 font-medium mt-2" style={{ color: 'var(--text-muted)', border: 'none' }}>Log Out</button>

@@ -54,6 +54,7 @@ export default function History() {
   const [selectedRun, setSelectedRun] = useState(null)
   const [selectedWorkout, setSelectedWorkout] = useState(null)
   const [showMissedModal, setShowMissedModal] = useState(false)
+  const [pendingDelete, setPendingDelete] = useState(null)
 
   const currentYear = new Date().getFullYear()
   const [selectedYear, setSelectedYear] = useState(null)
@@ -96,18 +97,22 @@ export default function History() {
     }
   }, [loading, location.search, runs, workoutSessions])
 
-  const deleteRun = async (id, e) => {
+  const requestDelete = (type, item, e) => {
     e.stopPropagation()
-    if (!confirm('Delete this run?')) return
-    await api.delete(`/runs/${id}`)
-    setRuns(prev => prev.filter(r => r.id !== id))
+    setPendingDelete({ type, item })
   }
 
-  const deleteLift = async (id, e) => {
-    e.stopPropagation()
-    if (!confirm('Delete this lift?')) return
-    await api.delete(`/lifts/${id}`)
-    setLifts(prev => prev.filter(l => l.id !== id))
+  const confirmDelete = async () => {
+    if (!pendingDelete) return
+    const { type, item } = pendingDelete
+    setPendingDelete(null)
+    if (type === 'run') {
+      await api.delete(`/runs/${item.id}`)
+      setRuns(prev => prev.filter(r => r.id !== item.id))
+      return
+    }
+    await api.delete(`/lifts/${item.id}`)
+    setLifts(prev => prev.filter(l => l.id !== item.id))
   }
 
   const updateRunInState = updated => {
@@ -328,8 +333,8 @@ export default function History() {
                 <div className="flex items-center gap-2">
                   {paceZone ? <span className="rounded-full px-2 py-1 text-xs font-semibold" style={{ background: `${paceZone.color}22`, color: paceZone.color }}>{`Zone ${paceZone.zone}`}</span> : null}
                   {run.perceived_effort ? <span className="rounded-full px-2 py-1 text-xs" style={{ background: 'var(--bg-input)', color: 'var(--text-muted)' }}>Effort {run.perceived_effort}/10</span> : null}
-                  <button onClick={e => { e.stopPropagation(); setEditingRun(run) }} className="transition-colors" style={{ color: 'var(--text-muted)' }}><Pencil size={14} /></button>
-                  <button onClick={e => deleteRun(run.id, e)} className="transition-colors" style={{ color: 'var(--text-muted)' }}><Trash2 size={14} /></button>
+                  <button type="button" aria-label="Edit run" title="Edit run" onClick={e => { e.stopPropagation(); setEditingRun(run) }} className="transition-colors" style={{ color: 'var(--text-muted)' }}><Pencil size={14} /></button>
+                  <button type="button" aria-label="Delete run" title="Delete run" onClick={e => requestDelete('run', run, e)} className="transition-colors" style={{ color: 'var(--text-muted)' }}><Trash2 size={14} /></button>
                 </div>
               </div>
                 )
@@ -393,8 +398,8 @@ export default function History() {
                 <div className="flex items-center justify-between">
                   <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{new Date(lift.date || lift.created_at).toLocaleDateString()}</p>
                   <div className="flex items-center gap-2">
-                    <button onClick={e => { e.stopPropagation(); setEditingLift(lift) }} className="transition-colors" style={{ color: 'var(--text-muted)' }}><Pencil size={14} /></button>
-                    <button onClick={e => deleteLift(lift.id, e)} className="transition-colors" style={{ color: 'var(--text-muted)' }}><Trash2 size={14} /></button>
+                    <button type="button" aria-label="Edit lift" title="Edit lift" onClick={e => { e.stopPropagation(); setEditingLift(lift) }} className="transition-colors" style={{ color: 'var(--text-muted)' }}><Pencil size={14} /></button>
+                    <button type="button" aria-label="Delete lift" title="Delete lift" onClick={e => requestDelete('lift', lift, e)} className="transition-colors" style={{ color: 'var(--text-muted)' }}><Trash2 size={14} /></button>
                   </div>
                 </div>
                 <p className="mt-1 font-semibold" style={{ color: 'var(--text-primary)' }}>{lift.exercise_name}</p>
@@ -449,6 +454,19 @@ export default function History() {
       {editingRun && <EditRunModal run={editingRun} onSave={updateRunInState} onClose={() => setEditingRun(null)} />}
       {editingLift && <EditLiftModal lift={editingLift} onSave={updateLiftInState} onClose={() => setEditingLift(null)} />}
       {showMissedModal && <MissedWorkoutModal onClose={() => setShowMissedModal(false)} />}
+
+      {pendingDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-sm rounded-xl border p-4" style={{ background: 'var(--bg-card)', borderColor: 'var(--border-subtle)' }}>
+            <h3 className="text-base font-bold" style={{ color: 'var(--text-primary)' }}>Delete {pendingDelete.type}?</h3>
+            <p className="mt-2 text-sm" style={{ color: 'var(--text-muted)' }}>This cannot be undone.</p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button type="button" onClick={() => setPendingDelete(null)} className="rounded-lg border px-4 py-2 text-sm" style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}>Cancel</button>
+              <button type="button" onClick={confirmDelete} className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: 'var(--accent)', color: '#000' }}>Delete</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {selectedRun && (
         <RunDetailModal

@@ -27,6 +27,10 @@ function average(list) {
   return total / list.length
 }
 
+function importNativeModule(name) {
+  return new Function('name', 'return import(name)')(name)
+}
+
 class HealthService {
   constructor() {
     this.healthKit = null
@@ -36,7 +40,7 @@ class HealthService {
     if (this.healthKit) return this.healthKit
 
     try {
-      const mod = await import('react-native-health')
+      const mod = await importNativeModule('react-native-health')
       this.healthKit = mod?.default || mod
       return this.healthKit
     } catch {
@@ -120,6 +124,7 @@ class HealthService {
     const { data } = await api.post('/health/sync', {
       steps_today: metrics.stepsToday,
       calories_today: metrics.caloriesBurnedToday,
+      avg_hr_bpm_last_workout: metrics.avgHeartRateFromLastRun,
       avg_heart_rate_last_run: metrics.avgHeartRateFromLastRun,
       total_miles_this_week: metrics.totalMilesThisWeek,
     })
