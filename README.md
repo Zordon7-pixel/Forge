@@ -14,7 +14,7 @@ Active project docs:
 - Production: `https://forge-production-773f.up.railway.app/`
 
 Latest known production deploy:
-- Railway deployment: `18ed59b9-e191-46d2-bec5-382b29fc39aa`
+- Railway deployment: `59a652bf-1df5-4a17-a4a6-4b729b31c959`
 - Frontend bundle: `/assets/index-KbY4Avz3.js`
 - iOS version/build: `1.0.3` / `8`
 - Bundle identifier: `com.zordon.forge`
