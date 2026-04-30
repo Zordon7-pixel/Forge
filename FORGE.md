@@ -5,7 +5,7 @@ This file holds Forge's product history, deployment notes, shipped phase log, kn
 ## Current Production
 
 - Production URL: `https://forge-production-773f.up.railway.app/`
-- Latest checked deployment: `b2836789-bdb5-47f2-8d30-2e7a1a811212`
+- Latest checked deployment: `18ed59b9-e191-46d2-bec5-382b29fc39aa`
 - Latest checked bundle: `/assets/index-KbY4Avz3.js`
 - iOS version/build: `1.0.3` / `8`
 - Bundle identifier: `com.zordon.forge`
@@ -46,6 +46,10 @@ Do not reintroduce these patterns.
 | Phase 1 cleanup placeholders visible | frontend/src/pages/Dashboard.jsx, frontend/src/pages/Settings.jsx, frontend/src/pages/LogRun.jsx | Removed duplicate Dashboard quick check-in, Settings legacy distance card, Settings notifications placeholder, and leftover run-log `coming soon` copy |
 | Account export/delete had incomplete table coverage | backend/src/lib/accountDataCoverage.js, backend/src/routes/auth.js, backend/scripts/check-account-data-coverage.js | Export/delete now share a coverage map, include social/PT/plans/device/user-owned data, exclude secrets, and ship with a coverage script |
 | Account deletion only required typed DELETE | backend/src/routes/auth.js, frontend/src/pages/Settings.jsx | Delete account now requires current password plus typed `DELETE`; missing/invalid password blocks deletion |
+
+## Authorization Model
+
+- Activity photos use owner-scoped writes and public authenticated reads by design. `POST /api/social/:activity_type/:activity_id/photo` in `backend/src/routes/social.js` validates parent activity ownership before insert/update, while `GET /api/social/:activity_type/:activity_id/photo` returns media to any signed-in user so public feed photos render consistently.
 
 ## 2026-04-28/29 QA and Product Hardening
 

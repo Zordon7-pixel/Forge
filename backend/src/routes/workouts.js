@@ -26,7 +26,7 @@ router.post('/strength', auth, async (req, res) => {
         );
       }
       if (muscleGroups.length) {
-        await dbRun('UPDATE workout_sessions SET muscle_groups=? WHERE id=?', [JSON.stringify(muscleGroups), id]);
+        await dbRun('UPDATE workout_sessions SET muscle_groups=? WHERE id=? AND user_id=?', [JSON.stringify(muscleGroups), id, req.user.id]);
       }
     }
 
@@ -36,7 +36,7 @@ router.post('/strength', auth, async (req, res) => {
     const durationHours = 45 / 60;
     const calories_burned = Math.round(MET_STRENGTH * weightKg * durationHours);
     if (calories_burned > 0) {
-      await dbRun('UPDATE workout_sessions SET calories_burned=? WHERE id=?', [calories_burned, id]);
+      await dbRun('UPDATE workout_sessions SET calories_burned=? WHERE id=? AND user_id=?', [calories_burned, id, req.user.id]);
     }
 
     res.status(201).json({
@@ -78,8 +78,8 @@ router.put('/:id/end', auth, async (req, res) => {
       total_seconds = Math.round((new Date(ended_at) - new Date(session.started_at)) / 1000);
     }
 
-    await dbRun('UPDATE workout_sessions SET ended_at=?, notes=?, total_seconds=? WHERE id=?',
-      [ended_at, notes || null, total_seconds, req.params.id]);
+    await dbRun('UPDATE workout_sessions SET ended_at=?, notes=?, total_seconds=? WHERE id=? AND user_id=?',
+      [ended_at, notes || null, total_seconds, req.params.id, req.user.id]);
 
     const userProfile = await dbGet('SELECT weight_lbs FROM users WHERE id=?', [req.user.id]);
     const weightKg = (userProfile?.weight_lbs || 154.35) / 2.205;
@@ -87,7 +87,7 @@ router.put('/:id/end', auth, async (req, res) => {
     const durationHours = (total_seconds > 0 ? total_seconds : 45 * 60) / 3600;
     const calories_burned = Math.round(MET_STRENGTH * weightKg * durationHours);
     if (calories_burned > 0) {
-      await dbRun('UPDATE workout_sessions SET calories_burned=? WHERE id=?', [calories_burned, req.params.id]);
+      await dbRun('UPDATE workout_sessions SET calories_burned=? WHERE id=? AND user_id=?', [calories_burned, req.params.id, req.user.id]);
     }
 
     res.json({ ok: true, total_seconds, calories_burned });
@@ -126,8 +126,8 @@ router.put('/:id', auth, async (req, res) => {
       } else {
         const firstSet = existingSets[0];
         await dbRun(
-          'UPDATE workout_sets SET exercise_name=?, reps=?, weight_lbs=? WHERE id=?',
-          [exerciseName, repsValue > 0 ? repsValue : firstSet.reps, weightValue >= 0 ? weightValue : firstSet.weight_lbs, firstSet.id]
+          'UPDATE workout_sets SET exercise_name=?, reps=?, weight_lbs=? WHERE id=? AND user_id=?',
+          [exerciseName, repsValue > 0 ? repsValue : firstSet.reps, weightValue >= 0 ? weightValue : firstSet.weight_lbs, firstSet.id, req.user.id]
         );
         if (setCount > existingSets.length) {
           for (let i = existingSets.length + 1; i <= setCount; i++) {
@@ -204,7 +204,7 @@ router.post('/:id/feedback', auth, async (req, res) => {
     await dbRun('INSERT INTO ai_usage (id, user_id, call_type) VALUES (?,?,?)', [uuidv4(), req.user.id, 'workout_feedback']);
 
     const feedback = await generateWorkoutFeedback(sessionData, sets, profile);
-    if (feedback) await dbRun('UPDATE workout_sessions SET ai_feedback=? WHERE id=?', [feedback, req.params.id]);
+    if (feedback) await dbRun('UPDATE workout_sessions SET ai_feedback=? WHERE id=? AND user_id=?', [feedback, req.params.id, req.user.id]);
     res.json({ feedback: feedback || 'Could not generate feedback right now.' });
   } catch (err) { res.status(500).json({ error: 'Feedback failed' }); }
 });

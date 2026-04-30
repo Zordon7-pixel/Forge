@@ -400,7 +400,8 @@ router.post('/sync', auth, requirePremium('Oura sync'), async (req, res) => {
         });
         synced += 1;
       }
-    } catch {
+    } catch (err) {
+      console.error('[oura/sync] sleep fetch failed:', err.message);
       // Sleep fetch failed, continue
     }
 
@@ -426,7 +427,8 @@ router.post('/sync', auth, requirePremium('Oura sync'), async (req, res) => {
         });
         synced += 1;
       }
-    } catch {
+    } catch (err) {
+      console.error('[oura/sync] readiness fetch failed:', err.message);
       // Readiness fetch failed, continue
     }
 
@@ -459,7 +461,8 @@ router.post('/sync', auth, requirePremium('Oura sync'), async (req, res) => {
         });
         synced += 1;
       }
-    } catch {
+    } catch (err) {
+      console.error('[oura/sync] heart rate fetch failed:', err.message);
       // Heart rate fetch failed, continue
     }
 

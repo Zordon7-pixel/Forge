@@ -122,6 +122,8 @@ function sanitize(val, maxLen = 200) {
 | `EMAIL_FROM` | For reset email | From address for forgot-password emails |
 | `PORT` | No | Defaults to 4002 |
 
+Resend HTTP API is used when `SMTP_HOST=smtp.resend.com` and `SMTP_USER=resend`; in that mode `SMTP_PASS` is the Resend bearer token, while `SMTP_PORT` and `SMTP_SECURE` are unused but still required by `isMailConfigured()`.
+
 ---
 
 ## Deploy Process
@@ -203,4 +205,6 @@ Read `FORGE.md` for:
 
 | Date | Agent | Action | Commit |
 |------|-------|--------|--------|
-| 2026-04-17 | forge-security-fixes (Sonnet 4.6) | Fixed C1 activity photo hijack — SELECT+UPDATE scoped to `AND user_id=?`, 403 guard added; fixed M1 silent catches (5 catch blocks); committed 4 audited-clean diffs (aiLimit, health, ai, feedback) | `9997eeb3` |
+| 2026-04-17 | forge-security-fixes (Sonnet 4.6) | Superseded historical note: this commit added social error logging and other audited-clean diffs; the activity-photo ownership fix actually landed later in `2f9340c9` | `9997eeb3` |
+| 2026-04-29 | claude-qa security fixes | Fixed password reset SQL, activity-photo ownership mutation guard, workout-set ownership guard, account deletion logging, meta/build admin gate, social catch logging, and Apple Health native gating | `2f9340c9` |
+| 2026-04-29 | codex | Fixed forgot-password delivery by using Resend HTTP API transport with existing Railway mail credentials | `4c9c9804` |

@@ -403,7 +403,8 @@ router.post('/sync', auth, requirePremium('WHOOP sync'), async (req, res) => {
         });
         synced += 1;
       }
-    } catch {
+    } catch (err) {
+      console.error('[whoop/sync] recovery fetch failed:', err.message);
       // Recovery fetch failed, continue with other data types
     }
 
@@ -429,7 +430,8 @@ router.post('/sync', auth, requirePremium('WHOOP sync'), async (req, res) => {
         });
         synced += 1;
       }
-    } catch {
+    } catch (err) {
+      console.error('[whoop/sync] strain fetch failed:', err.message);
       // Strain fetch failed, continue
     }
 
@@ -460,7 +462,8 @@ router.post('/sync', auth, requirePremium('WHOOP sync'), async (req, res) => {
         });
         synced += 1;
       }
-    } catch {
+    } catch (err) {
+      console.error('[whoop/sync] sleep fetch failed:', err.message);
       // Sleep fetch failed, continue
     }
 
