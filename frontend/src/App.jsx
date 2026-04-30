@@ -39,8 +39,20 @@ const WeeklyRecap = lazy(() => import('./pages/WeeklyRecap'))
 const Upgrade = lazy(() => import('./pages/Upgrade'))
 
 const PageFallback = () => (
-  <div style={{ minHeight: '100vh', background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+  <div style={{
+    minHeight: '100vh',
+    background: '#000',
+    color: '#E5E7EB',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 14,
+  }}>
     <div style={{ width: 32, height: 32, border: '3px solid #EAB308', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+    <p style={{ margin: 0, fontSize: 13, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: '#9CA3AF' }}>
+      Loading Forge
+    </p>
     <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
   </div>
 )
