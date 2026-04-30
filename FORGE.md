@@ -5,7 +5,7 @@ This file holds Forge's product history, deployment notes, shipped phase log, kn
 ## Current Production
 
 - Production URL: `https://forge-production-773f.up.railway.app/`
-- Latest checked deployment: `c44b1fa4-f558-4b36-87c5-afc970b3a954`
+- Latest checked deployment: `6b496dab-8e0a-40dc-b952-dc9dd0790d48`
 - Latest checked bundle: `/assets/index-CvpmYLna.js`
 - iOS version/build: `1.0.3` / `8`
 - Bundle identifier: `com.zordon.forge`
@@ -72,6 +72,7 @@ These changes are already implemented, built, Capacitor-synced, and deployed to 
 | 2026-04-29 | `59a652bf-1df5-4a17-a4a6-4b729b31c959` | Success | Medium/low QA cleanup shipped and live-verified |
 | 2026-04-29 | `7a835cf8-f03b-4c97-a0e3-13faee61e88a` | Success | App loading fallback labeled and browser-verified |
 | 2026-04-29 | `c44b1fa4-f558-4b36-87c5-afc970b3a954` | Success | Docs-only redeploy after recording loading fallback release |
+| 2026-04-29 | `6b496dab-8e0a-40dc-b952-dc9dd0790d48` | Success | Deployment-id doc bump built and production-verified |
 
 ### Build/Test Status
 
