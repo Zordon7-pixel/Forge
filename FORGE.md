@@ -16,6 +16,45 @@ Current production checks:
 - `/api/auth/forgot-password` returns `200 email_sent` for `demo@forge.app` in under one second.
 - EAS/TestFlight preflight resumed on May 3, 2026 after Apple Developer credentials became available.
 
+## Product Direction — Hybrid Runner/Lifter Reframe (2026-05-03)
+
+Bryan's current direction: FORGE is **not** a generic athlete platform. Position it for hybrid runners/lifters — people trying to run, lift, recover, and adapt their plan without guessing which signal matters.
+
+### Product Promise
+
+FORGE should feel like a plain-English coach for today's training decision:
+- What should I do today?
+- Why did my readiness/wearable data change that answer?
+- What should change in my plan, and can I apply it safely right now?
+- How do my running, lifting, recovery, and goals connect over time?
+
+### Build Priorities
+
+1. **Today as the main coaching surface** — keep Today as the first screen and primary decision point: check in, train, reflect, and understand the recommendation.
+2. **Recovery-adjusted plan changes users can apply** — recommendations should become explicit plan edits/alternatives the user can accept, not just passive insights.
+3. **Plain-English wearable/recovery explanation** — explain WHOOP/Oura/Apple Watch/Garmin-style recovery signals in normal language: what moved, why it matters, and what to do.
+4. **Reliability/TestFlight polish before breadth** — prioritize login/session stability, loading states, TestFlight debug visibility, sync confidence, and no-dead-end mobile flows before adding more surfaces.
+5. **Privacy/export/delete and offline reliability as differentiators** — make data export, account deletion, secret exclusions, and offline/degraded-state behavior part of the trust story, not buried settings.
+
+### Premium Conversion Spine
+
+Premium should convert around capabilities that compound value for a hybrid runner/lifter:
+- advanced AI coaching and deeper recaps
+- unified recovery/readiness across wearable sources
+- WHOOP/Oura integrations and richer wearable interpretation
+- goal cascades from long-term targets to week/day actions
+- deeper run/lift/recovery trend recaps with suggested next blocks
+
+### Concrete Next Build Sequence
+
+1. **Stabilize TestFlight/reliability gate** — complete EAS/TestFlight readiness, verify production auth/loading/debug paths, and keep the QA floor green.
+2. **Tighten Today copy and hierarchy** — audit Dashboard/Today language so the app speaks to hybrid runners/lifters and makes the daily decision obvious.
+3. **Ship apply-able recovery adjustments** — turn existing plan-adjustment signals into user-approved edits/alternatives for today's workout and near-term plan.
+4. **Wearable explanation layer** — add plain-English readiness drivers for connected devices, starting with WHOOP/Oura where premium value is clearest.
+5. **Premium gates and upgrade moments** — gate advanced AI, unified recovery, deeper recaps, goal cascades, and wearable depth after the core free Today loop proves reliable.
+
+No app-code implementation was started from this reframe; it is planning/product direction only.
+
 ## Recently Fixed Bugs
 
 Do not reintroduce these patterns.

@@ -1,6 +1,6 @@
 # FORGE
 
-Forge is a fitness tracking app for running, lifting, readiness, and AI-assisted training guidance.
+Forge is a coaching app for hybrid runners/lifters — people balancing miles, strength work, readiness, and recovery without wanting a generic athlete dashboard.
 
 Active project docs:
 - `README.md` is the human-facing setup, deploy, and store-submission guide.
@@ -101,5 +101,5 @@ Required before submission:
 - App Store description:
 
 ```text
-FORGE is a fitness tracking app built for athletes who want clarity, consistency, and progress. Log workouts, track training volume, and review trends over time. FORGE keeps your training history organized so you can focus on performance and recovery.
+FORGE is built for hybrid runners/lifters who want one plain-English coach for miles, strength work, readiness, and recovery. FORGE turns today's plan, wearable signals, and recent training into clear actions you can apply — adjust the workout, protect recovery, and keep building without guessing.
 ```

@@ -7,7 +7,7 @@
 
 ## What This App Is
 
-Forge is a **fitness tracking app** — running + lifting with AI coaching.
+Forge is a coaching app for **hybrid runners/lifters** — people balancing running, strength work, readiness, and recovery. Do not position it as a generic athlete tracker.
 - Backend: Node.js/Express + SQLite (local dev) / PostgreSQL (Railway)
 - Frontend/mobile shell: React + Vite + Capacitor in this repo
 - GitHub: `Zordon7-pixel/Forge` | Deploy: `git push origin main` → Railway auto-builds
