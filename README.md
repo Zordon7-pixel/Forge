@@ -5,6 +5,8 @@ Forge is a fitness tracking app for running, lifting, readiness, and AI-assisted
 Active project docs:
 - `README.md` is the human-facing setup, deploy, and store-submission guide.
 - `CLAUDE.md` is the source of truth for agents, QA rules, shipped fixes, security constraints, and release handoffs.
+- `FORGE.md` holds product history, deployment notes, shipped phases, known risks, and archived context.
+- `QA-CHECKLIST.md` is the per-diff review floor; use the `pre-launch-audit` skill for full release QA.
 
 ## Stack
 

@@ -190,13 +190,12 @@ These changes are already implemented, built, Capacitor-synced, and deployed to 
 
 ## Superseded Markdown Docs
 
-Only `README.md`, `CLAUDE.md`, and `FORGE.md` should be treated as active top-level project documentation.
+Only `README.md`, `CLAUDE.md`, `FORGE.md`, and `QA-CHECKLIST.md` should be treated as active top-level project documentation.
 
-Superseded docs that were consolidated:
+Superseded docs that were consolidated and removed:
 - `APP_STORE_README.md` — app store requirements and description moved to `README.md`.
 - `DEPLOY-IOS.md` — EAS/TestFlight credential and non-interactive build guidance moved to `README.md`.
 - `FORGE-RELEASE-CHECKLIST.md` — release status language moved to `CLAUDE.md`.
-- `QA-CHECKLIST.md` — active QA rules live in `CLAUDE.md`; phase status lives here.
 - `QA-REPORT-2026-04-17.md` — historical QA report superseded by the current fixed-bug table and 2026-04-29 QA fixes.
 - `QA-PHASE-1AB-2026-04-22.md` — old phase checklist superseded by the completed phase log above.
 - `BUILD-SPEC-2026-04-22-forge-roadmap.md` — old product roadmap archived as historical backlog context, not active implementation instructions.

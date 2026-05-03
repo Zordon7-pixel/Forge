@@ -121,6 +121,7 @@ function sanitize(val, maxLen = 200) {
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `SMTP_SECURE` | For reset email | SMTP delivery for forgot-password emails |
 | `EMAIL_FROM` | For reset email | From address for forgot-password emails |
 | `PORT` | No | Defaults to 4002 |
+| `HOST` | No | Defaults to `0.0.0.0` on Railway, `127.0.0.1` locally |
 
 Resend HTTP API is used when `SMTP_HOST=smtp.resend.com` and `SMTP_USER=resend`; in that mode `SMTP_PASS` is the Resend bearer token, while `SMTP_PORT` and `SMTP_SECURE` are unused but still required by `isMailConfigured()`.
 

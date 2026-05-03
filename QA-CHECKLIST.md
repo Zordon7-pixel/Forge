@@ -2,6 +2,8 @@
 
 Run through every item for every diff. CRITICAL items block ship. HIGH items must be noted in report.
 
+> **For ship-readiness / pre-launch / full-QA runs, use the `pre-launch-audit` skill instead.** It supersets this checklist (adds mobile UI on iPhone, currency formatting, schema drift, cron health, etc.). Invoke via "do a full QA of Forge" or `/pre-launch-audit forge`. This checklist remains the floor for per-diff reviews in the build pipeline.
+
 ---
 
 ## CRITICAL — Block ship if any are true

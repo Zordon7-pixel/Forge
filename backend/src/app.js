@@ -109,14 +109,15 @@ app.get('*', (req, res) => {
 });
 
 const PORT = process.env.PORT || 4002;
+const HOST = process.env.HOST || (process.env.RAILWAY_ENVIRONMENT ? '0.0.0.0' : '127.0.0.1');
 
 initDb()
   .then(async () => {
     // Seed demo data after DB is ready
     try { await require('./db/seed').runSeed(); } catch (e) { console.error('Seed error:', e.message); }
     try { await require('./db/exercises-seed').seedExercises(); } catch (e) { console.error('Exercise seed error:', e.message); }
-    app.listen(PORT, '0.0.0.0', () => {
-      console.log(`FORGE running on http://localhost:${PORT}`);
+    app.listen(PORT, HOST, () => {
+      console.log(`FORGE running on http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`);
     });
   })
   .catch(err => {
