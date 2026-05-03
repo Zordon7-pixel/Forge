@@ -14,7 +14,7 @@ Current production checks:
 - Demo diagnostics check returns `403`.
 - `/api/auth/me/export` returns account/training data and excludes `password_hash`.
 - `/api/auth/forgot-password` returns `200 email_sent` for `demo@forge.app` in under one second.
-- EAS/TestFlight build is intentionally deferred until May 1, 2026 because Apple Developer credentials/2FA are unavailable before then.
+- EAS/TestFlight preflight resumed on May 3, 2026 after Apple Developer credentials became available.
 
 ## Recently Fixed Bugs
 
@@ -125,7 +125,7 @@ These changes are already implemented, built, Capacitor-synced, and deployed to 
 
 ### Current Known Risks / Follow-Up
 
-- EAS is blocked until May 1, 2026 by Apple Developer login/2FA, not by source/build issues.
+- EAS/TestFlight preflight resumed on May 3, 2026; source/build readiness is handled in the current EAS phases.
 - Before the TestFlight build, set either `VITE_ENABLE_TESTFLIGHT_DEBUG=true` or `VITE_DEBUG_ADMIN_EMAILS` for approved testers/admins if the hidden debug panel should expose copyable payloads in TestFlight.
 - Data-heavy screens can show the Forge loading runner for a few seconds while production API calls resolve; no console errors were observed during Phase 6 smoke.
 - Dashboard Phase 4 is shipped: Today, Readiness, and Recent Activity are primary; secondary insight cards are behind `More insights`.

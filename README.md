@@ -75,7 +75,7 @@ https://forge-production-773f.up.railway.app/
 
 ## iOS and TestFlight
 
-EAS/TestFlight is intentionally deferred until May 1, 2026 because Apple Developer credentials and 2FA are not available before then.
+EAS/TestFlight preflight resumed on May 3, 2026 after Apple Developer credentials became available.
 
 Bryan does not run terminal commands. After the one-time App Store Connect credential setup is complete, builds must be non-interactive:
 
