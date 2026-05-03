@@ -1,0 +1,24 @@
+# EAS iOS builds run from the frontend app; keep cloud build uploads focused.
+.git/
+backend/
+scripts/
+
+# Never upload local databases or environment files to EAS.
+*.db
+*.db-shm
+*.db-wal
+.env
+.env.*
+frontend/.env
+frontend/.env.*
+backend/.env
+backend/.env.*
+
+# Root docs and agent notes are not needed in the native build archive.
+*.md
+.codex-tasks/
+
+# Railway/web deploy files are unrelated to EAS.
+railway.toml
+.dockerignore
+.env.example
