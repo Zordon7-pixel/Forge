@@ -165,6 +165,7 @@ These changes are already implemented, built, Capacitor-synced, and deployed to 
 ### Current Known Risks / Follow-Up
 
 - EAS/TestFlight preflight resumed on May 3, 2026; source/build readiness is handled in the current EAS phases.
+- Phase 4 EAS build attempt on 2026-05-03 stopped before upload because EAS remote iOS credentials are not fully set up for non-interactive builds; no TestFlight build was created.
 - Before the TestFlight build, set either `VITE_ENABLE_TESTFLIGHT_DEBUG=true` or `VITE_DEBUG_ADMIN_EMAILS` for approved testers/admins if the hidden debug panel should expose copyable payloads in TestFlight.
 - Data-heavy screens can show the Forge loading runner for a few seconds while production API calls resolve; no console errors were observed during Phase 6 smoke.
 - Dashboard Phase 4 is shipped: Today, Readiness, and Recent Activity are primary; secondary insight cards are behind `More insights`.

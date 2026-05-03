@@ -17,12 +17,24 @@ cd "$APP_DIR"
 PROFILE="${1:-production}"   # production | preview
 echo "[$(date -u +%FT%TZ)] forge-ios deploy: profile=$PROFILE" | tee -a "$LOG"
 
+APP_JSON="./app.json"
+XCODE_PROJECT="./ios/App/App.xcodeproj/project.pbxproj"
+export APP_JSON XCODE_PROJECT
+APP_JSON_BACKUP="$(mktemp)"
+XCODE_PROJECT_BACKUP="$(mktemp)"
+cp "$APP_JSON" "$APP_JSON_BACKUP"
+cp "$XCODE_PROJECT" "$XCODE_PROJECT_BACKUP"
+cleanup() {
+  rm -f "$APP_JSON_BACKUP" "$XCODE_PROJECT_BACKUP"
+}
+trap cleanup EXIT
+
 # Bump app.json and native Xcode build number together.
 # Apple rejects duplicate builds, and EAS reads native iOS values when ios/ exists.
 node -e '
   const fs = require("fs");
-  const p = "./app.json";
-  const xcode = "./ios/App/App.xcodeproj/project.pbxproj";
+  const p = process.env.APP_JSON;
+  const xcode = process.env.XCODE_PROJECT;
   const j = JSON.parse(fs.readFileSync(p, "utf8"));
   const cur = parseInt(j.expo.ios.buildNumber || "0", 10);
   const next = String(cur + 1);
@@ -49,7 +61,10 @@ if ! eas build \
       --non-interactive \
       --wait 2>&1 | tee -a "$LOG"; then
   echo "" | tee -a "$LOG"
+  cp "$APP_JSON_BACKUP" "$APP_JSON"
+  cp "$XCODE_PROJECT_BACKUP" "$XCODE_PROJECT"
   echo "❌ EAS build failed." | tee -a "$LOG"
+  echo "   Restored iOS build number files; no TestFlight build was created." | tee -a "$LOG"
   echo "   If error mentions credentials/provisioning/cert — EAS Cloud is missing iOS creds." | tee -a "$LOG"
   echo "   See: $REPO/README.md#ios-and-testflight (one-time ASC API Key setup)." | tee -a "$LOG"
   echo "   DO NOT ask Bryan to run terminal commands. Fix the cred setup once." | tee -a "$LOG"
