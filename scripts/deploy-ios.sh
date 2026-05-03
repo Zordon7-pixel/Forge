@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Forge iOS deploy — fully non-interactive.
-# Reads from EAS Cloud credentials configured ONCE per DEPLOY-IOS.md.
+# Reads from EAS Cloud credentials configured once per README.md.
 # If credentials are missing, fails with a pointer to that doc — never prompts.
 
 set -euo pipefail
@@ -37,7 +37,7 @@ if ! eas build \
   echo "" | tee -a "$LOG"
   echo "❌ EAS build failed." | tee -a "$LOG"
   echo "   If error mentions credentials/provisioning/cert — EAS Cloud is missing iOS creds." | tee -a "$LOG"
-  echo "   See: $REPO/DEPLOY-IOS.md (one-time ASC API Key setup)." | tee -a "$LOG"
+  echo "   See: $REPO/README.md#ios-and-testflight (one-time ASC API Key setup)." | tee -a "$LOG"
   echo "   DO NOT ask Bryan to run terminal commands. Fix the cred setup once." | tee -a "$LOG"
   exit 1
 fi
