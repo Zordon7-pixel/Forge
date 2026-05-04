@@ -13,6 +13,7 @@
     "production": {
       "distribution": "store",
       "ios": {
+        "image": "macos-sequoia-15.6-xcode-26.2",
         "buildConfiguration": "Release"
       }
     }

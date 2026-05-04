@@ -11,8 +11,8 @@
       "backgroundColor": "#111827"
     },
     "ios": {
-      "bundleIdentifier": "com.zordon.forge",
-      "buildNumber": "4",
+      "bundleIdentifier": "com.zordontech.forge",
+      "buildNumber": "5",
       "ascAppId": "6759941190",
       "supportsTablet": true,
       "infoPlist": {

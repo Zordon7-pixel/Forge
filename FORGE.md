@@ -7,8 +7,8 @@ This file holds Forge's product history, deployment notes, shipped phase log, kn
 - Production URL: `https://forge-production-773f.up.railway.app/`
 - Latest checked deployment: `84c9b107-8b86-496c-9757-bd5c9e87ac74`
 - Latest checked bundle: `/assets/index-CvpmYLna.js`
-- iOS version/build: `1.0.5` / `4`
-- Bundle identifier: `com.zordon.forge`
+- iOS version/build: `1.0.5` / `5`
+- Bundle identifier: `com.zordontech.forge`
 - Expo/EAS project: `@zordon/forge-athlete` (`6aeb5fbb-2697-4cf4-b9b3-afe60c63e9e1`)
 
 Current production checks:
@@ -171,13 +171,14 @@ These changes are already implemented, built, Capacitor-synced, and deployed to 
   - `overrides["@xmldom/xmldom"] = ^0.9.10`
   - `overrides["xcode"].uuid = ^14.0.0`
 - Do not re-add an `esbuild` major-version override. It cleared audit temporarily but broke Vite transpilation.
-- Native bundle identifiers are aligned to `com.zordon.forge`.
-- iOS build number was bumped to `8`.
+- Native bundle identifiers are aligned to `com.zordontech.forge`.
+- EAS production iOS builds are pinned to `macos-sequoia-15.6-xcode-26.2` for App Store Connect's iOS 26 SDK requirement.
+- iOS build number was bumped to `5`.
 
 ### Current Known Risks / Follow-Up
 
 - EAS/TestFlight preflight resumed on May 3, 2026; source/build readiness is handled in the current EAS phases.
-- Phase 4 EAS build attempt on 2026-05-03 stopped before upload because EAS remote iOS credentials are not fully set up for non-interactive builds; no TestFlight build was created.
+- Phase 4 EAS build `1.0.5 (4)` reached App Store Connect on 2026-05-04 but failed upload validation because it used the wrong bundle identifier and the iOS 17.5 SDK. Build `1.0.5 (5)` restores `com.zordontech.forge` and pins the Xcode 26.2 EAS image.
 - Before the TestFlight build, set either `VITE_ENABLE_TESTFLIGHT_DEBUG=true` or `VITE_DEBUG_ADMIN_EMAILS` for approved testers/admins if the hidden debug panel should expose copyable payloads in TestFlight.
 - Data-heavy screens can show the Forge loading runner for a few seconds while production API calls resolve; no console errors were observed during Phase 6 smoke.
 - Dashboard Phase 4 is shipped: Today, Readiness, and Recent Activity are primary; secondary insight cards are behind `More insights`.

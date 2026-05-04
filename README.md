@@ -26,8 +26,8 @@ The workspace-level `BUILD-SPEC-2026-04-24-forge-cross-platform-flow.md` is usef
 Latest known production deploy:
 - Railway deployment: `84c9b107-8b86-496c-9757-bd5c9e87ac74`
 - Frontend bundle: `/assets/index-CvpmYLna.js`
-- iOS version/build: `1.0.5` / `4`
-- Bundle identifier: `com.zordon.forge`
+- iOS version/build: `1.0.5` / `5`
+- Bundle identifier: `com.zordontech.forge`
 - Expo/EAS project: `@zordon/forge-athlete` (`6aeb5fbb-2697-4cf4-b9b3-afe60c63e9e1`)
 
 ## Install
