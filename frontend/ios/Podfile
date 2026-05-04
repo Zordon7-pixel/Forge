@@ -1,6 +1,8 @@
 platform :ios, '15.0'
 
-project 'App.xcodeproj'
+install! 'cocoapods', :integrate_targets => false
+
+project 'App/App.xcodeproj'
 
 target 'App' do
 end
