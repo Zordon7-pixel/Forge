@@ -15,6 +15,14 @@ Active project docs:
 - iOS app: Expo/EAS metadata in `frontend/app.json`, Capacitor native shell in `frontend/ios`
 - Production: `https://forge-production-773f.up.railway.app/`
 
+## Active Architecture
+
+This repo, `forge-app`, is the active production and TestFlight path. It owns the Railway backend, web frontend, and Capacitor iOS shell currently being shipped.
+
+Do not dispatch new implementation work to `forge-nextjs` or `forge-native` unless Bryan explicitly restarts one of those tracks. Treat `forge-nextjs` as future migration research and `forge-native` as a separate native experiment, not the current release target.
+
+The workspace-level `BUILD-SPEC-2026-04-24-forge-cross-platform-flow.md` is useful architecture research, but it is not the active implementation plan for this shipping app. If we want OpenAPI, Sentry, feature flags, or cross-platform e2e now, rewrite those specs against this `forge-app` stack first.
+
 Latest known production deploy:
 - Railway deployment: `84c9b107-8b86-496c-9757-bd5c9e87ac74`
 - Frontend bundle: `/assets/index-CvpmYLna.js`

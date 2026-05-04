@@ -16,6 +16,17 @@ Current production checks:
 - `/api/auth/forgot-password` returns `200 email_sent` for `demo@forge.app` in under one second.
 - EAS/TestFlight preflight resumed on May 3, 2026 after Apple Developer credentials became available.
 
+## Active Architecture Decision — Current Shipping Path
+
+`forge-app` is the active Forge product. It owns:
+- Railway production backend and web frontend
+- React/Vite/Capacitor app shell
+- EAS/TestFlight build path through `frontend/app.json`, `frontend/eas.json`, and `scripts/deploy-ios.sh`
+
+`forge-nextjs` is future migration research, not the current production target. `forge-native` is a separate native experiment unless Bryan explicitly revives it. Do not dispatch build work there for the current Forge release.
+
+The workspace-level `BUILD-SPEC-2026-04-24-forge-cross-platform-flow.md` has useful ideas around OpenAPI, Sentry, feature flags, and e2e coverage, but it assumes `forge-app` is deprecated. That assumption is stale. Any useful process/architecture ideas from that spec must be rewritten against this active `forge-app` stack before implementation.
+
 ## Product Direction — Hybrid Runner/Lifter Reframe (2026-05-03)
 
 Bryan's current direction: FORGE is **not** a generic athlete platform. Position it for hybrid runners/lifters — people trying to run, lift, recover, and adapt their plan without guessing which signal matters.

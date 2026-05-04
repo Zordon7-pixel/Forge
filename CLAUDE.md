@@ -12,6 +12,8 @@ Forge is a coaching app for **hybrid runners/lifters** — people balancing runn
 - Frontend/mobile shell: React + Vite + Capacitor in this repo
 - GitHub: `Zordon7-pixel/Forge` | Deploy: `git push origin main` → Railway auto-builds
 
+This repo is the active production/TestFlight target. Do not implement current Forge work in `forge-nextjs` or `forge-native` unless Bryan explicitly says to revive that track. Workspace-level cross-platform specs that describe `forge-app` as deprecated are stale for the current shipping path; translate any useful ideas back into this React/Vite/Capacitor + Express stack before building.
+
 ---
 
 ## Stack
