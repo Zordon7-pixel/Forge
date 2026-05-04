@@ -7,8 +7,9 @@ This file holds Forge's product history, deployment notes, shipped phase log, kn
 - Production URL: `https://forge-production-773f.up.railway.app/`
 - Latest checked deployment: `84c9b107-8b86-496c-9757-bd5c9e87ac74`
 - Latest checked bundle: `/assets/index-CvpmYLna.js`
-- iOS version/build: `1.0.3` / `8`
+- iOS version/build: `1.0.5` / `4`
 - Bundle identifier: `com.zordon.forge`
+- Expo/EAS project: `@zordon/forge-athlete` (`6aeb5fbb-2697-4cf4-b9b3-afe60c63e9e1`)
 
 Current production checks:
 - Demo diagnostics check returns `403`.
@@ -18,7 +19,7 @@ Current production checks:
 
 ## Active Architecture Decision — Current Shipping Path
 
-`forge-app` is the active Forge product. It owns:
+`forge-app` is the active Forge repo. Its Expo/EAS build target is the existing `@zordon/forge-athlete` project, which owns the prior TestFlight build history. It owns:
 - Railway production backend and web frontend
 - React/Vite/Capacitor app shell
 - EAS/TestFlight build path through `frontend/app.json`, `frontend/eas.json`, and `scripts/deploy-ios.sh`

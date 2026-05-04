@@ -1,8 +1,8 @@
 {
   "expo": {
     "name": "FORGE",
-    "slug": "forge-app",
-    "version": "1.0.3",
+    "slug": "forge-athlete",
+    "version": "1.0.5",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "splash": {
@@ -12,7 +12,7 @@
     },
     "ios": {
       "bundleIdentifier": "com.zordon.forge",
-      "buildNumber": "8",
+      "buildNumber": "4",
       "ascAppId": "6759941190",
       "supportsTablet": true,
       "infoPlist": {
@@ -22,7 +22,7 @@
     },
     "extra": {
       "eas": {
-        "projectId": "798c53bf-217c-474e-b180-f423d588e57c"
+        "projectId": "6aeb5fbb-2697-4cf4-b9b3-afe60c63e9e1"
       }
     },
     "owner": "zordon"
