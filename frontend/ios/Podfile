@@ -1,0 +1,6 @@
+platform :ios, '15.0'
+
+project 'App.xcodeproj'
+
+target 'App' do
+end
