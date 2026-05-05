@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ChevronRight, Download, Link2, Moon, RefreshCw, Shield, Sun, Trash2, Unplug, User, Watch } from 'lucide-react'
+import { ChevronRight, Download, Moon, Shield, Sun, Trash2, Unplug, Watch } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useUnits } from '../context/UnitsContext'
 import { useTheme } from '../context/ThemeContext'
@@ -65,9 +65,7 @@ export default function Settings() {
   const [importProgress, setImportProgress] = useState('')
   const [importNotice, setImportNotice] = useState(null)
   const [garminStatus, setGarminStatus] = useState({ connected: false, lastSync: null, activityCount: 0, displayName: '' })
-  const [garminAuth, setGarminAuth] = useState({ username: '', password: '' })
   const [garminLoading, setGarminLoading] = useState(false)
-  const [garminSyncing, setGarminSyncing] = useState(false)
   const [garminNotice, setGarminNotice] = useState(null)
   const [deviceStatuses, setDeviceStatuses] = useState({})
   const [deviceSyncing, setDeviceSyncing] = useState({})
@@ -88,6 +86,13 @@ export default function Settings() {
   const isNativeRuntime = typeof window !== 'undefined' && Boolean(window.Capacitor?.isNativePlatform?.())
 
   const supportsAppleHealth = isIOSSafari && !isNativeRuntime && typeof navigator !== 'undefined' && Boolean(navigator.health)
+  const appleHealthStatus = !isPro
+    ? 'Apple Health sync is available on the Pro tier.'
+    : isNativeRuntime
+      ? 'Apple Health needs a native HealthKit bridge in the TestFlight app before it can sync here.'
+      : supportsAppleHealth
+        ? 'Available on this device'
+        : 'Apple Health is not available in this browser.'
 
   useEffect(() => {
     api.get('/garmin/status').then((r) => {
@@ -166,8 +171,12 @@ export default function Settings() {
       setImportNotice({ ok: false, text: 'Apple Health sync is available on the Pro tier.' })
       return
     }
+    if (isNativeRuntime) {
+      setImportNotice({ ok: false, text: 'Apple Health needs the native HealthKit bridge before TestFlight can sync directly.' })
+      return
+    }
     if (!supportsAppleHealth) {
-      setImportNotice({ ok: false, text: 'Apple Health import is only supported on iOS Safari with Web Health API access.' })
+      setImportNotice({ ok: false, text: 'Apple Health is not available in this browser. Use File Import until native sync is wired up.' })
       return
     }
 
@@ -207,16 +216,6 @@ export default function Settings() {
     }
   }
 
-  const loadGarminStatus = async () => {
-    const { data } = await api.get('/garmin/status')
-    setGarminStatus({
-      connected: Boolean(data?.connected),
-      lastSync: data?.lastSync || null,
-      activityCount: Number(data?.activityCount || 0),
-      displayName: data?.displayName || '',
-    })
-  }
-
   const loadDeviceStatuses = async () => {
     const entries = await Promise.all([
       ['strava', api.get('/strava/status').catch(() => ({ data: { connected: false } }))],
@@ -224,41 +223,6 @@ export default function Settings() {
       ['oura', api.get('/oura/status').catch(() => ({ data: { connected: false } }))],
     ])
     setDeviceStatuses(Object.fromEntries(entries.map(([key, res]) => [key, res.data || { connected: false }])))
-  }
-
-  const handleGarminConnect = async (event) => {
-    event.preventDefault()
-    if (!garminAuth.username || !garminAuth.password) {
-      setGarminNotice({ ok: false, text: 'Enter your Garmin username and password.' })
-      return
-    }
-    setGarminLoading(true)
-    try {
-      const { data } = await api.post('/garmin/connect', garminAuth)
-      setGarminNotice({ ok: true, text: 'Garmin account connected.' })
-      setGarminAuth((prev) => ({ ...prev, password: '' }))
-      await loadGarminStatus()
-      if (data?.displayName) {
-        setGarminStatus((prev) => ({ ...prev, displayName: data.displayName, connected: true }))
-      }
-    } catch (err) {
-      setGarminNotice({ ok: false, text: err?.response?.data?.error || 'Connection failed.' })
-    } finally {
-      setGarminLoading(false)
-    }
-  }
-
-  const handleGarminSync = async () => {
-    setGarminSyncing(true)
-    try {
-      const { data } = await api.post('/garmin/sync')
-      setGarminNotice({ ok: true, text: `Synced ${Number(data?.synced || 0)} activities.` })
-      await loadGarminStatus()
-    } catch (err) {
-      setGarminNotice({ ok: false, text: err?.response?.data?.error || 'Sync failed.' })
-    } finally {
-      setGarminSyncing(false)
-    }
   }
 
   const handleGarminDisconnect = async () => {
@@ -448,23 +412,15 @@ export default function Settings() {
           <div style={card}>
             <span style={label}>Garmin</span>
             {!garminStatus.connected ? (
-              <form onSubmit={handleGarminConnect} style={{ display: 'grid', gap: 10 }}>
+              <div style={{ display: 'grid', gap: 10 }}>
                 <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
                   <Watch size={15} />
                   Status: Not connected
                 </p>
-                <div style={{ position: 'relative' }}>
-                  <User size={14} style={{ position: 'absolute', top: 11, left: 10, color: 'var(--text-muted)' }} />
-                  <input value={garminAuth.username} onChange={(e) => setGarminAuth((prev) => ({ ...prev, username: e.target.value }))} placeholder="Garmin username" autoComplete="username" style={{ width: '100%', padding: '10px 10px 10px 32px', borderRadius: 10, border: '1px solid var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)', fontSize: 13 }} />
-                </div>
-                <div style={{ position: 'relative' }}>
-                  <Link2 size={14} style={{ position: 'absolute', top: 11, left: 10, color: 'var(--text-muted)' }} />
-                  <input type="password" value={garminAuth.password} onChange={(e) => setGarminAuth((prev) => ({ ...prev, password: e.target.value }))} placeholder="Garmin password" autoComplete="current-password" style={{ width: '100%', padding: '10px 10px 10px 32px', borderRadius: 10, border: '1px solid var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)', fontSize: 13 }} />
-                </div>
-                <button type="submit" disabled={garminLoading} style={{ width: '100%', border: '1px solid var(--accent)', borderRadius: 10, padding: '10px 12px', fontSize: 13, fontWeight: 800, background: 'var(--accent)', color: '#111111', cursor: 'pointer', opacity: garminLoading ? 0.6 : 1 }}>
-                  {garminLoading ? 'Connecting...' : 'Connect Garmin'}
-                </button>
-              </form>
+                <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: 13, lineHeight: 1.6 }}>
+                  Direct Garmin login is paused until Forge has official Garmin API access. Use Apple Health or File Import for Garmin watch data.
+                </p>
+              </div>
             ) : (
               <div style={{ display: 'grid', gap: 10 }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
@@ -476,11 +432,10 @@ export default function Settings() {
                   </div>
                   <Shield size={18} style={{ color: '#22c55e', flexShrink: 0 }} />
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                  <button onClick={handleGarminSync} disabled={garminSyncing} style={{ border: '1px solid var(--accent)', borderRadius: 10, padding: '10px 12px', fontSize: 13, fontWeight: 800, background: 'var(--accent)', color: '#111111', cursor: 'pointer', opacity: garminSyncing ? 0.6 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
-                    <RefreshCw size={14} />
-                    {garminSyncing ? 'Syncing...' : 'Sync'}
-                  </button>
+                <div style={{ display: 'grid', gap: 8 }}>
+                  <p style={{ margin: 0, fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                    Garmin sync is paused until official API access is available.
+                  </p>
                   <button onClick={handleGarminDisconnect} disabled={garminLoading} style={{ border: '1px solid var(--border-subtle)', borderRadius: 10, padding: '10px 12px', fontSize: 13, fontWeight: 700, background: 'var(--bg-input)', color: 'var(--text-primary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
                     <Unplug size={14} />
                     Revoke
@@ -529,9 +484,9 @@ export default function Settings() {
 
           <div style={card}>
             <span style={label}>Apple Health</span>
-            <p style={{ margin: 0, fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.6 }}>Status: {supportsAppleHealth && isPro ? 'Available on this device' : 'Unavailable on this browser or plan'}</p>
+            <p style={{ margin: 0, fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.6 }}>Status: {appleHealthStatus}</p>
             <button onClick={handleAppleHealthImport} disabled={importing || !supportsAppleHealth || !isPro} style={{ width: '100%', marginTop: 12, border: '1px solid var(--border-subtle)', borderRadius: 10, padding: '10px 12px', fontSize: 13, fontWeight: 700, background: supportsAppleHealth && isPro ? 'var(--bg-input)' : 'rgba(148,163,184,0.1)', color: supportsAppleHealth && isPro ? 'var(--text-primary)' : 'var(--text-muted)', cursor: supportsAppleHealth && isPro ? 'pointer' : 'not-allowed' }}>
-              {!isPro ? 'Apple Health sync requires Pro' : (supportsAppleHealth ? 'Import from Apple Health' : 'Apple Health unavailable on this browser')}
+              {!isPro ? 'Apple Health sync requires Pro' : (supportsAppleHealth ? 'Import from Apple Health' : 'Native Apple Health bridge needed')}
             </button>
           </div>
 

@@ -772,7 +772,7 @@ export default function Injury() {
                 <p style={{ margin: '6px 0 2px', fontSize: 24, fontWeight: 900, color: 'var(--text-primary)' }}>
                   {formatSleepHours(totalSleepSeconds(latestSleep))}
                 </p>
-                <p style={{ margin: 0, fontSize: 12, color: 'var(--text-muted)' }}>{latestSleep?.calendar_date ? formatDate(latestSleep.calendar_date) : 'No Garmin sleep data yet'}</p>
+                <p style={{ margin: 0, fontSize: 12, color: 'var(--text-muted)' }}>{latestSleep?.calendar_date ? formatDate(latestSleep.calendar_date) : 'No sleep data imported yet'}</p>
               </div>
               <div style={{ border: '1px solid var(--border-subtle)', borderRadius: 12, padding: 12, background: 'var(--bg-base)' }}>
                 <p style={{ margin: 0, fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.8 }}>30-Day Avg</p>

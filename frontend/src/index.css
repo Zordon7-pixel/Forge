@@ -5,6 +5,7 @@
 html {
   font-size: 16px;
   -webkit-text-size-adjust: 100%;
+  overflow-x: hidden;
 }
 
 :root {
@@ -35,7 +36,38 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   -webkit-font-smoothing: antialiased;
   overscroll-behavior: none;
+  overflow-x: hidden;
   transition: background 0.2s, color 0.2s;
 }
 
 * { box-sizing: border-box; }
+
+#root {
+  min-height: 100vh;
+  max-width: 100vw;
+  overflow-x: hidden;
+}
+
+.phone-safe-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 132px), 1fr));
+}
+
+.phone-safe-actions {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 128px), 1fr));
+}
+
+.phone-safe-row {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+
+@media (max-width: 390px) {
+  .phone-safe-row {
+    flex-direction: column;
+  }
+}

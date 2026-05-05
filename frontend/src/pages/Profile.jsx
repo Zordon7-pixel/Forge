@@ -126,17 +126,18 @@ export default function Profile() {
 
   if (loading) return <div className="rounded-xl p-4" style={{ background: 'var(--bg-card)', color: 'var(--text-muted)' }}>{t('common.loading')}</div>
 
-  const sectionStyle = { background: 'var(--bg-card)', borderRadius: 16, padding: 20, marginBottom: 12 }
+  const sectionStyle = { background: 'var(--bg-card)', borderRadius: 16, padding: 16, marginBottom: 12, maxWidth: '100%', overflow: 'hidden' }
   const sectionLabel = { fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 14 }
   const inputStyle = { background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', borderRadius: 10, padding: '12px 14px', fontSize: 14, color: 'var(--text-primary)', width: '100%', boxSizing: 'border-box' }
-  const pillActive = { background: 'var(--accent)', color: '#000', border: 'none', borderRadius: 20, padding: '8px 16px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }
-  const pillInactive = { background: 'var(--bg-input)', color: 'var(--text-muted)', border: '1px solid var(--border-subtle)', borderRadius: 20, padding: '8px 16px', fontSize: 13, fontWeight: 400, cursor: 'pointer' }
+  const pillBase = { minWidth: 0, minHeight: 40, padding: '8px 12px', borderRadius: 20, fontSize: 13, lineHeight: 1.2, cursor: 'pointer' }
+  const pillActive = { ...pillBase, background: 'var(--accent)', color: '#000', border: 'none', fontWeight: 700 }
+  const pillInactive = { ...pillBase, background: 'var(--bg-input)', color: 'var(--text-muted)', border: '1px solid var(--border-subtle)', fontWeight: 400 }
 
   return (
-    <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>
+    <div className="rounded-2xl p-3 sm:p-4" style={{ background: 'var(--bg-card)', maxWidth: '100%', overflowX: 'hidden' }}>
       <h2 className="mb-4 text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{t('profile.title')}</h2>
 
-          <div style={{ background: 'var(--bg-card)', borderRadius: 20, padding: 24, marginBottom: 16, textAlign: 'center', border: '1px solid var(--border-subtle)' }}>
+            <div style={{ background: 'var(--bg-card)', borderRadius: 20, padding: 16, marginBottom: 16, textAlign: 'center', border: '1px solid var(--border-subtle)', maxWidth: '100%', overflow: 'hidden' }}>
             <div style={{ width: 72, height: 72, borderRadius: '50%', background: 'var(--bg-base)', border: '3px solid var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px', fontSize: 28, fontWeight: 900, color: 'var(--accent)' }}>
               {(form.name || 'U')[0].toUpperCase()}
             </div>
@@ -167,14 +168,14 @@ export default function Profile() {
               <div style={{ marginBottom: 12 }}>
                 <input type="email" aria-label="Email" value={form.email} readOnly style={{ ...inputStyle, color: 'var(--text-muted)' }} />
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
+              <div className="phone-safe-grid" style={{ marginBottom: 12 }}>
                 <input type="number" aria-label="Age" min={PROFILE_LIMITS.age.min} max={PROFILE_LIMITS.age.max} placeholder="Age" value={form.age} onChange={e => update('age', e.target.value)} style={inputStyle} />
                 <input type="number" aria-label="Weight in pounds" min={PROFILE_LIMITS.weight_lbs.min} max={PROFILE_LIMITS.weight_lbs.max} step="0.1" placeholder="Weight (lbs)" value={form.weight_lbs} onChange={e => update('weight_lbs', e.target.value)} style={inputStyle} />
               </div>
               <div style={{ marginBottom: 12 }}>
                 <input type="number" aria-label="Max heart rate" min={PROFILE_LIMITS.max_heart_rate.min} max={PROFILE_LIMITS.max_heart_rate.max} placeholder="Max heart rate" value={form.max_heart_rate} onChange={e => update('max_heart_rate', e.target.value)} style={inputStyle} />
               </div>
-              <div style={{ display: 'flex', gap: 8 }}>
+              <div className="phone-safe-actions">
                 {['male', 'female'].map(s => (
                   <button key={s} type="button" onClick={() => update('sex', s)} style={form.sex === s ? { ...pillActive, flex: 1 } : { ...pillInactive, flex: 1 }}>
                     {s === 'male' ? 'Male' : 'Female'}
@@ -185,7 +186,7 @@ export default function Profile() {
 
             <div style={sectionStyle}>
               <div style={{ ...sectionLabel, display: 'flex', alignItems: 'center', gap: 8 }}><Dumbbell size={14} /> Training</div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: 8, marginBottom: 12 }}>
+              <div className="phone-safe-actions" style={{ marginBottom: 12 }}>
                 {[
                   { key: 'beginner', label: 'Beginner' },
                   { key: 'intermediate', label: 'Intermediate' },
@@ -197,7 +198,7 @@ export default function Profile() {
                 ))}
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 12 }}>
+              <div className="phone-safe-actions" style={{ marginBottom: 12 }}>
                 {[
                   { key: 'get_faster', label: 'Get Faster' },
                   { key: 'run_longer', label: 'Run Longer' },
@@ -210,7 +211,7 @@ export default function Profile() {
                 ))}
               </div>
 
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div className="phone-safe-row" style={{ alignItems: 'center' }}>
                 <input type="number" aria-label="Weekly miles" min={PROFILE_LIMITS.weekly_miles.min} max={PROFILE_LIMITS.weekly_miles.max} step="0.1" placeholder="0.0" value={form.weekly_miles} onChange={e => update('weekly_miles', e.target.value)} style={inputStyle} />
                 <span style={{ color: 'var(--text-muted)', fontSize: 13, whiteSpace: 'nowrap' }}>miles/week</span>
               </div>
@@ -218,7 +219,7 @@ export default function Profile() {
 
             <div style={sectionStyle}>
               <div style={{ ...sectionLabel, display: 'flex', alignItems: 'center', gap: 8 }}><HeartPulse size={14} /> Your Coach</div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              <div className="phone-safe-grid">
                 {personalityOptions.map(option => (
                   <button
                     key={option.key}

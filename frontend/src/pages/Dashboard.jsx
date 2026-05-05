@@ -1405,7 +1405,7 @@ export default function Dashboard() {
             <div style={{ marginTop: 20, padding: 14, background: 'var(--bg-base)', borderRadius: 12, borderLeft: '3px solid var(--accent)' }}>
               <p style={{ fontSize: 12, fontWeight: 700, color: 'var(--accent)', marginBottom: 6 }}>How to improve your score</p>
               <p style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6 }}>
-                Log runs consistently to build your streak. Keep weekly mileage within 10–20% of your average. Connect your Garmin for HRV and sleep data — that unlocks a much more accurate score.
+                Log runs consistently to build your streak. Keep weekly mileage within 10–20% of your average. Import watch data for HRV and sleep when available — that unlocks a much more accurate score.
               </p>
             </div>
           </div>

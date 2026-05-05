@@ -253,7 +253,7 @@ export default function Challenges() {
             </div>
           )}
 
-          <p className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>Connect Garmin to sync automatically</p>
+          <p className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>Use Apple Health or file import to keep steps updated.</p>
         </section>
 
         <section>
