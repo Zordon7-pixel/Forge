@@ -17,6 +17,8 @@ html {
   --text-primary: #ffffff;
   --text-muted: #9ca3af;
   --border-subtle: rgba(255,255,255,0.08);
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 .light {
@@ -46,6 +48,19 @@ body {
   min-height: 100vh;
   max-width: 100vw;
   overflow-x: hidden;
+  padding-top: var(--safe-top);
+}
+
+#root::before {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--safe-top);
+  background: var(--bg-base);
+  z-index: 9999;
+  pointer-events: none;
 }
 
 .phone-safe-grid {

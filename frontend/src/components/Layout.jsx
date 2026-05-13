@@ -130,7 +130,7 @@ export default function Layout({ children }) {
           style={{
             borderColor: 'var(--border-subtle)',
             background: 'color-mix(in srgb, var(--bg-base) 90%, transparent)',
-            paddingTop: 'calc(1rem + env(safe-area-inset-top, 0px))',
+            paddingTop: '1rem',
             paddingBottom: '1rem',
           }}
         >
