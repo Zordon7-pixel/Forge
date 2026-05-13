@@ -1030,7 +1030,18 @@ export default function Dashboard() {
       <section className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
         <div className="mb-3 flex items-center justify-between">
           <p className="text-sm font-bold uppercase tracking-wide" style={{ color: '#EAB308' }}>Health Sync</p>
-          {healthSync.loading && <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Syncing...</p>}
+          {healthSync.loading ? (
+            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Syncing...</p>
+          ) : (
+            <button
+              type="button"
+              onClick={() => navigate('/health')}
+              className="rounded-lg px-3 py-1.5 text-xs font-bold"
+              style={{ background: 'var(--bg-input)', color: '#EAB308', border: '1px solid var(--border-subtle)' }}
+            >
+              View all
+            </button>
+          )}
         </div>
 
         {!proLoading && !isPro && (

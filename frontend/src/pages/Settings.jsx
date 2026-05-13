@@ -19,6 +19,7 @@ const LANGUAGES = [
 ]
 
 const KM_TO_MILES = 0.621371
+const HEALTH_SYNC_RESULT_KEY = 'forge_last_health_sync_result'
 
 function parseDuration(value) {
   const raw = String(value || '').trim()
@@ -194,6 +195,14 @@ export default function Settings() {
       setImportProgress('Syncing Apple Health...')
       try {
         const result = await HealthService.syncNativeData({ requestPermission: true })
+        try {
+          localStorage.setItem(HEALTH_SYNC_RESULT_KEY, JSON.stringify({
+            imported: Number(result.imported || 0),
+            skipped: Number(result.skipped || 0),
+            errors: result.errors || [],
+            syncedAt: new Date().toISOString(),
+          }))
+        } catch {}
         setImportNotice({
           ok: true,
           text: `Apple Health synced: ${result.imported} workouts imported, ${result.skipped} skipped.`,
@@ -531,6 +540,9 @@ export default function Settings() {
             <p style={{ margin: 0, fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.6 }}>Status: {appleHealthStatus}</p>
             <button onClick={handleAppleHealthImport} disabled={importing || (!supportsAppleHealth && !supportsNativeAppleHealth)} style={{ width: '100%', marginTop: 12, border: '1px solid var(--border-subtle)', borderRadius: 10, padding: '10px 12px', fontSize: 13, fontWeight: 700, background: (supportsAppleHealth || supportsNativeAppleHealth) ? 'var(--bg-input)' : 'rgba(148,163,184,0.1)', color: (supportsAppleHealth || supportsNativeAppleHealth) ? 'var(--text-primary)' : 'var(--text-muted)', cursor: (supportsAppleHealth || supportsNativeAppleHealth) ? 'pointer' : 'not-allowed' }}>
               {supportsNativeAppleHealth ? 'Sync Apple Health' : (supportsAppleHealth ? 'Import from Apple Health' : 'Apple Health unavailable')}
+            </button>
+            <button onClick={() => navigate('/health')} style={{ width: '100%', marginTop: 8, border: '1px solid var(--accent)', borderRadius: 10, padding: '10px 12px', fontSize: 13, fontWeight: 800, background: 'transparent', color: 'var(--accent)', cursor: 'pointer' }}>
+              View Health Data Center
             </button>
           </div>
 

@@ -19,6 +19,7 @@ const Warmup = lazy(() => import('./pages/Warmup'))
 const History = lazy(() => import('./pages/History'))
 const Profile = lazy(() => import('./pages/Profile'))
 const Settings = lazy(() => import('./pages/Settings'))
+const HealthData = lazy(() => import('./pages/HealthData'))
 const ActiveWorkout = lazy(() => import('./pages/ActiveWorkout'))
 const WorkoutSummary = lazy(() => import('./pages/WorkoutSummary'))
 const ActiveRun = lazy(() => import('./pages/ActiveRun'))
@@ -228,6 +229,14 @@ export default function App() {
           element={
             <PrivateRoute>
               <Settings />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/health"
+          element={
+            <PrivateRoute>
+              <HealthData />
             </PrivateRoute>
           }
         />
