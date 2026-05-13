@@ -6,7 +6,7 @@ export const DEVICES_REGISTRY = [
     id: 'apple-watch',
     name: 'Apple Watch',
     type: 'smartwatch',
-    status: 'available', // 'connected' | 'available' | 'coming_soon'
+    status: 'coming_soon', // 'connected' | 'available' | 'coming_soon'
     icon: 'Watch',
     capabilities: ['heart-rate', 'gps', 'pace', 'cadence', 'elevation'],
   },

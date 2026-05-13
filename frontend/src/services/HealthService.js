@@ -6,6 +6,10 @@ function isIOSDevice() {
   return typeof navigator !== 'undefined' && IOS_UA_REGEX.test(navigator.userAgent || '')
 }
 
+function isNativeRuntime() {
+  return typeof window !== 'undefined' && Boolean(window.Capacitor?.isNativePlatform?.())
+}
+
 function startOfDay(date) {
   const d = new Date(date)
   d.setHours(0, 0, 0, 0)
@@ -67,6 +71,10 @@ class HealthService {
   async initialize() {
     if (!isIOSDevice()) {
       return { available: false, reason: 'Apple Health is only available on iOS devices.' }
+    }
+
+    if (isNativeRuntime()) {
+      return { available: false, reason: 'Native Apple Health sync is not wired in TestFlight yet. Use File Import until the HealthKit bridge ships.' }
     }
 
     const healthKit = await this.loadHealthKit()

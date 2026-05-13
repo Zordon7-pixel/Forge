@@ -253,7 +253,7 @@ export default function Challenges() {
             </div>
           )}
 
-          <p className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>Use Apple Health or file import to keep steps updated.</p>
+          <p className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>Use File Import or manual entry for now. Native Apple Health sync is next.</p>
         </section>
 
         <section>

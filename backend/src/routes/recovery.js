@@ -238,7 +238,7 @@ router.get('/unified', auth, requirePremium('Full recovery dashboard'), async (r
     if (garminRow?.value) connectedSources.push('garmin');
     if (whoopRow) connectedSources.push('whoop');
     if (ouraRow) connectedSources.push('oura');
-    // Apple Health is always implicitly available via watch_sync
+    // Apple Health is present only when imported watch_sync rows exist.
     if (healthSleep.length > 0) connectedSources.push('apple_health');
 
     // Latest unified score

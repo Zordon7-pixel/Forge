@@ -67,6 +67,32 @@ Premium should convert around capabilities that compound value for a hybrid runn
 
 No app-code implementation was started from this reframe; it is planning/product direction only.
 
+## Data Foundation Audit — Phase 1 (2026-05-13)
+
+Current source-of-truth map before native Apple Health work:
+
+| Source | Current intake | Storage | Used today | Status |
+|--------|----------------|---------|------------|--------|
+| Manual runs | `LogRun.jsx` -> `/api/runs` | `runs` | History, Dashboard stats, load analysis, next recommendation, PRs | Working |
+| Manual lifts | `LogLift.jsx` / `ActiveWorkout.jsx` -> `/api/lifts`, `/api/workouts` | `lifts`, `workout_sessions`, `workout_sets` | History, Dashboard, AI lift feedback, training-load warnings | Working |
+| Morning check-in | `DailyCheckIn.jsx` -> `/api/checkin` | `daily_checkins` | Today flow, readiness breakdown, recovery adjustment | Working |
+| Race goals | `Races.jsx` -> `/api/races` | `race_events` | Race countdown, plan generation target | Working |
+| File import | Settings file upload -> `/api/import/workouts` or `/api/import/health` | `runs`, `lifts` | History, Dashboard stats, recommendations | Working for Garmin/Strava-style CSV and workout JSON |
+| Watch-sync API | `/api/watch-sync` and `/api/watch-sync/upload` | `watch_sync`, plus routed `runs`/`lifts` | Dashboard watch notice, readiness gate, history | Backend works; no native phone collector yet |
+| Health summary sync | `HealthService.syncToProfile()` -> `/api/health/sync` | `health_sync` | Dashboard health card only | Backend works; native Apple Health bridge not wired |
+| Apple Health / Apple Watch | Planned native HealthKit bridge | `health_sync`, `watch_sync`, `runs`, `lifts` | Planned readiness and recommendations | Not live in TestFlight yet |
+| Garmin direct | Settings status/revoke plus legacy backend route | `user_settings`, `garmin_sleep`, `watch_sync`, `runs` | Paused copy in Settings | Paused until official Garmin API access |
+| Strava OAuth | Settings device row -> `/api/strava/*` | `strava_tokens`, imported `runs` | History/Dashboard after sync | Available if env/app config is live |
+| WHOOP/Oura OAuth | Settings device rows -> `/api/whoop/*`, `/api/oura/*` | `whoop_*`, `oura_*` | Unified recovery endpoint | Premium integration path exists; depends on provider env/config |
+
+Phase 1 cleanup from this audit:
+- Dashboard/HealthService now states that native Apple Health sync is not wired in TestFlight yet instead of surfacing a `react-native-health` implementation detail.
+- Challenges step-copy now points users to File Import/manual entry until native Apple Health ships.
+- Device registry marks Apple Watch as `coming_soon` until the HealthKit bridge is implemented.
+- Recovery source comments now reflect that Apple Health is present only when imported/synced rows exist.
+
+Phase 2 should wire the native HealthKit bridge before adding notifications or group-run features.
+
 ## Recently Fixed Bugs
 
 Do not reintroduce these patterns.
@@ -157,7 +183,7 @@ These changes are already implemented, built, Capacitor-synced, and deployed to 
 - Account deletion moved into Account and requires typed `DELETE` plus current-password confirmation.
 - Garmin, Strava, WHOOP, and Oura have consistent status, connect, sync, and revoke controls.
 - Settings legacy distance-unit and notifications placeholder cards were removed.
-- Device registry only exposes available integrations: Apple Watch, Garmin, WHOOP, Oura.
+- Device registry exposes live provider rows and marks Apple Watch as coming soon until native HealthKit sync ships.
 - Dashboard Today flow is primary and now owns the daily recommendation.
 - Today detail sheet explains recommendation reason, readiness drivers, actions, and plan-adjustment signals.
 - Secondary dashboard cards now live behind `More insights`.
