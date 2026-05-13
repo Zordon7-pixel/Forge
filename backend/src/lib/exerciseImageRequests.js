@@ -3,6 +3,8 @@ const { v4: uuidv4 } = require('uuid');
 
 const LOCAL_FORM_IMAGE_MATCHERS = [
   (name) => name.includes('dumbbell bench press'),
+  (name) => name.includes('leg swing'),
+  (name) => name.includes('hip flexor'),
 ];
 
 function normalizeExerciseName(name) {

@@ -8,6 +8,16 @@ const PHOTO_DEMOS = [
     male: '/exercises/dumbbell-bench-press-male.png',
     female: '/exercises/dumbbell-bench-press-female.png',
   },
+  {
+    match: (lower) => lower.includes('leg swing'),
+    male: '/stretches/leg-swings-male.png',
+    female: '/stretches/leg-swings-female.png',
+  },
+  {
+    match: (lower) => lower.includes('hip flexor'),
+    male: '/stretches/hip-flexor-male.png',
+    female: '/stretches/hip-flexor-female.png',
+  },
 ]
 
 function getDemoKind(name = '') {

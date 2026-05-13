@@ -60,7 +60,7 @@ function CountdownRing({ total, remaining }) {
 }
 
 /* ─── Stretch session screen ─── */
-function StretchSession({ stretches, onDone, onBack }) {
+function StretchSession({ stretches, onDone, onBack, sex = 'male' }) {
   const { t } = useTranslation()
   const [stepIndex, setStepIndex]       = useState(0)
   const [remaining, setRemaining]       = useState(stretches[0]?.duration || 30)
@@ -164,7 +164,7 @@ function StretchSession({ stretches, onDone, onBack }) {
           {stretch.cue}
         </p>
 
-        <MovementDemo name={stretch.name} compact />
+        <MovementDemo name={stretch.name} compact sex={sex} />
 
         {/* Timer */}
         {phase === 'active' && (
@@ -240,10 +240,14 @@ export default function Stretches() {
   const [stretches, setStretches] = useState([])
   const [aiData, setAiData]       = useState(null) // { recommendedCategory, reason }
   const [doneCount, setDoneCount] = useState(0)
+  const [sex, setSex]             = useState('male')
 
   useEffect(() => {
     api.get('/stretches/categories')
       .then(r => setCategories(r.data.categories))
+      .catch(() => {})
+    api.get('/auth/me')
+      .then((r) => setSex(r.data?.user?.sex || r.data?.sex || 'male'))
       .catch(() => {})
   }, [])
 
@@ -344,6 +348,7 @@ export default function Stretches() {
         stretches={stretches}
         onDone={handleSessionDone}
         onBack={() => setScreen('categories')}
+        sex={sex}
       />
     )
   }

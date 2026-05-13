@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { CheckCircle2 } from 'lucide-react'
 import { postRunStretches, preRunStretches } from '../data/stretches'
 import MovementDemo from '../components/MovementDemo'
+import api from '../lib/api'
 
 export default function StretchSession() {
   const navigate = useNavigate()
@@ -20,6 +21,19 @@ export default function StretchSession() {
   const [transitioning, setTransitioning] = useState(false)
   const [nextName, setNextName] = useState('')
   const [done, setDone] = useState(false)
+  const [sex, setSex] = useState('male')
+
+  useEffect(() => {
+    let active = true
+    api.get('/auth/me')
+      .then((res) => {
+        if (active) setSex(res.data?.user?.sex || res.data?.sex || 'male')
+      })
+      .catch(() => {})
+    return () => {
+      active = false
+    }
+  }, [])
 
   useEffect(() => {
     setCurrent(0)
@@ -161,7 +175,7 @@ export default function StretchSession() {
               </div>
 
               <div className="my-8 flex flex-col items-center">
-                <MovementDemo name={currentStretch.name} />
+                <MovementDemo name={currentStretch.name} sex={sex} />
                 <p className={`text-7xl font-black mt-6 ${secondsLeft <= 5 ? 'animate-timer-pulse' : 'text-yellow-500'}`}>
                   {secondsLeft}
                 </p>
