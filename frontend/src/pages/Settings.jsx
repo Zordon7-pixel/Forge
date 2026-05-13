@@ -4,7 +4,6 @@ import { ChevronRight, Download, Moon, Shield, Sun, Trash2, Unplug, Watch } from
 import { useTranslation } from 'react-i18next'
 import { useUnits } from '../context/UnitsContext'
 import { useTheme } from '../context/ThemeContext'
-import { useProContext } from '../context/ProContext'
 import api from '../lib/api'
 import { parseGarminCSV, parseStravaCSV, requestAppleHealth } from '../lib/healthImport'
 import HealthService from '../services/HealthService'
@@ -60,7 +59,6 @@ export default function Settings() {
   const { t, i18n } = useTranslation()
   const { units, setUnits } = useUnits()
   const { theme, setTheme } = useTheme()
-  const { isPro } = useProContext()
   const [saved, setSaved] = useState(false)
   const [importing, setImporting] = useState(false)
   const [importProgress, setImportProgress] = useState('')
@@ -70,6 +68,8 @@ export default function Settings() {
   const [garminNotice, setGarminNotice] = useState(null)
   const [deviceStatuses, setDeviceStatuses] = useState({})
   const [deviceSyncing, setDeviceSyncing] = useState({})
+  const [deviceConnecting, setDeviceConnecting] = useState({})
+  const [deviceNotice, setDeviceNotice] = useState(null)
   const [privacyNotice, setPrivacyNotice] = useState(null)
   const [exporting, setExporting] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -88,13 +88,11 @@ export default function Settings() {
 
   const supportsNativeAppleHealth = isNativeRuntime
   const supportsAppleHealth = isIOSSafari && !isNativeRuntime && typeof navigator !== 'undefined' && Boolean(navigator.health)
-  const appleHealthStatus = !isPro
-    ? 'Apple Health sync is available on the Pro tier.'
-    : isNativeRuntime
-      ? 'Ready to request Apple Health permission on this iPhone.'
-      : supportsAppleHealth
-        ? 'Available on this device'
-        : 'Apple Health is not available in this browser.'
+  const appleHealthStatus = isNativeRuntime
+    ? 'Ready to request Apple Health permission on this iPhone.'
+    : supportsAppleHealth
+      ? 'Available on this device'
+      : 'Apple Health is not available in this browser.'
 
   useEffect(() => {
     api.get('/garmin/status').then((r) => {
@@ -119,6 +117,12 @@ export default function Settings() {
     const id = setTimeout(() => setGarminNotice(null), 4000)
     return () => clearTimeout(id)
   }, [garminNotice])
+
+  useEffect(() => {
+    if (!deviceNotice) return
+    const id = setTimeout(() => setDeviceNotice(null), 6000)
+    return () => clearTimeout(id)
+  }, [deviceNotice])
 
   useEffect(() => {
     if (!privacyNotice) return
@@ -169,10 +173,6 @@ export default function Settings() {
   }
 
   const handleAppleHealthImport = async () => {
-    if (!isPro) {
-      setImportNotice({ ok: false, text: 'Apple Health sync is available on the Pro tier.' })
-      return
-    }
     if (isNativeRuntime) {
       setImporting(true)
       setImportProgress('Syncing Apple Health...')
@@ -264,15 +264,20 @@ export default function Settings() {
   }
 
   const handleDeviceConnect = async (device) => {
+    setDeviceConnecting((prev) => ({ ...prev, [device]: true }))
+    setDeviceNotice({ ok: true, text: `Opening ${device.toUpperCase()} connection...` })
     try {
       const { data } = await api.get(`/${device}/auth`, { params: { json: 1 } })
       if (data?.url) {
-        window.location.href = data.url
+        const opened = window.open(data.url, '_blank', 'noopener,noreferrer')
+        if (!opened) window.location.href = data.url
         return
       }
-      setPrivacyNotice({ ok: false, text: `Could not start ${device.toUpperCase()} connection.` })
+      setDeviceNotice({ ok: false, text: `Could not start ${device.toUpperCase()} connection.` })
     } catch (err) {
-      setPrivacyNotice({ ok: false, text: err?.response?.data?.error || `Could not start ${device.toUpperCase()} connection.` })
+      setDeviceNotice({ ok: false, text: err?.response?.data?.error || `Could not start ${device.toUpperCase()} connection.` })
+    } finally {
+      setDeviceConnecting((prev) => ({ ...prev, [device]: false }))
     }
   }
 
@@ -340,6 +345,7 @@ export default function Settings() {
       detail: deviceStatuses.strava?.athlete_name || '',
       lastSync: deviceStatuses.strava?.last_sync,
       connect: () => handleDeviceConnect('strava'),
+      connecting: Boolean(deviceConnecting.strava),
       sync: () => handleDeviceSync('strava'),
       revoke: () => handleDeviceDisconnect('strava'),
     },
@@ -350,6 +356,7 @@ export default function Settings() {
       detail: deviceStatuses.whoop?.displayName || '',
       lastSync: deviceStatuses.whoop?.lastSync,
       connect: () => handleDeviceConnect('whoop'),
+      connecting: Boolean(deviceConnecting.whoop),
       sync: () => handleDeviceSync('whoop'),
       revoke: () => handleDeviceDisconnect('whoop'),
     },
@@ -360,6 +367,7 @@ export default function Settings() {
       detail: deviceStatuses.oura?.displayName || '',
       lastSync: deviceStatuses.oura?.lastSync,
       connect: () => handleDeviceConnect('oura'),
+      connecting: Boolean(deviceConnecting.oura),
       sync: () => handleDeviceSync('oura'),
       revoke: () => handleDeviceDisconnect('oura'),
     },
@@ -423,6 +431,11 @@ export default function Settings() {
 
       <section style={section}>
         <h2 style={sectionTitle}>Devices</h2>
+        {deviceNotice && (
+          <div style={{ marginBottom: 10, borderRadius: 10, padding: '9px 10px', fontSize: 12, border: `1px solid ${deviceNotice.ok ? 'rgba(34,197,94,0.35)' : 'rgba(239,68,68,0.35)'}`, color: deviceNotice.ok ? '#86efac' : '#fca5a5', background: deviceNotice.ok ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.1)' }}>
+            {deviceNotice.text}
+          </div>
+        )}
         <div style={sectionGrid}>
           <div style={card}>
             <span style={label}>Garmin</span>
@@ -479,8 +492,8 @@ export default function Settings() {
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: device.connected ? '1fr 1fr' : '1fr', gap: 8 }}>
                   {!device.connected ? (
-                    <button type="button" onClick={device.connect} style={{ border: '1px solid var(--accent)', borderRadius: 10, padding: '10px 12px', background: 'var(--accent)', color: '#111111', fontSize: 13, fontWeight: 800, cursor: 'pointer' }}>
-                      Connect {device.name}
+                    <button type="button" onClick={device.connect} disabled={device.connecting} style={{ border: '1px solid var(--accent)', borderRadius: 10, padding: '10px 12px', background: 'var(--accent)', color: '#111111', fontSize: 13, fontWeight: 800, cursor: device.connecting ? 'wait' : 'pointer', opacity: device.connecting ? 0.7 : 1 }}>
+                      {device.connecting ? `Opening ${device.name}...` : `Connect ${device.name}`}
                     </button>
                   ) : (
                     <>
@@ -500,8 +513,8 @@ export default function Settings() {
           <div style={card}>
             <span style={label}>Apple Health</span>
             <p style={{ margin: 0, fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.6 }}>Status: {appleHealthStatus}</p>
-            <button onClick={handleAppleHealthImport} disabled={importing || (!supportsAppleHealth && !supportsNativeAppleHealth) || !isPro} style={{ width: '100%', marginTop: 12, border: '1px solid var(--border-subtle)', borderRadius: 10, padding: '10px 12px', fontSize: 13, fontWeight: 700, background: (supportsAppleHealth || supportsNativeAppleHealth) && isPro ? 'var(--bg-input)' : 'rgba(148,163,184,0.1)', color: (supportsAppleHealth || supportsNativeAppleHealth) && isPro ? 'var(--text-primary)' : 'var(--text-muted)', cursor: (supportsAppleHealth || supportsNativeAppleHealth) && isPro ? 'pointer' : 'not-allowed' }}>
-              {!isPro ? 'Apple Health sync requires Pro' : (supportsNativeAppleHealth ? 'Sync Apple Health' : (supportsAppleHealth ? 'Import from Apple Health' : 'Apple Health unavailable'))}
+            <button onClick={handleAppleHealthImport} disabled={importing || (!supportsAppleHealth && !supportsNativeAppleHealth)} style={{ width: '100%', marginTop: 12, border: '1px solid var(--border-subtle)', borderRadius: 10, padding: '10px 12px', fontSize: 13, fontWeight: 700, background: (supportsAppleHealth || supportsNativeAppleHealth) ? 'var(--bg-input)' : 'rgba(148,163,184,0.1)', color: (supportsAppleHealth || supportsNativeAppleHealth) ? 'var(--text-primary)' : 'var(--text-muted)', cursor: (supportsAppleHealth || supportsNativeAppleHealth) ? 'pointer' : 'not-allowed' }}>
+              {supportsNativeAppleHealth ? 'Sync Apple Health' : (supportsAppleHealth ? 'Import from Apple Health' : 'Apple Health unavailable')}
             </button>
           </div>
 
