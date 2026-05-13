@@ -179,7 +179,7 @@ function generateSessions(intensity, user = {}) {
 }
 
 function parsePreferredDays(raw) {
-  const dayIndex = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
+  const dayIndex = { mon: 0, tue: 1, wed: 2, thu: 3, fri: 4, sat: 5, sun: 6 };
   const values = Array.isArray(raw)
     ? raw
     : String(raw || '')
@@ -196,7 +196,7 @@ function normalizeAdaptivePreferences(input = {}) {
   const preferred = parsePreferredDays(input.preferred_run_days);
   return {
     run_days_per_week: Number.isFinite(runDays) ? clamp(runDays, 2, 6) : null,
-    preferred_run_days: preferred.length ? preferred.map((idx) => ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][idx]) : null,
+    preferred_run_days: preferred.length ? preferred.map((idx) => ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][idx]) : null,
   };
 }
 
