@@ -181,6 +181,14 @@ CREATE TABLE IF NOT EXISTS health_sync (
   calories_today INTEGER,
   avg_heart_rate_last_run INTEGER,
   total_miles_this_week NUMERIC(10,2),
+  resting_heart_rate INTEGER,
+  hrv_ms INTEGER,
+  sleep_hours_last_night NUMERIC(4,1),
+  active_minutes_this_week INTEGER,
+  workout_count_this_week INTEGER,
+  last_workout_type TEXT,
+  last_workout_duration_seconds INTEGER,
+  last_workout_calories INTEGER,
   synced_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 

@@ -21,13 +21,18 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
             HKQuantityTypeIdentifier.stepCount,
             HKQuantityTypeIdentifier.activeEnergyBurned,
             HKQuantityTypeIdentifier.distanceWalkingRunning,
-            HKQuantityTypeIdentifier.heartRate
+            HKQuantityTypeIdentifier.heartRate,
+            HKQuantityTypeIdentifier.restingHeartRate,
+            HKQuantityTypeIdentifier.heartRateVariabilitySDNN
         ].forEach { identifier in
             if let type = HKObjectType.quantityType(forIdentifier: identifier) {
                 types.insert(type)
             }
         }
 
+        if let sleepType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) {
+            types.insert(sleepType)
+        }
         types.insert(HKObjectType.workoutType())
         return types
     }
@@ -68,6 +73,13 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
         var milesThisWeek = 0.0
         var workouts: [[String: Any]] = []
         var avgHeartRateLastRun: Double?
+        var restingHeartRate: Double?
+        var hrv: Double?
+        var sleepHoursLastNight = 0.0
+        var activeMinutesThisWeek = 0.0
+        var lastWorkoutType: String?
+        var lastWorkoutDurationSeconds: Int?
+        var lastWorkoutCalories: Int?
 
         group.enter()
         sumQuantity(.stepCount, unit: HKUnit.count(), startDate: todayStart, endDate: now) { value in
@@ -90,6 +102,14 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
         group.enter()
         fetchWorkouts(startDate: weekStart, endDate: now) { rows, latestRun in
             workouts = rows
+            activeMinutesThisWeek = rows.reduce(0.0) { sum, row in
+                sum + (row["durationSeconds"] as? Double ?? Double(row["durationSeconds"] as? Int ?? 0)) / 60.0
+            }
+            if let latest = rows.first {
+                lastWorkoutType = latest["type"] as? String
+                lastWorkoutDurationSeconds = latest["durationSeconds"] as? Int
+                lastWorkoutCalories = latest["calories"] as? Int
+            }
             guard let run = latestRun else {
                 group.leave()
                 return
@@ -101,14 +121,40 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
             }
         }
 
+        group.enter()
+        averageQuantity(.restingHeartRate, unit: HKUnit.count().unitDivided(by: HKUnit.minute()), startDate: weekStart, endDate: now) { value in
+            restingHeartRate = value
+            group.leave()
+        }
+
+        group.enter()
+        averageQuantity(.heartRateVariabilitySDNN, unit: HKUnit.secondUnit(with: .milli), startDate: weekStart, endDate: now) { value in
+            hrv = value
+            group.leave()
+        }
+
+        group.enter()
+        fetchSleepHours(startDate: calendar.date(byAdding: .day, value: -1, to: todayStart) ?? todayStart, endDate: now) { value in
+            sleepHoursLastNight = value
+            group.leave()
+        }
+
         group.notify(queue: .main) {
             var payload: [String: Any] = [
                 "stepsToday": Int(stepsToday.rounded()),
                 "caloriesBurnedToday": Int(caloriesToday.rounded()),
                 "totalMilesThisWeek": round(milesThisWeek * 100) / 100,
+                "sleepHoursLastNight": round(sleepHoursLastNight * 10) / 10,
+                "activeMinutesThisWeek": Int(activeMinutesThisWeek.rounded()),
+                "workoutCountThisWeek": workouts.count,
                 "workouts": workouts
             ]
             payload["avgHeartRateFromLastRun"] = avgHeartRateLastRun.map { Int($0.rounded()) } ?? NSNull()
+            payload["restingHeartRate"] = restingHeartRate.map { Int($0.rounded()) } ?? NSNull()
+            payload["heartRateVariabilityMs"] = hrv.map { Int($0.rounded()) } ?? NSNull()
+            payload["lastWorkoutType"] = lastWorkoutType ?? NSNull()
+            payload["lastWorkoutDurationSeconds"] = lastWorkoutDurationSeconds ?? NSNull()
+            payload["lastWorkoutCalories"] = lastWorkoutCalories ?? NSNull()
             call.resolve(payload)
         }
     }
@@ -124,6 +170,48 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
             completion(statistics?.sumQuantity()?.doubleValue(for: unit) ?? 0)
         }
         healthStore.execute(query)
+    }
+
+    private func averageQuantity(_ identifier: HKQuantityTypeIdentifier, unit: HKUnit, startDate: Date, endDate: Date, completion: @escaping (Double?) -> Void) {
+        guard let type = HKQuantityType.quantityType(forIdentifier: identifier) else {
+            completion(nil)
+            return
+        }
+
+        let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: .strictStartDate)
+        let query = HKStatisticsQuery(quantityType: type, quantitySamplePredicate: predicate, options: .discreteAverage) { _, statistics, _ in
+            completion(statistics?.averageQuantity()?.doubleValue(for: unit))
+        }
+        healthStore.execute(query)
+    }
+
+    private func fetchSleepHours(startDate: Date, endDate: Date, completion: @escaping (Double) -> Void) {
+        guard let type = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) else {
+            completion(0)
+            return
+        }
+
+        let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: .strictStartDate)
+        let query = HKSampleQuery(sampleType: type, predicate: predicate, limit: 100, sortDescriptors: nil) { _, samples, _ in
+            let sleepSeconds = (samples as? [HKCategorySample] ?? []).reduce(0.0) { sum, sample in
+                if self.isAsleep(sample.value) {
+                    return sum + sample.endDate.timeIntervalSince(sample.startDate)
+                }
+                return sum
+            }
+            completion(sleepSeconds / 3600.0)
+        }
+        healthStore.execute(query)
+    }
+
+    private func isAsleep(_ value: Int) -> Bool {
+        if #available(iOS 16.0, *) {
+            return value == HKCategoryValueSleepAnalysis.asleepCore.rawValue
+                || value == HKCategoryValueSleepAnalysis.asleepDeep.rawValue
+                || value == HKCategoryValueSleepAnalysis.asleepREM.rawValue
+                || value == HKCategoryValueSleepAnalysis.asleepUnspecified.rawValue
+        }
+        return value == HKCategoryValueSleepAnalysis.asleep.rawValue
     }
 
     private func fetchWorkouts(startDate: Date, endDate: Date, completion: @escaping ([[String: Any]], HKWorkout?) -> Void) {

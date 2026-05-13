@@ -645,9 +645,25 @@ async function initDb() {
         calories_today INTEGER,
         avg_heart_rate_last_run INTEGER,
         total_miles_this_week NUMERIC(10,2),
+        resting_heart_rate INTEGER,
+        hrv_ms INTEGER,
+        sleep_hours_last_night NUMERIC(4,1),
+        active_minutes_this_week INTEGER,
+        workout_count_this_week INTEGER,
+        last_workout_type TEXT,
+        last_workout_duration_seconds INTEGER,
+        last_workout_calories INTEGER,
         synced_at TIMESTAMPTZ DEFAULT NOW()
       );
     `);
+    await client.query('ALTER TABLE health_sync ADD COLUMN IF NOT EXISTS resting_heart_rate INTEGER');
+    await client.query('ALTER TABLE health_sync ADD COLUMN IF NOT EXISTS hrv_ms INTEGER');
+    await client.query('ALTER TABLE health_sync ADD COLUMN IF NOT EXISTS sleep_hours_last_night NUMERIC(4,1)');
+    await client.query('ALTER TABLE health_sync ADD COLUMN IF NOT EXISTS active_minutes_this_week INTEGER');
+    await client.query('ALTER TABLE health_sync ADD COLUMN IF NOT EXISTS workout_count_this_week INTEGER');
+    await client.query('ALTER TABLE health_sync ADD COLUMN IF NOT EXISTS last_workout_type TEXT');
+    await client.query('ALTER TABLE health_sync ADD COLUMN IF NOT EXISTS last_workout_duration_seconds INTEGER');
+    await client.query('ALTER TABLE health_sync ADD COLUMN IF NOT EXISTS last_workout_calories INTEGER');
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS user_settings (

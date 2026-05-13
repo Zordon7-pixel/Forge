@@ -1077,6 +1077,46 @@ export default function Dashboard() {
                   {Number(healthSync.metrics.stepsToday || 0).toLocaleString()}
                 </p>
               </div>
+              <div className="rounded-lg p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Sleep last night</p>
+                <p className="text-lg font-black" style={{ color: 'var(--text-primary)' }}>
+                  {healthSync.metrics.sleepHoursLastNight ? `${Number(healthSync.metrics.sleepHoursLastNight).toFixed(1)}h` : '--'}
+                </p>
+              </div>
+              <div className="rounded-lg p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Resting HR</p>
+                <p className="text-lg font-black" style={{ color: 'var(--text-primary)' }}>
+                  {healthSync.metrics.restingHeartRate ? `${healthSync.metrics.restingHeartRate} bpm` : '--'}
+                </p>
+              </div>
+              <div className="rounded-lg p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>HRV</p>
+                <p className="text-lg font-black" style={{ color: 'var(--text-primary)' }}>
+                  {healthSync.metrics.heartRateVariabilityMs ? `${healthSync.metrics.heartRateVariabilityMs} ms` : '--'}
+                </p>
+              </div>
+              <div className="rounded-lg p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Active minutes</p>
+                <p className="text-lg font-black" style={{ color: 'var(--text-primary)' }}>
+                  {Number(healthSync.metrics.activeMinutesThisWeek || 0).toLocaleString()}
+                </p>
+              </div>
+              <div className="rounded-lg p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Workouts this week</p>
+                <p className="text-lg font-black" style={{ color: 'var(--text-primary)' }}>
+                  {Number(healthSync.metrics.workoutCountThisWeek || 0).toLocaleString()}
+                </p>
+              </div>
+              <div className="rounded-lg p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Last workout</p>
+                <p className="text-sm font-black capitalize" style={{ color: 'var(--text-primary)' }}>
+                  {healthSync.metrics.lastWorkoutType || '--'}
+                </p>
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                  {healthSync.metrics.lastWorkoutDurationSeconds ? `${Math.round(Number(healthSync.metrics.lastWorkoutDurationSeconds) / 60)} min` : ''}
+                  {healthSync.metrics.lastWorkoutCalories ? ` · ${healthSync.metrics.lastWorkoutCalories} cal` : ''}
+                </p>
+              </div>
             </div>
             {healthSyncNotice && (
               <p className="mt-3 text-xs" style={{ color: '#F97316' }}>{healthSyncNotice}</p>

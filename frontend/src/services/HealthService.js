@@ -87,7 +87,10 @@ class HealthService {
           constants.StepCount || 'StepCount',
           constants.ActiveEnergyBurned || 'ActiveEnergyBurned',
           constants.HeartRate || 'HeartRate',
+          constants.RestingHeartRate || 'RestingHeartRate',
+          constants.HeartRateVariabilitySDNN || 'HeartRateVariabilitySDNN',
           constants.DistanceWalkingRunning || 'DistanceWalkingRunning',
+          constants.SleepAnalysis || 'SleepAnalysis',
           constants.Workout || 'Workout',
         ],
         write: [],
@@ -181,6 +184,14 @@ class HealthService {
       avg_hr_bpm_last_workout: metrics.avgHeartRateFromLastRun,
       avg_heart_rate_last_run: metrics.avgHeartRateFromLastRun,
       total_miles_this_week: metrics.totalMilesThisWeek,
+      resting_heart_rate: metrics.restingHeartRate,
+      hrv_ms: metrics.heartRateVariabilityMs,
+      sleep_hours_last_night: metrics.sleepHoursLastNight,
+      active_minutes_this_week: metrics.activeMinutesThisWeek,
+      workout_count_this_week: metrics.workoutCountThisWeek,
+      last_workout_type: metrics.lastWorkoutType,
+      last_workout_duration_seconds: metrics.lastWorkoutDurationSeconds,
+      last_workout_calories: metrics.lastWorkoutCalories,
     })
     return data
   }
@@ -226,6 +237,14 @@ class HealthService {
         metrics: {
           totalMilesThisWeek: toNumber(summary?.totalMilesThisWeek),
           avgHeartRateFromLastRun: summary?.avgHeartRateFromLastRun ? Math.round(toNumber(summary.avgHeartRateFromLastRun)) : null,
+          restingHeartRate: summary?.restingHeartRate ? Math.round(toNumber(summary.restingHeartRate)) : null,
+          heartRateVariabilityMs: summary?.heartRateVariabilityMs ? Math.round(toNumber(summary.heartRateVariabilityMs)) : null,
+          sleepHoursLastNight: Number(toNumber(summary?.sleepHoursLastNight).toFixed(1)),
+          activeMinutesThisWeek: Math.round(toNumber(summary?.activeMinutesThisWeek)),
+          workoutCountThisWeek: Math.round(toNumber(summary?.workoutCountThisWeek)),
+          lastWorkoutType: summary?.lastWorkoutType || null,
+          lastWorkoutDurationSeconds: summary?.lastWorkoutDurationSeconds ? Math.round(toNumber(summary.lastWorkoutDurationSeconds)) : null,
+          lastWorkoutCalories: summary?.lastWorkoutCalories ? Math.round(toNumber(summary.lastWorkoutCalories)) : null,
           caloriesBurnedToday: Math.round(toNumber(summary?.caloriesBurnedToday)),
           stepsToday: Math.round(toNumber(summary?.stepsToday)),
         },
@@ -310,12 +329,27 @@ class HealthService {
       avgHeartRateFromLastRun = average(heartRateSamples)
     }
 
+    const workoutMinutesThisWeek = workouts.reduce((sum, workout) => {
+      const seconds = toNumber(workout?.durationSeconds || workout?.duration_seconds || workout?.duration || 0)
+      return sum + (seconds / 60)
+    }, 0)
+    const latestWorkout = [...workouts]
+      .sort((a, b) => new Date(b?.startDate || b?.start || b?.date).getTime() - new Date(a?.startDate || a?.start || a?.date).getTime())[0]
+
     return {
       available: true,
       reason: null,
       metrics: {
         totalMilesThisWeek: Number(totalMilesThisWeek.toFixed(2)),
         avgHeartRateFromLastRun: avgHeartRateFromLastRun ? Math.round(avgHeartRateFromLastRun) : null,
+        restingHeartRate: null,
+        heartRateVariabilityMs: null,
+        sleepHoursLastNight: null,
+        activeMinutesThisWeek: Math.round(workoutMinutesThisWeek),
+        workoutCountThisWeek: workouts.length,
+        lastWorkoutType: latestWorkout?.type || latestWorkout?.activityName || latestWorkout?.activityType || null,
+        lastWorkoutDurationSeconds: latestWorkout ? Math.round(toNumber(latestWorkout.durationSeconds || latestWorkout.duration_seconds || latestWorkout.duration || 0)) : null,
+        lastWorkoutCalories: latestWorkout ? Math.round(toNumber(latestWorkout.calories || latestWorkout.totalEnergyBurned || 0)) : null,
         caloriesBurnedToday: Math.round(caloriesBurnedToday),
         stepsToday: Math.round(stepsToday),
       },
