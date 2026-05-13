@@ -28,6 +28,8 @@
 	<false/>
 	<key>NSHealthShareUsageDescription</key>
 	<string>FORGE reads Apple Health data to personalize training recommendations.</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>FORGE writes workout data to keep your health records up to date.</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>
