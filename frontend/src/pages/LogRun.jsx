@@ -6,8 +6,10 @@ import api from '../lib/api'
 import { parseDuration, formatDurationDisplay } from '../lib/parseDuration'
 import PostRunCheckIn from '../components/PostRunCheckIn'
 import PhotoUploader from '../components/PhotoUploader'
+import WatchWorkoutSendButton from '../components/WatchWorkoutSendButton'
 import { queueRequest } from '../lib/offlineQueue'
 import { scrollToFirstError, validateRunLog } from '../utils/validation'
+import WatchWorkoutService from '../services/WatchWorkoutService'
 
 function todayISO() {
   return new Date().toISOString().slice(0, 10)
@@ -122,10 +124,7 @@ function EffortBar({ effort, setEffort }) {
 function WorkoutWatchModal({ workout, onClose }) {
   if (!workout) return null
 
-  const copyText = async () => {
-    const text = `${workout.day}: ${workout.typeLabel}\nDistance: ${workout.distanceLabel}\n${workout.pace ? `Pace: ${workout.pace}\n` : ''}${workout.description ? `Notes: ${workout.description}` : ''}`
-    try { await navigator.clipboard.writeText(text) } catch {}
-  }
+  const watchWorkout = WatchWorkoutService.buildRunWorkout(workout)
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center px-4" style={{ background: 'rgba(0,0,0,0.7)' }}>
@@ -141,14 +140,8 @@ function WorkoutWatchModal({ workout, onClose }) {
           {workout.description && <div className="text-sm" style={{ color: 'var(--text-muted)' }}>{workout.description}</div>}
         </div>
 
-        <button
-          onClick={copyText}
-          className="w-full rounded-xl py-3 font-bold mb-3"
-          style={{ background: 'var(--accent)', color: '#000', border: 'none', cursor: 'pointer' }}
-        >
-          Copy Workout
-        </button>
-        <p className="text-sm mb-4" style={{ color: 'var(--text-muted)' }}>Automatic watch sync is coming in the FORGE mobile app</p>
+        <WatchWorkoutSendButton workout={watchWorkout} className="mb-4" />
+        <p className="text-sm mb-4" style={{ color: 'var(--text-muted)' }}>Forge sends the workout from the iPhone app. Copy is available as a fallback.</p>
         <button onClick={onClose} className="w-full rounded-xl py-2" style={{ background: 'var(--bg-base)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>Close</button>
       </div>
     </div>
