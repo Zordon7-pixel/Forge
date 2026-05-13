@@ -6,7 +6,7 @@ export default function WatchWorkoutSendButton({ workout, label = 'Send to Apple
   const [status, setStatus] = useState('')
   const [error, setError] = useState('')
   const [sending, setSending] = useState(false)
-  const workoutText = useMemo(() => WatchWorkoutService.formatWorkoutText(workout), [workout])
+  const workoutText = useMemo(() => WatchWorkoutService.formatWorkoutText(workout || {}), [workout])
 
   const copyWorkout = async () => {
     try {

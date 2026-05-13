@@ -1,10 +1,8 @@
 -- FORGE PostgreSQL Schema
 -- Converted from SQLite better-sqlite3
 
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-
 CREATE TABLE IF NOT EXISTS users (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   email TEXT UNIQUE NOT NULL,
   password_hash TEXT NOT NULL,
@@ -29,8 +27,8 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 
 CREATE TABLE IF NOT EXISTS runs (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   date TEXT NOT NULL,
   type TEXT NOT NULL,
   distance_miles REAL DEFAULT 0,
@@ -74,8 +72,8 @@ CREATE INDEX IF NOT EXISTS idx_runs_user_id ON runs(user_id);
 CREATE INDEX IF NOT EXISTS idx_runs_user_date ON runs(user_id, date DESC);
 
 CREATE TABLE IF NOT EXISTS lifts (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   date TEXT NOT NULL,
   muscle_groups TEXT DEFAULT '[]',
   intensity TEXT DEFAULT 'moderate',
@@ -103,8 +101,8 @@ CREATE INDEX IF NOT EXISTS idx_lifts_user_id ON lifts(user_id);
 CREATE INDEX IF NOT EXISTS idx_lifts_user_date ON lifts(user_id, date DESC);
 
 CREATE TABLE IF NOT EXISTS training_plans (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  id TEXT PRIMARY KEY,
+  user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
   week_start TEXT,
   plan_json TEXT,
   name TEXT,
@@ -118,9 +116,9 @@ CREATE TABLE IF NOT EXISTS training_plans (
 CREATE INDEX IF NOT EXISTS idx_training_plans_user_id ON training_plans(user_id);
 
 CREATE TABLE IF NOT EXISTS user_plans (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  plan_id UUID NOT NULL REFERENCES training_plans(id) ON DELETE CASCADE,
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  plan_id TEXT NOT NULL REFERENCES training_plans(id) ON DELETE CASCADE,
   started_at TEXT,
   current_week INTEGER DEFAULT 1,
   status TEXT DEFAULT 'active',
@@ -129,8 +127,8 @@ CREATE TABLE IF NOT EXISTS user_plans (
 );
 
 CREATE TABLE IF NOT EXISTS watch_sync (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   garmin_activity_id TEXT,
   activity_type TEXT,
   activity_name TEXT,
@@ -176,7 +174,7 @@ CREATE INDEX IF NOT EXISTS idx_watch_sync_user_garmin_id ON watch_sync(user_id, 
 
 CREATE TABLE IF NOT EXISTS health_sync (
   id BIGSERIAL PRIMARY KEY,
-  user_id UUID UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id TEXT UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   steps_today INTEGER,
   calories_today INTEGER,
   avg_heart_rate_last_run INTEGER,
@@ -193,8 +191,8 @@ CREATE TABLE IF NOT EXISTS health_sync (
 );
 
 CREATE TABLE IF NOT EXISTS user_settings (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   key TEXT NOT NULL,
   value TEXT,
   updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
@@ -203,8 +201,8 @@ CREATE TABLE IF NOT EXISTS user_settings (
 );
 
 CREATE TABLE IF NOT EXISTS garmin_sleep (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   calendar_date TEXT NOT NULL,
   sleep_start_gmt TIMESTAMPTZ,
   sleep_end_gmt TIMESTAMPTZ,
@@ -222,44 +220,44 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_garmin_sleep_user_date ON garmin_sleep(use
 CREATE INDEX IF NOT EXISTS idx_garmin_sleep_user_synced ON garmin_sleep(user_id, synced_at DESC);
 
 CREATE TABLE IF NOT EXISTS follows (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  follower_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  following_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  id TEXT PRIMARY KEY,
+  follower_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  following_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(follower_id, following_id)
 );
 
 CREATE TABLE IF NOT EXISTS activity_feed (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  shop_id UUID,
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  shop_id TEXT,
   type TEXT NOT NULL,
   data JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS activity_likes (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  activity_id UUID NOT NULL,
+  id TEXT PRIMARY KEY,
+  activity_id TEXT NOT NULL,
   activity_type TEXT DEFAULT 'feed',
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(activity_id, activity_type, user_id)
 );
 
 CREATE TABLE IF NOT EXISTS activity_comments (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  activity_id UUID NOT NULL,
+  id TEXT PRIMARY KEY,
+  activity_id TEXT NOT NULL,
   activity_type TEXT DEFAULT 'feed',
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   text TEXT,
   content TEXT,
   created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS push_subscriptions (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   endpoint TEXT NOT NULL,
   keys_p256dh TEXT NOT NULL,
   keys_auth TEXT NOT NULL,
