@@ -3,6 +3,7 @@ const { dbGet, dbAll, dbRun } = require('../db');
 const auth = require('../middleware/auth');
 const { v4: uuidv4 } = require('uuid');
 const { generateWorkoutFeedback } = require('../services/ai');
+const { requestExerciseImageIfMissing } = require('../lib/exerciseImageRequests');
 
 router.post('/strength', auth, async (req, res) => {
   try {
@@ -24,6 +25,7 @@ router.post('/strength', auth, async (req, res) => {
           'INSERT INTO workout_sets (id, session_id, user_id, exercise_name, muscle_group, set_number, reps, weight_lbs) VALUES (?,?,?,?,?,?,?,?)',
           [uuidv4(), id, req.user.id, s.exercise_name || 'Unknown', mg, s.set_number || 1, s.reps || null, s.weight_lbs || null]
         );
+        await requestExerciseImageIfMissing({ userId: req.user.id, exerciseName: s.exercise_name, source: 'strength_workout_import' });
       }
       if (muscleGroups.length) {
         await dbRun('UPDATE workout_sessions SET muscle_groups=? WHERE id=? AND user_id=?', [JSON.stringify(muscleGroups), id, req.user.id]);
@@ -123,12 +125,14 @@ router.put('/:id', auth, async (req, res) => {
             [uuidv4(), req.params.id, req.user.id, exerciseName, i, repsValue > 0 ? repsValue : null, weightValue >= 0 ? weightValue : null]
           );
         }
+        await requestExerciseImageIfMissing({ userId: req.user.id, exerciseName, source: 'workout_update' });
       } else {
         const firstSet = existingSets[0];
         await dbRun(
           'UPDATE workout_sets SET exercise_name=?, reps=?, weight_lbs=? WHERE id=? AND user_id=?',
           [exerciseName, repsValue > 0 ? repsValue : firstSet.reps, weightValue >= 0 ? weightValue : firstSet.weight_lbs, firstSet.id, req.user.id]
         );
+        await requestExerciseImageIfMissing({ userId: req.user.id, exerciseName, source: 'workout_update' });
         if (setCount > existingSets.length) {
           for (let i = existingSets.length + 1; i <= setCount; i++) {
             await dbRun(
@@ -163,6 +167,7 @@ router.post('/:id/sets', auth, async (req, res) => {
     const id = uuidv4();
     await dbRun('INSERT INTO workout_sets (id, session_id, user_id, exercise_name, muscle_group, set_number, reps, weight_lbs) VALUES (?,?,?,?,?,?,?,?)',
       [id, req.params.id, req.user.id, exercise_name, muscle_group || null, set_number || 1, reps || null, weight_lbs || null]);
+    await requestExerciseImageIfMissing({ userId: req.user.id, exerciseName: exercise_name, source: 'workout_set' });
 
     let groups = [];
     try { groups = JSON.parse(session?.muscle_groups || '[]'); } catch {}

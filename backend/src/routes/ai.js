@@ -3,6 +3,7 @@ const { v4: uuidv4 } = require('uuid');
 const { dbGet, dbAll, dbRun } = require('../db');
 const auth = require('../middleware/auth');
 const { generateRunBrief, generateLiftPlan, generateWorkoutRecommendation, generateSessionFeedback, generateBodyPartWorkout, generatePostSessionInsight, sanitize } = require('../services/ai');
+const { requestExerciseImageIfMissing, requestImagesForWorkoutItems } = require('../lib/exerciseImageRequests');
 
 router.post('/session-feedback', auth, async (req, res) => {
   try {
@@ -250,6 +251,7 @@ router.post('/lift-plan', auth, async (req, res) => {
       ],
       estimatedTime: `${timeAvailable || 30} min`
     };
+    await requestImagesForWorkoutItems({ userId: athleteId, items: plan.exercises, source: 'ai_lift_plan' });
 
     res.json({ plan });
   } catch (err) {
@@ -276,6 +278,9 @@ router.get('/workout-recommendation', auth, async (req, res) => {
       explanation: 'Lower body fatigue is high, so this session keeps leg stress low.',
       restExplanation: 'Longer rest on compounds to preserve quality sets.'
     };
+    await requestImagesForWorkoutItems({ userId, items: recommendation.main, source: 'ai_workout_recommendation' });
+    await requestImagesForWorkoutItems({ userId, items: recommendation.warmup, source: 'ai_workout_recommendation' });
+    await requestImagesForWorkoutItems({ userId, items: recommendation.recovery, source: 'ai_workout_recommendation' });
 
     res.json({ recommendation });
   } catch (err) {
@@ -305,6 +310,10 @@ router.post('/workout', auth, async (req, res) => {
       explanation: 'Focused session generated from your selected body part and exercise.',
       restExplanation: 'Longer rests on heavier sets, shorter rests on accessories.'
     };
+    await requestExerciseImageIfMissing({ userId: athleteId, exerciseName: exercise, source: 'ai_workout_anchor' });
+    await requestImagesForWorkoutItems({ userId: athleteId, items: recommendation.main, source: 'ai_workout' });
+    await requestImagesForWorkoutItems({ userId: athleteId, items: recommendation.warmup, source: 'ai_workout' });
+    await requestImagesForWorkoutItems({ userId: athleteId, items: recommendation.recovery, source: 'ai_workout' });
 
     res.json({ recommendation });
   } catch (err) {

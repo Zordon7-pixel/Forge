@@ -2,6 +2,7 @@ const router = require('express').Router();
 const { dbGet, dbAll, dbRun } = require('../db');
 const auth = require('../middleware/auth');
 const { v4: uuidv4 } = require('uuid');
+const { requestExerciseImageIfMissing } = require('../lib/exerciseImageRequests');
 
 router.get('/', auth, async (req, res) => {
   try {
@@ -19,6 +20,7 @@ router.post('/', auth, async (req, res) => {
       `INSERT INTO lifts (id, user_id, date, muscle_groups, intensity, notes, exercise_name, sets, reps, weight_lbs) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [id, req.user.id, date, JSON.stringify(muscle_groups || []), intensity || 'moderate', notes || null, exercise_name || null, sets || null, reps || null, weight_lbs || null]
     );
+    await requestExerciseImageIfMissing({ userId: req.user.id, exerciseName: exercise_name, source: 'lift_log' });
     const lift = await dbGet('SELECT * FROM lifts WHERE id = ?', [id]);
     res.status(201).json({ ...lift, muscle_groups: JSON.parse(lift.muscle_groups || '[]') });
   } catch (err) { res.status(500).json({ error: 'Failed to save lift' }); }
@@ -37,6 +39,7 @@ router.put('/:id', auth, async (req, res) => {
       notes = COALESCE(?, notes),
       date = COALESCE(?, date)
       WHERE id=? AND user_id=?`, [exercise_name ?? null, sets ?? null, reps ?? null, weight_lbs ?? null, notes ?? null, date ?? null, req.params.id, req.user.id]);
+    await requestExerciseImageIfMissing({ userId: req.user.id, exerciseName, source: 'lift_update' });
     const updated = await dbGet('SELECT * FROM lifts WHERE id=?', [req.params.id]);
     res.json(updated);
   } catch (err) { res.status(500).json({ error: 'Update failed' }); }

@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const { dbGet, dbAll, dbRun } = require('../db');
 const auth = require('../middleware/auth');
+const { requestExerciseImageIfMissing } = require('../lib/exerciseImageRequests');
 
 // GET /api/exercises — all or filter by muscle_group
 router.get('/', auth, async (req, res) => {
@@ -34,6 +35,7 @@ router.post('/', auth, async (req, res) => {
        VALUES (?, ?, ?, ?, ?, 0, ?, 1)`,
       [id, name.trim(), muscle_group.toLowerCase().trim(), secondary_muscles.trim(), instructions.trim(), req.user.id]
     );
+    await requestExerciseImageIfMissing({ userId: req.user.id, exerciseName: name, source: 'custom_exercise' });
     res.status(201).json({ id, name: name.trim(), muscle_group: muscle_group.toLowerCase(), is_system: 0, message: 'Exercise added to the community library!' });
   } catch (err) { res.status(500).json({ error: 'Failed to add exercise' }); }
 });
