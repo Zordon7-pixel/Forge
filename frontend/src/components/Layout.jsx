@@ -123,6 +123,10 @@ export default function Layout({ children }) {
   const isWorkout = location.pathname.startsWith('/workout/')
   const avatarLabel = getAvatarLabel(getUser())
 
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' })
+  }, [location.pathname])
+
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg-base)', color: 'var(--text-primary)', minHeight: '100dvh' }}>
       <div className="mx-auto w-full max-w-[480px] px-3 sm:px-4 pb-28" style={{ maxWidth: 'min(480px, 100vw)', overflowX: 'hidden', boxSizing: 'border-box' }}>
