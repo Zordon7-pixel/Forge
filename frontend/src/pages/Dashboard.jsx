@@ -538,6 +538,11 @@ export default function Dashboard() {
         if (!active) return
 
         if (result?.available && result?.metrics) {
+          const healthSteps = Number(result.metrics.stepsToday || 0)
+          if (Number.isFinite(healthSteps) && healthSteps > 0) {
+            setDailySteps(healthSteps)
+            setDailyStepsSource('watch')
+          }
           try {
             await HealthService.syncToProfile(result.metrics)
             if (active) setHealthSyncNotice('')
@@ -633,7 +638,9 @@ export default function Dashboard() {
 
   // Compute readiness from stats
   const { readiness, readinessBreakdown } = useMemo(() => {
-    if (!stats || !checkedInToday || !hasWatchData) return { readiness: null, readinessBreakdown: [] }
+    const healthMetrics = healthSync.metrics || null
+    const hasHealthContext = Boolean(healthMetrics) || checkedInToday || hasWatchData
+    if (!stats || !hasHealthContext) return { readiness: null, readinessBreakdown: [] }
     const { streak, week, all } = stats
     let score = 50
     const breakdown = []
@@ -669,7 +676,7 @@ export default function Dashboard() {
     score += volDelta
     breakdown.push({ label: 'Weekly load', value: volDelta, delta: volDelta, reason: volReason })
 
-    const sleepHours = Number(checkinData?.sleep_hours || 0)
+    const sleepHours = Number(checkinData?.sleep_hours || healthMetrics?.sleepHoursLastNight || 0)
     if (sleepHours > 0) {
       const sleepDelta = sleepHours < 6 ? -12 : sleepHours >= 8 ? 5 : 0
       score += sleepDelta
@@ -685,11 +692,62 @@ export default function Dashboard() {
       })
     }
 
+    const hrvMs = Number(healthMetrics?.heartRateVariabilityMs || 0)
+    if (hrvMs > 0) {
+      const hrvDelta = hrvMs < 35 ? -14 : hrvMs < 45 ? -8 : hrvMs >= 65 ? 5 : 0
+      score += hrvDelta
+      breakdown.push({
+        label: 'Apple Health HRV',
+        value: hrvDelta,
+        delta: hrvDelta,
+        reason: hrvMs < 35
+          ? `${hrvMs} ms HRV points to recovery stress.`
+          : hrvMs < 45
+            ? `${hrvMs} ms HRV is slightly suppressed today.`
+            : hrvMs >= 65
+              ? `${hrvMs} ms HRV supports training readiness.`
+              : `${hrvMs} ms HRV is neutral for readiness.`,
+      })
+    }
+
+    const restingHr = Number(healthMetrics?.restingHeartRate || 0)
+    if (restingHr > 0) {
+      const rhrDelta = restingHr >= 85 ? -14 : restingHr >= 75 ? -7 : restingHr <= 60 ? 4 : 0
+      score += rhrDelta
+      breakdown.push({
+        label: 'Resting heart rate',
+        value: rhrDelta,
+        delta: rhrDelta,
+        reason: restingHr >= 85
+          ? `${restingHr} bpm resting HR is elevated, so Forge lowers intensity.`
+          : restingHr >= 75
+            ? `${restingHr} bpm resting HR is above the preferred range.`
+            : restingHr <= 60
+              ? `${restingHr} bpm resting HR looks calm.`
+              : `${restingHr} bpm resting HR is neutral today.`,
+      })
+    }
+
+    const activeMinutes = Number(healthMetrics?.activeMinutesThisWeek || 0)
+    const workoutCount = Number(healthMetrics?.workoutCountThisWeek || 0)
+    if (activeMinutes > 0 || workoutCount > 0) {
+      const loadDelta = activeMinutes >= 420 || workoutCount >= 6 ? -8 : 0
+      score += loadDelta
+      breakdown.push({
+        label: 'Apple Health load',
+        value: loadDelta,
+        delta: loadDelta,
+        reason: loadDelta < 0
+          ? `${activeMinutes} active minutes and ${workoutCount} workouts this week mean recovery matters.`
+          : `${activeMinutes} active minutes and ${workoutCount} workouts this week are included in the score.`,
+      })
+    }
+
     return {
       readiness: Math.max(1, Math.min(99, Math.round(score))),
       readinessBreakdown: breakdown
     }
-  }, [stats, checkedInToday, hasWatchData, checkinData, fmt])
+  }, [stats, checkedInToday, hasWatchData, checkinData, healthSync.metrics, fmt])
 
   // Monthly challenge
   const monthlyGoal = useMemo(() => {
@@ -872,12 +930,12 @@ export default function Dashboard() {
       {/* Training Readiness */}
       <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>
         {readiness === null ? (
-          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Complete your daily check-in and sync your watch to unlock your Training Readiness score</p>
+          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Complete your daily check-in or sync Apple Health to unlock your Training Readiness score</p>
         ) : (
           <>
             <ReadinessGauge score={readiness} onClick={() => setShowReadinessModal(true)} />
             <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>
-              Based on your HRV, sleep, soreness, and energy levels{checkinData?.sleep_hours ? ` · Sleep: ${checkinData.sleep_hours}h` : ''}
+              Based on Apple Health, weekly load, soreness, and energy levels{(checkinData?.sleep_hours || healthSync.metrics?.sleepHoursLastNight) ? ` · Sleep: ${checkinData?.sleep_hours || Number(healthSync.metrics?.sleepHoursLastNight).toFixed(1)}h` : ''}
             </p>
           </>
         )}

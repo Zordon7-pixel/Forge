@@ -12,6 +12,7 @@ const {
   computeAgeGradedScore,
   getCompetitiveTier,
 } = require('../lib/ageGrading');
+const { buildHealthSignals } = require('../lib/healthSignals');
 
 function startOfDay(d) {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
@@ -125,11 +126,12 @@ router.get('/next-recommendation', auth, async (req, res) => {
     const nextWeekStart = new Date(thisWeekStart);
     nextWeekStart.setDate(thisWeekStart.getDate() + 7);
 
-    const [recentRuns, thisWeekRow, lastWeekRow, recentPrRow] = await Promise.all([
+    const [recentRuns, thisWeekRow, lastWeekRow, recentPrRow, healthRow] = await Promise.all([
       dbAll('SELECT date, distance_miles, duration_seconds FROM runs WHERE user_id=? AND date>=? AND date<? ORDER BY date DESC, created_at DESC', [req.user.id, fourteenDaysAgoStr, todayExclusiveStr]),
       dbGet('SELECT COALESCE(SUM(distance_miles),0) as miles, COUNT(*) as count FROM runs WHERE user_id=? AND date>=? AND date<?', [req.user.id, thisWeekStart.toISOString().slice(0, 10), nextWeekStart.toISOString().slice(0, 10)]),
       dbGet('SELECT COALESCE(SUM(distance_miles),0) as miles FROM runs WHERE user_id=? AND date>=? AND date<?', [req.user.id, lastWeekStart.toISOString().slice(0, 10), thisWeekStart.toISOString().slice(0, 10)]),
       dbGet('SELECT label, achieved_at FROM personal_records WHERE user_id=? AND achieved_at>=? ORDER BY achieved_at DESC LIMIT 1', [req.user.id, new Date(today.getTime() - (3 * 86400000)).toISOString().slice(0, 10)]),
+      dbGet('SELECT * FROM health_sync WHERE user_id=?', [req.user.id]).catch(() => null),
     ]);
 
     const avgDistance = recentRuns.length > 0
@@ -174,8 +176,35 @@ router.get('/next-recommendation', auth, async (req, res) => {
       suggestedDistance = Number(Math.max(1.5, avgDistance * 0.6).toFixed(1));
     }
 
+    const healthSignals = buildHealthSignals(healthRow || {});
+    let healthAdjusted = false;
+    if (healthSignals.available) {
+      if (healthSignals.shouldRest) {
+        recommendationType = 'rest';
+        reason = `${healthSignals.summary} Forge is switching today to recovery so your next run is higher quality.`;
+        suggestedDistance = 0;
+        healthAdjusted = true;
+      } else if (healthSignals.shouldReduceIntensity && recommendationType !== 'rest' && recommendationType !== 'strength') {
+        recommendationType = 'easy_run';
+        reason = `${healthSignals.summary} Forge lowered this to an easy aerobic run.`;
+        suggestedDistance = Number(Math.max(1, suggestedDistance * 0.75).toFixed(1));
+        healthAdjusted = true;
+      } else if (healthSignals.recoveryState === 'strong' && recommendationType === 'easy_run' && lastRunDaysAgo !== null && lastRunDaysAgo >= 2) {
+        reason = `${reason} ${healthSignals.summary} You can keep this controlled, not all-out.`;
+        suggestedDistance = Number(Math.max(suggestedDistance, avgDistance * 0.8).toFixed(1));
+        healthAdjusted = true;
+      }
+    }
+
     if (recommendationType === 'strength' || recommendationType === 'rest') {
-      res.json({ recommendationType, reason, suggestedDistance: 0, suggestedPace: '--' });
+      res.json({
+        recommendationType,
+        reason,
+        suggestedDistance: 0,
+        suggestedPace: '--',
+        healthAdjusted,
+        healthSignals,
+      });
       return;
     }
 
@@ -184,6 +213,8 @@ router.get('/next-recommendation', auth, async (req, res) => {
       reason,
       suggestedDistance,
       suggestedPace,
+      healthAdjusted,
+      healthSignals,
     });
   } catch (err) {
     res.status(500).json({ error: 'Recommendation failed' });

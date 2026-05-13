@@ -5,6 +5,7 @@ const { v4: uuidv4 } = require('uuid');
 const { generateExerciseSubstitutions, generateRecoveryAdjustment, generateNextGoalSuggestions, sanitize } = require('../services/ai');
 const { requirePremium } = require('../middleware/premiumGate');
 const { checkAiLimit } = require('../middleware/aiLimit');
+const { buildHealthSignals, applyHealthDelta } = require('../lib/healthSignals');
 
 // GET /warning — check if dangerous training combo exists
 router.get('/warning', auth, async (req, res) => {
@@ -118,6 +119,12 @@ router.post('/adjust-today', auth, checkAiLimit('adjust_today'), async (req, res
       readinessScore = Math.max(0, Math.min(100, Math.round(score)));
     }
 
+    const healthRow = await dbGet('SELECT * FROM health_sync WHERE user_id=?', [req.user.id]).catch(() => null);
+    const healthSignals = buildHealthSignals(healthRow || {});
+    if (healthSignals.available) {
+      readinessScore = applyHealthDelta(readinessScore === null ? 70 : readinessScore, healthSignals);
+    }
+
     // Active injury (injury_logs table, cleared=0 means active)
     const activeInjury = await dbGet(
       'SELECT * FROM injury_logs WHERE user_id=? AND cleared=0 ORDER BY date DESC LIMIT 1',
@@ -159,6 +166,8 @@ router.post('/adjust-today', auth, checkAiLimit('adjust_today'), async (req, res
       adjusted_intensity: validatedIntensity,
       skip_reason: result.skip_reason || null,
       readiness_score: readinessScore,
+      health_summary: healthSignals.available ? healthSignals.summary : null,
+      health_signals: healthSignals,
       checkin_summary: checkin ? {
         feeling: checkin.feeling,
         sleep_hours: checkin.sleep_hours,

@@ -4,6 +4,7 @@ const auth = require('../middleware/auth');
 const { checkAiLimit } = require('../middleware/aiLimit');
 const { v4: uuidv4 } = require('uuid');
 const { generateTrainingPlan, generateRaceAdjustment } = require('../services/ai');
+const { buildHealthSignals } = require('../lib/healthSignals');
 
 function getDayShort() {
   return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date().getDay()];
@@ -200,9 +201,13 @@ function normalizeAdaptivePreferences(input = {}) {
   };
 }
 
-function getAdaptiveWeek(user, recentRuns, recentLifts, checkins, activeInjuries) {
-  const avgFeeling = checkins.reduce((s, c) => s + Number(c.feeling || 0), 0) / (checkins.length || 1);
-  const avgSleep = checkins.reduce((s, c) => s + Number(c.sleep_hours || 7), 0) / (checkins.length || 1);
+function getAdaptiveWeek(user, recentRuns, recentLifts, checkins, activeInjuries, healthRow = null) {
+  const avgFeeling = checkins.length
+    ? checkins.reduce((s, c) => s + Number(c.feeling || 3), 0) / checkins.length
+    : 3;
+  const avgSleep = checkins.length
+    ? checkins.reduce((s, c) => s + Number(c.sleep_hours || 7), 0) / checkins.length
+    : 7;
   const hasInjury = activeInjuries.length > 0;
   const recentVolume = recentRuns.length;
 
@@ -210,6 +215,13 @@ function getAdaptiveWeek(user, recentRuns, recentLifts, checkins, activeInjuries
   if (avgFeeling < 2.5 || avgSleep < 6) intensity = 'reduced';
   if (avgFeeling >= 4 && avgSleep >= 7.5 && recentVolume < 3) intensity = 'increased';
   if (hasInjury) intensity = 'recovery';
+
+  const healthSignals = buildHealthSignals(healthRow || {});
+  if (!hasInjury && healthSignals.available) {
+    if (healthSignals.shouldRest) intensity = 'recovery';
+    else if (healthSignals.shouldReduceIntensity && intensity !== 'recovery') intensity = 'reduced';
+    else if (healthSignals.recoveryState === 'strong' && intensity === 'normal' && recentVolume < 3) intensity = 'increased';
+  }
 
   const lowSleepNights = checkins.filter((c) => Number(c.sleep_hours || 7) < 6).length;
   const lowFeelingDays = checkins.filter((c) => Number(c.feeling || 3) <= 2).length;
@@ -222,12 +234,23 @@ function getAdaptiveWeek(user, recentRuns, recentLifts, checkins, activeInjuries
   if (intensity === 'recovery') {
     reason = `Active injury logged — shifting to recovery week with lighter work.`;
     recommendation = 'Protect recovery and avoid intensity until pain settles.';
+    if (!hasInjury && healthSignals.shouldRest) {
+      reason = `${healthSignals.summary} Shifting this week to recovery even without an injury log.`;
+      recommendation = 'Prioritize mobility, easy aerobic work, and one fewer hard session.';
+    }
   } else if (intensity === 'reduced') {
     reason = `${lowSleepNights || lowFeelingDays} recovery signal(s) detected${flagsLabel ? ` (${flagsLabel})` : ''} — lighter week recommended.`;
     recommendation = "You've had low readiness markers, so this week reduces stress.";
+    if (healthSignals.shouldReduceIntensity) {
+      reason = `${healthSignals.summary} Lighter week recommended.`;
+      recommendation = "Apple Health is showing recovery stress, so this week backs off intensity.";
+    }
   } else if (intensity === 'increased') {
     reason = "You've been sleeping well and feeling great with room to build load.";
     recommendation = "You're ready for a controlled mileage bump this week.";
+    if (healthSignals.recoveryState === 'strong') {
+      reason = `${healthSignals.summary} You have room for a controlled mileage bump.`;
+    }
   }
 
   return {
@@ -241,7 +264,9 @@ function getAdaptiveWeek(user, recentRuns, recentLifts, checkins, activeInjuries
       recentRuns: recentRuns.length,
       recentLifts: recentLifts.length,
       activeInjuries: activeInjuries.length,
+      health: healthSignals,
     },
+    healthSignals,
   };
 }
 
@@ -251,7 +276,7 @@ async function buildAdaptiveRecommendation(userId, preferences = {}) {
   start.setDate(start.getDate() - 6);
   const startDate = start.toISOString().slice(0, 10);
 
-  const [user, checkins, activeInjuries, recentRuns, recentLifts] = await Promise.all([
+  const [user, checkins, activeInjuries, recentRuns, recentLifts, healthRow] = await Promise.all([
     dbGet('SELECT id, goal_type, goal_race_date, run_days_per_week, lift_days_per_week FROM users WHERE id=?', [userId]),
     dbAll(
       'SELECT feeling, sleep_hours, life_flags, checkin_date FROM daily_checkins WHERE user_id=? AND checkin_date >= ? ORDER BY checkin_date DESC LIMIT 7',
@@ -263,6 +288,7 @@ async function buildAdaptiveRecommendation(userId, preferences = {}) {
       "SELECT id, started_at, ended_at FROM workout_sessions WHERE user_id=? AND started_at >= ? AND ended_at IS NOT NULL ORDER BY started_at DESC",
       [userId, `${startDate}T00:00:00`]
     ),
+    dbGet('SELECT * FROM health_sync WHERE user_id=?', [userId]).catch(() => null),
   ]);
 
   if (!user) return null;
@@ -271,7 +297,7 @@ async function buildAdaptiveRecommendation(userId, preferences = {}) {
     ...user,
     run_days_per_week: normalizedPreferences.run_days_per_week || user.run_days_per_week,
     preferred_run_days: normalizedPreferences.preferred_run_days,
-  }, recentRuns || [], recentLifts || [], checkins || [], activeInjuries || []);
+  }, recentRuns || [], recentLifts || [], checkins || [], activeInjuries || [], healthRow);
 }
 
 router.get('/', auth, async (req, res) => {
