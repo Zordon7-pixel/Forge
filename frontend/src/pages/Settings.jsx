@@ -7,6 +7,7 @@ import { useTheme } from '../context/ThemeContext'
 import { useProContext } from '../context/ProContext'
 import api from '../lib/api'
 import { parseGarminCSV, parseStravaCSV, requestAppleHealth } from '../lib/healthImport'
+import HealthService from '../services/HealthService'
 import TestFlightDebugPanel from '../components/TestFlightDebugPanel'
 
 const LANGUAGES = [
@@ -85,11 +86,12 @@ export default function Settings() {
     && /WebKit/.test(navigator.userAgent)
   const isNativeRuntime = typeof window !== 'undefined' && Boolean(window.Capacitor?.isNativePlatform?.())
 
+  const supportsNativeAppleHealth = isNativeRuntime
   const supportsAppleHealth = isIOSSafari && !isNativeRuntime && typeof navigator !== 'undefined' && Boolean(navigator.health)
   const appleHealthStatus = !isPro
     ? 'Apple Health sync is available on the Pro tier.'
     : isNativeRuntime
-      ? 'Apple Health needs a native HealthKit bridge in the TestFlight app before it can sync here.'
+      ? 'Ready to request Apple Health permission on this iPhone.'
       : supportsAppleHealth
         ? 'Available on this device'
         : 'Apple Health is not available in this browser.'
@@ -172,7 +174,20 @@ export default function Settings() {
       return
     }
     if (isNativeRuntime) {
-      setImportNotice({ ok: false, text: 'Apple Health needs the native HealthKit bridge before TestFlight can sync directly.' })
+      setImporting(true)
+      setImportProgress('Syncing Apple Health...')
+      try {
+        const result = await HealthService.syncNativeData({ requestPermission: true })
+        setImportNotice({
+          ok: true,
+          text: `Apple Health synced: ${result.imported} workouts imported, ${result.skipped} skipped.`,
+        })
+      } catch (err) {
+        setImportNotice({ ok: false, text: err?.message || 'Unable to sync Apple Health on this device.' })
+      } finally {
+        setImportProgress('')
+        setImporting(false)
+      }
       return
     }
     if (!supportsAppleHealth) {
@@ -485,8 +500,8 @@ export default function Settings() {
           <div style={card}>
             <span style={label}>Apple Health</span>
             <p style={{ margin: 0, fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.6 }}>Status: {appleHealthStatus}</p>
-            <button onClick={handleAppleHealthImport} disabled={importing || !supportsAppleHealth || !isPro} style={{ width: '100%', marginTop: 12, border: '1px solid var(--border-subtle)', borderRadius: 10, padding: '10px 12px', fontSize: 13, fontWeight: 700, background: supportsAppleHealth && isPro ? 'var(--bg-input)' : 'rgba(148,163,184,0.1)', color: supportsAppleHealth && isPro ? 'var(--text-primary)' : 'var(--text-muted)', cursor: supportsAppleHealth && isPro ? 'pointer' : 'not-allowed' }}>
-              {!isPro ? 'Apple Health sync requires Pro' : (supportsAppleHealth ? 'Import from Apple Health' : 'Native Apple Health bridge needed')}
+            <button onClick={handleAppleHealthImport} disabled={importing || (!supportsAppleHealth && !supportsNativeAppleHealth) || !isPro} style={{ width: '100%', marginTop: 12, border: '1px solid var(--border-subtle)', borderRadius: 10, padding: '10px 12px', fontSize: 13, fontWeight: 700, background: (supportsAppleHealth || supportsNativeAppleHealth) && isPro ? 'var(--bg-input)' : 'rgba(148,163,184,0.1)', color: (supportsAppleHealth || supportsNativeAppleHealth) && isPro ? 'var(--text-primary)' : 'var(--text-muted)', cursor: (supportsAppleHealth || supportsNativeAppleHealth) && isPro ? 'pointer' : 'not-allowed' }}>
+              {!isPro ? 'Apple Health sync requires Pro' : (supportsNativeAppleHealth ? 'Sync Apple Health' : (supportsAppleHealth ? 'Import from Apple Health' : 'Apple Health unavailable'))}
             </button>
           </div>
 

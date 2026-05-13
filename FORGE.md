@@ -79,8 +79,8 @@ Current source-of-truth map before native Apple Health work:
 | Race goals | `Races.jsx` -> `/api/races` | `race_events` | Race countdown, plan generation target | Working |
 | File import | Settings file upload -> `/api/import/workouts` or `/api/import/health` | `runs`, `lifts` | History, Dashboard stats, recommendations | Working for Garmin/Strava-style CSV and workout JSON |
 | Watch-sync API | `/api/watch-sync` and `/api/watch-sync/upload` | `watch_sync`, plus routed `runs`/`lifts` | Dashboard watch notice, readiness gate, history | Backend works; no native phone collector yet |
-| Health summary sync | `HealthService.syncToProfile()` -> `/api/health/sync` | `health_sync` | Dashboard health card only | Backend works; native Apple Health bridge not wired |
-| Apple Health / Apple Watch | Planned native HealthKit bridge | `health_sync`, `watch_sync`, `runs`, `lifts` | Planned readiness and recommendations | Not live in TestFlight yet |
+| Health summary sync | `HealthService.syncToProfile()` -> `/api/health/sync` | `health_sync` | Dashboard health card only | Backend works; native bridge source added in Phase 2 |
+| Apple Health / Apple Watch | Native HealthKit bridge in `ForgeHealthPlugin.swift` | `health_sync`, imported `runs`/`lifts` | Settings sync button, Dashboard health card, recommendations after import | Requires a new EAS/TestFlight binary before phone QA |
 | Garmin direct | Settings status/revoke plus legacy backend route | `user_settings`, `garmin_sleep`, `watch_sync`, `runs` | Paused copy in Settings | Paused until official Garmin API access |
 | Strava OAuth | Settings device row -> `/api/strava/*` | `strava_tokens`, imported `runs` | History/Dashboard after sync | Available if env/app config is live |
 | WHOOP/Oura OAuth | Settings device rows -> `/api/whoop/*`, `/api/oura/*` | `whoop_*`, `oura_*` | Unified recovery endpoint | Premium integration path exists; depends on provider env/config |
@@ -91,7 +91,12 @@ Phase 1 cleanup from this audit:
 - Device registry marks Apple Watch as `coming_soon` until the HealthKit bridge is implemented.
 - Recovery source comments now reflect that Apple Health is present only when imported/synced rows exist.
 
-Phase 2 should wire the native HealthKit bridge before adding notifications or group-run features.
+Phase 2 cleanup from this audit:
+- Added a Capacitor `ForgeHealth` iOS plugin backed by HealthKit read permissions for steps, active calories, weekly running/walking distance, workouts, and average heart rate from the latest run.
+- Added HealthKit entitlement and native `NSHealthShareUsageDescription` so the next EAS binary can request Apple Health access.
+- `HealthService` now routes native iOS through the bridge, saves metrics to `/api/health/sync`, imports workouts through `/api/import/health`, and shows a clear "update TestFlight" message on older binaries that do not contain the plugin.
+- Settings now exposes `Sync Apple Health` inside the native app for Pro users. Dashboard still reads passively and tells users to grant permission from Settings first.
+- No EAS/TestFlight build was shipped in Phase 2; phone QA must happen before Bryan approves the next EAS build.
 
 ## Recently Fixed Bugs
 

@@ -1,13 +1,18 @@
+import { Capacitor, registerPlugin } from '@capacitor/core'
 import api from '../lib/api'
 
 const IOS_UA_REGEX = /iP(ad|hone|od)/i
+const NATIVE_HEALTH_AUTH_KEY = 'forge_health_authorized'
+const ForgeHealth = registerPlugin('ForgeHealth')
 
 function isIOSDevice() {
   return typeof navigator !== 'undefined' && IOS_UA_REGEX.test(navigator.userAgent || '')
 }
 
 function isNativeRuntime() {
-  return typeof window !== 'undefined' && Boolean(window.Capacitor?.isNativePlatform?.())
+  return typeof Capacitor !== 'undefined'
+    && typeof Capacitor.isNativePlatform === 'function'
+    && Capacitor.isNativePlatform()
 }
 
 function startOfDay(date) {
@@ -33,6 +38,28 @@ function average(list) {
 
 function importNativeModule(name) {
   return new Function('name', 'return import(name)')(name)
+}
+
+function hasNativeAuthorizationHint() {
+  try {
+    return localStorage.getItem(NATIVE_HEALTH_AUTH_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+function markNativeAuthorized() {
+  try {
+    localStorage.setItem(NATIVE_HEALTH_AUTH_KEY, '1')
+  } catch {}
+}
+
+function nativeBridgeUnavailableReason(error) {
+  const message = String(error?.message || error || '')
+  if (/not implemented|unimplemented|not available|no web implementation|plugin/i.test(message)) {
+    return 'Update TestFlight to a build that includes the Apple Health bridge.'
+  }
+  return message || 'Unable to reach the Apple Health bridge.'
 }
 
 class HealthService {
@@ -68,13 +95,32 @@ class HealthService {
     }
   }
 
-  async initialize() {
+  async initialize({ requestPermission = false } = {}) {
     if (!isIOSDevice()) {
       return { available: false, reason: 'Apple Health is only available on iOS devices.' }
     }
 
     if (isNativeRuntime()) {
-      return { available: false, reason: 'Native Apple Health sync is not wired in TestFlight yet. Use File Import until the HealthKit bridge ships.' }
+      try {
+        const status = await ForgeHealth.isAvailable()
+        if (!status?.available) {
+          return { available: false, reason: 'Apple Health is not available on this iPhone.' }
+        }
+
+        if (requestPermission) {
+          const auth = await ForgeHealth.requestAuthorization()
+          if (!auth?.authorized) {
+            return { available: false, reason: 'Apple Health permission was not granted.' }
+          }
+          markNativeAuthorized()
+        } else if (!hasNativeAuthorizationHint()) {
+          return { available: false, reason: 'Open Settings > Apple Health and tap Sync Apple Health to grant access.' }
+        }
+
+        return { available: true }
+      } catch (error) {
+        return { available: false, reason: nativeBridgeUnavailableReason(error) }
+      }
     }
 
     const healthKit = await this.loadHealthKit()
@@ -139,13 +185,74 @@ class HealthService {
     return data
   }
 
-  async getHealthSummary() {
-    const init = await this.initialize()
+  async syncNativeData({ requestPermission = false } = {}) {
+    const result = await this.getHealthSummary({ requestPermission })
+    if (!result?.available) {
+      throw new Error(result?.reason || 'Apple Health is not available.')
+    }
+
+    const profile = await this.syncToProfile(result.metrics)
+    let importResult = { imported: 0, skipped: 0, errors: [] }
+    if (Array.isArray(result.workouts) && result.workouts.length > 0) {
+      const { data } = await api.post('/import/health', { workouts: result.workouts })
+      importResult = data || importResult
+    }
+
+    return {
+      ...result,
+      profile,
+      imported: Number(importResult.imported || 0),
+      skipped: Number(importResult.skipped || 0),
+      errors: importResult.errors || [],
+    }
+  }
+
+  async getNativeHealthSummary(options = {}) {
+    const init = await this.initialize(options)
     if (!init.available) {
       return {
         available: false,
         reason: init.reason,
         metrics: null,
+        workouts: [],
+      }
+    }
+
+    try {
+      const summary = await ForgeHealth.getSummary()
+      return {
+        available: true,
+        reason: null,
+        metrics: {
+          totalMilesThisWeek: toNumber(summary?.totalMilesThisWeek),
+          avgHeartRateFromLastRun: summary?.avgHeartRateFromLastRun ? Math.round(toNumber(summary.avgHeartRateFromLastRun)) : null,
+          caloriesBurnedToday: Math.round(toNumber(summary?.caloriesBurnedToday)),
+          stepsToday: Math.round(toNumber(summary?.stepsToday)),
+        },
+        workouts: Array.isArray(summary?.workouts) ? summary.workouts : [],
+      }
+    } catch (error) {
+      return {
+        available: false,
+        reason: nativeBridgeUnavailableReason(error),
+        metrics: null,
+        workouts: [],
+      }
+    }
+  }
+
+  async getHealthSummary(options = {}) {
+    if (isNativeRuntime()) {
+      return this.getNativeHealthSummary(options)
+    }
+
+    const init = await this.initialize(options)
+    if (!init.available) {
+      return {
+        available: false,
+        reason: init.reason,
+        metrics: null,
+        workouts: [],
       }
     }
 
@@ -212,6 +319,7 @@ class HealthService {
         caloriesBurnedToday: Math.round(caloriesBurnedToday),
         stepsToday: Math.round(stepsToday),
       },
+      workouts,
     }
   }
 }
