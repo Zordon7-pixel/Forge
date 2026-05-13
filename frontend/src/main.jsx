@@ -6,8 +6,11 @@ import { ThemeProvider } from './context/ThemeContext'
 import { UnitsProvider } from './context/UnitsContext'
 import i18n from './i18n'
 import { I18nextProvider } from 'react-i18next'
+import { installChunkRecovery } from './lib/chunkRecovery'
 import './index.css'
 import 'leaflet/dist/leaflet.css'
+
+installChunkRecovery()
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <ErrorBoundary>
