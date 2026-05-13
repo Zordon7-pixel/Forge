@@ -148,6 +148,11 @@ function normalizeDeepLink(value) {
   return link;
 }
 
+function wantsJsonResponse(req) {
+  return String(req.query?.format || '').toLowerCase() === 'json'
+    || String(req.query?.json || '') === '1';
+}
+
 function appendQueryParams(url, params = {}) {
   const search = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {
@@ -281,7 +286,7 @@ router.get('/auth', auth, requirePremium('Oura sync'), async (req, res) => {
     state,
   }).toString()}`;
 
-  if (String(req.query?.format || '').toLowerCase() === 'json') {
+  if (wantsJsonResponse(req)) {
     return res.json({ url: authUrl });
   }
   return res.redirect(authUrl);

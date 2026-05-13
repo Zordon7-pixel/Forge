@@ -267,7 +267,7 @@ export default function Settings() {
     setDeviceConnecting((prev) => ({ ...prev, [device]: true }))
     setDeviceNotice({ ok: true, text: `Opening ${device.toUpperCase()} connection...` })
     try {
-      const { data } = await api.get(`/${device}/auth`, { params: { json: 1 } })
+      const { data } = await api.get(`/${device}/auth`, { params: { format: 'json' } })
       if (data?.url) {
         const opened = window.open(data.url, '_blank', 'noopener,noreferrer')
         if (!opened) window.location.href = data.url
