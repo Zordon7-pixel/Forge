@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import api from '../lib/api'
+import MovementDemo from './MovementDemo'
 
 export default function ExercisePickerModal({ muscleGroup, onSelect, onClose }) {
   const [exercises, setExercises] = useState([])
@@ -85,6 +86,7 @@ export default function ExercisePickerModal({ muscleGroup, onSelect, onClose }) 
                   </span>
                 )}
               </div>
+              <MovementDemo name={howToExercise.name} compact />
               {howToExercise.how_to_image_url && (
                 <div className="rounded-xl overflow-hidden">
                   <img src={howToExercise.how_to_image_url} alt={howToExercise.name}

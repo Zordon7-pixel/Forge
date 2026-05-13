@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import api from '../lib/api'
 import ExercisePickerModal from '../components/ExercisePickerModal'
+import MovementDemo from '../components/MovementDemo'
 import { getWeightDropWarning, scrollToFirstError, validateWorkoutSet } from '../utils/validation'
 
 const REST_PRESETS = [30, 60, 90, 120, 180]
@@ -313,22 +314,25 @@ export default function ActiveWorkout() {
         )}
 
         {currentExerciseName && (
-          <div className="flex gap-3 items-end">
-            <div className="flex-1">
-              <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Reps</p>
-              <input type="number" min="1" placeholder="0" value={reps} onChange={e => setReps(e.target.value)} className="w-full rounded-xl px-3 py-3 text-center text-xl font-bold border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }} />
-              {formErrors.reps && <p ref={repsErrorRef} className="text-xs mt-1" style={{ color: '#ef4444' }}>{formErrors.reps}</p>}
+          <>
+            <MovementDemo name={currentExerciseName} compact />
+            <div className="flex gap-3 items-end">
+              <div className="flex-1">
+                <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Reps</p>
+                <input type="number" min="1" placeholder="0" value={reps} onChange={e => setReps(e.target.value)} className="w-full rounded-xl px-3 py-3 text-center text-xl font-bold border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }} />
+                {formErrors.reps && <p ref={repsErrorRef} className="text-xs mt-1" style={{ color: '#ef4444' }}>{formErrors.reps}</p>}
+              </div>
+              <div className="flex-1">
+                <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Weight (lbs)</p>
+                <input type="number" min="0" step="2.5" placeholder="0" value={weight} onChange={e => setWeight(e.target.value)} className="w-full rounded-xl px-3 py-3 text-center text-xl font-bold border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }} />
+                {formErrors.weight && <p ref={weightErrorRef} className="text-xs mt-1" style={{ color: '#ef4444' }}>{formErrors.weight}</p>}
+                {formWarning && <p className="text-xs mt-1" style={{ color: '#f59e0b' }}>{formWarning}</p>}
+              </div>
+              <button onClick={logSet} className="rounded-xl px-4 py-3 font-bold text-sm" style={{ background: 'var(--accent)', color: 'black' }}>
+                + Set {setNumber}
+              </button>
             </div>
-            <div className="flex-1">
-              <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Weight (lbs)</p>
-              <input type="number" min="0" step="2.5" placeholder="0" value={weight} onChange={e => setWeight(e.target.value)} className="w-full rounded-xl px-3 py-3 text-center text-xl font-bold border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }} />
-              {formErrors.weight && <p ref={weightErrorRef} className="text-xs mt-1" style={{ color: '#ef4444' }}>{formErrors.weight}</p>}
-              {formWarning && <p className="text-xs mt-1" style={{ color: '#f59e0b' }}>{formWarning}</p>}
-            </div>
-            <button onClick={logSet} className="rounded-xl px-4 py-3 font-bold text-sm" style={{ background: 'var(--accent)', color: 'black' }}>
-              + Set {setNumber}
-            </button>
-          </div>
+          </>
         )}
       </div>
 

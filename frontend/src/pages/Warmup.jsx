@@ -4,6 +4,7 @@ import { TrendingUp, Calendar, Zap, Heart } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import api from '../lib/api'
 import LoadingRunner from '../components/LoadingRunner'
+import MovementDemo from '../components/MovementDemo'
 
 const WARM_UP_STEPS = [
   { name: 'Leg Swings', detail: '10 each side' },
@@ -113,33 +114,9 @@ function WarmupSteps({ stepIndex, onNext, onSkip }) {
       </div>
 
       <div className="flex flex-col items-center justify-center flex-1 px-6">
-        <div
-          style={{
-            width: 120,
-            height: 120,
-            borderRadius: '50%',
-            border: '3px solid #EAB308',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            marginBottom: 40,
-            animation: 'scale-in 0.5s cubic-bezier(0.34, 1.56, 0.64, 1)',
-          }}
-        >
-          <span
-            style={{
-              fontSize: 56,
-              fontWeight: 900,
-              color: '#EAB308',
-            }}
-          >
-            {stepIndex + 1}
-          </span>
-        </div>
-
         <h2
           style={{
-            fontSize: 48,
+            fontSize: 38,
             fontWeight: 900,
             textAlign: 'center',
             color: 'var(--text-primary)',
@@ -165,12 +142,14 @@ function WarmupSteps({ stepIndex, onNext, onSkip }) {
           {step.detail}
         </p>
 
+        <MovementDemo name={step.name} compact />
+
         <p
           style={{
             fontSize: 14,
             color: 'var(--text-muted)',
             textAlign: 'center',
-            margin: 0,
+            margin: '24px 0 0',
             fontStyle: 'italic',
           }}
         >
