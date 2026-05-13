@@ -107,6 +107,22 @@ export default function Settings() {
   }, [])
 
   useEffect(() => {
+    const refresh = () => {
+      if (typeof document === 'undefined' || document.visibilityState === 'visible') {
+        loadDeviceStatuses()
+      }
+    }
+    window.addEventListener('focus', refresh)
+    window.addEventListener('pageshow', refresh)
+    document.addEventListener('visibilitychange', refresh)
+    return () => {
+      window.removeEventListener('focus', refresh)
+      window.removeEventListener('pageshow', refresh)
+      document.removeEventListener('visibilitychange', refresh)
+    }
+  }, [])
+
+  useEffect(() => {
     if (!importNotice) return
     const id = setTimeout(() => setImportNotice(null), 5000)
     return () => clearTimeout(id)
@@ -265,7 +281,7 @@ export default function Settings() {
 
   const handleDeviceConnect = async (device) => {
     setDeviceConnecting((prev) => ({ ...prev, [device]: true }))
-    setDeviceNotice({ ok: true, text: `Opening ${device.toUpperCase()} connection...` })
+    setDeviceNotice({ ok: true, text: `Opening ${device.toUpperCase()} connection. Finish there, then return to Forge.` })
     try {
       const { data } = await api.get(`/${device}/auth`, { params: { format: 'json' } })
       if (data?.url) {

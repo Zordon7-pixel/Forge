@@ -55,6 +55,45 @@ function appendQueryParams(url, params = {}) {
   return `${url}${search.toString() ? `${prefix}${search.toString()}` : ''}`;
 }
 
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function sendOAuthResultPage(res, { ok, title, message }) {
+  const accent = ok ? '#22c55e' : '#ef4444';
+  const safeTitle = escapeHtml(title);
+  const safeMessage = escapeHtml(message);
+  return res.type('html').send(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>${safeTitle}</title>
+  <style>
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #050505; color: #f9fafb; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    main { width: min(88vw, 420px); text-align: center; }
+    .mark { width: 64px; height: 64px; border-radius: 50%; margin: 0 auto 22px; display: grid; place-items: center; background: ${accent}; color: #050505; font-size: 34px; font-weight: 900; }
+    h1 { margin: 0 0 12px; font-size: 30px; line-height: 1.1; }
+    p { margin: 0 0 24px; color: #9ca3af; font-size: 16px; line-height: 1.55; }
+    a { display: inline-flex; align-items: center; justify-content: center; min-height: 48px; padding: 0 22px; border-radius: 14px; background: #f5bd02; color: #111; font-weight: 900; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="mark">${ok ? '✓' : '!'}</div>
+    <h1>${safeTitle}</h1>
+    <p>${safeMessage}</p>
+    <a href="https://forge-production-773f.up.railway.app/settings">Return to Forge</a>
+  </main>
+</body>
+</html>`);
+}
+
 function signOAuthState(payload = {}) {
   const body = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
   const signature = crypto
@@ -314,12 +353,26 @@ router.get('/callback', async (req, res) => {
       return res.redirect(appendQueryParams(deepLink, { ok: 1, athlete_name: athleteName || '' }));
     }
 
-    return res.json({ ok: true, athlete_name: athleteName });
+    return sendOAuthResultPage(res, {
+      ok: true,
+      title: 'Strava Connected',
+      message: `${athleteName || 'Your Strava account'} is connected. Return to Forge and the Devices section will refresh automatically.`,
+    });
   } catch (err) {
     if (deepLink) {
       return res.redirect(appendQueryParams(deepLink, { ok: 0, error: 'token_exchange_failed' }));
     }
-    return res.status(Number(err.status || 500)).json({ ok: false, error: 'Strava callback failed' });
+    return res.status(Number(err.status || 500)).type('html').send(`<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Strava Connection Failed</title></head>
+<body style="margin:0;min-height:100vh;display:grid;place-items:center;background:#050505;color:#f9fafb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
+  <main style="width:min(88vw,420px);text-align:center">
+    <h1 style="font-size:30px;margin:0 0 12px">Strava Connection Failed</h1>
+    <p style="color:#9ca3af;line-height:1.55">Forge could not finish the Strava connection. Return to Forge and try again.</p>
+    <a style="display:inline-flex;align-items:center;justify-content:center;min-height:48px;padding:0 22px;border-radius:14px;background:#f5bd02;color:#111;font-weight:900;text-decoration:none" href="https://forge-production-773f.up.railway.app/settings">Return to Forge</a>
+  </main>
+</body>
+</html>`);
   }
 });
 
