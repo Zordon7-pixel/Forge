@@ -33,6 +33,15 @@ const CATEGORY_KEY = {
   'lower-back':  'stretches.lowerBack',
 }
 
+const TIGHTNESS_OPTIONS = [
+  { id: 'hips', label: 'Hips', category: 'hip-focused' },
+  { id: 'hamstrings', label: 'Hamstrings', category: 'leg-focused' },
+  { id: 'calves', label: 'Calves', category: 'leg-focused' },
+  { id: 'lower-back', label: 'Lower back', category: 'lower-back' },
+  { id: 'shoulders', label: 'Shoulders', category: 'upper-body' },
+  { id: 'full-body', label: 'Full body', category: 'full-body' },
+]
+
 /* ─── Countdown ring ─── */
 const RING_R    = 44
 const RING_CIRC = 2 * Math.PI * RING_R
@@ -386,6 +395,37 @@ export default function Stretches() {
           </h1>
           <p style={{ color: 'var(--text-muted)', fontSize: 14 }}>{t('stretches.subtitle')}</p>
         </header>
+
+        <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', borderRadius: 18, padding: 16, marginBottom: 16 }}>
+          <p style={{ color: 'var(--text-primary)', fontWeight: 900, fontSize: 17, margin: 0 }}>
+            Where do you feel tight?
+          </p>
+          <p style={{ color: 'var(--text-muted)', fontSize: 12, margin: '4px 0 14px' }}>
+            Pick the area and Forge will rotate a focused mobility set.
+          </p>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            {TIGHTNESS_OPTIONS.map(option => (
+              <button
+                key={option.id}
+                type="button"
+                onClick={() => loadCategory(option.category)}
+                style={{
+                  background: 'var(--bg-input)',
+                  border: '1px solid rgba(234,179,8,0.18)',
+                  borderRadius: 13,
+                  color: 'var(--text-primary)',
+                  cursor: 'pointer',
+                  fontSize: 13,
+                  fontWeight: 800,
+                  padding: '12px 10px',
+                  textAlign: 'left',
+                }}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </div>
 
         {/* AI Recommended */}
         <button
