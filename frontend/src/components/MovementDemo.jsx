@@ -2,6 +2,13 @@ const ACCENT = '#EAB308'
 const BODY = '#d1d5db'
 const MUTED = '#6b7280'
 const PANEL = 'rgba(234,179,8,0.08)'
+const PHOTO_DEMOS = [
+  {
+    match: (lower) => lower.includes('dumbbell bench press') || (lower.includes('bench') && lower.includes('press')),
+    male: '/exercises/dumbbell-bench-press-male.png',
+    female: '/exercises/dumbbell-bench-press-female.png',
+  },
+]
 
 function getDemoKind(name = '') {
   const lower = String(name).toLowerCase()
@@ -311,9 +318,16 @@ function getSetupCue(kind) {
   return cues[kind] || 'Use the picture to set your body position before starting.'
 }
 
-export default function MovementDemo({ name, label, compact = false }) {
+function normalizeSex(sex) {
+  return String(sex || '').toLowerCase() === 'female' ? 'female' : 'male'
+}
+
+export default function MovementDemo({ name, label, compact = false, sex = 'male' }) {
   const kind = getDemoKind(name)
   const title = label || name || 'Movement demo'
+  const lower = String(title || '').toLowerCase()
+  const photoDemo = PHOTO_DEMOS.find((demo) => demo.match(lower))
+  const photoSrc = photoDemo?.[normalizeSex(sex)] || photoDemo?.male
   return (
     <div
       style={{
@@ -326,13 +340,23 @@ export default function MovementDemo({ name, label, compact = false }) {
       }}
       aria-label={`${title} visual demonstration`}
     >
-      <svg viewBox="0 0 240 210" width="100%" role="img" aria-label={title} style={{ display: 'block', maxHeight: compact ? 210 : 250 }}>
-        <rect x="16" y="14" width="208" height="182" rx="22" fill="rgba(0,0,0,0.22)" stroke="rgba(255,255,255,0.08)" />
-        <Line x1={38} y1={178} x2={202} y2={178} width={3} />
-        <BodyPose kind={kind} />
-        <Joint cx={38} cy={28} />
-        <text x="50" y="32" fill={ACCENT} fontSize="11" fontWeight="800" letterSpacing="1.4">FORM GUIDE</text>
-      </svg>
+      {photoSrc ? (
+        <div style={{ position: 'relative', borderRadius: 16, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.08)', marginBottom: 10, aspectRatio: '4 / 3', background: '#050505' }}>
+          <img src={photoSrc} alt={`${title} demonstration`} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+          <div style={{ position: 'absolute', left: 12, top: 10, display: 'inline-flex', alignItems: 'center', gap: 6, borderRadius: 999, padding: '5px 9px', background: 'rgba(0,0,0,0.58)', color: ACCENT, fontSize: 10, fontWeight: 900, letterSpacing: 1.2 }}>
+            <span style={{ width: 7, height: 7, borderRadius: 999, background: ACCENT }} />
+            FORM GUIDE
+          </div>
+        </div>
+      ) : (
+        <svg viewBox="0 0 240 210" width="100%" role="img" aria-label={title} style={{ display: 'block', maxHeight: compact ? 210 : 250 }}>
+          <rect x="16" y="14" width="208" height="182" rx="22" fill="rgba(0,0,0,0.22)" stroke="rgba(255,255,255,0.08)" />
+          <Line x1={38} y1={178} x2={202} y2={178} width={3} />
+          <BodyPose kind={kind} />
+          <Joint cx={38} cy={28} />
+          <text x="50" y="32" fill={ACCENT} fontSize="11" fontWeight="800" letterSpacing="1.4">FORM GUIDE</text>
+        </svg>
+      )}
       <div style={{ display: 'grid', gap: 4 }}>
         <p style={{ margin: 0, color: 'var(--text-primary)', fontWeight: 900, fontSize: compact ? 14 : 16 }}>{title}</p>
         <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: compact ? 12 : 13, lineHeight: 1.45 }}>{getSetupCue(kind)}</p>

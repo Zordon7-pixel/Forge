@@ -87,7 +87,7 @@ function TrainingReadinessWidget() {
   return (
     <button
       type="button"
-      onClick={() => navigate('/checkin')}
+      onClick={() => navigate('/?readiness=1')}
       className="text-center"
       style={{
         position: 'absolute',
@@ -97,8 +97,9 @@ function TrainingReadinessWidget() {
         border: '1px solid var(--border-subtle)',
         background: 'var(--bg-input)',
         borderRadius: 10,
-        padding: '4px 12px',
+        padding: '4px 10px',
         minWidth: 120,
+        maxWidth: '42vw',
         cursor: 'pointer',
       }}
     >
@@ -124,13 +125,13 @@ export default function Layout({ children }) {
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg-base)', color: 'var(--text-primary)', minHeight: '100dvh' }}>
-      <div className="mx-auto w-full max-w-[480px] px-3 sm:px-4 pb-28" style={{ maxWidth: 'min(480px, 100vw)', overflowX: 'hidden' }}>
+      <div className="mx-auto w-full max-w-[480px] px-3 sm:px-4 pb-28" style={{ maxWidth: 'min(480px, 100vw)', overflowX: 'hidden', boxSizing: 'border-box' }}>
         <header
           className="sticky top-0 z-20 border-b backdrop-blur"
           style={{
             borderColor: 'var(--border-subtle)',
             background: 'color-mix(in srgb, var(--bg-base) 90%, transparent)',
-            paddingTop: '1rem',
+            paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)',
             paddingBottom: '1rem',
           }}
         >
@@ -177,7 +178,7 @@ export default function Layout({ children }) {
         </header>
 
         <PullToRefresh>
-          <main className="pb-24 pt-4">{children}</main>
+          <main className="pb-24 pt-4" style={{ minWidth: 0 }}>{children}</main>
         </PullToRefresh>
       </div>
 
@@ -185,7 +186,7 @@ export default function Layout({ children }) {
       <FeedbackButton externalOpen={showFeedback} onClose={() => setShowFeedback(false)} />
 
       {!isWorkout && (
-        <nav className="fixed bottom-0 left-1/2 z-30 grid w-full max-w-[480px] -translate-x-1/2 grid-cols-6 border-t px-1 py-1" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}>
+        <nav className="fixed bottom-0 left-1/2 z-30 grid w-full max-w-[480px] -translate-x-1/2 grid-cols-6 border-t px-1 py-1" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)', paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 0.25rem)' }}>
           {NAV_ITEMS(t).map(({ to, end, icon, iconComponent: IconComponent, label, color }) => (
             <NavLink key={to} to={to} end={end} className="flex flex-col items-center justify-center"
               onClick={to === '/' ? (e) => { e.preventDefault(); navigate('/') } : undefined}>

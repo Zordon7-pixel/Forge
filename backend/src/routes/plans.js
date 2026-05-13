@@ -117,7 +117,12 @@ function generateSessions(intensity, user = {}) {
   const runDays = clamp(Number(user.run_days_per_week || 3), 2, 6);
   const liftDays = clamp(Number(user.lift_days_per_week || 2), 0, 4);
   const dayLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-  const runDayOrder = [1, 3, 5, 6, 2, 0, 4];
+  const preferredRunDays = parsePreferredDays(user.preferred_run_days);
+  const fallbackRunDayOrder = [1, 3, 5, 6, 2, 0, 4];
+  const runDayOrder = [
+    ...preferredRunDays,
+    ...fallbackRunDayOrder.filter((idx) => !preferredRunDays.includes(idx)),
+  ];
   const liftDayOrder = [0, 2, 4, 6, 1, 3, 5];
 
   const sessions = dayLabels.map((day) => ({
@@ -173,6 +178,28 @@ function generateSessions(intensity, user = {}) {
   return sessions;
 }
 
+function parsePreferredDays(raw) {
+  const dayIndex = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
+  const values = Array.isArray(raw)
+    ? raw
+    : String(raw || '')
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
+  return [...new Set(values
+    .map((day) => dayIndex[String(day || '').slice(0, 3).toLowerCase()])
+    .filter((idx) => idx !== undefined))];
+}
+
+function normalizeAdaptivePreferences(input = {}) {
+  const runDays = Number(input.run_days_per_week);
+  const preferred = parsePreferredDays(input.preferred_run_days);
+  return {
+    run_days_per_week: Number.isFinite(runDays) ? clamp(runDays, 2, 6) : null,
+    preferred_run_days: preferred.length ? preferred.map((idx) => ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][idx]) : null,
+  };
+}
+
 function getAdaptiveWeek(user, recentRuns, recentLifts, checkins, activeInjuries) {
   const avgFeeling = checkins.reduce((s, c) => s + Number(c.feeling || 0), 0) / (checkins.length || 1);
   const avgSleep = checkins.reduce((s, c) => s + Number(c.sleep_hours || 7), 0) / (checkins.length || 1);
@@ -218,7 +245,7 @@ function getAdaptiveWeek(user, recentRuns, recentLifts, checkins, activeInjuries
   };
 }
 
-async function buildAdaptiveRecommendation(userId) {
+async function buildAdaptiveRecommendation(userId, preferences = {}) {
   const today = new Date();
   const start = new Date(today);
   start.setDate(start.getDate() - 6);
@@ -239,7 +266,12 @@ async function buildAdaptiveRecommendation(userId) {
   ]);
 
   if (!user) return null;
-  return getAdaptiveWeek(user, recentRuns || [], recentLifts || [], checkins || [], activeInjuries || []);
+  const normalizedPreferences = normalizeAdaptivePreferences(preferences);
+  return getAdaptiveWeek({
+    ...user,
+    run_days_per_week: normalizedPreferences.run_days_per_week || user.run_days_per_week,
+    preferred_run_days: normalizedPreferences.preferred_run_days,
+  }, recentRuns || [], recentLifts || [], checkins || [], activeInjuries || []);
 }
 
 router.get('/', auth, async (req, res) => {
@@ -257,7 +289,7 @@ router.get('/', auth, async (req, res) => {
 
 router.get('/adaptive/recommend', auth, async (req, res) => {
   try {
-    const adaptive = await buildAdaptiveRecommendation(req.user.id);
+    const adaptive = await buildAdaptiveRecommendation(req.user.id, req.query || {});
     if (!adaptive) return res.status(404).json({ error: 'User not found' });
     res.json(adaptive);
   } catch {
@@ -267,7 +299,7 @@ router.get('/adaptive/recommend', auth, async (req, res) => {
 
 router.post('/adaptive/accept', auth, async (req, res) => {
   try {
-    const adaptive = await buildAdaptiveRecommendation(req.user.id);
+    const adaptive = await buildAdaptiveRecommendation(req.user.id, req.body || {});
     if (!adaptive) return res.status(404).json({ error: 'User not found' });
 
     const weekStart = getMonday();

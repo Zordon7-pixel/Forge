@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { ArrowUpRight, ArrowDownRight, Watch, Footprints, X, AlertTriangle, Brain, ChevronRight, Lock } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import AchievementUnlock from '../components/AchievementUnlock'
@@ -390,6 +390,7 @@ function WatchSyncWidget({ onSyncPayload }) {
 
 export default function Dashboard() {
   const navigate = useNavigate()
+  const location = useLocation()
   const { fmt } = useUnits()
   const { t } = useTranslation()
   const [stats, setStats] = useState(null)
@@ -418,6 +419,14 @@ export default function Dashboard() {
   const [loadWarningDismissedUntil, setLoadWarningDismissedUntil] = useState(Number(localStorage.getItem('forge_load_warning_dismissed_until') || 0))
   const [shoeAlerts, setShoeAlerts] = useState([])
   const [weeklyCalories, setWeeklyCalories] = useState(0)
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search)
+    if (params.get('readiness') === '1') {
+      setShowReadinessModal(true)
+      navigate('/', { replace: true })
+    }
+  }, [location.search, navigate])
   const [checkinData, setCheckinData] = useState(null)
   const [dailySteps, setDailySteps] = useState(null)
   const [dailyStepsSource, setDailyStepsSource] = useState('manual')

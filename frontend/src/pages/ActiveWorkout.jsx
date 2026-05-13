@@ -60,6 +60,7 @@ export default function ActiveWorkout() {
   const restRef = useRef(null)
 
   const [hrInfo, setHrInfo] = useState(null)
+  const [userSex, setUserSex] = useState('male')
 
   const [ending, setEnding] = useState(false)
   const repsErrorRef = useRef(null)
@@ -98,6 +99,10 @@ export default function ActiveWorkout() {
         setHrInfo({ bpm: latest.avg_heart_rate, ts: latest.created_at || latest.date })
       }
     }).catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    api.get('/auth/me').then((r) => setUserSex(r.data?.user?.sex || 'male')).catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -201,14 +206,14 @@ export default function ActiveWorkout() {
   const exerciseSets = sets.filter(s => s.exercise_name === currentExerciseName)
 
   return (
-    <div className="space-y-4 pb-4">
-      <div className="flex items-center justify-between rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>
+    <div className="space-y-3" style={{ width: '100%', maxWidth: '100%', overflowX: 'hidden', paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 1rem)' }}>
+      <div className="flex items-center justify-between rounded-2xl p-3" style={{ background: 'var(--bg-card)', gap: 10 }}>
         <div>
           <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Workout Time</p>
-          <p className="text-3xl font-bold tabular-nums" style={{ color: 'var(--accent)' }}>{fmtDuration(elapsed)}</p>
+          <p className="text-2xl font-bold tabular-nums" style={{ color: 'var(--accent)' }}>{fmtDuration(elapsed)}</p>
           <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>{hrInfo ? `HR: ${hrInfo.bpm} bpm · ${Math.max(1, Math.round((Date.now()-new Date(hrInfo.ts).getTime())/60000))} min ago` : 'No watch data yet — sync your watch to unlock this'}</p>
         </div>
-        <button onClick={endWorkout} disabled={ending} className="rounded-xl px-5 py-3 font-bold text-sm" style={{ background: 'rgba(239,68,68,0.15)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)' }}>
+        <button onClick={endWorkout} disabled={ending} className="rounded-xl px-3 py-2 font-bold text-xs" style={{ background: 'rgba(239,68,68,0.15)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)', flexShrink: 0 }}>
           {ending ? 'Ending...' : 'End Workout'}
         </button>
       </div>
@@ -275,12 +280,12 @@ export default function ActiveWorkout() {
         </div>
       )}
 
-      <div className="rounded-2xl p-4 space-y-3" style={{ background: 'var(--bg-card)' }}>
-        <div className="flex items-center justify-between">
-          <span className="font-bold text-base" style={{ color: 'var(--accent)' }}>
+      <div className="rounded-2xl p-3 space-y-3" style={{ background: 'var(--bg-card)', minWidth: 0 }}>
+        <div className="flex items-start justify-between gap-2">
+          <span className="font-bold text-sm" style={{ color: 'var(--accent)', minWidth: 0, overflowWrap: 'anywhere' }}>
             Current: {currentExerciseName || 'None selected'}
           </span>
-          <button onClick={() => setShowExercisePicker(true)} className="text-xs" style={{ color: 'var(--text-muted)' }}>
+          <button onClick={() => setShowExercisePicker(true)} className="text-xs" style={{ color: 'var(--text-muted)', flexShrink: 0 }}>
             {currentExerciseName ? 'Change Exercise' : 'Choose Exercise'}
           </button>
         </div>
@@ -315,20 +320,20 @@ export default function ActiveWorkout() {
 
         {currentExerciseName && (
           <>
-            <MovementDemo name={currentExerciseName} compact />
-            <div className="flex gap-3 items-end">
-              <div className="flex-1">
+            <MovementDemo name={currentExerciseName} compact sex={userSex} />
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 10, alignItems: 'end' }}>
+              <div style={{ minWidth: 0 }}>
                 <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Reps</p>
                 <input type="number" min="1" placeholder="0" value={reps} onChange={e => setReps(e.target.value)} className="w-full rounded-xl px-3 py-3 text-center text-xl font-bold border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }} />
                 {formErrors.reps && <p ref={repsErrorRef} className="text-xs mt-1" style={{ color: '#ef4444' }}>{formErrors.reps}</p>}
               </div>
-              <div className="flex-1">
+              <div style={{ minWidth: 0 }}>
                 <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Weight (lbs)</p>
                 <input type="number" min="0" step="2.5" placeholder="0" value={weight} onChange={e => setWeight(e.target.value)} className="w-full rounded-xl px-3 py-3 text-center text-xl font-bold border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }} />
                 {formErrors.weight && <p ref={weightErrorRef} className="text-xs mt-1" style={{ color: '#ef4444' }}>{formErrors.weight}</p>}
                 {formWarning && <p className="text-xs mt-1" style={{ color: '#f59e0b' }}>{formWarning}</p>}
               </div>
-              <button onClick={logSet} className="rounded-xl px-4 py-3 font-bold text-sm" style={{ background: 'var(--accent)', color: 'black' }}>
+              <button onClick={logSet} className="rounded-xl px-4 py-3 font-bold text-sm" style={{ background: 'var(--accent)', color: 'black', gridColumn: '1 / -1', width: '100%' }}>
                 + Set {setNumber}
               </button>
             </div>

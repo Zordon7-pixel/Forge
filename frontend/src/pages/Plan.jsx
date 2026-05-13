@@ -4,6 +4,16 @@ import { CheckCircle2, Circle, Lock } from 'lucide-react'
 import api from '../lib/api'
 import { useProContext } from '../context/ProContext'
 
+const RUN_DAY_OPTIONS = [
+  { key: 'Mon', label: 'M' },
+  { key: 'Tue', label: 'T' },
+  { key: 'Wed', label: 'W' },
+  { key: 'Thu', label: 'T' },
+  { key: 'Fri', label: 'F' },
+  { key: 'Sat', label: 'S' },
+  { key: 'Sun', label: 'S' },
+]
+
 function sessionLabel(session = {}) {
   if (session.type === 'run') {
     const miles = Number(session.distance_miles || 0)
@@ -24,15 +34,22 @@ export default function Plan() {
   const [loading, setLoading] = useState(true)
   const [assigningId, setAssigningId] = useState(null)
   const [updating, setUpdating] = useState(false)
+  const [preferredRunDays, setPreferredRunDays] = useState(['Tue', 'Thu', 'Sat'])
+  const [runDaysPerWeek, setRunDaysPerWeek] = useState(3)
 
-  const loadAll = async () => {
+  const adaptiveParams = useMemo(() => ({
+    run_days_per_week: runDaysPerWeek,
+    preferred_run_days: preferredRunDays.join(','),
+  }), [preferredRunDays, runDaysPerWeek])
+
+  const loadAll = async (params = adaptiveParams) => {
     setLoading(true)
     setAdaptiveLoading(true)
     try {
       const [plansRes, myRes, adaptiveRes] = await Promise.all([
         api.get('/plans'),
         api.get('/plans/my'),
-        api.get('/plans/adaptive/recommend').catch(() => ({ data: null })),
+        api.get('/plans/adaptive/recommend', { params }).catch(() => ({ data: null })),
       ])
       setPlans(plansRes.data?.plans || [])
       setMyPlan(myRes.data?.plan || null)
@@ -46,7 +63,14 @@ export default function Plan() {
 
   useEffect(() => {
     loadAll()
-  }, [])
+  }, [adaptiveParams])
+
+  const togglePreferredRunDay = (day) => {
+    setPreferredRunDays((prev) => {
+      const next = prev.includes(day) ? prev.filter((item) => item !== day) : [...prev, day]
+      return next.sort((a, b) => RUN_DAY_OPTIONS.findIndex((item) => item.key === a) - RUN_DAY_OPTIONS.findIndex((item) => item.key === b))
+    })
+  }
 
   const assignPlan = async (planId) => {
     setAssigningId(planId)
@@ -95,7 +119,7 @@ export default function Plan() {
   const acceptAdaptive = async () => {
     setAcceptingAdaptive(true)
     try {
-      await api.post('/plans/adaptive/accept')
+      await api.post('/plans/adaptive/accept', adaptiveParams)
       await loadAll()
     } finally {
       setAcceptingAdaptive(false)
@@ -174,6 +198,47 @@ export default function Plan() {
         {!adaptiveLoading && adaptivePlan && (
           <>
             <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{adaptivePlan.reason || adaptivePlan.recommendation}</p>
+            <div className="rounded-xl p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
+              <p className="text-xs font-bold uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>Run availability</p>
+              <div className="mt-3 grid grid-cols-5 gap-2">
+                {[2, 3, 4, 5, 6].map((count) => (
+                  <button
+                    key={count}
+                    type="button"
+                    onClick={() => setRunDaysPerWeek(count)}
+                    className="rounded-lg px-2 py-2 text-xs font-black"
+                    style={{
+                      border: `1px solid ${runDaysPerWeek === count ? 'var(--accent)' : 'var(--border-subtle)'}`,
+                      background: runDaysPerWeek === count ? 'var(--accent)' : 'var(--bg-card)',
+                      color: runDaysPerWeek === count ? '#000' : 'var(--text-primary)',
+                    }}
+                  >
+                    {count}d
+                  </button>
+                ))}
+              </div>
+              <div className="mt-3 grid grid-cols-7 gap-2">
+                {RUN_DAY_OPTIONS.map((day) => {
+                  const active = preferredRunDays.includes(day.key)
+                  return (
+                    <button
+                      key={day.key}
+                      type="button"
+                      onClick={() => togglePreferredRunDay(day.key)}
+                      className="rounded-lg py-2 text-xs font-black"
+                      style={{
+                        border: `1px solid ${active ? 'var(--accent)' : 'var(--border-subtle)'}`,
+                        background: active ? 'var(--accent-dim)' : 'var(--bg-card)',
+                        color: active ? 'var(--accent)' : 'var(--text-muted)',
+                      }}
+                      aria-label={`Prefer ${day.key} runs`}
+                    >
+                      {day.label}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {(adaptivePlan.sessions || []).map((session) => (
                 <div

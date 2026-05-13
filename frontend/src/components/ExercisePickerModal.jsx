@@ -12,10 +12,15 @@ export default function ExercisePickerModal({ muscleGroup, onSelect, onClose }) 
   const [howToExercise, setHowToExercise] = useState(null)
   const [addFeedback, setAddFeedback] = useState('')
   const [addLoading, setAddLoading] = useState(false)
+  const [userSex, setUserSex] = useState('male')
 
   useEffect(() => {
     loadExercises()
   }, [muscleGroup])
+
+  useEffect(() => {
+    api.get('/auth/me').then((r) => setUserSex(r.data?.user?.sex || 'male')).catch(() => {})
+  }, [])
 
   const loadExercises = async () => {
     setLoading(true)
@@ -86,7 +91,7 @@ export default function ExercisePickerModal({ muscleGroup, onSelect, onClose }) 
                   </span>
                 )}
               </div>
-              <MovementDemo name={howToExercise.name} compact />
+              <MovementDemo name={howToExercise.name} compact sex={userSex} />
               {howToExercise.how_to_image_url && (
                 <div className="rounded-xl overflow-hidden">
                   <img src={howToExercise.how_to_image_url} alt={howToExercise.name}
