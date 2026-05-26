@@ -97,6 +97,9 @@ export default function Layout({ children }) {
   const location = useLocation()
   const navigate = useNavigate()
   const isWorkout = location.pathname.startsWith('/workout/')
+  const isImmersive = isWorkout
+    || location.pathname.startsWith('/stretches/session')
+    || location.pathname.startsWith('/run/active')
   const avatarLabel = getAvatarLabel(getUser())
 
   useEffect(() => {
@@ -105,16 +108,17 @@ export default function Layout({ children }) {
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg-base)', color: 'var(--text-primary)', minHeight: '100dvh' }}>
-      <div className="mx-auto w-full max-w-[480px] px-3 sm:px-4 pb-28" style={{ maxWidth: 'min(480px, 100vw)', overflowX: 'hidden', boxSizing: 'border-box' }}>
-        <header
-          className="sticky top-0 z-20 border-b backdrop-blur"
-          style={{
-            borderColor: 'var(--border-subtle)',
-            background: 'color-mix(in srgb, var(--bg-base) 90%, transparent)',
-            paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.9rem)',
-            paddingBottom: '0.75rem',
-          }}
-        >
+      <div className={`mx-auto w-full max-w-[480px] px-3 sm:px-4 ${isImmersive ? 'pb-0' : 'pb-28'}`} style={{ maxWidth: 'min(480px, 100vw)', overflowX: 'hidden', boxSizing: 'border-box' }}>
+        {!isImmersive && (
+          <header
+            className="sticky top-0 z-20 border-b backdrop-blur"
+            style={{
+              borderColor: 'var(--border-subtle)',
+              background: 'color-mix(in srgb, var(--bg-base) 90%, transparent)',
+              paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.9rem)',
+              paddingBottom: '0.75rem',
+            }}
+          >
           <div className="flex items-center justify-between gap-3">
             <button
               type="button"
@@ -138,14 +142,15 @@ export default function Layout({ children }) {
               </button>
             </div>
           </div>
-        </header>
+          </header>
+        )}
 
         <PullToRefresh>
-          <main className="pb-24 pt-4" style={{ minWidth: 0 }}>{children}</main>
+          <main className={isImmersive ? 'pb-0 pt-0' : 'pb-24 pt-4'} style={{ minWidth: 0 }}>{children}</main>
         </PullToRefresh>
       </div>
 
-      {!isWorkout && (
+      {!isImmersive && (
         <nav className="fixed bottom-0 left-1/2 z-30 grid w-full max-w-[480px] -translate-x-1/2 grid-cols-5 border-t px-1 py-1" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)', paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 0.25rem)' }}>
           {NAV_ITEMS(t).map(({ to, end, icon, iconComponent: IconComponent, label, color }) => (
             <NavLink key={to} to={to} end={end} className="flex flex-col items-center justify-center"

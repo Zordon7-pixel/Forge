@@ -18,66 +18,6 @@ const PHOTO_DEMOS = [
     male: '/stretches/hip-flexor-male.png',
     female: '/stretches/hip-flexor-female.png',
   },
-  {
-    match: (lower) => lower.includes('high knee'),
-    src: 'https://images.unsplash.com/photo-1517836357463-d25dfeac3438?w=900&h=675&fit=crop&crop=center',
-  },
-  {
-    match: (lower) => lower.includes('butt kick'),
-    src: 'https://images.unsplash.com/photo-1476480862126-209bfaa8edc8?w=900&h=675&fit=crop&crop=center',
-  },
-  {
-    match: (lower) => lower.includes('ankle'),
-    src: 'https://images.unsplash.com/photo-1518611012118-696072aa579a?w=900&h=675&fit=crop&crop=center',
-  },
-  {
-    match: (lower) => lower.includes('walking lunge') || lower === 'lunges' || lower.includes('lunge'),
-    src: 'https://images.unsplash.com/photo-1571019613454-1cb2f99b2d8b?w=900&h=675&fit=crop&crop=center',
-  },
-  {
-    match: (lower) => lower.includes('quad'),
-    src: 'https://images.unsplash.com/photo-1434608519344-49d77a699e1d?w=900&h=675&fit=crop&crop=center',
-  },
-  {
-    match: (lower) => lower.includes('hamstring') || lower.includes('forward fold') || lower.includes('toe touch'),
-    src: 'https://images.unsplash.com/photo-1566241142559-40e1dab266c6?w=900&h=675&fit=crop&crop=center',
-  },
-  {
-    match: (lower) => lower.includes('calf'),
-    src: 'https://images.unsplash.com/photo-1562771379-eafdca7a02f8?w=900&h=675&fit=crop&crop=center',
-  },
-  {
-    match: (lower) => lower.includes('figure') || lower.includes('piriformis') || lower.includes('pigeon'),
-    src: 'https://images.unsplash.com/photo-1506126613408-eca07ce68773?w=900&h=675&fit=crop&crop=center',
-  },
-  {
-    match: (lower) => lower.includes('butterfly') || lower.includes('inner thigh') || lower.includes('sumo'),
-    src: 'https://images.unsplash.com/photo-1552196563-55cd4e45efb3?w=900&h=675&fit=crop&crop=center',
-  },
-  {
-    match: (lower) => lower.includes('lateral lunge') || lower.includes('it band'),
-    src: 'https://images.unsplash.com/photo-1607914660218-d8b449017b52?w=900&h=675&fit=crop&crop=center',
-  },
-  {
-    match: (lower) => lower.includes('child'),
-    src: 'https://images.unsplash.com/photo-1544367567-0f2fcb009e0b?w=900&h=675&fit=crop&crop=bottom',
-  },
-  {
-    match: (lower) => lower.includes('cat-cow') || lower.includes('downward') || lower.includes('cobra') || lower.includes('inchworm'),
-    src: 'https://images.unsplash.com/photo-1588286840104-8957b019727f?w=900&h=675&fit=crop&crop=center',
-  },
-  {
-    match: (lower) => lower.includes('world') || lower.includes('side bend') || lower.includes('trunk rotation'),
-    src: 'https://images.unsplash.com/photo-1575052814086-f385e2e2ad1b?w=900&h=675&fit=crop&crop=center',
-  },
-  {
-    match: (lower) => lower.includes('shoulder') || lower.includes('chest') || lower.includes('tricep') || lower.includes('lat') || lower.includes('wrist') || lower.includes('trap') || lower.includes('neck'),
-    src: 'https://images.unsplash.com/photo-1574680096145-d05b474e2155?w=900&h=675&fit=crop&crop=center',
-  },
-  {
-    match: (lower) => lower.includes('knee-to-chest') || lower.includes('supine') || lower.includes('bridge') || lower.includes('pelvic'),
-    src: 'https://images.unsplash.com/photo-1518611012118-696072aa579a?w=900&h=675&fit=crop&crop=top',
-  },
 ]
 
 function getDemoKind(name = '') {
@@ -404,12 +344,17 @@ function getPhotoSource(photoDemo, sex) {
   return photoDemo.src || photoDemo?.[normalizeSex(sex)] || photoDemo?.male
 }
 
+function isLocalFormAsset(src = '') {
+  return String(src).startsWith('/exercises/') || String(src).startsWith('/stretches/')
+}
+
 export default function MovementDemo({ name, label, compact = false, sex = 'male', imageUrl = '' }) {
   const kind = getDemoKind(name)
   const title = label || name || 'Movement demo'
   const lower = String(title || '').toLowerCase()
   const photoDemo = PHOTO_DEMOS.find((demo) => demo.match(lower))
-  const photoSrc = imageUrl || getPhotoSource(photoDemo, sex)
+  const providedImage = isLocalFormAsset(imageUrl) ? imageUrl : ''
+  const photoSrc = providedImage || getPhotoSource(photoDemo, sex)
   return (
     <div
       style={{
@@ -447,6 +392,8 @@ export default function MovementDemo({ name, label, compact = false, sex = 'male
           <BodyPose kind={kind} />
           <Joint cx={38} cy={28} />
           <text x="50" y="32" fill={ACCENT} fontSize="11" fontWeight="800" letterSpacing="1.4">FORM GUIDE</text>
+          <path d="M 54 188 H 186" stroke={ACCENT} strokeWidth="3" strokeLinecap="round" strokeDasharray="8 7" opacity="0.75" />
+          <text x="120" y="204" fill={MUTED} fontSize="10" fontWeight="700" textAnchor="middle">EXACT IMAGE PENDING</text>
         </svg>
       )}
       <div style={{ display: 'grid', gap: 4 }}>
