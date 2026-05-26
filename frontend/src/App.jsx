@@ -34,6 +34,7 @@ const Community = lazy(() => import('./pages/Community'))
 const Journal = lazy(() => import('./pages/Journal'))
 const Races = lazy(() => import('./pages/Races'))
 const Gear = lazy(() => import('./pages/Gear'))
+const More = lazy(() => import('./pages/More'))
 const ResetPassword = lazy(() => import('./pages/ResetPassword'))
 const Injury = lazy(() => import('./pages/Injury'))
 const WeeklyRecap = lazy(() => import('./pages/WeeklyRecap'))
@@ -213,6 +214,14 @@ export default function App() {
           element={
             <PrivateRoute>
               <Journal />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/more"
+          element={
+            <PrivateRoute>
+              <More />
             </PrivateRoute>
           }
         />

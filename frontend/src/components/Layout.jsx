@@ -1,21 +1,17 @@
 import { useEffect, useState } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
-import { Trophy, Activity, User, Users } from 'lucide-react'
+import { Activity, Dumbbell, HeartPulse, MoreHorizontal } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { getUser, isLoggedIn } from '../lib/auth'
-import { useTheme } from '../context/ThemeContext'
-import HelpDesk from './HelpDesk'
-import FeedbackButton from './FeedbackButton'
 import PullToRefresh from './PullToRefresh'
 import api from '../lib/api'
 
 const NAV_ITEMS = (t) => [
   { to: '/', end: true, icon: '/nav-home.png', label: t('nav.home'), color: '#EAB308' },
   { to: '/run', label: t('nav.run'), iconComponent: Activity, color: '#EAB308' },
-  { to: '/community', label: t('nav.community') || 'Community', iconComponent: Users, color: '#22C55E' },
-  { to: '/log-lift', icon: '/nav-lift.png', label: t('nav.lift'), color: '#F97316' },
-  { to: '/history', icon: '/nav-history.png', label: t('nav.history'), color: '#3B82F6' },
-  { to: '/profile', label: t('nav.profile') || 'Profile', iconComponent: User, color: '#A855F7' },
+  { to: '/log-lift', iconComponent: Dumbbell, label: t('nav.lift'), color: '#F97316' },
+  { to: '/health', label: 'Health', iconComponent: HeartPulse, color: '#22C55E' },
+  { to: '/more', label: 'More', iconComponent: MoreHorizontal, color: '#A855F7' },
 ]
 
 function getAvatarLabel(user) {
@@ -85,24 +81,7 @@ function TrainingReadinessWidget() {
   }, [])
 
   return (
-    <button
-      type="button"
-      onClick={() => navigate('/?readiness=1')}
-      className="text-center"
-      style={{
-        position: 'absolute',
-        left: '50%',
-        top: '50%',
-        transform: 'translate(-50%, -50%)',
-        border: '1px solid var(--border-subtle)',
-        background: 'var(--bg-input)',
-        borderRadius: 10,
-        padding: '4px 10px',
-        minWidth: 120,
-        maxWidth: '42vw',
-        cursor: 'pointer',
-      }}
-    >
+    <button type="button" onClick={() => navigate('/?readiness=1')} className="text-left" style={{ border: '1px solid var(--border-subtle)', background: 'var(--bg-input)', borderRadius: 10, padding: '5px 10px', minWidth: 86, cursor: 'pointer' }}>
       <p style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: 0.6, color: 'var(--text-muted)' }}>{t('run.readiness')}</p>
       {score !== null ? (
         <p style={{ fontSize: 13, fontWeight: 800, color: '#EAB308' }}>{score}</p>
@@ -114,9 +93,6 @@ function TrainingReadinessWidget() {
 }
 
 export default function Layout({ children }) {
-  const [showHelp, setShowHelp] = useState(false)
-  const [showFeedback, setShowFeedback] = useState(false)
-  const { theme, toggle } = useTheme()
   const { t } = useTranslation()
   const location = useLocation()
   const navigate = useNavigate()
@@ -135,11 +111,11 @@ export default function Layout({ children }) {
           style={{
             borderColor: 'var(--border-subtle)',
             background: 'color-mix(in srgb, var(--bg-base) 90%, transparent)',
-            paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)',
-            paddingBottom: '1rem',
+            paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.9rem)',
+            paddingBottom: '0.75rem',
           }}
         >
-          <div className="relative flex items-center justify-between">
+          <div className="flex items-center justify-between gap-3">
             <button
               type="button"
               onClick={() => navigate('/')}
@@ -148,25 +124,8 @@ export default function Layout({ children }) {
             >
               <img src="/icon-192.png" alt="FORGE" className="w-9 h-9 rounded-xl object-cover" />
             </button>
-            <TrainingReadinessWidget />
-            <div className="flex items-center gap-3" style={{ zIndex: 10 }}>
-              <button onClick={toggle} className="transition-colors hover:opacity-80 text-xs" style={{ color: 'var(--text-muted)' }} title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'} aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}>
-                {theme === 'dark' ? (
-                  <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364-6.364l-.707.707M6.343 17.657l-.707.707M17.657 17.657l-.707-.707M6.343 6.343l-.707-.707M12 8a4 4 0 100 8 4 4 0 000-8z" />
-                  </svg>
-                ) : (
-                  <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
-                  </svg>
-                )}
-              </button>
-              <button onClick={() => setShowFeedback(true)} className="transition-colors hover:opacity-80" style={{ color: 'var(--text-muted)' }} title="Send feedback" aria-label="Send feedback">
-                <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                </svg>
-              </button>
-              <button onClick={() => setShowHelp(true)} className="transition-colors hover:opacity-80 text-xs font-bold" style={{ color: 'var(--text-muted)' }} title="Help & diagnostics" aria-label="Help and diagnostics">?</button>
+            <div className="flex items-center gap-2">
+              <TrainingReadinessWidget />
               <button
                 type="button"
                 onClick={() => navigate('/profile')}
@@ -186,11 +145,8 @@ export default function Layout({ children }) {
         </PullToRefresh>
       </div>
 
-      <HelpDesk externalOpen={showHelp} onClose={() => setShowHelp(false)} />
-      <FeedbackButton externalOpen={showFeedback} onClose={() => setShowFeedback(false)} />
-
       {!isWorkout && (
-        <nav className="fixed bottom-0 left-1/2 z-30 grid w-full max-w-[480px] -translate-x-1/2 grid-cols-6 border-t px-1 py-1" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)', paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 0.25rem)' }}>
+        <nav className="fixed bottom-0 left-1/2 z-30 grid w-full max-w-[480px] -translate-x-1/2 grid-cols-5 border-t px-1 py-1" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)', paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 0.25rem)' }}>
           {NAV_ITEMS(t).map(({ to, end, icon, iconComponent: IconComponent, label, color }) => (
             <NavLink key={to} to={to} end={end} className="flex flex-col items-center justify-center"
               onClick={to === '/' ? (e) => { e.preventDefault(); navigate('/') } : undefined}>
