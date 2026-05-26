@@ -37,6 +37,32 @@ function unavailableReason(error) {
 }
 
 class WatchWorkoutService {
+  isNativeRuntime() {
+    return isNativeRuntime()
+  }
+
+  async getAvailability() {
+    if (!isNativeRuntime()) {
+      return {
+        available: false,
+        reason: 'Apple Watch workout sending only works in the Forge iPhone app.',
+      }
+    }
+
+    try {
+      const status = await ForgeWatchWorkout.isAvailable()
+      return {
+        available: Boolean(status?.available),
+        reason: status?.reason || '',
+      }
+    } catch (error) {
+      return {
+        available: false,
+        reason: unavailableReason(error),
+      }
+    }
+  }
+
   buildRunWorkout(workout = {}) {
     const miles = parseMiles(workout.distanceLabel)
     const paceSeconds = parsePaceSecondsPerMile(workout.pace)

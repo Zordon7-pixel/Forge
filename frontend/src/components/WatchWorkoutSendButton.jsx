@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Watch } from 'lucide-react'
 import WatchWorkoutService from '../services/WatchWorkoutService'
 
@@ -6,7 +6,22 @@ export default function WatchWorkoutSendButton({ workout, label = 'Send to Apple
   const [status, setStatus] = useState('')
   const [error, setError] = useState('')
   const [sending, setSending] = useState(false)
+  const [availability, setAvailability] = useState({ checked: false, available: false, reason: '' })
   const workoutText = useMemo(() => WatchWorkoutService.formatWorkoutText(workout || {}), [workout])
+
+  useEffect(() => {
+    let active = true
+    WatchWorkoutService.getAvailability()
+      .then((result) => {
+        if (active) setAvailability({ checked: true, available: Boolean(result?.available), reason: result?.reason || '' })
+      })
+      .catch((err) => {
+        if (active) setAvailability({ checked: true, available: false, reason: err?.message || 'Apple Watch workout sending is unavailable.' })
+      })
+    return () => {
+      active = false
+    }
+  }, [])
 
   const copyWorkout = async () => {
     try {
@@ -21,6 +36,11 @@ export default function WatchWorkoutSendButton({ workout, label = 'Send to Apple
 
   const sendWorkout = async () => {
     if (!workout) return
+    if (availability.checked && !availability.available) {
+      setError(availability.reason || 'Apple Watch workout sending is unavailable.')
+      setStatus('')
+      return
+    }
     setSending(true)
     setError('')
     setStatus('')
@@ -39,12 +59,12 @@ export default function WatchWorkoutSendButton({ workout, label = 'Send to Apple
       <button
         type="button"
         onClick={sendWorkout}
-        disabled={sending || !workout}
+        disabled={sending || !workout || (availability.checked && !availability.available)}
         className="w-full rounded-xl py-3 font-bold flex items-center justify-center gap-2 disabled:opacity-60"
         style={{ background: 'var(--accent)', color: '#000', border: 'none', cursor: sending ? 'wait' : 'pointer' }}
       >
         <Watch size={17} />
-        {sending ? 'Sending...' : label}
+        {sending ? 'Sending...' : availability.checked && !availability.available ? 'Apple Watch unavailable' : label}
       </button>
       <button
         type="button"
@@ -55,7 +75,11 @@ export default function WatchWorkoutSendButton({ workout, label = 'Send to Apple
         Copy workout details
       </button>
       {status && <p className="mt-2 text-xs" style={{ color: '#22C55E' }}>{status}</p>}
-      {error && <p className="mt-2 text-xs" style={{ color: '#F97316' }}>{error}</p>}
+      {(error || (availability.checked && !availability.available && availability.reason)) && (
+        <p className="mt-2 text-xs" style={{ color: '#F97316' }}>
+          {error || availability.reason}
+        </p>
+      )}
     </div>
   )
 }
