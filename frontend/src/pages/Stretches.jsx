@@ -138,6 +138,10 @@ function StretchSession({ stretches, onDone, onBack, sex = 'male' }) {
     onBack()
   }
 
+  const handleSkip = () => {
+    handleNext()
+  }
+
   return (
     <div style={{ background: 'var(--bg-base)', minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
       {/* Progress bar */}
@@ -173,7 +177,7 @@ function StretchSession({ stretches, onDone, onBack, sex = 'male' }) {
           {stretch.cue}
         </p>
 
-        <MovementDemo name={stretch.name} compact sex={sex} />
+        <MovementDemo name={stretch.name} compact sex={sex} imageUrl={stretch.image_url || stretch.imageUrl} />
 
         {/* Timer */}
         {phase === 'active' && (
@@ -216,15 +220,23 @@ function StretchSession({ stretches, onDone, onBack, sex = 'male' }) {
             {t('common.done')}
           </button>
           {phase !== 'done' && (
-            <button
-              onClick={handleNext}
-              style={{ flex: 2, background: '#EAB308', border: 'none', borderRadius: 14, padding: '14px 0', fontSize: 14, fontWeight: 900, color: '#000', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
-            >
-              {nextStretch
-                ? <>{t('common.next')} <ChevronRight size={16} /></>
-                : <>{t('stretches.finish')} <Check size={16} /></>
-              }
-            </button>
+            <>
+              <button
+                onClick={handleSkip}
+                style={{ flex: 1, background: 'var(--bg-input)', border: '1px solid rgba(234,179,8,0.22)', borderRadius: 14, padding: '14px 0', fontSize: 14, fontWeight: 800, color: 'var(--text-primary)', cursor: 'pointer' }}
+              >
+                Skip
+              </button>
+              <button
+                onClick={handleNext}
+                style={{ flex: 2, background: '#EAB308', border: 'none', borderRadius: 14, padding: '14px 0', fontSize: 14, fontWeight: 900, color: '#000', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+              >
+                {nextStretch
+                  ? <>{t('common.next')} <ChevronRight size={16} /></>
+                  : <>{t('stretches.finish')} <Check size={16} /></>
+                }
+              </button>
+            </>
           )}
           {phase === 'done' && (
             <button

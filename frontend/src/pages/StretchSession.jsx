@@ -175,7 +175,7 @@ export default function StretchSession() {
               </div>
 
               <div className="my-8 flex flex-col items-center">
-                <MovementDemo name={currentStretch.name} sex={sex} />
+                <MovementDemo name={currentStretch.name} sex={sex} imageUrl={currentStretch.image_url || currentStretch.imageUrl} />
                 <p className={`text-7xl font-black mt-6 ${secondsLeft <= 5 ? 'animate-timer-pulse' : 'text-yellow-500'}`}>
                   {secondsLeft}
                 </p>
@@ -183,7 +183,9 @@ export default function StretchSession() {
                   <button onClick={() => setPaused(prev => !prev)} className="rounded-lg border border-[#2a2d3e] px-3 py-1 text-xs text-slate-300">
                     {paused ? 'Resume' : 'Pause'}
                   </button>
-                  <button onClick={skipToNext} className="text-xs text-slate-400 underline">Skip</button>
+                  <button onClick={skipToNext} className="rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-3 py-1 text-xs font-bold text-yellow-300">
+                    Skip stretch
+                  </button>
                 </div>
               </div>
 

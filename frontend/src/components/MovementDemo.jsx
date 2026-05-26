@@ -18,22 +18,88 @@ const PHOTO_DEMOS = [
     male: '/stretches/hip-flexor-male.png',
     female: '/stretches/hip-flexor-female.png',
   },
+  {
+    match: (lower) => lower.includes('high knee'),
+    src: 'https://images.unsplash.com/photo-1517836357463-d25dfeac3438?w=900&h=675&fit=crop&crop=center',
+  },
+  {
+    match: (lower) => lower.includes('butt kick'),
+    src: 'https://images.unsplash.com/photo-1476480862126-209bfaa8edc8?w=900&h=675&fit=crop&crop=center',
+  },
+  {
+    match: (lower) => lower.includes('ankle'),
+    src: 'https://images.unsplash.com/photo-1518611012118-696072aa579a?w=900&h=675&fit=crop&crop=center',
+  },
+  {
+    match: (lower) => lower.includes('walking lunge') || lower === 'lunges' || lower.includes('lunge'),
+    src: 'https://images.unsplash.com/photo-1571019613454-1cb2f99b2d8b?w=900&h=675&fit=crop&crop=center',
+  },
+  {
+    match: (lower) => lower.includes('quad'),
+    src: 'https://images.unsplash.com/photo-1434608519344-49d77a699e1d?w=900&h=675&fit=crop&crop=center',
+  },
+  {
+    match: (lower) => lower.includes('hamstring') || lower.includes('forward fold') || lower.includes('toe touch'),
+    src: 'https://images.unsplash.com/photo-1566241142559-40e1dab266c6?w=900&h=675&fit=crop&crop=center',
+  },
+  {
+    match: (lower) => lower.includes('calf'),
+    src: 'https://images.unsplash.com/photo-1562771379-eafdca7a02f8?w=900&h=675&fit=crop&crop=center',
+  },
+  {
+    match: (lower) => lower.includes('figure') || lower.includes('piriformis') || lower.includes('pigeon'),
+    src: 'https://images.unsplash.com/photo-1506126613408-eca07ce68773?w=900&h=675&fit=crop&crop=center',
+  },
+  {
+    match: (lower) => lower.includes('butterfly') || lower.includes('inner thigh') || lower.includes('sumo'),
+    src: 'https://images.unsplash.com/photo-1552196563-55cd4e45efb3?w=900&h=675&fit=crop&crop=center',
+  },
+  {
+    match: (lower) => lower.includes('lateral lunge') || lower.includes('it band'),
+    src: 'https://images.unsplash.com/photo-1607914660218-d8b449017b52?w=900&h=675&fit=crop&crop=center',
+  },
+  {
+    match: (lower) => lower.includes('child'),
+    src: 'https://images.unsplash.com/photo-1544367567-0f2fcb009e0b?w=900&h=675&fit=crop&crop=bottom',
+  },
+  {
+    match: (lower) => lower.includes('cat-cow') || lower.includes('downward') || lower.includes('cobra') || lower.includes('inchworm'),
+    src: 'https://images.unsplash.com/photo-1588286840104-8957b019727f?w=900&h=675&fit=crop&crop=center',
+  },
+  {
+    match: (lower) => lower.includes('world') || lower.includes('side bend') || lower.includes('trunk rotation'),
+    src: 'https://images.unsplash.com/photo-1575052814086-f385e2e2ad1b?w=900&h=675&fit=crop&crop=center',
+  },
+  {
+    match: (lower) => lower.includes('shoulder') || lower.includes('chest') || lower.includes('tricep') || lower.includes('lat') || lower.includes('wrist') || lower.includes('trap') || lower.includes('neck'),
+    src: 'https://images.unsplash.com/photo-1574680096145-d05b474e2155?w=900&h=675&fit=crop&crop=center',
+  },
+  {
+    match: (lower) => lower.includes('knee-to-chest') || lower.includes('supine') || lower.includes('bridge') || lower.includes('pelvic'),
+    src: 'https://images.unsplash.com/photo-1518611012118-696072aa579a?w=900&h=675&fit=crop&crop=top',
+  },
 ]
 
 function getDemoKind(name = '') {
   const lower = String(name).toLowerCase()
   if (lower.includes('leg swing')) return 'leg-swing'
   if (lower.includes('high knee')) return 'high-knees'
+  if (lower.includes('butt kick')) return 'quad'
   if (lower.includes('ankle') || lower.includes('calf raise')) return 'ankle'
   if (lower.includes('hip circle')) return 'hip-circle'
   if (lower.includes('arm swing')) return 'arm-swing'
   if (lower.includes('walking lunge') || lower === 'lunges' || lower.includes('lunge')) return 'lunge'
+  if (lower.includes('pigeon') || lower.includes('butterfly') || lower.includes('inner thigh') || lower.includes('sumo')) return 'figure-four'
   if (lower.includes('quad')) return 'quad'
-  if (lower.includes('hamstring') || lower.includes('romanian deadlift')) return 'hamstring'
-  if (lower.includes('calf')) return 'calf'
+  if (lower.includes('hamstring') || lower.includes('romanian deadlift') || lower.includes('forward fold') || lower.includes('toe touch')) return 'hamstring'
+  if (lower.includes('calf') || lower.includes('it band')) return 'calf'
   if (lower.includes('hip flexor')) return 'hip-flexor'
-  if (lower.includes('figure four') || lower.includes('piriformis') || lower.includes('glute')) return 'figure-four'
+  if (lower.includes('figure') || lower.includes('piriformis') || lower.includes('glute')) return 'figure-four'
   if (lower.includes('child')) return 'childs-pose'
+  if (lower.includes('cat-cow')) return 'core'
+  if (lower.includes('downward') || lower.includes('cobra') || lower.includes('inchworm')) return 'plank'
+  if (lower.includes('world') || lower.includes('side bend') || lower.includes('trunk rotation') || lower.includes('supine') || lower.includes('knee-to-chest') || lower.includes('bridge') || lower.includes('pelvic')) return 'core'
+  if (lower.includes('shoulder') || lower.includes('chest') || lower.includes('lat') || lower.includes('wrist') || lower.includes('trap')) return 'raise'
   if (lower.includes('bench') || lower.includes('press') || lower.includes('skull')) return 'press'
   if (lower.includes('push-up') || lower.includes('push up') || lower.includes('dips')) return 'push'
   if (lower.includes('pull-up') || lower.includes('pulldown')) return 'pull'
@@ -324,6 +390,7 @@ function getSetupCue(kind) {
     plank: 'Straight line from head to heels; ribs down.',
     core: 'Move from the abs, not the neck.',
     raise: 'Lift to shoulder height with soft elbows.',
+    neck: 'Keep both shoulders relaxed while the neck moves gently.',
   }
   return cues[kind] || 'Use the picture to set your body position before starting.'
 }
@@ -332,12 +399,17 @@ function normalizeSex(sex) {
   return String(sex || '').toLowerCase() === 'female' ? 'female' : 'male'
 }
 
-export default function MovementDemo({ name, label, compact = false, sex = 'male' }) {
+function getPhotoSource(photoDemo, sex) {
+  if (!photoDemo) return null
+  return photoDemo.src || photoDemo?.[normalizeSex(sex)] || photoDemo?.male
+}
+
+export default function MovementDemo({ name, label, compact = false, sex = 'male', imageUrl = '' }) {
   const kind = getDemoKind(name)
   const title = label || name || 'Movement demo'
   const lower = String(title || '').toLowerCase()
   const photoDemo = PHOTO_DEMOS.find((demo) => demo.match(lower))
-  const photoSrc = photoDemo?.[normalizeSex(sex)] || photoDemo?.male
+  const photoSrc = imageUrl || getPhotoSource(photoDemo, sex)
   return (
     <div
       style={{
@@ -353,9 +425,19 @@ export default function MovementDemo({ name, label, compact = false, sex = 'male
       {photoSrc ? (
         <div style={{ position: 'relative', borderRadius: 16, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.08)', marginBottom: 10, aspectRatio: '4 / 3', background: '#050505' }}>
           <img src={photoSrc} alt={`${title} demonstration`} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+          <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(0,0,0,0.10), rgba(0,0,0,0.34))', pointerEvents: 'none' }} />
+          <svg viewBox="0 0 240 180" aria-hidden="true" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}>
+            <defs>
+              <marker id={`arrow-${kind}`} markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto" markerUnits="strokeWidth">
+                <path d="M0,0 L0,6 L7,3 z" fill={ACCENT} />
+              </marker>
+            </defs>
+            <path d="M 78 130 C 112 88, 146 88, 174 54" fill="none" stroke={ACCENT} strokeWidth="5" strokeLinecap="round" strokeDasharray="10 8" markerEnd={`url(#arrow-${kind})`} opacity="0.95" />
+            <path d="M 60 140 C 82 118, 106 110, 128 102" fill="none" stroke="rgba(255,255,255,0.82)" strokeWidth="3" strokeLinecap="round" opacity="0.8" />
+          </svg>
           <div style={{ position: 'absolute', left: 12, top: 10, display: 'inline-flex', alignItems: 'center', gap: 6, borderRadius: 999, padding: '5px 9px', background: 'rgba(0,0,0,0.58)', color: ACCENT, fontSize: 10, fontWeight: 900, letterSpacing: 1.2 }}>
             <span style={{ width: 7, height: 7, borderRadius: 999, background: ACCENT }} />
-            FORM GUIDE
+            AI FORM GUIDE
           </div>
         </div>
       ) : (
