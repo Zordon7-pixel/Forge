@@ -195,8 +195,10 @@ export default function Settings() {
       setImportProgress('Syncing Apple Health...')
       try {
         const result = await HealthService.syncNativeData({ requestPermission: true })
+        const scanned = Array.isArray(result?.workouts) ? result.workouts.length : Number(result?.scanned || 0)
         try {
           localStorage.setItem(HEALTH_SYNC_RESULT_KEY, JSON.stringify({
+            scanned,
             imported: Number(result.imported || 0),
             skipped: Number(result.skipped || 0),
             errors: result.errors || [],
@@ -205,7 +207,7 @@ export default function Settings() {
         } catch {}
         setImportNotice({
           ok: true,
-          text: `Apple Health synced: ${result.imported} workouts imported, ${result.skipped} skipped.`,
+          text: `Apple Health synced: ${scanned} scanned, ${result.imported} imported, ${result.skipped} already in Forge.`,
         })
       } catch (err) {
         setImportNotice({ ok: false, text: err?.message || 'Unable to sync Apple Health on this device.' })
@@ -216,7 +218,7 @@ export default function Settings() {
       return
     }
     if (!supportsAppleHealth) {
-      setImportNotice({ ok: false, text: 'Apple Health is not available in this browser. Use File Import until native sync is wired up.' })
+      setImportNotice({ ok: false, text: 'Apple Health sync is only available in the iPhone app. Use File Import here, or open Health Data Center on TestFlight.' })
       return
     }
 
