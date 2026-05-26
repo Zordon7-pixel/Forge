@@ -386,15 +386,33 @@ export default function MovementDemo({ name, label, compact = false, sex = 'male
           </div>
         </div>
       ) : (
-        <svg viewBox="0 0 240 210" width="100%" role="img" aria-label={title} style={{ display: 'block', maxHeight: compact ? 210 : 250 }}>
-          <rect x="16" y="14" width="208" height="182" rx="22" fill="rgba(0,0,0,0.22)" stroke="rgba(255,255,255,0.08)" />
-          <Line x1={38} y1={178} x2={202} y2={178} width={3} />
-          <BodyPose kind={kind} />
-          <Joint cx={38} cy={28} />
-          <text x="50" y="32" fill={ACCENT} fontSize="11" fontWeight="800" letterSpacing="1.4">FORM GUIDE</text>
-          <path d="M 54 188 H 186" stroke={ACCENT} strokeWidth="3" strokeLinecap="round" strokeDasharray="8 7" opacity="0.75" />
-          <text x="120" y="204" fill={MUTED} fontSize="10" fontWeight="700" textAnchor="middle">EXACT IMAGE PENDING</text>
-        </svg>
+        <div
+          role="img"
+          aria-label={`${title} image is being prepared`}
+          style={{
+            minHeight: compact ? 138 : 170,
+            borderRadius: 16,
+            border: '1px solid rgba(255,255,255,0.08)',
+            marginBottom: 10,
+            background: 'radial-gradient(circle at 22% 20%, rgba(234,179,8,0.18), transparent 34%), linear-gradient(135deg, rgba(15,23,42,0.9), rgba(3,7,18,0.98))',
+            display: 'grid',
+            alignContent: 'center',
+            justifyItems: 'center',
+            textAlign: 'center',
+            padding: compact ? 18 : 24,
+          }}
+        >
+          <div style={{ width: 44, height: 4, borderRadius: 999, background: ACCENT, marginBottom: 14 }} />
+          <p style={{ margin: 0, color: ACCENT, fontSize: 11, fontWeight: 900, letterSpacing: 1.4, textTransform: 'uppercase' }}>
+            Form image queued
+          </p>
+          <p style={{ margin: '8px 0 0', color: 'var(--text-primary)', fontSize: compact ? 14 : 16, fontWeight: 900 }}>
+            {title}
+          </p>
+          <p style={{ margin: '6px 0 0', color: MUTED, fontSize: compact ? 12 : 13, lineHeight: 1.45, maxWidth: 260 }}>
+            Follow the cue below for this round.
+          </p>
+        </div>
       )}
       <div style={{ display: 'grid', gap: 4 }}>
         <p style={{ margin: 0, color: 'var(--text-primary)', fontWeight: 900, fontSize: compact ? 14 : 16 }}>{title}</p>

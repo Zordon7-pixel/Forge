@@ -170,7 +170,7 @@ export default function StretchSession() {
                 <p className="mt-3 text-sm font-semibold text-slate-300">{currentStretch.reps}</p>
 
                 <div className="mt-4 text-xs" style={{ color: '#EAB308', fontWeight: 700 }}>
-                  Match the form guide below before starting.
+                  Review the visual guide and movement cue before starting.
                 </div>
               </div>
 
