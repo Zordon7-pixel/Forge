@@ -44,7 +44,9 @@ function getLastSyncResult() {
 
 function saveLastSyncResult(result) {
   try {
+    const scanned = Array.isArray(result?.workouts) ? result.workouts.length : Number(result?.scanned || result?.total || 0)
     localStorage.setItem(HEALTH_SYNC_RESULT_KEY, JSON.stringify({
+      scanned: Number(scanned || 0),
       imported: Number(result?.imported || 0),
       skipped: Number(result?.skipped || 0),
       errors: Array.isArray(result?.errors) ? result.errors : [],
@@ -126,7 +128,8 @@ export default function HealthData() {
       const result = await HealthService.syncNativeData({ requestPermission: true })
       saveLastSyncResult(result)
       setLastSyncResult(getLastSyncResult())
-      setNotice(`Apple Health synced: ${result.imported} imported, ${result.skipped} skipped.`)
+      const scanned = Array.isArray(result?.workouts) ? result.workouts.length : Number(result?.scanned || 0)
+      setNotice(`Apple Health synced: ${scanned} scanned, ${result.imported} imported, ${result.skipped} already in Forge.`)
       await loadData()
     } catch (err) {
       setNotice(err?.message || 'Unable to sync Apple Health on this device.')
@@ -135,11 +138,16 @@ export default function HealthData() {
     }
   }
 
+  const scannedText = lastSyncResult
+    ? `${numberText(lastSyncResult.scanned, '0')} scanned`
+    : 'No scan yet'
   const skippedText = lastSyncResult
-    ? `${numberText(lastSyncResult.skipped, '0')} skipped`
+    ? `${numberText(lastSyncResult.skipped, '0')} already saved`
     : 'No import report yet'
-  const skippedDetail = lastSyncResult?.skipped
-    ? 'Skipped usually means those workouts already exist in Forge.'
+  const skippedDetail = lastSyncResult?.skipped && Number(lastSyncResult.imported || 0) === 0
+    ? 'Nothing is missing. Forge skipped those workouts because they already matched activity in your History.'
+    : lastSyncResult?.skipped
+      ? 'Skipped usually means those workouts already exist in Forge.'
     : 'Sync from this screen to see imported and skipped counts.'
 
   return (
@@ -168,7 +176,7 @@ export default function HealthData() {
 
       <section className="grid grid-cols-2 gap-3">
         <MetricCard label="Last sync" value={dateText(health?.synced_at)} detail={lastSyncResult ? `Import report: ${dateText(lastSyncResult.syncedAt)}` : 'No sync report on this device'} icon={RefreshCw} />
-        <MetricCard label="Import result" value={lastSyncResult ? `${numberText(lastSyncResult.imported, '0')} imported` : 'Unknown'} detail={skippedText} icon={Activity} />
+        <MetricCard label="Import result" value={lastSyncResult ? `${numberText(lastSyncResult.imported, '0')} imported` : 'Unknown'} detail={`${scannedText} · ${skippedText}`} icon={Activity} />
         <MetricCard label="Steps today" value={numberText(health?.steps_today, '0')} detail="From Apple Health step count" icon={Activity} />
         <MetricCard label="Calories today" value={numberText(health?.calories_today, '0')} detail="Active energy burned" icon={Activity} />
         <MetricCard label="Miles this week" value={`${decimalText(health?.total_miles_this_week, 2, '0.00')} mi`} detail="Walking/running distance" icon={Activity} />
@@ -195,11 +203,32 @@ export default function HealthData() {
             <p className="text-sm font-black" style={{ color: 'var(--text-primary)' }}>Import Report</p>
             <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>{skippedDetail}</p>
           </div>
-          <p className="text-xs font-bold" style={{ color: '#EAB308' }}>{skippedText}</p>
+          <p className="text-xs font-bold" style={{ color: '#EAB308', textAlign: 'right' }}>{scannedText}<br />{skippedText}</p>
         </div>
+        {lastSyncResult && (
+          <div className="mt-3 grid grid-cols-3 gap-2">
+            <div className="rounded-xl p-3 text-center" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
+              <p className="text-lg font-black" style={{ color: 'var(--text-primary)' }}>{numberText(lastSyncResult.scanned, '0')}</p>
+              <p className="text-[10px] font-bold uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>Scanned</p>
+            </div>
+            <div className="rounded-xl p-3 text-center" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
+              <p className="text-lg font-black" style={{ color: '#22C55E' }}>{numberText(lastSyncResult.imported, '0')}</p>
+              <p className="text-[10px] font-bold uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>Imported</p>
+            </div>
+            <div className="rounded-xl p-3 text-center" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
+              <p className="text-lg font-black" style={{ color: '#EAB308' }}>{numberText(lastSyncResult.skipped, '0')}</p>
+              <p className="text-[10px] font-bold uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>Existing</p>
+            </div>
+          </div>
+        )}
         {lastSyncResult?.errors?.length > 0 && (
           <div className="mt-3 rounded-xl p-3" style={{ background: 'rgba(249,115,22,0.1)', border: '1px solid rgba(249,115,22,0.35)' }}>
             <p className="text-xs font-bold" style={{ color: '#F97316' }}>Some rows could not import.</p>
+            <ul className="mt-2 space-y-1">
+              {lastSyncResult.errors.slice(0, 3).map((err, index) => (
+                <li key={`${String(err)}-${index}`} className="text-xs" style={{ color: 'var(--text-muted)' }}>{String(err)}</li>
+              ))}
+            </ul>
           </div>
         )}
       </section>
