@@ -31,18 +31,32 @@ router.put('/:id', auth, async (req, res) => {
     const lift = await dbGet('SELECT * FROM lifts WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
     if (!lift) return res.status(404).json({ error: 'Lift not found' });
     const { exercise_name, sets, reps, weight_lbs, notes, date } = req.body;
-    await dbRun(`UPDATE lifts SET
-      exercise_name = COALESCE(?, exercise_name),
-      sets = COALESCE(?, sets),
-      reps = COALESCE(?, reps),
-      weight_lbs = COALESCE(?, weight_lbs),
-      notes = COALESCE(?, notes),
-      date = COALESCE(?, date)
-      WHERE id=? AND user_id=?`, [exercise_name ?? null, sets ?? null, reps ?? null, weight_lbs ?? null, notes ?? null, date ?? null, req.params.id, req.user.id]);
-    await requestExerciseImageIfMissing({ userId: req.user.id, exerciseName, source: 'lift_update' });
+    const updates = [];
+    const params = [];
+    const addUpdate = (column, value) => {
+      if (value !== undefined) {
+        updates.push(`${column}=?`);
+        params.push(value);
+      }
+    };
+
+    addUpdate('exercise_name', exercise_name);
+    addUpdate('sets', sets);
+    addUpdate('reps', reps);
+    addUpdate('weight_lbs', weight_lbs);
+    addUpdate('notes', notes);
+    addUpdate('date', date);
+
+    if (!updates.length) return res.status(400).json({ error: 'Nothing to update' });
+
+    await dbRun(`UPDATE lifts SET ${updates.join(', ')} WHERE id=? AND user_id=?`, [...params, req.params.id, req.user.id]);
+    await requestExerciseImageIfMissing({ userId: req.user.id, exerciseName: exercise_name, source: 'lift_update' });
     const updated = await dbGet('SELECT * FROM lifts WHERE id=?', [req.params.id]);
-    res.json(updated);
-  } catch (err) { res.status(500).json({ error: 'Update failed' }); }
+    res.json({ ...updated, muscle_groups: JSON.parse(updated.muscle_groups || '[]') });
+  } catch (err) {
+    console.error('[lifts/update] failed:', err.message);
+    res.status(500).json({ error: 'Update failed' });
+  }
 });
 
 router.delete('/:id', auth, async (req, res) => {

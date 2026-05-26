@@ -232,25 +232,41 @@ router.get('/feed', auth, async (req, res) => {
     ].sort((a, b) => new Date(b._ts) - new Date(a._ts)).slice(0, 30);
 
     const enrichedFeed = await Promise.all(feed.map(async item => {
-      const [likes, userLiked, commentCount, media] = await Promise.all([
-        dbGet('SELECT COUNT(*) as cnt FROM activity_likes WHERE activity_id=? AND activity_type=?', [item.id, item._type]),
-        dbGet('SELECT id FROM activity_likes WHERE activity_id=? AND activity_type=? AND user_id=?', [item.id, item._type, req.user.id]),
-        dbGet('SELECT COUNT(*) as cnt FROM activity_comments WHERE activity_id=? AND activity_type=?', [item.id, item._type]),
-        dbGet('SELECT id FROM activity_media WHERE activity_id=? AND activity_type=? LIMIT 1', [item.id, item._type])
-      ]);
-      return {
-        ...item,
-        notes: cleanText(item.notes || ''),
-        user_name: cleanText(item.user_name || ''),
-        like_count: likes?.cnt || 0,
-        user_liked: !!userLiked,
-        comment_count: commentCount?.cnt || 0,
-        has_photo: !!media,
-      };
+      try {
+        const [likes, userLiked, commentCount, media] = await Promise.all([
+          dbGet('SELECT COUNT(*) as cnt FROM activity_likes WHERE activity_id=? AND (activity_type=? OR activity_type IS NULL)', [item.id, item._type]),
+          dbGet('SELECT id FROM activity_likes WHERE activity_id=? AND (activity_type=? OR activity_type IS NULL) AND user_id=?', [item.id, item._type, req.user.id]),
+          dbGet('SELECT COUNT(*) as cnt FROM activity_comments WHERE activity_id=? AND (activity_type=? OR activity_type IS NULL)', [item.id, item._type]),
+          dbGet('SELECT id FROM activity_media WHERE activity_id=? AND (activity_type=? OR activity_type IS NULL) LIMIT 1', [item.id, item._type])
+        ]);
+        return {
+          ...item,
+          notes: cleanText(item.notes || ''),
+          user_name: cleanText(item.user_name || ''),
+          like_count: Number(likes?.cnt || 0),
+          user_liked: !!userLiked,
+          comment_count: Number(commentCount?.cnt || 0),
+          has_photo: !!media,
+        };
+      } catch (err) {
+        console.error('[challenges/feed] enrich failed:', item._type, item.id, err.message);
+        return {
+          ...item,
+          notes: cleanText(item.notes || ''),
+          user_name: cleanText(item.user_name || ''),
+          like_count: 0,
+          user_liked: false,
+          comment_count: 0,
+          has_photo: false,
+        };
+      }
     }));
 
     res.json({ feed: enrichedFeed });
-  } catch (err) { res.status(500).json({ error: 'Failed to fetch feed' }); }
+  } catch (err) {
+    console.error('[challenges/feed] failed:', err.message);
+    res.status(500).json({ error: 'Failed to fetch feed' });
+  }
 });
 
 // GET /api/challenges/seasonal — currently active seasonal challenges

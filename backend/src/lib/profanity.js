@@ -4,7 +4,9 @@ const filter = new Filter()
 
 function cleanText(value) {
   if (value === null || value === undefined) return ''
-  return filter.clean(String(value))
+  const text = String(value)
+  if (!text.trim()) return ''
+  return filter.clean(text)
 }
 
 module.exports = { cleanText }
