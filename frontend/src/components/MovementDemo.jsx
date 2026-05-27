@@ -9,6 +9,46 @@ const PHOTO_DEMOS = [
     female: '/exercises/dumbbell-bench-press-female.png',
   },
   {
+    match: (lower) => lower.includes('squat') || lower.includes('leg press'),
+    src: '/exercises/squat.png',
+  },
+  {
+    match: (lower) => lower.includes('deadlift') || lower.includes('romanian deadlift'),
+    src: '/exercises/deadlift.png',
+  },
+  {
+    match: (lower) => lower.includes('barbell row') || lower.includes('dumbbell row') || lower.includes('cable row') || lower.includes('single-arm dumbbell row'),
+    src: '/exercises/barbell-row.png',
+  },
+  {
+    match: (lower) => lower.includes('overhead press') || lower.includes('arnold press') || lower.includes('shoulder press'),
+    src: '/exercises/overhead-press.png',
+  },
+  {
+    match: (lower) => lower.includes('push-up') || lower.includes('push up'),
+    src: '/exercises/push-ups.png',
+  },
+  {
+    match: (lower) => lower.includes('plank'),
+    src: '/exercises/plank.png',
+  },
+  {
+    match: (lower) => lower.includes('barbell curl') || lower.includes('hammer curl') || lower.includes('preacher curl') || lower.includes('curl'),
+    src: '/exercises/barbell-curl.png',
+  },
+  {
+    match: (lower) => lower.includes('tricep pushdown') || lower.includes('tricep') || lower.includes('skull crusher'),
+    src: '/exercises/tricep-pushdown.png',
+  },
+  {
+    match: (lower) => lower.includes('pull-up') || lower.includes('pull up'),
+    src: '/exercises/pull-ups.png',
+  },
+  {
+    match: (lower) => lower.includes('lat pulldown') || lower.includes('pulldown'),
+    src: '/exercises/lat-pulldown.png',
+  },
+  {
     match: (lower) => lower.includes('leg swing'),
     male: '/stretches/leg-swings-male.png',
     female: '/stretches/leg-swings-female.png',
@@ -35,7 +75,7 @@ const PHOTO_DEMOS = [
     src: '/stretches/ankle-rolls.png',
   },
   {
-    match: (lower) => lower.includes('walking lunge'),
+    match: (lower) => lower.includes('walking lunge') || lower === 'lunges' || lower.includes('lunge'),
     src: '/stretches/walking-lunges.png',
   },
   {
