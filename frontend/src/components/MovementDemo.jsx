@@ -18,6 +18,46 @@ const PHOTO_DEMOS = [
     male: '/stretches/hip-flexor-male.png',
     female: '/stretches/hip-flexor-female.png',
   },
+  {
+    match: (lower) => lower.includes('hip circle'),
+    src: '/stretches/hip-circles.png',
+  },
+  {
+    match: (lower) => lower.includes('high knee'),
+    src: '/stretches/high-knees.png',
+  },
+  {
+    match: (lower) => lower.includes('butt kick'),
+    src: '/stretches/butt-kicks.png',
+  },
+  {
+    match: (lower) => lower.includes('ankle roll'),
+    src: '/stretches/ankle-rolls.png',
+  },
+  {
+    match: (lower) => lower.includes('walking lunge'),
+    src: '/stretches/walking-lunges.png',
+  },
+  {
+    match: (lower) => lower.includes('standing quad') || lower.includes('quad stretch'),
+    src: '/stretches/standing-quad.png',
+  },
+  {
+    match: (lower) => lower.includes('hamstring stretch'),
+    src: '/stretches/hamstring-stretch.png',
+  },
+  {
+    match: (lower) => lower.includes('calf stretch'),
+    src: '/stretches/calf-stretch.png',
+  },
+  {
+    match: (lower) => lower.includes('figure four') || lower.includes('figure-4') || lower.includes('piriformis'),
+    src: '/stretches/figure-four.png',
+  },
+  {
+    match: (lower) => lower.includes("child's pose") || lower.includes('childs pose'),
+    src: '/stretches/childs-pose.png',
+  },
 ]
 
 function getDemoKind(name = '') {
@@ -382,7 +422,7 @@ export default function MovementDemo({ name, label, compact = false, sex = 'male
           </svg>
           <div style={{ position: 'absolute', left: 12, top: 10, display: 'inline-flex', alignItems: 'center', gap: 6, borderRadius: 999, padding: '5px 9px', background: 'rgba(0,0,0,0.58)', color: ACCENT, fontSize: 10, fontWeight: 900, letterSpacing: 1.2 }}>
             <span style={{ width: 7, height: 7, borderRadius: 999, background: ACCENT }} />
-            AI FORM GUIDE
+            FORM IMAGE
           </div>
         </div>
       ) : (

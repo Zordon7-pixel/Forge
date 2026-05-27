@@ -5,6 +5,16 @@ const LOCAL_FORM_IMAGE_MATCHERS = [
   (name) => name.includes('dumbbell bench press'),
   (name) => name.includes('leg swing'),
   (name) => name.includes('hip flexor'),
+  (name) => name.includes('hip circle'),
+  (name) => name.includes('high knee'),
+  (name) => name.includes('butt kick'),
+  (name) => name.includes('ankle roll'),
+  (name) => name.includes('walking lunge'),
+  (name) => name.includes('standing quad') || name.includes('quad stretch'),
+  (name) => name.includes('hamstring stretch'),
+  (name) => name.includes('calf stretch'),
+  (name) => name.includes('figure four') || name.includes('figure-4') || name.includes('piriformis'),
+  (name) => name.includes("child's pose") || name.includes('childs pose'),
 ];
 
 function normalizeExerciseName(name) {
