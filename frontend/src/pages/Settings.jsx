@@ -7,6 +7,7 @@ import { useTheme } from '../context/ThemeContext'
 import api from '../lib/api'
 import { parseGarminCSV, parseStravaCSV, requestAppleHealth } from '../lib/healthImport'
 import HealthService from '../services/HealthService'
+import WatchDeliveryService from '../services/WatchDeliveryService'
 import TestFlightDebugPanel from '../components/TestFlightDebugPanel'
 
 const LANGUAGES = [
@@ -79,6 +80,7 @@ export default function Settings() {
   const [showDeleteAccount, setShowDeleteAccount] = useState(false)
   const [debugTapCount, setDebugTapCount] = useState(0)
   const [showDebugPanel, setShowDebugPanel] = useState(false)
+  const [watchDelivery, setWatchDelivery] = useState({ checked: false, canAutoSend: false, reason: '', providers: [] })
   const manualFileRef = useRef(null)
   const debugTapTimerRef = useRef(null)
 
@@ -105,6 +107,14 @@ export default function Settings() {
       })
     }).catch(() => {})
     loadDeviceStatuses()
+    WatchDeliveryService.getAvailability()
+      .then((result) => setWatchDelivery({ checked: true, ...result }))
+      .catch((err) => setWatchDelivery({
+        checked: true,
+        canAutoSend: false,
+        reason: err?.message || 'Watch delivery is unavailable.',
+        providers: WatchDeliveryService.getProviders(),
+      }))
   }, [])
 
   useEffect(() => {
@@ -364,6 +374,26 @@ export default function Settings() {
   const sectionGrid = { display: 'grid', gap: 12 }
   const label = { fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text-muted)', marginBottom: 12, display: 'block' }
   const statusText = (value) => value ? new Date(value).toLocaleString() : 'Never'
+  const watchProviderPill = (provider) => {
+    const active = provider.id === 'apple-watch' && watchDelivery.canAutoSend
+    const labelText = active ? 'Ready' : provider.status === 'planned' ? 'Planned' : provider.status === 'available' ? 'iPhone app' : 'API access needed'
+    return (
+      <div key={provider.id} style={{
+        border: '1px solid var(--border-subtle)',
+        borderRadius: 12,
+        padding: '10px 11px',
+        background: active ? 'rgba(34,197,94,0.12)' : 'var(--bg-input)',
+        display: 'grid',
+        gap: 5,
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
+          <span style={{ fontSize: 13, fontWeight: 900, color: 'var(--text-primary)' }}>{provider.name}</span>
+          <span style={{ fontSize: 10, fontWeight: 900, color: active ? '#86efac' : 'var(--text-muted)', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>{labelText}</span>
+        </div>
+        <p style={{ margin: 0, fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.35 }}>{provider.delivery}</p>
+      </div>
+    )
+  }
   const deviceRows = [
     {
       key: 'strava',
@@ -464,6 +494,25 @@ export default function Settings() {
           </div>
         )}
         <div style={sectionGrid}>
+          <div style={card}>
+            <span style={label}>Watch Delivery</span>
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
+              <div>
+                <p style={{ margin: 0, fontSize: 15, fontWeight: 900, color: 'var(--text-primary)' }}>One Send to Watch flow</p>
+                <p style={{ margin: '5px 0 0', fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.55 }}>
+                  Forge now builds provider-neutral structured workouts. Apple Watch is the direct path; Garmin, COROS, Polar, Suunto, Wahoo, and TrainingPeaks are adapter slots pending API access.
+                </p>
+              </div>
+              <Shield size={18} style={{ color: watchDelivery.canAutoSend ? '#22c55e' : 'var(--text-muted)', flexShrink: 0 }} />
+            </div>
+            <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))' }}>
+              {(watchDelivery.providers?.length ? watchDelivery.providers : WatchDeliveryService.getProviders()).map(watchProviderPill)}
+            </div>
+            {watchDelivery.checked && watchDelivery.reason && (
+              <p style={{ margin: '10px 0 0', fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.45 }}>{watchDelivery.reason}</p>
+            )}
+          </div>
+
           <div style={card}>
             <span style={label}>Garmin</span>
             {!garminStatus.connected ? (

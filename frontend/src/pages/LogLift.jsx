@@ -378,7 +378,7 @@ export default function LogLift() {
               >
                 {loading ? 'Starting...' : 'Start Workout'}
               </button>
-              <WatchWorkoutSendButton workout={aiWatchWorkout} label="Send to Apple Watch" className="mt-3" />
+              <WatchWorkoutSendButton workout={aiWatchWorkout} className="mt-3" />
             </div>
           )}
         </>
@@ -483,7 +483,7 @@ export default function LogLift() {
                 <button type="button" onClick={acceptManualAiWorkout} className="flex-1 rounded-xl py-2 font-bold" style={{ background: 'var(--accent)', color: '#000', border: 'none', fontFamily: 'inherit' }}>Accept Workout</button>
                 <button type="button" onClick={generateManualWorkout} className="flex-1 rounded-xl py-2 font-bold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', fontFamily: 'inherit' }}>Regenerate</button>
               </div>
-              <WatchWorkoutSendButton workout={manualWatchWorkout} label="Send to Apple Watch" className="mt-3" />
+              <WatchWorkoutSendButton workout={manualWatchWorkout} className="mt-3" />
             </div>
           )}
         </div>

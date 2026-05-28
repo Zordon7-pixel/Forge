@@ -85,6 +85,24 @@ Current source-of-truth map before native Apple Health work:
 | Strava OAuth | Settings device row -> `/api/strava/*` | `strava_tokens`, imported `runs` | History/Dashboard after sync | Available if env/app config is live |
 | WHOOP/Oura OAuth | Settings device rows -> `/api/whoop/*`, `/api/oura/*` | `whoop_*`, `oura_*` | Unified recovery endpoint | Premium integration path exists; depends on provider env/config |
 
+## Watch Delivery Foundation (2026-05-27)
+
+Forge now has a provider-neutral watch delivery layer in `frontend/src/services/WatchDeliveryService.js`.
+
+- `WatchDeliveryService.buildStructuredWorkout()` converts Forge run/lift recommendations into a portable schema with goal, steps, targets, notes, and fallback text.
+- `WatchWorkoutSendButton` is now labeled **Send to Watch** instead of Apple-specific copy.
+- Settings shows one clean Watch Delivery card with adapter slots for Apple Watch, Garmin, COROS, TrainingPeaks, Polar, Suunto, and Wahoo.
+- Apple Watch remains the only direct in-app send path today via WorkoutKit.
+- Garmin, COROS, TrainingPeaks, Suunto, and Wahoo remain pending partner/API approval before direct workout push can ship.
+- Polar remains planned; data access is clearer than workout push, so provider validation is still needed.
+
+Provider applications Bryan should submit next:
+1. Garmin Training/Courses API access.
+2. COROS partner API access.
+3. TrainingPeaks API access as the broad bridge to Garmin/COROS/Polar/Suunto/Wahoo.
+4. Suunto Cloud API access.
+5. Wahoo Cloud API access.
+
 Phase 1 cleanup from this audit:
 - Dashboard/HealthService now states that native Apple Health sync is not wired in TestFlight yet instead of surfacing a `react-native-health` implementation detail.
 - Challenges step-copy now points users to File Import/manual entry until native Apple Health ships.
