@@ -106,7 +106,7 @@ const PRIVACY_HTML = `<!DOCTYPE html>
 
     <div class="panel">
       <h1>Privacy Policy</h1>
-      <p class="subhead">Effective Date: March 2026</p>
+      <p class="subhead">Last updated: May 27, 2026</p>
 
       <p>
         FORGE is an athletic performance platform operated by <strong>Madera Technologies LLC</strong>
@@ -128,33 +128,44 @@ const PRIVACY_HTML = `<!DOCTYPE html>
         <li>To respond to support requests and operational communications.</li>
       </ul>
 
-      <h2>3. Data Sharing</h2>
+      <h2>3. Connected Services &amp; Health Data</h2>
       <p>
-        We do <strong>not</strong> sell personal data to third parties. We only share information when required to
-        operate the service (for example, infrastructure providers under confidentiality obligations) or when
-        required by law.
+        With your permission, FORGE reads health and workout data from <strong>Apple Health</strong> (iOS) and
+        <strong>Android Health Connect</strong> &mdash; such as sleep, heart rate, HRV, steps, and prior workouts &mdash;
+        to generate your adaptive training plans. When you choose to connect a third-party training platform or watch
+        (including Garmin Connect, TrainingPeaks, COROS, Suunto, Wahoo, or Polar), FORGE sends your generated workouts,
+        planned training sessions, and routes to that account so they appear on your device. Each connection is
+        authorized by you through secure OAuth and can be disconnected at any time. We exchange only the data needed to
+        deliver these workouts.
       </p>
 
-      <h2>4. Data Retention</h2>
+      <h2>4. Data Sharing</h2>
+      <p>
+        We do <strong>not</strong> sell personal data to third parties. We only share information when required to
+        operate the service (for example, infrastructure providers under confidentiality obligations), to deliver
+        workouts to the connected platforms you authorize, or when required by law.
+      </p>
+
+      <h2>5. Data Retention</h2>
       <p>
         We retain data while your account is active and as needed to provide FORGE services. You may request
         deletion of your account and associated data by contacting us.
       </p>
 
-      <h2>5. Your Rights</h2>
+      <h2>6. Your Rights</h2>
       <p class="muted">
         Depending on your jurisdiction, you may have rights to access, correct, delete, or export your data,
         and to withdraw consent for optional health data integrations.
       </p>
       <p>
         To exercise these rights, contact us at
-        <a href="mailto:hello@zordontechnologies.com">hello@zordontechnologies.com</a>.
+        <a href="mailto:privacy@forgeathlete.app">privacy@forgeathlete.app</a>.
       </p>
 
-      <h2>6. Contact Information</h2>
+      <h2>7. Contact Information</h2>
       <p>
         Madera Technologies LLC (Zordon Technologies)<br />
-        Email: <a href="mailto:hello@zordontechnologies.com">hello@zordontechnologies.com</a>
+        Email: <a href="mailto:privacy@forgeathlete.app">privacy@forgeathlete.app</a>
       </p>
 
       <footer>&copy; 2026 Madera Technologies LLC. All rights reserved.</footer>

@@ -9,7 +9,7 @@ export default function Privacy() {
           Madera Technologies LLC (DBA Zordon Technologies) | FORGE Athlete
         </p>
         <p className="mt-4 text-sm" style={{ color: 'var(--text-muted)' }}>
-          Last updated: February 28, 2026
+          Last updated: May 27, 2026
         </p>
 
         <section className="mt-8">
@@ -25,6 +25,19 @@ export default function Privacy() {
           <p className="mt-2 text-sm leading-7" style={{ color: 'var(--text-muted)' }}>
             Your data is used only to power your training experience, including analytics, coaching insights, progress tracking, and product
             reliability. We do not sell your personal data.
+          </p>
+        </section>
+
+        <section className="mt-6">
+          <h2 className="text-lg font-bold">Connected services and health data</h2>
+          <p className="mt-2 text-sm leading-7" style={{ color: 'var(--text-muted)' }}>
+            With your permission, FORGE reads health and workout data from Apple Health (iOS) and Android Health Connect —
+            such as sleep, heart rate, HRV, steps, and prior workouts — to generate your adaptive training plans. When you
+            choose to connect a third-party training platform or watch (including Garmin Connect, TrainingPeaks, COROS,
+            Suunto, Wahoo, or Polar), FORGE sends your generated workouts, planned training sessions, and routes to that
+            account so they appear on your device. Each connection is authorized by you through secure OAuth and can be
+            disconnected at any time. We exchange only the data needed to deliver these workouts. We do not sell this data
+            or use it for advertising.
           </p>
         </section>
 
