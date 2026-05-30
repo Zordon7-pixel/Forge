@@ -92,7 +92,7 @@ function normalizeRunWorkout(workout = {}) {
       heartRateZone: workout.heartRateZone || null,
       effort: workout.effort || null,
     },
-    steps: [
+    steps: Array.isArray(workout.steps) && workout.steps.length ? workout.steps.map((step) => textStep(step)) : [
       textStep('Warm up easy', 300),
       {
         type: goal.type === 'distance' ? 'distance' : 'open',
@@ -167,6 +167,9 @@ class WatchDeliveryService {
         `${structured.title}`,
         `Goal: ${structured.goal?.type === 'distance' ? `${structured.goal.value} ${structured.goal.unit || 'mile'}` : 'Open run'}`,
         structured.targets?.paceSecondsPerMile ? `Target pace: ${Math.floor(structured.targets.paceSecondsPerMile / 60)}:${String(structured.targets.paceSecondsPerMile % 60).padStart(2, '0')} / mi` : '',
+        structured.targets?.heartRateZone ? `Target zone: ${structured.targets.heartRateZone}` : '',
+        structured.targets?.effort ? `Focus: ${structured.targets.effort}` : '',
+        structured.steps?.length ? `Structure: ${structured.steps.map((step) => step.label).filter(Boolean).join(' / ')}` : '',
         structured.notes ? `Notes: ${structured.notes}` : '',
       ].filter(Boolean).join('\n')
     }

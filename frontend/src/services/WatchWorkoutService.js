@@ -72,16 +72,21 @@ class WatchWorkoutService {
       activity: 'running',
       location: 'outdoor',
       title: cleanTitle(workout.typeLabel, 'Forge Run'),
-      notes: workout.description || '',
+      notes: [workout.progression, workout.description].filter(Boolean).join(' '),
       scheduledAt: new Date().toISOString(),
       goal: miles > 0
         ? { type: 'distance', value: miles, unit: 'mile' }
         : { type: 'open' },
       targetPaceSecondsPerMile: paceSeconds,
+      heartRateZone: workout.zone || workout.targetZone || null,
+      effort: workout.intensity || null,
+      steps: Array.isArray(workout.steps) ? workout.steps : [],
       display: {
         day: workout.day || 'Today',
         distance: workout.distanceLabel || 'Open distance',
         pace: workout.pace || '',
+        zone: workout.zone || '',
+        focus: workout.intensity || '',
       },
     }
   }
@@ -123,7 +128,10 @@ class WatchWorkoutService {
       `${workout.display?.day || 'Today'}: ${workout.title || 'Forge Run'}`,
       `Distance: ${workout.display?.distance || 'Open distance'}`,
       workout.display?.pace ? `Pace: ${workout.display.pace}` : '',
+      workout.display?.zone ? `Zone: ${workout.display.zone}` : '',
+      workout.display?.focus ? `Focus: ${workout.display.focus}` : '',
       workout.notes ? `Notes: ${workout.notes}` : '',
+      ...(workout.steps?.length ? [`Structure: ${workout.steps.join(' / ')}`] : []),
     ].filter(Boolean).join('\n')
   }
 

@@ -71,6 +71,65 @@ function parsePaceToSecondsPerMile(pace) {
   return (m * 60) + s
 }
 
+function cleanRunType(value = '') {
+  return String(value || 'run').replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+}
+
+function getRunCoachingDetails(type = '', pace = '') {
+  const normalized = String(type || '').toLowerCase()
+  if (normalized.includes('interval')) {
+    return {
+      zone: 'Zone 4',
+      intensity: 'Threshold / intervals',
+      progression: 'Quality day — keep reps controlled, recover easy between pushes.',
+      steps: ['10 min easy warm-up', 'Main intervals at controlled hard effort', '5-10 min easy cool-down'],
+    }
+  }
+  if (normalized.includes('tempo') || normalized.includes('quality') || normalized.includes('moderate') || normalized.includes('steady')) {
+    return {
+      zone: 'Zone 3',
+      intensity: 'Comfortably hard',
+      progression: 'Progression run — start easy, settle into steady rhythm, finish controlled.',
+      steps: ['8-10 min easy', 'Middle miles steady', 'Last 5 min controlled, not sprinting'],
+    }
+  }
+  if (normalized.includes('long')) {
+    return {
+      zone: 'Zone 2',
+      intensity: 'Easy aerobic',
+      progression: 'Long aerobic build — keep it conversational so the distance does the work.',
+      steps: ['First mile relaxed', 'Hold even effort through the middle', 'Finish with form tall and breathing calm'],
+    }
+  }
+  if (normalized.includes('recovery')) {
+    return {
+      zone: 'Zone 1-2',
+      intensity: 'Recovery',
+      progression: 'Recovery run — slower than normal is the goal today.',
+      steps: ['5 min very easy', 'Keep every mile conversational', 'Stop if soreness changes your stride'],
+    }
+  }
+  return {
+    zone: pace ? 'Zone 2' : 'Easy effort',
+    intensity: 'Conversational aerobic',
+    progression: 'Easy aerobic run — build consistency without forcing speed.',
+    steps: ['5-10 min relaxed warm-up', 'Hold steady conversational pace', 'Cool down easy'],
+  }
+}
+
+function normalizeSteps(value) {
+  if (Array.isArray(value)) return value.filter(Boolean)
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value)
+      return Array.isArray(parsed) ? parsed.filter(Boolean) : []
+    } catch {
+      return value.split(/\n|•/).map((item) => item.trim()).filter(Boolean)
+    }
+  }
+  return []
+}
+
 function parseSplits(run) {
   const raw = run?.splits || run?.splits_json || run?.gps_splits
   if (!raw) return []
@@ -137,7 +196,17 @@ function WorkoutWatchModal({ workout, onClose }) {
           </span>
           <div className="text-sm mb-1" style={{ color: 'var(--text-primary)' }}><strong>Distance:</strong> {workout.distanceLabel}</div>
           {workout.pace && <div className="text-sm mb-1" style={{ color: 'var(--text-primary)' }}><strong>Pace:</strong> {workout.pace}</div>}
+          {workout.zone && <div className="text-sm mb-1" style={{ color: 'var(--text-primary)' }}><strong>Target:</strong> {workout.zone} · {workout.intensity}</div>}
+          {workout.durationLabel && <div className="text-sm mb-1" style={{ color: 'var(--text-primary)' }}><strong>Est. time:</strong> {workout.durationLabel}</div>}
           {workout.description && <div className="text-sm" style={{ color: 'var(--text-muted)' }}>{workout.description}</div>}
+          {workout.steps?.length > 0 && (
+            <div className="mt-3 rounded-lg p-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+              <p className="text-xs font-bold uppercase mb-2" style={{ color: 'var(--text-muted)', letterSpacing: 0.8 }}>Workout structure</p>
+              {workout.steps.map((step, index) => (
+                <p key={`${step}-${index}`} className="text-xs mb-1" style={{ color: 'var(--text-primary)' }}>{index + 1}. {step}</p>
+              ))}
+            </div>
+          )}
         </div>
 
         <WatchWorkoutSendButton workout={watchWorkout} className="mb-4" />
@@ -240,16 +309,37 @@ export default function LogRun() {
   useEffect(() => {
     if (activeTab !== 'today' || todayWorkout) return
     setTodayLoading(true)
-    api.get('/plans/today')
-      .then(res => {
-        const w = res.data?.today || null
+    Promise.all([
+      api.get('/plans/today'),
+      api.get('/runs/next-recommendation').catch(() => ({ data: null })),
+    ])
+      .then(([planRes, recRes]) => {
+        const w = planRes.data?.today || null
         if (!w) return
+        const rec = recRes.data || {}
+        const type = w.type || w.workout_type || rec.recommendationType || 'run'
+        const distanceMiles = Number(w.distance_miles || rec.suggestedDistance || 0)
+        const pace = w.pace_target || w.pace || w.target_pace || rec.suggestedPace || ''
+        const details = getRunCoachingDetails(type, pace)
+        const plannedSteps = normalizeSteps(w.steps)
+        const recommendedSteps = normalizeSteps(rec.steps)
+        const estimatedSeconds = distanceMiles > 0 && parsePaceToSecondsPerMile(pace)
+          ? Math.round(distanceMiles * parsePaceToSecondsPerMile(pace))
+          : Number(w.duration_min || 0) > 0 ? Number(w.duration_min) * 60 : 0
         setTodayWorkout({
+          id: w.id || '',
           day: w.day || w.day_of_week || new Date().toLocaleDateString(undefined, { weekday: 'short' }),
-          typeLabel: String(w.type || 'run').replace('-', ' ').replace(/\b\w/g, c => c.toUpperCase()),
-          distanceLabel: Number(w.distance_miles) > 0 ? `${Number(w.distance_miles).toFixed(1)} miles` : 'No distance target',
-          pace: w.pace_target || w.pace || w.target_pace || '',
-          description: w.description || w.notes || '',
+          typeLabel: cleanRunType(type),
+          distanceLabel: distanceMiles > 0 ? `${distanceMiles.toFixed(1)} miles` : 'No distance target',
+          pace,
+          zone: w.zone || w.target_zone || rec.targetZone || details.zone,
+          intensity: w.intensity || rec.intensity || details.intensity,
+          progression: w.progression || rec.progression || details.progression,
+          steps: plannedSteps.length ? plannedSteps : recommendedSteps.length ? recommendedSteps : details.steps,
+          durationLabel: estimatedSeconds ? formatRunDuration(estimatedSeconds) : '',
+          description: w.description || w.notes || rec.reason || '',
+          aiReason: rec.reason || '',
+          healthAdjusted: Boolean(rec.healthAdjusted),
         })
       })
       .catch(() => {})
@@ -283,8 +373,9 @@ export default function LogRun() {
 
   useEffect(() => {
     const sid = selectedRun?.id || todayWorkout?.id
-    if (!sid) return
-    api.get(`/ai/run-brief?sessionId=${sid}`).then((r) => setRunBrief(r.data || null)).catch(() => setRunBrief(null))
+    if (!selectedRun && !todayWorkout) return
+    const queryString = sid ? `?sessionId=${encodeURIComponent(sid)}` : ''
+    api.get(`/ai/run-brief${queryString}`).then((r) => setRunBrief(r.data || null)).catch(() => setRunBrief(null))
   }, [selectedRun?.id, todayWorkout?.id])
 
   const estimatedTime = useMemo(() => {
@@ -449,10 +540,48 @@ export default function LogRun() {
             )}
             {todayLoading ? <p style={{ color: 'var(--text-muted)' }}>Loading workout...</p> : todayWorkout ? (
               <div className="rounded-2xl p-4" style={{ background: 'var(--bg-base)', border: '1px solid var(--border-subtle)' }}>
-                <span className="inline-block rounded-full px-3 py-1 text-xs font-bold mb-3" style={{ background: 'var(--accent)', color: '#000' }}>{todayWorkout.typeLabel}</span>
+                <div className="flex items-start justify-between gap-3 mb-3">
+                  <span className="inline-block rounded-full px-3 py-1 text-xs font-bold" style={{ background: 'var(--accent)', color: '#000' }}>{todayWorkout.typeLabel}</span>
+                  <span className="rounded-full px-2 py-1 text-[10px] font-black uppercase" style={{ background: 'rgba(34,197,94,0.12)', color: '#86efac', border: '1px solid rgba(34,197,94,0.35)', whiteSpace: 'nowrap' }}>
+                    AI coach
+                  </span>
+                </div>
                 <p className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>{todayWorkout.distanceLabel}</p>
-                {todayWorkout.pace && <p className="mt-1" style={{ color: 'var(--text-muted)' }}>{todayWorkout.pace}</p>}
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <div className="rounded-xl p-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+                    <p className="text-[11px] font-bold uppercase" style={{ color: 'var(--text-muted)' }}>Target pace</p>
+                    <p className="text-sm font-black" style={{ color: 'var(--text-primary)' }}>{todayWorkout.pace || '--'}</p>
+                  </div>
+                  <div className="rounded-xl p-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+                    <p className="text-[11px] font-bold uppercase" style={{ color: 'var(--text-muted)' }}>Zone</p>
+                    <p className="text-sm font-black" style={{ color: 'var(--text-primary)' }}>{todayWorkout.zone || '--'}</p>
+                  </div>
+                  <div className="rounded-xl p-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+                    <p className="text-[11px] font-bold uppercase" style={{ color: 'var(--text-muted)' }}>Focus</p>
+                    <p className="text-sm font-black" style={{ color: 'var(--text-primary)' }}>{todayWorkout.intensity || '--'}</p>
+                  </div>
+                  <div className="rounded-xl p-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+                    <p className="text-[11px] font-bold uppercase" style={{ color: 'var(--text-muted)' }}>Est. time</p>
+                    <p className="text-sm font-black" style={{ color: 'var(--text-primary)' }}>{todayWorkout.durationLabel || '--'}</p>
+                  </div>
+                </div>
+                {todayWorkout.progression && <p className="mt-3 text-sm" style={{ color: 'var(--text-primary)' }}>{todayWorkout.progression}</p>}
                 {todayWorkout.description && <p className="mt-3 text-sm" style={{ color: 'var(--text-muted)' }}>{todayWorkout.description}</p>}
+                {runBrief && (
+                  <div className="rounded-xl p-3 mt-3" style={{ background: 'rgba(234,179,8,0.08)', border: '1px solid rgba(234,179,8,0.25)' }}>
+                    <p className="text-xs font-black uppercase mb-1" style={{ color: 'var(--accent)', letterSpacing: 0.8 }}>AI check</p>
+                    <p className="text-sm" style={{ color: 'var(--text-primary)' }}>{runBrief.why}</p>
+                    <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>Effort: {runBrief.effort} · BPM: {runBrief.bpmRange} · Cadence: {runBrief.cadence}</p>
+                  </div>
+                )}
+                {todayWorkout.steps?.length > 0 && (
+                  <div className="rounded-xl p-3 mt-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+                    <p className="text-xs font-black uppercase mb-2" style={{ color: 'var(--text-muted)', letterSpacing: 0.8 }}>Workout structure</p>
+                    {todayWorkout.steps.map((step, index) => (
+                      <p key={`${step}-${index}`} className="text-xs mb-1" style={{ color: 'var(--text-primary)' }}>{index + 1}. {step}</p>
+                    ))}
+                  </div>
+                )}
                 <button onClick={() => setShowWatchModal(true)} className="w-full mt-4 rounded-xl py-3 font-bold" style={{ background: 'var(--accent)', color: '#000', border: 'none', cursor: 'pointer' }}>Send to Watch</button>
               </div>
             ) : (

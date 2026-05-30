@@ -114,6 +114,48 @@ function getIntensityMultiplier(intensity) {
   return 1;
 }
 
+function runDetailsForTemplate(title = '', intensity = 'normal') {
+  const label = String(title || '').toLowerCase();
+  if (label.includes('quality')) {
+    return {
+      pace_target: intensity === 'reduced' ? '10:00-10:45/mi' : '9:15-10:00/mi',
+      target_zone: 'Zone 3',
+      intensity: 'Comfortably hard',
+      progression: 'Start easy, settle into steady work, and finish controlled.',
+      description: 'Progression run — do not sprint the finish.',
+      steps: ['10 min easy warm-up', 'Steady middle miles', '5 min controlled finish', '5 min easy cool-down'],
+    };
+  }
+  if (label.includes('long')) {
+    return {
+      pace_target: '10:30-11:45/mi',
+      target_zone: 'Zone 2',
+      intensity: 'Easy aerobic',
+      progression: 'Keep it conversational so the distance builds endurance without draining the week.',
+      description: 'Long aerobic run — steady breathing, no pace chasing.',
+      steps: ['First mile relaxed', 'Hold even effort through the middle', 'Last mile smooth and easy'],
+    };
+  }
+  if (label.includes('recovery')) {
+    return {
+      pace_target: '11:00-12:30/mi',
+      target_zone: 'Zone 1-2',
+      intensity: 'Recovery',
+      progression: 'Run slower than normal and stop if soreness changes your stride.',
+      description: 'Recovery run — the win is finishing fresher than you started.',
+      steps: ['5 min very easy', 'Hold relaxed effort', 'Walk 2-3 min if breathing climbs'],
+    };
+  }
+  return {
+    pace_target: intensity === 'increased' ? '9:45-10:45/mi' : '10:15-11:15/mi',
+    target_zone: 'Zone 2',
+    intensity: 'Conversational aerobic',
+    progression: 'Easy aerobic run — build consistency without forcing speed.',
+    description: 'Easy run — conversational pace from start to finish.',
+    steps: ['5-10 min relaxed warm-up', 'Hold steady conversational pace', 'Cool down easy'],
+  };
+}
+
 function generateSessions(intensity, user = {}) {
   const runDays = clamp(Number(user.run_days_per_week || 3), 2, 6);
   const liftDays = clamp(Number(user.lift_days_per_week || 2), 0, 4);
@@ -157,12 +199,14 @@ function generateSessions(intensity, user = {}) {
     const dayIdx = selectedRunDays[i];
     const template = runTemplates[i] || runTemplates[runTemplates.length - 1];
     const base = baseDistances[Math.min(i, baseDistances.length - 1)];
+    const details = runDetailsForTemplate(template.title, intensity);
     sessions[dayIdx] = {
       id: `adaptive-run-${dayLabels[dayIdx].toLowerCase()}`,
       day: dayLabels[dayIdx],
       type: template.type,
       title: template.title,
       distance_miles: Math.max(1, Math.round(base * intensityFactor * 10) / 10),
+      ...details,
     };
   }
 

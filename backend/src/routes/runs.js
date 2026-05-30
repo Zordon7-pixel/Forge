@@ -34,6 +34,31 @@ function paceFromSeconds(distanceMiles, seconds) {
   return `${m}:${String(s).padStart(2, '0')}/mi`;
 }
 
+function detailsForRecommendation(type = 'easy_run', suggestedPace = '') {
+  if (type === 'moderate_run') {
+    return {
+      targetZone: 'Zone 3',
+      intensity: 'Comfortably hard',
+      progression: 'Progression run — start easy, settle into steady rhythm, finish controlled.',
+      steps: ['8-10 min easy', 'Middle miles steady', 'Last 5 min controlled'],
+    };
+  }
+  if (type === 'long_run') {
+    return {
+      targetZone: 'Zone 2',
+      intensity: 'Easy aerobic',
+      progression: 'Long aerobic build — keep it conversational so the distance does the work.',
+      steps: ['First mile relaxed', 'Hold even effort', 'Finish smooth'],
+    };
+  }
+  return {
+    targetZone: suggestedPace && suggestedPace !== '--' ? 'Zone 2' : 'Easy effort',
+    intensity: 'Conversational aerobic',
+    progression: 'Easy aerobic run — build consistency without forcing speed.',
+    steps: ['5-10 min relaxed warm-up', 'Hold steady conversational pace', 'Cool down easy'],
+  };
+}
+
 function daysSince(dateString, today = new Date()) {
   const d = new Date(`${dateString}T12:00:00`);
   const a = startOfDay(today);
@@ -202,17 +227,23 @@ router.get('/next-recommendation', auth, async (req, res) => {
         reason,
         suggestedDistance: 0,
         suggestedPace: '--',
+        targetZone: recommendationType === 'rest' ? 'Recovery' : 'Strength',
+        intensity: recommendationType === 'rest' ? 'Rest' : 'Strength support',
+        progression: recommendationType === 'rest' ? 'Recovery day — no run target today.' : 'Lift or mobility day to support the next run.',
+        steps: recommendationType === 'rest' ? ['Walk or mobility only if it helps you feel better'] : ['Warm up', 'Strength session', 'Mobility cooldown'],
         healthAdjusted,
         healthSignals,
       });
       return;
     }
 
+    const details = detailsForRecommendation(recommendationType, suggestedPace);
     res.json({
       recommendationType,
       reason,
       suggestedDistance,
       suggestedPace,
+      ...details,
       healthAdjusted,
       healthSignals,
     });
