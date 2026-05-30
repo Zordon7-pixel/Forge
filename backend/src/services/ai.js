@@ -194,7 +194,10 @@ async function generateRunBrief({ run, profile, recentRuns, recentLifts, userId 
     const result = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
     if (result) setCached(cacheKey, result, TTL.runBrief);
     return result;
-  } catch { return null; }
+  } catch (e) {
+    console.error('generateRunBrief error:', e.message);
+    return null;
+  }
 }
 
 async function generateLiftPlan({ bodyPart, timeAvailable, profile, recentSets, recentRuns, userId }) {

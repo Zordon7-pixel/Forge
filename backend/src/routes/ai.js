@@ -224,8 +224,8 @@ router.get('/run-brief', auth, async (req, res) => {
       cadence: '170–175 spm'
     };
 
-    const brief = await generateRunBrief({ run, profile, recentRuns, recentLifts, userId: req.user.id }) || fallback;
-    res.json(brief);
+    const brief = await generateRunBrief({ run, profile, recentRuns, recentLifts, userId: req.user.id });
+    res.json(brief ? { ...brief, source: 'ai' } : { ...fallback, source: 'fallback' });
   } catch (err) {
     console.error('Error generating run brief:', err.message);
     res.status(500).json({ error: 'Failed to generate run brief' });

@@ -284,6 +284,7 @@ export default function LogRun() {
   const [checkInCompleted, setCheckInCompleted] = useState(false)
   const distanceErrorRef = useRef(null)
   const durationErrorRef = useRef(null)
+  const runBriefIsAi = runBrief?.source === 'ai'
 
   useEffect(() => {
     if (warmUpState === 'done') setActiveTab('today')
@@ -543,7 +544,7 @@ export default function LogRun() {
                 <div className="flex items-start justify-between gap-3 mb-3">
                   <span className="inline-block rounded-full px-3 py-1 text-xs font-bold" style={{ background: 'var(--accent)', color: '#000' }}>{todayWorkout.typeLabel}</span>
                   <span className="rounded-full px-2 py-1 text-[10px] font-black uppercase" style={{ background: 'rgba(34,197,94,0.12)', color: '#86efac', border: '1px solid rgba(34,197,94,0.35)', whiteSpace: 'nowrap' }}>
-                    AI coach
+                    {runBriefIsAi ? 'AI coach' : 'Data coach'}
                   </span>
                 </div>
                 <p className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>{todayWorkout.distanceLabel}</p>
@@ -569,7 +570,7 @@ export default function LogRun() {
                 {todayWorkout.description && <p className="mt-3 text-sm" style={{ color: 'var(--text-muted)' }}>{todayWorkout.description}</p>}
                 {runBrief && (
                   <div className="rounded-xl p-3 mt-3" style={{ background: 'rgba(234,179,8,0.08)', border: '1px solid rgba(234,179,8,0.25)' }}>
-                    <p className="text-xs font-black uppercase mb-1" style={{ color: 'var(--accent)', letterSpacing: 0.8 }}>AI check</p>
+                    <p className="text-xs font-black uppercase mb-1" style={{ color: 'var(--accent)', letterSpacing: 0.8 }}>{runBriefIsAi ? 'AI check' : 'Coach baseline'}</p>
                     <p className="text-sm" style={{ color: 'var(--text-primary)' }}>{runBrief.why}</p>
                     <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>Effort: {runBrief.effort} · BPM: {runBrief.bpmRange} · Cadence: {runBrief.cadence}</p>
                   </div>
