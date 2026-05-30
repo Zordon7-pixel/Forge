@@ -59,6 +59,67 @@ function detailsForRecommendation(type = 'easy_run', suggestedPace = '') {
   };
 }
 
+function parseLifeFlags(raw) {
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw !== 'string') return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function buildCheckinSignals(checkin = null) {
+  if (!checkin) {
+    return {
+      available: false,
+      summary: 'No check-in has been completed today.',
+      shouldRest: false,
+      shouldReduceIntensity: false,
+      timeAvailable: null,
+      flags: [],
+    };
+  }
+
+  const feeling = Number(checkin.feeling || 0);
+  const sleepHours = checkin.sleep_hours === null || checkin.sleep_hours === undefined ? null : Number(checkin.sleep_hours);
+  const timeAvailable = checkin.time_available === null || checkin.time_available === undefined ? null : Number(checkin.time_available);
+  const lifeFlags = parseLifeFlags(checkin.life_flags);
+  const flagSet = new Set(lifeFlags);
+  const flags = [];
+
+  if (feeling > 0 && feeling <= 2) flags.push('low energy');
+  if (sleepHours !== null && sleepHours < 6) flags.push(`${sleepHours}h sleep`);
+  if (timeAvailable !== null && timeAvailable <= 30) flags.push(`${timeAvailable} min available`);
+  if (flagSet.has('sore')) flags.push('sore');
+  if (flagSet.has('sick') || flagSet.has('not_well')) flags.push('not well');
+  if (flagSet.has('long_shift')) flags.push('long shift');
+  if (flagSet.has('traveling')) flags.push('traveling');
+  if (flagSet.has('stressed')) flags.push('stressed');
+
+  const shouldRest = feeling <= 1 || flagSet.has('sick') || flagSet.has('not_well') || (sleepHours !== null && sleepHours < 4.5);
+  const shouldReduceIntensity = shouldRest
+    || feeling <= 2
+    || (sleepHours !== null && sleepHours < 6)
+    || flagSet.has('sore')
+    || flagSet.has('long_shift')
+    || flagSet.has('traveling')
+    || flagSet.has('stressed')
+    || (timeAvailable !== null && timeAvailable <= 30);
+
+  return {
+    available: true,
+    summary: flags.length ? `Check-in: ${flags.slice(0, 3).join(', ')}.` : 'Check-in supports a normal training day.',
+    shouldRest,
+    shouldReduceIntensity,
+    timeAvailable: Number.isFinite(timeAvailable) ? timeAvailable : null,
+    feeling: Number.isFinite(feeling) && feeling > 0 ? feeling : null,
+    sleepHours: Number.isFinite(sleepHours) ? sleepHours : null,
+    flags,
+  };
+}
+
 function daysSince(dateString, today = new Date()) {
   const d = new Date(`${dateString}T12:00:00`);
   const a = startOfDay(today);
@@ -151,12 +212,14 @@ router.get('/next-recommendation', auth, async (req, res) => {
     const nextWeekStart = new Date(thisWeekStart);
     nextWeekStart.setDate(thisWeekStart.getDate() + 7);
 
-    const [recentRuns, thisWeekRow, lastWeekRow, recentPrRow, healthRow] = await Promise.all([
+    const todayStr = today.toISOString().slice(0, 10);
+    const [recentRuns, thisWeekRow, lastWeekRow, recentPrRow, healthRow, checkinRow] = await Promise.all([
       dbAll('SELECT date, distance_miles, duration_seconds FROM runs WHERE user_id=? AND date>=? AND date<? ORDER BY date DESC, created_at DESC', [req.user.id, fourteenDaysAgoStr, todayExclusiveStr]),
       dbGet('SELECT COALESCE(SUM(distance_miles),0) as miles, COUNT(*) as count FROM runs WHERE user_id=? AND date>=? AND date<?', [req.user.id, thisWeekStart.toISOString().slice(0, 10), nextWeekStart.toISOString().slice(0, 10)]),
       dbGet('SELECT COALESCE(SUM(distance_miles),0) as miles FROM runs WHERE user_id=? AND date>=? AND date<?', [req.user.id, lastWeekStart.toISOString().slice(0, 10), thisWeekStart.toISOString().slice(0, 10)]),
       dbGet('SELECT label, achieved_at FROM personal_records WHERE user_id=? AND achieved_at>=? ORDER BY achieved_at DESC LIMIT 1', [req.user.id, new Date(today.getTime() - (3 * 86400000)).toISOString().slice(0, 10)]),
       dbGet('SELECT * FROM health_sync WHERE user_id=?', [req.user.id]).catch(() => null),
+      dbGet('SELECT feeling, time_available, sleep_hours, life_flags FROM daily_checkins WHERE user_id=? AND checkin_date=?', [req.user.id, todayStr]).catch(() => null),
     ]);
 
     const avgDistance = recentRuns.length > 0
@@ -221,6 +284,32 @@ router.get('/next-recommendation', auth, async (req, res) => {
       }
     }
 
+    const checkinSignals = buildCheckinSignals(checkinRow || null);
+    let checkinAdjusted = false;
+    if (checkinSignals.available) {
+      if (checkinSignals.shouldRest) {
+        recommendationType = 'rest';
+        reason = `${checkinSignals.summary} Forge is switching today to recovery.`;
+        suggestedDistance = 0;
+        checkinAdjusted = true;
+      } else if (checkinSignals.shouldReduceIntensity && recommendationType !== 'rest' && recommendationType !== 'strength') {
+        recommendationType = 'easy_run';
+        reason = `${checkinSignals.summary} Forge lowered this to an easy controlled run.`;
+        suggestedDistance = Number(Math.max(1, suggestedDistance * 0.75).toFixed(1));
+        checkinAdjusted = true;
+      }
+
+      if (checkinSignals.timeAvailable !== null && checkinSignals.timeAvailable <= 30 && recommendationType !== 'rest' && recommendationType !== 'strength') {
+        const paceSeconds = avgPaceSeconds || 600;
+        const maxDistanceByTime = Math.max(1, (checkinSignals.timeAvailable * 60) / paceSeconds);
+        if (suggestedDistance > maxDistanceByTime) {
+          suggestedDistance = Number(maxDistanceByTime.toFixed(1));
+          reason = `${checkinSignals.summary} Forge capped the run to fit your available time.`;
+          checkinAdjusted = true;
+        }
+      }
+    }
+
     if (recommendationType === 'strength' || recommendationType === 'rest') {
       res.json({
         recommendationType,
@@ -233,6 +322,8 @@ router.get('/next-recommendation', auth, async (req, res) => {
         steps: recommendationType === 'rest' ? ['Walk or mobility only if it helps you feel better'] : ['Warm up', 'Strength session', 'Mobility cooldown'],
         healthAdjusted,
         healthSignals,
+        checkinAdjusted,
+        checkinSignals,
       });
       return;
     }
@@ -246,6 +337,8 @@ router.get('/next-recommendation', auth, async (req, res) => {
       ...details,
       healthAdjusted,
       healthSignals,
+      checkinAdjusted,
+      checkinSignals,
     });
   } catch (err) {
     res.status(500).json({ error: 'Recommendation failed' });
