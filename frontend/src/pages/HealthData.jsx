@@ -1,20 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Activity, ChevronRight, HeartPulse, Moon, RefreshCw, Shield, Watch } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import api from '../lib/api'
 import HealthService from '../services/HealthService'
 
 const HEALTH_SYNC_RESULT_KEY = 'forge_last_health_sync_result'
-
-function numberText(value, fallback = '--') {
-  const num = Number(value)
-  return Number.isFinite(num) ? num.toLocaleString() : fallback
-}
-
-function decimalText(value, digits = 1, fallback = '--') {
-  const num = Number(value)
-  return Number.isFinite(num) ? num.toFixed(digits) : fallback
-}
 
 function dateText(value) {
   if (!value) return 'Never'
@@ -23,21 +14,12 @@ function dateText(value) {
   return date.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
 }
 
-function durationText(seconds) {
-  const total = Number(seconds || 0)
-  if (!Number.isFinite(total) || total <= 0) return '--'
-  const minutes = Math.round(total / 60)
-  if (minutes < 60) return `${minutes} min`
-  const hours = Math.floor(minutes / 60)
-  const mins = minutes % 60
-  return mins ? `${hours}h ${mins}m` : `${hours}h`
-}
-
 function getLastSyncResult() {
   try {
     const parsed = JSON.parse(localStorage.getItem(HEALTH_SYNC_RESULT_KEY) || 'null')
     return parsed && typeof parsed === 'object' ? parsed : null
-  } catch {
+  } catch (err) {
+    console.warn('[body] sync result parse failed:', err.message)
     return null
   }
 }
@@ -52,26 +34,51 @@ function saveLastSyncResult(result) {
       errors: Array.isArray(result?.errors) ? result.errors : [],
       syncedAt: new Date().toISOString(),
     }))
-  } catch {}
+  } catch (err) {
+    console.warn('[body] sync result save failed:', err.message)
+  }
 }
 
-function MetricCard({ label, value, detail, icon: Icon }) {
+function trendMeta(trend) {
+  if (trend === 'up') return { arrow: '↑', color: '#22C55E' }
+  if (trend === 'down') return { arrow: '↓', color: '#EF4444' }
+  return { arrow: '→', color: 'var(--text-muted)' }
+}
+
+function DriverCard({ driver, trendLabels }) {
+  const trend = trendMeta(driver.trend)
   return (
-    <div className="rounded-xl p-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-xs font-bold uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>{label}</p>
-        {Icon && <Icon size={16} color="#EAB308" />}
+    <article className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+      <p className="text-xs font-black uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>{driver.label}</p>
+      <div className="mt-2 flex items-end gap-2">
+        <p className="text-2xl font-black" style={{ color: 'var(--text-primary)' }}>{driver.value}</p>
+        <span className="pb-1 text-lg font-black" style={{ color: trend.color }} aria-label={trendLabels[driver.trend] || trendLabels.flat}>
+          {trend.arrow}
+        </span>
       </div>
-      <p className="mt-2 text-xl font-black" style={{ color: 'var(--text-primary)' }}>{value}</p>
-      {detail && <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>{detail}</p>}
+      <p className="mt-2 text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>{driver.plainEnglish}</p>
+      <p className="mt-3 text-xs italic" style={{ color: driver.impact === 'negative' ? '#F97316' : 'var(--text-muted)' }}>{driver.suggestion}</p>
+    </article>
+  )
+}
+
+function SourcePill({ icon: Icon, label, detail }) {
+  return (
+    <div className="flex items-center gap-2 rounded-xl px-3 py-2" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
+      <Icon size={15} color="#EAB308" />
+      <div>
+        <p className="text-xs font-bold" style={{ color: 'var(--text-primary)' }}>{label}</p>
+        <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{detail}</p>
+      </div>
     </div>
   )
 }
 
 export default function HealthData() {
+  const { t } = useTranslation()
+  const [driversData, setDriversData] = useState(null)
   const [health, setHealth] = useState(null)
   const [runs, setRuns] = useState([])
-  const [lifts, setLifts] = useState([])
   const [lastSyncResult, setLastSyncResult] = useState(() => getLastSyncResult())
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
@@ -80,14 +87,14 @@ export default function HealthData() {
   const loadData = async () => {
     setLoading(true)
     try {
-      const [healthRes, runsRes, liftsRes] = await Promise.all([
+      const [driversRes, healthRes, runsRes] = await Promise.all([
+        api.get('/body/drivers').catch(() => ({ data: null })),
         api.get('/health/sync').catch(() => ({ data: null })),
         api.get('/runs').catch(() => ({ data: { runs: [] } })),
-        api.get('/lifts').catch(() => ({ data: { lifts: [] } })),
       ])
+      setDriversData(driversRes.data || { summary: t('body.allGood'), limiter: null, drivers: [] })
       setHealth(healthRes.data || null)
       setRuns(Array.isArray(runsRes.data) ? runsRes.data : runsRes.data?.runs || [])
-      setLifts(liftsRes.data?.lifts || [])
     } finally {
       setLoading(false)
     }
@@ -96,30 +103,6 @@ export default function HealthData() {
   useEffect(() => {
     loadData()
   }, [])
-
-  const importedActivities = useMemo(() => {
-    const importedRuns = runs
-      .filter((run) => run.watch_mode === 'import' || run.watch_normalized_type === 'imported')
-      .map((run) => ({
-        id: run.id,
-        type: run.type || 'run',
-        date: run.date,
-        title: `${run.type || 'Run'} · ${decimalText(run.distance_miles, 2)} mi`,
-        detail: durationText(run.duration_seconds),
-      }))
-    const importedLifts = lifts
-      .filter((lift) => lift.watch_normalized_type === 'imported' || String(lift.notes || '').includes('Imported workout'))
-      .map((lift) => ({
-        id: lift.id,
-        type: 'strength',
-        date: lift.date,
-        title: lift.exercise_name || 'Imported Strength Session',
-        detail: durationText(lift.workout_duration_seconds),
-      }))
-    return [...importedRuns, ...importedLifts]
-      .sort((a, b) => new Date(`${b.date}T12:00:00`).getTime() - new Date(`${a.date}T12:00:00`).getTime())
-      .slice(0, 8)
-  }, [runs, lifts])
 
   const syncAppleHealth = async () => {
     setSyncing(true)
@@ -138,17 +121,15 @@ export default function HealthData() {
     }
   }
 
-  const scannedText = lastSyncResult
-    ? `${numberText(lastSyncResult.scanned, '0')} scanned`
-    : 'No scan yet'
-  const skippedText = lastSyncResult
-    ? `${numberText(lastSyncResult.skipped, '0')} already saved`
-    : 'No import report yet'
-  const skippedDetail = lastSyncResult?.skipped && Number(lastSyncResult.imported || 0) === 0
-    ? 'Nothing is missing. Forge skipped those workouts because they already matched activity in your History.'
-    : lastSyncResult?.skipped
-      ? 'Skipped usually means those workouts already exist in Forge.'
-    : 'Sync from this screen to see imported and skipped counts.'
+  const drivers = Array.isArray(driversData?.drivers) ? driversData.drivers : []
+  const limiterDriver = drivers.find((driver) => driver.key === driversData?.limiter)
+  const connectedSources = useMemo(() => {
+    const sources = []
+    if (health?.synced_at || lastSyncResult?.syncedAt) sources.push({ key: 'apple', label: 'Apple Health', detail: dateText(health?.synced_at || lastSyncResult?.syncedAt), icon: Watch })
+    if (runs.some((run) => run.garmin_activity_id || String(run.watch_activity_type || '').toLowerCase().includes('garmin'))) sources.push({ key: 'garmin', label: 'Garmin', detail: 'Imported activity present', icon: Activity })
+    return sources
+  }, [health, lastSyncResult, runs])
+  const trendLabels = { up: t('body.trendUp'), down: t('body.trendDown'), flat: t('body.trendFlat') }
 
   return (
     <div className="space-y-4 pb-16">
@@ -157,9 +138,63 @@ export default function HealthData() {
           <div>
             <p className="text-xs font-bold uppercase tracking-wide" style={{ color: '#EAB308' }}>Apple Health</p>
             <h1 className="mt-1 text-2xl font-black" style={{ color: 'var(--text-primary)' }}>Body</h1>
-            <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>Your readiness, recovery, and how it shapes today's training. Plain English.</p>
+            <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>Your readiness, recovery, and how it shapes today's training.</p>
           </div>
           <Shield size={22} color="#EAB308" />
+        </div>
+      </section>
+
+      <section className="rounded-2xl p-4" style={{ background: driversData?.limiter ? 'var(--accent)' : 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+        <p className="text-xs font-black uppercase tracking-wide" style={{ color: driversData?.limiter ? '#000' : '#EAB308' }}>
+          {driversData?.limiter ? `${limiterDriver?.label || 'Readiness'} ${t('body.limiterPrefix')}` : 'Readiness'}
+        </p>
+        <h2 className="mt-2 text-xl font-black leading-tight" style={{ color: driversData?.limiter ? '#000' : 'var(--text-primary)' }}>
+          {loading ? 'Reading your body signals...' : driversData?.summary || t('body.allGood')}
+        </h2>
+        <p className="mt-2 text-sm" style={{ color: driversData?.limiter ? '#111827' : 'var(--text-muted)' }}>
+          {limiterDriver?.suggestion || t('body.allGood')}
+        </p>
+      </section>
+
+      {drivers.length === 0 && !loading ? (
+        <section className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+          <p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{t('body.noData')}</p>
+          <Link
+            to="/settings"
+            className="mt-3 inline-flex rounded-xl px-4 py-2 text-sm font-black"
+            style={{ background: 'var(--accent)', color: '#000', textDecoration: 'none' }}
+          >
+            {t('body.noDataCta')}
+          </Link>
+        </section>
+      ) : (
+        <section className="grid grid-cols-2 gap-3">
+          {drivers.map((driver) => (
+            <DriverCard key={driver.key} driver={driver} trendLabels={trendLabels} />
+          ))}
+        </section>
+      )}
+
+      {connectedSources.length > 0 && (
+        <section className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+          <p className="text-sm font-black" style={{ color: 'var(--text-primary)' }}>Connected sources</p>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            {connectedSources.map((source) => (
+              <SourcePill key={source.key} icon={source.icon} label={source.label} detail={source.detail} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      <section className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-sm font-black" style={{ color: 'var(--text-primary)' }}>Sync controls</p>
+            <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+              {lastSyncResult ? `${lastSyncResult.imported || 0} imported · ${lastSyncResult.skipped || 0} already saved · ${dateText(lastSyncResult.syncedAt)}` : 'Sync Apple Health to refresh readiness drivers.'}
+            </p>
+          </div>
+          <HeartPulse size={18} color="#EAB308" />
         </div>
         <button
           type="button"
@@ -172,89 +207,9 @@ export default function HealthData() {
           {syncing ? 'Syncing Apple Health...' : 'Sync Apple Health'}
         </button>
         {notice && <p className="mt-3 text-xs" style={{ color: notice.includes('synced') ? '#22C55E' : '#F97316' }}>{notice}</p>}
-      </section>
-
-      <section className="grid grid-cols-2 gap-3">
-        <MetricCard label="Last sync" value={dateText(health?.synced_at)} detail={lastSyncResult ? `Import report: ${dateText(lastSyncResult.syncedAt)}` : 'No sync report on this device'} icon={RefreshCw} />
-        <MetricCard label="Import result" value={lastSyncResult ? `${numberText(lastSyncResult.imported, '0')} imported` : 'Unknown'} detail={`${scannedText} · ${skippedText}`} icon={Activity} />
-        <MetricCard label="Steps today" value={numberText(health?.steps_today, '0')} detail="From Apple Health step count" icon={Activity} />
-        <MetricCard label="Calories today" value={numberText(health?.calories_today, '0')} detail="Active energy burned" icon={Activity} />
-        <MetricCard label="Miles this week" value={`${decimalText(health?.total_miles_this_week, 2, '0.00')} mi`} detail="Walking/running distance" icon={Activity} />
-        <MetricCard label="Workouts this week" value={numberText(health?.workout_count_this_week, '0')} detail={`${numberText(health?.active_minutes_this_week, '0')} active minutes`} icon={Watch} />
-        <MetricCard label="Sleep last night" value={`${decimalText(health?.sleep_hours_last_night, 1)}h`} detail="Only appears if Health has sleep data" icon={Moon} />
-        <MetricCard label="Resting HR" value={health?.resting_heart_rate ? `${health.resting_heart_rate} bpm` : '--'} detail={health?.hrv_ms ? `HRV ${health.hrv_ms} ms` : 'HRV appears when available'} icon={HeartPulse} />
-      </section>
-
-      <section className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-        <p className="text-sm font-black" style={{ color: 'var(--text-primary)' }}>Last Workout From Health</p>
-        <div className="mt-3 rounded-xl p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
-          <p className="text-lg font-black capitalize" style={{ color: 'var(--text-primary)' }}>{health?.last_workout_type || '--'}</p>
-          <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-            {durationText(health?.last_workout_duration_seconds)}
-            {health?.last_workout_calories ? ` · ${numberText(health.last_workout_calories)} cal` : ''}
-            {health?.avg_heart_rate_last_run ? ` · last run avg ${health.avg_heart_rate_last_run} bpm` : ''}
-          </p>
-        </div>
-      </section>
-
-      <section className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <p className="text-sm font-black" style={{ color: 'var(--text-primary)' }}>Import Report</p>
-            <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>{skippedDetail}</p>
-          </div>
-          <p className="text-xs font-bold" style={{ color: '#EAB308', textAlign: 'right' }}>{scannedText}<br />{skippedText}</p>
-        </div>
-        {lastSyncResult && (
-          <div className="mt-3 grid grid-cols-3 gap-2">
-            <div className="rounded-xl p-3 text-center" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
-              <p className="text-lg font-black" style={{ color: 'var(--text-primary)' }}>{numberText(lastSyncResult.scanned, '0')}</p>
-              <p className="text-[10px] font-bold uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>Scanned</p>
-            </div>
-            <div className="rounded-xl p-3 text-center" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
-              <p className="text-lg font-black" style={{ color: '#22C55E' }}>{numberText(lastSyncResult.imported, '0')}</p>
-              <p className="text-[10px] font-bold uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>Imported</p>
-            </div>
-            <div className="rounded-xl p-3 text-center" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
-              <p className="text-lg font-black" style={{ color: '#EAB308' }}>{numberText(lastSyncResult.skipped, '0')}</p>
-              <p className="text-[10px] font-bold uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>Existing</p>
-            </div>
-          </div>
-        )}
-        {lastSyncResult?.errors?.length > 0 && (
-          <div className="mt-3 rounded-xl p-3" style={{ background: 'rgba(249,115,22,0.1)', border: '1px solid rgba(249,115,22,0.35)' }}>
-            <p className="text-xs font-bold" style={{ color: '#F97316' }}>Some rows could not import.</p>
-            <ul className="mt-2 space-y-1">
-              {lastSyncResult.errors.slice(0, 3).map((err, index) => (
-                <li key={`${String(err)}-${index}`} className="text-xs" style={{ color: 'var(--text-muted)' }}>{String(err)}</li>
-              ))}
-            </ul>
-          </div>
-        )}
-      </section>
-
-      <section className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <p className="text-sm font-black" style={{ color: 'var(--text-primary)' }}>Recent Imported Activity</p>
-            <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>Runs and strength sessions Forge created from Apple Health imports.</p>
-          </div>
-          <Link to="/history" className="flex items-center gap-1 text-xs font-bold" style={{ color: '#EAB308', textDecoration: 'none' }}>
-            History <ChevronRight size={14} />
-          </Link>
-        </div>
-        <div className="mt-3 space-y-2">
-          {loading && <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Loading health data...</p>}
-          {!loading && importedActivities.length === 0 && (
-            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No imported Apple Health workouts are visible yet. Sync Apple Health to import workouts.</p>
-          )}
-          {importedActivities.map((item) => (
-            <div key={`${item.type}-${item.id}`} className="rounded-xl p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
-              <p className="text-sm font-bold capitalize" style={{ color: 'var(--text-primary)' }}>{item.title}</p>
-              <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>{item.date || 'No date'} · {item.detail}</p>
-            </div>
-          ))}
-        </div>
+        <Link to="/history" className="mt-3 flex items-center gap-1 text-xs font-bold" style={{ color: '#EAB308', textDecoration: 'none' }}>
+          Review imported activity <ChevronRight size={14} />
+        </Link>
       </section>
     </div>
   )

@@ -25,6 +25,15 @@
     "phaseCooldown": "Cooldown",
     "downloadForWatch": "Download for Garmin / COROS / Polar / Suunto / Wahoo"
   },
+  "body": {
+    "limiterPrefix": "is the limiter today",
+    "allGood": "All inputs looking good — train as planned",
+    "noData": "Connect Apple Health, Garmin, or WHOOP to see your readiness drivers",
+    "noDataCta": "Open Settings",
+    "trendUp": "trending up",
+    "trendDown": "trending down",
+    "trendFlat": "steady"
+  },
   "run": {
     "warmup": "Warm-Up",
     "step": "Step",

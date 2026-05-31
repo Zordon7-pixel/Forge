@@ -77,6 +77,7 @@ app.use('/api/journal',     require('./routes/journal'));
 app.use('/api/milestones',  require('./routes/milestones'));
 app.use('/api/watch-sync',  require('./routes/watchSync'));
 app.use('/api/health',      require('./routes/health'));
+app.use('/api/body',        require('./routes/bodyDrivers'));
 app.use('/api/garmin',      require('./routes/garmin'));
 app.use('/api/strava',      require('./routes/strava'));
 app.use('/api/whoop',       require('./routes/whoop'));
