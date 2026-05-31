@@ -566,7 +566,7 @@ export default function Dashboard() {
         compliance={compliance}
         onCheckIn={() => navigate('/checkin')}
         onStartWorkout={handleStartWorkout}
-        onWarmup={() => navigate('/warmup')}
+        onWarmup={() => navigate('/prep?mode=warmup')}
         onReflect={() => navigate('/history')}
         onOpenReadiness={() => {
           setShowTodayDetail(false)

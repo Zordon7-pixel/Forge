@@ -138,6 +138,12 @@
     "upperBody": "Upper-Body",
     "lowerBack": "Lower-Back"
   },
+  "prep": {
+    "title": "Prep",
+    "subtitle": "Warm up before. Recover after.",
+    "warmupTab": "Pre-Workout",
+    "recoveryTab": "Recovery"
+  },
   "injury_logs": {
     "injury_log": "Injury Log",
     "active_injuries": "Active Injuries",
