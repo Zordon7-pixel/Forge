@@ -14,6 +14,11 @@ function dateText(value) {
   return date.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
 }
 
+function numberText(value) {
+  const number = Number(value)
+  return Number.isFinite(number) && number > 0 ? number.toLocaleString() : null
+}
+
 function getLastSyncResult() {
   try {
     const parsed = JSON.parse(localStorage.getItem(HEALTH_SYNC_RESULT_KEY) || 'null')
@@ -74,6 +79,16 @@ function SourcePill({ icon: Icon, label, detail }) {
   )
 }
 
+function MetricCell({ cell }) {
+  return (
+    <div className="rounded-xl p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
+      <p className="text-[10px] font-bold uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>{cell.label}</p>
+      <p className="mt-1 text-base font-black" style={{ color: 'var(--text-primary)' }}>{cell.value}</p>
+      {cell.detail && <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{cell.detail}</p>}
+    </div>
+  )
+}
+
 export default function HealthData() {
   const { t } = useTranslation()
   const [driversData, setDriversData] = useState(null)
@@ -123,6 +138,19 @@ export default function HealthData() {
 
   const drivers = Array.isArray(driversData?.drivers) ? driversData.drivers : []
   const limiterDriver = drivers.find((driver) => driver.key === driversData?.limiter)
+  const metricCells = useMemo(() => {
+    const restingHr = health?.resting_heart_rate_bpm || health?.resting_heart_rate
+    const avgWorkoutHr = health?.avg_heart_rate_bpm_last_workout || health?.avg_hr_bpm_last_workout || health?.avg_heart_rate_last_run
+    return [
+      { key: 'steps', label: 'Steps today', value: numberText(health?.steps_today), detail: null },
+      { key: 'activeMin', label: 'Active min', value: numberText(health?.active_minutes_this_week), detail: 'past 7 days' },
+      { key: 'restingHr', label: 'Resting HR', value: numberText(restingHr) ? `${Math.round(Number(restingHr))} bpm` : null, detail: null },
+      { key: 'calories', label: 'Calories', value: numberText(health?.calories_today), detail: 'today' },
+      { key: 'workouts', label: 'Workouts', value: numberText(health?.workout_count_this_week), detail: 'past 7 days' },
+      { key: 'avgHr', label: 'Avg workout HR', value: numberText(avgWorkoutHr) ? `${Math.round(Number(avgWorkoutHr))} bpm` : null, detail: 'last session' },
+    ].filter((cell) => cell.value && cell.value !== '--' && cell.value !== '0')
+  }, [health])
+  const hasMetricStrip = metricCells.length > 0
   const connectedSources = useMemo(() => {
     const sources = []
     if (health?.synced_at || lastSyncResult?.syncedAt) sources.push({ key: 'apple', label: 'Apple Health', detail: dateText(health?.synced_at || lastSyncResult?.syncedAt), icon: Watch })
@@ -172,6 +200,16 @@ export default function HealthData() {
           {drivers.map((driver) => (
             <DriverCard key={driver.key} driver={driver} trendLabels={trendLabels} />
           ))}
+        </section>
+      )}
+
+      {hasMetricStrip && (
+        <section className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+          <p className="text-sm font-black" style={{ color: 'var(--text-primary)' }}>{t('body.last7Days')}</p>
+          <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>{t('body.last7DaysSubtitle')}</p>
+          <div className="mt-3 grid grid-cols-3 gap-2">
+            {metricCells.map((cell) => <MetricCell key={cell.key} cell={cell} />)}
+          </div>
         </section>
       )}
 
