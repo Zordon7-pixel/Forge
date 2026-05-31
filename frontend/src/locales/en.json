@@ -20,6 +20,11 @@
   "today": {
     "sendToWatch": "Send to Apple Watch",
     "workoutBreakdown": "Workout breakdown",
+    "coachNotes": "Coach notes",
+    "effortTargets": "Effort targets",
+    "effortLabel": "Effort",
+    "hrLabel": "HR",
+    "cadenceLabel": "Cadence",
     "phaseWarmup": "Warmup",
     "phaseMain": "Main",
     "phaseCooldown": "Cooldown",

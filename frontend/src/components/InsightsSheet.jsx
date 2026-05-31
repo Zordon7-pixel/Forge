@@ -342,9 +342,9 @@ export function TodayDetailSheet({
   const topFactors = (readinessBreakdown || []).filter((item) => item.label !== 'Base score').slice(0, 2)
   const coachWhy = typeof recommendation?.brief?.why === 'string' ? recommendation.brief.why.trim() : ''
   const effortTargets = [
-    { key: 'effort', label: 'Effort', value: recommendation?.brief?.effort },
-    { key: 'hr', label: 'HR', value: recommendation?.brief?.bpmRange },
-    { key: 'cadence', label: 'Cadence', value: recommendation?.brief?.cadence },
+    { key: 'effort', label: t('today.effortLabel'), value: recommendation?.brief?.effort },
+    { key: 'hr', label: t('today.hrLabel'), value: recommendation?.brief?.bpmRange },
+    { key: 'cadence', label: t('today.cadenceLabel'), value: recommendation?.brief?.cadence },
   ]
     .map((target) => ({ ...target, value: target.value === null || target.value === undefined ? '' : String(target.value).trim() }))
     .filter((target) => target.value)
@@ -418,7 +418,7 @@ export function TodayDetailSheet({
 
         {Array.isArray(recommendation?.structure) && recommendation.structure.length > 0 && (
           <section className="mt-5">
-            <p className="text-xs font-bold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.8 }}>Workout breakdown</p>
+            <p className="text-xs font-bold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.8 }}>{t('today.workoutBreakdown')}</p>
             <div className="mt-2 space-y-2">
               {recommendation.structure.map((block, i) => (
                 <BlockRow key={`detail-${block.phase || 'block'}-${i}`} block={block} t={t} />
@@ -429,7 +429,7 @@ export function TodayDetailSheet({
 
         {coachWhy && (
           <section className="mt-5">
-            <p className="text-xs font-bold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.8 }}>Coach notes</p>
+            <p className="text-xs font-bold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.8 }}>{t('today.coachNotes')}</p>
             <p className="mt-2 rounded-xl p-3 text-sm italic" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', lineHeight: 1.5 }}>
               {coachWhy}
             </p>
@@ -438,7 +438,7 @@ export function TodayDetailSheet({
 
         {effortTargets.length > 0 && (
           <section className="mt-5">
-            <p className="text-xs font-bold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.8 }}>Effort targets</p>
+            <p className="text-xs font-bold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.8 }}>{t('today.effortTargets')}</p>
             <div className="mt-2 grid grid-cols-3 gap-2">
               {effortTargets.map((target) => (
                 <div key={target.key} className="rounded-xl p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
