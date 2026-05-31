@@ -204,7 +204,6 @@ export default function History() {
           }}>
           Weekly Recap
         </Link>
-        <Link to="/journal" className="text-sm" style={{ color: 'var(--accent)' }}>View Journal</Link>
       </div>
 
       <div className="grid grid-cols-1 gap-3 mb-4">
