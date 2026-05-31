@@ -1,10 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { Activity, Dumbbell, HeartPulse, MoreHorizontal } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { getUser, isLoggedIn } from '../lib/auth'
+import { getUser } from '../lib/auth'
 import PullToRefresh from './PullToRefresh'
-import api from '../lib/api'
 
 const NAV_ITEMS = (t) => [
   { to: '/', end: true, icon: '/nav-home.png', label: t('nav.home'), color: '#EAB308' },
@@ -24,72 +23,6 @@ function getAvatarLabel(user) {
   const email = String(user?.email || '').trim()
   if (email) return email[0].toUpperCase()
   return '?'
-}
-
-function TrainingReadinessWidget() {
-  const navigate = useNavigate()
-  const { t } = useTranslation()
-  const [score, setScore] = useState(null)
-
-  useEffect(() => {
-    if (!isLoggedIn()) return
-    let active = true
-
-    const fetchScore = async () => {
-      try {
-        const [statsRes, checkinRes] = await Promise.all([
-          api.get('/auth/me/stats').catch(() => ({ data: null })),
-          api.get('/checkin/today').catch(() => ({ data: null })),
-        ])
-
-        if (!active) return
-        const stats = statsRes?.data
-        const checkedIn = Boolean(checkinRes?.data)
-
-        if (!stats || !checkedIn) {
-          setScore(null)
-          return
-        }
-
-        const weekMiles = Number(stats?.week?.miles || 0)
-        const totalMiles = Number(stats?.all?.miles || 0)
-        const trendWeeks = Array.isArray(stats?.weeklyTrend)
-          ? stats.weeklyTrend.filter(w => Number(w.miles) > 0).length
-          : 0
-        const avgWeekly = trendWeeks > 0 ? totalMiles / trendWeeks : 0
-
-        let readinessScore = 50
-        const streakBonus = Math.min(Number(stats?.streak || 0) * 4, 20)
-        readinessScore += streakBonus
-
-        if (avgWeekly > 0) {
-          const ratio = weekMiles / avgWeekly
-          if (ratio < 0.5) readinessScore += 15
-          else if (ratio > 1.3) readinessScore -= 15
-        }
-
-        setScore(Math.max(1, Math.min(99, Math.round(readinessScore))))
-      } catch {
-        if (active) setScore(null)
-      }
-    }
-
-    fetchScore()
-    return () => {
-      active = false
-    }
-  }, [])
-
-  return (
-    <button type="button" onClick={() => navigate('/?readiness=1')} className="text-left" style={{ border: '1px solid var(--border-subtle)', background: 'var(--bg-input)', borderRadius: 10, padding: '5px 10px', minWidth: 86, cursor: 'pointer' }}>
-      <p style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: 0.6, color: 'var(--text-muted)' }}>{t('run.readiness')}</p>
-      {score !== null ? (
-        <p style={{ fontSize: 13, fontWeight: 800, color: '#EAB308' }}>{score}</p>
-      ) : (
-        <div style={{ height: 3, width: 32, background: '#EAB308', margin: '3px auto 0', borderRadius: 999 }} />
-      )}
-    </button>
-  )
 }
 
 export default function Layout({ children }) {
@@ -129,7 +62,6 @@ export default function Layout({ children }) {
               <img src="/icon-192.png" alt="FORGE" className="w-9 h-9 rounded-xl object-cover" />
             </button>
             <div className="flex items-center gap-2">
-              <TrainingReadinessWidget />
               <button
                 type="button"
                 onClick={() => navigate('/profile')}

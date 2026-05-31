@@ -141,7 +141,7 @@ async function generateTrainingPlan(profile, target = null) {
     ? `- Race target override: ${target.distanceMiles ? `${target.distanceMiles} miles` : 'race'} on ${target.raceDate || 'upcoming date'}`
     : '';
 
-  const prompt = `You are an expert running coach. Create a 4-week training plan for this athlete:
+  const prompt = `You are an expert hybrid runner/lifter coach who specializes in concurrent training (runners who also lift). Create a 4-week training plan for this athlete:
 - Name: ${sanitize(profile.name, 50)}
 - Current weekly miles: ${Number(profile.weekly_miles_current) || 0}
 - Goal: ${goalDesc}
@@ -160,6 +160,7 @@ Rules:
 - Include at least 6 training sessions each week (non-rest days)
 - Include 1-2 hybrid cardio + weight sessions weekly, marked as type "cross_train" with titles like Weighted Circuit, Kettlebell Cardio, Rucking, or Sled Push Intervals
 - Keep at least 1 full rest day each week
+- Account for concurrent training interference — do not place a hard run session within 24h of a heavy lower-body lift day. Prefer Z2/easy runs the day after lower-body lifts. Prefer upper-body lifts the day after long runs.
 - Increase mileage ~10% per week max. Week 4 should be a recovery week (reduce ~20%).`;
 
   try {
@@ -186,12 +187,12 @@ async function generateRunFeedback(run, profile) {
   const injuryCtx = sanitize(profile.injury_notes) ? `, currently managing: ${sanitize(profile.injury_notes)}` : '';
   const notesCtx = sanitize(run.notes) ? `\nAthlete note: "${sanitize(run.notes)}"` : '';
 
-  const prompt = `You are a sharp, experienced running coach reviewing a training log entry. Write 2-3 sentences of feedback. Sound like a knowledgeable training partner — direct, specific to the numbers, no fluff. Don't open with praise like "Great job" or "Well done". Don't mention weight or BMI. Reference the actual pace and effort.
+  const prompt = `You are a sharp, experienced hybrid runner/lifter coach who specializes in concurrent training (runners who also lift) reviewing a training log entry. Write 2-3 sentences of feedback. Sound like a knowledgeable training partner — direct, specific to the numbers, no fluff. Don't open with praise like "Great job" or "Well done". Don't mention weight or BMI. Reference the actual pace and effort.
 
 ${run.type} run — ${run.distance_miles} miles in ${durationMin} min (${pace}), effort ${run.perceived_effort}/10${notesCtx}
 Context: ${Number(profile.weekly_miles_current) || 0} mi/week base, goal: ${sanitize(profile.goal_type, 30) || 'fitness'}${injuryCtx}
 
-Under 60 words. No headers. No bullet points.`;
+Under 60 words. No headers. No bullet points. If the athlete's recent lifts are heavy (lower body), mention CNS load or leg fatigue when relevant. Talk like someone who lifts AND runs.`;
 
   try {
     const res = await getClient().messages.create({
@@ -221,13 +222,13 @@ async function generateWorkoutFeedback(session, sets, profile) {
     const muscleGroups = Array.isArray(session.muscle_groups) ? session.muscle_groups.join(', ') : session.muscle_groups;
     const notesCtx = sanitize(session.notes) ? `\nNotes: ${sanitize(session.notes)}` : '';
 
-    const prompt = `You are a strength coach reviewing a completed session. Write 2-3 sentences of feedback — specific to the exercises and numbers, not generic. End with one concrete suggestion for next time. Sound like a coach who actually looked at the data, not a bot. Don't open with "Great work" or similar.
+    const prompt = `You are an expert hybrid runner/lifter coach who specializes in concurrent training (runners who also lift) reviewing a completed strength session. Write 2-3 sentences of feedback — specific to the exercises and numbers, not generic. End with one concrete suggestion for next time. Sound like a coach who actually looked at the data, not a bot. Don't open with "Great work" or similar.
 
 ${durationMin ? `${durationMin} min session` : 'Session'} — ${muscleGroups || 'not specified'}
 Exercises: ${exerciseSummary}
 Goal: ${sanitize(profile?.goal_type, 30) || 'general fitness'}${notesCtx}
 
-Under 80 words. No headers. No bullet points.`;
+Under 80 words. No headers. No bullet points. Acknowledge how this session affects their running plan over the next 24–48h.`;
 
     const msg = await getClient().messages.create({
       model: 'frequent',

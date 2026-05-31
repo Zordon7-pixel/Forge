@@ -1,17 +1,12 @@
 import { Link } from 'react-router-dom'
 import {
-  Award,
-  BookOpen,
   CalendarDays,
   ChevronRight,
   Medal,
-  MessageCircle,
   Settings,
   ShieldAlert,
   Sparkles,
-  StretchHorizontal,
   Trophy,
-  Users,
 } from 'lucide-react'
 
 const sections = [
@@ -19,9 +14,9 @@ const sections = [
     title: 'Training',
     items: [
       { to: '/plan', label: 'Adaptive Plan', sub: 'Weekly training direction', icon: Sparkles, color: '#EAB308' },
-      { to: '/stretches', label: 'Stretches', sub: 'Warmup and recovery flows', icon: StretchHorizontal, color: '#22C55E' },
       { to: '/history', label: 'History', sub: 'Runs, lifts, imports', icon: CalendarDays, color: '#3B82F6' },
       { to: '/injury', label: 'Injury Mode', sub: 'Pain, limitations, PT', icon: ShieldAlert, color: '#F97316' },
+      { to: '/gear', label: 'Gear', sub: 'Shoes and mileage', icon: Settings, color: '#94A3B8' },
     ],
   },
   {
@@ -29,17 +24,6 @@ const sections = [
     items: [
       { to: '/races', label: 'Races', sub: 'Upcoming events', icon: Trophy, color: '#EAB308' },
       { to: '/prs', label: 'PR Wall', sub: 'Personal records', icon: Medal, color: '#A855F7' },
-      { to: '/badges', label: 'Badges', sub: 'Unlocked milestones', icon: Award, color: '#22C55E' },
-      { to: '/gear', label: 'Gear', sub: 'Shoes and mileage', icon: Settings, color: '#94A3B8' },
-    ],
-  },
-  {
-    title: 'Community',
-    items: [
-      { to: '/community', label: 'Community', sub: 'Feed, routes, athletes', icon: Users, color: '#22C55E' },
-      { to: '/challenges', label: 'Challenges', sub: 'Seasonal and custom goals', icon: Trophy, color: '#EAB308' },
-      { to: '/journal', label: 'Journal', sub: 'Notes from training', icon: BookOpen, color: '#3B82F6' },
-      { to: '/settings', label: 'Settings', sub: 'Devices, privacy, account', icon: MessageCircle, color: '#A855F7' },
     ],
   },
 ]
@@ -88,6 +72,18 @@ export default function More() {
             </div>
           </section>
         ))}
+        <Link
+          to="/settings"
+          style={{
+            justifySelf: 'start',
+            color: 'var(--text-muted)',
+            fontSize: 13,
+            fontWeight: 800,
+            textDecoration: 'none',
+          }}
+        >
+          Settings →
+        </Link>
       </div>
     </div>
   )

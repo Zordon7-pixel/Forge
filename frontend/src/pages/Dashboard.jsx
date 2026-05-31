@@ -115,14 +115,14 @@ function ReadinessGauge({ score, onClick }) {
 
 function getRecommendationLabel(recommendation) {
   return recommendation
-    ? String(recommendation.recommendationType || 'workout').replace('_', ' ')
-    : 'workout'
+    ? String(recommendation.recommendationType || "today's session").replace('_', ' ')
+    : "today's session"
 }
 
 function DailyCoachFlow({ checkedInToday, readiness, recommendation, onCheckIn, onStartWorkout, onReflect, onDetails }) {
   const recommendationLabel = recommendation
     ? getRecommendationLabel(recommendation)
-    : 'workout'
+    : "today's session"
   const steps = [
     { key: 'checkin', label: 'Check in', done: checkedInToday, action: onCheckIn },
     { key: 'train', label: recommendation ? recommendationLabel : 'train', done: false, action: onStartWorkout },
