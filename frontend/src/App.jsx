@@ -29,10 +29,6 @@ const DailyCheckIn = lazy(() => import('./pages/DailyCheckIn'))
 const Stretches = lazy(() => import('./pages/Stretches'))
 const StretchSession = lazy(() => import('./pages/StretchSession'))
 const PRWall = lazy(() => import('./pages/PRWall'))
-const Badges = lazy(() => import('./pages/Badges'))
-const Challenges = lazy(() => import('./pages/Challenges'))
-const Community = lazy(() => import('./pages/Community'))
-const Journal = lazy(() => import('./pages/Journal'))
 const Races = lazy(() => import('./pages/Races'))
 const Gear = lazy(() => import('./pages/Gear'))
 const More = lazy(() => import('./pages/More'))
@@ -191,38 +187,6 @@ export default function App() {
           element={
             <PrivateRoute>
               <PRWall />
-            </PrivateRoute>
-          }
-        />
-        <Route
-          path="/badges"
-          element={
-            <PrivateRoute>
-              <Badges />
-            </PrivateRoute>
-          }
-        />
-        <Route
-          path="/challenges"
-          element={
-            <PrivateRoute>
-              <Challenges />
-            </PrivateRoute>
-          }
-        />
-        <Route
-          path="/community"
-          element={
-            <PrivateRoute>
-              <Community />
-            </PrivateRoute>
-          }
-        />
-        <Route
-          path="/journal"
-          element={
-            <PrivateRoute>
-              <Journal />
             </PrivateRoute>
           }
         />
