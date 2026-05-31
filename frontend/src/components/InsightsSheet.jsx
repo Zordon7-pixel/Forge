@@ -115,6 +115,7 @@ export function DailyCoachFlow({ checkedInToday, readiness, recommendation, toda
     ? getRecommendationLabel(recommendation)
     : "today's plan"
   const structure = Array.isArray(recommendation?.structure) ? recommendation.structure : []
+  const coachWhy = typeof recommendation?.brief?.why === 'string' ? recommendation.brief.why.trim() : ''
   const buildTodaySubtitle = () => {
     if (!recommendation) return "Check in to unlock today's plan."
 
@@ -172,6 +173,11 @@ export function DailyCoachFlow({ checkedInToday, readiness, recommendation, toda
           <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
             {buildTodaySubtitle()}
           </p>
+          {coachWhy && (
+            <p className="mt-2 text-sm italic" style={{ color: 'var(--text-primary)', opacity: 0.9, lineHeight: 1.4 }}>
+              {coachWhy}
+            </p>
+          )}
         </div>
         <div className="flex flex-col gap-2">
           <button

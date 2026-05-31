@@ -2,7 +2,7 @@ const router = require('express').Router();
 const { dbGet, dbAll, dbRun } = require('../db');
 const auth   = require('../middleware/auth');
 const { v4: uuidv4 } = require('uuid');
-const { generateRunFeedback, generateLoadWarning } = require('../services/ai');
+const { generateRunFeedback, generateLoadWarning, generateRunBrief } = require('../services/ai');
 const autoUpdatePRs = require('../services/prAuto');
 const { buildTcxWorkout } = require('../utils/tcxBuilder');
 const {
@@ -251,7 +251,7 @@ router.get('/load-analysis', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'Load analysis failed' }); }
 });
 
-async function buildNextRecommendation(userId) {
+async function buildNextRecommendation(userId, { includeBrief = false } = {}) {
     const today = new Date();
     const fourteenDaysAgo = new Date(today);
     fourteenDaysAgo.setDate(today.getDate() - 14);
@@ -267,8 +267,10 @@ async function buildNextRecommendation(userId) {
     nextWeekStart.setDate(thisWeekStart.getDate() + 7);
 
     const todayStr = today.toISOString().slice(0, 10);
-    const [recentRuns, thisWeekRow, lastWeekRow, recentPrRow, healthRow, checkinRow] = await Promise.all([
+    const [profile, recentRuns, recentWorkouts, thisWeekRow, lastWeekRow, recentPrRow, healthRow, checkinRow] = await Promise.all([
+      dbGet('SELECT name, goal_type FROM users WHERE id=?', [userId]).catch(() => null),
       dbAll('SELECT date, distance_miles, duration_seconds FROM runs WHERE user_id=? AND date>=? AND date<? ORDER BY date DESC, created_at DESC', [userId, fourteenDaysAgoStr, todayExclusiveStr]),
+      dbAll('SELECT started_at, muscle_groups, total_seconds FROM workout_sessions WHERE user_id=? ORDER BY started_at DESC, created_at DESC LIMIT 5', [userId]).catch(() => []),
       dbGet('SELECT COALESCE(SUM(distance_miles),0) as miles, COUNT(*) as count FROM runs WHERE user_id=? AND date>=? AND date<?', [userId, thisWeekStart.toISOString().slice(0, 10), nextWeekStart.toISOString().slice(0, 10)]),
       dbGet('SELECT COALESCE(SUM(distance_miles),0) as miles FROM runs WHERE user_id=? AND date>=? AND date<?', [userId, lastWeekStart.toISOString().slice(0, 10), thisWeekStart.toISOString().slice(0, 10)]),
       dbGet('SELECT label, achieved_at FROM personal_records WHERE user_id=? AND achieved_at>=? ORDER BY achieved_at DESC LIMIT 1', [userId, new Date(today.getTime() - (3 * 86400000)).toISOString().slice(0, 10)]),
@@ -383,7 +385,7 @@ async function buildNextRecommendation(userId) {
     }
 
     const details = detailsForRecommendation(recommendationType, suggestedPace);
-    return {
+    const recommendation = {
       recommendationType,
       reason,
       suggestedDistance,
@@ -395,11 +397,34 @@ async function buildNextRecommendation(userId) {
       checkinAdjusted,
       checkinSignals,
     };
+
+    if (!includeBrief) return recommendation;
+
+    try {
+      const brief = await Promise.race([
+        generateRunBrief({ run: recommendation, profile, recentRuns, recentLifts: recentWorkouts, userId }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('brief-timeout')), 3000)),
+      ]);
+      if (brief && typeof brief === 'object') {
+        recommendation.brief = {
+          why: brief.why,
+          effort: brief.effort,
+          bpmRange: brief.bpmRange,
+          cadence: brief.cadence,
+        };
+      } else {
+        console.warn('[next-recommendation] brief failed:', 'empty-brief');
+      }
+    } catch (err) {
+      console.warn('[next-recommendation] brief failed:', err.message);
+    }
+
+    return recommendation;
 }
 
 router.get('/next-recommendation', auth, async (req, res) => {
   try {
-    res.json(await buildNextRecommendation(req.user.id));
+    res.json(await buildNextRecommendation(req.user.id, { includeBrief: true }));
   } catch (err) {
     res.status(500).json({ error: 'Recommendation failed' });
   }
