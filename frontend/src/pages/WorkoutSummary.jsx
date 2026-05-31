@@ -57,8 +57,6 @@ export default function WorkoutSummary() {
   const [userSex, setUserSex] = useState('male')
   const [routeShared, setRouteShared] = useState(false)
   const [sharingRoute, setSharingRoute] = useState(false)
-  const [sharingCommunity, setSharingCommunity] = useState(false)
-  const [sharedCommunity, setSharedCommunity] = useState(false)
 
   useEffect(() => {
     api.get('/auth/me').then((r) => setUserSex(r.data?.user?.sex || 'male')).catch(() => {})
@@ -332,40 +330,6 @@ export default function WorkoutSummary() {
         stats={cardStats}
         summaryText={shareSummaryText}
       />
-
-      <button
-        onClick={async () => {
-          setSharingCommunity(true)
-          try {
-            await api.post('/community/posts', {
-              title: `${Object.keys(exerciseMap).length} exercise lift session`,
-              body: `Logged ${sets.length} sets and ${totalReps} reps.`,
-              workout_type: 'lift',
-              workout_id: session.id,
-              stats: cardStats,
-            })
-            setSharedCommunity(true)
-          } catch (e) {
-            console.error('Failed to share workout to community', e)
-          } finally {
-            setSharingCommunity(false)
-          }
-        }}
-        disabled={sharingCommunity || sharedCommunity}
-        style={{
-          width: '100%',
-          padding: '12px 0',
-          background: '#EAB308',
-          color: '#0f1117',
-          borderRadius: 12,
-          fontSize: 14,
-          fontWeight: 700,
-          cursor: 'pointer',
-          opacity: sharingCommunity ? 0.7 : 1,
-        }}
-      >
-        {sharedCommunity ? 'Shared to Community' : sharingCommunity ? 'Sharing...' : 'Share to Community'}
-      </button>
 
       {routeCoords && routeCoords.length >= 2 && !routeShared && (
         <button
