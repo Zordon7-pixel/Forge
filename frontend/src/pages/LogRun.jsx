@@ -425,7 +425,7 @@ export default function LogRun() {
       const runRes = await api.post('/runs', runPayload)
       const runId = runRes.data?.id || runRes.data?.run?.id
       if (runId) api.post('/prs/auto-detect', { run_id: runId }).catch(() => {})
-      api.post('/badges/check', {}).catch(() => {})
+      // Phase 2L — /badges/check removed (display retired in 2K).
       if (!runId) {
         setFeedback('Run saved. Your coach will update after the next sync.')
         setShowRecoveryPrompt(true)
