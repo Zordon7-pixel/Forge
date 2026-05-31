@@ -118,7 +118,7 @@ export function DailyCoachFlow({ checkedInToday, readiness, recommendation, toda
   const buildTodaySubtitle = () => {
     if (!recommendation) return "Check in to unlock today's plan."
 
-    const parts = [recommendationLabel]
+    const parts = [recommendationLabel ? recommendationLabel.charAt(0).toUpperCase() + recommendationLabel.slice(1) : '']
     const distance = Number(recommendation.suggestedDistance || 0)
     const pace = recommendation.suggestedPace && recommendation.suggestedPace !== '--'
       ? String(recommendation.suggestedPace)
