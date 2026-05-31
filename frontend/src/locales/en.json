@@ -18,7 +18,12 @@
     "logWorkout": "Log a Workout"
   },
   "today": {
-    "sendToWatch": "Send to Apple Watch"
+    "sendToWatch": "Send to Apple Watch",
+    "workoutBreakdown": "Workout breakdown",
+    "phaseWarmup": "Warmup",
+    "phaseMain": "Main",
+    "phaseCooldown": "Cooldown",
+    "downloadForWatch": "Download for Garmin / COROS / Polar / Suunto / Wahoo"
   },
   "run": {
     "warmup": "Warm-Up",

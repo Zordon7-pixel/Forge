@@ -41,6 +41,42 @@ function getRecommendationLabel(recommendation) {
     : "today's session"
 }
 
+function getPhaseLabel(phase, t) {
+  if (phase === 'warmup') return t('today.phaseWarmup')
+  if (phase === 'cooldown') return t('today.phaseCooldown')
+  return t('today.phaseMain')
+}
+
+function BlockRow({ block, t }) {
+  const phase = block.phase || 'main'
+  const metric = block.durationMinutes
+    ? `${block.durationMinutes} min`
+    : block.distanceMiles
+      ? `${block.distanceMiles} mi`
+      : ''
+  const pace = block.paceTarget ? ` @ ${block.paceTarget}` : ''
+  const summary = `${metric}${pace}${metric || pace ? ' — ' : ''}${block.description || ''}`
+  const isMain = phase === 'main'
+
+  return (
+    <div className="rounded-xl p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
+      <div className="flex items-center gap-2">
+        <span
+          className="rounded-full px-2 py-0.5 text-[10px] font-black uppercase"
+          style={{
+            background: isMain ? 'var(--accent)' : 'rgba(156,163,175,0.14)',
+            color: isMain ? '#000' : 'var(--text-muted)',
+          }}
+        >
+          {getPhaseLabel(phase, t)}
+        </span>
+        <p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{block.label}</p>
+      </div>
+      {summary && <p className="mt-1 text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>{summary}</p>}
+    </div>
+  )
+}
+
 export function ReadinessGauge({ score, onClick }) {
   const r = 28, cx = 36, cy = 36
   const circumference = 2 * Math.PI * r
@@ -78,6 +114,22 @@ export function DailyCoachFlow({ checkedInToday, readiness, recommendation, toda
   const recommendationLabel = recommendation
     ? getRecommendationLabel(recommendation)
     : "today's session"
+  const structure = Array.isArray(recommendation?.structure) ? recommendation.structure : []
+  const handleDownloadTcx = async () => {
+    const token = getToken()
+    if (!token) return
+    const res = await fetch('/api/runs/today-workout.tcx', { headers: { Authorization: `Bearer ${token}` } })
+    if (!res.ok) return
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `forge-workout-${new Date().toISOString().slice(0, 10)}.tcx`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  }
   const steps = [
     { key: 'checkin', label: 'Check in', done: checkedInToday, action: onCheckIn },
     { key: 'train', label: recommendation ? recommendationLabel : 'train', done: false, action: onStartWorkout },
@@ -128,6 +180,18 @@ export function DailyCoachFlow({ checkedInToday, readiness, recommendation, toda
           </button>
         ))}
       </div>
+      {structure.length > 0 && (
+        <div className="mt-3 rounded-xl p-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+          <p className="text-xs font-black uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.8 }}>
+            {t('today.workoutBreakdown')}
+          </p>
+          <div className="mt-2 space-y-2">
+            {structure.map((block, index) => (
+              <BlockRow key={`${block.phase || 'block'}-${index}`} block={block} t={t} />
+            ))}
+          </div>
+        </div>
+      )}
       {todayWatchWorkout && (
         <WatchWorkoutSendButton
           workout={todayWatchWorkout}
@@ -135,6 +199,16 @@ export function DailyCoachFlow({ checkedInToday, readiness, recommendation, toda
           className="mt-2"
           compact
         />
+      )}
+      {structure.length > 0 && (
+        <button
+          type="button"
+          onClick={handleDownloadTcx}
+          className="mt-2 w-full rounded-xl px-3 py-3 text-sm font-bold"
+          style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}
+        >
+          {t('today.downloadForWatch')}
+        </button>
       )}
     </section>
   )

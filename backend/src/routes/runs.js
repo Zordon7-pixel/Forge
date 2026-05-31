@@ -4,6 +4,7 @@ const auth   = require('../middleware/auth');
 const { v4: uuidv4 } = require('uuid');
 const { generateRunFeedback, generateLoadWarning } = require('../services/ai');
 const autoUpdatePRs = require('../services/prAuto');
+const { buildTcxWorkout } = require('../utils/tcxBuilder');
 const {
   DISTANCE_CONFIG,
   normalizeSex,
@@ -32,6 +33,60 @@ function paceFromSeconds(distanceMiles, seconds) {
   const m = Math.floor(paceSec / 60);
   const s = Math.round(paceSec % 60);
   return `${m}:${String(s).padStart(2, '0')}/mi`;
+}
+
+function buildRunStructure({ recommendationType, suggestedDistance, suggestedPace }) {
+  const distance = Number(suggestedDistance) || 0;
+  const pace = String(suggestedPace || '').trim() || null;
+  const type = {
+    easy_run: 'easy',
+    moderate_run: 'tempo',
+    long_run: 'long',
+  }[recommendationType] || recommendationType;
+
+  const cleanBlock = (block) => Object.fromEntries(
+    Object.entries(block).filter(([, value]) => value !== null && value !== undefined && value !== '')
+  );
+  const withDistanceAndPace = (block) => cleanBlock({
+    ...block,
+    distanceMiles: distance || null,
+    paceTarget: pace,
+  });
+
+  switch (type) {
+    case 'easy':
+      return [
+        cleanBlock({ phase: 'warmup', label: 'Warmup', durationMinutes: 10, hrZone: 2, description: 'Easy jog or brisk walk, RPE 3/10' }),
+        withDistanceAndPace({ phase: 'main', label: 'Main', hrZone: 2, description: 'Conversational pace, Z2 heart rate' }),
+        cleanBlock({ phase: 'cooldown', label: 'Cooldown', durationMinutes: 5, hrZone: 1, description: 'Walk + light mobility' }),
+      ];
+    case 'tempo':
+      return [
+        cleanBlock({ phase: 'warmup', label: 'Warmup', durationMinutes: 15, hrZone: 2, description: 'Easy 10 min + 4 strides' }),
+        withDistanceAndPace({ phase: 'main', label: 'Tempo', hrZone: 4, description: 'Comfortably hard, controlled, Z3–Z4' }),
+        cleanBlock({ phase: 'cooldown', label: 'Cooldown', durationMinutes: 10, hrZone: 1, description: 'Easy jog or walk' }),
+      ];
+    case 'intervals':
+      return [
+        cleanBlock({ phase: 'warmup', label: 'Warmup', durationMinutes: 15, hrZone: 2, description: 'Easy + 4 strides' }),
+        cleanBlock({ phase: 'main', label: 'Intervals', hrZone: 4, description: distance >= 4 ? '6 × 800m @ 5K pace (90s rest)' : '5 × 400m @ 5K pace (60s rest)' }),
+        cleanBlock({ phase: 'cooldown', label: 'Cooldown', durationMinutes: 10, hrZone: 1, description: 'Easy jog' }),
+      ];
+    case 'long':
+      return [
+        cleanBlock({ phase: 'warmup', label: 'Warmup', durationMinutes: 5, hrZone: 2, description: 'Easy first mile' }),
+        withDistanceAndPace({ phase: 'main', label: 'Long run', hrZone: 2, description: 'Conversational, build aerobic base' }),
+        cleanBlock({ phase: 'cooldown', label: 'Cooldown', durationMinutes: 5, hrZone: 1, description: 'Walk + hydrate' }),
+      ];
+    case 'recovery':
+      return [
+        cleanBlock({ phase: 'main', label: 'Recovery', durationMinutes: 25, hrZone: 1, description: 'Z1 only — easier than easy. Walk if needed.' }),
+      ];
+    case 'rest':
+    case 'strength':
+    default:
+      return [];
+  }
 }
 
 function detailsForRecommendation(type = 'easy_run', suggestedPace = '') {
@@ -196,8 +251,7 @@ router.get('/load-analysis', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'Load analysis failed' }); }
 });
 
-router.get('/next-recommendation', auth, async (req, res) => {
-  try {
+async function buildNextRecommendation(userId) {
     const today = new Date();
     const fourteenDaysAgo = new Date(today);
     fourteenDaysAgo.setDate(today.getDate() - 14);
@@ -214,12 +268,12 @@ router.get('/next-recommendation', auth, async (req, res) => {
 
     const todayStr = today.toISOString().slice(0, 10);
     const [recentRuns, thisWeekRow, lastWeekRow, recentPrRow, healthRow, checkinRow] = await Promise.all([
-      dbAll('SELECT date, distance_miles, duration_seconds FROM runs WHERE user_id=? AND date>=? AND date<? ORDER BY date DESC, created_at DESC', [req.user.id, fourteenDaysAgoStr, todayExclusiveStr]),
-      dbGet('SELECT COALESCE(SUM(distance_miles),0) as miles, COUNT(*) as count FROM runs WHERE user_id=? AND date>=? AND date<?', [req.user.id, thisWeekStart.toISOString().slice(0, 10), nextWeekStart.toISOString().slice(0, 10)]),
-      dbGet('SELECT COALESCE(SUM(distance_miles),0) as miles FROM runs WHERE user_id=? AND date>=? AND date<?', [req.user.id, lastWeekStart.toISOString().slice(0, 10), thisWeekStart.toISOString().slice(0, 10)]),
-      dbGet('SELECT label, achieved_at FROM personal_records WHERE user_id=? AND achieved_at>=? ORDER BY achieved_at DESC LIMIT 1', [req.user.id, new Date(today.getTime() - (3 * 86400000)).toISOString().slice(0, 10)]),
-      dbGet('SELECT * FROM health_sync WHERE user_id=?', [req.user.id]).catch(() => null),
-      dbGet('SELECT feeling, time_available, sleep_hours, life_flags FROM daily_checkins WHERE user_id=? AND checkin_date=?', [req.user.id, todayStr]).catch(() => null),
+      dbAll('SELECT date, distance_miles, duration_seconds FROM runs WHERE user_id=? AND date>=? AND date<? ORDER BY date DESC, created_at DESC', [userId, fourteenDaysAgoStr, todayExclusiveStr]),
+      dbGet('SELECT COALESCE(SUM(distance_miles),0) as miles, COUNT(*) as count FROM runs WHERE user_id=? AND date>=? AND date<?', [userId, thisWeekStart.toISOString().slice(0, 10), nextWeekStart.toISOString().slice(0, 10)]),
+      dbGet('SELECT COALESCE(SUM(distance_miles),0) as miles FROM runs WHERE user_id=? AND date>=? AND date<?', [userId, lastWeekStart.toISOString().slice(0, 10), thisWeekStart.toISOString().slice(0, 10)]),
+      dbGet('SELECT label, achieved_at FROM personal_records WHERE user_id=? AND achieved_at>=? ORDER BY achieved_at DESC LIMIT 1', [userId, new Date(today.getTime() - (3 * 86400000)).toISOString().slice(0, 10)]),
+      dbGet('SELECT * FROM health_sync WHERE user_id=?', [userId]).catch(() => null),
+      dbGet('SELECT feeling, time_available, sleep_hours, life_flags FROM daily_checkins WHERE user_id=? AND checkin_date=?', [userId, todayStr]).catch(() => null),
     ]);
 
     const avgDistance = recentRuns.length > 0
@@ -311,7 +365,7 @@ router.get('/next-recommendation', auth, async (req, res) => {
     }
 
     if (recommendationType === 'strength' || recommendationType === 'rest') {
-      res.json({
+      return {
         recommendationType,
         reason,
         suggestedDistance: 0,
@@ -320,28 +374,52 @@ router.get('/next-recommendation', auth, async (req, res) => {
         intensity: recommendationType === 'rest' ? 'Rest' : 'Strength support',
         progression: recommendationType === 'rest' ? 'Recovery day — no run target today.' : 'Lift or mobility day to support the next run.',
         steps: recommendationType === 'rest' ? ['Walk or mobility only if it helps you feel better'] : ['Warm up', 'Strength session', 'Mobility cooldown'],
+        structure: buildRunStructure({ recommendationType, suggestedDistance: 0, suggestedPace: '--' }),
         healthAdjusted,
         healthSignals,
         checkinAdjusted,
         checkinSignals,
-      });
-      return;
+      };
     }
 
     const details = detailsForRecommendation(recommendationType, suggestedPace);
-    res.json({
+    return {
       recommendationType,
       reason,
       suggestedDistance,
       suggestedPace,
       ...details,
+      structure: buildRunStructure({ recommendationType, suggestedDistance, suggestedPace }),
       healthAdjusted,
       healthSignals,
       checkinAdjusted,
       checkinSignals,
-    });
+    };
+}
+
+router.get('/next-recommendation', auth, async (req, res) => {
+  try {
+    res.json(await buildNextRecommendation(req.user.id));
   } catch (err) {
     res.status(500).json({ error: 'Recommendation failed' });
+  }
+});
+
+router.get('/today-workout.tcx', auth, async (req, res) => {
+  try {
+    const recommendation = await buildNextRecommendation(req.user.id);
+    if (!recommendation.structure?.length) {
+      res.status(404).json({ error: 'No structured workout for today' });
+      return;
+    }
+    const typeName = String(recommendation.recommendationType || 'forge').replace(/_/g, ' ');
+    const tcx = buildTcxWorkout({ name: `${typeName} run`, structure: recommendation.structure });
+    const date = new Date().toISOString().slice(0, 10);
+    res.setHeader('Content-Type', 'application/vnd.garmin.tcx+xml');
+    res.setHeader('Content-Disposition', `attachment; filename="forge-workout-${date}.tcx"`);
+    res.send(tcx);
+  } catch (err) {
+    res.status(500).json({ error: 'Workout export failed' });
   }
 });
 
