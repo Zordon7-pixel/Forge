@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import api from '../lib/api'
 import LoadingRunner from '../components/LoadingRunner'
 import { Lock, Pencil } from 'lucide-react'
@@ -126,10 +127,23 @@ function formatPRDate(dateValue) {
   return new Date(clamped).toLocaleDateString()
 }
 
+function HybridPrCard({ pr }) {
+  return (
+    <article style={baseCardStyle}>
+      <p style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 1 }}>{pr.label}</p>
+      <p style={{ fontSize: 26, fontWeight: 900, color: 'var(--text-primary)', lineHeight: 1.1 }}>{pr.primary}</p>
+      <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6 }}>{pr.secondary}</p>
+      <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 10, fontStyle: 'italic' }}>{pr.plainEnglish}</p>
+    </article>
+  )
+}
+
 export default function PRWall() {
   const navigate = useNavigate()
+  const { t } = useTranslation()
   const { isPro, loading: proLoading } = useProContext()
   const [prs, setPrs] = useState([])
+  const [hybridPrs, setHybridPrs] = useState([])
   const [totalMiles, setTotalMiles] = useState(0)
   const [timePRs, setTimePRs] = useState([])
   const [loading, setLoading] = useState(true)
@@ -157,10 +171,11 @@ export default function PRWall() {
         await api.post('/prs/auto-detect', { run_id: runs[0].id }).catch(() => {})
       }
 
-      const [prsRes, allRunsRes, timePRRes] = await Promise.all([
+      const [prsRes, allRunsRes, timePRRes, hybridRes] = await Promise.all([
         api.get('/prs'),
         api.get('/runs'),
-        api.get('/prs/time').catch(() => ({ data: { times: [] } }))
+        api.get('/prs/time').catch(() => ({ data: { times: [] } })),
+        api.get('/hybrid-prs').catch(() => ({ data: { prs: [] } }))
       ])
 
       const prList = prsRes.data?.prs || []
@@ -169,6 +184,7 @@ export default function PRWall() {
       const miles = allRuns.reduce((sum, run) => sum + (Number(run.distance_miles) || 0), 0)
 
       setPrs(prList)
+      setHybridPrs(hybridRes.data?.prs || [])
       setTimePRs(times)
       setTotalMiles(miles)
     } catch (e) {
@@ -246,7 +262,7 @@ export default function PRWall() {
       <div className="mb-5 flex items-start justify-between gap-3">
         <div>
           <h1 className="text-3xl font-black" style={{ color: 'var(--text-primary)' }}>PR Wall</h1>
-          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Your best performances, ever.</p>
+          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{t('hybridPrs.subtitle')}</p>
         </div>
         <button
           onClick={() => setShowModal(true)}
@@ -262,6 +278,25 @@ export default function PRWall() {
         <LoadingRunner message="Loading records" />
       ) : (
         <>
+          <section className="mb-6">
+            <h2 className="mb-3 text-lg font-bold">Hybrid PRs</h2>
+            {hybridPrs.length === 0 ? (
+              <div style={baseCardStyle}>
+                <p style={{ color: 'var(--text-muted)' }}>{t('hybridPrs.noData')}</p>
+                <div className="mt-3 flex gap-2">
+                  <button onClick={() => navigate('/log-run')} className="rounded-xl px-3 py-2 text-sm font-bold" style={{ background: 'var(--accent)', color: '#000', border: 'none' }}>Log run</button>
+                  <button onClick={() => navigate('/log-lift')} className="rounded-xl px-3 py-2 text-sm font-bold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>Log lift</button>
+                </div>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                {hybridPrs.map((pr) => (
+                  <HybridPrCard key={pr.key} pr={pr} />
+                ))}
+              </div>
+            )}
+          </section>
+
           <section className="mb-6">
             <h2 className="mb-3 text-lg font-bold">Running PRs</h2>
             <div className="grid grid-cols-1 gap-3">

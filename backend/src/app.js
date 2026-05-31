@@ -68,6 +68,7 @@ app.use('/api/meta',        require('./routes/meta'));
 app.use('/api/feedback',    require('./routes/feedback'));
 app.use('/api/checkin',     require('./routes/checkin'));
 app.use('/api/prs',         require('./routes/prs'));
+app.use('/api/hybrid-prs',  require('./routes/hybridPrs'));
 app.use('/api/badges',      require('./routes/badges'));
 app.use('/api/challenges',  require('./routes/challenges'));
 app.use('/api/social',      require('./routes/social'));

@@ -34,6 +34,16 @@
     "trendDown": "trending down",
     "trendFlat": "steady"
   },
+  "hybridPrs": {
+    "title": "Hybrid PRs",
+    "subtitle": "Records only a runner who lifts can set.",
+    "noData": "Log a few runs and lifts to unlock hybrid PRs",
+    "labelStrongestWeek": "Strongest Week",
+    "labelLongestStreak": "Longest Hybrid Streak",
+    "labelBiggestMonth": "Biggest Month",
+    "labelEasiestAfterLift": "Easiest Run After Heavy Lift",
+    "labelBestCombo": "Best Lift+Run Combo"
+  },
   "run": {
     "warmup": "Warm-Up",
     "step": "Step",
