@@ -113,8 +113,33 @@ export function DailyCoachFlow({ checkedInToday, readiness, recommendation, toda
   const { t } = useTranslation()
   const recommendationLabel = recommendation
     ? getRecommendationLabel(recommendation)
-    : "today's session"
+    : "today's plan"
   const structure = Array.isArray(recommendation?.structure) ? recommendation.structure : []
+  const buildTodaySubtitle = () => {
+    if (!recommendation) return "Check in to unlock today's plan."
+
+    const parts = [recommendationLabel]
+    const distance = Number(recommendation.suggestedDistance || 0)
+    const pace = recommendation.suggestedPace && recommendation.suggestedPace !== '--'
+      ? String(recommendation.suggestedPace)
+      : ''
+    const targetZone = recommendation.targetZone && recommendation.targetZone !== '--'
+      ? String(recommendation.targetZone)
+      : ''
+    const intensity = recommendation.intensity && recommendation.intensity !== '--'
+      ? String(recommendation.intensity)
+      : ''
+
+    if (distance > 0) {
+      parts.push(`${recommendation.suggestedDistance} mi${pace ? ` @ ${pace}` : ''}`)
+    } else if (pace) {
+      parts.push(`@ ${pace}`)
+    }
+    if (targetZone) parts.push(targetZone.toLowerCase().startsWith('zone') ? targetZone : `Zone ${targetZone}`)
+    if (intensity) parts.push(intensity)
+
+    return `${readiness !== null ? `Readiness ${readiness}. ` : ''}${parts.filter(Boolean).join(' · ')}.`
+  }
   const handleDownloadTcx = async () => {
     const token = getToken()
     if (!token) return
@@ -132,8 +157,8 @@ export function DailyCoachFlow({ checkedInToday, readiness, recommendation, toda
   }
   const steps = [
     { key: 'checkin', label: 'Check in', done: checkedInToday, action: onCheckIn },
-    { key: 'train', label: recommendation ? recommendationLabel : 'train', done: false, action: onStartWorkout },
-    { key: 'reflect', label: 'reflect', done: false, action: onReflect },
+    { key: 'train', label: recommendation ? recommendationLabel : 'Train', done: false, action: onStartWorkout },
+    { key: 'reflect', label: 'Reflect', done: false, action: onReflect },
   ]
 
   return (
@@ -145,8 +170,7 @@ export function DailyCoachFlow({ checkedInToday, readiness, recommendation, toda
             {checkedInToday ? 'Train from the plan' : 'Start with readiness'}
           </h2>
           <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
-            {readiness !== null ? `Readiness ${readiness}. ` : ''}
-            {recommendation ? `${recommendationLabel}${Number(recommendation.suggestedDistance || 0) > 0 ? ` · ${recommendation.suggestedDistance} mi` : ''}` : 'Check in to unlock the next move.'}
+            {buildTodaySubtitle()}
           </p>
         </div>
         <div className="flex flex-col gap-2">
