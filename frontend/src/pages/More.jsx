@@ -2,8 +2,8 @@ import { Link } from 'react-router-dom'
 import {
   CalendarDays,
   ChevronRight,
+  Footprints,
   Medal,
-  Settings,
   ShieldAlert,
   Sparkles,
   Trophy,
@@ -16,7 +16,7 @@ const sections = [
       { to: '/plan', label: 'Adaptive Plan', sub: 'Weekly training direction', icon: Sparkles, color: '#EAB308' },
       { to: '/history', label: 'History', sub: 'Runs, lifts, imports', icon: CalendarDays, color: '#3B82F6' },
       { to: '/injury', label: 'Injury Mode', sub: 'Pain, limitations, PT', icon: ShieldAlert, color: '#F97316' },
-      { to: '/gear', label: 'Gear', sub: 'Shoes and mileage', icon: Settings, color: '#94A3B8' },
+      { to: '/gear', label: 'Gear', sub: 'Shoes and mileage', icon: Footprints, color: '#94A3B8' },
     ],
   },
   {

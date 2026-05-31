@@ -1,8 +1,9 @@
 {
   "nav": {
-    "home": "Inicio",
-    "run": "Correr",
+    "home": "Today",
+    "run": "Train",
     "lift": "Entrenar",
+    "body": "Body",
     "challenges": "Desafíos",
     "community": "Comunidad",
     "history": "Historial",

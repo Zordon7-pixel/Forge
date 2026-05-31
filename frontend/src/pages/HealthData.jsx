@@ -156,8 +156,8 @@ export default function HealthData() {
         <div className="flex items-start justify-between gap-3">
           <div>
             <p className="text-xs font-bold uppercase tracking-wide" style={{ color: '#EAB308' }}>Apple Health</p>
-            <h1 className="mt-1 text-2xl font-black" style={{ color: 'var(--text-primary)' }}>Health Data Center</h1>
-            <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>Everything Forge has synced from your iPhone so far.</p>
+            <h1 className="mt-1 text-2xl font-black" style={{ color: 'var(--text-primary)' }}>Body</h1>
+            <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>Your readiness, recovery, and how it shapes today's training. Plain English.</p>
           </div>
           <Shield size={22} color="#EAB308" />
         </div>

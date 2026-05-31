@@ -9,7 +9,7 @@ const NAV_ITEMS = (t) => [
   { to: '/', end: true, icon: '/nav-home.png', label: t('nav.home'), color: '#EAB308' },
   { to: '/run', label: t('nav.run'), iconComponent: Activity, color: '#EAB308' },
   { to: '/log-lift', iconComponent: Dumbbell, label: t('nav.lift'), color: '#F97316' },
-  { to: '/health', label: 'Health', iconComponent: HeartPulse, color: '#22C55E' },
+  { to: '/health', label: t('nav.body'), iconComponent: HeartPulse, color: '#22C55E' },
   { to: '/more', label: 'More', iconComponent: MoreHorizontal, color: '#A855F7' },
 ]
 

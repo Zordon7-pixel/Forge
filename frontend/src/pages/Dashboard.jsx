@@ -102,7 +102,7 @@ function ReadinessGauge({ score, onClick }) {
         </svg>
         <div>
           <p className="font-bold text-base" style={{ color: 'var(--text-primary)' }}>{label}</p>
-          <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>Training readiness</p>
+          <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>Readiness</p>
           <p className="text-xs mt-1" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>
             {score >= 75 ? 'Go hard today.' : score >= 50 ? 'Moderate effort.' : 'Take it easy today.'}
           </p>
@@ -705,7 +705,7 @@ export default function Dashboard() {
           : hrvMs < 45
             ? `${hrvMs} ms HRV is slightly suppressed today.`
             : hrvMs >= 65
-              ? `${hrvMs} ms HRV supports training readiness.`
+              ? `${hrvMs} ms HRV supports readiness.`
               : `${hrvMs} ms HRV is neutral for readiness.`,
       })
     }
@@ -927,10 +927,10 @@ export default function Dashboard() {
         }}
       />
 
-      {/* Training Readiness */}
+      {/* Readiness */}
       <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>
         {readiness === null ? (
-          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Complete your daily check-in or sync Apple Health to unlock your Training Readiness score</p>
+          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Complete your daily check-in or sync Apple Health to unlock your Readiness score</p>
         ) : (
           <>
             <ReadinessGauge score={readiness} onClick={() => setShowReadinessModal(true)} />
@@ -1496,7 +1496,7 @@ export default function Dashboard() {
             {/* Header */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
               <div>
-                <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>Training Readiness</p>
+                <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>Readiness</p>
                 <p style={{ fontSize: 28, fontWeight: 900, color: 'var(--accent)' }}>{readiness} <span style={{ fontSize: 14, fontWeight: 400, color: 'var(--text-muted)' }}>/ 100</span></p>
                 <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 2 }}>{readiness >= 80 ? 'Go hard today.' : readiness >= 60 ? 'Moderate effort — push but listen to your body.' : readiness >= 40 ? 'Take it easy — a recovery run or rest day is smart.' : 'Rest today. Your body is telling you something.'}</p>
               </div>
