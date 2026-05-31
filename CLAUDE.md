@@ -23,7 +23,7 @@ This repo is the active production/TestFlight target. Its Expo/EAS build target 
 | Backend | Node.js + Express | `backend/src/` |
 | Database | SQLite (local) / PostgreSQL (Railway) | `dbGet`, `dbRun` from db.js |
 | Auth | JWT | `req.user.id` scopes ALL queries |
-| AI | Anthropic SDK | Sonnet for complex, Haiku for frequent — see services/ai.js |
+| AI | OpenAI Responses API | GPT-5.5 for complex, GPT-5.4 mini for frequent — see services/ai.js |
 | Frontend | React + Vite + Capacitor | `frontend/` |
 | Deploy | Railway | `forge-production-773f.up.railway.app` |
 
@@ -57,7 +57,7 @@ backend/src/
 │   ├── lifts.js          ← Lift logging, history
 │   └── auth.js           ← User auth + profile update
 └── services/
-    └── ai.js             ← All AI prompt functions (Sonnet + Haiku tiering)
+    └── ai.js             ← All AI prompt functions (OpenAI model tiering)
 
 frontend/src/
 ├── pages/                ← App screens and settings/dashboard flows
@@ -70,16 +70,16 @@ frontend/src/
 
 ## AI Model Tiering — Critical, Do Not Change
 
-Forge uses Anthropic SDK. Token cost is real. Model assignments are fixed:
+Forge uses the OpenAI Responses API directly from `backend/src/services/ai.js`. Token cost is real. Model assignments are fixed:
 
 | Function | Model | Reason |
 |----------|-------|--------|
-| `generateTrainingPlan` | `claude-sonnet-4-6` | Complex, infrequent |
-| `generateWeeklyInsight` | `claude-sonnet-4-6` | Complex, weekly |
-| `generateRaceAdjustment` | `claude-sonnet-4-6` | Complex, occasional |
-| Everything else | `claude-haiku-4-5` | Frequent, simple feedback |
+| `generateTrainingPlan` | `OPENAI_MODEL_COMPLEX` default `gpt-5.5` | Complex, infrequent |
+| `generateWeeklyInsight` | `OPENAI_MODEL_COMPLEX` default `gpt-5.5` | Complex, weekly |
+| `generateRaceAdjustment` | `OPENAI_MODEL_COMPLEX` default `gpt-5.5` | Complex, occasional |
+| Everything else | `OPENAI_MODEL_FREQUENT` default `gpt-5.4-mini` | Frequent, simple feedback |
 
-**Never put Sonnet on functions that fire on every run/lift log — that's $10/day at scale.**
+**Never put the complex model on functions that fire on every run/lift log — that's expensive at scale.**
 
 ---
 
@@ -118,7 +118,9 @@ function sanitize(val, maxLen = 200) {
 |-----|----------|-------|
 | `JWT_SECRET` | YES | |
 | `DATABASE_URL` | YES | PostgreSQL on Railway |
-| `ANTHROPIC_API_KEY` | YES | For all AI features |
+| `OPENAI_API_KEY` | YES | For all AI features |
+| `OPENAI_MODEL_FREQUENT` | No | Defaults to `gpt-5.4-mini` for per-action feedback |
+| `OPENAI_MODEL_COMPLEX` | No | Defaults to `gpt-5.5` for complex/infrequent planning |
 | `APP_URL` | For reset email | Base URL used in password reset links |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `SMTP_SECURE` | For reset email | SMTP delivery for forgot-password emails |
 | `EMAIL_FROM` | For reset email | From address for forgot-password emails |
@@ -196,7 +198,7 @@ Read `FORGE.md` for:
 - [ ] Every DELETE/UPDATE includes `AND user_id=?` (not just the SELECT)
 - [ ] No `catch (_) {}` or empty catch blocks
 - [ ] New AI prompts use `sanitize()` on all user-controlled fields
-- [ ] New AI prompts use `claude-haiku-4-5` unless complex/infrequent (use Sonnet)
+- [ ] New AI prompts use `OPENAI_MODEL_FREQUENT` unless complex/infrequent (use `OPENAI_MODEL_COMPLEX`)
 - [ ] New numeric inputs have range validation
 - [ ] New routes have `auth` middleware
 - [ ] No raw user input interpolated into SQL (parameterized only)

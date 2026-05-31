@@ -1,9 +1,69 @@
-const Anthropic = require('@anthropic-ai/sdk');
 const crypto = require('crypto');
+
+const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
+const AI_MODELS = {
+  frequent: process.env.OPENAI_MODEL_FREQUENT || 'gpt-5.4-mini',
+  complex: process.env.OPENAI_MODEL_COMPLEX || 'gpt-5.5',
+};
+
+function mapLegacyModel(model = '') {
+  const key = String(model || '').toLowerCase();
+  return key === 'complex' || key.includes('sonnet') ? AI_MODELS.complex : AI_MODELS.frequent;
+}
+
+function extractOutputText(data = {}) {
+  if (typeof data.output_text === 'string') return data.output_text;
+  const chunks = [];
+  for (const item of data.output || []) {
+    for (const content of item.content || []) {
+      if (typeof content.text === 'string') chunks.push(content.text);
+    }
+  }
+  return chunks.join('\n').trim();
+}
+
+async function createOpenAIResponse({ model, max_tokens, messages }) {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) throw new Error('OPENAI_API_KEY is not configured.');
+  const input = Array.isArray(messages)
+    ? messages.map((message) => ({
+      role: message.role === 'user' ? 'user' : 'developer',
+      content: String(message.content || ''),
+    }))
+    : [];
+
+  const response = await fetch(OPENAI_RESPONSES_URL, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: mapLegacyModel(model),
+      input,
+      max_output_tokens: max_tokens,
+      store: false,
+    }),
+  });
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '');
+    throw new Error(`OpenAI response failed (${response.status})${detail ? `: ${detail}` : ''}`);
+  }
+
+  const data = await response.json();
+  return { content: [{ text: extractOutputText(data) }] };
+}
 
 let client;
 function getClient() {
-  if (!client) client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  if (!client) {
+    client = {
+      messages: {
+        create: createOpenAIResponse,
+      },
+    };
+  }
   return client;
 }
 
@@ -104,7 +164,7 @@ Rules:
 
   try {
     const res = await getClient().messages.create({
-      model: 'claude-haiku-4-5',
+      model: 'frequent',
       max_tokens: 4000,
       messages: [{ role: 'user', content: prompt }],
     });
@@ -135,7 +195,7 @@ Under 60 words. No headers. No bullet points.`;
 
   try {
     const res = await getClient().messages.create({
-      model: 'claude-haiku-4-5',
+      model: 'frequent',
       max_tokens: 150,
       messages: [{ role: 'user', content: prompt }],
     });
@@ -170,7 +230,7 @@ Goal: ${sanitize(profile?.goal_type, 30) || 'general fitness'}${notesCtx}
 Under 80 words. No headers. No bullet points.`;
 
     const msg = await getClient().messages.create({
-      model: 'claude-haiku-4-5',
+      model: 'frequent',
       max_tokens: 200,
       messages: [{ role: 'user', content: prompt }],
     });
@@ -188,7 +248,7 @@ async function generateRunBrief({ run, profile, recentRuns, recentLifts, userId 
     if (cached) return cached;
 
     const prompt = `Return JSON only with keys: why, effort, bpmRange, cadence. Athlete ${sanitize(profile?.name, 50) || 'athlete'} goal ${sanitize(profile?.goal_type, 30) || 'fitness'}. Latest planned/session run: ${JSON.stringify(sanitizeObj(run || {}))}. Recent runs: ${JSON.stringify(sanitizeObj((recentRuns || []).slice(0,5)))}. Recent workouts: ${JSON.stringify(sanitizeObj((recentLifts || []).slice(0,3)))}.`;
-    const msg = await getClient().messages.create({ model: 'claude-haiku-4-5', max_tokens: 220, messages: [{ role: 'user', content: prompt }] });
+    const msg = await getClient().messages.create({ model: 'frequent', max_tokens: 220, messages: [{ role: 'user', content: prompt }] });
     const text = msg.content?.[0]?.text || '{}';
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     const result = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
@@ -207,7 +267,7 @@ async function generateLiftPlan({ bodyPart, timeAvailable, profile, recentSets, 
     if (cached) return cached;
 
     const prompt = `Return JSON only with keys: workoutName, exercises(array of {name,sets,reps,rest}), estimatedTime. Body part: ${sanitize(bodyPart, 50)}. Time available: ${sanitize(timeAvailable, 20)}. Athlete: ${sanitize(profile?.name, 50) || 'athlete'}. Recent sets: ${JSON.stringify(sanitizeObj((recentSets || []).slice(0,12)))}. Recent runs: ${JSON.stringify(sanitizeObj((recentRuns || []).slice(0,4)))}.`;
-    const msg = await getClient().messages.create({ model: 'claude-haiku-4-5', max_tokens: 320, messages: [{ role: 'user', content: prompt }] });
+    const msg = await getClient().messages.create({ model: 'frequent', max_tokens: 320, messages: [{ role: 'user', content: prompt }] });
     const text = msg.content?.[0]?.text || '{}';
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     const result = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
@@ -234,7 +294,7 @@ Rules:
 - suggestion: 1 sentence — one concrete, actionable thing for the next session.
 - recovery: exactly one of: "easy day", "rest", "can train hard tomorrow"`;
     const msg = await getClient().messages.create({
-      model: 'claude-haiku-4-5',
+      model: 'frequent',
       max_tokens: 260,
       messages: [{ role: 'user', content: prompt }],
     });
@@ -256,7 +316,7 @@ async function generateWorkoutRecommendation({ profile, recentRuns, recentWorkou
     if (cached) return cached;
 
     const prompt = `Return JSON only with keys: workoutName,target,warmup(array),main(array of {name,sets,reps,rest}),recovery(array),explanation,restExplanation. Athlete:${sanitize(profile?.name, 50) || 'athlete'} goal ${sanitize(profile?.goal_type, 30) || 'fitness'}. recent runs ${JSON.stringify(sanitizeObj((recentRuns || []).slice(0,5)))}. recent workouts ${JSON.stringify(sanitizeObj((recentWorkouts || []).slice(0,5)))}.`;
-    const msg = await getClient().messages.create({ model: 'claude-haiku-4-5', max_tokens: 420, messages: [{ role: 'user', content: prompt }] });
+    const msg = await getClient().messages.create({ model: 'frequent', max_tokens: 420, messages: [{ role: 'user', content: prompt }] });
     const text = msg.content?.[0]?.text || '{}';
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     const result = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
@@ -272,7 +332,7 @@ async function generateBodyPartWorkout({ bodyPart, exercise, profile, userId }) 
     if (cached) return cached;
 
     const prompt = `Return JSON only with keys: workoutName,target,warmup(array),main(array of {name,sets,reps,rest}),recovery(array),explanation,restExplanation. Build a focused lifting workout with 4-6 exercises. Body part: ${sanitize(bodyPart, 50)}. Anchor exercise: ${sanitize(exercise, 50)}. Athlete: ${sanitize(profile?.name, 50) || 'athlete'} goal ${sanitize(profile?.goal_type, 30) || 'fitness'}.`;
-    const msg = await getClient().messages.create({ model: 'claude-haiku-4-5', max_tokens: 500, messages: [{ role: 'user', content: prompt }] });
+    const msg = await getClient().messages.create({ model: 'frequent', max_tokens: 500, messages: [{ role: 'user', content: prompt }] });
     const text = msg.content?.[0]?.text || '{}';
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     const result = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
@@ -296,7 +356,7 @@ Data: ${JSON.stringify(loadData)}
 - suggestedAction: one of rest|easy_day|reduce_miles|ok`;
 
     const msg = await getClient().messages.create({
-      model: 'claude-haiku-4-5',
+      model: 'frequent',
       max_tokens: 220,
       messages: [{ role: 'user', content: prompt }],
     });
@@ -316,7 +376,7 @@ async function generateRaceAdjustment({ profile, race, currentPlan }) {
   try {
     const prompt = `Return JSON only with key weeks (array). Athlete profile: ${JSON.stringify(sanitizeObj({ goal: profile?.goal_type, weekly: profile?.weekly_miles_current, runDays: profile?.run_days_per_week }))}. Race: ${JSON.stringify(sanitizeObj(race))}. Current plan: ${JSON.stringify(sanitizeObj(currentPlan))}. Rebalance with taper starting 2 weeks out when race <= 60 days.`;
     const msg = await getClient().messages.create({
-      model: 'claude-haiku-4-5',
+      model: 'frequent',
       max_tokens: 700,
       messages: [{ role: 'user', content: prompt }],
     });
@@ -330,7 +390,7 @@ async function generateRaceAdjustment({ profile, race, currentPlan }) {
 
 async function generateWeeklyInsight({ userId, weekLabel, summary }) {
   try {
-    if (!process.env.ANTHROPIC_API_KEY) return null;
+    if (!process.env.OPENAI_API_KEY) return null;
     const cacheKey = makeCacheKey('weekly-insight', { userId, weekLabel, summary });
     const cached = getCached(cacheKey);
     if (cached) return cached;
@@ -347,7 +407,7 @@ ${summary?.injuryRiskFlag ? `Injury risk: ${sanitize(summary?.injuryRiskReason, 
 Write 1-2 sentences. Pick the most meaningful pattern in the data — something they might not have noticed themselves. Don't just summarise numbers they can already see. Sound like a coach who's been watching their training, not an automated report. Under 45 words.`;
 
     const msg = await getClient().messages.create({
-      model: 'claude-haiku-4-5',
+      model: 'frequent',
       max_tokens: 150,
       messages: [{ role: 'user', content: prompt }],
     });
@@ -421,7 +481,7 @@ Rules:
 - No markdown, no explanations, JSON only.`;
 
     const res = await getClient().messages.create({
-      model: 'claude-haiku-4-5',
+      model: 'frequent',
       max_tokens: 2600,
       messages: [{ role: 'user', content: prompt }],
     });
@@ -455,7 +515,7 @@ Exercise to substitute: ${safeName}${reasonLine}${equipmentLine}
 Find 2-3 alternative exercises that target the same primary muscle groups with a similar training stimulus. Be specific about why each is a good substitute.`;
 
     const msg = await getClient().messages.create({
-      model: 'claude-haiku-4-5',
+      model: 'frequent',
       max_tokens: 400,
       messages: [{ role: 'user', content: prompt }],
     });
@@ -508,7 +568,7 @@ Rules:
 - Be conservative with injuries. Be honest about sleep debt.`;
 
     const msg = await getClient().messages.create({
-      model: 'claude-sonnet-4-6',
+      model: 'complex',
       max_tokens: 300,
       messages: [{ role: 'user', content: prompt }],
     });
@@ -562,7 +622,7 @@ Rules:
 - Under 60 words. No headers. No bullet points.`;
 
     const msg = await getClient().messages.create({
-      model: 'claude-haiku-4-5',
+      model: 'frequent',
       max_tokens: 180,
       messages: [{ role: 'user', content: prompt }],
     });
@@ -607,7 +667,7 @@ Rules:
 - Each goal should be achievable in 4-12 weeks`;
 
     const msg = await getClient().messages.create({
-      model: 'claude-sonnet-4-6',
+      model: 'complex',
       max_tokens: 500,
       messages: [{ role: 'user', content: prompt }],
     });
