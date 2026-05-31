@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Watch } from 'lucide-react'
 import WatchDeliveryService from '../services/WatchDeliveryService'
 
-export default function WatchWorkoutSendButton({ workout, label = 'Send to Watch', className = '' }) {
+export default function WatchWorkoutSendButton({ workout, label = 'Send to Watch', className = '', compact = false }) {
   const [status, setStatus] = useState('')
   const [error, setError] = useState('')
   const [sending, setSending] = useState(false)
@@ -53,6 +53,9 @@ export default function WatchWorkoutSendButton({ workout, label = 'Send to Watch
       setSending(false)
     }
   }
+
+  if (compact && !availability.checked) return null
+  if (compact && availability.checked && !availability.available) return null
 
   return (
     <div className={className}>

@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react'
 import { ArrowDownRight, ArrowUpRight, Brain, ChevronRight, Lock, Watch, AlertTriangle } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import AgeGradedPerformanceCard from './AgeGradedPerformanceCard'
+import WatchWorkoutSendButton from './WatchWorkoutSendButton'
 import { getToken } from '../lib/tokenStore'
 
 function TrendChart({ data = [] }) {
@@ -71,7 +73,8 @@ export function ReadinessGauge({ score, onClick }) {
   )
 }
 
-export function DailyCoachFlow({ checkedInToday, readiness, recommendation, onCheckIn, onStartWorkout, onReflect, onDetails }) {
+export function DailyCoachFlow({ checkedInToday, readiness, recommendation, todayWatchWorkout, onCheckIn, onStartWorkout, onReflect, onDetails }) {
+  const { t } = useTranslation()
   const recommendationLabel = recommendation
     ? getRecommendationLabel(recommendation)
     : "today's session"
@@ -125,6 +128,14 @@ export function DailyCoachFlow({ checkedInToday, readiness, recommendation, onCh
           </button>
         ))}
       </div>
+      {todayWatchWorkout && (
+        <WatchWorkoutSendButton
+          workout={todayWatchWorkout}
+          label={t('today.sendToWatch')}
+          className="mt-2"
+          compact
+        />
+      )}
     </section>
   )
 }

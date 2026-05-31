@@ -430,6 +430,20 @@ export default function Dashboard() {
     return combined.slice(0, 4)
   }, [runs, lifts, otherActivities])
 
+  const todayWatchWorkout = useMemo(() => {
+    if (!nextRecommendation) return null
+    const hasDistance = Number(nextRecommendation.suggestedDistance || 0) > 0
+    const hasPace = Boolean(nextRecommendation.suggestedPace)
+    if (!hasDistance && !hasPace) return null
+    return {
+      typeLabel: nextRecommendation.type || 'Forge Workout',
+      distanceLabel: hasDistance ? `${nextRecommendation.suggestedDistance} mi` : '',
+      pace: nextRecommendation.suggestedPace || '',
+      progression: nextRecommendation.summary || '',
+      description: nextRecommendation.why || '',
+    }
+  }, [nextRecommendation])
+
   const showLoadWarning = loadAnalysis && ['elevated', 'high', 'danger'].includes(loadAnalysis.loadStatus) && Date.now() > loadWarningDismissedUntil
   const complianceColor = compliance?.score >= 80 ? '#22c55e' : compliance?.score >= 50 ? '#EAB308' : '#ef4444'
   const periodLabels = { day: 'Today', week: t('dashboard.thisWeek'), month: 'This Month', year: 'This Year', all: 'All Time' }
@@ -545,6 +559,7 @@ export default function Dashboard() {
         checkedInToday={checkedInToday}
         readiness={readiness}
         recommendation={nextRecommendation}
+        todayWatchWorkout={todayWatchWorkout}
         onCheckIn={() => navigate('/checkin')}
         onStartWorkout={handleStartWorkout}
         onReflect={() => navigate('/history')}

@@ -17,6 +17,9 @@
     "startRun": "Start a Run",
     "logWorkout": "Log a Workout"
   },
+  "today": {
+    "sendToWatch": "Send to Apple Watch"
+  },
   "run": {
     "warmup": "Warm-Up",
     "step": "Step",
