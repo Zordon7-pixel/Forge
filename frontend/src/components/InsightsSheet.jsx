@@ -336,9 +336,18 @@ export function TodayDetailSheet({
   onReflect,
   onOpenReadiness,
 }) {
+  const { t } = useTranslation()
   if (!open) return null
   const recommendationLabel = recommendation ? getRecommendationLabel(recommendation) : null
   const topFactors = (readinessBreakdown || []).filter((item) => item.label !== 'Base score').slice(0, 2)
+  const coachWhy = typeof recommendation?.brief?.why === 'string' ? recommendation.brief.why.trim() : ''
+  const effortTargets = [
+    { key: 'effort', label: 'Effort', value: recommendation?.brief?.effort },
+    { key: 'hr', label: 'HR', value: recommendation?.brief?.bpmRange },
+    { key: 'cadence', label: 'Cadence', value: recommendation?.brief?.cadence },
+  ]
+    .map((target) => ({ ...target, value: target.value === null || target.value === undefined ? '' : String(target.value).trim() }))
+    .filter((target) => target.value)
   const planSignals = [
     !checkedInToday ? 'Today starts with check-in data so Forge can adjust effort before you train.' : null,
     activeInjury ? `Recovery mode is active for ${activeInjury.body_part || 'your injury'}, so workouts are softened until return.` : null,
@@ -406,6 +415,40 @@ export function TodayDetailSheet({
             )}
           </div>
         </section>
+
+        {Array.isArray(recommendation?.structure) && recommendation.structure.length > 0 && (
+          <section className="mt-5">
+            <p className="text-xs font-bold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.8 }}>Workout breakdown</p>
+            <div className="mt-2 space-y-2">
+              {recommendation.structure.map((block, i) => (
+                <BlockRow key={`detail-${block.phase || 'block'}-${i}`} block={block} t={t} />
+              ))}
+            </div>
+          </section>
+        )}
+
+        {coachWhy && (
+          <section className="mt-5">
+            <p className="text-xs font-bold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.8 }}>Coach notes</p>
+            <p className="mt-2 rounded-xl p-3 text-sm italic" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', lineHeight: 1.5 }}>
+              {coachWhy}
+            </p>
+          </section>
+        )}
+
+        {effortTargets.length > 0 && (
+          <section className="mt-5">
+            <p className="text-xs font-bold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.8 }}>Effort targets</p>
+            <div className="mt-2 grid grid-cols-3 gap-2">
+              {effortTargets.map((target) => (
+                <div key={target.key} className="rounded-xl p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
+                  <p className="text-[10px] font-bold uppercase" style={{ color: 'var(--text-muted)' }}>{target.label}</p>
+                  <p className="mt-1 text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{target.value}</p>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
 
         <section className="mt-5">
           <p className="text-xs font-bold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.8 }}>Actions</p>
