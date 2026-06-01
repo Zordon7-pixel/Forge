@@ -1,8 +1,10 @@
-import React, { Suspense, lazy } from 'react'
+import React, { Suspense, lazy, useEffect, useRef } from 'react'
+import { App as CapacitorApp } from '@capacitor/app'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { isLoggedIn, getUser } from './lib/auth'
 import Layout from './components/Layout'
 import { ProProvider } from './context/ProContext'
+import HealthService from './services/HealthService'
 
 const Login = lazy(() => import('./pages/Login'))
 const Register = lazy(() => import('./pages/Register'))
@@ -37,6 +39,92 @@ const Injury = lazy(() => import('./pages/Injury'))
 const WeeklyRecap = lazy(() => import('./pages/WeeklyRecap'))
 const Upgrade = lazy(() => import('./pages/Upgrade'))
 
+const AUTO_HEALTH_SYNC_LAST_SYNC_KEY = 'forge_auto_health_sync_last_sync_at'
+const AUTO_HEALTH_SYNC_MIN_INTERVAL_MS = 30 * 60 * 1000
+const AUTO_HEALTH_SYNC_FORCE_COOLDOWN_MS = 60 * 1000
+
+function shouldAttemptSync() {
+  try {
+    const lastSyncAt = Number(localStorage.getItem(AUTO_HEALTH_SYNC_LAST_SYNC_KEY) || 0)
+    return !lastSyncAt || Date.now() - lastSyncAt >= AUTO_HEALTH_SYNC_MIN_INTERVAL_MS
+  } catch {
+    return true
+  }
+}
+
+function markSyncAttempted() {
+  try {
+    localStorage.setItem(AUTO_HEALTH_SYNC_LAST_SYNC_KEY, String(Date.now()))
+  } catch {}
+}
+
+function AutoHealthSync() {
+  const lastForegroundSyncAtRef = useRef(0)
+  const syncInFlightRef = useRef(false)
+
+  useEffect(() => {
+    let cancelled = false
+    const listenerHandles = []
+
+    const sync = async ({ force = false } = {}) => {
+      if (cancelled || syncInFlightRef.current || !isLoggedIn()) return
+
+      const now = Date.now()
+      if (force && now - lastForegroundSyncAtRef.current < AUTO_HEALTH_SYNC_FORCE_COOLDOWN_MS) return
+      if (!force && !shouldAttemptSync()) return
+
+      if (force) lastForegroundSyncAtRef.current = now
+      syncInFlightRef.current = true
+      try {
+        await HealthService.syncNativeData()
+        markSyncAttempted()
+      } catch (error) {
+        console.warn('[AutoHealthSync] sync failed:', error?.message)
+      } finally {
+        syncInFlightRef.current = false
+      }
+    }
+
+    sync()
+    const interval = window.setInterval(() => sync(), AUTO_HEALTH_SYNC_MIN_INTERVAL_MS)
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') sync({ force: true })
+    }
+    document.addEventListener('visibilitychange', handleVisibility)
+
+    try {
+      const appStateHandle = CapacitorApp.addListener('appStateChange', ({ isActive }) => {
+        if (isActive) sync({ force: true })
+      })
+      const resumeHandle = CapacitorApp.addListener('resume', () => sync({ force: true }))
+
+      Promise.all([appStateHandle, resumeHandle])
+        .then((handles) => {
+          if (cancelled) {
+            handles.forEach((handle) => handle?.remove?.())
+            return
+          }
+          listenerHandles.push(...handles)
+        })
+        .catch((error) => {
+          console.warn('[AutoHealthSync] app listener setup failed:', error?.message)
+        })
+    } catch (error) {
+      console.warn('[AutoHealthSync] app listener setup failed:', error?.message)
+    }
+
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+      document.removeEventListener('visibilitychange', handleVisibility)
+      listenerHandles.forEach((handle) => handle?.remove?.())
+    }
+  }, [])
+
+  return null
+}
+
 const PageFallback = () => (
   <div style={{
     minHeight: '100vh',
@@ -69,6 +157,7 @@ export default function App() {
   return (
     <BrowserRouter>
       <ProProvider>
+        <AutoHealthSync />
         <Suspense fallback={<PageFallback />}>
           <Routes>
         <Route path="/login" element={<Login />} />

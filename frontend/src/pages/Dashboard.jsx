@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import { App as CapacitorApp } from '@capacitor/app'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { Footprints, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -168,11 +169,39 @@ export default function Dashboard() {
 
   useEffect(() => {
     fetchDashboardData()
+    let cancelled = false
+    const listenerHandles = []
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') fetchDashboardData()
     }
     document.addEventListener('visibilitychange', handleVisibility)
-    return () => document.removeEventListener('visibilitychange', handleVisibility)
+
+    try {
+      const appStateHandle = CapacitorApp.addListener('appStateChange', ({ isActive }) => {
+        if (isActive) fetchDashboardData()
+      })
+      const resumeHandle = CapacitorApp.addListener('resume', () => fetchDashboardData())
+
+      Promise.all([appStateHandle, resumeHandle])
+        .then((handles) => {
+          if (cancelled) {
+            handles.forEach((handle) => handle?.remove?.())
+            return
+          }
+          listenerHandles.push(...handles)
+        })
+        .catch((error) => {
+          console.warn('[Dashboard] app listener setup failed:', error?.message)
+        })
+    } catch (error) {
+      console.warn('[Dashboard] app listener setup failed:', error?.message)
+    }
+
+    return () => {
+      cancelled = true
+      document.removeEventListener('visibilitychange', handleVisibility)
+      listenerHandles.forEach((handle) => handle?.remove?.())
+    }
   }, [fetchDashboardData])
 
   useEffect(() => {
