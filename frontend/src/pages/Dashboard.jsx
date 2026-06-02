@@ -66,7 +66,7 @@ export default function Dashboard() {
   const [otherActivities, setOtherActivities] = useState([]), [streakStats, setStreakStats] = useState({ currentStreak: 0, bestStreak: 0 })
   const [milestones, setMilestones] = useState([]), [milestoneUnlock, setMilestoneUnlock] = useState(null), [compliance, setCompliance] = useState(null), [showComplianceDetails, setShowComplianceDetails] = useState(false)
   const [loadAnalysis, setLoadAnalysis] = useState(null), [nextRace, setNextRace] = useState(null), [loadWarningDismissedUntil, setLoadWarningDismissedUntil] = useState(Number(localStorage.getItem('forge_load_warning_dismissed_until') || 0))
-  const [shoeAlerts, setShoeAlerts] = useState([]), [weeklyCalories, setWeeklyCalories] = useState(0)
+  const [shoes, setShoes] = useState([]), [shoeAlerts, setShoeAlerts] = useState([]), [weeklyCalories, setWeeklyCalories] = useState(0)
 
   useEffect(() => {
     const params = new URLSearchParams(location.search)
@@ -151,7 +151,9 @@ export default function Dashboard() {
         setCompliance(complianceRes.data)
         setLoadAnalysis(loadRes.data)
         setNextRace(nextRaceRes.data?.race || null)
-        setShoeAlerts((gearRes.data?.shoes || []).filter((s) => Number(s.total_miles || 0) > 450))
+        const gearShoes = gearRes.data?.shoes || []
+        setShoes(gearShoes)
+        setShoeAlerts(gearShoes.filter((s) => Number(s.total_miles || 0) > 450))
         setActiveInjury((injuryRes.data?.injuries || [])[0] || null)
         setWeeklyCalories(recapRes.data?.totalCalories || 0)
         setNextRecommendation(recommendationRes.data || null)
@@ -473,6 +475,32 @@ export default function Dashboard() {
     }
   }, [nextRecommendation])
 
+  const shoeSummary = useMemo(() => {
+    const allShoes = Array.isArray(shoes) ? shoes : []
+    const activeShoes = allShoes.filter((shoe) => !shoe.is_retired)
+    const closest = activeShoes
+      .map((shoe) => {
+        const miles = Number(shoe.total_miles || 0)
+        const recommended = Number(shoe.recommended_miles || 0)
+        return {
+          shoe,
+          miles,
+          recommended,
+          remaining: recommended > 0 ? recommended - miles : Number.POSITIVE_INFINITY,
+        }
+      })
+      .sort((a, b) => {
+        if (a.remaining !== b.remaining) return a.remaining - b.remaining
+        return b.miles - a.miles
+      })[0]
+
+    return {
+      totalCount: allShoes.length,
+      activeCount: activeShoes.length,
+      closest,
+    }
+  }, [shoes])
+
   const showLoadWarning = loadAnalysis && ['elevated', 'high', 'danger'].includes(loadAnalysis.loadStatus) && Date.now() > loadWarningDismissedUntil
   const complianceColor = compliance?.score >= 80 ? '#22c55e' : compliance?.score >= 50 ? '#EAB308' : '#ef4444'
   const periodLabels = { day: 'Today', week: t('dashboard.thisWeek'), month: 'This Month', year: 'This Year', all: 'All Time' }
@@ -676,6 +704,28 @@ export default function Dashboard() {
       )}
 
       <RecentActivityCard recentActivity={recentActivity} navigate={navigate} fmt={fmt} fmtDuration={fmtDuration} t={t} />
+
+      <button
+        type="button"
+        onClick={() => navigate('/gear')}
+        className="w-full rounded-2xl p-4 text-left"
+        style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}
+      >
+        <div className="flex items-center gap-3">
+          <span style={{ width: 40, height: 40, borderRadius: 10, background: 'rgba(148, 163, 184, 0.14)', display: 'grid', placeItems: 'center', flexShrink: 0 }}>
+            <Footprints size={20} color="#94A3B8" />
+          </span>
+          <span style={{ minWidth: 0, flex: 1 }}>
+            <span className="text-sm font-black" style={{ display: 'block' }}>Shoes</span>
+            <span className="text-xs mt-1" style={{ display: 'block', color: 'var(--text-muted)' }}>
+              {shoeSummary.totalCount === 0
+                ? 'Add your shoes'
+                : `${shoeSummary.activeCount} active${shoeSummary.closest ? ` · ${shoeSummary.closest.shoe.name || 'Shoe'} ${Math.round(shoeSummary.closest.miles)}/${shoeSummary.closest.recommended > 0 ? Math.round(shoeSummary.closest.recommended) : '--'} mi` : ''}`}
+            </span>
+          </span>
+          <span className="text-xs font-bold" style={{ color: 'var(--text-muted)' }}>Gear →</span>
+        </div>
+      </button>
 
       <button
         type="button"
