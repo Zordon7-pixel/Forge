@@ -2,6 +2,8 @@ const router = require('express').Router();
 const { v4: uuidv4 } = require('uuid');
 const { dbGet, dbAll, dbRun } = require('../db');
 const auth = require('../middleware/auth');
+const { getWeather } = require('../services/weather');
+const { recommendShoe, recommendApparel } = require('../lib/shoeRecommendation');
 
 const SHOE_CATEGORIES = ['daily_trainer', 'tempo', 'race', 'trail', 'stability'];
 
@@ -36,6 +38,59 @@ router.get('/shoes', auth, async (req, res) => {
     }));
     res.json({ shoes: result });
   } catch (err) { res.status(500).json({ error: 'Failed to fetch shoes' }); }
+});
+
+router.get('/recommendation', auth, async (req, res) => {
+  try {
+    const runType = String(req.query.run_type || 'easy').toLowerCase();
+    const hasLat = req.query.lat !== undefined && req.query.lat !== '';
+    const hasLon = req.query.lon !== undefined && req.query.lon !== '';
+    const lat = hasLat ? Number(req.query.lat) : null;
+    const lon = hasLon ? Number(req.query.lon) : null;
+
+    if ((hasLat && !Number.isFinite(lat)) || (hasLon && !Number.isFinite(lon))) {
+      return res.status(400).json({ error: 'lat and lon must be finite numbers' });
+    }
+
+    const shoes = await dbAll(
+      'SELECT * FROM gear_shoes WHERE user_id=? AND is_retired=0 AND COALESCE(is_active,1)=1 ORDER BY created_at DESC',
+      [req.user.id]
+    );
+    const shoesWithMileage = await Promise.all(shoes.map(async (shoe) => {
+      const row = await dbGet('SELECT COALESCE(SUM(distance_miles),0) as total FROM runs WHERE user_id=? AND shoe_id=?', [req.user.id, shoe.id]);
+      const totalMiles = Number(Number(row?.total || 0).toFixed(2));
+      const recommendedMiles = Number(shoe.recommended_miles || 0);
+      const pct = recommendedMiles > 0 ? Math.round((totalMiles / recommendedMiles) * 100) : 0;
+      return {
+        ...shoe,
+        total_miles: totalMiles,
+        pct_used: pct,
+        miles_remaining: Math.max(0, recommendedMiles - totalMiles),
+        alert: pct >= 80 && !shoe.is_retired,
+      };
+    }));
+
+    const weather = hasLat && hasLon
+      ? await getWeather(lat, lon)
+      : {
+          tempF: null,
+          feelsLikeF: null,
+          conditions: null,
+          windMph: null,
+          isPrecip: false,
+          available: false,
+          reason: 'Location was not provided',
+        };
+
+    res.json({
+      weather,
+      shoe: recommendShoe(shoesWithMileage, runType, weather),
+      apparel: recommendApparel(weather),
+      run_type: runType,
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to build gear recommendation' });
+  }
 });
 
 router.post('/shoes', auth, async (req, res) => {
