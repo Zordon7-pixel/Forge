@@ -75,6 +75,9 @@ export default function TodaysPickCard({ runType = 'easy' }) {
     [pick.apparel?.items]
   )
   const hasShoePick = Boolean(shoeName)
+  const notes = pick.apparel?.notes
+  const hasApparelNotes = typeof notes === 'string' || (Array.isArray(notes) && notes.length > 0)
+  const apparelNotes = Array.isArray(notes) ? notes.join(' ') : notes
 
   if (state.loading) {
     return (
@@ -175,7 +178,7 @@ export default function TodaysPickCard({ runType = 'easy' }) {
       {showWhy && (
         <div className="space-y-2 pt-2" style={{ borderTop: '1px solid var(--border-subtle)' }}>
           {pick.shoe?.reason && <p className="text-xs" style={{ color: 'var(--text-muted)', margin: 0 }}>{pick.shoe.reason}</p>}
-          {pick.apparel?.notes && <p className="text-xs" style={{ color: 'var(--text-muted)', margin: 0 }}>{pick.apparel.notes}</p>}
+          {hasApparelNotes && <p className="text-xs" style={{ color: 'var(--text-muted)', margin: 0 }}>{apparelNotes}</p>}
         </div>
       )}
     </section>
