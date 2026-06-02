@@ -5,6 +5,7 @@ import { Footprints, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import AchievementUnlock from '../components/AchievementUnlock'
 import InsightsSheet, { CalendarDayDetailSheet, DailyCoachFlow, ReadinessBreakdownModal, ReadinessGauge, RecentActivityCard, TodayDetailSheet, WatchSyncWidget } from '../components/InsightsSheet'
+import TodaysPickCard from '../components/TodaysPickCard'
 import { useUnits } from '../context/UnitsContext'
 import api from '../lib/api'
 import LoadingRunner from '../components/LoadingRunner'
@@ -43,6 +44,15 @@ function getRecommendationLabel(recommendation) {
   return recommendation
     ? String(recommendation.recommendationType || "today's session").replace('_', ' ')
     : "today's session"
+}
+
+function getRecommendationRunType(recommendation) {
+  const rawType = String(recommendation?.recommendationType || recommendation?.type || '').toLowerCase()
+  if (rawType.includes('race')) return 'race'
+  if (rawType.includes('long')) return 'long'
+  if (rawType.includes('interval') || rawType.includes('speed') || rawType.includes('track')) return 'intervals'
+  if (rawType.includes('tempo') || rawType.includes('threshold')) return 'tempo'
+  return 'easy'
 }
 
 function getWeekKey() {
@@ -503,6 +513,7 @@ export default function Dashboard() {
 
   const showLoadWarning = loadAnalysis && ['elevated', 'high', 'danger'].includes(loadAnalysis.loadStatus) && Date.now() > loadWarningDismissedUntil
   const complianceColor = compliance?.score >= 80 ? '#22c55e' : compliance?.score >= 50 ? '#EAB308' : '#ef4444'
+  const todaysPickRunType = getRecommendationRunType(nextRecommendation)
   const periodLabels = { day: 'Today', week: t('dashboard.thisWeek'), month: 'This Month', year: 'This Year', all: 'All Time' }
   const injuryDismissed = injuryBannerDismissed || (activeInjury && activeInjury.id && localStorage.getItem(`forge-injury-dismissed-${activeInjury.id}`) === '1')
   const handleWatchSyncPayload = useCallback((payload) => {
@@ -645,6 +656,8 @@ export default function Dashboard() {
           setShowReadinessModal(true)
         }}
       />
+
+      <TodaysPickCard runType={todaysPickRunType} />
 
       {/* Readiness */}
       <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>
