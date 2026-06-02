@@ -3,6 +3,8 @@ const { v4: uuidv4 } = require('uuid');
 const { dbGet, dbAll, dbRun } = require('../db');
 const auth = require('../middleware/auth');
 
+const SHOE_CATEGORIES = ['daily_trainer', 'tempo', 'race', 'trail', 'stability'];
+
 const RECOMMENDED_MILES = {
   'vaporfly': 200, 'alphafly': 200, 'adios pro': 225, 'metaspeed': 225,
   'endorphin pro': 225, 'hyperion elite': 225, 'fuelcel sc elite': 225,
@@ -38,13 +40,17 @@ router.get('/shoes', auth, async (req, res) => {
 
 router.post('/shoes', auth, async (req, res) => {
   try {
-    const { brand, model, nickname, color, purchase_date } = req.body;
+    const { brand, model, nickname, color, purchase_date, category } = req.body;
     if (!brand || !model) return res.status(400).json({ error: 'brand and model required' });
+    if (category !== undefined && !SHOE_CATEGORIES.includes(category)) {
+      return res.status(400).json({ error: 'Invalid shoe category' });
+    }
     const recommended_miles = getRecommendedMiles(brand, model);
+    const shoeCategory = category || 'daily_trainer';
     const id = uuidv4();
     await dbRun(
-      'INSERT INTO gear_shoes (id, user_id, brand, model, nickname, color, purchase_date, recommended_miles) VALUES (?,?,?,?,?,?,?,?)',
-      [id, req.user.id, brand, model, nickname||null, color||null, purchase_date||null, recommended_miles]
+      'INSERT INTO gear_shoes (id, user_id, brand, model, nickname, color, purchase_date, category, recommended_miles) VALUES (?,?,?,?,?,?,?,?,?)',
+      [id, req.user.id, brand, model, nickname||null, color||null, purchase_date||null, shoeCategory, recommended_miles]
     );
     const shoe = await dbGet('SELECT * FROM gear_shoes WHERE id=?', [id]);
     res.status(201).json({ ...shoe, total_miles: 0, pct_used: 0, miles_remaining: recommended_miles, alert: false });
@@ -55,7 +61,10 @@ router.patch('/shoes/:id', auth, async (req, res) => {
   try {
     const shoe = await dbGet('SELECT * FROM gear_shoes WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
     if (!shoe) return res.status(404).json({ error: 'Not found' });
-    const allowed = ['nickname', 'color', 'purchase_date', 'recommended_miles', 'is_retired'];
+    if (req.body.category !== undefined && !SHOE_CATEGORIES.includes(req.body.category)) {
+      return res.status(400).json({ error: 'Invalid shoe category' });
+    }
+    const allowed = ['nickname', 'color', 'purchase_date', 'recommended_miles', 'is_retired', 'category'];
     const updates = Object.entries(req.body).filter(([k]) => allowed.includes(k));
     if (!updates.length) return res.status(400).json({ error: 'Nothing to update' });
     await dbRun(

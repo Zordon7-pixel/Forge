@@ -295,12 +295,14 @@ async function initDb() {
         nickname TEXT,
         color TEXT,
         purchase_date TEXT,
+        category TEXT DEFAULT 'daily_trainer',
         recommended_miles INTEGER DEFAULT 450,
         is_retired INTEGER DEFAULT 0,
         is_active INTEGER DEFAULT 1,
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
     `);
+    await client.query("ALTER TABLE gear_shoes ADD COLUMN IF NOT EXISTS category TEXT DEFAULT 'daily_trainer'");
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS lifts (

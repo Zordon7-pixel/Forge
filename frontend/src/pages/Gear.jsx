@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Package, Plus, X, AlertTriangle } from 'lucide-react'
+import { Package, Plus, X, AlertTriangle, Pencil } from 'lucide-react'
 import api from '../lib/api'
 import LoadingRunner from '../components/LoadingRunner'
 
@@ -18,6 +18,16 @@ const SHOE_BRANDS = {
   'Other': [],
 }
 
+const SHOE_CATEGORIES = [
+  { value: 'daily_trainer', label: 'Daily Trainer' },
+  { value: 'tempo', label: 'Tempo' },
+  { value: 'race', label: 'Race' },
+  { value: 'trail', label: 'Trail' },
+  { value: 'stability', label: 'Stability' },
+]
+
+const getCategoryLabel = (value) => SHOE_CATEGORIES.find(category => category.value === value)?.label || 'Daily Trainer'
+
 export default function Gear() {
   const [shoes, setShoes] = useState([])
   const [loading, setLoading] = useState(true)
@@ -28,7 +38,11 @@ export default function Gear() {
   const [nickname, setNickname] = useState('')
   const [color, setColor] = useState('')
   const [purchaseDate, setPurchaseDate] = useState('')
+  const [category, setCategory] = useState('daily_trainer')
+  const [editingShoe, setEditingShoe] = useState(null)
+  const [editCategory, setEditCategory] = useState('daily_trainer')
   const [adding, setAdding] = useState(false)
+  const [savingEdit, setSavingEdit] = useState(false)
 
   const load = async (retired = false) => {
     setLoading(true)
@@ -44,11 +58,26 @@ export default function Gear() {
     if (!brand || !model) return
     setAdding(true)
     try {
-      await api.post('/gear/shoes', { brand, model, nickname, color, purchase_date: purchaseDate })
-      setBrand(''); setModel(''); setNickname(''); setColor(''); setPurchaseDate('')
+      await api.post('/gear/shoes', { brand, model, nickname, color, purchase_date: purchaseDate, category })
+      setBrand(''); setModel(''); setNickname(''); setColor(''); setPurchaseDate(''); setCategory('daily_trainer')
       setShowAdd(false)
       load(showRetired)
     } finally { setAdding(false) }
+  }
+
+  const startEdit = (shoe) => {
+    setEditingShoe(shoe)
+    setEditCategory(shoe.category || 'daily_trainer')
+  }
+
+  const saveEdit = async () => {
+    if (!editingShoe) return
+    setSavingEdit(true)
+    try {
+      await api.patch(`/gear/shoes/${editingShoe.id}`, { category: editCategory })
+      setEditingShoe(null)
+      load(showRetired)
+    } finally { setSavingEdit(false) }
   }
 
   const retire = async (id) => {
@@ -108,6 +137,9 @@ export default function Gear() {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <div>
                   <p style={{ fontSize: 16, fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>{shoe.brand} {shoe.model}</p>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', marginTop: 6, padding: '3px 8px', borderRadius: 999, background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)', fontSize: 11, fontWeight: 700 }}>
+                    {getCategoryLabel(shoe.category)}
+                  </span>
                   {shoe.nickname && <p style={{ fontSize: 12, color: 'var(--accent)', margin: '2px 0 0' }}>{shoe.nickname}</p>}
                   {shoe.purchase_date && <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '2px 0 0' }}>Since {new Date(shoe.purchase_date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</p>}
                 </div>
@@ -126,6 +158,7 @@ export default function Gear() {
                 {miles < 500 ? `~${Math.max(0, Math.round(500 - miles))} miles remaining` : 'Over threshold'}
               </p>
               <div style={{ display: 'flex', gap: 8 }}>
+                <button onClick={() => startEdit(shoe)} aria-label="Edit shoe" title="Edit shoe" style={{ fontSize: 12, padding: '6px 12px', borderRadius: 8, background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}><Pencil size={13} /> Edit</button>
                 <button onClick={() => retire(shoe.id)} style={{ fontSize: 12, padding: '6px 12px', borderRadius: 8, background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)', cursor: 'pointer' }}>Retire</button>
                 <button onClick={() => remove(shoe.id)} style={{ fontSize: 12, padding: '6px 12px', borderRadius: 8, background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', color: '#ef4444', cursor: 'pointer' }}>Delete</button>
               </div>
@@ -179,8 +212,39 @@ export default function Gear() {
                 <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '0 0 4px' }}>Purchase Date (optional)</p>
                 <input type="date" value={purchaseDate} onChange={e => setPurchaseDate(e.target.value)} style={{ width: '100%', padding: '10px 12px', borderRadius: 10, background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', fontSize: 14, boxSizing: 'border-box' }} />
               </div>
+              <div>
+                <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '0 0 4px' }}>Category</p>
+                <select value={category} onChange={e => setCategory(e.target.value)} style={{ width: '100%', padding: '10px 12px', borderRadius: 10, background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', fontSize: 14 }}>
+                  {SHOE_CATEGORIES.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
+              </div>
               <button onClick={addShoe} disabled={adding || !brand || !model} style={{ padding: '12px 0', borderRadius: 12, background: '#EAB308', color: '#000', border: 'none', fontSize: 15, fontWeight: 700, cursor: 'pointer', opacity: (!brand || !model) ? 0.5 : 1 }}>
                 {adding ? 'Adding...' : 'Add Shoe'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {editingShoe && (
+        <div onClick={() => setEditingShoe(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 50, display: 'flex', alignItems: 'flex-end' }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: 'var(--bg-card)', borderRadius: '20px 20px 0 0', padding: 24, width: '100%' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+              <div>
+                <p style={{ fontSize: 18, fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>Edit Shoe</p>
+                <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '2px 0 0' }}>{editingShoe.brand} {editingShoe.model}</p>
+              </div>
+              <button onClick={() => setEditingShoe(null)} style={{ background: 'var(--bg-input)', border: 'none', borderRadius: 8, padding: '6px 12px', color: 'var(--text-muted)', cursor: 'pointer' }}><X size={16} /></button>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div>
+                <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '0 0 4px' }}>Category</p>
+                <select value={editCategory} onChange={e => setEditCategory(e.target.value)} style={{ width: '100%', padding: '10px 12px', borderRadius: 10, background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', fontSize: 14 }}>
+                  {SHOE_CATEGORIES.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
+              </div>
+              <button onClick={saveEdit} disabled={savingEdit} style={{ padding: '12px 0', borderRadius: 12, background: '#EAB308', color: '#000', border: 'none', fontSize: 15, fontWeight: 700, cursor: 'pointer', opacity: savingEdit ? 0.6 : 1 }}>
+                {savingEdit ? 'Saving...' : 'Save Shoe'}
               </button>
             </div>
           </div>
