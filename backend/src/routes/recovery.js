@@ -2,6 +2,7 @@ const router = require('express').Router();
 const { dbAll, dbGet } = require('../db');
 const auth = require('../middleware/auth');
 const { requirePremium } = require('../middleware/premiumGate');
+const { buildHealthSignals, buildReadinessBand } = require('../lib/healthSignals');
 
 // ── Score normalization helpers ──────────────────────────────────────────────
 // Each provider has different scales. We normalize everything to 0-100.
@@ -251,6 +252,60 @@ router.get('/unified', auth, requirePremium('Full recovery dashboard'), async (r
     });
   } catch (err) {
     return res.status(500).json({ error: 'Failed to fetch unified recovery data' });
+  }
+});
+
+// ── GET /recovery/readiness ─────────────────────────────────────────────────
+// Compact dashboard readiness card (Premium only)
+router.get('/readiness', auth, requirePremium('Recovery readiness'), async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const today = new Date();
+    const start7d = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const start28d = new Date(today.getTime() - 28 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+    const [healthRow, load7d, load28d] = await Promise.all([
+      dbGet('SELECT * FROM health_sync WHERE user_id = ?', [userId]).catch(() => null),
+      dbGet(
+        `SELECT COALESCE(SUM(distance_miles), 0) as miles
+         FROM runs
+         WHERE user_id = ? AND date >= ?`,
+        [userId, start7d]
+      ).catch(() => ({ miles: 0 })),
+      dbGet(
+        `SELECT COALESCE(SUM(distance_miles), 0) as miles
+         FROM runs
+         WHERE user_id = ? AND date >= ?`,
+        [userId, start28d]
+      ).catch(() => ({ miles: 0 })),
+    ]);
+
+    const signals = buildHealthSignals({
+      ...(healthRow || {}),
+      acute_load_7d: load7d?.miles,
+      chronic_load_28d: load28d?.miles,
+    });
+
+    if (!signals.available) {
+      return res.json({
+        available: false,
+        score: null,
+        band: null,
+        verdict: null,
+        drivers: [],
+      });
+    }
+
+    const { band, verdict } = buildReadinessBand(signals.readinessScore);
+    return res.json({
+      available: true,
+      score: signals.readinessScore,
+      band,
+      verdict,
+      drivers: signals.flags.slice(0, 2).map((flag) => flag.reason).filter(Boolean),
+    });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to fetch recovery readiness' });
   }
 });
 

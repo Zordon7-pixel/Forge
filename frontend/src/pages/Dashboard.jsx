@@ -4,7 +4,8 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { Footprints, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import AchievementUnlock from '../components/AchievementUnlock'
-import InsightsSheet, { CalendarDayDetailSheet, DailyCoachFlow, ReadinessBreakdownModal, ReadinessGauge, RecentActivityCard, TodayDetailSheet, WatchSyncWidget } from '../components/InsightsSheet'
+import InsightsSheet, { CalendarDayDetailSheet, DailyCoachFlow, ReadinessBreakdownModal, RecentActivityCard, TodayDetailSheet, WatchSyncWidget } from '../components/InsightsSheet'
+import ReadinessCard from '../components/ReadinessCard'
 import TodaysPickCard from '../components/TodaysPickCard'
 import { useUnits } from '../context/UnitsContext'
 import api from '../lib/api'
@@ -657,23 +658,13 @@ export default function Dashboard() {
         }}
       />
 
+      <ReadinessCard onOpenDetail={() => setShowReadinessModal(true)} />
       <TodaysPickCard runType={todaysPickRunType} />
 
-      {/* Readiness */}
-      <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>
-        {readiness === null ? (
-          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Complete your daily check-in or sync Apple Health to unlock your Readiness score</p>
-        ) : (
-          <>
-            <ReadinessGauge score={readiness} onClick={() => setShowReadinessModal(true)} />
-            <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>
-              Based on Apple Health, weekly load, soreness, and energy levels{(checkinData?.sleep_hours || healthSync.metrics?.sleepHoursLastNight) ? ` · Sleep: ${checkinData?.sleep_hours || Number(healthSync.metrics?.sleepHoursLastNight).toFixed(1)}h` : ''}
-            </p>
-          </>
-        )}
+      <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
         {dailySteps !== null && (
-          <div className="mt-3 pt-3" style={{ borderTop: '1px solid var(--border-subtle)' }}>
-            <p className="text-xs flex items-center gap-2" style={{ color: 'var(--text-muted)' }}>
+          <div>
+            <p className="text-xs flex items-center gap-2" style={{ color: 'var(--text-muted)', margin: 0 }}>
               <Footprints size={14} />
               <span>
                 <strong style={{ color: 'var(--text-primary)' }}>{Number(dailySteps).toLocaleString()} steps</strong>
@@ -681,6 +672,9 @@ export default function Dashboard() {
               </span>
             </p>
           </div>
+        )}
+        {dailySteps === null && (
+          <p className="text-sm" style={{ color: 'var(--text-muted)', margin: 0 }}>Sync Apple Health to show today&apos;s steps.</p>
         )}
       </div>
 

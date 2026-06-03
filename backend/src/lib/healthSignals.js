@@ -20,6 +20,20 @@ function hasHealthData(row = {}) {
   ].some((key) => row?.[key] !== null && row?.[key] !== undefined);
 }
 
+function buildReadinessBand(score) {
+  const value = Number(score);
+  if (value >= 70) return { band: 'GREEN', verdict: 'READY' };
+  if (value >= 45) return { band: 'AMBER', verdict: 'EASY' };
+  return { band: 'RED', verdict: 'REST' };
+}
+
+function computeAcuteChronicRatio(row = {}) {
+  const acuteLoad = toNumber(row.acute_load_7d ?? row.total_miles_7d ?? row.total_miles_this_week);
+  const chronicLoad = toNumber(row.chronic_load_28d ?? row.total_miles_28d);
+  if (acuteLoad === null || chronicLoad === null || acuteLoad <= 0 || chronicLoad <= 0) return null;
+  return round(acuteLoad / (chronicLoad / 4), 2);
+}
+
 function buildHealthSignals(row = {}) {
   if (!hasHealthData(row)) {
     return {
@@ -40,6 +54,7 @@ function buildHealthSignals(row = {}) {
   const miles = toNumber(row.total_miles_this_week);
   const lastWorkoutSeconds = toNumber(row.last_workout_duration_seconds);
   const lastWorkoutType = row.last_workout_type || null;
+  const acuteChronicRatio = computeAcuteChronicRatio(row);
 
   let scoreDelta = 0;
   const flags = [];
@@ -99,10 +114,15 @@ function buildHealthSignals(row = {}) {
     flags.push({ key: 'long_last_workout', severity: 'medium', label: `${Math.round(lastWorkoutSeconds / 60)} min last workout`, reason: 'The last workout was long enough to affect recovery.' });
   }
 
+  if (acuteChronicRatio !== null && acuteChronicRatio > 1.5) {
+    flags.push({ key: 'load_spike', severity: 'low', label: `${acuteChronicRatio}:1 load ratio`, reason: 'Recent run load is spiking above your 28-day baseline.' });
+  }
+
   const highFlags = flags.filter((flag) => flag.severity === 'high').length;
+  const cautionFlags = flags.filter((flag) => flag.severity !== 'low').length;
   let recoveryState = 'normal';
   if (highFlags >= 2 || scoreDelta <= -24) recoveryState = 'recovery';
-  else if (flags.length > 0 || scoreDelta <= -8) recoveryState = 'caution';
+  else if (cautionFlags > 0 || scoreDelta <= -8) recoveryState = 'caution';
   else if (scoreDelta >= 10) recoveryState = 'strong';
 
   const readinessScore = Math.max(1, Math.min(99, Math.round(70 + scoreDelta)));
@@ -128,6 +148,7 @@ function buildHealthSignals(row = {}) {
       activeMinutesThisWeek: activeMinutes,
       workoutCountThisWeek: workoutCount,
       totalMilesThisWeek: miles,
+      acuteChronicLoadRatio: acuteChronicRatio,
       lastWorkoutType,
       lastWorkoutDurationSeconds: lastWorkoutSeconds,
     },
@@ -142,5 +163,7 @@ function applyHealthDelta(baseScore, signals) {
 
 module.exports = {
   buildHealthSignals,
+  buildReadinessBand,
+  computeAcuteChronicRatio,
   applyHealthDelta,
 };
