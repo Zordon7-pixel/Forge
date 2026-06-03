@@ -61,42 +61,52 @@ const PHOTO_DEMOS = [
   {
     match: (lower) => lower.includes('hip circle'),
     src: '/stretches/hip-circles.png',
+    cropToSex: true,
   },
   {
     match: (lower) => lower.includes('high knee'),
     src: '/stretches/high-knees.png',
+    cropToSex: true,
   },
   {
     match: (lower) => lower.includes('butt kick'),
     src: '/stretches/butt-kicks.png',
+    cropToSex: true,
   },
   {
     match: (lower) => lower.includes('ankle roll'),
     src: '/stretches/ankle-rolls.png',
+    cropToSex: true,
   },
   {
     match: (lower) => lower.includes('walking lunge') || lower === 'lunges' || lower.includes('lunge'),
     src: '/stretches/walking-lunges.png',
+    cropToSex: true,
   },
   {
     match: (lower) => lower.includes('standing quad') || lower.includes('quad stretch'),
     src: '/stretches/standing-quad.png',
+    cropToSex: true,
   },
   {
     match: (lower) => lower.includes('hamstring stretch'),
     src: '/stretches/hamstring-stretch.png',
+    cropToSex: true,
   },
   {
     match: (lower) => lower.includes('calf stretch'),
     src: '/stretches/calf-stretch.png',
+    cropToSex: true,
   },
   {
     match: (lower) => lower.includes('figure four') || lower.includes('figure-4') || lower.includes('piriformis'),
     src: '/stretches/figure-four.png',
+    cropToSex: true,
   },
   {
     match: (lower) => lower.includes("child's pose") || lower.includes('childs pose'),
     src: '/stretches/childs-pose.png',
+    cropToSex: true,
   },
 ]
 
@@ -419,9 +429,12 @@ function normalizeSex(sex) {
   return String(sex || '').toLowerCase() === 'female' ? 'female' : 'male'
 }
 
-function getPhotoSource(photoDemo, sex) {
-  if (!photoDemo) return null
-  return photoDemo.src || photoDemo?.[normalizeSex(sex)] || photoDemo?.male
+function getPhotoConfig(photoDemo, sex) {
+  if (!photoDemo) return { src: '', cropToSex: false }
+  const normalizedSex = normalizeSex(sex)
+  if (photoDemo?.[normalizedSex]) return { src: photoDemo[normalizedSex], cropToSex: false }
+  if (photoDemo.src) return { src: photoDemo.src, cropToSex: Boolean(photoDemo.cropToSex) }
+  return { src: photoDemo?.male || '', cropToSex: false }
 }
 
 function isLocalFormAsset(src = '') {
@@ -434,7 +447,13 @@ export default function MovementDemo({ name, label, compact = false, sex = 'male
   const lower = String(title || '').toLowerCase()
   const photoDemo = PHOTO_DEMOS.find((demo) => demo.match(lower))
   const providedImage = isLocalFormAsset(imageUrl) ? imageUrl : ''
-  const photoSrc = providedImage || getPhotoSource(photoDemo, sex)
+  const normalizedSex = normalizeSex(sex)
+  const providedImageNeedsCrop = providedImage.startsWith('/stretches/') && !providedImage.includes('-male') && !providedImage.includes('-female')
+  const photoConfig = providedImage
+    ? { src: providedImage, cropToSex: providedImageNeedsCrop }
+    : getPhotoConfig(photoDemo, sex)
+  const photoSrc = photoConfig.src
+  const shouldCropToSex = Boolean(photoConfig.cropToSex)
   return (
     <div
       style={{
@@ -449,17 +468,26 @@ export default function MovementDemo({ name, label, compact = false, sex = 'male
     >
       {photoSrc ? (
         <div style={{ position: 'relative', borderRadius: 16, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.08)', marginBottom: 10, aspectRatio: '4 / 3', background: '#050505' }}>
-          <img src={photoSrc} alt={`${title} demonstration`} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+          <img
+            src={photoSrc}
+            alt={`${title} demonstration`}
+            style={shouldCropToSex
+              ? {
+                  position: 'absolute',
+                  top: 0,
+                  bottom: 0,
+                  left: normalizedSex === 'female' ? 0 : 'auto',
+                  right: normalizedSex === 'male' ? 0 : 'auto',
+                  width: '178%',
+                  maxWidth: 'none',
+                  height: '100%',
+                  objectFit: 'cover',
+                  objectPosition: normalizedSex === 'female' ? 'left center' : 'right center',
+                  display: 'block',
+                }
+              : { width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+          />
           <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(0,0,0,0.10), rgba(0,0,0,0.34))', pointerEvents: 'none' }} />
-          <svg viewBox="0 0 240 180" aria-hidden="true" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}>
-            <defs>
-              <marker id={`arrow-${kind}`} markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto" markerUnits="strokeWidth">
-                <path d="M0,0 L0,6 L7,3 z" fill={ACCENT} />
-              </marker>
-            </defs>
-            <path d="M 78 130 C 112 88, 146 88, 174 54" fill="none" stroke={ACCENT} strokeWidth="5" strokeLinecap="round" strokeDasharray="10 8" markerEnd={`url(#arrow-${kind})`} opacity="0.95" />
-            <path d="M 60 140 C 82 118, 106 110, 128 102" fill="none" stroke="rgba(255,255,255,0.82)" strokeWidth="3" strokeLinecap="round" opacity="0.8" />
-          </svg>
           <div style={{ position: 'absolute', left: 12, top: 10, display: 'inline-flex', alignItems: 'center', gap: 6, borderRadius: 999, padding: '5px 9px', background: 'rgba(0,0,0,0.58)', color: ACCENT, fontSize: 10, fontWeight: 900, letterSpacing: 1.2 }}>
             <span style={{ width: 7, height: 7, borderRadius: 999, background: ACCENT }} />
             FORM IMAGE
