@@ -99,13 +99,14 @@ export default function Dashboard() {
   const [nextRecommendation, setNextRecommendation] = useState(null)
   const [ageGradedPerformance, setAgeGradedPerformance] = useState(null)
   const [healthSync, setHealthSync] = useState({ loading: true, available: false, reason: null, metrics: null })
+  const [readinessState, setReadinessState] = useState({ loading: true, error: false, locked: false, data: null })
   const [healthSyncNotice, setHealthSyncNotice] = useState('')
   const { isOnline, queueCount } = useOnlineStatus()
   const { isPro, loading: proLoading } = useProContext()
 
   const fetchDashboardData = useCallback(async () => {
     try {
-        const [statsRes, runsRes, liftsRes, warningRes, checkinRes, goalRes, streakRes, milestoneRes, complianceRes, loadRes, nextRaceRes, gearRes, injuryRes, recapRes, recommendationRes, ageGradedRes] = await Promise.all([
+        const [statsRes, runsRes, liftsRes, warningRes, checkinRes, goalRes, streakRes, milestoneRes, complianceRes, loadRes, nextRaceRes, gearRes, injuryRes, recapRes, recommendationRes, ageGradedRes, readinessRes] = await Promise.all([
           api.get('/auth/me/stats'),
           api.get('/runs', { params: { limit: 5 } }),
           api.get('/lifts'),
@@ -122,7 +123,15 @@ export default function Dashboard() {
           api.get('/recap/weekly').catch(() => ({ data: null })),
           api.get('/runs/next-recommendation').catch(() => ({ data: null })),
           api.get('/runs/age-graded-performance').catch(() => ({ data: null })),
+          api.get('/recovery/readiness').catch((error) => ({ error })),
         ])
+        if (readinessRes.error?.response?.status === 402) {
+          setReadinessState({ loading: false, error: false, locked: true, data: null })
+        } else if (readinessRes.error) {
+          setReadinessState({ loading: false, error: true, locked: false, data: null })
+        } else {
+          setReadinessState({ loading: false, error: false, locked: false, data: readinessRes.data || null })
+        }
         setStats(statsRes.data)
         const runsList = Array.isArray(runsRes.data) ? runsRes.data : runsRes.data?.runs || []
         setRuns(runsList)
@@ -658,7 +667,7 @@ export default function Dashboard() {
         }}
       />
 
-      <ReadinessCard onOpenDetail={() => setShowReadinessModal(true)} />
+      <ReadinessCard readinessState={readinessState} onOpenDetail={() => setShowReadinessModal(true)} />
       <TodaysPickCard runType={todaysPickRunType} />
 
       <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
@@ -792,8 +801,7 @@ export default function Dashboard() {
       <ReadinessBreakdownModal
         open={showReadinessModal}
         onClose={() => setShowReadinessModal(false)}
-        readiness={readiness}
-        readinessBreakdown={readinessBreakdown}
+        readinessData={readinessState.data}
       />
     </div>
   )

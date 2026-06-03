@@ -45,6 +45,7 @@ const SOURCE_WEIGHTS = {
   oura_sleep: 0.5,
   apple_health_sleep: 0.4,
 };
+const FLAG_SEVERITY_RANK = { high: 3, medium: 2, low: 1 };
 
 // ── GET /recovery/unified ────────────────────────────────────────────────────
 // Full unified recovery dashboard (Premium only)
@@ -297,14 +298,18 @@ router.get('/readiness', auth, requirePremium('Recovery readiness'), async (req,
     }
 
     const { band, verdict } = buildReadinessBand(signals.readinessScore);
+    const topFlags = [...signals.flags]
+      .sort((a, b) => (FLAG_SEVERITY_RANK[b.severity] || 0) - (FLAG_SEVERITY_RANK[a.severity] || 0))
+      .slice(0, 2);
     return res.json({
       available: true,
       score: signals.readinessScore,
       band,
       verdict,
-      drivers: signals.flags.slice(0, 2).map((flag) => flag.reason).filter(Boolean),
+      drivers: topFlags.map((flag) => flag.reason).filter(Boolean),
     });
   } catch (err) {
+    console.error('[recovery/readiness] failed:', err.message);
     return res.status(500).json({ error: 'Failed to fetch recovery readiness' });
   }
 });

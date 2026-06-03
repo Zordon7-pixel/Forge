@@ -632,8 +632,24 @@ export function CalendarDayDetailSheet({ selectedCalendarDay, onClose, fmtDurati
   )
 }
 
-export function ReadinessBreakdownModal({ open, onClose, readiness, readinessBreakdown }) {
+function getReadinessBandColor(band) {
+  if (band === 'GREEN') return 'var(--accent)'
+  if (band === 'AMBER') return 'color-mix(in srgb, var(--accent) 78%, orange)'
+  if (band === 'RED') return 'color-mix(in srgb, var(--text-primary) 28%, red)'
+  return 'var(--text-muted)'
+}
+
+export function ReadinessBreakdownModal({ open, onClose, readinessData }) {
   if (!open) return null
+
+  const score = Number(readinessData?.score || 0)
+  const hasReadinessScore = readinessData?.available && readinessData?.score !== null && readinessData?.score !== undefined
+  const drivers = !hasReadinessScore
+    ? ['Sync Health data to unlock today\'s readiness drivers.']
+    : Array.isArray(readinessData?.drivers) && readinessData.drivers.length
+    ? readinessData.drivers
+    : ['Recovery signals look steady.']
+  const bandColor = getReadinessBandColor(readinessData?.band)
 
   return (
     <div
@@ -647,23 +663,21 @@ export function ReadinessBreakdownModal({ open, onClose, readiness, readinessBre
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
           <div>
             <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>Readiness</p>
-            <p style={{ fontSize: 28, fontWeight: 900, color: 'var(--accent)' }}>{readiness} <span style={{ fontSize: 14, fontWeight: 400, color: 'var(--text-muted)' }}>/ 100</span></p>
-            <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 2 }}>{readiness >= 80 ? 'Go hard today.' : readiness >= 60 ? 'Moderate effort — push but listen to your body.' : readiness >= 40 ? 'Take it easy — a recovery run or rest day is smart.' : 'Rest today. Your body is telling you something.'}</p>
+            <p style={{ fontSize: 28, fontWeight: 900, color: bandColor }}>
+              {hasReadinessScore ? (
+                <>{score} <span style={{ fontSize: 14, fontWeight: 400, color: 'var(--text-muted)' }}>/ 100</span></>
+              ) : 'Readiness unavailable'}
+            </p>
+            <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 2 }}>{hasReadinessScore ? readinessData.verdict : 'Sync Health data to unlock today\'s readiness score.'}</p>
           </div>
           <button onClick={onClose} style={{ background: 'var(--bg-input)', border: 'none', borderRadius: 10, padding: '8px 14px', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 13 }}>Close</button>
         </div>
 
-        <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 12 }}>Score Breakdown</p>
+        <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 12 }}>Readiness Drivers</p>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {readinessBreakdown.map((f, i) => (
+          {drivers.map((driver, i) => (
             <div key={i} style={{ background: 'var(--bg-base)', borderRadius: 12, padding: 14 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                <p style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{f.label}</p>
-                <p style={{ fontSize: 13, fontWeight: 700, color: f.delta > 0 ? '#22c55e' : f.delta < 0 ? '#ef4444' : 'var(--text-muted)' }}>
-                  {f.delta > 0 ? `+${f.delta}` : f.delta < 0 ? `${f.delta}` : `${f.value}`}
-                </p>
-              </div>
-              <p style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>{f.reason}</p>
+              <p style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>{driver}</p>
             </div>
           ))}
         </div>

@@ -1,5 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
-import api from '../lib/api'
+import { useMemo } from 'react'
 
 const RADIUS = 42
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS
@@ -11,37 +10,12 @@ function getBandColor(band) {
   return 'var(--text-muted)'
 }
 
-export default function ReadinessCard({ onOpenDetail }) {
-  const [state, setState] = useState({ loading: true, error: false, locked: false, data: null })
-
-  useEffect(() => {
-    let cancelled = false
-
-    async function loadReadiness() {
-      setState({ loading: true, error: false, locked: false, data: null })
-      try {
-        const res = await api.get('/recovery/readiness')
-        if (!cancelled) setState({ loading: false, error: false, locked: false, data: res.data || null })
-      } catch (error) {
-        if (cancelled) return
-        if (error?.response?.status === 402) {
-          setState({ loading: false, error: false, locked: true, data: null })
-        } else {
-          setState({ loading: false, error: true, locked: false, data: null })
-        }
-      }
-    }
-
-    loadReadiness()
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
+export default function ReadinessCard({ onOpenDetail, readinessState }) {
+  const state = readinessState || { loading: true, error: false, locked: false, data: null }
   const readiness = state.data || {}
   const score = Number(readiness.score || 0)
   const bandColor = getBandColor(readiness.band)
-  const ringColor = 'var(--accent)'
+  const ringColor = bandColor
   const dashOffset = useMemo(() => CIRCUMFERENCE - (Math.max(0, Math.min(score, 100)) / 100) * CIRCUMFERENCE, [score])
   const drivers = Array.isArray(readiness.drivers) && readiness.drivers.length
     ? readiness.drivers.slice(0, 2).join(' ')

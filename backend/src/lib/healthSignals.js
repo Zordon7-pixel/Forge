@@ -115,7 +115,9 @@ function buildHealthSignals(row = {}) {
   }
 
   if (acuteChronicRatio !== null && acuteChronicRatio > 1.5) {
-    flags.push({ key: 'load_spike', severity: 'low', label: `${acuteChronicRatio}:1 load ratio`, reason: 'Recent run load is spiking above your 28-day baseline.' });
+    const loadSpikeDelta = acuteChronicRatio > 1.8 ? -10 : -6;
+    scoreDelta += loadSpikeDelta;
+    flags.push({ key: 'load_spike', severity: acuteChronicRatio > 1.8 ? 'medium' : 'low', label: `${acuteChronicRatio}:1 load ratio`, reason: 'Recent run load is spiking above your 28-day baseline.' });
   }
 
   const highFlags = flags.filter((flag) => flag.severity === 'high').length;
