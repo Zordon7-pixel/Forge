@@ -45,11 +45,11 @@ async function getActivePlanForUser(userId) {
   return dbGet('SELECT * FROM training_plans WHERE user_id = ? ORDER BY created_at DESC LIMIT 1', [userId]);
 }
 
-function describeAdjustment(action, patch) {
+function describeAdjustment(action, patch, hasWorkoutToday = false) {
   if (!patch || Object.keys(patch).length === 0) {
-    return action === 'keep'
-      ? 'Check-in saved. Today\'s workout stays as planned.'
-      : 'Check-in saved. No active workout was found to override today.';
+    if (!hasWorkoutToday) return 'Check-in saved. No active workout was found to override today.';
+    if (action === 'shorten') return 'Check-in saved. Today\'s workout stays as planned because there was no distance or duration to shorten.';
+    return 'Check-in saved. Today\'s workout stays as planned.';
   }
   if (action === 'rest') return 'Check-in saved. Today\'s workout is now a rest day.';
   if (action === 'recovery_swap') return 'Check-in saved. Today\'s workout is now a recovery session.';
@@ -93,7 +93,7 @@ router.post('/', auth, async (req, res) => {
     );
 
     const feelingLabels = ['', 'Exhausted', 'Tired', 'Okay', 'Good', 'Great'];
-    const adjustment = describeAdjustment(action, patch);
+    const adjustment = describeAdjustment(action, patch, Boolean(todayDay));
 
     const readiness_delta = parsedSleep !== null
       ? parsedSleep < 6 ? -12 : parsedSleep >= 8 ? 5 : 0

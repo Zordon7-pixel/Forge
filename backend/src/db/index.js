@@ -732,11 +732,11 @@ async function initDb() {
     await client.query(`
       CREATE TABLE IF NOT EXISTS checkin_overrides (
         id TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         date TEXT NOT NULL,
         action TEXT NOT NULL,
         patch_json TEXT DEFAULT '{}',
-        created_at TIMESTAMPTZ DEFAULT NOW(),
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(user_id, date)
       );
     `);
