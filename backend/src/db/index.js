@@ -730,6 +730,18 @@ async function initDb() {
     await client.query('ALTER TABLE daily_checkins ADD COLUMN IF NOT EXISTS sleep_hours REAL');
 
     await client.query(`
+      CREATE TABLE IF NOT EXISTS checkin_overrides (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        date TEXT NOT NULL,
+        action TEXT NOT NULL,
+        patch_json TEXT DEFAULT '{}',
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(user_id, date)
+      );
+    `);
+
+    await client.query(`
       CREATE TABLE IF NOT EXISTS community_workouts (
         id TEXT PRIMARY KEY,
         user_id TEXT NOT NULL,

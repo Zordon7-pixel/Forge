@@ -5,6 +5,7 @@ const { checkAiLimit } = require('../middleware/aiLimit');
 const { v4: uuidv4 } = require('uuid');
 const { generateTrainingPlan, generateRaceAdjustment } = require('../services/ai');
 const { buildHealthSignals } = require('../lib/healthSignals');
+const { applyOverride } = require('../lib/checkinOverride');
 
 function getDayShort() {
   return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date().getDay()];
@@ -495,8 +496,25 @@ router.get('/today', auth, async (req, res) => {
     const active = await getActivePlanForUser(req.user.id);
     if (!active) return res.json({ today: null });
     const parsed = parsePlan(active.row);
-    res.json({ today: normalizeTodayEntry(parsed) });
-  } catch (err) { res.status(500).json({ error: 'Failed to fetch today' }); }
+    const today = new Date().toISOString().slice(0, 10);
+    const baseDay = normalizeTodayEntry(parsed);
+    const override = await dbGet(
+      'SELECT patch_json FROM checkin_overrides WHERE user_id=? AND date=?',
+      [req.user.id, today]
+    );
+    let patch = null;
+    if (override?.patch_json) {
+      try {
+        patch = typeof override.patch_json === 'string' ? JSON.parse(override.patch_json) : override.patch_json;
+      } catch (err) {
+        console.error('[plans] Failed to parse check-in override patch:', err);
+      }
+    }
+    res.json({ today: patch ? applyOverride(baseDay, patch) : baseDay });
+  } catch (err) {
+    console.error('[plans] GET today failed:', err);
+    res.status(500).json({ error: 'Failed to fetch today' });
+  }
 });
 
 router.get('/current', auth, async (req, res) => {

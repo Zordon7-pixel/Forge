@@ -2,6 +2,20 @@ const pg = require('./postgres');
 const fs = require('fs');
 const path = require('path');
 
+async function runAlwaysMigrations() {
+  await pg.query(`
+    CREATE TABLE IF NOT EXISTS checkin_overrides (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      date TEXT NOT NULL,
+      action TEXT NOT NULL,
+      patch_json TEXT DEFAULT '{}',
+      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(user_id, date)
+    )
+  `);
+}
+
 /**
  * Run all migrations idempotently
  * Creates migrations table if it doesn't exist, then runs schema SQL
@@ -29,6 +43,7 @@ async function runMigrations() {
     );
 
     if (existing) {
+      await runAlwaysMigrations();
       console.log('✅ Migrations already applied. Schema is up-to-date.');
       return;
     }
@@ -43,6 +58,8 @@ async function runMigrations() {
     for (const statement of statements) {
       await pg.query(statement);
     }
+
+    await runAlwaysMigrations();
 
     // Record the migration as completed
     await pg.query(
