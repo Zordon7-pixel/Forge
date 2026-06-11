@@ -67,32 +67,51 @@ function describeAdjustment(action, patch, hasWorkoutToday = false) {
   return 'Check-in saved. Today\'s workout stays as planned.';
 }
 
-function validateCheckinPayload(body = {}) {
+function validateCheckinPayload(body = {}, options = {}) {
+  const partial = Boolean(options.partial);
   const hasLegs = body.legs !== null && body.legs !== undefined && body.legs !== '';
   const hasDrive = body.drive !== null && body.drive !== undefined && body.drive !== '';
   const legs = hasLegs ? Number(body.legs) : null;
   const drive = hasDrive ? Number(body.drive) : null;
+  const hasInvalidLegs = hasLegs && (!Number.isInteger(legs) || legs < 1 || legs > 3);
+  const hasInvalidDrive = hasDrive && (!Number.isInteger(drive) || drive < 1 || drive > 3);
   const hasValidAxes = Number.isInteger(legs) && legs >= 1 && legs <= 3
     && Number.isInteger(drive) && drive >= 1 && drive <= 3;
 
-  let feeling = Number(body.feeling);
+  const hasFeeling = body.feeling !== null && body.feeling !== undefined && body.feeling !== '';
+  let feeling = hasFeeling ? Number(body.feeling) : null;
   const hasValidFeeling = Number.isInteger(feeling) && feeling >= 1 && feeling <= 5;
+  let incomplete = false;
+
+  if (hasInvalidLegs || hasInvalidDrive) {
+    return { error: 'Legs and drive must both be whole numbers from 1 to 3.' };
+  }
 
   if (hasLegs || hasDrive) {
     if (!hasValidAxes) {
-      return { error: 'Legs and drive must both be whole numbers from 1 to 3.' };
+      if (partial) incomplete = true;
+      else return { error: 'Legs and drive must both be whole numbers from 1 to 3.' };
+    } else {
+      feeling = deriveFeelingFromAxes(legs, drive);
     }
-    feeling = deriveFeelingFromAxes(legs, drive);
   } else if (!hasValidFeeling) {
-    return { error: 'Check-in requires legs and drive from 1 to 3, or a legacy feeling from 1 to 5.' };
+    if (partial && !hasFeeling) incomplete = true;
+    else {
+      return { error: 'Check-in requires legs and drive from 1 to 3, or a legacy feeling from 1 to 5.' };
+    }
   }
 
-  const timeAvailable = Number(body.time_available);
-  if (!Number.isInteger(timeAvailable) || timeAvailable <= 0) {
+  const hasTimeAvailable = body.time_available !== null && body.time_available !== undefined && body.time_available !== '';
+  const timeAvailable = hasTimeAvailable ? Number(body.time_available) : 60;
+  if (hasTimeAvailable) {
+    if (!Number.isInteger(timeAvailable) || timeAvailable <= 0) {
+      return { error: 'Time available must be a positive whole number of minutes.' };
+    }
+    if (timeAvailable > 1440) {
+      return { error: 'Time available must be no more than 1440 minutes.' };
+    }
+  } else if (!partial) {
     return { error: 'Time available must be a positive whole number of minutes.' };
-  }
-  if (timeAvailable > 1440) {
-    return { error: 'Time available must be no more than 1440 minutes.' };
   }
 
   const sleepHours = body.sleep_hours === null || body.sleep_hours === undefined || body.sleep_hours === ''
@@ -101,6 +120,8 @@ function validateCheckinPayload(body = {}) {
   if (sleepHours !== null && (!Number.isFinite(sleepHours) || sleepHours < 0 || sleepHours > 24)) {
     return { error: 'Sleep hours must be between 0 and 24, or left blank.' };
   }
+
+  if (incomplete) return { incomplete: true };
 
   return {
     value: {
@@ -111,6 +132,37 @@ function validateCheckinPayload(body = {}) {
       sleep_hours: sleepHours,
       life_flags: Array.isArray(body.life_flags) ? body.life_flags.filter(flag => ALLOWED_LIFE_FLAGS.has(flag)) : [],
     },
+  };
+}
+
+async function computeCheckinDirective(userId, checkinInput) {
+  const checkin = {
+    feeling: checkinInput.feeling,
+    legs: checkinInput.legs,
+    drive: checkinInput.drive,
+    time_available: checkinInput.time_available,
+    sleep_hours: checkinInput.sleep_hours,
+    life_flags: checkinInput.life_flags,
+  };
+  const action = deriveAction(checkin);
+  const activePlan = await getActivePlanForUser(userId);
+  const todayDay = activePlan ? normalizeTodayEntry(parsePlan(activePlan)) : null;
+  const patch = buildPatch(action, todayDay, checkin);
+  const readiness_delta = checkin.sleep_hours !== null
+    ? checkin.sleep_hours < 6 ? -12 : checkin.sleep_hours >= 8 ? 5 : 0
+    : 0;
+  const directive = buildDirective(checkin, action, patch, Boolean(todayDay), readiness_delta);
+  const feelingLabels = ['', 'Exhausted', 'Tired', 'Okay', 'Good', 'Great'];
+  const adjustment = directive.headline || describeAdjustment(action, patch, Boolean(todayDay));
+
+  return {
+    adjustment,
+    headline: directive.headline,
+    drivers: directive.drivers,
+    action,
+    patch,
+    feeling: feelingLabels[checkin.feeling] || 'Noted',
+    readiness_delta,
   };
 }
 
@@ -137,11 +189,14 @@ router.post('/', auth, async (req, res) => {
       );
     }
 
-    const checkin = { feeling, legs, drive, time_available, sleep_hours: parsedSleep, life_flags };
-    const action = deriveAction(checkin);
-    const activePlan = await getActivePlanForUser(req.user.id);
-    const todayDay = activePlan ? normalizeTodayEntry(parsePlan(activePlan)) : null;
-    const patch = buildPatch(action, todayDay, checkin);
+    const directive = await computeCheckinDirective(req.user.id, {
+      feeling,
+      legs,
+      drive,
+      time_available,
+      sleep_hours: parsedSleep,
+      life_flags,
+    });
     const overrideId = require('crypto').randomBytes(8).toString('hex');
 
     await dbRun(
@@ -150,28 +205,44 @@ router.post('/', auth, async (req, res) => {
        ON CONFLICT (user_id, date) DO UPDATE SET
          action = excluded.action,
          patch_json = excluded.patch_json`,
-      [overrideId, req.user.id, today, action, JSON.stringify(patch)]
+      [overrideId, req.user.id, today, directive.action, JSON.stringify(directive.patch)]
     );
-
-    const readiness_delta = parsedSleep !== null
-      ? parsedSleep < 6 ? -12 : parsedSleep >= 8 ? 5 : 0
-      : 0;
-    const directive = buildDirective(checkin, action, patch, Boolean(todayDay), readiness_delta);
-    const feelingLabels = ['', 'Exhausted', 'Tired', 'Okay', 'Good', 'Great'];
-    const adjustment = directive.headline || describeAdjustment(action, patch, Boolean(todayDay));
 
     res.json({
       ok: true,
-      adjustment,
+      adjustment: directive.adjustment,
       headline: directive.headline,
       drivers: directive.drivers,
-      action,
-      feeling: feelingLabels[feeling] || 'Noted',
-      readiness_delta,
+      action: directive.action,
+      feeling: directive.feeling,
+      readiness_delta: directive.readiness_delta,
     });
   } catch (err) {
     console.error('[checkin] POST failed:', err);
     res.status(500).json({ error: 'Check-in failed' });
+  }
+});
+
+router.post('/preview', auth, async (req, res) => {
+  try {
+    const validation = validateCheckinPayload(req.body, { partial: true });
+    if (validation.error) {
+      return res.status(400).json({ error: validation.error });
+    }
+    if (validation.incomplete) {
+      return res.json({ headline: null, adjustment: null, drivers: [] });
+    }
+
+    const directive = await computeCheckinDirective(req.user.id, validation.value);
+
+    res.json({
+      headline: directive.headline,
+      adjustment: directive.adjustment,
+      drivers: directive.drivers,
+    });
+  } catch (err) {
+    console.error('[checkin] PREVIEW failed:', err);
+    res.status(500).json({ error: 'Check-in preview failed' });
   }
 });
 
