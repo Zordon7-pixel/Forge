@@ -128,7 +128,7 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
         }
 
         group.enter()
-        averageQuantity(.heartRateVariabilitySDNN, unit: HKUnit.secondUnit(with: .milli), startDate: weekStart, endDate: now) { value in
+        averageHRV(startDate: weekStart, endDate: now) { value in
             hrv = value
             group.leave()
         }
@@ -185,6 +185,33 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
         healthStore.execute(query)
     }
 
+    private func averageHRV(startDate: Date, endDate: Date, completion: @escaping (Double?) -> Void) {
+        let unit = HKUnit.secondUnit(with: .milli)
+        averageQuantity(.heartRateVariabilitySDNN, unit: unit, startDate: startDate, endDate: endDate) { value in
+            guard value == nil else {
+                completion(value)
+                return
+            }
+
+            self.fetchMostRecentQuantity(.heartRateVariabilitySDNN, unit: unit, startDate: startDate, endDate: endDate, completion: completion)
+        }
+    }
+
+    private func fetchMostRecentQuantity(_ identifier: HKQuantityTypeIdentifier, unit: HKUnit, startDate: Date, endDate: Date, completion: @escaping (Double?) -> Void) {
+        guard let type = HKQuantityType.quantityType(forIdentifier: identifier) else {
+            completion(nil)
+            return
+        }
+
+        let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: .strictStartDate)
+        let sort = NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: false)
+        let query = HKSampleQuery(sampleType: type, predicate: predicate, limit: 1, sortDescriptors: [sort]) { _, samples, _ in
+            let sample = (samples as? [HKQuantitySample])?.first
+            completion(sample?.quantity.doubleValue(for: unit))
+        }
+        healthStore.execute(query)
+    }
+
     private func fetchSleepHours(startDate: Date, endDate: Date, completion: @escaping (Double) -> Void) {
         guard let type = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) else {
             completion(0)
@@ -192,16 +219,84 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
         }
 
         let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: .strictStartDate)
-        let query = HKSampleQuery(sampleType: type, predicate: predicate, limit: 100, sortDescriptors: nil) { _, samples, _ in
-            let sleepSeconds = (samples as? [HKCategorySample] ?? []).reduce(0.0) { sum, sample in
-                if self.isAsleep(sample.value) {
-                    return sum + sample.endDate.timeIntervalSince(sample.startDate)
-                }
-                return sum
-            }
+        let sort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)
+        let query = HKSampleQuery(sampleType: type, predicate: predicate, limit: 100, sortDescriptors: [sort]) { _, samples, _ in
+            let intervals = (samples as? [HKCategorySample] ?? [])
+                .filter { self.isAsleep($0.value) }
+                .map { SleepInterval(start: $0.startDate, end: $0.endDate) }
+            let sleepSeconds = self.mergedSleepSecondsForMostRecentSession(intervals)
             completion(sleepSeconds / 3600.0)
         }
         healthStore.execute(query)
+    }
+
+    private struct SleepInterval {
+        let start: Date
+        let end: Date
+    }
+
+    private func mergedSleepSecondsForMostRecentSession(_ intervals: [SleepInterval]) -> Double {
+        let sorted = intervals
+            .filter { $0.end > $0.start }
+            .sorted { $0.start < $1.start }
+        guard !sorted.isEmpty else {
+            return 0
+        }
+
+        let sessionGap: TimeInterval = 3 * 60 * 60
+        var sessions: [[SleepInterval]] = []
+        var currentSession: [SleepInterval] = []
+        var latestEndInSession: Date?
+
+        for interval in sorted {
+            if let latestEnd = latestEndInSession, interval.start.timeIntervalSince(latestEnd) > sessionGap {
+                sessions.append(currentSession)
+                currentSession = [interval]
+                latestEndInSession = interval.end
+                continue
+            }
+
+            currentSession.append(interval)
+            if let latestEnd = latestEndInSession {
+                latestEndInSession = max(latestEnd, interval.end)
+            } else {
+                latestEndInSession = interval.end
+            }
+        }
+
+        if !currentSession.isEmpty {
+            sessions.append(currentSession)
+        }
+
+        guard let latestSession = sessions.last else {
+            return 0
+        }
+
+        let mergedSeconds = mergeSleepIntervals(latestSession).reduce(0.0) { sum, interval in
+            sum + interval.end.timeIntervalSince(interval.start)
+        }
+        return min(max(mergedSeconds, 0), 12 * 60 * 60)
+    }
+
+    private func mergeSleepIntervals(_ intervals: [SleepInterval]) -> [SleepInterval] {
+        let sorted = intervals.sorted { $0.start < $1.start }
+        var merged: [SleepInterval] = []
+
+        for interval in sorted {
+            guard let last = merged.last else {
+                merged.append(interval)
+                continue
+            }
+
+            if interval.start <= last.end {
+                let end = max(last.end, interval.end)
+                merged[merged.count - 1] = SleepInterval(start: last.start, end: end)
+            } else {
+                merged.append(interval)
+            }
+        }
+
+        return merged
     }
 
     private func isAsleep(_ value: Int) -> Bool {
