@@ -48,6 +48,11 @@ const SOURCE_WEIGHTS = {
 };
 const FLAG_SEVERITY_RANK = { high: 3, medium: 2, low: 1 };
 
+function logReadinessQueryFailure(query, err, fallback) {
+  console.warn('[recovery/readiness] query failed:', query, err?.message || err);
+  return fallback;
+}
+
 // ── GET /recovery/unified ────────────────────────────────────────────────────
 // Full unified recovery dashboard (Premium only)
 router.get('/unified', auth, requirePremium('Full recovery dashboard'), async (req, res) => {
@@ -269,31 +274,34 @@ router.get('/readiness', auth, requirePremium('Recovery readiness'), async (req,
     const todayStr = today.toISOString().slice(0, 10);
 
     const [healthRow, load7d, load28d, userRow, recentRuns, checkinRow] = await Promise.all([
-      dbGet('SELECT * FROM health_sync WHERE user_id = ?', [userId]).catch(() => null),
+      dbGet('SELECT * FROM health_sync WHERE user_id = ?', [userId])
+        .catch((err) => logReadinessQueryFailure('SELECT * FROM health_sync WHERE user_id = ?', err, null)),
       dbGet(
         `SELECT COALESCE(SUM(distance_miles), 0) as miles
          FROM runs
          WHERE user_id = ? AND date >= ?`,
         [userId, start7d]
-      ).catch(() => ({ miles: 0 })),
+      ).catch((err) => logReadinessQueryFailure('SELECT COALESCE(SUM(distance_miles), 0) as miles FROM runs WHERE user_id = ? AND date >= ?', err, { miles: 0 })),
       dbGet(
         `SELECT COALESCE(SUM(distance_miles), 0) as miles
          FROM runs
          WHERE user_id = ? AND date >= ?`,
         [userId, start28d]
-      ).catch(() => ({ miles: 0 })),
-      dbGet('SELECT max_heart_rate FROM users WHERE id = ?', [userId]).catch(() => null),
+      ).catch((err) => logReadinessQueryFailure('SELECT COALESCE(SUM(distance_miles), 0) as miles FROM runs WHERE user_id = ? AND date >= ?', err, { miles: 0 })),
+      dbGet('SELECT max_heart_rate FROM users WHERE id = ?', [userId])
+        .catch((err) => logReadinessQueryFailure('SELECT max_heart_rate FROM users WHERE id = ?', err, null)),
       dbAll(
-        `SELECT avg_heart_rate, max_heart_rate, heart_rate_zones, pace_avg, distance_miles, date, created_at
+        `SELECT avg_heart_rate, max_heart_rate, heart_rate_zones, pace_avg, distance_miles, date, created_at,
+                type, watch_activity_type, watch_normalized_type
          FROM runs
          WHERE user_id = ? AND date >= ?
          ORDER BY date DESC, created_at DESC`,
         [userId, start42d]
-      ).catch(() => []),
+      ).catch((err) => logReadinessQueryFailure('SELECT avg_heart_rate, max_heart_rate, heart_rate_zones, pace_avg, distance_miles, date, created_at, type, watch_activity_type, watch_normalized_type FROM runs WHERE user_id = ? AND date >= ? ORDER BY date DESC, created_at DESC', err, [])),
       dbGet(
         'SELECT feeling, sleep_hours, life_flags FROM daily_checkins WHERE user_id = ? AND checkin_date = ?',
         [userId, todayStr]
-      ).catch(() => null),
+      ).catch((err) => logReadinessQueryFailure('SELECT feeling, sleep_hours, life_flags FROM daily_checkins WHERE user_id = ? AND checkin_date = ?', err, null)),
     ]);
 
     const runHistory = analyzeRunHistory(recentRuns || [], userRow?.max_heart_rate, { now: today });
@@ -305,6 +313,7 @@ router.get('/readiness', auth, requirePremium('Recovery readiness'), async (req,
       subjective_sleep_hours: checkinRow?.sleep_hours,
       life_flags: checkinRow?.life_flags,
       run_zone_drift_count: runHistory?.available ? runHistory.driftCount : null,
+      run_zone_drift_intent_known: runHistory?.available ? runHistory.hasRunIntent : null,
     });
 
     if (!signals.available) {

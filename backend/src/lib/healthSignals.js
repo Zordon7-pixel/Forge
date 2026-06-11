@@ -1,4 +1,6 @@
 function toNumber(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'string' && value.trim() === '') return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
@@ -8,20 +10,32 @@ function round(value, decimals = 1) {
   return Math.round(value * factor) / factor;
 }
 
+function parseLifeFlags(value) {
+  if (Array.isArray(value)) return value;
+  if (typeof value !== 'string' || value.trim() === '') return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
 function hasHealthData(row = {}) {
-  return [
+  const numericKeys = [
     'sleep_hours_last_night',
     'subjective_sleep_hours',
     'subjective_feeling',
-    'life_flags',
-    'run_zone_drift_count',
     'hrv_ms',
     'resting_heart_rate',
     'active_minutes_this_week',
     'workout_count_this_week',
     'total_miles_this_week',
     'last_workout_duration_seconds',
-  ].some((key) => row?.[key] !== null && row?.[key] !== undefined);
+  ];
+
+  return numericKeys.some((key) => toNumber(row?.[key]) !== null)
+    || parseLifeFlags(row.life_flags).length > 0;
 }
 
 function buildReadinessBand(score) {
@@ -62,16 +76,7 @@ function buildHealthSignals(row = {}) {
   const acuteChronicRatio = computeAcuteChronicRatio(row);
   const subjectiveFeeling = toNumber(row.subjective_feeling);
   const runZoneDriftCount = toNumber(row.run_zone_drift_count);
-  const lifeFlags = Array.isArray(row.life_flags)
-    ? row.life_flags
-    : (() => {
-      try {
-        const parsed = typeof row.life_flags === 'string' ? JSON.parse(row.life_flags) : [];
-        return Array.isArray(parsed) ? parsed : [];
-      } catch {
-        return [];
-      }
-    })();
+  const lifeFlags = parseLifeFlags(row.life_flags);
 
   let scoreDelta = 0;
   const flags = [];
@@ -172,7 +177,9 @@ function buildHealthSignals(row = {}) {
       key: 'zone_drift',
       severity: runZoneDriftCount >= 5 ? 'medium' : 'low',
       label: `${runZoneDriftCount} Z3+ recent runs`,
-      reason: 'Recent aerobic/base runs are drifting into Z3 or higher.',
+      reason: row.run_zone_drift_intent_known === false
+        ? 'Recent runs are frequently Z3 or higher.'
+        : 'Recent aerobic/base runs are drifting into Z3 or higher.',
     });
   }
 

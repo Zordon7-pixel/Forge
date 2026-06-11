@@ -1,4 +1,6 @@
 function toNumber(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'string' && value.trim() === '') return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
@@ -30,7 +32,7 @@ function computeHrZones(maxHr) {
 function classifyRunZone(avgHr, maxHr) {
   const avg = toNumber(avgHr);
   const max = toNumber(maxHr);
-  if (avg === null || max === null || max <= 0) return null;
+  if (avg === null || avg <= 0 || max === null || max <= 0) return null;
 
   const pct = avg / max;
   if (pct < 0.5) return 'below_z1';
@@ -46,6 +48,33 @@ function buildEmptyDistribution() {
     acc[zone] = { count: 0, percent: 0 };
     return acc;
   }, {});
+}
+
+function getRunIntent(run = {}) {
+  return String(
+    run.workout_type
+    || run.type
+    || run.run_type
+    || run.watch_normalized_type
+    || run.watch_activity_type
+    || ''
+  ).trim().toLowerCase();
+}
+
+function isIntentionalHardRun(run = {}) {
+  const intent = getRunIntent(run);
+  return /\b(tempo|intervals?|speed|races?|workouts?)\b/.test(intent);
+}
+
+function hasRunIntent(run = {}) {
+  return getRunIntent(run).length > 0;
+}
+
+function isEasyAerobicRun(run = {}) {
+  const intent = getRunIntent(run);
+  if (!intent) return false;
+  if (isIntentionalHardRun(run)) return false;
+  return /\b(easy|aerobic|base|recovery|long|run)\b/.test(intent);
 }
 
 function analyzeRunHistory(runs = [], maxHr, opts = {}) {
@@ -87,12 +116,14 @@ function analyzeRunHistory(runs = [], maxHr, opts = {}) {
   let weeklyMiles = 0;
   let chronicMiles = 0;
   let driftCount = 0;
+  let hasAnyRunIntent = false;
 
   for (const run of history) {
     const runDate = getRunDate(run);
     const miles = toNumber(run.distance_miles) || 0;
     const isRecent = runDate ? runDate >= recentCutoff : false;
     const isChronic = runDate ? runDate >= chronicCutoff : true;
+    if (hasRunIntent(run)) hasAnyRunIntent = true;
 
     if (isRecent) weeklyMiles += miles;
     if (isChronic) chronicMiles += miles;
@@ -100,12 +131,13 @@ function analyzeRunHistory(runs = [], maxHr, opts = {}) {
     const zone = classifyRunZone(run.avg_heart_rate, maxHr) || 'unknown';
     distribution[zone].count += 1;
     if (zone !== 'unknown') classifiedCount += 1;
-    if (isRecent && ['Z3', 'Z4', 'Z5'].includes(zone)) driftCount += 1;
+    if (isRecent && isEasyAerobicRun(run) && ['Z3', 'Z4', 'Z5'].includes(zone)) driftCount += 1;
   }
 
-  const total = history.length;
   for (const zone of Object.keys(distribution)) {
-    distribution[zone].percent = total > 0 ? round((distribution[zone].count / total) * 100, 1) : 0;
+    distribution[zone].percent = zone !== 'unknown' && classifiedCount > 0
+      ? round((distribution[zone].count / classifiedCount) * 100, 1)
+      : 0;
   }
 
   const acuteChronicMiles = chronicMiles > 0
@@ -121,6 +153,8 @@ function analyzeRunHistory(runs = [], maxHr, opts = {}) {
   }
   if (driftCount >= 3) {
     notes.push(`${driftCount} recent runs drifted into Z3 or higher against a Z2 base target.`);
+  } else if (!hasAnyRunIntent && distribution.Z3.count + distribution.Z4.count + distribution.Z5.count > 0) {
+    notes.push('Recent runs are frequently Z3 or higher.');
   } else if (classifiedCount > 0) {
     notes.push('Recent intensity distribution is not showing repeated Z2 drift.');
   }
@@ -131,6 +165,7 @@ function analyzeRunHistory(runs = [], maxHr, opts = {}) {
     zoneDistribution: distribution,
     acuteChronicMiles,
     driftCount,
+    hasRunIntent: hasAnyRunIntent,
     notes,
     zones,
   };
