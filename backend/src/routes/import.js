@@ -39,6 +39,11 @@ function normalizeZoneSeconds(value) {
   }, {});
 }
 
+function normalizeHeartRate(value) {
+  const bpm = asNumber(value, null);
+  return bpm >= 30 && bpm <= 250 ? bpm : null;
+}
+
 function classifyType(rawType = '') {
   const value = String(rawType || '').toLowerCase().trim();
   if (value.includes('strength') || value.includes('lift') || value.includes('weight') || value.includes('resistance')) {
@@ -58,8 +63,8 @@ function normalizeRow(raw = {}) {
   const type = classifyType(raw.type || raw.activityType || raw['Activity Type']);
   const distanceMiles = Number(asNumber(raw.distanceMiles || raw.distance_miles || raw.distance || 0, 0).toFixed(3));
   const durationSeconds = Math.max(0, Math.round(asNumber(raw.durationSeconds || raw.duration_seconds || raw.duration || raw.elapsedTime || 0, 0)));
-  const avgHeartRate = asNumber(raw.avgHR || raw.avgHeartRate || raw.avg_heart_rate || raw.average_heart_rate || raw['Average Heart Rate'] || null, null);
-  const maxHeartRate = asNumber(raw.maxHR || raw.maxHeartRate || raw.max_heart_rate || raw.maximum_heart_rate || raw['Max Heart Rate'] || null, null);
+  const avgHeartRate = normalizeHeartRate(raw.avgHR || raw.avgHeartRate || raw.avg_heart_rate || raw.average_heart_rate || raw['Average Heart Rate'] || null);
+  const maxHeartRate = normalizeHeartRate(raw.maxHR || raw.maxHeartRate || raw.max_heart_rate || raw.maximum_heart_rate || raw['Max Heart Rate'] || null);
   const zoneSeconds = normalizeZoneSeconds(raw.zoneSeconds || raw.zone_seconds || raw.heart_rate_zones);
   const source = String(raw.source || 'imported').slice(0, 40);
   return { date, startDate, endDate, ...type, distanceMiles, durationSeconds, avgHeartRate, maxHeartRate, zoneSeconds, source, raw };
@@ -127,11 +132,15 @@ async function insertRun(userId, item) {
 }
 
 async function updateExistingRunHealth(userId, runId, item) {
+  const normalizedZones = item.zoneSeconds || normalizeZoneSeconds();
+  const totalZoneSeconds = ['z1', 'z2', 'z3', 'z4', 'z5'].reduce((sum, zone) => sum + asNumber(normalizedZones[zone], 0), 0);
+  const zoneParam = totalZoneSeconds > 0 ? JSON.stringify(normalizedZones) : null;
+
   await dbRun(
     `UPDATE runs SET
       avg_heart_rate = COALESCE(?, avg_heart_rate),
       max_heart_rate = COALESCE(?, max_heart_rate),
-      heart_rate_zones = CASE WHEN ? != '{}' THEN ? ELSE heart_rate_zones END,
+      heart_rate_zones = COALESCE(?, heart_rate_zones),
       health_source = COALESCE(?, health_source),
       health_start_at = COALESCE(?, health_start_at),
       health_end_at = COALESCE(?, health_end_at)
@@ -139,8 +148,7 @@ async function updateExistingRunHealth(userId, runId, item) {
     [
       item.avgHeartRate,
       item.maxHeartRate,
-      JSON.stringify(item.zoneSeconds),
-      JSON.stringify(item.zoneSeconds),
+      zoneParam,
       item.source,
       item.startDate,
       item.endDate,

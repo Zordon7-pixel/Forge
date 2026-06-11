@@ -3,6 +3,7 @@ import api from '../lib/api'
 
 const IOS_UA_REGEX = /iP(ad|hone|od)/i
 const NATIVE_HEALTH_AUTH_KEY = 'forge_health_authorized'
+const HEALTH_RESYNC_NEEDED_KEY = 'forge.health.resyncNeeded'
 const ForgeHealth = registerPlugin('ForgeHealth')
 
 function isIOSDevice() {
@@ -51,6 +52,26 @@ function hasNativeAuthorizationHint() {
 function markNativeAuthorized() {
   try {
     localStorage.setItem(NATIVE_HEALTH_AUTH_KEY, '1')
+  } catch {}
+}
+
+function healthResyncNeeded() {
+  try {
+    return localStorage.getItem(HEALTH_RESYNC_NEEDED_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+function markHealthResyncNeeded() {
+  try {
+    localStorage.setItem(HEALTH_RESYNC_NEEDED_KEY, '1')
+  } catch {}
+}
+
+function clearHealthResyncNeeded() {
+  try {
+    localStorage.removeItem(HEALTH_RESYNC_NEEDED_KEY)
   } catch {}
 }
 
@@ -203,12 +224,19 @@ class HealthService {
     }
 
     const profile = await this.syncToProfile(result.metrics)
-    const history = await this.getWorkoutHistory()
+    const historyOptions = healthResyncNeeded() ? { forceFullSync: true } : {}
+    const history = await this.getWorkoutHistory(historyOptions)
     const workouts = history.available && history.workouts.length > 0 ? history.workouts : result.workouts
     let importResult = { imported: 0, skipped: 0, errors: [] }
     if (Array.isArray(workouts) && workouts.length > 0) {
-      const { data } = await api.post('/import/health', { workouts })
-      importResult = data || importResult
+      try {
+        const { data } = await api.post('/import/health', { workouts })
+        importResult = data || importResult
+        clearHealthResyncNeeded()
+      } catch (error) {
+        markHealthResyncNeeded()
+        throw error
+      }
     }
 
     return {
