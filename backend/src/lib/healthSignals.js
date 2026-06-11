@@ -11,6 +11,10 @@ function round(value, decimals = 1) {
 function hasHealthData(row = {}) {
   return [
     'sleep_hours_last_night',
+    'subjective_sleep_hours',
+    'subjective_feeling',
+    'life_flags',
+    'run_zone_drift_count',
     'hrv_ms',
     'resting_heart_rate',
     'active_minutes_this_week',
@@ -46,7 +50,8 @@ function buildHealthSignals(row = {}) {
     };
   }
 
-  const sleep = toNumber(row.sleep_hours_last_night);
+  const subjectiveSleep = toNumber(row.subjective_sleep_hours);
+  const sleep = subjectiveSleep !== null ? subjectiveSleep : toNumber(row.sleep_hours_last_night);
   const hrv = toNumber(row.hrv_ms);
   const restingHr = toNumber(row.resting_heart_rate);
   const activeMinutes = toNumber(row.active_minutes_this_week);
@@ -55,22 +60,62 @@ function buildHealthSignals(row = {}) {
   const lastWorkoutSeconds = toNumber(row.last_workout_duration_seconds);
   const lastWorkoutType = row.last_workout_type || null;
   const acuteChronicRatio = computeAcuteChronicRatio(row);
+  const subjectiveFeeling = toNumber(row.subjective_feeling);
+  const runZoneDriftCount = toNumber(row.run_zone_drift_count);
+  const lifeFlags = Array.isArray(row.life_flags)
+    ? row.life_flags
+    : (() => {
+      try {
+        const parsed = typeof row.life_flags === 'string' ? JSON.parse(row.life_flags) : [];
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    })();
 
   let scoreDelta = 0;
   const flags = [];
   const positives = [];
 
   if (sleep !== null) {
+    const sleepKeyPrefix = subjectiveSleep !== null ? 'checkin_' : '';
+    const sleepSource = subjectiveSleep !== null ? 'Check-in sleep' : 'Sleep';
     if (sleep < 5.5) {
       scoreDelta -= 20;
-      flags.push({ key: 'low_sleep', severity: 'high', label: `${round(sleep)}h sleep`, reason: 'Sleep was very low last night.' });
+      flags.push({ key: `${sleepKeyPrefix}low_sleep`, severity: 'high', label: `${round(sleep)}h sleep`, reason: `${sleepSource} was very low last night.` });
     } else if (sleep < 6.5) {
       scoreDelta -= 10;
-      flags.push({ key: 'short_sleep', severity: 'medium', label: `${round(sleep)}h sleep`, reason: 'Sleep is below the recovery target.' });
+      flags.push({ key: `${sleepKeyPrefix}short_sleep`, severity: 'medium', label: `${round(sleep)}h sleep`, reason: `${sleepSource} is below the recovery target.` });
     } else if (sleep >= 7.5) {
       scoreDelta += 8;
-      positives.push({ key: 'good_sleep', label: `${round(sleep)}h sleep`, reason: 'Sleep supports normal training.' });
+      positives.push({ key: `${sleepKeyPrefix}good_sleep`, label: `${round(sleep)}h sleep`, reason: `${sleepSource} supports normal training.` });
     }
+  }
+
+  if (subjectiveFeeling !== null) {
+    if (subjectiveFeeling <= 1) {
+      scoreDelta -= 14;
+      flags.push({ key: 'low_feeling', severity: 'high', label: 'Exhausted check-in', reason: 'Today\'s check-in reports very low readiness.' });
+    } else if (subjectiveFeeling === 2) {
+      scoreDelta -= 8;
+      flags.push({ key: 'tired_feeling', severity: 'medium', label: 'Tired check-in', reason: 'Today\'s check-in reports low energy.' });
+    } else if (subjectiveFeeling >= 5) {
+      scoreDelta += 5;
+      positives.push({ key: 'strong_feeling', label: 'Great check-in', reason: 'Today\'s check-in supports normal training.' });
+    }
+  }
+
+  if (lifeFlags.includes('sick') || lifeFlags.includes('injured')) {
+    scoreDelta -= 16;
+    flags.push({ key: 'health_life_flag', severity: 'high', label: 'Sick or injured', reason: 'Today\'s check-in includes a health limitation.' });
+  }
+  if (lifeFlags.includes('sore')) {
+    scoreDelta -= 8;
+    flags.push({ key: 'sore_life_flag', severity: 'medium', label: 'Sore', reason: 'Soreness can reduce readiness for intensity.' });
+  }
+  if (lifeFlags.includes('stressed') || lifeFlags.includes('traveling') || lifeFlags.includes('long_shift')) {
+    scoreDelta -= 5;
+    flags.push({ key: 'life_stress_flag', severity: 'medium', label: 'Life stress', reason: 'Today\'s check-in includes extra non-training stress.' });
   }
 
   if (hrv !== null) {
@@ -120,6 +165,17 @@ function buildHealthSignals(row = {}) {
     flags.push({ key: 'load_spike', severity: acuteChronicRatio > 1.8 ? 'medium' : 'low', label: `${acuteChronicRatio}:1 load ratio`, reason: 'Recent run load is spiking above your 28-day baseline.' });
   }
 
+  if (runZoneDriftCount !== null && runZoneDriftCount >= 3) {
+    const driftDelta = runZoneDriftCount >= 5 ? -10 : -6;
+    scoreDelta += driftDelta;
+    flags.push({
+      key: 'zone_drift',
+      severity: runZoneDriftCount >= 5 ? 'medium' : 'low',
+      label: `${runZoneDriftCount} Z3+ recent runs`,
+      reason: 'Recent aerobic/base runs are drifting into Z3 or higher.',
+    });
+  }
+
   const highFlags = flags.filter((flag) => flag.severity === 'high').length;
   const cautionFlags = flags.filter((flag) => flag.severity !== 'low').length;
   let recoveryState = 'normal';
@@ -145,12 +201,16 @@ function buildHealthSignals(row = {}) {
     summary,
     metrics: {
       sleepHoursLastNight: sleep,
+      sleepSource: subjectiveSleep !== null ? 'daily_checkin' : 'health_sync',
       hrvMs: hrv,
       restingHeartRate: restingHr,
       activeMinutesThisWeek: activeMinutes,
       workoutCountThisWeek: workoutCount,
       totalMilesThisWeek: miles,
       acuteChronicLoadRatio: acuteChronicRatio,
+      subjectiveFeeling,
+      lifeFlags,
+      runZoneDriftCount,
       lastWorkoutType,
       lastWorkoutDurationSeconds: lastWorkoutSeconds,
     },

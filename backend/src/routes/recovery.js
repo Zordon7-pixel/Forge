@@ -3,6 +3,7 @@ const { dbAll, dbGet } = require('../db');
 const auth = require('../middleware/auth');
 const { requirePremium } = require('../middleware/premiumGate');
 const { buildHealthSignals, buildReadinessBand } = require('../lib/healthSignals');
+const { analyzeRunHistory } = require('../lib/runHistory');
 
 // ── Score normalization helpers ──────────────────────────────────────────────
 // Each provider has different scales. We normalize everything to 0-100.
@@ -264,8 +265,10 @@ router.get('/readiness', auth, requirePremium('Recovery readiness'), async (req,
     const today = new Date();
     const start7d = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
     const start28d = new Date(today.getTime() - 28 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const start42d = new Date(today.getTime() - 42 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const todayStr = today.toISOString().slice(0, 10);
 
-    const [healthRow, load7d, load28d] = await Promise.all([
+    const [healthRow, load7d, load28d, userRow, recentRuns, checkinRow] = await Promise.all([
       dbGet('SELECT * FROM health_sync WHERE user_id = ?', [userId]).catch(() => null),
       dbGet(
         `SELECT COALESCE(SUM(distance_miles), 0) as miles
@@ -279,12 +282,29 @@ router.get('/readiness', auth, requirePremium('Recovery readiness'), async (req,
          WHERE user_id = ? AND date >= ?`,
         [userId, start28d]
       ).catch(() => ({ miles: 0 })),
+      dbGet('SELECT max_heart_rate FROM users WHERE id = ?', [userId]).catch(() => null),
+      dbAll(
+        `SELECT avg_heart_rate, max_heart_rate, heart_rate_zones, pace_avg, distance_miles, date, created_at
+         FROM runs
+         WHERE user_id = ? AND date >= ?
+         ORDER BY date DESC, created_at DESC`,
+        [userId, start42d]
+      ).catch(() => []),
+      dbGet(
+        'SELECT feeling, sleep_hours, life_flags FROM daily_checkins WHERE user_id = ? AND checkin_date = ?',
+        [userId, todayStr]
+      ).catch(() => null),
     ]);
 
+    const runHistory = analyzeRunHistory(recentRuns || [], userRow?.max_heart_rate, { now: today });
     const signals = buildHealthSignals({
       ...(healthRow || {}),
       acute_load_7d: load7d?.miles,
       chronic_load_28d: load28d?.miles,
+      subjective_feeling: checkinRow?.feeling,
+      subjective_sleep_hours: checkinRow?.sleep_hours,
+      life_flags: checkinRow?.life_flags,
+      run_zone_drift_count: runHistory?.available ? runHistory.driftCount : null,
     });
 
     if (!signals.available) {
@@ -294,6 +314,7 @@ router.get('/readiness', auth, requirePremium('Recovery readiness'), async (req,
         band: null,
         verdict: null,
         drivers: [],
+        runHistory,
       });
     }
 
@@ -307,9 +328,10 @@ router.get('/readiness', auth, requirePremium('Recovery readiness'), async (req,
       band,
       verdict,
       drivers: topFlags.map((flag) => flag.reason).filter(Boolean),
+      runHistory,
     });
   } catch (err) {
-    console.error('[recovery/readiness] failed:', err.message);
+    console.error('[recovery/readiness] failed:', err);
     return res.status(500).json({ error: 'Failed to fetch recovery readiness' });
   }
 });
