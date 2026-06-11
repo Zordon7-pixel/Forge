@@ -12,7 +12,7 @@ const healthSyncLimiter = rateLimit({
 });
 
 function coerceMetric(value, options = {}) {
-  const { label, integer = false, min = 0, max = Number.POSITIVE_INFINITY } = options;
+  const { label, integer = false, min = 0, max = Number.POSITIVE_INFINITY, dropAboveMax = false } = options;
 
   if (value === null || value === undefined || value === '') {
     return { value: null };
@@ -24,6 +24,10 @@ function coerceMetric(value, options = {}) {
   }
   if (integer && !Number.isInteger(parsed)) {
     return { error: `${label} must be a whole number` };
+  }
+  if (dropAboveMax && parsed > max) {
+    console.warn(`[health] dropping implausible ${label}: ${parsed}`);
+    return { value: null };
   }
   if (parsed < min || parsed > max) {
     return { error: `${label} must be between ${min} and ${max}` };
@@ -56,7 +60,7 @@ router.post('/sync', auth, healthSyncLimiter, async (req, res) => {
     const totalMiles = coerceMetric(total_miles_this_week, { label: 'total_miles_this_week', max: 500 });
     const restingHeartRate = coerceMetric(resting_heart_rate, { label: 'resting_heart_rate', integer: true, min: 30, max: 240 });
     const hrv = coerceMetric(hrv_ms, { label: 'hrv_ms', integer: true, min: 1, max: 500 });
-    const sleepHours = coerceMetric(sleep_hours_last_night, { label: 'sleep_hours_last_night', min: 0, max: 24 });
+    const sleepHours = coerceMetric(sleep_hours_last_night, { label: 'sleep_hours_last_night', min: 0, max: 16, dropAboveMax: true });
     const activeMinutes = coerceMetric(active_minutes_this_week, { label: 'active_minutes_this_week', integer: true, min: 0, max: 10080 });
     const workoutCount = coerceMetric(workout_count_this_week, { label: 'workout_count_this_week', integer: true, min: 0, max: 200 });
     const lastWorkoutSeconds = coerceMetric(last_workout_duration_seconds, { label: 'last_workout_duration_seconds', integer: true, min: 0, max: 86400 });

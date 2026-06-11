@@ -65,7 +65,9 @@ function buildHealthSignals(row = {}) {
   }
 
   const subjectiveSleep = toNumber(row.subjective_sleep_hours);
-  const sleep = subjectiveSleep !== null ? subjectiveSleep : toNumber(row.sleep_hours_last_night);
+  const syncedSleep = toNumber(row.sleep_hours_last_night);
+  const sleep = subjectiveSleep !== null ? subjectiveSleep : syncedSleep;
+  const syncedSleepSuspect = subjectiveSleep === null && syncedSleep !== null && syncedSleep > 12;
   const hrv = toNumber(row.hrv_ms);
   const restingHr = toNumber(row.resting_heart_rate);
   const activeMinutes = toNumber(row.active_minutes_this_week);
@@ -82,7 +84,14 @@ function buildHealthSignals(row = {}) {
   const flags = [];
   const positives = [];
 
-  if (sleep !== null) {
+  if (syncedSleepSuspect) {
+    flags.push({
+      key: 'sleep_data_suspect',
+      severity: 'low',
+      label: `${round(sleep)}h synced sleep`,
+      reason: 'Synced sleep looks like a double-counted or overlapping HealthKit reading, so it was ignored for readiness scoring.',
+    });
+  } else if (sleep !== null) {
     const sleepKeyPrefix = subjectiveSleep !== null ? 'checkin_' : '';
     const sleepSource = subjectiveSleep !== null ? 'Check-in sleep' : 'Sleep';
     if (sleep < 5.5) {
