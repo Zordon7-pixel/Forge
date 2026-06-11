@@ -9,10 +9,12 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
     public let pluginMethods: [CAPPluginMethod] = [
         CAPPluginMethod(name: "isAvailable", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "requestAuthorization", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "getSummary", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "getSummary", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "getWorkoutHistory", returnType: CAPPluginReturnPromise)
     ]
 
     private let healthStore = HKHealthStore()
+    private let workoutAnchorKey = "forge.healthkit.workoutHistoryAnchor"
 
     private var readTypes: Set<HKObjectType> {
         var types = Set<HKObjectType>()
@@ -156,6 +158,43 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
             payload["lastWorkoutDurationSeconds"] = lastWorkoutDurationSeconds ?? NSNull()
             payload["lastWorkoutCalories"] = lastWorkoutCalories ?? NSNull()
             call.resolve(payload)
+        }
+    }
+
+    @objc func getWorkoutHistory(_ call: CAPPluginCall) {
+        guard HKHealthStore.isHealthDataAvailable() else {
+            call.reject("Apple Health is not available on this device.")
+            return
+        }
+
+        let now = Date()
+        let defaultStart = Calendar.current.date(byAdding: .month, value: -18, to: now) ?? now
+        let requestedStart = call.getString("startDate").flatMap { parseDate($0) }
+        let startDate = requestedStart ?? defaultStart
+        let endDate = call.getString("endDate").flatMap { parseDate($0) } ?? now
+        let suppliedMaxHR = call.getDouble("maxHR")
+        let forceFullSync = call.getBool("forceFullSync") ?? false
+
+        fetchAnchoredWorkoutHistory(startDate: startDate, endDate: endDate, forceFullSync: forceFullSync) { workouts, newAnchor, usedAnchor, error in
+            if let error = error {
+                call.reject(error.localizedDescription)
+                return
+            }
+
+            self.enrichWorkoutsWithHeartRate(workouts, suppliedMaxHR: suppliedMaxHR) { rows, observedMaxHR in
+                if let anchor = newAnchor {
+                    self.saveWorkoutAnchor(anchor)
+                }
+                DispatchQueue.main.async {
+                    call.resolve([
+                        "workouts": rows,
+                        "observedMaxHR": observedMaxHR.map { Int($0.rounded()) } ?? NSNull(),
+                        "incremental": usedAnchor,
+                        "startDate": self.isoDateTime(startDate),
+                        "endDate": self.isoDateTime(endDate)
+                    ])
+                }
+            }
         }
     }
 
@@ -321,6 +360,155 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
         healthStore.execute(query)
     }
 
+    private func fetchAnchoredWorkoutHistory(startDate: Date, endDate: Date, forceFullSync: Bool, completion: @escaping ([HKWorkout], HKQueryAnchor?, Bool, Error?) -> Void) {
+        let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: .strictStartDate)
+        let storedAnchor = forceFullSync ? nil : loadWorkoutAnchor()
+        let query = HKAnchoredObjectQuery(
+            type: HKObjectType.workoutType(),
+            predicate: predicate,
+            anchor: storedAnchor,
+            limit: HKObjectQueryNoLimit
+        ) { _, samples, _, newAnchor, error in
+            if let error = error {
+                completion([], nil, storedAnchor != nil, error)
+                return
+            }
+            let workouts = (samples as? [HKWorkout] ?? []).sorted { $0.endDate > $1.endDate }
+            completion(workouts, newAnchor, storedAnchor != nil, nil)
+        }
+        healthStore.execute(query)
+    }
+
+    private struct WorkoutHeartRateSummary {
+        let avgHR: Double?
+        let maxHR: Double?
+        let zoneSeconds: [String: Int]
+    }
+
+    private func enrichWorkoutsWithHeartRate(_ workouts: [HKWorkout], suppliedMaxHR: Double?, completion: @escaping ([[String: Any]], Double?) -> Void) {
+        guard !workouts.isEmpty else {
+            completion([], nil)
+            return
+        }
+
+        let group = DispatchGroup()
+        let lock = NSLock()
+        var summaries: [UUID: WorkoutHeartRateSummary] = [:]
+        var observedMaxHR: Double?
+
+        for workout in workouts {
+            group.enter()
+            fetchHeartRateSamples(startDate: workout.startDate, endDate: workout.endDate) { samples in
+                let maxHR = samples.map { $0.bpm }.max()
+                let avgHR = samples.isEmpty ? nil : samples.reduce(0.0) { $0 + $1.bpm } / Double(samples.count)
+
+                lock.lock()
+                if let maxHR = maxHR {
+                    observedMaxHR = max(observedMaxHR ?? maxHR, maxHR)
+                }
+                summaries[workout.uuid] = WorkoutHeartRateSummary(avgHR: avgHR, maxHR: maxHR, zoneSeconds: [:])
+                lock.unlock()
+                group.leave()
+            }
+        }
+
+        group.notify(queue: .global(qos: .userInitiated)) {
+            let zoneMaxHR = suppliedMaxHR ?? observedMaxHR
+            let zoneGroup = DispatchGroup()
+
+            if let zoneMaxHR = zoneMaxHR, zoneMaxHR > 0 {
+                for workout in workouts {
+                    zoneGroup.enter()
+                    self.fetchHeartRateSamples(startDate: workout.startDate, endDate: workout.endDate) { samples in
+                        let zoneSeconds = self.bucketHeartRateSamples(samples, workout: workout, maxHR: zoneMaxHR)
+                        lock.lock()
+                        let existing = summaries[workout.uuid]
+                        summaries[workout.uuid] = WorkoutHeartRateSummary(avgHR: existing?.avgHR, maxHR: existing?.maxHR, zoneSeconds: zoneSeconds)
+                        lock.unlock()
+                        zoneGroup.leave()
+                    }
+                }
+            }
+
+            zoneGroup.notify(queue: .global(qos: .userInitiated)) {
+                let rows = workouts.map { workout -> [String: Any] in
+                    let summary = summaries[workout.uuid]
+                    return self.serializeWorkout(
+                        workout,
+                        avgHR: summary?.avgHR,
+                        maxHR: summary?.maxHR,
+                        zoneSeconds: summary?.zoneSeconds ?? self.emptyZoneSeconds()
+                    )
+                }
+                completion(rows, observedMaxHR)
+            }
+        }
+    }
+
+    private struct HeartRatePoint {
+        let date: Date
+        let bpm: Double
+    }
+
+    private func fetchHeartRateSamples(startDate: Date, endDate: Date, completion: @escaping ([HeartRatePoint]) -> Void) {
+        guard let type = HKQuantityType.quantityType(forIdentifier: .heartRate) else {
+            completion([])
+            return
+        }
+
+        let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: .strictStartDate)
+        let sort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)
+        let query = HKSampleQuery(sampleType: type, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: [sort]) { _, samples, error in
+            guard error == nil else {
+                completion([])
+                return
+            }
+
+            let unit = HKUnit.count().unitDivided(by: HKUnit.minute())
+            let points = (samples as? [HKQuantitySample] ?? []).map {
+                HeartRatePoint(date: $0.startDate, bpm: $0.quantity.doubleValue(for: unit))
+            }
+            completion(points)
+        }
+        healthStore.execute(query)
+    }
+
+    private func emptyZoneSeconds() -> [String: Int] {
+        return ["z1": 0, "z2": 0, "z3": 0, "z4": 0, "z5": 0]
+    }
+
+    private func bucketHeartRateSamples(_ samples: [HeartRatePoint], workout: HKWorkout, maxHR: Double) -> [String: Int] {
+        guard maxHR > 0, !samples.isEmpty else {
+            return emptyZoneSeconds()
+        }
+
+        var zones = emptyZoneSeconds()
+        for (index, sample) in samples.enumerated() {
+            let nextDate = index + 1 < samples.count ? samples[index + 1].date : workout.endDate
+            let rawSeconds = nextDate.timeIntervalSince(sample.date)
+            let seconds = Int(max(1, min(rawSeconds, 30)).rounded())
+            let pct = sample.bpm / maxHR
+            let zone: String?
+            if pct >= 0.9 {
+                zone = "z5"
+            } else if pct >= 0.8 {
+                zone = "z4"
+            } else if pct >= 0.7 {
+                zone = "z3"
+            } else if pct >= 0.6 {
+                zone = "z2"
+            } else if pct >= 0.5 {
+                zone = "z1"
+            } else {
+                zone = nil
+            }
+            if let zone = zone {
+                zones[zone] = (zones[zone] ?? 0) + seconds
+            }
+        }
+        return zones
+    }
+
     private func averageHeartRate(startDate: Date, endDate: Date, completion: @escaping (Double?) -> Void) {
         guard let type = HKQuantityType.quantityType(forIdentifier: .heartRate) else {
             completion(nil)
@@ -335,11 +523,12 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
         healthStore.execute(query)
     }
 
-    private func serializeWorkout(_ workout: HKWorkout) -> [String: Any] {
+    private func serializeWorkout(_ workout: HKWorkout, avgHR: Double? = nil, maxHR: Double? = nil, zoneSeconds: [String: Int]? = nil) -> [String: Any] {
         let distanceMiles = workout.totalDistance?.doubleValue(for: HKUnit.mile()) ?? 0
         let calories = workout.totalEnergyBurned?.doubleValue(for: HKUnit.kilocalorie()) ?? 0
 
-        return [
+        var payload: [String: Any] = [
+            "id": workout.uuid.uuidString,
             "date": isoDate(workout.startDate),
             "startDate": isoDateTime(workout.startDate),
             "endDate": isoDateTime(workout.endDate),
@@ -349,6 +538,10 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
             "calories": Int(calories.rounded()),
             "source": "apple_health"
         ]
+        payload["avgHR"] = avgHR.map { Int($0.rounded()) } ?? NSNull()
+        payload["maxHR"] = maxHR.map { Int($0.rounded()) } ?? NSNull()
+        payload["zoneSeconds"] = zoneSeconds ?? emptyZoneSeconds()
+        return payload
     }
 
     private func workoutTypeName(_ type: HKWorkoutActivityType) -> String {
@@ -383,5 +576,46 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter.string(from: date)
+    }
+
+    private func parseDate(_ value: String) -> Date? {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: value) {
+            return date
+        }
+        formatter.formatOptions = [.withInternetDateTime]
+        if let date = formatter.date(from: value) {
+            return date
+        }
+        let dayFormatter = DateFormatter()
+        dayFormatter.calendar = Calendar(identifier: .iso8601)
+        dayFormatter.locale = Locale(identifier: "en_US_POSIX")
+        dayFormatter.timeZone = TimeZone.current
+        dayFormatter.dateFormat = "yyyy-MM-dd"
+        return dayFormatter.date(from: value)
+    }
+
+    private func saveWorkoutAnchor(_ anchor: HKQueryAnchor) {
+        do {
+            let data = try NSKeyedArchiver.archivedData(withRootObject: anchor, requiringSecureCoding: true)
+            UserDefaults.standard.set(data.base64EncodedString(), forKey: workoutAnchorKey)
+        } catch {
+            NSLog("ForgeHealthPlugin failed to save workout anchor: %@", error.localizedDescription)
+        }
+    }
+
+    private func loadWorkoutAnchor() -> HKQueryAnchor? {
+        guard let encoded = UserDefaults.standard.string(forKey: workoutAnchorKey),
+              let data = Data(base64Encoded: encoded) else {
+            return nil
+        }
+
+        do {
+            return try NSKeyedUnarchiver.unarchivedObject(ofClass: HKQueryAnchor.self, from: data)
+        } catch {
+            NSLog("ForgeHealthPlugin failed to load workout anchor: %@", error.localizedDescription)
+            return nil
+        }
     }
 }

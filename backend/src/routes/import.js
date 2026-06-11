@@ -1,6 +1,6 @@
 const router = require('express').Router();
 const { v4: uuidv4 } = require('uuid');
-const { dbGet, dbRun } = require('../db');
+const { dbAll, dbGet, dbRun } = require('../db');
 const auth = require('../middleware/auth');
 
 function asNumber(value, fallback = 0) {
@@ -13,6 +13,30 @@ function normalizeDate(value) {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return null;
   return parsed.toISOString().slice(0, 10);
+}
+
+function normalizeDateTime(value) {
+  if (!value) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toISOString();
+}
+
+function normalizeZoneSeconds(value) {
+  let raw = value;
+  if (typeof raw === 'string' && raw.trim()) {
+    try {
+      raw = JSON.parse(raw);
+    } catch {
+      raw = null;
+    }
+  }
+  const source = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  return ['z1', 'z2', 'z3', 'z4', 'z5'].reduce((acc, zone) => {
+    const upper = zone.toUpperCase();
+    acc[zone] = Math.max(0, Math.round(asNumber(source[zone] ?? source[upper] ?? 0, 0)));
+    return acc;
+  }, {});
 }
 
 function classifyType(rawType = '') {
@@ -28,20 +52,38 @@ function classifyType(rawType = '') {
 }
 
 function normalizeRow(raw = {}) {
-  const date = normalizeDate(raw.date || raw.startDate || raw.start_date || raw.activityDate || raw['Activity Date']);
+  const startDate = normalizeDateTime(raw.startDate || raw.start_date || raw.start || raw.activityStartDate);
+  const endDate = normalizeDateTime(raw.endDate || raw.end_date || raw.end || raw.activityEndDate);
+  const date = normalizeDate(raw.date || startDate || raw.startDate || raw.start_date || raw.activityDate || raw['Activity Date']);
   const type = classifyType(raw.type || raw.activityType || raw['Activity Type']);
   const distanceMiles = Number(asNumber(raw.distanceMiles || raw.distance_miles || raw.distance || 0, 0).toFixed(3));
   const durationSeconds = Math.max(0, Math.round(asNumber(raw.durationSeconds || raw.duration_seconds || raw.duration || raw.elapsedTime || 0, 0)));
-  const avgHeartRate = asNumber(raw.avgHeartRate || raw.avg_heart_rate || raw.average_heart_rate || raw['Average Heart Rate'] || null, null);
-  return { date, ...type, distanceMiles, durationSeconds, avgHeartRate, raw };
+  const avgHeartRate = asNumber(raw.avgHR || raw.avgHeartRate || raw.avg_heart_rate || raw.average_heart_rate || raw['Average Heart Rate'] || null, null);
+  const maxHeartRate = asNumber(raw.maxHR || raw.maxHeartRate || raw.max_heart_rate || raw.maximum_heart_rate || raw['Max Heart Rate'] || null, null);
+  const zoneSeconds = normalizeZoneSeconds(raw.zoneSeconds || raw.zone_seconds || raw.heart_rate_zones);
+  const source = String(raw.source || 'imported').slice(0, 40);
+  return { date, startDate, endDate, ...type, distanceMiles, durationSeconds, avgHeartRate, maxHeartRate, zoneSeconds, source, raw };
 }
 
-async function runExists(userId, date, distanceMiles) {
-  const existing = await dbGet(
-    'SELECT id FROM runs WHERE user_id=? AND date=? AND ABS(COALESCE(distance_miles,0) - ?) < 0.01 LIMIT 1',
-    [userId, date, distanceMiles]
+function startsMatch(existingStart, importedStart) {
+  if (!existingStart || !importedStart) return false;
+  const existingTime = new Date(existingStart).getTime();
+  const importedTime = new Date(importedStart).getTime();
+  if (Number.isNaN(existingTime) || Number.isNaN(importedTime)) return false;
+  return Math.abs(existingTime - importedTime) <= 30 * 60 * 1000;
+}
+
+async function findExistingRun(userId, item) {
+  const candidates = await dbAll(
+    `SELECT id, date, health_start_at
+     FROM runs
+     WHERE user_id=? AND date=? AND ABS(COALESCE(distance_miles,0) - ?) < 0.05
+     LIMIT 25`,
+    [userId, item.date, item.distanceMiles]
   );
-  return Boolean(existing);
+  return candidates.find((row) => startsMatch(row.health_start_at, item.startDate))
+    || candidates.find((row) => !row.health_start_at)
+    || null;
 }
 
 async function liftExists(userId, date, distanceMiles, durationSeconds) {
@@ -58,8 +100,9 @@ async function insertRun(userId, item) {
   await dbRun(
     `INSERT INTO runs (
       id, user_id, date, type, distance_miles, duration_seconds, perceived_effort, notes,
-      avg_heart_rate, watch_mode, watch_activity_type, watch_normalized_type
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      avg_heart_rate, max_heart_rate, heart_rate_zones, calories, watch_mode, watch_activity_type,
+      watch_normalized_type, health_source, health_start_at, health_end_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       runId,
       userId,
@@ -70,9 +113,39 @@ async function insertRun(userId, item) {
       5,
       'Imported workout',
       item.avgHeartRate,
+      item.maxHeartRate,
+      JSON.stringify(item.zoneSeconds),
+      Math.round(asNumber(item.raw?.calories, 0)),
       'import',
       String(item.raw?.type || item.raw?.activityType || 'imported'),
       'imported',
+      item.source,
+      item.startDate,
+      item.endDate,
+    ]
+  );
+}
+
+async function updateExistingRunHealth(userId, runId, item) {
+  await dbRun(
+    `UPDATE runs SET
+      avg_heart_rate = COALESCE(?, avg_heart_rate),
+      max_heart_rate = COALESCE(?, max_heart_rate),
+      heart_rate_zones = CASE WHEN ? != '{}' THEN ? ELSE heart_rate_zones END,
+      health_source = COALESCE(?, health_source),
+      health_start_at = COALESCE(?, health_start_at),
+      health_end_at = COALESCE(?, health_end_at)
+     WHERE id=? AND user_id=?`,
+    [
+      item.avgHeartRate,
+      item.maxHeartRate,
+      JSON.stringify(item.zoneSeconds),
+      JSON.stringify(item.zoneSeconds),
+      item.source,
+      item.startDate,
+      item.endDate,
+      runId,
+      userId,
     ]
   );
 }
@@ -117,8 +190,9 @@ async function importRows(userId, rawRows) {
       }
 
       if (item.section === 'run') {
-        const exists = await runExists(userId, item.date, item.distanceMiles);
-        if (exists) {
+        const existing = await findExistingRun(userId, item);
+        if (existing) {
+          await updateExistingRunHealth(userId, existing.id, item);
           skipped += 1;
           continue;
         }

@@ -65,6 +65,9 @@ CREATE TABLE IF NOT EXISTS runs (
   watch_sync_id TEXT,
   watch_activity_type TEXT,
   watch_normalized_type TEXT,
+  health_source TEXT,
+  health_start_at TEXT,
+  health_end_at TEXT,
   created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 

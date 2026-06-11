@@ -43,6 +43,35 @@ function classifyRunZone(avgHr, maxHr) {
   return 'Z5';
 }
 
+function parseZoneSeconds(value) {
+  if (!value) return null;
+  let parsed = value;
+  if (typeof parsed === 'string') {
+    try {
+      parsed = JSON.parse(parsed);
+    } catch {
+      return null;
+    }
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  const zoneSeconds = {
+    Z1: toNumber(parsed.z1 ?? parsed.Z1) || 0,
+    Z2: toNumber(parsed.z2 ?? parsed.Z2) || 0,
+    Z3: toNumber(parsed.z3 ?? parsed.Z3) || 0,
+    Z4: toNumber(parsed.z4 ?? parsed.Z4) || 0,
+    Z5: toNumber(parsed.z5 ?? parsed.Z5) || 0,
+  };
+  const total = Object.values(zoneSeconds).reduce((sum, seconds) => sum + Math.max(0, seconds), 0);
+  return total > 0 ? zoneSeconds : null;
+}
+
+function dominantZone(zoneSeconds) {
+  if (!zoneSeconds) return null;
+  return Object.entries(zoneSeconds).reduce((best, [zone, seconds]) => (
+    seconds > best.seconds ? { zone, seconds } : best
+  ), { zone: null, seconds: 0 }).zone;
+}
+
 function buildEmptyDistribution() {
   return ['below_z1', 'Z1', 'Z2', 'Z3', 'Z4', 'Z5', 'unknown'].reduce((acc, zone) => {
     acc[zone] = { count: 0, percent: 0 };
@@ -78,7 +107,13 @@ function isEasyAerobicRun(run = {}) {
 }
 
 function analyzeRunHistory(runs = [], maxHr, opts = {}) {
-  const zones = computeHrZones(maxHr);
+  const history = Array.isArray(runs) ? runs : [];
+  const observedMaxHr = history.reduce((max, run) => {
+    const value = toNumber(run.max_heart_rate ?? run.maxHR);
+    return value !== null && value > max ? value : max;
+  }, 0);
+  const effectiveMaxHr = toNumber(maxHr) || observedMaxHr || null;
+  const zones = computeHrZones(effectiveMaxHr);
   if (!zones) {
     return {
       available: false,
@@ -91,7 +126,6 @@ function analyzeRunHistory(runs = [], maxHr, opts = {}) {
     };
   }
 
-  const history = Array.isArray(runs) ? runs : [];
   if (history.length === 0) {
     return {
       available: false,
@@ -128,9 +162,20 @@ function analyzeRunHistory(runs = [], maxHr, opts = {}) {
     if (isRecent) weeklyMiles += miles;
     if (isChronic) chronicMiles += miles;
 
-    const zone = classifyRunZone(run.avg_heart_rate, maxHr) || 'unknown';
-    distribution[zone].count += 1;
-    if (zone !== 'unknown') classifiedCount += 1;
+    const zoneSeconds = parseZoneSeconds(run.heart_rate_zones ?? run.zoneSeconds ?? run.zone_seconds);
+    let zone = null;
+    if (zoneSeconds) {
+      for (const [zoneKey, seconds] of Object.entries(zoneSeconds)) {
+        const safeSeconds = Math.max(0, seconds);
+        distribution[zoneKey].count += safeSeconds;
+        classifiedCount += safeSeconds;
+      }
+      zone = dominantZone(zoneSeconds);
+    } else {
+      zone = classifyRunZone(run.avg_heart_rate, effectiveMaxHr) || 'unknown';
+      distribution[zone].count += 1;
+      if (zone !== 'unknown') classifiedCount += 1;
+    }
     if (isRecent && isEasyAerobicRun(run) && ['Z3', 'Z4', 'Z5'].includes(zone)) driftCount += 1;
   }
 
@@ -168,11 +213,13 @@ function analyzeRunHistory(runs = [], maxHr, opts = {}) {
     hasRunIntent: hasAnyRunIntent,
     notes,
     zones,
+    maxHeartRate: effectiveMaxHr,
   };
 }
 
 module.exports = {
   computeHrZones,
   classifyRunZone,
+  parseZoneSeconds,
   analyzeRunHistory,
 };

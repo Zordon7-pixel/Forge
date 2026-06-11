@@ -275,6 +275,9 @@ async function initDb() {
         watch_sync_id TEXT,
         watch_activity_type TEXT,
         watch_normalized_type TEXT,
+        health_source TEXT,
+        health_start_at TEXT,
+        health_end_at TEXT,
         gps_available INTEGER DEFAULT 1,
         shoe_id TEXT,
         pain_level TEXT,
@@ -283,6 +286,9 @@ async function initDb() {
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
     `);
+    await client.query("ALTER TABLE runs ADD COLUMN IF NOT EXISTS health_source TEXT");
+    await client.query("ALTER TABLE runs ADD COLUMN IF NOT EXISTS health_start_at TEXT");
+    await client.query("ALTER TABLE runs ADD COLUMN IF NOT EXISTS health_end_at TEXT");
     await client.query("ALTER TABLE runs ADD COLUMN IF NOT EXISTS pain_level TEXT");
     await client.query("ALTER TABLE runs ADD COLUMN IF NOT EXISTS post_energy TEXT");
 

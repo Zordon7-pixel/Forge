@@ -203,18 +203,51 @@ class HealthService {
     }
 
     const profile = await this.syncToProfile(result.metrics)
+    const history = await this.getWorkoutHistory()
+    const workouts = history.available && history.workouts.length > 0 ? history.workouts : result.workouts
     let importResult = { imported: 0, skipped: 0, errors: [] }
-    if (Array.isArray(result.workouts) && result.workouts.length > 0) {
-      const { data } = await api.post('/import/health', { workouts: result.workouts })
+    if (Array.isArray(workouts) && workouts.length > 0) {
+      const { data } = await api.post('/import/health', { workouts })
       importResult = data || importResult
     }
 
     return {
       ...result,
       profile,
+      observedMaxHR: history.observedMaxHR,
+      workouts,
       imported: Number(importResult.imported || 0),
       skipped: Number(importResult.skipped || 0),
       errors: importResult.errors || [],
+    }
+  }
+
+  async getWorkoutHistory(options = {}) {
+    if (!isNativeRuntime()) {
+      return { available: false, reason: 'Apple Health workout history requires the native iOS app.', workouts: [] }
+    }
+
+    try {
+      if (typeof ForgeHealth.getWorkoutHistory !== 'function') {
+        return { available: false, reason: 'Update TestFlight to sync full Apple Health workout history.', workouts: [] }
+      }
+
+      const response = await ForgeHealth.getWorkoutHistory(options)
+      return {
+        available: true,
+        reason: null,
+        workouts: Array.isArray(response?.workouts) ? response.workouts : [],
+        observedMaxHR: response?.observedMaxHR ? Math.round(toNumber(response.observedMaxHR)) : null,
+        incremental: Boolean(response?.incremental),
+        startDate: response?.startDate || null,
+        endDate: response?.endDate || null,
+      }
+    } catch (error) {
+      return {
+        available: false,
+        reason: nativeBridgeUnavailableReason(error),
+        workouts: [],
+      }
     }
   }
 
