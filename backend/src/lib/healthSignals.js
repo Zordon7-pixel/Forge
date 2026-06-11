@@ -10,6 +10,10 @@ function round(value, decimals = 1) {
   return Math.round(value * factor) / factor;
 }
 
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
 function parseLifeFlags(value) {
   if (Array.isArray(value)) return value;
   if (typeof value !== 'string' || value.trim() === '') return [];
@@ -21,11 +25,27 @@ function parseLifeFlags(value) {
   }
 }
 
+function normalizeAxis(value) {
+  const parsed = toNumber(value);
+  return Number.isInteger(parsed) && parsed >= 1 && parsed <= 3 ? parsed : null;
+}
+
+function subjectiveFeelingFromAxes(row = {}) {
+  const legs = normalizeAxis(row.subjective_legs ?? row.legs);
+  const drive = normalizeAxis(row.subjective_drive ?? row.drive);
+  if (legs === null || drive === null) return null;
+  return clamp(Math.round(((legs + drive) / 6) * 4 + 1), 1, 5);
+}
+
 function hasHealthData(row = {}) {
   const numericKeys = [
     'sleep_hours_last_night',
     'subjective_sleep_hours',
     'subjective_feeling',
+    'subjective_legs',
+    'subjective_drive',
+    'legs',
+    'drive',
     'hrv_ms',
     'resting_heart_rate',
     'active_minutes_this_week',
@@ -76,7 +96,9 @@ function buildHealthSignals(row = {}) {
   const lastWorkoutSeconds = toNumber(row.last_workout_duration_seconds);
   const lastWorkoutType = row.last_workout_type || null;
   const acuteChronicRatio = computeAcuteChronicRatio(row);
-  const subjectiveFeeling = toNumber(row.subjective_feeling);
+  const subjectiveLegs = normalizeAxis(row.subjective_legs ?? row.legs);
+  const subjectiveDrive = normalizeAxis(row.subjective_drive ?? row.drive);
+  const subjectiveFeeling = subjectiveFeelingFromAxes(row) ?? toNumber(row.subjective_feeling);
   const runZoneDriftCount = toNumber(row.run_zone_drift_count);
   const lifeFlags = parseLifeFlags(row.life_flags);
 
@@ -225,6 +247,8 @@ function buildHealthSignals(row = {}) {
       totalMilesThisWeek: miles,
       acuteChronicLoadRatio: acuteChronicRatio,
       subjectiveFeeling,
+      subjectiveLegs,
+      subjectiveDrive,
       lifeFlags,
       runZoneDriftCount,
       lastWorkoutType,

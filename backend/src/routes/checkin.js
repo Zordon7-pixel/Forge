@@ -5,6 +5,14 @@ const { deriveAction, buildPatch, buildDirective } = require('../lib/checkinOver
 
 const ALLOWED_LIFE_FLAGS = new Set(['long_shift', 'sore', 'traveling', 'sick', 'injured', 'stressed', 'all_good']);
 
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function deriveFeelingFromAxes(legs, drive) {
+  return clamp(Math.round(((legs + drive) / 6) * 4 + 1), 1, 5);
+}
+
 function getDayShort() {
   return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date().getDay()];
 }
@@ -60,9 +68,23 @@ function describeAdjustment(action, patch, hasWorkoutToday = false) {
 }
 
 function validateCheckinPayload(body = {}) {
-  const feeling = Number(body.feeling);
-  if (!Number.isInteger(feeling) || feeling < 1 || feeling > 5) {
-    return { error: 'Feeling must be a whole number from 1 to 5.' };
+  const hasLegs = body.legs !== null && body.legs !== undefined && body.legs !== '';
+  const hasDrive = body.drive !== null && body.drive !== undefined && body.drive !== '';
+  const legs = hasLegs ? Number(body.legs) : null;
+  const drive = hasDrive ? Number(body.drive) : null;
+  const hasValidAxes = Number.isInteger(legs) && legs >= 1 && legs <= 3
+    && Number.isInteger(drive) && drive >= 1 && drive <= 3;
+
+  let feeling = Number(body.feeling);
+  const hasValidFeeling = Number.isInteger(feeling) && feeling >= 1 && feeling <= 5;
+
+  if (hasLegs || hasDrive) {
+    if (!hasValidAxes) {
+      return { error: 'Legs and drive must both be whole numbers from 1 to 3.' };
+    }
+    feeling = deriveFeelingFromAxes(legs, drive);
+  } else if (!hasValidFeeling) {
+    return { error: 'Check-in requires legs and drive from 1 to 3, or a legacy feeling from 1 to 5.' };
   }
 
   const timeAvailable = Number(body.time_available);
@@ -83,6 +105,8 @@ function validateCheckinPayload(body = {}) {
   return {
     value: {
       feeling,
+      legs: hasValidAxes ? legs : null,
+      drive: hasValidAxes ? drive : null,
       time_available: timeAvailable,
       sleep_hours: sleepHours,
       life_flags: Array.isArray(body.life_flags) ? body.life_flags.filter(flag => ALLOWED_LIFE_FLAGS.has(flag)) : [],
@@ -98,26 +122,26 @@ router.post('/', auth, async (req, res) => {
       return res.status(400).json({ error: validation.error });
     }
 
-    const { feeling, time_available, life_flags, sleep_hours: parsedSleep } = validation.value;
+    const { feeling, legs, drive, time_available, life_flags, sleep_hours: parsedSleep } = validation.value;
     const today = new Date().toISOString().slice(0,10);
 
     const existing = await dbGet('SELECT id FROM daily_checkins WHERE user_id=? AND checkin_date=?', [req.user.id, today]);
     if (existing) {
-      await dbRun('UPDATE daily_checkins SET feeling=?, time_available=?, sleep_hours=?, life_flags=? WHERE id=?',
-        [feeling, time_available, parsedSleep, JSON.stringify(life_flags), existing.id]);
+      await dbRun('UPDATE daily_checkins SET feeling=?, legs=?, drive=?, time_available=?, sleep_hours=?, life_flags=? WHERE id=? AND user_id=?',
+        [feeling, legs, drive, time_available, parsedSleep, JSON.stringify(life_flags), existing.id, req.user.id]);
     } else {
       const id = require('crypto').randomBytes(8).toString('hex');
       await dbRun(
-        'INSERT INTO daily_checkins (id, user_id, checkin_date, feeling, time_available, sleep_hours, life_flags) VALUES (?,?,?,?,?,?,?)',
-        [id, req.user.id, today, feeling, time_available, parsedSleep, JSON.stringify(life_flags)]
+        'INSERT INTO daily_checkins (id, user_id, checkin_date, feeling, legs, drive, time_available, sleep_hours, life_flags) VALUES (?,?,?,?,?,?,?,?,?)',
+        [id, req.user.id, today, feeling, legs, drive, time_available, parsedSleep, JSON.stringify(life_flags)]
       );
     }
 
-    const checkin = { feeling, time_available, sleep_hours: parsedSleep, life_flags };
+    const checkin = { feeling, legs, drive, time_available, sleep_hours: parsedSleep, life_flags };
     const action = deriveAction(checkin);
     const activePlan = await getActivePlanForUser(req.user.id);
     const todayDay = activePlan ? normalizeTodayEntry(parsePlan(activePlan)) : null;
-    const patch = buildPatch(action, todayDay);
+    const patch = buildPatch(action, todayDay, checkin);
     const overrideId = require('crypto').randomBytes(8).toString('hex');
 
     await dbRun(

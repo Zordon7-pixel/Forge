@@ -726,6 +726,8 @@ async function initDb() {
         user_id TEXT NOT NULL,
         checkin_date TEXT NOT NULL,
         feeling INTEGER DEFAULT 3,
+        legs INTEGER,
+        drive INTEGER,
         time_available INTEGER DEFAULT 60,
         sleep_hours REAL,
         life_flags TEXT DEFAULT '[]',
@@ -734,6 +736,8 @@ async function initDb() {
       );
     `);
     await client.query('ALTER TABLE daily_checkins ADD COLUMN IF NOT EXISTS sleep_hours REAL');
+    await client.query('ALTER TABLE daily_checkins ADD COLUMN IF NOT EXISTS legs INTEGER');
+    await client.query('ALTER TABLE daily_checkins ADD COLUMN IF NOT EXISTS drive INTEGER');
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS checkin_overrides (

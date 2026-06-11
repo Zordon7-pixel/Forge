@@ -268,6 +268,20 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
   UNIQUE(user_id, endpoint)
 );
 
+CREATE TABLE IF NOT EXISTS daily_checkins (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  checkin_date TEXT NOT NULL,
+  feeling INTEGER DEFAULT 3,
+  legs INTEGER,
+  drive INTEGER,
+  time_available INTEGER DEFAULT 60,
+  sleep_hours REAL,
+  life_flags TEXT DEFAULT '[]',
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(user_id, checkin_date)
+);
+
 CREATE TABLE IF NOT EXISTS checkin_overrides (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
