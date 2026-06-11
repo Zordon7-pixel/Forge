@@ -35,6 +35,9 @@ export default function DailyCheckIn({ onComplete }) {
   const [lifeFlags, setLifeFlags] = useState([])
   const [saving, setSaving] = useState(false)
   const [adjustment, setAdjustment] = useState(null)
+  const [headline, setHeadline] = useState(null)
+  const [drivers, setDrivers] = useState([])
+  const [showBreakdown, setShowBreakdown] = useState(false)
   const [todayPlan, setTodayPlan] = useState(null)
   const [showStretchGate, setShowStretchGate] = useState(false)
   const [alreadyDone, setAlreadyDone] = useState(false)
@@ -76,9 +79,17 @@ export default function DailyCheckIn({ onComplete }) {
       try {
         const planRes = await api.get('/plans/today')
         if (planRes.data?.today) setTodayPlan(planRes.data.today)
-      } catch (_) {}
-      if (res.data.adjustment) setAdjustment(res.data.adjustment)
+      } catch (err) {
+        console.error('[DailyCheckIn] Failed to fetch today plan:', err)
+      }
+      const nextHeadline = res.data.headline || res.data.adjustment
+      setHeadline(nextHeadline || null)
+      setDrivers(Array.isArray(res.data.drivers) ? res.data.drivers : [])
+      setShowBreakdown(false)
+      if (res.data.adjustment || nextHeadline) setAdjustment(res.data.adjustment || nextHeadline)
       else { onComplete?.(); navigate('/') }
+    } catch (err) {
+      console.error('[DailyCheckIn] Failed to submit check-in:', err)
     } finally { setSaving(false) }
   }
 
@@ -121,9 +132,42 @@ export default function DailyCheckIn({ onComplete }) {
   }
 
   if (adjustment) {
+    const hasDrivers = drivers.length > 0
     return (
       <div style={{ minHeight: '100vh', background: 'var(--bg-base)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24, gap: 20, textAlign: 'center', maxWidth: 480, margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
-        <p style={{ fontSize: 16, lineHeight: 1.6, color: 'var(--text-primary)', maxWidth: 340 }}>{adjustment}</p>
+        <p style={{ fontSize: 28, lineHeight: 1.15, fontWeight: 900, color: 'var(--text-primary)', maxWidth: 360, margin: 0 }}>{headline || adjustment}</p>
+        {hasDrivers ? (
+          <div style={{ width: '100%', maxWidth: 360 }}>
+            <button
+              onClick={() => setShowBreakdown(prev => !prev)}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: 'var(--accent)',
+                cursor: 'pointer',
+                fontSize: 14,
+                fontWeight: 800,
+                padding: '4px 0',
+              }}
+            >
+              {showBreakdown ? 'Hide breakdown' : 'See full breakdown'}
+            </button>
+            {showBreakdown && (
+              <div style={{ marginTop: 10, background: 'var(--bg-card)', borderRadius: 16, padding: 16, textAlign: 'left', display: 'flex', flexDirection: 'column', gap: 14 }}>
+                {drivers.map((driver, idx) => (
+                  <div key={`${driver.label || 'driver'}-${idx}`}>
+                    <p style={{ fontSize: 13, fontWeight: 900, color: 'var(--text-primary)', margin: '0 0 4px' }}>{driver.label}</p>
+                    <p style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.5, margin: 0 }}>{driver.detail}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : (
+          <p style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.5, maxWidth: 340, margin: 0 }}>
+            No extra adjustment drivers today.
+          </p>
+        )}
         {todayPlan && (
           <div style={{ background: 'var(--bg-card)', borderRadius: 16, padding: 20, width: '100%', textAlign: 'left' }}>
             <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 10 }}>Today's Workout</p>

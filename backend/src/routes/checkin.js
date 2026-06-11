@@ -1,7 +1,7 @@
 const router = require('express').Router();
 const { dbGet, dbRun } = require('../db');
 const auth = require('../middleware/auth');
-const { deriveAction, buildPatch } = require('../lib/checkinOverride');
+const { deriveAction, buildPatch, buildDirective } = require('../lib/checkinOverride');
 
 function getDayShort() {
   return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date().getDay()];
@@ -92,14 +92,22 @@ router.post('/', auth, async (req, res) => {
       [overrideId, req.user.id, today, action, JSON.stringify(patch)]
     );
 
-    const feelingLabels = ['', 'Exhausted', 'Tired', 'Okay', 'Good', 'Great'];
-    const adjustment = describeAdjustment(action, patch, Boolean(todayDay));
-
     const readiness_delta = parsedSleep !== null
       ? parsedSleep < 6 ? -12 : parsedSleep >= 8 ? 5 : 0
       : 0;
+    const directive = buildDirective(checkin, action, patch, Boolean(todayDay), readiness_delta);
+    const feelingLabels = ['', 'Exhausted', 'Tired', 'Okay', 'Good', 'Great'];
+    const adjustment = directive.headline || describeAdjustment(action, patch, Boolean(todayDay));
 
-    res.json({ ok: true, adjustment, action, feeling: feelingLabels[feeling] || 'Noted', readiness_delta });
+    res.json({
+      ok: true,
+      adjustment,
+      headline: directive.headline,
+      drivers: directive.drivers,
+      action,
+      feeling: feelingLabels[feeling] || 'Noted',
+      readiness_delta,
+    });
   } catch (err) {
     console.error('[checkin] POST failed:', err);
     res.status(500).json({ error: 'Check-in failed' });
