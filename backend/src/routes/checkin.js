@@ -57,12 +57,44 @@ function describeAdjustment(action, patch, hasWorkoutToday = false) {
   return 'Check-in saved. Today\'s workout stays as planned.';
 }
 
+function validateCheckinPayload(body = {}) {
+  const feeling = Number(body.feeling);
+  if (!Number.isInteger(feeling) || feeling < 1 || feeling > 5) {
+    return { error: 'Feeling must be a whole number from 1 to 5.' };
+  }
+
+  const timeAvailable = Number(body.time_available);
+  if (!Number.isInteger(timeAvailable) || timeAvailable <= 0) {
+    return { error: 'Time available must be a positive whole number of minutes.' };
+  }
+
+  const sleepHours = body.sleep_hours === null || body.sleep_hours === undefined || body.sleep_hours === ''
+    ? null
+    : Number(body.sleep_hours);
+  if (sleepHours !== null && (!Number.isFinite(sleepHours) || sleepHours < 0 || sleepHours > 24)) {
+    return { error: 'Sleep hours must be between 0 and 24, or left blank.' };
+  }
+
+  return {
+    value: {
+      feeling,
+      time_available: timeAvailable,
+      sleep_hours: sleepHours,
+      life_flags: Array.isArray(body.life_flags) ? body.life_flags : [],
+    },
+  };
+}
+
 // POST /api/checkin — daily life check-in
 router.post('/', auth, async (req, res) => {
   try {
-    const { feeling, time_available, life_flags = [], sleep_hours } = req.body;
+    const validation = validateCheckinPayload(req.body);
+    if (validation.error) {
+      return res.status(400).json({ error: validation.error });
+    }
+
+    const { feeling, time_available, life_flags, sleep_hours: parsedSleep } = validation.value;
     const today = new Date().toISOString().slice(0,10);
-    const parsedSleep = sleep_hours === null || sleep_hours === undefined || sleep_hours === '' ? null : Number(sleep_hours);
 
     const existing = await dbGet('SELECT id FROM daily_checkins WHERE user_id=? AND checkin_date=?', [req.user.id, today]);
     if (existing) {

@@ -43,6 +43,7 @@ export default function DailyCheckIn({ onComplete }) {
   const [alreadyDone, setAlreadyDone] = useState(false)
   const [sleepHours, setSleepHours] = useState('')
   const [fieldErrors, setFieldErrors] = useState({})
+  const [submitError, setSubmitError] = useState(null)
   const feelingErrorRef = useRef(null)
 
   useEffect(() => {
@@ -68,6 +69,7 @@ export default function DailyCheckIn({ onComplete }) {
       return
     }
     setSaving(true)
+    setSubmitError(null)
     try {
       const res = await api.post('/checkin', {
         feeling,
@@ -90,6 +92,7 @@ export default function DailyCheckIn({ onComplete }) {
       else { onComplete?.(); navigate('/') }
     } catch (err) {
       console.error('[DailyCheckIn] Failed to submit check-in:', err)
+      setSubmitError(err.response?.data?.error || 'Check-in failed. Please try again.')
     } finally { setSaving(false) }
   }
 
@@ -303,6 +306,12 @@ export default function DailyCheckIn({ onComplete }) {
           }}
         />
       </div>
+
+      {submitError && (
+        <p style={{ background: 'var(--bg-card)', border: '1px solid #ef4444', borderRadius: 12, color: '#fecaca', fontSize: 13, fontWeight: 700, lineHeight: 1.4, padding: '12px 14px', margin: '0 0 16px' }}>
+          {submitError}
+        </p>
+      )}
 
       <button onClick={submit} disabled={saving}
         style={{

@@ -121,6 +121,7 @@ function buildDirective(checkin = {}, action = 'keep', patch = {}, hasWorkoutTod
   const flags = parseLifeFlags(checkin.life_flags);
   const hasFlag = (flag) => flags.includes(flag);
   const drivers = [];
+  const hasPatch = patch && Object.keys(patch).length > 0;
   const firstNumericValue = (keys) => {
     for (const key of keys) {
       const value = Number(patch?.[key]);
@@ -144,7 +145,11 @@ function buildDirective(checkin = {}, action = 'keep', patch = {}, hasWorkoutTod
   if (timeAvailable > 0 && timeAvailable <= 30) {
     drivers.push({
       label: 'Limited time',
-      detail: 'You only have a short window, so the plan is trimmed to fit today instead of rushing the full session.',
+      detail: hasPatch && action === 'shorten'
+        ? 'You only have a short window, so the plan is trimmed to fit today instead of rushing the full session.'
+        : hasPatch
+          ? 'You only have a short window, so today is adjusted around the time you actually have.'
+          : 'You only have a short window, but today stays as planned because there was no distance or duration to trim.',
     });
   }
 
@@ -188,7 +193,6 @@ function buildDirective(checkin = {}, action = 'keep', patch = {}, hasWorkoutTod
     });
   }
 
-  const hasPatch = patch && Object.keys(patch).length > 0;
   let headline = 'Keep today as planned';
 
   if (!hasWorkoutToday) {
@@ -202,14 +206,14 @@ function buildDirective(checkin = {}, action = 'keep', patch = {}, hasWorkoutTod
   } else if (action === 'recovery_swap') {
     if (adjustedMinutes) headline = `Easy ${adjustedMinutes} min today, you are carrying fatigue`;
     else if (adjustedDistance) headline = `Easy ${formatMiles(adjustedDistance)} today, you are carrying fatigue`;
-    else headline = 'Easy 30 today, you are carrying fatigue';
+    else headline = 'Easy recovery session today, you are carrying fatigue';
   } else if (action === 'shorten') {
     if (adjustedMinutes) headline = `Shorten to ${adjustedMinutes} min today`;
     else if (adjustedDistance) headline = `Shorten to ${formatMiles(adjustedDistance)} today`;
     else headline = 'Shorten today, protect the streak';
   }
 
-  if (drivers.length === 0 && readinessDelta > 0 && action === 'keep' && hasWorkoutToday) {
+  if (readinessDelta > 0 && action === 'keep' && hasWorkoutToday) {
     headline = 'Keep today as planned, readiness looks good';
   }
 
