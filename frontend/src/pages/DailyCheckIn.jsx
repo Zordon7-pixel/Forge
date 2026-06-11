@@ -308,7 +308,7 @@ export default function DailyCheckIn({ onComplete }) {
       </div>
 
       {submitError && (
-        <p style={{ background: 'var(--bg-card)', border: '1px solid #ef4444', borderRadius: 12, color: '#fecaca', fontSize: 13, fontWeight: 700, lineHeight: 1.4, padding: '12px 14px', margin: '0 0 16px' }}>
+        <p role="alert" style={{ background: 'var(--bg-card)', border: '1px solid #ef4444', borderRadius: 12, color: '#fecaca', fontSize: 13, fontWeight: 700, lineHeight: 1.4, padding: '12px 14px', margin: '0 0 16px' }}>
           {submitError}
         </p>
       )}

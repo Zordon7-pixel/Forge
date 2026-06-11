@@ -3,6 +3,8 @@ const { dbGet, dbRun } = require('../db');
 const auth = require('../middleware/auth');
 const { deriveAction, buildPatch, buildDirective } = require('../lib/checkinOverride');
 
+const ALLOWED_LIFE_FLAGS = new Set(['long_shift', 'sore', 'traveling', 'sick', 'injured', 'stressed', 'all_good']);
+
 function getDayShort() {
   return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date().getDay()];
 }
@@ -67,6 +69,9 @@ function validateCheckinPayload(body = {}) {
   if (!Number.isInteger(timeAvailable) || timeAvailable <= 0) {
     return { error: 'Time available must be a positive whole number of minutes.' };
   }
+  if (timeAvailable > 1440) {
+    return { error: 'Time available must be no more than 1440 minutes.' };
+  }
 
   const sleepHours = body.sleep_hours === null || body.sleep_hours === undefined || body.sleep_hours === ''
     ? null
@@ -80,7 +85,7 @@ function validateCheckinPayload(body = {}) {
       feeling,
       time_available: timeAvailable,
       sleep_hours: sleepHours,
-      life_flags: Array.isArray(body.life_flags) ? body.life_flags : [],
+      life_flags: Array.isArray(body.life_flags) ? body.life_flags.filter(flag => ALLOWED_LIFE_FLAGS.has(flag)) : [],
     },
   };
 }
