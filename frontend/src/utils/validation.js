@@ -74,12 +74,6 @@ export function getRecurringInjuryWarning({ bodyPart, injuries }) {
   return ''
 }
 
-export function validateCheckIn({ feeling }) {
-  const errors = {}
-  if (!feeling) errors.feeling = 'Select at least one feeling before continuing.'
-  return { errors }
-}
-
 export function validateGoalSetting({ name, targetValue, targetDate }) {
   const errors = {}
   if (!String(name || '').trim()) errors.name = 'Goal name is required.'

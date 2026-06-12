@@ -46,7 +46,6 @@ function ReadinessSegment({ title, helper, options, value, onChange, error, erro
             <button
               key={option.value}
               type="button"
-              role="button"
               aria-pressed={selected}
               onClick={() => onChange(option.value)}
               style={{
@@ -92,6 +91,7 @@ export default function DailyCheckIn({ onComplete }) {
   const [submitError, setSubmitError] = useState(null)
   const [preview, setPreview] = useState(null)
   const [previewLoading, setPreviewLoading] = useState(false)
+  const [previewError, setPreviewError] = useState(false)
   const legsErrorRef = useRef(null)
   const driveErrorRef = useRef(null)
   const timeErrorRef = useRef(null)
@@ -123,13 +123,14 @@ export default function DailyCheckIn({ onComplete }) {
     if (legs == null || drive == null) {
       setPreview(null)
       setPreviewLoading(false)
+      setPreviewError(false)
       return undefined
     }
 
     let cancelled = false
-    setPreviewLoading(true)
 
     const timer = setTimeout(async () => {
+      setPreviewLoading(true)
       try {
         const res = await api.post('/checkin/preview', {
           legs,
@@ -143,8 +144,12 @@ export default function DailyCheckIn({ onComplete }) {
           headline: res.data?.headline || null,
           drivers: Array.isArray(res.data?.drivers) ? res.data.drivers : [],
         })
+        setPreviewError(false)
       } catch {
-        if (!cancelled) setPreview(null)
+        if (!cancelled) {
+          setPreview(null)
+          setPreviewError(true)
+        }
       } finally {
         if (!cancelled) setPreviewLoading(false)
       }
@@ -290,6 +295,9 @@ export default function DailyCheckIn({ onComplete }) {
   }
 
   const previewDrivers = (preview?.drivers || []).slice(0, 2)
+  const previewCopy = legs == null || drive == null
+    ? 'Pick your legs + drive to see today\'s plan'
+    : preview?.headline || (previewError || preview ? 'Plan preview unavailable — submit to see your adjustment' : 'Pick your legs + drive to see today\'s plan')
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-base)', padding: '24px 20px', paddingBottom: 100, maxWidth: 480, margin: '0 auto', boxSizing: 'border-box', width: '100%' }}>
@@ -337,7 +345,7 @@ export default function DailyCheckIn({ onComplete }) {
       >
         <p style={{ fontSize: 11, fontWeight: 900, color: 'var(--accent)', letterSpacing: 1, textTransform: 'uppercase', margin: '0 0 8px' }}>Today</p>
         <p style={{ fontSize: 17, lineHeight: 1.35, fontWeight: 900, color: 'var(--text-primary)', margin: '0 0 12px' }}>
-          {legs == null || drive == null ? 'Pick your legs + drive to see today\'s plan' : (preview?.headline || 'Pick your legs + drive to see today\'s plan')}
+          {previewCopy}
         </p>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, minHeight: 26 }}>
           {previewLoading ? (

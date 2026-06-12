@@ -13,6 +13,13 @@ function deriveFeelingFromAxes(legs, drive) {
   return clamp(Math.round(((legs + drive) / 6) * 4 + 1), 1, 5);
 }
 
+function isInt13(value) {
+  if (typeof value !== 'number' && typeof value !== 'string') return false;
+  if (typeof value === 'string' && !/^[1-3]$/.test(value)) return false;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 1 && parsed <= 3;
+}
+
 function getDayShort() {
   return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date().getDay()];
 }
@@ -69,23 +76,16 @@ function describeAdjustment(action, patch, hasWorkoutToday = false) {
 
 function validateCheckinPayload(body = {}, options = {}) {
   const partial = Boolean(options.partial);
-  const hasLegs = body.legs !== null && body.legs !== undefined && body.legs !== '';
-  const hasDrive = body.drive !== null && body.drive !== undefined && body.drive !== '';
+  const hasLegs = isInt13(body.legs);
+  const hasDrive = isInt13(body.drive);
   const legs = hasLegs ? Number(body.legs) : null;
   const drive = hasDrive ? Number(body.drive) : null;
-  const hasInvalidLegs = hasLegs && (!Number.isInteger(legs) || legs < 1 || legs > 3);
-  const hasInvalidDrive = hasDrive && (!Number.isInteger(drive) || drive < 1 || drive > 3);
-  const hasValidAxes = Number.isInteger(legs) && legs >= 1 && legs <= 3
-    && Number.isInteger(drive) && drive >= 1 && drive <= 3;
+  const hasValidAxes = hasLegs && hasDrive;
 
   const hasFeeling = body.feeling !== null && body.feeling !== undefined && body.feeling !== '';
   let feeling = hasFeeling ? Number(body.feeling) : null;
   const hasValidFeeling = Number.isInteger(feeling) && feeling >= 1 && feeling <= 5;
   let incomplete = false;
-
-  if (hasInvalidLegs || hasInvalidDrive) {
-    return { error: 'Legs and drive must both be whole numbers from 1 to 3.' };
-  }
 
   if (hasLegs || hasDrive) {
     if (!hasValidAxes) {

@@ -94,6 +94,7 @@ function sessionLooksHard(day = {}) {
 }
 
 function applyDriveCap(patch, action, checkin = {}, day = {}) {
+  if (action === 'recovery_swap') return patch;
   if (!hasLowDrive(checkin) || !sessionLooksHard(day)) return patch;
   return {
     ...patch,
@@ -140,7 +141,7 @@ function buildPatch(action, day = {}, checkin = {}) {
       description: 'Recovery session from today\'s check-in.',
       checkin_override: { action, label: 'Swapped to recovery from daily check-in' },
     };
-    return applyDriveCap(patch, action, checkin, day);
+    return patch;
   }
 
   if (action === 'rest') {
