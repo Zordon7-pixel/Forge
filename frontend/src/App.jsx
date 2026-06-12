@@ -6,38 +6,68 @@ import Layout from './components/Layout'
 import { ProProvider } from './context/ProContext'
 import HealthService from './services/HealthService'
 
-const Login = lazy(() => import('./pages/Login'))
-const Register = lazy(() => import('./pages/Register'))
-const Onboarding = lazy(() => import('./pages/Onboarding'))
-const Dashboard = lazy(() => import('./pages/Dashboard'))
-const Landing = lazy(() => import('./pages/Landing'))
-const Privacy = lazy(() => import('./pages/Privacy'))
-const Terms = lazy(() => import('./pages/Terms'))
-const LogRun = lazy(() => import('./pages/LogRun'))
-const LogLift = lazy(() => import('./pages/LogLift'))
-const Plan = lazy(() => import('./pages/Plan'))
-const RunHub = lazy(() => import('./pages/RunHub'))
-const Warmup = lazy(() => import('./pages/Warmup'))
-const Prep = lazy(() => import('./pages/Prep'))
-const History = lazy(() => import('./pages/History'))
-const Profile = lazy(() => import('./pages/Profile'))
-const Settings = lazy(() => import('./pages/Settings'))
-const HealthData = lazy(() => import('./pages/HealthData'))
-const ActiveWorkout = lazy(() => import('./pages/ActiveWorkout'))
-const WorkoutSummary = lazy(() => import('./pages/WorkoutSummary'))
-const ActiveRun = lazy(() => import('./pages/ActiveRun'))
-const TreadmillRun = lazy(() => import('./pages/TreadmillRun'))
-const DailyCheckIn = lazy(() => import('./pages/DailyCheckIn'))
-const Stretches = lazy(() => import('./pages/Stretches'))
-const StretchSession = lazy(() => import('./pages/StretchSession'))
-const PRWall = lazy(() => import('./pages/PRWall'))
-const Races = lazy(() => import('./pages/Races'))
-const Gear = lazy(() => import('./pages/Gear'))
-const More = lazy(() => import('./pages/More'))
-const ResetPassword = lazy(() => import('./pages/ResetPassword'))
-const Injury = lazy(() => import('./pages/Injury'))
-const WeeklyRecap = lazy(() => import('./pages/WeeklyRecap'))
-const Upgrade = lazy(() => import('./pages/Upgrade'))
+function lazyWithRetry(factory) {
+  return lazy(async () => {
+    const KEY = 'forge_chunk_reloaded'
+    try {
+      const mod = await factory()
+      try {
+        sessionStorage.removeItem(KEY)
+      } catch {}
+      return mod
+    } catch (err) {
+      // stale/failed chunk after a deploy -> force one full reload to get fresh index.html + chunks
+      let shouldReload = false
+      try {
+        shouldReload = !sessionStorage.getItem(KEY)
+        if (shouldReload) {
+          sessionStorage.setItem(KEY, '1')
+        }
+      } catch {}
+
+      if (shouldReload) {
+        console.warn('[lazyWithRetry] chunk load failed, reloading:', err?.message)
+        window.location.reload()
+        // return a never-resolving module so Suspense holds until reload
+        return new Promise(() => {})
+      }
+      throw err // already reloaded once; let the error surface rather than loop
+    }
+  })
+}
+
+const Login = lazyWithRetry(() => import('./pages/Login'))
+const Register = lazyWithRetry(() => import('./pages/Register'))
+const Onboarding = lazyWithRetry(() => import('./pages/Onboarding'))
+const Dashboard = lazyWithRetry(() => import('./pages/Dashboard'))
+const Landing = lazyWithRetry(() => import('./pages/Landing'))
+const Privacy = lazyWithRetry(() => import('./pages/Privacy'))
+const Terms = lazyWithRetry(() => import('./pages/Terms'))
+const LogRun = lazyWithRetry(() => import('./pages/LogRun'))
+const LogLift = lazyWithRetry(() => import('./pages/LogLift'))
+const Plan = lazyWithRetry(() => import('./pages/Plan'))
+const RunHub = lazyWithRetry(() => import('./pages/RunHub'))
+const Warmup = lazyWithRetry(() => import('./pages/Warmup'))
+const Prep = lazyWithRetry(() => import('./pages/Prep'))
+const History = lazyWithRetry(() => import('./pages/History'))
+const Profile = lazyWithRetry(() => import('./pages/Profile'))
+const Settings = lazyWithRetry(() => import('./pages/Settings'))
+const HealthData = lazyWithRetry(() => import('./pages/HealthData'))
+const ActiveWorkout = lazyWithRetry(() => import('./pages/ActiveWorkout'))
+const WorkoutSummary = lazyWithRetry(() => import('./pages/WorkoutSummary'))
+const ActiveRun = lazyWithRetry(() => import('./pages/ActiveRun'))
+const TreadmillRun = lazyWithRetry(() => import('./pages/TreadmillRun'))
+const DailyCheckIn = lazyWithRetry(() => import('./pages/DailyCheckIn'))
+const Stretches = lazyWithRetry(() => import('./pages/Stretches'))
+const StretchSession = lazyWithRetry(() => import('./pages/StretchSession'))
+const PRWall = lazyWithRetry(() => import('./pages/PRWall'))
+const Races = lazyWithRetry(() => import('./pages/Races'))
+const Gear = lazyWithRetry(() => import('./pages/Gear'))
+const More = lazyWithRetry(() => import('./pages/More'))
+const ResetPassword = lazyWithRetry(() => import('./pages/ResetPassword'))
+const Injury = lazyWithRetry(() => import('./pages/Injury'))
+const WeeklyRecap = lazyWithRetry(() => import('./pages/WeeklyRecap'))
+const Upgrade = lazyWithRetry(() => import('./pages/Upgrade'))
 
 const AUTO_HEALTH_SYNC_LAST_SYNC_KEY = 'forge_auto_health_sync_last_sync_at'
 const AUTO_HEALTH_SYNC_MIN_INTERVAL_MS = 30 * 60 * 1000
