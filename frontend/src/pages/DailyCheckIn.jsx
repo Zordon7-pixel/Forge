@@ -1,14 +1,18 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../lib/api'
-import { scrollToFirstError, validateCheckIn } from '../utils/validation'
+import { scrollToFirstError } from '../utils/validation'
 
-const FEELINGS = [
-  { value: 1, label: 'Exhausted', img: '/checkin/exhausted.png' },
-  { value: 2, label: 'Tired',     img: '/checkin/tired.png' },
-  { value: 3, label: 'Okay',      img: '/checkin/okay.png' },
-  { value: 4, label: 'Good',      img: '/checkin/good.png' },
-  { value: 5, label: 'Great',     img: '/checkin/great.png' },
+const LEG_OPTIONS = [
+  { value: 3, label: 'Fresh' },
+  { value: 2, label: 'Okay' },
+  { value: 1, label: 'Heavy' },
+]
+
+const DRIVE_OPTIONS = [
+  { value: 3, label: 'Fired up' },
+  { value: 2, label: 'Okay' },
+  { value: 1, label: 'Flat' },
 ]
 
 const TIME_OPTIONS = [
@@ -28,9 +32,51 @@ const LIFE_FLAGS = [
   { value: 'all_good', label: 'All good' },
 ]
 
+function ReadinessSegment({ title, helper, options, value, onChange, error, errorRef }) {
+  return (
+    <div ref={errorRef} style={{ marginBottom: 20 }}>
+      <div style={{ marginBottom: 12 }}>
+        <p style={{ fontWeight: 800, color: 'var(--text-primary)', margin: '0 0 3px' }}>{title}</p>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>{helper}</p>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 10 }}>
+        {options.map(option => {
+          const selected = value === option.value
+          return (
+            <button
+              key={option.value}
+              type="button"
+              role="button"
+              aria-pressed={selected}
+              onClick={() => onChange(option.value)}
+              style={{
+                minHeight: 56,
+                borderRadius: 14,
+                border: selected ? '2px solid var(--accent)' : '2px solid transparent',
+                background: selected ? 'var(--accent-dim)' : 'var(--bg-input)',
+                color: selected ? 'var(--accent)' : 'var(--text-muted)',
+                boxShadow: selected ? '0 0 14px rgba(234,179,8,0.30)' : 'none',
+                cursor: 'pointer',
+                fontSize: 13,
+                fontWeight: 900,
+                padding: '12px 8px',
+                transition: 'all 160ms ease',
+              }}
+            >
+              {option.label}
+            </button>
+          )
+        })}
+      </div>
+      {error && <p style={{ fontSize: 12, color: '#ef4444', marginTop: 8 }}>{error}</p>}
+    </div>
+  )
+}
+
 export default function DailyCheckIn({ onComplete }) {
   const navigate = useNavigate()
-  const [feeling, setFeeling] = useState(null)
+  const [legs, setLegs] = useState(null)
+  const [drive, setDrive] = useState(null)
   const [timeAvailable, setTimeAvailable] = useState(null)
   const [lifeFlags, setLifeFlags] = useState([])
   const [saving, setSaving] = useState(false)
@@ -44,7 +90,11 @@ export default function DailyCheckIn({ onComplete }) {
   const [sleepHours, setSleepHours] = useState('')
   const [fieldErrors, setFieldErrors] = useState({})
   const [submitError, setSubmitError] = useState(null)
-  const feelingErrorRef = useRef(null)
+  const [preview, setPreview] = useState(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
+  const legsErrorRef = useRef(null)
+  const driveErrorRef = useRef(null)
+  const timeErrorRef = useRef(null)
 
   useEffect(() => {
     api.get('/checkin/today').then(r => {
@@ -60,19 +110,68 @@ export default function DailyCheckIn({ onComplete }) {
     })
   }
 
+  const clearFieldError = (key) => {
+    setFieldErrors(prev => {
+      if (!prev[key]) return prev
+      const next = { ...prev }
+      delete next[key]
+      return next
+    })
+  }
+
+  useEffect(() => {
+    if (legs == null || drive == null) {
+      setPreview(null)
+      setPreviewLoading(false)
+      return undefined
+    }
+
+    let cancelled = false
+    setPreviewLoading(true)
+
+    const timer = setTimeout(async () => {
+      try {
+        const res = await api.post('/checkin/preview', {
+          legs,
+          drive,
+          time_available: timeAvailable,
+          life_flags: lifeFlags,
+          sleep_hours: sleepHours === '' ? null : Number(sleepHours),
+        })
+        if (cancelled) return
+        setPreview({
+          headline: res.data?.headline || null,
+          drivers: Array.isArray(res.data?.drivers) ? res.data.drivers : [],
+        })
+      } catch {
+        if (!cancelled) setPreview(null)
+      } finally {
+        if (!cancelled) setPreviewLoading(false)
+      }
+    }, 250)
+
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [legs, drive, timeAvailable, lifeFlags, sleepHours])
+
   const submit = async () => {
-    const { errors } = validateCheckIn({ feeling })
+    const errors = {}
+    if (legs == null) errors.legs = 'Select how your legs feel.'
+    if (drive == null) errors.drive = 'Select your drive today.'
     if (!timeAvailable) errors.time_available = 'Select available workout time.'
     setFieldErrors(errors)
     if (Object.keys(errors).length) {
-      scrollToFirstError({ feeling: feelingErrorRef }, ['feeling'])
+      scrollToFirstError({ legs: legsErrorRef, drive: driveErrorRef, time_available: timeErrorRef }, ['legs', 'drive', 'time_available'].filter(k => errors[k]))
       return
     }
     setSaving(true)
     setSubmitError(null)
     try {
       const res = await api.post('/checkin', {
-        feeling,
+        legs,
+        drive,
         time_available: timeAvailable,
         life_flags: lifeFlags,
         sleep_hours: sleepHours === '' ? null : Number(sleepHours),
@@ -190,50 +289,85 @@ export default function DailyCheckIn({ onComplete }) {
     )
   }
 
+  const previewDrivers = (preview?.drivers || []).slice(0, 2)
+
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-base)', padding: '24px 20px', paddingBottom: 100, maxWidth: 480, margin: '0 auto', boxSizing: 'border-box', width: '100%' }}>
       <h1 style={{ fontWeight: 900, fontSize: 26, color: 'var(--text-primary)', marginBottom: 4 }}>Morning Check-In</h1>
       <p style={{ color: 'var(--text-muted)', fontSize: 14, marginBottom: 28 }}>3 taps — I'll adjust your plan around your day.</p>
 
-      <div style={{ marginBottom: 24 }}>
-        <p style={{ fontWeight: 700, color: 'var(--text-primary)', marginBottom: 12 }}>How are you feeling?</p>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 6 }}>
-          {FEELINGS.map(f => (
-            <div key={f.value} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, flex: 1 }}>
-              <button onClick={() => setFeeling(f.value)}
-                style={{
-                  width: 62, height: 62, borderRadius: '50%',
-                  border: feeling === f.value ? '2.5px solid var(--accent)' : '2.5px solid transparent',
-                  background: feeling === f.value ? 'var(--accent-dim)' : 'var(--bg-input)',
-                  cursor: 'pointer',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  padding: 0,
-                  boxShadow: feeling === f.value ? '0 0 12px rgba(234,179,8,0.35)' : 'none',
-                  transition: 'all 0.2s',
-                  flexShrink: 0,
-                }}>
-                <img src={f.img} alt={f.label}
-                  style={{
-                    width: 46, height: 46, objectFit: 'cover', borderRadius: '50%',
-                    filter: feeling === f.value ? 'brightness(1.1)' : 'brightness(0.7)',
-                    transition: 'filter 0.2s',
-                  }} />
-              </button>
-              <span style={{
-                fontSize: 10, fontWeight: 700, textAlign: 'center',
-                color: feeling === f.value ? 'var(--accent)' : 'var(--text-muted)',
-              }}>{f.label}</span>
-            </div>
+      <ReadinessSegment
+        title="How are your legs?"
+        helper="Physical freshness"
+        options={LEG_OPTIONS}
+        value={legs}
+        onChange={(nextLegs) => {
+          setLegs(nextLegs)
+          clearFieldError('legs')
+        }}
+        error={fieldErrors.legs}
+        errorRef={legsErrorRef}
+      />
+
+      <ReadinessSegment
+        title="How is your drive?"
+        helper="Mental energy to train"
+        options={DRIVE_OPTIONS}
+        value={drive}
+        onChange={(nextDrive) => {
+          setDrive(nextDrive)
+          clearFieldError('drive')
+        }}
+        error={fieldErrors.drive}
+        errorRef={driveErrorRef}
+      />
+
+      <div
+        style={{
+          background: 'var(--bg-input)',
+          borderLeft: '3px solid var(--accent)',
+          borderRadius: 16,
+          padding: 16,
+          marginBottom: 24,
+          minHeight: 96,
+          boxSizing: 'border-box',
+          opacity: previewLoading ? 0.72 : 1,
+          transition: 'opacity 160ms ease',
+        }}
+      >
+        <p style={{ fontSize: 11, fontWeight: 900, color: 'var(--accent)', letterSpacing: 1, textTransform: 'uppercase', margin: '0 0 8px' }}>Today</p>
+        <p style={{ fontSize: 17, lineHeight: 1.35, fontWeight: 900, color: 'var(--text-primary)', margin: '0 0 12px' }}>
+          {legs == null || drive == null ? 'Pick your legs + drive to see today\'s plan' : (preview?.headline || 'Pick your legs + drive to see today\'s plan')}
+        </p>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, minHeight: 26 }}>
+          {previewLoading ? (
+            <>
+              <span style={{ width: 92, height: 24, borderRadius: 999, background: 'var(--accent-dim)', opacity: 0.65 }} />
+              <span style={{ width: 118, height: 24, borderRadius: 999, background: 'var(--accent-dim)', opacity: 0.45 }} />
+            </>
+          ) : previewDrivers.map((driver, idx) => (
+            <span
+              key={`${driver.label || driver}-${idx}`}
+              style={{
+                borderRadius: 999,
+                background: 'var(--accent-dim)',
+                color: 'var(--accent)',
+                fontSize: 11,
+                fontWeight: 900,
+                padding: '6px 10px',
+              }}
+            >
+              {driver.label || driver}
+            </span>
           ))}
         </div>
-        {fieldErrors.feeling && <p ref={feelingErrorRef} style={{ fontSize: 12, color: '#ef4444', marginTop: 8 }}>{fieldErrors.feeling}</p>}
       </div>
 
-      <div style={{ marginBottom: 24 }}>
+      <div ref={timeErrorRef} style={{ marginBottom: 24 }}>
         <p style={{ fontWeight: 700, color: 'var(--text-primary)', marginBottom: 12 }}>How much time do you have to workout?</p>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
           {TIME_OPTIONS.map(t => (
-            <button key={t.value} onClick={() => setTimeAvailable(t.value)}
+            <button key={t.value} onClick={() => { setTimeAvailable(t.value); clearFieldError('time_available') }}
               style={{
                 padding: '10px 16px', borderRadius: 12, border: `2px solid ${timeAvailable === t.value ? 'var(--accent)' : 'var(--border-subtle)'}`,
                 background: timeAvailable === t.value ? 'var(--accent-dim)' : 'var(--bg-card)',
