@@ -2,6 +2,7 @@ import React, { Suspense, lazy, useEffect, useRef } from 'react'
 import { App as CapacitorApp } from '@capacitor/app'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { isLoggedIn, getUser } from './lib/auth'
+import track from './lib/track'
 import Layout from './components/Layout'
 import { ProProvider } from './context/ProContext'
 import HealthService from './services/HealthService'
@@ -184,6 +185,10 @@ function PrivateRoute({ children }) {
 }
 
 export default function App() {
+  useEffect(() => {
+    track('app_open')
+  }, [])
+
   return (
     <BrowserRouter>
       <ProProvider>

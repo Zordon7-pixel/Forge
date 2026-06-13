@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../lib/api'
+import track from '../lib/track'
 import { scrollToFirstError } from '../utils/validation'
 
 const LEG_OPTIONS = [
@@ -181,6 +182,7 @@ export default function DailyCheckIn({ onComplete }) {
         life_flags: lifeFlags,
         sleep_hours: sleepHours === '' ? null : Number(sleepHours),
       })
+      track('checkin')
       // Also fetch today's plan to show after adjustment
       try {
         const planRes = await api.get('/plans/today')

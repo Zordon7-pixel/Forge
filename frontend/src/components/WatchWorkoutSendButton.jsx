@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Watch } from 'lucide-react'
+import track from '../lib/track'
 import WatchDeliveryService from '../services/WatchDeliveryService'
 
 export default function WatchWorkoutSendButton({ workout, label = 'Send to Watch', className = '', compact = false }) {
@@ -46,6 +47,7 @@ export default function WatchWorkoutSendButton({ workout, label = 'Send to Watch
     setStatus('')
     try {
       await WatchDeliveryService.send(workout)
+      track('recommendation_followed', { via: 'watch' })
       setStatus('Sent to watch.')
     } catch (err) {
       setError(err?.message || 'Could not send this workout to your watch.')

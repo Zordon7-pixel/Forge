@@ -3,6 +3,7 @@ import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { MapPin, Mountain, RefreshCw, Gauge, Pencil } from 'lucide-react'
 import { useUnits } from '../context/UnitsContext'
 import api from '../lib/api'
+import track from '../lib/track'
 import { parseDuration, formatDurationDisplay } from '../lib/parseDuration'
 import PostRunCheckIn from '../components/PostRunCheckIn'
 import PhotoUploader from '../components/PhotoUploader'
@@ -423,6 +424,7 @@ export default function LogRun() {
       }
 
       const runRes = await api.post('/runs', runPayload)
+      track('run_logged')
       const runId = runRes.data?.id || runRes.data?.run?.id
       if (runId) api.post('/prs/auto-detect', { run_id: runId }).catch(() => {})
       // Phase 2L — /badges/check removed (display retired in 2K).

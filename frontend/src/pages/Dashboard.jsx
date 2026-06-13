@@ -9,6 +9,7 @@ import ReadinessCard from '../components/ReadinessCard'
 import TodaysPickCard from '../components/TodaysPickCard'
 import { useUnits } from '../context/UnitsContext'
 import api from '../lib/api'
+import track from '../lib/track'
 import LoadingRunner from '../components/LoadingRunner'
 import { useOnlineStatus } from '../lib/useOnlineStatus'
 import HealthService from '../services/HealthService'
@@ -103,6 +104,7 @@ export default function Dashboard() {
   const [healthSyncNotice, setHealthSyncNotice] = useState('')
   const { isOnline, queueCount } = useOnlineStatus()
   const { isPro, loading: proLoading } = useProContext()
+  const todayCardViewedRef = React.useRef(false)
 
   const fetchDashboardData = useCallback(async () => {
     try {
@@ -225,6 +227,12 @@ export default function Dashboard() {
       listenerHandles.forEach((handle) => handle?.remove?.())
     }
   }, [fetchDashboardData])
+
+  useEffect(() => {
+    if (loading || todayCardViewedRef.current) return
+    todayCardViewedRef.current = true
+    track('today_card_viewed')
+  }, [loading])
 
   useEffect(() => {
     let active = true
@@ -538,6 +546,7 @@ export default function Dashboard() {
 
   const handleStartWorkout = useCallback(() => {
     if (!nextRecommendation) return navigate('/run')
+    track('recommendation_followed', { via: 'today_card_start' })
     if (nextRecommendation.recommendationType === 'rest') return navigate('/plan')
     if (nextRecommendation.recommendationType === 'strength') return navigate('/log-lift')
     const params = new URLSearchParams()

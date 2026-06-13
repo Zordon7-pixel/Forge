@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../lib/api'
+import track from '../lib/track'
 import { queueRequest } from '../lib/offlineQueue'
 import { getVolumeLoad, getProgressiveOverloadTip } from '../lib/athleteLanguage'
 import WatchWorkoutSendButton from '../components/WatchWorkoutSendButton'
@@ -172,6 +173,7 @@ export default function LogLift() {
       }
 
       const res = await api.post('/workouts/start', payload)
+      track('lift_logged')
       navigate(`/workout/active/${res.data.session.id}`, {
         state: {
           exercises: aiRecommendation?.main || [],
@@ -209,6 +211,7 @@ export default function LogLift() {
       }
 
       const res = await api.post('/workouts/start', payload)
+      track('lift_logged')
       navigate(`/workout/active/${res.data.session.id}`)
     } catch (err) {
       if (!err?.response) {
@@ -255,6 +258,7 @@ export default function LogLift() {
       }
 
       const res = await api.post('/workouts/start', payload)
+      track('lift_logged')
       navigate(`/workout/active/${res.data.session.id}`, {
         state: { exercises: manualAiPlan?.main || [], workoutName: manualAiPlan?.workoutName || '' }
       })
