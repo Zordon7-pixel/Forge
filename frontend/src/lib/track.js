@@ -23,8 +23,8 @@ export async function track(eventName, props) {
     }
 
     await api.post('/events', { event_name: eventName, props })
-  } catch {
-    // Usage events must never interrupt the product experience.
+  } catch (err) {
+    console.debug('track fail-soft:', err?.message)
   }
 }
 

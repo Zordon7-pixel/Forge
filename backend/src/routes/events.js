@@ -32,6 +32,7 @@ const ALLOWED_PROP_KEYS = new Set([
   'type',
   'unit',
   'value',
+  'via',
   'workout_type',
 ]);
 const MAX_PROPS = 12;
