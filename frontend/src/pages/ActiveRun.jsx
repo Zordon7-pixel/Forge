@@ -98,12 +98,12 @@ export default function ActiveRun() {
     watchRef.current = navigator.geolocation.watchPosition(
       pos => {
         setGpsAvailable(true)
-        const point = { lat: pos.coords.latitude, lon: pos.coords.longitude }
+        const point = { lat: pos.coords.latitude, lon: pos.coords.longitude, alt: pos.coords.altitude ?? null }
         if (lastPointRef.current) {
           const segment = haversineMiles(lastPointRef.current, point)
           if (segment > 0 && segment < 0.25) setDistanceMiles(v => v + segment)
         }
-        setRouteCoords((prev) => [...prev, [point.lat, point.lon]])
+        setRouteCoords((prev) => [...prev, [point.lat, point.lon, point.alt]])
         lastPointRef.current = point
       },
       () => {
@@ -163,7 +163,7 @@ export default function ActiveRun() {
         perceived_effort: 5,
         gps_available: gpsAvailable,
         avg_heart_rate: liveHr || null,
-        route_coords: routeCoords.map(([lat, lon]) => ({ lat, lon })),
+        route_coords: routeCoords.map(([lat, lon, alt]) => ({ lat, lon, alt: alt ?? null })),
         treadmill_brand: treadmillBrand || null
       })
       const runId = res.data?.id || res.data?.run?.id
@@ -224,7 +224,7 @@ export default function ActiveRun() {
 
       {mapMyRun && routeCoords.length > 0 && <div className="mb-4 rounded-xl overflow-hidden" style={{ height: 240 }}><MapContainer center={routeCoords[routeCoords.length - 1]} zoom={15} style={{ height: '100%', width: '100%' }}><TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" /><Marker position={routeCoords[routeCoords.length - 1]} /><Polyline positions={routeCoords} pathOptions={{ color: '#EAB308', weight: 4 }} /></MapContainer></div>}
 
-      {!running && !countingDown && !awaitingManualDistance && <><button onClick={() => setMapMyRun(v => !v)} className="w-full rounded-xl py-2 font-semibold mb-2" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}>{mapMyRun ? 'Map my run: On' : 'Map my run: Off'}</button><button onClick={() => { setCountdownVal(selectedCountdown); setCountingDown(selectedCountdown > 0); if (selectedCountdown === 0) startGPS() }} className="w-full rounded-xl py-3 font-black" style={{ background: 'var(--accent)', color: '#000' }}>Start Run</button></>}
+      {!running && !countingDown && !awaitingManualDistance && <><button onClick={() => setMapMyRun(v => !v)} className="w-full rounded-xl py-2 font-semibold mb-2" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}>{mapMyRun ? 'Record route: On' : 'Record route: Off'}</button><button onClick={() => { setCountdownVal(selectedCountdown); setCountingDown(selectedCountdown > 0); if (selectedCountdown === 0) startGPS() }} className="w-full rounded-xl py-3 font-black" style={{ background: 'var(--accent)', color: '#000' }}>Start Run</button></>}
       {running && <button onClick={finishRun} disabled={saving} className="w-full rounded-xl py-3 font-black" style={{ background: 'var(--accent)', color: '#000', opacity: saving ? 0.5 : 1 }}>{saving ? 'Saving...' : 'Finish Run'}</button>}
 
       {awaitingManualDistance && (

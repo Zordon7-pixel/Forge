@@ -271,7 +271,6 @@ export default function Settings() {
   const loadDeviceStatuses = async () => {
     const entries = await Promise.all([
       ['strava', api.get('/strava/status').catch(() => ({ data: { connected: false } }))],
-      ['whoop', api.get('/whoop/status').catch(() => ({ data: { connected: false } }))],
       ['oura', api.get('/oura/status').catch(() => ({ data: { connected: false } }))],
     ])
     setDeviceStatuses(Object.fromEntries(entries.map(([key, res]) => [key, res.data || { connected: false }])))
@@ -405,17 +404,6 @@ export default function Settings() {
       connecting: Boolean(deviceConnecting.strava),
       sync: () => handleDeviceSync('strava'),
       revoke: () => handleDeviceDisconnect('strava'),
-    },
-    {
-      key: 'whoop',
-      name: 'WHOOP',
-      connected: Boolean(deviceStatuses.whoop?.connected),
-      detail: deviceStatuses.whoop?.displayName || '',
-      lastSync: deviceStatuses.whoop?.lastSync,
-      connect: () => handleDeviceConnect('whoop'),
-      connecting: Boolean(deviceConnecting.whoop),
-      sync: () => handleDeviceSync('whoop'),
-      revoke: () => handleDeviceDisconnect('whoop'),
     },
     {
       key: 'oura',

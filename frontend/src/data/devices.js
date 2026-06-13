@@ -8,7 +8,7 @@ export const DEVICES_REGISTRY = [
     type: 'smartwatch',
     status: 'coming_soon', // 'connected' | 'available' | 'coming_soon'
     icon: 'Watch',
-    capabilities: ['heart-rate', 'gps', 'pace', 'cadence', 'elevation'],
+    capabilities: ['heart-rate', 'gps', 'pace', 'cadence'],
   },
   {
     id: 'garmin',
@@ -17,14 +17,6 @@ export const DEVICES_REGISTRY = [
     status: 'available',
     icon: 'Watch',
     capabilities: ['heart-rate', 'gps', 'training-load', 'recovery-time'],
-  },
-  {
-    id: 'whoop',
-    name: 'Whoop',
-    type: 'wearable',
-    status: 'available',
-    icon: 'Zap',
-    capabilities: ['recovery', 'strain', 'sleep-tracking'],
   },
   {
     id: 'oura',

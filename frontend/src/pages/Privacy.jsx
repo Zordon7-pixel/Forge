@@ -34,7 +34,7 @@ export default function Privacy() {
             With your permission, FORGE reads health and workout data from Apple Health (iOS) and Android Health Connect —
             such as sleep, heart rate, HRV, steps, and prior workouts — to generate your adaptive training plans. When you
             choose to connect a third-party training platform or watch (including Garmin Connect, TrainingPeaks, COROS,
-            Suunto, Wahoo, or Polar), FORGE sends your generated workouts, planned training sessions, and routes to that
+            Suunto, Wahoo, or Polar), FORGE sends your generated workouts, planned training sessions, and recorded routes to that
             account so they appear on your device. Each connection is authorized by you through secure OAuth and can be
             disconnected at any time. We exchange only the data needed to deliver these workouts. We do not sell this data
             or use it for advertising.
