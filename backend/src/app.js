@@ -66,6 +66,7 @@ app.use('/api/coach',       require('./routes/coach'));
 app.use('/api/diagnostics', require('./routes/diagnostics'));
 app.use('/api/meta',        require('./routes/meta'));
 app.use('/api/feedback',    require('./routes/feedback'));
+app.use('/api/events',      require('./routes/events'));
 app.use('/api/checkin',     require('./routes/checkin'));
 app.use('/api/prs',         require('./routes/prs'));
 app.use('/api/hybrid-prs',  require('./routes/hybridPrs'));

@@ -543,6 +543,17 @@ async function initDb() {
     `);
 
     await client.query(`
+      CREATE TABLE IF NOT EXISTS events (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        event_name TEXT NOT NULL,
+        props JSONB,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    await client.query('CREATE INDEX IF NOT EXISTS idx_events_user_created_at ON events(user_id, created_at)');
+
+    await client.query(`
       CREATE TABLE IF NOT EXISTS activity_media (
         id TEXT PRIMARY KEY,
         activity_id TEXT NOT NULL,

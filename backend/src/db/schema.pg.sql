@@ -239,6 +239,16 @@ CREATE TABLE IF NOT EXISTS activity_feed (
   created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS events (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  event_name TEXT NOT NULL,
+  props JSONB,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_events_user_created_at ON events(user_id, created_at);
+
 CREATE TABLE IF NOT EXISTS activity_likes (
   id TEXT PRIMARY KEY,
   activity_id TEXT NOT NULL,
