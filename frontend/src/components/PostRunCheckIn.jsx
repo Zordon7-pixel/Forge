@@ -21,7 +21,7 @@ const ENERGY_OPTIONS = [
   ['high', 'Energized'],
 ]
 
-export default function PostRunCheckIn({ runId, onDone }) {
+export default function PostRunCheckIn({ runId, heatDrift, onDone }) {
   const [step, setStep] = useState(0)
   const [effort, setEffort] = useState(null)
   const [pain, setPain] = useState(null)
@@ -126,6 +126,17 @@ export default function PostRunCheckIn({ runId, onDone }) {
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 50, padding: 16 }}>
       <div style={{ background: 'var(--bg-card)', borderRadius: '24px 24px 16px 16px', padding: 24, width: '100%', maxWidth: 480 }}>
+
+        {heatDrift?.drifted && (
+          <div style={{ marginBottom: 16, borderRadius: 12, border: '1px solid rgba(234,179,8,0.35)', background: 'var(--bg-card)', padding: '10px 12px' }}>
+            <p style={{ margin: '0 0 4px', color: 'var(--accent)', fontSize: 11, fontWeight: 900, textTransform: 'uppercase', letterSpacing: 0 }}>
+              {heatDrift.label}
+            </p>
+            <p style={{ margin: 0, color: 'var(--text-primary)', fontSize: 12, lineHeight: 1.45 }}>
+              {heatDrift.reason}
+            </p>
+          </div>
+        )}
 
         <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
           {STEPS.map((item, idx) => {

@@ -50,6 +50,7 @@ export default function ActiveRun() {
   const [saving, setSaving] = useState(false)
   const [showPostCheckIn, setShowPostCheckIn] = useState(false)
   const [savedRunId, setSavedRunId] = useState(null)
+  const [savedHeatDrift, setSavedHeatDrift] = useState(null)
   const [showAiCard, setShowAiCard] = useState(false)
   const [aiLoading, setAiLoading] = useState(false)
   const [aiFeedback, setAiFeedback] = useState(null)
@@ -169,6 +170,7 @@ export default function ActiveRun() {
       const runId = res.data?.id || res.data?.run?.id
       if (runId) {
         setSavedRunId(runId)
+        setSavedHeatDrift(res.data?.heatDrift || null)
         setShowAiCard(true)
         setAiLoading(true)
         try {
@@ -248,7 +250,7 @@ export default function ActiveRun() {
         />
       )}
 
-      {showPostCheckIn && savedRunId && <PostRunCheckIn runId={savedRunId} onDone={() => { setShowPostCheckIn(false); navigate('/') }} />}
+      {showPostCheckIn && savedRunId && <PostRunCheckIn runId={savedRunId} heatDrift={savedHeatDrift} onDone={() => { setShowPostCheckIn(false); navigate('/') }} />}
       <AICoachFeedbackCard open={showAiCard} loading={aiLoading} feedback={aiFeedback} sessionId={savedRunId} onClose={() => setShowAiCard(false)} />
       <Link to="/log-run" className="mt-5 inline-block text-sm" style={{ color: 'var(--text-muted)' }}>← Back</Link>
     </div>

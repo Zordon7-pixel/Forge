@@ -6,6 +6,9 @@ const { generateRunFeedback, generateLoadWarning, generateRunBrief } = require('
 const autoUpdatePRs = require('../services/prAuto');
 const { buildTcxWorkout } = require('../utils/tcxBuilder');
 const { applyInterference } = require('../services/interference');
+const { getWeather } = require('../services/weather');
+const { classifyRunZone } = require('../lib/runHistory');
+const { assessHeatDrift } = require('../lib/heatDrift');
 const {
   DISTANCE_CONFIG,
   normalizeSex,
@@ -34,6 +37,19 @@ function paceFromSeconds(distanceMiles, seconds) {
   const m = Math.floor(paceSec / 60);
   const s = Math.round(paceSec % 60);
   return `${m}:${String(s).padStart(2, '0')}/mi`;
+}
+
+function firstRoutePoint(routeCoords) {
+  if (!Array.isArray(routeCoords) || routeCoords.length === 0) return null;
+  const point = routeCoords[0];
+  if (Array.isArray(point)) {
+    const lat = Number(point[0]);
+    const lon = Number(point[1]);
+    return Number.isFinite(lat) && Number.isFinite(lon) ? { lat, lon } : null;
+  }
+  const lat = Number(point?.lat);
+  const lon = Number(point?.lon ?? point?.lng);
+  return Number.isFinite(lat) && Number.isFinite(lon) ? { lat, lon } : null;
 }
 
 function buildRunStructure({ recommendationType, suggestedDistance, suggestedPace }) {
@@ -600,7 +616,8 @@ router.post('/', auth, async (req, res) => {
       elevation_gain, elevation_loss, pace_avg, pace_splits,
       vo2_max, training_effect_aerobic, training_effect_anaerobic, recovery_time_hours,
       detected_surface_type, temperature_f, calories, treadmill_brand, treadmill_model,
-      watch_sync_id, watch_activity_type, watch_normalized_type, gps_available
+      watch_sync_id, watch_activity_type, watch_normalized_type, gps_available,
+      target_zone
     } = req.body;
     if (!date || !type) return res.status(400).json({ error: 'date and type required' });
     if (perceived_effort !== undefined && perceived_effort !== null) {
@@ -612,6 +629,16 @@ router.post('/', auth, async (req, res) => {
 
     const id = uuidv4();
     const resolvedSurface = surface || run_surface || 'road';
+    let prescribedTargetZone = target_zone || null;
+    if (!prescribedTargetZone) {
+      try {
+        const recommendation = await buildNextRecommendation(req.user.id, { includeBrief: false });
+        prescribedTargetZone = recommendation?.targetZone || null;
+      } catch (err) {
+        console.error('[runs] heat drift target lookup failed:', err);
+      }
+    }
+
     await dbRun(`INSERT INTO runs (
       id, user_id, date, type, distance_miles, duration_seconds, perceived_effort, notes,
       run_surface, surface, incline_pct, treadmill_speed, route_coords, watch_mode,
@@ -630,7 +657,7 @@ router.post('/', auth, async (req, res) => {
       watch_sync_id || null, watch_activity_type || null, watch_normalized_type || null, gps_available === false ? 0 : 1
     ]);
 
-    const userProfile = await dbGet('SELECT weight_lbs FROM users WHERE id=?', [req.user.id]);
+    const userProfile = await dbGet('SELECT weight_lbs, max_heart_rate FROM users WHERE id=?', [req.user.id]);
     const weightLbs = userProfile?.weight_lbs || 185;
     const computedCalories = Math.round(0.75 * weightLbs * (distance_miles || 0));
     const resolvedCalories = Number(calories || 0) > 0 ? Number(calories) : computedCalories;
@@ -650,11 +677,29 @@ router.post('/', auth, async (req, res) => {
     }
 
     const run = await dbGet('SELECT * FROM runs WHERE id = ?', [id]);
+    let heatDrift = { drifted: false };
+    try {
+      const actualZone = classifyRunZone(avg_heart_rate, userProfile?.max_heart_rate);
+      if (actualZone && prescribedTargetZone) {
+        const point = firstRoutePoint(route_coords);
+        const weather = point
+          ? await getWeather(point.lat, point.lon)
+          : { available: false, reason: 'No route start point available' };
+        heatDrift = assessHeatDrift({
+          actualZone,
+          targetZone: prescribedTargetZone,
+          weather,
+        });
+      }
+    } catch (err) {
+      console.error('[runs] heat drift assessment failed:', err);
+      heatDrift = { drifted: false };
+    }
 
     let prResult = { newPRs: [], discrepancies: [] };
     try { prResult = await autoUpdatePRs(req.user.id, run) || prResult; } catch (e) { console.error('PR auto-detect:', e); }
 
-    res.status(201).json({ run, newPRs: prResult.newPRs, discrepancies: prResult.discrepancies });
+    res.status(201).json({ run, heatDrift, newPRs: prResult.newPRs, discrepancies: prResult.discrepancies });
 
     // Fire and forget AI feedback
     try {

@@ -263,6 +263,7 @@ export default function LogRun() {
   const [showRecoveryPrompt, setShowRecoveryPrompt] = useState(false)
   const [showPostCheckIn, setShowPostCheckIn] = useState(false)
   const [savedRunId, setSavedRunId] = useState(null)
+  const [savedHeatDrift, setSavedHeatDrift] = useState(null)
   const [recentRuns, setRecentRuns] = useState([])
   const [runsLoading, setRunsLoading] = useState(false)
 
@@ -416,7 +417,7 @@ export default function LogRun() {
         navigate('/run/treadmill', { state: { treadmillType } })
         return
       }
-      const runPayload = { date, type: runType, surface: resolvedSurface, run_surface: resolvedSurface, distance_miles: distanceMiles, duration_seconds: seconds, notes, perceived_effort: Number(effort), treadmill_brand: treadmillType, shoe_id: selectedShoeId || null }
+      const runPayload = { date, type: runType, surface: resolvedSurface, run_surface: resolvedSurface, distance_miles: distanceMiles, duration_seconds: seconds, notes, perceived_effort: Number(effort), treadmill_brand: treadmillType, shoe_id: selectedShoeId || null, target_zone: todayWorkout?.zone || null }
       if (!navigator.onLine) {
         await queueRequest('/api/runs', 'POST', runPayload)
         setFeedback('Saved offline — will sync when connected')
@@ -435,6 +436,7 @@ export default function LogRun() {
       }
 
       setSavedRunId(runId)
+      setSavedHeatDrift(runRes.data?.heatDrift || null)
       setShowPostCheckIn(true)
       setPolling(true)
 
@@ -805,7 +807,7 @@ export default function LogRun() {
         </div>
       )}
 
-      {showPostCheckIn && savedRunId && <PostRunCheckIn runId={savedRunId} onDone={() => { setShowPostCheckIn(false); navigate('/') }} />}
+      {showPostCheckIn && savedRunId && <PostRunCheckIn runId={savedRunId} heatDrift={savedHeatDrift} onDone={() => { setShowPostCheckIn(false); navigate('/') }} />}
 
       {showRecoveryPrompt && (
         <div className="fixed inset-0 z-50 flex items-center justify-center px-4" style={{ background: 'rgba(0,0,0,0.7)' }}>
