@@ -2,7 +2,7 @@ const LOWER_BODY_PATTERN = /\b(legs?|quads?|quadriceps|hamstrings?|glutes?|lower
 const QUALITY_RUN_PATTERN = /(tempo|interval|speed|quality|threshold|hard)/i;
 const RECENT_WINDOW_MS = 24 * 60 * 60 * 1000;
 const MIN_LOWER_BODY_SECONDS = 10 * 60;
-const INTERFERENCE_REASON = 'heavy lower-body lift in the last 24h, keeping today aerobic Z2 to protect recovery.';
+const INTERFERENCE_REASON = 'recent lower-body strength session in the last 24h, keeping today aerobic Z2 to protect recovery.';
 
 function parseMuscleGroups(value) {
   if (Array.isArray(value)) return value.join(' ');
@@ -38,7 +38,6 @@ function isQualityRun(recommendation) {
 
 function buildZ2Structure(recommendation) {
   const distance = Number(recommendation?.suggestedDistance || 0);
-  const pace = String(recommendation?.suggestedPace || '').trim();
   const clean = (block) => Object.fromEntries(
     Object.entries(block).filter(([, value]) => value !== null && value !== undefined && value !== '')
   );
@@ -51,10 +50,26 @@ function buildZ2Structure(recommendation) {
       hrZone: 2,
       description: 'Conversational pace, Z2 heart rate',
       distanceMiles: distance || null,
-      paceTarget: pace && pace !== '--' ? pace : null,
     }),
     clean({ phase: 'cooldown', label: 'Cooldown', durationMinutes: 5, hrZone: 1, description: 'Walk + light mobility' }),
   ];
+}
+
+function scrubPaceTargets(recommendation) {
+  delete recommendation.pace;
+  delete recommendation.paceTarget;
+  delete recommendation.targetPace;
+  recommendation.suggestedPace = null;
+
+  if (!Array.isArray(recommendation.structure)) return;
+  recommendation.structure = recommendation.structure.map((block) => {
+    if (!block || typeof block !== 'object') return block;
+    const next = { ...block };
+    delete next.pace;
+    delete next.paceTarget;
+    delete next.targetPace;
+    return next;
+  });
 }
 
 function applyInterference(recommendation, recentWorkouts) {
@@ -74,6 +89,7 @@ function applyInterference(recommendation, recentWorkouts) {
     recommendation.progression = 'Easy aerobic run — keep the whole session in Z2 and save intensity for after recovery.';
     recommendation.steps = ['10 min easy warm-up', 'Z2 conversational main set', '5 min cooldown'];
     recommendation.structure = buildZ2Structure(recommendation);
+    scrubPaceTargets(recommendation);
     recommendation.reason = INTERFERENCE_REASON;
     recommendation.interference = {
       adjusted: true,

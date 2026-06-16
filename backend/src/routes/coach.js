@@ -23,7 +23,10 @@ router.get('/warning', auth, async (req, res) => {
       warning: true,
       message: result.interference.reason
     });
-  } catch (err) { res.status(500).json({ error: 'Warning check failed' }); }
+  } catch (err) {
+    console.error('Coach warning check failed:', err);
+    res.status(500).json({ error: 'Warning check failed' });
+  }
 });
 
 // GET /feedback/:run_id — return AI feedback for a run (generate if missing)
