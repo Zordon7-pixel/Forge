@@ -6,21 +6,22 @@ const { generateExerciseSubstitutions, generateRecoveryAdjustment, generateNextG
 const { requirePremium } = require('../middleware/premiumGate');
 const { checkAiLimit } = require('../middleware/aiLimit');
 const { buildHealthSignals, applyHealthDelta } = require('../lib/healthSignals');
+const { applyInterference } = require('../services/interference');
 
 // GET /warning — check if dangerous training combo exists
 router.get('/warning', auth, async (req, res) => {
   try {
-    const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString().split('T')[0];
-    const heavyLegs = await dbGet(
-      `SELECT id FROM lifts WHERE user_id = ? AND date >= ? AND intensity = 'heavy' AND muscle_groups LIKE '%legs%'`,
-      [req.user.id, cutoff]
+    const recentWorkouts = await dbAll(
+      'SELECT started_at, muscle_groups, total_seconds FROM workout_sessions WHERE user_id=? ORDER BY started_at DESC, created_at DESC LIMIT 10',
+      [req.user.id]
     );
+    const result = applyInterference({ type: 'tempo', structure: [] }, recentWorkouts);
 
-    if (!heavyLegs) return res.json({ warning: false });
+    if (!result.interference?.adjusted) return res.json({ warning: false });
 
     res.json({
       warning: true,
-      message: "You logged a heavy leg day recently. Running tempo or intervals today risks injury — your muscles haven't fully recovered. Consider an easy recovery run instead, or rest."
+      message: result.interference.reason
     });
   } catch (err) { res.status(500).json({ error: 'Warning check failed' }); }
 });

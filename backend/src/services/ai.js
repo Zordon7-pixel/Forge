@@ -160,7 +160,7 @@ Rules:
 - Include at least 6 training sessions each week (non-rest days)
 - Include 1-2 hybrid cardio + weight sessions weekly, marked as type "cross_train" with titles like Weighted Circuit, Kettlebell Cardio, Rucking, or Sled Push Intervals
 - Keep at least 1 full rest day each week
-- Account for concurrent training interference — do not place a hard run session within 24h of a heavy lower-body lift day. Prefer Z2/easy runs the day after lower-body lifts. Prefer upper-body lifts the day after long runs.
+- Keep run and lift scheduling sensible, but do not make same-day run/lift adjustment calls; deterministic backend rules own those changes.
 - Increase mileage ~10% per week max. Week 4 should be a recovery week (reduce ~20%).`;
 
   try {

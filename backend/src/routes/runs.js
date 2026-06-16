@@ -5,6 +5,7 @@ const { v4: uuidv4 } = require('uuid');
 const { generateRunFeedback, generateLoadWarning, generateRunBrief } = require('../services/ai');
 const autoUpdatePRs = require('../services/prAuto');
 const { buildTcxWorkout } = require('../utils/tcxBuilder');
+const { applyInterference } = require('../services/interference');
 const {
   DISTANCE_CONFIG,
   normalizeSex,
@@ -367,7 +368,7 @@ async function buildNextRecommendation(userId, { includeBrief = false } = {}) {
     }
 
     if (recommendationType === 'strength' || recommendationType === 'rest') {
-      return {
+      const recommendation = {
         recommendationType,
         reason,
         suggestedDistance: 0,
@@ -382,6 +383,7 @@ async function buildNextRecommendation(userId, { includeBrief = false } = {}) {
         checkinAdjusted,
         checkinSignals,
       };
+      return applyInterference(recommendation, recentWorkouts);
     }
 
     const details = detailsForRecommendation(recommendationType, suggestedPace);
@@ -397,6 +399,8 @@ async function buildNextRecommendation(userId, { includeBrief = false } = {}) {
       checkinAdjusted,
       checkinSignals,
     };
+
+    applyInterference(recommendation, recentWorkouts);
 
     if (!includeBrief) return recommendation;
 

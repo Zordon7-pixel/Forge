@@ -115,7 +115,10 @@ export function DailyCoachFlow({ checkedInToday, readiness, recommendation, toda
     ? getRecommendationLabel(recommendation)
     : "today's plan"
   const structure = Array.isArray(recommendation?.structure) ? recommendation.structure : []
-  const coachWhy = typeof recommendation?.brief?.why === 'string' ? recommendation.brief.why.trim() : ''
+  const interferenceReason = recommendation?.interference?.adjusted && typeof recommendation?.interference?.reason === 'string'
+    ? recommendation.interference.reason.trim()
+    : ''
+  const coachWhy = interferenceReason || (typeof recommendation?.brief?.why === 'string' ? recommendation.brief.why.trim() : '')
   const buildTodaySubtitle = () => {
     if (!recommendation) return "Check in to unlock today's plan."
 
@@ -340,7 +343,10 @@ export function TodayDetailSheet({
   if (!open) return null
   const recommendationLabel = recommendation ? getRecommendationLabel(recommendation) : null
   const topFactors = (readinessBreakdown || []).filter((item) => item.label !== 'Base score').slice(0, 2)
-  const coachWhy = typeof recommendation?.brief?.why === 'string' ? recommendation.brief.why.trim() : ''
+  const interferenceReason = recommendation?.interference?.adjusted && typeof recommendation?.interference?.reason === 'string'
+    ? recommendation.interference.reason.trim()
+    : ''
+  const coachWhy = interferenceReason || (typeof recommendation?.brief?.why === 'string' ? recommendation.brief.why.trim() : '')
   const effortTargets = [
     { key: 'effort', label: t('today.effortLabel'), value: recommendation?.brief?.effort },
     { key: 'hr', label: t('today.hrLabel'), value: recommendation?.brief?.bpmRange },

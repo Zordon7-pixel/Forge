@@ -57,6 +57,20 @@ function getRecommendationRunType(recommendation) {
   return 'easy'
 }
 
+function structureToWatchSteps(structure = []) {
+  if (!Array.isArray(structure)) return []
+  return structure.map((block) => {
+    const parts = [
+      block?.label || block?.phase,
+      block?.hrZone ? `Z${block.hrZone}` : '',
+      block?.durationMinutes ? `${block.durationMinutes} min` : '',
+      block?.distanceMiles ? `${block.distanceMiles} mi` : '',
+      block?.description || '',
+    ].filter(Boolean)
+    return parts.join(' - ')
+  }).filter(Boolean)
+}
+
 function getWeekKey() {
   const now = new Date()
   const weekStart = new Date(Date.UTC(now.getFullYear(), 0, 1))
@@ -495,11 +509,14 @@ export default function Dashboard() {
     const hasPace = Boolean(nextRecommendation.suggestedPace)
     if (!hasDistance && !hasPace) return null
     return {
-      typeLabel: nextRecommendation.type || 'Forge Workout',
+      typeLabel: nextRecommendation.type || nextRecommendation.recommendationType || 'Forge Workout',
       distanceLabel: hasDistance ? `${nextRecommendation.suggestedDistance} mi` : '',
       pace: nextRecommendation.suggestedPace || '',
-      progression: nextRecommendation.summary || '',
-      description: nextRecommendation.why || '',
+      progression: nextRecommendation.progression || nextRecommendation.summary || '',
+      description: nextRecommendation.interference?.reason || nextRecommendation.reason || nextRecommendation.why || '',
+      zone: nextRecommendation.targetZone || '',
+      intensity: nextRecommendation.intensity || '',
+      steps: structureToWatchSteps(nextRecommendation.structure),
     }
   }, [nextRecommendation])
 
