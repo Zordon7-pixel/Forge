@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { MapContainer, Marker, Polyline, TileLayer } from 'react-leaflet'
 import { useUnits } from '../context/UnitsContext'
 import api from '../lib/api'
+import { queueRequest } from '../lib/offlineQueue'
 import PostRunCheckIn from '../components/PostRunCheckIn'
 import AICoachFeedbackCard from '../components/AICoachFeedbackCard'
 import WorkoutCard from '../components/WorkoutCard'
@@ -29,8 +30,32 @@ const ZONES = [
 function getZone(hr, maxHr) {
   if (!hr || !maxHr) return null
   const pct = hr / maxHr
+  if (pct < ZONES[0].min) return { key: 'Z0', min: 0, max: ZONES[0].min, name: 'Below Z1', color: '#9CA3AF', pct }
   const zone = ZONES.find(z => pct >= z.min && pct < z.max) || ZONES[4]
   return { ...zone, pct }
+}
+
+function todayISO() {
+  const now = new Date()
+  const offsetDate = new Date(now.getTime() - now.getTimezoneOffset() * 60000)
+  return offsetDate.toISOString().slice(0, 10)
+}
+
+function createClientRunId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (char) => {
+    const value = Math.floor(Math.random() * 16)
+    const nibble = char === 'x' ? value : (value & 0x3) | 0x8
+    return nibble.toString(16)
+  })
+}
+
+function displayDistanceForUnit(miles, units, fmt) {
+  const distance = Number(miles || 0)
+  if (units === 'metric') return (distance * 1.60934).toFixed(2)
+  return distance.toFixed(2)
 }
 
 export default function ActiveRun() {
@@ -48,6 +73,8 @@ export default function ActiveRun() {
   const [manualDistance, setManualDistance] = useState('')
   const [awaitingManualDistance, setAwaitingManualDistance] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState('')
+  const [queuedOffline, setQueuedOffline] = useState(false)
   const [showPostCheckIn, setShowPostCheckIn] = useState(false)
   const [savedRunId, setSavedRunId] = useState(null)
   const [savedHeatDrift, setSavedHeatDrift] = useState(null)
@@ -63,10 +90,17 @@ export default function ActiveRun() {
   const [userProfile, setUserProfile] = useState(null)
   const [liveHr, setLiveHr] = useState(null)
   const [hrLastUpdated, setHrLastUpdated] = useState(null)
+  const [gpsStarted, setGpsStarted] = useState(false)
   const watchRef = useRef(null)
   const lastPointRef = useRef(null)
+  const startTimestampRef = useRef(null)
+  const clientRunIdRef = useRef(createClientRunId())
 
-  useEffect(() => { api.get('/auth/me').then(r => setUserProfile(r.data?.user || null)).catch(() => {}) }, [])
+  useEffect(() => {
+    api.get('/auth/me')
+      .then(r => setUserProfile(r.data?.user || null))
+      .catch((err) => { console.error('[ActiveRun] Failed to load profile:', err.message) })
+  }, [])
   
   useEffect(() => {
     const poll = async () => {
@@ -76,7 +110,9 @@ export default function ActiveRun() {
           setLiveHr(Number(res.data.avg_heart_rate))
           setHrLastUpdated(Date.now())
         }
-      } catch {}
+      } catch (err) {
+        console.error('[ActiveRun] Failed to poll watch status:', err.message)
+      }
     }
     if (!running) return
     poll()
@@ -88,17 +124,27 @@ export default function ActiveRun() {
   const hrZone = getZone(liveHr, maxHr)
 
   const startGPS = () => {
+    setSaveError('')
+    setQueuedOffline(false)
+    if (!startTimestampRef.current) startTimestampRef.current = Date.now() - (elapsed * 1000)
     setRunning(true)
-    if (!mapMyRun) return
+    if (!mapMyRun) {
+      setGpsStarted(false)
+      setGpsAvailable(false)
+      setGpsError('Route recording is off — enter your distance when you finish')
+      return
+    }
     if (!navigator?.geolocation) {
       setGpsError('GPS unavailable — tracking time and effort only')
       setGpsAvailable(false)
+      setGpsStarted(false)
       return
     }
 
     watchRef.current = navigator.geolocation.watchPosition(
       pos => {
         setGpsAvailable(true)
+        setGpsStarted(true)
         const point = { lat: pos.coords.latitude, lon: pos.coords.longitude, alt: pos.coords.altitude ?? null }
         if (lastPointRef.current) {
           const segment = haversineMiles(lastPointRef.current, point)
@@ -124,7 +170,12 @@ export default function ActiveRun() {
 
   useEffect(() => {
     if (!running) return
-    const t = setInterval(() => setElapsed(v => v + 1), 1000)
+    const updateElapsed = () => {
+      if (!startTimestampRef.current) return
+      setElapsed(Math.max(0, Math.round((Date.now() - startTimestampRef.current) / 1000)))
+    }
+    updateElapsed()
+    const t = setInterval(updateElapsed, 1000)
     return () => clearInterval(t)
   }, [running])
 
@@ -144,39 +195,50 @@ export default function ActiveRun() {
   }, [elapsed])
 
   const { units } = useUnits()
+
+  const buildRunPayload = () => {
+    const runSurface = runEnvironment === 'indoor' && surface === 'treadmill' ? 'treadmill' : surface
+    const shouldUseManualDistance = !gpsStarted || !gpsAvailable || distanceMiles <= 0
+    let finalDistance = shouldUseManualDistance ? Number(manualDistance || 0) : distanceMiles
+    if (shouldUseManualDistance && units === 'metric') {
+      finalDistance = fmt.milesFromKm(finalDistance)
+    }
+    return {
+      id: clientRunIdRef.current,
+      date: todayISO(),
+      type: runType,
+      run_surface: runSurface,
+      surface: runSurface,
+      distance_miles: finalDistance,
+      duration_seconds: elapsed,
+      notes: '',
+      perceived_effort: 5,
+      gps_available: gpsStarted && gpsAvailable,
+      avg_heart_rate: liveHr || null,
+      route_coords: routeCoords.map(([lat, lon, alt]) => ({ lat, lon, alt: alt ?? null })),
+      treadmill_brand: treadmillBrand || null
+    }
+  }
   
   const saveRun = async () => {
     setSaving(true)
+    setSaveError('')
+    setQueuedOffline(false)
+    const payload = buildRunPayload()
     try {
-      const runSurface = runEnvironment === 'indoor' && surface === 'treadmill' ? 'treadmill' : surface
-      let finalDistance = gpsAvailable ? distanceMiles : Number(manualDistance || 0)
-      // Convert manual distance from user's unit to miles for backend
-      if (!gpsAvailable && units === 'metric') {
-        finalDistance = fmt.milesFromKm(finalDistance)
-      }
-      const res = await api.post('/runs', {
-        date: new Date().toISOString().slice(0, 10),
-        type: runType,
-        run_surface: runSurface,
-        distance_miles: finalDistance,
-        duration_seconds: elapsed,
-        notes: '',
-        perceived_effort: 5,
-        gps_available: gpsAvailable,
-        avg_heart_rate: liveHr || null,
-        route_coords: routeCoords.map(([lat, lon, alt]) => ({ lat, lon, alt: alt ?? null })),
-        treadmill_brand: treadmillBrand || null
-      })
+      const res = await api.post('/runs', payload)
       const runId = res.data?.id || res.data?.run?.id
       if (runId) {
         setSavedRunId(runId)
+        setAwaitingManualDistance(false)
         setSavedHeatDrift(res.data?.heatDrift || null)
         setShowAiCard(true)
         setAiLoading(true)
         try {
           const fb = await api.post('/ai/session-feedback', { sessionType: 'run', sessionId: runId })
           setAiFeedback(fb.data?.feedback || null)
-        } catch {
+        } catch (err) {
+          console.error('[ActiveRun] Failed to load AI run feedback:', err.message)
           setAiFeedback({ analysis: 'Good work completing your run.', didWell: 'You stayed consistent and got the session done.', suggestion: 'Keep effort smooth and controlled on your next run.', recovery: 'easy day' })
         } finally {
           setAiLoading(false)
@@ -185,13 +247,26 @@ export default function ActiveRun() {
       }
     } catch (err) {
       console.error('Failed to save run:', err)
+      if (!err?.response || Number(err?.response?.status || 0) >= 500) {
+        await queueRequest('/api/runs', 'POST', payload)
+        setQueuedOffline(true)
+        setSavedRunId(payload.id)
+        setAwaitingManualDistance(false)
+        setSaveError('Saved offline — Forge will sync this run when your connection is back.')
+      } else {
+        setSaveError(err?.response?.data?.error || 'Could not save this run. Check the details and try again.')
+      }
     } finally { setSaving(false) }
   }
 
   const finishRun = () => {
     setRunning(false)
     if (watchRef.current != null && navigator?.geolocation) navigator.geolocation.clearWatch(watchRef.current)
-    if (!gpsAvailable) { setAwaitingManualDistance(true); return }
+    if (!gpsStarted || !gpsAvailable || distanceMiles <= 0) {
+      setManualDistance((current) => current || displayDistanceForUnit(distanceMiles, units, fmt))
+      setAwaitingManualDistance(true)
+      return
+    }
     saveRun()
   }
 
@@ -222,7 +297,8 @@ export default function ActiveRun() {
         ) : <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Connect watch for live HR</p>}
       </div>
 
-      {!gpsAvailable && <div className="rounded-xl p-3 mb-3" style={{ background: 'rgba(234,179,8,0.12)', border: '1px solid rgba(234,179,8,0.3)', color: 'var(--accent)' }}>GPS unavailable — tracking time and effort only</div>}
+      {(!gpsAvailable || gpsError) && <div className="rounded-xl p-3 mb-3" style={{ background: 'rgba(234,179,8,0.12)', border: '1px solid rgba(234,179,8,0.3)', color: 'var(--accent)' }}>{gpsError || 'GPS unavailable — tracking time and effort only'}</div>}
+      {saveError && <div className="rounded-xl p-3 mb-3" style={{ background: queuedOffline ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)', border: `1px solid ${queuedOffline ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'}`, color: queuedOffline ? '#22c55e' : '#ef4444' }}>{saveError}</div>}
 
       {mapMyRun && routeCoords.length > 0 && <div className="mb-4 rounded-xl overflow-hidden" style={{ height: 240 }}><MapContainer center={routeCoords[routeCoords.length - 1]} zoom={15} style={{ height: '100%', width: '100%' }}><TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" /><Marker position={routeCoords[routeCoords.length - 1]} /><Polyline positions={routeCoords} pathOptions={{ color: '#EAB308', weight: 4 }} /></MapContainer></div>}
 
@@ -232,6 +308,7 @@ export default function ActiveRun() {
       {awaitingManualDistance && (
         <div className="rounded-xl p-3" style={{ background: 'var(--bg-input)' }}>
           <p className="text-sm font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>How far did you run? ({fmt.distanceLabel})</p>
+          {distanceMiles > 0 && <p className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>Forge measured {fmt.distance(distanceMiles, 2)} before GPS stopped or route recording ended. Adjust if needed.</p>}
           <input value={manualDistance} onChange={e => setManualDistance(e.target.value)} type="number" min="0" step="0.1" className="w-full rounded-xl px-3 py-2" style={{ background: 'var(--bg-base)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }} placeholder={fmt.distanceLabel} />
           <button onClick={saveRun} className="w-full mt-2 rounded-xl py-2 font-semibold" style={{ background: 'var(--accent)', color: '#000' }}>Save Run</button>
         </div>
