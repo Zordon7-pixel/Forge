@@ -20,6 +20,10 @@ function isInt13(value) {
   return Number.isInteger(parsed) && parsed >= 1 && parsed <= 3;
 }
 
+function isISODate(value) {
+  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
 function getDayShort() {
   return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date().getDay()];
 }
@@ -175,7 +179,10 @@ router.post('/', auth, async (req, res) => {
     }
 
     const { feeling, legs, drive, time_available, life_flags, sleep_hours: parsedSleep } = validation.value;
-    const today = new Date().toISOString().slice(0,10);
+    if (req.body?.date !== undefined && req.body?.date !== null && !isISODate(req.body.date)) {
+      return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
+    }
+    const today = isISODate(req.body?.date) ? req.body.date : new Date().toISOString().slice(0,10);
 
     const existing = await dbGet('SELECT id FROM daily_checkins WHERE user_id=? AND checkin_date=?', [req.user.id, today]);
     if (existing) {
@@ -248,7 +255,10 @@ router.post('/preview', auth, async (req, res) => {
 
 router.get('/today', auth, async (req, res) => {
   try {
-    const today = new Date().toISOString().slice(0,10);
+    if (req.query?.date !== undefined && req.query?.date !== null && !isISODate(req.query.date)) {
+      return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
+    }
+    const today = isISODate(req.query?.date) ? req.query.date : new Date().toISOString().slice(0,10);
     const checkin = await dbGet('SELECT * FROM daily_checkins WHERE user_id=? AND checkin_date=?', [req.user.id, today]);
     res.json(checkin || null);
   } catch(err) {

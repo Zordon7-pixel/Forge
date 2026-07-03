@@ -40,6 +40,35 @@ async function dbRun(sql, params = []) {
   return { changes: r.rowCount };
 }
 
+async function withTransaction(fn) {
+  const client = await pool.connect();
+  const query = async (sql, params = []) => client.query(toPositional(sql), params);
+  query.get = async (sql, params = []) => {
+    const r = await query(sql, params);
+    return r.rows[0] || null;
+  };
+  query.all = async (sql, params = []) => {
+    const r = await query(sql, params);
+    return r.rows;
+  };
+  query.run = async (sql, params = []) => {
+    const r = await query(sql, params);
+    return { changes: r.rowCount };
+  };
+
+  try {
+    await client.query('BEGIN');
+    const result = await fn(query);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 async function initDb() {
   const client = await pool.connect();
   try {
@@ -1099,4 +1128,4 @@ async function initDb() {
   }
 }
 
-module.exports = { pool, dbGet, dbAll, dbRun, initDb };
+module.exports = { pool, dbGet, dbAll, dbRun, withTransaction, initDb };

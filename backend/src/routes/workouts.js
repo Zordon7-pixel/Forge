@@ -1,5 +1,5 @@
 const router = require('express').Router();
-const { dbGet, dbAll, dbRun } = require('../db');
+const { dbGet, dbAll, dbRun, withTransaction } = require('../db');
 const auth = require('../middleware/auth');
 const { v4: uuidv4 } = require('uuid');
 const { generateWorkoutFeedback } = require('../services/ai');
@@ -11,25 +11,32 @@ router.post('/strength', auth, async (req, res) => {
     const id = uuidv4();
     const started_at = completed_at || new Date().toISOString();
     const muscleGroups = [];
+    const exerciseImageNames = [];
 
-    await dbRun(
-      'INSERT INTO workout_sessions (id, user_id, started_at, ended_at, muscle_groups, notes, total_seconds) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [id, req.user.id, started_at, started_at, JSON.stringify(muscleGroups), name || 'Strength Session', 0]
-    );
+    await withTransaction(async (tx) => {
+      await tx.run(
+        'INSERT INTO workout_sessions (id, user_id, started_at, ended_at, muscle_groups, notes, total_seconds) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [id, req.user.id, started_at, started_at, JSON.stringify(muscleGroups), name || 'Strength Session', 0]
+      );
 
-    if (Array.isArray(sets)) {
-      for (const s of sets) {
-        const mg = s.muscle_group || null;
-        if (mg && !muscleGroups.includes(mg)) muscleGroups.push(mg);
-        await dbRun(
-          'INSERT INTO workout_sets (id, session_id, user_id, exercise_name, muscle_group, set_number, reps, weight_lbs) VALUES (?,?,?,?,?,?,?,?)',
-          [uuidv4(), id, req.user.id, s.exercise_name || 'Unknown', mg, s.set_number || 1, s.reps || null, s.weight_lbs || null]
-        );
-        await requestExerciseImageIfMissing({ userId: req.user.id, exerciseName: s.exercise_name, source: 'strength_workout_import' });
+      if (Array.isArray(sets)) {
+        for (const s of sets) {
+          const mg = s.muscle_group || null;
+          if (mg && !muscleGroups.includes(mg)) muscleGroups.push(mg);
+          await tx.run(
+            'INSERT INTO workout_sets (id, session_id, user_id, exercise_name, muscle_group, set_number, reps, weight_lbs) VALUES (?,?,?,?,?,?,?,?)',
+            [uuidv4(), id, req.user.id, s.exercise_name || 'Unknown', mg, s.set_number || 1, s.reps || null, s.weight_lbs || null]
+          );
+          if (s.exercise_name) exerciseImageNames.push(s.exercise_name);
+        }
+        if (muscleGroups.length) {
+          await tx.run('UPDATE workout_sessions SET muscle_groups=? WHERE id=? AND user_id=?', [JSON.stringify(muscleGroups), id, req.user.id]);
+        }
       }
-      if (muscleGroups.length) {
-        await dbRun('UPDATE workout_sessions SET muscle_groups=? WHERE id=? AND user_id=?', [JSON.stringify(muscleGroups), id, req.user.id]);
-      }
+    });
+
+    for (const exerciseName of exerciseImageNames) {
+      await requestExerciseImageIfMissing({ userId: req.user.id, exerciseName, source: 'strength_workout_import' });
     }
 
     const profile = await dbGet('SELECT weight_lbs FROM users WHERE id=?', [req.user.id]);
@@ -110,48 +117,56 @@ router.put('/:id', auth, async (req, res) => {
     const nextStartedAt = date
       ? `${date}T${(session.started_at || '').split('T')[1] || '12:00:00'}`
       : session.started_at;
-    await dbRun('UPDATE workout_sessions SET started_at=? WHERE id=? AND user_id=?', [nextStartedAt, req.params.id, req.user.id]);
+    let shouldRequestExerciseImage = false;
 
-    const existingSets = await dbAll(
-      'SELECT * FROM workout_sets WHERE session_id=? AND user_id=? ORDER BY set_number ASC, logged_at ASC',
-      [req.params.id, req.user.id]
-    );
+    const refreshed = await withTransaction(async (tx) => {
+      await tx.run('UPDATE workout_sessions SET started_at=? WHERE id=? AND user_id=?', [nextStartedAt, req.params.id, req.user.id]);
 
-    if (setCount > 0 && exerciseName) {
-      if (!existingSets.length) {
-        for (let i = 1; i <= setCount; i++) {
-          await dbRun(
-            'INSERT INTO workout_sets (id, session_id, user_id, exercise_name, set_number, reps, weight_lbs) VALUES (?,?,?,?,?,?,?)',
-            [uuidv4(), req.params.id, req.user.id, exerciseName, i, repsValue > 0 ? repsValue : null, weightValue >= 0 ? weightValue : null]
-          );
-        }
-        await requestExerciseImageIfMissing({ userId: req.user.id, exerciseName, source: 'workout_update' });
-      } else {
-        const firstSet = existingSets[0];
-        await dbRun(
-          'UPDATE workout_sets SET exercise_name=?, reps=?, weight_lbs=? WHERE id=? AND user_id=?',
-          [exerciseName, repsValue > 0 ? repsValue : firstSet.reps, weightValue >= 0 ? weightValue : firstSet.weight_lbs, firstSet.id, req.user.id]
-        );
-        await requestExerciseImageIfMissing({ userId: req.user.id, exerciseName, source: 'workout_update' });
-        if (setCount > existingSets.length) {
-          for (let i = existingSets.length + 1; i <= setCount; i++) {
-            await dbRun(
+      const existingSets = await tx.all(
+        'SELECT * FROM workout_sets WHERE session_id=? AND user_id=? ORDER BY set_number ASC, logged_at ASC',
+        [req.params.id, req.user.id]
+      );
+
+      if (setCount > 0 && exerciseName) {
+        shouldRequestExerciseImage = true;
+        if (!existingSets.length) {
+          for (let i = 1; i <= setCount; i++) {
+            await tx.run(
               'INSERT INTO workout_sets (id, session_id, user_id, exercise_name, set_number, reps, weight_lbs) VALUES (?,?,?,?,?,?,?)',
               [uuidv4(), req.params.id, req.user.id, exerciseName, i, repsValue > 0 ? repsValue : null, weightValue >= 0 ? weightValue : null]
             );
           }
-        } else if (setCount < existingSets.length) {
-          const idsToDelete = existingSets.slice(setCount).map((setRow) => setRow.id);
-          for (const setId of idsToDelete) {
-            await dbRun('DELETE FROM workout_sets WHERE id=? AND user_id=?', [setId, req.user.id]);
+        } else {
+          const firstSet = existingSets[0];
+          await tx.run(
+            'UPDATE workout_sets SET exercise_name=?, reps=?, weight_lbs=? WHERE id=? AND user_id=?',
+            [exerciseName, repsValue > 0 ? repsValue : firstSet.reps, weightValue >= 0 ? weightValue : firstSet.weight_lbs, firstSet.id, req.user.id]
+          );
+          if (setCount > existingSets.length) {
+            for (let i = existingSets.length + 1; i <= setCount; i++) {
+              await tx.run(
+                'INSERT INTO workout_sets (id, session_id, user_id, exercise_name, set_number, reps, weight_lbs) VALUES (?,?,?,?,?,?,?)',
+                [uuidv4(), req.params.id, req.user.id, exerciseName, i, repsValue > 0 ? repsValue : null, weightValue >= 0 ? weightValue : null]
+              );
+            }
+          } else if (setCount < existingSets.length) {
+            const idsToDelete = existingSets.slice(setCount).map((setRow) => setRow.id);
+            for (const setId of idsToDelete) {
+              await tx.run('DELETE FROM workout_sets WHERE id=? AND user_id=?', [setId, req.user.id]);
+            }
           }
         }
       }
-    }
 
-    const refreshedSession = await dbGet('SELECT * FROM workout_sessions WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
-    const refreshedSets = await dbAll('SELECT * FROM workout_sets WHERE session_id=? AND user_id=? ORDER BY set_number ASC, logged_at ASC', [req.params.id, req.user.id]);
-    res.json({ session: refreshedSession, sets: refreshedSets });
+      const refreshedSession = await tx.get('SELECT * FROM workout_sessions WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
+      const refreshedSets = await tx.all('SELECT * FROM workout_sets WHERE session_id=? AND user_id=? ORDER BY set_number ASC, logged_at ASC', [req.params.id, req.user.id]);
+      return { session: refreshedSession, sets: refreshedSets };
+    });
+
+    if (shouldRequestExerciseImage) {
+      await requestExerciseImageIfMissing({ userId: req.user.id, exerciseName, source: 'workout_update' });
+    }
+    res.json(refreshed);
   } catch (err) {
     res.status(500).json({ error: 'Update failed' });
   }
@@ -161,24 +176,37 @@ router.post('/:id/sets', auth, async (req, res) => {
   try {
     const { exercise_name, muscle_group, reps, weight_lbs, set_number } = req.body;
     if (!exercise_name) return res.status(400).json({ error: 'exercise_name required' });
-    const session = await dbGet('SELECT muscle_groups FROM workout_sessions WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
-    if (!session) return res.status(404).json({ error: 'Session not found' });
-
     const id = uuidv4();
-    await dbRun('INSERT INTO workout_sets (id, session_id, user_id, exercise_name, muscle_group, set_number, reps, weight_lbs) VALUES (?,?,?,?,?,?,?,?)',
-      [id, req.params.id, req.user.id, exercise_name, muscle_group || null, set_number || 1, reps || null, weight_lbs || null]);
+    const set = await withTransaction(async (tx) => {
+      const session = await tx.get('SELECT muscle_groups FROM workout_sessions WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
+      if (!session) {
+        const notFound = new Error('Session not found');
+        notFound.status = 404;
+        throw notFound;
+      }
+
+      await tx.run('INSERT INTO workout_sets (id, session_id, user_id, exercise_name, muscle_group, set_number, reps, weight_lbs) VALUES (?,?,?,?,?,?,?,?)',
+        [id, req.params.id, req.user.id, exercise_name, muscle_group || null, set_number || 1, reps || null, weight_lbs || null]);
+
+      let groups = [];
+      try {
+        groups = JSON.parse(session?.muscle_groups || '[]');
+      } catch (err) {
+        console.error('[workouts/sets] Failed to parse muscle groups:', err.message);
+      }
+      if (muscle_group && !groups.includes(muscle_group)) {
+        groups.push(muscle_group);
+        await tx.run('UPDATE workout_sessions SET muscle_groups=? WHERE id=? AND user_id=?', [JSON.stringify(groups), req.params.id, req.user.id]);
+      }
+
+      return tx.get('SELECT * FROM workout_sets WHERE id=? AND user_id=?', [id, req.user.id]);
+    });
     await requestExerciseImageIfMissing({ userId: req.user.id, exerciseName: exercise_name, source: 'workout_set' });
-
-    let groups = [];
-    try { groups = JSON.parse(session?.muscle_groups || '[]'); } catch {}
-    if (muscle_group && !groups.includes(muscle_group)) {
-      groups.push(muscle_group);
-      await dbRun('UPDATE workout_sessions SET muscle_groups=? WHERE id=? AND user_id=?', [JSON.stringify(groups), req.params.id, req.user.id]);
-    }
-
-    const set = await dbGet('SELECT * FROM workout_sets WHERE id=?', [id]);
     res.status(201).json({ set });
-  } catch (err) { res.status(500).json({ error: 'Failed to log set' }); }
+  } catch (err) {
+    if (err.status === 404) return res.status(404).json({ error: 'Session not found' });
+    res.status(500).json({ error: 'Failed to log set' });
+  }
 });
 
 router.get('/:id/sets', auth, async (req, res) => {

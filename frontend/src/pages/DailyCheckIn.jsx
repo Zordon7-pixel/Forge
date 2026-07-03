@@ -33,6 +33,12 @@ const LIFE_FLAGS = [
   { value: 'all_good', label: 'All good' },
 ]
 
+function todayISO() {
+  const now = new Date()
+  const offsetDate = new Date(now.getTime() - now.getTimezoneOffset() * 60000)
+  return offsetDate.toISOString().slice(0, 10)
+}
+
 function ReadinessSegment({ title, helper, options, value, onChange, error, errorRef }) {
   return (
     <div ref={errorRef} style={{ marginBottom: 20 }}>
@@ -176,6 +182,7 @@ export default function DailyCheckIn({ onComplete }) {
     setSubmitError(null)
     try {
       const res = await api.post('/checkin', {
+        date: todayISO(),
         legs,
         drive,
         time_available: timeAvailable,

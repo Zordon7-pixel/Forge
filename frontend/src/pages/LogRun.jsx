@@ -13,7 +13,9 @@ import { scrollToFirstError, validateRunLog } from '../utils/validation'
 import WatchWorkoutService from '../services/WatchWorkoutService'
 
 function todayISO() {
-  return new Date().toISOString().slice(0, 10)
+  const now = new Date()
+  const offsetDate = new Date(now.getTime() - now.getTimezoneOffset() * 60000)
+  return offsetDate.toISOString().slice(0, 10)
 }
 
 function createClientRunId() {
@@ -307,7 +309,7 @@ export default function LogRun() {
     let active = true
     const check = async () => {
       try {
-        const { data } = await api.get('/checkin/today')
+        const { data } = await api.get('/checkin/today', { params: { date: todayISO() } })
         const completed = Boolean(data?.completed ?? data?.id ?? data)
         if (active) setCheckInCompleted(completed)
       } catch {
