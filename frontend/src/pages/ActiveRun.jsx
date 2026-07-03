@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { MapContainer, Marker, Polyline, TileLayer } from 'react-leaflet'
+import { Capacitor, registerPlugin } from '@capacitor/core'
 import { useUnits } from '../context/UnitsContext'
 import api from '../lib/api'
 import { queueRequest } from '../lib/offlineQueue'
 import PostRunCheckIn from '../components/PostRunCheckIn'
 import AICoachFeedbackCard from '../components/AICoachFeedbackCard'
 import WorkoutCard from '../components/WorkoutCard'
+
+const BackgroundGeolocation = registerPlugin('BackgroundGeolocation')
 
 function haversineMiles(a, b) {
   const R = 3958.8
@@ -102,6 +105,7 @@ export default function ActiveRun() {
   const [gpsStarted, setGpsStarted] = useState(false)
   const [gpsGapSummary, setGpsGapSummary] = useState(null)
   const watchRef = useRef(null)
+  const nativeWatchRef = useRef(false)
   const lastPointRef = useRef(null)
   const lastFixAtRef = useRef(null)
   const gpsGapSecondsRef = useRef(0)
@@ -137,7 +141,73 @@ export default function ActiveRun() {
   const maxHr = userProfile?.max_heart_rate || (userProfile?.age ? 220 - Number(userProfile.age) : null)
   const hrZone = getZone(liveHr, maxHr)
 
-  const startGPS = () => {
+  const handlePoint = (lat, lon, alt, tsMillis) => {
+    const latitude = Number(lat)
+    const longitude = Number(lon)
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return
+    setGpsAvailable(true)
+    setGpsStarted(true)
+
+    const parsedTs = Number(tsMillis)
+    const parsedDateTs = Date.parse(tsMillis)
+    const fixAt = Number.isFinite(parsedTs) ? parsedTs : (Number.isFinite(parsedDateTs) ? parsedDateTs : Date.now())
+    if (lastFixAtRef.current) {
+      const gapSeconds = Math.round((fixAt - lastFixAtRef.current) / 1000)
+      if (gapSeconds > 15) {
+        gpsGapSecondsRef.current += gapSeconds
+        gpsGapCountRef.current += 1
+      }
+    }
+    const point = { lat: latitude, lon: longitude, alt: alt ?? null }
+    if (lastPointRef.current) {
+      const segment = haversineMiles(lastPointRef.current, point)
+      if (segment > 0 && segment < 0.25) {
+        setDistanceMiles(v => v + segment)
+      } else if (segment >= 0.25) {
+        discardedSegmentRef.current = true
+      }
+    }
+    setRouteCoords((prev) => [...prev, [point.lat, point.lon, point.alt]])
+    lastPointRef.current = point
+    lastFixAtRef.current = fixAt
+  }
+
+  const clearActiveWatch = async () => {
+    const id = watchRef.current
+    if (id == null) return
+    watchRef.current = null
+    const wasNative = nativeWatchRef.current
+    nativeWatchRef.current = false
+    if (wasNative) {
+      await BackgroundGeolocation.removeWatcher({ id })
+    } else if (typeof navigator !== 'undefined' && navigator.geolocation) {
+      navigator.geolocation.clearWatch(id)
+    }
+  }
+
+  const startWebGeolocation = () => {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      setGpsError('GPS unavailable — tracking time and effort only')
+      setGpsAvailable(false)
+      setGpsStarted(false)
+      return false
+    }
+
+    nativeWatchRef.current = false
+    watchRef.current = navigator.geolocation.watchPosition(
+      pos => {
+        handlePoint(pos.coords.latitude, pos.coords.longitude, pos.coords.altitude, Date.now())
+      },
+      () => {
+        setGpsError('GPS unavailable — tracking time and effort only')
+        setGpsAvailable(false)
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 1000 }
+    )
+    return true
+  }
+
+  const startGPS = async () => {
     setSaveError('')
     setQueuedOffline(false)
     setGpsGapSummary(null)
@@ -153,44 +223,32 @@ export default function ActiveRun() {
       setGpsError('Route recording is off — enter your distance when you finish')
       return
     }
-    if (!navigator?.geolocation) {
-      setGpsError('GPS unavailable — tracking time and effort only')
-      setGpsAvailable(false)
-      setGpsStarted(false)
-      return
+
+    if (Capacitor.isNativePlatform()) {
+      try {
+        const id = await BackgroundGeolocation.addWatcher({
+          backgroundMessage: 'Forge is recording your run',
+          backgroundTitle: 'Forge',
+          requestPermissions: true,
+          stale: false,
+          distanceFilter: 5,
+        }, (loc, err) => {
+          if (err) {
+            console.error('[ActiveRun] bg-geo error', err.message)
+            return
+          }
+          if (!loc) return
+          handlePoint(loc.latitude, loc.longitude, loc.altitude, loc.time || Date.now())
+        })
+        watchRef.current = id
+        nativeWatchRef.current = true
+        return
+      } catch (err) {
+        console.warn('[ActiveRun] background geolocation unavailable, falling back to web GPS:', err?.message)
+      }
     }
 
-    watchRef.current = navigator.geolocation.watchPosition(
-      pos => {
-        setGpsAvailable(true)
-        setGpsStarted(true)
-        const fixAt = Date.now()
-        if (lastFixAtRef.current) {
-          const gapSeconds = Math.round((fixAt - lastFixAtRef.current) / 1000)
-          if (gapSeconds > 15) {
-            gpsGapSecondsRef.current += gapSeconds
-            gpsGapCountRef.current += 1
-          }
-        }
-        const point = { lat: pos.coords.latitude, lon: pos.coords.longitude, alt: pos.coords.altitude ?? null }
-        if (lastPointRef.current) {
-          const segment = haversineMiles(lastPointRef.current, point)
-          if (segment > 0 && segment < 0.25) {
-            setDistanceMiles(v => v + segment)
-          } else if (segment >= 0.25) {
-            discardedSegmentRef.current = true
-          }
-        }
-        setRouteCoords((prev) => [...prev, [point.lat, point.lon, point.alt]])
-        lastPointRef.current = point
-        lastFixAtRef.current = fixAt
-      },
-      () => {
-        setGpsError('GPS unavailable — tracking time and effort only')
-        setGpsAvailable(false)
-      },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 1000 }
-    )
+    startWebGeolocation()
   }
 
   useEffect(() => {
@@ -211,7 +269,7 @@ export default function ActiveRun() {
     return () => clearInterval(t)
   }, [running])
 
-  useEffect(() => () => { if (watchRef.current != null && navigator?.geolocation) navigator.geolocation.clearWatch(watchRef.current) }, [])
+  useEffect(() => () => { clearActiveWatch().catch((err) => console.warn('[ActiveRun] failed to clear GPS watcher:', err?.message)) }, [])
 
   const pace = useMemo(() => {
     const dist = gpsAvailable ? distanceMiles : Number(manualDistance || distanceMiles || 0)
@@ -312,9 +370,9 @@ export default function ActiveRun() {
     } finally { setSaving(false) }
   }
 
-  const finishRun = () => {
+  const finishRun = async () => {
     setRunning(false)
-    if (watchRef.current != null && navigator?.geolocation) navigator.geolocation.clearWatch(watchRef.current)
+    await clearActiveWatch()
     const gapSummary = getGpsGapSummary()
     if (gapSummary) setGpsGapSummary(gapSummary)
     if (!gpsStarted || !gpsAvailable || distanceMiles <= 0) {

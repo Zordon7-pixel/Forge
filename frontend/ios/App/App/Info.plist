@@ -30,10 +30,18 @@
 	<string>FORGE reads Apple Health data to personalize training recommendations.</string>
 	<key>NSHealthUpdateUsageDescription</key>
 	<string>FORGE writes workout data to keep your health records up to date.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>FORGE uses your location to map and measure your runs.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>FORGE keeps recording your route in the background so your run does not stop when your screen is off.</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>
 	<string>Main</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>location</string>
+	</array>
 	<key>UIRequiredDeviceCapabilities</key>
 	<array>
 		<string>armv7</string>
