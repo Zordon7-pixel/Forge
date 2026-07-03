@@ -1,6 +1,6 @@
 const router = require('express').Router();
 const { v4: uuidv4 } = require('uuid');
-const { dbGet, dbAll, dbRun } = require('../db');
+const { dbGet, dbAll, dbRun, withTransaction } = require('../db');
 const auth = require('../middleware/auth');
 const multer = require('multer');
 const { parseStringPromise } = require('xml2js');
@@ -10,7 +10,12 @@ let watchSyncSchemaReady = null;
 
 async function ensureWatchSyncSchema() {
   if (!watchSyncSchemaReady) {
-    watchSyncSchemaReady = dbRun('ALTER TABLE watch_sync ADD COLUMN IF NOT EXISTS garmin_activity_id TEXT')
+    watchSyncSchemaReady = (async () => {
+      await dbRun('ALTER TABLE watch_sync ADD COLUMN IF NOT EXISTS garmin_activity_id TEXT');
+      await dbRun('ALTER TABLE watch_sync ADD COLUMN IF NOT EXISTS sync_uuid TEXT');
+      await dbRun('CREATE INDEX IF NOT EXISTS idx_watch_sync_user_garmin_id ON watch_sync(user_id, garmin_activity_id)');
+      await dbRun('CREATE UNIQUE INDEX IF NOT EXISTS idx_watch_sync_user_sync_uuid ON watch_sync(user_id, sync_uuid) WHERE sync_uuid IS NOT NULL');
+    })()
       .catch((err) => {
         watchSyncSchemaReady = null;
         throw err;
@@ -39,6 +44,169 @@ function asNum(value, fallback = null) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function cleanString(value, maxLength = 120) {
+  if (value === null || value === undefined) return null;
+  const trimmed = String(value).trim();
+  return trimmed ? trimmed.slice(0, maxLength) : null;
+}
+
+function normalizeGarminActivityId(payload = {}) {
+  return cleanString(payload.garmin_activity_id || payload.garminActivityId || payload.activityId || payload.activity_id);
+}
+
+function normalizeSyncUuid(payload = {}) {
+  return cleanString(payload.sync_uuid || payload.syncUuid || payload.client_sync_id || payload.clientSyncId);
+}
+
+function normalizeDate(value, fallbackIso) {
+  const source = value || fallbackIso;
+  if (!source) return null;
+  const parsed = new Date(source);
+  if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10);
+  const raw = String(source);
+  return raw.length >= 10 ? raw.slice(0, 10) : null;
+}
+
+function normalizeDateTime(value) {
+  if (!value) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toISOString();
+}
+
+function activityStartAt(payload = {}) {
+  const explicit = payload.start_at || payload.start_time || payload.startDate || payload.start_date || payload.activity_start_at;
+  if (explicit) return normalizeDateTime(explicit);
+  const firstRoutePoint = Array.isArray(payload.route_coords) ? payload.route_coords.find((point) => point?.time) : null;
+  return normalizeDateTime(firstRoutePoint?.time);
+}
+
+function activityEndAt(payload = {}) {
+  const explicit = payload.end_at || payload.end_time || payload.endDate || payload.end_date || payload.activity_end_at;
+  if (explicit) return normalizeDateTime(explicit);
+  const route = Array.isArray(payload.route_coords) ? payload.route_coords : [];
+  for (let i = route.length - 1; i >= 0; i -= 1) {
+    if (route[i]?.time) return normalizeDateTime(route[i].time);
+  }
+  return null;
+}
+
+function startsMatch(existingStart, importedStart) {
+  if (!existingStart || !importedStart) return false;
+  const existingTime = new Date(existingStart).getTime();
+  const importedTime = new Date(importedStart).getTime();
+  if (Number.isNaN(existingTime) || Number.isNaN(importedTime)) return false;
+  return Math.abs(existingTime - importedTime) <= 30 * 60 * 1000;
+}
+
+function durationMatches(existingDuration, incomingDuration) {
+  const existing = asNum(existingDuration, null);
+  const incoming = asNum(incomingDuration, null);
+  if (existing === null || incoming === null) return false;
+  return Math.abs(existing - incoming) <= 60;
+}
+
+function distanceMatches(existingDistance, incomingDistance) {
+  const existing = asNum(existingDistance, null);
+  const incoming = asNum(incomingDistance, null);
+  if (existing === null || incoming === null) return false;
+  const tolerance = Math.max(0.02, Math.abs(incoming) * 0.02);
+  return Math.abs(existing - incoming) <= tolerance;
+}
+
+function findRunDuplicateFromRows(rows = [], payload = {}) {
+  const distance = asNum(payload.distance_miles, 0);
+  const duration = asNum(payload.duration_seconds, 0);
+  const startAt = activityStartAt(payload);
+  const candidates = rows.filter((row) => durationMatches(row.duration_seconds, duration) && distanceMatches(row.distance_miles, distance));
+  if (startAt) {
+    return candidates.find((row) => startsMatch(row.health_start_at || row.created_at, startAt)) || null;
+  }
+  return candidates[0] || null;
+}
+
+function findLiftDuplicateFromRows(rows = [], payload = {}) {
+  const duration = asNum(payload.workout_duration_seconds ?? payload.duration_seconds, 0);
+  const activityName = cleanString(payload.exercise_name || payload.activity_name || payload.activity_type, 80);
+  return rows.find((row) => {
+    const rowName = cleanString(row.exercise_name || row.activity_name || row.activity_type, 80);
+    const nameMatches = !activityName || !rowName || rowName.toLowerCase() === activityName.toLowerCase();
+    return nameMatches && durationMatches(row.workout_duration_seconds ?? row.duration_seconds, duration);
+  }) || null;
+}
+
+function duplicateResponse({ watchSync = null, record = null, mapped, activityName, now, reason }) {
+  return {
+    id: watchSync?.id || record?.watch_sync_id || null,
+    created_record_id: record?.id || null,
+    normalized_type: mapped.normalized,
+    routed_section: mapped.section,
+    activity_name: activityName,
+    synced_at: watchSync?.synced_at || now,
+    duplicate: true,
+    duplicate_reason: reason,
+  };
+}
+
+async function findDuplicateActivity(userId, payload, mapped, activityName, now, db = { get: dbGet, all: dbAll }) {
+  const syncUuid = normalizeSyncUuid(payload);
+  if (syncUuid) {
+    const existingWatchSync = await db.get(
+      'SELECT id, routed_section, synced_at FROM watch_sync WHERE user_id=? AND sync_uuid=? LIMIT 1',
+      [userId, syncUuid]
+    );
+    if (existingWatchSync) {
+      const record = existingWatchSync.routed_section === 'run'
+        ? await db.get('SELECT id, watch_sync_id FROM runs WHERE user_id=? AND watch_sync_id=? LIMIT 1', [userId, existingWatchSync.id])
+        : await db.get('SELECT id, watch_sync_id FROM lifts WHERE user_id=? AND watch_sync_id=? LIMIT 1', [userId, existingWatchSync.id]);
+      return duplicateResponse({ watchSync: existingWatchSync, record, mapped, activityName, now, reason: 'sync_uuid' });
+    }
+  }
+
+  const garminActivityId = normalizeGarminActivityId(payload);
+  if (garminActivityId) {
+    const existingWatchSync = await db.get(
+      'SELECT id, routed_section, synced_at FROM watch_sync WHERE user_id=? AND garmin_activity_id=? LIMIT 1',
+      [userId, garminActivityId]
+    );
+    if (existingWatchSync) {
+      const record = existingWatchSync.routed_section === 'run'
+        ? await db.get('SELECT id, watch_sync_id FROM runs WHERE user_id=? AND watch_sync_id=? LIMIT 1', [userId, existingWatchSync.id])
+        : await db.get('SELECT id, watch_sync_id FROM lifts WHERE user_id=? AND watch_sync_id=? LIMIT 1', [userId, existingWatchSync.id]);
+      return duplicateResponse({ watchSync: existingWatchSync, record, mapped, activityName, now, reason: 'garmin_activity_id' });
+    }
+  }
+
+  const date = normalizeDate(payload.date || activityStartAt(payload), now);
+  if (!date) return null;
+
+  if (mapped.section === 'run') {
+    const rows = await db.all(
+      `SELECT id, watch_sync_id, date, distance_miles, duration_seconds, health_start_at, created_at
+       FROM runs
+       WHERE user_id=? AND date=? AND watch_sync_id IS NOT NULL
+       LIMIT 50`,
+      [userId, date]
+    );
+    const duplicate = findRunDuplicateFromRows(rows, payload);
+    return duplicate ? duplicateResponse({ record: duplicate, mapped, activityName, now, reason: 'heuristic' }) : null;
+  }
+
+  if (mapped.section === 'lift') {
+    const rows = await db.all(
+      `SELECT id, watch_sync_id, date, exercise_name, workout_duration_seconds, created_at
+       FROM lifts
+       WHERE user_id=? AND date=? AND watch_sync_id IS NOT NULL
+       LIMIT 50`,
+      [userId, date]
+    );
+    const duplicate = findLiftDuplicateFromRows(rows, payload);
+    return duplicate ? duplicateResponse({ record: duplicate, mapped, activityName, now, reason: 'heuristic' }) : null;
+  }
+
+  return null;
+}
+
 function haversineMiles(lat1, lon1, lat2, lon2) {
   const R = 3958.8;
   const toRad = (d) => (d * Math.PI) / 180;
@@ -52,10 +220,15 @@ async function ingestActivity(userId, payload = {}) {
   await ensureWatchSyncSchema();
   const mapped = normalizeActivityType(payload.activity_type);
   const now = new Date().toISOString();
-  const watchSyncId = uuidv4();
   const activityName = payload.activity_name || payload.activity_type || 'Watch activity';
+  const duplicate = await findDuplicateActivity(userId, payload, mapped, activityName, now);
+  if (duplicate) return duplicate;
+  const watchSyncId = uuidv4();
+  const syncUuid = normalizeSyncUuid(payload);
+  const garminActivityId = normalizeGarminActivityId(payload);
 
-  await dbRun(`INSERT INTO watch_sync (
+  return withTransaction(async (tx) => {
+    await tx.run(`INSERT INTO watch_sync (
     id, user_id, activity_type, activity_name, normalized_type, routed_section,
     distance_miles, duration_seconds, avg_pace, pace_splits_json,
     avg_heart_rate, max_heart_rate, min_heart_rate, heart_rate_zones_json,
@@ -65,8 +238,8 @@ async function ingestActivity(userId, payload = {}) {
     calories, exercise_name, sets, reps, weight_lbs,
     set_heart_rate_json, rest_heart_rate_json, workout_duration_seconds,
     recovery_heart_rate, incline_pct, belt_speed_mph,
-    treadmill_brand, treadmill_model, watch_mode, garmin_activity_id, raw_payload, synced_at
-  ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [
+    treadmill_brand, treadmill_model, watch_mode, garmin_activity_id, sync_uuid, raw_payload, synced_at
+  ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [
     watchSyncId, userId,
     payload.activity_type || null, activityName, mapped.normalized, mapped.section,
     asNum(payload.distance_miles, 0), asNum(payload.duration_seconds, 0), asNum(payload.avg_pace),
@@ -83,7 +256,7 @@ async function ingestActivity(userId, payload = {}) {
     asNum(payload.workout_duration_seconds), asNum(payload.recovery_heart_rate),
     asNum(payload.incline_pct), asNum(payload.belt_speed_mph),
     payload.treadmill_brand || null, payload.treadmill_model || null,
-    payload.watch_mode || null, payload.garmin_activity_id ? String(payload.garmin_activity_id) : null, JSON.stringify(payload), now
+    payload.watch_mode || null, garminActivityId, syncUuid, JSON.stringify(payload), now
   ]);
 
   let createdRecordId = null;
@@ -93,7 +266,7 @@ async function ingestActivity(userId, payload = {}) {
     createdRecordId = runId;
     const runDate = payload.date || now.slice(0, 10);
     const resolvedSurface = mapped.surface || payload.surface_type || 'road';
-    await dbRun(`INSERT INTO runs (
+    await tx.run(`INSERT INTO runs (
       id, user_id, date, type, distance_miles, duration_seconds, perceived_effort, notes,
       run_surface, surface, incline_pct, treadmill_speed, route_coords, watch_mode,
       watch_sync_id, watch_activity_type, watch_normalized_type,
@@ -101,8 +274,8 @@ async function ingestActivity(userId, payload = {}) {
       cadence_spm, elevation_gain, elevation_loss, pace_avg,
       pace_splits, vo2_max, training_effect_aerobic, training_effect_anaerobic,
       recovery_time_hours, detected_surface_type, temperature_f, calories,
-      treadmill_brand, treadmill_model
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [
+      treadmill_brand, treadmill_model, health_start_at, health_end_at
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [
       runId, userId, runDate, mapped.runType || payload.type || 'easy',
       asNum(payload.distance_miles, 0), asNum(payload.duration_seconds, 0), asNum(payload.perceived_effort, 5), payload.notes || 'Synced from watch',
       resolvedSurface, resolvedSurface, asNum(payload.incline_pct, 0), asNum(payload.belt_speed_mph || payload.treadmill_speed, 0), JSON.stringify(payload.route_coords || []), payload.watch_mode || 'watch-sync',
@@ -111,12 +284,12 @@ async function ingestActivity(userId, payload = {}) {
       asNum(payload.cadence_spm), asNum(payload.elevation_gain), asNum(payload.elevation_loss), asNum(payload.avg_pace),
       JSON.stringify(payload.pace_splits || []), asNum(payload.vo2_max), asNum(payload.training_effect_aerobic), asNum(payload.training_effect_anaerobic),
       asNum(payload.recovery_time_hours), payload.surface_type || null, asNum(payload.temperature_f), asNum(payload.calories, 0),
-      payload.treadmill_brand || null, payload.treadmill_model || null
+      payload.treadmill_brand || null, payload.treadmill_model || null, activityStartAt(payload), activityEndAt(payload)
     ]);
   } else if (mapped.section === 'lift') {
     const liftId = uuidv4();
     createdRecordId = liftId;
-    await dbRun(`INSERT INTO lifts (
+    await tx.run(`INSERT INTO lifts (
       id, user_id, date, muscle_groups, intensity, notes,
       exercise_name, sets, reps, weight_lbs,
       watch_sync_id, watch_activity_type, watch_normalized_type,
@@ -135,13 +308,14 @@ async function ingestActivity(userId, payload = {}) {
     ]);
   }
 
-  return { id: watchSyncId, created_record_id: createdRecordId, normalized_type: mapped.normalized, routed_section: mapped.section, activity_name: activityName, synced_at: now };
+    return { id: watchSyncId, created_record_id: createdRecordId, normalized_type: mapped.normalized, routed_section: mapped.section, activity_name: activityName, synced_at: now, duplicate: false };
+  });
 }
 
 router.post('/', auth, async (req, res) => {
   try {
     const result = await ingestActivity(req.user.id, req.body || {});
-    res.status(201).json(result);
+    res.status(result.duplicate ? 200 : 201).json(result);
   } catch (err) { res.status(500).json({ error: 'Watch sync failed' }); }
 });
 
@@ -201,7 +375,12 @@ router.post('/upload', auth, upload.single('file'), async (req, res) => {
     }
 
     const result = await ingestActivity(req.user.id, payload);
-    res.status(201).json({ ...result, message: `Activity imported — ${result.activity_name} added to your ${result.routed_section === 'lift' ? 'Lift' : 'Run'} history` });
+    res.status(result.duplicate ? 200 : 201).json({
+      ...result,
+      message: result.duplicate
+        ? `Activity already imported — ${result.activity_name}`
+        : `Activity imported — ${result.activity_name} added to your ${result.routed_section === 'lift' ? 'Lift' : 'Run'} history`
+    });
   } catch (e) {
     res.status(400).json({ error: "We couldn't parse this file. Supported: GPX, Garmin JSON export" });
   }
@@ -241,3 +420,14 @@ router.get('/meta/status', auth, async (req, res) => {
 
 module.exports = router;
 module.exports.ingestActivity = ingestActivity;
+module.exports._test = {
+  activityStartAt,
+  activityEndAt,
+  distanceMatches,
+  durationMatches,
+  findLiftDuplicateFromRows,
+  findRunDuplicateFromRows,
+  normalizeGarminActivityId,
+  normalizeSyncUuid,
+  startsMatch,
+};

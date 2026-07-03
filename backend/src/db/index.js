@@ -678,12 +678,15 @@ async function initDb() {
         treadmill_brand TEXT,
         treadmill_model TEXT,
         watch_mode TEXT,
+        sync_uuid TEXT,
         raw_payload TEXT,
         synced_at TEXT DEFAULT to_char(NOW(), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
       );
     `);
     await client.query('ALTER TABLE watch_sync ADD COLUMN IF NOT EXISTS garmin_activity_id TEXT');
+    await client.query('ALTER TABLE watch_sync ADD COLUMN IF NOT EXISTS sync_uuid TEXT');
     await client.query('CREATE INDEX IF NOT EXISTS idx_watch_sync_user_garmin_id ON watch_sync(user_id, garmin_activity_id)');
+    await client.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_watch_sync_user_sync_uuid ON watch_sync(user_id, sync_uuid) WHERE sync_uuid IS NOT NULL');
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS health_sync (
