@@ -1,5 +1,5 @@
 const router = require('express').Router();
-const { dbGet, dbAll, dbRun } = require('../db');
+const { dbGet, dbAll, dbRun, withTransaction } = require('../db');
 const auth   = require('../middleware/auth');
 const { v4: uuidv4, validate: uuidValidate } = require('uuid');
 const { generateRunFeedback, generateLoadWarning, generateRunBrief } = require('../services/ai');
@@ -741,9 +741,6 @@ router.post('/', auth, async (req, res) => {
 
 async function updateRunHandler(req, res) {
   try {
-    const run = await dbGet('SELECT * FROM runs WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
-    if (!run) return res.status(404).json({ error: 'Run not found' });
-
     const { date, distance_miles, duration_seconds, notes, perceived_effort, type, run_surface, incline_pct, treadmill_speed, pain_level, post_energy } = req.body;
     const validPainLevels = ['none', 'mild', 'moderate', 'severe'];
     const validEnergyLevels = ['low', 'medium', 'high'];
@@ -755,35 +752,65 @@ async function updateRunHandler(req, res) {
       return res.status(400).json({ error: 'Invalid post_energy' });
     }
 
-    const userProfile = await dbGet('SELECT weight_lbs FROM users WHERE id=?', [req.user.id]);
-    const weightLbs = userProfile?.weight_lbs || 185;
-    const newDist = distance_miles !== undefined ? Number(distance_miles) : run.distance_miles;
-    const calories = Math.round(0.75 * weightLbs * newDist);
+    const updated = await withTransaction(async (tx) => {
+      const run = await tx.get('SELECT * FROM runs WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
+      if (!run) {
+        const notFound = new Error('Run not found');
+        notFound.status = 404;
+        throw notFound;
+      }
 
-    await dbRun(`UPDATE runs SET
-      date = COALESCE(?, date),
-      distance_miles = COALESCE(?, distance_miles),
-      duration_seconds = COALESCE(?, duration_seconds),
-      notes = COALESCE(?, notes),
-      perceived_effort = COALESCE(?, perceived_effort),
-      type = COALESCE(?, type),
-      run_surface = COALESCE(?, run_surface),
-      incline_pct = COALESCE(?, incline_pct),
-      treadmill_speed = COALESCE(?, treadmill_speed),
-      pain_level = COALESCE(?, pain_level),
-      post_energy = COALESCE(?, post_energy),
-      calories = ?
-      WHERE id=? AND user_id=?`, [
-      date ?? null, distance_miles ?? null, duration_seconds ?? null,
-      notes ?? null, perceived_effort ?? null, type ?? null,
-      run_surface ?? null, incline_pct ?? null, treadmill_speed ?? null,
-      pain_level ?? null, post_energy ?? null,
-      calories, req.params.id, req.user.id
-    ]);
+      const userProfile = await tx.get('SELECT weight_lbs FROM users WHERE id=?', [req.user.id]);
+      const weightLbs = userProfile?.weight_lbs || 185;
+      const newDist = distance_miles !== undefined ? Number(distance_miles) : run.distance_miles;
+      const calories = Math.round(0.75 * weightLbs * newDist);
+      const shouldRecomputePrs = (
+        distance_miles !== undefined && Number(distance_miles) !== Number(run.distance_miles)
+      ) || (
+        duration_seconds !== undefined && Number(duration_seconds) !== Number(run.duration_seconds)
+      );
+      const existingPrRows = shouldRecomputePrs
+        ? await tx.all(
+          `SELECT label FROM personal_records WHERE run_id=? AND user_id=? AND category='run' AND source='auto'`,
+          [req.params.id, req.user.id]
+        )
+        : [];
 
-    const updated = await dbGet('SELECT * FROM runs WHERE id=?', [req.params.id]);
+      await tx.run(`UPDATE runs SET
+        date = COALESCE(?, date),
+        distance_miles = COALESCE(?, distance_miles),
+        duration_seconds = COALESCE(?, duration_seconds),
+        notes = COALESCE(?, notes),
+        perceived_effort = COALESCE(?, perceived_effort),
+        type = COALESCE(?, type),
+        run_surface = COALESCE(?, run_surface),
+        incline_pct = COALESCE(?, incline_pct),
+        treadmill_speed = COALESCE(?, treadmill_speed),
+        pain_level = COALESCE(?, pain_level),
+        post_energy = COALESCE(?, post_energy),
+        calories = ?
+        WHERE id=? AND user_id=?`, [
+        date ?? null, distance_miles ?? null, duration_seconds ?? null,
+        notes ?? null, perceived_effort ?? null, type ?? null,
+        run_surface ?? null, incline_pct ?? null, treadmill_speed ?? null,
+        pain_level ?? null, post_energy ?? null,
+        calories, req.params.id, req.user.id
+      ]);
+
+      const nextRun = await tx.get('SELECT * FROM runs WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
+      if (shouldRecomputePrs) {
+        const labels = existingPrRows.map((row) => row.label);
+        await autoUpdatePRs.recomputeRunPrCategories(req.user.id, labels, { tx });
+        await autoUpdatePRs(req.user.id, nextRun, { tx });
+      }
+      return nextRun;
+    });
     res.json(updated);
-  } catch (err) { res.status(500).json({ error: 'Update failed' }); }
+  } catch (err) {
+    if (err.status === 404) return res.status(404).json({ error: 'Run not found' });
+    console.error('[runs/update] failed:', err.message);
+    res.status(500).json({ error: 'Update failed' });
+  }
 }
 
 router.put('/:id', auth, updateRunHandler);
@@ -814,11 +841,26 @@ router.post('/:id/feedback', auth, async (req, res) => {
 
 router.delete('/:id', auth, async (req, res) => {
   try {
-    const run = await dbGet('SELECT * FROM runs WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
-    if (!run) return res.status(404).json({ error: 'Not found' });
-    await dbRun('DELETE FROM runs WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
+    await withTransaction(async (tx) => {
+      const run = await tx.get('SELECT * FROM runs WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
+      if (!run) {
+        const notFound = new Error('Run not found');
+        notFound.status = 404;
+        throw notFound;
+      }
+      const prRows = await tx.all(
+        `SELECT label FROM personal_records WHERE run_id=? AND user_id=? AND category='run' AND source='auto'`,
+        [req.params.id, req.user.id]
+      );
+      await tx.run('DELETE FROM runs WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
+      await autoUpdatePRs.recomputeRunPrCategories(req.user.id, prRows.map((row) => row.label), { tx });
+    });
     res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: 'Delete failed' }); }
+  } catch (err) {
+    if (err.status === 404) return res.status(404).json({ error: 'Not found' });
+    console.error('[runs/delete] failed:', err.message);
+    res.status(500).json({ error: 'Delete failed' });
+  }
 });
 
 router.post('/missed', auth, async (req, res) => {
