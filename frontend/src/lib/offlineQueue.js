@@ -69,16 +69,17 @@ export async function flushQueue() {
   if (hasWindow() && !navigator.onLine) return 0
 
   const db = await openDb()
-  const tx = db.transaction(STORE_NAME, 'readwrite')
-  const store = tx.objectStore(STORE_NAME)
+  const readTx = db.transaction(STORE_NAME, 'readonly')
+  const readStore = readTx.objectStore(STORE_NAME)
   const list = await new Promise((resolve, reject) => {
-    const req = store.getAll()
+    const req = readStore.getAll()
     req.onsuccess = () => resolve(req.result || [])
     req.onerror = () => reject(req.error || new Error('Failed to read offline queue'))
   })
+  await txPromise(readTx)
 
   list.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
-  let flushedCount = 0
+  const succeededIds = []
 
   for (const item of list) {
     try {
@@ -93,23 +94,27 @@ export async function flushQueue() {
             : undefined,
       })
       if (response.ok) {
-        store.delete(item.id)
-        flushedCount += 1
+        succeededIds.push(item.id)
       }
     } catch {
       break
     }
   }
 
-  await txPromise(tx)
+  if (succeededIds.length > 0) {
+    const deleteTx = db.transaction(STORE_NAME, 'readwrite')
+    const deleteStore = deleteTx.objectStore(STORE_NAME)
+    succeededIds.forEach((id) => deleteStore.delete(id))
+    await txPromise(deleteTx)
+  }
   db.close()
   await notifyQueueUpdated()
 
-  if (hasWindow() && flushedCount > 0) {
-    window.dispatchEvent(new CustomEvent('offline-queue-flushed', { detail: { flushedCount } }))
+  if (hasWindow() && succeededIds.length > 0) {
+    window.dispatchEvent(new CustomEvent('offline-queue-flushed', { detail: { flushedCount: succeededIds.length } }))
   }
 
-  return flushedCount
+  return succeededIds.length
 }
 
 export async function getQueueCount() {

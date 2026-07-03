@@ -15,6 +15,24 @@ router.post('/', auth, async (req, res) => {
   try {
     const { date, muscle_groups, intensity, notes, exercise_name, sets, reps, weight_lbs } = req.body;
     if (!date) return res.status(400).json({ error: 'date required' });
+    if (weight_lbs !== undefined && weight_lbs !== null) {
+      const weight = Number(weight_lbs);
+      if (!Number.isFinite(weight) || weight <= 0 || weight > 1500) {
+        return res.status(400).json({ error: 'weight_lbs must be greater than 0 and no more than 1500' });
+      }
+    }
+    if (reps !== undefined && reps !== null) {
+      const repCount = Number(reps);
+      if (!Number.isInteger(repCount) || repCount < 1 || repCount > 100) {
+        return res.status(400).json({ error: 'reps must be an integer between 1 and 100' });
+      }
+    }
+    if (sets !== undefined && sets !== null) {
+      const setCount = Number(sets);
+      if (!Number.isInteger(setCount) || setCount < 1 || setCount > 50) {
+        return res.status(400).json({ error: 'sets must be an integer between 1 and 50' });
+      }
+    }
     const id = uuidv4();
     await dbRun(
       `INSERT INTO lifts (id, user_id, date, muscle_groups, intensity, notes, exercise_name, sets, reps, weight_lbs) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,

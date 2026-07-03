@@ -1,7 +1,7 @@
 const router = require('express').Router();
 const { dbGet, dbAll, dbRun } = require('../db');
 const auth   = require('../middleware/auth');
-const { v4: uuidv4 } = require('uuid');
+const { v4: uuidv4, validate: uuidValidate } = require('uuid');
 const { generateRunFeedback, generateLoadWarning, generateRunBrief } = require('../services/ai');
 const autoUpdatePRs = require('../services/prAuto');
 const { buildTcxWorkout } = require('../utils/tcxBuilder');
@@ -617,7 +617,7 @@ router.post('/', auth, async (req, res) => {
       vo2_max, training_effect_aerobic, training_effect_anaerobic, recovery_time_hours,
       detected_surface_type, temperature_f, calories, treadmill_brand, treadmill_model,
       watch_sync_id, watch_activity_type, watch_normalized_type, gps_available,
-      target_zone
+      target_zone, id: clientRunId
     } = req.body;
     if (!date || !type) return res.status(400).json({ error: 'date and type required' });
     if (perceived_effort !== undefined && perceived_effort !== null) {
@@ -627,7 +627,7 @@ router.post('/', auth, async (req, res) => {
       }
     }
 
-    const id = uuidv4();
+    const id = uuidValidate(String(clientRunId || '')) ? clientRunId : uuidv4();
     const resolvedSurface = surface || run_surface || 'road';
     let prescribedTargetZone = target_zone || null;
     if (!prescribedTargetZone) {
@@ -639,7 +639,7 @@ router.post('/', auth, async (req, res) => {
       }
     }
 
-    await dbRun(`INSERT INTO runs (
+    const insertResult = await dbRun(`INSERT INTO runs (
       id, user_id, date, type, distance_miles, duration_seconds, perceived_effort, notes,
       run_surface, surface, incline_pct, treadmill_speed, route_coords, watch_mode,
       avg_heart_rate, max_heart_rate, min_heart_rate, heart_rate_zones,
@@ -647,7 +647,8 @@ router.post('/', auth, async (req, res) => {
       vo2_max, training_effect_aerobic, training_effect_anaerobic, recovery_time_hours,
       detected_surface_type, temperature_f, calories, treadmill_brand, treadmill_model,
       watch_sync_id, watch_activity_type, watch_normalized_type, gps_available
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT (id) DO NOTHING`, [
       id, req.user.id, date, type, distance_miles || 0, duration_seconds || 0, perceived_effort || 5, notes || null,
       resolvedSurface, resolvedSurface, incline_pct || 0, treadmill_speed || 0, JSON.stringify(route_coords || []), watch_mode || null,
       avg_heart_rate || null, max_heart_rate || null, min_heart_rate || null, JSON.stringify(heart_rate_zones || []),
@@ -656,6 +657,16 @@ router.post('/', auth, async (req, res) => {
       detected_surface_type || null, temperature_f || null, calories || 0, treadmill_brand || null, treadmill_model || null,
       watch_sync_id || null, watch_activity_type || null, watch_normalized_type || null, gps_available === false ? 0 : 1
     ]);
+    if (insertResult.changes === 0) {
+      const existingRun = await dbGet('SELECT * FROM runs WHERE id=? AND user_id=?', [id, req.user.id]);
+      if (!existingRun) return res.status(409).json({ error: 'Run id already exists' });
+      return res.status(200).json({
+        run: existingRun,
+        heatDrift: { drifted: false },
+        newPRs: [],
+        discrepancies: [],
+      });
+    }
 
     const userProfile = await dbGet('SELECT weight_lbs, max_heart_rate FROM users WHERE id=?', [req.user.id]);
     const weightLbs = userProfile?.weight_lbs || 185;
@@ -720,7 +731,7 @@ router.post('/', auth, async (req, res) => {
         const profile = await dbGet('SELECT * FROM users WHERE id = ?', [req.user.id]);
         generateRunFeedback(run, profile).then(async feedback => {
           if (feedback) await dbRun('UPDATE runs SET ai_feedback = ? WHERE id = ? AND user_id = ?', [feedback, id, req.user.id]);
-        }).catch(() => {});
+        }).catch((err) => { console.error('[runs] AI feedback generation failed:', err.message); });
       }
     } catch (e) { console.error('AI usage tracking failed:', e); }
   } catch (err) {

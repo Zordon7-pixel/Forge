@@ -1,5 +1,6 @@
 const WEATHER_URL = 'https://api.openweathermap.org/data/2.5/weather';
 const CACHE_TTL_MS = 30 * 60 * 1000;
+const WEATHER_TIMEOUT_MS = 2500;
 const cache = new Map();
 
 function unavailable(reason) {
@@ -54,7 +55,14 @@ async function getWeather(lat, lon) {
       units: 'imperial',
       appid: apiKey,
     });
-    const response = await fetch(`${WEATHER_URL}?${params.toString()}`);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), WEATHER_TIMEOUT_MS);
+    let response;
+    try {
+      response = await fetch(`${WEATHER_URL}?${params.toString()}`, { signal: controller.signal });
+    } finally {
+      clearTimeout(timeout);
+    }
     if (!response.ok) {
       return unavailable(`Weather provider returned ${response.status}`);
     }

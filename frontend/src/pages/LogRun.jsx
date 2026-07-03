@@ -16,6 +16,17 @@ function todayISO() {
   return new Date().toISOString().slice(0, 10)
 }
 
+function createClientRunId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (char) => {
+    const value = Math.floor(Math.random() * 16)
+    const nibble = char === 'x' ? value : (value & 0x3) | 0x8
+    return nibble.toString(16)
+  })
+}
+
 const WARM_UP_STEPS = [
   'Leg swings — 10 each side',
   'High knees — 30 seconds',
@@ -410,6 +421,8 @@ export default function LogRun() {
       return
     }
 
+    const clientRunId = createClientRunId()
+
     try {
       setLoading(true)
       const resolvedSurface = environment === 'inside' ? 'treadmill' : surface
@@ -417,7 +430,7 @@ export default function LogRun() {
         navigate('/run/treadmill', { state: { treadmillType } })
         return
       }
-      const runPayload = { date, type: runType, surface: resolvedSurface, run_surface: resolvedSurface, distance_miles: distanceMiles, duration_seconds: seconds, notes, perceived_effort: Number(effort), treadmill_brand: treadmillType, shoe_id: selectedShoeId || null, target_zone: todayWorkout?.zone || null }
+      const runPayload = { id: clientRunId, date, type: runType, surface: resolvedSurface, run_surface: resolvedSurface, distance_miles: distanceMiles, duration_seconds: seconds, notes, perceived_effort: Number(effort), treadmill_brand: treadmillType, shoe_id: selectedShoeId || null, target_zone: todayWorkout?.zone || null }
       if (!navigator.onLine) {
         await queueRequest('/api/runs', 'POST', runPayload)
         setFeedback('Saved offline — will sync when connected')
@@ -454,7 +467,7 @@ export default function LogRun() {
     } catch (err) {
       if (!err?.response) {
         const resolvedSurface = environment === 'inside' ? 'treadmill' : surface
-        const runPayload = { date, type: runType, surface: resolvedSurface, run_surface: resolvedSurface, distance_miles: distanceMiles, duration_seconds: seconds, notes, perceived_effort: Number(effort), treadmill_brand: treadmillType, shoe_id: selectedShoeId || null }
+        const runPayload = { id: clientRunId, date, type: runType, surface: resolvedSurface, run_surface: resolvedSurface, distance_miles: distanceMiles, duration_seconds: seconds, notes, perceived_effort: Number(effort), treadmill_brand: treadmillType, shoe_id: selectedShoeId || null, target_zone: todayWorkout?.zone || null }
         await queueRequest('/api/runs', 'POST', runPayload)
         setFeedback('Saved offline — will sync when connected')
         setError('')
