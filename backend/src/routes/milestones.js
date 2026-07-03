@@ -2,6 +2,7 @@ const router = require('express').Router();
 const { v4: uuidv4 } = require('uuid');
 const { dbGet, dbAll, dbRun } = require('../db');
 const auth = require('../middleware/auth');
+const { computeStreak, serverUtcAnchorCandidates } = require('../lib/streak');
 
 async function getStreak(userId) {
   const [runRows, liftRows] = await Promise.all([
@@ -11,25 +12,7 @@ async function getStreak(userId) {
   const runDates = runRows.map(r => (r.date || r.created_at || '').slice(0,10)).filter(Boolean);
   const liftDates = liftRows.map(s => (s.started_at || '').slice(0,10)).filter(Boolean);
   const uniqueDates = [...new Set([...runDates, ...liftDates])].sort();
-  let best = 0, cur = 0, current = 0;
-  const today = new Date().toISOString().slice(0,10);
-  const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0,10);
-  const dateSet = new Set(uniqueDates);
-  let checkDay = dateSet.has(today) ? today : (dateSet.has(yesterday) ? yesterday : null);
-  while (checkDay && dateSet.has(checkDay)) {
-    current += 1;
-    const d = new Date(checkDay);
-    d.setDate(d.getDate() - 1);
-    checkDay = d.toISOString().slice(0,10);
-  }
-  for (let i=0;i<uniqueDates.length;i++) {
-    if (i === 0) { cur = 1; best = 1; continue; }
-    const d1 = new Date(uniqueDates[i-1]);
-    const d2 = new Date(uniqueDates[i]);
-    const diff = Math.round((d2-d1)/86400000);
-    cur = diff === 1 ? cur + 1 : 1;
-    if (cur > best) best = cur;
-  }
+  const { current, best } = computeStreak(uniqueDates, serverUtcAnchorCandidates());
   return { best, currentStreak: current };
 }
 
@@ -123,7 +106,11 @@ router.get('/streak', auth, async (req, res) => {
     let milestoneJustHit = null;
     const earnedMilestones = STREAK_THRESHOLDS.filter(t => currentStreak >= t);
     let previousMilestones = [];
-    try { previousMilestones = JSON.parse(user?.streak_milestones || '[]'); } catch {}
+    try {
+      previousMilestones = JSON.parse(user?.streak_milestones || '[]');
+    } catch (err) {
+      console.error('[milestones/streak] Failed to parse streak milestones:', err.message);
+    }
     const newMilestones = earnedMilestones.filter(t => !previousMilestones.includes(t));
     if (newMilestones.length > 0) {
       milestoneJustHit = Math.max(...newMilestones);

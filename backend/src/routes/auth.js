@@ -12,6 +12,7 @@ const {
   bindUserId,
   buildExportSql,
 } = require('../lib/accountDataCoverage');
+const { computeStreak, serverUtcAnchorCandidates } = require('../lib/streak');
 const backendPackage = require('../../package.json');
 
 const sign = (user) => jwt.sign(
@@ -241,6 +242,7 @@ router.get('/me/stats', auth, async (req, res) => {
   try {
     const userId = req.user.id;
     const now = new Date();
+    const today = now.toISOString().slice(0, 10);
 
     const getRuns = async (daysBack) => {
       const since = new Date(now - daysBack * 86400000).toISOString().slice(0, 10);
@@ -248,7 +250,8 @@ router.get('/me/stats', auth, async (req, res) => {
     };
 
     const [dayRuns, weekRuns, monthRuns, yearRuns, allRuns] = await Promise.all([
-      getRuns(1), getRuns(7), getRuns(30), getRuns(365),
+      dbAll('SELECT * FROM runs WHERE user_id=? AND date >= ? ORDER BY date DESC', [userId, today]),
+      getRuns(7), getRuns(30), getRuns(365),
       dbAll('SELECT * FROM runs WHERE user_id=? ORDER BY date DESC', [userId])
     ]);
 
@@ -279,18 +282,7 @@ router.get('/me/stats', auth, async (req, res) => {
       ...workoutDates.map(s => (s.started_at || '').slice(0, 10))
     ]);
 
-    const today = now.toISOString().slice(0, 10);
-    const yesterday = new Date(now - 86400000).toISOString().slice(0, 10);
-    let streak = 0;
-    if (allDates.has(today) || allDates.has(yesterday)) {
-      let check = allDates.has(today) ? today : yesterday;
-      while (allDates.has(check)) {
-        streak++;
-        const d = new Date(check);
-        d.setDate(d.getDate() - 1);
-        check = d.toISOString().slice(0, 10);
-      }
-    }
+    const { current: streak } = computeStreak(allDates, serverUtcAnchorCandidates(now));
 
     const calendarDays = [];
     for (let d = 6; d >= 0; d--) {
@@ -324,25 +316,8 @@ router.get('/me/streak', auth, async (req, res) => {
     const liftDates = liftRows.map(s => (s.started_at || '').slice(0, 10)).filter(Boolean);
     const uniqueDates = [...new Set([...runDates, ...liftDates])].sort();
 
-    const dateSet = new Set(uniqueDates);
     const now = new Date();
-    const todayStr = now.toISOString().slice(0, 10);
-    const yesterdayStr = new Date(now.getTime() - 86400000).toISOString().slice(0, 10);
-    let currentStreak = 0;
-    let check = dateSet.has(todayStr) ? todayStr : dateSet.has(yesterdayStr) ? yesterdayStr : null;
-    while (check && dateSet.has(check)) {
-      currentStreak++;
-      const d = new Date(check); d.setDate(d.getDate() - 1);
-      check = d.toISOString().slice(0, 10);
-    }
-
-    let bestStreak = uniqueDates.length ? 1 : 0;
-    let cur = 1;
-    for (let i = 1; i < uniqueDates.length; i++) {
-      const diffDays = Math.round((new Date(uniqueDates[i]) - new Date(uniqueDates[i - 1])) / 86400000);
-      cur = diffDays === 1 ? cur + 1 : 1;
-      if (cur > bestStreak) bestStreak = cur;
-    }
+    const { current: currentStreak, best: bestStreak } = computeStreak(uniqueDates, serverUtcAnchorCandidates(now));
 
     res.json({ currentStreak, bestStreak });
   } catch (err) { res.status(500).json({ error: 'Streak fetch failed' }); }
