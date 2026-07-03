@@ -58,6 +58,15 @@ function displayDistanceForUnit(miles, units, fmt) {
   return distance.toFixed(2)
 }
 
+function formatGapDuration(seconds) {
+  const total = Math.max(0, Math.round(Number(seconds || 0)))
+  const minutes = Math.floor(total / 60)
+  const remaining = total % 60
+  if (minutes <= 0) return `${remaining}s`
+  if (remaining <= 0) return `${minutes}m`
+  return `${minutes}m ${remaining}s`
+}
+
 export default function ActiveRun() {
   const location = useLocation()
   const navigate = useNavigate()
@@ -91,8 +100,13 @@ export default function ActiveRun() {
   const [liveHr, setLiveHr] = useState(null)
   const [hrLastUpdated, setHrLastUpdated] = useState(null)
   const [gpsStarted, setGpsStarted] = useState(false)
+  const [gpsGapSummary, setGpsGapSummary] = useState(null)
   const watchRef = useRef(null)
   const lastPointRef = useRef(null)
+  const lastFixAtRef = useRef(null)
+  const gpsGapSecondsRef = useRef(0)
+  const gpsGapCountRef = useRef(0)
+  const discardedSegmentRef = useRef(false)
   const startTimestampRef = useRef(null)
   const clientRunIdRef = useRef(createClientRunId())
 
@@ -126,6 +140,11 @@ export default function ActiveRun() {
   const startGPS = () => {
     setSaveError('')
     setQueuedOffline(false)
+    setGpsGapSummary(null)
+    lastFixAtRef.current = null
+    gpsGapSecondsRef.current = 0
+    gpsGapCountRef.current = 0
+    discardedSegmentRef.current = false
     if (!startTimestampRef.current) startTimestampRef.current = Date.now() - (elapsed * 1000)
     setRunning(true)
     if (!mapMyRun) {
@@ -145,13 +164,26 @@ export default function ActiveRun() {
       pos => {
         setGpsAvailable(true)
         setGpsStarted(true)
+        const fixAt = Date.now()
+        if (lastFixAtRef.current) {
+          const gapSeconds = Math.round((fixAt - lastFixAtRef.current) / 1000)
+          if (gapSeconds > 15) {
+            gpsGapSecondsRef.current += gapSeconds
+            gpsGapCountRef.current += 1
+          }
+        }
         const point = { lat: pos.coords.latitude, lon: pos.coords.longitude, alt: pos.coords.altitude ?? null }
         if (lastPointRef.current) {
           const segment = haversineMiles(lastPointRef.current, point)
-          if (segment > 0 && segment < 0.25) setDistanceMiles(v => v + segment)
+          if (segment > 0 && segment < 0.25) {
+            setDistanceMiles(v => v + segment)
+          } else if (segment >= 0.25) {
+            discardedSegmentRef.current = true
+          }
         }
         setRouteCoords((prev) => [...prev, [point.lat, point.lon, point.alt]])
         lastPointRef.current = point
+        lastFixAtRef.current = fixAt
       },
       () => {
         setGpsError('GPS unavailable — tracking time and effort only')
@@ -196,6 +228,27 @@ export default function ActiveRun() {
 
   const { units } = useUnits()
 
+  const getGpsGapSummary = () => {
+    if (!mapMyRun || !gpsStarted) return null
+    const totalGapSeconds = gpsGapSecondsRef.current
+    const discardedCatchUp = discardedSegmentRef.current
+    if (totalGapSeconds <= 60 && !discardedCatchUp) return null
+    return {
+      seconds: totalGapSeconds,
+      count: gpsGapCountRef.current,
+      discardedCatchUp,
+    }
+  }
+
+  const buildGpsGapNote = () => {
+    const summary = getGpsGapSummary()
+    if (!summary) return ''
+    const pieces = []
+    if (summary.seconds > 0) pieces.push(`GPS signal paused for about ${formatGapDuration(summary.seconds)} across ${summary.count} gap${summary.count === 1 ? '' : 's'}`)
+    if (summary.discardedCatchUp) pieces.push('one or more large catch-up segments were excluded from distance')
+    return `[gps_gap_notice:${pieces.join('; ')}. Distance/route may be incomplete.]`
+  }
+
   const buildRunPayload = () => {
     const runSurface = runEnvironment === 'indoor' && surface === 'treadmill' ? 'treadmill' : surface
     const shouldUseManualDistance = !gpsStarted || !gpsAvailable || distanceMiles <= 0
@@ -211,7 +264,7 @@ export default function ActiveRun() {
       surface: runSurface,
       distance_miles: finalDistance,
       duration_seconds: elapsed,
-      notes: '',
+      notes: buildGpsGapNote(),
       perceived_effort: 5,
       gps_available: gpsStarted && gpsAvailable,
       avg_heart_rate: liveHr || null,
@@ -262,6 +315,8 @@ export default function ActiveRun() {
   const finishRun = () => {
     setRunning(false)
     if (watchRef.current != null && navigator?.geolocation) navigator.geolocation.clearWatch(watchRef.current)
+    const gapSummary = getGpsGapSummary()
+    if (gapSummary) setGpsGapSummary(gapSummary)
     if (!gpsStarted || !gpsAvailable || distanceMiles <= 0) {
       setManualDistance((current) => current || displayDistanceForUnit(distanceMiles, units, fmt))
       setAwaitingManualDistance(true)
@@ -298,6 +353,11 @@ export default function ActiveRun() {
       </div>
 
       {(!gpsAvailable || gpsError) && <div className="rounded-xl p-3 mb-3" style={{ background: 'rgba(234,179,8,0.12)', border: '1px solid rgba(234,179,8,0.3)', color: 'var(--accent)' }}>{gpsError || 'GPS unavailable — tracking time and effort only'}</div>}
+      {gpsGapSummary && (
+        <div className="rounded-xl p-3 mb-3" style={{ background: 'rgba(234,179,8,0.12)', border: '1px solid rgba(234,179,8,0.35)', color: 'var(--accent)' }}>
+          GPS paused during this run{gpsGapSummary.seconds > 0 ? ` for about ${formatGapDuration(gpsGapSummary.seconds)}` : ''}. Review the distance; Forge saves a note that the route may be incomplete.
+        </div>
+      )}
       {saveError && <div className="rounded-xl p-3 mb-3" style={{ background: queuedOffline ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)', border: `1px solid ${queuedOffline ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'}`, color: queuedOffline ? '#22c55e' : '#ef4444' }}>{saveError}</div>}
 
       {mapMyRun && routeCoords.length > 0 && <div className="mb-4 rounded-xl overflow-hidden" style={{ height: 240 }}><MapContainer center={routeCoords[routeCoords.length - 1]} zoom={15} style={{ height: '100%', width: '100%' }}><TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" /><Marker position={routeCoords[routeCoords.length - 1]} /><Polyline positions={routeCoords} pathOptions={{ color: '#EAB308', weight: 4 }} /></MapContainer></div>}
