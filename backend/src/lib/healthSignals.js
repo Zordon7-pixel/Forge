@@ -37,9 +37,13 @@ function subjectiveFeelingFromAxes(row = {}) {
   return clamp(Math.round(((legs + drive) / 6) * 4 + 1), 1, 5);
 }
 
+function isSuspectSyncedSleep(row = {}) {
+  const syncedSleep = toNumber(row.sleep_hours_last_night);
+  return syncedSleep !== null && syncedSleep > 12;
+}
+
 function hasHealthData(row = {}) {
   const numericKeys = [
-    'sleep_hours_last_night',
     'subjective_sleep_hours',
     'subjective_feeling',
     'subjective_legs',
@@ -54,7 +58,10 @@ function hasHealthData(row = {}) {
     'last_workout_duration_seconds',
   ];
 
-  return numericKeys.some((key) => toNumber(row?.[key]) !== null)
+  const hasValidSyncedSleep = toNumber(row?.sleep_hours_last_night) !== null && !isSuspectSyncedSleep(row);
+
+  return hasValidSyncedSleep
+    || numericKeys.some((key) => toNumber(row?.[key]) !== null)
     || parseLifeFlags(row.life_flags).length > 0;
 }
 
@@ -88,6 +95,7 @@ function buildHealthSignals(row = {}) {
   const syncedSleep = toNumber(row.sleep_hours_last_night);
   const sleep = subjectiveSleep !== null ? subjectiveSleep : syncedSleep;
   const syncedSleepSuspect = subjectiveSleep === null && syncedSleep !== null && syncedSleep > 12;
+  const subjectiveSleepSuspect = subjectiveSleep !== null && subjectiveSleep > 12;
   const hrv = toNumber(row.hrv_ms);
   const restingHr = toNumber(row.resting_heart_rate);
   const activeMinutes = toNumber(row.active_minutes_this_week);
@@ -106,7 +114,14 @@ function buildHealthSignals(row = {}) {
   const flags = [];
   const positives = [];
 
-  if (syncedSleepSuspect) {
+  if (subjectiveSleepSuspect) {
+    flags.push({
+      key: 'checkin_sleep_data_suspect',
+      severity: 'low',
+      label: `${round(subjectiveSleep)}h check-in sleep`,
+      reason: 'Check-in sleep looks unusually high, so Forge kept it visible but did not treat it as a recovery boost.',
+    });
+  } else if (syncedSleepSuspect) {
     flags.push({
       key: 'sleep_data_suspect',
       severity: 'low',

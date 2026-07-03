@@ -27,7 +27,7 @@ function coerceMetric(value, options = {}) {
   }
   if (dropAboveMax && parsed > max) {
     console.warn(`[health] dropping implausible ${label}: ${parsed}`);
-    return { value: null };
+    return { value: null, dropped: true, field: label };
   }
   if (parsed < min || parsed > max) {
     return { error: `${label} must be between ${min} and ${max}` };
@@ -71,6 +71,9 @@ router.post('/sync', auth, healthSyncLimiter, async (req, res) => {
     if (validationError) {
       return res.status(400).json({ error: validationError });
     }
+    const droppedFields = [steps, calories, avgHeartRate, totalMiles, restingHeartRate, hrv, sleepHours, activeMinutes, workoutCount, lastWorkoutSeconds, lastWorkoutCaloriesValue]
+      .filter((result) => result.dropped && result.field)
+      .map((result) => result.field);
 
     const row = await dbGet(
       `INSERT INTO health_sync (
@@ -121,7 +124,7 @@ router.post('/sync', auth, healthSyncLimiter, async (req, res) => {
       ]
     );
 
-    res.json({ ok: true, synced_at: row?.synced_at || new Date().toISOString() });
+    res.json({ ok: true, synced_at: row?.synced_at || new Date().toISOString(), ...(droppedFields.length ? { droppedFields } : {}) });
   } catch (err) {
     console.error('[health] sync failed:', err.message);
     res.status(500).json({ error: 'Failed to sync health metrics' });

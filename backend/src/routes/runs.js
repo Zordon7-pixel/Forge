@@ -403,7 +403,7 @@ async function buildNextRecommendation(userId, { includeBrief = false } = {}) {
     }
 
     const details = detailsForRecommendation(recommendationType, suggestedPace);
-    const recommendation = {
+    let recommendation = {
       recommendationType,
       reason,
       suggestedDistance,
@@ -416,7 +416,7 @@ async function buildNextRecommendation(userId, { includeBrief = false } = {}) {
       checkinSignals,
     };
 
-    applyInterference(recommendation, recentWorkouts);
+    recommendation = applyInterference(recommendation, recentWorkouts);
 
     if (!includeBrief) return recommendation;
 
@@ -629,7 +629,7 @@ router.post('/', auth, async (req, res) => {
 
     const id = uuidValidate(String(clientRunId || '')) ? clientRunId : uuidv4();
     const resolvedSurface = surface || run_surface || 'road';
-    let prescribedTargetZone = target_zone || null;
+    let prescribedTargetZone = typeof target_zone === 'string' && target_zone.length <= 20 ? target_zone.trim() || null : null;
     if (!prescribedTargetZone) {
       try {
         const recommendation = await buildNextRecommendation(req.user.id, { includeBrief: false });

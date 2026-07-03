@@ -79,6 +79,8 @@ function getWeekKey() {
   return `${now.getFullYear()}-${String(weekNumber).padStart(2, '0')}`
 }
 
+const TODAY_CARD_VIEWED_KEY = 'forge_track_today_card_viewed'
+
 export default function Dashboard() {
   const navigate = useNavigate()
   const location = useLocation()
@@ -118,7 +120,6 @@ export default function Dashboard() {
   const [healthSyncNotice, setHealthSyncNotice] = useState('')
   const { isOnline, queueCount } = useOnlineStatus()
   const { isPro, loading: proLoading } = useProContext()
-  const todayCardViewedRef = React.useRef(false)
 
   const fetchDashboardData = useCallback(async () => {
     try {
@@ -243,8 +244,13 @@ export default function Dashboard() {
   }, [fetchDashboardData])
 
   useEffect(() => {
-    if (loading || todayCardViewedRef.current) return
-    todayCardViewedRef.current = true
+    if (loading) return
+    try {
+      if (sessionStorage.getItem(TODAY_CARD_VIEWED_KEY) === '1') return
+      sessionStorage.setItem(TODAY_CARD_VIEWED_KEY, '1')
+    } catch (err) {
+      console.debug('[Dashboard] today_card_viewed session guard unavailable:', err?.message)
+    }
     track('today_card_viewed')
   }, [loading])
 
