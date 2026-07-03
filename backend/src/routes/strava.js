@@ -8,6 +8,7 @@ const STRAVA_AUTH_URL = 'https://www.strava.com/oauth/authorize';
 const STRAVA_TOKEN_URL = 'https://www.strava.com/oauth/token';
 const STRAVA_ACTIVITIES_URL = 'https://www.strava.com/api/v3/athlete/activities';
 const OAUTH_STATE_TTL_SECONDS = 10 * 60;
+const ENCRYPTION_ALGO = 'aes-256-gcm';
 
 const STRAVA_TOKEN_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS strava_tokens (
@@ -24,6 +25,66 @@ CREATE TABLE IF NOT EXISTS strava_tokens (
 
 dbRun(STRAVA_TOKEN_SCHEMA_SQL)
   .catch((err) => console.error('[strava] schema init failed:', err.message));
+
+function getEncryptionKey() {
+  return crypto.createHash('sha256').update(String(process.env.JWT_SECRET)).digest();
+}
+
+function encryptJson(payload) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv(ENCRYPTION_ALGO, getEncryptionKey(), iv);
+  const encrypted = Buffer.concat([cipher.update(JSON.stringify(payload), 'utf8'), cipher.final()]);
+  const authTag = cipher.getAuthTag();
+  return JSON.stringify({
+    v: 1,
+    iv: iv.toString('base64'),
+    tag: authTag.toString('base64'),
+    content: encrypted.toString('base64'),
+  });
+}
+
+function decryptJson(encryptedPayload) {
+  const parsed = typeof encryptedPayload === 'string' ? JSON.parse(encryptedPayload) : encryptedPayload;
+  const decipher = crypto.createDecipheriv(ENCRYPTION_ALGO, getEncryptionKey(), Buffer.from(parsed.iv, 'base64'));
+  decipher.setAuthTag(Buffer.from(parsed.tag, 'base64'));
+  const decrypted = Buffer.concat([
+    decipher.update(Buffer.from(parsed.content, 'base64')),
+    decipher.final(),
+  ]).toString('utf8');
+  return JSON.parse(decrypted);
+}
+
+function isEncryptedToken(value) {
+  if (typeof value === 'string' && !value.trim().startsWith('{')) return false;
+  try {
+    const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+    return Boolean(parsed?.v === 1 && parsed?.iv && parsed?.tag && parsed?.content);
+  } catch (err) {
+    console.error('[strava] failed to inspect encrypted token payload:', err.message);
+    return false;
+  }
+}
+
+function encryptToken(value) {
+  return encryptJson({ token: String(value || '') });
+}
+
+function decryptToken(value) {
+  if (!value) return '';
+  if (!isEncryptedToken(value)) return String(value);
+  const decrypted = decryptJson(value);
+  return String(decrypted?.token || '');
+}
+
+function decodeStravaTokenRow(row) {
+  if (!row) return null;
+  return {
+    ...row,
+    access_token: decryptToken(row.access_token),
+    refresh_token: decryptToken(row.refresh_token),
+    token_storage_encrypted: isEncryptedToken(row.access_token) && isEncryptedToken(row.refresh_token),
+  };
+}
 
 function getMissingStravaEnv() {
   const missing = [];
@@ -125,7 +186,8 @@ function verifyOAuthState(rawState) {
     if (!userId || !Number.isFinite(expiresAt)) return null;
     if (expiresAt < Math.floor(Date.now() / 1000)) return null;
     return parsed;
-  } catch {
+  } catch (err) {
+    console.error('[strava] invalid OAuth state payload:', err.message);
     return null;
   }
 }
@@ -161,7 +223,8 @@ async function callStravaTokenEndpoint(params = {}) {
   let payload = null;
   try {
     payload = await response.json();
-  } catch {
+  } catch (err) {
+    console.error('[strava] failed to parse token response:', err.message);
     payload = null;
   }
 
@@ -190,7 +253,8 @@ async function fetchStravaActivities(accessToken) {
   let payload = null;
   try {
     payload = await response.json();
-  } catch {
+  } catch (err) {
+    console.error('[strava] failed to parse activities response:', err.message);
     payload = null;
   }
 
@@ -224,8 +288,8 @@ async function upsertStravaTokens({ userId, accessToken, refreshToken, expiresAt
       connected_at = NOW()`,
     [
       userId,
-      accessToken,
-      refreshToken,
+      encryptToken(accessToken),
+      encryptToken(refreshToken),
       Number(expiresAt || 0),
       athleteId ? Number(athleteId) : null,
       athleteName || null,
@@ -248,23 +312,14 @@ async function maybeRefreshAccessToken(userId, tokens) {
   const nextAthleteId = Number(refreshed?.athlete?.id || tokens?.athlete_id || 0) || null;
   const nextAthleteName = buildAthleteName(refreshed?.athlete) || tokens?.athlete_name || null;
 
-  await dbRun(
-    `UPDATE strava_tokens
-      SET access_token = ?,
-          refresh_token = ?,
-          expires_at = ?,
-          athlete_id = ?,
-          athlete_name = ?
-      WHERE user_id = ?`,
-    [
-      String(refreshed.access_token),
-      String(refreshed.refresh_token || tokens?.refresh_token || ''),
-      Number(refreshed.expires_at || 0),
-      nextAthleteId,
-      nextAthleteName,
-      userId,
-    ]
-  );
+  await upsertStravaTokens({
+    userId,
+    accessToken: String(refreshed.access_token),
+    refreshToken: String(refreshed.refresh_token || tokens?.refresh_token || ''),
+    expiresAt: Number(refreshed.expires_at || 0),
+    athleteId: nextAthleteId,
+    athleteName: nextAthleteName,
+  });
 
   return {
     ...tokens,
@@ -390,22 +445,34 @@ router.get('/status', auth, async (req, res) => {
       athlete_name: row?.athlete_name || null,
       last_sync: row?.connected_at || null,
     });
-  } catch {
+  } catch (err) {
+    console.error('[strava/status] failed:', err.message);
     return res.status(500).json({ error: 'Failed to fetch Strava status' });
   }
 });
 
 router.post('/sync', auth, async (req, res) => {
   try {
-    const connected = await dbGet(
+    const row = await dbGet(
       `SELECT access_token, refresh_token, expires_at, athlete_id, athlete_name
        FROM strava_tokens
        WHERE user_id = ?`,
       [req.user.id]
     );
+    const connected = decodeStravaTokenRow(row);
 
     if (!connected?.access_token || !connected?.refresh_token) {
       return res.status(400).json({ error: 'Strava not connected' });
+    }
+    if (!connected.token_storage_encrypted) {
+      await upsertStravaTokens({
+        userId: req.user.id,
+        accessToken: connected.access_token,
+        refreshToken: connected.refresh_token,
+        expiresAt: connected.expires_at,
+        athleteId: connected.athlete_id,
+        athleteName: connected.athlete_name,
+      });
     }
 
     let tokens = await maybeRefreshAccessToken(req.user.id, connected);
@@ -473,7 +540,8 @@ router.post('/sync', auth, async (req, res) => {
     await dbRun('UPDATE strava_tokens SET connected_at = NOW() WHERE user_id = ?', [req.user.id]);
 
     return res.json({ imported, total: runs.length });
-  } catch {
+  } catch (err) {
+    console.error('[strava/sync] failed:', err.message);
     return res.status(500).json({ error: 'Failed to sync Strava activities' });
   }
 });
@@ -482,7 +550,8 @@ router.delete('/disconnect', auth, async (req, res) => {
   try {
     await dbRun('DELETE FROM strava_tokens WHERE user_id = ?', [req.user.id]);
     return res.json({ connected: false });
-  } catch {
+  } catch (err) {
+    console.error('[strava/disconnect] failed:', err.message);
     return res.status(500).json({ error: 'Failed to disconnect Strava' });
   }
 });
