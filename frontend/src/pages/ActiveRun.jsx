@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { MapContainer, Marker, Polyline, TileLayer } from 'react-leaflet'
 import { Capacitor, registerPlugin } from '@capacitor/core'
@@ -141,7 +141,7 @@ export default function ActiveRun() {
   const maxHr = userProfile?.max_heart_rate || (userProfile?.age ? 220 - Number(userProfile.age) : null)
   const hrZone = getZone(liveHr, maxHr)
 
-  const handlePoint = (lat, lon, alt, tsMillis) => {
+  const handlePoint = useCallback((lat, lon, alt, tsMillis) => {
     const latitude = Number(lat)
     const longitude = Number(lon)
     if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return
@@ -149,8 +149,7 @@ export default function ActiveRun() {
     setGpsStarted(true)
 
     const parsedTs = Number(tsMillis)
-    const parsedDateTs = Date.parse(tsMillis)
-    const fixAt = Number.isFinite(parsedTs) ? parsedTs : (Number.isFinite(parsedDateTs) ? parsedDateTs : Date.now())
+    const fixAt = Number.isFinite(parsedTs) ? parsedTs : Date.now()
     if (lastFixAtRef.current) {
       const gapSeconds = Math.round((fixAt - lastFixAtRef.current) / 1000)
       if (gapSeconds > 15) {
@@ -170,22 +169,30 @@ export default function ActiveRun() {
     setRouteCoords((prev) => [...prev, [point.lat, point.lon, point.alt]])
     lastPointRef.current = point
     lastFixAtRef.current = fixAt
-  }
+  }, [])
 
-  const clearActiveWatch = async () => {
+  const clearActiveWatch = useCallback(async () => {
     const id = watchRef.current
     if (id == null) return
     watchRef.current = null
     const wasNative = nativeWatchRef.current
     nativeWatchRef.current = false
     if (wasNative) {
-      await BackgroundGeolocation.removeWatcher({ id })
+      try {
+        await BackgroundGeolocation.removeWatcher({ id })
+      } catch (err) {
+        console.error('[ActiveRun] failed to remove native GPS watcher:', err)
+      }
     } else if (typeof navigator !== 'undefined' && navigator.geolocation) {
-      navigator.geolocation.clearWatch(id)
+      try {
+        navigator.geolocation.clearWatch(id)
+      } catch (err) {
+        console.error('[ActiveRun] failed to clear web GPS watcher:', err)
+      }
     }
-  }
+  }, [])
 
-  const startWebGeolocation = () => {
+  const startWebGeolocation = useCallback(() => {
     if (typeof navigator === 'undefined' || !navigator.geolocation) {
       setGpsError('GPS unavailable — tracking time and effort only')
       setGpsAvailable(false)
@@ -205,9 +212,9 @@ export default function ActiveRun() {
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 1000 }
     )
     return true
-  }
+  }, [handlePoint])
 
-  const startGPS = async () => {
+  const startGPS = useCallback(async () => {
     setSaveError('')
     setQueuedOffline(false)
     setGpsGapSummary(null)
@@ -249,14 +256,14 @@ export default function ActiveRun() {
     }
 
     startWebGeolocation()
-  }
+  }, [elapsed, handlePoint, mapMyRun, startWebGeolocation])
 
   useEffect(() => {
     if (!countingDown) return
     if (countdownVal <= 0) { setCountingDown(false); startGPS(); return }
     const t = setTimeout(() => setCountdownVal(v => v - 1), 1000)
     return () => clearTimeout(t)
-  }, [countingDown, countdownVal])
+  }, [countingDown, countdownVal, startGPS])
 
   useEffect(() => {
     if (!running) return
@@ -269,7 +276,7 @@ export default function ActiveRun() {
     return () => clearInterval(t)
   }, [running])
 
-  useEffect(() => () => { clearActiveWatch().catch((err) => console.warn('[ActiveRun] failed to clear GPS watcher:', err?.message)) }, [])
+  useEffect(() => () => { clearActiveWatch() }, [clearActiveWatch])
 
   const pace = useMemo(() => {
     const dist = gpsAvailable ? distanceMiles : Number(manualDistance || distanceMiles || 0)
@@ -372,15 +379,17 @@ export default function ActiveRun() {
 
   const finishRun = async () => {
     setRunning(false)
-    await clearActiveWatch()
     const gapSummary = getGpsGapSummary()
     if (gapSummary) setGpsGapSummary(gapSummary)
     if (!gpsStarted || !gpsAvailable || distanceMiles <= 0) {
       setManualDistance((current) => current || displayDistanceForUnit(distanceMiles, units, fmt))
       setAwaitingManualDistance(true)
+      await clearActiveWatch()
       return
     }
-    saveRun()
+    const savePromise = saveRun()
+    await clearActiveWatch()
+    await savePromise
   }
 
   return (
