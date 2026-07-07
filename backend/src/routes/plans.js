@@ -1,5 +1,5 @@
 const router = require('express').Router();
-const { dbGet, dbAll, dbRun } = require('../db');
+const { dbGet, dbAll, dbRun, withTransaction } = require('../db');
 const auth = require('../middleware/auth');
 const { checkAiLimit } = require('../middleware/aiLimit');
 const { v4: uuidv4 } = require('uuid');
@@ -70,6 +70,39 @@ async function getActivePlanForUser(userId) {
   const legacy = await dbGet('SELECT * FROM training_plans WHERE user_id = ? ORDER BY created_at DESC LIMIT 1', [userId]);
   if (legacy) return { source: 'legacy', row: legacy };
   return null;
+}
+
+async function ensureWritablePlan(active, userId, tx) {
+  if (active.source === 'assigned' && !active.row.user_id) {
+    const cloneId = uuidv4();
+    const cloneResult = await tx.run(
+      `INSERT INTO training_plans (
+        id, user_id, week_start, plan_json, name, type, weeks, description, plan_data
+      )
+      SELECT ?, ?, week_start, plan_json, name, type, weeks, description, plan_data
+      FROM training_plans WHERE id=?`,
+      [cloneId, userId, active.row.id]
+    );
+    if (cloneResult.changes === 0) throw new Error('Active plan clone failed');
+    const repointResult = await tx.run(
+      'UPDATE user_plans SET plan_id=? WHERE id=? AND user_id=?',
+      [cloneId, active.row.user_plan_id, userId]
+    );
+    if (repointResult.changes === 0) throw new Error('Active plan repoint failed');
+    active.row.id = cloneId;
+    active.row.user_id = userId;
+  }
+  return active.row.id;
+}
+
+async function updateActivePlanData(active, userId, planJson, tx) {
+  const planId = await ensureWritablePlan(active, userId, tx);
+  const serialized = JSON.stringify(planJson);
+  const result = active.source === 'assigned'
+    ? await tx.run('UPDATE training_plans SET plan_data=? WHERE id=? AND user_id=?', [serialized, planId, userId])
+    : await tx.run('UPDATE training_plans SET plan_json=? WHERE id=? AND user_id=?', [serialized, planId, userId]);
+  if (result.changes === 0) throw new Error('Active plan update failed');
+  return planId;
 }
 
 function clamp(n, min, max) {
@@ -636,13 +669,14 @@ router.post('/reschedule-missed', auth, async (req, res) => {
     if (week.days) week.days = dayList;
     if (week.sessions) week.sessions = dayList;
 
-    if (active.source === 'assigned') {
-      await dbRun('UPDATE training_plans SET plan_data=? WHERE id=?', [JSON.stringify(parsed), active.row.id]);
-    } else {
-      await dbRun('UPDATE training_plans SET plan_json=? WHERE id=?', [JSON.stringify(parsed), active.row.id]);
-    }
+    await withTransaction(async (tx) => {
+      await updateActivePlanData(active, req.user.id, parsed, tx);
+    });
     res.json({ ok: true, movedFrom: oldDay, movedTo: source.day, plan: parsed, aiSuggestion: 'Week rebalanced after missed session. Keep next run easy and preserve long run.' });
-  } catch (err) { res.status(500).json({ error: 'Reschedule failed' }); }
+  } catch (err) {
+    console.error('[plans/reschedule-missed] failed:', err.message);
+    res.status(500).json({ error: 'Reschedule failed' });
+  }
 });
 
 router.post('/race-adjust', auth, async (req, res) => {
@@ -662,13 +696,14 @@ router.post('/race-adjust', auth, async (req, res) => {
     const parsed = parsePlan(plan.row) || { weeks: [] };
     const adjusted = await generateRaceAdjustment({ profile, race, currentPlan: parsed });
     const nextPlan = adjusted?.weeks ? adjusted : parsed;
-    if (plan.source === 'assigned') {
-      await dbRun('UPDATE training_plans SET plan_data=? WHERE id=?', [JSON.stringify(nextPlan), plan.row.id]);
-    } else {
-      await dbRun('UPDATE training_plans SET plan_json=? WHERE id=?', [JSON.stringify(nextPlan), plan.row.id]);
-    }
+    await withTransaction(async (tx) => {
+      await updateActivePlanData(plan, req.user.id, nextPlan, tx);
+    });
     res.json({ ok: true, plan: nextPlan });
-  } catch (err) { res.status(500).json({ error: 'Race adjust failed' }); }
+  } catch (err) {
+    console.error('[plans/race-adjust] failed:', err.message);
+    res.status(500).json({ error: 'Race adjust failed' });
+  }
 });
 
 const HYBRID_SESSION_TEMPLATES = [
