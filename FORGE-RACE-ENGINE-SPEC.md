@@ -129,3 +129,30 @@ Each phase: Hermes pre-flight → Codex build → Claude Code QA (executes, not 
 **WHY:** Monetize high-value race/specialized programs, keep free tier useful, zero-cost path to hand friends the full app.
 
 **GATE:** Free user hits race-program generation -> 402 upgrade. New subscriber gets 14-day trial then auto-charge. Comp redemption grants full Pro with no Stripe sub; webhook events never downgrade comp. Admin flip works. QA executes each path.
+
+---
+
+## Phase 2.5 — Plan Catalog UX (Nike-style cards → dynamic generator front door)
+
+> Added 2026-07-07 per Bryan (Nike Run Club screenshots as UX reference). STANDING ORDER captured: Hermes must challenge/question Bryan's ideas, not rubber-stamp — recorded here as a design principle for this app.
+
+**STRATEGIC FRAME (the challenge, on record):** Nike Run Club ships a STATIC catalog — every plan card (4-wk beginner, 8-wk 5K, 18-wk marathon) is a pre-baked shelf product identical for all users. Copying that = a worse Nike. Forge's moat is the OPPOSITE: the card is a DOORWAY to a plan computed live from the user's own Apple Health/Watch data. Steal Nike's card UI + one-tap simplicity; reject Nike's fixed-template payload.
+
+**WHAT:**
+1. Plan catalog screen — clean Nike-style card grid (distance/goal: 5K, 10K, Half, Marathon, Army 10-Miler, Custom). Each card shows goal + est. duration + level badge. Simple, beautiful, athlete-first.
+2. Card tap = dynamic generation, NOT a template. Feeds the Phase 2 periodized generator with the user's real inputs.
+3. Generation inputs:
+   - Apple Health/Watch data (current fitness, recent weekly volume, HR/zones, pace) — the differentiator Nike cannot replicate.
+   - PR goals (target time for the distance).
+   - Distance/race (or race from Phase 3 catalog).
+   - Availability — INFER from Apple Health workout history (which days they actually train), then SHOW it and let user tap to correct. Simple + smart, not a blank questionnaire.
+   - Lift toggle — 'keep hitting weights?' → concurrent run+lift plan (Forge's core hybrid edge) vs run-only.
+4. Output = the Phase 2 variable, periodized plan (base/build/peak/taper), personalized — never a shelf template.
+
+**WHY:** Nike has no idea a user lifts or what their biometrics are. Concurrent runner+lifter personalization off real Apple Health data is Forge's defensible wedge. The catalog gives Nike-grade simplicity of entry without surrendering the smart, custom core.
+
+**HOW:** Frontend plan-catalog grid (reuse card/styling conventions). On tap → prefill generator context from /me + Apple Health signals + inferred availability, show an editable confirm sheet (availability chips, PR goal, lift toggle), then POST to the Phase 2 generator endpoint. Gate specialized/race plans behind Phase 1.5 paywall.
+
+**GATE:** Tapping a card never returns a static template — every plan reflects that user's data. Inferred availability is shown and editable. Lift toggle changes the plan structure. Free user tapping a specialized plan hits the 402 upgrade. QA verifies two different users tapping the same card get different, data-driven plans.
+
+**DEPENDS ON:** Phase 2 (variable periodized generator) + Phase 1.5 (paywall). Sequitur after Phase 2.
