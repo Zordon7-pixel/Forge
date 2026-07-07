@@ -2,6 +2,7 @@ import React, { Suspense, lazy, useEffect, useRef, useState } from 'react'
 import { App as CapacitorApp } from '@capacitor/app'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { isLoggedIn, getUser } from './lib/auth'
+import { clearToken } from './lib/tokenStore'
 import track from './lib/track'
 import Layout from './components/Layout'
 import { ProProvider } from './context/ProContext'
@@ -201,7 +202,10 @@ function WaiverGate({ children }) {
         if (!active) return
         setShowWaiver(data?.user?.waiver_current === false)
       })
-      .catch(() => {})
+      .catch((err) => {
+        console.error('[WaiverGate] /me check failed:', err)
+        if (active) setShowWaiver(true)
+      })
       .finally(() => {
         if (active) setChecking(false)
       })
@@ -226,6 +230,7 @@ function WaiverGate({ children }) {
             }
           }}
           onCancel={() => {
+            clearToken()
             window.location.href = '/login'
           }}
         />

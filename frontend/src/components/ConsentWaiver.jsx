@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { getCurrentWaiver } from '../lib/api'
+import { getCurrentWaiver, getWaiverVersion } from '../lib/api'
 import { getToken } from '../lib/tokenStore'
 
 export const WAIVER_VERSION = '2026-07-07'
@@ -40,18 +40,22 @@ export default function ConsentWaiver({ version, text, onAgree, onCancel, loadin
 
   useEffect(() => {
     if (version && text) return
-    if (!getToken()) return
 
     let active = true
-    getCurrentWaiver()
+    const token = getToken()
+    const request = token ? getCurrentWaiver() : getWaiverVersion()
+
+    request
       .then(({ data }) => {
         if (!active) return
         setWaiver({
-          version: data?.version || WAIVER_VERSION,
-          text: data?.text || WAIVER_TEXT
+          version: data?.version || version || WAIVER_VERSION,
+          text: data?.text || text || WAIVER_TEXT
         })
       })
-      .catch(() => {})
+      .catch((err) => {
+        console.error('[ConsentWaiver] waiver fetch failed:', err)
+      })
 
     return () => { active = false }
   }, [version, text])
