@@ -35,5 +35,6 @@ api.interceptors.response.use(
 
 export default api
 
+export const getWaiverVersion = () => api.get('/consent/version')
 export const getCurrentWaiver = () => api.get('/consent/current')
 export const acceptWaiver = (version) => api.post('/consent/accept', { version })

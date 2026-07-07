@@ -31,7 +31,7 @@ export default function Register() {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { setError('Please enter a valid email address'); return }
     if (password.length < 6) { setError('Password must be at least 6 characters'); return }
     if (!acceptedWaiverVersion) { setShowWaiver(true); return }
-    submitRegistration(acceptedWaiverVersion)
+    await submitRegistration(acceptedWaiverVersion)
   }
 
   return (
@@ -63,10 +63,10 @@ export default function Register() {
       {showWaiver && (
         <ConsentWaiver
           loading={loading}
-          onAgree={(version) => {
+          onAgree={async (version) => {
             setAcceptedWaiverVersion(version)
             setShowWaiver(false)
-            submitRegistration(version)
+            await submitRegistration(version)
           }}
           onCancel={() => {
             setShowWaiver(false)
