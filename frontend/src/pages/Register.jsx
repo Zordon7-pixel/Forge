@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import api from '../lib/api'
 import { setToken } from '../lib/tokenStore'
+import ConsentWaiver from '../components/ConsentWaiver'
 
 export default function Register() {
   const { t } = useTranslation()
@@ -11,18 +12,26 @@ export default function Register() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [showWaiver, setShowWaiver] = useState(false)
+  const [acceptedWaiverVersion, setAcceptedWaiverVersion] = useState('')
 
-  const onSubmit = async e => {
-    e.preventDefault(); setError(''); setLoading(true)
-    if (!email || !password) { setError('Email and password are required.'); setLoading(false); return }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { setError('Please enter a valid email address'); setLoading(false); return }
-    if (password.length < 6) { setError('Password must be at least 6 characters'); setLoading(false); return }
+  const submitRegistration = async (waiverVersion) => {
+    setLoading(true)
     try {
-      const response = await api.post('/auth/register', { name, email, password })
+      const response = await api.post('/auth/register', { name, email, password, accepted_waiver_version: waiverVersion })
       setToken(response.data.token)
       window.location.href = '/onboarding'
     } catch (err) { setError(err?.response?.data?.error || 'Registration failed. Please try again.') }
     finally { setLoading(false) }
+  }
+
+  const onSubmit = async e => {
+    e.preventDefault(); setError('')
+    if (!email || !password) { setError('Email and password are required.'); return }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { setError('Please enter a valid email address'); return }
+    if (password.length < 6) { setError('Password must be at least 6 characters'); return }
+    if (!acceptedWaiverVersion) { setShowWaiver(true); return }
+    submitRegistration(acceptedWaiverVersion)
   }
 
   return (
@@ -51,6 +60,20 @@ export default function Register() {
           {t('auth.hasAccount')} <Link to="/login" className="font-semibold hover:underline" style={{ color: 'var(--accent)' }}>{t('auth.login')}</Link>
         </p>
       </div>
+      {showWaiver && (
+        <ConsentWaiver
+          loading={loading}
+          onAgree={(version) => {
+            setAcceptedWaiverVersion(version)
+            setShowWaiver(false)
+            submitRegistration(version)
+          }}
+          onCancel={() => {
+            setShowWaiver(false)
+            setError('You must accept the medical disclaimer to register.')
+          }}
+        />
+      )}
     </div>
   )
 }
