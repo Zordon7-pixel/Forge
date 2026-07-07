@@ -138,8 +138,11 @@ async function generateTrainingPlan(profile, target = null) {
 - Preferred workout days per week: ${Number(profile.weekly_workout_days) || 4}
 - If missed workout: ${sanitize(profile.missed_workout_pref, 30) || 'adjust_week'}` : '';
 
+  const raceGoalTime = target?.goalTimeSeconds
+    ? `, goal finish ${Math.floor(target.goalTimeSeconds/3600)}h${String(Math.floor((target.goalTimeSeconds%3600)/60)).padStart(2,'0')}m`
+    : '';
   const raceTargetLine = target?.raceDate || target?.distanceMiles
-    ? `- Race target override: ${target.distanceMiles ? `${target.distanceMiles} miles` : 'race'} on ${target.raceDate || 'upcoming date'}`
+    ? `- Race target override: ${target.distanceMiles ? `${target.distanceMiles} miles` : 'race'} on ${target.raceDate || 'upcoming date'}${raceGoalTime}`
     : '';
 
   const prompt = `You are an expert hybrid runner/lifter coach who specializes in concurrent training (runners who also lift). Create a ${weeks}-week PERIODIZED training plan for this athlete:
@@ -170,7 +173,7 @@ Rules:
 
   try {
     const res = await getClient().messages.create({
-      model: 'frequent',
+      model: 'complex',
       max_tokens: Math.min(16000, Math.max(4000, weeks * 550)),
       messages: [{ role: 'user', content: prompt }],
     });

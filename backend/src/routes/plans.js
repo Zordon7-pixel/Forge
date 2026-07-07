@@ -776,7 +776,7 @@ router.post('/generate', auth, checkAiLimit('plan_generate'), async (req, res) =
     const weekStart = getMonday();
 
     if (!planData) {
-      const fallback = enforcePlanSessionRules(generateFallbackPlan(profile));
+      const fallback = enforcePlanSessionRules(generateFallbackPlan(profile, req.body?.target?.weeks));
       await dbRun('INSERT INTO training_plans (id, user_id, week_start, plan_json) VALUES (?, ?, ?, ?)',
         [id, req.user.id, weekStart, JSON.stringify(fallback)]);
       return res.json({ plan: { id, user_id: req.user.id, week_start: weekStart, plan_json: fallback } });
@@ -786,7 +786,7 @@ router.post('/generate', auth, checkAiLimit('plan_generate'), async (req, res) =
     await dbRun('INSERT INTO training_plans (id, user_id, week_start, plan_json) VALUES (?, ?, ?, ?)',
       [id, req.user.id, weekStart, JSON.stringify(constrainedPlan)]);
     res.json({ plan: { id, user_id: req.user.id, week_start: weekStart, plan_json: constrainedPlan } });
-  } catch (err) { res.status(500).json({ error: 'Plan generation failed' }); }
+  } catch (err) { console.error('generate failed:', err.message); res.status(500).json({ error: 'Plan generation failed' }); }
 });
 
 router.post('/generate-for-race/:raceId', auth, checkAiLimit('plan_generate'), async (req, res) => {
