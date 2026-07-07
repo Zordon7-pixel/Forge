@@ -26,6 +26,20 @@ async function runAlwaysMigrations() {
   `);
 
   await pg.query('CREATE INDEX IF NOT EXISTS idx_events_user_created_at ON events(user_id, created_at)');
+
+  await pg.query(`
+    CREATE TABLE IF NOT EXISTS user_consents (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      consent_type TEXT NOT NULL DEFAULT 'medical_waiver',
+      version TEXT NOT NULL,
+      accepted_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+      ip TEXT,
+      UNIQUE(user_id, consent_type, version)
+    )
+  `);
+
+  await pg.query('CREATE INDEX IF NOT EXISTS idx_user_consents_user_type ON user_consents(user_id, consent_type)');
 }
 
 /**

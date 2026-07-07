@@ -14,6 +14,7 @@ const {
 } = require('../lib/accountDataCoverage');
 const { computeStreak, serverUtcAnchorCandidates } = require('../lib/streak');
 const backendPackage = require('../../package.json');
+const { WAIVER_VERSION } = require('../lib/waiverText');
 
 const sign = (user) => jwt.sign(
   { id: user.id, name: user.name, email: user.email, onboarded: user.onboarded, coach_personality: user.coach_personality },
@@ -48,9 +49,11 @@ router.post('/login', async (req, res) => {
 
 router.post('/register', async (req, res) => {
   try {
-    const { name, email, password } = req.body;
+    const { name, email, password, accepted_waiver_version } = req.body;
     if (!name?.trim() || !email?.trim() || !password)
       return res.status(400).json({ error: 'Name, email, and password required' });
+    if (accepted_waiver_version !== WAIVER_VERSION)
+      return res.status(400).json({ error: 'You must accept the medical disclaimer to register.' });
     if (password.length < 6)
       return res.status(400).json({ error: 'Password must be at least 6 characters' });
     const emailNorm = email.trim().toLowerCase();
@@ -59,6 +62,12 @@ router.post('/register', async (req, res) => {
     const id = uuidv4();
     await dbRun(`INSERT INTO users (id, name, email, password_hash) VALUES (?, ?, ?, ?)`,
       [id, name.trim(), emailNorm, bcrypt.hashSync(password, 10)]);
+    await dbRun(
+      `INSERT INTO user_consents (id, user_id, consent_type, version, ip)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT (user_id, consent_type, version) DO NOTHING`,
+      [uuidv4(), id, 'medical_waiver', WAIVER_VERSION, req.ip]
+    );
     const user = await dbGet('SELECT * FROM users WHERE id = ?', [id]);
     res.status(201).json({ token: sign(user), user: { id: user.id, name: user.name, email: user.email, onboarded: 0 } });
   } catch (err) { res.status(500).json({ error: 'Registration failed' }); }
@@ -131,6 +140,12 @@ router.get('/me', auth, async (req, res) => {
       [req.user.id]
     );
     if (!user) return res.status(404).json({ error: 'User not found' });
+    const waiver = await dbGet(
+      `SELECT id FROM user_consents
+       WHERE user_id = ? AND consent_type = ? AND version = ?
+       LIMIT 1`,
+      [req.user.id, 'medical_waiver', WAIVER_VERSION]
+    );
     const normalized = {
       ...user,
       weekly_miles: user.weekly_miles_current,
@@ -146,7 +161,8 @@ router.get('/me', auth, async (req, res) => {
       injury_date: user.injury_date || '',
       injury_limitations: user.injury_limitations || '',
       is_pro: !!user.is_pro,
-      subscription_status: user.subscription_status || 'free'
+      subscription_status: user.subscription_status || 'free',
+      waiver_current: !!waiver
     };
     res.json({ user: normalized });
   } catch (err) { res.status(500).json({ error: 'Failed to fetch profile' }); }

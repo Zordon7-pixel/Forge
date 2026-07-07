@@ -1,4 +1,4 @@
-import React, { Suspense, lazy, useEffect, useRef } from 'react'
+import React, { Suspense, lazy, useEffect, useRef, useState } from 'react'
 import { App as CapacitorApp } from '@capacitor/app'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { isLoggedIn, getUser } from './lib/auth'
@@ -6,6 +6,8 @@ import track from './lib/track'
 import Layout from './components/Layout'
 import { ProProvider } from './context/ProContext'
 import HealthService from './services/HealthService'
+import api, { acceptWaiver } from './lib/api'
+import ConsentWaiver from './components/ConsentWaiver'
 
 function lazyWithRetry(factory) {
   return lazy(async () => {
@@ -179,9 +181,59 @@ function PrivateRoute({ children }) {
   if (!isLoggedIn()) return <Navigate to="/login" replace />
 
   const user = getUser()
-  if (user && !user.onboarded) return <Navigate to="/onboarding" replace />
 
-  return <Layout>{children}</Layout>
+  return (
+    <WaiverGate>
+      {user && !user.onboarded ? <Navigate to="/onboarding" replace /> : <Layout>{children}</Layout>}
+    </WaiverGate>
+  )
+}
+
+function WaiverGate({ children }) {
+  const [checking, setChecking] = useState(true)
+  const [showWaiver, setShowWaiver] = useState(false)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    let active = true
+    api.get('/auth/me')
+      .then(({ data }) => {
+        if (!active) return
+        setShowWaiver(data?.user?.waiver_current === false)
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (active) setChecking(false)
+      })
+
+    return () => { active = false }
+  }, [])
+
+  if (checking) return <PageFallback />
+
+  if (showWaiver) {
+    return (
+      <>
+        <ConsentWaiver
+          loading={saving}
+          onAgree={async (version) => {
+            setSaving(true)
+            try {
+              await acceptWaiver(version)
+              setShowWaiver(false)
+            } finally {
+              setSaving(false)
+            }
+          }}
+          onCancel={() => {
+            window.location.href = '/login'
+          }}
+        />
+      </>
+    )
+  }
+
+  return children
 }
 
 export default function App() {
@@ -200,7 +252,7 @@ export default function App() {
         <Route path="/privacy" element={<Privacy />} />
         <Route path="/terms" element={<Terms />} />
         <Route path="/reset-password" element={<ResetPassword />} />
-        <Route path="/onboarding" element={<Onboarding />} />
+        <Route path="/onboarding" element={isLoggedIn() ? <WaiverGate><Onboarding /></WaiverGate> : <Navigate to="/login" replace />} />
 
         <Route
           path="/"
