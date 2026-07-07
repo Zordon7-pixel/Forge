@@ -3,6 +3,8 @@
 > Author: Hermes (pre-build design). Date: 2026-07-07.
 > Origin: Bryan wants Forge to be the *ultimate* running/info app — know every upcoming race, its course (distance/elevation/altitude), and auto-build a real periodized program to it (e.g. Army 10-Miler, Oct, 12-week). Also wants a registration liability waiver so we're legally covered, modeled (NOT copied) on FivePointFive's breathwork Health & Safety consent.
 > Principle: **Simple as possible, smarter than the rest.** One tap to "train for this race," everything else automatic.
+> Correction (2026-07-07, Bryan): full-marathon plans must support 16–18 weeks explicitly; the Army 10-Miler is a LOCAL (DC) race used only as an example — the race catalog must cover local/regional races, not just national majors.
+
 
 ---
 
@@ -52,11 +54,12 @@ Content blocks:
 
 **HOW:**
 - Change `generateTrainingPlan(profile, target)` prompt: accept `weeksToRace` (derived from race_date − today, clamped 4–20) and instruct periodization + taper in final 1–2 weeks.
+- Distance-aware default lengths (used when the user has not fixed a date): full marathon = 16–18 weeks; half marathon = 12–14 weeks; 10-miler / 10K = 10–12 weeks; 5K = 8 weeks. Never cap a marathon build at a short block — an 18-week full-marathon plan must generate 18 real weeks.
 - Add `target.raceDistanceMiles`, `target.raceDate`, `target.goalTimeSeconds`.
 - New/updated endpoint `POST /plans/generate-for-race/:raceId` — reads the race, computes weeks, generates, assigns as active plan.
 - Respect existing readiness/check-in override layer (non-destructive).
 
-**WHY:** "12-week Army 10-Miler plan" must actually be 12 weeks and peak on race week — current 4-week hardcode can't.
+**WHY:** An "18-week full-marathon plan" or a "12-week 10-miler plan" must actually run that many weeks and peak/taper on race week — the current 4-week hardcode cannot express marathon-length periodization at all.
 
 **GATE:** Generating for a race 12 weeks out yields a 12-week plan with a taper in the final week and mileage progression that respects current weekly miles + injury notes. QA executes generation, not just compile.
 
@@ -68,7 +71,9 @@ Content blocks:
 
 **HOW:**
 - New table `race_catalog (id, name, date, city, state, country, distance_miles, event_type, source, url, lat, lng)`.
-- Seed with major/known races (Army 10-Miler, major marathons/halves, popular locals) via a seed script; design for periodic refresh.
+- Seed a MIX across scale: national majors (large marathons/halves) AND regional/LOCAL races. The catalog's real value is covering local/regional races, not just big national events.
+  - NOTE: the **Army 10-Miler** is a **local race (Washington, DC)** used in this spec only as Bryan's example — it is NOT a statewide/national flagship. Do not treat it as a marquee; it is representative of the many local races the catalog must include.
+  - Tag each race with a `scope` (national / regional / local) so search can surface nearby local races first. Design for periodic refresh.
 - Endpoint `GET /races/catalog?q=&distance=&month=&state=` search.
 - "Add from catalog" copies into `race_events` and pre-fills the plan target.
 - Keep manual add as fallback.
