@@ -123,6 +123,7 @@ function setCached(cacheKey, value, ttlMs) {
 }
 
 async function generateTrainingPlan(profile, target = null) {
+  const weeks = Math.max(4, Math.min(20, Number(target?.weeks) || 4));
   const goalDesc = {
     comeback:      'returning from injury, needs conservative build-up',
     race:          `training for a ${profile.goal_race_distance || 'race'} on ${profile.goal_race_date || 'an upcoming date'}`,
@@ -137,11 +138,14 @@ async function generateTrainingPlan(profile, target = null) {
 - Preferred workout days per week: ${Number(profile.weekly_workout_days) || 4}
 - If missed workout: ${sanitize(profile.missed_workout_pref, 30) || 'adjust_week'}` : '';
 
+  const raceGoalTime = target?.goalTimeSeconds
+    ? `, goal finish ${Math.floor(target.goalTimeSeconds/3600)}h${String(Math.floor((target.goalTimeSeconds%3600)/60)).padStart(2,'0')}m`
+    : '';
   const raceTargetLine = target?.raceDate || target?.distanceMiles
-    ? `- Race target override: ${target.distanceMiles ? `${target.distanceMiles} miles` : 'race'} on ${target.raceDate || 'upcoming date'}`
+    ? `- Race target override: ${target.distanceMiles ? `${target.distanceMiles} miles` : 'race'} on ${target.raceDate || 'upcoming date'}${raceGoalTime}`
     : '';
 
-  const prompt = `You are an expert hybrid runner/lifter coach who specializes in concurrent training (runners who also lift). Create a 4-week training plan for this athlete:
+  const prompt = `You are an expert hybrid runner/lifter coach who specializes in concurrent training (runners who also lift). Create a ${weeks}-week PERIODIZED training plan for this athlete:
 - Name: ${sanitize(profile.name, 50)}
 - Current weekly miles: ${Number(profile.weekly_miles_current) || 0}
 - Goal: ${goalDesc}
@@ -161,12 +165,16 @@ Rules:
 - Include 1-2 hybrid cardio + weight sessions weekly, marked as type "cross_train" with titles like Weighted Circuit, Kettlebell Cardio, Rucking, or Sled Push Intervals
 - Keep at least 1 full rest day each week
 - Keep run and lift scheduling sensible, but do not make same-day run/lift adjustment calls; deterministic backend rules own those changes.
-- Increase mileage ~10% per week max. Week 4 should be a recovery week (reduce ~20%).`;
+- PERIODIZATION over ${weeks} weeks: early weeks = BASE (aerobic volume), middle = BUILD (add tempo/intervals + peak long runs), final 1-2 weeks = TAPER (cut volume 30-50%, keep some intensity, race week is lightest).
+- Every 3rd-4th week is a DOWN/recovery week (reduce volume ~20%).
+- Increase weekly mileage no more than ~10% week-over-week.
+- Distance-appropriate structure: full marathon builds a 18-22mi peak long run; half marathon peaks ~10-12mi; 10-miler/10K peaks ~8-10mi; 5K emphasizes speed over volume.
+- The plan MUST contain exactly ${weeks} week objects in the weeks array, numbered 1..${weeks}.`;
 
   try {
     const res = await getClient().messages.create({
-      model: 'frequent',
-      max_tokens: 4000,
+      model: 'complex',
+      max_tokens: Math.min(16000, Math.max(4000, weeks * 550)),
       messages: [{ role: 'user', content: prompt }],
     });
     const text = res.content[0].text.trim();

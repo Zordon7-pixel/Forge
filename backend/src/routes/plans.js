@@ -776,7 +776,7 @@ router.post('/generate', auth, checkAiLimit('plan_generate'), async (req, res) =
     const weekStart = getMonday();
 
     if (!planData) {
-      const fallback = enforcePlanSessionRules(generateFallbackPlan(profile));
+      const fallback = enforcePlanSessionRules(generateFallbackPlan(profile, req.body?.target?.weeks));
       await dbRun('INSERT INTO training_plans (id, user_id, week_start, plan_json) VALUES (?, ?, ?, ?)',
         [id, req.user.id, weekStart, JSON.stringify(fallback)]);
       return res.json({ plan: { id, user_id: req.user.id, week_start: weekStart, plan_json: fallback } });
@@ -786,25 +786,65 @@ router.post('/generate', auth, checkAiLimit('plan_generate'), async (req, res) =
     await dbRun('INSERT INTO training_plans (id, user_id, week_start, plan_json) VALUES (?, ?, ?, ?)',
       [id, req.user.id, weekStart, JSON.stringify(constrainedPlan)]);
     res.json({ plan: { id, user_id: req.user.id, week_start: weekStart, plan_json: constrainedPlan } });
-  } catch (err) { res.status(500).json({ error: 'Plan generation failed' }); }
+  } catch (err) { console.error('generate failed:', err.message); res.status(500).json({ error: 'Plan generation failed' }); }
 });
 
-function generateFallbackPlan(profile) {
+router.post('/generate-for-race/:raceId', auth, checkAiLimit('plan_generate'), async (req, res) => {
+  try {
+    const profile = await dbGet('SELECT * FROM users WHERE id = ?', [req.user.id]);
+    if (!profile) return res.status(404).json({ error: 'User not found' });
+    const race = await dbGet('SELECT * FROM race_events WHERE id = ? AND user_id = ?', [req.params.raceId, req.user.id]);
+    if (!race) return res.status(404).json({ error: 'Race not found' });
+    // weeks-to-race from race_date, clamped 4..20
+    const today = new Date(); today.setHours(0,0,0,0);
+    const raceDate = new Date(`${race.race_date}T12:00:00`);
+    const weeks = Math.max(4, Math.min(20, Math.ceil((raceDate - today) / (7*24*3600*1000))));
+    const target = { raceDate: race.race_date, distanceMiles: race.distance_miles, goalTimeSeconds: race.goal_time_seconds || null, weeks };
+    const planData = await generateTrainingPlan(profile, target);
+    const id = uuidv4();
+    const weekStart = getMonday();
+    const finalPlan = enforcePlanSessionRules(planData || generateFallbackPlan(profile, weeks));
+    await dbRun('INSERT INTO training_plans (id, user_id, week_start, plan_json) VALUES (?, ?, ?, ?)', [id, req.user.id, weekStart, JSON.stringify(finalPlan)]);
+    res.json({ plan: { id, user_id: req.user.id, week_start: weekStart, plan_json: finalPlan }, weeks, race: { id: race.id, name: race.race_name, date: race.race_date } });
+  } catch (err) { console.error('generate-for-race failed:', err.message); res.status(500).json({ error: 'Race plan generation failed' }); }
+});
+
+function generateFallbackPlan(profile, weeks = 4) {
   const base = profile.weekly_miles_current || 10;
   const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-  const weeks = [1, 2, 3, 4].map(w => ({
-    week: w,
-    theme: w === 4 ? 'Recovery Week' : w === 1 ? 'Foundation' : w === 2 ? 'Build' : 'Peak',
-    total_miles: w === 4 ? Math.round(base * 0.8) : Math.round(base * (1 + (w - 1) * 0.1)),
-    days: days.map(day => {
+  const weekCount = Math.max(4, Math.min(20, Number(weeks) || 4));
+  const peakWeek = Math.max(1, weekCount - 2);
+  const peakVolume = base * (1 + (peakWeek - 1) * 0.08);
+  const planWeeks = Array.from({ length: weekCount }, (_, idx) => {
+    const w = idx + 1;
+    const theme = w === weekCount
+      ? 'Race Week / Taper'
+      : w === weekCount - 1
+        ? 'Taper'
+        : w === 1
+          ? 'Foundation'
+          : w % 4 === 0
+            ? 'Recovery Week'
+            : 'Build';
+    let volume = base * (1 + (w - 1) * 0.08);
+    if (w % 4 === 0 && w < weekCount - 1) volume *= 0.8;
+    if (w === weekCount - 1) volume = peakVolume * 0.6;
+    if (w === weekCount) volume = peakVolume * 0.4;
+
+    return {
+      week: w,
+      theme,
+      total_miles: Math.round(volume),
+      days: days.map(day => {
       const isRest = ['Tue', 'Thu', 'Sun'].includes(day);
       const isLong = day === 'Sat';
       if (isRest) return { day, type: 'rest', distance_miles: 0, duration_min: 0, description: 'Rest and recovery', rest: true };
-      if (isLong) return { day, type: 'long', distance_miles: Math.round(base * 0.35 * (w === 4 ? 0.8 : 1) * 10) / 10, duration_min: 0, description: 'Long easy run — conversational pace', rest: false };
-      return { day, type: day === 'Wed' ? 'strength' : 'easy', workout_type: day === 'Wed' ? 'strength' : 'run', distance_miles: Math.round(base * 0.2 * (w === 4 ? 0.8 : 1) * 10) / 10, duration_min: 0, description: day === 'Wed' ? 'Strength session' : 'Easy effort run', rest: false };
-    }),
-  }));
-  return { weeks };
+      if (isLong) return { day, type: 'long', distance_miles: Math.round(volume * 0.35 * 10) / 10, duration_min: 0, description: 'Long easy run — conversational pace', rest: false };
+      return { day, type: day === 'Wed' ? 'strength' : 'easy', workout_type: day === 'Wed' ? 'strength' : 'run', distance_miles: Math.round(volume * 0.2 * 10) / 10, duration_min: 0, description: day === 'Wed' ? 'Strength session' : 'Easy effort run', rest: false };
+      }),
+    };
+  });
+  return { weeks: planWeeks };
 }
 
 module.exports = router;
