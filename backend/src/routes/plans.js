@@ -110,6 +110,44 @@ function clamp(n, min, max) {
   return Math.max(min, Math.min(max, n));
 }
 
+function clampInt(value, min, max, fallback) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return clamp(Math.round(n), min, max);
+}
+
+function getPlanTargetOptions(target = null) {
+  const dayByKey = { sun: 'Sun', mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri', sat: 'Sat' };
+  const trainingDays = Array.isArray(target?.trainingDays)
+    ? [...new Set(target.trainingDays
+      .map((day) => dayByKey[String(day || '').trim().slice(0, 3).toLowerCase()])
+      .filter(Boolean))]
+    : [];
+  return {
+    liftingEnabled: target?.liftingEnabled === false ? false : true,
+    trainingDays,
+  };
+}
+
+function defaultPrefillFromProfile(profile = {}) {
+  const runDaysPerWeek = clampInt(profile.run_days_per_week, 1, 7, 3);
+  const liftDaysPerWeek = clampInt(profile.lift_days_per_week, 0, 7, 2);
+  return {
+    inferredTrainingDays: [],
+    runDaysPerWeek,
+    liftDaysPerWeek,
+    liftingEnabled: liftDaysPerWeek > 0,
+  };
+}
+
+function weekdayFromDateString(dateString) {
+  const datePart = String(dateString || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(datePart)) return null;
+  const date = new Date(`${datePart}T12:00:00`);
+  if (Number.isNaN(date.getTime())) return null;
+  return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][date.getDay()];
+}
+
 function parseLifeFlags(raw) {
   if (Array.isArray(raw)) return raw;
   if (typeof raw !== 'string') return [];
@@ -399,6 +437,30 @@ router.get('/adaptive/recommend', auth, async (req, res) => {
     res.json(adaptive);
   } catch {
     res.status(500).json({ error: 'Failed to build adaptive recommendation' });
+  }
+});
+
+router.get('/prefill', auth, async (req, res) => {
+  let fallback = defaultPrefillFromProfile();
+  try {
+    const profile = await dbGet('SELECT run_days_per_week, lift_days_per_week FROM users WHERE id=?', [req.user.id]);
+    fallback = defaultPrefillFromProfile(profile || {});
+
+    const since = new Date();
+    since.setDate(since.getDate() - 56);
+    const sinceDate = since.toISOString().slice(0, 10);
+    const rows = await dbAll(
+      'SELECT date FROM runs WHERE user_id=? AND date >= ? ORDER BY date ASC',
+      [req.user.id, sinceDate]
+    );
+    const inferredTrainingDays = [...new Set((rows || [])
+      .map((row) => weekdayFromDateString(row.date))
+      .filter(Boolean))];
+
+    res.json({ ...fallback, inferredTrainingDays });
+  } catch (err) {
+    console.error('[plans/prefill] failed soft:', err.message);
+    res.json(fallback);
   }
 });
 
@@ -755,13 +817,27 @@ function createEasySession(dayLabel) {
   };
 }
 
-function enforceWeekSessionRules(week = {}) {
+function enforceWeekSessionRules(week = {}, options = {}) {
   const dayOrder = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const allowedTrainingDays = Array.isArray(options.trainingDays) && options.trainingDays.length
+    ? new Set(options.trainingDays)
+    : null;
   const sourceDays = Array.isArray(week.days) ? [...week.days] : Array.isArray(week.sessions) ? [...week.sessions] : [];
+  const dayByKey = { sun: 'Sun', mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri', sat: 'Sat' };
+  const sourceByDay = new Map(sourceDays
+    .map((day) => [dayByKey[String(day?.day || '').trim().slice(0, 3).toLowerCase()], day])
+    .filter(([day]) => day));
   const days = dayOrder.map((label, idx) => {
-    const existing = sourceDays[idx] || {};
-    return { ...existing, day: existing.day || label };
+    const existing = allowedTrainingDays ? (sourceByDay.get(label) || {}) : (sourceDays[idx] || {});
+    return { ...existing, day: label };
   });
+
+  if (allowedTrainingDays) {
+    for (let i = 0; i < days.length; i += 1) {
+      if (allowedTrainingDays.has(days[i].day) || isRestDay(days[i])) continue;
+      days[i] = { day: days[i].day, type: 'rest', workout_type: 'rest', distance_miles: 0, duration_min: 0, description: 'Rest and recovery', rest: true };
+    }
+  }
 
   const nonRestIndexes = [];
   for (let i = 0; i < days.length; i += 1) {
@@ -769,10 +845,23 @@ function enforceWeekSessionRules(week = {}) {
   }
 
   while (nonRestIndexes.length < 6) {
-    const restIndex = days.findIndex((d) => isRestDay(d));
+    const restIndex = days.findIndex((d) => isRestDay(d) && (!allowedTrainingDays || allowedTrainingDays.has(d.day)));
     if (restIndex < 0) break;
     days[restIndex] = createEasySession(days[restIndex].day || dayOrder[restIndex]);
     nonRestIndexes.push(restIndex);
+  }
+
+  if (options.liftingEnabled === false) {
+    return {
+      ...week,
+      days: days.map((day) => {
+        const type = String(day.type || day.workout_type || '').toLowerCase();
+        if (type.includes('strength') || type.includes('lift') || isHybridSession(day)) {
+          return createEasySession(day.day);
+        }
+        return day;
+      }),
+    };
   }
 
   let hybridIndexes = nonRestIndexes.filter((idx) => isHybridSession(days[idx]));
@@ -797,8 +886,8 @@ function enforceWeekSessionRules(week = {}) {
   return { ...week, days };
 }
 
-function enforcePlanSessionRules(planData = {}) {
-  const weeks = Array.isArray(planData.weeks) ? planData.weeks.map((week) => enforceWeekSessionRules(week)) : [];
+function enforcePlanSessionRules(planData = {}, options = {}) {
+  const weeks = Array.isArray(planData.weeks) ? planData.weeks.map((week) => enforceWeekSessionRules(week, options)) : [];
   return { ...planData, weeks };
 }
 
@@ -812,13 +901,13 @@ router.post('/generate', auth, requirePremium('Race Programs'), checkAiLimit('pl
     const weekStart = getMonday();
 
     if (!planData) {
-      const fallback = enforcePlanSessionRules(generateFallbackPlan(profile, req.body?.target?.weeks));
+      const fallback = enforcePlanSessionRules(generateFallbackPlan(profile, req.body?.target?.weeks), getPlanTargetOptions(target));
       await dbRun('INSERT INTO training_plans (id, user_id, week_start, plan_json) VALUES (?, ?, ?, ?)',
         [id, req.user.id, weekStart, JSON.stringify(fallback)]);
       return res.json({ plan: { id, user_id: req.user.id, week_start: weekStart, plan_json: fallback } });
     }
 
-    const constrainedPlan = enforcePlanSessionRules(planData);
+    const constrainedPlan = enforcePlanSessionRules(planData, getPlanTargetOptions(target));
     await dbRun('INSERT INTO training_plans (id, user_id, week_start, plan_json) VALUES (?, ?, ?, ?)',
       [id, req.user.id, weekStart, JSON.stringify(constrainedPlan)]);
     res.json({ plan: { id, user_id: req.user.id, week_start: weekStart, plan_json: constrainedPlan } });

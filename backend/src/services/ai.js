@@ -87,6 +87,38 @@ function sanitizeObj(obj, maxLen = 200) {
   return obj;
 }
 
+function clampInt(value, min, max, fallback) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, Math.round(n)));
+}
+
+function resolvePlanFrequency(profile = {}, target = null) {
+  const profileRunDays = clampInt(profile.run_days_per_week, 1, 7, 3);
+  const profileLiftDays = clampInt(profile.lift_days_per_week, 0, 7, 2);
+  const hasRunOverride = target && Object.prototype.hasOwnProperty.call(target, 'runDaysPerWeek') && target.runDaysPerWeek !== undefined;
+  const hasLiftOverride = target && Object.prototype.hasOwnProperty.call(target, 'liftDaysPerWeek') && target.liftDaysPerWeek !== undefined;
+  const liftingExplicitlyDisabled = target?.liftingEnabled === false;
+  const liftingEnabled = liftingExplicitlyDisabled ? false : (target?.liftingEnabled === true || profileLiftDays > 0);
+
+  return {
+    runDaysPerWeek: hasRunOverride ? clampInt(target.runDaysPerWeek, 1, 7, profileRunDays) : profileRunDays,
+    liftDaysPerWeek: liftingEnabled
+      ? (hasLiftOverride ? clampInt(target.liftDaysPerWeek, 0, 7, profileLiftDays) : profileLiftDays)
+      : 0,
+    liftingEnabled,
+    liftingExplicitlyDisabled,
+  };
+}
+
+function normalizeTrainingDays(raw) {
+  if (!Array.isArray(raw)) return [];
+  const byKey = { sun: 'Sun', mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri', sat: 'Sat' };
+  return [...new Set(raw
+    .map((day) => byKey[String(day || '').trim().slice(0, 3).toLowerCase()])
+    .filter(Boolean))];
+}
+
 const aiCache = new Map();
 const TTL = {
   runBrief: 4 * 60 * 60 * 1000,
@@ -124,6 +156,21 @@ function setCached(cacheKey, value, ttlMs) {
 
 async function generateTrainingPlan(profile, target = null) {
   const weeks = Math.max(4, Math.min(20, Number(target?.weeks) || 4));
+  const frequency = resolvePlanFrequency(profile, target);
+  const trainingDays = normalizeTrainingDays(target?.trainingDays);
+  const trainingDaysLine = trainingDays.length
+    ? `\n- Actual available training weekdays: ${trainingDays.join(', ')}. Schedule non-rest sessions only on these weekdays unless unavoidable for race-week taper.`
+    : '';
+  const sessionCountRule = trainingDays.length
+    ? '- Schedule non-rest sessions only on the listed available training weekdays; do not add sessions on other days to satisfy a minimum session count.'
+    : '- Include at least 6 training sessions each week (non-rest days)';
+  const liftingRules = frequency.liftingExplicitlyDisabled
+    ? `- This is a RUN-ONLY plan: include zero lifting, strength, weighted circuit, kettlebell, rucking, sled, or hybrid cross-training sessions.
+- Use only running workouts and rest/recovery days.`
+    : `- Include 1-2 hybrid cardio + weight sessions weekly, marked as type "cross_train" with titles like Weighted Circuit, Kettlebell Cardio, Rucking, or Sled Push Intervals`;
+  const schedulingRule = frequency.liftingExplicitlyDisabled
+    ? '- Keep run scheduling sensible and preserve recovery days.'
+    : '- Keep run and lift scheduling sensible, but do not make same-day run/lift adjustment calls; deterministic backend rules own those changes.';
   const goalDesc = {
     comeback:      'returning from injury, needs conservative build-up',
     race:          `training for a ${profile.goal_race_distance || 'race'} on ${profile.goal_race_date || 'an upcoming date'}`,
@@ -149,8 +196,8 @@ async function generateTrainingPlan(profile, target = null) {
 - Name: ${sanitize(profile.name, 50)}
 - Current weekly miles: ${Number(profile.weekly_miles_current) || 0}
 - Goal: ${goalDesc}
-- Run days per week: ${Number(profile.run_days_per_week) || 3}
-- Lift days per week: ${Number(profile.lift_days_per_week) || 2}
+- Run days per week: ${frequency.runDaysPerWeek}
+- Lift days per week: ${frequency.liftDaysPerWeek}${trainingDaysLine}
 - Injury notes: ${sanitize(profile.injury_notes) || 'none'}
 - Comeback mode: ${profile.comeback_mode ? 'YES — be very conservative, no speed work for first 2 weeks' : 'no'}
 ${raceTargetLine}${scheduleInfo}
@@ -161,10 +208,10 @@ Return ONLY valid JSON in this exact format, no other text:
 }
 Types can be: easy, tempo, long, intervals, recovery, rest, cross_train
 Rules:
-- Include at least 6 training sessions each week (non-rest days)
-- Include 1-2 hybrid cardio + weight sessions weekly, marked as type "cross_train" with titles like Weighted Circuit, Kettlebell Cardio, Rucking, or Sled Push Intervals
+${sessionCountRule}
+${liftingRules}
 - Keep at least 1 full rest day each week
-- Keep run and lift scheduling sensible, but do not make same-day run/lift adjustment calls; deterministic backend rules own those changes.
+${schedulingRule}
 - PERIODIZATION over ${weeks} weeks: early weeks = BASE (aerobic volume), middle = BUILD (add tempo/intervals + peak long runs), final 1-2 weeks = TAPER (cut volume 30-50%, keep some intensity, race week is lightest).
 - Every 3rd-4th week is a DOWN/recovery week (reduce volume ~20%).
 - Increase weekly mileage no more than ~10% week-over-week.
