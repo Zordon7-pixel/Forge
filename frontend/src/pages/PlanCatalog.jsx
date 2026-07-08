@@ -7,23 +7,37 @@ import { useProContext } from '../context/ProContext'
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
 const PLAN_GOALS = [
-  { key: '5k', name: '5K', distanceMiles: 3.1, duration: '6-8 weeks', feel: 'Fast, sharp, repeatable' },
-  { key: '10k', name: '10K', distanceMiles: 6.2, duration: '8-10 weeks', feel: 'Speed with stamina' },
-  { key: 'half', name: 'Half Marathon', distanceMiles: 13.1, duration: '10-14 weeks', feel: 'Durable aerobic build' },
-  { key: 'marathon', name: 'Marathon', distanceMiles: 26.2, duration: '14-18 weeks', feel: 'Long-range endurance' },
-  { key: 'custom', name: 'Custom', distanceMiles: null, duration: 'Flexible', feel: 'Set your own target' },
+  { key: '5k', name: '5K', distanceMiles: 3.1, duration: '6-8 weeks', minWeeks: 6, maxWeeks: 8, feel: 'Fast, sharp, repeatable' },
+  { key: '10k', name: '10K', distanceMiles: 6.2, duration: '8-10 weeks', minWeeks: 8, maxWeeks: 10, feel: 'Speed with stamina' },
+  { key: 'half', name: 'Half Marathon', distanceMiles: 13.1, duration: '10-14 weeks', minWeeks: 10, maxWeeks: 14, feel: 'Durable aerobic build' },
+  { key: 'marathon', name: 'Marathon', distanceMiles: 26.2, duration: '14-18 weeks', minWeeks: 14, maxWeeks: 18, feel: 'Long-range endurance' },
+  { key: 'custom', name: 'Custom', distanceMiles: null, duration: 'Flexible', minWeeks: 4, maxWeeks: 20, feel: 'Set your own target' },
 ]
 
 function parseGoalTime(value) {
-  const parts = String(value || '').trim().split(':').filter(Boolean)
+  const raw = String(value || '').trim()
+  if (!raw) return undefined
+  const parts = raw.split(':').filter(Boolean)
   if (!parts.length) return undefined
   if (parts.length > 3 || parts.some((part) => !/^\d+$/.test(part))) return null
 
   const numbers = parts.map(Number)
   if (numbers.some((part) => Number.isNaN(part) || part < 0)) return null
 
-  if (numbers.length === 1) return numbers[0] * 60
-  if (numbers.length === 2) return numbers[0] * 60 + numbers[1]
+  if (numbers.length === 1) {
+    const compact = parts[0]
+    if (compact.length >= 3) {
+      const minutes = Number(compact.slice(-2))
+      const hours = Number(compact.slice(0, -2))
+      if (minutes < 60) return hours * 3600 + minutes * 60
+    }
+    return numbers[0] * 60
+  }
+  if (numbers.length === 2) {
+    if (numbers[1] >= 60) return null
+    return numbers[0] <= 12 ? numbers[0] * 3600 + numbers[1] * 60 : numbers[0] * 60 + numbers[1]
+  }
+  if (numbers[1] >= 60 || numbers[2] >= 60) return null
   return numbers[0] * 3600 + numbers[1] * 60 + numbers[2]
 }
 
@@ -113,6 +127,8 @@ export default function PlanCatalog() {
     setError('')
     try {
       const target = {
+        templateKey: selectedGoal.key,
+        templateName: selectedGoal.name,
         distanceMiles,
         trainingDays,
         runDaysPerWeek: trainingDays.length,

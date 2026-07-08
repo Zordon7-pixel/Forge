@@ -116,6 +116,110 @@ function clampInt(value, min, max, fallback) {
   return clamp(Math.round(n), min, max);
 }
 
+const PLAN_TEMPLATE_RANGES = {
+  '5k': { min: 6, max: 8, fallback: 8 },
+  '10k': { min: 8, max: 10, fallback: 10 },
+  half: { min: 10, max: 14, fallback: 12 },
+  marathon: { min: 14, max: 18, fallback: 16 },
+  custom: { min: 4, max: 20, fallback: 4 },
+};
+
+function inferPlanTemplateKey(target = {}) {
+  const raw = String(target.templateKey || target.templateName || target.type || '').toLowerCase();
+  if (raw.includes('5k')) return '5k';
+  if (raw.includes('10k')) return '10k';
+  if (raw.includes('half')) return 'half';
+  if (raw.includes('marathon')) return 'marathon';
+
+  const distance = Number(target.distanceMiles || target.distance_miles);
+  if (!Number.isFinite(distance) || distance <= 0) return 'custom';
+  if (distance <= 3.5) return '5k';
+  if (distance <= 7) return '10k';
+  if (distance <= 15) return 'half';
+  if (distance <= 30) return 'marathon';
+  return 'custom';
+}
+
+function parseRaceTimeSeconds(value) {
+  if (value === null || value === undefined || value === '') return { seconds: null, reason: null };
+  if (typeof value === 'number') {
+    return Number.isFinite(value) && value > 0
+      ? { seconds: Math.round(value), reason: null }
+      : { seconds: null, reason: 'goal time number was not positive and finite' };
+  }
+
+  const raw = String(value).trim();
+  if (!raw) return { seconds: null, reason: null };
+  const parts = raw.split(':').filter(Boolean);
+  if (!parts.length || parts.length > 3 || parts.some((part) => !/^\d+$/.test(part))) {
+    return { seconds: null, reason: `could not parse goal time "${raw}"` };
+  }
+
+  const numbers = parts.map(Number);
+  if (numbers.some((part) => !Number.isFinite(part) || part < 0)) {
+    return { seconds: null, reason: `goal time contained invalid numbers "${raw}"` };
+  }
+
+  let seconds;
+  if (numbers.length === 1) {
+    if (parts[0].length >= 3) {
+      const minutes = Number(parts[0].slice(-2));
+      const hours = Number(parts[0].slice(0, -2));
+      seconds = minutes < 60 ? hours * 3600 + minutes * 60 : null;
+    } else {
+      seconds = numbers[0] * 60;
+    }
+  } else if (numbers.length === 2) {
+    if (numbers[1] >= 60) return { seconds: null, reason: `goal time minutes/seconds out of range "${raw}"` };
+    seconds = numbers[0] <= 12 ? numbers[0] * 3600 + numbers[1] * 60 : numbers[0] * 60 + numbers[1];
+  } else {
+    if (numbers[1] >= 60 || numbers[2] >= 60) return { seconds: null, reason: `goal time minutes/seconds out of range "${raw}"` };
+    seconds = numbers[0] * 3600 + numbers[1] * 60 + numbers[2];
+  }
+
+  return seconds > 0
+    ? { seconds, reason: null }
+    : { seconds: null, reason: `goal time was zero "${raw}"` };
+}
+
+function normalizePlanGenerationTarget(rawTarget = {}) {
+  const target = rawTarget && typeof rawTarget === 'object' ? { ...rawTarget } : {};
+  const notes = [];
+  const templateKey = inferPlanTemplateKey(target);
+  const range = PLAN_TEMPLATE_RANGES[templateKey] || PLAN_TEMPLATE_RANGES.custom;
+  const distanceMiles = Number(target.distanceMiles || target.distance_miles || 0);
+
+  if (Number.isFinite(distanceMiles) && distanceMiles > 0) {
+    target.distanceMiles = distanceMiles;
+  } else {
+    delete target.distanceMiles;
+    notes.push('distanceMiles missing or invalid; generating without distance override');
+  }
+
+  const parsedTime = parseRaceTimeSeconds(target.goalTimeSeconds ?? target.goal_time_seconds ?? target.goalTime);
+  if (parsedTime.seconds) {
+    target.goalTimeSeconds = parsedTime.seconds;
+  } else {
+    delete target.goalTimeSeconds;
+    if (parsedTime.reason) notes.push(`${parsedTime.reason}; target pace disabled`);
+  }
+
+  const requestedWeeks = Number(target.weeks);
+  if (Number.isInteger(requestedWeeks) && requestedWeeks > 0) {
+    const clampedWeeks = clamp(requestedWeeks, range.min, range.max);
+    target.weeks = clampedWeeks;
+    if (clampedWeeks !== requestedWeeks) {
+      notes.push(`weeks ${requestedWeeks} outside ${templateKey} range ${range.min}-${range.max}; clamped to ${clampedWeeks}`);
+    }
+  } else {
+    target.weeks = range.fallback;
+    notes.push(`weeks missing or invalid; defaulted to ${range.fallback} for ${templateKey}`);
+  }
+
+  target.templateKey = templateKey;
+  return { target, notes };
+}
+
 function getPlanTargetOptions(target = null) {
   const dayByKey = { sun: 'Sun', mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri', sat: 'Sat' };
   const trainingDays = Array.isArray(target?.trainingDays)
@@ -898,16 +1002,23 @@ function enforcePlanSessionRules(planData = {}, options = {}) {
 }
 
 router.post('/generate', auth, requirePremium('Race Programs'), checkAiLimit('plan_generate'), async (req, res) => {
+  let normalizedTarget = null;
   try {
     const profile = await dbGet('SELECT * FROM users WHERE id = ?', [req.user.id]);
     if (!profile) return res.status(404).json({ error: 'User not found' });
-    const target = req.body?.target || null;
+    const { target, notes } = normalizePlanGenerationTarget(req.body?.target || {});
+    normalizedTarget = target;
+    if (notes.length) {
+      console.error('[plans/generate] target normalized:', { userId: req.user.id, notes, target });
+    }
+
     const planData = await generateTrainingPlan(profile, target);
     const id = uuidv4();
     const weekStart = getMonday();
 
     if (!planData) {
-      const fallback = enforcePlanSessionRules(generateFallbackPlan(profile, req.body?.target?.weeks), getPlanTargetOptions(target));
+      console.error('[plans/generate] generator returned no plan; using fallback:', { userId: req.user.id, target });
+      const fallback = enforcePlanSessionRules(generateFallbackPlan(profile, target.weeks), getPlanTargetOptions(target));
       await dbRun('INSERT INTO training_plans (id, user_id, week_start, plan_json) VALUES (?, ?, ?, ?)',
         [id, req.user.id, weekStart, JSON.stringify(fallback)]);
       return res.json({ plan: { id, user_id: req.user.id, week_start: weekStart, plan_json: fallback } });
@@ -917,10 +1028,19 @@ router.post('/generate', auth, requirePremium('Race Programs'), checkAiLimit('pl
     await dbRun('INSERT INTO training_plans (id, user_id, week_start, plan_json) VALUES (?, ?, ?, ?)',
       [id, req.user.id, weekStart, JSON.stringify(constrainedPlan)]);
     res.json({ plan: { id, user_id: req.user.id, week_start: weekStart, plan_json: constrainedPlan } });
-  } catch (err) { console.error('generate failed:', err.message); res.status(500).json({ error: 'Plan generation failed' }); }
+  } catch (err) {
+    console.error('[plans/generate] failed:', {
+      message: err.message,
+      stack: err.stack,
+      userId: req.user?.id,
+      target: normalizedTarget || req.body?.target || null,
+    });
+    res.status(500).json({ error: `Plan generation failed: ${err.message}` });
+  }
 });
 
 router.post('/generate-for-race/:raceId', auth, requirePremium('Race Programs'), checkAiLimit('plan_generate'), async (req, res) => {
+  let normalizedTarget = null;
   try {
     const profile = await dbGet('SELECT * FROM users WHERE id = ?', [req.user.id]);
     if (!profile) return res.status(404).json({ error: 'User not found' });
@@ -930,14 +1050,36 @@ router.post('/generate-for-race/:raceId', auth, requirePremium('Race Programs'),
     const today = new Date(); today.setHours(0,0,0,0);
     const raceDate = new Date(`${race.race_date}T12:00:00`);
     const weeks = Math.max(4, Math.min(20, Math.ceil((raceDate - today) / (7*24*3600*1000))));
-    const target = { raceDate: race.race_date, distanceMiles: race.distance_miles, goalTimeSeconds: race.goal_time_seconds || null, weeks };
+    const { target, notes } = normalizePlanGenerationTarget({
+      templateKey: race.distance_miles >= 12 && race.distance_miles <= 15 ? 'half' : undefined,
+      raceDate: race.race_date,
+      distanceMiles: race.distance_miles,
+      goalTimeSeconds: race.goal_time_seconds || null,
+      weeks,
+    });
+    normalizedTarget = target;
+    if (notes.length) {
+      console.error('[plans/generate-for-race] target normalized:', { userId: req.user.id, raceId: req.params.raceId, notes, target });
+    }
     const planData = await generateTrainingPlan(profile, target);
     const id = uuidv4();
     const weekStart = getMonday();
-    const finalPlan = enforcePlanSessionRules(planData || generateFallbackPlan(profile, weeks));
+    if (!planData) {
+      console.error('[plans/generate-for-race] generator returned no plan; using fallback:', { userId: req.user.id, raceId: req.params.raceId, target });
+    }
+    const finalPlan = enforcePlanSessionRules(planData || generateFallbackPlan(profile, target.weeks), getPlanTargetOptions(target));
     await dbRun('INSERT INTO training_plans (id, user_id, week_start, plan_json) VALUES (?, ?, ?, ?)', [id, req.user.id, weekStart, JSON.stringify(finalPlan)]);
-    res.json({ plan: { id, user_id: req.user.id, week_start: weekStart, plan_json: finalPlan }, weeks, race: { id: race.id, name: race.race_name, date: race.race_date } });
-  } catch (err) { console.error('generate-for-race failed:', err.message); res.status(500).json({ error: 'Race plan generation failed' }); }
+    res.json({ plan: { id, user_id: req.user.id, week_start: weekStart, plan_json: finalPlan }, weeks: target.weeks, race: { id: race.id, name: race.race_name, date: race.race_date } });
+  } catch (err) {
+    console.error('[plans/generate-for-race] failed:', {
+      message: err.message,
+      stack: err.stack,
+      userId: req.user?.id,
+      raceId: req.params.raceId,
+      target: normalizedTarget,
+    });
+    res.status(500).json({ error: `Race plan generation failed: ${err.message}` });
+  }
 });
 
 function generateFallbackPlan(profile, weeks = 4) {
