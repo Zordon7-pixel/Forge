@@ -51,7 +51,8 @@ export default function PlanCatalog() {
   }, [customDistance, selectedGoal])
 
   const openGoal = async (goal) => {
-    if (!proLoading && !isPro) {
+    if (proLoading) return
+    if (isPro !== true) {
       navigate('/upgrade')
       return
     }
@@ -246,6 +247,7 @@ export default function PlanCatalog() {
                       <button
                         key={day}
                         type="button"
+                        aria-pressed={active}
                         onClick={() => toggleDay(day)}
                         style={{
                           minHeight: 44,
