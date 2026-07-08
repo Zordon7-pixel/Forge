@@ -1,5 +1,6 @@
 import React, { Suspense, lazy, useEffect, useRef, useState } from 'react'
 import { App as CapacitorApp } from '@capacitor/app'
+import { Capacitor } from '@capacitor/core'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { isLoggedIn, getUser } from './lib/auth'
 import { clearToken } from './lib/tokenStore'
@@ -75,8 +76,13 @@ const WeeklyRecap = lazyWithRetry(() => import('./pages/WeeklyRecap'))
 const Upgrade = lazyWithRetry(() => import('./pages/Upgrade'))
 
 const AUTO_HEALTH_SYNC_LAST_SYNC_KEY = 'forge_auto_health_sync_last_sync_at'
-const AUTO_HEALTH_SYNC_MIN_INTERVAL_MS = 30 * 60 * 1000
-const AUTO_HEALTH_SYNC_FORCE_COOLDOWN_MS = 60 * 1000
+const AUTO_HEALTH_SYNC_MIN_INTERVAL_MS = 5 * 60 * 1000
+
+function isNativeRuntime() {
+  return typeof Capacitor !== 'undefined'
+    && typeof Capacitor.isNativePlatform === 'function'
+    && Capacitor.isNativePlatform()
+}
 
 function shouldAttemptSync() {
   try {
@@ -87,17 +93,13 @@ function shouldAttemptSync() {
   }
 }
 
-function markSyncAttempted() {
-  try {
-    localStorage.setItem(AUTO_HEALTH_SYNC_LAST_SYNC_KEY, String(Date.now()))
-  } catch {}
-}
-
 function AutoHealthSync() {
   const lastForegroundSyncAtRef = useRef(0)
   const syncInFlightRef = useRef(false)
 
   useEffect(() => {
+    if (!isNativeRuntime()) return undefined
+
     let cancelled = false
     const listenerHandles = []
 
@@ -105,14 +107,13 @@ function AutoHealthSync() {
       if (cancelled || syncInFlightRef.current || !isLoggedIn()) return
 
       const now = Date.now()
-      if (force && now - lastForegroundSyncAtRef.current < AUTO_HEALTH_SYNC_FORCE_COOLDOWN_MS) return
-      if (!force && !shouldAttemptSync()) return
+      if (force && now - lastForegroundSyncAtRef.current < AUTO_HEALTH_SYNC_MIN_INTERVAL_MS) return
+      if (!shouldAttemptSync()) return
 
       if (force) lastForegroundSyncAtRef.current = now
       syncInFlightRef.current = true
       try {
         await HealthService.syncNativeData()
-        markSyncAttempted()
       } catch (error) {
         console.warn('[AutoHealthSync] sync failed:', error?.message)
       } finally {

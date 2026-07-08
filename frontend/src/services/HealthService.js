@@ -4,6 +4,7 @@ import api from '../lib/api'
 const IOS_UA_REGEX = /iP(ad|hone|od)/i
 const NATIVE_HEALTH_AUTH_KEY = 'forge_health_authorized'
 const HEALTH_RESYNC_NEEDED_KEY = 'forge.health.resyncNeeded'
+const AUTO_HEALTH_SYNC_LAST_SYNC_KEY = 'forge_auto_health_sync_last_sync_at'
 const ForgeHealth = registerPlugin('ForgeHealth')
 
 function isIOSDevice() {
@@ -72,6 +73,12 @@ function markHealthResyncNeeded() {
 function clearHealthResyncNeeded() {
   try {
     localStorage.removeItem(HEALTH_RESYNC_NEEDED_KEY)
+  } catch {}
+}
+
+function markAutoHealthSyncAttempted() {
+  try {
+    localStorage.setItem(AUTO_HEALTH_SYNC_LAST_SYNC_KEY, String(Date.now()))
   } catch {}
 }
 
@@ -239,6 +246,8 @@ class HealthService {
       }
     }
 
+    markAutoHealthSyncAttempted()
+
     return {
       ...result,
       profile,
@@ -248,6 +257,10 @@ class HealthService {
       skipped: Number(importResult.skipped || 0),
       errors: importResult.errors || [],
     }
+  }
+
+  markAutoHealthSyncAttempted() {
+    markAutoHealthSyncAttempted()
   }
 
   async getWorkoutHistory(options = {}) {

@@ -118,13 +118,6 @@ function validateCheckinPayload(body = {}, options = {}) {
     return { error: 'Time available must be a positive whole number of minutes.' };
   }
 
-  const sleepHours = body.sleep_hours === null || body.sleep_hours === undefined || body.sleep_hours === ''
-    ? null
-    : Number(body.sleep_hours);
-  if (sleepHours !== null && (!Number.isFinite(sleepHours) || sleepHours < 0 || sleepHours > 24)) {
-    return { error: 'Sleep hours must be between 0 and 24, or left blank.' };
-  }
-
   if (incomplete) return { incomplete: true };
 
   return {
@@ -133,7 +126,7 @@ function validateCheckinPayload(body = {}, options = {}) {
       legs: hasValidAxes ? legs : null,
       drive: hasValidAxes ? drive : null,
       time_available: timeAvailable,
-      sleep_hours: sleepHours,
+      sleep_hours: null,
       life_flags: Array.isArray(body.life_flags) ? body.life_flags.filter(flag => ALLOWED_LIFE_FLAGS.has(flag)) : [],
     },
   };
@@ -145,16 +138,13 @@ async function computeCheckinDirective(userId, checkinInput) {
     legs: checkinInput.legs,
     drive: checkinInput.drive,
     time_available: checkinInput.time_available,
-    sleep_hours: checkinInput.sleep_hours,
     life_flags: checkinInput.life_flags,
   };
   const action = deriveAction(checkin);
   const activePlan = await getActivePlanForUser(userId);
   const todayDay = activePlan ? normalizeTodayEntry(parsePlan(activePlan)) : null;
   const patch = buildPatch(action, todayDay, checkin);
-  const readiness_delta = checkin.sleep_hours !== null
-    ? checkin.sleep_hours < 6 ? -12 : checkin.sleep_hours >= 8 ? 5 : 0
-    : 0;
+  const readiness_delta = 0;
   const directive = buildDirective(checkin, action, patch, Boolean(todayDay), readiness_delta);
   const feelingLabels = ['', 'Exhausted', 'Tired', 'Okay', 'Good', 'Great'];
   const adjustment = directive.headline || describeAdjustment(action, patch, Boolean(todayDay));
@@ -178,7 +168,8 @@ router.post('/', auth, async (req, res) => {
       return res.status(400).json({ error: validation.error });
     }
 
-    const { feeling, legs, drive, time_available, life_flags, sleep_hours: parsedSleep } = validation.value;
+    const { feeling, legs, drive, time_available, life_flags } = validation.value;
+    const parsedSleep = null;
     if (req.body?.date !== undefined && req.body?.date !== null && !isISODate(req.body.date)) {
       return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
     }
@@ -201,7 +192,6 @@ router.post('/', auth, async (req, res) => {
       legs,
       drive,
       time_available,
-      sleep_hours: parsedSleep,
       life_flags,
     });
     const overrideId = require('crypto').randomBytes(8).toString('hex');

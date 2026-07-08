@@ -5,7 +5,7 @@ const { v4: uuidv4 } = require('uuid');
 const { generateExerciseSubstitutions, generateRecoveryAdjustment, generateNextGoalSuggestions, sanitize } = require('../services/ai');
 const { requirePremium } = require('../middleware/premiumGate');
 const { checkAiLimit } = require('../middleware/aiLimit');
-const { buildHealthSignals, applyHealthDelta } = require('../lib/healthSignals');
+const { buildHealthSignals } = require('../lib/healthSignals');
 const { applyInterference } = require('../services/interference');
 
 // GET /warning — check if dangerous training combo exists
@@ -125,8 +125,9 @@ router.post('/adjust-today', auth, checkAiLimit('adjust_today'), async (req, res
 
     const healthRow = await dbGet('SELECT * FROM health_sync WHERE user_id=?', [req.user.id]).catch(() => null);
     const healthSignals = buildHealthSignals(healthRow || {});
-    if (healthSignals.available) {
-      readinessScore = applyHealthDelta(readinessScore === null ? 70 : readinessScore, healthSignals);
+    if (healthSignals.available && healthSignals.readinessScore !== null && healthSignals.readinessScore !== undefined) {
+      // Passive readiness is already an absolute score; scoreDelta is only an offset from 70.
+      readinessScore = healthSignals.readinessScore;
     }
 
     // Active injury (injury_logs table, cleared=0 means active)

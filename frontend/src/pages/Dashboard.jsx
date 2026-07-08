@@ -121,9 +121,24 @@ export default function Dashboard() {
   const { isOnline, queueCount } = useOnlineStatus()
   const { isPro, loading: proLoading } = useProContext()
 
+  const fetchReadinessData = useCallback(async () => {
+    setReadinessState((prev) => ({ ...prev, loading: true, error: false, locked: false }))
+    try {
+      const res = await api.get('/recovery/readiness')
+      setReadinessState({ loading: false, error: false, locked: false, data: res.data || null })
+    } catch (error) {
+      if (error?.response?.status === 402) {
+        setReadinessState({ loading: false, error: false, locked: true, data: null })
+      } else {
+        console.warn('[Dashboard] readiness fetch failed:', error?.message)
+        setReadinessState({ loading: false, error: true, locked: false, data: null })
+      }
+    }
+  }, [])
+
   const fetchDashboardData = useCallback(async () => {
     try {
-        const [statsRes, runsRes, liftsRes, warningRes, checkinRes, goalRes, streakRes, milestoneRes, complianceRes, loadRes, nextRaceRes, gearRes, injuryRes, recapRes, recommendationRes, ageGradedRes, readinessRes] = await Promise.all([
+        const [statsRes, runsRes, liftsRes, warningRes, checkinRes, goalRes, streakRes, milestoneRes, complianceRes, loadRes, nextRaceRes, gearRes, injuryRes, recapRes, recommendationRes, ageGradedRes] = await Promise.all([
           api.get('/auth/me/stats'),
           api.get('/runs', { params: { limit: 5 } }),
           api.get('/lifts'),
@@ -140,15 +155,7 @@ export default function Dashboard() {
           api.get('/recap/weekly').catch(() => ({ data: null })),
           api.get('/runs/next-recommendation').catch(() => ({ data: null })),
           api.get('/runs/age-graded-performance').catch(() => ({ data: null })),
-          api.get('/recovery/readiness').catch((error) => ({ error })),
         ])
-        if (readinessRes.error?.response?.status === 402) {
-          setReadinessState({ loading: false, error: false, locked: true, data: null })
-        } else if (readinessRes.error) {
-          setReadinessState({ loading: false, error: true, locked: false, data: null })
-        } else {
-          setReadinessState({ loading: false, error: false, locked: false, data: readinessRes.data || null })
-        }
         setStats(statsRes.data)
         const runsList = Array.isArray(runsRes.data) ? runsRes.data : runsRes.data?.runs || []
         setRuns(runsList)
@@ -208,18 +215,28 @@ export default function Dashboard() {
 
   useEffect(() => {
     fetchDashboardData()
+    fetchReadinessData()
     let cancelled = false
     const listenerHandles = []
     const handleVisibility = () => {
-      if (document.visibilityState === 'visible') fetchDashboardData()
+      if (document.visibilityState === 'visible') {
+        fetchDashboardData()
+        fetchReadinessData()
+      }
     }
     document.addEventListener('visibilitychange', handleVisibility)
 
     try {
       const appStateHandle = CapacitorApp.addListener('appStateChange', ({ isActive }) => {
-        if (isActive) fetchDashboardData()
+        if (isActive) {
+          fetchDashboardData()
+          fetchReadinessData()
+        }
       })
-      const resumeHandle = CapacitorApp.addListener('resume', () => fetchDashboardData())
+      const resumeHandle = CapacitorApp.addListener('resume', () => {
+        fetchDashboardData()
+        fetchReadinessData()
+      })
 
       Promise.all([appStateHandle, resumeHandle])
         .then((handles) => {
@@ -241,7 +258,7 @@ export default function Dashboard() {
       document.removeEventListener('visibilitychange', handleVisibility)
       listenerHandles.forEach((handle) => handle?.remove?.())
     }
-  }, [fetchDashboardData])
+  }, [fetchDashboardData, fetchReadinessData])
 
   useEffect(() => {
     if (loading) return
@@ -402,7 +419,7 @@ export default function Dashboard() {
     score += volDelta
     breakdown.push({ label: 'Weekly load', value: volDelta, delta: volDelta, reason: volReason })
 
-    const sleepHours = Number(checkinData?.sleep_hours || healthMetrics?.sleepHoursLastNight || 0)
+    const sleepHours = Number(healthMetrics?.sleepHoursLastNight || 0)
     if (sleepHours > 0) {
       const sleepDelta = sleepHours < 6 ? -12 : sleepHours >= 8 ? 5 : 0
       score += sleepDelta
@@ -473,7 +490,11 @@ export default function Dashboard() {
       readiness: Math.max(1, Math.min(99, Math.round(score))),
       readinessBreakdown: breakdown
     }
-  }, [stats, checkedInToday, hasWatchData, checkinData, healthSync.metrics, fmt])
+  }, [stats, checkedInToday, hasWatchData, healthSync.metrics, fmt])
+  const passiveReadinessScore = Number.isFinite(Number(readinessState.data?.score))
+    ? Math.round(Number(readinessState.data.score))
+    : null
+  const userFacingReadiness = passiveReadinessScore !== null ? passiveReadinessScore : readiness
 
   // Monthly challenge
   const monthlyGoal = useMemo(() => {
@@ -667,7 +688,7 @@ export default function Dashboard() {
 
       <DailyCoachFlow
         checkedInToday={checkedInToday}
-        readiness={readiness}
+        readiness={userFacingReadiness}
         recommendation={nextRecommendation}
         todayWatchWorkout={todayWatchWorkout}
         onCheckIn={() => navigate('/checkin')}
@@ -680,7 +701,7 @@ export default function Dashboard() {
         open={showTodayDetail}
         onClose={() => setShowTodayDetail(false)}
         checkedInToday={checkedInToday}
-        readiness={readiness}
+        readiness={userFacingReadiness}
         readinessBreakdown={readinessBreakdown}
         recommendation={nextRecommendation}
         checkinData={checkinData}

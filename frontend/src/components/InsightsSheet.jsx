@@ -359,7 +359,6 @@ export function TodayDetailSheet({
     activeInjury ? `Recovery mode is active for ${activeInjury.body_part || 'your injury'}, so workouts are softened until return.` : null,
     watchSyncNotice ? 'A new watch activity was synced and may change load, recovery, and the next workout.' : null,
     compliance && compliance.completed < compliance.planned ? 'Missed planned sessions this week can shift the next run toward base or recovery work.' : null,
-    checkinData?.sleep_hours ? `${checkinData.sleep_hours}h sleep is included in today's readiness.` : null,
     dailySteps !== null ? `${Number(dailySteps).toLocaleString()} steps${dailyStepsSource === 'watch' ? ' from watch sync' : ''} are part of the daily context.` : null,
   ].filter(Boolean)
 

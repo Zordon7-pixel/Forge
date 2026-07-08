@@ -271,9 +271,8 @@ router.get('/readiness', auth, requirePremium('Recovery readiness'), async (req,
     const start7d = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
     const start28d = new Date(today.getTime() - 28 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
     const start42d = new Date(today.getTime() - 42 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-    const todayStr = today.toISOString().slice(0, 10);
 
-    const [healthRow, load7d, load28d, userRow, recentRuns, checkinRow] = await Promise.all([
+    const [healthRow, load7d, load28d, userRow, recentRuns] = await Promise.all([
       dbGet('SELECT * FROM health_sync WHERE user_id = ?', [userId])
         .catch((err) => logReadinessQueryFailure('SELECT * FROM health_sync WHERE user_id = ?', err, null)),
       dbGet(
@@ -298,10 +297,6 @@ router.get('/readiness', auth, requirePremium('Recovery readiness'), async (req,
          ORDER BY date DESC, created_at DESC`,
         [userId, start42d]
       ).catch((err) => logReadinessQueryFailure('SELECT avg_heart_rate, max_heart_rate, heart_rate_zones, pace_avg, distance_miles, date, created_at, type, watch_activity_type, watch_normalized_type FROM runs WHERE user_id = ? AND date >= ? ORDER BY date DESC, created_at DESC', err, [])),
-      dbGet(
-        'SELECT feeling, sleep_hours, life_flags FROM daily_checkins WHERE user_id = ? AND checkin_date = ?',
-        [userId, todayStr]
-      ).catch((err) => logReadinessQueryFailure('SELECT feeling, sleep_hours, life_flags FROM daily_checkins WHERE user_id = ? AND checkin_date = ?', err, null)),
     ]);
 
     const runHistory = analyzeRunHistory(recentRuns || [], userRow?.max_heart_rate, { now: today });
@@ -309,9 +304,6 @@ router.get('/readiness', auth, requirePremium('Recovery readiness'), async (req,
       ...(healthRow || {}),
       acute_load_7d: load7d?.miles,
       chronic_load_28d: load28d?.miles,
-      subjective_feeling: checkinRow?.feeling,
-      subjective_sleep_hours: checkinRow?.sleep_hours,
-      life_flags: checkinRow?.life_flags,
       run_zone_drift_count: runHistory?.available ? runHistory.driftCount : null,
       run_zone_drift_intent_known: runHistory?.available ? runHistory.hasRunIntent : null,
     });
