@@ -28,6 +28,80 @@ function formatRaceDate(date) {
   return new Date(`${date}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
+function parseElevationSeries(courseProfileJson) {
+  if (!courseProfileJson) return []
+
+  try {
+    const parsed = typeof courseProfileJson === 'string' ? JSON.parse(courseProfileJson) : courseProfileJson
+    if (!Array.isArray(parsed)) return []
+
+    return parsed
+      .map((value) => Number(value))
+      .filter((value) => Number.isFinite(value))
+  } catch {
+    return []
+  }
+}
+
+function ElevationSparkline({ values }) {
+  if (!values.length) return null
+
+  const width = 80
+  const height = 20
+  const min = Math.min(...values)
+  const max = Math.max(...values)
+  const range = max - min || 1
+  const xStep = values.length > 1 ? width / (values.length - 1) : width
+  const points = values
+    .map((value, index) => {
+      const x = values.length > 1 ? index * xStep : width / 2
+      const y = height - ((value - min) / range) * (height - 4) - 2
+      return `${x.toFixed(1)},${y.toFixed(1)}`
+    })
+    .join(' ')
+
+  return (
+    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} aria-hidden="true" className="shrink-0">
+      <polyline points={points} fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" opacity="0.9" />
+    </svg>
+  )
+}
+
+function CourseStats({ race }) {
+  const elevationGain = race?.elevation_gain_ft
+  const maxAltitude = race?.max_altitude_ft
+  const terrain = race?.terrain
+  const distanceMiles = Number(race?.distance_miles)
+  const gainNumber = Number(elevationGain)
+  const hasElevationGain = elevationGain !== null && elevationGain !== undefined && Number.isFinite(gainNumber)
+  const hasMaxAltitude = maxAltitude !== null && maxAltitude !== undefined && Number.isFinite(Number(maxAltitude))
+  const hasTerrain = Boolean(terrain)
+  const isHilly = hasElevationGain && (
+    gainNumber >= 800 || (Number.isFinite(distanceMiles) && distanceMiles > 0 && gainNumber / distanceMiles >= 30)
+  )
+  const elevationSeries = parseElevationSeries(race?.course_profile_json)
+
+  if (!hasElevationGain && !hasMaxAltitude && !hasTerrain && !elevationSeries.length) return null
+
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+      {hasElevationGain && <span>↑ {gainNumber.toLocaleString()} ft gain</span>}
+      {hasMaxAltitude && <span>peak {Number(maxAltitude).toLocaleString()} ft</span>}
+      {hasTerrain && (
+        <span className="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase" style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
+          {terrain}
+        </span>
+      )}
+      {isHilly && (
+        <span className="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase" style={{ border: '1px solid rgba(234,179,8,0.35)', color: 'var(--accent)' }}>
+          Hilly
+        </span>
+      )}
+      <ElevationSparkline values={elevationSeries} />
+    </div>
+  )
+}
+
 export default function Races() {
   const navigate = useNavigate()
   const { isPro } = useProContext()
@@ -245,6 +319,7 @@ export default function Races() {
                     <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
                       {[race.city, race.state].filter(Boolean).join(', ')} {race.distance_miles ? `· ${race.distance_miles} mi` : ''}
                     </p>
+                    <CourseStats race={race} />
                   </div>
                   <span className="rounded-full px-2 py-1 text-[10px] font-bold uppercase" style={{ color: 'var(--accent)', border: '1px solid rgba(234,179,8,0.35)' }}>
                     {race.scope || 'local'}
@@ -291,6 +366,7 @@ export default function Races() {
             <p className="font-bold">{r.race_name}</p>
             <p className="text-xs" style={{ color: 'var(--accent)' }}>{d} days to go</p>
             <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{r.distance_miles} mi {r.location ? `· ${r.location}` : ''}</p>
+            <CourseStats race={r} />
             <button
               className="mt-2 rounded-lg px-3 py-1.5 text-xs font-bold"
               style={{ background: '#EAB308', color: '#0f1117' }}
