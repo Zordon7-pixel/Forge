@@ -2,6 +2,7 @@ const router = require('express').Router();
 const { dbGet, dbAll, dbRun, withTransaction } = require('../db');
 const auth = require('../middleware/auth');
 const { checkAiLimit } = require('../middleware/aiLimit');
+const { requirePremium } = require('../middleware/premiumGate');
 const { v4: uuidv4 } = require('uuid');
 const { generateTrainingPlan, generateRaceAdjustment } = require('../services/ai');
 const { buildHealthSignals } = require('../lib/healthSignals');
@@ -801,7 +802,7 @@ function enforcePlanSessionRules(planData = {}) {
   return { ...planData, weeks };
 }
 
-router.post('/generate', auth, checkAiLimit('plan_generate'), async (req, res) => {
+router.post('/generate', auth, requirePremium('Race Programs'), checkAiLimit('plan_generate'), async (req, res) => {
   try {
     const profile = await dbGet('SELECT * FROM users WHERE id = ?', [req.user.id]);
     if (!profile) return res.status(404).json({ error: 'User not found' });
@@ -824,7 +825,7 @@ router.post('/generate', auth, checkAiLimit('plan_generate'), async (req, res) =
   } catch (err) { console.error('generate failed:', err.message); res.status(500).json({ error: 'Plan generation failed' }); }
 });
 
-router.post('/generate-for-race/:raceId', auth, checkAiLimit('plan_generate'), async (req, res) => {
+router.post('/generate-for-race/:raceId', auth, requirePremium('Race Programs'), checkAiLimit('plan_generate'), async (req, res) => {
   try {
     const profile = await dbGet('SELECT * FROM users WHERE id = ?', [req.user.id]);
     if (!profile) return res.status(404).json({ error: 'User not found' });

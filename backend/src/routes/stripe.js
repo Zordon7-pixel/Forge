@@ -54,7 +54,8 @@ async function applyStatusFromEvent({ customerId, subscriptionId, status, period
          subscription_status = ?,
          subscription_ends_at = ?,
          is_pro = ?
-     WHERE stripe_customer_id = ? OR stripe_subscription_id = ?`,
+     WHERE (stripe_customer_id = ? OR stripe_subscription_id = ?)
+       AND subscription_status IS DISTINCT FROM 'comp'`,
     [
       subscriptionId || null,
       status,
@@ -98,6 +99,7 @@ router.post('/create-subscription', auth, async (req, res) => {
       const subscription = await stripe.subscriptions.create({
         customer: customerId,
         items: [{ price: priceId }],
+        trial_period_days: 14,
         payment_behavior: 'default_incomplete',
         payment_settings: { save_default_payment_method: 'on_subscription' },
         expand: ['latest_invoice.payment_intent'],
@@ -138,6 +140,7 @@ router.post('/create-subscription', auth, async (req, res) => {
       cancel_url: `${appUrl}/upgrade?checkout=cancel`,
       client_reference_id: user.id,
       subscription_data: {
+        trial_period_days: 14,
         metadata: {
           user_id: user.id,
           plan: String(plan || 'monthly'),

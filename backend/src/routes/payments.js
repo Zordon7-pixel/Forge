@@ -36,7 +36,8 @@ async function updateUserFromSubscriptionEvent(subscription) {
            subscription_status = ?,
            subscription_ends_at = ?,
            is_pro = ?
-       WHERE stripe_customer_id = ?`,
+       WHERE stripe_customer_id = ?
+         AND subscription_status IS DISTINCT FROM 'comp'`,
       [customerId, subscriptionId, status, endsAt, isProStatus(status) ? 1 : 0, customerId]
     );
   }
@@ -49,7 +50,8 @@ async function updateUserFromSubscriptionEvent(subscription) {
            subscription_status = ?,
            subscription_ends_at = ?,
            is_pro = ?
-       WHERE id = ?`,
+       WHERE id = ?
+         AND subscription_status IS DISTINCT FROM 'comp'`,
       [customerId || null, subscriptionId, status, endsAt, isProStatus(status) ? 1 : 0, userId]
     );
   }
@@ -142,7 +144,8 @@ router.post('/webhook', async (req, res) => {
                subscription_status = 'free',
                subscription_ends_at = ?,
                is_pro = 0
-           WHERE stripe_subscription_id = ? OR stripe_customer_id = ?`,
+           WHERE (stripe_subscription_id = ? OR stripe_customer_id = ?)
+             AND subscription_status IS DISTINCT FROM 'comp'`,
           [endsAt, sub.id, customerId || null]
         );
         break;
@@ -158,7 +161,8 @@ router.post('/webhook', async (req, res) => {
            SET stripe_subscription_id = COALESCE(?, stripe_subscription_id),
                subscription_status = 'past_due',
                is_pro = 0
-           WHERE stripe_customer_id = ? OR stripe_subscription_id = ?`,
+           WHERE (stripe_customer_id = ? OR stripe_subscription_id = ?)
+             AND subscription_status IS DISTINCT FROM 'comp'`,
           [subId || null, customerId || null, subId || null]
         );
         break;
@@ -215,7 +219,8 @@ router.post('/cancel', auth, async (req, res) => {
            subscription_status = 'canceled',
            subscription_ends_at = ?,
            is_pro = 0
-       WHERE id = ?`,
+       WHERE id = ?
+         AND subscription_status IS DISTINCT FROM 'comp'`,
       [normalizePeriodEnd(canceled?.ended_at || canceled?.current_period_end), req.user.id]
     );
 
