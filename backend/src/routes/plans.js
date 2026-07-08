@@ -837,6 +837,12 @@ function enforceWeekSessionRules(week = {}, options = {}) {
       if (allowedTrainingDays.has(days[i].day) || isRestDay(days[i])) continue;
       days[i] = { day: days[i].day, type: 'rest', workout_type: 'rest', distance_miles: 0, duration_min: 0, description: 'Rest and recovery', rest: true };
     }
+    for (let i = 0; i < days.length; i += 1) {
+      const hasType = String(days[i].type || days[i].workout_type || '').trim().length > 0;
+      if (allowedTrainingDays.has(days[i].day) && !isRestDay(days[i]) && !hasType) {
+        days[i] = createEasySession(days[i].day);
+      }
+    }
   }
 
   const nonRestIndexes = [];
@@ -856,7 +862,7 @@ function enforceWeekSessionRules(week = {}, options = {}) {
       ...week,
       days: days.map((day) => {
         const type = String(day.type || day.workout_type || '').toLowerCase();
-        if (type.includes('strength') || type.includes('lift') || isHybridSession(day)) {
+        if (type.includes('strength') || type.includes('lift') || type.includes('cross') || isHybridSession(day)) {
           return createEasySession(day.day);
         }
         return day;
