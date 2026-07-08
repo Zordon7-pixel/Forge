@@ -50,6 +50,7 @@ const Terms = lazyWithRetry(() => import('./pages/Terms'))
 const LogRun = lazyWithRetry(() => import('./pages/LogRun'))
 const LogLift = lazyWithRetry(() => import('./pages/LogLift'))
 const Plan = lazyWithRetry(() => import('./pages/Plan'))
+const PlanCatalog = lazyWithRetry(() => import('./pages/PlanCatalog'))
 const RunHub = lazyWithRetry(() => import('./pages/RunHub'))
 const Warmup = lazyWithRetry(() => import('./pages/Warmup'))
 const Prep = lazyWithRetry(() => import('./pages/Prep'))
@@ -336,6 +337,14 @@ export default function App() {
           element={
             <PrivateRoute>
               <Plan />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/plan-catalog"
+          element={
+            <PrivateRoute>
+              <PlanCatalog />
             </PrivateRoute>
           }
         />
