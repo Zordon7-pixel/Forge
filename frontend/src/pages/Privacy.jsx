@@ -29,6 +29,15 @@ export default function Privacy() {
         </section>
 
         <section className="mt-6">
+          <h2 className="text-lg font-bold">Feedback and support data</h2>
+          <p className="mt-2 text-sm leading-7" style={{ color: 'var(--text-muted)' }}>
+            When you send in-app feedback, we collect the message you submit, the current app screen, basic account context, and severity or
+            category selections. We use that information only to investigate bugs, answer support issues, and improve FORGE. Do not include
+            passwords, payment details, emergency medical information, or unrelated sensitive data in feedback.
+          </p>
+        </section>
+
+        <section className="mt-6">
           <h2 className="text-lg font-bold">Connected services and health data</h2>
           <p className="mt-2 text-sm leading-7" style={{ color: 'var(--text-muted)' }}>
             With your permission, FORGE reads health and workout data from Apple Health (iOS) and Android Health Connect —

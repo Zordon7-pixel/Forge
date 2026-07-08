@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import api from '../lib/api'
 
 const FEATURE_CATEGORIES = ['Runs', 'Lifting', 'AI Coach', 'Profile', 'Other']
+const MAX_FEEDBACK_LENGTH = 4000
 
 export default function FeedbackButton({ externalOpen, onClose }) {
   const [open, setOpen] = useState(false)
@@ -57,7 +58,10 @@ export default function FeedbackButton({ externalOpen, onClose }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
       <form onSubmit={submitFeedback} className="w-full max-w-md rounded-xl border p-5 shadow-2xl" style={{ background: 'var(--bg-card)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}>
-        <h2 className="mb-4 text-lg font-bold">Send Feedback</h2>
+        <h2 className="mb-2 text-lg font-bold">Send Feedback</h2>
+        <p className="mb-4 text-xs leading-5" style={{ color: 'var(--text-muted)' }}>
+          Sends your note, account id, and current screen to Forge support. Do not include medical emergencies, passwords, payment details, or other secrets.
+        </p>
 
         <div className="mb-4 grid grid-cols-2 gap-2 rounded-lg p-1" style={{ background: 'var(--bg-input)' }}>
           <button type="button" onClick={() => setTab('bug')} className="rounded-md px-3 py-2 text-sm font-semibold" style={tab === 'bug' ? { background: 'var(--accent)', color: '#000' } : { color: 'var(--text-muted)' }}>
@@ -70,7 +74,7 @@ export default function FeedbackButton({ externalOpen, onClose }) {
 
         {tab === 'bug' ? (
           <>
-            <textarea rows={4} value={description} onChange={e => setDescription(e.target.value)} className="mb-3 w-full rounded-lg border px-3 py-2 text-sm" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }} placeholder="Describe the issue" required />
+            <textarea rows={4} value={description} onChange={e => setDescription(e.target.value)} maxLength={MAX_FEEDBACK_LENGTH} className="mb-3 w-full rounded-lg border px-3 py-2 text-sm" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }} placeholder="Describe the issue" required />
             <select value={severity} onChange={e => setSeverity(e.target.value)} className="mb-3 w-full rounded-lg border px-3 py-2 text-sm" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }}>
               <option value="low">Low severity</option>
               <option value="medium">Medium severity</option>
@@ -79,7 +83,7 @@ export default function FeedbackButton({ externalOpen, onClose }) {
           </>
         ) : (
           <>
-            <textarea rows={4} value={featureText} onChange={e => setFeatureText(e.target.value)} className="mb-3 w-full rounded-lg border px-3 py-2 text-sm" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }} placeholder="What would you like to see?" required />
+            <textarea rows={4} value={featureText} onChange={e => setFeatureText(e.target.value)} maxLength={MAX_FEEDBACK_LENGTH} className="mb-3 w-full rounded-lg border px-3 py-2 text-sm" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }} placeholder="What would you like to see?" required />
             <select value={featureCategory} onChange={e => setFeatureCategory(e.target.value)} className="mb-3 w-full rounded-lg border px-3 py-2 text-sm" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }}>
               {FEATURE_CATEGORIES.map(cat => <option key={cat} value={cat}>{cat}</option>)}
             </select>
@@ -87,6 +91,10 @@ export default function FeedbackButton({ externalOpen, onClose }) {
         )}
 
         {status && <p className="mb-3 text-sm" style={{ color: status.startsWith('Thanks') ? '#86efac' : 'var(--accent)' }}>{status}</p>}
+
+        <p className="mb-3 text-[11px] leading-5" style={{ color: 'var(--text-muted)' }}>
+          By submitting, you agree that Forge may use this feedback to troubleshoot and improve the product under the Terms and Privacy Policy.
+        </p>
 
         <div className="flex justify-end gap-2">
           <button type="button" onClick={handleClose} className="rounded-lg border px-4 py-2 text-sm" style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}>Close</button>

@@ -36,6 +36,15 @@ export default function Terms() {
         </section>
 
         <section className="mt-6">
+          <h2 className="text-lg font-bold">Feedback and support reports</h2>
+          <p className="mt-2 text-sm leading-7" style={{ color: 'var(--text-muted)' }}>
+            If you submit feedback, bug reports, or feature requests, you grant us permission to review, store, route, and use that information
+            to troubleshoot, prioritize fixes, and improve FORGE. Do not submit passwords, payment details, medical emergencies, or other
+            sensitive information through the feedback form.
+          </p>
+        </section>
+
+        <section className="mt-6">
           <h2 className="text-lg font-bold">Acceptable use</h2>
           <p className="mt-2 text-sm leading-7" style={{ color: 'var(--text-muted)' }}>
             You agree not to misuse the platform, interfere with service operations, attempt unauthorized access, or use FORGE for unlawful

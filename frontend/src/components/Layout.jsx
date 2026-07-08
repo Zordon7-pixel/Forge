@@ -1,9 +1,10 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
-import { Activity, Dumbbell, HeartPulse, MoreHorizontal } from 'lucide-react'
+import { Activity, Dumbbell, HeartPulse, MessageSquarePlus, MoreHorizontal } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { getUser } from '../lib/auth'
 import PullToRefresh from './PullToRefresh'
+import FeedbackButton from './FeedbackButton'
 
 const NAV_ITEMS = (t) => [
   { to: '/', end: true, icon: '/nav-home.png', label: t('nav.home'), color: '#EAB308' },
@@ -29,6 +30,7 @@ export default function Layout({ children }) {
   const { t } = useTranslation()
   const location = useLocation()
   const navigate = useNavigate()
+  const [feedbackOpen, setFeedbackOpen] = useState(false)
   const isWorkout = location.pathname.startsWith('/workout/')
   const isImmersive = isWorkout
     || location.pathname.startsWith('/stretches/session')
@@ -62,6 +64,16 @@ export default function Layout({ children }) {
               <img src="/icon-192.png" alt="FORGE" className="w-9 h-9 rounded-xl object-cover" />
             </button>
             <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setFeedbackOpen(true)}
+                className="flex h-8 w-8 items-center justify-center rounded-full transition-opacity hover:opacity-85"
+                style={{ background: 'var(--bg-card)', color: 'var(--accent)', border: '1px solid var(--border-subtle)', position: 'relative', zIndex: 15 }}
+                aria-label="Send feedback"
+                title="Send feedback"
+              >
+                <MessageSquarePlus className="h-4 w-4" />
+              </button>
               <button
                 type="button"
                 onClick={() => navigate('/profile')}
@@ -112,6 +124,21 @@ export default function Layout({ children }) {
           ))}
         </nav>
       )}
+
+      {isImmersive && (
+        <button
+          type="button"
+          onClick={() => setFeedbackOpen(true)}
+          className="fixed right-3 top-3 z-40 flex h-9 w-9 items-center justify-center rounded-full shadow-lg"
+          style={{ background: 'var(--bg-card)', color: 'var(--accent)', border: '1px solid var(--border-subtle)' }}
+          aria-label="Send feedback"
+          title="Send feedback"
+        >
+          <MessageSquarePlus className="h-4 w-4" />
+        </button>
+      )}
+
+      <FeedbackButton externalOpen={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
     </div>
   )
 }

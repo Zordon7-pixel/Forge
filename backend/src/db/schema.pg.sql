@@ -115,6 +115,25 @@ CREATE TABLE IF NOT EXISTS lifts (
 CREATE INDEX IF NOT EXISTS idx_lifts_user_id ON lifts(user_id);
 CREATE INDEX IF NOT EXISTS idx_lifts_user_date ON lifts(user_id, date DESC);
 
+CREATE TABLE IF NOT EXISTS app_feedback (
+  id TEXT PRIMARY KEY,
+  user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  type TEXT DEFAULT 'bug',
+  message TEXT NOT NULL,
+  page TEXT,
+  severity TEXT,
+  category TEXT,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+ALTER TABLE app_feedback ADD COLUMN IF NOT EXISTS type TEXT DEFAULT 'bug';
+ALTER TABLE app_feedback ADD COLUMN IF NOT EXISTS page TEXT;
+ALTER TABLE app_feedback ADD COLUMN IF NOT EXISTS severity TEXT;
+ALTER TABLE app_feedback ADD COLUMN IF NOT EXISTS category TEXT;
+ALTER TABLE app_feedback ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;
+
+CREATE INDEX IF NOT EXISTS idx_app_feedback_user_created ON app_feedback(user_id, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS training_plans (
   id TEXT PRIMARY KEY,
   user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
