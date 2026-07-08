@@ -191,6 +191,17 @@ async function generateTrainingPlan(profile, target = null) {
   const raceTargetLine = target?.raceDate || target?.distanceMiles
     ? `- Race target override: ${target.distanceMiles ? `${target.distanceMiles} miles` : 'race'} on ${target.raceDate || 'upcoming date'}${raceGoalTime}`
     : '';
+  const elevationGainFt = Number(target?.elevation_gain_ft ?? target?.elevationGainFt);
+  const distanceMiles = Number(target?.distanceMiles ?? target?.distance_miles);
+  const maxAltitudeFt = Number(target?.max_altitude_ft ?? target?.maxAltitudeFt);
+  const courseHilly = Number.isFinite(elevationGainFt) && elevationGainFt > 0
+    ? (Number.isFinite(distanceMiles) && distanceMiles > 0 ? (elevationGainFt / distanceMiles) >= 30 : elevationGainFt >= 800)
+    : false;
+  const courseHighAltitude = Number.isFinite(maxAltitudeFt) && maxAltitudeFt >= 5000;
+  const courseInstructions = [
+    courseHilly ? `- Course is hilly (~${Math.round(elevationGainFt)}ft gain) — include weekly hill repeats / strength-endurance work and hill-specific long runs.` : '',
+    courseHighAltitude ? `- Race is at altitude (~${Math.round(maxAltitudeFt)}ft) — add an altitude-prep note and advise arriving early / adjusting pace expectations.` : '',
+  ].filter(Boolean).join('\n');
 
   const prompt = `You are an expert hybrid runner/lifter coach who specializes in concurrent training (runners who also lift). Create a ${weeks}-week PERIODIZED training plan for this athlete:
 - Name: ${sanitize(profile.name, 50)}
@@ -200,7 +211,7 @@ async function generateTrainingPlan(profile, target = null) {
 - Lift days per week: ${frequency.liftDaysPerWeek}${trainingDaysLine}
 - Injury notes: ${sanitize(profile.injury_notes) || 'none'}
 - Comeback mode: ${profile.comeback_mode ? 'YES — be very conservative, no speed work for first 2 weeks' : 'no'}
-${raceTargetLine}${scheduleInfo}
+${raceTargetLine}${courseInstructions ? `\n${courseInstructions}` : ''}${scheduleInfo}
 
 Return ONLY valid JSON in this exact format, no other text:
 {

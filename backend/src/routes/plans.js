@@ -116,6 +116,11 @@ function clampInt(value, min, max, fallback) {
   return clamp(Math.round(n), min, max);
 }
 
+function parsePositiveNumber(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
 function getPlanTargetOptions(target = null) {
   const dayByKey = { sun: 'Sun', mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri', sat: 'Sat' };
   const trainingDays = Array.isArray(target?.trainingDays)
@@ -123,9 +128,18 @@ function getPlanTargetOptions(target = null) {
       .map((day) => dayByKey[String(day || '').trim().slice(0, 3).toLowerCase()])
       .filter(Boolean))]
     : [];
+  const elevationGainFt = parsePositiveNumber(target?.elevation_gain_ft ?? target?.elevationGainFt);
+  const distanceMiles = parsePositiveNumber(target?.distanceMiles ?? target?.distance_miles);
+  const maxAltitudeFt = parsePositiveNumber(target?.max_altitude_ft ?? target?.maxAltitudeFt);
+  const courseHilly = elevationGainFt
+    ? (distanceMiles ? (elevationGainFt / distanceMiles) >= 30 : elevationGainFt >= 800)
+    : false;
   return {
     liftingEnabled: target?.liftingEnabled === false ? false : true,
     trainingDays,
+    courseHilly,
+    courseHighAltitude: maxAltitudeFt ? maxAltitudeFt >= 5000 : false,
+    courseTerrain: target?.terrain || null,
   };
 }
 
@@ -817,6 +831,84 @@ function createEasySession(dayLabel) {
   };
 }
 
+function isLongRunSession(day = {}) {
+  const text = `${day.title || ''} ${day.description || ''} ${day.workout_type || ''} ${day.type || ''}`.toLowerCase();
+  return text.includes('long');
+}
+
+function isRunningSession(day = {}) {
+  if (isRestDay(day) || isHybridSession(day)) return false;
+  const text = `${day.title || ''} ${day.description || ''} ${day.workout_type || ''} ${day.type || ''}`.toLowerCase();
+  if (text.includes('strength') || text.includes('lift') || text.includes('cross')) return false;
+  return true;
+}
+
+function isHillSession(day = {}) {
+  const text = `${day.title || ''} ${day.description || ''} ${day.workout_type || ''} ${day.type || ''}`.toLowerCase();
+  return text.includes('hill') || text.includes('uphill') || text.includes('climb');
+}
+
+function getHillSessionPrescription(week = {}) {
+  const theme = String(week.theme || '').toLowerCase();
+  const weekNumber = Number(week.week) || 1;
+  if (theme.includes('taper') || theme.includes('race')) {
+    return {
+      title: 'Hill Strides',
+      description: 'Easy run with 6 x 20s uphill strides at controlled fast effort; walk/jog back recovery.',
+      structure: {
+        warmup: '10-15 min easy',
+        repeats: '6 x 20s uphill controlled fast',
+        recovery: 'Walk/jog downhill between reps',
+        cooldown: 'Easy running to finish',
+      },
+    };
+  }
+  if (theme.includes('build') || weekNumber >= 5) {
+    return {
+      title: 'Hill Repeats',
+      description: 'Structured hill workout: 8 x 60s uphill hard with jog-down recovery; stay tall and powerful.',
+      structure: {
+        warmup: '10-15 min easy plus drills',
+        repeats: '8 x 60s uphill hard',
+        recovery: 'Jog downhill easy between reps',
+        cooldown: '10 min easy',
+      },
+    };
+  }
+  return {
+    title: 'Hill Repeats',
+    description: 'Structured hill workout: 6 x 60s uphill hard with jog-down recovery; keep effort strong but controlled.',
+    structure: {
+      warmup: '10-15 min easy',
+      repeats: '6 x 60s uphill hard',
+      recovery: 'Jog downhill easy between reps',
+      cooldown: '10 min easy',
+    },
+  };
+}
+
+function convertToHillSession(day = {}, week = {}) {
+  const prescription = getHillSessionPrescription(week);
+  return {
+    ...day,
+    type: 'hill',
+    workout_type: 'run',
+    title: prescription.title,
+    description: prescription.description,
+    structure: prescription.structure,
+    rest: false,
+  };
+}
+
+function enforceHillSessionForWeek(week = {}, days = []) {
+  if (days.some((day) => !isRestDay(day) && isHillSession(day))) return days;
+  const candidateIndex = days.findIndex((day) => isRunningSession(day) && !isLongRunSession(day));
+  if (candidateIndex < 0) return days;
+  const nextDays = [...days];
+  nextDays[candidateIndex] = convertToHillSession(nextDays[candidateIndex], week);
+  return nextDays;
+}
+
 function enforceWeekSessionRules(week = {}, options = {}) {
   const dayOrder = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   const allowedTrainingDays = Array.isArray(options.trainingDays) && options.trainingDays.length
@@ -858,15 +950,16 @@ function enforceWeekSessionRules(week = {}, options = {}) {
   }
 
   if (options.liftingEnabled === false) {
+    const runOnlyDays = days.map((day) => {
+      const type = String(day.type || day.workout_type || '').toLowerCase();
+      if (type.includes('strength') || type.includes('lift') || type.includes('cross') || isHybridSession(day)) {
+        return createEasySession(day.day);
+      }
+      return day;
+    });
     return {
       ...week,
-      days: days.map((day) => {
-        const type = String(day.type || day.workout_type || '').toLowerCase();
-        if (type.includes('strength') || type.includes('lift') || type.includes('cross') || isHybridSession(day)) {
-          return createEasySession(day.day);
-        }
-        return day;
-      }),
+      days: options.courseHilly ? enforceHillSessionForWeek(week, runOnlyDays) : runOnlyDays,
     };
   }
 
@@ -889,7 +982,7 @@ function enforceWeekSessionRules(week = {}, options = {}) {
     days[sundayIndex] = { day: 'Sun', type: 'rest', workout_type: 'rest', distance_miles: 0, duration_min: 0, description: 'Rest and recovery', rest: true };
   }
 
-  return { ...week, days };
+  return { ...week, days: options.courseHilly ? enforceHillSessionForWeek(week, days) : days };
 }
 
 function enforcePlanSessionRules(planData = {}, options = {}) {
@@ -930,11 +1023,19 @@ router.post('/generate-for-race/:raceId', auth, requirePremium('Race Programs'),
     const today = new Date(); today.setHours(0,0,0,0);
     const raceDate = new Date(`${race.race_date}T12:00:00`);
     const weeks = Math.max(4, Math.min(20, Math.ceil((raceDate - today) / (7*24*3600*1000))));
-    const target = { raceDate: race.race_date, distanceMiles: race.distance_miles, goalTimeSeconds: race.goal_time_seconds || null, weeks };
+    const target = {
+      raceDate: race.race_date,
+      distanceMiles: race.distance_miles,
+      goalTimeSeconds: race.goal_time_seconds || null,
+      weeks,
+      elevation_gain_ft: race.elevation_gain_ft,
+      max_altitude_ft: race.max_altitude_ft,
+      terrain: race.terrain || null,
+    };
     const planData = await generateTrainingPlan(profile, target);
     const id = uuidv4();
     const weekStart = getMonday();
-    const finalPlan = enforcePlanSessionRules(planData || generateFallbackPlan(profile, weeks));
+    const finalPlan = enforcePlanSessionRules(planData || generateFallbackPlan(profile, weeks), getPlanTargetOptions(target));
     await dbRun('INSERT INTO training_plans (id, user_id, week_start, plan_json) VALUES (?, ?, ?, ?)', [id, req.user.id, weekStart, JSON.stringify(finalPlan)]);
     res.json({ plan: { id, user_id: req.user.id, week_start: weekStart, plan_json: finalPlan }, weeks, race: { id: race.id, name: race.race_name, date: race.race_date } });
   } catch (err) { console.error('generate-for-race failed:', err.message); res.status(500).json({ error: 'Race plan generation failed' }); }
