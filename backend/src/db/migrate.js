@@ -87,6 +87,22 @@ async function runAlwaysMigrations() {
   await pg.query('CREATE INDEX IF NOT EXISTS idx_race_catalog_race_date ON race_catalog(race_date)');
   await pg.query('CREATE INDEX IF NOT EXISTS idx_race_catalog_lower_name ON race_catalog(lower(name))');
 
+  await pg.query(`
+    ALTER TABLE race_catalog
+      ADD COLUMN IF NOT EXISTS elevation_gain_ft INTEGER,
+      ADD COLUMN IF NOT EXISTS max_altitude_ft INTEGER,
+      ADD COLUMN IF NOT EXISTS terrain TEXT,
+      ADD COLUMN IF NOT EXISTS course_profile_json TEXT
+  `);
+
+  await pg.query(`
+    ALTER TABLE race_events
+      ADD COLUMN IF NOT EXISTS elevation_gain_ft INTEGER,
+      ADD COLUMN IF NOT EXISTS max_altitude_ft INTEGER,
+      ADD COLUMN IF NOT EXISTS terrain TEXT,
+      ADD COLUMN IF NOT EXISTS course_profile_json TEXT
+  `);
+
   await seedRaceCatalog();
 }
 

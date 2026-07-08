@@ -91,8 +91,11 @@ router.post('/from-catalog/:catalogId', auth, async (req, res) => {
     const id = uuidv4();
 
     await dbRun(
-      `INSERT INTO race_events (id, user_id, race_name, race_date, distance_miles, location, status)
-       VALUES (?,?,?,?,?,?,?)`,
+      `INSERT INTO race_events (
+        id, user_id, race_name, race_date, distance_miles, location, status,
+        elevation_gain_ft, max_altitude_ft, terrain, course_profile_json
+       )
+       VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
       [
         id,
         req.user.id,
@@ -100,7 +103,11 @@ router.post('/from-catalog/:catalogId', auth, async (req, res) => {
         catalogRace.race_date,
         Number(catalogRace.distance_miles),
         location ? location.trim() : null,
-        'upcoming'
+        'upcoming',
+        catalogRace.elevation_gain_ft || null,
+        catalogRace.max_altitude_ft || null,
+        catalogRace.terrain || null,
+        catalogRace.course_profile_json || null
       ]
     );
 
