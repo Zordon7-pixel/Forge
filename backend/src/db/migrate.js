@@ -1,6 +1,7 @@
 const pg = require('./postgres');
 const fs = require('fs');
 const path = require('path');
+const { seedRaceCatalog } = require('./race-catalog-seed');
 
 async function runAlwaysMigrations() {
   await pg.query(`
@@ -63,6 +64,30 @@ async function runAlwaysMigrations() {
   `);
 
   await pg.query('CREATE INDEX IF NOT EXISTS idx_comp_redemptions_user ON comp_redemptions(user_id)');
+
+  await pg.query(`
+    CREATE TABLE IF NOT EXISTS race_catalog (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      race_date TEXT NOT NULL,
+      city TEXT,
+      state TEXT,
+      country TEXT DEFAULT 'USA',
+      distance_miles REAL NOT NULL,
+      event_type TEXT,
+      scope TEXT DEFAULT 'regional',
+      source TEXT,
+      url TEXT,
+      lat REAL,
+      lng REAL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+
+  await pg.query('CREATE INDEX IF NOT EXISTS idx_race_catalog_race_date ON race_catalog(race_date)');
+  await pg.query('CREATE INDEX IF NOT EXISTS idx_race_catalog_lower_name ON race_catalog(lower(name))');
+
+  await seedRaceCatalog();
 }
 
 /**
