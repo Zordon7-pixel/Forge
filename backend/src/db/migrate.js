@@ -40,6 +40,29 @@ async function runAlwaysMigrations() {
   `);
 
   await pg.query('CREATE INDEX IF NOT EXISTS idx_user_consents_user_type ON user_consents(user_id, consent_type)');
+
+  await pg.query(`
+    CREATE TABLE IF NOT EXISTS comp_codes (
+      code TEXT PRIMARY KEY,
+      max_redemptions INTEGER DEFAULT 1,
+      redeemed_count INTEGER DEFAULT 0,
+      grants_until TEXT,
+      active INTEGER DEFAULT 1,
+      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  await pg.query(`
+    CREATE TABLE IF NOT EXISTS comp_redemptions (
+      id TEXT PRIMARY KEY,
+      code TEXT NOT NULL REFERENCES comp_codes(code) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      redeemed_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(code, user_id)
+    )
+  `);
+
+  await pg.query('CREATE INDEX IF NOT EXISTS idx_comp_redemptions_user ON comp_redemptions(user_id)');
 }
 
 /**
@@ -113,4 +136,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { runMigrations };
+module.exports = { runMigrations, runAlwaysMigrations };

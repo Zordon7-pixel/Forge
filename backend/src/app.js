@@ -107,6 +107,7 @@ app.use('/api/pt',          require('./routes/pt'));
 app.use('/api/recap',       require('./routes/recap'));
 app.use('/api/payments',    require('./routes/payments'));
 app.use('/api/stripe',      require('./routes/stripe'));
+app.use('/api/comp',        require('./routes/comp'));
 app.use('/api',             comebackRouter);
 
 // Public pages
@@ -128,6 +129,13 @@ const HOST = process.env.HOST || (process.env.RAILWAY_ENVIRONMENT ? '0.0.0.0' : 
 
 initDb()
   .then(async () => {
+    try {
+      await require('./db/migrate').runAlwaysMigrations();
+    } catch (err) {
+      console.error('[FATAL] Always migrations failed:', err);
+      process.exit(1);
+    }
+
     // Seed demo data after DB is ready
     try { await require('./db/seed').runSeed(); } catch (e) { console.error('Seed error:', e.message); }
     try { await require('./db/exercises-seed').seedExercises(); } catch (e) { console.error('Exercise seed error:', e.message); }
