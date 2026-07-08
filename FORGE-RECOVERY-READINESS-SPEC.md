@@ -71,3 +71,25 @@ Band -> color: GREEN=accent gold (on-brand 'good'), AMBER=a warm amber, RED=a re
 Motion: one subtle ring fill animation on load. Nothing flashy.
 
 North star: looks like it was always part of FORGE, reads in under 2 seconds, beautiful through simplicity.
+
+---
+
+## PHASE 3 BUILD PLAN (2026-07-08, Hermes — post pre-flight)
+
+Pre-flight finding: card + engine already shipped and prod-wired. Card matches locked UI spec; engine already emits GREEN/READY, AMBER/EASY, RED/REST bands, driver flags with reasons, and computes acute:chronic ratio. Phase 3 is a targeted reconcile+extend, NOT a rebuild. Do not recreate ReadinessCard.jsx or the band/verdict logic.
+
+Bryan ruling 2026-07-08: ENFORCE PASSIVE-ONLY. Remove subjective/check-in sleep from the readiness scoring path. Readiness = HealthKit data only, zero taps.
+
+### Phase 3a — Engine reconcile to locked spec (backend only)
+- WHAT: Refactor backend/src/lib/healthSignals.js readiness scoring from the delta-heuristic to the locked weighted blend. Each signal maps to a 0-100 sub-score; final = Sleep 30% + RHR-vs-baseline 25% + HRV trend 25% + acute:chronic load 20%, re-normalized when a signal is missing. Enforce passive-only: drop subjective_sleep_hours / check-in inputs from the readiness path (synced HealthKit sleep only). Keep band cutoffs (GREEN>=70 READY, AMBER>=45 EASY, RED REST) and the driver-flags-with-reasons output contract that ReadinessCard + recovery.js consume — do not change the API shape (score, band, verdict, drivers[], available).
+- WHY: Makes the score the transparent, auditable model in the spec; removes the shipped-code-vs-locked-spec contradiction (subjective input); keeps acute:chronic actually weighted (20%), not just displayed.
+- HOW: Codex edits healthSignals.js (+ any direct helper). Preserve exported function signatures. Add/keep missing-signal re-normalization so a user with no HRV still scores on the other 3.
+- GATE: 0 CRIT / 0 HIGH from Claude QA. Unit-verify each sub-score is clamped 0-100 and weights sum to 1.0 after re-normalization. Band output unchanged for representative known inputs. No subjective field referenced in the readiness path. recovery.js route response shape unchanged.
+
+### Phase 3b — Daily-score persistence + cold-start backfill
+- WHAT: (1) Persist the daily readiness score (new table readiness_scores: id, user_id, date, score, band, drivers jsonb, created_at; unique on user_id+date, idempotent upsert on compute). (2) Cold-start backfill: on first HealthKit sync / when >=7d history exists, compute and store prior days so a new Pro user sees a real score immediately.
+- WHY: Unlocks Body-tab trend charting (MVP #4) and a real day-one experience (locked #5). No trend history exists today (route computes live-only).
+- HOW: idempotent migration in initDb() (CREATE TABLE IF NOT EXISTS ordered before any ALTER, per the app_feedback lesson) + schema.pg.sql mirror; write-on-compute in recovery.js; backfill helper reading existing HealthKit history rows.
+- GATE: 0 CRIT / 0 HIGH. Row written/upserted on compute (no dupes per day). Backfill produces >=1 stored score from >=7d history. Prod health 200 post-deploy; row-level verify on prod.
+
+Pipeline per phase: Hermes pre-flight -> Codex build -> Claude Code QA (must execute/smoke-test) -> Hermes review verdict+diff -> ship to origin/main -> post-deploy live-verify.
