@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { useProContext } from '../context/ProContext'
 import api from '../lib/api'
 
 const DISTANCE_OPTIONS = {
@@ -15,6 +17,8 @@ function daysTo(date) {
 }
 
 export default function Races() {
+  const navigate = useNavigate()
+  const { isPro } = useProContext()
   const [races, setRaces] = useState([])
   const [form, setForm] = useState({ race_name: '', race_date: '', distance_key: '5K', distance_miles: 3.1, location: '', goal_time: '' })
   const [message, setMessage] = useState('')
@@ -45,6 +49,33 @@ export default function Races() {
     load()
   }
 
+  const generateRacePlan = async (race, onSuccess) => {
+    if (!isPro) {
+      navigate('/upgrade')
+      return
+    }
+
+    try {
+      setGeneratingPlanId(race.id)
+      await api.post('/plans/generate', {
+        target: {
+          raceDate: race.race_date,
+          distanceMiles: Number(race.distance_miles),
+          raceName: race.race_name,
+        },
+      })
+      onSuccess()
+    } catch (err) {
+      if (err?.response?.status === 402) {
+        navigate('/upgrade')
+        return
+      }
+      setMessage(err?.response?.data?.error || 'Unable to generate race plan')
+    } finally {
+      setGeneratingPlanId(null)
+    }
+  }
+
   return (
     <div className="space-y-4">
       <h1 className="text-2xl font-black" style={{ color: 'var(--text-primary)' }}>Races</h1>
@@ -58,22 +89,10 @@ export default function Races() {
             <button
               className="rounded-lg px-3 py-1.5 text-xs font-bold"
               style={{ background: 'var(--accent)', color: '#000' }}
-              onClick={async () => {
-                try {
-                  setGeneratingPlanId(planPromptRace.id)
-                  await api.post('/plans/generate', {
-                    target: {
-                      raceDate: planPromptRace.race_date,
-                      distanceMiles: Number(planPromptRace.distance_miles),
-                      raceName: planPromptRace.race_name,
-                    },
-                  })
-                  setPlanPromptRace(null)
-                  setMessage(`Your training plan has been updated around ${planPromptRace.race_name}`)
-                } finally {
-                  setGeneratingPlanId(null)
-                }
-              }}
+              onClick={() => generateRacePlan(planPromptRace, () => {
+                setPlanPromptRace(null)
+                setMessage(`Your training plan has been updated around ${planPromptRace.race_name}`)
+              })}
             >
               {generatingPlanId === planPromptRace.id ? 'Generating...' : 'Generate Race Plan'}
             </button>
@@ -112,21 +131,9 @@ export default function Races() {
             <button
               className="mt-2 rounded-lg px-3 py-1.5 text-xs font-bold"
               style={{ background: '#EAB308', color: '#0f1117' }}
-              onClick={async () => {
-                try {
-                  setGeneratingPlanId(r.id)
-                  await api.post('/plans/generate', {
-                    target: {
-                      raceDate: r.race_date,
-                      distanceMiles: Number(r.distance_miles),
-                      raceName: r.race_name,
-                    },
-                  })
-                  setMessage(`Your training plan has been updated around ${r.race_name}`)
-                } finally {
-                  setGeneratingPlanId(null)
-                }
-              }}
+              onClick={() => generateRacePlan(r, () => {
+                setMessage(`Your training plan has been updated around ${r.race_name}`)
+              })}
             >
               {generatingPlanId === r.id ? 'Generating...' : 'Generate Race Plan'}
             </button>

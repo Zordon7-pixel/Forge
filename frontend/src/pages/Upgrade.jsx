@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Check, X } from 'lucide-react'
 import { useProContext } from '../context/ProContext'
+import api from '../lib/api'
 import { startStripeSubscription } from '../services/StripeService'
 
 const freeFeatures = [
@@ -22,17 +23,29 @@ const plans = [
   { id: 'annual', label: 'Annual', price: '$99.99' },
 ]
 
+function trialDaysLeft(date) {
+  if (!date) return null
+  const time = new Date(date).getTime()
+  if (Number.isNaN(time)) return null
+  return Math.max(0, Math.ceil((time - Date.now()) / 86400000))
+}
+
 export default function Upgrade() {
   const navigate = useNavigate()
-  const { isPro, loading, refreshPro } = useProContext()
+  const { isPro, loading, subscriptionStatus, trialEndsAt, refreshPro } = useProContext()
   const [selectedPlan, setSelectedPlan] = useState('monthly')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
+  const [compCode, setCompCode] = useState('')
+  const [redeeming, setRedeeming] = useState(false)
+  const [redeemMessage, setRedeemMessage] = useState('')
+  const [redeemSuccess, setRedeemSuccess] = useState(false)
 
   const selectedPlanLabel = useMemo(
     () => plans.find((plan) => plan.id === selectedPlan)?.label || 'Monthly',
     [selectedPlan]
   )
+  const daysLeft = subscriptionStatus === 'trialing' ? trialDaysLeft(trialEndsAt) : null
 
   const startCheckout = async () => {
     setSubmitting(true)
@@ -44,6 +57,25 @@ export default function Upgrade() {
       setError(err?.message || 'Unable to start subscription flow right now.')
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  const redeemCompCode = async (e) => {
+    e.preventDefault()
+    setRedeeming(true)
+    setRedeemMessage('')
+    setRedeemSuccess(false)
+
+    try {
+      await api.post('/comp/redeem', { code: compCode.trim() })
+      await refreshPro()
+      setRedeemSuccess(true)
+      setRedeemMessage('Code redeemed. Pro is unlocked.')
+      window.setTimeout(() => navigate(-1), 900)
+    } catch (err) {
+      setRedeemMessage(err?.response?.data?.error || err?.response?.data?.message || 'Unable to redeem this code.')
+    } finally {
+      setRedeeming(false)
     }
   }
 
@@ -63,6 +95,12 @@ export default function Upgrade() {
           style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', textAlign: 'center', maxWidth: 420, width: '100%' }}
         >
           <h1 className="text-2xl font-black" style={{ color: 'var(--text-primary)' }}>You are on FORGE Pro</h1>
+          {redeemSuccess && redeemMessage && <p className="mt-2 text-sm" style={{ color: '#22c55e' }}>{redeemMessage}</p>}
+          {daysLeft !== null && (
+            <p className="mt-3 inline-flex rounded-full px-3 py-1 text-xs font-bold" style={{ background: 'rgba(234,179,8,0.14)', color: '#EAB308', border: '1px solid rgba(234,179,8,0.35)' }}>
+              {daysLeft} {daysLeft === 1 ? 'day' : 'days'} left in trial
+            </p>
+          )}
           <p className="mt-2" style={{ color: 'var(--text-muted)' }}>Apple Health sync and premium insights are unlocked.</p>
           <button
             onClick={() => navigate(-1)}
@@ -144,6 +182,24 @@ export default function Upgrade() {
             {submitting ? 'Starting...' : `Continue with ${selectedPlanLabel}`}
           </button>
           {error && <p className="text-sm" style={{ color: '#f87171' }}>{error}</p>}
+          <form onSubmit={redeemCompCode} className="mt-3 flex w-full max-w-md flex-col gap-2 sm:flex-row">
+            <input
+              className="rounded-lg px-3 py-3 text-sm"
+              style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', flex: 1 }}
+              placeholder="Comp code"
+              value={compCode}
+              onChange={(e) => setCompCode(e.target.value)}
+            />
+            <button
+              type="submit"
+              disabled={redeeming || !compCode.trim()}
+              className="rounded-lg px-5 py-3 text-sm font-bold disabled:opacity-60"
+              style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', cursor: 'pointer' }}
+            >
+              {redeeming ? 'Redeeming...' : 'Redeem'}
+            </button>
+          </form>
+          {redeemMessage && <p className="text-sm" style={{ color: redeemSuccess ? '#22c55e' : '#f87171' }}>{redeemMessage}</p>}
           <button
             onClick={() => navigate(-1)}
             className="text-sm underline"

@@ -4,12 +4,16 @@ import api from '../lib/api'
 const ProContext = createContext({
   isPro: false,
   loading: true,
+  subscriptionStatus: '',
+  trialEndsAt: null,
   refreshPro: async () => false,
 })
 
 export function ProProvider({ children }) {
   const [isPro, setIsPro] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [subscriptionStatus, setSubscriptionStatus] = useState('')
+  const [trialEndsAt, setTrialEndsAt] = useState(null)
 
   const refreshPro = useCallback(async () => {
     try {
@@ -18,9 +22,13 @@ export function ProProvider({ children }) {
       const hasProFlag = Number(res?.data?.is_pro) === 1
       const pro = status === 'pro' || status === 'active' || status === 'trialing' || hasProFlag
       setIsPro(pro)
+      setSubscriptionStatus(status)
+      setTrialEndsAt(res?.data?.subscription_ends_at || null)
       return pro
     } catch {
       setIsPro(false)
+      setSubscriptionStatus('')
+      setTrialEndsAt(null)
       return false
     } finally {
       setLoading(false)
@@ -32,7 +40,7 @@ export function ProProvider({ children }) {
   }, [refreshPro])
 
   return (
-    <ProContext.Provider value={{ isPro, loading, refreshPro }}>
+    <ProContext.Provider value={{ isPro, loading, subscriptionStatus, trialEndsAt, refreshPro }}>
       {children}
     </ProContext.Provider>
   )
