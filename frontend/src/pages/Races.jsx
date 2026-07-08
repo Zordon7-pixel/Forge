@@ -11,9 +11,21 @@ const DISTANCE_OPTIONS = {
   Other: null,
 }
 
+const CATALOG_DISTANCE_OPTIONS = [
+  ['5K', 3.1],
+  ['10K', 6.2],
+  ['Half', 13.1],
+  ['Marathon', 26.2],
+]
+
 function daysTo(date) {
   const ms = new Date(`${date}T12:00:00`).getTime() - Date.now()
   return Math.ceil(ms / 86400000)
+}
+
+function formatRaceDate(date) {
+  if (!date) return ''
+  return new Date(`${date}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
 export default function Races() {
@@ -21,6 +33,13 @@ export default function Races() {
   const { isPro } = useProContext()
   const [races, setRaces] = useState([])
   const [form, setForm] = useState({ race_name: '', race_date: '', distance_key: '5K', distance_miles: 3.1, location: '', goal_time: '' })
+  const [catalogForm, setCatalogForm] = useState({ q: '', distance: '', month: '', state: '' })
+  const [catalogRaces, setCatalogRaces] = useState([])
+  const [catalogSearched, setCatalogSearched] = useState(false)
+  const [catalogLoading, setCatalogLoading] = useState(false)
+  const [catalogError, setCatalogError] = useState('')
+  const [addingCatalogId, setAddingCatalogId] = useState(null)
+  const [addedCatalogId, setAddedCatalogId] = useState(null)
   const [message, setMessage] = useState('')
   const [planPromptRace, setPlanPromptRace] = useState(null)
   const [generatingPlanId, setGeneratingPlanId] = useState(null)
@@ -47,6 +66,46 @@ export default function Races() {
     setPlanPromptRace(race)
     setForm({ race_name: '', race_date: '', distance_key: '5K', distance_miles: 3.1, location: '', goal_time: '' })
     load()
+  }
+
+  const searchCatalog = async (e) => {
+    e.preventDefault()
+    setCatalogLoading(true)
+    setCatalogError('')
+    setCatalogSearched(true)
+    setAddedCatalogId(null)
+    try {
+      const params = {
+        q: catalogForm.q.trim() || undefined,
+        distance: catalogForm.distance || undefined,
+        month: catalogForm.month || undefined,
+        state: catalogForm.state.trim().toUpperCase() || undefined,
+      }
+      const res = await api.get('/races/catalog', { params })
+      setCatalogRaces(res.data.races || [])
+    } catch (err) {
+      setCatalogRaces([])
+      setCatalogError(err?.response?.data?.error || 'Unable to search races')
+    } finally {
+      setCatalogLoading(false)
+    }
+  }
+
+  const addCatalogRace = async (race) => {
+    if (addingCatalogId) return
+    setAddingCatalogId(race.id)
+    setCatalogError('')
+    try {
+      const res = await api.post(`/races/from-catalog/${race.id}`)
+      setAddedCatalogId(race.id)
+      setMessage(`${race.name} added`)
+      setPlanPromptRace(res.data.race || null)
+      await load()
+    } catch (err) {
+      setCatalogError(err?.response?.data?.error || 'Unable to add race')
+    } finally {
+      setAddingCatalogId(null)
+    }
   }
 
   const generateRacePlan = async (race, onSuccess) => {
@@ -100,6 +159,110 @@ export default function Races() {
           </div>
         </div>
       )}
+
+      <section className="rounded-xl p-4 space-y-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+        <div>
+          <p className="text-sm font-semibold">Find a race</p>
+        </div>
+        <form onSubmit={searchCatalog} className="space-y-3">
+          <input
+            className="w-full rounded-lg px-3 py-2"
+            style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}
+            placeholder="Race name or city"
+            value={catalogForm.q}
+            onChange={(e) => setCatalogForm({ ...catalogForm, q: e.target.value })}
+          />
+          <div className="flex flex-wrap gap-2">
+            {CATALOG_DISTANCE_OPTIONS.map(([label, miles]) => {
+              const active = String(catalogForm.distance) === String(miles)
+              return (
+                <button
+                  key={label}
+                  type="button"
+                  className="rounded-full px-3 py-1.5 text-xs font-bold"
+                  style={{
+                    background: active ? 'var(--accent)' : 'var(--bg-input)',
+                    color: active ? '#000' : 'var(--text-muted)',
+                    border: '1px solid var(--border-subtle)',
+                  }}
+                  onClick={() => setCatalogForm({ ...catalogForm, distance: active ? '' : miles })}
+                >
+                  {label}
+                </button>
+              )
+            })}
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <select
+              className="rounded-lg px-3 py-2"
+              style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}
+              value={catalogForm.month}
+              onChange={(e) => setCatalogForm({ ...catalogForm, month: e.target.value })}
+            >
+              <option value="">Any month</option>
+              {Array.from({ length: 12 }, (_, i) => (
+                <option key={i + 1} value={i + 1}>{new Date(2024, i, 1).toLocaleString(undefined, { month: 'long' })}</option>
+              ))}
+            </select>
+            <input
+              className="rounded-lg px-3 py-2 uppercase"
+              style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}
+              placeholder="State"
+              maxLength={2}
+              value={catalogForm.state}
+              onChange={(e) => setCatalogForm({ ...catalogForm, state: e.target.value.toUpperCase() })}
+            />
+          </div>
+          <div className="flex gap-2">
+            <button className="rounded-lg px-4 py-2 text-sm font-bold" style={{ background: 'var(--accent)', color: '#000' }} disabled={catalogLoading}>
+              {catalogLoading ? 'Searching...' : 'Search Catalog'}
+            </button>
+            {(catalogForm.q || catalogForm.distance || catalogForm.month || catalogForm.state) && (
+              <button
+                type="button"
+                className="rounded-lg px-4 py-2 text-sm"
+                style={{ background: 'var(--bg-input)', color: 'var(--text-muted)', border: '1px solid var(--border-subtle)' }}
+                onClick={() => setCatalogForm({ q: '', distance: '', month: '', state: '' })}
+              >
+                Clear
+              </button>
+            )}
+          </div>
+        </form>
+
+        {catalogError && <p className="text-xs" style={{ color: '#fca5a5' }}>{catalogError}</p>}
+        {!catalogLoading && catalogSearched && !catalogError && catalogRaces.length === 0 && (
+          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No catalog races found.</p>
+        )}
+        {catalogRaces.length > 0 && (
+          <div className="space-y-2">
+            {catalogRaces.map((race) => (
+              <div key={race.id} className="rounded-xl p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-bold" style={{ color: 'var(--text-primary)' }}>{race.name}</p>
+                    <p className="text-xs" style={{ color: 'var(--accent)' }}>{formatRaceDate(race.race_date)}</p>
+                    <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                      {[race.city, race.state].filter(Boolean).join(', ')} {race.distance_miles ? `· ${race.distance_miles} mi` : ''}
+                    </p>
+                  </div>
+                  <span className="rounded-full px-2 py-1 text-[10px] font-bold uppercase" style={{ color: 'var(--accent)', border: '1px solid rgba(234,179,8,0.35)' }}>
+                    {race.scope || 'local'}
+                  </span>
+                </div>
+                <button
+                  className="mt-3 rounded-lg px-3 py-1.5 text-xs font-bold"
+                  style={{ background: addedCatalogId === race.id ? 'var(--bg-card)' : '#EAB308', color: addedCatalogId === race.id ? 'var(--accent)' : '#0f1117', border: '1px solid var(--border-subtle)' }}
+                  onClick={() => addCatalogRace(race)}
+                  disabled={addingCatalogId === race.id || addedCatalogId === race.id}
+                >
+                  {addingCatalogId === race.id ? 'Adding...' : addedCatalogId === race.id ? 'Added' : 'Add to my races'}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
 
       <form onSubmit={submit} className="rounded-xl p-4 space-y-3" style={{ background: 'var(--bg-card)' }}>
         <p className="text-sm font-semibold">Add Race</p>
