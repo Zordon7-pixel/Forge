@@ -9,6 +9,7 @@ const { applyInterference } = require('../services/interference');
 const { getWeather } = require('../services/weather');
 const { classifyRunZone } = require('../lib/runHistory');
 const { assessHeatDrift } = require('../lib/heatDrift');
+const { getHrProfile, zoneForHr } = require('../lib/hrZones');
 const {
   DISTANCE_CONFIG,
   normalizeSex,
@@ -668,7 +669,10 @@ router.post('/', auth, async (req, res) => {
       });
     }
 
-    const userProfile = await dbGet('SELECT weight_lbs, max_heart_rate FROM users WHERE id=?', [req.user.id]);
+    const [userProfile, hrProfile] = await Promise.all([
+      dbGet('SELECT weight_lbs, max_heart_rate FROM users WHERE id=?', [req.user.id]),
+      getHrProfile(req.user.id, dbGet),
+    ]);
     const weightLbs = userProfile?.weight_lbs || 185;
     const computedCalories = Math.round(0.75 * weightLbs * (distance_miles || 0));
     const resolvedCalories = Number(calories || 0) > 0 ? Number(calories) : computedCalories;
@@ -690,7 +694,8 @@ router.post('/', auth, async (req, res) => {
     const run = await dbGet('SELECT * FROM runs WHERE id = ?', [id]);
     let heatDrift = { drifted: false };
     try {
-      const actualZone = classifyRunZone(avg_heart_rate, userProfile?.max_heart_rate);
+      const actualZone = zoneForHr(avg_heart_rate, hrProfile)
+        || classifyRunZone(avg_heart_rate, userProfile?.max_heart_rate);
       if (actualZone && prescribedTargetZone) {
         const point = firstRoutePoint(route_coords);
         const weather = point

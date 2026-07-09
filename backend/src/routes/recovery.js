@@ -4,6 +4,7 @@ const auth = require('../middleware/auth');
 const { requirePremium } = require('../middleware/premiumGate');
 const { buildHealthSignals, buildReadinessBand } = require('../lib/healthSignals');
 const { analyzeRunHistory } = require('../lib/runHistory');
+const { getHrProfile } = require('../lib/hrZones');
 
 // ── Score normalization helpers ──────────────────────────────────────────────
 // Each provider has different scales. We normalize everything to 0-100.
@@ -272,7 +273,7 @@ router.get('/readiness', auth, requirePremium('Recovery readiness'), async (req,
     const start28d = new Date(today.getTime() - 28 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
     const start42d = new Date(today.getTime() - 42 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
-    const [healthRow, load7d, load28d, userRow, recentRuns] = await Promise.all([
+    const [healthRow, load7d, load28d, userRow, hrProfile, recentRuns] = await Promise.all([
       dbGet('SELECT * FROM health_sync WHERE user_id = ?', [userId])
         .catch((err) => logReadinessQueryFailure('SELECT * FROM health_sync WHERE user_id = ?', err, null)),
       dbGet(
@@ -289,6 +290,7 @@ router.get('/readiness', auth, requirePremium('Recovery readiness'), async (req,
       ).catch((err) => logReadinessQueryFailure('SELECT COALESCE(SUM(distance_miles), 0) as miles FROM runs WHERE user_id = ? AND date >= ?', err, { miles: 0 })),
       dbGet('SELECT max_heart_rate FROM users WHERE id = ?', [userId])
         .catch((err) => logReadinessQueryFailure('SELECT max_heart_rate FROM users WHERE id = ?', err, null)),
+      getHrProfile(userId, dbGet),
       dbAll(
         `SELECT avg_heart_rate, max_heart_rate, heart_rate_zones, pace_avg, distance_miles, date, created_at,
                 type, watch_activity_type, watch_normalized_type
@@ -299,7 +301,7 @@ router.get('/readiness', auth, requirePremium('Recovery readiness'), async (req,
       ).catch((err) => logReadinessQueryFailure('SELECT avg_heart_rate, max_heart_rate, heart_rate_zones, pace_avg, distance_miles, date, created_at, type, watch_activity_type, watch_normalized_type FROM runs WHERE user_id = ? AND date >= ? ORDER BY date DESC, created_at DESC', err, [])),
     ]);
 
-    const runHistory = analyzeRunHistory(recentRuns || [], userRow?.max_heart_rate, { now: today });
+    const runHistory = analyzeRunHistory(recentRuns || [], userRow?.max_heart_rate, { now: today, hrProfile });
     const signals = buildHealthSignals({
       ...(healthRow || {}),
       acute_load_7d: load7d?.miles,

@@ -1,3 +1,5 @@
+const { zoneForHr } = require('./hrZones');
+
 function toNumber(value) {
   if (value === null || value === undefined) return null;
   if (typeof value === 'string' && value.trim() === '') return null;
@@ -108,6 +110,7 @@ function isEasyAerobicRun(run = {}) {
 
 function analyzeRunHistory(runs = [], maxHr, opts = {}) {
   const history = Array.isArray(runs) ? runs : [];
+  const hrProfile = opts.hrProfile || null;
   const observedMaxHr = history.reduce((max, run) => {
     const value = toNumber(run.max_heart_rate ?? run.maxHR);
     return value !== null && value > max ? value : max;
@@ -172,7 +175,9 @@ function analyzeRunHistory(runs = [], maxHr, opts = {}) {
       }
       zone = dominantZone(zoneSeconds);
     } else {
-      zone = classifyRunZone(run.avg_heart_rate, effectiveMaxHr) || 'unknown';
+      zone = zoneForHr(run.avg_heart_rate, hrProfile)
+        || classifyRunZone(run.avg_heart_rate, effectiveMaxHr)
+        || 'unknown';
       distribution[zone].count += 1;
       if (zone !== 'unknown') classifiedCount += 1;
     }
