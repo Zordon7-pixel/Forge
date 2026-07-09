@@ -4,6 +4,7 @@ import {
   ChevronRight,
   ClipboardList,
   Footprints,
+  HeartPulse,
   Medal,
   ShieldAlert,
   Sparkles,
@@ -15,6 +16,7 @@ const sections = [
     title: 'Training',
     items: [
       { to: '/gear', label: 'Gear', sub: 'Shoes and mileage', icon: Footprints, color: '#94A3B8' },
+      { to: '/hr-zones', label: 'HR Zones', sub: 'Calibrate your training zones', icon: HeartPulse, color: '#EF4444' },
       { to: '/plan', label: 'Adaptive Plan', sub: 'Weekly training direction', icon: Sparkles, color: '#EAB308' },
       { to: '/plan-catalog', label: 'Plan Catalog', sub: 'Build a goal-based plan', icon: ClipboardList, color: '#EAB308' },
       { to: '/history', label: 'History', sub: 'Runs, lifts, imports', icon: CalendarDays, color: '#3B82F6' },

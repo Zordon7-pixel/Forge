@@ -69,6 +69,7 @@ const StretchSession = lazyWithRetry(() => import('./pages/StretchSession'))
 const PRWall = lazyWithRetry(() => import('./pages/PRWall'))
 const Races = lazyWithRetry(() => import('./pages/Races'))
 const Gear = lazyWithRetry(() => import('./pages/Gear'))
+const HrZones = lazyWithRetry(() => import('./pages/HrZones'))
 const More = lazyWithRetry(() => import('./pages/More'))
 const ResetPassword = lazyWithRetry(() => import('./pages/ResetPassword'))
 const Injury = lazyWithRetry(() => import('./pages/Injury'))
@@ -370,6 +371,14 @@ export default function App() {
           element={
             <PrivateRoute>
               <Gear />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/hr-zones"
+          element={
+            <PrivateRoute>
+              <HrZones />
             </PrivateRoute>
           }
         />
