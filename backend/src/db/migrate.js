@@ -43,6 +43,18 @@ async function runAlwaysMigrations() {
   await pg.query('CREATE INDEX IF NOT EXISTS idx_user_consents_user_type ON user_consents(user_id, consent_type)');
 
   await pg.query(`
+    CREATE TABLE IF NOT EXISTS user_hr_profile (
+      user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      max_hr INTEGER,
+      resting_hr INTEGER,
+      lthr INTEGER,
+      zone_model TEXT NOT NULL DEFAULT 'hrr',
+      source TEXT NOT NULL DEFAULT 'manual',
+      updated_at TIMESTAMPTZ DEFAULT now()
+    )
+  `);
+
+  await pg.query(`
     CREATE TABLE IF NOT EXISTS comp_codes (
       code TEXT PRIMARY KEY,
       max_redemptions INTEGER DEFAULT 1,

@@ -72,6 +72,7 @@ app.use('/api/auth/reset-password',  authLimiter);
 app.use('/api/auth',        require('./routes/auth'));
 app.use('/api/consent',     require('./routes/consent'));
 app.use('/api/users',       require('./routes/users'));
+app.use('/api/profile/hr-zones', require('./routes/hrProfile'));
 app.use('/api/runs',        require('./routes/runs'));
 app.use('/api/lifts',       require('./routes/lifts'));
 app.use('/api/workouts',    require('./routes/workouts'));
