@@ -16,10 +16,10 @@ const STANDARD_PCTS = [
 
 const LTHR_PCTS = [
   [0, 0.8],
-  [0.81, 0.89],
-  [0.9, 0.94],
-  [0.95, 0.99],
-  [1.0, 1.05],
+  [0.8, 0.89],
+  [0.89, 0.94],
+  [0.94, 0.99],
+  [0.99, Infinity],
 ];
 
 function validHr(value) {
@@ -67,7 +67,8 @@ function computeZones({ maxHr, restingHr, lthr, model } = {}) {
       model: selectedModel,
       zones: buildZones(STANDARD_PCTS, pct => restingHr + pct * reserve),
     };
-  } catch {
+  } catch (err) {
+    console.error('[hrZones] computeZones threw:', err.message);
     return { model: selectedModel, zones: [] };
   }
 }

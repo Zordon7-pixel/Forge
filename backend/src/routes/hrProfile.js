@@ -68,6 +68,15 @@ router.put('/', auth, async (req, res) => {
     if (!ZONE_MODELS.has(zoneModel)) {
       return res.status(400).json({ error: 'zoneModel must be one of hrr, maxhr, lthr' });
     }
+    if (restingHrResult.value !== null && maxHrResult.value !== null && restingHrResult.value >= maxHrResult.value) {
+      return res.status(400).json({ error: 'resting_hr must be less than max_hr' });
+    }
+    if (lthrResult.value !== null && maxHrResult.value !== null && lthrResult.value >= maxHrResult.value) {
+      return res.status(400).json({ error: 'lthr must be less than max_hr' });
+    }
+    if (lthrResult.value !== null && restingHrResult.value !== null && lthrResult.value <= restingHrResult.value) {
+      return res.status(400).json({ error: 'lthr must be greater than resting_hr' });
+    }
 
     const row = await dbGet(
       `INSERT INTO user_hr_profile (user_id, max_hr, resting_hr, lthr, zone_model, source, updated_at)
