@@ -16,7 +16,7 @@ function StatCard({ icon: Icon, label, value, sub }) {
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <Icon size={16} color="#EAB308" />
+        <Icon size={16} color="var(--accent)" />
         <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0, textTransform: 'uppercase', letterSpacing: 0.7 }}>{label}</p>
       </div>
       <p style={{ fontSize: 24, fontWeight: 900, color: 'var(--text-primary)', marginTop: 8, lineHeight: 1 }}>{value}</p>
@@ -68,9 +68,9 @@ export default function WeeklyRecap() {
             </section>
 
             {Array.isArray(data?.prsThisWeek) && data.prsThisWeek.length > 0 && (
-              <section className="rounded-2xl p-4" style={{ background: 'rgba(234,179,8,0.12)', border: '1px solid rgba(234,179,8,0.32)' }}>
+              <section className="rounded-2xl p-4" style={{ background: 'var(--accent-dim)', border: '1px solid var(--border-subtle)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-                  <Trophy size={16} color="#EAB308" />
+                  <Trophy size={16} color="var(--accent)" />
                   <p style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-primary)', margin: 0, textTransform: 'uppercase', letterSpacing: 0.8 }}>
                     PRs Broken This Week
                   </p>
@@ -88,8 +88,8 @@ export default function WeeklyRecap() {
             {data?.injuryRiskFlag && (
               <section className="rounded-2xl p-4" style={{ background: 'rgba(249,115,22,0.14)', border: '1px solid rgba(249,115,22,0.4)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <AlertTriangle size={16} color="#F97316" />
-                  <p style={{ fontSize: 12, fontWeight: 800, color: '#FDBA74', margin: 0, textTransform: 'uppercase', letterSpacing: 0.8 }}>
+                  <AlertTriangle size={16} color="var(--warning)" />
+                  <p style={{ fontSize: 12, fontWeight: 800, color: 'var(--warning)', margin: 0, textTransform: 'uppercase', letterSpacing: 0.8 }}>
                     Injury Risk Watch
                   </p>
                 </div>
@@ -99,9 +99,9 @@ export default function WeeklyRecap() {
               </section>
             )}
 
-            <section className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', borderLeft: '4px solid #EAB308' }}>
+            <section className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', borderLeft: '4px solid var(--accent)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <Brain size={16} color="#EAB308" />
+                <Brain size={16} color="var(--accent)" />
                 <p style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-primary)', margin: 0, textTransform: 'uppercase', letterSpacing: 0.8 }}>
                   AI Insight
                 </p>
@@ -122,7 +122,7 @@ export default function WeeklyRecap() {
               <Link
                 to="/history"
                 className="rounded-xl py-3 text-center text-sm font-bold"
-                style={{ background: '#EAB308', color: '#000', textDecoration: 'none' }}
+                style={{ background: 'var(--accent)', color: 'var(--on-accent)', textDecoration: 'none' }}
               >
                 View History
               </Link>
@@ -152,13 +152,13 @@ export default function WeeklyRecap() {
               maxWidth: 320,
             }}
           >
-            <Lock size={32} color="#EAB308" style={{ margin: '0 auto 12px' }} />
+            <Lock size={32} color="var(--accent)" style={{ margin: '0 auto 12px' }} />
             <h3 style={{ color: 'var(--text-primary)', fontWeight: 800, fontSize: 20 }}>Weekly Recap</h3>
             <p style={{ color: 'var(--text-primary)', fontWeight: 700, marginTop: 8 }}>Weekly Recap is a Pro feature</p>
             <p style={{ color: 'var(--text-muted)', marginTop: 8 }}>Upgrade to see your weekly training insights and trends.</p>
             <button
               onClick={() => navigate('/upgrade')}
-              style={{ background: '#EAB308', color: '#000', fontWeight: 700, padding: '12px 24px', borderRadius: 8, border: 'none', cursor: 'pointer', marginTop: 16 }}
+              style={{ background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 700, padding: '12px 24px', borderRadius: 8, border: 'none', cursor: 'pointer', marginTop: 16 }}
             >
               Upgrade to Pro
             </button>

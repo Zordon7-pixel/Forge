@@ -68,7 +68,7 @@ export default function RunHub() {
               <Link to="/warmup" className="rounded-xl py-2 text-center text-sm font-semibold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', textDecoration: 'none' }}>
                 Warm Up
               </Link>
-              <Link to="/log-run" className="rounded-xl py-2 text-center text-sm font-semibold" style={{ background: 'var(--accent)', color: '#000', textDecoration: 'none' }}>
+              <Link to="/log-run" className="rounded-xl py-2 text-center text-sm font-semibold" style={{ background: 'var(--accent)', color: 'var(--on-accent)', textDecoration: 'none' }}>
                 Log Run
               </Link>
             </div>
@@ -97,7 +97,7 @@ export default function RunHub() {
         >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Lightbulb size={15} color="#EAB308" />
+              <Lightbulb size={15} color="var(--accent)" />
               <p className="text-xs font-semibold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.8 }}>
                 Today&apos;s Recommendation
               </p>
@@ -147,7 +147,7 @@ export default function RunHub() {
       <Link
         to="/log-run"
         className="block w-full rounded-xl py-3 text-center font-semibold"
-        style={{ background: 'var(--accent)', color: '#000' }}
+        style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}
       >
         Open Run Logger
       </Link>

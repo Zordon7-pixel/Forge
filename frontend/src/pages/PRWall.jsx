@@ -267,7 +267,7 @@ export default function PRWall() {
         <button
           onClick={() => setShowModal(true)}
           className="rounded-xl px-4 py-2 text-sm font-bold"
-          style={{ background: 'var(--accent)', color: '#000' }}
+          style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}
         >
           + Add PR
         </button>
@@ -284,7 +284,7 @@ export default function PRWall() {
               <div style={baseCardStyle}>
                 <p style={{ color: 'var(--text-muted)' }}>{t('hybridPrs.noData')}</p>
                 <div className="mt-3 flex gap-2">
-                  <button onClick={() => navigate('/log-run')} className="rounded-xl px-3 py-2 text-sm font-bold" style={{ background: 'var(--accent)', color: '#000', border: 'none' }}>Log run</button>
+                  <button onClick={() => navigate('/log-run')} className="rounded-xl px-3 py-2 text-sm font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none' }}>Log run</button>
                   <button onClick={() => navigate('/log-lift')} className="rounded-xl px-3 py-2 text-sm font-bold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>Log lift</button>
                 </div>
               </div>
@@ -316,7 +316,7 @@ export default function PRWall() {
                     <div className="mb-1 flex items-center justify-between gap-2">
                       <p style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 1 }}>{pr.label}</p>
                       {pr.run_id ? (
-                        <span className="rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ background: 'rgba(234,179,8,0.2)', color: 'var(--accent)' }}>Auto</span>
+                        <span className="rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ background: 'var(--accent-dim)', color: 'var(--accent)' }}>Auto</span>
                       ) : (
                         <button onClick={() => removePR(pr.id)} className="text-xs" style={{ color: 'var(--text-muted)' }}>Delete</button>
                       )}
@@ -366,7 +366,7 @@ export default function PRWall() {
                           <button
                             onClick={() => saveTimePR(dist.label, dist.target)}
                             className="flex-1 rounded-lg px-2 py-1 text-xs font-bold"
-                            style={{ background: 'var(--accent)', color: '#000', border: 'none', cursor: 'pointer' }}
+                            style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', cursor: 'pointer' }}
                           >
                             Save
                           </button>
@@ -457,7 +457,7 @@ export default function PRWall() {
                     <div key={label} style={baseCardStyle}>
                       <div className="flex items-center justify-between mb-2">
                         <p style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1 }}>{label}</p>
-                        <button onClick={openEntryModal} className="rounded-lg px-3 py-1 text-xs font-bold" style={{ background: 'var(--accent)', color: '#000', border: 'none', cursor: 'pointer' }}>
+                        <button onClick={openEntryModal} className="rounded-lg px-3 py-1 text-xs font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', cursor: 'pointer' }}>
                           + Add
                         </button>
                       </div>
@@ -471,7 +471,7 @@ export default function PRWall() {
                     <div className="mb-1 flex items-center justify-between gap-2">
                       <p style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 1 }}>{pr.label}</p>
                       <div className="flex items-center gap-2">
-                        <button onClick={openEntryModal} className="rounded-lg px-3 py-1 text-xs font-bold" style={{ background: 'var(--accent)', color: '#000', border: 'none', cursor: 'pointer' }}>
+                        <button onClick={openEntryModal} className="rounded-lg px-3 py-1 text-xs font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', cursor: 'pointer' }}>
                           Update
                         </button>
                         {!pr.lift_id && (
@@ -525,13 +525,13 @@ export default function PRWall() {
               maxWidth: 320,
             }}
           >
-            <Lock size={32} color="#EAB308" style={{ margin: '0 auto 12px' }} />
+            <Lock size={32} color="var(--accent)" style={{ margin: '0 auto 12px' }} />
             <h3 style={{ color: 'var(--text-primary)', fontWeight: 800, fontSize: 20 }}>PR Wall</h3>
             <p style={{ color: 'var(--text-primary)', fontWeight: 700, marginTop: 8 }}>PR Wall is a Pro feature</p>
             <p style={{ color: 'var(--text-muted)', marginTop: 8 }}>Upgrade to Pro to unlock personal-record tracking.</p>
             <button
               onClick={() => navigate('/upgrade')}
-              style={{ background: '#EAB308', color: '#000', fontWeight: 700, padding: '12px 24px', borderRadius: 8, border: 'none', cursor: 'pointer', marginTop: 16 }}
+              style={{ background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 700, padding: '12px 24px', borderRadius: 8, border: 'none', cursor: 'pointer', marginTop: 16 }}
             >
               Upgrade to Pro
             </button>
@@ -640,7 +640,7 @@ export default function PRWall() {
               </div>
 
               <div className="flex gap-2 pt-1">
-                <button type="submit" className="flex-1 rounded-xl px-4 py-3 font-bold text-sm" style={{ background: 'var(--accent)', color: '#000', border: 'none', cursor: 'pointer' }}>Save PR</button>
+                <button type="submit" className="flex-1 rounded-xl px-4 py-3 font-bold text-sm" style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', cursor: 'pointer' }}>Save PR</button>
                 <button type="button" onClick={() => setShowModal(false)} className="flex-1 rounded-xl border px-4 py-3 text-sm" style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-muted)', background: 'none', cursor: 'pointer' }}>Cancel</button>
               </div>
             </form>

@@ -17,7 +17,7 @@ const MUSCLE_GROUPS = [
 ]
 
 const BODY_GRAY = '#374151'
-const BODY_ACCENT = '#EAB308'
+const BODY_ACCENT = 'var(--accent)'
 
 function BodySVG({ highlight, sex = 'male' }) {
   const hi = (part) => highlight === 'full' || highlight === part ? BODY_ACCENT : BODY_GRAY
@@ -351,7 +351,7 @@ export default function LogLift() {
             </div>
           )}
           {aiError && (
-            <div className="rounded-2xl p-4" style={{ background: 'rgba(239,68,68,0.1)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)' }}>
+            <div className="rounded-2xl p-4" style={{ background: 'rgba(239,68,68,0.1)', color: 'var(--danger)', border: '1px solid rgba(239,68,68,0.3)' }}>
               <p className="text-sm">{aiError}</p>
             </div>
           )}
@@ -378,7 +378,7 @@ export default function LogLift() {
                 onClick={beginAI}
                 disabled={loading}
                 className="mt-3 w-full rounded-2xl py-4 text-base font-bold"
-                style={{ background: 'var(--accent)', color: '#000', border: 'none', cursor: 'pointer', opacity: loading ? 0.6 : 1, fontFamily: 'inherit' }}
+                style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', cursor: 'pointer', opacity: loading ? 0.6 : 1, fontFamily: 'inherit' }}
               >
                 {loading ? 'Starting...' : 'Start Workout'}
               </button>
@@ -400,10 +400,10 @@ export default function LogLift() {
               onClick={() => toggle(key)}
               className="flex flex-col items-center justify-between rounded-2xl py-3 px-2 transition-all"
               style={{
-                background: isSelected ? 'rgba(234,179,8,0.08)' : 'var(--bg-card)',
+                background: isSelected ? 'var(--accent-dim)' : 'var(--bg-card)',
                 border: `2px solid ${isSelected ? BODY_ACCENT : 'var(--border-subtle)'}`,
                 minHeight: 110,
-                boxShadow: isSelected ? '0 0 10px rgba(234,179,8,0.25)' : 'none',
+                boxShadow: isSelected ? '0 0 10px var(--border-subtle)' : 'none',
               }}
             >
               <BodySVG highlight={key} sex={userSex} />
@@ -425,10 +425,10 @@ export default function LogLift() {
               onClick={() => toggle('full')}
               className="col-span-3 flex items-center justify-center gap-4 rounded-2xl py-3 px-4 transition-all"
               style={{
-                background: isSelected ? 'rgba(234,179,8,0.08)' : 'var(--bg-card)',
+                background: isSelected ? 'var(--accent-dim)' : 'var(--bg-card)',
                 border: `2px solid ${isSelected ? BODY_ACCENT : 'var(--border-subtle)'}`,
                 minHeight: 72,
-                boxShadow: isSelected ? '0 0 10px rgba(234,179,8,0.25)' : 'none',
+                boxShadow: isSelected ? '0 0 10px var(--border-subtle)' : 'none',
               }}
             >
               <BodySVG highlight="full" sex={userSex} />
@@ -470,11 +470,11 @@ export default function LogLift() {
           {selectedExercise && <p className="text-sm" style={{ color: 'var(--text-primary)' }}>Exercise: {selectedExercise.name}</p>}
           {liftPlan && <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{liftPlan.workoutName} · Estimated: {liftPlan.estimatedTime}</p>}
           {selectedMuscleGroup && selectedExercise?.name && (
-            <button type="button" onClick={generateManualWorkout} disabled={manualAiLoading} className="rounded-xl px-4 py-2 text-sm font-bold" style={{ background: '#EAB308', color: '#000', border: 'none' }}>
+            <button type="button" onClick={generateManualWorkout} disabled={manualAiLoading} className="rounded-xl px-4 py-2 text-sm font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none' }}>
               {manualAiLoading ? 'Generating...' : `Generate AI Workout for ${pretty(selectedMuscleGroup)}`}
             </button>
           )}
-          {manualAiError && <p className="text-xs" style={{ color: '#ef4444' }}>{manualAiError}</p>}
+          {manualAiError && <p className="text-xs" style={{ color: 'var(--danger)' }}>{manualAiError}</p>}
           {manualAiPlan && (
             <div className="rounded-2xl p-4" style={{
               background: '#F5F0E8', color: '#1a1a2e', border: '1px solid #d6c9a0', position: 'relative', fontFamily: 'Caveat, cursive',
@@ -484,7 +484,7 @@ export default function LogLift() {
               <p className="text-lg font-bold">{manualAiPlan.workoutName}</p>
               <p className="text-sm mt-3 leading-relaxed"><strong>Main:</strong> {(manualAiPlan.main || []).map((m) => `${m.name} ${m.sets}x${m.reps} (${m.rest})`).join(' • ')}</p>
               <div className="flex gap-2 mt-3">
-                <button type="button" onClick={acceptManualAiWorkout} className="flex-1 rounded-xl py-2 font-bold" style={{ background: 'var(--accent)', color: '#000', border: 'none', fontFamily: 'inherit' }}>Accept Workout</button>
+                <button type="button" onClick={acceptManualAiWorkout} className="flex-1 rounded-xl py-2 font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', fontFamily: 'inherit' }}>Accept Workout</button>
                 <button type="button" onClick={generateManualWorkout} className="flex-1 rounded-xl py-2 font-bold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', fontFamily: 'inherit' }}>Regenerate</button>
               </div>
               <WatchWorkoutSendButton workout={manualWatchWorkout} className="mt-3" />
@@ -500,7 +500,7 @@ export default function LogLift() {
         onClick={begin}
         disabled={loading || selected.length === 0}
         className="w-full rounded-2xl py-4 text-lg font-bold disabled:opacity-60 transition-all"
-        style={{ background: 'var(--accent)', color: 'black' }}
+        style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}
       >
         {loading ? 'Starting...' : 'Begin Workout'}
       </button>

@@ -30,9 +30,9 @@ function computeReadiness(stats, checkin) {
 }
 
 function getReadinessColor(score) {
-  if (score < 50) return '#ef4444'
-  if (score < 75) return '#EAB308'
-  return '#22c55e'
+  if (score < 50) return 'var(--danger)'
+  if (score < 75) return 'var(--accent)'
+  return 'var(--success)'
 }
 
 function getReadinessMessage(score, t) {
@@ -79,7 +79,7 @@ function WarmupSteps({ stepIndex, onNext, onSkip }) {
           style={{
             height: '100%',
             width: `${progress}%`,
-            background: '#EAB308',
+            background: 'var(--accent)',
             transition: 'width 0.4s cubic-bezier(0.4, 0, 0.2, 1)',
             boxShadow: '0 0 16px rgba(234, 179, 8, 0.6)',
           }}
@@ -134,7 +134,7 @@ function WarmupSteps({ stepIndex, onNext, onSkip }) {
           style={{
             fontSize: 20,
             fontWeight: 600,
-            color: '#EAB308',
+            color: 'var(--accent)',
             margin: '0 0 32px',
             textAlign: 'center',
           }}
@@ -170,8 +170,8 @@ function WarmupSteps({ stepIndex, onNext, onSkip }) {
               letterSpacing: 1.2,
               borderRadius: 24,
               border: 'none',
-              background: '#EAB308',
-              color: '#000',
+              background: 'var(--accent)',
+              color: 'var(--on-accent)',
               cursor: 'pointer',
               boxShadow: '0 8px 24px rgba(234, 179, 8, 0.3)',
               transition: 'all 0.2s ease',
@@ -264,7 +264,7 @@ function WarmupDone({ onStartRun }) {
         <div className="max-w-[480px] mx-auto rounded-2xl p-5" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
           <h2 style={{ color: 'var(--text-primary)', fontSize: 24, fontWeight: 900, margin: '0 0 10px' }}>Morning Check-In Required</h2>
           <p style={{ color: 'var(--text-muted)', fontSize: 14, margin: '0 0 16px' }}>Complete your morning check-in before starting a run.</p>
-          <button onClick={() => navigate('/checkin')} style={{ width: '100%', background: '#EAB308', border: 'none', borderRadius: 12, padding: '12px 0', fontWeight: 800, cursor: 'pointer' }}>Go to Check-In</button>
+          <button onClick={() => navigate('/checkin')} style={{ width: '100%', background: 'var(--accent)', border: 'none', borderRadius: 12, padding: '12px 0', fontWeight: 800, cursor: 'pointer' }}>Go to Check-In</button>
         </div>
       </div>
     )
@@ -368,7 +368,7 @@ function WarmupDone({ onStartRun }) {
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
-              <Calendar size={18} style={{ color: '#EAB308' }} />
+              <Calendar size={18} style={{ color: 'var(--accent)' }} />
               <p
                 style={{
                   fontSize: 13,
@@ -414,7 +414,7 @@ function WarmupDone({ onStartRun }) {
         >
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-              <TrendingUp size={16} style={{ color: '#EAB308' }} />
+              <TrendingUp size={16} style={{ color: 'var(--accent)' }} />
               <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0, fontWeight: 600 }}>Week Miles</p>
             </div>
             <p style={{ fontSize: 24, fontWeight: 900, color: 'var(--text-primary)', margin: 0 }}>
@@ -423,7 +423,7 @@ function WarmupDone({ onStartRun }) {
           </div>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-              <Zap size={16} style={{ color: '#EAB308' }} />
+              <Zap size={16} style={{ color: 'var(--accent)' }} />
               <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0, fontWeight: 600 }}>Streak</p>
             </div>
             <p style={{ fontSize: 24, fontWeight: 900, color: 'var(--text-primary)', margin: 0 }}>
@@ -442,7 +442,7 @@ function WarmupDone({ onStartRun }) {
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
-              <Heart size={18} style={{ color: '#EAB308' }} />
+              <Heart size={18} style={{ color: 'var(--accent)' }} />
               <p
                 style={{
                   fontSize: 13,
@@ -534,8 +534,8 @@ function WarmupDone({ onStartRun }) {
             letterSpacing: 1.2,
             borderRadius: 24,
             border: 'none',
-            background: '#EAB308',
-            color: '#000',
+            background: 'var(--accent)',
+            color: 'var(--on-accent)',
             cursor: 'pointer',
             boxShadow: '0 8px 24px rgba(234, 179, 8, 0.3)',
             transition: 'all 0.2s ease',

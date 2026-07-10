@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import api from '../lib/api'
 
-const C = { accent: '#EAB308', card: 'var(--bg-card)', input: 'var(--bg-input)', muted: 'var(--text-muted)', primary: 'var(--text-primary)' }
+const C = { accent: 'var(--accent)', card: 'var(--bg-card)', input: 'var(--bg-input)', muted: 'var(--text-muted)', primary: 'var(--text-primary)' }
 
 function fmtTime(s) {
   const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60
@@ -140,7 +140,7 @@ export default function TreadmillRun() {
           </div>
 
           <button onClick={start}
-            style={{ background: C.accent, color: '#000', fontWeight: 900, fontSize: 18, borderRadius: 16, padding: '20px', border: 'none', cursor: 'pointer' }}>
+            style={{ background: C.accent, color: 'var(--on-accent)', fontWeight: 900, fontSize: 18, borderRadius: 16, padding: '20px', border: 'none', cursor: 'pointer' }}>
             Start Treadmill Run
           </button>
         </div>
@@ -175,12 +175,12 @@ export default function TreadmillRun() {
             <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
               <input value={manualLapDistance} onChange={e => setManualLapDistance(e.target.value)} type="number" step="0.01" placeholder="Lap miles"
                 style={{ flex: 1, background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', borderRadius: 10, padding: '10px', fontSize: 14 }} />
-              <button onClick={() => setManualLaps(prev => [...prev, Number(manualLapDistance) || 0])} style={{ background: 'var(--accent)', color: '#000', border: 'none', borderRadius: 10, padding: '10px 14px', fontWeight: 700 }}>Log Lap</button>
+              <button onClick={() => setManualLaps(prev => [...prev, Number(manualLapDistance) || 0])} style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', borderRadius: 10, padding: '10px 14px', fontWeight: 700 }}>Log Lap</button>
             </div>
             {trackSuggestion && (
-              <div style={{ marginTop: 8, background: 'rgba(234,179,8,0.15)', border: '1px solid rgba(234,179,8,0.35)', borderRadius: 10, padding: 8 }}>
+              <div style={{ marginTop: 8, background: 'var(--accent-dim)', border: '1px solid var(--border-subtle)', borderRadius: 10, padding: 8 }}>
                 <p style={{ fontSize: 12, color: 'var(--text-primary)' }}>You are logging 400m-style laps. Switch to track mode?</p>
-                <button onClick={() => setTrackMode(true)} style={{ marginTop: 6, background: 'var(--accent)', color: '#000', border: 'none', borderRadius: 8, padding: '6px 10px', fontSize: 12, fontWeight: 700 }}>Enable Track Mode</button>
+                <button onClick={() => setTrackMode(true)} style={{ marginTop: 6, background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', borderRadius: 8, padding: '6px 10px', fontSize: 12, fontWeight: 700 }}>Enable Track Mode</button>
               </div>
             )}
           </div>
@@ -211,12 +211,12 @@ export default function TreadmillRun() {
               </button>
             ) : (
               <button onClick={resume}
-                style={{ flex: 1, background: C.accent, color: '#000', fontWeight: 700, fontSize: 16, borderRadius: 14, padding: '18px', border: 'none', cursor: 'pointer' }}>
+                style={{ flex: 1, background: C.accent, color: 'var(--on-accent)', fontWeight: 700, fontSize: 16, borderRadius: 14, padding: '18px', border: 'none', cursor: 'pointer' }}>
                 Resume
               </button>
             )}
             <button onClick={finish}
-              style={{ flex: 1, background: '#ef4444', color: '#fff', fontWeight: 700, fontSize: 16, borderRadius: 14, padding: '18px', border: 'none', cursor: 'pointer' }}>
+              style={{ flex: 1, background: 'var(--danger)', color: '#fff', fontWeight: 700, fontSize: 16, borderRadius: 14, padding: '18px', border: 'none', cursor: 'pointer' }}>
               Finish
             </button>
           </div>
@@ -274,7 +274,7 @@ export default function TreadmillRun() {
           {feedback && <p style={{ color: C.accent, textAlign: 'center' }}>{feedback}</p>}
 
           <button onClick={save} disabled={saving || !distance}
-            style={{ background: distance ? C.accent : 'var(--bg-input)', color: '#000', fontWeight: 900, fontSize: 16, borderRadius: 14, padding: '18px', border: 'none', cursor: 'pointer', opacity: saving ? 0.6 : 1 }}>
+            style={{ background: distance ? C.accent : 'var(--bg-input)', color: 'var(--on-accent)', fontWeight: 900, fontSize: 16, borderRadius: 14, padding: '18px', border: 'none', cursor: 'pointer', opacity: saving ? 0.6 : 1 }}>
             {saving ? 'Saving...' : 'Save Run'}
           </button>
         </div>

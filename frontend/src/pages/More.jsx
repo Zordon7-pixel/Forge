@@ -16,17 +16,17 @@ const sections = [
     title: 'Training',
     items: [
       { to: '/gear', label: 'Gear', sub: 'Shoes and mileage', icon: Footprints, color: '#94A3B8' },
-      { to: '/hr-zones', label: 'HR Zones', sub: 'Calibrate your training zones', icon: HeartPulse, color: '#EF4444' },
-      { to: '/plan', label: 'Adaptive Plan', sub: 'Weekly training direction', icon: Sparkles, color: '#EAB308' },
-      { to: '/plan-catalog', label: 'Plan Catalog', sub: 'Build a goal-based plan', icon: ClipboardList, color: '#EAB308' },
+      { to: '/hr-zones', label: 'HR Zones', sub: 'Calibrate your training zones', icon: HeartPulse, color: 'var(--danger)' },
+      { to: '/plan', label: 'Adaptive Plan', sub: 'Weekly training direction', icon: Sparkles, color: 'var(--accent)' },
+      { to: '/plan-catalog', label: 'Plan Catalog', sub: 'Build a goal-based plan', icon: ClipboardList, color: 'var(--accent)' },
       { to: '/history', label: 'History', sub: 'Runs, lifts, imports', icon: CalendarDays, color: '#3B82F6' },
-      { to: '/injury', label: 'Injury Mode', sub: 'Pain, limitations, PT', icon: ShieldAlert, color: '#F97316' },
+      { to: '/injury', label: 'Injury Mode', sub: 'Pain, limitations, PT', icon: ShieldAlert, color: 'var(--warning)' },
     ],
   },
   {
     title: 'Progress',
     items: [
-      { to: '/races', label: 'Races', sub: 'Upcoming events', icon: Trophy, color: '#EAB308' },
+      { to: '/races', label: 'Races', sub: 'Upcoming events', icon: Trophy, color: 'var(--accent)' },
       { to: '/prs', label: 'PR Wall', sub: 'Personal records', icon: Medal, color: '#A855F7' },
     ],
   },
@@ -36,7 +36,7 @@ export default function More() {
   return (
     <div style={{ paddingBottom: 96 }}>
       <header style={{ marginBottom: 18 }}>
-        <p style={{ color: '#EAB308', fontSize: 12, fontWeight: 800, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6 }}>Forge</p>
+        <p style={{ color: 'var(--accent)', fontSize: 12, fontWeight: 800, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6 }}>Forge</p>
         <h1 style={{ color: 'var(--text-primary)', fontSize: 28, fontWeight: 900, margin: 0 }}>More</h1>
       </header>
 

@@ -45,8 +45,8 @@ function saveLastSyncResult(result) {
 }
 
 function trendMeta(trend) {
-  if (trend === 'up') return { arrow: '↑', color: '#22C55E' }
-  if (trend === 'down') return { arrow: '↓', color: '#EF4444' }
+  if (trend === 'up') return { arrow: '↑', color: 'var(--success)' }
+  if (trend === 'down') return { arrow: '↓', color: 'var(--danger)' }
   return { arrow: '→', color: 'var(--text-muted)' }
 }
 
@@ -62,7 +62,7 @@ function DriverCard({ driver, trendLabels }) {
         </span>
       </div>
       <p className="mt-2 text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>{driver.plainEnglish}</p>
-      <p className="mt-3 text-xs italic" style={{ color: driver.impact === 'negative' ? '#F97316' : 'var(--text-muted)' }}>{driver.suggestion}</p>
+      <p className="mt-3 text-xs italic" style={{ color: driver.impact === 'negative' ? 'var(--warning)' : 'var(--text-muted)' }}>{driver.suggestion}</p>
     </article>
   )
 }
@@ -70,7 +70,7 @@ function DriverCard({ driver, trendLabels }) {
 function SourcePill({ icon: Icon, label, detail }) {
   return (
     <div className="flex items-center gap-2 rounded-xl px-3 py-2" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
-      <Icon size={15} color="#EAB308" />
+      <Icon size={15} color="var(--accent)" />
       <div>
         <p className="text-xs font-bold" style={{ color: 'var(--text-primary)' }}>{label}</p>
         <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{detail}</p>
@@ -164,16 +164,16 @@ export default function HealthData() {
       <section className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
         <div className="flex items-start justify-between gap-3">
           <div>
-            <p className="text-xs font-bold uppercase tracking-wide" style={{ color: '#EAB308' }}>Apple Health</p>
+            <p className="text-xs font-bold uppercase tracking-wide" style={{ color: 'var(--accent)' }}>Apple Health</p>
             <h1 className="mt-1 text-2xl font-black" style={{ color: 'var(--text-primary)' }}>Body</h1>
             <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>Your readiness, recovery, and how it shapes today's training. Plain English.</p>
           </div>
-          <Shield size={22} color="#EAB308" />
+          <Shield size={22} color="var(--accent)" />
         </div>
       </section>
 
       <section className="rounded-2xl p-4" style={{ background: driversData?.limiter ? 'var(--accent)' : 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-        <p className="text-xs font-black uppercase tracking-wide" style={{ color: driversData?.limiter ? '#000' : '#EAB308' }}>
+        <p className="text-xs font-black uppercase tracking-wide" style={{ color: driversData?.limiter ? '#000' : 'var(--accent)' }}>
           {driversData?.limiter ? `${limiterDriver?.label || 'Readiness'} ${t('body.limiterPrefix')}` : 'Readiness'}
         </p>
         <h2 className="mt-2 text-xl font-black leading-tight" style={{ color: driversData?.limiter ? '#000' : 'var(--text-primary)' }}>
@@ -190,7 +190,7 @@ export default function HealthData() {
           <Link
             to="/settings"
             className="mt-3 inline-flex rounded-xl px-4 py-2 text-sm font-black"
-            style={{ background: 'var(--accent)', color: '#000', textDecoration: 'none' }}
+            style={{ background: 'var(--accent)', color: 'var(--on-accent)', textDecoration: 'none' }}
           >
             {t('body.noDataCta')}
           </Link>
@@ -232,20 +232,20 @@ export default function HealthData() {
               {lastSyncResult ? `${lastSyncResult.imported || 0} imported · ${lastSyncResult.skipped || 0} already saved · ${dateText(lastSyncResult.syncedAt)}` : 'Sync Apple Health to refresh readiness drivers.'}
             </p>
           </div>
-          <HeartPulse size={18} color="#EAB308" />
+          <HeartPulse size={18} color="var(--accent)" />
         </div>
         <button
           type="button"
           onClick={syncAppleHealth}
           disabled={syncing}
           className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl py-3 text-sm font-black disabled:opacity-60"
-          style={{ background: 'var(--accent)', color: '#000', border: 'none', cursor: syncing ? 'wait' : 'pointer' }}
+          style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', cursor: syncing ? 'wait' : 'pointer' }}
         >
           <RefreshCw size={16} />
           {syncing ? 'Syncing Apple Health...' : 'Sync Apple Health'}
         </button>
-        {notice && <p className="mt-3 text-xs" style={{ color: notice.includes('synced') ? '#22C55E' : '#F97316' }}>{notice}</p>}
-        <Link to="/history" className="mt-3 flex items-center gap-1 text-xs font-bold" style={{ color: '#EAB308', textDecoration: 'none' }}>
+        {notice && <p className="mt-3 text-xs" style={{ color: notice.includes('synced') ? 'var(--success)' : 'var(--warning)' }}>{notice}</p>}
+        <Link to="/history" className="mt-3 flex items-center gap-1 text-xs font-bold" style={{ color: 'var(--accent)', textDecoration: 'none' }}>
           Review imported activity <ChevronRight size={14} />
         </Link>
       </section>

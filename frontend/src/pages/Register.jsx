@@ -44,7 +44,7 @@ export default function Register() {
           <input type="text" required placeholder={t('auth.name')} className="w-full rounded-xl border px-4 py-3 outline-none placeholder:text-gray-500 focus:ring-2" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }} value={name} onChange={e => setName(e.target.value)} />
           <input type="email" required placeholder={t('auth.email')} className="w-full rounded-xl border px-4 py-3 outline-none placeholder:text-gray-500 focus:ring-2" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }} value={email} onChange={e => setEmail(e.target.value)} />
           <input type="password" required placeholder={t('auth.password')} className="w-full rounded-xl border px-4 py-3 outline-none placeholder:text-gray-500 focus:ring-2" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }} value={password} onChange={e => setPassword(e.target.value)} />
-          <button type="submit" disabled={loading} className="w-full rounded-xl py-3 font-semibold transition hover:opacity-90 disabled:opacity-70" style={{ background: 'var(--accent)', color: 'black' }}>{loading ? t('common.loading') : t('auth.register')}</button>
+          <button type="submit" disabled={loading} className="w-full rounded-xl py-3 font-semibold transition hover:opacity-90 disabled:opacity-70" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>{loading ? t('common.loading') : t('auth.register')}</button>
         </form>
 
         <p className="mt-4 text-center text-xs leading-6" style={{ color: 'var(--text-muted)' }}>

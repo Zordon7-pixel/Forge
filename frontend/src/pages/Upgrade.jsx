@@ -95,9 +95,9 @@ export default function Upgrade() {
           style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', textAlign: 'center', maxWidth: 420, width: '100%' }}
         >
           <h1 className="text-2xl font-black" style={{ color: 'var(--text-primary)' }}>You are on FORGE Pro</h1>
-          {redeemSuccess && redeemMessage && <p className="mt-2 text-sm" style={{ color: '#22c55e' }}>{redeemMessage}</p>}
+          {redeemSuccess && redeemMessage && <p className="mt-2 text-sm" style={{ color: 'var(--success)' }}>{redeemMessage}</p>}
           {daysLeft !== null && (
-            <p className="mt-3 inline-flex rounded-full px-3 py-1 text-xs font-bold" style={{ background: 'rgba(234,179,8,0.14)', color: '#EAB308', border: '1px solid rgba(234,179,8,0.35)' }}>
+            <p className="mt-3 inline-flex rounded-full px-3 py-1 text-xs font-bold" style={{ background: 'var(--accent-dim)', color: 'var(--accent)', border: '1px solid var(--border-subtle)' }}>
               {daysLeft} {daysLeft === 1 ? 'day' : 'days'} left in trial
             </p>
           )}
@@ -105,7 +105,7 @@ export default function Upgrade() {
           <button
             onClick={() => navigate(-1)}
             className="mt-6 rounded-lg px-5 py-3 text-sm font-bold"
-            style={{ background: '#EAB308', color: '#000', border: 'none', cursor: 'pointer' }}
+            style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', cursor: 'pointer' }}
           >
             Back
           </button>
@@ -127,7 +127,7 @@ export default function Upgrade() {
             <div className="mt-4 space-y-3">
               {freeFeatures.map((feature) => (
                 <div key={feature} className="flex items-center gap-2">
-                  <Check size={16} color="#22c55e" />
+                  <Check size={16} color="var(--success)" />
                   <p className="text-sm" style={{ color: 'var(--text-primary)' }}>{feature}</p>
                 </div>
               ))}
@@ -140,13 +140,13 @@ export default function Upgrade() {
             </div>
           </section>
 
-          <section className="rounded-2xl p-5" style={{ background: 'var(--bg-card)', border: '1px solid rgba(234,179,8,0.45)' }}>
-            <p className="text-xs font-bold uppercase tracking-wider" style={{ color: '#EAB308' }}>Pro</p>
+          <section className="rounded-2xl p-5" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+            <p className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--accent)' }}>Pro</p>
             <p className="mt-2 text-2xl font-black" style={{ color: 'var(--text-primary)' }}>{plans.find((plan) => plan.id === selectedPlan)?.price}</p>
             <div className="mt-4 space-y-3">
               {proFeatures.map((feature) => (
                 <div key={feature} className="flex items-center gap-2">
-                  <Check size={16} color="#EAB308" />
+                  <Check size={16} color="var(--accent)" />
                   <p className="text-sm" style={{ color: 'var(--text-primary)' }}>{feature}</p>
                 </div>
               ))}
@@ -163,7 +163,7 @@ export default function Upgrade() {
                 onClick={() => setSelectedPlan(plan.id)}
                 className="rounded-full px-4 py-2 text-sm font-semibold"
                 style={selectedPlan === plan.id
-                  ? { background: '#EAB308', color: '#000', border: '1px solid #EAB308' }
+                  ? { background: 'var(--accent)', color: 'var(--on-accent)', border: '1px solid var(--accent)' }
                   : { background: 'var(--bg-input)', color: 'var(--text-muted)', border: '1px solid var(--border-subtle)' }}
               >
                 {plan.label} ({plan.price})
@@ -177,11 +177,11 @@ export default function Upgrade() {
             onClick={startCheckout}
             disabled={submitting}
             className="rounded-lg px-6 py-3 text-sm font-bold disabled:opacity-60"
-            style={{ background: '#EAB308', color: '#000', border: 'none', cursor: 'pointer' }}
+            style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', cursor: 'pointer' }}
           >
             {submitting ? 'Starting...' : `Continue with ${selectedPlanLabel}`}
           </button>
-          {error && <p className="text-sm" style={{ color: '#f87171' }}>{error}</p>}
+          {error && <p className="text-sm" style={{ color: 'var(--danger)' }}>{error}</p>}
           <form onSubmit={redeemCompCode} className="mt-3 flex w-full max-w-md flex-col gap-2 sm:flex-row">
             <input
               className="rounded-lg px-3 py-3 text-sm"
@@ -199,7 +199,7 @@ export default function Upgrade() {
               {redeeming ? 'Redeeming...' : 'Redeem'}
             </button>
           </form>
-          {redeemMessage && <p className="text-sm" style={{ color: redeemSuccess ? '#22c55e' : '#f87171' }}>{redeemMessage}</p>}
+          {redeemMessage && <p className="text-sm" style={{ color: redeemSuccess ? 'var(--success)' : 'var(--danger)' }}>{redeemMessage}</p>}
           <button
             onClick={() => navigate(-1)}
             className="text-sm underline"

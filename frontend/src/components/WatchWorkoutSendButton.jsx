@@ -66,7 +66,7 @@ export default function WatchWorkoutSendButton({ workout, label = 'Send to Watch
         onClick={sendWorkout}
         disabled={sending || !workout || (availability.checked && !availability.available)}
         className="w-full rounded-xl py-3 font-bold flex items-center justify-center gap-2 disabled:opacity-60"
-        style={{ background: 'var(--accent)', color: '#000', border: 'none', cursor: sending ? 'wait' : 'pointer' }}
+        style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', cursor: sending ? 'wait' : 'pointer' }}
       >
         <Watch size={17} />
         {sending ? 'Sending...' : availability.checked && !availability.available ? 'Watch delivery unavailable' : label}
@@ -79,9 +79,9 @@ export default function WatchWorkoutSendButton({ workout, label = 'Send to Watch
       >
         Copy workout details
       </button>
-      {status && <p className="mt-2 text-xs" style={{ color: '#22C55E' }}>{status}</p>}
+      {status && <p className="mt-2 text-xs" style={{ color: 'var(--success)' }}>{status}</p>}
       {(error || (availability.checked && !availability.available && availability.reason)) && (
-        <p className="mt-2 text-xs" style={{ color: '#F97316' }}>
+        <p className="mt-2 text-xs" style={{ color: 'var(--warning)' }}>
           {error || availability.reason}
         </p>
       )}

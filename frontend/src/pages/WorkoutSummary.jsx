@@ -196,7 +196,7 @@ export default function WorkoutSummary() {
               </div>
               <div style={{ background: 'var(--bg-input)', borderRadius: 12, padding: 16 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
-                  <Flame size={11} color="#EAB308" />
+                  <Flame size={11} color="var(--accent)" />
                   <p style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, margin: 0 }}>Calories</p>
                 </div>
                 <p style={{ fontSize: 22, fontWeight: 900, color: 'var(--text-primary)' }}>
@@ -275,14 +275,14 @@ export default function WorkoutSummary() {
             <div style={{ width: '100%', height: 220, background: 'var(--bg-input)', borderRadius: 12, padding: 8 }}>
               <ResponsiveContainer>
                 <PieChart>
-                  <Pie data={muscleVolumeData} dataKey="value" nameKey="name" outerRadius={80}>{muscleVolumeData.map((_, i) => <Cell key={i} fill={i % 2 ? '#ffffff' : '#EAB308'} />)}</Pie>
+                  <Pie data={muscleVolumeData} dataKey="value" nameKey="name" outerRadius={80}>{muscleVolumeData.map((_, i) => <Cell key={i} fill={i % 2 ? '#ffffff' : 'var(--accent)'} />)}</Pie>
                   <Tooltip />
                 </PieChart>
               </ResponsiveContainer>
             </div>
             <div style={{ width: '100%', height: 220, background: 'var(--bg-input)', borderRadius: 12, padding: 8, marginTop: 10 }}>
               <ResponsiveContainer>
-                <BarChart data={hrZonesData}><XAxis dataKey="zone" stroke="#fff" /><YAxis stroke="#fff" /><Tooltip /><Bar dataKey="min" fill="#EAB308" /></BarChart>
+                <BarChart data={hrZonesData}><XAxis dataKey="zone" stroke="#fff" /><YAxis stroke="#fff" /><Tooltip /><Bar dataKey="min" fill="var(--accent)" /></BarChart>
               </ResponsiveContainer>
             </div>
           </div>
@@ -318,7 +318,7 @@ export default function WorkoutSummary() {
           onClick={saveNotes}
           disabled={saving}
           className="rounded-xl px-5 py-2.5 text-sm font-semibold disabled:opacity-50"
-          style={{ background: 'var(--accent)', color: 'black' }}
+          style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}
         >
           {saving ? 'Saving...' : saved ? 'Saved' : 'Save Notes'}
         </button>
@@ -364,7 +364,7 @@ export default function WorkoutSummary() {
         </button>
       )}
       {routeShared && (
-        <p style={{ textAlign: 'center', fontSize: 13, color: '#22c55e', marginTop: 8 }}>
+        <p style={{ textAlign: 'center', fontSize: 13, color: 'var(--success)', marginTop: 8 }}>
           Route shared to community
         </p>
       )}

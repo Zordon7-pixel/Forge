@@ -115,12 +115,12 @@ export default function WorkoutDetailModal({ session, onClose, onFeedbackGenerat
             <p className="text-sm leading-relaxed" style={{ color: 'var(--text-muted)' }}>{feedback}</p>
           ) : (
             <>
-              {error && <p className="text-xs mb-2" style={{ color: '#ef4444' }}>{error}</p>}
+              {error && <p className="text-xs mb-2" style={{ color: 'var(--danger)' }}>{error}</p>}
               <button
                 onClick={generateFeedback}
                 disabled={aiLoading}
                 className="w-full py-2.5 rounded-xl text-sm font-semibold"
-                style={{ background: 'var(--accent)', color: '#000' }}
+                style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}
               >
                 {aiLoading ? 'Analyzing your workout...' : 'Get AI Feedback'}
               </button>

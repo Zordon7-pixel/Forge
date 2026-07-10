@@ -47,7 +47,7 @@ export default function Login() {
   }
 
   const inputStyle = { borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }
-  const btnStyle = { background: 'var(--accent)', color: 'black' }
+  const btnStyle = { background: 'var(--accent)', color: 'var(--on-accent)' }
 
   return (
     <div className="flex min-h-screen items-center justify-center px-4" style={{ background: 'var(--bg-base)', color: 'var(--text-primary)' }}>

@@ -26,18 +26,18 @@ export default function AchievementUnlock({ badge, onDismiss }) {
         onClick={e => e.stopPropagation()}
         style={{
           background: 'var(--bg-card)',
-          border: '2px solid #EAB308',
+          border: '2px solid var(--accent)',
           borderRadius: 24,
           padding: 32,
           maxWidth: 300,
           width: '90%',
           textAlign: 'center',
           animation: 'popIn 0.35s cubic-bezier(0.34,1.56,0.64,1) forwards',
-          boxShadow: '0 0 40px rgba(234,179,8,0.3)',
+          boxShadow: '0 0 40px var(--border-subtle)',
         }}
       >
-        <BadgeCheck size={56} color="#EAB308" style={{ margin: '0 auto 16px' }} />
-        <p style={{ fontSize: 11, fontWeight: 700, color: '#EAB308', letterSpacing: 2, textTransform: 'uppercase', margin: '0 0 8px' }}>
+        <BadgeCheck size={56} color="var(--accent)" style={{ margin: '0 auto 16px' }} />
+        <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--accent)', letterSpacing: 2, textTransform: 'uppercase', margin: '0 0 8px' }}>
           Achievement Unlocked
         </p>
         <p style={{ fontSize: 22, fontWeight: 900, color: 'var(--text-primary)', margin: '0 0 8px' }}>
@@ -51,7 +51,7 @@ export default function AchievementUnlock({ badge, onDismiss }) {
         <button
           onClick={onDismiss}
           style={{
-            background: '#EAB308', color: '#000',
+            background: 'var(--accent)', color: 'var(--on-accent)',
             border: 'none', borderRadius: 12,
             padding: '10px 28px', fontSize: 14, fontWeight: 700,
             cursor: 'pointer',

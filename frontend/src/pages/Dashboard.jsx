@@ -189,7 +189,7 @@ export default function Dashboard() {
             name: fetchedMilestones[0].title,
             description: fetchedMilestones[0].description,
             icon: 'Award',
-            color: '#EAB308',
+            color: 'var(--accent)',
           })
         }
         setCompliance(complianceRes.data)
@@ -574,7 +574,7 @@ export default function Dashboard() {
   }, [shoes])
 
   const showLoadWarning = loadAnalysis && ['elevated', 'high', 'danger'].includes(loadAnalysis.loadStatus) && Date.now() > loadWarningDismissedUntil
-  const complianceColor = compliance?.score >= 80 ? '#22c55e' : compliance?.score >= 50 ? '#EAB308' : '#ef4444'
+  const complianceColor = compliance?.score >= 80 ? 'var(--success)' : compliance?.score >= 50 ? 'var(--accent)' : 'var(--danger)'
   const todaysPickRunType = getRecommendationRunType(nextRecommendation)
   const periodLabels = { day: 'Today', week: t('dashboard.thisWeek'), month: 'This Month', year: 'This Year', all: 'All Time' }
   const injuryDismissed = injuryBannerDismissed || (activeInjury && activeInjury.id && localStorage.getItem(`forge-injury-dismissed-${activeInjury.id}`) === '1')
@@ -610,7 +610,7 @@ export default function Dashboard() {
         </div>
       )}
       {(!isOnline || queueCount > 0) && (
-        <div className="rounded-xl p-2 text-sm font-semibold" style={{ background: 'rgba(234,179,8,0.14)', border: '1px solid rgba(234,179,8,0.35)', color: 'var(--text-primary)' }}>
+        <div className="rounded-xl p-2 text-sm font-semibold" style={{ background: 'var(--accent-dim)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}>
           {isOnline ? `${queueCount} workouts queued for sync` : `📴 Offline — ${queueCount} workouts queued for sync`}
         </div>
       )}
@@ -633,7 +633,7 @@ export default function Dashboard() {
       `}</style>
 
       {!injuryDismissed && activeInjury && activeInjury.id && (
-        <div className="rounded-xl p-4" style={{ background: 'rgba(234,179,8,0.2)', border: '1px solid #EAB308' }}>
+        <div className="rounded-xl p-4" style={{ background: 'var(--accent-dim)', border: '1px solid var(--accent)' }}>
           <div className="flex items-start justify-between gap-3">
             <div>
               <p className="text-sm font-bold" style={{ color: '#0f1117' }}>
@@ -666,7 +666,7 @@ export default function Dashboard() {
         <div className="rounded-xl p-4" style={{ background: '#1a1d2e', border: '1px solid #2a2d3e' }}>
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="text-sm font-bold" style={{ color: '#EAB308' }}>Weekly Recap</p>
+              <p className="text-sm font-bold" style={{ color: 'var(--accent)' }}>Weekly Recap</p>
               <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
                 {weeklyRecap.totalMiles?.toFixed?.(1) || 0} mi · {weeklyRecap.totalRuns || 0} runs · {(weeklyRecap.totalCalories || 0).toLocaleString()} cal
               </p>
@@ -730,7 +730,7 @@ export default function Dashboard() {
               <Footprints size={14} />
               <span>
                 <strong style={{ color: 'var(--text-primary)' }}>{Number(dailySteps).toLocaleString()} steps</strong>
-                {dailyStepsSource === 'watch' && <span style={{ marginLeft: 6, fontSize: 11, color: '#22c55e' }}>⌚ synced</span>}
+                {dailyStepsSource === 'watch' && <span style={{ marginLeft: 6, fontSize: 11, color: 'var(--success)' }}>⌚ synced</span>}
               </span>
             </p>
           </div>
@@ -741,7 +741,7 @@ export default function Dashboard() {
       </div>
 
       {watchSyncNotice && (
-        <div className="rounded-xl p-3" style={{ background: 'rgba(234,179,8,0.12)', border: '1px solid rgba(234,179,8,0.3)' }}>
+        <div className="rounded-xl p-3" style={{ background: 'var(--accent-dim)', border: '1px solid var(--border-subtle)' }}>
           <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
             New activity synced from your watch — {watchSyncNotice.activity_name}. View it in {watchSyncNotice.routed_section === 'lift' ? 'Lift' : watchSyncNotice.routed_section === 'other' ? 'History' : 'Run'} tab.
           </p>
@@ -754,7 +754,7 @@ export default function Dashboard() {
                 else navigate('/log-run')
               }}
               className="rounded-lg px-3 py-1.5 text-xs font-bold"
-              style={{ background: 'var(--accent)', color: '#000' }}
+              style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}
             >
               View
             </button>

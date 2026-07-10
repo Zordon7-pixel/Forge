@@ -14,10 +14,10 @@ function formatDate(dateStr) {
 }
 
 const tierStyle = {
-  elite_masters: { text: '#22c55e', bg: 'rgba(34,197,94,0.14)', border: 'rgba(34,197,94,0.4)' },
-  national_class: { text: '#EAB308', bg: 'rgba(234,179,8,0.14)', border: 'rgba(234,179,8,0.35)' },
+  elite_masters: { text: 'var(--success)', bg: 'rgba(34,197,94,0.14)', border: 'rgba(34,197,94,0.4)' },
+  national_class: { text: 'var(--accent)', bg: 'var(--accent-dim)', border: 'var(--border-subtle)' },
   regional_contender: { text: '#60a5fa', bg: 'rgba(96,165,250,0.14)', border: 'rgba(96,165,250,0.35)' },
-  local_competitive: { text: '#f97316', bg: 'rgba(249,115,22,0.14)', border: 'rgba(249,115,22,0.35)' },
+  local_competitive: { text: 'var(--warning)', bg: 'rgba(249,115,22,0.14)', border: 'var(--warning-dim)' },
   developing: { text: 'var(--text-muted)', bg: 'var(--bg-input)', border: 'var(--border-subtle)' },
 }
 
@@ -29,7 +29,7 @@ export default function AgeGradedPerformanceCard({ data, onOpenProfile }) {
     <section className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-xs font-bold uppercase tracking-wide" style={{ color: '#EAB308' }}>Senior Competitive Benchmark</p>
+          <p className="text-xs font-bold uppercase tracking-wide" style={{ color: 'var(--accent)' }}>Senior Competitive Benchmark</p>
           <p className="text-sm mt-1" style={{ color: 'var(--text-primary)' }}>Age-graded 5K/10K scoring with peer bracket tracking</p>
         </div>
         <p className="text-xs text-right" style={{ color: 'var(--text-muted)' }}>
@@ -38,12 +38,12 @@ export default function AgeGradedPerformanceCard({ data, onOpenProfile }) {
       </div>
 
       {!data.ageProvided && (
-        <div className="mt-3 rounded-xl p-3" style={{ background: 'rgba(234,179,8,0.12)', border: '1px solid rgba(234,179,8,0.3)' }}>
+        <div className="mt-3 rounded-xl p-3" style={{ background: 'var(--accent-dim)', border: '1px solid var(--border-subtle)' }}>
           <p className="text-xs" style={{ color: 'var(--text-primary)' }}>Add your age in Profile to unlock age-graded scoring and senior bracket ranking.</p>
           <button
             onClick={onOpenProfile}
             className="mt-2 rounded-lg px-3 py-1.5 text-xs font-bold"
-            style={{ background: '#EAB308', color: '#000', border: 'none', cursor: 'pointer' }}
+            style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', cursor: 'pointer' }}
           >
             Update Profile
           </button>
@@ -75,7 +75,7 @@ export default function AgeGradedPerformanceCard({ data, onOpenProfile }) {
                   <p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{item.label}</p>
                   <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Best: {formatDuration(item.normalizedDurationSeconds)} ({formatDate(item.bestDate)})</p>
                 </div>
-                <p className="text-lg font-black" style={{ color: '#EAB308' }}>
+                <p className="text-lg font-black" style={{ color: 'var(--accent)' }}>
                   {item.ageGradedScore ? `${Number(item.ageGradedScore).toFixed(1)}%` : '--'}
                 </p>
               </div>

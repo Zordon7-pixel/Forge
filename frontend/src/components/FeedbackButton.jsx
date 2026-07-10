@@ -64,10 +64,10 @@ export default function FeedbackButton({ externalOpen, onClose }) {
         </p>
 
         <div className="mb-4 grid grid-cols-2 gap-2 rounded-lg p-1" style={{ background: 'var(--bg-input)' }}>
-          <button type="button" onClick={() => setTab('bug')} className="rounded-md px-3 py-2 text-sm font-semibold" style={tab === 'bug' ? { background: 'var(--accent)', color: '#000' } : { color: 'var(--text-muted)' }}>
+          <button type="button" onClick={() => setTab('bug')} className="rounded-md px-3 py-2 text-sm font-semibold" style={tab === 'bug' ? { background: 'var(--accent)', color: 'var(--on-accent)' } : { color: 'var(--text-muted)' }}>
             Report an Issue
           </button>
-          <button type="button" onClick={() => setTab('feature')} className="rounded-md px-3 py-2 text-sm font-semibold" style={tab === 'feature' ? { background: 'var(--accent)', color: '#000' } : { color: 'var(--text-muted)' }}>
+          <button type="button" onClick={() => setTab('feature')} className="rounded-md px-3 py-2 text-sm font-semibold" style={tab === 'feature' ? { background: 'var(--accent)', color: 'var(--on-accent)' } : { color: 'var(--text-muted)' }}>
             Suggest a Feature
           </button>
         </div>
@@ -90,7 +90,7 @@ export default function FeedbackButton({ externalOpen, onClose }) {
           </>
         )}
 
-        {status && <p className="mb-3 text-sm" style={{ color: status.startsWith('Thanks') ? '#86efac' : 'var(--accent)' }}>{status}</p>}
+        {status && <p className="mb-3 text-sm" style={{ color: status.startsWith('Thanks') ? 'var(--success)' : 'var(--accent)' }}>{status}</p>}
 
         <p className="mb-3 text-[11px] leading-5" style={{ color: 'var(--text-muted)' }}>
           By submitting, you agree that Forge may use this feedback to troubleshoot and improve the product under the Terms and Privacy Policy.
@@ -98,7 +98,7 @@ export default function FeedbackButton({ externalOpen, onClose }) {
 
         <div className="flex justify-end gap-2">
           <button type="button" onClick={handleClose} className="rounded-lg border px-4 py-2 text-sm" style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}>Close</button>
-          <button type="submit" disabled={loading} className="rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-60" style={{ background: 'var(--accent)', color: 'black' }}>{loading ? 'Sending…' : 'Submit'}</button>
+          <button type="submit" disabled={loading} className="rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-60" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>{loading ? 'Sending…' : 'Submit'}</button>
         </div>
       </form>
     </div>

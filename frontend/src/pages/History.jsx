@@ -199,7 +199,7 @@ export default function History() {
           style={{
             display: 'inline-flex', alignItems: 'center', gap: 6,
             padding: '8px 16px', borderRadius: 20,
-            background: '#EAB308', color: '#000',
+            background: 'var(--accent)', color: 'var(--on-accent)',
             fontWeight: 700, fontSize: 13, textDecoration: 'none',
           }}>
           Weekly Recap
@@ -210,14 +210,14 @@ export default function History() {
         <div className="rounded-xl p-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
           <div style={{ width: '100%', height: 180 }}>
             <ResponsiveContainer>
-              <BarChart data={weeklyMileage}><XAxis dataKey="week" stroke="#fff" tick={{ fontSize: 10 }} /><YAxis stroke="#fff" tick={{ fontSize: 10 }} /><Tooltip /><Bar dataKey="miles" fill="#EAB308" /></BarChart>
+              <BarChart data={weeklyMileage}><XAxis dataKey="week" stroke="#fff" tick={{ fontSize: 10 }} /><YAxis stroke="#fff" tick={{ fontSize: 10 }} /><Tooltip /><Bar dataKey="miles" fill="var(--accent)" /></BarChart>
             </ResponsiveContainer>
           </div>
         </div>
         <div className="rounded-xl p-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
           <div style={{ width: '100%', height: 180 }}>
             <ResponsiveContainer>
-              <LineChart data={paceTrend}><XAxis dataKey="idx" stroke="#fff" tick={{ fontSize: 10 }} /><YAxis stroke="#fff" tick={{ fontSize: 10 }} /><Tooltip /><Line type="monotone" dataKey="pace" stroke="#EAB308" strokeWidth={2} dot={false} /></LineChart>
+              <LineChart data={paceTrend}><XAxis dataKey="idx" stroke="#fff" tick={{ fontSize: 10 }} /><YAxis stroke="#fff" tick={{ fontSize: 10 }} /><Tooltip /><Line type="monotone" dataKey="pace" stroke="var(--accent)" strokeWidth={2} dot={false} /></LineChart>
             </ResponsiveContainer>
           </div>
         </div>
@@ -298,7 +298,7 @@ export default function History() {
             onClick={() => setPeriod(p)}
             className="flex-1 py-2 text-xs font-semibold uppercase"
             style={period === p
-              ? { background: 'var(--accent)', color: 'black' }
+              ? { background: 'var(--accent)', color: 'var(--on-accent)' }
               : { background: 'var(--bg-input)', color: 'var(--text-muted)' }}
           >
             {p === 'week' ? 'W' : p === 'month' ? 'M' : p === 'year' ? 'Y' : 'All'}
@@ -432,7 +432,7 @@ export default function History() {
                     <p className="font-bold" style={{ color: 'var(--text-primary)' }}>{r.race_name}</p>
                     <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{r.race_date} · {r.distance_miles} mi{r.location ? ` · ${r.location}` : ''}</p>
                   </div>
-                  <span className="text-xs px-2 py-1 rounded-full font-semibold" style={{ background: r.status === 'completed' ? 'rgba(34,197,94,0.15)' : 'rgba(234,179,8,0.15)', color: r.status === 'completed' ? '#22c55e' : '#EAB308' }}>
+                  <span className="text-xs px-2 py-1 rounded-full font-semibold" style={{ background: r.status === 'completed' ? 'rgba(34,197,94,0.15)' : 'var(--accent-dim)', color: r.status === 'completed' ? 'var(--success)' : 'var(--accent)' }}>
                     {r.status || 'upcoming'}
                   </span>
                 </div>
@@ -461,7 +461,7 @@ export default function History() {
             <p className="mt-2 text-sm" style={{ color: 'var(--text-muted)' }}>This cannot be undone.</p>
             <div className="mt-4 flex justify-end gap-2">
               <button type="button" onClick={() => setPendingDelete(null)} className="rounded-lg border px-4 py-2 text-sm" style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}>Cancel</button>
-              <button type="button" onClick={confirmDelete} className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: 'var(--accent)', color: '#000' }}>Delete</button>
+              <button type="button" onClick={confirmDelete} className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>Delete</button>
             </div>
           </div>
         </div>

@@ -119,7 +119,7 @@ export default function ExercisePickerModal({ muscleGroup, onSelect, onClose }) 
             </div>
             <div className="p-4">
               <button onClick={() => { onSelect(howToExercise); onClose() }}
-                className="w-full py-3 rounded-xl font-bold text-black"
+                className="w-full py-3 rounded-xl font-bold text-on-accent"
                 style={{ background: 'var(--accent)' }}>
                 Select {howToExercise.name}
               </button>
@@ -230,7 +230,7 @@ export default function ExercisePickerModal({ muscleGroup, onSelect, onClose }) 
                   className="flex-1 py-3 rounded-xl text-sm"
                   style={{ background: 'var(--bg-input)', color: 'var(--text-muted)' }}>Cancel</button>
                 <button onClick={handleAdd} disabled={addLoading || !newName.trim()}
-                  className="flex-1 py-3 rounded-xl text-sm font-bold text-black"
+                  className="flex-1 py-3 rounded-xl text-sm font-bold text-on-accent"
                   style={{ background: newName.trim() ? 'var(--accent)' : 'var(--bg-input)', opacity: addLoading ? 0.6 : 1 }}>
                   {addLoading ? 'Adding...' : 'Add Exercise'}
                 </button>

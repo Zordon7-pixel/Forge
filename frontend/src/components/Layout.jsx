@@ -7,10 +7,10 @@ import PullToRefresh from './PullToRefresh'
 import FeedbackButton from './FeedbackButton'
 
 const NAV_ITEMS = (t) => [
-  { to: '/', end: true, icon: '/nav-home.png', label: t('nav.home'), color: '#EAB308' },
-  { to: '/run', label: t('nav.run'), iconComponent: Activity, color: '#EAB308' },
-  { to: '/log-lift', iconComponent: Dumbbell, label: t('nav.lift'), color: '#F97316' },
-  { to: '/health', label: t('nav.body'), iconComponent: HeartPulse, color: '#22C55E' },
+  { to: '/', end: true, icon: '/nav-home.png', label: t('nav.home'), color: 'var(--accent)' },
+  { to: '/run', label: t('nav.run'), iconComponent: Activity, color: 'var(--accent)' },
+  { to: '/log-lift', iconComponent: Dumbbell, label: t('nav.lift'), color: 'var(--warning)' },
+  { to: '/health', label: t('nav.body'), iconComponent: HeartPulse, color: 'var(--success)' },
   { to: '/more', label: 'More', iconComponent: MoreHorizontal, color: '#A855F7' },
 ]
 
@@ -78,7 +78,7 @@ export default function Layout({ children }) {
                 type="button"
                 onClick={() => navigate('/profile')}
                 className="flex h-8 w-8 items-center justify-center rounded-full text-xs font-black transition-opacity hover:opacity-85"
-                style={{ background: 'var(--accent)', color: '#000', border: '1px solid var(--border-subtle)', position: 'relative', zIndex: 15 }}
+                style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: '1px solid var(--border-subtle)', position: 'relative', zIndex: 15 }}
                 aria-label="Go to profile"
                 title="Profile"
               >

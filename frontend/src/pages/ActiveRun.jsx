@@ -25,9 +25,9 @@ function haversineMiles(a, b) {
 const ZONES = [
   { key: 'Z1', min: 0.5, max: 0.6, name: 'Recovery', color: '#6B7280' },
   { key: 'Z2', min: 0.6, max: 0.7, name: 'Aerobic Base', color: '#3B82F6' },
-  { key: 'Z3', min: 0.7, max: 0.8, name: 'Tempo', color: '#22C55E' },
-  { key: 'Z4', min: 0.8, max: 0.9, name: 'Threshold', color: '#EAB308' },
-  { key: 'Z5', min: 0.9, max: 1.01, name: 'Max Effort', color: '#EF4444' },
+  { key: 'Z3', min: 0.7, max: 0.8, name: 'Tempo', color: 'var(--success)' },
+  { key: 'Z4', min: 0.8, max: 0.9, name: 'Threshold', color: 'var(--accent)' },
+  { key: 'Z5', min: 0.9, max: 1.01, name: 'Max Effort', color: 'var(--danger)' },
 ]
 
 function getZone(hr, maxHr) {
@@ -409,7 +409,7 @@ export default function ActiveRun() {
           <>
             <div className="flex items-center gap-2">
               <p className="font-bold" style={{ color: 'var(--text-primary)' }}>{liveHr} bpm</p>
-              <span style={{ width: 8, height: 8, borderRadius: '50%', background: hrLastUpdated && Date.now() - hrLastUpdated < 10000 ? '#22c55e' : '#6b7280', animation: hrLastUpdated && Date.now() - hrLastUpdated < 10000 ? 'pulse 2s infinite' : 'none' }} />
+              <span style={{ width: 8, height: 8, borderRadius: '50%', background: hrLastUpdated && Date.now() - hrLastUpdated < 10000 ? 'var(--success)' : '#6b7280', animation: hrLastUpdated && Date.now() - hrLastUpdated < 10000 ? 'pulse 2s infinite' : 'none' }} />
               {hrLastUpdated && Date.now() - hrLastUpdated > 60000 && <span className="text-xs" style={{ color: 'var(--text-muted)' }}>(last known)</span>}
               {hrZone && <span className="px-2 py-0.5 rounded-full text-xs font-semibold" style={{ background: `${hrZone.color}22`, color: hrZone.color }}>{hrZone.key} · {hrZone.name}</span>}
             </div>
@@ -419,25 +419,25 @@ export default function ActiveRun() {
         ) : <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Connect watch for live HR</p>}
       </div>
 
-      {(!gpsAvailable || gpsError) && <div className="rounded-xl p-3 mb-3" style={{ background: 'rgba(234,179,8,0.12)', border: '1px solid rgba(234,179,8,0.3)', color: 'var(--accent)' }}>{gpsError || 'GPS unavailable — tracking time and effort only'}</div>}
+      {(!gpsAvailable || gpsError) && <div className="rounded-xl p-3 mb-3" style={{ background: 'var(--accent-dim)', border: '1px solid var(--border-subtle)', color: 'var(--accent)' }}>{gpsError || 'GPS unavailable — tracking time and effort only'}</div>}
       {gpsGapSummary && (
-        <div className="rounded-xl p-3 mb-3" style={{ background: 'rgba(234,179,8,0.12)', border: '1px solid rgba(234,179,8,0.35)', color: 'var(--accent)' }}>
+        <div className="rounded-xl p-3 mb-3" style={{ background: 'var(--accent-dim)', border: '1px solid var(--border-subtle)', color: 'var(--accent)' }}>
           GPS paused during this run{gpsGapSummary.seconds > 0 ? ` for about ${formatGapDuration(gpsGapSummary.seconds)}` : ''}. Review the distance; Forge saves a note that the route may be incomplete.
         </div>
       )}
-      {saveError && <div className="rounded-xl p-3 mb-3" style={{ background: queuedOffline ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)', border: `1px solid ${queuedOffline ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'}`, color: queuedOffline ? '#22c55e' : '#ef4444' }}>{saveError}</div>}
+      {saveError && <div className="rounded-xl p-3 mb-3" style={{ background: queuedOffline ? 'rgba(34,197,94,0.12)' : 'var(--danger-dim)', border: `1px solid ${queuedOffline ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'}`, color: queuedOffline ? 'var(--success)' : 'var(--danger)' }}>{saveError}</div>}
 
-      {mapMyRun && routeCoords.length > 0 && <div className="mb-4 rounded-xl overflow-hidden" style={{ height: 240 }}><MapContainer center={routeCoords[routeCoords.length - 1]} zoom={15} style={{ height: '100%', width: '100%' }}><TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" /><Marker position={routeCoords[routeCoords.length - 1]} /><Polyline positions={routeCoords} pathOptions={{ color: '#EAB308', weight: 4 }} /></MapContainer></div>}
+      {mapMyRun && routeCoords.length > 0 && <div className="mb-4 rounded-xl overflow-hidden" style={{ height: 240 }}><MapContainer center={routeCoords[routeCoords.length - 1]} zoom={15} style={{ height: '100%', width: '100%' }}><TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" /><Marker position={routeCoords[routeCoords.length - 1]} /><Polyline positions={routeCoords} pathOptions={{ color: 'var(--accent)', weight: 4 }} /></MapContainer></div>}
 
-      {!running && !countingDown && !awaitingManualDistance && <><button onClick={() => setMapMyRun(v => !v)} className="w-full rounded-xl py-2 font-semibold mb-2" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}>{mapMyRun ? 'Record route: On' : 'Record route: Off'}</button><button onClick={() => { setCountdownVal(selectedCountdown); setCountingDown(selectedCountdown > 0); if (selectedCountdown === 0) startGPS() }} className="w-full rounded-xl py-3 font-black" style={{ background: 'var(--accent)', color: '#000' }}>Start Run</button></>}
-      {running && <button onClick={finishRun} disabled={saving} className="w-full rounded-xl py-3 font-black" style={{ background: 'var(--accent)', color: '#000', opacity: saving ? 0.5 : 1 }}>{saving ? 'Saving...' : 'Finish Run'}</button>}
+      {!running && !countingDown && !awaitingManualDistance && <><button onClick={() => setMapMyRun(v => !v)} className="w-full rounded-xl py-2 font-semibold mb-2" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}>{mapMyRun ? 'Record route: On' : 'Record route: Off'}</button><button onClick={() => { setCountdownVal(selectedCountdown); setCountingDown(selectedCountdown > 0); if (selectedCountdown === 0) startGPS() }} className="w-full rounded-xl py-3 font-black" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>Start Run</button></>}
+      {running && <button onClick={finishRun} disabled={saving} className="w-full rounded-xl py-3 font-black" style={{ background: 'var(--accent)', color: 'var(--on-accent)', opacity: saving ? 0.5 : 1 }}>{saving ? 'Saving...' : 'Finish Run'}</button>}
 
       {awaitingManualDistance && (
         <div className="rounded-xl p-3" style={{ background: 'var(--bg-input)' }}>
           <p className="text-sm font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>How far did you run? ({fmt.distanceLabel})</p>
           {distanceMiles > 0 && <p className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>Forge measured {fmt.distance(distanceMiles, 2)} before GPS stopped or route recording ended. Adjust if needed.</p>}
           <input value={manualDistance} onChange={e => setManualDistance(e.target.value)} type="number" min="0" step="0.1" className="w-full rounded-xl px-3 py-2" style={{ background: 'var(--bg-base)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }} placeholder={fmt.distanceLabel} />
-          <button onClick={saveRun} className="w-full mt-2 rounded-xl py-2 font-semibold" style={{ background: 'var(--accent)', color: '#000' }}>Save Run</button>
+          <button onClick={saveRun} className="w-full mt-2 rounded-xl py-2 font-semibold" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>Save Run</button>
         </div>
       )}
 

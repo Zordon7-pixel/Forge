@@ -102,14 +102,14 @@ export default function Gear() {
           <h2 className="text-2xl font-black" style={{ color: 'var(--text-primary)' }}>My Gear</h2>
           <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{shoes.length} active shoe{shoes.length !== 1 ? 's' : ''}</p>
         </div>
-        <button onClick={() => setShowAdd(true)} style={{ background: '#EAB308', color: '#000', border: 'none', borderRadius: 10, padding: '8px 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
+        <button onClick={() => setShowAdd(true)} style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', borderRadius: 10, padding: '8px 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
           <Plus size={14} /> Add Shoe
         </button>
       </div>
 
       {alerts.length > 0 && (
         <div style={{ background: 'rgba(249,115,22,0.1)', border: '1px solid rgba(249,115,22,0.3)', borderRadius: 12, padding: '10px 14px' }}>
-          <p style={{ fontSize: 13, fontWeight: 700, color: '#f97316', margin: 0 }}>
+          <p style={{ fontSize: 13, fontWeight: 700, color: 'var(--warning)', margin: 0 }}>
             {alerts.length} shoe{alerts.length > 1 ? 's' : ''} need{alerts.length === 1 ? 's' : ''} attention
           </p>
         </div>
@@ -124,12 +124,12 @@ export default function Gear() {
         shoes.map(shoe => {
           const miles = Number(shoe.total_miles || 0)
           const pct = Math.min(100, (miles / 500) * 100)
-          const barColor = miles >= 500 ? '#ef4444' : miles >= 400 ? '#EAB308' : '#22c55e'
+          const barColor = miles >= 500 ? 'var(--danger)' : miles >= 400 ? 'var(--accent)' : 'var(--success)'
           return (
             <div key={shoe.id} style={{ background: 'var(--bg-card)', borderRadius: 16, padding: 16, border: `1.5px solid ${shoe.alert ? 'rgba(249,115,22,0.4)' : 'var(--border-subtle)'}`, boxShadow: shoe.alert ? '0 0 10px rgba(249,115,22,0.15)' : 'none' }}>
               {miles >= 500 && (
                 <div style={{ background: 'rgba(239,68,68,0.1)', borderRadius: 8, padding: '6px 10px', marginBottom: 10 }}>
-                  <p style={{ fontSize: 12, color: '#ef4444', fontWeight: 700, margin: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <p style={{ fontSize: 12, color: 'var(--danger)', fontWeight: 700, margin: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
                     <AlertTriangle size={14} /> Replace soon
                   </p>
                 </div>
@@ -160,7 +160,7 @@ export default function Gear() {
               <div style={{ display: 'flex', gap: 8 }}>
                 <button onClick={() => startEdit(shoe)} aria-label="Edit shoe" title="Edit shoe" style={{ fontSize: 12, padding: '6px 12px', borderRadius: 8, background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}><Pencil size={13} /> Edit</button>
                 <button onClick={() => retire(shoe.id)} style={{ fontSize: 12, padding: '6px 12px', borderRadius: 8, background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)', cursor: 'pointer' }}>Retire</button>
-                <button onClick={() => remove(shoe.id)} style={{ fontSize: 12, padding: '6px 12px', borderRadius: 8, background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', color: '#ef4444', cursor: 'pointer' }}>Delete</button>
+                <button onClick={() => remove(shoe.id)} style={{ fontSize: 12, padding: '6px 12px', borderRadius: 8, background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', color: 'var(--danger)', cursor: 'pointer' }}>Delete</button>
               </div>
             </div>
           )
@@ -218,7 +218,7 @@ export default function Gear() {
                   {SHOE_CATEGORIES.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
                 </select>
               </div>
-              <button onClick={addShoe} disabled={adding || !brand || !model} style={{ padding: '12px 0', borderRadius: 12, background: '#EAB308', color: '#000', border: 'none', fontSize: 15, fontWeight: 700, cursor: 'pointer', opacity: (!brand || !model) ? 0.5 : 1 }}>
+              <button onClick={addShoe} disabled={adding || !brand || !model} style={{ padding: '12px 0', borderRadius: 12, background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', fontSize: 15, fontWeight: 700, cursor: 'pointer', opacity: (!brand || !model) ? 0.5 : 1 }}>
                 {adding ? 'Adding...' : 'Add Shoe'}
               </button>
             </div>
@@ -243,7 +243,7 @@ export default function Gear() {
                   {SHOE_CATEGORIES.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
                 </select>
               </div>
-              <button onClick={saveEdit} disabled={savingEdit} style={{ padding: '12px 0', borderRadius: 12, background: '#EAB308', color: '#000', border: 'none', fontSize: 15, fontWeight: 700, cursor: 'pointer', opacity: savingEdit ? 0.6 : 1 }}>
+              <button onClick={saveEdit} disabled={savingEdit} style={{ padding: '12px 0', borderRadius: 12, background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', fontSize: 15, fontWeight: 700, cursor: 'pointer', opacity: savingEdit ? 0.6 : 1 }}>
                 {savingEdit ? 'Saving...' : 'Save Shoe'}
               </button>
             </div>

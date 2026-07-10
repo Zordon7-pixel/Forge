@@ -128,9 +128,9 @@ export default function Plan() {
 
   const intensityMeta = useMemo(() => {
     const key = String(adaptivePlan?.intensity || 'normal').toLowerCase()
-    if (key === 'recovery') return { label: '🔴 Recovery', color: '#EF4444' }
-    if (key === 'reduced') return { label: '🟡 Reduced', color: '#EAB308' }
-    if (key === 'increased') return { label: '💪 Increased', color: '#22C55E' }
+    if (key === 'recovery') return { label: '🔴 Recovery', color: 'var(--danger)' }
+    if (key === 'reduced') return { label: '🟡 Reduced', color: 'var(--accent)' }
+    if (key === 'increased') return { label: '💪 Increased', color: 'var(--success)' }
     return { label: '🟢 Normal', color: '#16A34A' }
   }, [adaptivePlan?.intensity])
 
@@ -162,13 +162,13 @@ export default function Plan() {
                 maxWidth: 320,
               }}
             >
-              <Lock size={32} color="#EAB308" style={{ margin: '0 auto 12px' }} />
+              <Lock size={32} color="var(--accent)" style={{ margin: '0 auto 12px' }} />
               <h3 style={{ color: 'var(--text-primary)', fontWeight: 800, fontSize: 20 }}>AI Training Plans</h3>
               <p style={{ color: 'var(--text-primary)', fontWeight: 700, marginTop: 8 }}>AI Training Plans are a Pro feature</p>
               <p style={{ color: 'var(--text-muted)', marginTop: 8 }}>Upgrade to unlock unlimited AI-generated training plans.</p>
               <button
                 onClick={() => navigate('/upgrade')}
-                style={{ background: '#EAB308', color: '#000', fontWeight: 700, padding: '12px 24px', borderRadius: 8, border: 'none', cursor: 'pointer', marginTop: 16 }}
+                style={{ background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 700, padding: '12px 24px', borderRadius: 8, border: 'none', cursor: 'pointer', marginTop: 16 }}
               >
                 Upgrade to Pro
               </button>
@@ -260,7 +260,7 @@ export default function Plan() {
               onClick={acceptAdaptive}
               disabled={acceptingAdaptive}
               className="rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-60"
-              style={{ background: 'var(--accent)', color: '#000' }}
+              style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}
             >
               {acceptingAdaptive ? 'Saving...' : 'Accept Plan'}
             </button>
@@ -284,7 +284,7 @@ export default function Plan() {
                 onClick={() => assignPlan(plan.id)}
                 disabled={assigningId === plan.id}
                 className="mt-3 rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-60"
-                style={{ background: 'var(--accent)', color: '#000' }}
+                style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}
               >
                 {assigningId === plan.id ? 'Assigning...' : 'Assign Plan'}
               </button>
@@ -301,7 +301,7 @@ export default function Plan() {
               {myPlan.type} · Week {currentWeek} of {myPlan.weeks}
             </p>
             <div className="mt-3 h-2 rounded-full" style={{ background: 'var(--bg-input)' }}>
-              <div className="h-2 rounded-full" style={{ width: `${weekProgress}%`, background: '#EAB308' }} />
+              <div className="h-2 rounded-full" style={{ width: `${weekProgress}%`, background: 'var(--accent)' }} />
             </div>
             <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>{weekProgress}% complete this week</p>
           </div>
@@ -343,7 +343,7 @@ export default function Plan() {
                   {session.type === 'rest'
                     ? <p className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>REST</p>
                     : isDone
-                      ? <CheckCircle2 size={18} color="#EAB308" />
+                      ? <CheckCircle2 size={18} color="var(--accent)" />
                       : <Circle size={18} color="var(--text-muted)" />}
                 </button>
               )
@@ -385,13 +385,13 @@ export default function Plan() {
               maxWidth: 320,
             }}
           >
-            <Lock size={32} color="#EAB308" style={{ margin: '0 auto 12px' }} />
+            <Lock size={32} color="var(--accent)" style={{ margin: '0 auto 12px' }} />
             <h3 style={{ color: 'var(--text-primary)', fontWeight: 800, fontSize: 20 }}>AI Training Plans</h3>
             <p style={{ color: 'var(--text-primary)', fontWeight: 700, marginTop: 8 }}>AI Training Plans are a Pro feature</p>
             <p style={{ color: 'var(--text-muted)', marginTop: 8 }}>Upgrade to unlock unlimited AI-generated training plans.</p>
             <button
               onClick={() => navigate('/upgrade')}
-              style={{ background: '#EAB308', color: '#000', fontWeight: 700, padding: '12px 24px', borderRadius: 8, border: 'none', cursor: 'pointer', marginTop: 16 }}
+              style={{ background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 700, padding: '12px 24px', borderRadius: 8, border: 'none', cursor: 'pointer', marginTop: 16 }}
             >
               Upgrade to Pro
             </button>

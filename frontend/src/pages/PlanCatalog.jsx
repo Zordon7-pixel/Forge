@@ -138,7 +138,7 @@ export default function PlanCatalog() {
   return (
     <div style={{ paddingBottom: 112 }}>
       <header style={{ marginBottom: 18 }}>
-        <p style={{ color: '#EAB308', fontSize: 12, fontWeight: 900, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6 }}>Plan Catalog</p>
+        <p style={{ color: 'var(--accent)', fontSize: 12, fontWeight: 900, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6 }}>Plan Catalog</p>
         <h1 style={{ color: 'var(--text-primary)', fontSize: 30, fontWeight: 950, margin: 0 }}>Build your next block.</h1>
         <p style={{ color: 'var(--text-muted)', fontSize: 14, marginTop: 8, maxWidth: 520 }}>
           Pick a goal, tune your availability, then generate a plan around the days you can actually train.
@@ -169,8 +169,8 @@ export default function PlanCatalog() {
               <span style={{ display: 'block', color: 'var(--text-muted)', fontSize: 13, fontWeight: 800, marginTop: 6 }}>{goal.duration}</span>
             </span>
             <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-              <span style={{ color: '#EAB308', fontSize: 13, fontWeight: 900 }}>{goal.feel}</span>
-              <ChevronRight size={20} color="#EAB308" />
+              <span style={{ color: 'var(--accent)', fontSize: 13, fontWeight: 900 }}>{goal.feel}</span>
+              <ChevronRight size={20} color="var(--accent)" />
             </span>
           </button>
         ))}
@@ -204,7 +204,7 @@ export default function PlanCatalog() {
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, marginBottom: 16 }}>
               <div>
-                <p style={{ color: '#EAB308', fontSize: 12, fontWeight: 900, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 4 }}>Confirm Target</p>
+                <p style={{ color: 'var(--accent)', fontSize: 12, fontWeight: 900, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 4 }}>Confirm Target</p>
                 <h2 style={{ color: 'var(--text-primary)', fontSize: 24, fontWeight: 950, margin: 0 }}>{selectedGoal.name}</h2>
                 <p style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 4 }}>{selectedGoal.duration} / {selectedGoal.feel}</p>
               </div>
@@ -219,7 +219,7 @@ export default function PlanCatalog() {
             </div>
 
             {prefillLoading && <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 12 }}>Loading your usual training rhythm...</p>}
-            {error && <div className="rounded-xl p-3" style={{ background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.35)', color: '#FCA5A5', fontSize: 13, fontWeight: 700, marginBottom: 12 }}>{error}</div>}
+            {error && <div className="rounded-xl p-3" style={{ background: 'var(--danger-dim)', border: '1px solid var(--danger-dim)', color: 'var(--danger)', fontSize: 13, fontWeight: 700, marginBottom: 12 }}>{error}</div>}
 
             <div style={{ display: 'grid', gap: 14 }}>
               {selectedGoal.key === 'custom' && (
@@ -252,9 +252,9 @@ export default function PlanCatalog() {
                         style={{
                           minHeight: 44,
                           borderRadius: 10,
-                          border: `1px solid ${active ? '#EAB308' : 'var(--border-subtle)'}`,
-                          background: active ? 'rgba(234,179,8,0.14)' : 'var(--bg-input)',
-                          color: active ? '#EAB308' : 'var(--text-muted)',
+                          border: `1px solid ${active ? 'var(--accent)' : 'var(--border-subtle)'}`,
+                          background: active ? 'var(--accent-dim)' : 'var(--bg-input)',
+                          color: active ? 'var(--accent)' : 'var(--text-muted)',
                           fontSize: 12,
                           fontWeight: 950,
                         }}
@@ -295,7 +295,7 @@ export default function PlanCatalog() {
                 className="rounded-xl p-4"
                 style={{
                   background: 'var(--bg-input)',
-                  border: `1px solid ${liftingEnabled ? '#EAB308' : 'var(--border-subtle)'}`,
+                  border: `1px solid ${liftingEnabled ? 'var(--accent)' : 'var(--border-subtle)'}`,
                   color: 'var(--text-primary)',
                   display: 'flex',
                   alignItems: 'center',
@@ -305,13 +305,13 @@ export default function PlanCatalog() {
                 }}
               >
                 <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <SlidersHorizontal size={18} color="#EAB308" />
+                  <SlidersHorizontal size={18} color="var(--accent)" />
                   <span>
                     <span style={{ display: 'block', fontSize: 14, fontWeight: 900 }}>Include lifting</span>
                     <span style={{ display: 'block', color: 'var(--text-muted)', fontSize: 12, marginTop: 2 }}>Strength work follows your generated run plan.</span>
                   </span>
                 </span>
-                <span style={{ color: liftingEnabled ? '#EAB308' : 'var(--text-muted)', fontSize: 12, fontWeight: 950 }}>{liftingEnabled ? 'ON' : 'OFF'}</span>
+                <span style={{ color: liftingEnabled ? 'var(--accent)' : 'var(--text-muted)', fontSize: 12, fontWeight: 950 }}>{liftingEnabled ? 'ON' : 'OFF'}</span>
               </button>
 
               <button
@@ -319,7 +319,7 @@ export default function PlanCatalog() {
                 onClick={generatePlan}
                 disabled={generating || prefillLoading}
                 className="rounded-xl p-4"
-                style={{ background: '#EAB308', color: '#000', border: 'none', fontSize: 15, fontWeight: 950, opacity: generating || prefillLoading ? 0.65 : 1 }}
+                style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', fontSize: 15, fontWeight: 950, opacity: generating || prefillLoading ? 0.65 : 1 }}
               >
                 {generating ? 'Generating...' : 'Generate Plan'}
               </button>

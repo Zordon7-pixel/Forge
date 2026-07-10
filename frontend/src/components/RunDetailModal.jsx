@@ -23,9 +23,9 @@ const EFFORT_LABELS = ['', 'Very Easy', 'Easy', 'Easy-Moderate', 'Moderate', 'Mo
 const ZONES = [
   { key: 'Z1', min: 0.5, max: 0.6, name: 'Recovery', color: '#6B7280' },
   { key: 'Z2', min: 0.6, max: 0.7, name: 'Aerobic Base', color: '#3B82F6' },
-  { key: 'Z3', min: 0.7, max: 0.8, name: 'Tempo', color: '#22C55E' },
-  { key: 'Z4', min: 0.8, max: 0.9, name: 'Threshold', color: '#EAB308' },
-  { key: 'Z5', min: 0.9, max: 1.01, name: 'Max Effort', color: '#EF4444' },
+  { key: 'Z3', min: 0.7, max: 0.8, name: 'Tempo', color: 'var(--success)' },
+  { key: 'Z4', min: 0.8, max: 0.9, name: 'Threshold', color: 'var(--accent)' },
+  { key: 'Z5', min: 0.9, max: 1.01, name: 'Max Effort', color: 'var(--danger)' },
 ]
 
 export default function RunDetailModal({ run, onClose, onFeedbackGenerated }) {
@@ -105,12 +105,12 @@ export default function RunDetailModal({ run, onClose, onFeedbackGenerated }) {
             <p className="text-sm leading-relaxed" style={{ color: 'var(--text-muted)' }}>{feedback}</p>
           ) : (
             <>
-              {error && <p className="text-xs mb-2" style={{ color: '#ef4444' }}>{error}</p>}
+              {error && <p className="text-xs mb-2" style={{ color: 'var(--danger)' }}>{error}</p>}
               <button
                 onClick={generateFeedback}
                 disabled={loading}
                 className="w-full py-2.5 rounded-xl text-sm font-semibold"
-                style={{ background: 'var(--accent)', color: '#000' }}
+                style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}
               >
                 {loading ? 'Analyzing your run...' : 'Get AI Feedback'}
               </button>

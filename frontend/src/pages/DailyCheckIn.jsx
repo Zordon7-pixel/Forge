@@ -74,7 +74,7 @@ function ReadinessSegment({ title, helper, options, value, onChange, error, erro
           )
         })}
       </div>
-      {error && <p style={{ fontSize: 12, color: '#ef4444', marginTop: 8 }}>{error}</p>}
+      {error && <p style={{ fontSize: 12, color: 'var(--danger)', marginTop: 8 }}>{error}</p>}
     </div>
   )
 }
@@ -211,7 +211,7 @@ export default function DailyCheckIn({ onComplete }) {
       <div style={{ minHeight: '100vh', background: 'var(--bg-base)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24, gap: 16, maxWidth: 480, margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
         <p style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', textAlign: 'center' }}>You've already checked in today</p>
         <button onClick={() => navigate('/')}
-          style={{ background: 'var(--accent)', color: '#000', fontWeight: 700, borderRadius: 14, padding: '16px 32px', border: 'none', cursor: 'pointer' }}>
+          style={{ background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 700, borderRadius: 14, padding: '16px 32px', border: 'none', cursor: 'pointer' }}>
           Go to Dashboard
         </button>
       </div>
@@ -229,7 +229,7 @@ export default function DailyCheckIn({ onComplete }) {
           </p>
           <button
             onClick={() => navigate('/stretches/session?type=pre')}
-            style={{ width: '100%', background: 'var(--accent)', color: '#000', fontWeight: 900, borderRadius: 14, padding: '18px', border: 'none', cursor: 'pointer', fontSize: 16, marginBottom: 12 }}
+            style={{ width: '100%', background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 900, borderRadius: 14, padding: '18px', border: 'none', cursor: 'pointer', fontSize: 16, marginBottom: 12 }}
           >
             Start Stretching
           </button>
@@ -293,7 +293,7 @@ export default function DailyCheckIn({ onComplete }) {
           </div>
         )}
         <button onClick={() => setShowStretchGate(true)}
-          style={{ background: 'var(--accent)', color: '#000', fontWeight: 900, borderRadius: 14, padding: '18px 48px', border: 'none', cursor: 'pointer', fontSize: 16 }}>
+          style={{ background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 900, borderRadius: 14, padding: '18px 48px', border: 'none', cursor: 'pointer', fontSize: 16 }}>
           Let's go
         </button>
       </div>
@@ -392,7 +392,7 @@ export default function DailyCheckIn({ onComplete }) {
             </button>
           ))}
         </div>
-        {fieldErrors.time_available && <p style={{ fontSize: 12, color: '#ef4444', marginTop: 8 }}>{fieldErrors.time_available}</p>}
+        {fieldErrors.time_available && <p style={{ fontSize: 12, color: 'var(--danger)', marginTop: 8 }}>{fieldErrors.time_available}</p>}
       </div>
 
       <div style={{ marginBottom: 32 }}>
@@ -413,7 +413,7 @@ export default function DailyCheckIn({ onComplete }) {
       </div>
 
       {submitError && (
-        <p role="alert" style={{ background: 'var(--bg-card)', border: '1px solid #ef4444', borderRadius: 12, color: '#fecaca', fontSize: 13, fontWeight: 700, lineHeight: 1.4, padding: '12px 14px', margin: '0 0 16px' }}>
+        <p role="alert" style={{ background: 'var(--bg-card)', border: '1px solid var(--danger)', borderRadius: 12, color: 'var(--danger)', fontSize: 13, fontWeight: 700, lineHeight: 1.4, padding: '12px 14px', margin: '0 0 16px' }}>
           {submitError}
         </p>
       )}
@@ -421,7 +421,7 @@ export default function DailyCheckIn({ onComplete }) {
       <button onClick={submit} disabled={saving}
         style={{
           width: '100%', background: !saving ? 'var(--accent)' : 'var(--bg-input)',
-          color: '#000', fontWeight: 900, fontSize: 17, borderRadius: 16, padding: '18px', border: 'none', cursor: 'pointer',
+          color: 'var(--on-accent)', fontWeight: 900, fontSize: 17, borderRadius: 16, padding: '18px', border: 'none', cursor: 'pointer',
           opacity: saving ? 0.6 : 1,
           marginBottom: 80,
         }}>

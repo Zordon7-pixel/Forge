@@ -1,6 +1,6 @@
 import React from 'react'
 
-const PRIMARY_COLOR = '#EAB308'
+const PRIMARY_COLOR = 'var(--accent)'
 const SECONDARY_COLOR = '#c9a634'
 const BASE_FILL = '#4b5563'
 const STROKE = 'rgba(255,255,255,0.85)'

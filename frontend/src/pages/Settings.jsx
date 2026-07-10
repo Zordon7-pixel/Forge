@@ -387,7 +387,7 @@ export default function Settings() {
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
           <span style={{ fontSize: 13, fontWeight: 900, color: 'var(--text-primary)' }}>{provider.name}</span>
-          <span style={{ fontSize: 10, fontWeight: 900, color: active ? '#86efac' : 'var(--text-muted)', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>{labelText}</span>
+          <span style={{ fontSize: 10, fontWeight: 900, color: active ? 'var(--success)' : 'var(--text-muted)', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>{labelText}</span>
         </div>
         <p style={{ margin: 0, fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.35 }}>{provider.delivery}</p>
       </div>
@@ -446,7 +446,7 @@ export default function Settings() {
                 <button
                   key={lang.code}
                   onClick={() => i18n.changeLanguage(lang.code)}
-                  style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 14px', borderRadius: 12, border: `2px solid ${i18n.language === lang.code ? '#EAB308' : 'var(--border-subtle)'}`, background: i18n.language === lang.code ? 'rgba(234, 179, 8, 0.15)' : 'var(--bg-input)', color: 'var(--text-primary)', fontWeight: 600, fontSize: 14, cursor: 'pointer', textAlign: 'left' }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 14px', borderRadius: 12, border: `2px solid ${i18n.language === lang.code ? 'var(--accent)' : 'var(--border-subtle)'}`, background: i18n.language === lang.code ? 'var(--accent-dim)' : 'var(--bg-input)', color: 'var(--text-primary)', fontWeight: 600, fontSize: 14, cursor: 'pointer', textAlign: 'left' }}
                 >
                   <span style={{ fontSize: 18 }}>{lang.flag}</span>
                   <span>{lang.name}</span>
@@ -469,7 +469,7 @@ export default function Settings() {
             <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 10 }}>
               {units === 'imperial' ? 'Miles, lbs, °F' : 'Kilometers, kg, °C'}
             </p>
-            {saved && <p style={{ fontSize: 12, color: '#22c55e', marginTop: 10 }}>Saved</p>}
+            {saved && <p style={{ fontSize: 12, color: 'var(--success)', marginTop: 10 }}>Saved</p>}
           </div>
         </div>
       </section>
@@ -477,7 +477,7 @@ export default function Settings() {
       <section style={section}>
         <h2 style={sectionTitle}>Devices</h2>
         {deviceNotice && (
-          <div style={{ marginBottom: 10, borderRadius: 10, padding: '9px 10px', fontSize: 12, border: `1px solid ${deviceNotice.ok ? 'rgba(34,197,94,0.35)' : 'rgba(239,68,68,0.35)'}`, color: deviceNotice.ok ? '#86efac' : '#fca5a5', background: deviceNotice.ok ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.1)' }}>
+          <div style={{ marginBottom: 10, borderRadius: 10, padding: '9px 10px', fontSize: 12, border: `1px solid ${deviceNotice.ok ? 'rgba(34,197,94,0.35)' : 'var(--danger-dim)'}`, color: deviceNotice.ok ? 'var(--success)' : 'var(--danger)', background: deviceNotice.ok ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.1)' }}>
             {deviceNotice.text}
           </div>
         )}
@@ -491,7 +491,7 @@ export default function Settings() {
                   Forge now builds provider-neutral structured workouts. Apple Watch is the direct path; Garmin, COROS, Polar, Suunto, Wahoo, and TrainingPeaks are adapter slots pending API access.
                 </p>
               </div>
-              <Shield size={18} style={{ color: watchDelivery.canAutoSend ? '#22c55e' : 'var(--text-muted)', flexShrink: 0 }} />
+              <Shield size={18} style={{ color: watchDelivery.canAutoSend ? 'var(--success)' : 'var(--text-muted)', flexShrink: 0 }} />
             </div>
             <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))' }}>
               {(watchDelivery.providers?.length ? watchDelivery.providers : WatchDeliveryService.getProviders()).map(watchProviderPill)}
@@ -522,7 +522,7 @@ export default function Settings() {
                     <p style={{ margin: '3px 0 0', fontSize: 12, color: 'var(--text-muted)' }}>Last sync: {statusText(garminStatus.lastSync)}</p>
                     <p style={{ margin: '3px 0 0', fontSize: 12, color: 'var(--text-muted)' }}>Imported activities: {garminStatus.activityCount}</p>
                   </div>
-                  <Shield size={18} style={{ color: '#22c55e', flexShrink: 0 }} />
+                  <Shield size={18} style={{ color: 'var(--success)', flexShrink: 0 }} />
                 </div>
                 <div style={{ display: 'grid', gap: 8 }}>
                   <p style={{ margin: 0, fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>
@@ -536,7 +536,7 @@ export default function Settings() {
               </div>
             )}
             {garminNotice && (
-              <div style={{ marginTop: 10, borderRadius: 10, padding: '9px 10px', fontSize: 12, border: `1px solid ${garminNotice.ok ? 'rgba(34,197,94,0.35)' : 'rgba(239,68,68,0.35)'}`, color: garminNotice.ok ? '#86efac' : '#fca5a5', background: garminNotice.ok ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.1)' }}>
+              <div style={{ marginTop: 10, borderRadius: 10, padding: '9px 10px', fontSize: 12, border: `1px solid ${garminNotice.ok ? 'rgba(34,197,94,0.35)' : 'var(--danger-dim)'}`, color: garminNotice.ok ? 'var(--success)' : 'var(--danger)', background: garminNotice.ok ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.1)' }}>
                 {garminNotice.text}
               </div>
             )}
@@ -552,7 +552,7 @@ export default function Settings() {
                     <p style={{ margin: '3px 0 0', fontSize: 12, color: 'var(--text-muted)' }}>Status: {device.connected ? 'Connected' : 'Not connected'}</p>
                     <p style={{ margin: '3px 0 0', fontSize: 12, color: 'var(--text-muted)' }}>Last sync: {statusText(device.lastSync)}</p>
                   </div>
-                  <Shield size={18} style={{ color: device.connected ? '#22c55e' : 'var(--text-muted)', flexShrink: 0 }} />
+                  <Shield size={18} style={{ color: device.connected ? 'var(--success)' : 'var(--text-muted)', flexShrink: 0 }} />
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: device.connected ? '1fr 1fr' : '1fr', gap: 8 }}>
                   {!device.connected ? (
@@ -625,16 +625,16 @@ export default function Settings() {
           <div style={card}>
             <span style={label}>Delete Account</span>
             <p style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.6, marginTop: 0 }}>Permanently delete your account and training history.</p>
-            <button type="button" onClick={() => setShowDeleteAccount((value) => !value)} style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, border: '1px solid rgba(239,68,68,0.4)', borderRadius: 12, padding: '11px 12px', background: 'rgba(239,68,68,0.08)', color: '#fca5a5', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+            <button type="button" onClick={() => setShowDeleteAccount((value) => !value)} style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, border: '1px solid rgba(239,68,68,0.4)', borderRadius: 12, padding: '11px 12px', background: 'rgba(239,68,68,0.08)', color: 'var(--danger)', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
               <Trash2 size={14} />
               Delete Account
             </button>
             {showDeleteAccount && (
-              <div style={{ border: '1px solid rgba(239,68,68,0.35)', borderRadius: 12, padding: 12, background: 'rgba(239,68,68,0.08)', marginTop: 10 }}>
-                <p style={{ margin: 0, fontSize: 12, color: '#fca5a5' }}>Type DELETE and confirm your password to continue.</p>
-                <input value={deleteConfirm} onChange={(e) => setDeleteConfirm(e.target.value)} placeholder="DELETE" aria-label="Delete account confirmation" style={{ width: '100%', marginTop: 10, padding: '10px 12px', borderRadius: 10, border: '1px solid rgba(239,68,68,0.35)', background: 'var(--bg-input)', color: 'var(--text-primary)' }} />
-                <input type="password" value={deletePassword} onChange={(e) => setDeletePassword(e.target.value)} placeholder="Current password" aria-label="Current password" autoComplete="current-password" style={{ width: '100%', marginTop: 10, padding: '10px 12px', borderRadius: 10, border: '1px solid rgba(239,68,68,0.35)', background: 'var(--bg-input)', color: 'var(--text-primary)' }} />
-                <button type="button" onClick={handleDeleteAccount} disabled={deleting} style={{ width: '100%', marginTop: 10, border: 'none', borderRadius: 10, padding: '10px 12px', background: '#ef4444', color: '#fff', fontWeight: 800, cursor: 'pointer', opacity: deleting ? 0.7 : 1 }}>
+              <div style={{ border: '1px solid var(--danger-dim)', borderRadius: 12, padding: 12, background: 'rgba(239,68,68,0.08)', marginTop: 10 }}>
+                <p style={{ margin: 0, fontSize: 12, color: 'var(--danger)' }}>Type DELETE and confirm your password to continue.</p>
+                <input value={deleteConfirm} onChange={(e) => setDeleteConfirm(e.target.value)} placeholder="DELETE" aria-label="Delete account confirmation" style={{ width: '100%', marginTop: 10, padding: '10px 12px', borderRadius: 10, border: '1px solid var(--danger-dim)', background: 'var(--bg-input)', color: 'var(--text-primary)' }} />
+                <input type="password" value={deletePassword} onChange={(e) => setDeletePassword(e.target.value)} placeholder="Current password" aria-label="Current password" autoComplete="current-password" style={{ width: '100%', marginTop: 10, padding: '10px 12px', borderRadius: 10, border: '1px solid var(--danger-dim)', background: 'var(--bg-input)', color: 'var(--text-primary)' }} />
+                <button type="button" onClick={handleDeleteAccount} disabled={deleting} style={{ width: '100%', marginTop: 10, border: 'none', borderRadius: 10, padding: '10px 12px', background: 'var(--danger)', color: '#fff', fontWeight: 800, cursor: 'pointer', opacity: deleting ? 0.7 : 1 }}>
                   {deleting ? 'Deleting...' : 'Permanently Delete Account'}
                 </button>
               </div>
@@ -644,16 +644,16 @@ export default function Settings() {
       </section>
 
       {privacyNotice && (
-        <div style={{ marginBottom: 16, borderRadius: 10, padding: '9px 10px', fontSize: 12, border: `1px solid ${privacyNotice.ok ? 'rgba(34,197,94,0.35)' : 'rgba(239,68,68,0.35)'}`, color: privacyNotice.ok ? '#86efac' : '#fca5a5', background: privacyNotice.ok ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.1)' }}>
+        <div style={{ marginBottom: 16, borderRadius: 10, padding: '9px 10px', fontSize: 12, border: `1px solid ${privacyNotice.ok ? 'rgba(34,197,94,0.35)' : 'var(--danger-dim)'}`, color: privacyNotice.ok ? 'var(--success)' : 'var(--danger)', background: privacyNotice.ok ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.1)' }}>
           {privacyNotice.text}
         </div>
       )}
 
       {importNotice && (
         <div style={{
-          background: importNotice.ok ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.12)',
-          border: `1px solid ${importNotice.ok ? 'rgba(34,197,94,0.35)' : 'rgba(239,68,68,0.35)'}`,
-          color: importNotice.ok ? '#86efac' : '#fca5a5',
+          background: importNotice.ok ? 'rgba(34,197,94,0.15)' : 'var(--danger-dim)',
+          border: `1px solid ${importNotice.ok ? 'rgba(34,197,94,0.35)' : 'var(--danger-dim)'}`,
+          color: importNotice.ok ? 'var(--success)' : 'var(--danger)',
           borderRadius: 12,
           padding: '10px 12px',
           fontSize: 13,

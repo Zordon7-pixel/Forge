@@ -130,7 +130,7 @@ export default function Profile() {
   const sectionLabel = { fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 14 }
   const inputStyle = { background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', borderRadius: 10, padding: '12px 14px', fontSize: 14, color: 'var(--text-primary)', width: '100%', boxSizing: 'border-box' }
   const pillBase = { minWidth: 0, minHeight: 40, padding: '8px 12px', borderRadius: 20, fontSize: 13, lineHeight: 1.2, cursor: 'pointer' }
-  const pillActive = { ...pillBase, background: 'var(--accent)', color: '#000', border: 'none', fontWeight: 700 }
+  const pillActive = { ...pillBase, background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', fontWeight: 700 }
   const pillInactive = { ...pillBase, background: 'var(--bg-input)', color: 'var(--text-muted)', border: '1px solid var(--border-subtle)', fontWeight: 400 }
 
   return (
@@ -286,7 +286,7 @@ export default function Profile() {
 
           {/* Sticky save button - stays visible while scrolling */}
           <div style={{ position: 'sticky', bottom: 80, zIndex: 20, background: 'var(--bg-base)', paddingTop: 8, paddingBottom: 8 }}>
-            <button form="profile-form" type="submit" disabled={saving} className="w-full rounded-xl py-3 font-semibold disabled:opacity-70" style={{ background: 'var(--accent)', color: '#000' }}>{saving ? t('common.loading') : t('profile.save')}</button>
+            <button form="profile-form" type="submit" disabled={saving} className="w-full rounded-xl py-3 font-semibold disabled:opacity-70" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>{saving ? t('common.loading') : t('profile.save')}</button>
           </div>
 
           <div
@@ -305,7 +305,7 @@ export default function Profile() {
             <p style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 }}>Health</p>
             <div onClick={() => navigate('/injury')} className="flex items-center justify-between rounded-xl p-4 cursor-pointer transition-colors" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
               <div className="flex items-center gap-3">
-                <Activity size={18} color="#EAB308" />
+                <Activity size={18} color="var(--accent)" />
                 <span className="text-sm font-medium text-[var(--text-primary)]">Injury Log</span>
               </div>
               <ChevronRight size={16} className="text-[var(--text-muted)]" />
