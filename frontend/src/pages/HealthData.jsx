@@ -4,6 +4,7 @@ import { Activity, ChevronRight, HeartPulse, Moon, RefreshCw, Shield, Watch } fr
 import { useTranslation } from 'react-i18next'
 import api from '../lib/api'
 import HealthService from '../services/HealthService'
+import Skeleton from '../components/Skeleton'
 
 const HEALTH_SYNC_RESULT_KEY = 'forge_last_health_sync_result'
 
@@ -183,6 +184,8 @@ export default function HealthData() {
           {limiterDriver?.suggestion || t('body.allGood')}
         </p>
       </section>
+
+      {loading && <Skeleton rows={2} />}
 
       {drivers.length === 0 && !loading ? (
         <section className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>

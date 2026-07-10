@@ -11,6 +11,7 @@ import { useUnits } from '../context/UnitsContext'
 import api from '../lib/api'
 import track from '../lib/track'
 import LoadingRunner from '../components/LoadingRunner'
+import Skeleton from '../components/Skeleton'
 import { useOnlineStatus } from '../lib/useOnlineStatus'
 import HealthService from '../services/HealthService'
 import { useProContext } from '../context/ProContext'
@@ -600,7 +601,7 @@ export default function Dashboard() {
     navigate(`/log-run${params.toString() ? `?${params.toString()}` : ''}`)
   }, [navigate, nextRecommendation])
 
-  if (loading) return <LoadingRunner message="Getting ready" />
+  if (loading) return <div className="space-y-4"><LoadingRunner message="Getting ready" /><Skeleton rows={3} /></div>
 
   return (
     <div className="space-y-4">

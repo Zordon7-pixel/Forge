@@ -365,10 +365,12 @@ export function TodayDetailSheet({
   return (
     <div
       onClick={onClose}
+      className="sheet-backdrop"
       style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.72)', zIndex: 50, display: 'flex', alignItems: 'flex-end' }}
     >
       <div
         onClick={(event) => event.stopPropagation()}
+        className="sheet-panel"
         style={{ background: 'var(--bg-card)', borderRadius: '20px 20px 0 0', padding: 24, width: '100%', maxHeight: '82vh', overflowY: 'auto' }}
       >
         <div className="flex items-start justify-between gap-3">
@@ -558,8 +560,10 @@ export function CalendarDayDetailSheet({ selectedCalendarDay, onClose, fmtDurati
 
   return (
     <div onClick={onClose}
+      className="sheet-backdrop"
       style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 50, display: 'flex', alignItems: 'flex-end' }}>
       <div onClick={e => e.stopPropagation()}
+        className="sheet-panel"
         style={{ background: 'var(--bg-card)', borderRadius: '20px 20px 0 0', padding: 24, width: '100%', maxHeight: '60vh', overflowY: 'auto' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
           <div>
@@ -659,10 +663,12 @@ export function ReadinessBreakdownModal({ open, onClose, readinessData }) {
   return (
     <div
       onClick={onClose}
+      className="sheet-backdrop"
       style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 50, display: 'flex', alignItems: 'flex-end' }}
     >
       <div
         onClick={e => e.stopPropagation()}
+        className="sheet-panel"
         style={{ background: 'var(--bg-card)', borderRadius: '20px 20px 0 0', padding: 24, width: '100%', maxHeight: '70vh', overflowY: 'auto' }}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
@@ -739,10 +745,12 @@ export default function InsightsSheet({
   return (
     <div
       onClick={onClose}
+      className="sheet-backdrop"
       style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.72)', zIndex: 50, display: 'flex', alignItems: 'flex-end' }}
     >
       <div
         onClick={(event) => event.stopPropagation()}
+        className="sheet-panel"
         style={{ background: 'var(--bg-base)', borderRadius: '20px 20px 0 0', padding: 16, width: '100%', maxHeight: '82vh', overflowY: 'auto' }}
       >
         <div className="mb-4 flex items-start justify-between gap-3">
