@@ -29,10 +29,11 @@ function computeReadiness(stats, checkin) {
   return Math.max(30, Math.min(100, score))
 }
 
+// hex required: consumed by `${color}XX` alpha templates — do not tokenize
 function getReadinessColor(score) {
-  if (score < 50) return 'var(--danger)'
-  if (score < 75) return 'var(--accent)'
-  return 'var(--success)'
+  if (score < 50) return '#ef4444'
+  if (score < 75) return '#EAB308'
+  return '#22c55e'
 }
 
 function getReadinessMessage(score, t) {
