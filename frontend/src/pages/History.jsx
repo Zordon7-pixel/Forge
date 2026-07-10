@@ -12,6 +12,7 @@ import RunDetailModal from '../components/RunDetailModal'
 import WorkoutDetailModal from '../components/WorkoutDetailModal'
 import LoadingRunner from '../components/LoadingRunner'
 import { getPaceZone } from '../lib/athleteLanguage'
+import { chartAccent, chartAxisProps, chartTooltipProps } from '../lib/chartTheme'
 
 function getRunDate(run) {
   return run.date || run.created_at?.slice(0, 10) || ''
@@ -210,14 +211,14 @@ export default function History() {
         <div className="rounded-xl p-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
           <div style={{ width: '100%', height: 180 }}>
             <ResponsiveContainer>
-              <BarChart data={weeklyMileage}><XAxis dataKey="week" stroke="#fff" tick={{ fontSize: 10 }} /><YAxis stroke="#fff" tick={{ fontSize: 10 }} /><Tooltip /><Bar dataKey="miles" fill="var(--accent)" /></BarChart>
+              <BarChart data={weeklyMileage}><XAxis dataKey="week" {...chartAxisProps} /><YAxis {...chartAxisProps} /><Tooltip {...chartTooltipProps} /><Bar dataKey="miles" fill={chartAccent} /></BarChart>
             </ResponsiveContainer>
           </div>
         </div>
         <div className="rounded-xl p-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
           <div style={{ width: '100%', height: 180 }}>
             <ResponsiveContainer>
-              <LineChart data={paceTrend}><XAxis dataKey="idx" stroke="#fff" tick={{ fontSize: 10 }} /><YAxis stroke="#fff" tick={{ fontSize: 10 }} /><Tooltip /><Line type="monotone" dataKey="pace" stroke="var(--accent)" strokeWidth={2} dot={false} /></LineChart>
+              <LineChart data={paceTrend}><XAxis dataKey="idx" {...chartAxisProps} /><YAxis {...chartAxisProps} /><Tooltip {...chartTooltipProps} /><Line type="monotone" dataKey="pace" stroke={chartAccent} strokeWidth={2} dot={false} /></LineChart>
             </ResponsiveContainer>
           </div>
         </div>

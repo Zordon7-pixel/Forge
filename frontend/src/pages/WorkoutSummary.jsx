@@ -9,6 +9,7 @@ import PhotoUploader from '../components/PhotoUploader'
 import AICoachFeedbackCard from '../components/AICoachFeedbackCard'
 import WorkoutCard from '../components/WorkoutCard'
 import { getPaceZone } from '../lib/athleteLanguage'
+import { chartAccent, chartAxisProps, chartContrast, chartTooltipProps } from '../lib/chartTheme'
 
 function fmtDuration(s) {
   if (!s && s !== 0) return '--'
@@ -275,14 +276,14 @@ export default function WorkoutSummary() {
             <div style={{ width: '100%', height: 220, background: 'var(--bg-input)', borderRadius: 12, padding: 8 }}>
               <ResponsiveContainer>
                 <PieChart>
-                  <Pie data={muscleVolumeData} dataKey="value" nameKey="name" outerRadius={80}>{muscleVolumeData.map((_, i) => <Cell key={i} fill={i % 2 ? '#ffffff' : 'var(--accent)'} />)}</Pie>
-                  <Tooltip />
+                  <Pie data={muscleVolumeData} dataKey="value" nameKey="name" outerRadius={80}>{muscleVolumeData.map((_, i) => <Cell key={i} fill={i % 2 ? chartContrast : chartAccent} />)}</Pie>
+                  <Tooltip {...chartTooltipProps} />
                 </PieChart>
               </ResponsiveContainer>
             </div>
             <div style={{ width: '100%', height: 220, background: 'var(--bg-input)', borderRadius: 12, padding: 8, marginTop: 10 }}>
               <ResponsiveContainer>
-                <BarChart data={hrZonesData}><XAxis dataKey="zone" stroke="#fff" /><YAxis stroke="#fff" /><Tooltip /><Bar dataKey="min" fill="var(--accent)" /></BarChart>
+                <BarChart data={hrZonesData}><XAxis dataKey="zone" {...chartAxisProps} /><YAxis {...chartAxisProps} /><Tooltip {...chartTooltipProps} /><Bar dataKey="min" fill={chartAccent} /></BarChart>
               </ResponsiveContainer>
             </div>
           </div>
