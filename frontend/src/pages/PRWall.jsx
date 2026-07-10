@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import api from '../lib/api'
 import LoadingRunner from '../components/LoadingRunner'
-import { Lock, Pencil } from 'lucide-react'
+import { Lock, Pencil, Trophy } from 'lucide-react'
 import { useProContext } from '../context/ProContext'
 
 const baseCardStyle = {
@@ -282,6 +282,7 @@ export default function PRWall() {
             <h2 className="t-h2 mb-3">Hybrid PRs</h2>
             {hybridPrs.length === 0 ? (
               <div style={baseCardStyle}>
+                <Trophy size={28} color="var(--accent)" style={{ marginBottom: 12 }} />
                 <p style={{ color: 'var(--text-muted)' }}>{t('hybridPrs.noData')}</p>
                 <div className="mt-3 flex gap-2">
                   <button onClick={() => navigate('/log-run')} className="rounded-xl px-3 py-2 text-sm font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none' }}>Log run</button>

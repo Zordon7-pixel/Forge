@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { ArrowDownRight, ArrowUpRight, Brain, ChevronRight, Lock, Watch, AlertTriangle } from 'lucide-react'
+import { Activity, ArrowDownRight, ArrowUpRight, Brain, ChevronRight, Lock, Watch, AlertTriangle } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import AgeGradedPerformanceCard from './AgeGradedPerformanceCard'
 import WatchWorkoutSendButton from './WatchWorkoutSendButton'
@@ -548,7 +548,10 @@ export function RecentActivityCard({ recentActivity, navigate, fmt, fmtDuration,
           )
         })}
         {recentActivity.length === 0 && (
-          <p className="text-sm py-4 text-center" style={{ color: 'var(--text-muted)' }}>{t('dashboard.noActivity')}</p>
+          <div className="py-4 text-center">
+            <Activity size={28} color="var(--accent)" style={{ margin: '0 auto 10px' }} />
+            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{t('dashboard.noActivity')}</p>
+          </div>
         )}
       </div>
     </section>

@@ -189,6 +189,7 @@ export default function HealthData() {
 
       {drivers.length === 0 && !loading ? (
         <section className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+          <HeartPulse size={28} color="var(--accent)" style={{ marginBottom: 12 }} />
           <p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{t('body.noData')}</p>
           <Link
             to="/settings"

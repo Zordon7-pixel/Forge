@@ -36,7 +36,13 @@ export default function Register() {
 
   return (
     <div className="flex min-h-screen items-center justify-center px-4" style={{ background: 'var(--bg-base)', color: 'var(--text-primary)' }}>
-      <div className="w-full max-w-[420px] rounded-2xl border p-6 shadow-xl" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}>
+      <div className="w-full max-w-[420px]">
+        <div className="mb-6 text-center">
+          <img src="/icon-192.png" alt="FORGE" className="mx-auto h-14 w-14 rounded-2xl object-cover" />
+          <p className="t-title mt-3 tracking-[0.24em]" style={{ color: 'var(--text-primary)' }}>FORGE</p>
+          <p className="t-sub mt-1">Coach for runners who lift.</p>
+        </div>
+      <div className="card p-6">
         <h1 className="mb-1 text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>{t('auth.register')}</h1>
         <p className="mb-6 text-sm" style={{ color: 'var(--text-muted)' }}>Start building your smartest training cycle.</p>
 
@@ -44,21 +50,22 @@ export default function Register() {
           <input type="text" required placeholder={t('auth.name')} className="w-full rounded-xl border px-4 py-3 outline-none placeholder:text-gray-500 focus:ring-2" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }} value={name} onChange={e => setName(e.target.value)} />
           <input type="email" required placeholder={t('auth.email')} className="w-full rounded-xl border px-4 py-3 outline-none placeholder:text-gray-500 focus:ring-2" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }} value={email} onChange={e => setEmail(e.target.value)} />
           <input type="password" required placeholder={t('auth.password')} className="w-full rounded-xl border px-4 py-3 outline-none placeholder:text-gray-500 focus:ring-2" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }} value={password} onChange={e => setPassword(e.target.value)} />
-          <button type="submit" disabled={loading} className="w-full rounded-xl py-3 font-semibold transition hover:opacity-90 disabled:opacity-70" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>{loading ? t('common.loading') : t('auth.register')}</button>
+          <button type="submit" disabled={loading} className="pressable w-full rounded-xl py-3 font-semibold transition hover:opacity-90 disabled:opacity-70" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>{loading ? t('common.loading') : t('auth.register')}</button>
         </form>
 
         <p className="mt-4 text-center text-xs leading-6" style={{ color: 'var(--text-muted)' }}>
           By creating an account you agree to our{' '}
-          <Link to="/terms" className="font-semibold hover:underline" style={{ color: 'var(--accent)' }}>Terms of Service</Link>
+          <Link to="/terms" className="whitespace-nowrap font-semibold hover:underline" style={{ color: 'var(--accent)' }}>Terms of Service</Link>
           {' '}and{' '}
-          <Link to="/privacy" className="font-semibold hover:underline" style={{ color: 'var(--accent)' }}>Privacy Policy</Link>
+          <Link to="/privacy" className="whitespace-nowrap font-semibold hover:underline" style={{ color: 'var(--accent)' }}>Privacy Policy</Link>
         </p>
 
         {error && <p className="mt-3 text-sm" style={{ color: 'var(--accent)' }}>{error}</p>}
 
         <p className="mt-5 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
-          {t('auth.hasAccount')} <Link to="/login" className="font-semibold hover:underline" style={{ color: 'var(--accent)' }}>{t('auth.login')}</Link>
+          {t('auth.hasAccount')} <Link to="/login" className="whitespace-nowrap font-semibold hover:underline" style={{ color: 'var(--accent)' }}>{t('auth.login')}</Link>
         </p>
+      </div>
       </div>
       {showWaiver && (
         <ConsentWaiver
