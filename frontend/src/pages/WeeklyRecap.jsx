@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
-import { Activity, AlertTriangle, Brain, Dumbbell, Lock, Mountain, Ruler, Timer, Trophy } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { Activity, AlertTriangle, Brain, Dumbbell, Mountain, Ruler, Timer, Trophy } from 'lucide-react'
 import api from '../lib/api'
 import LoadingRunner from '../components/LoadingRunner'
 import { useProContext } from '../context/ProContext'
+import ProGate from '../components/ProGate'
 
 function StatCard({ icon: Icon, label, value, sub }) {
   return (
@@ -26,7 +27,6 @@ function StatCard({ icon: Icon, label, value, sub }) {
 }
 
 export default function WeeklyRecap() {
-  const navigate = useNavigate()
   const { isPro, loading: proLoading } = useProContext()
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -43,8 +43,8 @@ export default function WeeklyRecap() {
   const deltaLabel = mileageDelta >= 0 ? `+${mileageDelta}% vs last week` : `${mileageDelta}% vs last week`
 
   return (
-    <div style={{ position: 'relative' }}>
-      <div className="space-y-4" style={{ filter: !proLoading && !isPro ? 'blur(4px)' : 'none', pointerEvents: !proLoading && !isPro ? 'none' : 'auto' }}>
+    <ProGate isPro={isPro} loading={proLoading} message="Weekly Recap is a Pro feature">
+      <div className="space-y-4">
         {loading ? (
           <LoadingRunner message="Loading weekly recap" />
         ) : (
@@ -130,41 +130,6 @@ export default function WeeklyRecap() {
           </>
         )}
       </div>
-      {!proLoading && !isPro && (
-        <div
-          style={{
-            position: 'absolute',
-            inset: 0,
-            backdropFilter: 'blur(4px)',
-            zIndex: 10,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-        >
-          <div
-            style={{
-              background: 'var(--bg-card)',
-              border: '1px solid var(--border-subtle)',
-              borderRadius: 16,
-              padding: 32,
-              textAlign: 'center',
-              maxWidth: 320,
-            }}
-          >
-            <Lock size={32} color="var(--accent)" style={{ margin: '0 auto 12px' }} />
-            <h3 style={{ color: 'var(--text-primary)', fontWeight: 800, fontSize: 20 }}>Weekly Recap</h3>
-            <p style={{ color: 'var(--text-primary)', fontWeight: 700, marginTop: 8 }}>Weekly Recap is a Pro feature</p>
-            <p style={{ color: 'var(--text-muted)', marginTop: 8 }}>Upgrade to see your weekly training insights and trends.</p>
-            <button
-              onClick={() => navigate('/upgrade')}
-              style={{ background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 700, padding: '12px 24px', borderRadius: 8, border: 'none', cursor: 'pointer', marginTop: 16 }}
-            >
-              Upgrade to Pro
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
+    </ProGate>
   )
 }
