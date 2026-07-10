@@ -395,25 +395,34 @@ export default function ActiveRun() {
   return (
     <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>
       {countingDown && <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: '#000' }}><div className="text-center"><p className="text-9xl font-black" style={{ color: 'var(--accent)' }}>{countdownVal}</p><p className="text-xl mt-4" style={{ color: 'var(--text-muted)' }}>Get ready...</p></div></div>}
-      <h2 className="text-2xl font-black mb-4" style={{ color: 'var(--text-primary)' }}>Active Run</h2>
+      <h2 className="t-micro mb-4">Active Run</h2>
 
-      <div className="grid grid-cols-3 gap-2 mb-4">
-        <div className="rounded-xl p-3 text-center" style={{ background: 'var(--bg-input)' }}><p className="text-xs" style={{ color: 'var(--text-muted)' }}>Time</p><p className="font-bold" style={{ color: 'var(--text-primary)' }}>{timeDisplay}</p></div>
-        <div className="rounded-xl p-3 text-center" style={{ background: 'var(--bg-input)' }}><p className="text-xs" style={{ color: 'var(--text-muted)' }}>Distance</p><p className="font-bold" style={{ color: 'var(--text-primary)' }}>{fmt.distance(distanceMiles, 2)}</p></div>
-        <div className="rounded-xl p-3 text-center" style={{ background: 'var(--bg-input)' }}><p className="text-xs" style={{ color: 'var(--text-muted)' }}>Pace</p><p className="font-bold" style={{ color: 'var(--text-primary)' }}>{pace}</p></div>
+      <div className="mb-5 text-center">
+        <p className="t-micro">Elapsed</p>
+        <p className="stat-num mt-1" style={{ color: 'var(--text-primary)', fontSize: 64, lineHeight: 1 }}>{timeDisplay}</p>
+        <div className="mt-4 grid grid-cols-2 gap-3">
+          <div>
+            <p className="t-micro">Distance</p>
+            <p className="stat-num mt-1" style={{ color: 'var(--text-primary)', fontSize: 28, lineHeight: 1.1 }}>{fmt.distance(distanceMiles, 2)}</p>
+          </div>
+          <div>
+            <p className="t-micro">Pace</p>
+            <p className="stat-num mt-1" style={{ color: 'var(--text-primary)', fontSize: 28, lineHeight: 1.1 }}>{pace}</p>
+          </div>
+        </div>
       </div>
 
       <div className="rounded-xl p-3 mb-3" style={{ background: 'var(--bg-input)' }}>
-        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Heart Rate</p>
+        <p className="t-micro">Heart Rate</p>
         {liveHr ? (
           <>
             <div className="flex items-center gap-2">
-              <p className="font-bold" style={{ color: 'var(--text-primary)' }}>{liveHr} bpm</p>
+              <p className="stat-num" style={{ color: 'var(--text-primary)', fontSize: 24, lineHeight: 1 }}>{liveHr} bpm</p>
               <span style={{ width: 8, height: 8, borderRadius: '50%', background: hrLastUpdated && Date.now() - hrLastUpdated < 10000 ? 'var(--success)' : '#6b7280', animation: hrLastUpdated && Date.now() - hrLastUpdated < 10000 ? 'pulse 2s infinite' : 'none' }} />
               {hrLastUpdated && Date.now() - hrLastUpdated > 60000 && <span className="text-xs" style={{ color: 'var(--text-muted)' }}>(last known)</span>}
               {hrZone && <span className="px-2 py-0.5 rounded-full text-xs font-semibold" style={{ background: `${hrZone.color}22`, color: hrZone.color }}>{hrZone.key} · {hrZone.name}</span>}
             </div>
-            {hrZone && <div className="mt-2 h-1.5 rounded-full" style={{ background: 'var(--bg-base)' }}><div className="h-full rounded-full" style={{ width: `${Math.min(100, Math.max(0, (hrZone.pct * 100))) }%`, background: hrZone.color }} /></div>}
+            {hrZone && <div className="mt-3 h-2 rounded-full" style={{ background: 'var(--bg-base)' }}><div className="h-full rounded-full" style={{ width: `${Math.min(100, Math.max(0, (hrZone.pct * 100))) }%`, background: hrZone.color, transition: 'width var(--dur-med) var(--ease-out)' }} /></div>}
             <style>{`@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }`}</style>
           </>
         ) : <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Connect watch for live HR</p>}
@@ -427,10 +436,10 @@ export default function ActiveRun() {
       )}
       {saveError && <div className="rounded-xl p-3 mb-3" style={{ background: queuedOffline ? 'rgba(34,197,94,0.12)' : 'var(--danger-dim)', border: `1px solid ${queuedOffline ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'}`, color: queuedOffline ? 'var(--success)' : 'var(--danger)' }}>{saveError}</div>}
 
-      {mapMyRun && routeCoords.length > 0 && <div className="mb-4 rounded-xl overflow-hidden" style={{ height: 240 }}><MapContainer center={routeCoords[routeCoords.length - 1]} zoom={15} style={{ height: '100%', width: '100%' }}><TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" /><Marker position={routeCoords[routeCoords.length - 1]} /><Polyline positions={routeCoords} pathOptions={{ color: 'var(--accent)', weight: 4 }} /></MapContainer></div>}
+      {mapMyRun && routeCoords.length > 0 && <div className="mb-4 rounded-2xl overflow-hidden" style={{ minHeight: 280, height: 280 }}><MapContainer center={routeCoords[routeCoords.length - 1]} zoom={15} style={{ height: '100%', width: '100%' }}><TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" /><Marker position={routeCoords[routeCoords.length - 1]} /><Polyline positions={routeCoords} pathOptions={{ color: 'var(--accent)', weight: 4 }} /></MapContainer></div>}
 
-      {!running && !countingDown && !awaitingManualDistance && <><button onClick={() => setMapMyRun(v => !v)} className="w-full rounded-xl py-2 font-semibold mb-2" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}>{mapMyRun ? 'Record route: On' : 'Record route: Off'}</button><button onClick={() => { setCountdownVal(selectedCountdown); setCountingDown(selectedCountdown > 0); if (selectedCountdown === 0) startGPS() }} className="w-full rounded-xl py-3 font-black" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>Start Run</button></>}
-      {running && <button onClick={finishRun} disabled={saving} className="w-full rounded-xl py-3 font-black" style={{ background: 'var(--accent)', color: 'var(--on-accent)', opacity: saving ? 0.5 : 1 }}>{saving ? 'Saving...' : 'Finish Run'}</button>}
+      {!running && !countingDown && !awaitingManualDistance && <><button onClick={() => setMapMyRun(v => !v)} className="pressable w-full rounded-xl py-2 font-semibold mb-2" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}>{mapMyRun ? 'Record route: On' : 'Record route: Off'}</button><button onClick={() => { setCountdownVal(selectedCountdown); setCountingDown(selectedCountdown > 0); if (selectedCountdown === 0) startGPS() }} className="pressable w-full rounded-xl py-3 font-black" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>Start Run</button></>}
+      {running && <button onClick={finishRun} disabled={saving} className="pressable w-full rounded-xl py-3 font-black" style={{ background: 'var(--accent)', color: 'var(--on-accent)', opacity: saving ? 0.5 : 1, minHeight: 56 }}>{saving ? 'Saving...' : 'Finish Run'}</button>}
 
       {awaitingManualDistance && (
         <div className="rounded-xl p-3" style={{ background: 'var(--bg-input)' }}>

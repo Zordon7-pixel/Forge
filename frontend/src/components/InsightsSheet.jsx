@@ -94,7 +94,7 @@ export function ReadinessGauge({ score, onClick }) {
             strokeLinecap="round"
             transform={`rotate(-90 ${cx} ${cy})`} />
           <text x={cx} y={cy+1} textAnchor="middle" dominantBaseline="middle"
-            fontSize="13" fontWeight="bold" fill={color}>{score}</text>
+            className="stat-num" fontSize="13" fontWeight="900" fill={color}>{score}</text>
         </svg>
         <div>
           <p className="font-bold text-base" style={{ color: 'var(--text-primary)' }}>{label}</p>
@@ -166,11 +166,11 @@ export function DailyCoachFlow({ checkedInToday, readiness, recommendation, toda
   ]
 
   return (
-    <section className="rounded-2xl p-5" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+    <section className="card-hero p-5">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-xs font-bold uppercase" style={{ color: 'var(--accent)', letterSpacing: 0.8 }}>Today</p>
-          <h2 className="mt-1 text-2xl font-black" style={{ color: 'var(--text-primary)' }}>
+          <p className="t-micro" style={{ color: 'var(--accent)' }}>Today</p>
+          <h2 className="t-title mt-1" style={{ color: 'var(--text-primary)' }}>
             {checkedInToday ? 'Train from the plan' : 'Start with readiness'}
           </h2>
           <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
@@ -185,14 +185,14 @@ export function DailyCoachFlow({ checkedInToday, readiness, recommendation, toda
         <div className="flex flex-col gap-2">
           <button
             onClick={checkedInToday ? onStartWorkout : onCheckIn}
-            className="rounded-xl px-3 py-2 text-xs font-black"
+            className="pressable rounded-xl px-3 py-2 text-xs font-black"
             style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none' }}
           >
             {checkedInToday ? 'Start' : 'Check in'}
           </button>
           <button
             onClick={onDetails}
-            className="rounded-xl px-3 py-2 text-xs font-bold"
+            className="pressable rounded-xl px-3 py-2 text-xs font-bold"
             style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}
           >
             Details
@@ -205,7 +205,7 @@ export function DailyCoachFlow({ checkedInToday, readiness, recommendation, toda
             key={step.key}
             type="button"
             onClick={step.action}
-            className="rounded-xl px-2 py-3 text-left"
+            className="card pressable px-2 py-3 text-left"
             style={{ background: step.done ? 'rgba(34,197,94,0.12)' : 'var(--bg-input)', border: `1px solid ${step.done ? 'rgba(34,197,94,0.35)' : 'var(--border-subtle)'}` }}
           >
             <span className="text-[10px] font-bold" style={{ color: step.done ? 'var(--success)' : 'var(--text-muted)' }}>{index + 1}</span>

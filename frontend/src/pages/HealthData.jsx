@@ -53,10 +53,10 @@ function trendMeta(trend) {
 function DriverCard({ driver, trendLabels }) {
   const trend = trendMeta(driver.trend)
   return (
-    <article className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-      <p className="text-xs font-black uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>{driver.label}</p>
+    <article className="card p-4">
+      <p className="t-micro">{driver.label}</p>
       <div className="mt-2 flex items-end gap-2">
-        <p className="text-2xl font-black" style={{ color: 'var(--text-primary)' }}>{driver.value}</p>
+        <p className="stat-num" style={{ color: 'var(--text-primary)', fontSize: 24, lineHeight: 1.1 }}>{driver.value}</p>
         <span className="pb-1 text-lg font-black" style={{ color: trend.color }} aria-label={trendLabels[driver.trend] || trendLabels.flat}>
           {trend.arrow}
         </span>
@@ -82,8 +82,8 @@ function SourcePill({ icon: Icon, label, detail }) {
 function MetricCell({ cell }) {
   return (
     <div className="rounded-xl p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
-      <p className="text-[10px] font-bold uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>{cell.label}</p>
-      <p className="mt-1 text-base font-black" style={{ color: 'var(--text-primary)' }}>{cell.value}</p>
+      <p className="t-micro">{cell.label}</p>
+      <p className="stat-num mt-1" style={{ color: 'var(--text-primary)', fontSize: 22, lineHeight: 1.1 }}>{cell.value}</p>
       {cell.detail && <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{cell.detail}</p>}
     </div>
   )
@@ -172,7 +172,7 @@ export default function HealthData() {
         </div>
       </section>
 
-      <section className="rounded-2xl p-4" style={{ background: driversData?.limiter ? 'var(--accent)' : 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+      <section className={driversData?.limiter ? 'card-hero p-4' : 'card p-4'} style={{ background: driversData?.limiter ? 'var(--accent)' : 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
         <p className="text-xs font-black uppercase tracking-wide" style={{ color: driversData?.limiter ? '#000' : 'var(--accent)' }}>
           {driversData?.limiter ? `${limiterDriver?.label || 'Readiness'} ${t('body.limiterPrefix')}` : 'Readiness'}
         </p>

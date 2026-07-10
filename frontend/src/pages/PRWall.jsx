@@ -129,9 +129,9 @@ function formatPRDate(dateValue) {
 
 function HybridPrCard({ pr }) {
   return (
-    <article style={baseCardStyle}>
-      <p style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 1 }}>{pr.label}</p>
-      <p style={{ fontSize: 26, fontWeight: 900, color: 'var(--text-primary)', lineHeight: 1.1 }}>{pr.primary}</p>
+    <article className="card" style={{ padding: '16px' }}>
+      <p className="t-micro" style={{ marginBottom: 4 }}>{pr.label}</p>
+      <p className="stat-num" style={{ fontSize: 26, color: 'var(--text-primary)', lineHeight: 1.1 }}>{pr.primary}</p>
       <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6 }}>{pr.secondary}</p>
       <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 10, fontStyle: 'italic' }}>{pr.plainEnglish}</p>
     </article>
@@ -279,7 +279,7 @@ export default function PRWall() {
       ) : (
         <>
           <section className="mb-6">
-            <h2 className="mb-3 text-lg font-bold">Hybrid PRs</h2>
+            <h2 className="t-h2 mb-3">Hybrid PRs</h2>
             {hybridPrs.length === 0 ? (
               <div style={baseCardStyle}>
                 <p style={{ color: 'var(--text-muted)' }}>{t('hybridPrs.noData')}</p>
@@ -298,11 +298,11 @@ export default function PRWall() {
           </section>
 
           <section className="mb-6">
-            <h2 className="mb-3 text-lg font-bold">Running PRs</h2>
+            <h2 className="t-h2 mb-3">Running PRs</h2>
             <div className="grid grid-cols-1 gap-3">
               <div style={baseCardStyle}>
-                <p style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 1 }}>Total Miles</p>
-                <p style={{ fontSize: 28, fontWeight: 900, color: 'var(--accent)' }}>{totalMiles.toFixed(2)} mi</p>
+                <p className="t-micro" style={{ marginBottom: 4 }}>Total Miles</p>
+                <p className="stat-num" style={{ fontSize: 28, color: 'var(--accent)' }}>{totalMiles.toFixed(2)} mi</p>
                 <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>All-time running volume</p>
               </div>
 
@@ -314,14 +314,14 @@ export default function PRWall() {
                 runningPRs.map(pr => (
                   <div key={pr.id} style={baseCardStyle}>
                     <div className="mb-1 flex items-center justify-between gap-2">
-                      <p style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 1 }}>{pr.label}</p>
+                      <p className="t-micro" style={{ marginBottom: 4 }}>{pr.label}</p>
                       {pr.run_id ? (
                         <span className="rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ background: 'var(--accent-dim)', color: 'var(--accent)' }}>Auto</span>
                       ) : (
                         <button onClick={() => removePR(pr.id)} className="text-xs" style={{ color: 'var(--text-muted)' }}>Delete</button>
                       )}
                     </div>
-                    <p style={{ fontSize: 28, fontWeight: 900, color: 'var(--accent)' }}>{formatValue(pr)}</p>
+                    <p className="stat-num" style={{ fontSize: 28, color: 'var(--accent)' }}>{formatValue(pr)}</p>
                     <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>{formatPRDate(pr.achieved_at)}</p>
                   </div>
                 ))
@@ -330,7 +330,7 @@ export default function PRWall() {
           </section>
 
           <section className="mb-6">
-            <h2 className="mb-3 text-lg font-bold">Time PRs</h2>
+            <h2 className="t-h2 mb-3">Time PRs</h2>
             <div className="grid grid-cols-1 gap-3">
               {[
                 { label: '1 Mile', target: 1.0 },
@@ -345,7 +345,7 @@ export default function PRWall() {
                 if (editingTimePR === dist.label) {
                   return (
                     <div key={dist.label} style={baseCardStyle}>
-                      <p style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 1 }}>{dist.label}</p>
+                      <p className="t-micro" style={{ marginBottom: 4 }}>{dist.label}</p>
                       <div className="space-y-2 mb-3">
                         <input
                           type="text"
@@ -390,7 +390,7 @@ export default function PRWall() {
                   return (
                     <div key={dist.label} style={baseCardStyle}>
                       <div className="mb-2 flex items-center justify-between">
-                        <p style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1 }}>{dist.label}</p>
+                        <p className="t-micro">{dist.label}</p>
                         <button
                           onClick={() => {
                             setEditingTimePR(dist.label)
@@ -402,7 +402,7 @@ export default function PRWall() {
                           <Pencil size={14} />
                         </button>
                       </div>
-                      <p style={{ fontSize: 22, fontWeight: 900, color: 'var(--text-muted)' }}>--</p>
+                      <p className="stat-num" style={{ fontSize: 22, color: 'var(--text-muted)' }}>--</p>
                       <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>No PR yet — log a run to set it</p>
                     </div>
                   )
@@ -415,7 +415,7 @@ export default function PRWall() {
                 return (
                   <div key={dist.label} style={baseCardStyle}>
                     <div className="mb-1 flex items-center justify-between">
-                      <p style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1 }}>{dist.label}</p>
+                      <p className="t-micro">{dist.label}</p>
                       <button
                         onClick={() => {
                           setEditingTimePR(dist.label)
@@ -427,7 +427,7 @@ export default function PRWall() {
                         <Pencil size={14} />
                       </button>
                     </div>
-                    <p style={{ fontSize: 28, fontWeight: 900, color: 'var(--accent)' }}>
+                    <p className="stat-num" style={{ fontSize: 28, color: 'var(--accent)' }}>
                       {secondsToHMS(pr.best_time_seconds)}
                     </p>
                     <div className="mt-2 flex items-center gap-2">
@@ -442,7 +442,7 @@ export default function PRWall() {
           </section>
 
           <section>
-            <h2 className="mb-3 text-lg font-bold">Lifting PRs</h2>
+            <h2 className="t-h2 mb-3">Lifting PRs</h2>
             <div className="grid grid-cols-1 gap-3">
               {liftingLabels.map(label => {
                 const pr = liftingPRs.find(item => item.label === label)
@@ -456,12 +456,12 @@ export default function PRWall() {
                   return (
                     <div key={label} style={baseCardStyle}>
                       <div className="flex items-center justify-between mb-2">
-                        <p style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1 }}>{label}</p>
+                        <p className="t-micro">{label}</p>
                         <button onClick={openEntryModal} className="rounded-lg px-3 py-1 text-xs font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', cursor: 'pointer' }}>
                           + Add
                         </button>
                       </div>
-                      <p style={{ fontSize: 22, fontWeight: 900, color: 'var(--text-muted)' }}>--</p>
+                      <p className="stat-num" style={{ fontSize: 22, color: 'var(--text-muted)' }}>--</p>
                       <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>No record yet</p>
                     </div>
                   )
@@ -469,7 +469,7 @@ export default function PRWall() {
                 return (
                   <div key={pr.id} style={baseCardStyle}>
                     <div className="mb-1 flex items-center justify-between gap-2">
-                      <p style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 1 }}>{pr.label}</p>
+                      <p className="t-micro" style={{ marginBottom: 4 }}>{pr.label}</p>
                       <div className="flex items-center gap-2">
                         <button onClick={openEntryModal} className="rounded-lg px-3 py-1 text-xs font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', cursor: 'pointer' }}>
                           Update
@@ -479,7 +479,7 @@ export default function PRWall() {
                         )}
                       </div>
                     </div>
-                    <p style={{ fontSize: 28, fontWeight: 900, color: 'var(--accent)' }}>{formatValue(pr)}</p>
+                    <p className="stat-num" style={{ fontSize: 28, color: 'var(--accent)' }}>{formatValue(pr)}</p>
                     <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>{formatPRDate(pr.achieved_at)}</p>
                   </div>
                 )
@@ -488,12 +488,12 @@ export default function PRWall() {
               {liftingPRs.filter(pr => !liftingLabels.includes(pr.label)).map(pr => (
                 <div key={pr.id} style={baseCardStyle}>
                   <div className="mb-1 flex items-center justify-between gap-2">
-                    <p style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 1 }}>{pr.label}</p>
+                    <p className="t-micro" style={{ marginBottom: 4 }}>{pr.label}</p>
                     {!pr.lift_id && (
                       <button onClick={() => removePR(pr.id)} className="text-xs" style={{ color: 'var(--text-muted)' }}>Delete</button>
                     )}
                   </div>
-                  <p style={{ fontSize: 28, fontWeight: 900, color: 'var(--accent)' }}>{formatValue(pr)}</p>
+                  <p className="stat-num" style={{ fontSize: 28, color: 'var(--accent)' }}>{formatValue(pr)}</p>
                   <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>{formatPRDate(pr.achieved_at)}</p>
                 </div>
               ))}
