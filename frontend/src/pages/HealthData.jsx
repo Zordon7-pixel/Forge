@@ -181,7 +181,7 @@ export default function HealthData() {
           {loading ? 'Reading your body signals...' : driversData?.summary || t('body.allGood')}
         </h2>
         <p className="mt-2 text-sm" style={{ color: driversData?.limiter ? '#111827' : 'var(--text-muted)' }}>
-          {limiterDriver?.suggestion || t('body.allGood')}
+          {limiterDriver?.suggestion || 'No recovery signal is limiting today\'s training.'}
         </p>
       </section>
 

@@ -335,6 +335,7 @@ export default function LogRun() {
         const w = planRes.data?.today || null
         if (!w) return
         const rec = recRes.data || {}
+        setRunBrief(rec.brief && typeof rec.brief === 'object' ? { ...rec.brief, source: 'ai' } : null)
         const type = w.type || w.workout_type || rec.recommendationType || 'run'
         const distanceMiles = Number(w.distance_miles || rec.suggestedDistance || 0)
         const pace = w.pace_target || w.pace || w.target_pace || rec.suggestedPace || ''
@@ -388,13 +389,6 @@ export default function LogRun() {
       .finally(() => setWeekPlanLoading(false))
   }, [activeTab, weekPlan])
 
-
-  useEffect(() => {
-    const sid = selectedRun?.id || todayWorkout?.id
-    if (!selectedRun && !todayWorkout) return
-    const queryString = sid ? `?sessionId=${encodeURIComponent(sid)}` : ''
-    api.get(`/ai/run-brief${queryString}`).then((r) => setRunBrief(r.data || null)).catch(() => setRunBrief(null))
-  }, [selectedRun?.id, todayWorkout?.id])
 
   const estimatedTime = useMemo(() => {
     const dist = Number(distance || todayWorkout?.distanceLabel?.split(' ')[0] || 0)
@@ -553,12 +547,6 @@ export default function LogRun() {
 
         {activeTab === 'today' && (
           <div>
-            {runBrief && (
-              <div className="rounded-xl p-3 mb-3" style={{ background: 'var(--bg-base)', border: '1px solid var(--border-subtle)' }}>
-                <p className="text-sm" style={{ color: 'var(--text-primary)' }}>{runBrief.why}</p>
-                <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>Effort: {runBrief.effort} · BPM: {runBrief.bpmRange} · Cadence: {runBrief.cadence}</p>
-              </div>
-            )}
             {todayLoading ? <p style={{ color: 'var(--text-muted)' }}>Loading workout...</p> : todayWorkout ? (
               <div className="rounded-2xl p-4" style={{ background: 'var(--bg-base)', border: '1px solid var(--border-subtle)' }}>
                 <div className="flex items-start justify-between gap-3 mb-3">

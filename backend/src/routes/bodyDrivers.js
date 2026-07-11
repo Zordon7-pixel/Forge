@@ -97,7 +97,7 @@ function buildStrainDriver(currentMiles, priorMiles, liftCount) {
       ? `Training load is up ${Math.round(ratio * 100)}% versus the prior week.`
       : impact === 'positive'
         ? `Training load is down ${Math.abs(Math.round(ratio * 100))}% versus the prior week, so you look fresher.`
-        : `Training load is balanced with ${value} and ${liftCount} lift sessions.`,
+        : `Training load is balanced with ${value} and ${liftCount} lift ${liftCount === 1 ? 'session' : 'sessions'}.`,
     suggestion: impact === 'negative' ? 'Avoid stacking another hard day on top of this load.' : 'You can follow the plan if sleep and soreness agree.',
   };
 }
