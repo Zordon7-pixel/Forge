@@ -176,7 +176,7 @@ export default function Gear() {
           <div onClick={e => e.stopPropagation()} className="sheet-panel" style={{ background: 'var(--bg-card)', borderRadius: '20px 20px 0 0', padding: 24, width: '100%', maxHeight: '80vh', overflowY: 'auto' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
               <p style={{ fontSize: 18, fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>Add Shoe</p>
-              <button onClick={() => setShowAdd(false)} style={{ background: 'var(--bg-input)', border: 'none', borderRadius: 8, padding: '6px 12px', color: 'var(--text-muted)', cursor: 'pointer' }}><X size={16} /></button>
+              <button aria-label="Close add shoe" onClick={() => setShowAdd(false)} style={{ background: 'var(--bg-input)', border: 'none', borderRadius: 8, padding: '6px 12px', color: 'var(--text-muted)', cursor: 'pointer' }}><X size={16} /></button>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               <div>
@@ -234,7 +234,7 @@ export default function Gear() {
                 <p style={{ fontSize: 18, fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>Edit Shoe</p>
                 <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '2px 0 0' }}>{editingShoe.brand} {editingShoe.model}</p>
               </div>
-              <button onClick={() => setEditingShoe(null)} style={{ background: 'var(--bg-input)', border: 'none', borderRadius: 8, padding: '6px 12px', color: 'var(--text-muted)', cursor: 'pointer' }}><X size={16} /></button>
+              <button aria-label="Close edit shoe" onClick={() => setEditingShoe(null)} style={{ background: 'var(--bg-input)', border: 'none', borderRadius: 8, padding: '6px 12px', color: 'var(--text-muted)', cursor: 'pointer' }}><X size={16} /></button>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               <div>

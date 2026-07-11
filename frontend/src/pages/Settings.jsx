@@ -9,6 +9,7 @@ import { parseGarminCSV, parseStravaCSV, requestAppleHealth } from '../lib/healt
 import HealthService from '../services/HealthService'
 import WatchDeliveryService from '../services/WatchDeliveryService'
 import TestFlightDebugPanel from '../components/TestFlightDebugPanel'
+import appConfig from '../../app.json'
 
 const LANGUAGES = [
   { code: 'en', name: 'English', flag: '🇺🇸' },
@@ -665,7 +666,7 @@ export default function Settings() {
 
       {/* App version */}
       <button type="button" onClick={handleVersionTap} style={{ display: 'block', width: '100%', textAlign: 'center', fontSize: 12, color: 'var(--text-muted)', opacity: 0.5, marginTop: 24, background: 'none', border: 'none', padding: 0, cursor: 'default' }} aria-label="App version">
-        FORGE v1.0 · Built to adapt.
+        FORGE v{appConfig.expo?.version || '1.0'} · Built to adapt.
       </button>
 
       <TestFlightDebugPanel open={showDebugPanel} onClose={() => setShowDebugPanel(false)} />
