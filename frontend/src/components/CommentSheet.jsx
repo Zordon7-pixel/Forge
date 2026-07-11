@@ -45,7 +45,7 @@ export default function CommentSheet({ activityId, activityType, onClose }) {
           )}
           {comments.map(c => (
             <div key={c.id} className="flex gap-3">
-              <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: 11, color: '#000', flexShrink: 0 }}>
+              <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: 11, color: 'var(--on-accent)', flexShrink: 0 }}>
                 {(c.user_name || 'A')[0].toUpperCase()}
               </div>
               <div className="flex-1">

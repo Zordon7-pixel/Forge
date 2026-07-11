@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { CheckCircle2, Circle, Lock } from 'lucide-react'
+import { CheckCircle2, Circle } from 'lucide-react'
 import api from '../lib/api'
 import { useProContext } from '../context/ProContext'
+import ProGate from '../components/ProGate'
 
 const RUN_DAY_OPTIONS = [
   { key: 'Mon', label: 'M' },
@@ -23,7 +23,6 @@ function sessionLabel(session = {}) {
 }
 
 export default function Plan() {
-  const navigate = useNavigate()
   const { isPro, loading: proLoading } = useProContext()
   const [plans, setPlans] = useState([])
   const [myPlan, setMyPlan] = useState(null)
@@ -128,60 +127,23 @@ export default function Plan() {
 
   const intensityMeta = useMemo(() => {
     const key = String(adaptivePlan?.intensity || 'normal').toLowerCase()
-    if (key === 'recovery') return { label: '🔴 Recovery', color: '#EF4444' }
-    if (key === 'reduced') return { label: '🟡 Reduced', color: '#EAB308' }
-    if (key === 'increased') return { label: '💪 Increased', color: '#22C55E' }
+    if (key === 'recovery') return { label: '🔴 Recovery', color: 'var(--danger)' }
+    if (key === 'reduced') return { label: '🟡 Reduced', color: 'var(--accent)' }
+    if (key === 'increased') return { label: '💪 Increased', color: 'var(--success)' }
     return { label: '🟢 Normal', color: '#16A34A' }
   }, [adaptivePlan?.intensity])
 
   if (loading) {
     return (
-      <div style={{ position: 'relative' }}>
-        <div style={{ filter: !proLoading && !isPro ? 'blur(4px)' : 'none', pointerEvents: !proLoading && !isPro ? 'none' : 'auto' }}>
-          <div className="rounded-xl p-4" style={{ background: 'var(--bg-card)', color: 'var(--text-muted)' }}>Loading training plans...</div>
-        </div>
-        {!proLoading && !isPro && (
-          <div
-            style={{
-              position: 'absolute',
-              inset: 0,
-              backdropFilter: 'blur(4px)',
-              zIndex: 10,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            <div
-              style={{
-                background: 'var(--bg-card)',
-                border: '1px solid var(--border-subtle)',
-                borderRadius: 16,
-                padding: 32,
-                textAlign: 'center',
-                maxWidth: 320,
-              }}
-            >
-              <Lock size={32} color="#EAB308" style={{ margin: '0 auto 12px' }} />
-              <h3 style={{ color: 'var(--text-primary)', fontWeight: 800, fontSize: 20 }}>AI Training Plans</h3>
-              <p style={{ color: 'var(--text-primary)', fontWeight: 700, marginTop: 8 }}>AI Training Plans are a Pro feature</p>
-              <p style={{ color: 'var(--text-muted)', marginTop: 8 }}>Upgrade to unlock unlimited AI-generated training plans.</p>
-              <button
-                onClick={() => navigate('/upgrade')}
-                style={{ background: '#EAB308', color: '#000', fontWeight: 700, padding: '12px 24px', borderRadius: 8, border: 'none', cursor: 'pointer', marginTop: 16 }}
-              >
-                Upgrade to Pro
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
+      <ProGate isPro={isPro} loading={proLoading} message="AI Training Plans are a Pro feature">
+        <div className="rounded-xl p-4" style={{ background: 'var(--bg-card)', color: 'var(--text-muted)' }}>Loading training plans...</div>
+      </ProGate>
     )
   }
 
   return (
-    <div style={{ position: 'relative' }}>
-      <div className="space-y-4" style={{ filter: !proLoading && !isPro ? 'blur(4px)' : 'none', pointerEvents: !proLoading && !isPro ? 'none' : 'auto' }}>
+    <ProGate isPro={isPro} loading={proLoading} message="AI Training Plans are a Pro feature">
+      <div className="space-y-4">
       <div className="rounded-2xl p-4 space-y-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
         <div className="flex items-start justify-between gap-3">
           <div>
@@ -260,7 +222,7 @@ export default function Plan() {
               onClick={acceptAdaptive}
               disabled={acceptingAdaptive}
               className="rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-60"
-              style={{ background: 'var(--accent)', color: '#000' }}
+              style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}
             >
               {acceptingAdaptive ? 'Saving...' : 'Accept Plan'}
             </button>
@@ -284,7 +246,7 @@ export default function Plan() {
                 onClick={() => assignPlan(plan.id)}
                 disabled={assigningId === plan.id}
                 className="mt-3 rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-60"
-                style={{ background: 'var(--accent)', color: '#000' }}
+                style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}
               >
                 {assigningId === plan.id ? 'Assigning...' : 'Assign Plan'}
               </button>
@@ -301,7 +263,7 @@ export default function Plan() {
               {myPlan.type} · Week {currentWeek} of {myPlan.weeks}
             </p>
             <div className="mt-3 h-2 rounded-full" style={{ background: 'var(--bg-input)' }}>
-              <div className="h-2 rounded-full" style={{ width: `${weekProgress}%`, background: '#EAB308' }} />
+              <div className="h-2 rounded-full" style={{ width: `${weekProgress}%`, background: 'var(--accent)' }} />
             </div>
             <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>{weekProgress}% complete this week</p>
           </div>
@@ -343,7 +305,7 @@ export default function Plan() {
                   {session.type === 'rest'
                     ? <p className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>REST</p>
                     : isDone
-                      ? <CheckCircle2 size={18} color="#EAB308" />
+                      ? <CheckCircle2 size={18} color="var(--accent)" />
                       : <Circle size={18} color="var(--text-muted)" />}
                 </button>
               )
@@ -363,41 +325,6 @@ export default function Plan() {
         </div>
       )}
       </div>
-      {!proLoading && !isPro && (
-        <div
-          style={{
-            position: 'absolute',
-            inset: 0,
-            backdropFilter: 'blur(4px)',
-            zIndex: 10,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-        >
-          <div
-            style={{
-              background: 'var(--bg-card)',
-              border: '1px solid var(--border-subtle)',
-              borderRadius: 16,
-              padding: 32,
-              textAlign: 'center',
-              maxWidth: 320,
-            }}
-          >
-            <Lock size={32} color="#EAB308" style={{ margin: '0 auto 12px' }} />
-            <h3 style={{ color: 'var(--text-primary)', fontWeight: 800, fontSize: 20 }}>AI Training Plans</h3>
-            <p style={{ color: 'var(--text-primary)', fontWeight: 700, marginTop: 8 }}>AI Training Plans are a Pro feature</p>
-            <p style={{ color: 'var(--text-muted)', marginTop: 8 }}>Upgrade to unlock unlimited AI-generated training plans.</p>
-            <button
-              onClick={() => navigate('/upgrade')}
-              style={{ background: '#EAB308', color: '#000', fontWeight: 700, padding: '12px 24px', borderRadius: 8, border: 'none', cursor: 'pointer', marginTop: 16 }}
-            >
-              Upgrade to Pro
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
+    </ProGate>
   )
 }

@@ -20,6 +20,7 @@ function fmtPace(durationSeconds, distance) {
 }
 
 const EFFORT_LABELS = ['', 'Very Easy', 'Easy', 'Easy-Moderate', 'Moderate', 'Moderate-Hard', 'Hard', 'Hard', 'Very Hard', 'Very Hard', 'Max']
+// hex required: consumed by `${color}XX` alpha templates — do not tokenize
 const ZONES = [
   { key: 'Z1', min: 0.5, max: 0.6, name: 'Recovery', color: '#6B7280' },
   { key: 'Z2', min: 0.6, max: 0.7, name: 'Aerobic Base', color: '#3B82F6' },
@@ -105,12 +106,12 @@ export default function RunDetailModal({ run, onClose, onFeedbackGenerated }) {
             <p className="text-sm leading-relaxed" style={{ color: 'var(--text-muted)' }}>{feedback}</p>
           ) : (
             <>
-              {error && <p className="text-xs mb-2" style={{ color: '#ef4444' }}>{error}</p>}
+              {error && <p className="text-xs mb-2" style={{ color: 'var(--danger)' }}>{error}</p>}
               <button
                 onClick={generateFeedback}
                 disabled={loading}
                 className="w-full py-2.5 rounded-xl text-sm font-semibold"
-                style={{ background: 'var(--accent)', color: '#000' }}
+                style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}
               >
                 {loading ? 'Analyzing your run...' : 'Get AI Feedback'}
               </button>

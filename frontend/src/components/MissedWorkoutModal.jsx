@@ -46,7 +46,7 @@ export default function MissedWorkoutModal({ onClose }) {
               ))}
             </div>
             <button onClick={submit} disabled={!reason || loading}
-              className="w-full py-4 rounded-xl font-black text-black"
+              className="w-full py-4 rounded-xl font-black text-on-accent"
               style={{ background: reason ? 'var(--accent)' : 'var(--bg-input)', opacity: loading ? 0.6 : 1 }}>
               {loading ? 'Adjusting...' : 'Update My Plan'}
             </button>
@@ -54,7 +54,7 @@ export default function MissedWorkoutModal({ onClose }) {
         ) : (
           <>
             <p className="text-base leading-relaxed" style={{ color: 'var(--text-primary)' }}>{response}</p>
-            <button onClick={onClose} className="w-full py-4 rounded-xl font-black text-black"
+            <button onClick={onClose} className="w-full py-4 rounded-xl font-black text-on-accent"
               style={{ background: 'var(--accent)' }}>Got it</button>
           </>
         )}

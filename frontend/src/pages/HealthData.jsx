@@ -4,6 +4,7 @@ import { Activity, ChevronRight, HeartPulse, Moon, RefreshCw, Shield, Watch } fr
 import { useTranslation } from 'react-i18next'
 import api from '../lib/api'
 import HealthService from '../services/HealthService'
+import Skeleton from '../components/Skeleton'
 
 const HEALTH_SYNC_RESULT_KEY = 'forge_last_health_sync_result'
 
@@ -45,24 +46,24 @@ function saveLastSyncResult(result) {
 }
 
 function trendMeta(trend) {
-  if (trend === 'up') return { arrow: '↑', color: '#22C55E' }
-  if (trend === 'down') return { arrow: '↓', color: '#EF4444' }
+  if (trend === 'up') return { arrow: '↑', color: 'var(--success)' }
+  if (trend === 'down') return { arrow: '↓', color: 'var(--danger)' }
   return { arrow: '→', color: 'var(--text-muted)' }
 }
 
 function DriverCard({ driver, trendLabels }) {
   const trend = trendMeta(driver.trend)
   return (
-    <article className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-      <p className="text-xs font-black uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>{driver.label}</p>
+    <article className="card p-4">
+      <p className="t-micro">{driver.label}</p>
       <div className="mt-2 flex items-end gap-2">
-        <p className="text-2xl font-black" style={{ color: 'var(--text-primary)' }}>{driver.value}</p>
+        <p className="stat-num" style={{ color: 'var(--text-primary)', fontSize: 24, lineHeight: 1.1 }}>{driver.value}</p>
         <span className="pb-1 text-lg font-black" style={{ color: trend.color }} aria-label={trendLabels[driver.trend] || trendLabels.flat}>
           {trend.arrow}
         </span>
       </div>
       <p className="mt-2 text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>{driver.plainEnglish}</p>
-      <p className="mt-3 text-xs italic" style={{ color: driver.impact === 'negative' ? '#F97316' : 'var(--text-muted)' }}>{driver.suggestion}</p>
+      <p className="mt-3 text-xs italic" style={{ color: driver.impact === 'negative' ? 'var(--warning)' : 'var(--text-muted)' }}>{driver.suggestion}</p>
     </article>
   )
 }
@@ -70,7 +71,7 @@ function DriverCard({ driver, trendLabels }) {
 function SourcePill({ icon: Icon, label, detail }) {
   return (
     <div className="flex items-center gap-2 rounded-xl px-3 py-2" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
-      <Icon size={15} color="#EAB308" />
+      <Icon size={15} color="var(--accent)" />
       <div>
         <p className="text-xs font-bold" style={{ color: 'var(--text-primary)' }}>{label}</p>
         <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{detail}</p>
@@ -82,8 +83,8 @@ function SourcePill({ icon: Icon, label, detail }) {
 function MetricCell({ cell }) {
   return (
     <div className="rounded-xl p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
-      <p className="text-[10px] font-bold uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>{cell.label}</p>
-      <p className="mt-1 text-base font-black" style={{ color: 'var(--text-primary)' }}>{cell.value}</p>
+      <p className="t-micro">{cell.label}</p>
+      <p className="stat-num mt-1" style={{ color: 'var(--text-primary)', fontSize: 22, lineHeight: 1.1 }}>{cell.value}</p>
       {cell.detail && <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{cell.detail}</p>}
     </div>
   )
@@ -164,16 +165,16 @@ export default function HealthData() {
       <section className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
         <div className="flex items-start justify-between gap-3">
           <div>
-            <p className="text-xs font-bold uppercase tracking-wide" style={{ color: '#EAB308' }}>Apple Health</p>
+            <p className="text-xs font-bold uppercase tracking-wide" style={{ color: 'var(--accent)' }}>Apple Health</p>
             <h1 className="mt-1 text-2xl font-black" style={{ color: 'var(--text-primary)' }}>Body</h1>
             <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>Your readiness, recovery, and how it shapes today's training. Plain English.</p>
           </div>
-          <Shield size={22} color="#EAB308" />
+          <Shield size={22} color="var(--accent)" />
         </div>
       </section>
 
-      <section className="rounded-2xl p-4" style={{ background: driversData?.limiter ? 'var(--accent)' : 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-        <p className="text-xs font-black uppercase tracking-wide" style={{ color: driversData?.limiter ? '#000' : '#EAB308' }}>
+      <section className={driversData?.limiter ? 'card-hero p-4' : 'card p-4'} style={{ background: driversData?.limiter ? 'var(--accent)' : 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+        <p className="text-xs font-black uppercase tracking-wide" style={{ color: driversData?.limiter ? '#000' : 'var(--accent)' }}>
           {driversData?.limiter ? `${limiterDriver?.label || 'Readiness'} ${t('body.limiterPrefix')}` : 'Readiness'}
         </p>
         <h2 className="mt-2 text-xl font-black leading-tight" style={{ color: driversData?.limiter ? '#000' : 'var(--text-primary)' }}>
@@ -184,13 +185,16 @@ export default function HealthData() {
         </p>
       </section>
 
+      {loading && <Skeleton rows={2} />}
+
       {drivers.length === 0 && !loading ? (
         <section className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+          <HeartPulse size={28} color="var(--accent)" style={{ marginBottom: 12 }} />
           <p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{t('body.noData')}</p>
           <Link
             to="/settings"
             className="mt-3 inline-flex rounded-xl px-4 py-2 text-sm font-black"
-            style={{ background: 'var(--accent)', color: '#000', textDecoration: 'none' }}
+            style={{ background: 'var(--accent)', color: 'var(--on-accent)', textDecoration: 'none' }}
           >
             {t('body.noDataCta')}
           </Link>
@@ -232,20 +236,20 @@ export default function HealthData() {
               {lastSyncResult ? `${lastSyncResult.imported || 0} imported · ${lastSyncResult.skipped || 0} already saved · ${dateText(lastSyncResult.syncedAt)}` : 'Sync Apple Health to refresh readiness drivers.'}
             </p>
           </div>
-          <HeartPulse size={18} color="#EAB308" />
+          <HeartPulse size={18} color="var(--accent)" />
         </div>
         <button
           type="button"
           onClick={syncAppleHealth}
           disabled={syncing}
           className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl py-3 text-sm font-black disabled:opacity-60"
-          style={{ background: 'var(--accent)', color: '#000', border: 'none', cursor: syncing ? 'wait' : 'pointer' }}
+          style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', cursor: syncing ? 'wait' : 'pointer' }}
         >
           <RefreshCw size={16} />
           {syncing ? 'Syncing Apple Health...' : 'Sync Apple Health'}
         </button>
-        {notice && <p className="mt-3 text-xs" style={{ color: notice.includes('synced') ? '#22C55E' : '#F97316' }}>{notice}</p>}
-        <Link to="/history" className="mt-3 flex items-center gap-1 text-xs font-bold" style={{ color: '#EAB308', textDecoration: 'none' }}>
+        {notice && <p className="mt-3 text-xs" style={{ color: notice.includes('synced') ? 'var(--success)' : 'var(--warning)' }}>{notice}</p>}
+        <Link to="/history" className="mt-3 flex items-center gap-1 text-xs font-bold" style={{ color: 'var(--accent)', textDecoration: 'none' }}>
           Review imported activity <ChevronRight size={14} />
         </Link>
       </section>

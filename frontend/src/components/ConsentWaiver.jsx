@@ -95,7 +95,7 @@ export default function ConsentWaiver({ version, text, onAgree, onCancel, loadin
             onClick={() => onAgree?.(waiver.version)}
             disabled={!checked || loading}
             className="rounded-xl px-4 py-3 font-semibold transition hover:opacity-90 disabled:opacity-70"
-            style={{ background: 'var(--accent)', color: 'black' }}
+            style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}
           >
             {loading ? 'Saving...' : 'Agree & Continue'}
           </button>

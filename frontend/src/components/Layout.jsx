@@ -6,6 +6,7 @@ import { getUser } from '../lib/auth'
 import PullToRefresh from './PullToRefresh'
 import FeedbackButton from './FeedbackButton'
 
+// hex required: consumed by `${color}XX` alpha templates — do not tokenize
 const NAV_ITEMS = (t) => [
   { to: '/', end: true, icon: '/nav-home.png', label: t('nav.home'), color: '#EAB308' },
   { to: '/run', label: t('nav.run'), iconComponent: Activity, color: '#EAB308' },
@@ -60,6 +61,7 @@ export default function Layout({ children }) {
               onClick={() => navigate('/')}
               style={{ background: "none", border: "none", padding: 0, cursor: "pointer" }}
               aria-label="Go Home"
+              className="pressable"
             >
               <img src="/icon-192.png" alt="FORGE" className="w-9 h-9 rounded-xl object-cover" />
             </button>
@@ -67,7 +69,7 @@ export default function Layout({ children }) {
               <button
                 type="button"
                 onClick={() => setFeedbackOpen(true)}
-                className="flex h-8 w-8 items-center justify-center rounded-full transition-opacity hover:opacity-85"
+                className="pressable flex h-8 w-8 items-center justify-center rounded-full transition-opacity hover:opacity-85"
                 style={{ background: 'var(--bg-card)', color: 'var(--accent)', border: '1px solid var(--border-subtle)', position: 'relative', zIndex: 15 }}
                 aria-label="Send feedback"
                 title="Send feedback"
@@ -77,8 +79,8 @@ export default function Layout({ children }) {
               <button
                 type="button"
                 onClick={() => navigate('/profile')}
-                className="flex h-8 w-8 items-center justify-center rounded-full text-xs font-black transition-opacity hover:opacity-85"
-                style={{ background: 'var(--accent)', color: '#000', border: '1px solid var(--border-subtle)', position: 'relative', zIndex: 15 }}
+                className="pressable flex h-8 w-8 items-center justify-center rounded-full text-xs font-black transition-opacity hover:opacity-85"
+                style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: '1px solid var(--border-subtle)', position: 'relative', zIndex: 15 }}
                 aria-label="Go to profile"
                 title="Profile"
               >
@@ -100,7 +102,7 @@ export default function Layout({ children }) {
             <NavLink key={to} to={to} end={end} className="flex flex-col items-center justify-center"
               onClick={to === '/' ? (e) => { e.preventDefault(); navigate('/') } : undefined}>
               {({ isActive }) => (
-                <span className="flex flex-col items-center justify-center gap-0.5 px-1 py-1.5 rounded-xl transition-all duration-200 w-full"
+                <span className="pressable flex flex-col items-center justify-center gap-0.5 px-1 py-1.5 rounded-xl transition-all duration-200 w-full"
                   style={isActive ? { background: `${color}22`, boxShadow: `0 0 0 1px ${color}55` } : {}}>
                   {IconComponent ? (
                     <IconComponent
@@ -129,7 +131,7 @@ export default function Layout({ children }) {
         <button
           type="button"
           onClick={() => setFeedbackOpen(true)}
-          className="fixed right-3 top-3 z-40 flex h-9 w-9 items-center justify-center rounded-full shadow-lg"
+          className="pressable fixed right-3 top-3 z-40 flex h-9 w-9 items-center justify-center rounded-full shadow-lg"
           style={{ background: 'var(--bg-card)', color: 'var(--accent)', border: '1px solid var(--border-subtle)' }}
           aria-label="Send feedback"
           title="Send feedback"

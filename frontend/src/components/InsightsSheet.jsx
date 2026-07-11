@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { ArrowDownRight, ArrowUpRight, Brain, ChevronRight, Lock, Watch, AlertTriangle } from 'lucide-react'
+import { Activity, ArrowDownRight, ArrowUpRight, Brain, ChevronRight, Lock, Watch, AlertTriangle } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import AgeGradedPerformanceCard from './AgeGradedPerformanceCard'
 import WatchWorkoutSendButton from './WatchWorkoutSendButton'
@@ -81,7 +81,7 @@ export function ReadinessGauge({ score, onClick }) {
   const r = 28, cx = 36, cy = 36
   const circumference = 2 * Math.PI * r
   const dash = (score / 100) * circumference
-  const color = score >= 75 ? '#22c55e' : score >= 50 ? 'var(--accent)' : '#ef4444'
+  const color = score >= 75 ? 'var(--success)' : score >= 50 ? 'var(--accent)' : 'var(--danger)'
   const label = score >= 80 ? 'Optimal' : score >= 60 ? 'Good' : score >= 40 ? 'Moderate' : 'Low'
 
   return (
@@ -94,7 +94,7 @@ export function ReadinessGauge({ score, onClick }) {
             strokeLinecap="round"
             transform={`rotate(-90 ${cx} ${cy})`} />
           <text x={cx} y={cy+1} textAnchor="middle" dominantBaseline="middle"
-            fontSize="13" fontWeight="bold" fill={color}>{score}</text>
+            className="stat-num" fontSize="13" fontWeight="900" fill={color}>{score}</text>
         </svg>
         <div>
           <p className="font-bold text-base" style={{ color: 'var(--text-primary)' }}>{label}</p>
@@ -166,11 +166,11 @@ export function DailyCoachFlow({ checkedInToday, readiness, recommendation, toda
   ]
 
   return (
-    <section className="rounded-2xl p-5" style={{ background: 'var(--bg-card)', border: '1px solid rgba(234,179,8,0.42)' }}>
+    <section className="card-hero p-5">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-xs font-bold uppercase" style={{ color: '#EAB308', letterSpacing: 0.8 }}>Today</p>
-          <h2 className="mt-1 text-2xl font-black" style={{ color: 'var(--text-primary)' }}>
+          <p className="t-micro" style={{ color: 'var(--accent)' }}>Today</p>
+          <h2 className="t-title mt-1" style={{ color: 'var(--text-primary)' }}>
             {checkedInToday ? 'Train from the plan' : 'Start with readiness'}
           </h2>
           <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
@@ -185,14 +185,14 @@ export function DailyCoachFlow({ checkedInToday, readiness, recommendation, toda
         <div className="flex flex-col gap-2">
           <button
             onClick={checkedInToday ? onStartWorkout : onCheckIn}
-            className="rounded-xl px-3 py-2 text-xs font-black"
-            style={{ background: 'var(--accent)', color: '#000', border: 'none' }}
+            className="pressable rounded-xl px-3 py-2 text-xs font-black"
+            style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none' }}
           >
             {checkedInToday ? 'Start' : 'Check in'}
           </button>
           <button
             onClick={onDetails}
-            className="rounded-xl px-3 py-2 text-xs font-bold"
+            className="pressable rounded-xl px-3 py-2 text-xs font-bold"
             style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}
           >
             Details
@@ -205,10 +205,10 @@ export function DailyCoachFlow({ checkedInToday, readiness, recommendation, toda
             key={step.key}
             type="button"
             onClick={step.action}
-            className="rounded-xl px-2 py-3 text-left"
+            className="card pressable px-2 py-3 text-left"
             style={{ background: step.done ? 'rgba(34,197,94,0.12)' : 'var(--bg-input)', border: `1px solid ${step.done ? 'rgba(34,197,94,0.35)' : 'var(--border-subtle)'}` }}
           >
-            <span className="text-[10px] font-bold" style={{ color: step.done ? '#22c55e' : 'var(--text-muted)' }}>{index + 1}</span>
+            <span className="text-[10px] font-bold" style={{ color: step.done ? 'var(--success)' : 'var(--text-muted)' }}>{index + 1}</span>
             <p className="mt-1 text-xs font-semibold capitalize" style={{ color: 'var(--text-primary)' }}>{step.label}</p>
           </button>
         ))}
@@ -285,7 +285,7 @@ export function WatchSyncWidget({ onSyncPayload }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
       <style>{`
-        @keyframes watchPulse { 0%,100% { box-shadow: 0 0 0 0 rgba(234,179,8,0.4); } 50% { box-shadow: 0 0 0 8px rgba(234,179,8,0); } }
+        @keyframes watchPulse { 0%,100% { box-shadow: 0 0 0 0 var(--border-subtle); } 50% { box-shadow: 0 0 0 8px rgba(234,179,8,0); } }
         @keyframes syncFlash { 0% { background: rgba(34,197,94,0.3); } 100% { background: transparent; } }
       `}</style>
       <button
@@ -295,25 +295,25 @@ export function WatchSyncWidget({ onSyncPayload }) {
         }}
         style={{
           display: 'flex', alignItems: 'center', gap: 6,
-          background: hasData ? 'rgba(234,179,8,0.1)' : 'var(--bg-input)',
-          border: `1px solid ${hasData ? 'rgba(234,179,8,0.4)' : 'var(--border-subtle)'}`,
+          background: hasData ? 'var(--accent-dim)' : 'var(--bg-input)',
+          border: `1px solid ${hasData ? 'var(--border-subtle)' : 'var(--border-subtle)'}`,
           borderRadius: 10, padding: '6px 12px', cursor: 'pointer',
           animation: syncing ? 'watchPulse 1s ease-in-out infinite' : 'none',
           transition: 'all 0.3s ease',
           ...(justSynced ? { animation: 'syncFlash 1s ease forwards' } : {}),
         }}
       >
-        <Watch size={14} color={hasData ? '#EAB308' : 'var(--text-muted)'} />
+        <Watch size={14} color={hasData ? 'var(--accent)' : 'var(--text-muted)'} />
         <div style={{ textAlign: 'left' }}>
           <p style={{ fontSize: 9, color: 'var(--text-muted)', margin: 0, letterSpacing: 0.5, textTransform: 'uppercase' }}>
             {watchBrand || 'Watch'}
           </p>
-          <p style={{ fontSize: 11, fontWeight: 700, color: hasData ? '#EAB308' : 'var(--text-muted)', margin: 0 }}>
+          <p style={{ fontSize: 11, fontWeight: 700, color: hasData ? 'var(--accent)' : 'var(--text-muted)', margin: 0 }}>
             {justSynced ? 'Synced!' : hasData ? `HR ${syncStatus.avg_heart_rate || '--'} bpm` : 'No data'}
           </p>
         </div>
         {hasData && (
-          <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#22c55e', animation: 'watchPulse 2s ease infinite' }} />
+          <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--success)', animation: 'watchPulse 2s ease infinite' }} />
         )}
       </button>
     </div>
@@ -365,15 +365,17 @@ export function TodayDetailSheet({
   return (
     <div
       onClick={onClose}
+      className="sheet-backdrop"
       style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.72)', zIndex: 50, display: 'flex', alignItems: 'flex-end' }}
     >
       <div
         onClick={(event) => event.stopPropagation()}
+        className="sheet-panel"
         style={{ background: 'var(--bg-card)', borderRadius: '20px 20px 0 0', padding: 24, width: '100%', maxHeight: '82vh', overflowY: 'auto' }}
       >
         <div className="flex items-start justify-between gap-3">
           <div>
-            <p className="text-xs font-bold uppercase" style={{ color: '#EAB308', letterSpacing: 0.8 }}>Today</p>
+            <p className="text-xs font-bold uppercase" style={{ color: 'var(--accent)', letterSpacing: 0.8 }}>Today</p>
             <h2 className="mt-1 text-2xl font-black" style={{ color: 'var(--text-primary)' }}>
               {checkedInToday ? 'Plan locked for today' : 'Check in before training'}
             </h2>
@@ -461,7 +463,7 @@ export function TodayDetailSheet({
             <button onClick={onCheckIn} className="rounded-xl px-3 py-3 text-sm font-bold" style={{ background: checkedInToday ? 'var(--bg-input)' : 'var(--accent)', color: checkedInToday ? 'var(--text-primary)' : '#000' }}>
               {checkedInToday ? 'Edit check-in' : 'Check in'}
             </button>
-            <button onClick={onStartWorkout} className="rounded-xl px-3 py-3 text-sm font-bold" style={{ background: 'var(--accent)', color: '#000' }}>
+            <button onClick={onStartWorkout} className="rounded-xl px-3 py-3 text-sm font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>
               Start/log
             </button>
             <button onClick={onWarmup} className="rounded-xl px-3 py-3 text-sm font-bold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>
@@ -496,12 +498,12 @@ export function TodayDetailSheet({
 export function RecentActivityCard({ recentActivity, navigate, fmt, fmtDuration, t }) {
   return (
     <section className="rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>
-      <h3 className="text-base font-bold mb-3" style={{ color: 'var(--text-primary)', borderBottom: '1px solid rgba(234,179,8,0.45)', paddingBottom: 6 }}>Recent Activity</h3>
+      <h3 className="text-base font-bold mb-3" style={{ color: 'var(--text-primary)', borderBottom: '1px solid var(--border-subtle)', paddingBottom: 6 }}>Recent Activity</h3>
       <div className="space-y-3">
         {recentActivity.map(item => {
           if (item._type === 'run') {
             return (
-              <div key={item.id} onClick={() => navigate(`/history?runId=${item.id}`)} className="rounded-xl p-3 border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', borderLeft: '4px solid #EAB308', cursor: 'pointer' }}>
+              <div key={item.id} onClick={() => navigate(`/history?runId=${item.id}`)} className="rounded-xl p-3 border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', borderLeft: '4px solid var(--accent)', cursor: 'pointer' }}>
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: 'var(--accent-dim)', color: 'var(--accent)' }}>Run</span>
                   <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
@@ -522,7 +524,7 @@ export function RecentActivityCard({ recentActivity, navigate, fmt, fmtDuration,
             return (
               <div key={item.id} className="rounded-xl p-3 border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)' }}>
                 <div className="flex items-center justify-between mb-1">
-                  <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: 'rgba(234,179,8,0.2)', color: 'var(--accent)' }}>Other Activity</span>
+                  <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: 'var(--accent-dim)', color: 'var(--accent)' }}>Other Activity</span>
                   <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{new Date(item.synced_at || item.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
                 </div>
                 <p className="text-sm font-bold mt-1" style={{ color: 'var(--text-primary)' }}>{item.activity_name || item.activity_type || 'Synced activity'}</p>
@@ -546,7 +548,10 @@ export function RecentActivityCard({ recentActivity, navigate, fmt, fmtDuration,
           )
         })}
         {recentActivity.length === 0 && (
-          <p className="text-sm py-4 text-center" style={{ color: 'var(--text-muted)' }}>{t('dashboard.noActivity')}</p>
+          <div className="py-4 text-center">
+            <Activity size={28} color="var(--accent)" style={{ margin: '0 auto 10px' }} />
+            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{t('dashboard.noActivity')}</p>
+          </div>
         )}
       </div>
     </section>
@@ -558,8 +563,10 @@ export function CalendarDayDetailSheet({ selectedCalendarDay, onClose, fmtDurati
 
   return (
     <div onClick={onClose}
+      className="sheet-backdrop"
       style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 50, display: 'flex', alignItems: 'flex-end' }}>
       <div onClick={e => e.stopPropagation()}
+        className="sheet-panel"
         style={{ background: 'var(--bg-card)', borderRadius: '20px 20px 0 0', padding: 24, width: '100%', maxHeight: '60vh', overflowY: 'auto' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
           <div>
@@ -659,10 +666,12 @@ export function ReadinessBreakdownModal({ open, onClose, readinessData }) {
   return (
     <div
       onClick={onClose}
+      className="sheet-backdrop"
       style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 50, display: 'flex', alignItems: 'flex-end' }}
     >
       <div
         onClick={e => e.stopPropagation()}
+        className="sheet-panel"
         style={{ background: 'var(--bg-card)', borderRadius: '20px 20px 0 0', padding: 24, width: '100%', maxHeight: '70vh', overflowY: 'auto' }}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
@@ -739,15 +748,17 @@ export default function InsightsSheet({
   return (
     <div
       onClick={onClose}
+      className="sheet-backdrop"
       style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.72)', zIndex: 50, display: 'flex', alignItems: 'flex-end' }}
     >
       <div
         onClick={(event) => event.stopPropagation()}
+        className="sheet-panel"
         style={{ background: 'var(--bg-base)', borderRadius: '20px 20px 0 0', padding: 16, width: '100%', maxHeight: '82vh', overflowY: 'auto' }}
       >
         <div className="mb-4 flex items-start justify-between gap-3">
           <div>
-            <p className="text-xs font-bold uppercase" style={{ color: '#EAB308', letterSpacing: 0.8 }}>Forge</p>
+            <p className="text-xs font-bold uppercase" style={{ color: 'var(--accent)', letterSpacing: 0.8 }}>Forge</p>
             <h2 className="mt-1 text-2xl font-black" style={{ color: 'var(--text-primary)' }}>More insights</h2>
           </div>
           <button onClick={onClose} className="rounded-lg px-3 py-2 text-xs" style={{ background: 'var(--bg-input)', color: 'var(--text-muted)' }}>
@@ -766,7 +777,7 @@ export default function InsightsSheet({
             >
               <div className="flex items-center justify-between">
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Brain size={16} color="#EAB308" />
+                  <Brain size={16} color="var(--accent)" />
                   <p className="text-xs font-bold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.8 }}>Weekly AI Recap</p>
                 </div>
                 <ChevronRight size={16} color="var(--text-muted)" />
@@ -775,7 +786,7 @@ export default function InsightsSheet({
                 {Number(weeklyRecap.totalMiles || 0).toFixed(1)} mi · {weeklyRecap.totalRuns || 0} runs · {weeklyRecap.avgPace ? `${weeklyRecap.avgPace}/mi` : 'Pace n/a'}
               </p>
               {weeklyRecap.injuryRiskFlag && (
-                <p className="text-xs mt-1" style={{ color: '#F97316' }}>{weeklyRecap.injuryRiskReason || 'Elevated injury risk this week'}</p>
+                <p className="text-xs mt-1" style={{ color: 'var(--warning)' }}>{weeklyRecap.injuryRiskReason || 'Elevated injury risk this week'}</p>
               )}
             </button>
           )}
@@ -789,13 +800,13 @@ export default function InsightsSheet({
 
           {showLoadWarning && (
             <div className="rounded-xl p-3" style={{
-              background: loadAnalysis.loadStatus === 'danger' ? 'rgba(239,68,68,0.12)' : loadAnalysis.loadStatus === 'high' ? 'rgba(249,115,22,0.12)' : 'rgba(234,179,8,0.12)',
-              border: `1px solid ${loadAnalysis.loadStatus === 'danger' ? 'rgba(239,68,68,0.35)' : loadAnalysis.loadStatus === 'high' ? 'rgba(249,115,22,0.35)' : 'rgba(234,179,8,0.35)'}`
+              background: loadAnalysis.loadStatus === 'danger' ? 'var(--danger-dim)' : loadAnalysis.loadStatus === 'high' ? 'rgba(249,115,22,0.12)' : 'var(--accent-dim)',
+              border: `1px solid ${loadAnalysis.loadStatus === 'danger' ? 'var(--danger-dim)' : loadAnalysis.loadStatus === 'high' ? 'var(--warning-dim)' : 'var(--border-subtle)'}`
             }}>
               <p className="text-xs font-bold uppercase" style={{ color: 'var(--text-primary)' }}>{loadAnalysis.loadStatus} load</p>
               <p className="text-sm mt-1" style={{ color: 'var(--text-primary)' }}>{loadAnalysis.warning || loadAnalysis.recommendation}</p>
               <div className="mt-2 flex gap-2">
-                <button className="rounded-lg px-3 py-1.5 text-xs font-bold" style={{ background: 'var(--accent)', color: '#000' }} onClick={() => navigate('/plan', { state: { suggestEasyDay: true } })}>Take Easy Day</button>
+                <button className="rounded-lg px-3 py-1.5 text-xs font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }} onClick={() => navigate('/plan', { state: { suggestEasyDay: true } })}>Take Easy Day</button>
                 <button className="rounded-lg px-3 py-1.5 text-xs" style={{ background: 'var(--bg-input)', color: 'var(--text-muted)', border: '1px solid var(--border-subtle)' }} onClick={onDismissLoadWarning}>OK</button>
               </div>
             </div>
@@ -818,7 +829,7 @@ export default function InsightsSheet({
               {showComplianceDetails && (
                 <div className="mt-3 space-y-1">
                   {(compliance.sessions || []).map((s, i) => (
-                    <p key={i} className="text-xs" style={{ color: s.completed ? '#22c55e' : '#ef4444' }}>{s.day}: {s.type} {s.completed ? 'hit' : 'missed'}</p>
+                    <p key={i} className="text-xs" style={{ color: s.completed ? 'var(--success)' : 'var(--danger)' }}>{s.day}: {s.type} {s.completed ? 'hit' : 'missed'}</p>
                   ))}
                 </div>
               )}
@@ -828,7 +839,7 @@ export default function InsightsSheet({
           {milestones.length > 0 && (
             <div className="space-y-2">
               {milestones.map((m) => (
-                <div key={m.key} className="rounded-xl p-3 flex items-center justify-between" style={{ background: 'rgba(234,179,8,0.12)', border: '1px solid rgba(234,179,8,0.3)' }}>
+                <div key={m.key} className="rounded-xl p-3 flex items-center justify-between" style={{ background: 'var(--accent-dim)', border: '1px solid var(--border-subtle)' }}>
                   <div>
                     <p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{m.title}</p>
                     <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{m.description}</p>
@@ -841,7 +852,7 @@ export default function InsightsSheet({
 
           <section className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
             <div className="mb-3 flex items-center justify-between">
-              <p className="text-sm font-bold uppercase tracking-wide" style={{ color: '#EAB308' }}>Health Sync</p>
+              <p className="text-sm font-bold uppercase tracking-wide" style={{ color: 'var(--accent)' }}>Health Sync</p>
               {healthSync.loading ? (
                 <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Syncing...</p>
               ) : (
@@ -849,7 +860,7 @@ export default function InsightsSheet({
                   type="button"
                   onClick={() => navigate('/health')}
                   className="rounded-lg px-3 py-1.5 text-xs font-bold"
-                  style={{ background: 'var(--bg-input)', color: '#EAB308', border: '1px solid var(--border-subtle)' }}
+                  style={{ background: 'var(--bg-input)', color: 'var(--accent)', border: '1px solid var(--border-subtle)' }}
                 >
                   View all
                 </button>
@@ -862,7 +873,7 @@ export default function InsightsSheet({
                 <button
                   onClick={() => navigate('/upgrade')}
                   className="mt-3 rounded-lg px-3 py-2 text-xs font-bold"
-                  style={{ background: '#EAB308', color: '#000', border: 'none', cursor: 'pointer' }}
+                  style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', cursor: 'pointer' }}
                 >
                   Upgrade to Pro
                 </button>
@@ -942,7 +953,7 @@ export default function InsightsSheet({
                   </div>
                 </div>
                 {healthSyncNotice && (
-                  <p className="mt-3 text-xs" style={{ color: '#F97316' }}>{healthSyncNotice}</p>
+                  <p className="mt-3 text-xs" style={{ color: 'var(--warning)' }}>{healthSyncNotice}</p>
                 )}
               </div>
             )}
@@ -967,12 +978,12 @@ export default function InsightsSheet({
                       {day.hasRun && day.hasLift ? (
                         <div className="flex items-center gap-1">
                           <span className="inline-block h-2 w-2 rounded-full" style={{ background: '#0f1117' }} aria-label="Run logged" />
-                          <span className="inline-block h-2 w-2 rounded-full" style={{ background: '#F97316' }} aria-label="Lift logged" />
+                          <span className="inline-block h-2 w-2 rounded-full" style={{ background: 'var(--warning)' }} aria-label="Lift logged" />
                         </div>
                       ) : day.hasRun ? (
                         <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: '#0f1117' }} aria-label="Run logged" />
                       ) : day.hasLift ? (
-                        <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: '#F97316' }} aria-label="Lift logged" />
+                        <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: 'var(--warning)' }} aria-label="Lift logged" />
                       ) : (
                         <span className="text-xs" style={{ color: 'var(--text-muted)', opacity: 0.4 }}>·</span>
                       )}
@@ -996,7 +1007,7 @@ export default function InsightsSheet({
                     <button key={key} onClick={() => setPeriod(key)}
                       className="px-4 py-1.5 rounded-full text-xs font-semibold transition-all"
                       style={period === key
-                        ? { background: 'var(--accent)', color: '#000' }
+                        ? { background: 'var(--accent)', color: 'var(--on-accent)' }
                         : { background: 'var(--bg-input)', color: 'var(--text-muted)', border: '1px solid var(--border-subtle)' }}>
                       {label}
                     </button>
@@ -1019,7 +1030,7 @@ export default function InsightsSheet({
                     {label:'Cal', value: period === 'week' ? weeklyCalories.toLocaleString() : (periodStats.calories || 0).toLocaleString()},
                   ].map((s, i) => {
                     const improving = i % 2 === 0
-                    return <div key={s.label} className="rounded-lg p-2" style={{ border: '1px solid var(--border-subtle)' }}><p className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>{s.value}</p><p className="text-xs flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>{s.label}{improving ? <ArrowUpRight size={12} color="#22c55e"/> : <ArrowDownRight size={12} color="#ef4444"/>}</p></div>
+                    return <div key={s.label} className="rounded-lg p-2" style={{ border: '1px solid var(--border-subtle)' }}><p className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>{s.value}</p><p className="text-xs flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>{s.label}{improving ? <ArrowUpRight size={12} color="var(--success)"/> : <ArrowDownRight size={12} color="var(--danger)"/>}</p></div>
                   })}
                 </div>
               </div>
@@ -1056,12 +1067,12 @@ export default function InsightsSheet({
                   className="rounded-2xl p-4"
                   style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', textAlign: 'center', maxWidth: 300 }}
                 >
-                  <Lock size={24} color="#EAB308" style={{ margin: '0 auto 8px' }} />
+                  <Lock size={24} color="var(--accent)" style={{ margin: '0 auto 8px' }} />
                   <p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>Advanced analytics is Pro-only</p>
                   <button
                     onClick={() => navigate('/upgrade')}
                     className="mt-3 rounded-lg px-3 py-2 text-xs font-bold"
-                    style={{ background: '#EAB308', color: '#000', border: 'none', cursor: 'pointer' }}
+                    style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', cursor: 'pointer' }}
                   >
                     Upgrade to Pro
                   </button>
@@ -1071,14 +1082,14 @@ export default function InsightsSheet({
           </div>
 
           {warning && (
-            <div className="rounded-xl border p-3 text-sm" style={{ borderColor: 'rgba(234,179,8,0.3)', background: 'rgba(234,179,8,0.08)', color: 'var(--accent)' }}>
+            <div className="rounded-xl border p-3 text-sm" style={{ borderColor: 'var(--border-subtle)', background: 'var(--accent-dim)', color: 'var(--accent)' }}>
               Heavy legs detected — consider a rest day or easy run today
             </div>
           )}
 
           {shoeAlerts.map(shoe => (
-            <div key={shoe.id} style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 12, padding: '10px 14px' }}>
-              <p style={{ fontSize: 13, fontWeight: 700, color: '#ef4444', margin: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div key={shoe.id} style={{ background: 'var(--danger-dim)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 12, padding: '10px 14px' }}>
+              <p style={{ fontSize: 13, fontWeight: 700, color: 'var(--danger)', margin: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
                 <AlertTriangle size={14} /> Your {shoe.nickname || `${shoe.brand} ${shoe.model}`} has {Number(shoe.total_miles || 0).toFixed(0)} miles — time to replace soon
               </p>
               <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '2px 0 0' }}>{shoe.total_miles} of 500 miles</p>

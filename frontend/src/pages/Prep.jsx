@@ -23,7 +23,7 @@ export default function Prep() {
   return (
     <div className="space-y-4 pb-16">
       <header>
-        <p style={{ color: '#EAB308', fontSize: 12, fontWeight: 800, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6 }}>Forge</p>
+        <p style={{ color: 'var(--accent)', fontSize: 12, fontWeight: 800, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6 }}>Forge</p>
         <h1 style={{ color: 'var(--text-primary)', fontSize: 28, fontWeight: 900, margin: 0 }}>{t('prep.title')}</h1>
         <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>{t('prep.subtitle')}</p>
       </header>

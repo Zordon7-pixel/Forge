@@ -83,8 +83,8 @@ export default function TodaysPickCard({ runType = 'easy' }) {
     return (
       <section className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
         <div className="flex items-center gap-3">
-          <span style={{ width: 40, height: 40, borderRadius: 10, background: 'rgba(234,179,8,0.12)', display: 'grid', placeItems: 'center' }}>
-            <Footprints size={20} color="#EAB308" />
+          <span style={{ width: 40, height: 40, borderRadius: 10, background: 'var(--accent-dim)', display: 'grid', placeItems: 'center' }}>
+            <Footprints size={20} color="var(--accent)" />
           </span>
           <div className="min-w-0 flex-1">
             <div style={{ width: 96, height: 12, borderRadius: 999, background: 'var(--bg-input)', marginBottom: 8 }} />
@@ -92,7 +92,7 @@ export default function TodaysPickCard({ runType = 'easy' }) {
           </div>
           <span
             aria-label="Loading today's pick"
-            style={{ width: 18, height: 18, borderRadius: '50%', border: '2px solid var(--border-subtle)', borderTopColor: '#EAB308', animation: 'spin 0.8s linear infinite' }}
+            style={{ width: 18, height: 18, borderRadius: '50%', border: '2px solid var(--border-subtle)', borderTopColor: 'var(--accent)', animation: 'spin 0.8s linear infinite' }}
           />
         </div>
       </section>
@@ -116,7 +116,7 @@ export default function TodaysPickCard({ runType = 'easy' }) {
           </span>
           <div className="min-w-0 flex-1">
             <p className="text-sm font-black" style={{ color: 'var(--text-primary)', margin: 0 }}>Today&apos;s pick</p>
-            <Link to="/gear" className="text-xs font-bold" style={{ color: '#EAB308', textDecoration: 'none' }}>
+            <Link to="/gear" className="text-xs font-bold" style={{ color: 'var(--accent)', textDecoration: 'none' }}>
               Add your shoes to get recommendations
             </Link>
           </div>
@@ -128,8 +128,8 @@ export default function TodaysPickCard({ runType = 'easy' }) {
   return (
     <section className="rounded-2xl p-4 space-y-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
       <div className="flex items-start gap-3">
-        <span style={{ width: 40, height: 40, borderRadius: 10, background: 'rgba(234,179,8,0.12)', display: 'grid', placeItems: 'center', flexShrink: 0 }}>
-          <Footprints size={20} color="#EAB308" />
+        <span style={{ width: 40, height: 40, borderRadius: 10, background: 'var(--accent-dim)', display: 'grid', placeItems: 'center', flexShrink: 0 }}>
+          <Footprints size={20} color="var(--accent)" />
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-3">
@@ -145,7 +145,7 @@ export default function TodaysPickCard({ runType = 'easy' }) {
           </div>
 
           {pick.shoe?.warning && (
-            <p className="text-xs font-bold mt-2" style={{ color: '#f97316', marginBottom: 0 }}>{pick.shoe.warning}</p>
+            <p className="text-xs font-bold mt-2" style={{ color: 'var(--warning)', marginBottom: 0 }}>{pick.shoe.warning}</p>
           )}
         </div>
       </div>

@@ -205,7 +205,7 @@ function WorkoutWatchModal({ workout, onClose }) {
         <h3 className="text-xl font-black mb-4" style={{ color: 'var(--text-primary)' }}>Today's Workout</h3>
         <div className="rounded-xl p-4 mb-4" style={{ background: 'var(--bg-base)', border: '1px solid var(--border-subtle)' }}>
           <div className="text-xs font-semibold uppercase mb-2" style={{ color: 'var(--text-muted)' }}>{workout.day}</div>
-          <span className="inline-block rounded-full px-3 py-1 text-xs font-bold mb-3" style={{ background: 'var(--accent)', color: '#000' }}>
+          <span className="inline-block rounded-full px-3 py-1 text-xs font-bold mb-3" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>
             {workout.typeLabel}
           </span>
           <div className="text-sm mb-1" style={{ color: 'var(--text-primary)' }}><strong>Distance:</strong> {workout.distanceLabel}</div>
@@ -518,7 +518,7 @@ export default function LogRun() {
       <div className="rounded-2xl p-6" style={{ background: 'var(--bg-card)' }}>
         <h2 className="text-xl font-black mb-2" style={{ color: 'var(--text-primary)' }}>Morning Check-In Required</h2>
         <p className="text-sm mb-5" style={{ color: 'var(--text-muted)' }}>Complete your morning check-in before starting a run.</p>
-        <button onClick={() => navigate('/checkin')} className="w-full rounded-xl py-3 font-bold" style={{ background: 'var(--accent)', color: '#000', border: 'none', cursor: 'pointer' }}>Go to Check-In</button>
+        <button onClick={() => navigate('/checkin')} className="w-full rounded-xl py-3 font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', cursor: 'pointer' }}>Go to Check-In</button>
       </div>
     )
   }
@@ -531,12 +531,12 @@ export default function LogRun() {
         <div className="space-y-3 mb-6">
           {WARM_UP_STEPS.map((step, i) => (
             <div key={i} className="flex items-center gap-3 rounded-xl p-3" style={{ background: 'var(--bg-base)', border: '1px solid var(--border-subtle)' }}>
-              <div style={{ width: 30, height: 30, borderRadius: '50%', background: 'var(--accent)', color: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: 13, flexShrink: 0 }}>{i + 1}</div>
+              <div style={{ width: 30, height: 30, borderRadius: '50%', background: 'var(--accent)', color: 'var(--on-accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: 13, flexShrink: 0 }}>{i + 1}</div>
               <span style={{ color: 'var(--text-primary)', fontSize: 14, fontWeight: 500 }}>{step}</span>
             </div>
           ))}
         </div>
-        <button onClick={() => setWarmUpState('done')} className="w-full rounded-xl py-3 font-bold" style={{ background: 'var(--accent)', color: '#000', border: 'none', cursor: 'pointer', fontSize: 16 }}>Done — Start Run</button>
+        <button onClick={() => setWarmUpState('done')} className="w-full rounded-xl py-3 font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', cursor: 'pointer', fontSize: 16 }}>Done — Start Run</button>
       </div>
     )
   }
@@ -561,8 +561,8 @@ export default function LogRun() {
             {todayLoading ? <p style={{ color: 'var(--text-muted)' }}>Loading workout...</p> : todayWorkout ? (
               <div className="rounded-2xl p-4" style={{ background: 'var(--bg-base)', border: '1px solid var(--border-subtle)' }}>
                 <div className="flex items-start justify-between gap-3 mb-3">
-                  <span className="inline-block rounded-full px-3 py-1 text-xs font-bold" style={{ background: 'var(--accent)', color: '#000' }}>{todayWorkout.typeLabel}</span>
-                  <span className="rounded-full px-2 py-1 text-[10px] font-black uppercase" style={{ background: 'rgba(34,197,94,0.12)', color: '#86efac', border: '1px solid rgba(34,197,94,0.35)', whiteSpace: 'nowrap' }}>
+                  <span className="inline-block rounded-full px-3 py-1 text-xs font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>{todayWorkout.typeLabel}</span>
+                  <span className="rounded-full px-2 py-1 text-[10px] font-black uppercase" style={{ background: 'rgba(34,197,94,0.12)', color: 'var(--success)', border: '1px solid rgba(34,197,94,0.35)', whiteSpace: 'nowrap' }}>
                     {runBriefIsAi ? 'AI coach' : 'Data coach'}
                   </span>
                 </div>
@@ -588,7 +588,7 @@ export default function LogRun() {
                 {todayWorkout.progression && <p className="mt-3 text-sm" style={{ color: 'var(--text-primary)' }}>{todayWorkout.progression}</p>}
                 {todayWorkout.description && <p className="mt-3 text-sm" style={{ color: 'var(--text-muted)' }}>{todayWorkout.description}</p>}
                 {runBrief && (
-                  <div className="rounded-xl p-3 mt-3" style={{ background: 'rgba(234,179,8,0.08)', border: '1px solid rgba(234,179,8,0.25)' }}>
+                  <div className="rounded-xl p-3 mt-3" style={{ background: 'var(--accent-dim)', border: '1px solid var(--border-subtle)' }}>
                     <p className="text-xs font-black uppercase mb-1" style={{ color: 'var(--accent)', letterSpacing: 0.8 }}>{runBriefIsAi ? 'AI check' : 'Coach baseline'}</p>
                     <p className="text-sm" style={{ color: 'var(--text-primary)' }}>{runBrief.why}</p>
                     <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>Effort: {runBrief.effort} · BPM: {runBrief.bpmRange} · Cadence: {runBrief.cadence}</p>
@@ -602,12 +602,12 @@ export default function LogRun() {
                     ))}
                   </div>
                 )}
-                <button onClick={() => setShowWatchModal(true)} className="w-full mt-4 rounded-xl py-3 font-bold" style={{ background: 'var(--accent)', color: '#000', border: 'none', cursor: 'pointer' }}>Send to Watch</button>
+                <button onClick={() => setShowWatchModal(true)} className="w-full mt-4 rounded-xl py-3 font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', cursor: 'pointer' }}>Send to Watch</button>
               </div>
             ) : (
               <div className="rounded-2xl p-4" style={{ background: 'var(--bg-base)', border: '1px solid var(--border-subtle)' }}>
                 <p style={{ color: 'var(--text-muted)' }}>No workout scheduled today — rest up or log a free run.</p>
-                <button onClick={() => setActiveTab('log')} className="mt-4 rounded-xl px-4 py-2 font-semibold" style={{ background: 'var(--accent)', color: '#000', border: 'none', cursor: 'pointer' }}>Log Free Run</button>
+                <button onClick={() => setActiveTab('log')} className="mt-4 rounded-xl px-4 py-2 font-semibold" style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', cursor: 'pointer' }}>Log Free Run</button>
               </div>
             )}
           </div>
@@ -671,7 +671,7 @@ export default function LogRun() {
                             )}
                             {!day.rest && isToday && (
                               <button onClick={e => { e.stopPropagation(); navigate('/run/active', { state: { countdown, runType: day.type || 'easy', runEnvironment: 'outdoor', surface: trackWorkout === 'yes' ? 'track' : 'road', mapMyRun: true, trackMode: trackWorkout === 'yes' } }) }}
-                                style={{ width: '100%', background: 'var(--accent)', color: '#000', fontWeight: 900, borderRadius: 10, padding: '12px', border: 'none', cursor: 'pointer', fontSize: 14 }}>
+                                style={{ width: '100%', background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 900, borderRadius: 10, padding: '12px', border: 'none', cursor: 'pointer', fontSize: 14 }}>
                                 Start This Run
                               </button>
                             )}
@@ -714,7 +714,7 @@ export default function LogRun() {
               <div className="text-center py-6">
                 <input type="number" step="0.1" min="0" required className="text-5xl font-bold bg-transparent text-center w-32 focus:outline-none" style={{ color: 'var(--accent)' }} value={distance} onChange={e => setDistance(e.target.value)} placeholder="0.0" />
                 <div className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>Distance ({fmt.distanceLabel})</div>
-                {fieldErrors.distance && <p ref={distanceErrorRef} className="text-xs mt-2" style={{ color: '#ef4444' }}>{fieldErrors.distance}</p>}
+                {fieldErrors.distance && <p ref={distanceErrorRef} className="text-xs mt-2" style={{ color: 'var(--danger)' }}>{fieldErrors.distance}</p>}
                 {estimatedTime && <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>Estimated time: {estimatedTime.low}–{estimatedTime.high} min based on your recent {Math.floor(estimatedTime.avg)}:{String(Math.round((estimatedTime.avg%1)*60)).padStart(2,'0')}/mi average pace</p>}
               </div>
             </div>
@@ -723,8 +723,8 @@ export default function LogRun() {
               <div className="flex gap-2 justify-center">
                 <input type="text" required value={duration} onChange={e => setDuration(e.target.value)} onBlur={() => { const sec = parseDuration(duration); if (sec) setDuration(formatDurationDisplay(sec)) }} placeholder="MM:SS or HH:MM:SS" className="w-full max-w-xs rounded-full border px-4 py-3 text-center text-xl font-bold" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)', color: 'var(--text-primary)' }} />
               </div>
-              {fieldErrors.duration && <p ref={durationErrorRef} className="text-xs mt-2 text-center" style={{ color: '#ef4444' }}>{fieldErrors.duration}</p>}
-              {fieldWarnings.pace && <p className="text-xs mt-2 text-center" style={{ color: '#f59e0b' }}>{fieldWarnings.pace}</p>}
+              {fieldErrors.duration && <p ref={durationErrorRef} className="text-xs mt-2 text-center" style={{ color: 'var(--danger)' }}>{fieldErrors.duration}</p>}
+              {fieldWarnings.pace && <p className="text-xs mt-2 text-center" style={{ color: 'var(--warning)' }}>{fieldWarnings.pace}</p>}
             </div>
 
             <div className="rounded-2xl p-4" style={{ background: 'var(--bg-base)', border: '1px solid var(--border-subtle)' }}>
@@ -748,7 +748,7 @@ export default function LogRun() {
               <div style={{ marginTop: 12 }}>
                 <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>Running In</p>
                 {activeShoes.find(s => s.id === selectedShoeId)?.alert && (
-                  <p style={{ fontSize: 11, color: '#f97316', marginBottom: 4 }}>
+                  <p style={{ fontSize: 11, color: 'var(--warning)', marginBottom: 4 }}>
                     This shoe is at {activeShoes.find(s => s.id === selectedShoeId)?.pct_used}% — consider rotating to a fresh pair
                   </p>
                 )}
@@ -769,7 +769,7 @@ export default function LogRun() {
 
             <input type="date" value={date} onChange={e => setDate(e.target.value)} className="w-full rounded-xl border px-4 py-3" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-base)', color: 'var(--text-primary)' }} />
 
-            <button type="submit" disabled={loading || polling} className="w-full rounded-xl py-3 font-semibold disabled:opacity-70" style={{ background: 'var(--accent)', color: '#000', border: 'none', cursor: 'pointer' }}>{loading ? 'Logging run...' : 'Save Run'}</button>
+            <button type="submit" disabled={loading || polling} className="w-full rounded-xl py-3 font-semibold disabled:opacity-70" style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', cursor: 'pointer' }}>{loading ? 'Logging run...' : 'Save Run'}</button>
             {error && <p className="mt-2 text-sm" style={{ color: 'var(--accent)' }}>{error}</p>}
             {feedback && <div className="mt-2 rounded-xl p-3" style={{ background: 'var(--bg-base)', color: 'var(--text-primary)' }}>{feedback}</div>}
             {savedRunId && (
@@ -802,7 +802,7 @@ export default function LogRun() {
 
             {panelPrefs.hr && <div className="rounded-xl p-4 mb-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}><h4 className="font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>Heart Rate</h4>{selectedRun.avg_hr || selectedRun.avg_heart_rate ? <div className="text-2xl font-black" style={{ color: 'var(--text-primary)' }}>{selectedRun.avg_hr || selectedRun.avg_heart_rate} bpm</div> : <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Connect a watch to see HR data</p>}</div>}
 
-            {panelPrefs.notes && <div className="rounded-xl p-4 mb-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}><h4 className="font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>Notes</h4><textarea rows={5} value={editingNotes} onChange={e => setEditingNotes(e.target.value)} className="w-full rounded-xl border px-3 py-2" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-base)', color: 'var(--text-primary)' }} /><button onClick={saveNotes} className="mt-2 rounded-lg px-3 py-2 text-sm font-semibold" style={{ background: 'var(--accent)', color: '#000', border: 'none' }}>Save Notes</button></div>}
+            {panelPrefs.notes && <div className="rounded-xl p-4 mb-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}><h4 className="font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>Notes</h4><textarea rows={5} value={editingNotes} onChange={e => setEditingNotes(e.target.value)} className="w-full rounded-xl border px-3 py-2" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-base)', color: 'var(--text-primary)' }} /><button onClick={saveNotes} className="mt-2 rounded-lg px-3 py-2 text-sm font-semibold" style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none' }}>Save Notes</button></div>}
 
             <button onClick={deleteRun} className="w-full rounded-xl py-3 font-bold" style={{ background: 'var(--bg-card)', color: 'var(--accent)', border: '1px solid var(--accent)' }}>Delete Run</button>
           </div>
@@ -816,7 +816,7 @@ export default function LogRun() {
                   <input type="checkbox" checked={panelPrefs[key]} onChange={e => setPanelPrefs(prev => ({ ...prev, [key]: e.target.checked }))} />
                 </label>
               ))}
-              <button onClick={() => setShowCustomize(false)} className="w-full mt-3 rounded-xl py-2" style={{ background: 'var(--accent)', color: '#000', border: 'none' }}>Done</button>
+              <button onClick={() => setShowCustomize(false)} className="w-full mt-3 rounded-xl py-2" style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none' }}>Done</button>
             </div>
           )}
         </div>
@@ -830,7 +830,7 @@ export default function LogRun() {
             <h3 className="text-xl font-black" style={{ color: 'var(--text-primary)' }}>Great run! Time to recover.</h3>
             <p className="mt-2 text-sm" style={{ color: 'var(--text-muted)' }}>Post-run recovery uses static holds. Hold each stretch for the full duration to target the muscles you just used.</p>
             <div className="mt-4 flex gap-2">
-              <button onClick={() => { setShowRecoveryPrompt(false); navigate('/stretches/session?type=post') }} className="flex-1 rounded-xl px-4 py-2 font-bold" style={{ background: 'var(--accent)', color: '#000', border: 'none' }}>Start Recovery</button>
+              <button onClick={() => { setShowRecoveryPrompt(false); navigate('/stretches/session?type=post') }} className="flex-1 rounded-xl px-4 py-2 font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none' }}>Start Recovery</button>
               <button onClick={() => setShowRecoveryPrompt(false)} className="flex-1 rounded-xl px-4 py-2" style={{ background: 'var(--bg-base)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>Skip</button>
             </div>
           </div>

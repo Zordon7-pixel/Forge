@@ -105,12 +105,12 @@ export default function EditRunModal({ run, onSave, onClose }) {
           />
         </div>
 
-        {error && <p className="text-xs" style={{ color: '#ef4444' }}>{error}</p>}
+        {error && <p className="text-xs" style={{ color: 'var(--danger)' }}>{error}</p>}
 
         <button
           onClick={save}
           disabled={saving}
-          className="w-full py-4 rounded-xl font-black text-black text-base"
+          className="w-full py-4 rounded-xl font-black text-on-accent text-base"
           style={{ background: 'var(--accent)', opacity: saving ? 0.6 : 1 }}
         >
           {saving ? 'Saving...' : 'Save Changes'}

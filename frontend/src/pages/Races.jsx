@@ -93,7 +93,7 @@ function CourseStats({ race }) {
         </span>
       )}
       {isHilly && (
-        <span className="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase" style={{ border: '1px solid rgba(234,179,8,0.35)', color: 'var(--accent)' }}>
+        <span className="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase" style={{ border: '1px solid var(--border-subtle)', color: 'var(--accent)' }}>
           Hilly
         </span>
       )}
@@ -214,14 +214,14 @@ export default function Races() {
       <h1 className="text-2xl font-black" style={{ color: 'var(--text-primary)' }}>Races</h1>
 
       {planPromptRace && (
-        <div className="rounded-xl p-4" style={{ background: 'rgba(234,179,8,0.12)', border: '1px solid rgba(234,179,8,0.3)' }}>
+        <div className="rounded-xl p-4" style={{ background: 'var(--accent-dim)', border: '1px solid var(--border-subtle)' }}>
           <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
             Build a training plan for this race?
           </p>
           <div className="flex gap-2 mt-3">
             <button
               className="rounded-lg px-3 py-1.5 text-xs font-bold"
-              style={{ background: 'var(--accent)', color: '#000' }}
+              style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}
               onClick={() => generateRacePlan(planPromptRace, () => {
                 setPlanPromptRace(null)
                 setMessage(`Your training plan has been updated around ${planPromptRace.race_name}`)
@@ -288,7 +288,7 @@ export default function Races() {
             />
           </div>
           <div className="flex gap-2">
-            <button className="rounded-lg px-4 py-2 text-sm font-bold" style={{ background: 'var(--accent)', color: '#000' }} disabled={catalogLoading}>
+            <button className="rounded-lg px-4 py-2 text-sm font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }} disabled={catalogLoading}>
               {catalogLoading ? 'Searching...' : 'Search Catalog'}
             </button>
             {(catalogForm.q || catalogForm.distance || catalogForm.month || catalogForm.state) && (
@@ -304,7 +304,7 @@ export default function Races() {
           </div>
         </form>
 
-        {catalogError && <p className="text-xs" style={{ color: '#fca5a5' }}>{catalogError}</p>}
+        {catalogError && <p className="text-xs" style={{ color: 'var(--danger)' }}>{catalogError}</p>}
         {!catalogLoading && catalogSearched && !catalogError && catalogRaces.length === 0 && (
           <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No catalog races found.</p>
         )}
@@ -321,13 +321,13 @@ export default function Races() {
                     </p>
                     <CourseStats race={race} />
                   </div>
-                  <span className="rounded-full px-2 py-1 text-[10px] font-bold uppercase" style={{ color: 'var(--accent)', border: '1px solid rgba(234,179,8,0.35)' }}>
+                  <span className="rounded-full px-2 py-1 text-[10px] font-bold uppercase" style={{ color: 'var(--accent)', border: '1px solid var(--border-subtle)' }}>
                     {race.scope || 'local'}
                   </span>
                 </div>
                 <button
                   className="mt-3 rounded-lg px-3 py-1.5 text-xs font-bold"
-                  style={{ background: addedCatalogId === race.id ? 'var(--bg-card)' : '#EAB308', color: addedCatalogId === race.id ? 'var(--accent)' : '#0f1117', border: '1px solid var(--border-subtle)' }}
+                  style={{ background: addedCatalogId === race.id ? 'var(--bg-card)' : 'var(--accent)', color: addedCatalogId === race.id ? 'var(--accent)' : '#0f1117', border: '1px solid var(--border-subtle)' }}
                   onClick={() => addCatalogRace(race)}
                   disabled={addingCatalogId === race.id || addedCatalogId === race.id}
                 >
@@ -354,7 +354,7 @@ export default function Races() {
         </div>
         <input className="w-full rounded-lg px-3 py-2" style={{ background: 'var(--bg-input)' }} placeholder="Location" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} />
         <input className="w-full rounded-lg px-3 py-2" style={{ background: 'var(--bg-input)' }} placeholder="Goal time (hh:mm:ss)" value={form.goal_time} onChange={(e) => setForm({ ...form, goal_time: e.target.value })} />
-        <button className="rounded-lg px-4 py-2 font-bold" style={{ background: 'var(--accent)', color: '#000' }}>Save Race</button>
+        <button className="rounded-lg px-4 py-2 font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>Save Race</button>
         {message && <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{message}</p>}
       </form>
 
@@ -369,7 +369,7 @@ export default function Races() {
             <CourseStats race={r} />
             <button
               className="mt-2 rounded-lg px-3 py-1.5 text-xs font-bold"
-              style={{ background: '#EAB308', color: '#0f1117' }}
+              style={{ background: 'var(--accent)', color: '#0f1117' }}
               onClick={() => generateRacePlan(r, () => {
                 setMessage(`Your training plan has been updated around ${r.race_name}`)
               })}

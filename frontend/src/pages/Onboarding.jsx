@@ -209,9 +209,9 @@ export default function Onboarding() {
           <div className="mt-6 flex items-center justify-between">
             <button type="button" onClick={back} disabled={step === 1 || saving} className="rounded-xl border px-4 py-2 disabled:opacity-40" style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-muted)' }}>Back</button>
             {step < 8 ? (
-              <button type="button" onClick={next} className="rounded-xl px-5 py-2 font-semibold" style={{ background: 'var(--accent)', color: 'black' }}>Next</button>
+              <button type="button" onClick={next} className="rounded-xl px-5 py-2 font-semibold" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>Next</button>
             ) : (
-              <button type="button" onClick={submit} disabled={saving} className="rounded-xl px-5 py-2 font-semibold disabled:opacity-70" style={{ background: 'var(--accent)', color: 'black' }}>Finish</button>
+              <button type="button" onClick={submit} disabled={saving} className="rounded-xl px-5 py-2 font-semibold disabled:opacity-70" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>Finish</button>
             )}
           </div>
         </div>

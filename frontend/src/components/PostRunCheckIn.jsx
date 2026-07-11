@@ -124,11 +124,11 @@ export default function PostRunCheckIn({ runId, heatDrift, onDone }) {
   }
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 50, padding: 16 }}>
-      <div style={{ background: 'var(--bg-card)', borderRadius: '24px 24px 16px 16px', padding: 24, width: '100%', maxWidth: 480 }}>
+    <div className="sheet-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 50, padding: 16 }}>
+      <div className="sheet-panel" style={{ background: 'var(--bg-card)', borderRadius: '24px 24px 16px 16px', padding: 24, width: '100%', maxWidth: 480 }}>
 
         {heatDrift?.drifted && (
-          <div style={{ marginBottom: 16, borderRadius: 12, border: '1px solid rgba(234,179,8,0.35)', background: 'var(--bg-card)', padding: '10px 12px' }}>
+          <div style={{ marginBottom: 16, borderRadius: 12, border: '1px solid var(--border-subtle)', background: 'var(--bg-card)', padding: '10px 12px' }}>
             <p style={{ margin: '0 0 4px', color: 'var(--accent)', fontSize: 11, fontWeight: 900, textTransform: 'uppercase', letterSpacing: 0 }}>
               {heatDrift.label}
             </p>
@@ -153,7 +153,7 @@ export default function PostRunCheckIn({ runId, heatDrift, onDone }) {
                   flex: 1,
                   borderRadius: 12,
                   border: `1px solid ${current ? 'var(--accent)' : 'var(--border-subtle)'}`,
-                  background: complete ? 'var(--accent-dim)' : current ? 'rgba(234,179,8,0.12)' : 'var(--bg-input)',
+                  background: complete ? 'var(--accent-dim)' : current ? 'var(--accent-dim)' : 'var(--bg-input)',
                   color: locked ? 'var(--text-muted)' : complete || current ? 'var(--accent)' : 'var(--text-primary)',
                   opacity: locked ? 0.45 : 1,
                   padding: '8px 6px',
@@ -173,7 +173,7 @@ export default function PostRunCheckIn({ runId, heatDrift, onDone }) {
         </div>
 
         {warning && (
-          <div style={{ marginBottom: 16, borderRadius: 12, border: '1px solid rgba(234,179,8,0.35)', background: 'rgba(234,179,8,0.1)', padding: '10px 12px' }}>
+          <div style={{ marginBottom: 16, borderRadius: 12, border: '1px solid var(--border-subtle)', background: 'var(--accent-dim)', padding: '10px 12px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
               <p style={{ color: 'var(--text-primary)', fontSize: 12, margin: 0 }}>{warning}</p>
               {pendingStep === null && (
@@ -223,9 +223,9 @@ export default function PostRunCheckIn({ runId, heatDrift, onDone }) {
                 </button>
               ))}
             </div>
-            {errors.effort && <p style={{ color: '#ef4444', fontSize: 12, margin: '0 0 12px' }}>{errors.effort}</p>}
+            {errors.effort && <p style={{ color: 'var(--danger)', fontSize: 12, margin: '0 0 12px' }}>{errors.effort}</p>}
             <button type="button" onClick={next}
-              style={{ width: '100%', padding: 16, background: 'var(--accent)', color: '#000', fontWeight: 900, borderRadius: 14, border: 'none', cursor: 'pointer', fontSize: 15, transition: 'transform 0.16s ease' }}>
+              style={{ width: '100%', padding: 16, background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 900, borderRadius: 14, border: 'none', cursor: 'pointer', fontSize: 15, transition: 'transform 0.16s ease' }}>
               Next
             </button>
           </div>
@@ -243,14 +243,14 @@ export default function PostRunCheckIn({ runId, heatDrift, onDone }) {
                 </button>
               ))}
             </div>
-            {errors.pain && <p style={{ color: '#ef4444', fontSize: 12, margin: '0 0 12px' }}>{errors.pain}</p>}
+            {errors.pain && <p style={{ color: 'var(--danger)', fontSize: 12, margin: '0 0 12px' }}>{errors.pain}</p>}
             <div style={{ display: 'flex', gap: 10 }}>
               <button type="button" onClick={() => requestStepChange(0)}
                 style={{ flex: 1, padding: 14, background: 'var(--bg-input)', color: 'var(--text-primary)', fontWeight: 800, borderRadius: 14, border: '1px solid var(--border-subtle)', cursor: 'pointer' }}>
                 Back
               </button>
               <button type="button" onClick={next}
-                style={{ flex: 2, padding: 14, background: 'var(--accent)', color: '#000', fontWeight: 900, borderRadius: 14, border: 'none', cursor: 'pointer', fontSize: 15 }}>
+                style={{ flex: 2, padding: 14, background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 900, borderRadius: 14, border: 'none', cursor: 'pointer', fontSize: 15 }}>
                 Next
               </button>
             </div>
@@ -269,14 +269,14 @@ export default function PostRunCheckIn({ runId, heatDrift, onDone }) {
                 </button>
               ))}
             </div>
-            {errors.energy && <p style={{ color: '#ef4444', fontSize: 12, margin: '0 0 12px' }}>{errors.energy}</p>}
+            {errors.energy && <p style={{ color: 'var(--danger)', fontSize: 12, margin: '0 0 12px' }}>{errors.energy}</p>}
             <div style={{ display: 'flex', gap: 10 }}>
               <button type="button" onClick={() => requestStepChange(1)}
                 style={{ flex: 1, padding: 14, background: 'var(--bg-input)', color: 'var(--text-primary)', fontWeight: 800, borderRadius: 14, border: '1px solid var(--border-subtle)', cursor: 'pointer' }}>
                 Back
               </button>
               <button type="button" onClick={next}
-                style={{ flex: 2, padding: 14, background: 'var(--accent)', color: '#000', fontWeight: 900, borderRadius: 14, border: 'none', cursor: 'pointer', fontSize: 15 }}>
+                style={{ flex: 2, padding: 14, background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 900, borderRadius: 14, border: 'none', cursor: 'pointer', fontSize: 15 }}>
                 Review
               </button>
             </div>
@@ -307,7 +307,7 @@ export default function PostRunCheckIn({ runId, heatDrift, onDone }) {
                 Back
               </button>
               <button type="button" onClick={next} disabled={saving}
-                style={{ flex: 2, padding: 14, background: 'var(--accent)', color: '#000', fontWeight: 900, borderRadius: 14, border: 'none', cursor: saving ? 'default' : 'pointer', fontSize: 15, opacity: saving ? 0.55 : 1 }}>
+                style={{ flex: 2, padding: 14, background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 900, borderRadius: 14, border: 'none', cursor: saving ? 'default' : 'pointer', fontSize: 15, opacity: saving ? 0.55 : 1 }}>
                 {saving ? 'Saving...' : 'Confirm & Save'}
               </button>
             </div>

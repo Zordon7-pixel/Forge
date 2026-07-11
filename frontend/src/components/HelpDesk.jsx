@@ -46,10 +46,10 @@ export default function HelpDesk({ externalOpen, onClose }) {
           <h2 className="text-lg font-bold">{diagnostics ? 'Admin Diagnostics' : 'Help'}</h2>
           {!loading && diagnostics && (
             <div className="flex items-center gap-2">
-              <span className="text-sm font-medium" style={{ color: diagnostics.ok ? '#22c55e' : '#ef4444' }}>
+              <span className="text-sm font-medium" style={{ color: diagnostics.ok ? 'var(--success)' : 'var(--danger)' }}>
                 {diagnostics.ok ? 'All systems healthy' : 'Issues detected'}
               </span>
-              <span style={{ display:'inline-block', width:8, height:8, borderRadius:'50%', background: diagnostics.ok ? '#22c55e' : '#ef4444' }} />
+              <span style={{ display:'inline-block', width:8, height:8, borderRadius:'50%', background: diagnostics.ok ? 'var(--success)' : 'var(--danger)' }} />
             </div>
           )}
         </div>
@@ -76,9 +76,9 @@ export default function HelpDesk({ externalOpen, onClose }) {
                     </div>
                     <div>
                       {check.ok ? (
-                        <CheckCircle size={14} style={{ color:'#22c55e' }} />
+                        <CheckCircle size={14} style={{ color:'var(--success)' }} />
                       ) : (
-                        <XCircle size={14} style={{ color:'#ef4444' }} />
+                        <XCircle size={14} style={{ color:'var(--danger)' }} />
                       )}
                     </div>
                   </div>
@@ -111,7 +111,7 @@ export default function HelpDesk({ externalOpen, onClose }) {
             <div className="flex justify-end gap-2">
               <button onClick={handleClose} className="rounded-lg border px-4 py-2 text-sm" style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}>Close</button>
               {diagnostics && (
-                <button onClick={runAutoFix} disabled={healing} className="rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-60" style={{ background: 'var(--accent)', color: 'black' }}>{healing ? 'Running...' : 'Run Auto-Fix'}</button>
+                <button onClick={runAutoFix} disabled={healing} className="rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-60" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>{healing ? 'Running...' : 'Run Auto-Fix'}</button>
               )}
             </div>
           </>

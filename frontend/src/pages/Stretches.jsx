@@ -54,13 +54,13 @@ function CountdownRing({ total, remaining }) {
       <circle cx="55" cy="55" r={RING_R} fill="none" stroke="var(--bg-card)" strokeWidth="7" />
       <circle
         cx="55" cy="55" r={RING_R} fill="none"
-        stroke="#EAB308" strokeWidth="7" strokeLinecap="round"
+        stroke="var(--accent)" strokeWidth="7" strokeLinecap="round"
         strokeDasharray={RING_CIRC} strokeDashoffset={offset}
         style={{ transform: 'rotate(-90deg)', transformOrigin: '55px 55px', transition: 'stroke-dashoffset 1s linear' }}
       />
       <text
         x="55" y="55" textAnchor="middle" dominantBaseline="central"
-        fill="#EAB308" fontSize="26" fontWeight="900" fontFamily="system-ui,sans-serif"
+        fill="var(--accent)" fontSize="26" fontWeight="900" fontFamily="system-ui,sans-serif"
       >
         {remaining}
       </text>
@@ -146,7 +146,7 @@ function StretchSession({ stretches, onDone, onBack, sex = 'male' }) {
     <div style={{ background: 'var(--bg-base)', minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
       {/* Progress bar */}
       <div style={{ height: 3, background: 'var(--bg-input)' }}>
-        <div style={{ height: '100%', background: '#EAB308', width: `${progressPct}%`, transition: 'width 0.3s ease' }} />
+        <div style={{ height: '100%', background: 'var(--accent)', width: `${progressPct}%`, transition: 'width 0.3s ease' }} />
       </div>
 
       <div style={{ flex: 1, maxWidth: 480, margin: '0 auto', width: '100%', padding: '20px 16px 120px', display: 'flex', flexDirection: 'column' }}>
@@ -168,7 +168,7 @@ function StretchSession({ stretches, onDone, onBack, sex = 'male' }) {
         <h1 style={{ color: 'var(--text-primary)', fontWeight: 900, fontSize: 34, textTransform: 'uppercase', letterSpacing: -1, marginBottom: 6, textAlign: 'center', lineHeight: 1.1 }}>
           {stretch.name}
         </h1>
-        <p style={{ color: '#EAB308', fontWeight: 700, fontSize: 13, textAlign: 'center', marginBottom: 24 }}>
+        <p style={{ color: 'var(--accent)', fontWeight: 700, fontSize: 13, textAlign: 'center', marginBottom: 24 }}>
           {stretch.durationLabel}
         </p>
 
@@ -193,15 +193,15 @@ function StretchSession({ stretches, onDone, onBack, sex = 'male' }) {
             <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 6 }}>
               {t('stretches.nextUp')} {transCountdown}...
             </p>
-            <p style={{ color: '#EAB308', fontWeight: 800, fontSize: 18 }}>{nextStretch.name}</p>
+            <p style={{ color: 'var(--accent)', fontWeight: 800, fontSize: 18 }}>{nextStretch.name}</p>
           </div>
         )}
 
         {/* Done state */}
         {phase === 'done' && (
           <div style={{ background: 'var(--bg-card)', border: '1px solid rgba(34,197,94,0.3)', borderRadius: 16, padding: 20, textAlign: 'center', marginBottom: 24, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
-            <Check size={28} color="#22c55e" />
-            <p style={{ color: '#22c55e', fontWeight: 800, fontSize: 16 }}>
+            <Check size={28} color="var(--success)" />
+            <p style={{ color: 'var(--success)', fontWeight: 800, fontSize: 16 }}>
               {isLast ? t('stretches.routineComplete') : t('stretches.stretchComplete')}
             </p>
           </div>
@@ -223,13 +223,13 @@ function StretchSession({ stretches, onDone, onBack, sex = 'male' }) {
             <>
               <button
                 onClick={handleSkip}
-                style={{ flex: 1, background: 'var(--bg-input)', border: '1px solid rgba(234,179,8,0.22)', borderRadius: 14, padding: '14px 0', fontSize: 14, fontWeight: 800, color: 'var(--text-primary)', cursor: 'pointer' }}
+                style={{ flex: 1, background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', borderRadius: 14, padding: '14px 0', fontSize: 14, fontWeight: 800, color: 'var(--text-primary)', cursor: 'pointer' }}
               >
                 Skip
               </button>
               <button
                 onClick={handleNext}
-                style={{ flex: 2, background: '#EAB308', border: 'none', borderRadius: 14, padding: '14px 0', fontSize: 14, fontWeight: 900, color: '#000', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                style={{ flex: 2, background: 'var(--accent)', border: 'none', borderRadius: 14, padding: '14px 0', fontSize: 14, fontWeight: 900, color: 'var(--on-accent)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
               >
                 {nextStretch
                   ? <>{t('common.next')} <ChevronRight size={16} /></>
@@ -241,7 +241,7 @@ function StretchSession({ stretches, onDone, onBack, sex = 'male' }) {
           {phase === 'done' && (
             <button
               onClick={onDone}
-              style={{ flex: 2, background: '#22c55e', border: 'none', borderRadius: 14, padding: '14px 0', fontSize: 14, fontWeight: 900, color: '#000', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+              style={{ flex: 2, background: 'var(--success)', border: 'none', borderRadius: 14, padding: '14px 0', fontSize: 14, fontWeight: 900, color: 'var(--on-accent)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
             >
               <Check size={16} /> {t('common.done')}
             </button>
@@ -322,9 +322,9 @@ export default function Stretches() {
       <div style={{ background: 'var(--bg-base)', minHeight: '100vh', padding: '32px 16px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
         <div style={{ maxWidth: 480, width: '100%' }}>
           {/* Badge */}
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'rgba(234,179,8,0.1)', border: '1px solid rgba(234,179,8,0.25)', borderRadius: 20, padding: '6px 14px', marginBottom: 28 }}>
-            <Sparkles size={14} color="#EAB308" />
-            <span style={{ color: '#EAB308', fontWeight: 700, fontSize: 12 }}>{t('stretches.aiRecommended')}</span>
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'var(--accent-dim)', border: '1px solid var(--border-subtle)', borderRadius: 20, padding: '6px 14px', marginBottom: 28 }}>
+            <Sparkles size={14} color="var(--accent)" />
+            <span style={{ color: 'var(--accent)', fontWeight: 700, fontSize: 12 }}>{t('stretches.aiRecommended')}</span>
           </div>
 
           <h1 style={{ color: 'var(--text-primary)', fontWeight: 900, fontSize: 30, marginBottom: 8 }}>
@@ -334,8 +334,8 @@ export default function Stretches() {
           {/* Category card */}
           <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', borderRadius: 20, padding: 24, marginBottom: 16 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 12 }}>
-              <div style={{ width: 52, height: 52, borderRadius: 14, background: 'rgba(234,179,8,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                <Icon size={24} color="#EAB308" />
+              <div style={{ width: 52, height: 52, borderRadius: 14, background: 'var(--accent-dim)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <Icon size={24} color="var(--accent)" />
               </div>
               <div>
                 <p style={{ color: 'var(--text-primary)', fontWeight: 800, fontSize: 20, margin: 0 }}>{catLabel}</p>
@@ -347,7 +347,7 @@ export default function Stretches() {
 
           <button
             onClick={() => setScreen('session')}
-            style={{ width: '100%', background: '#EAB308', color: '#000', border: 'none', borderRadius: 16, padding: '16px 0', fontWeight: 900, fontSize: 16, cursor: 'pointer', marginBottom: 12 }}
+            style={{ width: '100%', background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', borderRadius: 16, padding: '16px 0', fontWeight: 900, fontSize: 16, cursor: 'pointer', marginBottom: 12 }}
           >
             {t('stretches.begin')}
           </button>
@@ -379,7 +379,7 @@ export default function Stretches() {
     return (
       <div style={{ background: 'var(--bg-base)', minHeight: '100vh', padding: '24px 16px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
         <div style={{ maxWidth: 480, width: '100%', textAlign: 'center' }}>
-          <CheckCircle2 size={72} color="#EAB308" style={{ marginBottom: 20 }} />
+          <CheckCircle2 size={72} color="var(--accent)" style={{ marginBottom: 20 }} />
           <h1 style={{ color: 'var(--text-primary)', fontWeight: 900, fontSize: 32, marginBottom: 10 }}>
             {t('stretches.completionTitle')}
           </h1>
@@ -388,7 +388,7 @@ export default function Stretches() {
           </p>
           <button
             onClick={() => setScreen('categories')}
-            style={{ width: '100%', background: '#EAB308', color: '#000', border: 'none', borderRadius: 16, padding: '16px 0', fontWeight: 900, fontSize: 16, cursor: 'pointer' }}
+            style={{ width: '100%', background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', borderRadius: 16, padding: '16px 0', fontWeight: 900, fontSize: 16, cursor: 'pointer' }}
           >
             {t('stretches.startAnother')}
           </button>
@@ -423,7 +423,7 @@ export default function Stretches() {
                 onClick={() => loadCategory(option.category)}
                 style={{
                   background: 'var(--bg-input)',
-                  border: '1px solid rgba(234,179,8,0.18)',
+                  border: '1px solid var(--border-subtle)',
                   borderRadius: 13,
                   color: 'var(--text-primary)',
                   cursor: 'pointer',
@@ -444,16 +444,16 @@ export default function Stretches() {
           onClick={loadAI}
           style={{
             width: '100%', display: 'flex', alignItems: 'center', gap: 14,
-            background: 'rgba(234,179,8,0.07)', border: '1px solid rgba(234,179,8,0.22)',
+            background: 'var(--accent-dim)', border: '1px solid var(--border-subtle)',
             borderRadius: 16, padding: '16px 20px', cursor: 'pointer', marginBottom: 24,
             textAlign: 'left',
           }}
         >
-          <div style={{ width: 44, height: 44, borderRadius: 12, background: 'rgba(234,179,8,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-            <Sparkles size={20} color="#EAB308" />
+          <div style={{ width: 44, height: 44, borderRadius: 12, background: 'var(--accent-dim)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            <Sparkles size={20} color="var(--accent)" />
           </div>
           <div style={{ flex: 1 }}>
-            <p style={{ color: '#EAB308', fontWeight: 800, fontSize: 15, margin: 0 }}>{t('stretches.aiRecommended')}</p>
+            <p style={{ color: 'var(--accent)', fontWeight: 800, fontSize: 15, margin: 0 }}>{t('stretches.aiRecommended')}</p>
             <p style={{ color: 'var(--text-muted)', fontSize: 12, margin: 0 }}>{t('stretches.aiRecommendedDesc')}</p>
           </div>
           <ChevronRight size={18} color="var(--text-muted)" />
@@ -479,8 +479,8 @@ export default function Stretches() {
                   borderRadius: 16, padding: '18px 16px', cursor: 'pointer', textAlign: 'left',
                 }}
               >
-                <div style={{ width: 40, height: 40, borderRadius: 10, background: 'rgba(234,179,8,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <Icon size={18} color="#EAB308" />
+                <div style={{ width: 40, height: 40, borderRadius: 10, background: 'var(--accent-dim)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Icon size={18} color="var(--accent)" />
                 </div>
                 <span style={{ color: 'var(--text-primary)', fontWeight: 700, fontSize: 14, lineHeight: 1.2 }}>
                   {label}

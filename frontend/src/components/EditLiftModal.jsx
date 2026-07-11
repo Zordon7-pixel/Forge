@@ -55,17 +55,17 @@ export default function EditLiftModal({ lift, onSave, onClose }) {
           <div>
             <label className="text-xs mb-1 block" style={{ color: 'var(--text-muted)' }}>Sets</label>
             <input className="w-full px-4 py-3 rounded-xl text-sm outline-none" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }} value={sets} onChange={e => setSets(e.target.value)} inputMode="numeric" />
-            {fieldErrors.sets && <p className="text-xs mt-1" style={{ color: '#ef4444' }}>{fieldErrors.sets}</p>}
+            {fieldErrors.sets && <p className="text-xs mt-1" style={{ color: 'var(--danger)' }}>{fieldErrors.sets}</p>}
           </div>
           <div>
             <label className="text-xs mb-1 block" style={{ color: 'var(--text-muted)' }}>Reps</label>
             <input className="w-full px-4 py-3 rounded-xl text-sm outline-none" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }} value={reps} onChange={e => setReps(e.target.value)} inputMode="numeric" />
-            {fieldErrors.reps && <p className="text-xs mt-1" style={{ color: '#ef4444' }}>{fieldErrors.reps}</p>}
+            {fieldErrors.reps && <p className="text-xs mt-1" style={{ color: 'var(--danger)' }}>{fieldErrors.reps}</p>}
           </div>
           <div>
             <label className="text-xs mb-1 block" style={{ color: 'var(--text-muted)' }}>Weight</label>
             <input className="w-full px-4 py-3 rounded-xl text-sm outline-none" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }} value={weightLbs} onChange={e => setWeightLbs(e.target.value)} inputMode="decimal" />
-            {fieldErrors.weight && <p className="text-xs mt-1" style={{ color: '#ef4444' }}>{fieldErrors.weight}</p>}
+            {fieldErrors.weight && <p className="text-xs mt-1" style={{ color: 'var(--danger)' }}>{fieldErrors.weight}</p>}
           </div>
         </div>
 
@@ -79,9 +79,9 @@ export default function EditLiftModal({ lift, onSave, onClose }) {
           <textarea className="w-full px-4 py-3 rounded-xl text-sm outline-none resize-none" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }} value={notes} onChange={e => setNotes(e.target.value)} rows={2} />
         </div>
 
-        {error && <p className="text-xs" style={{ color: '#ef4444' }}>{error}</p>}
+        {error && <p className="text-xs" style={{ color: 'var(--danger)' }}>{error}</p>}
 
-        <button onClick={save} disabled={saving} className="w-full py-4 rounded-xl font-black text-black text-base" style={{ background: 'var(--accent)', opacity: saving ? 0.6 : 1 }}>
+        <button onClick={save} disabled={saving} className="w-full py-4 rounded-xl font-black text-on-accent text-base" style={{ background: 'var(--accent)', opacity: saving ? 0.6 : 1 }}>
           {saving ? 'Saving...' : 'Save Changes'}
         </button>
       </div>

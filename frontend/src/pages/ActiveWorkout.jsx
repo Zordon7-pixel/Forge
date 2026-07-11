@@ -213,7 +213,7 @@ export default function ActiveWorkout() {
           <p className="text-2xl font-bold tabular-nums" style={{ color: 'var(--accent)' }}>{fmtDuration(elapsed)}</p>
           <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>{hrInfo ? `HR: ${hrInfo.bpm} bpm · ${Math.max(1, Math.round((Date.now()-new Date(hrInfo.ts).getTime())/60000))} min ago` : 'No watch data yet — sync your watch to unlock this'}</p>
         </div>
-        <button onClick={endWorkout} disabled={ending} className="rounded-xl px-3 py-2 font-bold text-xs" style={{ background: 'rgba(239,68,68,0.15)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)', flexShrink: 0 }}>
+        <button onClick={endWorkout} disabled={ending} className="rounded-xl px-3 py-2 font-bold text-xs" style={{ background: 'var(--danger-dim)', color: 'var(--danger)', border: '1px solid rgba(239,68,68,0.3)', flexShrink: 0 }}>
           {ending ? 'Ending...' : 'End Workout'}
         </button>
       </div>
@@ -227,7 +227,7 @@ export default function ActiveWorkout() {
               const isDone = i < queueIndex
               return (
                 <div key={i} className="flex items-center gap-3 rounded-xl px-3 py-2" style={{
-                  background: isCurrent ? 'rgba(234,179,8,0.08)' : 'transparent',
+                  background: isCurrent ? 'var(--accent-dim)' : 'transparent',
                   borderLeft: isCurrent ? '3px solid var(--accent)' : '3px solid transparent',
                   opacity: isDone ? 0.4 : 1
                 }}>
@@ -252,17 +252,17 @@ export default function ActiveWorkout() {
           <p className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Rest Timer</p>
           <div className="flex gap-2 flex-wrap">
             {REST_PRESETS.map(s => (
-              <button key={s} onClick={() => startRest(s)} className="rounded-lg px-3 py-1.5 text-xs font-semibold border" style={restRunning && restSeconds === s ? { background: 'var(--accent)', color: 'black', borderColor: 'var(--accent)' } : { background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-muted)' }}>
+              <button key={s} onClick={() => startRest(s)} className="rounded-lg px-3 py-1.5 text-xs font-semibold border" style={restRunning && restSeconds === s ? { background: 'var(--accent)', color: 'var(--on-accent)', borderColor: 'var(--accent)' } : { background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-muted)' }}>
                 {s < 60 ? `${s}s` : `${s/60}m`}
               </button>
             ))}
           </div>
           {restSeconds > 0 && (
             <div className="flex items-center gap-3">
-              <span className="text-2xl font-bold tabular-nums" style={{ color: restSeconds <= 5 ? '#ef4444' : 'var(--text-primary)' }}>
+              <span className="text-2xl font-bold tabular-nums" style={{ color: restSeconds <= 5 ? 'var(--danger)' : 'var(--text-primary)' }}>
                 {fmtDuration(restSeconds)}
               </span>
-              <button onClick={() => setRestRunning(v => !v)} className="rounded-lg px-3 py-1 text-xs font-semibold" style={{ background: 'var(--accent)', color: 'black' }}>
+              <button onClick={() => setRestRunning(v => !v)} className="rounded-lg px-3 py-1 text-xs font-semibold" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>
                 {restRunning ? 'Pause' : 'Resume'}
               </button>
             </div>
@@ -273,7 +273,7 @@ export default function ActiveWorkout() {
       {muscleGroups.length > 0 && (
         <div className="flex gap-2 overflow-x-auto pb-1">
           {muscleGroups.map(g => (
-            <button key={g} onClick={() => { setActiveGroup(g); setSelectedExercise(null); setSetNumber(1) }} className="rounded-full px-4 py-1.5 text-sm capitalize font-medium whitespace-nowrap border flex-shrink-0" style={activeGroup === g ? { background: 'var(--accent)', borderColor: 'var(--accent)', color: 'black' } : { background: 'var(--bg-card)', borderColor: 'var(--border-subtle)', color: 'var(--text-muted)' }}>
+            <button key={g} onClick={() => { setActiveGroup(g); setSelectedExercise(null); setSetNumber(1) }} className="rounded-full px-4 py-1.5 text-sm capitalize font-medium whitespace-nowrap border flex-shrink-0" style={activeGroup === g ? { background: 'var(--accent)', borderColor: 'var(--accent)', color: 'var(--on-accent)' } : { background: 'var(--bg-card)', borderColor: 'var(--border-subtle)', color: 'var(--text-muted)' }}>
               {g}
             </button>
           ))}
@@ -325,15 +325,15 @@ export default function ActiveWorkout() {
               <div style={{ minWidth: 0 }}>
                 <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Reps</p>
                 <input type="number" min="1" placeholder="0" value={reps} onChange={e => setReps(e.target.value)} className="w-full rounded-xl px-3 py-3 text-center text-xl font-bold border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }} />
-                {formErrors.reps && <p ref={repsErrorRef} className="text-xs mt-1" style={{ color: '#ef4444' }}>{formErrors.reps}</p>}
+                {formErrors.reps && <p ref={repsErrorRef} className="text-xs mt-1" style={{ color: 'var(--danger)' }}>{formErrors.reps}</p>}
               </div>
               <div style={{ minWidth: 0 }}>
                 <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Weight (lbs)</p>
                 <input type="number" min="0" step="2.5" placeholder="0" value={weight} onChange={e => setWeight(e.target.value)} className="w-full rounded-xl px-3 py-3 text-center text-xl font-bold border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }} />
-                {formErrors.weight && <p ref={weightErrorRef} className="text-xs mt-1" style={{ color: '#ef4444' }}>{formErrors.weight}</p>}
-                {formWarning && <p className="text-xs mt-1" style={{ color: '#f59e0b' }}>{formWarning}</p>}
+                {formErrors.weight && <p ref={weightErrorRef} className="text-xs mt-1" style={{ color: 'var(--danger)' }}>{formErrors.weight}</p>}
+                {formWarning && <p className="text-xs mt-1" style={{ color: 'var(--warning)' }}>{formWarning}</p>}
               </div>
-              <button onClick={logSet} className="rounded-xl px-4 py-3 font-bold text-sm" style={{ background: 'var(--accent)', color: 'black', gridColumn: '1 / -1', width: '100%' }}>
+              <button onClick={logSet} className="rounded-xl px-4 py-3 font-bold text-sm" style={{ background: 'var(--accent)', color: 'var(--on-accent)', gridColumn: '1 / -1', width: '100%' }}>
                 + Set {setNumber}
               </button>
             </div>
@@ -342,7 +342,7 @@ export default function ActiveWorkout() {
       </div>
 
       {formErrors.workout && (
-        <p ref={endErrorRef} className="text-xs" style={{ color: '#ef4444' }}>
+        <p ref={endErrorRef} className="text-xs" style={{ color: 'var(--danger)' }}>
           {formErrors.workout}
         </p>
       )}

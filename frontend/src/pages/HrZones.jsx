@@ -3,7 +3,7 @@ import { Activity, AlertTriangle, ChevronDown, ChevronRight, Gauge, HeartPulse, 
 import api from '../lib/api'
 import LoadingRunner from '../components/LoadingRunner'
 
-const ZONE_COLORS = ['#22C55E', '#84CC16', '#EAB308', '#F97316', '#EF4444']
+const ZONE_COLORS = ['var(--success)', '#84CC16', 'var(--accent)', 'var(--warning)', 'var(--danger)']
 const MODEL_LABELS = {
   hrr: 'HR Reserve',
   maxhr: 'Max-HR %',
@@ -48,7 +48,7 @@ function ZoneBars({ zones }) {
   return (
     <div style={{ display: 'grid', gap: 10 }}>
       {zones.map((zone, index) => {
-        const color = ZONE_COLORS[index] || '#EAB308'
+        const color = ZONE_COLORS[index] || 'var(--accent)'
         return (
           <div key={zone.zone || index}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 5 }}>
@@ -80,7 +80,7 @@ function StatChip({ label, value }) {
 function SectionToggle({ open, onClick, icon: Icon, title, sub }) {
   return (
     <button type="button" onClick={onClick} style={{ width: '100%', display: 'grid', gridTemplateColumns: '34px minmax(0, 1fr) 20px', alignItems: 'center', gap: 10, background: 'none', border: 'none', padding: 0, cursor: 'pointer', textAlign: 'left' }}>
-      <span style={{ width: 34, height: 34, borderRadius: 10, background: 'rgba(234,179,8,0.12)', display: 'grid', placeItems: 'center', color: '#EAB308' }}><Icon size={18} /></span>
+      <span style={{ width: 34, height: 34, borderRadius: 10, background: 'var(--accent-dim)', display: 'grid', placeItems: 'center', color: 'var(--accent)' }}><Icon size={18} /></span>
       <span style={{ minWidth: 0 }}>
         <span style={{ display: 'block', color: 'var(--text-primary)', fontSize: 15, fontWeight: 900 }}>{title}</span>
         <span style={{ display: 'block', color: 'var(--text-muted)', fontSize: 12, marginTop: 2 }}>{sub}</span>
@@ -207,12 +207,12 @@ export default function HrZones() {
   return (
     <div style={{ display: 'grid', gap: 14, paddingBottom: 96 }}>
       <header style={{ marginBottom: 4 }}>
-        <p style={{ color: '#EAB308', fontSize: 12, fontWeight: 800, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6 }}>FORGE</p>
+        <p style={{ color: 'var(--accent)', fontSize: 12, fontWeight: 800, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6 }}>FORGE</p>
         <h1 style={{ color: 'var(--text-primary)', fontSize: 28, fontWeight: 900, margin: 0 }}>HR Zones</h1>
       </header>
 
       {loadError && (
-        <div style={{ ...cardStyle, borderColor: 'rgba(239,68,68,0.35)', background: 'rgba(239,68,68,0.08)', color: '#FCA5A5', fontSize: 13, fontWeight: 800 }}>
+        <div style={{ ...cardStyle, borderColor: 'var(--danger-dim)', background: 'var(--danger-dim)', color: 'var(--danger)', fontSize: 13, fontWeight: 800 }}>
           {loadError}
         </div>
       )}
@@ -223,7 +223,7 @@ export default function HrZones() {
             <p style={{ color: 'var(--text-primary)', fontSize: 17, fontWeight: 900, margin: 0 }}>Current zones</p>
             <p style={{ color: 'var(--text-muted)', fontSize: 12, margin: '3px 0 0' }}>{hasZones ? 'Live training targets from your profile' : 'Calibrate your zones'}</p>
           </div>
-          <HeartPulse size={22} color="#EF4444" />
+          <HeartPulse size={22} color="var(--danger)" />
         </div>
 
         {hasZones ? (
@@ -238,8 +238,8 @@ export default function HrZones() {
             <ZoneBars zones={zones.slice(0, 5)} />
           </>
         ) : (
-          <div style={{ borderRadius: 14, padding: 18, background: 'linear-gradient(135deg, rgba(234,179,8,0.13), rgba(239,68,68,0.08))', border: '1px solid rgba(234,179,8,0.22)', textAlign: 'center' }}>
-            <Gauge size={30} style={{ color: '#EAB308', margin: '0 auto 10px' }} />
+          <div style={{ borderRadius: 14, padding: 18, background: 'linear-gradient(135deg, var(--accent-dim), var(--danger-dim))', border: '1px solid var(--border-subtle)', textAlign: 'center' }}>
+            <Gauge size={30} style={{ color: 'var(--accent)', margin: '0 auto 10px' }} />
             <p style={{ color: 'var(--text-primary)', fontSize: 17, fontWeight: 900, margin: 0 }}>Calibrate your zones</p>
             <p style={{ color: 'var(--text-muted)', fontSize: 13, lineHeight: 1.45, margin: '6px 0 0' }}>Use recent run data or enter your numbers manually to unlock target bpm ranges.</p>
           </div>
@@ -247,11 +247,11 @@ export default function HrZones() {
       </section>
 
       <section style={cardStyle}>
-        <button type="button" onClick={derive} disabled={suggesting} style={{ width: '100%', minHeight: 46, borderRadius: 12, background: '#EAB308', color: '#000', border: 'none', fontSize: 14, fontWeight: 900, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, opacity: suggesting ? 0.7 : 1 }}>
+        <button type="button" onClick={derive} disabled={suggesting} style={{ width: '100%', minHeight: 46, borderRadius: 12, background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', fontSize: 14, fontWeight: 900, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, opacity: suggesting ? 0.7 : 1 }}>
           <Sparkles size={17} /> {suggesting ? 'Checking your data...' : 'Suggest from my data'}
         </button>
 
-        {suggestError && <p style={{ color: '#FCA5A5', fontSize: 12, fontWeight: 800, margin: '10px 0 0' }}>{suggestError}</p>}
+        {suggestError && <p style={{ color: 'var(--danger)', fontSize: 12, fontWeight: 800, margin: '10px 0 0' }}>{suggestError}</p>}
 
         {suggestion && (
           <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--border-subtle)' }}>
@@ -267,14 +267,14 @@ export default function HrZones() {
                 </div>
                 {suggestion.maxUnderDetected === true && (
                   <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', padding: 10, borderRadius: 12, background: 'rgba(249,115,22,0.12)', border: '1px solid rgba(249,115,22,0.3)', marginBottom: 12 }}>
-                    <AlertTriangle size={16} color="#F97316" style={{ flex: '0 0 auto', marginTop: 1 }} />
-                    <p style={{ color: '#FDBA74', fontSize: 12, fontWeight: 800, lineHeight: 1.4, margin: 0 }}>Your runs show a higher max than stored - consider updating.</p>
+                    <AlertTriangle size={16} color="var(--warning)" style={{ flex: '0 0 auto', marginTop: 1 }} />
+                    <p style={{ color: 'var(--warning)', fontSize: 12, fontWeight: 800, lineHeight: 1.4, margin: 0 }}>Your runs show a higher max than stored - consider updating.</p>
                   </div>
                 )}
                 {Array.isArray(suggestion.zones) && suggestion.zones.length > 0 && <ZoneBars zones={suggestion.zones.slice(0, 5)} />}
               </>
             )}
-            <button type="button" onClick={applySuggestion} disabled={!suggestion.available || applying} style={{ width: '100%', marginTop: 14, minHeight: 42, borderRadius: 12, background: suggestion.available ? '#22C55E' : 'var(--bg-input)', color: suggestion.available ? '#04130A' : 'var(--text-muted)', border: '1px solid var(--border-subtle)', fontSize: 13, fontWeight: 900, cursor: suggestion.available ? 'pointer' : 'not-allowed', opacity: applying ? 0.7 : 1 }}>
+            <button type="button" onClick={applySuggestion} disabled={!suggestion.available || applying} style={{ width: '100%', marginTop: 14, minHeight: 42, borderRadius: 12, background: suggestion.available ? 'var(--success)' : 'var(--bg-input)', color: suggestion.available ? '#04130A' : 'var(--text-muted)', border: '1px solid var(--border-subtle)', fontSize: 13, fontWeight: 900, cursor: suggestion.available ? 'pointer' : 'not-allowed', opacity: applying ? 0.7 : 1 }}>
               {applying ? 'Applying...' : 'Apply'}
             </button>
           </div>
@@ -307,8 +307,8 @@ export default function HrZones() {
                 <option value="lthr">LTHR</option>
               </select>
             </label>
-            {manualError && <p style={{ color: '#FCA5A5', fontSize: 12, fontWeight: 800, margin: 0 }}>{manualError}</p>}
-            <button type="button" onClick={saveManual} disabled={savingManual} style={{ minHeight: 44, borderRadius: 12, background: '#EAB308', color: '#000', border: 'none', fontSize: 14, fontWeight: 900, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, opacity: savingManual ? 0.7 : 1 }}>
+            {manualError && <p style={{ color: 'var(--danger)', fontSize: 12, fontWeight: 800, margin: 0 }}>{manualError}</p>}
+            <button type="button" onClick={saveManual} disabled={savingManual} style={{ minHeight: 44, borderRadius: 12, background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', fontSize: 14, fontWeight: 900, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, opacity: savingManual ? 0.7 : 1 }}>
               <Save size={16} /> {savingManual ? 'Saving...' : 'Save'}
             </button>
           </div>
@@ -329,7 +329,7 @@ export default function HrZones() {
                 <input type="number" min="15" max="90" inputMode="numeric" value={fieldForm.durationMinutes} onChange={e => setFieldForm({ ...fieldForm, durationMinutes: e.target.value })} style={inputStyle} />
               </label>
             </div>
-            {fieldError && <p style={{ color: '#FCA5A5', fontSize: 12, fontWeight: 800, margin: 0 }}>{fieldError}</p>}
+            {fieldError && <p style={{ color: 'var(--danger)', fontSize: 12, fontWeight: 800, margin: 0 }}>{fieldError}</p>}
             <button type="button" onClick={saveFieldTest} disabled={savingField} style={{ minHeight: 44, borderRadius: 12, background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', fontSize: 14, fontWeight: 900, cursor: 'pointer', opacity: savingField ? 0.7 : 1 }}>
               {savingField ? 'Saving...' : 'Save field test'}
             </button>

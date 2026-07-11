@@ -138,7 +138,7 @@ export default function TestFlightDebugPanel({ open, onClose }) {
       <div className="w-full max-h-[82vh] overflow-y-auto rounded-t-2xl border p-5" style={{ background: 'var(--bg-card)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}>
         <div className="mb-4 flex items-start justify-between gap-3">
           <div>
-            <p className="text-xs font-bold uppercase" style={{ color: '#EAB308', letterSpacing: 0.8 }}>TestFlight Debug</p>
+            <p className="text-xs font-bold uppercase" style={{ color: 'var(--accent)', letterSpacing: 0.8 }}>TestFlight Debug</p>
             <h2 className="mt-1 text-xl font-black">Build diagnostics</h2>
           </div>
           <button type="button" onClick={onClose} className="rounded-lg p-2" style={{ background: 'var(--bg-input)', color: 'var(--text-muted)' }} aria-label="Close debug panel">
@@ -147,7 +147,7 @@ export default function TestFlightDebugPanel({ open, onClose }) {
         </div>
 
         {!access.allowed ? (
-          <div className="rounded-xl border p-4" style={{ borderColor: 'rgba(234,179,8,0.35)', background: 'rgba(234,179,8,0.1)' }}>
+          <div className="rounded-xl border p-4" style={{ borderColor: 'var(--border-subtle)', background: 'var(--accent-dim)' }}>
             <p className="text-sm font-bold">Debug panel restricted</p>
             <p className="mt-2 text-sm" style={{ color: 'var(--text-muted)' }}>
               Production debug output requires `VITE_ENABLE_TESTFLIGHT_DEBUG=true` or an email in `VITE_DEBUG_ADMIN_EMAILS`.
@@ -165,12 +165,12 @@ export default function TestFlightDebugPanel({ open, onClose }) {
             </div>
 
             {error && (
-              <p className="mt-3 rounded-lg border px-3 py-2 text-sm" style={{ borderColor: 'rgba(249,115,22,0.35)', background: 'rgba(249,115,22,0.1)', color: '#fdba74' }}>
+              <p className="mt-3 rounded-lg border px-3 py-2 text-sm" style={{ borderColor: 'var(--warning-dim)', background: 'rgba(249,115,22,0.1)', color: 'var(--warning)' }}>
                 {error}
               </p>
             )}
 
-            <button type="button" onClick={copyDebugInfo} className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-black" style={{ background: 'var(--accent)', color: '#000' }}>
+            <button type="button" onClick={copyDebugInfo} className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-black" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>
               <Clipboard size={16} />
               {copied ? 'Copied' : 'Copy debug info'}
             </button>

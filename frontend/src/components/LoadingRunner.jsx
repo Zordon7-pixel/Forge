@@ -67,13 +67,13 @@ export default function LoadingRunner({ message = 'Loading...' }) {
 
       <svg width="140" height="130" viewBox="0 0 140 130" fill="none" xmlns="http://www.w3.org/2000/svg">
         {/* Shadow */}
-        <ellipse className="runner-shadow" cx="70" cy="115" rx="28" ry="5" fill="#EAB308" />
+        <ellipse className="runner-shadow" cx="70" cy="115" rx="28" ry="5" fill="var(--accent)" />
 
         {/* Track dashes */}
         <g clipPath="url(#track-clip)">
           <g className="track-line">
             {[0, 20, 40, 60, 80, 100, 120, 140, 160].map(x => (
-              <rect key={x} x={x} y="119" width="12" height="3" rx="1.5" fill="#EAB308" opacity="0.3" />
+              <rect key={x} x={x} y="119" width="12" height="3" rx="1.5" fill="var(--accent)" opacity="0.3" />
             ))}
           </g>
         </g>
@@ -86,32 +86,32 @@ export default function LoadingRunner({ message = 'Loading...' }) {
         {/* Runner group — centered at 70,55 */}
         <g className="runner-body" style={{ transformOrigin: '70px 55px' }}>
           {/* Head */}
-          <circle cx="70" cy="30" r="10" fill="#EAB308" />
+          <circle cx="70" cy="30" r="10" fill="var(--accent)" />
           {/* Visor */}
           <rect x="62" y="26" width="14" height="4" rx="2" fill="#000" />
           {/* Torso */}
-          <rect x="65" y="40" width="10" height="22" rx="4" fill="#EAB308" />
+          <rect x="65" y="40" width="10" height="22" rx="4" fill="var(--accent)" />
 
           {/* Left arm (forward swing) */}
           <g className="arm-l" style={{ transformOrigin: '67px 43px' }}>
-            <rect x="55" y="43" width="12" height="4" rx="2" fill="#EAB308" />
+            <rect x="55" y="43" width="12" height="4" rx="2" fill="var(--accent)" />
             {/* Forearm */}
-            <rect x="46" y="39" width="10" height="4" rx="2" fill="#EAB308" />
+            <rect x="46" y="39" width="10" height="4" rx="2" fill="var(--accent)" />
           </g>
 
           {/* Right arm (back swing) */}
           <g className="arm-r" style={{ transformOrigin: '73px 43px' }}>
-            <rect x="73" y="43" width="12" height="4" rx="2" fill="#EAB308" />
+            <rect x="73" y="43" width="12" height="4" rx="2" fill="var(--accent)" />
             {/* Forearm */}
-            <rect x="84" y="39" width="10" height="4" rx="2" fill="#EAB308" />
+            <rect x="84" y="39" width="10" height="4" rx="2" fill="var(--accent)" />
           </g>
 
           {/* Left thigh (forward) */}
           <g className="thigh-l" style={{ transformOrigin: '68px 62px' }}>
-            <rect x="64" y="62" width="5" height="16" rx="2.5" fill="#EAB308" />
+            <rect x="64" y="62" width="5" height="16" rx="2.5" fill="var(--accent)" />
             {/* Left calf */}
             <g className="calf-l" style={{ transformOrigin: '66px 78px' }}>
-              <rect x="63" y="78" width="5" height="14" rx="2.5" fill="#EAB308" />
+              <rect x="63" y="78" width="5" height="14" rx="2.5" fill="var(--accent)" />
               {/* Shoe */}
               <rect x="60" y="90" width="10" height="4" rx="2" fill="#000" />
             </g>
@@ -119,10 +119,10 @@ export default function LoadingRunner({ message = 'Loading...' }) {
 
           {/* Right thigh (back) */}
           <g className="thigh-r" style={{ transformOrigin: '72px 62px' }}>
-            <rect x="71" y="62" width="5" height="16" rx="2.5" fill="#EAB308" />
+            <rect x="71" y="62" width="5" height="16" rx="2.5" fill="var(--accent)" />
             {/* Right calf */}
             <g className="calf-r" style={{ transformOrigin: '73px 78px' }}>
-              <rect x="71" y="78" width="5" height="14" rx="2.5" fill="#EAB308" />
+              <rect x="71" y="78" width="5" height="14" rx="2.5" fill="var(--accent)" />
               {/* Shoe */}
               <rect x="70" y="90" width="10" height="4" rx="2" fill="#000" />
             </g>
