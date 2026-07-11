@@ -1,7 +1,56 @@
 const router = require('express').Router();
 const { v4: uuidv4 } = require('uuid');
+const rateLimit = require('express-rate-limit');
 const { dbGet, dbAll, dbRun } = require('../db');
 const auth = require('../middleware/auth');
+const { generateElevationAwareRoute, RouteEngineError } = require('../services/routeEngine');
+
+const routeGenerationLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 8,
+  keyGenerator: (req) => String(req.user.id),
+  message: { error: 'Too many route requests. Try again in 15 minutes.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// GET /api/routes/planner-status -- expose availability without leaking provider credentials
+router.get('/planner-status', auth, async (req, res) => {
+  try {
+    const user = await dbGet('SELECT is_pro FROM users WHERE id=?', [req.user.id]);
+    const configured = Boolean(process.env.OPENROUTESERVICE_API_KEY);
+    const isPro = Boolean(user?.is_pro);
+    res.json({
+      available: configured && isPro,
+      configured,
+      requiresPro: configured && !isPro,
+      elevationPreferences: ['flat', 'balanced', 'hilly'],
+      surfaces: ['road', 'trail'],
+    });
+  } catch (err) {
+    console.error('[routes/planner-status]', err.message);
+    res.status(500).json({ error: 'Failed to load route planner status.' });
+  }
+});
+
+// POST /api/routes/generate -- generate a private, ephemeral loop around the user's location
+router.post('/generate', auth, routeGenerationLimiter, async (req, res) => {
+  try {
+    const user = await dbGet('SELECT is_pro FROM users WHERE id=?', [req.user.id]);
+    if (!user?.is_pro) {
+      return res.status(403).json({ error: 'Elevation route planning requires Forge Pro.', code: 'PRO_REQUIRED' });
+    }
+    const route = await generateElevationAwareRoute(req.body);
+    res.json({ route });
+  } catch (err) {
+    if (err instanceof RouteEngineError) {
+      if (err.status >= 500) console.error('[routes/generate]', err.code, err.message);
+      return res.status(err.status).json({ error: err.message, code: err.code });
+    }
+    console.error('[routes/generate] unexpected failure:', err.message);
+    return res.status(500).json({ error: 'Route generation failed.' });
+  }
+});
 
 // GET /api/routes — browse shared routes (paginated, sorted by newest or most liked)
 router.get('/', auth, async (req, res) => {

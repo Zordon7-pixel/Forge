@@ -121,6 +121,7 @@ function sanitize(val, maxLen = 200) {
 | `OPENAI_API_KEY` | YES | For all AI features |
 | `OPENAI_MODEL_FREQUENT` | No | Defaults to `gpt-5.4-mini` for per-action feedback |
 | `OPENAI_MODEL_COMPLEX` | No | Defaults to `gpt-5.5` for complex/infrequent planning |
+| `OPENROUTESERVICE_API_KEY` | For elevation routes | Server-side route generation only; never expose through Vite/client env |
 | `APP_URL` | For reset email | Base URL used in password reset links |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `SMTP_SECURE` | For reset email | SMTP delivery for forgot-password emails |
 | `EMAIL_FROM` | For reset email | From address for forgot-password emails |

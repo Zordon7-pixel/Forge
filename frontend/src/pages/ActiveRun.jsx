@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { MapContainer, Marker, Polyline, TileLayer } from 'react-leaflet'
+import { CircleMarker, MapContainer, Polyline, TileLayer, useMap } from 'react-leaflet'
 import { Capacitor, registerPlugin } from '@capacitor/core'
 import { useUnits } from '../context/UnitsContext'
 import api from '../lib/api'
@@ -8,6 +8,7 @@ import { queueRequest } from '../lib/offlineQueue'
 import PostRunCheckIn from '../components/PostRunCheckIn'
 import AICoachFeedbackCard from '../components/AICoachFeedbackCard'
 import WorkoutCard from '../components/WorkoutCard'
+import { calculateElevationStats } from '../utils/elevation'
 
 const BackgroundGeolocation = registerPlugin('BackgroundGeolocation')
 
@@ -71,11 +72,52 @@ function formatGapDuration(seconds) {
   return `${minutes}m ${remaining}s`
 }
 
+function formatElevationForUnit(feet, units) {
+  if (feet === undefined || feet === null || feet === '') return '--'
+  if (!Number.isFinite(Number(feet))) return '--'
+  if (units === 'metric') return `${Math.round(Number(feet) * 0.3048).toLocaleString()} m`
+  return `${Math.round(Number(feet)).toLocaleString()} ft`
+}
+
+function normalizePlannedRoute(value) {
+  if (!value || typeof value !== 'object') return null
+  const optionalNumber = (numberValue) => {
+    if (numberValue === undefined || numberValue === null || numberValue === '') return null
+    const number = Number(numberValue)
+    return Number.isFinite(number) ? number : null
+  }
+  const coordinates = Array.isArray(value.coordinates)
+    ? value.coordinates
+      .slice(0, 800)
+      .filter((point) => Array.isArray(point) && Number.isFinite(Number(point[0])) && Number.isFinite(Number(point[1])))
+      .map((point) => [Number(point[0]), Number(point[1]), optionalNumber(point[2])])
+    : []
+  if (coordinates.length < 2) return null
+  return {
+    coordinates,
+    distanceMiles: optionalNumber(value.distanceMiles),
+    targetDistanceMiles: optionalNumber(value.targetDistanceMiles),
+    elevationGainFeet: optionalNumber(value.elevationGainFeet),
+    elevationPreference: ['flat', 'balanced', 'hilly'].includes(value.elevationPreference) ? value.elevationPreference : 'balanced',
+    surface: value.surface === 'trail' ? 'trail' : 'road',
+  }
+}
+
+function FitMapBounds({ positions }) {
+  const map = useMap()
+  useEffect(() => {
+    if (positions.length > 1) map.fitBounds(positions, { padding: [18, 18] })
+  }, [map, positions])
+  return null
+}
+
 export default function ActiveRun() {
   const location = useLocation()
   const navigate = useNavigate()
-  const { fmt } = useUnits()
+  const { fmt, units } = useUnits()
   const selectedCountdown = location?.state?.countdown ?? 0
+  const plannedRoute = useMemo(() => normalizePlannedRoute(location?.state?.plannedRoute), [location?.state?.plannedRoute])
+  const workoutTarget = location?.state?.workoutTarget || null
   const [countdownVal, setCountdownVal] = useState(selectedCountdown)
   const [countingDown, setCountingDown] = useState(selectedCountdown > 0)
   const [running, setRunning] = useState(false)
@@ -114,6 +156,15 @@ export default function ActiveRun() {
   const discardedSegmentRef = useRef(false)
   const startTimestampRef = useRef(null)
   const clientRunIdRef = useRef(createClientRunId())
+  const actualElevation = useMemo(() => calculateElevationStats(routeCoords), [routeCoords])
+  const plannedRoutePositions = useMemo(() => (
+    plannedRoute?.coordinates?.map(([lat, lon]) => [lat, lon]) || []
+  ), [plannedRoute])
+  const recordedRoutePositions = useMemo(() => routeCoords.map(([lat, lon]) => [lat, lon]), [routeCoords])
+  const allMapPositions = useMemo(() => (
+    plannedRoutePositions.length ? [...plannedRoutePositions, ...recordedRoutePositions] : recordedRoutePositions
+  ), [plannedRoutePositions, recordedRoutePositions])
+  const mapBoundsPositions = plannedRoutePositions.length ? plannedRoutePositions : recordedRoutePositions
 
   useEffect(() => {
     api.get('/auth/me')
@@ -292,8 +343,6 @@ export default function ActiveRun() {
     return `${m}:${String(s).padStart(2, '0')}`
   }, [elapsed])
 
-  const { units } = useUnits()
-
   const getGpsGapSummary = () => {
     if (!mapMyRun || !gpsStarted) return null
     const totalGapSeconds = gpsGapSecondsRef.current
@@ -334,6 +383,8 @@ export default function ActiveRun() {
       perceived_effort: 5,
       gps_available: gpsStarted && gpsAvailable,
       avg_heart_rate: liveHr || null,
+      elevation_gain: actualElevation.available ? actualElevation.gainFeet : null,
+      elevation_loss: actualElevation.available ? actualElevation.lossFeet : null,
       route_coords: routeCoords.map(([lat, lon, alt]) => ({ lat, lon, alt: alt ?? null })),
       treadmill_brand: treadmillBrand || null
     }
@@ -403,6 +454,21 @@ export default function ActiveRun() {
       {countingDown && <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: '#000' }}><div className="text-center"><p className="text-9xl font-black" style={{ color: 'var(--accent)' }}>{countdownVal}</p><p className="text-xl mt-4" style={{ color: 'var(--text-muted)' }}>Get ready...</p></div></div>}
       <h2 className="t-micro mb-4">Active Run</h2>
 
+      {plannedRoute && (
+        <div className="mb-4 p-3" style={{ borderRadius: 8, background: 'var(--accent-dim)', border: '1px solid var(--border-subtle)' }}>
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-xs font-black uppercase" style={{ color: 'var(--accent)' }}>Planned course</p>
+              <p className="text-sm font-bold capitalize" style={{ color: 'var(--text-primary)' }}>
+                {fmt.distance(plannedRoute.distanceMiles || plannedRoute.targetDistanceMiles, 1)} · {plannedRoute.elevationPreference === 'balanced' ? 'rolling' : plannedRoute.elevationPreference}
+              </p>
+            </div>
+            <p className="text-sm font-black" style={{ color: 'var(--text-primary)' }}>{formatElevationForUnit(plannedRoute.elevationGainFeet, units)} gain</p>
+          </div>
+          {(workoutTarget?.pace || workoutTarget?.zone) && <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>{workoutTarget?.pace ? `${workoutTarget.pace} target` : ''}{workoutTarget?.pace && workoutTarget?.zone ? ' · ' : ''}{workoutTarget?.zone || ''}</p>}
+        </div>
+      )}
+
       <div className="mb-5 text-center">
         <p className="t-micro">Elapsed</p>
         <p className="stat-num mt-1" style={{ color: 'var(--text-primary)', fontSize: 64, lineHeight: 1 }}>{timeDisplay}</p>
@@ -416,6 +482,14 @@ export default function ActiveRun() {
             <p className="stat-num mt-1" style={{ color: 'var(--text-primary)', fontSize: 28, lineHeight: 1.1 }}>{pace}</p>
           </div>
         </div>
+        {(actualElevation.available || plannedRoute) && (
+          <div className="mt-3 pt-3" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+            <p className="t-micro">Elevation gain</p>
+            <p className="stat-num mt-1" style={{ color: 'var(--text-primary)', fontSize: 22, lineHeight: 1.1 }}>
+              {actualElevation.available ? formatElevationForUnit(actualElevation.gainFeet, units) : 'Waiting for GPS altitude'}
+            </p>
+          </div>
+        )}
       </div>
 
       <div className="rounded-xl p-3 mb-3" style={{ background: 'var(--bg-input)' }}>
@@ -442,9 +516,19 @@ export default function ActiveRun() {
       )}
       {saveError && <div className="rounded-xl p-3 mb-3" style={{ background: queuedOffline ? 'rgba(34,197,94,0.12)' : 'var(--danger-dim)', border: `1px solid ${queuedOffline ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'}`, color: queuedOffline ? 'var(--success)' : 'var(--danger)' }}>{saveError}</div>}
 
-      {mapMyRun && routeCoords.length > 0 && <div className="mb-4 rounded-2xl overflow-hidden" style={{ minHeight: 280, height: 280 }}><MapContainer center={routeCoords[routeCoords.length - 1]} zoom={15} style={{ height: '100%', width: '100%' }}><TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" /><Marker position={routeCoords[routeCoords.length - 1]} /><Polyline positions={routeCoords} pathOptions={{ color: 'var(--accent)', weight: 4 }} /></MapContainer></div>}
+      {mapMyRun && allMapPositions.length > 0 && (
+        <div className="mb-4 overflow-hidden" style={{ minHeight: 280, height: 280, borderRadius: 8 }}>
+          <MapContainer center={recordedRoutePositions.at(-1) || plannedRoutePositions[0]} zoom={15} style={{ height: '100%', width: '100%' }}>
+            <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+            <FitMapBounds positions={mapBoundsPositions} />
+            {plannedRoutePositions.length > 0 && <Polyline positions={plannedRoutePositions} pathOptions={{ color: '#9CA3AF', weight: 5, opacity: 0.85, dashArray: '8 8' }} />}
+            {recordedRoutePositions.length > 0 && <Polyline positions={recordedRoutePositions} pathOptions={{ color: '#EAB308', weight: 5 }} />}
+            {recordedRoutePositions.length > 0 && <CircleMarker center={recordedRoutePositions.at(-1)} radius={6} pathOptions={{ color: '#111111', fillColor: '#EAB308', fillOpacity: 1, weight: 2 }} />}
+          </MapContainer>
+        </div>
+      )}
 
-      {!running && !countingDown && !awaitingManualDistance && <><button onClick={() => setMapMyRun(v => !v)} className="pressable w-full rounded-xl py-2 font-semibold mb-2" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}>{mapMyRun ? 'Record route: On' : 'Record route: Off'}</button><button onClick={() => { setCountdownVal(selectedCountdown); setCountingDown(selectedCountdown > 0); if (selectedCountdown === 0) startGPS() }} className="pressable w-full rounded-xl py-3 font-black" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>Start Run</button></>}
+      {!running && !countingDown && !awaitingManualDistance && <>{plannedRoute ? <div className="w-full py-2 text-center text-sm font-semibold mb-2" style={{ borderRadius: 8, background: 'var(--bg-input)', color: 'var(--text-primary)' }}>Planned course loaded · GPS recording on</div> : <button onClick={() => setMapMyRun(v => !v)} className="pressable w-full rounded-xl py-2 font-semibold mb-2" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}>{mapMyRun ? 'Record route: On' : 'Record route: Off'}</button>}<button onClick={() => { setCountdownVal(selectedCountdown); setCountingDown(selectedCountdown > 0); if (selectedCountdown === 0) startGPS() }} className="pressable w-full rounded-xl py-3 font-black" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>Start Run</button></>}
       {running && <button onClick={finishRun} disabled={saving} className="pressable w-full rounded-xl py-3 font-black" style={{ background: 'var(--accent)', color: 'var(--on-accent)', opacity: saving ? 0.5 : 1, minHeight: 56 }}>{saving ? 'Saving...' : 'Finish Run'}</button>}
 
       {awaitingManualDistance && (

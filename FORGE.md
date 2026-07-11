@@ -116,6 +116,16 @@ Phase 2 cleanup from this audit:
 - Settings now exposes `Sync Apple Health` inside the native app for Pro users. Dashboard still reads passively and tells users to grant permission from Settings first.
 - No EAS/TestFlight build was shipped in Phase 2; phone QA must happen before Bryan approves the next EAS build.
 
+## Elevation-Aware Run Routes (2026-07-11)
+
+- The Today run card exposes a Pro route planner when `OPENROUTESERVICE_API_KEY` is configured on Railway.
+- A prescribed distance can be planned as a road or trail loop with flat, rolling, or hilly terrain preference.
+- The backend compares three deterministic OpenRouteService round-trip candidates, selects by relative elevation gain, caches candidates for 20 minutes, and limits each user to eight generation requests per 15 minutes.
+- Generated routes are private and ephemeral. They are not inserted into `shared_routes`; the selected course is passed to Active Run as a planned overlay, separate from recorded GPS points.
+- Active Run now calculates phone-recorded elevation gain/loss from smoothed GPS altitude, saves it with the run, and shows gain in run details. Planned elevation is never substituted for measured elevation.
+- The first release is course preview plus on-run map overlay, not turn-by-turn navigation or off-route alerts. Users are told to review crossings, access rules, and current conditions.
+- This web/backend release does not require an EAS build. Production route generation remains hidden until the server-side provider key is present.
+
 ## Recently Fixed Bugs
 
 Do not reintroduce these patterns.

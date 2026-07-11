@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { X, Brain } from 'lucide-react'
 import api from '../lib/api'
+import { useUnits } from '../context/UnitsContext'
 
 function fmtDuration(totalSeconds = 0) {
   const h = Math.floor(totalSeconds / 3600)
@@ -30,6 +31,7 @@ const ZONES = [
 ]
 
 export default function RunDetailModal({ run, onClose, onFeedbackGenerated }) {
+  const { units } = useUnits()
   const [feedback, setFeedback] = useState(run.ai_feedback || '')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -53,6 +55,12 @@ export default function RunDetailModal({ run, onClose, onFeedbackGenerated }) {
   const maxHr = run.max_heart_rate || 190
   const hrPct = hr && maxHr ? hr / maxHr : null
   const zone = hrPct ? (ZONES.find(z => hrPct >= z.min && hrPct < z.max) || ZONES[4]) : null
+  const elevationGain = run.elevation_gain === null || run.elevation_gain === undefined || run.elevation_gain === ''
+    ? Number.NaN
+    : Number(run.elevation_gain)
+  const elevationLabel = Number.isFinite(elevationGain)
+    ? units === 'metric' ? `${Math.round(elevationGain * 0.3048)} m` : `${Math.round(elevationGain)} ft`
+    : '--'
 
   const stats = [
     { label: 'Distance', value: run.distance_miles ? `${Number(run.distance_miles).toFixed(2)} mi` : '--' },
@@ -61,6 +69,7 @@ export default function RunDetailModal({ run, onClose, onFeedbackGenerated }) {
     { label: 'Calories', value: run.calories ? `${run.calories} cal` : '--' },
     { label: 'Effort', value: run.perceived_effort ? `${run.perceived_effort}/10 - ${EFFORT_LABELS[run.perceived_effort] || ''}` : '--' },
     { label: 'Surface', value: run.surface || run.run_type || '--' },
+    { label: 'Elevation Gain', value: elevationLabel },
   ]
 
   return (

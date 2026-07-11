@@ -53,6 +53,12 @@ function firstRoutePoint(routeCoords) {
   return Number.isFinite(lat) && Number.isFinite(lon) ? { lat, lon } : null;
 }
 
+function optionalBoundedNumber(value, maximum) {
+  if (value === undefined || value === null || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 && number <= maximum ? number : null;
+}
+
 function buildRunStructure({ recommendationType, suggestedDistance, suggestedPace }) {
   const distance = Number(suggestedDistance) || 0;
   const pace = String(suggestedPace || '').trim() || null;
@@ -637,6 +643,8 @@ router.post('/', auth, async (req, res) => {
 
     const id = uuidValidate(String(clientRunId || '')) ? clientRunId : uuidv4();
     const resolvedSurface = surface || run_surface || 'road';
+    const resolvedElevationGain = optionalBoundedNumber(elevation_gain, 100000);
+    const resolvedElevationLoss = optionalBoundedNumber(elevation_loss, 100000);
     let prescribedTargetZone = typeof target_zone === 'string' && target_zone.length <= 20 ? target_zone.trim() || null : null;
     if (!prescribedTargetZone) {
       try {
@@ -660,7 +668,7 @@ router.post('/', auth, async (req, res) => {
       id, req.user.id, date, type, distance_miles || 0, duration_seconds || 0, perceived_effort || 5, notes || null,
       resolvedSurface, resolvedSurface, incline_pct || 0, treadmill_speed || 0, JSON.stringify(route_coords || []), watch_mode || null,
       avg_heart_rate || null, max_heart_rate || null, min_heart_rate || null, JSON.stringify(heart_rate_zones || []),
-      cadence_spm || null, elevation_gain || null, elevation_loss || null, pace_avg || null, JSON.stringify(pace_splits || []),
+      cadence_spm || null, resolvedElevationGain, resolvedElevationLoss, pace_avg || null, JSON.stringify(pace_splits || []),
       vo2_max || null, training_effect_aerobic || null, training_effect_anaerobic || null, recovery_time_hours || null,
       detected_surface_type || null, temperature_f || null, calories || 0, treadmill_brand || null, treadmill_model || null,
       watch_sync_id || null, watch_activity_type || null, watch_normalized_type || null, gps_available === false ? 0 : 1

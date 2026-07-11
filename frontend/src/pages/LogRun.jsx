@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react'
+import { lazy, Suspense, useState, useEffect, useMemo, useRef } from 'react'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { MapPin, Mountain, RefreshCw, Gauge, Pencil } from 'lucide-react'
 import { useUnits } from '../context/UnitsContext'
@@ -11,6 +11,8 @@ import WatchWorkoutSendButton from '../components/WatchWorkoutSendButton'
 import { queueRequest } from '../lib/offlineQueue'
 import { scrollToFirstError, validateRunLog } from '../utils/validation'
 import WatchWorkoutService from '../services/WatchWorkoutService'
+
+const RoutePlanner = lazy(() => import('../components/RoutePlanner'))
 
 function todayISO() {
   const now = new Date()
@@ -288,6 +290,7 @@ export default function LogRun() {
   const [weekPlanLoading, setWeekPlanLoading] = useState(false)
   const [selectedDay, setSelectedDay] = useState(null)
   const [showWatchModal, setShowWatchModal] = useState(false)
+  const [routePlannerStatus, setRoutePlannerStatus] = useState({ available: false, requiresPro: false })
 
   const [selectedRun, setSelectedRun] = useState(null)
   const [showCustomize, setShowCustomize] = useState(false)
@@ -306,6 +309,23 @@ export default function LogRun() {
   useEffect(() => {
     if (warmUpState === 'done') setActiveTab('today')
   }, [warmUpState])
+
+  useEffect(() => {
+    let active = true
+    api.get('/routes/planner-status')
+      .then((response) => {
+        if (active) {
+          setRoutePlannerStatus({
+            available: Boolean(response.data?.available),
+            requiresPro: Boolean(response.data?.requiresPro),
+          })
+        }
+      })
+      .catch((err) => {
+        console.error('[LogRun] route planner availability check failed:', err.message)
+      })
+    return () => { active = false }
+  }, [])
 
   useEffect(() => {
     let active = true
@@ -349,6 +369,8 @@ export default function LogRun() {
           id: w.id || '',
           day: w.day || w.day_of_week || new Date().toLocaleDateString(undefined, { weekday: 'short' }),
           typeLabel: cleanRunType(type),
+          rawType: type,
+          distanceMiles,
           distanceLabel: distanceMiles > 0 ? `${distanceMiles.toFixed(1)} miles` : 'No distance target',
           pace,
           zone: w.zone || w.target_zone || rec.targetZone || details.zone,
@@ -479,6 +501,24 @@ export default function LogRun() {
 
   const selectedSplits = useMemo(() => parseSplits(selectedRun), [selectedRun])
 
+  const startPlannedRoute = (plannedRoute, routeSurface) => {
+    navigate('/run/active', {
+      state: {
+        countdown,
+        runType: todayWorkout?.rawType || 'easy',
+        runEnvironment: 'outdoor',
+        surface: routeSurface,
+        mapMyRun: true,
+        plannedRoute,
+        workoutTarget: {
+          distanceMiles: todayWorkout?.distanceMiles || plannedRoute?.targetDistanceMiles || null,
+          pace: todayWorkout?.pace || null,
+          zone: todayWorkout?.zone || null,
+        },
+      },
+    })
+  }
+
   const saveNotes = async () => {
     if (!selectedRun) return
     try {
@@ -592,6 +632,17 @@ export default function LogRun() {
                   </div>
                 )}
                 <button onClick={() => setShowWatchModal(true)} className="w-full mt-4 rounded-xl py-3 font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', cursor: 'pointer' }}>Send to Watch</button>
+                {routePlannerStatus.available && (
+                  <Suspense fallback={<p className="mt-4 text-sm" style={{ color: 'var(--text-muted)' }}>Loading route planner...</p>}>
+                    <RoutePlanner workout={todayWorkout} onStart={startPlannedRoute} />
+                  </Suspense>
+                )}
+                {routePlannerStatus.requiresPro && (
+                  <Link to="/upgrade" className="mt-4 flex items-center justify-between py-3 px-1 text-sm font-black" style={{ borderTop: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}>
+                    <span className="flex items-center gap-2"><Mountain size={18} style={{ color: 'var(--accent)' }} /> Elevation routes</span>
+                    <span className="text-xs" style={{ color: 'var(--accent)' }}>Forge Pro</span>
+                  </Link>
+                )}
               </div>
             ) : (
               <div className="rounded-2xl p-4" style={{ background: 'var(--bg-base)', border: '1px solid var(--border-subtle)' }}>
