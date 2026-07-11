@@ -33,7 +33,8 @@ function featureForCandidate(callIndex) {
 
 async function generate(preference) {
   let callIndex = 0;
-  return generateElevationAwareRoute({
+  const requestUrls = [];
+  const route = await generateElevationAwareRoute({
     latitude: 39.29,
     longitude: -76.61,
     distanceMiles: 3,
@@ -42,21 +43,32 @@ async function generate(preference) {
   }, {
     apiKey: 'test-key',
     skipCache: true,
-    fetchImpl: async () => featureForCandidate(callIndex++),
+    fetchImpl: async (url) => {
+      requestUrls.push(url);
+      return featureForCandidate(callIndex++);
+    },
   });
+  return { route, requestUrls };
 }
 
 (async () => {
   clearRouteCache();
-  const flat = await generate('flat');
-  const balanced = await generate('balanced');
-  const hilly = await generate('hilly');
+  const flatResult = await generate('flat');
+  const balancedResult = await generate('balanced');
+  const hillyResult = await generate('hilly');
+  const flat = flatResult.route;
+  const balanced = balancedResult.route;
+  const hilly = hillyResult.route;
 
   assert(flat.elevationGainFeet < balanced.elevationGainFeet, 'flat candidate should have less gain than balanced');
   assert(balanced.elevationGainFeet < hilly.elevationGainFeet, 'balanced candidate should have less gain than hilly');
   assert.strictEqual(flat.distanceMiles, 3, 'provider distance should be converted to miles');
   assert.deepStrictEqual(flat.coordinates[0].slice(0, 2), [39.29, -76.61], 'GeoJSON longitude/latitude should convert to Leaflet latitude/longitude');
   assert.strictEqual(flat.alternativesEvaluated, 3, 'all three candidates should be considered');
+  assert(
+    flatResult.requestUrls.every((url) => url.startsWith('https://api.heigit.org/openrouteservice/v2/directions/')),
+    'route requests must use the current HeiGIT OpenRouteService host',
+  );
 
   assert.throws(
     () => validateRouteInput({ latitude: 39, longitude: -76, distanceMiles: 100 }),

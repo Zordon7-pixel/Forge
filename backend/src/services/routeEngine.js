@@ -1,6 +1,6 @@
 const crypto = require('crypto');
 
-const ORS_BASE_URL = 'https://api.openrouteservice.org/v2/directions';
+const ORS_BASE_URL = 'https://api.heigit.org/openrouteservice/v2/directions';
 const METERS_PER_MILE = 1609.344;
 const FEET_PER_METER = 3.28084;
 const ROUTE_TIMEOUT_MS = 10000;
