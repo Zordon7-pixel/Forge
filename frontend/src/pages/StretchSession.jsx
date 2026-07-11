@@ -21,7 +21,7 @@ export default function StretchSession() {
   const [transitioning, setTransitioning] = useState(false)
   const [nextName, setNextName] = useState('')
   const [done, setDone] = useState(false)
-  const [sex, setSex] = useState('male')
+  const [sex, setSex] = useState(null)
 
   useEffect(() => {
     let active = true
@@ -29,7 +29,7 @@ export default function StretchSession() {
       .then((res) => {
         if (active) setSex(res.data?.user?.sex || res.data?.sex || 'male')
       })
-      .catch(() => {})
+      .catch((err) => console.error('[stretch-session] profile load failed:', err?.message))
     return () => {
       active = false
     }

@@ -261,7 +261,7 @@ export default function Stretches() {
   const [stretches, setStretches] = useState([])
   const [aiData, setAiData]       = useState(null) // { recommendedCategory, reason }
   const [doneCount, setDoneCount] = useState(0)
-  const [sex, setSex]             = useState('male')
+  const [sex, setSex]             = useState(null)
 
   useEffect(() => {
     api.get('/stretches/categories')
@@ -269,7 +269,7 @@ export default function Stretches() {
       .catch(() => {})
     api.get('/auth/me')
       .then((r) => setSex(r.data?.user?.sex || r.data?.sex || 'male'))
-      .catch(() => {})
+      .catch((err) => console.error('[stretches] profile load failed:', err?.message))
   }, [])
 
   const loadCategory = async (categoryId) => {

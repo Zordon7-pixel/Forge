@@ -62,56 +62,67 @@ const PHOTO_DEMOS = [
     match: (lower) => lower.includes('hip circle'),
     src: '/stretches/hip-circles.png',
     cropToSex: true,
+    maleSide: 'left',
   },
   {
     match: (lower) => lower.includes('high knee'),
     src: '/stretches/high-knees.png',
     cropToSex: true,
+    maleSide: 'right',
   },
   {
     match: (lower) => lower.includes('butt kick'),
     src: '/stretches/butt-kicks.png',
     cropToSex: true,
+    maleSide: 'left',
   },
   {
     match: (lower) => lower.includes('ankle roll') || lower.includes('ankle circle'),
     src: '/stretches/ankle-rolls.png',
     cropToSex: true,
+    maleSide: 'right',
   },
   {
     match: (lower) => lower.includes('arm swing'),
     src: '/stretches/arm-swings.png',
     cropToSex: true,
+    maleSide: 'right',
   },
   {
     match: (lower) => lower.includes('walking lunge') || lower === 'lunges' || lower.includes('lunge'),
     src: '/stretches/walking-lunges.png',
     cropToSex: true,
+    maleSide: 'left',
   },
   {
     match: (lower) => lower.includes('standing quad') || lower.includes('quad stretch'),
     src: '/stretches/standing-quad.png',
     cropToSex: true,
+    maleSide: 'right',
   },
   {
     match: (lower) => lower.includes('hamstring stretch') || lower.includes('toe touch') || lower.includes('forward fold'),
     src: '/stretches/hamstring-stretch.png',
     cropToSex: true,
+    maleSide: 'right',
   },
   {
     match: (lower) => lower.includes('calf stretch'),
     src: '/stretches/calf-stretch.png',
     cropToSex: true,
+    maleSide: 'right',
   },
   {
     match: (lower) => lower.includes('figure four') || lower.includes('figure-4') || lower.includes('piriformis'),
     src: '/stretches/figure-four.png',
     cropToSex: true,
+    maleSide: 'right',
   },
   {
     match: (lower) => lower.includes("child's pose") || lower.includes('childs pose'),
     src: '/stretches/childs-pose.png',
     cropToSex: true,
+    maleSide: 'right',
   },
 ]
 
@@ -431,15 +442,21 @@ function getSetupCue(kind) {
 }
 
 function normalizeSex(sex) {
-  return String(sex || '').toLowerCase() === 'female' ? 'female' : 'male'
+  const normalized = String(sex || '').toLowerCase()
+  if (normalized === 'female') return 'female'
+  if (normalized === 'male') return 'male'
+  return ''
 }
 
 function getPhotoConfig(photoDemo, sex) {
-  if (!photoDemo) return { src: '', cropToSex: false }
+  if (!photoDemo) return { src: '', cropToSex: false, maleSide: 'right' }
   const normalizedSex = normalizeSex(sex)
-  if (photoDemo?.[normalizedSex]) return { src: photoDemo[normalizedSex], cropToSex: false }
-  if (photoDemo.src) return { src: photoDemo.src, cropToSex: Boolean(photoDemo.cropToSex) }
-  return { src: photoDemo?.male || '', cropToSex: false }
+  if (!normalizedSex && (photoDemo.male || photoDemo.female || photoDemo.cropToSex)) {
+    return { src: '', cropToSex: false, maleSide: photoDemo.maleSide || 'right' }
+  }
+  if (photoDemo?.[normalizedSex]) return { src: photoDemo[normalizedSex], cropToSex: false, maleSide: photoDemo.maleSide || 'right' }
+  if (photoDemo.src) return { src: photoDemo.src, cropToSex: Boolean(photoDemo.cropToSex), maleSide: photoDemo.maleSide || 'right' }
+  return { src: photoDemo?.male || '', cropToSex: false, maleSide: photoDemo.maleSide || 'right' }
 }
 
 function isLocalFormAsset(src = '') {
@@ -454,11 +471,20 @@ export default function MovementDemo({ name, label, compact = false, sex = 'male
   const providedImage = isLocalFormAsset(imageUrl) ? imageUrl : ''
   const normalizedSex = normalizeSex(sex)
   const providedImageNeedsCrop = providedImage.startsWith('/stretches/') && !providedImage.includes('-male') && !providedImage.includes('-female')
-  const photoConfig = providedImage
-    ? { src: providedImage, cropToSex: providedImageNeedsCrop }
+  const providedImageSex = providedImage.includes('-female')
+    ? 'female'
+    : (providedImage.includes('-male') ? 'male' : '')
+  const providedImageMatchesProfile = !providedImageSex || providedImageSex === normalizedSex
+  const photoConfig = providedImage && providedImageMatchesProfile
+    ? (providedImageNeedsCrop && !normalizedSex
+        ? { src: '', cropToSex: false, maleSide: photoDemo?.maleSide || 'right' }
+        : { src: providedImage, cropToSex: providedImageNeedsCrop, maleSide: photoDemo?.maleSide || 'right' })
     : getPhotoConfig(photoDemo, sex)
   const photoSrc = photoConfig.src
   const shouldCropToSex = Boolean(photoConfig.cropToSex)
+  const cropSide = normalizedSex === 'male'
+    ? photoConfig.maleSide
+    : (photoConfig.maleSide === 'left' ? 'right' : 'left')
   return (
     <div
       style={{
@@ -472,22 +498,23 @@ export default function MovementDemo({ name, label, compact = false, sex = 'male
       aria-label={`${title} visual demonstration`}
     >
       {photoSrc ? (
-        <div style={{ position: 'relative', borderRadius: 16, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.08)', marginBottom: 10, aspectRatio: '4 / 3', background: '#050505' }}>
+        <div style={{ position: 'relative', borderRadius: 16, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.08)', marginBottom: 10, aspectRatio: shouldCropToSex ? '2 / 3' : '4 / 3', background: '#050505' }}>
           <img
             src={photoSrc}
-            alt={`${title} demonstration`}
+            alt={`${normalizedSex || 'athlete'} ${title} demonstration`}
+            data-model-sex={normalizedSex || undefined}
             style={shouldCropToSex
               ? {
                   position: 'absolute',
                   top: 0,
                   bottom: 0,
-                  left: normalizedSex === 'female' ? 0 : 'auto',
-                  right: normalizedSex === 'male' ? 0 : 'auto',
-                  width: '178%',
+                  left: cropSide === 'left' ? 0 : 'auto',
+                  right: cropSide === 'right' ? 0 : 'auto',
+                  width: '200%',
                   maxWidth: 'none',
                   height: '100%',
                   objectFit: 'cover',
-                  objectPosition: normalizedSex === 'female' ? 'left center' : 'right center',
+                  objectPosition: `${cropSide} center`,
                   display: 'block',
                 }
               : { width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
