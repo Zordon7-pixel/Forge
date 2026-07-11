@@ -34,9 +34,9 @@ function startOfWeekMonday(d) {
 
 function paceFromSeconds(distanceMiles, seconds) {
   if (!distanceMiles || !seconds) return '--';
-  const paceSec = seconds / distanceMiles;
+  const paceSec = Math.round(seconds / distanceMiles);
   const m = Math.floor(paceSec / 60);
-  const s = Math.round(paceSec % 60);
+  const s = paceSec % 60;
   return `${m}:${String(s).padStart(2, '0')}/mi`;
 }
 
@@ -105,6 +105,12 @@ function buildRunStructure({ recommendationType, suggestedDistance, suggestedPac
     default:
       return [];
   }
+}
+
+function runStructureOverheadMinutes(recommendationType) {
+  if (recommendationType === 'moderate_run') return 25;
+  if (recommendationType === 'long_run') return 10;
+  return 15;
 }
 
 function detailsForRecommendation(type = 'easy_run', suggestedPace = '') {
@@ -373,9 +379,10 @@ async function buildNextRecommendation(userId, { includeBrief = false } = {}) {
         checkinAdjusted = true;
       }
 
-      if (checkinSignals.timeAvailable !== null && checkinSignals.timeAvailable <= 30 && recommendationType !== 'rest' && recommendationType !== 'strength') {
+      if (checkinSignals.timeAvailable !== null && checkinSignals.timeAvailable > 0 && recommendationType !== 'rest' && recommendationType !== 'strength') {
         const paceSeconds = avgPaceSeconds || 600;
-        const maxDistanceByTime = Math.max(1, (checkinSignals.timeAvailable * 60) / paceSeconds);
+        const runningMinutes = Math.max(5, checkinSignals.timeAvailable - runStructureOverheadMinutes(recommendationType));
+        const maxDistanceByTime = Math.max(0.5, (runningMinutes * 60) / paceSeconds);
         if (suggestedDistance > maxDistanceByTime) {
           suggestedDistance = Number(maxDistanceByTime.toFixed(1));
           reason = `${checkinSignals.summary} Forge capped the run to fit your available time.`;

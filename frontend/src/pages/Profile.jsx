@@ -146,7 +146,7 @@ export default function Profile() {
             {profileStats && (
               <div style={{ display: 'flex', justifyContent: 'center', gap: 24, marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border-subtle)' }}>
                 {[
-                  { label: 'Total Runs', value: profileStats.all?.runs ?? 0 },
+                  { label: 'Total Runs', value: profileStats.all?.count ?? 0 },
                   { label: 'Total Miles', value: (profileStats.all?.miles ?? 0).toFixed(1) },
                   { label: 'This Week', value: `${(profileStats.week?.miles ?? 0).toFixed(1)} mi` }
                 ].map(s => (

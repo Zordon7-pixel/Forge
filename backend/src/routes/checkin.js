@@ -1,7 +1,7 @@
 const router = require('express').Router();
 const { dbGet, dbRun } = require('../db');
 const auth = require('../middleware/auth');
-const { deriveAction, buildPatch, buildDirective } = require('../lib/checkinOverride');
+const { deriveAction, buildPatch, buildDirective, estimateWorkoutMinutes } = require('../lib/checkinOverride');
 
 const ALLOWED_LIFE_FLAGS = new Set(['long_shift', 'sore', 'traveling', 'sick', 'injured', 'stressed', 'all_good']);
 
@@ -140,9 +140,13 @@ async function computeCheckinDirective(userId, checkinInput) {
     time_available: checkinInput.time_available,
     life_flags: checkinInput.life_flags,
   };
-  const action = deriveAction(checkin);
+  let action = deriveAction(checkin);
   const activePlan = await getActivePlanForUser(userId);
   const todayDay = activePlan ? normalizeTodayEntry(parsePlan(activePlan)) : null;
+  const plannedMinutes = estimateWorkoutMinutes(todayDay || {});
+  if (action === 'keep' && plannedMinutes && checkin.time_available < plannedMinutes) {
+    action = 'shorten';
+  }
   const patch = buildPatch(action, todayDay, checkin);
   const readiness_delta = 0;
   const directive = buildDirective(checkin, action, patch, Boolean(todayDay), readiness_delta);

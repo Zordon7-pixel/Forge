@@ -74,8 +74,13 @@ const PHOTO_DEMOS = [
     cropToSex: true,
   },
   {
-    match: (lower) => lower.includes('ankle roll'),
+    match: (lower) => lower.includes('ankle roll') || lower.includes('ankle circle'),
     src: '/stretches/ankle-rolls.png',
+    cropToSex: true,
+  },
+  {
+    match: (lower) => lower.includes('arm swing'),
+    src: '/stretches/arm-swings.png',
     cropToSex: true,
   },
   {
@@ -89,7 +94,7 @@ const PHOTO_DEMOS = [
     cropToSex: true,
   },
   {
-    match: (lower) => lower.includes('hamstring stretch'),
+    match: (lower) => lower.includes('hamstring stretch') || lower.includes('toe touch') || lower.includes('forward fold'),
     src: '/stretches/hamstring-stretch.png',
     cropToSex: true,
   },

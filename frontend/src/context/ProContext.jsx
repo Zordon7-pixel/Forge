@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useState } from 'react'
 import api from '../lib/api'
+import { isLoggedIn } from '../lib/auth'
 
 const ProContext = createContext({
   isPro: false,
@@ -16,6 +17,14 @@ export function ProProvider({ children }) {
   const [trialEndsAt, setTrialEndsAt] = useState(null)
 
   const refreshPro = useCallback(async () => {
+    if (!isLoggedIn()) {
+      setIsPro(false)
+      setSubscriptionStatus('')
+      setTrialEndsAt(null)
+      setLoading(false)
+      return false
+    }
+
     try {
       const res = await api.get('/stripe/status').catch(() => api.get('/payments/status'))
       const status = String(res?.data?.subscription_status || '').toLowerCase()

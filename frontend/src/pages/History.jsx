@@ -18,6 +18,15 @@ function getRunDate(run) {
   return run.date || run.created_at?.slice(0, 10) || ''
 }
 
+function formatHistoryDate(value) {
+  if (!value) return '--'
+  const raw = String(value)
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(raw)
+    ? new Date(`${raw}T12:00:00`)
+    : new Date(raw)
+  return Number.isNaN(date.getTime()) ? '--' : date.toLocaleDateString()
+}
+
 function formatDuration(totalSeconds = 0) {
   const mins = Math.floor(totalSeconds / 60)
   const secs = totalSeconds % 60
@@ -26,9 +35,9 @@ function formatDuration(totalSeconds = 0) {
 
 function formatPace(durationSeconds, distance) {
   if (!durationSeconds || !distance) return '--'
-  const pace = durationSeconds / 60 / distance
-  const mins = Math.floor(pace)
-  const secs = Math.round((pace - mins) * 60)
+  const roundedSeconds = Math.round(durationSeconds / distance)
+  const mins = Math.floor(roundedSeconds / 60)
+  const secs = roundedSeconds % 60
   return `${mins}:${String(secs).padStart(2, '0')} /mi`
 }
 
@@ -110,6 +119,11 @@ export default function History() {
     if (type === 'run') {
       await api.delete(`/runs/${item.id}`)
       setRuns(prev => prev.filter(r => r.id !== item.id))
+      return
+    }
+    if (type === 'workout') {
+      await api.delete(`/workouts/${item.id}`)
+      setWorkoutSessions(prev => prev.filter(session => session.id !== item.id))
       return
     }
     await api.delete(`/lifts/${item.id}`)
@@ -329,7 +343,7 @@ export default function History() {
                 const paceZone = getPaceZone(paceMinPerMile)
                 return (
               <div className="mb-2 flex items-center justify-between">
-                <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{new Date(getRunDate(run)).toLocaleDateString()}</p>
+                <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{formatHistoryDate(getRunDate(run))}</p>
                 <div className="flex items-center gap-2">
                   {paceZone ? <span className="rounded-full px-2 py-1 text-xs font-semibold" style={{ background: `${paceZone.color}22`, color: paceZone.color }}>{`Zone ${paceZone.zone}`}</span> : null}
                   {run.perceived_effort ? <span className="rounded-full px-2 py-1 text-xs" style={{ background: 'var(--bg-input)', color: 'var(--text-muted)' }}>Effort {run.perceived_effort}/10</span> : null}
@@ -341,7 +355,7 @@ export default function History() {
               })()}
 
               <p className="text-sm" style={{ color: 'var(--text-primary)' }}>
-                {fmt.distance(Number(run.distance_miles || 0), 2)} · {formatDuration(run.duration_seconds)} · {fmt.pace(run.duration_seconds / run.distance_miles)}
+                {fmt.distance(Number(run.distance_miles || 0), 2)} · {formatDuration(run.duration_seconds)} · {Number(run.distance_miles || 0) > 0 && Number(run.duration_seconds || 0) > 0 ? fmt.pace(run.duration_seconds / run.distance_miles) : '--'}
                 {(run.calories_burned || run.calories) > 0 && <span> · {run.calories_burned || run.calories} cal</span>}
               </p>
 
@@ -372,8 +386,11 @@ export default function History() {
           {filteredWorkoutSessions.map(session => (
             <div key={session.id} onClick={() => setSelectedWorkout(session)} className="cursor-pointer rounded-xl p-4" style={{ background: 'var(--bg-card)' }}>
               <div className="flex items-center justify-between">
-                <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{new Date(session.started_at || session.created_at).toLocaleDateString()}</p>
-                <span className="text-xs" style={{ color: 'var(--text-muted)' }}>View Details</span>
+                <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{formatHistoryDate(session.started_at || session.created_at)}</p>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>View Details</span>
+                  <button type="button" aria-label="Delete workout" title="Delete workout" onClick={e => requestDelete('workout', session, e)} className="transition-colors" style={{ color: 'var(--text-muted)' }}><Trash2 size={14} /></button>
+                </div>
               </div>
               <p className="mt-1 text-sm" style={{ color: 'var(--text-primary)' }}>
                 Duration: {session.total_seconds ? formatWorkoutDuration(session.total_seconds) : '--'}
@@ -396,7 +413,7 @@ export default function History() {
             return (
               <div key={lift.id} className="cursor-pointer rounded-xl p-4" style={{ background: 'var(--bg-card)' }}>
                 <div className="flex items-center justify-between">
-                  <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{new Date(lift.date || lift.created_at).toLocaleDateString()}</p>
+                  <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{formatHistoryDate(lift.date || lift.created_at)}</p>
                   <div className="flex items-center gap-2">
                     <button type="button" aria-label="Edit lift" title="Edit lift" onClick={e => { e.stopPropagation(); setEditingLift(lift) }} className="transition-colors" style={{ color: 'var(--text-muted)' }}><Pencil size={14} /></button>
                     <button type="button" aria-label="Delete lift" title="Delete lift" onClick={e => requestDelete('lift', lift, e)} className="transition-colors" style={{ color: 'var(--text-muted)' }}><Trash2 size={14} /></button>

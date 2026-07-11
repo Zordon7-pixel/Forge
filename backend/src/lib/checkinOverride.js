@@ -22,6 +22,29 @@ function hasLowDrive(checkin = {}) {
   return hasAxes(checkin) && normalizeAxis(checkin.drive) === 1;
 }
 
+function parsePaceMinutes(value) {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
+  const match = String(value || '').match(/(\d{1,2}):(\d{2})/);
+  if (!match) return 10;
+  return Number(match[1]) + (Number(match[2]) / 60);
+}
+
+function estimateWorkoutMinutes(day = {}) {
+  for (const key of ['duration_minutes', 'duration_min', 'minutes', 'time_minutes']) {
+    const value = Number(day?.[key]);
+    if (Number.isFinite(value) && value > 0) return value;
+  }
+
+  for (const key of ['distance_miles', 'distance', 'miles']) {
+    const miles = Number(day?.[key]);
+    if (!Number.isFinite(miles) || miles <= 0) continue;
+    const paceMinutes = parsePaceMinutes(day.pace_target || day.pace || day.target_pace);
+    return miles * paceMinutes;
+  }
+
+  return null;
+}
+
 function deriveAction(checkin = {}) {
   const feeling = Number(checkin.feeling || 3);
   const legs = normalizeAxis(checkin.legs);
@@ -117,9 +140,15 @@ function buildPatch(action, day = {}, checkin = {}) {
   }
 
   if (action === 'shorten') {
+    const plannedMinutes = estimateWorkoutMinutes(day);
+    const timeAvailable = Number(checkin.time_available);
+    const timeMultiplier = Number.isFinite(timeAvailable) && timeAvailable > 0 && plannedMinutes && plannedMinutes > timeAvailable
+      ? timeAvailable / plannedMinutes
+      : 1;
+    const multiplier = Math.min(0.65, timeMultiplier);
     const workloadPatch = {
-      ...getDistancePatch(day, 0.65),
-      ...getDurationPatch(day, 0.65),
+      ...getDistancePatch(day, multiplier),
+      ...getDurationPatch(day, multiplier),
     };
     const patch = {
       ...workloadPatch,
@@ -210,7 +239,7 @@ function buildDirective(checkin = {}, action = 'keep', patch = {}, hasWorkoutTod
     });
   }
 
-  if (timeAvailable > 0 && timeAvailable <= 30) {
+  if (timeAvailable > 0 && (timeAvailable <= 30 || (action === 'shorten' && !hasFlag('long_shift') && !hasFlag('traveling')))) {
     drivers.push({
       label: 'Limited time',
       detail: hasPatch && action === 'shorten'
@@ -300,4 +329,4 @@ function applyOverride(day, patch = {}) {
   return { ...day, ...patch };
 }
 
-module.exports = { deriveAction, buildPatch, buildDirective, applyOverride };
+module.exports = { deriveAction, buildPatch, buildDirective, applyOverride, estimateWorkoutMinutes };

@@ -216,6 +216,23 @@ router.get('/:id/sets', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'Failed to fetch sets' }); }
 });
 
+router.delete('/:id', auth, async (req, res) => {
+  try {
+    const deleted = await withTransaction(async (tx) => {
+      const session = await tx.get('SELECT id FROM workout_sessions WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
+      if (!session) return false;
+      await tx.run('DELETE FROM workout_sets WHERE session_id=? AND user_id=?', [req.params.id, req.user.id]);
+      await tx.run('DELETE FROM workout_sessions WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
+      return true;
+    });
+    if (!deleted) return res.status(404).json({ error: 'Session not found' });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[workouts/delete] failed:', err.message);
+    res.status(500).json({ error: 'Delete failed' });
+  }
+});
+
 router.post('/:id/feedback', auth, async (req, res) => {
   try {
     const session = await dbGet('SELECT * FROM workout_sessions WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
@@ -232,7 +249,7 @@ router.post('/:id/feedback', auth, async (req, res) => {
     const canCallAI = Number(dailyRow?.cnt || 0) < 10 && (profile?.is_pro || Number(monthlyRow?.cnt || 0) < 5);
     if (!canCallAI) return res.status(429).json({ error: 'AI limit reached for today. Try again tomorrow.' });
 
-    const sets = await dbAll('SELECT * FROM workout_sets WHERE session_id=? ORDER BY logged_at ASC', [req.params.id]);
+    const sets = await dbAll('SELECT * FROM workout_sets WHERE session_id=? AND user_id=? ORDER BY logged_at ASC', [req.params.id, req.user.id]);
     const sessionData = { ...session, muscle_groups: JSON.parse(session.muscle_groups || '[]') };
     await dbRun('INSERT INTO ai_usage (id, user_id, call_type) VALUES (?,?,?)', [uuidv4(), req.user.id, 'workout_feedback']);
 
@@ -246,7 +263,7 @@ router.get('/:id', auth, async (req, res) => {
   try {
     const session = await dbGet('SELECT * FROM workout_sessions WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
     if (!session) return res.status(404).json({ error: 'Not found' });
-    const sets = await dbAll('SELECT * FROM workout_sets WHERE session_id=? ORDER BY logged_at ASC', [req.params.id]);
+    const sets = await dbAll('SELECT * FROM workout_sets WHERE session_id=? AND user_id=? ORDER BY logged_at ASC', [req.params.id, req.user.id]);
     res.json({ session: { ...session, muscle_groups: JSON.parse(session.muscle_groups || '[]') }, sets });
   } catch (err) { res.status(500).json({ error: 'Fetch failed' }); }
 });

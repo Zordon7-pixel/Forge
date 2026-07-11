@@ -20,6 +20,12 @@ function avg(values) {
   return nums.length ? nums.reduce((sum, value) => sum + value, 0) / nums.length : null;
 }
 
+function validSleepHours(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const hours = Number(value);
+  return Number.isFinite(hours) && hours > 0 && hours <= 12 ? hours : null;
+}
+
 function parseFlags(raw) {
   if (Array.isArray(raw)) return raw;
   if (!raw || typeof raw !== 'string') return [];
@@ -32,7 +38,9 @@ function parseFlags(raw) {
 }
 
 function buildSleepDriver(checkins) {
-  const sleepRows = checkins.filter((row) => Number.isFinite(Number(row.sleep_hours)));
+  const sleepRows = checkins
+    .map((row) => ({ ...row, sleep_hours: validSleepHours(row.sleep_hours) }))
+    .filter((row) => row.sleep_hours !== null);
   if (!sleepRows.length) return null;
   const current = Number(sleepRows[0].sleep_hours);
   const baseline = avg(sleepRows.slice(1).map((row) => row.sleep_hours));

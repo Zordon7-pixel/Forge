@@ -169,6 +169,8 @@ function EffortBar({ effort, setEffort }) {
             <button
               key={level}
               type="button"
+              aria-label={`Set effort to ${level} out of 10`}
+              aria-pressed={effort === level}
               onClick={() => setEffort(level)}
               style={{
                 flex: 1,
@@ -465,7 +467,6 @@ export default function LogRun() {
       }
 
       setFeedback(aiFeedback || 'Your coach is thinking... check back after your next run.')
-      setShowRecoveryPrompt(true)
     } catch (err) {
       if (!err?.response) {
         const resolvedSurface = environment === 'inside' ? 'treadmill' : surface
@@ -712,7 +713,7 @@ export default function LogRun() {
             </div>
             <div className="rounded-2xl p-4" style={{ background: 'var(--bg-base)', border: '1px solid var(--border-subtle)' }}>
               <div className="text-center py-6">
-                <input type="number" step="0.1" min="0" required className="text-5xl font-bold bg-transparent text-center w-32 focus:outline-none" style={{ color: 'var(--accent)' }} value={distance} onChange={e => setDistance(e.target.value)} placeholder="0.0" />
+                <input aria-label={`Run distance in ${fmt.distanceLabel}`} type="number" step="0.01" min="0" required className="text-5xl font-bold bg-transparent text-center w-32 focus:outline-none" style={{ color: 'var(--accent)' }} value={distance} onChange={e => setDistance(e.target.value)} placeholder="0.0" />
                 <div className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>Distance ({fmt.distanceLabel})</div>
                 {fieldErrors.distance && <p ref={distanceErrorRef} className="text-xs mt-2" style={{ color: 'var(--danger)' }}>{fieldErrors.distance}</p>}
                 {estimatedTime && <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>Estimated time: {estimatedTime.low}–{estimatedTime.high} min based on your recent {Math.floor(estimatedTime.avg)}:{String(Math.round((estimatedTime.avg%1)*60)).padStart(2,'0')}/mi average pace</p>}
@@ -822,7 +823,7 @@ export default function LogRun() {
         </div>
       )}
 
-      {showPostCheckIn && savedRunId && <PostRunCheckIn runId={savedRunId} heatDrift={savedHeatDrift} onDone={() => { setShowPostCheckIn(false); navigate('/') }} />}
+      {showPostCheckIn && savedRunId && <PostRunCheckIn runId={savedRunId} heatDrift={savedHeatDrift} onDone={() => { setShowPostCheckIn(false); setShowRecoveryPrompt(true) }} />}
 
       {showRecoveryPrompt && (
         <div className="fixed inset-0 z-50 flex items-center justify-center px-4" style={{ background: 'rgba(0,0,0,0.7)' }}>

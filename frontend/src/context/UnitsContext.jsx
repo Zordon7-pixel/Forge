@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect } from 'react'
 import api from '../lib/api'
+import { isLoggedIn } from '../lib/auth'
 
 const UnitsContext = createContext()
 
@@ -20,6 +21,12 @@ export function UnitsProvider({ children }) {
 
   // Load units from API on mount
   useEffect(() => {
+    if (!isLoggedIn()) {
+      setUnitsState('imperial')
+      setLoading(false)
+      return
+    }
+
     api.get('/users/settings')
       .then(r => {
         setUnitsState(r.data.units || 'imperial')
@@ -72,8 +79,9 @@ export function UnitsProvider({ children }) {
         displaySeconds = secondsPerMile / KM_PER_MILE
       }
 
-      const m = Math.floor(displaySeconds / 60)
-      const s = Math.round(displaySeconds % 60)
+      const roundedSeconds = Math.round(displaySeconds)
+      const m = Math.floor(roundedSeconds / 60)
+      const s = roundedSeconds % 60
       const label = units === 'metric' ? '/km' : '/mi'
       return `${m}:${String(s).padStart(2, '0')} ${label}`
     },

@@ -75,7 +75,7 @@ export default function ActiveRun() {
   const location = useLocation()
   const navigate = useNavigate()
   const { fmt } = useUnits()
-  const selectedCountdown = location?.state?.countdown ?? 3
+  const selectedCountdown = location?.state?.countdown ?? 0
   const [countdownVal, setCountdownVal] = useState(selectedCountdown)
   const [countingDown, setCountingDown] = useState(selectedCountdown > 0)
   const [running, setRunning] = useState(false)
@@ -340,10 +340,15 @@ export default function ActiveRun() {
   }
   
   const saveRun = async () => {
-    setSaving(true)
     setSaveError('')
     setQueuedOffline(false)
     const payload = buildRunPayload()
+    if (!Number.isFinite(payload.distance_miles) || payload.distance_miles <= 0) {
+      setSaveError(`Enter a distance greater than 0 ${fmt.distanceLabel} before saving.`)
+      return
+    }
+
+    setSaving(true)
     try {
       const res = await api.post('/runs', payload)
       const runId = res.data?.id || res.data?.run?.id
@@ -446,7 +451,7 @@ export default function ActiveRun() {
         <div className="rounded-xl p-3" style={{ background: 'var(--bg-input)' }}>
           <p className="text-sm font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>How far did you run? ({fmt.distanceLabel})</p>
           {distanceMiles > 0 && <p className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>Forge measured {fmt.distance(distanceMiles, 2)} before GPS stopped or route recording ended. Adjust if needed.</p>}
-          <input value={manualDistance} onChange={e => setManualDistance(e.target.value)} type="number" min="0" step="0.1" className="w-full rounded-xl px-3 py-2" style={{ background: 'var(--bg-base)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }} placeholder={fmt.distanceLabel} />
+          <input aria-label={`Run distance in ${fmt.distanceLabel}`} value={manualDistance} onChange={e => setManualDistance(e.target.value)} type="number" min="0" step="0.01" className="w-full rounded-xl px-3 py-2" style={{ background: 'var(--bg-base)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }} placeholder={fmt.distanceLabel} />
           <button onClick={saveRun} className="w-full mt-2 rounded-xl py-2 font-semibold" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>Save Run</button>
         </div>
       )}

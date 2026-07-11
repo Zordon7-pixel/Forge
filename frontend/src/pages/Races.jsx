@@ -20,7 +20,13 @@ const CATALOG_DISTANCE_OPTIONS = [
 
 function daysTo(date) {
   const ms = new Date(`${date}T12:00:00`).getTime() - Date.now()
-  return Math.ceil(ms / 86400000)
+  return Math.max(0, Math.ceil(ms / 86400000))
+}
+
+function todayDateKey() {
+  const now = new Date()
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000)
+  return local.toISOString().slice(0, 10)
 }
 
 function formatRaceDate(date) {
@@ -121,8 +127,12 @@ export default function Races() {
   const load = () => api.get('/races').then((r) => setRaces(r.data.races || []))
   useEffect(() => { load() }, [])
 
-  const upcoming = useMemo(() => races.filter((r) => r.status === 'upcoming').sort((a, b) => a.race_date.localeCompare(b.race_date)), [races])
-  const past = useMemo(() => races.filter((r) => r.status !== 'upcoming').sort((a, b) => b.race_date.localeCompare(a.race_date)), [races])
+  const upcoming = useMemo(() => races
+    .filter((r) => r.status === 'upcoming' && r.race_date >= todayDateKey())
+    .sort((a, b) => a.race_date.localeCompare(b.race_date)), [races])
+  const past = useMemo(() => races
+    .filter((r) => r.status !== 'upcoming' || r.race_date < todayDateKey())
+    .sort((a, b) => b.race_date.localeCompare(a.race_date)), [races])
 
   const submit = async (e) => {
     e.preventDefault()

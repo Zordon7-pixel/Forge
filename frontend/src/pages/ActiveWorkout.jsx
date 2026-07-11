@@ -324,12 +324,12 @@ export default function ActiveWorkout() {
             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 10, alignItems: 'end' }}>
               <div style={{ minWidth: 0 }}>
                 <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Reps</p>
-                <input type="number" min="1" placeholder="0" value={reps} onChange={e => setReps(e.target.value)} className="w-full rounded-xl px-3 py-3 text-center text-xl font-bold border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }} />
+                <input aria-label="Reps" type="number" min="1" placeholder="0" value={reps} onChange={e => setReps(e.target.value)} className="w-full rounded-xl px-3 py-3 text-center text-xl font-bold border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }} />
                 {formErrors.reps && <p ref={repsErrorRef} className="text-xs mt-1" style={{ color: 'var(--danger)' }}>{formErrors.reps}</p>}
               </div>
               <div style={{ minWidth: 0 }}>
                 <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Weight (lbs)</p>
-                <input type="number" min="0" step="2.5" placeholder="0" value={weight} onChange={e => setWeight(e.target.value)} className="w-full rounded-xl px-3 py-3 text-center text-xl font-bold border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }} />
+                <input aria-label="Weight in pounds" type="number" min="0" step="2.5" placeholder="0" value={weight} onChange={e => setWeight(e.target.value)} className="w-full rounded-xl px-3 py-3 text-center text-xl font-bold border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }} />
                 {formErrors.weight && <p ref={weightErrorRef} className="text-xs mt-1" style={{ color: 'var(--danger)' }}>{formErrors.weight}</p>}
                 {formWarning && <p className="text-xs mt-1" style={{ color: 'var(--warning)' }}>{formWarning}</p>}
               </div>

@@ -6,7 +6,6 @@ import { useTranslation } from 'react-i18next'
 import AchievementUnlock from '../components/AchievementUnlock'
 import InsightsSheet, { CalendarDayDetailSheet, DailyCoachFlow, ReadinessBreakdownModal, RecentActivityCard, TodayDetailSheet, WatchSyncWidget } from '../components/InsightsSheet'
 import ReadinessCard from '../components/ReadinessCard'
-import TodaysPickCard from '../components/TodaysPickCard'
 import { useUnits } from '../context/UnitsContext'
 import api from '../lib/api'
 import track from '../lib/track'
@@ -17,8 +16,10 @@ import HealthService from '../services/HealthService'
 import { useProContext } from '../context/ProContext'
 
 function fmtPace(durationSeconds, distance) {
-  if (!durationSeconds || !distance) return '--'; const pace = durationSeconds / 60 / distance
-  return `${Math.floor(pace)}:${String(Math.round((pace - Math.floor(pace)) * 60)).padStart(2,'0')} /mi` }
+  if (!durationSeconds || !distance) return '--'
+  const paceSeconds = Math.round(durationSeconds / distance)
+  return `${Math.floor(paceSeconds / 60)}:${String(paceSeconds % 60).padStart(2, '0')} /mi`
+}
 
 function fmtDuration(s) {
   if (!s) return '0 min'
@@ -47,15 +48,6 @@ function getRecommendationLabel(recommendation) {
   return recommendation
     ? String(recommendation.recommendationType || "today's session").replace('_', ' ')
     : "today's session"
-}
-
-function getRecommendationRunType(recommendation) {
-  const rawType = String(recommendation?.recommendationType || recommendation?.type || '').toLowerCase()
-  if (rawType.includes('race')) return 'race'
-  if (rawType.includes('long')) return 'long'
-  if (rawType.includes('interval') || rawType.includes('speed') || rawType.includes('track')) return 'intervals'
-  if (rawType.includes('tempo') || rawType.includes('threshold')) return 'tempo'
-  return 'easy'
 }
 
 function structureToWatchSteps(structure = []) {
@@ -95,7 +87,7 @@ export default function Dashboard() {
   const [otherActivities, setOtherActivities] = useState([]), [streakStats, setStreakStats] = useState({ currentStreak: 0, bestStreak: 0 })
   const [milestones, setMilestones] = useState([]), [milestoneUnlock, setMilestoneUnlock] = useState(null), [compliance, setCompliance] = useState(null), [showComplianceDetails, setShowComplianceDetails] = useState(false)
   const [loadAnalysis, setLoadAnalysis] = useState(null), [nextRace, setNextRace] = useState(null), [loadWarningDismissedUntil, setLoadWarningDismissedUntil] = useState(Number(localStorage.getItem('forge_load_warning_dismissed_until') || 0))
-  const [shoes, setShoes] = useState([]), [shoeAlerts, setShoeAlerts] = useState([]), [weeklyCalories, setWeeklyCalories] = useState(0)
+  const [shoeAlerts, setShoeAlerts] = useState([]), [weeklyCalories, setWeeklyCalories] = useState(0)
 
   useEffect(() => {
     const params = new URLSearchParams(location.search)
@@ -197,7 +189,6 @@ export default function Dashboard() {
         setLoadAnalysis(loadRes.data)
         setNextRace(nextRaceRes.data?.race || null)
         const gearShoes = gearRes.data?.shoes || []
-        setShoes(gearShoes)
         setShoeAlerts(gearShoes.filter((s) => Number(s.total_miles || 0) > 450))
         setActiveInjury((injuryRes.data?.injuries || [])[0] || null)
         setWeeklyCalories(recapRes.data?.totalCalories || 0)
@@ -404,11 +395,16 @@ export default function Dashboard() {
     })
 
     // Volume
-    const avgWeekly = all.miles / Math.max(stats.weeklyTrend?.filter(w => w.miles > 0).length, 1)
+    const activeWeeks = (stats.weeklyTrend || []).filter(w => Number(w.miles || 0) > 0)
+    const avgWeekly = activeWeeks.length
+      ? activeWeeks.reduce((sum, weekEntry) => sum + Number(weekEntry.miles || 0), 0) / activeWeeks.length
+      : 0
     const weekRatio = avgWeekly > 0 ? week.miles / avgWeekly : 0
     let volDelta = 0
     let volReason = ''
-    if (weekRatio < 0.5) {
+    if (avgWeekly <= 0) {
+      volReason = 'No recent weekly mileage baseline yet. Log a few weeks so Forge can compare load safely.'
+    } else if (weekRatio < 0.5) {
       volDelta = 15
       volReason = `This week you ran ${fmt.distance(week.miles, 1)} vs your avg ${fmt.distance(avgWeekly, 1)} — low volume means your legs are fresh.`
     } else if (weekRatio > 1.3) {
@@ -548,35 +544,8 @@ export default function Dashboard() {
     }
   }, [nextRecommendation])
 
-  const shoeSummary = useMemo(() => {
-    const allShoes = Array.isArray(shoes) ? shoes : []
-    const activeShoes = allShoes.filter((shoe) => !shoe.is_retired)
-    const closest = activeShoes
-      .map((shoe) => {
-        const miles = Number(shoe.total_miles || 0)
-        const recommended = Number(shoe.recommended_miles || 0)
-        return {
-          shoe,
-          miles,
-          recommended,
-          remaining: recommended > 0 ? recommended - miles : Number.POSITIVE_INFINITY,
-        }
-      })
-      .sort((a, b) => {
-        if (a.remaining !== b.remaining) return a.remaining - b.remaining
-        return b.miles - a.miles
-      })[0]
-
-    return {
-      totalCount: allShoes.length,
-      activeCount: activeShoes.length,
-      closest,
-    }
-  }, [shoes])
-
   const showLoadWarning = loadAnalysis && ['elevated', 'high', 'danger'].includes(loadAnalysis.loadStatus) && Date.now() > loadWarningDismissedUntil
   const complianceColor = compliance?.score >= 80 ? 'var(--success)' : compliance?.score >= 50 ? 'var(--accent)' : 'var(--danger)'
-  const todaysPickRunType = getRecommendationRunType(nextRecommendation)
   const periodLabels = { day: 'Today', week: t('dashboard.thisWeek'), month: 'This Month', year: 'This Year', all: 'All Time' }
   const injuryDismissed = injuryBannerDismissed || (activeInjury && activeInjury.id && localStorage.getItem(`forge-injury-dismissed-${activeInjury.id}`) === '1')
   const handleWatchSyncPayload = useCallback((payload) => {
@@ -722,7 +691,6 @@ export default function Dashboard() {
       />
 
       <ReadinessCard readinessState={readinessState} onOpenDetail={() => setShowReadinessModal(true)} />
-      <TodaysPickCard runType={todaysPickRunType} />
 
       <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
         {dailySteps !== null && (
@@ -774,28 +742,6 @@ export default function Dashboard() {
       )}
 
       <RecentActivityCard recentActivity={recentActivity} navigate={navigate} fmt={fmt} fmtDuration={fmtDuration} t={t} />
-
-      <button
-        type="button"
-        onClick={() => navigate('/gear')}
-        className="w-full rounded-2xl p-4 text-left"
-        style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}
-      >
-        <div className="flex items-center gap-3">
-          <span style={{ width: 40, height: 40, borderRadius: 10, background: 'rgba(148, 163, 184, 0.14)', display: 'grid', placeItems: 'center', flexShrink: 0 }}>
-            <Footprints size={20} color="#94A3B8" />
-          </span>
-          <span style={{ minWidth: 0, flex: 1 }}>
-            <span className="text-sm font-black" style={{ display: 'block' }}>Shoes</span>
-            <span className="text-xs mt-1" style={{ display: 'block', color: 'var(--text-muted)' }}>
-              {shoeSummary.totalCount === 0
-                ? 'Add your shoes'
-                : `${shoeSummary.activeCount} active${shoeSummary.closest ? ` · ${shoeSummary.closest.shoe.name || 'Shoe'} ${Math.round(shoeSummary.closest.miles)}/${shoeSummary.closest.recommended > 0 ? Math.round(shoeSummary.closest.recommended) : '--'} mi` : ''}`}
-            </span>
-          </span>
-          <span className="text-xs font-bold" style={{ color: 'var(--text-muted)' }}>Gear →</span>
-        </div>
-      </button>
 
       <button
         type="button"
