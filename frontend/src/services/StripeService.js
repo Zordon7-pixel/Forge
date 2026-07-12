@@ -55,7 +55,7 @@ export async function startStripeSubscription(plan = 'monthly') {
   })
 
   const initResult = await sdk.initPaymentSheet({
-    merchantDisplayName: 'FORGE',
+    merchantDisplayName: 'Forged Hybrid',
     customerId: paymentSheet.customerId,
     customerEphemeralKeySecret: paymentSheet.customerEphemeralKeySecret,
     paymentIntentClientSecret: paymentSheet.paymentIntentClientSecret,

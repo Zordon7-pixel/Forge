@@ -39,7 +39,7 @@ export default function ReadinessCard({ onOpenDetail, readinessState }) {
     return (
       <section className="rounded-2xl border border-subtle bg-card p-4">
         <p className="text-sm font-black text-primary" style={{ margin: 0 }}>Recovery readiness</p>
-        <p className="mt-1 text-sm text-muted" style={{ marginBottom: 0 }}>Upgrade to Forge Pro to unlock today&apos;s readiness score.</p>
+        <p className="mt-1 text-sm text-muted" style={{ marginBottom: 0 }}>Upgrade to Forged Hybrid Pro to unlock today&apos;s readiness score.</p>
       </section>
     )
   }

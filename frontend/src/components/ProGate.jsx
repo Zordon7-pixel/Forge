@@ -33,7 +33,7 @@ export default function ProGate({ children, isPro, loading, message }) {
             }}
           >
             <Lock size={32} color="var(--accent)" style={{ margin: '0 auto 12px' }} />
-            <h3 style={{ color: 'var(--text-primary)', fontWeight: 800, fontSize: 20 }}>Forge Pro</h3>
+            <h3 style={{ color: 'var(--text-primary)', fontWeight: 800, fontSize: 20 }}>Forged Hybrid Pro</h3>
             <p style={{ color: 'var(--text-primary)', fontWeight: 700, marginTop: 8 }}>{message}</p>
             <p style={{ color: 'var(--text-muted)', marginTop: 8 }}>Upgrade to unlock this training insight.</p>
             <button

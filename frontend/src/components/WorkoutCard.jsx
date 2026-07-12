@@ -14,7 +14,7 @@ export default function WorkoutCard({ workoutType = 'Workout', date, stats = {},
       .filter(([, v]) => v !== null && v !== undefined && String(v) !== '')
       .map(([k, v]) => `${k}: ${v}`)
       .join(' | ')
-    return `FORGE ${workoutType} · ${formattedDate}${statText ? ` · ${statText}` : ''}`
+    return `Forged Hybrid ${workoutType} · ${formattedDate}${statText ? ` · ${statText}` : ''}`
   }, [summaryText, workoutType, formattedDate, stats])
 
   const copySummary = async () => {
@@ -29,7 +29,7 @@ export default function WorkoutCard({ workoutType = 'Workout', date, stats = {},
   const shareSummary = async () => {
     if (navigator.share) {
       try {
-        await navigator.share({ title: `FORGE ${workoutType}`, text: cardText })
+        await navigator.share({ title: `Forged Hybrid ${workoutType}`, text: cardText })
         return
       } catch {}
     }
@@ -39,7 +39,7 @@ export default function WorkoutCard({ workoutType = 'Workout', date, stats = {},
   return (
     <div className="rounded-2xl p-4 space-y-3" style={{ background: '#0f1117', border: '1px solid #2a2d3e' }}>
       <div className="rounded-xl p-4" style={{ background: '#1a1d2e', border: '1px solid #2a2d3e' }}>
-        <p className="text-xs font-bold tracking-wide" style={{ color: '#EAB308' }}>FORGE</p>
+        <p className="text-xs font-bold tracking-wide" style={{ color: '#EAB308' }}>FORGED HYBRID</p>
         <p className="text-lg font-black mt-1" style={{ color: '#ffffff' }}>{workoutType}</p>
         <p className="text-xs mt-1" style={{ color: '#a1a1aa' }}>{formattedDate}</p>
         <div className="grid grid-cols-2 gap-2 mt-3">

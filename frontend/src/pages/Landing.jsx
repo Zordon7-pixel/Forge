@@ -6,7 +6,7 @@ export default function Landing() {
     <div className="min-h-screen" style={{ background: '#0a0a0a', color: '#f5f5f5' }}>
       <div className="mx-auto max-w-5xl px-6 py-12">
         <section className="py-16 text-center">
-          <p className="text-sm tracking-[0.2em] mb-4" style={{ color: '#EAB308' }}>FORGE</p>
+          <p className="text-sm tracking-[0.2em] mb-4" style={{ color: '#EAB308' }}>FORGED HYBRID</p>
           <h1 className="text-4xl md:text-6xl font-black leading-tight">Built to adapt. AI coaching that learns your body.</h1>
           <p className="mt-4 text-base md:text-lg text-neutral-300 max-w-2xl mx-auto">Train smarter with adaptive plans, real performance feedback, and seamless activity sync.</p>
           <div className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-3">
@@ -39,7 +39,7 @@ export default function Landing() {
         </section>
 
         <footer className="pt-10 pb-4 text-xs text-neutral-500 flex flex-wrap items-center justify-between gap-2">
-          <span>© {new Date().getFullYear()} FORGE</span>
+          <span>© {new Date().getFullYear()} Forged Hybrid</span>
           <div className="flex gap-4">
             <Link to="/login">Sign In</Link>
             <Link to="/register">Create Account</Link>

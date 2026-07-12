@@ -113,7 +113,7 @@ export default function ExercisePickerModal({ muscleGroup, onSelect, onClose }) 
               )}
               {!howToExercise.is_system && (
                 <p className="text-xs" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>
-                  Community exercise — added by a FORGE user
+                  Community exercise — added by a Forged Hybrid user
                 </p>
               )}
             </div>

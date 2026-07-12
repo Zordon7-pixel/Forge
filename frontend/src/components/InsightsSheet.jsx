@@ -758,7 +758,7 @@ export default function InsightsSheet({
       >
         <div className="mb-4 flex items-start justify-between gap-3">
           <div>
-            <p className="text-xs font-bold uppercase" style={{ color: 'var(--accent)', letterSpacing: 0.8 }}>Forge</p>
+            <p className="text-xs font-bold uppercase" style={{ color: 'var(--accent)', letterSpacing: 0.8 }}>Forged Hybrid</p>
             <h2 className="mt-1 text-2xl font-black" style={{ color: 'var(--text-primary)' }}>More insights</h2>
           </div>
           <button onClick={onClose} className="rounded-lg px-3 py-2 text-xs" style={{ background: 'var(--bg-input)', color: 'var(--text-muted)' }}>

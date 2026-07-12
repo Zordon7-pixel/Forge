@@ -53,8 +53,8 @@ export default function Login() {
     <div className="flex min-h-screen items-center justify-center px-4" style={{ background: 'var(--bg-base)', color: 'var(--text-primary)' }}>
       <div className="w-full max-w-[420px]">
         <div className="mb-6 text-center">
-          <img src="/icon-192.png" alt="FORGE" className="mx-auto h-14 w-14 rounded-2xl object-cover" />
-          <p className="t-title mt-3 tracking-[0.24em]" style={{ color: 'var(--text-primary)' }}>FORGE</p>
+          <img src="/icon-192.png" alt="Forged Hybrid" className="mx-auto h-14 w-14 rounded-2xl object-cover" />
+          <p className="t-title mt-3 tracking-[0.14em]" style={{ color: 'var(--text-primary)' }}>Forged Hybrid</p>
           <p className="t-sub mt-1">Coach for runners who lift.</p>
         </div>
         <div className="card p-6">

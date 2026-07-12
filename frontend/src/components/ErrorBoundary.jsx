@@ -18,7 +18,7 @@ export default class ErrorBoundary extends React.Component {
       const recoverable = isRecoverableChunkError(this.state.error)
       return (
         <div style={{ minHeight: '100vh', background: '#0a0a0a', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 16, padding: 32, fontFamily: 'sans-serif' }}>
-          <h1 style={{ color: 'var(--accent)', fontSize: 20, fontWeight: 700, margin: 0 }}>{recoverable ? 'FORGE — Updating' : 'FORGE — Startup Error'}</h1>
+          <h1 style={{ color: 'var(--accent)', fontSize: 20, fontWeight: 700, margin: 0 }}>{recoverable ? 'Forged Hybrid — Updating' : 'Forged Hybrid — Startup Error'}</h1>
           <p style={{ color: '#94a3b8', fontSize: 14, margin: 0, textAlign: 'center', maxWidth: 400 }}>
             {recoverable
               ? 'Forge loaded a stale app file after an update. Reload once to pull the latest version.'

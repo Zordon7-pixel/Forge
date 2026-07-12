@@ -151,7 +151,7 @@ export default function WorkoutSummary() {
     volume: totalVolumeLbs > 0 ? `${totalVolumeLbs.toLocaleString()} lbs` : '--',
   }
   const safeStartedAt = session?.started_at || Date.now()
-  const shareSummaryText = `FORGE Lift · ${new Date(safeStartedAt).toLocaleDateString()} · ${Object.keys(exerciseMap).length} exercises · ${sets.length} sets · ${totalReps} reps`
+  const shareSummaryText = `Forged Hybrid Lift · ${new Date(safeStartedAt).toLocaleDateString()} · ${Object.keys(exerciseMap).length} exercises · ${sets.length} sets · ${totalReps} reps`
 
   if (loading) return <div className="p-4" style={{ color: 'var(--text-muted)' }}>Loading summary...</div>
   if (!session) return null

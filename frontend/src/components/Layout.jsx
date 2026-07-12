@@ -63,7 +63,7 @@ export default function Layout({ children }) {
               aria-label="Go Home"
               className="pressable"
             >
-              <img src="/icon-192.png" alt="FORGE" className="w-9 h-9 rounded-xl object-cover" />
+              <img src="/icon-192.png" alt="Forged Hybrid" className="w-9 h-9 rounded-xl object-cover" />
             </button>
             <div className="flex items-center gap-2">
               <button

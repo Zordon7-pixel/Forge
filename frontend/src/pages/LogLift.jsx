@@ -366,7 +366,7 @@ export default function LogLift() {
               fontFamily: 'Caveat, cursive',
               backgroundImage: 'repeating-linear-gradient(to bottom, transparent 0 27px, rgba(26,26,46,0.12) 27px 28px)'
             }}>
-              <div style={{ position: 'absolute', top: 8, right: 10, fontSize: 11, fontWeight: 700, border: '1px solid #1a1a2e66', borderRadius: 999, padding: '2px 8px' }}>FORGE</div>
+              <div style={{ position: 'absolute', top: 8, right: 10, fontSize: 11, fontWeight: 700, border: '1px solid #1a1a2e66', borderRadius: 999, padding: '2px 8px' }}>FORGED HYBRID</div>
               <div style={{ position: 'absolute', left: 0, right: 0, bottom: -1, height: 14, background: 'linear-gradient(135deg, #eadfcd 25%, transparent 25%) 0 0/12px 12px, linear-gradient(225deg, #eadfcd 25%, transparent 25%) 6px 0/12px 12px' }} />
               <p className="text-lg font-bold">{aiRecommendationTitle}</p>
               <p className="text-sm mt-3 leading-relaxed"><strong>Warmup:</strong> {(aiRecommendation.warmup || []).join(', ')}</p>
@@ -480,7 +480,7 @@ export default function LogLift() {
               background: '#F5F0E8', color: '#1a1a2e', border: '1px solid #d6c9a0', position: 'relative', fontFamily: 'Caveat, cursive',
               backgroundImage: 'repeating-linear-gradient(to bottom, transparent 0 27px, rgba(26,26,46,0.12) 27px 28px)'
             }}>
-              <div style={{ position: 'absolute', top: 8, right: 10, fontSize: 11, fontWeight: 700, border: '1px solid #1a1a2e66', borderRadius: 999, padding: '2px 8px' }}>FORGE</div>
+              <div style={{ position: 'absolute', top: 8, right: 10, fontSize: 11, fontWeight: 700, border: '1px solid #1a1a2e66', borderRadius: 999, padding: '2px 8px' }}>FORGED HYBRID</div>
               <p className="text-lg font-bold">{manualAiPlan.workoutName}</p>
               <p className="text-sm mt-3 leading-relaxed"><strong>Main:</strong> {(manualAiPlan.main || []).map((m) => `${m.name} ${m.sets}x${m.reps} (${m.rest})`).join(' • ')}</p>
               <div className="flex gap-2 mt-3">

@@ -640,7 +640,7 @@ export default function LogRun() {
                 {routePlannerStatus.requiresPro && (
                   <Link to="/upgrade" className="mt-4 flex items-center justify-between py-3 px-1 text-sm font-black" style={{ borderTop: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}>
                     <span className="flex items-center gap-2"><Mountain size={18} style={{ color: 'var(--accent)' }} /> Elevation routes</span>
-                    <span className="text-xs" style={{ color: 'var(--accent)' }}>Forge Pro</span>
+                    <span className="text-xs" style={{ color: 'var(--accent)' }}>Pro</span>
                   </Link>
                 )}
               </div>

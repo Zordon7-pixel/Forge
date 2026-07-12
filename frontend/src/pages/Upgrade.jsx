@@ -94,7 +94,7 @@ export default function Upgrade() {
           className="rounded-2xl p-8"
           style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', textAlign: 'center', maxWidth: 420, width: '100%' }}
         >
-          <h1 className="text-2xl font-black" style={{ color: 'var(--text-primary)' }}>You are on FORGE Pro</h1>
+          <h1 className="text-2xl font-black" style={{ color: 'var(--text-primary)' }}>You are on Forged Hybrid Pro</h1>
           {redeemSuccess && redeemMessage && <p className="mt-2 text-sm" style={{ color: 'var(--success)' }}>{redeemMessage}</p>}
           {daysLeft !== null && (
             <p className="mt-3 inline-flex rounded-full px-3 py-1 text-xs font-bold" style={{ background: 'var(--accent-dim)', color: 'var(--accent)', border: '1px solid var(--border-subtle)' }}>
@@ -117,7 +117,7 @@ export default function Upgrade() {
   return (
     <div style={{ minHeight: 'calc(100vh - 120px)', background: 'var(--bg-base)' }}>
       <div className="mx-auto w-full max-w-5xl px-4 py-8">
-        <h1 className="text-3xl font-black" style={{ color: 'var(--text-primary)' }}>FORGE Subscription</h1>
+        <h1 className="text-3xl font-black" style={{ color: 'var(--text-primary)' }}>Forged Hybrid Subscription</h1>
         <p className="mt-2 text-sm" style={{ color: 'var(--text-muted)' }}>Free tier supports basic workout logging. Pro unlocks Apple Health sync and premium insights.</p>
 
         <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2">

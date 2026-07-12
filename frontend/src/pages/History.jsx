@@ -365,7 +365,7 @@ export default function History() {
 
           {filteredRuns.length === 0 && tab !== 'lifts' && (
             <div className="flex flex-col items-center justify-center gap-4 py-12">
-              <img src="/icon.svg" alt="FORGE" className="w-24 h-24 object-contain opacity-20" />
+              <img src="/icon.svg" alt="Forged Hybrid" className="w-24 h-24 object-contain opacity-20" />
               <p className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>{t('history.noRuns')}</p>
               <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Lace up and log your next run.</p>
             </div>
@@ -430,7 +430,7 @@ export default function History() {
 
           {filteredLifts.length === 0 && filteredWorkoutSessions.length === 0 && tab !== 'runs' && (
             <div className="flex flex-col items-center justify-center gap-4 py-12">
-              <img src="/icon.svg" alt="FORGE" className="w-24 h-24 object-contain opacity-20" />
+              <img src="/icon.svg" alt="Forged Hybrid" className="w-24 h-24 object-contain opacity-20" />
               <p className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>No lifts recorded for this period.</p>
               <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Hit the weights.</p>
             </div>

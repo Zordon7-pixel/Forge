@@ -286,8 +286,8 @@ export default function ActiveRun() {
     if (Capacitor.isNativePlatform()) {
       try {
         const id = await BackgroundGeolocation.addWatcher({
-          backgroundMessage: 'Forge is recording your run',
-          backgroundTitle: 'Forge',
+          backgroundMessage: 'Forged Hybrid is recording your run',
+          backgroundTitle: 'Forged Hybrid',
           requestPermissions: true,
           stale: false,
           distanceFilter: 5,
@@ -549,7 +549,7 @@ export default function ActiveRun() {
             pace,
             duration: timeDisplay,
           }}
-          summaryText={`FORGE Run · ${fmt.distance(gpsAvailable ? distanceMiles : Number(manualDistance || 0), 2)} · ${pace} · ${timeDisplay}`}
+          summaryText={`Forged Hybrid Run · ${fmt.distance(gpsAvailable ? distanceMiles : Number(manualDistance || 0), 2)} · ${pace} · ${timeDisplay}`}
         />
       )}
 
