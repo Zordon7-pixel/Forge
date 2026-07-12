@@ -2,7 +2,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
   appId: 'com.zordon.forge',
-  appName: 'FORGE',
+  appName: 'Forged Hybrid',
   webDir: 'dist',
   server: {
     // Live-load from Railway so TestFlight always gets the latest web build

@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-        <string>FORGE</string>
+	<string>Forged Hybrid</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -27,13 +27,13 @@
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>NSHealthShareUsageDescription</key>
-	<string>FORGE reads Apple Health data to personalize training recommendations.</string>
+	<string>Forged Hybrid reads Apple Health data to personalize training recommendations.</string>
 	<key>NSHealthUpdateUsageDescription</key>
-	<string>FORGE writes workout data to keep your health records up to date.</string>
+	<string>Forged Hybrid writes workout data to keep your health records up to date.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>FORGE uses your location to map and measure your runs.</string>
+	<string>Forged Hybrid uses your location to map and measure your runs.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>FORGE keeps recording your route in the background so your run does not stop when your screen is off.</string>
+	<string>Forged Hybrid keeps recording your route in the background so your run does not stop when your screen is off.</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>
