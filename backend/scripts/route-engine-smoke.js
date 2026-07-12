@@ -34,6 +34,7 @@ function featureForCandidate(callIndex) {
 async function generate(preference) {
   let callIndex = 0;
   const requestUrls = [];
+  const requestBodies = [];
   const route = await generateElevationAwareRoute({
     latitude: 39.29,
     longitude: -76.61,
@@ -43,12 +44,13 @@ async function generate(preference) {
   }, {
     apiKey: 'test-key',
     skipCache: true,
-    fetchImpl: async (url) => {
+    fetchImpl: async (url, init) => {
       requestUrls.push(url);
+      requestBodies.push(JSON.parse(init.body));
       return featureForCandidate(callIndex++);
     },
   });
-  return { route, requestUrls };
+  return { route, requestUrls, requestBodies };
 }
 
 (async () => {
@@ -68,6 +70,10 @@ async function generate(preference) {
   assert(
     flatResult.requestUrls.every((url) => url.startsWith('https://api.heigit.org/openrouteservice/v2/directions/')),
     'route requests must use the current HeiGIT OpenRouteService host',
+  );
+  assert(
+    flatResult.requestBodies.every((body) => body.options?.round_trip && !body.options?.profile_params),
+    'route requests must use the provider-supported round-trip options shape',
   );
 
   assert.throws(

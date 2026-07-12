@@ -144,12 +144,6 @@ function providerRequest(input, seed) {
           points: 5,
           seed,
         },
-        profile_params: {
-          weightings: {
-            green: { factor: input.surface === 'trail' ? 0.9 : 0.5 },
-            quiet: { factor: 1 },
-          },
-        },
       },
     },
   };
