@@ -234,7 +234,7 @@ export default function PostRunCheckIn({ runId, heatDrift, onDone }) {
         {step === 1 && (
           <div style={{ animation: 'checkinFade 180ms ease' }}>
             <p style={{ fontWeight: 800, fontSize: 18, color: 'var(--text-primary)', marginBottom: 6 }}>Any pain or discomfort?</p>
-            <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 20 }}>Be honest — FORGE adjusts your next session.</p>
+            <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 20 }}>Be honest — Forged Hybrid adjusts your next session.</p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 20 }}>
               {PAIN_OPTIONS.map(([val, label]) => (
                 <button key={val} type="button" onClick={() => selectStepValue(1, setPain, val, pain)}
@@ -260,7 +260,7 @@ export default function PostRunCheckIn({ runId, heatDrift, onDone }) {
         {step === 2 && (
           <div style={{ animation: 'checkinFade 180ms ease' }}>
             <p style={{ fontWeight: 800, fontSize: 18, color: 'var(--text-primary)', marginBottom: 6 }}>Energy level after?</p>
-            <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 20 }}>This helps FORGE plan your recovery time.</p>
+            <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 20 }}>This helps Forged Hybrid plan your recovery time.</p>
             <div style={{ display: 'flex', gap: 10, marginBottom: 20 }}>
               {ENERGY_OPTIONS.map(([val, label]) => (
                 <button key={val} type="button" onClick={() => selectStepValue(2, setEnergy, val, energy)}

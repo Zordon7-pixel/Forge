@@ -11,7 +11,7 @@ function requirePremium(featureName) {
       if (user?.is_pro) return next();
 
       return res.status(402).json({
-        error: `${featureName || 'This feature'} requires a Forge Pro subscription.`,
+        error: `${featureName || 'This feature'} requires a Forged Hybrid Pro subscription.`,
         feature: featureName || 'premium',
         upgrade: true,
       });

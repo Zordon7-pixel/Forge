@@ -403,7 +403,7 @@ export default function Dashboard() {
     let volDelta = 0
     let volReason = ''
     if (avgWeekly <= 0) {
-      volReason = 'No recent weekly mileage baseline yet. Log a few weeks so Forge can compare load safely.'
+      volReason = 'No recent weekly mileage baseline yet. Log a few weeks so Forged Hybrid can compare load safely.'
     } else if (weekRatio < 0.5) {
       volDelta = 15
       volReason = `This week you ran ${fmt.distance(week.miles, 1)} vs your avg ${fmt.distance(avgWeekly, 1)} — low volume means your legs are fresh.`
@@ -459,7 +459,7 @@ export default function Dashboard() {
         value: rhrDelta,
         delta: rhrDelta,
         reason: restingHr >= 85
-          ? `${restingHr} bpm resting HR is elevated, so Forge lowers intensity.`
+          ? `${restingHr} bpm resting HR is elevated, so Forged Hybrid lowers intensity.`
           : restingHr >= 75
             ? `${restingHr} bpm resting HR is above the preferred range.`
             : restingHr <= 60
@@ -533,7 +533,7 @@ export default function Dashboard() {
     const hasPace = Boolean(nextRecommendation.suggestedPace)
     if (!hasDistance && !hasPace) return null
     return {
-      typeLabel: nextRecommendation.type || nextRecommendation.recommendationType || 'Forge Workout',
+      typeLabel: nextRecommendation.type || nextRecommendation.recommendationType || 'Forged Hybrid Workout',
       distanceLabel: hasDistance ? `${nextRecommendation.suggestedDistance} mi` : '',
       pace: nextRecommendation.suggestedPace || '',
       progression: nextRecommendation.progression || nextRecommendation.summary || '',

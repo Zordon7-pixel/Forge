@@ -13,14 +13,14 @@ export const WATCH_PROVIDERS = [
     name: 'Garmin',
     status: 'partner_required',
     delivery: 'Garmin Training/Courses API',
-    notes: 'Adapter is planned; official Garmin API approval is required before Forge can push workouts.',
+    notes: 'Adapter is planned; official Garmin API approval is required before Forged Hybrid can push workouts.',
   },
   {
     id: 'coros',
     name: 'COROS',
     status: 'partner_required',
     delivery: 'COROS partner API',
-    notes: 'Adapter is planned; COROS API application approval is required before Forge can push workouts.',
+    notes: 'Adapter is planned; COROS API application approval is required before Forged Hybrid can push workouts.',
   },
   {
     id: 'trainingpeaks',

@@ -413,7 +413,7 @@ export default function Stretches() {
             Where do you feel tight?
           </p>
           <p style={{ color: 'var(--text-muted)', fontSize: 12, margin: '4px 0 14px' }}>
-            Pick the area and Forge will rotate a focused mobility set.
+            Pick the area and Forged Hybrid will rotate a focused mobility set.
           </p>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
             {TIGHTNESS_OPTIONS.map(option => (

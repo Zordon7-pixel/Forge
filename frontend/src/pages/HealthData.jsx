@@ -128,7 +128,7 @@ export default function HealthData() {
       saveLastSyncResult(result)
       setLastSyncResult(getLastSyncResult())
       const scanned = Array.isArray(result?.workouts) ? result.workouts.length : Number(result?.scanned || 0)
-      setNotice(`Apple Health synced: ${scanned} scanned, ${result.imported} imported, ${result.skipped} already in Forge.`)
+      setNotice(`Apple Health synced: ${scanned} scanned, ${result.imported} imported, ${result.skipped} already in Forged Hybrid.`)
       await loadData()
     } catch (err) {
       setNotice(err?.message || 'Unable to sync Apple Health on this device.')

@@ -355,12 +355,12 @@ async function buildNextRecommendation(userId, { includeBrief = false } = {}) {
     if (healthSignals.available) {
       if (healthSignals.shouldRest) {
         recommendationType = 'rest';
-        reason = `${healthSignals.summary} Forge is switching today to recovery so your next run is higher quality.`;
+        reason = `${healthSignals.summary} Forged Hybrid is switching today to recovery so your next run is higher quality.`;
         suggestedDistance = 0;
         healthAdjusted = true;
       } else if (healthSignals.shouldReduceIntensity && recommendationType !== 'rest' && recommendationType !== 'strength') {
         recommendationType = 'easy_run';
-        reason = `${healthSignals.summary} Forge lowered this to an easy aerobic run.`;
+        reason = `${healthSignals.summary} Forged Hybrid lowered this to an easy aerobic run.`;
         suggestedDistance = Number(Math.max(1, suggestedDistance * 0.75).toFixed(1));
         healthAdjusted = true;
       } else if (healthSignals.recoveryState === 'strong' && recommendationType === 'easy_run' && lastRunDaysAgo !== null && lastRunDaysAgo >= 2) {
@@ -375,12 +375,12 @@ async function buildNextRecommendation(userId, { includeBrief = false } = {}) {
     if (checkinSignals.available) {
       if (checkinSignals.shouldRest) {
         recommendationType = 'rest';
-        reason = `${checkinSignals.summary} Forge is switching today to recovery.`;
+        reason = `${checkinSignals.summary} Forged Hybrid is switching today to recovery.`;
         suggestedDistance = 0;
         checkinAdjusted = true;
       } else if (checkinSignals.shouldReduceIntensity && recommendationType !== 'rest' && recommendationType !== 'strength') {
         recommendationType = 'easy_run';
-        reason = `${checkinSignals.summary} Forge lowered this to an easy controlled run.`;
+        reason = `${checkinSignals.summary} Forged Hybrid lowered this to an easy controlled run.`;
         suggestedDistance = Number(Math.max(1, suggestedDistance * 0.75).toFixed(1));
         checkinAdjusted = true;
       }
@@ -391,7 +391,7 @@ async function buildNextRecommendation(userId, { includeBrief = false } = {}) {
         const maxDistanceByTime = Math.max(0.5, (runningMinutes * 60) / paceSeconds);
         if (suggestedDistance > maxDistanceByTime) {
           suggestedDistance = Number(maxDistanceByTime.toFixed(1));
-          reason = `${checkinSignals.summary} Forge capped the run to fit your available time.`;
+          reason = `${checkinSignals.summary} Forged Hybrid capped the run to fit your available time.`;
           checkinAdjusted = true;
         }
       }

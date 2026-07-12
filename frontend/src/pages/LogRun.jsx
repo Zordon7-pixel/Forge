@@ -228,7 +228,7 @@ function WorkoutWatchModal({ workout, onClose }) {
         </div>
 
         <WatchWorkoutSendButton workout={watchWorkout} className="mb-4" />
-        <p className="text-sm mb-4" style={{ color: 'var(--text-muted)' }}>Forge prepares a structured watch workout. Apple Watch can receive it from the iPhone app now; Garmin, COROS, Polar, Suunto, Wahoo, and TrainingPeaks plug in after partner access.</p>
+        <p className="text-sm mb-4" style={{ color: 'var(--text-muted)' }}>Forged Hybrid prepares a structured watch workout. Apple Watch can receive it from the iPhone app now; Garmin, COROS, Polar, Suunto, Wahoo, and TrainingPeaks plug in after partner access.</p>
         <button onClick={onClose} className="w-full rounded-xl py-2" style={{ background: 'var(--bg-base)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>Close</button>
       </div>
     </div>

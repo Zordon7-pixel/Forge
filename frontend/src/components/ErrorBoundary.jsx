@@ -21,7 +21,7 @@ export default class ErrorBoundary extends React.Component {
           <h1 style={{ color: 'var(--accent)', fontSize: 20, fontWeight: 700, margin: 0 }}>{recoverable ? 'Forged Hybrid — Updating' : 'Forged Hybrid — Startup Error'}</h1>
           <p style={{ color: '#94a3b8', fontSize: 14, margin: 0, textAlign: 'center', maxWidth: 400 }}>
             {recoverable
-              ? 'Forge loaded a stale app file after an update. Reload once to pull the latest version.'
+              ? 'Forged Hybrid loaded a stale app file after an update. Reload once to pull the latest version.'
               : 'Something failed during initialization. Error details:'}
           </p>
           {!recoverable && (

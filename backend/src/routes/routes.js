@@ -38,7 +38,7 @@ router.post('/generate', auth, routeGenerationLimiter, async (req, res) => {
   try {
     const user = await dbGet('SELECT is_pro FROM users WHERE id=?', [req.user.id]);
     if (!user?.is_pro) {
-      return res.status(403).json({ error: 'Elevation route planning requires Forge Pro.', code: 'PRO_REQUIRED' });
+      return res.status(403).json({ error: 'Elevation route planning requires Forged Hybrid Pro.', code: 'PRO_REQUIRED' });
     }
     const route = await generateElevationAwareRoute(req.body);
     res.json({ route });

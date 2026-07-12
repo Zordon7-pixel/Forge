@@ -355,7 +355,7 @@ export function TodayDetailSheet({
     .map((target) => ({ ...target, value: target.value === null || target.value === undefined ? '' : String(target.value).trim() }))
     .filter((target) => target.value)
   const planSignals = [
-    !checkedInToday ? 'Today starts with check-in data so Forge can adjust effort before you train.' : null,
+    !checkedInToday ? 'Today starts with check-in data so Forged Hybrid can adjust effort before you train.' : null,
     activeInjury ? `Recovery mode is active for ${activeInjury.body_part || 'your injury'}, so workouts are softened until return.` : null,
     watchSyncNotice ? 'A new watch activity was synced and may change load, recovery, and the next workout.' : null,
     compliance && compliance.completed < compliance.planned ? 'Missed planned sessions this week can shift the next run toward base or recovery work.' : null,
@@ -483,7 +483,7 @@ export function TodayDetailSheet({
         <section className="mt-5">
           <p className="text-xs font-bold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.8 }}>Adjustment history</p>
           <div className="mt-2 space-y-2">
-            {(planSignals.length ? planSignals : ['Forge has not detected any missed-session, recovery-mode, or new sync signals today.']).map((signal) => (
+            {(planSignals.length ? planSignals : ['Forged Hybrid has not detected any missed-session, recovery-mode, or new sync signals today.']).map((signal) => (
               <p key={signal} className="rounded-xl p-3 text-sm" style={{ background: 'var(--bg-input)', color: 'var(--text-muted)' }}>
                 {signal}
               </p>

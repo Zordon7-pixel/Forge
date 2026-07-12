@@ -98,7 +98,7 @@ export default function HelpDesk({ externalOpen, onClose }) {
                     <MessageSquare size={16} style={{ color: 'var(--accent)' }} />
                     <p className="text-sm font-semibold">Coach flow</p>
                   </div>
-                  <p className="mt-2 text-sm" style={{ color: 'var(--text-muted)' }}>Check in, follow the workout, then log how it felt. Forge adjusts from there.</p>
+                  <p className="mt-2 text-sm" style={{ color: 'var(--text-muted)' }}>Check in, follow the workout, then log how it felt. Forged Hybrid adjusts from there.</p>
                 </div>
               </div>
             )}

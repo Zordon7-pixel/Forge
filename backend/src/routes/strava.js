@@ -149,7 +149,7 @@ function sendOAuthResultPage(res, { ok, title, message }) {
     <div class="mark">${ok ? '✓' : '!'}</div>
     <h1>${safeTitle}</h1>
     <p>${safeMessage}</p>
-    <a href="https://forge-production-773f.up.railway.app/settings">Return to Forge</a>
+    <a href="https://forge-production-773f.up.railway.app/settings">Return to Forged Hybrid</a>
   </main>
 </body>
 </html>`);
@@ -411,7 +411,7 @@ router.get('/callback', async (req, res) => {
     return sendOAuthResultPage(res, {
       ok: true,
       title: 'Strava Connected',
-      message: `${athleteName || 'Your Strava account'} is connected. Return to Forge and the Devices section will refresh automatically.`,
+      message: `${athleteName || 'Your Strava account'} is connected. Return to Forged Hybrid and the Devices section will refresh automatically.`,
     });
   } catch (err) {
     if (deepLink) {
@@ -423,8 +423,8 @@ router.get('/callback', async (req, res) => {
 <body style="margin:0;min-height:100vh;display:grid;place-items:center;background:#050505;color:#f9fafb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
   <main style="width:min(88vw,420px);text-align:center">
     <h1 style="font-size:30px;margin:0 0 12px">Strava Connection Failed</h1>
-    <p style="color:#9ca3af;line-height:1.55">Forge could not finish the Strava connection. Return to Forge and try again.</p>
-    <a style="display:inline-flex;align-items:center;justify-content:center;min-height:48px;padding:0 22px;border-radius:14px;background:#f5bd02;color:#111;font-weight:900;text-decoration:none" href="https://forge-production-773f.up.railway.app/settings">Return to Forge</a>
+    <p style="color:#9ca3af;line-height:1.55">Forged Hybrid could not finish the Strava connection. Return to Forged Hybrid and try again.</p>
+    <a style="display:inline-flex;align-items:center;justify-content:center;min-height:48px;padding:0 22px;border-radius:14px;background:#f5bd02;color:#111;font-weight:900;text-decoration:none" href="https://forge-production-773f.up.railway.app/settings">Return to Forged Hybrid</a>
   </main>
 </body>
 </html>`);

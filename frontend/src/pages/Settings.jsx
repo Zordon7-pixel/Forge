@@ -218,7 +218,7 @@ export default function Settings() {
         } catch {}
         setImportNotice({
           ok: true,
-          text: `Apple Health synced: ${scanned} scanned, ${result.imported} imported, ${result.skipped} already in Forge.`,
+          text: `Apple Health synced: ${scanned} scanned, ${result.imported} imported, ${result.skipped} already in Forged Hybrid.`,
         })
       } catch (err) {
         setImportNotice({ ok: false, text: err?.message || 'Unable to sync Apple Health on this device.' })
@@ -302,7 +302,7 @@ export default function Settings() {
 
   const handleDeviceConnect = async (device) => {
     setDeviceConnecting((prev) => ({ ...prev, [device]: true }))
-    setDeviceNotice({ ok: true, text: `Opening ${device.toUpperCase()} connection. Finish there, then return to Forge.` })
+    setDeviceNotice({ ok: true, text: `Opening ${device.toUpperCase()} connection. Finish there, then return to Forged Hybrid.` })
     try {
       const { data } = await api.get(`/${device}/auth`, { params: { format: 'json' } })
       if (data?.url) {
@@ -489,7 +489,7 @@ export default function Settings() {
               <div>
                 <p style={{ margin: 0, fontSize: 15, fontWeight: 900, color: 'var(--text-primary)' }}>One Send to Watch flow</p>
                 <p style={{ margin: '5px 0 0', fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.55 }}>
-                  Forge now builds provider-neutral structured workouts. Apple Watch is the direct path; Garmin, COROS, Polar, Suunto, Wahoo, and TrainingPeaks are adapter slots pending API access.
+                  Forged Hybrid now builds provider-neutral structured workouts. Apple Watch is the direct path; Garmin, COROS, Polar, Suunto, Wahoo, and TrainingPeaks are adapter slots pending API access.
                 </p>
               </div>
               <Shield size={18} style={{ color: watchDelivery.canAutoSend ? 'var(--success)' : 'var(--text-muted)', flexShrink: 0 }} />
@@ -511,7 +511,7 @@ export default function Settings() {
                   Status: Not connected
                 </p>
                 <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: 13, lineHeight: 1.6 }}>
-                  Direct Garmin login is paused until Forge has official Garmin API access. Use Apple Health or File Import for Garmin watch data.
+                  Direct Garmin login is paused until Forged Hybrid has official Garmin API access. Use Apple Health or File Import for Garmin watch data.
                 </p>
               </div>
             ) : (

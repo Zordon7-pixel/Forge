@@ -34,7 +34,7 @@ function currentPosition() {
           reject(new Error('Allow location access in iPhone Settings to plan a route.'))
           return
         }
-        reject(new Error('Forge could not get your current location. Try again outside.'))
+        reject(new Error('Forged Hybrid could not get your current location. Try again outside.'))
       },
       { enableHighAccuracy: true, timeout: 12000, maximumAge: 30000 },
     )
@@ -93,7 +93,7 @@ export default function RoutePlanner({ workout, onStart }) {
       setRoute(response.data?.route || null)
     } catch (err) {
       console.error('[RoutePlanner] generation failed:', err.message)
-      setError(err?.response?.data?.error || err.message || 'Forge could not plan this route.')
+      setError(err?.response?.data?.error || err.message || 'Forged Hybrid could not plan this route.')
     } finally {
       setLoading(false)
     }
@@ -197,7 +197,7 @@ export default function RoutePlanner({ workout, onStart }) {
             {loading ? <LoaderCircle size={18} className="animate-spin" /> : <RouteIcon size={18} />}
             {loading ? 'Comparing routes...' : route ? 'Generate another route' : 'Generate route'}
           </button>
-          <p className="text-[11px] mt-2" style={{ color: 'var(--text-muted)' }}>Forge sends your start point and target distance to its route provider. The preview is not added to run history unless you complete the run.</p>
+          <p className="text-[11px] mt-2" style={{ color: 'var(--text-muted)' }}>Forged Hybrid sends your start point and target distance to its route provider. The preview is not added to run history unless you complete the run.</p>
 
           {error && (
             <div className="mt-3 p-3 text-sm" role="alert" style={{ borderRadius: 8, background: 'var(--danger-dim)', color: 'var(--danger)', border: '1px solid rgba(239,68,68,0.3)' }}>

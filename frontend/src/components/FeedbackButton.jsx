@@ -60,7 +60,7 @@ export default function FeedbackButton({ externalOpen, onClose }) {
       <form onSubmit={submitFeedback} className="w-full max-w-md rounded-xl border p-5 shadow-2xl" style={{ background: 'var(--bg-card)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}>
         <h2 className="mb-2 text-lg font-bold">Send Feedback</h2>
         <p className="mb-4 text-xs leading-5" style={{ color: 'var(--text-muted)' }}>
-          Sends your note, account id, and current screen to Forge support. Do not include medical emergencies, passwords, payment details, or other secrets.
+          Sends your note, account id, and current screen to Forged Hybrid support. Do not include medical emergencies, passwords, payment details, or other secrets.
         </p>
 
         <div className="mb-4 grid grid-cols-2 gap-2 rounded-lg p-1" style={{ background: 'var(--bg-input)' }}>
@@ -93,7 +93,7 @@ export default function FeedbackButton({ externalOpen, onClose }) {
         {status && <p className="mb-3 text-sm" style={{ color: status.startsWith('Thanks') ? 'var(--success)' : 'var(--accent)' }}>{status}</p>}
 
         <p className="mb-3 text-[11px] leading-5" style={{ color: 'var(--text-muted)' }}>
-          By submitting, you agree that Forge may use this feedback to troubleshoot and improve the product under the Terms and Privacy Policy.
+          By submitting, you agree that Forged Hybrid may use this feedback to troubleshoot and improve the product under the Terms and Privacy Policy.
         </p>
 
         <div className="flex justify-end gap-2">

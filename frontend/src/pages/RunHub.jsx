@@ -63,7 +63,7 @@ export default function RunHub() {
         ) : !latestRun ? (
           <div>
             <p className="text-base font-bold" style={{ color: 'var(--text-primary)' }}>First run sets your baseline</p>
-            <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>Warm up, log the run, then Forge will translate your pace and adjust the next recommendation.</p>
+            <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>Warm up, log the run, then Forged Hybrid will translate your pace and adjust the next recommendation.</p>
             <div className="mt-3 grid grid-cols-2 gap-2">
               <Link to="/warmup" className="rounded-xl py-2 text-center text-sm font-semibold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', textDecoration: 'none' }}>
                 Warm Up
