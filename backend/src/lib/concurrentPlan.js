@@ -331,6 +331,10 @@ function applyAcuteRunProtection(plan, context = {}) {
   const next = JSON.parse(JSON.stringify(plan));
   const protection = load.protection;
   const latestDate = load.latestRun.date;
+  const availableDays = new Set(normalizeWeekdays(
+    context.target?.trainingDays,
+    ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+  ));
   let changed = false;
 
   for (const week of next.weeks || []) {
@@ -373,24 +377,24 @@ function applyAcuteRunProtection(plan, context = {}) {
       const day = days[dayIndex];
       const lowerIndex = (day.sessions || []).findIndex((session) => session.kind === 'lift' && /lower/i.test(String(session.focus || '')));
       if (lowerIndex < 0 || !dateInRange(day.date, latestDate, protection.lowerBodyThrough)) continue;
-      const laterDayIndex = days.findIndex((candidate, candidateIndex) => (
+      const laterUpperDayIndex = days.findIndex((candidate, candidateIndex) => (
         candidateIndex > dayIndex
         && candidate.date > protection.lowerBodyThrough
         && [...hardIndexes].every((hardIndex) => Math.abs(hardIndex - candidateIndex) > 1)
         && (candidate.sessions || []).some((session) => session.kind === 'lift' && /upper/i.test(String(session.focus || '')))
       ));
       const originalLower = day.sessions[lowerIndex];
-      day.sessions[lowerIndex] = replaceLiftFocus(originalLower, {
-        weekNumber: week.week,
-        day: day.day,
-        focus: 'Upper body',
-        mode: next.planMode,
-        phase: week.phase,
-      });
       day.status = 'adjusted';
-      day.whyToday = `Lower-body strength was moved outside the recovery window from your ${round(load.latestRun.distanceMiles, 1)} mi run.`;
-      if (laterDayIndex >= 0) {
-        const laterDay = days[laterDayIndex];
+      if (laterUpperDayIndex >= 0) {
+        day.sessions[lowerIndex] = replaceLiftFocus(originalLower, {
+          weekNumber: week.week,
+          day: day.day,
+          focus: 'Upper body',
+          mode: next.planMode,
+          phase: week.phase,
+        });
+        day.whyToday = `Lower-body strength was moved outside the recovery window from your ${round(load.latestRun.distanceMiles, 1)} mi run.`;
+        const laterDay = days[laterUpperDayIndex];
         const upperIndex = laterDay.sessions.findIndex((session) => session.kind === 'lift' && /upper/i.test(String(session.focus || '')));
         laterDay.sessions[upperIndex] = replaceLiftFocus(laterDay.sessions[upperIndex], {
           weekNumber: week.week,
@@ -401,6 +405,36 @@ function applyAcuteRunProtection(plan, context = {}) {
         });
         laterDay.status = 'adjusted';
         laterDay.whyToday = `Lower-body strength moved here to protect recovery after your ${round(load.latestRun.distanceMiles, 1)} mi run.`;
+      } else {
+        const relocationDayIndex = days.findIndex((candidate, candidateIndex) => (
+          candidateIndex > dayIndex
+          && candidate.date > protection.lowerBodyThrough
+          && availableDays.has(candidate.day)
+          && (candidate.sessions || []).length < 2
+          && !(candidate.sessions || []).some((session) => session.kind === 'lift')
+          && [...hardIndexes].every((hardIndex) => Math.abs(hardIndex - candidateIndex) > 1)
+        ));
+        if (relocationDayIndex >= 0) {
+          const relocationDay = days[relocationDayIndex];
+          day.sessions.splice(lowerIndex, 1);
+          relocationDay.sessions.push({
+            ...originalLower,
+            description: `${originalLower.description || 'Lower-body strength.'} Moved outside the recent-run recovery window.`,
+            acuteLoadAdjusted: true,
+          });
+          day.whyToday = `Lower-body strength moved to ${relocationDay.day} to protect recovery after your ${round(load.latestRun.distanceMiles, 1)} mi run.`;
+          relocationDay.status = 'adjusted';
+          relocationDay.whyToday = `Lower-body strength moved here to preserve the weekly strength floor outside the recent-run recovery window.`;
+        } else {
+          day.sessions[lowerIndex] = replaceLiftFocus(originalLower, {
+            weekNumber: week.week,
+            day: day.day,
+            focus: 'Upper body',
+            mode: next.planMode,
+            phase: week.phase,
+          });
+          day.whyToday = `No safe lower-body slot remains this week after your ${round(load.latestRun.distanceMiles, 1)} mi run, so this session changed to optional upper-body work.`;
+        }
       }
       changed = true;
       weekChanged = true;

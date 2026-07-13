@@ -74,6 +74,9 @@ check(protectedSessions.some(({ day, session }) => day.date === '2026-07-14' && 
 check((protectedPlan.weeks[0].days.find((day) => day.date === '2026-07-14')?.whyToday || '').includes('7.3 mi'), 'day view explains the exact recent-run reason');
 check(protectedPlan.inputSummary.recentRun?.paceLabel === '11:37/mi', 'persisted input summary records the run used by planning');
 check(protectedPlan.inputSummary.appleHealth?.readinessScore === 58 && protectedPlan.inputSummary.checkin?.feeling === 3, 'persisted input summary records Apple Health and check-in inputs');
+const acceptedProtected = concurrent.selectPlanCandidate(protectedPlan, context);
+check(acceptedProtected.source === 'ai_validated', 'a candidate that already respects recent-run protection is accepted');
+check(acceptedProtected.plan.acuteLoadAdjustment?.latestRun?.distanceMiles === 7.312, 'accepted candidates retain acute-load provenance');
 
 section('unsafe AI candidate rejection');
 const unsafeContext = {
@@ -86,6 +89,34 @@ const selected = concurrent.selectPlanCandidate(unsafeCandidate, context);
 check(selected.source === 'deterministic_fallback', 'AI candidate that conflicts with recent load is rejected');
 check(selected.validationErrors.some((error) => /recent-run/.test(error)), 'AI rejection records the recent-run safety violation');
 check(concurrent.validateConcurrentPlan(selected.plan, context).valid, 'selected fallback remains valid after acute protection');
+
+section('lower-body strength preservation');
+const swappedCandidate = JSON.parse(JSON.stringify(unsafeCandidate));
+const swappedWednesday = swappedCandidate.weeks[0].days.find((day) => day.date === '2026-07-15');
+const swappedThursday = swappedCandidate.weeks[0].days.find((day) => day.date === '2026-07-16');
+const originalUpper = swappedWednesday.sessions.find((session) => session.kind === 'lift');
+const originalLower = swappedThursday.sessions.find((session) => session.kind === 'lift');
+swappedWednesday.sessions = swappedWednesday.sessions.filter((session) => session.kind !== 'lift').concat(originalLower);
+swappedThursday.sessions = swappedThursday.sessions.filter((session) => session.kind !== 'lift').concat(originalUpper);
+const swappedPlan = concurrent.applyAcuteRunProtection(swappedCandidate, context);
+const swappedSessions = sessions(swappedPlan);
+check(swappedSessions.some(({ day, session }) => day.date === '2026-07-15' && session.kind === 'lift' && /upper/i.test(session.focus)), 'a protected lower lift swaps with an existing safe later upper lift');
+check(swappedSessions.some(({ day, session }) => day.date === '2026-07-16' && session.kind === 'lift' && /lower/i.test(session.focus)), 'the lower-body stimulus lands outside the protected window after a swap');
+
+const relocatedCandidate = JSON.parse(JSON.stringify(unsafeCandidate));
+const relocatedMonday = relocatedCandidate.weeks[0].days.find((day) => day.date === '2026-07-13');
+const relocatedWednesday = relocatedCandidate.weeks[0].days.find((day) => day.date === '2026-07-15');
+const relocatedThursday = relocatedCandidate.weeks[0].days.find((day) => day.date === '2026-07-16');
+const relocatedUpper = relocatedWednesday.sessions.find((session) => session.kind === 'lift');
+const relocatedLower = relocatedThursday.sessions.find((session) => session.kind === 'lift');
+relocatedMonday.sessions.push(relocatedUpper);
+relocatedWednesday.sessions = relocatedWednesday.sessions.filter((session) => session.kind !== 'lift').concat(relocatedLower);
+relocatedThursday.sessions = relocatedThursday.sessions.filter((session) => session.kind !== 'lift');
+const relocatedPlan = concurrent.applyAcuteRunProtection(relocatedCandidate, context);
+const relocatedSessions = sessions(relocatedPlan);
+check(!relocatedSessions.some(({ day, session }) => day.date <= '2026-07-15' && session.kind === 'lift' && /lower/i.test(session.focus)), 'relocation clears lower-body work from the protected window');
+check(relocatedSessions.some(({ day, session }) => day.date === '2026-07-16' && session.id === relocatedLower.id && /lower/i.test(session.focus)), 'a lower lift with no later upper partner moves intact to a safe available day');
+check(relocatedPlan.weeks[0].days.find((day) => day.date === '2026-07-16').whyToday.includes('strength floor'), 'relocation explains that the weekly strength floor was preserved');
 
 section('live adaptation evidence');
 const proposal = adaptation.buildAdaptationProposal({
@@ -104,6 +135,9 @@ check(proposal.changes.filter((change) => change.after?.type === 'recovery').eve
 check(proposal.changes.every((change) => change.date <= '2026-07-16'), 'normal recent-run proposal stays inside the 72-hour window');
 
 section('stale run does not overreach');
+const yesterday = recentRuns.summarizeRecentRunLoad(rows, { todayISO: '2026-07-14', weeklyBaseline: 9.1, recoveryState: 'caution' });
+check(yesterday.protection.active && yesterday.latestRun.daysSince === 1, 'yesterday\'s long run keeps the remaining protection window active');
+check(yesterday.protection.noAdditionalRunOnDate === null && yesterday.protection.hardRunsThrough === '2026-07-15', 'yesterday does not block today as a duplicate while preserving hard-run protection');
 const stale = recentRuns.summarizeRecentRunLoad(rows, { todayISO: '2026-07-17', weeklyBaseline: 9.1, recoveryState: 'caution' });
 check(stale.available && !stale.protection.active, 'run older than 72 hours remains visible but does not alter the plan');
 
