@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ChevronRight, SlidersHorizontal, X } from 'lucide-react'
+import { ChevronRight, X } from 'lucide-react'
 import api from '../lib/api'
 import { useProContext } from '../context/ProContext'
 
@@ -40,6 +40,7 @@ export default function PlanCatalog() {
   const [error, setError] = useState('')
   const [trainingDays, setTrainingDays] = useState(['Tue', 'Thu', 'Sat'])
   const [liftingEnabled, setLiftingEnabled] = useState(false)
+  const [strengthMode, setStrengthMode] = useState('hybrid_maintain')
   const [liftDaysPerWeek, setLiftDaysPerWeek] = useState(0)
   const [weeks, setWeeks] = useState('')
   const [goalTime, setGoalTime] = useState('')
@@ -69,6 +70,7 @@ export default function PlanCatalog() {
       setTrainingDays(sortDays(data?.inferredTrainingDays || ['Tue', 'Thu', 'Sat']))
       setLiftingEnabled(Boolean(data?.liftingEnabled))
       setLiftDaysPerWeek(Number(data?.liftDaysPerWeek || 0))
+      setStrengthMode('hybrid_maintain')
     } catch (err) {
       if (err?.response?.status === 402) {
         navigate('/upgrade')
@@ -118,6 +120,8 @@ export default function PlanCatalog() {
         runDaysPerWeek: trainingDays.length,
         liftingEnabled,
         liftDaysPerWeek: liftingEnabled ? Math.max(1, Number(liftDaysPerWeek || 2)) : 0,
+        planMode: liftingEnabled ? strengthMode : 'run_only',
+        strengthGoal: strengthMode === 'hybrid_build' ? 'build' : 'maintain',
       }
       if (goalTimeSeconds) target.goalTimeSeconds = goalTimeSeconds
       if (weeks) target.weeks = parsedWeeks
@@ -289,30 +293,35 @@ export default function PlanCatalog() {
                 </label>
               </div>
 
-              <button
-                type="button"
-                onClick={() => setLiftingEnabled((value) => !value)}
-                className="rounded-xl p-4"
-                style={{
-                  background: 'var(--bg-input)',
-                  border: `1px solid ${liftingEnabled ? 'var(--accent)' : 'var(--border-subtle)'}`,
-                  color: 'var(--text-primary)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  gap: 12,
-                  textAlign: 'left',
-                }}
-              >
-                <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <SlidersHorizontal size={18} color="var(--accent)" />
-                  <span>
-                    <span style={{ display: 'block', fontSize: 14, fontWeight: 900 }}>Include lifting</span>
-                    <span style={{ display: 'block', color: 'var(--text-muted)', fontSize: 12, marginTop: 2 }}>Strength work follows your generated run plan.</span>
-                  </span>
-                </span>
-                <span style={{ color: liftingEnabled ? 'var(--accent)' : 'var(--text-muted)', fontSize: 12, fontWeight: 950 }}>{liftingEnabled ? 'ON' : 'OFF'}</span>
-              </button>
+              <section>
+                <span style={{ display: 'block', color: 'var(--text-primary)', fontSize: 13, fontWeight: 850, marginBottom: 8 }}>Training mode</span>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(145px, 1fr))', gap: 8 }}>
+                  {[
+                    { mode: 'run_only', label: 'Run only', detail: 'No lifting sessions' },
+                    { mode: 'hybrid_maintain', label: 'Maintain strength', detail: 'Protect size and strength' },
+                    { mode: 'hybrid_build', label: 'Build strength', detail: 'Progress lifting volume' },
+                  ].map((option) => {
+                    const active = option.mode === 'run_only' ? !liftingEnabled : liftingEnabled && strengthMode === option.mode
+                    return (
+                      <button key={option.mode} type="button" aria-pressed={active}
+                        onClick={() => {
+                          const enabled = option.mode !== 'run_only'
+                          setLiftingEnabled(enabled)
+                          if (enabled) {
+                            setStrengthMode(option.mode)
+                            setLiftDaysPerWeek((current) => Math.max(Number(current || 0), option.mode === 'hybrid_build' ? 3 : 2))
+                          } else {
+                            setLiftDaysPerWeek(0)
+                          }
+                        }}
+                        style={{ minHeight: 68, padding: '10px 12px', borderRadius: 8, textAlign: 'left', border: `1px solid ${active ? 'var(--accent)' : 'var(--border-subtle)'}`, background: active ? 'var(--accent-dim)' : 'var(--bg-input)', color: 'var(--text-primary)' }}>
+                        <span style={{ display: 'block', fontSize: 13, fontWeight: 900 }}>{option.label}</span>
+                        <span style={{ display: 'block', marginTop: 3, color: active ? 'var(--accent)' : 'var(--text-muted)', fontSize: 11 }}>{option.detail}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </section>
 
               <button
                 type="button"

@@ -8,6 +8,7 @@ const { generateTrainingPlan, generateRaceAdjustment } = require('../services/ai
 const { buildHealthSignals } = require('../lib/healthSignals');
 const { applyOverride } = require('../lib/checkinOverride');
 const planSchema = require('../lib/planSchema');
+const concurrentPlan = require('../lib/concurrentPlan');
 
 function getDayShort() {
   return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date().getDay()];
@@ -32,6 +33,22 @@ function getMonday(date = new Date()) {
   const diff = d.getDate() - day + (day === 0 ? -6 : 1);
   d.setDate(diff);
   return d.toISOString().split('T')[0];
+}
+
+function getPlanStartMonday(date = new Date()) {
+  const d = new Date(date);
+  d.setHours(12, 0, 0, 0);
+  const day = d.getDay();
+  const daysUntilMonday = day === 1 ? 0 : (8 - day) % 7;
+  d.setDate(d.getDate() + daysUntilMonday);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function weeksThroughDate(startDate, endDate) {
+  const start = new Date(`${startDate}T12:00:00`);
+  const end = new Date(`${endDate}T12:00:00`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) return 1;
+  return clamp(Math.floor((end - start) / (7 * 86400000)) + 1, 1, 20);
 }
 
 function parsePlan(plan) {
@@ -110,6 +127,103 @@ async function updateActivePlanData(active, userId, planJson, tx) {
     : await tx.run('UPDATE training_plans SET plan_json=? WHERE id=? AND user_id=?', [serialized, planId, userId]);
   if (result.changes === 0) throw new Error('Active plan update failed');
   return planId;
+}
+
+function defaultWeeksForDistance(distanceMiles) {
+  const distance = Number(distanceMiles || 0);
+  if (distance >= 20) return 16;
+  if (distance >= 11) return 12;
+  if (distance >= 5.5) return 10;
+  return 8;
+}
+
+async function buildConcurrentContext(userId, profile, target) {
+  const start = new Date();
+  start.setHours(12, 0, 0, 0);
+  start.setDate(start.getDate() - 55);
+  const sinceDate = start.toISOString().slice(0, 10);
+  const [runs, lifts, recentExercises, healthRow, activeInjury] = await Promise.all([
+    dbAll('SELECT date, distance_miles FROM runs WHERE user_id=? AND date>=? ORDER BY date ASC', [userId, sinceDate]),
+    dbAll('SELECT started_at FROM workout_sessions WHERE user_id=? AND started_at>=? AND ended_at IS NOT NULL ORDER BY started_at ASC', [userId, `${sinceDate}T00:00:00`]),
+    dbAll(
+      `SELECT exercise_name, COUNT(*) AS set_count, SUM(COALESCE(reps, 0)) AS rep_count,
+              MAX(COALESCE(weight_lbs, 0)) AS max_weight_lbs
+       FROM workout_sets
+       WHERE user_id=? AND logged_at>=?
+       GROUP BY exercise_name
+       ORDER BY set_count DESC
+       LIMIT 8`,
+      [userId, `${sinceDate}T00:00:00`]
+    ).catch((err) => {
+      console.error('[plans/generate] recent exercise lookup failed:', err.message);
+      return [];
+    }),
+    dbGet('SELECT * FROM health_sync WHERE user_id=?', [userId]).catch((err) => {
+      console.error('[plans/generate] health sync lookup failed:', err.message);
+      return null;
+    }),
+    dbGet('SELECT id FROM injury_logs WHERE user_id=? AND cleared=0 ORDER BY date DESC LIMIT 1', [userId]).catch((err) => {
+      console.error('[plans/generate] injury lookup failed:', err.message);
+      return null;
+    }),
+  ]);
+  const activityDates = [
+    ...(runs || []).map((run) => String(run.date || '').slice(0, 10)),
+    ...(lifts || []).map((lift) => String(lift.started_at || '').slice(0, 10)),
+  ].filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date)).sort();
+  const weeksObserved = activityDates.length
+    ? clamp(Math.ceil((Date.now() - new Date(`${activityDates[0]}T12:00:00`).getTime()) / (7 * 86400000)) || 1, 1, 8)
+    : 0;
+  const recentMiles = (runs || []).reduce((sum, run) => sum + Math.max(0, Number(run.distance_miles || 0)), 0);
+  const expectedPerWeek = clampInt(profile.run_days_per_week, 1, 6, 3) + clampInt(profile.lift_days_per_week, 0, 4, 0);
+  const expectedSessions = weeksObserved * expectedPerWeek;
+  const completedSessions = (runs || []).length + (lifts || []).length;
+  const healthSignals = buildHealthSignals(healthRow || {});
+  let recoveryState = healthSignals.available ? healthSignals.recoveryState : 'unknown';
+  if (activeInjury || profile.comeback_mode || String(profile.injury_notes || '').trim()) recoveryState = 'low';
+  return {
+    profile,
+    target,
+    todayISO: target.startDate,
+    history: {
+      weeklyMileageBaseline: weeksObserved ? recentMiles / weeksObserved : Number(profile.weekly_miles_current || 0),
+      recentRunCount: (runs || []).length,
+      recentLiftCount: (lifts || []).length,
+      recentExercises: (recentExercises || []).map((exercise) => ({
+        name: String(exercise.exercise_name || '').slice(0, 80),
+        sets: Math.max(0, Number(exercise.set_count || 0)),
+        reps: Math.max(0, Number(exercise.rep_count || 0)),
+        maxWeightLbs: Math.max(0, Number(exercise.max_weight_lbs || 0)),
+      })),
+      adherenceRate: expectedSessions ? clamp(completedSessions / expectedSessions, 0, 1) : null,
+      missedWorkouts: expectedSessions ? Math.max(0, expectedSessions - completedSessions) : 0,
+    },
+    recovery: {
+      state: recoveryState,
+      available: Boolean(healthSignals.available),
+    },
+  };
+}
+
+async function persistConcurrentPlan(userId, plan, meta = {}) {
+  const planId = uuidv4();
+  const userPlanId = uuidv4();
+  const weekStart = plan.weeks?.[0]?.startDate || getMonday();
+  const serialized = JSON.stringify(plan);
+  await withTransaction(async (tx) => {
+    await tx.run("UPDATE user_plans SET status='inactive' WHERE user_id=? AND status='active'", [userId]);
+    await tx.run(
+      `INSERT INTO training_plans (id, user_id, week_start, plan_json, name, type, weeks, description, plan_data)
+       VALUES (?,?,?,?,?,?,?,?,?)`,
+      [planId, userId, weekStart, serialized, meta.name, meta.type, plan.weeks.length, meta.description, serialized]
+    );
+    await tx.run(
+      `INSERT INTO user_plans (id, user_id, plan_id, started_at, current_week, status, progress_json)
+       VALUES (?,?,?,?,?,?,?)`,
+      [userPlanId, userId, planId, weekStart, 1, 'active', JSON.stringify({ completedSessionIds: [] })]
+    );
+  });
+  return { planId, userPlanId, weekStart };
 }
 
 function clamp(n, min, max) {
@@ -1026,22 +1140,40 @@ router.post('/generate', auth, requirePremium('Race Programs'), checkAiLimit('pl
   try {
     const profile = await dbGet('SELECT * FROM users WHERE id = ?', [req.user.id]);
     if (!profile) return res.status(404).json({ error: 'User not found' });
-    const target = req.body?.target || null;
-    const planData = await generateTrainingPlan(profile, target);
-    const id = uuidv4();
-    const weekStart = getMonday();
-
-    if (!planData) {
-      const fallback = enforcePlanSessionRules(generateFallbackPlan(profile, req.body?.target?.weeks), getPlanTargetOptions(target));
-      await dbRun('INSERT INTO training_plans (id, user_id, week_start, plan_json) VALUES (?, ?, ?, ?)',
-        [id, req.user.id, weekStart, JSON.stringify(fallback)]);
-      return res.json({ plan: { id, user_id: req.user.id, week_start: weekStart, plan_json: fallback } });
-    }
-
-    const constrainedPlan = enforcePlanSessionRules(planData, getPlanTargetOptions(target));
-    await dbRun('INSERT INTO training_plans (id, user_id, week_start, plan_json) VALUES (?, ?, ?, ?)',
-      [id, req.user.id, weekStart, JSON.stringify(constrainedPlan)]);
-    res.json({ plan: { id, user_id: req.user.id, week_start: weekStart, plan_json: constrainedPlan } });
+    const requested = req.body?.target || {};
+    const distanceMiles = clamp(parsePositiveNumber(requested.distanceMiles ?? requested.distance_miles) || 6.2, 1, 100);
+    const requestedRaceDate = /^\d{4}-\d{2}-\d{2}$/.test(String(requested.raceDate || ''))
+      && !Number.isNaN(new Date(`${requested.raceDate}T12:00:00`).getTime())
+      ? requested.raceDate
+      : null;
+    const upcomingMonday = getPlanStartMonday();
+    const startDate = requestedRaceDate && new Date(`${requestedRaceDate}T12:00:00`) < new Date(`${upcomingMonday}T12:00:00`)
+      ? getMonday()
+      : upcomingMonday;
+    const target = {
+      ...requested,
+      distanceMiles,
+      raceDate: requestedRaceDate,
+      weeks: requestedRaceDate
+        ? weeksThroughDate(startDate, requestedRaceDate)
+        : clampInt(requested.weeks, 4, 20, defaultWeeksForDistance(distanceMiles)),
+      startDate,
+      planMode: concurrentPlan.resolvePlanMode(profile, requested),
+    };
+    const context = await buildConcurrentContext(req.user.id, profile, target);
+    const candidate = await generateTrainingPlan(profile, target, context);
+    const selected = concurrentPlan.selectPlanCandidate(candidate, context);
+    const name = selected.plan.goal?.name || 'Forged Hybrid training block';
+    const persisted = await persistConcurrentPlan(req.user.id, selected.plan, {
+      name,
+      type: selected.plan.planMode,
+      description: `${selected.plan.weeks.length}-week concurrent plan generated from profile and recent training history.`,
+    });
+    res.status(201).json({
+      plan: { id: persisted.planId, user_id: req.user.id, week_start: persisted.weekStart, plan_json: selected.plan, plan_data: selected.plan },
+      user_plan_id: persisted.userPlanId,
+      generation_source: selected.source,
+    });
   } catch (err) { console.error('generate failed:', err.message); res.status(500).json({ error: 'Plan generation failed' }); }
 });
 
@@ -1051,25 +1183,40 @@ router.post('/generate-for-race/:raceId', auth, requirePremium('Race Programs'),
     if (!profile) return res.status(404).json({ error: 'User not found' });
     const race = await dbGet('SELECT * FROM race_events WHERE id = ? AND user_id = ?', [req.params.raceId, req.user.id]);
     if (!race) return res.status(404).json({ error: 'Race not found' });
-    // weeks-to-race from race_date, clamped 4..20
-    const today = new Date(); today.setHours(0,0,0,0);
+    // Cover every dated week through race day from the next plan Monday.
     const raceDate = new Date(`${race.race_date}T12:00:00`);
-    const weeks = Math.max(4, Math.min(20, Math.ceil((raceDate - today) / (7*24*3600*1000))));
+    const upcomingMonday = getPlanStartMonday();
+    const startDate = raceDate < new Date(`${upcomingMonday}T12:00:00`) ? getMonday() : upcomingMonday;
+    const weeks = weeksThroughDate(startDate, race.race_date);
+    const requested = req.body?.target || {};
     const target = {
+      ...requested,
       raceDate: race.race_date,
-      distanceMiles: race.distance_miles,
+      raceName: race.race_name,
+      distanceMiles: clamp(Number(race.distance_miles) || 6.2, 1, 100),
       goalTimeSeconds: race.goal_time_seconds || null,
       weeks,
+      startDate,
       elevation_gain_ft: race.elevation_gain_ft,
       max_altitude_ft: race.max_altitude_ft,
       terrain: race.terrain || null,
     };
-    const planData = await generateTrainingPlan(profile, target);
-    const id = uuidv4();
-    const weekStart = getMonday();
-    const finalPlan = enforcePlanSessionRules(planData || generateFallbackPlan(profile, weeks), getPlanTargetOptions(target));
-    await dbRun('INSERT INTO training_plans (id, user_id, week_start, plan_json) VALUES (?, ?, ?, ?)', [id, req.user.id, weekStart, JSON.stringify(finalPlan)]);
-    res.json({ plan: { id, user_id: req.user.id, week_start: weekStart, plan_json: finalPlan }, weeks, race: { id: race.id, name: race.race_name, date: race.race_date } });
+    target.planMode = concurrentPlan.resolvePlanMode(profile, target);
+    const context = await buildConcurrentContext(req.user.id, profile, target);
+    const candidate = await generateTrainingPlan(profile, target, context);
+    const selected = concurrentPlan.selectPlanCandidate(candidate, context);
+    const persisted = await persistConcurrentPlan(req.user.id, selected.plan, {
+      name: race.race_name,
+      type: selected.plan.planMode,
+      description: `${weeks}-week course-aware plan for ${race.race_name}.`,
+    });
+    res.status(201).json({
+      plan: { id: persisted.planId, user_id: req.user.id, week_start: persisted.weekStart, plan_json: selected.plan, plan_data: selected.plan },
+      user_plan_id: persisted.userPlanId,
+      generation_source: selected.source,
+      weeks,
+      race: { id: race.id, name: race.race_name, date: race.race_date },
+    });
   } catch (err) { console.error('generate-for-race failed:', err.message); res.status(500).json({ error: 'Race plan generation failed' }); }
 });
 

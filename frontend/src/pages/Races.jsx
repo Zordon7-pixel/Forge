@@ -200,13 +200,7 @@ export default function Races() {
 
     try {
       setGeneratingPlanId(race.id)
-      await api.post('/plans/generate', {
-        target: {
-          raceDate: race.race_date,
-          distanceMiles: Number(race.distance_miles),
-          raceName: race.race_name,
-        },
-      })
+      await api.post(`/plans/generate-for-race/${race.id}`)
       onSuccess()
     } catch (err) {
       if (err?.response?.status === 402) {

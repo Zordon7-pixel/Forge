@@ -154,9 +154,14 @@ function setCached(cacheKey, value, ttlMs) {
   });
 }
 
-async function generateTrainingPlan(profile, target = null) {
-  const weeks = Math.max(4, Math.min(20, Number(target?.weeks) || 4));
+async function generateTrainingPlan(profile, target = null, trainingContext = null) {
+  const minimumWeeks = target?.raceDate ? 1 : 4;
+  const weeks = Math.max(minimumWeeks, Math.min(20, Number(target?.weeks) || 4));
   const frequency = resolvePlanFrequency(profile, target);
+  const requestedMode = String(target?.planMode || '').toLowerCase();
+  const planMode = ['run_only', 'hybrid_maintain', 'hybrid_build'].includes(requestedMode)
+    ? requestedMode
+    : frequency.liftingExplicitlyDisabled ? 'run_only' : 'hybrid_maintain';
   const trainingDays = normalizeTrainingDays(target?.trainingDays);
   const trainingDaysLine = trainingDays.length
     ? `\n- Actual available training weekdays: ${trainingDays.join(', ')}. Schedule non-rest sessions only on these weekdays unless unavoidable for race-week taper.`
@@ -164,13 +169,15 @@ async function generateTrainingPlan(profile, target = null) {
   const sessionCountRule = trainingDays.length
     ? '- Schedule non-rest sessions only on the listed available training weekdays; do not add sessions on other days to satisfy a minimum session count.'
     : '- Include at least 6 training sessions each week (non-rest days)';
-  const liftingRules = frequency.liftingExplicitlyDisabled
+  const liftingRules = planMode === 'run_only'
     ? `- This is a RUN-ONLY plan: include zero lifting, strength, weighted circuit, kettlebell, rucking, sled, or hybrid cross-training sessions.
 - Use only running workouts and rest/recovery days.`
-    : `- Include 1-2 hybrid cardio + weight sessions weekly, marked as type "cross_train" with titles like Weighted Circuit, Kettlebell Cardio, Rucking, or Sled Push Intervals`;
-  const schedulingRule = frequency.liftingExplicitlyDisabled
+    : `- Include ${Math.max(1, frequency.liftDaysPerWeek)} real strength sessions per week using barbell/dumbbell exercises; do not use circuits, rucking, sleds, cross_train, or generic injury-prevention sessions.
+- Every strength session requires focus, warmup, main exercises, recovery, and progression. Every exercise requires name, sets, reps, rest, load, rpe or rir, cue, and progression.
+- ${planMode === 'hybrid_build' ? 'Use meaningful hypertrophy/strength volume while preserving run quality.' : 'Use submaximal volume that maintains strength and size.'}`;
+  const schedulingRule = planMode === 'run_only'
     ? '- Keep run scheduling sensible and preserve recovery days.'
-    : '- Keep run and lift scheduling sensible, but do not make same-day run/lift adjustment calls; deterministic backend rules own those changes.';
+    : '- Never place lower-body strength on the same day as or one day before/after a hard, long, hill, interval, threshold, or race run. A same-day easy run plus strength requires orderGuidance.';
   const goalDesc = {
     comeback:      'returning from injury, needs conservative build-up',
     race:          `training for a ${profile.goal_race_distance || 'race'} on ${profile.goal_race_date || 'an upcoming date'}`,
@@ -203,30 +210,54 @@ async function generateTrainingPlan(profile, target = null) {
     courseHighAltitude ? `- Race is at altitude (~${Math.round(maxAltitudeFt)}ft) — add an altitude-prep note and advise arriving early / adjusting pace expectations.` : '',
   ].filter(Boolean).join('\n');
 
-  const prompt = `You are an expert hybrid runner/lifter coach who specializes in concurrent training (runners who also lift). Create a ${weeks}-week PERIODIZED training plan for this athlete:
+  const startDate = /^\d{4}-\d{2}-\d{2}$/.test(String(target?.startDate || '')) ? target.startDate : '';
+  const raceName = sanitize(target?.raceName || 'Training target', 80);
+  const observed = trainingContext?.history || {};
+  const observedMileage = Number(observed.weeklyMileageBaseline);
+  const adherence = Number(observed.adherenceRate);
+  const recentExerciseLine = Array.isArray(observed.recentExercises) && observed.recentExercises.length
+    ? observed.recentExercises.slice(0, 8).map((exercise) => {
+      const name = sanitize(exercise?.name, 60) || 'exercise';
+      return `${name}: ${Math.max(0, Number(exercise?.sets || 0))} sets, ${Math.max(0, Number(exercise?.reps || 0))} reps, max ${Math.max(0, Number(exercise?.maxWeightLbs || 0))} lb`;
+    }).join('; ')
+    : 'no recent logged exercise-set detail';
+  const prompt = `You are an expert hybrid runner/lifter coach who specializes in concurrent training (runners who also lift). Create a ${weeks}-week PERIODIZED canonical plan for this athlete:
 - Name: ${sanitize(profile.name, 50)}
 - Current weekly miles: ${Number(profile.weekly_miles_current) || 0}
 - Goal: ${goalDesc}
+- Required plan mode: ${planMode}
+- First week starts Monday: ${startDate || 'derive from the supplied target'}
 - Run days per week: ${frequency.runDaysPerWeek}
 - Lift days per week: ${frequency.liftDaysPerWeek}${trainingDaysLine}
+- Observed weekly mileage from recent activity: ${Number.isFinite(observedMileage) ? observedMileage.toFixed(1) : 'unknown'}
+- Recent completed runs/lifts: ${Math.max(0, Number(observed.recentRunCount || 0))}/${Math.max(0, Number(observed.recentLiftCount || 0))}
+- Recent adherence: ${Number.isFinite(adherence) ? `${Math.round(adherence * 100)}%` : 'unknown'}; missed sessions estimate: ${Math.max(0, Number(observed.missedWorkouts || 0))}
+- Current recovery state: ${sanitize(trainingContext?.recovery?.state || 'unknown', 20)}
+- Recent lifting detail: ${recentExerciseLine}
 - Injury notes: ${sanitize(profile.injury_notes) || 'none'}
 - Comeback mode: ${profile.comeback_mode ? 'YES — be very conservative, no speed work for first 2 weeks' : 'no'}
 ${raceTargetLine}${courseInstructions ? `\n${courseInstructions}` : ''}${scheduleInfo}
 
 Return ONLY valid JSON in this exact format, no other text:
 {
-  "weeks": [{"week":1,"theme":"short theme name","total_miles":0,"days":[{"day":"Mon","type":"easy","distance_miles":0,"duration_min":0,"description":"brief description","rest":false}]}]
+  "schemaVersion": 2,
+  "planMode": "${planMode}",
+  "goal": {"kind":"${target?.raceDate ? 'race' : 'training_block'}","name":${JSON.stringify(raceName)},"date":${target?.raceDate ? JSON.stringify(sanitize(target.raceDate, 10)) : 'null'},"distanceMiles":${Number(target?.distanceMiles) || 6.2},"goalType":"${target?.goalTimeSeconds ? 'pr' : 'completion'}","goalTimeSeconds":${Number(target?.goalTimeSeconds) || 'null'}},
+  "strengthPolicy": {"enabled":${planMode !== 'run_only'},"goal":"${planMode === 'hybrid_build' ? 'build' : planMode === 'hybrid_maintain' ? 'maintain' : 'none'}","sessionsPerWeek":${planMode === 'run_only' ? 0 : Math.max(1, frequency.liftDaysPerWeek)},"minimumSessionsPerWeek":${planMode === 'run_only' ? 0 : Math.min(2, Math.max(1, frequency.liftDaysPerWeek))}},
+  "weeks": [{"week":1,"phase":"base","startDate":"${startDate || 'YYYY-MM-DD'}","totalMiles":0,"days":[{"date":"${startDate || 'YYYY-MM-DD'}","day":"Mon","sessions":[{"id":"w1-mon-run","kind":"run","type":"easy","workout_type":"run","title":"Easy aerobic run","distance_miles":3,"pace_target":"Conversational effort","target_zone":"Zone 2","intensity":"Easy","warmup":["5 min easy"],"steps":["Hold conversational effort"],"cooldown":["5 min walk"],"progression":"Add time before pace","description":"Aerobic development"}],"status":"planned"}]}]
 }
-Types can be: easy, tempo, long, intervals, recovery, rest, cross_train
 Rules:
 ${sessionCountRule}
 ${liftingRules}
+- Each week has exactly seven dated Mon-Sun day objects and each day has zero, one, or two sessions. Empty sessions means rest.
+- Every session id is stable and globally unique. Run fields must be complete like the example.
 - Keep at least 1 full rest day each week
 ${schedulingRule}
 - PERIODIZATION over ${weeks} weeks: early weeks = BASE (aerobic volume), middle = BUILD (add tempo/intervals + peak long runs), final 1-2 weeks = TAPER (cut volume 30-50%, keep some intensity, race week is lightest).
 - Every 3rd-4th week is a DOWN/recovery week (reduce volume ~20%).
 - Increase weekly mileage no more than ~10% week-over-week.
 - Distance-appropriate structure: full marathon builds a 18-22mi peak long run; half marathon peaks ~10-12mi; 10-miler/10K peaks ~8-10mi; 5K emphasizes speed over volume.
+- Use phases base, build, deload, peak, taper, race. Race date and distance must be preserved exactly.
 - The plan MUST contain exactly ${weeks} week objects in the weeks array, numbered 1..${weeks}.`;
 
   try {
