@@ -27,6 +27,11 @@ export default function Plan() {
   const [adaptivePlan, setAdaptivePlan] = useState(null)
   const [adaptiveLoading, setAdaptiveLoading] = useState(false)
   const [acceptingAdaptive, setAcceptingAdaptive] = useState(false)
+  const [adaptationProposal, setAdaptationProposal] = useState(null)
+  const [adaptationLoading, setAdaptationLoading] = useState(false)
+  const [adaptationError, setAdaptationError] = useState('')
+  const [adaptationDecision, setAdaptationDecision] = useState(null)
+  const [decidingAdaptation, setDecidingAdaptation] = useState(null)
   const [loading, setLoading] = useState(true)
   const [assigningId, setAssigningId] = useState(null)
   const [updating, setUpdating] = useState(false)
@@ -43,19 +48,43 @@ export default function Plan() {
   const loadAll = async (params = adaptiveParams) => {
     setLoading(true)
     setAdaptiveLoading(true)
+    setAdaptationLoading(true)
+    setAdaptationError('')
     try {
-      const [plansRes, myRes, adaptiveRes] = await Promise.all([
+      const [plansRes, myRes] = await Promise.all([
         api.get('/plans'),
         api.get('/plans/my'),
-        api.get('/plans/adaptive/recommend', { params }).catch(() => ({ data: null })),
       ])
+      const nextPlan = myRes.data?.plan || null
       setPlans(plansRes.data?.plans || [])
-      setMyPlan(myRes.data?.plan || null)
+      setMyPlan(nextPlan)
       setMyUserPlan(myRes.data?.user_plan || null)
-      setAdaptivePlan(adaptiveRes?.data || null)
+      const isSchemaV2 = Number(nextPlan?.plan_data?.schemaVersion || 0) === 2
+      if (isSchemaV2) {
+        setAdaptivePlan(null)
+        setAdaptiveLoading(false)
+        try {
+          const adaptationRes = await api.get('/plans/adaptation/current', { params: { date: todayISO() } })
+          setAdaptationProposal(adaptationRes.data?.proposal || null)
+        } catch (err) {
+          setAdaptationProposal(null)
+          setAdaptationError(err?.response?.data?.error || 'Transparent adjustment is not available right now.')
+        }
+      } else if (!nextPlan) {
+        setAdaptationProposal(null)
+        setAdaptationLoading(false)
+        const adaptiveRes = await api.get('/plans/adaptive/recommend', { params }).catch(() => ({ data: null }))
+        setAdaptivePlan(adaptiveRes?.data || null)
+      } else {
+        setAdaptationProposal(null)
+        setAdaptationLoading(false)
+        const adaptiveRes = await api.get('/plans/adaptive/recommend', { params }).catch(() => ({ data: null }))
+        setAdaptivePlan(adaptiveRes?.data || null)
+      }
     } finally {
       setLoading(false)
       setAdaptiveLoading(false)
+      setAdaptationLoading(false)
     }
   }
 
@@ -93,6 +122,7 @@ export default function Plan() {
     () => (myPlan ? buildCalendarModel(myPlan, myUserPlan) : null),
     [myPlan, myUserPlan],
   )
+  const isActiveSchemaV2 = Number(myPlan?.plan_data?.schemaVersion || 0) === 2
   const weekCount = Number(myPlan?.weeks || model?.weekCount || 0)
 
   // Derive the selected day from the live model so completion toggles stay fresh
@@ -138,6 +168,45 @@ export default function Plan() {
     } finally {
       setAcceptingAdaptive(false)
     }
+  }
+
+  const decideAdaptation = async (decision) => {
+    if (!adaptationProposal?.id) return
+    setDecidingAdaptation(decision)
+    setAdaptationError('')
+    try {
+      await api.post(`/plans/adaptation/${adaptationProposal.id}/${decision}`)
+      if (decision === 'accept') {
+        await loadAll()
+        setAdaptationDecision('accepted')
+      } else {
+        setAdaptationProposal((prev) => prev ? { ...prev, decisionStatus: 'kept' } : prev)
+        setAdaptationDecision('kept')
+      }
+    } catch (err) {
+      setAdaptationError(err?.response?.data?.error || 'Could not update this adjustment.')
+    } finally {
+      setDecidingAdaptation(null)
+    }
+  }
+
+  const formatEvidenceSource = (source) => {
+    if (source === 'apple_health') return 'Apple Health'
+    if (source === 'checkin') return 'Check-in'
+    if (source === 'completion') return 'Completion'
+    if (source === 'injury') return 'Injury'
+    return source || 'Signal'
+  }
+
+  const formatSession = (session = {}) => {
+    const title = session.title || session.type || session.workout_type || session.kind || 'Session'
+    const miles = Number(session.distance_miles ?? session.distance ?? session.miles)
+    const duration = Number(session.duration_min ?? session.duration_minutes ?? session.minutes)
+    const pieces = [title]
+    if (Number.isFinite(miles) && miles > 0) pieces.push(`${Math.round(miles * 10) / 10} mi`)
+    else if (Number.isFinite(duration) && duration > 0) pieces.push(`${Math.round(duration)} min`)
+    if (session.intensity) pieces.push(session.intensity)
+    return pieces.join(' · ')
   }
 
   const intensityMeta = useMemo(() => {
@@ -215,6 +284,110 @@ export default function Plan() {
     </div>
   )
 
+  const course = model?.goal?.course || myPlan?.plan_data?.goal?.course || null
+  const hasVerifiedCourse = course
+    && ['official', 'curated'].includes(String(course.provenance || '').toLowerCase())
+    && (course.source || course.url)
+  const hasAdaptationChanges = adaptationProposal?.status === 'proposal'
+    && (adaptationProposal?.changes || []).length > 0
+    && adaptationProposal?.decisionStatus !== 'kept'
+    && adaptationProposal?.decisionStatus !== 'accepted'
+
+  const adaptationPanel = isActiveSchemaV2 ? (
+    <div className="rounded-lg p-4 space-y-3 min-w-0" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2 min-w-0">
+        <div className="min-w-0">
+          <h2 className="text-base font-bold break-words" style={{ color: 'var(--text-primary)' }}>
+            {adaptationProposal?.headline || 'Transparent adjustment'}
+          </h2>
+          <p className="text-sm mt-1 break-words" style={{ color: 'var(--text-muted)' }}>
+            {adaptationLoading ? 'Checking the live calendar...' : adaptationProposal?.reason || 'No calendar adjustment is pending.'}
+          </p>
+        </div>
+        {adaptationProposal?.safetyException && (
+          <span className="text-xs font-bold rounded-full px-3 py-1 self-start" style={{ background: 'var(--danger-dim)', color: 'var(--danger)' }}>
+            Safety
+          </span>
+        )}
+      </div>
+
+      <p className="text-xs break-words" style={{ color: 'var(--text-muted)' }}>
+        {hasVerifiedCourse ? (
+          <>
+            Course data: {course.provenance} from{' '}
+            {course.url ? <a href={course.url} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)' }}>{course.source || course.url}</a> : (course.source || 'verified source')}.
+          </>
+        ) : 'Course data: no verified course data; this calendar uses the race date and distance only.'}
+      </p>
+
+      {adaptationError && (
+        <p className="text-sm rounded-lg p-3 break-words" style={{ background: 'var(--danger-dim)', color: 'var(--danger)' }}>{adaptationError}</p>
+      )}
+      {adaptationDecision === 'accepted' && (
+        <p className="text-sm rounded-lg p-3" style={{ background: 'rgba(22, 163, 74, 0.12)', color: 'var(--success)' }}>Accepted. Calendar updated.</p>
+      )}
+      {adaptationDecision === 'kept' && (
+        <p className="text-sm rounded-lg p-3" style={{ background: 'var(--bg-input)', color: 'var(--text-muted)' }}>Kept original calendar.</p>
+      )}
+
+      {!adaptationLoading && adaptationProposal && (
+        <>
+          <div className="space-y-2">
+            <p className="text-xs font-bold uppercase" style={{ color: 'var(--text-muted)' }}>Evidence</p>
+            {(adaptationProposal.evidence || []).length === 0 ? (
+              <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No fresh driver was strong enough to change the calendar.</p>
+            ) : (
+              <div className="grid grid-cols-1 gap-2">
+                {(adaptationProposal.evidence || []).map((item, index) => (
+                  <div key={`${item.signal || 'signal'}-${index}`} className="rounded-lg p-3 min-w-0" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-xs font-bold" style={{ color: 'var(--text-primary)' }}>{formatEvidenceSource(item.source)}</span>
+                      <span className="text-[11px] rounded-full px-2 py-0.5" style={{ background: 'var(--bg-card)', color: 'var(--text-muted)' }}>{item.objective ? 'objective' : 'subjective'}</span>
+                      <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{item.freshness}</span>
+                    </div>
+                    <p className="text-sm mt-1 break-words" style={{ color: 'var(--text-muted)' }}>{item.detail}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <p className="text-xs font-bold uppercase" style={{ color: 'var(--text-muted)' }}>Changed sessions</p>
+            {(adaptationProposal.changes || []).length === 0 ? (
+              <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No sessions change.</p>
+            ) : (
+              <div className="grid grid-cols-1 gap-2">
+                {(adaptationProposal.changes || []).map((change) => (
+                  <div key={`${change.date}-${change.sessionId}`} className="rounded-lg p-3 min-w-0" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
+                    <p className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>{change.date}</p>
+                    <p className="text-sm mt-1 break-words" style={{ color: 'var(--text-primary)' }}>{formatSession(change.before)} → {formatSession(change.after)}</p>
+                    <p className="text-xs mt-1 break-words" style={{ color: 'var(--text-muted)' }}>{change.summary}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {hasAdaptationChanges && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <button type="button" onClick={() => decideAdaptation('accept')} disabled={Boolean(decidingAdaptation)}
+                className="rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-60"
+                style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>
+                {decidingAdaptation === 'accept' ? 'Accepting...' : 'Accept'}
+              </button>
+              <button type="button" onClick={() => decideAdaptation('keep')} disabled={Boolean(decidingAdaptation)}
+                className="rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-60"
+                style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>
+                {decidingAdaptation === 'keep' ? 'Saving...' : 'Keep original'}
+              </button>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  ) : null
+
   return (
     <ProGate isPro={isPro} loading={proLoading} message="AI Training Plans are a Pro feature">
       <div className="space-y-4">
@@ -270,6 +443,8 @@ export default function Plan() {
                 canNext={currentWeek < (weekCount || currentWeek) && !updating}
               />
 
+              {adaptationPanel}
+
               {/* Secondary plan controls in a compact Manage plan disclosure */}
               <div className="rounded-lg" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
                 <button type="button" onClick={() => setManageOpen((v) => !v)}
@@ -285,7 +460,7 @@ export default function Plan() {
                       <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{myPlan.name}</p>
                       <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>{myPlan.type} · Week {currentWeek} of {myPlan.weeks}</p>
                     </div>
-                    {adaptivePanel}
+                    {!isActiveSchemaV2 && adaptivePanel}
                     <button onClick={() => { setSelectedDayISO(null); setMyPlan(null); setMyUserPlan(null) }}
                       className="rounded-lg px-4 py-2 text-sm font-semibold"
                       style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}>

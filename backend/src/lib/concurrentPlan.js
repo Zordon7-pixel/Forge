@@ -306,6 +306,57 @@ function summarizeInputs(profile = {}, history = {}, recovery = {}) {
   };
 }
 
+function parseCourseProfile(value) {
+  if (value === null || value === undefined || value === '') return null;
+  if (typeof value === 'object') return value;
+  try {
+    return JSON.parse(String(value));
+  } catch {
+    return String(value).slice(0, 1000);
+  }
+}
+
+function numberOrNull(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function buildGoalCourse(target = {}) {
+  const source = target.source || target.courseSource || null;
+  const url = target.url || target.courseUrl || null;
+  if (!source && !url) return null;
+  const explicit = String(target.provenance || target.courseProvenance || '').toLowerCase();
+  const provenance = explicit === 'official' ? 'official' : 'curated';
+  const course = {
+    elevationGainFt: numberOrNull(target.elevation_gain_ft ?? target.elevationGainFt),
+    maxAltitudeFt: numberOrNull(target.max_altitude_ft ?? target.maxAltitudeFt),
+    terrain: target.terrain || target.courseTerrain || null,
+    courseProfile: parseCourseProfile(target.course_profile_json ?? target.courseProfile),
+    source,
+    url,
+    provenance,
+  };
+  for (const key of Object.keys(course)) {
+    if (course[key] === null || course[key] === undefined || course[key] === '') delete course[key];
+  }
+  return course;
+}
+
+function goalMetadata(target = {}, existingGoal = {}) {
+  const raceDate = parseISODate(target.raceDate) ? target.raceDate : existingGoal.date || null;
+  const raceDistance = Number(target.distanceMiles ?? existingGoal.distanceMiles ?? 6.2) || 6.2;
+  return Object.assign({}, existingGoal, {
+    kind: raceDate ? 'race' : (existingGoal.kind || 'training_block'),
+    raceId: target.raceId || existingGoal.raceId || null,
+    name: target.raceName || target.goalName || existingGoal.name || `${raceDistance}-mile training block`,
+    date: raceDate,
+    distanceMiles: raceDistance,
+    goalType: target.goalType || existingGoal.goalType || (target.goalTimeSeconds ? 'pr' : 'completion'),
+    goalTimeSeconds: Number(target.goalTimeSeconds ?? existingGoal.goalTimeSeconds) || null,
+    course: buildGoalCourse(target),
+  });
+}
+
 function buildConcurrentPlan(context = {}) {
   const profile = context.profile || {};
   const target = context.target || {};
@@ -371,14 +422,7 @@ function buildConcurrentPlan(context = {}) {
   const plan = {
     schemaVersion: planSchema.SCHEMA_VERSION,
     planMode: mode,
-    goal: {
-      kind: raceDate ? 'race' : 'training_block',
-      name: target.raceName || target.goalName || `${raceDistance}-mile training block`,
-      date: raceDate,
-      distanceMiles: raceDistance,
-      goalType: target.goalType || (target.goalTimeSeconds ? 'pr' : 'completion'),
-      goalTimeSeconds: Number(target.goalTimeSeconds) || null,
-    },
+    goal: goalMetadata(target, { kind: raceDate ? 'race' : 'training_block' }),
     strengthPolicy,
     generationSource: 'deterministic',
     generationValidationErrors: [],
@@ -530,7 +574,12 @@ function selectPlanCandidate(candidate, context = {}) {
   const validation = validateConcurrentPlan(candidate, context);
   if (validation.valid) {
     return {
-      plan: { ...JSON.parse(JSON.stringify(candidate)), generationSource: 'ai_validated', generationValidationErrors: [] },
+      plan: {
+        ...JSON.parse(JSON.stringify(candidate)),
+        goal: goalMetadata(context.target || {}, candidate.goal || {}),
+        generationSource: 'ai_validated',
+        generationValidationErrors: [],
+      },
       source: 'ai_validated',
       validationErrors: [],
     };
@@ -553,5 +602,7 @@ module.exports = {
   buildConcurrentPlan,
   validateConcurrentPlan,
   selectPlanCandidate,
+  buildGoalCourse,
+  goalMetadata,
   isHardRun,
 };

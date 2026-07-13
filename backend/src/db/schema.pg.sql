@@ -333,6 +333,29 @@ CREATE TABLE IF NOT EXISTS checkin_overrides (
   UNIQUE(user_id, date)
 );
 
+CREATE TABLE IF NOT EXISTS plan_adjustment_proposals (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_plan_id TEXT,
+  plan_id TEXT,
+  plan_version TEXT,
+  window_start TEXT,
+  window_end TEXT,
+  planning_date TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  safety_exception INTEGER DEFAULT 0,
+  original_json TEXT,
+  proposed_json TEXT,
+  changes_json TEXT,
+  evidence_json TEXT,
+  reason TEXT,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  decided_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_plan_adjustment_proposals_user_status ON plan_adjustment_proposals(user_id, status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_adjustment_proposals_pending ON plan_adjustment_proposals(user_id, planning_date, plan_version) WHERE status='pending';
+
 CREATE TABLE IF NOT EXISTS comp_codes (
   code TEXT PRIMARY KEY,
   max_redemptions INTEGER DEFAULT 1,

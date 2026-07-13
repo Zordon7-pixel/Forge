@@ -17,6 +17,31 @@ async function runAlwaysMigrations() {
   `);
 
   await pg.query(`
+    CREATE TABLE IF NOT EXISTS plan_adjustment_proposals (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      user_plan_id TEXT,
+      plan_id TEXT,
+      plan_version TEXT,
+      window_start TEXT,
+      window_end TEXT,
+      planning_date TEXT,
+      status TEXT NOT NULL DEFAULT 'pending',
+      safety_exception INTEGER DEFAULT 0,
+      original_json TEXT,
+      proposed_json TEXT,
+      changes_json TEXT,
+      evidence_json TEXT,
+      reason TEXT,
+      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+      decided_at TIMESTAMPTZ
+    )
+  `);
+
+  await pg.query('CREATE INDEX IF NOT EXISTS idx_plan_adjustment_proposals_user_status ON plan_adjustment_proposals(user_id, status)');
+  await pg.query("CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_adjustment_proposals_pending ON plan_adjustment_proposals(user_id, planning_date, plan_version) WHERE status='pending'");
+
+  await pg.query(`
     CREATE TABLE IF NOT EXISTS events (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -112,7 +137,9 @@ async function runAlwaysMigrations() {
       ADD COLUMN IF NOT EXISTS elevation_gain_ft INTEGER,
       ADD COLUMN IF NOT EXISTS max_altitude_ft INTEGER,
       ADD COLUMN IF NOT EXISTS terrain TEXT,
-      ADD COLUMN IF NOT EXISTS course_profile_json TEXT
+      ADD COLUMN IF NOT EXISTS course_profile_json TEXT,
+      ADD COLUMN IF NOT EXISTS source TEXT,
+      ADD COLUMN IF NOT EXISTS url TEXT
   `);
 
   await seedRaceCatalog();

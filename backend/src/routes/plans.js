@@ -4,11 +4,13 @@ const auth = require('../middleware/auth');
 const { checkAiLimit } = require('../middleware/aiLimit');
 const { requirePremium } = require('../middleware/premiumGate');
 const { v4: uuidv4 } = require('uuid');
+const crypto = require('crypto');
 const { generateTrainingPlan, generateRaceAdjustment } = require('../services/ai');
 const { buildHealthSignals } = require('../lib/healthSignals');
 const { applyOverride } = require('../lib/checkinOverride');
 const planSchema = require('../lib/planSchema');
 const concurrentPlan = require('../lib/concurrentPlan');
+const adaptationEngine = require('../lib/adaptationEngine');
 
 function getDayShort() {
   return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date().getDay()];
@@ -49,6 +51,15 @@ function getTodayISO(date = new Date()) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+function getPlanningDateFromRequest(req) {
+  const serverDate = getTodayISO();
+  const requested = String(req.query?.date || '').trim();
+  if (!requested) return serverDate;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(requested)) return null;
+  const offsetDays = daysBetween(requested, serverDate);
+  return offsetDays !== null && Math.abs(offsetDays) <= 1 ? requested : null;
+}
+
 function parsePlan(plan) {
   try {
     if (plan?.plan_data) {
@@ -59,6 +70,315 @@ function parsePlan(plan) {
     console.error('[plans/parsePlan] invalid plan JSON:', err.message);
     return null;
   }
+}
+
+function parseJsonValue(raw, fallback) {
+  if (raw === null || raw === undefined || raw === '') return fallback;
+  if (typeof raw !== 'string') return raw;
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    console.error('[plans/parseJsonValue] invalid JSON:', err.message);
+    return fallback;
+  }
+}
+
+function planVersionFor(active, parsedPlan) {
+  return crypto
+    .createHash('sha256')
+    .update(JSON.stringify({
+      source: active?.source || null,
+      planId: active?.row?.id || null,
+      userPlanId: active?.row?.user_plan_id || null,
+      plan: parsedPlan || null,
+    }))
+    .digest('hex')
+    .slice(0, 32);
+}
+
+function daysBetween(leftISO, rightISO) {
+  const left = adaptationEngine.parseISODate(leftISO);
+  const right = adaptationEngine.parseISODate(rightISO);
+  if (!left || !right) return null;
+  return Math.round((left.getTime() - right.getTime()) / 86400000);
+}
+
+function freshnessForAsOf(asOf, planningDateISO, valuePresent, suspect = false) {
+  if (suspect) return 'suspect';
+  if (!valuePresent) return 'no_data';
+  const asOfDate = String(asOf || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(asOfDate)) return 'unknown';
+  const diff = daysBetween(planningDateISO, asOfDate);
+  return diff !== null && diff >= -1 && diff <= 2 ? 'fresh' : 'stale';
+}
+
+function adaptationMetric(value, source, asOf, planningDateISO, suspect = false) {
+  const valuePresent = value !== null && value !== undefined && value !== '';
+  return {
+    value: valuePresent ? value : null,
+    source: source || 'apple_health',
+    asOf: asOf || null,
+    freshness: freshnessForAsOf(asOf, planningDateISO, valuePresent, suspect),
+    suspect: Boolean(suspect),
+  };
+}
+
+function buildAdaptationHealthSignals(healthRow, planningDateISO) {
+  const row = healthRow || {};
+  const derived = buildHealthSignals(row);
+  const asOf = row.synced_at || row.updated_at || null;
+  const rawSleep = row.sleep_hours_last_night === null || row.sleep_hours_last_night === undefined
+    ? null
+    : Number(row.sleep_hours_last_night);
+  const suspectSleep = Number.isFinite(rawSleep) && rawSleep > 12;
+  const source = row.health_source || 'apple_health';
+  return {
+    recoveryState: derived.recoveryState,
+    shouldReduceIntensity: Boolean(derived.shouldReduceIntensity),
+    shouldRest: Boolean(derived.shouldRest),
+    metrics: {
+      readinessScore: adaptationMetric(derived.readinessScore, source, asOf, planningDateISO, false),
+      sleepHoursLastNight: adaptationMetric(
+        suspectSleep ? rawSleep : derived.metrics?.sleepHoursLastNight,
+        source,
+        asOf,
+        planningDateISO,
+        suspectSleep
+      ),
+      hrvMs: adaptationMetric(derived.metrics?.hrvMs, source, asOf, planningDateISO, false),
+      restingHeartRate: adaptationMetric(derived.metrics?.restingHeartRate, source, asOf, planningDateISO, false),
+      acuteChronicLoadRatio: adaptationMetric(derived.metrics?.acuteChronicLoadRatio, source, asOf, planningDateISO, false),
+    },
+  };
+}
+
+function plannedSessionsBetween(plan, startISO, endISO) {
+  const rows = [];
+  const weeks = Array.isArray(plan?.weeks) ? plan.weeks : [];
+  for (const week of weeks) {
+    const days = planSchema.getDayEntries(week);
+    days.forEach((day, dayIndex) => {
+      const date = day?.date;
+      if (!date || date < startISO || date > endISO) return;
+      planSchema.daySessions(day).forEach((session, sessionIndex) => {
+        const kind = planSchema.kindFromSession(session);
+        if (kind !== 'run' && kind !== 'lift') return;
+        rows.push({
+          sessionId: planSchema.sessionIdentifier(day, session, sessionIndex, dayIndex),
+          date,
+          kind,
+        });
+      });
+    });
+  }
+  return rows;
+}
+
+function dateWithinOneDay(actualISO, targetISO) {
+  const diff = daysBetween(String(actualISO || '').slice(0, 10), targetISO);
+  return diff !== null && Math.abs(diff) <= 1;
+}
+
+async function buildCompletionSummaryForAdaptation(userId, plan, active, planningDateISO) {
+  const since = adaptationEngine.addDays(planningDateISO, -7);
+  const planned = plannedSessionsBetween(plan, since, adaptationEngine.addDays(planningDateISO, -1));
+  const progress = parseJsonValue(active?.row?.progress_json, {});
+  const completedIds = new Set((Array.isArray(progress?.completedSessionIds) ? progress.completedSessionIds : []).map(String));
+  const [runs, lifts, workouts] = await Promise.all([
+    dbAll('SELECT id, date FROM runs WHERE user_id=? AND date>=? AND date<=?', [userId, since, planningDateISO]),
+    dbAll('SELECT id, date FROM lifts WHERE user_id=? AND date>=? AND date<=?', [userId, since, planningDateISO]),
+    dbAll(
+      'SELECT id, started_at FROM workout_sessions WHERE user_id=? AND started_at>=? AND started_at<=? AND ended_at IS NOT NULL',
+      [userId, `${since}T00:00:00`, `${planningDateISO}T23:59:59`]
+    ),
+  ]);
+
+  const runDates = (runs || []).map((row) => String(row.date || '').slice(0, 10)).filter(Boolean);
+  const liftDates = [
+    ...(lifts || []).map((row) => String(row.date || '').slice(0, 10)),
+    ...(workouts || []).map((row) => String(row.started_at || '').slice(0, 10)),
+  ].filter(Boolean);
+
+  let completed = 0;
+  let missedRuns = 0;
+  let missedLifts = 0;
+  for (const item of planned) {
+    const completedByProgress = completedIds.has(String(item.sessionId));
+    const completedByLog = item.kind === 'run'
+      ? runDates.some((date) => dateWithinOneDay(date, item.date))
+      : liftDates.some((date) => dateWithinOneDay(date, item.date));
+    if (completedByProgress || completedByLog) completed += 1;
+    else if (item.kind === 'run') missedRuns += 1;
+    else missedLifts += 1;
+  }
+
+  return {
+    planned: planned.length,
+    completed,
+    missedRuns,
+    missedLifts,
+    missedWorkouts: missedRuns + missedLifts,
+    adherenceRate: planned.length ? completed / planned.length : null,
+    freshness: `${since} to ${planningDateISO}`,
+  };
+}
+
+async function buildAdaptationInputs(userId, plan, active, planningDateISO) {
+  const [healthRow, checkin, injuries, completion] = await Promise.all([
+    dbGet('SELECT * FROM health_sync WHERE user_id=?', [userId]).catch((err) => {
+      console.error('[plans/adaptation] health sync lookup failed:', err.message);
+      return null;
+    }),
+    dbGet(
+      'SELECT feeling, legs, drive, sleep_hours, time_available, life_flags, checkin_date FROM daily_checkins WHERE user_id=? AND checkin_date=?',
+      [userId, planningDateISO]
+    ),
+    dbAll(
+      'SELECT id, date, body_part, pain_level, notes FROM injury_logs WHERE user_id=? AND cleared=0 ORDER BY date DESC LIMIT 3',
+      [userId]
+    ),
+    buildCompletionSummaryForAdaptation(userId, plan, active, planningDateISO).catch((err) => {
+      console.error('[plans/adaptation] completion summary failed:', err.message);
+      return {};
+    }),
+  ]);
+  const activeInjury = Array.isArray(injuries) && injuries.length ? injuries[0] : null;
+  return {
+    healthSignals: buildAdaptationHealthSignals(healthRow, planningDateISO),
+    checkin: checkin || null,
+    completion,
+    injuryState: activeInjury ? {
+      active: true,
+      bodyPart: activeInjury.body_part,
+      notes: activeInjury.notes,
+      reason: [activeInjury.body_part, activeInjury.notes].filter(Boolean).join(': ') || 'active injury log',
+      freshness: activeInjury.date || 'current',
+    } : { active: false },
+  };
+}
+
+function encodeProposalReason(proposal) {
+  return JSON.stringify({
+    headline: proposal.headline,
+    reason: proposal.reason,
+  });
+}
+
+function decodeProposalReason(raw) {
+  if (!raw) return { headline: null, reason: '' };
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && (parsed.headline || parsed.reason)) {
+      return { headline: parsed.headline || null, reason: parsed.reason || '' };
+    }
+  } catch (err) {
+    console.error('[plans/adaptation] legacy reason parse skipped:', err.message);
+  }
+  return { headline: null, reason: String(raw) };
+}
+
+function proposalFromRow(row) {
+  if (!row) return null;
+  const changes = parseJsonValue(row.changes_json, []);
+  const evidence = parseJsonValue(row.evidence_json, []);
+  const meta = decodeProposalReason(row.reason);
+  return {
+    id: row.id,
+    status: Array.isArray(changes) && changes.length ? 'proposal' : 'keep',
+    decisionStatus: row.status,
+    planningDate: row.planning_date,
+    windowStart: row.window_start,
+    windowEnd: row.window_end,
+    safetyException: Number(row.safety_exception || 0) === 1,
+    evidence: Array.isArray(evidence) ? evidence : [],
+    changes: Array.isArray(changes) ? changes : [],
+    headline: meta.headline || (Array.isArray(changes) && changes.length ? 'Calendar adjustment pending' : 'Keep the calendar as planned'),
+    choices: ['accept', 'keep_original'],
+    reason: meta.reason,
+    planVersion: row.plan_version || null,
+    planId: row.plan_id || null,
+    userPlanId: row.user_plan_id || null,
+  };
+}
+
+async function findPendingAdaptation(userId, planningDateISO, planVersion, tx = null) {
+  const get = tx?.get || dbGet;
+  return get(
+    `SELECT *
+     FROM plan_adjustment_proposals
+     WHERE user_id=? AND planning_date=? AND plan_version=? AND status='pending'
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [userId, planningDateISO, planVersion]
+  );
+}
+
+async function findLatestAdaptation(userId, planningDateISO, planVersion) {
+  return dbGet(
+    `SELECT *
+     FROM plan_adjustment_proposals
+     WHERE user_id=? AND planning_date=? AND plan_version=?
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [userId, planningDateISO, planVersion]
+  );
+}
+
+async function persistAdaptationProposal(userId, active, planVersion, originalPlan, proposal) {
+  const existing = await findPendingAdaptation(userId, proposal.planningDate, planVersion);
+  if (existing) return proposalFromRow(existing);
+  const id = uuidv4();
+  const inserted = await dbRun(
+    `INSERT INTO plan_adjustment_proposals (
+      id, user_id, user_plan_id, plan_id, plan_version, window_start, window_end,
+      planning_date, status, safety_exception, original_json, proposed_json,
+      changes_json, evidence_json, reason
+    )
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT DO NOTHING`,
+    [
+      id,
+      userId,
+      active?.row?.user_plan_id || null,
+      active?.row?.id || null,
+      planVersion,
+      proposal.windowStart,
+      proposal.windowEnd,
+      proposal.planningDate,
+      'pending',
+      proposal.safetyException ? 1 : 0,
+      JSON.stringify(originalPlan || null),
+      JSON.stringify(proposal.proposedPlan || originalPlan || null),
+      JSON.stringify(proposal.changes || []),
+      JSON.stringify(proposal.evidence || []),
+      encodeProposalReason(proposal),
+    ]
+  );
+  if (inserted.changes === 0) {
+    const concurrent = await findPendingAdaptation(userId, proposal.planningDate, planVersion);
+    if (!concurrent) throw new Error('Pending adaptation proposal conflict could not be resolved');
+    return proposalFromRow(concurrent);
+  }
+  return Object.assign({}, proposal, {
+    id,
+    decisionStatus: 'pending',
+    planVersion,
+    planId: active?.row?.id || null,
+    userPlanId: active?.row?.user_plan_id || null,
+  });
+}
+
+function courseTargetFromRace(race = {}) {
+  return {
+    raceId: race.id || null,
+    elevation_gain_ft: race.elevation_gain_ft,
+    max_altitude_ft: race.max_altitude_ft,
+    terrain: race.terrain || null,
+    course_profile_json: race.course_profile_json || null,
+    source: race.source || null,
+    url: race.url || null,
+    courseProvenance: race.source || race.url ? 'curated' : 'unknown',
+  };
 }
 
 function mapType(day = {}) {
@@ -77,8 +397,9 @@ function dayToDate(weekStart, dayLabel) {
   return d.toISOString().slice(0, 10);
 }
 
-async function getActivePlanForUser(userId) {
-  const assigned = await dbGet(`
+async function getActivePlanForUser(userId, tx = null) {
+  const get = tx?.get || dbGet;
+  const assigned = await get(`
     SELECT up.id as user_plan_id, up.current_week, up.started_at, up.status, up.progress_json,
            tp.*
     FROM user_plans up
@@ -89,7 +410,7 @@ async function getActivePlanForUser(userId) {
   `, [userId]);
   if (assigned) return { source: 'assigned', row: assigned };
 
-  const legacy = await dbGet('SELECT * FROM training_plans WHERE user_id = ? ORDER BY created_at DESC LIMIT 1', [userId]);
+  const legacy = await get('SELECT * FROM training_plans WHERE user_id = ? ORDER BY created_at DESC LIMIT 1', [userId]);
   if (legacy) return { source: 'legacy', row: legacy };
   return null;
 }
@@ -578,6 +899,112 @@ router.get('/adaptive/recommend', auth, async (req, res) => {
   } catch (err) {
     console.error('[plans/adaptive/recommend] failed:', err.message);
     res.status(500).json({ error: 'Failed to build adaptive recommendation' });
+  }
+});
+
+function publicProposal(proposal) {
+  if (!proposal) return null;
+  const { proposedPlan, plan, ...rest } = proposal;
+  return rest;
+}
+
+router.get('/adaptation/current', auth, async (req, res) => {
+  try {
+    const active = await getActivePlanForUser(req.user.id);
+    if (!active) return res.json({ proposal: null, reason: 'No active plan is assigned yet.' });
+    const parsed = parsePlan(active.row);
+    if (!parsed || !planSchema.isSchemaV2(parsed)) {
+      return res.json({ proposal: null, reason: 'Transparent adaptation is available for schema-v2 dated calendars only.' });
+    }
+
+    const planningDateISO = getPlanningDateFromRequest(req);
+    if (!planningDateISO) return res.status(400).json({ error: 'date must be the phone local date in YYYY-MM-DD format' });
+    const planVersion = planVersionFor(active, parsed);
+    const existing = await findLatestAdaptation(req.user.id, planningDateISO, planVersion);
+    if (existing) return res.json({ proposal: publicProposal(proposalFromRow(existing)) });
+
+    const inputs = await buildAdaptationInputs(req.user.id, parsed, active, planningDateISO);
+    const proposal = adaptationEngine.buildAdaptationProposal({
+      plan: parsed,
+      planningDateISO,
+      planVersion,
+      healthSignals: inputs.healthSignals,
+      checkin: inputs.checkin,
+      completion: inputs.completion,
+      injuryState: inputs.injuryState,
+    });
+    const persisted = await persistAdaptationProposal(req.user.id, active, planVersion, parsed, proposal);
+    res.json({ proposal: publicProposal(persisted) });
+  } catch (err) {
+    console.error('[plans/adaptation/current] failed:', err.message);
+    res.status(500).json({ error: 'Failed to compute transparent adaptation' });
+  }
+});
+
+router.post('/adaptation/:proposalId/accept', auth, async (req, res) => {
+  try {
+    const result = await withTransaction(async (tx) => {
+      const row = await tx.get('SELECT * FROM plan_adjustment_proposals WHERE id=? AND user_id=?', [req.params.proposalId, req.user.id]);
+      if (!row) return { notFound: true };
+      if (row.status === 'accepted') return { ok: true, status: 'accepted', proposal: proposalFromRow(row), idempotent: true };
+      if (row.status !== 'pending') return { conflict: true, reason: 'Proposal is no longer pending.' };
+
+      const active = await getActivePlanForUser(req.user.id, tx);
+      if (!active) return { conflict: true, reason: 'No active plan is assigned.' };
+      const parsed = parsePlan(active.row);
+      const currentVersion = planVersionFor(active, parsed);
+      if (String(currentVersion) !== String(row.plan_version || '')) {
+        return { conflict: true, reason: 'The active plan changed after this proposal was computed.' };
+      }
+
+      const proposedPlan = parseJsonValue(row.proposed_json, null);
+      if (!proposedPlan || typeof proposedPlan !== 'object') throw new Error('Stored proposed plan JSON is invalid');
+      await updateActivePlanData(active, req.user.id, proposedPlan, tx);
+      const update = await tx.run(
+        "UPDATE plan_adjustment_proposals SET status='accepted', decided_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=? AND status='pending'",
+        [row.id, req.user.id]
+      );
+      if (update.changes === 0) throw new Error('Proposal accept status update failed');
+      return { ok: true, status: 'accepted', proposal: proposalFromRow({ ...row, status: 'accepted' }) };
+    });
+
+    if (result.notFound) return res.status(404).json({ error: 'Proposal not found' });
+    if (result.conflict) return res.status(409).json({ error: result.reason });
+    res.json({ ok: true, status: 'accepted', proposal: publicProposal(result.proposal), idempotent: Boolean(result.idempotent) });
+  } catch (err) {
+    console.error('[plans/adaptation/accept] failed:', err.message);
+    res.status(500).json({ error: 'Failed to accept transparent adaptation' });
+  }
+});
+
+router.post('/adaptation/:proposalId/keep', auth, async (req, res) => {
+  try {
+    const result = await withTransaction(async (tx) => {
+      const row = await tx.get('SELECT * FROM plan_adjustment_proposals WHERE id=? AND user_id=?', [req.params.proposalId, req.user.id]);
+      if (!row) return { notFound: true };
+      if (row.status === 'kept') return { ok: true, status: 'kept', proposal: proposalFromRow(row), idempotent: true };
+      if (row.status !== 'pending') return { conflict: true, reason: 'Proposal is no longer pending.' };
+      const active = await getActivePlanForUser(req.user.id, tx);
+      if (!active) return { conflict: true, reason: 'No active plan is assigned.' };
+      const parsed = parsePlan(active.row);
+      const currentVersion = planVersionFor(active, parsed);
+      if (String(currentVersion) !== String(row.plan_version || '')) {
+        return { conflict: true, reason: 'The active plan changed after this proposal was computed.' };
+      }
+      const update = await tx.run(
+        "UPDATE plan_adjustment_proposals SET status='kept', decided_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=? AND status='pending'",
+        [row.id, req.user.id]
+      );
+      if (update.changes === 0) throw new Error('Proposal keep status update failed');
+      return { ok: true, status: 'kept', proposal: proposalFromRow({ ...row, status: 'kept' }) };
+    });
+
+    if (result.notFound) return res.status(404).json({ error: 'Proposal not found' });
+    if (result.conflict) return res.status(409).json({ error: result.reason });
+    res.json({ ok: true, status: 'kept', proposal: publicProposal(result.proposal), idempotent: Boolean(result.idempotent) });
+  } catch (err) {
+    console.error('[plans/adaptation/keep] failed:', err.message);
+    res.status(500).json({ error: 'Failed to keep original plan' });
   }
 });
 
@@ -1191,6 +1618,7 @@ router.post('/generate-for-race/:raceId', auth, requirePremium('Race Programs'),
       goalTimeSeconds: race.goal_time_seconds || null,
       weeks,
       startDate,
+      ...courseTargetFromRace(race),
       elevation_gain_ft: race.elevation_gain_ft,
       max_altitude_ft: race.max_altitude_ft,
       terrain: race.terrain || null,

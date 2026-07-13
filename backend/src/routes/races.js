@@ -76,7 +76,7 @@ router.post('/', auth, async (req, res) => {
       [id, req.user.id, race_name, race_date, Number(distance_miles), location || null, goal_time_seconds || null, status, notes || null]
     );
 
-    const race = await dbGet('SELECT * FROM race_events WHERE id=?', [id]);
+    const race = await dbGet('SELECT * FROM race_events WHERE id=? AND user_id=?', [id, req.user.id]);
     res.status(201).json({ race });
   } catch (err) { res.status(500).json({ error: 'Failed to add race' }); }
 });
@@ -93,9 +93,9 @@ router.post('/from-catalog/:catalogId', auth, async (req, res) => {
     await dbRun(
       `INSERT INTO race_events (
         id, user_id, race_name, race_date, distance_miles, location, status,
-        elevation_gain_ft, max_altitude_ft, terrain, course_profile_json
+        elevation_gain_ft, max_altitude_ft, terrain, course_profile_json, source, url
        )
-       VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
         id,
         req.user.id,
@@ -107,13 +107,18 @@ router.post('/from-catalog/:catalogId', auth, async (req, res) => {
         catalogRace.elevation_gain_ft || null,
         catalogRace.max_altitude_ft || null,
         catalogRace.terrain || null,
-        catalogRace.course_profile_json || null
+        catalogRace.course_profile_json || null,
+        catalogRace.source || null,
+        catalogRace.url || null
       ]
     );
 
     const race = await dbGet('SELECT * FROM race_events WHERE id=? AND user_id=?', [id, req.user.id]);
     res.status(201).json({ race });
-  } catch (err) { res.status(500).json({ error: 'Failed to add race from catalog' }); }
+  } catch (err) {
+    console.error('[races/from-catalog] failed:', err.message);
+    res.status(500).json({ error: 'Failed to add race from catalog' });
+  }
 });
 
 router.patch('/:id', auth, async (req, res) => {
@@ -127,7 +132,7 @@ router.patch('/:id', auth, async (req, res) => {
       [next.race_name, next.race_date, next.distance_miles, next.location, next.goal_time_seconds, next.status, next.notes, req.params.id, req.user.id]
     );
 
-    const updated = await dbGet('SELECT * FROM race_events WHERE id=?', [req.params.id]);
+    const updated = await dbGet('SELECT * FROM race_events WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
     res.json({ race: updated });
   } catch (err) { res.status(500).json({ error: 'Update failed' }); }
 });
