@@ -108,6 +108,16 @@ export function getPlanMode(plan) {
   if (policy && policy.enabled) return 'hybrid_maintain'
   const type = String(plan?.type || data.type || '').toLowerCase()
   if (type.includes('hybrid') || type.includes('strength')) return 'hybrid_maintain'
+  // Legacy catalog plan types are race distances (5K, 10K, etc.), so infer
+  // hybrid mode from their actual sessions just as the backend schema does.
+  for (const week of getWeeks(plan)) {
+    for (const entry of weekEntries(week)) {
+      const sessions = isSchemaV2Entry(entry) ? entry.sessions : [entry]
+      if (sessions.some((session) => sessionKind(session) === 'lift')) {
+        return 'hybrid_maintain'
+      }
+    }
+  }
   return 'run_only'
 }
 
@@ -180,7 +190,7 @@ export function normalizeSession(rawSession, context = {}) {
   const prescription = rawSession.prescription || rawSession.details || {}
   const anchor = context.anchor || 'day'
   const index = context.index ?? 0
-  const id = firstDefined(rawSession.id, `${anchor}-${kind}-${index}`)
+  const id = firstDefined(rawSession.id, context.fallbackId, `${anchor}-${kind}-${index}`)
   const distanceMiles =
     Number(firstDefined(rawSession.distance_miles, prescription.distanceMiles, prescription.distance_miles, 0)) || 0
   const type = firstDefined(rawSession.type, prescription.type, kind === 'lift' ? 'strength' : kind)
@@ -242,12 +252,13 @@ export function buildWeekDays(weekData, weekStartDate, options = {}) {
       if (entryDate) weekdayIndex = (entryDate.getDay() + 6) % 7
     }
     if (weekdayIndex === null) weekdayIndex = entryIndex % 7
-    if (!byWeekday.has(weekdayIndex)) byWeekday.set(weekdayIndex, entry)
+    if (!byWeekday.has(weekdayIndex)) byWeekday.set(weekdayIndex, { entry, entryIndex })
   })
 
   const days = []
   for (let slot = 0; slot < 7; slot += 1) {
-    const entry = byWeekday.get(slot) || null
+    const mapped = byWeekday.get(slot) || null
+    const entry = mapped?.entry || null
     const slotDate = weekStartDate ? addDays(weekStartDate, slot) : null
     const entryDate = entry ? parseLocalDate(entry.date) : null
     const date = entryDate || slotDate
@@ -258,10 +269,15 @@ export function buildWeekDays(weekData, weekStartDate, options = {}) {
       if (isSchemaV2Entry(entry)) {
         sessions = entry.sessions.map((raw, index) =>
           normalizeSession(raw, { anchor, index }),
-        )
+        ).filter((session) => session.kind !== 'rest')
       } else {
         // Legacy flat/day entry: the entry itself is one session.
-        const normalized = normalizeSession(entry, { anchor, index: 0 })
+        // Keep the backend's compliance id fallback: original entry-array index.
+        const normalized = normalizeSession(entry, {
+          anchor,
+          index: 0,
+          fallbackId: String(mapped.entryIndex),
+        })
         if (normalized.kind !== 'rest') sessions = [normalized]
       }
     }

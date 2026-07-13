@@ -76,6 +76,24 @@ check('b: legacy week.days renders one session per day', () => {
   assert.equal(days[1].isRest, true)
 })
 
+check('b2: legacy id fallback and inferred lift mode match the backend', () => {
+  const plan = {
+    type: '10K',
+    plan_data: {
+      weeks: [{ week: 1, days: [
+        { day: 'Mon', type: 'run', title: 'Easy Run', distance_miles: 3 },
+        { day: 'Wed', type: 'strength', title: 'Full Body' },
+      ] }],
+    },
+  }
+  assert.equal(getPlanMode(plan), 'hybrid_maintain')
+  const model = buildCalendarModel(plan, { started_at: '2026-07-13' }, { now: WEEK_START })
+  assert.equal(model.runOnly, false)
+  assert.equal(model.getWeek(0).days[0].sessions[0].id, '0')
+  assert.equal(model.getWeek(0).days[2].sessions[0].id, '1')
+  assert.equal(dayHasLift(model.getWeek(0).days[2]), true)
+})
+
 // ---------------------------------------------------------------------------
 // (c) schema-v2 nested day.sessions — 0, 1, and 2 sessions
 // ---------------------------------------------------------------------------
@@ -101,6 +119,18 @@ check('c: schema-v2 handles 0/1/2 sessions per day', () => {
   assert.equal(days[0].sessions[0].title, 'Intervals')
   assert.equal(days[1].sessions.length, 1)
   assert.equal(days[2].isRest, true) // zero sessions -> rest
+})
+
+check('c2: schema-v2 fallback ids match backend anchors and rest entries are filtered', () => {
+  const week = {
+    days: [{ date: '2026-07-13', day: 'Mon', sessions: [
+      { kind: 'run', type: 'easy' },
+      { kind: 'rest', type: 'rest' },
+    ] }],
+  }
+  const days = buildWeekDays(week, WEEK_START, { runOnly: false })
+  assert.equal(days[0].sessions.length, 1)
+  assert.equal(days[0].sessions[0].id, '2026-07-13-run-0')
 })
 
 // ---------------------------------------------------------------------------

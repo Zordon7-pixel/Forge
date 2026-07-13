@@ -271,7 +271,7 @@ export default function Plan() {
               />
 
               {/* Secondary plan controls in a compact Manage plan disclosure */}
-              <div className="rounded-xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+              <div className="rounded-lg" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
                 <button type="button" onClick={() => setManageOpen((v) => !v)}
                   className="w-full flex items-center justify-between p-4"
                   style={{ background: 'transparent', border: 'none', color: 'var(--text-primary)', cursor: 'pointer' }}

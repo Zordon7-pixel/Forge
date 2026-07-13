@@ -111,7 +111,7 @@ export default function ForgedCalendar({
   return (
     <div className="forged-cal">
       {/* Header */}
-      <div className="rounded-xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+      <div className="rounded-lg p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
         <div className="flex items-start justify-between gap-3">
           <div style={{ minWidth: 0 }}>
             <h2 className="text-lg font-bold" style={{ color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -127,7 +127,10 @@ export default function ForgedCalendar({
           </div>
           <div className="forged-seg" role="group" aria-label="Calendar view">
             <button type="button" aria-pressed={view === 'week'} onClick={() => setView('week')}>Week</button>
-            <button type="button" aria-pressed={view === 'month'} onClick={() => setView('month')}>Month</button>
+            <button type="button" aria-pressed={view === 'month'} onClick={() => {
+              setMonthAnchor(week?.startISO || todayISO)
+              setView('month')
+            }}>Month</button>
           </div>
         </div>
       </div>

@@ -4,6 +4,7 @@ import {
   Maximize2, Minimize2, Minus, Plus, ChevronLeft, CheckCircle2, Circle,
 } from 'lucide-react'
 import WatchWorkoutSendButton from '../WatchWorkoutSendButton'
+import WatchWorkoutService from '../../services/WatchWorkoutService'
 import { sessionState } from '../../lib/planCalendar'
 import './forgedCalendar.css'
 
@@ -16,10 +17,35 @@ function str(value) {
   if (typeof value === 'number') return String(value)
   return ''
 }
+function labelText(value) {
+  return String(value).replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())
+}
+function displayValue(value) {
+  const scalar = str(value)
+  if (scalar) return scalar
+  if (Array.isArray(value)) return value.map(displayValue).filter(Boolean).join(', ')
+  if (value && typeof value === 'object') {
+    return Object.entries(value)
+      .map(([key, item]) => {
+        const itemText = displayValue(item)
+        return itemText ? `${labelText(key)}: ${itemText}` : ''
+      })
+      .filter(Boolean)
+      .join(' · ')
+  }
+  return ''
+}
 function list(value) {
-  if (Array.isArray(value)) return value.map((item) => str(item) || item).filter(Boolean)
-  const single = str(value)
+  if (Array.isArray(value)) return value.map(displayValue).filter(Boolean)
+  const single = displayValue(value)
   return single ? [single] : []
+}
+function structuredList(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return list(value)
+  return Object.entries(value).flatMap(([key, item]) => {
+    const valueText = displayValue(item)
+    return valueText ? [`${labelText(key)}: ${valueText}`] : []
+  })
 }
 function firstStr(...values) {
   for (const value of values) {
@@ -33,15 +59,16 @@ function runFacts(session) {
   const p = session.prescription || {}
   const raw = session.raw || {}
   const miles = Number(session.distanceMiles || p.distanceMiles || p.distance_miles || raw.distance_miles || 0)
+  const durationMinutes = firstStr(p.duration_min, raw.duration_min)
   return {
     purpose: firstStr(p.purpose, p.focus, raw.purpose),
     distance: miles > 0 ? `${miles.toFixed(1)} mi` : '',
-    time: firstStr(p.duration, p.time, raw.duration),
-    pace: firstStr(p.pace, p.targetPace, raw.pace),
-    zone: firstStr(p.zone, p.hrZone, p.heartRateZone, raw.zone),
+    time: firstStr(p.duration, p.time, raw.duration, durationMinutes ? `${durationMinutes} min` : ''),
+    pace: firstStr(p.pace, p.targetPace, p.pace_target, raw.pace, raw.pace_target),
+    zone: firstStr(p.zone, p.hrZone, p.heartRateZone, p.target_zone, raw.zone, raw.target_zone),
     intensity: firstStr(p.intensity, raw.intensity),
     warmup: list(p.warmup || raw.warmup),
-    steps: list(p.steps || p.blocks || p.structure || raw.steps),
+    steps: structuredList(p.steps || p.blocks || p.structure || raw.steps || raw.structure),
     cooldown: list(p.cooldown || raw.cooldown),
     recoveries: firstStr(p.recoveries, p.recovery),
   }
@@ -52,10 +79,12 @@ function liftFacts(session) {
   const raw = session.raw || {}
   const exercises = Array.isArray(p.exercises) ? p.exercises
     : Array.isArray(p.main) ? p.main
-    : Array.isArray(raw.exercises) ? raw.exercises : []
+    : Array.isArray(raw.exercises) ? raw.exercises
+    : Array.isArray(raw.main) ? raw.main : []
   return {
     focus: firstStr(p.focus, raw.focus),
     warmup: list(p.warmup || raw.warmup),
+    recovery: list(p.recovery || raw.recovery),
     exercises: exercises.map((ex) => ({
       name: firstStr(ex.name, ex.exercise, 'Exercise'),
       sets: firstStr(ex.sets),
@@ -141,15 +170,18 @@ export default function ForgedDayView({
     if (!runSession) return null
     const f = runFacts(runSession)
     const done = completedSet?.has(String(runSession.id))
-    const watchWorkout = {
-      workoutName: runSession.title,
-      type: 'run',
-      distanceMiles: runSession.distanceMiles || undefined,
+    const watchWorkout = WatchWorkoutService.buildRunWorkout({
+      day: dateLabel,
+      typeLabel: runSession.title,
+      distanceLabel: f.distance,
       pace: f.pace || undefined,
-      warmup: f.warmup,
-      main: f.steps,
-      recovery: f.cooldown,
-    }
+      zone: f.zone || undefined,
+      intensity: f.intensity || undefined,
+      steps: f.steps,
+      progression: firstStr(runSession.prescription?.progression, runSession.raw?.progression),
+      description: firstStr(runSession.prescription?.description, runSession.raw?.description),
+    })
+    const zoneLabel = /^zone\b/i.test(f.zone) ? f.zone : `Zone ${f.zone}`
     return (
       <PaperSection title={firstStr(runSession.title, 'Run')} tone="run" px={px}
         icon={<span className="forged-stamp forged-stamp--run" data-state={sessionState(runSession, completedSet)}><Footprints size={16} /></span>}>
@@ -158,7 +190,7 @@ export default function ForgedDayView({
           {f.distance && <span style={{ fontSize: px(13) }}><Route size={13} style={{ verticalAlign: -1 }} /> {f.distance}</span>}
           {f.time && <span style={{ fontSize: px(13) }}><Timer size={13} style={{ verticalAlign: -1 }} /> {f.time}</span>}
           {f.pace && <span style={{ fontSize: px(13) }}><Gauge size={13} style={{ verticalAlign: -1 }} /> {f.pace}</span>}
-          {f.zone && <span style={{ fontSize: px(13) }}>Zone {f.zone}</span>}
+          {f.zone && <span style={{ fontSize: px(13) }}>{zoneLabel}</span>}
           {f.intensity && <span className="forged-sec-red" style={{ fontSize: px(13) }}><Flame size={13} style={{ verticalAlign: -1 }} /> {f.intensity}</span>}
         </div>
         {f.warmup.length > 0 && (
@@ -199,12 +231,14 @@ export default function ForgedDayView({
     if (!liftSession) return null
     const f = liftFacts(liftSession)
     const done = completedSet?.has(String(liftSession.id))
-    const watchWorkout = {
+    const watchWorkout = WatchWorkoutService.buildStrengthWorkout({
       workoutName: liftSession.title,
-      type: 'strength',
+      target: f.focus,
       warmup: f.warmup,
       main: f.exercises,
-    }
+      recovery: f.recovery,
+      explanation: firstStr(liftSession.prescription?.explanation, liftSession.raw?.explanation),
+    })
     return (
       <PaperSection title={firstStr(liftSession.title, 'Strength')} px={px}
         icon={<span className="forged-stamp forged-stamp--lift" data-state={sessionState(liftSession, completedSet)}><Dumbbell size={16} /></span>}>
@@ -225,7 +259,8 @@ export default function ForgedDayView({
               <span>Sets<strong style={{ fontSize: px(15) }}>{ex.sets || '—'}</strong></span>
               <span>Reps<strong style={{ fontSize: px(15) }}>{ex.reps || '—'}</strong></span>
               <span>Rest<strong style={{ fontSize: px(15) }}>{ex.rest || '—'}</strong></span>
-              <span>{ex.rpe ? 'RPE/RIR' : 'Load'}<strong style={{ fontSize: px(15) }}>{ex.rpe || ex.load || '—'}</strong></span>
+              <span>Load<strong style={{ fontSize: px(15) }}>{ex.load || '—'}</strong></span>
+              <span>RPE/RIR<strong style={{ fontSize: px(15) }}>{ex.rpe || '—'}</strong></span>
             </div>
             {ex.cue && <p style={{ fontSize: px(12), marginTop: 6, color: 'var(--ink-soft, #5A554B)' }}>{ex.cue}</p>}
           </div>
