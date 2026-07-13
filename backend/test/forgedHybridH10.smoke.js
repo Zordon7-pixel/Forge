@@ -56,6 +56,8 @@ const staleSteady = integrity.repairRecoverySession({ kind: 'run', type: 'recove
 check(staleSteady.steps.some((step) => /stay in zone 1-2/i.test(step)) && !staleSteady.steps.some((step) => /steady effort/i.test(step)), 'converted steady runs receive the same coherent recovery repair');
 const hardRun = { kind: 'run', type: 'hills', title: 'Controlled hill repeats', target_zone: 'Zone 3', steps: ['6 x 60 sec uphill'] };
 check(integrity.repairRecoverySession(hardRun) === hardRun, 'a real hill workout is not rewritten');
+const safeMobility = { kind: 'run', type: 'recovery', title: 'Recovery run', target_zone: 'Zone 1-2', cooldown: ['Optional moderate mobility after the walk'] };
+check(integrity.repairRecoverySession(safeMobility) === safeMobility, 'incidental moderate mobility language does not trigger a false repair');
 
 section('recent lifting history summary');
 const exerciseHistory = strength.summarizeRecentExercises([
@@ -107,7 +109,7 @@ const normal = concurrent.buildConcurrentPlan(context());
 const allLifts = liftSessions(normal);
 const bench = allLifts.flatMap((session) => session.main).find((exercise) => exercise.name === 'Dumbbell bench press');
 check(concurrent.validateConcurrentPlan(normal, context()).valid, 'data-driven deterministic plan validates');
-check(bench?.load === '52.5 lb starting load' && /recent 55 lb x 8 set/i.test(bench?.loadSource), 'matching exercise load is conservatively estimated from the latest logged set');
+check(bench?.load === '52.5 lb starting load' && /recent Dumbbell Bench Press set: 55 lb x 8/i.test(bench?.loadSource), 'matching exercise and latest logged set are named in the conservative load provenance');
 check(/2-3 min|60-90 sec/.test(allLifts[0]?.main[0]?.rest || ''), 'every lift has an explicit evidence-informed rest interval');
 check(allLifts.every((session) => session.main.every((exercise) => exercise.sets && exercise.reps && exercise.rest && exercise.load && exercise.rpe && exercise.progression)), 'every exercise includes sets, reps, rest, load, effort, and progression');
 check(allLifts.every((session) => session.prescriptionBasis?.watchDataRole.includes('does not estimate lifting loads')), 'plan states the bounded role of watch data');
@@ -126,6 +128,15 @@ const barbellBenchOnly = strength.summarizeRecentExercises([
 const modalitySafe = concurrent.buildConcurrentPlan(context({ history: { recentExercises: barbellBenchOnly } }));
 const dumbbellBench = liftSessions(modalitySafe).flatMap((session) => session.main).find((exercise) => exercise.name === 'Dumbbell bench press');
 check(/RIR/.test(dumbbellBench.load) && !/225/.test(`${dumbbellBench.load} ${dumbbellBench.loadSource}`), 'barbell history is never reused as a dumbbell load');
+const dumbbellBenchOnly = strength.summarizeRecentExercises([
+  { exercise_name: 'Dumbbell Bench Press', reps: 8, weight_lbs: 55, logged_at: '2026-07-12T18:00:00Z' },
+]);
+const reverseModalitySafe = concurrent.buildConcurrentPlan(context({
+  target: { equipment: ['barbell', 'rack', 'bench'] },
+  history: { recentExercises: dumbbellBenchOnly },
+}));
+const barbellBench = liftSessions(reverseModalitySafe).flatMap((session) => session.main).find((exercise) => exercise.name === 'Barbell bench press');
+check(/RIR/.test(barbellBench.load) && !/55/.test(`${barbellBench.load} ${barbellBench.loadSource}`), 'dumbbell history is never reused as a barbell load');
 
 section('equipment and candidate validation');
 const minimalContext = context({ target: { equipment: ['bodyweight', 'resistance_bands'] } });

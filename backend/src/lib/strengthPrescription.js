@@ -127,8 +127,15 @@ function exerciseCatalog(focus, equipment) {
 
 function findExerciseHistory(exercise, history = []) {
   const names = [exercise.name, ...(exercise.aliases || [])].map(normalizeExerciseName).filter(Boolean);
+  const expectedModality = /\bdumbbell\b/.test(normalizeExerciseName(exercise.name))
+    ? 'dumbbell'
+    : /\bbarbell\b/.test(normalizeExerciseName(exercise.name))
+      ? 'barbell'
+      : null;
   return history.find((item) => {
     const candidate = normalizeExerciseName(item.normalizedName || item.name);
+    const candidateModality = /\bdumbbell\b/.test(candidate) ? 'dumbbell' : /\bbarbell\b/.test(candidate) ? 'barbell' : null;
+    if (expectedModality && candidateModality !== expectedModality) return false;
     return names.some((name) => candidate === name || (name.length >= 8 && candidate.includes(name)) || (candidate.length >= 8 && name.includes(candidate)));
   }) || null;
 }
@@ -177,7 +184,7 @@ function personalizeExercise(exercise, options = {}) {
     ? `${trainingWeight} lb starting load`
     : `Choose a load that leaves ${effort.rir}`;
   const loadSource = trainingWeight
-    ? `Conservative estimate from a recent ${formatWeight(history.latestWeightLbs)} lb x ${Math.max(1, Number(history.latestReps || 0))} set${history.latestLoggedAt ? ` (${String(history.latestLoggedAt).slice(0, 10)})` : ''}`
+    ? `Conservative estimate from a recent ${history.name} set: ${formatWeight(history.latestWeightLbs)} lb x ${Math.max(1, Number(history.latestReps || 0))}${history.latestLoggedAt ? ` (${String(history.latestLoggedAt).slice(0, 10)})` : ''}`
     : 'Effort calibrated; no matching logged set';
   const increment = /dumbbell|single|split|calf|raise|pull-up|push-up/i.test(exercise.name) ? '2.5-5 lb or one rep' : '5 lb or one rep';
   return {

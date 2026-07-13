@@ -324,6 +324,13 @@ check('h4: converted steady work cannot remain inside a recovery run', () => {
   assert.ok(normalized.prescription.steps.every((step) => !/steady effort/i.test(step)))
 })
 
+check('h4b: incidental moderate mobility copy does not trigger recovery repair', () => {
+  const raw = { kind: 'run', type: 'recovery', title: 'Recovery run', target_zone: 'Zone 1-2', cooldown: ['Optional moderate mobility after the walk'] }
+  const normalized = normalizeSession(raw)
+  assert.equal(normalized.adjusted, false)
+  assert.deepEqual(normalized.prescription.cooldown, raw.cooldown)
+})
+
 check('h5: unsupported legacy lift percentages fall back to honest effort calibration', () => {
   const normalized = normalizeLiftExercisePrescription({ name: 'Dumbbell bench press', load: '70-80% estimated max', rpe: '7-8' })
   assert.equal(normalized.load, 'Choose load for RPE/RIR 7-8')

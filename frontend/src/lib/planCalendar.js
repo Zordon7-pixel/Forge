@@ -184,7 +184,7 @@ function firstDefined(...values) {
 }
 
 const RECOVERY_MARKER = /(recovery|zone\s*1(?:\s*-\s*2)?|fully conversational)/i
-const HARD_WORK_MARKER = /(hill|interval|repeat|threshold|sprint|tempo|race pace|zone\s*[3-5]|hard(?:\s+but)?|comfortably steady|steady effort|moderate)/i
+const HARD_WORK_MARKER = /(hill|interval|repeat|threshold|sprint|tempo|race pace|zone\s*[3-5]|hard(?:\s+but)?|comfortably steady|steady effort|moderate\s+(?:effort|pace|run(?:ning)?|intensity))/i
 const SAFE_RECOVERY_PRESCRIPTION = {
   type: 'recovery',
   workout_type: 'recovery',
