@@ -252,35 +252,45 @@ export function buildWeekDays(weekData, weekStartDate, options = {}) {
       if (entryDate) weekdayIndex = (entryDate.getDay() + 6) % 7
     }
     if (weekdayIndex === null) weekdayIndex = entryIndex % 7
-    if (!byWeekday.has(weekdayIndex)) byWeekday.set(weekdayIndex, { entry, entryIndex })
+    const mapped = { entry, entryIndex }
+    if (byWeekday.has(weekdayIndex)) byWeekday.get(weekdayIndex).push(mapped)
+    else byWeekday.set(weekdayIndex, [mapped])
   })
 
   const days = []
   for (let slot = 0; slot < 7; slot += 1) {
-    const mapped = byWeekday.get(slot) || null
+    const mappedEntries = byWeekday.get(slot) || []
+    const mapped = mappedEntries[0] || null
     const entry = mapped?.entry || null
     const slotDate = weekStartDate ? addDays(weekStartDate, slot) : null
-    const entryDate = entry ? parseLocalDate(entry.date) : null
+    const entryDate = mappedEntries
+      .map((item) => parseLocalDate(item.entry?.date))
+      .find(Boolean) || null
     const date = entryDate || slotDate
-    const anchor = firstDefined(entry?.id, entry?.date, toISODate(date), `day-${slot}`)
 
-    let sessions = []
-    if (entry) {
-      if (isSchemaV2Entry(entry)) {
-        sessions = entry.sessions.map((raw, index) =>
-          normalizeSession(raw, { anchor, index }),
-        ).filter((session) => session.kind !== 'rest')
-      } else {
-        // Legacy flat/day entry: the entry itself is one session.
-        // Keep the backend's compliance id fallback: original entry-array index.
-        const normalized = normalizeSession(entry, {
-          anchor,
-          index: 0,
-          fallbackId: String(mapped.entryIndex),
-        })
-        if (normalized.kind !== 'rest') sessions = [normalized]
+    let sessions = mappedEntries.flatMap((item) => {
+      const rawEntry = item.entry
+      const anchor = firstDefined(
+        rawEntry?.id,
+        rawEntry?.date,
+        rawEntry?.day,
+        `day-${item.entryIndex}`,
+      )
+      if (isSchemaV2Entry(rawEntry)) {
+        return rawEntry.sessions
+          .map((raw, index) => normalizeSession(raw, { anchor, index }))
+          .filter((session) => session.kind !== 'rest')
       }
-    }
+
+      // Legacy flat/day entry: the entry itself is one session. Keep the
+      // backend's compliance id fallback: original entry-array index.
+      const normalized = normalizeSession(rawEntry, {
+        anchor,
+        index: 0,
+        fallbackId: String(item.entryIndex),
+      })
+      return normalized.kind === 'rest' ? [] : [normalized]
+    })
 
     if (runOnly) sessions = sessions.filter((session) => session.kind === 'run')
 
@@ -292,9 +302,9 @@ export function buildWeekDays(weekData, weekStartDate, options = {}) {
       date,
       sessions,
       isRest,
-      orderGuidance: firstDefined(entry?.orderGuidance, entry?.order_guidance),
-      whyToday: firstDefined(entry?.whyToday, entry?.why_today, entry?.explanation),
-      recovery: firstDefined(entry?.recovery, entry?.recoveryNote),
+      orderGuidance: firstDefined(...mappedEntries.flatMap(({ entry: item }) => [item?.orderGuidance, item?.order_guidance])),
+      whyToday: firstDefined(...mappedEntries.flatMap(({ entry: item }) => [item?.whyToday, item?.why_today, item?.explanation])),
+      recovery: firstDefined(...mappedEntries.flatMap(({ entry: item }) => [item?.recovery, item?.recoveryNote])),
       status: String(entry?.status || '').toLowerCase() || (isRest ? 'rest' : 'planned'),
       raw: entry,
     })

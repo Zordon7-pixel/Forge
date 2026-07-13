@@ -181,7 +181,7 @@ export default function ForgedDayView({
       progression: firstStr(runSession.prescription?.progression, runSession.raw?.progression),
       description: firstStr(runSession.prescription?.description, runSession.raw?.description),
     })
-    const zoneLabel = /^zone\b/i.test(f.zone) ? f.zone : `Zone ${f.zone}`
+    const zoneLabel = /^\d+$/.test(f.zone) ? `Zone ${f.zone}` : f.zone
     return (
       <PaperSection title={firstStr(runSession.title, 'Run')} tone="run" px={px}
         icon={<span className="forged-stamp forged-stamp--run" data-state={sessionState(runSession, completedSet)}><Footprints size={16} /></span>}>

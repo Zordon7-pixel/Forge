@@ -94,6 +94,17 @@ check('b2: legacy id fallback and inferred lift mode match the backend', () => {
   assert.equal(dayHasLift(model.getWeek(0).days[2]), true)
 })
 
+check('b3: duplicate legacy weekdays preserve a same-day run and lift', () => {
+  const week = { sessions: [
+    { day: 'Mon', type: 'run', title: 'Easy Run' },
+    { day: 'Mon', type: 'strength', title: 'Upper Strength' },
+  ] }
+  const days = buildWeekDays(week, WEEK_START, { runOnly: false })
+  assert.equal(days[0].sessions.length, 2)
+  assert.deepEqual(days[0].sessions.map((session) => session.id), ['0', '1'])
+  assert.equal(dayHasLift(days[0]), true)
+})
+
 // ---------------------------------------------------------------------------
 // (c) schema-v2 nested day.sessions — 0, 1, and 2 sessions
 // ---------------------------------------------------------------------------
@@ -131,6 +142,15 @@ check('c2: schema-v2 fallback ids match backend anchors and rest entries are fil
   const days = buildWeekDays(week, WEEK_START, { runOnly: false })
   assert.equal(days[0].sessions.length, 1)
   assert.equal(days[0].sessions[0].id, '2026-07-13-run-0')
+})
+
+check('c3: date-less schema-v2 fallback ids match backend weekday anchors', () => {
+  const week = { days: [{ day: 'Mon', sessions: [
+    { kind: 'run', type: 'easy' },
+    { kind: 'lift', type: 'strength' },
+  ] }] }
+  const days = buildWeekDays(week, WEEK_START, { runOnly: false })
+  assert.deepEqual(days[0].sessions.map((session) => session.id), ['Mon-run-0', 'Mon-lift-1'])
 })
 
 // ---------------------------------------------------------------------------

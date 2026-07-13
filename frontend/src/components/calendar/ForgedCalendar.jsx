@@ -96,6 +96,12 @@ export default function ForgedCalendar({
     () => (week ? week.days.find((d) => d.dateISO === todayISO) : null),
     [week, todayISO],
   )
+  const weekProgress = useMemo(() => {
+    const sessions = (week?.days || []).flatMap((day) => day.sessions || [])
+    const total = sessions.length
+    const completed = sessions.filter((session) => completedSet?.has(String(session.id))).length
+    return { total, completed, percent: total ? Math.round((completed / total) * 100) : 0 }
+  }, [week, completedSet])
 
   const handleTouchStart = (event) => { touchStartX.current = event.touches[0]?.clientX ?? null }
   const handleTouchEnd = (event) => {
@@ -148,9 +154,28 @@ export default function ForgedCalendar({
             >
               <ChevronLeft size={18} />
             </button>
-            <span className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>
-              Week {week?.weekNumber || currentWeekIndex + 1}{weekCount ? ` of ${weekCount}` : ''}
-            </span>
+            <div style={{ flex: 1, maxWidth: 180, textAlign: 'center', padding: '0 8px' }}>
+              <span className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>
+                Week {week?.weekNumber || currentWeekIndex + 1}{weekCount ? ` of ${weekCount}` : ''}
+              </span>
+              {weekProgress.total > 0 && (
+                <>
+                  <div
+                    role="progressbar"
+                    aria-label="Weekly workout completion"
+                    aria-valuemin="0"
+                    aria-valuemax="100"
+                    aria-valuenow={weekProgress.percent}
+                    style={{ height: 4, marginTop: 5, borderRadius: 4, overflow: 'hidden', background: 'var(--bg-input)' }}
+                  >
+                    <div style={{ width: `${weekProgress.percent}%`, height: '100%', background: 'var(--success)', borderRadius: 4 }} />
+                  </div>
+                  <span style={{ display: 'block', marginTop: 3, color: 'var(--text-muted)', fontSize: 10, fontWeight: 700 }}>
+                    {weekProgress.percent}% complete this week
+                  </span>
+                </>
+              )}
+            </div>
             <button
               type="button"
               onClick={onNextWeek}
