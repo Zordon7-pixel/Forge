@@ -5,8 +5,8 @@ This file holds Forge's product history, deployment notes, shipped phase log, kn
 ## Current Production
 
 - Production URL: `https://forge-production-773f.up.railway.app/`
-- Latest verified application release: commit `c40db938`, deployment `f6c0aff8-7ce1-4847-b0a8-a2dd33e1ae16`
-- Latest checked bundle: `/assets/index-CQXv4o1G.js`
+- Latest verified application release: commit `9a7f9b3e`, deployment `141a52be-e978-4de7-a5d3-51e8fb520a3a`
+- Latest checked bundle: `/assets/index-IHa1ZhZv.js`
 - iOS version/build: `1.0.5` / `15`
 - Bundle identifier: `com.zordontech.forge`
 - Expo/EAS project: `@zordon/forge-athlete` (`6aeb5fbb-2697-4cf4-b9b3-afe60c63e9e1`)
@@ -153,6 +153,15 @@ Phase 2 cleanup from this audit:
 - H8 passed 39 focused checks, H1/H3/H4/H5/H6 and legacy smokes, both dependency audits, 47-table account-data coverage, frontend build, Capacitor sync, and two independent Claude Code reviews.
 - Production verified the exact `/assets/index-CQXv4o1G.js` bundle, authenticated Army Ten-Miler and Washington DC search, `401` unauthenticated catalog access, and a 390px mobile layout without horizontal overflow. No EAS build was run.
 
+## Recent-Run Adaptive Safety H9 (2026-07-13)
+
+- New plans now use the latest meaningful run's exact distance, duration, computed pace, average heart rate, RPE, trailing seven-day volume, current Apple Health readiness metrics, and today's check-in instead of relying only on aggregate history.
+- A recent long or hard run creates a deterministic 24-72-hour protection window: no duplicate same-day run, no conflicting demanding run, and no lower-body strength inside the recovery window. Lower-body work swaps or relocates to preserve the weekly strength floor when a safe slot exists.
+- Recovery substitutions replace stale hill/interval instructions, and persisted legacy recovery sessions receive the same display-time safety guard.
+- TestFlight build 15 contains the WorkoutKit plugin class but omitted its Capacitor registration. `AppViewController` now registers `ForgeWatchWorkoutPlugin`; automatic Apple Watch delivery requires a future approved build 16, while manual entry remains available.
+- H9 passed 32 focused checks, H3/H4/H8 regression smokes, Watch diagnostics smoke, frontend build, dependency audit, 47-table account-data coverage, Capacitor sync, Swift parse, and two independent Claude Code reviews.
+- Production verified `/assets/index-IHa1ZhZv.js`, authenticated plan reads, `401` unauthenticated plan access, a 390x844 plan layout without horizontal overflow, and zero browser console errors. No EAS build was run.
+
 ## Recently Fixed Bugs
 
 Do not reintroduce these patterns.
@@ -168,6 +177,8 @@ Do not reintroduce these patterns.
 | [H2] hashFile symlink bypass (2026-03-23, commit 8bbd950e) | lib/vault.js | path.resolve() doesn't follow symlinks; fixed with fs.realpathSync() before boundary check |
 | Activity photo hijack (2026-04-29 QA fix commit) | routes/social.js | POST photo validates the parent activity owner before INSERT/UPDATE; UPDATE no longer rewrites `user_id`; invalid/missing activities are rejected |
 | Gear shoe ownership bypass | backend/src/routes/gear.js | PATCH now includes `WHERE id=? AND user_id=?` |
+| Apple Watch plugin present but unreachable in TestFlight build 15 | frontend/ios/App/App/AppViewController.swift | Native plugin instances must be registered with the Capacitor bridge; fixed for the next approved iOS build (minimum build 16) |
+| Recovery adaptation retained hill/interval steps | backend/src/lib/adaptationEngine.js, frontend/src/components/calendar/ForgedDayView.jsx | Recovery substitutions replace the full run prescription; legacy persisted sessions are normalized before display |
 | Diagnostics exposed to all users | backend/src/routes/diagnostics.js, frontend/src/components/HelpDesk.jsx | Diagnostics/heal routes require admin email allowlist; demo is denied unless explicitly allowed |
 | Auth rate limiter blocked normal profile/stat reads | backend/src/app.js | Rate limit narrowed to login/register/password-reset routes only |
 | Profile numeric fields weakly validated | frontend/src/pages/Profile.jsx, backend/src/routes/auth.js | Age, weight, max HR, weekly miles are labeled and range-limited |
@@ -215,6 +226,7 @@ These changes are already implemented, built, Capacitor-synced, and deployed to 
 | 2026-07-13 | `0faa870b-fd59-4b9a-a4f6-fb2139149691` | Success | Unified Hybrid Plan H6 simplification, migration compatibility, and AI guidance labeling verified live |
 | 2026-07-13 | `5fb0c377-aeea-43ce-83a2-aa52ad6705e5` | Success | H7 race-course intelligence, provenance trust gating, and privacy-safe GPX analysis verified live |
 | 2026-07-13 | `f6c0aff8-7ce1-4847-b0a8-a2dd33e1ae16` | Success | H8 race-first plan search, calendar setup, and resilient plan generation verified live |
+| 2026-07-13 | `141a52be-e978-4de7-a5d3-51e8fb520a3a` | Success | H9 exact recent-run adaptation, strength-floor protection, and build-aware Apple Watch diagnostics verified live |
 
 ### Build/Test Status
 
@@ -234,6 +246,7 @@ These changes are already implemented, built, Capacitor-synced, and deployed to 
 - Phase 6 admin safety smoke: demo user receives `403` from `/api/diagnostics`; unauthenticated `/api/diagnostics` and `/api/meta/build` return `401`.
 - Phase H7 production smoke: Army 10-Miler resolves to trusted curated course facts; unauthenticated race/catalog/GPX requests return `401`; signed-in mobile Races and Plan views render without horizontal overflow or console errors.
 - Phase H8 production smoke: exact bundle hash matches local build; Army Ten-Miler alias and Washington DC location searches return the canonical October 11 event; unauthenticated catalog returns `401`; mobile plan search renders at 390px without horizontal overflow.
+- Phase H9 production smoke: exact `/assets/index-IHa1ZhZv.js` bundle matches the reviewed build; authenticated plan routes return `200`, unauthenticated current-plan access returns `401`, and the plan renders at 390x844 without horizontal overflow or console errors.
 
 ### Product Changes Shipped
 
