@@ -54,6 +54,9 @@ for (const rel of aiSurfaces) {
   assert(/import AiGuidanceNote from '.*AiGuidanceNote'/.test(src), `${rel} imports the shared AiGuidanceNote`);
   assert(/<AiGuidanceNote\s*\/>/.test(src), `${rel} renders <AiGuidanceNote />`);
 }
+const insights = read('components/InsightsSheet.jsx');
+assert(/\{\(recommendation\?\.reason \|\| coachWhy\) && <AiGuidanceNote \/>\}/.test(insights), 'Today detail note requires AI recommendation/coach prose');
+assert(!/topFactors\.length[^\n]*AiGuidanceNote/.test(insights), 'deterministic health factors alone do not trigger the AI note');
 
 console.log('\n== deterministic surfaces stay note-free ==');
 // Readiness score + gear pick are rule-based/deterministic — the note must NOT be

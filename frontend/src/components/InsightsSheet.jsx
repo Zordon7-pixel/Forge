@@ -414,7 +414,7 @@ export function TodayDetailSheet({
                 Complete check-in and sync a watch to unlock the readiness explanation.
               </p>
             )}
-            {(recommendation?.reason || topFactors.length > 0 || coachWhy) && <AiGuidanceNote />}
+            {(recommendation?.reason || coachWhy) && <AiGuidanceNote />}
           </div>
         </section>
 
