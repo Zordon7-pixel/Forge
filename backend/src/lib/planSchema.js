@@ -215,6 +215,7 @@ function rescheduleSessionInWeek(week, sessionId) {
   for (let dayIndex = 0; dayIndex < entries.length; dayIndex += 1) {
     const day = entries[dayIndex] || {};
     if (!Array.isArray(day.sessions)) {
+      if (isRestEntry(day)) continue;
       if (sessionIdentifier(day, day, 0, dayIndex) === wanted) {
         sourceIndex = dayIndex;
         break;
@@ -222,7 +223,7 @@ function rescheduleSessionInWeek(week, sessionId) {
       continue;
     }
     const match = day.sessions.findIndex((session, index) => (
-      sessionIdentifier(day, session, index, dayIndex) === wanted
+      kindFromSession(session) !== 'rest' && sessionIdentifier(day, session, index, dayIndex) === wanted
     ));
     if (match >= 0) {
       sourceIndex = dayIndex;
@@ -242,8 +243,11 @@ function rescheduleSessionInWeek(week, sessionId) {
   const movedTo = target.day;
 
   if (Array.isArray(source.sessions)) {
-    const movingSession = source.sessions[sourceSessionIndex];
-    const siblingSessions = source.sessions.filter((_, index) => index !== sourceSessionIndex);
+    const normalizedSessions = source.sessions.map((session, index) => (
+      normalizeSession(session, sessionIdentifier(source, session, index, sourceIndex))
+    ));
+    const movingSession = normalizedSessions[sourceSessionIndex];
+    const siblingSessions = normalizedSessions.filter((_, index) => index !== sourceSessionIndex);
     nextEntries[sourceIndex] = toCanonicalDay(source, siblingSessions);
     nextEntries[targetIndex] = toCanonicalDay(target, [movingSession]);
   } else {
@@ -258,6 +262,7 @@ function rescheduleSessionInWeek(week, sessionId) {
       rest: true,
     });
     nextEntries[targetIndex] = Object.assign({}, source, {
+      id: source.id || wanted,
       day: target.day,
       date: target.date || source.date,
       description: `${source.description || ''} (rescheduled)`.trim(),

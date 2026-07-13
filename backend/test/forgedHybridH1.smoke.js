@@ -240,6 +240,7 @@ const idlessWeek = {
   days: [
     { day: 'Mon', type: 'easy', workout_type: 'run', distance_miles: 3, description: 'Easy run' },
     { day: 'Tue', type: 'rest', workout_type: 'rest', rest: true },
+    { day: 'Wed', type: 'rest', workout_type: 'rest', rest: true },
   ],
 };
 const firstLegacyId = schema.plannedSessionsForDay(idlessWeek.days[0], 0, '2026-07-13')[0].sessionId;
@@ -248,6 +249,10 @@ assert(firstLegacyId === '0' && secondLegacyId === firstLegacyId, 'id-less legac
 const movedLegacy = schema.rescheduleSessionInWeek(idlessWeek, firstLegacyId);
 assert(!movedLegacy.error && schema.isRestEntry(movedLegacy.week.days[0]), 'legacy reschedule leaves a rest day at the source');
 assert(Number(movedLegacy.week.days[1].distance_miles) === 3 && movedLegacy.week.days[1].day === 'Tue', 'legacy reschedule inserts the workout into the target day');
+assert(movedLegacy.week.days[1].id === firstLegacyId, 'legacy reschedule preserves the compliance session id');
+const movedLegacyAgain = schema.rescheduleSessionInWeek(movedLegacy.week, firstLegacyId);
+assert(!movedLegacyAgain.error && schema.isRestEntry(movedLegacyAgain.week.days[1]), 'legacy session can be rescheduled a second time');
+assert(movedLegacyAgain.week.days[2].id === firstLegacyId && movedLegacyAgain.week.days[2].day === 'Wed', 'second legacy move preserves identity and reaches the next rest day');
 
 // A v2 reschedule moves only the requested session and retains its sibling.
 const v2RescheduleWeek = {
@@ -275,6 +280,8 @@ const v2IdlessDay = { date: '2026-07-17', day: 'Fri', sessions: [{ kind: 'run', 
 const v2IdA = schema.plannedSessionsForDay(v2IdlessDay, 4, '2026-07-17')[0].sessionId;
 const v2IdB = schema.plannedSessionsForDay(v2IdlessDay, 4, '2026-07-17')[0].sessionId;
 assert(v2IdA === v2IdB, 'id-less v2 session fallback id is deterministic');
+const movedIdlessV2 = schema.rescheduleSessionInWeek({ days: [v2IdlessDay, { date: '2026-07-18', day: 'Sat', sessions: [] }] }, v2IdA);
+assert(schema.daySessions(movedIdlessV2.week.days[1])[0].id === v2IdA, 'id-less v2 session keeps its fallback id when first rescheduled');
 
 const idlessConversionPlan = {
   weeks: [
