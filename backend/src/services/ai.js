@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const { trustedCourseFacts } = require('../lib/concurrentPlan');
 
 const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
 const AI_MODELS = {
@@ -198,9 +199,10 @@ async function generateTrainingPlan(profile, target = null, trainingContext = nu
   const raceTargetLine = target?.raceDate || target?.distanceMiles
     ? `- Race target override: ${target.distanceMiles ? `${target.distanceMiles} miles` : 'race'} on ${target.raceDate || 'upcoming date'}${raceGoalTime}`
     : '';
-  const elevationGainFt = Number(target?.elevation_gain_ft ?? target?.elevationGainFt);
+  const courseTrust = trustedCourseFacts(target || {});
+  const elevationGainFt = courseTrust.trusted ? Number(courseTrust.facts.elevationGainFt) : NaN;
   const distanceMiles = Number(target?.distanceMiles ?? target?.distance_miles);
-  const maxAltitudeFt = Number(target?.max_altitude_ft ?? target?.maxAltitudeFt);
+  const maxAltitudeFt = courseTrust.trusted ? Number(courseTrust.facts.maxAltitudeFt) : NaN;
   const courseHilly = Number.isFinite(elevationGainFt) && elevationGainFt > 0
     ? (Number.isFinite(distanceMiles) && distanceMiles > 0 ? (elevationGainFt / distanceMiles) >= 30 : elevationGainFt >= 800)
     : false;
@@ -208,6 +210,7 @@ async function generateTrainingPlan(profile, target = null, trainingContext = nu
   const courseInstructions = [
     courseHilly ? `- Course is hilly (~${Math.round(elevationGainFt)}ft gain) — include weekly hill repeats / strength-endurance work and hill-specific long runs.` : '',
     courseHighAltitude ? `- Race is at altitude (~${Math.round(maxAltitudeFt)}ft) — add an altitude-prep note and advise arriving early / adjusting pace expectations.` : '',
+    !courseTrust.trusted ? '- Course details are unverified or stale. Use distance-only programming; do not infer course elevation, terrain, altitude, or course-specific demands from the race name.' : '',
   ].filter(Boolean).join('\n');
 
   const startDate = /^\d{4}-\d{2}-\d{2}$/.test(String(target?.startDate || '')) ? target.startDate : '';
@@ -496,7 +499,20 @@ Data: ${JSON.stringify(loadData)}
 
 async function generateRaceAdjustment({ profile, race, currentPlan }) {
   try {
-    const prompt = `Return JSON only with key weeks (array). Athlete profile: ${JSON.stringify(sanitizeObj({ goal: profile?.goal_type, weekly: profile?.weekly_miles_current, runDays: profile?.run_days_per_week }))}. Race: ${JSON.stringify(sanitizeObj(race))}. Current plan: ${JSON.stringify(sanitizeObj(currentPlan))}. Rebalance with taper starting 2 weeks out when race <= 60 days.`;
+    const courseTrust = trustedCourseFacts(race || {});
+    const safeRace = {
+      name: race?.race_name || race?.name || null,
+      date: race?.race_date || race?.raceDate || null,
+      distanceMiles: Number(race?.distance_miles ?? race?.distanceMiles) || null,
+      goalTimeSeconds: Number(race?.goal_time_seconds ?? race?.goalTimeSeconds) || null,
+      course: courseTrust.trusted
+        ? { state: courseTrust.state, provenance: courseTrust.provenance, ...courseTrust.facts }
+        : { state: courseTrust.state, provenance: courseTrust.provenance },
+    };
+    const courseRule = courseTrust.trusted
+      ? 'Use only the supplied structured course facts; do not add new elevation, terrain, or altitude claims.'
+      : 'Course details are unverified or stale. Keep this distance-only and do not infer course-specific hills, terrain, elevation, or altitude from the race name.';
+    const prompt = `Return JSON only with key weeks (array). Athlete profile: ${JSON.stringify(sanitizeObj({ goal: profile?.goal_type, weekly: profile?.weekly_miles_current, runDays: profile?.run_days_per_week }))}. Race: ${JSON.stringify(sanitizeObj(safeRace))}. Current plan: ${JSON.stringify(sanitizeObj(currentPlan))}. ${courseRule} Rebalance with taper starting 2 weeks out when race <= 60 days.`;
     const msg = await getClient().messages.create({
       model: 'frequent',
       max_tokens: 700,
@@ -504,8 +520,14 @@ async function generateRaceAdjustment({ profile, race, currentPlan }) {
     });
     const text = msg.content?.[0]?.text || '{}';
     const jsonMatch = text.match(/\{[\s\S]*\}/);
-    return jsonMatch ? JSON.parse(jsonMatch[0]) : null;
-  } catch {
+    const result = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+    if (!courseTrust.trusted && result && /(course-specific|race hills?|course elevation|altitude prep)/i.test(JSON.stringify(result))) {
+      console.error('[ai/race-adjustment] rejected unsupported course claim');
+      return null;
+    }
+    return result;
+  } catch (err) {
+    console.error('[ai/race-adjustment] failed:', err.message);
     return null;
   }
 }

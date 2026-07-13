@@ -3,6 +3,7 @@
 
 const engine = require('../src/lib/concurrentPlan');
 const schema = require('../src/lib/planSchema');
+const raceCourse = require('../src/lib/raceCourse');
 
 let passed = 0;
 let failed = 0;
@@ -42,6 +43,17 @@ function context(mode, overrides = {}) {
 
 function allSessions(plan) {
   return plan.weeks.flatMap((week) => week.days.flatMap((day) => day.sessions));
+}
+
+function trustedCourseEnvelope({ id, name, raceDate, elevationGainFt }) {
+  return JSON.stringify(raceCourse.buildCatalogCourseEnvelope({
+    id,
+    name,
+    race_date: raceDate,
+    elevation_gain_ft: elevationGainFt,
+    terrain: 'road',
+    source: 'H3 fixture',
+  }, { asOf: '2026-07-13T00:00:00.000Z', provenance: 'curated' }));
 }
 
 function liftSetVolume(plan, weekIndex = 0) {
@@ -140,7 +152,16 @@ const shiftedValidation = engine.validateConcurrentPlan(shiftedCalendar, raceCon
 assert(!shiftedValidation.valid && shiftedValidation.errors.some((error) => /startDate must be 2026-07-13/.test(error)), 'validator rejects a shifted calendar anchor');
 
 const hillyContext = context('run_only', {
-  target: { weeks: 13, startDate: '2026-07-13', raceDate: '2026-10-11', raceName: 'Hilly Ten-Miler', distanceMiles: 10, elevation_gain_ft: 1200 },
+  target: {
+    weeks: 13,
+    startDate: '2026-07-13',
+    raceDate: '2026-10-11',
+    raceName: 'Hilly Ten-Miler',
+    distanceMiles: 10,
+    elevation_gain_ft: 1200,
+    source: 'H3 fixture',
+    course_profile_json: trustedCourseEnvelope({ id: 'hilly-ten-2026-10-11', name: 'Hilly Ten-Miler', raceDate: '2026-10-11', elevationGainFt: 1200 }),
+  },
 });
 const hillyPlan = engine.buildConcurrentPlan(hillyContext);
 assert(engine.validateConcurrentPlan(hillyPlan, hillyContext).valid, 'deterministic hilly race plan validates');
@@ -173,7 +194,18 @@ assert(allSessions(customDistancePlan).some((session) => session.type === 'race'
 assert(engine.racePlanWindow('2026-07-11', '2026-07-12') === null, 'past race date is rejected before generation');
 
 const oneWeekHillyContext = context('run_only', {
-  target: { weeks: 1, startDate: '2026-07-13', raceDate: '2026-07-19', raceName: 'Immediate hilly race', distanceMiles: 10, elevation_gain_ft: 1000, trainingDays: ['Sun'], runDaysPerWeek: 1 },
+  target: {
+    weeks: 1,
+    startDate: '2026-07-13',
+    raceDate: '2026-07-19',
+    raceName: 'Immediate hilly race',
+    distanceMiles: 10,
+    elevation_gain_ft: 1000,
+    source: 'H3 fixture',
+    course_profile_json: trustedCourseEnvelope({ id: 'immediate-hilly-2026-07-19', name: 'Immediate hilly race', raceDate: '2026-07-19', elevationGainFt: 1000 }),
+    trainingDays: ['Sun'],
+    runDaysPerWeek: 1,
+  },
 });
 assert(engine.validateConcurrentPlan(engine.buildConcurrentPlan(oneWeekHillyContext), oneWeekHillyContext).valid, 'one-week hilly race remains feasible without inventing a prep session');
 

@@ -60,6 +60,8 @@ const GPX_MAX_BYTES = 2 * 1024 * 1024; // 2 MB
 const GPX_MAX_POINTS = 60000;
 const GPX_MIN_POINTS = 10;
 const ELEV_NOISE_FT = 10; // ignore cumulative gains below this threshold (noise)
+const TERRAIN_KINDS = new Set(['road', 'trail', 'track', 'mixed']);
+const CATALOG_DISTANCE_TOLERANCE_MILES = 0.2;
 const LAT_MIN = -90;
 const LAT_MAX = 90;
 const LNG_MIN = -180;
@@ -68,6 +70,7 @@ const ELEV_MIN_M = -500;
 const ELEV_MAX_M = 9000;
 
 function numberOrNull(value) {
+  if (value === null || value === undefined || (typeof value === 'string' && value.trim() === '')) return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
@@ -105,6 +108,29 @@ function normalizeRaceName(name) {
   return cleaned;
 }
 
+function normalizeRaceLocation(value) {
+  if (value === null || value === undefined) return '';
+  return String(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\b(united states of america|united states|usa|us)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/\b([a-z])\s+([a-z])\b/g, '$1$2')
+    .trim();
+}
+
+function catalogLocation(row = {}) {
+  return normalizeRaceLocation([row.city, row.state, row.country].filter(Boolean).join(' '));
+}
+
+function locationMatches(row, requestedLocation) {
+  const target = normalizeRaceLocation(requestedLocation);
+  if (!target) return true;
+  const candidate = catalogLocation(row);
+  if (!candidate) return false;
+  return candidate === target || candidate.includes(target) || target.includes(candidate);
+}
+
 // Canonical event id: strip a trailing ISO date from a catalog id so multiple
 // dated editions share one canonical event family.
 function canonicalEventIdFromCatalogId(catalogId) {
@@ -128,7 +154,7 @@ function editionYear(dateISO) {
 // - Otherwise match by normalized name. If multiple editions match, require an
 //   unambiguous edition disambiguator (exact date, else year, else distance).
 // - Never silently pick a nearest race or a different edition.
-function resolveCatalogRace({ catalog, id, name, date, distanceMiles } = {}) {
+function resolveCatalogRace({ catalog, id, name, date, distanceMiles, location } = {}) {
   const rows = Array.isArray(catalog) ? catalog : [];
 
   if (id) {
@@ -140,47 +166,40 @@ function resolveCatalogRace({ catalog, id, name, date, distanceMiles } = {}) {
   const targetName = normalizeRaceName(name);
   if (!targetName) return { status: 'unknown', race: null, reason: 'no_name', candidates: [] };
 
+  const hasDistance = distanceMiles !== undefined && distanceMiles !== null && distanceMiles !== '';
+  const targetDistance = hasDistance ? numberOrNull(distanceMiles) : null;
+  if (hasDistance && (targetDistance === null || targetDistance <= 0)) {
+    return { status: 'unknown', race: null, reason: 'invalid_distance', candidates: [] };
+  }
+
   const nameMatches = rows.filter((row) => normalizeRaceName(row.name) === targetName);
   if (nameMatches.length === 0) {
     return { status: 'unknown', race: null, reason: 'no_name_match', candidates: [] };
   }
-  if (nameMatches.length === 1) {
-    const only = nameMatches[0];
-    // A lone name match still must not contradict an explicit date/year.
-    if (date && only.race_date && String(only.race_date) !== String(date)) {
-      const wantYear = editionYear(date);
-      const gotYear = editionYear(only.race_date);
-      if (wantYear && gotYear && wantYear !== gotYear) {
-        return { status: 'unknown', race: null, reason: 'edition_date_mismatch', candidates: [only] };
-      }
-    }
-    if (
-      distanceMiles !== undefined && distanceMiles !== null && only.distance_miles !== undefined
-      && Math.abs(Number(only.distance_miles) - Number(distanceMiles)) > 0.75
-    ) {
-      return { status: 'unknown', race: null, reason: 'distance_mismatch', candidates: [only] };
-    }
-    return { status: 'resolved', race: only, reason: 'unique_name', candidates: [only] };
-  }
-
-  // Multiple editions: disambiguate by exact date, then year, then distance.
+  // Apply every supplied discriminator before resolving. A full date must match
+  // exactly; a same-year-but-different-day event is a different edition.
   let pool = nameMatches;
   if (date) {
     const exactDate = pool.filter((row) => String(row.race_date) === String(date));
-    if (exactDate.length === 1) return { status: 'resolved', race: exactDate[0], reason: 'name_and_date', candidates: exactDate };
-    if (exactDate.length > 1) pool = exactDate;
-    else {
-      const wantYear = editionYear(date);
-      const yearMatches = wantYear ? pool.filter((row) => editionYear(row.race_date) === wantYear) : [];
-      if (yearMatches.length === 1) return { status: 'resolved', race: yearMatches[0], reason: 'name_and_year', candidates: yearMatches };
-      if (yearMatches.length > 1) pool = yearMatches;
-      else return { status: 'ambiguous', race: null, reason: 'no_matching_edition', candidates: nameMatches };
-    }
+    if (exactDate.length === 0) return { status: 'unknown', race: null, reason: 'edition_date_mismatch', candidates: nameMatches };
+    pool = exactDate;
   }
-  if (distanceMiles !== undefined && distanceMiles !== null) {
-    const distMatches = pool.filter((row) => Math.abs(Number(row.distance_miles) - Number(distanceMiles)) <= 0.75);
-    if (distMatches.length === 1) return { status: 'resolved', race: distMatches[0], reason: 'name_and_distance', candidates: distMatches };
-    if (distMatches.length > 1) pool = distMatches;
+  if (normalizeRaceLocation(location)) {
+    const locationMatchesRows = pool.filter((row) => locationMatches(row, location));
+    if (locationMatchesRows.length === 0) return { status: 'unknown', race: null, reason: 'location_mismatch', candidates: pool };
+    pool = locationMatchesRows;
+  }
+  if (hasDistance) {
+    const distMatches = pool.filter((row) => {
+      const rowDistance = numberOrNull(row.distance_miles);
+      return rowDistance !== null && Math.abs(rowDistance - targetDistance) <= CATALOG_DISTANCE_TOLERANCE_MILES;
+    });
+    if (distMatches.length === 0) return { status: 'unknown', race: null, reason: 'distance_mismatch', candidates: pool };
+    pool = distMatches;
+  }
+  if (pool.length === 1) {
+    const reason = date ? 'name_and_date' : normalizeRaceLocation(location) ? 'name_and_location' : hasDistance ? 'name_and_distance' : 'unique_name';
+    return { status: 'resolved', race: pool[0], reason, candidates: pool };
   }
   return { status: 'ambiguous', race: null, reason: 'multiple_editions', candidates: pool };
 }
@@ -213,7 +232,10 @@ function buildCatalogCourseEnvelope(catalogRace = {}, { asOf, provenance } = {})
   const facts = {};
   const elevation = fact(numberOrNull(catalogRace.elevation_gain_ft), { source, provenance: kind, confidence: 'medium', asOf: stamp });
   const altitude = fact(numberOrNull(catalogRace.max_altitude_ft), { source, provenance: kind, confidence: 'medium', asOf: stamp });
-  const terrain = fact(catalogRace.terrain || null, { source, provenance: kind, confidence: 'medium', asOf: stamp });
+  const terrainValue = TERRAIN_KINDS.has(String(catalogRace.terrain || '').toLowerCase())
+    ? String(catalogRace.terrain).toLowerCase()
+    : null;
+  const terrain = fact(terrainValue, { source, provenance: kind, confidence: 'medium', asOf: stamp });
   if (elevation) facts.elevationGainFt = elevation;
   if (altitude) facts.maxAltitudeFt = altitude;
   if (terrain) facts.terrain = terrain;
@@ -280,9 +302,15 @@ function evaluateCourseTrust({ envelope, looseFacts, raceDate, provenance, nowIS
   let kind = 'unknown';
   if (env && PROVENANCE_KINDS.includes(env.provenance)) kind = env.provenance;
   else if (PROVENANCE_KINDS.includes(provenance)) kind = provenance;
-  else if (looseFacts && (looseFacts.source || looseFacts.url) && hasAnyLooseFact(looseFacts)) {
-    // Legacy pre-H7 catalog rows carried source/url + loose facts; treat as curated.
-    kind = 'curated';
+  const looseHasFacts = !env && hasAnyLooseFact(looseFacts);
+  const legacyStructured = looseHasFacts && (
+    (looseFacts && (looseFacts.source || looseFacts.url))
+    || TRUSTED_PROVENANCE.has(kind)
+  );
+  if (legacyStructured) {
+    // Legacy rows have no review timestamp or edition-bound provenance. Surface
+    // them as stale until the seed/migration or a user GPX creates an envelope.
+    if (kind === 'unknown') kind = 'curated';
     reasons.push('legacy_curated_inference');
   }
 
@@ -294,6 +322,11 @@ function evaluateCourseTrust({ envelope, looseFacts, raceDate, provenance, nowIS
     return { trusted: false, state: COURSE_STATES.DISTANCE_ONLY, label: STATE_LABELS.distance_only, provenance: kind, facts: {}, reasons };
   }
 
+  if (legacyStructured) {
+    reasons.push('missing_freshness');
+    return { trusted: false, state: COURSE_STATES.STALE, label: STATE_LABELS.stale, provenance: kind, facts: {}, reasons };
+  }
+
   // Edition / freshness gating.
   if (env) {
     if (env.editionDate && raceDate && String(env.editionDate) !== String(raceDate)) {
@@ -302,12 +335,14 @@ function evaluateCourseTrust({ envelope, looseFacts, raceDate, provenance, nowIS
     }
     const asOf = env.freshness && env.freshness.asOf;
     const staleAfter = Number(env.freshness && env.freshness.staleAfterDays) || DEFAULT_STALE_AFTER_DAYS;
-    if (asOf) {
-      const age = daysBetween(asOf, now);
-      if (age !== null && age > staleAfter) {
-        reasons.push('facts_stale');
-        return { trusted: false, state: COURSE_STATES.STALE, label: STATE_LABELS.stale, provenance: kind, facts: {}, reasons };
-      }
+    if (!asOf) {
+      reasons.push('missing_freshness');
+      return { trusted: false, state: COURSE_STATES.STALE, label: STATE_LABELS.stale, provenance: kind, facts: {}, reasons };
+    }
+    const age = daysBetween(asOf, now);
+    if (age === null || age > staleAfter) {
+      reasons.push(age === null ? 'invalid_freshness' : 'facts_stale');
+      return { trusted: false, state: COURSE_STATES.STALE, label: STATE_LABELS.stale, provenance: kind, facts: {}, reasons };
     }
   }
 
@@ -333,10 +368,24 @@ function hasAnyLooseFact(looseFacts = {}) {
 
 function factsFromEnvelope(env) {
   const facts = env && env.facts ? env.facts : {};
+  const readTrustedFact = (entry, type) => {
+    if (!isPlainObject(entry)) return null;
+    if (!TRUSTED_PROVENANCE.has(entry.provenance)) return null;
+    if (!['medium', 'high'].includes(String(entry.confidence || '').toLowerCase())) return null;
+    if (type === 'terrain') {
+      const value = String(entry.value || '').toLowerCase();
+      return TERRAIN_KINDS.has(value) ? value : null;
+    }
+    const value = numberOrNull(entry.value);
+    if (value === null) return null;
+    if (type === 'elevation' && (value < 0 || value > 100000)) return null;
+    if (type === 'altitude' && (value < -2000 || value > 30000)) return null;
+    return value;
+  };
   return {
-    elevationGainFt: facts.elevationGainFt ? numberOrNull(facts.elevationGainFt.value) : null,
-    maxAltitudeFt: facts.maxAltitudeFt ? numberOrNull(facts.maxAltitudeFt.value) : null,
-    terrain: facts.terrain ? (facts.terrain.value || null) : null,
+    elevationGainFt: readTrustedFact(facts.elevationGainFt, 'elevation'),
+    maxAltitudeFt: readTrustedFact(facts.maxAltitudeFt, 'altitude'),
+    terrain: readTrustedFact(facts.terrain, 'terrain'),
   };
 }
 
@@ -391,7 +440,7 @@ function collectTrackPoints(parsed) {
   for (const trk of trks) {
     for (const seg of segmentsFrom(trk)) {
       const pts = seg && seg.trkpt ? (Array.isArray(seg.trkpt) ? seg.trkpt : [seg.trkpt]) : [];
-      for (const pt of pts) points.push(pt);
+      pts.forEach((pt, index) => points.push({ point: pt, segmentStart: index === 0 }));
     }
   }
   // Fall back to route points if no track points present.
@@ -399,7 +448,7 @@ function collectTrackPoints(parsed) {
     const rtes = Array.isArray(gpx.rte) ? gpx.rte : [gpx.rte];
     for (const rte of rtes) {
       const pts = rte && rte.rtept ? (Array.isArray(rte.rtept) ? rte.rtept : [rte.rtept]) : [];
-      for (const pt of pts) points.push(pt);
+      pts.forEach((pt, index) => points.push({ point: pt, segmentStart: index === 0 }));
     }
   }
   return points;
@@ -445,8 +494,8 @@ async function analyzeGpx(input, options = {}) {
   if (rawPoints.length > maxPoints) throw new Error('gpx exceeds point limit');
 
   const coords = [];
-  for (const pt of rawPoints) {
-    const { lat, lng, ele } = pointCoords(pt);
+  for (const entry of rawPoints) {
+    const { lat, lng, ele } = pointCoords(entry.point);
     if (lat === null || lng === null) continue;
     if (lat < LAT_MIN || lat > LAT_MAX || lng < LNG_MIN || lng > LNG_MAX) {
       throw new Error('gpx contains out-of-range coordinates');
@@ -454,14 +503,14 @@ async function analyzeGpx(input, options = {}) {
     if (ele !== null && (ele < ELEV_MIN_M || ele > ELEV_MAX_M)) {
       throw new Error('gpx contains out-of-range elevation');
     }
-    coords.push({ lat, lng, ele });
+    coords.push({ lat, lng, ele, segmentStart: entry.segmentStart });
   }
   if (coords.length < GPX_MIN_POINTS) throw new Error('gpx has too few valid points');
 
   // Cumulative distance (haversine) and noise-resistant elevation gain.
   let meters = 0;
   let gainFt = 0;
-  let maxAltFt = null;
+  let maxAltFt = coords[0].ele !== null ? coords[0].ele * 3.28084 : null;
   let pendingGainFt = 0;
   let lastEleFt = coords[0].ele !== null ? coords[0].ele * 3.28084 : null;
   const METERS_PER_MILE = 1609.344;
@@ -471,11 +520,11 @@ async function analyzeGpx(input, options = {}) {
   for (let i = 1; i < coords.length; i += 1) {
     const prev = coords[i - 1];
     const cur = coords[i];
-    meters += haversineMeters(prev.lat, prev.lng, cur.lat, cur.lng);
+    if (!cur.segmentStart) meters += haversineMeters(prev.lat, prev.lng, cur.lat, cur.lng);
     if (cur.ele !== null) {
       const eleFt = cur.ele * 3.28084;
       if (maxAltFt === null || eleFt > maxAltFt) maxAltFt = eleFt;
-      if (lastEleFt !== null) {
+      if (!cur.segmentStart && lastEleFt !== null) {
         const delta = eleFt - lastEleFt;
         if (delta >= 0) {
           pendingGainFt += delta;
@@ -488,17 +537,16 @@ async function analyzeGpx(input, options = {}) {
         }
       }
       lastEleFt = eleFt;
+      if (cur.segmentStart) pendingGainFt = 0;
     }
   }
 
   const distanceMiles = Math.round((meters / METERS_PER_MILE) * 100) / 100;
+  if (distanceMiles < 0.05) throw new Error('gpx course distance is too short');
   // Build bounded distance/elevation samples (no coordinates).
-  const step = Math.max(1, Math.floor(coords.length / totalSamples));
+  const step = Math.max(1, Math.ceil(coords.length / totalSamples));
   let running = 0;
   for (let i = 0; i < coords.length; i += step) {
-    if (i > 0) {
-      // accumulate distance from previous sampled anchor cheaply
-    }
     const eleFt = coords[i].ele !== null ? Math.round(coords[i].ele * 3.28084) : null;
     profile.push({
       distanceMiles: Math.round((running / METERS_PER_MILE) * 100) / 100,
@@ -506,13 +554,16 @@ async function analyzeGpx(input, options = {}) {
     });
     // advance running distance to next sample anchor
     for (let j = i + 1; j <= Math.min(i + step, coords.length - 1); j += 1) {
-      running += haversineMeters(coords[j - 1].lat, coords[j - 1].lng, coords[j].lat, coords[j].lng);
+      if (!coords[j].segmentStart) {
+        running += haversineMeters(coords[j - 1].lat, coords[j - 1].lng, coords[j].lat, coords[j].lng);
+      }
     }
   }
 
   const elevationGainFt = Math.round(gainFt);
   const maxAltitudeFt = maxAltFt === null ? null : Math.round(maxAltFt);
-  const terrain = 'road'; // deterministic default; GPS alone cannot prove surface
+  // Coordinates alone cannot prove road/trail/track surface, so do not invent it.
+  const terrain = null;
 
   return {
     distanceMiles,
@@ -532,12 +583,17 @@ async function analyzeGpx(input, options = {}) {
 
 // Build a user_gpx envelope from an analyzeGpx() result. Stores only distance /
 // elevation samples and privacy metadata — never coordinates or start/end.
-function buildUserGpxEnvelope(analysis = {}, { asOf } = {}) {
+function buildUserGpxEnvelope(analysis = {}, { asOf, baseEnvelope, raceDate } = {}) {
   const stamp = asOf || analysis.asOf || new Date().toISOString();
+  const base = isEnvelope(baseEnvelope) ? baseEnvelope : readCourseEnvelope(baseEnvelope);
+  const prior = isEnvelope(base) ? base : null;
   const facts = {};
   const elevation = fact(numberOrNull(analysis.elevationGainFt), { source: 'user_gpx', provenance: 'user_gpx', confidence: 'medium', asOf: stamp });
   const altitude = fact(numberOrNull(analysis.maxAltitudeFt), { source: 'user_gpx', provenance: 'user_gpx', confidence: 'medium', asOf: stamp });
-  const terrain = fact(analysis.terrain || null, { source: 'user_gpx', provenance: 'user_gpx', confidence: 'low', asOf: stamp });
+  const terrainValue = TERRAIN_KINDS.has(String(analysis.terrain || '').toLowerCase())
+    ? String(analysis.terrain).toLowerCase()
+    : null;
+  const terrain = fact(terrainValue, { source: 'user_gpx', provenance: 'user_gpx', confidence: 'medium', asOf: stamp });
   if (elevation) facts.elevationGainFt = elevation;
   if (altitude) facts.maxAltitudeFt = altitude;
   if (terrain) facts.terrain = terrain;
@@ -546,21 +602,41 @@ function buildUserGpxEnvelope(analysis = {}, { asOf } = {}) {
     ? analysis.samples.map((s) => ({ distanceMiles: numberOrNull(s.distanceMiles), elevationFt: numberOrNull(s.elevationFt) }))
     : [];
 
+  const corrections = Array.isArray(prior && prior.corrections) ? prior.corrections.slice() : [];
+  if (prior && prior.provenance !== 'user_gpx') {
+    corrections.push({
+      field: 'course_source',
+      previous: prior.provenance || 'unknown',
+      next: 'user_gpx',
+      reason: 'User uploaded a course GPX',
+      source: 'user_gpx',
+      at: stamp,
+    });
+  }
+
   return {
     envelopeVersion: ENVELOPE_VERSION,
-    canonicalEventId: null,
-    editionId: null,
-    editionDate: null,
-    courseVersion: null,
+    canonicalEventId: prior?.canonicalEventId || null,
+    editionId: prior?.editionId || null,
+    editionDate: prior?.editionDate || raceDate || null,
+    courseVersion: `user-gpx:${stamp}`,
     provenance: 'user_gpx',
     source: 'user_gpx',
     url: null,
     facts,
     distanceSamples: samples,
     freshness: { asOf: stamp, staleAfterDays: DEFAULT_STALE_AFTER_DAYS },
-    corrections: [],
+    corrections,
     privacy: { containsUserGps: true, coordinatesStored: false, startEndStored: false },
   };
+}
+
+function courseDistanceMatchesRace(courseDistanceMiles, raceDistanceMiles) {
+  const courseDistance = numberOrNull(courseDistanceMiles);
+  const raceDistance = numberOrNull(raceDistanceMiles);
+  if (courseDistance === null || raceDistance === null || courseDistance <= 0 || raceDistance <= 0) return false;
+  const tolerance = Math.max(0.5, raceDistance * 0.15);
+  return Math.abs(courseDistance - raceDistance) <= tolerance;
 }
 
 // Convenience: derive one honest course-intelligence state for a race row.
@@ -612,7 +688,9 @@ module.exports = {
   GOAL_KINDS,
   GPX_MAX_BYTES,
   GPX_MAX_POINTS,
+  TERRAIN_KINDS,
   normalizeRaceName,
+  normalizeRaceLocation,
   canonicalEventIdFromCatalogId,
   editionYear,
   resolveCatalogRace,
@@ -623,6 +701,7 @@ module.exports = {
   appendCorrection,
   analyzeGpx,
   buildUserGpxEnvelope,
+  courseDistanceMatchesRace,
   courseIntelligenceForRace,
   factsFromEnvelope,
   validateGoalKind,

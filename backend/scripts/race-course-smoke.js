@@ -3,6 +3,8 @@
 // Pure, deterministic, no DB and no external network. Fixture data only.
 
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
 const raceCourse = require('../src/lib/raceCourse');
 const concurrentPlan = require('../src/lib/concurrentPlan');
 
@@ -55,6 +57,8 @@ function testResolution() {
 
   const wrongYear = raceCourse.resolveCatalogRace({ catalog, name: 'Army Ten-Miler', date: '2025-10-12', distanceMiles: 10 });
   assert.notStrictEqual(wrongYear.status, 'resolved', 'wrong year does not resolve');
+  const wrongDay = raceCourse.resolveCatalogRace({ catalog, name: 'Army Ten-Miler', date: '2026-10-12', distanceMiles: 10 });
+  assert.notStrictEqual(wrongDay.status, 'resolved', 'same-year wrong date does not resolve');
   const ambiguous = raceCourse.resolveCatalogRace({ catalog: catalogAmbiguous, name: 'Army Ten-Miler' });
   assert.strictEqual(ambiguous.status, 'ambiguous', 'multiple editions without disambiguator is ambiguous');
   const missing = raceCourse.resolveCatalogRace({ catalog, name: 'Some Race That Does Not Exist' });
@@ -62,6 +66,26 @@ function testResolution() {
   const disamb = raceCourse.resolveCatalogRace({ catalog: catalogAmbiguous, name: 'Army Ten-Miler', date: '2027-10-10' });
   assert.strictEqual(disamb.status, 'resolved', 'exact date disambiguates editions');
   assert.strictEqual(disamb.race.id, 'army-10-miler-2027-10-10');
+
+  const duplicateDate = Object.assign({}, armyRow, { id: 'army-10-miler-virginia-2026-10-11', city: 'Arlington', state: 'VA' });
+  const byLocation = raceCourse.resolveCatalogRace({
+    catalog: [armyRow, duplicateDate],
+    name: 'Army Ten-Miler',
+    date: '2026-10-11',
+    distanceMiles: 10,
+    location: 'Washington, DC',
+  });
+  assert.strictEqual(byLocation.status, 'resolved', 'location disambiguates same-name/date races');
+  assert.strictEqual(byLocation.race.id, armyRow.id, 'correct location edition selected');
+  const fifteenK = Object.assign({}, armyRow, { id: 'army-15k-2026-10-11', distance_miles: 9.3 });
+  const byExactDistance = raceCourse.resolveCatalogRace({
+    catalog: [armyRow, fifteenK],
+    name: 'Army Ten-Miler',
+    date: '2026-10-11',
+    distanceMiles: 10,
+  });
+  assert.strictEqual(byExactDistance.status, 'resolved', '10-mile and 15K editions are not conflated');
+  assert.strictEqual(byExactDistance.race.id, armyRow.id, 'distance discriminator selects the 10-mile race');
   console.log('resolution + edition gating: OK');
 }
 
@@ -96,13 +120,18 @@ function testTrustGating() {
     raceDate: '2026-10-11',
     nowISO: NOW,
   });
-  assert.strictEqual(legacy.trusted, true, 'legacy curated loose facts remain trusted');
+  assert.strictEqual(legacy.trusted, false, 'legacy loose facts without freshness are untrusted');
+  assert.strictEqual(legacy.state, raceCourse.COURSE_STATES.STALE, 'legacy loose facts are marked stale');
   console.log('trust/stale/verified gating: OK');
 }
 
 function buildGpx(points) {
   const pts = points.map((p) => `<trkpt lat="${p.lat}" lon="${p.lng}"><ele>${p.ele}</ele></trkpt>`).join('');
   return `<?xml version="1.0"?><gpx version="1.1"><trk><trkseg>${pts}</trkseg></trk></gpx>`;
+}
+function buildSegmentedGpx(segments) {
+  const xml = segments.map((points) => `<trkseg>${points.map((p) => `<trkpt lat="${p.lat}" lon="${p.lng}"><ele>${p.ele}</ele></trkpt>`).join('')}</trkseg>`).join('');
+  return `<?xml version="1.0"?><gpx version="1.1"><trk>${xml}</trk></gpx>`;
 }
 function linePoints(n) {
   const out = [];
@@ -116,6 +145,8 @@ async function testGpx() {
   const analysis = await raceCourse.analyzeGpx(buildGpx(linePoints(30)), { asOf: NOW });
   assert.ok(analysis.distanceMiles > 0, 'gpx yields positive distance');
   assert.ok(analysis.elevationGainFt >= 0, 'gpx elevation gain is non-negative');
+  assert.strictEqual(analysis.terrain, null, 'gpx does not invent surface terrain');
+  assert.ok(analysis.samples.length <= 40, 'gpx elevation profile is bounded');
   assert.strictEqual(analysis.privacy.coordinatesStored, false, 'privacy: no coordinates stored');
   assert.strictEqual(analysis.privacy.startEndStored, false, 'privacy: no start/end stored');
 
@@ -131,10 +162,21 @@ async function testGpx() {
   assert.ok(!/startLat|endLat|start_point|end_point/i.test(serialized), 'no start/end points');
   assert.strictEqual(gpxEnvelope.provenance, 'user_gpx', 'gpx envelope provenance is user_gpx');
 
+  const highFirst = linePoints(30);
+  highFirst[0].ele = 500;
+  const highFirstAnalysis = await raceCourse.analyzeGpx(buildGpx(highFirst), { asOf: NOW });
+  assert.ok(highFirstAnalysis.maxAltitudeFt >= 1640, 'first point participates in maximum altitude');
+
   await assert.rejects(() => raceCourse.analyzeGpx('not xml at all <<<', {}), /valid XML|root element/i, 'invalid XML rejected');
   await assert.rejects(() => raceCourse.analyzeGpx(buildGpx(linePoints(3)), {}), /too few/i, 'too-few-points rejected');
   const badCoords = [{ lat: 200, lng: 0, ele: 10 }, { lat: 201, lng: 0, ele: 10 }].concat(linePoints(12));
   await assert.rejects(() => raceCourse.analyzeGpx(buildGpx(badCoords), {}), /out-of-range coordinates/i, 'out-of-range coords rejected');
+  const stationary = Array.from({ length: 12 }, () => ({ lat: 38.9, lng: -77, ele: 30 }));
+  await assert.rejects(() => raceCourse.analyzeGpx(buildGpx(stationary), {}), /distance is too short/i, 'zero-distance course rejected');
+  const firstSegment = linePoints(12);
+  const secondSegment = linePoints(12).map((point) => ({ ...point, lat: point.lat + 2, lng: point.lng + 2 }));
+  const segmented = await raceCourse.analyzeGpx(buildSegmentedGpx([firstSegment, secondSegment]), { asOf: NOW });
+  assert.ok(segmented.distanceMiles < 5, 'separate GPX segments are not joined by a teleport distance');
 
   const gpxTrust = raceCourse.evaluateCourseTrust({ envelope: gpxEnvelope, raceDate: '2026-10-11', nowISO: NOW });
   assert.strictEqual(gpxTrust.state, raceCourse.COURSE_STATES.USER_GPX, 'gpx envelope is user_gpx state');
@@ -149,6 +191,19 @@ function testCorrectionHistory() {
   assert.strictEqual(env.corrections.length, 2, 'two corrections retained');
   assert.strictEqual(env.corrections[0].field, 'elevationGainFt', 'first correction preserved');
   assert.strictEqual(env.corrections[1].next, 'road/gravel', 'second correction preserved');
+
+  const gpxEnv = raceCourse.buildUserGpxEnvelope({
+    elevationGainFt: 210,
+    maxAltitudeFt: 120,
+    terrain: null,
+    samples: [],
+    asOf: NOW,
+  }, { baseEnvelope: env, raceDate: armyRow.race_date, asOf: NOW });
+  assert.strictEqual(gpxEnv.canonicalEventId, env.canonicalEventId, 'GPX keeps canonical event identity');
+  assert.strictEqual(gpxEnv.editionId, env.editionId, 'GPX keeps edition identity');
+  assert.strictEqual(gpxEnv.courseVersion, `user-gpx:${NOW}`, 'GPX records a distinct course version');
+  assert.strictEqual(gpxEnv.corrections.length, 3, 'GPX preserves history and records source replacement');
+  assert.strictEqual(gpxEnv.corrections[2].next, 'user_gpx', 'GPX source correction recorded');
   console.log('correction history: OK');
 }
 
@@ -196,6 +251,15 @@ function testPlanIntegration() {
   };
   const result = concurrentPlan.validateConcurrentPlan(fabricated, { target: fabTarget, profile: {} });
   assert.ok(result.errors.some((e) => /not supported by trusted structured data/i.test(e)), 'fabricated course facts rejected');
+
+  const clientClaim = concurrentPlan.trustedCourseFacts({
+    raceDate: '2026-10-11',
+    distanceMiles: 10,
+    elevation_gain_ft: 4000,
+    terrain: 'mountain',
+    source: 'client claim',
+  });
+  assert.strictEqual(clientClaim.trusted, false, 'raw client course claims are not trusted without an envelope');
   console.log('plan distance-only + fabrication guard: OK');
 }
 
@@ -211,7 +275,21 @@ function testUserScopedGpx() {
   assert.strictEqual(scopedGpxUpdate('race-1', 'attacker', env).updated, 0, 'other user cannot mutate GPX');
   assert.strictEqual(rows[0].course_profile_json, null, 'race unchanged after unauthorized attempt');
   assert.strictEqual(scopedGpxUpdate('race-1', 'owner', env).updated, 1, 'owner can mutate GPX');
+  const routeSource = fs.readFileSync(path.join(__dirname, '../src/routes/races.js'), 'utf8');
+  assert.match(
+    routeSource,
+    /UPDATE race_events[\s\S]*?course_profile_json[\s\S]*?WHERE id=\? AND user_id=\?/,
+    'real GPX UPDATE is scoped by race id and user id',
+  );
+  assert.ok(!/router\.post\('\/resolve'/.test(routeSource), 'unused resolver endpoint is not exposed');
   console.log('user-scoped GPX mutation: OK');
+}
+
+function testCourseDistanceGuard() {
+  assert.strictEqual(raceCourse.courseDistanceMatchesRace(10.1, 10), true, 'small GPX distance drift accepted');
+  assert.strictEqual(raceCourse.courseDistanceMatchesRace(7, 10), false, 'wrong course distance rejected');
+  assert.strictEqual(raceCourse.courseDistanceMatchesRace(null, 10), false, 'missing course distance rejected');
+  console.log('GPX race-distance guard: OK');
 }
 
 function testGoalTaxonomy() {
@@ -231,6 +309,7 @@ async function main() {
   testCorrectionHistory();
   testPlanIntegration();
   testUserScopedGpx();
+  testCourseDistanceGuard();
   testGoalTaxonomy();
   console.log('race-course-smoke: ALL PASS');
 }

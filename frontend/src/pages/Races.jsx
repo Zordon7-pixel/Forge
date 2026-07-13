@@ -39,9 +39,13 @@ function parseElevationSeries(courseProfileJson) {
 
   try {
     const parsed = typeof courseProfileJson === 'string' ? JSON.parse(courseProfileJson) : courseProfileJson
-    if (!Array.isArray(parsed)) return []
+    const values = Array.isArray(parsed)
+      ? parsed
+      : Array.isArray(parsed?.distanceSamples)
+        ? parsed.distanceSamples.map((sample) => sample?.elevationFt)
+        : []
 
-    return parsed
+    return values
       .map((value) => Number(value))
       .filter((value) => Number.isFinite(value))
   } catch {
@@ -74,9 +78,11 @@ function ElevationSparkline({ values }) {
 }
 
 function CourseStats({ race }) {
-  const elevationGain = race?.elevation_gain_ft
-  const maxAltitude = race?.max_altitude_ft
-  const terrain = race?.terrain
+  const intelligence = race?.course_intelligence
+  const facts = intelligence?.trusted ? (intelligence.facts || {}) : {}
+  const elevationGain = facts.elevationGainFt
+  const maxAltitude = facts.maxAltitudeFt
+  const terrain = facts.terrain
   const distanceMiles = Number(race?.distance_miles)
   const gainNumber = Number(elevationGain)
   const hasElevationGain = elevationGain !== null && elevationGain !== undefined && Number.isFinite(gainNumber)
@@ -85,7 +91,7 @@ function CourseStats({ race }) {
   const isHilly = hasElevationGain && (
     gainNumber >= 800 || (Number.isFinite(distanceMiles) && distanceMiles > 0 && gainNumber / distanceMiles >= 30)
   )
-  const elevationSeries = parseElevationSeries(race?.course_profile_json)
+  const elevationSeries = intelligence?.trusted ? parseElevationSeries(race?.course_profile_json) : []
 
   if (!hasElevationGain && !hasMaxAltitude && !hasTerrain && !elevationSeries.length) return null
 
@@ -156,9 +162,9 @@ function GpxUploadControl({ race, onUploaded }) {
     <div className="mt-2">
       <label className="inline-flex cursor-pointer rounded-lg px-3 py-1.5 text-xs font-bold" style={{ background: 'var(--bg-input)', color: 'var(--text-muted)', border: '1px solid var(--border-subtle)' }}>
         {uploading ? 'Analyzing...' : 'Upload course GPX'}
-        <input type="file" accept=".gpx,application/gpx+xml,text/xml" className="hidden" onChange={onPick} disabled={uploading} />
+        <input type="file" accept=".gpx,application/gpx+xml,text/xml" aria-label="Upload course GPX" className="hidden" onChange={onPick} disabled={uploading} />
       </label>
-      {note && <p className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>{note}</p>}
+      {note && <p className="mt-1 text-[11px]" role="status" aria-live="polite" style={{ color: 'var(--text-muted)' }}>{note}</p>}
     </div>
   )
 }
@@ -409,7 +415,7 @@ export default function Races() {
           }}>
             {Object.keys(DISTANCE_OPTIONS).map((k) => <option key={k}>{k}</option>)}
           </select>
-          <input type="number" step="0.1" className="rounded-lg px-3 py-2" style={{ background: 'var(--bg-input)' }} placeholder="Miles" value={form.distance_miles} onChange={(e) => setForm({ ...form, distance_miles: e.target.value })} required />
+          <input type="number" min="0.1" max="100" step="0.1" className="rounded-lg px-3 py-2" style={{ background: 'var(--bg-input)' }} placeholder="Miles" value={form.distance_miles} onChange={(e) => setForm({ ...form, distance_miles: e.target.value })} required />
         </div>
         <input className="w-full rounded-lg px-3 py-2" style={{ background: 'var(--bg-input)' }} placeholder="Location" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} />
         <input className="w-full rounded-lg px-3 py-2" style={{ background: 'var(--bg-input)' }} placeholder="Goal time (hh:mm:ss)" value={form.goal_time} onChange={(e) => setForm({ ...form, goal_time: e.target.value })} />

@@ -383,6 +383,22 @@ function courseTargetFromRace(race = {}) {
   };
 }
 
+const CLIENT_COURSE_KEYS = [
+  'elevation_gain_ft', 'elevationGainFt', 'max_altitude_ft', 'maxAltitudeFt',
+  'terrain', 'courseTerrain', 'course_profile_json', 'courseProfile',
+  'source', 'courseSource', 'url', 'courseUrl', 'provenance', 'courseProvenance',
+  'nowISO', 'todayISO',
+];
+
+// Course facts may only enter plan generation from an owned race row. A generic
+// client target can choose distance/date/preferences, but cannot self-assert a
+// trusted course envelope or manipulate freshness evaluation.
+function stripClientCourseFacts(target = {}) {
+  const safe = { ...target };
+  for (const key of CLIENT_COURSE_KEYS) delete safe[key];
+  return safe;
+}
+
 function mapType(day = {}) {
   const t = String(day.workout_type || day.type || '').toLowerCase();
   if (t.includes('rest')) return 'rest';
@@ -1710,7 +1726,7 @@ router.post('/generate', auth, requirePremium('Race Programs'), checkAiLimit('pl
   try {
     const profile = await dbGet('SELECT * FROM users WHERE id = ?', [req.user.id]);
     if (!profile) return res.status(404).json({ error: 'User not found' });
-    const requested = req.body?.target || {};
+    const requested = stripClientCourseFacts(req.body?.target || {});
     const distanceMiles = clamp(parsePositiveNumber(requested.distanceMiles ?? requested.distance_miles) || 6.2, 1, 100);
     const requestedRaceDate = /^\d{4}-\d{2}-\d{2}$/.test(String(requested.raceDate || ''))
       && !Number.isNaN(new Date(`${requested.raceDate}T12:00:00`).getTime())
@@ -1726,6 +1742,8 @@ router.post('/generate', auth, requirePremium('Race Programs'), checkAiLimit('pl
       weeks: raceWindow?.weeks || clampInt(requested.weeks, 4, 20, defaultWeeksForDistance(distanceMiles)),
       startDate,
       planMode: concurrentPlan.resolvePlanMode(profile, requested),
+      todayISO: getTodayISO(),
+      nowISO: `${getTodayISO()}T12:00:00.000Z`,
     };
     const context = await buildConcurrentContext(req.user.id, profile, target);
     const candidate = await generateTrainingPlan(profile, target, context);
@@ -1754,7 +1772,7 @@ router.post('/generate-for-race/:raceId', auth, requirePremium('Race Programs'),
     const raceWindow = concurrentPlan.racePlanWindow(race.race_date, getTodayISO());
     if (!raceWindow) return res.status(400).json({ error: 'Race date must be today or later' });
     const { startDate, weeks } = raceWindow;
-    const requested = req.body?.target || {};
+    const requested = stripClientCourseFacts(req.body?.target || {});
     const target = {
       ...requested,
       raceDate: race.race_date,
@@ -1767,6 +1785,8 @@ router.post('/generate-for-race/:raceId', auth, requirePremium('Race Programs'),
       elevation_gain_ft: race.elevation_gain_ft,
       max_altitude_ft: race.max_altitude_ft,
       terrain: race.terrain || null,
+      todayISO: getTodayISO(),
+      nowISO: `${getTodayISO()}T12:00:00.000Z`,
     };
     target.planMode = concurrentPlan.resolvePlanMode(profile, target);
     const context = await buildConcurrentContext(req.user.id, profile, target);

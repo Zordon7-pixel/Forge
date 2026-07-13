@@ -159,9 +159,25 @@ export default function Plan() {
   }
 
   const course = model?.goal?.course || myPlan?.plan_data?.goal?.course || null
-  const hasVerifiedCourse = course
-    && ['official', 'curated'].includes(String(course.provenance || '').toLowerCase())
-    && (course.source || course.url)
+  const courseProvenance = String(course?.provenance || '').toLowerCase()
+  const courseState = course?.state || (
+    ['official', 'licensed'].includes(courseProvenance)
+      ? 'verified'
+      : courseProvenance === 'curated'
+        ? 'curated'
+        : courseProvenance === 'user_gpx'
+          ? 'user_gpx'
+          : 'distance_only'
+  )
+  const courseStatus = (() => {
+    if (courseState === 'user_gpx') return 'Course data: your GPX analysis is being used; precise coordinates are not stored.'
+    if (courseState === 'stale') return 'Course data: course details are stale, so this calendar uses race date and distance only.'
+    if (courseState === 'distance_only') return 'Course data: distance only; no course elevation, terrain, or altitude assumptions are used.'
+    if (courseState === 'verified' || courseState === 'curated') {
+      return courseState === 'verified' ? 'Verified course data' : 'Curated course data'
+    }
+    return 'Course data: distance only; no course elevation, terrain, or altitude assumptions are used.'
+  })()
   const hasAdaptationChanges = adaptationProposal?.status === 'proposal'
     && (adaptationProposal?.changes || []).length > 0
     && adaptationProposal?.decisionStatus !== 'kept'
@@ -187,12 +203,12 @@ export default function Plan() {
       </div>
 
       <p className="text-xs break-words" style={{ color: 'var(--text-muted)' }}>
-        {hasVerifiedCourse ? (
+        {courseState === 'verified' || courseState === 'curated' ? (
           <>
-            Course data: {course.provenance} from{' '}
-            {course.url ? <a href={course.url} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)' }}>{course.source || course.url}</a> : (course.source || 'verified source')}.
+            {courseStatus}{course?.source || course?.url ? ' from ' : ''}
+            {course?.url ? <a href={course.url} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)' }}>{course.source || course.url}</a> : course?.source}.
           </>
-        ) : 'Course data: no verified course data; this calendar uses the race date and distance only.'}
+        ) : courseStatus}
       </p>
 
       {adaptationError && (

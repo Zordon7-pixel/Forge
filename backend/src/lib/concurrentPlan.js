@@ -307,16 +307,6 @@ function summarizeInputs(profile = {}, history = {}, recovery = {}) {
   };
 }
 
-function parseCourseProfile(value) {
-  if (value === null || value === undefined || value === '') return null;
-  if (typeof value === 'object') return value;
-  try {
-    return JSON.parse(String(value));
-  } catch {
-    return String(value).slice(0, 1000);
-  }
-}
-
 function numberOrNull(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
@@ -652,6 +642,7 @@ module.exports = {
   validateConcurrentPlan,
   selectPlanCandidate,
   buildGoalCourse,
+  trustedCourseFacts,
   goalMetadata,
   isHardRun,
 };
