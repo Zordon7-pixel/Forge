@@ -1155,7 +1155,7 @@ router.put('/my/progress', auth, async (req, res) => {
     }
 
     const result = await withTransaction(async (tx) => {
-      const row = await tx.get(`
+      const findAssigned = () => tx.get(`
         SELECT up.id, up.progress_json, up.current_week,
                tp.weeks, tp.plan_data, tp.plan_json
         FROM user_plans up
@@ -1165,7 +1165,33 @@ router.put('/my/progress', auth, async (req, res) => {
         LIMIT 1
         FOR UPDATE OF up
       `, [req.user.id]);
-      if (!row) return { notFound: true };
+      let row = await findAssigned();
+      let legacyPlanId = null;
+      if (!row) {
+        const legacy = await tx.get(`
+          SELECT tp.id AS legacy_plan_id, tp.week_start,
+                 tp.weeks, tp.plan_data, tp.plan_json
+          FROM training_plans tp
+          WHERE tp.user_id = ?
+          ORDER BY tp.created_at DESC
+          LIMIT 1
+          FOR UPDATE OF tp
+        `, [req.user.id]);
+        if (!legacy) return { notFound: true };
+
+        // The legacy-row lock serializes first completion. Recheck so a
+        // concurrent request can reuse the assignment created while waiting.
+        row = await findAssigned();
+        if (!row) {
+          legacyPlanId = legacy.legacy_plan_id;
+          row = {
+            ...legacy,
+            id: uuidv4(),
+            current_week: 1,
+            progress_json: JSON.stringify({ completedSessionIds: [] }),
+          };
+        }
+      }
 
       const parsed = parsePlan(row);
       const sessionIds = dailyExecution.collectSessionIds(parsed);
@@ -1195,6 +1221,15 @@ router.put('/my/progress', auth, async (req, res) => {
       const completed = new Set(Array.isArray(progress.completedSessionIds) ? progress.completedSessionIds.map(String) : []);
       if (completedId) completed.add(completedId);
       if (unsetId) completed.delete(unsetId);
+
+      if (legacyPlanId) {
+        const insert = await tx.run(
+          `INSERT INTO user_plans (id, user_id, plan_id, started_at, current_week, status, progress_json)
+           VALUES (?,?,?,?,?,?,?)`,
+          [row.id, req.user.id, legacyPlanId, row.week_start || getTodayISO(), 1, 'active', JSON.stringify({ completedSessionIds: [] })]
+        );
+        if (insert.changes === 0) throw new Error('Legacy plan assignment migration failed');
+      }
 
       const update = await tx.run(
         'UPDATE user_plans SET current_week = ?, progress_json = ? WHERE id = ? AND user_id = ?',
@@ -1231,6 +1266,7 @@ router.get('/today', auth, async (req, res) => {
     const selection = dailyExecution.selectDayForDate(parsed, dateISO, weekdayShort);
     const selectedEntry = selection ? selection.entry : null;
     const selectedWeek = selection ? selection.week : null;
+    const selectedDayIndex = selection ? selection.dayIndex : null;
 
     const override = await dbGet(
       'SELECT patch_json FROM checkin_overrides WHERE user_id=? AND date=?',
@@ -1276,6 +1312,7 @@ router.get('/today', auth, async (req, res) => {
       weekdayShort,
       selectedEntry: overriddenEntry,
       selectedWeek,
+      selectedDayIndex,
       completedSessionIds,
       hrProfile,
     });

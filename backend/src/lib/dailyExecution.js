@@ -106,20 +106,26 @@ function collectSessionIds(plan) {
 // Select the plan day for a given date.
 //   1. Exact schema-v2 dated day (authoritative).
 //   2. Legacy weekday match among UNDATED days only (byte-compatible fallback).
-// Returns { entry, week } or null.
+// Returns { entry, week, weekIndex, dayIndex } or null.
 function selectDayForDate(plan, dateISO, weekdayShort) {
   if (!plan || !Array.isArray(plan.weeks)) return null;
   const wanted = String(dateISO || '');
-  for (const week of plan.weeks) {
-    for (const entry of planSchema.getDayEntries(week)) {
-      if (entry && entry.date === wanted) return { entry, week };
+  for (let weekIndex = 0; weekIndex < plan.weeks.length; weekIndex += 1) {
+    const week = plan.weeks[weekIndex];
+    const days = planSchema.getDayEntries(week);
+    for (let dayIndex = 0; dayIndex < days.length; dayIndex += 1) {
+      const entry = days[dayIndex];
+      if (entry && entry.date === wanted) return { entry, week, weekIndex, dayIndex };
     }
   }
   const dow = weekdayShort || weekdayShortForDate(dateISO);
   if (dow) {
-    for (const week of plan.weeks) {
-      for (const entry of planSchema.getDayEntries(week)) {
-        if (entry && !entry.date && entry.day === dow) return { entry, week };
+    for (let weekIndex = 0; weekIndex < plan.weeks.length; weekIndex += 1) {
+      const week = plan.weeks[weekIndex];
+      const days = planSchema.getDayEntries(week);
+      for (let dayIndex = 0; dayIndex < days.length; dayIndex += 1) {
+        const entry = days[dayIndex];
+        if (entry && !entry.date && entry.day === dow) return { entry, week, weekIndex, dayIndex };
       }
     }
   }
@@ -136,6 +142,7 @@ function buildDailyExecution(opts) {
     weekdayShort,
     selectedEntry,
     selectedWeek,
+    selectedDayIndex,
     completedSessionIds,
     hrProfile,
   } = opts || {};
@@ -154,8 +161,19 @@ function buildDailyExecution(opts) {
     return { hasPlan: true, hasDay: false, date: dateISO || null, day: dow, mode, goal, isRest: false, sessions: [], run: null, lift: null };
   }
 
-  const sessions = planSchema.daySessions(selectedEntry).map((session) => {
-    const id = session.id ? String(session.id) : undefined;
+  const sourceSessions = Array.isArray(selectedEntry.sessions)
+    ? selectedEntry.sessions
+      .map((source, sourceIndex) => ({ source, sourceIndex }))
+      .filter(({ source }) => planSchema.kindFromSession(source) !== 'rest')
+    : [{ source: selectedEntry, sourceIndex: 0 }];
+  const sessions = planSchema.daySessions(selectedEntry).map((session, sessionIndex) => {
+    const source = sourceSessions[sessionIndex] || { source: session, sourceIndex: sessionIndex };
+    const id = String(session.id || planSchema.sessionIdentifier(
+      selectedEntry,
+      source.source,
+      source.sourceIndex,
+      Number.isInteger(selectedDayIndex) ? selectedDayIndex : 0
+    ));
     const out = Object.assign({}, session, id ? { id } : {}, { completed: id ? completed.has(id) : false });
     if (session.kind === 'run') {
       out.hrZone = resolveHrZone(session.target_zone, hrProfile);

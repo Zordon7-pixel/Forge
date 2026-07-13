@@ -74,6 +74,7 @@ function build(plan, dateISO, weekdayShort, completedSessionIds, hrProfile) {
     weekdayShort,
     selectedEntry: selection ? selection.entry : null,
     selectedWeek: selection ? selection.week : null,
+    selectedDayIndex: selection ? selection.dayIndex : null,
     completedSessionIds: completedSessionIds || [],
     hrProfile: hrProfile || null,
   });
@@ -137,6 +138,7 @@ assert(foreignId.run.completed === false && foreignId.lift.completed === false, 
 section('legacy plan compatibility');
 const legacyMon = build(legacyPlan, '2026-07-13', 'Mon', [], hrrProfile);
 assert(legacyMon.hasDay && !legacyMon.isRest && legacyMon.run && legacyMon.run.kind === 'run', 'legacy weekday run day resolves via weekday fallback');
+assert(legacyMon.run.id === '0', 'legacy daily execution exposes the calendar/compliance fallback session id');
 assert(legacyMon.mode === 'run_only', 'legacy run-only plan inferred as run_only');
 const legacyRest = build(legacyPlan, '2026-07-14', 'Tue', [], hrrProfile);
 assert(legacyRest.hasDay && legacyRest.isRest === true, 'legacy rest day resolves as rest');
@@ -201,16 +203,32 @@ async function runProgressRouteHarness() {
   const originalDbModule = require.cache[dbModulePath];
   const originalPlansRoute = require.cache[plansRoutePath];
   let routeRow = null;
+  let legacyRow = null;
   let selectParams = null;
   let updateParams = null;
+  let insertParams = null;
 
   const tx = {
-    get: async (_sql, params) => {
+    get: async (sql, params) => {
       selectParams = params;
-      return routeRow ? { ...routeRow } : null;
+      if (sql.includes('FROM user_plans up')) return routeRow ? { ...routeRow } : null;
+      if (sql.includes('FROM training_plans tp')) return legacyRow ? { ...legacyRow } : null;
+      return null;
     },
     all: async () => [],
-    run: async (_sql, params) => {
+    run: async (sql, params) => {
+      if (sql.includes('INSERT INTO user_plans')) {
+        insertParams = params;
+        routeRow = {
+          id: params[0],
+          current_week: params[4],
+          progress_json: params[6],
+          weeks: legacyRow.weeks,
+          plan_data: legacyRow.plan_data,
+          plan_json: legacyRow.plan_json,
+        };
+        return { changes: 1 };
+      }
       updateParams = params;
       routeRow.current_week = params[0];
       routeRow.progress_json = params[1];
@@ -259,6 +277,7 @@ async function runProgressRouteHarness() {
     });
 
     routeRow = freshRow();
+    legacyRow = null;
     updateParams = null;
     let response = await invoke({ completed_session_id: 'run-1', current_week: 1 });
     assert(response.statusCode === 200 && response.payload?.completedSessionIds?.includes('run-1'), 'valid completion returns 200 and records the plan session');
@@ -280,6 +299,30 @@ async function runProgressRouteHarness() {
     assert(response.statusCode === 400 && response.payload?.error === 'Invalid plan week', 'week above the plan length returns 400');
 
     routeRow = null;
+    legacyRow = {
+      legacy_plan_id: 'legacy-plan-h5',
+      week_start: '2026-07-13',
+      weeks: legacyPlan.weeks.length,
+      plan_data: legacyPlan,
+      plan_json: JSON.stringify(legacyPlan),
+    };
+    insertParams = null;
+    response = await invoke({ completed_session_id: 'foreign-session' });
+    assert(response.statusCode === 400 && insertParams === null, 'invalid legacy session is rejected before creating an assignment');
+
+    routeRow = null;
+    insertParams = null;
+    response = await invoke({ current_week: 0 });
+    assert(response.statusCode === 400 && insertParams === null, 'invalid legacy week is rejected before creating an assignment');
+
+    routeRow = null;
+    insertParams = null;
+    response = await invoke({ completed_session_id: '0', current_week: 1 });
+    assert(response.statusCode === 200 && response.payload?.completedSessionIds?.includes('0'), 'valid legacy completion lazily creates progress and succeeds');
+    assert(insertParams?.[1] === 'user-h5' && insertParams?.[2] === 'legacy-plan-h5', 'legacy assignment INSERT binds the user and owned plan ids');
+
+    routeRow = null;
+    legacyRow = null;
     response = await invoke({ completed_session_id: 'run-1' });
     assert(response.statusCode === 404 && response.payload?.error === 'No assigned plan', 'missing active plan returns 404');
   } finally {
