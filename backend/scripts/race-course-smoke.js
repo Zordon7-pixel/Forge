@@ -110,6 +110,11 @@ function testTrustGating() {
   assert.strictEqual(staleAge.trusted, false, 'aged facts are stale');
   assert.strictEqual(staleAge.state, raceCourse.COURSE_STATES.STALE);
 
+  const futureEnvelope = raceCourse.buildCatalogCourseEnvelope(armyRow, { asOf: '2030-01-01T00:00:00.000Z', provenance: 'curated' });
+  const futureDated = raceCourse.evaluateCourseTrust({ envelope: futureEnvelope, raceDate: '2026-10-11', nowISO: NOW });
+  assert.strictEqual(futureDated.trusted, false, 'future-dated facts are not trusted');
+  assert.ok(futureDated.reasons.includes('future_freshness'), 'future freshness reason is explicit');
+
   const officialEnv = raceCourse.buildCatalogCourseEnvelope(armyRow, { asOf: SEED_ASOF, provenance: 'official' });
   const verified = raceCourse.evaluateCourseTrust({ envelope: officialEnv, raceDate: '2026-10-11', nowISO: NOW });
   assert.strictEqual(verified.state, raceCourse.COURSE_STATES.VERIFIED, 'official is verified state');
@@ -282,6 +287,8 @@ function testUserScopedGpx() {
     'real GPX UPDATE is scoped by race id and user id',
   );
   assert.ok(!/router\.post\('\/resolve'/.test(routeSource), 'unused resolver endpoint is not exposed');
+  const plansSource = fs.readFileSync(path.join(__dirname, '../src/routes/plans.js'), 'utf8');
+  assert.match(plansSource, /!Array\.isArray\(adjusted\?\.weeks\)/, 'race adjustment reports an AI no-op instead of false success');
   console.log('user-scoped GPX mutation: OK');
 }
 

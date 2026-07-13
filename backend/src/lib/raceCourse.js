@@ -283,7 +283,7 @@ function daysBetween(aISO, bISO) {
   const a = Date.parse(aISO);
   const b = Date.parse(bISO);
   if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
-  return Math.abs(b - a) / (1000 * 60 * 60 * 24);
+  return (b - a) / (1000 * 60 * 60 * 24);
 }
 
 // Evaluate whether course facts may be trusted for training logic.
@@ -340,8 +340,8 @@ function evaluateCourseTrust({ envelope, looseFacts, raceDate, provenance, nowIS
       return { trusted: false, state: COURSE_STATES.STALE, label: STATE_LABELS.stale, provenance: kind, facts: {}, reasons };
     }
     const age = daysBetween(asOf, now);
-    if (age === null || age > staleAfter) {
-      reasons.push(age === null ? 'invalid_freshness' : 'facts_stale');
+    if (age === null || age < -1 || age > staleAfter) {
+      reasons.push(age === null ? 'invalid_freshness' : age < -1 ? 'future_freshness' : 'facts_stale');
       return { trusted: false, state: COURSE_STATES.STALE, label: STATE_LABELS.stale, provenance: kind, facts: {}, reasons };
     }
   }

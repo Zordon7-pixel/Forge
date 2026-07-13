@@ -585,9 +585,10 @@ function getPlanTargetOptions(target = null) {
       .map((day) => dayByKey[String(day || '').trim().slice(0, 3).toLowerCase()])
       .filter(Boolean))]
     : [];
-  const elevationGainFt = parsePositiveNumber(target?.elevation_gain_ft ?? target?.elevationGainFt);
+  const courseTrust = concurrentPlan.trustedCourseFacts(target || {});
+  const elevationGainFt = courseTrust.trusted ? parsePositiveNumber(courseTrust.facts.elevationGainFt) : null;
   const distanceMiles = parsePositiveNumber(target?.distanceMiles ?? target?.distance_miles);
-  const maxAltitudeFt = parsePositiveNumber(target?.max_altitude_ft ?? target?.maxAltitudeFt);
+  const maxAltitudeFt = courseTrust.trusted ? parsePositiveNumber(courseTrust.facts.maxAltitudeFt) : null;
   const courseHilly = elevationGainFt
     ? (distanceMiles ? (elevationGainFt / distanceMiles) >= 30 : elevationGainFt >= 800)
     : false;
@@ -596,7 +597,7 @@ function getPlanTargetOptions(target = null) {
     trainingDays,
     courseHilly,
     courseHighAltitude: maxAltitudeFt ? maxAltitudeFt >= 5000 : false,
-    courseTerrain: target?.terrain || null,
+    courseTerrain: courseTrust.trusted ? (courseTrust.facts.terrain || null) : null,
   };
 }
 
@@ -1495,7 +1496,10 @@ router.post('/race-adjust', auth, async (req, res) => {
 
     const parsed = parsePlan(plan.row) || { weeks: [] };
     const adjusted = await generateRaceAdjustment({ profile, race, currentPlan: parsed });
-    const nextPlan = adjusted?.weeks ? adjusted : parsed;
+    if (!Array.isArray(adjusted?.weeks) || adjusted.weeks.length === 0) {
+      return res.status(503).json({ error: 'Race adjustment is temporarily unavailable. Your current plan was not changed.' });
+    }
+    const nextPlan = adjusted;
     await withTransaction(async (tx) => {
       await updateActivePlanData(plan, req.user.id, nextPlan, tx);
     });
