@@ -90,16 +90,30 @@ function setDayEntries(week, entries) {
   return next;
 }
 
-function normalizeSession(session) {
+function sessionIdentifier(dayEntry, session, sessionIndex = 0, dayIndex = 0) {
+  const d = dayEntry || {};
+  const s = session || {};
+  if (s.id !== undefined && s.id !== null && String(s.id).length) return String(s.id);
+  if (!Array.isArray(d.sessions)) {
+    return d.id !== undefined && d.id !== null && String(d.id).length
+      ? String(d.id)
+      : String(dayIndex);
+  }
+  const anchor = d.id || d.date || d.day || `day-${dayIndex}`;
+  return `${anchor}-${kindFromSession(s)}-${sessionIndex}`;
+}
+
+function normalizeSession(session, fallbackId) {
   const s = session || {};
   const kind = kindFromSession(s);
   const prescription = s.prescription && typeof s.prescription === 'object' ? s.prescription : null;
   const flat = prescription ? Object.assign({}, prescription) : {};
+  const id = s.id !== undefined && s.id !== null && String(s.id).length
+    ? String(s.id)
+    : fallbackId;
   return Object.assign(
-    {
-      id: s.id ? String(s.id) : stableId(kind),
-      kind,
-    },
+    { kind },
+    id ? { id } : {},
     flat,
     stripUndefined({
       type: s.type,
@@ -124,11 +138,14 @@ function normalizeSession(session) {
 function daySessions(dayEntry) {
   const d = dayEntry || {};
   if (Array.isArray(d.sessions)) {
-    return d.sessions.map(normalizeSession).filter((s) => s.kind !== 'rest');
+    return d.sessions
+      .map((session, index) => normalizeSession(session, sessionIdentifier(d, session, index)))
+      .filter((s) => s.kind !== 'rest');
   }
   const kind = kindFromLegacy(d);
   if (kind === 'rest') return [];
-  return [normalizeSession(Object.assign({}, d, { kind }))];
+  const existingId = d.id !== undefined && d.id !== null && String(d.id).length ? String(d.id) : undefined;
+  return [normalizeSession(Object.assign({}, d, { kind }), existingId)];
 }
 
 function isRestEntry(dayEntry) {
@@ -177,13 +194,82 @@ function plannedSessionsForDay(dayEntry, idx, dateStr) {
   const sessions = daySessions(d);
   if (sessions.length === 0) return [];
   return sessions.map((s, sIdx) => ({
-    sessionId: s.id || (sessions.length === 1 ? (d.id || String(idx)) : idx + '-' + sIdx),
+    sessionId: sessionIdentifier(d, Array.isArray(d.sessions) ? d.sessions[sIdx] : d, sIdx, idx),
     day: d.day || ('Day ' + (idx + 1)),
     date: dateStr,
     type: s.kind === 'lift' ? 'lift' : 'run',
     distance: Number(s.distance_miles || 0),
     raw: s,
   }));
+}
+
+// Move one planned session into the next rest day without dropping a sibling
+// session. Compliance and reschedule share sessionIdentifier(), so id-less
+// legacy and v2 plans remain addressable across repeated reads.
+function rescheduleSessionInWeek(week, sessionId) {
+  const entries = getDayEntries(week);
+  const wanted = String(sessionId);
+  let sourceIndex = -1;
+  let sourceSessionIndex = -1;
+
+  for (let dayIndex = 0; dayIndex < entries.length; dayIndex += 1) {
+    const day = entries[dayIndex] || {};
+    if (!Array.isArray(day.sessions)) {
+      if (sessionIdentifier(day, day, 0, dayIndex) === wanted) {
+        sourceIndex = dayIndex;
+        break;
+      }
+      continue;
+    }
+    const match = day.sessions.findIndex((session, index) => (
+      sessionIdentifier(day, session, index, dayIndex) === wanted
+    ));
+    if (match >= 0) {
+      sourceIndex = dayIndex;
+      sourceSessionIndex = match;
+      break;
+    }
+  }
+
+  if (sourceIndex < 0) return { error: 'not_found' };
+  const targetIndex = entries.findIndex((entry, index) => index > sourceIndex && isRestEntry(entry));
+  if (targetIndex < 0) return { error: 'no_target' };
+
+  const source = entries[sourceIndex];
+  const target = entries[targetIndex];
+  const nextEntries = entries.slice();
+  const movedFrom = source.day;
+  const movedTo = target.day;
+
+  if (Array.isArray(source.sessions)) {
+    const movingSession = source.sessions[sourceSessionIndex];
+    const siblingSessions = source.sessions.filter((_, index) => index !== sourceSessionIndex);
+    nextEntries[sourceIndex] = toCanonicalDay(source, siblingSessions);
+    nextEntries[targetIndex] = toCanonicalDay(target, [movingSession]);
+  } else {
+    nextEntries[sourceIndex] = stripUndefined({
+      day: source.day,
+      date: source.date,
+      type: 'rest',
+      workout_type: 'rest',
+      distance_miles: 0,
+      duration_min: 0,
+      description: 'Rescheduled recovery day',
+      rest: true,
+    });
+    nextEntries[targetIndex] = Object.assign({}, source, {
+      day: target.day,
+      date: target.date || source.date,
+      description: `${source.description || ''} (rescheduled)`.trim(),
+      rest: false,
+    });
+  }
+
+  return {
+    week: setDayEntries(week, nextEntries),
+    movedFrom,
+    movedTo,
+  };
 }
 
 // Session-aware override merge. Identical to { ...day, ...patch } for legacy /
@@ -352,14 +438,19 @@ function toCanonicalDay(entry, sessions, sameDayRunLift) {
   const next = {
     date: e.date,
     day: e.day || weekdayFromDate(e.date),
-    sessions: sessions.map(normalizeSession),
+    sessions: sessions.map((session) => {
+      const normalized = normalizeSession(session);
+      return normalized.id ? normalized : Object.assign({}, normalized, { id: stableId(normalized.kind) });
+    }),
   };
   if (e.id !== undefined) next.id = e.id;
   if (e.status !== undefined) next.status = e.status;
-  if (sameDayRunLift && next.sessions.some((s) => s.kind === 'run') && next.sessions.some((s) => s.kind === 'lift')) {
-    next.orderGuidance = 'Run first; lift at least 6 hours later.';
-  } else if (e.orderGuidance !== undefined) {
-    next.orderGuidance = e.orderGuidance;
+  const hasRunAndLift = next.sessions.some((s) => s.kind === 'run') && next.sessions.some((s) => s.kind === 'lift');
+  if (hasRunAndLift) {
+    next.orderGuidance = sameDayRunLift
+      ? 'Run first; lift at least 6 hours later.'
+      : e.orderGuidance;
+    if (next.orderGuidance === undefined) delete next.orderGuidance;
   }
   return next;
 }
@@ -386,8 +477,10 @@ module.exports = {
   isRestEntry,
   daySessions,
   normalizeSession,
+  sessionIdentifier,
   flattenDayForConsumer,
   plannedSessionsForDay,
+  rescheduleSessionInWeek,
   applyOverrideToDay,
   isHardOrLongRun,
   buildLiftSession,

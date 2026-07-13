@@ -234,6 +234,64 @@ for (let wi = 0; wi < 13; wi += 1) {
 }
 assert(reschedTypesOk, 'reschedule day-type (rest vs non-rest) parity across all days');
 
+// Id-less legacy plans must keep the original index identifier across reads so
+// compliance output can be passed back to reschedule-missed.
+const idlessWeek = {
+  days: [
+    { day: 'Mon', type: 'easy', workout_type: 'run', distance_miles: 3, description: 'Easy run' },
+    { day: 'Tue', type: 'rest', workout_type: 'rest', rest: true },
+  ],
+};
+const firstLegacyId = schema.plannedSessionsForDay(idlessWeek.days[0], 0, '2026-07-13')[0].sessionId;
+const secondLegacyId = schema.plannedSessionsForDay(idlessWeek.days[0], 0, '2026-07-13')[0].sessionId;
+assert(firstLegacyId === '0' && secondLegacyId === firstLegacyId, 'id-less legacy compliance id is deterministic');
+const movedLegacy = schema.rescheduleSessionInWeek(idlessWeek, firstLegacyId);
+assert(!movedLegacy.error && schema.isRestEntry(movedLegacy.week.days[0]), 'legacy reschedule leaves a rest day at the source');
+assert(Number(movedLegacy.week.days[1].distance_miles) === 3 && movedLegacy.week.days[1].day === 'Tue', 'legacy reschedule inserts the workout into the target day');
+
+// A v2 reschedule moves only the requested session and retains its sibling.
+const v2RescheduleWeek = {
+  days: [
+    {
+      date: '2026-07-15', day: 'Wed',
+      orderGuidance: 'Run first; lift at least 6 hours later.',
+      sessions: [
+        { id: 'wed-run', kind: 'run', type: 'easy', distance_miles: 3 },
+        { id: 'wed-lift', kind: 'lift', type: 'strength', title: 'Lower body' },
+      ],
+    },
+    { date: '2026-07-16', day: 'Thu', sessions: [] },
+  ],
+};
+const movedV2 = schema.rescheduleSessionInWeek(v2RescheduleWeek, 'wed-run');
+assert(!movedV2.error, 'v2 session reschedule succeeds');
+assert(schema.daySessions(movedV2.week.days[0]).length === 1 && schema.daySessions(movedV2.week.days[0])[0].id === 'wed-lift', 'v2 reschedule preserves the lift sibling');
+assert(schema.daySessions(movedV2.week.days[1]).length === 1 && schema.daySessions(movedV2.week.days[1])[0].id === 'wed-run', 'v2 reschedule inserts only the requested run in the target day');
+assert(!movedV2.week.days[0].orderGuidance && !movedV2.week.days[1].orderGuidance, 'reschedule removes stale run/lift ordering guidance');
+const repeatedV2Id = schema.plannedSessionsForDay(movedV2.week.days[1], 1, '2026-07-16')[0].sessionId;
+assert(repeatedV2Id === 'wed-run', 'moved v2 session keeps its stable id');
+
+const v2IdlessDay = { date: '2026-07-17', day: 'Fri', sessions: [{ kind: 'run', type: 'easy' }] };
+const v2IdA = schema.plannedSessionsForDay(v2IdlessDay, 4, '2026-07-17')[0].sessionId;
+const v2IdB = schema.plannedSessionsForDay(v2IdlessDay, 4, '2026-07-17')[0].sessionId;
+assert(v2IdA === v2IdB, 'id-less v2 session fallback id is deterministic');
+
+const idlessConversionPlan = {
+  weeks: [
+    { days: [
+      { day: 'Mon', date: '2026-07-20', type: 'easy', workout_type: 'run' },
+      { day: 'Tue', date: '2026-07-21', type: 'rest', workout_type: 'rest', rest: true },
+    ] },
+    { days: [
+      { day: 'Mon', date: '2026-07-27', type: 'easy', workout_type: 'run' },
+      { day: 'Tue', date: '2026-07-28', type: 'rest', workout_type: 'rest', rest: true },
+    ] },
+  ],
+};
+const idlessConverted = schema.switchPlanMode(idlessConversionPlan, schema.PLAN_MODES.RUN_ONLY, { todayISO: '2026-07-01' });
+const convertedIds = idlessConverted.weeks.flatMap((week) => schema.getDayEntries(week).flatMap((day) => schema.daySessions(day).map((session) => session.id)));
+assert(convertedIds.length === new Set(convertedIds).size && convertedIds.every(Boolean), 'mode conversion assigns unique persisted ids to id-less sessions');
+
 // ---- (c) hybrid -> run_only future-only, preserving past + completed ----
 section('(c) hybrid -> run_only future-only switch');
 const todayISO_c = hybrid.weeks[2].days[2].date; // week 3 Wed

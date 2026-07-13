@@ -40,7 +40,10 @@ function parsePlan(plan) {
       return typeof plan.plan_data === 'string' ? JSON.parse(plan.plan_data) : plan.plan_data;
     }
     return typeof plan?.plan_json === 'string' ? JSON.parse(plan.plan_json) : plan?.plan_json;
-  } catch { return null; }
+  } catch (err) {
+    console.error('[plans/parsePlan] invalid plan JSON:', err.message);
+    return null;
+  }
 }
 
 function mapType(day = {}) {
@@ -171,7 +174,8 @@ function parseLifeFlags(raw) {
   try {
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
-  } catch {
+  } catch (err) {
+    console.error('[plans/parseLifeFlags] invalid JSON:', err.message);
     return [];
   }
 }
@@ -423,7 +427,10 @@ async function buildAdaptiveRecommendation(userId, preferences = {}) {
       "SELECT id, started_at, ended_at FROM workout_sessions WHERE user_id=? AND started_at >= ? AND ended_at IS NOT NULL ORDER BY started_at DESC",
       [userId, `${startDate}T00:00:00`]
     ),
-    dbGet('SELECT * FROM health_sync WHERE user_id=?', [userId]).catch(() => null),
+    dbGet('SELECT * FROM health_sync WHERE user_id=?', [userId]).catch((err) => {
+      console.error('[plans/adaptive] health sync lookup failed:', err.message);
+      return null;
+    }),
   ]);
 
   if (!user) return null;
@@ -445,7 +452,10 @@ router.get('/', auth, async (req, res) => {
     `);
     const plans = rows.map((row) => ({ ...row, plan_data: parsePlan(row) || { weeks: [] } }));
     res.json({ plans });
-  } catch (err) { res.status(500).json({ error: 'Failed to fetch plan' }); }
+  } catch (err) {
+    console.error('[plans/list] failed:', err.message);
+    res.status(500).json({ error: 'Failed to fetch plan' });
+  }
 });
 
 router.get('/adaptive/recommend', auth, async (req, res) => {
@@ -453,7 +463,8 @@ router.get('/adaptive/recommend', auth, async (req, res) => {
     const adaptive = await buildAdaptiveRecommendation(req.user.id, req.query || {});
     if (!adaptive) return res.status(404).json({ error: 'User not found' });
     res.json(adaptive);
-  } catch {
+  } catch (err) {
+    console.error('[plans/adaptive/recommend] failed:', err.message);
     res.status(500).json({ error: 'Failed to build adaptive recommendation' });
   }
 });
@@ -494,30 +505,33 @@ router.post('/adaptive/accept', auth, async (req, res) => {
     const intensityLabel = adaptive.intensity.charAt(0).toUpperCase() + adaptive.intensity.slice(1);
     const planName = `Adaptive Week - ${weekStart}`;
 
-    await dbRun("UPDATE user_plans SET status = 'inactive' WHERE user_id = ? AND status = 'active'", [req.user.id]);
-    await dbRun(
-      `INSERT INTO training_plans (id, user_id, week_start, plan_json, name, type, weeks, description, plan_data)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        planId,
-        req.user.id,
-        weekStart,
-        JSON.stringify(planData),
-        planName,
-        'Adaptive',
-        1,
-        `${intensityLabel} intensity recommendation for this week.`,
-        JSON.stringify(planData),
-      ]
-    );
-    await dbRun(
-      `INSERT INTO user_plans (id, user_id, plan_id, started_at, current_week, status, progress_json)
-       VALUES (?,?,?,?,?,?,?)`,
-      [userPlanId, req.user.id, planId, weekStart, 1, 'active', JSON.stringify({ completedSessionIds: [] })]
-    );
+    await withTransaction(async (tx) => {
+      await tx.run("UPDATE user_plans SET status = 'inactive' WHERE user_id = ? AND status = 'active'", [req.user.id]);
+      await tx.run(
+        `INSERT INTO training_plans (id, user_id, week_start, plan_json, name, type, weeks, description, plan_data)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          planId,
+          req.user.id,
+          weekStart,
+          JSON.stringify(planData),
+          planName,
+          'Adaptive',
+          1,
+          `${intensityLabel} intensity recommendation for this week.`,
+          JSON.stringify(planData),
+        ]
+      );
+      await tx.run(
+        `INSERT INTO user_plans (id, user_id, plan_id, started_at, current_week, status, progress_json)
+         VALUES (?,?,?,?,?,?,?)`,
+        [userPlanId, req.user.id, planId, weekStart, 1, 'active', JSON.stringify({ completedSessionIds: [] })]
+      );
+    });
 
     res.status(201).json({ ok: true, user_plan_id: userPlanId, plan_id: planId, ...adaptive });
-  } catch {
+  } catch (err) {
+    console.error('[plans/adaptive/accept] failed:', err.message);
     res.status(500).json({ error: 'Failed to accept adaptive plan' });
   }
 });
@@ -527,15 +541,18 @@ router.post('/assign/:planId', auth, async (req, res) => {
     const plan = await dbGet('SELECT * FROM training_plans WHERE id = ? AND user_id IS NULL', [req.params.planId]);
     if (!plan) return res.status(404).json({ error: 'Plan not found' });
 
-    await dbRun("UPDATE user_plans SET status = 'inactive' WHERE user_id = ? AND status = 'active'", [req.user.id]);
     const id = uuidv4();
-    await dbRun(
-      `INSERT INTO user_plans (id, user_id, plan_id, started_at, current_week, status, progress_json)
-       VALUES (?,?,?,?,?,?,?)`,
-      [id, req.user.id, plan.id, new Date().toISOString().slice(0, 10), 1, 'active', JSON.stringify({ completedSessionIds: [] })]
-    );
+    await withTransaction(async (tx) => {
+      await tx.run("UPDATE user_plans SET status = 'inactive' WHERE user_id = ? AND status = 'active'", [req.user.id]);
+      await tx.run(
+        `INSERT INTO user_plans (id, user_id, plan_id, started_at, current_week, status, progress_json)
+         VALUES (?,?,?,?,?,?,?)`,
+        [id, req.user.id, plan.id, new Date().toISOString().slice(0, 10), 1, 'active', JSON.stringify({ completedSessionIds: [] })]
+      );
+    });
     res.status(201).json({ ok: true, assignment_id: id });
-  } catch {
+  } catch (err) {
+    console.error('[plans/assign] failed:', err.message);
     res.status(500).json({ error: 'Failed to assign plan' });
   }
 });
@@ -553,7 +570,11 @@ router.get('/my', auth, async (req, res) => {
 
     if (!row) return res.json({ plan: null });
     let progress = {};
-    try { progress = JSON.parse(row.progress_json || '{}'); } catch {}
+    try {
+      progress = JSON.parse(row.progress_json || '{}');
+    } catch (err) {
+      console.error('[plans/my] invalid progress JSON:', err.message);
+    }
     res.json({
       plan: {
         id: row.plan_id,
@@ -571,7 +592,8 @@ router.get('/my', auth, async (req, res) => {
         progress,
       },
     });
-  } catch {
+  } catch (err) {
+    console.error('[plans/my] failed:', err.message);
     res.status(500).json({ error: 'Failed to fetch user plan' });
   }
 });
@@ -589,18 +611,24 @@ router.put('/my/progress', auth, async (req, res) => {
     if (!row) return res.status(404).json({ error: 'No assigned plan' });
 
     let progress = {};
-    try { progress = JSON.parse(row.progress_json || '{}'); } catch { progress = {}; }
+    try {
+      progress = JSON.parse(row.progress_json || '{}');
+    } catch (err) {
+      console.error('[plans/my/progress] invalid progress JSON:', err.message);
+      progress = {};
+    }
     const completed = new Set(Array.isArray(progress.completedSessionIds) ? progress.completedSessionIds : []);
     if (completed_session_id) completed.add(String(completed_session_id));
     if (unset_session_id) completed.delete(String(unset_session_id));
     const nextWeek = Number.isFinite(Number(current_week)) ? Number(current_week) : Number(row.current_week || 1);
 
     await dbRun(
-      'UPDATE user_plans SET current_week = ?, progress_json = ? WHERE id = ?',
-      [nextWeek, JSON.stringify({ ...progress, completedSessionIds: Array.from(completed) }), row.id]
+      'UPDATE user_plans SET current_week = ?, progress_json = ? WHERE id = ? AND user_id = ?',
+      [nextWeek, JSON.stringify({ ...progress, completedSessionIds: Array.from(completed) }), row.id, req.user.id]
     );
     res.json({ ok: true, current_week: nextWeek, completedSessionIds: Array.from(completed) });
-  } catch {
+  } catch (err) {
+    console.error('[plans/my/progress] failed:', err.message);
     res.status(500).json({ error: 'Failed to update progress' });
   }
 });
@@ -644,7 +672,10 @@ router.get('/current', auth, async (req, res) => {
         current_week: Number(active.row.current_week || 1),
       },
     });
-  } catch (err) { res.status(500).json({ error: 'Failed to fetch current plan' }); }
+  } catch (err) {
+    console.error('[plans/current] failed:', err.message);
+    res.status(500).json({ error: 'Failed to fetch current plan' });
+  }
 });
 
 router.get('/compliance', auth, async (req, res) => {
@@ -714,12 +745,15 @@ router.get('/compliance', auth, async (req, res) => {
     })();
 
     res.json({ week, planned, completed, score, missed, streak: { current, best }, sessions: statusItems });
-  } catch (err) { res.status(500).json({ error: 'Compliance fetch failed' }); }
+  } catch (err) {
+    console.error('[plans/compliance] failed:', err.message);
+    res.status(500).json({ error: 'Compliance fetch failed' });
+  }
 });
 
 router.post('/reschedule-missed', auth, async (req, res) => {
   try {
-    const { sessionId, originalDate } = req.body || {};
+    const { sessionId } = req.body || {};
     if (!sessionId) return res.status(400).json({ error: 'sessionId required' });
 
     const active = await getActivePlanForUser(req.user.id);
@@ -728,42 +762,17 @@ router.post('/reschedule-missed', auth, async (req, res) => {
     const parsed = parsePlan(active.row);
     const currentWeek = Math.max(0, Number(active.row.current_week || 1) - 1);
     const week = parsed?.weeks?.[currentWeek];
-    const dayList = planSchema.getDayEntries(week);
-    if (!dayList?.length) return res.status(400).json({ error: 'Invalid plan format' });
+    if (!planSchema.getDayEntries(week).length) return res.status(400).json({ error: 'Invalid plan format' });
 
-    const dayMap = { Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4, Sat: 5, Sun: 6 };
-    // Session-aware (H1): a day matches by its day-level id or by any contained
-    // session id. Legacy / run-only days keep the original id-or-index match.
-    const sourceIdx = dayList.findIndex((d, idx) => {
-      if (`${d.id || idx}` === `${sessionId}`) return true;
-      return planSchema.daySessions(d).some((s) => `${s.id}` === `${sessionId}`);
-    });
-    if (sourceIdx < 0) return res.status(404).json({ error: 'Session not found in plan' });
-
-    const source = dayList[sourceIdx];
-    let nextIdx = sourceIdx + 1;
-    while (nextIdx < dayList.length) {
-      const t = mapType(planSchema.flattenDayForConsumer(dayList[nextIdx]));
-      if (t === 'rest') break;
-      nextIdx += 1;
-    }
-    if (nextIdx >= dayList.length) nextIdx = dayList.length - 1;
-
-    const oldDay = source.day;
-    source.day = Object.keys(dayMap)[nextIdx];
-    source.description = `${source.description || ''} (rescheduled)`;
-    const restDay = { ...dayList[sourceIdx], type: 'rest', workout_type: 'rest', distance_miles: 0, description: 'Rescheduled recovery day', rest: true };
-    // For a schema-v2 day, also clear its sessions so the rest conversion is
-    // consistent across both readers; legacy days are untouched (byte-identical).
-    if (Array.isArray(dayList[sourceIdx].sessions)) restDay.sessions = [];
-    dayList[sourceIdx] = restDay;
-    if (week.days) week.days = dayList;
-    if (week.sessions) week.sessions = dayList;
+    const result = planSchema.rescheduleSessionInWeek(week, sessionId);
+    if (result.error === 'not_found') return res.status(404).json({ error: 'Session not found in plan' });
+    if (result.error === 'no_target') return res.status(409).json({ error: 'No later recovery day is available' });
+    parsed.weeks[currentWeek] = result.week;
 
     await withTransaction(async (tx) => {
       await updateActivePlanData(active, req.user.id, parsed, tx);
     });
-    res.json({ ok: true, movedFrom: oldDay, movedTo: source.day, plan: parsed, aiSuggestion: 'Week rebalanced after missed session. Keep next run easy and preserve long run.' });
+    res.json({ ok: true, movedFrom: result.movedFrom, movedTo: result.movedTo, plan: parsed, aiSuggestion: 'Week rebalanced after missed session. Keep next run easy and preserve long run.' });
   } catch (err) {
     console.error('[plans/reschedule-missed] failed:', err.message);
     res.status(500).json({ error: 'Reschedule failed' });
@@ -931,7 +940,13 @@ function enforceWeekSessionRules(week = {}, options = {}) {
   // Session-aware (H1): schema-v2 days are flattened to the legacy single-day
   // shape before the single-session enforcement logic runs. Legacy days pass
   // through unchanged (identity), so existing plans stay byte-identical.
-  const sourceDays = planSchema.getDayEntries(week).map((d) => planSchema.flattenDayForConsumer(d));
+  const sourceDays = planSchema.getDayEntries(week).map((day) => {
+    if (options.liftingEnabled === false && Array.isArray(day?.sessions)) {
+      const runSessions = planSchema.daySessions(day).filter((session) => session.kind !== 'lift');
+      return planSchema.flattenDayForConsumer(planSchema.toCanonicalDay(day, runSessions));
+    }
+    return planSchema.flattenDayForConsumer(day);
+  });
   const dayByKey = { sun: 'Sun', mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri', sat: 'Sat' };
   const sourceByDay = new Map(sourceDays
     .map((day) => [dayByKey[String(day?.day || '').trim().slice(0, 3).toLowerCase()], day])

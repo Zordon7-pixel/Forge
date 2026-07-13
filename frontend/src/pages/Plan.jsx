@@ -28,24 +28,34 @@ function sessionLabel(session = {}) {
 // Legacy plans pass straight through so existing behavior is unchanged.
 function weekSessionRows(weekData) {
   if (!weekData) return []
-  // Legacy shape: sessions[] holds one entry per calendar day.
-  if (Array.isArray(weekData.sessions) && !Array.isArray(weekData.days)) return weekData.sessions
-  const days = Array.isArray(weekData.days) ? weekData.days : []
+  const entries = Array.isArray(weekData.days)
+    ? weekData.days
+    : Array.isArray(weekData.sessions) ? weekData.sessions : []
+  // Legacy shape: week.sessions[] holds one flat entry per calendar day.
+  if (entries.length && !entries.some((entry) => Array.isArray(entry?.sessions))) {
+    return entries.map((entry, index) => ({ ...entry, id: entry.id ?? String(index) }))
+  }
   const rows = []
-  for (const day of days) {
+  for (let dayIndex = 0; dayIndex < entries.length; dayIndex += 1) {
+    const day = entries[dayIndex]
     // A schema-v2 day carries its own sessions[] of run/lift entries.
     if (!Array.isArray(day.sessions)) {
       // Legacy-shaped day nested inside a days[] array — render as-is.
-      rows.push(day)
+      rows.push({ ...day, id: day.id ?? String(dayIndex) })
       continue
     }
     if (day.sessions.length === 0) {
-      rows.push({ id: day.id || day.date || day.day, day: day.day, type: 'rest', title: 'Rest day', distance_miles: 0 })
+      rows.push({ id: day.id || day.date || day.day || String(dayIndex), day: day.day, type: 'rest', title: 'Rest day', distance_miles: 0 })
       continue
     }
-    for (const s of day.sessions) {
-      const type = s.type || (s.kind === 'lift' ? 'strength' : 'run')
-      rows.push({ ...s, id: s.id, day: day.day, type, title: s.title, distance_miles: Number(s.distance_miles || 0) })
+    for (let sessionIndex = 0; sessionIndex < day.sessions.length; sessionIndex += 1) {
+      const s = day.sessions[sessionIndex]
+      const rawKind = String(s.kind || s.workout_type || s.type || '').toLowerCase()
+      const kind = rawKind.includes('strength') || rawKind.includes('lift') || rawKind.includes('cross') ? 'lift' : 'run'
+      const type = s.type || (kind === 'lift' ? 'strength' : 'run')
+      const anchor = day.id || day.date || day.day || `day-${dayIndex}`
+      const id = s.id || `${anchor}-${kind}-${sessionIndex}`
+      rows.push({ ...s, id, day: day.day, type, title: s.title, distance_miles: Number(s.distance_miles || 0) })
     }
   }
   return rows
