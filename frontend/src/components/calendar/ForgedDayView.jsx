@@ -61,6 +61,11 @@ function runFacts(session) {
   const raw = session.raw || {}
   const miles = Number(session.distanceMiles || p.distanceMiles || p.distance_miles || raw.distance_miles || 0)
   const durationMinutes = firstStr(p.duration_min, raw.duration_min)
+  const isRecovery = /recovery|zone 1-2/i.test([session.title, session.type, p.intensity, p.target_zone, raw.intensity, raw.target_zone].filter(Boolean).join(' '))
+  const originalSteps = structuredList(p.steps || p.blocks || p.structure || raw.steps || raw.structure)
+  const steps = isRecovery && originalSteps.some((step) => /(hill|interval|repeat|threshold|sprint|hard)/i.test(step))
+    ? ['Stay in Zone 1-2', 'Keep breathing relaxed', 'Stop if soreness changes your stride']
+    : originalSteps
   return {
     purpose: firstStr(p.purpose, p.focus, raw.purpose),
     distance: miles > 0 ? `${miles.toFixed(1)} mi` : '',
@@ -69,7 +74,7 @@ function runFacts(session) {
     zone: firstStr(p.zone, p.hrZone, p.heartRateZone, p.target_zone, raw.zone, raw.target_zone),
     intensity: firstStr(p.intensity, raw.intensity),
     warmup: list(p.warmup || raw.warmup),
-    steps: structuredList(p.steps || p.blocks || p.structure || raw.steps || raw.structure),
+    steps,
     cooldown: list(p.cooldown || raw.cooldown),
     recoveries: firstStr(p.recoveries, p.recovery),
   }

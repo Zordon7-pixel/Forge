@@ -133,6 +133,7 @@ export default function Plan() {
 
   const formatEvidenceSource = (source) => {
     if (source === 'apple_health') return 'Apple Health'
+    if (source === 'recent_run') return 'Recent run'
     if (source === 'checkin') return 'Check-in'
     if (source === 'completion') return 'Completion'
     if (source === 'injury') return 'Injury'
@@ -159,6 +160,17 @@ export default function Plan() {
   }
 
   const course = model?.goal?.course || myPlan?.plan_data?.goal?.course || null
+  const planInputs = myPlan?.plan_data?.inputSummary || null
+  const recentRunInput = planInputs?.recentRun || null
+  const planInputFacts = planInputs ? [
+    `${Number(planInputs.recentRunCount || 0)} recent runs`,
+    `${Number(planInputs.recentLiftCount || 0)} recent lifts`,
+    recentRunInput?.distanceMiles
+      ? `latest ${Number(recentRunInput.distanceMiles).toFixed(1)} mi on ${recentRunInput.date}${recentRunInput.paceLabel ? ` at ${recentRunInput.paceLabel}` : ''}`
+      : null,
+    planInputs.recoveryState ? `recovery ${planInputs.recoveryState}` : null,
+    planInputs.checkin?.date ? 'today\'s check-in included' : null,
+  ].filter(Boolean) : []
   const courseProvenance = String(course?.provenance || '').toLowerCase()
   const courseState = course?.state || (
     ['official', 'licensed'].includes(courseProvenance)
@@ -344,6 +356,13 @@ export default function Plan() {
                 canPrev={currentWeek > 1 && !updating}
                 canNext={currentWeek < (weekCount || currentWeek) && !updating}
               />
+
+              {planInputFacts.length > 0 && (
+                <div className="px-1" role="note">
+                  <p className="text-xs font-bold uppercase" style={{ color: 'var(--text-muted)' }}>Built from your data</p>
+                  <p className="text-sm mt-1 break-words" style={{ color: 'var(--text-primary)' }}>{planInputFacts.join(' · ')}</p>
+                </div>
+              )}
 
               {adaptationPanel}
 

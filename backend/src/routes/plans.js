@@ -13,6 +13,7 @@ const concurrentPlan = require('../lib/concurrentPlan');
 const adaptationEngine = require('../lib/adaptationEngine');
 const dailyExecution = require('../lib/dailyExecution');
 const { getHrProfile } = require('../lib/hrZones');
+const { summarizeRecentRunLoad } = require('../lib/recentRunLoad');
 
 function getDayShort() {
   return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date().getDay()];
@@ -226,7 +227,8 @@ async function buildCompletionSummaryForAdaptation(userId, plan, active, plannin
 }
 
 async function buildAdaptationInputs(userId, plan, active, planningDateISO) {
-  const [healthRow, checkin, injuries, completion] = await Promise.all([
+  const recentRunSince = adaptationEngine.addDays(planningDateISO, -34);
+  const [healthRow, checkin, injuries, completion, recentRuns] = await Promise.all([
     dbGet('SELECT * FROM health_sync WHERE user_id=?', [userId]).catch((err) => {
       console.error('[plans/adaptation] health sync lookup failed:', err.message);
       return null;
@@ -243,12 +245,29 @@ async function buildAdaptationInputs(userId, plan, active, planningDateISO) {
       console.error('[plans/adaptation] completion summary failed:', err.message);
       return {};
     }),
+    dbAll(
+      `SELECT date, distance_miles, duration_seconds, perceived_effort, avg_heart_rate,
+              pace_avg, health_source, created_at
+       FROM runs
+       WHERE user_id=? AND date>=? AND date<=?
+       ORDER BY date ASC, created_at ASC`,
+      [userId, recentRunSince, planningDateISO]
+    ).catch((err) => {
+      console.error('[plans/adaptation] recent run lookup failed:', err.message);
+      return [];
+    }),
   ]);
   const activeInjury = Array.isArray(injuries) && injuries.length ? injuries[0] : null;
+  const healthSignals = buildAdaptationHealthSignals(healthRow, planningDateISO);
   return {
-    healthSignals: buildAdaptationHealthSignals(healthRow, planningDateISO),
+    healthSignals,
     checkin: checkin || null,
     completion,
+    recentRunLoad: summarizeRecentRunLoad(recentRuns, {
+      todayISO: planningDateISO,
+      weeklyBaseline: Number(plan?.inputSummary?.weeklyMileageBaseline || 0),
+      recoveryState: healthSignals.recoveryState,
+    }),
     injuryState: activeInjury ? {
       active: true,
       bodyPart: activeInjury.body_part,
@@ -475,12 +494,20 @@ function defaultWeeksForDistance(distanceMiles) {
 }
 
 async function buildConcurrentContext(userId, profile, target) {
+  const planningDateISO = /^\d{4}-\d{2}-\d{2}$/.test(String(target.todayISO || '')) ? target.todayISO : getTodayISO();
   const start = new Date();
   start.setHours(12, 0, 0, 0);
   start.setDate(start.getDate() - 55);
   const sinceDate = start.toISOString().slice(0, 10);
-  const [runs, lifts, recentExercises, healthRow, activeInjury] = await Promise.all([
-    dbAll('SELECT date, distance_miles FROM runs WHERE user_id=? AND date>=? ORDER BY date ASC', [userId, sinceDate]),
+  const [runs, lifts, recentExercises, healthRow, activeInjury, dailyCheckin] = await Promise.all([
+    dbAll(
+      `SELECT date, distance_miles, duration_seconds, perceived_effort, avg_heart_rate,
+              pace_avg, health_source, created_at
+       FROM runs
+       WHERE user_id=? AND date>=? AND date<=?
+       ORDER BY date ASC, created_at ASC`,
+      [userId, sinceDate, planningDateISO]
+    ),
     dbAll('SELECT started_at FROM workout_sessions WHERE user_id=? AND started_at>=? AND ended_at IS NOT NULL ORDER BY started_at ASC', [userId, `${sinceDate}T00:00:00`]),
     dbAll(
       `SELECT exercise_name, COUNT(*) AS set_count, SUM(COALESCE(reps, 0)) AS rep_count,
@@ -503,6 +530,13 @@ async function buildConcurrentContext(userId, profile, target) {
       console.error('[plans/generate] injury lookup failed:', err.message);
       return null;
     }),
+    dbGet(
+      'SELECT feeling, legs, drive, sleep_hours, time_available, life_flags, checkin_date FROM daily_checkins WHERE user_id=? AND checkin_date=?',
+      [userId, planningDateISO]
+    ).catch((err) => {
+      console.error('[plans/generate] daily check-in lookup failed:', err.message);
+      return null;
+    }),
   ]);
   const activityDates = [
     ...(runs || []).map((run) => String(run.date || '').slice(0, 10)),
@@ -517,15 +551,37 @@ async function buildConcurrentContext(userId, profile, target) {
   const completedSessions = (runs || []).length + (lifts || []).length;
   const healthSignals = buildHealthSignals(healthRow || {});
   let recoveryState = healthSignals.available ? healthSignals.recoveryState : 'unknown';
+  const checkinFlags = parseLifeFlags(dailyCheckin?.life_flags);
+  const checkinFeeling = Number(dailyCheckin?.feeling || 0);
+  const checkinSleep = dailyCheckin?.sleep_hours === null || dailyCheckin?.sleep_hours === undefined
+    ? null
+    : Number(dailyCheckin.sleep_hours);
+  const severeCheckin = checkinFeeling === 1
+    || (Number.isFinite(checkinSleep) && checkinSleep < 4.5)
+    || checkinFlags.some((flag) => ['sick', 'not_well', 'injured'].includes(flag));
+  const cautionCheckin = checkinFeeling === 2
+    || Number(dailyCheckin?.legs || 0) === 1
+    || Number(dailyCheckin?.drive || 0) === 1
+    || (Number.isFinite(checkinSleep) && checkinSleep < 6)
+    || checkinFlags.includes('stressed');
+  if (severeCheckin) recoveryState = 'low';
+  else if (cautionCheckin && !['low', 'recovery'].includes(recoveryState)) recoveryState = 'caution';
   if (activeInjury || profile.comeback_mode || String(profile.injury_notes || '').trim()) recoveryState = 'low';
+  const weeklyMileageBaseline = weeksObserved ? recentMiles / weeksObserved : Number(profile.weekly_miles_current || 0);
+  const acuteRunLoad = summarizeRecentRunLoad(runs, {
+    todayISO: planningDateISO,
+    weeklyBaseline: weeklyMileageBaseline,
+    recoveryState,
+  });
   return {
     profile,
     target,
-    todayISO: target.startDate,
+    todayISO: planningDateISO,
     history: {
-      weeklyMileageBaseline: weeksObserved ? recentMiles / weeksObserved : Number(profile.weekly_miles_current || 0),
+      weeklyMileageBaseline,
       recentRunCount: (runs || []).length,
       recentLiftCount: (lifts || []).length,
+      acuteRunLoad,
       recentExercises: (recentExercises || []).map((exercise) => ({
         name: String(exercise.exercise_name || '').slice(0, 80),
         sets: Math.max(0, Number(exercise.set_count || 0)),
@@ -538,7 +594,19 @@ async function buildConcurrentContext(userId, profile, target) {
     recovery: {
       state: recoveryState,
       available: Boolean(healthSignals.available),
+      readinessScore: healthSignals.readinessScore ?? null,
+      syncedAt: healthRow?.synced_at || null,
+      metrics: healthSignals.metrics || {},
     },
+    checkin: dailyCheckin ? {
+      date: dailyCheckin.checkin_date,
+      feeling: Number(dailyCheckin.feeling || 0) || null,
+      legs: Number(dailyCheckin.legs || 0) || null,
+      drive: Number(dailyCheckin.drive || 0) || null,
+      sleepHours: Number.isFinite(checkinSleep) ? checkinSleep : null,
+      timeAvailable: Number(dailyCheckin.time_available || 0) || null,
+      lifeFlags: checkinFlags,
+    } : null,
   };
 }
 
@@ -950,6 +1018,7 @@ router.get('/adaptation/current', auth, async (req, res) => {
       healthSignals: inputs.healthSignals,
       checkin: inputs.checkin,
       completion: inputs.completion,
+      recentRunLoad: inputs.recentRunLoad,
       injuryState: inputs.injuryState,
     });
     const persisted = await persistAdaptationProposal(req.user.id, active, planVersion, parsed, proposal);

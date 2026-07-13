@@ -273,8 +273,170 @@ function buildLiftSession({ weekNumber, day, focus, mode, phase }) {
   };
 }
 
+function dateInRange(date, start, end) {
+  return Boolean(parseISODate(date) && parseISODate(start) && parseISODate(end) && date >= start && date <= end);
+}
+
+function recoveryRunAfterRecentLoad(session, latestRun) {
+  const distance = Number(session.distance_miles || 0);
+  return {
+    ...session,
+    type: 'recovery',
+    workout_type: 'recovery',
+    title: 'Recovery run',
+    distance_miles: round(Math.max(0.5, Math.min(2, distance * 0.5))),
+    target_zone: 'Zone 1-2',
+    pace_target: 'Fully conversational; walking is allowed',
+    intensity: 'Recovery',
+    warmup: ['5 min easy walking'],
+    steps: ['Keep breathing relaxed', 'Stop if soreness changes your stride'],
+    cooldown: ['5 min easy walking', 'Hydrate and refuel'],
+    progression: 'Do not add distance today.',
+    description: `Reduced because a ${round(latestRun.distanceMiles, 1)} mi recent run already created meaningful lower-body load.`,
+    acuteLoadAdjusted: true,
+  };
+}
+
+function replaceLiftFocus(session, { weekNumber, day, focus, mode, phase }) {
+  return {
+    ...buildLiftSession({ weekNumber, day, focus, mode, phase }),
+    id: session.id,
+    acuteLoadAdjusted: true,
+  };
+}
+
+function acuteLoadMetadata(history = {}) {
+  const load = history.acuteRunLoad;
+  if (!load?.available || !load.latestRun) return null;
+  return {
+    latestRun: {
+      date: load.latestRun.date,
+      distanceMiles: load.latestRun.distanceMiles,
+      durationMinutes: load.latestRun.durationMinutes,
+      paceLabel: load.latestRun.paceLabel,
+      avgHeartRate: load.latestRun.avgHeartRate,
+      perceivedEffort: load.latestRun.perceivedEffort,
+      isLong: Boolean(load.latestRun.isLong),
+      isHard: Boolean(load.latestRun.isHard),
+    },
+    sevenDayMiles: load.sevenDayMiles,
+    loadRatio: load.loadRatio,
+    protection: load.protection || { active: false },
+  };
+}
+
+function applyAcuteRunProtection(plan, context = {}) {
+  const load = context.history?.acuteRunLoad;
+  if (!load?.protection?.active || !load.latestRun) return plan;
+  const next = JSON.parse(JSON.stringify(plan));
+  const protection = load.protection;
+  const latestDate = load.latestRun.date;
+  let changed = false;
+
+  for (const week of next.weeks || []) {
+    const days = Array.isArray(week.days) ? week.days : [];
+    let weekChanged = false;
+
+    for (const day of days) {
+      const sessions = Array.isArray(day.sessions) ? day.sessions : [];
+      const rebuilt = [];
+      for (const session of sessions) {
+        if (session.kind !== 'run' || String(session.type || '').toLowerCase() === 'race') {
+          rebuilt.push(session);
+          continue;
+        }
+        if (protection.noAdditionalRunOnDate && day.date === protection.noAdditionalRunOnDate) {
+          changed = true;
+          weekChanged = true;
+          day.status = 'adjusted';
+          day.whyToday = `Your ${round(load.latestRun.distanceMiles, 1)} mi run is already logged for today, so Forged Hybrid did not schedule a second run.`;
+          continue;
+        }
+        if (isDemandingRun(session) && dateInRange(day.date, latestDate, protection.hardRunsThrough)) {
+          rebuilt.push(recoveryRunAfterRecentLoad(session, load.latestRun));
+          changed = true;
+          weekChanged = true;
+          day.status = 'adjusted';
+          day.whyToday = `Adjusted after your ${round(load.latestRun.distanceMiles, 1)} mi run on ${latestDate}: hard running is protected through ${protection.hardRunsThrough}.`;
+          continue;
+        }
+        rebuilt.push(session);
+      }
+      day.sessions = rebuilt;
+    }
+
+    const hardIndexes = new Set();
+    days.forEach((day, index) => {
+      if ((day.sessions || []).some((session) => isHardRun(session))) hardIndexes.add(index);
+    });
+    for (let dayIndex = 0; dayIndex < days.length; dayIndex += 1) {
+      const day = days[dayIndex];
+      const lowerIndex = (day.sessions || []).findIndex((session) => session.kind === 'lift' && /lower/i.test(String(session.focus || '')));
+      if (lowerIndex < 0 || !dateInRange(day.date, latestDate, protection.lowerBodyThrough)) continue;
+      const laterDayIndex = days.findIndex((candidate, candidateIndex) => (
+        candidateIndex > dayIndex
+        && candidate.date > protection.lowerBodyThrough
+        && [...hardIndexes].every((hardIndex) => Math.abs(hardIndex - candidateIndex) > 1)
+        && (candidate.sessions || []).some((session) => session.kind === 'lift' && /upper/i.test(String(session.focus || '')))
+      ));
+      const originalLower = day.sessions[lowerIndex];
+      day.sessions[lowerIndex] = replaceLiftFocus(originalLower, {
+        weekNumber: week.week,
+        day: day.day,
+        focus: 'Upper body',
+        mode: next.planMode,
+        phase: week.phase,
+      });
+      day.status = 'adjusted';
+      day.whyToday = `Lower-body strength was moved outside the recovery window from your ${round(load.latestRun.distanceMiles, 1)} mi run.`;
+      if (laterDayIndex >= 0) {
+        const laterDay = days[laterDayIndex];
+        const upperIndex = laterDay.sessions.findIndex((session) => session.kind === 'lift' && /upper/i.test(String(session.focus || '')));
+        laterDay.sessions[upperIndex] = replaceLiftFocus(laterDay.sessions[upperIndex], {
+          weekNumber: week.week,
+          day: laterDay.day,
+          focus: 'Lower body',
+          mode: next.planMode,
+          phase: week.phase,
+        });
+        laterDay.status = 'adjusted';
+        laterDay.whyToday = `Lower-body strength moved here to protect recovery after your ${round(load.latestRun.distanceMiles, 1)} mi run.`;
+      }
+      changed = true;
+      weekChanged = true;
+    }
+
+    for (const day of days) {
+      if (!dateInRange(day.date, latestDate, protection.upperBodyOptionalThrough)) continue;
+      const upper = (day.sessions || []).find((session) => session.kind === 'lift' && /upper/i.test(String(session.focus || '')));
+      if (!upper) continue;
+      upper.description = `${upper.description} Optional after the recent run: keep this submaximal and skip it if whole-body fatigue or soreness is elevated.`;
+      upper.acuteLoadAdjusted = true;
+      day.status = 'adjusted';
+      day.whyToday = day.whyToday || `Upper-body strength is optional while you recover from the ${round(load.latestRun.distanceMiles, 1)} mi run; lower-body loading stays protected.`;
+      changed = true;
+      weekChanged = true;
+    }
+
+    week.totalMiles = round(days
+      .flatMap((day) => day.sessions || [])
+      .filter((session) => session.kind === 'run')
+      .reduce((sum, session) => sum + Number(session.distance_miles || 0), 0));
+    if (weekChanged) week.acuteLoadAdjusted = true;
+  }
+
+  if (changed) next.acuteLoadAdjustment = acuteLoadMetadata(context.history);
+  return next;
+}
+
 function isHardRun(session) {
   return session?.kind === 'run' && HARD_RUN_PATTERN.test([session.title, session.type, session.intensity, session.target_zone].filter(Boolean).join(' '));
+}
+
+function isDemandingRun(session) {
+  return isHardRun(session) || (session?.kind === 'run' && /(steady|moderate|progression|zone 2-3)/i.test(
+    [session.title, session.type, session.intensity, session.target_zone].filter(Boolean).join(' ')
+  ));
 }
 
 function chooseLiftDays(availableDays, runByDay, count) {
@@ -295,8 +457,12 @@ function chooseLiftDays(availableDays, runByDay, count) {
   return selected.map((day, index) => ({ day, focus: day === lowerDay || (!lowerDay && index === 0 && hardIndexes.size === 0) ? 'Lower body' : 'Upper body' }));
 }
 
-function summarizeInputs(profile = {}, history = {}, recovery = {}) {
+function summarizeInputs(profile = {}, history = {}, recovery = {}, checkin = null) {
   const adherence = Number(history.adherenceRate);
+  const acute = acuteLoadMetadata(history);
+  const metric = (value) => value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value))
+    ? Number(value)
+    : null;
   return {
     weeklyMileageBaseline: round(Number(history.weeklyMileageBaseline ?? profile.weekly_miles_current) || 0),
     recentRunCount: clamp(Math.round(Number(history.recentRunCount || 0)), 0, 100),
@@ -304,6 +470,24 @@ function summarizeInputs(profile = {}, history = {}, recovery = {}) {
     missedWorkouts: clamp(Math.round(Number(history.missedWorkouts || 0)), 0, 100),
     adherenceBand: Number.isFinite(adherence) ? (adherence >= 0.85 ? 'high' : adherence >= 0.65 ? 'moderate' : 'low') : 'unknown',
     recoveryState: String(recovery.state || recovery.recoveryState || 'unknown').slice(0, 20),
+    appleHealth: recovery.available ? {
+      readinessScore: metric(recovery.readinessScore),
+      sleepHoursLastNight: metric(recovery.metrics?.sleepHoursLastNight),
+      hrvMs: metric(recovery.metrics?.hrvMs),
+      restingHeartRate: metric(recovery.metrics?.restingHeartRate),
+      syncedAt: recovery.syncedAt || null,
+    } : null,
+    checkin: checkin ? {
+      date: checkin.date || null,
+      feeling: checkin.feeling || null,
+      legs: checkin.legs || null,
+      drive: checkin.drive || null,
+      sleepHours: checkin.sleepHours ?? null,
+      lifeFlags: Array.isArray(checkin.lifeFlags) ? checkin.lifeFlags.slice(0, 6) : [],
+    } : null,
+    recentRun: acute?.latestRun || null,
+    sevenDayRunMiles: acute?.sevenDayMiles ?? 0,
+    recentRunLoadRatio: acute?.loadRatio ?? null,
   };
 }
 
@@ -446,10 +630,10 @@ function buildConcurrentPlan(context = {}) {
     strengthPolicy,
     generationSource: 'deterministic',
     generationValidationErrors: [],
-    inputSummary: summarizeInputs(profile, history, recovery),
+    inputSummary: summarizeInputs(profile, history, recovery, context.checkin),
     weeks,
   };
-  return plan;
+  return applyAcuteRunProtection(plan, context);
 }
 
 function validateLift(session, path, errors) {
@@ -482,6 +666,9 @@ function validateConcurrentPlan(candidate, context = {}) {
   const hasRace = Boolean(parseISODate(target.raceDate));
   const expectedWeeks = clamp(Math.round(Number(target.weeks) || 8), hasRace ? 1 : 4, 20);
   const expectedStartDate = mondayFor(target.startDate || context.todayISO);
+  const acuteLoad = context.history?.acuteRunLoad;
+  const acuteProtection = acuteLoad?.protection?.active ? acuteLoad.protection : null;
+  const latestRunDate = acuteLoad?.latestRun?.date || null;
   if (!candidate || typeof candidate !== 'object') return { valid: false, errors: ['candidate is missing'] };
   if (Number(candidate.schemaVersion) !== planSchema.SCHEMA_VERSION) errors.push(`schemaVersion must be ${planSchema.SCHEMA_VERSION}`);
   if (candidate.planMode !== expectedMode) errors.push(`planMode must be ${expectedMode}`);
@@ -532,6 +719,13 @@ function validateConcurrentPlan(candidate, context = {}) {
           validateRun(session, sessionPath, errors);
           miles += Number(session.distance_miles || 0);
           if (isHardRun(session)) hardRunIndexes.add(dayIndex);
+          if (acuteProtection && String(session.type || '').toLowerCase() !== 'race') {
+            if (acuteProtection.noAdditionalRunOnDate && day.date === acuteProtection.noAdditionalRunOnDate) {
+              errors.push(`${sessionPath} duplicates a run already logged on ${day.date}`);
+            } else if (isDemandingRun(session) && dateInRange(day.date, latestRunDate, acuteProtection.hardRunsThrough)) {
+              errors.push(`${sessionPath} conflicts with recent-run hard-session protection through ${acuteProtection.hardRunsThrough}`);
+            }
+          }
           if (/(hill|course-specific)/i.test([session.title, session.type, session.description].filter(Boolean).join(' '))) raceSpecificSessionFound = true;
           if (String(session.type || '').toLowerCase() === 'race') {
             const exactDistance = Math.abs(Number(session.distance_miles) - Number(target.distanceMiles)) < 0.01;
@@ -542,6 +736,9 @@ function validateConcurrentPlan(candidate, context = {}) {
           lifts += 1;
           validateLift(session, sessionPath, errors);
           if (/lower/i.test(String(session.focus || ''))) lowerLiftIndexes.add(dayIndex);
+          if (acuteProtection && /lower/i.test(String(session.focus || '')) && dateInRange(day.date, latestRunDate, acuteProtection.lowerBodyThrough)) {
+            errors.push(`${sessionPath} conflicts with recent-run lower-body protection through ${acuteProtection.lowerBodyThrough}`);
+          }
         } else {
           errors.push(`${sessionPath}.kind must be run or lift`);
         }
@@ -572,7 +769,7 @@ function validateConcurrentPlan(candidate, context = {}) {
   for (let index = 1; index < weeks.length; index += 1) {
     const phase = weeks[index]?.phase;
     const previousPhase = weeks[index - 1]?.phase;
-    if (!['deload', 'taper', 'race'].includes(phase) && previousPhase !== 'deload' && weekMiles[index] > weekMiles[index - 1] * 1.11 + 0.2) {
+    if (!weeks[index - 1]?.acuteLoadAdjusted && !['deload', 'taper', 'race'].includes(phase) && previousPhase !== 'deload' && weekMiles[index] > weekMiles[index - 1] * 1.11 + 0.2) {
       errors.push(`weeks[${index}].totalMiles increases more than 10%`);
     }
     if (phase === 'deload' && weekMiles[index] >= weekMiles[index - 1] * 0.9) errors.push(`weeks[${index}] deload must reduce mileage by at least 10%`);
@@ -618,6 +815,8 @@ function selectPlanCandidate(candidate, context = {}) {
         goal: goalMetadata(context.target || {}, candidate.goal || {}),
         generationSource: 'ai_validated',
         generationValidationErrors: [],
+        inputSummary: summarizeInputs(context.profile || {}, context.history || {}, context.recovery || {}, context.checkin || null),
+        ...(context.history?.acuteRunLoad?.protection?.active ? { acuteLoadAdjustment: acuteLoadMetadata(context.history) } : {}),
       },
       source: 'ai_validated',
       validationErrors: [],
@@ -639,6 +838,7 @@ module.exports = {
   phaseForWeek,
   buildMileageTargets,
   buildConcurrentPlan,
+  applyAcuteRunProtection,
   validateConcurrentPlan,
   selectPlanCandidate,
   buildGoalCourse,

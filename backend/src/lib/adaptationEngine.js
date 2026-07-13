@@ -301,6 +301,36 @@ function buildCompletionEvidence(completion = {}) {
   };
 }
 
+function isDemandingRun(session) {
+  return isHardRun(session) || (planSchema.kindFromSession(session) === 'run' && /(steady|moderate|progression|zone 2-3)/i.test(
+    [session.title, session.type, session.intensity, session.target_zone].filter(Boolean).join(' ')
+  ));
+}
+
+function buildRecentRunEvidence(recentRunLoad = {}) {
+  const latest = recentRunLoad?.latestRun;
+  const protection = recentRunLoad?.protection;
+  if (!latest || !protection?.active) return { evidence: [], driver: false, latest: null, protection: null };
+  const details = [
+    `${Number(latest.distanceMiles || 0).toFixed(1)} mi`,
+    latest.paceLabel || null,
+    latest.durationMinutes ? `${Math.round(Number(latest.durationMinutes))} min` : null,
+    latest.avgHeartRate ? `avg HR ${Math.round(Number(latest.avgHeartRate))}` : null,
+  ].filter(Boolean).join(', ');
+  return {
+    driver: true,
+    latest,
+    protection,
+    evidence: [{
+      signal: 'recent run load',
+      source: 'recent_run',
+      objective: true,
+      freshness: latest.daysSince === 0 ? 'today' : latest.daysSince === 1 ? 'yesterday' : `${latest.daysSince} days ago`,
+      detail: `Logged run: ${details}. Duplicate running, hard sessions, and lower-body loading are protected during the next 24-72 hours.`,
+    }],
+  };
+}
+
 function buildInjuryEvidence(injuryState = {}) {
   const active = Boolean(injuryState && (injuryState.active || injuryState.hasActiveInjury || injuryState.sick));
   if (!active) return { evidence: [], safety: false, reason: null };
@@ -330,6 +360,10 @@ function patchRunForRecovery(session, severity, label) {
     target_zone: 'Zone 1-2',
     pace_target: 'Conversational effort',
     description: label,
+    warmup: ['5-10 min easy walking or jogging'],
+    steps: ['Stay in Zone 1-2', 'Keep breathing relaxed', 'Stop if soreness changes your stride'],
+    cooldown: ['5 min easy walking', 'Hydrate and refuel'],
+    progression: 'Do not add pace, repeats, or distance today.',
   });
   const miles = Number(session.distance_miles);
   if (Number.isFinite(miles) && miles > 0) next.distance_miles = Math.max(0.5, Math.round(miles * multiplier * 10) / 10);
@@ -350,6 +384,37 @@ function safetyRestSession(session, reason) {
     distance_miles: 0,
     description: `Safety hold: ${reason}`,
     steps: [],
+  };
+}
+
+function replaceLowerBodyAfterRun(session, latestRun) {
+  return {
+    ...session,
+    kind: 'lift',
+    type: 'strength',
+    workout_type: 'strength',
+    title: 'Optional upper-body strength',
+    focus: 'Upper body',
+    warmup: ['Band pull-apart x 20', 'Scapular push-up x 10', 'Two progressive warm-up sets'],
+    main: [
+      { name: 'Dumbbell bench press', sets: 3, reps: '6-8', rest: '2 min', load: 'Submaximal', rpe: '6-7', cue: 'Keep the shoulder blades set on the bench.', progression: 'Hold load today; do not chase fatigue.' },
+      { name: 'One-arm dumbbell row', sets: 3, reps: '8 each side', rest: '90 sec', load: 'Moderate', rpe: '6-7', cue: 'Drive the elbow toward the hip without twisting.', progression: 'Stop with at least three reps in reserve.' },
+      { name: 'Pull-up or lat pulldown', sets: 2, reps: '6-10', rest: '90 sec', load: 'Easy-moderate', rir: '3', cue: 'Pull the elbows down without shrugging.', progression: 'Skip the final set if whole-body fatigue is elevated.' },
+    ],
+    recovery: ['Skip this optional session if soreness changes normal movement', 'Prioritize carbohydrate, protein, hydration, and sleep'],
+    progression: 'Resume normal strength progression after lower-body recovery is normal.',
+    description: `Lower-body loading is deferred after the ${Number(latestRun.distanceMiles || 0).toFixed(1)} mi recent run.`,
+    acuteLoadAdjusted: true,
+  };
+}
+
+function markUpperBodyOptionalAfterRun(session, latestRun) {
+  const currentTitle = String(session.title || 'Upper-body strength').replace(/^Optional\s+/i, '');
+  return {
+    ...session,
+    title: `Optional ${currentTitle}`,
+    description: `${session.description || 'Upper-body strength.'} Keep this submaximal and skip it if whole-body fatigue or soreness is elevated after the ${Number(latestRun.distanceMiles || 0).toFixed(1)} mi run.`,
+    acuteLoadAdjusted: true,
   };
 }
 
@@ -547,6 +612,7 @@ function buildAdaptationProposal(input = {}) {
   const checkin = buildCheckinEvidence(input.checkin || {}, todaySessions);
   const health = buildHealthEvidence(input.healthSignals || {});
   const completion = buildCompletionEvidence(input.completion || input.adherence || {});
+  const recentRun = buildRecentRunEvidence(input.recentRunLoad || {});
   let safetyException = false;
   let safetyReason = null;
   let windowEnd = normalWindowEnd;
@@ -558,6 +624,7 @@ function buildAdaptationProposal(input = {}) {
     }),
     ...health.evidence,
     ...completion.evidence,
+    ...recentRun.evidence,
   ];
 
   if (injury.safety || checkin.safety) {
@@ -652,6 +719,53 @@ function buildAdaptationProposal(input = {}) {
       }
     }
 
+    if (recentRun.driver) {
+      for (const item of sessionsInWindow) {
+        if (item.kind === 'run' && recentRun.protection.noAdditionalRunOnDate === item.date && String(item.session.type || '').toLowerCase() !== 'race') {
+          addChange(
+            changes,
+            item,
+            safetyRestSession(item.session, 'a run is already logged for today'),
+            `${sessionSummary(item.session)} is removed because the ${Number(recentRun.latest.distanceMiles || 0).toFixed(1)} mi run is already logged today.`
+          );
+          continue;
+        }
+        if (item.kind === 'run' && isDemandingRun(item.session) && item.date <= recentRun.protection.hardRunsThrough && String(item.session.type || '').toLowerCase() !== 'race') {
+          const after = patchRunForRecovery(
+            item.session,
+            'reduce',
+            `Recovery version after the ${Number(recentRun.latest.distanceMiles || 0).toFixed(1)} mi recent run.`
+          );
+          addChange(
+            changes,
+            item,
+            after,
+            `${sessionSummary(item.session)} changes to ${sessionSummary(after)} because hard running is protected through ${recentRun.protection.hardRunsThrough}.`
+          );
+          continue;
+        }
+        if (item.kind === 'lift' && /lower/i.test(String(item.session.focus || '')) && item.date <= recentRun.protection.lowerBodyThrough) {
+          const after = replaceLowerBodyAfterRun(item.session, recentRun.latest);
+          addChange(
+            changes,
+            item,
+            after,
+            `${sessionSummary(item.session)} changes to optional upper-body strength because lower-body loading is protected through ${recentRun.protection.lowerBodyThrough}.`
+          );
+          continue;
+        }
+        if (item.kind === 'lift' && /upper/i.test(String(item.session.focus || '')) && item.date <= recentRun.protection.upperBodyOptionalThrough) {
+          const after = markUpperBodyOptionalAfterRun(item.session, recentRun.latest);
+          addChange(
+            changes,
+            item,
+            after,
+            `${sessionSummary(item.session)} remains upper-body only and becomes optional after the recent run.`
+          );
+        }
+      }
+    }
+
   }
 
   const changeList = Array.from(changes.values()).sort((a, b) => (
@@ -668,7 +782,7 @@ function buildAdaptationProposal(input = {}) {
       'Keep the calendar as planned',
       evidence.length
         ? 'Available signals do not warrant changing the dated race calendar.'
-        : 'No fresh objective Apple Health driver, subjective check-in driver, completion concern, or active injury was provided.'
+        : 'No fresh objective Apple Health driver, recent-run load, subjective check-in driver, completion concern, or active injury was provided.'
     );
   }
 
@@ -685,7 +799,7 @@ function buildAdaptationProposal(input = {}) {
     choices: ['accept', 'keep_original'],
     reason: safetyException
       ? `A safety exception is marked because ${safetyReason}; the hold can extend beyond 72 hours.`
-      : 'Only dated sessions inside the next 72 hours are changed; race target, phases, course facts, and the strength policy stay fixed.',
+      : 'Only dated sessions inside the next 72 hours are changed from current recovery, recent-run load, check-in, and completion evidence; race target, phases, course facts, and the strength policy stay fixed.',
     planVersion: input.planVersion || null,
   };
   return validateCandidateOrKeep(input, proposal, candidate, normalWindowEnd);

@@ -241,6 +241,27 @@ async function generateTrainingPlan(profile, target = null, trainingContext = nu
   const observed = trainingContext?.history || {};
   const observedMileage = Number(observed.weeklyMileageBaseline);
   const adherence = Number(observed.adherenceRate);
+  const recentRunLoad = observed.acuteRunLoad || {};
+  const latestRun = recentRunLoad.latestRun || null;
+  const recentRunLine = latestRun
+    ? `${Number(latestRun.distanceMiles || 0).toFixed(1)} miles on ${sanitize(latestRun.date, 10)}${latestRun.durationMinutes ? ` in ${Math.round(Number(latestRun.durationMinutes))} min` : ''}${latestRun.paceLabel ? ` (${sanitize(latestRun.paceLabel, 20)})` : ''}${latestRun.avgHeartRate ? `, avg HR ${Math.round(Number(latestRun.avgHeartRate))}` : ''}${latestRun.perceivedEffort ? `, RPE ${Number(latestRun.perceivedEffort)}` : ''}`
+    : 'none available';
+  const protection = recentRunLoad.protection || {};
+  const healthMetrics = trainingContext?.recovery?.metrics || {};
+  const checkin = trainingContext?.checkin || null;
+  const numericMetric = (value) => value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value))
+    ? Number(value)
+    : null;
+  const readinessMetric = numericMetric(trainingContext?.recovery?.readinessScore);
+  const sleepMetric = numericMetric(healthMetrics.sleepHoursLastNight);
+  const hrvMetric = numericMetric(healthMetrics.hrvMs);
+  const restingHrMetric = numericMetric(healthMetrics.restingHeartRate);
+  const recentRunSafetyRule = protection.active
+    ? `- A run is already logged on ${sanitize(protection.noAdditionalRunOnDate, 10) || 'the protected date'}. Do not schedule another run that day. Do not schedule demanding running through ${sanitize(protection.hardRunsThrough, 10)} or lower-body strength through ${sanitize(protection.lowerBodyThrough, 10)}; preserve these recent-run safety windows exactly.`
+    : '- No recent-run protection window is active.';
+  const checkinLine = checkin
+    ? `feeling ${Number(checkin.feeling || 0) || 'unknown'}/5, legs ${Number(checkin.legs || 0) || 'unknown'}/3, drive ${Number(checkin.drive || 0) || 'unknown'}/3${checkin.sleepHours ? `, ${Number(checkin.sleepHours)}h subjective sleep` : ''}${Array.isArray(checkin.lifeFlags) && checkin.lifeFlags.length ? `, flags: ${checkin.lifeFlags.map((flag) => sanitize(flag, 24)).join(', ')}` : ''}`
+    : 'none recorded today';
   const recentExerciseLine = Array.isArray(observed.recentExercises) && observed.recentExercises.length
     ? observed.recentExercises.slice(0, 8).map((exercise) => {
       const name = sanitize(exercise?.name, 60) || 'exercise';
@@ -257,8 +278,11 @@ async function generateTrainingPlan(profile, target = null, trainingContext = nu
 - Lift days per week: ${frequency.liftDaysPerWeek}${trainingDaysLine}
 - Observed weekly mileage from recent activity: ${Number.isFinite(observedMileage) ? observedMileage.toFixed(1) : 'unknown'}
 - Recent completed runs/lifts: ${Math.max(0, Number(observed.recentRunCount || 0))}/${Math.max(0, Number(observed.recentLiftCount || 0))}
+- Latest meaningful run: ${recentRunLine}; trailing 7-day miles: ${Number(recentRunLoad.sevenDayMiles || 0).toFixed(1)}
 - Recent adherence: ${Number.isFinite(adherence) ? `${Math.round(adherence * 100)}%` : 'unknown'}; missed sessions estimate: ${Math.max(0, Number(observed.missedWorkouts || 0))}
 - Current recovery state: ${sanitize(trainingContext?.recovery?.state || 'unknown', 20)}
+- Apple Health snapshot: readiness ${readinessMetric ?? 'unknown'}, sleep ${sleepMetric === null ? 'unknown' : `${sleepMetric}h`}, HRV ${hrvMetric === null ? 'unknown' : `${hrvMetric}ms`}, resting HR ${restingHrMetric ?? 'unknown'}
+- Today's check-in: ${checkinLine}
 - Recent lifting detail: ${recentExerciseLine}
 - Injury notes: ${sanitize(profile.injury_notes) || 'none'}
 - Comeback mode: ${profile.comeback_mode ? 'YES — be very conservative, no speed work for first 2 weeks' : 'no'}
@@ -279,6 +303,7 @@ ${liftingRules}
 - Every session id is stable and globally unique. Run fields must be complete like the example.
 - Keep at least 1 full rest day each week
 ${schedulingRule}
+${recentRunSafetyRule}
 - PERIODIZATION over ${weeks} weeks: early weeks = BASE (aerobic volume), middle = BUILD (add tempo/intervals + peak long runs), final 1-2 weeks = TAPER (cut volume 30-50%, keep some intensity, race week is lightest).
 - Every 3rd-4th week is a DOWN/recovery week (reduce volume ~20%).
 - Increase weekly mileage no more than ~10% week-over-week.
