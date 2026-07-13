@@ -126,6 +126,15 @@ Phase 2 cleanup from this audit:
 - The first release is course preview plus on-run map overlay, not turn-by-turn navigation or off-route alerts. Users are told to review crossings, access rules, and current conditions.
 - This web/backend release does not require an EAS build. Production route generation remains hidden until the server-side provider key is present.
 
+## HR Zone Calibration
+
+- The default model is heart-rate reserve (Karvonen), computed from maximum and resting heart rate. Percent-of-max and LTHR remain supported alternatives; LTHR is opt-in through the guided field test.
+- `user_hr_profile` is the persisted source of truth. `backend/src/lib/hrZones.js` and `backend/src/lib/hrCalibration.js` own deterministic zone calculation, history-derived suggestions, and BPM classification.
+- Heat-drift and readiness classification prefer the calibrated profile. Users without a usable profile retain the pre-calibration max-HR fallback.
+- The derive flow flags an observed run maximum above the stored maximum and suggests a correction, but never overwrites the profile without user confirmation.
+- The field-test path calculates LTHR as 95% of the user's 20-minute time-trial average heart rate.
+- Open H5 execution gap: generated plans currently prescribe zone labels such as `Zone 2`, not the user's calibrated BPM range. Unified Daily Execution must resolve and display the matching personal range without changing the stored plan contract.
+
 ## Recently Fixed Bugs
 
 Do not reintroduce these patterns.

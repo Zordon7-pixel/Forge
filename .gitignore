@@ -27,3 +27,6 @@ frontend/dist/
 # Logs
 *.log
 npm-debug.log*
+
+# Local agent usage telemetry
+.build-prompts/*-usage.json
