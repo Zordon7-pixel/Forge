@@ -386,6 +386,7 @@ export default function ActiveRun() {
       duration_seconds: elapsed,
       notes: buildGpsGapNote(),
       perceived_effort: 5,
+      target_zone: workoutTarget?.zone || null,
       gps_available: gpsStarted && gpsAvailable,
       avg_heart_rate: liveHr || null,
       elevation_gain: actualElevation.available ? actualElevation.gainFeet : null,
@@ -439,11 +440,19 @@ export default function ActiveRun() {
       if (!err?.response || Number(err?.response?.status || 0) >= 500) {
         await queueRequest('/api/runs', 'POST', payload)
         // H5: order completion AFTER the queued run so it replays second.
-        if (planSessionId) await queueSessionComplete(planSessionId, planCurrentWeek)
+        let progressNotice = ''
+        if (planSessionId) {
+          try {
+            await queueSessionComplete(planSessionId, planCurrentWeek)
+          } catch (completionErr) {
+            console.error('[ActiveRun] failed to queue plan completion:', completionErr?.message || completionErr)
+            progressNotice = ' Plan progress will update after the run syncs.'
+          }
+        }
         setQueuedOffline(true)
         setSavedRunId(payload.id)
         setAwaitingManualDistance(false)
-        setSaveError('Saved offline — Forged Hybrid will sync this run when your connection is back.')
+        setSaveError(`Saved offline — Forged Hybrid will sync this run when your connection is back.${progressNotice}`)
       } else {
         setSaveError(err?.response?.data?.error || 'Could not save this run. Check the details and try again.')
       }

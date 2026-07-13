@@ -426,6 +426,15 @@ export default function Plan() {
                 planSessionId: runSession?.id != null ? String(runSession.id) : null,
                 currentWeek: Number.isFinite(selectedDay?.weekIndex) ? selectedDay.weekIndex + 1 : currentWeek,
                 scheduledRun: runSession || null,
+                startAfterWarmup: true,
+                runType: runSession?.prescription?.workout_type || runSession?.type || 'run',
+                runEnvironment: 'outdoor',
+                mapMyRun: true,
+                workoutTarget: {
+                  distanceMiles: runSession?.distanceMiles || runSession?.prescription?.distance_miles || null,
+                  pace: runSession?.prescription?.pace_target || runSession?.prescription?.pace || null,
+                  zone: runSession?.prescription?.target_zone || null,
+                },
               } })}
               onStartLift={(liftSession) => navigate('/log-lift', { state: {
                 planSessionId: liftSession?.id != null ? String(liftSession.id) : null,
@@ -434,6 +443,7 @@ export default function Plan() {
               } })}
               onBack={() => setSelectedDayISO(null)}
               updating={updating}
+              canStart={selectedDay.dateISO === today}
             />
           ) : (
             <>

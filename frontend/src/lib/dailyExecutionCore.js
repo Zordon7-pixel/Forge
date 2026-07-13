@@ -73,11 +73,12 @@ export function formatHrZone(session) {
   if (!session) return null;
   const hz = session.hrZone;
   if (hz && Number.isFinite(hz.minBpm) && Number.isFinite(hz.maxBpm)) {
-    return `Zone ${hz.zone} · ${hz.minBpm}-${hz.maxBpm} bpm`;
+    return `${hz.zoneLabel || `Zone ${hz.zone}`} · ${hz.minBpm}-${hz.maxBpm} bpm`;
   }
   if (session.target_zone) {
-    const n = String(session.target_zone).replace(/[^0-9]/g, '');
-    return n ? `Zone ${n}` : `Zone ${session.target_zone}`;
+    const raw = String(session.target_zone).trim();
+    if (/^z\s*[1-5](?:\s*[-–]\s*[1-5])?$/i.test(raw)) return raw.replace(/^z/i, 'Zone ');
+    return raw;
   }
   return null;
 }
@@ -86,7 +87,10 @@ export function formatHrZone(session) {
 // Ownership is enforced server-side by req.user.id scoping.
 export function completionBody(sessionId, currentWeek) {
   const body = { completed_session_id: sessionId };
-  if (Number.isFinite(Number(currentWeek))) body.current_week = Number(currentWeek);
+  const week = Number(currentWeek);
+  if (currentWeek !== null && currentWeek !== undefined && currentWeek !== '' && Number.isInteger(week) && week >= 1) {
+    body.current_week = week;
+  }
   return body;
 }
 
@@ -103,10 +107,20 @@ export function scheduledLiftFromExecution(execution) {
 }
 
 // Map today's executable calendar session into the `recommendation` shape the
-// Home coach/detail surfaces already consume. Returns null when there is no
-// executable session so callers fall back to the legacy next-recommendation.
+// Home coach/detail surfaces already consume. An active calendar rest day is
+// explicit so callers do not replace it with an unrelated legacy suggestion.
 // A run is preferred over a lift for the run-centric coach card.
 export function recommendationFromExecution(execution) {
+  if (!execution || !execution.hasPlan || !execution.hasDay) return null;
+  if (execution.isRest) {
+    return {
+      recommendationType: 'rest',
+      type: 'rest',
+      reason: 'Rest and recovery are scheduled today.',
+      structure: [],
+      source: 'calendar',
+    };
+  }
   if (!hasExecutableSession(execution)) return null;
   const run = execution.run || null;
   if (run) {
@@ -117,10 +131,10 @@ export function recommendationFromExecution(execution) {
       type,
       suggestedDistance: dist || undefined,
       suggestedPace: run.pace_target || run.pace || run.target_pace || undefined,
-      targetZone: run.target_zone || (run.hrZone ? `Zone ${run.hrZone.zone}` : '') || '',
+      targetZone: run.hrZone?.zoneLabel || run.target_zone || (run.hrZone ? `Zone ${run.hrZone.zone}` : '') || '',
       intensity: run.intensity || '',
       progression: run.progression || '',
-      structure: Array.isArray(run.structure) ? run.structure : [],
+      structure: Array.isArray(run.structure) ? run.structure : Array.isArray(run.steps) ? run.steps : [],
       reason: run.description || run.notes || '',
       planSessionId: run.id || null,
       source: 'calendar',
@@ -170,6 +184,7 @@ export function planSessionIdFromState(state) {
 // Number or null.
 export function currentWeekFromState(state) {
   if (!state || typeof state !== 'object') return null;
+  if (state.currentWeek === null || state.currentWeek === undefined || state.currentWeek === '') return null;
   const n = Number(state.currentWeek);
-  return Number.isFinite(n) ? n : null;
+  return Number.isInteger(n) && n >= 1 ? n : null;
 }

@@ -1141,33 +1141,73 @@ router.get('/my', auth, async (req, res) => {
 
 router.put('/my/progress', auth, async (req, res) => {
   try {
-    const { current_week, completed_session_id, unset_session_id } = req.body || {};
-    const row = await dbGet(`
-      SELECT id, progress_json, current_week
-      FROM user_plans
-      WHERE user_id = ? AND status = 'active'
-      ORDER BY created_at DESC
-      LIMIT 1
-    `, [req.user.id]);
-    if (!row) return res.status(404).json({ error: 'No assigned plan' });
-
-    let progress = {};
-    try {
-      progress = JSON.parse(row.progress_json || '{}');
-    } catch (err) {
-      console.error('[plans/my/progress] invalid progress JSON:', err.message);
-      progress = {};
+    const body = req.body || {};
+    const hasCurrentWeek = Object.prototype.hasOwnProperty.call(body, 'current_week');
+    const completedId = body.completed_session_id === null || body.completed_session_id === undefined
+      ? null
+      : String(body.completed_session_id).trim();
+    const unsetId = body.unset_session_id === null || body.unset_session_id === undefined
+      ? null
+      : String(body.unset_session_id).trim();
+    if (completedId && unsetId) return res.status(400).json({ error: 'Choose one session progress action' });
+    if ((completedId && completedId.length > 128) || (unsetId && unsetId.length > 128)) {
+      return res.status(400).json({ error: 'Invalid plan session' });
     }
-    const completed = new Set(Array.isArray(progress.completedSessionIds) ? progress.completedSessionIds : []);
-    if (completed_session_id) completed.add(String(completed_session_id));
-    if (unset_session_id) completed.delete(String(unset_session_id));
-    const nextWeek = Number.isFinite(Number(current_week)) ? Number(current_week) : Number(row.current_week || 1);
 
-    await dbRun(
-      'UPDATE user_plans SET current_week = ?, progress_json = ? WHERE id = ? AND user_id = ?',
-      [nextWeek, JSON.stringify({ ...progress, completedSessionIds: Array.from(completed) }), row.id, req.user.id]
-    );
-    res.json({ ok: true, current_week: nextWeek, completedSessionIds: Array.from(completed) });
+    const result = await withTransaction(async (tx) => {
+      const row = await tx.get(`
+        SELECT up.id, up.progress_json, up.current_week,
+               tp.weeks, tp.plan_data, tp.plan_json
+        FROM user_plans up
+        JOIN training_plans tp ON tp.id = up.plan_id
+        WHERE up.user_id = ? AND up.status = 'active'
+        ORDER BY up.created_at DESC
+        LIMIT 1
+        FOR UPDATE OF up
+      `, [req.user.id]);
+      if (!row) return { notFound: true };
+
+      const parsed = parsePlan(row);
+      const sessionIds = dailyExecution.collectSessionIds(parsed);
+      const requestedId = completedId || unsetId;
+      if (requestedId && !sessionIds.has(requestedId)) return { invalidSession: true };
+
+      const rawWeekCount = Number(parsed?.weeks?.length || row.weeks || 1);
+      const maxWeek = Number.isInteger(rawWeekCount) && rawWeekCount >= 1 ? rawWeekCount : 1;
+      let nextWeek = Number(row.current_week || 1);
+      if (hasCurrentWeek) {
+        const requestedWeek = Number(body.current_week);
+        if (!Number.isInteger(requestedWeek) || requestedWeek < 1 || requestedWeek > maxWeek) {
+          return { invalidWeek: true };
+        }
+        nextWeek = requestedWeek;
+      }
+
+      let progress = {};
+      try {
+        progress = typeof row.progress_json === 'string'
+          ? JSON.parse(row.progress_json || '{}')
+          : (row.progress_json || {});
+      } catch (err) {
+        console.error('[plans/my/progress] invalid progress JSON:', err.message);
+        progress = {};
+      }
+      const completed = new Set(Array.isArray(progress.completedSessionIds) ? progress.completedSessionIds.map(String) : []);
+      if (completedId) completed.add(completedId);
+      if (unsetId) completed.delete(unsetId);
+
+      const update = await tx.run(
+        'UPDATE user_plans SET current_week = ?, progress_json = ? WHERE id = ? AND user_id = ?',
+        [nextWeek, JSON.stringify({ ...progress, completedSessionIds: Array.from(completed) }), row.id, req.user.id]
+      );
+      if (update.changes === 0) throw new Error('Active plan progress update failed');
+      return { ok: true, current_week: nextWeek, completedSessionIds: Array.from(completed) };
+    });
+
+    if (result.notFound) return res.status(404).json({ error: 'No assigned plan' });
+    if (result.invalidSession) return res.status(400).json({ error: 'Invalid plan session' });
+    if (result.invalidWeek) return res.status(400).json({ error: 'Invalid plan week' });
+    res.json(result);
   } catch (err) {
     console.error('[plans/my/progress] failed:', err.message);
     res.status(500).json({ error: 'Failed to update progress' });

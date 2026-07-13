@@ -114,7 +114,8 @@ export default function LogLift() {
   const navigate = useNavigate()
   // H5: calendar scheduled lift is the primary path; AI/manual are secondary.
   const location = useLocation()
-  const [scheduledLift, setScheduledLift] = useState(null)
+  const incomingScheduledLift = location.state?.scheduledLift || null
+  const [scheduledLift, setScheduledLift] = useState(incomingScheduledLift)
   const [planSessionId, setPlanSessionId] = useState(() => planSessionIdFromState(location.state))
   const [planCurrentWeek, setPlanCurrentWeek] = useState(() => currentWeekFromState(location.state))
   const [selected, setSelected] = useState([])
@@ -124,7 +125,7 @@ export default function LogLift() {
   const [userSex, setUserSex] = useState('male')
   const [timeAvailable, setTimeAvailable] = useState('')
   const [liftPlan, setLiftPlan] = useState(null)
-  const [activeTab, setActiveTab] = useState('ai')
+  const [activeTab, setActiveTab] = useState(incomingScheduledLift ? 'scheduled' : 'ai')
   const [aiRecommendation, setAiRecommendation] = useState(null)
   const [aiLoading, setAiLoading] = useState(false)
   const [aiError, setAiError] = useState(null)
@@ -165,6 +166,7 @@ export default function LogLift() {
   // scheduled lift exists it becomes the default primary tab; AI/manual remain
   // available. Falls back silently to AI/manual when there is no calendar lift.
   useEffect(() => {
+    if (incomingScheduledLift) return undefined
     let active = true
     fetchDailyExecution(localDateISO())
       .then((execution) => {
@@ -179,9 +181,9 @@ export default function LogLift() {
           }
         }
       })
-      .catch(() => {})
+      .catch((err) => console.error('[LogLift] scheduled lift lookup failed:', err?.message || err))
     return () => { active = false }
-  }, [])
+  }, [incomingScheduledLift])
 
 
 

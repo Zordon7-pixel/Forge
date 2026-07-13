@@ -70,6 +70,8 @@ assert(normalizeExecution(null).hasPlan === false, 'null body normalizes without
 console.log('\n== formatHrZone ==');
 assert(formatHrZone(h.run) === 'Zone 2 · 134-148 bpm', 'calibrated bpm band rendered');
 assert(formatHrZone({ target_zone: 'Z3' }) === 'Zone 3', 'no profile → plain zone label');
+assert(formatHrZone({ target_zone: 'Z2-3' }) === 'Zone 2-3', 'zone range stays readable and never collapses to Zone 23');
+assert(formatHrZone({ target_zone: 'Zone 3-4', hrZone: { zone: '3-4', zoneLabel: 'Zone 3-4', minBpm: 149, maxBpm: 176 } }) === 'Zone 3-4 · 149-176 bpm', 'calibrated zone range renders its full label');
 assert(formatHrZone({ target_zone: 'Zone 4', hrZone: null }) === 'Zone 4', 'null hrZone → plain label, no invented bpm');
 assert(formatHrZone({}) === null, 'no zone info → null');
 
@@ -79,6 +81,8 @@ assert(localDateISO(new Date(2026, 6, 5)) === '2026-07-05', 'localDateISO pads m
 const body = completionBody('run-1', 2);
 assert(body.completed_session_id === 'run-1' && body.current_week === 2, 'completion body carries session id + week');
 assert(completionBody('run-1').current_week === undefined, 'completion body omits week when not finite');
+assert(completionBody('run-1', null).current_week === undefined, 'completion body never coerces null to week zero');
+assert(completionBody('run-1', 0).current_week === undefined, 'completion body rejects week zero');
 
 console.log('\n== scheduled run/lift extractors (calendar preference) ==');
 assert(scheduledRunFromExecution(h) && scheduledRunFromExecution(h).id === 'run-1', 'scheduledRunFromExecution returns the executable run');
@@ -92,8 +96,11 @@ const calRec = recommendationFromExecution(h);
 assert(calRec && calRec.source === 'calendar', 'calendar recommendation is flagged source=calendar');
 assert(calRec.recommendationType === 'run' && calRec.planSessionId === 'run-1', 'run preferred; carries planSessionId');
 assert(calRec.targetZone === 'Z2', 'targetZone taken from the scheduled run');
-assert(recommendationFromExecution(r) === null, 'rest day → null so callers fall back to next-recommendation');
+const restRec = recommendationFromExecution(r);
+assert(restRec && restRec.source === 'calendar' && restRec.recommendationType === 'rest', 'calendar rest stays explicit instead of falling back to an unrelated workout');
 assert(recommendationFromExecution(n) === null, 'no-plan → null so callers fall back to next-recommendation');
+const stepsRec = recommendationFromExecution(normalizeExecution({ execution: { hasPlan: true, hasDay: true, isRest: false, sessions: [], run: { id: 'run-steps', kind: 'run', steps: ['Warm up', '3 x 5 min', 'Cool down'] } } }));
+assert(stepsRec && stepsRec.structure.length === 3, 'run steps remain visible when structure is absent');
 const liftOnly = normalizeExecution({ execution: { hasPlan: true, hasDay: true, isRest: false, week: 3, sessions: [{ id: 'lift-9', kind: 'lift', title: 'Upper' }], run: null, lift: { id: 'lift-9', kind: 'lift', title: 'Upper' } } });
 const liftRec = recommendationFromExecution(liftOnly);
 assert(liftRec && liftRec.recommendationType === 'strength' && liftRec.planSessionId === 'lift-9', 'lift-only day → strength recommendation with lift session id');
@@ -109,6 +116,7 @@ assert(planSessionIdFromState({ scheduledRun: { id: 'run-7' } }) === 'run-7', 'p
 assert(planSessionIdFromState(null) === null && planSessionIdFromState({}) === null, 'planSessionIdFromState null-safe');
 assert(currentWeekFromState({ currentWeek: '4' }) === 4, 'currentWeekFromState coerces finite numbers');
 assert(currentWeekFromState({ currentWeek: 'nope' }) === null && currentWeekFromState(null) === null, 'currentWeekFromState rejects non-finite / null');
+assert(currentWeekFromState({ currentWeek: null }) === null && currentWeekFromState({ currentWeek: 0 }) === null, 'currentWeekFromState never emits week zero');
 
 console.log(`\nPASSED: ${passed}  FAILED: ${failed}`);
 if (failed) process.exit(1);

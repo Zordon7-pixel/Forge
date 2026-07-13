@@ -120,6 +120,7 @@ export default function ForgedDayView({
   onStartLift,
   onBack,
   updating = false,
+  canStart = true,
 }) {
   const [scaleIndex, setScaleIndex] = useState(1)
   const [expanded, setExpanded] = useState(false)
@@ -213,8 +214,9 @@ export default function ForgedDayView({
           </div>
         )}
         <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
-          <button type="button" onClick={() => onStartRun?.(runSession)}
-            className="forged-start-run" style={{ flex: '1 1 140px', border: 'none', borderRadius: 8, padding: '12px', fontWeight: 900, fontSize: px(14), cursor: 'pointer' }}>
+          <button type="button" onClick={() => canStart && onStartRun?.(runSession)} disabled={!canStart}
+            title={canStart ? 'Start run' : 'Available on the scheduled day'}
+            className="forged-start-run" style={{ flex: '1 1 140px', border: 'none', borderRadius: 8, padding: '12px', fontWeight: 900, fontSize: px(14), cursor: canStart ? 'pointer' : 'not-allowed', opacity: canStart ? 1 : 0.5 }}>
             Start Run
           </button>
           <button type="button" onClick={() => onToggleComplete?.(runSession.id)} disabled={updating}
@@ -266,8 +268,9 @@ export default function ForgedDayView({
           </div>
         ))}
         <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
-          <button type="button" onClick={() => onStartLift?.(liftSession)}
-            className="forged-start-lift" style={{ flex: '1 1 140px', border: 'none', borderRadius: 8, padding: '12px', fontWeight: 900, fontSize: px(14), cursor: 'pointer' }}>
+          <button type="button" onClick={() => canStart && onStartLift?.(liftSession)} disabled={!canStart}
+            title={canStart ? 'Start lift' : 'Available on the scheduled day'}
+            className="forged-start-lift" style={{ flex: '1 1 140px', border: 'none', borderRadius: 8, padding: '12px', fontWeight: 900, fontSize: px(14), cursor: canStart ? 'pointer' : 'not-allowed', opacity: canStart ? 1 : 0.5 }}>
             Start Lift
           </button>
           <button type="button" onClick={() => onToggleComplete?.(liftSession.id)} disabled={updating}

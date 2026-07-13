@@ -150,7 +150,10 @@ export default function Dashboard() {
           api.get('/recap/weekly').catch(() => ({ data: null })),
           api.get('/runs/next-recommendation').catch(() => ({ data: null })),
           api.get('/runs/age-graded-performance').catch(() => ({ data: null })),
-          fetchDailyExecution(localDateISO()).catch(() => null),
+          fetchDailyExecution(localDateISO()).catch((err) => {
+            console.error('[Dashboard] daily execution fetch failed:', err?.message || err)
+            return null
+          }),
         ])
         setExecution(executionRes || null)
         setStats(statsRes.data)
@@ -532,10 +535,11 @@ export default function Dashboard() {
   }, [runs, lifts, otherActivities])
 
   // H5: prefer today's calendar session over the legacy next-recommendation.
-  // calendarRec is null on rest days / no-plan, so effectiveRecommendation falls
-  // back to nextRecommendation and existing behavior is preserved.
+  // Active-plan rest days stay explicit; only a missing calendar day falls
+  // back to the legacy recommendation.
   const calendarRec = useMemo(() => recommendationFromExecution(execution), [execution])
-  const effectiveRecommendation = calendarRec || nextRecommendation
+  const calendarOwnsToday = Boolean(execution?.hasPlan && execution?.hasDay)
+  const effectiveRecommendation = calendarRec || (calendarOwnsToday ? null : nextRecommendation)
 
   const todayWatchWorkout = useMemo(() => {
     if (!effectiveRecommendation) return null
@@ -578,6 +582,7 @@ export default function Dashboard() {
       }
       return navigate('/log-run', { state: runRouteState(execution) })
     }
+    if (calendarOwnsToday) return navigate('/plan')
     if (!nextRecommendation) return navigate('/run')
     track('recommendation_followed', { via: 'today_card_start' })
     if (nextRecommendation.recommendationType === 'rest') return navigate('/plan')
@@ -587,7 +592,7 @@ export default function Dashboard() {
     if (nextRecommendation.recommendationType) params.set('type', String(nextRecommendation.recommendationType))
     if (nextRecommendation.suggestedPace) params.set('pace', String(nextRecommendation.suggestedPace))
     navigate(`/log-run${params.toString() ? `?${params.toString()}` : ''}`)
-  }, [navigate, nextRecommendation, execution, calendarRec])
+  }, [navigate, nextRecommendation, execution, calendarRec, calendarOwnsToday])
 
   if (loading) return <div className="space-y-4"><LoadingRunner message="Getting ready" /><Skeleton rows={3} /></div>
 

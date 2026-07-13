@@ -29,23 +29,28 @@ function weekdayShortForDate(dateISO) {
 
 // Parse a plan-prescribed zone label into an integer 1-5. Accepts number,
 // "Z2", "Zone 2", "zone2", "2". Returns null when there is no clear zone.
-function zoneNumberFromLabel(val) {
-  if (val === null || val === undefined) return null;
-  if (typeof val === 'number') return val >= 1 && val <= 5 ? Math.trunc(val) : null;
+function zoneNumbersFromLabel(val) {
+  if (val === null || val === undefined) return [];
+  if (typeof val === 'number') return val >= 1 && val <= 5 ? [Math.trunc(val)] : [];
   const s = String(val).trim();
-  if (!s) return null;
-  let m = s.match(/(?:zone|z)\s*([1-5])/i);
-  if (m) return Number(m[1]);
-  m = s.match(/^([1-5])$/);
-  if (m) return Number(m[1]);
-  return null;
+  if (!s) return [];
+  const match = s.match(/^(?:zone|z)?\s*([1-5])(?:\s*[-–]\s*(?:zone|z)?\s*([1-5]))?$/i);
+  if (!match) return [];
+  const start = Number(match[1]);
+  const end = Number(match[2] || match[1]);
+  if (end < start) return [];
+  return Array.from({ length: end - start + 1 }, (_, index) => start + index);
+}
+
+function zoneNumberFromLabel(val) {
+  return zoneNumbersFromLabel(val)[0] || null;
 }
 
 // Resolve a plan zone label to the user's calibrated BPM band. Returns null
 // (never a fabricated band) when the profile cannot produce a valid range.
 function resolveHrZone(targetZone, hrProfile) {
-  const zoneNum = zoneNumberFromLabel(targetZone);
-  if (!zoneNum || !hrProfile) return null;
+  const zoneNumbers = zoneNumbersFromLabel(targetZone);
+  if (!zoneNumbers.length || !hrProfile) return null;
   const model = hrProfile.zone_model;
   if (!['hrr', 'maxhr', 'lthr'].includes(model)) return null;
   const result = computeZones({
@@ -55,16 +60,47 @@ function resolveHrZone(targetZone, hrProfile) {
     model,
   });
   const zones = Array.isArray(result && result.zones) ? result.zones : [];
-  const z = zones.find((entry) => entry.zone === zoneNum);
-  if (!z || !Number.isFinite(z.minBpm) || !Number.isFinite(z.maxBpm)) return null;
+  const selected = zoneNumbers.map((zone) => zones.find((entry) => entry.zone === zone));
+  if (selected.some((zone) => !zone || !Number.isFinite(zone.minBpm) || !Number.isFinite(zone.maxBpm))) return null;
+  const first = selected[0];
+  const last = selected[selected.length - 1];
+  const zoneLabel = zoneNumbers.length === 1
+    ? `Zone ${zoneNumbers[0]}`
+    : `Zone ${zoneNumbers[0]}-${zoneNumbers[zoneNumbers.length - 1]}`;
   return {
-    zone: zoneNum,
-    label: z.label,
-    minBpm: z.minBpm,
-    maxBpm: z.maxBpm,
+    zone: zoneNumbers.length === 1 ? zoneNumbers[0] : `${zoneNumbers[0]}-${zoneNumbers[zoneNumbers.length - 1]}`,
+    zones: zoneNumbers,
+    zoneLabel,
+    label: zoneNumbers.length === 1 ? first.label : `${first.label} to ${last.label}`,
+    minBpm: first.minBpm,
+    maxBpm: last.maxBpm,
     model,
     source: 'calibrated',
   };
+}
+
+// Collect the stable session identifiers accepted by plan-progress updates.
+// Uses the same identifier rules as compliance/calendar rendering for both
+// schema-v2 and legacy plans, so clients cannot add arbitrary JSON entries.
+function collectSessionIds(plan) {
+  const ids = new Set();
+  const weeks = Array.isArray(plan && plan.weeks) ? plan.weeks : [];
+  for (const week of weeks) {
+    const days = planSchema.getDayEntries(week);
+    days.forEach((day, dayIndex) => {
+      if (Array.isArray(day && day.sessions)) {
+        day.sessions.forEach((session, sessionIndex) => {
+          if (planSchema.kindFromSession(session) === 'rest') return;
+          ids.add(planSchema.sessionIdentifier(day, session, sessionIndex, dayIndex));
+        });
+        return;
+      }
+      if (!planSchema.isRestEntry(day)) {
+        ids.add(planSchema.sessionIdentifier(day, day, 0, dayIndex));
+      }
+    });
+  }
+  return ids;
 }
 
 // Select the plan day for a given date.
@@ -150,8 +186,10 @@ function buildDailyExecution(opts) {
 
 module.exports = {
   weekdayShortForDate,
+  zoneNumbersFromLabel,
   zoneNumberFromLabel,
   resolveHrZone,
+  collectSessionIds,
   selectDayForDate,
   buildDailyExecution,
 };

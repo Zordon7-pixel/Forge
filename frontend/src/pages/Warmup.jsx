@@ -573,6 +573,10 @@ export default function Warmup() {
   }
 
   const handleStartRun = () => {
+    if (location.state?.startAfterWarmup) {
+      navigate('/run/active', { state: location.state })
+      return
+    }
     navigate('/log-run', location.state ? { state: location.state } : undefined)
   }
 

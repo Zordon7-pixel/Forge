@@ -108,14 +108,25 @@ section('personalized BPM and no-profile fallback');
 const z2 = exec.resolveHrZone('Z2', hrrProfile);
 assert(z2 && z2.zone === 2 && Number.isFinite(z2.minBpm) && Number.isFinite(z2.maxBpm) && z2.minBpm < z2.maxBpm, 'Z2 resolves to a calibrated bpm band');
 assert(z2.source === 'calibrated', 'resolved band is flagged calibrated');
+const z34 = exec.resolveHrZone('Zone 3-4', hrrProfile);
+const z3 = exec.resolveHrZone('Z3', hrrProfile);
+const z4 = exec.resolveHrZone('Z4', hrrProfile);
+assert(z34 && z34.zoneLabel === 'Zone 3-4' && z34.minBpm === z3.minBpm && z34.maxBpm === z4.maxBpm, 'Zone 3-4 resolves across the full calibrated BPM band');
+assert(Array.isArray(z34.zones) && z34.zones.join(',') === '3,4', 'resolved range preserves both zone numbers');
 assert(exec.resolveHrZone('Z2', null) === null, 'no profile -> no invented bpm');
 assert(exec.resolveHrZone('Z2', { zone_model: 'hrr', max_hr: null, resting_hr: null }) === null, 'incomplete profile -> no invented bpm');
 assert(monday.run.hrZone && monday.run.hrZone.zone === 2, 'run session carries resolved hrZone when profile present');
 const noProfile = build(hybridPlan, '2026-07-13', 'Mon', [], null);
 assert(noProfile.run.hrZone === null, 'run session hrZone is null when no profile');
 assert(exec.zoneNumberFromLabel('Zone 3') === 3 && exec.zoneNumberFromLabel(4) === 4 && exec.zoneNumberFromLabel('easy') === null, 'zone label parsing');
+assert(exec.zoneNumbersFromLabel('Z2-4').join(',') === '2,3,4', 'zone range parser expands ascending zones');
+assert(exec.zoneNumbersFromLabel('Z4-2').length === 0 && exec.zoneNumbersFromLabel('Zone 23').length === 0, 'zone range parser rejects reversed and ambiguous labels');
 
 section('completion display mapping + idempotency');
+const sessionIds = exec.collectSessionIds(hybridPlan);
+assert(sessionIds.has('run-1') && sessionIds.has('lift-1') && sessionIds.has('run-3'), 'active-plan session allowlist contains every stable schema-v2 id');
+const legacyIds = exec.collectSessionIds(legacyPlan);
+assert(legacyIds.has('0') && !legacyIds.has('1'), 'legacy identifier allowlist matches calendar/compliance rules and excludes rest');
 const withRunDone = build(hybridPlan, '2026-07-13', 'Mon', ['run-1'], hrrProfile);
 assert(withRunDone.run.completed === true && withRunDone.lift.completed === false, 'only the completed session id is marked complete');
 const idempotent = build(hybridPlan, '2026-07-13', 'Mon', ['run-1', 'run-1'], hrrProfile);
@@ -153,6 +164,17 @@ assert(/from '\.\.\/lib\/dailyExecution'/.test(activeWorkout) && /markSessionCom
 assert(/location\.state/.test(warmup) && /navigate\('\/log-run'/.test(warmup), 'Warmup forwards location.state through the run handoff');
 assert(/onStartRun\?\.\(runSession\)/.test(forgedDayView) && /onStartLift\?\.\(liftSession\)/.test(forgedDayView), 'ForgedDayView passes the selected session to start handlers');
 assert(/planSessionId/.test(plan) && /scheduledRun/.test(plan), 'Plan hands the selected session id + prescription into navigate state');
+assert(/workoutTarget/.test(plan) && /target_zone/.test(plan), 'Plan hands the exact run target into ActiveRun');
+assert(/disabled=\{!canStart\}/.test(forgedDayView), 'calendar prevents starting a future or past scheduled session');
+assert(logRun.indexOf('Start Scheduled Run') < logRun.indexOf('routePlannerStatus.available &&'), 'scheduled run start is available even when route planning is unavailable');
+assert(/navigate\('\/warmup'/.test(logRun) && /startAfterWarmup:\s*true/.test(logRun), 'scheduled run keeps the warm-up before ActiveRun');
+assert(/target_zone:\s*todayWorkout\?\.targetZone/.test(logRun), 'LogRun stores the raw plan zone, not display-only BPM text');
+assert(/target_zone:\s*workoutTarget\?\.zone/.test(activeRun), 'ActiveRun stores the scheduled plan zone');
+assert(/execution\?\.hasPlan && execution\?\.hasDay/.test(logRun), 'LogRun does not reinterpret a calendar rest/lift day as a run');
+const plansRoute = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'plans.js'), 'utf8');
+assert(/withTransaction\(async \(tx\)/.test(plansRoute) && /FOR UPDATE OF up/.test(plansRoute), 'plan progress read-modify-write is transactionally locked');
+assert(/collectSessionIds\(parsed\)/.test(plansRoute), 'plan progress rejects session ids outside the active plan');
+assert(/requestedWeek < 1/.test(plansRoute), 'plan progress rejects week zero at the API boundary');
 
 section('completion is called ONLY on the success path (static)');
 // lastIndexOf targets the CALL SITE (the import line is the first occurrence).
