@@ -5,8 +5,8 @@ This file holds Forge's product history, deployment notes, shipped phase log, kn
 ## Current Production
 
 - Production URL: `https://forge-production-773f.up.railway.app/`
-- Latest verified application release: commit `df07abfe`, deployment `5fb0c377-aeea-43ce-83a2-aa52ad6705e5`
-- Latest checked bundle: `/assets/index-CFTZzFDE.js`
+- Latest verified application release: commit `c40db938`, deployment `f6c0aff8-7ce1-4847-b0a8-a2dd33e1ae16`
+- Latest checked bundle: `/assets/index-CQXv4o1G.js`
 - iOS version/build: `1.0.5` / `15`
 - Bundle identifier: `com.zordontech.forge`
 - Expo/EAS project: `@zordon/forge-athlete` (`6aeb5fbb-2697-4cf4-b9b3-afe60c63e9e1`)
@@ -144,6 +144,15 @@ Phase 2 cleanup from this audit:
 - H6 passed Claude Code QA after the deterministic-health disclaimer guard was corrected. H1-H6 smokes, frontend build, both high-severity audits, 47-table account-data coverage, and Capacitor sync passed.
 - Production computer-use verified one Plan destination, the legacy calendar, the same 4-mile workout across Home/Plan/Train, preserved setup/race routes, and no browser console errors. No EAS build was run.
 
+## Race-First Plan Builder H8 (2026-07-13)
+
+- Create / Manage Plan now starts with race search by event name or location, while manual race entry and no-race distance blocks remain available.
+- Selecting a catalog race pre-fills its canonical name, date, distance, location, and trusted course summary. Race import is idempotent per owned edition and preserves an existing goal time when no replacement is supplied.
+- Race setup uses a native date calendar and separately captures available weekdays, run frequency, optional strength mode/frequency, equipment, and goal time.
+- AI plan requests have a 75-second backend abort and a 90-second frontend request window. Invalid, malformed, or timed-out AI output reaches the deterministic concurrent-plan fallback for both ordinary and race-specific generation routes.
+- H8 passed 39 focused checks, H1/H3/H4/H5/H6 and legacy smokes, both dependency audits, 47-table account-data coverage, frontend build, Capacitor sync, and two independent Claude Code reviews.
+- Production verified the exact `/assets/index-CQXv4o1G.js` bundle, authenticated Army Ten-Miler and Washington DC search, `401` unauthenticated catalog access, and a 390px mobile layout without horizontal overflow. No EAS build was run.
+
 ## Recently Fixed Bugs
 
 Do not reintroduce these patterns.
@@ -174,6 +183,7 @@ Do not reintroduce these patterns.
 | Phase 1 cleanup placeholders visible | frontend/src/pages/Dashboard.jsx, frontend/src/pages/Settings.jsx, frontend/src/pages/LogRun.jsx | Removed duplicate Dashboard quick check-in, Settings legacy distance card, Settings notifications placeholder, and leftover run-log `coming soon` copy |
 | Account export/delete had incomplete table coverage | backend/src/lib/accountDataCoverage.js, backend/src/routes/auth.js, backend/scripts/check-account-data-coverage.js | Export/delete now share a coverage map, include social/PT/plans/device/user-owned data, exclude secrets, and ship with a coverage script |
 | Account deletion only required typed DELETE | backend/src/routes/auth.js, frontend/src/pages/Settings.jsx | Delete account now requires current password plus typed `DELETE`; missing/invalid password blocks deletion |
+| Custom plan generation surfaced a generic failure after malformed/slow AI output | backend/src/services/ai.js, backend/src/routes/plans.js, frontend/src/pages/PlanCatalog.jsx | AI requests abort before the UI deadline and both plan routes select a deterministic fallback instead of failing the user flow |
 
 ## Authorization Model
 
@@ -204,6 +214,7 @@ These changes are already implemented, built, Capacitor-synced, and deployed to 
 | 2026-05-02 | `84c9b107-8b86-496c-9757-bd5c9e87ac74` | Success | Phase 1 TestFlight readiness audit verified current production bundle |
 | 2026-07-13 | `0faa870b-fd59-4b9a-a4f6-fb2139149691` | Success | Unified Hybrid Plan H6 simplification, migration compatibility, and AI guidance labeling verified live |
 | 2026-07-13 | `5fb0c377-aeea-43ce-83a2-aa52ad6705e5` | Success | H7 race-course intelligence, provenance trust gating, and privacy-safe GPX analysis verified live |
+| 2026-07-13 | `f6c0aff8-7ce1-4847-b0a8-a2dd33e1ae16` | Success | H8 race-first plan search, calendar setup, and resilient plan generation verified live |
 
 ### Build/Test Status
 
@@ -222,6 +233,7 @@ These changes are already implemented, built, Capacitor-synced, and deployed to 
 - Phase 6 export/account safety smoke: export returns metadata plus 43 categories without `password_hash`; delete account rejects typed `DELETE` without current password.
 - Phase 6 admin safety smoke: demo user receives `403` from `/api/diagnostics`; unauthenticated `/api/diagnostics` and `/api/meta/build` return `401`.
 - Phase H7 production smoke: Army 10-Miler resolves to trusted curated course facts; unauthenticated race/catalog/GPX requests return `401`; signed-in mobile Races and Plan views render without horizontal overflow or console errors.
+- Phase H8 production smoke: exact bundle hash matches local build; Army Ten-Miler alias and Washington DC location searches return the canonical October 11 event; unauthenticated catalog returns `401`; mobile plan search renders at 390px without horizontal overflow.
 
 ### Product Changes Shipped
 

@@ -8,18 +8,20 @@
 
 ---
 
-## Current state (audited 2026-07-07)
+## Current state (verified 2026-07-13 after H8)
 
 | Capability | Status |
 |---|---|
 | Personal race calendar `race_events` (name/date/distance/location/goal_time/notes) + CRUD + `/next` | ✅ exists |
 | `Races.jsx` page | ✅ exists |
 | AI plan generator tied to `goal_type='race'` (`/plans/generate`, `/race-adjust`, adaptive) | ✅ exists |
-| Variable plan length (e.g. 12 weeks) | ❌ generator prompt HARDCODED to "4-week" |
-| Plan auto-derived from weeks-to-race (base/build/peak/taper periodization) | ❌ not wired |
-| Race **catalog** (searchable DB of real upcoming races) | ❌ none — user hand-types every race |
-| Course intelligence (distance/elevation gain/altitude profile) | ❌ zero course columns |
-| Registration medical/liability waiver | ❌ none (only a Privacy page) |
+| Variable plan length (e.g. 12 weeks) | ✅ shipped; race windows create dated, periodized plans through race day |
+| Plan auto-derived from weeks-to-race (base/build/peak/taper periodization) | ✅ shipped in the unified concurrent-plan engine |
+| Race **catalog** (searchable DB of real upcoming races) | ✅ shipped with name/location search plus manual fallback |
+| Course intelligence (distance/elevation gain/altitude profile) | ✅ shipped with provenance/freshness trust gates and privacy-safe GPX analysis |
+| Registration medical/liability waiver | ✅ shipped with versioned consent storage and re-prompt support |
+
+H8 completed the race-first entry flow: catalog selection pre-fills date, distance, location, and trusted course data; users then choose available days, run/lift frequency, equipment, and goal time before generating. Malformed or timed-out AI output now falls back to the deterministic plan engine for both ordinary and race-specific routes.
 
 ---
 
