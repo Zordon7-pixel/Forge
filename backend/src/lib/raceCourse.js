@@ -62,6 +62,9 @@ const GPX_MIN_POINTS = 10;
 const ELEV_NOISE_FT = 10; // ignore cumulative gains below this threshold (noise)
 const TERRAIN_KINDS = new Set(['road', 'trail', 'track', 'mixed']);
 const CATALOG_DISTANCE_TOLERANCE_MILES = 0.2;
+const CATALOG_SEARCH_MAX_INPUT_LENGTH = 160;
+const CATALOG_SEARCH_MAX_TOKENS = 8;
+const CATALOG_SEARCH_MAX_TOKEN_LENGTH = 40;
 const LAT_MIN = -90;
 const LAT_MAX = 90;
 const LNG_MIN = -180;
@@ -117,6 +120,21 @@ function normalizeRaceLocation(value) {
     .replace(/\s+/g, ' ')
     .replace(/\b([a-z])\s+([a-z])\b/g, '$1$2')
     .trim();
+}
+
+function normalizeCatalogSearchTokens(value) {
+  if (value === null || value === undefined) return [];
+  const bounded = String(value).slice(0, CATALOG_SEARCH_MAX_INPUT_LENGTH);
+  const normalized = normalizeRaceLocation(bounded);
+  if (!normalized) return [];
+  const canonical = Object.prototype.hasOwnProperty.call(NAME_ALIASES, normalized)
+    ? NAME_ALIASES[normalized]
+    : normalized;
+  return [...new Set(canonical
+    .split(' ')
+    .map((token) => token.slice(0, CATALOG_SEARCH_MAX_TOKEN_LENGTH))
+    .filter(Boolean))]
+    .slice(0, CATALOG_SEARCH_MAX_TOKENS);
 }
 
 function catalogLocation(row = {}) {
@@ -689,8 +707,11 @@ module.exports = {
   GPX_MAX_BYTES,
   GPX_MAX_POINTS,
   TERRAIN_KINDS,
+  CATALOG_SEARCH_MAX_INPUT_LENGTH,
+  CATALOG_SEARCH_MAX_TOKENS,
   normalizeRaceName,
   normalizeRaceLocation,
+  normalizeCatalogSearchTokens,
   canonicalEventIdFromCatalogId,
   editionYear,
   resolveCatalogRace,

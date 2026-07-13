@@ -49,6 +49,34 @@ function catalogEnvelopeJson(catalogRace) {
   }));
 }
 
+function catalogRaceFields(catalogRace) {
+  const locationParts = [catalogRace.city, catalogRace.state].filter(Boolean);
+  const location = locationParts.length ? locationParts.join(', ') : (catalogRace.country || null);
+  return {
+    race_name: catalogRace.name,
+    race_date: catalogRace.race_date,
+    distance_miles: Number(catalogRace.distance_miles),
+    location: location ? location.trim() : null,
+    elevation_gain_ft: catalogRace.elevation_gain_ft ?? null,
+    max_altitude_ft: catalogRace.max_altitude_ft ?? null,
+    terrain: catalogRace.terrain || null,
+    course_profile_json: catalogEnvelopeJson(catalogRace),
+    source: catalogRace.source || null,
+    url: catalogRace.url || null,
+  };
+}
+
+function isSameCatalogEdition(race, catalogRace) {
+  if (!race || !catalogRace) return false;
+  if (String(race.race_date) !== String(catalogRace.race_date)) return false;
+  if (Number(race.distance_miles) !== Number(catalogRace.distance_miles)) return false;
+  const envelope = raceCourse.readCourseEnvelope(race.course_profile_json);
+  if (raceCourse.isEnvelope(envelope) && envelope.editionId) {
+    return String(envelope.editionId) === String(catalogRace.id);
+  }
+  return raceCourse.normalizeRaceName(race.race_name) === raceCourse.normalizeRaceName(catalogRace.name);
+}
+
 function receiveGpx(req, res, next) {
   gpxUpload.single('gpx')(req, res, (err) => {
     if (!err) return next();
@@ -94,8 +122,16 @@ router.get('/catalog', auth, async (req, res) => {
     const params = [];
 
     if (q && String(q).trim()) {
-      where.push('name ILIKE ?');
-      params.push(`%${String(q).trim()}%`);
+      const searchTokens = raceCourse.normalizeCatalogSearchTokens(q);
+      if (searchTokens.length === 0) {
+        where.push('1=0');
+      } else {
+        for (const token of searchTokens) {
+          where.push('(name ILIKE ? OR city ILIKE ? OR state ILIKE ? OR country ILIKE ?)');
+          const pattern = `%${token}%`;
+          params.push(pattern, pattern, pattern, pattern);
+        }
+      }
     }
 
     if (distance !== undefined && distance !== '') {
@@ -204,41 +240,78 @@ router.post('/', auth, async (req, res) => {
 
 router.post('/from-catalog/:catalogId', auth, async (req, res) => {
   try {
+    const body = req.body || {};
+    const hasGoalTime = Object.prototype.hasOwnProperty.call(body, 'goal_time_seconds');
+    const requestedGoalTime = parseGoalTime(body.goal_time_seconds);
+    if (Number.isNaN(requestedGoalTime)) return res.status(400).json({ error: 'goal_time_seconds is invalid' });
+
     const catalogRace = await dbGet('SELECT * FROM race_catalog WHERE id=?', [req.params.catalogId]);
     if (!catalogRace) return res.status(404).json({ error: 'Catalog race not found' });
 
-    const locationParts = [catalogRace.city, catalogRace.state].filter(Boolean);
-    const location = locationParts.length ? locationParts.join(', ') : (catalogRace.country || null);
-    const id = uuidv4();
+    const canonical = catalogRaceFields(catalogRace);
+    const candidates = await dbAll(
+      `SELECT * FROM race_events
+       WHERE user_id=? AND race_date=? AND distance_miles=?
+       ORDER BY created_at ASC, id ASC`,
+      [req.user.id, canonical.race_date, canonical.distance_miles]
+    );
+    const existingRace = candidates.find((race) => isSameCatalogEdition(race, catalogRace));
 
-    // Embed the canonical/provenance envelope, not just loose course fields.
-    const envelopeJson = catalogEnvelopeJson(catalogRace);
+    if (existingRace) {
+      const goalTimeSeconds = hasGoalTime ? requestedGoalTime : (existingRace.goal_time_seconds ?? null);
+      await dbRun(
+        `UPDATE race_events
+         SET race_name=?, race_date=?, distance_miles=?, location=?, goal_time_seconds=?,
+             elevation_gain_ft=?, max_altitude_ft=?, terrain=?, course_profile_json=?, source=?, url=?
+         WHERE id=? AND user_id=?`,
+        [
+          canonical.race_name,
+          canonical.race_date,
+          canonical.distance_miles,
+          canonical.location,
+          goalTimeSeconds,
+          canonical.elevation_gain_ft,
+          canonical.max_altitude_ft,
+          canonical.terrain,
+          canonical.course_profile_json,
+          canonical.source,
+          canonical.url,
+          existingRace.id,
+          req.user.id,
+        ]
+      );
+      const refreshed = await dbGet('SELECT * FROM race_events WHERE id=? AND user_id=?', [existingRace.id, req.user.id]);
+      return res.json({ race: withCourseIntelligence(refreshed), existing: true });
+    }
+
+    const id = uuidv4();
 
     await dbRun(
       `INSERT INTO race_events (
-        id, user_id, race_name, race_date, distance_miles, location, status,
+        id, user_id, race_name, race_date, distance_miles, location, goal_time_seconds, status,
         elevation_gain_ft, max_altitude_ft, terrain, course_profile_json, source, url
        )
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
         id,
         req.user.id,
-        catalogRace.name,
-        catalogRace.race_date,
-        Number(catalogRace.distance_miles),
-        location ? location.trim() : null,
+        canonical.race_name,
+        canonical.race_date,
+        canonical.distance_miles,
+        canonical.location,
+        requestedGoalTime,
         'upcoming',
-        catalogRace.elevation_gain_ft || null,
-        catalogRace.max_altitude_ft || null,
-        catalogRace.terrain || null,
-        envelopeJson,
-        catalogRace.source || null,
-        catalogRace.url || null
+        canonical.elevation_gain_ft,
+        canonical.max_altitude_ft,
+        canonical.terrain,
+        canonical.course_profile_json,
+        canonical.source,
+        canonical.url
       ]
     );
 
     const race = await dbGet('SELECT * FROM race_events WHERE id=? AND user_id=?', [id, req.user.id]);
-    res.status(201).json({ race: withCourseIntelligence(race) });
+    res.status(201).json({ race: withCourseIntelligence(race), existing: false });
   } catch (err) {
     console.error('[races/from-catalog] failed:', err.message);
     res.status(500).json({ error: 'Failed to add race from catalog' });

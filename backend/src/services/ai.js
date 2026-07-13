@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const { trustedCourseFacts } = require('../lib/concurrentPlan');
 
 const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
+const OPENAI_RESPONSES_TIMEOUT_MS = 75_000;
 const AI_MODELS = {
   frequent: process.env.OPENAI_MODEL_FREQUENT || 'gpt-5.4-mini',
   complex: process.env.OPENAI_MODEL_COMPLEX || 'gpt-5.5',
@@ -33,27 +34,42 @@ async function createOpenAIResponse({ model, max_tokens, messages }) {
     }))
     : [];
 
-  const response = await fetch(OPENAI_RESPONSES_URL, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: mapLegacyModel(model),
-      input,
-      max_output_tokens: max_tokens,
-      store: false,
-    }),
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), OPENAI_RESPONSES_TIMEOUT_MS);
+  try {
+    const response = await fetch(OPENAI_RESPONSES_URL, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: mapLegacyModel(model),
+        input,
+        max_output_tokens: max_tokens,
+        store: false,
+      }),
+      signal: controller.signal,
+    });
 
-  if (!response.ok) {
-    const detail = await response.text().catch(() => '');
-    throw new Error(`OpenAI response failed (${response.status})${detail ? `: ${detail}` : ''}`);
+    if (!response.ok) {
+      const detail = await response.text().catch(() => '');
+      throw new Error(`OpenAI response failed (${response.status})${detail ? `: ${detail}` : ''}`);
+    }
+
+    const data = await response.json();
+    return { content: [{ text: extractOutputText(data) }] };
+  } catch (err) {
+    if (controller.signal.aborted || err?.name === 'AbortError') {
+      const timeoutError = new Error(`OpenAI Responses request timed out after ${OPENAI_RESPONSES_TIMEOUT_MS / 1000} seconds`);
+      timeoutError.code = 'OPENAI_RESPONSES_TIMEOUT';
+      console.error('[AI/OpenAI] request aborted:', timeoutError.message);
+      throw timeoutError;
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
   }
-
-  const data = await response.json();
-  return { content: [{ text: extractOutputText(data) }] };
 }
 
 let client;
@@ -167,13 +183,20 @@ async function generateTrainingPlan(profile, target = null, trainingContext = nu
   const trainingDaysLine = trainingDays.length
     ? `\n- Actual available training weekdays: ${trainingDays.join(', ')}. Schedule non-rest sessions only on these weekdays unless unavoidable for race-week taper.`
     : '';
+  const equipment = Array.isArray(target?.equipment)
+    ? [...new Set(target.equipment
+      .slice(0, 8)
+      .map((item) => sanitize(item, 30).replace(/_/g, ' '))
+      .filter(Boolean))]
+    : [];
+  const equipmentLine = equipment.length ? equipment.join(', ') : 'barbell, dumbbell, rack, bench';
   const sessionCountRule = trainingDays.length
     ? '- Schedule non-rest sessions only on the listed available training weekdays; do not add sessions on other days to satisfy a minimum session count.'
     : '- Include at least 6 training sessions each week (non-rest days)';
   const liftingRules = planMode === 'run_only'
     ? `- This is a RUN-ONLY plan: include zero lifting, strength, weighted circuit, kettlebell, rucking, sled, or hybrid cross-training sessions.
 - Use only running workouts and rest/recovery days.`
-    : `- Include ${Math.max(1, frequency.liftDaysPerWeek)} real strength sessions per week using barbell/dumbbell exercises; do not use circuits, rucking, sleds, cross_train, or generic injury-prevention sessions.
+    : `- Include ${Math.max(1, frequency.liftDaysPerWeek)} real strength sessions per week using only this available equipment: ${equipmentLine}. Do not prescribe equipment outside this list; do not use circuits, rucking, sleds, cross_train, or generic injury-prevention sessions.
 - Every strength session requires focus, warmup, main exercises, recovery, and progression. Every exercise requires name, sets, reps, rest, load, rpe or rir, cue, and progression.
 - ${planMode === 'hybrid_build' ? 'Use meaningful hypertrophy/strength volume while preserving run quality.' : 'Use submaximal volume that maintains strength and size.'}`;
   const schedulingRule = planMode === 'run_only'
