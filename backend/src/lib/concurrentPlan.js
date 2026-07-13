@@ -163,6 +163,7 @@ function allocateRunDistances(totalMiles, runDays, phase, raceDistance, raceDay)
     const easyTotal = Math.max(0, totalMiles - raceDistance);
     return runDays.map((day) => (day === raceDay ? Number(raceDistance) : round(easyTotal / Math.max(1, easyDays))));
   }
+  if (runDays.length === 1) return [round(Math.min(maxLongRun(raceDistance), totalMiles))];
   const longShare = phase === 'taper' ? 0.3 : 0.38;
   const qualityShare = runDays.length >= 3 ? 0.24 : 0;
   const longDistance = Math.min(maxLongRun(raceDistance), totalMiles * longShare);
@@ -341,7 +342,11 @@ function buildConcurrentPlan(context = {}) {
     const phase = phaseForWeek(weekNumber, weekCount, Boolean(raceDate));
     const raceDay = raceDate && DAY_ORDER.find((day, index) => addDays(weekStart, index) === raceDate);
     const weekRunDays = raceDay && !runDays.includes(raceDay) ? [...runDays.slice(0, Math.max(1, runDays.length - 1)), raceDay] : runDays.slice();
-    const distances = allocateRunDistances(mileageTargets[weekNumber - 1], weekRunDays, phase, raceDistance, raceDay);
+    let scheduledMileageTarget = mileageTargets[weekNumber - 1];
+    const priorScheduledMiles = Number(weeks[weeks.length - 1]?.totalMiles || 0);
+    if (phase === 'deload' && priorScheduledMiles > 0) scheduledMileageTarget = Math.min(scheduledMileageTarget, priorScheduledMiles * 0.8);
+    if (phase === 'taper' && priorScheduledMiles > 0) scheduledMileageTarget = Math.min(scheduledMileageTarget, priorScheduledMiles * 0.65);
+    const distances = allocateRunDistances(scheduledMileageTarget, weekRunDays, phase, raceDistance, raceDay);
     const runByDay = new Map();
     weekRunDays.forEach((day, index) => {
       const type = day === raceDay ? 'race' : runTypeFor(day, weekRunDays, phase);
@@ -517,7 +522,7 @@ function validateConcurrentPlan(candidate, context = {}) {
   }
   if (expectedWeeks >= 8 && !phases.has('deload')) errors.push('plan must include a deload phase');
   const elevationPerMile = Number(target.elevation_gain_ft || target.elevationGainFt || 0) / Math.max(1, Number(target.distanceMiles || 0));
-  if (elevationPerMile >= 30 && !raceSpecificSessionFound) errors.push('hilly race plan must include a hill or course-specific session');
+  if (elevationPerMile >= 30 && expectedWeeks > 1 && !raceSpecificSessionFound) errors.push('hilly race plan must include a hill or course-specific session');
   return { valid: errors.length === 0, errors };
 }
 

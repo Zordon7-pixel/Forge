@@ -172,6 +172,17 @@ assert(engine.validateConcurrentPlan(customDistancePlan, customDistanceContext).
 assert(allSessions(customDistancePlan).some((session) => session.type === 'race' && session.distance_miles === 6.25), 'custom race session preserves exact distance');
 assert(engine.racePlanWindow('2026-07-11', '2026-07-12') === null, 'past race date is rejected before generation');
 
+const oneWeekHillyContext = context('run_only', {
+  target: { weeks: 1, startDate: '2026-07-13', raceDate: '2026-07-19', raceName: 'Immediate hilly race', distanceMiles: 10, elevation_gain_ft: 1000, trainingDays: ['Sun'], runDaysPerWeek: 1 },
+});
+assert(engine.validateConcurrentPlan(engine.buildConcurrentPlan(oneWeekHillyContext), oneWeekHillyContext).valid, 'one-week hilly race remains feasible without inventing a prep session');
+
+const lowFrequencyLongContext = context('run_only', {
+  target: { weeks: 20, startDate: '2026-07-13', raceDate: '2026-11-29', raceName: 'Low-frequency race', distanceMiles: 10, trainingDays: ['Sat'], runDaysPerWeek: 1 },
+});
+const lowFrequencyLongPlan = engine.buildConcurrentPlan(lowFrequencyLongContext);
+assert(engine.validateConcurrentPlan(lowFrequencyLongPlan, lowFrequencyLongContext).valid, '20-week one-day plan preserves measurable deloads');
+
 section('stable ids and candidate rejection');
 const repeated = engine.buildConcurrentPlan(raceContext);
 assert(JSON.stringify(army) === JSON.stringify(repeated), 'deterministic generation is byte-stable for the same inputs');
