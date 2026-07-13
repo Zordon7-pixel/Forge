@@ -1,4 +1,6 @@
 import { Capacitor, registerPlugin } from '@capacitor/core'
+import { App } from '@capacitor/app'
+import { watchWorkoutUnavailableReason } from './watchWorkoutAvailability'
 
 const ForgeWatchWorkout = registerPlugin('ForgeWatchWorkout')
 
@@ -28,12 +30,13 @@ function cleanTitle(value, fallback) {
   return String(value || fallback).replace(/_/g, ' ').trim() || fallback
 }
 
-function unavailableReason(error) {
-  const message = String(error?.message || error || '')
-  if (/not implemented|unimplemented|plugin|no web implementation/i.test(message)) {
-    return 'Update TestFlight to a build that includes Forge Apple Watch workout sending.'
+async function appInfo() {
+  try {
+    return await App.getInfo()
+  } catch (error) {
+    console.error('[watch-workout] app build lookup failed:', error?.message || error)
+    return null
   }
-  return message || 'Apple Watch workout sending is unavailable on this build.'
 }
 
 class WatchWorkoutService {
@@ -45,7 +48,7 @@ class WatchWorkoutService {
     if (!isNativeRuntime()) {
       return {
         available: false,
-        reason: 'Apple Watch workout sending only works in the Forge iPhone app.',
+        reason: 'Automatic Apple Watch delivery only works in the Forged Hybrid iPhone app.',
       }
     }
 
@@ -58,7 +61,7 @@ class WatchWorkoutService {
     } catch (error) {
       return {
         available: false,
-        reason: unavailableReason(error),
+        reason: watchWorkoutUnavailableReason(error, await appInfo()),
       }
     }
   }
@@ -137,7 +140,7 @@ class WatchWorkoutService {
 
   async sendToAppleWatch(workout) {
     if (!isNativeRuntime()) {
-      throw new Error('Apple Watch workout sending only works in the Forge iPhone app.')
+      throw new Error('Automatic Apple Watch delivery only works in the Forged Hybrid iPhone app.')
     }
 
     try {
@@ -151,7 +154,7 @@ class WatchWorkoutService {
       }
       return ForgeWatchWorkout.scheduleWorkout({ workout })
     } catch (error) {
-      throw new Error(unavailableReason(error))
+      throw new Error(watchWorkoutUnavailableReason(error, await appInfo()))
     }
   }
 }
