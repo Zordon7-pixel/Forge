@@ -318,6 +318,8 @@ Gate: route scan, navigation QA, account export/delete coverage, full computer-u
 
 ### Phase H7: Race Course Intelligence and Provenance
 
+Status: Shipped and production-verified on 2026-07-13 at commit `df07abfe`, Railway deployment `5fb0c377-aeea-43ce-83a2-aa52ad6705e5`, bundle `/assets/index-CFTZzFDE.js`. Claude Code QA: PASS.
+
 - Resolve a selected race to a canonical event, dated edition, and course version while preserving the user-entered race as a deterministic fallback.
 - Expand the curated race catalog through official organizer feeds, licensed sources, permissive public data, and user-supplied GPX. Do not scrape sources against their terms.
 - Store or embed provenance, confidence, freshness, and correction history for every course fact used by training logic.

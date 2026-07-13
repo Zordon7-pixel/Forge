@@ -214,3 +214,4 @@ Read `FORGE.md` for:
 | 2026-04-17 | forge-security-fixes (Sonnet 4.6) | Superseded historical note: this commit added social error logging and other audited-clean diffs; the activity-photo ownership fix actually landed later in `2f9340c9` | `9997eeb3` |
 | 2026-04-29 | claude-qa security fixes | Fixed password reset SQL, activity-photo ownership mutation guard, workout-set ownership guard, account deletion logging, meta/build admin gate, social catch logging, and Apple Health native gating | `2f9340c9` |
 | 2026-04-29 | codex | Fixed forgot-password delivery by using Resend HTTP API transport with existing Railway mail credentials | `4c9c9804` |
+| 2026-07-13 | hermes + codex + claude-qa | Shipped H7 canonical race editions, provenance/freshness trust gates, privacy-safe GPX analysis, and course-aware plan inputs; closed QA trust and no-op risks before production | `df07abfe` |

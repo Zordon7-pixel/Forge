@@ -5,8 +5,8 @@ This file holds Forge's product history, deployment notes, shipped phase log, kn
 ## Current Production
 
 - Production URL: `https://forge-production-773f.up.railway.app/`
-- Latest verified application release: commit `0af22d3b`, deployment `0faa870b-fd59-4b9a-a4f6-fb2139149691`
-- Latest checked bundle: `/assets/index-DmSV7cmz.js`
+- Latest verified application release: commit `df07abfe`, deployment `5fb0c377-aeea-43ce-83a2-aa52ad6705e5`
+- Latest checked bundle: `/assets/index-CFTZzFDE.js`
 - iOS version/build: `1.0.5` / `15`
 - Bundle identifier: `com.zordontech.forge`
 - Expo/EAS project: `@zordon/forge-athlete` (`6aeb5fbb-2697-4cf4-b9b3-afe60c63e9e1`)
@@ -203,6 +203,7 @@ These changes are already implemented, built, Capacitor-synced, and deployed to 
 | 2026-04-29 | `6b496dab-8e0a-40dc-b952-dc9dd0790d48` | Success | Deployment-id doc bump built and production-verified |
 | 2026-05-02 | `84c9b107-8b86-496c-9757-bd5c9e87ac74` | Success | Phase 1 TestFlight readiness audit verified current production bundle |
 | 2026-07-13 | `0faa870b-fd59-4b9a-a4f6-fb2139149691` | Success | Unified Hybrid Plan H6 simplification, migration compatibility, and AI guidance labeling verified live |
+| 2026-07-13 | `5fb0c377-aeea-43ce-83a2-aa52ad6705e5` | Success | H7 race-course intelligence, provenance trust gating, and privacy-safe GPX analysis verified live |
 
 ### Build/Test Status
 
@@ -220,6 +221,7 @@ These changes are already implemented, built, Capacitor-synced, and deployed to 
 - Phase 6 production mobile smoke: Dashboard, Settings, Profile, Run Hub, History, and Community render with no console errors.
 - Phase 6 export/account safety smoke: export returns metadata plus 43 categories without `password_hash`; delete account rejects typed `DELETE` without current password.
 - Phase 6 admin safety smoke: demo user receives `403` from `/api/diagnostics`; unauthenticated `/api/diagnostics` and `/api/meta/build` return `401`.
+- Phase H7 production smoke: Army 10-Miler resolves to trusted curated course facts; unauthenticated race/catalog/GPX requests return `401`; signed-in mobile Races and Plan views render without horizontal overflow or console errors.
 
 ### Product Changes Shipped
 
