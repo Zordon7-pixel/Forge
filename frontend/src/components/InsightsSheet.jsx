@@ -144,21 +144,6 @@ export function DailyCoachFlow({ checkedInToday, readiness, recommendation, toda
 
     return `${readiness !== null ? `Readiness ${readiness}. ` : ''}${parts.filter(Boolean).join(' · ')}.`
   }
-  const handleDownloadTcx = async () => {
-    const token = getToken()
-    if (!token) return
-    const res = await fetch('/api/runs/today-workout.tcx', { headers: { Authorization: `Bearer ${token}` } })
-    if (!res.ok) return
-    const blob = await res.blob()
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `forge-workout-${new Date().toISOString().slice(0, 10)}.tcx`
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-    URL.revokeObjectURL(url)
-  }
   const steps = [
     { key: 'checkin', label: 'Check in', done: checkedInToday, action: onCheckIn },
     { key: 'train', label: recommendation ? recommendationLabel : 'Train', done: false, action: onStartWorkout },
@@ -234,14 +219,19 @@ export function DailyCoachFlow({ checkedInToday, readiness, recommendation, toda
         />
       )}
       {structure.length > 0 && (
-        <button
-          type="button"
-          onClick={handleDownloadTcx}
-          className="mt-2 w-full rounded-xl px-3 py-3 text-sm font-bold"
+        <div
+          role="status"
+          className="mt-2 flex w-full items-center justify-between gap-3 rounded-xl px-3 py-3"
           style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}
         >
-          {t('today.downloadForWatch')}
-        </button>
+          <span className="flex items-center gap-2 text-left text-sm font-bold">
+            <Watch size={17} color="var(--text-muted)" />
+            {t('today.thirdPartyWatchSync')}
+          </span>
+          <span className="shrink-0 text-xs font-black uppercase" style={{ color: 'var(--accent)' }}>
+            {t('profile.comingSoon')}
+          </span>
+        </div>
       )}
     </section>
   )

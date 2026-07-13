@@ -28,7 +28,7 @@
     "phaseWarmup": "Warmup",
     "phaseMain": "Main",
     "phaseCooldown": "Cooldown",
-    "downloadForWatch": "Download for Garmin / COROS / Polar / Suunto / Wahoo"
+    "thirdPartyWatchSync": "Garmin / COROS / Polar / Suunto / Wahoo sync"
   },
   "body": {
     "limiterPrefix": "is the limiter today",

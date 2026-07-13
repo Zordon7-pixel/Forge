@@ -57,30 +57,34 @@ export default function WatchWorkoutSendButton({ workout, label = 'Send to Watch
   }
 
   if (compact && !availability.checked) return null
-  if (compact && availability.checked && !availability.available) return null
+
+  const canSend = availability.checked && availability.available
+  const showSendButton = !compact || canSend
 
   return (
     <div className={className}>
-      <button
-        type="button"
-        onClick={sendWorkout}
-        disabled={sending || !workout || (availability.checked && !availability.available)}
-        className="w-full rounded-xl py-3 font-bold flex items-center justify-center gap-2 disabled:opacity-60"
-        style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', cursor: sending ? 'wait' : 'pointer' }}
-      >
-        <Watch size={17} />
-        {sending ? 'Sending...' : availability.checked && !availability.available ? 'Watch delivery unavailable' : label}
-      </button>
+      {showSendButton && (
+        <button
+          type="button"
+          onClick={sendWorkout}
+          disabled={sending || !workout || (availability.checked && !availability.available)}
+          className="w-full rounded-xl py-3 font-bold flex items-center justify-center gap-2 disabled:opacity-60"
+          style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', cursor: sending ? 'wait' : 'pointer' }}
+        >
+          <Watch size={17} />
+          {sending ? 'Sending...' : availability.checked && !availability.available ? 'Watch delivery unavailable' : label}
+        </button>
+      )}
       <button
         type="button"
         onClick={copyWorkout}
-        className="w-full mt-2 rounded-xl py-2 text-sm font-semibold"
+        className={`w-full rounded-xl py-2 text-sm font-semibold ${showSendButton ? 'mt-2' : ''}`}
         style={{ background: 'var(--bg-base)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}
       >
-        Copy workout details
+        {canSend ? 'Copy workout details' : 'Copy workout for manual entry'}
       </button>
       {status && <p className="mt-2 text-xs" style={{ color: 'var(--success)' }}>{status}</p>}
-      {(error || (availability.checked && !availability.available && availability.reason)) && (
+      {(error || (!compact && availability.checked && !availability.available && availability.reason)) && (
         <p className="mt-2 text-xs" style={{ color: 'var(--warning)' }}>
           {error || availability.reason}
         </p>

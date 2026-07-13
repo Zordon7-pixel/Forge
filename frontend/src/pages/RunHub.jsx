@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ChevronRight, Lightbulb } from 'lucide-react'
+import { CalendarDays, ChevronRight, Lightbulb } from 'lucide-react'
 import { useUnits } from '../context/UnitsContext'
 import api from '../lib/api'
 import { getPaceZone } from '../lib/athleteLanguage'
@@ -56,6 +56,21 @@ export default function RunHub() {
         <h2 className="text-2xl font-bold mb-1" style={{ color: 'var(--text-primary)' }}>Run Hub</h2>
         <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Your last run translated into runner language.</p>
       </div>
+
+      <Link
+        to="/plan-catalog"
+        className="flex items-center justify-between gap-3 rounded-2xl p-4"
+        style={{ background: 'var(--accent)', color: 'var(--on-accent)', textDecoration: 'none' }}
+      >
+        <span className="flex items-center gap-3 text-left">
+          <CalendarDays size={22} />
+          <span>
+            <span className="block text-base font-black">Start a running plan</span>
+            <span className="mt-0.5 block text-xs font-semibold opacity-80">Choose your goal, training days, and timeline.</span>
+          </span>
+        </span>
+        <ChevronRight size={20} className="shrink-0" />
+      </Link>
 
       <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>
         {loading ? (
