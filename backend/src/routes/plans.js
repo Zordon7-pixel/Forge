@@ -1109,7 +1109,26 @@ router.get('/my', auth, async (req, res) => {
       LIMIT 1
     `, [req.user.id]);
 
-    if (!row) return res.json({ plan: null });
+    if (!row) {
+      const legacy = await dbGet(
+        'SELECT * FROM training_plans WHERE user_id = ? ORDER BY created_at DESC LIMIT 1',
+        [req.user.id]
+      );
+      if (!legacy) return res.json({ plan: null });
+      const legacyPlan = parsePlan(legacy) || { weeks: [] };
+      return res.json({
+        source: 'legacy',
+        plan: {
+          id: legacy.id,
+          name: legacy.name,
+          type: legacy.type,
+          weeks: Number(legacy.weeks || legacyPlan.weeks?.length || 1),
+          description: legacy.description,
+          plan_data: legacyPlan,
+        },
+        user_plan: null,
+      });
+    }
     let progress = {};
     try {
       progress = JSON.parse(row.progress_json || '{}');

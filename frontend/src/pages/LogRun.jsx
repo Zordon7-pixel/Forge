@@ -8,6 +8,7 @@ import { parseDuration, formatDurationDisplay } from '../lib/parseDuration'
 import PostRunCheckIn from '../components/PostRunCheckIn'
 import PhotoUploader from '../components/PhotoUploader'
 import WatchWorkoutSendButton from '../components/WatchWorkoutSendButton'
+import AiGuidanceNote from '../components/AiGuidanceNote'
 import { queueRequest } from '../lib/offlineQueue'
 import { scrollToFirstError, validateRunLog } from '../utils/validation'
 import WatchWorkoutService from '../services/WatchWorkoutService'
@@ -310,6 +311,7 @@ export default function LogRun() {
   const distanceErrorRef = useRef(null)
   const durationErrorRef = useRef(null)
   const runBriefIsAi = runBrief?.source === 'ai'
+  const todayCoachingIsAi = runBriefIsAi || Boolean(todayWorkout?.aiReason)
 
   useEffect(() => {
     if (warmUpState === 'done') setActiveTab('today')
@@ -733,7 +735,7 @@ export default function LogRun() {
                     <span className="inline-block rounded-full px-2 py-1 text-[10px] font-bold" style={{ background: 'var(--bg-card)', color: 'var(--text-muted)', border: '1px solid var(--border-subtle)' }}>From your plan</span>
                   )}
                   <span className="rounded-full px-2 py-1 text-[10px] font-black uppercase" style={{ background: 'rgba(34,197,94,0.12)', color: 'var(--success)', border: '1px solid rgba(34,197,94,0.35)', whiteSpace: 'nowrap' }}>
-                    {runBriefIsAi ? 'AI coach' : 'Data coach'}
+                    {todayCoachingIsAi ? 'AI coach' : 'Data coach'}
                   </span>
                 </div>
                 <p className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>{todayWorkout.distanceLabel}</p>
@@ -757,6 +759,7 @@ export default function LogRun() {
                 </div>
                 {todayWorkout.progression && <p className="mt-3 text-sm" style={{ color: 'var(--text-primary)' }}>{todayWorkout.progression}</p>}
                 {todayWorkout.description && <p className="mt-3 text-sm" style={{ color: 'var(--text-muted)' }}>{todayWorkout.description}</p>}
+                {todayCoachingIsAi && <AiGuidanceNote />}
                 {runBrief && (
                   <div className="rounded-xl p-3 mt-3" style={{ background: 'var(--accent-dim)', border: '1px solid var(--border-subtle)' }}>
                     <p className="text-xs font-black uppercase mb-1" style={{ color: 'var(--accent)', letterSpacing: 0.8 }}>{runBriefIsAi ? 'AI check' : 'Coach baseline'}</p>

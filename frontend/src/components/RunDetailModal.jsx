@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { X, Brain } from 'lucide-react'
 import api from '../lib/api'
 import { useUnits } from '../context/UnitsContext'
+import AiGuidanceNote from './AiGuidanceNote'
 
 function fmtDuration(totalSeconds = 0) {
   const h = Math.floor(totalSeconds / 3600)
@@ -112,7 +113,10 @@ export default function RunDetailModal({ run, onClose, onFeedbackGenerated }) {
           </div>
 
           {feedback ? (
-            <p className="text-sm leading-relaxed" style={{ color: 'var(--text-muted)' }}>{feedback}</p>
+            <>
+              <p className="text-sm leading-relaxed" style={{ color: 'var(--text-muted)' }}>{feedback}</p>
+              <AiGuidanceNote />
+            </>
           ) : (
             <>
               {error && <p className="text-xs mb-2" style={{ color: 'var(--danger)' }}>{error}</p>}

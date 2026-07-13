@@ -9,82 +9,49 @@ import ForgedCalendar from '../components/calendar/ForgedCalendar'
 import ForgedDayView from '../components/calendar/ForgedDayView'
 import { buildCalendarModel, todayISO } from '../lib/planCalendar'
 
-const RUN_DAY_OPTIONS = [
-  { key: 'Mon', label: 'M' },
-  { key: 'Tue', label: 'T' },
-  { key: 'Wed', label: 'W' },
-  { key: 'Thu', label: 'T' },
-  { key: 'Fri', label: 'F' },
-  { key: 'Sat', label: 'S' },
-  { key: 'Sun', label: 'S' },
-]
-
 export default function Plan() {
   const navigate = useNavigate()
   const { isPro, loading: proLoading } = useProContext()
-  const [plans, setPlans] = useState([])
   const [myPlan, setMyPlan] = useState(null)
   const [myUserPlan, setMyUserPlan] = useState(null)
-  const [adaptivePlan, setAdaptivePlan] = useState(null)
-  const [adaptiveLoading, setAdaptiveLoading] = useState(false)
-  const [acceptingAdaptive, setAcceptingAdaptive] = useState(false)
   const [adaptationProposal, setAdaptationProposal] = useState(null)
   const [adaptationLoading, setAdaptationLoading] = useState(false)
   const [adaptationError, setAdaptationError] = useState('')
   const [adaptationDecision, setAdaptationDecision] = useState(null)
   const [decidingAdaptation, setDecidingAdaptation] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [assigningId, setAssigningId] = useState(null)
   const [updating, setUpdating] = useState(false)
-  const [preferredRunDays, setPreferredRunDays] = useState(['Tue', 'Thu', 'Sat'])
-  const [runDaysPerWeek, setRunDaysPerWeek] = useState(3)
   const [selectedDayISO, setSelectedDayISO] = useState(null)
   const [manageOpen, setManageOpen] = useState(false)
 
-  const adaptiveParams = useMemo(() => ({
-    run_days_per_week: runDaysPerWeek,
-    preferred_run_days: preferredRunDays.join(','),
-  }), [preferredRunDays, runDaysPerWeek])
-
-  const loadAll = async (params = adaptiveParams) => {
+  const loadAll = async () => {
     setLoading(true)
-    setAdaptiveLoading(true)
-    setAdaptationLoading(true)
     setAdaptationError('')
     try {
-      const [plansRes, myRes] = await Promise.all([
-        api.get('/plans'),
-        api.get('/plans/my'),
-      ])
+      const myRes = await api.get('/plans/my')
       const nextPlan = myRes.data?.plan || null
-      setPlans(plansRes.data?.plans || [])
       setMyPlan(nextPlan)
       setMyUserPlan(myRes.data?.user_plan || null)
+      setAdaptationProposal(null)
       const isSchemaV2 = Number(nextPlan?.plan_data?.schemaVersion || 0) === 2
       if (isSchemaV2) {
-        setAdaptivePlan(null)
-        setAdaptiveLoading(false)
+        setAdaptationLoading(true)
         try {
           const adaptationRes = await api.get('/plans/adaptation/current', { params: { date: todayISO() } })
           setAdaptationProposal(adaptationRes.data?.proposal || null)
         } catch (err) {
           setAdaptationProposal(null)
           setAdaptationError(err?.response?.data?.error || 'Transparent adjustment is not available right now.')
+        } finally {
+          setAdaptationLoading(false)
         }
-      } else if (!nextPlan) {
-        setAdaptationProposal(null)
-        setAdaptationLoading(false)
-        const adaptiveRes = await api.get('/plans/adaptive/recommend', { params }).catch(() => ({ data: null }))
-        setAdaptivePlan(adaptiveRes?.data || null)
       } else {
-        setAdaptationProposal(null)
         setAdaptationLoading(false)
-        const adaptiveRes = await api.get('/plans/adaptive/recommend', { params }).catch(() => ({ data: null }))
-        setAdaptivePlan(adaptiveRes?.data || null)
       }
+    } catch (err) {
+      console.error('[Plan] failed to load active plan:', err?.message || err)
     } finally {
       setLoading(false)
-      setAdaptiveLoading(false)
       setAdaptationLoading(false)
     }
   }
@@ -92,24 +59,7 @@ export default function Plan() {
   useEffect(() => {
     loadAll()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [adaptiveParams])
-
-  const togglePreferredRunDay = (day) => {
-    setPreferredRunDays((prev) => {
-      const next = prev.includes(day) ? prev.filter((item) => item !== day) : [...prev, day]
-      return next.sort((a, b) => RUN_DAY_OPTIONS.findIndex((item) => item.key === a) - RUN_DAY_OPTIONS.findIndex((item) => item.key === b))
-    })
-  }
-
-  const assignPlan = async (planId) => {
-    setAssigningId(planId)
-    try {
-      await api.post(`/plans/assign/${planId}`)
-      await loadAll()
-    } finally {
-      setAssigningId(null)
-    }
-  }
+  }, [])
 
   const currentWeek = Math.max(1, Number(myUserPlan?.current_week || 1))
   const weekIndex = currentWeek - 1
@@ -161,16 +111,6 @@ export default function Plan() {
     }
   }
 
-  const acceptAdaptive = async () => {
-    setAcceptingAdaptive(true)
-    try {
-      await api.post('/plans/adaptive/accept', adaptiveParams)
-      await loadAll()
-    } finally {
-      setAcceptingAdaptive(false)
-    }
-  }
-
   const decideAdaptation = async (decision) => {
     if (!adaptationProposal?.id) return
     setDecidingAdaptation(decision)
@@ -210,14 +150,6 @@ export default function Plan() {
     return pieces.join(' · ')
   }
 
-  const intensityMeta = useMemo(() => {
-    const key = String(adaptivePlan?.intensity || 'normal').toLowerCase()
-    if (key === 'recovery') return { label: '🔴 Recovery', color: 'var(--danger)' }
-    if (key === 'reduced') return { label: '🟡 Reduced', color: 'var(--accent)' }
-    if (key === 'increased') return { label: '💪 Increased', color: 'var(--success)' }
-    return { label: '🟢 Normal', color: '#16A34A' }
-  }, [adaptivePlan?.intensity])
-
   if (loading) {
     return (
       <ProGate isPro={isPro} loading={proLoading} message="AI Training Plans are a Pro feature">
@@ -225,66 +157,6 @@ export default function Plan() {
       </ProGate>
     )
   }
-
-  // Adaptive recommendation panel — kept reachable per migration rule #10.
-  const adaptivePanel = (
-    <div className="rounded-xl p-4 space-y-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h2 className="text-base font-bold" style={{ color: 'var(--text-primary)' }}>Adaptive recommendation</h2>
-          <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>This week&apos;s suggested adjustment from your check-ins.</p>
-        </div>
-        <span className="text-xs font-bold rounded-full px-3 py-1" style={{ background: 'var(--bg-input)', color: intensityMeta.color }}>{intensityMeta.label}</span>
-      </div>
-      {adaptiveLoading && <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Loading adaptive recommendation...</p>}
-      {!adaptiveLoading && !adaptivePlan && <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Adaptive recommendation is not available yet.</p>}
-      {!adaptiveLoading && adaptivePlan && (
-        <>
-          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{adaptivePlan.reason || adaptivePlan.recommendation}</p>
-          <AiGuidanceNote />
-          <div className="rounded-lg p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
-            <p className="text-xs font-bold uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>Run availability</p>
-            <div className="mt-3 grid grid-cols-5 gap-2">
-              {[2, 3, 4, 5, 6].map((count) => (
-                <button key={count} type="button" onClick={() => setRunDaysPerWeek(count)} className="rounded-lg px-2 py-2 text-xs font-black"
-                  style={{ border: `1px solid ${runDaysPerWeek === count ? 'var(--accent)' : 'var(--border-subtle)'}`, background: runDaysPerWeek === count ? 'var(--accent)' : 'var(--bg-card)', color: runDaysPerWeek === count ? '#000' : 'var(--text-primary)' }}>
-                  {count}d
-                </button>
-              ))}
-            </div>
-            <div className="mt-3 grid grid-cols-7 gap-2">
-              {RUN_DAY_OPTIONS.map((day) => {
-                const active = preferredRunDays.includes(day.key)
-                return (
-                  <button key={day.key} type="button" onClick={() => togglePreferredRunDay(day.key)} className="rounded-lg py-2 text-xs font-black"
-                    style={{ border: `1px solid ${active ? 'var(--accent)' : 'var(--border-subtle)'}`, background: active ? 'var(--accent-dim)' : 'var(--bg-card)', color: active ? 'var(--accent)' : 'var(--text-muted)' }}
-                    aria-label={`Prefer ${day.key} runs`}>
-                    {day.label}
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            {(adaptivePlan.sessions || []).map((session, index) => (
-              <div key={session.id || `${session.day}-${index}`} className="rounded-lg p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
-                <p className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>{session.day}</p>
-                <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{session.title}</p>
-                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                  {session.type === 'run' && Number(session.distance_miles || 0) > 0
-                    ? `${Number(session.distance_miles).toFixed(1)} mi`
-                    : session.type === 'rest' ? 'Rest day' : 'Strength session'}
-                </p>
-              </div>
-            ))}
-          </div>
-          <button onClick={acceptAdaptive} disabled={acceptingAdaptive} className="rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-60" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>
-            {acceptingAdaptive ? 'Saving...' : 'Accept adjustment'}
-          </button>
-        </>
-      )}
-    </div>
-  )
 
   const course = model?.goal?.course || myPlan?.plan_data?.goal?.course || null
   const hasVerifiedCourse = course
@@ -305,7 +177,7 @@ export default function Plan() {
           <p className="text-sm mt-1 break-words" style={{ color: 'var(--text-muted)' }}>
             {adaptationLoading ? 'Checking the live calendar...' : adaptationProposal?.reason || 'No calendar adjustment is pending.'}
           </p>
-          <AiGuidanceNote />
+          {adaptationProposal?.reason && <AiGuidanceNote />}
         </div>
         {adaptationProposal?.safetyException && (
           <span className="text-xs font-bold rounded-full px-3 py-1 self-start" style={{ background: 'var(--danger-dim)', color: 'var(--danger)' }}>
@@ -394,35 +266,20 @@ export default function Plan() {
   return (
     <ProGate isPro={isPro} loading={proLoading} message="AI Training Plans are a Pro feature">
       <div className="space-y-4">
-        {/* No active plan: catalog assignment + adaptive controls stay reachable */}
+        {/* No active plan: setup lives in one Create / Manage flow. */}
         {!myPlan && (
-          <>
-            <div className="rounded-xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-              <h2 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>Training Plans</h2>
-              <p className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>Run-only or hybrid plans. When lifting is on, strength is a protected training objective alongside your race goal.</p>
-              <div className="mt-3 flex flex-wrap gap-3">
-                <button type="button" onClick={() => navigate('/plan-catalog')} className="text-xs font-bold" style={{ background: 'transparent', border: 'none', color: 'var(--accent)', padding: 0, cursor: 'pointer' }}>
-                  Create / manage plan →
-                </button>
-                <button type="button" onClick={() => navigate('/races')} className="text-xs font-bold" style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', padding: 0, cursor: 'pointer' }}>
-                  Races →
-                </button>
-              </div>
+          <div className="rounded-xl p-5" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+            <h2 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>Build your training calendar</h2>
+            <p className="text-sm mt-2" style={{ color: 'var(--text-muted)' }}>Choose a run-only or hybrid goal. Your race, workouts, and transparent adjustments will live in this calendar.</p>
+            <div className="mt-4 flex flex-col sm:flex-row gap-2">
+              <button type="button" onClick={() => navigate('/plan-catalog')} className="rounded-lg px-4 py-3 text-sm font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', cursor: 'pointer' }}>
+                Create / manage plan
+              </button>
+              <button type="button" onClick={() => navigate('/races')} className="rounded-lg px-4 py-3 text-sm font-bold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', cursor: 'pointer' }}>
+                Manage races
+              </button>
             </div>
-            <div className="grid gap-3">
-              {plans.map((plan) => (
-                <div key={plan.id} className="rounded-xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-                  <p className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>{plan.name}</p>
-                  <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>{plan.type} · {plan.weeks} weeks</p>
-                  <p className="text-sm mt-2" style={{ color: 'var(--text-muted)' }}>{plan.description}</p>
-                  <button onClick={() => assignPlan(plan.id)} disabled={assigningId === plan.id} className="mt-3 rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-60" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>
-                    {assigningId === plan.id ? 'Assigning...' : 'Assign Plan'}
-                  </button>
-                </div>
-              ))}
-            </div>
-            {adaptivePanel}
-          </>
+          </div>
         )}
 
         {/* Active plan: the Forged Training Calendar is primary */}
@@ -489,7 +346,6 @@ export default function Plan() {
                       <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{myPlan.name}</p>
                       <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>{myPlan.type} · Week {currentWeek} of {myPlan.weeks}</p>
                     </div>
-                    {!isActiveSchemaV2 && adaptivePanel}
                     <div className="flex flex-wrap gap-3">
                       <button type="button" onClick={() => navigate('/plan-catalog')} className="text-xs font-bold" style={{ background: 'transparent', border: 'none', color: 'var(--accent)', padding: 0, cursor: 'pointer' }}>
                         Create / manage plan →
@@ -498,11 +354,6 @@ export default function Plan() {
                         Races →
                       </button>
                     </div>
-                    <button onClick={() => { setSelectedDayISO(null); setMyPlan(null); setMyUserPlan(null) }}
-                      className="rounded-lg px-4 py-2 text-sm font-semibold"
-                      style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}>
-                      Change Plan
-                    </button>
                   </div>
                 )}
               </div>

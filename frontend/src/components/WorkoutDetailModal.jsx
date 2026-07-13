@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { X, Brain } from 'lucide-react'
 import api from '../lib/api'
+import AiGuidanceNote from './AiGuidanceNote'
 
 function fmtDuration(totalSeconds = 0) {
   const h = Math.floor(totalSeconds / 3600)
@@ -112,7 +113,10 @@ export default function WorkoutDetailModal({ session, onClose, onFeedbackGenerat
             <span className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>AI Coach Feedback</span>
           </div>
           {feedback ? (
-            <p className="text-sm leading-relaxed" style={{ color: 'var(--text-muted)' }}>{feedback}</p>
+            <>
+              <p className="text-sm leading-relaxed" style={{ color: 'var(--text-muted)' }}>{feedback}</p>
+              <AiGuidanceNote />
+            </>
           ) : (
             <>
               {error && <p className="text-xs mb-2" style={{ color: 'var(--danger)' }}>{error}</p>}

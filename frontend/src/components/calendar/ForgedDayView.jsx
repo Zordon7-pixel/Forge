@@ -4,6 +4,7 @@ import {
   Maximize2, Minimize2, Minus, Plus, ChevronLeft, CheckCircle2, Circle,
 } from 'lucide-react'
 import WatchWorkoutSendButton from '../WatchWorkoutSendButton'
+import AiGuidanceNote from '../AiGuidanceNote'
 import WatchWorkoutService from '../../services/WatchWorkoutService'
 import { sessionState } from '../../lib/planCalendar'
 import './forgedCalendar.css'
@@ -355,6 +356,7 @@ export default function ForgedDayView({
             <h4 className="forged-hand" style={{ fontSize: px(17), fontWeight: 700 }}>Why today</h4>
           </div>
           <p style={{ fontSize: px(13), lineHeight: 1.55, marginTop: 8 }}>{whyToday}</p>
+          <AiGuidanceNote />
         </section>
       )}
     </div>

@@ -15,8 +15,10 @@ import { dirname, resolve } from 'node:path';
 import { recommendationFromExecution, normalizeExecution } from '../src/lib/dailyExecutionCore.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const repoDir = resolve(__dirname, '../..');
 const srcDir = resolve(__dirname, '../src');
 const read = (rel) => readFileSync(resolve(srcDir, rel), 'utf8');
+const readRepo = (rel) => readFileSync(resolve(repoDir, rel), 'utf8');
 
 let passed = 0;
 let failed = 0;
@@ -38,7 +40,12 @@ console.log('\n== AI-prose surfaces carry the note ==');
 const aiSurfaces = [
   'components/AICoachFeedbackCard.jsx',
   'components/InsightsSheet.jsx',
+  'components/RunDetailModal.jsx',
   'components/StrengthWorkoutRecommendation.jsx',
+  'components/WorkoutDetailModal.jsx',
+  'components/calendar/ForgedDayView.jsx',
+  'pages/LogRun.jsx',
+  'pages/RunHub.jsx',
   'pages/WeeklyRecap.jsx',
   'pages/Plan.jsx',
 ];
@@ -68,6 +75,9 @@ console.log('\n== catalog/races stay reachable from the Plan flow ==');
 const plan = read('pages/Plan.jsx');
 assert(/navigate\('\/plan-catalog'\)/.test(plan), 'Plan flow links to /plan-catalog (create/manage)');
 assert(/navigate\('\/races'\)/.test(plan), 'Plan flow links to /races');
+assert(!/api\.get\('\/plans'\)/.test(plan), 'Plan no longer duplicates the catalog listing');
+assert(!/\/plans\/adaptive\/recommend/.test(plan), 'legacy Adaptive Plan recommendation panel is removed');
+assert(!/plans\.map|Assign Plan/.test(plan), 'Plan no longer renders competing assignment cards');
 
 console.log('\n== Plan Catalog reframed as Create / Manage Plan ==');
 const catalog = read('pages/PlanCatalog.jsx');
@@ -96,6 +106,18 @@ const rec = recommendationFromExecution(normalizeExecution(hybridBody));
 assert(rec && rec.source === 'calendar', 'active-plan recommendation is sourced from the calendar, not a disconnected suggestion');
 assert(rec && rec.planSessionId === 'run-1', 'calendar recommendation carries the scheduled run session id');
 assert(recommendationFromExecution(normalizeExecution({ today: null, execution: { hasPlan: false, hasDay: false } })) === null, 'no-plan yields null so callers fall back to manual recommendation');
+
+console.log('\n== Run Hub uses the canonical calendar when a plan is active ==');
+const runHub = read('pages/RunHub.jsx');
+assert(/fetchDailyExecution/.test(runHub) && /recommendationFromExecution/.test(runHub), 'RunHub imports the canonical daily execution helpers');
+assert(/dailyExecution\?\.hasPlan[\s\S]{0,120}recommendationFromExecution\(dailyExecution\)/.test(runHub), 'RunHub prefers the calendar recommendation for an active plan');
+assert(/to="\/plan"/.test(runHub), 'RunHub plan CTA opens the unified calendar');
+assert(!/to="\/plan-catalog"/.test(runHub), 'RunHub no longer bypasses the unified calendar');
+
+console.log('\n== legacy owned plans remain visible without migration writes ==');
+const plansRoute = readRepo('backend/src/routes/plans.js');
+assert(/SELECT \* FROM training_plans WHERE user_id = \? ORDER BY created_at DESC LIMIT 1/.test(plansRoute), '/plans/my falls back to a user-scoped legacy plan');
+assert(/source:\s*'legacy'/.test(plansRoute) && /user_plan:\s*null/.test(plansRoute), 'legacy fallback is explicitly read-only until normal progress migration');
 
 console.log(`\nPASSED: ${passed}  FAILED: ${failed}`);
 if (failed) process.exit(1);

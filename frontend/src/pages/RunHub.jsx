@@ -4,26 +4,38 @@ import { CalendarDays, ChevronRight, Lightbulb } from 'lucide-react'
 import { useUnits } from '../context/UnitsContext'
 import api from '../lib/api'
 import { getPaceZone } from '../lib/athleteLanguage'
+import AiGuidanceNote from '../components/AiGuidanceNote'
+import { fetchDailyExecution, recommendationFromExecution, runRouteState } from '../lib/dailyExecution'
 
 export default function RunHub() {
   const { fmt } = useUnits()
   const [latestRun, setLatestRun] = useState(null)
   const [recommendation, setRecommendation] = useState(null)
+  const [execution, setExecution] = useState(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     Promise.all([
       api.get('/runs'),
+      fetchDailyExecution().catch((err) => {
+        console.error('[RunHub] canonical daily execution fetch failed:', err?.message || err)
+        return null
+      }),
       api.get('/runs/next-recommendation').catch(() => ({ data: null })),
     ])
-      .then(([runsRes, recRes]) => {
+      .then(([runsRes, dailyExecution, recRes]) => {
         const runs = Array.isArray(runsRes.data) ? runsRes.data : runsRes.data?.runs || []
         setLatestRun(runs[0] || null)
-        setRecommendation(recRes.data || null)
+        setExecution(dailyExecution)
+        setRecommendation(dailyExecution?.hasPlan
+          ? recommendationFromExecution(dailyExecution)
+          : (recRes.data || null))
       })
-      .catch(() => {
+      .catch((err) => {
+        console.error('[RunHub] failed to load run hub:', err?.message || err)
         setLatestRun(null)
         setRecommendation(null)
+        setExecution(null)
       })
       .finally(() => setLoading(false))
   }, [])
@@ -39,16 +51,20 @@ export default function RunHub() {
     return fmt.pace(latestRun.duration_seconds / latestRun.distance_miles)
   }, [latestRun, fmt])
 
+  const calendarOwnsToday = execution?.hasPlan === true
+  const calendarRunState = useMemo(() => runRouteState(execution), [execution])
+
   const recommendationTarget = useMemo(() => {
-    if (!recommendation) return '/log-run'
+    if (!recommendation) return calendarOwnsToday ? '/plan' : '/log-run'
     if (recommendation.recommendationType === 'strength') return '/log-lift'
     if (recommendation.recommendationType === 'rest') return '/plan'
+    if (recommendation.source === 'calendar') return '/log-run'
     const params = new URLSearchParams()
     if (Number(recommendation.suggestedDistance || 0) > 0) params.set('distance', String(recommendation.suggestedDistance))
     if (recommendation.recommendationType) params.set('type', String(recommendation.recommendationType))
     if (recommendation.suggestedPace) params.set('pace', String(recommendation.suggestedPace))
     return `/log-run${params.toString() ? `?${params.toString()}` : ''}`
-  }, [recommendation])
+  }, [calendarOwnsToday, recommendation])
 
   return (
     <div className="space-y-4 py-2 pb-16">
@@ -58,15 +74,15 @@ export default function RunHub() {
       </div>
 
       <Link
-        to="/plan-catalog"
+        to="/plan"
         className="flex items-center justify-between gap-3 rounded-2xl p-4"
         style={{ background: 'var(--accent)', color: 'var(--on-accent)', textDecoration: 'none' }}
       >
         <span className="flex items-center gap-3 text-left">
           <CalendarDays size={22} />
           <span>
-            <span className="block text-base font-black">Start a running plan</span>
-            <span className="mt-0.5 block text-xs font-semibold opacity-80">Choose your goal, training days, and timeline.</span>
+            <span className="block text-base font-black">{calendarOwnsToday ? 'Open training plan' : 'Create a training plan'}</span>
+            <span className="mt-0.5 block text-xs font-semibold opacity-80">{calendarOwnsToday ? 'Review today and the weeks ahead.' : 'Choose your goal, training days, and timeline.'}</span>
           </span>
         </span>
         <ChevronRight size={20} className="shrink-0" />
@@ -107,6 +123,7 @@ export default function RunHub() {
       {recommendation && (
         <Link
           to={recommendationTarget}
+          state={recommendation.source === 'calendar' ? calendarRunState : undefined}
           className="block rounded-2xl p-4"
           style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', textDecoration: 'none' }}
         >
@@ -114,7 +131,7 @@ export default function RunHub() {
             <div className="flex items-center gap-2">
               <Lightbulb size={15} color="var(--accent)" />
               <p className="text-xs font-semibold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.8 }}>
-                Today&apos;s Recommendation
+                {recommendation.source === 'calendar' ? 'Today\'s Plan' : 'Today\'s Recommendation'}
               </p>
             </div>
             <ChevronRight size={15} color="var(--text-muted)" />
@@ -124,6 +141,19 @@ export default function RunHub() {
             {Number(recommendation.suggestedDistance || 0) > 0 ? ` · ${recommendation.suggestedDistance} mi` : ''}
           </p>
           <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>{recommendation.reason}</p>
+          {recommendation.reason && recommendation.recommendationType !== 'rest' && <AiGuidanceNote />}
+        </Link>
+      )}
+
+      {!loading && calendarOwnsToday && !recommendation && (
+        <Link
+          to="/plan"
+          className="block rounded-2xl p-4"
+          style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', textDecoration: 'none' }}
+        >
+          <p className="text-xs font-semibold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.8 }}>Today&apos;s Plan</p>
+          <p className="text-sm font-bold mt-2" style={{ color: 'var(--text-primary)' }}>No run is scheduled today</p>
+          <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>Open your calendar to review the next session.</p>
         </Link>
       )}
 

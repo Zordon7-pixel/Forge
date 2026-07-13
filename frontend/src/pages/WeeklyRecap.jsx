@@ -110,7 +110,7 @@ export default function WeeklyRecap() {
               <p style={{ marginTop: 10, marginBottom: 0, fontSize: 14, lineHeight: 1.55, color: 'var(--text-primary)' }}>
                 {data?.insight || 'Keep your next run easy and consistent to build aerobic fitness safely.'}
               </p>
-              <AiGuidanceNote />
+              {data?.insight && <AiGuidanceNote />}
             </section>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
