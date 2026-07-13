@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Brain, Maximize2, Minimize2, Minus, Plus, Zap } from 'lucide-react'
 import WatchWorkoutSendButton from './WatchWorkoutSendButton'
 
@@ -28,6 +28,7 @@ export default function StrengthWorkoutRecommendation({
 }) {
   const [scaleIndex, setScaleIndex] = useState(1)
   const [expanded, setExpanded] = useState(false)
+  const containerRef = useRef(null)
   const scale = TEXT_SCALES[scaleIndex]
   const px = (value) => `${Math.round(value * scale)}px`
   const exercises = Array.isArray(plan?.main) ? plan.main : []
@@ -35,17 +36,42 @@ export default function StrengthWorkoutRecommendation({
   useEffect(() => {
     if (!expanded) return undefined
     const previousOverflow = document.body.style.overflow
+    const previousFocus = document.activeElement
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        setExpanded(false)
+        return
+      }
+      if (event.key !== 'Tab') return
+      const focusable = Array.from(containerRef.current?.querySelectorAll('button:not([disabled]), [href], input:not([disabled]), [tabindex]:not([tabindex="-1"])') || [])
+      if (!focusable.length) return
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
     document.body.style.overflow = 'hidden'
+    document.addEventListener('keydown', handleKeyDown)
+    containerRef.current?.focus()
     return () => {
       document.body.style.overflow = previousOverflow
+      document.removeEventListener('keydown', handleKeyDown)
+      previousFocus?.focus?.()
     }
   }, [expanded])
 
   return (
     <div
+      ref={containerRef}
       role={expanded ? 'dialog' : undefined}
       aria-modal={expanded ? 'true' : undefined}
       aria-label={expanded ? `${title || 'Strength workout'} expanded` : undefined}
+      tabIndex={expanded ? -1 : undefined}
       className="p-4"
       style={{
         position: expanded ? 'fixed' : 'relative',

@@ -40,7 +40,9 @@ function playAlarm() {
       o.start(ctx.currentTime + start); o.stop(ctx.currentTime + start + dur + 0.1)
     }
     beep(880,0,0.15); beep(1100,0.2,0.15); beep(880,0.4,0.15); beep(1320,0.6,0.3)
-  } catch {}
+  } catch (err) {
+    console.warn('[active-workout/alarm] unable to play rest alert:', err?.message || err)
+  }
 }
 
 export default function ActiveWorkout() {
@@ -195,7 +197,10 @@ export default function ActiveWorkout() {
           setSetNumber(1)
         }
       }
-    } catch {}
+    } catch (err) {
+      console.error('[active-workout/log-set] failed:', err?.message || err)
+      setFormErrors((previous) => ({ ...previous, workout: 'Could not save this set. Check your connection and try again.' }))
+    }
   }
 
   const endWorkout = async () => {
@@ -209,7 +214,9 @@ export default function ActiveWorkout() {
     try {
       await api.put(`/workouts/${id}/end`, {})
       navigate(`/workout/summary/${id}`)
-    } catch {
+    } catch (err) {
+      console.error('[active-workout/end] failed:', err?.message || err)
+      setFormErrors((previous) => ({ ...previous, workout: 'Could not finish this workout. Try again.' }))
       setEnding(false)
     }
   }

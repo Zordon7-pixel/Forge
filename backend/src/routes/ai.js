@@ -36,8 +36,8 @@ function normalizeStrengthRecommendation(value) {
         sets: Number.isFinite(parsedSets) ? Math.max(1, Math.min(8, Math.round(parsedSets))) : 3,
         reps: sanitize(exercise.reps, 20) || '6-8',
         rest: sanitize(exercise.rest, 20) || '90s',
-        focus: sanitize(exercise.focus, 30),
-        cue: sanitize(exercise.cue, 140),
+        focus: sanitize(exercise.focus, 30) || 'Strength',
+        cue: sanitize(exercise.cue, 140) || 'Use controlled form and stop the set before technique breaks down.',
       };
     })
     .filter(Boolean)
