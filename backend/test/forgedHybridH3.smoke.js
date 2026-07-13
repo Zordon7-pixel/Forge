@@ -155,6 +155,23 @@ for (const session of allSessions(noHillPlan)) {
 const noHillValidation = engine.validateConcurrentPlan(noHillPlan, hillyContext);
 assert(!noHillValidation.valid && noHillValidation.errors.some((error) => /hilly race plan/.test(error)), 'validator rejects a hilly race plan with no hill-specific session');
 
+const farWindow = engine.racePlanWindow('2027-04-19', '2026-07-12');
+assert(farWindow.weeks === 20 && farWindow.startDate === '2026-12-07' && farWindow.startsLater, 'far race uses a capped 20-week window ending on race week');
+const farRaceContext = context('hybrid_maintain', {
+  target: { weeks: farWindow.weeks, startDate: farWindow.startDate, raceDate: '2027-04-19', raceName: 'Boston Marathon', distanceMiles: 26.2 },
+});
+const farRacePlan = engine.buildConcurrentPlan(farRaceContext);
+assert(engine.validateConcurrentPlan(farRacePlan, farRaceContext).valid, 'far-race deterministic fallback validates and reaches exact race day');
+assert(allSessions(farRacePlan).some((session) => session.type === 'race' && session.distance_miles === 26.2), 'far-race plan preserves exact race distance');
+
+const customDistanceContext = context('run_only', {
+  target: { weeks: 13, startDate: '2026-07-13', raceDate: '2026-10-11', raceName: 'Custom course', distanceMiles: 6.25 },
+});
+const customDistancePlan = engine.buildConcurrentPlan(customDistanceContext);
+assert(engine.validateConcurrentPlan(customDistancePlan, customDistanceContext).valid, 'custom race distance validates without one-decimal truncation');
+assert(allSessions(customDistancePlan).some((session) => session.type === 'race' && session.distance_miles === 6.25), 'custom race session preserves exact distance');
+assert(engine.racePlanWindow('2026-07-11', '2026-07-12') === null, 'past race date is rejected before generation');
+
 section('stable ids and candidate rejection');
 const repeated = engine.buildConcurrentPlan(raceContext);
 assert(JSON.stringify(army) === JSON.stringify(repeated), 'deterministic generation is byte-stable for the same inputs');

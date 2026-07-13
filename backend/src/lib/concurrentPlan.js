@@ -40,6 +40,21 @@ function mondayFor(value) {
   return toISODate(new Date(date.getFullYear(), date.getMonth(), date.getDate() - offset, 12));
 }
 
+function racePlanWindow(raceDateValue, planningDateValue) {
+  const raceDate = parseISODate(raceDateValue);
+  const planningDate = parseISODate(planningDateValue);
+  if (!raceDate || !planningDate || raceDate < planningDate) return null;
+  const currentMonday = mondayFor(planningDateValue);
+  const planningDay = DAY_ORDER[(planningDate.getDay() + 6) % 7];
+  const upcomingMonday = planningDay === 'Mon' ? currentMonday : addDays(currentMonday, 7);
+  const raceWeekMonday = mondayFor(raceDateValue);
+  let startDate = raceDate < parseISODate(upcomingMonday) ? currentMonday : upcomingMonday;
+  const rawWeeks = Math.floor((parseISODate(raceWeekMonday) - parseISODate(startDate)) / (7 * 86400000)) + 1;
+  const weeks = clamp(rawWeeks, 1, 20);
+  if (rawWeeks > 20) startDate = addDays(raceWeekMonday, -(weeks - 1) * 7);
+  return { startDate, weeks, startsLater: startDate > upcomingMonday };
+}
+
 function normalizeWeekdays(values, fallback) {
   const source = Array.isArray(values) ? values : [];
   const normalized = source
@@ -146,7 +161,7 @@ function allocateRunDistances(totalMiles, runDays, phase, raceDistance, raceDay)
   if (raceDay) {
     const easyDays = Math.max(0, runDays.length - 1);
     const easyTotal = Math.max(0, totalMiles - raceDistance);
-    return runDays.map((day) => (day === raceDay ? round(raceDistance) : round(easyTotal / Math.max(1, easyDays))));
+    return runDays.map((day) => (day === raceDay ? Number(raceDistance) : round(easyTotal / Math.max(1, easyDays))));
   }
   const longShare = phase === 'taper' ? 0.3 : 0.38;
   const qualityShare = runDays.length >= 3 ? 0.24 : 0;
@@ -207,7 +222,7 @@ function buildRunSession({ weekNumber, day, type, distance, phase, hilly, raceNa
   if (type === 'race') {
     return {
       id: `h3-w${weekNumber}-${day.toLowerCase()}-run`, kind: 'run', type: 'race', workout_type: 'run',
-      title: raceName || 'Race day', distance_miles: round(distance), target_zone: 'Race effort', pace_target: 'Goal race effort', intensity: 'Race',
+      title: raceName || 'Race day', distance_miles: Number(distance), target_zone: 'Race effort', pace_target: 'Goal race effort', intensity: 'Race',
       warmup: ['10-15 min easy', '4 x 20 sec relaxed strides'], steps: ['Start controlled', 'Settle into goal effort', 'Race by effort over late hills'],
       cooldown: ['Walk until breathing settles'], progression: 'Execute the prepared race plan.', description: 'Race-day execution.',
     };
@@ -526,6 +541,7 @@ function selectPlanCandidate(candidate, context = {}) {
 module.exports = {
   addDays,
   mondayFor,
+  racePlanWindow,
   resolvePlanMode,
   phaseForWeek,
   buildMileageTargets,

@@ -44,11 +44,9 @@ function getPlanStartMonday(date = new Date()) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-function weeksThroughDate(startDate, endDate) {
-  const start = new Date(`${startDate}T12:00:00`);
-  const end = new Date(`${endDate}T12:00:00`);
-  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) return 1;
-  return clamp(Math.floor((end - start) / (7 * 86400000)) + 1, 1, 20);
+function getTodayISO(date = new Date()) {
+  const d = new Date(date);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 function parsePlan(plan) {
@@ -1146,17 +1144,14 @@ router.post('/generate', auth, requirePremium('Race Programs'), checkAiLimit('pl
       && !Number.isNaN(new Date(`${requested.raceDate}T12:00:00`).getTime())
       ? requested.raceDate
       : null;
-    const upcomingMonday = getPlanStartMonday();
-    const startDate = requestedRaceDate && new Date(`${requestedRaceDate}T12:00:00`) < new Date(`${upcomingMonday}T12:00:00`)
-      ? getMonday()
-      : upcomingMonday;
+    const raceWindow = requestedRaceDate ? concurrentPlan.racePlanWindow(requestedRaceDate, getTodayISO()) : null;
+    if (requestedRaceDate && !raceWindow) return res.status(400).json({ error: 'Race date must be today or later' });
+    const startDate = raceWindow?.startDate || getPlanStartMonday();
     const target = {
       ...requested,
       distanceMiles,
       raceDate: requestedRaceDate,
-      weeks: requestedRaceDate
-        ? weeksThroughDate(startDate, requestedRaceDate)
-        : clampInt(requested.weeks, 4, 20, defaultWeeksForDistance(distanceMiles)),
+      weeks: raceWindow?.weeks || clampInt(requested.weeks, 4, 20, defaultWeeksForDistance(distanceMiles)),
       startDate,
       planMode: concurrentPlan.resolvePlanMode(profile, requested),
     };
@@ -1184,10 +1179,9 @@ router.post('/generate-for-race/:raceId', auth, requirePremium('Race Programs'),
     const race = await dbGet('SELECT * FROM race_events WHERE id = ? AND user_id = ?', [req.params.raceId, req.user.id]);
     if (!race) return res.status(404).json({ error: 'Race not found' });
     // Cover every dated week through race day from the next plan Monday.
-    const raceDate = new Date(`${race.race_date}T12:00:00`);
-    const upcomingMonday = getPlanStartMonday();
-    const startDate = raceDate < new Date(`${upcomingMonday}T12:00:00`) ? getMonday() : upcomingMonday;
-    const weeks = weeksThroughDate(startDate, race.race_date);
+    const raceWindow = concurrentPlan.racePlanWindow(race.race_date, getTodayISO());
+    if (!raceWindow) return res.status(400).json({ error: 'Race date must be today or later' });
+    const { startDate, weeks } = raceWindow;
     const requested = req.body?.target || {};
     const target = {
       ...requested,
