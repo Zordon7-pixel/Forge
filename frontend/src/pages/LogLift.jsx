@@ -4,7 +4,7 @@ import api from '../lib/api'
 import track from '../lib/track'
 import { queueRequest } from '../lib/offlineQueue'
 import { getVolumeLoad, getProgressiveOverloadTip } from '../lib/athleteLanguage'
-import WatchWorkoutSendButton from '../components/WatchWorkoutSendButton'
+import StrengthWorkoutRecommendation from '../components/StrengthWorkoutRecommendation'
 import WatchWorkoutService from '../services/WatchWorkoutService'
 
 const MUSCLE_GROUPS = [
@@ -18,6 +18,16 @@ const MUSCLE_GROUPS = [
 
 const BODY_GRAY = '#374151'
 const BODY_ACCENT = 'var(--accent)'
+
+function muscleGroupsFromTarget(target = '') {
+  const value = String(target).toLowerCase()
+  const groups = MUSCLE_GROUPS
+    .filter(({ key }) => value.includes(key))
+    .map(({ key }) => key)
+  if (/lower body|glute|quad|hamstring|calf/.test(value) && !groups.includes('legs')) groups.push('legs')
+  if (/upper body/.test(value)) groups.push(...['chest', 'back', 'shoulders', 'arms'].filter((key) => !groups.includes(key)))
+  return groups.length ? groups : ['full']
+}
 
 function BodySVG({ highlight, sex = 'male' }) {
   const hi = (part) => highlight === 'full' || highlight === part ? BODY_ACCENT : BODY_GRAY
@@ -162,9 +172,8 @@ export default function LogLift() {
     setError('')
     setFeedback('')
     try {
-      const targetStr = aiRecommendation?.target || ''
-      const muscleGroups = targetStr.split(/[,\/\s]+/).map(s => s.trim().toLowerCase()).filter(Boolean)
-      const payload = { muscle_groups: muscleGroups.length ? muscleGroups : ['full'] }
+      const muscleGroups = muscleGroupsFromTarget(aiRecommendation?.target)
+      const payload = { muscle_groups: muscleGroups }
       if (!navigator.onLine) {
         await queueRequest('/api/workouts/start', 'POST', payload)
         setFeedback('Saved offline — will sync when connected')
@@ -182,9 +191,7 @@ export default function LogLift() {
       })
     } catch (err) {
       if (!err?.response) {
-        const targetStr = aiRecommendation?.target || ''
-        const muscleGroups = targetStr.split(/[,\/\s]+/).map(s => s.trim().toLowerCase()).filter(Boolean)
-        await queueRequest('/api/workouts/start', 'POST', { muscle_groups: muscleGroups.length ? muscleGroups : ['full'] })
+        await queueRequest('/api/workouts/start', 'POST', { muscle_groups: muscleGroupsFromTarget(aiRecommendation?.target) })
         setFeedback('Saved offline — will sync when connected')
         setError('')
         return
@@ -361,29 +368,13 @@ export default function LogLift() {
             </div>
           )}
           {aiRecommendation && (
-            <div className="rounded-2xl p-4" style={{
-              background: '#F5F0E8', color: '#1a1a2e', border: '1px solid #d6c9a0', position: 'relative',
-              fontFamily: 'Caveat, cursive',
-              backgroundImage: 'repeating-linear-gradient(to bottom, transparent 0 27px, rgba(26,26,46,0.12) 27px 28px)'
-            }}>
-              <div style={{ position: 'absolute', top: 8, right: 10, fontSize: 11, fontWeight: 700, border: '1px solid #1a1a2e66', borderRadius: 999, padding: '2px 8px' }}>FORGED HYBRID</div>
-              <div style={{ position: 'absolute', left: 0, right: 0, bottom: -1, height: 14, background: 'linear-gradient(135deg, #eadfcd 25%, transparent 25%) 0 0/12px 12px, linear-gradient(225deg, #eadfcd 25%, transparent 25%) 6px 0/12px 12px' }} />
-              <p className="text-lg font-bold">{aiRecommendationTitle}</p>
-              <p className="text-sm mt-3 leading-relaxed"><strong>Warmup:</strong> {(aiRecommendation.warmup || []).join(', ')}</p>
-              <p className="text-sm mt-3 leading-relaxed"><strong>Main:</strong> {(aiRecommendation.main || []).map((m) => `${m.name} ${m.sets}x${m.reps} (${m.rest})`).join(' • ')}</p>
-              <p className="text-sm mt-3 leading-relaxed"><strong>Recovery:</strong> {(aiRecommendation.recovery || []).join(', ')}</p>
-              <p className="text-sm mt-2">{aiRecommendation.explanation}</p>
-              <p className="text-xs mt-1">{aiRecommendation.restExplanation}</p>
-              <button
-                onClick={beginAI}
-                disabled={loading}
-                className="mt-3 w-full rounded-2xl py-4 text-base font-bold"
-                style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', cursor: 'pointer', opacity: loading ? 0.6 : 1, fontFamily: 'inherit' }}
-              >
-                {loading ? 'Starting...' : 'Start Workout'}
-              </button>
-              <WatchWorkoutSendButton workout={aiWatchWorkout} className="mt-3" />
-            </div>
+            <StrengthWorkoutRecommendation
+              plan={aiRecommendation}
+              title={aiRecommendationTitle}
+              onStart={beginAI}
+              startBusy={loading}
+              watchWorkout={aiWatchWorkout}
+            />
           )}
         </>
       )}
@@ -476,19 +467,15 @@ export default function LogLift() {
           )}
           {manualAiError && <p className="text-xs" style={{ color: 'var(--danger)' }}>{manualAiError}</p>}
           {manualAiPlan && (
-            <div className="rounded-2xl p-4" style={{
-              background: '#F5F0E8', color: '#1a1a2e', border: '1px solid #d6c9a0', position: 'relative', fontFamily: 'Caveat, cursive',
-              backgroundImage: 'repeating-linear-gradient(to bottom, transparent 0 27px, rgba(26,26,46,0.12) 27px 28px)'
-            }}>
-              <div style={{ position: 'absolute', top: 8, right: 10, fontSize: 11, fontWeight: 700, border: '1px solid #1a1a2e66', borderRadius: 999, padding: '2px 8px' }}>FORGED HYBRID</div>
-              <p className="text-lg font-bold">{manualAiPlan.workoutName}</p>
-              <p className="text-sm mt-3 leading-relaxed"><strong>Main:</strong> {(manualAiPlan.main || []).map((m) => `${m.name} ${m.sets}x${m.reps} (${m.rest})`).join(' • ')}</p>
-              <div className="flex gap-2 mt-3">
-                <button type="button" onClick={acceptManualAiWorkout} className="flex-1 rounded-xl py-2 font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', fontFamily: 'inherit' }}>Accept Workout</button>
-                <button type="button" onClick={generateManualWorkout} className="flex-1 rounded-xl py-2 font-bold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', fontFamily: 'inherit' }}>Regenerate</button>
-              </div>
-              <WatchWorkoutSendButton workout={manualWatchWorkout} className="mt-3" />
-            </div>
+            <StrengthWorkoutRecommendation
+              plan={manualAiPlan}
+              title={manualAiPlan.workoutName}
+              onStart={acceptManualAiWorkout}
+              startLabel="Accept and Start"
+              startBusy={loading}
+              onRegenerate={generateManualWorkout}
+              watchWorkout={manualWatchWorkout}
+            />
           )}
         </div>
       )}

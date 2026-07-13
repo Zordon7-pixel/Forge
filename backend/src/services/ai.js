@@ -333,14 +333,24 @@ async function generateLiftPlan({ bodyPart, timeAvailable, profile, recentSets, 
     const cached = getCached(cacheKey);
     if (cached) return cached;
 
-    const prompt = `Return JSON only with keys: workoutName, exercises(array of {name,sets,reps,rest}), estimatedTime. Body part: ${sanitize(bodyPart, 50)}. Time available: ${sanitize(timeAvailable, 20)}. Athlete: ${sanitize(profile?.name, 50) || 'athlete'}. Recent sets: ${JSON.stringify(sanitizeObj((recentSets || []).slice(0,12)))}. Recent runs: ${JSON.stringify(sanitizeObj((recentRuns || []).slice(0,4)))}.`;
-    const msg = await getClient().messages.create({ model: 'frequent', max_tokens: 320, messages: [{ role: 'user', content: prompt }] });
+    const prompt = `Return JSON only with keys: workoutName, exercises(array of {name,sets,reps,rest,focus,cue}), estimatedTime.
+Build a complete, executable hybrid-athlete lifting session for strength, power, running economy, and speed. Do not return a synopsis in place of exercises.
+- Include 4-6 exercises that fit the available time.
+- Put the primary strength or power movement first, then unilateral/posterior-chain work, runner-specific accessory work, and trunk stability when appropriate.
+- Use practical strength/power prescriptions: low reps for power, moderate reps for strength, higher reps only for accessories.
+- Every exercise must have a specific name, numeric sets, reps, rest, a short focus label, and one concise form cue.
+- Respect fatigue visible in the recent running and lifting data; do not force lower-body power work when the athlete is not recovered.
+Body part: ${sanitize(bodyPart, 50)}. Time available: ${sanitize(timeAvailable, 20)}. Athlete: ${sanitize(profile?.name, 50) || 'athlete'}. Recent sets: ${JSON.stringify(sanitizeObj((recentSets || []).slice(0,12)))}. Recent runs: ${JSON.stringify(sanitizeObj((recentRuns || []).slice(0,4)))}.`;
+    const msg = await getClient().messages.create({ model: 'frequent', max_tokens: 650, messages: [{ role: 'user', content: prompt }] });
     const text = msg.content?.[0]?.text || '{}';
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     const result = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
     if (result) setCached(cacheKey, result, TTL.liftPlan);
     return result;
-  } catch { return null; }
+  } catch (e) {
+    console.error('generateLiftPlan error:', e.message);
+    return null;
+  }
 }
 
 async function generateSessionFeedback({ sessionType, sessionData, profile, userId }) {
@@ -382,14 +392,25 @@ async function generateWorkoutRecommendation({ profile, recentRuns, recentWorkou
     const cached = getCached(cacheKey);
     if (cached) return cached;
 
-    const prompt = `Return JSON only with keys: workoutName,target,warmup(array),main(array of {name,sets,reps,rest}),recovery(array),explanation,restExplanation. Athlete:${sanitize(profile?.name, 50) || 'athlete'} goal ${sanitize(profile?.goal_type, 30) || 'fitness'}. recent runs ${JSON.stringify(sanitizeObj((recentRuns || []).slice(0,5)))}. recent workouts ${JSON.stringify(sanitizeObj((recentWorkouts || []).slice(0,5)))}.`;
-    const msg = await getClient().messages.create({ model: 'frequent', max_tokens: 420, messages: [{ role: 'user', content: prompt }] });
+    const prompt = `Return JSON only with keys: workoutName,target,warmup(array),main(array of {name,sets,reps,rest,focus,cue}),recovery(array),explanation,restExplanation.
+Create a complete hybrid-athlete strength and speed session, not a summary of what the athlete should do.
+- main must contain 4-6 executable exercises with a specific name, numeric sets, reps, rest, short focus label, and one concise form cue.
+- Build strength, force production, running economy, and speed using an appropriate mix of compound strength, unilateral/posterior-chain work, power or plyometrics, calf/ankle work, and trunk stability.
+- If recent running or lifting shows lower-body fatigue, reduce impact and shift emphasis instead of forcing jumps or heavy leg work.
+- warmup must contain 3 specific movements. recovery must contain 2 specific actions.
+- explanation is a separate 1-2 sentence coach rationale based on the athlete's data. Do not place rationale inside main.
+- restExplanation briefly explains how to use the listed rest periods.
+Athlete: ${sanitize(profile?.name, 50) || 'athlete'}. Goal: ${sanitize(profile?.goal_type, 30) || 'fitness'}. Recent runs: ${JSON.stringify(sanitizeObj((recentRuns || []).slice(0,5)))}. Recent workouts: ${JSON.stringify(sanitizeObj((recentWorkouts || []).slice(0,5)))}.`;
+    const msg = await getClient().messages.create({ model: 'frequent', max_tokens: 750, messages: [{ role: 'user', content: prompt }] });
     const text = msg.content?.[0]?.text || '{}';
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     const result = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
     if (result) setCached(cacheKey, result, TTL.workoutRecommendation);
     return result;
-  } catch { return null; }
+  } catch (e) {
+    console.error('generateWorkoutRecommendation error:', e.message);
+    return null;
+  }
 }
 
 async function generateBodyPartWorkout({ bodyPart, exercise, profile, userId }) {
@@ -398,14 +419,17 @@ async function generateBodyPartWorkout({ bodyPart, exercise, profile, userId }) 
     const cached = getCached(cacheKey);
     if (cached) return cached;
 
-    const prompt = `Return JSON only with keys: workoutName,target,warmup(array),main(array of {name,sets,reps,rest}),recovery(array),explanation,restExplanation. Build a focused lifting workout with 4-6 exercises. Body part: ${sanitize(bodyPart, 50)}. Anchor exercise: ${sanitize(exercise, 50)}. Athlete: ${sanitize(profile?.name, 50) || 'athlete'} goal ${sanitize(profile?.goal_type, 30) || 'fitness'}.`;
-    const msg = await getClient().messages.create({ model: 'frequent', max_tokens: 500, messages: [{ role: 'user', content: prompt }] });
+    const prompt = `Return JSON only with keys: workoutName,target,warmup(array),main(array of {name,sets,reps,rest,focus,cue}),recovery(array),explanation,restExplanation.
+Build a complete 4-6 exercise hybrid-athlete lifting workout, not a synopsis. Use the selected anchor exercise, then add movements that develop strength, force production, running economy, and speed without redundant volume. Every main exercise needs a specific name, numeric sets, reps, rest, short focus label, and one concise form cue. Keep the 1-2 sentence coaching rationale only in explanation and rest guidance only in restExplanation.
+Body part: ${sanitize(bodyPart, 50)}. Anchor exercise: ${sanitize(exercise, 50)}. Athlete: ${sanitize(profile?.name, 50) || 'athlete'}. Goal: ${sanitize(profile?.goal_type, 30) || 'fitness'}.`;
+    const msg = await getClient().messages.create({ model: 'frequent', max_tokens: 700, messages: [{ role: 'user', content: prompt }] });
     const text = msg.content?.[0]?.text || '{}';
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     const result = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
     if (result) setCached(cacheKey, result, TTL.liftPlan);
     return result;
-  } catch {
+  } catch (e) {
+    console.error('generateBodyPartWorkout error:', e.message);
     return null;
   }
 }

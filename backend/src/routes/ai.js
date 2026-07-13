@@ -5,6 +5,79 @@ const auth = require('../middleware/auth');
 const { generateRunBrief, generateLiftPlan, generateWorkoutRecommendation, generateSessionFeedback, generateBodyPartWorkout, generatePostSessionInsight, sanitize } = require('../services/ai');
 const { requestExerciseImageIfMissing, requestImagesForWorkoutItems } = require('../lib/exerciseImageRequests');
 
+const FALLBACK_ACCESSORIES = {
+  chest: ['Incline Dumbbell Press', 'Push-Up'],
+  back: ['Chest-Supported Row', 'Lat Pulldown'],
+  legs: ['Rear-Foot-Elevated Split Squat', 'Romanian Deadlift'],
+  shoulders: ['Half-Kneeling Landmine Press', 'Cable Face Pull'],
+  arms: ['Close-Grip Bench Press', 'Hammer Curl'],
+  core: ['Pallof Press', 'Dead Bug'],
+  full: ['Rear-Foot-Elevated Split Squat', 'Single-Leg Romanian Deadlift'],
+};
+
+function normalizeGuidance(items, fallback) {
+  const normalized = (Array.isArray(items) ? items : [])
+    .map((item) => sanitize(typeof item === 'string' ? item : item?.name, 100))
+    .filter(Boolean)
+    .slice(0, 6);
+  return normalized.length ? normalized : fallback;
+}
+
+function normalizeStrengthRecommendation(value) {
+  if (!value || typeof value !== 'object') return null;
+  const main = (Array.isArray(value.main) ? value.main : [])
+    .map((exercise) => {
+      if (!exercise || typeof exercise !== 'object') return null;
+      const name = sanitize(exercise.name, 80);
+      if (!name) return null;
+      const parsedSets = Number(exercise.sets);
+      return {
+        name,
+        sets: Number.isFinite(parsedSets) ? Math.max(1, Math.min(8, Math.round(parsedSets))) : 3,
+        reps: sanitize(exercise.reps, 20) || '6-8',
+        rest: sanitize(exercise.rest, 20) || '90s',
+        focus: sanitize(exercise.focus, 30),
+        cue: sanitize(exercise.cue, 140),
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 6);
+
+  if (main.length < 4) return null;
+
+  return {
+    workoutName: sanitize(value.workoutName, 100) || 'Hybrid Strength and Speed',
+    target: sanitize(value.target, 80) || 'Full Body',
+    warmup: normalizeGuidance(value.warmup, ['Easy movement x 3 min', 'Dynamic leg swings x 8/side', 'Bodyweight squat x 10']),
+    main,
+    recovery: normalizeGuidance(value.recovery, ['Easy walk x 3 min', 'Hip flexor stretch x 45s/side']),
+    explanation: sanitize(value.explanation, 400),
+    restExplanation: sanitize(value.restExplanation, 240),
+  };
+}
+
+function fallbackStrengthRecommendation({ bodyPart = 'full', exercise = '' } = {}) {
+  const normalizedPart = sanitize(bodyPart, 30).toLowerCase();
+  const accessories = FALLBACK_ACCESSORIES[normalizedPart] || FALLBACK_ACCESSORIES.full;
+  const anchor = sanitize(exercise, 80) || 'Trap Bar Deadlift';
+  return {
+    workoutName: 'Hybrid Strength and Speed',
+    target: normalizedPart === 'full' ? 'Full Body' : sanitize(bodyPart, 50),
+    warmup: ['Easy movement x 3 min', 'Dynamic leg swings x 8/side', 'Pogo hops x 20'],
+    main: [
+      { name: anchor, sets: 4, reps: '4-6', rest: '2-3 min', focus: 'Strength', cue: 'Move each rep with control and stop before form slows.' },
+      { name: accessories[0], sets: 3, reps: '6/side', rest: '90s', focus: 'Single-leg strength', cue: 'Keep the working knee tracking over the middle toes.' },
+      { name: accessories[1], sets: 3, reps: '8', rest: '75s', focus: 'Force production', cue: 'Brace first, then drive through the full range.' },
+      { name: 'Low Box Jump', sets: 4, reps: '3', rest: '90s', focus: 'Power', cue: 'Use a low box, land quietly, and reset before every rep.' },
+      { name: 'Standing Calf Raise', sets: 3, reps: '10', rest: '60s', focus: 'Ankle stiffness', cue: 'Pause at the top and lower under control.' },
+      { name: 'Pallof Press', sets: 3, reps: '10/side', rest: '45s', focus: 'Trunk stability', cue: 'Keep ribs stacked and resist rotation.' },
+    ],
+    recovery: ['Easy walk x 3 min', 'Hip flexor stretch x 45s/side'],
+    explanation: 'This session develops usable strength and force production while covering the single-leg, calf, and trunk qualities that support faster running.',
+    restExplanation: 'Take the full rest on strength and power work so every set stays crisp; shorten rest only on the final accessories.',
+  };
+}
+
 router.post('/session-feedback', auth, async (req, res) => {
   try {
     const { sessionType, sessionId } = req.body || {};
@@ -269,15 +342,8 @@ router.get('/workout-recommendation', auth, async (req, res) => {
       dbAll('SELECT * FROM workout_sessions WHERE user_id=? ORDER BY started_at DESC LIMIT 8', [userId])
     ]);
 
-    const recommendation = await generateWorkoutRecommendation({ profile, recentRuns, recentWorkouts, userId }) || {
-      workoutName: 'Upper Body and Core — Recovery Focus',
-      target: 'Upper Body and Core',
-      warmup: ['Band pull-aparts x 20', 'Shoulder circles x 30s'],
-      main: [{ name: 'Dumbbell Bench Press', sets: 4, reps: '8-10', rest: '90s' }],
-      recovery: ['Child\'s pose 60s', 'Thoracic rotations 8/side'],
-      explanation: 'Lower body fatigue is high, so this session keeps leg stress low.',
-      restExplanation: 'Longer rest on compounds to preserve quality sets.'
-    };
+    const generated = await generateWorkoutRecommendation({ profile, recentRuns, recentWorkouts, userId });
+    const recommendation = normalizeStrengthRecommendation(generated) || fallbackStrengthRecommendation();
     await requestImagesForWorkoutItems({ userId, items: recommendation.main, source: 'ai_workout_recommendation' });
     await requestImagesForWorkoutItems({ userId, items: recommendation.warmup, source: 'ai_workout_recommendation' });
     await requestImagesForWorkoutItems({ userId, items: recommendation.recovery, source: 'ai_workout_recommendation' });
@@ -296,20 +362,8 @@ router.post('/workout', auth, async (req, res) => {
     const athleteId = req.user.id;
 
     const profile = await dbGet('SELECT * FROM users WHERE id=?', [athleteId]);
-    const recommendation = await generateBodyPartWorkout({ bodyPart, exercise, profile, userId: athleteId }) || {
-      workoutName: `${String(bodyPart)} Builder`,
-      target: String(bodyPart),
-      warmup: ['Dynamic mobility x 5 min'],
-      main: [
-        { name: String(exercise), sets: 4, reps: '8-10', rest: '90s' },
-        { name: `${String(bodyPart)} Accessory`, sets: 3, reps: '10-12', rest: '60s' },
-        { name: 'Stability Finisher', sets: 2, reps: '12-15', rest: '45s' },
-        { name: 'Core Hold', sets: 2, reps: '30-45s', rest: '45s' }
-      ],
-      recovery: ['Light stretch 5 min'],
-      explanation: 'Focused session generated from your selected body part and exercise.',
-      restExplanation: 'Longer rests on heavier sets, shorter rests on accessories.'
-    };
+    const generated = await generateBodyPartWorkout({ bodyPart, exercise, profile, userId: athleteId });
+    const recommendation = normalizeStrengthRecommendation(generated) || fallbackStrengthRecommendation({ bodyPart, exercise });
     await requestExerciseImageIfMissing({ userId: athleteId, exerciseName: exercise, source: 'ai_workout_anchor' });
     await requestImagesForWorkoutItems({ userId: athleteId, items: recommendation.main, source: 'ai_workout' });
     await requestImagesForWorkoutItems({ userId: athleteId, items: recommendation.warmup, source: 'ai_workout' });

@@ -7,6 +7,19 @@ import { getWeightDropWarning, scrollToFirstError, validateWorkoutSet } from '..
 
 const REST_PRESETS = [30, 60, 90, 120, 180]
 
+function prescribedReps(value) {
+  const match = String(value || '').match(/\d+/)
+  return match ? match[0] : ''
+}
+
+function prescribedRestSeconds(value) {
+  const match = String(value || '').toLowerCase().match(/(\d+(?:\.\d+)?)(?:\s*-\s*\d+(?:\.\d+)?)?\s*(min|m|sec|s)?/)
+  if (!match) return 90
+  const amount = Number(match[1])
+  if (!Number.isFinite(amount) || amount <= 0) return 90
+  return match[2] === 'min' || match[2] === 'm' ? Math.round(amount * 60) : Math.round(amount)
+}
+
 function fmtDuration(s) {
   const h = Math.floor(s / 3600)
   const m = Math.floor((s % 3600) / 60)
@@ -109,7 +122,7 @@ export default function ActiveWorkout() {
     if (plannedExercises.length > 0) {
       const first = plannedExercises[0]
       setSelectedExercise({ name: first.name })
-      setReps(String(first.reps || ''))
+      setReps(prescribedReps(first.reps))
     }
   }, [])
 
@@ -167,17 +180,17 @@ export default function ActiveWorkout() {
       setWeight('')
       setFormErrors({})
       setFormWarning('')
-      startRest(90)
+      const currentPlanned = plannedExercises[queueIndex]
+      startRest(prescribedRestSeconds(currentPlanned?.rest))
 
       // Auto-advance to next planned exercise after completing all sets
-      const currentPlanned = plannedExercises[queueIndex]
       if (currentPlanned && nextSetNumber > Number(currentPlanned.sets)) {
         const nextIndex = queueIndex + 1
         if (nextIndex < plannedExercises.length) {
           const next = plannedExercises[nextIndex]
           setQueueIndex(nextIndex)
           setSelectedExercise({ name: next.name })
-          setReps(String(next.reps || ''))
+          setReps(prescribedReps(next.reps))
           setWeight('')
           setSetNumber(1)
         }
