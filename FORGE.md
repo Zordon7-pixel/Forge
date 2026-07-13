@@ -5,8 +5,8 @@ This file holds Forge's product history, deployment notes, shipped phase log, kn
 ## Current Production
 
 - Production URL: `https://forge-production-773f.up.railway.app/`
-- Latest verified application release: commit `9a7f9b3e`, deployment `141a52be-e978-4de7-a5d3-51e8fb520a3a`
-- Latest checked bundle: `/assets/index-IHa1ZhZv.js`
+- Latest verified application release: commit `2378714e`, deployment `14fd2c37-40de-451b-9ac4-f47599c8aa99`
+- Latest checked bundle: `/assets/index-CGU9ymkK.js`
 - iOS version/build: `1.0.5` / `15`
 - Bundle identifier: `com.zordontech.forge`
 - Expo/EAS project: `@zordon/forge-athlete` (`6aeb5fbb-2697-4cf4-b9b3-afe60c63e9e1`)
@@ -162,6 +162,15 @@ Phase 2 cleanup from this audit:
 - H9 passed 32 focused checks, H3/H4/H8 regression smokes, Watch diagnostics smoke, frontend build, dependency audit, 47-table account-data coverage, Capacitor sync, Swift parse, and two independent Claude Code reviews.
 - Production verified `/assets/index-IHa1ZhZv.js`, authenticated plan reads, `401` unauthenticated plan access, a 390x844 plan layout without horizontal overflow, and zero browser console errors. No EAS build was run.
 
+## Prescription Integrity and Strength Detail H10 (2026-07-13)
+
+- Persisted plans can no longer present a Recovery / Zone 1-2 label while retaining hill repeats, intervals, tempo work, or steady-effort instructions. The backend repairs contradictory responses without mutating stored data, and the frontend applies the same guard before display, Start Run, watch delivery, or manual copy.
+- Every generated strength exercise now includes working sets, reps, between-set rest, load guidance, RPE/RIR, form cue, and progression. The day view exposes the total working sets and a compact `Why these numbers` explanation.
+- Exact starting weights require a recent usable set from the same named exercise and implement modality. Barbell and dumbbell history cannot cross-calibrate. With no defensible match, the plan uses RPE/RIR and asks the athlete to log the completed load instead of inventing pounds.
+- Plan phase, strength mode, available equipment, run/lift history, Apple Health readiness, and check-in evidence have bounded roles. Apple Health and check-ins can reduce first-week volume/effort; watch data never estimates a lifting load from heart rate, sleep, or steps.
+- H10 passed 24 focused checks, H1/H3/H4/H5/H6/H8/H9 regressions, 17 calendar checks, all other frontend smokes, frontend build, zero-vulnerability audit, 47-table account-data coverage, Capacitor sync, and two Claude Code reviews. Claude verdict: PASS — Ship.
+- Production verified `/assets/index-CGU9ymkK.js` and `/assets/Plan-DP5Af5aD.js`, the new prescription rationale/detail copy, authenticated plan reads, a 390x844 mobile plan render, and zero browser console errors. No EAS build was run.
+
 ## Recently Fixed Bugs
 
 Do not reintroduce these patterns.
@@ -227,6 +236,7 @@ These changes are already implemented, built, Capacitor-synced, and deployed to 
 | 2026-07-13 | `5fb0c377-aeea-43ce-83a2-aa52ad6705e5` | Success | H7 race-course intelligence, provenance trust gating, and privacy-safe GPX analysis verified live |
 | 2026-07-13 | `f6c0aff8-7ce1-4847-b0a8-a2dd33e1ae16` | Success | H8 race-first plan search, calendar setup, and resilient plan generation verified live |
 | 2026-07-13 | `141a52be-e978-4de7-a5d3-51e8fb520a3a` | Success | H9 exact recent-run adaptation, strength-floor protection, and build-aware Apple Watch diagnostics verified live |
+| 2026-07-13 | `14fd2c37-40de-451b-9ac4-f47599c8aa99` | Success | H10 recovery-prescription integrity and data-backed strength details verified live |
 
 ### Build/Test Status
 
@@ -247,6 +257,7 @@ These changes are already implemented, built, Capacitor-synced, and deployed to 
 - Phase H7 production smoke: Army 10-Miler resolves to trusted curated course facts; unauthenticated race/catalog/GPX requests return `401`; signed-in mobile Races and Plan views render without horizontal overflow or console errors.
 - Phase H8 production smoke: exact bundle hash matches local build; Army Ten-Miler alias and Washington DC location searches return the canonical October 11 event; unauthenticated catalog returns `401`; mobile plan search renders at 390px without horizontal overflow.
 - Phase H9 production smoke: exact `/assets/index-IHa1ZhZv.js` bundle matches the reviewed build; authenticated plan routes return `200`, unauthenticated current-plan access returns `401`, and the plan renders at 390x844 without horizontal overflow or console errors.
+- Phase H10 production smoke: exact `/assets/index-CGU9ymkK.js` and `/assets/Plan-DP5Af5aD.js` assets match the reviewed build; new rationale/working-set/load-basis copy is live, authenticated plan routes return `200`, and the mobile plan renders without console errors.
 
 ### Product Changes Shipped
 
