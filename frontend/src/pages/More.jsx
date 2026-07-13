@@ -2,13 +2,11 @@ import { Link } from 'react-router-dom'
 import {
   CalendarDays,
   ChevronRight,
-  ClipboardList,
   Footprints,
   HeartPulse,
   Medal,
   ShieldAlert,
   Sparkles,
-  Trophy,
 } from 'lucide-react'
 
 const sections = [
@@ -17,8 +15,7 @@ const sections = [
     items: [
       { to: '/gear', label: 'Gear', sub: 'Shoes and mileage', icon: Footprints, color: '#94A3B8' },
       { to: '/hr-zones', label: 'HR Zones', sub: 'Calibrate your training zones', icon: HeartPulse, color: 'var(--danger)' },
-      { to: '/plan', label: 'Adaptive Plan', sub: 'Weekly training direction', icon: Sparkles, color: 'var(--accent)' },
-      { to: '/plan-catalog', label: 'Plan Catalog', sub: 'Build a goal-based plan', icon: ClipboardList, color: 'var(--accent)' },
+      { to: '/plan', label: 'Plan', sub: 'Calendar, create/manage, races', icon: Sparkles, color: 'var(--accent)' },
       { to: '/history', label: 'History', sub: 'Runs, lifts, imports', icon: CalendarDays, color: '#3B82F6' },
       { to: '/injury', label: 'Injury Mode', sub: 'Pain, limitations, PT', icon: ShieldAlert, color: 'var(--warning)' },
     ],
@@ -26,7 +23,6 @@ const sections = [
   {
     title: 'Progress',
     items: [
-      { to: '/races', label: 'Races', sub: 'Upcoming events', icon: Trophy, color: 'var(--accent)' },
       { to: '/prs', label: 'PR Wall', sub: 'Personal records', icon: Medal, color: '#A855F7' },
     ],
   },

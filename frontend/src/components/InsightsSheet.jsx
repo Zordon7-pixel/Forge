@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import AgeGradedPerformanceCard from './AgeGradedPerformanceCard'
 import WatchWorkoutSendButton from './WatchWorkoutSendButton'
 import { getToken } from '../lib/tokenStore'
+import AiGuidanceNote from './AiGuidanceNote'
 
 function TrendChart({ data = [] }) {
   if (!data.length) return null
@@ -162,9 +163,12 @@ export function DailyCoachFlow({ checkedInToday, readiness, recommendation, toda
             {buildTodaySubtitle()}
           </p>
           {coachWhy && (
-            <p className="mt-2 text-sm italic" style={{ color: 'var(--text-primary)', opacity: 0.9, lineHeight: 1.4 }}>
-              {coachWhy}
-            </p>
+            <>
+              <p className="mt-2 text-sm italic" style={{ color: 'var(--text-primary)', opacity: 0.9, lineHeight: 1.4 }}>
+                {coachWhy}
+              </p>
+              <AiGuidanceNote />
+            </>
           )}
         </div>
         <div className="flex flex-col gap-2">
@@ -410,6 +414,7 @@ export function TodayDetailSheet({
                 Complete check-in and sync a watch to unlock the readiness explanation.
               </p>
             )}
+            <AiGuidanceNote />
           </div>
         </section>
 

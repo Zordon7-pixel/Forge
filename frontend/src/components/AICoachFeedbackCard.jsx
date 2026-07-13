@@ -1,3 +1,5 @@
+import AiGuidanceNote from './AiGuidanceNote'
+
 export default function AICoachFeedbackCard({ open, loading, feedback, fallback, sessionId, onClose }) {
   if (!open) return null
   const data = feedback || fallback
@@ -14,6 +16,7 @@ export default function AICoachFeedbackCard({ open, loading, feedback, fallback,
             <p className="text-sm" style={{ color: 'var(--text-muted)' }}><strong>Did well:</strong> {data.didWell}</p>
             <p className="text-sm" style={{ color: 'var(--text-muted)' }}><strong>Next session:</strong> {data.suggestion}</p>
             <p className="text-sm" style={{ color: 'var(--accent)' }}><strong>Recovery:</strong> {data.recovery}</p>
+            <AiGuidanceNote />
           </div>
         ) : null}
 

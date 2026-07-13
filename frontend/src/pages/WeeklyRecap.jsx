@@ -5,6 +5,7 @@ import api from '../lib/api'
 import LoadingRunner from '../components/LoadingRunner'
 import { useProContext } from '../context/ProContext'
 import ProGate from '../components/ProGate'
+import AiGuidanceNote from '../components/AiGuidanceNote'
 
 function StatCard({ icon: Icon, label, value, sub }) {
   return (
@@ -109,6 +110,7 @@ export default function WeeklyRecap() {
               <p style={{ marginTop: 10, marginBottom: 0, fontSize: 14, lineHeight: 1.55, color: 'var(--text-primary)' }}>
                 {data?.insight || 'Keep your next run easy and consistent to build aerobic fitness safely.'}
               </p>
+              <AiGuidanceNote />
             </section>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>

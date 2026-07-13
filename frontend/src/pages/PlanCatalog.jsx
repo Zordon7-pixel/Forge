@@ -142,7 +142,7 @@ export default function PlanCatalog() {
   return (
     <div style={{ paddingBottom: 112 }}>
       <header style={{ marginBottom: 18 }}>
-        <p style={{ color: 'var(--accent)', fontSize: 12, fontWeight: 900, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6 }}>Plan Catalog</p>
+        <p style={{ color: 'var(--accent)', fontSize: 12, fontWeight: 900, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6 }}>Create / Manage Plan</p>
         <h1 style={{ color: 'var(--text-primary)', fontSize: 30, fontWeight: 950, margin: 0 }}>Build your next block.</h1>
         <p style={{ color: 'var(--text-muted)', fontSize: 14, marginTop: 8, maxWidth: 520 }}>
           Pick a goal, tune your availability, then generate a plan around the days you can actually train.

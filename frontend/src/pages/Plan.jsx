@@ -4,6 +4,7 @@ import { ChevronDown, ChevronUp } from 'lucide-react'
 import api from '../lib/api'
 import { useProContext } from '../context/ProContext'
 import ProGate from '../components/ProGate'
+import AiGuidanceNote from '../components/AiGuidanceNote'
 import ForgedCalendar from '../components/calendar/ForgedCalendar'
 import ForgedDayView from '../components/calendar/ForgedDayView'
 import { buildCalendarModel, todayISO } from '../lib/planCalendar'
@@ -240,6 +241,7 @@ export default function Plan() {
       {!adaptiveLoading && adaptivePlan && (
         <>
           <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{adaptivePlan.reason || adaptivePlan.recommendation}</p>
+          <AiGuidanceNote />
           <div className="rounded-lg p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
             <p className="text-xs font-bold uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>Run availability</p>
             <div className="mt-3 grid grid-cols-5 gap-2">
@@ -303,6 +305,7 @@ export default function Plan() {
           <p className="text-sm mt-1 break-words" style={{ color: 'var(--text-muted)' }}>
             {adaptationLoading ? 'Checking the live calendar...' : adaptationProposal?.reason || 'No calendar adjustment is pending.'}
           </p>
+          <AiGuidanceNote />
         </div>
         {adaptationProposal?.safetyException && (
           <span className="text-xs font-bold rounded-full px-3 py-1 self-start" style={{ background: 'var(--danger-dim)', color: 'var(--danger)' }}>
@@ -397,6 +400,14 @@ export default function Plan() {
             <div className="rounded-xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
               <h2 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>Training Plans</h2>
               <p className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>Run-only or hybrid plans. When lifting is on, strength is a protected training objective alongside your race goal.</p>
+              <div className="mt-3 flex flex-wrap gap-3">
+                <button type="button" onClick={() => navigate('/plan-catalog')} className="text-xs font-bold" style={{ background: 'transparent', border: 'none', color: 'var(--accent)', padding: 0, cursor: 'pointer' }}>
+                  Create / manage plan →
+                </button>
+                <button type="button" onClick={() => navigate('/races')} className="text-xs font-bold" style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', padding: 0, cursor: 'pointer' }}>
+                  Races →
+                </button>
+              </div>
             </div>
             <div className="grid gap-3">
               {plans.map((plan) => (
@@ -479,6 +490,14 @@ export default function Plan() {
                       <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>{myPlan.type} · Week {currentWeek} of {myPlan.weeks}</p>
                     </div>
                     {!isActiveSchemaV2 && adaptivePanel}
+                    <div className="flex flex-wrap gap-3">
+                      <button type="button" onClick={() => navigate('/plan-catalog')} className="text-xs font-bold" style={{ background: 'transparent', border: 'none', color: 'var(--accent)', padding: 0, cursor: 'pointer' }}>
+                        Create / manage plan →
+                      </button>
+                      <button type="button" onClick={() => navigate('/races')} className="text-xs font-bold" style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', padding: 0, cursor: 'pointer' }}>
+                        Races →
+                      </button>
+                    </div>
                     <button onClick={() => { setSelectedDayISO(null); setMyPlan(null); setMyUserPlan(null) }}
                       className="rounded-lg px-4 py-2 text-sm font-semibold"
                       style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}>

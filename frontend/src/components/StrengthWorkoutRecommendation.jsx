@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Brain, Maximize2, Minimize2, Minus, Plus, Zap } from 'lucide-react'
 import WatchWorkoutSendButton from './WatchWorkoutSendButton'
+import AiGuidanceNote from './AiGuidanceNote'
 
 const TEXT_SCALES = [0.9, 1, 1.15, 1.3]
 
@@ -179,6 +180,7 @@ export default function StrengthWorkoutRecommendation({
           </div>
           {plan?.explanation && <p style={{ color: 'var(--text-muted)', fontSize: px(14), lineHeight: 1.55, margin: '10px 0 0' }}>{plan.explanation}</p>}
           {plan?.restExplanation && <p style={{ color: 'var(--text-muted)', fontSize: px(13), lineHeight: 1.5, margin: '8px 0 0' }}><strong style={{ color: 'var(--text-primary)' }}>Rest guidance:</strong> {plan.restExplanation}</p>}
+          <AiGuidanceNote />
         </section>
       )}
 
