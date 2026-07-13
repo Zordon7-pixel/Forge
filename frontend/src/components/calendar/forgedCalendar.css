@@ -1,0 +1,221 @@
+/* Forged Training Calendar — scoped styles (H2).
+ * Week/Month live on the existing dark app shell; the Day sheet is an original
+ * warm-paper surface. No reference artwork, lettering, or trade dress is copied:
+ * warm paper + faint rule lines + a handwritten heading face is a generic,
+ * unprotectable aesthetic. Functional metrics stay in a legible UI font. */
+
+.forged-cal {
+  --fc-run: var(--accent, #F26B21);
+  --fc-lift: #7C5CFF;
+  --fc-rest: var(--text-muted, #8A8F98);
+  --fc-done: #16A34A;
+  --fc-adjust: #EAB308;
+  --fc-skip: #EF4444;
+}
+
+/* ---- Segmented view switch ---- */
+.forged-seg {
+  display: inline-flex;
+  padding: 3px;
+  border-radius: 8px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+}
+.forged-seg button {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  padding: 7px 14px;
+  border-radius: 6px;
+  min-height: 36px;
+  cursor: pointer;
+}
+.forged-seg button[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--on-accent, #000);
+}
+
+/* ---- Original session stamps (lucide icon inside a stamped badge) ---- */
+.forged-stamp {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1.5px solid currentColor;
+  flex: 0 0 30px;
+  position: relative;
+}
+.forged-stamp--run { color: var(--fc-run); }
+.forged-stamp--lift { color: var(--fc-lift); }
+.forged-stamp--rest { color: var(--fc-rest); border-style: dashed; }
+.forged-stamp--sm { width: 22px; height: 22px; flex-basis: 22px; border-radius: 6px; }
+
+/* State ring on a stamp */
+.forged-stamp[data-state="completed"] { box-shadow: inset 0 0 0 2px var(--fc-done); }
+.forged-stamp[data-state="adjusted"] { box-shadow: inset 0 0 0 2px var(--fc-adjust); }
+.forged-stamp[data-state="skipped"] { box-shadow: inset 0 0 0 2px var(--fc-skip); opacity: 0.7; }
+
+/* ---- Week rows ---- */
+.forged-week {
+  display: grid;
+  gap: 8px;
+}
+.forged-day-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  min-height: 64px;
+  cursor: pointer;
+}
+.forged-day-row[data-today="true"] {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+  background: var(--accent-dim, rgba(242,107,33,0.10));
+}
+.forged-day-row[data-rest="true"] { opacity: 0.72; }
+.forged-day-date {
+  flex: 0 0 44px;
+  display: grid;
+  gap: 2px;
+  text-align: center;
+}
+.forged-day-dow { font-size: 11px; font-weight: 800; color: var(--text-muted); text-transform: uppercase; }
+.forged-day-num { font-size: 18px; font-weight: 900; color: var(--text-primary); line-height: 1; }
+.forged-day-main { min-width: 0; flex: 1; display: grid; gap: 3px; }
+.forged-day-title { font-size: 13px; font-weight: 700; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.forged-day-sub { font-size: 11px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.forged-day-stamps { display: flex; gap: 6px; flex: 0 0 auto; }
+
+/* Today primary action pinned under the header */
+.forged-today-cta {
+  width: 100%;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--on-accent, #000);
+  font-weight: 900;
+  font-size: 14px;
+  padding: 13px 16px;
+  cursor: pointer;
+}
+
+/* ---- Month grid (quiet, read-only) ---- */
+.forged-month {
+  display: grid;
+  gap: 6px;
+}
+.forged-month-head, .forged-month-week {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+}
+.forged-month-dow {
+  text-align: center;
+  font-size: 10px;
+  font-weight: 800;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  padding-bottom: 2px;
+}
+.forged-month-cell {
+  aspect-ratio: 1 / 1;
+  min-height: 40px;
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 2px;
+  padding: 4px;
+  cursor: pointer;
+}
+.forged-month-cell[data-out="true"] { opacity: 0.32; }
+.forged-month-cell[data-today="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.forged-month-num { font-size: 11px; font-weight: 800; color: var(--text-muted); line-height: 1; }
+.forged-month-marks { display: flex; align-items: center; justify-content: center; gap: 3px; }
+.forged-mark-dot { width: 7px; height: 7px; border-radius: 2px; }
+.forged-mark-dot--run { background: var(--fc-run); }
+.forged-mark-dot--lift { background: var(--fc-lift); }
+.forged-mark-dot--hybrid { background: linear-gradient(90deg, var(--fc-run) 50%, var(--fc-lift) 50%); }
+.forged-mark-dot--rest { background: transparent; border: 1px dashed var(--fc-rest); }
+.forged-month-cell[data-state="completed"] .forged-mark-dot { outline: 1.5px solid var(--fc-done); outline-offset: 1px; }
+.forged-month-cell[data-state="adjusted"] .forged-mark-dot { outline: 1.5px solid var(--fc-adjust); outline-offset: 1px; }
+
+/* ---- Day paper sheet ---- */
+.forged-paper {
+  --paper: #FBF7EF;
+  --paper-line: rgba(60, 55, 45, 0.10);
+  --ink: #23201A;
+  --ink-soft: #5A554B;
+  --paper-run: #C2410C;
+  --paper-green: #15803D;
+  --paper-red: #B91C1C;
+  position: relative;
+  background-color: var(--paper);
+  /* faint ruled lines — the line height is set inline per text scale */
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent calc(var(--rule, 32px) - 1px),
+    var(--paper-line) calc(var(--rule, 32px) - 1px),
+    var(--paper-line) var(--rule, 32px)
+  );
+  color: var(--ink);
+  border-radius: 8px;
+  border: 1px solid rgba(60,55,45,0.14);
+}
+.forged-paper--full {
+  border-radius: 0;
+  border: none;
+}
+.forged-hand {
+  font-family: 'Bradley Hand', 'Segoe Print', 'Marker Felt', 'Comic Sans MS', cursive;
+  color: var(--ink);
+  letter-spacing: 0.01em;
+}
+.forged-paper-metric { font-variant-numeric: tabular-nums; }
+.forged-paper h3, .forged-paper h4 { margin: 0; }
+.forged-paper hr { border: none; border-top: 1px solid rgba(60,55,45,0.16); margin: 16px 0; }
+
+.forged-paper .forged-sec-green { color: var(--paper-green); }
+.forged-paper .forged-sec-red { color: var(--paper-red); }
+.forged-paper .forged-sec-run { color: var(--paper-run); }
+
+.forged-paper-controls button {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border: none;
+  background: rgba(60,55,45,0.06);
+  color: var(--ink);
+  cursor: pointer;
+}
+.forged-paper-controls { border: 1px solid rgba(60,55,45,0.16); border-radius: 8px; overflow: hidden; display: inline-flex; align-items: center; }
+
+.forged-start-run { background: var(--paper-run) !important; color: #fff !important; }
+.forged-start-lift { background: var(--fc-lift) !important; color: #fff !important; }
+
+.forged-exercise { padding: 12px 0; border-bottom: 1px solid rgba(60,55,45,0.12); }
+.forged-exercise:last-child { border-bottom: none; }
+.forged-exercise-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 8px; }
+.forged-exercise-metrics span { font-size: 11px; color: var(--ink-soft); }
+.forged-exercise-metrics strong { display: block; color: var(--ink); font-variant-numeric: tabular-nums; }
+
+@media (max-width: 380px) {
+  .forged-day-date { flex-basis: 40px; }
+  .forged-seg button { padding: 7px 11px; }
+}

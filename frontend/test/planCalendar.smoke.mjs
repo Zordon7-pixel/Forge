@@ -1,0 +1,225 @@
+// Standalone Node ESM smoke for the Forged Training Calendar model (H2).
+// Run: cd frontend && node test/planCalendar.smoke.mjs
+// No test framework — pure asserts so it runs anywhere Node runs.
+
+import assert from 'node:assert/strict'
+import {
+  parseLocalDate,
+  toISODate,
+  addDays,
+  startOfWeekMonday,
+  countdownDays,
+  getPlanMode,
+  planModeLabel,
+  buildWeekDays,
+  buildCalendarModel,
+  buildMonthGrid,
+  dayHasLift,
+  dayMarks,
+  dayStatus,
+  monthMark,
+} from '../src/lib/planCalendar.js'
+
+let passed = 0
+function check(name, fn) {
+  fn()
+  passed += 1
+  console.log(`  ok  ${name}`)
+}
+
+const WEEK_START = parseLocalDate('2026-07-13') // Monday
+
+// ---------------------------------------------------------------------------
+// (a) legacy week.sessions — dates + ids preserved
+// ---------------------------------------------------------------------------
+check('a: legacy week.sessions preserves ids and derives dates', () => {
+  const week = {
+    week: 1,
+    sessions: [
+      { id: 'run-mon', day: 'Mon', type: 'run', title: 'Easy Run', distance_miles: 4 },
+      { id: 'run-wed', day: 'Wed', type: 'run', title: 'Tempo', distance_miles: 6 },
+      { id: 'long-sat', day: 'Sat', type: 'run', title: 'Long Run', distance_miles: 10 },
+    ],
+  }
+  const days = buildWeekDays(week, WEEK_START, { runOnly: true })
+  assert.equal(days.length, 7)
+  const mon = days[0]
+  assert.equal(mon.dayLabel, 'Mon')
+  assert.equal(mon.dateISO, '2026-07-13')
+  assert.equal(mon.sessions[0].id, 'run-mon')
+  assert.equal(mon.sessions[0].distanceMiles, 4)
+  // Wednesday is slot 2 -> 2026-07-15
+  assert.equal(days[2].dateISO, '2026-07-15')
+  assert.equal(days[2].sessions[0].id, 'run-wed')
+  // Saturday is slot 5 -> 2026-07-18
+  assert.equal(days[5].dateISO, '2026-07-18')
+  // Tue/Thu/Fri/Sun with no session -> rest
+  assert.equal(days[1].isRest, true)
+  assert.equal(days[3].isRest, true)
+})
+
+// ---------------------------------------------------------------------------
+// (b) legacy week.days (legacy-shaped day entries, no nested sessions[])
+// ---------------------------------------------------------------------------
+check('b: legacy week.days renders one session per day', () => {
+  const week = {
+    week: 2,
+    days: [
+      { id: 'd-mon', day: 'Mon', type: 'run', title: 'Recovery', distance_miles: 3 },
+      { id: 'd-tue', day: 'Tue', type: 'rest', title: 'Rest day' },
+    ],
+  }
+  const days = buildWeekDays(week, WEEK_START, { runOnly: true })
+  assert.equal(days[0].sessions.length, 1)
+  assert.equal(days[0].sessions[0].id, 'd-mon')
+  // rest-typed legacy day -> no sessions -> rest
+  assert.equal(days[1].isRest, true)
+})
+
+// ---------------------------------------------------------------------------
+// (c) schema-v2 nested day.sessions — 0, 1, and 2 sessions
+// ---------------------------------------------------------------------------
+check('c: schema-v2 handles 0/1/2 sessions per day', () => {
+  const week = {
+    week: 1,
+    startDate: '2026-07-13',
+    days: [
+      { date: '2026-07-13', day: 'Mon', sessions: [
+        { id: 's-run', kind: 'run', prescription: { title: 'Intervals', distanceMiles: 5 } },
+        { id: 's-lift', kind: 'lift', prescription: { title: 'Lower Strength' } },
+      ], orderGuidance: 'Run first; lift 6h later' },
+      { date: '2026-07-14', day: 'Tue', sessions: [
+        { id: 's-easy', kind: 'run', prescription: { title: 'Easy', distanceMiles: 3 } },
+      ] },
+      { date: '2026-07-15', day: 'Wed', sessions: [] },
+    ],
+  }
+  const days = buildWeekDays(week, WEEK_START, { runOnly: false })
+  assert.equal(days[0].sessions.length, 2)
+  assert.equal(days[0].orderGuidance, 'Run first; lift 6h later')
+  assert.equal(dayHasLift(days[0]), true)
+  assert.equal(days[0].sessions[0].title, 'Intervals')
+  assert.equal(days[1].sessions.length, 1)
+  assert.equal(days[2].isRest, true) // zero sessions -> rest
+})
+
+// ---------------------------------------------------------------------------
+// (d) run-only produces no lift sessions / placeholders
+// ---------------------------------------------------------------------------
+check('d: run-only strips lift sessions entirely', () => {
+  const plan = {
+    weeks: 1,
+    plan_data: {
+      planMode: 'run_only',
+      weeks: [{ week: 1, startDate: '2026-07-13', days: [
+        { date: '2026-07-13', day: 'Mon', sessions: [
+          { id: 'r', kind: 'run', prescription: { title: 'Easy', distanceMiles: 4 } },
+          { id: 'l', kind: 'lift', prescription: { title: 'Should not show' } },
+        ] },
+      ] }],
+    },
+  }
+  assert.equal(getPlanMode(plan), 'run_only')
+  const model = buildCalendarModel(plan, {}, { now: WEEK_START })
+  assert.equal(model.runOnly, true)
+  const day = model.getWeek(0).days[0]
+  assert.equal(day.sessions.length, 1)
+  assert.equal(dayHasLift(day), false)
+  assert.equal(model.getWeek(0).days.some((d) => dayHasLift(d)), false)
+})
+
+// ---------------------------------------------------------------------------
+// (e) completed status
+// ---------------------------------------------------------------------------
+check('e: completed status reflects completedSet', () => {
+  const week = {
+    week: 1,
+    days: [
+      { date: '2026-07-13', day: 'Mon', sessions: [
+        { id: 'a', kind: 'run', prescription: { title: 'Run', distanceMiles: 4 } },
+        { id: 'b', kind: 'lift', prescription: { title: 'Lift' } },
+      ] },
+    ],
+  }
+  const days = buildWeekDays(week, WEEK_START, { runOnly: false })
+  const noneDone = new Set()
+  assert.equal(dayStatus(days[0], noneDone), 'planned')
+  const partial = new Set(['a'])
+  assert.equal(dayStatus(days[0], partial), 'planned')
+  const allDone = new Set(['a', 'b'])
+  assert.equal(dayStatus(days[0], allDone), 'completed')
+  const marks = dayMarks(days[0], allDone)
+  assert.equal(marks.length, 2)
+  assert.equal(marks[0].state, 'completed')
+})
+
+// ---------------------------------------------------------------------------
+// (f) local-date derivation around DST + week/year boundaries
+// ---------------------------------------------------------------------------
+check('f: local-date math is DST- and boundary-safe', () => {
+  // US spring-forward 2026-03-08. Adding a day must not drift the calendar date.
+  const beforeDst = parseLocalDate('2026-03-07')
+  assert.equal(toISODate(addDays(beforeDst, 1)), '2026-03-08')
+  assert.equal(toISODate(addDays(beforeDst, 2)), '2026-03-09')
+  // Fall-back 2026-11-01.
+  const beforeFall = parseLocalDate('2026-10-31')
+  assert.equal(toISODate(addDays(beforeFall, 1)), '2026-11-01')
+  // Year boundary.
+  assert.equal(toISODate(addDays(parseLocalDate('2026-12-31'), 1)), '2027-01-01')
+  // Monday anchor for a Sunday must reach back to the same week's Monday.
+  const sunday = parseLocalDate('2026-07-19')
+  assert.equal(toISODate(startOfWeekMonday(sunday)), '2026-07-13')
+  // 'YYYY-MM-DD' must NOT drift a day (the classic UTC bug).
+  assert.equal(toISODate(parseLocalDate('2026-07-13')), '2026-07-13')
+  // Countdown across DST is whole days.
+  assert.equal(countdownDays('2026-10-11', '2026-07-12'), 91)
+})
+
+// ---------------------------------------------------------------------------
+// (g) month grid + day selection helpers
+// ---------------------------------------------------------------------------
+check('g: month grid marks scheduled dates and finds days', () => {
+  const plan = {
+    weeks: 1,
+    plan_data: {
+      planMode: 'hybrid_maintain',
+      goal: { name: 'Army Ten-Miler', date: '2026-10-11', distanceMiles: 10, goalType: 'pr' },
+      weeks: [{ week: 1, startDate: '2026-07-13', phase: 'base', days: [
+        { date: '2026-07-13', day: 'Mon', sessions: [
+          { id: 'r', kind: 'run', prescription: { title: 'Easy', distanceMiles: 4 } },
+          { id: 'l', kind: 'lift', prescription: { title: 'Full Body' } },
+        ] },
+        { date: '2026-07-15', day: 'Wed', sessions: [
+          { id: 'r2', kind: 'run', prescription: { title: 'Tempo', distanceMiles: 6 } },
+        ] },
+        { date: '2026-07-16', day: 'Thu', sessions: [] },
+      ] }],
+    },
+  }
+  const model = buildCalendarModel(plan, {}, { now: WEEK_START })
+  assert.equal(model.mode, 'hybrid_maintain')
+  assert.equal(planModeLabel(model.mode), 'Maintain strength')
+  assert.equal(model.goal.name, 'Army Ten-Miler')
+
+  const found = model.findDayByDate('2026-07-13')
+  assert.ok(found)
+  assert.equal(monthMark(found), 'hybrid')
+  assert.equal(monthMark(model.findDayByDate('2026-07-15')), 'run')
+  assert.equal(monthMark(model.findDayByDate('2026-07-16')), 'rest')
+
+  const grid = buildMonthGrid(model, '2026-07-13', { todayISO: '2026-07-13' })
+  assert.equal(grid.rows.length, 6)
+  assert.equal(grid.rows[0].length, 7)
+  // Find the July 13 cell and confirm mark + today flag.
+  const flat = grid.rows.flat()
+  const cell = flat.find((c) => c.dateISO === '2026-07-13')
+  assert.ok(cell)
+  assert.equal(cell.inMonth, true)
+  assert.equal(cell.isToday, true)
+  assert.equal(cell.mark, 'hybrid')
+  // A date with no plan has no mark.
+  const empty = flat.find((c) => c.dateISO === '2026-07-20')
+  assert.equal(empty.mark, null)
+})
+
+console.log(`\nplanCalendar smoke: ${passed} checks passed`)
