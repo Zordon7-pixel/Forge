@@ -14,6 +14,8 @@ const adaptationEngine = require('../lib/adaptationEngine');
 const dailyExecution = require('../lib/dailyExecution');
 const { getHrProfile } = require('../lib/hrZones');
 const { summarizeRecentRunLoad } = require('../lib/recentRunLoad');
+const { repairPlanPrescriptions } = require('../lib/prescriptionIntegrity');
+const { summarizeRecentExercises } = require('../lib/strengthPrescription');
 
 function getDayShort() {
   return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date().getDay()];
@@ -65,10 +67,13 @@ function getPlanningDateFromRequest(req) {
 
 function parsePlan(plan) {
   try {
+    let parsed;
     if (plan?.plan_data) {
-      return typeof plan.plan_data === 'string' ? JSON.parse(plan.plan_data) : plan.plan_data;
+      parsed = typeof plan.plan_data === 'string' ? JSON.parse(plan.plan_data) : plan.plan_data;
+    } else {
+      parsed = typeof plan?.plan_json === 'string' ? JSON.parse(plan.plan_json) : plan?.plan_json;
     }
-    return typeof plan?.plan_json === 'string' ? JSON.parse(plan.plan_json) : plan?.plan_json;
+    return repairPlanPrescriptions(parsed);
   } catch (err) {
     console.error('[plans/parsePlan] invalid plan JSON:', err.message);
     return null;
@@ -510,13 +515,11 @@ async function buildConcurrentContext(userId, profile, target) {
     ),
     dbAll('SELECT started_at FROM workout_sessions WHERE user_id=? AND started_at>=? AND ended_at IS NOT NULL ORDER BY started_at ASC', [userId, `${sinceDate}T00:00:00`]),
     dbAll(
-      `SELECT exercise_name, COUNT(*) AS set_count, SUM(COALESCE(reps, 0)) AS rep_count,
-              MAX(COALESCE(weight_lbs, 0)) AS max_weight_lbs
+      `SELECT exercise_name, session_id, reps, weight_lbs, logged_at
        FROM workout_sets
        WHERE user_id=? AND logged_at>=?
-       GROUP BY exercise_name
-       ORDER BY set_count DESC
-       LIMIT 8`,
+       ORDER BY logged_at DESC
+       LIMIT 200`,
       [userId, `${sinceDate}T00:00:00`]
     ).catch((err) => {
       console.error('[plans/generate] recent exercise lookup failed:', err.message);
@@ -582,12 +585,7 @@ async function buildConcurrentContext(userId, profile, target) {
       recentRunCount: (runs || []).length,
       recentLiftCount: (lifts || []).length,
       acuteRunLoad,
-      recentExercises: (recentExercises || []).map((exercise) => ({
-        name: String(exercise.exercise_name || '').slice(0, 80),
-        sets: Math.max(0, Number(exercise.set_count || 0)),
-        reps: Math.max(0, Number(exercise.rep_count || 0)),
-        maxWeightLbs: Math.max(0, Number(exercise.max_weight_lbs || 0)),
-      })),
+      recentExercises: summarizeRecentExercises(recentExercises || []),
       adherenceRate: expectedSessions ? clamp(completedSessions / expectedSessions, 0, 1) : null,
       missedWorkouts: expectedSessions ? Math.max(0, expectedSessions - completedSessions) : 0,
     },

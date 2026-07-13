@@ -215,9 +215,15 @@
 
 .forged-exercise { padding: 12px 0; border-bottom: 1px solid rgba(60,55,45,0.12); }
 .forged-exercise:last-child { border-bottom: none; }
-.forged-exercise-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(54px, 1fr)); gap: 6px; margin-top: 8px; }
+.forged-exercise-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 8px; }
 .forged-exercise-metrics span { font-size: 11px; color: var(--ink-soft); }
-.forged-exercise-metrics strong { display: block; color: var(--ink); font-variant-numeric: tabular-nums; }
+.forged-exercise-metrics span:nth-child(4) { grid-column: span 2; }
+.forged-exercise-metrics strong { display: block; color: var(--ink); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+
+@media (min-width: 640px) {
+  .forged-exercise-metrics { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .forged-exercise-metrics span:nth-child(4) { grid-column: auto; }
+}
 
 @media (max-width: 380px) {
   .forged-day-date { flex-basis: 40px; }

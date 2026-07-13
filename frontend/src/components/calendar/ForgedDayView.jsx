@@ -6,7 +6,7 @@ import {
 import WatchWorkoutSendButton from '../WatchWorkoutSendButton'
 import AiGuidanceNote from '../AiGuidanceNote'
 import WatchWorkoutService from '../../services/WatchWorkoutService'
-import { sessionState } from '../../lib/planCalendar'
+import { normalizeLiftExercisePrescription, sessionState } from '../../lib/planCalendar'
 import './forgedCalendar.css'
 
 const TEXT_SCALES = [0.9, 1, 1.15, 1.3]
@@ -61,11 +61,7 @@ function runFacts(session) {
   const raw = session.raw || {}
   const miles = Number(session.distanceMiles || p.distanceMiles || p.distance_miles || raw.distance_miles || 0)
   const durationMinutes = firstStr(p.duration_min, raw.duration_min)
-  const isRecovery = /recovery|zone 1-2/i.test([session.title, session.type, p.intensity, p.target_zone, raw.intensity, raw.target_zone].filter(Boolean).join(' '))
-  const originalSteps = structuredList(p.steps || p.blocks || p.structure || raw.steps || raw.structure)
-  const steps = isRecovery && originalSteps.some((step) => /(hill|interval|repeat|threshold|sprint|hard)/i.test(step))
-    ? ['Stay in Zone 1-2', 'Keep breathing relaxed', 'Stop if soreness changes your stride']
-    : originalSteps
+  const steps = structuredList(p.steps || p.blocks || p.structure || raw.steps || raw.structure)
   return {
     purpose: firstStr(p.purpose, p.focus, raw.purpose),
     distance: miles > 0 ? `${miles.toFixed(1)} mi` : '',
@@ -80,27 +76,45 @@ function runFacts(session) {
   }
 }
 
-function liftFacts(session) {
+function liftFacts(session, planContext = {}) {
   const p = session.prescription || {}
   const raw = session.raw || {}
   const exercises = Array.isArray(p.exercises) ? p.exercises
     : Array.isArray(p.main) ? p.main
     : Array.isArray(raw.exercises) ? raw.exercises
     : Array.isArray(raw.main) ? raw.main : []
+  const explicitBasis = p.prescriptionBasis || p.prescription_basis || raw.prescriptionBasis || raw.prescription_basis
+  const input = planContext.inputSummary || {}
+  const basis = explicitBasis && typeof explicitBasis === 'object'
+    ? Object.values(explicitBasis).map(displayValue).filter(Boolean)
+    : [
+        Number(input.recentRunCount || 0) > 0 ? `${Number(input.recentRunCount)} recent runs established the running-load baseline` : '',
+        Number(input.recentLiftCount || 0) > 0 ? 'Recent lift history is available; matching logged sets calibrate exact loads' : 'RPE/RIR calibrates load until lift history is available',
+        input.appleHealth ? 'Apple Health recovery informed workload and scheduling' : input.checkin ? 'Daily check-in informed workload and scheduling' : '',
+        planContext.phase ? `${labelText(planContext.phase)} phase and ${planContext.modeLabel || 'strength goal'}` : '',
+        'Evidence-informed sets, reps, and rest intervals',
+        'Watch data adjusts workload and recovery; it does not estimate lifting loads',
+      ].filter(Boolean)
+  const normalizedExercises = exercises.map(normalizeLiftExercisePrescription).map((ex) => ({
+    name: firstStr(ex.name, ex.exercise, 'Exercise'),
+    sets: firstStr(ex.sets),
+    reps: firstStr(ex.reps),
+    rest: firstStr(ex.rest),
+    load: firstStr(ex.load, ex.weight, ex.targetLoad),
+    loadSource: firstStr(ex.loadSource, ex.load_source),
+    rpe: firstStr(ex.rpe, ex.RPE, ex.rir, ex.RIR),
+    cue: firstStr(ex.cue, ex.formCue, ex.notes),
+    progression: firstStr(ex.progression),
+    exFocus: firstStr(ex.focus),
+  }))
   return {
     focus: firstStr(p.focus, raw.focus),
     warmup: list(p.warmup || raw.warmup),
     recovery: list(p.recovery || raw.recovery),
-    exercises: exercises.map((ex) => ({
-      name: firstStr(ex.name, ex.exercise, 'Exercise'),
-      sets: firstStr(ex.sets),
-      reps: firstStr(ex.reps),
-      rest: firstStr(ex.rest),
-      load: firstStr(ex.load, ex.weight, ex.targetLoad),
-      rpe: firstStr(ex.rpe, ex.RPE, ex.rir, ex.RIR),
-      cue: firstStr(ex.cue, ex.formCue, ex.notes),
-      exFocus: firstStr(ex.focus),
-    })),
+    progression: firstStr(p.progression, raw.progression),
+    basis: [...new Set(basis)],
+    totalSets: normalizedExercises.reduce((sum, exercise) => sum + (Number(exercise.sets) || 0), 0),
+    exercises: normalizedExercises,
   }
 }
 
@@ -237,7 +251,7 @@ export default function ForgedDayView({
 
   const renderLift = () => {
     if (!liftSession) return null
-    const f = liftFacts(liftSession)
+    const f = liftFacts(liftSession, planContext)
     const done = completedSet?.has(String(liftSession.id))
     const watchWorkout = WatchWorkoutService.buildStrengthWorkout({
       workoutName: liftSession.title,
@@ -251,6 +265,16 @@ export default function ForgedDayView({
       <PaperSection title={firstStr(liftSession.title, 'Strength')} px={px}
         icon={<span className="forged-stamp forged-stamp--lift" data-state={sessionState(liftSession, completedSet)}><Dumbbell size={16} /></span>}>
         {f.focus && <p className="forged-hand" style={{ fontSize: px(15), margin: '0 0 8px' }}>{f.focus}</p>}
+        <div style={{ marginBottom: 10, padding: '9px 10px', border: '1px solid rgba(60,55,45,0.14)', borderRadius: 8, background: 'rgba(255,255,255,0.28)' }}>
+          <p style={{ margin: 0, fontSize: px(13), fontWeight: 800 }}>{f.exercises.length} exercises · {f.totalSets || '—'} working sets</p>
+          <p style={{ margin: '2px 0 0', fontSize: px(11), color: 'var(--ink-soft, #5A554B)' }}>Sets, reps, load, effort, and rest are listed for every exercise.</p>
+        </div>
+        {f.basis.length > 0 && (
+          <details style={{ marginBottom: 10, padding: '9px 10px', borderLeft: '3px solid #C2410C', background: 'rgba(194,65,12,0.05)' }}>
+            <summary className="forged-hand" style={{ fontSize: px(13), fontWeight: 700, cursor: 'pointer' }}>Why these numbers</summary>
+            <ul style={{ margin: '4px 0 0', paddingLeft: 17, fontSize: px(11), lineHeight: 1.45 }}>{f.basis.map((item, index) => <li key={`basis-${index}`}>{item}</li>)}</ul>
+          </details>
+        )}
         {f.warmup.length > 0 && (
           <div style={{ marginBottom: 8 }}>
             <p className="forged-hand forged-sec-green" style={{ fontSize: px(14), margin: 0 }}>Warm-up</p>
@@ -270,9 +294,12 @@ export default function ForgedDayView({
               <span>Load<strong style={{ fontSize: px(15) }}>{ex.load || '—'}</strong></span>
               <span>RPE/RIR<strong style={{ fontSize: px(15) }}>{ex.rpe || '—'}</strong></span>
             </div>
+            {ex.loadSource && <p style={{ fontSize: px(11), marginTop: 6, color: 'var(--ink-soft, #5A554B)' }}><strong>Load basis:</strong> {ex.loadSource}</p>}
             {ex.cue && <p style={{ fontSize: px(12), marginTop: 6, color: 'var(--ink-soft, #5A554B)' }}>{ex.cue}</p>}
+            {ex.progression && <p style={{ fontSize: px(11), marginTop: 4, color: 'var(--ink-soft, #5A554B)' }}><strong>Progress:</strong> {ex.progression}</p>}
           </div>
         ))}
+        {f.progression && <p style={{ fontSize: px(12), marginTop: 8 }}><strong>Session progression:</strong> {f.progression}</p>}
         <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
           <button type="button" onClick={() => canStart && onStartLift?.(liftSession)} disabled={!canStart}
             title={canStart ? 'Start lift' : 'Available on the scheduled day'}

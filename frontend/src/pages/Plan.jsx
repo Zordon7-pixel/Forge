@@ -315,7 +315,7 @@ export default function Plan() {
           selectedDay ? (
             <ForgedDayView
               day={selectedDay}
-              planContext={{ goal: model.goal, mode: model.mode, modeLabel: model.modeLabel, phase: selectedPhase }}
+              planContext={{ goal: model.goal, mode: model.mode, modeLabel: model.modeLabel, phase: selectedPhase, inputSummary: planInputs }}
               completedSet={completedSet}
               onToggleComplete={toggleSession}
               onStartRun={(runSession) => navigate('/warmup', { state: {

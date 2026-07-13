@@ -198,6 +198,8 @@ async function generateTrainingPlan(profile, target = null, trainingContext = nu
 - Use only running workouts and rest/recovery days.`
     : `- Include ${Math.max(1, frequency.liftDaysPerWeek)} real strength sessions per week using only this available equipment: ${equipmentLine}. Do not prescribe equipment outside this list; do not use circuits, rucking, sleds, cross_train, or generic injury-prevention sessions.
 - Every strength session requires focus, warmup, main exercises, recovery, and progression. Every exercise requires name, sets, reps, rest, load, rpe or rir, cue, and progression.
+- Use whole-number working sets from 1-6. Default to 2-3 minutes of rest for compound lifts and 60-90 seconds for accessories unless the exercise has a specific reason to differ.
+- A numeric pound load is allowed only when the recent lifting detail contains a matching exercise with a usable load/reps pair. Otherwise prescribe load by RPE/RIR and say that the athlete must calibrate it. Apple Health may adjust volume and effort, but it cannot estimate a barbell or dumbbell load.
 - ${planMode === 'hybrid_build' ? 'Use meaningful hypertrophy/strength volume while preserving run quality.' : 'Use submaximal volume that maintains strength and size.'}`;
   const schedulingRule = planMode === 'run_only'
     ? '- Keep run scheduling sensible and preserve recovery days.'
@@ -265,7 +267,13 @@ async function generateTrainingPlan(profile, target = null, trainingContext = nu
   const recentExerciseLine = Array.isArray(observed.recentExercises) && observed.recentExercises.length
     ? observed.recentExercises.slice(0, 8).map((exercise) => {
       const name = sanitize(exercise?.name, 60) || 'exercise';
-      return `${name}: ${Math.max(0, Number(exercise?.sets || 0))} sets, ${Math.max(0, Number(exercise?.reps || 0))} reps, max ${Math.max(0, Number(exercise?.maxWeightLbs || 0))} lb`;
+      const latestWeight = Number(exercise?.latestWeightLbs);
+      const latestReps = Number(exercise?.latestReps);
+      const latestDate = sanitize(exercise?.latestLoggedAt, 10);
+      const recentSet = Number.isFinite(latestWeight) && latestWeight > 0 && Number.isFinite(latestReps) && latestReps > 0
+        ? `latest usable set ${latestWeight} lb x ${latestReps}${latestDate ? ` on ${latestDate}` : ''}`
+        : 'no usable load/reps pair';
+      return `${name}: ${Math.max(0, Number(exercise?.sets || 0))} logged sets, ${recentSet}`;
     }).join('; ')
     : 'no recent logged exercise-set detail';
   const prompt = `You are an expert hybrid runner/lifter coach who specializes in concurrent training (runners who also lift). Create a ${weeks}-week PERIODIZED canonical plan for this athlete:

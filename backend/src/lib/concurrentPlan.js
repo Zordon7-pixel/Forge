@@ -3,6 +3,7 @@
 
 const planSchema = require('./planSchema');
 const raceCourse = require('./raceCourse');
+const strengthPrescription = require('./strengthPrescription');
 
 const DAY_ORDER = planSchema.DAY_ORDER;
 const VALID_MODES = planSchema.VALID_MODES;
@@ -235,38 +236,29 @@ function buildRunSession({ weekNumber, day, type, distance, phase, hilly, raceNa
   };
 }
 
-function strengthExercises(focus, mode, phase) {
+function buildLiftSession({ weekNumber, day, focus, mode, phase, context = {} }) {
   const build = mode === planSchema.PLAN_MODES.HYBRID_BUILD;
-  const taper = phase === 'taper' || phase === 'race';
-  const primarySets = taper ? 2 : build ? 4 : 3;
-  const accessorySets = taper ? 2 : build ? 3 : 2;
-  const lower = [
-    ['Barbell back squat', primarySets, '4-6', '2-3 min', '70-80% 1RM', '7-8', 'Brace before descending and drive through the full foot.'],
-    ['Romanian deadlift', primarySets, '6-8', '2 min', 'Moderate-heavy', '7', 'Push the hips back while keeping the bar close.'],
-    ['Rear-foot elevated split squat', accessorySets, '8 each side', '90 sec', 'Controlled dumbbells', '7', 'Keep the front knee tracking over the toes.'],
-    ['Standing calf raise', accessorySets, '10-12', '60 sec', 'Controlled load', '7', 'Pause at the top and lower through full range.'],
-  ];
-  const upper = [
-    ['Dumbbell bench press', primarySets, '6-8', '2 min', '70-80% estimated max', '7-8', 'Keep the shoulder blades set on the bench.'],
-    ['One-arm dumbbell row', primarySets, '8 each side', '90 sec', 'Moderate-heavy', '7', 'Drive the elbow toward the hip without twisting.'],
-    ['Standing overhead press', accessorySets, '6-8', '2 min', 'Controlled barbell or dumbbells', '7', 'Stack ribs over hips and finish overhead.'],
-    ['Pull-up or lat pulldown', accessorySets, '6-10', '90 sec', 'Two reps in reserve', '8 RIR 2', 'Pull the elbows down without shrugging.'],
-  ];
-  const selected = (focus === 'Lower body' ? lower : upper).slice(0, taper ? 2 : build ? 4 : 3);
-  return selected.map(([name, sets, reps, rest, load, rpe, cue]) => ({
-    name, sets, reps, rest, load, rpe, cue,
-    progression: taper ? 'Keep the load familiar and stop well before fatigue.' : 'Add 2.5-5 lb when all reps finish with the prescribed effort in reserve.',
-  }));
-}
-
-function buildLiftSession({ weekNumber, day, focus, mode, phase }) {
-  const build = mode === planSchema.PLAN_MODES.HYBRID_BUILD;
+  const main = strengthPrescription.buildStrengthExercises({
+    weekNumber,
+    focus,
+    mode,
+    phase,
+    equipment: context.target?.equipment,
+    history: context.history,
+    recovery: context.recovery,
+  });
   return {
     id: `h3-w${weekNumber}-${day.toLowerCase()}-lift`, kind: 'lift', type: 'strength', workout_type: 'strength',
     title: `${build ? planSchema.STRENGTH_BUILD_TITLE : planSchema.STRENGTH_MAINTAIN_TITLE} - ${focus}`,
     focus,
     warmup: focus === 'Lower body' ? ['5 min easy cardio', 'Bodyweight squat x 10', 'Two progressive warm-up sets'] : ['Band pull-apart x 20', 'Scapular push-up x 10', 'Two progressive warm-up sets'],
-    main: strengthExercises(focus, mode, phase),
+    main,
+    prescriptionBasis: strengthPrescription.prescriptionBasis({
+      phase,
+      mode,
+      recovery: context.recovery,
+      checkin: context.checkin,
+    }, main),
     recovery: ['Leave at least one full day before repeating the same focus', 'Prioritize protein, carbohydrate, and sleep'],
     progression: phase === 'taper' || phase === 'race' ? 'Reduce volume and preserve movement quality.' : build ? 'Progress load or reps weekly while keeping one to two reps in reserve.' : 'Hold strength with repeatable submaximal work.',
     description: build ? 'Build strength and size alongside the running block.' : 'Maintain strength and size while run volume develops.',
@@ -297,9 +289,9 @@ function recoveryRunAfterRecentLoad(session, latestRun) {
   };
 }
 
-function replaceLiftFocus(session, { weekNumber, day, focus, mode, phase }) {
+function replaceLiftFocus(session, { weekNumber, day, focus, mode, phase, context }) {
   return {
-    ...buildLiftSession({ weekNumber, day, focus, mode, phase }),
+    ...buildLiftSession({ weekNumber, day, focus, mode, phase, context }),
     id: session.id,
     acuteLoadAdjusted: true,
   };
@@ -392,6 +384,7 @@ function applyAcuteRunProtection(plan, context = {}) {
           focus: 'Upper body',
           mode: next.planMode,
           phase: week.phase,
+          context,
         });
         day.whyToday = `Lower-body strength was moved outside the recovery window from your ${round(load.latestRun.distanceMiles, 1)} mi run.`;
         const laterDay = days[laterUpperDayIndex];
@@ -402,6 +395,7 @@ function applyAcuteRunProtection(plan, context = {}) {
           focus: 'Lower body',
           mode: next.planMode,
           phase: week.phase,
+          context,
         });
         laterDay.status = 'adjusted';
         laterDay.whyToday = `Lower-body strength moved here to protect recovery after your ${round(load.latestRun.distanceMiles, 1)} mi run.`;
@@ -432,6 +426,7 @@ function applyAcuteRunProtection(plan, context = {}) {
             focus: 'Upper body',
             mode: next.planMode,
             phase: week.phase,
+            context,
           });
           day.whyToday = `No safe lower-body slot remains this week after your ${round(load.latestRun.distanceMiles, 1)} mi run, so this session changed to optional upper-body work.`;
         }
@@ -644,7 +639,7 @@ function buildConcurrentPlan(context = {}) {
 
     const effectiveLiftCount = mode === planSchema.PLAN_MODES.RUN_ONLY ? 0 : phase === 'race' ? Math.min(1, liftDaysPerWeek) : liftDaysPerWeek;
     const liftAssignments = chooseLiftDays(availableDays, runByDay, effectiveLiftCount);
-    const liftByDay = new Map(liftAssignments.map(({ day, focus }) => [day, buildLiftSession({ weekNumber, day, focus, mode, phase })]));
+    const liftByDay = new Map(liftAssignments.map(({ day, focus }) => [day, buildLiftSession({ weekNumber, day, focus, mode, phase, context })]));
     const days = DAY_ORDER.map((day, index) => {
       const sessions = [runByDay.get(day), liftByDay.get(day)].filter(Boolean);
       const result = { date: addDays(weekStart, index), day, sessions, status: 'planned' };
@@ -682,6 +677,9 @@ function validateLift(session, path, errors) {
       if (exercise?.[field] === undefined || exercise?.[field] === null || exercise?.[field] === '') errors.push(`${path}.main[${index}].${field} is required`);
     }
     if (!exercise?.rpe && !exercise?.rir) errors.push(`${path}.main[${index}] requires rpe or rir`);
+    const sets = Number(exercise?.sets);
+    if (!Number.isInteger(sets) || sets < 1 || sets > 6) errors.push(`${path}.main[${index}].sets must be a whole number from 1 to 6`);
+    if (String(exercise?.rest || '').length > 30) errors.push(`${path}.main[${index}].rest is too long`);
   });
 }
 
@@ -841,12 +839,13 @@ function validateConcurrentPlan(candidate, context = {}) {
 }
 
 function selectPlanCandidate(candidate, context = {}) {
-  const validation = validateConcurrentPlan(candidate, context);
+  const preparedCandidate = strengthPrescription.applyStrengthPrescriptionData(candidate, context);
+  const validation = validateConcurrentPlan(preparedCandidate, context);
   if (validation.valid) {
     return {
       plan: {
-        ...JSON.parse(JSON.stringify(candidate)),
-        goal: goalMetadata(context.target || {}, candidate.goal || {}),
+        ...preparedCandidate,
+        goal: goalMetadata(context.target || {}, preparedCandidate.goal || {}),
         generationSource: 'ai_validated',
         generationValidationErrors: [],
         inputSummary: summarizeInputs(context.profile || {}, context.history || {}, context.recovery || {}, context.checkin || null),

@@ -183,20 +183,83 @@ function firstDefined(...values) {
   return null
 }
 
+const RECOVERY_MARKER = /(recovery|zone\s*1(?:\s*-\s*2)?|fully conversational)/i
+const HARD_WORK_MARKER = /(hill|interval|repeat|threshold|sprint|tempo|race pace|zone\s*[3-5]|hard(?:\s+but)?|comfortably steady|steady effort|moderate)/i
+const SAFE_RECOVERY_PRESCRIPTION = {
+  type: 'recovery',
+  workout_type: 'recovery',
+  title: 'Recovery run',
+  target_zone: 'Zone 1-2',
+  pace_target: 'Fully conversational; walking is allowed',
+  intensity: 'Recovery',
+  warmup: ['5 min easy walking', 'Begin running only when your stride feels relaxed'],
+  steps: ['Stay in Zone 1-2', 'Keep breathing relaxed', 'Stop if soreness changes your stride'],
+  cooldown: ['5 min easy walking', 'Hydrate and refuel'],
+  progression: 'Do not add pace or distance today.',
+}
+
+function nestedText(value) {
+  if (Array.isArray(value)) return value.map(nestedText).join(' ')
+  if (value && typeof value === 'object') return Object.values(value).map(nestedText).join(' ')
+  return value === null || value === undefined ? '' : String(value)
+}
+
+export function normalizePrescription(rawSession = {}) {
+  const nested = rawSession.prescription && typeof rawSession.prescription === 'object'
+    ? rawSession.prescription
+    : rawSession.details && typeof rawSession.details === 'object'
+      ? rawSession.details
+      : null
+  const base = nested || rawSession
+  if (sessionKind(rawSession) !== 'run') return { prescription: base, raw: rawSession, adjusted: false }
+  const markers = [
+    rawSession.title, rawSession.type, rawSession.workout_type, rawSession.target_zone, rawSession.intensity, rawSession.pace_target,
+    base.title, base.type, base.workout_type, base.target_zone, base.intensity, base.pace_target,
+  ].filter(Boolean).join(' ')
+  const hardWork = nestedText([
+    rawSession.warmup, rawSession.steps, rawSession.blocks, rawSession.structure, rawSession.cooldown, rawSession.pace_target, rawSession.intensity, rawSession.progression,
+    base.warmup, base.steps, base.blocks, base.structure, base.cooldown, base.pace_target, base.intensity, base.progression,
+  ])
+  if (!RECOVERY_MARKER.test(markers) || !HARD_WORK_MARKER.test(hardWork)) {
+    return { prescription: base, raw: rawSession, adjusted: false }
+  }
+  const prescription = { ...base, ...SAFE_RECOVERY_PRESCRIPTION, prescriptionIntegrityAdjusted: true }
+  const raw = { ...rawSession, ...SAFE_RECOVERY_PRESCRIPTION, prescriptionIntegrityAdjusted: true }
+  if (rawSession.prescription && typeof rawSession.prescription === 'object') raw.prescription = prescription
+  if (rawSession.details && typeof rawSession.details === 'object') raw.details = prescription
+  return { prescription, raw, adjusted: true }
+}
+
+export function normalizeLiftExercisePrescription(exercise = {}) {
+  const rpe = exercise.rpe ?? exercise.RPE ?? exercise.rir ?? exercise.RIR ?? null
+  const rawLoad = exercise.load ?? exercise.weight ?? exercise.targetLoad ?? ''
+  const explicitSource = exercise.loadSource ?? exercise.load_source ?? ''
+  const unsupportedGenericLoad = !explicitSource && /estimated|max|moderate|controlled|%\s*1rm|reps? in reserve/i.test(String(rawLoad))
+  if (!unsupportedGenericLoad) return exercise
+  return {
+    ...exercise,
+    load: rpe ? `Choose load for RPE/RIR ${rpe}` : 'Choose load for the prescribed effort',
+    loadSource: 'Effort calibrated; this saved plan has no matching logged set attached',
+  }
+}
+
 // Normalize a raw session (legacy flat entry OR schema-v2 session) into a stable
-// render shape. Never invents prescription content that is not present.
+// render shape. The only synthesized content is a conservative recovery
+// prescription when persisted labels conflict with hard-workout instructions.
 export function normalizeSession(rawSession, context = {}) {
   const kind = sessionKind(rawSession)
-  const prescription = rawSession.prescription || rawSession.details || {}
+  const normalized = normalizePrescription(rawSession)
+  const prescription = normalized.prescription
+  const safeRaw = normalized.raw
   const anchor = context.anchor || 'day'
   const index = context.index ?? 0
   const id = firstDefined(rawSession.id, context.fallbackId, `${anchor}-${kind}-${index}`)
   const distanceMiles =
     Number(firstDefined(rawSession.distance_miles, prescription.distanceMiles, prescription.distance_miles, 0)) || 0
-  const type = firstDefined(rawSession.type, prescription.type, kind === 'lift' ? 'strength' : kind)
+  const type = firstDefined(prescription.type, safeRaw.type, kind === 'lift' ? 'strength' : kind)
   const title = firstDefined(
-    rawSession.title,
     prescription.title,
+    safeRaw.title,
     prescription.name,
     kind === 'lift' ? 'Strength' : kind === 'rest' ? 'Rest day' : 'Run',
   )
@@ -207,9 +270,9 @@ export function normalizeSession(rawSession, context = {}) {
     title,
     distanceMiles,
     status: String(rawSession.status || prescription.status || '').toLowerCase() || null,
-    adjusted: Boolean(rawSession.adjusted || rawSession.status === 'adjusted' || prescription.adjusted),
+    adjusted: Boolean(safeRaw.adjusted || safeRaw.status === 'adjusted' || prescription.adjusted || normalized.adjusted),
     prescription,
-    raw: rawSession,
+    raw: safeRaw,
   }
 }
 

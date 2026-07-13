@@ -18,6 +18,9 @@ import {
   dayMarks,
   dayStatus,
   monthMark,
+  normalizePrescription,
+  normalizeLiftExercisePrescription,
+  normalizeSession,
 } from '../src/lib/planCalendar.js'
 
 let passed = 0
@@ -270,6 +273,63 @@ check('g: month grid marks scheduled dates and finds days', () => {
   // A date with no plan has no mark.
   const empty = flat.find((c) => c.dateISO === '2026-07-20')
   assert.equal(empty.mark, null)
+})
+
+// ---------------------------------------------------------------------------
+// (h) recovery prescription integrity + execution payload
+// ---------------------------------------------------------------------------
+check('h: stale recovery hill work is repaired before display or execution', () => {
+  const raw = {
+    id: 'recovery-after-long-run',
+    kind: 'run',
+    type: 'recovery',
+    title: 'Recovery run',
+    distance_miles: 0.9,
+    target_zone: 'Zone 1-2',
+    intensity: 'Recovery',
+    warmup: ['12 min easy running', '4 x 20 sec relaxed strides'],
+    steps: ['6-8 x 60 sec uphill', 'Jog down fully between repetitions'],
+    cooldown: ['10 min easy running'],
+  }
+  const normalized = normalizeSession(raw)
+  assert.equal(normalized.type, 'recovery')
+  assert.equal(normalized.prescription.target_zone, 'Zone 1-2')
+  assert.match(normalized.prescription.pace_target, /fully conversational/i)
+  assert.ok(normalized.prescription.steps.some((step) => /stay in zone 1-2/i.test(step)))
+  assert.ok(normalized.prescription.steps.every((step) => !/hill|repeat|interval/i.test(step)))
+  assert.deepEqual(normalized.raw.steps, normalized.prescription.steps)
+  assert.match(raw.steps[0], /uphill/) // source data remains immutable
+})
+
+check('h2: flat prescriptions remain complete for start/watch consumers', () => {
+  const raw = { id: 'easy', kind: 'run', type: 'easy', title: 'Easy run', pace_target: '10:30/mi', target_zone: 'Zone 2', steps: ['Stay easy'] }
+  const normalized = normalizeSession(raw)
+  assert.equal(normalized.prescription.pace_target, '10:30/mi')
+  assert.equal(normalized.prescription.target_zone, 'Zone 2')
+  assert.deepEqual(normalized.prescription.steps, ['Stay easy'])
+  assert.equal(normalizePrescription(raw).adjusted, false)
+})
+
+check('h3: genuine hard workouts are never mislabeled or rewritten', () => {
+  const raw = { kind: 'run', type: 'hills', title: 'Controlled hill repeats', target_zone: 'Zone 3', steps: ['6 x 60 sec uphill'] }
+  const normalized = normalizeSession(raw)
+  assert.equal(normalized.title, 'Controlled hill repeats')
+  assert.deepEqual(normalized.prescription.steps, ['6 x 60 sec uphill'])
+  assert.equal(normalizePrescription(raw).adjusted, false)
+})
+
+check('h4: converted steady work cannot remain inside a recovery run', () => {
+  const normalized = normalizeSession({ kind: 'run', type: 'recovery', title: 'Recovery run', target_zone: 'Zone 1-2', pace_target: 'Comfortably steady', steps: ['Run the middle continuously at steady effort'] })
+  assert.ok(normalized.prescription.steps.some((step) => /stay in zone 1-2/i.test(step)))
+  assert.ok(normalized.prescription.steps.every((step) => !/steady effort/i.test(step)))
+})
+
+check('h5: unsupported legacy lift percentages fall back to honest effort calibration', () => {
+  const normalized = normalizeLiftExercisePrescription({ name: 'Dumbbell bench press', load: '70-80% estimated max', rpe: '7-8' })
+  assert.equal(normalized.load, 'Choose load for RPE/RIR 7-8')
+  assert.match(normalized.loadSource, /no matching logged set/i)
+  const anchored = normalizeLiftExercisePrescription({ name: 'Dumbbell bench press', load: '52.5 lb starting load', loadSource: 'Conservative estimate from a recent set', rpe: '7-8' })
+  assert.equal(anchored.load, '52.5 lb starting load')
 })
 
 console.log(`\nplanCalendar smoke: ${passed} checks passed`)
