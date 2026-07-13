@@ -5,9 +5,9 @@ This file holds Forge's product history, deployment notes, shipped phase log, kn
 ## Current Production
 
 - Production URL: `https://forge-production-773f.up.railway.app/`
-- Latest checked deployment: `84c9b107-8b86-496c-9757-bd5c9e87ac74`
-- Latest checked bundle: `/assets/index-CvpmYLna.js`
-- iOS version/build: `1.0.5` / `5`
+- Latest verified application release: commit `0af22d3b`, deployment `0faa870b-fd59-4b9a-a4f6-fb2139149691`
+- Latest checked bundle: `/assets/index-DmSV7cmz.js`
+- iOS version/build: `1.0.5` / `15`
 - Bundle identifier: `com.zordontech.forge`
 - Expo/EAS project: `@zordon/forge-athlete` (`6aeb5fbb-2697-4cf4-b9b3-afe60c63e9e1`)
 
@@ -133,7 +133,16 @@ Phase 2 cleanup from this audit:
 - Heat-drift and readiness classification prefer the calibrated profile. Users without a usable profile retain the pre-calibration max-HR fallback.
 - The derive flow flags an observed run maximum above the stored maximum and suggests a correction, but never overwrites the profile without user confirmation.
 - The field-test path calculates LTHR as 95% of the user's 20-minute time-trial average heart rate.
-- Open H5 execution gap: generated plans currently prescribe zone labels such as `Zone 2`, not the user's calibrated BPM range. Unified Daily Execution must resolve and display the matching personal range without changing the stored plan contract.
+- H5 closed the execution gap: generated plan zone labels now resolve to the user's calibrated BPM range when a usable heart-rate profile exists, without changing the stored plan contract.
+
+## Unified Hybrid Plan H1-H6 (2026-07-13)
+
+- The Plan surface is now the single training calendar for run-only and hybrid plans. Create/Manage Plan and Races remain reachable through its setup/manage flow instead of competing navigation entries.
+- Home, Train, Lift, and Plan share the canonical daily execution contract. An active calendar day cannot be replaced by a disconnected recommendation.
+- Existing user-owned legacy plans remain readable through the calendar without a read-time write; normal progress actions perform the existing scoped lazy migration.
+- AI-generated coaching, feedback, recommendation, and plan-rationale surfaces use the shared inline `AI guidance — not medical advice.` note. Deterministic metrics and static fallback copy do not trigger it.
+- H6 passed Claude Code QA after the deterministic-health disclaimer guard was corrected. H1-H6 smokes, frontend build, both high-severity audits, 47-table account-data coverage, and Capacitor sync passed.
+- Production computer-use verified one Plan destination, the legacy calendar, the same 4-mile workout across Home/Plan/Train, preserved setup/race routes, and no browser console errors. No EAS build was run.
 
 ## Recently Fixed Bugs
 
@@ -193,6 +202,7 @@ These changes are already implemented, built, Capacitor-synced, and deployed to 
 | 2026-04-29 | `c44b1fa4-f558-4b36-87c5-afc970b3a954` | Success | Docs-only redeploy after recording loading fallback release |
 | 2026-04-29 | `6b496dab-8e0a-40dc-b952-dc9dd0790d48` | Success | Deployment-id doc bump built and production-verified |
 | 2026-05-02 | `84c9b107-8b86-496c-9757-bd5c9e87ac74` | Success | Phase 1 TestFlight readiness audit verified current production bundle |
+| 2026-07-13 | `0faa870b-fd59-4b9a-a4f6-fb2139149691` | Success | Unified Hybrid Plan H6 simplification, migration compatibility, and AI guidance labeling verified live |
 
 ### Build/Test Status
 
