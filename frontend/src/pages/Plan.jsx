@@ -422,8 +422,16 @@ export default function Plan() {
               planContext={{ goal: model.goal, mode: model.mode, modeLabel: model.modeLabel, phase: selectedPhase }}
               completedSet={completedSet}
               onToggleComplete={toggleSession}
-              onStartRun={() => navigate('/warmup')}
-              onStartLift={() => navigate('/log-lift')}
+              onStartRun={(runSession) => navigate('/warmup', { state: {
+                planSessionId: runSession?.id != null ? String(runSession.id) : null,
+                currentWeek: Number.isFinite(selectedDay?.weekIndex) ? selectedDay.weekIndex + 1 : currentWeek,
+                scheduledRun: runSession || null,
+              } })}
+              onStartLift={(liftSession) => navigate('/log-lift', { state: {
+                planSessionId: liftSession?.id != null ? String(liftSession.id) : null,
+                currentWeek: Number.isFinite(selectedDay?.weekIndex) ? selectedDay.weekIndex + 1 : currentWeek,
+                scheduledLift: liftSession || null,
+              } })}
               onBack={() => setSelectedDayISO(null)}
               updating={updating}
             />

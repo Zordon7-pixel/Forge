@@ -131,6 +131,44 @@ const legacyRest = build(legacyPlan, '2026-07-14', 'Tue', [], hrrProfile);
 assert(legacyRest.hasDay && legacyRest.isRest === true, 'legacy rest day resolves as rest');
 assert(schema.getPlanMode(legacyPlan) === 'run_only', 'schema mode inference unchanged for legacy plan');
 
+section('screen consumers wire the shared daily-execution service (static)');
+const fs = require('fs');
+const path = require('path');
+const FE = path.join(__dirname, '..', '..', 'frontend', 'src');
+function read(rel) { try { return fs.readFileSync(path.join(FE, rel), 'utf8'); } catch { return ''; } }
+const dashboard = read('pages/Dashboard.jsx');
+const logRun = read('pages/LogRun.jsx');
+const warmup = read('pages/Warmup.jsx');
+const activeRun = read('pages/ActiveRun.jsx');
+const logLift = read('pages/LogLift.jsx');
+const activeWorkout = read('pages/ActiveWorkout.jsx');
+const plan = read('pages/Plan.jsx');
+const forgedDayView = read('components/calendar/ForgedDayView.jsx');
+
+assert(/from '\.\.\/lib\/dailyExecution'/.test(dashboard) && /recommendationFromExecution/.test(dashboard), 'Dashboard imports the shared service + calendar recommendation');
+assert(/from '\.\.\/lib\/dailyExecution'/.test(logRun) && /scheduledRunFromExecution/.test(logRun), 'LogRun imports the shared service + scheduled run');
+assert(/from '\.\.\/lib\/dailyExecution'/.test(logLift) && /scheduledLiftFromExecution/.test(logLift), 'LogLift imports the shared service + scheduled lift');
+assert(/from '\.\.\/lib\/dailyExecution'/.test(activeRun) && /markSessionComplete/.test(activeRun), 'ActiveRun imports markSessionComplete');
+assert(/from '\.\.\/lib\/dailyExecution'/.test(activeWorkout) && /markSessionComplete/.test(activeWorkout), 'ActiveWorkout imports markSessionComplete');
+assert(/location\.state/.test(warmup) && /navigate\('\/log-run'/.test(warmup), 'Warmup forwards location.state through the run handoff');
+assert(/onStartRun\?\.\(runSession\)/.test(forgedDayView) && /onStartLift\?\.\(liftSession\)/.test(forgedDayView), 'ForgedDayView passes the selected session to start handlers');
+assert(/planSessionId/.test(plan) && /scheduledRun/.test(plan), 'Plan hands the selected session id + prescription into navigate state');
+
+section('completion is called ONLY on the success path (static)');
+// lastIndexOf targets the CALL SITE (the import line is the first occurrence).
+// ActiveRun: markSessionComplete must sit inside the durable-save success block
+// (after runId truthy), before the outer save catch; queueSessionComplete only
+// after the queued run request.
+assert(activeRun.indexOf('if (runId) {') < activeRun.lastIndexOf('markSessionComplete') && activeRun.lastIndexOf('markSessionComplete') < activeRun.indexOf("Failed to save run"), 'ActiveRun completion is inside the runId success block, before the save catch');
+assert(activeRun.indexOf("queueRequest('/api/runs', 'POST', payload)") < activeRun.lastIndexOf('queueSessionComplete'), 'ActiveRun offline completion is queued AFTER the run request');
+// LogRun: online completion after setShowPostCheckIn(true); offline completion after queueRequest.
+assert(logRun.indexOf('setShowPostCheckIn(true)') < logRun.lastIndexOf('markSessionComplete'), 'LogRun online completion runs after the successful save');
+assert((logRun.match(/queueSessionComplete\(/g) || []).length >= 2, 'LogRun queues completion on both offline branches');
+// ActiveWorkout: completion only after the end PUT resolves, before summary nav.
+assert(activeWorkout.indexOf('/end`, {})') < activeWorkout.lastIndexOf('markSessionComplete') && activeWorkout.lastIndexOf('markSessionComplete') < activeWorkout.indexOf('navigate(`/workout/summary/'), 'ActiveWorkout completion sits between a successful end and the summary nav');
+// No completion helper is fired before a save/end in any consumer.
+assert(!/markSessionComplete[\s\S]{0,120}await api\.(post|put)\('\/(runs|workouts)/.test(activeRun), 'ActiveRun never completes before the save call');
+
 console.log(`\nPASSED: ${passed}  FAILED: ${failed}`);
 if (failed) process.exit(1);
 console.log('H5 SMOKE OK');

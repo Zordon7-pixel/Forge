@@ -5,6 +5,7 @@ import { Capacitor, registerPlugin } from '@capacitor/core'
 import { useUnits } from '../context/UnitsContext'
 import api from '../lib/api'
 import { queueRequest } from '../lib/offlineQueue'
+import { planSessionIdFromState, currentWeekFromState, markSessionComplete, queueSessionComplete } from '../lib/dailyExecution'
 import PostRunCheckIn from '../components/PostRunCheckIn'
 import AICoachFeedbackCard from '../components/AICoachFeedbackCard'
 import WorkoutCard from '../components/WorkoutCard'
@@ -132,6 +133,10 @@ export default function ActiveRun() {
   const [queuedOffline, setQueuedOffline] = useState(false)
   const [showPostCheckIn, setShowPostCheckIn] = useState(false)
   const [savedRunId, setSavedRunId] = useState(null)
+  // H5: canonical plan session carried from LogRun/Warmup so a durable run save
+  // marks the exact calendar session complete. Null for ad-hoc/manual runs.
+  const planSessionId = planSessionIdFromState(location.state)
+  const planCurrentWeek = currentWeekFromState(location.state)
   const [savedHeatDrift, setSavedHeatDrift] = useState(null)
   const [showAiCard, setShowAiCard] = useState(false)
   const [aiLoading, setAiLoading] = useState(false)
@@ -419,11 +424,22 @@ export default function ActiveRun() {
           setAiLoading(false)
         }
         setShowPostCheckIn(true)
+        // H5: mark the scheduled calendar session complete ONLY after the run
+        // durably saved. A failed completion must never roll back the run.
+        if (planSessionId) {
+          try {
+            await markSessionComplete(planSessionId, planCurrentWeek)
+          } catch (completionErr) {
+            console.error('[ActiveRun] plan completion failed:', completionErr?.message || completionErr)
+          }
+        }
       }
     } catch (err) {
       console.error('Failed to save run:', err)
       if (!err?.response || Number(err?.response?.status || 0) >= 500) {
         await queueRequest('/api/runs', 'POST', payload)
+        // H5: order completion AFTER the queued run so it replays second.
+        if (planSessionId) await queueSessionComplete(planSessionId, planCurrentWeek)
         setQueuedOffline(true)
         setSavedRunId(payload.id)
         setAwaitingManualDistance(false)

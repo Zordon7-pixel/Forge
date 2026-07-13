@@ -8,6 +8,12 @@ import {
   hasExecutableSession,
   formatHrZone,
   completionBody,
+  scheduledRunFromExecution,
+  scheduledLiftFromExecution,
+  recommendationFromExecution,
+  runRouteState,
+  planSessionIdFromState,
+  currentWeekFromState,
 } from '../src/lib/dailyExecutionCore.js';
 
 let passed = 0;
@@ -73,6 +79,36 @@ assert(localDateISO(new Date(2026, 6, 5)) === '2026-07-05', 'localDateISO pads m
 const body = completionBody('run-1', 2);
 assert(body.completed_session_id === 'run-1' && body.current_week === 2, 'completion body carries session id + week');
 assert(completionBody('run-1').current_week === undefined, 'completion body omits week when not finite');
+
+console.log('\n== scheduled run/lift extractors (calendar preference) ==');
+assert(scheduledRunFromExecution(h) && scheduledRunFromExecution(h).id === 'run-1', 'scheduledRunFromExecution returns the executable run');
+assert(scheduledLiftFromExecution(h) && scheduledLiftFromExecution(h).id === 'lift-1', 'scheduledLiftFromExecution returns the executable lift');
+assert(scheduledRunFromExecution(r) === null, 'rest day yields no scheduled run');
+assert(scheduledLiftFromExecution(r) === null, 'rest day yields no scheduled lift');
+assert(scheduledRunFromExecution(n) === null, 'no-plan yields no scheduled run');
+
+console.log('\n== recommendationFromExecution (calendar vs fallback) ==');
+const calRec = recommendationFromExecution(h);
+assert(calRec && calRec.source === 'calendar', 'calendar recommendation is flagged source=calendar');
+assert(calRec.recommendationType === 'run' && calRec.planSessionId === 'run-1', 'run preferred; carries planSessionId');
+assert(calRec.targetZone === 'Z2', 'targetZone taken from the scheduled run');
+assert(recommendationFromExecution(r) === null, 'rest day → null so callers fall back to next-recommendation');
+assert(recommendationFromExecution(n) === null, 'no-plan → null so callers fall back to next-recommendation');
+const liftOnly = normalizeExecution({ execution: { hasPlan: true, hasDay: true, isRest: false, week: 3, sessions: [{ id: 'lift-9', kind: 'lift', title: 'Upper' }], run: null, lift: { id: 'lift-9', kind: 'lift', title: 'Upper' } } });
+const liftRec = recommendationFromExecution(liftOnly);
+assert(liftRec && liftRec.recommendationType === 'strength' && liftRec.planSessionId === 'lift-9', 'lift-only day → strength recommendation with lift session id');
+
+console.log('\n== runRouteState + state readers ==');
+const rs = runRouteState(h);
+assert(rs && rs.planSessionId === 'run-1' && rs.currentWeek === 1, 'runRouteState carries planSessionId + week');
+assert(rs.scheduledRun && rs.scheduledRun.id === 'run-1', 'runRouteState embeds the scheduled run');
+assert(rs.prescription && rs.prescription.zone === 'Z2', 'runRouteState prescription carries the plan zone');
+assert(runRouteState(r) === null && runRouteState(n) === null, 'no executable run → null route state');
+assert(planSessionIdFromState({ planSessionId: 42 }) === '42', 'planSessionIdFromState stringifies planSessionId');
+assert(planSessionIdFromState({ scheduledRun: { id: 'run-7' } }) === 'run-7', 'planSessionIdFromState falls back to scheduledRun.id');
+assert(planSessionIdFromState(null) === null && planSessionIdFromState({}) === null, 'planSessionIdFromState null-safe');
+assert(currentWeekFromState({ currentWeek: '4' }) === 4, 'currentWeekFromState coerces finite numbers');
+assert(currentWeekFromState({ currentWeek: 'nope' }) === null && currentWeekFromState(null) === null, 'currentWeekFromState rejects non-finite / null');
 
 console.log(`\nPASSED: ${passed}  FAILED: ${failed}`);
 if (failed) process.exit(1);

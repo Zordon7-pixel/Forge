@@ -11,6 +11,7 @@ import WatchWorkoutSendButton from '../components/WatchWorkoutSendButton'
 import { queueRequest } from '../lib/offlineQueue'
 import { scrollToFirstError, validateRunLog } from '../utils/validation'
 import WatchWorkoutService from '../services/WatchWorkoutService'
+import { fetchDailyExecution, scheduledRunFromExecution, runRouteState, planSessionIdFromState, currentWeekFromState, markSessionComplete, queueSessionComplete, localDateISO } from '../lib/dailyExecution'
 
 const RoutePlanner = lazy(() => import('../components/RoutePlanner'))
 
@@ -285,6 +286,11 @@ export default function LogRun() {
   const [runsLoading, setRunsLoading] = useState(false)
 
   const [todayWorkout, setTodayWorkout] = useState(null)
+  // H5: canonical scheduled-run handoff — the plan session id + week survive
+  // through warmup / ActiveRun so completion targets the exact calendar session.
+  const [planSessionId, setPlanSessionId] = useState(() => planSessionIdFromState(location.state))
+  const [planCurrentWeek, setPlanCurrentWeek] = useState(() => currentWeekFromState(location.state))
+  const [scheduledRouteState, setScheduledRouteState] = useState(() => (location.state && location.state.scheduledRun ? location.state : null))
   const [todayLoading, setTodayLoading] = useState(false)
   const [weekPlan, setWeekPlan] = useState(null)
   const [weekPlanLoading, setWeekPlanLoading] = useState(false)
@@ -347,11 +353,57 @@ export default function LogRun() {
   useEffect(() => {
     if (activeTab !== 'today' || todayWorkout) return
     setTodayLoading(true)
+    // H5: source today's run from the canonical daily execution. The legacy
+    // `today` payload + next-recommendation stay ONLY as a fallback when there
+    // is no executable scheduled calendar run (rest day / no plan / legacy).
     Promise.all([
+      fetchDailyExecution(localDateISO()).catch(() => null),
       api.get('/plans/today'),
       api.get('/runs/next-recommendation').catch(() => ({ data: null })),
     ])
-      .then(([planRes, recRes]) => {
+      .then(([execution, planRes, recRes]) => {
+        const scheduledRun = scheduledRunFromExecution(execution)
+        if (scheduledRun) {
+          // Canonical scheduled run — do NOT merge the AI recommendation over it.
+          const type = scheduledRun.type || scheduledRun.workout_type || 'run'
+          const distanceMiles = Number(scheduledRun.distance_miles || scheduledRun.distance || 0)
+          const pace = scheduledRun.pace_target || scheduledRun.pace || scheduledRun.target_pace || ''
+          const details = getRunCoachingDetails(type, pace)
+          const plannedSteps = normalizeSteps(scheduledRun.steps || scheduledRun.structure)
+          const zoneLabel = scheduledRun.target_zone
+            || (scheduledRun.hrZone && scheduledRun.hrZone.zone ? `Zone ${scheduledRun.hrZone.zone}` : '')
+            || details.zone
+          const bpmLabel = scheduledRun.hrZone && Number.isFinite(scheduledRun.hrZone.minBpm) && Number.isFinite(scheduledRun.hrZone.maxBpm)
+            ? `${scheduledRun.hrZone.minBpm}-${scheduledRun.hrZone.maxBpm} bpm`
+            : ''
+          const estimatedSeconds = distanceMiles > 0 && parsePaceToSecondsPerMile(pace)
+            ? Math.round(distanceMiles * parsePaceToSecondsPerMile(pace))
+            : Number(scheduledRun.duration_min || 0) > 0 ? Number(scheduledRun.duration_min) * 60 : 0
+          setPlanSessionId(scheduledRun.id ? String(scheduledRun.id) : null)
+          setPlanCurrentWeek(execution && execution.week != null ? Number(execution.week) : null)
+          setScheduledRouteState(runRouteState(execution))
+          setRunBrief(null)
+          setTodayWorkout({
+            id: scheduledRun.id || '',
+            source: 'calendar',
+            day: execution.day || new Date().toLocaleDateString(undefined, { weekday: 'short' }),
+            typeLabel: cleanRunType(type),
+            rawType: type,
+            distanceMiles,
+            distanceLabel: distanceMiles > 0 ? `${distanceMiles.toFixed(1)} miles` : 'No distance target',
+            pace,
+            zone: bpmLabel ? `${zoneLabel} · ${bpmLabel}` : zoneLabel,
+            intensity: scheduledRun.intensity || details.intensity,
+            progression: scheduledRun.progression || details.progression,
+            steps: plannedSteps.length ? plannedSteps : details.steps,
+            durationLabel: estimatedSeconds ? formatRunDuration(estimatedSeconds) : '',
+            description: scheduledRun.description || scheduledRun.notes || '',
+            aiReason: '',
+            healthAdjusted: false,
+          })
+          return
+        }
+        // Fallback: legacy /plans/today `today` merged with next-recommendation.
         const w = planRes.data?.today || null
         if (!w) return
         const rec = recRes.data || {}
@@ -453,6 +505,8 @@ export default function LogRun() {
       const runPayload = { id: clientRunId, date, type: runType, surface: resolvedSurface, run_surface: resolvedSurface, distance_miles: distanceMiles, duration_seconds: seconds, notes, perceived_effort: Number(effort), treadmill_brand: treadmillType, shoe_id: selectedShoeId || null, target_zone: todayWorkout?.zone || null }
       if (!navigator.onLine) {
         await queueRequest('/api/runs', 'POST', runPayload)
+        // H5: order completion AFTER the queued run so it replays second.
+        if (planSessionId) await queueSessionComplete(planSessionId, planCurrentWeek)
         setFeedback('Saved offline — will sync when connected')
         return
       }
@@ -473,6 +527,18 @@ export default function LogRun() {
       setShowPostCheckIn(true)
       setPolling(true)
 
+      // H5: mark the scheduled calendar session complete ONLY after the run
+      // saved successfully. A failed completion must never roll back the run —
+      // surface a non-blocking notice instead.
+      if (planSessionId) {
+        try {
+          await markSessionComplete(planSessionId, planCurrentWeek)
+        } catch (completionErr) {
+          console.error('[LogRun] plan completion failed:', completionErr?.message || completionErr)
+          setFeedback((prev) => `${prev ? `${prev} ` : ''}Run saved. Plan progress will update on next sync.`)
+        }
+      }
+
       let attempts = 0
       let aiFeedback = ''
       while (attempts < 5 && !aiFeedback) {
@@ -488,6 +554,8 @@ export default function LogRun() {
         const resolvedSurface = environment === 'inside' ? 'treadmill' : surface
         const runPayload = { id: clientRunId, date, type: runType, surface: resolvedSurface, run_surface: resolvedSurface, distance_miles: distanceMiles, duration_seconds: seconds, notes, perceived_effort: Number(effort), treadmill_brand: treadmillType, shoe_id: selectedShoeId || null, target_zone: todayWorkout?.zone || null }
         await queueRequest('/api/runs', 'POST', runPayload)
+        // H5: order completion AFTER the queued run so it replays second.
+        if (planSessionId) await queueSessionComplete(planSessionId, planCurrentWeek)
         setFeedback('Saved offline — will sync when connected')
         setError('')
         return
@@ -510,8 +578,32 @@ export default function LogRun() {
         surface: routeSurface,
         mapMyRun: true,
         plannedRoute,
+        // H5: carry the canonical plan session so ActiveRun can mark it complete.
+        planSessionId,
+        currentWeek: planCurrentWeek,
         workoutTarget: {
           distanceMiles: todayWorkout?.distanceMiles || plannedRoute?.targetDistanceMiles || null,
+          pace: todayWorkout?.pace || null,
+          zone: todayWorkout?.zone || null,
+        },
+      },
+    })
+  }
+
+  // H5: obvious one-tap start for the scheduled calendar run — carries the
+  // canonical plan session so ActiveRun marks the exact session complete on a
+  // durable save. Manual logging stays available on the 'Manual' tab.
+  const startScheduledRun = () => {
+    navigate('/run/active', {
+      state: {
+        countdown,
+        runType: todayWorkout?.rawType || 'easy',
+        runEnvironment: 'outdoor',
+        mapMyRun: true,
+        planSessionId,
+        currentWeek: planCurrentWeek,
+        workoutTarget: {
+          distanceMiles: todayWorkout?.distanceMiles || null,
           pace: todayWorkout?.pace || null,
           zone: todayWorkout?.zone || null,
         },
@@ -591,6 +683,9 @@ export default function LogRun() {
               <div className="rounded-2xl p-4" style={{ background: 'var(--bg-base)', border: '1px solid var(--border-subtle)' }}>
                 <div className="flex items-start justify-between gap-3 mb-3">
                   <span className="inline-block rounded-full px-3 py-1 text-xs font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>{todayWorkout.typeLabel}</span>
+                  {todayWorkout.source === 'calendar' && (
+                    <span className="inline-block rounded-full px-2 py-1 text-[10px] font-bold" style={{ background: 'var(--bg-card)', color: 'var(--text-muted)', border: '1px solid var(--border-subtle)' }}>From your plan</span>
+                  )}
                   <span className="rounded-full px-2 py-1 text-[10px] font-black uppercase" style={{ background: 'rgba(34,197,94,0.12)', color: 'var(--success)', border: '1px solid rgba(34,197,94,0.35)', whiteSpace: 'nowrap' }}>
                     {runBriefIsAi ? 'AI coach' : 'Data coach'}
                   </span>
@@ -634,6 +729,9 @@ export default function LogRun() {
                 <button onClick={() => setShowWatchModal(true)} className="w-full mt-4 rounded-xl py-3 font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', cursor: 'pointer' }}>Send to Watch</button>
                 {routePlannerStatus.available && (
                   <Suspense fallback={<p className="mt-4 text-sm" style={{ color: 'var(--text-muted)' }}>Loading route planner...</p>}>
+                    {todayWorkout.source === 'calendar' && (
+                      <button type="button" onClick={startScheduledRun} className="w-full rounded-xl py-3 font-bold mb-3" style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', cursor: 'pointer', fontSize: 15 }}>Start Scheduled Run</button>
+                    )}
                     <RoutePlanner workout={todayWorkout} onStart={startPlannedRoute} />
                   </Suspense>
                 )}

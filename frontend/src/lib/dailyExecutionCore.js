@@ -89,3 +89,87 @@ export function completionBody(sessionId, currentWeek) {
   if (Number.isFinite(Number(currentWeek))) body.current_week = Number(currentWeek);
   return body;
 }
+
+// The scheduled run session for today, or null when there is no executable
+// calendar run (rest day, lift-only day, or no plan). Never fabricates a run.
+export function scheduledRunFromExecution(execution) {
+  return hasExecutableSession(execution) && execution.run ? execution.run : null;
+}
+
+// The scheduled lift session for today, or null when there is no executable
+// calendar lift. Never fabricates a lift.
+export function scheduledLiftFromExecution(execution) {
+  return hasExecutableSession(execution) && execution.lift ? execution.lift : null;
+}
+
+// Map today's executable calendar session into the `recommendation` shape the
+// Home coach/detail surfaces already consume. Returns null when there is no
+// executable session so callers fall back to the legacy next-recommendation.
+// A run is preferred over a lift for the run-centric coach card.
+export function recommendationFromExecution(execution) {
+  if (!hasExecutableSession(execution)) return null;
+  const run = execution.run || null;
+  if (run) {
+    const type = run.type || run.workout_type || 'run';
+    const dist = Number(run.distance_miles || run.distance || 0);
+    return {
+      recommendationType: run.type || run.workout_type || 'run',
+      type,
+      suggestedDistance: dist || undefined,
+      suggestedPace: run.pace_target || run.pace || run.target_pace || undefined,
+      targetZone: run.target_zone || (run.hrZone ? `Zone ${run.hrZone.zone}` : '') || '',
+      intensity: run.intensity || '',
+      progression: run.progression || '',
+      structure: Array.isArray(run.structure) ? run.structure : [],
+      reason: run.description || run.notes || '',
+      planSessionId: run.id || null,
+      source: 'calendar',
+    };
+  }
+  const lift = execution.lift || null;
+  return {
+    recommendationType: 'strength',
+    type: 'strength',
+    planSessionId: lift ? lift.id || null : null,
+    reason: lift ? lift.description || lift.notes || '' : '',
+    structure: [],
+    source: 'calendar',
+  };
+}
+
+// Build the navigation state the run flow (LogRun → Warmup → ActiveRun) carries
+// so the scheduled run + its plan session id survive every hop. Null when there
+// is no executable scheduled run.
+export function runRouteState(execution) {
+  const run = scheduledRunFromExecution(execution);
+  if (!run) return null;
+  return {
+    planSessionId: run.id || null,
+    currentWeek: execution && execution.week != null ? execution.week : null,
+    scheduledRun: run,
+    prescription: {
+      type: run.type || run.workout_type || 'run',
+      distanceMiles: Number(run.distance_miles || run.distance || 0) || null,
+      pace: run.pace_target || run.pace || run.target_pace || null,
+      zone: run.target_zone || null,
+      hrZone: run.hrZone || null,
+    },
+  };
+}
+
+// Read the plan session id back out of an incoming navigation state so warmup /
+// active handoffs keep the canonical scheduled session. Returns a String id or
+// null.
+export function planSessionIdFromState(state) {
+  if (!state || typeof state !== 'object') return null;
+  const id = state.planSessionId || (state.scheduledRun && state.scheduledRun.id) || null;
+  return id != null ? String(id) : null;
+}
+
+// Read the plan week back out of an incoming navigation state. Returns a finite
+// Number or null.
+export function currentWeekFromState(state) {
+  if (!state || typeof state !== 'object') return null;
+  const n = Number(state.currentWeek);
+  return Number.isFinite(n) ? n : null;
+}

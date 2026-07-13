@@ -14,6 +14,7 @@ import Skeleton from '../components/Skeleton'
 import { useOnlineStatus } from '../lib/useOnlineStatus'
 import HealthService from '../services/HealthService'
 import { useProContext } from '../context/ProContext'
+import { fetchDailyExecution, recommendationFromExecution, hasExecutableSession, runRouteState, localDateISO } from '../lib/dailyExecution'
 
 function fmtPace(durationSeconds, distance) {
   if (!durationSeconds || !distance) return '--'
@@ -107,6 +108,7 @@ export default function Dashboard() {
   const [showTodayDetail, setShowTodayDetail] = useState(false)
   const [showMoreInsights, setShowMoreInsights] = useState(false)
   const [nextRecommendation, setNextRecommendation] = useState(null)
+  const [execution, setExecution] = useState(null)
   const [ageGradedPerformance, setAgeGradedPerformance] = useState(null)
   const [healthSync, setHealthSync] = useState({ loading: true, available: false, reason: null, metrics: null })
   const [readinessState, setReadinessState] = useState({ loading: true, error: false, locked: false, data: null })
@@ -131,7 +133,7 @@ export default function Dashboard() {
 
   const fetchDashboardData = useCallback(async () => {
     try {
-        const [statsRes, runsRes, liftsRes, warningRes, checkinRes, goalRes, streakRes, milestoneRes, complianceRes, loadRes, nextRaceRes, gearRes, injuryRes, recapRes, recommendationRes, ageGradedRes] = await Promise.all([
+        const [statsRes, runsRes, liftsRes, warningRes, checkinRes, goalRes, streakRes, milestoneRes, complianceRes, loadRes, nextRaceRes, gearRes, injuryRes, recapRes, recommendationRes, ageGradedRes, executionRes] = await Promise.all([
           api.get('/auth/me/stats'),
           api.get('/runs', { params: { limit: 5 } }),
           api.get('/lifts'),
@@ -148,7 +150,9 @@ export default function Dashboard() {
           api.get('/recap/weekly').catch(() => ({ data: null })),
           api.get('/runs/next-recommendation').catch(() => ({ data: null })),
           api.get('/runs/age-graded-performance').catch(() => ({ data: null })),
+          fetchDailyExecution(localDateISO()).catch(() => null),
         ])
+        setExecution(executionRes || null)
         setStats(statsRes.data)
         const runsList = Array.isArray(runsRes.data) ? runsRes.data : runsRes.data?.runs || []
         setRuns(runsList)
@@ -527,22 +531,28 @@ export default function Dashboard() {
     return combined.slice(0, 4)
   }, [runs, lifts, otherActivities])
 
+  // H5: prefer today's calendar session over the legacy next-recommendation.
+  // calendarRec is null on rest days / no-plan, so effectiveRecommendation falls
+  // back to nextRecommendation and existing behavior is preserved.
+  const calendarRec = useMemo(() => recommendationFromExecution(execution), [execution])
+  const effectiveRecommendation = calendarRec || nextRecommendation
+
   const todayWatchWorkout = useMemo(() => {
-    if (!nextRecommendation) return null
-    const hasDistance = Number(nextRecommendation.suggestedDistance || 0) > 0
-    const hasPace = Boolean(nextRecommendation.suggestedPace)
+    if (!effectiveRecommendation) return null
+    const hasDistance = Number(effectiveRecommendation.suggestedDistance || 0) > 0
+    const hasPace = Boolean(effectiveRecommendation.suggestedPace)
     if (!hasDistance && !hasPace) return null
     return {
-      typeLabel: nextRecommendation.type || nextRecommendation.recommendationType || 'Forged Hybrid Workout',
-      distanceLabel: hasDistance ? `${nextRecommendation.suggestedDistance} mi` : '',
-      pace: nextRecommendation.suggestedPace || '',
-      progression: nextRecommendation.progression || nextRecommendation.summary || '',
-      description: nextRecommendation.interference?.reason || nextRecommendation.reason || nextRecommendation.why || '',
-      zone: nextRecommendation.targetZone || '',
-      intensity: nextRecommendation.intensity || '',
-      steps: structureToWatchSteps(nextRecommendation.structure),
+      typeLabel: effectiveRecommendation.type || effectiveRecommendation.recommendationType || 'Forged Hybrid Workout',
+      distanceLabel: hasDistance ? `${effectiveRecommendation.suggestedDistance} mi` : '',
+      pace: effectiveRecommendation.suggestedPace || '',
+      progression: effectiveRecommendation.progression || effectiveRecommendation.summary || '',
+      description: effectiveRecommendation.interference?.reason || effectiveRecommendation.reason || effectiveRecommendation.why || '',
+      zone: effectiveRecommendation.targetZone || '',
+      intensity: effectiveRecommendation.intensity || '',
+      steps: structureToWatchSteps(effectiveRecommendation.structure),
     }
-  }, [nextRecommendation])
+  }, [effectiveRecommendation])
 
   const showLoadWarning = loadAnalysis && ['elevated', 'high', 'danger'].includes(loadAnalysis.loadStatus) && Date.now() > loadWarningDismissedUntil
   const complianceColor = compliance?.score >= 80 ? 'var(--success)' : compliance?.score >= 50 ? 'var(--accent)' : 'var(--danger)'
@@ -559,6 +569,15 @@ export default function Dashboard() {
   }, [])
 
   const handleStartWorkout = useCallback(() => {
+    // H5: when today has an executable calendar session, hand off the canonical
+    // scheduled run/lift (with its plan session id) instead of the legacy rec.
+    if (hasExecutableSession(execution)) {
+      track('recommendation_followed', { via: 'today_card_start', source: 'calendar' })
+      if (calendarRec && calendarRec.recommendationType === 'strength') {
+        return navigate('/log-lift', { state: { planSessionId: calendarRec.planSessionId, currentWeek: execution.week ?? null } })
+      }
+      return navigate('/log-run', { state: runRouteState(execution) })
+    }
     if (!nextRecommendation) return navigate('/run')
     track('recommendation_followed', { via: 'today_card_start' })
     if (nextRecommendation.recommendationType === 'rest') return navigate('/plan')
@@ -568,7 +587,7 @@ export default function Dashboard() {
     if (nextRecommendation.recommendationType) params.set('type', String(nextRecommendation.recommendationType))
     if (nextRecommendation.suggestedPace) params.set('pace', String(nextRecommendation.suggestedPace))
     navigate(`/log-run${params.toString() ? `?${params.toString()}` : ''}`)
-  }, [navigate, nextRecommendation])
+  }, [navigate, nextRecommendation, execution, calendarRec])
 
   if (loading) return <div className="space-y-4"><LoadingRunner message="Getting ready" /><Skeleton rows={3} /></div>
 
@@ -656,10 +675,10 @@ export default function Dashboard() {
         </div>
       )}
 
-      <DailyCoachFlow
+      <DailyCoachFlow /* H5: effectiveRecommendation prefers calendar */
         checkedInToday={checkedInToday}
         readiness={userFacingReadiness}
-        recommendation={nextRecommendation}
+        recommendation={effectiveRecommendation}
         todayWatchWorkout={todayWatchWorkout}
         onCheckIn={() => navigate('/checkin')}
         onStartWorkout={handleStartWorkout}
@@ -673,7 +692,7 @@ export default function Dashboard() {
         checkedInToday={checkedInToday}
         readiness={userFacingReadiness}
         readinessBreakdown={readinessBreakdown}
-        recommendation={nextRecommendation}
+        recommendation={effectiveRecommendation}
         checkinData={checkinData}
         dailySteps={dailySteps}
         dailyStepsSource={dailyStepsSource}

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { TrendingUp, Calendar, Zap, Heart } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import api from '../lib/api'
@@ -554,6 +554,9 @@ function WarmupDone({ onStartRun }) {
 
 export default function Warmup() {
   const navigate = useNavigate()
+  // H5: preserve any incoming scheduled-run / plan-session state so the run
+  // stays canonical through the warm-up → LogRun handoff.
+  const location = useLocation()
   const [runState, setRunState] = useState('warmup-steps')
   const [stepIndex, setStepIndex] = useState(0)
 
@@ -570,7 +573,7 @@ export default function Warmup() {
   }
 
   const handleStartRun = () => {
-    navigate('/log-run')
+    navigate('/log-run', location.state ? { state: location.state } : undefined)
   }
 
   return (

@@ -20,9 +20,27 @@ import {
   hasExecutableSession,
   formatHrZone,
   completionBody,
+  scheduledRunFromExecution,
+  scheduledLiftFromExecution,
+  recommendationFromExecution,
+  runRouteState,
+  planSessionIdFromState,
+  currentWeekFromState,
 } from './dailyExecutionCore';
 
-export { localDateISO, normalizeExecution, hasExecutableSession, formatHrZone, completionBody };
+export {
+  localDateISO,
+  normalizeExecution,
+  hasExecutableSession,
+  formatHrZone,
+  completionBody,
+  scheduledRunFromExecution,
+  scheduledLiftFromExecution,
+  recommendationFromExecution,
+  runRouteState,
+  planSessionIdFromState,
+  currentWeekFromState,
+};
 
 // Fetch + normalize today's execution for a phone-local date.
 export async function fetchDailyExecution(dateISO = localDateISO()) {
@@ -52,6 +70,12 @@ export default {
   hasExecutableSession,
   formatHrZone,
   completionBody,
+  scheduledRunFromExecution,
+  scheduledLiftFromExecution,
+  recommendationFromExecution,
+  runRouteState,
+  planSessionIdFromState,
+  currentWeekFromState,
   fetchDailyExecution,
   markSessionComplete,
   queueSessionComplete,

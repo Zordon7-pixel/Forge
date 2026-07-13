@@ -4,6 +4,7 @@ import api from '../lib/api'
 import ExercisePickerModal from '../components/ExercisePickerModal'
 import MovementDemo from '../components/MovementDemo'
 import { getWeightDropWarning, scrollToFirstError, validateWorkoutSet } from '../utils/validation'
+import { planSessionIdFromState, currentWeekFromState, markSessionComplete } from '../lib/dailyExecution'
 
 const REST_PRESETS = [30, 60, 90, 120, 180]
 
@@ -51,6 +52,10 @@ export default function ActiveWorkout() {
   const location = useLocation()
   const plannedExercises = location.state?.exercises || []
   const workoutName = location.state?.workoutName || ''
+  // H5: canonical plan session carried from LogLift so a successful workout end
+  // marks the exact calendar lift complete. Null for ad-hoc/manual workouts.
+  const planSessionId = planSessionIdFromState(location.state)
+  const planCurrentWeek = currentWeekFromState(location.state)
 
   const [elapsed, setElapsed] = useState(0)
   const workoutTimerRef = useRef(null)
@@ -213,6 +218,15 @@ export default function ActiveWorkout() {
     clearInterval(workoutTimerRef.current)
     try {
       await api.put(`/workouts/${id}/end`, {})
+      // H5: mark the scheduled calendar session complete ONLY after the workout
+      // end succeeded. A failed completion must never block the summary nav.
+      if (planSessionId) {
+        try {
+          await markSessionComplete(planSessionId, planCurrentWeek)
+        } catch (completionErr) {
+          console.error('[active-workout] plan completion failed:', completionErr?.message || completionErr)
+        }
+      }
       navigate(`/workout/summary/${id}`)
     } catch (err) {
       console.error('[active-workout/end] failed:', err?.message || err)

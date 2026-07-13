@@ -1,11 +1,12 @@
 import { useState, useEffect, useMemo } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import api from '../lib/api'
 import track from '../lib/track'
 import { queueRequest } from '../lib/offlineQueue'
 import { getVolumeLoad, getProgressiveOverloadTip } from '../lib/athleteLanguage'
 import StrengthWorkoutRecommendation from '../components/StrengthWorkoutRecommendation'
 import WatchWorkoutService from '../services/WatchWorkoutService'
+import { fetchDailyExecution, scheduledLiftFromExecution, planSessionIdFromState, currentWeekFromState, localDateISO } from '../lib/dailyExecution'
 
 const MUSCLE_GROUPS = [
   { key: 'chest', label: 'Chest' },
@@ -111,6 +112,11 @@ function BodySVG({ highlight, sex = 'male' }) {
 
 export default function LogLift() {
   const navigate = useNavigate()
+  // H5: calendar scheduled lift is the primary path; AI/manual are secondary.
+  const location = useLocation()
+  const [scheduledLift, setScheduledLift] = useState(null)
+  const [planSessionId, setPlanSessionId] = useState(() => planSessionIdFromState(location.state))
+  const [planCurrentWeek, setPlanCurrentWeek] = useState(() => currentWeekFromState(location.state))
   const [selected, setSelected] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -155,6 +161,28 @@ export default function LogLift() {
     }).finally(() => setAiLoading(false))
   }, [])
 
+  // H5: source today's lift from the canonical calendar execution. When a
+  // scheduled lift exists it becomes the default primary tab; AI/manual remain
+  // available. Falls back silently to AI/manual when there is no calendar lift.
+  useEffect(() => {
+    let active = true
+    fetchDailyExecution(localDateISO())
+      .then((execution) => {
+        if (!active) return
+        const lift = scheduledLiftFromExecution(execution)
+        if (lift) {
+          setScheduledLift(lift)
+          setActiveTab('scheduled')
+          if (lift.id != null) setPlanSessionId((prev) => prev || String(lift.id))
+          if (execution && execution.week != null) {
+            setPlanCurrentWeek((prev) => (prev != null ? prev : Number(execution.week)))
+          }
+        }
+      })
+      .catch(() => {})
+    return () => { active = false }
+  }, [])
+
 
 
   const toggle = (key) => setSelected(prev => {
@@ -192,6 +220,45 @@ export default function LogLift() {
     } catch (err) {
       if (!err?.response) {
         await queueRequest('/api/workouts/start', 'POST', { muscle_groups: muscleGroupsFromTarget(aiRecommendation?.target) })
+        setFeedback('Saved offline — will sync when connected')
+        setError('')
+        return
+      }
+      setError(err?.response?.data?.error || 'Could not start workout. Try again.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // H5: start the scheduled calendar lift. Carries planSessionId + currentWeek
+  // so ActiveWorkout marks the exact plan session complete on a successful end.
+  const beginScheduled = async () => {
+    if (!scheduledLiftPlan) return
+    setLoading(true)
+    setError('')
+    setFeedback('')
+    const muscleGroups = muscleGroupsFromTarget(scheduledLiftPlan.target)
+    const payload = { muscle_groups: muscleGroups }
+    try {
+      if (!navigator.onLine) {
+        await queueRequest('/api/workouts/start', 'POST', payload)
+        setFeedback('Saved offline — will sync when connected')
+        setLoading(false)
+        return
+      }
+      const res = await api.post('/workouts/start', payload)
+      track('lift_logged')
+      navigate(`/workout/active/${res.data.session.id}`, {
+        state: {
+          exercises: scheduledLiftPlan.main || [],
+          workoutName: scheduledLiftPlan.workoutName || '',
+          planSessionId,
+          currentWeek: planCurrentWeek,
+        }
+      })
+    } catch (err) {
+      if (!err?.response) {
+        await queueRequest('/api/workouts/start', 'POST', payload)
         setFeedback('Saved offline — will sync when connected')
         setError('')
         return
@@ -314,6 +381,29 @@ export default function LogLift() {
         { sets: latestLift.sets, reps: latestLift.reps, weight: latestLift.weight_lbs }
       )
     : ''
+  // H5: normalize the scheduled calendar lift into the plan shape the existing
+  // StrengthWorkoutRecommendation + WatchWorkoutService already consume.
+  const scheduledLiftPlan = useMemo(() => {
+    if (!scheduledLift) return null
+    const p = scheduledLift.prescription || scheduledLift
+    const main = Array.isArray(scheduledLift.main) ? scheduledLift.main
+      : Array.isArray(p.main) ? p.main
+      : Array.isArray(p.exercises) ? p.exercises
+      : Array.isArray(scheduledLift.exercises) ? scheduledLift.exercises
+      : []
+    return {
+      workoutName: scheduledLift.title || p.title || 'Scheduled Strength',
+      target: scheduledLift.focus || p.focus || p.target || '',
+      warmup: Array.isArray(p.warmup) ? p.warmup : [],
+      main,
+      recovery: p.recovery || scheduledLift.recovery || '',
+      explanation: p.explanation || p.description || scheduledLift.description || '',
+    }
+  }, [scheduledLift])
+  const scheduledWatchWorkout = useMemo(
+    () => scheduledLiftPlan ? WatchWorkoutService.buildStrengthWorkout(scheduledLiftPlan) : null,
+    [scheduledLiftPlan]
+  )
   const aiWatchWorkout = useMemo(
     () => aiRecommendation ? WatchWorkoutService.buildStrengthWorkout(aiRecommendation) : null,
     [aiRecommendation]
@@ -345,10 +435,20 @@ export default function LogLift() {
       )}
 
       <div className="flex gap-2">
-        {['manual','ai'].map((t) => (
-          <button key={t} onClick={() => setActiveTab(t)} className="rounded-full px-4 py-2 text-xs font-bold" style={{ background: activeTab===t ? 'var(--accent)' : 'var(--bg-input)', color: activeTab===t ? '#000' : 'var(--text-muted)' }}>{t === 'manual' ? 'Manual' : 'AI Recommends'}</button>
+        {[...(scheduledLiftPlan ? ['scheduled'] : []), 'manual', 'ai'].map((t) => (
+          <button key={t} onClick={() => setActiveTab(t)} className="rounded-full px-4 py-2 text-xs font-bold" style={{ background: activeTab===t ? 'var(--accent)' : 'var(--bg-input)', color: activeTab===t ? '#000' : 'var(--text-muted)' }}>{t === 'scheduled' ? 'From your plan' : t === 'manual' ? 'Manual' : 'AI Recommends'}</button>
         ))}
       </div>
+
+      {activeTab === 'scheduled' && scheduledLiftPlan && (
+        <StrengthWorkoutRecommendation
+          plan={scheduledLiftPlan}
+          title={scheduledLiftPlan.workoutName || 'Scheduled Strength'}
+          onStart={beginScheduled}
+          startBusy={loading}
+          watchWorkout={scheduledWatchWorkout}
+        />
+      )}
 
       {activeTab === 'ai' && (
         <>
