@@ -11,6 +11,8 @@ const { applyOverride } = require('../lib/checkinOverride');
 const planSchema = require('../lib/planSchema');
 const concurrentPlan = require('../lib/concurrentPlan');
 const adaptationEngine = require('../lib/adaptationEngine');
+const dailyExecution = require('../lib/dailyExecution');
+const { getHrProfile } = require('../lib/hrZones');
 
 function getDayShort() {
   return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date().getDay()];
@@ -1174,14 +1176,25 @@ router.put('/my/progress', auth, async (req, res) => {
 
 router.get('/today', auth, async (req, res) => {
   try {
+    // H5: accept a phone-local date (+/-1 day safety, same rule as H4).
+    const dateISO = getPlanningDateFromRequest(req);
+    if (dateISO === null) return res.status(400).json({ error: 'Invalid date' });
+
     const active = await getActivePlanForUser(req.user.id);
-    if (!active) return res.json({ today: null });
+    if (!active) return res.json({ today: null, execution: { hasPlan: false, hasDay: false, date: dateISO } });
     const parsed = parsePlan(active.row);
-    const today = new Date().toISOString().slice(0, 10);
-    const baseDay = normalizeTodayEntry(parsed);
+
+    // H5: select the EXACT dated schema-v2 day (legacy plans fall back to a
+    // weekday match among undated days only). Replaces the old first-weekday
+    // scan that could return week 1's Tuesday regardless of the current week.
+    const weekdayShort = dailyExecution.weekdayShortForDate(dateISO);
+    const selection = dailyExecution.selectDayForDate(parsed, dateISO, weekdayShort);
+    const selectedEntry = selection ? selection.entry : null;
+    const selectedWeek = selection ? selection.week : null;
+
     const override = await dbGet(
       'SELECT patch_json FROM checkin_overrides WHERE user_id=? AND date=?',
-      [req.user.id, today]
+      [req.user.id, dateISO]
     );
     let patch = null;
     if (override?.patch_json) {
@@ -1191,7 +1204,43 @@ router.get('/today', auth, async (req, res) => {
         console.error('[plans] Failed to parse check-in override patch:', err);
       }
     }
-    res.json({ today: patch ? applyOverride(baseDay, patch) : baseDay });
+
+    // Legacy `today` shape is preserved for existing consumers.
+    const baseDay = selectedEntry ? planSchema.flattenDayForConsumer(selectedEntry) : null;
+    const legacyToday = baseDay ? (patch ? applyOverride(baseDay, patch) : baseDay) : null;
+
+    // Completion state + calibrated HR profile for the canonical execution object.
+    const [progressRow, hrProfile] = await Promise.all([
+      dbGet(
+        "SELECT progress_json FROM user_plans WHERE user_id=? AND status='active' ORDER BY created_at DESC LIMIT 1",
+        [req.user.id]
+      ),
+      getHrProfile(req.user.id, dbGet),
+    ]);
+    let completedSessionIds = [];
+    if (progressRow?.progress_json) {
+      try {
+        const p = JSON.parse(progressRow.progress_json);
+        if (Array.isArray(p.completedSessionIds)) completedSessionIds = p.completedSessionIds;
+      } catch (err) {
+        console.error('[plans/today] invalid progress JSON:', err.message);
+      }
+    }
+
+    const overriddenEntry = (patch && selectedEntry)
+      ? planSchema.applyOverrideToDay(selectedEntry, patch)
+      : selectedEntry;
+    const execution = dailyExecution.buildDailyExecution({
+      plan: parsed,
+      dateISO,
+      weekdayShort,
+      selectedEntry: overriddenEntry,
+      selectedWeek,
+      completedSessionIds,
+      hrProfile,
+    });
+
+    res.json({ today: legacyToday, execution });
   } catch (err) {
     console.error('[plans] GET today failed:', err);
     res.status(500).json({ error: 'Failed to fetch today' });
