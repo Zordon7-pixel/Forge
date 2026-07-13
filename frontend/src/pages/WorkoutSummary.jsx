@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useParams, useNavigate, Link } from 'react-router-dom'
+import { useParams, useNavigate, useLocation, Link } from 'react-router-dom'
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip, BarChart, XAxis, YAxis, Bar } from 'recharts'
 import { Flame } from 'lucide-react'
 import api from '../lib/api'
@@ -44,6 +44,8 @@ function parseSecondaryMuscles(raw) {
 export default function WorkoutSummary() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const location = useLocation()
+  const planProgressNotice = location.state?.planProgressNotice || ''
   const [session, setSession] = useState(null)
   const [notes, setNotes] = useState('')
   const [saving, setSaving] = useState(false)
@@ -158,6 +160,11 @@ export default function WorkoutSummary() {
 
   return (
     <div className="space-y-4 pb-8">
+      {planProgressNotice && (
+        <div className="rounded-xl p-3" role="status" style={{ background: 'var(--accent-dim)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}>
+          {planProgressNotice}
+        </div>
+      )}
       <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>
         <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Workout Complete</p>
         <h2 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>Summary</h2>

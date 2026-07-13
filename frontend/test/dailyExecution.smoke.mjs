@@ -14,6 +14,7 @@ import {
   runRouteState,
   planSessionIdFromState,
   currentWeekFromState,
+  isRetryableCompletionFailure,
 } from '../src/lib/dailyExecutionCore.js';
 
 let passed = 0;
@@ -117,6 +118,11 @@ assert(planSessionIdFromState(null) === null && planSessionIdFromState({}) === n
 assert(currentWeekFromState({ currentWeek: '4' }) === 4, 'currentWeekFromState coerces finite numbers');
 assert(currentWeekFromState({ currentWeek: 'nope' }) === null && currentWeekFromState(null) === null, 'currentWeekFromState rejects non-finite / null');
 assert(currentWeekFromState({ currentWeek: null }) === null && currentWeekFromState({ currentWeek: 0 }) === null, 'currentWeekFromState never emits week zero');
+
+console.log('\n== completion retry policy ==');
+assert(isRetryableCompletionFailure(new Error('offline')) === true, 'network completion failure is retryable');
+assert(isRetryableCompletionFailure({ response: { status: 503 } }) === true, 'server completion failure is retryable');
+assert(isRetryableCompletionFailure({ response: { status: 400 } }) === false, 'deterministic 4xx completion failure is not queued forever');
 
 console.log(`\nPASSED: ${passed}  FAILED: ${failed}`);
 if (failed) process.exit(1);

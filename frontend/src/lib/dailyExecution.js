@@ -26,6 +26,7 @@ import {
   runRouteState,
   planSessionIdFromState,
   currentWeekFromState,
+  isRetryableCompletionFailure,
 } from './dailyExecutionCore';
 
 export {
@@ -40,6 +41,7 @@ export {
   runRouteState,
   planSessionIdFromState,
   currentWeekFromState,
+  isRetryableCompletionFailure,
 };
 
 // Fetch + normalize today's execution for a phone-local date.
@@ -76,6 +78,7 @@ export default {
   runRouteState,
   planSessionIdFromState,
   currentWeekFromState,
+  isRetryableCompletionFailure,
   fetchDailyExecution,
   markSessionComplete,
   queueSessionComplete,

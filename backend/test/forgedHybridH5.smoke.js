@@ -186,11 +186,117 @@ assert(activeRun.indexOf("queueRequest('/api/runs', 'POST', payload)") < activeR
 // LogRun: online completion after setShowPostCheckIn(true); offline completion after queueRequest.
 assert(logRun.indexOf('setShowPostCheckIn(true)') < logRun.lastIndexOf('markSessionComplete'), 'LogRun online completion runs after the successful save');
 assert((logRun.match(/queueSessionComplete\(/g) || []).length >= 2, 'LogRun queues completion on both offline branches');
+assert((logRun.match(/queueSessionComplete\(/g) || []).length >= 3 && /isRetryableCompletionFailure/.test(logRun), 'LogRun queues retryable online completion failures');
+assert((activeRun.match(/queueSessionComplete\(/g) || []).length >= 2 && /isRetryableCompletionFailure/.test(activeRun), 'ActiveRun queues retryable online completion failures');
 // ActiveWorkout: completion only after the end PUT resolves, before summary nav.
 assert(activeWorkout.indexOf('/end`, {})') < activeWorkout.lastIndexOf('markSessionComplete') && activeWorkout.lastIndexOf('markSessionComplete') < activeWorkout.indexOf('navigate(`/workout/summary/'), 'ActiveWorkout completion sits between a successful end and the summary nav');
+assert(/queueSessionComplete/.test(activeWorkout) && /planProgressNotice/.test(activeWorkout), 'ActiveWorkout queues retryable completion failures and surfaces the result');
 // No completion helper is fired before a save/end in any consumer.
 assert(!/markSessionComplete[\s\S]{0,120}await api\.(post|put)\('\/(runs|workouts)/.test(activeRun), 'ActiveRun never completes before the save call');
 
-console.log(`\nPASSED: ${passed}  FAILED: ${failed}`);
-if (failed) process.exit(1);
-console.log('H5 SMOKE OK');
+async function runProgressRouteHarness() {
+  section('progress route behavior (real handler, mocked transaction boundary)');
+  const dbModulePath = require.resolve('../src/db');
+  const plansRoutePath = require.resolve('../src/routes/plans');
+  const originalDbModule = require.cache[dbModulePath];
+  const originalPlansRoute = require.cache[plansRoutePath];
+  let routeRow = null;
+  let selectParams = null;
+  let updateParams = null;
+
+  const tx = {
+    get: async (_sql, params) => {
+      selectParams = params;
+      return routeRow ? { ...routeRow } : null;
+    },
+    all: async () => [],
+    run: async (_sql, params) => {
+      updateParams = params;
+      routeRow.current_week = params[0];
+      routeRow.progress_json = params[1];
+      return { changes: 1 };
+    },
+  };
+  const mockDb = {
+    dbGet: async () => null,
+    dbAll: async () => [],
+    dbRun: async () => ({ changes: 0 }),
+    withTransaction: async (fn) => fn(tx),
+  };
+  require.cache[dbModulePath] = {
+    id: dbModulePath,
+    filename: dbModulePath,
+    loaded: true,
+    exports: mockDb,
+    children: [],
+    paths: [],
+  };
+  delete require.cache[plansRoutePath];
+
+  try {
+    const plansRouter = require('../src/routes/plans');
+    const layer = plansRouter.stack.find((item) => item.route?.path === '/my/progress' && item.route?.methods?.put);
+    const handler = layer?.route?.stack?.at(-1)?.handle;
+    assert(typeof handler === 'function', 'progress route handler is registered');
+
+    const invoke = async (body) => {
+      let statusCode = 200;
+      let payload = null;
+      const response = {
+        status(code) { statusCode = code; return this; },
+        json(value) { payload = value; return this; },
+      };
+      await handler({ body, user: { id: 'user-h5' } }, response);
+      return { statusCode, payload };
+    };
+    const freshRow = () => ({
+      id: 'user-plan-h5',
+      current_week: 1,
+      progress_json: JSON.stringify({ completedSessionIds: [] }),
+      weeks: hybridPlan.weeks.length,
+      plan_data: hybridPlan,
+      plan_json: null,
+    });
+
+    routeRow = freshRow();
+    updateParams = null;
+    let response = await invoke({ completed_session_id: 'run-1', current_week: 1 });
+    assert(response.statusCode === 200 && response.payload?.completedSessionIds?.includes('run-1'), 'valid completion returns 200 and records the plan session');
+    assert(selectParams?.[0] === 'user-h5' && updateParams?.[3] === 'user-h5', 'progress SELECT and UPDATE bind the authenticated user id');
+
+    response = await invoke({ completed_session_id: 'run-1', current_week: 1 });
+    const repeated = JSON.parse(routeRow.progress_json).completedSessionIds.filter((id) => id === 'run-1');
+    assert(response.statusCode === 200 && repeated.length === 1, 'duplicate completion remains idempotent through the route');
+
+    routeRow = freshRow();
+    updateParams = null;
+    response = await invoke({ completed_session_id: 'foreign-session', current_week: 1 });
+    assert(response.statusCode === 400 && response.payload?.error === 'Invalid plan session' && updateParams === null, 'unknown session returns 400 without writing');
+
+    routeRow = freshRow();
+    response = await invoke({ current_week: 0 });
+    assert(response.statusCode === 400 && response.payload?.error === 'Invalid plan week', 'week zero returns 400');
+    response = await invoke({ current_week: hybridPlan.weeks.length + 1 });
+    assert(response.statusCode === 400 && response.payload?.error === 'Invalid plan week', 'week above the plan length returns 400');
+
+    routeRow = null;
+    response = await invoke({ completed_session_id: 'run-1' });
+    assert(response.statusCode === 404 && response.payload?.error === 'No assigned plan', 'missing active plan returns 404');
+  } finally {
+    delete require.cache[plansRoutePath];
+    if (originalPlansRoute) require.cache[plansRoutePath] = originalPlansRoute;
+    if (originalDbModule) require.cache[dbModulePath] = originalDbModule;
+    else delete require.cache[dbModulePath];
+  }
+}
+
+runProgressRouteHarness()
+  .then(() => {
+    console.log(`\nPASSED: ${passed}  FAILED: ${failed}`);
+    if (failed) process.exit(1);
+    console.log('H5 SMOKE OK');
+  })
+  .catch((err) => {
+    console.error('  FAIL: progress route harness crashed:', err);
+    process.exit(1);
+  });

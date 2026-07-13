@@ -4,7 +4,7 @@ import api from '../lib/api'
 import ExercisePickerModal from '../components/ExercisePickerModal'
 import MovementDemo from '../components/MovementDemo'
 import { getWeightDropWarning, scrollToFirstError, validateWorkoutSet } from '../utils/validation'
-import { planSessionIdFromState, currentWeekFromState, markSessionComplete } from '../lib/dailyExecution'
+import { planSessionIdFromState, currentWeekFromState, markSessionComplete, queueSessionComplete, isRetryableCompletionFailure } from '../lib/dailyExecution'
 
 const REST_PRESETS = [30, 60, 90, 120, 180]
 
@@ -218,6 +218,7 @@ export default function ActiveWorkout() {
     clearInterval(workoutTimerRef.current)
     try {
       await api.put(`/workouts/${id}/end`, {})
+      let planProgressNotice = ''
       // H5: mark the scheduled calendar session complete ONLY after the workout
       // end succeeded. A failed completion must never block the summary nav.
       if (planSessionId) {
@@ -225,9 +226,20 @@ export default function ActiveWorkout() {
           await markSessionComplete(planSessionId, planCurrentWeek)
         } catch (completionErr) {
           console.error('[active-workout] plan completion failed:', completionErr?.message || completionErr)
+          if (isRetryableCompletionFailure(completionErr)) {
+            try {
+              await queueSessionComplete(planSessionId, planCurrentWeek)
+              planProgressNotice = 'Workout saved. Plan progress is queued for sync.'
+            } catch (queueErr) {
+              console.error('[active-workout] failed to queue completion retry:', queueErr?.message || queueErr)
+              planProgressNotice = 'Workout saved. Open Plan to mark this session complete.'
+            }
+          } else {
+            planProgressNotice = 'Workout saved. Open Plan to mark this session complete.'
+          }
         }
       }
-      navigate(`/workout/summary/${id}`)
+      navigate(`/workout/summary/${id}`, { state: { planProgressNotice } })
     } catch (err) {
       console.error('[active-workout/end] failed:', err?.message || err)
       setFormErrors((previous) => ({ ...previous, workout: 'Could not finish this workout. Try again.' }))

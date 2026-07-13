@@ -11,7 +11,7 @@ import WatchWorkoutSendButton from '../components/WatchWorkoutSendButton'
 import { queueRequest } from '../lib/offlineQueue'
 import { scrollToFirstError, validateRunLog } from '../utils/validation'
 import WatchWorkoutService from '../services/WatchWorkoutService'
-import { fetchDailyExecution, scheduledRunFromExecution, planSessionIdFromState, currentWeekFromState, markSessionComplete, queueSessionComplete, localDateISO } from '../lib/dailyExecution'
+import { fetchDailyExecution, scheduledRunFromExecution, planSessionIdFromState, currentWeekFromState, markSessionComplete, queueSessionComplete, isRetryableCompletionFailure, localDateISO } from '../lib/dailyExecution'
 
 const RoutePlanner = lazy(() => import('../components/RoutePlanner'))
 
@@ -524,7 +524,7 @@ export default function LogRun() {
             await queueSessionComplete(planSessionId, planCurrentWeek)
           } catch (completionErr) {
             console.error('[LogRun] failed to queue plan completion:', completionErr?.message || completionErr)
-            progressNotice = ' Plan progress will update after the run syncs.'
+            progressNotice = ' Open Plan after the run syncs to mark this session complete.'
           }
         }
         setFeedback(`Saved offline — will sync when connected.${progressNotice}`)
@@ -550,12 +550,23 @@ export default function LogRun() {
       // H5: mark the scheduled calendar session complete ONLY after the run
       // saved successfully. A failed completion must never roll back the run —
       // surface a non-blocking notice instead.
+      let planProgressNotice = ''
       if (planSessionId) {
         try {
           await markSessionComplete(planSessionId, planCurrentWeek)
         } catch (completionErr) {
           console.error('[LogRun] plan completion failed:', completionErr?.message || completionErr)
-          setFeedback((prev) => `${prev ? `${prev} ` : ''}Run saved. Plan progress will update on next sync.`)
+          if (isRetryableCompletionFailure(completionErr)) {
+            try {
+              await queueSessionComplete(planSessionId, planCurrentWeek)
+              planProgressNotice = 'Plan progress is queued for sync.'
+            } catch (queueErr) {
+              console.error('[LogRun] failed to queue completion retry:', queueErr?.message || queueErr)
+              planProgressNotice = 'Open Plan to mark this session complete.'
+            }
+          } else {
+            planProgressNotice = 'Open Plan to mark this session complete.'
+          }
         }
       }
 
@@ -564,11 +575,17 @@ export default function LogRun() {
       while (attempts < 5 && !aiFeedback) {
         attempts += 1
         await new Promise(resolve => setTimeout(resolve, 2000))
-        const feedbackRes = await api.get(`/coach/feedback/${runId}`)
-        aiFeedback = feedbackRes.data?.ai_feedback || ''
+        try {
+          const feedbackRes = await api.get(`/coach/feedback/${runId}`)
+          aiFeedback = feedbackRes.data?.ai_feedback || ''
+        } catch (feedbackErr) {
+          console.error('[LogRun] coach feedback poll failed:', feedbackErr?.message || feedbackErr)
+          break
+        }
       }
 
-      setFeedback(aiFeedback || 'Your coach is thinking... check back after your next run.')
+      const coachNotice = aiFeedback || 'Your coach is thinking... check back after your next run.'
+      setFeedback([coachNotice, planProgressNotice].filter(Boolean).join(' '))
     } catch (err) {
       if (!err?.response) {
         const resolvedSurface = environment === 'inside' ? 'treadmill' : surface
@@ -581,7 +598,7 @@ export default function LogRun() {
             await queueSessionComplete(planSessionId, planCurrentWeek)
           } catch (completionErr) {
             console.error('[LogRun] failed to queue plan completion:', completionErr?.message || completionErr)
-            progressNotice = ' Plan progress will update after the run syncs.'
+            progressNotice = ' Open Plan after the run syncs to mark this session complete.'
           }
         }
         setFeedback(`Saved offline — will sync when connected.${progressNotice}`)

@@ -320,6 +320,12 @@ export default function ForgedDayView({
         </div>
       </header>
 
+      {!canStart && !isRest && (
+        <p role="status" style={{ fontSize: px(12), margin: '12px 0 0', padding: '8px 10px', borderRadius: 8, background: 'rgba(60,55,45,0.06)', color: 'var(--ink-soft, #5A554B)' }}>
+          This workout can be started on its scheduled day. You can still review it or mark it complete here.
+        </p>
+      )}
+
       {isRest ? (
         <section style={{ marginTop: 24, textAlign: 'center' }}>
           <span className="forged-stamp forged-stamp--rest" style={{ margin: '0 auto' }}><Moon size={16} /></span>

@@ -578,7 +578,7 @@ export default function Dashboard() {
     if (hasExecutableSession(execution)) {
       track('recommendation_followed', { via: 'today_card_start', source: 'calendar' })
       if (calendarRec && calendarRec.recommendationType === 'strength') {
-        return navigate('/log-lift', { state: { planSessionId: calendarRec.planSessionId, currentWeek: execution.week ?? null } })
+        return navigate('/log-lift', { state: { planSessionId: calendarRec.planSessionId, currentWeek: execution.week ?? null, scheduledLift: execution.lift || null } })
       }
       return navigate('/log-run', { state: runRouteState(execution) })
     }

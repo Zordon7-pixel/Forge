@@ -5,7 +5,7 @@ import { Capacitor, registerPlugin } from '@capacitor/core'
 import { useUnits } from '../context/UnitsContext'
 import api from '../lib/api'
 import { queueRequest } from '../lib/offlineQueue'
-import { planSessionIdFromState, currentWeekFromState, markSessionComplete, queueSessionComplete } from '../lib/dailyExecution'
+import { planSessionIdFromState, currentWeekFromState, markSessionComplete, queueSessionComplete, isRetryableCompletionFailure } from '../lib/dailyExecution'
 import PostRunCheckIn from '../components/PostRunCheckIn'
 import AICoachFeedbackCard from '../components/AICoachFeedbackCard'
 import WorkoutCard from '../components/WorkoutCard'
@@ -130,6 +130,7 @@ export default function ActiveRun() {
   const [awaitingManualDistance, setAwaitingManualDistance] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState('')
+  const [planProgressNotice, setPlanProgressNotice] = useState('')
   const [queuedOffline, setQueuedOffline] = useState(false)
   const [showPostCheckIn, setShowPostCheckIn] = useState(false)
   const [savedRunId, setSavedRunId] = useState(null)
@@ -398,6 +399,7 @@ export default function ActiveRun() {
   
   const saveRun = async () => {
     setSaveError('')
+    setPlanProgressNotice('')
     setQueuedOffline(false)
     const payload = buildRunPayload()
     if (!Number.isFinite(payload.distance_miles) || payload.distance_miles <= 0) {
@@ -432,6 +434,17 @@ export default function ActiveRun() {
             await markSessionComplete(planSessionId, planCurrentWeek)
           } catch (completionErr) {
             console.error('[ActiveRun] plan completion failed:', completionErr?.message || completionErr)
+            if (isRetryableCompletionFailure(completionErr)) {
+              try {
+                await queueSessionComplete(planSessionId, planCurrentWeek)
+                setPlanProgressNotice('Run saved. Plan progress is queued for sync.')
+              } catch (queueErr) {
+                console.error('[ActiveRun] failed to queue completion retry:', queueErr?.message || queueErr)
+                setPlanProgressNotice('Run saved. Open Plan to mark this session complete.')
+              }
+            } else {
+              setPlanProgressNotice('Run saved. Open Plan to mark this session complete.')
+            }
           }
         }
       }
@@ -446,7 +459,7 @@ export default function ActiveRun() {
             await queueSessionComplete(planSessionId, planCurrentWeek)
           } catch (completionErr) {
             console.error('[ActiveRun] failed to queue plan completion:', completionErr?.message || completionErr)
-            progressNotice = ' Plan progress will update after the run syncs.'
+            progressNotice = ' Open Plan after the run syncs to mark this session complete.'
           }
         }
         setQueuedOffline(true)
@@ -540,6 +553,7 @@ export default function ActiveRun() {
         </div>
       )}
       {saveError && <div className="rounded-xl p-3 mb-3" style={{ background: queuedOffline ? 'rgba(34,197,94,0.12)' : 'var(--danger-dim)', border: `1px solid ${queuedOffline ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'}`, color: queuedOffline ? 'var(--success)' : 'var(--danger)' }}>{saveError}</div>}
+      {planProgressNotice && <div className="rounded-xl p-3 mb-3" role="status" style={{ background: 'var(--accent-dim)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}>{planProgressNotice}</div>}
 
       {mapMyRun && allMapPositions.length > 0 && (
         <div className="mb-4 overflow-hidden" style={{ minHeight: 280, height: 280, borderRadius: 8 }}>

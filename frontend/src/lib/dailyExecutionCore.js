@@ -188,3 +188,11 @@ export function currentWeekFromState(state) {
   const n = Number(state.currentWeek);
   return Number.isInteger(n) && n >= 1 ? n : null;
 }
+
+// Completion retries belong in the offline queue only for network/server
+// failures. A 4xx response is deterministic and would otherwise become a
+// permanently stuck queue item.
+export function isRetryableCompletionFailure(error) {
+  const status = Number(error?.response?.status || 0);
+  return !Number.isFinite(status) || status === 0 || status >= 500;
+}
