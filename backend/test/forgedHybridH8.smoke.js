@@ -359,6 +359,7 @@ async function runPlanFallbackSmoke() {
   const originalAiModule = require.cache[aiModulePath];
   const originalPlansRoute = require.cache[plansRoutePath];
   const writes = [];
+  const generatedTargets = [];
   let generateCalls = 0;
   const profile = {
     id: 'plan-owner-h8',
@@ -370,9 +371,27 @@ async function runPlanFallbackSmoke() {
     comeback_mode: 0,
     injury_notes: '',
   };
+  const raceDate = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const race = {
+    id: 'race-plan-h8',
+    user_id: profile.id,
+    race_name: 'H8 Race',
+    race_date: raceDate,
+    distance_miles: 10,
+    goal_time_seconds: 5400,
+    elevation_gain_ft: null,
+    max_altitude_ft: null,
+    terrain: null,
+    course_profile_json: null,
+    source: null,
+    url: null,
+  };
   const mockDb = {
     dbGet: async (sql, params = []) => {
       if (sql.includes('FROM users WHERE id = ?')) return params[0] === profile.id ? { ...profile } : null;
+      if (sql.includes('FROM race_events WHERE id = ? AND user_id = ?')) {
+        return params[0] === race.id && params[1] === profile.id ? { ...race } : null;
+      }
       return null;
     },
     dbAll: async () => [],
@@ -385,8 +404,9 @@ async function runPlanFallbackSmoke() {
     }),
   };
   const mockAi = {
-    generateTrainingPlan: async () => {
+    generateTrainingPlan: async (_profile, target) => {
       generateCalls += 1;
+      generatedTargets.push({ ...target });
       return null;
     },
     generateRaceAdjustment: async () => null,
@@ -413,8 +433,9 @@ async function runPlanFallbackSmoke() {
   try {
     const plansRouter = require('../src/routes/plans');
     const handler = routeHandler(plansRouter, '/generate', 'post');
-    check(typeof handler === 'function', 'real POST /plans/generate handler is registered');
-    const response = await invoke(handler, {
+    const raceHandler = routeHandler(plansRouter, '/generate-for-race/:raceId', 'post');
+    check(typeof handler === 'function' && typeof raceHandler === 'function', 'ordinary and race plan generation handlers are registered');
+    let response = await invoke(handler, {
       body: { target: { weeks: 4, planMode: 'run_only', liftingEnabled: false } },
       query: {},
       user: { id: profile.id },
@@ -423,6 +444,18 @@ async function runPlanFallbackSmoke() {
     check(response.statusCode === 201 && response.payload?.generation_source === 'deterministic_fallback', 'POST /plans/generate succeeds with deterministic_fallback');
     check(response.payload?.plan?.plan_data?.generationSource === 'deterministic_fallback', 'persisted response carries deterministic fallback provenance');
     check(writes.length === 3 && writes.every((write) => write.params.includes(profile.id)), 'fallback plan persistence remains scoped to the authenticated user');
+
+    response = await invoke(raceHandler, {
+      params: { raceId: race.id },
+      body: { target: { trainingDays: ['Tue', 'Thu', 'Sat'], runDaysPerWeek: 3, planMode: 'run_only', liftingEnabled: false } },
+      query: {},
+      user: { id: profile.id },
+    });
+    check(generateCalls === 2, 'race plan route also receives null from generateTrainingPlan');
+    check(response.statusCode === 201 && response.payload?.generation_source === 'deterministic_fallback', 'POST /plans/generate-for-race succeeds with deterministic_fallback');
+    check(response.payload?.plan?.plan_data?.generationSource === 'deterministic_fallback', 'race fallback persistence carries deterministic provenance');
+    check(response.payload?.race?.id === race.id && generatedTargets[1]?.raceName === race.race_name && generatedTargets[1]?.raceDate === raceDate, 'race fallback uses the owned race identity and date');
+    check(writes.length === 6 && writes.every((write) => write.params.includes(profile.id)), 'race fallback persistence remains scoped to the authenticated user');
   } finally {
     delete require.cache[plansRoutePath];
     if (originalPlansRoute) require.cache[plansRoutePath] = originalPlansRoute;

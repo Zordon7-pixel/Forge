@@ -6,10 +6,11 @@ import { useProContext } from '../context/ProContext'
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 const PLAN_GENERATION_TIMEOUT_MS = 90000
-const TODAY_ISO = (() => {
+
+function localTodayISO() {
   const now = new Date()
   return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10)
-})()
+}
 
 const PLAN_GOALS = [
   { key: '5k', kind: 'block', name: '5K', distanceMiles: 3.1, duration: '6-8 weeks', feel: 'Fast, sharp, repeatable' },
@@ -37,6 +38,15 @@ function parseGoalTime(value) {
   if (numbers.length === 1) return numbers[0] * 60
   if (numbers.length === 2) return numbers[0] * 60 + numbers[1]
   return numbers[0] * 3600 + numbers[1] * 60 + numbers[2]
+}
+
+function formatGoalTime(seconds) {
+  const total = Number(seconds)
+  if (!Number.isFinite(total) || total <= 0) return ''
+  const hours = Math.floor(total / 3600)
+  const minutes = Math.floor((total % 3600) / 60)
+  const remaining = Math.floor(total % 60)
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(remaining).padStart(2, '0')}`
 }
 
 function sortDays(days) {
@@ -69,7 +79,7 @@ function raceDistance(race = {}) {
 function weeksToRace(value) {
   if (!isValidISODate(value)) return null
   const race = new Date(`${value}T12:00:00`)
-  const today = new Date(`${TODAY_ISO}T12:00:00`)
+  const today = new Date(`${localTodayISO()}T12:00:00`)
   const days = Math.ceil((race.getTime() - today.getTime()) / 86400000)
   return days >= 0 ? Math.max(1, Math.ceil(days / 7)) : null
 }
@@ -77,6 +87,7 @@ function weeksToRace(value) {
 export default function PlanCatalog() {
   const navigate = useNavigate()
   const { isPro, loading: proLoading } = useProContext()
+  const todayISO = localTodayISO()
   const [selectedGoal, setSelectedGoal] = useState(null)
   const [prefillLoading, setPrefillLoading] = useState(false)
   const [generating, setGenerating] = useState(false)
@@ -116,13 +127,13 @@ export default function PlanCatalog() {
       .then(({ data }) => {
         if (!active) return
         const upcoming = (Array.isArray(data?.races) ? data.races : [])
-          .filter((race) => race.status === 'upcoming' && race.race_date >= TODAY_ISO)
+          .filter((race) => race.status === 'upcoming' && race.race_date >= todayISO)
           .sort((a, b) => String(a.race_date).localeCompare(String(b.race_date)))
         setSavedRaces(upcoming)
       })
       .catch((err) => console.error('[PlanCatalog] saved race load failed:', err.message))
     return () => { active = false }
-  }, [])
+  }, [todayISO])
 
   const ensurePro = () => {
     if (proLoading) return false
@@ -184,7 +195,7 @@ export default function PlanCatalog() {
       feel: race ? 'Course-aware race build' : 'Enter the event details',
     })
     setError('')
-    setGoalTime('')
+    setGoalTime(formatGoalTime(race?.goal_time_seconds))
     setWeeks('')
     setCustomDistance(race ? String(raceDistance(race)) : '')
     setRaceSelection(race ? { type: selectionType, race } : null)
@@ -247,7 +258,7 @@ export default function PlanCatalog() {
       setError('Enter or select the race name.')
       return
     }
-    if (isRacePlan && (!isValidISODate(raceDraft.date) || raceDraft.date < TODAY_ISO)) {
+    if (isRacePlan && (!isValidISODate(raceDraft.date) || raceDraft.date < localTodayISO())) {
       setError('Choose the race date from the calendar. It must be today or later.')
       return
     }
@@ -308,6 +319,11 @@ export default function PlanCatalog() {
             status: 'upcoming',
           })
           ownedRace = data?.race
+        }
+        const requestedGoalTime = goalTimeSeconds || null
+        if (ownedRace && raceSelection?.type === 'owned' && Number(ownedRace.goal_time_seconds || 0) !== Number(requestedGoalTime || 0)) {
+          const { data } = await api.patch(`/races/${encodeURIComponent(ownedRace.id)}`, { goal_time_seconds: requestedGoalTime })
+          ownedRace = data?.race || ownedRace
         }
         if (!ownedRace?.id) throw new Error('Race could not be saved before plan generation.')
         setRaceSelection({ type: 'owned', race: ownedRace })
@@ -486,7 +502,7 @@ export default function PlanCatalog() {
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
                     <label style={{ display: 'grid', gap: 7 }}>
                       <span style={{ color: 'var(--text-primary)', fontSize: 13, fontWeight: 850, display: 'flex', alignItems: 'center', gap: 6 }}><CalendarDays size={15} color="var(--accent)" /> Race date</span>
-                      <input type="date" min={TODAY_ISO} value={raceDraft.date} onChange={(event) => updateRaceDraft('date', event.target.value)} style={{ minWidth: 0, background: 'var(--bg-input)', color: 'var(--text-primary)', colorScheme: 'dark', border: '1px solid var(--border-subtle)', borderRadius: 8, padding: '11px 12px', fontSize: 16 }} />
+                      <input type="date" min={todayISO} value={raceDraft.date} onChange={(event) => updateRaceDraft('date', event.target.value)} style={{ minWidth: 0, background: 'var(--bg-input)', color: 'var(--text-primary)', colorScheme: 'dark', border: '1px solid var(--border-subtle)', borderRadius: 8, padding: '11px 12px', fontSize: 16 }} />
                     </label>
                     <label style={{ display: 'grid', gap: 7 }}>
                       <span style={{ color: 'var(--text-primary)', fontSize: 13, fontWeight: 850 }}>Distance miles</span>
