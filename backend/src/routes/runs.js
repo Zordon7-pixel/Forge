@@ -342,7 +342,7 @@ async function buildNextRecommendation(userId, { includeBrief = false } = {}) {
       suggestedDistance = Number(Math.max(2, avgDistance * 0.9).toFixed(1));
     } else if (thisWeekRunCount >= 3) {
       recommendationType = 'strength';
-      reason = 'You already logged 3+ runs this week. Use today for strength or mobility to support injury prevention.';
+      reason = 'You already logged 3+ runs this week. Use today for strength or mobility while your running load settles.';
       suggestedDistance = 0;
     } else if (recentPrSet) {
       recommendationType = 'easy_run';

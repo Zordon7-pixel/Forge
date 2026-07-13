@@ -59,7 +59,7 @@ export default function WeeklyRecap() {
               <StatCard icon={Ruler} label="Total Miles" value={Number(data?.totalMiles || 0).toFixed(1)} sub="Running is primary" />
               <StatCard icon={Activity} label="Runs" value={data?.totalRuns || 0} />
               <StatCard icon={Timer} label="Avg Pace" value={data?.avgPace ? `${data.avgPace}/mi` : '--'} />
-              <StatCard icon={Dumbbell} label="Lift Sessions" value={data?.liftSessions || 0} sub="Injury prevention support" />
+              <StatCard icon={Dumbbell} label="Lift Sessions" value={data?.liftSessions || 0} sub="Protected strength work" />
             </section>
 
             <section style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>

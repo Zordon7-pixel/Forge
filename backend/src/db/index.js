@@ -1012,14 +1012,14 @@ async function initDb() {
         name: '5K Builder',
         type: '5K',
         weeks: 8,
-        description: 'Runner-first 5K progression with strength for injury prevention.',
+        description: '5K progression that balances quality running with protected strength sessions.',
         planData: {
           weeks: Array.from({ length: 8 }).map((_, i) => ({
             week: i + 1,
             sessions: [
               { id: `w${i + 1}-mon`, day: 'Mon', type: 'rest', title: 'Rest + mobility' },
               { id: `w${i + 1}-tue`, day: 'Tue', type: 'run', title: 'Easy run', distance_miles: 2 + i * 0.2 },
-              { id: `w${i + 1}-wed`, day: 'Wed', type: 'strength', title: 'Strength injury prevention' },
+              { id: `w${i + 1}-wed`, day: 'Wed', type: 'strength', title: 'Strength maintenance' },
               { id: `w${i + 1}-thu`, day: 'Thu', type: 'run', title: 'Quality intervals', distance_miles: 2.5 + i * 0.25 },
               { id: `w${i + 1}-fri`, day: 'Fri', type: 'rest', title: 'Recovery walk' },
               { id: `w${i + 1}-sat`, day: 'Sat', type: 'run', title: 'Long easy run', distance_miles: 3 + i * 0.4 },
@@ -1040,7 +1040,7 @@ async function initDb() {
             sessions: [
               { id: `10k-${i + 1}-mon`, day: 'Mon', type: 'rest', title: 'Rest + mobility' },
               { id: `10k-${i + 1}-tue`, day: 'Tue', type: 'run', title: 'Easy run', distance_miles: 3 + i * 0.25 },
-              { id: `10k-${i + 1}-wed`, day: 'Wed', type: 'strength', title: 'Strength injury prevention' },
+              { id: `10k-${i + 1}-wed`, day: 'Wed', type: 'strength', title: 'Strength maintenance' },
               { id: `10k-${i + 1}-thu`, day: 'Thu', type: 'run', title: 'Tempo', distance_miles: 3.5 + i * 0.25 },
               { id: `10k-${i + 1}-fri`, day: 'Fri', type: 'rest', title: 'Rest' },
               { id: `10k-${i + 1}-sat`, day: 'Sat', type: 'run', title: 'Long run', distance_miles: 4 + i * 0.5 },
@@ -1061,7 +1061,7 @@ async function initDb() {
             sessions: [
               { id: `half-${i + 1}-mon`, day: 'Mon', type: 'rest', title: 'Rest' },
               { id: `half-${i + 1}-tue`, day: 'Tue', type: 'run', title: 'Easy run', distance_miles: 3.5 + i * 0.25 },
-              { id: `half-${i + 1}-wed`, day: 'Wed', type: 'strength', title: 'Strength injury prevention' },
+              { id: `half-${i + 1}-wed`, day: 'Wed', type: 'strength', title: 'Strength maintenance' },
               { id: `half-${i + 1}-thu`, day: 'Thu', type: 'run', title: 'Tempo/threshold', distance_miles: 4 + i * 0.3 },
               { id: `half-${i + 1}-fri`, day: 'Fri', type: 'rest', title: 'Rest' },
               { id: `half-${i + 1}-sat`, day: 'Sat', type: 'run', title: 'Long run', distance_miles: 6 + i * 0.6 },
@@ -1082,7 +1082,7 @@ async function initDb() {
             sessions: [
               { id: `m-${i + 1}-mon`, day: 'Mon', type: 'rest', title: 'Rest + mobility' },
               { id: `m-${i + 1}-tue`, day: 'Tue', type: 'run', title: 'Easy run', distance_miles: 4 + i * 0.25 },
-              { id: `m-${i + 1}-wed`, day: 'Wed', type: 'strength', title: 'Strength injury prevention' },
+              { id: `m-${i + 1}-wed`, day: 'Wed', type: 'strength', title: 'Strength maintenance' },
               { id: `m-${i + 1}-thu`, day: 'Thu', type: 'run', title: 'Marathon pace work', distance_miles: 5 + i * 0.35 },
               { id: `m-${i + 1}-fri`, day: 'Fri', type: 'rest', title: 'Recovery day' },
               { id: `m-${i + 1}-sat`, day: 'Sat', type: 'run', title: 'Long run', distance_miles: 8 + i * 0.8 },

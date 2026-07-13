@@ -56,7 +56,7 @@ function deterministicWeeklyInsight(summary) {
   if ((summary.mileageVsLastWeek || 0) >= 10) {
     return 'Mileage climbed this week and your running frequency stayed solid. Hold this level for another week before adding more distance.';
   }
-  return 'Your training load looks steady and sustainable. Keep stacking easy miles and use strength sessions as injury-prevention support.';
+  return 'Your training load looks steady and sustainable. Keep stacking easy miles while protecting your strength work.';
 }
 
 async function buildWeeklyRecap(userId, { isPro = false } = {}) {
