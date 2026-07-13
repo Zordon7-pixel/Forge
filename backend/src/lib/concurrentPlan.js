@@ -2,6 +2,7 @@
 // Pure and deterministic: no DB, network, framework, or wall-clock dependency.
 
 const planSchema = require('./planSchema');
+const raceCourse = require('./raceCourse');
 
 const DAY_ORDER = planSchema.DAY_ORDER;
 const VALID_MODES = planSchema.VALID_MODES;
@@ -202,7 +203,7 @@ function runPrescription(type, phase, hilly) {
       steps: hillSession ? ['6-8 x 60 sec uphill', 'Jog down fully between repetitions'] : ['4 x 5 min controlled hard', '2 min easy jog between repetitions'],
       cooldown: ['10 min easy running'],
       progression: 'Add one repeat only after completing every repetition at even effort.',
-      description: hillSession ? 'Develop course-specific climbing strength without sprinting.' : 'Raise sustainable speed without turning the session into a race.',
+      description: hilly ? 'Develop course-specific climbing strength without sprinting.' : (hillSession ? 'Build general climbing strength and durability without sprinting.' : 'Raise sustainable speed without turning the session into a race.'),
     };
   }
   if (type === 'steady') {
@@ -321,20 +322,46 @@ function numberOrNull(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+// H7: evaluate whether a target's structured course facts may be trusted for
+// training logic. Returns the full evaluation (trusted flag, honest state, and
+// only-when-trusted facts). Untrusted/stale/unknown data yields distance-only.
+function trustedCourseFacts(target = {}) {
+  return raceCourse.evaluateCourseTrust({
+    envelope: target.course_profile_json ?? target.courseProfile,
+    looseFacts: {
+      elevationGainFt: target.elevation_gain_ft ?? target.elevationGainFt,
+      maxAltitudeFt: target.max_altitude_ft ?? target.maxAltitudeFt,
+      terrain: target.terrain ?? target.courseTerrain,
+      source: target.source ?? target.courseSource,
+      url: target.url ?? target.courseUrl,
+    },
+    raceDate: target.raceDate || target.race_date || null,
+    provenance: target.provenance || target.courseProvenance,
+    nowISO: target.nowISO || target.todayISO || null,
+  });
+}
+
 function buildGoalCourse(target = {}) {
   const source = target.source || target.courseSource || null;
   const url = target.url || target.courseUrl || null;
-  if (!source && !url) return null;
-  const explicit = String(target.provenance || target.courseProvenance || '').toLowerCase();
-  const provenance = explicit === 'official' ? 'official' : 'curated';
+  const evaluation = trustedCourseFacts(target);
+  // Distance-only fallback: never surface untrusted/stale course facts to the
+  // plan. Preserve the legacy null contract when there is no course data at all.
+  if (!evaluation.trusted) {
+    if (!source && !url) return null;
+    const course = { state: evaluation.state, provenance: evaluation.provenance };
+    if (source) course.source = source;
+    if (url) course.url = url;
+    return course;
+  }
   const course = {
-    elevationGainFt: numberOrNull(target.elevation_gain_ft ?? target.elevationGainFt),
-    maxAltitudeFt: numberOrNull(target.max_altitude_ft ?? target.maxAltitudeFt),
-    terrain: target.terrain || target.courseTerrain || null,
-    courseProfile: parseCourseProfile(target.course_profile_json ?? target.courseProfile),
+    state: evaluation.state,
+    provenance: evaluation.provenance,
+    elevationGainFt: numberOrNull(evaluation.facts.elevationGainFt),
+    maxAltitudeFt: numberOrNull(evaluation.facts.maxAltitudeFt),
+    terrain: evaluation.facts.terrain || null,
     source,
     url,
-    provenance,
   };
   for (const key of Object.keys(course)) {
     if (course[key] === null || course[key] === undefined || course[key] === '') delete course[key];
@@ -385,7 +412,10 @@ function buildConcurrentPlan(context = {}) {
     }, mode);
   const baseline = Number(history.weeklyMileageBaseline ?? profile.weekly_miles_current) || Math.max(6, raceDistance);
   const mileageTargets = buildMileageTargets(weekCount, baseline, Boolean(raceDate), recovery, history);
-  const hilly = Number(target.elevation_gain_ft || target.elevationGainFt || 0) / Math.max(1, raceDistance) >= 30;
+  // H7: only trusted, current structured course facts may drive hill work.
+  const trustedCourse = trustedCourseFacts(target);
+  const trustedElevationGainFt = trustedCourse.trusted ? Number(trustedCourse.facts.elevationGainFt || 0) : 0;
+  const hilly = trustedElevationGainFt / Math.max(1, raceDistance) >= 30;
 
   const weeks = [];
   for (let weekNumber = 1; weekNumber <= weekCount; weekNumber += 1) {
@@ -565,8 +595,27 @@ function validateConcurrentPlan(candidate, context = {}) {
     if (weeks.length >= 3 && !phases.has('peak')) errors.push('race plan must include a peak phase');
   }
   if (expectedWeeks >= 8 && !phases.has('deload')) errors.push('plan must include a deload phase');
-  const elevationPerMile = Number(target.elevation_gain_ft || target.elevationGainFt || 0) / Math.max(1, Number(target.distanceMiles || 0));
+  // H7: only trusted, current course facts may require a hill session, and AI
+  // candidates may not fabricate course facts absent from trusted structured data.
+  const trustedCourse = trustedCourseFacts(target);
+  const trustedElevationGainFt = trustedCourse.trusted ? Number(trustedCourse.facts.elevationGainFt || 0) : 0;
+  const elevationPerMile = trustedElevationGainFt / Math.max(1, Number(target.distanceMiles || 0));
   if (elevationPerMile >= 30 && expectedWeeks > 1 && !raceSpecificSessionFound) errors.push('hilly race plan must include a hill or course-specific session');
+  const candidateCourse = candidate && candidate.goal && typeof candidate.goal.course === 'object' ? candidate.goal.course : null;
+  if (candidateCourse) {
+    const claimedElevation = numberOrNull(candidateCourse.elevationGainFt);
+    const claimedAltitude = numberOrNull(candidateCourse.maxAltitudeFt);
+    const claimedTerrain = candidateCourse.terrain || null;
+    if (!trustedCourse.trusted) {
+      if (claimedElevation !== null || claimedAltitude !== null || claimedTerrain) {
+        errors.push('candidate course facts are not supported by trusted structured data');
+      }
+    } else {
+      if (claimedElevation !== null && Number(trustedCourse.facts.elevationGainFt) !== claimedElevation) errors.push('candidate elevation gain does not match trusted course data');
+      if (claimedAltitude !== null && Number(trustedCourse.facts.maxAltitudeFt) !== claimedAltitude) errors.push('candidate altitude does not match trusted course data');
+      if (claimedTerrain && String(trustedCourse.facts.terrain || '') !== String(claimedTerrain)) errors.push('candidate terrain does not match trusted course data');
+    }
+  }
   return { valid: errors.length === 0, errors };
 }
 

@@ -108,6 +108,61 @@ function CourseStats({ race }) {
   )
 }
 
+const COURSE_STATE_STYLES = {
+  verified: { color: 'var(--accent)' },
+  curated: { color: 'var(--accent)' },
+  user_gpx: { color: 'var(--accent)' },
+  stale: { color: 'var(--text-muted)' },
+  distance_only: { color: 'var(--text-muted)' },
+}
+
+function CourseIntelligenceChip({ intelligence }) {
+  if (!intelligence || !intelligence.label) return null
+  const style = COURSE_STATE_STYLES[intelligence.state] || { color: 'var(--text-muted)' }
+  return (
+    <span
+      className="mt-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold uppercase"
+      style={{ border: '1px solid var(--border-subtle)', color: style.color }}
+    >
+      {intelligence.label}
+    </span>
+  )
+}
+
+function GpxUploadControl({ race, onUploaded }) {
+  const [uploading, setUploading] = useState(false)
+  const [note, setNote] = useState('')
+
+  const onPick = async (event) => {
+    const file = event.target.files && event.target.files[0]
+    event.target.value = ''
+    if (!file) return
+    setUploading(true)
+    setNote('')
+    try {
+      const data = new FormData()
+      data.append('gpx', file)
+      await api.post(`/races/${race.id}/course/gpx`, data)
+      setNote('Course analyzed from your GPX. Coordinates are never stored.')
+      if (onUploaded) await onUploaded()
+    } catch (err) {
+      setNote(err?.response?.data?.error || 'Could not analyze that GPX file.')
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  return (
+    <div className="mt-2">
+      <label className="inline-flex cursor-pointer rounded-lg px-3 py-1.5 text-xs font-bold" style={{ background: 'var(--bg-input)', color: 'var(--text-muted)', border: '1px solid var(--border-subtle)' }}>
+        {uploading ? 'Analyzing...' : 'Upload course GPX'}
+        <input type="file" accept=".gpx,application/gpx+xml,text/xml" className="hidden" onChange={onPick} disabled={uploading} />
+      </label>
+      {note && <p className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>{note}</p>}
+    </div>
+  )
+}
+
 export default function Races() {
   const navigate = useNavigate()
   const { isPro } = useProContext()
@@ -371,6 +426,8 @@ export default function Races() {
             <p className="text-xs" style={{ color: 'var(--accent)' }}>{d} days to go</p>
             <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{r.distance_miles} mi {r.location ? `· ${r.location}` : ''}</p>
             <CourseStats race={r} />
+            {r.course_intelligence && <div><CourseIntelligenceChip intelligence={r.course_intelligence} /></div>}
+            <GpxUploadControl race={r} onUploaded={load} />
             <button
               className="mt-2 rounded-lg px-3 py-1.5 text-xs font-bold"
               style={{ background: 'var(--accent)', color: '#0f1117' }}

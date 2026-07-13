@@ -1,4 +1,10 @@
 const pg = require('./postgres');
+const raceCourse = require('../lib/raceCourse');
+
+// Deterministic freshness stamp for seeded curated course facts. These are
+// curated organizer-derived estimates, not officially measured course data, so
+// the envelope provenance stays `curated` (never auto-upgraded to `official`).
+const SEED_FACTS_ASOF = '2026-07-12T00:00:00.000Z';
 
 const RACES = [
   { id: 'nyc-marathon-2026-11-01', name: 'TCS New York City Marathon', race_date: '2026-11-01', city: 'New York', state: 'NY', distance_miles: 26.2, event_type: 'marathon', scope: 'national', source: 'NYRR', url: 'https://www.nyrr.org/tcsnycmarathon', lat: 40.7128, lng: -74.0060, elevation_gain_ft: 810, max_altitude_ft: 260, terrain: 'road' },
@@ -36,8 +42,19 @@ const RACES = [
   { id: 'portland-shamrock-run-15k-2027-03-14', name: 'Shamrock Run Portland 15K', race_date: '2027-03-14', city: 'Portland', state: 'OR', distance_miles: 9.3, event_type: '15k', scope: 'local', source: 'Shamrock Run Portland', url: 'https://www.shamrockrunportland.com/', lat: 45.5152, lng: -122.6784, elevation_gain_ft: 950, max_altitude_ft: 1050, terrain: 'road' }
 ];
 
+// Build the curated H7 course envelope for a seeded catalog row. Provenance is
+// always `curated` (organizer-derived estimates), never `official`.
+function curatedEnvelopeJson(race) {
+  const envelope = raceCourse.buildCatalogCourseEnvelope(race, {
+    asOf: SEED_FACTS_ASOF,
+    provenance: 'curated',
+  });
+  return JSON.stringify(envelope);
+}
+
 async function seedRaceCatalog() {
   for (const race of RACES) {
+    const envelopeJson = curatedEnvelopeJson(race);
     await pg.query(
       `INSERT INTO race_catalog (
         id, name, race_date, city, state, country, distance_miles, event_type,
@@ -48,7 +65,10 @@ async function seedRaceCatalog() {
       ON CONFLICT (id) DO UPDATE SET
         elevation_gain_ft = EXCLUDED.elevation_gain_ft,
         max_altitude_ft = EXCLUDED.max_altitude_ft,
-        terrain = EXCLUDED.terrain`,
+        terrain = EXCLUDED.terrain,
+        source = EXCLUDED.source,
+        url = EXCLUDED.url,
+        course_profile_json = EXCLUDED.course_profile_json`,
       [
         race.id,
         race.name,
@@ -66,7 +86,7 @@ async function seedRaceCatalog() {
         race.elevation_gain_ft || null,
         race.max_altitude_ft || null,
         race.terrain || null,
-        race.course_profile_json || null
+        envelopeJson
       ]
     );
   }
