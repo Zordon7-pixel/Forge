@@ -22,6 +22,35 @@ function sessionLabel(session = {}) {
   return session.title || String(session.type || 'session').replace('_', ' ')
 }
 
+// H1 compatibility path: return a flat list of renderable session rows for the
+// current week, supporting BOTH legacy plans (week.sessions = day entries) and
+// schema-v2 plans (week.days = day entries, each with a sessions[] of run/lift).
+// Legacy plans pass straight through so existing behavior is unchanged.
+function weekSessionRows(weekData) {
+  if (!weekData) return []
+  // Legacy shape: sessions[] holds one entry per calendar day.
+  if (Array.isArray(weekData.sessions) && !Array.isArray(weekData.days)) return weekData.sessions
+  const days = Array.isArray(weekData.days) ? weekData.days : []
+  const rows = []
+  for (const day of days) {
+    // A schema-v2 day carries its own sessions[] of run/lift entries.
+    if (!Array.isArray(day.sessions)) {
+      // Legacy-shaped day nested inside a days[] array — render as-is.
+      rows.push(day)
+      continue
+    }
+    if (day.sessions.length === 0) {
+      rows.push({ id: day.id || day.date || day.day, day: day.day, type: 'rest', title: 'Rest day', distance_miles: 0 })
+      continue
+    }
+    for (const s of day.sessions) {
+      const type = s.type || (s.kind === 'lift' ? 'strength' : 'run')
+      rows.push({ ...s, id: s.id, day: day.day, type, title: s.title, distance_miles: Number(s.distance_miles || 0) })
+    }
+  }
+  return rows
+}
+
 export default function Plan() {
   const { isPro, loading: proLoading } = useProContext()
   const [plans, setPlans] = useState([])
@@ -87,8 +116,10 @@ export default function Plan() {
     return weeks[currentWeek - 1] || weeks[0] || null
   }, [myPlan, currentWeek])
   const completedSet = new Set(myUserPlan?.progress?.completedSessionIds || [])
-  const totalInWeek = (weekData?.sessions || []).filter((s) => s.type !== 'rest').length
-  const completedInWeek = (weekData?.sessions || []).filter((s) => s.type !== 'rest' && completedSet.has(String(s.id))).length
+  // H1: flatten legacy + schema-v2 weeks into renderable session rows.
+  const weekRows = useMemo(() => weekSessionRows(weekData), [weekData])
+  const totalInWeek = weekRows.filter((s) => s.type !== 'rest').length
+  const completedInWeek = weekRows.filter((s) => s.type !== 'rest' && completedSet.has(String(s.id))).length
   const weekProgress = totalInWeek > 0 ? Math.round((completedInWeek / totalInWeek) * 100) : 0
 
   const toggleSession = async (sessionId) => {
@@ -232,7 +263,7 @@ export default function Plan() {
 
       <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
         <h2 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>Training Plans</h2>
-        <p className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>Running-first plans. Strength sessions focus on injury prevention only.</p>
+        <p className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>Run-only or hybrid plans. When lifting is on, strength is a protected training objective alongside your race goal.</p>
       </div>
 
       {!myPlan && (
@@ -288,7 +319,7 @@ export default function Plan() {
           </div>
 
           <div className="rounded-xl p-4 space-y-2" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-            {(weekData?.sessions || []).map((session) => {
+            {weekRows.map((session) => {
               const isDone = completedSet.has(String(session.id))
               return (
                 <button

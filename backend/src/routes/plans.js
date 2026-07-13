@@ -7,6 +7,7 @@ const { v4: uuidv4 } = require('uuid');
 const { generateTrainingPlan, generateRaceAdjustment } = require('../services/ai');
 const { buildHealthSignals } = require('../lib/healthSignals');
 const { applyOverride } = require('../lib/checkinOverride');
+const planSchema = require('../lib/planSchema');
 
 function getDayShort() {
   return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date().getDay()];
@@ -16,9 +17,11 @@ function normalizeTodayEntry(planJson) {
   if (!planJson?.weeks?.length) return null;
   const today = getDayShort();
   for (const week of planJson.weeks) {
-    const days = Array.isArray(week.days) ? week.days : Array.isArray(week.sessions) ? week.sessions : [];
+    const days = planSchema.getDayEntries(week);
     const hit = days.find(d => d?.day === today);
-    if (hit) return hit;
+    // Session-aware (H1): a schema-v2 day is flattened to the legacy single-day
+    // shape; legacy days pass through unchanged (byte-identical).
+    if (hit) return planSchema.flattenDayForConsumer(hit);
   }
   return null;
 }
@@ -302,7 +305,8 @@ function generateSessions(intensity, user = {}) {
       id: `adaptive-lift-${dayLabels[dayIdx].toLowerCase()}`,
       day: dayLabels[dayIdx],
       type: 'strength',
-      title: 'Strength injury prevention',
+      // H1: neutral strength framing (no "injury-prevention-only" wording).
+      title: planSchema.STRENGTH_MAINTAIN_TITLE,
       distance_miles: 0,
     };
   }
@@ -656,13 +660,14 @@ router.get('/compliance', auth, async (req, res) => {
     const parsed = parsePlan(active.row) || { weeks: [] };
     const currentWeek = Number(active.row.current_week || 1);
     const weekBucket = parsed?.weeks?.[Math.max(0, currentWeek - 1)] || parsed?.weeks?.[0] || {};
-    const days = weekBucket?.days || weekBucket?.sessions || [];
+    const days = planSchema.getDayEntries(weekBucket);
+    // Session-aware (H1): each day expands to one planned row per run/lift
+    // session. Legacy / run-only days collapse to exactly one row, matching the
+    // previous mapType behaviour.
     const plannedSessions = days
-      .map((d, idx) => ({
-        sessionId: d.id || `${idx}`, day: d.day || `Day ${idx + 1}`,
-        date: dayToDate(active.row.week_start || active.row.started_at || weekStart, d.day),
-        type: mapType(d), distance: Number(d.distance_miles || 0), raw: d,
-      }))
+      .flatMap((d, idx) => planSchema.plannedSessionsForDay(
+        d, idx, dayToDate(active.row.week_start || active.row.started_at || weekStart, d.day)
+      ))
       .filter((d) => d.type !== 'rest' && d.date && d.date >= weekStart && d.date < weekEnd);
 
     const [runs, lifts] = await Promise.all([
@@ -723,17 +728,22 @@ router.post('/reschedule-missed', auth, async (req, res) => {
     const parsed = parsePlan(active.row);
     const currentWeek = Math.max(0, Number(active.row.current_week || 1) - 1);
     const week = parsed?.weeks?.[currentWeek];
-    const dayList = week?.days || week?.sessions;
+    const dayList = planSchema.getDayEntries(week);
     if (!dayList?.length) return res.status(400).json({ error: 'Invalid plan format' });
 
     const dayMap = { Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4, Sat: 5, Sun: 6 };
-    const sourceIdx = dayList.findIndex((d, idx) => `${d.id || idx}` === `${sessionId}`);
+    // Session-aware (H1): a day matches by its day-level id or by any contained
+    // session id. Legacy / run-only days keep the original id-or-index match.
+    const sourceIdx = dayList.findIndex((d, idx) => {
+      if (`${d.id || idx}` === `${sessionId}`) return true;
+      return planSchema.daySessions(d).some((s) => `${s.id}` === `${sessionId}`);
+    });
     if (sourceIdx < 0) return res.status(404).json({ error: 'Session not found in plan' });
 
     const source = dayList[sourceIdx];
     let nextIdx = sourceIdx + 1;
     while (nextIdx < dayList.length) {
-      const t = mapType(dayList[nextIdx]);
+      const t = mapType(planSchema.flattenDayForConsumer(dayList[nextIdx]));
       if (t === 'rest') break;
       nextIdx += 1;
     }
@@ -742,7 +752,11 @@ router.post('/reschedule-missed', auth, async (req, res) => {
     const oldDay = source.day;
     source.day = Object.keys(dayMap)[nextIdx];
     source.description = `${source.description || ''} (rescheduled)`;
-    dayList[sourceIdx] = { ...dayList[sourceIdx], type: 'rest', workout_type: 'rest', distance_miles: 0, description: 'Rescheduled recovery day', rest: true };
+    const restDay = { ...dayList[sourceIdx], type: 'rest', workout_type: 'rest', distance_miles: 0, description: 'Rescheduled recovery day', rest: true };
+    // For a schema-v2 day, also clear its sessions so the rest conversion is
+    // consistent across both readers; legacy days are untouched (byte-identical).
+    if (Array.isArray(dayList[sourceIdx].sessions)) restDay.sessions = [];
+    dayList[sourceIdx] = restDay;
     if (week.days) week.days = dayList;
     if (week.sessions) week.sessions = dayList;
 
@@ -914,7 +928,10 @@ function enforceWeekSessionRules(week = {}, options = {}) {
   const allowedTrainingDays = Array.isArray(options.trainingDays) && options.trainingDays.length
     ? new Set(options.trainingDays)
     : null;
-  const sourceDays = Array.isArray(week.days) ? [...week.days] : Array.isArray(week.sessions) ? [...week.sessions] : [];
+  // Session-aware (H1): schema-v2 days are flattened to the legacy single-day
+  // shape before the single-session enforcement logic runs. Legacy days pass
+  // through unchanged (identity), so existing plans stay byte-identical.
+  const sourceDays = planSchema.getDayEntries(week).map((d) => planSchema.flattenDayForConsumer(d));
   const dayByKey = { sun: 'Sun', mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri', sat: 'Sat' };
   const sourceByDay = new Map(sourceDays
     .map((day) => [dayByKey[String(day?.day || '').trim().slice(0, 3).toLowerCase()], day])

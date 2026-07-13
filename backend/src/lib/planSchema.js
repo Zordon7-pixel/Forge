@@ -1,0 +1,397 @@
+// Forged Hybrid - canonical plan schema (H1)
+//
+// Introduces schema-version 2 plan metadata (planMode + strengthPolicy) stored
+// INSIDE the existing plan JSON blob (no new DB columns) and bidirectional
+// adapters so every legacy day-level consumer keeps working.
+//
+// Vocabulary (two different levels):
+//   - A WEEK holds a day-entry array. Legacy weeks use week.days OR
+//     week.sessions; both are arrays of DAY entries (one per calendar day).
+//   - A canonical schema-v2 DAY holds day.sessions[] where each entry is a
+//     SESSION (run or lift) with a stable id. Legacy days are flat objects
+//     with no .sessions array, so Array.isArray(dayEntry.sessions) reliably
+//     distinguishes a v2 day.
+//
+// Design guarantee: for a legacy plan every adapter is the identity function,
+// and a run-only schema-v2 plan collapses to behaviour equivalent to its legacy
+// twin for today / compliance / override / completion / reschedule.
+
+const SCHEMA_VERSION = 2;
+
+const PLAN_MODES = Object.freeze({
+  RUN_ONLY: 'run_only',
+  HYBRID_MAINTAIN: 'hybrid_maintain',
+  HYBRID_BUILD: 'hybrid_build',
+});
+
+const VALID_MODES = new Set(Object.values(PLAN_MODES));
+
+// Neutral strength copy - no running-first / injury-prevention-only framing.
+const STRENGTH_MAINTAIN_TITLE = 'Strength maintenance';
+const STRENGTH_BUILD_TITLE = 'Strength build';
+
+const DAY_ORDER = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const DAY_INDEX = { Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4, Sat: 5, Sun: 6 };
+
+let idCounter = 0;
+function stableId(prefix) {
+  idCounter += 1;
+  return (prefix || 'sess') + '-' + idCounter + '-' + Date.now().toString(36);
+}
+
+function isSchemaV2(plan) {
+  return !!plan && Number(plan.schemaVersion) === SCHEMA_VERSION;
+}
+
+function isHybridMode(mode) {
+  return mode === PLAN_MODES.HYBRID_MAINTAIN || mode === PLAN_MODES.HYBRID_BUILD;
+}
+
+function stripUndefined(obj) {
+  const out = {};
+  for (const key of Object.keys(obj)) {
+    if (obj[key] !== undefined) out[key] = obj[key];
+  }
+  return out;
+}
+
+function kindFromLegacy(entry) {
+  const e = entry || {};
+  const t = String(e.workout_type || e.type || '').toLowerCase();
+  if (t.includes('rest')) return 'rest';
+  if (t.includes('strength') || t.includes('lift')) return 'lift';
+  if (t.includes('cross')) return 'lift';
+  return 'run';
+}
+
+function kindFromSession(session) {
+  const s = session || {};
+  const k = String(s.kind || '').toLowerCase();
+  if (k === 'run' || k === 'lift' || k === 'rest') return k;
+  return kindFromLegacy(s);
+}
+
+function dayEntriesKey(week) {
+  if (Array.isArray(week && week.days)) return 'days';
+  if (Array.isArray(week && week.sessions)) return 'sessions';
+  return 'days';
+}
+
+function getDayEntries(week) {
+  if (Array.isArray(week && week.days)) return week.days;
+  if (Array.isArray(week && week.sessions)) return week.sessions;
+  return [];
+}
+
+function setDayEntries(week, entries) {
+  const key = dayEntriesKey(week);
+  const next = Object.assign({}, week);
+  next[key] = entries;
+  return next;
+}
+
+function normalizeSession(session) {
+  const s = session || {};
+  const kind = kindFromSession(s);
+  const prescription = s.prescription && typeof s.prescription === 'object' ? s.prescription : null;
+  const flat = prescription ? Object.assign({}, prescription) : {};
+  return Object.assign(
+    {
+      id: s.id ? String(s.id) : stableId(kind),
+      kind,
+    },
+    flat,
+    stripUndefined({
+      type: s.type,
+      workout_type: s.workout_type,
+      title: s.title,
+      distance_miles: s.distance_miles,
+      duration_min: s.duration_min,
+      description: s.description,
+      pace_target: s.pace_target,
+      target_zone: s.target_zone,
+      intensity: s.intensity,
+      steps: s.steps,
+      structure: s.structure,
+      focus: s.focus,
+    })
+  );
+}
+
+// Return the canonical session list for a day entry.
+//   - legacy flat day -> single wrapped session (or [] for rest)
+//   - schema-v2 day    -> its sessions[], normalized, rest sessions dropped
+function daySessions(dayEntry) {
+  const d = dayEntry || {};
+  if (Array.isArray(d.sessions)) {
+    return d.sessions.map(normalizeSession).filter((s) => s.kind !== 'rest');
+  }
+  const kind = kindFromLegacy(d);
+  if (kind === 'rest') return [];
+  return [normalizeSession(Object.assign({}, d, { kind }))];
+}
+
+function isRestEntry(dayEntry) {
+  const d = dayEntry || {};
+  if (Array.isArray(d.sessions)) return daySessions(d).length === 0;
+  if (d.rest === true) return true;
+  return kindFromLegacy(d) === 'rest';
+}
+
+// Produce the flat, legacy-shaped day object a single-session consumer expects.
+// For legacy days this returns the SAME object (identity), guaranteeing
+// byte-equivalent behaviour; only v2 days are flattened.
+function flattenDayForConsumer(dayEntry) {
+  const d = dayEntry;
+  if (!d || !Array.isArray(d.sessions)) return d;
+  const sessions = daySessions(d);
+  const base = { day: d.day, date: d.date };
+  if (d.id !== undefined) base.id = d.id;
+  if (d.orderGuidance !== undefined) base.orderGuidance = d.orderGuidance;
+  if (d.status !== undefined) base.status = d.status;
+  if (sessions.length === 0) {
+    return Object.assign({}, base, {
+      type: 'rest',
+      workout_type: 'rest',
+      distance_miles: 0,
+      description: d.description || 'Rest and recovery',
+      rest: true,
+      sessions: [],
+    });
+  }
+  const primary = sessions.find((s) => s.kind === 'run') || sessions[0];
+  const primaryFlat = Object.assign({}, primary);
+  delete primaryFlat.id;
+  delete primaryFlat.kind;
+  return Object.assign({}, base, {
+    id: base.id !== undefined ? base.id : primary.id,
+    type: primary.type || (primary.kind === 'lift' ? 'strength' : 'run'),
+  }, primaryFlat, { sessions });
+}
+
+// Compliance helper: expand one day entry into per-session planned rows.
+// legacy day -> 1 row (matches old mapType behaviour); v2 day -> one row per
+// run/lift session. Run-only v2 collapses to exactly one run row per day.
+function plannedSessionsForDay(dayEntry, idx, dateStr) {
+  const d = dayEntry || {};
+  const sessions = daySessions(d);
+  if (sessions.length === 0) return [];
+  return sessions.map((s, sIdx) => ({
+    sessionId: s.id || (sessions.length === 1 ? (d.id || String(idx)) : idx + '-' + sIdx),
+    day: d.day || ('Day ' + (idx + 1)),
+    date: dateStr,
+    type: s.kind === 'lift' ? 'lift' : 'run',
+    distance: Number(s.distance_miles || 0),
+    raw: s,
+  }));
+}
+
+// Session-aware override merge. Identical to { ...day, ...patch } for legacy /
+// single-session days; for a v2 day it also merges the patch into the run
+// session and leaves lift sessions untouched.
+function applyOverrideToDay(day, patch) {
+  const p = patch || {};
+  if (!day || typeof p !== 'object') return day || null;
+  const merged = Object.assign({}, day, p);
+  if (Array.isArray(day.sessions) && day.sessions.length) {
+    merged.sessions = day.sessions.map((s) => (kindFromSession(s) === 'run' ? Object.assign({}, s, p) : s));
+  }
+  return merged;
+}
+
+// Infer a mode for a plan that has no explicit planMode (legacy plans).
+function inferPlanMode(plan) {
+  const weeks = plan && Array.isArray(plan.weeks) ? plan.weeks : [];
+  for (const week of weeks) {
+    for (const dayEntry of getDayEntries(week)) {
+      for (const session of daySessions(dayEntry)) {
+        if (session.kind === 'lift') return PLAN_MODES.HYBRID_MAINTAIN;
+      }
+    }
+  }
+  return PLAN_MODES.RUN_ONLY;
+}
+
+function getPlanMode(plan) {
+  if (plan && VALID_MODES.has(plan.planMode)) return plan.planMode;
+  return inferPlanMode(plan);
+}
+
+function normalizeStrengthPolicy(policy, mode) {
+  if (!isHybridMode(mode)) {
+    return { enabled: false };
+  }
+  const base = policy && typeof policy === 'object' ? policy : {};
+  const rawPerWeek = Number(base.sessionsPerWeek);
+  const sessionsPerWeek = Number.isFinite(rawPerWeek) ? Math.max(1, Math.min(6, Math.round(rawPerWeek))) : 3;
+  const rawMin = Number(base.minimumSessionsPerWeek);
+  const minimumSessionsPerWeek = Number.isFinite(rawMin)
+    ? Math.max(1, Math.min(sessionsPerWeek, Math.round(rawMin)))
+    : Math.min(2, sessionsPerWeek);
+  return {
+    enabled: true,
+    goal: mode === PLAN_MODES.HYBRID_BUILD ? 'build' : 'maintain',
+    sessionsPerWeek,
+    minimumSessionsPerWeek,
+    equipment: Array.isArray(base.equipment) ? base.equipment.slice(0, 12) : ['barbell', 'dumbbell'],
+    preferredDays: Array.isArray(base.preferredDays) ? base.preferredDays.slice(0, 7) : ['Mon', 'Wed', 'Fri'],
+  };
+}
+
+// A run session that must NOT sit next to lower-body strength (interference).
+function isHardOrLongRun(session) {
+  const s = session || {};
+  const text = [s.title, s.description, s.type, s.workout_type, s.intensity, s.target_zone]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+  return /(long|quality|tempo|threshold|interval|hill|hard|speed|vo2|race|zone 3|zone 4|zone 5)/.test(text);
+}
+
+function buildLiftSession(focus, mode) {
+  const goalTitle = mode === PLAN_MODES.HYBRID_BUILD ? STRENGTH_BUILD_TITLE : STRENGTH_MAINTAIN_TITLE;
+  return {
+    id: stableId('lift'),
+    kind: 'lift',
+    type: 'strength',
+    workout_type: 'strength',
+    title: goalTitle + ' - ' + focus,
+    focus,
+    distance_miles: 0,
+    description: goalTitle + ' session (' + focus + '). Full prescriptions are added in a later phase.',
+  };
+}
+
+// Future-only mode switch. Past dates and completed sessions are immutable.
+//   hybrid_* -> run_only : remove future lift sessions only.
+//   run_only -> hybrid_* : inject lifts into eligible future days only, after
+//                          deterministic interference + strength-floor checks.
+function switchPlanMode(plan, targetMode, opts) {
+  const options = opts || {};
+  const todayISO = options.todayISO || new Date().toISOString().slice(0, 10);
+  const completed = new Set((options.completedSessionIds || []).map(String));
+  if (!VALID_MODES.has(targetMode)) {
+    throw new Error('switchPlanMode: invalid target mode ' + targetMode);
+  }
+  const source = plan && typeof plan === 'object' ? plan : { weeks: [] };
+  const policy = normalizeStrengthPolicy(
+    isHybridMode(targetMode) ? (source.strengthPolicy || options.strengthPolicy) : null,
+    targetMode
+  );
+  const perWeekCap = isHybridMode(targetMode) ? policy.sessionsPerWeek : 0;
+  // Preferred lift weekdays that avoid the hard/long run slots (Tue/Sat here).
+  const liftDayFocus = { Mon: 'Upper body', Wed: 'Lower body', Fri: 'Upper body' };
+
+  const weeks = (Array.isArray(source.weeks) ? source.weeks : []).map((week) => {
+    const entries = getDayEntries(week);
+    let liftCountThisWeek = 0;
+    const nextEntries = entries.map((entry) => {
+      const sessions = daySessions(entry);
+      const isFuture = entry && entry.date ? String(entry.date) > todayISO : false;
+
+      // Count existing (non-removed) lifts toward the weekly cap.
+      const existingLifts = sessions.filter((s) => s.kind === 'lift');
+      if (!isFuture) {
+        liftCountThisWeek += existingLifts.length;
+        return entry; // immutable past/today
+      }
+
+      if (targetMode === PLAN_MODES.RUN_ONLY) {
+        // Remove future lifts unless that specific lift was completed.
+        const kept = sessions.filter((s) => s.kind !== 'lift' || completed.has(String(s.id)));
+        liftCountThisWeek += kept.filter((s) => s.kind === 'lift').length;
+        return toCanonicalDay(entry, kept);
+      }
+
+      // hybrid target: keep existing lifts, count them.
+      liftCountThisWeek += existingLifts.length;
+      const weekday = entry.day || weekdayFromDate(entry.date);
+      const alreadyHasLift = existingLifts.length > 0;
+      const eligibleDay = Object.prototype.hasOwnProperty.call(liftDayFocus, weekday);
+      const hasHardRun = sessions.some((s) => s.kind === 'run' && isHardOrLongRun(s));
+      if (
+        !alreadyHasLift &&
+        eligibleDay &&
+        !hasHardRun &&
+        liftCountThisWeek < perWeekCap &&
+        sessions.length < 2
+      ) {
+        const lift = buildLiftSession(liftDayFocus[weekday], targetMode);
+        liftCountThisWeek += 1;
+        return toCanonicalDay(entry, sessions.concat([lift]), true);
+      }
+      return toCanonicalDay(entry, sessions);
+    });
+    return setDayEntries(week, nextEntries);
+  });
+
+  const nextPlan = Object.assign({}, source, {
+    schemaVersion: SCHEMA_VERSION,
+    planMode: targetMode,
+    weeks,
+  });
+  if (isHybridMode(targetMode)) {
+    nextPlan.strengthPolicy = policy;
+  } else {
+    nextPlan.strengthPolicy = { enabled: false };
+  }
+  return nextPlan;
+}
+
+function weekdayFromDate(dateStr) {
+  const s = String(dateStr || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  const d = new Date(s + 'T12:00:00');
+  if (Number.isNaN(d.getTime())) return null;
+  return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()];
+}
+
+// Rebuild a day entry as a canonical schema-v2 day with the given sessions.
+function toCanonicalDay(entry, sessions, sameDayRunLift) {
+  const e = entry || {};
+  const next = {
+    date: e.date,
+    day: e.day || weekdayFromDate(e.date),
+    sessions: sessions.map(normalizeSession),
+  };
+  if (e.id !== undefined) next.id = e.id;
+  if (e.status !== undefined) next.status = e.status;
+  if (sameDayRunLift && next.sessions.some((s) => s.kind === 'run') && next.sessions.some((s) => s.kind === 'lift')) {
+    next.orderGuidance = 'Run first; lift at least 6 hours later.';
+  } else if (e.orderGuidance !== undefined) {
+    next.orderGuidance = e.orderGuidance;
+  }
+  return next;
+}
+
+module.exports = {
+  SCHEMA_VERSION,
+  PLAN_MODES,
+  VALID_MODES,
+  STRENGTH_MAINTAIN_TITLE,
+  STRENGTH_BUILD_TITLE,
+  DAY_ORDER,
+  DAY_INDEX,
+  stableId,
+  isSchemaV2,
+  isHybridMode,
+  inferPlanMode,
+  getPlanMode,
+  normalizeStrengthPolicy,
+  getDayEntries,
+  setDayEntries,
+  dayEntriesKey,
+  kindFromLegacy,
+  kindFromSession,
+  isRestEntry,
+  daySessions,
+  normalizeSession,
+  flattenDayForConsumer,
+  plannedSessionsForDay,
+  applyOverrideToDay,
+  isHardOrLongRun,
+  buildLiftSession,
+  switchPlanMode,
+  toCanonicalDay,
+  weekdayFromDate,
+};

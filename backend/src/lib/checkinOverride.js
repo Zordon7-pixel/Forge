@@ -324,9 +324,13 @@ function buildDirective(checkin = {}, action = 'keep', patch = {}, hasWorkoutTod
   return { headline, drivers };
 }
 
+// Session-aware in H1. For legacy / single-session days this is byte-identical
+// to { ...day, ...patch }; for a schema-v2 day (day.sessions[]) it also merges
+// the patch onto the run session and leaves lift sessions untouched.
+const { applyOverrideToDay } = require('./planSchema');
+
 function applyOverride(day, patch = {}) {
-  if (!day || !patch || typeof patch !== 'object') return day || null;
-  return { ...day, ...patch };
+  return applyOverrideToDay(day, patch);
 }
 
 module.exports = { deriveAction, buildPatch, buildDirective, applyOverride, estimateWorkoutMinutes };

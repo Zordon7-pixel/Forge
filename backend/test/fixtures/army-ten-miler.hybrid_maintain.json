@@ -1,0 +1,1669 @@
+{
+  "schemaVersion": 2,
+  "planMode": "hybrid_maintain",
+  "goal": {
+    "kind": "race",
+    "name": "Army Ten-Miler",
+    "date": "2026-10-11",
+    "distanceMiles": 10,
+    "goalType": "pr",
+    "goalTimeSeconds": null
+  },
+  "weeks": [
+    {
+      "week": 1,
+      "phase": "base",
+      "startDate": "2026-07-13",
+      "days": [
+        {
+          "date": "2026-07-13",
+          "day": "Mon",
+          "sessions": [
+            {
+              "id": "w1-mon-lift",
+              "kind": "lift",
+              "type": "strength",
+              "workout_type": "strength",
+              "title": "Strength maintenance - Upper body",
+              "focus": "Upper body",
+              "distance_miles": 0,
+              "description": "Strength maintenance (Upper body)."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-07-14",
+          "day": "Tue",
+          "sessions": [
+            {
+              "id": "w1-tue-run",
+              "kind": "run",
+              "type": "run",
+              "workout_type": "run",
+              "title": "Quality run",
+              "distance_miles": 4.1,
+              "target_zone": "Zone 3",
+              "description": "Quality intervals."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-07-15",
+          "day": "Wed",
+          "sessions": [
+            {
+              "id": "w1-wed-run",
+              "kind": "run",
+              "type": "easy",
+              "workout_type": "run",
+              "title": "Easy run",
+              "distance_miles": 3,
+              "target_zone": "Zone 2",
+              "description": "Easy aerobic run."
+            },
+            {
+              "id": "w1-wed-lift",
+              "kind": "lift",
+              "type": "strength",
+              "workout_type": "strength",
+              "title": "Strength maintenance - Lower body",
+              "focus": "Lower body",
+              "distance_miles": 0,
+              "description": "Strength maintenance (Lower body)."
+            }
+          ],
+          "orderGuidance": "Run first; lift at least 6 hours later.",
+          "status": "planned"
+        },
+        {
+          "date": "2026-07-16",
+          "day": "Thu",
+          "sessions": [
+            {
+              "id": "w1-thu-run",
+              "kind": "run",
+              "type": "easy",
+              "workout_type": "run",
+              "title": "Easy run",
+              "distance_miles": 3,
+              "target_zone": "Zone 2",
+              "description": "Easy aerobic run."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-07-17",
+          "day": "Fri",
+          "sessions": [
+            {
+              "id": "w1-fri-lift",
+              "kind": "lift",
+              "type": "strength",
+              "workout_type": "strength",
+              "title": "Strength maintenance - Upper body",
+              "focus": "Upper body",
+              "distance_miles": 0,
+              "description": "Strength maintenance (Upper body)."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-07-18",
+          "day": "Sat",
+          "sessions": [
+            {
+              "id": "w1-sat-run",
+              "kind": "run",
+              "type": "long",
+              "workout_type": "run",
+              "title": "Long run",
+              "distance_miles": 6.3,
+              "target_zone": "Zone 2",
+              "description": "Long aerobic run."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-07-19",
+          "day": "Sun",
+          "sessions": [],
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "week": 2,
+      "phase": "base",
+      "startDate": "2026-07-20",
+      "days": [
+        {
+          "date": "2026-07-20",
+          "day": "Mon",
+          "sessions": [
+            {
+              "id": "w2-mon-lift",
+              "kind": "lift",
+              "type": "strength",
+              "workout_type": "strength",
+              "title": "Strength maintenance - Upper body",
+              "focus": "Upper body",
+              "distance_miles": 0,
+              "description": "Strength maintenance (Upper body)."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-07-21",
+          "day": "Tue",
+          "sessions": [
+            {
+              "id": "w2-tue-run",
+              "kind": "run",
+              "type": "run",
+              "workout_type": "run",
+              "title": "Quality run",
+              "distance_miles": 4.2,
+              "target_zone": "Zone 3",
+              "description": "Quality intervals."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-07-22",
+          "day": "Wed",
+          "sessions": [
+            {
+              "id": "w2-wed-run",
+              "kind": "run",
+              "type": "easy",
+              "workout_type": "run",
+              "title": "Easy run",
+              "distance_miles": 3,
+              "target_zone": "Zone 2",
+              "description": "Easy aerobic run."
+            },
+            {
+              "id": "w2-wed-lift",
+              "kind": "lift",
+              "type": "strength",
+              "workout_type": "strength",
+              "title": "Strength maintenance - Lower body",
+              "focus": "Lower body",
+              "distance_miles": 0,
+              "description": "Strength maintenance (Lower body)."
+            }
+          ],
+          "orderGuidance": "Run first; lift at least 6 hours later.",
+          "status": "planned"
+        },
+        {
+          "date": "2026-07-23",
+          "day": "Thu",
+          "sessions": [
+            {
+              "id": "w2-thu-run",
+              "kind": "run",
+              "type": "easy",
+              "workout_type": "run",
+              "title": "Easy run",
+              "distance_miles": 3,
+              "target_zone": "Zone 2",
+              "description": "Easy aerobic run."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-07-24",
+          "day": "Fri",
+          "sessions": [
+            {
+              "id": "w2-fri-lift",
+              "kind": "lift",
+              "type": "strength",
+              "workout_type": "strength",
+              "title": "Strength maintenance - Upper body",
+              "focus": "Upper body",
+              "distance_miles": 0,
+              "description": "Strength maintenance (Upper body)."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-07-25",
+          "day": "Sat",
+          "sessions": [
+            {
+              "id": "w2-sat-run",
+              "kind": "run",
+              "type": "long",
+              "workout_type": "run",
+              "title": "Long run",
+              "distance_miles": 6.6,
+              "target_zone": "Zone 2",
+              "description": "Long aerobic run."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-07-26",
+          "day": "Sun",
+          "sessions": [],
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "week": 3,
+      "phase": "base",
+      "startDate": "2026-07-27",
+      "days": [
+        {
+          "date": "2026-07-27",
+          "day": "Mon",
+          "sessions": [
+            {
+              "id": "w3-mon-lift",
+              "kind": "lift",
+              "type": "strength",
+              "workout_type": "strength",
+              "title": "Strength maintenance - Upper body",
+              "focus": "Upper body",
+              "distance_miles": 0,
+              "description": "Strength maintenance (Upper body)."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-07-28",
+          "day": "Tue",
+          "sessions": [
+            {
+              "id": "w3-tue-run",
+              "kind": "run",
+              "type": "run",
+              "workout_type": "run",
+              "title": "Quality run",
+              "distance_miles": 4.3,
+              "target_zone": "Zone 3",
+              "description": "Quality intervals."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-07-29",
+          "day": "Wed",
+          "sessions": [
+            {
+              "id": "w3-wed-run",
+              "kind": "run",
+              "type": "easy",
+              "workout_type": "run",
+              "title": "Easy run",
+              "distance_miles": 3,
+              "target_zone": "Zone 2",
+              "description": "Easy aerobic run."
+            },
+            {
+              "id": "w3-wed-lift",
+              "kind": "lift",
+              "type": "strength",
+              "workout_type": "strength",
+              "title": "Strength maintenance - Lower body",
+              "focus": "Lower body",
+              "distance_miles": 0,
+              "description": "Strength maintenance (Lower body)."
+            }
+          ],
+          "orderGuidance": "Run first; lift at least 6 hours later.",
+          "status": "planned"
+        },
+        {
+          "date": "2026-07-30",
+          "day": "Thu",
+          "sessions": [
+            {
+              "id": "w3-thu-run",
+              "kind": "run",
+              "type": "easy",
+              "workout_type": "run",
+              "title": "Easy run",
+              "distance_miles": 3,
+              "target_zone": "Zone 2",
+              "description": "Easy aerobic run."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-07-31",
+          "day": "Fri",
+          "sessions": [
+            {
+              "id": "w3-fri-lift",
+              "kind": "lift",
+              "type": "strength",
+              "workout_type": "strength",
+              "title": "Strength maintenance - Upper body",
+              "focus": "Upper body",
+              "distance_miles": 0,
+              "description": "Strength maintenance (Upper body)."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-08-01",
+          "day": "Sat",
+          "sessions": [
+            {
+              "id": "w3-sat-run",
+              "kind": "run",
+              "type": "long",
+              "workout_type": "run",
+              "title": "Long run",
+              "distance_miles": 6.9,
+              "target_zone": "Zone 2",
+              "description": "Long aerobic run."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-08-02",
+          "day": "Sun",
+          "sessions": [],
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "week": 4,
+      "phase": "build",
+      "startDate": "2026-08-03",
+      "days": [
+        {
+          "date": "2026-08-03",
+          "day": "Mon",
+          "sessions": [
+            {
+              "id": "w4-mon-lift",
+              "kind": "lift",
+              "type": "strength",
+              "workout_type": "strength",
+              "title": "Strength maintenance - Upper body",
+              "focus": "Upper body",
+              "distance_miles": 0,
+              "description": "Strength maintenance (Upper body)."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-08-04",
+          "day": "Tue",
+          "sessions": [
+            {
+              "id": "w4-tue-run",
+              "kind": "run",
+              "type": "run",
+              "workout_type": "run",
+              "title": "Quality run",
+              "distance_miles": 4.4,
+              "target_zone": "Zone 3",
+              "description": "Quality intervals."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-08-05",
+          "day": "Wed",
+          "sessions": [
+            {
+              "id": "w4-wed-run",
+              "kind": "run",
+              "type": "easy",
+              "workout_type": "run",
+              "title": "Easy run",
+              "distance_miles": 3,
+              "target_zone": "Zone 2",
+              "description": "Easy aerobic run."
+            },
+            {
+              "id": "w4-wed-lift",
+              "kind": "lift",
+              "type": "strength",
+              "workout_type": "strength",
+              "title": "Strength maintenance - Lower body",
+              "focus": "Lower body",
+              "distance_miles": 0,
+              "description": "Strength maintenance (Lower body)."
+            }
+          ],
+          "orderGuidance": "Run first; lift at least 6 hours later.",
+          "status": "planned"
+        },
+        {
+          "date": "2026-08-06",
+          "day": "Thu",
+          "sessions": [
+            {
+              "id": "w4-thu-run",
+              "kind": "run",
+              "type": "easy",
+              "workout_type": "run",
+              "title": "Easy run",
+              "distance_miles": 3,
+              "target_zone": "Zone 2",
+              "description": "Easy aerobic run."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-08-07",
+          "day": "Fri",
+          "sessions": [
+            {
+              "id": "w4-fri-lift",
+              "kind": "lift",
+              "type": "strength",
+              "workout_type": "strength",
+              "title": "Strength maintenance - Upper body",
+              "focus": "Upper body",
+              "distance_miles": 0,
+              "description": "Strength maintenance (Upper body)."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-08-08",
+          "day": "Sat",
+          "sessions": [
+            {
+              "id": "w4-sat-run",
+              "kind": "run",
+              "type": "long",
+              "workout_type": "run",
+              "title": "Long run",
+              "distance_miles": 7.2,
+              "target_zone": "Zone 2",
+              "description": "Long aerobic run."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-08-09",
+          "day": "Sun",
+          "sessions": [],
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "week": 5,
+      "phase": "build",
+      "startDate": "2026-08-10",
+      "days": [
+        {
+          "date": "2026-08-10",
+          "day": "Mon",
+          "sessions": [
+            {
+              "id": "w5-mon-lift",
+              "kind": "lift",
+              "type": "strength",
+              "workout_type": "strength",
+              "title": "Strength maintenance - Upper body",
+              "focus": "Upper body",
+              "distance_miles": 0,
+              "description": "Strength maintenance (Upper body)."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-08-11",
+          "day": "Tue",
+          "sessions": [
+            {
+              "id": "w5-tue-run",
+              "kind": "run",
+              "type": "run",
+              "workout_type": "run",
+              "title": "Quality run",
+              "distance_miles": 4.5,
+              "target_zone": "Zone 3",
+              "description": "Quality intervals."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-08-12",
+          "day": "Wed",
+          "sessions": [
+            {
+              "id": "w5-wed-run",
+              "kind": "run",
+              "type": "easy",
+              "workout_type": "run",
+              "title": "Easy run",
+              "distance_miles": 3,
+              "target_zone": "Zone 2",
+              "description": "Easy aerobic run."
+            },
+            {
+              "id": "w5-wed-lift",
+              "kind": "lift",
+              "type": "strength",
+              "workout_type": "strength",
+              "title": "Strength maintenance - Lower body",
+              "focus": "Lower body",
+              "distance_miles": 0,
+              "description": "Strength maintenance (Lower body)."
+            }
+          ],
+          "orderGuidance": "Run first; lift at least 6 hours later.",
+          "status": "planned"
+        },
+        {
+          "date": "2026-08-13",
+          "day": "Thu",
+          "sessions": [
+            {
+              "id": "w5-thu-run",
+              "kind": "run",
+              "type": "easy",
+              "workout_type": "run",
+              "title": "Easy run",
+              "distance_miles": 3,
+              "target_zone": "Zone 2",
+              "description": "Easy aerobic run."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-08-14",
+          "day": "Fri",
+          "sessions": [
+            {
+              "id": "w5-fri-lift",
+              "kind": "lift",
+              "type": "strength",
+              "workout_type": "strength",
+              "title": "Strength maintenance - Upper body",
+              "focus": "Upper body",
+              "distance_miles": 0,
+              "description": "Strength maintenance (Upper body)."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-08-15",
+          "day": "Sat",
+          "sessions": [
+            {
+              "id": "w5-sat-run",
+              "kind": "run",
+              "type": "long",
+              "workout_type": "run",
+              "title": "Long run",
+              "distance_miles": 7.5,
+              "target_zone": "Zone 2",
+              "description": "Long aerobic run."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-08-16",
+          "day": "Sun",
+          "sessions": [],
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "week": 6,
+      "phase": "build",
+      "startDate": "2026-08-17",
+      "days": [
+        {
+          "date": "2026-08-17",
+          "day": "Mon",
+          "sessions": [
+            {
+              "id": "w6-mon-lift",
+              "kind": "lift",
+              "type": "strength",
+              "workout_type": "strength",
+              "title": "Strength maintenance - Upper body",
+              "focus": "Upper body",
+              "distance_miles": 0,
+              "description": "Strength maintenance (Upper body)."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-08-18",
+          "day": "Tue",
+          "sessions": [
+            {
+              "id": "w6-tue-run",
+              "kind": "run",
+              "type": "run",
+              "workout_type": "run",
+              "title": "Quality run",
+              "distance_miles": 4.6,
+              "target_zone": "Zone 3",
+              "description": "Quality intervals."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-08-19",
+          "day": "Wed",
+          "sessions": [
+            {
+              "id": "w6-wed-run",
+              "kind": "run",
+              "type": "easy",
+              "workout_type": "run",
+              "title": "Easy run",
+              "distance_miles": 3,
+              "target_zone": "Zone 2",
+              "description": "Easy aerobic run."
+            },
+            {
+              "id": "w6-wed-lift",
+              "kind": "lift",
+              "type": "strength",
+              "workout_type": "strength",
+              "title": "Strength maintenance - Lower body",
+              "focus": "Lower body",
+              "distance_miles": 0,
+              "description": "Strength maintenance (Lower body)."
+            }
+          ],
+          "orderGuidance": "Run first; lift at least 6 hours later.",
+          "status": "planned"
+        },
+        {
+          "date": "2026-08-20",
+          "day": "Thu",
+          "sessions": [
+            {
+              "id": "w6-thu-run",
+              "kind": "run",
+              "type": "easy",
+              "workout_type": "run",
+              "title": "Easy run",
+              "distance_miles": 3,
+              "target_zone": "Zone 2",
+              "description": "Easy aerobic run."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-08-21",
+          "day": "Fri",
+          "sessions": [
+            {
+              "id": "w6-fri-lift",
+              "kind": "lift",
+              "type": "strength",
+              "workout_type": "strength",
+              "title": "Strength maintenance - Upper body",
+              "focus": "Upper body",
+              "distance_miles": 0,
+              "description": "Strength maintenance (Upper body)."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-08-22",
+          "day": "Sat",
+          "sessions": [
+            {
+              "id": "w6-sat-run",
+              "kind": "run",
+              "type": "long",
+              "workout_type": "run",
+              "title": "Long run",
+              "distance_miles": 7.8,
+              "target_zone": "Zone 2",
+              "description": "Long aerobic run."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-08-23",
+          "day": "Sun",
+          "sessions": [],
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "week": 7,
+      "phase": "down",
+      "startDate": "2026-08-24",
+      "days": [
+        {
+          "date": "2026-08-24",
+          "day": "Mon",
+          "sessions": [
+            {
+              "id": "w7-mon-lift",
+              "kind": "lift",
+              "type": "strength",
+              "workout_type": "strength",
+              "title": "Strength maintenance - Upper body",
+              "focus": "Upper body",
+              "distance_miles": 0,
+              "description": "Strength maintenance (Upper body)."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-08-25",
+          "day": "Tue",
+          "sessions": [
+            {
+              "id": "w7-tue-run",
+              "kind": "run",
+              "type": "run",
+              "workout_type": "run",
+              "title": "Quality run",
+              "distance_miles": 4.7,
+              "target_zone": "Zone 3",
+              "description": "Quality intervals."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-08-26",
+          "day": "Wed",
+          "sessions": [
+            {
+              "id": "w7-wed-run",
+              "kind": "run",
+              "type": "easy",
+              "workout_type": "run",
+              "title": "Easy run",
+              "distance_miles": 3,
+              "target_zone": "Zone 2",
+              "description": "Easy aerobic run."
+            },
+            {
+              "id": "w7-wed-lift",
+              "kind": "lift",
+              "type": "strength",
+              "workout_type": "strength",
+              "title": "Strength maintenance - Lower body",
+              "focus": "Lower body",
+              "distance_miles": 0,
+              "description": "Strength maintenance (Lower body)."
+            }
+          ],
+          "orderGuidance": "Run first; lift at least 6 hours later.",
+          "status": "planned"
+        },
+        {
+          "date": "2026-08-27",
+          "day": "Thu",
+          "sessions": [
+            {
+              "id": "w7-thu-run",
+              "kind": "run",
+              "type": "easy",
+              "workout_type": "run",
+              "title": "Easy run",
+              "distance_miles": 3,
+              "target_zone": "Zone 2",
+              "description": "Easy aerobic run."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-08-28",
+          "day": "Fri",
+          "sessions": [
+            {
+              "id": "w7-fri-lift",
+              "kind": "lift",
+              "type": "strength",
+              "workout_type": "strength",
+              "title": "Strength maintenance - Upper body",
+              "focus": "Upper body",
+              "distance_miles": 0,
+              "description": "Strength maintenance (Upper body)."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-08-29",
+          "day": "Sat",
+          "sessions": [
+            {
+              "id": "w7-sat-run",
+              "kind": "run",
+              "type": "long",
+              "workout_type": "run",
+              "title": "Long run",
+              "distance_miles": 8.1,
+              "target_zone": "Zone 2",
+              "description": "Long aerobic run."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-08-30",
+          "day": "Sun",
+          "sessions": [],
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "week": 8,
+      "phase": "build",
+      "startDate": "2026-08-31",
+      "days": [
+        {
+          "date": "2026-08-31",
+          "day": "Mon",
+          "sessions": [
+            {
+              "id": "w8-mon-lift",
+              "kind": "lift",
+              "type": "strength",
+              "workout_type": "strength",
+              "title": "Strength maintenance - Upper body",
+              "focus": "Upper body",
+              "distance_miles": 0,
+              "description": "Strength maintenance (Upper body)."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-09-01",
+          "day": "Tue",
+          "sessions": [
+            {
+              "id": "w8-tue-run",
+              "kind": "run",
+              "type": "run",
+              "workout_type": "run",
+              "title": "Quality run",
+              "distance_miles": 4.8,
+              "target_zone": "Zone 3",
+              "description": "Quality intervals."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-09-02",
+          "day": "Wed",
+          "sessions": [
+            {
+              "id": "w8-wed-run",
+              "kind": "run",
+              "type": "easy",
+              "workout_type": "run",
+              "title": "Easy run",
+              "distance_miles": 3,
+              "target_zone": "Zone 2",
+              "description": "Easy aerobic run."
+            },
+            {
+              "id": "w8-wed-lift",
+              "kind": "lift",
+              "type": "strength",
+              "workout_type": "strength",
+              "title": "Strength maintenance - Lower body",
+              "focus": "Lower body",
+              "distance_miles": 0,
+              "description": "Strength maintenance (Lower body)."
+            }
+          ],
+          "orderGuidance": "Run first; lift at least 6 hours later.",
+          "status": "planned"
+        },
+        {
+          "date": "2026-09-03",
+          "day": "Thu",
+          "sessions": [
+            {
+              "id": "w8-thu-run",
+              "kind": "run",
+              "type": "easy",
+              "workout_type": "run",
+              "title": "Easy run",
+              "distance_miles": 3,
+              "target_zone": "Zone 2",
+              "description": "Easy aerobic run."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-09-04",
+          "day": "Fri",
+          "sessions": [
+            {
+              "id": "w8-fri-lift",
+              "kind": "lift",
+              "type": "strength",
+              "workout_type": "strength",
+              "title": "Strength maintenance - Upper body",
+              "focus": "Upper body",
+              "distance_miles": 0,
+              "description": "Strength maintenance (Upper body)."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-09-05",
+          "day": "Sat",
+          "sessions": [
+            {
+              "id": "w8-sat-run",
+              "kind": "run",
+              "type": "long",
+              "workout_type": "run",
+              "title": "Long run",
+              "distance_miles": 8.4,
+              "target_zone": "Zone 2",
+              "description": "Long aerobic run."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-09-06",
+          "day": "Sun",
+          "sessions": [],
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "week": 9,
+      "phase": "build",
+      "startDate": "2026-09-07",
+      "days": [
+        {
+          "date": "2026-09-07",
+          "day": "Mon",
+          "sessions": [
+            {
+              "id": "w9-mon-lift",
+              "kind": "lift",
+              "type": "strength",
+              "workout_type": "strength",
+              "title": "Strength maintenance - Upper body",
+              "focus": "Upper body",
+              "distance_miles": 0,
+              "description": "Strength maintenance (Upper body)."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-09-08",
+          "day": "Tue",
+          "sessions": [
+            {
+              "id": "w9-tue-run",
+              "kind": "run",
+              "type": "run",
+              "workout_type": "run",
+              "title": "Quality run",
+              "distance_miles": 4.9,
+              "target_zone": "Zone 3",
+              "description": "Quality intervals."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-09-09",
+          "day": "Wed",
+          "sessions": [
+            {
+              "id": "w9-wed-run",
+              "kind": "run",
+              "type": "easy",
+              "workout_type": "run",
+              "title": "Easy run",
+              "distance_miles": 3,
+              "target_zone": "Zone 2",
+              "description": "Easy aerobic run."
+            },
+            {
+              "id": "w9-wed-lift",
+              "kind": "lift",
+              "type": "strength",
+              "workout_type": "strength",
+              "title": "Strength maintenance - Lower body",
+              "focus": "Lower body",
+              "distance_miles": 0,
+              "description": "Strength maintenance (Lower body)."
+            }
+          ],
+          "orderGuidance": "Run first; lift at least 6 hours later.",
+          "status": "planned"
+        },
+        {
+          "date": "2026-09-10",
+          "day": "Thu",
+          "sessions": [
+            {
+              "id": "w9-thu-run",
+              "kind": "run",
+              "type": "easy",
+              "workout_type": "run",
+              "title": "Easy run",
+              "distance_miles": 3,
+              "target_zone": "Zone 2",
+              "description": "Easy aerobic run."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-09-11",
+          "day": "Fri",
+          "sessions": [
+            {
+              "id": "w9-fri-lift",
+              "kind": "lift",
+              "type": "strength",
+              "workout_type": "strength",
+              "title": "Strength maintenance - Upper body",
+              "focus": "Upper body",
+              "distance_miles": 0,
+              "description": "Strength maintenance (Upper body)."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-09-12",
+          "day": "Sat",
+          "sessions": [
+            {
+              "id": "w9-sat-run",
+              "kind": "run",
+              "type": "long",
+              "workout_type": "run",
+              "title": "Long run",
+              "distance_miles": 8.7,
+              "target_zone": "Zone 2",
+              "description": "Long aerobic run."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-09-13",
+          "day": "Sun",
+          "sessions": [],
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "week": 10,
+      "phase": "build",
+      "startDate": "2026-09-14",
+      "days": [
+        {
+          "date": "2026-09-14",
+          "day": "Mon",
+          "sessions": [
+            {
+              "id": "w10-mon-lift",
+              "kind": "lift",
+              "type": "strength",
+              "workout_type": "strength",
+              "title": "Strength maintenance - Upper body",
+              "focus": "Upper body",
+              "distance_miles": 0,
+              "description": "Strength maintenance (Upper body)."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-09-15",
+          "day": "Tue",
+          "sessions": [
+            {
+              "id": "w10-tue-run",
+              "kind": "run",
+              "type": "run",
+              "workout_type": "run",
+              "title": "Quality run",
+              "distance_miles": 5,
+              "target_zone": "Zone 3",
+              "description": "Quality intervals."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-09-16",
+          "day": "Wed",
+          "sessions": [
+            {
+              "id": "w10-wed-run",
+              "kind": "run",
+              "type": "easy",
+              "workout_type": "run",
+              "title": "Easy run",
+              "distance_miles": 3,
+              "target_zone": "Zone 2",
+              "description": "Easy aerobic run."
+            },
+            {
+              "id": "w10-wed-lift",
+              "kind": "lift",
+              "type": "strength",
+              "workout_type": "strength",
+              "title": "Strength maintenance - Lower body",
+              "focus": "Lower body",
+              "distance_miles": 0,
+              "description": "Strength maintenance (Lower body)."
+            }
+          ],
+          "orderGuidance": "Run first; lift at least 6 hours later.",
+          "status": "planned"
+        },
+        {
+          "date": "2026-09-17",
+          "day": "Thu",
+          "sessions": [
+            {
+              "id": "w10-thu-run",
+              "kind": "run",
+              "type": "easy",
+              "workout_type": "run",
+              "title": "Easy run",
+              "distance_miles": 3,
+              "target_zone": "Zone 2",
+              "description": "Easy aerobic run."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-09-18",
+          "day": "Fri",
+          "sessions": [
+            {
+              "id": "w10-fri-lift",
+              "kind": "lift",
+              "type": "strength",
+              "workout_type": "strength",
+              "title": "Strength maintenance - Upper body",
+              "focus": "Upper body",
+              "distance_miles": 0,
+              "description": "Strength maintenance (Upper body)."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-09-19",
+          "day": "Sat",
+          "sessions": [
+            {
+              "id": "w10-sat-run",
+              "kind": "run",
+              "type": "long",
+              "workout_type": "run",
+              "title": "Long run",
+              "distance_miles": 9,
+              "target_zone": "Zone 2",
+              "description": "Long aerobic run."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-09-20",
+          "day": "Sun",
+          "sessions": [],
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "week": 11,
+      "phase": "peak",
+      "startDate": "2026-09-21",
+      "days": [
+        {
+          "date": "2026-09-21",
+          "day": "Mon",
+          "sessions": [
+            {
+              "id": "w11-mon-lift",
+              "kind": "lift",
+              "type": "strength",
+              "workout_type": "strength",
+              "title": "Strength maintenance - Upper body",
+              "focus": "Upper body",
+              "distance_miles": 0,
+              "description": "Strength maintenance (Upper body)."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-09-22",
+          "day": "Tue",
+          "sessions": [
+            {
+              "id": "w11-tue-run",
+              "kind": "run",
+              "type": "run",
+              "workout_type": "run",
+              "title": "Quality run",
+              "distance_miles": 5.1,
+              "target_zone": "Zone 3",
+              "description": "Quality intervals."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-09-23",
+          "day": "Wed",
+          "sessions": [
+            {
+              "id": "w11-wed-run",
+              "kind": "run",
+              "type": "easy",
+              "workout_type": "run",
+              "title": "Easy run",
+              "distance_miles": 3,
+              "target_zone": "Zone 2",
+              "description": "Easy aerobic run."
+            },
+            {
+              "id": "w11-wed-lift",
+              "kind": "lift",
+              "type": "strength",
+              "workout_type": "strength",
+              "title": "Strength maintenance - Lower body",
+              "focus": "Lower body",
+              "distance_miles": 0,
+              "description": "Strength maintenance (Lower body)."
+            }
+          ],
+          "orderGuidance": "Run first; lift at least 6 hours later.",
+          "status": "planned"
+        },
+        {
+          "date": "2026-09-24",
+          "day": "Thu",
+          "sessions": [
+            {
+              "id": "w11-thu-run",
+              "kind": "run",
+              "type": "easy",
+              "workout_type": "run",
+              "title": "Easy run",
+              "distance_miles": 3,
+              "target_zone": "Zone 2",
+              "description": "Easy aerobic run."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-09-25",
+          "day": "Fri",
+          "sessions": [
+            {
+              "id": "w11-fri-lift",
+              "kind": "lift",
+              "type": "strength",
+              "workout_type": "strength",
+              "title": "Strength maintenance - Upper body",
+              "focus": "Upper body",
+              "distance_miles": 0,
+              "description": "Strength maintenance (Upper body)."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-09-26",
+          "day": "Sat",
+          "sessions": [
+            {
+              "id": "w11-sat-run",
+              "kind": "run",
+              "type": "long",
+              "workout_type": "run",
+              "title": "Long run",
+              "distance_miles": 9.3,
+              "target_zone": "Zone 2",
+              "description": "Long aerobic run."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-09-27",
+          "day": "Sun",
+          "sessions": [],
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "week": 12,
+      "phase": "taper",
+      "startDate": "2026-09-28",
+      "days": [
+        {
+          "date": "2026-09-28",
+          "day": "Mon",
+          "sessions": [
+            {
+              "id": "w12-mon-lift",
+              "kind": "lift",
+              "type": "strength",
+              "workout_type": "strength",
+              "title": "Strength maintenance - Upper body",
+              "focus": "Upper body",
+              "distance_miles": 0,
+              "description": "Strength maintenance (Upper body)."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-09-29",
+          "day": "Tue",
+          "sessions": [
+            {
+              "id": "w12-tue-run",
+              "kind": "run",
+              "type": "run",
+              "workout_type": "run",
+              "title": "Quality run",
+              "distance_miles": 5.2,
+              "target_zone": "Zone 3",
+              "description": "Quality intervals."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-09-30",
+          "day": "Wed",
+          "sessions": [
+            {
+              "id": "w12-wed-run",
+              "kind": "run",
+              "type": "easy",
+              "workout_type": "run",
+              "title": "Easy run",
+              "distance_miles": 3,
+              "target_zone": "Zone 2",
+              "description": "Easy aerobic run."
+            },
+            {
+              "id": "w12-wed-lift",
+              "kind": "lift",
+              "type": "strength",
+              "workout_type": "strength",
+              "title": "Strength maintenance - Lower body",
+              "focus": "Lower body",
+              "distance_miles": 0,
+              "description": "Strength maintenance (Lower body)."
+            }
+          ],
+          "orderGuidance": "Run first; lift at least 6 hours later.",
+          "status": "planned"
+        },
+        {
+          "date": "2026-10-01",
+          "day": "Thu",
+          "sessions": [
+            {
+              "id": "w12-thu-run",
+              "kind": "run",
+              "type": "easy",
+              "workout_type": "run",
+              "title": "Easy run",
+              "distance_miles": 3,
+              "target_zone": "Zone 2",
+              "description": "Easy aerobic run."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-10-02",
+          "day": "Fri",
+          "sessions": [
+            {
+              "id": "w12-fri-lift",
+              "kind": "lift",
+              "type": "strength",
+              "workout_type": "strength",
+              "title": "Strength maintenance - Upper body",
+              "focus": "Upper body",
+              "distance_miles": 0,
+              "description": "Strength maintenance (Upper body)."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-10-03",
+          "day": "Sat",
+          "sessions": [
+            {
+              "id": "w12-sat-run",
+              "kind": "run",
+              "type": "long",
+              "workout_type": "run",
+              "title": "Long run",
+              "distance_miles": 9.6,
+              "target_zone": "Zone 2",
+              "description": "Long aerobic run."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-10-04",
+          "day": "Sun",
+          "sessions": [],
+          "status": "planned"
+        }
+      ]
+    },
+    {
+      "week": 13,
+      "phase": "race",
+      "startDate": "2026-10-05",
+      "days": [
+        {
+          "date": "2026-10-05",
+          "day": "Mon",
+          "sessions": [
+            {
+              "id": "w13-mon-lift",
+              "kind": "lift",
+              "type": "strength",
+              "workout_type": "strength",
+              "title": "Strength maintenance - Upper body",
+              "focus": "Upper body",
+              "distance_miles": 0,
+              "description": "Strength maintenance (Upper body)."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-10-06",
+          "day": "Tue",
+          "sessions": [
+            {
+              "id": "w13-tue-run",
+              "kind": "run",
+              "type": "run",
+              "workout_type": "run",
+              "title": "Quality run",
+              "distance_miles": 5.3,
+              "target_zone": "Zone 3",
+              "description": "Quality intervals."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-10-07",
+          "day": "Wed",
+          "sessions": [
+            {
+              "id": "w13-wed-run",
+              "kind": "run",
+              "type": "easy",
+              "workout_type": "run",
+              "title": "Easy run",
+              "distance_miles": 3,
+              "target_zone": "Zone 2",
+              "description": "Easy aerobic run."
+            },
+            {
+              "id": "w13-wed-lift",
+              "kind": "lift",
+              "type": "strength",
+              "workout_type": "strength",
+              "title": "Strength maintenance - Lower body",
+              "focus": "Lower body",
+              "distance_miles": 0,
+              "description": "Strength maintenance (Lower body)."
+            }
+          ],
+          "orderGuidance": "Run first; lift at least 6 hours later.",
+          "status": "planned"
+        },
+        {
+          "date": "2026-10-08",
+          "day": "Thu",
+          "sessions": [
+            {
+              "id": "w13-thu-run",
+              "kind": "run",
+              "type": "easy",
+              "workout_type": "run",
+              "title": "Easy run",
+              "distance_miles": 3,
+              "target_zone": "Zone 2",
+              "description": "Easy aerobic run."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-10-09",
+          "day": "Fri",
+          "sessions": [
+            {
+              "id": "w13-fri-lift",
+              "kind": "lift",
+              "type": "strength",
+              "workout_type": "strength",
+              "title": "Strength maintenance - Upper body",
+              "focus": "Upper body",
+              "distance_miles": 0,
+              "description": "Strength maintenance (Upper body)."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-10-10",
+          "day": "Sat",
+          "sessions": [
+            {
+              "id": "w13-sat-run",
+              "kind": "run",
+              "type": "long",
+              "workout_type": "run",
+              "title": "Long run",
+              "distance_miles": 9.9,
+              "target_zone": "Zone 2",
+              "description": "Long aerobic run."
+            }
+          ],
+          "status": "planned"
+        },
+        {
+          "date": "2026-10-11",
+          "day": "Sun",
+          "sessions": [],
+          "status": "planned"
+        }
+      ]
+    }
+  ],
+  "strengthPolicy": {
+    "enabled": true,
+    "goal": "maintain",
+    "sessionsPerWeek": 3,
+    "minimumSessionsPerWeek": 2,
+    "equipment": [
+      "barbell",
+      "dumbbell",
+      "rack",
+      "bench"
+    ],
+    "preferredDays": [
+      "Mon",
+      "Wed",
+      "Fri"
+    ]
+  }
+}
