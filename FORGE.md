@@ -5,13 +5,14 @@ This file holds Forge's product history, deployment notes, shipped phase log, kn
 ## Current Production
 
 - Production URL: `https://forge-production-773f.up.railway.app/`
-- Latest verified application release: commit `53ae701a`, deployment `22655735-758a-40d2-bde0-cc9359fb9b3b`
-- Latest checked bundle: `/assets/index-D-pIgSi3.js`
+- Latest verified application release: commit `cd14b1bf`, deployment `dc344e3d-21f5-495c-807c-7510a8323d42`
+- Latest checked bundle: `/assets/index-BchGiqME.js`
 - iOS version/build: `1.0.5` / `15`
 - Bundle identifier: `com.zordontech.forge`
 - Expo/EAS project: `@zordon/forge-athlete` (`6aeb5fbb-2697-4cf4-b9b3-afe60c63e9e1`)
 
 Current production checks:
+- H12 Apple Health activity classification, athlete-specific heart-rate zones, workout-metric integrity, and data-coverage UI verified live.
 - Demo diagnostics check returns `403`.
 - `/api/auth/me/export` returns account/training data and excludes `password_hash`.
 - `/api/auth/forgot-password` returns `200 email_sent` for `demo@forge.app` in under one second.
@@ -258,6 +259,7 @@ These changes are already implemented, built, Capacitor-synced, and deployed to 
 | 2026-07-13 | `141a52be-e978-4de7-a5d3-51e8fb520a3a` | Success | H9 exact recent-run adaptation, strength-floor protection, and build-aware Apple Watch diagnostics verified live |
 | 2026-07-13 | `14fd2c37-40de-451b-9ac4-f47599c8aa99` | Success | H10 recovery-prescription integrity and data-backed strength details verified live |
 | 2026-07-13 | `22655735-758a-40d2-bde0-cc9359fb9b3b` | Success | H11 expanded Apple Health training intelligence, freshness gates, plan provenance, and Body metrics verified live |
+| 2026-07-14 | `dc344e3d-21f5-495c-807c-7510a8323d42` | Success | H12 Apple Health activity classification, exact HR zones, workout metrics, and data-coverage handling verified live |
 
 ### Build/Test Status
 
