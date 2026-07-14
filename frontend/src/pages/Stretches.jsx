@@ -211,7 +211,7 @@ function StretchSession({ stretches, onDone, onBack, sex = 'male' }) {
       </div>
 
       {/* Fixed bottom buttons */}
-      <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, padding: '12px 16px 28px', background: 'var(--bg-base)', borderTop: '1px solid var(--border-subtle)' }}>
+      <div style={{ position: 'fixed', bottom: 'var(--app-bottom-nav-height, 59px)', left: 0, right: 0, zIndex: 25, padding: '12px 16px', background: 'var(--bg-base)', borderTop: '1px solid var(--border-subtle)' }}>
         <div style={{ maxWidth: 480, margin: '0 auto', display: 'flex', gap: 12 }}>
           <button
             onClick={handleExit}

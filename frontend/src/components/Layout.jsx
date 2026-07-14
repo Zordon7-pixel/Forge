@@ -43,7 +43,7 @@ export default function Layout({ children }) {
   }, [location.pathname])
 
   return (
-    <div className="min-h-screen" style={{ background: 'var(--bg-base)', color: 'var(--text-primary)', minHeight: '100dvh' }}>
+    <div className="min-h-screen" style={{ background: 'var(--bg-base)', color: 'var(--text-primary)', minHeight: '100dvh', '--app-bottom-nav-height': 'calc(59px + env(safe-area-inset-bottom, 0px))' }}>
       <div className={`mx-auto w-full max-w-[480px] px-3 sm:px-4 ${isImmersive ? 'pb-0' : 'pb-28'}`} style={{ maxWidth: 'min(480px, 100vw)', overflowX: 'hidden', boxSizing: 'border-box' }}>
         {!isImmersive && (
           <header
@@ -97,7 +97,7 @@ export default function Layout({ children }) {
       </div>
 
       {!isImmersive && (
-        <nav className="fixed bottom-0 left-1/2 z-30 grid w-full max-w-[480px] -translate-x-1/2 grid-cols-5 border-t px-1 py-1" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)', paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 0.25rem)' }}>
+        <nav className="fixed bottom-0 left-1/2 z-30 grid w-full max-w-[480px] -translate-x-1/2 grid-cols-5 border-t px-1 py-1" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)', paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 0.25rem)', height: 'var(--app-bottom-nav-height)' }}>
           {NAV_ITEMS(t).map(({ to, end, icon, iconComponent: IconComponent, label, color }) => (
             <NavLink key={to} to={to} end={end} className="flex flex-col items-center justify-center"
               onClick={to === '/' ? (e) => { e.preventDefault(); navigate('/') } : undefined}>
