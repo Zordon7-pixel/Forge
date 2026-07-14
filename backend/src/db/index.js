@@ -119,147 +119,47 @@ async function initDb() {
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
     `);
-    try {
-      await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS is_pro INTEGER DEFAULT 0');
-      console.log('is_pro');
-    } catch (err) {}
-    try {
-      await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS sex TEXT DEFAULT 'male'");
-      console.log('sex');
-    } catch (err) {}
-    try {
-      await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS weight_lbs REAL');
-      console.log('weight_lbs');
-    } catch (err) {}
-    try {
-      await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS height_ft INTEGER DEFAULT 5');
-      console.log('height_ft');
-    } catch (err) {}
-    try {
-      await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS height_in INTEGER DEFAULT 8');
-      console.log('height_in');
-    } catch (err) {}
-    try {
-      await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS schedule_type TEXT DEFAULT 'adaptive'");
-      console.log('schedule_type');
-    } catch (err) {}
-    try {
-      await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS lifestyle TEXT DEFAULT 'works_fulltime'");
-      console.log('lifestyle');
-    } catch (err) {}
-    try {
-      await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS preferred_workout_time TEXT DEFAULT 'evening'");
-      console.log('preferred_workout_time');
-    } catch (err) {}
-    try {
-      await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS preferred_workout_days TEXT DEFAULT '[]'");
-      console.log('preferred_workout_days');
-    } catch (err) {}
-    try {
-      await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS missed_workout_pref TEXT DEFAULT 'adjust_week'");
-      console.log('missed_workout_pref');
-    } catch (err) {}
-    try {
-      await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS weekly_workout_days INTEGER DEFAULT 4');
-      console.log('weekly_workout_days');
-    } catch (err) {}
-    try {
-      await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS injury_mode INTEGER DEFAULT 0');
-      console.log('injury_mode');
-    } catch (err) {}
-    try {
-      await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS injury_description TEXT DEFAULT ''");
-      console.log('injury_description');
-    } catch (err) {}
-    try {
-      await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS injury_date TEXT DEFAULT ''");
-      console.log('injury_date');
-    } catch (err) {}
-    try {
-      await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS injury_limitations TEXT DEFAULT ''");
-      console.log('injury_limitations');
-    } catch (err) {}
-    try {
-      await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS distance_unit TEXT DEFAULT 'miles'");
-      console.log('distance_unit');
-    } catch (err) {}
-    try {
-      await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS theme TEXT DEFAULT 'dark'");
-      console.log('theme');
-    } catch (err) {}
-    try {
-      await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS age INTEGER');
-      console.log('age');
-    } catch (err) {}
-    try {
-      await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS max_heart_rate INTEGER');
-      console.log('max_heart_rate');
-    } catch (err) {}
-    try {
-      await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT');
-      console.log('username');
-    } catch (err) {}
-    try {
-      await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS units TEXT DEFAULT 'imperial'");
-      console.log('units');
-    } catch (err) {}
-    try {
-      await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS step_goal INTEGER DEFAULT 10000');
-      console.log('step_goal');
-    } catch (err) {}
-    try {
-      await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS monthly_goal_miles REAL');
-      console.log('monthly_goal_miles');
-    } catch (err) {}
-    try {
-      await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS monthly_goal_mode TEXT DEFAULT 'auto'");
-      console.log('monthly_goal_mode');
-    } catch (err) {}
-    try {
-      await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_customer_id TEXT');
-      console.log('stripe_customer_id');
-    } catch (err) {}
-    try {
-      await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_subscription_id TEXT');
-      console.log('stripe_subscription_id');
-    } catch (err) {}
-    try {
-      await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_status TEXT DEFAULT 'free'");
-      console.log('subscription_status');
-    } catch (err) {}
-    try {
-      await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_ends_at TEXT');
-      console.log('subscription_ends_at');
-    } catch (err) {}
-    try {
-      await client.query("UPDATE users SET subscription_status = 'free' WHERE subscription_status IS NULL");
-    } catch (err) {}
-    try {
-      await client.query("UPDATE users SET subscription_status = 'pro' WHERE subscription_status IN ('active', 'trialing')");
-    } catch (err) {}
-    try {
-      await client.query("UPDATE users SET subscription_status = 'cancelled' WHERE subscription_status IN ('canceled', 'past_due', 'unpaid')");
-    } catch (err) {}
-    try {
-      await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS fitness_level TEXT DEFAULT 'beginner'");
-      console.log('fitness_level');
-    } catch (err) {}
-    try {
-      await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS current_streak INTEGER DEFAULT 0');
-      console.log('current_streak');
-    } catch (err) {}
-    try {
-      await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS longest_streak INTEGER DEFAULT 0');
-      console.log('longest_streak');
-    } catch (err) {}
-    try {
-      await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS streak_milestones TEXT DEFAULT '[]'");
-      console.log('streak_milestones');
-    } catch (err) {}
-    try {
-      await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS streak_updated_at TEXT');
-      console.log('streak_updated_at');
-    } catch (err) {}
+    const userColumnMigrations = [
+      'ALTER TABLE users ADD COLUMN IF NOT EXISTS is_pro INTEGER DEFAULT 0',
+      "ALTER TABLE users ADD COLUMN IF NOT EXISTS sex TEXT DEFAULT 'male'",
+      'ALTER TABLE users ADD COLUMN IF NOT EXISTS weight_lbs REAL',
+      'ALTER TABLE users ADD COLUMN IF NOT EXISTS height_ft INTEGER DEFAULT 5',
+      'ALTER TABLE users ADD COLUMN IF NOT EXISTS height_in INTEGER DEFAULT 8',
+      "ALTER TABLE users ADD COLUMN IF NOT EXISTS schedule_type TEXT DEFAULT 'adaptive'",
+      "ALTER TABLE users ADD COLUMN IF NOT EXISTS lifestyle TEXT DEFAULT 'works_fulltime'",
+      "ALTER TABLE users ADD COLUMN IF NOT EXISTS preferred_workout_time TEXT DEFAULT 'evening'",
+      "ALTER TABLE users ADD COLUMN IF NOT EXISTS preferred_workout_days TEXT DEFAULT '[]'",
+      "ALTER TABLE users ADD COLUMN IF NOT EXISTS missed_workout_pref TEXT DEFAULT 'adjust_week'",
+      'ALTER TABLE users ADD COLUMN IF NOT EXISTS weekly_workout_days INTEGER DEFAULT 4',
+      'ALTER TABLE users ADD COLUMN IF NOT EXISTS injury_mode INTEGER DEFAULT 0',
+      "ALTER TABLE users ADD COLUMN IF NOT EXISTS injury_description TEXT DEFAULT ''",
+      "ALTER TABLE users ADD COLUMN IF NOT EXISTS injury_date TEXT DEFAULT ''",
+      "ALTER TABLE users ADD COLUMN IF NOT EXISTS injury_limitations TEXT DEFAULT ''",
+      "ALTER TABLE users ADD COLUMN IF NOT EXISTS distance_unit TEXT DEFAULT 'miles'",
+      "ALTER TABLE users ADD COLUMN IF NOT EXISTS theme TEXT DEFAULT 'dark'",
+      'ALTER TABLE users ADD COLUMN IF NOT EXISTS age INTEGER',
+      'ALTER TABLE users ADD COLUMN IF NOT EXISTS max_heart_rate INTEGER',
+      'ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT',
+      "ALTER TABLE users ADD COLUMN IF NOT EXISTS units TEXT DEFAULT 'imperial'",
+      'ALTER TABLE users ADD COLUMN IF NOT EXISTS step_goal INTEGER DEFAULT 10000',
+      'ALTER TABLE users ADD COLUMN IF NOT EXISTS monthly_goal_miles REAL',
+      "ALTER TABLE users ADD COLUMN IF NOT EXISTS monthly_goal_mode TEXT DEFAULT 'auto'",
+      'ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_customer_id TEXT',
+      'ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_subscription_id TEXT',
+      "ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_status TEXT DEFAULT 'free'",
+      'ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_ends_at TEXT',
+      "ALTER TABLE users ADD COLUMN IF NOT EXISTS fitness_level TEXT DEFAULT 'beginner'",
+      'ALTER TABLE users ADD COLUMN IF NOT EXISTS current_streak INTEGER DEFAULT 0',
+      'ALTER TABLE users ADD COLUMN IF NOT EXISTS longest_streak INTEGER DEFAULT 0',
+      "ALTER TABLE users ADD COLUMN IF NOT EXISTS streak_milestones TEXT DEFAULT '[]'",
+      'ALTER TABLE users ADD COLUMN IF NOT EXISTS streak_updated_at TEXT',
+    ];
+    for (const migration of userColumnMigrations) {
+      await client.query(migration);
+    }
+    await client.query("UPDATE users SET subscription_status = 'free' WHERE subscription_status IS NULL");
+    await client.query("UPDATE users SET subscription_status = 'pro' WHERE subscription_status IN ('active', 'trialing')");
+    await client.query("UPDATE users SET subscription_status = 'cancelled' WHERE subscription_status IN ('canceled', 'past_due', 'unpaid')");
     console.log('✅ Schema migration: users table columns ensured');
 
     await client.query(`

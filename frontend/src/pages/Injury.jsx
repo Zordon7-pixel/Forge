@@ -127,7 +127,10 @@ export default function Injury() {
       setMilestones(milestoneRes.data?.milestones || [])
       setReadiness(readinessRes.data || { score: 0, days_since_injury: 0, avg_pain_3d: 0, avg_pain_7d: 0 })
       setSleepNights(Array.isArray(sleepRes.data?.sleep) ? sleepRes.data.sleep : [])
-    } catch (_) {}
+    } catch (error) {
+      console.error('[injury] recovery data load failed:', error?.message || error)
+      setMessage('Unable to load recovery data')
+    }
     setLoading(false)
   }
 
@@ -264,7 +267,10 @@ export default function Injury() {
     try {
       await api.put(`/injury/${id}/clear`)
       await loadData()
-    } catch (_) {}
+    } catch (error) {
+      console.error('[injury] clear failed:', error?.message || error)
+      setMessage('Failed to clear injury')
+    }
   }
 
   const addExercise = async (payload) => {
@@ -305,7 +311,10 @@ export default function Injury() {
         setTimeout(() => setCelebrateExerciseId(''), 450)
       }
       await loadData()
-    } catch (_) {}
+    } catch (error) {
+      console.error('[injury] exercise update failed:', error?.message || error)
+      setExerciseMessage('Failed to update exercise')
+    }
   }
 
   const markMilestone = async (type) => {
@@ -316,7 +325,10 @@ export default function Injury() {
         notes: '',
       })
       await loadData()
-    } catch (_) {}
+    } catch (error) {
+      console.error('[injury] milestone save failed:', error?.message || error)
+      setMessage('Failed to save milestone')
+    }
   }
 
   const cardStyle = {

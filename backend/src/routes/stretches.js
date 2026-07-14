@@ -103,7 +103,19 @@ router.get('/recommended', auth, async (req, res) => {
 
     if (session) {
       let muscles = [];
-      try { muscles = JSON.parse(session.muscle_groups || '[]'); } catch (_) {}
+      try {
+        const parsedMuscles = JSON.parse(session.muscle_groups || '[]');
+        if (Array.isArray(parsedMuscles)) {
+          muscles = parsedMuscles.filter((muscle) => typeof muscle === 'string' && muscle.trim());
+          if (muscles.length !== parsedMuscles.length) {
+            console.warn('[stretches/recommended] ignored non-string muscle_groups values');
+          }
+        } else {
+          console.warn('[stretches/recommended] muscle_groups was not an array');
+        }
+      } catch (err) {
+        console.error('[stretches/recommended] invalid muscle_groups JSON:', err.message);
+      }
       for (const muscle of muscles) {
         const cat = MUSCLE_MAP[muscle.toLowerCase()];
         if (cat) {

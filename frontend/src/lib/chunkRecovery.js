@@ -40,7 +40,9 @@ export function installChunkRecovery() {
   window.setTimeout(() => {
     try {
       window.sessionStorage.removeItem(RECOVERY_KEY)
-    } catch {}
+    } catch (error) {
+      console.warn('[chunkRecovery] session flag cleanup failed:', error?.message || error)
+    }
   }, RECOVERY_CLEAR_MS)
 
   window.addEventListener('vite:preloadError', (event) => {

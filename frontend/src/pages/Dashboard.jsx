@@ -641,7 +641,9 @@ export default function Dashboard() {
               onClick={async () => {
                 try {
                   await api.delete('/injury/active')
-                } catch (_) {}
+                } catch (error) {
+                  console.error('[dashboard/injury] dismiss failed:', error?.message || error)
+                }
                 localStorage.setItem(`forge-injury-dismissed-${activeInjury.id}`, '1')
                 setInjuryBannerDismissed(true)
                 setActiveInjury(null)

@@ -31,7 +31,11 @@ export default function WorkoutCard({ workoutType = 'Workout', date, stats = {},
       try {
         await navigator.share({ title: `Forged Hybrid ${workoutType}`, text: cardText })
         return
-      } catch {}
+      } catch (error) {
+        if (error?.name !== 'AbortError') {
+          console.error('[workout-card] native share failed:', error?.message || error)
+        }
+      }
     }
     await copySummary()
   }

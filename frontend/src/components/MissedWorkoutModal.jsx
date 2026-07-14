@@ -21,7 +21,12 @@ export default function MissedWorkoutModal({ onClose }) {
     try {
       const res = await api.post('/runs/missed', { reason, scheduled_date: new Date().toISOString().slice(0,10) })
       setResponse(res.data.message)
-    } catch {} finally { setLoading(false) }
+    } catch (error) {
+      console.error('[missed-workout] adjustment failed:', error?.message || error)
+      setResponse('Unable to adjust your plan right now. Close this and try again.')
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (

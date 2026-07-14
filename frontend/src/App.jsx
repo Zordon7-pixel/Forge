@@ -18,7 +18,9 @@ function lazyWithRetry(factory) {
       const mod = await factory()
       try {
         sessionStorage.removeItem(KEY)
-      } catch {}
+      } catch (error) {
+        console.warn('[lazyWithRetry] recovery flag cleanup failed:', error?.message || error)
+      }
       return mod
     } catch (err) {
       // stale/failed chunk after a deploy -> force one full reload to get fresh index.html + chunks
@@ -28,7 +30,9 @@ function lazyWithRetry(factory) {
         if (shouldReload) {
           sessionStorage.setItem(KEY, '1')
         }
-      } catch {}
+      } catch (storageError) {
+        console.warn('[lazyWithRetry] recovery flag lookup failed:', storageError?.message || storageError)
+      }
 
       if (shouldReload) {
         console.warn('[lazyWithRetry] chunk load failed, reloading:', err?.message)
