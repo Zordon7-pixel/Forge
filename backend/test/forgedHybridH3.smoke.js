@@ -87,14 +87,14 @@ assert(allSessions(noviceLow).every((session) => session.kind === 'run'), 'run-o
 assert(noviceLow.strengthPolicy.enabled === false, 'run-only strength policy disabled');
 assert(noviceLow.weeks.every((week) => week.days.length === 7 && week.days.some((day) => day.sessions.length === 0)), 'every week has seven days and a full rest day');
 
-section('recovery and adherence affect initial load');
+section('acute recovery does not rewrite the full block');
 const noviceHigh = engine.buildConcurrentPlan(context('run_only', {
   profile: { weekly_miles_current: 7, run_days_per_week: 3, lift_days_per_week: 0 },
   history: { weeklyMileageBaseline: 7, adherenceRate: 0.95, missedWorkouts: 0 },
   recovery: { state: 'high' },
   target: { trainingDays: ['Tue', 'Thu', 'Sat'], runDaysPerWeek: 3 },
 }));
-assert(noviceLow.weeks[0].totalMiles < noviceHigh.weeks[0].totalMiles, 'low recovery/missed workouts reduce opening mileage');
+assert(noviceLow.weeks[0].totalMiles === noviceHigh.weeks[0].totalMiles, 'one recovery snapshot and inferred missed sessions do not reduce the full block');
 assert(noviceLow.inputSummary.adherenceBand === 'low' && noviceHigh.inputSummary.recoveryState === 'high', 'bounded input summary records adherence/recovery bands');
 
 section('hybrid maintain and build prescriptions');

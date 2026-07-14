@@ -7,6 +7,7 @@ import WatchWorkoutSendButton from '../WatchWorkoutSendButton'
 import AiGuidanceNote from '../AiGuidanceNote'
 import WatchWorkoutService from '../../services/WatchWorkoutService'
 import { normalizeLiftExercisePrescription, sessionState } from '../../lib/planCalendar'
+import { trainingEvidenceKindLabel } from '../../lib/trainingEvidence'
 import './forgedCalendar.css'
 
 const TEXT_SCALES = [0.9, 1, 1.15, 1.3]
@@ -61,11 +62,15 @@ function runFacts(session) {
   const raw = session.raw || {}
   const miles = Number(session.distanceMiles || p.distanceMiles || p.distance_miles || raw.distance_miles || 0)
   const durationMinutes = firstStr(p.duration_min, raw.duration_min)
+  const distanceIsEstimate = Boolean(session.distanceIsEstimate || p.distance_is_estimate || raw.distance_is_estimate)
+  const prescriptionBasis = firstStr(session.prescriptionBasis, p.prescription_basis, raw.prescription_basis)
   const steps = structuredList(p.steps || p.blocks || p.structure || raw.steps || raw.structure)
   return {
     purpose: firstStr(p.purpose, p.focus, raw.purpose),
-    distance: miles > 0 ? `${miles.toFixed(1)} mi` : '',
+    distance: miles > 0 && prescriptionBasis !== 'time' ? `${distanceIsEstimate ? '~' : ''}${miles.toFixed(1)} mi${distanceIsEstimate ? ' estimated' : ''}` : '',
     time: firstStr(p.duration, p.time, raw.duration, durationMinutes ? `${durationMinutes} min` : ''),
+    durationMinutes: Number(durationMinutes || session.durationMinutes || 0) || 0,
+    prescriptionBasis,
     pace: firstStr(p.pace, p.targetPace, p.pace_target, raw.pace, raw.pace_target),
     zone: firstStr(p.zone, p.hrZone, p.heartRateZone, p.target_zone, raw.zone, raw.target_zone),
     intensity: firstStr(p.intensity, raw.intensity),
@@ -73,6 +78,7 @@ function runFacts(session) {
     steps,
     cooldown: list(p.cooldown || raw.cooldown),
     recoveries: firstStr(p.recoveries, p.recovery),
+    evidenceRefs: list(p.evidence_refs || raw.evidence_refs),
   }
 }
 
@@ -195,6 +201,9 @@ export default function ForgedDayView({
       day: dateLabel,
       typeLabel: runSession.title,
       distanceLabel: f.distance,
+      durationMinutes: f.durationMinutes,
+      durationLabel: f.time,
+      prescriptionBasis: f.prescriptionBasis,
       pace: f.pace || undefined,
       zone: f.zone || undefined,
       intensity: f.intensity || undefined,
@@ -203,17 +212,33 @@ export default function ForgedDayView({
       description: firstStr(runSession.prescription?.description, runSession.raw?.description),
     })
     const zoneLabel = /^\d+$/.test(f.zone) ? `Zone ${f.zone}` : f.zone
+    const evidenceById = new Map((planContext.trainingEvidence || []).map((source) => [source.id, source]))
+    const evidenceSources = f.evidenceRefs.map((id) => evidenceById.get(id)).filter(Boolean)
     return (
       <PaperSection title={firstStr(runSession.title, 'Run')} tone="run" px={px}
         icon={<span className="forged-stamp forged-stamp--run" data-state={sessionState(runSession, completedSet)}><Footprints size={16} /></span>}>
         {f.purpose && <p className="forged-hand" style={{ fontSize: px(15), margin: '0 0 8px' }}>{f.purpose}</p>}
         <div className="forged-paper-metric" style={{ display: 'flex', flexWrap: 'wrap', gap: 14 }}>
-          {f.distance && <span style={{ fontSize: px(13) }}><Route size={13} style={{ verticalAlign: -1 }} /> {f.distance}</span>}
           {f.time && <span style={{ fontSize: px(13) }}><Timer size={13} style={{ verticalAlign: -1 }} /> {f.time}</span>}
+          {f.distance && <span style={{ fontSize: px(13) }}><Route size={13} style={{ verticalAlign: -1 }} /> {f.distance}</span>}
           {f.pace && <span style={{ fontSize: px(13) }}><Gauge size={13} style={{ verticalAlign: -1 }} /> {f.pace}</span>}
           {f.zone && <span style={{ fontSize: px(13) }}>{zoneLabel}</span>}
           {f.intensity && <span className="forged-sec-red" style={{ fontSize: px(13) }}><Flame size={13} style={{ verticalAlign: -1 }} /> {f.intensity}</span>}
         </div>
+        {f.prescriptionBasis === 'time' && <p style={{ fontSize: px(11), margin: '6px 0 0', color: 'var(--ink-soft, #5A554B)' }}>Run by time and effort; distance is not the target.</p>}
+        {evidenceSources.length > 0 && (
+          <details style={{ marginTop: 10, padding: '8px 10px', borderLeft: '3px solid #C2410C', background: 'rgba(194,65,12,0.05)' }}>
+            <summary className="forged-hand" style={{ fontSize: px(13), fontWeight: 700, cursor: 'pointer' }}>Training basis</summary>
+            <ul style={{ margin: '5px 0 0', paddingLeft: 17, fontSize: px(11), lineHeight: 1.45 }}>
+              {evidenceSources.map((source) => (
+                <li key={source.id}>
+                  <strong>{trainingEvidenceKindLabel(source.kind)}: </strong>
+                  <a href={source.url} target="_blank" rel="noreferrer" style={{ color: '#9A3412', fontWeight: 700 }}>{source.publisher}</a>: {source.principle}
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
         {f.warmup.length > 0 && (
           <div style={{ marginTop: 10 }}>
             <p className="forged-hand forged-sec-green" style={{ fontSize: px(14), margin: 0 }}>Warm-up</p>

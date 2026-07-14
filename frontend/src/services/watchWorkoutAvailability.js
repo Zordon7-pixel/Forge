@@ -5,6 +5,20 @@ export function normalizeBuildNumber(value) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null
 }
 
+export function isInternalWatchDiagnostic(reason = '') {
+  return /build|plugin|installed app|did not load/i.test(String(reason || ''))
+}
+
+export function athleteWatchAvailabilityMessage(reason = '') {
+  if (/only works in the Forged Hybrid iPhone app/i.test(reason)) {
+    return 'Open Forged Hybrid on iPhone to send this workout. Manual entry still works.'
+  }
+  if (isInternalWatchDiagnostic(reason)) {
+    return 'Apple Watch delivery is coming in the next app update. Manual entry still works.'
+  }
+  return 'Apple Watch delivery is unavailable right now. Manual entry still works.'
+}
+
 export function watchWorkoutUnavailableReason(error, appInfo = null) {
   const message = String(error?.message || error || '').trim()
   const pluginMissing = /not implemented|unimplemented|plugin|no web implementation/i.test(message)

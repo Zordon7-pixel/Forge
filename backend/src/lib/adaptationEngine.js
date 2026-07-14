@@ -308,7 +308,7 @@ function isDemandingRun(session) {
 }
 
 function buildRecentRunEvidence(recentRunLoad = {}) {
-  const latest = recentRunLoad?.latestRun;
+  const latest = recentRunLoad?.protectiveRun || recentRunLoad?.latestRun;
   const protection = recentRunLoad?.protection;
   if (!latest || !protection?.active) return { evidence: [], driver: false, latest: null, protection: null };
   const details = [

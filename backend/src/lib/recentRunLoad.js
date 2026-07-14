@@ -28,6 +28,12 @@ function daysBetween(laterISO, earlierISO) {
   return Math.round((later.getTime() - earlier.getTime()) / 86400000);
 }
 
+function mondayFor(iso) {
+  const date = parseISODate(iso);
+  if (!date) return null;
+  return addDays(iso, -((date.getUTCDay() + 6) % 7));
+}
+
 function finiteNumber(value, min, max) {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= min && parsed <= max ? parsed : null;
@@ -87,34 +93,73 @@ function summarizeRecentRunLoad(rows = [], options = {}) {
     .filter((run) => !sevenDayStart || (run.date >= sevenDayStart && run.date <= todayISO))
     .reduce((sum, run) => sum + run.distanceMiles, 0), 1);
 
-  if (!latestRun || !todayISO) {
+  const longRunThresholdMiles = round(Math.min(8, Math.max(5, weeklyBaseline * 0.35 || 5)), 1);
+  const annotate = (run) => {
+    const daysSince = daysBetween(todayISO, run.date);
+    const isLong = run.distanceMiles >= longRunThresholdMiles || run.durationSeconds >= 75 * 60;
+    const isHard = Number(run.perceivedEffort || 0) >= 7;
+    return {
+      ...run,
+      distanceMiles: round(run.distanceMiles, 3),
+      daysSince,
+      isLong,
+      isHard,
+      distanceShareOfWeeklyBaseline: weeklyBaseline > 0 ? round(run.distanceMiles / weeklyBaseline, 2) : null,
+    };
+  };
+  const annotatedLatest = latestRun ? annotate(latestRun) : null;
+  const currentWeekStart = todayISO ? mondayFor(todayISO) : null;
+  const currentWeekRuns = currentWeekStart
+    ? meaningful.filter((run) => run.date >= currentWeekStart && run.date <= todayISO).map(annotate)
+    : [];
+  const currentWeekLongest = currentWeekRuns
+    .slice()
+    .sort((left, right) => right.distanceMiles - left.distanceMiles || right.durationSeconds - left.durationSeconds)[0] || null;
+  const currentWeek = {
+    startDate: currentWeekStart,
+    miles: round(normalized
+      .filter((run) => currentWeekStart && run.date >= currentWeekStart && run.date <= todayISO)
+      .reduce((sum, run) => sum + run.distanceMiles, 0), 1),
+    runCount: currentWeekRuns.length,
+    runDates: [...new Set(currentWeekRuns.map((run) => run.date))],
+    longRunCompleted: Boolean(currentWeekLongest?.isLong),
+    longestRun: currentWeekLongest,
+  };
+
+  if (!annotatedLatest || !todayISO) {
     return {
       available: false,
       weeklyBaseline: round(weeklyBaseline, 1),
       sevenDayMiles,
       latestRun: null,
+      protectiveRun: null,
+      currentWeek,
       protection: { active: false },
     };
   }
 
-  const daysSince = daysBetween(todayISO, latestRun.date);
-  const longRunThresholdMiles = round(Math.min(8, Math.max(5, weeklyBaseline * 0.35 || 5)), 1);
-  const isLong = latestRun.distanceMiles >= longRunThresholdMiles || latestRun.durationSeconds >= 75 * 60;
-  const isHard = Number(latestRun.perceivedEffort || 0) >= 7;
+  const protectiveRun = meaningful
+    .map(annotate)
+    .filter((run) => run.daysSince !== null && run.daysSince >= 0 && run.daysSince <= 2 && (run.isLong || run.isHard))
+    .sort((left, right) => (
+      Number(right.isLong && right.isHard) - Number(left.isLong && left.isHard)
+      || Math.max(right.distanceMiles / longRunThresholdMiles, right.durationSeconds / 4500, Number(right.perceivedEffort || 0) / 7)
+        - Math.max(left.distanceMiles / longRunThresholdMiles, left.durationSeconds / 4500, Number(left.perceivedEffort || 0) / 7)
+      || right.date.localeCompare(left.date)
+    ))[0] || null;
   const recoveryCaution = ['low', 'recovery', 'caution'].includes(recoveryState);
-  const withinAcuteWindow = daysSince !== null && daysSince >= 0 && daysSince <= 2;
-  const protectsFromLoad = withinAcuteWindow && (isLong || isHard);
-  const hardProtectionDays = protectsFromLoad ? ((isLong && isHard) || recoveryCaution ? 2 : 1) : 0;
+  const protectsFromLoad = Boolean(protectiveRun);
+  const hardProtectionDays = protectsFromLoad ? ((protectiveRun.isLong && protectiveRun.isHard) || recoveryCaution ? 2 : 1) : 0;
   const lowerProtectionDays = protectsFromLoad ? (recoveryCaution ? 2 : 1) : 0;
-  const noAdditionalRunOnDate = daysSince === 0 ? latestRun.date : null;
+  const noAdditionalRunOnDate = annotatedLatest.daysSince === 0 ? annotatedLatest.date : null;
   const protectionActive = Boolean(noAdditionalRunOnDate || protectsFromLoad);
-  const distanceShare = weeklyBaseline > 0 ? round(latestRun.distanceMiles / weeklyBaseline, 2) : null;
-  const when = daysSince === 0 ? 'today' : daysSince === 1 ? 'yesterday' : `${daysSince} days ago`;
+  const reasonRun = protectiveRun || annotatedLatest;
+  const when = reasonRun.daysSince === 0 ? 'today' : reasonRun.daysSince === 1 ? 'yesterday' : `${reasonRun.daysSince} days ago`;
   const details = [
-    `${round(latestRun.distanceMiles, 1)} mi`,
-    latestRun.paceLabel,
-    latestRun.durationMinutes ? `${Math.round(latestRun.durationMinutes)} min` : null,
-    latestRun.avgHeartRate ? `avg HR ${Math.round(latestRun.avgHeartRate)}` : null,
+    `${round(reasonRun.distanceMiles, 1)} mi`,
+    reasonRun.paceLabel,
+    reasonRun.durationMinutes ? `${Math.round(reasonRun.durationMinutes)} min` : null,
+    reasonRun.avgHeartRate ? `avg HR ${Math.round(reasonRun.avgHeartRate)}` : null,
   ].filter(Boolean).join(', ');
 
   return {
@@ -122,20 +167,16 @@ function summarizeRecentRunLoad(rows = [], options = {}) {
     weeklyBaseline: round(weeklyBaseline, 1),
     sevenDayMiles,
     loadRatio: weeklyBaseline > 0 ? round(sevenDayMiles / weeklyBaseline, 2) : null,
-    latestRun: {
-      ...latestRun,
-      distanceMiles: round(latestRun.distanceMiles, 3),
-      daysSince,
-      isLong,
-      isHard,
-      distanceShareOfWeeklyBaseline: distanceShare,
-    },
+    latestRun: annotatedLatest,
+    protectiveRun,
+    currentWeek,
     protection: {
       active: protectionActive,
+      anchorDate: protectiveRun?.date || annotatedLatest.date,
       noAdditionalRunOnDate,
-      hardRunsThrough: protectsFromLoad ? addDays(latestRun.date, hardProtectionDays) : noAdditionalRunOnDate,
-      lowerBodyThrough: protectsFromLoad ? addDays(latestRun.date, lowerProtectionDays) : null,
-      upperBodyOptionalThrough: protectsFromLoad ? addDays(latestRun.date, 1) : null,
+      hardRunsThrough: protectsFromLoad ? addDays(protectiveRun.date, hardProtectionDays) : noAdditionalRunOnDate,
+      lowerBodyThrough: protectsFromLoad ? addDays(protectiveRun.date, lowerProtectionDays) : null,
+      upperBodyOptionalThrough: protectsFromLoad ? addDays(protectiveRun.date, 1) : null,
       reason: protectionActive
         ? `${details} was logged ${when}. Protect the next 24-72 hours from duplicate or conflicting load.`
         : null,

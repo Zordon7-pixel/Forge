@@ -8,6 +8,7 @@ import api from '../lib/api'
 import { parseGarminCSV, parseStravaCSV, requestAppleHealth } from '../lib/healthImport'
 import HealthService from '../services/HealthService'
 import WatchDeliveryService from '../services/WatchDeliveryService'
+import { athleteWatchAvailabilityMessage, isInternalWatchDiagnostic } from '../services/watchWorkoutAvailability'
 import TestFlightDebugPanel from '../components/TestFlightDebugPanel'
 import appConfig from '../../app.json'
 
@@ -109,7 +110,12 @@ export default function Settings() {
     }).catch(() => {})
     loadDeviceStatuses()
     WatchDeliveryService.getAvailability()
-      .then((result) => setWatchDelivery({ checked: true, ...result }))
+      .then((result) => {
+        if (!result?.canAutoSend && isInternalWatchDiagnostic(result?.reason)) {
+          console.error('[settings/watch-delivery] unavailable:', result.reason)
+        }
+        setWatchDelivery({ checked: true, ...result })
+      })
       .catch((err) => setWatchDelivery({
         checked: true,
         canAutoSend: false,
@@ -500,7 +506,7 @@ export default function Settings() {
               {(watchDelivery.providers?.length ? watchDelivery.providers : WatchDeliveryService.getProviders()).map(watchProviderPill)}
             </div>
             {watchDelivery.checked && watchDelivery.reason && (
-              <p style={{ margin: '10px 0 0', fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.45 }}>{watchDelivery.reason}</p>
+              <p style={{ margin: '10px 0 0', fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.45 }}>{athleteWatchAvailabilityMessage(watchDelivery.reason)}</p>
             )}
           </div>
 

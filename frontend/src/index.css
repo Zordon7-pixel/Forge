@@ -90,6 +90,32 @@ body {
   pointer-events: none;
 }
 
+.forged-branded-screen {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+}
+
+.forged-branded-screen::after {
+  content: '';
+  position: fixed;
+  left: 50%;
+  top: 72%;
+  width: min(42vw, 168px);
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+  background: url('/icon-192.png') center / contain no-repeat;
+  opacity: 0.13;
+  filter: saturate(0.75);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.forged-branded-screen > * {
+  position: relative;
+  z-index: 1;
+}
+
 .phone-safe-grid {
   display: grid;
   gap: 10px;

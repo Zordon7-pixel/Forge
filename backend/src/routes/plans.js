@@ -1,11 +1,10 @@
 const router = require('express').Router();
 const { dbGet, dbAll, dbRun, withTransaction } = require('../db');
 const auth = require('../middleware/auth');
-const { checkAiLimit } = require('../middleware/aiLimit');
 const { requirePremium } = require('../middleware/premiumGate');
 const { v4: uuidv4 } = require('uuid');
 const crypto = require('crypto');
-const { generateTrainingPlan, generateRaceAdjustment } = require('../services/ai');
+const { generateRaceAdjustment } = require('../services/ai');
 const { buildHealthSignals } = require('../lib/healthSignals');
 const { applyOverride } = require('../lib/checkinOverride');
 const planSchema = require('../lib/planSchema');
@@ -549,7 +548,6 @@ async function buildConcurrentContext(userId, profile, target) {
   const weeksObserved = activityDates.length
     ? clamp(Math.ceil((Date.now() - new Date(`${activityDates[0]}T12:00:00`).getTime()) / (7 * 86400000)) || 1, 1, 8)
     : 0;
-  const recentMiles = (runs || []).reduce((sum, run) => sum + Math.max(0, Number(run.distance_miles || 0)), 0);
   const expectedPerWeek = clampInt(profile.run_days_per_week, 1, 6, 3) + clampInt(profile.lift_days_per_week, 0, 4, 0);
   const expectedSessions = weeksObserved * expectedPerWeek;
   const completedSessions = (runs || []).length + (lifts || []).length;
@@ -581,7 +579,11 @@ async function buildConcurrentContext(userId, profile, target) {
   if (severeCheckin) recoveryState = 'low';
   else if (cautionCheckin && !['low', 'recovery'].includes(recoveryState)) recoveryState = 'caution';
   if (activeInjury || profile.comeback_mode || String(profile.injury_notes || '').trim()) recoveryState = 'low';
-  const weeklyMileageBaseline = weeksObserved ? recentMiles / weeksObserved : Number(profile.weekly_miles_current || 0);
+  const mileageBaseline = concurrentPlan.estimateWeeklyMileageBaseline(runs, {
+    planningDateISO,
+    profileWeeklyMiles: profile.weekly_miles_current,
+  });
+  const weeklyMileageBaseline = mileageBaseline.weeklyMiles;
   const acuteRunLoad = summarizeRecentRunLoad(runs, {
     todayISO: planningDateISO,
     weeklyBaseline: weeklyMileageBaseline,
@@ -593,6 +595,7 @@ async function buildConcurrentContext(userId, profile, target) {
     todayISO: planningDateISO,
     history: {
       weeklyMileageBaseline,
+      mileageBaseline,
       recentRunCount: (runs || []).length,
       recentLiftCount: (lifts || []).length,
       acuteRunLoad,
@@ -1805,7 +1808,7 @@ function enforcePlanSessionRules(planData = {}, options = {}) {
   return { ...planData, weeks };
 }
 
-router.post('/generate', auth, requirePremium('Race Programs'), checkAiLimit('plan_generate'), async (req, res) => {
+router.post('/generate', auth, requirePremium('Race Programs'), async (req, res) => {
   try {
     const profile = await dbGet('SELECT * FROM users WHERE id = ?', [req.user.id]);
     if (!profile) return res.status(404).json({ error: 'User not found' });
@@ -1829,14 +1832,15 @@ router.post('/generate', auth, requirePremium('Race Programs'), checkAiLimit('pl
       nowISO: `${getTodayISO()}T12:00:00.000Z`,
     };
     const context = await buildConcurrentContext(req.user.id, profile, target);
-    const candidate = await generateTrainingPlan(profile, target, context);
-    // selectPlanCandidate owns the deterministic fallback when AI is unavailable or invalid.
-    const selected = concurrentPlan.selectPlanCandidate(candidate, context);
+    const evidencePlan = concurrentPlan.buildConcurrentPlan(context);
+    const validation = concurrentPlan.validateConcurrentPlan(evidencePlan, context);
+    if (!validation.valid) throw new Error(`Evidence plan failed validation: ${validation.errors.join('; ')}`);
+    const selected = { plan: evidencePlan, source: 'evidence_engine' };
     const name = selected.plan.goal?.name || 'Forged Hybrid training block';
     const persisted = await persistConcurrentPlan(req.user.id, selected.plan, {
       name,
       type: selected.plan.planMode,
-      description: `${selected.plan.weeks.length}-week concurrent plan generated from profile and recent training history.`,
+      description: `${selected.plan.weeks.length}-week evidence-backed concurrent plan generated from profile and recent training history.`,
     });
     res.status(201).json({
       plan: { id: persisted.planId, user_id: req.user.id, week_start: persisted.weekStart, plan_json: selected.plan, plan_data: selected.plan },
@@ -1846,7 +1850,7 @@ router.post('/generate', auth, requirePremium('Race Programs'), checkAiLimit('pl
   } catch (err) { console.error('generate failed:', err.message); res.status(500).json({ error: 'Plan generation failed' }); }
 });
 
-router.post('/generate-for-race/:raceId', auth, requirePremium('Race Programs'), checkAiLimit('plan_generate'), async (req, res) => {
+router.post('/generate-for-race/:raceId', auth, requirePremium('Race Programs'), async (req, res) => {
   try {
     const profile = await dbGet('SELECT * FROM users WHERE id = ?', [req.user.id]);
     if (!profile) return res.status(404).json({ error: 'User not found' });
@@ -1871,9 +1875,10 @@ router.post('/generate-for-race/:raceId', auth, requirePremium('Race Programs'),
     };
     target.planMode = concurrentPlan.resolvePlanMode(profile, target);
     const context = await buildConcurrentContext(req.user.id, profile, target);
-    const candidate = await generateTrainingPlan(profile, target, context);
-    // selectPlanCandidate owns the deterministic fallback when AI is unavailable or invalid.
-    const selected = concurrentPlan.selectPlanCandidate(candidate, context);
+    const evidencePlan = concurrentPlan.buildConcurrentPlan(context);
+    const validation = concurrentPlan.validateConcurrentPlan(evidencePlan, context);
+    if (!validation.valid) throw new Error(`Evidence race plan failed validation: ${validation.errors.join('; ')}`);
+    const selected = { plan: evidencePlan, source: 'evidence_engine' };
     const persisted = await persistConcurrentPlan(req.user.id, selected.plan, {
       name: race.race_name,
       type: selected.plan.planMode,

@@ -95,9 +95,10 @@ function normalizeRunWorkout(workout = {}) {
     steps: Array.isArray(workout.steps) && workout.steps.length ? workout.steps.map((step) => textStep(step)) : [
       textStep('Warm up easy', 300),
       {
-        type: goal.type === 'distance' ? 'distance' : 'open',
+        type: goal.type === 'distance' ? 'distance' : goal.type === 'time' ? 'time' : 'open',
         label: workout.title || workout.typeLabel || 'Main run',
         distanceMiles: goal.type === 'distance' ? Number(goal.value || miles || 0) : null,
+        durationSeconds: goal.type === 'time' ? Number(goal.value || 0) * 60 : null,
         targetPaceSecondsPerMile: paceSeconds || null,
       },
       textStep('Cool down easy', 300),
@@ -165,7 +166,11 @@ class WatchDeliveryService {
     if (structured.kind === 'run') {
       return [
         `${structured.title}`,
-        `Goal: ${structured.goal?.type === 'distance' ? `${structured.goal.value} ${structured.goal.unit || 'mile'}` : 'Open run'}`,
+        `Goal: ${structured.goal?.type === 'distance'
+          ? `${structured.goal.value} ${structured.goal.unit || 'mile'}`
+          : structured.goal?.type === 'time'
+            ? `${structured.goal.value} ${structured.goal.unit || 'minute'}${Number(structured.goal.value) === 1 ? '' : 's'}`
+            : 'Open run'}`,
         structured.targets?.paceSecondsPerMile ? `Target pace: ${Math.floor(structured.targets.paceSecondsPerMile / 60)}:${String(structured.targets.paceSecondsPerMile % 60).padStart(2, '0')} / mi` : '',
         structured.targets?.heartRateZone ? `Target zone: ${structured.targets.heartRateZone}` : '',
         structured.targets?.effort ? `Focus: ${structured.targets.effort}` : '',

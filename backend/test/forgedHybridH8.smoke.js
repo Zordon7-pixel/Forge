@@ -359,7 +359,6 @@ async function runPlanFallbackSmoke() {
   const originalAiModule = require.cache[aiModulePath];
   const originalPlansRoute = require.cache[plansRoutePath];
   const writes = [];
-  const generatedTargets = [];
   let generateCalls = 0;
   const profile = {
     id: 'plan-owner-h8',
@@ -406,7 +405,6 @@ async function runPlanFallbackSmoke() {
   const mockAi = {
     generateTrainingPlan: async (_profile, target) => {
       generateCalls += 1;
-      generatedTargets.push({ ...target });
       return null;
     },
     generateRaceAdjustment: async () => null,
@@ -440,10 +438,10 @@ async function runPlanFallbackSmoke() {
       query: {},
       user: { id: profile.id },
     });
-    check(generateCalls === 1, 'plan route receives null from generateTrainingPlan');
-    check(response.statusCode === 201 && response.payload?.generation_source === 'deterministic_fallback', 'POST /plans/generate succeeds with deterministic_fallback');
-    check(response.payload?.plan?.plan_data?.generationSource === 'deterministic_fallback', 'persisted response carries deterministic fallback provenance');
-    check(writes.length === 3 && writes.every((write) => write.params.includes(profile.id)), 'fallback plan persistence remains scoped to the authenticated user');
+    check(generateCalls === 0, 'plan route does not spend an LLM request');
+    check(response.statusCode === 201 && response.payload?.generation_source === 'evidence_engine', 'POST /plans/generate succeeds with evidence_engine');
+    check(response.payload?.plan?.plan_data?.generationSource === 'evidence_engine', 'persisted response carries evidence-engine provenance');
+    check(writes.length === 3 && writes.every((write) => write.params.includes(profile.id)), 'evidence plan persistence remains scoped to the authenticated user');
 
     response = await invoke(raceHandler, {
       params: { raceId: race.id },
@@ -451,11 +449,11 @@ async function runPlanFallbackSmoke() {
       query: {},
       user: { id: profile.id },
     });
-    check(generateCalls === 2, 'race plan route also receives null from generateTrainingPlan');
-    check(response.statusCode === 201 && response.payload?.generation_source === 'deterministic_fallback', 'POST /plans/generate-for-race succeeds with deterministic_fallback');
-    check(response.payload?.plan?.plan_data?.generationSource === 'deterministic_fallback', 'race fallback persistence carries deterministic provenance');
-    check(response.payload?.race?.id === race.id && generatedTargets[1]?.raceName === race.race_name && generatedTargets[1]?.raceDate === raceDate, 'race fallback uses the owned race identity and date');
-    check(writes.length === 6 && writes.every((write) => write.params.includes(profile.id)), 'race fallback persistence remains scoped to the authenticated user');
+    check(generateCalls === 0, 'race plan route also avoids an LLM request');
+    check(response.statusCode === 201 && response.payload?.generation_source === 'evidence_engine', 'POST /plans/generate-for-race succeeds with evidence_engine');
+    check(response.payload?.plan?.plan_data?.generationSource === 'evidence_engine', 'race plan persistence carries evidence-engine provenance');
+    check(response.payload?.race?.id === race.id && response.payload?.plan?.plan_data?.goal?.name === race.race_name && response.payload?.plan?.plan_data?.goal?.date === raceDate, 'race plan uses the owned race identity and date');
+    check(writes.length === 6 && writes.every((write) => write.params.includes(profile.id)), 'race evidence persistence remains scoped to the authenticated user');
   } finally {
     delete require.cache[plansRoutePath];
     if (originalPlansRoute) require.cache[plansRoutePath] = originalPlansRoute;

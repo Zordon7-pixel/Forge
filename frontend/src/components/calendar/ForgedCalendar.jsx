@@ -30,10 +30,15 @@ function WeekRow({ day, isToday, completedSet, onOpen }) {
   const title = day.isRest
     ? 'Rest day'
     : [runSession?.title, liftSession?.title].filter(Boolean).join(' + ') || 'Session'
+  const runTarget = runSession?.prescriptionBasis === 'time' && runSession.durationMinutes > 0
+    ? `${Math.round(runSession.durationMinutes)} min`
+    : runSession && runSession.distanceMiles > 0
+      ? `${runSession.distanceIsEstimate ? '~' : ''}${runSession.distanceMiles.toFixed(1)} mi`
+      : (runSession ? 'Run' : '')
   const sub = day.isRest
     ? 'Recover'
     : [
-        runSession && runSession.distanceMiles > 0 ? `${runSession.distanceMiles.toFixed(1)} mi` : (runSession ? 'Run' : ''),
+        runTarget,
         liftSession ? 'Lift' : '',
       ].filter(Boolean).join(' · ')
   return (

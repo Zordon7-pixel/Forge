@@ -4,6 +4,7 @@
 const planSchema = require('./planSchema');
 const raceCourse = require('./raceCourse');
 const strengthPrescription = require('./strengthPrescription');
+const trainingEvidence = require('./trainingEvidence');
 
 const DAY_ORDER = planSchema.DAY_ORDER;
 const VALID_MODES = planSchema.VALID_MODES;
@@ -34,6 +35,61 @@ function addDays(iso, amount) {
   const date = parseISODate(iso);
   if (!date) return null;
   return toISODate(new Date(date.getFullYear(), date.getMonth(), date.getDate() + amount, 12));
+}
+
+function dateDistanceDays(laterValue, earlierValue) {
+  const later = parseISODate(laterValue);
+  const earlier = parseISODate(earlierValue);
+  if (!later || !earlier) return null;
+  return Math.round((later.getTime() - earlier.getTime()) / 86400000);
+}
+
+function estimateWeeklyMileageBaseline(rows = [], options = {}) {
+  const planningDateISO = parseISODate(options.planningDateISO) ? options.planningDateISO : toISODate(new Date());
+  const profileWeeklyMiles = Math.max(0, Number(options.profileWeeklyMiles || 0));
+  const normalized = (Array.isArray(rows) ? rows : [])
+    .map((row) => ({
+      date: String(row?.date || '').slice(0, 10),
+      miles: Math.max(0, Number(row?.distance_miles || 0)),
+      durationSeconds: Math.max(0, Number(row?.duration_seconds || 0)),
+    }))
+    .filter((row) => (
+      parseISODate(row.date)
+      && row.date <= planningDateISO
+      && (row.miles >= 0.5 || row.durationSeconds >= 600)
+    ));
+
+  function weeklyAverage(windowDays) {
+    const cutoff = addDays(planningDateISO, -(windowDays - 1));
+    const included = normalized.filter((row) => row.date >= cutoff);
+    if (!included.length) return 0;
+    const earliest = included.reduce((value, row) => (row.date < value ? row.date : value), included[0].date);
+    const observedDays = clamp((dateDistanceDays(planningDateISO, earliest) || 0) + 1, 7, windowDays);
+    return included.reduce((sum, row) => sum + row.miles, 0) / (observedDays / 7);
+  }
+
+  const longTermWeeklyMiles = weeklyAverage(56);
+  const recent28WeeklyMiles = weeklyAverage(28);
+  const recent14WeeklyMiles = weeklyAverage(14);
+  const boundedProfileMiles = longTermWeeklyMiles > 0 && profileWeeklyMiles > 0
+    ? clamp(profileWeeklyMiles, longTermWeeklyMiles * 0.75, longTermWeeklyMiles * 1.25)
+    : profileWeeklyMiles;
+  const dataAnchor = Math.max(longTermWeeklyMiles, boundedProfileMiles) || recent28WeeklyMiles || recent14WeeklyMiles;
+  let weeklyMiles = dataAnchor || profileWeeklyMiles;
+  if (dataAnchor > 0) {
+    const recentHigh = Math.max(recent28WeeklyMiles, recent14WeeklyMiles);
+    const upperBound = Math.max(dataAnchor * 1.25, dataAnchor + 2);
+    weeklyMiles = Math.min(Math.max(dataAnchor, recentHigh), upperBound);
+  }
+
+  return {
+    weeklyMiles: round(weeklyMiles),
+    longTermWeeklyMiles: round(longTermWeeklyMiles),
+    recent28WeeklyMiles: round(recent28WeeklyMiles),
+    recent14WeeklyMiles: round(recent14WeeklyMiles),
+    meaningfulRunCount: normalized.length,
+    method: normalized.length ? 'bounded_recent_history' : 'profile_fallback',
+  };
 }
 
 function mondayFor(value) {
@@ -103,19 +159,14 @@ function maxLongRun(distanceMiles) {
   return 6;
 }
 
-function recoveryMultiplier(recovery = {}, history = {}) {
-  const state = String(recovery.state || recovery.recoveryState || '').toLowerCase();
-  let multiplier = state === 'low' || state === 'recovery' || state === 'caution' ? 0.85 : state === 'high' || state === 'strong' ? 1.03 : 1;
-  const adherence = Number(history.adherenceRate);
-  if (Number.isFinite(adherence) && adherence < 0.65) multiplier *= 0.9;
-  if (Number(history.missedWorkouts || 0) >= 3) multiplier *= 0.92;
-  return clamp(multiplier, 0.7, 1.05);
-}
-
-function buildMileageTargets(weekCount, baseline, hasRace, recovery, history) {
+function buildMileageTargets(weekCount, baseline, hasRace, recovery, history, target = {}) {
   const targets = [];
-  let lastBuild = Math.max(4, Number(baseline || 0)) * recoveryMultiplier(recovery, history);
+  // Recovery and check-in state change the next 48-72 hours through
+  // applyAcuteRunProtection. They must not silently shrink an entire block.
+  let lastBuild = Math.max(4, Number(baseline || 0));
   let priorBuild = lastBuild;
+  const goalType = String(target.goalType || target.goal_type || '').toLowerCase();
+  const growthRate = hasRace && (goalType === 'pr' || Number(target.goalTimeSeconds || target.goal_time_seconds) > 0) ? 1.08 : 1.06;
   for (let weekNumber = 1; weekNumber <= weekCount; weekNumber += 1) {
     const phase = phaseForWeek(weekNumber, weekCount, hasRace);
     let target;
@@ -129,7 +180,7 @@ function buildMileageTargets(weekCount, baseline, hasRace, recovery, history) {
       target = lastBuild;
       priorBuild = target;
     } else {
-      target = priorBuild * (phase === 'peak' ? 1.04 : 1.07);
+      target = priorBuild * (phase === 'peak' ? 1.04 : growthRate);
       priorBuild = target;
     }
     lastBuild = target;
@@ -159,24 +210,54 @@ function runTypeFor(day, runDays, phase) {
   return position === 1 && runDays.length >= 4 ? 'steady' : 'easy';
 }
 
-function allocateRunDistances(totalMiles, runDays, phase, raceDistance, raceDay) {
+function allocateRunDistances(totalMiles, runDays, phase, raceDistance, raceDay, options = {}) {
+  if (!runDays.length) return [];
   if (raceDay) {
     const easyDays = Math.max(0, runDays.length - 1);
     const easyTotal = Math.max(0, totalMiles - raceDistance);
     return runDays.map((day) => (day === raceDay ? Number(raceDistance) : round(easyTotal / Math.max(1, easyDays))));
   }
-  if (runDays.length === 1) return [round(Math.min(maxLongRun(raceDistance), totalMiles))];
-  const longShare = phase === 'taper' ? 0.3 : 0.38;
-  const qualityShare = runDays.length >= 3 ? 0.24 : 0;
-  const longDistance = Math.min(maxLongRun(raceDistance), totalMiles * longShare);
+  if (runDays.length === 1) return [round(Math.max(0.1, Math.min(maxLongRun(raceDistance), totalMiles)))];
+  if (options.longRunCompleted) {
+    const perRun = Math.max(0.1, Number(totalMiles || 0) / Math.max(1, runDays.length));
+    return runDays.map(() => round(perRun));
+  }
+  const longShare = phase === 'taper' ? 0.3 : phase === 'base' ? 0.42 : 0.45;
+  const qualityShare = runDays.length >= 3 ? 0.22 : 0;
+  const recentLongMiles = Number(options.recentLongMiles || 0);
+  const recentLongFloor = options.weekNumber <= 3 && ['base', 'build'].includes(phase) && recentLongMiles > 0
+    ? recentLongMiles * (0.75 + (options.weekNumber * 0.05))
+    : 0;
+  const longDistance = Math.min(
+    maxLongRun(raceDistance),
+    totalMiles * 0.55,
+    Math.max(totalMiles * longShare, recentLongFloor)
+  );
   const qualityDistance = totalMiles * qualityShare;
   const remainingSlots = Math.max(1, runDays.length - (qualityShare ? 2 : 1));
-  const easyDistance = Math.max(1, (totalMiles - longDistance - qualityDistance) / remainingSlots);
-  return runDays.map((day, index) => {
+  const easyDistance = Math.max(0.1, (totalMiles - longDistance - qualityDistance) / remainingSlots);
+  const raw = runDays.map((day, index) => {
     if (index === runDays.length - 1) return round(longDistance);
     if (index === 0 && qualityShare) return round(qualityDistance);
     return round(easyDistance);
   });
+  const rawTotal = raw.reduce((sum, value) => sum + value, 0);
+  const scale = rawTotal > 0 && totalMiles > 0 ? totalMiles / rawTotal : 1;
+  return raw.map((value) => round(Math.max(0.1, value * scale)));
+}
+
+function durationForRun(type, distance, phase, history = {}) {
+  const recentPace = Number(history.acuteRunLoad?.latestRun?.paceSecondsPerMile || 0);
+  const basePaceSeconds = clamp(recentPace || 720, 360, 1200);
+  const effortFactor = type === 'recovery' ? 1.15 : ['easy', 'long'].includes(type) ? 1.08 : type === 'steady' ? 1 : 0.92;
+  const estimatedMinutes = Number(distance || 0) * basePaceSeconds * effortFactor / 60;
+  if (type === 'long') return Math.round(clamp(estimatedMinutes, 30, phase === 'taper' ? 75 : 105));
+  if (type === 'quality') return Math.round(clamp(estimatedMinutes, 48, 65));
+  if (type === 'hills') return Math.round(clamp(estimatedMinutes, 42, 65));
+  if (type === 'sharpen') return Math.round(clamp(estimatedMinutes, 35, 48));
+  if (type === 'steady') return Math.round(clamp(estimatedMinutes, 25, 60));
+  if (type === 'recovery') return Math.round(clamp(estimatedMinutes, 15, 35));
+  return Math.round(clamp(estimatedMinutes, 15, 50));
 }
 
 function runPrescription(type, phase, hilly) {
@@ -195,14 +276,19 @@ function runPrescription(type, phase, hilly) {
   }
   if (type === 'quality' || type === 'hills' || type === 'sharpen') {
     const hillSession = hilly || type === 'hills';
+    const sharpen = type === 'sharpen';
     return {
       title: hillSession ? (phase === 'taper' ? 'Hill strides' : 'Controlled hill repeats') : (phase === 'taper' ? 'Race-pace sharpening' : 'Threshold intervals'),
       target_zone: phase === 'base' ? 'Zone 3' : 'Zone 3-4',
       pace_target: hillSession ? 'Controlled uphill effort' : 'Current threshold effort',
       intensity: phase === 'taper' ? 'Short and controlled' : 'Hard but repeatable',
-      warmup: ['12 min easy running', '4 x 20 sec relaxed strides'],
-      steps: hillSession ? ['6-8 x 60 sec uphill', 'Jog down fully between repetitions'] : ['4 x 5 min controlled hard', '2 min easy jog between repetitions'],
-      cooldown: ['10 min easy running'],
+      warmup: sharpen ? ['10 min easy running', '4 x 20 sec relaxed strides'] : ['12 min easy running', '4 x 20 sec relaxed strides'],
+      steps: sharpen
+        ? ['6 x 60 sec at goal 10-mile effort', '90 sec easy jog between repetitions']
+        : hillSession
+          ? ['6-8 x 60 sec uphill', '90 sec easy jog down between repetitions']
+          : ['4 x 5 min controlled hard', '2 min easy jog between repetitions'],
+      cooldown: [sharpen ? '8 min easy running' : '10 min easy running'],
       progression: 'Add one repeat only after completing every repetition at even effort.',
       description: hilly ? 'Develop course-specific climbing strength without sprinting.' : (hillSession ? 'Build general climbing strength and durability without sprinting.' : 'Raise sustainable speed without turning the session into a race.'),
     };
@@ -221,18 +307,26 @@ function runPrescription(type, phase, hilly) {
   };
 }
 
-function buildRunSession({ weekNumber, day, type, distance, phase, hilly, raceName }) {
+function buildRunSession({ weekNumber, day, type, distance, phase, hilly, raceName, history }) {
   if (type === 'race') {
     return {
       id: `h3-w${weekNumber}-${day.toLowerCase()}-run`, kind: 'run', type: 'race', workout_type: 'run',
+      prescription_basis: 'distance',
       title: raceName || 'Race day', distance_miles: Number(distance), target_zone: 'Race effort', pace_target: 'Goal race effort', intensity: 'Race',
       warmup: ['10-15 min easy', '4 x 20 sec relaxed strides'], steps: ['Start controlled', 'Settle into goal effort', 'Race by effort over late hills'],
       cooldown: ['Walk until breathing settles'], progression: 'Execute the prepared race plan.', description: 'Race-day execution.',
+      evidence_refs: trainingEvidence.runEvidenceRefs('race'),
     };
   }
+  const estimatedDistance = round(Math.max(0.1, distance));
   return {
     id: `h3-w${weekNumber}-${day.toLowerCase()}-run`, kind: 'run', type, workout_type: 'run',
-    distance_miles: round(Math.max(1, distance)), ...runPrescription(type, phase, hilly),
+    prescription_basis: 'time',
+    duration_min: durationForRun(type, estimatedDistance, phase, history),
+    distance_miles: estimatedDistance,
+    distance_is_estimate: true,
+    evidence_refs: trainingEvidence.runEvidenceRefs(type),
+    ...runPrescription(type, phase, hilly),
   };
 }
 
@@ -262,6 +356,7 @@ function buildLiftSession({ weekNumber, day, focus, mode, phase, context = {} })
     recovery: ['Leave at least one full day before repeating the same focus', 'Prioritize protein, carbohydrate, and sleep'],
     progression: phase === 'taper' || phase === 'race' ? 'Reduce volume and preserve movement quality.' : build ? 'Progress load or reps weekly while keeping one to two reps in reserve.' : 'Hold strength with repeatable submaximal work.',
     description: build ? 'Build strength and size alongside the running block.' : 'Maintain strength and size while run volume develops.',
+    evidence_refs: trainingEvidence.strengthEvidenceRefs(),
   };
 }
 
@@ -271,20 +366,25 @@ function dateInRange(date, start, end) {
 
 function recoveryRunAfterRecentLoad(session, latestRun) {
   const distance = Number(session.distance_miles || 0);
+  const duration = Math.round(clamp(Number(session.duration_min || 25) * 0.65, 20, 35));
   return {
     ...session,
     type: 'recovery',
     workout_type: 'recovery',
     title: 'Recovery run',
-    distance_miles: round(Math.max(0.5, Math.min(2, distance * 0.5))),
+    prescription_basis: 'time',
+    duration_min: duration,
+    distance_miles: round(Math.max(0.5, Math.min(3, distance * 0.65))),
+    distance_is_estimate: true,
     target_zone: 'Zone 1-2',
     pace_target: 'Fully conversational; walking is allowed',
     intensity: 'Recovery',
     warmup: ['5 min easy walking'],
     steps: ['Keep breathing relaxed', 'Stop if soreness changes your stride'],
     cooldown: ['5 min easy walking', 'Hydrate and refuel'],
-    progression: 'Do not add distance today.',
+    progression: 'Keep the full session within the prescribed time today.',
     description: `Reduced because a ${round(latestRun.distanceMiles, 1)} mi recent run already created meaningful lower-body load.`,
+    evidence_refs: trainingEvidence.runEvidenceRefs('recovery'),
     acuteLoadAdjusted: true,
   };
 }
@@ -300,6 +400,7 @@ function replaceLiftFocus(session, { weekNumber, day, focus, mode, phase, contex
 function acuteLoadMetadata(history = {}) {
   const load = history.acuteRunLoad;
   if (!load?.available || !load.latestRun) return null;
+  const protectiveRun = load.protectiveRun || null;
   return {
     latestRun: {
       date: load.latestRun.date,
@@ -311,6 +412,16 @@ function acuteLoadMetadata(history = {}) {
       isLong: Boolean(load.latestRun.isLong),
       isHard: Boolean(load.latestRun.isHard),
     },
+    protectiveRun: protectiveRun ? {
+      date: protectiveRun.date,
+      distanceMiles: protectiveRun.distanceMiles,
+      durationMinutes: protectiveRun.durationMinutes,
+      paceLabel: protectiveRun.paceLabel,
+      avgHeartRate: protectiveRun.avgHeartRate,
+      perceivedEffort: protectiveRun.perceivedEffort,
+      isLong: Boolean(protectiveRun.isLong),
+      isHard: Boolean(protectiveRun.isHard),
+    } : null,
     sevenDayMiles: load.sevenDayMiles,
     loadRatio: load.loadRatio,
     protection: load.protection || { active: false },
@@ -322,7 +433,8 @@ function applyAcuteRunProtection(plan, context = {}) {
   if (!load?.protection?.active || !load.latestRun) return plan;
   const next = JSON.parse(JSON.stringify(plan));
   const protection = load.protection;
-  const latestDate = load.latestRun.date;
+  const anchorRun = load.protectiveRun || load.latestRun;
+  const anchorDate = protection.anchorDate || anchorRun.date;
   const availableDays = new Set(normalizeWeekdays(
     context.target?.trainingDays,
     ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -348,12 +460,12 @@ function applyAcuteRunProtection(plan, context = {}) {
           day.whyToday = `Your ${round(load.latestRun.distanceMiles, 1)} mi run is already logged for today, so Forged Hybrid did not schedule a second run.`;
           continue;
         }
-        if (isDemandingRun(session) && dateInRange(day.date, latestDate, protection.hardRunsThrough)) {
-          rebuilt.push(recoveryRunAfterRecentLoad(session, load.latestRun));
+        if (isDemandingRun(session) && dateInRange(day.date, anchorDate, protection.hardRunsThrough)) {
+          rebuilt.push(recoveryRunAfterRecentLoad(session, anchorRun));
           changed = true;
           weekChanged = true;
           day.status = 'adjusted';
-          day.whyToday = `Adjusted after your ${round(load.latestRun.distanceMiles, 1)} mi run on ${latestDate}: hard running is protected through ${protection.hardRunsThrough}.`;
+          day.whyToday = `Adjusted after your ${round(anchorRun.distanceMiles, 1)} mi run on ${anchorDate}: hard running is protected through ${protection.hardRunsThrough}.`;
           continue;
         }
         rebuilt.push(session);
@@ -368,7 +480,7 @@ function applyAcuteRunProtection(plan, context = {}) {
     for (let dayIndex = 0; dayIndex < days.length; dayIndex += 1) {
       const day = days[dayIndex];
       const lowerIndex = (day.sessions || []).findIndex((session) => session.kind === 'lift' && /lower/i.test(String(session.focus || '')));
-      if (lowerIndex < 0 || !dateInRange(day.date, latestDate, protection.lowerBodyThrough)) continue;
+      if (lowerIndex < 0 || !dateInRange(day.date, anchorDate, protection.lowerBodyThrough)) continue;
       const laterUpperDayIndex = days.findIndex((candidate, candidateIndex) => (
         candidateIndex > dayIndex
         && candidate.date > protection.lowerBodyThrough
@@ -386,7 +498,7 @@ function applyAcuteRunProtection(plan, context = {}) {
           phase: week.phase,
           context,
         });
-        day.whyToday = `Lower-body strength was moved outside the recovery window from your ${round(load.latestRun.distanceMiles, 1)} mi run.`;
+        day.whyToday = `Lower-body strength was moved outside the recovery window from your ${round(anchorRun.distanceMiles, 1)} mi run.`;
         const laterDay = days[laterUpperDayIndex];
         const upperIndex = laterDay.sessions.findIndex((session) => session.kind === 'lift' && /upper/i.test(String(session.focus || '')));
         laterDay.sessions[upperIndex] = replaceLiftFocus(laterDay.sessions[upperIndex], {
@@ -398,7 +510,7 @@ function applyAcuteRunProtection(plan, context = {}) {
           context,
         });
         laterDay.status = 'adjusted';
-        laterDay.whyToday = `Lower-body strength moved here to protect recovery after your ${round(load.latestRun.distanceMiles, 1)} mi run.`;
+        laterDay.whyToday = `Lower-body strength moved here to protect recovery after your ${round(anchorRun.distanceMiles, 1)} mi run.`;
       } else {
         const relocationDayIndex = days.findIndex((candidate, candidateIndex) => (
           candidateIndex > dayIndex
@@ -416,7 +528,7 @@ function applyAcuteRunProtection(plan, context = {}) {
             description: `${originalLower.description || 'Lower-body strength.'} Moved outside the recent-run recovery window.`,
             acuteLoadAdjusted: true,
           });
-          day.whyToday = `Lower-body strength moved to ${relocationDay.day} to protect recovery after your ${round(load.latestRun.distanceMiles, 1)} mi run.`;
+          day.whyToday = `Lower-body strength moved to ${relocationDay.day} to protect recovery after your ${round(anchorRun.distanceMiles, 1)} mi run.`;
           relocationDay.status = 'adjusted';
           relocationDay.whyToday = `Lower-body strength moved here to preserve the weekly strength floor outside the recent-run recovery window.`;
         } else {
@@ -428,7 +540,7 @@ function applyAcuteRunProtection(plan, context = {}) {
             phase: week.phase,
             context,
           });
-          day.whyToday = `No safe lower-body slot remains this week after your ${round(load.latestRun.distanceMiles, 1)} mi run, so this session changed to optional upper-body work.`;
+          day.whyToday = `No safe lower-body slot remains this week after your ${round(anchorRun.distanceMiles, 1)} mi run, so this session changed to optional upper-body work.`;
         }
       }
       changed = true;
@@ -436,15 +548,24 @@ function applyAcuteRunProtection(plan, context = {}) {
     }
 
     for (const day of days) {
-      if (!dateInRange(day.date, latestDate, protection.upperBodyOptionalThrough)) continue;
+      if (!dateInRange(day.date, anchorDate, protection.upperBodyOptionalThrough)) continue;
       const upper = (day.sessions || []).find((session) => session.kind === 'lift' && /upper/i.test(String(session.focus || '')));
       if (!upper) continue;
       upper.description = `${upper.description} Optional after the recent run: keep this submaximal and skip it if whole-body fatigue or soreness is elevated.`;
       upper.acuteLoadAdjusted = true;
       day.status = 'adjusted';
-      day.whyToday = day.whyToday || `Upper-body strength is optional while you recover from the ${round(load.latestRun.distanceMiles, 1)} mi run; lower-body loading stays protected.`;
+      day.whyToday = day.whyToday || `Upper-body strength is optional while you recover from the ${round(anchorRun.distanceMiles, 1)} mi run; lower-body loading stays protected.`;
       changed = true;
       weekChanged = true;
+    }
+
+    for (const day of days) {
+      const kinds = new Set((day.sessions || []).map((session) => session.kind));
+      if (kinds.has('run') && kinds.has('lift')) {
+        day.orderGuidance = day.orderGuidance || 'Run first; lift at least 6 hours later.';
+      } else {
+        delete day.orderGuidance;
+      }
     }
 
     week.totalMiles = round(days
@@ -496,6 +617,7 @@ function summarizeInputs(profile = {}, history = {}, recovery = {}, checkin = nu
     : null;
   return {
     weeklyMileageBaseline: round(Number(history.weeklyMileageBaseline ?? profile.weekly_miles_current) || 0),
+    mileageBaseline: history.mileageBaseline || null,
     recentRunCount: clamp(Math.round(Number(history.recentRunCount || 0)), 0, 100),
     recentLiftCount: clamp(Math.round(Number(history.recentLiftCount || 0)), 0, 100),
     missedWorkouts: clamp(Math.round(Number(history.missedWorkouts || 0)), 0, 100),
@@ -533,6 +655,8 @@ function summarizeInputs(profile = {}, history = {}, recovery = {}, checkin = nu
       lifeFlags: Array.isArray(checkin.lifeFlags) ? checkin.lifeFlags.slice(0, 6) : [],
     } : null,
     recentRun: acute?.latestRun || null,
+    recentLoadAnchor: acute?.protectiveRun || null,
+    currentWeekRunLoad: acute?.currentWeek || null,
     sevenDayRunMiles: acute?.sevenDayMiles ?? 0,
     recentRunLoadRatio: acute?.loadRatio ?? null,
   };
@@ -632,7 +756,7 @@ function buildConcurrentPlan(context = {}) {
       preferredDays: availableDays,
     }, mode);
   const baseline = Number(history.weeklyMileageBaseline ?? profile.weekly_miles_current) || Math.max(6, raceDistance);
-  const mileageTargets = buildMileageTargets(weekCount, baseline, Boolean(raceDate), recovery, history);
+  const mileageTargets = buildMileageTargets(weekCount, baseline, Boolean(raceDate), recovery, history, target);
   // H7: only trusted, current structured course facts may drive hill work.
   const trustedCourse = trustedCourseFacts(target);
   const trustedElevationGainFt = trustedCourse.trusted ? Number(trustedCourse.facts.elevationGainFt || 0) : 0;
@@ -643,16 +767,38 @@ function buildConcurrentPlan(context = {}) {
     const weekStart = addDays(startDate, (weekNumber - 1) * 7);
     const phase = phaseForWeek(weekNumber, weekCount, Boolean(raceDate));
     const raceDay = raceDate && DAY_ORDER.find((day, index) => addDays(weekStart, index) === raceDate);
-    const weekRunDays = raceDay && !runDays.includes(raceDay) ? [...runDays.slice(0, Math.max(1, runDays.length - 1)), raceDay] : runDays.slice();
+    let weekRunDays = raceDay && !runDays.includes(raceDay) ? [...runDays.slice(0, Math.max(1, runDays.length - 1)), raceDay] : runDays.slice();
+    const currentWeekLoad = history.acuteRunLoad?.currentWeek;
+    const isCurrentWeek = weekNumber === 1
+      && currentWeekLoad?.startDate === weekStart
+      && context.todayISO >= weekStart
+      && context.todayISO <= addDays(weekStart, 6);
+    const completedRunDates = new Set(isCurrentWeek ? currentWeekLoad.runDates || [] : []);
+    if (isCurrentWeek) {
+      weekRunDays = weekRunDays.filter((day) => {
+        const date = addDays(weekStart, DAY_ORDER.indexOf(day));
+        return date >= context.todayISO && !completedRunDates.has(date);
+      });
+    }
     let scheduledMileageTarget = mileageTargets[weekNumber - 1];
+    if (isCurrentWeek) scheduledMileageTarget = Math.max(0, scheduledMileageTarget - Number(currentWeekLoad.miles || 0));
     const priorScheduledMiles = Number(weeks[weeks.length - 1]?.totalMiles || 0);
     if (phase === 'deload' && priorScheduledMiles > 0) scheduledMileageTarget = Math.min(scheduledMileageTarget, priorScheduledMiles * 0.8);
     if (phase === 'taper' && priorScheduledMiles > 0) scheduledMileageTarget = Math.min(scheduledMileageTarget, priorScheduledMiles * 0.65);
-    const distances = allocateRunDistances(scheduledMileageTarget, weekRunDays, phase, raceDistance, raceDay);
+    const distances = allocateRunDistances(scheduledMileageTarget, weekRunDays, phase, raceDistance, raceDay, {
+      weekNumber,
+      recentLongMiles: (history.acuteRunLoad?.protectiveRun || history.acuteRunLoad?.latestRun)?.isLong
+        ? (history.acuteRunLoad.protectiveRun || history.acuteRunLoad.latestRun).distanceMiles
+        : 0,
+      longRunCompleted: Boolean(isCurrentWeek && currentWeekLoad.longRunCompleted),
+    });
     const runByDay = new Map();
     weekRunDays.forEach((day, index) => {
-      const type = day === raceDay ? 'race' : runTypeFor(day, weekRunDays, phase);
-      runByDay.set(day, buildRunSession({ weekNumber, day, type, distance: distances[index], phase, hilly, raceName: target.raceName }));
+      const scheduledType = runTypeFor(day, weekRunDays, phase);
+      const longAlreadyCompleted = isCurrentWeek && currentWeekLoad.longRunCompleted && scheduledType === 'long';
+      const qualitySlotTooSmall = ['quality', 'hills', 'sharpen'].includes(scheduledType) && Number(distances[index] || 0) < 1.5;
+      const type = day === raceDay ? 'race' : (longAlreadyCompleted || qualitySlotTooSmall ? 'easy' : scheduledType);
+      runByDay.set(day, buildRunSession({ weekNumber, day, type, distance: distances[index], phase, hilly, raceName: target.raceName, history }));
     });
 
     const effectiveLiftCount = mode === planSchema.PLAN_MODES.RUN_ONLY ? 0 : phase === 'race' ? Math.min(1, liftDaysPerWeek) : liftDaysPerWeek;
@@ -667,7 +813,14 @@ function buildConcurrentPlan(context = {}) {
       return result;
     });
     const totalMiles = round(days.flatMap((day) => day.sessions).filter((session) => session.kind === 'run').reduce((sum, session) => sum + Number(session.distance_miles || 0), 0));
-    weeks.push({ week: weekNumber, phase, startDate: weekStart, totalMiles, days });
+    weeks.push({
+      week: weekNumber,
+      phase,
+      startDate: weekStart,
+      totalMiles,
+      completedMilesAtGeneration: isCurrentWeek ? round(Number(currentWeekLoad.miles || 0)) : 0,
+      days,
+    });
   }
 
   const plan = {
@@ -675,8 +828,10 @@ function buildConcurrentPlan(context = {}) {
     planMode: mode,
     goal: goalMetadata(target, { kind: raceDate ? 'race' : 'training_block' }),
     strengthPolicy,
-    generationSource: 'deterministic',
+    generationSource: 'evidence_engine',
     generationValidationErrors: [],
+    trainingEvidence: trainingEvidence.planEvidence(mode),
+    methodologyNote: 'Research and athlete practice set the training principles; your history, recovery, availability, and race set the dosage. Elite volume is never copied.',
     inputSummary: summarizeInputs(profile, history, recovery, context.checkin),
     weeks,
   };
@@ -707,6 +862,10 @@ function validateRun(session, path, errors) {
     if (value === undefined || value === null || value === '' || (Array.isArray(value) && value.length === 0)) errors.push(`${path}.${field} is required`);
   }
   if (!(Number(session.distance_miles) > 0)) errors.push(`${path}.distance_miles must be positive`);
+  if (String(session.prescription_basis || '').toLowerCase() === 'time' && !(Number(session.duration_min) > 0)) {
+    errors.push(`${path}.duration_min must be positive for a time-based session`);
+  }
+  if (!Array.isArray(session.evidence_refs) || session.evidence_refs.length === 0) errors.push(`${path}.evidence_refs is required`);
 }
 
 function validateConcurrentPlan(candidate, context = {}) {
@@ -718,7 +877,7 @@ function validateConcurrentPlan(candidate, context = {}) {
   const expectedStartDate = mondayFor(target.startDate || context.todayISO);
   const acuteLoad = context.history?.acuteRunLoad;
   const acuteProtection = acuteLoad?.protection?.active ? acuteLoad.protection : null;
-  const latestRunDate = acuteLoad?.latestRun?.date || null;
+  const latestRunDate = acuteProtection?.anchorDate || acuteLoad?.protectiveRun?.date || acuteLoad?.latestRun?.date || null;
   if (!candidate || typeof candidate !== 'object') return { valid: false, errors: ['candidate is missing'] };
   if (Number(candidate.schemaVersion) !== planSchema.SCHEMA_VERSION) errors.push(`schemaVersion must be ${planSchema.SCHEMA_VERSION}`);
   if (candidate.planMode !== expectedMode) errors.push(`planMode must be ${expectedMode}`);
@@ -807,7 +966,8 @@ function validateConcurrentPlan(candidate, context = {}) {
       }
     }
     const roundedMiles = round(miles);
-    weekMiles.push(roundedMiles);
+    const completedMilesAtGeneration = Math.max(0, Number(week.completedMilesAtGeneration || 0));
+    weekMiles.push(round(roundedMiles + completedMilesAtGeneration));
     if (Math.abs(Number(week.totalMiles) - roundedMiles) > 0.2) errors.push(`${path}.totalMiles must equal scheduled run mileage`);
   });
 
@@ -856,8 +1016,33 @@ function validateConcurrentPlan(candidate, context = {}) {
   return { valid: errors.length === 0, errors };
 }
 
+function applyTrainingEvidence(plan, mode) {
+  if (!plan || typeof plan !== 'object') return plan;
+  const next = JSON.parse(JSON.stringify(plan));
+  next.trainingEvidence = trainingEvidence.planEvidence(mode || next.planMode);
+  next.methodologyNote = next.methodologyNote
+    || 'Research and athlete practice set the training principles; your history, recovery, availability, and race set the dosage. Elite volume is never copied.';
+  for (const week of next.weeks || []) {
+    for (const day of week.days || []) {
+      for (const session of day.sessions || []) {
+        const kind = planSchema.kindFromSession(session);
+        if (kind === 'run' && (!Array.isArray(session.evidence_refs) || session.evidence_refs.length === 0)) {
+          session.evidence_refs = trainingEvidence.runEvidenceRefs(session.type);
+        }
+        if (kind === 'lift' && (!Array.isArray(session.evidence_refs) || session.evidence_refs.length === 0)) {
+          session.evidence_refs = trainingEvidence.strengthEvidenceRefs();
+        }
+      }
+    }
+  }
+  return next;
+}
+
 function selectPlanCandidate(candidate, context = {}) {
-  const preparedCandidate = strengthPrescription.applyStrengthPrescriptionData(candidate, context);
+  const preparedCandidate = applyTrainingEvidence(
+    strengthPrescription.applyStrengthPrescriptionData(candidate, context),
+    resolvePlanMode(context.profile || {}, context.target || {})
+  );
   const validation = validateConcurrentPlan(preparedCandidate, context);
   if (validation.valid) {
     return {
@@ -887,6 +1072,7 @@ module.exports = {
   racePlanWindow,
   resolvePlanMode,
   phaseForWeek,
+  estimateWeeklyMileageBaseline,
   buildMileageTargets,
   buildConcurrentPlan,
   applyAcuteRunProtection,

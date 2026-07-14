@@ -208,7 +208,7 @@ export default function DailyCheckIn({ onComplete }) {
 
   if (alreadyDone) {
     return (
-      <div style={{ minHeight: '100vh', background: 'var(--bg-base)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24, gap: 16, maxWidth: 480, margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
+      <div className="forged-branded-screen" style={{ minHeight: '100vh', background: 'var(--bg-base)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24, gap: 16, maxWidth: 480, margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
         <p style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', textAlign: 'center' }}>You've already checked in today</p>
         <button onClick={() => navigate('/')}
           style={{ background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 700, borderRadius: 14, padding: '16px 32px', border: 'none', cursor: 'pointer' }}>
@@ -221,7 +221,7 @@ export default function DailyCheckIn({ onComplete }) {
   if (showStretchGate) {
     const workoutRoute = todayPlan?.type === 'strength' ? '/log-lift' : '/log-run'
     return (
-      <div style={{ minHeight: '100vh', background: 'var(--bg-base)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24, gap: 20, textAlign: 'center', maxWidth: 480, margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
+      <div className="forged-branded-screen" style={{ minHeight: '100vh', background: 'var(--bg-base)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24, gap: 20, textAlign: 'center', maxWidth: 480, margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
         <div style={{ background: 'var(--bg-card)', borderRadius: 20, padding: 32, width: '100%' }}>
           <p style={{ fontSize: 22, fontWeight: 900, color: 'var(--text-primary)', marginBottom: 8 }}>Let's stretch first</p>
           <p style={{ fontSize: 14, color: 'var(--text-muted)', lineHeight: 1.6, marginBottom: 28 }}>
@@ -247,7 +247,7 @@ export default function DailyCheckIn({ onComplete }) {
   if (adjustment) {
     const hasDrivers = drivers.length > 0
     return (
-      <div style={{ minHeight: '100vh', background: 'var(--bg-base)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24, gap: 20, textAlign: 'center', maxWidth: 480, margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
+      <div className="forged-branded-screen" style={{ minHeight: '100vh', background: 'var(--bg-base)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24, gap: 20, textAlign: 'center', maxWidth: 480, margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
         <p style={{ fontSize: 28, lineHeight: 1.15, fontWeight: 900, color: 'var(--text-primary)', maxWidth: 360, margin: 0 }}>{headline || adjustment}</p>
         {hasDrivers ? (
           <div style={{ width: '100%', maxWidth: 360 }}>

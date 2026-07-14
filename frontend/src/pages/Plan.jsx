@@ -8,6 +8,7 @@ import AiGuidanceNote from '../components/AiGuidanceNote'
 import ForgedCalendar from '../components/calendar/ForgedCalendar'
 import ForgedDayView from '../components/calendar/ForgedDayView'
 import { buildCalendarModel, todayISO } from '../lib/planCalendar'
+import { trainingEvidenceKindLabel } from '../lib/trainingEvidence'
 
 export default function Plan() {
   const navigate = useNavigate()
@@ -153,7 +154,7 @@ export default function Plan() {
 
   if (loading) {
     return (
-      <ProGate isPro={isPro} loading={proLoading} message="AI Training Plans are a Pro feature">
+      <ProGate isPro={isPro} loading={proLoading} message="Adaptive training plans are a Pro feature">
         <div className="rounded-xl p-4" style={{ background: 'var(--bg-card)', color: 'var(--text-muted)' }}>Loading training plans...</div>
       </ProGate>
     )
@@ -161,6 +162,8 @@ export default function Plan() {
 
   const course = model?.goal?.course || myPlan?.plan_data?.goal?.course || null
   const planInputs = myPlan?.plan_data?.inputSummary || null
+  const trainingEvidence = Array.isArray(myPlan?.plan_data?.trainingEvidence) ? myPlan.plan_data.trainingEvidence : []
+  const methodologyNote = myPlan?.plan_data?.methodologyNote || ''
   const recentRunInput = planInputs?.recentRun || null
   const planInputFacts = planInputs ? [
     `${Number(planInputs.recentRunCount || 0)} recent runs`,
@@ -293,7 +296,7 @@ export default function Plan() {
   ) : null
 
   return (
-    <ProGate isPro={isPro} loading={proLoading} message="AI Training Plans are a Pro feature">
+    <ProGate isPro={isPro} loading={proLoading} message="Adaptive training plans are a Pro feature">
       <div className="space-y-4">
         {/* No active plan: setup lives in one Create / Manage flow. */}
         {!myPlan && (
@@ -316,7 +319,7 @@ export default function Plan() {
           selectedDay ? (
             <ForgedDayView
               day={selectedDay}
-              planContext={{ goal: model.goal, mode: model.mode, modeLabel: model.modeLabel, phase: selectedPhase, inputSummary: planInputs }}
+              planContext={{ goal: model.goal, mode: model.mode, modeLabel: model.modeLabel, phase: selectedPhase, inputSummary: planInputs, trainingEvidence }}
               completedSet={completedSet}
               onToggleComplete={toggleSession}
               onStartRun={(runSession) => navigate('/warmup', { state: {
@@ -329,6 +332,8 @@ export default function Plan() {
                 mapMyRun: true,
                 workoutTarget: {
                   distanceMiles: runSession?.distanceMiles || runSession?.prescription?.distance_miles || null,
+                  durationMinutes: runSession?.durationMinutes || runSession?.prescription?.duration_min || null,
+                  prescriptionBasis: runSession?.prescriptionBasis || runSession?.prescription?.prescription_basis || null,
                   pace: runSession?.prescription?.pace_target || runSession?.prescription?.pace || null,
                   zone: runSession?.prescription?.target_zone || null,
                 },
@@ -363,6 +368,22 @@ export default function Plan() {
                   <p className="text-xs font-bold uppercase" style={{ color: 'var(--text-muted)' }}>Built from your data</p>
                   <p className="text-sm mt-1 break-words" style={{ color: 'var(--text-primary)' }}>{planInputFacts.join(' · ')}</p>
                 </div>
+              )}
+
+              {trainingEvidence.length > 0 && (
+                <details className="rounded-lg p-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+                  <summary className="text-sm font-bold cursor-pointer" style={{ color: 'var(--text-primary)' }}>Research and coaching references</summary>
+                  {methodologyNote && <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>{methodologyNote}</p>}
+                  <ul className="mt-2 space-y-2 pl-4 text-xs" style={{ color: 'var(--text-muted)' }}>
+                    {trainingEvidence.map((source) => (
+                      <li key={source.id}>
+                        <span className="font-bold">{trainingEvidenceKindLabel(source.kind)}: </span>
+                        <a href={source.url} target="_blank" rel="noreferrer" className="font-semibold underline" style={{ color: 'var(--accent)' }}>{source.publisher}</a>
+                        {source.principle ? ` - ${source.principle}` : ''}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
               )}
 
               {adaptationPanel}

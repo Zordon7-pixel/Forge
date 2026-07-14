@@ -256,6 +256,9 @@ export function normalizeSession(rawSession, context = {}) {
   const id = firstDefined(rawSession.id, context.fallbackId, `${anchor}-${kind}-${index}`)
   const distanceMiles =
     Number(firstDefined(rawSession.distance_miles, prescription.distanceMiles, prescription.distance_miles, 0)) || 0
+  const durationMinutes =
+    Number(firstDefined(rawSession.duration_min, prescription.durationMinutes, prescription.duration_min, 0)) || 0
+  const prescriptionBasis = String(firstDefined(rawSession.prescription_basis, prescription.prescriptionBasis, prescription.prescription_basis, '') || '').toLowerCase()
   const type = firstDefined(prescription.type, safeRaw.type, kind === 'lift' ? 'strength' : kind)
   const title = firstDefined(
     prescription.title,
@@ -269,6 +272,9 @@ export function normalizeSession(rawSession, context = {}) {
     type,
     title,
     distanceMiles,
+    durationMinutes,
+    prescriptionBasis,
+    distanceIsEstimate: Boolean(firstDefined(rawSession.distance_is_estimate, prescription.distanceIsEstimate, prescription.distance_is_estimate, false)),
     status: String(rawSession.status || prescription.status || '').toLowerCase() || null,
     adjusted: Boolean(safeRaw.adjusted || safeRaw.status === 'adjusted' || prescription.adjusted || normalized.adjusted),
     prescription,

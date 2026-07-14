@@ -20,6 +20,11 @@ function parseMiles(label = '') {
   return match ? toNumber(match[1]) : 0
 }
 
+function parseMinutes(label = '') {
+  const match = String(label).match(/([0-9]+(?:\.[0-9]+)?)\s*(?:min|minute)/i)
+  return match ? toNumber(match[1]) : 0
+}
+
 function parsePaceSecondsPerMile(pace = '') {
   const match = String(pace).match(/([0-9]+):([0-9]{2})/)
   if (!match) return null
@@ -68,16 +73,20 @@ class WatchWorkoutService {
 
   buildRunWorkout(workout = {}) {
     const miles = parseMiles(workout.distanceLabel)
+    const durationMinutes = toNumber(workout.durationMinutes) || parseMinutes(workout.durationLabel)
+    const timePrimary = String(workout.prescriptionBasis || '').toLowerCase() === 'time' && durationMinutes > 0
     const paceSeconds = parsePaceSecondsPerMile(workout.pace)
     return {
       source: 'forge',
       kind: 'run',
       activity: 'running',
       location: 'outdoor',
-      title: cleanTitle(workout.typeLabel, 'Forge Run'),
+      title: cleanTitle(workout.typeLabel, 'Forged Hybrid Run'),
       notes: [workout.progression, workout.description].filter(Boolean).join(' '),
       scheduledAt: new Date().toISOString(),
-      goal: miles > 0
+      goal: timePrimary
+        ? { type: 'time', value: durationMinutes, unit: 'minute' }
+        : miles > 0
         ? { type: 'distance', value: miles, unit: 'mile' }
         : { type: 'open' },
       targetPaceSecondsPerMile: paceSeconds,
@@ -87,6 +96,7 @@ class WatchWorkoutService {
       display: {
         day: workout.day || 'Today',
         distance: workout.distanceLabel || 'Open distance',
+        duration: durationMinutes > 0 ? `${Math.round(durationMinutes)} min` : '',
         pace: workout.pace || '',
         zone: workout.zone || '',
         focus: workout.intensity || '',
@@ -128,8 +138,11 @@ class WatchWorkoutService {
     }
 
     return [
-      `${workout.display?.day || 'Today'}: ${workout.title || 'Forge Run'}`,
-      `Distance: ${workout.display?.distance || 'Open distance'}`,
+      `${workout.display?.day || 'Today'}: ${workout.title || 'Forged Hybrid Run'}`,
+      workout.goal?.type === 'time' ? `Duration: ${workout.display?.duration || `${workout.goal.value} min`}` : '',
+      workout.goal?.type === 'distance' ? `Distance: ${workout.display?.distance || `${workout.goal.value} mi`}` : '',
+      workout.goal?.type === 'time' && workout.display?.distance ? `Estimated distance: ${workout.display.distance}` : '',
+      workout.goal?.type === 'open' ? 'Goal: Open run' : '',
       workout.display?.pace ? `Pace: ${workout.display.pace}` : '',
       workout.display?.zone ? `Zone: ${workout.display.zone}` : '',
       workout.display?.focus ? `Focus: ${workout.display.focus}` : '',

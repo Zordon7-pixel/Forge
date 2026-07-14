@@ -70,7 +70,7 @@ check(validation.valid, `protected deterministic plan validates: ${validation.er
 check(!protectedSessions.some(({ day, session }) => day.date === '2026-07-13' && session.kind === 'run'), 'plan does not prescribe a second run on the completed date');
 check(!protectedSessions.some(({ day, session }) => day.date <= '2026-07-15' && concurrent.isHardRun(session)), 'no hard run remains inside the protected window');
 check(!protectedSessions.some(({ day, session }) => day.date <= '2026-07-15' && session.kind === 'lift' && /lower/i.test(String(session.focus || ''))), 'no lower-body lift remains inside the protected window');
-check(protectedSessions.some(({ day, session }) => day.date === '2026-07-14' && session.type === 'recovery'), 'next demanding run becomes an explicit recovery run');
+check(!protectedSessions.some(({ week, session }) => week.week === 1 && (session.type === 'long' || concurrent.isHardRun(session))), 'a completed long run leaves only easy remaining running in the current week');
 check((protectedPlan.weeks[0].days.find((day) => day.date === '2026-07-14')?.whyToday || '').includes('7.3 mi'), 'day view explains the exact recent-run reason');
 check(protectedPlan.inputSummary.recentRun?.paceLabel === '11:37/mi', 'persisted input summary records the run used by planning');
 check(protectedPlan.inputSummary.appleHealth?.readinessScore === 58 && protectedPlan.inputSummary.checkin?.feeling === 3, 'persisted input summary records Apple Health and check-in inputs');
@@ -138,6 +138,27 @@ section('stale run does not overreach');
 const yesterday = recentRuns.summarizeRecentRunLoad(rows, { todayISO: '2026-07-14', weeklyBaseline: 9.1, recoveryState: 'caution' });
 check(yesterday.protection.active && yesterday.latestRun.daysSince === 1, 'yesterday\'s long run keeps the remaining protection window active');
 check(yesterday.protection.noAdditionalRunOnDate === null && yesterday.protection.hardRunsThrough === '2026-07-15', 'yesterday does not block today as a duplicate while preserving hard-run protection');
+const afterRecovery = recentRuns.summarizeRecentRunLoad(rows.concat({
+  date: '2026-07-14', type: 'easy', watch_activity_type: 'Running', distance_miles: 2.173, duration_seconds: 1531,
+  avg_heart_rate: 138, health_source: 'apple_health', created_at: '2026-07-14T12:52:00.000Z',
+}), { todayISO: '2026-07-14', weeklyBaseline: 11.4, recoveryState: 'caution' });
+check(afterRecovery.latestRun.distanceMiles === 2.173, 'the most recent recovery run remains the latest-run truth');
+check(afterRecovery.protectiveRun.distanceMiles === 7.312 && afterRecovery.protection.anchorDate === '2026-07-13', 'a short recovery run does not hide yesterday\'s long-run protection anchor');
+check(afterRecovery.protection.noAdditionalRunOnDate === '2026-07-14' && afterRecovery.protection.hardRunsThrough === '2026-07-15', 'today\'s run blocks a duplicate while the prior long run controls the hard-session window');
+check(afterRecovery.currentWeek.miles === 9.5 && afterRecovery.currentWeek.longRunCompleted, 'current-week load records both runs and recognizes that the long run is already complete');
+const recoveryWeekContext = {
+  ...context,
+  todayISO: '2026-07-14',
+  target: { ...context.target, startDate: '2026-07-13', raceDate: '2026-10-11', weeks: 13 },
+  history: { ...context.history, weeklyMileageBaseline: 11.4, acuteRunLoad: afterRecovery },
+};
+const recoveryWeekPlan = concurrent.buildConcurrentPlan(recoveryWeekContext);
+const recoveryWeekValidation = concurrent.validateConcurrentPlan(recoveryWeekPlan, recoveryWeekContext);
+const recoveryWeekRuns = sessions(recoveryWeekPlan).filter(({ week, session }) => week.week === 1 && session.kind === 'run');
+check(recoveryWeekValidation.valid, `a midweek regeneration validates against completed-plus-planned load: ${recoveryWeekValidation.errors.join('; ')}`);
+check(recoveryWeekRuns.every(({ day }) => day.date > '2026-07-14'), 'a regenerated plan does not schedule replacement runs on already completed or past dates');
+check(!recoveryWeekRuns.some(({ session }) => session.type === 'long'), 'a completed 7.3-mile long run prevents a second long run in the same week');
+check(recoveryWeekPlan.weeks[0].completedMilesAtGeneration === 9.5, 'the plan records current-week completed mileage separately from remaining prescriptions');
 const stale = recentRuns.summarizeRecentRunLoad(rows, { todayISO: '2026-07-17', weeklyBaseline: 9.1, recoveryState: 'caution' });
 check(stale.available && !stale.protection.active, 'run older than 72 hours remains visible but does not alter the plan');
 

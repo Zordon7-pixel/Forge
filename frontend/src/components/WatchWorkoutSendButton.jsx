@@ -2,6 +2,13 @@ import { useEffect, useMemo, useState } from 'react'
 import { Watch } from 'lucide-react'
 import track from '../lib/track'
 import WatchDeliveryService from '../services/WatchDeliveryService'
+import { athleteWatchAvailabilityMessage, isInternalWatchDiagnostic } from '../services/watchWorkoutAvailability'
+
+function logAvailabilityDiagnostic(reason = '') {
+  if (isInternalWatchDiagnostic(reason)) {
+    console.error('[watch-delivery] unavailable:', reason)
+  }
+}
 
 export default function WatchWorkoutSendButton({ workout, label = 'Send to Watch', className = '', compact = false }) {
   const [status, setStatus] = useState('')
@@ -14,9 +21,11 @@ export default function WatchWorkoutSendButton({ workout, label = 'Send to Watch
     let active = true
     WatchDeliveryService.getAvailability()
       .then((result) => {
+        if (!result?.canAutoSend && result?.reason) logAvailabilityDiagnostic(result.reason)
         if (active) setAvailability({ checked: true, available: Boolean(result?.canAutoSend), reason: result?.reason || '' })
       })
       .catch((err) => {
+        console.error('[watch-delivery] availability check failed:', err?.message || err)
         if (active) setAvailability({ checked: true, available: false, reason: err?.message || 'Watch delivery is unavailable.' })
       })
     return () => {
@@ -38,7 +47,7 @@ export default function WatchWorkoutSendButton({ workout, label = 'Send to Watch
   const sendWorkout = async () => {
     if (!workout) return
     if (availability.checked && !availability.available) {
-      setError(availability.reason || 'Watch delivery is unavailable.')
+      setError(athleteWatchAvailabilityMessage(availability.reason))
       setStatus('')
       return
     }
@@ -50,7 +59,8 @@ export default function WatchWorkoutSendButton({ workout, label = 'Send to Watch
       track('recommendation_followed', { via: 'watch' })
       setStatus('Sent to watch.')
     } catch (err) {
-      setError(err?.message || 'Could not send this workout to your watch.')
+      console.error('[watch-delivery] send failed:', err?.message || err)
+      setError('Could not send this workout to Apple Watch. Manual entry still works.')
     } finally {
       setSending(false)
     }
@@ -60,6 +70,7 @@ export default function WatchWorkoutSendButton({ workout, label = 'Send to Watch
 
   const canSend = availability.checked && availability.available
   const showSendButton = !compact || canSend
+  const unavailableMessage = athleteWatchAvailabilityMessage(availability.reason)
 
   return (
     <div className={className}>
@@ -72,7 +83,7 @@ export default function WatchWorkoutSendButton({ workout, label = 'Send to Watch
           style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', cursor: sending ? 'wait' : 'pointer' }}
         >
           <Watch size={17} />
-          {sending ? 'Sending...' : availability.checked && !availability.available ? 'Watch delivery unavailable' : label}
+          {sending ? 'Sending...' : availability.checked && !availability.available ? 'Apple Watch coming soon' : label}
         </button>
       )}
       <button
@@ -86,7 +97,7 @@ export default function WatchWorkoutSendButton({ workout, label = 'Send to Watch
       {status && <p className="mt-2 text-xs" style={{ color: 'var(--success)' }}>{status}</p>}
       {(error || (!compact && availability.checked && !availability.available && availability.reason)) && (
         <p className="mt-2 text-xs" style={{ color: 'var(--warning)' }}>
-          {error || availability.reason}
+          {error || unavailableMessage}
         </p>
       )}
     </div>
