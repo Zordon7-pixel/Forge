@@ -5,8 +5,8 @@ This file holds Forge's product history, deployment notes, shipped phase log, kn
 ## Current Production
 
 - Production URL: `https://forge-production-773f.up.railway.app/`
-- Latest verified application release: commit `2378714e`, deployment `14fd2c37-40de-451b-9ac4-f47599c8aa99`
-- Latest checked bundle: `/assets/index-CGU9ymkK.js`
+- Latest verified application release: commit `53ae701a`, deployment `22655735-758a-40d2-bde0-cc9359fb9b3b`
+- Latest checked bundle: `/assets/index-D-pIgSi3.js`
 - iOS version/build: `1.0.5` / `15`
 - Bundle identifier: `com.zordontech.forge`
 - Expo/EAS project: `@zordon/forge-athlete` (`6aeb5fbb-2697-4cf4-b9b3-afe60c63e9e1`)
@@ -79,8 +79,8 @@ Current source-of-truth map before native Apple Health work:
 | Race goals | `Races.jsx` -> `/api/races` | `race_events` | Race countdown, plan generation target | Working |
 | File import | Settings file upload -> `/api/import/workouts` or `/api/import/health` | `runs`, `lifts` | History, Dashboard stats, recommendations | Working for Garmin/Strava-style CSV and workout JSON |
 | Watch-sync API | `/api/watch-sync` and `/api/watch-sync/upload` | `watch_sync`, plus routed `runs`/`lifts` | Dashboard watch notice, readiness gate, history | Backend works; no native phone collector yet |
-| Health summary sync | `HealthService.syncToProfile()` -> `/api/health/sync` | `health_sync` | Dashboard health card only | Backend works; native bridge source added in Phase 2 |
-| Apple Health / Apple Watch | Native HealthKit bridge in `ForgeHealthPlugin.swift` | `health_sync`, imported `runs`/`lifts` | Settings sync button, Dashboard health card, recommendations after import | Requires a new EAS/TestFlight binary before phone QA |
+| Health summary sync | `HealthService.syncToProfile()` -> `/api/health/sync` | `health_sync` | Body overview, readiness, plan provenance, and bounded plan generation/adaptation context | Expanded H11 backend and web surfaces verified live |
+| Apple Health / Apple Watch | Native HealthKit bridge in `ForgeHealthPlugin.swift` | `health_sync`, imported `runs`/`lifts` | Settings sync, Body metrics, recent load, recovery, cardio fitness, and running-form context | Existing bridge remains usable; H11 expanded native reads require a later Bryan-approved EAS build and phone QA |
 | Garmin direct | Settings status/revoke plus legacy backend route | `user_settings`, `garmin_sleep`, `watch_sync`, `runs` | Paused copy in Settings | Paused until official Garmin API access |
 | Strava OAuth | Settings device row -> `/api/strava/*` | `strava_tokens`, imported `runs` | History/Dashboard after sync | Available if env/app config is live |
 | WHOOP/Oura OAuth | Settings device rows -> `/api/whoop/*`, `/api/oura/*` | `whoop_*`, `oura_*` | Unified recovery endpoint | Premium integration path exists; depends on provider env/config |
@@ -171,6 +171,16 @@ Phase 2 cleanup from this audit:
 - H10 passed 24 focused checks, H1/H3/H4/H5/H6/H8/H9 regressions, 17 calendar checks, all other frontend smokes, frontend build, zero-vulnerability audit, 47-table account-data coverage, Capacitor sync, and two Claude Code reviews. Claude verdict: PASS — Ship.
 - Production verified `/assets/index-CGU9ymkK.js` and `/assets/Plan-DP5Af5aD.js`, the new prescription rationale/detail copy, authenticated plan reads, a 390x844 mobile plan render, and zero browser console errors. No EAS build was run.
 
+## Apple Health Training Intelligence H11 (2026-07-13)
+
+- The native HealthKit bridge now covers training-relevant workout/load, activity, sleep stages and prior-night baseline, HRV/resting-HR athlete baselines, VO2 max, walking heart rate, one-minute heart-rate recovery, respiratory rate, and latest-run power/speed/stride/vertical-oscillation/ground-contact metrics.
+- The authenticated `/api/health/sync` boundary validates and whitelists expanded metrics, stores them in the existing user-owned health row, preserves source timestamps, and exposes a flattened read contract. Stale or suspect recovery data is removed before Body, readiness, AI, or plan consumers see it.
+- Plan generation keeps completed run/lift history as primary evidence. Fresh Apple Health data supplies bounded recovery, activity, cardio, and running-form context; it cannot independently increase training load or invent lifting weights.
+- The Body screen groups activity, recovery, cardio fitness, and running-form data and explains how it informs the plan. Missing or stale inputs now say there is not enough recent data instead of claiming everything looks good.
+- Collection remains purpose-limited. ECG, AFib, blood pressure, glucose, reproductive data, clinical records, and unrelated medical categories are not requested.
+- H11 passed 36 focused behavioral checks, all H1/H3/H4/H5/H6/H8/H9/H10 regressions, heat-drift/interference checks, four frontend smokes, production build, zero-vulnerability audit, 47-table account-data coverage, Capacitor sync, Swift parse, and three Claude Code QA passes. Final verdict: PASS.
+- Railway production verified `/assets/index-D-pIgSi3.js` and `/assets/HealthData-DRmOOl2D.js`; authenticated health/Body reads return `200`, unauthenticated reads return `401`, and invalid extended metrics return `400` without changing stored data. No EAS build was run; expanded native collection awaits Bryan's explicit approval.
+
 ## Recently Fixed Bugs
 
 Do not reintroduce these patterns.
@@ -237,6 +247,7 @@ These changes are already implemented, built, Capacitor-synced, and deployed to 
 | 2026-07-13 | `f6c0aff8-7ce1-4847-b0a8-a2dd33e1ae16` | Success | H8 race-first plan search, calendar setup, and resilient plan generation verified live |
 | 2026-07-13 | `141a52be-e978-4de7-a5d3-51e8fb520a3a` | Success | H9 exact recent-run adaptation, strength-floor protection, and build-aware Apple Watch diagnostics verified live |
 | 2026-07-13 | `14fd2c37-40de-451b-9ac4-f47599c8aa99` | Success | H10 recovery-prescription integrity and data-backed strength details verified live |
+| 2026-07-13 | `22655735-758a-40d2-bde0-cc9359fb9b3b` | Success | H11 expanded Apple Health training intelligence, freshness gates, plan provenance, and Body metrics verified live |
 
 ### Build/Test Status
 
@@ -258,6 +269,7 @@ These changes are already implemented, built, Capacitor-synced, and deployed to 
 - Phase H8 production smoke: exact bundle hash matches local build; Army Ten-Miler alias and Washington DC location searches return the canonical October 11 event; unauthenticated catalog returns `401`; mobile plan search renders at 390px without horizontal overflow.
 - Phase H9 production smoke: exact `/assets/index-IHa1ZhZv.js` bundle matches the reviewed build; authenticated plan routes return `200`, unauthenticated current-plan access returns `401`, and the plan renders at 390x844 without horizontal overflow or console errors.
 - Phase H10 production smoke: exact `/assets/index-CGU9ymkK.js` and `/assets/Plan-DP5Af5aD.js` assets match the reviewed build; new rationale/working-set/load-basis copy is live, authenticated plan routes return `200`, and the mobile plan renders without console errors.
+- Phase H11 production smoke: exact `/assets/index-D-pIgSi3.js` and `/assets/HealthData-DRmOOl2D.js` assets match the reviewed build; health/Body auth boundaries return `401` unauthenticated and `200` signed in, empty data is described honestly, and rejected metrics perform no write.
 
 ### Product Changes Shipped
 
