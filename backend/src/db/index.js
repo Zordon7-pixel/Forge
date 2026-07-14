@@ -205,6 +205,7 @@ async function initDb() {
         watch_activity_type TEXT,
         watch_normalized_type TEXT,
         health_source TEXT,
+        health_source_workout_id TEXT,
         health_start_at TEXT,
         health_end_at TEXT,
         workout_metrics_json TEXT DEFAULT '{}',
@@ -217,11 +218,23 @@ async function initDb() {
       );
     `);
     await client.query("ALTER TABLE runs ADD COLUMN IF NOT EXISTS health_source TEXT");
+    await client.query("ALTER TABLE runs ADD COLUMN IF NOT EXISTS health_source_workout_id TEXT");
     await client.query("ALTER TABLE runs ADD COLUMN IF NOT EXISTS health_start_at TEXT");
     await client.query("ALTER TABLE runs ADD COLUMN IF NOT EXISTS health_end_at TEXT");
     await client.query("ALTER TABLE runs ADD COLUMN IF NOT EXISTS workout_metrics_json TEXT DEFAULT '{}'");
     await client.query("ALTER TABLE runs ADD COLUMN IF NOT EXISTS pain_level TEXT");
     await client.query("ALTER TABLE runs ADD COLUMN IF NOT EXISTS post_energy TEXT");
+    await client.query('CREATE INDEX IF NOT EXISTS idx_runs_health_source_workout ON runs(user_id, health_source, health_source_workout_id)');
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS run_import_tombstones (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        source_key TEXT NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(user_id, source_key)
+      );
+    `);
+    await client.query('CREATE INDEX IF NOT EXISTS idx_run_import_tombstones_user ON run_import_tombstones(user_id)');
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS gear_shoes (

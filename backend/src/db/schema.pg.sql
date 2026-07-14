@@ -78,6 +78,7 @@ CREATE TABLE IF NOT EXISTS runs (
   watch_activity_type TEXT,
   watch_normalized_type TEXT,
   health_source TEXT,
+  health_source_workout_id TEXT,
   health_start_at TEXT,
   health_end_at TEXT,
   workout_metrics_json TEXT DEFAULT '{}',
@@ -86,6 +87,17 @@ CREATE TABLE IF NOT EXISTS runs (
 
 CREATE INDEX IF NOT EXISTS idx_runs_user_id ON runs(user_id);
 CREATE INDEX IF NOT EXISTS idx_runs_user_date ON runs(user_id, date DESC);
+CREATE INDEX IF NOT EXISTS idx_runs_health_source_workout ON runs(user_id, health_source, health_source_workout_id);
+
+CREATE TABLE IF NOT EXISTS run_import_tombstones (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  source_key TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(user_id, source_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_run_import_tombstones_user ON run_import_tombstones(user_id);
 
 CREATE TABLE IF NOT EXISTS user_hr_profile (
   user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,

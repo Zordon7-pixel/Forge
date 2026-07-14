@@ -65,12 +65,15 @@ export default function History() {
   const [workoutSessions, setWorkoutSessions] = useState([])
   const [races, setRaces] = useState([])
   const [hrZones, setHrZones] = useState([])
+  const [hrProfile, setHrProfile] = useState(null)
   const [editingRun, setEditingRun] = useState(null)
   const [editingLift, setEditingLift] = useState(null)
   const [selectedRun, setSelectedRun] = useState(null)
   const [selectedWorkout, setSelectedWorkout] = useState(null)
   const [showMissedModal, setShowMissedModal] = useState(false)
   const [pendingDelete, setPendingDelete] = useState(null)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState('')
 
   const currentYear = new Date().getFullYear()
   const [selectedYear, setSelectedYear] = useState(null)
@@ -92,6 +95,7 @@ export default function History() {
         setWorkoutSessions([...(workoutsRes.data?.sessions || [])].sort((a, b) => (b.started_at || '').localeCompare(a.started_at || '')))
         setRaces([...(racesRes.data?.races || [])].sort((a, b) => (b.race_date || '').localeCompare(a.race_date || '')))
         setHrZones(Array.isArray(hrZonesRes.data?.zones) ? hrZonesRes.data.zones : [])
+        setHrProfile(hrZonesRes.data?.profile || null)
       } finally {
         setLoading(false)
       }
@@ -116,26 +120,35 @@ export default function History() {
   }, [loading, location.search, runs, workoutSessions])
 
   const requestDelete = (type, item, e) => {
-    e.stopPropagation()
+    e?.stopPropagation?.()
+    setDeleteError('')
     setPendingDelete({ type, item })
   }
 
   const confirmDelete = async () => {
-    if (!pendingDelete) return
+    if (!pendingDelete || deleting) return
     const { type, item } = pendingDelete
-    setPendingDelete(null)
-    if (type === 'run') {
-      await api.delete(`/runs/${item.id}`)
-      setRuns(prev => prev.filter(r => r.id !== item.id))
-      return
+    setDeleting(true)
+    setDeleteError('')
+    try {
+      if (type === 'run') {
+        await api.delete(`/runs/${item.id}`)
+        setRuns(prev => prev.filter(r => r.id !== item.id))
+        setSelectedRun(current => current?.id === item.id ? null : current)
+      } else if (type === 'workout') {
+        await api.delete(`/workouts/${item.id}`)
+        setWorkoutSessions(prev => prev.filter(session => session.id !== item.id))
+      } else {
+        await api.delete(`/lifts/${item.id}`)
+        setLifts(prev => prev.filter(l => l.id !== item.id))
+      }
+      setPendingDelete(null)
+    } catch (error) {
+      console.error('[history/delete] failed:', error?.message || error)
+      setDeleteError(error?.response?.data?.error || `Could not delete this ${type}. Try again.`)
+    } finally {
+      setDeleting(false)
     }
-    if (type === 'workout') {
-      await api.delete(`/workouts/${item.id}`)
-      setWorkoutSessions(prev => prev.filter(session => session.id !== item.id))
-      return
-    }
-    await api.delete(`/lifts/${item.id}`)
-    setLifts(prev => prev.filter(l => l.id !== item.id))
   }
 
   const updateRunInState = updated => {
@@ -486,10 +499,11 @@ export default function History() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
           <div className="w-full max-w-sm rounded-xl border p-4" style={{ background: 'var(--bg-card)', borderColor: 'var(--border-subtle)' }}>
             <h3 className="text-base font-bold" style={{ color: 'var(--text-primary)' }}>Delete {pendingDelete.type}?</h3>
-            <p className="mt-2 text-sm" style={{ color: 'var(--text-muted)' }}>This cannot be undone.</p>
+            <p className="mt-2 text-sm" style={{ color: 'var(--text-muted)' }}>This removes it from Forged Hybrid and recalculates affected records. It does not delete the original workout from Apple Health.</p>
+            {deleteError && <p className="mt-2 text-sm" role="alert" style={{ color: 'var(--danger)' }}>{deleteError}</p>}
             <div className="mt-4 flex justify-end gap-2">
-              <button type="button" onClick={() => setPendingDelete(null)} className="rounded-lg border px-4 py-2 text-sm" style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}>Cancel</button>
-              <button type="button" onClick={confirmDelete} className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>Delete</button>
+              <button type="button" disabled={deleting} onClick={() => setPendingDelete(null)} className="rounded-lg border px-4 py-2 text-sm" style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-primary)', opacity: deleting ? 0.5 : 1 }}>Cancel</button>
+              <button type="button" disabled={deleting} onClick={confirmDelete} className="rounded-lg px-4 py-2 text-sm font-semibold" style={{ background: 'var(--danger)', color: '#FFFFFF', opacity: deleting ? 0.6 : 1 }}>{deleting ? 'Deleting...' : 'Delete'}</button>
             </div>
           </div>
         </div>
@@ -499,7 +513,13 @@ export default function History() {
         <RunDetailModal
           run={selectedRun}
           hrZones={hrZones}
+          hrProfile={hrProfile}
           onClose={() => setSelectedRun(null)}
+          onDelete={() => {
+            const run = selectedRun
+            setSelectedRun(null)
+            requestDelete('run', run)
+          }}
           onFeedbackGenerated={(id, fb) => setRuns(prev => prev.map(r => (r.id === id ? { ...r, ai_feedback: fb } : r)))}
         />
       )}

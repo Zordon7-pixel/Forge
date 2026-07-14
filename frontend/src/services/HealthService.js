@@ -8,7 +8,7 @@ const REQUIRED_HEALTH_AUTH_VERSION = 3
 const HEALTH_RESYNC_NEEDED_KEY = 'forge.health.resyncNeeded'
 const AUTO_HEALTH_SYNC_LAST_SYNC_KEY = 'forge_auto_health_sync_last_sync_at'
 const WORKOUT_IMPORT_VERSION_KEY = 'forge_health_workout_import_version'
-const REQUIRED_WORKOUT_IMPORT_VERSION = 3
+const REQUIRED_WORKOUT_IMPORT_VERSION = 4
 const ForgeHealth = registerPlugin('ForgeHealth')
 
 function isIOSDevice() {
@@ -316,7 +316,9 @@ class HealthService {
     }
 
     await this.syncToProfile(result.metrics)
-    const historyOptions = (healthResyncNeeded() || workoutHistoryUpgradeRequired()) ? { forceFullSync: true } : {}
+    const nativeMetricsVersion = Number(result.metrics?.metricsSchemaVersion || 1)
+    const workoutUpgradeAvailable = nativeMetricsVersion >= REQUIRED_WORKOUT_IMPORT_VERSION
+    const historyOptions = (healthResyncNeeded() || (workoutUpgradeAvailable && workoutHistoryUpgradeRequired())) ? { forceFullSync: true } : {}
     let profile = null
     try {
       const { data } = await api.get('/profile/hr-zones')
@@ -344,7 +346,7 @@ class HealthService {
 
     if (history.available) {
       clearHealthResyncNeeded()
-      markWorkoutHistoryUpgraded()
+      if (workoutUpgradeAvailable) markWorkoutHistoryUpgraded()
     } else {
       markHealthResyncNeeded()
     }

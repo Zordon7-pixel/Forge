@@ -160,7 +160,7 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
 
             let runGroup = DispatchGroup()
             runGroup.enter()
-            self.averageHeartRate(startDate: run.startDate, endDate: run.endDate) { value in
+            self.averageHeartRate(workout: run) { value in
                 avgHeartRateLastRun = value
                 runGroup.leave()
             }
@@ -240,7 +240,7 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
 
         group.notify(queue: .main) {
             var payload: [String: Any] = [
-                "metricsSchemaVersion": 3,
+                "metricsSchemaVersion": 4,
                 "stepsToday": Int(stepsToday.rounded()),
                 "caloriesBurnedToday": Int(caloriesToday.rounded()),
                 "totalMilesThisWeek": round(milesThisWeek * 100) / 100,
@@ -734,9 +734,10 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
 
         for workout in workouts {
             group.enter()
-            fetchHeartRateSamples(startDate: workout.startDate, endDate: workout.endDate) { samples in
-                let maxHR = samples.map { $0.bpm }.max()
-                let avgHR = samples.isEmpty ? nil : samples.reduce(0.0) { $0 + $1.bpm } / Double(samples.count)
+            fetchHeartRateSamples(workout: workout) { samples in
+                let workoutStatistics = self.workoutHeartRateStatistics(workout)
+                let maxHR = workoutStatistics.maxHR ?? samples.map { $0.bpm }.max()
+                let avgHR = workoutStatistics.avgHR ?? self.timeWeightedAverage(samples, workout: workout)
 
                 lock.lock()
                 if let maxHR = maxHR {
@@ -755,7 +756,7 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
             if zoneMinimums != nil || (suppliedMaxHR ?? 0) > 0 {
                 for workout in workouts {
                     zoneGroup.enter()
-                    self.fetchHeartRateSamples(startDate: workout.startDate, endDate: workout.endDate) { samples in
+                    self.fetchHeartRateSamples(workout: workout) { samples in
                         let zoneSeconds = self.bucketHeartRateSamples(samples, workout: workout, maxHR: suppliedMaxHR, zoneMinimums: zoneMinimums)
                         lock.lock()
                         let existing = summaries[workout.uuid]
@@ -786,13 +787,37 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
         let bpm: Double
     }
 
-    private func fetchHeartRateSamples(startDate: Date, endDate: Date, completion: @escaping ([HeartRatePoint]) -> Void) {
+    private func workoutHeartRateStatistics(_ workout: HKWorkout) -> (avgHR: Double?, maxHR: Double?) {
+        guard #available(iOS 16.0, *), let type = HKQuantityType.quantityType(forIdentifier: .heartRate) else {
+            return (nil, nil)
+        }
+        let unit = HKUnit.count().unitDivided(by: HKUnit.minute())
+        let statistics = workout.statistics(for: type)
+        return (
+            statistics?.averageQuantity()?.doubleValue(for: unit),
+            statistics?.maximumQuantity()?.doubleValue(for: unit)
+        )
+    }
+
+    private func timeWeightedAverage(_ samples: [HeartRatePoint], workout: HKWorkout) -> Double? {
+        guard !samples.isEmpty else { return nil }
+        var weightedTotal = 0.0
+        var coveredSeconds = 0.0
+        for (index, sample) in samples.enumerated() {
+            let nextDate = index + 1 < samples.count ? samples[index + 1].date : workout.endDate
+            let seconds = max(1.0, min(nextDate.timeIntervalSince(sample.date), 30.0))
+            weightedTotal += sample.bpm * seconds
+            coveredSeconds += seconds
+        }
+        return coveredSeconds > 0 ? weightedTotal / coveredSeconds : nil
+    }
+
+    private func queryHeartRateSamples(predicate: NSPredicate, completion: @escaping ([HeartRatePoint]) -> Void) {
         guard let type = HKQuantityType.quantityType(forIdentifier: .heartRate) else {
             completion([])
             return
         }
 
-        let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: .strictStartDate)
         let sort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)
         let query = HKSampleQuery(sampleType: type, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: [sort]) { _, samples, error in
             guard error == nil else {
@@ -801,12 +826,28 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
             }
 
             let unit = HKUnit.count().unitDivided(by: HKUnit.minute())
-            let points = (samples as? [HKQuantitySample] ?? []).map {
-                HeartRatePoint(date: $0.startDate, bpm: $0.quantity.doubleValue(for: unit))
+            let points = (samples as? [HKQuantitySample] ?? []).compactMap { sample -> HeartRatePoint? in
+                let bpm = sample.quantity.doubleValue(for: unit)
+                guard bpm >= 30, bpm <= 250 else { return nil }
+                return HeartRatePoint(date: sample.startDate, bpm: bpm)
             }
             completion(points)
         }
         healthStore.execute(query)
+    }
+
+    private func fetchHeartRateSamples(workout: HKWorkout, completion: @escaping ([HeartRatePoint]) -> Void) {
+        let workoutPredicate = HKQuery.predicateForObjects(from: workout)
+        queryHeartRateSamples(predicate: workoutPredicate) { associatedSamples in
+            guard associatedSamples.isEmpty else {
+                completion(associatedSamples)
+                return
+            }
+            let datePredicate = HKQuery.predicateForSamples(withStart: workout.startDate, end: workout.endDate, options: .strictStartDate)
+            let sourcePredicate = HKQuery.predicateForObjects(from: workout.sourceRevision.source)
+            let fallbackPredicate = NSCompoundPredicate(andPredicateWithSubpredicates: [datePredicate, sourcePredicate])
+            self.queryHeartRateSamples(predicate: fallbackPredicate, completion: completion)
+        }
     }
 
     private func emptyZoneSeconds() -> [String: Int] {
@@ -905,18 +946,15 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
-    private func averageHeartRate(startDate: Date, endDate: Date, completion: @escaping (Double?) -> Void) {
-        guard let type = HKQuantityType.quantityType(forIdentifier: .heartRate) else {
-            completion(nil)
+    private func averageHeartRate(workout: HKWorkout, completion: @escaping (Double?) -> Void) {
+        let workoutAverage = workoutHeartRateStatistics(workout).avgHR
+        if let workoutAverage = workoutAverage {
+            completion(workoutAverage)
             return
         }
-
-        let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: .strictStartDate)
-        let query = HKStatisticsQuery(quantityType: type, quantitySamplePredicate: predicate, options: .discreteAverage) { _, statistics, _ in
-            let unit = HKUnit.count().unitDivided(by: HKUnit.minute())
-            completion(statistics?.averageQuantity()?.doubleValue(for: unit))
+        fetchHeartRateSamples(workout: workout) { samples in
+            completion(self.timeWeightedAverage(samples, workout: workout))
         }
-        healthStore.execute(query)
     }
 
     private func serializeWorkout(_ workout: HKWorkout, avgHR: Double? = nil, maxHR: Double? = nil, zoneSeconds: [String: Int]? = nil) -> [String: Any] {

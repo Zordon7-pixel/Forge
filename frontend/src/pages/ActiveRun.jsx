@@ -10,6 +10,7 @@ import PostRunCheckIn from '../components/PostRunCheckIn'
 import AICoachFeedbackCard from '../components/AICoachFeedbackCard'
 import WorkoutCard from '../components/WorkoutCard'
 import { calculateElevationStats } from '../utils/elevation'
+import { clearActiveRunSession, elapsedFromSession, loadActiveRunSession, saveActiveRunSession } from '../lib/activeRunSession'
 
 const BackgroundGeolocation = registerPlugin('BackgroundGeolocation')
 
@@ -33,8 +34,24 @@ const ZONES = [
   { key: 'Z5', min: 0.9, max: 1.01, name: 'Max Effort', color: '#EF4444' },
 ]
 
-function getZone(hr, maxHr) {
-  if (!hr || !maxHr) return null
+function getZone(hr, maxHr, savedZones = []) {
+  if (!hr) return null
+  if (Array.isArray(savedZones) && savedZones.length === 5) {
+    const value = Number(hr)
+    const index = savedZones.findIndex((zone, zoneIndex) => (
+      value >= Number(zone.minBpm)
+      && (zoneIndex === savedZones.length - 1 || value < Number(savedZones[zoneIndex + 1].minBpm))
+    ))
+    const resolvedIndex = index >= 0 ? index : value < Number(savedZones[0]?.minBpm) ? 0 : 4
+    const savedZone = savedZones[resolvedIndex]
+    return {
+      key: `Z${resolvedIndex + 1}`,
+      name: savedZone?.label || ZONES[resolvedIndex].name,
+      color: ZONES[resolvedIndex].color,
+      pct: Math.min(1, Math.max(0, value / (Number(maxHr) || 230))),
+    }
+  }
+  if (!maxHr) return null
   const pct = hr / maxHr
   if (pct < ZONES[0].min) return { key: 'Z0', min: 0, max: ZONES[0].min, name: 'Below Z1', color: '#9CA3AF', pct }
   const zone = ZONES.find(z => pct >= z.min && pct < z.max) || ZONES[4]
@@ -112,56 +129,75 @@ function FitMapBounds({ positions }) {
   return null
 }
 
+function FollowCurrentLocation({ position, enabled }) {
+  const map = useMap()
+  useEffect(() => {
+    if (enabled && position) map.panTo(position, { animate: true, duration: 0.5 })
+  }, [enabled, map, position])
+  return null
+}
+
 export default function ActiveRun() {
   const location = useLocation()
   const navigate = useNavigate()
   const { fmt, units } = useUnits()
-  const selectedCountdown = location?.state?.countdown ?? 0
-  const plannedRoute = useMemo(() => normalizePlannedRoute(location?.state?.plannedRoute), [location?.state?.plannedRoute])
-  const workoutTarget = location?.state?.workoutTarget || null
+  const [restoredSession] = useState(() => loadActiveRunSession())
+  const navigationState = useMemo(() => restoredSession?.navigationState || location?.state || {}, [location?.state, restoredSession])
+  const selectedCountdown = navigationState.countdown ?? 0
+  const plannedRoute = useMemo(() => normalizePlannedRoute(navigationState.plannedRoute), [navigationState.plannedRoute])
+  const workoutTarget = navigationState.workoutTarget || null
   const [countdownVal, setCountdownVal] = useState(selectedCountdown)
-  const [countingDown, setCountingDown] = useState(selectedCountdown > 0)
-  const [running, setRunning] = useState(false)
-  const [elapsed, setElapsed] = useState(0)
-  const [distanceMiles, setDistanceMiles] = useState(0)
+  const [countingDown, setCountingDown] = useState(!restoredSession && selectedCountdown > 0)
+  const [running, setRunning] = useState(restoredSession?.phase === 'running')
+  const [elapsed, setElapsed] = useState(() => elapsedFromSession(restoredSession))
+  const [distanceMiles, setDistanceMiles] = useState(restoredSession?.distanceMiles || 0)
   const [gpsError, setGpsError] = useState('')
-  const [gpsAvailable, setGpsAvailable] = useState(true)
-  const [manualDistance, setManualDistance] = useState('')
-  const [awaitingManualDistance, setAwaitingManualDistance] = useState(false)
+  const [gpsAvailable, setGpsAvailable] = useState(restoredSession ? restoredSession.gpsAvailable : true)
+  const [manualDistance, setManualDistance] = useState(restoredSession?.manualDistance || '')
+  const [awaitingManualDistance, setAwaitingManualDistance] = useState(restoredSession?.phase === 'awaiting_distance')
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState('')
+  const [restoredNotice, setRestoredNotice] = useState(Boolean(restoredSession))
   const [planProgressNotice, setPlanProgressNotice] = useState('')
   const [queuedOffline, setQueuedOffline] = useState(false)
   const [showPostCheckIn, setShowPostCheckIn] = useState(false)
   const [savedRunId, setSavedRunId] = useState(null)
   // H5: canonical plan session carried from LogRun/Warmup so a durable run save
   // marks the exact calendar session complete. Null for ad-hoc/manual runs.
-  const planSessionId = planSessionIdFromState(location.state)
-  const planCurrentWeek = currentWeekFromState(location.state)
+  const planSessionId = planSessionIdFromState(navigationState)
+  const planCurrentWeek = currentWeekFromState(navigationState)
   const [savedHeatDrift, setSavedHeatDrift] = useState(null)
   const [showAiCard, setShowAiCard] = useState(false)
   const [aiLoading, setAiLoading] = useState(false)
   const [aiFeedback, setAiFeedback] = useState(null)
-  const [mapMyRun, setMapMyRun] = useState(location?.state?.mapMyRun ?? false)
-  const [routeCoords, setRouteCoords] = useState([])
-  const [runEnvironment, setRunEnvironment] = useState(location?.state?.runEnvironment ?? 'outdoor')
-  const [surface, setSurface] = useState(location?.state?.surface ?? 'road')
-  const [runType, setRunType] = useState(location?.state?.runType ?? 'run')
-  const [treadmillBrand, setTreadmillBrand] = useState(location?.state?.treadmillBrand ?? null)
+  const [mapMyRun, setMapMyRun] = useState(restoredSession?.mapMyRun ?? navigationState.mapMyRun ?? false)
+  const [routeCoords, setRouteCoords] = useState(restoredSession?.routeCoords || [])
+  const [runEnvironment, setRunEnvironment] = useState(restoredSession?.runEnvironment ?? navigationState.runEnvironment ?? 'outdoor')
+  const [surface, setSurface] = useState(restoredSession?.surface ?? navigationState.surface ?? 'road')
+  const [runType, setRunType] = useState(restoredSession?.runType ?? navigationState.runType ?? 'run')
+  const [treadmillBrand, setTreadmillBrand] = useState(restoredSession?.treadmillBrand ?? navigationState.treadmillBrand ?? null)
   const [userProfile, setUserProfile] = useState(null)
+  const [savedHrProfile, setSavedHrProfile] = useState(null)
+  const [savedHrZones, setSavedHrZones] = useState([])
   const [liveHr, setLiveHr] = useState(null)
   const [hrLastUpdated, setHrLastUpdated] = useState(null)
-  const [gpsStarted, setGpsStarted] = useState(false)
+  const [gpsStarted, setGpsStarted] = useState(Boolean(restoredSession?.gpsStarted || restoredSession?.routeCoords?.length))
   const [gpsGapSummary, setGpsGapSummary] = useState(null)
   const watchRef = useRef(null)
   const nativeWatchRef = useRef(false)
-  const lastPointRef = useRef(null)
-  const lastFixAtRef = useRef(null)
-  const gpsGapSecondsRef = useRef(0)
-  const gpsGapCountRef = useRef(0)
-  const discardedSegmentRef = useRef(false)
-  const startTimestampRef = useRef(null)
-  const clientRunIdRef = useRef(createClientRunId())
+  const lastPointRef = useRef(restoredSession?.routeCoords?.length ? {
+    lat: restoredSession.routeCoords.at(-1)[0],
+    lon: restoredSession.routeCoords.at(-1)[1],
+    alt: restoredSession.routeCoords.at(-1)[2],
+  } : null)
+  const lastFixAtRef = useRef(restoredSession?.lastFixAt || restoredSession?.savedAt || null)
+  const gpsGapSecondsRef = useRef(restoredSession?.gpsGapSeconds || 0)
+  const gpsGapCountRef = useRef(restoredSession?.gpsGapCount || 0)
+  const discardedSegmentRef = useRef(Boolean(restoredSession?.discardedSegment))
+  const startTimestampRef = useRef(restoredSession?.startedAt || null)
+  const clientRunIdRef = useRef(restoredSession?.clientRunId || createClientRunId())
+  const resumeAttemptedRef = useRef(false)
+  const sessionStateRef = useRef(null)
   const actualElevation = useMemo(() => calculateElevationStats(routeCoords), [routeCoords])
   const plannedRoutePositions = useMemo(() => (
     plannedRoute?.coordinates?.map(([lat, lon]) => [lat, lon]) || []
@@ -171,11 +207,53 @@ export default function ActiveRun() {
     plannedRoutePositions.length ? [...plannedRoutePositions, ...recordedRoutePositions] : recordedRoutePositions
   ), [plannedRoutePositions, recordedRoutePositions])
   const mapBoundsPositions = plannedRoutePositions.length ? plannedRoutePositions : recordedRoutePositions
+  const currentPosition = recordedRoutePositions.at(-1) || null
+
+  sessionStateRef.current = {
+    phase: running ? 'running' : awaitingManualDistance ? 'awaiting_distance' : null,
+    startedAt: startTimestampRef.current,
+    elapsed,
+    distanceMiles,
+    routeCoords,
+    manualDistance,
+    mapMyRun,
+    gpsStarted,
+    gpsAvailable,
+    runEnvironment,
+    surface,
+    runType,
+    treadmillBrand,
+    clientRunId: clientRunIdRef.current,
+    gpsGapSeconds: gpsGapSecondsRef.current,
+    gpsGapCount: gpsGapCountRef.current,
+    lastFixAt: lastFixAtRef.current,
+    discardedSegment: discardedSegmentRef.current,
+    navigationState,
+  }
+
+  useEffect(() => {
+    if (!running && !awaitingManualDistance) return
+    const persist = () => saveActiveRunSession(sessionStateRef.current)
+    persist()
+    const timer = setInterval(persist, 5000)
+    window.addEventListener('pagehide', persist)
+    return () => {
+      clearInterval(timer)
+      window.removeEventListener('pagehide', persist)
+      persist()
+    }
+  }, [awaitingManualDistance, running])
 
   useEffect(() => {
     api.get('/auth/me')
       .then(r => setUserProfile(r.data?.user || null))
       .catch((err) => { console.error('[ActiveRun] Failed to load profile:', err.message) })
+    api.get('/profile/hr-zones')
+      .then((response) => {
+        setSavedHrProfile(response.data?.profile || null)
+        setSavedHrZones(Array.isArray(response.data?.zones) ? response.data.zones : [])
+      })
+      .catch((err) => { console.error('[ActiveRun] Failed to load HR zones:', err.message) })
   }, [])
   
   useEffect(() => {
@@ -196,13 +274,13 @@ export default function ActiveRun() {
     return () => clearInterval(t)
   }, [running])
 
-  const maxHr = userProfile?.max_heart_rate || (userProfile?.age ? 220 - Number(userProfile.age) : null)
-  const hrZone = getZone(liveHr, maxHr)
+  const maxHr = savedHrProfile?.maxHr || userProfile?.max_heart_rate || (userProfile?.age ? 220 - Number(userProfile.age) : null)
+  const hrZone = getZone(liveHr, maxHr, savedHrZones)
 
   const handlePoint = useCallback((lat, lon, alt, tsMillis) => {
     const latitude = Number(lat)
     const longitude = Number(lon)
-    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return
+    if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90 || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) return
     setGpsAvailable(true)
     setGpsStarted(true)
 
@@ -272,14 +350,16 @@ export default function ActiveRun() {
     return true
   }, [handlePoint])
 
-  const startGPS = useCallback(async () => {
+  const startGPS = useCallback(async ({ resume = false } = {}) => {
     setSaveError('')
     setQueuedOffline(false)
     setGpsGapSummary(null)
-    lastFixAtRef.current = null
-    gpsGapSecondsRef.current = 0
-    gpsGapCountRef.current = 0
-    discardedSegmentRef.current = false
+    if (!resume) {
+      lastFixAtRef.current = null
+      gpsGapSecondsRef.current = 0
+      gpsGapCountRef.current = 0
+      discardedSegmentRef.current = false
+    }
     if (!startTimestampRef.current) startTimestampRef.current = Date.now() - (elapsed * 1000)
     setRunning(true)
     if (!mapMyRun) {
@@ -315,6 +395,12 @@ export default function ActiveRun() {
 
     startWebGeolocation()
   }, [elapsed, handlePoint, mapMyRun, startWebGeolocation])
+
+  useEffect(() => {
+    if (restoredSession?.phase !== 'running' || resumeAttemptedRef.current) return
+    resumeAttemptedRef.current = true
+    startGPS({ resume: true })
+  }, [restoredSession, startGPS])
 
   useEffect(() => {
     if (!countingDown) return
@@ -412,6 +498,7 @@ export default function ActiveRun() {
       const res = await api.post('/runs', payload)
       const runId = res.data?.id || res.data?.run?.id
       if (runId) {
+        clearActiveRunSession()
         setSavedRunId(runId)
         setAwaitingManualDistance(false)
         setSavedHeatDrift(res.data?.heatDrift || null)
@@ -463,6 +550,7 @@ export default function ActiveRun() {
           }
         }
         setQueuedOffline(true)
+        clearActiveRunSession()
         setSavedRunId(payload.id)
         setAwaitingManualDistance(false)
         setSaveError(`Saved offline — Forged Hybrid will sync this run when your connection is back.${progressNotice}`)
@@ -547,6 +635,11 @@ export default function ActiveRun() {
       </div>
 
       {(!gpsAvailable || gpsError) && <div className="rounded-xl p-3 mb-3" style={{ background: 'var(--accent-dim)', border: '1px solid var(--border-subtle)', color: 'var(--accent)' }}>{gpsError || 'GPS unavailable — tracking time and effort only'}</div>}
+      {restoredNotice && (
+        <button type="button" onClick={() => setRestoredNotice(false)} className="w-full rounded-xl p-3 mb-3 text-left" role="status" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.3)', color: 'var(--success)' }}>
+          Run restored after the app reloaded. Time, distance, and recorded route were kept. Tap to dismiss.
+        </button>
+      )}
       {gpsGapSummary && (
         <div className="rounded-xl p-3 mb-3" style={{ background: 'var(--accent-dim)', border: '1px solid var(--border-subtle)', color: 'var(--accent)' }}>
           GPS paused during this run{gpsGapSummary.seconds > 0 ? ` for about ${formatGapDuration(gpsGapSummary.seconds)}` : ''}. Review the distance; Forged Hybrid saves a note that the route may be incomplete.
@@ -556,14 +649,21 @@ export default function ActiveRun() {
       {planProgressNotice && <div className="rounded-xl p-3 mb-3" role="status" style={{ background: 'var(--accent-dim)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}>{planProgressNotice}</div>}
 
       {mapMyRun && allMapPositions.length > 0 && (
-        <div className="mb-4 overflow-hidden" style={{ minHeight: 280, height: 280, borderRadius: 8 }}>
+        <div className="mb-4 overflow-hidden" style={{ minHeight: 280, height: 280, borderRadius: 8, position: 'relative' }}>
           <MapContainer center={recordedRoutePositions.at(-1) || plannedRoutePositions[0]} zoom={15} style={{ height: '100%', width: '100%' }}>
             <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
             <FitMapBounds positions={mapBoundsPositions} />
+            <FollowCurrentLocation position={currentPosition} enabled={running} />
             {plannedRoutePositions.length > 0 && <Polyline positions={plannedRoutePositions} pathOptions={{ color: '#9CA3AF', weight: 5, opacity: 0.85, dashArray: '8 8' }} />}
             {recordedRoutePositions.length > 0 && <Polyline positions={recordedRoutePositions} pathOptions={{ color: '#EAB308', weight: 5 }} />}
-            {recordedRoutePositions.length > 0 && <CircleMarker center={recordedRoutePositions.at(-1)} radius={6} pathOptions={{ color: '#111111', fillColor: '#EAB308', fillOpacity: 1, weight: 2 }} />}
+            {currentPosition && <CircleMarker center={currentPosition} radius={15} pathOptions={{ color: '#EAB308', fillColor: '#EAB308', fillOpacity: 0.2, weight: 2 }} />}
+            {currentPosition && <CircleMarker center={currentPosition} radius={8} pathOptions={{ color: '#FFFFFF', fillColor: '#EAB308', fillOpacity: 1, weight: 3 }} />}
           </MapContainer>
+          {currentPosition && (
+            <div style={{ position: 'absolute', top: 10, right: 10, zIndex: 500, display: 'flex', alignItems: 'center', gap: 6, borderRadius: 999, padding: '6px 9px', background: 'rgba(0,0,0,0.82)', color: '#FFFFFF', fontSize: 11, fontWeight: 800, pointerEvents: 'none' }}>
+              <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#EAB308', border: '2px solid #FFFFFF' }} /> You are here
+            </div>
+          )}
         </div>
       )}
 

@@ -3,6 +3,7 @@ const { v4: uuidv4 } = require('uuid');
 const { dbAll, dbGet, dbRun } = require('../db');
 const auth = require('../middleware/auth');
 const { activityKind } = require('../lib/runActivity');
+const { buildRunImportKeys } = require('../lib/runImportKey');
 const { normalizeWorkoutMetrics } = require('../lib/workoutMetrics');
 
 function asNumber(value, fallback = 0) {
@@ -116,6 +117,7 @@ function normalizeRow(raw = {}) {
   const maxHeartRate = normalizeHeartRate(raw.maxHR || raw.maxHeartRate || raw.max_heart_rate || raw.maximum_heart_rate || raw['Max Heart Rate'] || null);
   const zoneSeconds = normalizeZoneSeconds(raw.zoneSeconds || raw.zone_seconds || raw.heart_rate_zones);
   const source = String(raw.source || 'imported').slice(0, 40);
+  const sourceWorkoutId = String(raw.sourceWorkoutId || raw.source_workout_id || raw.id || raw.uuid || '').trim().slice(0, 200) || null;
   const workoutMetrics = normalizeWorkoutMetrics({ ...raw, metric_source: source });
   const totalZoneSeconds = Object.values(zoneSeconds).reduce((sum, seconds) => sum + seconds, 0);
   if (durationSeconds > 0 && totalZoneSeconds > 0 && workoutMetrics.metrics.hr_sample_coverage_pct === undefined) {
@@ -132,6 +134,7 @@ function normalizeRow(raw = {}) {
     maxHeartRate,
     zoneSeconds,
     source,
+    sourceWorkoutId,
     calories: optionalNumber(raw, ['calories', 'Calories'], 0, 30000),
     perceivedEffort: optionalNumber(raw, ['perceivedEffort', 'perceived_effort', 'rpe', 'RPE'], 1, 10),
     cadenceSpm: optionalNumber(raw, ['cadenceSpm', 'cadence_spm', 'avgCadence', 'averageCadence', 'Avg Run Cadence'], 0, 300),
@@ -158,6 +161,17 @@ function startsMatch(existingStart, importedStart) {
 }
 
 async function findExistingRun(userId, item) {
+  if (item.sourceWorkoutId) {
+    const exact = await dbGet(
+      `SELECT id, date, type, watch_activity_type, watch_normalized_type, health_start_at
+       FROM runs
+       WHERE user_id=? AND health_source=? AND health_source_workout_id=?
+       LIMIT 1`,
+      [userId, item.source, item.sourceWorkoutId]
+    );
+    if (exact) return exact;
+  }
+
   const candidates = await dbAll(
     `SELECT id, date, type, watch_activity_type, watch_normalized_type, health_start_at
      FROM runs
@@ -170,6 +184,31 @@ async function findExistingRun(userId, item) {
   return sameActivity.find((row) => startsMatch(row.health_start_at, item.startDate))
     || sameActivity.find((row) => !row.health_start_at)
     || null;
+}
+
+function importKeysForItem(item) {
+  return buildRunImportKeys({
+    healthSource: item.source,
+    sourceWorkoutId: item.sourceWorkoutId,
+    startDate: item.startDate,
+    type: item.runType,
+    watchActivityType: String(item.raw?.type || item.raw?.activityType || 'imported'),
+    watchNormalizedType: item.runType,
+    distanceMiles: item.distanceMiles,
+    durationSeconds: item.durationSeconds,
+  });
+}
+
+async function isDeletedImport(userId, item) {
+  const keys = importKeysForItem(item);
+  for (const key of keys) {
+    const tombstone = await dbGet(
+      'SELECT id FROM run_import_tombstones WHERE user_id=? AND source_key=? LIMIT 1',
+      [userId, key]
+    );
+    if (tombstone) return true;
+  }
+  return false;
 }
 
 async function liftExists(userId, date, distanceMiles, durationSeconds) {
@@ -187,10 +226,10 @@ async function insertRun(userId, item) {
     `INSERT INTO runs (
       id, user_id, date, type, distance_miles, duration_seconds, perceived_effort, notes,
       avg_heart_rate, max_heart_rate, heart_rate_zones, calories, watch_mode, watch_activity_type,
-      watch_normalized_type, health_source, health_start_at, health_end_at, cadence_spm,
+      watch_normalized_type, health_source, health_source_workout_id, health_start_at, health_end_at, cadence_spm,
       elevation_gain, elevation_loss, route_coords, vo2_max, training_effect_aerobic,
       training_effect_anaerobic, recovery_time_hours, temperature_f, workout_metrics_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       runId,
       userId,
@@ -208,6 +247,7 @@ async function insertRun(userId, item) {
       String(item.raw?.type || item.raw?.activityType || 'imported'),
       item.runType || 'imported',
       item.source,
+      item.sourceWorkoutId,
       item.startDate,
       item.endDate,
       item.cadenceSpm,
@@ -235,6 +275,7 @@ async function updateExistingRunHealth(userId, runId, item) {
       max_heart_rate = COALESCE(?, max_heart_rate),
       heart_rate_zones = COALESCE(?, heart_rate_zones),
       health_source = COALESCE(?, health_source),
+      health_source_workout_id = COALESCE(?, health_source_workout_id),
       health_start_at = COALESCE(?, health_start_at),
       health_end_at = COALESCE(?, health_end_at),
       type = COALESCE(?, type),
@@ -257,6 +298,7 @@ async function updateExistingRunHealth(userId, runId, item) {
       item.maxHeartRate,
       zoneParam,
       item.source,
+      item.sourceWorkoutId,
       item.startDate,
       item.endDate,
       item.section === 'activity' ? item.runType : null,
@@ -320,6 +362,10 @@ async function importRows(userId, rawRows) {
       }
 
       if (item.section === 'run' || item.section === 'activity') {
+        if (await isDeletedImport(userId, item)) {
+          skipped += 1;
+          continue;
+        }
         const existing = await findExistingRun(userId, item);
         if (existing) {
           await updateExistingRunHealth(userId, existing.id, item);
@@ -374,4 +420,5 @@ module.exports._test = {
   classifyType,
   normalizeRouteCoords,
   normalizeRow,
+  importKeysForItem,
 };

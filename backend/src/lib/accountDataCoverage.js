@@ -1,5 +1,6 @@
 const ACCOUNT_EXPORT_TABLES = [
   { key: 'runs', table: 'runs', orderBy: 'COALESCE(date, created_at) DESC' },
+  { key: 'run_import_tombstones', table: 'run_import_tombstones', orderBy: 'created_at DESC' },
   { key: 'lifts', table: 'lifts', orderBy: 'COALESCE(date, created_at) DESC' },
   { key: 'workout_sessions', table: 'workout_sessions', orderBy: 'started_at DESC' },
   { key: 'workout_sets', table: 'workout_sets', orderBy: 'logged_at DESC' },
@@ -104,6 +105,7 @@ const ACCOUNT_DELETE_QUERIES = [
   ['DELETE FROM watch_sync WHERE user_id = ?', [0]],
   ['DELETE FROM health_sync WHERE user_id = ?', [0]],
   ['DELETE FROM user_hr_profile WHERE user_id = ?', [0]],
+  ['DELETE FROM run_import_tombstones WHERE user_id = ?', [0]],
   ['DELETE FROM lifts WHERE user_id = ?', [0]],
   ['DELETE FROM runs WHERE user_id = ?', [0]],
   ['DELETE FROM personal_records WHERE user_id = ?', [0]],

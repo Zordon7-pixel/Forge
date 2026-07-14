@@ -10,6 +10,7 @@ const { getWeather } = require('../services/weather');
 const { classifyRunZone } = require('../lib/runHistory');
 const { assessHeatDrift } = require('../lib/heatDrift');
 const { getHrProfile, zoneForHr } = require('../lib/hrZones');
+const { buildRunImportKeys } = require('../lib/runImportKey');
 const {
   DISTANCE_CONFIG,
   normalizeSex,
@@ -875,6 +876,24 @@ router.delete('/:id', auth, async (req, res) => {
         `SELECT label FROM personal_records WHERE run_id=? AND user_id=? AND category='run' AND source='auto'`,
         [req.params.id, req.user.id]
       );
+      const importKeys = buildRunImportKeys({
+        healthSource: run.health_source,
+        sourceWorkoutId: run.health_source_workout_id,
+        startDate: run.health_start_at,
+        type: run.type,
+        watchActivityType: run.watch_activity_type,
+        watchNormalizedType: run.watch_normalized_type,
+        distanceMiles: run.distance_miles,
+        durationSeconds: run.duration_seconds,
+      });
+      for (const sourceKey of importKeys) {
+        await tx.run(
+          `INSERT INTO run_import_tombstones (id, user_id, source_key)
+           VALUES (?, ?, ?)
+           ON CONFLICT (user_id, source_key) DO NOTHING`,
+          [uuidv4(), req.user.id, sourceKey]
+        );
+      }
       await tx.run('DELETE FROM runs WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
       await autoUpdatePRs.recomputeRunPrCategories(req.user.id, prRows.map((row) => row.label), { tx });
     });

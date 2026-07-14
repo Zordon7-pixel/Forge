@@ -91,9 +91,13 @@ export default function Layout({ children }) {
           </header>
         )}
 
-        <PullToRefresh>
-          <main className={isImmersive ? 'pb-0 pt-0' : 'pb-24 pt-4'} style={{ minWidth: 0 }}>{children}</main>
-        </PullToRefresh>
+        {isImmersive ? (
+          <main className="pb-0 pt-0" style={{ minWidth: 0 }}>{children}</main>
+        ) : (
+          <PullToRefresh>
+            <main className="pb-24 pt-4" style={{ minWidth: 0 }}>{children}</main>
+          </PullToRefresh>
+        )}
       </div>
 
       {!isImmersive && (

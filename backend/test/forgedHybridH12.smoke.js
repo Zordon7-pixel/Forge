@@ -6,6 +6,7 @@ const path = require('path');
 const { computeZones, zoneForHr } = require('../src/lib/hrZones');
 const { analyzeRunHistory } = require('../src/lib/runHistory');
 const { activityKind, isRunActivity, runActivitySql } = require('../src/lib/runActivity');
+const { buildRunImportKeys } = require('../src/lib/runImportKey');
 const { normalizeWorkoutMetrics } = require('../src/lib/workoutMetrics');
 const autoUpdatePRs = require('../src/services/prAuto');
 
@@ -64,11 +65,17 @@ check(normalizeWorkoutMetrics({ runningPowerWatts: 9999 }).droppedFields.include
 
 section('import and native bridge wiring');
 const importRoute = require('../src/routes/import');
-const { classifyType, normalizeRouteCoords, normalizeRow } = importRoute._test;
+const { classifyType, normalizeRouteCoords, normalizeRow, importKeysForItem } = importRoute._test;
 check(classifyType('Walking').section === 'activity' && classifyType('Walking').runType === 'walk', 'walking imports enter activity history, not run planning');
 check(classifyType('Cycling').runType === 'cycling' && classifyType('Swimming').runType === 'swimming', 'other HealthKit workout types retain their identity');
 const walk = normalizeRow({ type: 'Walking', date: recentDate, distanceMiles: 0.29, durationSeconds: 369, avgHeartRate: 129, source: 'apple_health' });
 check(walk.runType === 'walk' && walk.perceivedEffort === null, 'imported walking has no invented run type or RPE');
+const sparseRun = normalizeRow({ type: 'Running', date: recentDate, durationSeconds: 1531, zoneSeconds: { z1: 0, z2: 30, z3: 90, z4: 60, z5: 210 }, source: 'apple_health' });
+check(sparseRun.workoutMetrics.hr_sample_coverage_pct === 25.5, 'import records sparse HealthKit HR coverage instead of presenting it as a full timeline');
+const keyedRun = normalizeRow({ id: 'healthkit-workout-1', type: 'Running', startDate: `${recentDate}T12:00:00.000Z`, distanceMiles: 2.173, durationSeconds: 1531, source: 'apple_health' });
+const incomingKeys = importKeysForItem(keyedRun);
+const legacyDeleteKeys = buildRunImportKeys({ healthSource: 'apple_health', startDate: keyedRun.startDate, type: keyedRun.runType, distanceMiles: keyedRun.distanceMiles, durationSeconds: keyedRun.durationSeconds });
+check(incomingKeys.length === 2 && legacyDeleteKeys.some((key) => incomingKeys.includes(key)), 'Apple Health imports retain both a source-id key and a legacy fingerprint tombstone key');
 const coords = normalizeRouteCoords([{ lat: 38.9, lon: -77.0, alt: 42, time: '2026-07-12T12:00:00Z' }, { lat: 999, lon: 0 }]);
 check(coords.length === 1 && coords[0].alt === 42 && coords[0].time.endsWith('Z'), 'valid HealthKit routes retain coordinate provenance and reject invalid points');
 
@@ -80,14 +87,20 @@ const insightsSource = fs.readFileSync(path.join(root, 'frontend/src/components/
 const runDetailSource = fs.readFileSync(path.join(root, 'frontend/src/components/RunDetailModal.jsx'), 'utf8');
 const hrZonesSource = fs.readFileSync(path.join(root, 'frontend/src/pages/HrZones.jsx'), 'utf8');
 const runsRouteSource = fs.readFileSync(path.join(root, 'backend/src/routes/runs.js'), 'utf8');
+const importRouteSource = fs.readFileSync(path.join(root, 'backend/src/routes/import.js'), 'utf8');
 const prAutoSource = fs.readFileSync(path.join(root, 'backend/src/services/prAuto.js'), 'utf8');
 check(/HKSeriesType\.workoutRoute\(\)/.test(swift) && /row\["routeCoords"\]\s*=\s*route/.test(swift), 'native bridge requests and serializes HealthKit workout routes');
+check(/workout\.statistics\(for: type\)/.test(swift) && /timeWeightedAverage/.test(swift), 'workout-owned HR summary wins over a time-weighted sparse-sample fallback');
+check(/predicateForObjects\(from: workout\)/.test(swift) && /workout\.sourceRevision\.source/.test(swift), 'heart-rate samples are scoped to the workout or its source');
 check(!/suppliedMaxHR\s*\?\?\s*observedMaxHR/.test(swift), 'an observed workout maximum is never reused as the athlete zone maximum');
 check(/call\.getArray\("zoneMinimums"/.test(swift) && /historyOptions\.zoneMinimums\s*=\s*zones\.map/.test(service), 'saved watch boundaries reach native sample bucketing');
-check(/REQUIRED_HEALTH_AUTH_VERSION\s*=\s*3/.test(service) && /REQUIRED_WORKOUT_IMPORT_VERSION\s*=\s*3/.test(service), 'new permissions trigger authorization and full-history refresh once');
+check(/REQUIRED_HEALTH_AUTH_VERSION\s*=\s*3/.test(service) && /REQUIRED_WORKOUT_IMPORT_VERSION\s*=\s*4/.test(service), 'permissions remain v3 while corrected workout summaries trigger a v4 full-history refresh once');
+check(/workoutUpgradeAvailable[\s\S]*workoutHistoryUpgradeRequired/.test(service), 'an old native shell cannot mark the v4 import complete before the corrected plugin arrives');
 check(/let profile\s*=\s*null[\s\S]*profile\s*=\s*data\?\.profile/.test(service), 'native sync keeps the HR profile in scope for its response');
 check(/if \(history\.available\)[\s\S]*markWorkoutHistoryUpgraded\(\)[\s\S]*else[\s\S]*markHealthResyncNeeded\(\)/.test(service), 'only a successful full-history read completes the import upgrade');
 check(/actualRuns[^\n]*filter\(isRunningActivity\)/.test(historySource), 'History run totals and charts use running activities only');
+check(/INSERT INTO run_import_tombstones[\s\S]*ON CONFLICT \(user_id, source_key\) DO NOTHING/.test(runsRouteSource), 'deleting a health import records a user-scoped tombstone before removing the run');
+check(/SELECT id FROM run_import_tombstones WHERE user_id=\? AND source_key=\?/.test(importRouteSource), 'future full health syncs honor deleted-run tombstones');
 check(/Pace Z\$\{paceZone\.zone\}/.test(historySource) && !/`Zone \$\{paceZone\.zone\}`/.test(historySource), 'pace zones are labeled so they cannot be mistaken for heart-rate zones');
 check(/activityLabel\(item\)/.test(insightsSource), 'recent activity cards display the imported workout kind');
 check(/T12:00:00/.test(insightsSource) && /T12:00:00/.test(runDetailSource), 'date-only HealthKit workouts render on the local calendar day');

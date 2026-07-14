@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { X, Brain } from 'lucide-react'
+import { X, Brain, Trash2 } from 'lucide-react'
 import api from '../lib/api'
 import { useUnits } from '../context/UnitsContext'
 import AiGuidanceNote from './AiGuidanceNote'
@@ -33,6 +33,8 @@ function fmtPace(durationSeconds, distance) {
 const EFFORT_LABELS = ['', 'Very Easy', 'Easy', 'Easy-Moderate', 'Moderate', 'Moderate-Hard', 'Hard', 'Hard', 'Very Hard', 'Very Hard', 'Max']
 // hex required: consumed by `${color}XX` alpha templates — do not tokenize
 const ZONE_COLORS = ['#6B7280', '#3B82F6', '#22C55E', '#EAB308', '#EF4444']
+const ZONE_LABELS = ['Recovery', 'Easy', 'Aerobic', 'Threshold', 'Maximum']
+const ZONE_MODEL_LABELS = { custom: 'Watch zones', hrr: 'HR Reserve', maxhr: 'Max-HR %', lthr: 'LTHR' }
 
 function parseObject(value) {
   if (!value) return {}
@@ -56,6 +58,18 @@ function findZone(hr, zones) {
   return { ...zones[index], zone: index + 1, color: ZONE_COLORS[index] }
 }
 
+function zoneTimeline(value, durationSeconds) {
+  const parsed = parseObject(value)
+  const seconds = ['z1', 'z2', 'z3', 'z4', 'z5'].map((key) => Math.max(0, Number(parsed[key] ?? parsed[key.toUpperCase()] ?? 0) || 0))
+  const total = seconds.reduce((sum, item) => sum + item, 0)
+  const duration = Number(durationSeconds || 0)
+  return {
+    seconds,
+    total,
+    coverage: duration > 0 && total > 0 ? Math.min(100, (total / duration) * 100) : null,
+  }
+}
+
 function formatSeconds(value) {
   const seconds = Number(value)
   if (!Number.isFinite(seconds) || seconds <= 0) return null
@@ -70,7 +84,7 @@ function formatSourceLabel(healthSource, metricSource) {
   return source.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())
 }
 
-export default function RunDetailModal({ run, hrZones = [], onClose, onFeedbackGenerated }) {
+export default function RunDetailModal({ run, hrZones = [], hrProfile = null, onClose, onDelete, onFeedbackGenerated }) {
   const { units } = useUnits()
   const [feedback, setFeedback] = useState(run.ai_feedback || '')
   const [loading, setLoading] = useState(false)
@@ -94,9 +108,20 @@ export default function RunDetailModal({ run, hrZones = [], onClose, onFeedbackG
   const isRun = isRunningActivity(run)
   const kind = activityLabel(run)
   const hr = run.avg_hr || run.avg_heart_rate || null
-  const zone = findZone(hr, hrZones)
+  const averageZone = findZone(hr, hrZones)
   const workoutMetrics = parseObject(run.workout_metrics_json)
   const sourceLabel = formatSourceLabel(run.health_source, workoutMetrics.metric_source)
+  const timeline = zoneTimeline(run.heart_rate_zones, run.duration_seconds)
+  const metricCoverage = Number(workoutMetrics.hr_sample_coverage_pct)
+  const hrCoverage = Number.isFinite(metricCoverage) ? metricCoverage : timeline.coverage
+  const hasTrustedHrCoverage = Number.isFinite(hrCoverage) && hrCoverage >= 70
+  const dominantZoneIndex = hasTrustedHrCoverage && timeline.total > 0
+    ? timeline.seconds.indexOf(Math.max(...timeline.seconds))
+    : -1
+  const zone = dominantZoneIndex >= 0
+    ? { label: ZONE_LABELS[dominantZoneIndex], ...(hrZones[dominantZoneIndex] || {}), zone: dominantZoneIndex + 1, color: ZONE_COLORS[dominantZoneIndex] }
+    : averageZone
+  const zoneModelLabel = ZONE_MODEL_LABELS[hrProfile?.zoneModel] || 'saved profile'
   const hasTrustedEffort = !(run.watch_mode === 'import' && run.notes === 'Imported workout')
   const elevationGain = run.elevation_gain === null || run.elevation_gain === undefined || run.elevation_gain === ''
     ? Number.NaN
@@ -109,7 +134,7 @@ export default function RunDetailModal({ run, hrZones = [], onClose, onFeedbackG
     { label: 'Distance', value: run.distance_miles ? `${Number(run.distance_miles).toFixed(2)} mi` : '--' },
     { label: 'Duration', value: run.duration_seconds ? fmtDuration(run.duration_seconds) : '--' },
     { label: 'Pace', value: fmtPace(run.duration_seconds, run.distance_miles) },
-    { label: 'Calories', value: run.calories ? `${run.calories} cal` : '--' },
+    { label: sourceLabel === 'Apple Health' ? 'Active calories' : 'Calories', value: run.calories ? `${run.calories} cal` : '--' },
     { label: 'Effort', value: run.perceived_effort && hasTrustedEffort ? `${run.perceived_effort}/10 - ${EFFORT_LABELS[run.perceived_effort] || ''}` : '--' },
     { label: 'Surface', value: run.surface || run.run_type || '--' },
     { label: 'Elevation Gain', value: elevationLabel },
@@ -128,7 +153,6 @@ export default function RunDetailModal({ run, hrZones = [], onClose, onFeedbackG
     { label: 'Temperature', value: run.temperature_f != null ? `${Math.round(Number(run.temperature_f))}°F` : null },
     { label: 'Aerobic / anaerobic TE', value: run.training_effect_aerobic != null || run.training_effect_anaerobic != null ? `${run.training_effect_aerobic ?? '--'} / ${run.training_effect_anaerobic ?? '--'}` : null },
   ].filter((item) => item.value)
-  const hrCoverage = Number(workoutMetrics.hr_sample_coverage_pct)
   const hasPartialHrCoverage = Number.isFinite(hrCoverage) && hrCoverage > 0 && hrCoverage < 70
 
   return (
@@ -154,10 +178,22 @@ export default function RunDetailModal({ run, hrZones = [], onClose, onFeedbackG
 
         {hr && zone && (
           <div className="rounded-xl p-3 mb-5" style={{ background: 'var(--bg-input)' }}>
-            <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Heart Rate Zone</p>
-            <div className="flex items-center gap-2"><p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{hr} bpm</p><span className="rounded-full px-2 py-1 text-xs" style={{ background: `${zone.color}22`, color: zone.color }}>Z{zone.zone} · {zone.label}</span></div>
+            <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>{sourceLabel === 'Apple Health' ? 'Apple Health average' : 'Average heart rate'}</p>
+            <div className="flex flex-wrap items-center gap-2"><p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{hr} bpm</p><span className="rounded-full px-2 py-1 text-xs" style={{ background: `${zone.color}22`, color: zone.color }}>Z{zone.zone} · {zone.label}</span></div>
             <div className="mt-2 h-1.5 rounded-full" style={{ background: 'var(--bg-base)' }}><div className="h-full rounded-full" style={{ width: `${zone.zone * 20}%`, background: zone.color }} /></div>
-            {hasPartialHrCoverage && <p className="mt-2 text-xs" style={{ color: 'var(--warning)' }}>Apple Health supplied only {hrCoverage.toFixed(0)}% of this workout's heart-rate timeline. The average is shown, but partial zone time is not used to judge intensity.</p>}
+            <p className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>{hasTrustedHrCoverage ? `Dominant zone from ${hrCoverage.toFixed(0)}% of the workout timeline.` : `Classified with your ${zoneModelLabel} profile.`}</p>
+            {hasTrustedHrCoverage && (
+              <div className="mt-2 grid grid-cols-5 gap-1" aria-label="Heart-rate zone time distribution">
+                {timeline.seconds.map((seconds, index) => (
+                  <div key={`zone-time-${index + 1}`} className="text-center">
+                    <div style={{ height: 4, borderRadius: 999, background: ZONE_COLORS[index], opacity: seconds > 0 ? 1 : 0.25 }} />
+                    <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>Z{index + 1} {Math.round((seconds / timeline.total) * 100)}%</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {hasPartialHrCoverage && <p className="mt-2 text-xs" style={{ color: 'var(--warning)' }}>Apple Health supplied only {hrCoverage.toFixed(0)}% of this workout's heart-rate timeline. Partial zone time is not used to judge intensity.</p>}
+            <Link to="/hr-zones" onClick={onClose} className="mt-2 inline-flex text-xs font-bold" style={{ color: 'var(--accent)' }}>Review or match watch zones</Link>
           </div>
         )}
 
@@ -222,6 +258,12 @@ export default function RunDetailModal({ run, hrZones = [], onClose, onFeedbackG
             </>
           )}
         </div>}
+
+        {onDelete && (
+          <button type="button" onClick={onDelete} className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl border py-3 text-sm font-semibold" style={{ borderColor: 'rgba(239,68,68,0.45)', color: 'var(--danger)', background: 'var(--danger-dim)' }}>
+            <Trash2 size={16} /> Delete this {isRun ? 'run' : 'activity'}
+          </button>
+        )}
       </div>
     </div>
   )
