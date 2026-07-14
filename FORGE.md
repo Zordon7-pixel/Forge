@@ -80,7 +80,7 @@ Current source-of-truth map before native Apple Health work:
 | File import | Settings file upload -> `/api/import/workouts` or `/api/import/health` | `runs`, `lifts` | History, Dashboard stats, recommendations | Working for Garmin/Strava-style CSV and workout JSON |
 | Watch-sync API | `/api/watch-sync` and `/api/watch-sync/upload` | `watch_sync`, plus routed `runs`/`lifts` | Dashboard watch notice, readiness gate, history | Backend works; no native phone collector yet |
 | Health summary sync | `HealthService.syncToProfile()` -> `/api/health/sync` | `health_sync` | Body overview, readiness, plan provenance, and bounded plan generation/adaptation context | Expanded H11 backend and web surfaces verified live |
-| Apple Health / Apple Watch | Native HealthKit bridge in `ForgeHealthPlugin.swift` | `health_sync`, imported `runs`/`lifts` | Settings sync, Body metrics, recent load, recovery, cardio fitness, and running-form context | Existing bridge remains usable; H11 expanded native reads require a later Bryan-approved EAS build and phone QA |
+| Apple Health / Apple Watch | Native HealthKit bridge in `ForgeHealthPlugin.swift` | `health_sync`, imported `runs`/`lifts` | Settings sync, Body metrics, activity history, recent run load, recovery, cardio fitness, running form, routes, elevation, and workout context | H12 web/backend classification and exact-zone handling are ready for Railway; schema-v3 native route/dynamics reads require a later Bryan-approved EAS build and phone QA |
 | Garmin direct | Settings status/revoke plus legacy backend route | `user_settings`, `garmin_sleep`, `watch_sync`, `runs` | Paused copy in Settings | Paused until official Garmin API access |
 | Strava OAuth | Settings device row -> `/api/strava/*` | `strava_tokens`, imported `runs` | History/Dashboard after sync | Available if env/app config is live |
 | WHOOP/Oura OAuth | Settings device rows -> `/api/whoop/*`, `/api/oura/*` | `whoop_*`, `oura_*` | Unified recovery endpoint | Premium integration path exists; depends on provider env/config |
@@ -181,6 +181,15 @@ Phase 2 cleanup from this audit:
 - H11 passed 36 focused behavioral checks, all H1/H3/H4/H5/H6/H8/H9/H10 regressions, heat-drift/interference checks, four frontend smokes, production build, zero-vulnerability audit, 47-table account-data coverage, Capacitor sync, Swift parse, and three Claude Code QA passes. Final verdict: PASS.
 - Railway production verified `/assets/index-D-pIgSi3.js` and `/assets/HealthData-DRmOOl2D.js`; authenticated health/Body reads return `200`, unauthenticated reads return `401`, and invalid extended metrics return `400` without changing stored data. No EAS build was run; expanded native collection awaits Bryan's explicit approval.
 
+## Apple Health Workout Integrity H12 (2026-07-13)
+
+- Apple Health walks and cross-training keep their activity identity in History but are excluded from running mileage, pace trends, PRs, streaks, readiness run load, plan generation/adaptation, race analysis, and run-specific AI feedback. Manual run-to-walk edits also recompute or remove stale automatic run PRs.
+- Heart-rate detail uses the athlete's saved profile instead of deriving zones from one workout's observed maximum. Users can copy five exact watch-zone boundaries; sparse zone timelines do not override a calibrated average-heart-rate classification.
+- Native schema v3 adds workout-route coordinates, HealthKit elevation/weather metadata, HR sample coverage, cadence, and per-workout running dynamics when the source writes them. Validated Garmin CSV or structured JSON can supply Garmin-only metrics; absent values remain blank.
+- Mobile QA at 390x844 verified Walk Detail, 129 bpm as Z2, 150 bpm as Z3 for boundaries 96/117/137/156/176, local workout dates, advanced metric cards, and no horizontal overflow or console errors.
+- H12 passed 32 focused checks, all H1/H3/H4/H5/H6/H8/H9/H10/H11 regressions, shared safety smokes, frontend build, zero-vulnerability audit, 47-table account-data coverage, Capacitor sync, and Swift parse. Claude Code re-QA passed and Hermes approved the Railway merge.
+- Commit `602251b0` is source-ready. No EAS build was run; schema-v3 native reads remain unavailable until Bryan explicitly approves a later EAS/TestFlight build and phone verification.
+
 ## Recently Fixed Bugs
 
 Do not reintroduce these patterns.
@@ -214,6 +223,7 @@ Do not reintroduce these patterns.
 | Account export/delete had incomplete table coverage | backend/src/lib/accountDataCoverage.js, backend/src/routes/auth.js, backend/scripts/check-account-data-coverage.js | Export/delete now share a coverage map, include social/PT/plans/device/user-owned data, exclude secrets, and ship with a coverage script |
 | Account deletion only required typed DELETE | backend/src/routes/auth.js, frontend/src/pages/Settings.jsx | Delete account now requires current password plus typed `DELETE`; missing/invalid password blocks deletion |
 | Custom plan generation surfaced a generic failure after malformed/slow AI output | backend/src/services/ai.js, backend/src/routes/plans.js, frontend/src/pages/PlanCatalog.jsx | AI requests abort before the UI deadline and both plan routes select a deterministic fallback instead of failing the user flow |
+| Apple Health walk counted as a run and workout-average HR appeared as Z5 | backend/src/lib/runActivity.js, backend/src/lib/hrZones.js, backend/src/routes/import.js, frontend/src/components/RunDetailModal.jsx | Preserve workout kind across import, exclude non-runs from running intelligence, and classify average HR only against a saved athlete profile or exact watch boundaries |
 
 ## Authorization Model
 
