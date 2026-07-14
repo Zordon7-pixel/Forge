@@ -121,11 +121,11 @@ function normalizePlannedRoute(value) {
   }
 }
 
-function FitMapBounds({ positions }) {
+function FitMapBounds({ positions, enabled = true }) {
   const map = useMap()
   useEffect(() => {
-    if (positions.length > 1) map.fitBounds(positions, { padding: [18, 18] })
-  }, [map, positions])
+    if (enabled && positions.length > 1) map.fitBounds(positions, { padding: [18, 18] })
+  }, [enabled, map, positions])
   return null
 }
 
@@ -652,7 +652,7 @@ export default function ActiveRun() {
         <div className="mb-4 overflow-hidden" style={{ minHeight: 280, height: 280, borderRadius: 8, position: 'relative' }}>
           <MapContainer center={recordedRoutePositions.at(-1) || plannedRoutePositions[0]} zoom={15} style={{ height: '100%', width: '100%' }}>
             <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-            <FitMapBounds positions={mapBoundsPositions} />
+            <FitMapBounds positions={mapBoundsPositions} enabled={!running || plannedRoutePositions.length > 0} />
             <FollowCurrentLocation position={currentPosition} enabled={running} />
             {plannedRoutePositions.length > 0 && <Polyline positions={plannedRoutePositions} pathOptions={{ color: '#9CA3AF', weight: 5, opacity: 0.85, dashArray: '8 8' }} />}
             {recordedRoutePositions.length > 0 && <Polyline positions={recordedRoutePositions} pathOptions={{ color: '#EAB308', weight: 5 }} />}
