@@ -28,6 +28,7 @@ function normalizeRouteCoords(value) {
     Number(point[0]),
     Number(point[1]),
     point[2] === null || point[2] === undefined || !Number.isFinite(Number(point[2])) ? null : Number(point[2]),
+    point[3] === null || point[3] === undefined || !Number.isFinite(Number(point[3])) ? null : Number(point[3]),
   ])
 }
 

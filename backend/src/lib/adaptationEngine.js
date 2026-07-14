@@ -317,17 +317,31 @@ function buildRecentRunEvidence(recentRunLoad = {}) {
     latest.durationMinutes ? `${Math.round(Number(latest.durationMinutes))} min` : null,
     latest.avgHeartRate ? `avg HR ${Math.round(Number(latest.avgHeartRate))}` : null,
   ].filter(Boolean).join(', ');
+  const evidence = [{
+    signal: 'recent run load',
+    source: 'recent_run',
+    objective: true,
+    freshness: latest.daysSince === 0 ? 'today' : latest.daysSince === 1 ? 'yesterday' : `${latest.daysSince} days ago`,
+    detail: `Logged run: ${details}. Duplicate running, hard sessions, and lower-body loading are protected during the next 24-72 hours.`,
+  }];
+  if (latest.postRunCaution) {
+    const checkinDetails = [
+      latest.postRunPain && latest.postRunPain !== 'none' ? `${latest.postRunPain} pain` : null,
+      latest.postRunEnergy === 'low' ? 'low energy' : null,
+    ].filter(Boolean).join(' and ');
+    evidence.push({
+      signal: 'post-run check-in',
+      source: 'post_run_checkin',
+      objective: false,
+      freshness: latest.daysSince === 0 ? 'today' : latest.daysSince === 1 ? 'yesterday' : `${latest.daysSince} days ago`,
+      detail: `The athlete reported ${checkinDetails}; the next run and lower-body load stay conservative.`,
+    });
+  }
   return {
     driver: true,
     latest,
     protection,
-    evidence: [{
-      signal: 'recent run load',
-      source: 'recent_run',
-      objective: true,
-      freshness: latest.daysSince === 0 ? 'today' : latest.daysSince === 1 ? 'yesterday' : `${latest.daysSince} days ago`,
-      detail: `Logged run: ${details}. Duplicate running, hard sessions, and lower-body loading are protected during the next 24-72 hours.`,
-    }],
+    evidence,
   };
 }
 
@@ -727,6 +741,15 @@ function buildAdaptationProposal(input = {}) {
             item,
             safetyRestSession(item.session, 'a run is already logged for today'),
             `${sessionSummary(item.session)} is removed because the ${Number(recentRun.latest.distanceMiles || 0).toFixed(1)} mi run is already logged today.`
+          );
+          continue;
+        }
+        if (item.kind === 'run' && recentRun.protection.postRunSevere && item.date <= recentRun.protection.hardRunsThrough && String(item.session.type || '').toLowerCase() !== 'race') {
+          addChange(
+            changes,
+            item,
+            safetyRestSession(item.session, 'severe pain was reported after the recent run'),
+            `${sessionSummary(item.session)} is held because severe post-run pain protects running through ${recentRun.protection.hardRunsThrough}.`
           );
           continue;
         }

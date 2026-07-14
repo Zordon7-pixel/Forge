@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS runs (
   perceived_effort INTEGER DEFAULT 5,
   notes TEXT,
   ai_feedback TEXT,
+  ai_feedback_requested_at TIMESTAMPTZ,
   run_surface TEXT DEFAULT 'road',
   surface TEXT DEFAULT 'road',
   incline_pct REAL DEFAULT 0,
@@ -82,6 +83,8 @@ CREATE TABLE IF NOT EXISTS runs (
   health_start_at TEXT,
   health_end_at TEXT,
   workout_metrics_json TEXT DEFAULT '{}',
+  plan_session_id TEXT,
+  planned_session_json TEXT DEFAULT '{}',
   created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 

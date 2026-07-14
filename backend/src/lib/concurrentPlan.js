@@ -409,6 +409,8 @@ function acuteLoadMetadata(history = {}) {
       paceLabel: load.latestRun.paceLabel,
       avgHeartRate: load.latestRun.avgHeartRate,
       perceivedEffort: load.latestRun.perceivedEffort,
+      postRunPain: load.latestRun.postRunPain,
+      postRunEnergy: load.latestRun.postRunEnergy,
       isLong: Boolean(load.latestRun.isLong),
       isHard: Boolean(load.latestRun.isHard),
     },
@@ -419,6 +421,8 @@ function acuteLoadMetadata(history = {}) {
       paceLabel: protectiveRun.paceLabel,
       avgHeartRate: protectiveRun.avgHeartRate,
       perceivedEffort: protectiveRun.perceivedEffort,
+      postRunPain: protectiveRun.postRunPain,
+      postRunEnergy: protectiveRun.postRunEnergy,
       isLong: Boolean(protectiveRun.isLong),
       isHard: Boolean(protectiveRun.isHard),
     } : null,
@@ -459,6 +463,13 @@ function applyAcuteRunProtection(plan, context = {}) {
           weekChanged = true;
           day.status = 'adjusted';
           day.whyToday = `Your ${round(load.latestRun.distanceMiles, 1)} mi run is already logged for today, so Forged Hybrid did not schedule a second run.`;
+          continue;
+        }
+        if (protection.postRunSevere && dateInRange(day.date, anchorDate, protection.hardRunsThrough)) {
+          changed = true;
+          weekChanged = true;
+          day.status = 'adjusted';
+          day.whyToday = `Running is held through ${protection.hardRunsThrough} after severe post-run pain was reported on ${anchorDate}.`;
           continue;
         }
         if (isDemandingRun(session) && dateInRange(day.date, anchorDate, protection.hardRunsThrough)) {
@@ -932,6 +943,8 @@ function validateConcurrentPlan(candidate, context = {}) {
           if (acuteProtection && String(session.type || '').toLowerCase() !== 'race') {
             if (acuteProtection.noAdditionalRunOnDate && day.date === acuteProtection.noAdditionalRunOnDate) {
               errors.push(`${sessionPath} duplicates a run already logged on ${day.date}`);
+            } else if (acuteProtection.postRunSevere && dateInRange(day.date, latestRunDate, acuteProtection.hardRunsThrough)) {
+              errors.push(`${sessionPath} conflicts with severe-pain run protection through ${acuteProtection.hardRunsThrough}`);
             } else if (isDemandingRun(session) && dateInRange(day.date, latestRunDate, acuteProtection.hardRunsThrough)) {
               errors.push(`${sessionPath} conflicts with recent-run hard-session protection through ${acuteProtection.hardRunsThrough}`);
             }

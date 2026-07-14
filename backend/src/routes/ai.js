@@ -89,8 +89,7 @@ router.post('/session-feedback', auth, async (req, res) => {
     let sessionData = null;
 
     if (sessionType === 'run') {
-      sessionData = await dbGet('SELECT * FROM runs WHERE id=? AND user_id=?', [sessionId, athleteId]);
-      if (sessionData && !isRunActivity(sessionData)) return res.status(400).json({ error: 'Run analysis is only available for running activities' });
+      return res.status(410).json({ error: 'Run feedback is generated once after the post-run check-in.' });
     } else if (sessionType === 'lift') {
       const session = await dbGet('SELECT * FROM workout_sessions WHERE id=? AND user_id=?', [sessionId, athleteId]);
       const sets = await dbAll('SELECT * FROM workout_sets WHERE session_id=? AND user_id=? ORDER BY logged_at ASC', [sessionId, athleteId]);

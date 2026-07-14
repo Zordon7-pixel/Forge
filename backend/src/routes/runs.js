@@ -21,6 +21,12 @@ const {
 } = require('../lib/ageGrading');
 const { buildHealthSignals } = require('../lib/healthSignals');
 const { activityKind, isRunActivity, runActivitySql } = require('../lib/runActivity');
+const {
+  normalizePlanSessionId,
+  normalizePlannedSession,
+  normalizePostRunCheckIn,
+  normalizeRouteCoords,
+} = require('../lib/runPostRun');
 
 function startOfDay(d) {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
@@ -59,6 +65,90 @@ function optionalBoundedNumber(value, maximum) {
   if (value === undefined || value === null || value === '') return null;
   const number = Number(value);
   return Number.isFinite(number) && number >= 0 && number <= maximum ? number : null;
+}
+
+async function generateStoredRunFeedback(run, userId) {
+  if (run?.ai_feedback) return { feedback: run.ai_feedback, status: 'existing' };
+  let claimed = false;
+  const claimAt = new Date().toISOString();
+  try {
+    const claim = await dbRun(
+      `UPDATE runs
+       SET ai_feedback_requested_at=?
+       WHERE id=? AND user_id=? AND ai_feedback IS NULL
+         AND (
+           ai_feedback_requested_at IS NULL
+           OR ai_feedback_requested_at < CURRENT_TIMESTAMP - INTERVAL '10 minutes'
+         )`,
+      [claimAt, run.id, userId]
+    );
+    claimed = claim.changes > 0;
+    if (!claimed) {
+      const current = await dbGet(
+        'SELECT ai_feedback FROM runs WHERE id=? AND user_id=?',
+        [run.id, userId]
+      );
+      return current?.ai_feedback
+        ? { feedback: current.ai_feedback, status: 'existing' }
+        : { feedback: null, status: 'pending' };
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+    const monthStart = `${new Date().toISOString().slice(0, 7)}-01`;
+    const [dailyRow, profile] = await Promise.all([
+      dbGet('SELECT COUNT(*) as cnt FROM ai_usage WHERE user_id=? AND created_at>=?', [userId, `${today}T00:00:00`]),
+      dbGet('SELECT * FROM users WHERE id=?', [userId]),
+    ]);
+    const monthlyRow = profile?.is_pro
+      ? null
+      : await dbGet('SELECT COUNT(*) as cnt FROM ai_usage WHERE user_id=? AND created_at>=?', [userId, `${monthStart}T00:00:00`]);
+    const canCallAI = Number(dailyRow?.cnt || 0) < 10
+      && (profile?.is_pro || Number(monthlyRow?.cnt || 0) < 5);
+    if (!canCallAI) {
+      await dbRun(
+        `UPDATE runs SET ai_feedback_requested_at=NULL
+         WHERE id=? AND user_id=? AND ai_feedback IS NULL AND ai_feedback_requested_at=?`,
+        [run.id, userId, claimAt]
+      );
+      return { feedback: null, status: 'limit' };
+    }
+
+    await dbRun('INSERT INTO ai_usage (id, user_id, call_type) VALUES (?,?,?)', [uuidv4(), userId, 'run_feedback']);
+    const claimedRun = await dbGet('SELECT * FROM runs WHERE id=? AND user_id=?', [run.id, userId]);
+    if (!claimedRun) return { feedback: null, status: 'unavailable' };
+    const feedback = await generateRunFeedback(claimedRun, profile || {});
+    if (!feedback) {
+      await dbRun(
+        `UPDATE runs SET ai_feedback_requested_at=NULL
+         WHERE id=? AND user_id=? AND ai_feedback IS NULL AND ai_feedback_requested_at=?`,
+        [run.id, userId, claimAt]
+      );
+      return { feedback: null, status: 'unavailable' };
+    }
+
+    const storedResult = await dbRun(
+      `UPDATE runs SET ai_feedback=?
+       WHERE id=? AND user_id=? AND ai_feedback IS NULL AND ai_feedback_requested_at=?`,
+      [feedback, run.id, userId, claimAt]
+    );
+    const stored = await dbGet('SELECT ai_feedback FROM runs WHERE id=? AND user_id=?', [run.id, userId]);
+    if (storedResult.changes === 0 && !stored?.ai_feedback) return { feedback: null, status: 'pending' };
+    return { feedback: stored?.ai_feedback || feedback, status: storedResult.changes > 0 ? 'generated' : 'existing' };
+  } catch (err) {
+    console.error('[runs/feedback] generation failed:', err.message);
+    if (claimed) {
+      try {
+        await dbRun(
+          `UPDATE runs SET ai_feedback_requested_at=NULL
+           WHERE id=? AND user_id=? AND ai_feedback IS NULL AND ai_feedback_requested_at=?`,
+          [run.id, userId, claimAt]
+        );
+      } catch (releaseErr) {
+        console.error('[runs/feedback] claim release failed:', releaseErr.message);
+      }
+    }
+    return { feedback: null, status: 'unavailable' };
+  }
 }
 
 function buildRunStructure({ recommendationType, suggestedDistance, suggestedPace }) {
@@ -633,7 +723,7 @@ router.post('/', auth, async (req, res) => {
       vo2_max, training_effect_aerobic, training_effect_anaerobic, recovery_time_hours,
       detected_surface_type, temperature_f, calories, treadmill_brand, treadmill_model,
       watch_sync_id, watch_activity_type, watch_normalized_type, gps_available,
-      target_zone, id: clientRunId
+      target_zone, plan_session_id, planned_session, id: clientRunId
     } = req.body;
     if (!date || !type) return res.status(400).json({ error: 'date and type required' });
     if (perceived_effort !== undefined && perceived_effort !== null) {
@@ -647,6 +737,9 @@ router.post('/', auth, async (req, res) => {
     const resolvedSurface = surface || run_surface || 'road';
     const resolvedElevationGain = optionalBoundedNumber(elevation_gain, 100000);
     const resolvedElevationLoss = optionalBoundedNumber(elevation_loss, 100000);
+    const normalizedRouteCoords = normalizeRouteCoords(route_coords);
+    const resolvedPlanSessionId = normalizePlanSessionId(plan_session_id);
+    const resolvedPlannedSession = normalizePlannedSession(planned_session, resolvedPlanSessionId);
     let prescribedTargetZone = typeof target_zone === 'string' && target_zone.length <= 20 ? target_zone.trim() || null : null;
     if (!prescribedTargetZone) {
       try {
@@ -664,16 +757,18 @@ router.post('/', auth, async (req, res) => {
       cadence_spm, elevation_gain, elevation_loss, pace_avg, pace_splits,
       vo2_max, training_effect_aerobic, training_effect_anaerobic, recovery_time_hours,
       detected_surface_type, temperature_f, calories, treadmill_brand, treadmill_model,
-      watch_sync_id, watch_activity_type, watch_normalized_type, gps_available
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      watch_sync_id, watch_activity_type, watch_normalized_type, gps_available,
+      plan_session_id, planned_session_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (id) DO NOTHING`, [
-      id, req.user.id, date, type, distance_miles || 0, duration_seconds || 0, perceived_effort || 5, notes || null,
-      resolvedSurface, resolvedSurface, incline_pct || 0, treadmill_speed || 0, JSON.stringify(route_coords || []), watch_mode || null,
+      id, req.user.id, date, type, distance_miles || 0, duration_seconds || 0, perceived_effort ?? null, notes || null,
+      resolvedSurface, resolvedSurface, incline_pct || 0, treadmill_speed || 0, JSON.stringify(normalizedRouteCoords), watch_mode || null,
       avg_heart_rate || null, max_heart_rate || null, min_heart_rate || null, JSON.stringify(heart_rate_zones || []),
       cadence_spm || null, resolvedElevationGain, resolvedElevationLoss, pace_avg || null, JSON.stringify(pace_splits || []),
       vo2_max || null, training_effect_aerobic || null, training_effect_anaerobic || null, recovery_time_hours || null,
       detected_surface_type || null, temperature_f || null, calories || 0, treadmill_brand || null, treadmill_model || null,
-      watch_sync_id || null, watch_activity_type || null, watch_normalized_type || null, gps_available === false ? 0 : 1
+      watch_sync_id || null, watch_activity_type || null, watch_normalized_type || null, gps_available === false ? 0 : 1,
+      resolvedPlanSessionId, JSON.stringify(resolvedPlannedSession || {})
     ]);
     if (insertResult.changes === 0) {
       const existingRun = await dbGet('SELECT * FROM runs WHERE id=? AND user_id=?', [id, req.user.id]);
@@ -734,28 +829,6 @@ router.post('/', auth, async (req, res) => {
 
     res.status(201).json({ run, heatDrift, newPRs: prResult.newPRs, discrepancies: prResult.discrepancies });
 
-    // Fire and forget AI feedback
-    try {
-      const today = new Date().toISOString().slice(0, 10);
-      const month = new Date().toISOString().slice(0, 7);
-      const [dailyRow, userRow] = await Promise.all([
-        dbGet("SELECT COUNT(*) as cnt FROM ai_usage WHERE user_id = ? AND created_at >= ?", [req.user.id, today + 'T00:00:00']),
-        dbGet("SELECT is_pro FROM users WHERE id = ?", [req.user.id])
-      ]);
-      const dailyCount = Number(dailyRow?.cnt || 0);
-      const monthlyRow = !userRow?.is_pro
-        ? await dbGet("SELECT COUNT(*) as cnt FROM ai_usage WHERE user_id = ? AND created_at >= ?", [req.user.id, month + '-01T00:00:00'])
-        : null;
-      const monthlyCount = Number(monthlyRow?.cnt || 0);
-      const canCallAI = dailyCount < 10 && (userRow?.is_pro || monthlyCount < 5);
-      if (canCallAI) {
-        await dbRun("INSERT INTO ai_usage (id, user_id, call_type) VALUES (?, ?, ?)", [uuidv4(), req.user.id, 'run_feedback']);
-        const profile = await dbGet('SELECT * FROM users WHERE id = ?', [req.user.id]);
-        generateRunFeedback(run, profile).then(async feedback => {
-          if (feedback) await dbRun('UPDATE runs SET ai_feedback = ? WHERE id = ? AND user_id = ?', [feedback, id, req.user.id]);
-        }).catch((err) => { console.error('[runs] AI feedback generation failed:', err.message); });
-      }
-    } catch (e) { console.error('AI usage tracking failed:', e); }
   } catch (err) {
     if (!res.headersSent) res.status(500).json({ error: 'Failed to save run' });
   }
@@ -836,6 +909,57 @@ async function updateRunHandler(req, res) {
   }
 }
 
+router.patch('/:id/check-in', auth, async (req, res) => {
+  const normalized = normalizePostRunCheckIn(req.body || {});
+  if (normalized.error) return res.status(400).json({ error: normalized.error });
+
+  try {
+    const updatedRun = await withTransaction(async (tx) => {
+      const run = await tx.get('SELECT * FROM runs WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
+      if (!run) {
+        const notFound = new Error('Run not found');
+        notFound.status = 404;
+        throw notFound;
+      }
+      if (!isRunActivity(run)) {
+        const wrongType = new Error('Post-run check-in is only available for running activities');
+        wrongType.status = 400;
+        throw wrongType;
+      }
+
+      const values = normalized.value;
+      const changed = Number(run.perceived_effort) !== values.perceived_effort
+        || String(run.pain_level || '') !== values.pain_level
+        || String(run.post_energy || '') !== values.post_energy;
+      if (changed) {
+        await tx.run(
+          `UPDATE runs
+           SET perceived_effort=?, pain_level=?, post_energy=?, ai_feedback=NULL,
+               ai_feedback_requested_at=NULL
+           WHERE id=? AND user_id=?`,
+          [values.perceived_effort, values.pain_level, values.post_energy, req.params.id, req.user.id]
+        );
+      }
+      return tx.get('SELECT * FROM runs WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
+    });
+
+    const feedbackResult = updatedRun.ai_feedback
+      ? { feedback: updatedRun.ai_feedback, status: 'existing' }
+      : await generateStoredRunFeedback(updatedRun, req.user.id);
+    res.json({
+      ok: true,
+      run: updatedRun,
+      feedback: feedbackResult.feedback || null,
+      feedbackStatus: feedbackResult.status,
+    });
+  } catch (err) {
+    if (err.status === 404) return res.status(404).json({ error: 'Run not found' });
+    if (err.status === 400) return res.status(400).json({ error: err.message });
+    console.error('[runs/check-in] failed:', err.message);
+    res.status(500).json({ error: 'Post-run check-in failed' });
+  }
+});
+
 router.put('/:id', auth, updateRunHandler);
 router.patch('/:id', auth, updateRunHandler);
 
@@ -846,21 +970,15 @@ router.post('/:id/feedback', auth, async (req, res) => {
     if (!isRunActivity(run)) return res.status(400).json({ error: 'Run feedback is only available for running activities' });
     if (run.ai_feedback) return res.json({ feedback: run.ai_feedback });
 
-    const profile = await dbGet('SELECT * FROM users WHERE id=?', [req.user.id]);
-    const today = new Date().toISOString().slice(0, 10);
-    const monthStart = `${new Date().toISOString().slice(0, 7)}-01`;
-    const [dailyRow, monthlyRow] = await Promise.all([
-      dbGet("SELECT COUNT(*) as cnt FROM ai_usage WHERE user_id=? AND created_at>=?", [req.user.id, today]),
-      dbGet("SELECT COUNT(*) as cnt FROM ai_usage WHERE user_id=? AND created_at>=?", [req.user.id, monthStart])
-    ]);
-    const canCallAI = Number(dailyRow?.cnt || 0) < 10 && (profile?.is_pro || Number(monthlyRow?.cnt || 0) < 5);
-    if (!canCallAI) return res.status(429).json({ error: 'AI limit reached for today.' });
-
-    await dbRun('INSERT INTO ai_usage (id, user_id, call_type) VALUES (?,?,?)', [uuidv4(), req.user.id, 'run_feedback']);
-    const feedback = await generateRunFeedback(run, profile);
-    if (feedback) await dbRun('UPDATE runs SET ai_feedback=? WHERE id=? AND user_id=?', [feedback, run.id, req.user.id]);
-    res.json({ feedback: feedback || 'Could not generate feedback right now.' });
-  } catch (err) { res.status(500).json({ error: 'Feedback failed' }); }
+    const result = await generateStoredRunFeedback(run, req.user.id);
+    if (result.status === 'limit') return res.status(429).json({ error: 'AI limit reached for today.' });
+    if (result.status === 'pending') return res.status(202).json({ feedback: null, pending: true });
+    if (!result.feedback) return res.status(503).json({ error: 'Could not generate feedback right now.' });
+    res.json({ feedback: result.feedback });
+  } catch (err) {
+    console.error('[runs/feedback] failed:', err.message);
+    res.status(500).json({ error: 'Feedback failed' });
+  }
 });
 
 router.delete('/:id', auth, async (req, res) => {

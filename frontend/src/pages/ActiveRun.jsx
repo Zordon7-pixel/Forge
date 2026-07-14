@@ -7,10 +7,11 @@ import api from '../lib/api'
 import { queueRequest } from '../lib/offlineQueue'
 import { planSessionIdFromState, currentWeekFromState, markSessionComplete, queueSessionComplete, isRetryableCompletionFailure } from '../lib/dailyExecution'
 import PostRunCheckIn from '../components/PostRunCheckIn'
-import AICoachFeedbackCard from '../components/AICoachFeedbackCard'
 import WorkoutCard from '../components/WorkoutCard'
 import { calculateElevationStats } from '../utils/elevation'
 import { clearActiveRunSession, elapsedFromSession, loadActiveRunSession, saveActiveRunSession } from '../lib/activeRunSession'
+import { loadPostRunCheckInDraft, savePostRunCheckInDraft } from '../lib/postRunCheckInDraft'
+import { buildPlannedSessionSnapshot } from '../lib/runProvenance'
 
 const BackgroundGeolocation = registerPlugin('BackgroundGeolocation')
 
@@ -142,6 +143,7 @@ export default function ActiveRun() {
   const navigate = useNavigate()
   const { fmt, units } = useUnits()
   const [restoredSession] = useState(() => loadActiveRunSession())
+  const [pendingPostRunDraft] = useState(() => restoredSession ? null : loadPostRunCheckInDraft())
   const navigationState = useMemo(() => restoredSession?.navigationState || location?.state || {}, [location?.state, restoredSession])
   const selectedCountdown = navigationState.countdown ?? 0
   const plannedRoute = useMemo(() => normalizePlannedRoute(navigationState.plannedRoute), [navigationState.plannedRoute])
@@ -160,16 +162,13 @@ export default function ActiveRun() {
   const [restoredNotice, setRestoredNotice] = useState(Boolean(restoredSession))
   const [planProgressNotice, setPlanProgressNotice] = useState('')
   const [queuedOffline, setQueuedOffline] = useState(false)
-  const [showPostCheckIn, setShowPostCheckIn] = useState(false)
-  const [savedRunId, setSavedRunId] = useState(null)
+  const [showPostCheckIn, setShowPostCheckIn] = useState(Boolean(pendingPostRunDraft))
+  const [savedRunId, setSavedRunId] = useState(pendingPostRunDraft?.runId || null)
   // H5: canonical plan session carried from LogRun/Warmup so a durable run save
   // marks the exact calendar session complete. Null for ad-hoc/manual runs.
   const planSessionId = planSessionIdFromState(navigationState)
   const planCurrentWeek = currentWeekFromState(navigationState)
-  const [savedHeatDrift, setSavedHeatDrift] = useState(null)
-  const [showAiCard, setShowAiCard] = useState(false)
-  const [aiLoading, setAiLoading] = useState(false)
-  const [aiFeedback, setAiFeedback] = useState(null)
+  const [savedHeatDrift, setSavedHeatDrift] = useState(pendingPostRunDraft?.heatDrift || null)
   const [mapMyRun, setMapMyRun] = useState(restoredSession?.mapMyRun ?? navigationState.mapMyRun ?? false)
   const [routeCoords, setRouteCoords] = useState(restoredSession?.routeCoords || [])
   const [runEnvironment, setRunEnvironment] = useState(restoredSession?.runEnvironment ?? navigationState.runEnvironment ?? 'outdoor')
@@ -302,7 +301,7 @@ export default function ActiveRun() {
         discardedSegmentRef.current = true
       }
     }
-    setRouteCoords((prev) => [...prev, [point.lat, point.lon, point.alt]])
+    setRouteCoords((prev) => [...prev, [point.lat, point.lon, point.alt, fixAt]])
     lastPointRef.current = point
     lastFixAtRef.current = fixAt
   }, [])
@@ -463,22 +462,29 @@ export default function ActiveRun() {
     if (shouldUseManualDistance && units === 'metric') {
       finalDistance = fmt.milesFromKm(finalDistance)
     }
+    const runDate = todayISO()
     return {
       id: clientRunIdRef.current,
-      date: todayISO(),
+      date: runDate,
       type: runType,
       run_surface: runSurface,
       surface: runSurface,
       distance_miles: finalDistance,
       duration_seconds: elapsed,
       notes: buildGpsGapNote(),
-      perceived_effort: 5,
       target_zone: workoutTarget?.zone || null,
+      plan_session_id: planSessionId,
+      planned_session: buildPlannedSessionSnapshot({
+        planSessionId,
+        scheduledRun: navigationState.scheduledRun,
+        workoutTarget,
+        date: runDate,
+      }),
       gps_available: gpsStarted && gpsAvailable,
       avg_heart_rate: liveHr || null,
       elevation_gain: actualElevation.available ? actualElevation.gainFeet : null,
       elevation_loss: actualElevation.available ? actualElevation.lossFeet : null,
-      route_coords: routeCoords.map(([lat, lon, alt]) => ({ lat, lon, alt: alt ?? null })),
+      route_coords: routeCoords.map(([lat, lon, alt, time]) => ({ lat, lon, alt: alt ?? null, time: time ?? null })),
       treadmill_brand: treadmillBrand || null
     }
   }
@@ -502,17 +508,7 @@ export default function ActiveRun() {
         setSavedRunId(runId)
         setAwaitingManualDistance(false)
         setSavedHeatDrift(res.data?.heatDrift || null)
-        setShowAiCard(true)
-        setAiLoading(true)
-        try {
-          const fb = await api.post('/ai/session-feedback', { sessionType: 'run', sessionId: runId })
-          setAiFeedback(fb.data?.feedback || null)
-        } catch (err) {
-          console.error('[ActiveRun] Failed to load AI run feedback:', err.message)
-          setAiFeedback({ analysis: 'Good work completing your run.', didWell: 'You stayed consistent and got the session done.', suggestion: 'Keep effort smooth and controlled on your next run.', recovery: 'easy day' })
-        } finally {
-          setAiLoading(false)
-        }
+        savePostRunCheckInDraft({ runId, heatDrift: res.data?.heatDrift || null, runQueued: false })
         setShowPostCheckIn(true)
         // H5: mark the scheduled calendar session complete ONLY after the run
         // durably saved. A failed completion must never roll back the run.
@@ -553,6 +549,8 @@ export default function ActiveRun() {
         clearActiveRunSession()
         setSavedRunId(payload.id)
         setAwaitingManualDistance(false)
+        savePostRunCheckInDraft({ runId: payload.id, heatDrift: null, runQueued: true })
+        setShowPostCheckIn(true)
         setSaveError(`Saved offline — Forged Hybrid will sync this run when your connection is back.${progressNotice}`)
       } else {
         setSaveError(err?.response?.data?.error || 'Could not save this run. Check the details and try again.')
@@ -693,7 +691,6 @@ export default function ActiveRun() {
       )}
 
       {showPostCheckIn && savedRunId && <PostRunCheckIn runId={savedRunId} heatDrift={savedHeatDrift} onDone={() => { setShowPostCheckIn(false); navigate('/') }} />}
-      <AICoachFeedbackCard open={showAiCard} loading={aiLoading} feedback={aiFeedback} sessionId={savedRunId} onClose={() => setShowAiCard(false)} />
       <Link to="/log-run" className="mt-5 inline-block text-sm" style={{ color: 'var(--text-muted)' }}>← Back</Link>
     </div>
   )

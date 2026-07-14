@@ -13,6 +13,8 @@ import { queueRequest } from '../lib/offlineQueue'
 import { scrollToFirstError, validateRunLog } from '../utils/validation'
 import WatchWorkoutService from '../services/WatchWorkoutService'
 import { fetchDailyExecution, scheduledRunFromExecution, planSessionIdFromState, currentWeekFromState, markSessionComplete, queueSessionComplete, isRetryableCompletionFailure, localDateISO } from '../lib/dailyExecution'
+import { loadPostRunCheckInDraft, savePostRunCheckInDraft } from '../lib/postRunCheckInDraft'
+import { buildPlannedSessionSnapshot } from '../lib/runProvenance'
 
 const RoutePlanner = lazy(() => import('../components/RoutePlanner'))
 
@@ -266,15 +268,15 @@ export default function LogRun() {
   const [notes, setNotes] = useState('')
   const [effort, setEffort] = useState(5)
   const [loading, setLoading] = useState(false)
-  const [polling, setPolling] = useState(false)
+  const [pendingPostRunDraft] = useState(() => loadPostRunCheckInDraft())
   const [feedback, setFeedback] = useState('')
   const [error, setError] = useState('')
   const [fieldErrors, setFieldErrors] = useState({})
   const [fieldWarnings, setFieldWarnings] = useState({})
   const [showRecoveryPrompt, setShowRecoveryPrompt] = useState(false)
-  const [showPostCheckIn, setShowPostCheckIn] = useState(false)
-  const [savedRunId, setSavedRunId] = useState(null)
-  const [savedHeatDrift, setSavedHeatDrift] = useState(null)
+  const [showPostCheckIn, setShowPostCheckIn] = useState(Boolean(pendingPostRunDraft))
+  const [savedRunId, setSavedRunId] = useState(pendingPostRunDraft?.runId || null)
+  const [savedHeatDrift, setSavedHeatDrift] = useState(pendingPostRunDraft?.heatDrift || null)
   const [recentRuns, setRecentRuns] = useState([])
   const [runsLoading, setRunsLoading] = useState(false)
 
@@ -500,15 +502,40 @@ export default function LogRun() {
     }
 
     const clientRunId = createClientRunId()
+    const resolvedSurface = environment === 'inside' ? 'treadmill' : surface
+    const plannedSession = buildPlannedSessionSnapshot({
+      planSessionId,
+      scheduledRun: todayWorkout,
+      workoutTarget: {
+        distanceMiles: todayWorkout?.distanceMiles || null,
+        pace: todayWorkout?.pace || null,
+        zone: todayWorkout?.targetZone || null,
+      },
+      date,
+    })
+    const runPayload = {
+      id: clientRunId,
+      date,
+      type: runType,
+      surface: resolvedSurface,
+      run_surface: resolvedSurface,
+      distance_miles: distanceMiles,
+      duration_seconds: seconds,
+      notes,
+      perceived_effort: Number(effort),
+      treadmill_brand: treadmillType,
+      shoe_id: selectedShoeId || null,
+      target_zone: todayWorkout?.targetZone || null,
+      plan_session_id: planSessionId,
+      planned_session: plannedSession,
+    }
 
     try {
       setLoading(true)
-      const resolvedSurface = environment === 'inside' ? 'treadmill' : surface
       if (resolvedSurface === 'treadmill') {
         navigate('/run/treadmill', { state: { treadmillType } })
         return
       }
-      const runPayload = { id: clientRunId, date, type: runType, surface: resolvedSurface, run_surface: resolvedSurface, distance_miles: distanceMiles, duration_seconds: seconds, notes, perceived_effort: Number(effort), treadmill_brand: treadmillType, shoe_id: selectedShoeId || null, target_zone: todayWorkout?.targetZone || null }
       if (!navigator.onLine) {
         await queueRequest('/api/runs', 'POST', runPayload)
         // H5: order completion AFTER the queued run so it replays second.
@@ -521,6 +548,16 @@ export default function LogRun() {
             progressNotice = ' Open Plan after the run syncs to mark this session complete.'
           }
         }
+        savePostRunCheckInDraft({
+          runId: clientRunId,
+          heatDrift: null,
+          runQueued: true,
+          effort: Number(effort),
+          step: 1,
+        })
+        setSavedRunId(clientRunId)
+        setSavedHeatDrift(null)
+        setShowPostCheckIn(true)
         setFeedback(`Saved offline — will sync when connected.${progressNotice}`)
         return
       }
@@ -538,8 +575,14 @@ export default function LogRun() {
 
       setSavedRunId(runId)
       setSavedHeatDrift(runRes.data?.heatDrift || null)
+      savePostRunCheckInDraft({
+        runId,
+        heatDrift: runRes.data?.heatDrift || null,
+        runQueued: false,
+        effort: Number(effort),
+        step: 1,
+      })
       setShowPostCheckIn(true)
-      setPolling(true)
 
       // H5: mark the scheduled calendar session complete ONLY after the run
       // saved successfully. A failed completion must never roll back the run —
@@ -564,26 +607,9 @@ export default function LogRun() {
         }
       }
 
-      let attempts = 0
-      let aiFeedback = ''
-      while (attempts < 5 && !aiFeedback) {
-        attempts += 1
-        await new Promise(resolve => setTimeout(resolve, 2000))
-        try {
-          const feedbackRes = await api.get(`/coach/feedback/${runId}`)
-          aiFeedback = feedbackRes.data?.ai_feedback || ''
-        } catch (feedbackErr) {
-          console.error('[LogRun] coach feedback poll failed:', feedbackErr?.message || feedbackErr)
-          break
-        }
-      }
-
-      const coachNotice = aiFeedback || 'Your coach is thinking... check back after your next run.'
-      setFeedback([coachNotice, planProgressNotice].filter(Boolean).join(' '))
+      setFeedback(planProgressNotice)
     } catch (err) {
       if (!err?.response) {
-        const resolvedSurface = environment === 'inside' ? 'treadmill' : surface
-        const runPayload = { id: clientRunId, date, type: runType, surface: resolvedSurface, run_surface: resolvedSurface, distance_miles: distanceMiles, duration_seconds: seconds, notes, perceived_effort: Number(effort), treadmill_brand: treadmillType, shoe_id: selectedShoeId || null, target_zone: todayWorkout?.targetZone || null }
         await queueRequest('/api/runs', 'POST', runPayload)
         // H5: order completion AFTER the queued run so it replays second.
         let progressNotice = ''
@@ -595,6 +621,16 @@ export default function LogRun() {
             progressNotice = ' Open Plan after the run syncs to mark this session complete.'
           }
         }
+        savePostRunCheckInDraft({
+          runId: clientRunId,
+          heatDrift: null,
+          runQueued: true,
+          effort: Number(effort),
+          step: 1,
+        })
+        setSavedRunId(clientRunId)
+        setSavedHeatDrift(null)
+        setShowPostCheckIn(true)
         setFeedback(`Saved offline — will sync when connected.${progressNotice}`)
         setError('')
         return
@@ -602,7 +638,6 @@ export default function LogRun() {
       setError(err?.response?.data?.error || 'Could not save run. Check your connection and try again.')
     } finally {
       setLoading(false)
-      setPolling(false)
     }
   }
 
@@ -620,6 +655,7 @@ export default function LogRun() {
         // H5: carry the canonical plan session so ActiveRun can mark it complete.
         planSessionId,
         currentWeek: planCurrentWeek,
+        scheduledRun: todayWorkout,
         workoutTarget: {
           distanceMiles: todayWorkout?.distanceMiles || plannedRoute?.targetDistanceMiles || null,
           pace: todayWorkout?.pace || null,
@@ -941,7 +977,7 @@ export default function LogRun() {
 
             <input type="date" value={date} onChange={e => setDate(e.target.value)} className="w-full rounded-xl border px-4 py-3" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-base)', color: 'var(--text-primary)' }} />
 
-            <button type="submit" disabled={loading || polling} className="w-full rounded-xl py-3 font-semibold disabled:opacity-70" style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', cursor: 'pointer' }}>{loading ? 'Logging run...' : 'Save Run'}</button>
+            <button type="submit" disabled={loading} className="w-full rounded-xl py-3 font-semibold disabled:opacity-70" style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', cursor: 'pointer' }}>{loading ? 'Logging run...' : 'Save Run'}</button>
             {error && <p className="mt-2 text-sm" style={{ color: 'var(--accent)' }}>{error}</p>}
             {feedback && <div className="mt-2 rounded-xl p-3" style={{ background: 'var(--bg-base)', color: 'var(--text-primary)' }}>{feedback}</div>}
             {savedRunId && (
@@ -994,7 +1030,16 @@ export default function LogRun() {
         </div>
       )}
 
-      {showPostCheckIn && savedRunId && <PostRunCheckIn runId={savedRunId} heatDrift={savedHeatDrift} onDone={() => { setShowPostCheckIn(false); setShowRecoveryPrompt(true) }} />}
+      {showPostCheckIn && savedRunId && <PostRunCheckIn runId={savedRunId} heatDrift={savedHeatDrift} onDone={(result) => {
+        setShowPostCheckIn(false)
+        const checkInNotice = result?.queued
+          ? 'Post-run check-in queued and will sync with your run.'
+          : ['generated', 'existing'].includes(result?.feedbackStatus)
+            ? 'Check-in and coach analysis saved.'
+            : 'Check-in saved. Coach analysis can be retried from run history.'
+        setFeedback((current) => [checkInNotice, current].filter(Boolean).join(' '))
+        setShowRecoveryPrompt(true)
+      }} />}
 
       {showRecoveryPrompt && (
         <div className="fixed inset-0 z-50 flex items-center justify-center px-4" style={{ background: 'rgba(0,0,0,0.7)' }}>

@@ -1,5 +1,11 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import api from '../lib/api'
+import { flushQueue, queueRequest } from '../lib/offlineQueue'
+import {
+  clearPostRunCheckInDraft,
+  loadPostRunCheckInDraft,
+  savePostRunCheckInDraft,
+} from '../lib/postRunCheckInDraft'
 
 const STEPS = [
   { key: 'effort', label: 'Effort' },
@@ -22,14 +28,28 @@ const ENERGY_OPTIONS = [
 ]
 
 export default function PostRunCheckIn({ runId, heatDrift, onDone }) {
-  const [step, setStep] = useState(0)
-  const [effort, setEffort] = useState(null)
-  const [pain, setPain] = useState(null)
-  const [energy, setEnergy] = useState(null)
+  const [initialDraft] = useState(() => loadPostRunCheckInDraft(runId))
+  const [step, setStep] = useState(initialDraft?.step || 0)
+  const [effort, setEffort] = useState(initialDraft?.effort || null)
+  const [pain, setPain] = useState(initialDraft?.pain || null)
+  const [energy, setEnergy] = useState(initialDraft?.energy || null)
   const [saving, setSaving] = useState(false)
   const [errors, setErrors] = useState({})
   const [warning, setWarning] = useState(null)
   const [pendingStep, setPendingStep] = useState(null)
+  const [submitError, setSubmitError] = useState('')
+
+  useEffect(() => {
+    savePostRunCheckInDraft({
+      runId,
+      runQueued: Boolean(initialDraft?.runQueued),
+      heatDrift: heatDrift || initialDraft?.heatDrift || null,
+      step,
+      effort,
+      pain,
+      energy,
+    })
+  }, [energy, effort, heatDrift, initialDraft, pain, runId, step])
 
   const completion = useMemo(() => ({
     0: effort !== null,
@@ -56,16 +76,54 @@ export default function PostRunCheckIn({ runId, heatDrift, onDone }) {
   const energyLabel = ENERGY_OPTIONS.find(([value]) => value === energy)?.[1] || '--'
 
   const submit = async () => {
+    const payload = {
+      perceived_effort: effort,
+      pain_level: pain,
+      post_energy: energy,
+    }
+    const queueCheckIn = async () => {
+      await queueRequest(`/api/runs/${runId}/check-in`, 'PATCH', payload)
+      if (navigator.onLine) {
+        try {
+          await flushQueue()
+        } catch (error) {
+          console.error('[post-run/check-in] immediate queue flush failed:', error?.message || error)
+        }
+      }
+      clearPostRunCheckInDraft(runId)
+      onDone({ queued: true, feedback: null, feedbackStatus: 'queued' })
+    }
+
     setSaving(true)
+    setSubmitError('')
     try {
-      await api.patch(`/runs/${runId}`, {
-        perceived_effort: effort,
-        pain_level: pain,
-        post_energy: energy,
+      if (!navigator.onLine || initialDraft?.runQueued) {
+        await queueCheckIn()
+        return
+      }
+      const response = await api.patch(`/runs/${runId}/check-in`, payload)
+      clearPostRunCheckInDraft(runId)
+      onDone({
+        queued: false,
+        feedback: response.data?.feedback || null,
+        feedbackStatus: response.data?.feedbackStatus || 'pending',
+        run: response.data?.run || null,
       })
+    } catch (error) {
+      const status = Number(error?.response?.status || 0)
+      const canQueue = !error?.response || status >= 500 || (status === 404 && initialDraft?.runQueued)
+      if (canQueue) {
+        try {
+          await queueCheckIn()
+          return
+        } catch (queueError) {
+          console.error('[post-run/check-in] queue failed:', queueError?.message || queueError)
+        }
+      }
+      console.error('[post-run/check-in] save failed:', error?.message || error)
+      setSubmitError(error?.response?.data?.error || 'Could not save your check-in. Your answers are still here; try again.')
     } finally {
       setSaving(false)
-      onDone()
     }
   }
 
@@ -301,6 +359,7 @@ export default function PostRunCheckIn({ runId, heatDrift, onDone }) {
                 <p style={{ margin: '4px 0 0', color: 'var(--text-primary)', fontWeight: 800 }}>{energyLabel}</p>
               </div>
             </div>
+            {submitError && <p role="alert" style={{ color: 'var(--danger)', fontSize: 12, margin: '0 0 12px' }}>{submitError}</p>}
             <div style={{ display: 'flex', gap: 10 }}>
               <button type="button" onClick={() => requestStepChange(2)}
                 style={{ flex: 1, padding: 14, background: 'var(--bg-input)', color: 'var(--text-primary)', fontWeight: 800, borderRadius: 14, border: '1px solid var(--border-subtle)', cursor: 'pointer' }}>

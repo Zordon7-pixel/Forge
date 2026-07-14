@@ -50,6 +50,11 @@ function paceLabel(secondsPerMile) {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}/mi`;
 }
 
+function normalizedChoice(value, choices) {
+  const normalized = String(value || '').toLowerCase();
+  return choices.includes(normalized) ? normalized : null;
+}
+
 function normalizeRun(row = {}) {
   if (!isRunActivity(row)) return null;
   const date = String(row.date || '').slice(0, 10);
@@ -69,6 +74,8 @@ function normalizeRun(row = {}) {
     paceLabel: paceLabel(paceSecondsPerMile),
     perceivedEffort: finiteNumber(row.perceived_effort, 1, 10),
     avgHeartRate: finiteNumber(row.avg_heart_rate, 30, 240),
+    postRunPain: normalizedChoice(row.pain_level, ['none', 'mild', 'moderate', 'severe']),
+    postRunEnergy: normalizedChoice(row.post_energy, ['low', 'medium', 'high']),
     source: String(row.health_source || row.source || 'logged').slice(0, 40),
     createdAt: row.created_at ? String(row.created_at) : null,
   };
@@ -81,7 +88,13 @@ function summarizeRecentRunLoad(rows = [], options = {}) {
   const normalized = (Array.isArray(rows) ? rows : [])
     .map(normalizeRun)
     .filter((run) => run && (!todayISO || run.date <= todayISO));
-  const meaningful = normalized.filter((run) => run.distanceMiles >= 1 || run.durationSeconds >= 600 || Number(run.perceivedEffort || 0) >= 7);
+  const meaningful = normalized.filter((run) => (
+    run.distanceMiles >= 1
+    || run.durationSeconds >= 600
+    || Number(run.perceivedEffort || 0) >= 7
+    || ['moderate', 'severe'].includes(run.postRunPain)
+    || run.postRunEnergy === 'low'
+  ));
   const latestDate = meaningful.reduce((latest, run) => (!latest || run.date > latest ? run.date : latest), null);
   const latestRun = latestDate
     ? meaningful
@@ -98,12 +111,16 @@ function summarizeRecentRunLoad(rows = [], options = {}) {
     const daysSince = daysBetween(todayISO, run.date);
     const isLong = run.distanceMiles >= longRunThresholdMiles || run.durationSeconds >= 75 * 60;
     const isHard = Number(run.perceivedEffort || 0) >= 7;
+    const postRunCaution = ['moderate', 'severe'].includes(run.postRunPain) || run.postRunEnergy === 'low';
+    const postRunSevere = run.postRunPain === 'severe';
     return {
       ...run,
       distanceMiles: round(run.distanceMiles, 3),
       daysSince,
       isLong,
       isHard,
+      postRunCaution,
+      postRunSevere,
       distanceShareOfWeeklyBaseline: weeklyBaseline > 0 ? round(run.distanceMiles / weeklyBaseline, 2) : null,
     };
   };
@@ -140,17 +157,23 @@ function summarizeRecentRunLoad(rows = [], options = {}) {
 
   const protectiveRun = meaningful
     .map(annotate)
-    .filter((run) => run.daysSince !== null && run.daysSince >= 0 && run.daysSince <= 2 && (run.isLong || run.isHard))
+    .filter((run) => run.daysSince !== null && run.daysSince >= 0 && run.daysSince <= 3 && (run.isLong || run.isHard || run.postRunCaution))
     .sort((left, right) => (
-      Number(right.isLong && right.isHard) - Number(left.isLong && left.isHard)
+      Number(right.postRunSevere) - Number(left.postRunSevere)
+      || Number(right.postRunCaution) - Number(left.postRunCaution)
+      || Number(right.isLong && right.isHard) - Number(left.isLong && left.isHard)
       || Math.max(right.distanceMiles / longRunThresholdMiles, right.durationSeconds / 4500, Number(right.perceivedEffort || 0) / 7)
         - Math.max(left.distanceMiles / longRunThresholdMiles, left.durationSeconds / 4500, Number(left.perceivedEffort || 0) / 7)
       || right.date.localeCompare(left.date)
     ))[0] || null;
   const recoveryCaution = ['low', 'recovery', 'caution'].includes(recoveryState);
   const protectsFromLoad = Boolean(protectiveRun);
-  const hardProtectionDays = protectsFromLoad ? ((protectiveRun.isLong && protectiveRun.isHard) || recoveryCaution ? 2 : 1) : 0;
-  const lowerProtectionDays = protectsFromLoad ? (recoveryCaution ? 2 : 1) : 0;
+  const hardProtectionDays = protectsFromLoad
+    ? protectiveRun.postRunSevere ? 3 : protectiveRun.postRunCaution || (protectiveRun.isLong && protectiveRun.isHard) || recoveryCaution ? 2 : 1
+    : 0;
+  const lowerProtectionDays = protectsFromLoad
+    ? protectiveRun.postRunSevere ? 3 : protectiveRun.postRunCaution || recoveryCaution ? 2 : 1
+    : 0;
   const noAdditionalRunOnDate = annotatedLatest.daysSince === 0 ? annotatedLatest.date : null;
   const protectionActive = Boolean(noAdditionalRunOnDate || protectsFromLoad);
   const reasonRun = protectiveRun || annotatedLatest;
@@ -160,6 +183,8 @@ function summarizeRecentRunLoad(rows = [], options = {}) {
     reasonRun.paceLabel,
     reasonRun.durationMinutes ? `${Math.round(reasonRun.durationMinutes)} min` : null,
     reasonRun.avgHeartRate ? `avg HR ${Math.round(reasonRun.avgHeartRate)}` : null,
+    reasonRun.postRunPain && reasonRun.postRunPain !== 'none' ? `${reasonRun.postRunPain} post-run pain` : null,
+    reasonRun.postRunEnergy === 'low' ? 'low post-run energy' : null,
   ].filter(Boolean).join(', ');
 
   return {
@@ -176,7 +201,9 @@ function summarizeRecentRunLoad(rows = [], options = {}) {
       noAdditionalRunOnDate,
       hardRunsThrough: protectsFromLoad ? addDays(protectiveRun.date, hardProtectionDays) : noAdditionalRunOnDate,
       lowerBodyThrough: protectsFromLoad ? addDays(protectiveRun.date, lowerProtectionDays) : null,
-      upperBodyOptionalThrough: protectsFromLoad ? addDays(protectiveRun.date, 1) : null,
+      upperBodyOptionalThrough: protectsFromLoad ? addDays(protectiveRun.date, protectiveRun.postRunSevere ? 2 : 1) : null,
+      postRunCaution: Boolean(protectiveRun?.postRunCaution),
+      postRunSevere: Boolean(protectiveRun?.postRunSevere),
       reason: protectionActive
         ? `${details} was logged ${when}. Protect the next 24-72 hours from duplicate or conflicting load.`
         : null,

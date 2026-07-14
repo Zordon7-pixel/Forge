@@ -366,13 +366,25 @@ async function generateRunFeedback(run, profile) {
     ? `${Math.floor(durationMin / run.distance_miles)}:${String(Math.round((durationMin / run.distance_miles % 1) * 60)).padStart(2, '0')}/mi`
     : 'unknown pace';
 
-  const injuryCtx = sanitize(profile.injury_notes) ? `, currently managing: ${sanitize(profile.injury_notes)}` : '';
+  const injuryCtx = sanitize(profile?.injury_notes) ? `, currently managing: ${sanitize(profile.injury_notes)}` : '';
   const notesCtx = sanitize(run.notes) ? `\nAthlete note: "${sanitize(run.notes)}"` : '';
+  const postRunCtx = `\nPost-run check-in: pain ${sanitize(run.pain_level, 20) || 'not reported'}, energy ${sanitize(run.post_energy, 20) || 'not reported'}.`;
+  let plannedSession = null;
+  try {
+    plannedSession = typeof run.planned_session_json === 'string'
+      ? JSON.parse(run.planned_session_json)
+      : run.planned_session_json;
+  } catch (err) {
+    console.error('[AI/run-feedback] planned session parse skipped:', err.message);
+  }
+  const plannedCtx = plannedSession && Object.keys(plannedSession).length
+    ? `\nPlanned prescription: ${JSON.stringify(sanitizeObj(plannedSession))}`
+    : '';
 
   const prompt = `You are a sharp, experienced hybrid runner/lifter coach who specializes in concurrent training (runners who also lift) reviewing a training log entry. Write 2-3 sentences of feedback. Sound like a knowledgeable training partner — direct, specific to the numbers, no fluff. Don't open with praise like "Great job" or "Well done". Don't mention weight or BMI. Reference the actual pace and effort.
 
-${run.type} run — ${run.distance_miles} miles in ${durationMin} min (${pace}), effort ${run.perceived_effort}/10${notesCtx}
-Context: ${Number(profile.weekly_miles_current) || 0} mi/week base, goal: ${sanitize(profile.goal_type, 30) || 'fitness'}${injuryCtx}
+${sanitize(run.type, 40) || 'Run'} — ${Number(run.distance_miles) || 0} miles in ${durationMin} min (${pace}), effort ${Number(run.perceived_effort) || 'not reported'}/10${notesCtx}${postRunCtx}${plannedCtx}
+Context: ${Number(profile?.weekly_miles_current) || 0} mi/week base, goal: ${sanitize(profile?.goal_type, 30) || 'fitness'}${injuryCtx}
 
 Under 60 words. No headers. No bullet points. If the athlete's recent lifts are heavy (lower body), mention CNS load or leg fatigue when relevant. Talk like someone who lifts AND runs.`;
 
@@ -479,7 +491,7 @@ async function generateSessionFeedback({ sessionType, sessionData, profile, user
 
 Session: ${sanitize(sessionType, 30)}
 Goal: ${sanitize(profile?.goal_type, 30) || 'fitness'}
-Data: ${JSON.stringify(sessionData || {})}
+Data: ${JSON.stringify(sanitizeObj(sessionData || {}))}
 
 Rules:
 - analysis: 2 sentences — what actually happened in this session and what it means for training. Be specific to the numbers. Sound like a coach, not an app.
