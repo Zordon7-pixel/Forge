@@ -5,14 +5,15 @@ This file holds Forge's product history, deployment notes, shipped phase log, kn
 ## Current Production
 
 - Production URL: `https://forge-production-773f.up.railway.app/`
-- Latest verified application release: commit `71b28a02`, deployment `e9f4fba8-534c-4fca-98fb-779ac8d240ca`
-- Latest checked bundle: `/assets/index-BNfzfH3-.js`
+- Latest verified application release: commit `44bdb4f7`, deployment `6d410bad-6436-4832-b511-e68391bb1ae8`
+- Latest checked bundle: `/assets/index-BkNTEfzQ.js`
 - iOS version/build: `1.0.5` / `15`
 - Bundle identifier: `com.zordontech.forge`
 - Expo/EAS project: `@zordon/forge-athlete` (`6aeb5fbb-2697-4cf4-b9b3-afe60c63e9e1`)
 
 Current production checks:
-- Final friends-and-family beta gate passed Claude Code and Hermes review, all deterministic smokes, both dependency audits, 47-table account-data coverage, Capacitor sync, Swift parse, guarded live CRUD/ownership testing, and an 18-route mobile browser crawl.
+- Final friends-and-family beta gate passed Claude Code and Hermes review, all deterministic smokes, both dependency audits, 48-table account-data coverage, Capacitor sync, Swift parse, guarded live CRUD/ownership testing, and an 18-route mobile browser crawl.
+- Run-integrity follow-up verified durable active-run recovery after reload, user-facing run deletion, imported-workout tombstones that prevent resync resurrection, source-accurate calorie labels, and a runner-following live-location marker.
 - Stretch catalog cues now remain exact, and the mobile `Done` / `Skip` / `Next` controls sit above the app navigation instead of routing accidental taps to another tab.
 - H12 Apple Health activity classification, athlete-specific heart-rate zones, workout-metric integrity, and data-coverage UI verified live.
 - Demo diagnostics check returns `403`.
@@ -202,6 +203,15 @@ Phase 2 cleanup from this audit:
 - Claude Code and Hermes independently passed the three testing phases plus both live-test roll-forward fixes. Production serves `/assets/index-BNfzfH3-.js`, byte-for-byte matching the reviewed local build.
 - Remaining device-only checks are real HealthKit permission/foreground sync behavior, Apple Watch delivery with a paired watch, and physical-iPhone safe-area confirmation. No EAS or TestFlight build was run during this gate.
 
+## Run Integrity and Heart-Rate Reconciliation (2026-07-14)
+
+- Active runs persist a bounded local session and recover elapsed time, route, distance, and client ID after a reload instead of silently restarting. The immersive run route bypasses pull-to-refresh while recording.
+- Runs can be deleted from History or the detail sheet. Imported-run deletion writes a user-scoped tombstone in the same transaction, so the source workout remains hidden from later Apple Health syncs without deleting it from Apple Health itself.
+- The live map follows the runner and renders a high-contrast yellow location marker. Planned and completed routes still fit their full bounds.
+- Heart-rate classification uses the athlete's saved `/profile/hr-zones` profile. Sparse imported zone timelines cannot override that profile, and Apple Health calories are labeled as active calories rather than being compared silently with a watch's total-calorie value.
+- HealthKit workout schema v4 prefers workout-owned heart-rate statistics and otherwise uses bounded time-weighted samples. The web/backend release is live; this native bridge improvement remains pending a separately approved EAS/TestFlight build.
+- Claude Code passed the implementation and focused re-QA with no critical, high, or medium findings. Live browser testing verified detail-sheet deletion, confirmation copy, tombstone-backed resync skipping, active-run recovery after reload, and zero browser console warnings/errors.
+
 ## Recently Fixed Bugs
 
 Do not reintroduce these patterns.
@@ -236,6 +246,7 @@ Do not reintroduce these patterns.
 | Account deletion only required typed DELETE | backend/src/routes/auth.js, frontend/src/pages/Settings.jsx | Delete account now requires current password plus typed `DELETE`; missing/invalid password blocks deletion |
 | Custom plan generation surfaced a generic failure after malformed/slow AI output | backend/src/services/ai.js, backend/src/routes/plans.js, frontend/src/pages/PlanCatalog.jsx | AI requests abort before the UI deadline and both plan routes select a deterministic fallback instead of failing the user flow |
 | Apple Health walk counted as a run and workout-average HR appeared as Z5 | backend/src/lib/runActivity.js, backend/src/lib/hrZones.js, backend/src/routes/import.js, frontend/src/components/RunDetailModal.jsx | Preserve workout kind across import, exclude non-runs from running intelligence, and classify average HR only against a saved athlete profile or exact watch boundaries |
+| Active run restarted after reload and deleted Health imports returned | frontend/src/pages/ActiveRun.jsx, frontend/src/lib/activeRunSession.js, backend/src/routes/runs.js, backend/src/lib/runImportKey.js | Persist bounded active-run state, recover elapsed time from timestamps, and tombstone deleted imports in a user-scoped transaction before deletion |
 
 ## Authorization Model
 
@@ -272,6 +283,7 @@ These changes are already implemented, built, Capacitor-synced, and deployed to 
 | 2026-07-13 | `22655735-758a-40d2-bde0-cc9359fb9b3b` | Success | H11 expanded Apple Health training intelligence, freshness gates, plan provenance, and Body metrics verified live |
 | 2026-07-14 | `dc344e3d-21f5-495c-807c-7510a8323d42` | Success | H12 Apple Health activity classification, exact HR zones, workout metrics, and data-coverage handling verified live |
 | 2026-07-14 | `e9f4fba8-534c-4fca-98fb-779ac8d240ca` | Success | Final friends-and-family beta gate, exact stretch cues, and mobile stretch-control overlap fix verified live |
+| 2026-07-14 | `6d410bad-6436-4832-b511-e68391bb1ae8` | Success | Run recovery, durable imported-run deletion, live-location map behavior, and heart-rate source integrity verified live |
 
 ### Build/Test Status
 

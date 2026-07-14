@@ -24,9 +24,9 @@ Do not dispatch new implementation work to `forge-nextjs` or `forge-native` unle
 The workspace-level `BUILD-SPEC-2026-04-24-forge-cross-platform-flow.md` is useful architecture research, but it is not the active implementation plan for this shipping app. If we want OpenAPI, Sentry, feature flags, or cross-platform e2e now, rewrite those specs against this `forge-app` stack first.
 
 Latest verified application release (docs-only commits may create a later Railway deployment with the same bundle):
-- Commit: `53ae701a`
-- Railway deployment: `22655735-758a-40d2-bde0-cc9359fb9b3b`
-- Frontend bundle: `/assets/index-D-pIgSi3.js`
+- Commit: `44bdb4f7`
+- Railway deployment: `6d410bad-6436-4832-b511-e68391bb1ae8`
+- Frontend bundle: `/assets/index-BkNTEfzQ.js`
 - iOS version/build: `1.0.5` / `15`
 - Bundle identifier: `com.zordontech.forge`
 - Expo/EAS project: `@zordon/forge-athlete` (`6aeb5fbb-2697-4cf4-b9b3-afe60c63e9e1`)
