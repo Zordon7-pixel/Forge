@@ -499,7 +499,7 @@ export default function History() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
           <div className="w-full max-w-sm rounded-xl border p-4" style={{ background: 'var(--bg-card)', borderColor: 'var(--border-subtle)' }}>
             <h3 className="text-base font-bold" style={{ color: 'var(--text-primary)' }}>Delete {pendingDelete.type}?</h3>
-            <p className="mt-2 text-sm" style={{ color: 'var(--text-muted)' }}>This removes it from Forged Hybrid and recalculates affected records. It does not delete the original workout from Apple Health.</p>
+            <p className="mt-2 text-sm" style={{ color: 'var(--text-muted)' }}>This removes it from Forged Hybrid, recalculates affected records, and keeps an imported activity hidden from future syncs. It does not delete the original workout from Apple Health.</p>
             {deleteError && <p className="mt-2 text-sm" role="alert" style={{ color: 'var(--danger)' }}>{deleteError}</p>}
             <div className="mt-4 flex justify-end gap-2">
               <button type="button" disabled={deleting} onClick={() => setPendingDelete(null)} className="rounded-lg border px-4 py-2 text-sm" style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-primary)', opacity: deleting ? 0.5 : 1 }}>Cancel</button>

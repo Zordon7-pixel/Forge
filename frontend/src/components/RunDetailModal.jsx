@@ -111,6 +111,11 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
   const averageZone = findZone(hr, hrZones)
   const workoutMetrics = parseObject(run.workout_metrics_json)
   const sourceLabel = formatSourceLabel(run.health_source, workoutMetrics.metric_source)
+  const calorieLabel = sourceLabel === 'Apple Health'
+    ? 'Active calories'
+    : sourceLabel === 'Garmin file'
+      ? 'Garmin calories'
+      : 'Calories'
   const timeline = zoneTimeline(run.heart_rate_zones, run.duration_seconds)
   const metricCoverage = Number(workoutMetrics.hr_sample_coverage_pct)
   const hrCoverage = Number.isFinite(metricCoverage) ? metricCoverage : timeline.coverage
@@ -134,7 +139,7 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
     { label: 'Distance', value: run.distance_miles ? `${Number(run.distance_miles).toFixed(2)} mi` : '--' },
     { label: 'Duration', value: run.duration_seconds ? fmtDuration(run.duration_seconds) : '--' },
     { label: 'Pace', value: fmtPace(run.duration_seconds, run.distance_miles) },
-    { label: sourceLabel === 'Apple Health' ? 'Active calories' : 'Calories', value: run.calories ? `${run.calories} cal` : '--' },
+    { label: calorieLabel, value: run.calories ? `${run.calories} cal` : '--' },
     { label: 'Effort', value: run.perceived_effort && hasTrustedEffort ? `${run.perceived_effort}/10 - ${EFFORT_LABELS[run.perceived_effort] || ''}` : '--' },
     { label: 'Surface', value: run.surface || run.run_type || '--' },
     { label: 'Elevation Gain', value: elevationLabel },

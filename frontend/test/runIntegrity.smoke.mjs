@@ -67,7 +67,8 @@ check(/saveActiveRunSession/.test(activeRun) && /loadActiveRunSession/.test(acti
 check(/FollowCurrentLocation/.test(activeRun) && /You are here/.test(activeRun) && /radius=\{15\}/.test(activeRun), 'map follows a prominent yellow current-location marker')
 check(/enabled=\{!running \|\| plannedRoutePositions\.length > 0\}/.test(activeRun), 'ad-hoc runs follow the athlete without refitting the whole route on every GPS fix')
 check(/Delete this \{isRun \? 'run' : 'activity'\}/.test(detail) && /onDelete=\{\(\) =>/.test(history), 'run detail exposes the confirmed delete flow')
-check(/Active calories/.test(detail) && /Review or match watch zones/.test(detail), 'Apple Health calorie provenance and zone calibration are explicit')
+check(/Active calories/.test(detail) && /Garmin calories/.test(detail) && /Review or match watch zones/.test(detail), 'watch calorie provenance and zone calibration are explicit')
+check(/keeps an imported activity hidden from future syncs/.test(history), 'delete confirmation explains the permanent import tombstone behavior')
 check(/savedHrZones/.test(activeRun) && /profile\/hr-zones/.test(activeRun), 'live-run zones use the same saved watch profile as History')
 
 console.log('\n== HealthKit source truth ==')
