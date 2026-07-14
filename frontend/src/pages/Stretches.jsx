@@ -177,7 +177,7 @@ function StretchSession({ stretches, onDone, onBack, sex = 'male' }) {
           {stretch.cue}
         </p>
 
-        <MovementDemo name={stretch.name} compact sex={sex} imageUrl={stretch.image_url || stretch.imageUrl} />
+        <MovementDemo name={stretch.name} compact sex={sex} imageUrl={stretch.image_url || stretch.imageUrl} cue={stretch.cue} />
 
         {/* Timer */}
         {phase === 'active' && (

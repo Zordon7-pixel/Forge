@@ -463,7 +463,7 @@ function isLocalFormAsset(src = '') {
   return String(src).startsWith('/exercises/') || String(src).startsWith('/stretches/')
 }
 
-export default function MovementDemo({ name, label, compact = false, sex = 'male', imageUrl = '' }) {
+export default function MovementDemo({ name, label, compact = false, sex = 'male', imageUrl = '', cue = '' }) {
   const kind = getDemoKind(name)
   const title = label || name || 'Movement demo'
   const lower = String(title || '').toLowerCase()
@@ -556,7 +556,7 @@ export default function MovementDemo({ name, label, compact = false, sex = 'male
       )}
       <div style={{ display: 'grid', gap: 4 }}>
         <p style={{ margin: 0, color: 'var(--text-primary)', fontWeight: 900, fontSize: compact ? 14 : 16 }}>{title}</p>
-        <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: compact ? 12 : 13, lineHeight: 1.45 }}>{getSetupCue(kind)}</p>
+        <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: compact ? 12 : 13, lineHeight: 1.45 }}>{cue || getSetupCue(kind)}</p>
       </div>
     </div>
   )

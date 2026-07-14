@@ -175,7 +175,7 @@ export default function StretchSession() {
               </div>
 
               <div className="my-8 flex flex-col items-center">
-                <MovementDemo name={currentStretch.name} sex={sex} imageUrl={currentStretch.image_url || currentStretch.imageUrl} />
+                <MovementDemo name={currentStretch.name} sex={sex} imageUrl={currentStretch.image_url || currentStretch.imageUrl} cue={currentStretch.cue} />
                 <p className={`text-7xl font-black mt-6 ${secondsLeft <= 5 ? 'animate-timer-pulse' : 'text-accent'}`}>
                   {secondsLeft}
                 </p>
