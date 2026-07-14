@@ -54,9 +54,6 @@ const swiftSource = fs.readFileSync(path.join(__dirname, '../../frontend/ios/App
 check(/"activitySummaryRecordedAt":\s*self\.isoDateTime\(now\)/.test(swiftSource), 'native summary timestamps current-week activity at collection time');
 check(/candidateSessions\.dropLast\(\)\.suffix\(7\)/.test(swiftSource), 'sleep baseline excludes the current night');
 
-const bodyDriversSource = fs.readFileSync(path.join(__dirname, '../src/routes/bodyDrivers.js'), 'utf8');
-check(/Not enough recent data yet/.test(bodyDriversSource), 'Body does not describe missing or stale inputs as healthy');
-
 const parsed = parseTrainingMetrics(JSON.stringify({ ...normalized.metrics, blood_pressure: 'do-not-store' }));
 check(parsed.vo2_max === 51.7 && parsed.blood_pressure === undefined, 'hydration keeps only the training-metric whitelist');
 const hydrated = hydrateHealthRow({ hrv_ms: 49, training_metrics_json: normalized.metrics });
@@ -234,7 +231,50 @@ async function routeSmoke() {
   }
 }
 
-routeSmoke().then(() => {
+async function bodyDriversRouteSmoke() {
+  section('Body empty-data state');
+  const dbPath = require.resolve('../src/db');
+  const routePath = require.resolve('../src/routes/bodyDrivers');
+  const originalDb = require.cache[dbPath];
+  const originalRoute = require.cache[routePath];
+  require.cache[dbPath] = {
+    id: dbPath,
+    filename: dbPath,
+    loaded: true,
+    children: [],
+    paths: [],
+    exports: {
+      dbAll: async () => [],
+      dbGet: async (sql) => {
+        if (/COUNT\(\*\)/i.test(sql)) return { count: 0 };
+        if (/SUM\(distance_miles\)/i.test(sql)) return { miles: 0 };
+        return null;
+      },
+    },
+  };
+  delete require.cache[routePath];
+
+  try {
+    const router = require(routePath);
+    const handler = router.stack.find((layer) => layer.route?.path === '/drivers' && layer.route?.methods?.get)?.route?.stack?.at(-1)?.handle;
+    let statusCode = 200;
+    let payload;
+    const res = {
+      status(code) { statusCode = code; return this; },
+      json(value) { payload = value; return this; },
+    };
+    await handler({ user: { id: 'h11-empty-user' } }, res);
+    check(statusCode === 200 && payload?.drivers?.length === 0, 'Body empty-data request returns no fabricated drivers');
+    check(payload?.summary?.startsWith('Not enough recent data yet'), 'Body empty-data request never reports that missing inputs look good');
+  } finally {
+    if (originalDb) require.cache[dbPath] = originalDb;
+    else delete require.cache[dbPath];
+    if (originalRoute) require.cache[routePath] = originalRoute;
+    else delete require.cache[routePath];
+  }
+}
+
+routeSmoke().then(bodyDriversRouteSmoke).then(() => {
   console.log(`\nPASSED: ${passed}  FAILED: ${failed}`);
   if (failed) process.exit(1);
   console.log('H11 SMOKE OK');
