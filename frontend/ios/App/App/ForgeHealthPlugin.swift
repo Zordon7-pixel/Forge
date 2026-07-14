@@ -25,7 +25,11 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
             HKQuantityTypeIdentifier.distanceWalkingRunning,
             HKQuantityTypeIdentifier.heartRate,
             HKQuantityTypeIdentifier.restingHeartRate,
-            HKQuantityTypeIdentifier.heartRateVariabilitySDNN
+            HKQuantityTypeIdentifier.heartRateVariabilitySDNN,
+            HKQuantityTypeIdentifier.walkingHeartRateAverage,
+            HKQuantityTypeIdentifier.vo2Max,
+            HKQuantityTypeIdentifier.respiratoryRate,
+            HKQuantityTypeIdentifier.appleExerciseTime
         ].forEach { identifier in
             if let type = HKObjectType.quantityType(forIdentifier: identifier) {
                 types.insert(type)
@@ -34,6 +38,20 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
 
         if let sleepType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) {
             types.insert(sleepType)
+        }
+        if #available(iOS 16.0, *) {
+            [
+                HKQuantityTypeIdentifier.heartRateRecoveryOneMinute,
+                HKQuantityTypeIdentifier.runningPower,
+                HKQuantityTypeIdentifier.runningSpeed,
+                HKQuantityTypeIdentifier.runningStrideLength,
+                HKQuantityTypeIdentifier.runningVerticalOscillation,
+                HKQuantityTypeIdentifier.runningGroundContactTime
+            ].forEach { identifier in
+                if let type = HKObjectType.quantityType(forIdentifier: identifier) {
+                    types.insert(type)
+                }
+            }
         }
         types.insert(HKObjectType.workoutType())
         return types
@@ -68,6 +86,7 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
         let calendar = Calendar.current
         let todayStart = calendar.startOfDay(for: now)
         let weekStart = calendar.date(byAdding: .day, value: -6, to: todayStart) ?? todayStart
+        let monthStart = calendar.date(byAdding: .day, value: -28, to: todayStart) ?? weekStart
 
         let group = DispatchGroup()
         var stepsToday = 0.0
@@ -76,12 +95,32 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
         var workouts: [[String: Any]] = []
         var avgHeartRateLastRun: Double?
         var restingHeartRate: Double?
+        var restingHeartRateBaseline: Double?
+        var restingHeartRateRecordedAt: Date?
         var hrv: Double?
-        var sleepHoursLastNight = 0.0
+        var hrvBaseline: Double?
+        var hrvRecordedAt: Date?
+        var sleepHoursLastNight: Double?
+        var sleepHours7dBaseline: Double?
+        var sleepCoreHours: Double?
+        var sleepDeepHours: Double?
+        var sleepREMHours: Double?
+        var sleepAwakeHours: Double?
+        var sleepEndAt: Date?
         var activeMinutesThisWeek = 0.0
+        var exerciseMinutesThisWeek = 0.0
         var lastWorkoutType: String?
         var lastWorkoutDurationSeconds: Int?
         var lastWorkoutCalories: Int?
+        var vo2Max: Double?
+        var vo2MaxRecordedAt: Date?
+        var walkingHeartRateAverage: Double?
+        var walkingHeartRateRecordedAt: Date?
+        var heartRateRecoveryOneMinute: Double?
+        var heartRateRecoveryRecordedAt: Date?
+        var respiratoryRate: Double?
+        var respiratoryRateRecordedAt: Date?
+        var runningDynamics = RunningDynamicsSummary()
 
         group.enter()
         sumQuantity(.stepCount, unit: HKUnit.count(), startDate: todayStart, endDate: now) { value in
@@ -117,43 +156,125 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
                 return
             }
 
+            let runGroup = DispatchGroup()
+            runGroup.enter()
             self.averageHeartRate(startDate: run.startDate, endDate: run.endDate) { value in
                 avgHeartRateLastRun = value
+                runGroup.leave()
+            }
+            runGroup.enter()
+            self.fetchRunningDynamics(workout: run) { value in
+                runningDynamics = value
+                runGroup.leave()
+            }
+            runGroup.notify(queue: .global(qos: .userInitiated)) {
                 group.leave()
             }
         }
 
         group.enter()
-        averageQuantity(.restingHeartRate, unit: HKUnit.count().unitDivided(by: HKUnit.minute()), startDate: weekStart, endDate: now) { value in
-            restingHeartRate = value
+        fetchQuantityTrend(.restingHeartRate, unit: HKUnit.count().unitDivided(by: HKUnit.minute()), startDate: monthStart, endDate: now, baselineDays: 21) { trend in
+            restingHeartRate = trend.current
+            restingHeartRateBaseline = trend.baseline
+            restingHeartRateRecordedAt = trend.recordedAt
             group.leave()
         }
 
         group.enter()
-        averageHRV(startDate: weekStart, endDate: now) { value in
-            hrv = value
+        fetchQuantityTrend(.heartRateVariabilitySDNN, unit: HKUnit.secondUnit(with: .milli), startDate: monthStart, endDate: now, baselineDays: 21) { trend in
+            hrv = trend.current
+            hrvBaseline = trend.baseline
+            hrvRecordedAt = trend.recordedAt
             group.leave()
         }
 
         group.enter()
-        fetchSleepHours(startDate: calendar.date(byAdding: .day, value: -1, to: todayStart) ?? todayStart, endDate: now) { value in
-            sleepHoursLastNight = value
+        fetchSleepSummary(startDate: calendar.date(byAdding: .day, value: -9, to: todayStart) ?? weekStart, endDate: now) { summary in
+            sleepHoursLastNight = summary.endDate == nil ? nil : summary.totalHours
+            sleepHours7dBaseline = summary.baselineHours
+            sleepCoreHours = summary.coreHours
+            sleepDeepHours = summary.deepHours
+            sleepREMHours = summary.remHours
+            sleepAwakeHours = summary.awakeHours
+            sleepEndAt = summary.endDate
             group.leave()
+        }
+
+        group.enter()
+        sumQuantity(.appleExerciseTime, unit: HKUnit.minute(), startDate: weekStart, endDate: now) { value in
+            exerciseMinutesThisWeek = value
+            group.leave()
+        }
+
+        group.enter()
+        fetchQuantityTrend(.vo2Max, unit: HKUnit(from: "ml/kg*min"), startDate: calendar.date(byAdding: .day, value: -180, to: now) ?? monthStart, endDate: now, baselineDays: 0) { trend in
+            vo2Max = trend.current
+            vo2MaxRecordedAt = trend.recordedAt
+            group.leave()
+        }
+
+        group.enter()
+        fetchQuantityTrend(.walkingHeartRateAverage, unit: HKUnit.count().unitDivided(by: HKUnit.minute()), startDate: monthStart, endDate: now, baselineDays: 0) { trend in
+            walkingHeartRateAverage = trend.current
+            walkingHeartRateRecordedAt = trend.recordedAt
+            group.leave()
+        }
+
+        group.enter()
+        fetchQuantityTrend(.respiratoryRate, unit: HKUnit.count().unitDivided(by: HKUnit.minute()), startDate: weekStart, endDate: now, baselineDays: 0) { trend in
+            respiratoryRate = trend.current
+            respiratoryRateRecordedAt = trend.recordedAt
+            group.leave()
+        }
+
+        if #available(iOS 16.0, *) {
+            group.enter()
+            fetchQuantityTrend(.heartRateRecoveryOneMinute, unit: HKUnit.count().unitDivided(by: HKUnit.minute()), startDate: calendar.date(byAdding: .day, value: -90, to: now) ?? monthStart, endDate: now, baselineDays: 0) { trend in
+                heartRateRecoveryOneMinute = trend.current
+                heartRateRecoveryRecordedAt = trend.recordedAt
+                group.leave()
+            }
         }
 
         group.notify(queue: .main) {
             var payload: [String: Any] = [
+                "metricsSchemaVersion": 2,
                 "stepsToday": Int(stepsToday.rounded()),
                 "caloriesBurnedToday": Int(caloriesToday.rounded()),
                 "totalMilesThisWeek": round(milesThisWeek * 100) / 100,
-                "sleepHoursLastNight": round(sleepHoursLastNight * 10) / 10,
                 "activeMinutesThisWeek": Int(activeMinutesThisWeek.rounded()),
+                "exerciseMinutesThisWeek": Int(exerciseMinutesThisWeek.rounded()),
                 "workoutCountThisWeek": workouts.count,
                 "workouts": workouts
             ]
             payload["avgHeartRateFromLastRun"] = avgHeartRateLastRun.map { Int($0.rounded()) } ?? NSNull()
             payload["restingHeartRate"] = restingHeartRate.map { Int($0.rounded()) } ?? NSNull()
+            payload["restingHeartRateBaseline"] = restingHeartRateBaseline.map { Int($0.rounded()) } ?? NSNull()
+            payload["restingHeartRateRecordedAt"] = restingHeartRateRecordedAt.map { self.isoDateTime($0) } ?? NSNull()
             payload["heartRateVariabilityMs"] = hrv.map { Int($0.rounded()) } ?? NSNull()
+            payload["heartRateVariabilityBaselineMs"] = hrvBaseline.map { Int($0.rounded()) } ?? NSNull()
+            payload["heartRateVariabilityRecordedAt"] = hrvRecordedAt.map { self.isoDateTime($0) } ?? NSNull()
+            payload["sleepHoursLastNight"] = sleepHoursLastNight.map { round($0 * 10) / 10 } ?? NSNull()
+            payload["sleepHours7dBaseline"] = sleepHours7dBaseline.map { round($0 * 10) / 10 } ?? NSNull()
+            payload["sleepCoreHours"] = sleepCoreHours.map { round($0 * 10) / 10 } ?? NSNull()
+            payload["sleepDeepHours"] = sleepDeepHours.map { round($0 * 10) / 10 } ?? NSNull()
+            payload["sleepREMHours"] = sleepREMHours.map { round($0 * 10) / 10 } ?? NSNull()
+            payload["sleepAwakeHours"] = sleepAwakeHours.map { round($0 * 10) / 10 } ?? NSNull()
+            payload["sleepEndAt"] = sleepEndAt.map { self.isoDateTime($0) } ?? NSNull()
+            payload["vo2Max"] = vo2Max.map { round($0 * 10) / 10 } ?? NSNull()
+            payload["vo2MaxRecordedAt"] = vo2MaxRecordedAt.map { self.isoDateTime($0) } ?? NSNull()
+            payload["walkingHeartRateAverage"] = walkingHeartRateAverage.map { Int($0.rounded()) } ?? NSNull()
+            payload["walkingHeartRateRecordedAt"] = walkingHeartRateRecordedAt.map { self.isoDateTime($0) } ?? NSNull()
+            payload["heartRateRecoveryOneMinute"] = heartRateRecoveryOneMinute.map { Int($0.rounded()) } ?? NSNull()
+            payload["heartRateRecoveryRecordedAt"] = heartRateRecoveryRecordedAt.map { self.isoDateTime($0) } ?? NSNull()
+            payload["respiratoryRate"] = respiratoryRate.map { round($0 * 10) / 10 } ?? NSNull()
+            payload["respiratoryRateRecordedAt"] = respiratoryRateRecordedAt.map { self.isoDateTime($0) } ?? NSNull()
+            payload["runningPowerWatts"] = runningDynamics.powerWatts.map { Int($0.rounded()) } ?? NSNull()
+            payload["runningSpeedMps"] = runningDynamics.speedMps.map { round($0 * 100) / 100 } ?? NSNull()
+            payload["runningStrideLengthM"] = runningDynamics.strideLengthM.map { round($0 * 100) / 100 } ?? NSNull()
+            payload["runningVerticalOscillationCm"] = runningDynamics.verticalOscillationCm.map { round($0 * 10) / 10 } ?? NSNull()
+            payload["runningGroundContactTimeMs"] = runningDynamics.groundContactTimeMs.map { Int($0.rounded()) } ?? NSNull()
+            payload["runningDynamicsRecordedAt"] = runningDynamics.recordedAt.map { self.isoDateTime($0) } ?? NSNull()
             payload["lastWorkoutType"] = lastWorkoutType ?? NSNull()
             payload["lastWorkoutDurationSeconds"] = lastWorkoutDurationSeconds ?? NSNull()
             payload["lastWorkoutCalories"] = lastWorkoutCalories ?? NSNull()
@@ -224,63 +345,130 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
         healthStore.execute(query)
     }
 
-    private func averageHRV(startDate: Date, endDate: Date, completion: @escaping (Double?) -> Void) {
-        let unit = HKUnit.secondUnit(with: .milli)
-        averageQuantity(.heartRateVariabilitySDNN, unit: unit, startDate: startDate, endDate: endDate) { value in
-            guard value == nil else {
-                completion(value)
+    private struct QuantityTrend {
+        let current: Double?
+        let baseline: Double?
+        let recordedAt: Date?
+    }
+
+    private func fetchQuantityTrend(_ identifier: HKQuantityTypeIdentifier, unit: HKUnit, startDate: Date, endDate: Date, baselineDays: Int, completion: @escaping (QuantityTrend) -> Void) {
+        guard let type = HKQuantityType.quantityType(forIdentifier: identifier) else {
+            completion(QuantityTrend(current: nil, baseline: nil, recordedAt: nil))
+            return
+        }
+
+        let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: .strictStartDate)
+        let sort = NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: true)
+        let query = HKSampleQuery(sampleType: type, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: [sort]) { _, samples, error in
+            if let error = error {
+                NSLog("ForgeHealthPlugin %@ query failed: %@", identifier.rawValue, error.localizedDescription)
+                completion(QuantityTrend(current: nil, baseline: nil, recordedAt: nil))
                 return
             }
 
-            self.fetchMostRecentQuantity(.heartRateVariabilitySDNN, unit: unit, startDate: startDate, endDate: endDate, completion: completion)
-        }
-    }
-
-    private func fetchMostRecentQuantity(_ identifier: HKQuantityTypeIdentifier, unit: HKUnit, startDate: Date, endDate: Date, completion: @escaping (Double?) -> Void) {
-        guard let type = HKQuantityType.quantityType(forIdentifier: identifier) else {
-            completion(nil)
-            return
-        }
-
-        let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: .strictStartDate)
-        let sort = NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: false)
-        let query = HKSampleQuery(sampleType: type, predicate: predicate, limit: 1, sortDescriptors: [sort]) { _, samples, _ in
-            let sample = (samples as? [HKQuantitySample])?.first
-            completion(sample?.quantity.doubleValue(for: unit))
-        }
-        healthStore.execute(query)
-    }
-
-    private func fetchSleepHours(startDate: Date, endDate: Date, completion: @escaping (Double) -> Void) {
-        guard let type = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) else {
-            completion(0)
-            return
-        }
-
-        let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: .strictStartDate)
-        let sort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)
-        let query = HKSampleQuery(sampleType: type, predicate: predicate, limit: 100, sortDescriptors: [sort]) { _, samples, _ in
-            let intervals = (samples as? [HKCategorySample] ?? [])
-                .filter { self.isAsleep($0.value) }
-                .map { SleepInterval(start: $0.startDate, end: $0.endDate) }
-            let sleepSeconds = self.mergedSleepSecondsForMostRecentSession(intervals)
-            completion(sleepSeconds / 3600.0)
+            let quantitySamples = samples as? [HKQuantitySample] ?? []
+            let calendar = Calendar.current
+            var dailyValues: [Date: [Double]] = [:]
+            for sample in quantitySamples {
+                let value = sample.quantity.doubleValue(for: unit)
+                guard value.isFinite else { continue }
+                dailyValues[calendar.startOfDay(for: sample.endDate), default: []].append(value)
+            }
+            let dailyAverages = dailyValues.keys.sorted().compactMap { day -> Double? in
+                guard let values = dailyValues[day], !values.isEmpty else { return nil }
+                return values.reduce(0, +) / Double(values.count)
+            }
+            let baselineValues = baselineDays > 0 ? Array(dailyAverages.dropLast().suffix(baselineDays)) : []
+            let baseline = baselineValues.count >= 3 ? baselineValues.reduce(0, +) / Double(baselineValues.count) : nil
+            completion(QuantityTrend(current: dailyAverages.last, baseline: baseline, recordedAt: quantitySamples.last?.endDate))
         }
         healthStore.execute(query)
+    }
+
+    private struct SleepSummary {
+        let totalHours: Double
+        let baselineHours: Double?
+        let coreHours: Double?
+        let deepHours: Double?
+        let remHours: Double?
+        let awakeHours: Double?
+        let endDate: Date?
     }
 
     private struct SleepInterval {
         let start: Date
         let end: Date
+        let value: Int
     }
 
-    private func mergedSleepSecondsForMostRecentSession(_ intervals: [SleepInterval]) -> Double {
+    private func fetchSleepSummary(startDate: Date, endDate: Date, completion: @escaping (SleepSummary) -> Void) {
+        guard let type = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) else {
+            completion(SleepSummary(totalHours: 0, baselineHours: nil, coreHours: nil, deepHours: nil, remHours: nil, awakeHours: nil, endDate: nil))
+            return
+        }
+
+        let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: .strictStartDate)
+        let sort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)
+        let query = HKSampleQuery(sampleType: type, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: [sort]) { _, samples, error in
+            if let error = error {
+                NSLog("ForgeHealthPlugin sleep query failed: %@", error.localizedDescription)
+                completion(SleepSummary(totalHours: 0, baselineHours: nil, coreHours: nil, deepHours: nil, remHours: nil, awakeHours: nil, endDate: nil))
+                return
+            }
+
+            let intervals = (samples as? [HKCategorySample] ?? []).map {
+                SleepInterval(start: $0.startDate, end: $0.endDate, value: $0.value)
+            }
+            let sleepSessions = self.groupSleepSessions(intervals.filter { self.isAsleep($0.value) })
+            let nightSessions = sleepSessions.filter { self.sleepSeconds($0) >= 3 * 60 * 60 }
+            let candidateSessions = nightSessions.isEmpty ? sleepSessions : nightSessions
+            guard let latestSession = candidateSessions.last,
+                  let sessionStart = latestSession.map(\.start).min(),
+                  let sessionEnd = latestSession.map(\.end).max() else {
+                completion(SleepSummary(totalHours: 0, baselineHours: nil, coreHours: nil, deepHours: nil, remHours: nil, awakeHours: nil, endDate: nil))
+                return
+            }
+
+            let latestSeconds = self.sleepSeconds(latestSession)
+            let recentSessionHours = candidateSessions.suffix(7).map { self.sleepSeconds($0) / 3600.0 }
+            let baseline = recentSessionHours.count >= 3 ? recentSessionHours.reduce(0, +) / Double(recentSessionHours.count) : nil
+            var coreSeconds: Double?
+            var deepSeconds: Double?
+            var remSeconds: Double?
+            var awakeSeconds: Double?
+            if #available(iOS 16.0, *) {
+                coreSeconds = self.sleepStageSeconds(intervals, value: HKCategoryValueSleepAnalysis.asleepCore.rawValue, startDate: sessionStart, endDate: sessionEnd)
+                deepSeconds = self.sleepStageSeconds(intervals, value: HKCategoryValueSleepAnalysis.asleepDeep.rawValue, startDate: sessionStart, endDate: sessionEnd)
+                remSeconds = self.sleepStageSeconds(intervals, value: HKCategoryValueSleepAnalysis.asleepREM.rawValue, startDate: sessionStart, endDate: sessionEnd)
+                awakeSeconds = self.sleepStageSeconds(intervals, value: HKCategoryValueSleepAnalysis.awake.rawValue, startDate: sessionStart, endDate: sessionEnd)
+
+                let detailedTotal = (coreSeconds ?? 0) + (deepSeconds ?? 0) + (remSeconds ?? 0)
+                if detailedTotal > latestSeconds, detailedTotal > 0 {
+                    let scale = latestSeconds / detailedTotal
+                    coreSeconds = (coreSeconds ?? 0) * scale
+                    deepSeconds = (deepSeconds ?? 0) * scale
+                    remSeconds = (remSeconds ?? 0) * scale
+                }
+            }
+
+            completion(SleepSummary(
+                totalHours: latestSeconds / 3600.0,
+                baselineHours: baseline,
+                coreHours: coreSeconds.map { $0 / 3600.0 },
+                deepHours: deepSeconds.map { $0 / 3600.0 },
+                remHours: remSeconds.map { $0 / 3600.0 },
+                awakeHours: awakeSeconds.map { min($0, 8 * 60 * 60) / 3600.0 },
+                endDate: sessionEnd
+            ))
+        }
+        healthStore.execute(query)
+    }
+
+    private func groupSleepSessions(_ intervals: [SleepInterval]) -> [[SleepInterval]] {
         let sorted = intervals
             .filter { $0.end > $0.start }
             .sorted { $0.start < $1.start }
-        guard !sorted.isEmpty else {
-            return 0
-        }
+        guard !sorted.isEmpty else { return [] }
 
         let sessionGap: TimeInterval = 3 * 60 * 60
         var sessions: [[SleepInterval]] = []
@@ -306,15 +494,25 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
         if !currentSession.isEmpty {
             sessions.append(currentSession)
         }
+        return sessions
+    }
 
-        guard let latestSession = sessions.last else {
-            return 0
-        }
-
-        let mergedSeconds = mergeSleepIntervals(latestSession).reduce(0.0) { sum, interval in
+    private func sleepSeconds(_ intervals: [SleepInterval]) -> Double {
+        let mergedSeconds = mergeSleepIntervals(intervals).reduce(0.0) { sum, interval in
             sum + interval.end.timeIntervalSince(interval.start)
         }
         return min(max(mergedSeconds, 0), 12 * 60 * 60)
+    }
+
+    private func sleepStageSeconds(_ intervals: [SleepInterval], value: Int, startDate: Date, endDate: Date) -> Double {
+        let clipped = intervals.compactMap { interval -> SleepInterval? in
+            guard interval.value == value else { return nil }
+            let start = max(interval.start, startDate)
+            let end = min(interval.end, endDate)
+            guard end > start else { return nil }
+            return SleepInterval(start: start, end: end, value: value)
+        }
+        return mergeSleepIntervals(clipped).reduce(0.0) { $0 + $1.end.timeIntervalSince($1.start) }
     }
 
     private func mergeSleepIntervals(_ intervals: [SleepInterval]) -> [SleepInterval] {
@@ -329,7 +527,7 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
 
             if interval.start <= last.end {
                 let end = max(last.end, interval.end)
-                merged[merged.count - 1] = SleepInterval(start: last.start, end: end)
+                merged[merged.count - 1] = SleepInterval(start: last.start, end: end, value: last.value)
             } else {
                 merged.append(interval)
             }
@@ -340,12 +538,55 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
 
     private func isAsleep(_ value: Int) -> Bool {
         if #available(iOS 16.0, *) {
-            return value == HKCategoryValueSleepAnalysis.asleepCore.rawValue
-                || value == HKCategoryValueSleepAnalysis.asleepDeep.rawValue
-                || value == HKCategoryValueSleepAnalysis.asleepREM.rawValue
-                || value == HKCategoryValueSleepAnalysis.asleepUnspecified.rawValue
+            return HKCategoryValueSleepAnalysis.allAsleepValues.contains { $0.rawValue == value }
         }
         return value == HKCategoryValueSleepAnalysis.asleep.rawValue
+    }
+
+    private struct RunningDynamicsSummary {
+        var powerWatts: Double?
+        var speedMps: Double?
+        var strideLengthM: Double?
+        var verticalOscillationCm: Double?
+        var groundContactTimeMs: Double?
+        var recordedAt: Date?
+    }
+
+    private func fetchRunningDynamics(workout: HKWorkout, completion: @escaping (RunningDynamicsSummary) -> Void) {
+        guard #available(iOS 16.0, *) else {
+            completion(RunningDynamicsSummary())
+            return
+        }
+
+        let group = DispatchGroup()
+        let lock = NSLock()
+        var summary = RunningDynamicsSummary()
+        let queries: [(HKQuantityTypeIdentifier, HKUnit, (Double) -> Void)] = [
+            (.runningPower, HKUnit.watt(), { summary.powerWatts = $0 }),
+            (.runningSpeed, HKUnit.meter().unitDivided(by: HKUnit.second()), { summary.speedMps = $0 }),
+            (.runningStrideLength, HKUnit.meter(), { summary.strideLengthM = $0 }),
+            (.runningVerticalOscillation, HKUnit.meterUnit(with: .centi), { summary.verticalOscillationCm = $0 }),
+            (.runningGroundContactTime, HKUnit.secondUnit(with: .milli), { summary.groundContactTimeMs = $0 })
+        ]
+
+        for (identifier, unit, assign) in queries {
+            group.enter()
+            averageQuantity(identifier, unit: unit, startDate: workout.startDate, endDate: workout.endDate) { value in
+                if let value = value {
+                    lock.lock()
+                    assign(value)
+                    lock.unlock()
+                }
+                group.leave()
+            }
+        }
+
+        group.notify(queue: .global(qos: .userInitiated)) {
+            if summary.powerWatts != nil || summary.speedMps != nil || summary.strideLengthM != nil || summary.verticalOscillationCm != nil || summary.groundContactTimeMs != nil {
+                summary.recordedAt = workout.endDate
+            }
+            completion(summary)
+        }
     }
 
     private func fetchWorkouts(startDate: Date, endDate: Date, completion: @escaping ([[String: Any]], HKWorkout?) -> Void) {

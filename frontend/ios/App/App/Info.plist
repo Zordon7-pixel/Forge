@@ -27,7 +27,7 @@
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>NSHealthShareUsageDescription</key>
-	<string>Forged Hybrid reads Apple Health data to personalize training recommendations.</string>
+	<string>Forged Hybrid reads workouts, activity, heart rate, HRV, sleep, cardio fitness, and running dynamics to personalize your training plan.</string>
 	<key>NSHealthUpdateUsageDescription</key>
 	<string>Forged Hybrid writes workout data to keep your health records up to date.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>

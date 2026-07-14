@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const rateLimit = require('express-rate-limit');
 const { dbGet } = require('../db');
+const { coerceMetric, hydrateHealthRow, normalizeTrainingMetrics } = require('../lib/healthSyncMetrics');
 const auth = require('../middleware/auth');
 
 const healthSyncLimiter = rateLimit({
@@ -10,31 +11,6 @@ const healthSyncLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
-
-function coerceMetric(value, options = {}) {
-  const { label, integer = false, min = 0, max = Number.POSITIVE_INFINITY, dropAboveMax = false } = options;
-
-  if (value === null || value === undefined || value === '') {
-    return { value: null };
-  }
-
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    return { error: `${label} must be a number` };
-  }
-  if (integer && !Number.isInteger(parsed)) {
-    return { error: `${label} must be a whole number` };
-  }
-  if (dropAboveMax && parsed > max) {
-    console.warn(`[health] dropping implausible ${label}: ${parsed}`);
-    return { value: null, dropped: true, field: label };
-  }
-  if (parsed < min || parsed > max) {
-    return { error: `${label} must be between ${min} and ${max}` };
-  }
-
-  return { value: parsed };
-}
 
 router.post('/sync', auth, healthSyncLimiter, async (req, res) => {
   try {
@@ -66,8 +42,10 @@ router.post('/sync', auth, healthSyncLimiter, async (req, res) => {
     const lastWorkoutSeconds = coerceMetric(last_workout_duration_seconds, { label: 'last_workout_duration_seconds', integer: true, min: 0, max: 86400 });
     const lastWorkoutCaloriesValue = coerceMetric(last_workout_calories, { label: 'last_workout_calories', integer: true, min: 0, max: 20000 });
     const lastWorkoutType = String(last_workout_type || '').trim().slice(0, 40) || null;
+    const trainingMetrics = normalizeTrainingMetrics(req.body || {});
 
-    const validationError = [steps, calories, avgHeartRate, totalMiles, restingHeartRate, hrv, sleepHours, activeMinutes, workoutCount, lastWorkoutSeconds, lastWorkoutCaloriesValue].find((result) => result.error)?.error;
+    const validationError = trainingMetrics.error
+      || [steps, calories, avgHeartRate, totalMiles, restingHeartRate, hrv, sleepHours, activeMinutes, workoutCount, lastWorkoutSeconds, lastWorkoutCaloriesValue].find((result) => result.error)?.error;
     if (validationError) {
       return res.status(400).json({ error: validationError });
     }
@@ -90,8 +68,9 @@ router.post('/sync', auth, healthSyncLimiter, async (req, res) => {
         last_workout_type,
         last_workout_duration_seconds,
         last_workout_calories,
+        training_metrics_json,
         synced_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, NOW())
       ON CONFLICT (user_id) DO UPDATE SET
         steps_today = EXCLUDED.steps_today,
         calories_today = EXCLUDED.calories_today,
@@ -105,6 +84,7 @@ router.post('/sync', auth, healthSyncLimiter, async (req, res) => {
         last_workout_type = EXCLUDED.last_workout_type,
         last_workout_duration_seconds = EXCLUDED.last_workout_duration_seconds,
         last_workout_calories = EXCLUDED.last_workout_calories,
+        training_metrics_json = COALESCE(health_sync.training_metrics_json, '{}'::jsonb) || EXCLUDED.training_metrics_json,
         synced_at = NOW()
       RETURNING synced_at`,
       [
@@ -121,6 +101,7 @@ router.post('/sync', auth, healthSyncLimiter, async (req, res) => {
         lastWorkoutType,
         lastWorkoutSeconds.value,
         lastWorkoutCaloriesValue.value,
+        JSON.stringify(trainingMetrics.metrics),
       ]
     );
 
@@ -147,6 +128,7 @@ router.get('/sync', auth, async (req, res) => {
         last_workout_type,
         last_workout_duration_seconds,
         last_workout_calories,
+        training_metrics_json,
         synced_at
       FROM health_sync
       WHERE user_id=$1`,
@@ -154,10 +136,9 @@ router.get('/sync', auth, async (req, res) => {
     );
     if (!row) return res.json(null);
 
-    res.json({
-      ...row,
-      avg_hr_bpm_last_workout: row.avg_heart_rate_last_run,
-    });
+    const hydrated = hydrateHealthRow(row);
+    delete hydrated.training_metrics_json;
+    res.json({ ...hydrated, avg_hr_bpm_last_workout: row.avg_heart_rate_last_run });
   } catch (err) {
     console.error('[health] fetch failed:', err.message);
     res.status(500).json({ error: 'Failed to fetch health sync' });

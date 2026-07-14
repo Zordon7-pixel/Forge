@@ -1,5 +1,6 @@
 const router = require('express').Router();
 const { dbAll, dbGet } = require('../db');
+const { buildHealthSignals } = require('../lib/healthSignals');
 const auth = require('../middleware/auth');
 
 function isoDaysAgo(days) {
@@ -32,18 +33,22 @@ function parseFlags(raw) {
   try {
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
-  } catch {
+  } catch (err) {
+    console.error('[body/drivers] check-in flags parse failed:', err.message);
     return [];
   }
 }
 
-function buildSleepDriver(checkins) {
+function buildSleepDriver(checkins, healthSignals) {
   const sleepRows = checkins
     .map((row) => ({ ...row, sleep_hours: validSleepHours(row.sleep_hours) }))
     .filter((row) => row.sleep_hours !== null);
-  if (!sleepRows.length) return null;
-  const current = Number(sleepRows[0].sleep_hours);
-  const baseline = avg(sleepRows.slice(1).map((row) => row.sleep_hours));
+  const syncedSleep = validSleepHours(healthSignals?.metrics?.sleepHoursLastNight);
+  if (!sleepRows.length && syncedSleep === null) return null;
+  const current = sleepRows.length ? Number(sleepRows[0].sleep_hours) : syncedSleep;
+  const baseline = sleepRows.length
+    ? avg(sleepRows.slice(1).map((row) => row.sleep_hours))
+    : validSleepHours(healthSignals?.metrics?.sleepHours7dBaseline);
   const delta = baseline === null ? 0 : current - baseline;
   const impact = current < 6.5 ? 'negative' : current >= 7.5 ? 'positive' : 'neutral';
   const trend = delta <= -0.5 ? 'down' : delta >= 0.5 ? 'up' : 'flat';
@@ -62,21 +67,48 @@ function buildSleepDriver(checkins) {
   };
 }
 
-function buildHrvDriver(row) {
-  const hrv = Number(row?.hrv_ms);
+function buildHrvDriver(healthSignals) {
+  const hrv = Number(healthSignals?.metrics?.hrvMs);
   if (!Number.isFinite(hrv) || hrv <= 0) return null;
-  const impact = hrv < 40 ? 'negative' : hrv >= 60 ? 'positive' : 'neutral';
+  const baseline = Number(healthSignals?.metrics?.hrvMsBaseline);
+  const deltaPct = Number.isFinite(baseline) && baseline > 0 ? (hrv - baseline) / baseline : null;
+  const impact = deltaPct !== null ? (deltaPct <= -0.15 ? 'negative' : deltaPct >= 0.1 ? 'positive' : 'neutral') : hrv < 40 ? 'negative' : hrv >= 60 ? 'positive' : 'neutral';
   return {
     key: 'hrv',
     label: 'HRV',
     value: `${Math.round(hrv)}ms`,
-    trend: 'flat',
+    trend: deltaPct === null ? 'flat' : deltaPct <= -0.08 ? 'down' : deltaPct >= 0.08 ? 'up' : 'flat',
     impact,
     severity: impact === 'negative' ? 10 : 0,
     plainEnglish: impact === 'negative'
-      ? `HRV is low at ${Math.round(hrv)}ms, which usually means recovery stress is still present.`
-      : `HRV is ${Math.round(hrv)}ms, so recovery is not waving a red flag.`,
+      ? `HRV is ${Math.round(hrv)}ms${deltaPct === null ? '' : `, ${Math.abs(Math.round(deltaPct * 100))}% below your baseline`}.`
+      : `HRV is ${Math.round(hrv)}ms${deltaPct === null ? '' : ` versus a ${Math.round(baseline)}ms baseline`}.`,
     suggestion: impact === 'negative' ? 'Keep intensity controlled and skip all-out intervals.' : 'Use effort, not ego, to decide if you can push.',
+  };
+}
+
+function buildRestingHrDriver(healthSignals) {
+  const restingHr = Number(healthSignals?.metrics?.restingHeartRate);
+  const baseline = Number(healthSignals?.metrics?.restingHeartRateBaseline);
+  if (!Number.isFinite(restingHr) || restingHr <= 0 || !Number.isFinite(baseline) || baseline <= 0) return null;
+  const delta = restingHr - baseline;
+  const impact = delta >= 8 ? 'negative' : delta <= -3 ? 'positive' : 'neutral';
+  return {
+    key: 'restingHr',
+    label: 'Resting HR',
+    value: `${Math.round(restingHr)} bpm`,
+    trend: delta >= 3 ? 'up' : delta <= -3 ? 'down' : 'flat',
+    impact,
+    severity: impact === 'negative' ? 10 : 0,
+    plainEnglish: `Resting heart rate is ${Math.abs(Math.round(delta))} bpm ${delta >= 0 ? 'above' : 'below'} your baseline.`,
+    suggestion: impact === 'negative' ? 'Keep today controlled and pair this with sleep, soreness, and how you feel.' : 'No unusual resting-heart-rate strain is showing.',
+  };
+}
+
+function lookupFallback(label, fallback) {
+  return (err) => {
+    console.error(`[body/drivers] ${label} lookup failed:`, err.message);
+    return fallback;
   };
 }
 
@@ -122,16 +154,18 @@ router.get('/drivers', auth, async (req, res) => {
     const since7 = isoDaysAgo(7);
     const since14 = isoDaysAgo(14);
     const [checkins, health, currentRun, priorRun, currentLifts] = await Promise.all([
-      dbAll('SELECT sleep_hours, life_flags, checkin_date, created_at FROM daily_checkins WHERE user_id=? AND checkin_date>=? ORDER BY checkin_date DESC, created_at DESC', [req.user.id, since7]).catch(() => []),
-      dbGet('SELECT hrv_ms, synced_at FROM health_sync WHERE user_id=?', [req.user.id]).catch(() => null),
-      dbGet('SELECT COALESCE(SUM(distance_miles),0) as miles FROM runs WHERE user_id=? AND date>=?', [req.user.id, since7]).catch(() => ({ miles: 0 })),
-      dbGet('SELECT COALESCE(SUM(distance_miles),0) as miles FROM runs WHERE user_id=? AND date>=? AND date<?', [req.user.id, since14, since7]).catch(() => ({ miles: 0 })),
-      dbGet("SELECT COUNT(*) as count FROM workout_sessions WHERE user_id=? AND started_at>=? AND ended_at IS NOT NULL", [req.user.id, `${since7}T00:00:00`]).catch(() => ({ count: 0 })),
+      dbAll('SELECT sleep_hours, life_flags, checkin_date, created_at FROM daily_checkins WHERE user_id=? AND checkin_date>=? ORDER BY checkin_date DESC, created_at DESC', [req.user.id, since7]).catch(lookupFallback('check-in', [])),
+      dbGet('SELECT * FROM health_sync WHERE user_id=?', [req.user.id]).catch(lookupFallback('health sync', null)),
+      dbGet('SELECT COALESCE(SUM(distance_miles),0) as miles FROM runs WHERE user_id=? AND date>=?', [req.user.id, since7]).catch(lookupFallback('current run load', { miles: 0 })),
+      dbGet('SELECT COALESCE(SUM(distance_miles),0) as miles FROM runs WHERE user_id=? AND date>=? AND date<?', [req.user.id, since14, since7]).catch(lookupFallback('prior run load', { miles: 0 })),
+      dbGet("SELECT COUNT(*) as count FROM workout_sessions WHERE user_id=? AND started_at>=? AND ended_at IS NOT NULL", [req.user.id, `${since7}T00:00:00`]).catch(lookupFallback('lift count', { count: 0 })),
     ]);
+    const healthSignals = buildHealthSignals(health || {});
 
     const driversWithSeverity = [
-      buildSleepDriver(checkins),
-      buildHrvDriver(health),
+      buildSleepDriver(checkins, healthSignals),
+      buildHrvDriver(healthSignals),
+      buildRestingHrDriver(healthSignals),
       buildStrainDriver(Number(currentRun?.miles || 0), Number(priorRun?.miles || 0), Number(currentLifts?.count || 0)),
       buildSorenessDriver(checkins[0]),
     ].filter(Boolean);

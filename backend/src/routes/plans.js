@@ -149,12 +149,12 @@ function buildAdaptationHealthSignals(healthRow, planningDateISO) {
       sleepHoursLastNight: adaptationMetric(
         suspectSleep ? rawSleep : derived.metrics?.sleepHoursLastNight,
         source,
-        asOf,
+        derived.metrics?.sleepEndAt || asOf,
         planningDateISO,
         suspectSleep
       ),
-      hrvMs: adaptationMetric(derived.metrics?.hrvMs, source, asOf, planningDateISO, false),
-      restingHeartRate: adaptationMetric(derived.metrics?.restingHeartRate, source, asOf, planningDateISO, false),
+      hrvMs: adaptationMetric(derived.metrics?.hrvMs, source, derived.metrics?.hrvRecordedAt || asOf, planningDateISO, false),
+      restingHeartRate: adaptationMetric(derived.metrics?.restingHeartRate, source, derived.metrics?.restingHeartRateRecordedAt || asOf, planningDateISO, false),
       acuteChronicLoadRatio: adaptationMetric(derived.metrics?.acuteChronicLoadRatio, source, asOf, planningDateISO, false),
     },
   };
@@ -553,6 +553,15 @@ async function buildConcurrentContext(userId, profile, target) {
   const expectedSessions = weeksObserved * expectedPerWeek;
   const completedSessions = (runs || []).length + (lifts || []).length;
   const healthSignals = buildHealthSignals(healthRow || {});
+  const healthMetrics = healthSignals.metrics || {};
+  const healthFreshness = healthMetrics.freshness || {};
+  const hasMetric = (value) => Number.isFinite(Number(value)) && Number(value) > 0;
+  const hasTrainingRelevantHealthData = Boolean(healthSignals.available
+    || (healthFreshness.activity !== false && [healthMetrics.activeMinutesThisWeek, healthMetrics.exerciseMinutesThisWeek, healthMetrics.workoutCountThisWeek].some(hasMetric))
+    || (healthFreshness.vo2Max !== false && hasMetric(healthMetrics.vo2Max))
+    || (healthFreshness.heartRateRecovery !== false && hasMetric(healthMetrics.heartRateRecoveryOneMinute))
+    || (healthFreshness.respiratoryRate !== false && hasMetric(healthMetrics.respiratoryRate))
+    || (healthFreshness.runningDynamics !== false && [healthMetrics.runningPowerWatts, healthMetrics.runningSpeedMps, healthMetrics.runningStrideLengthM, healthMetrics.runningVerticalOscillationCm, healthMetrics.runningGroundContactTimeMs].some(hasMetric)));
   let recoveryState = healthSignals.available ? healthSignals.recoveryState : 'unknown';
   const checkinFlags = parseLifeFlags(dailyCheckin?.life_flags);
   const checkinFeeling = Number(dailyCheckin?.feeling || 0);
@@ -592,6 +601,7 @@ async function buildConcurrentContext(userId, profile, target) {
     recovery: {
       state: recoveryState,
       available: Boolean(healthSignals.available),
+      dataAvailable: hasTrainingRelevantHealthData,
       readinessScore: healthSignals.readinessScore ?? null,
       syncedAt: healthRow?.synced_at || null,
       metrics: healthSignals.metrics || {},

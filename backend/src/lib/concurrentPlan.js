@@ -489,6 +489,8 @@ function chooseLiftDays(availableDays, runByDay, count) {
 function summarizeInputs(profile = {}, history = {}, recovery = {}, checkin = null) {
   const adherence = Number(history.adherenceRate);
   const acute = acuteLoadMetadata(history);
+  const healthMetrics = recovery.metrics || {};
+  const healthFreshness = healthMetrics.freshness || {};
   const metric = (value) => value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value))
     ? Number(value)
     : null;
@@ -499,11 +501,27 @@ function summarizeInputs(profile = {}, history = {}, recovery = {}, checkin = nu
     missedWorkouts: clamp(Math.round(Number(history.missedWorkouts || 0)), 0, 100),
     adherenceBand: Number.isFinite(adherence) ? (adherence >= 0.85 ? 'high' : adherence >= 0.65 ? 'moderate' : 'low') : 'unknown',
     recoveryState: String(recovery.state || recovery.recoveryState || 'unknown').slice(0, 20),
-    appleHealth: recovery.available ? {
+    appleHealth: (recovery.dataAvailable || recovery.available || healthMetrics.syncedAt) ? {
       readinessScore: metric(recovery.readinessScore),
-      sleepHoursLastNight: metric(recovery.metrics?.sleepHoursLastNight),
-      hrvMs: metric(recovery.metrics?.hrvMs),
-      restingHeartRate: metric(recovery.metrics?.restingHeartRate),
+      sleepHoursLastNight: healthFreshness.sleep === false ? null : metric(healthMetrics.sleepHoursLastNight),
+      sleepHours7dBaseline: metric(healthMetrics.sleepHours7dBaseline),
+      hrvMs: healthFreshness.hrv === false ? null : metric(healthMetrics.hrvMs),
+      hrvMsBaseline: metric(healthMetrics.hrvMsBaseline),
+      restingHeartRate: healthFreshness.restingHeartRate === false ? null : metric(healthMetrics.restingHeartRate),
+      restingHeartRateBaseline: metric(healthMetrics.restingHeartRateBaseline),
+      activeMinutesThisWeek: healthFreshness.activity === false ? null : metric(healthMetrics.activeMinutesThisWeek),
+      exerciseMinutesThisWeek: healthFreshness.activity === false ? null : metric(healthMetrics.exerciseMinutesThisWeek),
+      workoutCountThisWeek: healthFreshness.activity === false ? null : metric(healthMetrics.workoutCountThisWeek),
+      vo2Max: healthFreshness.vo2Max === false ? null : metric(healthMetrics.vo2Max),
+      heartRateRecoveryOneMinute: healthFreshness.heartRateRecovery === false ? null : metric(healthMetrics.heartRateRecoveryOneMinute),
+      respiratoryRate: healthFreshness.respiratoryRate === false ? null : metric(healthMetrics.respiratoryRate),
+      runningPowerWatts: healthFreshness.runningDynamics === false ? null : metric(healthMetrics.runningPowerWatts),
+      runningSpeedMps: healthFreshness.runningDynamics === false ? null : metric(healthMetrics.runningSpeedMps),
+      runningStrideLengthM: healthFreshness.runningDynamics === false ? null : metric(healthMetrics.runningStrideLengthM),
+      runningVerticalOscillationCm: healthFreshness.runningDynamics === false ? null : metric(healthMetrics.runningVerticalOscillationCm),
+      runningGroundContactTimeMs: healthFreshness.runningDynamics === false ? null : metric(healthMetrics.runningGroundContactTimeMs),
+      freshness: healthFreshness,
+      usedFor: ['recovery baseline', 'training-load context', 'cardio and running-form trends'],
       syncedAt: recovery.syncedAt || null,
     } : null,
     checkin: checkin ? {

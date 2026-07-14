@@ -169,6 +169,7 @@ export default function Plan() {
       ? `latest ${Number(recentRunInput.distanceMiles).toFixed(1)} mi on ${recentRunInput.date}${recentRunInput.paceLabel ? ` at ${recentRunInput.paceLabel}` : ''}`
       : null,
     planInputs.recoveryState ? `recovery ${planInputs.recoveryState}` : null,
+    planInputs.appleHealth ? `Apple Health${Number.isFinite(Number(planInputs.appleHealth.readinessScore)) ? ` readiness ${Math.round(Number(planInputs.appleHealth.readinessScore))}` : ' trends'} included` : null,
     planInputs.checkin?.date ? 'today\'s check-in included' : null,
   ].filter(Boolean) : []
   const courseProvenance = String(course?.provenance || '').toLowerCase()

@@ -704,6 +704,7 @@ async function initDb() {
         last_workout_type TEXT,
         last_workout_duration_seconds INTEGER,
         last_workout_calories INTEGER,
+        training_metrics_json JSONB NOT NULL DEFAULT '{}'::jsonb,
         synced_at TIMESTAMPTZ DEFAULT NOW()
       );
     `);
@@ -715,6 +716,7 @@ async function initDb() {
     await client.query('ALTER TABLE health_sync ADD COLUMN IF NOT EXISTS last_workout_type TEXT');
     await client.query('ALTER TABLE health_sync ADD COLUMN IF NOT EXISTS last_workout_duration_seconds INTEGER');
     await client.query('ALTER TABLE health_sync ADD COLUMN IF NOT EXISTS last_workout_calories INTEGER');
+    await client.query("ALTER TABLE health_sync ADD COLUMN IF NOT EXISTS training_metrics_json JSONB NOT NULL DEFAULT '{}'::jsonb");
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS user_settings (

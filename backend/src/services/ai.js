@@ -256,8 +256,30 @@ async function generateTrainingPlan(profile, target = null, trainingContext = nu
     : null;
   const readinessMetric = numericMetric(trainingContext?.recovery?.readinessScore);
   const sleepMetric = numericMetric(healthMetrics.sleepHoursLastNight);
+  const sleepBaselineMetric = numericMetric(healthMetrics.sleepHours7dBaseline);
   const hrvMetric = numericMetric(healthMetrics.hrvMs);
+  const hrvBaselineMetric = numericMetric(healthMetrics.hrvMsBaseline);
   const restingHrMetric = numericMetric(healthMetrics.restingHeartRate);
+  const restingHrBaselineMetric = numericMetric(healthMetrics.restingHeartRateBaseline);
+  const healthFreshness = healthMetrics.freshness || {};
+  const freshMetric = (key, value) => healthFreshness[key] === false ? null : numericMetric(value);
+  const cardioFitnessLine = [
+    ['VO2 max', freshMetric('vo2Max', healthMetrics.vo2Max), 'ml/kg/min'],
+    ['1-min HR recovery', freshMetric('heartRateRecovery', healthMetrics.heartRateRecoveryOneMinute), 'bpm'],
+    ['respiratory rate', freshMetric('respiratoryRate', healthMetrics.respiratoryRate), '/min'],
+  ].filter(([, value]) => value !== null).map(([label, value, unit]) => `${label} ${value}${unit}`).join(', ') || 'not available';
+  const activityLine = [
+    ['active minutes', freshMetric('activity', healthMetrics.activeMinutesThisWeek)],
+    ['exercise minutes', freshMetric('activity', healthMetrics.exerciseMinutesThisWeek)],
+    ['workouts', freshMetric('activity', healthMetrics.workoutCountThisWeek)],
+  ].filter(([, value]) => value !== null).map(([label, value]) => `${label} ${value}`).join(', ') || 'not available';
+  const runningFormLine = [
+    ['power', freshMetric('runningDynamics', healthMetrics.runningPowerWatts), 'W'],
+    ['speed', freshMetric('runningDynamics', healthMetrics.runningSpeedMps), 'm/s'],
+    ['stride', freshMetric('runningDynamics', healthMetrics.runningStrideLengthM), 'm'],
+    ['vertical oscillation', freshMetric('runningDynamics', healthMetrics.runningVerticalOscillationCm), 'cm'],
+    ['ground contact', freshMetric('runningDynamics', healthMetrics.runningGroundContactTimeMs), 'ms'],
+  ].filter(([, value]) => value !== null).map(([label, value, unit]) => `${label} ${value}${unit}`).join(', ') || 'not available';
   const recentRunSafetyRule = protection.active
     ? `- A run is already logged on ${sanitize(protection.noAdditionalRunOnDate, 10) || 'the protected date'}. Do not schedule another run that day. Do not schedule demanding running through ${sanitize(protection.hardRunsThrough, 10)} or lower-body strength through ${sanitize(protection.lowerBodyThrough, 10)}; preserve these recent-run safety windows exactly.`
     : '- No recent-run protection window is active.';
@@ -289,7 +311,10 @@ async function generateTrainingPlan(profile, target = null, trainingContext = nu
 - Latest meaningful run: ${recentRunLine}; trailing 7-day miles: ${Number(recentRunLoad.sevenDayMiles || 0).toFixed(1)}
 - Recent adherence: ${Number.isFinite(adherence) ? `${Math.round(adherence * 100)}%` : 'unknown'}; missed sessions estimate: ${Math.max(0, Number(observed.missedWorkouts || 0))}
 - Current recovery state: ${sanitize(trainingContext?.recovery?.state || 'unknown', 20)}
-- Apple Health snapshot: readiness ${readinessMetric ?? 'unknown'}, sleep ${sleepMetric === null ? 'unknown' : `${sleepMetric}h`}, HRV ${hrvMetric === null ? 'unknown' : `${hrvMetric}ms`}, resting HR ${restingHrMetric ?? 'unknown'}
+- Apple Health recovery: readiness ${readinessMetric ?? 'unknown'}, sleep ${sleepMetric === null ? 'unknown' : `${sleepMetric}h`}${sleepBaselineMetric === null ? '' : ` vs ${sleepBaselineMetric}h baseline`}, HRV ${hrvMetric === null ? 'unknown' : `${hrvMetric}ms`}${hrvBaselineMetric === null ? '' : ` vs ${hrvBaselineMetric}ms baseline`}, resting HR ${restingHrMetric ?? 'unknown'}${restingHrBaselineMetric === null ? '' : ` vs ${restingHrBaselineMetric} baseline`}
+- Apple Health activity this week: ${activityLine}
+- Apple Health cardio context: ${cardioFitnessLine}
+- Latest Apple Watch running-form context: ${runningFormLine}
 - Today's check-in: ${checkinLine}
 - Recent lifting detail: ${recentExerciseLine}
 - Injury notes: ${sanitize(profile.injury_notes) || 'none'}
@@ -312,6 +337,7 @@ ${liftingRules}
 - Keep at least 1 full rest day each week
 ${schedulingRule}
 ${recentRunSafetyRule}
+- Use Apple Health recovery and recent completed-workout history to adjust workload conservatively. VO2 max and running-form metrics are trend context only; never use one wearable metric by itself to prescribe unsafe volume, pace, or intensity.
 - PERIODIZATION over ${weeks} weeks: early weeks = BASE (aerobic volume), middle = BUILD (add tempo/intervals + peak long runs), final 1-2 weeks = TAPER (cut volume 30-50%, keep some intensity, race week is lightest).
 - Every 3rd-4th week is a DOWN/recovery week (reduce volume ~20%).
 - Increase weekly mileage no more than ~10% week-over-week.

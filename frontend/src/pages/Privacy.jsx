@@ -6,16 +6,16 @@ export default function Privacy() {
       <div className="mx-auto w-full max-w-3xl rounded-2xl border p-6 md:p-8" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}>
         <h1 className="text-3xl font-black">Privacy Policy</h1>
         <p className="mt-2 text-sm" style={{ color: 'var(--text-muted)' }}>
-          Madera Technologies LLC (DBA Zordon Technologies) | FORGE Athlete
+          Madera Technologies LLC | Forged Hybrid
         </p>
         <p className="mt-4 text-sm" style={{ color: 'var(--text-muted)' }}>
-          Last updated: May 27, 2026
+          Last updated: July 13, 2026
         </p>
 
         <section className="mt-8">
           <h2 className="text-lg font-bold">What data we collect</h2>
           <p className="mt-2 text-sm leading-7" style={{ color: 'var(--text-muted)' }}>
-            We collect the information needed to run FORGE Athlete: your account email, workout and training logs, and connected device
+            We collect the information needed to run Forged Hybrid: your account email, workout and training logs, and connected device
             metrics like steps and heart rate.
           </p>
         </section>
@@ -40,13 +40,12 @@ export default function Privacy() {
         <section className="mt-6">
           <h2 className="text-lg font-bold">Connected services and health data</h2>
           <p className="mt-2 text-sm leading-7" style={{ color: 'var(--text-muted)' }}>
-            With your permission, FORGE reads health and workout data from Apple Health (iOS) and Android Health Connect —
-            such as sleep, heart rate, HRV, steps, and prior workouts — to generate your adaptive training plans. When you
-            choose to connect a third-party training platform or watch (including Garmin Connect, TrainingPeaks, COROS,
-            Suunto, Wahoo, or Polar), FORGE sends your generated workouts, planned training sessions, and recorded routes to that
-            account so they appear on your device. Each connection is authorized by you through secure OAuth and can be
-            disconnected at any time. We exchange only the data needed to deliver these workouts. We do not sell this data
-            or use it for advertising.
+            With your permission, Forged Hybrid reads training-relevant health and workout data from Apple Health (iOS) and Android Health Connect —
+            including workouts, activity, sleep stages, heart rate, HRV, resting heart rate, cardio-fitness estimates, and running dynamics — to generate and adapt your training plans. We do not request unrelated medical, reproductive, ECG, blood-pressure, or AFib data for this purpose. When you
+            choose an available connection to a third-party training platform or watch, Forged Hybrid may send the generated workouts,
+            planned sessions, or routes you select so they appear on that account or device. Provider availability varies, and planned
+            connections are labeled Coming soon until approved and operational. Each live connection is authorized by you and can be
+            disconnected at any time. We exchange only the data needed for the connected fitness feature. We do not sell health data or use it for advertising.
           </p>
         </section>
 
@@ -71,7 +70,7 @@ export default function Privacy() {
 
         <div className="mt-8 border-t pt-4 text-sm" style={{ borderColor: 'var(--border-subtle)' }}>
           <Link to="/" className="hover:underline" style={{ color: 'var(--accent)' }}>
-            Back to FORGE
+            Back to Forged Hybrid
           </Link>
         </div>
       </div>

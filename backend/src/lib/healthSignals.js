@@ -1,3 +1,7 @@
+const { hydrateHealthRow } = require('./healthSyncMetrics');
+
+const HOUR_MS = 60 * 60 * 1000;
+
 function toNumber(value) {
   if (value === null || value === undefined) return null;
   if (typeof value === 'string' && value.trim() === '') return null;
@@ -19,11 +23,40 @@ function isSuspectSyncedSleep(row = {}) {
   return syncedSleep !== null && syncedSleep > 12;
 }
 
-function hasHealthData(row = {}) {
-  const hasValidSyncedSleep = toNumber(row?.sleep_hours_last_night) !== null && !isSuspectSyncedSleep(row);
-  return hasValidSyncedSleep
-    || toNumber(row?.hrv_ms) !== null
-    || toNumber(row?.resting_heart_rate) !== null
+function hoursSince(value) {
+  if (!value) return null;
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) return null;
+  return (Date.now() - timestamp) / HOUR_MS;
+}
+
+function metricIsFresh(row, timestampField, maxHours) {
+  const age = hoursSince(row[timestampField] || row.synced_at);
+  return age === null || (age >= -0.25 && age <= maxHours);
+}
+
+function metricFreshness(row = {}) {
+  return {
+    activity: metricIsFresh(row, 'synced_at', 48),
+    sleep: metricIsFresh(row, 'sleep_end_at', 36),
+    restingHeartRate: metricIsFresh(row, 'resting_heart_rate_recorded_at', 48),
+    hrv: metricIsFresh(row, 'hrv_recorded_at', 48),
+    respiratoryRate: metricIsFresh(row, 'respiratory_rate_recorded_at', 48),
+    vo2Max: metricIsFresh(row, 'vo2_max_recorded_at', 90 * 24),
+    walkingHeartRate: metricIsFresh(row, 'walking_heart_rate_recorded_at', 30 * 24),
+    heartRateRecovery: metricIsFresh(row, 'heart_rate_recovery_recorded_at', 30 * 24),
+    runningDynamics: metricIsFresh(row, 'running_dynamics_recorded_at', 30 * 24),
+  };
+}
+
+function hasHealthData(rawRow = {}) {
+  const row = hydrateHealthRow(rawRow);
+  const freshness = metricFreshness(row);
+  const syncedSleep = toNumber(row?.sleep_hours_last_night);
+  const hasValidSyncedSleep = syncedSleep !== null && syncedSleep > 0 && !isSuspectSyncedSleep(row);
+  return (hasValidSyncedSleep && freshness.sleep)
+    || (toNumber(row?.hrv_ms) !== null && freshness.hrv)
+    || (toNumber(row?.resting_heart_rate) !== null && freshness.restingHeartRate)
     || computeAcuteChronicRatio(row) !== null;
 }
 
@@ -34,7 +67,8 @@ function buildReadinessBand(score) {
   return { band: 'RED', verdict: 'REST' };
 }
 
-function computeAcuteChronicRatio(row = {}) {
+function computeAcuteChronicRatio(rawRow = {}) {
+  const row = hydrateHealthRow(rawRow);
   const acuteLoad = toNumber(row.acute_load_7d ?? row.total_miles_7d ?? row.total_miles_this_week);
   const chronicLoad = toNumber(row.chronic_load_28d ?? row.total_miles_28d);
   if (acuteLoad === null || chronicLoad === null || acuteLoad <= 0 || chronicLoad <= 0) return null;
@@ -155,7 +189,53 @@ function driverForSubScore(signal) {
   return 'Recent run load is in a healthy range.';
 }
 
-function buildHealthSignals(row = {}) {
+function buildMetricSnapshot(row, freshness, overrides = {}) {
+  return {
+    sleepHoursLastNight: toNumber(row.sleep_hours_last_night),
+    sleepSource: toNumber(row.sleep_hours_last_night) !== null ? 'health_sync' : null,
+    sleepHours7dBaseline: sleepBaseline(row),
+    sleepCoreHours: toNumber(row.sleep_core_hours),
+    sleepDeepHours: toNumber(row.sleep_deep_hours),
+    sleepRemHours: toNumber(row.sleep_rem_hours),
+    sleepAwakeHours: toNumber(row.sleep_awake_hours),
+    sleepEndAt: row.sleep_end_at || null,
+    hrvMs: toNumber(row.hrv_ms),
+    hrvMsBaseline: hrvBaseline(row),
+    hrvRecordedAt: row.hrv_recorded_at || null,
+    restingHeartRate: toNumber(row.resting_heart_rate),
+    restingHeartRateBaseline: rhrBaseline(row),
+    restingHeartRateRecordedAt: row.resting_heart_rate_recorded_at || null,
+    activeMinutesThisWeek: toNumber(row.active_minutes_this_week),
+    exerciseMinutesThisWeek: toNumber(row.exercise_minutes_this_week),
+    workoutCountThisWeek: toNumber(row.workout_count_this_week),
+    totalMilesThisWeek: toNumber(row.total_miles_this_week),
+    acuteChronicLoadRatio: computeAcuteChronicRatio(row),
+    runZoneDriftCount: toNumber(row.run_zone_drift_count),
+    lastWorkoutType: row.last_workout_type || null,
+    lastWorkoutDurationSeconds: toNumber(row.last_workout_duration_seconds),
+    vo2Max: toNumber(row.vo2_max),
+    vo2MaxRecordedAt: row.vo2_max_recorded_at || null,
+    walkingHeartRateAverage: toNumber(row.walking_heart_rate_average),
+    walkingHeartRateRecordedAt: row.walking_heart_rate_recorded_at || null,
+    heartRateRecoveryOneMinute: toNumber(row.heart_rate_recovery_one_minute),
+    heartRateRecoveryRecordedAt: row.heart_rate_recovery_recorded_at || null,
+    respiratoryRate: toNumber(row.respiratory_rate),
+    respiratoryRateRecordedAt: row.respiratory_rate_recorded_at || null,
+    runningPowerWatts: toNumber(row.running_power_watts),
+    runningSpeedMps: toNumber(row.running_speed_mps),
+    runningStrideLengthM: toNumber(row.running_stride_length_m),
+    runningVerticalOscillationCm: toNumber(row.running_vertical_oscillation_cm),
+    runningGroundContactTimeMs: toNumber(row.running_ground_contact_time_ms),
+    runningDynamicsRecordedAt: row.running_dynamics_recorded_at || null,
+    freshness,
+    syncedAt: row.synced_at || null,
+    ...overrides,
+  };
+}
+
+function buildHealthSignals(rawRow = {}) {
+  const row = hydrateHealthRow(rawRow);
+  const freshness = metricFreshness(row);
   if (!hasHealthData(row)) {
     return {
       available: false,
@@ -164,27 +244,34 @@ function buildHealthSignals(row = {}) {
       recoveryState: 'unknown',
       flags: [],
       summary: 'Apple Health has not synced enough recovery data yet.',
+      metrics: buildMetricSnapshot(row, freshness),
     };
   }
 
   const syncedSleep = toNumber(row.sleep_hours_last_night);
-  const sleep = syncedSleep !== null && !isSuspectSyncedSleep(row) ? syncedSleep : null;
+  const sleep = syncedSleep !== null && syncedSleep > 0 && !isSuspectSyncedSleep(row) && freshness.sleep ? syncedSleep : null;
   const syncedSleepSuspect = syncedSleep !== null && isSuspectSyncedSleep(row);
-  const hrv = toNumber(row.hrv_ms);
-  const restingHr = toNumber(row.resting_heart_rate);
-  const activeMinutes = toNumber(row.active_minutes_this_week);
-  const workoutCount = toNumber(row.workout_count_this_week);
-  const miles = toNumber(row.total_miles_this_week);
-  const lastWorkoutSeconds = toNumber(row.last_workout_duration_seconds);
-  const lastWorkoutType = row.last_workout_type || null;
+  const rawHrv = toNumber(row.hrv_ms);
+  const rawRestingHr = toNumber(row.resting_heart_rate);
+  const hrv = freshness.hrv ? rawHrv : null;
+  const restingHr = freshness.restingHeartRate ? rawRestingHr : null;
   const acuteChronicRatio = computeAcuteChronicRatio(row);
-  const runZoneDriftCount = toNumber(row.run_zone_drift_count);
   const sleepBase = sleepBaseline(row);
   const restingHrBase = rhrBaseline(row);
   const hrvBase = hrvBaseline(row);
   const flags = [];
   const positives = [];
   const subScores = [];
+
+  if (syncedSleep !== null && !syncedSleepSuspect && !freshness.sleep) {
+    flags.push({ key: 'sleep_stale', severity: 'low', label: 'Sleep needs a refresh', reason: 'The latest sleep sample is too old to adjust today\'s training.' });
+  }
+  if (rawHrv !== null && !freshness.hrv) {
+    flags.push({ key: 'hrv_stale', severity: 'low', label: 'HRV needs a refresh', reason: 'The latest HRV sample is too old to adjust today\'s training.' });
+  }
+  if (rawRestingHr !== null && !freshness.restingHeartRate) {
+    flags.push({ key: 'resting_hr_stale', severity: 'low', label: 'Resting HR needs a refresh', reason: 'The latest resting heart-rate sample is too old to adjust today\'s training.' });
+  }
 
   if (syncedSleepSuspect) {
     flags.push({
@@ -283,19 +370,12 @@ function buildHealthSignals(row = {}) {
     flags,
     positives,
     summary,
-    metrics: {
+    metrics: buildMetricSnapshot(row, freshness, {
       sleepHoursLastNight: sleep,
       sleepSource: sleep !== null ? 'health_sync' : null,
       hrvMs: hrv,
       restingHeartRate: restingHr,
-      activeMinutesThisWeek: activeMinutes,
-      workoutCountThisWeek: workoutCount,
-      totalMilesThisWeek: miles,
-      acuteChronicLoadRatio: acuteChronicRatio,
-      runZoneDriftCount,
-      lastWorkoutType,
-      lastWorkoutDurationSeconds: lastWorkoutSeconds,
-    },
+    }),
   };
 }
 

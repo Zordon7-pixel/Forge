@@ -20,6 +20,20 @@ function numberText(value) {
   return Number.isFinite(number) && number > 0 ? number.toLocaleString() : null
 }
 
+function decimalText(value, digits = 1) {
+  const number = Number(value)
+  return Number.isFinite(number) && number > 0 ? number.toFixed(digits) : null
+}
+
+function paceFromMetersPerSecond(value) {
+  const speed = Number(value)
+  if (!Number.isFinite(speed) || speed <= 0) return null
+  const totalSeconds = Math.round(1609.344 / speed)
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return `${minutes}:${String(seconds).padStart(2, '0')}/mi`
+}
+
 function getLastSyncResult() {
   try {
     const parsed = JSON.parse(localStorage.getItem(HEALTH_SYNC_RESULT_KEY) || 'null')
@@ -38,6 +52,7 @@ function saveLastSyncResult(result) {
       imported: Number(result?.imported || 0),
       skipped: Number(result?.skipped || 0),
       errors: Array.isArray(result?.errors) ? result.errors : [],
+      authorizationUpgradeRequired: Boolean(result?.authorizationUpgradeRequired),
       syncedAt: new Date().toISOString(),
     }))
   } catch (err) {
@@ -87,6 +102,19 @@ function MetricCell({ cell }) {
       <p className="stat-num mt-1" style={{ color: 'var(--text-primary)', fontSize: 22, lineHeight: 1.1 }}>{cell.value}</p>
       {cell.detail && <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{cell.detail}</p>}
     </div>
+  )
+}
+
+function MetricGroup({ title, subtitle, cells }) {
+  if (!cells.length) return null
+  return (
+    <section className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+      <p className="text-sm font-black" style={{ color: 'var(--text-primary)' }}>{title}</p>
+      <p className="mt-1 text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>{subtitle}</p>
+      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+        {cells.map((cell) => <MetricCell key={cell.key} cell={cell} />)}
+      </div>
+    </section>
   )
 }
 
@@ -144,7 +172,9 @@ export default function HealthData() {
     const avgWorkoutHr = health?.avg_heart_rate_bpm_last_workout || health?.avg_hr_bpm_last_workout || health?.avg_heart_rate_last_run
     return [
       { key: 'steps', label: 'Steps today', value: numberText(health?.steps_today), detail: null },
+      { key: 'miles', label: 'Walk + run', value: decimalText(health?.total_miles_this_week) ? `${decimalText(health.total_miles_this_week)} mi` : null, detail: 'past 7 days' },
       { key: 'activeMin', label: 'Active min', value: numberText(health?.active_minutes_this_week), detail: 'past 7 days' },
+      { key: 'exerciseMin', label: 'Exercise min', value: numberText(health?.exercise_minutes_this_week), detail: 'Apple ring · 7 days' },
       { key: 'restingHr', label: 'Resting HR', value: numberText(restingHr) ? `${Math.round(Number(restingHr))} bpm` : null, detail: null },
       { key: 'calories', label: 'Calories', value: numberText(health?.calories_today), detail: 'today' },
       { key: 'workouts', label: 'Workouts', value: numberText(health?.workout_count_this_week), detail: 'past 7 days' },
@@ -152,6 +182,53 @@ export default function HealthData() {
     ].filter((cell) => cell.value && cell.value !== '--' && cell.value !== '0')
   }, [health])
   const hasMetricStrip = metricCells.length > 0
+  const extendedMetricGroups = useMemo(() => {
+    const syncedAt = health?.synced_at
+    const detail = (timestamp, context) => `${context} · ${dateText(timestamp || syncedAt)}`
+    const sleepBaseline = decimalText(health?.sleep_hours_7d_baseline)
+    const rhrBaseline = numberText(health?.resting_heart_rate_baseline)
+    const hrvBaseline = numberText(health?.hrv_ms_baseline)
+    const speed = decimalText(health?.running_speed_mps, 2)
+    return [
+      {
+        key: 'recovery',
+        title: 'Recovery detail',
+        subtitle: 'Fresh sleep, HRV, and resting heart rate can adjust today and the next 48-72 hours.',
+        cells: [
+          { key: 'sleep', label: 'Sleep', value: decimalText(health?.sleep_hours_last_night) ? `${decimalText(health.sleep_hours_last_night)} h` : null, detail: sleepBaseline ? `7-night avg ${sleepBaseline} h` : detail(health?.sleep_end_at, 'latest night') },
+          { key: 'deep', label: 'Deep sleep', value: decimalText(health?.sleep_deep_hours) ? `${decimalText(health.sleep_deep_hours)} h` : null, detail: 'latest night' },
+          { key: 'rem', label: 'REM sleep', value: decimalText(health?.sleep_rem_hours) ? `${decimalText(health.sleep_rem_hours)} h` : null, detail: 'latest night' },
+          { key: 'core', label: 'Core sleep', value: decimalText(health?.sleep_core_hours) ? `${decimalText(health.sleep_core_hours)} h` : null, detail: 'latest night' },
+          { key: 'awake', label: 'Awake', value: decimalText(health?.sleep_awake_hours) ? `${decimalText(health.sleep_awake_hours)} h` : null, detail: 'during sleep window' },
+          { key: 'hrv', label: 'HRV', value: numberText(health?.hrv_ms) ? `${Math.round(Number(health.hrv_ms))} ms` : null, detail: hrvBaseline ? `baseline ${hrvBaseline} ms` : detail(health?.hrv_recorded_at, 'latest') },
+          { key: 'rhr', label: 'Resting HR', value: numberText(health?.resting_heart_rate) ? `${Math.round(Number(health.resting_heart_rate))} bpm` : null, detail: rhrBaseline ? `baseline ${rhrBaseline} bpm` : detail(health?.resting_heart_rate_recorded_at, 'latest') },
+          { key: 'respiratory', label: 'Respiratory rate', value: decimalText(health?.respiratory_rate) ? `${decimalText(health.respiratory_rate)} /min` : null, detail: detail(health?.respiratory_rate_recorded_at, 'latest') },
+        ].filter((cell) => cell.value),
+      },
+      {
+        key: 'cardio',
+        title: 'Cardio fitness',
+        subtitle: 'Longer-term fitness and recovery trends add context; no single value sets the plan by itself.',
+        cells: [
+          { key: 'vo2', label: 'VO2 max', value: decimalText(health?.vo2_max) ? `${decimalText(health.vo2_max)} ml/kg/min` : null, detail: detail(health?.vo2_max_recorded_at, 'latest estimate') },
+          { key: 'walkingHr', label: 'Walking HR', value: numberText(health?.walking_heart_rate_average) ? `${Math.round(Number(health.walking_heart_rate_average))} bpm` : null, detail: detail(health?.walking_heart_rate_recorded_at, 'latest average') },
+          { key: 'hrRecovery', label: '1-min HR recovery', value: numberText(health?.heart_rate_recovery_one_minute) ? `${Math.round(Number(health.heart_rate_recovery_one_minute))} bpm` : null, detail: detail(health?.heart_rate_recovery_recorded_at, 'latest') },
+        ].filter((cell) => cell.value),
+      },
+      {
+        key: 'running',
+        title: 'Latest run form',
+        subtitle: 'Apple Watch running dynamics help track form trends. They are not used as a medical judgment.',
+        cells: [
+          { key: 'power', label: 'Running power', value: numberText(health?.running_power_watts) ? `${Math.round(Number(health.running_power_watts))} W` : null, detail: detail(health?.running_dynamics_recorded_at, 'latest run') },
+          { key: 'speed', label: 'Running pace', value: paceFromMetersPerSecond(health?.running_speed_mps), detail: speed ? `${speed} m/s` : null },
+          { key: 'stride', label: 'Stride length', value: decimalText(health?.running_stride_length_m, 2) ? `${decimalText(health.running_stride_length_m, 2)} m` : null, detail: 'latest run average' },
+          { key: 'vertical', label: 'Vertical oscillation', value: decimalText(health?.running_vertical_oscillation_cm) ? `${decimalText(health.running_vertical_oscillation_cm)} cm` : null, detail: 'latest run average' },
+          { key: 'contact', label: 'Ground contact', value: numberText(health?.running_ground_contact_time_ms) ? `${Math.round(Number(health.running_ground_contact_time_ms))} ms` : null, detail: 'latest run average' },
+        ].filter((cell) => cell.value),
+      },
+    ]
+  }, [health])
   const connectedSources = useMemo(() => {
     const sources = []
     if (health?.synced_at || lastSyncResult?.syncedAt) sources.push({ key: 'apple', label: 'Apple Health', detail: dateText(health?.synced_at || lastSyncResult?.syncedAt), icon: Watch })
@@ -211,11 +288,22 @@ export default function HealthData() {
         <section className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
           <p className="text-sm font-black" style={{ color: 'var(--text-primary)' }}>{t('body.last7Days')}</p>
           <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>{t('body.last7DaysSubtitle')}</p>
-          <div className="mt-3 grid grid-cols-3 gap-2">
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
             {metricCells.map((cell) => <MetricCell key={cell.key} cell={cell} />)}
           </div>
         </section>
       )}
+
+      {extendedMetricGroups.map((group) => (
+        <MetricGroup key={group.key} title={group.title} subtitle={group.subtitle} cells={group.cells} />
+      ))}
+
+      <section className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+        <p className="text-sm font-black" style={{ color: 'var(--text-primary)' }}>How your plan uses this data</p>
+        <p className="mt-2 text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+          Completed runs establish mileage, pace, heart-rate, and recent-load history. Fresh sleep, HRV, resting heart rate, and your check-in can reduce or move near-term work. Cardio fitness and running-form values are supporting trends, never the only reason for a harder prescription.
+        </p>
+      </section>
 
       {connectedSources.length > 0 && (
         <section className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
@@ -249,6 +337,11 @@ export default function HealthData() {
           {syncing ? 'Syncing Apple Health...' : 'Sync Apple Health'}
         </button>
         {notice && <p className="mt-3 text-xs" style={{ color: notice.includes('synced') ? 'var(--success)' : 'var(--warning)' }}>{notice}</p>}
+        {(health?.synced_at || lastSyncResult?.syncedAt) && Number(health?.metrics_schema_version || 0) < 2 && (
+          <p className="mt-3 text-xs leading-relaxed" style={{ color: 'var(--warning)' }}>
+            Expanded sleep, cardio fitness, and running-form metrics require the next approved iPhone build. After updating, tap Sync Apple Health once to grant the additional read permissions.
+          </p>
+        )}
         <Link to="/history" className="mt-3 flex items-center gap-1 text-xs font-bold" style={{ color: 'var(--accent)', textDecoration: 'none' }}>
           Review imported activity <ChevronRight size={14} />
         </Link>

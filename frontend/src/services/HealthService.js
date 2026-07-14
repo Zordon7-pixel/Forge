@@ -3,6 +3,8 @@ import api from '../lib/api'
 
 const IOS_UA_REGEX = /iP(ad|hone|od)/i
 const NATIVE_HEALTH_AUTH_KEY = 'forge_health_authorized'
+const NATIVE_HEALTH_AUTH_VERSION_KEY = 'forge_health_authorized_version'
+const REQUIRED_HEALTH_AUTH_VERSION = 2
 const HEALTH_RESYNC_NEEDED_KEY = 'forge.health.resyncNeeded'
 const AUTO_HEALTH_SYNC_LAST_SYNC_KEY = 'forge_auto_health_sync_last_sync_at'
 const ForgeHealth = registerPlugin('ForgeHealth')
@@ -32,6 +34,12 @@ function toNumber(value) {
   return Number.isFinite(num) ? num : 0
 }
 
+function numberOrNull(value) {
+  if (value === null || value === undefined || value === '') return null
+  const number = Number(value)
+  return Number.isFinite(number) ? number : null
+}
+
 function average(list) {
   if (!Array.isArray(list) || list.length === 0) return null
   const total = list.reduce((sum, item) => sum + toNumber(item?.value), 0)
@@ -50,10 +58,20 @@ function hasNativeAuthorizationHint() {
   }
 }
 
-function markNativeAuthorized() {
+function markNativeAuthorized(version = 1) {
   try {
     localStorage.setItem(NATIVE_HEALTH_AUTH_KEY, '1')
+    const currentVersion = Number(localStorage.getItem(NATIVE_HEALTH_AUTH_VERSION_KEY) || 0)
+    localStorage.setItem(NATIVE_HEALTH_AUTH_VERSION_KEY, String(Math.max(currentVersion, version)))
   } catch {}
+}
+
+function hasExpandedNativeAuthorization() {
+  try {
+    return Number(localStorage.getItem(NATIVE_HEALTH_AUTH_VERSION_KEY) || 0) >= REQUIRED_HEALTH_AUTH_VERSION
+  } catch {
+    return false
+  }
 }
 
 function healthResyncNeeded() {
@@ -118,6 +136,16 @@ class HealthService {
           constants.RestingHeartRate || 'RestingHeartRate',
           constants.HeartRateVariabilitySDNN || 'HeartRateVariabilitySDNN',
           constants.DistanceWalkingRunning || 'DistanceWalkingRunning',
+          constants.AppleExerciseTime || 'AppleExerciseTime',
+          constants.Vo2Max || 'Vo2Max',
+          constants.WalkingHeartRateAverage || 'WalkingHeartRateAverage',
+          constants.HeartRateRecoveryOneMinute || 'HeartRateRecoveryOneMinute',
+          constants.RespiratoryRate || 'RespiratoryRate',
+          constants.RunningPower || 'RunningPower',
+          constants.RunningSpeed || 'RunningSpeed',
+          constants.RunningStrideLength || 'RunningStrideLength',
+          constants.RunningVerticalOscillation || 'RunningVerticalOscillation',
+          constants.RunningGroundContactTime || 'RunningGroundContactTime',
           constants.SleepAnalysis || 'SleepAnalysis',
           constants.Workout || 'Workout',
         ],
@@ -148,7 +176,7 @@ class HealthService {
           return { available: false, reason: 'Open Settings > Apple Health and tap Sync Apple Health to grant access.' }
         }
 
-        return { available: true }
+        return { available: true, authorizationUpgradeRequired: !hasExpandedNativeAuthorization() }
       } catch (error) {
         return { available: false, reason: nativeBridgeUnavailableReason(error) }
       }
@@ -220,6 +248,32 @@ class HealthService {
       last_workout_type: metrics.lastWorkoutType,
       last_workout_duration_seconds: metrics.lastWorkoutDurationSeconds,
       last_workout_calories: metrics.lastWorkoutCalories,
+      sleep_core_hours: metrics.sleepCoreHours,
+      sleep_deep_hours: metrics.sleepDeepHours,
+      sleep_rem_hours: metrics.sleepRemHours,
+      sleep_awake_hours: metrics.sleepAwakeHours,
+      sleep_end_at: metrics.sleepEndAt,
+      sleep_hours_7d_baseline: metrics.sleepHours7dBaseline,
+      resting_heart_rate_baseline: metrics.restingHeartRateBaseline,
+      resting_heart_rate_recorded_at: metrics.restingHeartRateRecordedAt,
+      hrv_ms_baseline: metrics.heartRateVariabilityBaselineMs,
+      hrv_recorded_at: metrics.heartRateVariabilityRecordedAt,
+      vo2_max: metrics.vo2Max,
+      vo2_max_recorded_at: metrics.vo2MaxRecordedAt,
+      walking_heart_rate_average: metrics.walkingHeartRateAverage,
+      walking_heart_rate_recorded_at: metrics.walkingHeartRateRecordedAt,
+      heart_rate_recovery_one_minute: metrics.heartRateRecoveryOneMinute,
+      heart_rate_recovery_recorded_at: metrics.heartRateRecoveryRecordedAt,
+      respiratory_rate: metrics.respiratoryRate,
+      respiratory_rate_recorded_at: metrics.respiratoryRateRecordedAt,
+      exercise_minutes_this_week: metrics.exerciseMinutesThisWeek,
+      running_power_watts: metrics.runningPowerWatts,
+      running_speed_mps: metrics.runningSpeedMps,
+      running_stride_length_m: metrics.runningStrideLengthM,
+      running_vertical_oscillation_cm: metrics.runningVerticalOscillationCm,
+      running_ground_contact_time_ms: metrics.runningGroundContactTimeMs,
+      running_dynamics_recorded_at: metrics.runningDynamicsRecordedAt,
+      metrics_schema_version: hasExpandedNativeAuthorization() ? metrics.metricsSchemaVersion : 1,
     })
     return data
   }
@@ -305,15 +359,21 @@ class HealthService {
 
     try {
       const summary = await ForgeHealth.getSummary()
+      const metricsSchemaVersion = Number(summary?.metricsSchemaVersion || 1)
+      if (options.requestPermission && metricsSchemaVersion >= REQUIRED_HEALTH_AUTH_VERSION) {
+        markNativeAuthorized(REQUIRED_HEALTH_AUTH_VERSION)
+      }
       return {
         available: true,
         reason: null,
+        authorizationUpgradeRequired: !hasExpandedNativeAuthorization(),
         metrics: {
+          metricsSchemaVersion,
           totalMilesThisWeek: toNumber(summary?.totalMilesThisWeek),
           avgHeartRateFromLastRun: summary?.avgHeartRateFromLastRun ? Math.round(toNumber(summary.avgHeartRateFromLastRun)) : null,
           restingHeartRate: summary?.restingHeartRate ? Math.round(toNumber(summary.restingHeartRate)) : null,
           heartRateVariabilityMs: summary?.heartRateVariabilityMs ? Math.round(toNumber(summary.heartRateVariabilityMs)) : null,
-          sleepHoursLastNight: Number(toNumber(summary?.sleepHoursLastNight).toFixed(1)),
+          sleepHoursLastNight: numberOrNull(summary?.sleepHoursLastNight),
           activeMinutesThisWeek: Math.round(toNumber(summary?.activeMinutesThisWeek)),
           workoutCountThisWeek: Math.round(toNumber(summary?.workoutCountThisWeek)),
           lastWorkoutType: summary?.lastWorkoutType || null,
@@ -321,6 +381,31 @@ class HealthService {
           lastWorkoutCalories: summary?.lastWorkoutCalories ? Math.round(toNumber(summary.lastWorkoutCalories)) : null,
           caloriesBurnedToday: Math.round(toNumber(summary?.caloriesBurnedToday)),
           stepsToday: Math.round(toNumber(summary?.stepsToday)),
+          exerciseMinutesThisWeek: Math.round(toNumber(summary?.exerciseMinutesThisWeek)),
+          sleepHours7dBaseline: numberOrNull(summary?.sleepHours7dBaseline),
+          sleepCoreHours: numberOrNull(summary?.sleepCoreHours),
+          sleepDeepHours: numberOrNull(summary?.sleepDeepHours),
+          sleepRemHours: numberOrNull(summary?.sleepREMHours),
+          sleepAwakeHours: numberOrNull(summary?.sleepAwakeHours),
+          sleepEndAt: summary?.sleepEndAt || null,
+          restingHeartRateBaseline: numberOrNull(summary?.restingHeartRateBaseline),
+          restingHeartRateRecordedAt: summary?.restingHeartRateRecordedAt || null,
+          heartRateVariabilityBaselineMs: numberOrNull(summary?.heartRateVariabilityBaselineMs),
+          heartRateVariabilityRecordedAt: summary?.heartRateVariabilityRecordedAt || null,
+          vo2Max: numberOrNull(summary?.vo2Max),
+          vo2MaxRecordedAt: summary?.vo2MaxRecordedAt || null,
+          walkingHeartRateAverage: numberOrNull(summary?.walkingHeartRateAverage),
+          walkingHeartRateRecordedAt: summary?.walkingHeartRateRecordedAt || null,
+          heartRateRecoveryOneMinute: numberOrNull(summary?.heartRateRecoveryOneMinute),
+          heartRateRecoveryRecordedAt: summary?.heartRateRecoveryRecordedAt || null,
+          respiratoryRate: numberOrNull(summary?.respiratoryRate),
+          respiratoryRateRecordedAt: summary?.respiratoryRateRecordedAt || null,
+          runningPowerWatts: numberOrNull(summary?.runningPowerWatts),
+          runningSpeedMps: numberOrNull(summary?.runningSpeedMps),
+          runningStrideLengthM: numberOrNull(summary?.runningStrideLengthM),
+          runningVerticalOscillationCm: numberOrNull(summary?.runningVerticalOscillationCm),
+          runningGroundContactTimeMs: numberOrNull(summary?.runningGroundContactTimeMs),
+          runningDynamicsRecordedAt: summary?.runningDynamicsRecordedAt || null,
         },
         workouts: Array.isArray(summary?.workouts) ? summary.workouts : [],
       }

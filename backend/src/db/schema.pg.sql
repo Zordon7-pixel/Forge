@@ -221,6 +221,7 @@ CREATE TABLE IF NOT EXISTS health_sync (
   last_workout_type TEXT,
   last_workout_duration_seconds INTEGER,
   last_workout_calories INTEGER,
+  training_metrics_json JSONB NOT NULL DEFAULT '{}'::jsonb,
   synced_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
