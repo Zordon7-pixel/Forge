@@ -2,6 +2,7 @@ const router = require('express').Router();
 const { dbAll, dbGet } = require('../db');
 const { buildHealthSignals } = require('../lib/healthSignals');
 const auth = require('../middleware/auth');
+const { runActivitySql } = require('../lib/runActivity');
 
 function isoDaysAgo(days) {
   const date = new Date();
@@ -156,8 +157,8 @@ router.get('/drivers', auth, async (req, res) => {
     const [checkins, health, currentRun, priorRun, currentLifts] = await Promise.all([
       dbAll('SELECT sleep_hours, life_flags, checkin_date, created_at FROM daily_checkins WHERE user_id=? AND checkin_date>=? ORDER BY checkin_date DESC, created_at DESC', [req.user.id, since7]).catch(lookupFallback('check-in', [])),
       dbGet('SELECT * FROM health_sync WHERE user_id=?', [req.user.id]).catch(lookupFallback('health sync', null)),
-      dbGet('SELECT COALESCE(SUM(distance_miles),0) as miles FROM runs WHERE user_id=? AND date>=?', [req.user.id, since7]).catch(lookupFallback('current run load', { miles: 0 })),
-      dbGet('SELECT COALESCE(SUM(distance_miles),0) as miles FROM runs WHERE user_id=? AND date>=? AND date<?', [req.user.id, since14, since7]).catch(lookupFallback('prior run load', { miles: 0 })),
+      dbGet(`SELECT COALESCE(SUM(distance_miles),0) as miles FROM runs WHERE user_id=? AND date>=? AND ${runActivitySql()}`, [req.user.id, since7]).catch(lookupFallback('current run load', { miles: 0 })),
+      dbGet(`SELECT COALESCE(SUM(distance_miles),0) as miles FROM runs WHERE user_id=? AND date>=? AND date<? AND ${runActivitySql()}`, [req.user.id, since14, since7]).catch(lookupFallback('prior run load', { miles: 0 })),
       dbGet("SELECT COUNT(*) as count FROM workout_sessions WHERE user_id=? AND started_at>=? AND ended_at IS NOT NULL", [req.user.id, `${since7}T00:00:00`]).catch(lookupFallback('lift count', { count: 0 })),
     ]);
     const healthSignals = buildHealthSignals(health || {});

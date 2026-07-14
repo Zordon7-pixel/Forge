@@ -1,10 +1,10 @@
 const router = require('express').Router();
 const { dbGet, dbAll, dbRun } = require('../db');
 const auth = require('../middleware/auth');
-const { computeZones } = require('../lib/hrZones');
+const { computeZones, parseCustomMinimums } = require('../lib/hrZones');
 const { deriveHrProfileFromHistory, computeFieldTestLthr } = require('../lib/hrCalibration');
 
-const ZONE_MODELS = new Set(['hrr', 'maxhr', 'lthr']);
+const ZONE_MODELS = new Set(['hrr', 'maxhr', 'lthr', 'custom']);
 
 function profileFromRow(row) {
   if (!row) return null;
@@ -12,6 +12,7 @@ function profileFromRow(row) {
     maxHr: row.max_hr,
     restingHr: row.resting_hr,
     lthr: row.lthr,
+    customMinimums: parseCustomMinimums(row.custom_zones_json),
     zoneModel: row.zone_model,
     source: row.source,
     updatedAt: row.updated_at,
@@ -28,13 +29,14 @@ function responseFromRow(row) {
         restingHr: profile.restingHr,
         lthr: profile.lthr,
         model: profile.zoneModel,
+        customMinimums: profile.customMinimums,
       }).zones
       : [],
   };
 }
 
 function validateHrField(value, field) {
-  if (value === null) return { value: null };
+  if (value === null || value === undefined || value === '') return { value: null };
   if (!Number.isInteger(value) || value < 30 || value > 230) {
     return { error: `${field} must be an integer between 30 and 230, or null` };
   }
@@ -44,7 +46,7 @@ function validateHrField(value, field) {
 router.get('/', auth, async (req, res) => {
   try {
     const row = await dbGet(
-      `SELECT max_hr, resting_hr, lthr, zone_model, source, updated_at
+      `SELECT max_hr, resting_hr, lthr, custom_zones_json, zone_model, source, updated_at
        FROM user_hr_profile
        WHERE user_id = ?`,
       [req.user.id]
@@ -95,7 +97,7 @@ router.post('/field-test', auth, async (req, res) => {
     );
 
     const row = await dbGet(
-      `SELECT max_hr, resting_hr, lthr, zone_model, source, updated_at
+      `SELECT max_hr, resting_hr, lthr, custom_zones_json, zone_model, source, updated_at
        FROM user_hr_profile
        WHERE user_id = ?`,
       [req.user.id]
@@ -110,7 +112,7 @@ router.post('/field-test', auth, async (req, res) => {
 
 router.put('/', auth, async (req, res) => {
   try {
-    const { maxHr, restingHr, lthr, zoneModel } = req.body || {};
+    const { maxHr, restingHr, lthr, zoneModel, customMinimums } = req.body || {};
     const maxHrResult = validateHrField(maxHr, 'maxHr');
     const restingHrResult = validateHrField(restingHr, 'restingHr');
     const lthrResult = validateHrField(lthr, 'lthr');
@@ -118,7 +120,7 @@ router.put('/', auth, async (req, res) => {
     const error = maxHrResult.error || restingHrResult.error || lthrResult.error;
     if (error) return res.status(400).json({ error });
     if (!ZONE_MODELS.has(zoneModel)) {
-      return res.status(400).json({ error: 'zoneModel must be one of hrr, maxhr, lthr' });
+      return res.status(400).json({ error: 'zoneModel must be one of hrr, maxhr, lthr, custom' });
     }
     if (restingHrResult.value !== null && maxHrResult.value !== null && restingHrResult.value >= maxHrResult.value) {
       return res.status(400).json({ error: 'resting_hr must be less than max_hr' });
@@ -132,22 +134,38 @@ router.put('/', auth, async (req, res) => {
     if (zoneModel === 'lthr' && lthrResult.value === null) {
       return res.status(400).json({ error: 'lthr is required for the lthr model' });
     }
+    if (zoneModel === 'maxhr' && maxHrResult.value === null) {
+      return res.status(400).json({ error: 'maxHr is required for the maxhr model' });
+    }
     if (zoneModel === 'hrr' && (maxHrResult.value === null || restingHrResult.value === null)) {
       return res.status(400).json({ error: 'maxHr and restingHr are required for the hrr model' });
     }
+    const normalizedCustomMinimums = parseCustomMinimums(customMinimums);
+    if (zoneModel === 'custom' && normalizedCustomMinimums.length !== 5) {
+      return res.status(400).json({ error: 'customMinimums must contain five strictly increasing bpm values between 30 and 230' });
+    }
 
     const row = await dbGet(
-      `INSERT INTO user_hr_profile (user_id, max_hr, resting_hr, lthr, zone_model, source, updated_at)
-       VALUES (?, ?, ?, ?, ?, 'manual', now())
+      `INSERT INTO user_hr_profile (user_id, max_hr, resting_hr, lthr, custom_zones_json, zone_model, source, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, now())
        ON CONFLICT (user_id) DO UPDATE SET
          max_hr = excluded.max_hr,
          resting_hr = excluded.resting_hr,
          lthr = excluded.lthr,
+         custom_zones_json = excluded.custom_zones_json,
          zone_model = excluded.zone_model,
-         source = 'manual',
+         source = excluded.source,
          updated_at = now()
-       RETURNING max_hr, resting_hr, lthr, zone_model, source, updated_at`,
-      [req.user.id, maxHrResult.value, restingHrResult.value, lthrResult.value, zoneModel]
+       RETURNING max_hr, resting_hr, lthr, custom_zones_json, zone_model, source, updated_at`,
+      [
+        req.user.id,
+        maxHrResult.value,
+        restingHrResult.value,
+        lthrResult.value,
+        JSON.stringify(normalizedCustomMinimums),
+        zoneModel,
+        zoneModel === 'custom' ? 'manual_watch' : 'manual',
+      ]
     );
 
     res.json(responseFromRow(row));

@@ -3,10 +3,11 @@ const { v4: uuidv4 } = require('uuid');
 const { dbGet, dbAll, dbRun } = require('../db');
 const auth = require('../middleware/auth');
 const { computeStreak, serverUtcAnchorCandidates } = require('../lib/streak');
+const { runActivitySql } = require('../lib/runActivity');
 
 async function getStreak(userId) {
   const [runRows, liftRows] = await Promise.all([
-    dbAll('SELECT date, created_at FROM runs WHERE user_id=?', [userId]),
+    dbAll(`SELECT date, created_at FROM runs WHERE user_id=? AND ${runActivitySql()}`, [userId]),
     dbAll('SELECT started_at FROM workout_sessions WHERE user_id=? AND ended_at IS NOT NULL', [userId])
   ]);
   const runDates = runRows.map(r => (r.date || r.created_at || '').slice(0,10)).filter(Boolean);
@@ -20,7 +21,7 @@ router.get('/new', auth, async (req, res) => {
   try {
     const userId = req.user.id;
     const [runs, lifts, seenRows] = await Promise.all([
-      dbAll('SELECT * FROM runs WHERE user_id=? ORDER BY date ASC, created_at ASC', [userId]),
+      dbAll(`SELECT * FROM runs WHERE user_id=? AND ${runActivitySql()} ORDER BY date ASC, created_at ASC`, [userId]),
       dbAll('SELECT * FROM workout_sessions WHERE user_id=? AND ended_at IS NOT NULL ORDER BY started_at ASC', [userId]),
       dbAll('SELECT milestone_key FROM milestones_seen WHERE user_id=?', [userId])
     ]);

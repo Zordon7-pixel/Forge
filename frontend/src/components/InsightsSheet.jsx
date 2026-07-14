@@ -5,6 +5,14 @@ import AgeGradedPerformanceCard from './AgeGradedPerformanceCard'
 import WatchWorkoutSendButton from './WatchWorkoutSendButton'
 import { getToken } from '../lib/tokenStore'
 import AiGuidanceNote from './AiGuidanceNote'
+import { activityLabel, isRunningActivity } from '../lib/activityType'
+
+function activityDateLabel(value) {
+  if (!value) return '--'
+  const raw = String(value)
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? new Date(`${raw}T12:00:00`) : new Date(raw)
+  return Number.isNaN(date.getTime()) ? '--' : date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
 
 function TrendChart({ data = [] }) {
   if (!data.length) return null
@@ -497,17 +505,19 @@ export function RecentActivityCard({ recentActivity, navigate, fmt, fmtDuration,
       <div className="space-y-3">
         {recentActivity.map(item => {
           if (item._type === 'run') {
+            const isRun = isRunningActivity(item)
+            const label = activityLabel(item)
             return (
-              <div key={item.id} onClick={() => navigate(`/history?runId=${item.id}`)} className="rounded-xl p-3 border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', borderLeft: '4px solid var(--accent)', cursor: 'pointer' }}>
+              <div key={item.id} onClick={() => navigate(`/history?runId=${item.id}`)} className="rounded-xl p-3 border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', borderLeft: `4px solid ${isRun ? 'var(--accent)' : 'var(--success)'}`, cursor: 'pointer' }}>
                 <div className="flex items-center justify-between mb-1">
-                  <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: 'var(--accent-dim)', color: 'var(--accent)' }}>Run</span>
+                  <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: isRun ? 'var(--accent-dim)' : 'rgba(34,197,94,0.12)', color: isRun ? 'var(--accent)' : 'var(--success)' }}>{label}</span>
                   <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                    {new Date(item.date || item.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                    {activityDateLabel(item.date || item.created_at)}
                   </span>
                 </div>
                 <div className="flex gap-4 mt-1">
-                  <div><p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{fmt.distance(Number(item.distance_miles || 0), 2)}</p></div>
-                  <div><p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{fmt.pace(item.duration_seconds / item.distance_miles)}</p></div>
+                  {Number(item.distance_miles || 0) > 0 && <div><p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{fmt.distance(Number(item.distance_miles), 2)}</p></div>}
+                  {(isRun || label === 'Walk') && Number(item.distance_miles || 0) > 0 && Number(item.duration_seconds || 0) > 0 && <div><p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{fmt.pace(item.duration_seconds / item.distance_miles)}</p></div>}
                   <div><p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{fmtDuration(item.duration_seconds)}</p></div>
                   {item.calories > 0 && <div><p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{item.calories} cal</p></div>}
                 </div>

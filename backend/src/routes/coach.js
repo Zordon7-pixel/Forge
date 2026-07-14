@@ -7,6 +7,7 @@ const { requirePremium } = require('../middleware/premiumGate');
 const { checkAiLimit } = require('../middleware/aiLimit');
 const { buildHealthSignals } = require('../lib/healthSignals');
 const { applyInterference } = require('../services/interference');
+const { isRunActivity, runActivitySql } = require('../lib/runActivity');
 
 // GET /warning — check if dangerous training combo exists
 router.get('/warning', auth, async (req, res) => {
@@ -34,6 +35,7 @@ router.get('/feedback/:run_id', auth, async (req, res) => {
   try {
     const run = await dbGet('SELECT * FROM runs WHERE id = ? AND user_id = ?', [req.params.run_id, req.user.id]);
     if (!run) return res.status(404).json({ error: 'Run not found' });
+    if (!isRunActivity(run)) return res.status(400).json({ error: 'Coaching feedback is only available for running activities' });
 
     if (run.ai_feedback) return res.json({ feedback: run.ai_feedback });
 
@@ -139,9 +141,12 @@ router.post('/adjust-today', auth, checkAiLimit('adjust_today'), async (req, res
     // Recent training load (last 7 days)
     const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
     const recentRuns = await dbAll(
-      'SELECT date, distance_miles, duration_seconds, perceived_effort, type FROM runs WHERE user_id=? AND date>=? ORDER BY date DESC',
+      `SELECT date, distance_miles, duration_seconds, perceived_effort, type FROM runs WHERE user_id=? AND date>=? AND ${runActivitySql()} ORDER BY date DESC`,
       [req.user.id, sevenDaysAgo]
-    ).catch(() => []);
+    ).catch((err) => {
+      console.error('[coach/recovery] recent run lookup failed:', err.message);
+      return [];
+    });
     const recentLifts = await dbAll(
       'SELECT date, muscle_groups, intensity FROM lifts WHERE user_id=? AND date>=? ORDER BY date DESC',
       [req.user.id, sevenDaysAgo]
@@ -201,7 +206,7 @@ router.post('/next-goal', auth, requirePremium('Goal cascades'), async (req, res
     // Gather recent activity for context
     const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
     const [recentRuns, recentLifts] = await Promise.all([
-      dbAll('SELECT date, distance_miles, duration_seconds, type FROM runs WHERE user_id=? AND date>=? ORDER BY date DESC LIMIT 10', [req.user.id, sevenDaysAgo]),
+      dbAll(`SELECT date, distance_miles, duration_seconds, type FROM runs WHERE user_id=? AND date>=? AND ${runActivitySql()} ORDER BY date DESC LIMIT 10`, [req.user.id, sevenDaysAgo]),
       dbAll('SELECT started_at, muscle_groups FROM workout_sessions WHERE user_id=? AND ended_at IS NOT NULL ORDER BY started_at DESC LIMIT 5', [req.user.id])
     ]);
 

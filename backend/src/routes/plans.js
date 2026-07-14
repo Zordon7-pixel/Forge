@@ -16,6 +16,7 @@ const { getHrProfile } = require('../lib/hrZones');
 const { summarizeRecentRunLoad } = require('../lib/recentRunLoad');
 const { repairPlanPrescriptions } = require('../lib/prescriptionIntegrity');
 const { summarizeRecentExercises } = require('../lib/strengthPrescription');
+const { runActivitySql } = require('../lib/runActivity');
 
 function getDayShort() {
   return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date().getDay()];
@@ -193,7 +194,7 @@ async function buildCompletionSummaryForAdaptation(userId, plan, active, plannin
   const progress = parseJsonValue(active?.row?.progress_json, {});
   const completedIds = new Set((Array.isArray(progress?.completedSessionIds) ? progress.completedSessionIds : []).map(String));
   const [runs, lifts, workouts] = await Promise.all([
-    dbAll('SELECT id, date FROM runs WHERE user_id=? AND date>=? AND date<=?', [userId, since, planningDateISO]),
+    dbAll(`SELECT id, date FROM runs WHERE user_id=? AND date>=? AND date<=? AND ${runActivitySql()}`, [userId, since, planningDateISO]),
     dbAll('SELECT id, date FROM lifts WHERE user_id=? AND date>=? AND date<=?', [userId, since, planningDateISO]),
     dbAll(
       'SELECT id, started_at FROM workout_sessions WHERE user_id=? AND started_at>=? AND started_at<=? AND ended_at IS NOT NULL',
@@ -254,7 +255,7 @@ async function buildAdaptationInputs(userId, plan, active, planningDateISO) {
       `SELECT date, distance_miles, duration_seconds, perceived_effort, avg_heart_rate,
               pace_avg, health_source, created_at
        FROM runs
-       WHERE user_id=? AND date>=? AND date<=?
+       WHERE user_id=? AND date>=? AND date<=? AND ${runActivitySql()}
        ORDER BY date ASC, created_at ASC`,
       [userId, recentRunSince, planningDateISO]
     ).catch((err) => {
@@ -509,7 +510,7 @@ async function buildConcurrentContext(userId, profile, target) {
       `SELECT date, distance_miles, duration_seconds, perceived_effort, avg_heart_rate,
               pace_avg, health_source, created_at
        FROM runs
-       WHERE user_id=? AND date>=? AND date<=?
+       WHERE user_id=? AND date>=? AND date<=? AND ${runActivitySql()}
        ORDER BY date ASC, created_at ASC`,
       [userId, sinceDate, planningDateISO]
     ),
@@ -951,7 +952,7 @@ async function buildAdaptiveRecommendation(userId, preferences = {}) {
       [userId, startDate]
     ),
     dbAll('SELECT * FROM injury_logs WHERE user_id=? AND cleared=0 ORDER BY date DESC', [userId]),
-    dbAll('SELECT id, date FROM runs WHERE user_id=? AND date >= ? ORDER BY date DESC', [userId, startDate]),
+    dbAll(`SELECT id, date FROM runs WHERE user_id=? AND date >= ? AND ${runActivitySql()} ORDER BY date DESC`, [userId, startDate]),
     dbAll(
       "SELECT id, started_at, ended_at FROM workout_sessions WHERE user_id=? AND started_at >= ? AND ended_at IS NOT NULL ORDER BY started_at DESC",
       [userId, `${startDate}T00:00:00`]
@@ -1115,7 +1116,7 @@ router.get('/prefill', auth, async (req, res) => {
     since.setDate(since.getDate() - 56);
     const sinceDate = since.toISOString().slice(0, 10);
     const rows = await dbAll(
-      'SELECT date FROM runs WHERE user_id=? AND date >= ? ORDER BY date ASC',
+      `SELECT date FROM runs WHERE user_id=? AND date >= ? AND ${runActivitySql()} ORDER BY date ASC`,
       [req.user.id, sinceDate]
     );
     const inferredTrainingDays = [...new Set((rows || [])
@@ -1481,7 +1482,7 @@ router.get('/compliance', auth, async (req, res) => {
       .filter((d) => d.type !== 'rest' && d.date && d.date >= weekStart && d.date < weekEnd);
 
     const [runs, lifts] = await Promise.all([
-      dbAll('SELECT id, date, distance_miles FROM runs WHERE user_id=? AND date>=? AND date<?', [req.user.id, weekStart, weekEnd]),
+      dbAll(`SELECT id, date, distance_miles FROM runs WHERE user_id=? AND date>=? AND date<? AND ${runActivitySql()}`, [req.user.id, weekStart, weekEnd]),
       dbAll('SELECT id, date FROM lifts WHERE user_id=? AND date>=? AND date<?', [req.user.id, weekStart, weekEnd])
     ]);
 

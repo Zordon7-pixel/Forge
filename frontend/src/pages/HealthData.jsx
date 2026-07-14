@@ -232,7 +232,7 @@ export default function HealthData() {
   const connectedSources = useMemo(() => {
     const sources = []
     if (health?.synced_at || lastSyncResult?.syncedAt) sources.push({ key: 'apple', label: 'Apple Health', detail: dateText(health?.synced_at || lastSyncResult?.syncedAt), icon: Watch })
-    if (runs.some((run) => run.garmin_activity_id || String(run.watch_activity_type || '').toLowerCase().includes('garmin'))) sources.push({ key: 'garmin', label: 'Garmin', detail: 'Imported activity present', icon: Activity })
+    if (runs.some((run) => run.garmin_activity_id || String(run.watch_activity_type || '').toLowerCase().includes('garmin') || String(run.health_source || '').toLowerCase().includes('garmin'))) sources.push({ key: 'garmin', label: 'Garmin file', detail: 'Imported activity present', icon: Activity })
     return sources
   }, [health, lastSyncResult, runs])
   const trendLabels = { up: t('body.trendUp'), down: t('body.trendDown'), flat: t('body.trendFlat') }
@@ -305,6 +305,15 @@ export default function HealthData() {
         </p>
       </section>
 
+      <section className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+        <p className="text-sm font-black" style={{ color: 'var(--text-primary)' }}>Data coverage</p>
+        <div className="mt-2 space-y-2 text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+          <p><strong style={{ color: 'var(--text-primary)' }}>Apple Health:</strong> sleep stages, HRV, resting and workout heart rate, activity, calories, VO2 max, recovery HR, respiratory rate, workouts, routes, elevation, weather metadata, and running dynamics when the source writes them.</p>
+          <p><strong style={{ color: 'var(--text-primary)' }}>Garmin gaps:</strong> exact Garmin zone totals, ground-contact balance, performance condition, and run/walk segments are not reliably shared through Apple Health.</p>
+          <p><strong style={{ color: 'var(--text-primary)' }}>File import:</strong> Garmin CSV or structured workout JSON can add supported metrics. Forged Hybrid leaves unavailable values blank and never invents them.</p>
+        </div>
+      </section>
+
       {connectedSources.length > 0 && (
         <section className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
           <p className="text-sm font-black" style={{ color: 'var(--text-primary)' }}>Connected sources</p>
@@ -337,9 +346,9 @@ export default function HealthData() {
           {syncing ? 'Syncing Apple Health...' : 'Sync Apple Health'}
         </button>
         {notice && <p className="mt-3 text-xs" style={{ color: notice.includes('synced') ? 'var(--success)' : 'var(--warning)' }}>{notice}</p>}
-        {(health?.synced_at || lastSyncResult?.syncedAt) && Number(health?.metrics_schema_version || 0) < 2 && (
+        {(health?.synced_at || lastSyncResult?.syncedAt) && Number(health?.metrics_schema_version || 0) < 3 && (
           <p className="mt-3 text-xs leading-relaxed" style={{ color: 'var(--warning)' }}>
-            Expanded sleep, cardio fitness, and running-form metrics require the next approved iPhone build. After updating, tap Sync Apple Health once to grant the additional read permissions.
+            New workout-route and activity-detail imports require the next approved iPhone build. Existing Apple Health sync still works; after updating, tap Sync once to approve the added read permission.
           </p>
         )}
         <Link to="/history" className="mt-3 flex items-center gap-1 text-xs font-bold" style={{ color: 'var(--accent)', textDecoration: 'none' }}>

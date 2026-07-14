@@ -1,4 +1,5 @@
-const { zoneForHr } = require('./hrZones');
+const { computeZones, zoneForHr } = require('./hrZones');
+const { isRunActivity } = require('./runActivity');
 
 function toNumber(value) {
   if (value === null || value === undefined) return null;
@@ -109,23 +110,31 @@ function isEasyAerobicRun(run = {}) {
 }
 
 function analyzeRunHistory(runs = [], maxHr, opts = {}) {
-  const history = Array.isArray(runs) ? runs : [];
+  const history = (Array.isArray(runs) ? runs : []).filter(isRunActivity);
   const hrProfile = opts.hrProfile || null;
-  const observedMaxHr = history.reduce((max, run) => {
-    const value = toNumber(run.max_heart_rate ?? run.maxHR);
-    return value !== null && value > max ? value : max;
-  }, 0);
-  const effectiveMaxHr = toNumber(maxHr) || observedMaxHr || null;
-  const zones = computeHrZones(effectiveMaxHr);
+  const effectiveMaxHr = toNumber(maxHr) || toNumber(hrProfile?.max_hr) || null;
+  const profileZones = hrProfile ? computeZones({
+    maxHr: hrProfile.max_hr,
+    restingHr: hrProfile.resting_hr,
+    lthr: hrProfile.lthr,
+    model: hrProfile.zone_model,
+    customMinimums: hrProfile.custom_zones_json,
+  }).zones : [];
+  const zones = profileZones.length === 5
+    ? profileZones.reduce((acc, zone) => {
+      acc[`Z${zone.zone}`] = { min: zone.minBpm, max: zone.maxBpm };
+      return acc;
+    }, {})
+    : computeHrZones(effectiveMaxHr);
   if (!zones) {
     return {
       available: false,
-      reason: 'missing_max_heart_rate',
+      reason: 'missing_heart_rate_profile',
       weeklyVolumeMiles: 0,
       zoneDistribution: buildEmptyDistribution(),
       acuteChronicMiles: null,
       driftCount: 0,
-      notes: ['Add max heart rate to enable zone analysis.'],
+      notes: ['Add heart-rate zones to enable intensity analysis.'],
     };
   }
 
@@ -165,7 +174,12 @@ function analyzeRunHistory(runs = [], maxHr, opts = {}) {
     if (isRecent) weeklyMiles += miles;
     if (isChronic) chronicMiles += miles;
 
-    const zoneSeconds = parseZoneSeconds(run.heart_rate_zones ?? run.zoneSeconds ?? run.zone_seconds);
+    const parsedZoneSeconds = parseZoneSeconds(run.heart_rate_zones ?? run.zoneSeconds ?? run.zone_seconds);
+    const coveredSeconds = parsedZoneSeconds
+      ? Object.values(parsedZoneSeconds).reduce((sum, seconds) => sum + Math.max(0, seconds), 0)
+      : 0;
+    const durationSeconds = toNumber(run.duration_seconds ?? run.durationSeconds) || 0;
+    const zoneSeconds = durationSeconds > 0 && coveredSeconds / durationSeconds < 0.7 ? null : parsedZoneSeconds;
     let zone = null;
     if (zoneSeconds) {
       for (const [zoneKey, seconds] of Object.entries(zoneSeconds)) {

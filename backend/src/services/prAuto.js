@@ -1,5 +1,6 @@
 const { dbGet, dbAll, dbRun } = require('../db');
 const { v4: uuidv4 } = require('uuid');
+const { isRunActivity, runActivitySql } = require('../lib/runActivity');
 
 const RACE_WINDOWS = [
   { label: '1 Mile PR', miles: 1.0 },
@@ -42,7 +43,7 @@ function getCandidateDirection(label) {
 }
 
 function buildRunPrCandidates(run) {
-  if (!run) return [];
+  if (!run || !isRunActivity(run)) return [];
   const distance = Number(run.distance_miles || 0);
   const durationSeconds = Number(run.duration_seconds || 0);
 
@@ -107,8 +108,8 @@ async function autoUpdatePRs(userId, run, options = {}) {
       if (existing.source === 'auto') {
         if (isBetter(candidate.value, Number(existing.value), candidate.direction)) {
           await db.run(
-            `UPDATE personal_records SET value = ?, unit = ?, run_id = ?, achieved_at = ?, discrepancy = 0, auto_value = NULL, source = 'auto' WHERE id = ?`,
-            [candidate.value, candidate.unit, run.id, runDate, existing.id]
+            `UPDATE personal_records SET value = ?, unit = ?, run_id = ?, achieved_at = ?, discrepancy = 0, auto_value = NULL, source = 'auto' WHERE id = ? AND user_id = ?`,
+            [candidate.value, candidate.unit, run.id, runDate, existing.id, userId]
           );
           result.newPRs.push(candidate.label);
         }
@@ -117,8 +118,8 @@ async function autoUpdatePRs(userId, run, options = {}) {
 
       if (existing.source === 'manual' && isBetter(candidate.value, Number(existing.value), candidate.direction)) {
         await db.run(
-          `UPDATE personal_records SET discrepancy = 1, auto_value = ? WHERE id = ?`,
-          [candidate.value, existing.id]
+          `UPDATE personal_records SET discrepancy = 1, auto_value = ? WHERE id = ? AND user_id = ?`,
+          [candidate.value, existing.id, userId]
         );
         result.discrepancies.push({
           label: candidate.label,
@@ -141,7 +142,7 @@ async function recomputeRunPrCategories(userId, categoryLabels = [], options = {
   if (!labels.length) return result;
   const db = getDb(options);
   const runs = await db.all(
-    'SELECT * FROM runs WHERE user_id=? ORDER BY date ASC, created_at ASC',
+    `SELECT * FROM runs WHERE user_id=? AND ${runActivitySql()} ORDER BY date ASC, created_at ASC`,
     [userId]
   );
 

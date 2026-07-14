@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const { dbAll } = require('../db');
 const auth = require('../middleware/auth');
+const { runActivitySql } = require('../lib/runActivity');
 
 function dayKey(value) {
   return String(value || '').slice(0, 10);
@@ -85,7 +86,7 @@ router.get('/', auth, async (req, res) => {
   try {
     const [runs, lifts] = await Promise.all([
       dbAll(
-        'SELECT date, distance_miles, duration_seconds, perceived_effort FROM runs WHERE user_id=? AND distance_miles>0 ORDER BY date ASC',
+        `SELECT date, distance_miles, duration_seconds, perceived_effort FROM runs WHERE user_id=? AND distance_miles>0 AND ${runActivitySql()} ORDER BY date ASC`,
         [req.user.id]
       ),
       dbAll(

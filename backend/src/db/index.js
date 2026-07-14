@@ -307,6 +307,7 @@ async function initDb() {
         health_source TEXT,
         health_start_at TEXT,
         health_end_at TEXT,
+        workout_metrics_json TEXT DEFAULT '{}',
         gps_available INTEGER DEFAULT 1,
         shoe_id TEXT,
         pain_level TEXT,
@@ -318,6 +319,7 @@ async function initDb() {
     await client.query("ALTER TABLE runs ADD COLUMN IF NOT EXISTS health_source TEXT");
     await client.query("ALTER TABLE runs ADD COLUMN IF NOT EXISTS health_start_at TEXT");
     await client.query("ALTER TABLE runs ADD COLUMN IF NOT EXISTS health_end_at TEXT");
+    await client.query("ALTER TABLE runs ADD COLUMN IF NOT EXISTS workout_metrics_json TEXT DEFAULT '{}'");
     await client.query("ALTER TABLE runs ADD COLUMN IF NOT EXISTS pain_level TEXT");
     await client.query("ALTER TABLE runs ADD COLUMN IF NOT EXISTS post_energy TEXT");
 

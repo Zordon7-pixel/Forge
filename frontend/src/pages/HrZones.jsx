@@ -8,6 +8,7 @@ const MODEL_LABELS = {
   hrr: 'HR Reserve',
   maxhr: 'Max-HR %',
   lthr: 'LTHR',
+  custom: 'Watch zones',
 }
 
 const cardStyle = {
@@ -40,6 +41,7 @@ function formatRange(zone) {
   const min = zone.minBpm ?? zone.min_bpm
   const max = zone.maxBpm ?? zone.max_bpm
   if (min == null && max == null) return '--'
+  if (zone.openEnded) return `${min}+`
   if (max == null) return `${min}+`
   return `${min}-${max}`
 }
@@ -59,7 +61,7 @@ function ZoneBars({ zones }) {
               <span style={{ color: 'var(--text-muted)', fontSize: 12, fontWeight: 800 }}>{formatRange(zone)} bpm</span>
             </div>
             <div style={{ height: 10, borderRadius: 999, background: 'var(--bg-input)', overflow: 'hidden', border: '1px solid var(--border-subtle)' }}>
-              <div style={{ width: `${60 + index * 10}%`, height: '100%', borderRadius: 999, background: `linear-gradient(90deg, ${color}99, ${color})` }} />
+              <div style={{ width: `${60 + index * 10}%`, height: '100%', borderRadius: 999, background: color }} />
             </div>
           </div>
         )
@@ -104,15 +106,19 @@ export default function HrZones() {
   const [fieldError, setFieldError] = useState('')
   const [savingManual, setSavingManual] = useState(false)
   const [savingField, setSavingField] = useState(false)
-  const [form, setForm] = useState({ maxHr: '', restingHr: '', lthr: '', zoneModel: 'hrr' })
+  const [form, setForm] = useState({ maxHr: '', restingHr: '', lthr: '', zoneModel: 'hrr', customMinimums: ['', '', '', '', ''] })
   const [fieldForm, setFieldForm] = useState({ avgHr: '', durationMinutes: 20 })
 
   const syncForm = (data) => {
+    const customMinimums = Array.isArray(data?.customMinimums) && data.customMinimums.length === 5
+      ? data.customMinimums.map(String)
+      : ['', '', '', '', '']
     setForm({
-      maxHr: data?.max_hr ?? '',
-      restingHr: data?.resting_hr ?? '',
+      maxHr: data?.maxHr ?? '',
+      restingHr: data?.restingHr ?? '',
       lthr: data?.lthr ?? '',
-      zoneModel: data?.zone_model || 'hrr',
+      zoneModel: data?.zoneModel || 'hrr',
+      customMinimums,
     })
   }
 
@@ -121,8 +127,9 @@ export default function HrZones() {
     setLoadError('')
     try {
       const res = await api.get('/profile/hr-zones')
-      setProfile(res.data || {})
-      syncForm(res.data || {})
+      const next = { ...(res.data?.profile || {}), zones: Array.isArray(res.data?.zones) ? res.data.zones : [] }
+      setProfile(next)
+      syncForm(next)
     } catch (err) {
       setLoadError(readError(err, 'Unable to load HR zones.'))
     } finally {
@@ -153,7 +160,9 @@ export default function HrZones() {
       await api.put('/profile/hr-zones', {
         maxHr: suggestion.suggestedMaxHr,
         restingHr: suggestion.suggestedRestingHr,
+        lthr: null,
         zoneModel: 'hrr',
+        customMinimums: [],
       })
       setSuggestion(null)
       await load()
@@ -173,6 +182,7 @@ export default function HrZones() {
         restingHr: numberOrNull(form.restingHr),
         lthr: numberOrNull(form.lthr),
         zoneModel: form.zoneModel,
+        customMinimums: form.customMinimums.map(numberOrNull),
       })
       await load()
     } catch (err) {
@@ -229,10 +239,10 @@ export default function HrZones() {
         {hasZones ? (
           <>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
-              <StatChip label="Max HR" value={profile?.max_hr} />
-              <StatChip label="Resting" value={profile?.resting_hr} />
+              <StatChip label="Max HR" value={profile?.maxHr} />
+              <StatChip label="Resting" value={profile?.restingHr} />
               <StatChip label="LTHR" value={profile?.lthr} />
-              <StatChip label="Model" value={MODEL_LABELS[profile?.zone_model] || profile?.zone_model || '--'} />
+              <StatChip label="Model" value={MODEL_LABELS[profile?.zoneModel] || profile?.zoneModel || '--'} />
               <StatChip label="Source" value={profile?.source || '--'} />
             </div>
             <ZoneBars zones={zones.slice(0, 5)} />
@@ -282,7 +292,7 @@ export default function HrZones() {
       </section>
 
       <section style={cardStyle}>
-        <SectionToggle open={manualOpen} onClick={() => setManualOpen(v => !v)} icon={Activity} title="Manual edit" sub="Set max, resting, LTHR, and model" />
+        <SectionToggle open={manualOpen} onClick={() => setManualOpen(v => !v)} icon={Activity} title="Manual edit" sub="Use calculated zones or copy exact boundaries from your watch" />
         {manualOpen && (
           <div style={{ display: 'grid', gap: 12, marginTop: 14 }}>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
@@ -305,8 +315,34 @@ export default function HrZones() {
                 <option value="hrr">HR Reserve</option>
                 <option value="maxhr">Max-HR %</option>
                 <option value="lthr">LTHR</option>
+                <option value="custom">Copy zones from watch</option>
               </select>
             </label>
+            {form.zoneModel === 'custom' && (
+              <div>
+                <p style={{ color: 'var(--text-muted)', fontSize: 12, lineHeight: 1.45, margin: '0 0 8px' }}>Enter the starting bpm shown by your watch for each zone. Forged Hybrid will use these exact boundaries instead of estimating from one workout.</p>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: 7 }}>
+                  {form.customMinimums.map((value, index) => (
+                    <label key={`custom-zone-${index + 1}`} style={{ minWidth: 0 }}>
+                      <span style={{ display: 'block', color: ZONE_COLORS[index], fontSize: 11, fontWeight: 900, marginBottom: 5 }}>Z{index + 1}</span>
+                      <input
+                        type="number"
+                        min="30"
+                        max="230"
+                        inputMode="numeric"
+                        aria-label={`Zone ${index + 1} starts at bpm`}
+                        value={value}
+                        onChange={(event) => setForm((current) => ({
+                          ...current,
+                          customMinimums: current.customMinimums.map((entry, itemIndex) => itemIndex === index ? event.target.value : entry),
+                        }))}
+                        style={{ ...inputStyle, padding: '9px 6px', textAlign: 'center' }}
+                      />
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
             {manualError && <p style={{ color: 'var(--danger)', fontSize: 12, fontWeight: 800, margin: 0 }}>{manualError}</p>}
             <button type="button" onClick={saveManual} disabled={savingManual} style={{ minHeight: 44, borderRadius: 12, background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', fontSize: 14, fontWeight: 900, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, opacity: savingManual ? 0.7 : 1 }}>
               <Save size={16} /> {savingManual ? 'Saving...' : 'Save'}

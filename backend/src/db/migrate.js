@@ -73,11 +73,15 @@ async function runAlwaysMigrations() {
       max_hr INTEGER,
       resting_hr INTEGER,
       lthr INTEGER,
+      custom_zones_json TEXT DEFAULT '[]',
       zone_model TEXT NOT NULL DEFAULT 'hrr',
       source TEXT NOT NULL DEFAULT 'manual',
       updated_at TIMESTAMPTZ DEFAULT now()
     )
   `);
+
+  await pg.query("ALTER TABLE user_hr_profile ADD COLUMN IF NOT EXISTS custom_zones_json TEXT DEFAULT '[]'");
+  await pg.query("ALTER TABLE runs ADD COLUMN IF NOT EXISTS workout_metrics_json TEXT DEFAULT '{}'");
 
   await pg.query(`
     CREATE TABLE IF NOT EXISTS comp_codes (

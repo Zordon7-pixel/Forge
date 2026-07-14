@@ -378,7 +378,7 @@ export default function LogRun() {
             || (scheduledRun.hrZone && scheduledRun.hrZone.zone ? `Zone ${scheduledRun.hrZone.zone}` : '')
             || details.zone
           const bpmLabel = scheduledRun.hrZone && Number.isFinite(scheduledRun.hrZone.minBpm) && Number.isFinite(scheduledRun.hrZone.maxBpm)
-            ? `${scheduledRun.hrZone.minBpm}-${scheduledRun.hrZone.maxBpm} bpm`
+            ? `${scheduledRun.hrZone.minBpm}${scheduledRun.hrZone.openEnded ? '+' : `-${scheduledRun.hrZone.maxBpm}`} bpm`
             : ''
           const estimatedSeconds = distanceMiles > 0 && parsePaceToSecondsPerMile(pace)
             ? Math.round(distanceMiles * parsePaceToSecondsPerMile(pace))
@@ -672,7 +672,9 @@ export default function LogRun() {
         const updated = res.data || { ...selectedRun, notes: editingNotes }
         setSelectedRun(updated)
         setRecentRuns(prev => prev.map(r => (r.id === updated.id ? { ...r, notes: updated.notes } : r)))
-      } catch {}
+      } catch (error) {
+        console.error('[LogRun] notes update failed:', error?.message || error)
+      }
     }
   }
 

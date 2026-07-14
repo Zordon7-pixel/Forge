@@ -3,6 +3,7 @@ const { dbGet, dbAll, dbRun } = require('../db');
 const auth = require('../middleware/auth');
 const { v4: uuidv4 } = require('uuid');
 const autoUpdatePRs = require('../services/prAuto');
+const { isRunActivity, runActivitySql } = require('../lib/runActivity');
 
 // GET /api/prs — get all PRs for user
 router.get('/', auth, async (req, res) => {
@@ -44,9 +45,9 @@ router.post('/auto-detect', auth, async (req, res) => {
     const run = run_id ? await dbGet('SELECT * FROM runs WHERE id = ? AND user_id = ?', [run_id, req.user.id]) : null;
     const newPRs = [];
 
-    if (run && run.distance_miles && run.duration_seconds) {
+    if (run && isRunActivity(run) && run.distance_miles && run.duration_seconds) {
       // Check longest run
-      const longestRun = await dbGet(`SELECT MAX(distance_miles) as max FROM runs WHERE user_id = ? AND id != ?`, [req.user.id, run.id]);
+      const longestRun = await dbGet(`SELECT MAX(distance_miles) as max FROM runs WHERE user_id = ? AND id != ? AND ${runActivitySql()}`, [req.user.id, run.id]);
       if (!longestRun.max || run.distance_miles > longestRun.max) {
         const existing = await dbGet(`SELECT * FROM personal_records WHERE user_id = ? AND category = 'run' AND label = 'Longest Run'`, [req.user.id]);
         if (!existing || run.distance_miles > existing.value) {
@@ -63,7 +64,7 @@ router.post('/auto-detect', auth, async (req, res) => {
       // Check fastest pace
       const pace = run.duration_seconds / 60 / run.distance_miles;
       const fastestPace = await dbGet(
-        `SELECT MIN(duration_seconds / 60.0 / distance_miles) as min FROM runs WHERE user_id = ? AND distance_miles > 0 AND duration_seconds > 0 AND id != ?`,
+        `SELECT MIN(duration_seconds / 60.0 / distance_miles) as min FROM runs WHERE user_id = ? AND distance_miles > 0 AND duration_seconds > 0 AND id != ? AND ${runActivitySql()}`,
         [req.user.id, run.id]
       );
       if (!fastestPace.min || pace < fastestPace.min) {
@@ -98,7 +99,7 @@ router.get('/time', auth, async (req, res) => {
 
     const results = await Promise.all(distances.map(async dist => {
       const run = await dbGet(
-        `SELECT id, distance_miles, duration_seconds, date FROM runs WHERE user_id = ? AND distance_miles >= ? AND distance_miles <= ? ORDER BY duration_seconds ASC LIMIT 1`,
+        `SELECT id, distance_miles, duration_seconds, date FROM runs WHERE user_id = ? AND distance_miles >= ? AND distance_miles <= ? AND ${runActivitySql()} ORDER BY duration_seconds ASC LIMIT 1`,
         [req.user.id, dist.min, dist.max]
       );
       if (!run) return { distance: dist.label, best_time_seconds: null, pace: null, date: null, run_id: null, is_manual: false };

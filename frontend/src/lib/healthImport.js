@@ -95,9 +95,45 @@ function normalizeDate(value) {
 function normalizeType(rawType) {
   const value = String(rawType || '').toLowerCase()
   if (!value) return 'run'
-  if (value.includes('run') || value.includes('jog') || value.includes('walk')) return 'run'
+  if (value.includes('walk')) return 'walk'
+  if (value.includes('run') || value.includes('jog')) return 'run'
   if (value.includes('strength') || value.includes('lift') || value.includes('weight')) return 'strength'
   return value
+}
+
+function firstValue(row, keys) {
+  for (const key of keys) {
+    if (row[key] !== null && row[key] !== undefined && row[key] !== '') return row[key]
+  }
+  return null
+}
+
+function parseGarminDistanceMiles(row) {
+  const kmValue = firstValue(row, ['distance (km)', 'Distance (km)', 'Distance km'])
+  if (kmValue !== null) return (asNumber(kmValue) || 0) * KM_TO_MILES
+  const milesValue = firstValue(row, ['distance (mi)', 'Distance (mi)', 'Distance mi'])
+  if (milesValue !== null) return asNumber(milesValue) || 0
+  return parseDistanceMiles(firstValue(row, ['distance', 'Distance']), 'miles')
+}
+
+function parseElevationFeet(row, baseKeys) {
+  const meterValue = firstValue(row, baseKeys.flatMap((key) => [`${key} (m)`, `${key} m`]))
+  if (meterValue !== null) return (asNumber(meterValue) || 0) * 3.28084
+  return asNumber(firstValue(row, baseKeys))
+}
+
+function parseTemperatureF(row) {
+  const celsius = firstValue(row, ['Average Temperature (C)', 'Avg Temperature (C)', 'Temperature (C)'])
+  if (celsius !== null) return ((asNumber(celsius) || 0) * 9 / 5) + 32
+  return asNumber(firstValue(row, ['Average Temperature', 'Avg Temperature', 'Temperature']))
+}
+
+function parseGroundContactBalance(row) {
+  const raw = firstValue(row, ['Avg GCT Balance', 'Average Ground Contact Time Balance', 'Ground Contact Balance'])
+  if (raw === null) return {}
+  const left = asNumber(raw)
+  if (left === null || left < 0 || left > 100) return {}
+  return { groundContactBalanceLeftPct: left, groundContactBalanceRightPct: Number((100 - left).toFixed(1)) }
 }
 
 function parseDistanceMiles(value, assume = 'miles') {
@@ -117,17 +153,38 @@ export function parseGarminCSV(csvText) {
   const rows = parseCsvRows(csvText)
   return rows.map((row) => {
     const date = normalizeDate(row.date || row.Date || row['Start Time'] || row.start_time)
-    const distanceKm = asNumber(row.distance || row['distance (km)'] || row['Distance (km)'] || row.Distance)
+    const distanceMiles = parseGarminDistanceMiles(row)
     const durationSeconds = parseDurationToSeconds(row.duration || row.Duration || row['Elapsed Time'] || row.elapsed_time)
     const avgHeartRate = asNumber(row.avg_heart_rate || row['Average Heart Rate'] || row['Avg Heart Rate'])
     const type = normalizeType(row.type || row.Type || row.activity_type || row['Activity Type'])
 
+    const balance = parseGroundContactBalance(row)
     return {
       date,
       type,
-      distanceMiles: Number(((distanceKm || 0) * KM_TO_MILES).toFixed(3)),
+      distanceMiles: Number(distanceMiles.toFixed(3)),
       durationSeconds,
       avgHeartRate: avgHeartRate || null,
+      maxHeartRate: asNumber(firstValue(row, ['max_heart_rate', 'Max Heart Rate', 'Max HR'])),
+      calories: asNumber(firstValue(row, ['Calories', 'calories'])),
+      cadenceSpm: asNumber(firstValue(row, ['Avg Run Cadence', 'Average Run Cadence', 'Avg Cadence'])),
+      elevationGain: parseElevationFeet(row, ['Total Ascent', 'Elevation Gain']),
+      elevationLoss: parseElevationFeet(row, ['Total Descent', 'Elevation Loss']),
+      trainingEffectAerobic: asNumber(firstValue(row, ['Aerobic TE', 'Aerobic Training Effect'])),
+      trainingEffectAnaerobic: asNumber(firstValue(row, ['Anaerobic TE', 'Anaerobic Training Effect'])),
+      runningPowerWatts: asNumber(firstValue(row, ['Avg Power', 'Average Power'])),
+      runningStrideLengthM: asNumber(firstValue(row, ['Avg Stride Length', 'Average Stride Length'])),
+      runningVerticalOscillationCm: asNumber(firstValue(row, ['Avg Vertical Oscillation', 'Average Vertical Oscillation'])),
+      runningGroundContactTimeMs: asNumber(firstValue(row, ['Avg Ground Contact Time', 'Average Ground Contact Time'])),
+      runningVerticalRatioPct: asNumber(firstValue(row, ['Avg Vertical Ratio', 'Average Vertical Ratio'])),
+      respiratoryRateAvg: asNumber(firstValue(row, ['Average Respiration Rate', 'Avg Respiration Rate'])),
+      respiratoryRateMax: asNumber(firstValue(row, ['Max Respiration Rate'])),
+      performanceCondition: asNumber(firstValue(row, ['Performance Condition'])),
+      runTimeSeconds: parseDurationToSeconds(firstValue(row, ['Run Time'])),
+      walkTimeSeconds: parseDurationToSeconds(firstValue(row, ['Walk Time'])),
+      idleTimeSeconds: parseDurationToSeconds(firstValue(row, ['Idle Time'])),
+      temperatureF: parseTemperatureF(row),
+      ...balance,
       source: 'garmin_csv',
     }
   }).filter((row) => row.date && (row.distanceMiles > 0 || row.durationSeconds > 0))
@@ -148,6 +205,9 @@ export function parseStravaCSV(csvText) {
       distanceMiles: Number(distanceMiles.toFixed(3)),
       durationSeconds,
       avgHeartRate: avgHeartRate || null,
+      maxHeartRate: asNumber(row['Max Heart Rate'] || row.max_heart_rate),
+      calories: asNumber(row.Calories || row.calories),
+      elevationGain: asNumber(row['Elevation Gain'] || row.elevation_gain),
       source: 'strava_csv',
     }
   }).filter((row) => row.date && (row.distanceMiles > 0 || row.durationSeconds > 0))

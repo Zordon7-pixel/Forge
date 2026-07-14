@@ -4,6 +4,7 @@ const { dbGet, dbAll, dbRun } = require('../db');
 const auth = require('../middleware/auth');
 const { generateRunBrief, generateLiftPlan, generateWorkoutRecommendation, generateSessionFeedback, generateBodyPartWorkout, generatePostSessionInsight, sanitize } = require('../services/ai');
 const { requestExerciseImageIfMissing, requestImagesForWorkoutItems } = require('../lib/exerciseImageRequests');
+const { isRunActivity, runActivitySql } = require('../lib/runActivity');
 
 const FALLBACK_ACCESSORIES = {
   chest: ['Incline Dumbbell Press', 'Push-Up'],
@@ -89,9 +90,10 @@ router.post('/session-feedback', auth, async (req, res) => {
 
     if (sessionType === 'run') {
       sessionData = await dbGet('SELECT * FROM runs WHERE id=? AND user_id=?', [sessionId, athleteId]);
+      if (sessionData && !isRunActivity(sessionData)) return res.status(400).json({ error: 'Run analysis is only available for running activities' });
     } else if (sessionType === 'lift') {
       const session = await dbGet('SELECT * FROM workout_sessions WHERE id=? AND user_id=?', [sessionId, athleteId]);
-      const sets = await dbAll('SELECT * FROM workout_sets WHERE session_id=? ORDER BY logged_at ASC', [sessionId]);
+      const sets = await dbAll('SELECT * FROM workout_sets WHERE session_id=? AND user_id=? ORDER BY logged_at ASC', [sessionId, athleteId]);
       sessionData = session ? { ...session, sets } : null;
     } else {
       return res.status(400).json({ error: 'sessionType must be run or lift' });
@@ -130,9 +132,10 @@ router.post('/post-session-insight', auth, async (req, res) => {
     if (sessionType === 'run') {
       const run = await dbGet('SELECT * FROM runs WHERE id=? AND user_id=?', [sessionId, athleteId]);
       if (!run) return res.status(404).json({ error: 'Run not found' });
+      if (!isRunActivity(run)) return res.status(400).json({ error: 'Run analysis is only available for running activities' });
 
       const recentRuns = await dbAll(
-        'SELECT distance_miles, duration_seconds, perceived_effort, date FROM runs WHERE user_id=? AND id!=? ORDER BY date DESC, created_at DESC LIMIT 5',
+        `SELECT distance_miles, duration_seconds, perceived_effort, date FROM runs WHERE user_id=? AND id!=? AND ${runActivitySql()} ORDER BY date DESC, created_at DESC LIMIT 5`,
         [athleteId, sessionId]
       );
 
@@ -178,7 +181,7 @@ router.post('/post-session-insight', auth, async (req, res) => {
       weekStart.setDate(weekStart.getDate() - (day === 0 ? 6 : day - 1));
       weekStart.setHours(0, 0, 0, 0);
       const weekRow = await dbGet(
-        'SELECT COALESCE(SUM(distance_miles),0) as miles FROM runs WHERE user_id=? AND date>=?',
+        `SELECT COALESCE(SUM(distance_miles),0) as miles FROM runs WHERE user_id=? AND date>=? AND ${runActivitySql()}`,
         [athleteId, weekStart.toISOString().slice(0, 10)]
       );
 
@@ -286,7 +289,7 @@ router.get('/run-brief', auth, async (req, res) => {
     const [run, profile, recentRuns, recentLifts] = await Promise.all([
       sessionId ? dbGet('SELECT * FROM runs WHERE id=? AND user_id=?', [sessionId, req.user.id]) : Promise.resolve(null),
       dbGet('SELECT * FROM users WHERE id=?', [req.user.id]),
-      dbAll('SELECT * FROM runs WHERE user_id=? ORDER BY date DESC, created_at DESC LIMIT 8', [req.user.id]),
+      dbAll(`SELECT * FROM runs WHERE user_id=? AND ${runActivitySql()} ORDER BY date DESC, created_at DESC LIMIT 8`, [req.user.id]),
       dbAll('SELECT * FROM workout_sessions WHERE user_id=? AND ended_at IS NOT NULL ORDER BY started_at DESC LIMIT 5', [req.user.id])
     ]);
 
@@ -312,7 +315,7 @@ router.post('/lift-plan', auth, async (req, res) => {
     const [profile, recentSets, recentRuns] = await Promise.all([
       dbGet('SELECT * FROM users WHERE id=?', [athleteId]),
       dbAll('SELECT * FROM workout_sets WHERE user_id=? ORDER BY logged_at DESC LIMIT 40', [athleteId]),
-      dbAll('SELECT * FROM runs WHERE user_id=? ORDER BY date DESC, created_at DESC LIMIT 10', [athleteId])
+      dbAll(`SELECT * FROM runs WHERE user_id=? AND ${runActivitySql()} ORDER BY date DESC, created_at DESC LIMIT 10`, [athleteId])
     ]);
 
     const plan = await generateLiftPlan({ bodyPart, timeAvailable, profile, recentSets, recentRuns, userId: athleteId }) || {
@@ -338,7 +341,7 @@ router.get('/workout-recommendation', auth, async (req, res) => {
     const userId = req.user.id;
     const [profile, recentRuns, recentWorkouts] = await Promise.all([
       dbGet('SELECT * FROM users WHERE id=?', [userId]),
-      dbAll('SELECT * FROM runs WHERE user_id=? ORDER BY date DESC, created_at DESC LIMIT 10', [userId]),
+      dbAll(`SELECT * FROM runs WHERE user_id=? AND ${runActivitySql()} ORDER BY date DESC, created_at DESC LIMIT 10`, [userId]),
       dbAll('SELECT * FROM workout_sessions WHERE user_id=? ORDER BY started_at DESC LIMIT 8', [userId])
     ]);
 

@@ -52,12 +52,13 @@ function resolveHrZone(targetZone, hrProfile) {
   const zoneNumbers = zoneNumbersFromLabel(targetZone);
   if (!zoneNumbers.length || !hrProfile) return null;
   const model = hrProfile.zone_model;
-  if (!['hrr', 'maxhr', 'lthr'].includes(model)) return null;
+  if (!['hrr', 'maxhr', 'lthr', 'custom'].includes(model)) return null;
   const result = computeZones({
     maxHr: hrProfile.max_hr,
     restingHr: hrProfile.resting_hr,
     lthr: hrProfile.lthr,
     model,
+    customMinimums: hrProfile.custom_zones_json,
   });
   const zones = Array.isArray(result && result.zones) ? result.zones : [];
   const selected = zoneNumbers.map((zone) => zones.find((entry) => entry.zone === zone));
@@ -74,6 +75,7 @@ function resolveHrZone(targetZone, hrProfile) {
     label: zoneNumbers.length === 1 ? first.label : `${first.label} to ${last.label}`,
     minBpm: first.minBpm,
     maxBpm: last.maxBpm,
+    openEnded: Boolean(last.openEnded),
     model,
     source: 'calibrated',
   };

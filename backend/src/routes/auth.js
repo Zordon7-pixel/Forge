@@ -15,6 +15,7 @@ const {
 const { computeStreak, serverUtcAnchorCandidates } = require('../lib/streak');
 const backendPackage = require('../../package.json');
 const { WAIVER_VERSION } = require('../lib/waiverText');
+const { runActivitySql } = require('../lib/runActivity');
 
 const sign = (user) => jwt.sign(
   { id: user.id, name: user.name, email: user.email, onboarded: user.onboarded, coach_personality: user.coach_personality },
@@ -262,13 +263,13 @@ router.get('/me/stats', auth, async (req, res) => {
 
     const getRuns = async (daysBack) => {
       const since = new Date(now - daysBack * 86400000).toISOString().slice(0, 10);
-      return dbAll('SELECT * FROM runs WHERE user_id=? AND date >= ? ORDER BY date DESC', [userId, since]);
+      return dbAll(`SELECT * FROM runs WHERE user_id=? AND date >= ? AND ${runActivitySql()} ORDER BY date DESC`, [userId, since]);
     };
 
     const [dayRuns, weekRuns, monthRuns, yearRuns, allRuns] = await Promise.all([
-      dbAll('SELECT * FROM runs WHERE user_id=? AND date >= ? ORDER BY date DESC', [userId, today]),
+      dbAll(`SELECT * FROM runs WHERE user_id=? AND date >= ? AND ${runActivitySql()} ORDER BY date DESC`, [userId, today]),
       getRuns(7), getRuns(30), getRuns(365),
-      dbAll('SELECT * FROM runs WHERE user_id=? ORDER BY date DESC', [userId])
+      dbAll(`SELECT * FROM runs WHERE user_id=? AND ${runActivitySql()} ORDER BY date DESC`, [userId])
     ]);
 
     const summarize = (runs) => {
@@ -283,7 +284,7 @@ router.get('/me/stats', auth, async (req, res) => {
       const wStart = new Date(now - (w + 1) * 7 * 86400000).toISOString().slice(0, 10);
       const wEnd = new Date(now - w * 7 * 86400000).toISOString().slice(0, 10);
       weeklyTrendPromises.push(
-        dbAll('SELECT distance_miles FROM runs WHERE user_id=? AND date >= ? AND date < ?', [userId, wStart, wEnd])
+        dbAll(`SELECT distance_miles FROM runs WHERE user_id=? AND date >= ? AND date < ? AND ${runActivitySql()}`, [userId, wStart, wEnd])
           .then(wRuns => ({
             week: wStart,
             miles: Math.round(wRuns.reduce((s, r) => s + Number(r.distance_miles || 0), 0) * 100) / 100
@@ -325,7 +326,7 @@ router.get('/me/streak', auth, async (req, res) => {
   try {
     const userId = req.user.id;
     const [runRows, liftRows] = await Promise.all([
-      dbAll("SELECT date, created_at FROM runs WHERE user_id=?", [userId]),
+      dbAll(`SELECT date, created_at FROM runs WHERE user_id=? AND ${runActivitySql()}`, [userId]),
       dbAll("SELECT started_at FROM workout_sessions WHERE user_id=? AND ended_at IS NOT NULL", [userId])
     ]);
     const runDates = runRows.map(r => (r.date || r.created_at || '').slice(0, 10)).filter(Boolean);

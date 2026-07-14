@@ -4,9 +4,11 @@ import api from '../lib/api'
 const IOS_UA_REGEX = /iP(ad|hone|od)/i
 const NATIVE_HEALTH_AUTH_KEY = 'forge_health_authorized'
 const NATIVE_HEALTH_AUTH_VERSION_KEY = 'forge_health_authorized_version'
-const REQUIRED_HEALTH_AUTH_VERSION = 2
+const REQUIRED_HEALTH_AUTH_VERSION = 3
 const HEALTH_RESYNC_NEEDED_KEY = 'forge.health.resyncNeeded'
 const AUTO_HEALTH_SYNC_LAST_SYNC_KEY = 'forge_auto_health_sync_last_sync_at'
+const WORKOUT_IMPORT_VERSION_KEY = 'forge_health_workout_import_version'
+const REQUIRED_WORKOUT_IMPORT_VERSION = 3
 const ForgeHealth = registerPlugin('ForgeHealth')
 
 function isIOSDevice() {
@@ -53,7 +55,8 @@ function importNativeModule(name) {
 function hasNativeAuthorizationHint() {
   try {
     return localStorage.getItem(NATIVE_HEALTH_AUTH_KEY) === '1'
-  } catch {
+  } catch (error) {
+    console.error('[HealthService] authorization hint could not be read:', error?.message || error)
     return false
   }
 }
@@ -63,13 +66,16 @@ function markNativeAuthorized(version = 1) {
     localStorage.setItem(NATIVE_HEALTH_AUTH_KEY, '1')
     const currentVersion = Number(localStorage.getItem(NATIVE_HEALTH_AUTH_VERSION_KEY) || 0)
     localStorage.setItem(NATIVE_HEALTH_AUTH_VERSION_KEY, String(Math.max(currentVersion, version)))
-  } catch {}
+  } catch (error) {
+    console.error('[HealthService] authorization hint could not be saved:', error?.message || error)
+  }
 }
 
 function hasExpandedNativeAuthorization() {
   try {
     return Number(localStorage.getItem(NATIVE_HEALTH_AUTH_VERSION_KEY) || 0) >= REQUIRED_HEALTH_AUTH_VERSION
-  } catch {
+  } catch (error) {
+    console.error('[HealthService] authorization version could not be read:', error?.message || error)
     return false
   }
 }
@@ -77,7 +83,8 @@ function hasExpandedNativeAuthorization() {
 function healthResyncNeeded() {
   try {
     return localStorage.getItem(HEALTH_RESYNC_NEEDED_KEY) === '1'
-  } catch {
+  } catch (error) {
+    console.error('[HealthService] resync state could not be read:', error?.message || error)
     return false
   }
 }
@@ -85,19 +92,42 @@ function healthResyncNeeded() {
 function markHealthResyncNeeded() {
   try {
     localStorage.setItem(HEALTH_RESYNC_NEEDED_KEY, '1')
-  } catch {}
+  } catch (error) {
+    console.error('[HealthService] resync state could not be saved:', error?.message || error)
+  }
 }
 
 function clearHealthResyncNeeded() {
   try {
     localStorage.removeItem(HEALTH_RESYNC_NEEDED_KEY)
-  } catch {}
+  } catch (error) {
+    console.error('[HealthService] resync state could not be cleared:', error?.message || error)
+  }
+}
+
+function workoutHistoryUpgradeRequired() {
+  try {
+    return Number(localStorage.getItem(WORKOUT_IMPORT_VERSION_KEY) || 0) < REQUIRED_WORKOUT_IMPORT_VERSION
+  } catch (error) {
+    console.error('[HealthService] workout import version could not be read:', error?.message || error)
+    return true
+  }
+}
+
+function markWorkoutHistoryUpgraded() {
+  try {
+    localStorage.setItem(WORKOUT_IMPORT_VERSION_KEY, String(REQUIRED_WORKOUT_IMPORT_VERSION))
+  } catch (error) {
+    console.error('[HealthService] workout import version could not be saved:', error?.message || error)
+  }
 }
 
 function markAutoHealthSyncAttempted() {
   try {
     localStorage.setItem(AUTO_HEALTH_SYNC_LAST_SYNC_KEY, String(Date.now()))
-  } catch {}
+  } catch (error) {
+    console.error('[HealthService] automatic sync timestamp could not be saved:', error?.message || error)
+  }
 }
 
 function nativeBridgeUnavailableReason(error) {
@@ -171,7 +201,7 @@ class HealthService {
           if (!auth?.authorized) {
             return { available: false, reason: 'Apple Health permission was not granted.' }
           }
-          markNativeAuthorized()
+          markNativeAuthorized(REQUIRED_HEALTH_AUTH_VERSION)
         } else if (!hasNativeAuthorizationHint()) {
           return { available: false, reason: 'Open Settings > Apple Health and tap Sync Apple Health to grant access.' }
         }
@@ -285,8 +315,20 @@ class HealthService {
       throw new Error(result?.reason || 'Apple Health is not available.')
     }
 
-    const profile = await this.syncToProfile(result.metrics)
-    const historyOptions = healthResyncNeeded() ? { forceFullSync: true } : {}
+    await this.syncToProfile(result.metrics)
+    const historyOptions = (healthResyncNeeded() || workoutHistoryUpgradeRequired()) ? { forceFullSync: true } : {}
+    let profile = null
+    try {
+      const { data } = await api.get('/profile/hr-zones')
+      profile = data?.profile || null
+      const zones = Array.isArray(data?.zones) ? data.zones : []
+      if (Number.isFinite(Number(profile?.maxHr))) historyOptions.maxHR = Number(profile.maxHr)
+      if (zones.length === 5 && zones.every((zone) => Number.isFinite(Number(zone?.minBpm)))) {
+        historyOptions.zoneMinimums = zones.map((zone) => Number(zone.minBpm))
+      }
+    } catch (error) {
+      console.error('[HealthService] HR zone profile lookup failed:', error?.message || error)
+    }
     const history = await this.getWorkoutHistory(historyOptions)
     const workouts = history.available && history.workouts.length > 0 ? history.workouts : result.workouts
     let importResult = { imported: 0, skipped: 0, errors: [] }
@@ -294,11 +336,17 @@ class HealthService {
       try {
         const { data } = await api.post('/import/health', { workouts })
         importResult = data || importResult
-        clearHealthResyncNeeded()
       } catch (error) {
         markHealthResyncNeeded()
         throw error
       }
+    }
+
+    if (history.available) {
+      clearHealthResyncNeeded()
+      markWorkoutHistoryUpgraded()
+    } else {
+      markHealthResyncNeeded()
     }
 
     markAutoHealthSyncAttempted()

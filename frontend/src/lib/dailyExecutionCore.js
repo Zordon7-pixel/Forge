@@ -73,7 +73,8 @@ export function formatHrZone(session) {
   if (!session) return null;
   const hz = session.hrZone;
   if (hz && Number.isFinite(hz.minBpm) && Number.isFinite(hz.maxBpm)) {
-    return `${hz.zoneLabel || `Zone ${hz.zone}`} · ${hz.minBpm}-${hz.maxBpm} bpm`;
+    const range = hz.openEnded ? `${hz.minBpm}+` : `${hz.minBpm}-${hz.maxBpm}`;
+    return `${hz.zoneLabel || `Zone ${hz.zone}`} · ${range} bpm`;
   }
   if (session.target_zone) {
     const raw = String(session.target_zone).trim();

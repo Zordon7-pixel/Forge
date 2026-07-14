@@ -1,4 +1,5 @@
 import Capacitor
+import CoreLocation
 import Foundation
 import HealthKit
 
@@ -39,6 +40,7 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
         if let sleepType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) {
             types.insert(sleepType)
         }
+        types.insert(HKSeriesType.workoutRoute())
         if #available(iOS 16.0, *) {
             [
                 HKQuantityTypeIdentifier.heartRateRecoveryOneMinute,
@@ -238,7 +240,7 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
 
         group.notify(queue: .main) {
             var payload: [String: Any] = [
-                "metricsSchemaVersion": 2,
+                "metricsSchemaVersion": 3,
                 "stepsToday": Int(stepsToday.rounded()),
                 "caloriesBurnedToday": Int(caloriesToday.rounded()),
                 "totalMilesThisWeek": round(milesThisWeek * 100) / 100,
@@ -295,6 +297,7 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
         let startDate = requestedStart ?? defaultStart
         let endDate = call.getString("endDate").flatMap { parseDate($0) } ?? now
         let suppliedMaxHR = call.getDouble("maxHR")
+        let suppliedZoneMinimums = call.getArray("zoneMinimums", Double.self)
         let forceFullSync = call.getBool("forceFullSync") ?? false
 
         fetchAnchoredWorkoutHistory(startDate: startDate, endDate: endDate, forceFullSync: forceFullSync) { workouts, newAnchor, usedAnchor, error in
@@ -303,18 +306,20 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
                 return
             }
 
-            self.enrichWorkoutsWithHeartRate(workouts, suppliedMaxHR: suppliedMaxHR) { rows, observedMaxHR in
+            self.enrichWorkoutsWithHeartRate(workouts, suppliedMaxHR: suppliedMaxHR, suppliedZoneMinimums: suppliedZoneMinimums) { rows, observedMaxHR in
                 if let anchor = newAnchor {
                     self.saveWorkoutAnchor(anchor)
                 }
-                DispatchQueue.main.async {
-                    call.resolve([
-                        "workouts": rows,
-                        "observedMaxHR": observedMaxHR.map { Int($0.rounded()) } ?? NSNull(),
-                        "incremental": usedAnchor,
-                        "startDate": self.isoDateTime(startDate),
-                        "endDate": self.isoDateTime(endDate)
-                    ])
+                self.enrichWorkoutRowsWithRunningDynamics(rows, workouts: workouts) { enrichedRows in
+                    DispatchQueue.main.async {
+                        call.resolve([
+                            "workouts": enrichedRows,
+                            "observedMaxHR": observedMaxHR.map { Int($0.rounded()) } ?? NSNull(),
+                            "incremental": usedAnchor,
+                            "startDate": self.isoDateTime(startDate),
+                            "endDate": self.isoDateTime(endDate)
+                        ])
+                    }
                 }
             }
         }
@@ -550,6 +555,7 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
         var strideLengthM: Double?
         var verticalOscillationCm: Double?
         var groundContactTimeMs: Double?
+        var cadenceSpm: Double?
         var recordedAt: Date?
     }
 
@@ -582,12 +588,100 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
             }
         }
 
+        group.enter()
+        sumQuantity(.stepCount, unit: HKUnit.count(), startDate: workout.startDate, endDate: workout.endDate) { steps in
+            if steps > 0, workout.duration > 0 {
+                lock.lock()
+                summary.cadenceSpm = steps / (workout.duration / 60.0)
+                lock.unlock()
+            }
+            group.leave()
+        }
+
         group.notify(queue: .global(qos: .userInitiated)) {
-            if summary.powerWatts != nil || summary.speedMps != nil || summary.strideLengthM != nil || summary.verticalOscillationCm != nil || summary.groundContactTimeMs != nil {
+            if summary.powerWatts != nil || summary.speedMps != nil || summary.strideLengthM != nil || summary.verticalOscillationCm != nil || summary.groundContactTimeMs != nil || summary.cadenceSpm != nil {
                 summary.recordedAt = workout.endDate
             }
             completion(summary)
         }
+    }
+
+    private func fetchRouteLocations(_ route: HKWorkoutRoute, completion: @escaping ([CLLocation]) -> Void) {
+        let lock = NSLock()
+        var locations: [CLLocation] = []
+        var finished = false
+        let query = HKWorkoutRouteQuery(route: route) { _, batch, done, error in
+            lock.lock()
+            if finished {
+                lock.unlock()
+                return
+            }
+            if let batch = batch {
+                locations.append(contentsOf: batch)
+            }
+            if let error = error {
+                finished = true
+                let captured = locations
+                lock.unlock()
+                NSLog("ForgeHealthPlugin workout route query failed: %@", error.localizedDescription)
+                completion(captured)
+                return
+            }
+            if done {
+                finished = true
+                let captured = locations
+                lock.unlock()
+                completion(captured)
+                return
+            }
+            lock.unlock()
+        }
+        healthStore.execute(query)
+    }
+
+    private func fetchWorkoutRoute(workout: HKWorkout, completion: @escaping ([[String: Any]]) -> Void) {
+        let routeType = HKSeriesType.workoutRoute()
+        let predicate = HKQuery.predicateForObjects(from: workout)
+        let query = HKSampleQuery(sampleType: routeType, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, error in
+            if let error = error {
+                NSLog("ForgeHealthPlugin workout route lookup failed: %@", error.localizedDescription)
+                completion([])
+                return
+            }
+            let routes = samples as? [HKWorkoutRoute] ?? []
+            guard !routes.isEmpty else {
+                completion([])
+                return
+            }
+
+            let group = DispatchGroup()
+            let lock = NSLock()
+            var locations: [CLLocation] = []
+            for route in routes {
+                group.enter()
+                self.fetchRouteLocations(route) { routeLocations in
+                    lock.lock()
+                    locations.append(contentsOf: routeLocations)
+                    lock.unlock()
+                    group.leave()
+                }
+            }
+            group.notify(queue: .global(qos: .userInitiated)) {
+                let sorted = locations.sorted { $0.timestamp < $1.timestamp }
+                let stride = max(1, Int(ceil(Double(sorted.count) / 5000.0)))
+                let sampled = sorted.enumerated().compactMap { index, location -> [String: Any]? in
+                    guard index % stride == 0 else { return nil }
+                    return [
+                        "lat": location.coordinate.latitude,
+                        "lon": location.coordinate.longitude,
+                        "alt": location.altitude,
+                        "time": self.isoDateTime(location.timestamp)
+                    ]
+                }.prefix(5000)
+                completion(Array(sampled))
+            }
+        }
+        healthStore.execute(query)
     }
 
     private func fetchWorkouts(startDate: Date, endDate: Date, completion: @escaping ([[String: Any]], HKWorkout?) -> Void) {
@@ -627,7 +721,7 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
         let zoneSeconds: [String: Int]
     }
 
-    private func enrichWorkoutsWithHeartRate(_ workouts: [HKWorkout], suppliedMaxHR: Double?, completion: @escaping ([[String: Any]], Double?) -> Void) {
+    private func enrichWorkoutsWithHeartRate(_ workouts: [HKWorkout], suppliedMaxHR: Double?, suppliedZoneMinimums: [Double]?, completion: @escaping ([[String: Any]], Double?) -> Void) {
         guard !workouts.isEmpty else {
             completion([], nil)
             return
@@ -655,14 +749,14 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
         }
 
         group.notify(queue: .global(qos: .userInitiated)) {
-            let zoneMaxHR = suppliedMaxHR ?? observedMaxHR
+            let zoneMinimums = self.validZoneMinimums(suppliedZoneMinimums)
             let zoneGroup = DispatchGroup()
 
-            if let zoneMaxHR = zoneMaxHR, zoneMaxHR > 0 {
+            if zoneMinimums != nil || (suppliedMaxHR ?? 0) > 0 {
                 for workout in workouts {
                     zoneGroup.enter()
                     self.fetchHeartRateSamples(startDate: workout.startDate, endDate: workout.endDate) { samples in
-                        let zoneSeconds = self.bucketHeartRateSamples(samples, workout: workout, maxHR: zoneMaxHR)
+                        let zoneSeconds = self.bucketHeartRateSamples(samples, workout: workout, maxHR: suppliedMaxHR, zoneMinimums: zoneMinimums)
                         lock.lock()
                         let existing = summaries[workout.uuid]
                         summaries[workout.uuid] = WorkoutHeartRateSummary(avgHR: existing?.avgHR, maxHR: existing?.maxHR, zoneSeconds: zoneSeconds)
@@ -719,8 +813,16 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
         return ["z1": 0, "z2": 0, "z3": 0, "z4": 0, "z5": 0]
     }
 
-    private func bucketHeartRateSamples(_ samples: [HeartRatePoint], workout: HKWorkout, maxHR: Double) -> [String: Int] {
-        guard maxHR > 0, !samples.isEmpty else {
+    private func validZoneMinimums(_ values: [Double]?) -> [Double]? {
+        guard let values = values, values.count == 5 else { return nil }
+        guard values.enumerated().allSatisfy({ index, value in
+            value >= 30 && value <= 230 && (index == 0 || value > values[index - 1])
+        }) else { return nil }
+        return values
+    }
+
+    private func bucketHeartRateSamples(_ samples: [HeartRatePoint], workout: HKWorkout, maxHR: Double?, zoneMinimums: [Double]?) -> [String: Int] {
+        guard !samples.isEmpty, zoneMinimums != nil || (maxHR ?? 0) > 0 else {
             return emptyZoneSeconds()
         }
 
@@ -729,18 +831,23 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
             let nextDate = index + 1 < samples.count ? samples[index + 1].date : workout.endDate
             let rawSeconds = nextDate.timeIntervalSince(sample.date)
             let seconds = Int(max(1, min(rawSeconds, 30)).rounded())
-            let pct = sample.bpm / maxHR
             let zone: String?
-            if pct >= 0.9 {
-                zone = "z5"
-            } else if pct >= 0.8 {
-                zone = "z4"
-            } else if pct >= 0.7 {
-                zone = "z3"
-            } else if pct >= 0.6 {
-                zone = "z2"
-            } else if pct >= 0.5 {
-                zone = "z1"
+            if let minimums = zoneMinimums {
+                let zoneIndex = minimums.lastIndex(where: { sample.bpm >= $0 }) ?? 0
+                zone = "z\(zoneIndex + 1)"
+            } else if let maxHR = maxHR {
+                let pct = sample.bpm / maxHR
+                if pct >= 0.9 {
+                    zone = "z5"
+                } else if pct >= 0.8 {
+                    zone = "z4"
+                } else if pct >= 0.7 {
+                    zone = "z3"
+                } else if pct >= 0.6 {
+                    zone = "z2"
+                } else {
+                    zone = "z1"
+                }
             } else {
                 zone = nil
             }
@@ -749,6 +856,53 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
             }
         }
         return zones
+    }
+
+    private func enrichWorkoutRowsWithRunningDynamics(_ rows: [[String: Any]], workouts: [HKWorkout], completion: @escaping ([[String: Any]]) -> Void) {
+        guard rows.count == workouts.count else {
+            completion(rows)
+            return
+        }
+        let group = DispatchGroup()
+        let lock = NSLock()
+        var enriched = rows
+
+        for (index, workout) in workouts.enumerated() {
+            group.enter()
+            fetchWorkoutRoute(workout: workout) { route in
+                let applyEnrichment: (RunningDynamicsSummary) -> Void = { dynamics in
+                    lock.lock()
+                    var row = enriched[index]
+                    var metrics = row["workoutMetrics"] as? [String: Any] ?? [:]
+                    if let value = dynamics.powerWatts { metrics["running_power_watts"] = Int(value.rounded()) }
+                    if let value = dynamics.speedMps { metrics["running_speed_mps"] = round(value * 100) / 100 }
+                    if let value = dynamics.strideLengthM { metrics["running_stride_length_m"] = round(value * 100) / 100 }
+                    if let value = dynamics.verticalOscillationCm { metrics["running_vertical_oscillation_cm"] = round(value * 10) / 10 }
+                    if let value = dynamics.groundContactTimeMs { metrics["running_ground_contact_time_ms"] = Int(value.rounded()) }
+                    if let stride = dynamics.strideLengthM, stride > 0, let vertical = dynamics.verticalOscillationCm {
+                        metrics["running_vertical_ratio_pct"] = round((vertical / (stride * 100)) * 1000) / 10
+                    }
+                    if let value = dynamics.cadenceSpm {
+                        row["cadenceSpm"] = round(value * 10) / 10
+                    }
+                    if !route.isEmpty { row["routeCoords"] = route }
+                    metrics["metric_source"] = "apple_health"
+                    row["workoutMetrics"] = metrics
+                    enriched[index] = row
+                    lock.unlock()
+                    group.leave()
+                }
+                if workout.workoutActivityType == .running {
+                    self.fetchRunningDynamics(workout: workout, completion: applyEnrichment)
+                } else {
+                    applyEnrichment(RunningDynamicsSummary())
+                }
+            }
+        }
+
+        group.notify(queue: .global(qos: .userInitiated)) {
+            completion(enriched)
+        }
     }
 
     private func averageHeartRate(startDate: Date, endDate: Date, completion: @escaping (Double?) -> Void) {
@@ -782,7 +936,23 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
         ]
         payload["avgHR"] = avgHR.map { Int($0.rounded()) } ?? NSNull()
         payload["maxHR"] = maxHR.map { Int($0.rounded()) } ?? NSNull()
-        payload["zoneSeconds"] = zoneSeconds ?? emptyZoneSeconds()
+        let resolvedZoneSeconds = zoneSeconds ?? emptyZoneSeconds()
+        payload["zoneSeconds"] = resolvedZoneSeconds
+        var workoutMetrics: [String: Any] = ["metric_source": "apple_health"]
+        let coveredSeconds = resolvedZoneSeconds.values.reduce(0, +)
+        if workout.duration > 0, coveredSeconds > 0 {
+            workoutMetrics["hr_sample_coverage_pct"] = min(100, round((Double(coveredSeconds) / workout.duration) * 1000) / 10)
+        }
+        if let temperature = workout.metadata?[HKMetadataKeyWeatherTemperature] as? HKQuantity {
+            payload["temperatureF"] = round(temperature.doubleValue(for: HKUnit.degreeFahrenheit()) * 10) / 10
+        }
+        if let ascent = workout.metadata?[HKMetadataKeyElevationAscended] as? HKQuantity {
+            payload["elevationGain"] = round(ascent.doubleValue(for: HKUnit.foot()) * 10) / 10
+        }
+        if let descent = workout.metadata?[HKMetadataKeyElevationDescended] as? HKQuantity {
+            payload["elevationLoss"] = round(descent.doubleValue(for: HKUnit.foot()) * 10) / 10
+        }
+        payload["workoutMetrics"] = workoutMetrics
         return payload
     }
 

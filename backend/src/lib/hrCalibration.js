@@ -1,4 +1,5 @@
 const { computeZones } = require('./hrZones');
+const { runActivitySql } = require('./runActivity');
 
 function toNumber(value) {
   if (value === null || value === undefined) return null;
@@ -36,6 +37,7 @@ async function deriveHrProfileFromHistory(userId, deps) {
        AND date >= to_char(CURRENT_DATE - INTERVAL '180 days', 'YYYY-MM-DD')
        AND max_heart_rate IS NOT NULL
        AND max_heart_rate BETWEEN 30 AND 230
+       AND ${runActivitySql()}
      ORDER BY max_heart_rate DESC
      LIMIT 3`,
     [userId]

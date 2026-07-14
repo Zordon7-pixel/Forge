@@ -2,6 +2,7 @@ const router = require('express').Router();
 const { dbGet, dbAll } = require('../db');
 const auth = require('../middleware/auth');
 const { generateWeeklyInsight } = require('../services/ai');
+const { runActivitySql } = require('../lib/runActivity');
 
 function getMonthBounds() {
   const now = new Date();
@@ -76,9 +77,9 @@ async function buildWeeklyRecap(userId, { isPro = false } = {}) {
   const prevEndExclusive = weekStart;
 
   const [runs, lifts, prevWeekMilesRow, prs] = await Promise.all([
-    dbAll('SELECT * FROM runs WHERE user_id=? AND date>=? AND date<? ORDER BY date DESC, created_at DESC', [userId, weekStart, weekEndExclusive]),
+    dbAll(`SELECT * FROM runs WHERE user_id=? AND date>=? AND date<? AND ${runActivitySql()} ORDER BY date DESC, created_at DESC`, [userId, weekStart, weekEndExclusive]),
     dbAll('SELECT * FROM lifts WHERE user_id=? AND date>=? AND date<? ORDER BY date DESC, created_at DESC', [userId, weekStart, weekEndExclusive]),
-    dbGet('SELECT COALESCE(SUM(distance_miles),0) as miles FROM runs WHERE user_id=? AND date>=? AND date<?', [userId, prevStart, prevEndExclusive]),
+    dbGet(`SELECT COALESCE(SUM(distance_miles),0) as miles FROM runs WHERE user_id=? AND date>=? AND date<? AND ${runActivitySql()}`, [userId, prevStart, prevEndExclusive]),
     dbAll('SELECT label, achieved_at FROM personal_records WHERE user_id=? AND achieved_at>=? AND achieved_at<? ORDER BY achieved_at DESC', [userId, weekStart, weekEndExclusive]),
   ]);
 
@@ -163,13 +164,13 @@ async function buildWeeklyRecap(userId, { isPro = false } = {}) {
 
 async function buildRecap(userId, start, end, prevStart, prevEnd) {
   const [runs, workouts, allRunDates, allLiftDates, user, monthRow, prevRuns] = await Promise.all([
-    dbAll('SELECT * FROM runs WHERE user_id=? AND date>=? AND date<? ORDER BY date DESC', [userId, start, end]),
+    dbAll(`SELECT * FROM runs WHERE user_id=? AND date>=? AND date<? AND ${runActivitySql()} ORDER BY date DESC`, [userId, start, end]),
     dbAll("SELECT * FROM workout_sessions WHERE user_id=? AND started_at>=? AND started_at<? AND ended_at IS NOT NULL", [userId, start + 'T00:00:00', end + 'T00:00:00']),
-    dbAll('SELECT date FROM runs WHERE user_id=?', [userId]),
+    dbAll(`SELECT date FROM runs WHERE user_id=? AND ${runActivitySql()}`, [userId]),
     dbAll('SELECT started_at FROM workout_sessions WHERE user_id=? AND ended_at IS NOT NULL', [userId]),
     dbGet('SELECT monthly_goal_miles FROM users WHERE id=?', [userId]),
-    dbGet('SELECT COALESCE(SUM(distance_miles),0) as miles FROM runs WHERE user_id=? AND date>=? AND date<?', [userId, getMonthBounds().start, getMonthBounds().end]),
-    dbAll('SELECT distance_miles FROM runs WHERE user_id=? AND date>=? AND date<?', [userId, prevStart, prevEnd])
+    dbGet(`SELECT COALESCE(SUM(distance_miles),0) as miles FROM runs WHERE user_id=? AND date>=? AND date<? AND ${runActivitySql()}`, [userId, getMonthBounds().start, getMonthBounds().end]),
+    dbAll(`SELECT distance_miles FROM runs WHERE user_id=? AND date>=? AND date<? AND ${runActivitySql()}`, [userId, prevStart, prevEnd])
   ]);
 
   const totalMiles = runs.reduce((s, r) => s + Number(r.distance_miles || 0), 0);
@@ -214,7 +215,7 @@ async function buildRecap(userId, start, end, prevStart, prevEnd) {
     weeklyMilesGoal = Math.round((user.monthly_goal_miles / 4.33) * 10) / 10;
   } else {
     const fourWeekStart = new Date(Date.now() - 28 * 86400000).toISOString().slice(0, 10);
-    const oldRuns = await dbAll('SELECT distance_miles FROM runs WHERE user_id=? AND date>=?', [userId, fourWeekStart]);
+    const oldRuns = await dbAll(`SELECT distance_miles FROM runs WHERE user_id=? AND date>=? AND ${runActivitySql()}`, [userId, fourWeekStart]);
     const fourWeekMiles = oldRuns.reduce((s, r) => s + Number(r.distance_miles || 0), 0);
     const avgWeekly = fourWeekMiles / 4;
     if (avgWeekly > 0) weeklyMilesGoal = Math.max(10, Math.round(avgWeekly * 1.1 * 10) / 10);

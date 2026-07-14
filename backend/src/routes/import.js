@@ -2,6 +2,8 @@ const router = require('express').Router();
 const { v4: uuidv4 } = require('uuid');
 const { dbAll, dbGet, dbRun } = require('../db');
 const auth = require('../middleware/auth');
+const { activityKind } = require('../lib/runActivity');
+const { normalizeWorkoutMetrics } = require('../lib/workoutMetrics');
 
 function asNumber(value, fallback = 0) {
   const num = Number(value);
@@ -27,7 +29,8 @@ function normalizeZoneSeconds(value) {
   if (typeof raw === 'string' && raw.trim()) {
     try {
       raw = JSON.parse(raw);
-    } catch {
+    } catch (err) {
+      console.error('[import] heart-rate zones JSON parse failed:', err.message);
       raw = null;
     }
   }
@@ -44,16 +47,62 @@ function normalizeHeartRate(value) {
   return bpm >= 30 && bpm <= 250 ? bpm : null;
 }
 
+function firstValue(raw, keys) {
+  for (const key of keys) {
+    if (raw[key] !== null && raw[key] !== undefined && raw[key] !== '') return raw[key];
+  }
+  return null;
+}
+
+function optionalNumber(raw, keys, min, max) {
+  const value = firstValue(raw, keys);
+  if (value === null) return null;
+  const number = Number(value);
+  return Number.isFinite(number) && number >= min && number <= max ? number : null;
+}
+
+function normalizeRouteCoords(value) {
+  let parsed = value;
+  if (typeof parsed === 'string' && parsed.trim()) {
+    try {
+      parsed = JSON.parse(parsed);
+    } catch (err) {
+      console.error('[import] route coordinates JSON parse failed:', err.message);
+      return [];
+    }
+  }
+  if (!Array.isArray(parsed)) return [];
+  return parsed.slice(0, 5000).map((point) => {
+    const coordinate = {
+      lat: Number(point?.lat ?? point?.latitude),
+      lon: Number(point?.lon ?? point?.lng ?? point?.longitude),
+    };
+    const altitude = Number(point?.alt ?? point?.altitude);
+    if (Number.isFinite(altitude) && altitude >= -500 && altitude <= 30000) coordinate.alt = altitude;
+    const timestampValue = point?.time ?? point?.timestamp;
+    if (timestampValue) {
+      const timestamp = new Date(timestampValue);
+      if (!Number.isNaN(timestamp.getTime())) coordinate.time = timestamp.toISOString();
+    }
+    return coordinate;
+  }).filter((point) => Number.isFinite(point.lat) && point.lat >= -90 && point.lat <= 90 && Number.isFinite(point.lon) && point.lon >= -180 && point.lon <= 180);
+}
+
 function classifyType(rawType = '') {
   const value = String(rawType || '').toLowerCase().trim();
   if (value.includes('strength') || value.includes('lift') || value.includes('weight') || value.includes('resistance')) {
     return { section: 'lift', runType: null, liftCategory: 'strength' };
   }
-  if (value.includes('walk')) return { section: 'run', runType: 'walk', liftCategory: null };
+  if (value.includes('walk')) return { section: 'activity', runType: 'walk', liftCategory: null };
   if (value.includes('treadmill')) return { section: 'run', runType: 'treadmill', liftCategory: null };
   if (value.includes('run') || value.includes('jog')) return { section: 'run', runType: 'easy', liftCategory: null };
-  if (value.includes('workout')) return { section: 'lift', runType: null, liftCategory: 'strength' };
-  return { section: 'run', runType: 'easy', liftCategory: null };
+  if (value.includes('cycl') || value.includes('bike')) return { section: 'activity', runType: 'cycling', liftCategory: null };
+  if (value.includes('swim')) return { section: 'activity', runType: 'swimming', liftCategory: null };
+  if (value.includes('hik')) return { section: 'activity', runType: 'hiking', liftCategory: null };
+  if (value.includes('row')) return { section: 'activity', runType: 'rowing', liftCategory: null };
+  if (value.includes('elliptical')) return { section: 'activity', runType: 'elliptical', liftCategory: null };
+  if (value.includes('workout') || value === 'other' || !value) return { section: 'activity', runType: 'workout', liftCategory: null };
+  return { section: 'activity', runType: value.slice(0, 40), liftCategory: null };
 }
 
 function normalizeRow(raw = {}) {
@@ -67,7 +116,37 @@ function normalizeRow(raw = {}) {
   const maxHeartRate = normalizeHeartRate(raw.maxHR || raw.maxHeartRate || raw.max_heart_rate || raw.maximum_heart_rate || raw['Max Heart Rate'] || null);
   const zoneSeconds = normalizeZoneSeconds(raw.zoneSeconds || raw.zone_seconds || raw.heart_rate_zones);
   const source = String(raw.source || 'imported').slice(0, 40);
-  return { date, startDate, endDate, ...type, distanceMiles, durationSeconds, avgHeartRate, maxHeartRate, zoneSeconds, source, raw };
+  const workoutMetrics = normalizeWorkoutMetrics({ ...raw, metric_source: source });
+  const totalZoneSeconds = Object.values(zoneSeconds).reduce((sum, seconds) => sum + seconds, 0);
+  if (durationSeconds > 0 && totalZoneSeconds > 0 && workoutMetrics.metrics.hr_sample_coverage_pct === undefined) {
+    workoutMetrics.metrics.hr_sample_coverage_pct = Math.min(100, Math.round((totalZoneSeconds / durationSeconds) * 1000) / 10);
+  }
+  return {
+    date,
+    startDate,
+    endDate,
+    ...type,
+    distanceMiles,
+    durationSeconds,
+    avgHeartRate,
+    maxHeartRate,
+    zoneSeconds,
+    source,
+    calories: optionalNumber(raw, ['calories', 'Calories'], 0, 30000),
+    perceivedEffort: optionalNumber(raw, ['perceivedEffort', 'perceived_effort', 'rpe', 'RPE'], 1, 10),
+    cadenceSpm: optionalNumber(raw, ['cadenceSpm', 'cadence_spm', 'avgCadence', 'averageCadence', 'Avg Run Cadence'], 0, 300),
+    elevationGain: optionalNumber(raw, ['elevationGain', 'elevation_gain', 'elevationGainFeet', 'totalAscent', 'Total Ascent'], 0, 100000),
+    elevationLoss: optionalNumber(raw, ['elevationLoss', 'elevation_loss', 'elevationLossFeet', 'totalDescent', 'Total Descent'], 0, 100000),
+    vo2Max: optionalNumber(raw, ['vo2Max', 'vo2_max', 'VO2 Max'], 5, 100),
+    trainingEffectAerobic: optionalNumber(raw, ['trainingEffectAerobic', 'training_effect_aerobic', 'aerobicTrainingEffect', 'Aerobic TE'], 0, 10),
+    trainingEffectAnaerobic: optionalNumber(raw, ['trainingEffectAnaerobic', 'training_effect_anaerobic', 'anaerobicTrainingEffect', 'Anaerobic TE'], 0, 10),
+    recoveryTimeHours: optionalNumber(raw, ['recoveryTimeHours', 'recovery_time_hours', 'Recovery Time'], 0, 1000),
+    temperatureF: optionalNumber(raw, ['temperatureF', 'temperature_f', 'avgTemperatureF', 'Average Temperature'], -100, 150),
+    routeCoords: normalizeRouteCoords(raw.routeCoords || raw.route_coords || raw.route),
+    workoutMetrics: workoutMetrics.metrics,
+    droppedMetricFields: workoutMetrics.droppedFields,
+    raw,
+  };
 }
 
 function startsMatch(existingStart, importedStart) {
@@ -80,14 +159,16 @@ function startsMatch(existingStart, importedStart) {
 
 async function findExistingRun(userId, item) {
   const candidates = await dbAll(
-    `SELECT id, date, health_start_at
+    `SELECT id, date, type, watch_activity_type, watch_normalized_type, health_start_at
      FROM runs
      WHERE user_id=? AND date=? AND ABS(COALESCE(distance_miles,0) - ?) < 0.05
      LIMIT 25`,
     [userId, item.date, item.distanceMiles]
   );
-  return candidates.find((row) => startsMatch(row.health_start_at, item.startDate))
-    || candidates.find((row) => !row.health_start_at)
+  const incomingKind = activityKind({ type: item.runType });
+  const sameActivity = candidates.filter((row) => activityKind(row) === incomingKind);
+  return sameActivity.find((row) => startsMatch(row.health_start_at, item.startDate))
+    || sameActivity.find((row) => !row.health_start_at)
     || null;
 }
 
@@ -106,8 +187,10 @@ async function insertRun(userId, item) {
     `INSERT INTO runs (
       id, user_id, date, type, distance_miles, duration_seconds, perceived_effort, notes,
       avg_heart_rate, max_heart_rate, heart_rate_zones, calories, watch_mode, watch_activity_type,
-      watch_normalized_type, health_source, health_start_at, health_end_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      watch_normalized_type, health_source, health_start_at, health_end_at, cadence_spm,
+      elevation_gain, elevation_loss, route_coords, vo2_max, training_effect_aerobic,
+      training_effect_anaerobic, recovery_time_hours, temperature_f, workout_metrics_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       runId,
       userId,
@@ -115,18 +198,28 @@ async function insertRun(userId, item) {
       item.runType || 'easy',
       item.distanceMiles,
       item.durationSeconds,
-      5,
+      item.perceivedEffort,
       'Imported workout',
       item.avgHeartRate,
       item.maxHeartRate,
       JSON.stringify(item.zoneSeconds),
-      Math.round(asNumber(item.raw?.calories, 0)),
+      Math.round(asNumber(item.calories, 0)),
       'import',
       String(item.raw?.type || item.raw?.activityType || 'imported'),
-      'imported',
+      item.runType || 'imported',
       item.source,
       item.startDate,
       item.endDate,
+      item.cadenceSpm,
+      item.elevationGain,
+      item.elevationLoss,
+      JSON.stringify(item.routeCoords),
+      item.vo2Max,
+      item.trainingEffectAerobic,
+      item.trainingEffectAnaerobic,
+      item.recoveryTimeHours,
+      item.temperatureF,
+      JSON.stringify(item.workoutMetrics),
     ]
   );
 }
@@ -143,7 +236,21 @@ async function updateExistingRunHealth(userId, runId, item) {
       heart_rate_zones = COALESCE(?, heart_rate_zones),
       health_source = COALESCE(?, health_source),
       health_start_at = COALESCE(?, health_start_at),
-      health_end_at = COALESCE(?, health_end_at)
+      health_end_at = COALESCE(?, health_end_at),
+      type = COALESCE(?, type),
+      watch_activity_type = COALESCE(?, watch_activity_type),
+      watch_normalized_type = COALESCE(?, watch_normalized_type),
+      cadence_spm = COALESCE(?, cadence_spm),
+      elevation_gain = COALESCE(?, elevation_gain),
+      elevation_loss = COALESCE(?, elevation_loss),
+      route_coords = COALESCE(NULLIF(?, '[]'), route_coords),
+      vo2_max = COALESCE(?, vo2_max),
+      training_effect_aerobic = COALESCE(?, training_effect_aerobic),
+      training_effect_anaerobic = COALESCE(?, training_effect_anaerobic),
+      recovery_time_hours = COALESCE(?, recovery_time_hours),
+      temperature_f = COALESCE(?, temperature_f),
+      calories = CASE WHEN ?>0 THEN ? ELSE calories END,
+      workout_metrics_json = COALESCE(NULLIF(?, '{}'), workout_metrics_json)
      WHERE id=? AND user_id=?`,
     [
       item.avgHeartRate,
@@ -152,6 +259,21 @@ async function updateExistingRunHealth(userId, runId, item) {
       item.source,
       item.startDate,
       item.endDate,
+      item.section === 'activity' ? item.runType : null,
+      String(item.raw?.type || item.raw?.activityType || 'imported'),
+      item.runType,
+      item.cadenceSpm,
+      item.elevationGain,
+      item.elevationLoss,
+      JSON.stringify(item.routeCoords),
+      item.vo2Max,
+      item.trainingEffectAerobic,
+      item.trainingEffectAnaerobic,
+      item.recoveryTimeHours,
+      item.temperatureF,
+      asNumber(item.calories, 0),
+      Math.round(asNumber(item.calories, 0)),
+      JSON.stringify(item.workoutMetrics),
       runId,
       userId,
     ]
@@ -197,7 +319,7 @@ async function importRows(userId, rawRows) {
         continue;
       }
 
-      if (item.section === 'run') {
+      if (item.section === 'run' || item.section === 'activity') {
         const existing = await findExistingRun(userId, item);
         if (existing) {
           await updateExistingRunHealth(userId, existing.id, item);
@@ -217,6 +339,7 @@ async function importRows(userId, rawRows) {
       await insertLift(userId, item);
       imported += 1;
     } catch (err) {
+      console.error(`[import] row ${i} failed:`, err.message);
       errors.push({ index: i, error: err.message || 'Import failed for row' });
     }
   }
@@ -230,6 +353,7 @@ router.post('/health', auth, async (req, res) => {
     const result = await importRows(req.user.id, rows);
     res.json(result);
   } catch (err) {
+    console.error('[import/health] failed:', err.message);
     res.status(500).json({ imported: 0, skipped: 0, errors: [{ error: 'Apple Health import failed' }] });
   }
 });
@@ -240,8 +364,14 @@ router.post('/workouts', auth, async (req, res) => {
     const result = await importRows(req.user.id, rows);
     res.json(result);
   } catch (err) {
+    console.error('[import/workouts] failed:', err.message);
     res.status(500).json({ imported: 0, skipped: 0, errors: [{ error: 'Workout import failed' }] });
   }
 });
 
 module.exports = router;
+module.exports._test = {
+  classifyType,
+  normalizeRouteCoords,
+  normalizeRow,
+};

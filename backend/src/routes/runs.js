@@ -19,6 +19,7 @@ const {
   getCompetitiveTier,
 } = require('../lib/ageGrading');
 const { buildHealthSignals } = require('../lib/healthSignals');
+const { activityKind, isRunActivity, runActivitySql } = require('../lib/runActivity');
 
 function startOfDay(d) {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
@@ -240,9 +241,9 @@ router.get('/load-analysis', auth, async (req, res) => {
     const lastWeekStart = lastMonday.toISOString().slice(0, 10);
 
     const [twRow, lwRow, runs] = await Promise.all([
-      dbGet('SELECT COALESCE(SUM(distance_miles),0) as miles FROM runs WHERE user_id=? AND date>=? AND date<?', [req.user.id, thisWeekStart, thisWeekEnd]),
-      dbGet('SELECT COALESCE(SUM(distance_miles),0) as miles FROM runs WHERE user_id=? AND date>=? AND date<?', [req.user.id, lastWeekStart, thisWeekStart]),
-      dbAll('SELECT date, perceived_effort FROM runs WHERE user_id=? AND date>=? AND date<? ORDER BY date ASC', [req.user.id, thisWeekStart, thisWeekEnd])
+      dbGet(`SELECT COALESCE(SUM(distance_miles),0) as miles FROM runs WHERE user_id=? AND date>=? AND date<? AND ${runActivitySql()}`, [req.user.id, thisWeekStart, thisWeekEnd]),
+      dbGet(`SELECT COALESCE(SUM(distance_miles),0) as miles FROM runs WHERE user_id=? AND date>=? AND date<? AND ${runActivitySql()}`, [req.user.id, lastWeekStart, thisWeekStart]),
+      dbAll(`SELECT date, perceived_effort FROM runs WHERE user_id=? AND date>=? AND date<? AND ${runActivitySql()} ORDER BY date ASC`, [req.user.id, thisWeekStart, thisWeekEnd])
     ]);
 
     const thisWeekMiles = Number(twRow?.miles || 0);
@@ -299,10 +300,10 @@ async function buildNextRecommendation(userId, { includeBrief = false } = {}) {
     const todayStr = today.toISOString().slice(0, 10);
     const [profile, recentRuns, recentWorkouts, thisWeekRow, lastWeekRow, recentPrRow, healthRow, checkinRow] = await Promise.all([
       dbGet('SELECT name, goal_type FROM users WHERE id=?', [userId]).catch(() => null),
-      dbAll('SELECT date, distance_miles, duration_seconds FROM runs WHERE user_id=? AND date>=? AND date<? ORDER BY date DESC, created_at DESC', [userId, fourteenDaysAgoStr, todayExclusiveStr]),
+      dbAll(`SELECT date, distance_miles, duration_seconds FROM runs WHERE user_id=? AND date>=? AND date<? AND ${runActivitySql()} ORDER BY date DESC, created_at DESC`, [userId, fourteenDaysAgoStr, todayExclusiveStr]),
       dbAll('SELECT started_at, muscle_groups, total_seconds FROM workout_sessions WHERE user_id=? ORDER BY started_at DESC, created_at DESC LIMIT 5', [userId]).catch(() => []),
-      dbGet('SELECT COALESCE(SUM(distance_miles),0) as miles, COUNT(*) as count FROM runs WHERE user_id=? AND date>=? AND date<?', [userId, thisWeekStart.toISOString().slice(0, 10), nextWeekStart.toISOString().slice(0, 10)]),
-      dbGet('SELECT COALESCE(SUM(distance_miles),0) as miles FROM runs WHERE user_id=? AND date>=? AND date<?', [userId, lastWeekStart.toISOString().slice(0, 10), thisWeekStart.toISOString().slice(0, 10)]),
+      dbGet(`SELECT COALESCE(SUM(distance_miles),0) as miles, COUNT(*) as count FROM runs WHERE user_id=? AND date>=? AND date<? AND ${runActivitySql()}`, [userId, thisWeekStart.toISOString().slice(0, 10), nextWeekStart.toISOString().slice(0, 10)]),
+      dbGet(`SELECT COALESCE(SUM(distance_miles),0) as miles FROM runs WHERE user_id=? AND date>=? AND date<? AND ${runActivitySql()}`, [userId, lastWeekStart.toISOString().slice(0, 10), thisWeekStart.toISOString().slice(0, 10)]),
       dbGet('SELECT label, achieved_at FROM personal_records WHERE user_id=? AND achieved_at>=? ORDER BY achieved_at DESC LIMIT 1', [userId, new Date(today.getTime() - (3 * 86400000)).toISOString().slice(0, 10)]),
       dbGet('SELECT * FROM health_sync WHERE user_id=?', [userId]).catch(() => null),
       dbGet('SELECT feeling, time_available, sleep_hours, life_flags FROM daily_checkins WHERE user_id=? AND checkin_date=?', [userId, todayStr]).catch(() => null),
@@ -492,7 +493,7 @@ router.get('/age-graded-performance', auth, async (req, res) => {
       dbAll(
         `SELECT date, distance_miles, duration_seconds
          FROM runs
-         WHERE user_id=? AND date>=? AND duration_seconds>0 AND distance_miles>0
+         WHERE user_id=? AND date>=? AND duration_seconds>0 AND distance_miles>0 AND ${runActivitySql()}
          ORDER BY date DESC`,
         [req.user.id, since365]
       ),
@@ -500,7 +501,7 @@ router.get('/age-graded-performance', auth, async (req, res) => {
         `SELECT r.user_id, r.date, r.distance_miles, r.duration_seconds, u.age, u.sex
          FROM runs r
          INNER JOIN users u ON u.id = r.user_id
-         WHERE u.age>=40 AND r.date>=? AND r.duration_seconds>0 AND r.distance_miles>0`,
+         WHERE u.age>=40 AND r.date>=? AND r.duration_seconds>0 AND r.distance_miles>0 AND ${runActivitySql('r')}`,
         [since365]
       ),
     ]);
@@ -706,7 +707,7 @@ router.post('/', auth, async (req, res) => {
       }
     }
 
-    const run = await dbGet('SELECT * FROM runs WHERE id = ?', [id]);
+    const run = await dbGet('SELECT * FROM runs WHERE id = ? AND user_id = ?', [id, req.user.id]);
     let heatDrift = { drifted: false };
     try {
       const actualZone = zoneForHr(avg_heart_rate, hrProfile)
@@ -784,11 +785,12 @@ async function updateRunHandler(req, res) {
       const weightLbs = userProfile?.weight_lbs || 185;
       const newDist = distance_miles !== undefined ? Number(distance_miles) : run.distance_miles;
       const calories = Math.round(0.75 * weightLbs * newDist);
+      const activityKindChanged = type !== undefined && activityKind({ ...run, type }) !== activityKind(run);
       const shouldRecomputePrs = (
         distance_miles !== undefined && Number(distance_miles) !== Number(run.distance_miles)
       ) || (
         duration_seconds !== undefined && Number(duration_seconds) !== Number(run.duration_seconds)
-      );
+      ) || activityKindChanged;
       const existingPrRows = shouldRecomputePrs
         ? await tx.all(
           `SELECT label FROM personal_records WHERE run_id=? AND user_id=? AND category='run' AND source='auto'`,
@@ -840,6 +842,7 @@ router.post('/:id/feedback', auth, async (req, res) => {
   try {
     const run = await dbGet('SELECT * FROM runs WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
     if (!run) return res.status(404).json({ error: 'Not found' });
+    if (!isRunActivity(run)) return res.status(400).json({ error: 'Run feedback is only available for running activities' });
     if (run.ai_feedback) return res.json({ feedback: run.ai_feedback });
 
     const profile = await dbGet('SELECT * FROM users WHERE id=?', [req.user.id]);
@@ -854,7 +857,7 @@ router.post('/:id/feedback', auth, async (req, res) => {
 
     await dbRun('INSERT INTO ai_usage (id, user_id, call_type) VALUES (?,?,?)', [uuidv4(), req.user.id, 'run_feedback']);
     const feedback = await generateRunFeedback(run, profile);
-    if (feedback) await dbRun('UPDATE runs SET ai_feedback=? WHERE id=?', [feedback, run.id]);
+    if (feedback) await dbRun('UPDATE runs SET ai_feedback=? WHERE id=? AND user_id=?', [feedback, run.id, req.user.id]);
     res.json({ feedback: feedback || 'Could not generate feedback right now.' });
   } catch (err) { res.status(500).json({ error: 'Feedback failed' }); }
 });

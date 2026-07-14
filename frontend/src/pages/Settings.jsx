@@ -53,7 +53,7 @@ function normalizeJsonRows(parsed) {
       : Number((rawDistance * (unit === 'km' || row.distance_km || row.distanceKm ? KM_TO_MILES : 1)).toFixed(3))
     const durationSeconds = Number(row.durationSeconds || row.duration_seconds || parseDuration(row.duration || row['Elapsed Time']) || 0)
     const avgHeartRate = Number(row.avgHeartRate || row.avg_heart_rate || row['Average Heart Rate'] || 0) || null
-    return { date, type, distanceMiles, durationSeconds, avgHeartRate, source: 'manual_json' }
+    return { ...row, date, type, distanceMiles, durationSeconds, avgHeartRate, source: row.source || 'manual_json' }
   }).filter((row) => row.date && (row.distanceMiles > 0 || row.durationSeconds > 0))
 }
 
@@ -215,7 +215,9 @@ export default function Settings() {
             errors: result.errors || [],
             syncedAt: new Date().toISOString(),
           }))
-        } catch {}
+        } catch (error) {
+          console.error('[Settings] Apple Health sync result could not be saved:', error?.message || error)
+        }
         setImportNotice({
           ok: true,
           text: `Apple Health synced: ${scanned} scanned, ${result.imported} imported, ${result.skipped} already in Forged Hybrid.`,
@@ -588,7 +590,7 @@ export default function Settings() {
 
           <div style={card}>
             <span style={label}>File Import</span>
-            <p style={{ margin: 0, fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.6 }}>Upload Garmin or Strava CSV, or workout JSON.</p>
+            <p style={{ margin: 0, fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.6 }}>Upload Garmin or Strava CSV, or structured workout JSON. Supported route, elevation, heart-rate, cadence, power, running-dynamics, respiration, run/walk, and performance fields are preserved when present.</p>
             <input ref={manualFileRef} type="file" accept=".csv,.json" onChange={handleManualImport} style={{ display: 'none' }} />
             <button onClick={() => manualFileRef.current?.click()} disabled={importing} style={{ width: '100%', marginTop: 12, border: '1px solid var(--border-subtle)', borderRadius: 10, padding: '10px 12px', fontSize: 13, fontWeight: 700, background: 'var(--bg-input)', color: 'var(--text-primary)', cursor: 'pointer', opacity: importing ? 0.7 : 1 }}>
               {importing ? 'Importing...' : 'Import File'}

@@ -80,11 +80,23 @@ CREATE TABLE IF NOT EXISTS runs (
   health_source TEXT,
   health_start_at TEXT,
   health_end_at TEXT,
+  workout_metrics_json TEXT DEFAULT '{}',
   created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_runs_user_id ON runs(user_id);
 CREATE INDEX IF NOT EXISTS idx_runs_user_date ON runs(user_id, date DESC);
+
+CREATE TABLE IF NOT EXISTS user_hr_profile (
+  user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  max_hr INTEGER,
+  resting_hr INTEGER,
+  lthr INTEGER,
+  custom_zones_json TEXT DEFAULT '[]',
+  zone_model TEXT NOT NULL DEFAULT 'hrr',
+  source TEXT NOT NULL DEFAULT 'manual',
+  updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
 
 CREATE TABLE IF NOT EXISTS lifts (
   id TEXT PRIMARY KEY,

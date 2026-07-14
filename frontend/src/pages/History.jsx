@@ -13,6 +13,7 @@ import WorkoutDetailModal from '../components/WorkoutDetailModal'
 import LoadingRunner from '../components/LoadingRunner'
 import { getPaceZone } from '../lib/athleteLanguage'
 import { chartAccent, chartAxisProps, chartTooltipProps } from '../lib/chartTheme'
+import { activityLabel, isRunningActivity } from '../lib/activityType'
 
 function getRunDate(run) {
   return run.date || run.created_at?.slice(0, 10) || ''
@@ -48,6 +49,10 @@ function formatWorkoutDuration(totalSeconds = 0) {
   return `${m}m`
 }
 
+function hasTrustedEffort(activity) {
+  return !(activity?.watch_mode === 'import' && activity?.notes === 'Imported workout')
+}
+
 export default function History() {
   const location = useLocation()
   const { fmt } = useUnits()
@@ -59,6 +64,7 @@ export default function History() {
   const [lifts, setLifts] = useState([])
   const [workoutSessions, setWorkoutSessions] = useState([])
   const [races, setRaces] = useState([])
+  const [hrZones, setHrZones] = useState([])
   const [editingRun, setEditingRun] = useState(null)
   const [editingLift, setEditingLift] = useState(null)
   const [selectedRun, setSelectedRun] = useState(null)
@@ -74,16 +80,18 @@ export default function History() {
   useEffect(() => {
     ;(async () => {
       try {
-        const [runsRes, liftsRes, workoutsRes, racesRes] = await Promise.all([
+        const [runsRes, liftsRes, workoutsRes, racesRes, hrZonesRes] = await Promise.all([
           api.get('/runs'),
           api.get('/lifts'),
           api.get('/workouts').catch(() => ({ data: { sessions: [] } })),
           api.get('/races').catch(() => ({ data: { races: [] } })),
+          api.get('/profile/hr-zones').catch(() => ({ data: { zones: [] } })),
         ])
         setRuns([...(Array.isArray(runsRes.data) ? runsRes.data : runsRes.data?.runs || [])].sort((a, b) => getRunDate(b).localeCompare(getRunDate(a))))
         setLifts([...(Array.isArray(liftsRes.data) ? liftsRes.data : liftsRes.data?.lifts || [])].sort((a, b) => (b.date || b.created_at || '').localeCompare(a.date || a.created_at || '')))
         setWorkoutSessions([...(workoutsRes.data?.sessions || [])].sort((a, b) => (b.started_at || '').localeCompare(a.started_at || '')))
         setRaces([...(racesRes.data?.races || [])].sort((a, b) => (b.race_date || '').localeCompare(a.race_date || '')))
+        setHrZones(Array.isArray(hrZonesRes.data?.zones) ? hrZonesRes.data.zones : [])
       } finally {
         setLoading(false)
       }
@@ -165,32 +173,33 @@ export default function History() {
   }
 
   const filteredRuns = filterItems(runs, 'date')
+  const actualRuns = useMemo(() => filteredRuns.filter(isRunningActivity), [filteredRuns])
   const filteredLifts = filterItems(lifts, 'date')
   const filteredWorkoutSessions = filterItems(workoutSessions, 'started_at')
 
   const periodMiles = useMemo(
-    () => filteredRuns.reduce((s, r) => s + Number(r.distance_miles || 0), 0),
-    [filteredRuns]
+    () => actualRuns.reduce((s, r) => s + Number(r.distance_miles || 0), 0),
+    [actualRuns]
   )
 
   const avgPace = useMemo(() => {
-    const validRuns = filteredRuns.filter(r => r.distance_miles && r.duration_seconds)
+    const validRuns = actualRuns.filter(r => r.distance_miles && r.duration_seconds)
     if (!validRuns.length) return '--'
     const avgPaceSeconds = validRuns.reduce((s, r) => s + r.duration_seconds / r.distance_miles, 0) / validRuns.length
     return fmt.pace(avgPaceSeconds)
-  }, [filteredRuns, fmt])
+  }, [actualRuns, fmt])
 
   const weeklyMileage = useMemo(() => {
     const out = []
     for (let i = 7; i >= 0; i -= 1) {
       const start = new Date(); start.setDate(start.getDate() - i * 7)
       const end = new Date(start); end.setDate(end.getDate() + 6)
-      const miles = runs.filter((r) => { const d = new Date((r.date || r.created_at || '') + 'T12:00:00'); return d >= start && d <= end }).reduce((sum, r) => sum + Number(r.distance_miles || 0), 0)
+      const miles = runs.filter(isRunningActivity).filter((r) => { const d = new Date((r.date || r.created_at || '') + 'T12:00:00'); return d >= start && d <= end }).reduce((sum, r) => sum + Number(r.distance_miles || 0), 0)
       out.push({ week: `${start.getMonth()+1}/${start.getDate()}`, miles: Number(miles.toFixed(1)) })
     }
     return out
   }, [runs])
-  const paceTrend = useMemo(() => filteredRuns.slice(0, 20).reverse().map((r, i) => ({ idx: i + 1, pace: r.distance_miles ? Number((r.duration_seconds / 60 / r.distance_miles).toFixed(2)) : 0 })).filter((x) => x.pace > 0), [filteredRuns])
+  const paceTrend = useMemo(() => actualRuns.slice(0, 20).reverse().map((r, i) => ({ idx: i + 1, pace: r.distance_miles ? Number((r.duration_seconds / 60 / r.distance_miles).toFixed(2)) : 0 })).filter((x) => x.pace > 0), [actualRuns])
 
   if (loading) return <LoadingRunner message="Loading history" />
 
@@ -201,7 +210,7 @@ export default function History() {
         <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Review your runs, lifts, and race efforts.</p>
       </div>
       <div className="mb-4 grid grid-cols-3 gap-2">
-        {[['Distance', fmt.distance(periodMiles, 1)], ['Avg Pace', avgPace], ['Lifts', `${filteredLifts.length + filteredWorkoutSessions.length}`]].map(([l, v]) => (
+        {[['Run Distance', fmt.distance(periodMiles, 1)], ['Run Pace', avgPace], ['Lifts', `${filteredLifts.length + filteredWorkoutSessions.length}`]].map(([l, v]) => (
           <div key={l} className="rounded-xl p-3 text-center" style={{ background: 'var(--bg-card)' }}>
             <p className="text-xs" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>{l}</p>
             <p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{v}</p>
@@ -322,7 +331,7 @@ export default function History() {
       </div>
 
       <div className="mb-4 flex border-b" style={{ borderColor: 'var(--border-subtle)' }}>
-        {[['all', 'All'], ['runs', t('history.runs')], ['lifts', t('history.workouts')], ['races', t('history.races')]].map(([value, label]) => (
+        {[['all', 'All'], ['runs', 'Activities'], ['lifts', t('history.workouts')], ['races', t('history.races')]].map(([value, label]) => (
           <button
             key={value}
             onClick={() => setTab(value)}
@@ -340,13 +349,14 @@ export default function History() {
             <div key={run.id} onClick={() => setSelectedRun(run)} className="cursor-pointer rounded-xl p-4" style={{ background: 'var(--bg-card)' }}>
               {(() => {
                 const paceMinPerMile = run.distance_miles ? run.duration_seconds / 60 / run.distance_miles : null
-                const paceZone = getPaceZone(paceMinPerMile)
+                const paceZone = isRunningActivity(run) ? getPaceZone(paceMinPerMile) : null
                 return (
               <div className="mb-2 flex items-center justify-between">
                 <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{formatHistoryDate(getRunDate(run))}</p>
                 <div className="flex items-center gap-2">
-                  {paceZone ? <span className="rounded-full px-2 py-1 text-xs font-semibold" style={{ background: `${paceZone.color}22`, color: paceZone.color }}>{`Zone ${paceZone.zone}`}</span> : null}
-                  {run.perceived_effort ? <span className="rounded-full px-2 py-1 text-xs" style={{ background: 'var(--bg-input)', color: 'var(--text-muted)' }}>Effort {run.perceived_effort}/10</span> : null}
+                  <span className="rounded-full px-2 py-1 text-xs font-semibold" style={{ background: isRunningActivity(run) ? 'var(--accent-dim)' : 'rgba(34,197,94,0.12)', color: isRunningActivity(run) ? 'var(--accent)' : 'var(--success)' }}>{activityLabel(run)}</span>
+                  {paceZone ? <span className="rounded-full px-2 py-1 text-xs font-semibold" style={{ background: `${paceZone.color}22`, color: paceZone.color }}>{`Pace Z${paceZone.zone}`}</span> : null}
+                  {run.perceived_effort && hasTrustedEffort(run) ? <span className="rounded-full px-2 py-1 text-xs" style={{ background: 'var(--bg-input)', color: 'var(--text-muted)' }}>Effort {run.perceived_effort}/10</span> : null}
                   <button type="button" aria-label="Edit run" title="Edit run" onClick={e => { e.stopPropagation(); setEditingRun(run) }} className="transition-colors" style={{ color: 'var(--text-muted)' }}><Pencil size={14} /></button>
                   <button type="button" aria-label="Delete run" title="Delete run" onClick={e => requestDelete('run', run, e)} className="transition-colors" style={{ color: 'var(--text-muted)' }}><Trash2 size={14} /></button>
                 </div>
@@ -488,6 +498,7 @@ export default function History() {
       {selectedRun && (
         <RunDetailModal
           run={selectedRun}
+          hrZones={hrZones}
           onClose={() => setSelectedRun(null)}
           onFeedbackGenerated={(id, fb) => setRuns(prev => prev.map(r => (r.id === id ? { ...r, ai_feedback: fb } : r)))}
         />
