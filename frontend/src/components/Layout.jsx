@@ -3,6 +3,7 @@ import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { Activity, Dumbbell, HeartPulse, MessageSquarePlus, MoreHorizontal } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { getUser } from '../lib/auth'
+import { recordSmartDestinationVisit } from '../lib/smartQuickAction'
 import PullToRefresh from './PullToRefresh'
 import FeedbackButton from './FeedbackButton'
 
@@ -40,6 +41,7 @@ export default function Layout({ children }) {
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: 'auto' })
+    recordSmartDestinationVisit(location.pathname)
   }, [location.pathname])
 
   return (

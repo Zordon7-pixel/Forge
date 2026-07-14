@@ -1,12 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Activity, ChevronRight, HeartPulse, Moon, RefreshCw, Shield, Watch } from 'lucide-react'
+import { HeartPulse, Shield } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import api from '../lib/api'
-import HealthService from '../services/HealthService'
 import Skeleton from '../components/Skeleton'
-
-const HEALTH_SYNC_RESULT_KEY = 'forge_last_health_sync_result'
 
 function dateText(value) {
   if (!value) return 'Never'
@@ -34,32 +31,6 @@ function paceFromMetersPerSecond(value) {
   return `${minutes}:${String(seconds).padStart(2, '0')}/mi`
 }
 
-function getLastSyncResult() {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(HEALTH_SYNC_RESULT_KEY) || 'null')
-    return parsed && typeof parsed === 'object' ? parsed : null
-  } catch (err) {
-    console.warn('[body] sync result parse failed:', err.message)
-    return null
-  }
-}
-
-function saveLastSyncResult(result) {
-  try {
-    const scanned = Array.isArray(result?.workouts) ? result.workouts.length : Number(result?.scanned || result?.total || 0)
-    localStorage.setItem(HEALTH_SYNC_RESULT_KEY, JSON.stringify({
-      scanned: Number(scanned || 0),
-      imported: Number(result?.imported || 0),
-      skipped: Number(result?.skipped || 0),
-      errors: Array.isArray(result?.errors) ? result.errors : [],
-      authorizationUpgradeRequired: Boolean(result?.authorizationUpgradeRequired),
-      syncedAt: new Date().toISOString(),
-    }))
-  } catch (err) {
-    console.warn('[body] sync result save failed:', err.message)
-  }
-}
-
 function trendMeta(trend) {
   if (trend === 'up') return { arrow: '↑', color: 'var(--success)' }
   if (trend === 'down') return { arrow: '↓', color: 'var(--danger)' }
@@ -80,18 +51,6 @@ function DriverCard({ driver, trendLabels }) {
       <p className="mt-2 text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>{driver.plainEnglish}</p>
       <p className="mt-3 text-xs italic" style={{ color: driver.impact === 'negative' ? 'var(--warning)' : 'var(--text-muted)' }}>{driver.suggestion}</p>
     </article>
-  )
-}
-
-function SourcePill({ icon: Icon, label, detail }) {
-  return (
-    <div className="flex items-center gap-2 rounded-xl px-3 py-2" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
-      <Icon size={15} color="var(--accent)" />
-      <div>
-        <p className="text-xs font-bold" style={{ color: 'var(--text-primary)' }}>{label}</p>
-        <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{detail}</p>
-      </div>
-    </div>
   )
 }
 
@@ -122,23 +81,17 @@ export default function HealthData() {
   const { t } = useTranslation()
   const [driversData, setDriversData] = useState(null)
   const [health, setHealth] = useState(null)
-  const [runs, setRuns] = useState([])
-  const [lastSyncResult, setLastSyncResult] = useState(() => getLastSyncResult())
   const [loading, setLoading] = useState(true)
-  const [syncing, setSyncing] = useState(false)
-  const [notice, setNotice] = useState('')
 
   const loadData = async () => {
     setLoading(true)
     try {
-      const [driversRes, healthRes, runsRes] = await Promise.all([
+      const [driversRes, healthRes] = await Promise.all([
         api.get('/body/drivers').catch(() => ({ data: null })),
         api.get('/health/sync').catch(() => ({ data: null })),
-        api.get('/runs').catch(() => ({ data: { runs: [] } })),
       ])
       setDriversData(driversRes.data || { summary: t('body.allGood'), limiter: null, drivers: [] })
       setHealth(healthRes.data || null)
-      setRuns(Array.isArray(runsRes.data) ? runsRes.data : runsRes.data?.runs || [])
     } finally {
       setLoading(false)
     }
@@ -147,23 +100,6 @@ export default function HealthData() {
   useEffect(() => {
     loadData()
   }, [])
-
-  const syncAppleHealth = async () => {
-    setSyncing(true)
-    setNotice('')
-    try {
-      const result = await HealthService.syncNativeData({ requestPermission: true })
-      saveLastSyncResult(result)
-      setLastSyncResult(getLastSyncResult())
-      const scanned = Array.isArray(result?.workouts) ? result.workouts.length : Number(result?.scanned || 0)
-      setNotice(`Apple Health synced: ${scanned} scanned, ${result.imported} imported, ${result.skipped} already in Forged Hybrid.`)
-      await loadData()
-    } catch (err) {
-      setNotice(err?.message || 'Unable to sync Apple Health on this device.')
-    } finally {
-      setSyncing(false)
-    }
-  }
 
   const drivers = Array.isArray(driversData?.drivers) ? driversData.drivers : []
   const limiterDriver = drivers.find((driver) => driver.key === driversData?.limiter)
@@ -229,12 +165,6 @@ export default function HealthData() {
       },
     ]
   }, [health])
-  const connectedSources = useMemo(() => {
-    const sources = []
-    if (health?.synced_at || lastSyncResult?.syncedAt) sources.push({ key: 'apple', label: 'Apple Health', detail: dateText(health?.synced_at || lastSyncResult?.syncedAt), icon: Watch })
-    if (runs.some((run) => run.garmin_activity_id || String(run.watch_activity_type || '').toLowerCase().includes('garmin') || String(run.health_source || '').toLowerCase().includes('garmin'))) sources.push({ key: 'garmin', label: 'Garmin file', detail: 'Imported activity present', icon: Activity })
-    return sources
-  }, [health, lastSyncResult, runs])
   const trendLabels = { up: t('body.trendUp'), down: t('body.trendDown'), flat: t('body.trendFlat') }
 
   return (
@@ -305,56 +235,6 @@ export default function HealthData() {
         </p>
       </section>
 
-      <section className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-        <p className="text-sm font-black" style={{ color: 'var(--text-primary)' }}>Data coverage</p>
-        <div className="mt-2 space-y-2 text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-          <p><strong style={{ color: 'var(--text-primary)' }}>Apple Health:</strong> sleep stages, HRV, resting and workout heart rate, activity, calories, VO2 max, recovery HR, respiratory rate, workouts, routes, elevation, weather metadata, and running dynamics when the source writes them.</p>
-          <p><strong style={{ color: 'var(--text-primary)' }}>Garmin gaps:</strong> exact Garmin zone totals, ground-contact balance, performance condition, and run/walk segments are not reliably shared through Apple Health.</p>
-          <p><strong style={{ color: 'var(--text-primary)' }}>File import:</strong> Garmin CSV or structured workout JSON can add supported metrics. Forged Hybrid leaves unavailable values blank and never invents them.</p>
-        </div>
-      </section>
-
-      {connectedSources.length > 0 && (
-        <section className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-          <p className="text-sm font-black" style={{ color: 'var(--text-primary)' }}>Connected sources</p>
-          <div className="mt-3 grid grid-cols-2 gap-2">
-            {connectedSources.map((source) => (
-              <SourcePill key={source.key} icon={source.icon} label={source.label} detail={source.detail} />
-            ))}
-          </div>
-        </section>
-      )}
-
-      <section className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <p className="text-sm font-black" style={{ color: 'var(--text-primary)' }}>Sync controls</p>
-            <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-              {lastSyncResult ? `${lastSyncResult.imported || 0} imported · ${lastSyncResult.skipped || 0} already saved · ${dateText(lastSyncResult.syncedAt)}` : 'Sync Apple Health to refresh readiness drivers.'}
-            </p>
-          </div>
-          <HeartPulse size={18} color="var(--accent)" />
-        </div>
-        <button
-          type="button"
-          onClick={syncAppleHealth}
-          disabled={syncing}
-          className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl py-3 text-sm font-black disabled:opacity-60"
-          style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', cursor: syncing ? 'wait' : 'pointer' }}
-        >
-          <RefreshCw size={16} />
-          {syncing ? 'Syncing Apple Health...' : 'Sync Apple Health'}
-        </button>
-        {notice && <p className="mt-3 text-xs" style={{ color: notice.includes('synced') ? 'var(--success)' : 'var(--warning)' }}>{notice}</p>}
-        {(health?.synced_at || lastSyncResult?.syncedAt) && Number(health?.metrics_schema_version || 0) < 3 && (
-          <p className="mt-3 text-xs leading-relaxed" style={{ color: 'var(--warning)' }}>
-            New workout-route and activity-detail imports require the next approved iPhone build. Existing Apple Health sync still works; after updating, tap Sync once to approve the added read permission.
-          </p>
-        )}
-        <Link to="/history" className="mt-3 flex items-center gap-1 text-xs font-bold" style={{ color: 'var(--accent)', textDecoration: 'none' }}>
-          Review imported activity <ChevronRight size={14} />
-        </Link>
-      </section>
     </div>
   )
 }

@@ -52,7 +52,7 @@ function getReadinessAdvice(stats) {
   return "You're ready. Trust your training."
 }
 
-function WarmupSteps({ stepIndex, onNext, onSkip }) {
+function WarmupSteps({ stepIndex, onNext, onSkip, sex }) {
   const { t } = useTranslation()
   const step = WARM_UP_STEPS[stepIndex]
   const progress = ((stepIndex + 1) / WARM_UP_STEPS.length) * 100
@@ -143,7 +143,7 @@ function WarmupSteps({ stepIndex, onNext, onSkip }) {
           {step.detail}
         </p>
 
-        <MovementDemo name={step.name} compact />
+        <MovementDemo name={step.name} compact sex={sex} />
 
         <p
           style={{
@@ -559,6 +559,27 @@ export default function Warmup() {
   const location = useLocation()
   const [runState, setRunState] = useState('warmup-steps')
   const [stepIndex, setStepIndex] = useState(0)
+  const [sex, setSex] = useState('')
+  const [profileReady, setProfileReady] = useState(false)
+
+  useEffect(() => {
+    let active = true
+    api.get('/auth/me')
+      .then((res) => {
+        if (!active) return
+        setSex(String(res.data?.user?.sex || res.data?.sex || '').toLowerCase() === 'female' ? 'female' : 'male')
+      })
+      .catch((err) => {
+        console.error('[warmup] profile load failed:', err?.message || err)
+        if (active) setSex('male')
+      })
+      .finally(() => {
+        if (active) setProfileReady(true)
+      })
+    return () => {
+      active = false
+    }
+  }, [])
 
   const handleNextStep = () => {
     if (stepIndex === WARM_UP_STEPS.length - 1) {
@@ -580,10 +601,12 @@ export default function Warmup() {
     navigate('/log-run', location.state ? { state: location.state } : undefined)
   }
 
+  if (!profileReady) return <LoadingRunner message="Preparing warm-up" />
+
   return (
     <div>
       {runState === 'warmup-steps' && (
-        <WarmupSteps stepIndex={stepIndex} onNext={handleNextStep} onSkip={handleSkipWarmup} />
+        <WarmupSteps stepIndex={stepIndex} onNext={handleNextStep} onSkip={handleSkipWarmup} sex={sex} />
       )}
       {runState === 'warmup-done' && <WarmupDone onStartRun={handleStartRun} />}
     </div>

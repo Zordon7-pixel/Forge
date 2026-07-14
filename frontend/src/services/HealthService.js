@@ -203,7 +203,7 @@ class HealthService {
           }
           markNativeAuthorized(REQUIRED_HEALTH_AUTH_VERSION)
         } else if (!hasNativeAuthorizationHint()) {
-          return { available: false, reason: 'Open Settings > Apple Health and tap Sync Apple Health to grant access.' }
+          return { available: false, reason: 'Open More > Health & data and tap Sync Apple Health to grant access.' }
         }
 
         return { available: true, authorizationUpgradeRequired: !hasExpandedNativeAuthorization() }

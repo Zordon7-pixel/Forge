@@ -5,8 +5,7 @@ import { useTranslation } from 'react-i18next'
 import { useUnits } from '../context/UnitsContext'
 import { useTheme } from '../context/ThemeContext'
 import api from '../lib/api'
-import { parseGarminCSV, parseStravaCSV, requestAppleHealth } from '../lib/healthImport'
-import HealthService from '../services/HealthService'
+import { parseGarminCSV, parseStravaCSV } from '../lib/healthImport'
 import WatchDeliveryService from '../services/WatchDeliveryService'
 import { athleteWatchAvailabilityMessage, isInternalWatchDiagnostic } from '../services/watchWorkoutAvailability'
 import TestFlightDebugPanel from '../components/TestFlightDebugPanel'
@@ -22,7 +21,6 @@ const LANGUAGES = [
 ]
 
 const KM_TO_MILES = 0.621371
-const HEALTH_SYNC_RESULT_KEY = 'forge_last_health_sync_result'
 
 function parseDuration(value) {
   const raw = String(value || '').trim()
@@ -85,19 +83,6 @@ export default function Settings() {
   const [watchDelivery, setWatchDelivery] = useState({ checked: false, canAutoSend: false, reason: '', providers: [] })
   const manualFileRef = useRef(null)
   const debugTapTimerRef = useRef(null)
-
-  const isIOSSafari = typeof navigator !== 'undefined'
-    && /iP(ad|hone|od)/.test(navigator.userAgent)
-    && /WebKit/.test(navigator.userAgent)
-  const isNativeRuntime = typeof window !== 'undefined' && Boolean(window.Capacitor?.isNativePlatform?.())
-
-  const supportsNativeAppleHealth = isNativeRuntime
-  const supportsAppleHealth = isIOSSafari && !isNativeRuntime && typeof navigator !== 'undefined' && Boolean(navigator.health)
-  const appleHealthStatus = isNativeRuntime
-    ? 'Ready to request Apple Health permission on this iPhone.'
-    : supportsAppleHealth
-      ? 'Available on this device'
-      : 'Apple Health is not available in this browser.'
 
   useEffect(() => {
     api.get('/garmin/status').then((r) => {
@@ -204,49 +189,6 @@ export default function Settings() {
       debugTapTimerRef.current = setTimeout(() => setDebugTapCount(0), 1800)
       return next
     })
-  }
-
-  const handleAppleHealthImport = async () => {
-    if (isNativeRuntime) {
-      setImporting(true)
-      setImportProgress('Syncing Apple Health...')
-      try {
-        const result = await HealthService.syncNativeData({ requestPermission: true })
-        const scanned = Array.isArray(result?.workouts) ? result.workouts.length : Number(result?.scanned || 0)
-        try {
-          localStorage.setItem(HEALTH_SYNC_RESULT_KEY, JSON.stringify({
-            scanned,
-            imported: Number(result.imported || 0),
-            skipped: Number(result.skipped || 0),
-            errors: result.errors || [],
-            syncedAt: new Date().toISOString(),
-          }))
-        } catch (error) {
-          console.error('[Settings] Apple Health sync result could not be saved:', error?.message || error)
-        }
-        setImportNotice({
-          ok: true,
-          text: `Apple Health synced: ${scanned} scanned, ${result.imported} imported, ${result.skipped} already in Forged Hybrid.`,
-        })
-      } catch (err) {
-        setImportNotice({ ok: false, text: err?.message || 'Unable to sync Apple Health on this device.' })
-      } finally {
-        setImportProgress('')
-        setImporting(false)
-      }
-      return
-    }
-    if (!supportsAppleHealth) {
-      setImportNotice({ ok: false, text: 'Apple Health sync is only available in the iPhone app. Use File Import here, or open Health Data Center on TestFlight.' })
-      return
-    }
-
-    try {
-      const workouts = await requestAppleHealth()
-      await runImport('/import/health', workouts)
-    } catch (err) {
-      setImportNotice({ ok: false, text: err?.message || 'Unable to connect to Apple Health on this device.' })
-    }
   }
 
   const handleManualImport = async (event) => {
@@ -582,17 +524,6 @@ export default function Settings() {
               </div>
             </div>
           ))}
-
-          <div style={card}>
-            <span style={label}>Apple Health</span>
-            <p style={{ margin: 0, fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.6 }}>Status: {appleHealthStatus}</p>
-            <button onClick={handleAppleHealthImport} disabled={importing || (!supportsAppleHealth && !supportsNativeAppleHealth)} style={{ width: '100%', marginTop: 12, border: '1px solid var(--border-subtle)', borderRadius: 10, padding: '10px 12px', fontSize: 13, fontWeight: 700, background: (supportsAppleHealth || supportsNativeAppleHealth) ? 'var(--bg-input)' : 'rgba(148,163,184,0.1)', color: (supportsAppleHealth || supportsNativeAppleHealth) ? 'var(--text-primary)' : 'var(--text-muted)', cursor: (supportsAppleHealth || supportsNativeAppleHealth) ? 'pointer' : 'not-allowed' }}>
-              {supportsNativeAppleHealth ? 'Sync Apple Health' : (supportsAppleHealth ? 'Import from Apple Health' : 'Apple Health unavailable')}
-            </button>
-            <button onClick={() => navigate('/health')} style={{ width: '100%', marginTop: 8, border: '1px solid var(--accent)', borderRadius: 10, padding: '10px 12px', fontSize: 13, fontWeight: 800, background: 'transparent', color: 'var(--accent)', cursor: 'pointer' }}>
-              View Health Data Center
-            </button>
-          </div>
 
           <div style={card}>
             <span style={label}>File Import</span>

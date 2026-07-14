@@ -65,6 +65,56 @@ const POOLS = {
   ],
 };
 
+const LOCAL_IMAGE_BY_ID = Object.freeze({
+  'hip-flexor-lunge': '/stretches/hip-flexor-male.png',
+  'pigeon-pose': '/stretches/pigeon-pose.webp',
+  butterfly: '/stretches/butterfly.webp',
+  'figure-4': '/stretches/figure-four.png',
+  'lateral-lunge-hold': '/stretches/lateral-lunge-hold.webp',
+  'sumo-squat-hold': '/stretches/sumo-squat-hold.webp',
+  'standing-hip-circle': '/stretches/hip-circles.png',
+  'seated-hip-rotation': '/stretches/seated-hip-rotation.webp',
+  'quad-stretch': '/stretches/standing-quad.png',
+  'hamstring-seated': '/stretches/hamstring-stretch.png',
+  'calf-wall': '/stretches/calf-stretch.png',
+  'standing-it-band': '/stretches/standing-it-band.webp',
+  'standing-hamstring-fold': '/stretches/hamstring-stretch.png',
+  'inner-thigh-stretch': '/stretches/inner-thigh-stretch.webp',
+  'kneeling-quad': '/stretches/kneeling-quad.webp',
+  'toe-touch-both': '/stretches/hamstring-stretch.png',
+  'childs-pose': '/stretches/childs-pose.png',
+  'cat-cow': '/stretches/cat-cow.webp',
+  'downward-dog': '/stretches/downward-dog.webp',
+  cobra: '/stretches/cobra.webp',
+  'worlds-greatest': '/stretches/worlds-greatest.webp',
+  'standing-side-bend': '/stretches/standing-side-bend.webp',
+  inchworm: '/stretches/inchworm.webp',
+  'trunk-rotation': '/stretches/trunk-rotation.webp',
+  'shoulder-cross': '/stretches/cross-body-shoulder.webp',
+  'chest-opener': '/stretches/chest-opener.webp',
+  'tricep-stretch': '/stretches/overhead-tricep.webp',
+  'neck-tilt': '/stretches/neck-tilt.webp',
+  'overhead-lat': '/stretches/overhead-lat.webp',
+  'wrist-flexor': '/stretches/wrist-flexor.webp',
+  'doorway-chest': '/stretches/doorway-chest.webp',
+  'upper-trap': '/stretches/upper-trap.webp',
+  'cat-cow-lb': '/stretches/cat-cow.webp',
+  'knee-to-chest': '/stretches/knee-to-chest.webp',
+  'supine-twist': '/stretches/supine-twist.webp',
+  'childs-pose-lb': '/stretches/childs-pose.png',
+  'bridge-hold': '/stretches/bridge-hold.webp',
+  'pelvic-tilt': '/stretches/pelvic-tilt.webp',
+  'trunk-rotation-lb': '/stretches/trunk-rotation.webp',
+  'hip-flexor-back': '/stretches/hip-flexor-male.png',
+});
+
+function withLocalImage(stretch) {
+  return {
+    ...stretch,
+    image_url: LOCAL_IMAGE_BY_ID[stretch.id] || '',
+  };
+}
+
 /* ─── Muscle group → category mapping ─── */
 const MUSCLE_MAP = {
   'glutes': 'hip-focused', 'hip flexors': 'hip-focused', 'hips': 'hip-focused',
@@ -134,9 +184,12 @@ router.get('/recommended', auth, async (req, res) => {
 
     const pool = POOLS[recommendedCategory];
     const count = 5 + Math.floor(Math.random() * 3);
-    const stretches = shuffle(pool).slice(0, count);
+    const stretches = shuffle(pool).slice(0, count).map(withLocalImage);
     res.json({ recommendedCategory, reason, stretches });
-  } catch (err) { res.status(500).json({ error: 'Failed to get recommended stretches' }); }
+  } catch (err) {
+    console.error('[stretches/recommended] failed:', err.message);
+    res.status(500).json({ error: 'Failed to get recommended stretches' });
+  }
 });
 
 /* ─── GET /api/stretches?category=X ─── */
@@ -145,8 +198,9 @@ router.get('/', auth, (req, res) => {
   if (!category || !POOLS[category]) return res.status(400).json({ error: 'Invalid or missing category' });
   const pool = POOLS[category];
   const count = 5 + Math.floor(Math.random() * 3);
-  const stretches = shuffle(pool).slice(0, count);
+  const stretches = shuffle(pool).slice(0, count).map(withLocalImage);
   res.json({ stretches });
 });
 
 module.exports = router;
+module.exports._test = { LOCAL_IMAGE_BY_ID, POOLS, withLocalImage };

@@ -262,14 +262,19 @@ export default function Stretches() {
   const [aiData, setAiData]       = useState(null) // { recommendedCategory, reason }
   const [doneCount, setDoneCount] = useState(0)
   const [sex, setSex]             = useState(null)
+  const [profileReady, setProfileReady] = useState(false)
 
   useEffect(() => {
     api.get('/stretches/categories')
       .then(r => setCategories(r.data.categories))
-      .catch(() => {})
+      .catch((err) => console.error('[stretches] category load failed:', err?.message || err))
     api.get('/auth/me')
-      .then((r) => setSex(r.data?.user?.sex || r.data?.sex || 'male'))
-      .catch((err) => console.error('[stretches] profile load failed:', err?.message))
+      .then((r) => setSex(String(r.data?.user?.sex || r.data?.sex || '').toLowerCase() === 'female' ? 'female' : 'male'))
+      .catch((err) => {
+        console.error('[stretches] profile load failed:', err?.message || err)
+        setSex('male')
+      })
+      .finally(() => setProfileReady(true))
   }, [])
 
   const loadCategory = async (categoryId) => {
@@ -278,7 +283,8 @@ export default function Stretches() {
       const r = await api.get(`/stretches?category=${categoryId}`)
       setStretches(r.data.stretches)
       setScreen('session')
-    } catch {
+    } catch (err) {
+      console.error('[stretches] category routine load failed:', err?.message || err)
       setScreen('categories')
     }
   }
@@ -293,7 +299,8 @@ export default function Stretches() {
       })
       setStretches(r.data.stretches)
       setScreen('ai-banner')
-    } catch {
+    } catch (err) {
+      console.error('[stretches] recommended routine load failed:', err?.message || err)
       setScreen('categories')
     }
   }
@@ -304,7 +311,7 @@ export default function Stretches() {
   }
 
   /* ── Loading ── */
-  if (screen === 'loading') {
+  if (!profileReady || screen === 'loading') {
     return (
       <div style={{ background: 'var(--bg-base)', minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <p style={{ color: 'var(--text-muted)', fontSize: 15 }}>{t('common.loading')}</p>

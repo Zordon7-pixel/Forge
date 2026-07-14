@@ -8,6 +8,7 @@ import {
   ShieldAlert,
   Sparkles,
 } from 'lucide-react'
+import HealthSourceManager from '../components/HealthSourceManager'
 
 const sections = [
   {
@@ -72,6 +73,12 @@ export default function More() {
             </div>
           </section>
         ))}
+        <section>
+          <h2 style={{ color: 'var(--text-muted)', fontSize: 12, fontWeight: 800, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 10 }}>
+            Health & data
+          </h2>
+          <HealthSourceManager />
+        </section>
         <Link
           to="/settings"
           style={{

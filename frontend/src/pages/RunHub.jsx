@@ -1,11 +1,19 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { CalendarDays, ChevronRight, Lightbulb } from 'lucide-react'
+import { Accessibility, CalendarDays, ChevronRight, Flame, HeartPulse, History, Lightbulb, Medal } from 'lucide-react'
 import { useUnits } from '../context/UnitsContext'
 import api from '../lib/api'
 import { getPaceZone } from '../lib/athleteLanguage'
 import AiGuidanceNote from '../components/AiGuidanceNote'
 import { fetchDailyExecution, recommendationFromExecution, runRouteState } from '../lib/dailyExecution'
+import { getSmartQuickAction } from '../lib/smartQuickAction'
+
+const SMART_ACTION_ICONS = {
+  calendar: CalendarDays,
+  history: History,
+  body: HeartPulse,
+  prs: Medal,
+}
 
 export default function RunHub() {
   const { fmt } = useUnits()
@@ -53,6 +61,8 @@ export default function RunHub() {
 
   const calendarOwnsToday = execution?.hasPlan === true
   const calendarRunState = useMemo(() => runRouteState(execution), [execution])
+  const smartAction = useMemo(() => getSmartQuickAction(), [])
+  const SmartActionIcon = SMART_ACTION_ICONS[smartAction.icon] || History
 
   const recommendationTarget = useMemo(() => {
     if (!recommendation) return calendarOwnsToday ? '/plan' : '/log-run'
@@ -95,11 +105,8 @@ export default function RunHub() {
           <div>
             <p className="text-base font-bold" style={{ color: 'var(--text-primary)' }}>First run sets your baseline</p>
             <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>Warm up, log the run, then Forged Hybrid will translate your pace and adjust the next recommendation.</p>
-            <div className="mt-3 grid grid-cols-2 gap-2">
-              <Link to="/warmup" className="rounded-xl py-2 text-center text-sm font-semibold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', textDecoration: 'none' }}>
-                Warm Up
-              </Link>
-              <Link to="/log-run" className="rounded-xl py-2 text-center text-sm font-semibold" style={{ background: 'var(--accent)', color: 'var(--on-accent)', textDecoration: 'none' }}>
+            <div className="mt-3">
+              <Link to="/log-run" className="block rounded-xl py-2 text-center text-sm font-semibold" style={{ background: 'var(--accent)', color: 'var(--on-accent)', textDecoration: 'none' }}>
                 Log Run
               </Link>
             </div>
@@ -179,12 +186,18 @@ export default function RunHub() {
 
       <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
         <p className="text-xs font-semibold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.8 }}>Quick Actions</p>
-        <div className="mt-3 grid grid-cols-2 gap-2">
-          <Link to="/warmup" className="rounded-xl py-2 text-center text-sm font-semibold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', textDecoration: 'none' }}>
-            Start Warm-Up
+        <div className="mt-3 grid grid-cols-3 gap-2">
+          <Link to="/warmup" className="flex min-h-[76px] flex-col items-center justify-center gap-2 rounded-xl px-1.5 py-2 text-center text-xs font-bold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', textDecoration: 'none' }}>
+            <Flame size={19} color="var(--accent)" />
+            <span>Start Warm-Up</span>
           </Link>
-          <Link to="/history" className="rounded-xl py-2 text-center text-sm font-semibold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', textDecoration: 'none' }}>
-            View History
+          <Link to="/stretches" className="flex min-h-[76px] flex-col items-center justify-center gap-2 rounded-xl px-1.5 py-2 text-center text-xs font-bold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', textDecoration: 'none' }}>
+            <Accessibility size={19} color="var(--accent)" />
+            <span>Start Stretches</span>
+          </Link>
+          <Link to={smartAction.path} className="flex min-h-[76px] flex-col items-center justify-center gap-2 rounded-xl px-1.5 py-2 text-center text-xs font-bold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', textDecoration: 'none' }}>
+            <SmartActionIcon size={19} color="var(--accent)" />
+            <span>{smartAction.label}</span>
           </Link>
         </div>
       </div>

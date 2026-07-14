@@ -4,6 +4,7 @@ import { CheckCircle2 } from 'lucide-react'
 import { postRunStretches, preRunStretches } from '../data/stretches'
 import MovementDemo from '../components/MovementDemo'
 import api from '../lib/api'
+import LoadingRunner from '../components/LoadingRunner'
 
 export default function StretchSession() {
   const navigate = useNavigate()
@@ -22,14 +23,21 @@ export default function StretchSession() {
   const [nextName, setNextName] = useState('')
   const [done, setDone] = useState(false)
   const [sex, setSex] = useState(null)
+  const [profileReady, setProfileReady] = useState(false)
 
   useEffect(() => {
     let active = true
     api.get('/auth/me')
       .then((res) => {
-        if (active) setSex(res.data?.user?.sex || res.data?.sex || 'male')
+        if (active) setSex(String(res.data?.user?.sex || res.data?.sex || '').toLowerCase() === 'female' ? 'female' : 'male')
       })
-      .catch((err) => console.error('[stretch-session] profile load failed:', err?.message))
+      .catch((err) => {
+        console.error('[stretch-session] profile load failed:', err?.message || err)
+        if (active) setSex('male')
+      })
+      .finally(() => {
+        if (active) setProfileReady(true)
+      })
     return () => {
       active = false
     }
@@ -45,7 +53,7 @@ export default function StretchSession() {
   }, [stretches])
 
   useEffect(() => {
-    if (paused || transitioning || done) return
+    if (!profileReady || paused || transitioning || done) return
 
     const timer = setInterval(() => {
       setSecondsLeft(prev => {
@@ -74,7 +82,7 @@ export default function StretchSession() {
     }, 1000)
 
     return () => clearInterval(timer)
-  }, [paused, transitioning, done, current, stretches])
+  }, [profileReady, paused, transitioning, done, current, stretches])
 
   const currentStretch = stretches[current]
   const nextStretch = stretches[current + 1]
@@ -99,6 +107,8 @@ export default function StretchSession() {
       setNextName('')
     }, 2000)
   }
+
+  if (!profileReady) return <LoadingRunner message="Preparing stretches" />
 
   return (
     <>
