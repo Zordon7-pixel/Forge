@@ -557,7 +557,8 @@ async function buildConcurrentContext(userId, profile, target) {
   const healthFreshness = healthMetrics.freshness || {};
   const hasMetric = (value) => Number.isFinite(Number(value)) && Number(value) > 0;
   const hasTrainingRelevantHealthData = Boolean(healthSignals.available
-    || (healthFreshness.activity !== false && [healthMetrics.activeMinutesThisWeek, healthMetrics.exerciseMinutesThisWeek, healthMetrics.workoutCountThisWeek].some(hasMetric))
+    || (healthFreshness.activity !== false && [healthMetrics.activeMinutesThisWeek, healthMetrics.workoutCountThisWeek].some(hasMetric))
+    || (healthFreshness.exerciseMinutes !== false && hasMetric(healthMetrics.exerciseMinutesThisWeek))
     || (healthFreshness.vo2Max !== false && hasMetric(healthMetrics.vo2Max))
     || (healthFreshness.heartRateRecovery !== false && hasMetric(healthMetrics.heartRateRecoveryOneMinute))
     || (healthFreshness.respiratoryRate !== false && hasMetric(healthMetrics.respiratoryRate))

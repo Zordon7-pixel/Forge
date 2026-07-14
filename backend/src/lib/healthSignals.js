@@ -30,17 +30,18 @@ function hoursSince(value) {
   return (Date.now() - timestamp) / HOUR_MS;
 }
 
-function metricIsFresh(row, timestampField, maxHours) {
-  const age = hoursSince(row[timestampField] || row.synced_at);
-  return age === null || (age >= -0.25 && age <= maxHours);
+function metricIsFresh(row, timestampField, maxHours, { fallbackToSync = false } = {}) {
+  const age = hoursSince(row[timestampField] || (fallbackToSync ? row.synced_at : null));
+  return age !== null && age >= -0.25 && age <= maxHours;
 }
 
 function metricFreshness(row = {}) {
   return {
     activity: metricIsFresh(row, 'synced_at', 48),
-    sleep: metricIsFresh(row, 'sleep_end_at', 36),
-    restingHeartRate: metricIsFresh(row, 'resting_heart_rate_recorded_at', 48),
-    hrv: metricIsFresh(row, 'hrv_recorded_at', 48),
+    exerciseMinutes: metricIsFresh(row, 'activity_summary_recorded_at', 48),
+    sleep: metricIsFresh(row, 'sleep_end_at', 36, { fallbackToSync: true }),
+    restingHeartRate: metricIsFresh(row, 'resting_heart_rate_recorded_at', 48, { fallbackToSync: true }),
+    hrv: metricIsFresh(row, 'hrv_recorded_at', 48, { fallbackToSync: true }),
     respiratoryRate: metricIsFresh(row, 'respiratory_rate_recorded_at', 48),
     vo2Max: metricIsFresh(row, 'vo2_max_recorded_at', 90 * 24),
     walkingHeartRate: metricIsFresh(row, 'walking_heart_rate_recorded_at', 30 * 24),
@@ -237,6 +238,8 @@ function buildHealthSignals(rawRow = {}) {
   const row = hydrateHealthRow(rawRow);
   const freshness = metricFreshness(row);
   if (!hasHealthData(row)) {
+    const syncedSleep = toNumber(row.sleep_hours_last_night);
+    const sleep = syncedSleep !== null && syncedSleep > 0 && !isSuspectSyncedSleep(row) && freshness.sleep ? syncedSleep : null;
     return {
       available: false,
       scoreDelta: 0,
@@ -244,7 +247,12 @@ function buildHealthSignals(rawRow = {}) {
       recoveryState: 'unknown',
       flags: [],
       summary: 'Apple Health has not synced enough recovery data yet.',
-      metrics: buildMetricSnapshot(row, freshness),
+      metrics: buildMetricSnapshot(row, freshness, {
+        sleepHoursLastNight: sleep,
+        sleepSource: sleep !== null ? 'health_sync' : null,
+        hrvMs: freshness.hrv ? toNumber(row.hrv_ms) : null,
+        restingHeartRate: freshness.restingHeartRate ? toNumber(row.resting_heart_rate) : null,
+      }),
     };
   }
 

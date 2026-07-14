@@ -501,7 +501,7 @@ function summarizeInputs(profile = {}, history = {}, recovery = {}, checkin = nu
     missedWorkouts: clamp(Math.round(Number(history.missedWorkouts || 0)), 0, 100),
     adherenceBand: Number.isFinite(adherence) ? (adherence >= 0.85 ? 'high' : adherence >= 0.65 ? 'moderate' : 'low') : 'unknown',
     recoveryState: String(recovery.state || recovery.recoveryState || 'unknown').slice(0, 20),
-    appleHealth: (recovery.dataAvailable || recovery.available || healthMetrics.syncedAt) ? {
+    appleHealth: (recovery.dataAvailable || recovery.available) ? {
       readinessScore: metric(recovery.readinessScore),
       sleepHoursLastNight: healthFreshness.sleep === false ? null : metric(healthMetrics.sleepHoursLastNight),
       sleepHours7dBaseline: metric(healthMetrics.sleepHours7dBaseline),
@@ -510,7 +510,7 @@ function summarizeInputs(profile = {}, history = {}, recovery = {}, checkin = nu
       restingHeartRate: healthFreshness.restingHeartRate === false ? null : metric(healthMetrics.restingHeartRate),
       restingHeartRateBaseline: metric(healthMetrics.restingHeartRateBaseline),
       activeMinutesThisWeek: healthFreshness.activity === false ? null : metric(healthMetrics.activeMinutesThisWeek),
-      exerciseMinutesThisWeek: healthFreshness.activity === false ? null : metric(healthMetrics.exerciseMinutesThisWeek),
+      exerciseMinutesThisWeek: healthFreshness.exerciseMinutes === false ? null : metric(healthMetrics.exerciseMinutesThisWeek),
       workoutCountThisWeek: healthFreshness.activity === false ? null : metric(healthMetrics.workoutCountThisWeek),
       vo2Max: healthFreshness.vo2Max === false ? null : metric(healthMetrics.vo2Max),
       heartRateRecoveryOneMinute: healthFreshness.heartRateRecovery === false ? null : metric(healthMetrics.heartRateRecoveryOneMinute),

@@ -32,12 +32,15 @@ const normalized = normalizeTrainingMetrics({
   running_stride_length_m: 1.19,
   running_vertical_oscillation_cm: 8.4,
   running_ground_contact_time_ms: 244,
+  activity_summary_recorded_at: recordedAt,
   running_dynamics_recorded_at: recordedAt,
 });
 check(!normalized.error && normalized.metrics.metrics_schema_version === 2, 'valid native v2 payload is accepted');
 check(normalized.metrics.vo2_max === 51.7 && normalized.metrics.running_power_watts === 318, 'cardio and running-form values survive normalization');
+check(normalized.metrics.activity_summary_recorded_at === recordedAt, 'activity freshness timestamp survives normalization');
 check(normalizeTrainingMetrics({ running_speed_mps: 99 }).error?.includes('between'), 'implausible running speed is rejected at the API boundary');
 check(normalizeTrainingMetrics({ vo2_max_recorded_at: new Date(Date.now() + 60 * 60 * 1000).toISOString() }).error?.includes('future'), 'future metric timestamps are rejected');
+check(normalizeTrainingMetrics({ vo2_max_recorded_at: 'July 13, 2026' }).error?.includes('ISO'), 'non-ISO timestamp strings are rejected');
 check(!normalizeTrainingMetrics({}).metrics.metrics_schema_version, 'legacy bridge payload cannot claim expanded coverage');
 
 const healthServiceSource = fs.readFileSync(path.join(__dirname, '../../frontend/src/services/HealthService.js'), 'utf8');
@@ -45,6 +48,14 @@ check(
   /metrics_schema_version:\s*hasExpandedNativeAuthorization\(\)\s*\?\s*metrics\.metricsSchemaVersion\s*:\s*1/.test(healthServiceSource),
   'frontend cannot claim expanded schema coverage before the added HealthKit permissions are approved'
 );
+check(/activity_summary_recorded_at:\s*metrics\.activitySummaryRecordedAt/.test(healthServiceSource), 'frontend maps the native activity timestamp to the API contract');
+
+const swiftSource = fs.readFileSync(path.join(__dirname, '../../frontend/ios/App/App/ForgeHealthPlugin.swift'), 'utf8');
+check(/"activitySummaryRecordedAt":\s*self\.isoDateTime\(now\)/.test(swiftSource), 'native summary timestamps current-week activity at collection time');
+check(/candidateSessions\.dropLast\(\)\.suffix\(7\)/.test(swiftSource), 'sleep baseline excludes the current night');
+
+const bodyDriversSource = fs.readFileSync(path.join(__dirname, '../src/routes/bodyDrivers.js'), 'utf8');
+check(/Not enough recent data yet/.test(bodyDriversSource), 'Body does not describe missing or stale inputs as healthy');
 
 const parsed = parseTrainingMetrics(JSON.stringify({ ...normalized.metrics, blood_pressure: 'do-not-store' }));
 check(parsed.vo2_max === 51.7 && parsed.blood_pressure === undefined, 'hydration keeps only the training-metric whitelist');
@@ -62,6 +73,7 @@ const freshSignals = buildHealthSignals({
   training_metrics_json: {
     metrics_schema_version: 2,
     exercise_minutes_this_week: 184,
+    activity_summary_recorded_at: recordedAt,
     sleep_end_at: recordedAt,
     sleep_hours_7d_baseline: 7.4,
     resting_heart_rate_baseline: 58,
@@ -75,6 +87,7 @@ const freshSignals = buildHealthSignals({
 check(freshSignals.available && freshSignals.recoveryState !== 'strong', 'fresh values below athlete baselines cannot produce a strong recovery state');
 check(freshSignals.metrics.sleepHours7dBaseline === 7.4 && freshSignals.metrics.hrvMsBaseline === 60, 'athlete baselines reach readiness output');
 check(freshSignals.metrics.vo2Max === 51.7 && freshSignals.metrics.freshness.vo2Max, 'fresh cardio context is exposed without becoming a readiness weight');
+check(freshSignals.metrics.freshness.exerciseMinutes, 'exercise minutes carry their own freshness timestamp');
 
 const staleAt = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString();
 const staleSignals = buildHealthSignals({
@@ -90,6 +103,16 @@ const staleSignals = buildHealthSignals({
 });
 check(staleSignals.available === false && staleSignals.readinessScore === null, 'stale-only recovery values cannot produce a green readiness score');
 check(staleSignals.metrics.freshness.sleep === false && staleSignals.metrics.freshness.hrv === false, 'staleness is explicit in the health snapshot');
+check(staleSignals.metrics.sleepHoursLastNight === null && staleSignals.metrics.hrvMs === null && staleSignals.metrics.restingHeartRate === null, 'stale recovery values are removed before downstream consumers see them');
+
+const staleExerciseSignals = buildHealthSignals({
+  synced_at: recordedAt,
+  training_metrics_json: {
+    exercise_minutes_this_week: 250,
+    activity_summary_recorded_at: staleAt,
+  },
+});
+check(staleExerciseSignals.metrics.freshness.exerciseMinutes === false, 'a later partial sync cannot make old exercise minutes appear fresh');
 
 const zeroSleepSignals = buildHealthSignals({
   sleep_hours_last_night: 0,
@@ -118,6 +141,15 @@ check(plan.inputSummary.appleHealth?.vo2Max === 51.7, 'fresh cardio context is p
 check(plan.inputSummary.appleHealth?.sleepHours7dBaseline === 7.4, 'sleep baseline is persisted with plan inputs');
 check(plan.inputSummary.appleHealth?.exerciseMinutesThisWeek === 184, 'fresh Apple Health activity reaches plan provenance');
 check(plan.inputSummary.appleHealth?.usedFor?.includes('training-load context'), 'plan explains the bounded role of Apple Health data');
+
+const planWithoutHealth = concurrentPlan.buildConcurrentPlan({
+  todayISO: '2026-07-13',
+  profile: { weekly_miles_current: 15, run_days_per_week: 4, lift_days_per_week: 0 },
+  target: { weeks: 4, startDate: '2026-07-13', distanceMiles: 10, planMode: 'run_only', trainingDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] },
+  history: { weeklyMileageBaseline: 15, recentRunCount: 9, recentLiftCount: 0, adherenceRate: 0.85, missedWorkouts: 0 },
+  recovery: { state: 'unknown', available: false, dataAvailable: false, syncedAt: recordedAt, metrics: { syncedAt: recordedAt } },
+});
+check(planWithoutHealth.inputSummary.appleHealth === null, 'an old sync timestamp alone cannot claim Apple Health plan provenance');
 
 async function routeSmoke() {
   section('authenticated sync route');
@@ -168,6 +200,8 @@ async function routeSmoke() {
         sleep_hours_last_night: 7.1,
         metrics_schema_version: 2,
         sleep_hours_7d_baseline: 7.3,
+        exercise_minutes_this_week: 165,
+        activity_summary_recorded_at: recordedAt,
         vo2_max: 51.7,
         vo2_max_recorded_at: recordedAt,
       },
@@ -177,6 +211,7 @@ async function routeSmoke() {
     check(response.statusCode === 200 && response.payload?.ok, 'valid expanded sync returns 200');
     check(insert.params[0] === 'h11-user' && /ON CONFLICT \(user_id\)/.test(insert.sql), 'upsert is scoped by the authenticated user conflict key');
     check(storedMetrics.vo2_max === 51.7 && storedMetrics.metrics_schema_version === 2, 'route stores only normalized v2 metrics JSON');
+    check(storedMetrics.exercise_minutes_this_week === 165 && storedMetrics.activity_summary_recorded_at === recordedAt, 'route stores activity value and provenance together');
 
     const callCount = calls.length;
     response = await invoke(post, { user: { id: 'h11-user' }, body: { running_power_watts: 9999 } });

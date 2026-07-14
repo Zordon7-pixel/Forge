@@ -244,6 +244,7 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
                 "totalMilesThisWeek": round(milesThisWeek * 100) / 100,
                 "activeMinutesThisWeek": Int(activeMinutesThisWeek.rounded()),
                 "exerciseMinutesThisWeek": Int(exerciseMinutesThisWeek.rounded()),
+                "activitySummaryRecordedAt": self.isoDateTime(now),
                 "workoutCountThisWeek": workouts.count,
                 "workouts": workouts
             ]
@@ -430,7 +431,7 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
             }
 
             let latestSeconds = self.sleepSeconds(latestSession)
-            let recentSessionHours = candidateSessions.suffix(7).map { self.sleepSeconds($0) / 3600.0 }
+            let recentSessionHours = candidateSessions.dropLast().suffix(7).map { self.sleepSeconds($0) / 3600.0 }
             let baseline = recentSessionHours.count >= 3 ? recentSessionHours.reduce(0, +) / Double(recentSessionHours.count) : nil
             var coreSeconds: Double?
             var deepSeconds: Double?

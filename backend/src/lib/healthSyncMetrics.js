@@ -19,6 +19,7 @@ const TRAINING_METRIC_SPECS = {
 };
 
 const TRAINING_TIMESTAMP_FIELDS = [
+  'activity_summary_recorded_at',
   'sleep_end_at',
   'resting_heart_rate_recorded_at',
   'hrv_recorded_at',
@@ -57,6 +58,9 @@ function coerceMetric(value, options = {}) {
 function coerceTimestamp(value, label) {
   if (value === null || value === undefined || value === '') return { value: null };
   if (typeof value !== 'string' || value.length > 80) return { error: `${label} must be an ISO timestamp` };
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/.test(value)) {
+    return { error: `${label} must be an ISO timestamp` };
+  }
   const timestamp = Date.parse(value);
   if (!Number.isFinite(timestamp)) return { error: `${label} must be an ISO timestamp` };
   if (timestamp > Date.now() + 10 * 60 * 1000) return { error: `${label} cannot be in the future` };

@@ -178,9 +178,14 @@ router.get('/drivers', auth, async (req, res) => {
       return (b.severity || 0) - (a.severity || 0);
     });
     const limiter = candidates[0] || null;
+    const summary = limiter
+      ? `${limiter.label} is the limiter today — ${limiter.plainEnglish}`
+      : drivers.length
+        ? 'All recent inputs look good — train as planned'
+        : 'Not enough recent data yet — sync Apple Health or complete today\'s check-in.';
 
     res.json({
-      summary: limiter ? `${limiter.label} is the limiter today — ${limiter.plainEnglish}` : 'All inputs looking good — train as planned',
+      summary,
       limiter: limiter?.key || null,
       drivers,
     });

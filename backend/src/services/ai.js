@@ -270,7 +270,7 @@ async function generateTrainingPlan(profile, target = null, trainingContext = nu
   ].filter(([, value]) => value !== null).map(([label, value, unit]) => `${label} ${value}${unit}`).join(', ') || 'not available';
   const activityLine = [
     ['active minutes', freshMetric('activity', healthMetrics.activeMinutesThisWeek)],
-    ['exercise minutes', freshMetric('activity', healthMetrics.exerciseMinutesThisWeek)],
+    ['exercise minutes', freshMetric('exerciseMinutes', healthMetrics.exerciseMinutesThisWeek)],
     ['workouts', freshMetric('activity', healthMetrics.workoutCountThisWeek)],
   ].filter(([, value]) => value !== null).map(([label, value]) => `${label} ${value}`).join(', ') || 'not available';
   const runningFormLine = [
