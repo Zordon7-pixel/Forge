@@ -9,7 +9,7 @@ const PHOTO_DEMOS = [
     female: '/exercises/dumbbell-bench-press-female.png',
   },
   {
-    match: (lower) => lower.includes('squat') || lower.includes('leg press'),
+    match: (lower) => lower.includes('leg press') || (lower.includes('squat') && !lower.includes('stretch') && !lower.includes('hold')),
     src: '/exercises/squat.png',
   },
   {
@@ -37,7 +37,7 @@ const PHOTO_DEMOS = [
     src: '/exercises/barbell-curl.png',
   },
   {
-    match: (lower) => lower.includes('tricep pushdown') || lower.includes('tricep') || lower.includes('skull crusher'),
+    match: (lower) => lower.includes('tricep pushdown') || (lower.includes('tricep') && !lower.includes('stretch')) || lower.includes('skull crusher'),
     src: '/exercises/tricep-pushdown.png',
   },
   {
@@ -89,13 +89,13 @@ const PHOTO_DEMOS = [
     maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes('walking lunge') || lower === 'lunges' || lower.includes('lunge'),
+    match: (lower) => lower.includes('walking lunge') || lower === 'lunges' || (lower.includes('lunge') && !lower.includes('lateral')),
     src: '/stretches/walking-lunges.png',
     cropToSex: true,
     maleSide: 'left',
   },
   {
-    match: (lower) => lower.includes('standing quad') || lower.includes('quad stretch'),
+    match: (lower) => lower.includes('standing quad') || (lower.includes('quad stretch') && !lower.includes('kneeling')),
     src: '/stretches/standing-quad.png',
     cropToSex: true,
     maleSide: 'right',

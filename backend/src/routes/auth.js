@@ -58,6 +58,8 @@ router.post('/register', async (req, res) => {
     if (password.length < 6)
       return res.status(400).json({ error: 'Password must be at least 6 characters' });
     const emailNorm = email.trim().toLowerCase();
+    if (!emailRegex.test(emailNorm))
+      return res.status(400).json({ error: 'Please enter a valid email address.' });
     if (await dbGet('SELECT id FROM users WHERE email = ?', [emailNorm]))
       return res.status(409).json({ error: 'Email already in use' });
     const id = uuidv4();

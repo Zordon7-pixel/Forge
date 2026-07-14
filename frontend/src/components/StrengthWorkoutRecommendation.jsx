@@ -138,6 +138,11 @@ export default function StrengthWorkoutRecommendation({
       <section style={{ marginTop: 20 }}>
         <h4 style={{ color: 'var(--text-primary)', fontSize: px(17), fontWeight: 950, margin: 0 }}>Workout</h4>
         <div style={{ marginTop: 8 }}>
+          {exercises.length === 0 && (
+            <p role="status" style={{ color: 'var(--text-muted)', fontSize: px(14), lineHeight: 1.55, margin: '12px 0 0' }}>
+              This plan does not include a detailed lift prescription. Choose AI Recommends or Manual to build a complete workout before starting.
+            </p>
+          )}
           {exercises.map((exercise, index) => (
             <article
               key={`${exercise?.name || 'exercise'}-${index}`}
@@ -207,7 +212,7 @@ export default function StrengthWorkoutRecommendation({
         )}
       </div>
 
-      <WatchWorkoutSendButton workout={watchWorkout} className="mt-3" />
+      {exercises.length > 0 && <WatchWorkoutSendButton workout={watchWorkout} className="mt-3" />}
     </div>
   )
 }
