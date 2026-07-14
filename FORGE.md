@@ -5,8 +5,8 @@ This file holds Forge's product history, deployment notes, shipped phase log, kn
 ## Current Production
 
 - Production URL: `https://forge-production-773f.up.railway.app/`
-- Latest verified application release: commit `44bdb4f7`, deployment `6d410bad-6436-4832-b511-e68391bb1ae8`
-- Latest checked bundle: `/assets/index-BkNTEfzQ.js`
+- Latest verified application release: commit `e2c3e8f6`, deployment `62ca8931-908b-48ca-9fc9-0a9c0780c030`
+- Latest checked bundle: `/assets/index-CRA4gsOq.js`
 - iOS version/build: `1.0.5` / `15`
 - Bundle identifier: `com.zordontech.forge`
 - Expo/EAS project: `@zordon/forge-athlete` (`6aeb5fbb-2697-4cf4-b9b3-afe60c63e9e1`)
@@ -16,6 +16,7 @@ Current production checks:
 - Run-integrity follow-up verified durable active-run recovery after reload, user-facing run deletion, imported-workout tombstones that prevent resync resurrection, source-accurate calorie labels, and a runner-following live-location marker.
 - Stretch catalog cues now remain exact, and the mobile `Done` / `Skip` / `Next` controls sit above the app navigation instead of routing accidental taps to another tab.
 - H12 Apple Health activity classification, athlete-specific heart-rate zones, workout-metric integrity, and data-coverage UI verified live.
+- H13 evidence-backed race plans now use bounded run history, current-week work, check-ins, and recovery data to prescribe time-first training with transparent research, coach-plan, and athlete-practice references.
 - Demo diagnostics check returns `403`.
 - `/api/auth/me/export` returns account/training data and excludes `password_hash`.
 - `/api/auth/forgot-password` returns `200 email_sent` for `demo@forge.app` in under one second.
@@ -212,6 +213,15 @@ Phase 2 cleanup from this audit:
 - HealthKit workout schema v4 prefers workout-owned heart-rate statistics and otherwise uses bounded time-weighted samples. The web/backend release is live; this native bridge improvement remains pending a separately approved EAS/TestFlight build.
 - Claude Code passed the implementation and focused re-QA with no critical, high, or medium findings. Live browser testing verified detail-sheet deletion, confirmation copy, tombstone-backed resync skipping, active-run recovery after reload, and zero browser console warnings/errors.
 
+## Evidence-Backed Timed Race Plans H13 (2026-07-14)
+
+- Plan generation is deterministic and no longer spends an LLM request. Public research, coach plans, and elite-athlete practice set the programming principles; the athlete's own history, availability, race, recovery, and check-in set the dosage. Elite volume is never copied.
+- Non-race sessions are prescribed by time and effort, with internal distance estimates retained only for load accounting. Race day remains exact-date and exact-distance. Watch and manual-entry payloads preserve time goals.
+- Mileage baselines use bounded 14-, 28-, and 56-day run history. Tiny fragments cannot inflate the baseline, a short recovery run cannot hide the prior long-run protection anchor, and regeneration records current-week completed work without scheduling duplicate or past sessions.
+- Bryan's Army 10-Miler plan was regenerated from 17 meaningful runs: 11.9 mi/week bounded baseline, 9.5 miles already completed this week, a 7.31-mile long-run anchor, and a 2.17-mile latest recovery run. The block peaks at 19.6 miles with a 105-minute/8.8-mile estimated long run before tapering to the exact 10-mile race on 2026-10-11.
+- Athlete-facing Watch surfaces no longer expose native build/plugin diagnostics. Build 15 versus build 16 details remain in internal console diagnostics; automatic Apple Watch delivery still requires a separately Bryan-approved EAS build 16.
+- H13 passed all backend and frontend smokes, a 3,200-case generator fuzz, frontend build, zero-vulnerability audit, 48-table account-data coverage, Capacitor sync, Swift parse, and two independent Claude Code reviews. Final re-QA verdict: PASS. No EAS build was run.
+
 ## Recently Fixed Bugs
 
 Do not reintroduce these patterns.
@@ -284,6 +294,7 @@ These changes are already implemented, built, Capacitor-synced, and deployed to 
 | 2026-07-14 | `dc344e3d-21f5-495c-807c-7510a8323d42` | Success | H12 Apple Health activity classification, exact HR zones, workout metrics, and data-coverage handling verified live |
 | 2026-07-14 | `e9f4fba8-534c-4fca-98fb-779ac8d240ca` | Success | Final friends-and-family beta gate, exact stretch cues, and mobile stretch-control overlap fix verified live |
 | 2026-07-14 | `6d410bad-6436-4832-b511-e68391bb1ae8` | Success | Run recovery, durable imported-run deletion, live-location map behavior, and heart-rate source integrity verified live |
+| 2026-07-14 | `62ca8931-908b-48ca-9fc9-0a9c0780c030` | Success | H13 evidence-backed timed race plans, current-week provenance, internal Watch diagnostics, and sparse-screen branding verified live |
 
 ### Build/Test Status
 
