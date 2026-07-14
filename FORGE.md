@@ -5,13 +5,15 @@ This file holds Forge's product history, deployment notes, shipped phase log, kn
 ## Current Production
 
 - Production URL: `https://forge-production-773f.up.railway.app/`
-- Latest verified application release: commit `cd14b1bf`, deployment `dc344e3d-21f5-495c-807c-7510a8323d42`
-- Latest checked bundle: `/assets/index-BchGiqME.js`
+- Latest verified application release: commit `71b28a02`, deployment `e9f4fba8-534c-4fca-98fb-779ac8d240ca`
+- Latest checked bundle: `/assets/index-BNfzfH3-.js`
 - iOS version/build: `1.0.5` / `15`
 - Bundle identifier: `com.zordontech.forge`
 - Expo/EAS project: `@zordon/forge-athlete` (`6aeb5fbb-2697-4cf4-b9b3-afe60c63e9e1`)
 
 Current production checks:
+- Final friends-and-family beta gate passed Claude Code and Hermes review, all deterministic smokes, both dependency audits, 47-table account-data coverage, Capacitor sync, Swift parse, guarded live CRUD/ownership testing, and an 18-route mobile browser crawl.
+- Stretch catalog cues now remain exact, and the mobile `Done` / `Skip` / `Next` controls sit above the app navigation instead of routing accidental taps to another tab.
 - H12 Apple Health activity classification, athlete-specific heart-rate zones, workout-metric integrity, and data-coverage UI verified live.
 - Demo diagnostics check returns `403`.
 - `/api/auth/me/export` returns account/training data and excludes `password_hash`.
@@ -191,6 +193,15 @@ Phase 2 cleanup from this audit:
 - H12 passed 32 focused checks, all H1/H3/H4/H5/H6/H8/H9/H10/H11 regressions, shared safety smokes, frontend build, zero-vulnerability audit, 47-table account-data coverage, Capacitor sync, and Swift parse. Claude Code re-QA passed and Hermes approved the Railway merge.
 - Commit `602251b0` is source-ready. No EAS build was run; schema-v3 native reads remain unavailable until Bryan explicitly approves a later EAS/TestFlight build and phone verification.
 
+## Final Friends-and-Family Beta Gate (2026-07-14)
+
+- Phase 1 surfaced previously swallowed startup, migration, chunk-loading, and user-action failures with contextual logs and user-visible fallbacks. Registration now rejects malformed email addresses at the backend boundary.
+- Phase 2 added the opt-in `final-beta-api-smoke.js` production workflow guard. It creates uniquely named disposable accounts, covers 17 auth/CRUD/ownership/export/delete groups, and deletes its accounts after the run. Sparse lift plans now explain that a full prescription is unavailable instead of showing unusable workout controls.
+- Phase 3 locked Apple Health training truth with 37 focused assertions: calibrated heart-rate zones, walk exclusion, recent-long-run protection, complete strength prescriptions, stale-data bounds, plan provenance, and native-only automatic sync wiring. `recentRunLoad` now excludes known non-run activities while retaining legacy type-less run rows.
+- Final computer-use testing covered 18 authenticated core routes at 390x844 with no horizontal overflow, broken images, startup errors, or console errors. Feedback dry-run, lift expansion, stretch selection, exact cues, and `Done` / `Skip` / `Next` were exercised without mutating the demo account.
+- Claude Code and Hermes independently passed the three testing phases plus both live-test roll-forward fixes. Production serves `/assets/index-BNfzfH3-.js`, byte-for-byte matching the reviewed local build.
+- Remaining device-only checks are real HealthKit permission/foreground sync behavior, Apple Watch delivery with a paired watch, and physical-iPhone safe-area confirmation. No EAS or TestFlight build was run during this gate.
+
 ## Recently Fixed Bugs
 
 Do not reintroduce these patterns.
@@ -260,6 +271,7 @@ These changes are already implemented, built, Capacitor-synced, and deployed to 
 | 2026-07-13 | `14fd2c37-40de-451b-9ac4-f47599c8aa99` | Success | H10 recovery-prescription integrity and data-backed strength details verified live |
 | 2026-07-13 | `22655735-758a-40d2-bde0-cc9359fb9b3b` | Success | H11 expanded Apple Health training intelligence, freshness gates, plan provenance, and Body metrics verified live |
 | 2026-07-14 | `dc344e3d-21f5-495c-807c-7510a8323d42` | Success | H12 Apple Health activity classification, exact HR zones, workout metrics, and data-coverage handling verified live |
+| 2026-07-14 | `e9f4fba8-534c-4fca-98fb-779ac8d240ca` | Success | Final friends-and-family beta gate, exact stretch cues, and mobile stretch-control overlap fix verified live |
 
 ### Build/Test Status
 
