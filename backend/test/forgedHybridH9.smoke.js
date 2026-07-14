@@ -16,15 +16,15 @@ function sessions(plan) { return (plan.weeks || []).flatMap((week) => (week.days
 
 const rows = [
   {
-    date: '2026-07-13', distance_miles: 7.312, duration_seconds: 5097, perceived_effort: 5,
+    date: '2026-07-13', type: 'easy', watch_activity_type: 'Running', distance_miles: 7.312, duration_seconds: 5097, perceived_effort: 5,
     avg_heart_rate: 150, pace_avg: null, health_source: 'apple_health', created_at: '2026-07-13T15:49:36.728Z',
   },
   {
-    date: '2026-07-13', distance_miles: 0.287, duration_seconds: 369, perceived_effort: 5,
+    date: '2026-07-13', type: 'walk', watch_activity_type: 'Walking', distance_miles: 0.287, duration_seconds: 369, perceived_effort: 5,
     avg_heart_rate: 129, pace_avg: null, health_source: 'apple_health', created_at: '2026-07-13T18:26:25.120Z',
   },
   {
-    date: '2026-07-03', distance_miles: 3.115, duration_seconds: 2027, perceived_effort: 5,
+    date: '2026-07-03', type: 'easy', watch_activity_type: 'Running', distance_miles: 3.115, duration_seconds: 2027, perceived_effort: 5,
     avg_heart_rate: 161, pace_avg: null, health_source: 'apple_health', created_at: '2026-07-08T08:38:03.982Z',
   },
 ];
@@ -37,7 +37,7 @@ const acute = recentRuns.summarizeRecentRunLoad(rows, {
 });
 check(acute.available && acute.latestRun.distanceMiles === 7.312, 'largest meaningful run wins over a later short Apple Health segment');
 check(acute.latestRun.paceSecondsPerMile === 697 && acute.latestRun.paceLabel === '11:37/mi', 'pace is computed from duration when pace_avg is absent');
-check(acute.sevenDayMiles === 7.6 && acute.loadRatio === 0.84, 'seven-day load includes all valid run segments');
+check(acute.sevenDayMiles === 7.3 && acute.loadRatio === 0.8, 'seven-day run load excludes the later Apple Health walk');
 check(acute.latestRun.isLong && !acute.latestRun.isHard, '85-minute 7.3-mile run is long without inventing hard effort');
 check(acute.protection.noAdditionalRunOnDate === '2026-07-13', 'same-day duplicate running is blocked');
 check(acute.protection.hardRunsThrough === '2026-07-15' && acute.protection.lowerBodyThrough === '2026-07-15', 'caution recovery protects demanding running and lower body for 72 hours');

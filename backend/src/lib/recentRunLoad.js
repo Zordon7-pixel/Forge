@@ -1,5 +1,7 @@
 // Pure recent-run load summary used by plan generation and live adaptation.
 
+const { isRunActivity } = require('./runActivity');
+
 function parseISODate(value) {
   const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!match) return null;
@@ -43,6 +45,7 @@ function paceLabel(secondsPerMile) {
 }
 
 function normalizeRun(row = {}) {
+  if (!isRunActivity(row)) return null;
   const date = String(row.date || '').slice(0, 10);
   if (!parseISODate(date)) return null;
   const distanceMiles = finiteNumber(row.distance_miles, 0, 500) || 0;
