@@ -1,4 +1,4 @@
-import { getToken, clearToken } from './tokenStore'
+import { getToken, clearToken } from './tokenStore.js'
 
 export function getUser() {
   try {

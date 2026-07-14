@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import api from '../lib/api'
+import { isSwipeBackUnsafeSessionStatus } from '../lib/swipeBack'
 
 const C = { accent: 'var(--accent)', card: 'var(--bg-card)', input: 'var(--bg-input)', muted: 'var(--text-muted)', primary: 'var(--text-primary)' }
 
@@ -105,7 +106,10 @@ export default function TreadmillRun() {
     : null
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg-base)', color: 'var(--text-primary)', paddingBottom: 100 }}>
+    <div
+      data-swipe-back-ignore={isSwipeBackUnsafeSessionStatus(status) || undefined}
+      style={{ minHeight: '100vh', background: 'var(--bg-base)', color: 'var(--text-primary)', paddingBottom: 100 }}
+    >
       <div style={{ padding: '16px 16px 0', display: 'flex', alignItems: 'center', gap: 12 }}>
         <button onClick={() => navigate(-1)}
           style={{ color: 'var(--text-muted)', background: 'var(--bg-input)', border: 'none', borderRadius: 10, padding: '8px 12px', cursor: 'pointer', fontSize: 14 }}>

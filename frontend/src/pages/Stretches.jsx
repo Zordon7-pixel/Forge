@@ -14,6 +14,10 @@ import {
 } from 'lucide-react'
 import api from '../lib/api'
 import MovementDemo from '../components/MovementDemo'
+import { getPreviousRoutineIds, rememberRoutine } from '../lib/routineRotation'
+import { SWIPE_BACK_EVENT } from '../lib/swipeBack'
+
+const STRETCH_ROTATION_SCOPE = 'stretch-library'
 
 /* ─── Category icon map ─── */
 const CATEGORY_ICONS = {
@@ -277,10 +281,22 @@ export default function Stretches() {
       .finally(() => setProfileReady(true))
   }, [])
 
+  useEffect(() => {
+    if (screen === 'categories' || screen === 'loading') return undefined
+    const returnToCategories = (event) => {
+      event.preventDefault()
+      setScreen('categories')
+    }
+    window.addEventListener(SWIPE_BACK_EVENT, returnToCategories)
+    return () => window.removeEventListener(SWIPE_BACK_EVENT, returnToCategories)
+  }, [screen])
+
   const loadCategory = async (categoryId) => {
     setScreen('loading')
     try {
-      const r = await api.get(`/stretches?category=${categoryId}`)
+      const exclude = getPreviousRoutineIds(STRETCH_ROTATION_SCOPE)
+      const r = await api.get('/stretches', { params: { category: categoryId, exclude: exclude.join(',') } })
+      rememberRoutine(STRETCH_ROTATION_SCOPE, r.data.stretches)
       setStretches(r.data.stretches)
       setScreen('session')
     } catch (err) {
@@ -292,7 +308,9 @@ export default function Stretches() {
   const loadAI = async () => {
     setScreen('loading')
     try {
-      const r = await api.get('/stretches/recommended')
+      const exclude = getPreviousRoutineIds(STRETCH_ROTATION_SCOPE)
+      const r = await api.get('/stretches/recommended', { params: { exclude: exclude.join(',') } })
+      rememberRoutine(STRETCH_ROTATION_SCOPE, r.data.stretches)
       setAiData({
         recommendedCategory: r.data.recommendedCategory,
         reason: r.data.reason,

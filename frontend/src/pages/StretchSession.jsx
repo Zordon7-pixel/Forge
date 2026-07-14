@@ -5,6 +5,9 @@ import { postRunStretches, preRunStretches } from '../data/stretches'
 import MovementDemo from '../components/MovementDemo'
 import api from '../lib/api'
 import LoadingRunner from '../components/LoadingRunner'
+import { chooseRotatingRoutine, rememberRoutine } from '../lib/routineRotation'
+
+const STRETCH_SESSION_COUNT = 6
 
 export default function StretchSession() {
   const navigate = useNavigate()
@@ -14,7 +17,12 @@ export default function StretchSession() {
   const sessionType = location.state?.type || typeFromQuery || 'pre'
   const isPre = sessionType !== 'post'
 
-  const stretches = useMemo(() => (isPre ? preRunStretches : postRunStretches), [isPre])
+  const rotationScope = isPre ? 'stretch-session:pre' : 'stretch-session:post'
+  const stretches = useMemo(() => chooseRotatingRoutine(
+    rotationScope,
+    isPre ? preRunStretches : postRunStretches,
+    STRETCH_SESSION_COUNT,
+  ), [isPre, rotationScope])
 
   const [current, setCurrent] = useState(0)
   const [secondsLeft, setSecondsLeft] = useState(stretches[0].duration)
@@ -24,6 +32,10 @@ export default function StretchSession() {
   const [done, setDone] = useState(false)
   const [sex, setSex] = useState(null)
   const [profileReady, setProfileReady] = useState(false)
+
+  useEffect(() => {
+    rememberRoutine(rotationScope, stretches)
+  }, [rotationScope, stretches])
 
   useEffect(() => {
     let active = true

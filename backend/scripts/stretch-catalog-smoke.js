@@ -30,4 +30,30 @@ for (const stretch of stretches) {
   }
 }
 
-console.log(`Stretch catalog OK: ${stretches.length} entries, ${ids.size} local image mappings`);
+const hipPool = _test.POOLS['hip-focused'];
+const previousIds = hipPool.slice(0, 5).map((stretch) => stretch.id);
+const rotated = _test.selectRoutine(hipPool, previousIds, 5, () => 0.25);
+const unseenIds = new Set(hipPool.slice(5).map((stretch) => stretch.id));
+if (!rotated.slice(0, unseenIds.size).every((stretch) => unseenIds.has(stretch.id))) {
+  throw new Error('Stretch rotation must select unseen movements before recent movements');
+}
+if (rotated.every((stretch) => previousIds.includes(stretch.id))) {
+  throw new Error('Stretch rotation repeated the prior routine despite unseen movements');
+}
+if (_test.selectRoutine(hipPool, previousIds, -1).length !== 0) {
+  throw new Error('Stretch rotation must clamp negative counts to zero');
+}
+if (_test.selectRoutine(hipPool, previousIds, 100).length !== hipPool.length) {
+  throw new Error('Stretch rotation must clamp oversized counts to the pool');
+}
+const duplicateSelection = _test.selectRoutine([hipPool[0], hipPool[0], hipPool[1]], [], 3);
+if (duplicateSelection.length !== 2 || new Set(duplicateSelection.map((stretch) => stretch.id)).size !== 2) {
+  throw new Error('Stretch rotation must not emit duplicate movement IDs');
+}
+
+const parsedExclusions = _test.parseExcludedIds('hip-flexor-lunge,invalid value,pigeon-pose');
+if (parsedExclusions.join(',') !== 'hip-flexor-lunge,pigeon-pose') {
+  throw new Error('Stretch exclusion parsing did not reject malformed IDs');
+}
+
+console.log(`Stretch catalog OK: ${stretches.length} entries, ${ids.size} local image mappings, exclusion rotation verified`);

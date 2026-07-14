@@ -126,13 +126,38 @@ const MUSCLE_MAP = {
   'core': 'full-body', 'abs': 'full-body', 'full body': 'full-body', 'cardio': 'full-body',
 };
 
-function shuffle(arr) {
+function shuffle(arr, random = Math.random) {
   const a = [...arr];
   for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const value = Math.max(0, Math.min(0.999999, Number(random()) || 0));
+    const j = Math.floor(value * (i + 1));
     [a[i], a[j]] = [a[j], a[i]];
   }
   return a;
+}
+
+function parseExcludedIds(value) {
+  return String(value || '')
+    .split(',')
+    .map((id) => id.trim())
+    .filter((id) => /^[a-z0-9-]{1,64}$/.test(id))
+    .slice(0, 20);
+}
+
+function selectRoutine(pool, excludedIds = [], count = 5, random = Math.random) {
+  const unique = [];
+  const seen = new Set();
+  for (const stretch of Array.isArray(pool) ? pool : []) {
+    const id = String(stretch?.id || '');
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    unique.push(stretch);
+  }
+  const excluded = new Set(excludedIds);
+  const unseen = shuffle(unique.filter((stretch) => !excluded.has(stretch.id)), random);
+  const recent = shuffle(unique.filter((stretch) => excluded.has(stretch.id)), random);
+  const limit = Math.max(0, Math.min(Math.trunc(Number(count) || 0), unique.length));
+  return [...unseen, ...recent].slice(0, limit).map(withLocalImage);
 }
 
 /* ─── GET /api/stretches/categories ─── */
@@ -184,7 +209,7 @@ router.get('/recommended', auth, async (req, res) => {
 
     const pool = POOLS[recommendedCategory];
     const count = 5 + Math.floor(Math.random() * 3);
-    const stretches = shuffle(pool).slice(0, count).map(withLocalImage);
+    const stretches = selectRoutine(pool, parseExcludedIds(req.query.exclude), count);
     res.json({ recommendedCategory, reason, stretches });
   } catch (err) {
     console.error('[stretches/recommended] failed:', err.message);
@@ -198,9 +223,9 @@ router.get('/', auth, (req, res) => {
   if (!category || !POOLS[category]) return res.status(400).json({ error: 'Invalid or missing category' });
   const pool = POOLS[category];
   const count = 5 + Math.floor(Math.random() * 3);
-  const stretches = shuffle(pool).slice(0, count).map(withLocalImage);
+  const stretches = selectRoutine(pool, parseExcludedIds(req.query.exclude), count);
   res.json({ stretches });
 });
 
 module.exports = router;
-module.exports._test = { LOCAL_IMAGE_BY_ID, POOLS, withLocalImage };
+module.exports._test = { LOCAL_IMAGE_BY_ID, POOLS, parseExcludedIds, selectRoutine, withLocalImage };

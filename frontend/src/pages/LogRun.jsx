@@ -1,5 +1,5 @@
 import { lazy, Suspense, useState, useEffect, useMemo, useRef } from 'react'
-import { Link, useNavigate, useLocation } from 'react-router-dom'
+import { Link, Navigate, useNavigate, useLocation } from 'react-router-dom'
 import { MapPin, Mountain, RefreshCw, Gauge, Pencil } from 'lucide-react'
 import { useUnits } from '../context/UnitsContext'
 import api from '../lib/api'
@@ -32,14 +32,6 @@ function createClientRunId() {
     return nibble.toString(16)
   })
 }
-
-const WARM_UP_STEPS = [
-  'Leg swings — 10 each side',
-  'High knees — 30 seconds',
-  'Ankle circles — 10 each side',
-  'Hip circles — 10 each direction',
-  'Arm swings — 20 reps',
-]
 
 const SURFACE_OPTIONS = [
   { value: 'road', label: 'Road', icon: MapPin },
@@ -242,7 +234,7 @@ export default function LogRun() {
   const location = useLocation()
   const query = useMemo(() => new URLSearchParams(location.search), [location.search])
   const { units, fmt } = useUnits()
-  const [warmUpState, setWarmUpState] = useState(() => {
+  const [warmUpState] = useState(() => {
     const params = new URLSearchParams(window.location.search)
     return params.get('warmup') === 'true' ? 'warmup' : 'done'
   })
@@ -701,21 +693,12 @@ export default function LogRun() {
   }
 
   if (warmUpState === 'warmup') {
-    return (
-      <div className="rounded-2xl p-6" style={{ background: 'var(--bg-card)' }}>
-        <h2 className="text-xl font-black mb-1" style={{ color: 'var(--text-primary)' }}>Dynamic Warm-Up</h2>
-        <p className="text-sm mb-5" style={{ color: 'var(--text-muted)' }}>Complete each movement before you run.</p>
-        <div className="space-y-3 mb-6">
-          {WARM_UP_STEPS.map((step, i) => (
-            <div key={i} className="flex items-center gap-3 rounded-xl p-3" style={{ background: 'var(--bg-base)', border: '1px solid var(--border-subtle)' }}>
-              <div style={{ width: 30, height: 30, borderRadius: '50%', background: 'var(--accent)', color: 'var(--on-accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: 13, flexShrink: 0 }}>{i + 1}</div>
-              <span style={{ color: 'var(--text-primary)', fontSize: 14, fontWeight: 500 }}>{step}</span>
-            </div>
-          ))}
-        </div>
-        <button onClick={() => setWarmUpState('done')} className="w-full rounded-xl py-3 font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', cursor: 'pointer', fontSize: 16 }}>Done — Start Run</button>
-      </div>
-    )
+    const returnParams = new URLSearchParams(location.search)
+    returnParams.delete('warmup')
+    const returnSearch = returnParams.toString()
+    const returnTo = `/log-run${returnSearch ? `?${returnSearch}` : ''}`
+    const incomingState = location.state && typeof location.state === 'object' ? location.state : {}
+    return <Navigate to="/warmup" replace state={{ ...incomingState, warmupReturnTo: returnTo }} />
   }
 
   return (

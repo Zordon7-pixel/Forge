@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { Activity, Dumbbell, HeartPulse, MessageSquarePlus, MoreHorizontal } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -6,6 +6,7 @@ import { getUser } from '../lib/auth'
 import { recordSmartDestinationVisit } from '../lib/smartQuickAction'
 import PullToRefresh from './PullToRefresh'
 import FeedbackButton from './FeedbackButton'
+import SwipeBackGesture from './SwipeBackGesture'
 
 // hex required: consumed by `${color}XX` alpha templates — do not tokenize
 const NAV_ITEMS = (t) => [
@@ -44,8 +45,17 @@ export default function Layout({ children }) {
     recordSmartDestinationVisit(location.pathname)
   }, [location.pathname])
 
+  const interceptSwipeBack = useCallback(() => {
+    if (feedbackOpen) {
+      setFeedbackOpen(false)
+      return true
+    }
+    return false
+  }, [feedbackOpen])
+
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg-base)', color: 'var(--text-primary)', minHeight: '100dvh', '--app-bottom-nav-height': 'calc(59px + env(safe-area-inset-bottom, 0px))' }}>
+      <SwipeBackGesture onBeforeBack={interceptSwipeBack} />
       <div className={`mx-auto w-full max-w-[480px] px-3 sm:px-4 ${isImmersive ? 'pb-0' : 'pb-28'}`} style={{ maxWidth: 'min(480px, 100vw)', overflowX: 'hidden', boxSizing: 'border-box' }}>
         {!isImmersive && (
           <header

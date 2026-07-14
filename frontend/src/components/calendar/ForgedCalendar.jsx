@@ -195,6 +195,7 @@ export default function ForgedCalendar({
 
           <div
             className="forged-week"
+            data-swipe-back-ignore
             onTouchStart={handleTouchStart}
             onTouchEnd={handleTouchEnd}
           >

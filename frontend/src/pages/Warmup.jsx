@@ -5,14 +5,12 @@ import { useTranslation } from 'react-i18next'
 import api from '../lib/api'
 import LoadingRunner from '../components/LoadingRunner'
 import MovementDemo from '../components/MovementDemo'
+import { preRunStretches } from '../data/stretches'
+import { chooseRotatingRoutine, rememberRoutine } from '../lib/routineRotation'
+import { SWIPE_BACK_EVENT } from '../lib/swipeBack'
 
-const WARM_UP_STEPS = [
-  { name: 'Leg Swings', detail: '10 each side' },
-  { name: 'High Knees', detail: '30 seconds' },
-  { name: 'Ankle Circles', detail: '10 each direction' },
-  { name: 'Hip Circles', detail: '10 each direction' },
-  { name: 'Arm Swings', detail: '20 reps' },
-]
+const WARMUP_ROTATION_SCOPE = 'warmup'
+const WARMUP_STEP_COUNT = 5
 
 function computeReadiness(stats, checkin) {
   let score = 60
@@ -52,17 +50,17 @@ function getReadinessAdvice(stats) {
   return "You're ready. Trust your training."
 }
 
-function WarmupSteps({ stepIndex, onNext, onSkip, sex }) {
+function WarmupSteps({ steps, stepIndex, onNext, onSkip, sex }) {
   const { t } = useTranslation()
-  const step = WARM_UP_STEPS[stepIndex]
-  const progress = ((stepIndex + 1) / WARM_UP_STEPS.length) * 100
+  const step = steps[stepIndex]
+  const progress = ((stepIndex + 1) / steps.length) * 100
 
   return (
     <div
       className="flex flex-col min-h-screen justify-between relative overflow-hidden"
       style={{
         background: 'linear-gradient(135deg, var(--bg-base) 0%, rgba(0,0,0,0.3) 100%)',
-        paddingBottom: 80,
+        paddingBottom: 'calc(var(--app-bottom-nav-height, 59px) + 132px)',
       }}
     >
       <div
@@ -110,7 +108,7 @@ function WarmupSteps({ stepIndex, onNext, onSkip, sex }) {
             margin: '4px 0 0',
           }}
         >
-          {t('run.step')} {stepIndex + 1} {t('run.of')} {WARM_UP_STEPS.length}
+          {t('run.step')} {stepIndex + 1} {t('run.of')} {steps.length}
         </p>
       </div>
 
@@ -140,10 +138,10 @@ function WarmupSteps({ stepIndex, onNext, onSkip, sex }) {
             textAlign: 'center',
           }}
         >
-          {step.detail}
+          {step.reps}
         </p>
 
-        <MovementDemo name={step.name} compact sex={sex} />
+        <MovementDemo name={step.name} compact sex={sex} imageUrl={step.image_url} cue={step.cue} />
 
         <p
           style={{
@@ -158,7 +156,13 @@ function WarmupSteps({ stepIndex, onNext, onSkip, sex }) {
         </p>
       </div>
 
-      <div className="fixed bottom-0 left-0 right-0 px-4 py-6" style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.5), transparent)' }}>
+      <div
+        className="fixed left-0 right-0 px-4 py-4"
+        style={{
+          bottom: 'var(--app-bottom-nav-height, 59px)',
+          background: 'linear-gradient(to top, var(--bg-base) 72%, transparent)',
+        }}
+      >
         <div className="max-w-[480px] mx-auto">
           <button
             onClick={onNext}
@@ -181,7 +185,7 @@ function WarmupSteps({ stepIndex, onNext, onSkip, sex }) {
             onMouseEnter={e => (e.target.style.boxShadow = '0 12px 32px rgba(234, 179, 8, 0.5)')}
             onMouseLeave={e => (e.target.style.boxShadow = '0 8px 24px rgba(234, 179, 8, 0.3)')}
           >
-            {stepIndex === WARM_UP_STEPS.length - 1 ? t('run.finishWarmup') : t('run.next')}
+            {stepIndex === steps.length - 1 ? t('run.finishWarmup') : t('run.next')}
           </button>
 
           <button
@@ -561,6 +565,30 @@ export default function Warmup() {
   const [stepIndex, setStepIndex] = useState(0)
   const [sex, setSex] = useState('')
   const [profileReady, setProfileReady] = useState(false)
+  const [warmupSteps] = useState(() => chooseRotatingRoutine(
+    WARMUP_ROTATION_SCOPE,
+    preRunStretches,
+    WARMUP_STEP_COUNT,
+  ))
+
+  useEffect(() => {
+    rememberRoutine(WARMUP_ROTATION_SCOPE, warmupSteps)
+  }, [warmupSteps])
+
+  useEffect(() => {
+    const handleSwipeBack = (event) => {
+      if (runState === 'warmup-done') {
+        event.preventDefault()
+        setRunState('warmup-steps')
+        setStepIndex(warmupSteps.length - 1)
+      } else if (stepIndex > 0) {
+        event.preventDefault()
+        setStepIndex((current) => Math.max(0, current - 1))
+      }
+    }
+    window.addEventListener(SWIPE_BACK_EVENT, handleSwipeBack)
+    return () => window.removeEventListener(SWIPE_BACK_EVENT, handleSwipeBack)
+  }, [runState, stepIndex, warmupSteps.length])
 
   useEffect(() => {
     let active = true
@@ -582,7 +610,7 @@ export default function Warmup() {
   }, [])
 
   const handleNextStep = () => {
-    if (stepIndex === WARM_UP_STEPS.length - 1) {
+    if (stepIndex === warmupSteps.length - 1) {
       setRunState('warmup-done')
     } else {
       setStepIndex((s) => s + 1)
@@ -594,11 +622,16 @@ export default function Warmup() {
   }
 
   const handleStartRun = () => {
-    if (location.state?.startAfterWarmup) {
-      navigate('/run/active', { state: location.state })
+    const incomingState = location.state && typeof location.state === 'object' ? location.state : {}
+    const { warmupReturnTo, ...nextState } = incomingState
+    if (nextState.startAfterWarmup) {
+      navigate('/run/active', { state: nextState })
       return
     }
-    navigate('/log-run', location.state ? { state: location.state } : undefined)
+    const returnTo = typeof warmupReturnTo === 'string' && /^\/log-run(?:\?|$)/.test(warmupReturnTo)
+      ? warmupReturnTo
+      : '/log-run'
+    navigate(returnTo, Object.keys(nextState).length ? { state: nextState } : undefined)
   }
 
   if (!profileReady) return <LoadingRunner message="Preparing warm-up" />
@@ -606,7 +639,7 @@ export default function Warmup() {
   return (
     <div>
       {runState === 'warmup-steps' && (
-        <WarmupSteps stepIndex={stepIndex} onNext={handleNextStep} onSkip={handleSkipWarmup} sex={sex} />
+        <WarmupSteps steps={warmupSteps} stepIndex={stepIndex} onNext={handleNextStep} onSkip={handleSkipWarmup} sex={sex} />
       )}
       {runState === 'warmup-done' && <WarmupDone onStartRun={handleStartRun} />}
     </div>
