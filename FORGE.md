@@ -5,8 +5,8 @@ This file holds Forge's product history, deployment notes, shipped phase log, kn
 ## Current Production
 
 - Production URL: `https://forge-production-773f.up.railway.app/`
-- Latest verified application release: commit `e2c3e8f6`, deployment `62ca8931-908b-48ca-9fc9-0a9c0780c030`
-- Latest checked bundle: `/assets/index-CRA4gsOq.js`
+- Latest verified application release: commit `92ee28fb`, deployment `28880400-a761-4fd3-b4b1-193a04cf5c9c`
+- Latest checked bundle: `/assets/index-BAW1plzh.js`
 - iOS version/build: `1.0.5` / `15`
 - Bundle identifier: `com.zordontech.forge`
 - Expo/EAS project: `@zordon/forge-athlete` (`6aeb5fbb-2697-4cf4-b9b3-afe60c63e9e1`)
@@ -17,6 +17,7 @@ Current production checks:
 - Stretch catalog cues now remain exact, and the mobile `Done` / `Skip` / `Next` controls sit above the app navigation instead of routing accidental taps to another tab.
 - H12 Apple Health activity classification, athlete-specific heart-rate zones, workout-metric integrity, and data-coverage UI verified live.
 - H13 evidence-backed race plans now use bounded run history, current-week work, check-ins, and recovery data to prescribe time-first training with transparent research, coach-plan, and athlete-practice references.
+- H14 supplies a real local form image for every current stretch and warm-up, crops composite guides to the profile sex, consolidates health-source controls under More, and adds a deterministic usage-based Train shortcut.
 - Demo diagnostics check returns `403`.
 - `/api/auth/me/export` returns account/training data and excludes `password_hash`.
 - `/api/auth/forgot-password` returns `200 email_sent` for `demo@forge.app` in under one second.
@@ -222,6 +223,14 @@ Phase 2 cleanup from this audit:
 - Athlete-facing Watch surfaces no longer expose native build/plugin diagnostics. Build 15 versus build 16 details remain in internal console diagnostics; automatic Apple Watch delivery still requires a separately Bryan-approved EAS build 16.
 - H13 passed all backend and frontend smokes, a 3,200-case generator fuzz, frontend build, zero-vulnerability audit, 48-table account-data coverage, Capacitor sync, Swift parse, and two independent Claude Code reviews. Final re-QA verdict: PASS. No EAS build was run.
 
+## Mobility Visuals and Navigation Cleanup H14 (2026-07-14)
+
+- All 40 current stretch-catalog entries now resolve to an existing local PNG or WebP form guide. The five warm-up movements and all 12 static pre/post-run movements also resolve locally; current routines no longer reach the `FORM IMAGE QUEUED` fallback.
+- New composite guides use a consistent woman-left/man-right layout and `MovementDemo` crops to one athlete after profile sex resolves. All 27 generated composites were visually reviewed as a contact sheet; production mobile QA confirmed a single male-profile crop with no image or horizontal overflow.
+- Body retains readiness and training metrics. Data coverage, connected sources, and the single Apple Health sync control now live in one compact More surface; Settings keeps provider/file import controls without duplicating Apple Health actions.
+- Train Quick Actions now provide Start Warm-Up, Start Stretches, and one user-scoped deterministic shortcut chosen from History, Body, or PRs based on exact destination visits.
+- Claude Code reported zero critical/high findings. Its countdown-during-profile-load low finding was fixed before ship. Frontend build, zero-vulnerability audit, eight frontend smokes, 40-entry catalog smoke, 48-table account-data coverage, and Capacitor sync passed. Railway production serves `/assets/index-BAW1plzh.js`; all 27 new assets return `200`. No EAS build was run.
+
 ## Recently Fixed Bugs
 
 Do not reintroduce these patterns.
@@ -257,6 +266,7 @@ Do not reintroduce these patterns.
 | Custom plan generation surfaced a generic failure after malformed/slow AI output | backend/src/services/ai.js, backend/src/routes/plans.js, frontend/src/pages/PlanCatalog.jsx | AI requests abort before the UI deadline and both plan routes select a deterministic fallback instead of failing the user flow |
 | Apple Health walk counted as a run and workout-average HR appeared as Z5 | backend/src/lib/runActivity.js, backend/src/lib/hrZones.js, backend/src/routes/import.js, frontend/src/components/RunDetailModal.jsx | Preserve workout kind across import, exclude non-runs from running intelligence, and classify average HR only against a saved athlete profile or exact watch boundaries |
 | Active run restarted after reload and deleted Health imports returned | frontend/src/pages/ActiveRun.jsx, frontend/src/lib/activeRunSession.js, backend/src/routes/runs.js, backend/src/lib/runImportKey.js | Persist bounded active-run state, recover elapsed time from timestamps, and tombstone deleted imports in a user-scoped transaction before deletion |
+| Stretch library showed queued or dual-model guides and health controls were duplicated | backend/src/routes/stretches.js, frontend/src/components/MovementDemo.jsx, frontend/src/components/HealthSourceManager.jsx | Every current movement resolves locally, profile-aware composite crops show one athlete, and Apple Health management has one home under More |
 
 ## Authorization Model
 
@@ -295,6 +305,7 @@ These changes are already implemented, built, Capacitor-synced, and deployed to 
 | 2026-07-14 | `e9f4fba8-534c-4fca-98fb-779ac8d240ca` | Success | Final friends-and-family beta gate, exact stretch cues, and mobile stretch-control overlap fix verified live |
 | 2026-07-14 | `6d410bad-6436-4832-b511-e68391bb1ae8` | Success | Run recovery, durable imported-run deletion, live-location map behavior, and heart-rate source integrity verified live |
 | 2026-07-14 | `62ca8931-908b-48ca-9fc9-0a9c0780c030` | Success | H13 evidence-backed timed race plans, current-week provenance, internal Watch diagnostics, and sparse-screen branding verified live |
+| 2026-07-14 | `28880400-a761-4fd3-b4b1-193a04cf5c9c` | Success | H14 complete mobility visuals, profile-sex crops, health-control consolidation, and smart Train actions verified live |
 
 ### Build/Test Status
 
