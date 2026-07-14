@@ -424,6 +424,7 @@ function acuteLoadMetadata(history = {}) {
     } : null,
     sevenDayMiles: load.sevenDayMiles,
     loadRatio: load.loadRatio,
+    currentWeek: load.currentWeek || null,
     protection: load.protection || { active: false },
   };
 }

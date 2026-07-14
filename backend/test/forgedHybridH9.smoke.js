@@ -74,6 +74,7 @@ check(!protectedSessions.some(({ week, session }) => week.week === 1 && (session
 check((protectedPlan.weeks[0].days.find((day) => day.date === '2026-07-14')?.whyToday || '').includes('7.3 mi'), 'day view explains the exact recent-run reason');
 check(protectedPlan.inputSummary.recentRun?.paceLabel === '11:37/mi', 'persisted input summary records the run used by planning');
 check(protectedPlan.inputSummary.appleHealth?.readinessScore === 58 && protectedPlan.inputSummary.checkin?.feeling === 3, 'persisted input summary records Apple Health and check-in inputs');
+check(protectedPlan.inputSummary.currentWeekRunLoad?.miles === 7.3, 'persisted input summary records current-week mileage provenance');
 const acceptedProtected = concurrent.selectPlanCandidate(protectedPlan, context);
 check(acceptedProtected.source === 'ai_validated', 'a candidate that already respects recent-run protection is accepted');
 check(acceptedProtected.plan.acuteLoadAdjustment?.latestRun?.distanceMiles === 7.312, 'accepted candidates retain acute-load provenance');
