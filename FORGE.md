@@ -5,8 +5,8 @@ This file holds Forge's product history, deployment notes, shipped phase log, kn
 ## Current Production
 
 - Production URL: `https://forge-production-773f.up.railway.app/`
-- Latest verified application release: commit `92ee28fb`, deployment `28880400-a761-4fd3-b4b1-193a04cf5c9c`
-- Latest checked bundle: `/assets/index-BAW1plzh.js`
+- Latest verified application release: commit `b436b30f`, deployment `e25d0f9f-a6ea-4738-9a94-a0f4f591a03d`
+- Latest checked bundle: `/assets/index-BWq1Mkew.js`
 - iOS version/build: `1.0.5` / `15`
 - Bundle identifier: `com.zordontech.forge`
 - Expo/EAS project: `@zordon/forge-athlete` (`6aeb5fbb-2697-4cf4-b9b3-afe60c63e9e1`)
@@ -18,6 +18,7 @@ Current production checks:
 - H12 Apple Health activity classification, athlete-specific heart-rate zones, workout-metric integrity, and data-coverage UI verified live.
 - H13 evidence-backed race plans now use bounded run history, current-week work, check-ins, and recovery data to prescribe time-first training with transparent research, coach-plan, and athlete-practice references.
 - H14 supplies a real local form image for every current stretch and warm-up, crops composite guides to the profile sex, consolidates health-source controls under More, and adds a deterministic usage-based Train shortcut.
+- H15 rotates warm-up and stretch routines per user, prefers movements not shown in the previous routine, and adds guarded edge-swipe back navigation without exposing active timed sessions to accidental dismissal.
 - Demo diagnostics check returns `403`.
 - `/api/auth/me/export` returns account/training data and excludes `password_hash`.
 - `/api/auth/forgot-password` returns `200 email_sent` for `demo@forge.app` in under one second.
@@ -231,6 +232,13 @@ Phase 2 cleanup from this audit:
 - Train Quick Actions now provide Start Warm-Up, Start Stretches, and one user-scoped deterministic shortcut chosen from History, Body, or PRs based on exact destination visits.
 - Claude Code reported zero critical/high findings. Its countdown-during-profile-load low finding was fixed before ship. Frontend build, zero-vulnerability audit, eight frontend smokes, 40-entry catalog smoke, 48-table account-data coverage, and Capacitor sync passed. Railway production serves `/assets/index-BAW1plzh.js`; all 27 new assets return `200`. No EAS build was run.
 
+## Routine Rotation and Swipe Navigation H15 (2026-07-14)
+
+- Warm-Up now chooses five movements from a ten-movement pool, while pre-run and recovery stretching choose six from independent 10- and 12-movement pools. Selection is user-scoped, randomized, and unseen-first so consecutive routines vary before recent movements are reused.
+- The dynamic stretch catalog accepts a bounded exclusion list and returns unseen movements first without weakening authentication or user scoping. Every returned movement continues to use an existing local form image.
+- A guarded left-edge swipe moves back on normal app screens. It ignores maps, horizontal calendar gestures, form controls, feedback-modal dismissal, active outdoor runs, and running/paused/completed-unsaved treadmill sessions.
+- Claude Code's final verdict was PASS with no critical, high, or medium findings. Rotation, asset, gesture, backend catalog, build, audit, 48-table account-data, and Capacitor checks passed. Railway production serves `/assets/index-BWq1Mkew.js`; mobile QA confirmed two different consecutive warm-ups with the full image/cue/control layout visible. No EAS build was run.
+
 ## Recently Fixed Bugs
 
 Do not reintroduce these patterns.
@@ -306,6 +314,7 @@ These changes are already implemented, built, Capacitor-synced, and deployed to 
 | 2026-07-14 | `6d410bad-6436-4832-b511-e68391bb1ae8` | Success | Run recovery, durable imported-run deletion, live-location map behavior, and heart-rate source integrity verified live |
 | 2026-07-14 | `62ca8931-908b-48ca-9fc9-0a9c0780c030` | Success | H13 evidence-backed timed race plans, current-week provenance, internal Watch diagnostics, and sparse-screen branding verified live |
 | 2026-07-14 | `28880400-a761-4fd3-b4b1-193a04cf5c9c` | Success | H14 complete mobility visuals, profile-sex crops, health-control consolidation, and smart Train actions verified live |
+| 2026-07-14 | `e25d0f9f-a6ea-4738-9a94-a0f4f591a03d` | Success | H15 per-user routine rotation and guarded edge-swipe navigation verified live |
 
 ### Build/Test Status
 
@@ -328,6 +337,7 @@ These changes are already implemented, built, Capacitor-synced, and deployed to 
 - Phase H9 production smoke: exact `/assets/index-IHa1ZhZv.js` bundle matches the reviewed build; authenticated plan routes return `200`, unauthenticated current-plan access returns `401`, and the plan renders at 390x844 without horizontal overflow or console errors.
 - Phase H10 production smoke: exact `/assets/index-CGU9ymkK.js` and `/assets/Plan-DP5Af5aD.js` assets match the reviewed build; new rationale/working-set/load-basis copy is live, authenticated plan routes return `200`, and the mobile plan renders without console errors.
 - Phase H11 production smoke: exact `/assets/index-D-pIgSi3.js` and `/assets/HealthData-DRmOOl2D.js` assets match the reviewed build; health/Body auth boundaries return `401` unauthenticated and `200` signed in, empty data is described honestly, and rejected metrics perform no write.
+- Phase H15 production smoke: exact `/assets/index-BWq1Mkew.js` matches the reviewed build; authenticated exclusion-aware stretch selection is unseen-first, returned form assets are all `200`, and consecutive warm-up visits rotate the displayed routine at 390x844 without content or navigation overlap.
 
 ### Product Changes Shipped
 
