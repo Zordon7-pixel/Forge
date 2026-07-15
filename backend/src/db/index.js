@@ -108,6 +108,8 @@ async function initDb() {
         age INTEGER,
         max_heart_rate INTEGER,
         username TEXT,
+        friend_handle TEXT,
+        friend_discoverable INTEGER DEFAULT 0,
         units TEXT DEFAULT 'imperial',
         step_goal INTEGER DEFAULT 10000,
         monthly_goal_miles REAL,
@@ -140,6 +142,8 @@ async function initDb() {
       'ALTER TABLE users ADD COLUMN IF NOT EXISTS age INTEGER',
       'ALTER TABLE users ADD COLUMN IF NOT EXISTS max_heart_rate INTEGER',
       'ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT',
+      'ALTER TABLE users ADD COLUMN IF NOT EXISTS friend_handle TEXT',
+      'ALTER TABLE users ADD COLUMN IF NOT EXISTS friend_discoverable INTEGER DEFAULT 0',
       "ALTER TABLE users ADD COLUMN IF NOT EXISTS units TEXT DEFAULT 'imperial'",
       'ALTER TABLE users ADD COLUMN IF NOT EXISTS step_goal INTEGER DEFAULT 10000',
       'ALTER TABLE users ADD COLUMN IF NOT EXISTS monthly_goal_miles REAL',
@@ -157,6 +161,7 @@ async function initDb() {
     for (const migration of userColumnMigrations) {
       await client.query(migration);
     }
+    await client.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_friend_handle_lower ON users (LOWER(friend_handle)) WHERE friend_handle IS NOT NULL');
     await client.query("UPDATE users SET subscription_status = 'free' WHERE subscription_status IS NULL");
     await client.query("UPDATE users SET subscription_status = 'pro' WHERE subscription_status IN ('active', 'trialing')");
     await client.query("UPDATE users SET subscription_status = 'cancelled' WHERE subscription_status IN ('canceled', 'past_due', 'unpaid')");

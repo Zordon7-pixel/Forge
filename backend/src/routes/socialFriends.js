@@ -13,6 +13,8 @@ const {
   createInviteToken,
   hashInviteToken,
   isInviteTokenShape,
+  normalizeFriendHandle,
+  relationshipState,
 } = require('../lib/friendship');
 
 const REPORT_CATEGORIES = new Set(['harassment', 'spam', 'impersonation', 'unsafe_content', 'other']);
@@ -28,15 +30,33 @@ function limiter(windowMs, max, message) {
   });
 }
 
+function userLimiter(windowMs, max, message) {
+  return rateLimit({
+    windowMs,
+    max,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => `user:${req.user.id}`,
+    message: { error: message },
+  });
+}
+
 const inviteCreateLimiter = limiter(60 * 60 * 1000, 10, 'Too many invite attempts. Try again later.');
 const inviteResolveLimiter = limiter(15 * 60 * 1000, 30, 'Too many invite attempts. Try again later.');
 const relationshipLimiter = limiter(15 * 60 * 1000, 60, 'Too many friend changes. Try again later.');
 const reportLimiter = limiter(24 * 60 * 60 * 1000, 10, 'Too many reports. Try again later.');
+const handleUpdateLimiter = userLimiter(60 * 60 * 1000, 10, 'Too many handle changes. Try again later.');
+const friendSearchLimiter = userLimiter(15 * 60 * 1000, 40, 'Too many searches. Try again later.');
+const directRequestLimiter = userLimiter(15 * 60 * 1000, 20, 'Too many friend requests. Try again later.');
 
 router.use(auth);
 
 function inviteUnavailable(res) {
   return res.status(404).json({ error: 'Invite unavailable.' });
+}
+
+function athleteUnavailable(res) {
+  return res.status(404).json({ error: 'Athlete not found.' });
 }
 
 async function lockUsers(tx, userIds) {
@@ -66,6 +86,168 @@ async function pairIsBlocked(tx, firstUserId, secondUserId) {
   );
   return Boolean(row);
 }
+
+async function createFriendshipRequest(tx, requesterId, addresseeId) {
+  if (await pairIsBlocked(tx, requesterId, addresseeId)) return { unavailable: true };
+
+  const [userLowId, userHighId] = canonicalPair(requesterId, addresseeId);
+  const existing = await tx.get(
+    `SELECT id, status, requester_id, addressee_id
+     FROM friendships
+     WHERE user_low_id = ? AND user_high_id = ?
+     FOR UPDATE`,
+    [userLowId, userHighId]
+  );
+
+  if (existing?.status === 'accepted') {
+    return {
+      status: 200,
+      body: { ok: true, friendship_id: existing.id, status: 'already_friends', direction: 'friends' },
+      createdRequest: false,
+    };
+  }
+  if (existing?.status === 'pending') {
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        friendship_id: existing.id,
+        status: 'request_exists',
+        direction: relationshipState(existing, requesterId),
+      },
+      createdRequest: false,
+    };
+  }
+
+  const requesterCount = await acceptedFriendCount(tx, requesterId);
+  const addresseeCount = await acceptedFriendCount(tx, addresseeId);
+  if (requesterCount >= MAX_FRIENDS || addresseeCount >= MAX_FRIENDS) {
+    return { status: 409, body: { error: 'One of these accounts has reached the friend limit.' }, createdRequest: false };
+  }
+
+  const friendshipId = existing?.id || uuidv4();
+  if (existing) {
+    const update = await tx.run(
+      `UPDATE friendships
+       SET requester_id = ?, addressee_id = ?, status = 'pending', responded_at = NULL, updated_at = NOW()
+       WHERE id = ? AND user_low_id = ? AND user_high_id = ?
+         AND (requester_id = ? OR addressee_id = ?)`,
+      [requesterId, addresseeId, existing.id, userLowId, userHighId, requesterId, requesterId]
+    );
+    if (update.changes !== 1) throw new Error('Friendship reset lost its ownership guard');
+  } else {
+    await tx.run(
+      `INSERT INTO friendships
+       (id, requester_id, addressee_id, user_low_id, user_high_id, status)
+       VALUES (?, ?, ?, ?, ?, 'pending')`,
+      [friendshipId, requesterId, addresseeId, userLowId, userHighId]
+    );
+  }
+
+  return {
+    status: 200,
+    body: { ok: true, friendship_id: friendshipId, status: 'pending', direction: 'outgoing' },
+    createdRequest: true,
+  };
+}
+
+async function findDiscoverableAthlete(query, handle, viewerId) {
+  return query.get(
+    `SELECT u.id, u.name, u.friend_handle
+     FROM users u
+     WHERE LOWER(u.friend_handle) = ?
+       AND u.friend_discoverable = 1
+       AND u.id <> ?
+       AND NOT EXISTS (
+         SELECT 1 FROM user_blocks b
+         WHERE (b.blocker_id = ? AND b.blocked_id = u.id)
+            OR (b.blocker_id = u.id AND b.blocked_id = ?)
+       )
+     LIMIT 1`,
+    [handle, viewerId, viewerId, viewerId]
+  );
+}
+
+router.put('/friend-discovery-profile', handleUpdateLimiter, async (req, res) => {
+  const rawHandle = req.body?.handle;
+  const discoverable = req.body?.discoverable;
+  if (typeof rawHandle !== 'string' || typeof discoverable !== 'boolean') {
+    return res.status(400).json({ error: 'Handle and visibility are required.' });
+  }
+
+  const trimmed = rawHandle.trim().replace(/^@/, '');
+  const handle = trimmed ? normalizeFriendHandle(rawHandle) : null;
+  if (trimmed && !handle) {
+    return res.status(400).json({ error: 'Use 3-24 letters, numbers, periods, or underscores.' });
+  }
+
+  try {
+    const result = await dbRun(
+      `UPDATE users
+       SET friend_handle = ?, friend_discoverable = ?
+       WHERE id = ?`,
+      [handle, handle && discoverable ? 1 : 0, req.user.id]
+    );
+    if (result.changes !== 1) return res.status(404).json({ error: 'Account not found.' });
+    return res.json({ handle, discoverable: Boolean(handle && discoverable) });
+  } catch (err) {
+    if (err.code === '23505') return res.status(409).json({ error: 'That handle is not available.' });
+    console.error('[social/friend-discovery-profile] update failed:', err.message);
+    return res.status(500).json({ error: 'Could not update your friend handle.' });
+  }
+});
+
+router.post('/friend-search', friendSearchLimiter, async (req, res) => {
+  const handle = normalizeFriendHandle(req.body?.handle);
+  if (!handle) return athleteUnavailable(res);
+
+  try {
+    const athlete = await findDiscoverableAthlete({ get: dbGet }, handle, req.user.id);
+    if (!athlete) return athleteUnavailable(res);
+    const [userLowId, userHighId] = canonicalPair(req.user.id, athlete.id);
+    const relationship = await dbGet(
+      `SELECT id, status, requester_id, addressee_id
+       FROM friendships
+       WHERE user_low_id = ? AND user_high_id = ?
+         AND (requester_id = ? OR addressee_id = ?)
+       LIMIT 1`,
+      [userLowId, userHighId, req.user.id, req.user.id]
+    );
+    return res.json({
+      athlete: {
+        name: athlete.name,
+        handle: athlete.friend_handle,
+        relationship: relationshipState(relationship, req.user.id),
+      },
+    });
+  } catch (err) {
+    console.error('[social/friend-search] failed:', err.message);
+    return res.status(500).json({ error: 'Could not search for that athlete.' });
+  }
+});
+
+router.post('/friend-requests', directRequestLimiter, async (req, res) => {
+  const handle = normalizeFriendHandle(req.body?.handle);
+  if (!handle) return athleteUnavailable(res);
+
+  try {
+    const result = await withTransaction(async (tx) => {
+      const preview = await findDiscoverableAthlete(tx, handle, req.user.id);
+      if (!preview) return { unavailable: true };
+      const usersExist = await lockUsers(tx, [req.user.id, preview.id]);
+      if (!usersExist) return { unavailable: true };
+      const athlete = await findDiscoverableAthlete(tx, handle, req.user.id);
+      if (!athlete || athlete.id !== preview.id) return { unavailable: true };
+      return createFriendshipRequest(tx, req.user.id, athlete.id);
+    });
+
+    if (result.unavailable) return athleteUnavailable(res);
+    return res.status(result.status).json(result.body);
+  } catch (err) {
+    console.error('[social/friend-requests] create failed:', err.message);
+    return res.status(500).json({ error: 'Could not send this friend request.' });
+  }
+});
 
 router.post('/friend-invites', inviteCreateLimiter, async (req, res) => {
   try {
@@ -122,56 +304,9 @@ router.post('/friend-invites/:token/request', inviteResolveLimiter, async (req, 
       }
 
       const usersExist = await lockUsers(tx, [req.user.id, invite.owner_id]);
-      if (!usersExist || await pairIsBlocked(tx, req.user.id, invite.owner_id)) {
-        return { unavailable: true };
-      }
-
-      const [userLowId, userHighId] = canonicalPair(req.user.id, invite.owner_id);
-      const existing = await tx.get(
-        `SELECT id, status, requester_id, addressee_id
-         FROM friendships
-         WHERE user_low_id = ? AND user_high_id = ?
-         FOR UPDATE`,
-        [userLowId, userHighId]
-      );
-
-      if (existing?.status === 'accepted') {
-        return {
-          status: 200,
-          body: { ok: true, friendship_id: existing.id, status: 'already_friends' },
-        };
-      }
-      if (existing?.status === 'pending') {
-        return {
-          status: 200,
-          body: { ok: true, friendship_id: existing.id, status: 'request_exists' },
-        };
-      }
-
-      const friendshipId = existing?.id || uuidv4();
-      const requesterCount = await acceptedFriendCount(tx, req.user.id);
-      const ownerCount = await acceptedFriendCount(tx, invite.owner_id);
-      if (requesterCount >= MAX_FRIENDS || ownerCount >= MAX_FRIENDS) {
-        return { status: 409, body: { error: 'One of these accounts has reached the friend limit.' } };
-      }
-
-      if (existing) {
-        const update = await tx.run(
-          `UPDATE friendships
-           SET requester_id = ?, addressee_id = ?, status = 'pending', responded_at = NULL, updated_at = NOW()
-           WHERE id = ? AND user_low_id = ? AND user_high_id = ?
-             AND (requester_id = ? OR addressee_id = ?)`,
-          [req.user.id, invite.owner_id, existing.id, userLowId, userHighId, req.user.id, req.user.id]
-        );
-        if (update.changes !== 1) throw new Error('Friendship reset lost its ownership guard');
-      } else {
-        await tx.run(
-          `INSERT INTO friendships
-           (id, requester_id, addressee_id, user_low_id, user_high_id, status)
-           VALUES (?, ?, ?, ?, ?, 'pending')`,
-          [friendshipId, req.user.id, invite.owner_id, userLowId, userHighId]
-        );
-      }
+      if (!usersExist) return { unavailable: true };
+      const request = await createFriendshipRequest(tx, req.user.id, invite.owner_id);
+      if (request.unavailable || !request.createdRequest) return request;
 
       const consumed = await tx.run(
         `UPDATE friend_invites
@@ -182,14 +317,7 @@ router.post('/friend-invites/:token/request', inviteResolveLimiter, async (req, 
       );
       if (consumed.changes !== 1) throw new Error('Invite consume lost its one-use guard');
 
-      return {
-        status: 200,
-        body: {
-          ok: true,
-          friendship_id: friendshipId,
-          status: 'pending',
-        },
-      };
+      return request;
     });
 
     if (result.unavailable) return inviteUnavailable(res);
@@ -204,7 +332,8 @@ router.get('/friends', async (req, res) => {
   try {
     const rows = await dbAll(
       `SELECT f.id, f.status, f.requester_id, f.addressee_id, f.created_at, f.responded_at,
-              u.id AS friend_id, u.name AS friend_name
+              u.id AS friend_id, u.name AS friend_name,
+              CASE WHEN f.status = 'accepted' OR u.friend_discoverable = 1 THEN u.friend_handle ELSE NULL END AS friend_handle
        FROM friendships f
        JOIN users u ON u.id = CASE WHEN f.requester_id = ? THEN f.addressee_id ELSE f.requester_id END
        WHERE (f.requester_id = ? OR f.addressee_id = ?)
@@ -225,11 +354,14 @@ router.get('/friends', async (req, res) => {
        ORDER BY b.created_at DESC`,
       [req.user.id]
     );
-    const activeInvites = await dbGet(
-      `SELECT COUNT(*) AS count FROM friend_invites
-       WHERE owner_id = ? AND consumed_at IS NULL AND expires_at > NOW()`,
-      [req.user.id]
-    );
+    const [activeInvites, discoveryProfile] = await Promise.all([
+      dbGet(
+        `SELECT COUNT(*) AS count FROM friend_invites
+         WHERE owner_id = ? AND consumed_at IS NULL AND expires_at > NOW()`,
+        [req.user.id]
+      ),
+      dbGet('SELECT friend_handle, friend_discoverable FROM users WHERE id = ?', [req.user.id]),
+    ]);
 
     const friends = [];
     const incoming = [];
@@ -237,7 +369,7 @@ router.get('/friends', async (req, res) => {
     for (const row of rows) {
       const item = {
         id: row.id,
-        user: { id: row.friend_id, name: row.friend_name },
+        user: { id: row.friend_id, name: row.friend_name, handle: row.friend_handle || null },
         created_at: row.created_at,
         responded_at: row.responded_at,
       };
@@ -251,6 +383,10 @@ router.get('/friends', async (req, res) => {
       incoming,
       outgoing,
       blocked,
+      discovery: {
+        handle: discoveryProfile?.friend_handle || '',
+        discoverable: Boolean(discoveryProfile?.friend_handle && discoveryProfile?.friend_discoverable),
+      },
       limits: {
         friends: MAX_FRIENDS,
         active_invites: MAX_ACTIVE_INVITES,

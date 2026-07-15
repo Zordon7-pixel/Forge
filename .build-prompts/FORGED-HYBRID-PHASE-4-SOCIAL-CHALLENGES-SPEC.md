@@ -1,6 +1,6 @@
 # Forged Hybrid Phase 4 Build Spec: Friends, Challenges, and Leaderboards
 
-Status: **PHASE 4A IMPLEMENTED + QA APPROVED (2026-07-15, `e656c00f`) - Railway live verification required before Phase 4B**
+Status: **PHASE 4A SHIPPED + LIVE VERIFIED; PHASE 4A.1 EXACT-HANDLE DISCOVERY IMPLEMENTED + CLAUDE/HERMES APPROVED, RAILWAY LIVE VERIFICATION PENDING (2026-07-15)**
 Repo: `/Volumes/Zordon Storage /openclaw-workspace/forge-app`
 Release target: current React/Vite/Capacitor + Express/PostgreSQL app only
 Native/EAS scope: **none for Phases 4A-4C**
@@ -34,7 +34,7 @@ The differentiator is **hybrid competition**, not maximum mileage. Example: `20 
 
 ### Build now
 
-- Mutual friends with invite links/codes, request/accept/decline/remove, block, and report; maximum 100 accepted friends per user in beta.
+- Mutual friends with opt-in exact `@handle` lookup plus secondary invite links/codes, request/accept/decline/remove, block, and report; maximum 100 accepted friends per user in beta.
 - Private challenges for accepted friends.
 - Deterministic challenge templates:
   - running distance;
@@ -83,7 +83,7 @@ Add `Community` under the existing `More` screen with subtitle `Friends and chal
 The Community screen uses two compact tabs:
 
 1. **Challenges** - default tab. Active challenges first, then invitations, then a single `Create challenge` action.
-2. **Friends** - accepted friends, pending requests, `Invite a friend`, remove/block/report actions.
+2. **Friends** - opt-in exact-handle lookup, accepted friends, pending requests, secondary private-link invites, and remove/block/report actions.
 
 Challenge detail contains:
 
@@ -130,7 +130,9 @@ Recommended tables:
 - if both users already belong to a shared challenge, neither membership is removed unilaterally. Challenge and leaderboard APIs omit each user's identity and contribution rows from the other's response while calculating the official rank/tie basis across all joined members. Rank gaps are allowed and reveal no identity or activity details;
 - every mutation must include the authenticated user in the write predicate.
 
-Do not upload contacts in v1. Do not offer fuzzy global user search. Invite links/codes are enough for friends-and-family beta and avoid email/account enumeration.
+Do not upload contacts in v1. Do not offer fuzzy, name-based, email-based, or browseable global user search. Exact handle lookup is allowed only for accounts that explicitly choose a unique handle and enable discoverability. Invalid, hidden, missing, and blocked lookups return the same response. Invite links remain the fallback.
+
+Turning discoverability off removes the account from exact-handle lookup and hides the handle from new invite-based pending rows. Existing accepted friends may continue to see the handle as stable relationship identity; visibility changes never delete or damage an accepted friendship.
 
 ## 7. Challenge data model
 
@@ -198,6 +200,9 @@ Minimum endpoints:
 
 - `POST /api/social/friend-invites`
 - `POST /api/social/friend-invites/:token/request`
+- `PUT /api/social/friend-discovery-profile`
+- `POST /api/social/friend-search` with an exact handle only
+- `POST /api/social/friend-requests` with an exact handle only
 - `GET /api/social/friends`
 - `PATCH /api/social/friendships/:id` with `accept|decline`
 - `DELETE /api/social/friendships/:id`
@@ -238,6 +243,16 @@ Every endpoint requires `auth`. Every mutation must prove authenticated ownershi
 - focused ownership, enumeration, rate-limit, and mobile tests.
 
 Gate: Codex implementation -> Claude Code full QA -> Hermes product/privacy review -> fixes -> Railway deploy -> live two-account verification. No EAS.
+
+### Phase 4A.1 - opt-in exact-handle discovery
+
+- unique, normalized friend handles stored separately from the legacy username field;
+- existing users hidden by default until they explicitly enable exact-handle discovery;
+- exact-match lookup only, with per-account rate limits and identical unavailable responses;
+- block-aware results and the same transactional mutual-request path used by invite links;
+- private invite links retained as a secondary option; no contacts, fuzzy search, directory, QR dependency, or public profiles.
+
+Gate: same build loop plus duplicate/case-insensitive handle, hidden-user, blocked-user, reverse-pending, rate-limit, export, mobile-width, and live disposable-account tests. No EAS.
 
 ### Phase 4B - private challenge engine
 

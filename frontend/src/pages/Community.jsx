@@ -2,16 +2,21 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import {
+  AtSign,
   Ban,
   Check,
   Copy,
+  Eye,
+  EyeOff,
   Flag,
   Link as LinkIcon,
   MoreVertical,
   RefreshCw,
+  Search,
   Share2,
   ShieldCheck,
   UserMinus,
+  UserPlus,
   Users,
   X,
 } from 'lucide-react'
@@ -22,6 +27,7 @@ const EMPTY_DATA = {
   incoming: [],
   outgoing: [],
   blocked: [],
+  discovery: { handle: '', discoverable: false },
   limits: { active_invite_count: 0, active_invites: 5, friends: 100 },
 }
 
@@ -40,6 +46,14 @@ function avatarLabel(name) {
   return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase()
 }
 
+function normalizeHandle(value) {
+  return String(value || '').trim().toLowerCase().replace(/^@/, '')
+}
+
+function isHandleShape(value) {
+  return /^[a-z0-9][a-z0-9._]{2,23}$/.test(normalizeHandle(value))
+}
+
 function copyWithFallback(value) {
   if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(value)
   const textArea = document.createElement('textarea')
@@ -56,6 +70,7 @@ function copyWithFallback(value) {
 function PersonRow({ item, subtitle, children }) {
   const { t } = useTranslation()
   const name = item.user?.name || item.name || t('community.athleteFallback')
+  const handle = item.user?.handle || item.handle || ''
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '42px minmax(0, 1fr) auto', alignItems: 'center', gap: 12, minHeight: 66, padding: '10px 0', borderBottom: '1px solid var(--border-subtle)', position: 'relative' }}>
       <span aria-hidden="true" style={{ width: 42, height: 42, borderRadius: '50%', display: 'grid', placeItems: 'center', background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', color: 'var(--accent)', fontSize: 12, fontWeight: 900 }}>
@@ -63,7 +78,11 @@ function PersonRow({ item, subtitle, children }) {
       </span>
       <span style={{ minWidth: 0 }}>
         <span style={{ display: 'block', color: 'var(--text-primary)', fontSize: 14, fontWeight: 850, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
-        {subtitle && <span style={{ display: 'block', color: 'var(--text-muted)', fontSize: 12, marginTop: 2 }}>{subtitle}</span>}
+        {(handle || subtitle) && (
+          <span style={{ display: 'block', color: 'var(--text-muted)', fontSize: 12, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {handle ? `@${handle}` : ''}{handle && subtitle ? ' · ' : ''}{subtitle || ''}
+          </span>
+        )}
       </span>
       <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6 }}>{children}</span>
     </div>
@@ -89,6 +108,11 @@ export default function Community() {
   const [busy, setBusy] = useState('')
   const [notice, setNotice] = useState(null)
   const [invite, setInvite] = useState(null)
+  const [handleDraft, setHandleDraft] = useState('')
+  const [handleDiscoverable, setHandleDiscoverable] = useState(false)
+  const [searchHandle, setSearchHandle] = useState('')
+  const [searchResult, setSearchResult] = useState(null)
+  const [searchMessage, setSearchMessage] = useState('')
   const [menuFor, setMenuFor] = useState('')
   const [reportTarget, setReportTarget] = useState(null)
   const [reportCategory, setReportCategory] = useState('harassment')
@@ -99,7 +123,10 @@ export default function Community() {
     if (!quiet) setLoading(true)
     try {
       const response = await api.get('/social/friends')
-      setData({ ...EMPTY_DATA, ...(response.data || {}) })
+      const nextData = { ...EMPTY_DATA, ...(response.data || {}) }
+      setData(nextData)
+      setHandleDraft(nextData.discovery?.handle || '')
+      setHandleDiscoverable(Boolean(nextData.discovery?.discoverable))
     } catch (error) {
       console.error('[Community] load failed:', error?.message)
       setNotice({ type: 'error', text: t('community.loadError') })
@@ -174,6 +201,77 @@ export default function Community() {
     })
   }
 
+  const saveDiscoveryProfile = async () => {
+    setBusy('save-handle')
+    setNotice(null)
+    try {
+      const response = await api.put('/social/friend-discovery-profile', {
+        handle: handleDraft,
+        discoverable: handleDiscoverable,
+      })
+      setHandleDraft(response.data?.handle || '')
+      setHandleDiscoverable(Boolean(response.data?.discoverable))
+      setNotice({ type: 'success', text: t('community.handleSaved') })
+      await load({ quiet: true })
+    } catch (error) {
+      setNotice({ type: 'error', text: error?.response?.data?.error || t('community.actionError') })
+    } finally {
+      setBusy('')
+    }
+  }
+
+  const findFriend = async (event) => {
+    event.preventDefault()
+    const handle = normalizeHandle(searchHandle)
+    setSearchResult(null)
+    setSearchMessage('')
+    if (!isHandleShape(handle)) {
+      setSearchMessage(t('community.searchInvalid'))
+      return
+    }
+    setBusy('friend-search')
+    try {
+      const response = await api.post('/social/friend-search', { handle })
+      setSearchResult(response.data?.athlete || null)
+      if (!response.data?.athlete) setSearchMessage(t('community.searchEmpty'))
+    } catch (error) {
+      if (error?.response?.status === 404) setSearchMessage(t('community.searchEmpty'))
+      else setNotice({ type: 'error', text: error?.response?.data?.error || t('community.actionError') })
+    } finally {
+      setBusy('')
+    }
+  }
+
+  const sendHandleRequest = async () => {
+    if (!searchResult?.handle) return
+    setBusy('handle-request')
+    setNotice(null)
+    try {
+      const response = await api.post('/social/friend-requests', { handle: searchResult.handle })
+      const relationship = response.data?.direction
+        || (response.data?.status === 'already_friends' ? 'friends' : 'outgoing')
+      setSearchResult((current) => current ? { ...current, relationship } : current)
+      setNotice({
+        type: 'success',
+        text: response.data?.status === 'already_friends'
+          ? t('community.alreadyFriends')
+          : response.data?.status === 'request_exists'
+            ? t('community.requestExists')
+            : t('community.requestSent'),
+      })
+      await load({ quiet: true })
+    } catch (error) {
+      if (error?.response?.status === 404) {
+        setSearchResult(null)
+        setSearchMessage(t('community.searchEmpty'))
+      } else {
+        setNotice({ type: 'error', text: error?.response?.data?.error || t('community.actionError') })
+      }
+    } finally {
+      setBusy('')
+    }
+  }
+
   const copyInvite = async () => {
     if (!invite?.url) return
     try {
@@ -237,6 +335,13 @@ export default function Community() {
 
   const friendCount = data.friends.length
   const inviteLimitReached = Number(data.limits?.active_invite_count || 0) >= Number(data.limits?.active_invites || 5)
+  const relationshipLabel = searchResult
+    ? {
+        friends: t('community.searchFriends'),
+        incoming: t('community.searchIncoming'),
+        outgoing: t('community.searchOutgoing'),
+      }[searchResult.relationship]
+    : ''
 
   return (
     <div style={{ paddingBottom: 96 }}>
@@ -252,19 +357,64 @@ export default function Community() {
         </div>
       )}
 
-      <section style={{ border: '1px solid var(--border-subtle)', borderRadius: 8, background: 'var(--bg-card)', padding: 14, marginBottom: 24 }}>
+      <section style={{ border: '1px solid var(--border-subtle)', borderRadius: 8, background: 'var(--bg-card)', padding: 14, marginBottom: 12 }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-          <span style={{ flex: '0 0 auto', width: 38, height: 38, borderRadius: 8, display: 'grid', placeItems: 'center', background: 'color-mix(in srgb, var(--accent) 15%, transparent)', color: 'var(--accent)' }}><LinkIcon size={19} /></span>
+          <span style={{ flex: '0 0 auto', width: 38, height: 38, borderRadius: 8, display: 'grid', placeItems: 'center', background: 'color-mix(in srgb, var(--accent) 15%, transparent)', color: 'var(--accent)' }}><Search size={19} /></span>
           <span style={{ minWidth: 0 }}>
-            <h2 style={{ color: 'var(--text-primary)', fontSize: 16, fontWeight: 900, margin: 0 }}>{t('community.inviteTitle')}</h2>
-            <p style={{ color: 'var(--text-muted)', fontSize: 12, lineHeight: 1.5, margin: '4px 0 0' }}>{t('community.inviteBody')}</p>
+            <h2 style={{ color: 'var(--text-primary)', fontSize: 16, fontWeight: 900, margin: 0 }}>{t('community.findTitle')}</h2>
+            <p style={{ color: 'var(--text-muted)', fontSize: 12, lineHeight: 1.5, margin: '4px 0 0' }}>{t('community.findBody')}</p>
           </span>
         </div>
 
+        <div style={{ marginTop: 16 }}>
+          <label htmlFor="friend-handle" style={{ display: 'block', color: 'var(--text-muted)', fontSize: 11, fontWeight: 850, marginBottom: 6, textTransform: 'uppercase' }}>{t('community.yourHandle')}</label>
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: 8 }}>
+            <label style={{ minHeight: 44, display: 'flex', alignItems: 'center', gap: 5, border: '1px solid var(--border-subtle)', borderRadius: 8, background: 'var(--bg-input)', padding: '0 11px' }}>
+              <AtSign size={16} color="var(--text-muted)" aria-hidden="true" />
+              <input id="friend-handle" value={handleDraft} maxLength={25} autoCapitalize="none" autoCorrect="off" spellCheck="false" onChange={(event) => setHandleDraft(event.target.value)} placeholder={t('community.handlePlaceholder')} style={{ minWidth: 0, width: '100%', border: 'none', outline: 'none', background: 'transparent', color: 'var(--text-primary)', fontSize: 14 }} />
+            </label>
+            <button type="button" className="pressable" onClick={saveDiscoveryProfile} disabled={Boolean(busy)} style={{ minWidth: 72, minHeight: 44, borderRadius: 8, border: 'none', background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 850, opacity: Boolean(busy) ? 0.55 : 1 }}>{busy === 'save-handle' ? t('community.saving') : t('community.saveHandle')}</button>
+          </div>
+          <label style={{ minHeight: 44, marginTop: 8, display: 'flex', alignItems: 'center', gap: 10, color: 'var(--text-primary)', fontSize: 12, fontWeight: 750 }}>
+            <input type="checkbox" checked={handleDiscoverable} disabled={!isHandleShape(handleDraft)} onChange={(event) => setHandleDiscoverable(event.target.checked)} style={{ width: 19, height: 19, accentColor: 'var(--accent)' }} />
+            {handleDiscoverable ? <Eye size={17} color="var(--success)" /> : <EyeOff size={17} color="var(--text-muted)" />}
+            <span>{t('community.discoverableLabel')}</span>
+          </label>
+          <p style={{ color: 'var(--text-muted)', fontSize: 11, lineHeight: 1.45, margin: '2px 0 0' }}>{t('community.handleRules')}</p>
+        </div>
+
+        <form onSubmit={findFriend} style={{ borderTop: '1px solid var(--border-subtle)', marginTop: 14, paddingTop: 14 }}>
+          <label htmlFor="friend-search" style={{ display: 'block', color: 'var(--text-muted)', fontSize: 11, fontWeight: 850, marginBottom: 6, textTransform: 'uppercase' }}>{t('community.exactSearch')}</label>
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 44px', gap: 8 }}>
+            <label style={{ minHeight: 44, display: 'flex', alignItems: 'center', gap: 5, border: '1px solid var(--border-subtle)', borderRadius: 8, background: 'var(--bg-input)', padding: '0 11px' }}>
+              <AtSign size={16} color="var(--text-muted)" aria-hidden="true" />
+              <input id="friend-search" value={searchHandle} maxLength={25} autoCapitalize="none" autoCorrect="off" spellCheck="false" onChange={(event) => { setSearchHandle(event.target.value); setSearchResult(null); setSearchMessage('') }} placeholder={t('community.searchPlaceholder')} style={{ minWidth: 0, width: '100%', border: 'none', outline: 'none', background: 'transparent', color: 'var(--text-primary)', fontSize: 14 }} />
+            </label>
+            <button type="submit" className="pressable" title={t('community.search')} aria-label={t('community.search')} disabled={Boolean(busy)} style={{ width: 44, height: 44, borderRadius: 8, border: 'none', background: 'var(--accent)', color: 'var(--on-accent)', display: 'grid', placeItems: 'center', opacity: Boolean(busy) ? 0.55 : 1 }}><Search size={19} /></button>
+          </div>
+        </form>
+
+        {searchMessage && <p role="status" style={{ color: 'var(--text-muted)', fontSize: 12, margin: '12px 0 0' }}>{searchMessage}</p>}
+        {searchResult && (
+          <PersonRow item={searchResult} subtitle={relationshipLabel}>
+            {searchResult.relationship === 'available' ? (
+              <button type="button" className="pressable" onClick={sendHandleRequest} disabled={Boolean(busy)} style={{ minHeight: 40, borderRadius: 8, border: 'none', background: 'var(--accent)', color: 'var(--on-accent)', display: 'flex', alignItems: 'center', gap: 6, padding: '0 10px', fontSize: 12, fontWeight: 850 }}><UserPlus size={16} />{t('community.addFriend')}</button>
+            ) : (
+              <span style={{ color: 'var(--text-muted)', fontSize: 11, fontWeight: 800, textAlign: 'right' }}>{relationshipLabel}</span>
+            )}
+          </PersonRow>
+        )}
+      </section>
+
+      <details style={{ border: '1px solid var(--border-subtle)', borderRadius: 8, background: 'var(--bg-card)', padding: 14, marginBottom: 24 }}>
+        <summary className="pressable" style={{ minHeight: 40, cursor: 'pointer', color: 'var(--text-primary)', fontSize: 14, fontWeight: 850, display: 'flex', alignItems: 'center', gap: 9, listStyle: 'none' }}>
+          <LinkIcon size={18} color="var(--accent)" />{t('community.inviteTitle')}
+        </summary>
+        <p style={{ color: 'var(--text-muted)', fontSize: 12, lineHeight: 1.5, margin: '6px 0 0' }}>{t('community.inviteBody')}</p>
         {invite ? (
           <div style={{ marginTop: 14 }}>
             <p style={{ color: 'var(--success)', fontSize: 12, fontWeight: 850, margin: '0 0 8px' }}>{t('community.inviteReady')}</p>
-            <div style={{ border: '1px solid var(--border-subtle)', borderRadius: 8, background: 'var(--bg-input)', padding: '10px 12px', color: 'var(--text-muted)', fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{invite.url}</div>
+            <p style={{ color: 'var(--text-muted)', fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', margin: 0 }}>{invite.url}</p>
             <p style={{ color: 'var(--text-muted)', fontSize: 11, margin: '7px 0 0' }}>{t('community.inviteExpires', { date: new Date(invite.expiresAt).toLocaleDateString() })}</p>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 10 }}>
               <button type="button" className="pressable" onClick={shareInvite} style={{ minHeight: 42, borderRadius: 8, border: 'none', background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 850, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}><Share2 size={17} />{t('community.shareInvite')}</button>
@@ -277,7 +427,7 @@ export default function Community() {
           </button>
         )}
         {!invite && inviteLimitReached && <p style={{ color: 'var(--text-muted)', fontSize: 11, lineHeight: 1.45, margin: '8px 0 0' }}>{t('community.inviteLimit')}</p>}
-      </section>
+      </details>
 
       {loading ? (
         <div style={{ minHeight: 180, display: 'grid', placeItems: 'center', color: 'var(--text-muted)' }}>

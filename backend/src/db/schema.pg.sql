@@ -21,10 +21,13 @@ CREATE TABLE IF NOT EXISTS users (
   stripe_subscription_id TEXT,
   subscription_status TEXT DEFAULT 'free',
   subscription_ends_at TEXT,
+  friend_handle TEXT,
+  friend_discoverable INTEGER DEFAULT 0,
   created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_friend_handle_lower ON users (LOWER(friend_handle)) WHERE friend_handle IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS user_consents (
   id TEXT PRIMARY KEY,

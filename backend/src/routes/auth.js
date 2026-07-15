@@ -377,6 +377,7 @@ router.get('/me/export', auth, async (req, res) => {
       `SELECT id, name, email, onboarded, sex, age, weight_lbs, max_heart_rate,
         weekly_miles_current, goal_type, fitness_level, injury_mode,
         injury_description, injury_limitations, distance_unit, theme,
+        friend_handle, friend_discoverable,
         created_at
        FROM users WHERE id = ?`,
       [userId]
