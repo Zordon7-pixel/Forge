@@ -24,7 +24,7 @@ Current production checks:
 - `/api/auth/forgot-password` returns `200 email_sent` for `demo@forge.app` in under one second.
 - EAS/TestFlight preflight resumed on May 3, 2026 after Apple Developer credentials became available.
 
-## Friends Beta Gate Phase 0 — Patched, Awaiting QA (2026-07-14)
+## Friends Beta Gate Phase 0 — QA Complete, Awaiting Deployment (2026-07-14)
 
 - GPS and manual run saves now retain the canonical plan-session id plus a bounded snapshot of the prescribed distance/time, pace, zone, intensity, and workout structure.
 - Recorded route points retain their sample timestamps through active-run recovery and backend storage.
@@ -32,7 +32,7 @@ Current production checks:
 - Automatic run analysis starts only after the complete post-run check-in is durable. A user-scoped database claim prevents duplicate AI calls and rejects a stale in-flight result after amended answers.
 - Later edits to coaching inputs such as effort, pain, energy, notes, distance, duration, or run type invalidate the stored analysis so History cannot display stale coaching.
 - Moderate/severe pain or low post-run energy now enters deterministic 48–72-hour plan protection; severe pain holds non-race running and lower-body loading for 72 hours.
-- Status is `patched`: focused and existing regression smokes, both dependency audits, frontend build, 48-table account-data coverage, and Capacitor iOS sync pass. Claude Code QA, Railway deployment, production verification, and Bryan verification are still pending. No EAS build was run.
+- Status is `QA complete`: focused and existing regression smokes, both dependency audits, frontend build, 48-table account-data coverage, and Capacitor iOS sync pass. Claude Code's final independent review returned GREEN with no findings. Railway deployment, production verification, and Bryan verification are still pending. No EAS build was run.
 
 ## Active Architecture Decision — Current Shipping Path
 
