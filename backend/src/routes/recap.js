@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const { dbGet, dbAll } = require('../db');
 const auth = require('../middleware/auth');
+const { betaAccessEnabled } = require('../lib/betaAccess');
 const { generateWeeklyInsight } = require('../services/ai');
 const { runActivitySql } = require('../lib/runActivity');
 
@@ -246,8 +247,9 @@ async function buildRecap(userId, start, end, prevStart, prevEnd) {
 router.get('/weekly', auth, async (req, res) => {
   try {
     const user = await dbGet('SELECT is_pro FROM users WHERE id = ?', [req.user.id]);
-    const recap = await buildWeeklyRecap(req.user.id, { isPro: !!user?.is_pro });
-    recap.is_pro = !!user?.is_pro;
+    const isPro = !!user?.is_pro || betaAccessEnabled();
+    const recap = await buildWeeklyRecap(req.user.id, { isPro });
+    recap.is_pro = isPro;
     res.json(recap);
   } catch (err) { res.status(500).json({ error: 'Weekly recap failed' }); }
 });

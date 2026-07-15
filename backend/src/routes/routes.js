@@ -4,6 +4,7 @@ const rateLimit = require('express-rate-limit');
 const { dbGet, dbAll, dbRun } = require('../db');
 const auth = require('../middleware/auth');
 const { generateElevationAwareRoute, RouteEngineError } = require('../services/routeEngine');
+const { betaAccessEnabled } = require('../lib/betaAccess');
 
 const routeGenerationLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -19,7 +20,7 @@ router.get('/planner-status', auth, async (req, res) => {
   try {
     const user = await dbGet('SELECT is_pro FROM users WHERE id=?', [req.user.id]);
     const configured = Boolean(process.env.OPENROUTESERVICE_API_KEY);
-    const isPro = Boolean(user?.is_pro);
+    const isPro = Boolean(user?.is_pro) || betaAccessEnabled();
     res.json({
       available: configured && isPro,
       configured,
@@ -37,7 +38,7 @@ router.get('/planner-status', auth, async (req, res) => {
 router.post('/generate', auth, routeGenerationLimiter, async (req, res) => {
   try {
     const user = await dbGet('SELECT is_pro FROM users WHERE id=?', [req.user.id]);
-    if (!user?.is_pro) {
+    if (!user?.is_pro && !betaAccessEnabled()) {
       return res.status(403).json({ error: 'Elevation route planning requires Forged Hybrid Pro.', code: 'PRO_REQUIRED' });
     }
     const route = await generateElevationAwareRoute(req.body);
