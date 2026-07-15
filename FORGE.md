@@ -269,6 +269,13 @@ Phase 2 cleanup from this audit:
 - A guarded left-edge swipe moves back on normal app screens. It ignores maps, horizontal calendar gestures, form controls, feedback-modal dismissal, active outdoor runs, and running/paused/completed-unsaved treadmill sessions.
 - Claude Code's final verdict was PASS with no critical, high, or medium findings. Rotation, asset, gesture, backend catalog, build, audit, 48-table account-data, and Capacitor checks passed. Railway production serves `/assets/index-BWq1Mkew.js`; mobile QA confirmed two different consecutive warm-ups with the full image/cue/control layout visible. No EAS build was run.
 
+## Native TestFlight Build 16 / Phase 3C (2026-07-15)
+
+- Forged Hybrid `1.0.5 (16)` was built from `4247d10a` using the existing EAS remote certificate, provisioning profile, and App Store Connect API key. EAS build `71dde0a7-62c1-4d62-b543-6ddb7670961b` finished successfully.
+- The signed IPA was inspected before submission: bundle ID `com.zordontech.forge`, HealthKit entitlement, background-location mode, non-exempt encryption declaration, and compiled `ForgeHealthPlugin` / `ForgeWatchWorkoutPlugin` classes all matched the reviewed source.
+- App Store Connect accepted submission `35d15332-b2b4-4f1d-a198-e51e97bb4618`. Status is shipped and awaiting Apple processing plus physical-iPhone verification of Apple Health sync, locked-screen GPS, planned Run/Lift starts, route planning, and app resume. WorkoutKit delivery still requires a paired Apple Watch tester.
+- Claude Code preflight returned PASS WITH RISKS with zero critical/high findings. Frontend build, zero-vulnerability audit, 49-table account-data coverage, Capacitor sync, Swift parse, 13 frontend smoke suites, 13 backend phase suites, 9 integrity smokes, and the EAS archive audit passed. The local full Xcode compile was unavailable because this Mac lacks the iOS 26.5 platform; the EAS Xcode compile succeeded.
+
 ## Recently Fixed Bugs
 
 Do not reintroduce these patterns.
@@ -284,7 +291,7 @@ Do not reintroduce these patterns.
 | [H2] hashFile symlink bypass (2026-03-23, commit 8bbd950e) | lib/vault.js | path.resolve() doesn't follow symlinks; fixed with fs.realpathSync() before boundary check |
 | Activity photo hijack (2026-04-29 QA fix commit) | routes/social.js | POST photo validates the parent activity owner before INSERT/UPDATE; UPDATE no longer rewrites `user_id`; invalid/missing activities are rejected |
 | Gear shoe ownership bypass | backend/src/routes/gear.js | PATCH now includes `WHERE id=? AND user_id=?` |
-| Apple Watch plugin present but unreachable in TestFlight build 15 | frontend/ios/App/App/AppViewController.swift | Native plugin instances must be registered with the Capacitor bridge; fixed for the next approved iOS build (minimum build 16) |
+| Apple Watch plugin present but unreachable in TestFlight build 15 | frontend/ios/App/App/AppViewController.swift | Native plugin instances are registered with the Capacitor bridge and shipped in TestFlight build 16; paired-Watch verification remains pending |
 | Recovery adaptation retained hill/interval steps | backend/src/lib/adaptationEngine.js, frontend/src/components/calendar/ForgedDayView.jsx | Recovery substitutions replace the full run prescription; legacy persisted sessions are normalized before display |
 | Diagnostics exposed to all users | backend/src/routes/diagnostics.js, frontend/src/components/HelpDesk.jsx | Diagnostics/heal routes require admin email allowlist; demo is denied unless explicitly allowed |
 | Auth rate limiter blocked normal profile/stat reads | backend/src/app.js | Rate limit narrowed to login/register/password-reset routes only |
