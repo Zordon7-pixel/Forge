@@ -7,6 +7,7 @@ const {
   normalizePlannedSession,
   normalizePostRunCheckIn,
   normalizeRouteCoords,
+  shouldInvalidateRunFeedback,
 } = require('../src/lib/runPostRun');
 const { summarizeRecentRunLoad } = require('../src/lib/recentRunLoad');
 const { buildAdaptationProposal } = require('../src/lib/adaptationEngine');
@@ -46,6 +47,9 @@ check(planned.sessionId === 'session-1' && planned.distanceMiles === 3, 'planned
 check(!Object.prototype.hasOwnProperty.call(planned, 'untrustedExtra'), 'unknown planned-session fields are dropped');
 check(Boolean(normalizePostRunCheckIn({ perceived_effort: 7, pain_level: 'moderate', post_energy: 'low' }).value), 'complete check-in is accepted');
 check(Boolean(normalizePostRunCheckIn({ perceived_effort: 11, pain_level: 'none', post_energy: 'high' }).error), 'invalid effort is rejected');
+check(shouldInvalidateRunFeedback({ pain_level: 'moderate' }), 'pain edits invalidate stored run feedback');
+check(shouldInvalidateRunFeedback({ notes: 'Felt smooth' }), 'note edits invalidate stored run feedback');
+check(!shouldInvalidateRunFeedback({ run_surface: 'trail' }), 'non-coaching metadata edits retain stored run feedback');
 
 console.log('\n== pain and energy protection ==');
 const severeLoad = summarizeRecentRunLoad([{

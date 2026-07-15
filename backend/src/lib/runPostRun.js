@@ -1,4 +1,14 @@
 const MAX_ROUTE_POINTS = 5000;
+const RUN_FEEDBACK_INPUT_FIELDS = new Set([
+  'date',
+  'distance_miles',
+  'duration_seconds',
+  'notes',
+  'perceived_effort',
+  'type',
+  'pain_level',
+  'post_energy',
+]);
 
 function boundedString(value, maxLength) {
   if (value === undefined || value === null) return null;
@@ -102,10 +112,16 @@ function normalizePostRunCheckIn(value = {}) {
   return { value: { perceived_effort: effort, pain_level: pain, post_energy: energy } };
 }
 
+function shouldInvalidateRunFeedback(value = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  return Object.keys(value).some((field) => RUN_FEEDBACK_INPUT_FIELDS.has(field));
+}
+
 module.exports = {
   MAX_ROUTE_POINTS,
   normalizePlanSessionId,
   normalizePlannedSession,
   normalizePostRunCheckIn,
   normalizeRouteCoords,
+  shouldInvalidateRunFeedback,
 };

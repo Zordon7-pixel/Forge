@@ -26,6 +26,7 @@ const {
   normalizePlannedSession,
   normalizePostRunCheckIn,
   normalizeRouteCoords,
+  shouldInvalidateRunFeedback,
 } = require('../lib/runPostRun');
 
 function startOfDay(d) {
@@ -839,6 +840,7 @@ async function updateRunHandler(req, res) {
     const { date, distance_miles, duration_seconds, notes, perceived_effort, type, run_surface, incline_pct, treadmill_speed, pain_level, post_energy } = req.body;
     const validPainLevels = ['none', 'mild', 'moderate', 'severe'];
     const validEnergyLevels = ['low', 'medium', 'high'];
+    const invalidatesFeedback = shouldInvalidateRunFeedback(req.body);
 
     if (pain_level !== undefined && pain_level !== null && !validPainLevels.includes(String(pain_level))) {
       return res.status(400).json({ error: 'Invalid pain_level' });
@@ -884,12 +886,15 @@ async function updateRunHandler(req, res) {
         treadmill_speed = COALESCE(?, treadmill_speed),
         pain_level = COALESCE(?, pain_level),
         post_energy = COALESCE(?, post_energy),
+        ai_feedback = CASE WHEN ?=1 THEN NULL ELSE ai_feedback END,
+        ai_feedback_requested_at = CASE WHEN ?=1 THEN NULL ELSE ai_feedback_requested_at END,
         calories = ?
         WHERE id=? AND user_id=?`, [
         date ?? null, distance_miles ?? null, duration_seconds ?? null,
         notes ?? null, perceived_effort ?? null, type ?? null,
         run_surface ?? null, incline_pct ?? null, treadmill_speed ?? null,
         pain_level ?? null, post_energy ?? null,
+        invalidatesFeedback ? 1 : 0, invalidatesFeedback ? 1 : 0,
         calories, req.params.id, req.user.id
       ]);
 
