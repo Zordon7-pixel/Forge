@@ -351,6 +351,33 @@ router.get('/readiness', auth, requirePremium('Recovery readiness'), async (req,
   }
 });
 
+router.get('/readiness/history', auth, requirePremium('Recovery readiness'), async (req, res) => {
+  try {
+    const days = Math.min(30, Math.max(1, Number(req.query?.days || 14)));
+    const rows = await dbAll(
+      `SELECT score_date, score, band, drivers
+       FROM readiness_scores
+       WHERE user_id = ?
+       ORDER BY score_date DESC
+       LIMIT ?`,
+      [req.user.id, days]
+    );
+    res.json({
+      days: rows.map((row) => ({
+        date: row.score_date,
+        score: Number(row.score),
+        band: row.band,
+        drivers: Array.isArray(row.drivers) ? row.drivers : (() => {
+          try { return JSON.parse(row.drivers || '[]'); } catch { return []; }
+        })(),
+      })),
+    });
+  } catch (err) {
+    console.error('[recovery/readiness/history] failed:', err.message);
+    res.status(500).json({ error: 'Failed to fetch readiness history' });
+  }
+});
+
 // ── Data fetchers ────────────────────────────────────────────────────────────
 
 async function fetchGarminData(userId, startDate) {

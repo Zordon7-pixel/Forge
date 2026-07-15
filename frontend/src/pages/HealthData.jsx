@@ -81,17 +81,20 @@ export default function HealthData() {
   const { t } = useTranslation()
   const [driversData, setDriversData] = useState(null)
   const [health, setHealth] = useState(null)
+  const [readinessHistory, setReadinessHistory] = useState([])
   const [loading, setLoading] = useState(true)
 
   const loadData = async () => {
     setLoading(true)
     try {
-      const [driversRes, healthRes] = await Promise.all([
+      const [driversRes, healthRes, readinessRes] = await Promise.all([
         api.get('/body/drivers').catch(() => ({ data: null })),
         api.get('/health/sync').catch(() => ({ data: null })),
+        api.get('/recovery/readiness/history?days=14').catch(() => ({ data: null })),
       ])
       setDriversData(driversRes.data || { summary: t('body.allGood'), limiter: null, drivers: [] })
       setHealth(healthRes.data || null)
+      setReadinessHistory(Array.isArray(readinessRes.data?.days) ? readinessRes.data.days : [])
     } finally {
       setLoading(false)
     }
@@ -227,6 +230,22 @@ export default function HealthData() {
       {extendedMetricGroups.map((group) => (
         <MetricGroup key={group.key} title={group.title} subtitle={group.subtitle} cells={group.cells} />
       ))}
+
+      {readinessHistory.length > 0 && (
+        <section className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+          <p className="text-sm font-black" style={{ color: 'var(--text-primary)' }}>Readiness history</p>
+          <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>Stored from passive Health data; missing days stay missing.</p>
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {readinessHistory.map((entry) => (
+              <div key={entry.date} className="rounded-xl p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
+                <p className="text-[10px] font-bold uppercase" style={{ color: 'var(--text-muted)' }}>{entry.date}</p>
+                <p className="mt-1 text-xl font-black" style={{ color: 'var(--text-primary)' }}>{entry.score}</p>
+                <p className="text-[10px] font-bold" style={{ color: entry.band === 'GREEN' ? 'var(--accent)' : entry.band === 'RED' ? 'var(--danger)' : 'var(--warning)' }}>{entry.band}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       <section className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
         <p className="text-sm font-black" style={{ color: 'var(--text-primary)' }}>How your plan uses this data</p>
