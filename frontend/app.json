@@ -19,8 +19,7 @@
         "usesNonExemptEncryption": false
       },
       "infoPlist": {
-        "NSHealthShareUsageDescription": "Forged Hybrid reads workouts, activity, heart rate, HRV, sleep, cardio fitness, and running dynamics to personalize your training plan.",
-        "NSHealthUpdateUsageDescription": "Forged Hybrid writes workout data to keep your health records up to date."
+        "NSHealthShareUsageDescription": "Forged Hybrid reads workouts, activity, heart rate, HRV, sleep, cardio fitness, and running dynamics to personalize your training plan."
       }
     },
     "extra": {

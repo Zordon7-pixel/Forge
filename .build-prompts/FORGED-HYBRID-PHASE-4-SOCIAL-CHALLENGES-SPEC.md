@@ -1,16 +1,16 @@
 # Forged Hybrid Phase 4 Build Spec: Friends, Challenges, and Leaderboards
 
-Status: **APPROVED BY HERMES (2026-07-15) - implementation gated on Phase 3D/3E**
+Status: **APPROVED BY HERMES (2026-07-15) - Phase 4A opens after Phase 3E Railway verification**
 Repo: `/Volumes/Zordon Storage /openclaw-workspace/forge-app`
 Release target: current React/Vite/Capacitor + Express/PostgreSQL app only
 Native/EAS scope: **none for Phases 4A-4C**
 
 ## 1. Remaining roadmap before this feature
 
-The required release work still open is:
+Release-gate status:
 
-1. **Phase 3D - active TestFlight device acceptance.** Build 16 is uploaded. Real-iPhone checks still need to cover Apple Health, locked-screen GPS, session recovery, planned Run/Lift starts, route planning, deletion/resync, beta access, and app resume. Paired-Watch delivery remains a separate device-only check.
-2. **Phase 3E - beta hardening closure.** Fix or explicitly accept the two Phase 3D medium findings: user-facing startup crashes expose raw technical details, and the iOS Health usage description says Forged Hybrid writes workouts although the current native bridge requests read access only. The first is a Railway change; the second belongs in the next separately approved native build.
+1. **Phase 3D - complete per Bryan on 2026-07-15.** TestFlight build 16 device acceptance is closed with no remaining critical/high blocker. Paired-Watch delivery remains a separate hardware-only check and does not block the iPhone beta.
+2. **Phase 3E - implemented and Claude Code QA passed on 2026-07-15.** Tester-facing startup crashes no longer expose raw technical details, and the unused HealthKit write-purpose claim was removed from both metadata sources. The web fix still requires Railway live verification; the metadata correction will ride the next separately approved native build. No EAS build is authorized by this phase.
 3. **Phase 4 - this social competition track.** Build friends, private challenges, and trustworthy leaderboards only after Phase 3D has no critical/high blocker.
 4. **Partner watch delivery remains external.** Garmin, COROS, TrainingPeaks, Polar, Suunto, and Wahoo direct workout delivery depends on partner approval. It is not an internally finishable code phase. Manual workout copy/export and Apple WorkoutKit remain the available paths.
 
@@ -303,4 +303,4 @@ Hermes must return `APPROVE`, `APPROVE WITH CHANGES`, or `REJECT`, and answer:
 5. What must be removed, simplified, or added before Codex receives an implementation task?
 6. Should Phase 4D group runs remain separate?
 
-Hermes approved this spec on 2026-07-15 with no remaining required changes. Phase 4A implementation is authorized only after Phase 3D device acceptance has no critical/high blocker and the two Phase 3E findings are fixed or explicitly accepted. No push, Railway deploy, or EAS build is authorized by this spec alone.
+Hermes approved this spec on 2026-07-15 with no remaining required changes. Phase 3D is complete and the Phase 3E source/QA gate is green; Phase 4A may begin after the Phase 3E web bundle is verified on Railway. No EAS build is authorized by this spec alone.

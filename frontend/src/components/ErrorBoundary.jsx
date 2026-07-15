@@ -22,13 +22,8 @@ export default class ErrorBoundary extends React.Component {
           <p style={{ color: '#94a3b8', fontSize: 14, margin: 0, textAlign: 'center', maxWidth: 400 }}>
             {recoverable
               ? 'Forged Hybrid loaded a stale app file after an update. Reload once to pull the latest version.'
-              : 'Something failed during initialization. Error details:'}
+              : 'Forged Hybrid could not finish starting. Reload and try again.'}
           </p>
-          {!recoverable && (
-            <pre style={{ color: 'var(--danger)', fontSize: 12, fontFamily: 'monospace', background: '#111', padding: '12px 16px', borderRadius: 8, maxWidth: 600, wordBreak: 'break-all', whiteSpace: 'pre-wrap', textAlign: 'left' }}>
-              {this.state.error?.message}{'\n\n'}{this.state.error?.stack}
-            </pre>
-          )}
           <button
             onClick={() => {
               const url = new URL(window.location.href)
