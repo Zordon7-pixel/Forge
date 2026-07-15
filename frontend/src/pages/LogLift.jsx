@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
+import { Accessibility, Flame, History } from 'lucide-react'
 import api from '../lib/api'
 import track from '../lib/track'
 import { queueRequest } from '../lib/offlineQueue'
@@ -7,6 +8,8 @@ import { getVolumeLoad, getProgressiveOverloadTip } from '../lib/athleteLanguage
 import StrengthWorkoutRecommendation from '../components/StrengthWorkoutRecommendation'
 import WatchWorkoutService from '../services/WatchWorkoutService'
 import { fetchDailyExecution, scheduledLiftFromExecution, planSessionIdFromState, currentWeekFromState, localDateISO } from '../lib/dailyExecution'
+import { getLiftMobilityPool, inferLiftFocus } from '../data/liftMobility'
+import { chooseRotatingRoutine } from '../lib/routineRotation'
 
 const MUSCLE_GROUPS = [
   { key: 'chest', label: 'Chest' },
@@ -139,7 +142,7 @@ export default function LogLift() {
   useEffect(() => {
     api.get('/auth/me').then(res => {
       setUserSex(res.data.user?.sex || 'male')
-    }).catch(() => {})
+    }).catch((err) => console.error('[LogLift] profile load failed:', err?.message || err))
   }, [])
 
   useEffect(() => {
@@ -414,6 +417,36 @@ export default function LogLift() {
     () => manualAiPlan ? WatchWorkoutService.buildStrengthWorkout(manualAiPlan) : null,
     [manualAiPlan]
   )
+  const mobilityPlan = useMemo(() => {
+    if (activeTab === 'scheduled' && scheduledLiftPlan) return scheduledLiftPlan
+    if (activeTab === 'manual') {
+      if (manualAiPlan) return manualAiPlan
+      if (liftPlan) return liftPlan
+      return {
+        workoutName: selectedExercise?.name || (selectedMuscleGroup ? `${pretty(selectedMuscleGroup)} Workout` : 'Full Body Strength'),
+        target: selectedMuscleGroup || 'full body',
+        main: selectedExercise ? [{ name: selectedExercise.name, muscle_group: selectedMuscleGroup }] : [],
+      }
+    }
+    return aiRecommendation || scheduledLiftPlan || { workoutName: 'Full Body Strength', target: 'full body', main: [] }
+  }, [activeTab, aiRecommendation, liftPlan, manualAiPlan, scheduledLiftPlan, selectedExercise, selectedMuscleGroup])
+  const mobilityFocus = inferLiftFocus(mobilityPlan)
+  const mobilityLabel = mobilityPlan?.workoutName || `${pretty(mobilityFocus)} Strength`
+
+  const launchLiftMobility = (phase) => {
+    const pool = getLiftMobilityPool(mobilityPlan, phase)
+    const rotationScope = `lift-mobility:${phase}:${mobilityFocus}`
+    const routine = chooseRotatingRoutine(rotationScope, pool, 6)
+    navigate('/stretches/session', {
+      state: {
+        context: 'lift',
+        phase,
+        routine,
+        rotationScope,
+        workoutName: mobilityLabel,
+      },
+    })
+  }
 
   return (
     <div className="space-y-6 py-4">
@@ -595,6 +628,25 @@ export default function LogLift() {
       </button>
       </>
       )}
+
+      <section className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+        <p className="text-xs font-semibold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.8 }}>Quick Actions</p>
+        <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>Prepared for {mobilityLabel}</p>
+        <div className="mt-3 grid grid-cols-3 gap-2">
+          <button type="button" onClick={() => launchLiftMobility('warmup')} className="flex min-h-[76px] flex-col items-center justify-center gap-2 rounded-xl border-0 px-1.5 py-2 text-center text-xs font-bold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}>
+            <Flame size={19} color="var(--accent)" />
+            <span>Lift Warm-Up</span>
+          </button>
+          <button type="button" onClick={() => launchLiftMobility('recovery')} className="flex min-h-[76px] flex-col items-center justify-center gap-2 rounded-xl border-0 px-1.5 py-2 text-center text-xs font-bold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}>
+            <Accessibility size={19} color="var(--accent)" />
+            <span>Post-Lift Stretch</span>
+          </button>
+          <button type="button" onClick={() => navigate('/history')} className="flex min-h-[76px] flex-col items-center justify-center gap-2 rounded-xl border-0 px-1.5 py-2 text-center text-xs font-bold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}>
+            <History size={19} color="var(--accent)" />
+            <span>Lift History</span>
+          </button>
+        </div>
+      </section>
     </div>
   )
 }

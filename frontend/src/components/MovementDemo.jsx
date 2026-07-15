@@ -124,6 +124,120 @@ const PHOTO_DEMOS = [
     cropToSex: true,
     maleSide: 'right',
   },
+  {
+    match: (lower) => lower.includes('inchworm'),
+    src: '/stretches/inchworm.webp',
+    cropToSex: true,
+    maleSide: 'right',
+  },
+  {
+    match: (lower) => lower.includes("world's greatest") || lower.includes('worlds greatest'),
+    src: '/stretches/worlds-greatest.webp',
+    cropToSex: true,
+    maleSide: 'right',
+  },
+  {
+    match: (lower) => lower.includes('trunk rotation'),
+    src: '/stretches/trunk-rotation.webp',
+    cropToSex: true,
+    maleSide: 'right',
+  },
+  {
+    match: (lower) => lower.includes('cat-cow') || lower.includes('cat cow'),
+    src: '/stretches/cat-cow.webp',
+    cropToSex: true,
+    maleSide: 'right',
+  },
+  {
+    match: (lower) => lower.includes('bridge hold') || lower.includes('glute bridge'),
+    src: '/stretches/bridge-hold.webp',
+    cropToSex: true,
+    maleSide: 'right',
+  },
+  {
+    match: (lower) => lower.includes('chest opener'),
+    src: '/stretches/chest-opener.webp',
+    cropToSex: true,
+    maleSide: 'right',
+  },
+  {
+    match: (lower) => lower.includes('cross-body shoulder') || lower.includes('cross body shoulder'),
+    src: '/stretches/cross-body-shoulder.webp',
+    cropToSex: true,
+    maleSide: 'right',
+  },
+  {
+    match: (lower) => lower.includes('overhead lat'),
+    src: '/stretches/overhead-lat.webp',
+    cropToSex: true,
+    maleSide: 'right',
+  },
+  {
+    match: (lower) => lower.includes('wrist flexor'),
+    src: '/stretches/wrist-flexor.webp',
+    cropToSex: true,
+    maleSide: 'right',
+  },
+  {
+    match: (lower) => lower.includes('pelvic tilt'),
+    src: '/stretches/pelvic-tilt.webp',
+    cropToSex: true,
+    maleSide: 'right',
+  },
+  {
+    match: (lower) => lower.includes('lateral lunge'),
+    src: '/stretches/lateral-lunge-hold.webp',
+    cropToSex: true,
+    maleSide: 'right',
+  },
+  {
+    match: (lower) => lower.includes('doorway chest'),
+    src: '/stretches/doorway-chest.webp',
+    cropToSex: true,
+    maleSide: 'right',
+  },
+  {
+    match: (lower) => lower.includes('overhead tricep'),
+    src: '/stretches/overhead-tricep.webp',
+    cropToSex: true,
+    maleSide: 'right',
+  },
+  {
+    match: (lower) => lower.includes('upper trap'),
+    src: '/stretches/upper-trap.webp',
+    cropToSex: true,
+    maleSide: 'right',
+  },
+  {
+    match: (lower) => lower.includes('cobra'),
+    src: '/stretches/cobra.webp',
+    cropToSex: true,
+    maleSide: 'right',
+  },
+  {
+    match: (lower) => lower.includes('supine spinal twist') || lower.includes('supine twist'),
+    src: '/stretches/supine-twist.webp',
+    cropToSex: true,
+    maleSide: 'right',
+  },
+  {
+    match: (lower) => lower.includes('knee-to-chest') || lower.includes('knee to chest'),
+    src: '/stretches/knee-to-chest.webp',
+    cropToSex: true,
+    maleSide: 'right',
+  },
+  {
+    match: (lower) => lower.includes('kneeling quad'),
+    src: '/stretches/kneeling-quad.webp',
+    cropToSex: true,
+    maleSide: 'right',
+  },
+  {
+    match: (lower) => lower.includes('butterfly'),
+    src: '/stretches/butterfly.webp',
+    cropToSex: true,
+    maleSide: 'right',
+  },
 ]
 
 function getDemoKind(name = '') {
@@ -470,7 +584,7 @@ export default function MovementDemo({ name, label, compact = false, sex = 'male
   const photoDemo = PHOTO_DEMOS.find((demo) => demo.match(lower))
   const providedImage = isLocalFormAsset(imageUrl) ? imageUrl : ''
   const normalizedSex = normalizeSex(sex)
-  const providedImageNeedsCrop = providedImage.startsWith('/stretches/') && !providedImage.includes('-male') && !providedImage.includes('-female')
+  const providedImageNeedsCrop = Boolean(photoDemo?.cropToSex)
   const providedImageSex = providedImage.includes('-female')
     ? 'female'
     : (providedImage.includes('-male') ? 'male' : '')

@@ -6,8 +6,30 @@ import MovementDemo from '../components/MovementDemo'
 import api from '../lib/api'
 import LoadingRunner from '../components/LoadingRunner'
 import { chooseRotatingRoutine, rememberRoutine } from '../lib/routineRotation'
+import { getLiftMobilityPool } from '../data/liftMobility'
 
 const STRETCH_SESSION_COUNT = 6
+
+function safeLiftRoutine(value) {
+  if (!Array.isArray(value)) return []
+  return value.slice(0, 8).flatMap((item) => {
+    const id = String(item?.id || '').slice(0, 80)
+    const name = String(item?.name || '').slice(0, 80)
+    const duration = Math.trunc(Number(item?.duration))
+    const imageUrl = String(item?.image_url || item?.imageUrl || '')
+    if (!id || !name || duration < 10 || duration > 120 || !imageUrl.startsWith('/stretches/')) return []
+    return [{
+      ...item,
+      id,
+      name,
+      duration,
+      reps: String(item?.reps || item?.durationLabel || '').slice(0, 80),
+      muscle: String(item?.muscle || 'mobility').slice(0, 80),
+      cue: String(item?.cue || '').slice(0, 240),
+      image_url: imageUrl,
+    }]
+  })
+}
 
 export default function StretchSession() {
   const navigate = useNavigate()
@@ -16,16 +38,24 @@ export default function StretchSession() {
   const typeFromQuery = new URLSearchParams(location.search).get('type')
   const sessionType = location.state?.type || typeFromQuery || 'pre'
   const isPre = sessionType !== 'post'
+  const isLift = location.state?.context === 'lift'
+  const liftPhase = location.state?.phase === 'recovery' ? 'recovery' : 'warmup'
+  const liftWorkoutName = String(location.state?.workoutName || 'Strength Workout').slice(0, 80)
 
-  const rotationScope = isPre ? 'stretch-session:pre' : 'stretch-session:post'
-  const stretches = useMemo(() => chooseRotatingRoutine(
-    rotationScope,
-    isPre ? preRunStretches : postRunStretches,
-    STRETCH_SESSION_COUNT,
-  ), [isPre, rotationScope])
+  const rotationScope = isLift
+    ? String(location.state?.rotationScope || `lift-mobility:${liftPhase}:full`).slice(0, 120)
+    : (isPre ? 'stretch-session:pre' : 'stretch-session:post')
+  const stretches = useMemo(() => {
+    if (isLift) {
+      const passedRoutine = safeLiftRoutine(location.state?.routine)
+      if (passedRoutine.length) return passedRoutine
+      return chooseRotatingRoutine(rotationScope, getLiftMobilityPool({}, liftPhase), STRETCH_SESSION_COUNT)
+    }
+    return chooseRotatingRoutine(rotationScope, isPre ? preRunStretches : postRunStretches, STRETCH_SESSION_COUNT)
+  }, [isLift, isPre, liftPhase, location.state?.routine, rotationScope])
 
   const [current, setCurrent] = useState(0)
-  const [secondsLeft, setSecondsLeft] = useState(stretches[0].duration)
+  const [secondsLeft, setSecondsLeft] = useState(stretches[0]?.duration || 30)
   const [paused, setPaused] = useState(false)
   const [transitioning, setTransitioning] = useState(false)
   const [nextName, setNextName] = useState('')
@@ -57,7 +87,7 @@ export default function StretchSession() {
 
   useEffect(() => {
     setCurrent(0)
-    setSecondsLeft(stretches[0].duration)
+    setSecondsLeft(stretches[0]?.duration || 30)
     setPaused(false)
     setTransitioning(false)
     setNextName('')
@@ -156,7 +186,7 @@ export default function StretchSession() {
           <header className="mb-6 flex items-center justify-between">
             <button onClick={() => navigate(-1)} className="text-text-muted">← Back</button>
             <div className="text-center">
-              <h1 className="text-lg font-bold">{isPre ? 'Pre-Run Warmup' : 'Post-Run Recovery'}</h1>
+              <h1 className="text-lg font-bold">{isLift ? (liftPhase === 'warmup' ? 'Lift Warm-Up' : 'Post-Lift Stretch') : (isPre ? 'Pre-Run Warmup' : 'Post-Run Recovery')}</h1>
               <p className="text-xs text-text-muted">{Math.min(current + 1, stretches.length)} / {stretches.length}</p>
             </div>
             <div className="w-12" />
@@ -174,10 +204,12 @@ export default function StretchSession() {
               </div>
               <p className="text-3xl font-black text-accent">Session Complete</p>
               <p className="mt-3 text-sm text-text-muted">
-                {isPre ? 'You are warmed up with dynamic movement only. Ready to run strong.' : 'Recovery complete. Hold static stretches after each run to reduce tightness.'}
+                {isLift
+                  ? (liftPhase === 'warmup' ? `Your body is prepared for ${liftWorkoutName}.` : `Post-lift mobility for ${liftWorkoutName} is complete.`)
+                  : (isPre ? 'You are warmed up with dynamic movement only. Ready to run strong.' : 'Recovery complete. Hold static stretches after each run to reduce tightness.')}
               </p>
               <button
-                onClick={() => navigate('/log-run')}
+                onClick={() => navigate(isLift ? '/log-lift' : '/log-run')}
                 className="mt-5 rounded-xl bg-accent px-5 py-3 font-bold text-on-accent"
               >
                 Done
@@ -206,7 +238,7 @@ export default function StretchSession() {
                     {paused ? 'Resume' : 'Pause'}
                   </button>
                   <button onClick={skipToNext} className="rounded-lg border border-border-subtle bg-accent-dim px-3 py-1 text-xs font-bold text-accent">
-                    Skip stretch
+                    {isLift && liftPhase === 'warmup' ? 'Skip movement' : 'Skip stretch'}
                   </button>
                 </div>
               </div>
