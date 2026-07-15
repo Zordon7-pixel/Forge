@@ -35,6 +35,15 @@ Current production checks:
 - Moderate/severe pain or low post-run energy now enters deterministic 48–72-hour plan protection; severe pain holds non-race running and lower-body loading for 72 hours.
 - Status is `production verified`: Claude Code returned GREEN with no findings and Hermes approved the product/safety review. Railway deployment `5bfd7c80-fa6b-40ce-87bb-18d9e5518df1` serves the byte-matched `/assets/index-CPGq_y41.js` bundle. A disposable live account verified invalid check-in rejection, one generated feedback response, replay reuse, planned-session provenance, route timestamps, and complete cleanup. Bryan phone verification is still pending. No EAS build was run.
 
+## Friends Beta Phase 1 — Post-Run Recap (2026-07-14)
+
+- Status is `patched, awaiting independent QA`; no push or deployment has occurred yet.
+- Successful tracked and manual run saves now continue from the durable post-run check-in to a dedicated recap route.
+- The recap presents the recorded route, plan-versus-recorded distance/time/pace/zone truth, split data, calibrated heart-rate distribution, subjective effort/pain/energy, training metrics, notes, and the existing stored coach evaluation.
+- Multi-zone targets such as Zone 1-2 sum the complete prescribed range. Zone adherence stays hidden below 70% timeline coverage, and runs without a stored plan snapshot explicitly show recorded data only instead of inventing a target.
+- The exact run is fetched through a new authenticated owner-scoped lookup instead of relying on the capped recent-history response. Imperial and metric display preferences are respected.
+- Local gates passed: 25 Phase 1 smoke assertions, all Phase 0/run-integrity regression smokes, frontend build, both high-severity dependency audits, 48-table account-data coverage, and Capacitor iOS sync. No EAS build was run.
+
 ## Active Architecture Decision — Current Shipping Path
 
 `forge-app` is the active Forge repo. Its Expo/EAS build target is the existing `@zordon/forge-athlete` project, which owns the prior TestFlight build history. It owns:

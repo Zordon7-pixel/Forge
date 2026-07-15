@@ -66,6 +66,7 @@ const HealthData = lazyWithRetry(() => import('./pages/HealthData'))
 const ActiveWorkout = lazyWithRetry(() => import('./pages/ActiveWorkout'))
 const WorkoutSummary = lazyWithRetry(() => import('./pages/WorkoutSummary'))
 const ActiveRun = lazyWithRetry(() => import('./pages/ActiveRun'))
+const RunRecap = lazyWithRetry(() => import('./pages/RunRecap'))
 const TreadmillRun = lazyWithRetry(() => import('./pages/TreadmillRun'))
 const DailyCheckIn = lazyWithRetry(() => import('./pages/DailyCheckIn'))
 const Stretches = lazyWithRetry(() => import('./pages/Stretches'))
@@ -335,6 +336,14 @@ export default function App() {
           element={
             <PrivateRoute>
               <ActiveRun />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/run/recap/:id"
+          element={
+            <PrivateRoute>
+              <RunRecap />
             </PrivateRoute>
           }
         />

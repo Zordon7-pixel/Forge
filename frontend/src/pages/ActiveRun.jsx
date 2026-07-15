@@ -690,7 +690,10 @@ export default function ActiveRun() {
         />
       )}
 
-      {showPostCheckIn && savedRunId && <PostRunCheckIn runId={savedRunId} heatDrift={savedHeatDrift} onDone={() => { setShowPostCheckIn(false); navigate('/') }} />}
+      {showPostCheckIn && savedRunId && <PostRunCheckIn runId={savedRunId} heatDrift={savedHeatDrift} onDone={(result) => {
+        setShowPostCheckIn(false)
+        navigate(result?.queued ? '/' : `/run/recap/${savedRunId}`, { replace: true })
+      }} />}
       <Link to="/log-run" className="mt-5 inline-block text-sm" style={{ color: 'var(--text-muted)' }}>← Back</Link>
     </div>
   )

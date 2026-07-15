@@ -1032,11 +1032,11 @@ export default function LogRun() {
 
       {showPostCheckIn && savedRunId && <PostRunCheckIn runId={savedRunId} heatDrift={savedHeatDrift} onDone={(result) => {
         setShowPostCheckIn(false)
-        const checkInNotice = result?.queued
-          ? 'Post-run check-in queued and will sync with your run.'
-          : ['generated', 'existing'].includes(result?.feedbackStatus)
-            ? 'Check-in and coach analysis saved.'
-            : 'Check-in saved. Coach analysis can be retried from run history.'
+        if (!result?.queued) {
+          navigate(`/run/recap/${savedRunId}`, { replace: true })
+          return
+        }
+        const checkInNotice = 'Post-run check-in queued and will sync with your run.'
         setFeedback((current) => [checkInNotice, current].filter(Boolean).join(' '))
         setShowRecoveryPrompt(true)
       }} />}

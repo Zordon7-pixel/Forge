@@ -1,10 +1,12 @@
-import { useState } from 'react'
-import { X, Brain, Trash2 } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { ArrowLeft, X, Brain, Trash2 } from 'lucide-react'
+import { CircleMarker, MapContainer, Polyline, TileLayer, useMap } from 'react-leaflet'
 import api from '../lib/api'
 import { useUnits } from '../context/UnitsContext'
 import AiGuidanceNote from './AiGuidanceNote'
 import { Link } from 'react-router-dom'
 import { activityLabel, isRunningActivity } from '../lib/activityType'
+import { buildRunComparison, normalizeRunSplits, parseRunRoute, parseZoneTimeline } from '../lib/runRecap'
 
 function fmtDuration(totalSeconds = 0) {
   const h = Math.floor(totalSeconds / 3600)
@@ -20,14 +22,6 @@ function formatActivityDate(value) {
   const date = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? new Date(`${raw}T12:00:00`) : new Date(raw)
   if (Number.isNaN(date.getTime())) return 'Date unavailable'
   return date.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
-}
-
-function fmtPace(durationSeconds, distance) {
-  if (!durationSeconds || !distance) return '--'
-  const pace = durationSeconds / 60 / distance
-  const mins = Math.floor(pace)
-  const secs = Math.round((pace - mins) * 60)
-  return `${mins}:${String(secs).padStart(2, '0')} /mi`
 }
 
 const EFFORT_LABELS = ['', 'Very Easy', 'Easy', 'Easy-Moderate', 'Moderate', 'Moderate-Hard', 'Hard', 'Hard', 'Very Hard', 'Very Hard', 'Max']
@@ -58,22 +52,32 @@ function findZone(hr, zones) {
   return { ...zones[index], zone: index + 1, color: ZONE_COLORS[index] }
 }
 
-function zoneTimeline(value, durationSeconds) {
-  const parsed = parseObject(value)
-  const seconds = ['z1', 'z2', 'z3', 'z4', 'z5'].map((key) => Math.max(0, Number(parsed[key] ?? parsed[key.toUpperCase()] ?? 0) || 0))
-  const total = seconds.reduce((sum, item) => sum + item, 0)
-  const duration = Number(durationSeconds || 0)
-  return {
-    seconds,
-    total,
-    coverage: duration > 0 && total > 0 ? Math.min(100, (total / duration) * 100) : null,
-  }
-}
-
 function formatSeconds(value) {
   const seconds = Number(value)
   if (!Number.isFinite(seconds) || seconds <= 0) return null
   return fmtDuration(Math.round(seconds))
+}
+
+function formatPaceSeconds(value, fmt) {
+  const seconds = Number(value)
+  if (!Number.isFinite(seconds) || seconds <= 0) return '--'
+  return fmt.pace(seconds)
+}
+
+function comparisonNote(actual, planned, { unit = '', precision = 1, tolerance = 0 } = {}) {
+  if (!Number.isFinite(Number(actual)) || !Number.isFinite(Number(planned))) return null
+  const delta = Number(actual) - Number(planned)
+  const allowed = Math.max(tolerance, Math.abs(Number(planned)) * 0.05)
+  if (Math.abs(delta) <= allowed) return 'On target'
+  return `${Math.abs(delta).toFixed(precision)}${unit ? ` ${unit}` : ''} ${delta > 0 ? 'over' : 'under'}`
+}
+
+function FitRouteBounds({ positions }) {
+  const map = useMap()
+  useEffect(() => {
+    if (positions.length >= 2) map.fitBounds(positions, { padding: [24, 24] })
+  }, [map, positions])
+  return null
 }
 
 function formatSourceLabel(healthSource, metricSource) {
@@ -84,8 +88,8 @@ function formatSourceLabel(healthSource, metricSource) {
   return source.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())
 }
 
-export default function RunDetailModal({ run, hrZones = [], hrProfile = null, onClose, onDelete, onFeedbackGenerated }) {
-  const { units } = useUnits()
+export default function RunDetailModal({ run, hrZones = [], hrProfile = null, onClose, onDelete, onFeedbackGenerated, standalone = false }) {
+  const { units, fmt } = useUnits()
   const [feedback, setFeedback] = useState(run.ai_feedback || '')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -116,11 +120,11 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
     : sourceLabel === 'Garmin file'
       ? 'Garmin calories'
       : 'Calories'
-  const timeline = zoneTimeline(run.heart_rate_zones, run.duration_seconds)
+  const timeline = parseZoneTimeline(run.heart_rate_zones, run.duration_seconds)
   const metricCoverage = Number(workoutMetrics.hr_sample_coverage_pct)
-  const hrCoverage = Number.isFinite(metricCoverage) ? metricCoverage : timeline.coverage
+  const hrCoverage = Number.isFinite(metricCoverage) ? metricCoverage : timeline.coveragePct
   const hasTrustedHrCoverage = Number.isFinite(hrCoverage) && hrCoverage >= 70
-  const dominantZoneIndex = hasTrustedHrCoverage && timeline.total > 0
+  const dominantZoneIndex = hasTrustedHrCoverage && timeline.totalSeconds > 0
     ? timeline.seconds.indexOf(Math.max(...timeline.seconds))
     : -1
   const zone = dominantZoneIndex >= 0
@@ -136,9 +140,9 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
     : '--'
 
   const stats = [
-    { label: 'Distance', value: run.distance_miles ? `${Number(run.distance_miles).toFixed(2)} mi` : '--' },
+    { label: 'Distance', value: run.distance_miles ? fmt.distance(Number(run.distance_miles), 2) : '--' },
     { label: 'Duration', value: run.duration_seconds ? fmtDuration(run.duration_seconds) : '--' },
-    { label: 'Pace', value: fmtPace(run.duration_seconds, run.distance_miles) },
+    { label: 'Pace', value: run.distance_miles && run.duration_seconds ? fmt.pace(run.duration_seconds / run.distance_miles) : '--' },
     { label: calorieLabel, value: run.calories ? `${run.calories} cal` : '--' },
     { label: 'Effort', value: run.perceived_effort && hasTrustedEffort ? `${run.perceived_effort}/10 - ${EFFORT_LABELS[run.perceived_effort] || ''}` : '--' },
     { label: 'Surface', value: run.surface || run.run_type || '--' },
@@ -159,18 +163,83 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
     { label: 'Aerobic / anaerobic TE', value: run.training_effect_aerobic != null || run.training_effect_anaerobic != null ? `${run.training_effect_aerobic ?? '--'} / ${run.training_effect_anaerobic ?? '--'}` : null },
   ].filter((item) => item.value)
   const hasPartialHrCoverage = Number.isFinite(hrCoverage) && hrCoverage > 0 && hrCoverage < 70
+  const comparison = buildRunComparison(run)
+  const splits = normalizeRunSplits(run.pace_splits)
+  const routePositions = parseRunRoute(run.route_coords)
+  const checkInAvailable = run.perceived_effort != null || run.pain_level || run.post_energy
+  const comparisonRows = comparison.hasPlan ? [
+    comparison.plannedDistanceMiles != null ? {
+      label: 'Distance',
+      planned: fmt.distance(comparison.plannedDistanceMiles, 2),
+      actual: comparison.actualDistanceMiles > 0 ? fmt.distance(comparison.actualDistanceMiles, 2) : '--',
+      note: comparison.actualDistanceMiles > 0
+        ? comparisonNote(fmt.distanceValue(comparison.actualDistanceMiles), fmt.distanceValue(comparison.plannedDistanceMiles), { unit: fmt.distanceLabel, precision: 2, tolerance: units === 'metric' ? 0.16 : 0.1 })
+        : null,
+    } : null,
+    comparison.plannedDurationSeconds != null ? {
+      label: 'Time',
+      planned: fmtDuration(comparison.plannedDurationSeconds),
+      actual: comparison.actualDurationSeconds > 0 ? fmtDuration(comparison.actualDurationSeconds) : '--',
+      note: comparison.actualDurationSeconds > 0
+        ? comparisonNote(comparison.actualDurationSeconds / 60, comparison.plannedDurationSeconds / 60, { unit: 'min', precision: 0, tolerance: 1 })
+        : null,
+    } : null,
+    comparison.plannedPaceTarget ? {
+      label: 'Pace',
+      planned: comparison.plannedPaceTarget,
+      actual: formatPaceSeconds(comparison.actualPaceSeconds, fmt),
+      note: null,
+    } : null,
+    comparison.plannedZoneTarget ? {
+      label: 'Heart rate',
+      planned: comparison.plannedZoneTarget,
+      actual: comparison.zoneAdherencePct != null
+        ? `${comparison.zoneAdherencePct.toFixed(0)}% in target`
+        : comparison.timeline.trusted && comparison.timeline.dominantZone
+          ? `Dominant Z${comparison.timeline.dominantZone}`
+          : 'Not enough HR coverage',
+      note: comparison.zoneAdherencePct != null ? `${comparison.zoneAdherencePct.toFixed(0)}% adherence` : null,
+    } : null,
+  ].filter(Boolean) : []
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end" style={{ background: 'rgba(0,0,0,0.7)' }} onClick={onClose}>
-      <div className="w-full rounded-t-2xl p-6 pb-10 max-h-[85vh] overflow-y-auto" style={{ background: 'var(--bg-card)' }} onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between mb-1">
-          <div>
-            <h2 className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>{kind} Detail</h2>
+    <div
+      className={standalone ? 'min-h-full' : 'fixed inset-0 z-50 flex items-end'}
+      style={{ background: standalone ? 'transparent' : 'rgba(0,0,0,0.7)' }}
+      onClick={standalone ? undefined : onClose}
+    >
+      <div
+        className={standalone
+          ? 'mx-auto w-full max-w-2xl pb-8'
+          : 'mx-auto max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-t-2xl p-6 pb-10'}
+        style={{ background: standalone ? 'transparent' : 'var(--bg-card)' }}
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-center mb-1">
+          {standalone && (
+            <button type="button" onClick={onClose} aria-label="Back from run recap" className="mr-3 rounded-lg p-2" style={{ color: 'var(--text-muted)', background: 'var(--bg-input)' }}>
+              <ArrowLeft size={20} />
+            </button>
+          )}
+          <div className="flex-1">
+            <h2 className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>{isRun ? 'Run Recap' : `${kind} Detail`}</h2>
             {sourceLabel && <p className="mt-0.5 text-xs" style={{ color: 'var(--text-muted)' }}>Synced from {sourceLabel}</p>}
           </div>
-          <button type="button" onClick={onClose} aria-label="Close activity detail"><X size={20} style={{ color: 'var(--text-muted)' }} /></button>
+          {!standalone && <button type="button" onClick={onClose} aria-label="Close activity detail" className="ml-auto"><X size={20} style={{ color: 'var(--text-muted)' }} /></button>}
         </div>
         <p className="text-sm mb-5" style={{ color: 'var(--text-muted)' }}>{date}</p>
+
+        {isRun && routePositions.length >= 2 && (
+          <div className="mb-5 overflow-hidden rounded-xl" style={{ height: 220, border: '1px solid var(--border-subtle)' }}>
+            <MapContainer key={run.id} center={routePositions[0]} zoom={14} scrollWheelZoom={false} style={{ height: '100%', width: '100%' }}>
+              <FitRouteBounds positions={routePositions} />
+              <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+              <Polyline positions={routePositions} pathOptions={{ color: '#EAB308', weight: 5 }} />
+              <CircleMarker center={routePositions[0]} radius={7} pathOptions={{ color: '#FFFFFF', fillColor: '#22C55E', fillOpacity: 1, weight: 2 }} />
+              <CircleMarker center={routePositions.at(-1)} radius={7} pathOptions={{ color: '#FFFFFF', fillColor: '#EF4444', fillOpacity: 1, weight: 2 }} />
+            </MapContainer>
+          </div>
+        )}
 
         <div className="grid grid-cols-2 gap-3 mb-5">
           {stats.map(({ label, value }) => (
@@ -181,6 +250,43 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
           ))}
         </div>
 
+        {isRun && (
+          <div className="rounded-xl p-4 mb-5" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
+            <p className="text-xs font-bold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.6 }}>Planned vs recorded</p>
+            {comparison.hasPlan ? (
+              <>
+                <p className="mt-1 text-base font-bold" style={{ color: 'var(--text-primary)' }}>{comparison.planned.title || comparison.planned.workoutType || comparison.planned.type || 'Saved workout prescription'}</p>
+                {comparisonRows.length > 0 ? (
+                  <div className="mt-3 overflow-hidden rounded-lg" style={{ border: '1px solid var(--border-subtle)' }}>
+                    <div className="grid grid-cols-[minmax(80px,0.8fr)_1fr_1fr] gap-2 px-3 py-2 text-[11px] font-bold uppercase" style={{ color: 'var(--text-muted)', background: 'var(--bg-base)' }}>
+                      <span>Metric</span><span>Target</span><span>Recorded</span>
+                    </div>
+                    {comparisonRows.map((row) => (
+                      <div key={row.label} className="grid grid-cols-[minmax(80px,0.8fr)_1fr_1fr] gap-2 px-3 py-2 text-xs" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+                        <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>{row.label}</span>
+                        <span style={{ color: 'var(--text-muted)' }}>{row.planned}</span>
+                        <span style={{ color: 'var(--text-primary)' }}>{row.actual}{row.note ? <small className="block mt-0.5" style={{ color: row.note === 'On target' ? 'var(--success)' : 'var(--text-muted)' }}>{row.note}</small> : null}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-2 text-sm" style={{ color: 'var(--text-muted)' }}>This saved prescription has no distance, time, pace, or zone target to compare.</p>
+                )}
+                {comparison.planned.steps?.length > 0 && (
+                  <div className="mt-3">
+                    <p className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>Prescription</p>
+                    <ol className="mt-1 list-decimal space-y-1 pl-5 text-xs" style={{ color: 'var(--text-muted)' }}>
+                      {comparison.planned.steps.map((step, index) => <li key={`${step}-${index}`}>{step}</li>)}
+                    </ol>
+                  </div>
+                )}
+              </>
+            ) : (
+              <p className="mt-2 text-sm leading-relaxed" style={{ color: 'var(--text-muted)' }}>No plan target was saved for this activity. This recap shows recorded data only and does not invent a prescription.</p>
+            )}
+          </div>
+        )}
+
         {hr && zone && (
           <div className="rounded-xl p-3 mb-5" style={{ background: 'var(--bg-input)' }}>
             <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>{sourceLabel === 'Apple Health' ? 'Apple Health average' : 'Average heart rate'}</p>
@@ -188,11 +294,12 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
             <div className="mt-2 h-1.5 rounded-full" style={{ background: 'var(--bg-base)' }}><div className="h-full rounded-full" style={{ width: `${zone.zone * 20}%`, background: zone.color }} /></div>
             <p className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>{hasTrustedHrCoverage ? `Dominant zone from ${hrCoverage.toFixed(0)}% of the workout timeline.` : `Classified with your ${zoneModelLabel} profile.`}</p>
             {hasTrustedHrCoverage && (
-              <div className="mt-2 grid grid-cols-5 gap-1" aria-label="Heart-rate zone time distribution">
+              <div className="mt-3 space-y-2" aria-label="Heart-rate zone time distribution">
                 {timeline.seconds.map((seconds, index) => (
-                  <div key={`zone-time-${index + 1}`} className="text-center">
-                    <div style={{ height: 4, borderRadius: 999, background: ZONE_COLORS[index], opacity: seconds > 0 ? 1 : 0.25 }} />
-                    <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>Z{index + 1} {Math.round((seconds / timeline.total) * 100)}%</span>
+                  <div key={`zone-time-${index + 1}`} className="grid grid-cols-[70px_1fr_72px] items-center gap-2 text-xs">
+                    <span className="font-semibold" style={{ color: ZONE_COLORS[index] }}>Z{index + 1} {ZONE_LABELS[index]}</span>
+                    <div style={{ height: 6, borderRadius: 999, background: 'var(--bg-base)' }}><div style={{ width: `${Math.round((seconds / timeline.totalSeconds) * 100)}%`, height: '100%', borderRadius: 999, background: ZONE_COLORS[index], opacity: seconds > 0 ? 1 : 0.25 }} /></div>
+                    <span className="text-right" style={{ color: 'var(--text-muted)' }}>{formatSeconds(seconds) || '0m'} · {Math.round((seconds / timeline.totalSeconds) * 100)}%</span>
                   </div>
                 ))}
               </div>
@@ -208,6 +315,46 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
             <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{hr} bpm</p>
             <p className="mt-2 text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>No zone is guessed from this workout's maximum. Add your watch boundaries to classify it correctly.</p>
             <Link to="/hr-zones" onClick={onClose} className="mt-2 inline-flex text-xs font-bold" style={{ color: 'var(--accent)' }}>Calibrate HR zones</Link>
+          </div>
+        )}
+
+        {isRun && splits.length > 0 && (
+          <div className="mb-5 rounded-xl p-4" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
+            <p className="text-xs font-bold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.6 }}>Splits</p>
+            <div className="mt-2 overflow-hidden rounded-lg" style={{ border: '1px solid var(--border-subtle)' }}>
+              {splits.slice(0, 8).map((split) => (
+                <div key={`${split.label}-${split.index}`} className="grid grid-cols-[1fr_auto_auto] gap-3 px-3 py-2 text-xs" style={{ borderTop: split.index === 1 ? 'none' : '1px solid var(--border-subtle)' }}>
+                  <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>{split.label}</span>
+                  <span style={{ color: 'var(--text-muted)' }}>{split.distanceMiles ? fmt.distance(split.distanceMiles, 2) : split.durationSeconds ? fmtDuration(split.durationSeconds) : ''}</span>
+                  <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>{split.paceSeconds ? formatPaceSeconds(split.paceSeconds, fmt) : '--'}</span>
+                </div>
+              ))}
+            </div>
+            {splits.length > 8 && (
+              <details className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>
+                <summary className="cursor-pointer font-semibold" style={{ color: 'var(--accent)' }}>Show {splits.length - 8} more splits</summary>
+                <div className="mt-2 overflow-hidden rounded-lg" style={{ border: '1px solid var(--border-subtle)' }}>
+                  {splits.slice(8).map((split) => (
+                    <div key={`${split.label}-${split.index}`} className="grid grid-cols-[1fr_auto_auto] gap-3 px-3 py-2" style={{ borderTop: split.index === 9 ? 'none' : '1px solid var(--border-subtle)' }}>
+                      <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>{split.label}</span>
+                      <span>{split.distanceMiles ? fmt.distance(split.distanceMiles, 2) : split.durationSeconds ? fmtDuration(split.durationSeconds) : ''}</span>
+                      <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>{split.paceSeconds ? formatPaceSeconds(split.paceSeconds, fmt) : '--'}</span>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )}
+          </div>
+        )}
+
+        {isRun && checkInAvailable && (
+          <div className="mb-5 rounded-xl p-4" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
+            <p className="text-xs font-bold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.6 }}>Post-run check-in</p>
+            <div className="mt-3 grid grid-cols-3 gap-2">
+              <div><p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Effort</p><p className="mt-1 text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{run.perceived_effort != null ? `${run.perceived_effort}/10` : '--'}</p></div>
+              <div><p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Pain</p><p className="mt-1 text-sm font-semibold capitalize" style={{ color: run.pain_level === 'moderate' || run.pain_level === 'severe' ? 'var(--danger)' : 'var(--text-primary)' }}>{run.pain_level || '--'}</p></div>
+              <div><p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Energy</p><p className="mt-1 text-sm font-semibold capitalize" style={{ color: run.post_energy === 'low' ? 'var(--warning)' : 'var(--text-primary)' }}>{run.post_energy || '--'}</p></div>
+            </div>
           </div>
         )}
 
@@ -241,7 +388,7 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
         {isRun && <div className="rounded-xl p-4" style={{ background: 'var(--bg-base)', border: '1px solid var(--border-subtle)' }}>
           <div className="flex items-center gap-2 mb-3">
             <Brain size={16} style={{ color: 'var(--accent)' }} />
-            <span className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>AI Coach Feedback</span>
+            <span className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>Coach evaluation</span>
           </div>
 
           {feedback ? (

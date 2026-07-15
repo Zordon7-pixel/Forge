@@ -714,6 +714,17 @@ router.get('/age-graded-performance', auth, async (req, res) => {
   }
 });
 
+router.get('/:id', auth, async (req, res) => {
+  try {
+    const run = await dbGet('SELECT * FROM runs WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
+    if (!run) return res.status(404).json({ error: 'Run not found' });
+    res.json({ run });
+  } catch (err) {
+    console.error('[runs/detail] fetch failed:', err.message);
+    res.status(500).json({ error: 'Failed to fetch run' });
+  }
+});
+
 router.post('/', auth, async (req, res) => {
   try {
     const {
