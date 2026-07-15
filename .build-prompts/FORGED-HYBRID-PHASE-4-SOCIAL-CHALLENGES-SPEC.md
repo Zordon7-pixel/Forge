@@ -1,6 +1,6 @@
 # Forged Hybrid Phase 4 Build Spec: Friends, Challenges, and Leaderboards
 
-Status: **PHASE 4A SHIPPED + LIVE VERIFIED; PHASE 4A.1 EXACT-HANDLE DISCOVERY IMPLEMENTED + CLAUDE/HERMES APPROVED, RAILWAY LIVE VERIFICATION PENDING (2026-07-15)**
+Status: **PHASE 4A + 4A.1 SHIPPED, CLAUDE/HERMES APPROVED, AND RAILWAY LIVE VERIFIED (2026-07-15)**
 Repo: `/Volumes/Zordon Storage /openclaw-workspace/forge-app`
 Release target: current React/Vite/Capacitor + Express/PostgreSQL app only
 Native/EAS scope: **none for Phases 4A-4C**
@@ -253,6 +253,8 @@ Gate: Codex implementation -> Claude Code full QA -> Hermes product/privacy revi
 - private invite links retained as a secondary option; no contacts, fuzzy search, directory, QR dependency, or public profiles.
 
 Gate: same build loop plus duplicate/case-insensitive handle, hidden-user, blocked-user, reverse-pending, rate-limit, export, mobile-width, and live disposable-account tests. No EAS.
+
+Live verification (2026-07-15): Railway deployment `b09c3251-c4e2-4682-8e5a-8c8b8f43a8b9` served the matching `assets/index-loM_aUUY.js` bundle. A three-account disposable production matrix passed exact and case-insensitive lookup, uniform hidden/missing/invalid masking, duplicate rejection, pending-request de-duplication, reverse-pending state, accepted-friend persistence after discovery is disabled, hidden pending-handle masking, bidirectional block masking, account export, and complete account cleanup. The Community surface rendered at a 390px mobile viewport without horizontal overflow or console errors. No EAS build was run.
 
 ### Phase 4B - private challenge engine
 
