@@ -50,6 +50,7 @@ check(Boolean(normalizePostRunCheckIn({ perceived_effort: 11, pain_level: 'none'
 check(shouldInvalidateRunFeedback({ pain_level: 'moderate' }), 'pain edits invalidate stored run feedback');
 check(shouldInvalidateRunFeedback({ notes: 'Felt smooth' }), 'note edits invalidate stored run feedback');
 check(!shouldInvalidateRunFeedback({ run_surface: 'trail' }), 'non-coaching metadata edits retain stored run feedback');
+check(!shouldInvalidateRunFeedback({ date: '2026-07-14' }), 'date-only edits retain stored run feedback');
 
 console.log('\n== pain and energy protection ==');
 const severeLoad = summarizeRecentRunLoad([{

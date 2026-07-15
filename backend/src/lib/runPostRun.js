@@ -1,6 +1,5 @@
 const MAX_ROUTE_POINTS = 5000;
 const RUN_FEEDBACK_INPUT_FIELDS = new Set([
-  'date',
   'distance_miles',
   'duration_seconds',
   'notes',
