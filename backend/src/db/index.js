@@ -703,6 +703,19 @@ async function initDb() {
         UNIQUE(user_id, checkin_date)
       );
     `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS readiness_scores (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        score_date TEXT NOT NULL,
+        score INTEGER NOT NULL,
+        band TEXT NOT NULL,
+        drivers TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_id, score_date)
+      );
+    `);
+    await client.query('CREATE INDEX IF NOT EXISTS idx_readiness_scores_user_date ON readiness_scores(user_id, score_date DESC)');
     await client.query('ALTER TABLE daily_checkins ADD COLUMN IF NOT EXISTS sleep_hours REAL');
     await client.query('ALTER TABLE daily_checkins ADD COLUMN IF NOT EXISTS legs INTEGER');
     await client.query('ALTER TABLE daily_checkins ADD COLUMN IF NOT EXISTS drive INTEGER');

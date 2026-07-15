@@ -1,5 +1,6 @@
 const router = require('express').Router();
-const { dbAll, dbGet } = require('../db');
+const { dbAll, dbGet, dbRun } = require('../db');
+const { v4: uuidv4 } = require('uuid');
 const auth = require('../middleware/auth');
 const { requirePremium } = require('../middleware/premiumGate');
 const { buildHealthSignals, buildReadinessBand } = require('../lib/healthSignals');
@@ -326,12 +327,22 @@ router.get('/readiness', auth, requirePremium('Recovery readiness'), async (req,
     const topFlags = [...signals.flags]
       .sort((a, b) => (FLAG_SEVERITY_RANK[b.severity] || 0) - (FLAG_SEVERITY_RANK[a.severity] || 0))
       .slice(0, 2);
+    const drivers = topFlags.map((flag) => flag.reason).filter(Boolean);
+    await dbRun(
+      `INSERT INTO readiness_scores (id, user_id, score_date, score, band, drivers)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT (user_id, score_date) DO UPDATE SET
+         score = EXCLUDED.score,
+         band = EXCLUDED.band,
+         drivers = EXCLUDED.drivers`,
+      [uuidv4(), userId, today.toISOString().slice(0, 10), signals.readinessScore, band, JSON.stringify(drivers)]
+    );
     return res.json({
       available: true,
       score: signals.readinessScore,
       band,
       verdict,
-      drivers: topFlags.map((flag) => flag.reason).filter(Boolean),
+      drivers,
       runHistory,
     });
   } catch (err) {

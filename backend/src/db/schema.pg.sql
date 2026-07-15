@@ -364,6 +364,19 @@ CREATE TABLE IF NOT EXISTS daily_checkins (
   UNIQUE(user_id, checkin_date)
 );
 
+CREATE TABLE IF NOT EXISTS readiness_scores (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  score_date TEXT NOT NULL,
+  score INTEGER NOT NULL,
+  band TEXT NOT NULL,
+  drivers JSONB NOT NULL DEFAULT '[]'::jsonb,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(user_id, score_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_readiness_scores_user_date ON readiness_scores(user_id, score_date DESC);
+
 CREATE TABLE IF NOT EXISTS checkin_overrides (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
