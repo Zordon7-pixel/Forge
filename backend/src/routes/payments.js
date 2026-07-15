@@ -2,6 +2,7 @@ const router = require('express').Router();
 const Stripe = require('stripe');
 const { dbGet, dbRun } = require('../db');
 const auth = require('../middleware/auth');
+const { betaAccessEnabled } = require('../lib/betaAccess');
 
 function getStripeClient() {
   if (!process.env.STRIPE_SECRET_KEY) {
@@ -189,6 +190,7 @@ router.get('/status', auth, async (req, res) => {
     if (!user) return res.status(404).json({ error: 'User not found' });
     res.json({
       subscription_status: user.subscription_status || 'free',
+      beta_access: betaAccessEnabled(),
       subscription_ends_at: user.subscription_ends_at || null,
       stripe_customer_id: user.stripe_customer_id || null,
       stripe_subscription_id: user.stripe_subscription_id || null

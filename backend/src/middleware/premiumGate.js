@@ -1,4 +1,5 @@
 const { dbGet } = require('../db');
+const { betaAccessEnabled } = require('../lib/betaAccess');
 
 /**
  * Middleware that blocks free-tier users from premium-only routes.
@@ -7,6 +8,7 @@ const { dbGet } = require('../db');
 function requirePremium(featureName) {
   return async (req, res, next) => {
     try {
+      if (betaAccessEnabled()) return next();
       const user = await dbGet('SELECT is_pro FROM users WHERE id = ?', [req.user.id]);
       if (user?.is_pro) return next();
 

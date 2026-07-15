@@ -1,4 +1,5 @@
 const { dbGet, dbRun } = require('../db');
+const { betaAccessEnabled } = require('../lib/betaAccess');
 const { v4: uuidv4 } = require('uuid');
 
 // Free plan: 3 AI calls per week (Mon–Sun).
@@ -13,7 +14,7 @@ function checkAiLimit(callType) {
       const user = await dbGet("SELECT is_pro FROM users WHERE id = ?", [userId]);
 
       // Pro users: no limits
-      if (user?.is_pro) {
+      if (user?.is_pro || betaAccessEnabled()) {
         await dbRun("INSERT INTO ai_usage (id, user_id, call_type) VALUES (?, ?, ?)", [uuidv4(), userId, callType]);
         return next();
       }

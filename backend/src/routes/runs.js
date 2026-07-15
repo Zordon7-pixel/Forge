@@ -11,6 +11,7 @@ const { classifyRunZone } = require('../lib/runHistory');
 const { assessHeatDrift } = require('../lib/heatDrift');
 const { getHrProfile, zoneForHr } = require('../lib/hrZones');
 const { buildRunImportKeys } = require('../lib/runImportKey');
+const { betaAccessEnabled } = require('../lib/betaAccess');
 const {
   DISTANCE_CONFIG,
   normalizeSex,
@@ -100,11 +101,11 @@ async function generateStoredRunFeedback(run, userId) {
       dbGet('SELECT COUNT(*) as cnt FROM ai_usage WHERE user_id=? AND created_at>=?', [userId, `${today}T00:00:00`]),
       dbGet('SELECT * FROM users WHERE id=?', [userId]),
     ]);
-    const monthlyRow = profile?.is_pro
+    const monthlyRow = profile?.is_pro || betaAccessEnabled()
       ? null
       : await dbGet('SELECT COUNT(*) as cnt FROM ai_usage WHERE user_id=? AND created_at>=?', [userId, `${monthStart}T00:00:00`]);
     const canCallAI = Number(dailyRow?.cnt || 0) < 10
-      && (profile?.is_pro || Number(monthlyRow?.cnt || 0) < 5);
+      && (profile?.is_pro || betaAccessEnabled() || Number(monthlyRow?.cnt || 0) < 5);
     if (!canCallAI) {
       await dbRun(
         `UPDATE runs SET ai_feedback_requested_at=NULL

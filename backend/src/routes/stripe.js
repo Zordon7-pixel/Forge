@@ -2,6 +2,7 @@ const router = require('express').Router();
 const Stripe = require('stripe');
 const { dbGet, dbRun } = require('../db');
 const auth = require('../middleware/auth');
+const { betaAccessEnabled } = require('../lib/betaAccess');
 
 // ── Pricing tiers ────────────────────────────────────────────────────────────
 const PRICING = {
@@ -222,6 +223,7 @@ router.get('/status', auth, async (req, res) => {
     return res.json({
       subscription_status: status,
       is_pro: Number(user.is_pro || 0),
+      beta_access: betaAccessEnabled(),
       stripe_customer_id: user.stripe_customer_id || null,
       stripe_subscription_id: user.stripe_subscription_id || null,
     });

@@ -29,7 +29,7 @@ export function ProProvider({ children }) {
       const res = await api.get('/stripe/status').catch(() => api.get('/payments/status'))
       const status = String(res?.data?.subscription_status || '').toLowerCase()
       const hasProFlag = Number(res?.data?.is_pro) === 1
-      const pro = status === 'pro' || status === 'active' || status === 'trialing' || hasProFlag
+      const pro = Boolean(res?.data?.beta_access) || status === 'pro' || status === 'active' || status === 'trialing' || hasProFlag
       setIsPro(pro)
       setSubscriptionStatus(status)
       setTrialEndsAt(res?.data?.subscription_ends_at || null)
