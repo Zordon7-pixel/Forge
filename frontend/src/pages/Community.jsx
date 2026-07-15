@@ -15,12 +15,14 @@ import {
   Search,
   Share2,
   ShieldCheck,
+  Trophy,
   UserMinus,
   UserPlus,
   Users,
   X,
 } from 'lucide-react'
 import api from '../lib/api'
+import ChallengePanel from '../components/ChallengePanel'
 
 const EMPTY_DATA = {
   friends: [],
@@ -117,6 +119,7 @@ export default function Community() {
   const [reportTarget, setReportTarget] = useState(null)
   const [reportCategory, setReportCategory] = useState('harassment')
   const [reportNote, setReportNote] = useState('')
+  const [activeTab, setActiveTab] = useState('challenges')
   const processedInviteRef = useRef('')
 
   const load = useCallback(async ({ quiet = false } = {}) => {
@@ -143,6 +146,7 @@ export default function Community() {
     const token = searchParams.get('invite') || ''
     if (!token || processedInviteRef.current === token) return
     processedInviteRef.current = token
+    setActiveTab('friends')
     let active = true
 
     const resolveInvite = async () => {
@@ -357,6 +361,15 @@ export default function Community() {
         </div>
       )}
 
+      <div role="tablist" aria-label={t('community.title')} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, padding: 4, marginBottom: 16, border: '1px solid var(--border-subtle)', borderRadius: 8, background: 'var(--bg-card)' }}>
+        <button type="button" role="tab" aria-selected={activeTab === 'challenges'} className="pressable" onClick={() => setActiveTab('challenges')} style={{ minHeight: 44, border: 'none', borderRadius: 6, background: activeTab === 'challenges' ? 'var(--accent)' : 'transparent', color: activeTab === 'challenges' ? 'var(--on-accent)' : 'var(--text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, fontSize: 13, fontWeight: 900 }}><Trophy size={17} />{t('community.challengesTab')}</button>
+        <button type="button" role="tab" aria-selected={activeTab === 'friends'} className="pressable" onClick={() => setActiveTab('friends')} style={{ minHeight: 44, border: 'none', borderRadius: 6, background: activeTab === 'friends' ? 'var(--accent)' : 'transparent', color: activeTab === 'friends' ? 'var(--on-accent)' : 'var(--text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, fontSize: 13, fontWeight: 900 }}><Users size={17} />{t('community.friendsTab')}</button>
+      </div>
+
+      {activeTab === 'challenges' ? (
+        <ChallengePanel friends={data.friends} />
+      ) : (
+        <>
       <section style={{ border: '1px solid var(--border-subtle)', borderRadius: 8, background: 'var(--bg-card)', padding: 14, marginBottom: 12 }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
           <span style={{ flex: '0 0 auto', width: 38, height: 38, borderRadius: 8, display: 'grid', placeItems: 'center', background: 'color-mix(in srgb, var(--accent) 15%, transparent)', color: 'var(--accent)' }}><Search size={19} /></span>
@@ -501,6 +514,8 @@ export default function Community() {
 
           <button type="button" className="pressable" onClick={() => load()} disabled={loading || Boolean(busy)} style={{ justifySelf: 'center', minHeight: 40, border: 'none', background: 'transparent', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, fontWeight: 800 }}><RefreshCw size={15} />{t('community.refresh')}</button>
         </div>
+      )}
+        </>
       )}
 
       {reportTarget && (

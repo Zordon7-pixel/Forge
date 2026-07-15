@@ -89,6 +89,7 @@ app.use('/api/prs',         require('./routes/prs'));
 app.use('/api/hybrid-prs',  require('./routes/hybridPrs'));
 app.use('/api/social',      require('./routes/socialFriends'));
 app.use('/api/social',      require('./routes/social'));
+app.use('/api/challenges',  require('./routes/challenges'));
 app.use('/api/admin/social-reports', require('./routes/adminSocial'));
 app.use('/api/ai',          require('./routes/ai'));
 app.use('/api/milestones',  require('./routes/milestones'));

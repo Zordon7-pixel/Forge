@@ -145,6 +145,55 @@ CREATE TABLE IF NOT EXISTS lifts (
 CREATE INDEX IF NOT EXISTS idx_lifts_user_id ON lifts(user_id);
 CREATE INDEX IF NOT EXISTS idx_lifts_user_date ON lifts(user_id, date DESC);
 
+CREATE TABLE IF NOT EXISTS challenges (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,
+  type TEXT DEFAULT 'virtual_course',
+  target_value REAL NOT NULL,
+  unit TEXT DEFAULT 'miles',
+  badge_color TEXT DEFAULT '#EAB308',
+  is_featured INTEGER DEFAULT 0,
+  sort_order INTEGER DEFAULT 0,
+  start_date TEXT,
+  end_date TEXT,
+  is_seasonal INTEGER DEFAULT 0,
+  creator_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  kind TEXT NOT NULL DEFAULT 'system' CHECK (kind IN ('system', 'personal', 'social')),
+  visibility TEXT NOT NULL DEFAULT 'system' CHECK (visibility IN ('system', 'personal', 'private', 'friends')),
+  template_type TEXT CHECK (template_type IS NULL OR template_type IN ('running_distance', 'running_time', 'running_consistency', 'strength_consistency', 'hybrid_balance')),
+  run_target REAL,
+  run_unit TEXT,
+  lift_target REAL,
+  lift_unit TEXT,
+  timezone TEXT NOT NULL DEFAULT 'UTC',
+  verification_policy TEXT NOT NULL DEFAULT 'all_activity' CHECK (verification_policy IN ('all_activity', 'device_only')),
+  participant_limit INTEGER NOT NULL DEFAULT 25 CHECK (participant_limit BETWEEN 2 AND 50),
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('draft', 'active', 'completed', 'cancelled')),
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_challenges_social_status ON challenges(kind, visibility, status, start_date, end_date);
+
+CREATE TABLE IF NOT EXISTS user_challenges (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  challenge_id TEXT NOT NULL REFERENCES challenges(id) ON DELETE CASCADE,
+  progress REAL DEFAULT 0,
+  role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('owner', 'member')),
+  status TEXT NOT NULL DEFAULT 'joined' CHECK (status IN ('invited', 'joined', 'declined', 'left', 'removed')),
+  notifications_muted INTEGER NOT NULL DEFAULT 0,
+  invited_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  joined_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  left_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  completed_at TEXT,
+  UNIQUE(user_id, challenge_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_challenges_challenge_status ON user_challenges(challenge_id, status);
+CREATE INDEX IF NOT EXISTS idx_user_challenges_user_status ON user_challenges(user_id, status);
+
 CREATE TABLE IF NOT EXISTS app_feedback (
   id TEXT PRIMARY KEY,
   user_id TEXT REFERENCES users(id) ON DELETE SET NULL,

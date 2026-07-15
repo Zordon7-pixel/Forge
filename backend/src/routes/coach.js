@@ -1,5 +1,5 @@
 const router = require('express').Router();
-const { dbGet, dbAll, dbRun } = require('../db');
+const { dbGet, dbAll, dbRun, withTransaction } = require('../db');
 const auth = require('../middleware/auth');
 const { v4: uuidv4 } = require('uuid');
 const { generateExerciseSubstitutions, generateRecoveryAdjustment, generateNextGoalSuggestions, sanitize } = require('../services/ai');
@@ -254,17 +254,31 @@ router.post('/next-goal/:id/accept', auth, async (req, res) => {
   try {
     const goal = await dbGet('SELECT * FROM suggested_goals WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
     if (!goal) return res.status(404).json({ error: 'Goal not found' });
+    if (goal.status !== 'suggested') {
+      return res.status(409).json({ error: 'This goal is no longer available.' });
+    }
 
     const challengeId = `goal-${uuidv4()}`;
-    await dbRun(
-      'INSERT INTO challenges (id, name, description, type, target_value, unit, badge_color, is_featured, sort_order) VALUES (?,?,?,?,?,?,?,0,50)',
-      [challengeId, goal.title, goal.description, goal.type, goal.target_value || 1, goal.target_unit || 'units', '#EAB308']
-    );
-    await dbRun(
-      'INSERT INTO user_challenges (id, user_id, challenge_id, progress) VALUES (?,?,?,0) ON CONFLICT (user_id, challenge_id) DO NOTHING',
-      [uuidv4(), req.user.id, challengeId]
-    );
-    await dbRun("UPDATE suggested_goals SET status='accepted' WHERE id=? AND user_id=?", [req.params.id, req.user.id]);
+    await withTransaction(async (tx) => {
+      await tx.run(
+        `INSERT INTO challenges (
+          id, name, description, type, target_value, unit, badge_color, is_featured,
+          sort_order, creator_id, kind, visibility, status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 50, ?, 'personal', 'personal', 'active')`,
+        [challengeId, goal.title, goal.description, goal.type, goal.target_value || 1, goal.target_unit || 'units', '#EAB308', req.user.id]
+      );
+      await tx.run(
+        `INSERT INTO user_challenges (id, user_id, challenge_id, progress, role, status)
+         VALUES (?, ?, ?, 0, 'owner', 'joined')
+         ON CONFLICT (user_id, challenge_id) DO NOTHING`,
+        [uuidv4(), req.user.id, challengeId]
+      );
+      const updatedGoal = await tx.run(
+        "UPDATE suggested_goals SET status='accepted' WHERE id=? AND user_id=? AND status='suggested'",
+        [req.params.id, req.user.id]
+      );
+      if (updatedGoal.changes !== 1) throw new Error('Goal acceptance lost its user guard');
+    });
 
     res.json({ ok: true, challenge_id: challengeId });
   } catch (err) {

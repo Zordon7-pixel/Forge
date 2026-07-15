@@ -425,6 +425,21 @@ async function initDb() {
     await client.query('ALTER TABLE challenges ADD COLUMN IF NOT EXISTS start_date TEXT');
     await client.query('ALTER TABLE challenges ADD COLUMN IF NOT EXISTS end_date TEXT');
     await client.query('ALTER TABLE challenges ADD COLUMN IF NOT EXISTS is_seasonal INTEGER DEFAULT 0');
+    await client.query('ALTER TABLE challenges ADD COLUMN IF NOT EXISTS creator_id TEXT REFERENCES users(id) ON DELETE SET NULL');
+    await client.query("ALTER TABLE challenges ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'system'");
+    await client.query("ALTER TABLE challenges ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'system'");
+    await client.query('ALTER TABLE challenges ADD COLUMN IF NOT EXISTS template_type TEXT');
+    await client.query('ALTER TABLE challenges ADD COLUMN IF NOT EXISTS run_target REAL');
+    await client.query('ALTER TABLE challenges ADD COLUMN IF NOT EXISTS run_unit TEXT');
+    await client.query('ALTER TABLE challenges ADD COLUMN IF NOT EXISTS lift_target REAL');
+    await client.query('ALTER TABLE challenges ADD COLUMN IF NOT EXISTS lift_unit TEXT');
+    await client.query("ALTER TABLE challenges ADD COLUMN IF NOT EXISTS timezone TEXT NOT NULL DEFAULT 'UTC'");
+    await client.query("ALTER TABLE challenges ADD COLUMN IF NOT EXISTS verification_policy TEXT NOT NULL DEFAULT 'all_activity'");
+    await client.query('ALTER TABLE challenges ADD COLUMN IF NOT EXISTS participant_limit INTEGER NOT NULL DEFAULT 25');
+    await client.query("ALTER TABLE challenges ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active'");
+    await client.query("UPDATE challenges SET kind = 'personal', visibility = 'personal' WHERE id LIKE 'goal-%' AND kind = 'system'");
+    await client.query("UPDATE challenges SET visibility = 'system' WHERE kind = 'system' AND visibility <> 'system'");
+    await client.query('CREATE INDEX IF NOT EXISTS idx_challenges_social_status ON challenges(kind, visibility, status, start_date, end_date)');
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS user_challenges (
@@ -437,6 +452,17 @@ async function initDb() {
         UNIQUE(user_id, challenge_id)
       );
     `);
+    await client.query("ALTER TABLE user_challenges ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'member'");
+    await client.query("ALTER TABLE user_challenges ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'joined'");
+    await client.query('ALTER TABLE user_challenges ADD COLUMN IF NOT EXISTS notifications_muted INTEGER NOT NULL DEFAULT 0');
+    await client.query('ALTER TABLE user_challenges ADD COLUMN IF NOT EXISTS invited_at TIMESTAMPTZ DEFAULT NOW()');
+    await client.query('ALTER TABLE user_challenges ADD COLUMN IF NOT EXISTS left_at TIMESTAMPTZ');
+    await client.query('ALTER TABLE user_challenges ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_user_challenges_challenge_status ON user_challenges(challenge_id, status)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_user_challenges_user_status ON user_challenges(user_id, status)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_runs_user_date ON runs(user_id, date DESC)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_lifts_user_date ON lifts(user_id, date DESC)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_workout_sessions_user_started ON workout_sessions(user_id, started_at)');
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS step_logs (

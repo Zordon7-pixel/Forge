@@ -17,6 +17,7 @@ const { computeStreak, serverUtcAnchorCandidates } = require('../lib/streak');
 const backendPackage = require('../../package.json');
 const { WAIVER_VERSION } = require('../lib/waiverText');
 const { runActivitySql } = require('../lib/runActivity');
+const { cleanupOwnedSocialChallenges } = require('../lib/challengeOwnership');
 
 const sign = (user) => jwt.sign(
   { id: user.id, name: user.name, email: user.email, onboarded: user.onboarded, coach_personality: user.coach_personality },
@@ -436,6 +437,7 @@ router.delete('/account', auth, async (req, res) => {
     }
 
     await withTransaction(async (tx) => {
+      await cleanupOwnedSocialChallenges(tx, userId);
       for (const [sql, params] of ACCOUNT_SOCIAL_DELETE_QUERIES) {
         await tx.run(sql, bindUserId(params, userId));
       }

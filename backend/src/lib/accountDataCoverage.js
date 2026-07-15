@@ -21,6 +21,7 @@ const ACCOUNT_EXPORT_TABLES = [
   { key: 'milestones_seen', table: 'milestones_seen', orderBy: 'seen_at DESC' },
   { key: 'user_badges', table: 'user_badges', orderBy: 'earned_at DESC' },
   { key: 'user_challenges', table: 'user_challenges', orderBy: 'joined_at DESC' },
+  { key: 'owned_challenges', table: 'challenges', where: "id IN (SELECT challenge_id FROM user_challenges WHERE user_id = ? AND role = 'owner')", orderBy: 'created_at DESC' },
   { key: 'step_logs', table: 'step_logs', orderBy: 'log_date DESC' },
   { key: 'activity_feed', table: 'activity_feed', orderBy: 'created_at DESC' },
   { key: 'activity_likes', table: 'activity_likes', orderBy: 'created_at DESC' },
@@ -62,6 +63,7 @@ const ACCOUNT_SECRET_TABLES = [
 ];
 
 const ACCOUNT_SOCIAL_DELETE_QUERIES = [
+  ['UPDATE challenges SET creator_id = NULL WHERE creator_id = ?', [0]],
   ['UPDATE social_reports SET reporter_id = NULL, note = NULL, context_id = NULL WHERE reporter_id = ?', [0]],
   ['UPDATE social_reports SET subject_user_id = NULL, note = NULL, context_id = NULL WHERE subject_user_id = ?', [0]],
   ['DELETE FROM friend_invites WHERE owner_id = ?', [0]],

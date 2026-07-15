@@ -8,6 +8,37 @@ async function runAlwaysMigrations() {
   await pg.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS friend_discoverable INTEGER DEFAULT 0');
   await pg.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_friend_handle_lower ON users (LOWER(friend_handle)) WHERE friend_handle IS NOT NULL');
 
+  await pg.query('ALTER TABLE challenges ADD COLUMN IF NOT EXISTS start_date TEXT');
+  await pg.query('ALTER TABLE challenges ADD COLUMN IF NOT EXISTS end_date TEXT');
+  await pg.query('ALTER TABLE challenges ADD COLUMN IF NOT EXISTS is_seasonal INTEGER DEFAULT 0');
+  await pg.query('ALTER TABLE challenges ADD COLUMN IF NOT EXISTS creator_id TEXT REFERENCES users(id) ON DELETE SET NULL');
+  await pg.query("ALTER TABLE challenges ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'system'");
+  await pg.query("ALTER TABLE challenges ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'system'");
+  await pg.query('ALTER TABLE challenges ADD COLUMN IF NOT EXISTS template_type TEXT');
+  await pg.query('ALTER TABLE challenges ADD COLUMN IF NOT EXISTS run_target REAL');
+  await pg.query('ALTER TABLE challenges ADD COLUMN IF NOT EXISTS run_unit TEXT');
+  await pg.query('ALTER TABLE challenges ADD COLUMN IF NOT EXISTS lift_target REAL');
+  await pg.query('ALTER TABLE challenges ADD COLUMN IF NOT EXISTS lift_unit TEXT');
+  await pg.query("ALTER TABLE challenges ADD COLUMN IF NOT EXISTS timezone TEXT NOT NULL DEFAULT 'UTC'");
+  await pg.query("ALTER TABLE challenges ADD COLUMN IF NOT EXISTS verification_policy TEXT NOT NULL DEFAULT 'all_activity'");
+  await pg.query('ALTER TABLE challenges ADD COLUMN IF NOT EXISTS participant_limit INTEGER NOT NULL DEFAULT 25');
+  await pg.query("ALTER TABLE challenges ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active'");
+  await pg.query("UPDATE challenges SET kind = 'personal', visibility = 'personal' WHERE id LIKE 'goal-%' AND kind = 'system'");
+  await pg.query("UPDATE challenges SET visibility = 'system' WHERE kind = 'system' AND visibility <> 'system'");
+  await pg.query('CREATE INDEX IF NOT EXISTS idx_challenges_social_status ON challenges(kind, visibility, status, start_date, end_date)');
+
+  await pg.query("ALTER TABLE user_challenges ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'member'");
+  await pg.query("ALTER TABLE user_challenges ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'joined'");
+  await pg.query('ALTER TABLE user_challenges ADD COLUMN IF NOT EXISTS notifications_muted INTEGER NOT NULL DEFAULT 0');
+  await pg.query('ALTER TABLE user_challenges ADD COLUMN IF NOT EXISTS invited_at TIMESTAMPTZ DEFAULT NOW()');
+  await pg.query('ALTER TABLE user_challenges ADD COLUMN IF NOT EXISTS left_at TIMESTAMPTZ');
+  await pg.query('ALTER TABLE user_challenges ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()');
+  await pg.query('CREATE INDEX IF NOT EXISTS idx_user_challenges_challenge_status ON user_challenges(challenge_id, status)');
+  await pg.query('CREATE INDEX IF NOT EXISTS idx_user_challenges_user_status ON user_challenges(user_id, status)');
+  await pg.query('CREATE INDEX IF NOT EXISTS idx_runs_user_date ON runs(user_id, date DESC)');
+  await pg.query('CREATE INDEX IF NOT EXISTS idx_lifts_user_date ON lifts(user_id, date DESC)');
+  await pg.query('CREATE INDEX IF NOT EXISTS idx_workout_sessions_user_started ON workout_sessions(user_id, started_at)');
+
   await pg.query(`
     CREATE TABLE IF NOT EXISTS readiness_scores (
       id TEXT PRIMARY KEY,

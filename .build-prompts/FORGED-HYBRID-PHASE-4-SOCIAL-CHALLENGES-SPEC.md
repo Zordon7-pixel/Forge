@@ -1,6 +1,6 @@
 # Forged Hybrid Phase 4 Build Spec: Friends, Challenges, and Leaderboards
 
-Status: **PHASE 4A + 4A.1 SHIPPED, CLAUDE/HERMES APPROVED, AND RAILWAY LIVE VERIFIED (2026-07-15)**
+Status: **PHASE 4A + 4A.1 SHIPPED; PHASE 4B CLAUDE/HERMES APPROVED AND LOCAL GATES GREEN, PENDING RAILWAY LIVE VERIFICATION (2026-07-15)**
 Repo: `/Volumes/Zordon Storage /openclaw-workspace/forge-app`
 Release target: current React/Vite/Capacitor + Express/PostgreSQL app only
 Native/EAS scope: **none for Phases 4A-4C**
@@ -264,6 +264,8 @@ Live verification (2026-07-15): Railway deployment `b09c3251-c4e2-4682-8e5a-8c8b
 - compatibility guard for personal coach-created goals.
 
 Gate: same build loop plus run/walk classification, duplicate import, deletion/tombstone, timezone, manual/device, and concurrent membership tests.
+
+Local verification (2026-07-15): Claude Code returned PASS with no critical/high code finding, Hermes returned APPROVE with no Phase 4B deploy blocker, and syntax checks, Phase 4A/4A.1 regressions, the Phase 4B deterministic smoke, 53-table account-data coverage, frontend build, high-level audit, Capacitor sync, and 375/390/430px responsive browser checks passed. Before Phase 4C exposes cross-user rankings, resolve or explicitly model the ambiguous case where one physical manual strength session is separately logged in both `workout_sessions` and legacy `lifts`; date-only merging is prohibited because it would undercount legitimate two-a-day sessions.
 
 ### Phase 4C - leaderboard and beta polish
 
