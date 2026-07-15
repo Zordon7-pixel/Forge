@@ -5,8 +5,8 @@ This file holds Forge's product history, deployment notes, shipped phase log, kn
 ## Current Production
 
 - Production URL: `https://forge-production-773f.up.railway.app/`
-- Latest verified application release: commit `c46cecf9`, deployment `5bfd7c80-fa6b-40ce-87bb-18d9e5518df1`
-- Latest checked bundle: `/assets/index-CPGq_y41.js`
+- Latest verified application release: commit `c646aa04`, deployment `3319e687-0ece-4088-b11b-a38f46fd4b65`
+- Latest checked bundle: `/assets/index-CfBTKrdH.js`
 - iOS version/build: `1.0.5` / `15`
 - Bundle identifier: `com.zordontech.forge`
 - Expo/EAS project: `@zordon/forge-athlete` (`6aeb5fbb-2697-4cf4-b9b3-afe60c63e9e1`)
@@ -20,6 +20,7 @@ Current production checks:
 - H14 supplies a real local form image for every current stretch and warm-up, crops composite guides to the profile sex, consolidates health-source controls under More, and adds a deterministic usage-based Train shortcut.
 - H15 rotates warm-up and stretch routines per user, prefers movements not shown in the previous routine, and adds guarded edge-swipe back navigation without exposing active timed sessions to accidental dismissal.
 - Friends Beta Phase 0 now preserves planned-session and timestamped-route truth, durably stores the complete post-run check-in before one idempotent AI analysis, and applies deterministic pain/energy protection to the next 48-72 hours.
+- Friends Beta Phase 1 adds an owner-only post-run recap with route, splits, plan-versus-recorded truth, coverage-gated heart-rate zones, post-run answers, and stored coach evaluation.
 - Demo diagnostics check returns `403`.
 - `/api/auth/me/export` returns account/training data and excludes `password_hash`.
 - `/api/auth/forgot-password` returns `200 email_sent` for `demo@forge.app` in under one second.
@@ -37,12 +38,13 @@ Current production checks:
 
 ## Friends Beta Phase 1 — Post-Run Recap (2026-07-14)
 
-- Status is `patched, awaiting independent QA`; no push or deployment has occurred yet.
+- Status is `production verified`: Claude Code returned GREEN after the metric pace follow-up, and Hermes approved the product/safety review with no blockers.
 - Successful tracked and manual run saves now continue from the durable post-run check-in to a dedicated recap route.
 - The recap presents the recorded route, plan-versus-recorded distance/time/pace/zone truth, split data, calibrated heart-rate distribution, subjective effort/pain/energy, training metrics, notes, and the existing stored coach evaluation.
 - Multi-zone targets such as Zone 1-2 sum the complete prescribed range. Zone adherence stays hidden below 70% timeline coverage, and runs without a stored plan snapshot explicitly show recorded data only instead of inventing a target.
 - The exact run is fetched through a new authenticated owner-scoped lookup instead of relying on the capped recent-history response. Imperial and metric display preferences are respected.
 - Local gates passed: 28 Phase 1 smoke assertions, all Phase 0/run-integrity regression smokes, frontend build, both high-severity dependency audits, 48-table account-data coverage, and Capacitor iOS sync. No EAS build was run.
+- Railway deployment `3319e687-0ece-4088-b11b-a38f46fd4b65` serves byte-matched `/assets/index-CfBTKrdH.js` and recap chunks. Live API checks returned `200` for the owner, `401` without auth, and `404` for a different signed-in user. Planned and no-plan recaps rendered at 390x844 with no horizontal overflow, no console errors, correct metric pace conversion, and actions clear of bottom navigation. Both disposable accounts were deleted and post-delete login returned `401`.
 
 ## Active Architecture Decision — Current Shipping Path
 
@@ -336,6 +338,7 @@ These changes are already implemented, built, Capacitor-synced, and deployed to 
 | 2026-07-14 | `28880400-a761-4fd3-b4b1-193a04cf5c9c` | Success | H14 complete mobility visuals, profile-sex crops, health-control consolidation, and smart Train actions verified live |
 | 2026-07-14 | `e25d0f9f-a6ea-4738-9a94-a0f4f591a03d` | Success | H15 per-user routine rotation and guarded edge-swipe navigation verified live |
 | 2026-07-14 | `5bfd7c80-fa6b-40ce-87bb-18d9e5518df1` | Success | Friends Beta Phase 0 post-run truth, one-call AI analysis, provenance, and pain/energy protection verified live |
+| 2026-07-14 | `3319e687-0ece-4088-b11b-a38f46fd4b65` | Success | Friends Beta Phase 1 truthful post-run recap, owner scoping, and metric/mobile verification |
 
 ### Build/Test Status
 
