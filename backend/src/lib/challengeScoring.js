@@ -42,12 +42,10 @@ function runDedupKey(run) {
   return `run:${run.id}`;
 }
 
-function liftDedupKey(lift) {
+function deviceLiftDedupKey(lift) {
   if (lift.watch_sync_id) return `watch:${lift.watch_sync_id}`;
   // Health/watch ingest rejects replays before insert; preserve distinct device sessions here.
-  if (isDeviceRecorded(lift)) return `import:${lift.id}`;
-  // Legacy manual lift rows may represent exercises rather than sessions.
-  return `legacy-manual:${lift.date}`;
+  return `import:${lift.id}`;
 }
 
 function preferMoreComplete(existing, candidate, fields) {
@@ -101,8 +99,11 @@ function scoreChallenge(challenge, rows, userId) {
     const date = localActivityDate(lift, challenge.timezone);
     if (!isInsideWindow(date, challenge)) continue;
     const device = isDeviceRecorded(lift);
-    if (deviceOnly && !device) continue;
-    strengthMap.set(liftDedupKey(lift), { date, verification: device ? 'device' : 'manual' });
+    // Unprovenanced legacy rows may be exercise summaries or duplicates of an
+    // in-app session. Only canonical workout sessions and device imports earn
+    // social strength credit until those records have a shared session id.
+    if (!device) continue;
+    strengthMap.set(deviceLiftDedupKey(lift), { date, verification: 'device' });
   }
 
   const strengthContributions = [...strengthMap.values()].map((entry) => ({

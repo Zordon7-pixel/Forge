@@ -74,7 +74,10 @@ assert.strictEqual(afterDelete.run.value, 5);
 
 const strengthRows = {
   runs: [{ id: 'run-hybrid', user_id: 'a', date: '2026-07-15', type: 'run', distance_miles: 10, duration_seconds: 3600 }],
-  workoutSessions: [{ id: 'session-1', user_id: 'a', started_at: '2026-07-16T22:00:00.000Z', ended_at: '2026-07-16T23:00:00.000Z' }],
+  workoutSessions: [
+    { id: 'session-1', user_id: 'a', started_at: '2026-07-16T14:00:00.000Z', ended_at: '2026-07-16T15:00:00.000Z' },
+    { id: 'session-2', user_id: 'a', started_at: '2026-07-16T22:00:00.000Z', ended_at: '2026-07-16T23:00:00.000Z' },
+  ],
   lifts: [
     { id: 'manual-exercise-1', user_id: 'a', date: '2026-07-17' },
     { id: 'manual-exercise-2', user_id: 'a', date: '2026-07-17' },
@@ -92,6 +95,8 @@ const strength = scoreChallenge({
 }, strengthRows, 'a');
 assert.strictEqual(strength.qualifying_counts.strength_sessions, 4);
 assert.strictEqual(strength.percent, 100);
+assert.strictEqual(strength.contributions.filter((entry) => entry.category === 'strength' && entry.verification === 'manual').length, 2);
+assert.strictEqual(strength.contributions.filter((entry) => entry.category === 'strength' && entry.verification === 'device').length, 2);
 
 const verifiedStrength = scoreChallenge({
   ...challenge,
@@ -150,7 +155,11 @@ async function ownerCleanupScenario(successor) {
   assert.ok(routeSource.includes("c.kind = 'social'"));
   assert.ok(routeSource.includes("c.visibility IN ('private', 'friends')"));
   assert.ok(routeSource.includes("AND owner_uc.user_id = ?"));
-  assert.ok(routeSource.includes("AND target_uc.user_id = ?"));
+  assert.ok(routeSource.includes('WHERE id = ? AND challenge_id = ? AND user_id = ?'));
+  assert.ok(routeSource.includes("context_type, context_id, note, status"));
+  assert.ok(routeSource.includes("'challenge', ?, ?, 'open'"));
+  assert.ok(routeSource.includes('owner_action: ownerAction'));
+  assert.strictEqual(routeSource.includes('req.body?.member_id'), false);
   assert.strictEqual(routeSource.includes('user: { id: entry.user_id'), false);
   assert.ok(routeSource.includes('is_self: entry.user_id === req.user.id'));
 

@@ -5,9 +5,11 @@ const { dbAll, dbGet, dbRun, withTransaction } = require('../db');
 const auth = require('../middleware/auth');
 const { addDays, challengeTemplateLabel, effectiveChallengeStatus, normalizeChallengeInput } = require('../lib/challengeRules');
 const { rankChallengeScores, scoreChallenge } = require('../lib/challengeScoring');
+const { cleanText } = require('../lib/profanity');
 const { runActivitySql } = require('../lib/runActivity');
 
 const MAX_ACTIVE_OWNED_CHALLENGES = 10;
+const REPORT_CATEGORIES = new Set(['harassment', 'spam', 'impersonation', 'unsafe_content', 'other']);
 
 function userLimiter(windowMs, max, message) {
   return rateLimit({
@@ -23,6 +25,7 @@ function userLimiter(windowMs, max, message) {
 const createLimiter = userLimiter(60 * 60 * 1000, 10, 'Too many challenge creation attempts. Try again later.');
 const inviteLimiter = userLimiter(15 * 60 * 1000, 30, 'Too many challenge invitations. Try again later.');
 const membershipLimiter = userLimiter(15 * 60 * 1000, 60, 'Too many challenge changes. Try again later.');
+const reportLimiter = userLimiter(24 * 60 * 60 * 1000, 10, 'Too many challenge reports. Try again later.');
 
 router.use(auth);
 
@@ -126,7 +129,7 @@ async function loadScoringRows(challenge, userIds) {
       [userIds, queryStart, queryEnd]
     ),
     dbAll(
-      `SELECT l.id, l.user_id, l.date, l.notes, l.watch_sync_id,
+      `SELECT l.id, l.user_id, l.date, l.watch_sync_id,
               l.watch_activity_type, l.watch_normalized_type, l.workout_duration_seconds
        FROM lifts l
        WHERE l.user_id = ANY(?::text[])
@@ -428,32 +431,44 @@ router.patch('/:id', membershipLimiter, async (req, res) => {
       return res.json({ ok: true, status: 'cancelled' });
     }
 
-    const memberId = String(req.body?.member_id || '');
-    if (!isUuid(memberId) || memberId === req.user.id) {
+    const membershipId = String(req.body?.membership_id || '');
+    if (!isUuid(membershipId)) {
       return res.status(400).json({ error: 'Choose a valid challenge member.' });
     }
-    const updated = await dbRun(
-      `UPDATE user_challenges target_uc
-       SET status = 'removed', left_at = NOW(), updated_at = NOW()
-       WHERE target_uc.challenge_id = ? AND target_uc.user_id = ?
-         AND target_uc.role = 'member' AND target_uc.status IN ('invited', 'joined')
-         AND EXISTS (
-           SELECT 1 FROM challenges c
-           WHERE c.id = target_uc.challenge_id
-             AND c.kind = 'social'
-             AND c.visibility IN ('private', 'friends')
-             AND c.status = 'active'
-         )
-         AND EXISTS (
-           SELECT 1 FROM user_challenges owner_uc
-           WHERE owner_uc.challenge_id = target_uc.challenge_id
-             AND owner_uc.user_id = ?
-             AND owner_uc.role = 'owner'
-             AND owner_uc.status = 'joined'
-         )`,
-      [req.params.id, memberId, req.user.id]
-    );
-    if (updated.changes !== 1) return challengeUnavailable(res);
+    const removed = await withTransaction(async (tx) => {
+      const target = await tx.get(
+        `SELECT target_uc.id, target_uc.user_id
+         FROM user_challenges target_uc
+         WHERE target_uc.id = ? AND target_uc.challenge_id = ?
+           AND target_uc.role = 'member' AND target_uc.status IN ('invited', 'joined')
+           AND EXISTS (
+             SELECT 1 FROM challenges c
+             WHERE c.id = target_uc.challenge_id
+               AND c.kind = 'social'
+               AND c.visibility IN ('private', 'friends')
+               AND c.status = 'active'
+           )
+           AND EXISTS (
+             SELECT 1 FROM user_challenges owner_uc
+             WHERE owner_uc.challenge_id = target_uc.challenge_id
+               AND owner_uc.user_id = ?
+               AND owner_uc.role = 'owner'
+               AND owner_uc.status = 'joined'
+           )
+         FOR UPDATE`,
+        [membershipId, req.params.id, req.user.id]
+      );
+      if (!target) return false;
+      const updated = await tx.run(
+        `UPDATE user_challenges
+         SET status = 'removed', left_at = NOW(), updated_at = NOW()
+         WHERE id = ? AND challenge_id = ? AND user_id = ?
+           AND role = 'member' AND status IN ('invited', 'joined')`,
+        [target.id, req.params.id, target.user_id]
+      );
+      return updated.changes === 1;
+    });
+    if (!removed) return challengeUnavailable(res);
     return res.json({ ok: true, status: 'removed' });
   } catch (err) {
     console.error('[challenges/owner-action] failed:', err.message);
@@ -468,7 +483,7 @@ router.get('/:id/leaderboard', async (req, res) => {
     if (!challenge) return challengeUnavailable(res);
 
     const members = await dbAll(
-      `SELECT uc.user_id, u.name
+      `SELECT uc.id AS membership_id, uc.user_id, u.name
        FROM user_challenges uc
        JOIN users u ON u.id = uc.user_id
        WHERE uc.challenge_id = ? AND uc.status = 'joined'
@@ -480,6 +495,7 @@ router.get('/:id/leaderboard', async (req, res) => {
     const scoringRows = await loadScoringRows(challenge, userIds);
     const ranked = rankChallengeScores(userIds.map((userId) => scoreChallenge(challenge, scoringRows, userId)));
     const names = new Map(members.map((member) => [member.user_id, member.name]));
+    const membershipIds = new Map(members.map((member) => [member.user_id, member.membership_id]));
     const blocks = await dbAll(
       `SELECT blocker_id, blocked_id FROM user_blocks
        WHERE blocker_id = ? OR blocked_id = ?`,
@@ -487,14 +503,18 @@ router.get('/:id/leaderboard', async (req, res) => {
     );
     const hiddenUsers = new Set(blocks.map((block) => block.blocker_id === req.user.id ? block.blocked_id : block.blocker_id));
     const rows = ranked.map((entry) => {
+      const ownerAction = challenge.membership_role === 'owner' && entry.user_id !== req.user.id
+        ? { membership_id: membershipIds.get(entry.user_id) }
+        : null;
       if (entry.user_id !== req.user.id && hiddenUsers.has(entry.user_id)) {
-        return { rank: entry.rank, masked: true };
+        return { rank: entry.rank, masked: true, owner_action: ownerAction };
       }
       return {
         rank: entry.rank,
         masked: false,
         is_self: entry.user_id === req.user.id,
         user: { name: names.get(entry.user_id) || 'Athlete' },
+        owner_action: ownerAction,
         progress: {
           score: entry.score,
           percent: entry.percent,
@@ -510,6 +530,43 @@ router.get('/:id/leaderboard', async (req, res) => {
   } catch (err) {
     console.error('[challenges/leaderboard] failed:', err.message);
     res.status(500).json({ error: 'Could not load this leaderboard.' });
+  }
+});
+
+router.post('/:id/report', reportLimiter, async (req, res) => {
+  if (!isUuid(req.params.id)) return challengeUnavailable(res);
+  const category = String(req.body?.category || '');
+  if (!REPORT_CATEGORIES.has(category)) return res.status(400).json({ error: 'Choose a valid report reason.' });
+  const note = cleanText(req.body?.note).trim().slice(0, 500) || null;
+
+  try {
+    const challenge = await dbGet(
+      `SELECT c.id, owner_uc.user_id AS owner_user_id
+       FROM challenges c
+       JOIN user_challenges viewer_uc ON viewer_uc.challenge_id = c.id
+       LEFT JOIN user_challenges owner_uc ON owner_uc.challenge_id = c.id
+         AND owner_uc.role = 'owner' AND owner_uc.status = 'joined'
+       WHERE c.id = ? AND viewer_uc.user_id = ? AND viewer_uc.status = 'joined'
+         AND c.kind = 'social'
+         AND c.visibility IN ('private', 'friends')
+         AND c.status IN ('active', 'completed')
+       LIMIT 1`,
+      [req.params.id, req.user.id]
+    );
+    if (!challenge) return challengeUnavailable(res);
+    if (challenge.owner_user_id === req.user.id) {
+      return res.status(400).json({ error: 'Challenge owners cannot report their own challenge.' });
+    }
+    await dbRun(
+      `INSERT INTO social_reports
+       (id, reporter_id, subject_user_id, category, context_type, context_id, note, status)
+       VALUES (?, ?, ?, ?, 'challenge', ?, ?, 'open')`,
+      [uuidv4(), req.user.id, challenge.owner_user_id || null, category, req.params.id, note]
+    );
+    return res.status(201).json({ ok: true });
+  } catch (err) {
+    console.error('[challenges/report] failed:', err.message);
+    return res.status(500).json({ error: 'Could not submit this challenge report.' });
   }
 });
 

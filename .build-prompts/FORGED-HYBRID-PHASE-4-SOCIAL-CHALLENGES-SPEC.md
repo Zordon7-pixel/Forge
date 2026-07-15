@@ -276,7 +276,11 @@ Live verification (2026-07-15): Railway deployment `d3416ea5-7d40-4d84-bcca-3583
 - moderation controls and compact in-app updates;
 - mobile computer-use test with at least three disposable accounts.
 
+Strength-credit contract (Hermes-approved 2026-07-15): `all_activity` counts completed first-party `workout_sessions` plus trusted device-recorded `lifts`; `device_only` counts trusted device-recorded `lifts` only. Unprovenanced legacy manual `lifts` remain in private History but do not feed social scoring because they may be exercise summaries or duplicates of a first-party session. Distinct canonical session/import IDs preserve legitimate two-a-days. Known beta limitation: an in-app workout later imported independently from a watch can still appear as two strength sessions until both sources share a durable session identity; do not claim perfect cross-source deduplication.
+
 Gate: full toolchain, Claude Code QA, Hermes review, Railway live verification, then Bryan approval before broad beta exposure.
+
+Local verification (2026-07-15): Claude Code returned PASS after fixing one medium truth-state issue so a successful challenge action is not mislabeled failed when only its background refresh fails. Hermes reviewed the real scoring, payload, owner-removal, report, and masking code and returned APPROVE with no must-fix. Phase 4A/4A.1 regressions, Phase 4B/4C scoring smokes, 53-table account-data coverage, frontend build/audit, Capacitor sync, 375/430px browser checks, and a seven-part three-account disposable API matrix passed. No EAS build was run.
 
 ### Phase 4D - group runs (separate future spec)
 
