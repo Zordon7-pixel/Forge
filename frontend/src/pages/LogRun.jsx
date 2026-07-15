@@ -6,7 +6,6 @@ import api from '../lib/api'
 import track from '../lib/track'
 import { parseDuration, formatDurationDisplay } from '../lib/parseDuration'
 import PostRunCheckIn from '../components/PostRunCheckIn'
-import PhotoUploader from '../components/PhotoUploader'
 import WatchWorkoutSendButton from '../components/WatchWorkoutSendButton'
 import AiGuidanceNote from '../components/AiGuidanceNote'
 import { queueRequest } from '../lib/offlineQueue'
@@ -980,11 +979,6 @@ export default function LogRun() {
             <button type="submit" disabled={loading} className="w-full rounded-xl py-3 font-semibold disabled:opacity-70" style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', cursor: 'pointer' }}>{loading ? 'Logging run...' : 'Save Run'}</button>
             {error && <p className="mt-2 text-sm" style={{ color: 'var(--accent)' }}>{error}</p>}
             {feedback && <div className="mt-2 rounded-xl p-3" style={{ background: 'var(--bg-base)', color: 'var(--text-primary)' }}>{feedback}</div>}
-            {savedRunId && (
-              <div className="mt-4">
-                <PhotoUploader activityId={savedRunId} activityType="run" />
-              </div>
-            )}
           </form>
         )}
 

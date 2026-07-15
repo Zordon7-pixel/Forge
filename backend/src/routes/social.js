@@ -1,8 +1,13 @@
 const router = require('express').Router();
 const { v4: uuidv4 } = require('uuid');
-const { dbGet, dbAll, dbRun } = require('../db');
+const { dbGet, dbAll, dbRun, withTransaction } = require('../db');
 const auth = require('../middleware/auth');
 const { cleanText } = require('../lib/profanity');
+const {
+  MAX_ACTIVITY_PHOTOS,
+  defaultMediaVisibility,
+  validatePhotoPayload,
+} = require('../lib/activityMedia');
 
 function parseJson(value, fallback = {}) {
   if (!value) return fallback;
@@ -25,6 +30,10 @@ async function requireOwnedPhotoActivity(activityType, activityId, userId) {
   if (!activity) return { error: 'Activity not found', status: 404 };
   if (activity.user_id !== userId) return { error: 'Activity photo is restricted to the activity owner', status: 403 };
   return { activity };
+}
+
+async function requireOwnedRun(runId, userId) {
+  return dbGet('SELECT id FROM runs WHERE id = ? AND user_id = ?', [runId, userId]);
 }
 
 async function buildActivityRows(userIds = [], limit = 30) {
@@ -251,36 +260,141 @@ router.post('/comment/:activityId', auth, async (req, res) => {
   }
 });
 
+router.get('/run/:activity_id/photos', auth, async (req, res) => {
+  try {
+    const run = await requireOwnedRun(req.params.activity_id, req.user.id);
+    if (!run) return res.status(404).json({ error: 'Run not found' });
+
+    const media = await dbAll(
+      `SELECT id, mime_type, created_at, visibility
+       FROM activity_media
+       WHERE activity_id = ? AND activity_type = ? AND user_id = ?
+       ORDER BY created_at ASC, id ASC`,
+      [req.params.activity_id, 'run', req.user.id]
+    );
+    res.json({ media });
+  } catch (err) {
+    console.error('[social/run-photos] list failed:', err.message);
+    res.status(500).json({ error: 'Failed to fetch run photos' });
+  }
+});
+
+router.get('/run/:activity_id/photos/:mediaId', auth, async (req, res) => {
+  try {
+    const run = await requireOwnedRun(req.params.activity_id, req.user.id);
+    if (!run) return res.status(404).json({ error: 'Run not found' });
+
+    const media = await dbGet(
+      `SELECT id, data, mime_type, created_at, visibility
+       FROM activity_media
+       WHERE id = ? AND activity_id = ? AND activity_type = ? AND user_id = ?`,
+      [req.params.mediaId, req.params.activity_id, 'run', req.user.id]
+    );
+    if (!media) return res.status(404).json({ error: 'Run photo not found' });
+    res.json({ media });
+  } catch (err) {
+    console.error('[social/run-photos] fetch failed:', err.message);
+    res.status(500).json({ error: 'Failed to fetch run photo' });
+  }
+});
+
+router.post('/run/:activity_id/photos', auth, async (req, res) => {
+  try {
+    const validation = validatePhotoPayload(req.body);
+    if (validation.error) return res.status(400).json({ error: validation.error });
+
+    const result = await withTransaction(async (tx) => {
+      const run = await tx.get(
+        'SELECT id FROM runs WHERE id = ? AND user_id = ? FOR UPDATE',
+        [req.params.activity_id, req.user.id]
+      );
+      if (!run) return { notFound: true };
+
+      const countRow = await tx.get(
+        'SELECT COUNT(*) AS count FROM activity_media WHERE activity_id = ? AND activity_type = ? AND user_id = ?',
+        [req.params.activity_id, 'run', req.user.id]
+      );
+      if (Number(countRow?.count || 0) >= MAX_ACTIVITY_PHOTOS) return { limitReached: true };
+
+      const mediaId = uuidv4();
+      await tx.run(
+        `INSERT INTO activity_media (id, activity_id, activity_type, user_id, data, mime_type, visibility)
+         VALUES (?,?,?,?,?,?,?)`,
+        [mediaId, req.params.activity_id, 'run', req.user.id, validation.data, validation.mimeType, 'private']
+      );
+      const media = await tx.get(
+        `SELECT id, mime_type, created_at, visibility
+         FROM activity_media
+         WHERE id = ? AND activity_id = ? AND activity_type = ? AND user_id = ?`,
+        [mediaId, req.params.activity_id, 'run', req.user.id]
+      );
+      return { media };
+    });
+
+    if (result.notFound) return res.status(404).json({ error: 'Run not found' });
+    if (result.limitReached) return res.status(409).json({ error: `Runs can have up to ${MAX_ACTIVITY_PHOTOS} photos` });
+    res.status(201).json({ media: result.media });
+  } catch (err) {
+    console.error('[social/run-photos] save failed:', err.message);
+    res.status(500).json({ error: 'Failed to save run photo' });
+  }
+});
+
+router.delete('/run/:activity_id/photos/:mediaId', auth, async (req, res) => {
+  try {
+    const run = await requireOwnedRun(req.params.activity_id, req.user.id);
+    if (!run) return res.status(404).json({ error: 'Run not found' });
+
+    const result = await dbRun(
+      `DELETE FROM activity_media
+       WHERE id = ? AND activity_id = ? AND activity_type = ? AND user_id = ?`,
+      [req.params.mediaId, req.params.activity_id, 'run', req.user.id]
+    );
+    if (!result.changes) return res.status(404).json({ error: 'Run photo not found' });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[social/run-photos] delete failed:', err.message);
+    res.status(500).json({ error: 'Failed to delete run photo' });
+  }
+});
+
 router.post('/:activity_type/:activity_id/photo', auth, async (req, res) => {
   try {
     const { activity_id, activity_type } = req.params;
-    const data = String(req.body?.data || '');
-    const mimeType = String(req.body?.mime_type || 'image/jpeg');
-    if (!data) return res.status(400).json({ error: 'Photo data is required' });
-    if (data.length > 1000000) return res.status(400).json({ error: 'Photo too large — must be under 1MB' });
-    if (!['image/jpeg', 'image/png', 'image/webp'].includes(mimeType)) return res.status(400).json({ error: 'Invalid image type' });
+    const validation = validatePhotoPayload({
+      ...req.body,
+      mime_type: req.body?.mime_type || 'image/jpeg',
+    });
+    if (validation.error) return res.status(400).json({ error: validation.error });
 
     const ownership = await requireOwnedPhotoActivity(activity_type, activity_id, req.user.id);
     if (ownership.error) return res.status(ownership.status).json({ error: ownership.error });
 
     const existing = await dbGet(
-      'SELECT id FROM activity_media WHERE activity_id = ? AND activity_type = ? LIMIT 1',
-      [activity_id, activity_type]
+      'SELECT id FROM activity_media WHERE activity_id = ? AND activity_type = ? AND user_id = ? LIMIT 1',
+      [activity_id, activity_type, req.user.id]
     );
 
     let mediaId = existing?.id;
     if (existing) {
-      await dbRun('UPDATE activity_media SET data = ?, mime_type = ? WHERE id = ? AND activity_id = ? AND activity_type = ?',
-        [data, mimeType, existing.id, activity_id, activity_type]);
+      await dbRun(
+        `UPDATE activity_media SET data = ?, mime_type = ?
+         WHERE id = ? AND activity_id = ? AND activity_type = ? AND user_id = ?`,
+        [validation.data, validation.mimeType, existing.id, activity_id, activity_type, req.user.id]
+      );
     } else {
       mediaId = uuidv4();
       await dbRun(
-        'INSERT INTO activity_media (id, activity_id, activity_type, user_id, data, mime_type) VALUES (?,?,?,?,?,?)',
-        [mediaId, activity_id, activity_type, req.user.id, data, mimeType]
+        `INSERT INTO activity_media (id, activity_id, activity_type, user_id, data, mime_type, visibility)
+         VALUES (?,?,?,?,?,?,?)`,
+        [mediaId, activity_id, activity_type, req.user.id, validation.data, validation.mimeType, defaultMediaVisibility(activity_type)]
       );
     }
 
-    const media = await dbGet('SELECT id, data, mime_type FROM activity_media WHERE id = ?', [mediaId]);
+    const media = await dbGet(
+      'SELECT id, data, mime_type FROM activity_media WHERE id = ? AND user_id = ?',
+      [mediaId, req.user.id]
+    );
     res.json({ media });
   } catch (err) {
     console.error('[social/photo] save failed:', err.message);
@@ -291,9 +405,14 @@ router.post('/:activity_type/:activity_id/photo', auth, async (req, res) => {
 router.get('/:activity_type/:activity_id/photo', auth, async (req, res) => {
   try {
     const { activity_id, activity_type } = req.params;
+    if (!PHOTO_ACTIVITY_TABLES[activity_type]) return res.status(400).json({ error: 'Invalid activity type' });
     const media = await dbGet(
-      'SELECT id, data, mime_type FROM activity_media WHERE activity_id = ? AND activity_type = ? LIMIT 1',
-      [activity_id, activity_type]
+      `SELECT id, data, mime_type
+       FROM activity_media
+       WHERE activity_id = ? AND activity_type = ? AND (user_id = ? OR visibility = 'public')
+       ORDER BY created_at ASC, id ASC
+       LIMIT 1`,
+      [activity_id, activity_type, req.user.id]
     );
     res.json({ media: media || null });
   } catch (err) {

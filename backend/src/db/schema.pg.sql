@@ -308,6 +308,19 @@ CREATE TABLE IF NOT EXISTS events (
 
 CREATE INDEX IF NOT EXISTS idx_events_user_created_at ON events(user_id, created_at);
 
+CREATE TABLE IF NOT EXISTS activity_media (
+  id TEXT PRIMARY KEY,
+  activity_id TEXT NOT NULL,
+  activity_type TEXT NOT NULL,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  data TEXT NOT NULL,
+  mime_type TEXT DEFAULT 'image/jpeg',
+  visibility TEXT NOT NULL DEFAULT 'private',
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_activity_media_owner_activity ON activity_media(user_id, activity_type, activity_id);
+
 CREATE TABLE IF NOT EXISTS activity_likes (
   id TEXT PRIMARY KEY,
   activity_id TEXT NOT NULL,

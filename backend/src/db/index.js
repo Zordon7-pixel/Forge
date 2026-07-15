@@ -511,9 +511,11 @@ async function initDb() {
         user_id TEXT NOT NULL,
         data TEXT NOT NULL,
         mime_type TEXT DEFAULT 'image/jpeg',
+        visibility TEXT NOT NULL DEFAULT 'private',
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
     `);
+    await client.query('CREATE INDEX IF NOT EXISTS idx_activity_media_owner_activity ON activity_media(user_id, activity_type, activity_id)');
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS shared_routes (

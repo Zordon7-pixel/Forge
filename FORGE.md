@@ -46,6 +46,14 @@ Current production checks:
 - Local gates passed: 28 Phase 1 smoke assertions, all Phase 0/run-integrity regression smokes, frontend build, both high-severity dependency audits, 48-table account-data coverage, and Capacitor iOS sync. No EAS build was run.
 - Railway deployment `3319e687-0ece-4088-b11b-a38f46fd4b65` serves byte-matched `/assets/index-CfBTKrdH.js` and recap chunks. Live API checks returned `200` for the owner, `401` without auth, and `404` for a different signed-in user. Planned and no-plan recaps rendered at 390x844 with no horizontal overflow, no console errors, correct metric pace conversion, and actions clear of bottom navigation. Both disposable accounts were deleted and post-delete login returned `401`.
 
+## Friends Beta Phase 2 — Private Run Photos (2026-07-14)
+
+- Status is `implementation complete; QA pending`.
+- Run recaps now own a private, library-only gallery with multi-select upload, EXIF-stripping JPEG conversion, a four-photo limit, inline errors, and explicit remove confirmation. The duplicate run-photo control was removed from manual logging; lift-photo behavior is unchanged.
+- Collection listing returns metadata only. Individual blobs, upload, and delete are separate owner-scoped endpoints, and the server serializes the four-photo limit against the owned run row.
+- `activity_media.visibility` is added by an idempotent startup migration. Existing run/lift media backfills private, existing feed/post media backfills public, and the legacy singular endpoint now returns media only to its owner or when marked public.
+- Base64-in-PostgreSQL storage is accepted for the four-photo friends beta limit. Moving media blobs to object storage remains a later scale requirement, not Phase 2 scope. No native code or EAS build is included.
+
 ## Active Architecture Decision — Current Shipping Path
 
 `forge-app` is the active Forge repo. Its Expo/EAS build target is the existing `@zordon/forge-athlete` project, which owns the prior TestFlight build history. It owns:

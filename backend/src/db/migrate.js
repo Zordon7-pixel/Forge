@@ -53,6 +53,19 @@ async function runAlwaysMigrations() {
 
   await pg.query('CREATE INDEX IF NOT EXISTS idx_events_user_created_at ON events(user_id, created_at)');
 
+  await pg.query('ALTER TABLE activity_media ADD COLUMN IF NOT EXISTS visibility TEXT');
+  await pg.query(`
+    UPDATE activity_media
+    SET visibility = CASE
+      WHEN activity_type IN ('feed', 'post', 'community_post') THEN 'public'
+      ELSE 'private'
+    END
+    WHERE visibility IS NULL
+  `);
+  await pg.query("ALTER TABLE activity_media ALTER COLUMN visibility SET DEFAULT 'private'");
+  await pg.query('ALTER TABLE activity_media ALTER COLUMN visibility SET NOT NULL');
+  await pg.query('CREATE INDEX IF NOT EXISTS idx_activity_media_owner_activity ON activity_media(user_id, activity_type, activity_id)');
+
   await pg.query(`
     CREATE TABLE IF NOT EXISTS user_consents (
       id TEXT PRIMARY KEY,
