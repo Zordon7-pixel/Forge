@@ -6,7 +6,7 @@ import { useUnits } from '../context/UnitsContext'
 import AiGuidanceNote from './AiGuidanceNote'
 import { Link } from 'react-router-dom'
 import { activityLabel, isRunningActivity } from '../lib/activityType'
-import { buildRunComparison, normalizeRunSplits, parseRunRoute, parseZoneTimeline } from '../lib/runRecap'
+import { buildRunComparison, formatPlannedPaceTarget, normalizeRunSplits, parseRunRoute, parseZoneTimeline } from '../lib/runRecap'
 
 function fmtDuration(totalSeconds = 0) {
   const h = Math.floor(totalSeconds / 3600)
@@ -186,7 +186,7 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
     } : null,
     comparison.plannedPaceTarget ? {
       label: 'Pace',
-      planned: comparison.plannedPaceTarget,
+      planned: formatPlannedPaceTarget(comparison.plannedPaceTarget, units),
       actual: formatPaceSeconds(comparison.actualPaceSeconds, fmt),
       note: null,
     } : null,

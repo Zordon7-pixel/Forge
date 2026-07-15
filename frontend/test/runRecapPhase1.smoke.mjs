@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import {
   buildRunComparison,
+  formatPlannedPaceTarget,
   normalizeRunSplits,
   parsePlannedRun,
   parseRunRoute,
@@ -29,6 +30,9 @@ check(planned?.sessionId === 'session-1', 'stored plan snapshot parses')
 check(parsePlannedRun('{}') === null, 'empty plan snapshot remains absent')
 check(targetZoneNumber('Z4 threshold') === 4, 'target zone parser accepts compact labels')
 check(JSON.stringify(targetZoneNumbers('Zone 1-2')) === JSON.stringify([1, 2]), 'target zone parser preserves multi-zone prescriptions')
+check(formatPlannedPaceTarget('10:00/mi', 'metric') === '6:13/km', 'single pace targets convert for metric comparison')
+check(formatPlannedPaceTarget('10:00-10:45/mi', 'metric') === '6:13-6:41/km', 'pace ranges convert for metric comparison')
+check(formatPlannedPaceTarget('Conversational effort', 'metric') === 'Conversational effort', 'effort-language targets remain unchanged')
 
 const comparison = buildRunComparison({
   distance_miles: 3.1,

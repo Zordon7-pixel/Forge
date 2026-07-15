@@ -86,6 +86,21 @@ export function targetZoneNumbers(value) {
   return single ? [Number(single[1])] : []
 }
 
+export function formatPlannedPaceTarget(value, units = 'imperial') {
+  const text = String(value || '').trim()
+  if (!text || units !== 'metric') return text || null
+  const match = text.match(/^(\d{1,2}):(\d{2})(?:\s*-\s*(\d{1,2}):(\d{2}))?\s*\/\s*mi$/i)
+  if (!match) return text
+  const formatPerKm = (minutes, seconds) => {
+    const totalSeconds = (Number(minutes) * 60 + Number(seconds)) / 1.60934
+    const rounded = Math.round(totalSeconds)
+    return `${Math.floor(rounded / 60)}:${String(rounded % 60).padStart(2, '0')}`
+  }
+  const start = formatPerKm(match[1], match[2])
+  const end = match[3] ? formatPerKm(match[3], match[4]) : null
+  return `${start}${end ? `-${end}` : ''}/km`
+}
+
 export function buildRunComparison(run = {}) {
   const planned = parsePlannedRun(run.planned_session_json ?? run.plannedSession)
   const actualDistanceMiles = Math.max(0, finiteNumber(run.distance_miles) || 0)

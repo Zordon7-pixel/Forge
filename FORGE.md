@@ -42,7 +42,7 @@ Current production checks:
 - The recap presents the recorded route, plan-versus-recorded distance/time/pace/zone truth, split data, calibrated heart-rate distribution, subjective effort/pain/energy, training metrics, notes, and the existing stored coach evaluation.
 - Multi-zone targets such as Zone 1-2 sum the complete prescribed range. Zone adherence stays hidden below 70% timeline coverage, and runs without a stored plan snapshot explicitly show recorded data only instead of inventing a target.
 - The exact run is fetched through a new authenticated owner-scoped lookup instead of relying on the capped recent-history response. Imperial and metric display preferences are respected.
-- Local gates passed: 25 Phase 1 smoke assertions, all Phase 0/run-integrity regression smokes, frontend build, both high-severity dependency audits, 48-table account-data coverage, and Capacitor iOS sync. No EAS build was run.
+- Local gates passed: 28 Phase 1 smoke assertions, all Phase 0/run-integrity regression smokes, frontend build, both high-severity dependency audits, 48-table account-data coverage, and Capacitor iOS sync. No EAS build was run.
 
 ## Active Architecture Decision — Current Shipping Path
 
