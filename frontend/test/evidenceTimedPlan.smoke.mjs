@@ -45,7 +45,9 @@ const settingsSource = fs.readFileSync(new URL('../src/pages/Settings.jsx', impo
 assert.doesNotMatch(buttonSource, /\{error \|\| availability\.reason\}/)
 assert.doesNotMatch(buttonSource, /requires TestFlight build/)
 assert.match(buttonSource, /console\.error\('\[watch-delivery\] unavailable:'/)
-assert.match(buttonSource, /Apple Watch coming soon/)
+assert.doesNotMatch(buttonSource, /Apple Watch coming soon/)
+assert.match(buttonSource, /Checking Apple Watch\.\.\./)
+assert.doesNotMatch(buttonSource, /!compact && availability\.checked && !availability\.available/)
 assert.equal(settingsSource.includes('>{watchDelivery.reason}</p>'), false)
 assert.match(settingsSource, /athleteWatchAvailabilityMessage\(watchDelivery\.reason\)/)
 

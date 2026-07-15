@@ -146,7 +146,8 @@ export default function ForgedDayView({
   onStartLift,
   onBack,
   updating = false,
-  canStart = true,
+  isScheduledToday = true,
+  routePlanner = null,
 }) {
   const [scaleIndex, setScaleIndex] = useState(1)
   const [expanded, setExpanded] = useState(false)
@@ -259,9 +260,9 @@ export default function ForgedDayView({
           </div>
         )}
         <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
-          <button type="button" onClick={() => canStart && onStartRun?.(runSession)} disabled={!canStart}
-            title={canStart ? 'Start run' : 'Available on the scheduled day'}
-            className="forged-start-run" style={{ flex: '1 1 140px', border: 'none', borderRadius: 8, padding: '12px', fontWeight: 900, fontSize: px(14), cursor: canStart ? 'pointer' : 'not-allowed', opacity: canStart ? 1 : 0.5 }}>
+          <button type="button" onClick={() => onStartRun?.(runSession)} disabled={typeof onStartRun !== 'function'}
+            title="Start this scheduled run"
+            className="forged-start-run" style={{ flex: '1 1 140px', border: 'none', borderRadius: 8, padding: '12px', fontWeight: 900, fontSize: px(14), cursor: typeof onStartRun === 'function' ? 'pointer' : 'not-allowed', opacity: typeof onStartRun === 'function' ? 1 : 0.5 }}>
             Start Run
           </button>
           <button type="button" onClick={() => onToggleComplete?.(runSession.id)} disabled={updating}
@@ -269,6 +270,7 @@ export default function ForgedDayView({
             {done ? <CheckCircle2 size={16} color="#15803D" /> : <Circle size={16} />} {done ? 'Done' : 'Mark done'}
           </button>
         </div>
+        {routePlanner}
         <WatchWorkoutSendButton workout={watchWorkout} className="mt-2" />
       </PaperSection>
     )
@@ -326,9 +328,9 @@ export default function ForgedDayView({
         ))}
         {f.progression && <p style={{ fontSize: px(12), marginTop: 8 }}><strong>Session progression:</strong> {f.progression}</p>}
         <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
-          <button type="button" onClick={() => canStart && onStartLift?.(liftSession)} disabled={!canStart}
-            title={canStart ? 'Start lift' : 'Available on the scheduled day'}
-            className="forged-start-lift" style={{ flex: '1 1 140px', border: 'none', borderRadius: 8, padding: '12px', fontWeight: 900, fontSize: px(14), cursor: canStart ? 'pointer' : 'not-allowed', opacity: canStart ? 1 : 0.5 }}>
+          <button type="button" onClick={() => onStartLift?.(liftSession)} disabled={typeof onStartLift !== 'function'}
+            title="Start this scheduled lift"
+            className="forged-start-lift" style={{ flex: '1 1 140px', border: 'none', borderRadius: 8, padding: '12px', fontWeight: 900, fontSize: px(14), cursor: typeof onStartLift === 'function' ? 'pointer' : 'not-allowed', opacity: typeof onStartLift === 'function' ? 1 : 0.5 }}>
             Start Lift
           </button>
           <button type="button" onClick={() => onToggleComplete?.(liftSession.id)} disabled={updating}
@@ -378,9 +380,9 @@ export default function ForgedDayView({
         </div>
       </header>
 
-      {!canStart && !isRest && (
+      {!isScheduledToday && !isRest && (
         <p role="status" style={{ fontSize: px(12), margin: '12px 0 0', padding: '8px 10px', borderRadius: 8, background: 'rgba(60,55,45,0.06)', color: 'var(--ink-soft, #5A554B)' }}>
-          This workout can be started on its scheduled day. You can still review it or mark it complete here.
+          This workout is scheduled for {dateLabel}. You can start it now; Forged Hybrid will confirm before continuing.
         </p>
       )}
 

@@ -69,8 +69,7 @@ export default function WatchWorkoutSendButton({ workout, label = 'Send to Watch
   if (compact && !availability.checked) return null
 
   const canSend = availability.checked && availability.available
-  const showSendButton = !compact || canSend
-  const unavailableMessage = athleteWatchAvailabilityMessage(availability.reason)
+  const showSendButton = !availability.checked || canSend
 
   return (
     <div className={className}>
@@ -78,12 +77,12 @@ export default function WatchWorkoutSendButton({ workout, label = 'Send to Watch
         <button
           type="button"
           onClick={sendWorkout}
-          disabled={sending || !workout || (availability.checked && !availability.available)}
+          disabled={sending || !workout || !availability.checked}
           className="w-full rounded-xl py-3 font-bold flex items-center justify-center gap-2 disabled:opacity-60"
           style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', cursor: sending ? 'wait' : 'pointer' }}
         >
           <Watch size={17} />
-          {sending ? 'Sending...' : availability.checked && !availability.available ? 'Apple Watch coming soon' : label}
+          {sending ? 'Sending...' : !availability.checked ? 'Checking Apple Watch...' : label}
         </button>
       )}
       <button
@@ -95,9 +94,9 @@ export default function WatchWorkoutSendButton({ workout, label = 'Send to Watch
         {canSend ? 'Copy workout details' : 'Copy workout for manual entry'}
       </button>
       {status && <p className="mt-2 text-xs" style={{ color: 'var(--success)' }}>{status}</p>}
-      {(error || (!compact && availability.checked && !availability.available && availability.reason)) && (
+      {error && (
         <p className="mt-2 text-xs" style={{ color: 'var(--warning)' }}>
-          {error || unavailableMessage}
+          {error}
         </p>
       )}
     </div>

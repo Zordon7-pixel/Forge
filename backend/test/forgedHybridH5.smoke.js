@@ -172,7 +172,9 @@ assert(
 assert(/onStartRun\?\.\(runSession\)/.test(forgedDayView) && /onStartLift\?\.\(liftSession\)/.test(forgedDayView), 'ForgedDayView passes the selected session to start handlers');
 assert(/planSessionId/.test(plan) && /scheduledRun/.test(plan), 'Plan hands the selected session id + prescription into navigate state');
 assert(/workoutTarget/.test(plan) && /target_zone/.test(plan), 'Plan hands the exact run target into ActiveRun');
-assert(/disabled=\{!canStart\}/.test(forgedDayView), 'calendar prevents starting a future or past scheduled session');
+assert(!/disabled=\{!canStart\}/.test(forgedDayView), 'calendar start actions are not silently disabled outside the scheduled date');
+assert(/confirmOffScheduleStart/.test(plan) && /isScheduledToday/.test(forgedDayView), 'off-schedule starts require explicit confirmation while keeping the plan session');
+assert(/<RoutePlanner/.test(plan) && /Map this run/.test(plan) && /plannedRoute/.test(plan), 'the selected calendar run exposes route planning and carries the planned course into execution');
 assert(logRun.indexOf('Start Scheduled Run') < logRun.indexOf('routePlannerStatus.available &&'), 'scheduled run start is available even when route planning is unavailable');
 assert(/navigate\('\/warmup'/.test(logRun) && /startAfterWarmup:\s*true/.test(logRun), 'scheduled run keeps the warm-up before ActiveRun');
 assert(/target_zone:\s*todayWorkout\?\.targetZone/.test(logRun), 'LogRun stores the raw plan zone, not display-only BPM text');

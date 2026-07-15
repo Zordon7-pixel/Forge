@@ -32,7 +32,7 @@ check(
 check(isInternalWatchDiagnostic('Plugin did not load in build 15'), 'native build/plugin failures are recognized as internal diagnostics')
 check(
   athleteWatchAvailabilityMessage('Apple Watch delivery requires TestFlight build 16 or newer. You have build 15; manual entry still works.')
-    === 'Apple Watch delivery is coming in the next app update. Manual entry still works.',
+    === 'Automatic Apple Watch delivery is not enabled in this beta. Manual entry still works.',
   'athletes never see native build numbers',
 )
 

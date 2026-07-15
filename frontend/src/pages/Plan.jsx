@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ChevronDown, ChevronUp } from 'lucide-react'
 import api from '../lib/api'
@@ -9,6 +9,8 @@ import ForgedCalendar from '../components/calendar/ForgedCalendar'
 import ForgedDayView from '../components/calendar/ForgedDayView'
 import { buildCalendarModel, todayISO } from '../lib/planCalendar'
 import { trainingEvidenceKindLabel } from '../lib/trainingEvidence'
+
+const RoutePlanner = lazy(() => import('../components/RoutePlanner'))
 
 export default function Plan() {
   const navigate = useNavigate()
@@ -24,6 +26,7 @@ export default function Plan() {
   const [updating, setUpdating] = useState(false)
   const [selectedDayISO, setSelectedDayISO] = useState(null)
   const [manageOpen, setManageOpen] = useState(false)
+  const [routePlannerStatus, setRoutePlannerStatus] = useState({ available: false, requiresPro: false })
 
   const loadAll = async () => {
     setLoading(true)
@@ -62,6 +65,22 @@ export default function Plan() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  useEffect(() => {
+    let active = true
+    api.get('/routes/planner-status')
+      .then((response) => {
+        if (!active) return
+        setRoutePlannerStatus({
+          available: Boolean(response.data?.available),
+          requiresPro: Boolean(response.data?.requiresPro),
+        })
+      })
+      .catch((err) => {
+        console.error('[Plan] route planner availability check failed:', err?.message || err)
+      })
+    return () => { active = false }
+  }, [])
+
   const currentWeek = Math.max(1, Number(myUserPlan?.current_week || 1))
   const weekIndex = currentWeek - 1
   const today = todayISO()
@@ -83,6 +102,19 @@ export default function Plan() {
     () => (selectedDayISO && model ? model.findDayByDate(selectedDayISO) : null),
     [selectedDayISO, model],
   )
+  const selectedRunSession = useMemo(
+    () => selectedDay?.sessions?.find((session) => session.kind === 'run') || null,
+    [selectedDay],
+  )
+  const routePlannerWorkout = useMemo(() => {
+    if (!selectedRunSession) return null
+    const prescription = selectedRunSession.prescription || {}
+    return {
+      distanceMiles: Number(selectedRunSession.distanceMiles || prescription.distance_miles || prescription.distanceMiles || 0),
+      rawType: prescription.workout_type || selectedRunSession.type || 'run',
+      typeLabel: selectedRunSession.title || 'Scheduled run',
+    }
+  }, [selectedRunSession])
   const selectedPhase = useMemo(() => {
     if (!selectedDay || !model) return null
     return model.phaseForWeek(selectedDay.weekIndex)
@@ -150,6 +182,43 @@ export default function Plan() {
     else if (Number.isFinite(duration) && duration > 0) pieces.push(`${Math.round(duration)} min`)
     if (session.intensity) pieces.push(session.intensity)
     return pieces.join(' · ')
+  }
+
+  const confirmOffScheduleStart = (sessionLabel) => {
+    if (!selectedDay || selectedDay.dateISO === today) return true
+    const scheduledDate = selectedDay.date?.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' }) || selectedDay.dateISO
+    return window.confirm(`${sessionLabel} is scheduled for ${scheduledDate}. Start it now and keep it linked to that plan day?`)
+  }
+
+  const startRunSession = (runSession, { plannedRoute = null, surface = 'road' } = {}) => {
+    if (!runSession || !confirmOffScheduleStart('This run')) return
+    navigate('/warmup', { state: {
+      planSessionId: runSession.id != null ? String(runSession.id) : null,
+      currentWeek: Number.isFinite(selectedDay?.weekIndex) ? selectedDay.weekIndex + 1 : currentWeek,
+      scheduledRun: runSession,
+      startAfterWarmup: true,
+      runType: runSession.prescription?.workout_type || runSession.type || 'run',
+      runEnvironment: 'outdoor',
+      surface,
+      mapMyRun: true,
+      plannedRoute,
+      workoutTarget: {
+        distanceMiles: runSession.distanceMiles || runSession.prescription?.distance_miles || null,
+        durationMinutes: runSession.durationMinutes || runSession.prescription?.duration_min || null,
+        prescriptionBasis: runSession.prescriptionBasis || runSession.prescription?.prescription_basis || null,
+        pace: runSession.prescription?.pace_target || runSession.prescription?.pace || null,
+        zone: runSession.prescription?.target_zone || null,
+      },
+    } })
+  }
+
+  const startLiftSession = (liftSession) => {
+    if (!liftSession || !confirmOffScheduleStart('This lift')) return
+    navigate('/log-lift', { state: {
+      planSessionId: liftSession.id != null ? String(liftSession.id) : null,
+      currentWeek: Number.isFinite(selectedDay?.weekIndex) ? selectedDay.weekIndex + 1 : currentWeek,
+      scheduledLift: liftSession,
+    } })
   }
 
   if (loading) {
@@ -322,30 +391,22 @@ export default function Plan() {
               planContext={{ goal: model.goal, mode: model.mode, modeLabel: model.modeLabel, phase: selectedPhase, inputSummary: planInputs, trainingEvidence }}
               completedSet={completedSet}
               onToggleComplete={toggleSession}
-              onStartRun={(runSession) => navigate('/warmup', { state: {
-                planSessionId: runSession?.id != null ? String(runSession.id) : null,
-                currentWeek: Number.isFinite(selectedDay?.weekIndex) ? selectedDay.weekIndex + 1 : currentWeek,
-                scheduledRun: runSession || null,
-                startAfterWarmup: true,
-                runType: runSession?.prescription?.workout_type || runSession?.type || 'run',
-                runEnvironment: 'outdoor',
-                mapMyRun: true,
-                workoutTarget: {
-                  distanceMiles: runSession?.distanceMiles || runSession?.prescription?.distance_miles || null,
-                  durationMinutes: runSession?.durationMinutes || runSession?.prescription?.duration_min || null,
-                  prescriptionBasis: runSession?.prescriptionBasis || runSession?.prescription?.prescription_basis || null,
-                  pace: runSession?.prescription?.pace_target || runSession?.prescription?.pace || null,
-                  zone: runSession?.prescription?.target_zone || null,
-                },
-              } })}
-              onStartLift={(liftSession) => navigate('/log-lift', { state: {
-                planSessionId: liftSession?.id != null ? String(liftSession.id) : null,
-                currentWeek: Number.isFinite(selectedDay?.weekIndex) ? selectedDay.weekIndex + 1 : currentWeek,
-                scheduledLift: liftSession || null,
-              } })}
+              onStartRun={startRunSession}
+              onStartLift={startLiftSession}
               onBack={() => setSelectedDayISO(null)}
               updating={updating}
-              canStart={selectedDay.dateISO === today}
+              isScheduledToday={selectedDay.dateISO === today}
+              routePlanner={routePlannerStatus.available && routePlannerWorkout?.distanceMiles > 0 ? (
+                <Suspense fallback={<p style={{ marginTop: 10, fontSize: 12, color: 'var(--ink-soft, #5A554B)' }}>Loading route planner...</p>}>
+                  <RoutePlanner
+                    workout={routePlannerWorkout}
+                    onStart={(plannedRoute, surface) => startRunSession(selectedRunSession, { plannedRoute, surface })}
+                    title="Map this run"
+                    startLabel="Warm up and start this route"
+                    variant="paper"
+                  />
+                </Suspense>
+              ) : null}
             />
           ) : (
             <>

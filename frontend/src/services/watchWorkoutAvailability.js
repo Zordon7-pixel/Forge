@@ -14,7 +14,7 @@ export function athleteWatchAvailabilityMessage(reason = '') {
     return 'Open Forged Hybrid on iPhone to send this workout. Manual entry still works.'
   }
   if (isInternalWatchDiagnostic(reason)) {
-    return 'Apple Watch delivery is coming in the next app update. Manual entry still works.'
+    return 'Automatic Apple Watch delivery is not enabled in this beta. Manual entry still works.'
   }
   return 'Apple Watch delivery is unavailable right now. Manual entry still works.'
 }

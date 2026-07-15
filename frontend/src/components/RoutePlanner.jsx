@@ -49,7 +49,7 @@ function FitRouteBounds({ positions }) {
   return null
 }
 
-export default function RoutePlanner({ workout, onStart }) {
+export default function RoutePlanner({ workout, onStart, title = 'Plan an elevation route', startLabel = 'Start this route', variant = 'default' }) {
   const { units, fmt } = useUnits()
   const [expanded, setExpanded] = useState(false)
   const [surface, setSurface] = useState('road')
@@ -58,6 +58,19 @@ export default function RoutePlanner({ workout, onStart }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const targetDistanceMiles = Number(workout?.distanceMiles || 0)
+  const variantStyle = variant === 'paper' ? {
+    '--text-primary': 'var(--ink, #23201A)',
+    '--text-muted': 'var(--ink-soft, #5A554B)',
+    '--bg-card': 'rgba(255,255,255,0.30)',
+    '--bg-base': 'rgba(255,255,255,0.44)',
+    '--border-subtle': 'rgba(60,55,45,0.18)',
+    '--accent': 'var(--paper-run, #C2410C)',
+    '--on-accent': '#FFFFFF',
+    '--accent-dim': 'rgba(194,65,12,0.10)',
+    '--danger': 'var(--paper-red, #B91C1C)',
+    '--danger-dim': 'rgba(185,28,28,0.08)',
+    '--warning': '#9A3412',
+  } : {}
 
   const positions = useMemo(() => (
     Array.isArray(route?.coordinates)
@@ -112,7 +125,7 @@ export default function RoutePlanner({ workout, onStart }) {
   }
 
   return (
-    <section className="mt-4 pt-4" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+    <section className="mt-4 pt-4" style={{ borderTop: '1px solid var(--border-subtle)', ...variantStyle }}>
       <button
         type="button"
         onClick={() => setExpanded((value) => !value)}
@@ -120,7 +133,7 @@ export default function RoutePlanner({ workout, onStart }) {
         className="pressable w-full flex items-center justify-between py-2"
         style={{ background: 'transparent', border: 'none', color: 'var(--text-primary)' }}
       >
-        <span className="flex items-center gap-2 text-sm font-black"><RouteIcon size={18} style={{ color: 'var(--accent)' }} /> Plan an elevation route</span>
+        <span className="flex items-center gap-2 text-sm font-black"><RouteIcon size={18} style={{ color: 'var(--accent)' }} /> {title}</span>
         {expanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
       </button>
 
@@ -241,11 +254,12 @@ export default function RoutePlanner({ workout, onStart }) {
               <p className="text-[11px] mt-2" style={{ color: 'var(--text-muted)' }}>{route.notice}</p>
               <button
                 type="button"
-                onClick={() => onStart(route, surface)}
+                onClick={() => onStart?.(route, surface)}
+                disabled={typeof onStart !== 'function'}
                 className="pressable w-full mt-3 flex items-center justify-center gap-2 py-3 font-black"
                 style={{ borderRadius: 8, border: 'none', background: 'var(--accent)', color: 'var(--on-accent)' }}
               >
-                <Navigation size={18} /> Start this route
+                <Navigation size={18} /> {startLabel}
               </button>
               <p className="text-[10px] text-center mt-2" style={{ color: 'var(--text-muted)' }}>Routing by openrouteservice · Map data by OpenStreetMap</p>
             </div>
