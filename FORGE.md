@@ -5,8 +5,8 @@ This file holds Forge's product history, deployment notes, shipped phase log, kn
 ## Current Production
 
 - Production URL: `https://forge-production-773f.up.railway.app/`
-- Latest verified application release: commit `b436b30f`, deployment `e25d0f9f-a6ea-4738-9a94-a0f4f591a03d`
-- Latest checked bundle: `/assets/index-BWq1Mkew.js`
+- Latest verified application release: commit `c46cecf9`, deployment `5bfd7c80-fa6b-40ce-87bb-18d9e5518df1`
+- Latest checked bundle: `/assets/index-CPGq_y41.js`
 - iOS version/build: `1.0.5` / `15`
 - Bundle identifier: `com.zordontech.forge`
 - Expo/EAS project: `@zordon/forge-athlete` (`6aeb5fbb-2697-4cf4-b9b3-afe60c63e9e1`)
@@ -19,12 +19,13 @@ Current production checks:
 - H13 evidence-backed race plans now use bounded run history, current-week work, check-ins, and recovery data to prescribe time-first training with transparent research, coach-plan, and athlete-practice references.
 - H14 supplies a real local form image for every current stretch and warm-up, crops composite guides to the profile sex, consolidates health-source controls under More, and adds a deterministic usage-based Train shortcut.
 - H15 rotates warm-up and stretch routines per user, prefers movements not shown in the previous routine, and adds guarded edge-swipe back navigation without exposing active timed sessions to accidental dismissal.
+- Friends Beta Phase 0 now preserves planned-session and timestamped-route truth, durably stores the complete post-run check-in before one idempotent AI analysis, and applies deterministic pain/energy protection to the next 48-72 hours.
 - Demo diagnostics check returns `403`.
 - `/api/auth/me/export` returns account/training data and excludes `password_hash`.
 - `/api/auth/forgot-password` returns `200 email_sent` for `demo@forge.app` in under one second.
 - EAS/TestFlight preflight resumed on May 3, 2026 after Apple Developer credentials became available.
 
-## Friends Beta Gate Phase 0 — QA Complete, Awaiting Deployment (2026-07-14)
+## Friends Beta Gate Phase 0 — Production Verified (2026-07-14)
 
 - GPS and manual run saves now retain the canonical plan-session id plus a bounded snapshot of the prescribed distance/time, pace, zone, intensity, and workout structure.
 - Recorded route points retain their sample timestamps through active-run recovery and backend storage.
@@ -32,7 +33,7 @@ Current production checks:
 - Automatic run analysis starts only after the complete post-run check-in is durable. A user-scoped database claim prevents duplicate AI calls and rejects a stale in-flight result after amended answers.
 - Later edits to coaching inputs such as effort, pain, energy, notes, distance, duration, or run type invalidate the stored analysis so History cannot display stale coaching.
 - Moderate/severe pain or low post-run energy now enters deterministic 48–72-hour plan protection; severe pain holds non-race running and lower-body loading for 72 hours.
-- Status is `QA complete`: focused and existing regression smokes, both dependency audits, frontend build, 48-table account-data coverage, and Capacitor iOS sync pass. Claude Code's final independent review returned GREEN with no findings. Railway deployment, production verification, and Bryan verification are still pending. No EAS build was run.
+- Status is `production verified`: Claude Code returned GREEN with no findings and Hermes approved the product/safety review. Railway deployment `5bfd7c80-fa6b-40ce-87bb-18d9e5518df1` serves the byte-matched `/assets/index-CPGq_y41.js` bundle. A disposable live account verified invalid check-in rejection, one generated feedback response, replay reuse, planned-session provenance, route timestamps, and complete cleanup. Bryan phone verification is still pending. No EAS build was run.
 
 ## Active Architecture Decision — Current Shipping Path
 
@@ -325,6 +326,7 @@ These changes are already implemented, built, Capacitor-synced, and deployed to 
 | 2026-07-14 | `62ca8931-908b-48ca-9fc9-0a9c0780c030` | Success | H13 evidence-backed timed race plans, current-week provenance, internal Watch diagnostics, and sparse-screen branding verified live |
 | 2026-07-14 | `28880400-a761-4fd3-b4b1-193a04cf5c9c` | Success | H14 complete mobility visuals, profile-sex crops, health-control consolidation, and smart Train actions verified live |
 | 2026-07-14 | `e25d0f9f-a6ea-4738-9a94-a0f4f591a03d` | Success | H15 per-user routine rotation and guarded edge-swipe navigation verified live |
+| 2026-07-14 | `5bfd7c80-fa6b-40ce-87bb-18d9e5518df1` | Success | Friends Beta Phase 0 post-run truth, one-call AI analysis, provenance, and pain/energy protection verified live |
 
 ### Build/Test Status
 
