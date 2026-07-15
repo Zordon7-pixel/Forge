@@ -1,6 +1,6 @@
 # Forged Hybrid Phase 4 Build Spec: Friends, Challenges, and Leaderboards
 
-Status: **APPROVED BY HERMES (2026-07-15) - Phase 4A opens after Phase 3E Railway verification**
+Status: **PHASE 4A IMPLEMENTED + QA APPROVED (2026-07-15, `e656c00f`) - Railway live verification required before Phase 4B**
 Repo: `/Volumes/Zordon Storage /openclaw-workspace/forge-app`
 Release target: current React/Vite/Capacitor + Express/PostgreSQL app only
 Native/EAS scope: **none for Phases 4A-4C**
