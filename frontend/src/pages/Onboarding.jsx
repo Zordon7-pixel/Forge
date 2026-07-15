@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import api from '../lib/api'
-import { setToken } from '../lib/tokenStore'
+import { consumePostAuthRedirect, setToken } from '../lib/tokenStore'
 
 const personalityOptions = [
   { key: 'mentor', label: 'Mentor' },
@@ -41,7 +41,7 @@ export default function Onboarding() {
       // Save the new token (contains onboarded=1) — without this, PrivateRoute loops back to /onboarding
       if (data?.token) setToken(data.token)
       await api.post('/plans/generate')
-      window.location.href = '/'
+      window.location.href = consumePostAuthRedirect() || '/'
     } catch (err) {
       setError(err?.response?.data?.error || 'Could not finish onboarding. Please try again.')
       setSaving(false)

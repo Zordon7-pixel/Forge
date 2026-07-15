@@ -7,10 +7,18 @@ import {
   Medal,
   ShieldAlert,
   Sparkles,
+  Users,
 } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import HealthSourceManager from '../components/HealthSourceManager'
 
-const sections = [
+const sections = (t) => [
+  {
+    title: t('community.moreSection'),
+    items: [
+      { to: '/community', label: t('community.moreLabel'), sub: t('community.moreSubtitle'), icon: Users, color: '#38BDF8' },
+    ],
+  },
   {
     title: 'Training',
     items: [
@@ -30,6 +38,7 @@ const sections = [
 ]
 
 export default function More() {
+  const { t } = useTranslation()
   return (
     <div style={{ paddingBottom: 96 }}>
       <header style={{ marginBottom: 18 }}>
@@ -38,7 +47,7 @@ export default function More() {
       </header>
 
       <div style={{ display: 'grid', gap: 18 }}>
-        {sections.map((section) => (
+        {sections(t).map((section) => (
           <section key={section.title}>
             <h2 style={{ color: 'var(--text-muted)', fontSize: 12, fontWeight: 800, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 10 }}>
               {section.title}

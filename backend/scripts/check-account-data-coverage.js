@@ -6,11 +6,12 @@ const {
   ACCOUNT_DELETE_QUERIES,
   ACCOUNT_EXPORT_TABLES,
   ACCOUNT_SECRET_TABLES,
+  ACCOUNT_SOCIAL_DELETE_QUERIES,
 } = require('../src/lib/accountDataCoverage');
 
 const root = path.resolve(__dirname, '..');
 const srcDir = path.join(root, 'src');
-const userOwnedColumnPattern = /\b(user_id|follower_id|following_id|created_by_user_id)\b/i;
+const userOwnedColumnPattern = /\b(user_id|follower_id|following_id|created_by_user_id|requester_id|addressee_id|owner_id|consumed_by_id|blocker_id|blocked_id|reporter_id|subject_user_id|reviewed_by_id)\b/i;
 
 function walk(dir) {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -38,8 +39,8 @@ function collectUserOwnedTables() {
 
 function collectDeleteTables() {
   const tables = new Set();
-  for (const [sql] of ACCOUNT_DELETE_QUERIES) {
-    const match = String(sql).match(/DELETE FROM\s+([a-zA-Z0-9_]+)/i);
+  for (const [sql] of [...ACCOUNT_SOCIAL_DELETE_QUERIES, ...ACCOUNT_DELETE_QUERIES]) {
+    const match = String(sql).match(/(?:DELETE FROM|UPDATE)\s+([a-zA-Z0-9_]+)/i);
     if (match) tables.add(match[1]);
   }
   return tables;

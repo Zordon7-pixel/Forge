@@ -2,13 +2,14 @@ const router  = require('express').Router();
 const bcrypt  = require('bcryptjs');
 const jwt     = require('jsonwebtoken');
 const crypto  = require('crypto');
-const { dbGet, dbAll, dbRun } = require('../db');
+const { dbGet, dbAll, dbRun, withTransaction } = require('../db');
 const auth    = require('../middleware/auth');
 const { v4: uuidv4 } = require('uuid');
 const { isMailConfigured, sendPasswordResetEmail } = require('../services/mail');
 const {
   ACCOUNT_DELETE_QUERIES,
   ACCOUNT_EXPORT_TABLES,
+  ACCOUNT_SOCIAL_DELETE_QUERIES,
   bindUserId,
   buildExportSql,
 } = require('../lib/accountDataCoverage');
@@ -433,6 +434,12 @@ router.delete('/account', auth, async (req, res) => {
       return res.status(401).json({ error: 'Password confirmation failed.' });
     }
 
+    await withTransaction(async (tx) => {
+      for (const [sql, params] of ACCOUNT_SOCIAL_DELETE_QUERIES) {
+        await tx.run(sql, bindUserId(params, userId));
+      }
+    });
+
     for (const [sql, params] of ACCOUNT_DELETE_QUERIES) {
       try {
         await dbRun(sql, bindUserId(params, userId));
@@ -445,6 +452,7 @@ router.delete('/account', auth, async (req, res) => {
     await dbRun('DELETE FROM users WHERE id = ?', [userId]);
     res.json({ ok: true });
   } catch (err) {
+    console.error('[auth/delete-account] failed:', err.message);
     res.status(500).json({ error: 'Failed to delete account' });
   }
 });

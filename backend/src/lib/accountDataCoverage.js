@@ -28,6 +28,12 @@ const ACCOUNT_EXPORT_TABLES = [
   { key: 'activity_media', table: 'activity_media', columns: 'id, activity_id, activity_type, user_id, mime_type, created_at', orderBy: 'created_at DESC' },
   { key: 'follows_as_follower', table: 'follows', where: 'follower_id = ?', orderBy: 'created_at DESC' },
   { key: 'follows_as_following', table: 'follows', where: 'following_id = ?', orderBy: 'created_at DESC' },
+  { key: 'friendships_requested', table: 'friendships', where: 'requester_id = ?', orderBy: 'created_at DESC' },
+  { key: 'friendships_received', table: 'friendships', where: 'addressee_id = ?', orderBy: 'created_at DESC' },
+  { key: 'friend_invites', table: 'friend_invites', where: 'owner_id = ?', columns: 'id, owner_id, expires_at, consumed_at, consumed_by_id, created_at', orderBy: 'created_at DESC' },
+  { key: 'blocks_given', table: 'user_blocks', where: 'blocker_id = ?', orderBy: 'created_at DESC' },
+  { key: 'blocks_received', table: 'user_blocks', where: 'blocked_id = ?', columns: 'id, blocked_id, created_at', orderBy: 'created_at DESC' },
+  { key: 'social_reports_submitted', table: 'social_reports', where: 'reporter_id = ?', columns: 'id, reporter_id, subject_user_id, category, context_type, context_id, note, status, created_at, reviewed_at', orderBy: 'created_at DESC' },
   { key: 'community_posts', table: 'community_posts', orderBy: 'created_at DESC' },
   { key: 'community_workouts', table: 'community_workouts', orderBy: 'created_at DESC' },
   { key: 'saved_workouts', table: 'saved_workouts', orderBy: 'created_at DESC' },
@@ -53,6 +59,14 @@ const ACCOUNT_EXPORT_TABLES = [
 
 const ACCOUNT_SECRET_TABLES = [
   'password_reset_tokens',
+];
+
+const ACCOUNT_SOCIAL_DELETE_QUERIES = [
+  ['UPDATE social_reports SET reporter_id = NULL, note = NULL, context_id = NULL WHERE reporter_id = ?', [0]],
+  ['UPDATE social_reports SET subject_user_id = NULL, note = NULL, context_id = NULL WHERE subject_user_id = ?', [0]],
+  ['DELETE FROM friend_invites WHERE owner_id = ?', [0]],
+  ['DELETE FROM user_blocks WHERE blocker_id = ? OR blocked_id = ?', [0, 0]],
+  ['DELETE FROM friendships WHERE requester_id = ? OR addressee_id = ?', [0, 0]],
 ];
 
 const ACCOUNT_DELETE_QUERIES = [
@@ -131,6 +145,7 @@ function buildExportSql({ table, columns = '*', where = 'user_id = ?', orderBy }
 module.exports = {
   ACCOUNT_EXPORT_TABLES,
   ACCOUNT_SECRET_TABLES,
+  ACCOUNT_SOCIAL_DELETE_QUERIES,
   ACCOUNT_DELETE_QUERIES,
   bindUserId,
   buildExportSql,

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import api from '../lib/api'
-import { setToken } from '../lib/tokenStore'
+import { consumePostAuthRedirect, setToken } from '../lib/tokenStore'
 
 export default function Login() {
   const { t } = useTranslation()
@@ -22,7 +22,9 @@ export default function Login() {
     try {
       const response = await api.post('/auth/login', { email, password })
       setToken(response.data.token)
-      window.location.href = '/'
+      window.location.href = response.data?.user?.onboarded
+        ? (consumePostAuthRedirect() || '/')
+        : '/onboarding'
     } catch { setError('Wrong email or password.') }
     finally { setLoading(false) }
   }

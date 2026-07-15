@@ -1,9 +1,9 @@
 import React, { Suspense, lazy, useEffect, useRef, useState } from 'react'
 import { App as CapacitorApp } from '@capacitor/app'
 import { Capacitor } from '@capacitor/core'
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { isLoggedIn, getUser } from './lib/auth'
-import { clearToken } from './lib/tokenStore'
+import { clearToken, rememberPostAuthRedirect } from './lib/tokenStore'
 import track from './lib/track'
 import Layout from './components/Layout'
 import { ProProvider } from './context/ProContext'
@@ -76,6 +76,7 @@ const Races = lazyWithRetry(() => import('./pages/Races'))
 const Gear = lazyWithRetry(() => import('./pages/Gear'))
 const HrZones = lazyWithRetry(() => import('./pages/HrZones'))
 const More = lazyWithRetry(() => import('./pages/More'))
+const Community = lazyWithRetry(() => import('./pages/Community'))
 const ResetPassword = lazyWithRetry(() => import('./pages/ResetPassword'))
 const Injury = lazyWithRetry(() => import('./pages/Injury'))
 const WeeklyRecap = lazyWithRetry(() => import('./pages/WeeklyRecap'))
@@ -187,9 +188,16 @@ const PageFallback = () => (
 )
 
 function PrivateRoute({ children }) {
-  if (!isLoggedIn()) return <Navigate to="/login" replace />
+  const location = useLocation()
+  if (!isLoggedIn()) {
+    rememberPostAuthRedirect(`${location.pathname}${location.search}`)
+    return <Navigate to="/login" replace />
+  }
 
   const user = getUser()
+  if (user && !user.onboarded) {
+    rememberPostAuthRedirect(`${location.pathname}${location.search}`)
+  }
 
   return (
     <WaiverGate>
@@ -408,6 +416,14 @@ export default function App() {
           element={
             <PrivateRoute>
               <More />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/community"
+          element={
+            <PrivateRoute>
+              <Community />
             </PrivateRoute>
           }
         />

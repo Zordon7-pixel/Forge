@@ -482,6 +482,70 @@ async function initDb() {
     `);
 
     await client.query(`
+      CREATE TABLE IF NOT EXISTS friendships (
+        id TEXT PRIMARY KEY,
+        requester_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        addressee_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        user_low_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        user_high_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'declined', 'removed')),
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        responded_at TIMESTAMPTZ,
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        CHECK (requester_id <> addressee_id),
+        CHECK (user_low_id = LEAST(requester_id, addressee_id)),
+        CHECK (user_high_id = GREATEST(requester_id, addressee_id)),
+        UNIQUE(user_low_id, user_high_id)
+      );
+    `);
+    await client.query('CREATE INDEX IF NOT EXISTS idx_friendships_requester_status ON friendships(requester_id, status)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_friendships_addressee_status ON friendships(addressee_id, status)');
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS friend_invites (
+        id TEXT PRIMARY KEY,
+        owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        token_hash TEXT NOT NULL UNIQUE CHECK (char_length(token_hash) = 64),
+        expires_at TIMESTAMPTZ NOT NULL,
+        consumed_at TIMESTAMPTZ,
+        consumed_by_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    await client.query('CREATE INDEX IF NOT EXISTS idx_friend_invites_owner_active ON friend_invites(owner_id, expires_at) WHERE consumed_at IS NULL');
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS user_blocks (
+        id TEXT PRIMARY KEY,
+        blocker_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        blocked_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        CHECK (blocker_id <> blocked_id),
+        UNIQUE(blocker_id, blocked_id)
+      );
+    `);
+    await client.query('CREATE INDEX IF NOT EXISTS idx_user_blocks_blocked ON user_blocks(blocked_id)');
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS social_reports (
+        id TEXT PRIMARY KEY,
+        reporter_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+        subject_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+        category TEXT NOT NULL CHECK (category IN ('harassment', 'spam', 'impersonation', 'unsafe_content', 'other')),
+        context_type TEXT NOT NULL CHECK (context_type IN ('profile', 'friendship', 'challenge', 'activity')),
+        context_id TEXT,
+        note TEXT,
+        status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'reviewed', 'closed')),
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        reviewed_at TIMESTAMPTZ,
+        reviewed_by_id TEXT REFERENCES users(id) ON DELETE SET NULL
+      );
+    `);
+    await client.query('CREATE INDEX IF NOT EXISTS idx_social_reports_status_created ON social_reports(status, created_at DESC)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_social_reports_reporter ON social_reports(reporter_id, created_at DESC)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_social_reports_subject ON social_reports(subject_user_id, created_at DESC)');
+
+    await client.query(`
       CREATE TABLE IF NOT EXISTS activity_feed (
         id TEXT PRIMARY KEY,
         user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
