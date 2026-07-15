@@ -163,7 +163,12 @@ assert(/from '\.\.\/lib\/dailyExecution'/.test(logRun) && /scheduledRunFromExecu
 assert(/from '\.\.\/lib\/dailyExecution'/.test(logLift) && /scheduledLiftFromExecution/.test(logLift), 'LogLift imports the shared service + scheduled lift');
 assert(/from '\.\.\/lib\/dailyExecution'/.test(activeRun) && /markSessionComplete/.test(activeRun), 'ActiveRun imports markSessionComplete');
 assert(/from '\.\.\/lib\/dailyExecution'/.test(activeWorkout) && /markSessionComplete/.test(activeWorkout), 'ActiveWorkout imports markSessionComplete');
-assert(/location\.state/.test(warmup) && /navigate\('\/log-run'/.test(warmup), 'Warmup forwards location.state through the run handoff');
+assert(
+  /location\.state/.test(warmup)
+    && /navigate\('\/run\/active'/.test(warmup)
+    && /navigate\(returnTo/.test(warmup),
+  'Warmup forwards location.state through scheduled and manual run handoffs'
+);
 assert(/onStartRun\?\.\(runSession\)/.test(forgedDayView) && /onStartLift\?\.\(liftSession\)/.test(forgedDayView), 'ForgedDayView passes the selected session to start handlers');
 assert(/planSessionId/.test(plan) && /scheduledRun/.test(plan), 'Plan hands the selected session id + prescription into navigate state');
 assert(/workoutTarget/.test(plan) && /target_zone/.test(plan), 'Plan hands the exact run target into ActiveRun');
