@@ -5,8 +5,8 @@ This file holds Forge's product history, deployment notes, shipped phase log, kn
 ## Current Production
 
 - Production URL: `https://forge-production-773f.up.railway.app/`
-- Latest verified application release: commit `c646aa04`, deployment `3319e687-0ece-4088-b11b-a38f46fd4b65`
-- Latest checked bundle: `/assets/index-CfBTKrdH.js`
+- Latest verified application release: commit `5c2bb109`, deployment `f6d5ffa4-bc0a-4608-85ac-5db95e8b965d`
+- Latest checked bundle: `/assets/index-BuYpSH0L.js`
 - iOS version/build: `1.0.5` / `15`
 - Bundle identifier: `com.zordontech.forge`
 - Expo/EAS project: `@zordon/forge-athlete` (`6aeb5fbb-2697-4cf4-b9b3-afe60c63e9e1`)
@@ -21,6 +21,8 @@ Current production checks:
 - H15 rotates warm-up and stretch routines per user, prefers movements not shown in the previous routine, and adds guarded edge-swipe back navigation without exposing active timed sessions to accidental dismissal.
 - Friends Beta Phase 0 now preserves planned-session and timestamped-route truth, durably stores the complete post-run check-in before one idempotent AI analysis, and applies deterministic pain/energy protection to the next 48-72 hours.
 - Friends Beta Phase 1 adds an owner-only post-run recap with route, splits, plan-versus-recorded truth, coverage-gated heart-rate zones, post-run answers, and stored coach evaluation.
+- Lift now mirrors Train's compact quick-action pattern with focus-aware Lift Warm-Up, Post-Lift Stretch, and Lift History actions. Both mobility flows use six image-backed movements matched to the prepared lift focus and profile sex.
+- Phase 4C adds private challenge leaderboards with deterministic ties/progress/source labels, compact activity, owner member removal, member reporting, and privacy-masked blocked rows. Its disposable three-account production matrix passed all seven grouped checks.
 - Demo diagnostics check returns `403`.
 - `/api/auth/me/export` returns account/training data and excludes `password_hash`.
 - `/api/auth/forgot-password` returns `200 email_sent` for `demo@forge.app` in under one second.
@@ -354,6 +356,7 @@ These changes are already implemented, built, Capacitor-synced, and deployed to 
 | 2026-07-14 | `e25d0f9f-a6ea-4738-9a94-a0f4f591a03d` | Success | H15 per-user routine rotation and guarded edge-swipe navigation verified live |
 | 2026-07-14 | `5bfd7c80-fa6b-40ce-87bb-18d9e5518df1` | Success | Friends Beta Phase 0 post-run truth, one-call AI analysis, provenance, and pain/energy protection verified live |
 | 2026-07-14 | `3319e687-0ece-4088-b11b-a38f46fd4b65` | Success | Friends Beta Phase 1 truthful post-run recap, owner scoping, and metric/mobile verification |
+| 2026-07-15 | `f6d5ffa4-bc0a-4608-85ac-5db95e8b965d` | Success | Lift mobility quick actions and Phase 4C private challenge leaderboards verified live on `/assets/index-BuYpSH0L.js` |
 
 ### Build/Test Status
 

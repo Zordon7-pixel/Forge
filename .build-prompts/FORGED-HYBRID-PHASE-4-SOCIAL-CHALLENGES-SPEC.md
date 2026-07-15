@@ -282,6 +282,8 @@ Gate: full toolchain, Claude Code QA, Hermes review, Railway live verification, 
 
 Local verification (2026-07-15): Claude Code returned PASS after fixing one medium truth-state issue so a successful challenge action is not mislabeled failed when only its background refresh fails. Hermes reviewed the real scoring, payload, owner-removal, report, and masking code and returned APPROVE with no must-fix. Phase 4A/4A.1 regressions, Phase 4B/4C scoring smokes, 53-table account-data coverage, frontend build/audit, Capacitor sync, 375/430px browser checks, and a seven-part three-account disposable API matrix passed. No EAS build was run.
 
+Live verification (2026-07-15): Railway deployment `f6d5ffa4-bc0a-4608-85ac-5db95e8b965d` serves commit `5c2bb109` and the matching `/assets/index-BuYpSH0L.js` bundle. The production three-account disposable matrix passed all seven grouped checks covering exact-handle friendship, private invitations, canonical strength credit, tied ranks, source identity, user-ID concealment, member reporting, opaque owner removal, nonmember concealment, and complete account cleanup. The authenticated Community and Lift surfaces rendered cleanly on a phone-sized viewport; both lift mobility actions opened profile-sex image-backed six-movement sessions. No EAS build was run.
+
 ### Phase 4D - group runs (separate future spec)
 
 Only after 4A-4C prove safe: scheduled time, bounded location sharing, route/workout attachment, invitations, join/leave, reminders, and organizer controls. Live location sharing is out of scope until a dedicated privacy/threat-model review.
