@@ -3,6 +3,7 @@ const { cleanText } = require('./profanity');
 
 const MAX_ROUTE_COORDINATES = 800;
 const MAX_ACTIVE_OWNED_GROUP_RUNS = 10;
+const GROUP_RUN_SAFETY_RETENTION_DAYS = 30;
 const GROUP_RUN_STATUSES = new Set(['scheduled', 'completed', 'cancelled']);
 const GROUP_RUN_MEMBER_STATUSES = new Set(['invited', 'going', 'declined', 'left', 'removed']);
 const GOAL_MODES = new Set(['distance', 'time', 'open']);
@@ -233,6 +234,49 @@ function canExposePrivateGroupRun(groupRun, now = new Date()) {
     && nowDate <= expiresAt;
 }
 
+async function revokeBlockedGroupRunAccess(tx, blockerId, blockedId) {
+  const sharedRuns = await tx.all(
+    `SELECT gr.id AS group_run_id, gr.owner_id,
+            blocker_member.id AS blocker_membership_id,
+            blocked_member.id AS blocked_membership_id
+     FROM group_runs gr
+     JOIN group_run_members blocker_member ON blocker_member.group_run_id = gr.id
+       AND blocker_member.user_id = ?
+       AND blocker_member.status IN ('invited', 'going')
+     JOIN group_run_members blocked_member ON blocked_member.group_run_id = gr.id
+       AND blocked_member.user_id = ?
+       AND blocked_member.status IN ('invited', 'going')
+     WHERE gr.status IN ('scheduled', 'completed')
+       AND gr.starts_at + ((gr.duration_minutes + 120) * INTERVAL '1 minute') >= NOW()
+     ORDER BY gr.id
+     FOR UPDATE OF gr, blocker_member, blocked_member`,
+    [blockerId, blockedId]
+  );
+
+  for (const groupRun of sharedRuns) {
+    if (groupRun.owner_id === blockerId) {
+      const removed = await tx.run(
+        `UPDATE group_run_members
+         SET status = 'removed', left_at = NOW(), removed_at = NOW(), updated_at = NOW()
+         WHERE id = ? AND group_run_id = ? AND user_id = ?
+           AND status IN ('invited', 'going')`,
+        [groupRun.blocked_membership_id, groupRun.group_run_id, blockedId]
+      );
+      if (removed.changes !== 1) throw new Error('Blocked group run member removal lost its user guard');
+      continue;
+    }
+
+    const left = await tx.run(
+      `UPDATE group_run_members
+       SET status = 'left', left_at = NOW(), updated_at = NOW()
+       WHERE id = ? AND group_run_id = ? AND user_id = ?
+         AND status IN ('invited', 'going')`,
+      [groupRun.blocker_membership_id, groupRun.group_run_id, blockerId]
+    );
+    if (left.changes !== 1) throw new Error('Blocking group run member leave lost its user guard');
+  }
+}
+
 function optionalNumber(value) {
   return value === null || value === undefined ? null : Number(value);
 }
@@ -278,6 +322,7 @@ function serializeGroupRun(groupRun, { detail = false, now = new Date() } = {}) 
 module.exports = {
   GOAL_MODES,
   GROUP_RUN_MEMBER_STATUSES,
+  GROUP_RUN_SAFETY_RETENTION_DAYS,
   GROUP_RUN_STATUSES,
   MAX_ACTIVE_OWNED_GROUP_RUNS,
   MAX_ROUTE_COORDINATES,
@@ -288,5 +333,6 @@ module.exports = {
   normalizeGroupRunInput,
   normalizeRouteJson,
   privateAccessExpiresAt,
+  revokeBlockedGroupRunAccess,
   serializeGroupRun,
 };

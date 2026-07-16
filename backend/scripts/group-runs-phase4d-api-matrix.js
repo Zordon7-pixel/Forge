@@ -48,7 +48,7 @@ async function request(path, { token, method = 'GET', body, expected = [200] } =
   if (path.startsWith('/group-runs') && payload && typeof payload === 'object') {
     assertNoUserIds(payload, `${method} ${path}`);
   }
-  return { status: response.status, payload };
+  return { status: response.status, payload, headers: response.headers };
 }
 
 function pass(label) {
@@ -145,6 +145,30 @@ function groupRunPayload(title, startsAt, friendIds = []) {
     await befriend(accounts[1], accounts[2]);
     pass('all three friendship pairs accepted');
 
+    const invitationOnly = await request('/group-runs', {
+      token: accounts[0].token,
+      method: 'POST',
+      body: groupRunPayload(`Phase 4D Invite Gate ${suffix}`, futureIso(3), [accounts[1].id]),
+      expected: [201],
+    });
+    await request(`/group-runs/${invitationOnly.payload.group_run_id}`, { token: accounts[1].token });
+    await request(`/group-runs/${invitationOnly.payload.group_run_id}`, {
+      token: accounts[0].token,
+      method: 'PATCH',
+      body: { action: 'cancel' },
+    });
+    await request(`/group-runs/${invitationOnly.payload.group_run_id}`, {
+      token: accounts[1].token,
+      expected: [404],
+    });
+    const cancelledOwnerDetail = await request(
+      `/group-runs/${invitationOnly.payload.group_run_id}`,
+      { token: accounts[0].token }
+    );
+    assert.strictEqual(cancelledOwnerDetail.payload.group_run.status, 'cancelled');
+    assert.strictEqual('meetup_details' in cancelledOwnerDetail.payload.group_run, false);
+    pass('cancelled invitations lose direct detail while going owners retain redacted history');
+
     const created = await request('/group-runs', {
       token: accounts[0].token,
       method: 'POST',
@@ -161,6 +185,8 @@ function groupRunPayload(title, startsAt, friendIds = []) {
 
     for (const invitee of accounts.slice(1)) {
       const list = await request('/group-runs', { token: invitee.token });
+      assert.match(list.headers.get('cache-control') || '', /private/);
+      assert.match(list.headers.get('cache-control') || '', /no-store/);
       const invitation = list.payload.group_runs.find((run) => run.id === groupRunId);
       assert.strictEqual(invitation.membership.status, 'invited');
       assert.strictEqual(invitation.meetup_area, 'North Creek Park');
@@ -168,6 +194,8 @@ function groupRunPayload(title, startsAt, friendIds = []) {
       assert.strictEqual('route' in invitation, false);
 
       const detail = await request(`/group-runs/${groupRunId}`, { token: invitee.token });
+      assert.match(detail.headers.get('cache-control') || '', /private/);
+      assert.match(detail.headers.get('cache-control') || '', /no-store/);
       assert.strictEqual(detail.payload.group_run.workout_structure.includes('Easy out and back'), true);
       assert.strictEqual('meetup_details' in detail.payload.group_run, false);
       assert.strictEqual('route' in detail.payload.group_run, false);
@@ -185,6 +213,14 @@ function groupRunPayload(title, startsAt, friendIds = []) {
     assert.strictEqual(joinedDetail.payload.group_run.meetup_details, 'Meet by the west trailhead map.');
     assert.strictEqual(joinedDetail.payload.group_run.route.coordinates.length, 3);
     assert.strictEqual(joinedDetail.payload.group_run.target_distance_miles, 4.5);
+    const joinedPeer = joinedDetail.payload.members.find((member) => member.user?.name === accounts[2].name);
+    assert.ok(joinedPeer?.safety_action?.membership_id);
+    await request(`/group-runs/${groupRunId}/members/${joinedPeer.safety_action.membership_id}/report`, {
+      token: accounts[1].token,
+      method: 'POST',
+      body: { category: 'other', note: 'Disposable attendee-scoped moderation test.' },
+      expected: [201],
+    });
     pass('joined members receive exact meetup and private static route');
 
     const ownerDetail = await request(`/group-runs/${groupRunId}`, { token: accounts[0].token });
@@ -193,6 +229,12 @@ function groupRunPayload(title, startsAt, friendIds = []) {
     const trailMember = ownerDetail.payload.members.find((member) => member.user?.name === accounts[2].name);
     assert.ok(tempoMember?.owner_action?.membership_id);
     assert.ok(trailMember?.owner_action?.membership_id);
+    assert.ok(tempoMember?.safety_action?.membership_id);
+    assert.ok(trailMember?.safety_action?.membership_id);
+    assert.strictEqual(
+      ownerDetail.payload.members.find((member) => member.is_self)?.safety_action,
+      null
+    );
     assert.ok(ownerDetail.payload.members.every((member) => !member.user?.id));
     pass('member roster uses name-only identities and opaque owner actions');
 
@@ -254,38 +296,67 @@ function groupRunPayload(title, startsAt, friendIds = []) {
       });
     }
 
-    await request(`/social/blocks/${accounts[2].id}`, {
+    const memberOneBeforeBlocks = await request(`/group-runs/${blockRunId}`, { token: accounts[1].token });
+    const ownerBeforeBlocks = await request(`/group-runs/${blockRunId}`, { token: accounts[0].token });
+    const peerSafety = memberOneBeforeBlocks.payload.members.find(
+      (member) => member.user?.name === accounts[2].name
+    )?.safety_action;
+    const ownerSafety = memberOneBeforeBlocks.payload.members.find(
+      (member) => member.user?.name === accounts[0].name
+    )?.safety_action;
+    const memberTwoSafety = ownerBeforeBlocks.payload.members.find(
+      (member) => member.user?.name === accounts[2].name
+    )?.safety_action;
+    assert.ok(peerSafety?.membership_id);
+    assert.ok(ownerSafety?.membership_id);
+    assert.ok(memberTwoSafety?.membership_id);
+
+    await request(`/group-runs/${blockRunId}/members/${peerSafety.membership_id}/block`, {
       token: accounts[1].token,
       method: 'POST',
     });
     await request(`/group-runs/${blockRunId}`, { token: accounts[1].token, expected: [404] });
     await request(`/group-runs/${blockRunId}`, { token: accounts[2].token });
 
+    await request(`/group-runs/${blockRunId}/members/${peerSafety.membership_id}/report`, {
+      token: accounts[1].token,
+      method: 'POST',
+      body: { category: 'harassment', note: 'Historical attendee report after blocking.' },
+      expected: [201],
+    });
     await request(`/group-runs/${blockRunId}/invite`, {
       token: accounts[0].token,
       method: 'POST',
       body: { friend_id: accounts[1].id },
-      expected: [201],
+      expected: [404],
     });
-    await request(`/group-runs/${blockRunId}/membership`, {
-      token: accounts[1].token,
-      method: 'PATCH',
-      body: { action: 'join' },
-    });
-    await request(`/social/blocks/${accounts[0].id}`, {
+
+    await request(`/group-runs/${blockRunId}/members/${ownerSafety.membership_id}/block`, {
       token: accounts[1].token,
       method: 'POST',
+    });
+    await request(`/group-runs/${blockRunId}/report`, {
+      token: accounts[1].token,
+      method: 'POST',
+      body: { category: 'other', note: 'Historical organizer report despite active block.' },
+      expected: [201],
     });
     await request(`/group-runs/${blockRunId}`, { token: accounts[1].token, expected: [404] });
 
-    await request(`/social/blocks/${accounts[2].id}`, {
+    await request(`/group-runs/${blockRunId}/members/${memberTwoSafety.membership_id}/block`, {
       token: accounts[0].token,
       method: 'POST',
+    });
+    await request(`/group-runs/${blockRunId}/report`, {
+      token: accounts[2].token,
+      method: 'POST',
+      body: { category: 'other', note: 'Removed attendee report despite organizer block.' },
+      expected: [201],
     });
     await request(`/group-runs/${blockRunId}`, { token: accounts[2].token, expected: [404] });
     const ownerAfterBlocks = await request(`/group-runs/${blockRunId}`, { token: accounts[0].token });
     assert.strictEqual(ownerAfterBlocks.payload.members.length, 1);
-    pass('all three blocking-role revocation rules enforced immediately');
+    pass('opaque current and historical safety actions enforce revocation without user IDs');
 
     console.log(`Phase 4D API matrix passed ${checks.length} grouped checks against ${API_BASE}`);
   } finally {

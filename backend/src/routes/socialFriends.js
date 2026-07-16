@@ -4,6 +4,7 @@ const { validate: isUuid, v4: uuidv4 } = require('uuid');
 const { dbAll, dbGet, dbRun, withTransaction } = require('../db');
 const auth = require('../middleware/auth');
 const { cleanText } = require('../lib/profanity');
+const { revokeBlockedGroupRunAccess } = require('../lib/groupRunRules');
 const {
   INVITE_TTL_MS,
   MAX_ACTIVE_INVITES,
@@ -85,49 +86,6 @@ async function pairIsBlocked(tx, firstUserId, secondUserId) {
     [firstUserId, secondUserId, secondUserId, firstUserId]
   );
   return Boolean(row);
-}
-
-async function revokeUpcomingGroupRunAccess(tx, blockerId, blockedId) {
-  const sharedRuns = await tx.all(
-    `SELECT gr.id AS group_run_id, gr.owner_id,
-            blocker_member.id AS blocker_membership_id,
-            blocked_member.id AS blocked_membership_id
-     FROM group_runs gr
-     JOIN group_run_members blocker_member ON blocker_member.group_run_id = gr.id
-       AND blocker_member.user_id = ?
-       AND blocker_member.status IN ('invited', 'going')
-     JOIN group_run_members blocked_member ON blocked_member.group_run_id = gr.id
-       AND blocked_member.user_id = ?
-       AND blocked_member.status IN ('invited', 'going')
-     WHERE gr.status = 'scheduled'
-       AND gr.starts_at + ((gr.duration_minutes + 120) * INTERVAL '1 minute') > NOW()
-     ORDER BY gr.id
-     FOR UPDATE OF gr, blocker_member, blocked_member`,
-    [blockerId, blockedId]
-  );
-
-  for (const groupRun of sharedRuns) {
-    if (groupRun.owner_id === blockerId) {
-      const removed = await tx.run(
-        `UPDATE group_run_members
-         SET status = 'removed', left_at = NOW(), removed_at = NOW(), updated_at = NOW()
-         WHERE id = ? AND group_run_id = ? AND user_id = ?
-           AND status IN ('invited', 'going')`,
-        [groupRun.blocked_membership_id, groupRun.group_run_id, blockedId]
-      );
-      if (removed.changes !== 1) throw new Error('Blocked group run member removal lost its user guard');
-      continue;
-    }
-
-    const left = await tx.run(
-      `UPDATE group_run_members
-       SET status = 'left', left_at = NOW(), updated_at = NOW()
-       WHERE id = ? AND group_run_id = ? AND user_id = ?
-         AND status IN ('invited', 'going')`,
-      [groupRun.blocker_membership_id, groupRun.group_run_id, blockerId]
-    );
-    if (left.changes !== 1) throw new Error('Blocking group run member leave lost its user guard');
-  }
 }
 
 async function createFriendshipRequest(tx, requesterId, addresseeId) {
@@ -551,7 +509,7 @@ router.post('/blocks/:userId', relationshipLimiter, async (req, res) => {
            AND status IN ('pending', 'accepted')`,
         [userLowId, userHighId, req.user.id, req.user.id]
       );
-      await revokeUpcomingGroupRunAccess(tx, req.user.id, targetId);
+      await revokeBlockedGroupRunAccess(tx, req.user.id, targetId);
       return { status: 200, body: { ok: true } };
     });
     return res.status(result.status).json(result.body);

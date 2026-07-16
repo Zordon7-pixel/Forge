@@ -1,16 +1,21 @@
 const router = require('express').Router();
 const rateLimit = require('express-rate-limit');
 const { validate: isUuid, v4: uuidv4 } = require('uuid');
-const { dbAll, dbGet, withTransaction } = require('../db');
+const { withTransaction } = require('../db');
 const auth = require('../middleware/auth');
+const { canonicalPair } = require('../lib/friendship');
 const { cleanText } = require('../lib/profanity');
 const {
+  GROUP_RUN_SAFETY_RETENTION_DAYS,
   MAX_ACTIVE_OWNED_GROUP_RUNS,
   normalizeGroupRunInput,
+  revokeBlockedGroupRunAccess,
   serializeGroupRun,
 } = require('../lib/groupRunRules');
 
 const REPORT_CATEGORIES = new Set(['harassment', 'spam', 'impersonation', 'unsafe_content', 'other']);
+const EXACT_DATA_PURGE_BATCH_SIZE = 250;
+const EXACT_DATA_PURGE_INTERVAL_MS = 60 * 1000;
 
 function userLimiter(windowMs, max, message) {
   return rateLimit({
@@ -77,10 +82,132 @@ async function activeReservationCount(query, groupRunId) {
   return Number(row?.count || 0);
 }
 
-router.get('/', async (req, res) => {
+async function purgeExpiredGroupRunExactData(
+  tx,
+  { userId = null, batchSize = EXACT_DATA_PURGE_BATCH_SIZE } = {}
+) {
+  const limit = Math.max(1, Math.min(EXACT_DATA_PURGE_BATCH_SIZE, Number(batchSize) || 1));
+  const userScope = userId
+    ? `AND (gr.owner_id = ? OR EXISTS (
+         SELECT 1 FROM group_run_members viewer_member
+         WHERE viewer_member.group_run_id = gr.id AND viewer_member.user_id = ?
+       ))`
+    : '';
+  const rows = await tx.all(
+    `SELECT gr.id, gr.owner_id
+     FROM group_runs gr
+     WHERE (gr.meetup_details IS NOT NULL OR gr.notes IS NOT NULL OR gr.route_json IS NOT NULL)
+       AND (gr.status = 'cancelled'
+         OR NOW() > gr.starts_at + ((gr.duration_minutes + 120) * INTERVAL '1 minute'))
+       ${userScope}
+     ORDER BY gr.starts_at ASC, gr.id ASC
+     LIMIT ?::integer
+     FOR UPDATE OF gr SKIP LOCKED`,
+    userId ? [userId, userId, limit] : [limit]
+  );
+
+  for (const row of rows) {
+    const updated = await tx.run(
+      `UPDATE group_runs
+       SET meetup_details = NULL, notes = NULL, route_json = NULL, updated_at = NOW()
+       WHERE id = ? AND owner_id = ?
+         AND (meetup_details IS NOT NULL OR notes IS NOT NULL OR route_json IS NOT NULL)
+         AND (status = 'cancelled'
+           OR NOW() > starts_at + ((duration_minutes + 120) * INTERVAL '1 minute'))`,
+      [row.id, row.owner_id]
+    );
+    if (updated.changes !== 1) throw new Error('Group run exact-data purge lost its owner guard');
+  }
+  return rows.length;
+}
+
+let periodicExactDataPurgeRunning = false;
+async function runPeriodicExactDataPurge() {
+  if (periodicExactDataPurgeRunning) return;
+  periodicExactDataPurgeRunning = true;
   try {
-    const rows = await dbAll(
-      `SELECT gr.id, gr.title, gr.starts_at, gr.timezone, gr.duration_minutes,
+    await withTransaction((tx) => purgeExpiredGroupRunExactData(tx));
+  } catch (err) {
+    console.error('[group-runs/exact-data-purge] failed:', err.message);
+  } finally {
+    periodicExactDataPurgeRunning = false;
+  }
+}
+
+const periodicExactDataPurgeTimer = setInterval(
+  runPeriodicExactDataPurge,
+  EXACT_DATA_PURGE_INTERVAL_MS
+);
+periodicExactDataPurgeTimer.unref();
+
+async function attendeeSetHasBlock(query, userIds) {
+  const ids = [...new Set(userIds.map(String))];
+  if (ids.length < 2) return false;
+  const placeholders = ids.map(() => '?').join(',');
+  const row = await query.get(
+    `SELECT id FROM user_blocks
+     WHERE blocker_id IN (${placeholders}) AND blocked_id IN (${placeholders})
+     LIMIT 1`,
+    [...ids, ...ids]
+  );
+  return Boolean(row);
+}
+
+async function candidateHasBlockedCurrentAttendee(query, groupRunId, candidateId) {
+  const row = await query.get(
+    `SELECT block_pair.id
+     FROM group_run_members current_member
+     JOIN user_blocks block_pair
+       ON (block_pair.blocker_id = ? AND block_pair.blocked_id = current_member.user_id)
+       OR (block_pair.blocker_id = current_member.user_id AND block_pair.blocked_id = ?)
+     WHERE current_member.group_run_id = ?
+       AND current_member.user_id <> ?
+       AND current_member.status IN ('invited', 'going')
+     LIMIT 1`,
+    [candidateId, candidateId, groupRunId, candidateId]
+  );
+  return Boolean(row);
+}
+
+async function findAttendeeActionContext(query, groupRunId, membershipId, viewerId, { lock = false } = {}) {
+  const lockClause = lock ? 'FOR UPDATE OF gr, viewer_member, target_member' : '';
+  return query.get(
+    `SELECT gr.id, target_member.user_id AS target_user_id
+     FROM group_runs gr
+     JOIN group_run_members viewer_member ON viewer_member.group_run_id = gr.id
+       AND viewer_member.user_id = ?
+     JOIN group_run_members target_member ON target_member.group_run_id = gr.id
+       AND target_member.id = ? AND target_member.user_id <> ?
+     WHERE gr.id = ?
+       AND NOW() <= gr.starts_at + (gr.duration_minutes * INTERVAL '1 minute')
+         + (?::integer * INTERVAL '1 day')
+     ${lockClause}`,
+    [viewerId, membershipId, viewerId, groupRunId, GROUP_RUN_SAFETY_RETENTION_DAYS]
+  );
+}
+
+async function lockAttendeeActionContext(tx, groupRunId, membershipId, viewerId) {
+  const preview = await findAttendeeActionContext(tx, groupRunId, membershipId, viewerId);
+  if (!preview) return null;
+  if (!await lockUsers(tx, [viewerId, preview.target_user_id])) return null;
+  await purgeExpiredGroupRunExactData(tx, { userId: viewerId });
+  const context = await findAttendeeActionContext(
+    tx,
+    groupRunId,
+    membershipId,
+    viewerId,
+    { lock: true }
+  );
+  return context?.target_user_id === preview.target_user_id ? context : null;
+}
+
+router.get('/', async (req, res) => {
+  res.set('Cache-Control', 'private, no-store');
+  try {
+    const rows = await withTransaction(async (tx) => {
+      await purgeExpiredGroupRunExactData(tx, { userId: req.user.id });
+      return tx.all(
+        `SELECT gr.id, gr.title, gr.starts_at, gr.timezone, gr.duration_minutes,
               gr.run_type, gr.goal_mode, gr.target_distance_miles, gr.target_duration_minutes,
               gr.pace_note, gr.target_zone, gr.workout_structure, gr.meetup_area,
               gr.participant_limit, gr.status, gr.created_at, gr.updated_at,
@@ -100,16 +227,24 @@ router.get('/', async (req, res) => {
          AND (viewer_member.status = 'going'
            OR (gr.status = 'scheduled' AND gr.starts_at > NOW()))
          AND NOT EXISTS (
-           SELECT 1 FROM user_blocks block_pair
-           WHERE (block_pair.blocker_id = gr.owner_id AND block_pair.blocked_id = ?)
-              OR (block_pair.blocker_id = ? AND block_pair.blocked_id = gr.owner_id)
+           SELECT 1
+           FROM group_run_members current_member
+           JOIN user_blocks block_pair
+             ON (block_pair.blocker_id = viewer_member.user_id
+               AND block_pair.blocked_id = current_member.user_id)
+             OR (block_pair.blocker_id = current_member.user_id
+               AND block_pair.blocked_id = viewer_member.user_id)
+           WHERE current_member.group_run_id = gr.id
+             AND current_member.user_id <> viewer_member.user_id
+             AND current_member.status IN ('invited', 'going')
          )
        ORDER BY CASE WHEN viewer_member.status = 'invited' THEN 0 ELSE 1 END,
                 CASE WHEN gr.status = 'scheduled' THEN 0 ELSE 1 END,
                 gr.starts_at ASC, gr.created_at DESC
        LIMIT 50`,
-      [req.user.id, req.user.id, req.user.id, req.user.id]
-    );
+        [req.user.id, req.user.id]
+      );
+    });
     return res.json({ group_runs: rows.map((row) => serializeGroupRun(row)) });
   } catch (err) {
     console.error('[group-runs/list] failed:', err.message);
@@ -127,6 +262,7 @@ router.post('/', createLimiter, async (req, res) => {
     const result = await withTransaction(async (tx) => {
       const usersExist = await lockUsers(tx, [req.user.id, ...groupRun.friendIds]);
       if (!usersExist) return { status: 404, body: { error: 'Friend unavailable.' } };
+      await purgeExpiredGroupRunExactData(tx, { userId: req.user.id });
 
       const activeOwned = await tx.get(
         `SELECT COUNT(*) AS count
@@ -140,10 +276,12 @@ router.post('/', createLimiter, async (req, res) => {
       }
 
       for (const friendId of groupRun.friendIds) {
-        if (!await areAcceptedFriends(tx, req.user.id, friendId)
-          || await pairIsBlocked(tx, req.user.id, friendId)) {
+        if (!await areAcceptedFriends(tx, req.user.id, friendId)) {
           return { status: 404, body: { error: 'Friend unavailable.' } };
         }
+      }
+      if (await attendeeSetHasBlock(tx, [req.user.id, ...groupRun.friendIds])) {
+        return { status: 404, body: { error: 'Friend unavailable.' } };
       }
 
       await tx.run(
@@ -197,6 +335,7 @@ router.post('/:id/invite', inviteLimiter, async (req, res) => {
     const result = await withTransaction(async (tx) => {
       const usersExist = await lockUsers(tx, [req.user.id, friendId]);
       if (!usersExist) return { status: 404, body: { error: 'Friend unavailable.' } };
+      await purgeExpiredGroupRunExactData(tx, { userId: req.user.id });
 
       const groupRun = await tx.get(
         `SELECT gr.id, gr.participant_limit, gr.starts_at, gr.status
@@ -215,6 +354,9 @@ router.post('/:id/invite', inviteLimiter, async (req, res) => {
 
       if (!await areAcceptedFriends(tx, req.user.id, friendId)
         || await pairIsBlocked(tx, req.user.id, friendId)) {
+        return { status: 404, body: { error: 'Friend unavailable.' } };
+      }
+      if (await candidateHasBlockedCurrentAttendee(tx, req.params.id, friendId)) {
         return { status: 404, body: { error: 'Friend unavailable.' } };
       }
 
@@ -275,6 +417,7 @@ router.patch('/:id/membership', actionLimiter, async (req, res) => {
 
   try {
     const result = await withTransaction(async (tx) => {
+      await purgeExpiredGroupRunExactData(tx, { userId: req.user.id });
       const row = await tx.get(
         `SELECT gr.id, gr.owner_id, gr.participant_limit, gr.starts_at, gr.status,
                 viewer_member.id AS membership_id,
@@ -284,12 +427,19 @@ router.patch('/:id/membership', actionLimiter, async (req, res) => {
          WHERE gr.id = ? AND viewer_member.user_id = ?
            AND viewer_member.status IN ('invited', 'going')
            AND NOT EXISTS (
-             SELECT 1 FROM user_blocks block_pair
-             WHERE (block_pair.blocker_id = gr.owner_id AND block_pair.blocked_id = ?)
-                OR (block_pair.blocker_id = ? AND block_pair.blocked_id = gr.owner_id)
+             SELECT 1
+             FROM group_run_members current_member
+             JOIN user_blocks block_pair
+               ON (block_pair.blocker_id = viewer_member.user_id
+                 AND block_pair.blocked_id = current_member.user_id)
+               OR (block_pair.blocker_id = current_member.user_id
+                 AND block_pair.blocked_id = viewer_member.user_id)
+             WHERE current_member.group_run_id = gr.id
+               AND current_member.user_id <> viewer_member.user_id
+               AND current_member.status IN ('invited', 'going')
            )
          FOR UPDATE OF gr, viewer_member`,
-        [req.params.id, req.user.id, req.user.id, req.user.id]
+        [req.params.id, req.user.id]
       );
       if (!row) return { status: 404, body: { error: 'Group run not found.' } };
 
@@ -374,6 +524,7 @@ router.patch('/:id', actionLimiter, async (req, res) => {
 
   try {
     const result = await withTransaction(async (tx) => {
+      await purgeExpiredGroupRunExactData(tx, { userId: req.user.id });
       const groupRun = await tx.get(
         `SELECT gr.id, gr.status, gr.starts_at
          FROM group_runs gr
@@ -393,13 +544,20 @@ router.patch('/:id', actionLimiter, async (req, res) => {
 
       if (action === 'cancel' || action === 'complete') {
         const nextStatus = action === 'cancel' ? 'cancelled' : 'completed';
-        const timestampColumn = action === 'cancel' ? 'cancelled_at' : 'completed_at';
-        const updated = await tx.run(
-          `UPDATE group_runs
-           SET status = ?, ${timestampColumn} = NOW(), updated_at = NOW()
-           WHERE id = ? AND owner_id = ? AND status = 'scheduled'`,
-          [nextStatus, req.params.id, req.user.id]
-        );
+        const updated = action === 'cancel'
+          ? await tx.run(
+            `UPDATE group_runs
+             SET status = 'cancelled', cancelled_at = NOW(), meetup_details = NULL,
+                 notes = NULL, route_json = NULL, updated_at = NOW()
+             WHERE id = ? AND owner_id = ? AND status = 'scheduled'`,
+            [req.params.id, req.user.id]
+          )
+          : await tx.run(
+            `UPDATE group_runs
+             SET status = 'completed', completed_at = NOW(), updated_at = NOW()
+             WHERE id = ? AND owner_id = ? AND status = 'scheduled'`,
+            [req.params.id, req.user.id]
+          );
         if (updated.changes !== 1) throw new Error('Group run owner action lost its owner guard');
         return { status: 200, body: { ok: true, status: nextStatus } };
       }
@@ -444,19 +602,16 @@ router.post('/:id/report', reportLimiter, async (req, res) => {
 
   try {
     const result = await withTransaction(async (tx) => {
+      await purgeExpiredGroupRunExactData(tx, { userId: req.user.id });
       const groupRun = await tx.get(
         `SELECT gr.id, gr.owner_id
          FROM group_runs gr
          JOIN group_run_members viewer_member ON viewer_member.group_run_id = gr.id
          WHERE gr.id = ? AND viewer_member.user_id = ?
-           AND viewer_member.status IN ('invited', 'going')
-           AND NOT EXISTS (
-             SELECT 1 FROM user_blocks block_pair
-             WHERE (block_pair.blocker_id = gr.owner_id AND block_pair.blocked_id = ?)
-                OR (block_pair.blocker_id = ? AND block_pair.blocked_id = gr.owner_id)
-           )
+           AND NOW() <= gr.starts_at + (gr.duration_minutes * INTERVAL '1 minute')
+             + (?::integer * INTERVAL '1 day')
          FOR UPDATE OF gr, viewer_member`,
-        [req.params.id, req.user.id, req.user.id, req.user.id]
+        [req.params.id, req.user.id, GROUP_RUN_SAFETY_RETENTION_DAYS]
       );
       if (!groupRun) return { status: 404, body: { error: 'Group run not found.' } };
       if (groupRun.owner_id === req.user.id) {
@@ -478,12 +633,91 @@ router.post('/:id/report', reportLimiter, async (req, res) => {
   }
 });
 
+router.post('/:id/members/:membershipId/report', reportLimiter, async (req, res) => {
+  if (!isUuid(req.params.id) || !isUuid(req.params.membershipId)) return groupRunUnavailable(res);
+  const category = String(req.body?.category || '');
+  if (!REPORT_CATEGORIES.has(category)) {
+    return res.status(400).json({ error: 'Choose a valid report reason.' });
+  }
+  const note = cleanText(req.body?.note).replace(/[\r\n]+/g, ' ').trim().slice(0, 500) || null;
+
+  try {
+    const result = await withTransaction(async (tx) => {
+      const context = await lockAttendeeActionContext(
+        tx,
+        req.params.id,
+        req.params.membershipId,
+        req.user.id
+      );
+      if (!context) return { status: 404, body: { error: 'Group run not found.' } };
+
+      await tx.run(
+        `INSERT INTO social_reports (
+          id, reporter_id, subject_user_id, category, context_type, context_id, note, status
+        ) VALUES (?, ?, ?, ?, 'activity', ?, ?, 'open')`,
+        [
+          uuidv4(), req.user.id, context.target_user_id, category,
+          `group_run:${req.params.id}:member:${req.params.membershipId}`, note,
+        ]
+      );
+      return { status: 201, body: { ok: true } };
+    });
+
+    return res.status(result.status).json(result.body);
+  } catch (err) {
+    console.error('[group-runs/member-report] failed:', err.message);
+    return res.status(500).json({ error: 'Could not submit this attendee report.' });
+  }
+});
+
+router.post('/:id/members/:membershipId/block', actionLimiter, async (req, res) => {
+  if (!isUuid(req.params.id) || !isUuid(req.params.membershipId)) return groupRunUnavailable(res);
+
+  try {
+    const result = await withTransaction(async (tx) => {
+      const context = await lockAttendeeActionContext(
+        tx,
+        req.params.id,
+        req.params.membershipId,
+        req.user.id
+      );
+      if (!context) return { status: 404, body: { error: 'Group run not found.' } };
+
+      const [userLowId, userHighId] = canonicalPair(req.user.id, context.target_user_id);
+      await tx.run(
+        `INSERT INTO user_blocks (id, blocker_id, blocked_id)
+         VALUES (?, ?, ?)
+         ON CONFLICT (blocker_id, blocked_id) DO NOTHING`,
+        [uuidv4(), req.user.id, context.target_user_id]
+      );
+      await tx.run(
+        `UPDATE friendships
+         SET status = 'removed', responded_at = NOW(), updated_at = NOW()
+         WHERE user_low_id = ? AND user_high_id = ?
+           AND (requester_id = ? OR addressee_id = ?)
+           AND status IN ('pending', 'accepted')`,
+        [userLowId, userHighId, req.user.id, req.user.id]
+      );
+      await revokeBlockedGroupRunAccess(tx, req.user.id, context.target_user_id);
+      return { status: 200, body: { ok: true } };
+    });
+
+    return res.status(result.status).json(result.body);
+  } catch (err) {
+    console.error('[group-runs/member-block] failed:', err.message);
+    return res.status(500).json({ error: 'Could not block this attendee.' });
+  }
+});
+
 router.get('/:id', async (req, res) => {
+  res.set('Cache-Control', 'private, no-store');
   if (!isUuid(req.params.id)) return groupRunUnavailable(res);
 
   try {
-    const groupRun = await dbGet(
-      `SELECT gr.id, gr.title, gr.starts_at, gr.timezone, gr.duration_minutes,
+    const detail = await withTransaction(async (tx) => {
+      await purgeExpiredGroupRunExactData(tx, { userId: req.user.id });
+      const groupRun = await tx.get(
+        `SELECT gr.id, gr.title, gr.starts_at, gr.timezone, gr.duration_minutes,
               gr.run_type, gr.goal_mode, gr.target_distance_miles, gr.target_duration_minutes,
               gr.pace_note, gr.target_zone, gr.workout_structure, gr.meetup_area,
               CASE WHEN viewer_member.status = 'going'
@@ -502,6 +736,8 @@ router.get('/:id', async (req, res) => {
               owner.name AS owner_name,
               viewer_member.status AS membership_status, viewer_member.muted,
               (gr.owner_id = ?) AS viewer_is_owner,
+              (NOW() <= gr.starts_at + (gr.duration_minutes * INTERVAL '1 minute')
+                + (?::integer * INTERVAL '1 day')) AS safety_actions_available,
               (SELECT COUNT(*) FROM group_run_members going_members
                WHERE going_members.group_run_id = gr.id AND going_members.status = 'going') AS participant_count,
               (SELECT COUNT(*) FROM group_run_members reserved_members
@@ -511,21 +747,36 @@ router.get('/:id', async (req, res) => {
        JOIN group_run_members viewer_member ON viewer_member.group_run_id = gr.id
        JOIN users owner ON owner.id = gr.owner_id
        WHERE gr.id = ? AND viewer_member.user_id = ?
-         AND viewer_member.status IN ('invited', 'going')
+         AND (viewer_member.status = 'going'
+           OR (viewer_member.status = 'invited'
+             AND gr.status = 'scheduled' AND gr.starts_at > NOW()))
          AND NOT EXISTS (
-           SELECT 1 FROM user_blocks block_pair
-           WHERE (block_pair.blocker_id = gr.owner_id AND block_pair.blocked_id = ?)
-              OR (block_pair.blocker_id = ? AND block_pair.blocked_id = gr.owner_id)
+           SELECT 1
+           FROM group_run_members current_member
+           JOIN user_blocks block_pair
+             ON (block_pair.blocker_id = viewer_member.user_id
+               AND block_pair.blocked_id = current_member.user_id)
+             OR (block_pair.blocker_id = current_member.user_id
+               AND block_pair.blocked_id = viewer_member.user_id)
+           WHERE current_member.group_run_id = gr.id
+             AND current_member.user_id <> viewer_member.user_id
+             AND current_member.status IN ('invited', 'going')
          )
-       LIMIT 1`,
-      [req.user.id, req.params.id, req.user.id, req.user.id, req.user.id]
-    );
-    if (!groupRun) return groupRunUnavailable(res);
+       LIMIT 1
+       FOR SHARE OF gr, viewer_member`,
+        [
+          req.user.id,
+          GROUP_RUN_SAFETY_RETENTION_DAYS,
+          req.params.id,
+          req.user.id,
+        ]
+      );
+      if (!groupRun) return null;
 
-    let members = [];
-    if (groupRun.membership_status === 'going') {
-      const memberRows = await dbAll(
-        `SELECT member.id AS membership_id, athlete.name, member.status,
+      let members = [];
+      if (groupRun.membership_status === 'going') {
+        const memberRows = await tx.all(
+          `SELECT member.id AS membership_id, athlete.name, member.status,
                 (athlete.id = gr.owner_id) AS is_owner,
                 (member.user_id = ?) AS is_self
          FROM group_run_members member
@@ -534,25 +785,37 @@ router.get('/:id', async (req, res) => {
          WHERE member.group_run_id = ?
            AND member.status IN ('invited', 'going')
            AND (gr.owner_id = ? OR member.status = 'going')
+           AND NOT EXISTS (
+             SELECT 1 FROM user_blocks block_pair
+             WHERE (block_pair.blocker_id = ? AND block_pair.blocked_id = member.user_id)
+                OR (block_pair.blocker_id = member.user_id AND block_pair.blocked_id = ?)
+           )
          ORDER BY CASE WHEN athlete.id = gr.owner_id THEN 0 ELSE 1 END,
                   member.joined_at ASC NULLS LAST, member.invited_at ASC, member.id ASC`,
-        [req.user.id, req.params.id, req.user.id]
-      );
-      members = memberRows.map((member) => ({
-        membership_id: member.membership_id,
-        user: { name: member.name },
-        status: member.status,
-        is_owner: Boolean(member.is_owner),
-        is_self: Boolean(member.is_self),
-        owner_action: groupRun.viewer_is_owner && !member.is_owner
-          ? { membership_id: member.membership_id }
-          : null,
-      }));
-    }
+          [req.user.id, req.params.id, req.user.id, req.user.id, req.user.id]
+        );
+        members = memberRows.map((member) => ({
+          membership_id: member.membership_id,
+          user: { name: member.name },
+          status: member.status,
+          is_owner: Boolean(member.is_owner),
+          is_self: Boolean(member.is_self),
+          owner_action: groupRun.viewer_is_owner && !member.is_owner
+            ? { membership_id: member.membership_id }
+            : null,
+          safety_action: groupRun.safety_actions_available && !member.is_self
+            ? { membership_id: member.membership_id }
+            : null,
+        }));
+      }
+
+      return { groupRun, members };
+    });
+    if (!detail) return groupRunUnavailable(res);
 
     return res.json({
-      group_run: serializeGroupRun(groupRun, { detail: true }),
-      members,
+      group_run: serializeGroupRun(detail.groupRun, { detail: true }),
+      members: detail.members,
     });
   } catch (err) {
     console.error('[group-runs/detail] failed:', err.message);
@@ -561,4 +824,9 @@ router.get('/:id', async (req, res) => {
 });
 
 module.exports = router;
-module.exports._test = { activeReservationCount, areAcceptedFriends, pairIsBlocked };
+module.exports._test = {
+  activeReservationCount,
+  areAcceptedFriends,
+  pairIsBlocked,
+  purgeExpiredGroupRunExactData,
+};
