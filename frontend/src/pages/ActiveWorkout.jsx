@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
+import { Pause, Play, Plus, X } from 'lucide-react'
 import api from '../lib/api'
 import ExercisePickerModal from '../components/ExercisePickerModal'
 import MovementDemo from '../components/MovementDemo'
@@ -7,6 +8,7 @@ import { getWeightDropWarning, scrollToFirstError, validateWorkoutSet } from '..
 import { planSessionIdFromState, currentWeekFromState, markSessionComplete, queueSessionComplete, isRetryableCompletionFailure } from '../lib/dailyExecution'
 
 const REST_PRESETS = [30, 60, 90, 120, 180]
+const DEFAULT_REST_SECONDS = 90
 
 function prescribedReps(value) {
   const match = String(value || '').match(/\d+/)
@@ -46,6 +48,105 @@ function playAlarm() {
   }
 }
 
+function RestTimerDialog({ duration, remaining, running, complete, onToggle, onAddTime, onEnd, onClose }) {
+  const progress = duration > 0 ? Math.max(0, Math.min(100, (remaining / duration) * 100)) : 0
+  const dialogRef = useRef(null)
+  const closeButtonRef = useRef(null)
+  const onCloseRef = useRef(onClose)
+
+  useEffect(() => {
+    onCloseRef.current = onClose
+  }, [onClose])
+
+  useEffect(() => {
+    const previouslyFocused = document.activeElement
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    closeButtonRef.current?.focus()
+
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onCloseRef.current()
+        return
+      }
+      if (event.key !== 'Tab') return
+
+      const focusable = [...(dialogRef.current?.querySelectorAll('button:not([disabled])') || [])]
+      if (!focusable.length) return
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown)
+      document.body.style.overflow = previousOverflow
+      if (previouslyFocused instanceof HTMLElement) previouslyFocused.focus()
+    }
+  }, [])
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="rest-timer-title"
+      className="fixed inset-0 z-[70] flex items-center justify-center p-4"
+      style={{ background: 'rgba(0,0,0,0.78)', paddingTop: 'calc(env(safe-area-inset-top, 0px) + 1rem)', paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 1rem)' }}
+      onClick={(event) => { if (event.target === event.currentTarget) onClose() }}
+    >
+      <div ref={dialogRef} className="w-full rounded-2xl p-5" style={{ maxWidth: 380, background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p id="rest-timer-title" className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>Rest Timer</p>
+            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Countdown length: {fmtDuration(duration)}</p>
+          </div>
+          <button ref={closeButtonRef} type="button" onClick={onClose} aria-label="Close rest timer" className="w-10 h-10 rounded-full flex items-center justify-center" style={{ background: 'var(--bg-input)', color: 'var(--text-muted)' }}>
+            <X size={20} aria-hidden="true" />
+          </button>
+        </div>
+
+        <div className="py-8 text-center">
+          <p className="font-bold tabular-nums" style={{ color: complete ? 'var(--success)' : (remaining <= 5 ? 'var(--danger)' : 'var(--accent)'), fontSize: 72, lineHeight: 1 }}>
+            {fmtDuration(remaining)}
+          </p>
+          <p role="status" aria-live="polite" className="mt-3 text-sm font-semibold" style={{ color: complete ? 'var(--success)' : 'var(--text-muted)' }}>
+            {complete ? 'Rest complete' : (running ? 'Resting' : 'Timer paused')}
+          </p>
+        </div>
+
+        <div className="h-2 rounded-full overflow-hidden mb-5" style={{ background: 'var(--bg-input)' }}>
+          <div style={{ width: `${progress}%`, height: '100%', background: complete ? 'var(--success)' : 'var(--accent)', transition: 'width 1s linear' }} />
+        </div>
+
+        {!complete && (
+          <div className="grid grid-cols-2 gap-2">
+            <button type="button" onClick={onToggle} className="rounded-xl py-3 px-3 font-bold flex items-center justify-center gap-2" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>
+              {running ? <Pause size={18} aria-hidden="true" /> : <Play size={18} aria-hidden="true" />}
+              {running ? 'Pause' : 'Resume'}
+            </button>
+            <button type="button" onClick={onAddTime} className="rounded-xl py-3 px-3 font-bold flex items-center justify-center gap-2" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>
+              <Plus size={18} aria-hidden="true" />
+              30 sec
+            </button>
+          </div>
+        )}
+
+        <button type="button" onClick={complete ? onClose : onEnd} className="w-full mt-3 rounded-xl py-3 font-semibold" style={{ background: 'transparent', color: 'var(--text-muted)', border: '1px solid var(--border-subtle)' }}>
+          {complete ? 'Done' : 'End rest'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 export default function ActiveWorkout() {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -76,7 +177,11 @@ export default function ActiveWorkout() {
 
   const [showRest, setShowRest] = useState(true)
   const [restSeconds, setRestSeconds] = useState(0)
+  const [restDuration, setRestDuration] = useState(DEFAULT_REST_SECONDS)
+  const [selectedRestPreset, setSelectedRestPreset] = useState(DEFAULT_REST_SECONDS)
   const [restRunning, setRestRunning] = useState(false)
+  const [restComplete, setRestComplete] = useState(false)
+  const [showRestDialog, setShowRestDialog] = useState(false)
   const restRef = useRef(null)
 
   const [hrInfo, setHrInfo] = useState(null)
@@ -138,6 +243,7 @@ export default function ActiveWorkout() {
       restRef.current = setTimeout(() => setRestSeconds(s => s - 1), 1000)
     } else if (restRunning && restSeconds === 0) {
       setRestRunning(false)
+      setRestComplete(true)
       playAlarm()
     }
     return () => clearTimeout(restRef.current)
@@ -157,8 +263,27 @@ export default function ActiveWorkout() {
 
   const startRest = (s) => {
     clearTimeout(restRef.current)
+    setSelectedRestPreset(s)
+    setRestDuration(s)
     setRestSeconds(s)
     setRestRunning(true)
+    setRestComplete(false)
+    setShowRestDialog(true)
+  }
+
+  const addRestTime = () => {
+    setRestDuration((seconds) => seconds + 30)
+    setRestSeconds((seconds) => seconds + 30)
+    setRestComplete(false)
+    setRestRunning(true)
+  }
+
+  const endRest = () => {
+    clearTimeout(restRef.current)
+    setRestSeconds(0)
+    setRestRunning(false)
+    setRestComplete(false)
+    setShowRestDialog(false)
   }
 
   const logSet = async () => {
@@ -295,25 +420,51 @@ export default function ActiveWorkout() {
 
       {showRest && (
         <div className="rounded-xl p-3 space-y-2" style={{ background: 'var(--bg-card)' }}>
-          <p className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Rest Timer</p>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Rest Timer</p>
+              <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                {restSeconds > 0 || restComplete ? `Countdown length: ${fmtDuration(restDuration)}` : `Default countdown: ${fmtDuration(restDuration)}`}
+              </p>
+            </div>
+            {(restSeconds > 0 || restComplete) && (
+              <button type="button" onClick={() => setShowRestDialog(true)} className="rounded-lg px-3 py-2 text-xs font-semibold" style={{ background: 'var(--accent-dim)', color: 'var(--accent)', border: '1px solid var(--accent)' }}>
+                Open large timer
+              </button>
+            )}
+          </div>
           <div className="flex gap-2 flex-wrap">
             {REST_PRESETS.map(s => (
-              <button key={s} onClick={() => startRest(s)} className="rounded-lg px-3 py-1.5 text-xs font-semibold border" style={restRunning && restSeconds === s ? { background: 'var(--accent)', color: 'var(--on-accent)', borderColor: 'var(--accent)' } : { background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-muted)' }}>
+              <button key={s} type="button" aria-pressed={selectedRestPreset === s} onClick={() => startRest(s)} className="rounded-lg px-3 py-2 text-xs font-semibold border" style={selectedRestPreset === s ? { background: 'var(--accent)', color: 'var(--on-accent)', borderColor: 'var(--accent)' } : { background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-muted)' }}>
                 {s < 60 ? `${s}s` : `${s/60}m`}
               </button>
             ))}
           </div>
           {restSeconds > 0 && (
             <div className="flex items-center gap-3">
-              <span className="text-2xl font-bold tabular-nums" style={{ color: restSeconds <= 5 ? 'var(--danger)' : 'var(--text-primary)' }}>
+              <span className="text-4xl font-bold tabular-nums" style={{ color: restSeconds <= 5 ? 'var(--danger)' : 'var(--text-primary)' }}>
                 {fmtDuration(restSeconds)}
               </span>
-              <button onClick={() => setRestRunning(v => !v)} className="rounded-lg px-3 py-1 text-xs font-semibold" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>
+              <button type="button" onClick={() => setRestRunning(v => !v)} className="rounded-lg px-3 py-2 text-xs font-semibold" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>
                 {restRunning ? 'Pause' : 'Resume'}
               </button>
             </div>
           )}
+          {restComplete && <p className="text-sm font-semibold" style={{ color: 'var(--success)' }}>Rest complete</p>}
         </div>
+      )}
+
+      {showRestDialog && (
+        <RestTimerDialog
+          duration={restDuration}
+          remaining={restSeconds}
+          running={restRunning}
+          complete={restComplete}
+          onToggle={() => setRestRunning((running) => !running)}
+          onAddTime={addRestTime}
+          onEnd={endRest}
+          onClose={() => setShowRestDialog(false)}
+        />
       )}
 
       {muscleGroups.length > 0 && (

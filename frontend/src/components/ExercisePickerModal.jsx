@@ -2,6 +2,13 @@ import React, { useEffect, useState } from 'react'
 import api from '../lib/api'
 import MovementDemo from './MovementDemo'
 
+const AGGREGATE_GROUPS = new Set(['', 'all', 'full', 'full body', 'full-body', 'full_body'])
+
+function exerciseFilterGroup(muscleGroup) {
+  const normalized = String(muscleGroup || '').trim().toLowerCase()
+  return AGGREGATE_GROUPS.has(normalized) ? '' : normalized
+}
+
 export default function ExercisePickerModal({ muscleGroup, onSelect, onClose }) {
   const [exercises, setExercises] = useState([])
   const [search, setSearch] = useState('')
@@ -22,12 +29,36 @@ export default function ExercisePickerModal({ muscleGroup, onSelect, onClose }) 
     api.get('/auth/me').then((r) => setUserSex(r.data?.user?.sex || 'male')).catch(() => {})
   }, [])
 
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = previousOverflow
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
+    }
+  }, [])
+
+  const closePicker = () => {
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
+    onClose()
+  }
+
+  const selectExercise = (exercise) => {
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
+    onSelect(exercise)
+    onClose()
+  }
+
   const loadExercises = async () => {
     setLoading(true)
     try {
-      const params = muscleGroup ? { muscle_group: muscleGroup } : {}
+      const filterGroup = exerciseFilterGroup(muscleGroup)
+      const params = filterGroup ? { muscle_group: filterGroup } : {}
       const res = await api.get('/exercises', { params })
       setExercises(Array.isArray(res.data) ? res.data : [])
+    } catch (error) {
+      console.error('[exercise-picker/load] failed:', error?.message || error)
+      setExercises([])
     } finally {
       setLoading(false)
     }
@@ -43,7 +74,7 @@ export default function ExercisePickerModal({ muscleGroup, onSelect, onClose }) 
     try {
       const res = await api.post('/exercises', {
         name: newName.trim(),
-        muscle_group: muscleGroup || 'other',
+        muscle_group: exerciseFilterGroup(muscleGroup) || 'other',
         instructions: newInstructions.trim()
       })
       if (res.data.alreadyExists) {
@@ -64,9 +95,10 @@ export default function ExercisePickerModal({ muscleGroup, onSelect, onClose }) 
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70"
-      onClick={e => { if (e.target === e.currentTarget) onClose() }}>
+      style={{ width: '100%', maxWidth: '100vw', overflowX: 'hidden', paddingTop: 'env(safe-area-inset-top, 0px)' }}
+      onClick={e => { if (e.target === e.currentTarget) closePicker() }}>
       <div className="w-full max-w-lg rounded-t-2xl flex flex-col max-h-[80vh] relative"
-        style={{ background: 'var(--bg-card)' }}>
+        style={{ background: 'var(--bg-card)', minWidth: 0, maxWidth: 'min(32rem, 100vw)', overflow: 'hidden', overscrollBehavior: 'contain' }}>
 
         {/* How-to overlay */}
         {howToExercise && (
@@ -118,7 +150,7 @@ export default function ExercisePickerModal({ muscleGroup, onSelect, onClose }) 
               )}
             </div>
             <div className="p-4">
-              <button onClick={() => { onSelect(howToExercise); onClose() }}
+              <button onClick={() => selectExercise(howToExercise)}
                 className="w-full py-3 rounded-xl font-bold text-on-accent"
                 style={{ background: 'var(--accent)' }}>
                 Select {howToExercise.name}
@@ -132,7 +164,7 @@ export default function ExercisePickerModal({ muscleGroup, onSelect, onClose }) 
             <h3 className="font-bold text-lg" style={{ color: 'var(--text-primary)' }}>Choose Exercise</h3>
             {muscleGroup && <p className="text-xs mt-0.5 capitalize" style={{ color: 'var(--text-muted)' }}>{muscleGroup}</p>}
           </div>
-          <button onClick={onClose} className="text-sm px-3 py-1 rounded-lg"
+          <button onClick={closePicker} className="text-sm px-3 py-1 rounded-lg"
             style={{ background: 'var(--bg-input)', color: 'var(--text-muted)' }}>Close</button>
         </div>
 
@@ -142,9 +174,9 @@ export default function ExercisePickerModal({ muscleGroup, onSelect, onClose }) 
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder="Search exercises..."
-            autoFocus
-            className="w-full px-4 py-3 rounded-xl text-sm outline-none"
-            style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}
+            aria-label="Search exercises"
+            className="w-full px-4 py-3 rounded-xl outline-none"
+            style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', fontSize: 16, minWidth: 0 }}
           />
         </div>
 
@@ -169,7 +201,7 @@ export default function ExercisePickerModal({ muscleGroup, onSelect, onClose }) 
               <div key={ex.id}
                 className="flex items-center justify-between rounded-xl px-4 py-3 cursor-pointer transition-all hover:opacity-80"
                 style={{ background: 'var(--bg-input)' }}>
-                <button className="flex-1 text-left" onClick={() => { onSelect(ex); onClose() }}>
+                <button className="flex-1 text-left" onClick={() => selectExercise(ex)}>
                   <p className="font-medium text-sm" style={{ color: 'var(--text-primary)' }}>{ex.name}</p>
                   {ex.secondary_muscles && (
                     <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
@@ -211,16 +243,16 @@ export default function ExercisePickerModal({ muscleGroup, onSelect, onClose }) 
                 value={newName}
                 onChange={e => setNewName(e.target.value)}
                 placeholder="Exercise name (e.g. Sissy Squat)"
-                className="w-full px-4 py-3 rounded-xl text-sm outline-none"
-                style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}
+                className="w-full px-4 py-3 rounded-xl outline-none"
+                style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', fontSize: 16, minWidth: 0 }}
               />
               <textarea
                 value={newInstructions}
                 onChange={e => setNewInstructions(e.target.value)}
                 placeholder="How to do it (optional — helps other users)"
                 rows={2}
-                className="w-full px-4 py-3 rounded-xl text-sm outline-none resize-none"
-                style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}
+                className="w-full px-4 py-3 rounded-xl outline-none resize-none"
+                style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', fontSize: 16, minWidth: 0 }}
               />
               {addFeedback && (
                 <p className="text-xs text-center font-medium" style={{ color: 'var(--accent)' }}>{addFeedback}</p>
