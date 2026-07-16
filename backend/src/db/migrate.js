@@ -35,6 +35,71 @@ async function runAlwaysMigrations() {
   await pg.query('ALTER TABLE user_challenges ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()');
   await pg.query('CREATE INDEX IF NOT EXISTS idx_user_challenges_challenge_status ON user_challenges(challenge_id, status)');
   await pg.query('CREATE INDEX IF NOT EXISTS idx_user_challenges_user_status ON user_challenges(user_id, status)');
+
+  await pg.query(`
+    CREATE TABLE IF NOT EXISTS group_runs (
+      id TEXT PRIMARY KEY,
+      owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      starts_at TIMESTAMPTZ NOT NULL,
+      timezone TEXT NOT NULL,
+      duration_minutes INTEGER NOT NULL CHECK (duration_minutes BETWEEN 10 AND 480),
+      run_type TEXT NOT NULL,
+      goal_mode TEXT NOT NULL CHECK (goal_mode IN ('distance', 'time', 'open')),
+      target_distance_miles REAL,
+      target_duration_minutes INTEGER,
+      pace_note TEXT,
+      target_zone TEXT,
+      workout_structure TEXT,
+      meetup_area TEXT NOT NULL,
+      meetup_details TEXT,
+      notes TEXT,
+      route_json JSONB,
+      participant_limit INTEGER NOT NULL DEFAULT 25 CHECK (participant_limit BETWEEN 2 AND 25),
+      status TEXT NOT NULL DEFAULT 'scheduled' CHECK (status IN ('scheduled', 'completed', 'cancelled')),
+      completed_at TIMESTAMPTZ,
+      cancelled_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CHECK (
+        (goal_mode = 'distance' AND target_distance_miles IS NOT NULL
+          AND target_distance_miles BETWEEN 0.1 AND 200 AND target_duration_minutes IS NULL)
+        OR (goal_mode = 'time' AND target_distance_miles IS NULL
+          AND target_duration_minutes IS NOT NULL AND target_duration_minutes BETWEEN 10 AND 480)
+        OR (goal_mode = 'open' AND target_distance_miles IS NULL AND target_duration_minutes IS NULL)
+      ),
+      CHECK (
+        route_json IS NULL OR CASE
+          WHEN jsonb_typeof(route_json) = 'object'
+            AND jsonb_typeof(route_json->'coordinates') = 'array'
+          THEN jsonb_array_length(route_json->'coordinates') BETWEEN 2 AND 800
+          ELSE FALSE
+        END
+      )
+    )
+  `);
+  await pg.query('CREATE INDEX IF NOT EXISTS idx_group_runs_owner_status_start ON group_runs(owner_id, status, starts_at)');
+  await pg.query('CREATE INDEX IF NOT EXISTS idx_group_runs_status_start ON group_runs(status, starts_at)');
+
+  await pg.query(`
+    CREATE TABLE IF NOT EXISTS group_run_members (
+      id TEXT PRIMARY KEY,
+      group_run_id TEXT NOT NULL REFERENCES group_runs(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      status TEXT NOT NULL CHECK (status IN ('invited', 'going', 'declined', 'left', 'removed')),
+      muted INTEGER NOT NULL DEFAULT 0 CHECK (muted IN (0, 1)),
+      invited_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      joined_at TIMESTAMPTZ,
+      left_at TIMESTAMPTZ,
+      removed_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(user_id, group_run_id)
+    )
+  `);
+  await pg.query('CREATE INDEX IF NOT EXISTS idx_group_run_members_run_status ON group_run_members(group_run_id, status)');
+  await pg.query('CREATE INDEX IF NOT EXISTS idx_group_run_members_user_status ON group_run_members(user_id, status)');
+
   await pg.query('CREATE INDEX IF NOT EXISTS idx_runs_user_date ON runs(user_id, date DESC)');
   await pg.query('CREATE INDEX IF NOT EXISTS idx_lifts_user_date ON lifts(user_id, date DESC)');
   await pg.query('CREATE INDEX IF NOT EXISTS idx_workout_sessions_user_started ON workout_sessions(user_id, started_at)');

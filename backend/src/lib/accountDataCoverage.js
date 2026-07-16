@@ -22,6 +22,8 @@ const ACCOUNT_EXPORT_TABLES = [
   { key: 'user_badges', table: 'user_badges', orderBy: 'earned_at DESC' },
   { key: 'user_challenges', table: 'user_challenges', orderBy: 'joined_at DESC' },
   { key: 'owned_challenges', table: 'challenges', where: "id IN (SELECT challenge_id FROM user_challenges WHERE user_id = ? AND role = 'owner')", orderBy: 'created_at DESC' },
+  { key: 'owned_group_runs', table: 'group_runs', where: 'owner_id = ?', orderBy: 'starts_at DESC' },
+  { key: 'group_run_memberships', table: 'group_run_members', orderBy: 'created_at DESC' },
   { key: 'step_logs', table: 'step_logs', orderBy: 'log_date DESC' },
   { key: 'activity_feed', table: 'activity_feed', orderBy: 'created_at DESC' },
   { key: 'activity_likes', table: 'activity_likes', orderBy: 'created_at DESC' },
@@ -63,6 +65,8 @@ const ACCOUNT_SECRET_TABLES = [
 ];
 
 const ACCOUNT_SOCIAL_DELETE_QUERIES = [
+  ['DELETE FROM group_runs WHERE owner_id = ?', [0]],
+  ['DELETE FROM group_run_members WHERE user_id = ?', [0]],
   ['UPDATE challenges SET creator_id = NULL WHERE creator_id = ?', [0]],
   ['UPDATE social_reports SET reporter_id = NULL, note = NULL, context_id = NULL WHERE reporter_id = ?', [0]],
   ['UPDATE social_reports SET subject_user_id = NULL, note = NULL, context_id = NULL WHERE subject_user_id = ?', [0]],
