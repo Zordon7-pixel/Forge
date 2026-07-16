@@ -97,6 +97,8 @@ router.get('/', async (req, res) => {
        JOIN users owner ON owner.id = gr.owner_id
        WHERE viewer_member.user_id = ?
          AND viewer_member.status IN ('invited', 'going')
+         AND (viewer_member.status = 'going'
+           OR (gr.status = 'scheduled' AND gr.starts_at > NOW()))
          AND NOT EXISTS (
            SELECT 1 FROM user_blocks block_pair
            WHERE (block_pair.blocker_id = gr.owner_id AND block_pair.blocked_id = ?)
@@ -373,7 +375,7 @@ router.patch('/:id', actionLimiter, async (req, res) => {
   try {
     const result = await withTransaction(async (tx) => {
       const groupRun = await tx.get(
-        `SELECT gr.id, gr.status
+        `SELECT gr.id, gr.status, gr.starts_at
          FROM group_runs gr
          JOIN group_run_members owner_member ON owner_member.group_run_id = gr.id
          WHERE gr.id = ? AND gr.owner_id = ?
@@ -384,6 +386,9 @@ router.patch('/:id', actionLimiter, async (req, res) => {
       if (!groupRun) return { status: 404, body: { error: 'Group run not found.' } };
       if (groupRun.status !== 'scheduled') {
         return { status: 409, body: { error: 'This group run is no longer scheduled.' } };
+      }
+      if (action === 'complete' && new Date(groupRun.starts_at) > new Date()) {
+        return { status: 409, body: { error: 'This group run has not started yet.' } };
       }
 
       if (action === 'cancel' || action === 'complete') {

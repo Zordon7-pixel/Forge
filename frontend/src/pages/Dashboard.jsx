@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { App as CapacitorApp } from '@capacitor/app'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { Footprints, X } from 'lucide-react'
+import { CalendarClock, Footprints, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import AchievementUnlock from '../components/AchievementUnlock'
 import InsightsSheet, { CalendarDayDetailSheet, DailyCoachFlow, ReadinessBreakdownModal, RecentActivityCard, TodayDetailSheet, WatchSyncWidget } from '../components/InsightsSheet'
@@ -15,6 +15,7 @@ import { useOnlineStatus } from '../lib/useOnlineStatus'
 import HealthService from '../services/HealthService'
 import { useProContext } from '../context/ProContext'
 import { fetchDailyExecution, recommendationFromExecution, hasExecutableSession, runRouteState, localDateISO } from '../lib/dailyExecution'
+import { formatGroupRunDate, upcomingGroupRun } from '../lib/groupRuns'
 
 function fmtPace(durationSeconds, distance) {
   if (!durationSeconds || !distance) return '--'
@@ -113,6 +114,7 @@ export default function Dashboard() {
   const [healthSync, setHealthSync] = useState({ loading: true, available: false, reason: null, metrics: null })
   const [readinessState, setReadinessState] = useState({ loading: true, error: false, locked: false, data: null })
   const [healthSyncNotice, setHealthSyncNotice] = useState('')
+  const [upcomingSocialRun, setUpcomingSocialRun] = useState(null)
   const { isOnline, queueCount } = useOnlineStatus()
   const { isPro, loading: proLoading } = useProContext()
 
@@ -133,7 +135,7 @@ export default function Dashboard() {
 
   const fetchDashboardData = useCallback(async () => {
     try {
-        const [statsRes, runsRes, liftsRes, warningRes, checkinRes, goalRes, streakRes, milestoneRes, complianceRes, loadRes, nextRaceRes, gearRes, injuryRes, recapRes, recommendationRes, ageGradedRes, executionRes] = await Promise.all([
+        const [statsRes, runsRes, liftsRes, warningRes, checkinRes, goalRes, streakRes, milestoneRes, complianceRes, loadRes, nextRaceRes, gearRes, injuryRes, recapRes, recommendationRes, ageGradedRes, executionRes, groupRunsRes] = await Promise.all([
           api.get('/auth/me/stats'),
           api.get('/runs', { params: { limit: 5 } }),
           api.get('/lifts'),
@@ -154,8 +156,13 @@ export default function Dashboard() {
             console.error('[Dashboard] daily execution fetch failed:', err?.message || err)
             return null
           }),
+          api.get('/group-runs').catch((error) => {
+            console.error('[Dashboard] group run reminder fetch failed:', error?.message || error)
+            return { data: { group_runs: [] } }
+          }),
         ])
         setExecution(executionRes || null)
+        setUpcomingSocialRun(upcomingGroupRun(groupRunsRes.data?.group_runs || []))
         setStats(statsRes.data)
         const runsList = Array.isArray(runsRes.data) ? runsRes.data : runsRes.data?.runs || []
         setRuns(runsList)
@@ -692,6 +699,20 @@ export default function Dashboard() {
         onReflect={() => navigate('/history')}
         onDetails={() => setShowTodayDetail(true)}
       />
+
+      {upcomingSocialRun && (
+        <section style={{ border: '1px solid var(--border-subtle)', borderRadius: 8, background: 'var(--bg-card)', padding: 14 }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+            <CalendarClock size={20} color="var(--accent)" style={{ flex: '0 0 auto', marginTop: 1 }} />
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <p style={{ color: 'var(--accent)', fontSize: 10, fontWeight: 900, textTransform: 'uppercase', margin: 0 }}>{t('groupRuns.todayReminder')}</p>
+              <h2 style={{ color: 'var(--text-primary)', fontSize: 16, fontWeight: 900, margin: '4px 0 0', overflowWrap: 'anywhere' }}>{upcomingSocialRun.title}</h2>
+              <p style={{ color: 'var(--text-muted)', fontSize: 11, lineHeight: 1.5, margin: '5px 0 0' }}>{formatGroupRunDate(upcomingSocialRun)} · {upcomingSocialRun.meetup_area}</p>
+            </div>
+          </div>
+          <button type="button" className="pressable" onClick={() => navigate('/community?tab=runs')} style={{ width: '100%', minHeight: 44, marginTop: 12, borderRadius: 8, border: '1px solid var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)', fontWeight: 850 }}>{t('groupRuns.openCommunity')}</button>
+        </section>
+      )}
 
       <TodayDetailSheet
         open={showTodayDetail}

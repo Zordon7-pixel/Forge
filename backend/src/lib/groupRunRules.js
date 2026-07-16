@@ -6,6 +6,7 @@ const MAX_ACTIVE_OWNED_GROUP_RUNS = 10;
 const GROUP_RUN_STATUSES = new Set(['scheduled', 'completed', 'cancelled']);
 const GROUP_RUN_MEMBER_STATUSES = new Set(['invited', 'going', 'declined', 'left', 'removed']);
 const GOAL_MODES = new Set(['distance', 'time', 'open']);
+const RUN_TYPES = new Set(['social', 'easy', 'recovery', 'long', 'tempo', 'intervals', 'hills']);
 
 const ROUTE_STRING_FIELDS = new Map([
   ['id', 100],
@@ -136,8 +137,8 @@ function normalizeGroupRunInput(body = {}, { now = new Date(), ownerId } = {}) {
   const durationMinutes = boundedNumber(body.duration_minutes, 10, 480, { integer: true });
   if (durationMinutes === null) return { error: 'Duration must be between 10 and 480 minutes.' };
 
-  const runType = normalizedText(body.run_type, 40);
-  if (!runType) return { error: 'Choose a valid run type.' };
+  const runType = String(body.run_type || '').trim().toLowerCase();
+  if (!RUN_TYPES.has(runType)) return { error: 'Choose a valid run type.' };
 
   const goalMode = String(body.goal_mode || 'open').trim().toLowerCase();
   if (!GOAL_MODES.has(goalMode)) return { error: 'Goal mode must be distance, time, or open.' };
@@ -280,6 +281,7 @@ module.exports = {
   GROUP_RUN_STATUSES,
   MAX_ACTIVE_OWNED_GROUP_RUNS,
   MAX_ROUTE_COORDINATES,
+  RUN_TYPES,
   canExposePrivateGroupRun,
   isIanaTimezone,
   normalizeFriendIds,

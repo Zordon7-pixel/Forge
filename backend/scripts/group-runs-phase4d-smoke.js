@@ -47,6 +47,7 @@ assert.strictEqual('liveLocation' in normalized.value.routeJson, false);
 assert.ok(normalizeGroupRunInput({ ...validInput, duration_minutes: 9 }, { now }).error);
 assert.ok(normalizeGroupRunInput({ ...validInput, duration_minutes: 481 }, { now }).error);
 assert.ok(normalizeGroupRunInput({ ...validInput, participant_limit: 26 }, { now }).error);
+assert.ok(normalizeGroupRunInput({ ...validInput, run_type: 'anything-goes' }, { now }).error);
 assert.ok(normalizeGroupRunInput({ ...validInput, starts_at: '2026-07-15T11:59:00.000Z' }, { now }).error);
 assert.ok(normalizeGroupRunInput({ ...validInput, goal_mode: 'open', target_distance_miles: 4 }, { now }).error);
 const timeGoal = normalizeGroupRunInput({
