@@ -148,6 +148,8 @@ export default function PRWall() {
   const [timePRs, setTimePRs] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [timeSaveMessage, setTimeSaveMessage] = useState('')
+  const [savingTimePR, setSavingTimePR] = useState(false)
 
   const [showModal, setShowModal] = useState(false)
   const [editingTimePR, setEditingTimePR] = useState(null)
@@ -235,6 +237,9 @@ export default function PRWall() {
   }
 
   const saveTimePR = async (distance, distanceMiles) => {
+    if (savingTimePR) return
+    setError('')
+    setTimeSaveMessage('')
     try {
       const timeSeconds = hmsToSeconds(timeEditForm.time_hms)
       if (timeSeconds <= 0) {
@@ -242,6 +247,7 @@ export default function PRWall() {
         return
       }
 
+      setSavingTimePR(true)
       await api.post('/prs/manual', {
         distance_miles: distanceMiles,
         time_seconds: timeSeconds,
@@ -251,13 +257,16 @@ export default function PRWall() {
       setEditingTimePR(null)
       setTimeEditForm({ time_hms: '', date: new Date().toISOString().slice(0, 10) })
       await loadData()
+      setTimeSaveMessage(`${distance} PR saved.`)
     } catch (e) {
       setError(e?.response?.data?.error || 'Could not save time PR.')
+    } finally {
+      setSavingTimePR(false)
     }
   }
 
   return (
-    <div style={{ paddingBottom: 'calc(8rem + env(safe-area-inset-bottom))', position: 'relative' }}>
+    <div style={{ paddingBottom: 'calc(8rem + env(safe-area-inset-bottom))', position: 'relative', width: '100%', minWidth: 0, overflowX: 'hidden' }}>
       <div style={{ filter: !proLoading && !isPro ? 'blur(4px)' : 'none', pointerEvents: !proLoading && !isPro ? 'none' : 'auto' }}>
       <div className="mb-5 flex items-start justify-between gap-3">
         <div>
@@ -273,7 +282,8 @@ export default function PRWall() {
         </button>
       </div>
 
-      {error && <p className="mb-4 text-sm" style={{ color: 'var(--accent)' }}>{error}</p>}
+      {error && <p className="mb-4 text-sm" role="alert" style={{ color: 'var(--danger)' }}>{error}</p>}
+      {timeSaveMessage && <p className="mb-4 text-sm" role="status" aria-live="polite" style={{ color: 'var(--success)' }}>{timeSaveMessage}</p>}
       {loading ? (
         <LoadingRunner message="Loading records" />
       ) : (
@@ -366,17 +376,19 @@ export default function PRWall() {
                         <div className="flex gap-2">
                           <button
                             onClick={() => saveTimePR(dist.label, dist.target)}
-                            className="flex-1 rounded-lg px-2 py-1 text-xs font-bold"
+                            disabled={savingTimePR}
+                            className="min-h-11 flex-1 rounded-lg px-2 py-2 text-xs font-bold disabled:opacity-60"
                             style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', cursor: 'pointer' }}
                           >
-                            Save
+                            {savingTimePR ? 'Saving...' : 'Save'}
                           </button>
                           <button
                             onClick={() => {
                               setEditingTimePR(null)
                               setTimeEditForm({ time_hms: '', date: new Date().toISOString().slice(0, 10) })
                             }}
-                            className="flex-1 rounded-lg border px-2 py-1 text-xs"
+                            disabled={savingTimePR}
+                            className="min-h-11 flex-1 rounded-lg border px-2 py-2 text-xs disabled:opacity-60"
                             style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-muted)', background: 'none', cursor: 'pointer' }}
                           >
                             Cancel
@@ -397,7 +409,9 @@ export default function PRWall() {
                             setEditingTimePR(dist.label)
                             setTimeEditForm({ time_hms: '', date: new Date().toISOString().slice(0, 10) })
                           }}
-                          className="rounded-lg p-1.5"
+                          aria-label={`Edit ${dist.label} time PR`}
+                          title={`Edit ${dist.label} time PR`}
+                          className="grid h-11 w-11 place-items-center rounded-lg"
                           style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}
                         >
                           <Pencil size={14} />
@@ -420,9 +434,11 @@ export default function PRWall() {
                       <button
                         onClick={() => {
                           setEditingTimePR(dist.label)
-                          setTimeEditForm({ time_hms: secondsToHMS(pr.best_time_seconds), date: pr.date })
+                          setTimeEditForm({ time_hms: secondsToHMS(pr.best_time_seconds), date: pr.date || new Date().toISOString().slice(0, 10) })
                         }}
-                        className="rounded-lg p-1.5"
+                        aria-label={`Edit ${dist.label} time PR`}
+                        title={`Edit ${dist.label} time PR`}
+                        className="grid h-11 w-11 place-items-center rounded-lg"
                         style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}
                       >
                         <Pencil size={14} />
