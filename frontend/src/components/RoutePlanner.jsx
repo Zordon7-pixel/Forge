@@ -131,7 +131,7 @@ export default function RoutePlanner({ workout, onStart, title = 'Plan an elevat
         onClick={() => setExpanded((value) => !value)}
         aria-expanded={expanded}
         className="pressable w-full flex items-center justify-between py-2"
-        style={{ background: 'transparent', border: 'none', color: 'var(--text-primary)' }}
+        style={{ minHeight: 44, background: 'transparent', border: 'none', color: 'var(--text-primary)' }}
       >
         <span className="flex items-center gap-2 text-sm font-black"><RouteIcon size={18} style={{ color: 'var(--accent)' }} /> {title}</span>
         {expanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}

@@ -4,6 +4,7 @@ import { planSessionIdFromState } from '../src/lib/dailyExecutionCore.js'
 import {
   canRestoreGroupRunNavigation,
   groupRunCompatibility,
+  groupRunCountdown,
   groupRunIdFromNavigationState,
   groupRunNavigationProvenance,
   groupRunWarmupState,
@@ -58,9 +59,27 @@ assert.equal(
   'different',
   'a materially longer group run must not be presented as plan-compatible',
 )
+assert.equal(
+  groupRunCompatibility({ ...matchingGroupRun, run_type: 'intervals' }, { run: scheduledRun }).state,
+  'different',
+  'matching distance alone must not hide a different run type',
+)
+assert.equal(
+  groupRunCompatibility({ ...matchingGroupRun, target_zone: 'Zone 4' }, { run: scheduledRun }).state,
+  'different',
+  'explicitly different zones must not be presented as compatible',
+)
+assert.deepEqual(
+  groupRunCompatibility(matchingGroupRun, { run: null }),
+  { state: 'none', label: 'No scheduled run on this date' },
+  'a rest day must not be mislabeled as a successful compatibility check',
+)
+assert.equal(groupRunCountdown({ ...matchingGroupRun, status: 'cancelled' }, now), 'Cancelled')
+assert.equal(groupRunCountdown({ ...matchingGroupRun, status: 'completed' }, now), 'Completed')
 
 const selected = upcomingGroupRun([
   { ...matchingGroupRun, id: 'declined', membership: { status: 'declined' } },
+  { ...matchingGroupRun, id: 'muted', membership: { status: 'going', muted: true } },
   { ...matchingGroupRun, id: 'tomorrow', starts_at: '2026-07-16T08:00:00.000Z' },
   matchingGroupRun,
 ], now)

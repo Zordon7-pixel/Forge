@@ -3,6 +3,7 @@ import { CalendarClock, Check, ChevronLeft, ChevronRight, MapPin, Route, Users, 
 import { useTranslation } from 'react-i18next'
 import { fetchDailyExecution } from '../lib/dailyExecution'
 import { localDateTimeInput, planRunSnapshot } from '../lib/groupRuns'
+import useDialogFocus from '../lib/useDialogFocus'
 import RoutePlanner from './RoutePlanner'
 
 const fieldStyle = {
@@ -41,13 +42,14 @@ function FieldLabel({ children, htmlFor }) {
   return <label htmlFor={htmlFor} style={{ display: 'block', color: 'var(--text-muted)', fontSize: 11, fontWeight: 850, marginBottom: 6, textTransform: 'uppercase' }}>{children}</label>
 }
 
-export default function GroupRunComposer({ friends = [], busy = false, onClose, onSubmit }) {
+export default function GroupRunComposer({ friends = [], busy = false, notice = null, onClose, onSubmit }) {
   const { t } = useTranslation()
   const [step, setStep] = useState(1)
   const [form, setForm] = useState(initialForm)
   const [route, setRoute] = useState(null)
   const [planRun, setPlanRun] = useState(null)
   const [planLoading, setPlanLoading] = useState(false)
+  const dialogRef = useDialogFocus(true, onClose)
   const dateISO = form.starts_at.slice(0, 10)
 
   useEffect(() => {
@@ -126,7 +128,7 @@ export default function GroupRunComposer({ friends = [], busy = false, onClose, 
   }
 
   return (
-    <div role="dialog" aria-modal="true" aria-labelledby="group-run-create-title" style={{ position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(0,0,0,0.78)', display: 'grid', alignItems: 'end', justifyItems: 'center' }}>
+    <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="group-run-create-title" style={{ position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(0,0,0,0.78)', display: 'grid', alignItems: 'end', justifyItems: 'center' }}>
       <form onSubmit={submit} style={{ width: 'min(520px, 100%)', maxHeight: '94dvh', overflowY: 'auto', borderRadius: '8px 8px 0 0', border: '1px solid var(--border-subtle)', background: 'var(--bg-base)', padding: 18, paddingBottom: 'calc(22px + env(safe-area-inset-bottom, 0px))', boxSizing: 'border-box' }}>
         <div style={{ position: 'sticky', top: -18, zIndex: 3, margin: '-18px -18px 18px', padding: '14px 18px', background: 'var(--bg-base)', borderBottom: '1px solid var(--border-subtle)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
           <div>
@@ -135,6 +137,8 @@ export default function GroupRunComposer({ friends = [], busy = false, onClose, 
           </div>
           <button type="button" onClick={onClose} aria-label={t('groupRuns.close')} style={{ width: 44, height: 44, border: 'none', background: 'transparent', color: 'var(--text-muted)', display: 'grid', placeItems: 'center' }}><X size={21} /></button>
         </div>
+
+        {notice && <div role={notice.type === 'error' ? 'alert' : 'status'} style={{ marginBottom: 13, padding: '10px 12px', borderRadius: 8, border: `1px solid ${notice.type === 'success' ? 'color-mix(in srgb, var(--success) 45%, transparent)' : 'color-mix(in srgb, var(--danger) 45%, transparent)'}`, background: notice.type === 'success' ? 'color-mix(in srgb, var(--success) 12%, transparent)' : 'color-mix(in srgb, var(--danger) 12%, transparent)', color: notice.type === 'success' ? 'var(--success)' : 'var(--danger)', fontSize: 12, fontWeight: 800 }}>{notice.text}</div>}
 
         {step === 1 ? (
           <div>
