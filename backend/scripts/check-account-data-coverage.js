@@ -79,4 +79,14 @@ if (missingExport.length || missingDelete.length) {
   process.exit(1);
 }
 
-console.log(`Account data coverage OK: ${userOwnedTables.size} user-owned tables checked.`);
+const { runAccountDeletionAtomicitySmoke } = require('../test/accountDeletionAtomicity.smoke');
+
+runAccountDeletionAtomicitySmoke()
+  .then(() => {
+    console.log(`Account data coverage OK: ${userOwnedTables.size} user-owned tables checked.`);
+    console.log('Account deletion atomicity OK: mid-delete rollback checked.');
+  })
+  .catch((err) => {
+    console.error('Account deletion atomicity check failed:', err);
+    process.exitCode = 1;
+  });

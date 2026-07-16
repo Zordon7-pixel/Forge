@@ -441,18 +441,19 @@ router.delete('/account', auth, async (req, res) => {
       for (const [sql, params] of ACCOUNT_SOCIAL_DELETE_QUERIES) {
         await tx.run(sql, bindUserId(params, userId));
       }
-    });
 
-    for (const [sql, params] of ACCOUNT_DELETE_QUERIES) {
-      try {
-        await dbRun(sql, bindUserId(params, userId));
-      } catch (deleteErr) {
-        const table = sql.match(/^DELETE FROM\s+([a-zA-Z0-9_]+)/)?.[1] || 'unknown_table';
-        console.error(`[auth/delete-account] failed deleting ${table}:`, deleteErr.message);
+      for (const [sql, params] of ACCOUNT_DELETE_QUERIES) {
+        try {
+          await tx.run(sql, bindUserId(params, userId));
+        } catch (deleteErr) {
+          const table = sql.match(/^DELETE FROM\s+([a-zA-Z0-9_]+)/)?.[1] || 'unknown_table';
+          console.error(`[auth/delete-account] failed deleting ${table}:`, deleteErr.message);
+          throw deleteErr;
+        }
       }
-    }
 
-    await dbRun('DELETE FROM users WHERE id = ?', [userId]);
+      await tx.run('DELETE FROM users WHERE id = ?', [userId]);
+    });
     res.json({ ok: true });
   } catch (err) {
     console.error('[auth/delete-account] failed:', err.message);
