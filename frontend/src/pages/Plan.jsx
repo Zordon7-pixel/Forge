@@ -8,7 +8,6 @@ import AiGuidanceNote from '../components/AiGuidanceNote'
 import ForgedCalendar from '../components/calendar/ForgedCalendar'
 import ForgedDayView from '../components/calendar/ForgedDayView'
 import { buildCalendarModel, todayISO } from '../lib/planCalendar'
-import { trainingEvidenceKindLabel } from '../lib/trainingEvidence'
 
 const RoutePlanner = lazy(() => import('../components/RoutePlanner'))
 
@@ -26,6 +25,7 @@ export default function Plan() {
   const [updating, setUpdating] = useState(false)
   const [selectedDayISO, setSelectedDayISO] = useState(null)
   const [manageOpen, setManageOpen] = useState(false)
+  const [adaptationOpen, setAdaptationOpen] = useState(false)
   const [routePlannerStatus, setRoutePlannerStatus] = useState({ available: false, requiresPro: false })
 
   const loadAll = async () => {
@@ -64,6 +64,14 @@ export default function Plan() {
     loadAll()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  useEffect(() => {
+    if (!adaptationProposal?.id) return
+    const hasPendingChanges = adaptationProposal.status === 'proposal'
+      && (adaptationProposal.changes || []).length > 0
+      && !['kept', 'accepted'].includes(adaptationProposal.decisionStatus)
+    setAdaptationOpen(Boolean(adaptationProposal.safetyException || hasPendingChanges))
+  }, [adaptationProposal?.id])
 
   useEffect(() => {
     let active = true
@@ -232,18 +240,6 @@ export default function Plan() {
   const course = model?.goal?.course || myPlan?.plan_data?.goal?.course || null
   const planInputs = myPlan?.plan_data?.inputSummary || null
   const trainingEvidence = Array.isArray(myPlan?.plan_data?.trainingEvidence) ? myPlan.plan_data.trainingEvidence : []
-  const methodologyNote = myPlan?.plan_data?.methodologyNote || ''
-  const recentRunInput = planInputs?.recentRun || null
-  const planInputFacts = planInputs ? [
-    `${Number(planInputs.recentRunCount || 0)} recent runs`,
-    `${Number(planInputs.recentLiftCount || 0)} recent lifts`,
-    recentRunInput?.distanceMiles
-      ? `latest ${Number(recentRunInput.distanceMiles).toFixed(1)} mi on ${recentRunInput.date}${recentRunInput.paceLabel ? ` at ${recentRunInput.paceLabel}` : ''}`
-      : null,
-    planInputs.recoveryState ? `recovery ${planInputs.recoveryState}` : null,
-    planInputs.appleHealth ? `Apple Health${Number.isFinite(Number(planInputs.appleHealth.readinessScore)) ? ` readiness ${Math.round(Number(planInputs.appleHealth.readinessScore))}` : ' trends'} included` : null,
-    planInputs.checkin?.date ? 'today\'s check-in included' : null,
-  ].filter(Boolean) : []
   const courseProvenance = String(course?.provenance || '').toLowerCase()
   const courseState = course?.state || (
     ['official', 'licensed'].includes(courseProvenance)
@@ -269,8 +265,14 @@ export default function Plan() {
     && adaptationProposal?.decisionStatus !== 'accepted'
 
   const adaptationPanel = isActiveSchemaV2 ? (
-    <div className="rounded-lg p-4 space-y-3 min-w-0" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2 min-w-0">
+    <div className="rounded-lg min-w-0" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+      <button
+        type="button"
+        onClick={() => setAdaptationOpen((open) => !open)}
+        aria-expanded={adaptationOpen}
+        className="flex min-h-11 w-full items-start justify-between gap-3 p-4 text-left"
+        style={{ background: 'transparent', border: 'none', color: 'var(--text-primary)', cursor: 'pointer' }}
+      >
         <div className="min-w-0">
           <h2 className="text-base font-bold break-words" style={{ color: 'var(--text-primary)' }}>
             {adaptationProposal?.headline || 'Transparent adjustment'}
@@ -280,13 +282,13 @@ export default function Plan() {
           </p>
           {adaptationProposal?.reason && <AiGuidanceNote />}
         </div>
-        {adaptationProposal?.safetyException && (
-          <span className="text-xs font-bold rounded-full px-3 py-1 self-start" style={{ background: 'var(--danger-dim)', color: 'var(--danger)' }}>
-            Safety
-          </span>
-        )}
-      </div>
+        <span className="flex shrink-0 items-center gap-2">
+          {adaptationProposal?.safetyException && <span className="text-xs font-bold rounded-full px-3 py-1" style={{ background: 'var(--danger-dim)', color: 'var(--danger)' }}>Safety</span>}
+          {adaptationOpen ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+        </span>
+      </button>
 
+      {adaptationOpen && <div className="space-y-3 p-4 pt-0">
       <p className="text-xs break-words" style={{ color: 'var(--text-muted)' }}>
         {courseState === 'verified' || courseState === 'curated' ? (
           <>
@@ -361,6 +363,7 @@ export default function Plan() {
           )}
         </>
       )}
+      </div>}
     </div>
   ) : null
 
@@ -423,29 +426,6 @@ export default function Plan() {
                 canPrev={currentWeek > 1 && !updating}
                 canNext={currentWeek < (weekCount || currentWeek) && !updating}
               />
-
-              {planInputFacts.length > 0 && (
-                <div className="px-1" role="note">
-                  <p className="text-xs font-bold uppercase" style={{ color: 'var(--text-muted)' }}>Built from your data</p>
-                  <p className="text-sm mt-1 break-words" style={{ color: 'var(--text-primary)' }}>{planInputFacts.join(' · ')}</p>
-                </div>
-              )}
-
-              {trainingEvidence.length > 0 && (
-                <details className="rounded-lg p-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-                  <summary className="text-sm font-bold cursor-pointer" style={{ color: 'var(--text-primary)' }}>Research and coaching references</summary>
-                  {methodologyNote && <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>{methodologyNote}</p>}
-                  <ul className="mt-2 space-y-2 pl-4 text-xs" style={{ color: 'var(--text-muted)' }}>
-                    {trainingEvidence.map((source) => (
-                      <li key={source.id}>
-                        <span className="font-bold">{trainingEvidenceKindLabel(source.kind)}: </span>
-                        <a href={source.url} target="_blank" rel="noreferrer" className="font-semibold underline" style={{ color: 'var(--accent)' }}>{source.publisher}</a>
-                        {source.principle ? ` - ${source.principle}` : ''}
-                      </li>
-                    ))}
-                  </ul>
-                </details>
-              )}
 
               {adaptationPanel}
 
