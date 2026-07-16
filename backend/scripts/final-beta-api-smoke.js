@@ -351,11 +351,26 @@ async function main() {
 
   await api('POST', '/api/feedback', {
     token: alpha.token,
+    expected: 400,
+    body: { type: 'feature_request', category: 'AI Coach', page: '/synthetic-final-beta-smoke', message: 'I do not have' },
+  });
+  const createdFeedback = await api('POST', '/api/feedback', {
+    token: alpha.token,
     body: { type: 'bug', severity: 'low', page: '/synthetic-final-beta-smoke', message: `Synthetic feedback ${nonce}` },
   });
+  assert.equal(createdFeedback.data?.duplicate, false);
+  const duplicateFeedback = await api('POST', '/api/feedback', {
+    token: alpha.token,
+    body: { type: 'bug', severity: 'low', page: '/synthetic-final-beta-smoke', message: `Synthetic feedback ${nonce}` },
+  });
+  assert.equal(duplicateFeedback.data?.duplicate, true);
+  assert.equal(duplicateFeedback.data?.id, createdFeedback.data?.id);
   const feedback = await api('GET', '/api/feedback', { token: alpha.token });
-  assert.ok(feedback.data?.feedback?.some((entry) => entry.message === `Synthetic feedback ${nonce}`));
-  record('feedback create and user-scoped readback');
+  const feedbackEntry = feedback.data?.feedback?.find((entry) => entry.message === `Synthetic feedback ${nonce}`);
+  assert.ok(feedbackEntry);
+  assert.equal(feedbackEntry.status, 'new');
+  assert.equal(feedbackEntry.support_note, undefined);
+  record('feedback validation, idempotency, safe user-scoped readback');
 
   const exported = await api('GET', '/api/auth/me/export', { token: alpha.token });
   assert.equal(exported.data?.account?.email, alpha.email);

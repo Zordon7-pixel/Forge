@@ -42,7 +42,7 @@ const ACCOUNT_EXPORT_TABLES = [
   { key: 'saved_workouts', table: 'saved_workouts', orderBy: 'created_at DESC' },
   { key: 'shared_routes', table: 'shared_routes', orderBy: 'created_at DESC' },
   { key: 'route_likes', table: 'route_likes', orderBy: 'created_at DESC' },
-  { key: 'app_feedback', table: 'app_feedback', orderBy: 'created_at DESC' },
+  { key: 'app_feedback', table: 'app_feedback', columns: 'id, user_id, type, message, page, severity, category, status, created_at, updated_at', orderBy: 'created_at DESC' },
   { key: 'events', table: 'events', orderBy: 'created_at DESC' },
   { key: 'user_consents', table: 'user_consents', columns: 'id, user_id, consent_type, version, ip, created_at', orderBy: 'created_at DESC' },
   { key: 'settings', table: 'user_settings', where: "user_id = ? AND key NOT IN ('garmin_credentials')", columns: 'key, value, updated_at, created_at', orderBy: 'key ASC' },

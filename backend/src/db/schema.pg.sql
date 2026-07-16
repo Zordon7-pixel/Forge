@@ -323,6 +323,12 @@ CREATE TABLE IF NOT EXISTS app_feedback (
   page TEXT,
   severity TEXT,
   category TEXT,
+  status TEXT NOT NULL DEFAULT 'new',
+  assigned_to TEXT,
+  support_note TEXT,
+  linked_ref TEXT,
+  reviewed_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
   created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -330,9 +336,36 @@ ALTER TABLE app_feedback ADD COLUMN IF NOT EXISTS type TEXT DEFAULT 'bug';
 ALTER TABLE app_feedback ADD COLUMN IF NOT EXISTS page TEXT;
 ALTER TABLE app_feedback ADD COLUMN IF NOT EXISTS severity TEXT;
 ALTER TABLE app_feedback ADD COLUMN IF NOT EXISTS category TEXT;
+ALTER TABLE app_feedback ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'new';
+ALTER TABLE app_feedback ADD COLUMN IF NOT EXISTS assigned_to TEXT;
+ALTER TABLE app_feedback ADD COLUMN IF NOT EXISTS support_note TEXT;
+ALTER TABLE app_feedback ADD COLUMN IF NOT EXISTS linked_ref TEXT;
+ALTER TABLE app_feedback ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ;
+ALTER TABLE app_feedback ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP;
 ALTER TABLE app_feedback ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;
 
 CREATE INDEX IF NOT EXISTS idx_app_feedback_user_created ON app_feedback(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_app_feedback_status_created ON app_feedback(status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS exercise_image_requests (
+  id TEXT PRIMARY KEY,
+  canonical_key TEXT NOT NULL UNIQUE,
+  display_name TEXT NOT NULL,
+  example_text TEXT,
+  source TEXT,
+  known_exercise INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'new',
+  occurrence_count INTEGER NOT NULL DEFAULT 1,
+  assigned_to TEXT,
+  support_note TEXT,
+  linked_ref TEXT,
+  first_seen_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_seen_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_exercise_image_requests_status_seen
+  ON exercise_image_requests(status, last_seen_at DESC);
 
 CREATE TABLE IF NOT EXISTS training_plans (
   id TEXT PRIMARY KEY,

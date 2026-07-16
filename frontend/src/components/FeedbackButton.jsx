@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import api from '../lib/api'
 
 const FEATURE_CATEGORIES = ['Runs', 'Lifting', 'AI Coach', 'Profile', 'Other']
+const MIN_FEEDBACK_LENGTH = 20
 const MAX_FEEDBACK_LENGTH = 4000
 
 export default function FeedbackButton({ externalOpen, onClose }) {
@@ -29,8 +30,8 @@ export default function FeedbackButton({ externalOpen, onClose }) {
       ? { type: 'bug', message: description.trim(), severity, page: window.location.pathname }
       : { type: 'feature_request', message: featureText.trim(), category: featureCategory, page: window.location.pathname }
 
-    if (!payload.message) {
-      setStatus("Couldn't send — try again")
+    if (payload.message.length < MIN_FEEDBACK_LENGTH) {
+      setStatus(`Please add a little more detail (${MIN_FEEDBACK_LENGTH} characters minimum).`)
       return
     }
 
@@ -46,8 +47,8 @@ export default function FeedbackButton({ externalOpen, onClose }) {
         setFeatureCategory('Runs')
         handleClose()
       }, 1500)
-    } catch {
-      setStatus("Couldn't send — try again")
+    } catch (error) {
+      setStatus(error.response?.data?.error || "Couldn't send — try again")
     } finally {
       setLoading(false)
     }
@@ -74,7 +75,8 @@ export default function FeedbackButton({ externalOpen, onClose }) {
 
         {tab === 'bug' ? (
           <>
-            <textarea rows={4} value={description} onChange={e => setDescription(e.target.value)} maxLength={MAX_FEEDBACK_LENGTH} className="mb-3 w-full rounded-lg border px-3 py-2 text-sm" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }} placeholder="Describe the issue" required />
+            <textarea rows={4} value={description} onChange={e => setDescription(e.target.value)} minLength={MIN_FEEDBACK_LENGTH} maxLength={MAX_FEEDBACK_LENGTH} className="mb-1 w-full rounded-lg border px-3 py-2 text-sm" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }} placeholder="Describe what happened, what you expected, and what screen you were on" required />
+            <p className="mb-3 text-right text-[11px]" style={{ color: 'var(--text-muted)' }}>{description.length}/{MAX_FEEDBACK_LENGTH}</p>
             <select value={severity} onChange={e => setSeverity(e.target.value)} className="mb-3 w-full rounded-lg border px-3 py-2 text-sm" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }}>
               <option value="low">Low severity</option>
               <option value="medium">Medium severity</option>
@@ -83,7 +85,8 @@ export default function FeedbackButton({ externalOpen, onClose }) {
           </>
         ) : (
           <>
-            <textarea rows={4} value={featureText} onChange={e => setFeatureText(e.target.value)} maxLength={MAX_FEEDBACK_LENGTH} className="mb-3 w-full rounded-lg border px-3 py-2 text-sm" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }} placeholder="What would you like to see?" required />
+            <textarea rows={4} value={featureText} onChange={e => setFeatureText(e.target.value)} minLength={MIN_FEEDBACK_LENGTH} maxLength={MAX_FEEDBACK_LENGTH} className="mb-1 w-full rounded-lg border px-3 py-2 text-sm" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }} placeholder="What would you like to do, and where would you expect to find it?" required />
+            <p className="mb-3 text-right text-[11px]" style={{ color: 'var(--text-muted)' }}>{featureText.length}/{MAX_FEEDBACK_LENGTH}</p>
             <select value={featureCategory} onChange={e => setFeatureCategory(e.target.value)} className="mb-3 w-full rounded-lg border px-3 py-2 text-sm" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }}>
               {FEATURE_CATEGORIES.map(cat => <option key={cat} value={cat}>{cat}</option>)}
             </select>
