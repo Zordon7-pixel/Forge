@@ -118,4 +118,3 @@ export default function WhatsNewSheet({ release, onSnooze, onAcknowledge, onView
     </div>
   )
 }
-

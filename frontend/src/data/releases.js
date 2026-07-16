@@ -51,4 +51,3 @@ export function eligibleReleases(runtime = {}) {
 export function newestEligibleRelease(runtime = {}) {
   return eligibleReleases(runtime).at(-1) || null
 }
-

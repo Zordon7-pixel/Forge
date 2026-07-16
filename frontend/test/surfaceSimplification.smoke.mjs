@@ -14,6 +14,7 @@ check(!planSource.includes('Built from your data'), 'Train omits the redundant d
 check(!planSource.includes('Research and coaching references'), 'Train omits the page-level research disclosure')
 check(planSource.includes('aria-expanded={adaptationOpen}'), 'calendar adaptation is a disclosure')
 check(planSource.includes("setAdaptationOpen(Boolean(adaptationProposal.safetyException || hasPendingChanges))"), 'pending or safety adaptations open automatically')
+check(planSource.includes('}, [adaptationProposal])'), 'adaptation disclosure re-evaluates when safety state changes on the same proposal')
 
 check(!bodySource.includes("api.get('/health/sync')"), 'Body does not fetch the raw health metric strip')
 check(!bodySource.includes('How your plan uses this data'), 'Body omits the repeated plan explanation')

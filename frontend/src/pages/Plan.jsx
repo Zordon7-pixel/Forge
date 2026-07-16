@@ -71,7 +71,7 @@ export default function Plan() {
       && (adaptationProposal.changes || []).length > 0
       && !['kept', 'accepted'].includes(adaptationProposal.decisionStatus)
     setAdaptationOpen(Boolean(adaptationProposal.safetyException || hasPendingChanges))
-  }, [adaptationProposal?.id])
+  }, [adaptationProposal])
 
   useEffect(() => {
     let active = true
@@ -239,7 +239,6 @@ export default function Plan() {
 
   const course = model?.goal?.course || myPlan?.plan_data?.goal?.course || null
   const planInputs = myPlan?.plan_data?.inputSummary || null
-  const trainingEvidence = Array.isArray(myPlan?.plan_data?.trainingEvidence) ? myPlan.plan_data.trainingEvidence : []
   const courseProvenance = String(course?.provenance || '').toLowerCase()
   const courseState = course?.state || (
     ['official', 'licensed'].includes(courseProvenance)

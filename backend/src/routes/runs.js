@@ -765,8 +765,16 @@ router.post('/', auth, async (req, res) => {
     const resolvedElevationGain = optionalBoundedNumber(elevation_gain, 100000);
     const resolvedElevationLoss = optionalBoundedNumber(elevation_loss, 100000);
     const normalizedRouteCoords = normalizeRouteCoords(route_coords);
-    const resolvedPlanSessionId = normalizePlanSessionId(plan_session_id);
-    const resolvedPlannedSession = normalizePlannedSession(planned_session, resolvedPlanSessionId);
+    let resolvedPlanSessionId = normalizePlanSessionId(plan_session_id);
+    let resolvedPlannedSession = normalizePlannedSession(planned_session, resolvedPlanSessionId);
+    if (!hasMeaningfulPlannedRun(resolvedPlannedSession)
+      && isRunActivity({ type, watch_activity_type, watch_normalized_type })) {
+      const scheduledRun = await findPlannedRunForDate(req.user.id, String(date).slice(0, 10));
+      if (scheduledRun) {
+        resolvedPlannedSession = scheduledRun;
+        resolvedPlanSessionId = scheduledRun.sessionId || resolvedPlanSessionId;
+      }
+    }
     let prescribedTargetZone = typeof target_zone === 'string' && target_zone.length <= 20 ? target_zone.trim() || null : null;
     if (!prescribedTargetZone) {
       try {

@@ -70,4 +70,3 @@ export async function acknowledgeRelease(userId, seenSequence) {
 export function releasePromptSessionKey(userId, sequence) {
   return `forge_whats_new_prompted:${String(userId || '').trim()}:${normalizeSeenSequence(sequence)}`
 }
-

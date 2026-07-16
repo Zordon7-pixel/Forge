@@ -51,6 +51,8 @@ findPlannedRunForDate('user-1', '2026-07-14', {
   check(importSource.includes("item.section === 'run' ? await findPlannedRunForDate"), 'walks and non-run imports cannot claim a run prescription')
   check(/UPDATE runs SET[\s\S]*WHERE id=\? AND user_id=\?/.test(importSource), 'import enrichment update remains owner scoped')
   check(runsSource.includes('!hasMeaningfulPlannedRun(run.planned_session_json)'), 'run detail preserves an existing immutable snapshot')
+  check(runsSource.includes('resolvedPlannedSession = scheduledRun'), 'manual run save freezes an exact-date scheduled target before insert')
+  check(runsSource.includes('isRunActivity({ type, watch_activity_type, watch_normalized_type })'), 'manual non-run activities cannot claim a run prescription')
 
   console.log(`PASSED: ${passed}  FAILED: 0`);
   console.log('PLANNED RUN MATCH SMOKE OK');
