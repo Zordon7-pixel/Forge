@@ -27,6 +27,8 @@ check(source.includes("category='time_pr'"), 'time reads include manual records'
 check(source.includes('manual_record_id'), 'time response marks its manual override');
 check(/UPDATE personal_records[\s\S]*WHERE id=\? AND user_id=\?/.test(source), 'manual update remains owner scoped');
 check(source.includes('Math.abs(item.target - miles) <= 0.002'), 'distance boundary is deterministic');
+check(source.includes('ORDER BY achieved_at DESC, id DESC'), 'manual override lookup uses columns present in production');
+check(!source.includes('ORDER BY achieved_at DESC, created_at DESC'), 'manual override lookup does not require a nonexistent created_at column');
 
 console.log(`PASSED: ${passed}  FAILED: 0`);
 console.log('PR TIME OVERRIDE SMOKE OK');

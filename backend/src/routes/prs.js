@@ -123,7 +123,7 @@ router.get('/time', auth, async (req, res) => {
       `SELECT id, label, value, achieved_at
        FROM personal_records
        WHERE user_id=? AND category='time_pr'
-       ORDER BY achieved_at DESC, created_at DESC`,
+       ORDER BY achieved_at DESC, id DESC`,
       [req.user.id]
     );
     const results = await Promise.all(STANDARD_TIME_PRS.map(async dist => {
