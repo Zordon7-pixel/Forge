@@ -2,6 +2,24 @@ const { dbGet, dbRun } = require('../db');
 const { v4: uuidv4 } = require('uuid');
 
 const LOCAL_FORM_IMAGE_MATCHERS = [
+  (name) => name.includes('90/90 breathing'),
+  (name) => name.includes('90/90 hip switch'),
+  (name) => name.includes('low box jump'),
+  (name) => name.includes('box jump'),
+  (name) => name.includes('a-skip') || name.includes('a skip'),
+  (name) => name.includes('a-march') || name.includes('a march'),
+  (name) => name.includes('pogo hop') || name.includes('pogo jump'),
+  (name) => name.includes('dead bug'),
+  (name) => name.includes('pallof press'),
+  (name) => name.includes('seated calf raise'),
+  (name) => (name.includes('standing calf raise') || name.includes('single-leg calf raise') || name.includes('single leg calf raise')),
+  (name) => name.includes('kettlebell swing'),
+  (name) => name.includes('band pull-apart') || name.includes('band pull apart'),
+  (name) => name.includes('shoulder circle'),
+  (name) => name.includes('foam roll'),
+  (name) => name.includes('barbell bench press'),
+  (name) => name.includes('chest-supported row') || name.includes('chest supported row'),
+  (name) => name.includes('incline dumbbell press'),
   (name) => name.includes('dumbbell bench press'),
   (name) => name.includes('squat') || name.includes('leg press'),
   (name) => name.includes('deadlift') || name.includes('romanian deadlift'),
@@ -50,6 +68,7 @@ const CANONICAL_MOVEMENTS = [
   { match: /world'?s greatest/, name: "World's Greatest Stretch" },
   { match: /\ba[- ]?skips?\b/, name: 'A-Skips' },
   { match: /\ba[- ]?march(?:es|ing)?\b/, name: 'A-March' },
+  { match: /high[- ]knee march(?: into skip)?/, name: 'A-March' },
   { match: /\bpogo (?:hop|jump|snap)/, name: 'Pogo Hops' },
   { match: /90\/90.*breath/, name: '90/90 Breathing' },
   { match: /90\/90.*(?:hip|switch)/, name: '90/90 Hip Switch' },
@@ -83,6 +102,7 @@ function isNonVisualGuidance(name) {
   if (/^(?:(?:test|placeholder|example|sample|dummy)(?: exercise| movement| move| workout| item)?|arms?|core accessory|stability finisher|core hold|dynamic mobility|light stretch|warm[- ]?up|cool[- ]?down)$/.test(lower)) return true;
   if (/\b(hydrate|refuel|recovery meal|recovery snack|carbs?|protein|next run)\b/.test(lower)) return true;
   if (/\b(strides?|sprints?|intervals?|fast finish|speed endurance|race pace|running form|accelerations?|fast efforts?|fast reps?|hill repeats?)\b/.test(lower)) return true;
+  if (/^(?:speed maintenance|short speed repeats?|fast (?:but controlled|relaxed running mechanics focus|controlled (?:reps?|effort))|(?:at )?strong mile\/5k effort)$/.test(lower)) return true;
   const generalMovement = /\b(walk|walking|jog|jogging|bike|biking|cycle|cycling|spin|row|rowing|movement)\b/;
   const guidance = /\b(easy|light|brisk|downshift|raise temperature|nasal breathing|cool ?down|warm ?up)\b/;
   return generalMovement.test(lower) && guidance.test(lower);
@@ -96,14 +116,15 @@ function canonicalizeExerciseName(name) {
   if (mapped) return mapped.name;
 
   const withoutLeadingDose = normalized
-    .replace(/^\d+\s*x\s*\d+(?:\s*[-/]\s*\d+)?\s*/i, '')
+    .replace(/^\d+\s*x\s*\d+(?:\s*[-/]\s*\d+)?\s*(?:(?:kilometers?|kilometres?|meters?|metres?|miles?|km|mi|m)(?=\s|$))?\s*/i, '')
     .replace(/^\d+(?:\.\d+)?\s*(?:min(?:ute)?s?|sec(?:ond)?s?)\s*/i, '');
   const withoutTrailingDose = withoutLeadingDose
     .replace(/\s+(?:x|for)\s+\d+(?:\.\d+)?(?:\s*x\s*\d+(?:\.\d+)?)?.*$/i, '')
     .replace(/\s+\d+(?:\.\d+)?\s*(?:reps?|meters?|metres?|m|seconds?|secs?|s|minutes?|mins?)(?:\s*\/\s*side)?.*$/i, '')
     .replace(/\s*[-:]\s*\d+(?:\.\d+)?.*$/i, '')
     .trim();
-  return withoutTrailingDose.slice(0, 100) || null;
+  if (!withoutTrailingDose || isNonVisualGuidance(withoutTrailingDose)) return null;
+  return withoutTrailingDose.slice(0, 100);
 }
 
 function canonicalKey(name) {

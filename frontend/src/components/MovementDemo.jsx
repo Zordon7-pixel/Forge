@@ -3,6 +3,115 @@ const BODY = '#d1d5db'
 const MUTED = '#6b7280'
 const PANEL = 'rgba(234,179,8,0.08)'
 const PHOTO_DEMOS = [
+  // Paired sources are female-left/male-right and cropped to the profile sex.
+  {
+    match: (lower) => lower.includes('90/90 breathing'),
+    src: '/exercises/90-90-breathing.jpg',
+    cropToSex: true,
+    maleSide: 'right',
+  },
+  {
+    match: (lower) => lower.includes('90/90 hip switch'),
+    src: '/exercises/90-90-hip-switch.jpg',
+    cropToSex: true,
+    maleSide: 'right',
+  },
+  {
+    match: (lower) => lower.includes('low box jump'),
+    src: '/exercises/low-box-jump.jpg',
+    cropToSex: true,
+    maleSide: 'right',
+  },
+  {
+    match: (lower) => lower.includes('box jump'),
+    src: '/exercises/box-jump.jpg',
+    cropToSex: true,
+    maleSide: 'right',
+  },
+  {
+    match: (lower) => lower.includes('a-skip') || lower.includes('a skip'),
+    src: '/exercises/a-skips.jpg',
+    cropToSex: true,
+    maleSide: 'right',
+  },
+  {
+    match: (lower) => lower.includes('a-march') || lower.includes('a march'),
+    src: '/exercises/a-march.jpg',
+    cropToSex: true,
+    maleSide: 'right',
+  },
+  {
+    match: (lower) => lower.includes('pogo hop') || lower.includes('pogo jump'),
+    src: '/exercises/pogo-hops.jpg',
+    cropToSex: true,
+    maleSide: 'right',
+  },
+  {
+    match: (lower) => lower.includes('dead bug'),
+    src: '/exercises/dead-bug.jpg',
+    cropToSex: true,
+    maleSide: 'right',
+  },
+  {
+    match: (lower) => lower.includes('pallof press'),
+    src: '/exercises/pallof-press.jpg',
+    cropToSex: true,
+    maleSide: 'right',
+  },
+  {
+    match: (lower) => lower.includes('seated calf raise'),
+    src: '/exercises/seated-calf-raise.jpg',
+    cropToSex: true,
+    maleSide: 'right',
+  },
+  {
+    match: (lower) => lower.includes('standing calf raise') || lower.includes('single-leg calf raise') || lower.includes('single leg calf raise'),
+    src: '/exercises/standing-calf-raise.jpg',
+    cropToSex: true,
+    maleSide: 'right',
+  },
+  {
+    match: (lower) => lower.includes('kettlebell swing'),
+    src: '/exercises/kettlebell-swing.jpg',
+    cropToSex: true,
+    maleSide: 'right',
+  },
+  {
+    match: (lower) => lower.includes('band pull-apart') || lower.includes('band pull apart'),
+    src: '/exercises/band-pull-apart.jpg',
+    cropToSex: true,
+    maleSide: 'right',
+  },
+  {
+    match: (lower) => lower.includes('shoulder circle'),
+    src: '/exercises/shoulder-circles.jpg',
+    cropToSex: true,
+    maleSide: 'right',
+  },
+  {
+    match: (lower) => lower.includes('foam roll'),
+    src: '/exercises/foam-rolling.jpg',
+    cropToSex: true,
+    maleSide: 'right',
+  },
+  {
+    match: (lower) => lower.includes('barbell bench press'),
+    src: '/exercises/barbell-bench-press.jpg',
+    cropToSex: true,
+    maleSide: 'right',
+  },
+  {
+    match: (lower) => lower.includes('chest-supported row') || lower.includes('chest supported row'),
+    src: '/exercises/chest-supported-row.jpg',
+    cropToSex: true,
+    maleSide: 'right',
+  },
+  {
+    match: (lower) => lower.includes('incline dumbbell press'),
+    src: '/exercises/incline-dumbbell-press.jpg',
+    cropToSex: true,
+    maleSide: 'right',
+  },
   {
     match: (lower) => lower.includes('dumbbell bench press') || (lower.includes('bench') && lower.includes('press')),
     male: '/exercises/dumbbell-bench-press-male.png',

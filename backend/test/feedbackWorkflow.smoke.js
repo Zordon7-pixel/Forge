@@ -31,8 +31,19 @@ assert.equal(images.canonicalizeExerciseName('QA Full Update'), null);
 assert.equal(images.canonicalizeExerciseName('Test Exercise'), null);
 assert.equal(images.canonicalizeExerciseName('Placeholder move'), null);
 assert.equal(images.canonicalizeExerciseName('Core Accessory'), null);
+assert.equal(images.canonicalizeExerciseName('Dynamic mobility x 5 min'), null);
+assert.equal(images.canonicalizeExerciseName('Light stretch 5 min'), null);
+assert.equal(images.canonicalizeExerciseName('6 x 200m fast but controlled'), null);
+assert.equal(images.canonicalizeExerciseName('4 x 400m at strong mile/5K effort'), null);
+assert.equal(images.canonicalizeExerciseName('Speed maintenance'), null);
+assert.equal(images.canonicalizeExerciseName('Fast relaxed running mechanics focus'), null);
+assert.equal(images.canonicalizeExerciseName('Short speed repeats'), null);
+assert.equal(images.canonicalizeExerciseName('2 x 20m high-knee march into skip'), 'A-March');
 assert.equal(images.canonicalizeExerciseName('A-skips x 2 x 20 meters'), 'A-Skips');
 assert.equal(images.canonicalizeExerciseName('2 x 20m A-skip with tall posture'), 'A-Skips');
+assert.equal(images.canonicalizeExerciseName('4 x 8 Mountain Climbers'), 'Mountain Climbers');
+assert.equal(images.canonicalizeExerciseName('3 x 8 Mini-band walks'), 'Mini-band walks');
+assert.equal(images.canonicalizeExerciseName('3 x 5 Muscle-ups'), 'Muscle-ups');
 assert.equal(images.canonicalizeExerciseName('Dead Bug with Reach'), 'Dead Bug');
 assert.equal(images.canonicalizeExerciseName('Pallof Press March'), 'Pallof Press');
 assert.equal(images.canonicalizeExerciseName('Single-Leg Calf Raise'), 'Standing Calf Raise');
@@ -44,7 +55,35 @@ assert.equal(images.canonicalizeExerciseName('Band pull-aparts x 20'), 'Band Pul
 assert.equal(images.canonicalKey("World's Greatest Stretch"), 'worlds-greatest-stretch');
 assert.equal(images.hasLocalFormImage(images.canonicalizeExerciseName("World’s greatest stretch x 4/side")), true);
 assert.equal(images.hasLocalFormImage(images.canonicalizeExerciseName('Dynamic leg swings x 8/side')), true);
-assert.equal(images.hasLocalFormImage('Pallof Press'), false);
+
+const newFormAssets = [
+  ['A-Skips', 'a-skips.jpg'],
+  ['Standing Calf Raise', 'standing-calf-raise.jpg'],
+  ['Pogo Hops', 'pogo-hops.jpg'],
+  ['Dead Bug', 'dead-bug.jpg'],
+  ['Pallof Press', 'pallof-press.jpg'],
+  ['Box Jump', 'box-jump.jpg'],
+  ['Low Box Jump', 'low-box-jump.jpg'],
+  ['90/90 Breathing', '90-90-breathing.jpg'],
+  ['90/90 Hip Switch', '90-90-hip-switch.jpg'],
+  ['Kettlebell Swing', 'kettlebell-swing.jpg'],
+  ['Band Pull-Apart', 'band-pull-apart.jpg'],
+  ['Shoulder Circles', 'shoulder-circles.jpg'],
+  ['A-March', 'a-march.jpg'],
+  ['Foam Rolling', 'foam-rolling.jpg'],
+  ['Barbell Bench Press', 'barbell-bench-press.jpg'],
+  ['Chest-Supported Row', 'chest-supported-row.jpg'],
+  ['Incline Dumbbell Press', 'incline-dumbbell-press.jpg'],
+  ['Seated Calf Raise', 'seated-calf-raise.jpg'],
+];
+for (const [movement, filename] of newFormAssets) {
+  assert.equal(images.hasLocalFormImage(movement), true, `${movement} must resolve to a local form image`);
+  assert.equal(
+    fs.existsSync(path.join(__dirname, '../../frontend/public/exercises', filename)),
+    true,
+    `${filename} must exist`
+  );
+}
 
 const root = path.join(__dirname, '..');
 const feedbackRoute = fs.readFileSync(path.join(root, 'src/routes/feedback.js'), 'utf8');
