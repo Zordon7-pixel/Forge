@@ -73,8 +73,8 @@ saveActiveRunSession({
   phase: 'running',
   startedAt: now - 10_000,
   routeCoords: [[38.91, -76.95, 20, now - 5000]],
-}, sessionStorage, now)
-const restored = loadActiveRunSession(sessionStorage, now + 1000)
+}, 'phase-0-user', sessionStorage, now)
+const restored = loadActiveRunSession('phase-0-user', sessionStorage, now + 1000)
 check(restored?.routeCoords?.[0]?.[3] === now - 5000, 'GPS sample timestamp survives session persistence')
 
 console.log('\n== client ordering ==')

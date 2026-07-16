@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { ChevronRight, Settings as SettingsIcon, User, Dumbbell, HeartPulse, Activity } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import api from '../lib/api'
-import { clearToken } from '../lib/tokenStore'
+import { logout as clearAuth } from '../lib/auth'
 
 const personalityOptions = [
   { key: 'mentor', label: 'Mentor', description: 'Guidance and wisdom, no pressure' },
@@ -120,7 +120,7 @@ export default function Profile() {
   }
 
   const logout = () => {
-    clearToken()
+    clearAuth()
     navigate('/login')
   }
 

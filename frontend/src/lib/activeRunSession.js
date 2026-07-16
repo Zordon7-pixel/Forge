@@ -9,6 +9,12 @@ function storageOrNull(storage) {
   return window.localStorage
 }
 
+function normalizeOwnerUserId(value) {
+  if (value === null || value === undefined) return null
+  const normalized = String(value).trim()
+  return normalized ? normalized.slice(0, 160) : null
+}
+
 function finiteNumber(value, fallback = 0) {
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : fallback
@@ -40,13 +46,26 @@ export function clearActiveRunSession(storage) {
   }
 }
 
-export function loadActiveRunSession(storage, now = Date.now()) {
+export function loadActiveRunSession(ownerUserId, storage, now = Date.now()) {
   const target = storageOrNull(storage)
   if (!target) return null
 
   try {
+    const expectedOwnerUserId = normalizeOwnerUserId(ownerUserId)
+    if (!expectedOwnerUserId) {
+      target.removeItem(ACTIVE_RUN_SESSION_KEY)
+      return null
+    }
+
     const parsed = JSON.parse(target.getItem(ACTIVE_RUN_SESSION_KEY) || 'null')
-    if (!parsed || !['running', 'awaiting_distance'].includes(parsed.phase)) return null
+    if (!parsed || normalizeOwnerUserId(parsed.ownerUserId) !== expectedOwnerUserId) {
+      target.removeItem(ACTIVE_RUN_SESSION_KEY)
+      return null
+    }
+    if (!['running', 'awaiting_distance'].includes(parsed.phase)) {
+      target.removeItem(ACTIVE_RUN_SESSION_KEY)
+      return null
+    }
 
     const startedAt = finiteNumber(parsed.startedAt, 0)
     const savedAt = finiteNumber(parsed.savedAt, startedAt)
@@ -56,6 +75,7 @@ export function loadActiveRunSession(storage, now = Date.now()) {
     }
 
     return {
+      ownerUserId: expectedOwnerUserId,
       phase: parsed.phase,
       startedAt,
       savedAt,
@@ -92,13 +112,21 @@ export function elapsedFromSession(session, now = Date.now()) {
   return Math.max(Number(session.elapsed || 0), Math.round((now - session.startedAt) / 1000))
 }
 
-export function saveActiveRunSession(session, storage, now = Date.now()) {
+export function saveActiveRunSession(session, ownerUserId, storage, now = Date.now()) {
   const target = storageOrNull(storage)
-  if (!target || !session || !['running', 'awaiting_distance'].includes(session.phase)) return
+  if (!target) return
 
   try {
+    const normalizedOwnerUserId = normalizeOwnerUserId(ownerUserId)
+    if (!normalizedOwnerUserId) {
+      target.removeItem(ACTIVE_RUN_SESSION_KEY)
+      return
+    }
+    if (!session || !['running', 'awaiting_distance'].includes(session.phase)) return
+
     target.setItem(ACTIVE_RUN_SESSION_KEY, JSON.stringify({
       ...session,
+      ownerUserId: normalizedOwnerUserId,
       savedAt: now,
       routeCoords: normalizeRouteCoords(session.routeCoords),
     }))

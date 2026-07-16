@@ -114,6 +114,8 @@ assert(rs.prescription && rs.prescription.zone === 'Z2', 'runRouteState prescrip
 assert(runRouteState(r) === null && runRouteState(n) === null, 'no executable run → null route state');
 assert(planSessionIdFromState({ planSessionId: 42 }) === '42', 'planSessionIdFromState stringifies planSessionId');
 assert(planSessionIdFromState({ scheduledRun: { id: 'run-7' } }) === 'run-7', 'planSessionIdFromState falls back to scheduledRun.id');
+assert(planSessionIdFromState({ planSessionId: null, scheduledRun: { id: 'group-run-7' } }) === null, 'an explicit null plan id never falls back to a synthetic scheduled-run id');
+assert(planSessionIdFromState({ source: 'group_run', planSessionId: 'bad-plan-id', scheduledRun: { id: 'group-run-7' } }) === null, 'group-run provenance can never resolve to plan progress');
 assert(planSessionIdFromState(null) === null && planSessionIdFromState({}) === null, 'planSessionIdFromState null-safe');
 assert(currentWeekFromState({ currentWeek: '4' }) === 4, 'currentWeekFromState coerces finite numbers');
 assert(currentWeekFromState({ currentWeek: 'nope' }) === null && currentWeekFromState(null) === null, 'currentWeekFromState rejects non-finite / null');

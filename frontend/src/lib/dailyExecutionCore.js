@@ -177,7 +177,12 @@ export function runRouteState(execution) {
 // null.
 export function planSessionIdFromState(state) {
   if (!state || typeof state !== 'object') return null;
-  const id = state.planSessionId || (state.scheduledRun && state.scheduledRun.id) || null;
+  if (state.source === 'group_run') return null;
+  if (Object.prototype.hasOwnProperty.call(state, 'planSessionId')) {
+    const explicitId = state.planSessionId;
+    return explicitId !== null && explicitId !== undefined && explicitId !== '' ? String(explicitId) : null;
+  }
+  const id = (state.scheduledRun && state.scheduledRun.id) || null;
   return id != null ? String(id) : null;
 }
 

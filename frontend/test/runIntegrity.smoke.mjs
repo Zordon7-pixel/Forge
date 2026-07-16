@@ -11,6 +11,8 @@ import {
   loadActiveRunSession,
   saveActiveRunSession,
 } from '../src/lib/activeRunSession.js'
+import { getAuthenticatedUserId } from '../src/lib/auth.js'
+import { clearToken, setToken } from '../src/lib/tokenStore.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const root = resolve(__dirname, '../..')
@@ -33,6 +35,7 @@ class MemoryStorage {
 console.log('\n== active-run recovery ==')
 const storage = new MemoryStorage()
 const now = Date.parse('2026-07-14T12:30:00Z')
+const ownerUserId = 'user-owner-a'
 saveActiveRunSession({
   phase: 'running',
   startedAt: now - 31_000,
@@ -45,17 +48,64 @@ saveActiveRunSession({
   lastFixAt: now - 1_000,
   clientRunId: 'run-client-id',
   navigationState: { plannedRoute: { coordinates: [[38.9, -76.95], [38.91, -76.96]] } },
-}, storage, now)
-const restored = loadActiveRunSession(storage, now + 4_000)
+}, ownerUserId, storage, now)
+const restored = loadActiveRunSession(ownerUserId, storage, now + 4_000)
 check(restored?.routeCoords.length === 2 && restored?.distanceMiles === 0.11, 'route and distance survive a reload')
 check(restored?.lastFixAt === now - 1_000, 'the last GPS fix timestamp survives a reload')
 check(elapsedFromSession(restored, now + 4_000) === 35, 'elapsed time is rebuilt from the persisted start timestamp')
 check(restored?.navigationState?.plannedRoute?.coordinates?.length === 2, 'planned route survives a reload')
+check(restored?.ownerUserId === ownerUserId, 'restored session remains bound to its authenticated owner')
 clearActiveRunSession(storage)
 check(storage.getItem(ACTIVE_RUN_SESSION_KEY) === null, 'saved session is removed after a durable run save')
 
-saveActiveRunSession({ phase: 'running', startedAt: now - 90_000_000, elapsed: 1 }, storage, now - 90_000_000)
-check(loadActiveRunSession(storage, now) === null, 'stale sessions do not resurrect old runs')
+saveActiveRunSession({ phase: 'running', startedAt: now - 90_000_000, elapsed: 1 }, ownerUserId, storage, now - 90_000_000)
+check(loadActiveRunSession(ownerUserId, storage, now) === null, 'stale sessions do not resurrect old runs')
+
+saveActiveRunSession({
+  phase: 'running',
+  startedAt: now - 10_000,
+  navigationState: { plannedRoute: { coordinates: [[38.9, -76.95], [38.91, -76.96]] } },
+}, ownerUserId, storage, now)
+check(loadActiveRunSession('user-owner-b', storage, now + 1000) === null, 'another authenticated user cannot restore a private active-run session')
+check(storage.getItem(ACTIVE_RUN_SESSION_KEY) === null, 'owner mismatch clears the private persisted session')
+
+storage.setItem(ACTIVE_RUN_SESSION_KEY, JSON.stringify({
+  phase: 'running',
+  startedAt: now - 10_000,
+  savedAt: now,
+  navigationState: { plannedRoute: { coordinates: [[38.9, -76.95], [38.91, -76.96]] } },
+}))
+check(loadActiveRunSession(ownerUserId, storage, now + 1000) === null, 'legacy ownerless sessions cannot be restored')
+check(storage.getItem(ACTIVE_RUN_SESSION_KEY) === null, 'ownerless private session is removed')
+
+saveActiveRunSession({ phase: 'running', startedAt: now - 10_000 }, null, storage, now)
+check(storage.getItem(ACTIVE_RUN_SESSION_KEY) === null, 'a session cannot be persisted without an authenticated owner')
+
+const browserStorage = new MemoryStorage()
+const originalWindow = globalThis.window
+const originalLocalStorage = globalThis.localStorage
+globalThis.window = { localStorage: browserStorage }
+globalThis.localStorage = browserStorage
+const authPayload = Buffer.from(JSON.stringify({ id: ownerUserId, exp: Math.floor(now / 1000) + 3600 })).toString('base64url')
+const ownerToken = `header.${authPayload}.signature`
+browserStorage.setItem('forge_token', ownerToken)
+check(getAuthenticatedUserId(now) === ownerUserId, 'active-run ownership comes from the current unexpired auth token')
+saveActiveRunSession({ phase: 'running', startedAt: now - 10_000 }, ownerUserId, browserStorage, now)
+setToken(ownerToken)
+check(browserStorage.getItem(ACTIVE_RUN_SESSION_KEY) !== null, 'writing the identical token preserves its active-run session')
+const replacementPayload = Buffer.from(JSON.stringify({ id: 'user-owner-b', exp: Math.floor(now / 1000) + 3600 })).toString('base64url')
+const replacementToken = `header.${replacementPayload}.signature`
+setToken(replacementToken)
+check(browserStorage.getItem('forge_token') === replacementToken, 'a different auth token replaces the previous token')
+check(browserStorage.getItem(ACTIVE_RUN_SESSION_KEY) === null, 'replacing a different token clears the previous account active-run session')
+saveActiveRunSession({ phase: 'running', startedAt: now - 10_000 }, 'user-owner-b', browserStorage, now)
+clearToken()
+check(browserStorage.getItem('forge_token') === null, 'auth clear removes the token')
+check(browserStorage.getItem(ACTIVE_RUN_SESSION_KEY) === null, 'auth clear also removes the active-run session')
+if (originalWindow === undefined) delete globalThis.window
+else globalThis.window = originalWindow
+if (originalLocalStorage === undefined) delete globalThis.localStorage
+else globalThis.localStorage = originalLocalStorage
 
 console.log('\n== UI wiring ==')
 const layout = read('frontend/src/components/Layout.jsx')

@@ -12,6 +12,14 @@ import { calculateElevationStats } from '../utils/elevation'
 import { clearActiveRunSession, elapsedFromSession, loadActiveRunSession, saveActiveRunSession } from '../lib/activeRunSession'
 import { loadPostRunCheckInDraft, savePostRunCheckInDraft } from '../lib/postRunCheckInDraft'
 import { buildPlannedSessionSnapshot } from '../lib/runProvenance'
+import { getAuthenticatedUserId } from '../lib/auth'
+import {
+  canRestoreGroupRunNavigation,
+  groupRunIdFromNavigationState,
+  groupRunNavigationProvenance,
+  groupRunWarmupState,
+  isGroupRunNavigationState,
+} from '../lib/groupRuns'
 
 const BackgroundGeolocation = registerPlugin('BackgroundGeolocation')
 
@@ -142,9 +150,40 @@ export default function ActiveRun() {
   const location = useLocation()
   const navigate = useNavigate()
   const { fmt, units } = useUnits()
-  const [restoredSession] = useState(() => loadActiveRunSession())
+  const [activeRunOwnerId] = useState(() => getAuthenticatedUserId())
+  const [restoreContext] = useState(() => {
+    const session = loadActiveRunSession(activeRunOwnerId)
+    const locationState = location?.state && typeof location.state === 'object' && !Array.isArray(location.state)
+      ? location.state
+      : {}
+    const incomingState = session?.navigationState || locationState
+    const isGroupRunNavigation = isGroupRunNavigationState(incomingState)
+    const groupRunId = groupRunIdFromNavigationState(incomingState)
+    const groupRunProvenance = isGroupRunNavigation ? groupRunNavigationProvenance(incomingState) : null
+    if (!session || !isGroupRunNavigation) return { session, isGroupRunNavigation, groupRunId, groupRunProvenance }
+
+    const redactedSession = { ...session, navigationState: groupRunProvenance }
+    saveActiveRunSession(redactedSession, activeRunOwnerId)
+    return { session: redactedSession, isGroupRunNavigation, groupRunId, groupRunProvenance }
+  })
+  const restoredSession = restoreContext.session
   const [pendingPostRunDraft] = useState(() => restoredSession ? null : loadPostRunCheckInDraft())
-  const navigationState = useMemo(() => restoredSession?.navigationState || location?.state || {}, [location?.state, restoredSession])
+  const incomingNavigationState = useMemo(() => (
+    restoredSession?.navigationState
+    || (location?.state && typeof location.state === 'object' && !Array.isArray(location.state) ? location.state : {})
+  ), [location?.state, restoredSession])
+  const groupRunId = restoreContext.groupRunId
+  const groupRunProvenance = restoreContext.groupRunProvenance
+  const isGroupRunNavigation = restoreContext.isGroupRunNavigation
+  const [groupRunAuthorization, setGroupRunAuthorization] = useState(isGroupRunNavigation ? (groupRunId ? 'pending' : 'denied') : 'not_required')
+  const [authorizedGroupRunState, setAuthorizedGroupRunState] = useState(null)
+  const [groupRunNotice, setGroupRunNotice] = useState('')
+  const navigationState = useMemo(() => {
+    if (!isGroupRunNavigation) return incomingNavigationState
+    if (groupRunAuthorization === 'authorized') return authorizedGroupRunState || groupRunProvenance
+    if (groupRunAuthorization === 'denied') return {}
+    return groupRunProvenance
+  }, [authorizedGroupRunState, groupRunAuthorization, groupRunProvenance, incomingNavigationState, isGroupRunNavigation])
   const selectedCountdown = navigationState.countdown ?? 0
   const plannedRoute = useMemo(() => normalizePlannedRoute(navigationState.plannedRoute), [navigationState.plannedRoute])
   const workoutTarget = navigationState.workoutTarget || null
@@ -166,7 +205,7 @@ export default function ActiveRun() {
   const [savedRunId, setSavedRunId] = useState(pendingPostRunDraft?.runId || null)
   // H5: canonical plan session carried from LogRun/Warmup so a durable run save
   // marks the exact calendar session complete. Null for ad-hoc/manual runs.
-  const planSessionId = planSessionIdFromState(navigationState)
+  const planSessionId = isGroupRunNavigation ? null : planSessionIdFromState(navigationState)
   const planCurrentWeek = currentWeekFromState(navigationState)
   const [savedHeatDrift, setSavedHeatDrift] = useState(pendingPostRunDraft?.heatDrift || null)
   const [mapMyRun, setMapMyRun] = useState(restoredSession?.mapMyRun ?? navigationState.mapMyRun ?? false)
@@ -231,8 +270,96 @@ export default function ActiveRun() {
   }
 
   useEffect(() => {
+    if (!isGroupRunNavigation) return undefined
+
+    let active = true
+    const activeRunPath = `${location.pathname}${location.search}${location.hash}`
+    navigate(activeRunPath, { replace: true, state: groupRunProvenance })
+
+    const clearPrivateNavigation = ({ authFailure = false } = {}) => {
+      if (!active) return
+      setAuthorizedGroupRunState(null)
+      setGroupRunAuthorization('denied')
+      setGroupRunNotice('Group run details are no longer available. Your elapsed time, distance, and recorded route were kept.')
+      navigate(activeRunPath, { replace: true, state: null })
+
+      const currentSession = sessionStateRef.current
+      const canPreserveStats = !authFailure
+        && getAuthenticatedUserId() === activeRunOwnerId
+        && ['running', 'awaiting_distance'].includes(currentSession?.phase)
+      if (!canPreserveStats) {
+        sessionStateRef.current = { ...currentSession, navigationState: {} }
+        clearActiveRunSession()
+        return
+      }
+      const redactedSession = { ...currentSession, navigationState: {} }
+      sessionStateRef.current = redactedSession
+      saveActiveRunSession(redactedSession, activeRunOwnerId)
+    }
+
+    if (!groupRunId) {
+      clearPrivateNavigation()
+      return () => {
+        active = false
+      }
+    }
+
+    api.get(`/group-runs/${encodeURIComponent(groupRunId)}`)
+      .then((response) => {
+        if (!active) return
+        const groupRun = response.data?.group_run
+        if (!canRestoreGroupRunNavigation(groupRun, groupRunId)) {
+          clearPrivateNavigation()
+          return
+        }
+
+        const authorizedState = groupRunWarmupState(groupRun)
+        setAuthorizedGroupRunState(authorizedState)
+        setGroupRunAuthorization('authorized')
+        setGroupRunNotice('')
+        setMapMyRun(true)
+        setRunEnvironment('outdoor')
+        setSurface(groupRun.route?.surface || 'road')
+        setRunType(groupRun.run_type || 'social')
+        const currentSession = sessionStateRef.current
+        if (getAuthenticatedUserId() === activeRunOwnerId && ['running', 'awaiting_distance'].includes(currentSession?.phase)) {
+          const authorizedSession = {
+            ...currentSession,
+            mapMyRun: true,
+            runEnvironment: 'outdoor',
+            surface: groupRun.route?.surface || 'road',
+            runType: groupRun.run_type || 'social',
+            navigationState: authorizedState,
+          }
+          sessionStateRef.current = authorizedSession
+          saveActiveRunSession(authorizedSession, activeRunOwnerId)
+        }
+      })
+      .catch((error) => {
+        if (!active) return
+        const status = Number(error?.response?.status || 0)
+        if ([400, 401, 403, 404, 409, 410].includes(status)) {
+          clearPrivateNavigation({ authFailure: status === 401 || status === 403 })
+          return
+        }
+        setGroupRunAuthorization('unavailable')
+        setGroupRunNotice('Group run access could not be verified. The private course is hidden; your run stats are still available.')
+      })
+
+    return () => {
+      active = false
+    }
+  }, [activeRunOwnerId, groupRunId, groupRunProvenance, isGroupRunNavigation, location.hash, location.pathname, location.search, navigate])
+
+  useEffect(() => {
     if (!running && !awaitingManualDistance) return
-    const persist = () => saveActiveRunSession(sessionStateRef.current)
+    const persist = () => {
+      if (!activeRunOwnerId || getAuthenticatedUserId() !== activeRunOwnerId) {
+        clearActiveRunSession()
+        return
+      }
+      saveActiveRunSession(sessionStateRef.current, activeRunOwnerId)
+    }
     persist()
     const timer = setInterval(persist, 5000)
     window.addEventListener('pagehide', persist)
@@ -638,6 +765,11 @@ export default function ActiveRun() {
           Run restored after the app reloaded. Time, distance, and recorded route were kept. Tap to dismiss.
         </button>
       )}
+      {groupRunNotice && (
+        <div className="rounded-xl p-3 mb-3" role="status" style={{ background: 'var(--accent-dim)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}>
+          {groupRunNotice}
+        </div>
+      )}
       {gpsGapSummary && (
         <div className="rounded-xl p-3 mb-3" style={{ background: 'var(--accent-dim)', border: '1px solid var(--border-subtle)', color: 'var(--accent)' }}>
           GPS paused during this run{gpsGapSummary.seconds > 0 ? ` for about ${formatGapDuration(gpsGapSummary.seconds)}` : ''}. Review the distance; Forged Hybrid saves a note that the route may be incomplete.
@@ -665,7 +797,7 @@ export default function ActiveRun() {
         </div>
       )}
 
-      {!running && !countingDown && !awaitingManualDistance && <>{plannedRoute ? <div className="w-full py-2 text-center text-sm font-semibold mb-2" style={{ borderRadius: 8, background: 'var(--bg-input)', color: 'var(--text-primary)' }}>Planned course loaded · GPS recording on</div> : <button onClick={() => setMapMyRun(v => !v)} className="pressable w-full rounded-xl py-2 font-semibold mb-2" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}>{mapMyRun ? 'Record route: On' : 'Record route: Off'}</button>}<button onClick={() => { setCountdownVal(selectedCountdown); setCountingDown(selectedCountdown > 0); if (selectedCountdown === 0) startGPS() }} className="pressable w-full rounded-xl py-3 font-black" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>Start Run</button></>}
+      {!running && !countingDown && !awaitingManualDistance && <>{plannedRoute ? <div className="w-full py-2 text-center text-sm font-semibold mb-2" style={{ borderRadius: 8, background: 'var(--bg-input)', color: 'var(--text-primary)' }}>Planned course loaded · GPS recording on</div> : <button onClick={() => setMapMyRun(v => !v)} className="pressable w-full rounded-xl py-2 font-semibold mb-2" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}>{mapMyRun ? 'Record route: On' : 'Record route: Off'}</button>}<button disabled={groupRunAuthorization === 'pending'} onClick={() => { setCountdownVal(selectedCountdown); setCountingDown(selectedCountdown > 0); if (selectedCountdown === 0) startGPS() }} className="pressable w-full rounded-xl py-3 font-black" style={{ background: 'var(--accent)', color: 'var(--on-accent)', opacity: groupRunAuthorization === 'pending' ? 0.55 : 1 }}>{groupRunAuthorization === 'pending' ? 'Verifying Group Run...' : 'Start Run'}</button></>}
       {running && <button onClick={finishRun} disabled={saving} className="pressable w-full rounded-xl py-3 font-black" style={{ background: 'var(--accent)', color: 'var(--on-accent)', opacity: saving ? 0.5 : 1, minHeight: 56 }}>{saving ? 'Saving...' : 'Finish Run'}</button>}
 
       {awaitingManualDistance && (

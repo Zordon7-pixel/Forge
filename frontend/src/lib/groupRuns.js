@@ -3,6 +3,15 @@ function finiteNumber(value) {
   return Number.isFinite(number) ? number : null
 }
 
+export const GROUP_RUN_NAVIGATION_SOURCE = 'group_run'
+const PRIVATE_ACCESS_GRACE_MINUTES = 120
+
+function normalizedGroupRunId(value) {
+  if (value === null || value === undefined) return null
+  const normalized = String(value).trim()
+  return normalized && normalized.length <= 160 ? normalized : null
+}
+
 export function localDateTimeInput(hoursAhead = 24) {
   const date = new Date(Date.now() + hoursAhead * 60 * 60 * 1000)
   date.setMinutes(date.getMinutes() - date.getTimezoneOffset())
@@ -90,11 +99,58 @@ export function groupRunCompatibility(groupRun, execution) {
     : { state: 'different', label: 'Different from your scheduled run' }
 }
 
+export function groupRunIdFromNavigationState(state) {
+  if (!isGroupRunNavigationState(state)) return null
+  if (state.source === GROUP_RUN_NAVIGATION_SOURCE) {
+    return normalizedGroupRunId(state.groupRunId)
+  }
+
+  const legacyScheduledRunId = String(state.scheduledRun?.id || '')
+  const legacyGroupRunId = legacyScheduledRunId.slice('group-run-'.length)
+  return legacyGroupRunId === 'scheduled' ? null : normalizedGroupRunId(legacyGroupRunId)
+}
+
+export function isGroupRunNavigationState(state) {
+  if (!state || typeof state !== 'object' || Array.isArray(state)) return false
+  if (state.source === GROUP_RUN_NAVIGATION_SOURCE) return true
+  if (state.source !== null && state.source !== undefined) return false
+  return String(state.scheduledRun?.id || '').startsWith('group-run-')
+}
+
+export function groupRunNavigationProvenance(state) {
+  const groupRunId = groupRunIdFromNavigationState(state)
+  if (!groupRunId) return {}
+  return {
+    source: GROUP_RUN_NAVIGATION_SOURCE,
+    groupRunId,
+    planSessionId: null,
+  }
+}
+
+export function canRestoreGroupRunNavigation(groupRun, expectedGroupRunId, now = Date.now()) {
+  const groupRunId = normalizedGroupRunId(groupRun?.id)
+  const expectedId = normalizedGroupRunId(expectedGroupRunId)
+  if (!groupRunId || !expectedId || groupRunId !== expectedId) return false
+  if (groupRun?.membership?.status !== 'going') return false
+  if (!['scheduled', 'completed'].includes(String(groupRun?.status || ''))) return false
+
+  const startsAt = new Date(groupRun?.starts_at || '').getTime()
+  const durationMinutes = finiteNumber(groupRun?.duration_minutes)
+  const currentTime = Number(now)
+  if (!Number.isFinite(startsAt) || durationMinutes === null || durationMinutes < 0 || !Number.isFinite(currentTime)) return false
+  const privateAccessExpiresAt = startsAt + (durationMinutes + PRIVATE_ACCESS_GRACE_MINUTES) * 60 * 1000
+  return currentTime <= privateAccessExpiresAt
+}
+
 export function groupRunWarmupState(groupRun) {
   const route = groupRun?.route || null
   const distance = groupRun?.distance_target_miles ?? groupRun?.target_distance_miles ?? null
   const duration = groupRun?.time_target_minutes ?? groupRun?.target_duration_minutes ?? null
+  const groupRunId = normalizedGroupRunId(groupRun?.id)
   return {
+    source: GROUP_RUN_NAVIGATION_SOURCE,
+    groupRunId,
+    planSessionId: null,
     startAfterWarmup: true,
     runType: groupRun?.run_type || 'social',
     runEnvironment: 'outdoor',
@@ -102,7 +158,7 @@ export function groupRunWarmupState(groupRun) {
     mapMyRun: true,
     plannedRoute: route,
     scheduledRun: {
-      id: `group-run-${groupRun?.id || 'scheduled'}`,
+      id: `group-run-${groupRunId || 'scheduled'}`,
       title: groupRun?.title || 'Group run',
       type: groupRun?.run_type || 'social',
       distance_miles: distance,

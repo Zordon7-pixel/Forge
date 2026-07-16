@@ -1,3 +1,5 @@
+import { clearActiveRunSession } from './activeRunSession.js'
+
 const TOKEN_KEY = 'forge_token'
 const POST_AUTH_REDIRECT_KEY = 'forge_post_auth_redirect'
 const POST_AUTH_REDIRECT_TTL_MS = 24 * 60 * 60 * 1000
@@ -13,12 +15,20 @@ export function getToken() {
 }
 
 export function setToken(token) {
+  const previousToken = localStorage.getItem(TOKEN_KEY)
   localStorage.setItem(TOKEN_KEY, token)
+  if (previousToken !== null && previousToken !== String(token)) {
+    clearActiveRunSession()
+  }
 }
 
 export function clearToken() {
-  localStorage.removeItem(TOKEN_KEY)
-  localStorage.removeItem(POST_AUTH_REDIRECT_KEY)
+  try {
+    localStorage.removeItem(TOKEN_KEY)
+    localStorage.removeItem(POST_AUTH_REDIRECT_KEY)
+  } finally {
+    clearActiveRunSession()
+  }
 }
 
 export function rememberPostAuthRedirect(path) {

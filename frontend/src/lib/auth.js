@@ -15,13 +15,18 @@ export function getUser() {
   }
 }
 
+export function getAuthenticatedUserId(now = Date.now()) {
+  const user = getUser()
+  const expiresAt = Number(user?.exp)
+  if (!user || !Number.isFinite(expiresAt) || expiresAt <= now / 1000) return null
+  if (user.id === null || user.id === undefined) return null
+  const userId = String(user.id).trim()
+  return userId || null
+}
+
 export function isLoggedIn() {
   try {
-    const token = getToken()
-    if (!token) return false
-
-    const user = getUser()
-    return !!user && user.exp > Date.now() / 1000
+    return getAuthenticatedUserId() !== null
   } catch {
     return false
   }
