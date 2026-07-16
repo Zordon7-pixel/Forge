@@ -5,8 +5,8 @@ This file holds Forge's product history, deployment notes, shipped phase log, kn
 ## Current Production
 
 - Production URL: `https://forge-production-773f.up.railway.app/`
-- Latest verified application release: commit `f1d86c2c`, deployment `16aab5c8-36bf-41c6-ab69-d7b30aa6c46d`
-- Latest checked bundle: `/assets/index-B-v0-u9Z.js`
+- Latest verified application release: commit `87f984fa`, deployment `c6661452-1a35-4bb4-9b51-18ad1de54b89`
+- Latest checked bundle: `/assets/index-BhmEr9y-.js`
 - iOS version/build: `1.0.5` / `15`
 - Bundle identifier: `com.zordontech.forge`
 - Expo/EAS project: `@zordon/forge-athlete` (`6aeb5fbb-2697-4cf4-b9b3-afe60c63e9e1`)
@@ -23,6 +23,7 @@ Current production checks:
 - Friends Beta Phase 1 adds an owner-only post-run recap with route, splits, plan-versus-recorded truth, coverage-gated heart-rate zones, post-run answers, and stored coach evaluation.
 - Lift now mirrors Train's compact quick-action pattern with focus-aware Lift Warm-Up, Post-Lift Stretch, and Lift History actions. Both mobility flows use six image-backed movements matched to the prepared lift focus and profile sex.
 - Phase 4C adds private challenge leaderboards with deterministic ties/progress/source labels, compact activity, owner member removal, member reporting, and privacy-masked blocked rows. Its disposable three-account production matrix passed all seven grouped checks.
+- Phase 4E adds a bounded What's New sheet and archive, persistent editable time PRs, quieter Train/Body surfaces, and exact-date scheduled-versus-recorded run matching. Claude Code passed twice, Hermes approved, two disposable accounts verified release snooze/acknowledgement/CTA isolation, and the production-only PR schema drift was fixed and re-verified before cleanup. No EAS build was run.
 - Demo diagnostics check returns `403`.
 - `/api/auth/me/export` returns account/training data and excludes `password_hash`.
 - `/api/auth/forgot-password` returns `200 email_sent` for `demo@forge.app` in under one second.
@@ -358,6 +359,7 @@ These changes are already implemented, built, Capacitor-synced, and deployed to 
 | 2026-07-14 | `3319e687-0ece-4088-b11b-a38f46fd4b65` | Success | Friends Beta Phase 1 truthful post-run recap, owner scoping, and metric/mobile verification |
 | 2026-07-15 | `f6d5ffa4-bc0a-4608-85ac-5db95e8b965d` | Success | Lift mobility quick actions and Phase 4C private challenge leaderboards verified live on `/assets/index-BuYpSH0L.js` |
 | 2026-07-15 | `16aab5c8-36bf-41c6-ab69-d7b30aa6c46d` | Success | Phase 4D private friends-only group runs, exact-location privacy, moderation controls, and canonical account-mutation locking verified live on `/assets/index-B-v0-u9Z.js` |
+| 2026-07-16 | `c6661452-1a35-4bb4-9b51-18ad1de54b89` | Success | Phase 4E What's New, PR persistence, Train/Body simplification, and exact-date workout matching verified live on `/assets/index-BhmEr9y-.js` |
 
 ### Build/Test Status
 
