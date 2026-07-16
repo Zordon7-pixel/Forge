@@ -5,6 +5,7 @@ export const RELEASE_CTA_ALLOWLIST = Object.freeze([
   '/log-lift',
   '/health',
   '/history',
+  '/gear',
   '/more',
 ])
 
@@ -23,6 +24,26 @@ export const RELEASES = Object.freeze([
     cta: Object.freeze({
       labelKey: 'whatsNew.releases.privateTraining.cta',
       to: '/community?tab=runs',
+    }),
+    delivery: 'web',
+    minIosBuild: null,
+    minAndroidBuild: null,
+    audience: 'all',
+  }),
+  Object.freeze({
+    id: 'forged-closet',
+    sequence: 2,
+    publishedAt: '2026-07-16',
+    titleKey: 'whatsNew.releases.forgedCloset.title',
+    summaryKey: 'whatsNew.releases.forgedCloset.summary',
+    highlightKeys: Object.freeze([
+      'whatsNew.releases.forgedCloset.catalog',
+      'whatsNew.releases.forgedCloset.rotation',
+      'whatsNew.releases.forgedCloset.pick',
+    ]),
+    cta: Object.freeze({
+      labelKey: 'whatsNew.releases.forgedCloset.cta',
+      to: '/gear',
     }),
     delivery: 'web',
     minIosBuild: null,

@@ -23,7 +23,7 @@ const sections = (t) => [
   {
     title: 'Training',
     items: [
-      { to: '/gear', label: 'Gear', sub: 'Shoes and mileage', icon: Footprints, color: '#94A3B8' },
+      { to: '/gear', label: 'Forged Closet', sub: "Shoes, wear, and today's pick", icon: Footprints, color: '#94A3B8' },
       { to: '/hr-zones', label: 'HR Zones', sub: 'Calibrate your training zones', icon: HeartPulse, color: 'var(--danger)' },
       { to: '/plan', label: 'Plan', sub: 'Calendar, create/manage, races', icon: Sparkles, color: 'var(--accent)' },
       { to: '/history', label: 'History', sub: 'Runs, lifts, imports', icon: CalendarDays, color: '#3B82F6' },

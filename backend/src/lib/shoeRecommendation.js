@@ -1,24 +1,26 @@
 const RUN_CATEGORY_PRIORITIES = {
-  easy: ['daily_trainer'],
-  recovery: ['daily_trainer'],
-  long: ['daily_trainer'],
-  tempo: ['tempo', 'daily_trainer'],
-  threshold: ['tempo', 'daily_trainer'],
-  intervals: ['race', 'tempo'],
-  speed: ['race', 'tempo'],
+  easy: ['daily_trainer', 'stability'],
+  recovery: ['daily_trainer', 'stability'],
+  long: ['daily_trainer', 'stability', 'tempo'],
+  tempo: ['tempo', 'daily_trainer', 'race'],
+  threshold: ['tempo', 'race', 'daily_trainer'],
+  intervals: ['tempo', 'race'],
+  speed: ['tempo', 'race'],
   race: ['race', 'tempo'],
-  trail: ['trail', 'stability', 'daily_trainer'],
+  trail: ['trail'],
 };
 
 const DEFAULT_CATEGORY_PRIORITY = ['daily_trainer', 'stability', 'tempo', 'race', 'trail'];
-const WET_CATEGORY_PRIORITY = ['trail', 'stability', 'daily_trainer'];
 
 function isTruthyFlag(value) {
   return value === true || value === 1 || value === '1' || value === 'true';
 }
 
 function isActiveShoe(shoe) {
-  return !isTruthyFlag(shoe?.is_retired) && shoe?.is_active !== 0 && shoe?.is_active !== false && shoe?.is_active !== '0';
+  return !isTruthyFlag(shoe?.is_retired)
+    && shoe?.is_active !== 0
+    && shoe?.is_active !== false
+    && shoe?.is_active !== '0';
 }
 
 function shoeMiles(shoe) {
@@ -29,77 +31,177 @@ function recommendedMiles(shoe) {
   return Number(shoe?.recommended_miles || 0) || 0;
 }
 
-function isOverRecommendedMiles(shoe) {
+function wearRatio(shoe) {
   const recommended = recommendedMiles(shoe);
-  return recommended > 0 && shoeMiles(shoe) >= recommended;
+  return recommended > 0 ? shoeMiles(shoe) / recommended : 0;
+}
+
+function isOverRecommendedMiles(shoe) {
+  return wearRatio(shoe) >= 1;
+}
+
+function parseTags(value) {
+  if (Array.isArray(value)) return value.map((tag) => String(tag).toLowerCase());
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.map((tag) => String(tag).toLowerCase()) : [];
+  } catch (err) {
+    console.error('[shoe-recommendation/intent-tags]', err.message);
+    return [];
+  }
 }
 
 function formatCategory(category) {
   return String(category || '').replace(/_/g, ' ');
 }
 
-function chooseLowestMileage(shoes) {
-  return [...shoes].sort((a, b) => {
-    const milesDiff = shoeMiles(a) - shoeMiles(b);
-    if (milesDiff !== 0) return milesDiff;
-    return String(a.created_at || '').localeCompare(String(b.created_at || ''));
-  })[0] || null;
+function shoeSurface(shoe) {
+  const surface = String(shoe?.surface || '').toLowerCase();
+  if (['road', 'trail', 'both'].includes(surface)) return surface;
+  return shoe?.category === 'trail' ? 'trail' : 'road';
 }
 
-function getCategoryPriority(runType, weather) {
+function matchesSurface(shoe, requestedSurface) {
+  const surface = shoeSurface(shoe);
+  return surface === 'both' || requestedSurface === 'both' || surface === requestedSurface;
+}
+
+function getCategoryPriority(runType) {
+  const normalized = String(runType || 'easy').toLowerCase();
+  return RUN_CATEGORY_PRIORITIES[normalized] || RUN_CATEGORY_PRIORITIES.easy;
+}
+
+function scoreCandidate(shoe, { runType, surface, weather, categoryPriority, hasRotation }) {
+  const reasonCodes = [];
+  const categoryIndex = categoryPriority.indexOf(shoe.category);
+  let score = categoryIndex >= 0 ? 50 - categoryIndex * 8 : 12;
+
+  if (categoryIndex === 0) reasonCodes.push('CATEGORY_MATCH');
+  const tags = parseTags(shoe.intent_tags);
+  if (tags.includes(runType)) {
+    score += 28;
+    reasonCodes.push('INTENT_MATCH');
+  }
+
+  const normalizedSurface = shoeSurface(shoe);
+  if (normalizedSurface === surface) {
+    score += 22;
+    reasonCodes.push('SURFACE_MATCH');
+  } else if (normalizedSurface === 'both' || surface === 'both') {
+    score += 14;
+    reasonCodes.push('SURFACE_VERSATILE');
+  } else {
+    score -= 45;
+    reasonCodes.push('WRONG_SURFACE');
+  }
+
+  if (weather?.isPrecip) {
+    if (isTruthyFlag(shoe.wet_ok)) {
+      score += 18;
+      reasonCodes.push('WET_READY');
+    } else if (shoe.wet_ok === 0 || shoe.wet_ok === false || shoe.wet_ok === '0') {
+      score -= 30;
+      reasonCodes.push('WET_LIMITED');
+    } else {
+      reasonCodes.push('WET_UNKNOWN');
+    }
+  }
+
+  const ratio = wearRatio(shoe);
+  score += Math.max(0, 20 - ratio * 20);
+  if (ratio >= 0.8) reasonCodes.push('INSPECT_WEAR');
+  if (hasRotation) reasonCodes.push('ROTATE_LOAD');
+
+  return { shoe, score: Number(score.toFixed(2)), reason_codes: reasonCodes };
+}
+
+function reasonText(result, runType, surface) {
+  const codes = new Set(result.reason_codes);
+  const pieces = [];
+  if (codes.has('INTENT_MATCH') || codes.has('CATEGORY_MATCH')) {
+    pieces.push(`matches your ${runType} session`);
+  }
+  if (codes.has('SURFACE_MATCH')) pieces.push(`built for ${surface}`);
+  if (codes.has('SURFACE_VERSATILE')) pieces.push(`works across ${surface} conditions`);
+  if (codes.has('WET_READY')) pieces.push('has verified wet-condition traction');
+  if (codes.has('ROTATE_LOAD')) pieces.push('helps spread wear across your rotation');
+  if (codes.has('INSPECT_WEAR')) pieces.push('is nearing its mileage estimate, so inspect comfort and tread');
+  return pieces.length
+    ? `${pieces[0][0].toUpperCase()}${pieces[0].slice(1)}${pieces.length > 1 ? `; ${pieces.slice(1).join('; ')}` : ''}.`
+    : `Best available match for this ${runType} session.`;
+}
+
+function recommendShoe(shoes, runType = 'easy', weather = {}, requestedSurface = 'road') {
   const normalizedRunType = String(runType || 'easy').toLowerCase();
-  if (weather?.isPrecip || normalizedRunType === 'trail') return WET_CATEGORY_PRIORITY;
-  return RUN_CATEGORY_PRIORITIES[normalizedRunType] || RUN_CATEGORY_PRIORITIES.easy;
-}
-
-function recommendShoe(shoes, runType = 'easy', weather = {}) {
+  const surface = ['road', 'trail', 'both'].includes(String(requestedSurface).toLowerCase())
+    ? String(requestedSurface).toLowerCase()
+    : 'road';
   const activeShoes = (Array.isArray(shoes) ? shoes : []).filter(isActiveShoe);
   if (!activeShoes.length) {
     return {
       shoe: null,
-      reason: 'No active shoes found in your locker.',
+      alternatives: [],
+      reason: 'No active shoes found in your closet.',
+      reason_codes: ['NO_ACTIVE_SHOES'],
       warning: null,
     };
   }
 
-  const skipped = activeShoes.filter(isOverRecommendedMiles);
-  const availableShoes = activeShoes.filter((shoe) => !isOverRecommendedMiles(shoe));
-  const warning = skipped.length
-    ? `${skipped.length} shoe${skipped.length === 1 ? ' is' : 's are'} at or over recommended mileage and ${skipped.length === 1 ? 'was' : 'were'} skipped.`
-    : null;
-
-  if (!availableShoes.length) {
+  const overMileage = activeShoes.filter(isOverRecommendedMiles);
+  let candidates = activeShoes.filter((shoe) => !isOverRecommendedMiles(shoe));
+  const warnings = [];
+  if (overMileage.length) {
+    warnings.push(`${overMileage.length} pair${overMileage.length === 1 ? ' is' : 's are'} at or over the mileage estimate and ${overMileage.length === 1 ? 'was' : 'were'} left out.`);
+  }
+  if (!candidates.length) {
     return {
       shoe: null,
-      reason: 'All active shoes are at or over their recommended mileage.',
-      warning,
+      alternatives: [],
+      reason: 'All active shoes are at or over their mileage estimate. Inspect cushioning, tread, and comfort before the next run.',
+      reason_codes: ['ALL_OVER_MILEAGE'],
+      warning: warnings.join(' '),
     };
   }
 
-  const categoryPriority = getCategoryPriority(runType, weather);
-  const idealCategory = categoryPriority[0];
-  const fullPriority = [...categoryPriority, ...DEFAULT_CATEGORY_PRIORITY.filter((category) => !categoryPriority.includes(category))];
-
-  for (const category of fullPriority) {
-    const matches = availableShoes.filter((shoe) => shoe.category === category);
-    if (!matches.length) continue;
-
-    const shoe = chooseLowestMileage(matches);
-    const fallbackNote = category === idealCategory
-      ? null
-      : `No ${formatCategory(idealCategory)} shoe in your locker - using ${formatCategory(category)}.`;
-    return {
-      shoe,
-      reason: fallbackNote || `Best match for ${String(runType || 'easy').toLowerCase()} run: ${formatCategory(category)}.`,
-      warning,
-    };
+  const surfaceMatches = candidates.filter((shoe) => matchesSurface(shoe, surface));
+  if (surfaceMatches.length) {
+    candidates = surfaceMatches;
+  } else {
+    warnings.push(`No ${surface} shoe is available, so this is the closest fallback.`);
   }
 
-  const shoe = chooseLowestMileage(availableShoes);
+  if (weather?.isPrecip) {
+    const wetReady = candidates.filter((shoe) => isTruthyFlag(shoe.wet_ok));
+    if (wetReady.length) candidates = wetReady;
+    else warnings.push('Wet traction is not verified for the available pairs. Use your judgment before heading out.');
+  }
+
+  const categoryPriority = [
+    ...getCategoryPriority(normalizedRunType),
+    ...DEFAULT_CATEGORY_PRIORITY.filter((category) => !getCategoryPriority(normalizedRunType).includes(category)),
+  ];
+  const ranked = candidates
+    .map((shoe) => scoreCandidate(shoe, {
+      runType: normalizedRunType,
+      surface,
+      weather,
+      categoryPriority,
+      hasRotation: candidates.length > 1,
+    }))
+    .sort((a, b) => b.score - a.score || wearRatio(a.shoe) - wearRatio(b.shoe) || String(a.shoe.id).localeCompare(String(b.shoe.id)));
+
+  const [top, ...rest] = ranked;
   return {
-    shoe,
-    reason: `No categorized match found - using your lowest-mileage available shoe.`,
-    warning,
+    shoe: top.shoe,
+    alternatives: rest.slice(0, 2).map((result) => ({
+      shoe: result.shoe,
+      reason_codes: result.reason_codes,
+      reason: reasonText(result, normalizedRunType, surface),
+    })),
+    reason: reasonText(top, normalizedRunType, surface),
+    reason_codes: top.reason_codes,
+    warning: warnings.length ? warnings.join(' ') : null,
   };
 }
 
@@ -140,11 +242,9 @@ function recommendApparel(weather = {}) {
     items.push('Water-resistant layer', 'Brim hat');
     notes.push('Wet conditions: reduce chafe and blister risk.');
   }
-  if (Number(weather.windMph || 0) >= 15) {
-    notes.push('Wind is high: add a windbreak layer.');
-  }
+  if (Number(weather.windMph || 0) >= 15) notes.push('Wind is high: add a windbreak layer.');
 
   return { items, summary, notes };
 }
 
-module.exports = { recommendShoe, recommendApparel };
+module.exports = { recommendShoe, recommendApparel, _test: { wearRatio, matchesSurface, parseTags } };

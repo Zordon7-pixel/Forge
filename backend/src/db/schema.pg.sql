@@ -105,6 +105,65 @@ CREATE TABLE IF NOT EXISTS run_import_tombstones (
 
 CREATE INDEX IF NOT EXISTS idx_run_import_tombstones_user ON run_import_tombstones(user_id);
 
+CREATE TABLE IF NOT EXISTS shoe_catalog (
+  id TEXT PRIMARY KEY,
+  brand TEXT NOT NULL,
+  model TEXT NOT NULL,
+  model_version TEXT,
+  release_year INTEGER,
+  aliases TEXT NOT NULL DEFAULT '[]',
+  category TEXT NOT NULL,
+  surface TEXT NOT NULL,
+  intent_tags TEXT NOT NULL DEFAULT '[]',
+  drop_mm REAL,
+  heel_stack_mm REAL,
+  forefoot_stack_mm REAL,
+  cushioning TEXT,
+  stability TEXT,
+  plate_type TEXT,
+  rocker TEXT,
+  terrain TEXT,
+  lug_depth_mm REAL,
+  weight_g REAL,
+  spec_basis TEXT,
+  recommended_miles_min INTEGER NOT NULL,
+  recommended_miles_max INTEGER NOT NULL,
+  wet_ok INTEGER,
+  regions TEXT NOT NULL DEFAULT '[]',
+  status TEXT NOT NULL DEFAULT 'active',
+  source_urls TEXT NOT NULL DEFAULT '[]',
+  verified_fields TEXT NOT NULL DEFAULT '[]',
+  verification_status TEXT NOT NULL DEFAULT 'pending',
+  confidence TEXT NOT NULL DEFAULT 'low',
+  verified_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_shoe_catalog_brand_model ON shoe_catalog(LOWER(brand), LOWER(model));
+
+CREATE TABLE IF NOT EXISTS gear_shoes (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  brand TEXT NOT NULL,
+  model TEXT NOT NULL,
+  nickname TEXT,
+  color TEXT,
+  purchase_date TEXT,
+  category TEXT DEFAULT 'daily_trainer',
+  surface TEXT DEFAULT 'road',
+  intent_tags TEXT DEFAULT '[]',
+  wet_ok INTEGER,
+  cushion TEXT,
+  catalog_id TEXT REFERENCES shoe_catalog(id) ON DELETE SET NULL,
+  recommended_miles INTEGER DEFAULT 450,
+  is_retired INTEGER DEFAULT 0,
+  is_active INTEGER DEFAULT 1,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_gear_shoes_user ON gear_shoes(user_id);
+CREATE INDEX IF NOT EXISTS idx_gear_shoes_catalog_id ON gear_shoes(catalog_id);
+
 CREATE TABLE IF NOT EXISTS user_hr_profile (
   user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
   max_hr INTEGER,

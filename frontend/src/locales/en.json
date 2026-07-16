@@ -369,6 +369,14 @@
         "challenges": "Create private run, strength, and hybrid challenges.",
         "groupRuns": "Plan a structured group run with a private route and meetup.",
         "cta": "Open Community"
+      },
+      "forgedCloset": {
+        "title": "Meet Forged Closet",
+        "summary": "Track your shoe rotation and get a clear pair recommendation for the session ahead.",
+        "catalog": "Search a verified pilot catalog or add an unlisted pair without guessed specs.",
+        "rotation": "See per-shoe mileage and practical wear-inspection reminders.",
+        "pick": "Choose a run type and surface to get a deterministic top pick with alternatives and reasons.",
+        "cta": "Open Forged Closet"
       }
     }
   },

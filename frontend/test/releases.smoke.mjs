@@ -38,7 +38,9 @@ for (const release of RELEASES) {
   if (release.delivery === 'web') check(release.minIosBuild === null && release.minAndroidBuild === null, 'web releases do not claim native minimums')
 }
 
-check(eligibleReleases({ platform: 'web' }).length === 1, 'current web release is eligible')
+const webReleases = eligibleReleases({ platform: 'web' })
+check(webReleases.length === RELEASES.filter((release) => release.delivery === 'web' && release.audience === 'all').length, 'all current web releases are eligible')
+check(webReleases.at(-1)?.id === 'forged-closet', 'Forged Closet is the newest web release')
 check(!isAllowedReleaseCta('https://example.com'), 'external CTA is rejected')
 check(!isAllowedReleaseCta('//example.com'), 'protocol-relative CTA is rejected')
 const contextSource = fs.readFileSync(new URL('../src/context/ReleaseNotesContext.jsx', import.meta.url), 'utf8')

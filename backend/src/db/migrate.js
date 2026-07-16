@@ -2,8 +2,67 @@ const pg = require('./postgres');
 const fs = require('fs');
 const path = require('path');
 const { seedRaceCatalog } = require('./race-catalog-seed');
+const { seedShoeCatalog } = require('./shoe-catalog-seed');
 
 async function runAlwaysMigrations() {
+  await pg.query(`
+    CREATE TABLE IF NOT EXISTS shoe_catalog (
+      id TEXT PRIMARY KEY,
+      brand TEXT NOT NULL,
+      model TEXT NOT NULL,
+      model_version TEXT,
+      release_year INTEGER,
+      aliases TEXT NOT NULL DEFAULT '[]',
+      category TEXT NOT NULL,
+      surface TEXT NOT NULL,
+      intent_tags TEXT NOT NULL DEFAULT '[]',
+      drop_mm REAL,
+      heel_stack_mm REAL,
+      forefoot_stack_mm REAL,
+      cushioning TEXT,
+      stability TEXT,
+      plate_type TEXT,
+      rocker TEXT,
+      terrain TEXT,
+      lug_depth_mm REAL,
+      weight_g REAL,
+      spec_basis TEXT,
+      recommended_miles_min INTEGER NOT NULL,
+      recommended_miles_max INTEGER NOT NULL,
+      wet_ok INTEGER,
+      regions TEXT NOT NULL DEFAULT '[]',
+      status TEXT NOT NULL DEFAULT 'active',
+      source_urls TEXT NOT NULL DEFAULT '[]',
+      verified_fields TEXT NOT NULL DEFAULT '[]',
+      verification_status TEXT NOT NULL DEFAULT 'pending',
+      confidence TEXT NOT NULL DEFAULT 'low',
+      verified_at TIMESTAMPTZ,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pg.query('CREATE INDEX IF NOT EXISTS idx_shoe_catalog_brand_model ON shoe_catalog(LOWER(brand), LOWER(model))');
+  await pg.query("ALTER TABLE gear_shoes ADD COLUMN IF NOT EXISTS surface TEXT DEFAULT 'road'");
+  await pg.query("ALTER TABLE gear_shoes ADD COLUMN IF NOT EXISTS intent_tags TEXT DEFAULT '[]'");
+  await pg.query('ALTER TABLE gear_shoes ADD COLUMN IF NOT EXISTS wet_ok INTEGER');
+  await pg.query('ALTER TABLE gear_shoes ADD COLUMN IF NOT EXISTS cushion TEXT');
+  await pg.query('ALTER TABLE gear_shoes ADD COLUMN IF NOT EXISTS catalog_id TEXT');
+  await pg.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'gear_shoes_catalog_id_fkey'
+          AND conrelid = 'gear_shoes'::regclass
+      ) THEN
+        ALTER TABLE gear_shoes
+          ADD CONSTRAINT gear_shoes_catalog_id_fkey
+          FOREIGN KEY (catalog_id) REFERENCES shoe_catalog(id) ON DELETE SET NULL;
+      END IF;
+    END $$
+  `);
+  await pg.query('CREATE INDEX IF NOT EXISTS idx_gear_shoes_catalog_id ON gear_shoes(catalog_id)');
+
   await pg.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS friend_handle TEXT');
   await pg.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS friend_discoverable INTEGER DEFAULT 0');
   await pg.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_friend_handle_lower ON users (LOWER(friend_handle)) WHERE friend_handle IS NOT NULL');
@@ -274,6 +333,7 @@ async function runAlwaysMigrations() {
   `);
 
   await seedRaceCatalog();
+  await seedShoeCatalog();
 }
 
 /**

@@ -1097,7 +1097,7 @@ export default function InsightsSheet({
               <p style={{ fontSize: 13, fontWeight: 700, color: 'var(--danger)', margin: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
                 <AlertTriangle size={14} /> Your {shoe.nickname || `${shoe.brand} ${shoe.model}`} has {Number(shoe.total_miles || 0).toFixed(0)} miles — time to replace soon
               </p>
-              <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '2px 0 0' }}>{shoe.total_miles} of 500 miles</p>
+              <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '2px 0 0' }}>{shoe.total_miles} of {shoe.recommended_miles || 450} estimated miles</p>
             </div>
           ))}
         </div>

@@ -1,8 +1,10 @@
 # FORGE-CLOSET-SPEC.md — Smart Shoe Closet, Sneaker Knowledge Base & Rotation Recommender
 
-**Status:** Draft (queue BEHIND current Friends Beta phases)
+**Status:** V1 implemented (Phases 0-3 bounded release); Phases 4-5 deferred
 **Author:** Hermes (per Bryan, 2026-07-15)
 **Related:** FORGE-SHOE-FEATURE-SPEC.md, FORGE-RECOVERY-READINESS-SPEC.md, FORGE-ZONE-CALIBRATION-SPEC.md, gear tracker (`gear_shoes`, page `/gear`, routes `/api/gear`, `backend/src/routes/gear.js`, `backend/src/lib/shoeRecommendation.js`)
+
+**V1 implementation note (2026-07-16):** The first release uses a 14-model manufacturer-sourced pilot catalog plus an explicit manual fallback that never guesses missing specs. Catalog growth will be driven by real unmatched searches and manual adds. The deterministic recommendation, rotation, weather degradation, and Closet UI are implemented; LLM narrative and photo identification remain deferred.
 
 ## MISSION (north star)
 Forged Hybrid's purpose is **injury prevention + teaching the runner as they go.** Every feature answers: *should you run today, how hard, and in what shoe — without getting hurt.* This spec adds the missing injury pillar (footwear) to the two Forge already has.

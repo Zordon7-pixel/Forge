@@ -37,7 +37,7 @@ function apparelItemLabel(item) {
   return item.label || item.name || item.item || item.type || ''
 }
 
-export default function TodaysPickCard({ runType = 'easy' }) {
+export default function TodaysPickCard({ runType = 'easy', surface = 'road' }) {
   const [state, setState] = useState({ loading: true, error: false, data: null })
   const [showWhy, setShowWhy] = useState(false)
 
@@ -48,7 +48,7 @@ export default function TodaysPickCard({ runType = 'easy' }) {
       setState({ loading: true, error: false, data: null })
       try {
         const position = await getPosition()
-        const params = { run_type: runType || 'easy' }
+        const params = { run_type: runType || 'easy', surface: surface || 'road' }
         if (position?.coords) {
           params.lat = position.coords.latitude
           params.lon = position.coords.longitude
@@ -56,7 +56,8 @@ export default function TodaysPickCard({ runType = 'easy' }) {
 
         const res = await api.get('/gear/recommendation', { params })
         if (!cancelled) setState({ loading: false, error: false, data: res.data || null })
-      } catch (_) {
+      } catch (error) {
+        console.error('[TodaysPickCard] recommendation failed:', error?.message)
         if (!cancelled) setState({ loading: false, error: true, data: null })
       }
     }
@@ -65,7 +66,7 @@ export default function TodaysPickCard({ runType = 'easy' }) {
     return () => {
       cancelled = true
     }
-  }, [runType])
+  }, [runType, surface])
 
   const pick = state.data || {}
   const shoe = pick.shoe?.shoe
@@ -178,6 +179,16 @@ export default function TodaysPickCard({ runType = 'easy' }) {
       {showWhy && (
         <div className="space-y-2 pt-2" style={{ borderTop: '1px solid var(--border-subtle)' }}>
           {pick.shoe?.reason && <p className="text-xs" style={{ color: 'var(--text-muted)', margin: 0 }}>{pick.shoe.reason}</p>}
+          {Array.isArray(pick.shoe?.alternatives) && pick.shoe.alternatives.length > 0 && (
+            <div>
+              <p className="text-xs font-bold" style={{ color: 'var(--text-primary)', margin: '8px 0 4px' }}>Alternates</p>
+              {pick.shoe.alternatives.map((alternative) => (
+                <p key={alternative.shoe?.id || shoeDisplayName(alternative.shoe)} className="text-xs" style={{ color: 'var(--text-muted)', margin: '3px 0' }}>
+                  {shoeDisplayName(alternative.shoe)} - {alternative.reason}
+                </p>
+              ))}
+            </div>
+          )}
           {hasApparelNotes && <p className="text-xs" style={{ color: 'var(--text-muted)', margin: 0 }}>{apparelNotes}</p>}
         </div>
       )}

@@ -203,7 +203,7 @@ export default function Dashboard() {
         setLoadAnalysis(loadRes.data)
         setNextRace(nextRaceRes.data?.race || null)
         const gearShoes = gearRes.data?.shoes || []
-        setShoeAlerts(gearShoes.filter((s) => Number(s.total_miles || 0) > 450))
+        setShoeAlerts(gearShoes.filter((shoe) => Boolean(shoe.alert)))
         setActiveInjury((injuryRes.data?.injuries || [])[0] || null)
         setWeeklyCalories(recapRes.data?.totalCalories || 0)
         setNextRecommendation(recommendationRes.data || null)
