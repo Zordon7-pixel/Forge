@@ -5,6 +5,7 @@ const auth = require('../middleware/auth');
 const { activityKind } = require('../lib/runActivity');
 const { buildRunImportKeys } = require('../lib/runImportKey');
 const { normalizeWorkoutMetrics } = require('../lib/workoutMetrics');
+const { findPlannedRunForDate, hasMeaningfulPlannedRun } = require('../lib/plannedRunMatch');
 
 function asNumber(value, fallback = 0) {
   const num = Number(value);
@@ -163,7 +164,7 @@ function startsMatch(existingStart, importedStart) {
 async function findExistingRun(userId, item) {
   if (item.sourceWorkoutId) {
     const exact = await dbGet(
-      `SELECT id, date, type, watch_activity_type, watch_normalized_type, health_start_at
+      `SELECT id, date, type, watch_activity_type, watch_normalized_type, health_start_at, planned_session_json
        FROM runs
        WHERE user_id=? AND health_source=? AND health_source_workout_id=?
        LIMIT 1`,
@@ -173,7 +174,7 @@ async function findExistingRun(userId, item) {
   }
 
   const candidates = await dbAll(
-    `SELECT id, date, type, watch_activity_type, watch_normalized_type, health_start_at
+    `SELECT id, date, type, watch_activity_type, watch_normalized_type, health_start_at, planned_session_json
      FROM runs
      WHERE user_id=? AND date=? AND ABS(COALESCE(distance_miles,0) - ?) < 0.05
      LIMIT 25`,
@@ -222,14 +223,16 @@ async function liftExists(userId, date, distanceMiles, durationSeconds) {
 
 async function insertRun(userId, item) {
   const runId = uuidv4();
+  const planned = item.section === 'run' ? await findPlannedRunForDate(userId, item.date) : null;
   await dbRun(
     `INSERT INTO runs (
       id, user_id, date, type, distance_miles, duration_seconds, perceived_effort, notes,
       avg_heart_rate, max_heart_rate, heart_rate_zones, calories, watch_mode, watch_activity_type,
       watch_normalized_type, health_source, health_source_workout_id, health_start_at, health_end_at, cadence_spm,
       elevation_gain, elevation_loss, route_coords, vo2_max, training_effect_aerobic,
-      training_effect_anaerobic, recovery_time_hours, temperature_f, workout_metrics_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      training_effect_anaerobic, recovery_time_hours, temperature_f, workout_metrics_json,
+      plan_session_id, planned_session_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       runId,
       userId,
@@ -260,14 +263,19 @@ async function insertRun(userId, item) {
       item.recoveryTimeHours,
       item.temperatureF,
       JSON.stringify(item.workoutMetrics),
+      planned?.sessionId || null,
+      JSON.stringify(planned || {}),
     ]
   );
 }
 
-async function updateExistingRunHealth(userId, runId, item) {
+async function updateExistingRunHealth(userId, existingRun, item) {
   const normalizedZones = item.zoneSeconds || normalizeZoneSeconds();
   const totalZoneSeconds = ['z1', 'z2', 'z3', 'z4', 'z5'].reduce((sum, zone) => sum + asNumber(normalizedZones[zone], 0), 0);
   const zoneParam = totalZoneSeconds > 0 ? JSON.stringify(normalizedZones) : null;
+  const planned = item.section === 'run' && !hasMeaningfulPlannedRun(existingRun.planned_session_json)
+    ? await findPlannedRunForDate(userId, item.date)
+    : null;
 
   await dbRun(
     `UPDATE runs SET
@@ -291,7 +299,13 @@ async function updateExistingRunHealth(userId, runId, item) {
       recovery_time_hours = COALESCE(?, recovery_time_hours),
       temperature_f = COALESCE(?, temperature_f),
       calories = CASE WHEN ?>0 THEN ? ELSE calories END,
-      workout_metrics_json = COALESCE(NULLIF(?, '{}'), workout_metrics_json)
+      workout_metrics_json = COALESCE(NULLIF(?, '{}'), workout_metrics_json),
+      plan_session_id = COALESCE(NULLIF(plan_session_id, ''), ?),
+      planned_session_json = CASE
+        WHEN planned_session_json IS NULL OR planned_session_json='' OR planned_session_json='{}'
+          THEN COALESCE(?, '{}')
+        ELSE planned_session_json
+      END
      WHERE id=? AND user_id=?`,
     [
       item.avgHeartRate,
@@ -316,7 +330,9 @@ async function updateExistingRunHealth(userId, runId, item) {
       asNumber(item.calories, 0),
       Math.round(asNumber(item.calories, 0)),
       JSON.stringify(item.workoutMetrics),
-      runId,
+      planned?.sessionId || null,
+      planned ? JSON.stringify(planned) : null,
+      existingRun.id,
       userId,
     ]
   );
@@ -368,7 +384,7 @@ async function importRows(userId, rawRows) {
         }
         const existing = await findExistingRun(userId, item);
         if (existing) {
-          await updateExistingRunHealth(userId, existing.id, item);
+          await updateExistingRunHealth(userId, existing, item);
           skipped += 1;
           continue;
         }

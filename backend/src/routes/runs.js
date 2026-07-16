@@ -22,6 +22,7 @@ const {
 } = require('../lib/ageGrading');
 const { buildHealthSignals } = require('../lib/healthSignals');
 const { activityKind, isRunActivity, runActivitySql } = require('../lib/runActivity');
+const { findPlannedRunForDate, hasMeaningfulPlannedRun } = require('../lib/plannedRunMatch');
 const {
   normalizePlanSessionId,
   normalizePlannedSession,
@@ -719,7 +720,20 @@ router.get('/:id', auth, async (req, res) => {
   try {
     const run = await dbGet('SELECT * FROM runs WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
     if (!run) return res.status(404).json({ error: 'Run not found' });
-    res.json({ run });
+    if (isRunActivity(run) && !hasMeaningfulPlannedRun(run.planned_session_json)) {
+      const planned = await findPlannedRunForDate(req.user.id, String(run.date || '').slice(0, 10));
+      if (planned) {
+        return res.json({
+          run: {
+            ...run,
+            plan_session_id: planned.sessionId || null,
+            planned_session_json: JSON.stringify(planned),
+            planned_match_source: planned.matchSource,
+          },
+        });
+      }
+    }
+    res.json({ run: { ...run, planned_match_source: hasMeaningfulPlannedRun(run.planned_session_json) ? 'saved' : null } });
   } catch (err) {
     console.error('[runs/detail] fetch failed:', err.message);
     res.status(500).json({ error: 'Failed to fetch run' });

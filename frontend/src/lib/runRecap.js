@@ -29,6 +29,63 @@ function parsePaceSeconds(value) {
   return Number(match[1]) * 60 + Number(match[2])
 }
 
+function parsePaceTargetRange(value) {
+  const text = String(value || '').trim().replace(/\s*\/\s*mi.*$/i, '')
+  if (!text) return null
+  const pieces = text.split(/\s*(?:-|\u2013|to)\s*/i).filter(Boolean)
+  if (pieces.length < 1 || pieces.length > 2) return null
+  const seconds = pieces.map(parsePaceSeconds)
+  if (seconds.some((item) => !(item > 0))) return null
+  return { min: Math.min(...seconds), max: Math.max(...seconds) }
+}
+
+function closenessScore(actual, target) {
+  if (!(actual > 0) || !(target > 0)) return null
+  return Math.max(0, Math.min(100, 100 - (Math.abs(actual - target) / target) * 200))
+}
+
+function buildAdherenceSummary({
+  actualDistanceMiles,
+  actualDurationSeconds,
+  actualPaceSeconds,
+  plannedDistanceMiles,
+  plannedDurationSeconds,
+  plannedPaceTarget,
+  plannedZoneTarget,
+  zoneAdherencePct,
+}) {
+  const components = []
+  if (plannedDistanceMiles > 0 && actualDistanceMiles > 0) {
+    components.push({ key: 'distance', score: closenessScore(actualDistanceMiles, plannedDistanceMiles) })
+  } else if (plannedDurationSeconds > 0 && actualDurationSeconds > 0) {
+    components.push({ key: 'duration', score: closenessScore(actualDurationSeconds, plannedDurationSeconds) })
+  }
+
+  const paceRange = parsePaceTargetRange(plannedPaceTarget)
+  if (paceRange && actualPaceSeconds > 0) {
+    const nearestTarget = actualPaceSeconds < paceRange.min
+      ? paceRange.min
+      : actualPaceSeconds > paceRange.max
+        ? paceRange.max
+        : actualPaceSeconds
+    components.push({ key: 'pace', score: closenessScore(actualPaceSeconds, nearestTarget) })
+  }
+  if (Number.isFinite(zoneAdherencePct)) {
+    components.push({ key: 'zone', score: Math.max(0, Math.min(100, zoneAdherencePct)) })
+  }
+
+  if (!components.length) return { adherenceScore: null, adherenceLabel: null, adherenceCue: null, adherenceComponents: [] }
+  const adherenceScore = Math.round(components.reduce((sum, component) => sum + component.score, 0) / components.length)
+  const adherenceLabel = adherenceScore >= 85 ? 'On plan' : adherenceScore >= 65 ? 'Mostly on plan' : 'Different from plan'
+  const weakest = components.reduce((lowest, component) => component.score < lowest.score ? component : lowest)
+  let adherenceCue = 'Workout matched the available prescription targets.'
+  if (adherenceScore < 85 && weakest.key === 'distance') adherenceCue = 'Bring the completed distance closer to the scheduled distance next time.'
+  if (adherenceScore < 85 && weakest.key === 'duration') adherenceCue = 'Bring the completed time closer to the scheduled duration next time.'
+  if (adherenceScore < 85 && weakest.key === 'pace') adherenceCue = `Hold the prescribed pace${plannedPaceTarget ? ` (${plannedPaceTarget})` : ''} more consistently.`
+  if (adherenceScore < 85 && weakest.key === 'zone') adherenceCue = `Spend more of the workout in ${plannedZoneTarget || 'the prescribed heart-rate zone'}.`
+  return { adherenceScore, adherenceLabel, adherenceCue, adherenceComponents: components }
+}
+
 export function parsePlannedRun(value) {
   const parsed = parseJson(value, null)
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
@@ -129,22 +186,38 @@ export function buildRunComparison(run = {}) {
     ? (targetZones.reduce((sum, zone) => sum + timeline.seconds[zone - 1], 0) / timeline.totalSeconds) * 100
     : null
 
+  const plannedDistanceMiles = finiteNumber(planned.distanceMiles)
+  const plannedDurationSeconds = finiteNumber(planned.durationMinutes) !== null
+    ? finiteNumber(planned.durationMinutes) * 60
+    : null
+  const plannedPaceTarget = String(planned.paceTarget || '').trim() || null
+  const plannedZoneTarget = String(planned.targetZone || '').trim() || null
+  const adherence = buildAdherenceSummary({
+    actualDistanceMiles,
+    actualDurationSeconds,
+    actualPaceSeconds,
+    plannedDistanceMiles,
+    plannedDurationSeconds,
+    plannedPaceTarget,
+    plannedZoneTarget,
+    zoneAdherencePct,
+  })
+
   return {
     hasPlan: true,
     planned,
     actualDistanceMiles,
     actualDurationSeconds,
     actualPaceSeconds,
-    plannedDistanceMiles: finiteNumber(planned.distanceMiles),
-    plannedDurationSeconds: finiteNumber(planned.durationMinutes) !== null
-      ? finiteNumber(planned.durationMinutes) * 60
-      : null,
-    plannedPaceTarget: String(planned.paceTarget || '').trim() || null,
-    plannedZoneTarget: String(planned.targetZone || '').trim() || null,
+    plannedDistanceMiles,
+    plannedDurationSeconds,
+    plannedPaceTarget,
+    plannedZoneTarget,
     targetZone,
     targetZones,
     zoneAdherencePct,
     timeline,
+    ...adherence,
   }
 }
 

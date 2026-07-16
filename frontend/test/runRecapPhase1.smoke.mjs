@@ -45,6 +45,8 @@ check(comparison.plannedDistanceMiles === 3, 'planned distance remains immutable
 check(comparison.actualDistanceMiles === 3.1, 'recorded distance remains actual truth')
 check(Math.round(comparison.actualPaceSeconds) === 600, 'actual pace derives from recorded time and distance')
 check(Math.round(comparison.zoneAdherencePct) === 73, 'zone adherence uses complete calibrated timeline')
+check(comparison.adherenceScore >= 85 && comparison.adherenceLabel === 'On plan', 'available objective targets produce an on-plan score')
+check(comparison.adherenceComponents.map((item) => item.key).join(',') === 'distance,pace,zone', 'duration is not double-counted when distance is prescribed')
 
 const rangeComparison = buildRunComparison({
   distance_miles: 2,
@@ -66,6 +68,7 @@ const partial = buildRunComparison({
   heart_rate_zones: { z2: 100 },
 })
 check(partial.zoneAdherencePct === null, 'sparse timeline never claims zone adherence')
+check(partial.adherenceScore === null, 'a zone-only target with sparse coverage never fabricates adherence')
 
 console.log('\n== splits and route normalization ==')
 const splits = normalizeRunSplits(JSON.stringify([
@@ -98,6 +101,8 @@ check(appSource.includes('path="/run/recap/:id"'), 'authenticated app route expo
 check(activeRunSource.includes('`/run/recap/${savedRunId}`'), 'tracked runs continue to the saved recap')
 check(logRunSource.includes('`/run/recap/${savedRunId}`'), 'manual runs continue to the saved recap')
 check(recapSource.includes('api.get(`/runs/${encodeURIComponent(id)}`)'), 'recap fetches the exact run instead of a capped history page')
+const historySource = fs.readFileSync(new URL('../src/pages/History.jsx', import.meta.url), 'utf8')
+check(historySource.includes('api.get(`/runs/${encodeURIComponent(run.id)}`)'), 'History enriches an imported run before opening its comparison')
 check(/SELECT \* FROM runs WHERE id=\? AND user_id=\?/.test(runsRouteSource), 'run detail lookup is owner scoped')
 
 console.log(`\nPASSED: ${passed}  FAILED: 0`)

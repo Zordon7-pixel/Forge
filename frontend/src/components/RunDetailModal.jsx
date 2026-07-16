@@ -164,6 +164,7 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
   ].filter((item) => item.value)
   const hasPartialHrCoverage = Number.isFinite(hrCoverage) && hrCoverage > 0 && hrCoverage < 70
   const comparison = buildRunComparison(run)
+  const inferredPlanMatch = comparison.planned?.matchSource === 'scheduled_date' || run.planned_match_source === 'scheduled_date'
   const splits = normalizeRunSplits(run.pace_splits)
   const routePositions = parseRunRoute(run.route_coords)
   const checkInAvailable = run.perceived_effort != null || run.pain_level || run.post_energy
@@ -252,10 +253,20 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
 
         {isRun && (
           <div className="rounded-xl p-4 mb-5" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
-            <p className="text-xs font-bold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.6 }}>Planned vs recorded</p>
+            <p className="text-xs font-bold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.6 }}>Workout match</p>
             {comparison.hasPlan ? (
               <>
                 <p className="mt-1 text-base font-bold" style={{ color: 'var(--text-primary)' }}>{comparison.planned.title || comparison.planned.workoutType || comparison.planned.type || 'Saved workout prescription'}</p>
+                {inferredPlanMatch && <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>Matched to the single run scheduled on this date.</p>}
+                {comparison.adherenceScore != null && (
+                  <div className="mt-3 rounded-lg p-3" style={{ background: 'var(--bg-base)', border: '1px solid var(--border-subtle)' }}>
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-sm font-bold" style={{ color: comparison.adherenceScore >= 85 ? 'var(--success)' : comparison.adherenceScore >= 65 ? 'var(--warning)' : 'var(--text-primary)' }}>{comparison.adherenceLabel}</p>
+                      <p className="text-lg font-black" style={{ color: 'var(--text-primary)' }}>{comparison.adherenceScore}%</p>
+                    </div>
+                    <p className="mt-1 text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>{comparison.adherenceCue}</p>
+                  </div>
+                )}
                 {comparisonRows.length > 0 ? (
                   <div className="mt-3 overflow-hidden rounded-lg" style={{ border: '1px solid var(--border-subtle)' }}>
                     <div className="grid grid-cols-[minmax(80px,0.8fr)_1fr_1fr] gap-2 px-3 py-2 text-[11px] font-bold uppercase" style={{ color: 'var(--text-muted)', background: 'var(--bg-base)' }}>

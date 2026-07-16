@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ResponsiveContainer, BarChart, LineChart, XAxis, YAxis, Tooltip, Bar, Line } from 'recharts'
 import { useLocation, Link } from 'react-router-dom'
 import { Pencil, Trash2 } from 'lucide-react'
@@ -80,6 +80,19 @@ export default function History() {
   const [customRange, setCustomRange] = useState({ from: '', to: '' })
   const [showDatePicker, setShowDatePicker] = useState(false)
 
+  const openRunDetail = useCallback(async (run) => {
+    if (!run?.id) return
+    setSelectedRun(run)
+    try {
+      const response = await api.get(`/runs/${encodeURIComponent(run.id)}`)
+      const detailedRun = response.data?.run
+      if (!detailedRun) return
+      setSelectedRun((current) => current?.id === run.id ? { ...current, ...detailedRun } : current)
+    } catch (error) {
+      console.error('[history/run-detail] enrichment failed:', error?.message || error)
+    }
+  }, [])
+
   useEffect(() => {
     ;(async () => {
       try {
@@ -110,14 +123,14 @@ export default function History() {
       const workoutId = params.get('workoutId')
       if (runId) {
         const r = runs.find((x) => x.id === runId)
-        if (r) setSelectedRun(r)
+        if (r) openRunDetail(r)
       }
       if (workoutId) {
         const w = workoutSessions.find((x) => x.id === workoutId)
         if (w) setSelectedWorkout(w)
       }
     }
-  }, [loading, location.search, runs, workoutSessions])
+  }, [loading, location.search, openRunDetail, runs, workoutSessions])
 
   const requestDelete = (type, item, e) => {
     e?.stopPropagation?.()
@@ -359,7 +372,7 @@ export default function History() {
       {(tab === 'all' || tab === 'runs') && (
         <div className="space-y-3 mb-3">
           {filteredRuns.map(run => (
-            <div key={run.id} onClick={() => setSelectedRun(run)} className="cursor-pointer rounded-xl p-4" style={{ background: 'var(--bg-card)' }}>
+            <div key={run.id} onClick={() => openRunDetail(run)} className="cursor-pointer rounded-xl p-4" style={{ background: 'var(--bg-card)' }}>
               {(() => {
                 const paceMinPerMile = run.distance_miles ? run.duration_seconds / 60 / run.distance_miles : null
                 const paceZone = isRunningActivity(run) ? getPaceZone(paceMinPerMile) : null
