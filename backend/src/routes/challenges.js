@@ -87,6 +87,13 @@ async function areAcceptedFriends(query, firstUserId, secondUserId) {
   return Boolean(row);
 }
 
+async function lockUsers(tx, userIds) {
+  const ids = [...new Set(userIds.map(String))].sort();
+  const placeholders = ids.map(() => '?').join(',');
+  const rows = await tx.all(`SELECT id FROM users WHERE id IN (${placeholders}) ORDER BY id FOR UPDATE`, ids);
+  return rows.length === ids.length;
+}
+
 async function getChallengeForUser(challengeId, userId, statuses = ['invited', 'joined']) {
   return dbGet(
     `SELECT c.*, uc.role AS membership_role, uc.status AS membership_status,
@@ -214,7 +221,7 @@ router.post('/', createLimiter, async (req, res) => {
         [uuidv4(), req.user.id, challengeId]
       );
       return { status: 201, body: { ok: true, challenge_id: challengeId } };
-    });
+    }, { userIds: [req.user.id], userLock: 'update' });
 
     res.status(result.status).json(result.body);
   } catch (err) {
@@ -231,6 +238,8 @@ router.post('/:id/invite', inviteLimiter, async (req, res) => {
 
   try {
     const result = await withTransaction(async (tx) => {
+      const friend = await tx.get('SELECT id FROM users WHERE id = ?', [friendId]);
+      if (!friend) return { status: 404, body: { error: 'Friend unavailable.' } };
       const challenge = await tx.get(
         `SELECT c.*, owner_uc.id AS owner_membership_id
          FROM challenges c
@@ -292,7 +301,7 @@ router.post('/:id/invite', inviteLimiter, async (req, res) => {
         );
       }
       return { status: 201, body: { ok: true, status: 'invited' } };
-    });
+    }, { userIds: [req.user.id, friendId], userLock: 'update' });
 
     res.status(result.status).json(result.body);
   } catch (err) {
@@ -540,30 +549,51 @@ router.post('/:id/report', reportLimiter, async (req, res) => {
   const note = cleanText(req.body?.note).trim().slice(0, 500) || null;
 
   try {
-    const challenge = await dbGet(
-      `SELECT c.id, owner_uc.user_id AS owner_user_id
-       FROM challenges c
-       JOIN user_challenges viewer_uc ON viewer_uc.challenge_id = c.id
-       LEFT JOIN user_challenges owner_uc ON owner_uc.challenge_id = c.id
-         AND owner_uc.role = 'owner' AND owner_uc.status = 'joined'
-       WHERE c.id = ? AND viewer_uc.user_id = ? AND viewer_uc.status = 'joined'
-         AND c.kind = 'social'
-         AND c.visibility IN ('private', 'friends')
-         AND c.status IN ('active', 'completed')
-       LIMIT 1`,
-      [req.params.id, req.user.id]
-    );
-    if (!challenge) return challengeUnavailable(res);
-    if (challenge.owner_user_id === req.user.id) {
-      return res.status(400).json({ error: 'Challenge owners cannot report their own challenge.' });
-    }
-    await dbRun(
-      `INSERT INTO social_reports
-       (id, reporter_id, subject_user_id, category, context_type, context_id, note, status)
-       VALUES (?, ?, ?, ?, 'challenge', ?, ?, 'open')`,
-      [uuidv4(), req.user.id, challenge.owner_user_id || null, category, req.params.id, note]
-    );
-    return res.status(201).json({ ok: true });
+    const result = await withTransaction(async (tx) => {
+      const preview = await tx.get(
+        `SELECT c.id, owner_uc.user_id AS owner_user_id
+         FROM challenges c
+         JOIN user_challenges viewer_uc ON viewer_uc.challenge_id = c.id
+         JOIN user_challenges owner_uc ON owner_uc.challenge_id = c.id
+           AND owner_uc.role = 'owner' AND owner_uc.status = 'joined'
+         WHERE c.id = ? AND viewer_uc.user_id = ? AND viewer_uc.status = 'joined'
+           AND c.kind = 'social'
+           AND c.visibility IN ('private', 'friends')
+           AND c.status IN ('active', 'completed')
+         LIMIT 1`,
+        [req.params.id, req.user.id]
+      );
+      if (!preview) return { status: 404, body: { error: 'Challenge not found.' } };
+      if (preview.owner_user_id === req.user.id) {
+        return { status: 400, body: { error: 'Challenge owners cannot report their own challenge.' } };
+      }
+      if (!await lockUsers(tx, [req.user.id, preview.owner_user_id])) {
+        return { status: 404, body: { error: 'Challenge not found.' } };
+      }
+      const challenge = await tx.get(
+        `SELECT c.id, owner_uc.user_id AS owner_user_id
+         FROM challenges c
+         JOIN user_challenges viewer_uc ON viewer_uc.challenge_id = c.id
+         JOIN user_challenges owner_uc ON owner_uc.challenge_id = c.id
+           AND owner_uc.role = 'owner' AND owner_uc.status = 'joined'
+         WHERE c.id = ? AND owner_uc.user_id = ?
+           AND viewer_uc.user_id = ? AND viewer_uc.status = 'joined'
+           AND c.kind = 'social'
+           AND c.visibility IN ('private', 'friends')
+           AND c.status IN ('active', 'completed')
+         FOR UPDATE OF c, viewer_uc, owner_uc`,
+        [req.params.id, preview.owner_user_id, req.user.id]
+      );
+      if (!challenge) return { status: 404, body: { error: 'Challenge not found.' } };
+      await tx.run(
+        `INSERT INTO social_reports
+         (id, reporter_id, subject_user_id, category, context_type, context_id, note, status)
+         VALUES (?, ?, ?, ?, 'challenge', ?, ?, 'open')`,
+        [uuidv4(), req.user.id, challenge.owner_user_id, category, req.params.id, note]
+      );
+      return { status: 201, body: { ok: true } };
+    }, { skipContextUserGuard: true });
+    return res.status(result.status).json(result.body);
   } catch (err) {
     console.error('[challenges/report] failed:', err.message);
     return res.status(500).json({ error: 'Could not submit this challenge report.' });

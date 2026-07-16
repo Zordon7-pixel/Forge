@@ -1,12 +1,29 @@
 const jwt = require('jsonwebtoken');
+const { dbGet, runWithUserContext } = require('../db');
 
-module.exports = (req, res, next) => {
+async function auth(req, res, next) {
   const header = req.headers.authorization;
   if (!header?.startsWith('Bearer ')) return res.status(401).json({ error: 'Unauthorized' });
+
+  let user;
   try {
-    req.user = jwt.verify(header.slice(7), process.env.JWT_SECRET);
-    next();
+    user = jwt.verify(header.slice(7), process.env.JWT_SECRET);
   } catch {
-    res.status(401).json({ error: 'Invalid token' });
+    return res.status(401).json({ error: 'Invalid token' });
   }
-};
+
+  try {
+    const account = await dbGet('SELECT id FROM users WHERE id = ?', [user.id]);
+    if (!account) {
+      return res.status(401).json({ error: 'Invalid token' });
+    }
+
+    req.user = user;
+    return runWithUserContext(user.id, next);
+  } catch (err) {
+    console.error('[auth] account verification failed:', err.message);
+    return res.status(503).json({ error: 'Authentication is temporarily unavailable.' });
+  }
+}
+
+module.exports = auth;

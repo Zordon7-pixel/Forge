@@ -1,4 +1,5 @@
 const { Pool, types } = require('pg');
+const { AsyncLocalStorage } = require('node:async_hooks');
 
 // Parse int8 (bigint) as JavaScript integer — COUNT(*) returns int8 in PG
 types.setTypeParser(20, parseInt);
@@ -8,13 +9,18 @@ types.setTypeParser(1700, parseFloat);
 types.setTypeParser(1114, val => val);
 types.setTypeParser(1184, val => val);
 
-const pool = new Pool({
+const poolConfig = {
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+};
+
+const pool = new Pool({
+  ...poolConfig,
   max: 10,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 5000,
 });
+const userRequestContext = new AsyncLocalStorage();
 
 // Convert SQLite-style ? placeholders to PostgreSQL $1, $2, $3...
 function toPositional(sql) {
@@ -36,11 +42,60 @@ async function dbAll(sql, params = []) {
 
 // dbRun — execute INSERT/UPDATE/DELETE, returns { changes: rowCount }
 async function dbRun(sql, params = []) {
-  const r = await pool.query(toPositional(sql), params);
-  return { changes: r.rowCount };
+  const userId = userRequestContext.getStore()?.userId;
+  if (!userId) {
+    const r = await pool.query(toPositional(sql), params);
+    return { changes: r.rowCount };
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await lockAuthenticatedUser(client, userId);
+    const r = await client.query(toPositional(sql), params);
+    await client.query('COMMIT');
+    return { changes: r.rowCount };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
-async function withTransaction(fn) {
+function runWithUserContext(userId, fn) {
+  return userRequestContext.run({ userId: String(userId) }, fn);
+}
+
+function accountUnavailableError() {
+  const err = new Error('Authenticated account no longer exists');
+  err.code = 'AUTH_ACCOUNT_DELETED';
+  return err;
+}
+
+async function lockAuthenticatedUser(client, userId) {
+  const result = await client.query('SELECT id FROM users WHERE id = $1 FOR KEY SHARE', [String(userId)]);
+  if (!result.rows[0]) throw accountUnavailableError();
+}
+
+async function lockUserRows(client, userIds, { mode = 'key_share' } = {}) {
+  const ids = [...new Set((userIds || []).map((id) => String(id || '').trim()).filter(Boolean))].sort();
+  if (!ids.length) return new Set();
+  const placeholders = ids.map((_, index) => `$${index + 1}`).join(', ');
+  const lockClause = mode === 'update' ? 'FOR UPDATE' : 'FOR KEY SHARE';
+  const result = await client.query(
+    `SELECT id FROM users WHERE id IN (${placeholders}) ORDER BY id ${lockClause}`,
+    ids
+  );
+  return new Set(result.rows.map((row) => String(row.id)));
+}
+
+async function withTransaction(fn, {
+  userIds = [],
+  userLock = 'key_share',
+  requireUserIds = [],
+  skipContextUserGuard = false,
+} = {}) {
   const client = await pool.connect();
   const query = async (sql, params = []) => client.query(toPositional(sql), params);
   query.get = async (sql, params = []) => {
@@ -58,6 +113,17 @@ async function withTransaction(fn) {
 
   try {
     await client.query('BEGIN');
+    const contextualUserId = skipContextUserGuard ? null : userRequestContext.getStore()?.userId;
+    const guardedUserIds = [...new Set([
+      ...(contextualUserId ? [contextualUserId] : []),
+      ...userIds,
+    ].map((id) => String(id || '').trim()).filter(Boolean))];
+    const lockedUserIds = await lockUserRows(client, guardedUserIds, { mode: userLock });
+    const required = new Set([
+      ...(contextualUserId ? [String(contextualUserId)] : []),
+      ...requireUserIds.map((id) => String(id || '').trim()).filter(Boolean),
+    ]);
+    if ([...required].some((id) => !lockedUserIds.has(id))) throw accountUnavailableError();
     const result = await fn(query);
     await client.query('COMMIT');
     return result;
@@ -67,6 +133,15 @@ async function withTransaction(fn) {
   } finally {
     client.release();
   }
+}
+
+async function withUserMutation(userId, fn) {
+  const normalizedUserId = String(userId || '').trim();
+  if (!normalizedUserId) throw accountUnavailableError();
+  return withTransaction(fn, {
+    userIds: [normalizedUserId],
+    requireUserIds: [normalizedUserId],
+  });
 }
 
 async function initDb() {
@@ -1235,4 +1310,14 @@ async function initDb() {
   }
 }
 
-module.exports = { pool, dbGet, dbAll, dbRun, withTransaction, initDb };
+module.exports = {
+  pool,
+  dbGet,
+  dbAll,
+  dbRun,
+  runWithUserContext,
+  withTransaction,
+  withUserMutation,
+  initDb,
+  _test: { lockAuthenticatedUser, lockUserRows },
+};

@@ -247,10 +247,11 @@ async function revokeBlockedGroupRunAccess(tx, blockerId, blockedId) {
        AND blocked_member.user_id = ?
        AND blocked_member.status IN ('invited', 'going')
      WHERE gr.status IN ('scheduled', 'completed')
-       AND gr.starts_at + ((gr.duration_minutes + 120) * INTERVAL '1 minute') >= NOW()
+       AND gr.starts_at + (gr.duration_minutes * INTERVAL '1 minute')
+         + (?::integer * INTERVAL '1 day') >= NOW()
      ORDER BY gr.id
      FOR UPDATE OF gr, blocker_member, blocked_member`,
-    [blockerId, blockedId]
+    [blockerId, blockedId, GROUP_RUN_SAFETY_RETENTION_DAYS]
   );
 
   for (const groupRun of sharedRuns) {

@@ -1,7 +1,7 @@
 const crypto = require('crypto');
 const router = require('express').Router();
 
-const { dbGet, dbRun } = require('../db');
+const { dbGet, dbRun, withUserMutation } = require('../db');
 const auth = require('../middleware/auth');
 
 const STRAVA_AUTH_URL = 'https://www.strava.com/oauth/authorize';
@@ -268,8 +268,9 @@ async function fetchStravaActivities(accessToken) {
   return Array.isArray(payload) ? payload : [];
 }
 
-async function upsertStravaTokens({ userId, accessToken, refreshToken, expiresAt, athleteId, athleteName }) {
-  await dbRun(
+async function upsertStravaTokens({ userId, accessToken, refreshToken, expiresAt, athleteId, athleteName, query = null }) {
+  const run = query?.run || dbRun;
+  await run(
     `INSERT INTO strava_tokens (
       user_id,
       access_token,
@@ -395,14 +396,15 @@ router.get('/callback', async (req, res) => {
     const athleteId = Number(tokenPayload?.athlete?.id || 0) || null;
     const athleteName = buildAthleteName(tokenPayload?.athlete);
 
-    await upsertStravaTokens({
+    await withUserMutation(statePayload.user_id, (tx) => upsertStravaTokens({
       userId: statePayload.user_id,
       accessToken: String(tokenPayload.access_token),
       refreshToken: String(tokenPayload.refresh_token),
       expiresAt: Number(tokenPayload.expires_at || 0),
       athleteId,
       athleteName,
-    });
+      query: tx,
+    }));
 
     if (deepLink) {
       return res.redirect(appendQueryParams(deepLink, { ok: 1, athlete_name: athleteName || '' }));

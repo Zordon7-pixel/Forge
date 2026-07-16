@@ -19,6 +19,8 @@ const scheduledRun = {
   type: 'easy',
   distance_miles: 4,
   target_zone: 'Zone 2',
+  pace_target: 'Conversational',
+  structure: ['20 minutes easy with relaxed form'],
 }
 const matchingGroupRun = {
   id: 'group-run-1',
@@ -31,6 +33,7 @@ const matchingGroupRun = {
   target_distance_miles: 4.5,
   target_zone: 'Zone 2',
   pace_note: 'Conversational',
+  workout_structure: '20 minutes easy with relaxed form',
   meetup_area: 'River park',
   membership: { status: 'going' },
   route: {
@@ -44,15 +47,20 @@ assert.deepEqual(planRunSnapshot(scheduledRun), {
   goal_mode: 'distance',
   target_distance_miles: 4,
   target_duration_minutes: null,
-  pace_note: '',
+  pace_note: 'Conversational',
   target_zone: 'Zone 2',
-  workout_structure: '',
+  workout_structure: '20 minutes easy with relaxed form',
 })
 
 assert.equal(
   groupRunCompatibility(matchingGroupRun, { run: scheduledRun }).state,
   'match',
   'a group run within 20% of the plan distance should match',
+)
+assert.equal(
+  groupRunCompatibility({ ...matchingGroupRun, workout_structure: '' }, { run: scheduledRun }).state,
+  'partial',
+  'missing prescribed detail must not be presented as a categorical match',
 )
 assert.equal(
   groupRunCompatibility({ ...matchingGroupRun, target_distance_miles: 7 }, { run: scheduledRun }).state,
@@ -71,7 +79,7 @@ assert.equal(
 )
 assert.deepEqual(
   groupRunCompatibility(matchingGroupRun, { run: null }),
-  { state: 'none', label: 'No scheduled run on this date' },
+  { state: 'none', labelKey: 'groupRuns.noScheduledRun' },
   'a rest day must not be mislabeled as a successful compatibility check',
 )
 assert.equal(groupRunCountdown({ ...matchingGroupRun, status: 'cancelled' }, now), 'Cancelled')
@@ -115,11 +123,24 @@ assert.equal(canRestoreGroupRunNavigation(matchingGroupRun, 'another-group-run',
 const activeRunSource = readFileSync(new URL('../src/pages/ActiveRun.jsx', import.meta.url), 'utf8')
 assert.match(activeRunSource, /api\.get\(`\/group-runs\/\$\{encodeURIComponent\(groupRunId\)\}`\)/, 'ActiveRun must reauthorize through group-run detail')
 assert.match(activeRunSource, /if \(!canRestoreGroupRunNavigation\(groupRun, groupRunId\)\)/, 'ActiveRun must validate membership, cancellation, and expiry before authorizing state')
+assert.match(activeRunSource, /setInterval\(verifyAccess, 60_000\)/, 'ActiveRun must periodically revalidate private group-run access')
+assert.match(activeRunSource, /visibilitychange/, 'ActiveRun must revalidate private group-run access when the app becomes visible')
+assert.match(activeRunSource, /hidePrivateNavigation\(\)/, 'ActiveRun must fail closed when private access cannot be verified')
 const authorizationGateIndex = activeRunSource.indexOf("if (groupRunAuthorization === 'authorized')")
 const routeNormalizationIndex = activeRunSource.indexOf('normalizePlannedRoute(navigationState.plannedRoute)')
 assert.ok(
   authorizationGateIndex >= 0 && routeNormalizationIndex >= 0 && authorizationGateIndex < routeNormalizationIndex,
   'the authorization gate must be established before planned route normalization',
 )
+
+const panelSource = readFileSync(new URL('../src/components/GroupRunPanel.jsx', import.meta.url), 'utf8')
+assert.match(panelSource, /detailRefreshRequestRef\.current !== refreshRequestId/, 'overlapping detail refreshes must not let an older private response win')
+assert.match(panelSource, /detailRefreshRequestRef\.current !== detailRequestId/, 'an older detail-open response must not overwrite a newer privacy refresh')
+assert.match(panelSource, /detailIdRef\.current !== groupRunId/, 'background detail refreshes must not overwrite a different or closed run')
+assert.match(panelSource, /onClick=\{\(\) => openReport\(\)\}/, 'invitees and joined non-owners must have a group-run report action')
+assert.match(panelSource, /state: groupRunNavigationProvenance\(groupRunWarmupState\(detail\.group_run\)\)/, 'group-run navigation must write provenance only to browser history')
+
+const warmupSource = readFileSync(new URL('../src/pages/Warmup.jsx', import.meta.url), 'utf8')
+assert.match(warmupSource, /navigate\('\/run\/active', \{ replace: true, state: groupRunNavigationProvenance\(nextState\) \}\)/, 'Warmup must replace its history entry with provenance-only group-run state')
 
 console.log('Phase 4D group-run frontend smoke OK')

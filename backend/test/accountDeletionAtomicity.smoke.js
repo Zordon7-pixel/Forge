@@ -58,7 +58,12 @@ function createScenario({ failOnSql = null } = {}) {
       outsideTransactionRuns += 1;
       throw new Error('Account deletion wrote outside its transaction');
     },
-    withTransaction: async (fn) => {
+    withTransaction: async (fn, options = {}) => {
+      assert.deepEqual(options, {
+        userIds: [USER_ID],
+        userLock: 'update',
+        requireUserIds: [USER_ID],
+      }, 'account deletion must acquire its user update lock before the callback');
       const workingState = clone(durableState);
       const tx = {
         all: async (sql, params) => {
@@ -69,6 +74,11 @@ function createScenario({ failOnSql = null } = {}) {
             : [];
         },
         get: async (sql, params) => {
+          if (/^SELECT id, password_hash FROM users/.test(sql)) {
+            assert.equal(sql, 'SELECT id, password_hash FROM users WHERE id = ?');
+            assert.deepEqual(params, [USER_ID]);
+            return workingState.user ? { id: USER_ID, password_hash: PASSWORD_HASH } : null;
+          }
           assert.match(sql, /FROM user_challenges/);
           assert.deepEqual(params, [CHALLENGE_ID, USER_ID]);
           return null;

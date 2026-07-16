@@ -2,7 +2,7 @@ const router  = require('express').Router();
 const bcrypt  = require('bcryptjs');
 const jwt     = require('jsonwebtoken');
 const crypto  = require('crypto');
-const { dbGet, dbAll, dbRun, withTransaction } = require('../db');
+const { dbGet, dbAll, dbRun, withTransaction, withUserMutation } = require('../db');
 const auth    = require('../middleware/auth');
 const { v4: uuidv4 } = require('uuid');
 const { isMailConfigured, sendPasswordResetEmail } = require('../services/mail');
@@ -96,8 +96,15 @@ router.post('/forgot-password', async (req, res) => {
       const token = crypto.randomBytes(32).toString('hex');
       const expiresAt = new Date(Date.now() + 3600000).toISOString();
 
-      await dbRun('INSERT INTO password_reset_tokens (id, user_id, token, expires_at) VALUES (?, ?, ?, ?)',
-        [uuidv4(), user.id, token, expiresAt]);
+      try {
+        await withUserMutation(user.id, (tx) => tx.run(
+          'INSERT INTO password_reset_tokens (id, user_id, token, expires_at) VALUES (?, ?, ?, ?)',
+          [uuidv4(), user.id, token, expiresAt]
+        ));
+      } catch (err) {
+        if (err.code === 'AUTH_ACCOUNT_DELETED') return res.json(forgotPasswordResponses.emailSent);
+        throw err;
+      }
 
       try {
         await sendPasswordResetEmail({ to: user.email, token });
@@ -123,15 +130,37 @@ router.post('/reset-password', async (req, res) => {
     const { token, password } = req.body;
     if (!token || !password) return res.status(400).json({ error: 'Token and new password are required.' });
     if (password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters.' });
-    const record = await dbGet('SELECT * FROM password_reset_tokens WHERE token = ? AND used = 0 AND expires_at > ?',
+    const record = await dbGet('SELECT user_id FROM password_reset_tokens WHERE token = ? AND used = 0 AND expires_at > ?',
       [token, new Date().toISOString()]);
     if (!record) return res.status(400).json({ error: 'Reset link is invalid or expired.' });
-    await dbRun('UPDATE users SET password_hash = ? WHERE id = ?', [bcrypt.hashSync(password, 10), record.user_id]);
-    await dbRun('UPDATE password_reset_tokens SET used = 1 WHERE user_id = ? AND used = 0', [record.user_id]);
-    res.json({ ok: true });
+    const passwordHash = bcrypt.hashSync(password, 10);
+    const reset = await withUserMutation(record.user_id, async (tx) => {
+      const activeRecord = await tx.get(
+        `SELECT id FROM password_reset_tokens
+         WHERE token = ? AND user_id = ? AND used = 0 AND expires_at > ?
+         FOR UPDATE`,
+        [token, record.user_id, new Date().toISOString()]
+      );
+      if (!activeRecord) return false;
+      const updated = await tx.run(
+        'UPDATE users SET password_hash = ? WHERE id = ?',
+        [passwordHash, record.user_id]
+      );
+      if (updated.changes !== 1) return false;
+      const consumed = await tx.run(
+        'UPDATE password_reset_tokens SET used = 1 WHERE id = ? AND user_id = ? AND used = 0',
+        [activeRecord.id, record.user_id]
+      );
+      return consumed.changes === 1;
+    });
+    if (!reset) return res.status(400).json({ error: 'Reset link is invalid or expired.' });
+    return res.json({ ok: true });
   } catch (err) {
+    if (err.code === 'AUTH_ACCOUNT_DELETED') {
+      return res.status(400).json({ error: 'Reset link is invalid or expired.' });
+    }
     console.error('[auth/reset-password] failed:', err.message);
-    res.status(500).json({ error: 'Reset failed' });
+    return res.status(500).json({ error: 'Reset failed' });
   }
 });
 
@@ -430,13 +459,19 @@ router.delete('/account', auth, async (req, res) => {
       return res.status(400).json({ error: 'Password confirmation is required.' });
     }
 
-    const user = await dbGet('SELECT id, password_hash FROM users WHERE id = ?', [userId]);
-    if (!user) return res.status(404).json({ error: 'Account not found' });
-    if (!bcrypt.compareSync(String(password), user.password_hash)) {
-      return res.status(401).json({ error: 'Password confirmation failed.' });
-    }
-
     await withTransaction(async (tx) => {
+      const user = await tx.get('SELECT id, password_hash FROM users WHERE id = ?', [userId]);
+      if (!user) {
+        const err = new Error('Account not found');
+        err.code = 'ACCOUNT_NOT_FOUND';
+        throw err;
+      }
+      if (!bcrypt.compareSync(String(password), user.password_hash)) {
+        const err = new Error('Password confirmation failed');
+        err.code = 'PASSWORD_CONFIRMATION_FAILED';
+        throw err;
+      }
+
       await cleanupOwnedSocialChallenges(tx, userId);
       for (const [sql, params] of ACCOUNT_SOCIAL_DELETE_QUERIES) {
         await tx.run(sql, bindUserId(params, userId));
@@ -453,11 +488,17 @@ router.delete('/account', auth, async (req, res) => {
       }
 
       await tx.run('DELETE FROM users WHERE id = ?', [userId]);
-    });
+    }, { userIds: [userId], userLock: 'update', requireUserIds: [userId] });
     res.json({ ok: true });
   } catch (err) {
+    if (err.code === 'ACCOUNT_NOT_FOUND' || err.code === 'AUTH_ACCOUNT_DELETED') {
+      return res.status(404).json({ error: 'Account not found' });
+    }
+    if (err.code === 'PASSWORD_CONFIRMATION_FAILED') {
+      return res.status(401).json({ error: 'Password confirmation failed.' });
+    }
     console.error('[auth/delete-account] failed:', err.message);
-    res.status(500).json({ error: 'Failed to delete account' });
+    return res.status(500).json({ error: 'Failed to delete account' });
   }
 });
 

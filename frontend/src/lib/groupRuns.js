@@ -85,7 +85,7 @@ export function planRunSnapshot(run) {
 
 export function groupRunCompatibility(groupRun, execution) {
   const planned = planRunSnapshot(execution?.run)
-  if (!planned) return { state: 'none', label: 'No scheduled run on this date' }
+  if (!planned) return { state: 'none', labelKey: 'groupRuns.noScheduledRun' }
   const normalizeType = (value) => String(value || 'social').trim().toLowerCase().replace(/[_\s]+/g, '-')
   const normalizeZone = (value) => String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '')
   const normalizeText = (value) => String(value || '').trim().toLowerCase().replace(/\s+/g, ' ')
@@ -93,25 +93,30 @@ export function groupRunCompatibility(groupRun, execution) {
   const sameMode = planned.goal_mode === groupRun?.goal_mode
   const plannedZone = normalizeZone(planned.target_zone)
   const groupZone = normalizeZone(groupRun?.target_zone)
-  const zoneMatches = !plannedZone || !groupZone || plannedZone === groupZone
+  const zoneConflicts = Boolean(plannedZone && groupZone && plannedZone !== groupZone)
   const plannedPace = normalizeText(planned.pace_note)
   const groupPace = normalizeText(groupRun?.pace_note)
-  const paceMatches = !plannedPace || !groupPace || plannedPace === groupPace
+  const paceConflicts = Boolean(plannedPace && groupPace && plannedPace !== groupPace)
   const plannedStructure = normalizeText(planned.workout_structure)
   const groupStructure = normalizeText(groupRun?.workout_structure)
-  const structureMatches = !plannedStructure || !groupStructure || plannedStructure === groupStructure
+  const structureConflicts = Boolean(plannedStructure && groupStructure && plannedStructure !== groupStructure)
   const groupDistance = finiteNumber(groupRun?.distance_target_miles ?? groupRun?.target_distance_miles)
   const planDistance = finiteNumber(planned.target_distance_miles)
   const groupDuration = finiteNumber(groupRun?.time_target_minutes ?? groupRun?.target_duration_minutes)
   const planDuration = finiteNumber(planned.target_duration_minutes)
-  const targetMatches = sameType && sameMode && zoneMatches && paceMatches && structureMatches && (
+  const coreMatches = sameType && sameMode && (
     groupRun?.goal_mode === 'open'
     || (groupDistance > 0 && planDistance > 0 && Math.abs(groupDistance - planDistance) / planDistance <= 0.2)
     || (groupDuration > 0 && planDuration > 0 && Math.abs(groupDuration - planDuration) / planDuration <= 0.2)
   )
-  return targetMatches
-    ? { state: 'match', label: 'Matches your scheduled run' }
-    : { state: 'different', label: 'Different from your scheduled run' }
+  if (!coreMatches || zoneConflicts || paceConflicts || structureConflicts) {
+    return { state: 'different', labelKey: 'groupRuns.compatibilityDifferent' }
+  }
+
+  const completeDetails = [plannedZone, groupZone, plannedPace, groupPace, plannedStructure, groupStructure].every(Boolean)
+  return completeDetails
+    ? { state: 'match', labelKey: 'groupRuns.compatibilityMatch' }
+    : { state: 'partial', labelKey: 'groupRuns.compatibilityPartial' }
 }
 
 export function groupRunIdFromNavigationState(state) {

@@ -80,11 +80,14 @@ if (missingExport.length || missingDelete.length) {
 }
 
 const { runAccountDeletionAtomicitySmoke } = require('../test/accountDeletionAtomicity.smoke');
+const { runAuthMutationGuardSmoke } = require('../test/authMutationGuard.smoke');
 
 runAccountDeletionAtomicitySmoke()
+  .then(() => runAuthMutationGuardSmoke())
   .then(() => {
     console.log(`Account data coverage OK: ${userOwnedTables.size} user-owned tables checked.`);
     console.log('Account deletion atomicity OK: mid-delete rollback checked.');
+    console.log('Account deletion concurrency OK: per-transaction user guard checked.');
   })
   .catch((err) => {
     console.error('Account deletion atomicity check failed:', err);

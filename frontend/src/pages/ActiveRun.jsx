@@ -273,6 +273,8 @@ export default function ActiveRun() {
     if (!isGroupRunNavigation) return undefined
 
     let active = true
+    let verificationInFlight = false
+    let authorizationRevoked = false
     const activeRunPath = `${location.pathname}${location.search}${location.hash}`
     navigate(activeRunPath, { replace: true, state: groupRunProvenance })
 
@@ -297,6 +299,20 @@ export default function ActiveRun() {
       saveActiveRunSession(redactedSession, activeRunOwnerId)
     }
 
+    const hidePrivateNavigation = () => {
+      if (!active || authorizationRevoked) return
+      setAuthorizedGroupRunState(null)
+      setGroupRunAuthorization('unavailable')
+      setGroupRunNotice('Group run access could not be verified. The private course is hidden; your run stats are still available.')
+      navigate(activeRunPath, { replace: true, state: groupRunProvenance })
+      const currentSession = sessionStateRef.current
+      if (getAuthenticatedUserId() === activeRunOwnerId && ['running', 'awaiting_distance'].includes(currentSession?.phase)) {
+        const redactedSession = { ...currentSession, navigationState: groupRunProvenance }
+        sessionStateRef.current = redactedSession
+        saveActiveRunSession(redactedSession, activeRunOwnerId)
+      }
+    }
+
     if (!groupRunId) {
       clearPrivateNavigation()
       return () => {
@@ -304,11 +320,15 @@ export default function ActiveRun() {
       }
     }
 
-    api.get(`/group-runs/${encodeURIComponent(groupRunId)}`)
-      .then((response) => {
+    const verifyAccess = async () => {
+      if (!active || authorizationRevoked || verificationInFlight) return
+      verificationInFlight = true
+      try {
+        const response = await api.get(`/group-runs/${encodeURIComponent(groupRunId)}`)
         if (!active) return
         const groupRun = response.data?.group_run
         if (!canRestoreGroupRunNavigation(groupRun, groupRunId)) {
+          authorizationRevoked = true
           clearPrivateNavigation()
           return
         }
@@ -334,20 +354,31 @@ export default function ActiveRun() {
           sessionStateRef.current = authorizedSession
           saveActiveRunSession(authorizedSession, activeRunOwnerId)
         }
-      })
-      .catch((error) => {
+      } catch (error) {
         if (!active) return
         const status = Number(error?.response?.status || 0)
         if ([400, 401, 403, 404, 409, 410].includes(status)) {
+          authorizationRevoked = true
           clearPrivateNavigation({ authFailure: status === 401 || status === 403 })
           return
         }
-        setGroupRunAuthorization('unavailable')
-        setGroupRunNotice('Group run access could not be verified. The private course is hidden; your run stats are still available.')
-      })
+        hidePrivateNavigation()
+      } finally {
+        verificationInFlight = false
+      }
+    }
+
+    verifyAccess()
+    const verificationTimer = window.setInterval(verifyAccess, 60_000)
+    const verifyWhenVisible = () => {
+      if (document.visibilityState === 'visible') verifyAccess()
+    }
+    document.addEventListener('visibilitychange', verifyWhenVisible)
 
     return () => {
       active = false
+      window.clearInterval(verificationTimer)
+      document.removeEventListener('visibilitychange', verifyWhenVisible)
     }
   }, [activeRunOwnerId, groupRunId, groupRunProvenance, isGroupRunNavigation, location.hash, location.pathname, location.search, navigate])
 

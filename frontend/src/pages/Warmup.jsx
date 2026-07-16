@@ -8,6 +8,7 @@ import MovementDemo from '../components/MovementDemo'
 import { preRunStretches } from '../data/stretches'
 import { chooseRotatingRoutine, rememberRoutine } from '../lib/routineRotation'
 import { SWIPE_BACK_EVENT } from '../lib/swipeBack'
+import { groupRunNavigationProvenance, isGroupRunNavigationState } from '../lib/groupRuns'
 
 const WARMUP_ROTATION_SCOPE = 'warmup'
 const WARMUP_STEP_COUNT = 5
@@ -624,6 +625,10 @@ export default function Warmup() {
   const handleStartRun = () => {
     const incomingState = location.state && typeof location.state === 'object' ? location.state : {}
     const { warmupReturnTo, ...nextState } = incomingState
+    if (isGroupRunNavigationState(nextState)) {
+      navigate('/run/active', { replace: true, state: groupRunNavigationProvenance(nextState) })
+      return
+    }
     if (nextState.startAfterWarmup) {
       navigate('/run/active', { state: nextState })
       return

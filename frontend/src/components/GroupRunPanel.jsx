@@ -28,6 +28,7 @@ import {
   groupRunCompatibility,
   groupRunCountdown,
   groupRunDateISO,
+  groupRunNavigationProvenance,
   groupRunWarmupState,
   workoutSummary,
 } from '../lib/groupRuns'
@@ -105,8 +106,12 @@ export default function GroupRunPanel({ friends = [] }) {
   const [reportNote, setReportNote] = useState('')
   const [reportTarget, setReportTarget] = useState(null)
   const compatibilityRequestRef = useRef(0)
+  const detailRefreshRequestRef = useRef(0)
+  const detailIdRef = useRef(null)
   const closeDetail = useCallback(() => {
     compatibilityRequestRef.current += 1
+    detailRefreshRequestRef.current += 1
+    detailIdRef.current = null
     setReportOpen(false)
     setReportTarget(null)
     setDetail(null)
@@ -144,10 +149,19 @@ export default function GroupRunPanel({ friends = [] }) {
   const past = useMemo(() => joined.filter((run) => run.status !== 'scheduled' || new Date(run.starts_at).getTime() + Number(run.duration_minutes || 60) * 60000 < now), [joined, now])
 
   const refreshDetail = useCallback(async (groupRunId) => {
+    const dialogRequestId = compatibilityRequestRef.current
+    const refreshRequestId = detailRefreshRequestRef.current + 1
+    detailRefreshRequestRef.current = refreshRequestId
     try {
       const response = await api.get(`/group-runs/${groupRunId}`)
-      setDetail(response.data)
+      if (compatibilityRequestRef.current !== dialogRequestId
+        || detailRefreshRequestRef.current !== refreshRequestId
+        || detailIdRef.current !== groupRunId) return
+      setDetail((current) => current?.group_run?.id === groupRunId ? response.data : current)
     } catch (error) {
+      if (compatibilityRequestRef.current !== dialogRequestId
+        || detailRefreshRequestRef.current !== refreshRequestId
+        || detailIdRef.current !== groupRunId) return
       console.error('[GroupRunPanel] detail refresh failed:', error?.message)
       closeDetail()
       setNotice({ type: 'error', text: error?.response?.data?.error || t('groupRuns.detailUnavailable') })
@@ -187,32 +201,41 @@ export default function GroupRunPanel({ friends = [] }) {
   const openDetail = async (groupRunId, { preserveNotice = false } = {}) => {
     const requestId = compatibilityRequestRef.current + 1
     compatibilityRequestRef.current = requestId
+    const detailRequestId = detailRefreshRequestRef.current + 1
+    detailRefreshRequestRef.current = detailRequestId
     setBusy(`detail-${groupRunId}`)
     if (!preserveNotice) setNotice(null)
     setCompatibility(null)
     setReportOpen(false)
     try {
       const response = await api.get(`/group-runs/${groupRunId}`)
-      if (compatibilityRequestRef.current !== requestId) return
+      if (compatibilityRequestRef.current !== requestId || detailRefreshRequestRef.current !== detailRequestId) return
       const nextDetail = response.data
+      detailIdRef.current = nextDetail.group_run?.id || null
       setDetail(nextDetail)
       const dateISO = groupRunDateISO(nextDetail.group_run)
       if (dateISO) {
         fetchDailyExecution(dateISO)
           .then((execution) => {
-            if (compatibilityRequestRef.current === requestId) setCompatibility(groupRunCompatibility(nextDetail.group_run, execution))
+            if (compatibilityRequestRef.current === requestId && detailRefreshRequestRef.current === detailRequestId) {
+              setCompatibility(groupRunCompatibility(nextDetail.group_run, execution))
+            }
           })
           .catch((error) => {
             console.error('[GroupRunPanel] compatibility check failed:', error?.message)
-            if (compatibilityRequestRef.current === requestId) setCompatibility({ state: 'unavailable', label: t('groupRuns.compatibilityUnavailable') })
+            if (compatibilityRequestRef.current === requestId && detailRefreshRequestRef.current === detailRequestId) {
+              setCompatibility({ state: 'unavailable', label: t('groupRuns.compatibilityUnavailable') })
+            }
           })
       } else {
         setCompatibility({ state: 'none', label: t('groupRuns.noScheduledRun') })
       }
     } catch (error) {
-      if (compatibilityRequestRef.current === requestId) setNotice({ type: 'error', text: error?.response?.data?.error || t('groupRuns.actionError') })
+      if (compatibilityRequestRef.current === requestId && detailRefreshRequestRef.current === detailRequestId) {
+        setNotice({ type: 'error', text: error?.response?.data?.error || t('groupRuns.actionError') })
+      }
     } finally {
-      if (compatibilityRequestRef.current === requestId) setBusy('')
+      if (compatibilityRequestRef.current === requestId && detailRefreshRequestRef.current === detailRequestId) setBusy('')
     }
   }
 
@@ -240,7 +263,7 @@ export default function GroupRunPanel({ friends = [] }) {
       setNotice({ type: 'success', text: t(`groupRuns.${action}Success`) })
       await load({ quiet: true })
       if (action === 'join' || action === 'mute') await openDetail(groupRunId, { preserveNotice: true })
-      else if (detail?.group_run?.id === groupRunId) setDetail(null)
+      else if (detail?.group_run?.id === groupRunId) closeDetail()
     } catch (error) {
       setNotice({ type: 'error', text: error?.response?.data?.error || t('groupRuns.actionError') })
     } finally {
@@ -274,7 +297,7 @@ export default function GroupRunPanel({ friends = [] }) {
       await api.patch(`/group-runs/${detail.group_run.id}`, { action, ...(membershipId ? { membership_id: membershipId } : {}) })
       setNotice({ type: 'success', text: t(`groupRuns.${action}Success`) })
       if (action === 'remove_member') await refreshDetail(detail.group_run.id)
-      else setDetail(null)
+      else closeDetail()
       await load({ quiet: true })
     } catch (error) {
       setNotice({ type: 'error', text: error?.response?.data?.error || t('groupRuns.actionError') })
@@ -329,7 +352,7 @@ export default function GroupRunPanel({ friends = [] }) {
     if (!detail?.group_run) return
     const startsAt = new Date(detail.group_run.starts_at).getTime()
     if (startsAt - Date.now() > 6 * 60 * 60 * 1000 && !window.confirm(t('groupRuns.startEarlyConfirm'))) return
-    navigate('/warmup', { state: groupRunWarmupState(detail.group_run) })
+    navigate('/warmup', { state: groupRunNavigationProvenance(groupRunWarmupState(detail.group_run)) })
   }
 
   return (
@@ -371,7 +394,7 @@ export default function GroupRunPanel({ friends = [] }) {
               {detail.group_run.pace_note && <p style={{ color: 'var(--text-muted)', fontSize: 12, margin: '5px 0 0' }}>{detail.group_run.pace_note}</p>}
               {detail.group_run.target_zone && <p style={{ color: 'var(--accent)', fontSize: 12, fontWeight: 850, margin: '5px 0 0' }}>{detail.group_run.target_zone}</p>}
               {detail.group_run.workout_structure && <p style={{ whiteSpace: 'pre-line', color: 'var(--text-primary)', fontSize: 12, lineHeight: 1.55, margin: '11px 0 0' }}>{detail.group_run.workout_structure}</p>}
-              {compatibility && <p style={{ color: compatibility.state === 'match' ? 'var(--success)' : compatibility.state === 'different' || compatibility.state === 'unavailable' ? 'var(--warning)' : 'var(--text-muted)', fontSize: 11, fontWeight: 800, margin: '10px 0 0' }}>{compatibility.label}</p>}
+              {compatibility && <p style={{ color: compatibility.state === 'match' ? 'var(--success)' : ['different', 'partial', 'unavailable'].includes(compatibility.state) ? 'var(--warning)' : 'var(--text-muted)', fontSize: 11, fontWeight: 800, margin: '10px 0 0' }}>{compatibility.labelKey ? t(compatibility.labelKey) : compatibility.label}</p>}
               <p style={{ color: 'var(--text-muted)', fontSize: 10, lineHeight: 1.45, margin: '7px 0 0' }}>{t('groupRuns.planSafety')}</p>
             </section>
 
@@ -421,6 +444,7 @@ export default function GroupRunPanel({ friends = [] }) {
             {detail.group_run.status === 'scheduled' && detail.group_run.membership?.status === 'going' && detail.group_run.meetup_details && <button type="button" className="pressable" onClick={startRun} style={{ width: '100%', minHeight: 50, marginTop: 18, border: 'none', borderRadius: 8, background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 950, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}><Navigation size={19} />{t('groupRuns.start')}</button>}
 
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
+              {!detail.group_run.membership?.is_owner && <button type="button" onClick={() => openReport()} style={{ minHeight: 44, borderRadius: 8, border: '1px solid var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-muted)', padding: '0 11px', fontSize: 11, fontWeight: 800, display: 'flex', alignItems: 'center', gap: 6 }}><Flag size={15} />{t('groupRuns.report')}</button>}
               {detail.group_run.status === 'scheduled' && <button type="button" onClick={() => membershipAction(detail.group_run.id, 'mute', !detail.group_run.membership?.muted)} style={{ minHeight: 44, borderRadius: 8, border: '1px solid var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-muted)', padding: '0 11px', fontSize: 11, fontWeight: 800, display: 'flex', alignItems: 'center', gap: 6 }}>{detail.group_run.membership?.muted ? <Bell size={15} /> : <BellOff size={15} />}{detail.group_run.membership?.muted ? t('groupRuns.unmute') : t('groupRuns.mute')}</button>}
               {detail.group_run.membership?.is_owner ? detail.group_run.status === 'scheduled' && <>{new Date(detail.group_run.starts_at).getTime() <= now && <button type="button" onClick={() => ownerAction('complete')} style={{ minHeight: 44, borderRadius: 8, border: '1px solid var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--success)', padding: '0 11px', fontSize: 11, fontWeight: 800, display: 'flex', alignItems: 'center', gap: 6 }}><Check size={15} />{t('groupRuns.complete')}</button>}<button type="button" onClick={() => ownerAction('cancel')} style={{ minHeight: 44, borderRadius: 8, border: '1px solid var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--danger)', padding: '0 11px', fontSize: 11, fontWeight: 800 }}>{t('groupRuns.cancel')}</button></> : detail.group_run.status === 'scheduled' && detail.group_run.membership?.status === 'going' && <button type="button" onClick={() => membershipAction(detail.group_run.id, 'leave')} style={{ minHeight: 44, borderRadius: 8, border: '1px solid var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--danger)', padding: '0 11px', fontSize: 11, fontWeight: 800 }}>{t('groupRuns.leave')}</button>}
             </div>

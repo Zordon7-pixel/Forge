@@ -240,7 +240,7 @@ router.post('/friend-requests', directRequestLimiter, async (req, res) => {
       const athlete = await findDiscoverableAthlete(tx, handle, req.user.id);
       if (!athlete || athlete.id !== preview.id) return { unavailable: true };
       return createFriendshipRequest(tx, req.user.id, athlete.id);
-    });
+    }, { skipContextUserGuard: true });
 
     if (result.unavailable) return athleteUnavailable(res);
     return res.status(result.status).json(result.body);
@@ -277,7 +277,7 @@ router.post('/friend-invites', inviteCreateLimiter, async (req, res) => {
         [uuidv4(), req.user.id, hashInviteToken(token), expiresAt]
       );
       return { status: 201, body: { token, expires_at: expiresAt } };
-    });
+    }, { userIds: [req.user.id], userLock: 'update' });
 
     res.status(result.status).json(result.body);
   } catch (err) {
@@ -292,20 +292,28 @@ router.post('/friend-invites/:token/request', inviteResolveLimiter, async (req, 
 
   try {
     const result = await withTransaction(async (tx) => {
-      const invite = await tx.get(
+      const preview = await tx.get(
         `SELECT id, owner_id
          FROM friend_invites
-         WHERE token_hash = ? AND consumed_at IS NULL AND expires_at > NOW()
-         FOR UPDATE`,
+         WHERE token_hash = ? AND consumed_at IS NULL AND expires_at > NOW()`,
         [hashInviteToken(token)]
       );
-      if (!invite) return { unavailable: true };
-      if (invite.owner_id === req.user.id) {
+      if (!preview) return { unavailable: true };
+      if (preview.owner_id === req.user.id) {
         return { status: 400, body: { error: 'You cannot use your own invite.' } };
       }
 
-      const usersExist = await lockUsers(tx, [req.user.id, invite.owner_id]);
+      const usersExist = await lockUsers(tx, [req.user.id, preview.owner_id]);
       if (!usersExist) return { unavailable: true };
+      const invite = await tx.get(
+        `SELECT id, owner_id
+         FROM friend_invites
+         WHERE id = ? AND owner_id = ? AND token_hash = ?
+           AND consumed_at IS NULL AND expires_at > NOW()
+         FOR UPDATE`,
+        [preview.id, preview.owner_id, hashInviteToken(token)]
+      );
+      if (!invite) return { unavailable: true };
       const request = await createFriendshipRequest(tx, req.user.id, invite.owner_id);
       if (request.unavailable || !request.createdRequest) return request;
 
@@ -319,7 +327,7 @@ router.post('/friend-invites/:token/request', inviteResolveLimiter, async (req, 
       if (consumed.changes !== 1) throw new Error('Invite consume lost its one-use guard');
 
       return request;
-    });
+    }, { skipContextUserGuard: true });
 
     if (result.unavailable) return inviteUnavailable(res);
     return res.status(result.status).json(result.body);
@@ -449,7 +457,7 @@ router.patch('/friendships/:id', relationshipLimiter, async (req, res) => {
       );
       if (update.changes !== 1) throw new Error('Friend request action lost its ownership guard');
       return { status: 200, body: { ok: true, status: action === 'accept' ? 'accepted' : 'declined' } };
-    });
+    }, action === 'accept' ? { skipContextUserGuard: true } : {});
 
     return res.status(result.status).json(result.body);
   } catch (err) {
@@ -511,7 +519,7 @@ router.post('/blocks/:userId', relationshipLimiter, async (req, res) => {
       );
       await revokeBlockedGroupRunAccess(tx, req.user.id, targetId);
       return { status: 200, body: { ok: true } };
-    });
+    }, { userIds: [req.user.id, targetId], userLock: 'update' });
     return res.status(result.status).json(result.body);
   } catch (err) {
     console.error('[social/blocks] create failed:', err.message);
@@ -548,32 +556,37 @@ router.post('/reports', reportLimiter, async (req, res) => {
 
   try {
     const [userLowId, userHighId] = canonicalPair(req.user.id, subjectUserId);
-    const relationship = await dbGet(
-      `SELECT id FROM friendships
-       WHERE user_low_id = ? AND user_high_id = ?
-         AND (requester_id = ? OR addressee_id = ?)
-       LIMIT 1`,
-      [userLowId, userHighId, req.user.id, req.user.id]
-    );
-    const blocked = await dbGet(
-      'SELECT id FROM user_blocks WHERE blocker_id = ? AND blocked_id = ?',
-      [req.user.id, subjectUserId]
-    );
-    if (!relationship && !blocked) return res.status(404).json({ error: 'Account unavailable.' });
+    const result = await withTransaction(async (tx) => {
+      const subject = await tx.get('SELECT id FROM users WHERE id = ?', [subjectUserId]);
+      if (!subject) return { status: 404, body: { error: 'Account unavailable.' } };
+      const relationship = await tx.get(
+        `SELECT id FROM friendships
+         WHERE user_low_id = ? AND user_high_id = ?
+           AND (requester_id = ? OR addressee_id = ?)
+         LIMIT 1`,
+        [userLowId, userHighId, req.user.id, req.user.id]
+      );
+      const blocked = await tx.get(
+        'SELECT id FROM user_blocks WHERE blocker_id = ? AND blocked_id = ?',
+        [req.user.id, subjectUserId]
+      );
+      if (!relationship && !blocked) return { status: 404, body: { error: 'Account unavailable.' } };
 
-    const requestedContextId = boundedText(req.body?.context_id, 80) || null;
-    if (contextType === 'friendship' && requestedContextId !== relationship?.id) {
-      return res.status(400).json({ error: 'Invalid report context.' });
-    }
-    const note = boundedText(cleanText(req.body?.note), 500) || null;
-    await dbRun(
-      `INSERT INTO social_reports
-       (id, reporter_id, subject_user_id, category, context_type, context_id, note, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'open')`,
-      [uuidv4(), req.user.id, subjectUserId, category, contextType,
-        contextType === 'friendship' ? relationship.id : null, note]
-    );
-    return res.status(201).json({ ok: true });
+      const requestedContextId = boundedText(req.body?.context_id, 80) || null;
+      if (contextType === 'friendship' && requestedContextId !== relationship?.id) {
+        return { status: 400, body: { error: 'Invalid report context.' } };
+      }
+      const note = boundedText(cleanText(req.body?.note), 500) || null;
+      await tx.run(
+        `INSERT INTO social_reports
+         (id, reporter_id, subject_user_id, category, context_type, context_id, note, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'open')`,
+        [uuidv4(), req.user.id, subjectUserId, category, contextType,
+          contextType === 'friendship' ? relationship.id : null, note]
+      );
+      return { status: 201, body: { ok: true } };
+    }, { userIds: [req.user.id, subjectUserId], userLock: 'update' });
+    return res.status(result.status).json(result.body);
   } catch (err) {
     console.error('[social/reports] create failed:', err.message);
     return res.status(500).json({ error: 'Could not submit this report.' });

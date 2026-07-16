@@ -29,7 +29,10 @@ export default function useDialogFocus(open, onClose) {
       }
       const first = items[0]
       const last = items[items.length - 1]
-      if (event.shiftKey && document.activeElement === first) {
+      if (!container?.contains(document.activeElement)) {
+        event.preventDefault()
+        ;(event.shiftKey ? last : first).focus()
+      } else if (event.shiftKey && document.activeElement === first) {
         event.preventDefault()
         last.focus()
       } else if (!event.shiftKey && document.activeElement === last) {
@@ -38,10 +41,17 @@ export default function useDialogFocus(open, onClose) {
       }
     }
 
+    const onFocusIn = (event) => {
+      if (container?.contains(event.target)) return
+      ;(focusable()[0] || container)?.focus?.()
+    }
+
     document.addEventListener('keydown', onKeyDown)
+    document.addEventListener('focusin', onFocusIn)
     return () => {
       window.clearTimeout(timer)
       document.removeEventListener('keydown', onKeyDown)
+      document.removeEventListener('focusin', onFocusIn)
       previousFocus?.focus?.()
     }
   }, [open])

@@ -1,7 +1,7 @@
 const crypto = require('crypto');
 const router = require('express').Router();
 const { v4: uuidv4 } = require('uuid');
-const { dbGet, dbAll, dbRun } = require('../db');
+const { dbGet, dbAll, dbRun, withUserMutation } = require('../db');
 const auth = require('../middleware/auth');
 const { requirePremium } = require('../middleware/premiumGate');
 
@@ -215,7 +215,7 @@ async function getStoredTokens(userId) {
   return { ...tokens, display_name: row.display_name, whoop_user_id: row.whoop_user_id };
 }
 
-async function upsertTokens(userId, tokens, displayName, whoopUserId) {
+async function upsertTokens(userId, tokens, displayName, whoopUserId, query = null) {
   await ensureSchema();
   const encrypted = encryptJson({
     access_token: tokens.access_token,
@@ -224,14 +224,15 @@ async function upsertTokens(userId, tokens, displayName, whoopUserId) {
   });
   const now = new Date().toISOString();
 
-  const updated = await dbRun(
+  const run = query?.run || dbRun;
+  const updated = await run(
     'UPDATE whoop_tokens SET encrypted_tokens = ?, display_name = ?, whoop_user_id = ?, updated_at = ? WHERE user_id = ?',
     [encrypted, displayName, whoopUserId, now, userId]
   );
 
   if ((updated?.changes || 0) > 0) return;
 
-  await dbRun(
+  await run(
     'INSERT INTO whoop_tokens (id, user_id, encrypted_tokens, display_name, whoop_user_id, connected_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
     [uuidv4(), userId, encrypted, displayName, whoopUserId, now, now]
   );
@@ -339,7 +340,10 @@ router.get('/callback', async (req, res) => {
       displayName = null;
     }
 
-    await upsertTokens(statePayload.user_id, tokens, displayName, whoopUserId);
+    await withUserMutation(
+      statePayload.user_id,
+      (tx) => upsertTokens(statePayload.user_id, tokens, displayName, whoopUserId, tx)
+    );
 
     if (deepLink) return res.redirect(appendQueryParams(deepLink, { ok: 1, display_name: displayName || '' }));
     return res.json({ ok: true, display_name: displayName });

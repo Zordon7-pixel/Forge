@@ -1,6 +1,6 @@
 # Forged Hybrid Phase 4 Build Spec: Friends, Challenges, and Leaderboards
 
-Status: **PHASE 4A + 4A.1 + 4B SHIPPED AND RAILWAY-LIVE-VERIFIED; PHASE 4C NOT STARTED (2026-07-15)**
+Status: **PHASES 4A-4C SHIPPED AND RAILWAY-LIVE-VERIFIED; PHASE 4D IMPLEMENTED, LOCALLY VERIFIED, AND RAILWAY-PENDING (2026-07-15)**
 Repo: `/Volumes/Zordon Storage /openclaw-workspace/forge-app`
 Release target: current React/Vite/Capacitor + Express/PostgreSQL app only
 Native/EAS scope: **none for Phases 4A-4C**
@@ -55,7 +55,7 @@ The differentiator is **hybrid competition**, not maximum mileage. Example: `20 
 - Address-book/contact upload.
 - Arbitrary formulas or free-form challenge scoring.
 - Weight-loss, calorie-burn, body-weight, sleep, HRV, or medical-data leaderboards.
-- Team leagues, group-run event logistics, location sharing, and live participant maps. Those can be a later Phase 4D after privacy/moderation proves sound.
+- Team leagues, public group-run discovery, and live participant maps. Private friends-only group-run logistics are Phase 4D; live location sharing remains deferred.
 - Native push notifications, deep links, or another EAS build.
 
 ## 4. Existing code to reuse or retire carefully
@@ -284,9 +284,18 @@ Local verification (2026-07-15): Claude Code returned PASS after fixing one medi
 
 Live verification (2026-07-15): Railway deployment `f6d5ffa4-bc0a-4608-85ac-5db95e8b965d` serves commit `5c2bb109` and the matching `/assets/index-BuYpSH0L.js` bundle. The production three-account disposable matrix passed all seven grouped checks covering exact-handle friendship, private invitations, canonical strength credit, tied ranks, source identity, user-ID concealment, member reporting, opaque owner removal, nonmember concealment, and complete account cleanup. The authenticated Community and Lift surfaces rendered cleanly on a phone-sized viewport; both lift mobility actions opened profile-sex image-backed six-movement sessions. No EAS build was run.
 
-### Phase 4D - group runs (separate future spec)
+### Phase 4D - private group runs
 
-Only after 4A-4C prove safe: scheduled time, bounded location sharing, route/workout attachment, invitations, join/leave, reminders, and organizer controls. Live location sharing is out of scope until a dedicated privacy/threat-model review.
+- Private events for accepted friends with a structured workout, scheduled time, broad meetup area, optional static route, and participant cap.
+- Review-before-join invitations. Exact meetup instructions and route coordinates unlock only after the athlete joins.
+- Mute, leave, report, block, organizer invite/remove, cancellation, completion, and truthful reminder/status handling.
+- Private/no-store responses plus immediate cancellation purge and bounded post-event purge for exact location material.
+- Group-run workouts may launch Active Run but never mutate the athlete's adaptive training-plan progress.
+- Live participant location, public event discovery, native notifications, and EAS changes remain out of scope.
+
+Gate: full toolchain, Claude Code security/privacy QA, Hermes product/privacy review, Railway live verification, three-account disposable production matrix, and 375-430px production browser verification. No EAS.
+
+Local release gate (2026-07-15): backend syntax, Phase 4A-4D regression smokes, 93 daily/run/post-run assertions, the Phase 4D frontend smoke, 54-table account-data coverage, account-deletion atomicity and concurrency guards, frontend build/audit, Capacitor sync, and diff checks pass. Disposable local matrices passed seven challenge checks and ten group-run/privacy checks, including simultaneous reciprocal friend requests and cross-user report paths. The 375x812 and 430x932 planners have no horizontal overflow. Independent code/security and product/privacy re-reviews both returned PASS/APPROVE.
 
 ## 12. Required verification matrix
 

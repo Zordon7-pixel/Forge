@@ -189,8 +189,8 @@ assert.ok(appSource.includes("app.use('/api/group-runs'"));
   const tx = {
     all: async (sql, params) => {
       assert.ok(sql.includes("gr.status IN ('scheduled', 'completed')"));
-      assert.ok(sql.includes("(gr.duration_minutes + 120) * INTERVAL '1 minute'"));
-      assert.deepStrictEqual(params, ['blocker-user', 'blocked-user']);
+      assert.ok(sql.includes("?::integer * INTERVAL '1 day'"));
+      assert.deepStrictEqual(params, ['blocker-user', 'blocked-user', GROUP_RUN_SAFETY_RETENTION_DAYS]);
       return [
         {
           group_run_id: 'owner-run',

@@ -87,6 +87,37 @@ async function befriend(requester, addressee) {
   });
 }
 
+async function befriendConcurrently(first, second) {
+  await Promise.all([
+    request('/social/friend-requests', {
+      token: first.token,
+      method: 'POST',
+      body: { handle: second.handle },
+      expected: [200, 201],
+    }),
+    request('/social/friend-requests', {
+      token: second.token,
+      method: 'POST',
+      body: { handle: first.handle },
+      expected: [200, 201],
+    }),
+  ]);
+
+  const [firstState, secondState] = await Promise.all([
+    request('/social/friends', { token: first.token }),
+    request('/social/friends', { token: second.token }),
+  ]);
+  const incoming = firstState.payload.incoming[0]
+    ? { account: first, requestId: firstState.payload.incoming[0].id }
+    : { account: second, requestId: secondState.payload.incoming[0]?.id };
+  assert.ok(incoming.requestId, 'Concurrent reciprocal requests must leave one actionable request');
+  await request(`/social/friendships/${incoming.requestId}`, {
+    token: incoming.account.token,
+    method: 'PATCH',
+    body: { action: 'accept' },
+  });
+}
+
 function futureIso(hoursAhead) {
   return new Date(Date.now() + hoursAhead * 60 * 60 * 1000).toISOString();
 }
@@ -140,10 +171,10 @@ function groupRunPayload(title, startsAt, friendIds = []) {
     }
     pass('three disposable accounts registered');
 
-    await befriend(accounts[0], accounts[1]);
+    await befriendConcurrently(accounts[0], accounts[1]);
     await befriend(accounts[0], accounts[2]);
     await befriend(accounts[1], accounts[2]);
-    pass('all three friendship pairs accepted');
+    pass('reciprocal concurrency and all three friendship pairs accepted');
 
     const invitationOnly = await request('/group-runs', {
       token: accounts[0].token,
@@ -268,7 +299,18 @@ function groupRunPayload(title, startsAt, friendIds = []) {
       body: { category: 'other', note: 'Disposable Phase 4D moderation test.' },
       expected: [201],
     });
-    pass('membership mute and activity-scoped report accepted');
+    await request('/social/reports', {
+      token: accounts[0].token,
+      method: 'POST',
+      body: {
+        subject_user_id: accounts[2].id,
+        category: 'other',
+        context_type: 'profile',
+        note: 'Disposable cross-user report lock-order test.',
+      },
+      expected: [201],
+    });
+    pass('membership mute plus activity and cross-user reports accepted');
 
     await request(`/group-runs/${groupRunId}`, {
       token: accounts[0].token,

@@ -316,7 +316,7 @@ router.post('/', createLimiter, async (req, res) => {
         );
       }
       return { status: 201, body: { ok: true, group_run_id: groupRunId } };
-    });
+    }, { userIds: [req.user.id, ...groupRun.friendIds], userLock: 'update' });
 
     return res.status(result.status).json(result.body);
   } catch (err) {
@@ -389,15 +389,15 @@ router.post('/:id/invite', inviteLimiter, async (req, res) => {
         );
         if (updated.changes !== 1) throw new Error('Group run reinvite lost its membership guard');
       } else {
-        await tx.run(
-          `INSERT INTO group_run_members (
+      await tx.run(
+        `INSERT INTO group_run_members (
             id, group_run_id, user_id, status, muted, invited_at, joined_at
           ) VALUES (?, ?, ?, 'invited', 0, NOW(), NULL)`,
           [uuidv4(), req.params.id, friendId]
         );
       }
       return { status: 201, body: { ok: true, status: 'invited' } };
-    });
+    }, { userIds: [req.user.id, friendId], userLock: 'update' });
 
     return res.status(result.status).json(result.body);
   } catch (err) {
@@ -602,21 +602,34 @@ router.post('/:id/report', reportLimiter, async (req, res) => {
 
   try {
     const result = await withTransaction(async (tx) => {
-      await purgeExpiredGroupRunExactData(tx, { userId: req.user.id });
-      const groupRun = await tx.get(
+      const preview = await tx.get(
         `SELECT gr.id, gr.owner_id
          FROM group_runs gr
          JOIN group_run_members viewer_member ON viewer_member.group_run_id = gr.id
          WHERE gr.id = ? AND viewer_member.user_id = ?
            AND NOW() <= gr.starts_at + (gr.duration_minutes * INTERVAL '1 minute')
-             + (?::integer * INTERVAL '1 day')
-         FOR UPDATE OF gr, viewer_member`,
+             + (?::integer * INTERVAL '1 day')`,
         [req.params.id, req.user.id, GROUP_RUN_SAFETY_RETENTION_DAYS]
       );
-      if (!groupRun) return { status: 404, body: { error: 'Group run not found.' } };
-      if (groupRun.owner_id === req.user.id) {
+      if (!preview) return { status: 404, body: { error: 'Group run not found.' } };
+      if (preview.owner_id === req.user.id) {
         return { status: 400, body: { error: 'Owners cannot report their own group run.' } };
       }
+      if (!await lockUsers(tx, [req.user.id, preview.owner_id])) {
+        return { status: 404, body: { error: 'Group run not found.' } };
+      }
+      await purgeExpiredGroupRunExactData(tx, { userId: req.user.id });
+      const groupRun = await tx.get(
+        `SELECT gr.id, gr.owner_id
+         FROM group_runs gr
+         JOIN group_run_members viewer_member ON viewer_member.group_run_id = gr.id
+         WHERE gr.id = ? AND gr.owner_id = ? AND viewer_member.user_id = ?
+           AND NOW() <= gr.starts_at + (gr.duration_minutes * INTERVAL '1 minute')
+             + (?::integer * INTERVAL '1 day')
+         FOR UPDATE OF gr, viewer_member`,
+        [req.params.id, preview.owner_id, req.user.id, GROUP_RUN_SAFETY_RETENTION_DAYS]
+      );
+      if (!groupRun) return { status: 404, body: { error: 'Group run not found.' } };
       await tx.run(
         `INSERT INTO social_reports (
           id, reporter_id, subject_user_id, category, context_type, context_id, note, status
@@ -624,7 +637,7 @@ router.post('/:id/report', reportLimiter, async (req, res) => {
         [uuidv4(), req.user.id, groupRun.owner_id, category, `group_run:${req.params.id}`, note]
       );
       return { status: 201, body: { ok: true } };
-    });
+    }, { skipContextUserGuard: true });
 
     return res.status(result.status).json(result.body);
   } catch (err) {
@@ -661,7 +674,7 @@ router.post('/:id/members/:membershipId/report', reportLimiter, async (req, res)
         ]
       );
       return { status: 201, body: { ok: true } };
-    });
+    }, { skipContextUserGuard: true });
 
     return res.status(result.status).json(result.body);
   } catch (err) {
@@ -700,7 +713,7 @@ router.post('/:id/members/:membershipId/block', actionLimiter, async (req, res) 
       );
       await revokeBlockedGroupRunAccess(tx, req.user.id, context.target_user_id);
       return { status: 200, body: { ok: true } };
-    });
+    }, { skipContextUserGuard: true });
 
     return res.status(result.status).json(result.body);
   } catch (err) {
