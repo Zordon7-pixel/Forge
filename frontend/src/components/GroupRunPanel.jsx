@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import {
@@ -30,8 +30,7 @@ import {
   workoutSummary,
 } from '../lib/groupRuns'
 import GroupRunComposer from './GroupRunComposer'
-
-const RoutePreviewMap = lazy(() => import('./maps/RoutePreviewMap'))
+import RoutePreviewMap from './maps/RoutePreviewMap'
 
 const REPORT_CATEGORIES = ['harassment', 'spam', 'unsafe_content', 'other']
 
@@ -292,7 +291,7 @@ export default function GroupRunPanel({ friends = [] }) {
               <p style={{ color: 'var(--text-primary)', fontSize: 13, fontWeight: 850, margin: '9px 0 0' }}>{detail.group_run.meetup_area}</p>
               {detail.group_run.meetup_details ? <p style={{ color: 'var(--text-muted)', fontSize: 12, lineHeight: 1.5, margin: '5px 0 0' }}>{detail.group_run.meetup_details}</p> : <p style={{ color: 'var(--text-muted)', fontSize: 11, margin: '5px 0 0' }}>{detail.group_run.membership?.status === 'invited' ? t('groupRuns.joinForLogistics') : t('groupRuns.logisticsExpired')}</p>}
               {detail.group_run.notes && <p style={{ color: 'var(--text-primary)', fontSize: 12, lineHeight: 1.5, margin: '10px 0 0' }}>{detail.group_run.notes}</p>}
-              {detail.group_run.route && <div style={{ marginTop: 13 }}><Suspense fallback={<p style={{ color: 'var(--text-muted)', fontSize: 11 }}>{t('groupRuns.routeLoading')}</p>}><RoutePreviewMap route={detail.group_run.route} /></Suspense></div>}
+              {detail.group_run.route && <div style={{ marginTop: 13 }}><RoutePreviewMap route={detail.group_run.route} /></div>}
             </section>
 
             <section style={{ borderTop: '1px solid var(--border-subtle)', marginTop: 16, paddingTop: 16 }}>

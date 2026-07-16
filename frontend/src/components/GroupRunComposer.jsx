@@ -1,10 +1,9 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { CalendarClock, Check, ChevronLeft, ChevronRight, MapPin, Route, Users, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { fetchDailyExecution } from '../lib/dailyExecution'
 import { localDateTimeInput, planRunSnapshot } from '../lib/groupRuns'
-
-const RoutePlanner = lazy(() => import('./RoutePlanner'))
+import RoutePlanner from './RoutePlanner'
 
 const fieldStyle = {
   width: '100%',
@@ -175,9 +174,7 @@ export default function GroupRunComposer({ friends = [], busy = false, onClose, 
             <div style={{ marginBottom: 13 }}><FieldLabel htmlFor="group-run-notes">{t('groupRuns.notes')}</FieldLabel><textarea id="group-run-notes" rows={3} maxLength={500} value={form.notes} onChange={(event) => update('notes', event.target.value)} style={{ ...fieldStyle, minHeight: 78, padding: 11, resize: 'vertical' }} placeholder={t('groupRuns.notesPlaceholder')} /></div>
 
             {form.goal_mode === 'distance' && Number(form.target_distance_miles) >= 0.5 && (
-              <Suspense fallback={<p style={{ color: 'var(--text-muted)', fontSize: 12 }}>{t('groupRuns.routeLoading')}</p>}>
-                <RoutePlanner workout={routeWorkout} title={t('groupRuns.routeTitle')} startLabel={t('groupRuns.useRoute')} onStart={(nextRoute, surface) => setRoute({ ...nextRoute, surface })} />
-              </Suspense>
+              <RoutePlanner workout={routeWorkout} title={t('groupRuns.routeTitle')} startLabel={t('groupRuns.useRoute')} onStart={(nextRoute, surface) => setRoute({ ...nextRoute, surface })} />
             )}
             {route && <p role="status" style={{ display: 'flex', alignItems: 'center', gap: 7, color: 'var(--success)', fontSize: 12, fontWeight: 850, margin: '10px 0 14px' }}><Check size={16} />{t('groupRuns.routeReady')}</p>}
 
