@@ -5,8 +5,8 @@ This file holds Forge's product history, deployment notes, shipped phase log, kn
 ## Current Production
 
 - Production URL: `https://forge-production-773f.up.railway.app/`
-- Latest verified application release: commit `87f984fa`, deployment `c6661452-1a35-4bb4-9b51-18ad1de54b89`
-- Latest checked bundle: `/assets/index-BhmEr9y-.js`
+- Latest verified application release: commit `73e9a5d9`, deployment `4ad773cf-8d54-4a26-a177-bfe2d0ddac7d`
+- Latest checked bundle: `/assets/index-sDvnpUYZ.js`
 - iOS version/build: `1.0.5` / `15`
 - Bundle identifier: `com.zordontech.forge`
 - Expo/EAS project: `@zordon/forge-athlete` (`6aeb5fbb-2697-4cf4-b9b3-afe60c63e9e1`)
@@ -24,6 +24,7 @@ Current production checks:
 - Lift now mirrors Train's compact quick-action pattern with focus-aware Lift Warm-Up, Post-Lift Stretch, and Lift History actions. Both mobility flows use six image-backed movements matched to the prepared lift focus and profile sex.
 - Phase 4C adds private challenge leaderboards with deterministic ties/progress/source labels, compact activity, owner member removal, member reporting, and privacy-masked blocked rows. Its disposable three-account production matrix passed all seven grouped checks.
 - Phase 4E adds a bounded What's New sheet and archive, persistent editable time PRs, quieter Train/Body surfaces, and exact-date scheduled-versus-recorded run matching. Claude Code passed twice, Hermes approved, two disposable accounts verified release snooze/acknowledgement/CTA isolation, and the production-only PR schema drift was fixed and re-verified before cleanup. No EAS build was run.
+- Forged Closet v1 adds a 14-model manufacturer-sourced pilot catalog, manual fallback without guessed specs, per-shoe mileage and wear-inspection reminders, and deterministic session/surface/weather-aware rotation picks. Claude Code and Hermes returned SHIP, the 390x844 mobile flow had no horizontal overflow, and disposable production accounts verified catalog/manual add, edit, retire, beta recommendation access, and cross-user mutation rejection before complete cleanup. No EAS build was run.
 - Demo diagnostics check returns `403`.
 - `/api/auth/me/export` returns account/training data and excludes `password_hash`.
 - `/api/auth/forgot-password` returns `200 email_sent` for `demo@forge.app` in under one second.
@@ -360,6 +361,7 @@ These changes are already implemented, built, Capacitor-synced, and deployed to 
 | 2026-07-15 | `f6d5ffa4-bc0a-4608-85ac-5db95e8b965d` | Success | Lift mobility quick actions and Phase 4C private challenge leaderboards verified live on `/assets/index-BuYpSH0L.js` |
 | 2026-07-15 | `16aab5c8-36bf-41c6-ab69-d7b30aa6c46d` | Success | Phase 4D private friends-only group runs, exact-location privacy, moderation controls, and canonical account-mutation locking verified live on `/assets/index-B-v0-u9Z.js` |
 | 2026-07-16 | `c6661452-1a35-4bb4-9b51-18ad1de54b89` | Success | Phase 4E What's New, PR persistence, Train/Body simplification, and exact-date workout matching verified live on `/assets/index-BhmEr9y-.js` |
+| 2026-07-16 | `4ad773cf-8d54-4a26-a177-bfe2d0ddac7d` | Success | Forged Closet pilot catalog, deterministic rotation recommendations, wear reminders, and mobile Closet UI verified live on `/assets/index-sDvnpUYZ.js` |
 
 ### Build/Test Status
 
