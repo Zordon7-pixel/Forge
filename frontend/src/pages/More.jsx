@@ -11,6 +11,7 @@ import {
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import HealthSourceManager from '../components/HealthSourceManager'
+import { useReleaseNotes } from '../context/ReleaseNotesContext'
 
 const sections = (t) => [
   {
@@ -39,6 +40,7 @@ const sections = (t) => [
 
 export default function More() {
   const { t } = useTranslation()
+  const { unread } = useReleaseNotes()
   return (
     <div style={{ paddingBottom: 96 }}>
       <header style={{ marginBottom: 18 }}>
@@ -82,6 +84,29 @@ export default function More() {
             </div>
           </section>
         ))}
+        <section>
+          <h2 style={{ color: 'var(--text-muted)', fontSize: 12, fontWeight: 800, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 10 }}>
+            Product
+          </h2>
+          <Link
+            to="/whats-new"
+            style={{ display: 'grid', gridTemplateColumns: '40px minmax(0, 1fr) 20px', alignItems: 'center', gap: 12, border: '1px solid var(--border-subtle)', borderRadius: 12, background: 'var(--bg-card)', padding: 12, textDecoration: 'none' }}
+          >
+            <span style={{ width: 40, height: 40, borderRadius: 10, background: 'var(--accent-dim)', display: 'grid', placeItems: 'center' }}>
+              <Sparkles size={20} color="var(--accent)" />
+            </span>
+            <span style={{ minWidth: 0 }}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-primary)', fontWeight: 850, fontSize: 14 }}>
+                What's New
+                {unread && <span aria-label="Unread product updates" style={{ width: 8, height: 8, borderRadius: 999, background: 'var(--accent)', flexShrink: 0 }} />}
+              </span>
+              <span style={{ display: 'block', color: 'var(--text-muted)', fontSize: 12, marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {unread ? 'New improvements are ready' : 'Recent improvements and new features'}
+              </span>
+            </span>
+            <ChevronRight size={18} color="var(--text-muted)" />
+          </Link>
+        </section>
         <section>
           <h2 style={{ color: 'var(--text-muted)', fontSize: 12, fontWeight: 800, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 10 }}>
             Health & data

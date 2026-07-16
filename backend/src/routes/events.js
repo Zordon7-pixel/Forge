@@ -10,6 +10,9 @@ const ALLOWED_EVENTS = new Set([
   'lift_logged',
   'today_card_viewed',
   'recommendation_followed',
+  'whats_new_shown',
+  'whats_new_opened',
+  'whats_new_cta',
 ]);
 
 const BLOCKED_PROP_KEY = /(email|name|token|secret|password|authorization|auth|jwt|session|phone|address)/i;

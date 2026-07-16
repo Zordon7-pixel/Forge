@@ -76,6 +76,7 @@ const Races = lazyWithRetry(() => import('./pages/Races'))
 const Gear = lazyWithRetry(() => import('./pages/Gear'))
 const HrZones = lazyWithRetry(() => import('./pages/HrZones'))
 const More = lazyWithRetry(() => import('./pages/More'))
+const WhatsNew = lazyWithRetry(() => import('./pages/WhatsNew'))
 const Community = lazyWithRetry(() => import('./pages/Community'))
 const ResetPassword = lazyWithRetry(() => import('./pages/ResetPassword'))
 const Injury = lazyWithRetry(() => import('./pages/Injury'))
@@ -416,6 +417,14 @@ export default function App() {
           element={
             <PrivateRoute>
               <More />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/whats-new"
+          element={
+            <PrivateRoute>
+              <WhatsNew />
             </PrivateRoute>
           }
         />

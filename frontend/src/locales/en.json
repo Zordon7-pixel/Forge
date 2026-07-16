@@ -352,6 +352,26 @@
     "phaseCooldown": "Cooldown",
     "thirdPartyWatchSync": "Garmin / COROS / Polar / Suunto / Wahoo sync"
   },
+  "whatsNew": {
+    "eyebrow": "What's New",
+    "pageTitle": "Product updates",
+    "pageSubtitle": "The important improvements now available in Forged Hybrid.",
+    "gotIt": "Got it",
+    "notNow": "Not now",
+    "viewAll": "View all updates",
+    "availableHere": "Available in this app",
+    "empty": "No product updates are available yet.",
+    "releases": {
+      "privateTraining": {
+        "title": "Train together, privately",
+        "summary": "Friends, challenges, and structured group runs are now together in Community.",
+        "friends": "Find trusted friends with exact handles or private invites.",
+        "challenges": "Create private run, strength, and hybrid challenges.",
+        "groupRuns": "Plan a structured group run with a private route and meetup.",
+        "cta": "Open Community"
+      }
+    }
+  },
   "body": {
     "limiterPrefix": "is the limiter today",
     "allGood": "All inputs looking good — train as planned",

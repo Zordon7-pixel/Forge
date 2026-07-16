@@ -7,6 +7,7 @@ import { recordSmartDestinationVisit } from '../lib/smartQuickAction'
 import PullToRefresh from './PullToRefresh'
 import FeedbackButton from './FeedbackButton'
 import SwipeBackGesture from './SwipeBackGesture'
+import { ReleaseNotesProvider } from '../context/ReleaseNotesContext'
 
 // hex required: consumed by `${color}XX` alpha templates — do not tokenize
 const NAV_ITEMS = (t) => [
@@ -54,6 +55,7 @@ export default function Layout({ children }) {
   }, [feedbackOpen])
 
   return (
+    <ReleaseNotesProvider suppressed={isImmersive || feedbackOpen}>
     <div className="min-h-screen" style={{ background: 'var(--bg-base)', color: 'var(--text-primary)', minHeight: '100dvh', '--app-bottom-nav-height': 'calc(59px + env(safe-area-inset-bottom, 0px))' }}>
       <SwipeBackGesture onBeforeBack={interceptSwipeBack} />
       <div className={`mx-auto w-full max-w-[480px] px-3 sm:px-4 ${isImmersive ? 'pb-0' : 'pb-28'}`} style={{ maxWidth: 'min(480px, 100vw)', overflowX: 'hidden', boxSizing: 'border-box' }}>
@@ -158,5 +160,6 @@ export default function Layout({ children }) {
 
       <FeedbackButton externalOpen={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
     </div>
+    </ReleaseNotesProvider>
   )
 }
