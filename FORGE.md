@@ -5,8 +5,8 @@ This file holds Forge's product history, deployment notes, shipped phase log, kn
 ## Current Production
 
 - Production URL: `https://forge-production-773f.up.railway.app/`
-- Latest verified application release: commit `5c2bb109`, deployment `f6d5ffa4-bc0a-4608-85ac-5db95e8b965d`
-- Latest checked bundle: `/assets/index-BuYpSH0L.js`
+- Latest verified application release: commit `f1d86c2c`, deployment `16aab5c8-36bf-41c6-ab69-d7b30aa6c46d`
+- Latest checked bundle: `/assets/index-B-v0-u9Z.js`
 - iOS version/build: `1.0.5` / `15`
 - Bundle identifier: `com.zordontech.forge`
 - Expo/EAS project: `@zordon/forge-athlete` (`6aeb5fbb-2697-4cf4-b9b3-afe60c63e9e1`)
@@ -357,11 +357,12 @@ These changes are already implemented, built, Capacitor-synced, and deployed to 
 | 2026-07-14 | `5bfd7c80-fa6b-40ce-87bb-18d9e5518df1` | Success | Friends Beta Phase 0 post-run truth, one-call AI analysis, provenance, and pain/energy protection verified live |
 | 2026-07-14 | `3319e687-0ece-4088-b11b-a38f46fd4b65` | Success | Friends Beta Phase 1 truthful post-run recap, owner scoping, and metric/mobile verification |
 | 2026-07-15 | `f6d5ffa4-bc0a-4608-85ac-5db95e8b965d` | Success | Lift mobility quick actions and Phase 4C private challenge leaderboards verified live on `/assets/index-BuYpSH0L.js` |
+| 2026-07-15 | `16aab5c8-36bf-41c6-ab69-d7b30aa6c46d` | Success | Phase 4D private friends-only group runs, exact-location privacy, moderation controls, and canonical account-mutation locking verified live on `/assets/index-B-v0-u9Z.js` |
 
 ### Build/Test Status
 
 - `npm audit`: `0 vulnerabilities`
-- `npm run build`: passes on Vite `6.4.2`
+- `npm run build`: passes on Vite `6.4.3`
 - `npx cap sync ios`: passes
 - Phase 1 local browser smoke passed for Dashboard, Settings, Profile, Run Hub; no console errors found.
 - Phase 2 `npm run check:account-data`: passes, 42 user-owned tables checked.
@@ -380,6 +381,7 @@ These changes are already implemented, built, Capacitor-synced, and deployed to 
 - Phase H10 production smoke: exact `/assets/index-CGU9ymkK.js` and `/assets/Plan-DP5Af5aD.js` assets match the reviewed build; new rationale/working-set/load-basis copy is live, authenticated plan routes return `200`, and the mobile plan renders without console errors.
 - Phase H11 production smoke: exact `/assets/index-D-pIgSi3.js` and `/assets/HealthData-DRmOOl2D.js` assets match the reviewed build; health/Body auth boundaries return `401` unauthenticated and `200` signed in, empty data is described honestly, and rejected metrics perform no write.
 - Phase H15 production smoke: exact `/assets/index-BWq1Mkew.js` matches the reviewed build; authenticated exclusion-aware stretch selection is unseen-first, returned form assets are all `200`, and consecutive warm-up visits rotate the displayed routine at 390x844 without content or navigation overlap.
+- Phase 4D production smoke: exact `/assets/index-B-v0-u9Z.js` matches the reviewed build; seven challenge and ten group-run disposable checks pass, private/no-store redaction and opaque safety actions hold, reciprocal friend requests avoid lock deadlocks, and Community renders without horizontal overflow at 375x812 and 430x932. No EAS build was run.
 
 ### Product Changes Shipped
 
