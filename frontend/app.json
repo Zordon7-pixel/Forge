@@ -19,7 +19,8 @@
         "usesNonExemptEncryption": false
       },
       "infoPlist": {
-        "NSHealthShareUsageDescription": "Forged Hybrid reads workouts, activity, heart rate, HRV, sleep, cardio fitness, and running dynamics to personalize your training plan."
+        "NSHealthShareUsageDescription": "Forged Hybrid reads workouts, activity, heart rate, HRV, sleep, cardio fitness, and running dynamics to personalize your training plan.",
+        "NSContactsUsageDescription": "Forged Hybrid reads permitted contact email addresses only when you choose Find beta friends. Your address book is not stored."
       }
     },
     "extra": {

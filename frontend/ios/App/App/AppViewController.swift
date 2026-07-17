@@ -5,5 +5,6 @@ class AppViewController: CAPBridgeViewController {
         super.capacitorDidLoad()
         bridge?.registerPluginInstance(ForgeHealthPlugin())
         bridge?.registerPluginInstance(ForgeWatchWorkoutPlugin())
+        bridge?.registerPluginInstance(ForgeContactsPlugin())
     }
 }

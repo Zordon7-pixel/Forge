@@ -21,7 +21,7 @@ check(indexCss.includes("input:not([type='checkbox']):not([type='radio']):not([t
 check(indexCss.includes('font-size: 16px !important'), 'iOS form controls render at the no-auto-zoom threshold')
 check(indexHtml.includes('user-scalable=yes'), 'user pinch zoom remains enabled for accessibility')
 check(!indexHtml.includes('user-scalable=no') && !indexHtml.includes('maximum-scale=1'), 'viewport metadata does not trap users at an enlarged scale')
-check(community.includes("gridTemplateColumns: 'repeat(3, minmax(0, 1fr))'"), 'Community tabs can shrink within narrow phones')
+check(community.includes("gridTemplateColumns: 'repeat(4, minmax(0, 1fr))'"), 'all four Community tabs can shrink within narrow phones')
 check(community.includes("overflowX: 'clip'"), 'Community contains accidental horizontal paint overflow')
 check((community.match(/maxWidth: 'calc\(100vw - 24px\)'/g) || []).length === 2, 'friend action menus are capped to the phone viewport')
 check(layout.includes('grid-cols-5'), 'bottom navigation remains a stable five-column grid')

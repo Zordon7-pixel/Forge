@@ -5,16 +5,22 @@ const { dbAll, dbGet, dbRun, withTransaction } = require('../db');
 const auth = require('../middleware/auth');
 const { cleanText } = require('../lib/profanity');
 const { revokeBlockedGroupRunAccess } = require('../lib/groupRunRules');
+const { monthBounds, rankFriendMileage } = require('../lib/friendLeaderboard');
+const { runActivitySql } = require('../lib/runActivity');
 const {
   INVITE_TTL_MS,
   MAX_ACTIVE_INVITES,
+  MAX_CONTACT_EMAILS,
   MAX_FRIENDS,
   boundedText,
   canonicalPair,
+  createContactSuggestionToken,
   createInviteToken,
   hashInviteToken,
   isInviteTokenShape,
   normalizeFriendHandle,
+  normalizeContactEmails,
+  parseContactSuggestionToken,
   relationshipState,
 } = require('../lib/friendship');
 
@@ -49,6 +55,8 @@ const reportLimiter = limiter(24 * 60 * 60 * 1000, 10, 'Too many reports. Try ag
 const handleUpdateLimiter = userLimiter(60 * 60 * 1000, 10, 'Too many handle changes. Try again later.');
 const friendSearchLimiter = userLimiter(15 * 60 * 1000, 40, 'Too many searches. Try again later.');
 const directRequestLimiter = userLimiter(15 * 60 * 1000, 20, 'Too many friend requests. Try again later.');
+const contactSuggestionLimiter = userLimiter(24 * 60 * 60 * 1000, 10, 'Too many contact checks. Try again tomorrow.');
+const leaderboardLimiter = userLimiter(15 * 60 * 1000, 60, 'Too many leaderboard refreshes. Try again later.');
 
 router.use(auth);
 
@@ -195,6 +203,98 @@ router.put('/friend-discovery-profile', handleUpdateLimiter, async (req, res) =>
     if (err.code === '23505') return res.status(409).json({ error: 'That handle is not available.' });
     console.error('[social/friend-discovery-profile] update failed:', err.message);
     return res.status(500).json({ error: 'Could not update your friend handle.' });
+  }
+});
+
+router.put('/contact-discovery-profile', handleUpdateLimiter, async (req, res) => {
+  if (typeof req.body?.discoverable !== 'boolean') {
+    return res.status(400).json({ error: 'Contact visibility is required.' });
+  }
+  try {
+    const result = await dbRun(
+      'UPDATE users SET contact_discoverable = ? WHERE id = ?',
+      [req.body.discoverable ? 1 : 0, req.user.id]
+    );
+    if (result.changes !== 1) return res.status(404).json({ error: 'Account not found.' });
+    return res.json({ discoverable: req.body.discoverable });
+  } catch (err) {
+    console.error('[social/contact-discovery-profile] update failed:', err.message);
+    return res.status(500).json({ error: 'Could not update contact visibility.' });
+  }
+});
+
+router.post('/contact-suggestions', contactSuggestionLimiter, async (req, res) => {
+  const emails = normalizeContactEmails(req.body?.emails);
+  if (!emails) {
+    return res.status(400).json({ error: `Choose no more than ${MAX_CONTACT_EMAILS} contact emails.` });
+  }
+  if (!emails.length) return res.json({ suggestions: [] });
+
+  try {
+    const rows = await dbAll(
+      `SELECT u.id, u.name, u.friend_handle,
+              f.status, f.requester_id, f.addressee_id
+       FROM users u
+       LEFT JOIN friendships f
+         ON f.user_low_id = LEAST(u.id, ?)
+        AND f.user_high_id = GREATEST(u.id, ?)
+        AND f.status IN ('pending', 'accepted')
+       WHERE u.email = ANY(?::text[])
+         AND u.contact_discoverable = 1
+         AND u.id <> ?
+         AND NOT EXISTS (
+           SELECT 1 FROM user_blocks b
+           WHERE (b.blocker_id = ? AND b.blocked_id = u.id)
+              OR (b.blocker_id = u.id AND b.blocked_id = ?)
+         )
+       ORDER BY u.name ASC, u.id ASC
+       LIMIT 50`,
+      [req.user.id, req.user.id, emails, req.user.id, req.user.id, req.user.id]
+    );
+    const suggestions = rows
+      .map((row) => ({ row, relationship: relationshipState(row, req.user.id) }))
+      .filter(({ relationship }) => relationship !== 'friends')
+      .map(({ row, relationship }) => ({
+        user: { name: row.name || 'Athlete', handle: row.friend_handle || null },
+        relationship,
+        request_token: relationship === 'available'
+          ? createContactSuggestionToken(req.user.id, row.id, process.env.JWT_SECRET)
+          : null,
+      }));
+    return res.json({ suggestions });
+  } catch (err) {
+    console.error('[social/contact-suggestions] lookup failed:', err.message);
+    return res.status(500).json({ error: 'Could not check contacts right now.' });
+  }
+});
+
+router.post('/contact-suggestions/request', directRequestLimiter, async (req, res) => {
+  const token = String(req.body?.token || '');
+  if (!token || token.length > 2048) return athleteUnavailable(res);
+
+  const payload = parseContactSuggestionToken(token, process.env.JWT_SECRET);
+  if (!payload
+    || payload.viewer !== req.user.id
+    || !isUuid(String(payload?.target || ''))
+    || payload.target === req.user.id) {
+    return athleteUnavailable(res);
+  }
+
+  try {
+    const result = await withTransaction(async (tx) => {
+      if (!await lockUsers(tx, [req.user.id, payload.target])) return { unavailable: true };
+      const target = await tx.get(
+        'SELECT id FROM users WHERE id = ? AND contact_discoverable = 1 FOR UPDATE',
+        [payload.target]
+      );
+      if (!target) return { unavailable: true };
+      return createFriendshipRequest(tx, req.user.id, target.id);
+    }, { skipContextUserGuard: true });
+    if (result.unavailable) return athleteUnavailable(res);
+    return res.status(result.status).json(result.body);
+  } catch (err) {
+    console.error('[social/contact-suggestions/request] create failed:', err.message);
+    return res.status(500).json({ error: 'Could not send this friend request.' });
   }
 });
 
@@ -369,7 +469,7 @@ router.get('/friends', async (req, res) => {
          WHERE owner_id = ? AND consumed_at IS NULL AND expires_at > NOW()`,
         [req.user.id]
       ),
-      dbGet('SELECT friend_handle, friend_discoverable FROM users WHERE id = ?', [req.user.id]),
+      dbGet('SELECT friend_handle, friend_discoverable, contact_discoverable FROM users WHERE id = ?', [req.user.id]),
     ]);
 
     const friends = [];
@@ -395,6 +495,7 @@ router.get('/friends', async (req, res) => {
       discovery: {
         handle: discoveryProfile?.friend_handle || '',
         discoverable: Boolean(discoveryProfile?.friend_handle && discoveryProfile?.friend_discoverable),
+        contact_discoverable: Boolean(discoveryProfile?.contact_discoverable),
       },
       limits: {
         friends: MAX_FRIENDS,
@@ -405,6 +506,69 @@ router.get('/friends', async (req, res) => {
   } catch (err) {
     console.error('[social/friends] list failed:', err.message);
     res.status(500).json({ error: 'Could not load friends.' });
+  }
+});
+
+router.get('/friends/leaderboard', leaderboardLimiter, async (req, res) => {
+  const month = monthBounds(req.query.month);
+  if (!month) return res.status(400).json({ error: 'Choose a valid month.' });
+
+  try {
+    const rows = await dbAll(
+      `WITH friend_circle AS (
+         SELECT CAST(? AS TEXT) AS user_id
+         UNION
+         SELECT CASE WHEN f.requester_id = ? THEN f.addressee_id ELSE f.requester_id END AS user_id
+         FROM friendships f
+         WHERE f.status = 'accepted'
+           AND (f.requester_id = ? OR f.addressee_id = ?)
+       ), visible_circle AS (
+         SELECT circle.user_id
+         FROM friend_circle circle
+         WHERE circle.user_id = ?
+            OR NOT EXISTS (
+              SELECT 1 FROM user_blocks b
+              WHERE (b.blocker_id = ? AND b.blocked_id = circle.user_id)
+                 OR (b.blocker_id = circle.user_id AND b.blocked_id = ?)
+            )
+       )
+       SELECT circle.user_id, u.name, u.friend_handle,
+              COALESCE(SUM(r.distance_miles), 0) AS miles,
+              COUNT(r.id) AS run_count
+       FROM visible_circle circle
+       JOIN users u ON u.id = circle.user_id
+       LEFT JOIN runs r ON r.user_id = circle.user_id
+         AND r.date >= ? AND r.date < ?
+         AND r.distance_miles BETWEEN 0.01 AND 500
+         AND ${runActivitySql('r')}
+       GROUP BY circle.user_id, u.name, u.friend_handle
+       LIMIT 101`,
+      [
+        req.user.id,
+        req.user.id,
+        req.user.id,
+        req.user.id,
+        req.user.id,
+        req.user.id,
+        req.user.id,
+        month.start,
+        month.endExclusive,
+      ]
+    );
+    const ranked = rankFriendMileage(rows, req.user.id);
+    return res.json({
+      month: {
+        key: month.key,
+        label: month.label,
+        start: month.start,
+        end_exclusive: month.endExclusive,
+      },
+      participant_count: ranked.length,
+      rows: ranked,
+    });
+  } catch (err) {
+    console.error('[social/friends/leaderboard] load failed:', err.message);
+    return res.status(500).json({ error: 'Could not load the friends leaderboard.' });
   }
 });
 

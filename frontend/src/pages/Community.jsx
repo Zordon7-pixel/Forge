@@ -11,6 +11,7 @@ import {
   EyeOff,
   Flag,
   Link as LinkIcon,
+  Medal,
   MoreVertical,
   RefreshCw,
   Search,
@@ -24,14 +25,16 @@ import {
 } from 'lucide-react'
 import api from '../lib/api'
 import ChallengePanel from '../components/ChallengePanel'
+import FriendLeaderboard from '../components/FriendLeaderboard'
 import GroupRunPanel from '../components/GroupRunPanel'
+import { isContactMatchingAvailable, readPermittedContactEmails } from '../services/ContactService'
 
 const EMPTY_DATA = {
   friends: [],
   incoming: [],
   outgoing: [],
   blocked: [],
-  discovery: { handle: '', discoverable: false },
+  discovery: { handle: '', discoverable: false, contact_discoverable: false },
   limits: { active_invite_count: 0, active_invites: 5, friends: 100 },
 }
 
@@ -114,6 +117,9 @@ export default function Community() {
   const [invite, setInvite] = useState(null)
   const [handleDraft, setHandleDraft] = useState('')
   const [handleDiscoverable, setHandleDiscoverable] = useState(false)
+  const [contactDiscoverable, setContactDiscoverable] = useState(false)
+  const [contactSuggestions, setContactSuggestions] = useState([])
+  const [contactMessage, setContactMessage] = useState('')
   const [searchHandle, setSearchHandle] = useState('')
   const [searchResult, setSearchResult] = useState(null)
   const [searchMessage, setSearchMessage] = useState('')
@@ -124,7 +130,7 @@ export default function Community() {
   const [reportNote, setReportNote] = useState('')
   const [activeTab, setActiveTab] = useState(() => {
     const requestedTab = searchParams.get('tab')
-    return ['runs', 'challenges', 'friends'].includes(requestedTab) ? requestedTab : 'runs'
+    return ['runs', 'challenges', 'leaderboard', 'friends'].includes(requestedTab) ? requestedTab : 'runs'
   })
   const processedInviteRef = useRef('')
 
@@ -143,6 +149,7 @@ export default function Community() {
       setData(nextData)
       setHandleDraft(nextData.discovery?.handle || '')
       setHandleDiscoverable(Boolean(nextData.discovery?.discoverable))
+      setContactDiscoverable(Boolean(nextData.discovery?.contact_discoverable))
     } catch (error) {
       console.error('[Community] load failed:', error?.message)
       setNotice({ type: 'error', text: t('community.loadError') })
@@ -260,6 +267,67 @@ export default function Community() {
     }
   }
 
+  const saveContactDiscoverability = async (discoverable) => {
+    setBusy('contact-discovery')
+    setNotice(null)
+    try {
+      const response = await api.put('/social/contact-discovery-profile', { discoverable })
+      setContactDiscoverable(Boolean(response.data?.discoverable))
+      setNotice({ type: 'success', text: t('community.contactDiscoverySaved') })
+      await load({ quiet: true })
+    } catch (error) {
+      setNotice({ type: 'error', text: error?.response?.data?.error || t('community.actionError') })
+    } finally {
+      setBusy('')
+    }
+  }
+
+  const findContactSuggestions = async () => {
+    setBusy('contact-scan')
+    setNotice(null)
+    setContactMessage('')
+    setContactSuggestions([])
+    try {
+      const emails = (await readPermittedContactEmails()).slice(0, 500)
+      if (!emails.length) {
+        setContactMessage(t('community.contactEmailsEmpty'))
+        return
+      }
+      const response = await api.post('/social/contact-suggestions', { emails })
+      const suggestions = response.data?.suggestions || []
+      setContactSuggestions(suggestions)
+      setContactMessage(suggestions.length
+        ? t('community.contactMatches', { count: suggestions.length })
+        : t('community.contactMatchesEmpty'))
+    } catch (error) {
+      console.error('[Community] contact suggestion scan failed:', error?.message)
+      setContactMessage(error?.response?.data?.error || error?.message || t('community.contactMatchError'))
+    } finally {
+      setBusy('')
+    }
+  }
+
+  const sendContactRequest = async (index) => {
+    const suggestion = contactSuggestions[index]
+    if (!suggestion?.request_token) return
+    setBusy(`contact-request-${index}`)
+    setNotice(null)
+    try {
+      const response = await api.post('/social/contact-suggestions/request', { token: suggestion.request_token })
+      const relationship = response.data?.direction
+        || (response.data?.status === 'already_friends' ? 'friends' : 'outgoing')
+      setContactSuggestions((current) => current.map((item, itemIndex) => (
+        itemIndex === index ? { ...item, relationship, request_token: null } : item
+      )))
+      setNotice({ type: 'success', text: t('community.requestSent') })
+      await load({ quiet: true })
+    } catch (error) {
+      setNotice({ type: 'error', text: error?.response?.data?.error || t('community.actionError') })
+    } finally {
+      setBusy('')
+    }
+  }
+
   const sendHandleRequest = async () => {
     if (!searchResult?.handle) return
     setBusy('handle-request')
@@ -352,6 +420,7 @@ export default function Community() {
   }
 
   const friendCount = data.friends.length
+  const contactMatchingAvailable = isContactMatchingAvailable()
   const inviteLimitReached = Number(data.limits?.active_invite_count || 0) >= Number(data.limits?.active_invites || 5)
   const relationshipLabel = searchResult
     ? {
@@ -375,16 +444,19 @@ export default function Community() {
         </div>
       )}
 
-      <div role="tablist" aria-label={t('community.title')} style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', width: '100%', maxWidth: '100%', minWidth: 0, gap: 4, padding: 4, marginBottom: 16, border: '1px solid var(--border-subtle)', borderRadius: 8, background: 'var(--bg-card)' }}>
-        <button type="button" role="tab" aria-selected={activeTab === 'runs'} className="pressable" onClick={() => selectTab('runs')} style={{ minWidth: 0, minHeight: 44, padding: '0 4px', border: 'none', borderRadius: 6, background: activeTab === 'runs' ? 'var(--accent)' : 'transparent', color: activeTab === 'runs' ? 'var(--on-accent)' : 'var(--text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, fontSize: 12, fontWeight: 900 }}><CalendarClock size={16} />{t('community.runsTab')}</button>
-        <button type="button" role="tab" aria-selected={activeTab === 'challenges'} className="pressable" onClick={() => selectTab('challenges')} style={{ minWidth: 0, minHeight: 44, padding: '0 4px', border: 'none', borderRadius: 6, background: activeTab === 'challenges' ? 'var(--accent)' : 'transparent', color: activeTab === 'challenges' ? 'var(--on-accent)' : 'var(--text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, fontSize: 12, fontWeight: 900 }}><Trophy size={16} />{t('community.challengesTab')}</button>
-        <button type="button" role="tab" aria-selected={activeTab === 'friends'} className="pressable" onClick={() => selectTab('friends')} style={{ minWidth: 0, minHeight: 44, padding: '0 4px', border: 'none', borderRadius: 6, background: activeTab === 'friends' ? 'var(--accent)' : 'transparent', color: activeTab === 'friends' ? 'var(--on-accent)' : 'var(--text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, fontSize: 12, fontWeight: 900 }}><Users size={16} />{t('community.friendsTab')}</button>
+      <div role="tablist" aria-label={t('community.title')} style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', width: '100%', maxWidth: '100%', minWidth: 0, gap: 3, padding: 4, marginBottom: 16, border: '1px solid var(--border-subtle)', borderRadius: 8, background: 'var(--bg-card)' }}>
+        <button type="button" role="tab" aria-selected={activeTab === 'runs'} className="pressable" onClick={() => selectTab('runs')} style={{ minWidth: 0, minHeight: 54, padding: '4px 2px', border: 'none', borderRadius: 6, background: activeTab === 'runs' ? 'var(--accent)' : 'transparent', color: activeTab === 'runs' ? 'var(--on-accent)' : 'var(--text-muted)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, fontSize: 10, fontWeight: 900 }}><CalendarClock size={15} />{t('community.runsTab')}</button>
+        <button type="button" role="tab" aria-selected={activeTab === 'challenges'} className="pressable" onClick={() => selectTab('challenges')} style={{ minWidth: 0, minHeight: 54, padding: '4px 2px', border: 'none', borderRadius: 6, background: activeTab === 'challenges' ? 'var(--accent)' : 'transparent', color: activeTab === 'challenges' ? 'var(--on-accent)' : 'var(--text-muted)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, fontSize: 10, fontWeight: 900 }}><Trophy size={15} />{t('community.challengesTab')}</button>
+        <button type="button" role="tab" aria-selected={activeTab === 'leaderboard'} className="pressable" onClick={() => selectTab('leaderboard')} style={{ minWidth: 0, minHeight: 54, padding: '4px 2px', border: 'none', borderRadius: 6, background: activeTab === 'leaderboard' ? 'var(--accent)' : 'transparent', color: activeTab === 'leaderboard' ? 'var(--on-accent)' : 'var(--text-muted)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, fontSize: 10, fontWeight: 900 }}><Medal size={15} />{t('community.leaderboardTab')}</button>
+        <button type="button" role="tab" aria-selected={activeTab === 'friends'} className="pressable" onClick={() => selectTab('friends')} style={{ minWidth: 0, minHeight: 54, padding: '4px 2px', border: 'none', borderRadius: 6, background: activeTab === 'friends' ? 'var(--accent)' : 'transparent', color: activeTab === 'friends' ? 'var(--on-accent)' : 'var(--text-muted)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, fontSize: 10, fontWeight: 900 }}><Users size={15} />{t('community.friendsTab')}</button>
       </div>
 
       {activeTab === 'runs' ? (
         <GroupRunPanel friends={data.friends} />
       ) : activeTab === 'challenges' ? (
         <ChallengePanel friends={data.friends} />
+      ) : activeTab === 'leaderboard' ? (
+        <FriendLeaderboard />
       ) : (
         <>
       <section style={{ border: '1px solid var(--border-subtle)', borderRadius: 8, background: 'var(--bg-card)', padding: 14, marginBottom: 12 }}>
@@ -444,9 +516,39 @@ export default function Community() {
           </>
         ) : (
           <div style={{ marginTop: 16, borderTop: '1px solid var(--border-subtle)', paddingTop: 14 }}>
+            <h3 style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-primary)', fontSize: 14, fontWeight: 900, margin: 0 }}><Users size={18} color="var(--accent)" />{t('community.findBetaFriends')}</h3>
+            <p style={{ color: 'var(--text-muted)', fontSize: 12, lineHeight: 1.5, margin: '6px 0 0' }}>{t('community.contactDiscoveryBody')}</p>
+            <label style={{ minHeight: 44, marginTop: 10, display: 'flex', alignItems: 'center', gap: 10, color: 'var(--text-primary)', fontSize: 12, fontWeight: 750 }}>
+              <input type="checkbox" checked={contactDiscoverable} disabled={busy === 'contact-discovery'} onChange={(event) => saveContactDiscoverability(event.target.checked)} style={{ width: 19, height: 19, accentColor: 'var(--accent)' }} />
+              {contactDiscoverable ? <Eye size={17} color="var(--success)" /> : <EyeOff size={17} color="var(--text-muted)" />}
+              <span>{t('community.contactDiscoverableLabel')}</span>
+            </label>
+            <button type="button" className="pressable" onClick={findContactSuggestions} disabled={Boolean(busy) || !contactMatchingAvailable} style={{ width: '100%', minHeight: 44, marginTop: 8, borderRadius: 8, border: 'none', background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 900, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, opacity: Boolean(busy) || !contactMatchingAvailable ? 0.55 : 1 }}>
+              {busy === 'contact-scan' ? <RefreshCw size={17} className="animate-spin" /> : <Search size={17} />}
+              {busy === 'contact-scan' ? t('community.checkingContacts') : contactMatchingAvailable ? t('community.findBetaFriendsButton') : t('community.contactMatchingNextBuild')}
+            </button>
+            <p style={{ color: 'var(--text-muted)', fontSize: 11, lineHeight: 1.45, margin: '8px 0 0' }}>{t('community.contactPrivacy')}</p>
+            {contactMessage && <p role="status" style={{ color: contactSuggestions.length ? 'var(--success)' : 'var(--text-muted)', fontSize: 12, lineHeight: 1.45, margin: '10px 0 0' }}>{contactMessage}</p>}
+            {contactSuggestions.map((suggestion, index) => {
+              const relationship = {
+                friends: t('community.searchFriends'),
+                incoming: t('community.searchIncoming'),
+                outgoing: t('community.searchOutgoing'),
+              }[suggestion.relationship] || ''
+              return (
+                <PersonRow key={`${suggestion.user?.handle || suggestion.user?.name}-${index}`} item={suggestion} subtitle={relationship}>
+                  {suggestion.relationship === 'available' ? (
+                    <button type="button" className="pressable" onClick={() => sendContactRequest(index)} disabled={Boolean(busy)} style={{ minHeight: 40, borderRadius: 8, border: 'none', background: 'var(--accent)', color: 'var(--on-accent)', display: 'flex', alignItems: 'center', gap: 6, padding: '0 10px', fontSize: 12, fontWeight: 850 }}><UserPlus size={16} />{t('community.addFriend')}</button>
+                  ) : (
+                    <span style={{ color: 'var(--text-muted)', fontSize: 11, fontWeight: 800, textAlign: 'right' }}>{relationship}</span>
+                  )}
+                </PersonRow>
+              )
+            })}
+
+            <div style={{ borderTop: '1px solid var(--border-subtle)', marginTop: 18, paddingTop: 14 }}>
             <h3 style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-primary)', fontSize: 14, fontWeight: 900, margin: 0 }}><LinkIcon size={18} color="var(--accent)" />{t('community.contactInviteTitle')}</h3>
             <p style={{ color: 'var(--text-muted)', fontSize: 12, lineHeight: 1.5, margin: '6px 0 0' }}>{t('community.contactInviteBody')}</p>
-            <p style={{ color: 'var(--text-muted)', fontSize: 11, lineHeight: 1.45, margin: '8px 0 0' }}>{t('community.contactPrivacy')}</p>
             {invite ? (
               <div style={{ marginTop: 14 }}>
                 <p style={{ color: 'var(--success)', fontSize: 12, fontWeight: 850, margin: '0 0 8px' }}>{t('community.inviteReady')}</p>
@@ -463,6 +565,7 @@ export default function Community() {
               </button>
             )}
             {!invite && inviteLimitReached && <p style={{ color: 'var(--text-muted)', fontSize: 11, lineHeight: 1.45, margin: '8px 0 0' }}>{t('community.inviteLimit')}</p>}
+            </div>
           </div>
         )}
       </section>

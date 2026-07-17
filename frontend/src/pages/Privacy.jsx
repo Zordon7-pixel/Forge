@@ -9,7 +9,7 @@ export default function Privacy() {
           Madera Technologies LLC | Forged Hybrid
         </p>
         <p className="mt-4 text-sm" style={{ color: 'var(--text-muted)' }}>
-          Last updated: July 13, 2026
+          Last updated: July 17, 2026
         </p>
 
         <section className="mt-8">
@@ -17,6 +17,15 @@ export default function Privacy() {
           <p className="mt-2 text-sm leading-7" style={{ color: 'var(--text-muted)' }}>
             We collect the information needed to run Forged Hybrid: your account email, workout and training logs, and connected device
             metrics like steps and heart rate.
+          </p>
+        </section>
+
+        <section className="mt-6">
+          <h2 className="text-lg font-bold">Contact matching</h2>
+          <p className="mt-2 text-sm leading-7" style={{ color: 'var(--text-muted)' }}>
+            If you explicitly choose Find beta friends, Forged Hybrid reads contact email addresses you permitted and checks them transiently
+            against accounts that opted into contact discovery. We do not store your address book, expose matched email addresses, or add anyone
+            automatically. You choose whether to send each friend request and can turn off your own discoverability at any time.
           </p>
         </section>
 

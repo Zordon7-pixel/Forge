@@ -21,7 +21,10 @@ assert.ok(route.includes('u.friend_discoverable = 1'));
 assert.ok(!/friend_handle[^\n]*ILIKE|ILIKE[^\n]*friend_handle/i.test(route));
 assert.ok(route.includes('(b.blocker_id = ? AND b.blocked_id = u.id)'));
 assert.ok(route.includes('(b.blocker_id = u.id AND b.blocked_id = ?)'));
-assert.ok(!route.includes('u.email'));
+const handleSearchStart = route.indexOf("router.post('/friend-search'");
+const handleRequestStart = route.indexOf("router.post('/friend-requests'", handleSearchStart);
+const handleSearchRoute = route.slice(handleSearchStart, handleRequestStart);
+assert.ok(!handleSearchRoute.includes('u.email'));
 assert.ok(/SET friend_handle = \?, friend_discoverable = \?[\s\S]*WHERE id = \?/.test(route));
 
 for (const source of [db, schema]) {
@@ -33,6 +36,6 @@ for (const source of [db, schema]) {
 assert.ok(community.includes("api.post('/social/friend-search'"));
 assert.ok(community.includes("api.post('/social/friend-requests'"));
 assert.ok(community.includes("api.put('/social/friend-discovery-profile'"));
-assert.ok(locale.toLowerCase().includes('names, emails, and contacts are never searchable'));
+assert.ok(locale.includes('"exactSearch": "Exact handle search"'));
 
 console.log('Phase 4A.1 exact-handle discovery smoke passed');

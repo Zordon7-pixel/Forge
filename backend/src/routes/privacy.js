@@ -119,6 +119,7 @@ const PRIVACY_HTML = `<!DOCTYPE html>
         <li><strong>Workout logs:</strong> training sessions, runs, lifts, distances, times, and related performance entries.</li>
         <li><strong>Health metrics:</strong> heart rate, recovery and readiness signals, and similar fitness measurements when you grant access.</li>
         <li><strong>Device data:</strong> app version, device model, operating system, and diagnostic events used for reliability and support.</li>
+        <li><strong>Contact matching:</strong> when you explicitly choose Find beta friends, contact email addresses are checked transiently against accounts that opted into discovery. Contact entries are not stored, and matched email addresses are never shown to other users.</li>
       </ul>
 
       <h2>2. How We Use Data</h2>

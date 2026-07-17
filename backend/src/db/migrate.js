@@ -92,6 +92,7 @@ async function runAlwaysMigrations() {
 
   await pg.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS friend_handle TEXT');
   await pg.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS friend_discoverable INTEGER DEFAULT 0');
+  await pg.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS contact_discoverable INTEGER DEFAULT 0');
   await pg.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_friend_handle_lower ON users (LOWER(friend_handle)) WHERE friend_handle IS NOT NULL');
 
   await pg.query('ALTER TABLE challenges ADD COLUMN IF NOT EXISTS start_date TEXT');

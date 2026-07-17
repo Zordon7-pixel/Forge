@@ -18,6 +18,7 @@
 		50B271D11FEDC1A000F3C39B /* public in Resources */ = {isa = PBXBuildFile; fileRef = 50B271D01FEDC1A000F3C39B /* public */; };
 		A7F200000000000000000001 /* ForgeHealthPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7F200000000000000000002 /* ForgeHealthPlugin.swift */; };
 		A7F200000000000000000006 /* ForgeWatchWorkoutPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7F200000000000000000007 /* ForgeWatchWorkoutPlugin.swift */; };
+		A7F200000000000000000008 /* ForgeContactsPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7F200000000000000000009 /* ForgeContactsPlugin.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -34,6 +35,7 @@
 		958DCC722DB07C7200EA8C5F /* debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = debug.xcconfig; path = ../debug.xcconfig; sourceTree = SOURCE_ROOT; };
 		A7F200000000000000000002 /* ForgeHealthPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeHealthPlugin.swift; sourceTree = "<group>"; };
 		A7F200000000000000000007 /* ForgeWatchWorkoutPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeWatchWorkoutPlugin.swift; sourceTree = "<group>"; };
+		A7F200000000000000000009 /* ForgeContactsPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeContactsPlugin.swift; sourceTree = "<group>"; };
 		A7F200000000000000000003 /* App.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = App.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -74,6 +76,7 @@
 				A7F200000000000000000005 /* AppViewController.swift */,
 				A7F200000000000000000002 /* ForgeHealthPlugin.swift */,
 				A7F200000000000000000007 /* ForgeWatchWorkoutPlugin.swift */,
+				A7F200000000000000000009 /* ForgeContactsPlugin.swift */,
 				504EC30B1FED79650016851F /* Main.storyboard */,
 				504EC30E1FED79650016851F /* Assets.xcassets */,
 				504EC3101FED79650016851F /* LaunchScreen.storyboard */,
@@ -170,6 +173,7 @@
 				A7F200000000000000000004 /* AppViewController.swift in Sources */,
 				A7F200000000000000000001 /* ForgeHealthPlugin.swift in Sources */,
 				A7F200000000000000000006 /* ForgeWatchWorkoutPlugin.swift in Sources */,
+				A7F200000000000000000008 /* ForgeContactsPlugin.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

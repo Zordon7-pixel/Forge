@@ -28,6 +28,8 @@
 	<false/>
 	<key>NSHealthShareUsageDescription</key>
 	<string>Forged Hybrid reads workouts, activity, heart rate, HRV, sleep, cardio fitness, and running dynamics to personalize your training plan.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>Forged Hybrid reads permitted contact email addresses only when you choose Find beta friends. Your address book is not stored.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Forged Hybrid uses your location to map and measure your runs.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>

@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS users (
   subscription_ends_at TEXT,
   friend_handle TEXT,
   friend_discoverable INTEGER DEFAULT 0,
+  contact_discoverable INTEGER DEFAULT 0,
   created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
