@@ -286,9 +286,16 @@ Phase 2 cleanup from this audit:
 
 - Forged Hybrid `1.0.5 (17)` was built from `c13eba01` with the existing EAS remote certificate, provisioning profile, and App Store Connect API key. EAS build `1105717c-845d-4706-be54-11ae84db0b20` finished successfully; only this one build was consumed.
 - The signed IPA was inspected before submission: bundle ID `com.zordontech.forge`, build `17`, Contacts/Health/location usage descriptions, HealthKit entitlement, background-location mode, and compiled Contacts/Health/WorkoutKit plugin classes matched the reviewed source.
-- EAS submission `6ac31393-ffb7-44b4-a573-8ed29f3f3b59` reached App Store Connect, but Apple rejected build 17 during automated validation with `ITMS-90683` because `NSHealthUpdateUsageDescription` was absent. The source fix adds the missing purpose string to both configuration sources and blocks future deploys when required privacy metadata is missing or inconsistent. Build 18 requires Bryan's explicit EAS approval.
-- Contact suggestions require build 17, Contacts permission, discoverability enabled on both accounts, and an address-book email that exactly matches the other athlete's account email. Phone-number matching is intentionally unavailable until Forge has verified phone ownership.
+- EAS submission `6ac31393-ffb7-44b4-a573-8ed29f3f3b59` reached App Store Connect, but Apple rejected build 17 during automated validation with `ITMS-90683` because `NSHealthUpdateUsageDescription` was absent. The source fix adds the missing purpose string to both configuration sources and blocks future deploys when required privacy metadata is missing or inconsistent. Build 18 replaced this rejected binary.
+- Contact suggestions require build 17 or newer, Contacts permission, discoverability enabled on both accounts, and an address-book email that exactly matches the other athlete's account email. Phone-number matching is intentionally unavailable until Forge has verified phone ownership.
 - Frontend/backend installs, both high-severity dependency audits, frontend build, 54-table account-data coverage, contact and leaderboard smokes, Capacitor sync, Swift parse, plist validation, package resolution, archive inspection, and signed-IPA inspection passed. A local full Xcode compile remained unavailable because the installed simulator runtime does not match Xcode; the EAS Xcode build succeeded.
+
+## Native TestFlight Build 18 / HealthKit Privacy Fix (2026-07-17)
+
+- Forged Hybrid `1.0.5 (18)` was built once from `09c548c4` using the existing EAS remote certificate, provisioning profile, and App Store Connect API key. EAS build `27a1deca-8dbc-42a8-a553-6cb59df416e0` finished successfully.
+- The signed IPA was inspected before submission: bundle ID `com.zordontech.forge`, build `18`, Health/Contacts/location purpose strings, HealthKit entitlement, background-location mode, and compiled Contacts/Health/WorkoutKit/background-geolocation plugin classes matched the reviewed source.
+- EAS submission `c627c4aa-0265-40c9-9b4a-818bcc97126e` uploaded the binary successfully to App Store Connect. Apple is processing it for TestFlight; availability is not claimed until processing finishes.
+- Frontend/backend installs, both high-severity dependency audits, frontend build, FIT/contact smokes, 54-table account-data coverage, Capacitor sync, Swift parse, plist/privacy validation, archive inspection, and signed-IPA inspection passed. A local full Xcode compile remained unavailable because the installed Xcode and simulator support versions do not match; the EAS Xcode build succeeded.
 
 ## Recently Fixed Bugs
 
