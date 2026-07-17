@@ -27,7 +27,7 @@ Latest verified application release (docs-only commits may create a later Railwa
 - Commit: `73e9a5d9`
 - Railway deployment: `4ad773cf-8d54-4a26-a177-bfe2d0ddac7d`
 - Frontend bundle: `/assets/index-sDvnpUYZ.js`
-- iOS version/build: `1.0.5` / `15`
+- iOS version/build: `1.0.5` / `17`
 - Bundle identifier: `com.zordontech.forge`
 - Expo/EAS project: `@zordon/forge-athlete` (`6aeb5fbb-2697-4cf4-b9b3-afe60c63e9e1`)
 
@@ -87,7 +87,7 @@ https://forge-production-773f.up.railway.app/
 
 EAS/TestFlight preflight resumed on May 3, 2026 after Apple Developer credentials became available.
 
-Current native beta: Forged Hybrid `1.0.5 (16)`, EAS build `71dde0a7-62c1-4d62-b543-6ddb7670961b`, uploaded to App Store Connect on July 15, 2026. Apple processing and physical-device verification remain external release gates.
+Current native release artifact: Forged Hybrid `1.0.5 (17)`, EAS build `1105717c-845d-4706-be54-11ae84db0b20`, completed on July 17, 2026. EAS submission `6ac31393-ffb7-44b4-a573-8ed29f3f3b59` is queued for App Store Connect; do not create a duplicate submission. TestFlight availability, Apple processing, and physical-device verification remain external release gates.
 
 Bryan does not run terminal commands. After the one-time App Store Connect credential setup is complete, builds must be non-interactive:
 

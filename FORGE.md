@@ -7,7 +7,7 @@ This file holds Forge's product history, deployment notes, shipped phase log, kn
 - Production URL: `https://forge-production-773f.up.railway.app/`
 - Latest verified application release: commit `10159b31`, deployment `b2a42e6c-599e-453e-943a-4a0a68b5c5b8`
 - Latest checked bundle: `/assets/index-C2ohGLK1.js`
-- iOS version/build: `1.0.5` / `15`
+- iOS version/build: `1.0.5` / `17`
 - Bundle identifier: `com.zordontech.forge`
 - Expo/EAS project: `@zordon/forge-athlete` (`6aeb5fbb-2697-4cf4-b9b3-afe60c63e9e1`)
 
@@ -25,7 +25,7 @@ Current production checks:
 - Phase 4C adds private challenge leaderboards with deterministic ties/progress/source labels, compact activity, owner member removal, member reporting, and privacy-masked blocked rows. Its disposable three-account production matrix passed all seven grouped checks.
 - Phase 4E adds a bounded What's New sheet and archive, persistent editable time PRs, quieter Train/Body surfaces, and exact-date scheduled-versus-recorded run matching. Claude Code passed twice, Hermes approved, two disposable accounts verified release snooze/acknowledgement/CTA isolation, and the production-only PR schema drift was fixed and re-verified before cleanup. No EAS build was run.
 - Forged Closet v1 adds a 14-model manufacturer-sourced pilot catalog, manual fallback without guessed specs, per-shoe mileage and wear-inspection reminders, and deterministic session/surface/weather-aware rotation picks. Claude Code and Hermes returned SHIP, the 390x844 mobile flow had no horizontal overflow, and disposable production accounts verified catalog/manual add, edit, retire, beta recommendation access, and cross-user mutation rejection before complete cleanup. No EAS build was run.
-- Community now includes a private monthly running-mileage leaderboard for the signed-in athlete and accepted friends only. Contact suggestions are consent-based and email-only: both accounts opt in, address-book values are checked transiently and never stored, and an encrypted short-lived token creates a pending request without exposing the matched email or account id. The web/current beta shows the honest next-beta state; native contact reading awaits a separately approved EAS build.
+- Community now includes a private monthly running-mileage leaderboard for the signed-in athlete and accepted friends only. Contact suggestions are consent-based and email-only: both accounts opt in, address-book values are checked transiently and never stored, and an encrypted short-lived token creates a pending request without exposing the matched email or account id. Native contact reading is included in build 17; the App Store submission is queued and phone verification remains pending.
 - Demo diagnostics check returns `403`.
 - `/api/auth/me/export` returns account/training data and excludes `password_hash`.
 - `/api/auth/forgot-password` returns `200 email_sent` for `demo@forge.app` in under one second.
@@ -280,6 +280,14 @@ Phase 2 cleanup from this audit:
 - The signed IPA was inspected before submission: bundle ID `com.zordontech.forge`, HealthKit entitlement, background-location mode, non-exempt encryption declaration, and compiled `ForgeHealthPlugin` / `ForgeWatchWorkoutPlugin` classes all matched the reviewed source.
 - App Store Connect accepted submission `35d15332-b2b4-4f1d-a198-e51e97bb4618`. Status is shipped and awaiting Apple processing plus physical-iPhone verification of Apple Health sync, locked-screen GPS, planned Run/Lift starts, route planning, and app resume. WorkoutKit delivery still requires a paired Apple Watch tester.
 - Claude Code preflight returned PASS WITH RISKS with zero critical/high findings. Frontend build, zero-vulnerability audit, 49-table account-data coverage, Capacitor sync, Swift parse, 13 frontend smoke suites, 13 backend phase suites, 9 integrity smokes, and the EAS archive audit passed. The local full Xcode compile was unavailable because this Mac lacks the iOS 26.5 platform; the EAS Xcode compile succeeded.
+
+## Native TestFlight Build 17 / Contact Suggestions (2026-07-17)
+
+- Forged Hybrid `1.0.5 (17)` was built from `c13eba01` with the existing EAS remote certificate, provisioning profile, and App Store Connect API key. EAS build `1105717c-845d-4706-be54-11ae84db0b20` finished successfully; only this one build was consumed.
+- The signed IPA was inspected before submission: bundle ID `com.zordontech.forge`, build `17`, Contacts/Health/location usage descriptions, HealthKit entitlement, background-location mode, and compiled Contacts/Health/WorkoutKit plugin classes matched the reviewed source.
+- EAS submission `6ac31393-ffb7-44b4-a573-8ed29f3f3b59` remains queued for App Store Connect with no reported error. Do not create a duplicate submission; TestFlight availability and physical-iPhone verification remain pending.
+- Contact suggestions require build 17, Contacts permission, discoverability enabled on both accounts, and an address-book email that exactly matches the other athlete's account email. Phone-number matching is intentionally unavailable until Forge has verified phone ownership.
+- Frontend/backend installs, both high-severity dependency audits, frontend build, 54-table account-data coverage, contact and leaderboard smokes, Capacitor sync, Swift parse, plist validation, package resolution, archive inspection, and signed-IPA inspection passed. A local full Xcode compile remained unavailable because the installed simulator runtime does not match Xcode; the EAS Xcode build succeeded.
 
 ## Recently Fixed Bugs
 
