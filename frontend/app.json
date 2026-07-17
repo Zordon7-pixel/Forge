@@ -12,7 +12,7 @@
     },
     "ios": {
       "bundleIdentifier": "com.zordontech.forge",
-      "buildNumber": "17",
+      "buildNumber": "18",
       "ascAppId": "6759941190",
       "supportsTablet": true,
       "config": {
