@@ -502,6 +502,7 @@ export default function Community() {
                 <button type="submit" className="pressable" title={t('community.search')} aria-label={t('community.search')} disabled={Boolean(busy)} style={{ width: 44, height: 44, borderRadius: 8, border: 'none', background: 'var(--accent)', color: 'var(--on-accent)', display: 'grid', placeItems: 'center', opacity: Boolean(busy) ? 0.55 : 1 }}><Search size={19} /></button>
               </div>
             </form>
+            <p style={{ color: 'var(--text-muted)', fontSize: 11, lineHeight: 1.45, margin: '8px 0 0' }}>{t('community.searchCaseHint')}</p>
 
             {searchMessage && <p role="status" style={{ color: 'var(--text-muted)', fontSize: 12, margin: '12px 0 0' }}>{searchMessage}</p>}
             {searchResult && (

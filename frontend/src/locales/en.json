@@ -45,6 +45,7 @@
     "exactSearch": "Exact handle search",
     "searchPlaceholder": "friend.handle",
     "search": "Find athlete",
+    "searchCaseHint": "Capitalization does not matter. Your friend must save their handle, turn on handle discovery, and tap Save before they can appear here.",
     "searchInvalid": "Enter an exact friend handle.",
     "searchEmpty": "No discoverable athlete matched that exact handle.",
     "addFriend": "Add",

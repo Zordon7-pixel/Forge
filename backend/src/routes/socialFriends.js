@@ -164,7 +164,7 @@ async function findDiscoverableAthlete(query, handle, viewerId) {
   return query.get(
     `SELECT u.id, u.name, u.friend_handle
      FROM users u
-     WHERE LOWER(u.friend_handle) = ?
+     WHERE LOWER(u.friend_handle) = LOWER(?)
        AND u.friend_discoverable = 1
        AND u.id <> ?
        AND NOT EXISTS (
