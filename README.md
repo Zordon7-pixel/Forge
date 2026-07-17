@@ -87,7 +87,7 @@ https://forge-production-773f.up.railway.app/
 
 EAS/TestFlight preflight resumed on May 3, 2026 after Apple Developer credentials became available.
 
-Current native release artifact: Forged Hybrid `1.0.5 (17)`, EAS build `1105717c-845d-4706-be54-11ae84db0b20`, completed on July 17, 2026. EAS submission `6ac31393-ffb7-44b4-a573-8ed29f3f3b59` reached App Store Connect successfully. TestFlight availability, Apple processing, and physical-device verification remain external release gates.
+Current native release artifact: Forged Hybrid `1.0.5 (17)`, EAS build `1105717c-845d-4706-be54-11ae84db0b20`, completed on July 17, 2026. EAS submission `6ac31393-ffb7-44b4-a573-8ed29f3f3b59` reached App Store Connect, but Apple rejected the binary during automated validation because `NSHealthUpdateUsageDescription` was absent. The source fix and preflight guard are ready; build 18 requires Bryan's explicit EAS approval.
 
 Bryan does not run terminal commands. After the one-time App Store Connect credential setup is complete, builds must be non-interactive:
 

@@ -17,6 +17,9 @@ cd "$APP_DIR"
 PROFILE="${1:-production}"   # production | preview
 echo "[$(date -u +%FT%TZ)] forge-ios deploy: profile=$PROFILE" | tee -a "$LOG"
 
+# Fail before bumping or creating an EAS job when privacy metadata is incomplete.
+node "$REPO/scripts/check-ios-privacy.mjs" | tee -a "$LOG"
+
 APP_JSON="./app.json"
 XCODE_PROJECT="./ios/App/App.xcodeproj/project.pbxproj"
 export APP_JSON XCODE_PROJECT
