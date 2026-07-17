@@ -14,7 +14,9 @@ export default function WatchWorkoutSendButton({ workout, label = 'Send to Watch
   const [status, setStatus] = useState('')
   const [error, setError] = useState('')
   const [sending, setSending] = useState(false)
+  const [fitSending, setFitSending] = useState(false)
   const [availability, setAvailability] = useState({ checked: false, available: false, reason: '' })
+  const structuredWorkout = useMemo(() => (workout ? WatchDeliveryService.buildStructuredWorkout(workout) : null), [workout])
   const workoutText = useMemo(() => WatchDeliveryService.formatFallbackText(workout || {}), [workout])
 
   useEffect(() => {
@@ -66,7 +68,23 @@ export default function WatchWorkoutSendButton({ workout, label = 'Send to Watch
     }
   }
 
-  if (compact && !availability.checked) return null
+  const sendFitWorkout = async () => {
+    if (!structuredWorkout) return
+    setFitSending(true)
+    setError('')
+    setStatus('')
+    try {
+      const result = await WatchDeliveryService.exportWorkoutFitFile(structuredWorkout)
+      if (result?.cancelled) return
+      track('recommendation_followed', { via: 'fit_export' })
+      setStatus(result?.shared ? 'Workout .FIT file shared.' : 'Workout .FIT file downloaded.')
+    } catch (err) {
+      console.error('[watch-fit-export] send failed:', err?.message || err)
+      setError('Could not export this workout as a .FIT file.')
+    } finally {
+      setFitSending(false)
+    }
+  }
 
   const canSend = availability.checked && availability.available
   const showSendButton = !availability.checked || canSend
@@ -87,8 +105,17 @@ export default function WatchWorkoutSendButton({ workout, label = 'Send to Watch
       )}
       <button
         type="button"
-        onClick={copyWorkout}
+        onClick={sendFitWorkout}
+        disabled={fitSending || !structuredWorkout}
         className={`w-full rounded-xl py-2 text-sm font-semibold ${showSendButton ? 'mt-2' : ''}`}
+        style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', cursor: fitSending ? 'wait' : 'pointer' }}
+      >
+        {fitSending ? 'Preparing .FIT...' : 'Send to watch (.FIT)'}
+      </button>
+      <button
+        type="button"
+        onClick={copyWorkout}
+        className="w-full rounded-xl py-2 text-sm font-semibold mt-2"
         style={{ background: 'var(--bg-base)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}
       >
         {canSend ? 'Copy workout details' : 'Copy workout for manual entry'}

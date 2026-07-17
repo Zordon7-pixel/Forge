@@ -1,4 +1,14 @@
 import WatchWorkoutService from './WatchWorkoutService'
+import { encodeWorkoutFit } from './fit/encodeWorkoutFit'
+
+const FIT_MIME_TYPE = 'application/vnd.ant.fit'
+const FIT_HELP_TEXT = {
+  garmin: 'Send this workout as a .FIT file, then open it in the Garmin app to add it to your watch.',
+  coros: 'Send this workout as a .FIT file, then open it in the COROS app to add it to your watch.',
+  suunto: 'Send this workout as a .FIT file, then open it in the Suunto app to add it to your watch.',
+  wahoo: 'Send this workout as a .FIT file, then open it in the Wahoo app to add it to your watch.',
+  polar: 'Send this workout as a .FIT file, then open it in the Polar app to add it to your watch.',
+}
 
 export const WATCH_PROVIDERS = [
   {
@@ -13,6 +23,8 @@ export const WATCH_PROVIDERS = [
     name: 'Garmin',
     status: 'partner_required',
     delivery: 'Garmin Training/Courses API',
+    fitExport: true,
+    help: FIT_HELP_TEXT.garmin,
     notes: 'Adapter is planned; official Garmin API approval is required before Forged Hybrid can push workouts.',
   },
   {
@@ -20,6 +32,8 @@ export const WATCH_PROVIDERS = [
     name: 'COROS',
     status: 'partner_required',
     delivery: 'COROS partner API',
+    fitExport: true,
+    help: FIT_HELP_TEXT.coros,
     notes: 'Adapter is planned; COROS API application approval is required before Forged Hybrid can push workouts.',
   },
   {
@@ -34,6 +48,8 @@ export const WATCH_PROVIDERS = [
     name: 'Polar',
     status: 'planned',
     delivery: 'Polar Flow / structured workout path',
+    fitExport: true,
+    help: FIT_HELP_TEXT.polar,
     notes: 'Data API is available; workout push path still needs provider validation.',
   },
   {
@@ -41,6 +57,8 @@ export const WATCH_PROVIDERS = [
     name: 'Suunto',
     status: 'partner_required',
     delivery: 'Suunto Cloud API',
+    fitExport: true,
+    help: FIT_HELP_TEXT.suunto,
     notes: 'Partner approval is required before direct workout delivery can ship.',
   },
   {
@@ -48,6 +66,8 @@ export const WATCH_PROVIDERS = [
     name: 'Wahoo',
     status: 'partner_required',
     delivery: 'Wahoo Cloud API',
+    fitExport: true,
+    help: FIT_HELP_TEXT.wahoo,
     notes: 'Partner approval is required before direct workout delivery can ship.',
   },
 ]
@@ -64,6 +84,13 @@ function milesFromLabel(value = '') {
 }
 
 function textStep(label, durationSeconds = null) {
+  if (label && typeof label === 'object') {
+    return {
+      ...label,
+      type: label.type || 'instruction',
+      label: String(label.label || label.name || '').trim(),
+    }
+  }
   return {
     type: 'instruction',
     label: String(label || '').trim(),
@@ -71,9 +98,11 @@ function textStep(label, durationSeconds = null) {
   }
 }
 
-function normalizeRunWorkout(workout = {}) {
+export function normalizeRunWorkout(workout = {}) {
   const miles = milesFromLabel(workout.display?.distance || workout.distanceLabel)
-  const paceSeconds = workout.targetPaceSecondsPerMile || paceToSeconds(workout.display?.pace || workout.pace)
+  const paceSeconds = workout.targetPaceSecondsPerMile
+    || workout.targets?.paceSecondsPerMile
+    || paceToSeconds(workout.display?.pace || workout.pace)
   const goal = workout.goal || (miles > 0
     ? { type: 'distance', value: miles, unit: 'mile' }
     : { type: 'open' })
@@ -89,7 +118,7 @@ function normalizeRunWorkout(workout = {}) {
     goal,
     targets: {
       paceSecondsPerMile: paceSeconds || null,
-      heartRateZone: workout.heartRateZone || null,
+      heartRateZone: workout.heartRateZone || workout.targets?.heartRateZone || null,
       effort: workout.effort || null,
     },
     steps: Array.isArray(workout.steps) && workout.steps.length ? workout.steps.map((step) => textStep(step)) : [
@@ -108,7 +137,7 @@ function normalizeRunWorkout(workout = {}) {
   }
 }
 
-function normalizeStrengthWorkout(workout = {}) {
+export function normalizeStrengthWorkout(workout = {}) {
   const steps = Array.isArray(workout.steps) ? workout.steps : []
   return {
     schemaVersion: 1,
@@ -119,6 +148,11 @@ function normalizeStrengthWorkout(workout = {}) {
     activity: workout.activity || 'functionalStrengthTraining',
     location: workout.location || 'indoor',
     goal: workout.goal || { type: 'open' },
+    targets: {
+      paceSecondsPerMile: null,
+      heartRateZone: workout.heartRateZone || null,
+      effort: workout.effort || null,
+    },
     warmup: workout.warmup || [],
     steps: steps.map((step) => ({
       type: 'exercise',
@@ -133,12 +167,63 @@ function normalizeStrengthWorkout(workout = {}) {
   }
 }
 
+function isNormalizedWorkout(workout = {}) {
+  return workout.schemaVersion === 1
+    && workout.source === 'forge'
+    && (workout.kind === 'run' || workout.kind === 'strength')
+    && Array.isArray(workout.steps)
+}
+
+function fitDateStamp(date = new Date()) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}${month}${day}`
+}
+
+function fitFileName(workout = {}) {
+  const kind = workout.kind === 'strength' ? 'strength' : 'run'
+  return `forge-${kind}-${fitDateStamp()}.fit`
+}
+
+function triggerDownload(file) {
+  const url = URL.createObjectURL(file)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = file.name
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 0)
+}
+
+export async function exportWorkoutFitFile(normalizedWorkout = {}) {
+  try {
+    const bytes = encodeWorkoutFit(normalizedWorkout)
+    const filename = fitFileName(normalizedWorkout)
+    const file = new File([bytes], filename, { type: FIT_MIME_TYPE })
+
+    if (typeof navigator !== 'undefined' && navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], title: normalizedWorkout.title || 'Forge Workout' })
+      return { filename, shared: true }
+    }
+
+    triggerDownload(file)
+    return { filename, downloaded: true }
+  } catch (error) {
+    if (error?.name === 'AbortError') return { cancelled: true }
+    console.error('[watch-fit-export] export failed:', error?.message || error)
+    throw error
+  }
+}
+
 class WatchDeliveryService {
   getProviders() {
     return WATCH_PROVIDERS
   }
 
   buildStructuredWorkout(workout = {}) {
+    if (isNormalizedWorkout(workout)) return workout
     if (workout.kind === 'strength') return normalizeStrengthWorkout(workout)
     return normalizeRunWorkout(workout)
   }
@@ -159,6 +244,10 @@ class WatchDeliveryService {
       return WatchWorkoutService.sendToAppleWatch(workout)
     }
     throw new Error('This workout type is not ready for watch delivery yet.')
+  }
+
+  async exportWorkoutFitFile(normalizedWorkout) {
+    return exportWorkoutFitFile(normalizedWorkout)
   }
 
   formatFallbackText(workout = {}) {
