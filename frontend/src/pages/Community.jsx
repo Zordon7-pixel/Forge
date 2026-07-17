@@ -61,6 +61,12 @@ function isHandleShape(value) {
   return /^[a-z0-9][a-z0-9._]{2,23}$/.test(normalizeHandle(value))
 }
 
+function buildInviteUrl(value) {
+  const normalized = normalizeHandle(value)
+  if (!isHandleShape(normalized)) return ''
+  return new URL(`/invite/${encodeURIComponent(normalized)}`, window.location.origin).toString()
+}
+
 function copyWithFallback(value) {
   if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(value)
   const textArea = document.createElement('textarea')
@@ -133,6 +139,7 @@ export default function Community() {
     return ['runs', 'challenges', 'leaderboard', 'friends'].includes(requestedTab) ? requestedTab : 'runs'
   })
   const processedInviteRef = useRef('')
+  const processedHandleRef = useRef('')
 
   const selectTab = (tab) => {
     setActiveTab(tab)
@@ -200,6 +207,43 @@ export default function Community() {
     return () => { active = false }
   }, [load, searchParams, setSearchParams, t])
 
+  useEffect(() => {
+    if (searchParams.get('invite')) return
+    const handle = normalizeHandle(searchParams.get('handle') || '')
+    if (!isHandleShape(handle) || processedHandleRef.current === handle) return
+    processedHandleRef.current = handle
+    setActiveTab('friends')
+    setFriendDiscoveryMode('handle')
+    setSearchHandle(handle)
+    setSearchResult(null)
+    setSearchMessage('')
+    let active = true
+
+    const resolveHandle = async () => {
+      setBusy('friend-search')
+      try {
+        const response = await api.post('/social/friend-search', { handle })
+        if (!active) return
+        setSearchResult(response.data?.athlete || null)
+        if (!response.data?.athlete) setSearchMessage(t('community.searchEmpty'))
+      } catch (error) {
+        if (!active) return
+        if (error?.response?.status === 404) setSearchMessage(t('community.searchEmpty'))
+        else setNotice({ type: 'error', text: error?.response?.data?.error || t('community.actionError') })
+      } finally {
+        if (!active) return
+        const nextParams = new URLSearchParams(searchParams)
+        nextParams.delete('handle')
+        nextParams.set('tab', 'friends')
+        setSearchParams(nextParams, { replace: true })
+        setBusy('')
+      }
+    }
+
+    resolveHandle()
+    return () => { active = false }
+  }, [searchParams, setSearchParams, t])
+
   const runAction = async (key, request, successText = '') => {
     setBusy(key)
     setNotice(null)
@@ -217,13 +261,15 @@ export default function Community() {
     }
   }
 
-  const createInvite = async () => {
-    await runAction('create-invite', async () => {
-      const response = await api.post('/social/friend-invites')
-      const url = new URL('/community', window.location.origin)
-      url.searchParams.set('invite', response.data.token)
-      setInvite({ url: url.toString(), expiresAt: response.data.expires_at })
-    })
+  const createInvite = () => {
+    const url = buildInviteUrl(data.discovery?.handle)
+    if (!data.discovery?.discoverable || !url) {
+      setInvite(null)
+      setNotice({ type: 'error', text: t('community.inviteHandleRequired') })
+      return
+    }
+    setNotice(null)
+    setInvite({ url })
   }
 
   const saveDiscoveryProfile = async () => {
@@ -236,6 +282,7 @@ export default function Community() {
       })
       setHandleDraft(response.data?.handle || '')
       setHandleDiscoverable(Boolean(response.data?.discoverable))
+      setInvite(null)
       setNotice({ type: 'success', text: t('community.handleSaved') })
       await load({ quiet: true })
     } catch (error) {
@@ -421,7 +468,6 @@ export default function Community() {
 
   const friendCount = data.friends.length
   const contactMatchingAvailable = isContactMatchingAvailable()
-  const inviteLimitReached = Number(data.limits?.active_invite_count || 0) >= Number(data.limits?.active_invites || 5)
   const relationshipLabel = searchResult
     ? {
         friends: t('community.searchFriends'),
@@ -553,18 +599,17 @@ export default function Community() {
               <div style={{ marginTop: 14 }}>
                 <p style={{ color: 'var(--success)', fontSize: 12, fontWeight: 850, margin: '0 0 8px' }}>{t('community.inviteReady')}</p>
                 <p style={{ color: 'var(--text-muted)', fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', margin: 0 }}>{invite.url}</p>
-                <p style={{ color: 'var(--text-muted)', fontSize: 11, margin: '7px 0 0' }}>{t('community.inviteExpires', { date: new Date(invite.expiresAt).toLocaleDateString() })}</p>
+                {invite.expiresAt && <p style={{ color: 'var(--text-muted)', fontSize: 11, margin: '7px 0 0' }}>{t('community.inviteExpires', { date: new Date(invite.expiresAt).toLocaleDateString() })}</p>}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8, marginTop: 10 }}>
                   <button type="button" className="pressable" onClick={shareInvite} style={{ minWidth: 0, minHeight: 44, borderRadius: 8, border: 'none', background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 850, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, fontSize: 12 }}><Share2 size={17} />{t('community.chooseContact')}</button>
                   <button type="button" className="pressable" onClick={copyInvite} style={{ minWidth: 0, minHeight: 44, borderRadius: 8, border: '1px solid var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)', fontWeight: 850, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, fontSize: 12 }}><Copy size={17} />{t('community.copyInvite')}</button>
                 </div>
               </div>
             ) : (
-              <button type="button" className="pressable" onClick={createInvite} disabled={Boolean(busy) || inviteLimitReached} style={{ width: '100%', minHeight: 44, marginTop: 14, borderRadius: 8, border: 'none', background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 900, opacity: Boolean(busy) || inviteLimitReached ? 0.55 : 1 }}>
+              <button type="button" className="pressable" onClick={createInvite} disabled={Boolean(busy)} style={{ width: '100%', minHeight: 44, marginTop: 14, borderRadius: 8, border: 'none', background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 900, opacity: Boolean(busy) ? 0.55 : 1 }}>
                 {busy === 'create-invite' ? t('community.creating') : t('community.createContactInvite')}
               </button>
             )}
-            {!invite && inviteLimitReached && <p style={{ color: 'var(--text-muted)', fontSize: 11, lineHeight: 1.45, margin: '8px 0 0' }}>{t('community.inviteLimit')}</p>}
             </div>
           </div>
         )}

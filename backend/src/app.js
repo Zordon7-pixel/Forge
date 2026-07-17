@@ -118,7 +118,9 @@ app.use('/api/comp',        require('./routes/comp'));
 app.use('/api',             comebackRouter);
 
 // Public pages
+app.use('/invite', require('./routes/invitePreview'));
 app.use('/privacy', require('./routes/privacy'));
+app.use('/assets', express.static(path.join(__dirname, '../../frontend/public/assets')));
 
 // Serve frontend static files after all API routes
 app.use(express.static(dist));
