@@ -285,7 +285,7 @@ Phase 2 cleanup from this audit:
 
 - Forged Hybrid `1.0.5 (17)` was built from `c13eba01` with the existing EAS remote certificate, provisioning profile, and App Store Connect API key. EAS build `1105717c-845d-4706-be54-11ae84db0b20` finished successfully; only this one build was consumed.
 - The signed IPA was inspected before submission: bundle ID `com.zordontech.forge`, build `17`, Contacts/Health/location usage descriptions, HealthKit entitlement, background-location mode, and compiled Contacts/Health/WorkoutKit plugin classes matched the reviewed source.
-- EAS submission `6ac31393-ffb7-44b4-a573-8ed29f3f3b59` remains queued for App Store Connect with no reported error. Do not create a duplicate submission; TestFlight availability and physical-iPhone verification remain pending.
+- EAS submission `6ac31393-ffb7-44b4-a573-8ed29f3f3b59` reached App Store Connect successfully with no reported error. TestFlight availability and physical-iPhone verification remain pending.
 - Contact suggestions require build 17, Contacts permission, discoverability enabled on both accounts, and an address-book email that exactly matches the other athlete's account email. Phone-number matching is intentionally unavailable until Forge has verified phone ownership.
 - Frontend/backend installs, both high-severity dependency audits, frontend build, 54-table account-data coverage, contact and leaderboard smokes, Capacitor sync, Swift parse, plist validation, package resolution, archive inspection, and signed-IPA inspection passed. A local full Xcode compile remained unavailable because the installed simulator runtime does not match Xcode; the EAS Xcode build succeeded.
 
