@@ -5,8 +5,8 @@ This file holds Forge's product history, deployment notes, shipped phase log, kn
 ## Current Production
 
 - Production URL: `https://forge-production-773f.up.railway.app/`
-- Latest verified application release: commit `73e9a5d9`, deployment `4ad773cf-8d54-4a26-a177-bfe2d0ddac7d`
-- Latest checked bundle: `/assets/index-sDvnpUYZ.js`
+- Latest verified application release: commit `10159b31`, deployment `b2a42e6c-599e-453e-943a-4a0a68b5c5b8`
+- Latest checked bundle: `/assets/index-C2ohGLK1.js`
 - iOS version/build: `1.0.5` / `15`
 - Bundle identifier: `com.zordontech.forge`
 - Expo/EAS project: `@zordon/forge-athlete` (`6aeb5fbb-2697-4cf4-b9b3-afe60c63e9e1`)
@@ -363,6 +363,7 @@ These changes are already implemented, built, Capacitor-synced, and deployed to 
 | 2026-07-15 | `16aab5c8-36bf-41c6-ab69-d7b30aa6c46d` | Success | Phase 4D private friends-only group runs, exact-location privacy, moderation controls, and canonical account-mutation locking verified live on `/assets/index-B-v0-u9Z.js` |
 | 2026-07-16 | `c6661452-1a35-4bb4-9b51-18ad1de54b89` | Success | Phase 4E What's New, PR persistence, Train/Body simplification, and exact-date workout matching verified live on `/assets/index-BhmEr9y-.js` |
 | 2026-07-16 | `4ad773cf-8d54-4a26-a177-bfe2d0ddac7d` | Success | Forged Closet pilot catalog, deterministic rotation recommendations, wear reminders, and mobile Closet UI verified live on `/assets/index-sDvnpUYZ.js` |
+| 2026-07-17 | `b2a42e6c-599e-453e-943a-4a0a68b5c5b8` | Success | Accepted-friend monthly run leaderboard and consent-based contact suggestions verified with a disposable two-account matrix on `/assets/index-C2ohGLK1.js`; no EAS build was run |
 
 ### Build/Test Status
 
