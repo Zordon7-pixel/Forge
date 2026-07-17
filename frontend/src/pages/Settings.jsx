@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { App as CapacitorApp } from '@capacitor/app'
 import { useNavigate } from 'react-router-dom'
 import { ChevronRight, Download, Moon, Shield, Sun, Trash2, Unplug, Watch } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -83,6 +84,58 @@ export default function Settings() {
   const [watchDelivery, setWatchDelivery] = useState({ checked: false, canAutoSend: false, reason: '', providers: [] })
   const manualFileRef = useRef(null)
   const debugTapTimerRef = useRef(null)
+  const deviceStatusRequestRef = useRef(0)
+  const deviceConnectionPollRef = useRef(null)
+  const pendingDeviceRef = useRef('')
+
+  const loadDeviceStatuses = useCallback(async ({ announceDevice = '' } = {}) => {
+    const requestId = ++deviceStatusRequestRef.current
+    const devices = ['strava', 'oura']
+    const entries = await Promise.all(devices.map(async (device) => {
+      try {
+        const response = await api.get(`/${device}/status`, { params: { fresh: Date.now() } })
+        return [device, { ...(response.data || { connected: false }), statusChecked: true, statusUnavailable: false }]
+      } catch (error) {
+        console.error(`[settings/${device}-status] refresh failed:`, error?.message)
+        return [device, { statusChecked: true, statusUnavailable: true }]
+      }
+    }))
+
+    if (requestId !== deviceStatusRequestRef.current) return null
+    const freshStatuses = Object.fromEntries(entries.filter(([, value]) => !value.statusUnavailable))
+    setDeviceStatuses((current) => {
+      const next = { ...current }
+      entries.forEach(([device, value]) => {
+        next[device] = value.statusUnavailable
+          ? { ...current[device], available: false, statusChecked: true, statusUnavailable: true }
+          : value
+      })
+      return next
+    })
+
+    if (announceDevice && freshStatuses[announceDevice]?.connected) {
+      pendingDeviceRef.current = ''
+      clearTimeout(deviceConnectionPollRef.current)
+      deviceConnectionPollRef.current = null
+      setDeviceNotice({ ok: true, text: `${announceDevice.toUpperCase()} connected. You can sync now.` })
+    }
+    return freshStatuses
+  }, [])
+
+  const startDeviceConnectionPoll = useCallback((device) => {
+    pendingDeviceRef.current = device
+    clearTimeout(deviceConnectionPollRef.current)
+    let attempts = 0
+
+    const poll = async () => {
+      attempts += 1
+      const statuses = await loadDeviceStatuses({ announceDevice: device })
+      if (statuses?.[device]?.connected || attempts >= 60 || pendingDeviceRef.current !== device) return
+      deviceConnectionPollRef.current = window.setTimeout(poll, 2000)
+    }
+
+    deviceConnectionPollRef.current = window.setTimeout(poll, 2000)
+  }, [loadDeviceStatuses])
 
   useEffect(() => {
     api.get('/garmin/status').then((r) => {
@@ -92,7 +145,7 @@ export default function Settings() {
         activityCount: Number(r.data?.activityCount || 0),
         displayName: r.data?.displayName || '',
       })
-    }).catch(() => {})
+    }).catch((error) => console.error('[settings/garmin-status] refresh failed:', error?.message))
     loadDeviceStatuses()
     WatchDeliveryService.getAvailability()
       .then((result) => {
@@ -107,23 +160,43 @@ export default function Settings() {
         reason: err?.message || 'Watch delivery is unavailable.',
         providers: WatchDeliveryService.getProviders(),
       }))
-  }, [])
+  }, [loadDeviceStatuses])
 
   useEffect(() => {
+    let cancelled = false
+    const listenerHandles = []
     const refresh = () => {
       if (typeof document === 'undefined' || document.visibilityState === 'visible') {
-        loadDeviceStatuses()
+        loadDeviceStatuses({ announceDevice: pendingDeviceRef.current })
       }
     }
     window.addEventListener('focus', refresh)
     window.addEventListener('pageshow', refresh)
     document.addEventListener('visibilitychange', refresh)
+
+    try {
+      const appStateHandle = CapacitorApp.addListener('appStateChange', ({ isActive }) => {
+        if (isActive) refresh()
+      })
+      const resumeHandle = CapacitorApp.addListener('resume', refresh)
+      Promise.all([appStateHandle, resumeHandle])
+        .then((handles) => {
+          if (cancelled) handles.forEach((handle) => handle?.remove?.())
+          else listenerHandles.push(...handles)
+        })
+        .catch((error) => console.warn('[settings/devices] app listener setup failed:', error?.message))
+    } catch (error) {
+      console.warn('[settings/devices] app listener setup failed:', error?.message)
+    }
+
     return () => {
+      cancelled = true
       window.removeEventListener('focus', refresh)
       window.removeEventListener('pageshow', refresh)
       document.removeEventListener('visibilitychange', refresh)
+      listenerHandles.forEach((handle) => handle?.remove?.())
     }
-  }, [])
+  }, [loadDeviceStatuses])
 
   useEffect(() => {
     if (!importNotice) return
@@ -149,7 +222,10 @@ export default function Settings() {
     return () => clearTimeout(id)
   }, [privacyNotice])
 
-  useEffect(() => () => clearTimeout(debugTapTimerRef.current), [])
+  useEffect(() => () => {
+    clearTimeout(debugTapTimerRef.current)
+    clearTimeout(deviceConnectionPollRef.current)
+  }, [])
 
   const saveUnits = async (newUnits) => {
     await setUnits(newUnits)
@@ -219,14 +295,6 @@ export default function Settings() {
     }
   }
 
-  const loadDeviceStatuses = async () => {
-    const entries = await Promise.all([
-      ['strava', api.get('/strava/status').catch(() => ({ data: { connected: false } }))],
-      ['oura', api.get('/oura/status').catch(() => ({ data: { connected: false } }))],
-    ])
-    setDeviceStatuses(Object.fromEntries(entries.map(([key, res]) => [key, res.data || { connected: false }])))
-  }
-
   const handleGarminDisconnect = async () => {
     setGarminLoading(true)
     try {
@@ -258,6 +326,7 @@ export default function Settings() {
       if (data?.url) {
         const opened = window.open(data.url, '_blank', 'noopener,noreferrer')
         if (!opened) window.location.href = data.url
+        startDeviceConnectionPoll(device)
         return
       }
       setDeviceNotice({ ok: false, text: `Could not start ${device.toUpperCase()} connection.` })
@@ -351,6 +420,9 @@ export default function Settings() {
       connected: Boolean(deviceStatuses.strava?.connected),
       detail: deviceStatuses.strava?.athlete_name || '',
       lastSync: deviceStatuses.strava?.last_sync,
+      available: deviceStatuses.strava?.available === true,
+      statusChecked: Boolean(deviceStatuses.strava?.statusChecked),
+      statusUnavailable: Boolean(deviceStatuses.strava?.statusUnavailable),
       connect: () => handleDeviceConnect('strava'),
       connecting: Boolean(deviceConnecting.strava),
       sync: () => handleDeviceSync('strava'),
@@ -362,6 +434,9 @@ export default function Settings() {
       connected: Boolean(deviceStatuses.oura?.connected),
       detail: deviceStatuses.oura?.displayName || '',
       lastSync: deviceStatuses.oura?.lastSync,
+      available: deviceStatuses.oura?.available === true,
+      statusChecked: Boolean(deviceStatuses.oura?.statusChecked),
+      statusUnavailable: Boolean(deviceStatuses.oura?.statusUnavailable),
       connect: () => handleDeviceConnect('oura'),
       connecting: Boolean(deviceConnecting.oura),
       sync: () => handleDeviceSync('oura'),
@@ -507,8 +582,8 @@ export default function Settings() {
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: device.connected ? '1fr 1fr' : '1fr', gap: 8 }}>
                   {!device.connected ? (
-                    <button type="button" onClick={device.connect} disabled={device.connecting} style={{ border: '1px solid var(--accent)', borderRadius: 10, padding: '10px 12px', background: 'var(--accent)', color: '#111111', fontSize: 13, fontWeight: 800, cursor: device.connecting ? 'wait' : 'pointer', opacity: device.connecting ? 0.7 : 1 }}>
-                      {device.connecting ? `Opening ${device.name}...` : `Connect ${device.name}`}
+                    <button type="button" onClick={device.connect} disabled={device.connecting || !device.available} style={{ border: '1px solid var(--accent)', borderRadius: 10, padding: '10px 12px', background: device.available ? 'var(--accent)' : 'var(--bg-input)', color: device.available ? '#111111' : 'var(--text-muted)', fontSize: 13, fontWeight: 800, cursor: device.connecting ? 'wait' : device.available ? 'pointer' : 'not-allowed', opacity: device.connecting ? 0.7 : 1 }}>
+                      {!device.statusChecked ? `Checking ${device.name}...` : device.statusUnavailable ? `${device.name} status unavailable` : !device.available ? `${device.name} connection coming soon` : device.connecting ? `Opening ${device.name}...` : `Connect ${device.name}`}
                     </button>
                   ) : (
                     <>

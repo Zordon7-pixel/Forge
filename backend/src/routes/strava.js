@@ -141,7 +141,7 @@ function sendOAuthResultPage(res, { ok, title, message }) {
     .mark { width: 64px; height: 64px; border-radius: 50%; margin: 0 auto 22px; display: grid; place-items: center; background: ${accent}; color: #050505; font-size: 34px; font-weight: 900; }
     h1 { margin: 0 0 12px; font-size: 30px; line-height: 1.1; }
     p { margin: 0 0 24px; color: #9ca3af; font-size: 16px; line-height: 1.55; }
-    a { display: inline-flex; align-items: center; justify-content: center; min-height: 48px; padding: 0 22px; border-radius: 14px; background: #f5bd02; color: #111; font-weight: 900; text-decoration: none; }
+    .return { display: inline-flex; align-items: center; justify-content: center; min-height: 48px; padding: 0 22px; border-radius: 14px; background: #f5bd02; color: #111; font-weight: 900; }
   </style>
 </head>
 <body>
@@ -149,7 +149,7 @@ function sendOAuthResultPage(res, { ok, title, message }) {
     <div class="mark">${ok ? '✓' : '!'}</div>
     <h1>${safeTitle}</h1>
     <p>${safeMessage}</p>
-    <a href="https://forge-production-773f.up.railway.app/settings">Return to Forged Hybrid</a>
+    <div class="return">Use Forged Hybrid / Back at top-left</div>
   </main>
 </body>
 </html>`);
@@ -377,7 +377,12 @@ router.get('/callback', async (req, res) => {
     if (deepLink) {
       return res.redirect(appendQueryParams(deepLink, { ok: 0, error: String(req.query.error) }));
     }
-    return res.status(400).json({ ok: false, error: String(req.query.error) });
+    res.status(400);
+    return sendOAuthResultPage(res, {
+      ok: false,
+      title: 'Strava Connection Cancelled',
+      message: 'Strava was not connected. Return to Forged Hybrid whenever you are ready to try again.',
+    });
   }
 
   const code = String(req.query?.code || '').trim();
@@ -413,27 +418,24 @@ router.get('/callback', async (req, res) => {
     return sendOAuthResultPage(res, {
       ok: true,
       title: 'Strava Connected',
-      message: `${athleteName || 'Your Strava account'} is connected. Return to Forged Hybrid and the Devices section will refresh automatically.`,
+      message: `${athleteName || 'Your Strava account'} is connected. Tap Forged Hybrid or Back at the top-left to return; the Devices section will refresh.`,
     });
   } catch (err) {
     if (deepLink) {
       return res.redirect(appendQueryParams(deepLink, { ok: 0, error: 'token_exchange_failed' }));
     }
-    return res.status(Number(err.status || 500)).type('html').send(`<!doctype html>
-<html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Strava Connection Failed</title></head>
-<body style="margin:0;min-height:100vh;display:grid;place-items:center;background:#050505;color:#f9fafb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
-  <main style="width:min(88vw,420px);text-align:center">
-    <h1 style="font-size:30px;margin:0 0 12px">Strava Connection Failed</h1>
-    <p style="color:#9ca3af;line-height:1.55">Forged Hybrid could not finish the Strava connection. Return to Forged Hybrid and try again.</p>
-    <a style="display:inline-flex;align-items:center;justify-content:center;min-height:48px;padding:0 22px;border-radius:14px;background:#f5bd02;color:#111;font-weight:900;text-decoration:none" href="https://forge-production-773f.up.railway.app/settings">Return to Forged Hybrid</a>
-  </main>
-</body>
-</html>`);
+    console.error('[strava/callback] failed:', err.message);
+    res.status(Number(err.status || 500));
+    return sendOAuthResultPage(res, {
+      ok: false,
+      title: 'Strava Connection Failed',
+      message: 'Forged Hybrid could not finish the Strava connection. Return to the app and try again.',
+    });
   }
 });
 
 router.get('/status', auth, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
   try {
     const row = await dbGet(
       `SELECT athlete_name, connected_at
@@ -444,6 +446,7 @@ router.get('/status', auth, async (req, res) => {
 
     return res.json({
       connected: Boolean(row),
+      available: getMissingStravaEnv().length === 0,
       athlete_name: row?.athlete_name || null,
       last_sync: row?.connected_at || null,
     });

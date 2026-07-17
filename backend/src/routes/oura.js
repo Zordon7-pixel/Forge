@@ -163,6 +163,45 @@ function appendQueryParams(url, params = {}) {
   return `${url}${search.toString() ? `${prefix}${search.toString()}` : ''}`;
 }
 
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function sendOAuthResultPage(res, { ok, title, message }) {
+  const accent = ok ? '#22c55e' : '#ef4444';
+  const safeTitle = escapeHtml(title);
+  const safeMessage = escapeHtml(message);
+  return res.type('html').send(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>${safeTitle}</title>
+  <style>
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #050505; color: #f9fafb; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    main { width: min(88vw, 420px); text-align: center; }
+    .mark { width: 64px; height: 64px; border-radius: 50%; margin: 0 auto 22px; display: grid; place-items: center; background: ${accent}; color: #050505; font-size: 34px; font-weight: 900; }
+    h1 { margin: 0 0 12px; font-size: 30px; line-height: 1.1; }
+    p { margin: 0 0 24px; color: #9ca3af; font-size: 16px; line-height: 1.55; }
+    .return { display: inline-flex; align-items: center; justify-content: center; min-height: 48px; padding: 0 22px; border-radius: 14px; background: #f5bd02; color: #111; font-weight: 900; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="mark">${ok ? '✓' : '!'}</div>
+    <h1>${safeTitle}</h1>
+    <p>${safeMessage}</p>
+    <div class="return">Use Forged Hybrid / Back at top-left</div>
+  </main>
+</body>
+</html>`);
+}
+
 async function callTokenEndpoint(params = {}) {
   const response = await fetch(OURA_TOKEN_URL, {
     method: 'POST',
@@ -171,7 +210,11 @@ async function callTokenEndpoint(params = {}) {
   });
 
   let payload = null;
-  try { payload = await response.json(); } catch { payload = null; }
+  try {
+    payload = await response.json();
+  } catch (err) {
+    console.error('[oura/token] failed to parse response:', err.message);
+  }
 
   if (!response.ok) {
     const message = payload?.message || payload?.error || 'Oura token exchange failed';
@@ -283,7 +326,7 @@ router.get('/auth', auth, requirePremium('Oura sync'), async (req, res) => {
     client_id: String(process.env.OURA_CLIENT_ID),
     redirect_uri: String(process.env.OURA_REDIRECT_URI),
     response_type: 'code',
-    scope: 'daily sleep personal heartrate',
+    scope: 'daily personal heartrate',
     state,
   }).toString()}`;
 
@@ -305,7 +348,12 @@ router.get('/callback', async (req, res) => {
 
   if (req.query?.error) {
     if (deepLink) return res.redirect(appendQueryParams(deepLink, { ok: 0, error: String(req.query.error) }));
-    return res.status(400).json({ ok: false, error: String(req.query.error) });
+    res.status(400);
+    return sendOAuthResultPage(res, {
+      ok: false,
+      title: 'Oura Connection Cancelled',
+      message: 'Oura was not connected. Return to Forged Hybrid whenever you are ready to try again.',
+    });
   }
 
   const code = String(req.query?.code || '').trim();
@@ -331,9 +379,10 @@ router.get('/callback', async (req, res) => {
     // Fetch personal info for display name
     let displayName = null;
     try {
-      const info = await ouraApiFetch(tokens.access_token, '/../v2/usercollection/personal_info');
+      const info = await ouraApiFetch(tokens.access_token, '/personal_info');
       displayName = info?.email || 'Oura User';
-    } catch {
+    } catch (err) {
+      console.error('[oura/callback] personal info fetch failed:', err.message);
       displayName = 'Oura User';
     }
 
@@ -343,15 +392,26 @@ router.get('/callback', async (req, res) => {
     );
 
     if (deepLink) return res.redirect(appendQueryParams(deepLink, { ok: 1, display_name: displayName || '' }));
-    return res.json({ ok: true, display_name: displayName });
+    return sendOAuthResultPage(res, {
+      ok: true,
+      title: 'Oura Connected',
+      message: `${displayName || 'Your Oura account'} is connected. Tap Forged Hybrid or Back at the top-left to return; the Devices section will refresh.`,
+    });
   } catch (err) {
     if (deepLink) return res.redirect(appendQueryParams(deepLink, { ok: 0, error: 'token_exchange_failed' }));
-    return res.status(Number(err.status || 500)).json({ ok: false, error: 'Oura callback failed' });
+    console.error('[oura/callback] failed:', err.message);
+    res.status(Number(err.status || 500));
+    return sendOAuthResultPage(res, {
+      ok: false,
+      title: 'Oura Connection Failed',
+      message: 'Forged Hybrid could not finish the Oura connection. Return to the app and try again.',
+    });
   }
 });
 
 // GET /oura/status — check connection status
 router.get('/status', auth, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
   try {
     await ensureSchema();
     const row = await dbGet(
@@ -366,11 +426,13 @@ router.get('/status', auth, async (req, res) => {
 
     return res.json({
       connected: Boolean(row),
+      available: getMissingEnv().length === 0,
       displayName: row?.display_name || null,
       lastSync: row?.updated_at || null,
       dataCount: Number(dataCount?.count || 0),
     });
-  } catch {
+  } catch (err) {
+    console.error('[oura/status] failed:', err.message);
     return res.status(500).json({ error: 'Failed to fetch Oura status' });
   }
 });

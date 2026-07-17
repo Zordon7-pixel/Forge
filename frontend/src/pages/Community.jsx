@@ -76,7 +76,7 @@ function PersonRow({ item, subtitle, children }) {
   const name = item.user?.name || item.name || t('community.athleteFallback')
   const handle = item.user?.handle || item.handle || ''
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '42px minmax(0, 1fr) auto', alignItems: 'center', gap: 12, minHeight: 66, padding: '10px 0', borderBottom: '1px solid var(--border-subtle)', position: 'relative' }}>
+    <div style={{ display: 'grid', gridTemplateColumns: '42px minmax(0, 1fr) auto', alignItems: 'center', gap: 12, width: '100%', maxWidth: '100%', minWidth: 0, minHeight: 66, padding: '10px 0', borderBottom: '1px solid var(--border-subtle)', position: 'relative' }}>
       <span aria-hidden="true" style={{ width: 42, height: 42, borderRadius: '50%', display: 'grid', placeItems: 'center', background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', color: 'var(--accent)', fontSize: 12, fontWeight: 900 }}>
         {avatarLabel(name)}
       </span>
@@ -88,7 +88,7 @@ function PersonRow({ item, subtitle, children }) {
           </span>
         )}
       </span>
-      <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6 }}>{children}</span>
+      <span style={{ display: 'flex', minWidth: 0, alignItems: 'center', justifyContent: 'flex-end', gap: 6 }}>{children}</span>
     </div>
   )
 }
@@ -117,6 +117,7 @@ export default function Community() {
   const [searchHandle, setSearchHandle] = useState('')
   const [searchResult, setSearchResult] = useState(null)
   const [searchMessage, setSearchMessage] = useState('')
+  const [friendDiscoveryMode, setFriendDiscoveryMode] = useState('handle')
   const [menuFor, setMenuFor] = useState('')
   const [reportTarget, setReportTarget] = useState(null)
   const [reportCategory, setReportCategory] = useState('harassment')
@@ -304,7 +305,7 @@ export default function Community() {
     if (!invite?.url) return
     if (!navigator.share) return copyInvite()
     try {
-      await navigator.share({ title: 'Forged Hybrid', text: t('community.inviteBody'), url: invite.url })
+      await navigator.share({ title: 'Forged Hybrid', text: t('community.inviteShareText'), url: invite.url })
     } catch (error) {
       if (error?.name !== 'AbortError') {
         console.error('[Community] share failed:', error?.message)
@@ -361,7 +362,7 @@ export default function Community() {
     : ''
 
   return (
-    <div style={{ paddingBottom: 96 }}>
+    <div style={{ width: '100%', maxWidth: '100%', minWidth: 0, paddingBottom: 96, overflowX: 'clip' }}>
       <header style={{ marginBottom: 18 }}>
         <p style={{ color: 'var(--accent)', fontSize: 12, fontWeight: 800, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6 }}>Forged Hybrid</p>
         <h1 style={{ color: 'var(--text-primary)', fontSize: 28, fontWeight: 900, margin: 0 }}>{t('community.title')}</h1>
@@ -374,10 +375,10 @@ export default function Community() {
         </div>
       )}
 
-      <div role="tablist" aria-label={t('community.title')} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 4, padding: 4, marginBottom: 16, border: '1px solid var(--border-subtle)', borderRadius: 8, background: 'var(--bg-card)' }}>
-        <button type="button" role="tab" aria-selected={activeTab === 'runs'} className="pressable" onClick={() => selectTab('runs')} style={{ minHeight: 44, border: 'none', borderRadius: 6, background: activeTab === 'runs' ? 'var(--accent)' : 'transparent', color: activeTab === 'runs' ? 'var(--on-accent)' : 'var(--text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontSize: 12, fontWeight: 900 }}><CalendarClock size={16} />{t('community.runsTab')}</button>
-        <button type="button" role="tab" aria-selected={activeTab === 'challenges'} className="pressable" onClick={() => selectTab('challenges')} style={{ minHeight: 44, border: 'none', borderRadius: 6, background: activeTab === 'challenges' ? 'var(--accent)' : 'transparent', color: activeTab === 'challenges' ? 'var(--on-accent)' : 'var(--text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontSize: 12, fontWeight: 900 }}><Trophy size={16} />{t('community.challengesTab')}</button>
-        <button type="button" role="tab" aria-selected={activeTab === 'friends'} className="pressable" onClick={() => selectTab('friends')} style={{ minHeight: 44, border: 'none', borderRadius: 6, background: activeTab === 'friends' ? 'var(--accent)' : 'transparent', color: activeTab === 'friends' ? 'var(--on-accent)' : 'var(--text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontSize: 12, fontWeight: 900 }}><Users size={16} />{t('community.friendsTab')}</button>
+      <div role="tablist" aria-label={t('community.title')} style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', width: '100%', maxWidth: '100%', minWidth: 0, gap: 4, padding: 4, marginBottom: 16, border: '1px solid var(--border-subtle)', borderRadius: 8, background: 'var(--bg-card)' }}>
+        <button type="button" role="tab" aria-selected={activeTab === 'runs'} className="pressable" onClick={() => selectTab('runs')} style={{ minWidth: 0, minHeight: 44, padding: '0 4px', border: 'none', borderRadius: 6, background: activeTab === 'runs' ? 'var(--accent)' : 'transparent', color: activeTab === 'runs' ? 'var(--on-accent)' : 'var(--text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, fontSize: 12, fontWeight: 900 }}><CalendarClock size={16} />{t('community.runsTab')}</button>
+        <button type="button" role="tab" aria-selected={activeTab === 'challenges'} className="pressable" onClick={() => selectTab('challenges')} style={{ minWidth: 0, minHeight: 44, padding: '0 4px', border: 'none', borderRadius: 6, background: activeTab === 'challenges' ? 'var(--accent)' : 'transparent', color: activeTab === 'challenges' ? 'var(--on-accent)' : 'var(--text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, fontSize: 12, fontWeight: 900 }}><Trophy size={16} />{t('community.challengesTab')}</button>
+        <button type="button" role="tab" aria-selected={activeTab === 'friends'} className="pressable" onClick={() => selectTab('friends')} style={{ minWidth: 0, minHeight: 44, padding: '0 4px', border: 'none', borderRadius: 6, background: activeTab === 'friends' ? 'var(--accent)' : 'transparent', color: activeTab === 'friends' ? 'var(--on-accent)' : 'var(--text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, fontSize: 12, fontWeight: 900 }}><Users size={16} />{t('community.friendsTab')}</button>
       </div>
 
       {activeTab === 'runs' ? (
@@ -395,68 +396,76 @@ export default function Community() {
           </span>
         </div>
 
-        <div style={{ marginTop: 16 }}>
-          <label htmlFor="friend-handle" style={{ display: 'block', color: 'var(--text-muted)', fontSize: 11, fontWeight: 850, marginBottom: 6, textTransform: 'uppercase' }}>{t('community.yourHandle')}</label>
-          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: 8 }}>
-            <label style={{ minHeight: 44, display: 'flex', alignItems: 'center', gap: 5, border: '1px solid var(--border-subtle)', borderRadius: 8, background: 'var(--bg-input)', padding: '0 11px' }}>
-              <AtSign size={16} color="var(--text-muted)" aria-hidden="true" />
-              <input id="friend-handle" value={handleDraft} maxLength={25} autoCapitalize="none" autoCorrect="off" spellCheck="false" onChange={(event) => setHandleDraft(event.target.value)} placeholder={t('community.handlePlaceholder')} style={{ minWidth: 0, width: '100%', border: 'none', outline: 'none', background: 'transparent', color: 'var(--text-primary)', fontSize: 14 }} />
-            </label>
-            <button type="button" className="pressable" onClick={saveDiscoveryProfile} disabled={Boolean(busy)} style={{ minWidth: 72, minHeight: 44, borderRadius: 8, border: 'none', background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 850, opacity: Boolean(busy) ? 0.55 : 1 }}>{busy === 'save-handle' ? t('community.saving') : t('community.saveHandle')}</button>
-          </div>
-          <label style={{ minHeight: 44, marginTop: 8, display: 'flex', alignItems: 'center', gap: 10, color: 'var(--text-primary)', fontSize: 12, fontWeight: 750 }}>
-            <input type="checkbox" checked={handleDiscoverable} disabled={!isHandleShape(handleDraft)} onChange={(event) => setHandleDiscoverable(event.target.checked)} style={{ width: 19, height: 19, accentColor: 'var(--accent)' }} />
-            {handleDiscoverable ? <Eye size={17} color="var(--success)" /> : <EyeOff size={17} color="var(--text-muted)" />}
-            <span>{t('community.discoverableLabel')}</span>
-          </label>
-          <p style={{ color: 'var(--text-muted)', fontSize: 11, lineHeight: 1.45, margin: '2px 0 0' }}>{t('community.handleRules')}</p>
+        <div role="tablist" aria-label={t('community.friendDiscoveryTabs')} style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', width: '100%', gap: 4, padding: 4, marginTop: 16, borderRadius: 8, background: 'var(--bg-input)' }}>
+          <button type="button" role="tab" aria-selected={friendDiscoveryMode === 'handle'} className="pressable" onClick={() => setFriendDiscoveryMode('handle')} style={{ minWidth: 0, minHeight: 42, border: 'none', borderRadius: 6, background: friendDiscoveryMode === 'handle' ? 'var(--accent)' : 'transparent', color: friendDiscoveryMode === 'handle' ? 'var(--on-accent)' : 'var(--text-muted)', fontSize: 12, fontWeight: 900 }}>{t('community.handleTab')}</button>
+          <button type="button" role="tab" aria-selected={friendDiscoveryMode === 'contacts'} className="pressable" onClick={() => setFriendDiscoveryMode('contacts')} style={{ minWidth: 0, minHeight: 42, border: 'none', borderRadius: 6, background: friendDiscoveryMode === 'contacts' ? 'var(--accent)' : 'transparent', color: friendDiscoveryMode === 'contacts' ? 'var(--on-accent)' : 'var(--text-muted)', fontSize: 12, fontWeight: 900 }}>{t('community.contactsTab')}</button>
         </div>
 
-        <form onSubmit={findFriend} style={{ borderTop: '1px solid var(--border-subtle)', marginTop: 14, paddingTop: 14 }}>
-          <label htmlFor="friend-search" style={{ display: 'block', color: 'var(--text-muted)', fontSize: 11, fontWeight: 850, marginBottom: 6, textTransform: 'uppercase' }}>{t('community.exactSearch')}</label>
-          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 44px', gap: 8 }}>
-            <label style={{ minHeight: 44, display: 'flex', alignItems: 'center', gap: 5, border: '1px solid var(--border-subtle)', borderRadius: 8, background: 'var(--bg-input)', padding: '0 11px' }}>
-              <AtSign size={16} color="var(--text-muted)" aria-hidden="true" />
-              <input id="friend-search" value={searchHandle} maxLength={25} autoCapitalize="none" autoCorrect="off" spellCheck="false" onChange={(event) => { setSearchHandle(event.target.value); setSearchResult(null); setSearchMessage('') }} placeholder={t('community.searchPlaceholder')} style={{ minWidth: 0, width: '100%', border: 'none', outline: 'none', background: 'transparent', color: 'var(--text-primary)', fontSize: 14 }} />
-            </label>
-            <button type="submit" className="pressable" title={t('community.search')} aria-label={t('community.search')} disabled={Boolean(busy)} style={{ width: 44, height: 44, borderRadius: 8, border: 'none', background: 'var(--accent)', color: 'var(--on-accent)', display: 'grid', placeItems: 'center', opacity: Boolean(busy) ? 0.55 : 1 }}><Search size={19} /></button>
-          </div>
-        </form>
+        {friendDiscoveryMode === 'handle' ? (
+          <>
+            <div style={{ marginTop: 16 }}>
+              <label htmlFor="friend-handle" style={{ display: 'block', color: 'var(--text-muted)', fontSize: 11, fontWeight: 850, marginBottom: 6, textTransform: 'uppercase' }}>{t('community.yourHandle')}</label>
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', width: '100%', maxWidth: '100%', minWidth: 0, gap: 8 }}>
+                <label style={{ minHeight: 44, display: 'flex', alignItems: 'center', gap: 5, border: '1px solid var(--border-subtle)', borderRadius: 8, background: 'var(--bg-input)', padding: '0 11px' }}>
+                  <AtSign size={16} color="var(--text-muted)" aria-hidden="true" />
+                  <input id="friend-handle" value={handleDraft} maxLength={25} autoCapitalize="none" autoCorrect="off" spellCheck="false" onChange={(event) => setHandleDraft(event.target.value)} placeholder={t('community.handlePlaceholder')} style={{ minWidth: 0, width: '100%', border: 'none', outline: 'none', background: 'transparent', color: 'var(--text-primary)', fontSize: 14 }} />
+                </label>
+                <button type="button" className="pressable" onClick={saveDiscoveryProfile} disabled={Boolean(busy)} style={{ minWidth: 72, minHeight: 44, borderRadius: 8, border: 'none', background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 850, opacity: Boolean(busy) ? 0.55 : 1 }}>{busy === 'save-handle' ? t('community.saving') : t('community.saveHandle')}</button>
+              </div>
+              <label style={{ minHeight: 44, marginTop: 8, display: 'flex', alignItems: 'center', gap: 10, color: 'var(--text-primary)', fontSize: 12, fontWeight: 750 }}>
+                <input type="checkbox" checked={handleDiscoverable} disabled={!isHandleShape(handleDraft)} onChange={(event) => setHandleDiscoverable(event.target.checked)} style={{ width: 19, height: 19, accentColor: 'var(--accent)' }} />
+                {handleDiscoverable ? <Eye size={17} color="var(--success)" /> : <EyeOff size={17} color="var(--text-muted)" />}
+                <span>{t('community.discoverableLabel')}</span>
+              </label>
+              <p style={{ color: 'var(--text-muted)', fontSize: 11, lineHeight: 1.45, margin: '2px 0 0' }}>{t('community.handleRules')}</p>
+            </div>
 
-        {searchMessage && <p role="status" style={{ color: 'var(--text-muted)', fontSize: 12, margin: '12px 0 0' }}>{searchMessage}</p>}
-        {searchResult && (
-          <PersonRow item={searchResult} subtitle={relationshipLabel}>
-            {searchResult.relationship === 'available' ? (
-              <button type="button" className="pressable" onClick={sendHandleRequest} disabled={Boolean(busy)} style={{ minHeight: 40, borderRadius: 8, border: 'none', background: 'var(--accent)', color: 'var(--on-accent)', display: 'flex', alignItems: 'center', gap: 6, padding: '0 10px', fontSize: 12, fontWeight: 850 }}><UserPlus size={16} />{t('community.addFriend')}</button>
-            ) : (
-              <span style={{ color: 'var(--text-muted)', fontSize: 11, fontWeight: 800, textAlign: 'right' }}>{relationshipLabel}</span>
+            <form onSubmit={findFriend} style={{ borderTop: '1px solid var(--border-subtle)', marginTop: 14, paddingTop: 14 }}>
+              <label htmlFor="friend-search" style={{ display: 'block', color: 'var(--text-muted)', fontSize: 11, fontWeight: 850, marginBottom: 6, textTransform: 'uppercase' }}>{t('community.exactSearch')}</label>
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 44px', width: '100%', maxWidth: '100%', minWidth: 0, gap: 8 }}>
+                <label style={{ minHeight: 44, display: 'flex', alignItems: 'center', gap: 5, border: '1px solid var(--border-subtle)', borderRadius: 8, background: 'var(--bg-input)', padding: '0 11px' }}>
+                  <AtSign size={16} color="var(--text-muted)" aria-hidden="true" />
+                  <input id="friend-search" value={searchHandle} maxLength={25} autoCapitalize="none" autoCorrect="off" spellCheck="false" onChange={(event) => { setSearchHandle(event.target.value); setSearchResult(null); setSearchMessage('') }} placeholder={t('community.searchPlaceholder')} style={{ minWidth: 0, width: '100%', border: 'none', outline: 'none', background: 'transparent', color: 'var(--text-primary)', fontSize: 14 }} />
+                </label>
+                <button type="submit" className="pressable" title={t('community.search')} aria-label={t('community.search')} disabled={Boolean(busy)} style={{ width: 44, height: 44, borderRadius: 8, border: 'none', background: 'var(--accent)', color: 'var(--on-accent)', display: 'grid', placeItems: 'center', opacity: Boolean(busy) ? 0.55 : 1 }}><Search size={19} /></button>
+              </div>
+            </form>
+
+            {searchMessage && <p role="status" style={{ color: 'var(--text-muted)', fontSize: 12, margin: '12px 0 0' }}>{searchMessage}</p>}
+            {searchResult && (
+              <PersonRow item={searchResult} subtitle={relationshipLabel}>
+                {searchResult.relationship === 'available' ? (
+                  <button type="button" className="pressable" onClick={sendHandleRequest} disabled={Boolean(busy)} style={{ minHeight: 40, borderRadius: 8, border: 'none', background: 'var(--accent)', color: 'var(--on-accent)', display: 'flex', alignItems: 'center', gap: 6, padding: '0 10px', fontSize: 12, fontWeight: 850 }}><UserPlus size={16} />{t('community.addFriend')}</button>
+                ) : (
+                  <span style={{ color: 'var(--text-muted)', fontSize: 11, fontWeight: 800, textAlign: 'right' }}>{relationshipLabel}</span>
+                )}
+              </PersonRow>
             )}
-          </PersonRow>
+          </>
+        ) : (
+          <div style={{ marginTop: 16, borderTop: '1px solid var(--border-subtle)', paddingTop: 14 }}>
+            <h3 style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-primary)', fontSize: 14, fontWeight: 900, margin: 0 }}><LinkIcon size={18} color="var(--accent)" />{t('community.contactInviteTitle')}</h3>
+            <p style={{ color: 'var(--text-muted)', fontSize: 12, lineHeight: 1.5, margin: '6px 0 0' }}>{t('community.contactInviteBody')}</p>
+            <p style={{ color: 'var(--text-muted)', fontSize: 11, lineHeight: 1.45, margin: '8px 0 0' }}>{t('community.contactPrivacy')}</p>
+            {invite ? (
+              <div style={{ marginTop: 14 }}>
+                <p style={{ color: 'var(--success)', fontSize: 12, fontWeight: 850, margin: '0 0 8px' }}>{t('community.inviteReady')}</p>
+                <p style={{ color: 'var(--text-muted)', fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', margin: 0 }}>{invite.url}</p>
+                <p style={{ color: 'var(--text-muted)', fontSize: 11, margin: '7px 0 0' }}>{t('community.inviteExpires', { date: new Date(invite.expiresAt).toLocaleDateString() })}</p>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8, marginTop: 10 }}>
+                  <button type="button" className="pressable" onClick={shareInvite} style={{ minWidth: 0, minHeight: 44, borderRadius: 8, border: 'none', background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 850, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, fontSize: 12 }}><Share2 size={17} />{t('community.chooseContact')}</button>
+                  <button type="button" className="pressable" onClick={copyInvite} style={{ minWidth: 0, minHeight: 44, borderRadius: 8, border: '1px solid var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)', fontWeight: 850, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, fontSize: 12 }}><Copy size={17} />{t('community.copyInvite')}</button>
+                </div>
+              </div>
+            ) : (
+              <button type="button" className="pressable" onClick={createInvite} disabled={Boolean(busy) || inviteLimitReached} style={{ width: '100%', minHeight: 44, marginTop: 14, borderRadius: 8, border: 'none', background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 900, opacity: Boolean(busy) || inviteLimitReached ? 0.55 : 1 }}>
+                {busy === 'create-invite' ? t('community.creating') : t('community.createContactInvite')}
+              </button>
+            )}
+            {!invite && inviteLimitReached && <p style={{ color: 'var(--text-muted)', fontSize: 11, lineHeight: 1.45, margin: '8px 0 0' }}>{t('community.inviteLimit')}</p>}
+          </div>
         )}
       </section>
-
-      <details style={{ border: '1px solid var(--border-subtle)', borderRadius: 8, background: 'var(--bg-card)', padding: 14, marginBottom: 24 }}>
-        <summary className="pressable" style={{ minHeight: 40, cursor: 'pointer', color: 'var(--text-primary)', fontSize: 14, fontWeight: 850, display: 'flex', alignItems: 'center', gap: 9, listStyle: 'none' }}>
-          <LinkIcon size={18} color="var(--accent)" />{t('community.inviteTitle')}
-        </summary>
-        <p style={{ color: 'var(--text-muted)', fontSize: 12, lineHeight: 1.5, margin: '6px 0 0' }}>{t('community.inviteBody')}</p>
-        {invite ? (
-          <div style={{ marginTop: 14 }}>
-            <p style={{ color: 'var(--success)', fontSize: 12, fontWeight: 850, margin: '0 0 8px' }}>{t('community.inviteReady')}</p>
-            <p style={{ color: 'var(--text-muted)', fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', margin: 0 }}>{invite.url}</p>
-            <p style={{ color: 'var(--text-muted)', fontSize: 11, margin: '7px 0 0' }}>{t('community.inviteExpires', { date: new Date(invite.expiresAt).toLocaleDateString() })}</p>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 10 }}>
-              <button type="button" className="pressable" onClick={shareInvite} style={{ minHeight: 42, borderRadius: 8, border: 'none', background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 850, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}><Share2 size={17} />{t('community.shareInvite')}</button>
-              <button type="button" className="pressable" onClick={copyInvite} style={{ minHeight: 42, borderRadius: 8, border: '1px solid var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)', fontWeight: 850, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}><Copy size={17} />{t('community.copyInvite')}</button>
-            </div>
-          </div>
-        ) : (
-          <button type="button" className="pressable" onClick={createInvite} disabled={Boolean(busy) || inviteLimitReached} style={{ width: '100%', minHeight: 44, marginTop: 14, borderRadius: 8, border: 'none', background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 900, opacity: Boolean(busy) || inviteLimitReached ? 0.55 : 1 }}>
-            {busy === 'create-invite' ? t('community.creating') : t('community.createInvite')}
-          </button>
-        )}
-        {!invite && inviteLimitReached && <p style={{ color: 'var(--text-muted)', fontSize: 11, lineHeight: 1.45, margin: '8px 0 0' }}>{t('community.inviteLimit')}</p>}
-      </details>
 
       {loading ? (
         <div style={{ minHeight: 180, display: 'grid', placeItems: 'center', color: 'var(--text-muted)' }}>
@@ -473,7 +482,7 @@ export default function Community() {
                   <button type="button" className="pressable" title={t('community.decline')} aria-label={`${t('community.decline')} ${item.user.name}`} disabled={Boolean(busy)} onClick={() => runAction(`decline-${item.id}`, () => api.patch(`/social/friendships/${item.id}`, { action: 'decline' }))} style={{ minWidth: 40, height: 40, borderRadius: 8, border: '1px solid var(--border-subtle)', background: 'var(--bg-card)', color: 'var(--text-muted)', display: 'grid', placeItems: 'center' }}><X size={18} /></button>
                   <button type="button" className="pressable" aria-label={t('community.actionsFor', { name: item.user.name })} title={t('community.actionsFor', { name: item.user.name })} onClick={() => setMenuFor((current) => current === `incoming-${item.id}` ? '' : `incoming-${item.id}`)} style={{ minWidth: 40, height: 40, borderRadius: 8, border: '1px solid var(--border-subtle)', background: 'var(--bg-card)', color: 'var(--text-muted)', display: 'grid', placeItems: 'center' }}><MoreVertical size={18} /></button>
                   {menuFor === `incoming-${item.id}` && (
-                    <div style={{ position: 'absolute', right: 0, top: 56, zIndex: 15, width: 180, border: '1px solid var(--border-subtle)', borderRadius: 8, background: 'var(--bg-card)', boxShadow: '0 12px 30px rgba(0,0,0,0.35)', padding: 6 }}>
+                    <div style={{ position: 'absolute', right: 0, top: 56, zIndex: 15, width: 180, maxWidth: 'calc(100vw - 24px)', border: '1px solid var(--border-subtle)', borderRadius: 8, background: 'var(--bg-card)', boxShadow: '0 12px 30px rgba(0,0,0,0.35)', padding: 6 }}>
                       <button type="button" onClick={() => openReport(item)} style={{ width: '100%', minHeight: 40, border: 'none', borderRadius: 6, background: 'transparent', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 9, padding: '0 10px', fontSize: 13, fontWeight: 750 }}><Flag size={16} />{t('community.report')}</button>
                       <button type="button" onClick={() => blockFriend(item)} style={{ width: '100%', minHeight: 40, border: 'none', borderRadius: 6, background: 'transparent', color: 'var(--danger)', display: 'flex', alignItems: 'center', gap: 9, padding: '0 10px', fontSize: 13, fontWeight: 750 }}><Ban size={16} />{t('community.block')}</button>
                     </div>
@@ -506,7 +515,7 @@ export default function Community() {
               <PersonRow key={item.id} item={item} subtitle={t('community.friendSubtitle')}>
                 <button type="button" className="pressable" aria-label={t('community.actionsFor', { name: item.user.name })} title={t('community.actionsFor', { name: item.user.name })} onClick={() => setMenuFor((current) => current === item.id ? '' : item.id)} style={{ width: 40, height: 40, borderRadius: 8, border: '1px solid var(--border-subtle)', background: 'var(--bg-card)', color: 'var(--text-muted)', display: 'grid', placeItems: 'center' }}><MoreVertical size={18} /></button>
                 {menuFor === item.id && (
-                  <div style={{ position: 'absolute', right: 0, top: 56, zIndex: 15, width: 180, border: '1px solid var(--border-subtle)', borderRadius: 8, background: 'var(--bg-card)', boxShadow: '0 12px 30px rgba(0,0,0,0.35)', padding: 6 }}>
+                  <div style={{ position: 'absolute', right: 0, top: 56, zIndex: 15, width: 180, maxWidth: 'calc(100vw - 24px)', border: '1px solid var(--border-subtle)', borderRadius: 8, background: 'var(--bg-card)', boxShadow: '0 12px 30px rgba(0,0,0,0.35)', padding: 6 }}>
                     <button type="button" onClick={() => removeFriend(item)} style={{ width: '100%', minHeight: 40, border: 'none', borderRadius: 6, background: 'transparent', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 9, padding: '0 10px', fontSize: 13, fontWeight: 750 }}><UserMinus size={16} />{t('community.remove')}</button>
                     <button type="button" onClick={() => openReport(item)} style={{ width: '100%', minHeight: 40, border: 'none', borderRadius: 6, background: 'transparent', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 9, padding: '0 10px', fontSize: 13, fontWeight: 750 }}><Flag size={16} />{t('community.report')}</button>
                     <button type="button" onClick={() => blockFriend(item)} style={{ width: '100%', minHeight: 40, border: 'none', borderRadius: 6, background: 'transparent', color: 'var(--danger)', display: 'flex', alignItems: 'center', gap: 9, padding: '0 10px', fontSize: 13, fontWeight: 750 }}><Ban size={16} />{t('community.block')}</button>

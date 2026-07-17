@@ -69,6 +69,15 @@ body {
   transition: background 0.2s, color 0.2s;
 }
 
+/* iOS zooms the entire web view when a focused form control renders below 16px. */
+@supports (-webkit-touch-callout: none) {
+  input:not([type='checkbox']):not([type='radio']):not([type='range']),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+
 * { box-sizing: border-box; }
 
 #root {
