@@ -874,13 +874,14 @@ export default function InsightsSheet({
 
             {!proLoading && !isPro && (
               <div>
-                <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Apple Health sync is available on the Pro tier.</p>
+                <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Sync Apple Health to bring workouts and recovery data into Forge.</p>
                 <button
-                  onClick={() => navigate('/upgrade')}
+                  type="button"
+                  onClick={() => navigate('/health')}
                   className="mt-3 rounded-lg px-3 py-2 text-xs font-bold"
                   style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', cursor: 'pointer' }}
                 >
-                  Upgrade to Pro
+                  Sync Health data
                 </button>
               </div>
             )}

@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import api from '../lib/api'
+import HealthService from '../services/HealthService'
 import { consumePostAuthRedirect, setToken } from '../lib/tokenStore'
 
 const personalityOptions = [
@@ -9,20 +10,43 @@ const personalityOptions = [
   { key: 'training_partner', label: 'Training Partner' }
 ]
 
+const TOTAL_STEPS = 9
+
+function isNativeRuntime() {
+  return typeof window !== 'undefined' && Boolean(window.Capacitor?.isNativePlatform?.())
+}
+
 export default function Onboarding() {
   const [step, setStep] = useState(1)
   const [saving, setSaving] = useState(false)
+  const [healthSyncing, setHealthSyncing] = useState(false)
+  const [healthNotice, setHealthNotice] = useState('')
   const [error, setError] = useState('')
   const [form, setForm] = useState({ age: '', weightLbs: '', heightFt: 5, heightIn: 8, weeklyMiles: 10, fitnessLevel: 'beginner', primaryGoal: 'general_fitness', injuryStatus: 'none', injuryDetail: '', coachPersonality: 'mentor' })
   const [scheduleType, setScheduleType] = useState('adaptive')
   const [lifestyle, setLifestyle] = useState('works_fulltime')
   const [preferredWorkoutTime, setPreferredWorkoutTime] = useState('evening')
   const [missedWorkoutPref, setMissedWorkoutPref] = useState('adjust_week')
+  const nativeRuntime = isNativeRuntime()
 
-  const progress = useMemo(() => `${(step / 8) * 100}%`, [step])
-  const next = () => setStep(s => Math.min(8, s + 1))
+  const progress = useMemo(() => `${(step / TOTAL_STEPS) * 100}%`, [step])
+  const next = () => setStep(s => Math.min(TOTAL_STEPS, s + 1))
   const back = () => setStep(s => Math.max(1, s - 1))
   const update = (key, value) => setForm(prev => ({ ...prev, [key]: value }))
+
+  const syncAppleHealth = async () => {
+    setHealthSyncing(true)
+    setHealthNotice('')
+    try {
+      const result = await HealthService.syncNativeData({ requestPermission: true })
+      const scanned = Array.isArray(result?.workouts) ? result.workouts.length : Number(result?.scanned || 0)
+      setHealthNotice(`Apple Health synced: ${scanned} scanned, ${result.imported || 0} imported, ${result.skipped || 0} already saved.`)
+    } catch (err) {
+      setHealthNotice(err?.message || 'Unable to sync Apple Health on this device.')
+    } finally {
+      setHealthSyncing(false)
+    }
+  }
 
   const submit = async () => {
     setError(''); setSaving(true)
@@ -56,7 +80,7 @@ export default function Onboarding() {
         </div>
 
         <div className="rounded-2xl border p-5" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}>
-          <p className="mb-1 text-xs uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Step {step} of 8</p>
+          <p className="mb-1 text-xs uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Step {step} of {TOTAL_STEPS}</p>
 
           {step === 1 && (
             <div className="space-y-4">
@@ -204,11 +228,43 @@ export default function Onboarding() {
             </div>
           )}
 
+          {step === 9 && (
+            <div className="space-y-4">
+              <h2 className="text-2xl font-black" style={{ color: 'var(--text-primary)' }}>Connect Apple Health</h2>
+              <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                Sync your recent runs and recovery signals so Forge can start with real training history.
+              </p>
+
+              {nativeRuntime ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={syncAppleHealth}
+                    disabled={healthSyncing}
+                    className="w-full rounded-2xl px-4 py-3 text-sm font-black disabled:opacity-60"
+                    style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', cursor: healthSyncing ? 'wait' : 'pointer' }}
+                  >
+                    {healthSyncing ? 'Syncing Apple Health...' : 'Sync Health data'}
+                  </button>
+                  <p className="text-xs" style={{ color: 'var(--text-muted)' }}>You can finish now and connect later from Health.</p>
+                </>
+              ) : (
+                <p className="rounded-xl border p-3 text-sm" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-muted)' }}>
+                  Open Forge in the iPhone app to connect Apple Health.
+                </p>
+              )}
+
+              {healthNotice && (
+                <p className="text-xs" style={{ color: healthNotice.includes('synced') ? 'var(--success)' : 'var(--warning)' }}>{healthNotice}</p>
+              )}
+            </div>
+          )}
+
           {error && <p className="mt-4 text-sm" style={{ color: 'var(--accent)' }}>{error}</p>}
 
           <div className="mt-6 flex items-center justify-between">
             <button type="button" onClick={back} disabled={step === 1 || saving} className="rounded-xl border px-4 py-2 disabled:opacity-40" style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-muted)' }}>Back</button>
-            {step < 8 ? (
+            {step < TOTAL_STEPS ? (
               <button type="button" onClick={next} className="rounded-xl px-5 py-2 font-semibold" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>Next</button>
             ) : (
               <button type="button" onClick={submit} disabled={saving} className="rounded-xl px-5 py-2 font-semibold disabled:opacity-70" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>Finish</button>
