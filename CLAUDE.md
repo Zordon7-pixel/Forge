@@ -240,3 +240,4 @@ Read `FORGE.md` for:
 | 2026-07-17 | codex | Added the missing HealthKit update purpose string to Expo and native metadata plus a fail-before-build privacy verifier used for build 18 | `401c427d` |
 | 2026-07-17 | codex | Hardened exact-handle friend search to compare case-insensitively at the SQL boundary, added mixed-case regression coverage, and clarified that target accounts must opt into handle discovery | `c6c401b1` |
 | 2026-07-17 | codex | Built Forged Hybrid 1.0.5 build 18 once, inspected the signed IPA, and uploaded EAS build `27a1deca-8dbc-42a8-a553-6cb59df416e0` through submission `c627c4aa-0265-40c9-9b4a-818bcc97126e`; Apple processing is pending | `09c548c4` |
+| 2026-07-18 | codex | Shipped source-truth Run Recaps, user-rated post-run effort, route-derived elevation fallback, and duplicate-safe Strava route/elevation enrichment; native HealthKit effort/elevation schema v5 awaits a separately approved EAS build | `a05b3249` |
