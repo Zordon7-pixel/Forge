@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import api from '../lib/api'
 import track from '../lib/track'
 import { scrollToFirstError } from '../utils/validation'
+import { normalizeExecution, runRouteState, scheduledLiftFromExecution } from '../lib/dailyExecution'
 
 const LEG_OPTIONS = [
   { value: 3, label: 'Fresh' },
@@ -91,6 +92,7 @@ export default function DailyCheckIn({ onComplete }) {
   const [drivers, setDrivers] = useState([])
   const [showBreakdown, setShowBreakdown] = useState(false)
   const [todayPlan, setTodayPlan] = useState(null)
+  const [workoutHandoff, setWorkoutHandoff] = useState(null)
   const [showStretchGate, setShowStretchGate] = useState(false)
   const [alreadyDone, setAlreadyDone] = useState(false)
   const [fieldErrors, setFieldErrors] = useState({})
@@ -105,7 +107,9 @@ export default function DailyCheckIn({ onComplete }) {
   useEffect(() => {
     api.get('/checkin/today').then(r => {
       if (r.data) setAlreadyDone(true)
-    }).catch(() => {})
+    }).catch((error) => {
+      console.error('[DailyCheckIn] today status lookup failed:', error?.message || error)
+    })
   }, [])
 
   const toggleFlag = (val) => {
@@ -150,7 +154,8 @@ export default function DailyCheckIn({ onComplete }) {
           drivers: Array.isArray(res.data?.drivers) ? res.data.drivers : [],
         })
         setPreviewError(false)
-      } catch {
+      } catch (error) {
+        console.error('[DailyCheckIn] preview failed:', error?.message || error)
         if (!cancelled) {
           setPreview(null)
           setPreviewError(true)
@@ -187,12 +192,91 @@ export default function DailyCheckIn({ onComplete }) {
         life_flags: lifeFlags,
       })
       track('checkin')
-      // Also fetch today's plan to show after adjustment
+      // Resolve the same canonical session Home/Run/Lift use. The legacy plan
+      // and recommendation are fallbacks for accounts without a calendar yet.
       try {
-        const planRes = await api.get('/plans/today')
-        if (planRes.data?.today) setTodayPlan(planRes.data.today)
+        const [planRes, recommendationRes] = await Promise.all([
+          api.get('/plans/today', { params: { date: todayISO() } }),
+          api.get('/runs/next-recommendation').catch((error) => {
+            console.error('[DailyCheckIn] recommendation lookup failed:', error?.message || error)
+            return { data: null }
+          }),
+        ])
+        const execution = normalizeExecution(planRes.data)
+        const runState = runRouteState(execution)
+        const scheduledLift = scheduledLiftFromExecution(execution)
+
+        if (runState && execution.run) {
+          const run = execution.run
+          const distanceMiles = Number(run.distance_miles || run.distance || 0) || null
+          const pace = run.pace_target || run.pace || run.target_pace || null
+          const zone = run.target_zone || run.hrZone?.zoneLabel || (run.hrZone?.zone ? `Zone ${run.hrZone.zone}` : null)
+          setTodayPlan(run)
+          setWorkoutHandoff({
+            kind: 'run',
+            route: '/run/active',
+            state: {
+              ...runState,
+              countdown: 3,
+              runType: run.type || run.workout_type || 'run',
+              runEnvironment: 'outdoor',
+              mapMyRun: true,
+              startAfterWarmup: true,
+              workoutTarget: { distanceMiles, pace, zone },
+            },
+          })
+        } else if (scheduledLift) {
+          setTodayPlan(scheduledLift)
+          setWorkoutHandoff({
+            kind: 'strength',
+            route: '/log-lift',
+            state: {
+              planSessionId: scheduledLift.id || null,
+              currentWeek: execution.week ?? null,
+              scheduledLift,
+            },
+          })
+        } else {
+          const legacyPlan = planRes.data?.today || null
+          const recommendation = recommendationRes.data && typeof recommendationRes.data === 'object'
+            ? recommendationRes.data
+            : null
+          const source = legacyPlan || recommendation
+          const rawType = String(source?.type || source?.workout_type || source?.recommendationType || '').toLowerCase()
+          const kind = rawType === 'strength' || rawType === 'lift'
+            ? 'strength'
+            : rawType === 'rest'
+              ? 'rest'
+              : source ? 'run' : null
+
+          setTodayPlan(source)
+          if (kind === 'run') {
+            const distanceMiles = Number(source.distance_miles || source.distance || source.suggestedDistance || 0) || null
+            const pace = source.pace_target || source.pace || source.target_pace || source.suggestedPace || null
+            const zone = source.zone || source.target_zone || source.targetZone || null
+            setWorkoutHandoff({
+              kind: 'run',
+              route: '/run/active',
+              state: {
+                countdown: 3,
+                runType: rawType || 'easy_run',
+                runEnvironment: 'outdoor',
+                mapMyRun: true,
+                startAfterWarmup: true,
+                scheduledRun: source,
+                workoutTarget: { distanceMiles, pace, zone },
+              },
+            })
+          } else if (kind === 'strength') {
+            setWorkoutHandoff({ kind: 'strength', route: '/log-lift', state: null })
+          } else {
+            setWorkoutHandoff(kind === 'rest' ? { kind: 'rest', route: '/', state: null } : null)
+          }
+        }
       } catch (err) {
         console.error('[DailyCheckIn] Failed to fetch today plan:', err)
+        setTodayPlan(null)
+        setWorkoutHandoff(null)
       }
       const nextHeadline = res.data.headline || res.data.adjustment
       setHeadline(nextHeadline || null)
@@ -219,25 +303,29 @@ export default function DailyCheckIn({ onComplete }) {
   }
 
   if (showStretchGate) {
-    const workoutRoute = todayPlan?.type === 'strength' ? '/log-lift' : '/log-run'
+    const startRun = (withWarmup) => {
+      onComplete?.()
+      const state = { ...(workoutHandoff?.state || {}), startAfterWarmup: withWarmup }
+      navigate(withWarmup ? '/warmup' : '/run/active', { state })
+    }
     return (
       <div className="forged-branded-screen" style={{ minHeight: '100vh', background: 'var(--bg-base)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24, gap: 20, textAlign: 'center', maxWidth: 480, margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
         <div style={{ background: 'var(--bg-card)', borderRadius: 20, padding: 32, width: '100%' }}>
-          <p style={{ fontSize: 22, fontWeight: 900, color: 'var(--text-primary)', marginBottom: 8 }}>Let's stretch first</p>
+          <p style={{ fontSize: 22, fontWeight: 900, color: 'var(--text-primary)', marginBottom: 8 }}>Warm up first</p>
           <p style={{ fontSize: 14, color: 'var(--text-muted)', lineHeight: 1.6, marginBottom: 28 }}>
-            A quick pre-run stretch reduces injury risk and gets your muscles ready. Takes about 5 minutes.
+            Use a short dynamic warm-up before the run. Takes about 5 minutes.
           </p>
           <button
-            onClick={() => navigate('/stretches/session?type=pre')}
+            onClick={() => startRun(true)}
             style={{ width: '100%', background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 900, borderRadius: 14, padding: '18px', border: 'none', cursor: 'pointer', fontSize: 16, marginBottom: 12 }}
           >
-            Start Stretching
+            Start Warm-Up
           </button>
           <button
-            onClick={() => { onComplete?.(); navigate(workoutRoute) }}
+            onClick={() => startRun(false)}
             style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 14, padding: '8px 0' }}
           >
-            Skip, go straight to workout
+            Skip, start the run
           </button>
         </div>
       </div>
@@ -246,6 +334,23 @@ export default function DailyCheckIn({ onComplete }) {
 
   if (adjustment) {
     const hasDrivers = drivers.length > 0
+    const continueToWorkout = () => {
+      if (workoutHandoff?.kind === 'run') {
+        setShowStretchGate(true)
+        return
+      }
+      onComplete?.()
+      if (workoutHandoff?.route) {
+        navigate(workoutHandoff.route, workoutHandoff.state ? { state: workoutHandoff.state } : undefined)
+      } else {
+        navigate('/')
+      }
+    }
+    const actionLabel = workoutHandoff?.kind === 'run'
+      ? 'Prepare to Run'
+      : workoutHandoff?.kind === 'strength'
+        ? 'Review Strength Workout'
+        : 'View Today'
     return (
       <div className="forged-branded-screen" style={{ minHeight: '100vh', background: 'var(--bg-base)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24, gap: 20, textAlign: 'center', maxWidth: 480, margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
         <p style={{ fontSize: 28, lineHeight: 1.15, fontWeight: 900, color: 'var(--text-primary)', maxWidth: 360, margin: 0 }}>{headline || adjustment}</p>
@@ -285,16 +390,21 @@ export default function DailyCheckIn({ onComplete }) {
           <div style={{ background: 'var(--bg-card)', borderRadius: 16, padding: 20, width: '100%', textAlign: 'left' }}>
             <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 10 }}>Today's Workout</p>
             <p style={{ fontSize: 18, fontWeight: 800, color: 'var(--text-primary)', marginBottom: 4, textTransform: 'capitalize' }}>
-              {todayPlan.type || 'Run'}
+              {todayPlan.type || todayPlan.workout_type || todayPlan.recommendationType || 'Run'}
             </p>
-            {todayPlan.distance && <p style={{ fontSize: 14, color: 'var(--text-muted)' }}>{todayPlan.distance} miles</p>}
-            {todayPlan.pace && <p style={{ fontSize: 14, color: 'var(--text-muted)' }}>{todayPlan.pace}</p>}
-            {todayPlan.notes && <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 8, lineHeight: 1.5 }}>{todayPlan.notes}</p>}
+            {(todayPlan.distance || todayPlan.distance_miles || todayPlan.suggestedDistance) && <p style={{ fontSize: 14, color: 'var(--text-muted)' }}>{todayPlan.distance || todayPlan.distance_miles || todayPlan.suggestedDistance} miles</p>}
+            {(todayPlan.pace || todayPlan.pace_target || todayPlan.suggestedPace) && <p style={{ fontSize: 14, color: 'var(--text-muted)' }}>{todayPlan.pace || todayPlan.pace_target || todayPlan.suggestedPace}</p>}
+            {(todayPlan.notes || todayPlan.description || todayPlan.reason) && <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 8, lineHeight: 1.5 }}>{todayPlan.notes || todayPlan.description || todayPlan.reason}</p>}
           </div>
         )}
-        <button onClick={() => setShowStretchGate(true)}
+        {!todayPlan && (
+          <p style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.5, maxWidth: 340, margin: 0 }}>
+            Check-in saved. No workout is scheduled, so Forged Hybrid will not send you into a warm-up with nothing to start.
+          </p>
+        )}
+        <button onClick={continueToWorkout}
           style={{ background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 900, borderRadius: 14, padding: '18px 48px', border: 'none', cursor: 'pointer', fontSize: 16 }}>
-          Let's go
+          {actionLabel}
         </button>
       </div>
     )

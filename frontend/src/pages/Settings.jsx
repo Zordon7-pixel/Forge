@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { App as CapacitorApp } from '@capacitor/app'
 import { useNavigate } from 'react-router-dom'
-import { ChevronRight, Download, Moon, Shield, Sun, Trash2, Unplug, Watch } from 'lucide-react'
+import { ChevronRight, Download, Moon, RefreshCw, Shield, Sun, Trash2, Unplug, Watch } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useUnits } from '../context/UnitsContext'
 import { useTheme } from '../context/ThemeContext'
@@ -72,6 +72,7 @@ export default function Settings() {
   const [deviceStatuses, setDeviceStatuses] = useState({})
   const [deviceSyncing, setDeviceSyncing] = useState({})
   const [deviceConnecting, setDeviceConnecting] = useState({})
+  const [refreshingDevices, setRefreshingDevices] = useState(false)
   const [deviceNotice, setDeviceNotice] = useState(null)
   const [privacyNotice, setPrivacyNotice] = useState(null)
   const [exporting, setExporting] = useState(false)
@@ -350,6 +351,22 @@ export default function Settings() {
     }
   }
 
+  const handleDeviceStatusRefresh = async () => {
+    setRefreshingDevices(true)
+    try {
+      const statuses = await loadDeviceStatuses({ announceDevice: pendingDeviceRef.current })
+      const refreshed = statuses && Object.keys(statuses).length > 0
+      setDeviceNotice(refreshed
+        ? { ok: true, text: 'Device connection status refreshed.' }
+        : { ok: false, text: 'Could not refresh device status. Try again.' })
+    } catch (error) {
+      console.error('[settings/devices] manual refresh failed:', error?.message || error)
+      setDeviceNotice({ ok: false, text: 'Could not refresh device status. Try again.' })
+    } finally {
+      setRefreshingDevices(false)
+    }
+  }
+
   const handleExportData = async () => {
     setExporting(true)
     try {
@@ -404,12 +421,14 @@ export default function Settings() {
         background: active ? 'rgba(34,197,94,0.12)' : 'var(--bg-input)',
         display: 'grid',
         gap: 5,
+        minWidth: 0,
+        overflow: 'hidden',
       }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
-          <span style={{ fontSize: 13, fontWeight: 900, color: 'var(--text-primary)' }}>{provider.name}</span>
-          <span style={{ fontSize: 10, fontWeight: 900, color: active ? 'var(--success)' : 'var(--text-muted)', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>{labelText}</span>
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start', flexWrap: 'wrap', minWidth: 0 }}>
+          <span style={{ fontSize: 13, fontWeight: 900, color: 'var(--text-primary)', minWidth: 0, overflowWrap: 'anywhere' }}>{provider.name}</span>
+          <span style={{ fontSize: 10, fontWeight: 900, color: active ? 'var(--success)' : 'var(--text-muted)', textTransform: 'uppercase', overflowWrap: 'anywhere' }}>{labelText}</span>
         </div>
-        <p style={{ margin: 0, fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.35 }}>{provider.delivery}</p>
+        <p style={{ margin: 0, fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.35, overflowWrap: 'anywhere' }}>{provider.delivery}</p>
       </div>
     )
   }
@@ -501,7 +520,19 @@ export default function Settings() {
       </section>
 
       <section style={section}>
-        <h2 style={sectionTitle}>Devices</h2>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 10 }}>
+          <h2 style={{ ...sectionTitle, margin: 0 }}>Devices</h2>
+          <button
+            type="button"
+            onClick={handleDeviceStatusRefresh}
+            disabled={refreshingDevices}
+            aria-label="Refresh device status"
+            title="Refresh device status"
+            style={{ width: 40, height: 40, display: 'grid', placeItems: 'center', borderRadius: 10, border: '1px solid var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)', opacity: refreshingDevices ? 0.6 : 1 }}
+          >
+            <RefreshCw size={17} aria-hidden="true" className={refreshingDevices ? 'animate-spin' : ''} />
+          </button>
+        </div>
         {deviceNotice && (
           <div style={{ marginBottom: 10, borderRadius: 10, padding: '9px 10px', fontSize: 12, border: `1px solid ${deviceNotice.ok ? 'rgba(34,197,94,0.35)' : 'var(--danger-dim)'}`, color: deviceNotice.ok ? 'var(--success)' : 'var(--danger)', background: deviceNotice.ok ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.1)' }}>
             {deviceNotice.text}
@@ -519,7 +550,7 @@ export default function Settings() {
               </div>
               <Shield size={18} style={{ color: watchDelivery.canAutoSend ? 'var(--success)' : 'var(--text-muted)', flexShrink: 0 }} />
             </div>
-            <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))' }}>
+            <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(min(150px, 100%), 1fr))', minWidth: 0 }}>
               {(watchDelivery.providers?.length ? watchDelivery.providers : WatchDeliveryService.getProviders()).map(watchProviderPill)}
             </div>
             {watchDelivery.checked && watchDelivery.reason && (

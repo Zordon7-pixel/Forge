@@ -23,6 +23,15 @@ function prescribedRestSeconds(value) {
   return match[2] === 'min' || match[2] === 'm' ? Math.round(amount * 60) : Math.round(amount)
 }
 
+function normalizeWarmupItems(value) {
+  if (!Array.isArray(value)) return []
+  return value.map((item) => {
+    if (typeof item === 'string') return item.trim()
+    if (!item || typeof item !== 'object') return ''
+    return String(item.name || item.label || item.instruction || '').trim()
+  }).filter(Boolean)
+}
+
 function fmtDuration(s) {
   const h = Math.floor(s / 3600)
   const m = Math.floor((s % 3600) / 60)
@@ -152,6 +161,7 @@ export default function ActiveWorkout() {
   const navigate = useNavigate()
   const location = useLocation()
   const plannedExercises = location.state?.exercises || []
+  const plannedWarmup = useMemo(() => normalizeWarmupItems(location.state?.warmup), [location.state?.warmup])
   const workoutName = location.state?.workoutName || ''
   // H5: canonical plan session carried from LogLift so a successful workout end
   // marks the exact calendar lift complete. Null for ad-hoc/manual workouts.
@@ -204,17 +214,24 @@ export default function ActiveWorkout() {
       if (groups.length > 0) {
         setActiveGroup(groups[0])
       }
-    }).catch(() => {})
+    }).catch((error) => {
+      console.error('[active-workout/session] load failed:', error?.message || error)
+    })
   }, [id])
 
   useEffect(() => {
     api.get(`/workouts/${id}/sets`).then(res => {
       setSets(res.data?.sets || [])
-    }).catch(() => {})
+    }).catch((error) => {
+      console.error('[active-workout/sets] load failed:', error?.message || error)
+    })
   }, [id])
 
   useEffect(() => {
-    api.get('/lifts').then((r) => setRecentLifts(r.data?.lifts || [])).catch(() => setRecentLifts([]))
+    api.get('/lifts').then((r) => setRecentLifts(r.data?.lifts || [])).catch((error) => {
+      console.error('[active-workout/lifts] recent lifts lookup failed:', error?.message || error)
+      setRecentLifts([])
+    })
   }, [])
 
   useEffect(() => {
@@ -223,11 +240,15 @@ export default function ActiveWorkout() {
       if (latest?.avg_heart_rate) {
         setHrInfo({ bpm: latest.avg_heart_rate, ts: latest.created_at || latest.date })
       }
-    }).catch(() => {})
+    }).catch((error) => {
+      console.error('[active-workout/runs] heart-rate lookup failed:', error?.message || error)
+    })
   }, [])
 
   useEffect(() => {
-    api.get('/auth/me').then((r) => setUserSex(r.data?.user?.sex || 'male')).catch(() => {})
+    api.get('/auth/me').then((r) => setUserSex(r.data?.user?.sex || 'male')).catch((error) => {
+      console.error('[active-workout/profile] lookup failed:', error?.message || error)
+    })
   }, [])
 
   useEffect(() => {
@@ -388,6 +409,18 @@ export default function ActiveWorkout() {
           {ending ? 'Ending...' : 'End Workout'}
         </button>
       </div>
+
+      {plannedWarmup.length > 0 && (
+        <details className="rounded-2xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', overflow: 'hidden' }}>
+          <summary className="flex items-center justify-between gap-3 px-4 py-3 font-bold" style={{ color: 'var(--text-primary)', cursor: 'pointer' }}>
+            <span>Warm-up</span>
+            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{plannedWarmup.length} steps</span>
+          </summary>
+          <ol className="grid gap-2 px-4 pb-4 pl-9 text-sm" style={{ color: 'var(--text-muted)' }}>
+            {plannedWarmup.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}
+          </ol>
+        </details>
+      )}
 
       {plannedExercises.length > 0 && (
         <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>

@@ -18,6 +18,22 @@ function GuidanceList({ title, items, fontSize }) {
   )
 }
 
+function GuidanceDetails({ title, items, fontSize }) {
+  if (!Array.isArray(items) || items.length === 0) return null
+
+  return (
+    <details style={{ marginTop: 20, border: '1px solid var(--border-subtle)', borderRadius: 8, background: 'var(--bg-input)', overflow: 'hidden' }}>
+      <summary style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '14px 16px', color: 'var(--text-primary)', fontSize, fontWeight: 900, cursor: 'pointer' }}>
+        <span>{title}</span>
+        <span style={{ color: 'var(--text-muted)', fontSize: '0.8em', fontWeight: 800 }}>{items.length} steps</span>
+      </summary>
+      <ol style={{ display: 'grid', gap: 8, margin: 0, padding: '0 20px 16px 38px', color: 'var(--text-muted)', fontSize, lineHeight: 1.5 }}>
+        {items.map((item, index) => <li key={`${title}-${index}`}>{String(item)}</li>)}
+      </ol>
+    </details>
+  )
+}
+
 export default function StrengthWorkoutRecommendation({
   plan,
   title,
@@ -135,6 +151,8 @@ export default function StrengthWorkoutRecommendation({
         </div>
       </header>
 
+      <GuidanceDetails title="Warm-up" items={plan?.warmup} fontSize={px(15)} />
+
       <section style={{ marginTop: 20 }}>
         <h4 style={{ color: 'var(--text-primary)', fontSize: px(17), fontWeight: 950, margin: 0 }}>Workout</h4>
         <div style={{ marginTop: 8 }}>
@@ -173,7 +191,6 @@ export default function StrengthWorkoutRecommendation({
       </section>
 
       <div style={{ display: 'grid', gap: 16, marginTop: 8 }}>
-        <GuidanceList title="Warm-up" items={plan?.warmup} fontSize={px(15)} />
         <GuidanceList title="Recovery" items={plan?.recovery} fontSize={px(15)} />
       </div>
 

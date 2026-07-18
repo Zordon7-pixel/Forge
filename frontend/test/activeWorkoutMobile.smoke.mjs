@@ -8,6 +8,8 @@ const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), 'u
 const activeWorkout = read('src/pages/ActiveWorkout.jsx')
 const exercisePicker = read('src/components/ExercisePickerModal.jsx')
 const movementDemo = read('src/components/MovementDemo.jsx')
+const logLift = read('src/pages/LogLift.jsx')
+const recommendation = read('src/components/StrengthWorkoutRecommendation.jsx')
 const boxJumpAsset = path.join(root, 'public/exercises/box-jump.jpg')
 
 let passed = 0
@@ -28,5 +30,13 @@ check(activeWorkout.includes("event.key === 'Escape'") && activeWorkout.includes
 check((activeWorkout.match(/document\.body\.style\.overflow = 'hidden'/g) || []).length >= 1, 'rest dialog locks background scrolling')
 check(movementDemo.includes("src: '/exercises/box-jump.jpg'"), 'Box Jump resolves to a local form image')
 check(fs.statSync(boxJumpAsset).size > 0, 'Box Jump form image exists and is non-empty')
+check(recommendation.includes('function GuidanceDetails') && recommendation.indexOf('<GuidanceDetails title="Warm-up"') < recommendation.indexOf('>Workout</h4>'), 'lift recommendation puts a compact warm-up disclosure before exercises')
+check(
+  logLift.includes('warmup: aiRecommendation?.warmup || []')
+    && logLift.includes('warmup: scheduledLiftPlan.warmup || []')
+    && logLift.includes('warmup: manualAiPlan?.warmup || []'),
+  'all recommended lift start paths carry warm-up guidance',
+)
+check(activeWorkout.includes("normalizeWarmupItems(location.state?.warmup)") && activeWorkout.includes('{plannedWarmup.length > 0 && ('), 'active lift preserves and displays its warm-up before the exercise queue')
 
 console.log(`ACTIVE WORKOUT MOBILE SMOKE OK (${passed})`)

@@ -356,7 +356,10 @@ export default function LogRun() {
         return null
       }),
       api.get('/plans/today'),
-      api.get('/runs/next-recommendation').catch(() => ({ data: null })),
+      api.get('/runs/next-recommendation').catch((err) => {
+        console.error('[LogRun] next recommendation fetch failed:', err?.message || err)
+        return { data: null }
+      }),
     ])
       .then(([execution, planRes, recRes]) => {
         const scheduledRun = scheduledRunFromExecution(execution)
@@ -409,33 +412,36 @@ export default function LogRun() {
         }
         // Fallback: legacy /plans/today `today` merged with next-recommendation.
         const w = planRes.data?.today || null
-        if (!w) return
-        const rec = recRes.data || {}
+        const rec = recRes.data && typeof recRes.data === 'object' ? recRes.data : {}
+        const recommendationType = String(rec.recommendationType || '').toLowerCase()
+        if (!w && (!recommendationType || recommendationType === 'rest' || recommendationType === 'strength')) return
+        const source = w || rec
         setRunBrief(rec.brief && typeof rec.brief === 'object' ? { ...rec.brief, source: 'ai' } : null)
-        const type = w.type || w.workout_type || rec.recommendationType || 'run'
-        const distanceMiles = Number(w.distance_miles || rec.suggestedDistance || 0)
-        const pace = w.pace_target || w.pace || w.target_pace || rec.suggestedPace || ''
+        const type = source.type || source.workout_type || rec.recommendationType || 'run'
+        const distanceMiles = Number(source.distance_miles || source.distance || rec.suggestedDistance || 0)
+        const pace = source.pace_target || source.pace || source.target_pace || rec.suggestedPace || ''
         const details = getRunCoachingDetails(type, pace)
-        const plannedSteps = normalizeSteps(w.steps)
+        const plannedSteps = normalizeSteps(source.steps || source.structure)
         const recommendedSteps = normalizeSteps(rec.steps)
         const estimatedSeconds = distanceMiles > 0 && parsePaceToSecondsPerMile(pace)
           ? Math.round(distanceMiles * parsePaceToSecondsPerMile(pace))
-          : Number(w.duration_min || 0) > 0 ? Number(w.duration_min) * 60 : 0
+          : Number(source.duration_min || 0) > 0 ? Number(source.duration_min) * 60 : 0
         setTodayWorkout({
-          id: w.id || '',
-          day: w.day || w.day_of_week || new Date().toLocaleDateString(undefined, { weekday: 'short' }),
+          id: source.id || '',
+          source: w ? 'legacy-plan' : 'recommendation',
+          day: source.day || source.day_of_week || new Date().toLocaleDateString(undefined, { weekday: 'short' }),
           typeLabel: cleanRunType(type),
           rawType: type,
           distanceMiles,
           distanceLabel: distanceMiles > 0 ? `${distanceMiles.toFixed(1)} miles` : 'No distance target',
           pace,
-          targetZone: w.zone || w.target_zone || rec.targetZone || details.zone,
-          zone: w.zone || w.target_zone || rec.targetZone || details.zone,
-          intensity: w.intensity || rec.intensity || details.intensity,
-          progression: w.progression || rec.progression || details.progression,
+          targetZone: source.zone || source.target_zone || rec.targetZone || details.zone,
+          zone: source.zone || source.target_zone || rec.targetZone || details.zone,
+          intensity: source.intensity || rec.intensity || details.intensity,
+          progression: source.progression || rec.progression || details.progression,
           steps: plannedSteps.length ? plannedSteps : recommendedSteps.length ? recommendedSteps : details.steps,
           durationLabel: estimatedSeconds ? formatRunDuration(estimatedSeconds) : '',
-          description: w.description || w.notes || rec.reason || '',
+          description: source.description || source.notes || rec.reason || '',
           aiReason: rec.reason || '',
           healthAdjusted: Boolean(rec.healthAdjusted),
         })
@@ -451,7 +457,9 @@ export default function LogRun() {
   }, [panelPrefs])
 
   useEffect(() => {
-    api.get('/gear/shoes').then(r => setActiveShoes(r.data?.shoes || [])).catch(() => {})
+    api.get('/gear/shoes').then(r => setActiveShoes(r.data?.shoes || [])).catch((err) => {
+      console.error('[LogRun] shoe lookup failed:', err?.message || err)
+    })
   }, [])
 
   useEffect(() => {
@@ -466,7 +474,9 @@ export default function LogRun() {
           setWeekPlan(week?.days || week?.sessions || [])
         }
       })
-      .catch(() => {})
+      .catch((err) => {
+        console.error('[LogRun] week plan fetch failed:', err?.message || err)
+      })
       .finally(() => setWeekPlanLoading(false))
   }, [activeTab, weekPlan])
 
@@ -564,7 +574,9 @@ export default function LogRun() {
       const runRes = await api.post('/runs', runPayload)
       track('run_logged')
       const runId = runRes.data?.id || runRes.data?.run?.id
-      if (runId) api.post('/prs/auto-detect', { run_id: runId }).catch(() => {})
+      if (runId) api.post('/prs/auto-detect', { run_id: runId }).catch((err) => {
+        console.error('[LogRun] PR auto-detect failed:', err?.message || err)
+      })
       // Phase 2L — /badges/check removed (display retired in 2K).
       if (!runId) {
         setFeedback('Run saved. Your coach will update after the next sync.')
@@ -796,9 +808,9 @@ export default function LogRun() {
                   </div>
                 )}
                 <button onClick={() => setShowWatchModal(true)} className="w-full mt-4 rounded-xl py-3 font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', cursor: 'pointer' }}>Send to Watch</button>
-                {todayWorkout.source === 'calendar' && (
-                  <button type="button" onClick={startScheduledRun} className="w-full rounded-xl py-3 font-bold mt-3" style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', cursor: 'pointer', fontSize: 15 }}>Start Scheduled Run</button>
-                )}
+                <button type="button" onClick={startScheduledRun} className="w-full rounded-xl py-3 font-bold mt-3" style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', cursor: 'pointer', fontSize: 15 }}>
+                  {todayWorkout.source === 'calendar' ? 'Start Scheduled Run' : 'Start Run'}
+                </button>
                 {routePlannerStatus.available && (
                   <Suspense fallback={<p className="mt-4 text-sm" style={{ color: 'var(--text-muted)' }}>Loading route planner...</p>}>
                     <RoutePlanner workout={todayWorkout} onStart={startPlannedRoute} />

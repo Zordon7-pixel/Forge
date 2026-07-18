@@ -219,7 +219,8 @@ export default function LogLift() {
       navigate(`/workout/active/${res.data.session.id}`, {
         state: {
           exercises: aiRecommendation?.main || [],
-          workoutName: aiRecommendation?.workoutName || ''
+          workoutName: aiRecommendation?.workoutName || '',
+          warmup: aiRecommendation?.warmup || [],
         }
       })
     } catch (err) {
@@ -257,6 +258,7 @@ export default function LogLift() {
         state: {
           exercises: scheduledLiftPlan.main || [],
           workoutName: scheduledLiftPlan.workoutName || '',
+          warmup: scheduledLiftPlan.warmup || [],
           planSessionId,
           currentWeek: planCurrentWeek,
         }
@@ -339,7 +341,11 @@ export default function LogLift() {
       const res = await api.post('/workouts/start', payload)
       track('lift_logged')
       navigate(`/workout/active/${res.data.session.id}`, {
-        state: { exercises: manualAiPlan?.main || [], workoutName: manualAiPlan?.workoutName || '' }
+        state: {
+          exercises: manualAiPlan?.main || [],
+          workoutName: manualAiPlan?.workoutName || '',
+          warmup: manualAiPlan?.warmup || [],
+        }
       })
     } catch (err) {
       if (!err?.response) {
