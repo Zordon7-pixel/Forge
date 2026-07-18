@@ -208,6 +208,7 @@ export function DailyCoachFlow({ checkedInToday, readiness, recommendation, toda
             key={step.key}
             type="button"
             onClick={step.action}
+            disabled={step.key === 'train' && isRestDay}
             className="card pressable px-2 py-3 text-left"
             style={{ background: step.done ? 'rgba(34,197,94,0.12)' : 'var(--bg-input)', border: `1px solid ${step.done ? 'rgba(34,197,94,0.35)' : 'var(--border-subtle)'}` }}
           >

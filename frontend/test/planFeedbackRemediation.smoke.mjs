@@ -30,6 +30,7 @@ assert(insights.includes("const isRestDay = recommendation?.recommendationType =
 assert(insights.includes("isRestDay ? 'View week' : 'Start'"), 'Today primary action never labels a rest day Start')
 assert(insights.includes("isRestDay ? 'View calendar' : 'Start/log'"), 'Today details route rest days to the calendar')
 assert(insights.includes('Recovery is the plan today'), 'rest-day heading is explicit')
+assert(insights.includes("disabled={step.key === 'train' && isRestDay}"), 'completed rest step is not a redundant interactive control')
 
 console.log('\n== Profile-matched form images ==')
 assert(movement.includes("male: '/stretches/leg-swings-male.png'") && movement.includes("female: '/stretches/leg-swings-female.png'"), 'leg swings use one profile-matched athlete')
