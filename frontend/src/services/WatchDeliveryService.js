@@ -3,11 +3,11 @@ import { encodeWorkoutFit } from './fit/encodeWorkoutFit'
 
 const FIT_MIME_TYPE = 'application/vnd.ant.fit'
 const FIT_HELP_TEXT = {
-  garmin: 'Send this workout as a .FIT file, then open it in the Garmin app to add it to your watch.',
-  coros: 'Send this workout as a .FIT file, then open it in the COROS app to add it to your watch.',
-  suunto: 'Send this workout as a .FIT file, then open it in the Suunto app to add it to your watch.',
-  wahoo: 'Send this workout as a .FIT file, then open it in the Wahoo app to add it to your watch.',
-  polar: 'Send this workout as a .FIT file, then open it in the Polar app to add it to your watch.',
+  garmin: 'Export a structured .FIT file for manual transfer to a compatible Garmin device. Automatic Garmin Connect delivery requires Training API approval.',
+  coros: 'Export a structured .FIT file for a compatible manual transfer workflow. Automatic COROS delivery requires partner API approval.',
+  suunto: 'Export a structured .FIT file for a compatible manual transfer workflow. Automatic Suunto delivery requires partner API approval.',
+  wahoo: 'Export a structured .FIT file for a compatible manual transfer workflow. Automatic Wahoo delivery requires partner API approval.',
+  polar: 'Export a structured .FIT file for a compatible manual transfer workflow. Automatic Polar delivery requires a validated provider integration.',
 }
 
 export const WATCH_PROVIDERS = [
@@ -194,7 +194,7 @@ function triggerDownload(file) {
   document.body.appendChild(link)
   link.click()
   link.remove()
-  setTimeout(() => URL.revokeObjectURL(url), 0)
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
 export async function exportWorkoutFitFile(normalizedWorkout = {}) {
