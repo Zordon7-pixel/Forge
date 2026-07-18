@@ -247,9 +247,8 @@ const PHOTO_DEMOS = [
   },
   {
     match: (lower) => lower.includes('trunk rotation'),
-    src: '/stretches/trunk-rotation.webp',
-    cropToSex: true,
-    maleSide: 'right',
+    male: '/stretches/trunk-rotation-male.png',
+    female: '/stretches/trunk-rotation-female.png',
   },
   {
     match: (lower) => lower.includes('cat-cow') || lower.includes('cat cow'),
@@ -698,11 +697,14 @@ export default function MovementDemo({ name, label, compact = false, sex = 'male
     ? 'female'
     : (providedImage.includes('-male') ? 'male' : '')
   const providedImageMatchesProfile = !providedImageSex || providedImageSex === normalizedSex
-  const photoConfig = providedImage && providedImageMatchesProfile
-    ? (providedImageNeedsCrop && !normalizedSex
-        ? { src: '', cropToSex: false, maleSide: photoDemo?.maleSide || 'right' }
-        : { src: providedImage, cropToSex: providedImageNeedsCrop, maleSide: photoDemo?.maleSide || 'right' })
-    : getPhotoConfig(photoDemo, sex)
+  const hasProfilePair = Boolean(photoDemo?.male || photoDemo?.female)
+  const photoConfig = hasProfilePair
+    ? getPhotoConfig(photoDemo, sex)
+    : (providedImage && providedImageMatchesProfile
+        ? (providedImageNeedsCrop && !normalizedSex
+            ? { src: '', cropToSex: false, maleSide: photoDemo?.maleSide || 'right' }
+            : { src: providedImage, cropToSex: providedImageNeedsCrop, maleSide: photoDemo?.maleSide || 'right' })
+        : getPhotoConfig(photoDemo, sex))
   const photoSrc = photoConfig.src
   const shouldCropToSex = Boolean(photoConfig.cropToSex)
   const cropSide = normalizedSex === 'male'

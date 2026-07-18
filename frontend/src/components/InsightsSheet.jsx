@@ -120,6 +120,7 @@ export function ReadinessGauge({ score, onClick }) {
 
 export function DailyCoachFlow({ checkedInToday, readiness, recommendation, todayWatchWorkout, onCheckIn, onStartWorkout, onReflect, onDetails }) {
   const { t } = useTranslation()
+  const isRestDay = recommendation?.recommendationType === 'rest' || recommendation?.type === 'rest'
   const recommendationLabel = recommendation
     ? getRecommendationLabel(recommendation)
     : "today's plan"
@@ -130,6 +131,9 @@ export function DailyCoachFlow({ checkedInToday, readiness, recommendation, toda
   const coachWhy = interferenceReason || (typeof recommendation?.brief?.why === 'string' ? recommendation.brief.why.trim() : '')
   const buildTodaySubtitle = () => {
     if (!recommendation) return "Check in to unlock today's plan."
+    if (isRestDay) {
+      return `${readiness !== null ? `Readiness ${readiness}. ` : ''}Rest and recovery are scheduled today.`
+    }
 
     const parts = [recommendationLabel ? recommendationLabel.charAt(0).toUpperCase() + recommendationLabel.slice(1) : '']
     const distance = Number(recommendation.suggestedDistance || 0)
@@ -155,7 +159,7 @@ export function DailyCoachFlow({ checkedInToday, readiness, recommendation, toda
   }
   const steps = [
     { key: 'checkin', label: 'Check in', done: checkedInToday, action: onCheckIn },
-    { key: 'train', label: recommendation ? recommendationLabel : 'Train', done: false, action: onStartWorkout },
+    { key: 'train', label: isRestDay ? 'Rest day' : (recommendation ? recommendationLabel : 'Train'), done: isRestDay, action: onStartWorkout },
     { key: 'reflect', label: 'Reflect', done: false, action: onReflect },
   ]
 
@@ -165,7 +169,9 @@ export function DailyCoachFlow({ checkedInToday, readiness, recommendation, toda
         <div>
           <p className="t-micro" style={{ color: 'var(--accent)' }}>Today</p>
           <h2 className="t-title mt-1" style={{ color: 'var(--text-primary)' }}>
-            {checkedInToday ? 'Train from the plan' : 'Start with readiness'}
+            {checkedInToday
+              ? (isRestDay ? 'Recovery is the plan today' : 'Train from the plan')
+              : 'Check in before today\'s plan'}
           </h2>
           <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
             {buildTodaySubtitle()}
@@ -185,7 +191,7 @@ export function DailyCoachFlow({ checkedInToday, readiness, recommendation, toda
             className="pressable rounded-xl px-3 py-2 text-xs font-black"
             style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none' }}
           >
-            {checkedInToday ? 'Start' : 'Check in'}
+            {checkedInToday ? (isRestDay ? 'View week' : 'Start') : 'Check in'}
           </button>
           <button
             onClick={onDetails}
@@ -343,6 +349,7 @@ export function TodayDetailSheet({
 }) {
   const { t } = useTranslation()
   if (!open) return null
+  const isRestDay = recommendation?.recommendationType === 'rest' || recommendation?.type === 'rest'
   const recommendationLabel = recommendation ? getRecommendationLabel(recommendation) : null
   const topFactors = (readinessBreakdown || []).filter((item) => item.label !== 'Base score').slice(0, 2)
   const interferenceReason = recommendation?.interference?.adjusted && typeof recommendation?.interference?.reason === 'string'
@@ -379,7 +386,9 @@ export function TodayDetailSheet({
           <div>
             <p className="text-xs font-bold uppercase" style={{ color: 'var(--accent)', letterSpacing: 0.8 }}>Today</p>
             <h2 className="mt-1 text-2xl font-black" style={{ color: 'var(--text-primary)' }}>
-              {checkedInToday ? 'Plan locked for today' : 'Check in before training'}
+              {checkedInToday
+                ? (isRestDay ? 'Recovery is the plan today' : 'Plan locked for today')
+                : 'Check in before training'}
             </h2>
           </div>
           <button onClick={onClose} className="rounded-lg px-3 py-2 text-xs" style={{ background: 'var(--bg-input)', color: 'var(--text-muted)' }}>
@@ -467,7 +476,7 @@ export function TodayDetailSheet({
               {checkedInToday ? 'Edit check-in' : 'Check in'}
             </button>
             <button onClick={onStartWorkout} className="rounded-xl px-3 py-3 text-sm font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>
-              Start/log
+              {isRestDay ? 'View calendar' : 'Start/log'}
             </button>
             <button onClick={onWarmup} className="rounded-xl px-3 py-3 text-sm font-bold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>
               Warm-up

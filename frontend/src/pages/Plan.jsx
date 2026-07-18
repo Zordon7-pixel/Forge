@@ -239,6 +239,9 @@ export default function Plan() {
 
   const course = model?.goal?.course || myPlan?.plan_data?.goal?.course || null
   const planInputs = myPlan?.plan_data?.inputSummary || null
+  const trainingEvidence = Array.isArray(myPlan?.plan_data?.trainingEvidence)
+    ? myPlan.plan_data.trainingEvidence
+    : []
   const courseProvenance = String(course?.provenance || '').toLowerCase()
   const courseState = course?.state || (
     ['official', 'licensed'].includes(courseProvenance)
