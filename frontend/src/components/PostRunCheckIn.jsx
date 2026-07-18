@@ -27,7 +27,7 @@ const ENERGY_OPTIONS = [
   ['high', 'Energized'],
 ]
 
-export default function PostRunCheckIn({ runId, heatDrift, onDone }) {
+export default function PostRunCheckIn({ runId, heatDrift, onDone, onCancel }) {
   const [initialDraft] = useState(() => loadPostRunCheckInDraft(runId))
   const [step, setStep] = useState(initialDraft?.step || 0)
   const [effort, setEffort] = useState(initialDraft?.effort || null)
@@ -184,6 +184,13 @@ export default function PostRunCheckIn({ runId, heatDrift, onDone }) {
   return (
     <div className="sheet-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 50, padding: 16 }}>
       <div className="sheet-panel" style={{ background: 'var(--bg-card)', borderRadius: '24px 24px 16px 16px', padding: 24, width: '100%', maxWidth: 480 }}>
+
+        {onCancel && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 16 }}>
+            <p style={{ margin: 0, color: 'var(--text-primary)', fontWeight: 900, fontSize: 18 }}>Post-run check-in</p>
+            <button type="button" onClick={onCancel} style={{ border: '1px solid var(--border-subtle)', borderRadius: 10, padding: '8px 10px', background: 'var(--bg-input)', color: 'var(--text-muted)', fontWeight: 800, cursor: 'pointer' }}>Not now</button>
+          </div>
+        )}
 
         {heatDrift?.drifted && (
           <div style={{ marginBottom: 16, borderRadius: 12, border: '1px solid var(--border-subtle)', background: 'var(--bg-card)', padding: '10px 12px' }}>

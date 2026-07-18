@@ -14,6 +14,10 @@ const WORKOUT_METRIC_SPECS = {
   walk_time_seconds: { integer: true, min: 0, max: 172800 },
   idle_time_seconds: { integer: true, min: 0, max: 172800 },
   hr_sample_coverage_pct: { min: 0, max: 100 },
+  elevation_derived_from_route: { integer: true, min: 0, max: 1 },
+  workout_effort_user_rated: { integer: true, min: 0, max: 1 },
+  route_enriched_from_strava: { integer: true, min: 0, max: 1 },
+  elevation_enriched_from_strava: { integer: true, min: 0, max: 1 },
 };
 
 const FIELD_ALIASES = {
@@ -32,6 +36,10 @@ const FIELD_ALIASES = {
   walk_time_seconds: ['walk_time_seconds', 'walkTimeSeconds'],
   idle_time_seconds: ['idle_time_seconds', 'idleTimeSeconds'],
   hr_sample_coverage_pct: ['hr_sample_coverage_pct', 'hrSampleCoveragePct'],
+  elevation_derived_from_route: ['elevation_derived_from_route', 'elevationDerivedFromRoute'],
+  workout_effort_user_rated: ['workout_effort_user_rated', 'workoutEffortUserRated'],
+  route_enriched_from_strava: ['route_enriched_from_strava', 'routeEnrichedFromStrava'],
+  elevation_enriched_from_strava: ['elevation_enriched_from_strava', 'elevationEnrichedFromStrava'],
 };
 
 function firstPresent(source, aliases) {

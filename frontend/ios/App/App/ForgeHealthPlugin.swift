@@ -55,6 +55,9 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
                 }
             }
         }
+        if #available(iOS 18.0, *), let effortType = HKObjectType.quantityType(forIdentifier: .workoutEffortScore) {
+            types.insert(effortType)
+        }
         types.insert(HKObjectType.workoutType())
         return types
     }
@@ -240,7 +243,7 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
 
         group.notify(queue: .main) {
             var payload: [String: Any] = [
-                "metricsSchemaVersion": 4,
+                "metricsSchemaVersion": 5,
                 "stepsToday": Int(stepsToday.rounded()),
                 "caloriesBurnedToday": Int(caloriesToday.rounded()),
                 "totalMilesThisWeek": round(milesThisWeek * 100) / 100,
@@ -639,18 +642,56 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
         healthStore.execute(query)
     }
 
-    private func fetchWorkoutRoute(workout: HKWorkout, completion: @escaping ([[String: Any]]) -> Void) {
+    private struct WorkoutRouteSummary {
+        let points: [[String: Any]]
+        let elevationGainFeet: Double?
+        let elevationLossFeet: Double?
+    }
+
+    private func routeElevationSummary(_ locations: [CLLocation]) -> (gainFeet: Double?, lossFeet: Double?) {
+        let reliable = locations.filter { location in
+            location.verticalAccuracy >= 0 && location.verticalAccuracy <= 30 && location.altitude.isFinite
+        }
+        guard reliable.count >= 2 else { return (nil, nil) }
+
+        var referenceAltitude = reliable[0].altitude
+        var gainMeters = 0.0
+        var lossMeters = 0.0
+        for location in reliable.dropFirst() {
+            let delta = location.altitude - referenceAltitude
+            guard abs(delta) >= 1.5 else { continue }
+            guard abs(delta) <= 100 else {
+                referenceAltitude = location.altitude
+                continue
+            }
+            if delta > 0 {
+                gainMeters += delta
+            } else {
+                lossMeters += abs(delta)
+            }
+            referenceAltitude = location.altitude
+        }
+
+        guard gainMeters > 0 || lossMeters > 0 else { return (nil, nil) }
+        let feetPerMeter = 3.280839895
+        return (
+            gainMeters > 0 ? round(gainMeters * feetPerMeter * 10) / 10 : nil,
+            lossMeters > 0 ? round(lossMeters * feetPerMeter * 10) / 10 : nil
+        )
+    }
+
+    private func fetchWorkoutRoute(workout: HKWorkout, completion: @escaping (WorkoutRouteSummary) -> Void) {
         let routeType = HKSeriesType.workoutRoute()
         let predicate = HKQuery.predicateForObjects(from: workout)
         let query = HKSampleQuery(sampleType: routeType, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, error in
             if let error = error {
                 NSLog("ForgeHealthPlugin workout route lookup failed: %@", error.localizedDescription)
-                completion([])
+                completion(WorkoutRouteSummary(points: [], elevationGainFeet: nil, elevationLossFeet: nil))
                 return
             }
             let routes = samples as? [HKWorkoutRoute] ?? []
             guard !routes.isEmpty else {
-                completion([])
+                completion(WorkoutRouteSummary(points: [], elevationGainFeet: nil, elevationLossFeet: nil))
                 return
             }
 
@@ -678,8 +719,47 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
                         "time": self.isoDateTime(location.timestamp)
                     ]
                 }.prefix(5000)
-                completion(Array(sampled))
+                let elevation = self.routeElevationSummary(sorted)
+                completion(WorkoutRouteSummary(
+                    points: Array(sampled),
+                    elevationGainFeet: elevation.gainFeet,
+                    elevationLossFeet: elevation.lossFeet
+                ))
             }
+        }
+        healthStore.execute(query)
+    }
+
+    private func fetchWorkoutEffort(workout: HKWorkout, completion: @escaping (Int?) -> Void) {
+        guard #available(iOS 18.0, *),
+              let effortType = HKQuantityType.quantityType(forIdentifier: .workoutEffortScore) else {
+            completion(nil)
+            return
+        }
+
+        let predicate = HKQuery.predicateForObject(with: workout.uuid)
+        let query = HKWorkoutEffortRelationshipQuery(
+            predicate: predicate,
+            anchor: nil,
+            options: .mostRelevant
+        ) { query, relationships, _, error in
+            self.healthStore.stop(query)
+            if let error = error {
+                NSLog("ForgeHealthPlugin workout effort lookup failed: %@", error.localizedDescription)
+                completion(nil)
+                return
+            }
+            let effortSample = (relationships ?? [])
+                .flatMap { $0.samples ?? [] }
+                .compactMap { $0 as? HKQuantitySample }
+                .first { $0.quantityType == effortType }
+            guard let value = effortSample?.quantity.doubleValue(for: .appleEffortScore()),
+                  value.isFinite else {
+                completion(nil)
+                return
+            }
+            let rounded = Int(value.rounded())
+            completion((1...10).contains(rounded) ? rounded : nil)
         }
         healthStore.execute(query)
     }
@@ -910,34 +990,70 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
 
         for (index, workout) in workouts.enumerated() {
             group.enter()
-            fetchWorkoutRoute(workout: workout) { route in
-                let applyEnrichment: (RunningDynamicsSummary) -> Void = { dynamics in
-                    lock.lock()
-                    var row = enriched[index]
-                    var metrics = row["workoutMetrics"] as? [String: Any] ?? [:]
-                    if let value = dynamics.powerWatts { metrics["running_power_watts"] = Int(value.rounded()) }
-                    if let value = dynamics.speedMps { metrics["running_speed_mps"] = round(value * 100) / 100 }
-                    if let value = dynamics.strideLengthM { metrics["running_stride_length_m"] = round(value * 100) / 100 }
-                    if let value = dynamics.verticalOscillationCm { metrics["running_vertical_oscillation_cm"] = round(value * 10) / 10 }
-                    if let value = dynamics.groundContactTimeMs { metrics["running_ground_contact_time_ms"] = Int(value.rounded()) }
-                    if let stride = dynamics.strideLengthM, stride > 0, let vertical = dynamics.verticalOscillationCm {
-                        metrics["running_vertical_ratio_pct"] = round((vertical / (stride * 100)) * 1000) / 10
-                    }
-                    if let value = dynamics.cadenceSpm {
-                        row["cadenceSpm"] = round(value * 10) / 10
-                    }
-                    if !route.isEmpty { row["routeCoords"] = route }
-                    metrics["metric_source"] = "apple_health"
-                    row["workoutMetrics"] = metrics
-                    enriched[index] = row
-                    lock.unlock()
-                    group.leave()
+            let itemGroup = DispatchGroup()
+            let itemLock = NSLock()
+            var route = WorkoutRouteSummary(points: [], elevationGainFeet: nil, elevationLossFeet: nil)
+            var dynamics = RunningDynamicsSummary()
+            var perceivedEffort: Int?
+
+            itemGroup.enter()
+            fetchWorkoutRoute(workout: workout) { summary in
+                itemLock.lock()
+                route = summary
+                itemLock.unlock()
+                itemGroup.leave()
+            }
+
+            itemGroup.enter()
+            fetchWorkoutEffort(workout: workout) { value in
+                itemLock.lock()
+                perceivedEffort = value
+                itemLock.unlock()
+                itemGroup.leave()
+            }
+
+            if workout.workoutActivityType == .running {
+                itemGroup.enter()
+                fetchRunningDynamics(workout: workout) { value in
+                    itemLock.lock()
+                    dynamics = value
+                    itemLock.unlock()
+                    itemGroup.leave()
                 }
-                if workout.workoutActivityType == .running {
-                    self.fetchRunningDynamics(workout: workout, completion: applyEnrichment)
-                } else {
-                    applyEnrichment(RunningDynamicsSummary())
+            }
+
+            itemGroup.notify(queue: .global(qos: .userInitiated)) {
+                lock.lock()
+                var row = enriched[index]
+                var metrics = row["workoutMetrics"] as? [String: Any] ?? [:]
+                if let value = dynamics.powerWatts { metrics["running_power_watts"] = Int(value.rounded()) }
+                if let value = dynamics.speedMps { metrics["running_speed_mps"] = round(value * 100) / 100 }
+                if let value = dynamics.strideLengthM { metrics["running_stride_length_m"] = round(value * 100) / 100 }
+                if let value = dynamics.verticalOscillationCm { metrics["running_vertical_oscillation_cm"] = round(value * 10) / 10 }
+                if let value = dynamics.groundContactTimeMs { metrics["running_ground_contact_time_ms"] = Int(value.rounded()) }
+                if let stride = dynamics.strideLengthM, stride > 0, let vertical = dynamics.verticalOscillationCm {
+                    metrics["running_vertical_ratio_pct"] = round((vertical / (stride * 100)) * 1000) / 10
                 }
+                if let value = dynamics.cadenceSpm {
+                    row["cadenceSpm"] = round(value * 10) / 10
+                }
+                if !route.points.isEmpty { row["routeCoords"] = route.points }
+                if row["elevationGain"] == nil, let value = route.elevationGainFeet {
+                    row["elevationGain"] = value
+                    metrics["elevation_derived_from_route"] = 1
+                }
+                if row["elevationLoss"] == nil, let value = route.elevationLossFeet {
+                    row["elevationLoss"] = value
+                }
+                if let perceivedEffort = perceivedEffort {
+                    row["perceivedEffort"] = perceivedEffort
+                    metrics["workout_effort_user_rated"] = 1
+                }
+                metrics["metric_source"] = "apple_health"
+                row["workoutMetrics"] = metrics
+                enriched[index] = row
+                lock.unlock()
+                group.leave()
             }
         }
 

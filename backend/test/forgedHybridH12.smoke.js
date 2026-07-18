@@ -89,13 +89,13 @@ const hrZonesSource = fs.readFileSync(path.join(root, 'frontend/src/pages/HrZone
 const runsRouteSource = fs.readFileSync(path.join(root, 'backend/src/routes/runs.js'), 'utf8');
 const importRouteSource = fs.readFileSync(path.join(root, 'backend/src/routes/import.js'), 'utf8');
 const prAutoSource = fs.readFileSync(path.join(root, 'backend/src/services/prAuto.js'), 'utf8');
-check(/HKSeriesType\.workoutRoute\(\)/.test(swift) && /row\["routeCoords"\]\s*=\s*route/.test(swift), 'native bridge requests and serializes HealthKit workout routes');
+check(/HKSeriesType\.workoutRoute\(\)/.test(swift) && /row\["routeCoords"\]\s*=\s*route\.points/.test(swift), 'native bridge requests and serializes HealthKit workout routes');
 check(/workout\.statistics\(for: type\)/.test(swift) && /timeWeightedAverage/.test(swift), 'workout-owned HR summary wins over a time-weighted sparse-sample fallback');
 check(/predicateForObjects\(from: workout\)/.test(swift) && /workout\.sourceRevision\.source/.test(swift), 'heart-rate samples are scoped to the workout or its source');
 check(!/suppliedMaxHR\s*\?\?\s*observedMaxHR/.test(swift), 'an observed workout maximum is never reused as the athlete zone maximum');
 check(/call\.getArray\("zoneMinimums"/.test(swift) && /historyOptions\.zoneMinimums\s*=\s*zones\.map/.test(service), 'saved watch boundaries reach native sample bucketing');
-check(/REQUIRED_HEALTH_AUTH_VERSION\s*=\s*3/.test(service) && /REQUIRED_WORKOUT_IMPORT_VERSION\s*=\s*4/.test(service), 'permissions remain v3 while corrected workout summaries trigger a v4 full-history refresh once');
-check(/workoutUpgradeAvailable[\s\S]*workoutHistoryUpgradeRequired/.test(service), 'an old native shell cannot mark the v4 import complete before the corrected plugin arrives');
+check(/REQUIRED_HEALTH_AUTH_VERSION\s*=\s*4/.test(service) && /REQUIRED_WORKOUT_IMPORT_VERSION\s*=\s*5/.test(service), 'workout-effort permission upgrade and corrected workout summaries trigger a v5 full-history refresh once');
+check(/workoutUpgradeAvailable[\s\S]*workoutHistoryUpgradeRequired/.test(service), 'an old native shell cannot mark the v5 import complete before the corrected plugin arrives');
 check(/let profile\s*=\s*null[\s\S]*profile\s*=\s*data\?\.profile/.test(service), 'native sync keeps the HR profile in scope for its response');
 check(/if \(history\.available\)[\s\S]*markWorkoutHistoryUpgraded\(\)[\s\S]*else[\s\S]*markHealthResyncNeeded\(\)/.test(service), 'only a successful full-history read completes the import upgrade');
 check(/actualRuns[^\n]*filter\(isRunningActivity\)/.test(historySource), 'History run totals and charts use running activities only');

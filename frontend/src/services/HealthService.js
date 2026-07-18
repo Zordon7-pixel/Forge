@@ -4,11 +4,11 @@ import api from '../lib/api'
 const IOS_UA_REGEX = /iP(ad|hone|od)/i
 const NATIVE_HEALTH_AUTH_KEY = 'forge_health_authorized'
 const NATIVE_HEALTH_AUTH_VERSION_KEY = 'forge_health_authorized_version'
-const REQUIRED_HEALTH_AUTH_VERSION = 3
+const REQUIRED_HEALTH_AUTH_VERSION = 4
 const HEALTH_RESYNC_NEEDED_KEY = 'forge.health.resyncNeeded'
 const AUTO_HEALTH_SYNC_LAST_SYNC_KEY = 'forge_auto_health_sync_last_sync_at'
 const WORKOUT_IMPORT_VERSION_KEY = 'forge_health_workout_import_version'
-const REQUIRED_WORKOUT_IMPORT_VERSION = 4
+const REQUIRED_WORKOUT_IMPORT_VERSION = 5
 const ForgeHealth = registerPlugin('ForgeHealth')
 
 function isIOSDevice() {

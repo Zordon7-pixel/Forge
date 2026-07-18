@@ -4,6 +4,7 @@ import api from '../lib/api'
 import LoadingRunner from '../components/LoadingRunner'
 import RunDetailModal from '../components/RunDetailModal'
 import RunMediaManager from '../components/RunMediaManager'
+import PostRunCheckIn from '../components/PostRunCheckIn'
 
 export default function RunRecap() {
   const { id } = useParams()
@@ -13,6 +14,7 @@ export default function RunRecap() {
   const [hrProfile, setHrProfile] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [showCheckIn, setShowCheckIn] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -60,11 +62,22 @@ export default function RunRecap() {
         hrZones={hrZones}
         hrProfile={hrProfile}
         onClose={() => navigate('/history')}
+        onAddCheckIn={() => setShowCheckIn(true)}
         onFeedbackGenerated={(runId, feedback) => {
           if (runId === run.id) setRun((current) => ({ ...current, ai_feedback: feedback }))
         }}
       />
       <RunMediaManager runId={run.id} />
+      {showCheckIn && (
+        <PostRunCheckIn
+          runId={run.id}
+          onCancel={() => setShowCheckIn(false)}
+          onDone={(result) => {
+            if (result?.run) setRun(result.run)
+            setShowCheckIn(false)
+          }}
+        />
+      )}
       <div className="mx-auto grid w-full max-w-2xl grid-cols-2 gap-3 pb-6">
         <Link to="/stretches/session?type=post" className="rounded-xl px-4 py-3 text-center text-sm font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>Start recovery</Link>
         <Link to="/" className="rounded-xl border px-4 py-3 text-center text-sm font-semibold" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }}>Done</Link>

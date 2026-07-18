@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, X, Brain, Trash2 } from 'lucide-react'
+import { ArrowLeft, X, Brain, MapPin, Trash2 } from 'lucide-react'
 import { CircleMarker, MapContainer, Polyline, TileLayer, useMap } from 'react-leaflet'
 import api from '../lib/api'
 import { useUnits } from '../context/UnitsContext'
@@ -88,7 +88,7 @@ function formatSourceLabel(healthSource, metricSource) {
   return source.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())
 }
 
-export default function RunDetailModal({ run, hrZones = [], hrProfile = null, onClose, onDelete, onFeedbackGenerated, standalone = false }) {
+export default function RunDetailModal({ run, hrZones = [], hrProfile = null, onClose, onDelete, onAddCheckIn, onFeedbackGenerated, standalone = false }) {
   const { units, fmt } = useUnits()
   const [feedback, setFeedback] = useState(run.ai_feedback || '')
   const [loading, setLoading] = useState(false)
@@ -115,6 +115,12 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
   const averageZone = findZone(hr, hrZones)
   const workoutMetrics = parseObject(run.workout_metrics_json)
   const sourceLabel = formatSourceLabel(run.health_source, workoutMetrics.metric_source)
+  const isAppleHealthSource = sourceLabel === 'Apple Health'
+  const enrichedByStrava = workoutMetrics.route_enriched_from_strava === 1
+    || workoutMetrics.elevation_enriched_from_strava === 1
+  const displayedSourceLabel = isAppleHealthSource && enrichedByStrava
+    ? 'Apple Health + Strava'
+    : sourceLabel
   const calorieLabel = sourceLabel === 'Apple Health'
     ? 'Active calories'
     : sourceLabel === 'Garmin file'
@@ -131,20 +137,26 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
     ? { label: ZONE_LABELS[dominantZoneIndex], ...(hrZones[dominantZoneIndex] || {}), zone: dominantZoneIndex + 1, color: ZONE_COLORS[dominantZoneIndex] }
     : averageZone
   const zoneModelLabel = ZONE_MODEL_LABELS[hrProfile?.zoneModel] || 'saved profile'
-  const hasTrustedEffort = !(run.watch_mode === 'import' && run.notes === 'Imported workout')
+  const importedLegacyEffort = run.watch_mode === 'import' && run.notes === 'Imported workout'
+  const hasTrustedEffort = run.perceived_effort != null && (
+    !importedLegacyEffort
+    || workoutMetrics.workout_effort_user_rated === 1
+    || Boolean(run.pain_level)
+    || Boolean(run.post_energy)
+  )
   const elevationGain = run.elevation_gain === null || run.elevation_gain === undefined || run.elevation_gain === ''
     ? Number.NaN
     : Number(run.elevation_gain)
   const elevationLabel = Number.isFinite(elevationGain)
     ? units === 'metric' ? `${Math.round(elevationGain * 0.3048)} m` : `${Math.round(elevationGain)} ft`
-    : '--'
+    : isAppleHealthSource ? 'Not shared' : '--'
 
   const stats = [
     { label: 'Distance', value: run.distance_miles ? fmt.distance(Number(run.distance_miles), 2) : '--' },
     { label: 'Duration', value: run.duration_seconds ? fmtDuration(run.duration_seconds) : '--' },
     { label: 'Pace', value: run.distance_miles && run.duration_seconds ? fmt.pace(run.duration_seconds / run.distance_miles) : '--' },
     { label: calorieLabel, value: run.calories ? `${run.calories} cal` : '--' },
-    { label: 'Effort', value: run.perceived_effort && hasTrustedEffort ? `${run.perceived_effort}/10 - ${EFFORT_LABELS[run.perceived_effort] || ''}` : '--' },
+    { label: 'Effort', value: hasTrustedEffort ? `${run.perceived_effort}/10 - ${EFFORT_LABELS[run.perceived_effort] || ''}` : isAppleHealthSource ? 'Not rated' : '--' },
     { label: 'Surface', value: run.surface || run.run_type || '--' },
     { label: 'Elevation Gain', value: elevationLabel },
   ]
@@ -168,6 +180,9 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
   const splits = normalizeRunSplits(run.pace_splits)
   const routePositions = parseRunRoute(run.route_coords)
   const checkInAvailable = run.perceived_effort != null || run.pain_level || run.post_energy
+  const checkInComplete = hasTrustedEffort && Boolean(run.pain_level) && Boolean(run.post_energy)
+  const missingAppleRoute = isRun && isAppleHealthSource && routePositions.length < 2
+  const missingAppleElevation = isRun && isAppleHealthSource && !Number.isFinite(elevationGain)
   const comparisonRows = comparison.hasPlan ? [
     comparison.plannedDistanceMiles != null ? {
       label: 'Distance',
@@ -224,7 +239,7 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
           )}
           <div className="flex-1">
             <h2 className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>{isRun ? 'Run Recap' : `${kind} Detail`}</h2>
-            {sourceLabel && <p className="mt-0.5 text-xs" style={{ color: 'var(--text-muted)' }}>Synced from {sourceLabel}</p>}
+            {displayedSourceLabel && <p className="mt-0.5 text-xs" style={{ color: 'var(--text-muted)' }}>Synced from {displayedSourceLabel}</p>}
           </div>
           {!standalone && <button type="button" onClick={onClose} aria-label="Close activity detail" className="ml-auto"><X size={20} style={{ color: 'var(--text-muted)' }} /></button>}
         </div>
@@ -239,6 +254,22 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
               <CircleMarker center={routePositions[0]} radius={7} pathOptions={{ color: '#FFFFFF', fillColor: '#22C55E', fillOpacity: 1, weight: 2 }} />
               <CircleMarker center={routePositions.at(-1)} radius={7} pathOptions={{ color: '#FFFFFF', fillColor: '#EF4444', fillOpacity: 1, weight: 2 }} />
             </MapContainer>
+          </div>
+        )}
+
+        {(missingAppleRoute || missingAppleElevation) && (
+          <div className="mb-5 rounded-xl p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
+            <div className="flex items-start gap-2">
+              <MapPin size={16} className="mt-0.5 shrink-0" style={{ color: 'var(--accent)' }} />
+              <div>
+                <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Recording details not shared</p>
+                <p className="mt-1 text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                  The app or watch that saved this workout to Apple Health did not include {missingAppleRoute && missingAppleElevation ? 'a GPS route or elevation gain' : missingAppleRoute ? 'a GPS route' : 'elevation gain'}. Forged Hybrid will not guess missing activity data.
+                </p>
+                <p className="mt-1 text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>If the same run is in a connected Strava account, syncing Strava can fill supported route and elevation fields without duplicating the run.</p>
+                <Link to="/settings" className="mt-2 inline-flex text-xs font-bold" style={{ color: 'var(--accent)' }}>Open connected sources</Link>
+              </div>
+            </div>
           </div>
         )}
 
@@ -366,6 +397,17 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
               <div><p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Pain</p><p className="mt-1 text-sm font-semibold capitalize" style={{ color: run.pain_level === 'moderate' || run.pain_level === 'severe' ? 'var(--danger)' : 'var(--text-primary)' }}>{run.pain_level || '--'}</p></div>
               <div><p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Energy</p><p className="mt-1 text-sm font-semibold capitalize" style={{ color: run.post_energy === 'low' ? 'var(--warning)' : 'var(--text-primary)' }}>{run.post_energy || '--'}</p></div>
             </div>
+            {!checkInComplete && onAddCheckIn && (
+              <button type="button" onClick={onAddCheckIn} className="mt-3 w-full rounded-lg py-2.5 text-sm font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>Complete check-in</button>
+            )}
+          </div>
+        )}
+
+        {isRun && !checkInAvailable && onAddCheckIn && (
+          <div className="mb-5 rounded-xl p-4" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
+            <p className="text-xs font-bold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.6 }}>How did it feel?</p>
+            <p className="mt-1 text-sm leading-relaxed" style={{ color: 'var(--text-muted)' }}>Apple Health did not include a rated effort. Add your effort, pain, and post-run energy so future training can adapt to what the run actually cost you.</p>
+            <button type="button" onClick={onAddCheckIn} className="mt-3 w-full rounded-lg py-2.5 text-sm font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>Rate this run</button>
           </div>
         )}
 

@@ -90,6 +90,18 @@ function normalizeRouteCoords(value) {
   }).filter((point) => Number.isFinite(point.lat) && point.lat >= -90 && point.lat <= 90 && Number.isFinite(point.lon) && point.lon >= -180 && point.lon <= 180);
 }
 
+function parseStoredWorkoutMetrics(value) {
+  if (!value) return {};
+  if (typeof value === 'object' && !Array.isArray(value)) return value;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (err) {
+    console.error('[import] stored workout metrics JSON parse failed:', err.message);
+    return {};
+  }
+}
+
 function classifyType(rawType = '') {
   const value = String(rawType || '').toLowerCase().trim();
   if (value.includes('strength') || value.includes('lift') || value.includes('weight') || value.includes('resistance')) {
@@ -164,7 +176,9 @@ function startsMatch(existingStart, importedStart) {
 async function findExistingRun(userId, item) {
   if (item.sourceWorkoutId) {
     const exact = await dbGet(
-      `SELECT id, date, type, watch_activity_type, watch_normalized_type, health_start_at, planned_session_json
+      `SELECT id, date, type, watch_mode, watch_activity_type, watch_normalized_type,
+              health_start_at, perceived_effort, pain_level, post_energy, notes,
+              planned_session_json, workout_metrics_json
        FROM runs
        WHERE user_id=? AND health_source=? AND health_source_workout_id=?
        LIMIT 1`,
@@ -174,7 +188,9 @@ async function findExistingRun(userId, item) {
   }
 
   const candidates = await dbAll(
-    `SELECT id, date, type, watch_activity_type, watch_normalized_type, health_start_at, planned_session_json
+    `SELECT id, date, type, watch_mode, watch_activity_type, watch_normalized_type,
+            health_start_at, perceived_effort, pain_level, post_energy, notes,
+            planned_session_json, workout_metrics_json
      FROM runs
      WHERE user_id=? AND date=? AND ABS(COALESCE(distance_miles,0) - ?) < 0.05
      LIMIT 25`,
@@ -276,9 +292,23 @@ async function updateExistingRunHealth(userId, existingRun, item) {
   const planned = item.section === 'run' && !hasMeaningfulPlannedRun(existingRun.planned_session_json)
     ? await findPlannedRunForDate(userId, item.date)
     : null;
+  const storedWorkoutMetrics = parseStoredWorkoutMetrics(existingRun.workout_metrics_json);
+  const existingEffortIsTrusted = storedWorkoutMetrics.workout_effort_user_rated === 1
+    || Boolean(existingRun.pain_level)
+    || Boolean(existingRun.post_energy)
+    || !(existingRun.watch_mode === 'import' && existingRun.notes === 'Imported workout');
+  const importedEffort = item.perceivedEffort != null
+    && (existingRun.perceived_effort == null || !existingEffortIsTrusted)
+    ? item.perceivedEffort
+    : null;
+  const mergedWorkoutMetrics = {
+    ...storedWorkoutMetrics,
+    ...item.workoutMetrics,
+  };
 
   await dbRun(
     `UPDATE runs SET
+      perceived_effort = COALESCE(?, perceived_effort),
       avg_heart_rate = COALESCE(?, avg_heart_rate),
       max_heart_rate = COALESCE(?, max_heart_rate),
       heart_rate_zones = COALESCE(?, heart_rate_zones),
@@ -308,6 +338,7 @@ async function updateExistingRunHealth(userId, existingRun, item) {
       END
      WHERE id=? AND user_id=?`,
     [
+      importedEffort,
       item.avgHeartRate,
       item.maxHeartRate,
       zoneParam,
@@ -329,7 +360,7 @@ async function updateExistingRunHealth(userId, existingRun, item) {
       item.temperatureF,
       asNumber(item.calories, 0),
       Math.round(asNumber(item.calories, 0)),
-      JSON.stringify(item.workoutMetrics),
+      JSON.stringify(mergedWorkoutMetrics),
       planned?.sessionId || null,
       planned ? JSON.stringify(planned) : null,
       existingRun.id,
