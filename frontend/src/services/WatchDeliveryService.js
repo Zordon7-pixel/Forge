@@ -83,6 +83,11 @@ function milesFromLabel(value = '') {
   return match ? Number(match[1]) : 0
 }
 
+function workoutTitle(value, fallback) {
+  const title = String(value || fallback).replace(/_+/g, ' ').replace(/\s+/g, ' ').trim()
+  return title ? `${title.charAt(0).toUpperCase()}${title.slice(1)}` : fallback
+}
+
 function textStep(label, durationSeconds = null) {
   if (label && typeof label === 'object') {
     return {
@@ -100,6 +105,7 @@ function textStep(label, durationSeconds = null) {
 
 export function normalizeRunWorkout(workout = {}) {
   const miles = milesFromLabel(workout.display?.distance || workout.distanceLabel)
+  const title = workoutTitle(workout.title || workout.typeLabel, 'Forged Hybrid Run')
   const paceSeconds = workout.targetPaceSecondsPerMile
     || workout.targets?.paceSecondsPerMile
     || paceToSeconds(workout.display?.pace || workout.pace)
@@ -111,7 +117,7 @@ export function normalizeRunWorkout(workout = {}) {
     schemaVersion: 1,
     source: 'forge',
     kind: 'run',
-    title: workout.title || workout.typeLabel || 'Forge Run',
+    title,
     scheduledAt: workout.scheduledAt || new Date().toISOString(),
     activity: workout.activity || 'running',
     location: workout.location || 'outdoor',
@@ -125,7 +131,7 @@ export function normalizeRunWorkout(workout = {}) {
       textStep('Warm up easy', 300),
       {
         type: goal.type === 'distance' ? 'distance' : goal.type === 'time' ? 'time' : 'open',
-        label: workout.title || workout.typeLabel || 'Main run',
+        label: title,
         distanceMiles: goal.type === 'distance' ? Number(goal.value || miles || 0) : null,
         durationSeconds: goal.type === 'time' ? Number(goal.value || 0) * 60 : null,
         targetPaceSecondsPerMile: paceSeconds || null,
@@ -143,7 +149,7 @@ export function normalizeStrengthWorkout(workout = {}) {
     schemaVersion: 1,
     source: 'forge',
     kind: 'strength',
-    title: workout.title || 'Forge Strength',
+    title: workoutTitle(workout.title, 'Forged Hybrid Strength'),
     scheduledAt: workout.scheduledAt || new Date().toISOString(),
     activity: workout.activity || 'functionalStrengthTraining',
     location: workout.location || 'indoor',

@@ -39,6 +39,7 @@ const distance = WatchWorkoutService.buildRunWorkout({
   distanceLabel: '10.0 mi',
 })
 assert.deepEqual(distance.goal, { type: 'distance', value: 10, unit: 'mile' })
+assert.equal(WatchDeliveryService.buildStructuredWorkout({ typeLabel: 'easy_run' }).title, 'Easy run')
 
 const buttonSource = fs.readFileSync(new URL('../src/components/WatchWorkoutSendButton.jsx', import.meta.url), 'utf8')
 const settingsSource = fs.readFileSync(new URL('../src/pages/Settings.jsx', import.meta.url), 'utf8')
