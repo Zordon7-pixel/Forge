@@ -121,6 +121,7 @@ export default function Community() {
   const [busy, setBusy] = useState('')
   const [notice, setNotice] = useState(null)
   const [invite, setInvite] = useState(null)
+  const [inviteError, setInviteError] = useState('')
   const [handleDraft, setHandleDraft] = useState('')
   const [handleDiscoverable, setHandleDiscoverable] = useState(false)
   const [contactDiscoverable, setContactDiscoverable] = useState(false)
@@ -140,6 +141,8 @@ export default function Community() {
   })
   const processedInviteRef = useRef('')
   const processedHandleRef = useRef('')
+  const inviteHandleInputRef = useRef(null)
+  const scrollToInviteHandleRef = useRef(false)
 
   const selectTab = (tab) => {
     setActiveTab(tab)
@@ -168,6 +171,12 @@ export default function Community() {
   useEffect(() => {
     load()
   }, [load])
+
+  useEffect(() => {
+    if (friendDiscoveryMode !== 'handle' || !scrollToInviteHandleRef.current) return
+    scrollToInviteHandleRef.current = false
+    inviteHandleInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }, [friendDiscoveryMode])
 
   useEffect(() => {
     const token = searchParams.get('invite') || ''
@@ -265,11 +274,18 @@ export default function Community() {
     const url = buildInviteUrl(data.discovery?.handle)
     if (!data.discovery?.discoverable || !url) {
       setInvite(null)
-      setNotice({ type: 'error', text: t('community.inviteHandleRequired') })
+      setInviteError(t('community.inviteHandleRequired'))
       return
     }
+    setInviteError('')
     setNotice(null)
     setInvite({ url })
+  }
+
+  const openInviteHandleSetup = () => {
+    setInviteError('')
+    scrollToInviteHandleRef.current = true
+    setFriendDiscoveryMode('handle')
   }
 
   const saveDiscoveryProfile = async () => {
@@ -283,6 +299,7 @@ export default function Community() {
       setHandleDraft(response.data?.handle || '')
       setHandleDiscoverable(Boolean(response.data?.discoverable))
       setInvite(null)
+      setInviteError('')
       setNotice({ type: 'success', text: t('community.handleSaved') })
       await load({ quiet: true })
     } catch (error) {
@@ -526,7 +543,7 @@ export default function Community() {
               <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', width: '100%', maxWidth: '100%', minWidth: 0, gap: 8 }}>
                 <label style={{ minHeight: 44, display: 'flex', alignItems: 'center', gap: 5, border: '1px solid var(--border-subtle)', borderRadius: 8, background: 'var(--bg-input)', padding: '0 11px' }}>
                   <AtSign size={16} color="var(--text-muted)" aria-hidden="true" />
-                  <input id="friend-handle" value={handleDraft} maxLength={25} autoCapitalize="none" autoCorrect="off" spellCheck="false" onChange={(event) => setHandleDraft(event.target.value)} placeholder={t('community.handlePlaceholder')} style={{ minWidth: 0, width: '100%', border: 'none', outline: 'none', background: 'transparent', color: 'var(--text-primary)', fontSize: 14 }} />
+                  <input ref={inviteHandleInputRef} id="friend-handle" value={handleDraft} maxLength={25} autoCapitalize="none" autoCorrect="off" spellCheck="false" onChange={(event) => setHandleDraft(event.target.value)} placeholder={t('community.handlePlaceholder')} style={{ minWidth: 0, width: '100%', border: 'none', outline: 'none', background: 'transparent', color: 'var(--text-primary)', fontSize: 14 }} />
                 </label>
                 <button type="button" className="pressable" onClick={saveDiscoveryProfile} disabled={Boolean(busy)} style={{ minWidth: 72, minHeight: 44, borderRadius: 8, border: 'none', background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 850, opacity: Boolean(busy) ? 0.55 : 1 }}>{busy === 'save-handle' ? t('community.saving') : t('community.saveHandle')}</button>
               </div>
@@ -607,9 +624,19 @@ export default function Community() {
                 </div>
               </div>
             ) : (
-              <button type="button" className="pressable" onClick={createInvite} disabled={Boolean(busy)} style={{ width: '100%', minHeight: 44, marginTop: 14, borderRadius: 8, border: 'none', background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 900, opacity: Boolean(busy) ? 0.55 : 1 }}>
-                {busy === 'create-invite' ? t('community.creating') : t('community.createContactInvite')}
-              </button>
+              <>
+                <button type="button" className="pressable" onClick={createInvite} disabled={Boolean(busy)} style={{ width: '100%', minHeight: 44, marginTop: 14, borderRadius: 8, border: 'none', background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 900, opacity: Boolean(busy) ? 0.55 : 1 }}>
+                  {busy === 'create-invite' ? t('community.creating') : t('community.createContactInvite')}
+                </button>
+                {inviteError && (
+                  <div role="alert" style={{ marginTop: 10, padding: 10, borderRadius: 8, border: '1px solid color-mix(in srgb, var(--danger) 45%, transparent)', background: 'color-mix(in srgb, var(--danger) 12%, transparent)' }}>
+                    <p style={{ color: 'var(--danger)', fontSize: 12, lineHeight: 1.45, margin: 0 }}>{inviteError}</p>
+                    <button type="button" className="pressable" onClick={openInviteHandleSetup} style={{ minHeight: 40, marginTop: 8, borderRadius: 8, border: '1px solid var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)', padding: '0 12px', fontSize: 12, fontWeight: 850 }}>
+                      {t('community.setupInviteHandle')}
+                    </button>
+                  </div>
+                )}
+              </>
             )}
             </div>
           </div>

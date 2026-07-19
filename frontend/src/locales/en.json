@@ -75,6 +75,7 @@
     "createInvite": "Create invite link",
     "inviteReady": "Invite link ready",
     "inviteHandleRequired": "Save a discoverable friend handle before sharing an invite link.",
+    "setupInviteHandle": "Set up handle",
     "inviteExpires": "Expires {{date}}.",
     "inviteLimit": "You already have five active invites. Use or wait for one to expire before creating another.",
     "shareInvite": "Share",
