@@ -284,19 +284,33 @@ function buildCompletionEvidence(completion = {}) {
   const missed = Number(completion.missedWorkouts ?? completion.missed_workouts ?? completion.missedCount ?? 0);
   const missedRuns = Number(completion.missedRuns ?? completion.missedRunCount ?? 0);
   const missedLifts = Number(completion.missedLifts ?? completion.missedLiftCount ?? 0);
-  const driver = (Number.isFinite(adherence) && adherence < 0.65) || missed >= 2 || missedRuns >= 2;
+  const daysInactive = Number(completion.daysInactive ?? completion.days_inactive);
+  const gapPromptEnabled = completion.gapPromptEnabled !== false;
+  const isPlanStartWindow = completion.isPlanStartWindow === true;
+  const trainingGap = gapPromptEnabled
+    && Number.isFinite(daysInactive)
+    && daysInactive >= (missed >= 1 ? 3 : 4)
+    && (missed >= 1 || isPlanStartWindow);
+  const driver = trainingGap || (Number.isFinite(adherence) && adherence < 0.65) || missed >= 2 || missedRuns >= 2;
   if (!driver) return { evidence: [], driver: false };
   const details = [];
   if (Number.isFinite(adherence)) details.push(`${Math.round(adherence * 100)}% recent adherence`);
   if (missedRuns || missedLifts || missed) details.push(`${missedRuns || 0} missed runs, ${missedLifts || 0} missed lifts`);
+  if (trainingGap) details.unshift(`${Math.round(daysInactive)} days since the last logged run or lift`);
   return {
     driver: true,
+    trainingGap,
+    daysInactive: trainingGap ? Math.round(daysInactive) : null,
     evidence: [{
-      signal: 'adherence',
+      signal: trainingGap ? 'training_gap' : 'adherence',
       source: 'completion',
       objective: true,
       freshness: completion.freshness || 'recent',
-      detail: `Logged completion history shows ${details.join('; ') || 'recent missed sessions'}, so the next hard run is reduced instead of forcing a catch-up.`
+      daysInactive: trainingGap ? Math.round(daysInactive) : null,
+      missedWorkouts: Math.max(0, missed || 0),
+      detail: trainingGap
+        ? `Forged Hybrid has not seen a logged run or lift for ${Math.round(daysInactive)} days${missed > 0 ? ` and found ${missed} missed scheduled session${missed === 1 ? '' : 's'}` : ' as the dated plan begins'}. The next demanding run is reviewed before any change is made.`
+        : `Logged completion history shows ${details.join('; ') || 'recent missed sessions'}, so the next hard run is reduced instead of forcing a catch-up.`
     }],
   };
 }
@@ -717,18 +731,22 @@ function buildAdaptationProposal(input = {}) {
     }
 
     if (completion.driver) {
-      const nextHard = sessionsInWindow.find((item) => item.kind === 'run' && isHardRun(item.session));
+      const nextHard = sessionsInWindow.find((item) => (
+        item.kind === 'run' && (completion.trainingGap ? isDemandingRun(item.session) : isHardRun(item.session))
+      ));
       if (nextHard) {
         const after = patchRunForRecovery(
           nextHard.session,
           'reduce',
-          'Easier version from recent completion and missed-session history.'
+          completion.trainingGap
+            ? 'Easier re-entry version after a recent training gap.'
+            : 'Easier version from recent completion and missed-session history.'
         );
         addChange(
           changes,
           nextHard,
           after,
-          `${sessionSummary(nextHard.session)} changes to ${sessionSummary(after)} from recent completion history.`
+          `${sessionSummary(nextHard.session)} changes to ${sessionSummary(after)} from ${completion.trainingGap ? 'the recent training gap' : 'recent completion history'}.`
         );
       }
     }
@@ -818,11 +836,15 @@ function buildAdaptationProposal(input = {}) {
     safetyException,
     evidence,
     changes: changeList,
-    headline: safetyException ? 'Safety hold for the live calendar' : 'Small transparent calendar adjustment',
+    headline: safetyException
+      ? 'Safety hold for the live calendar'
+      : completion.trainingGap ? 'Everything okay?' : 'Small transparent calendar adjustment',
     choices: ['accept', 'keep_original'],
     reason: safetyException
       ? `A safety exception is marked because ${safetyReason}; the hold can extend beyond 72 hours.`
-      : 'Only dated sessions inside the next 72 hours are changed from current recovery, recent-run load, check-in, and completion evidence; race target, phases, course facts, and the strength policy stay fixed.',
+      : completion.trainingGap
+        ? `We have not seen a logged run or lift in ${completion.daysInactive} days. You can ease the next demanding session or leave the calendar exactly as it is.`
+        : 'Only dated sessions inside the next 72 hours are changed from current recovery, recent-run load, check-in, and completion evidence; race target, phases, course facts, and the strength policy stay fixed.',
     planVersion: input.planVersion || null,
   };
   return validateCandidateOrKeep(input, proposal, candidate, normalWindowEnd);

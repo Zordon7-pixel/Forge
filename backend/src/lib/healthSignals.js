@@ -23,36 +23,38 @@ function isSuspectSyncedSleep(row = {}) {
   return syncedSleep !== null && syncedSleep > 12;
 }
 
-function hoursSince(value) {
+function hoursSince(value, nowMs = Date.now()) {
   if (!value) return null;
   const timestamp = new Date(value).getTime();
   if (!Number.isFinite(timestamp)) return null;
-  return (Date.now() - timestamp) / HOUR_MS;
+  return (nowMs - timestamp) / HOUR_MS;
 }
 
-function metricIsFresh(row, timestampField, maxHours, { fallbackToSync = false } = {}) {
-  const age = hoursSince(row[timestampField] || (fallbackToSync ? row.synced_at : null));
+function metricIsFresh(row, timestampField, maxHours, { fallbackToSync = false, nowMs = Date.now() } = {}) {
+  const age = hoursSince(row[timestampField] || (fallbackToSync ? row.synced_at : null), nowMs);
   return age !== null && age >= -0.25 && age <= maxHours;
 }
 
-function metricFreshness(row = {}) {
+function metricFreshness(row = {}, { now = new Date() } = {}) {
+  const parsedNow = now instanceof Date ? now.getTime() : new Date(now).getTime();
+  const nowMs = Number.isFinite(parsedNow) ? parsedNow : Date.now();
   return {
-    activity: metricIsFresh(row, 'synced_at', 48),
-    exerciseMinutes: metricIsFresh(row, 'activity_summary_recorded_at', 48),
-    sleep: metricIsFresh(row, 'sleep_end_at', 36, { fallbackToSync: true }),
-    restingHeartRate: metricIsFresh(row, 'resting_heart_rate_recorded_at', 48, { fallbackToSync: true }),
-    hrv: metricIsFresh(row, 'hrv_recorded_at', 48, { fallbackToSync: true }),
-    respiratoryRate: metricIsFresh(row, 'respiratory_rate_recorded_at', 48),
-    vo2Max: metricIsFresh(row, 'vo2_max_recorded_at', 90 * 24),
-    walkingHeartRate: metricIsFresh(row, 'walking_heart_rate_recorded_at', 30 * 24),
-    heartRateRecovery: metricIsFresh(row, 'heart_rate_recovery_recorded_at', 30 * 24),
-    runningDynamics: metricIsFresh(row, 'running_dynamics_recorded_at', 30 * 24),
+    activity: metricIsFresh(row, 'synced_at', 48, { nowMs }),
+    exerciseMinutes: metricIsFresh(row, 'activity_summary_recorded_at', 48, { nowMs }),
+    sleep: metricIsFresh(row, 'sleep_end_at', 36, { fallbackToSync: true, nowMs }),
+    restingHeartRate: metricIsFresh(row, 'resting_heart_rate_recorded_at', 48, { fallbackToSync: true, nowMs }),
+    hrv: metricIsFresh(row, 'hrv_recorded_at', 48, { fallbackToSync: true, nowMs }),
+    respiratoryRate: metricIsFresh(row, 'respiratory_rate_recorded_at', 48, { nowMs }),
+    vo2Max: metricIsFresh(row, 'vo2_max_recorded_at', 90 * 24, { nowMs }),
+    walkingHeartRate: metricIsFresh(row, 'walking_heart_rate_recorded_at', 30 * 24, { nowMs }),
+    heartRateRecovery: metricIsFresh(row, 'heart_rate_recovery_recorded_at', 30 * 24, { nowMs }),
+    runningDynamics: metricIsFresh(row, 'running_dynamics_recorded_at', 30 * 24, { nowMs }),
   };
 }
 
-function hasHealthData(rawRow = {}) {
+function hasHealthData(rawRow = {}, options = {}) {
   const row = hydrateHealthRow(rawRow);
-  const freshness = metricFreshness(row);
+  const freshness = metricFreshness(row, options);
   const syncedSleep = toNumber(row?.sleep_hours_last_night);
   const hasValidSyncedSleep = syncedSleep !== null && syncedSleep > 0 && !isSuspectSyncedSleep(row);
   return (hasValidSyncedSleep && freshness.sleep)
@@ -234,10 +236,10 @@ function buildMetricSnapshot(row, freshness, overrides = {}) {
   };
 }
 
-function buildHealthSignals(rawRow = {}) {
+function buildHealthSignals(rawRow = {}, options = {}) {
   const row = hydrateHealthRow(rawRow);
-  const freshness = metricFreshness(row);
-  if (!hasHealthData(row)) {
+  const freshness = metricFreshness(row, options);
+  if (!hasHealthData(row, options)) {
     const syncedSleep = toNumber(row.sleep_hours_last_night);
     const sleep = syncedSleep !== null && syncedSleep > 0 && !isSuspectSyncedSleep(row) && freshness.sleep ? syncedSleep : null;
     return {

@@ -17,6 +17,8 @@ const { repairPlanPrescriptions } = require('../lib/prescriptionIntegrity');
 const { summarizeRecentExercises } = require('../lib/strengthPrescription');
 const { runActivitySql } = require('../lib/runActivity');
 
+const ADAPTATION_POLICY_VERSION = 'training-gap-v1';
+
 function getDayShort() {
   return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date().getDay()];
 }
@@ -95,6 +97,7 @@ function planVersionFor(active, parsedPlan) {
   return crypto
     .createHash('sha256')
     .update(JSON.stringify({
+      adaptationPolicyVersion: ADAPTATION_POLICY_VERSION,
       source: active?.source || null,
       planId: active?.row?.id || null,
       userPlanId: active?.row?.user_plan_id || null,
@@ -192,12 +195,18 @@ async function buildCompletionSummaryForAdaptation(userId, plan, active, plannin
   const planned = plannedSessionsBetween(plan, since, adaptationEngine.addDays(planningDateISO, -1));
   const progress = parseJsonValue(active?.row?.progress_json, {});
   const completedIds = new Set((Array.isArray(progress?.completedSessionIds) ? progress.completedSessionIds : []).map(String));
-  const [runs, lifts, workouts] = await Promise.all([
+  const [runs, lifts, workouts, lastRun, lastLift, lastWorkout] = await Promise.all([
     dbAll(`SELECT id, date FROM runs WHERE user_id=? AND date>=? AND date<=? AND ${runActivitySql()}`, [userId, since, planningDateISO]),
     dbAll('SELECT id, date FROM lifts WHERE user_id=? AND date>=? AND date<=?', [userId, since, planningDateISO]),
     dbAll(
       'SELECT id, started_at FROM workout_sessions WHERE user_id=? AND started_at>=? AND started_at<=? AND ended_at IS NOT NULL',
       [userId, `${since}T00:00:00`, `${planningDateISO}T23:59:59`]
+    ),
+    dbGet(`SELECT MAX(date) AS last_date FROM runs WHERE user_id=? AND date<=? AND ${runActivitySql()}`, [userId, planningDateISO]),
+    dbGet('SELECT MAX(date) AS last_date FROM lifts WHERE user_id=? AND date<=?', [userId, planningDateISO]),
+    dbGet(
+      'SELECT MAX(substr(started_at, 1, 10)) AS last_date FROM workout_sessions WHERE user_id=? AND started_at<=? AND ended_at IS NOT NULL',
+      [userId, `${planningDateISO}T23:59:59`]
     ),
   ]);
 
@@ -216,9 +225,25 @@ async function buildCompletionSummaryForAdaptation(userId, plan, active, plannin
       ? runDates.some((date) => dateWithinOneDay(date, item.date))
       : liftDates.some((date) => dateWithinOneDay(date, item.date));
     if (completedByProgress || completedByLog) completed += 1;
-    else if (item.kind === 'run') missedRuns += 1;
-    else missedLifts += 1;
+    else {
+      if (item.kind === 'run') missedRuns += 1;
+      else missedLifts += 1;
+    }
   }
+
+  const lastActivityDate = [lastRun?.last_date, lastLift?.last_date, lastWorkout?.last_date]
+    .map((value) => String(value || '').slice(0, 10))
+    .filter((value) => /^\d{4}-\d{2}-\d{2}$/.test(value) && value <= planningDateISO)
+    .sort()
+    .pop() || null;
+  const daysInactive = lastActivityDate === null
+    ? null
+    : Math.max(0, daysBetween(planningDateISO, lastActivityDate));
+  const planStartDate = (Array.isArray(plan?.weeks) ? plan.weeks : [])
+    .flatMap((week) => planSchema.getDayEntries(week))
+    .map((day) => String(day?.date || '').slice(0, 10))
+    .filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date))
+    .sort()[0] || null;
 
   return {
     planned: planned.length,
@@ -228,12 +253,16 @@ async function buildCompletionSummaryForAdaptation(userId, plan, active, plannin
     missedWorkouts: missedRuns + missedLifts,
     adherenceRate: planned.length ? completed / planned.length : null,
     freshness: `${since} to ${planningDateISO}`,
+    lastActivityDate,
+    daysInactive,
+    planStartDate,
+    isPlanStartWindow: Boolean(planStartDate && planningDateISO <= planStartDate),
   };
 }
 
 async function buildAdaptationInputs(userId, plan, active, planningDateISO) {
   const recentRunSince = adaptationEngine.addDays(planningDateISO, -34);
-  const [healthRow, checkin, injuries, completion, recentRuns] = await Promise.all([
+  const [healthRow, checkin, injuries, completion, recentRuns, profile] = await Promise.all([
     dbGet('SELECT * FROM health_sync WHERE user_id=?', [userId]).catch((err) => {
       console.error('[plans/adaptation] health sync lookup failed:', err.message);
       return null;
@@ -261,13 +290,22 @@ async function buildAdaptationInputs(userId, plan, active, planningDateISO) {
       console.error('[plans/adaptation] recent run lookup failed:', err.message);
       return [];
     }),
+    dbGet('SELECT schedule_type, missed_workout_pref FROM users WHERE id=?', [userId]).catch((err) => {
+      console.error('[plans/adaptation] preference lookup failed:', err.message);
+      return null;
+    }),
   ]);
   const activeInjury = Array.isArray(injuries) && injuries.length ? injuries[0] : null;
   const healthSignals = buildAdaptationHealthSignals(healthRow, planningDateISO);
+  const scheduleType = String(profile?.schedule_type || 'adaptive').toLowerCase();
+  const missedWorkoutPref = String(profile?.missed_workout_pref || 'adjust_week').toLowerCase();
   return {
     healthSignals,
     checkin: checkin || null,
-    completion,
+    completion: {
+      ...(completion || {}),
+      gapPromptEnabled: ['adaptive', 'flexible'].includes(scheduleType) && missedWorkoutPref !== 'skip',
+    },
     recentRunLoad: summarizeRecentRunLoad(recentRuns, {
       todayISO: planningDateISO,
       weeklyBaseline: Number(plan?.inputSummary?.weeklyMileageBaseline || 0),

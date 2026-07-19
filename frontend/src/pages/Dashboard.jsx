@@ -76,6 +76,63 @@ function getWeekKey() {
 
 const TODAY_CARD_VIEWED_KEY = 'forge_track_today_card_viewed'
 
+function trainingGapEvidence(proposal) {
+  return (proposal?.evidence || []).find((item) => item?.signal === 'training_gap') || null
+}
+
+function TrainingGapPrompt({ proposal, deciding, error, onDecision }) {
+  const gap = trainingGapEvidence(proposal)
+  const changes = Array.isArray(proposal?.changes) ? proposal.changes : []
+  if (!gap || proposal?.status !== 'proposal' || changes.length === 0) return null
+
+  const days = Number(gap.daysInactive || 0)
+  const firstChange = changes[0]
+  return (
+    <section
+      aria-labelledby="training-gap-title"
+      className="rounded-xl p-4"
+      style={{ background: 'var(--bg-card)', border: '1px solid var(--accent)' }}
+    >
+      <div className="flex items-start gap-3">
+        <CalendarClock size={20} color="var(--accent)" style={{ flex: '0 0 auto', marginTop: 2 }} />
+        <div className="min-w-0 flex-1">
+          <p className="text-[10px] font-black uppercase" style={{ color: 'var(--accent)', margin: 0 }}>Adaptive plan check</p>
+          <h2 id="training-gap-title" className="mt-1 text-lg font-black" style={{ color: 'var(--text-primary)' }}>Everything okay?</h2>
+          <p className="mt-1 text-sm leading-6" style={{ color: 'var(--text-muted)' }}>
+            We have not seen a logged run or lift in {days} days. Do you want to ease the next demanding session, or leave your calendar as it is?
+          </p>
+          {firstChange?.summary && (
+            <p className="mt-3 border-t pt-3 text-xs leading-5" style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-muted)' }}>
+              Proposed: {firstChange.summary}{changes.length > 1 ? ` +${changes.length - 1} more` : ''}
+            </p>
+          )}
+        </div>
+      </div>
+      {error && <p role="alert" className="mt-3 rounded-lg p-2 text-sm" style={{ background: 'var(--danger-dim)', color: 'var(--danger)' }}>{error}</p>}
+      <div className="mt-4 grid grid-cols-2 gap-2">
+        <button
+          type="button"
+          className="min-h-11 rounded-lg px-3 text-sm font-black disabled:opacity-60"
+          style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}
+          disabled={Boolean(deciding)}
+          onClick={() => onDecision('accept')}
+        >
+          {deciding === 'accept' ? 'Adjusting...' : 'Adjust plan'}
+        </button>
+        <button
+          type="button"
+          className="min-h-11 rounded-lg px-3 text-sm font-bold disabled:opacity-60"
+          style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}
+          disabled={Boolean(deciding)}
+          onClick={() => onDecision('keep')}
+        >
+          {deciding === 'keep' ? 'Saving...' : 'Leave as is'}
+        </button>
+      </div>
+    </section>
+  )
+}
+
 export default function Dashboard() {
   const navigate = useNavigate()
   const location = useLocation()
@@ -115,6 +172,10 @@ export default function Dashboard() {
   const [readinessState, setReadinessState] = useState({ loading: true, error: false, locked: false, data: null })
   const [healthSyncNotice, setHealthSyncNotice] = useState('')
   const [upcomingSocialRun, setUpcomingSocialRun] = useState(null)
+  const [trainingGapProposal, setTrainingGapProposal] = useState(null)
+  const [trainingGapDecision, setTrainingGapDecision] = useState(null)
+  const [trainingGapError, setTrainingGapError] = useState('')
+  const [trainingGapNotice, setTrainingGapNotice] = useState('')
   const { isOnline, queueCount } = useOnlineStatus()
   const { isPro, loading: proLoading } = useProContext()
 
@@ -135,7 +196,7 @@ export default function Dashboard() {
 
   const fetchDashboardData = useCallback(async () => {
     try {
-        const [statsRes, runsRes, liftsRes, warningRes, checkinRes, goalRes, streakRes, milestoneRes, complianceRes, loadRes, nextRaceRes, gearRes, injuryRes, recapRes, recommendationRes, ageGradedRes, executionRes, groupRunsRes] = await Promise.all([
+        const [statsRes, runsRes, liftsRes, warningRes, checkinRes, goalRes, streakRes, milestoneRes, complianceRes, loadRes, nextRaceRes, gearRes, injuryRes, recapRes, recommendationRes, ageGradedRes, executionRes, groupRunsRes, adaptationRes] = await Promise.all([
           api.get('/auth/me/stats'),
           api.get('/runs', { params: { limit: 5 } }),
           api.get('/lifts'),
@@ -159,6 +220,10 @@ export default function Dashboard() {
           api.get('/group-runs').catch((error) => {
             console.error('[Dashboard] group run reminder fetch failed:', error?.message || error)
             return { data: { group_runs: [] } }
+          }),
+          api.get('/plans/adaptation/current', { params: { date: localDateISO() } }).catch((error) => {
+            console.error('[Dashboard] training gap check failed:', error?.message || error)
+            return { data: { proposal: null } }
           }),
         ])
         setExecution(executionRes || null)
@@ -208,6 +273,12 @@ export default function Dashboard() {
         setWeeklyCalories(recapRes.data?.totalCalories || 0)
         setNextRecommendation(recommendationRes.data || null)
         setAgeGradedPerformance(ageGradedRes.data || null)
+        const nextProposal = adaptationRes.data?.proposal || null
+        const pendingGap = trainingGapEvidence(nextProposal)
+          && nextProposal?.status === 'proposal'
+          && (nextProposal?.changes || []).length > 0
+          && !['accepted', 'kept'].includes(nextProposal?.decisionStatus)
+        setTrainingGapProposal(pendingGap ? nextProposal : null)
         const isSunday = new Date().getDay() === 0
         const weekKey = `recap-seen-${getWeekKey()}`
         if (isSunday && localStorage.getItem(weekKey) !== '1') {
@@ -601,6 +672,22 @@ export default function Dashboard() {
     navigate(`/log-run${params.toString() ? `?${params.toString()}` : ''}`)
   }, [navigate, nextRecommendation, execution, calendarRec, calendarOwnsToday])
 
+  const decideTrainingGap = useCallback(async (decision) => {
+    if (!trainingGapProposal?.id || !['accept', 'keep'].includes(decision)) return
+    setTrainingGapDecision(decision)
+    setTrainingGapError('')
+    try {
+      await api.post(`/plans/adaptation/${trainingGapProposal.id}/${decision}`)
+      setTrainingGapProposal(null)
+      setTrainingGapNotice(decision === 'accept' ? 'Plan adjusted for a safer return.' : 'Calendar left as planned.')
+      if (decision === 'accept') await fetchDashboardData()
+    } catch (error) {
+      setTrainingGapError(error?.response?.data?.error || 'Could not save that choice. Please try again.')
+    } finally {
+      setTrainingGapDecision(null)
+    }
+  }, [fetchDashboardData, trainingGapProposal])
+
   if (loading) return <div className="space-y-4"><LoadingRunner message="Getting ready" /><Skeleton rows={3} /></div>
 
   return (
@@ -608,6 +695,12 @@ export default function Dashboard() {
       {showSyncedFlash && (
         <div className="rounded-xl p-2 text-sm font-semibold" style={{ background: 'rgba(34,197,94,0.18)', border: '1px solid rgba(34,197,94,0.45)', color: '#16a34a' }}>
           Synced!
+        </div>
+      )}
+      {trainingGapNotice && (
+        <div className="flex min-h-11 items-center justify-between gap-3 rounded-xl px-3 py-2 text-sm font-semibold" style={{ background: 'var(--accent-dim)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}>
+          <span>{trainingGapNotice}</span>
+          <button type="button" aria-label="Dismiss plan update" onClick={() => setTrainingGapNotice('')} className="shrink-0 rounded-md p-1" style={{ background: 'transparent', color: 'var(--text-muted)' }}><X size={16} /></button>
         </div>
       )}
       {(!isOnline || queueCount > 0) && (
@@ -688,6 +781,13 @@ export default function Dashboard() {
           </div>
         </div>
       )}
+
+      <TrainingGapPrompt
+        proposal={trainingGapProposal}
+        deciding={trainingGapDecision}
+        error={trainingGapError}
+        onDecision={decideTrainingGap}
+      />
 
       <DailyCoachFlow /* H5: effectiveRecommendation prefers calendar */
         checkedInToday={checkedInToday}

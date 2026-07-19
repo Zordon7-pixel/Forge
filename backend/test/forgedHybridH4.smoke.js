@@ -143,6 +143,74 @@ const suspectSleep = adaptation.buildAdaptationProposal({
 });
 assert(!suspectSleep.evidence.some((item) => item.source === 'apple_health' && item.objective), 'suspect sleep-only metric is not an objective driver');
 
+section('adaptive training-gap consent');
+const trainingGapPlan = clone(army);
+setHardRun(trainingGapPlan, '2026-07-14', 'gap-hard-run');
+const trainingGap = adaptation.buildAdaptationProposal({
+  plan: trainingGapPlan,
+  planningDateISO: '2026-07-13',
+  completion: {
+    daysInactive: 5,
+    lastActivityDate: '2026-07-08',
+    missedWorkouts: 0,
+    isPlanStartWindow: true,
+    gapPromptEnabled: true,
+    freshness: 'recent',
+  },
+});
+assert(trainingGap.status === 'proposal' && trainingGap.changes.length > 0, 'established adaptive athlete gets a pre-plan gap proposal before a demanding run');
+assert(trainingGap.headline === 'Everything okay?' && trainingGap.evidence.some((item) => item.signal === 'training_gap' && item.daysInactive === 5), 'training-gap proposal carries user-facing gap evidence');
+assert(trainingGap.reason.includes('leave the calendar exactly as it is'), 'training-gap proposal preserves explicit consent');
+
+const optedOutGap = adaptation.buildAdaptationProposal({
+  plan: trainingGapPlan,
+  planningDateISO: '2026-07-13',
+  completion: {
+    daysInactive: 5,
+    missedWorkouts: 0,
+    isPlanStartWindow: true,
+    gapPromptEnabled: false,
+  },
+});
+assert(optedOutGap.status === 'keep' && optedOutGap.changes.length === 0, 'structured or skip preference does not create an inactivity adjustment');
+
+const missedGap = adaptation.buildAdaptationProposal({
+  plan: trainingGapPlan,
+  planningDateISO: '2026-07-13',
+  completion: {
+    daysInactive: 3,
+    missedRuns: 1,
+    missedWorkouts: 1,
+    isPlanStartWindow: false,
+    gapPromptEnabled: true,
+  },
+});
+assert(missedGap.status === 'proposal' && missedGap.evidence.some((item) => item.signal === 'training_gap'), 'one missed scheduled session plus a three-day gap is enough to ask');
+
+const plannedRestGap = adaptation.buildAdaptationProposal({
+  plan: trainingGapPlan,
+  planningDateISO: '2026-07-13',
+  completion: {
+    daysInactive: 4,
+    missedWorkouts: 0,
+    isPlanStartWindow: false,
+    gapPromptEnabled: true,
+  },
+});
+assert(plannedRestGap.status === 'keep' && plannedRestGap.changes.length === 0, 'planned rest days do not create a false inactivity prompt mid-plan');
+
+const noHistoryGap = adaptation.buildAdaptationProposal({
+  plan: trainingGapPlan,
+  planningDateISO: '2026-07-13',
+  completion: {
+    daysInactive: null,
+    missedWorkouts: 1,
+    isPlanStartWindow: true,
+    gapPromptEnabled: true,
+  },
+});
+assert(noHistoryGap.status === 'keep' && noHistoryGap.changes.length === 0, 'a new athlete with no activity history is not labelled inactive');
+
 section('objective and subjective evidence labels');
 const labelled = adaptation.buildAdaptationProposal({
   plan: army,
