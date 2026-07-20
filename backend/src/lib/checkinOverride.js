@@ -14,12 +14,12 @@ function normalizeAxis(value) {
   return Number.isInteger(parsed) && parsed >= 1 && parsed <= 3 ? parsed : null;
 }
 
-function hasAxes(checkin = {}) {
-  return normalizeAxis(checkin.legs) !== null && normalizeAxis(checkin.drive) !== null;
+function hasLegSignal(checkin = {}) {
+  return normalizeAxis(checkin.legs) !== null;
 }
 
 function hasLowDrive(checkin = {}) {
-  return hasAxes(checkin) && normalizeAxis(checkin.drive) === 1;
+  return normalizeAxis(checkin.drive) === 1;
 }
 
 function parsePaceMinutes(value) {
@@ -48,7 +48,7 @@ function estimateWorkoutMinutes(day = {}) {
 function deriveAction(checkin = {}) {
   const feeling = Number(checkin.feeling || 3);
   const legs = normalizeAxis(checkin.legs);
-  const usesAxes = hasAxes(checkin);
+  const usesLegSignal = hasLegSignal(checkin);
   const timeAvailable = Number(checkin.time_available || 60);
   const sleepHours = checkin.sleep_hours === null || checkin.sleep_hours === undefined || checkin.sleep_hours === ''
     ? null
@@ -56,11 +56,11 @@ function deriveAction(checkin = {}) {
   const flags = parseLifeFlags(checkin.life_flags);
   const hasFlag = (flag) => flags.includes(flag);
 
-  if (hasFlag('sick') || hasFlag('injured') || (!usesAxes && feeling <= 1) || (sleepHours !== null && sleepHours < 4.5)) {
+  if (hasFlag('sick') || hasFlag('injured') || (!usesLegSignal && feeling <= 1) || (sleepHours !== null && sleepHours < 4.5)) {
     return 'rest';
   }
 
-  if ((usesAxes && legs === 1) || (!usesAxes && feeling <= 2) || hasFlag('sore') || (sleepHours !== null && sleepHours < 6)) {
+  if ((usesLegSignal && legs === 1) || (!usesLegSignal && feeling <= 2) || hasFlag('sore') || (sleepHours !== null && sleepHours < 6)) {
     return 'recovery_swap';
   }
 
@@ -196,7 +196,7 @@ function buildDirective(checkin = {}, action = 'keep', patch = {}, hasWorkoutTod
   const feeling = Number(checkin.feeling || 3);
   const legs = normalizeAxis(checkin.legs);
   const drive = normalizeAxis(checkin.drive);
-  const usesAxes = hasAxes(checkin);
+  const usesLegSignal = hasLegSignal(checkin);
   const timeAvailable = Number(checkin.time_available || 60);
   const sleepHours = checkin.sleep_hours === null || checkin.sleep_hours === undefined || checkin.sleep_hours === ''
     ? null
@@ -216,14 +216,14 @@ function buildDirective(checkin = {}, action = 'keep', patch = {}, hasWorkoutTod
   const adjustedDistance = firstNumericValue(['distance_miles', 'distance', 'miles']);
   const formatMiles = (miles) => `${miles} ${miles === 1 ? 'mile' : 'miles'}`;
 
-  if (usesAxes && legs <= 2) {
+  if (usesLegSignal && legs <= 2) {
     drivers.push({
       label: legs === 1 ? 'Legs heavy' : 'Legs okay',
       detail: legs === 1
         ? 'You checked in with heavy legs, so today shifts away from loading tired tissue.'
         : 'Your legs are not fully fresh, so today avoids adding unnecessary physical strain.',
     });
-  } else if (!usesAxes && feeling <= 2) {
+  } else if (!usesLegSignal && feeling <= 2) {
     drivers.push({
       label: 'Low feeling',
       detail: feeling <= 1
@@ -232,7 +232,7 @@ function buildDirective(checkin = {}, action = 'keep', patch = {}, hasWorkoutTod
     });
   }
 
-  if (usesAxes && drive === 1) {
+  if (drive === 1) {
     drivers.push({
       label: 'Low drive',
       detail: 'You checked in flat, so today should stay controlled and avoid forcing hard intensity.',
@@ -301,7 +301,7 @@ function buildDirective(checkin = {}, action = 'keep', patch = {}, hasWorkoutTod
   } else if (action === 'rest') {
     headline = 'Rest today, recovery comes first';
   } else if (action === 'recovery_swap') {
-    const reason = usesAxes && legs === 1 ? 'legs are heavy' : 'you are carrying fatigue';
+    const reason = usesLegSignal && legs === 1 ? 'legs are heavy' : 'you are carrying fatigue';
     if (adjustedMinutes) headline = `Easy ${adjustedMinutes} min today, ${reason}`;
     else if (adjustedDistance) headline = `Easy ${formatMiles(adjustedDistance)} today, ${reason}`;
     else headline = `Easy recovery session today, ${reason}`;
@@ -311,13 +311,13 @@ function buildDirective(checkin = {}, action = 'keep', patch = {}, hasWorkoutTod
     else headline = 'Shorten today, protect the streak';
   }
 
-  if (usesAxes && drive === 1 && hasWorkoutToday && (action === 'keep' || action === 'shorten')) {
+  if (drive === 1 && hasWorkoutToday && (action === 'keep' || action === 'shorten')) {
     headline = action === 'shorten'
       ? `${headline}, keep it easy`
       : 'Keep today easy, drive is low';
   }
 
-  if (readinessDelta > 0 && action === 'keep' && hasWorkoutToday && !(usesAxes && drive === 1)) {
+  if (readinessDelta > 0 && action === 'keep' && hasWorkoutToday && drive !== 1) {
     headline = 'Keep today as planned, readiness looks good';
   }
 
