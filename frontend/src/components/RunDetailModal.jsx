@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, X, Brain, Gauge, MapPin, Trash2 } from 'lucide-react'
+import { ArrowLeft, X, Brain, Gauge, MapPin, Share2, Trash2 } from 'lucide-react'
 import { CircleMarker, MapContainer, Polyline, TileLayer, useMap } from 'react-leaflet'
 import api from '../lib/api'
 import { useUnits } from '../context/UnitsContext'
@@ -7,6 +7,7 @@ import AiGuidanceNote from './AiGuidanceNote'
 import { Link } from 'react-router-dom'
 import { activityLabel, isRunningActivity } from '../lib/activityType'
 import { buildRunComparison, formatPlannedPaceTarget, normalizeRunSplits, parseRunRoute, parseZoneTimeline } from '../lib/runRecap'
+import ActivityShareStudio from './ActivityShareStudio'
 
 function fmtDuration(totalSeconds = 0) {
   const h = Math.floor(totalSeconds / 3600)
@@ -93,6 +94,7 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
   const [feedback, setFeedback] = useState(run.ai_feedback || '')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [shareOpen, setShareOpen] = useState(false)
 
   const generateFeedback = async () => {
     setLoading(true)
@@ -292,6 +294,12 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
             </div>
           ))}
         </div>
+
+        {isRun && (
+          <button type="button" onClick={() => setShareOpen(true)} className="pressable mb-5 flex w-full items-center justify-center gap-2 rounded-xl py-3 text-sm font-black" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>
+            <Share2 size={18} /> Share run recap
+          </button>
+        )}
 
         {isRun && hasCalculatedEffort && (
           <div className="mb-5 rounded-xl p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
@@ -495,6 +503,7 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
           </button>
         )}
       </div>
+      {shareOpen && <ActivityShareStudio run={run} onClose={() => setShareOpen(false)} />}
     </div>
   )
 }

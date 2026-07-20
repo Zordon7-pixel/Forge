@@ -2,6 +2,7 @@ import Capacitor
 import CoreLocation
 import Foundation
 import HealthKit
+import UserNotifications
 
 @objc(ForgeHealthPlugin)
 public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
@@ -16,6 +17,13 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
 
     private let healthStore = HKHealthStore()
     private let workoutAnchorKey = "forge.healthkit.workoutHistoryAnchor"
+    private let observedWorkoutEndKey = "forge.healthkit.lastObservedWorkoutEnd"
+    private var workoutObserverQuery: HKObserverQuery?
+
+    public override func load() {
+        super.load()
+        startWorkoutObserver()
+    }
 
     private var readTypes: Set<HKObjectType> {
         var types = Set<HKObjectType>()
@@ -77,7 +85,88 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
                 call.reject(error.localizedDescription)
                 return
             }
+            if success {
+                self.startWorkoutObserver()
+                self.requestActivityNotificationPermission()
+            }
             call.resolve(["authorized": success])
+        }
+    }
+
+    private func startWorkoutObserver() {
+        guard HKHealthStore.isHealthDataAvailable() else { return }
+        DispatchQueue.main.async {
+            let workoutType = HKObjectType.workoutType()
+            if self.workoutObserverQuery == nil {
+                let query = HKObserverQuery(sampleType: workoutType, predicate: nil) { _, completionHandler, error in
+                    if let error = error {
+                        NSLog("ForgeHealthPlugin workout observer failed: %@", error.localizedDescription)
+                        completionHandler()
+                        return
+                    }
+                    self.handleObservedWorkout(completionHandler: completionHandler)
+                }
+                self.workoutObserverQuery = query
+                self.healthStore.execute(query)
+            }
+            self.healthStore.enableBackgroundDelivery(for: workoutType, frequency: .immediate) { success, error in
+                if let error = error {
+                    NSLog("ForgeHealthPlugin background delivery failed: %@", error.localizedDescription)
+                } else if !success {
+                    NSLog("ForgeHealthPlugin background delivery was not enabled")
+                }
+            }
+        }
+    }
+
+    private func handleObservedWorkout(completionHandler: @escaping () -> Void) {
+        let workoutType = HKObjectType.workoutType()
+        let sort = NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: false)
+        let query = HKSampleQuery(sampleType: workoutType, predicate: nil, limit: 1, sortDescriptors: [sort]) { _, samples, error in
+            defer { completionHandler() }
+            if let error = error {
+                NSLog("ForgeHealthPlugin latest workout lookup failed: %@", error.localizedDescription)
+                return
+            }
+            guard let workout = samples?.first as? HKWorkout else { return }
+            let previousEnd = UserDefaults.standard.double(forKey: self.observedWorkoutEndKey)
+            let currentEnd = workout.endDate.timeIntervalSince1970
+            UserDefaults.standard.set(currentEnd, forKey: self.observedWorkoutEndKey)
+            guard previousEnd > 0, currentEnd > previousEnd + 1 else { return }
+
+            let workoutType = self.workoutTypeName(workout.workoutActivityType)
+            self.notifyListeners("workoutObserved", data: [
+                "type": workoutType,
+                "endedAt": self.isoDateTime(workout.endDate)
+            ], retainUntilConsumed: true)
+            self.scheduleWorkoutReadyNotification(workoutType: workoutType)
+        }
+        healthStore.execute(query)
+    }
+
+    private func requestActivityNotificationPermission() {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, error in
+            if let error = error {
+                NSLog("ForgeHealthPlugin notification authorization failed: %@", error.localizedDescription)
+            }
+        }
+    }
+
+    private func scheduleWorkoutReadyNotification(workoutType: String) {
+        let center = UNUserNotificationCenter.current()
+        center.getNotificationSettings { settings in
+            guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else { return }
+            let content = UNMutableNotificationContent()
+            content.title = "Workout ready"
+            content.body = "Your latest \(workoutType) is ready to sync and review in Forged Hybrid."
+            content.sound = .default
+            content.userInfo = ["path": "/history"]
+            let request = UNNotificationRequest(identifier: "forge-health-\(UUID().uuidString)", content: content, trigger: nil)
+            center.add(request) { error in
+                if let error = error {
+                    NSLog("ForgeHealthPlugin workout notification failed: %@", error.localizedDescription)
+                }
+            }
         }
     }
 

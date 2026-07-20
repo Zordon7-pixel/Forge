@@ -2,21 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useProContext } from '../context/ProContext'
 import api from '../lib/api'
-
-const DISTANCE_OPTIONS = {
-  '5K': 3.1,
-  '10K': 6.2,
-  Half: 13.1,
-  Full: 26.2,
-  Other: null,
-}
-
-const CATALOG_DISTANCE_OPTIONS = [
-  ['5K', 3.1],
-  ['10K', 6.2],
-  ['Half', 13.1],
-  ['Marathon', 26.2],
-]
+import { RACE_DISTANCE_OPTIONS, STANDARD_RACE_DISTANCES } from '../lib/raceDistances'
 
 function daysTo(date) {
   const ms = new Date(`${date}T12:00:00`).getTime() - Date.now()
@@ -173,7 +159,7 @@ export default function Races() {
   const navigate = useNavigate()
   const { isPro } = useProContext()
   const [races, setRaces] = useState([])
-  const [form, setForm] = useState({ race_name: '', race_date: '', distance_key: '5K', distance_miles: 3.1, location: '', goal_time: '' })
+  const [form, setForm] = useState({ race_name: '', race_date: '', distance_key: '5K', distance_miles: RACE_DISTANCE_OPTIONS['5K'], location: '', goal_time: '' })
   const [catalogForm, setCatalogForm] = useState({ q: '', distance: '', month: '', state: '' })
   const [catalogRaces, setCatalogRaces] = useState([])
   const [catalogSearched, setCatalogSearched] = useState(false)
@@ -209,7 +195,7 @@ export default function Races() {
     setMessage('Race added')
     const race = res.data.race
     setPlanPromptRace(race)
-    setForm({ race_name: '', race_date: '', distance_key: '5K', distance_miles: 3.1, location: '', goal_time: '' })
+    setForm({ race_name: '', race_date: '', distance_key: '5K', distance_miles: RACE_DISTANCE_OPTIONS['5K'], location: '', goal_time: '' })
     load()
   }
 
@@ -312,7 +298,7 @@ export default function Races() {
             onChange={(e) => setCatalogForm({ ...catalogForm, q: e.target.value })}
           />
           <div className="flex flex-wrap gap-2">
-            {CATALOG_DISTANCE_OPTIONS.map(([label, miles]) => {
+            {STANDARD_RACE_DISTANCES.map(({ label, miles }) => {
               const active = String(catalogForm.distance) === String(miles)
               return (
                 <button
@@ -411,9 +397,9 @@ export default function Races() {
         <div className="grid grid-cols-2 gap-2">
           <select className="rounded-lg px-3 py-2" style={{ background: 'var(--bg-input)' }} value={form.distance_key} onChange={(e) => {
             const key = e.target.value
-            setForm({ ...form, distance_key: key, distance_miles: DISTANCE_OPTIONS[key] ?? form.distance_miles })
+            setForm({ ...form, distance_key: key, distance_miles: RACE_DISTANCE_OPTIONS[key] ?? form.distance_miles })
           }}>
-            {Object.keys(DISTANCE_OPTIONS).map((k) => <option key={k}>{k}</option>)}
+            {Object.keys(RACE_DISTANCE_OPTIONS).map((k) => <option key={k}>{k}</option>)}
           </select>
           <input type="number" min="0.1" max="100" step="0.1" className="rounded-lg px-3 py-2" style={{ background: 'var(--bg-input)' }} placeholder="Miles" value={form.distance_miles} onChange={(e) => setForm({ ...form, distance_miles: e.target.value })} required />
         </div>

@@ -617,6 +617,22 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
   UNIQUE(user_id, endpoint)
 );
 
+CREATE TABLE IF NOT EXISTS user_notifications (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  type TEXT NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  href TEXT,
+  source_key TEXT NOT NULL,
+  read_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(user_id, source_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_notifications_user_unread
+  ON user_notifications(user_id, read_at, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS daily_checkins (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,

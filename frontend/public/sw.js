@@ -1,4 +1,4 @@
-const CACHE = 'forge-v3';
+const CACHE = 'forge-v4';
 const API_CACHE = 'forge-api-v1';
 const STATIC = ['/'];
 const API_GET_CACHE_PATHS = ['/api/user', '/api/workouts/recent'];
@@ -18,6 +18,43 @@ self.addEventListener('activate', (event) => {
     )
   );
   self.clients.claim();
+});
+
+self.addEventListener('push', (event) => {
+  let payload = {};
+  try {
+    payload = event.data ? event.data.json() : {};
+  } catch (error) {
+    console.error('[service-worker/push] payload parse failed:', error?.message || error);
+    payload = { title: 'Forged Hybrid', body: event.data?.text?.() || 'A new activity is ready to review.' };
+  }
+  const title = String(payload.title || 'Forged Hybrid').slice(0, 80);
+  const body = String(payload.body || 'A new activity is ready to review.').slice(0, 240);
+  const url = typeof payload.url === 'string' && payload.url.startsWith('/') ? payload.url : '/';
+  event.waitUntil(Promise.all([
+    self.registration.showNotification(title, {
+      body,
+      icon: '/icon-192.png',
+      badge: '/icon-192.png',
+      tag: payload.notificationId || payload.type || 'forged-hybrid-activity',
+      data: { url },
+    }),
+    notifyClients('FORGED_NOTIFICATION_RECEIVED', { notificationId: payload.notificationId || null }),
+  ]));
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const targetUrl = new URL(event.notification.data?.url || '/', self.location.origin).href;
+  event.waitUntil((async () => {
+    const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    const existing = windows.find((client) => client.url.startsWith(self.location.origin));
+    if (existing) {
+      await existing.navigate(targetUrl);
+      return existing.focus();
+    }
+    return self.clients.openWindow(targetUrl);
+  })());
 });
 
 function openDb() {

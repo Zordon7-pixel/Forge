@@ -37,7 +37,9 @@ async function sendToUser(userId, payload = {}) {
     } catch (err) {
       const code = Number(err?.statusCode || 0);
       if (code === 404 || code === 410) {
-        await dbRun('DELETE FROM push_subscriptions WHERE id = ?', [sub.id]);
+        await dbRun('DELETE FROM push_subscriptions WHERE id = ? AND user_id = ?', [sub.id, userId]);
+      } else {
+        console.error('[push/send] delivery failed:', err?.message || err);
       }
     }
   }

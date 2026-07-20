@@ -368,6 +368,11 @@ class HealthService {
     markAutoHealthSyncAttempted()
   }
 
+  addWorkoutObserverListener(callback) {
+    if (!isNativeRuntime() || typeof ForgeHealth.addListener !== 'function') return null
+    return ForgeHealth.addListener('workoutObserved', callback)
+  }
+
   async getWorkoutHistory(options = {}) {
     if (!isNativeRuntime()) {
       return { available: false, reason: 'Apple Health workout history requires the native iOS app.', workouts: [] }

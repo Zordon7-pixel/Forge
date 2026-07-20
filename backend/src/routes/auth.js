@@ -274,9 +274,20 @@ router.put('/me/profile', auth, async (req, res) => {
       units ?? null,
       req.user.id
     ]);
-    const user = await dbGet('SELECT * FROM users WHERE id = ?', [req.user.id]);
+    const user = await dbGet(
+      `SELECT id, name, email, onboarded, coach_personality, age, weight_lbs, max_heart_rate,
+       weekly_miles_current, goal_type, goal_race_date, goal_race_distance, injury_notes,
+       comeback_mode, run_days_per_week, lift_days_per_week, sex, schedule_type, lifestyle,
+       preferred_workout_time, preferred_workout_days, missed_workout_pref,
+       weekly_workout_days, units, is_pro, subscription_status
+       FROM users WHERE id = ?`,
+      [req.user.id]
+    );
     res.json({ token: sign(user), user });
-  } catch (err) { res.status(500).json({ error: 'Profile update failed' }); }
+  } catch (err) {
+    console.error('[auth/profile] update failed:', err.message);
+    res.status(500).json({ error: 'Profile update failed' });
+  }
 });
 
 router.post('/injury', auth, async (req, res) => {

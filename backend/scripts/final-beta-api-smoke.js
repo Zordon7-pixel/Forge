@@ -144,6 +144,7 @@ async function main() {
     },
   });
   assert.equal(profileUpdate.data?.user?.name, 'Codex Alpha Updated');
+  assert.equal(Object.hasOwn(profileUpdate.data?.user || {}, 'password_hash'), false);
   const profile = await api('GET', '/api/auth/me', { token: alpha.token });
   assert.equal(profile.data?.user?.age, 35);
   assert.equal(profile.data?.user?.waiver_current, true);

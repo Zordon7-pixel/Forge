@@ -50,6 +50,26 @@ export const RELEASES = Object.freeze([
     minAndroidBuild: null,
     audience: 'all',
   }),
+  Object.freeze({
+    id: 'share-the-work',
+    sequence: 3,
+    publishedAt: '2026-07-20',
+    titleKey: 'whatsNew.releases.shareTheWork.title',
+    summaryKey: 'whatsNew.releases.shareTheWork.summary',
+    highlightKeys: Object.freeze([
+      'whatsNew.releases.shareTheWork.cards',
+      'whatsNew.releases.shareTheWork.races',
+      'whatsNew.releases.shareTheWork.sync',
+    ]),
+    cta: Object.freeze({
+      labelKey: 'whatsNew.releases.shareTheWork.cta',
+      to: '/history',
+    }),
+    delivery: 'web',
+    minIosBuild: null,
+    minAndroidBuild: null,
+    audience: 'all',
+  }),
 ])
 
 export function isAllowedReleaseCta(path = '') {

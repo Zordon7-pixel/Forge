@@ -33,6 +33,22 @@ async function runAlwaysMigrations() {
   await pg.query('CREATE INDEX IF NOT EXISTS idx_exercise_image_requests_status_seen ON exercise_image_requests(status, last_seen_at DESC)');
 
   await pg.query(`
+    CREATE TABLE IF NOT EXISTS user_notifications (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      type TEXT NOT NULL,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      href TEXT,
+      source_key TEXT NOT NULL,
+      read_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(user_id, source_key)
+    )
+  `);
+  await pg.query('CREATE INDEX IF NOT EXISTS idx_user_notifications_user_unread ON user_notifications(user_id, read_at, created_at DESC)');
+
+  await pg.query(`
     CREATE TABLE IF NOT EXISTS shoe_catalog (
       id TEXT PRIMARY KEY,
       brand TEXT NOT NULL,

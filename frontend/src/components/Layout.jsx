@@ -8,6 +8,7 @@ import PullToRefresh from './PullToRefresh'
 import FeedbackButton from './FeedbackButton'
 import SwipeBackGesture from './SwipeBackGesture'
 import { ReleaseNotesProvider } from '../context/ReleaseNotesContext'
+import SyncNotificationBanner from './SyncNotificationBanner'
 
 // hex required: consumed by `${color}XX` alpha templates — do not tokenize
 const NAV_ITEMS = (t) => [
@@ -109,7 +110,7 @@ export default function Layout({ children }) {
           <main className="pb-0 pt-0" style={{ minWidth: 0 }}>{children}</main>
         ) : (
           <PullToRefresh>
-            <main className="pb-24 pt-4" style={{ minWidth: 0 }}>{children}</main>
+            <main className="pb-24 pt-4" style={{ minWidth: 0 }}><SyncNotificationBanner />{children}</main>
           </PullToRefresh>
         )}
       </div>

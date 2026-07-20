@@ -111,12 +111,12 @@ function AutoHealthSync() {
     let cancelled = false
     const listenerHandles = []
 
-    const sync = async ({ force = false } = {}) => {
+    const sync = async ({ force = false, bypassInterval = false } = {}) => {
       if (cancelled || syncInFlightRef.current || !isLoggedIn()) return
 
       const now = Date.now()
       if (force && now - lastForegroundSyncAtRef.current < AUTO_HEALTH_SYNC_MIN_INTERVAL_MS) return
-      if (!shouldAttemptSync()) return
+      if (!bypassInterval && !shouldAttemptSync()) return
 
       if (force) lastForegroundSyncAtRef.current = now
       syncInFlightRef.current = true
@@ -142,8 +142,9 @@ function AutoHealthSync() {
         if (isActive) sync({ force: true })
       })
       const resumeHandle = CapacitorApp.addListener('resume', () => sync({ force: true }))
+      const workoutHandle = HealthService.addWorkoutObserverListener(() => sync({ force: true, bypassInterval: true }))
 
-      Promise.all([appStateHandle, resumeHandle])
+      Promise.all([appStateHandle, resumeHandle, workoutHandle].filter(Boolean))
         .then((handles) => {
           if (cancelled) {
             handles.forEach((handle) => handle?.remove?.())

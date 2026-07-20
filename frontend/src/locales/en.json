@@ -413,6 +413,14 @@
         "rotation": "See per-shoe mileage and practical wear-inspection reminders.",
         "pick": "Choose a run type and surface to get a deterministic top pick with alternatives and reasons.",
         "cta": "Open Forged Closet"
+      },
+      "shareTheWork": {
+        "title": "Share the work",
+        "summary": "Turn a completed run into a Forged Hybrid card and keep connected activities moving in the background.",
+        "cards": "Choose a route, training-log, or photo card and share it through your phone's share sheet.",
+        "races": "Set standard race targets from the mile through the marathon, or enter a custom distance.",
+        "sync": "Connected Strava runs now sync automatically and appear as an in-app alert when ready.",
+        "cta": "Open run history"
       }
     }
   },

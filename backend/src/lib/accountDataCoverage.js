@@ -54,6 +54,7 @@ const ACCOUNT_EXPORT_TABLES = [
   { key: 'readiness_scores', table: 'readiness_scores', orderBy: 'score_date DESC' },
   { key: 'user_hr_profile', table: 'user_hr_profile', orderBy: 'updated_at DESC' },
   { key: 'push_subscriptions', table: 'push_subscriptions', columns: 'id, user_id, endpoint, created_at', orderBy: 'created_at DESC' },
+  { key: 'user_notifications', table: 'user_notifications', orderBy: 'created_at DESC' },
   { key: 'custom_exercises', table: 'exercises', where: 'created_by_user_id = ?', columns: 'id, name, muscle_group, secondary_muscles, instructions, how_to_image_url, is_system, created_by_user_id, approved, created_at', orderBy: 'created_at DESC' },
   { key: 'strava_connection', table: 'strava_tokens', columns: 'user_id, expires_at, athlete_id, athlete_name, connected_at', orderBy: 'connected_at DESC' },
   { key: 'whoop_connection', table: 'whoop_tokens', columns: 'user_id, whoop_user_id, display_name, connected_at, updated_at', orderBy: 'connected_at DESC' },
@@ -78,6 +79,7 @@ const ACCOUNT_SOCIAL_DELETE_QUERIES = [
 const ACCOUNT_DELETE_QUERIES = [
   ['DELETE FROM password_reset_tokens WHERE user_id = ?', [0]],
   ['DELETE FROM push_subscriptions WHERE user_id = ?', [0]],
+  ['DELETE FROM user_notifications WHERE user_id = ?', [0]],
   ['DELETE FROM ai_usage WHERE user_id = ?', [0]],
   ['DELETE FROM readiness_scores WHERE user_id = ?', [0]],
   ['DELETE FROM app_feedback WHERE user_id = ?', [0]],

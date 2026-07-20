@@ -1,16 +1,28 @@
 const crypto = require('crypto');
 const router = require('express').Router();
+const rateLimit = require('express-rate-limit');
 
 const { dbGet, dbRun, withUserMutation } = require('../db');
 const auth = require('../middleware/auth');
 const { chooseMatchingHealthRun, normalizeStravaRun } = require('../lib/stravaActivity');
 const autoUpdatePRs = require('../services/prAuto');
+const { createUserNotification } = require('../services/notifications');
+const { getWebhookVerifyToken, normalizeWebhookEvent, verifyWebhookToken } = require('../lib/stravaWebhook');
 
 const STRAVA_AUTH_URL = 'https://www.strava.com/oauth/authorize';
 const STRAVA_TOKEN_URL = 'https://www.strava.com/oauth/token';
 const STRAVA_ACTIVITIES_URL = 'https://www.strava.com/api/v3/athlete/activities';
+const STRAVA_ACTIVITY_URL = 'https://www.strava.com/api/v3/activities';
+const STRAVA_ATHLETE_URL = 'https://www.strava.com/api/v3/athlete';
 const OAUTH_STATE_TTL_SECONDS = 10 * 60;
 const ENCRYPTION_ALGO = 'aes-256-gcm';
+const webhookLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 300,
+  message: { error: 'Too many webhook events.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 const STRAVA_TOKEN_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS strava_tokens (
@@ -225,6 +237,7 @@ async function enrichRunFromStrava(userId, runId, incoming, query) {
   if (!row) return { changes: 0 };
 
   let metrics = {};
+  let canWriteMetrics = true;
   const storedMetrics = row?.workout_metrics_json;
   if (storedMetrics && typeof storedMetrics === 'object' && !Array.isArray(storedMetrics)) {
     metrics = storedMetrics;
@@ -234,7 +247,7 @@ async function enrichRunFromStrava(userId, runId, incoming, query) {
       metrics = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
     } catch (err) {
       console.error('[strava/sync] workout metrics parse failed:', err.message);
-      metrics = {};
+      canWriteMetrics = false;
     }
   }
 
@@ -266,7 +279,7 @@ async function enrichRunFromStrava(userId, runId, incoming, query) {
        perceived_effort = CASE WHEN ?=1 THEN ? ELSE perceived_effort END,
        avg_heart_rate = CASE WHEN ?=1 THEN ? ELSE avg_heart_rate END,
        calories = CASE WHEN ?=1 THEN ? ELSE calories END,
-       workout_metrics_json = ?
+       workout_metrics_json = CASE WHEN ?=1 THEN ? ELSE workout_metrics_json END
      WHERE id=? AND user_id=?`,
     [
       addRoute ? 1 : 0,
@@ -279,6 +292,7 @@ async function enrichRunFromStrava(userId, runId, incoming, query) {
       incoming.averageHeartRate,
       addCalories ? 1 : 0,
       incoming.calories,
+      canWriteMetrics ? 1 : 0,
       JSON.stringify(metrics),
       runId,
       userId,
@@ -339,6 +353,44 @@ async function fetchStravaActivities(accessToken) {
   }
 
   return Array.isArray(payload) ? payload : [];
+}
+
+async function fetchStravaActivity(accessToken, activityId) {
+  const response = await fetch(`${STRAVA_ACTIVITY_URL}/${encodeURIComponent(activityId)}`, {
+    headers: { Authorization: `Bearer ${String(accessToken || '')}` },
+  });
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch (err) {
+    console.error('[strava] failed to parse activity response:', err.message);
+  }
+  if (!response.ok || !payload) {
+    const message = payload?.message || payload?.error || 'Failed to fetch Strava activity';
+    const err = new Error(String(message));
+    err.status = response.status;
+    throw err;
+  }
+  return payload;
+}
+
+async function fetchStravaAthlete(accessToken) {
+  const response = await fetch(STRAVA_ATHLETE_URL, {
+    headers: { Authorization: `Bearer ${String(accessToken || '')}` },
+  });
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch (err) {
+    console.error('[strava] failed to parse athlete response:', err.message);
+  }
+  if (!response.ok || !payload) {
+    const message = payload?.message || payload?.error || 'Failed to verify Strava athlete';
+    const err = new Error(String(message));
+    err.status = response.status;
+    throw err;
+  }
+  return payload;
 }
 
 async function upsertStravaTokens({ userId, accessToken, refreshToken, expiresAt, athleteId, athleteName, query = null }) {
@@ -404,6 +456,169 @@ async function maybeRefreshAccessToken(userId, tokens) {
     athlete_name: nextAthleteName,
   };
 }
+
+async function syncStravaActivitiesForUser(userId, activities = []) {
+  const runs = activities.filter((activity) => String(activity?.type || activity?.sport_type || '').toLowerCase().includes('run'));
+  const result = await withUserMutation(userId, async (tx) => {
+    let imported = 0;
+    let enriched = 0;
+    const runIds = [];
+
+    for (const activity of runs) {
+      const incoming = normalizeStravaRun(activity);
+      if (!incoming.activityId) continue;
+
+      const matchingHealthRun = await findMatchingAppleHealthRun(userId, incoming, tx);
+      if (matchingHealthRun) {
+        const updateResult = await enrichRunFromStrava(userId, matchingHealthRun.id, incoming, tx);
+        if (Number(updateResult?.changes || 0) > 0) enriched += 1;
+        const syncedRun = await tx.get('SELECT * FROM runs WHERE id=? AND user_id=?', [matchingHealthRun.id, userId]);
+        if (syncedRun) await autoUpdatePRs(userId, syncedRun, { tx });
+        runIds.push(matchingHealthRun.id);
+        continue;
+      }
+
+      const runId = `strava_${userId}_${incoming.activityId}`;
+      const routeJson = JSON.stringify(incoming.routeCoords);
+      const workoutMetrics = { metric_source: 'strava' };
+      if (incoming.routeCoords.length >= 2) workoutMetrics.route_enriched_from_strava = 1;
+      if (incoming.elevationGainFeet !== null) workoutMetrics.elevation_enriched_from_strava = 1;
+      if (incoming.perceivedEffort !== null) workoutMetrics.workout_effort_user_rated = 1;
+      const insertResult = await tx.run(
+        `INSERT INTO runs (
+          id, user_id, date, type, distance_miles, duration_seconds, perceived_effort,
+          calories, notes, watch_mode, watch_activity_type, watch_normalized_type,
+          health_source, health_source_workout_id, health_start_at, health_end_at,
+          avg_heart_rate, elevation_gain, route_coords, workout_metrics_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (id) DO NOTHING`,
+        [
+          runId,
+          userId,
+          incoming.date,
+          'easy',
+          incoming.distanceMiles,
+          incoming.movingSeconds,
+          incoming.perceivedEffort,
+          incoming.calories,
+          `Imported from Strava: ${incoming.name}`,
+          'strava',
+          incoming.activityType,
+          'strava_run',
+          'strava',
+          incoming.activityId,
+          incoming.startDate,
+          incoming.endDate,
+          incoming.averageHeartRate,
+          incoming.elevationGainFeet,
+          routeJson,
+          JSON.stringify(workoutMetrics),
+        ]
+      );
+
+      if (Number(insertResult?.changes || 0) > 0) imported += 1;
+      else {
+        const updateResult = await enrichRunFromStrava(userId, runId, incoming, tx);
+        if (Number(updateResult?.changes || 0) > 0) enriched += 1;
+      }
+      const syncedRun = await tx.get('SELECT * FROM runs WHERE id=? AND user_id=?', [runId, userId]);
+      if (syncedRun) await autoUpdatePRs(userId, syncedRun, { tx });
+      runIds.push(runId);
+    }
+
+    await tx.run('UPDATE strava_tokens SET connected_at = NOW() WHERE user_id = ?', [userId]);
+    return { imported, enriched, runIds };
+  });
+  return { ...result, total: runs.length };
+}
+
+async function confirmStravaDeauthorization(userId, connected) {
+  let tokens = connected;
+  try {
+    tokens = await maybeRefreshAccessToken(userId, connected);
+  } catch (refreshError) {
+    if (![400, 401, 403].includes(Number(refreshError?.status || 0))) throw refreshError;
+  }
+
+  try {
+    await fetchStravaAthlete(tokens.access_token);
+    return false;
+  } catch (error) {
+    if ([401, 403].includes(Number(error?.status || 0))) return true;
+    throw error;
+  }
+}
+
+async function processWebhookEvent(event) {
+  const row = await dbGet(
+    `SELECT user_id, access_token, refresh_token, expires_at, athlete_id, athlete_name
+     FROM strava_tokens
+     WHERE athlete_id = ?`,
+    [event.ownerId]
+  );
+  const connected = decodeStravaTokenRow(row);
+  if (!connected?.user_id) return { ignored: 'unknown_athlete' };
+
+  if (event.objectType === 'athlete' && String(event.updates?.authorized) === 'false') {
+    const deauthorized = await confirmStravaDeauthorization(connected.user_id, connected);
+    if (!deauthorized) {
+      console.warn('[strava/webhook] ignored unconfirmed deauthorization event');
+      return { ignored: 'unconfirmed_deauthorization' };
+    }
+    await dbRun('DELETE FROM strava_tokens WHERE athlete_id = ? AND user_id = ?', [event.ownerId, connected.user_id]);
+    await createUserNotification(connected.user_id, {
+      type: 'connection',
+      title: 'Strava disconnected',
+      body: 'Reconnect Strava to keep background activity sync active.',
+      href: '/more',
+      sourceKey: `strava:deauthorization:${event.ownerId}`,
+    });
+    return { disconnected: true };
+  }
+
+  if (event.objectType !== 'activity' || event.aspectType === 'delete') return { ignored: 'unsupported_event' };
+  let tokens = await maybeRefreshAccessToken(connected.user_id, connected);
+  let activity;
+  try {
+    activity = await fetchStravaActivity(tokens.access_token, event.objectId);
+  } catch (err) {
+    if (Number(err?.status || 0) !== 401) throw err;
+    tokens = await maybeRefreshAccessToken(connected.user_id, { ...tokens, expires_at: 0 });
+    activity = await fetchStravaActivity(tokens.access_token, event.objectId);
+  }
+  const syncResult = await syncStravaActivitiesForUser(connected.user_id, [activity]);
+  const runId = syncResult.runIds?.[0];
+  if (runId && (event.aspectType === 'create' || syncResult.imported > 0 || syncResult.enriched > 0)) {
+    const incoming = normalizeStravaRun(activity);
+    await createUserNotification(connected.user_id, {
+      type: 'activity_synced',
+      title: 'Run synced',
+      body: `${incoming.name} is ready to review in Forged Hybrid.`,
+      href: `/run/recap/${encodeURIComponent(runId)}`,
+      sourceKey: `strava:activity:${event.objectId}`,
+    });
+  }
+  return syncResult;
+}
+
+router.get('/webhook', (req, res) => {
+  const mode = String(req.query['hub.mode'] || '');
+  const challenge = String(req.query['hub.challenge'] || '');
+  const token = String(req.query['hub.verify_token'] || '');
+  if (mode !== 'subscribe' || !challenge || !verifyWebhookToken(token)) {
+    return res.status(403).json({ error: 'Webhook verification failed' });
+  }
+  return res.json({ 'hub.challenge': challenge });
+});
+
+router.post('/webhook', webhookLimiter, (req, res) => {
+  const event = normalizeWebhookEvent(req.body);
+  if (!event) return res.status(400).json({ error: 'Invalid webhook event' });
+  res.status(200).json({ received: true });
+  setImmediate(() => {
+    processWebhookEvent(event).catch((err) => console.error('[strava/webhook] processing failed:', err.message));
+  });
+});
 
 router.get('/auth', auth, async (req, res) => {
   const missing = getMissingStravaEnv();
@@ -567,76 +782,8 @@ router.post('/sync', auth, async (req, res) => {
       }
     }
 
-    const runs = activities.filter((activity) => String(activity?.type || activity?.sport_type || '').toLowerCase().includes('run'));
-    const syncResult = await withUserMutation(req.user.id, async (tx) => {
-      let imported = 0;
-      let enriched = 0;
-
-      for (const activity of runs) {
-        const incoming = normalizeStravaRun(activity);
-        if (!incoming.activityId) continue;
-
-        const matchingHealthRun = await findMatchingAppleHealthRun(req.user.id, incoming, tx);
-        if (matchingHealthRun) {
-          const updateResult = await enrichRunFromStrava(req.user.id, matchingHealthRun.id, incoming, tx);
-          if (Number(updateResult?.changes || 0) > 0) enriched += 1;
-          const syncedRun = await tx.get('SELECT * FROM runs WHERE id=? AND user_id=?', [matchingHealthRun.id, req.user.id]);
-          if (syncedRun) await autoUpdatePRs(req.user.id, syncedRun, { tx });
-          continue;
-        }
-
-        const runId = `strava_${req.user.id}_${incoming.activityId}`;
-        const routeJson = JSON.stringify(incoming.routeCoords);
-        const workoutMetrics = { metric_source: 'strava' };
-        if (incoming.routeCoords.length >= 2) workoutMetrics.route_enriched_from_strava = 1;
-        if (incoming.elevationGainFeet !== null) workoutMetrics.elevation_enriched_from_strava = 1;
-        if (incoming.perceivedEffort !== null) workoutMetrics.workout_effort_user_rated = 1;
-        const insertResult = await tx.run(
-          `INSERT INTO runs (
-            id, user_id, date, type, distance_miles, duration_seconds, perceived_effort,
-            calories, notes, watch_mode, watch_activity_type, watch_normalized_type,
-            health_source, health_source_workout_id, health_start_at, health_end_at,
-            avg_heart_rate, elevation_gain, route_coords, workout_metrics_json
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          ON CONFLICT (id) DO NOTHING`,
-          [
-            runId,
-            req.user.id,
-            incoming.date,
-            'easy',
-            incoming.distanceMiles,
-            incoming.movingSeconds,
-            incoming.perceivedEffort,
-            incoming.calories,
-            `Imported from Strava: ${incoming.name}`,
-            'strava',
-            incoming.activityType,
-            'strava_run',
-            'strava',
-            incoming.activityId,
-            incoming.startDate,
-            incoming.endDate,
-            incoming.averageHeartRate,
-            incoming.elevationGainFeet,
-            routeJson,
-            JSON.stringify(workoutMetrics),
-          ]
-        );
-
-        if (Number(insertResult?.changes || 0) > 0) {
-          imported += 1;
-        } else {
-          await enrichRunFromStrava(req.user.id, runId, incoming, tx);
-        }
-        const syncedRun = await tx.get('SELECT * FROM runs WHERE id=? AND user_id=?', [runId, req.user.id]);
-        if (syncedRun) await autoUpdatePRs(req.user.id, syncedRun, { tx });
-      }
-
-      await tx.run('UPDATE strava_tokens SET connected_at = NOW() WHERE user_id = ?', [req.user.id]);
-      return { imported, enriched };
-    });
-
-    return res.json({ ...syncResult, total: runs.length });
+    const { imported, enriched, total } = await syncStravaActivitiesForUser(req.user.id, activities);
+    return res.json({ imported, enriched, total });
   } catch (err) {
     console.error('[strava/sync] failed:', err.message);
     return res.status(500).json({ error: 'Failed to sync Strava activities' });

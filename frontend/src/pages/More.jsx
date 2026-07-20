@@ -12,6 +12,7 @@ import {
 import { useTranslation } from 'react-i18next'
 import HealthSourceManager from '../components/HealthSourceManager'
 import { useReleaseNotes } from '../context/ReleaseNotesContext'
+import WorkoutNotificationControl from '../components/WorkoutNotificationControl'
 
 const sections = (t) => [
   {
@@ -111,7 +112,10 @@ export default function More() {
           <h2 style={{ color: 'var(--text-muted)', fontSize: 12, fontWeight: 800, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 10 }}>
             Health & data
           </h2>
-          <HealthSourceManager />
+          <div style={{ display: 'grid', gap: 10 }}>
+            <WorkoutNotificationControl />
+            <HealthSourceManager />
+          </div>
         </section>
         <Link
           to="/settings"

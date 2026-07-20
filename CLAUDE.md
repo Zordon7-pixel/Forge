@@ -125,6 +125,8 @@ function sanitize(val, maxLen = 200) {
 | `APP_URL` | For reset email | Base URL used in password reset links |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `SMTP_SECURE` | For reset email | SMTP delivery for forgot-password emails |
 | `EMAIL_FROM` | For reset email | From address for forgot-password emails |
+| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | For web push | Enables background activity alerts in compatible installed web apps; keep the private key server-only |
+| `VAPID_SUBJECT` | No | Contact URI for web push, defaults to `mailto:support@forgeathlete.app` |
 | `PORT` | No | Defaults to 4002 |
 | `HOST` | No | Defaults to `0.0.0.0` on Railway, `127.0.0.1` locally |
 | `FORGE_BETA_ACCESS` | No | Set to `true` to unlock premium routes and AI limits for beta testers without changing subscription records; set to `false` before paid launch |
