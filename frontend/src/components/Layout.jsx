@@ -9,6 +9,7 @@ import FeedbackButton from './FeedbackButton'
 import SwipeBackGesture from './SwipeBackGesture'
 import { ReleaseNotesProvider } from '../context/ReleaseNotesContext'
 import SyncNotificationBanner from './SyncNotificationBanner'
+import HeaderReadinessChip from './HeaderReadinessChip'
 
 // hex required: consumed by `${color}XX` alpha templates — do not tokenize
 const NAV_ITEMS = (t) => [
@@ -70,17 +71,21 @@ export default function Layout({ children }) {
               paddingBottom: '0.75rem',
             }}
           >
-          <div className="flex items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-2">
             <button
               type="button"
               onClick={() => navigate('/')}
-              style={{ background: "none", border: "none", padding: 0, cursor: "pointer" }}
+              style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', flex: '0 0 auto' }}
               aria-label="Go Home"
               className="pressable"
             >
               <img src="/icon-192.png" alt="Forged Hybrid" className="w-9 h-9 rounded-xl object-cover" />
             </button>
-            <div className="flex items-center gap-2">
+            <HeaderReadinessChip
+              refreshKey={location.key}
+              onOpen={() => navigate('/?readiness=1')}
+            />
+            <div className="ml-auto flex shrink-0 items-center gap-2">
               <button
                 type="button"
                 onClick={() => setFeedbackOpen(true)}

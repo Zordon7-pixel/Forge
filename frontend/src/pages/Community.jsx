@@ -27,6 +27,7 @@ import api from '../lib/api'
 import ChallengePanel from '../components/ChallengePanel'
 import CommunityActivityPanel from '../components/CommunityActivityPanel'
 import FriendLeaderboard from '../components/FriendLeaderboard'
+import { EngagementHighlights } from '../components/EngagementProgressCards'
 import { isContactMatchingAvailable, readPermittedContactEmails } from '../services/ContactService'
 
 const EMPTY_DATA = {
@@ -117,6 +118,7 @@ export default function Community() {
   const { t } = useTranslation()
   const [searchParams, setSearchParams] = useSearchParams()
   const [data, setData] = useState(EMPTY_DATA)
+  const [engagement, setEngagement] = useState(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState('')
   const [notice, setNotice] = useState(null)
@@ -155,9 +157,16 @@ export default function Community() {
   const load = useCallback(async ({ quiet = false } = {}) => {
     if (!quiet) setLoading(true)
     try {
-      const response = await api.get('/social/friends')
+      const [response, engagementResponse] = await Promise.all([
+        api.get('/social/friends'),
+        api.get('/stats/engagement').catch((error) => {
+          console.error('[Community] engagement load failed:', error?.message || error)
+          return { data: null }
+        }),
+      ])
       const nextData = { ...EMPTY_DATA, ...(response.data || {}) }
       setData(nextData)
+      setEngagement(engagementResponse.data || null)
       setHandleDraft(nextData.discovery?.handle || '')
       setHandleDiscoverable(Boolean(nextData.discovery?.discoverable))
       setContactDiscoverable(Boolean(nextData.discovery?.contact_discoverable))
@@ -516,7 +525,10 @@ export default function Community() {
       </div>
 
       {activeTab === 'activity' ? (
-        <CommunityActivityPanel friends={data.friends} />
+        <div className="space-y-4">
+          <EngagementHighlights engagement={engagement} />
+          <CommunityActivityPanel friends={data.friends} />
+        </div>
       ) : activeTab === 'challenges' ? (
         <ChallengePanel friends={data.friends} />
       ) : activeTab === 'leaderboard' ? (

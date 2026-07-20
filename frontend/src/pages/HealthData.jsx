@@ -4,6 +4,7 @@ import { HeartPulse, Shield } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import api from '../lib/api'
 import Skeleton from '../components/Skeleton'
+import { YouVsLastMonthCard } from '../components/EngagementProgressCards'
 
 function trendMeta(trend) {
   if (trend === 'up') return { arrow: '↑', color: 'var(--success)' }
@@ -32,17 +33,23 @@ export default function HealthData() {
   const { t } = useTranslation()
   const [driversData, setDriversData] = useState(null)
   const [readinessHistory, setReadinessHistory] = useState([])
+  const [engagement, setEngagement] = useState(null)
   const [loading, setLoading] = useState(true)
 
   const loadData = async () => {
     setLoading(true)
     try {
-      const [driversRes, readinessRes] = await Promise.all([
+      const [driversRes, readinessRes, engagementRes] = await Promise.all([
         api.get('/body/drivers').catch(() => ({ data: null })),
         api.get('/recovery/readiness/history?days=14').catch(() => ({ data: null })),
+        api.get('/stats/engagement').catch((error) => {
+          console.error('[Body] engagement load failed:', error?.message || error)
+          return { data: null }
+        }),
       ])
       setDriversData(driversRes.data || { summary: t('body.allGood'), limiter: null, drivers: [] })
       setReadinessHistory(Array.isArray(readinessRes.data?.days) ? readinessRes.data.days : [])
+      setEngagement(engagementRes.data || null)
     } finally {
       setLoading(false)
     }
@@ -84,6 +91,8 @@ export default function HealthData() {
           </div>
         </section>
       )}
+
+      <YouVsLastMonthCard comparison={engagement?.youVsLastMonth} />
 
       {drivers.length === 0 && !loading ? (
         <section className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
