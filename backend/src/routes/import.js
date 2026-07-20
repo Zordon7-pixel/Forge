@@ -6,6 +6,7 @@ const { activityKind } = require('../lib/runActivity');
 const { buildRunImportKeys } = require('../lib/runImportKey');
 const { normalizeWorkoutMetrics } = require('../lib/workoutMetrics');
 const { findPlannedRunForDate, hasMeaningfulPlannedRun } = require('../lib/plannedRunMatch');
+const autoUpdatePRs = require('../services/prAuto');
 
 function asNumber(value, fallback = 0) {
   const num = Number(value);
@@ -283,6 +284,7 @@ async function insertRun(userId, item) {
       JSON.stringify(planned || {}),
     ]
   );
+  return runId;
 }
 
 async function updateExistingRunHealth(userId, existingRun, item) {
@@ -367,6 +369,12 @@ async function updateExistingRunHealth(userId, existingRun, item) {
       userId,
     ]
   );
+  return existingRun.id;
+}
+
+async function updateImportedRunPrs(userId, runId) {
+  const run = await dbGet('SELECT * FROM runs WHERE id=? AND user_id=?', [runId, userId]);
+  if (run) await autoUpdatePRs(userId, run);
 }
 
 async function insertLift(userId, item) {
@@ -415,11 +423,13 @@ async function importRows(userId, rawRows) {
         }
         const existing = await findExistingRun(userId, item);
         if (existing) {
-          await updateExistingRunHealth(userId, existing, item);
+          const runId = await updateExistingRunHealth(userId, existing, item);
+          await updateImportedRunPrs(userId, runId);
           skipped += 1;
           continue;
         }
-        await insertRun(userId, item);
+        const runId = await insertRun(userId, item);
+        await updateImportedRunPrs(userId, runId);
         imported += 1;
         continue;
       }

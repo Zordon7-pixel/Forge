@@ -10,6 +10,7 @@ const STANDARD_TIME_PRS = Object.freeze([
   { label: '5K', target: 3.107, min: 2.95, max: 3.26 },
   { label: '10K', target: 6.214, min: 5.90, max: 6.52 },
   { label: '15K', target: 9.321, min: 8.85, max: 9.79 },
+  { label: '10 Mile', target: 10.0, min: 9.50, max: 10.50 },
   { label: 'Half Marathon', target: 13.109, min: 12.45, max: 13.76 },
   { label: 'Marathon', target: 26.219, min: 24.91, max: 27.53 },
 ]);
@@ -18,6 +19,15 @@ function standardTimePrForDistance(value) {
   const miles = Number(value);
   if (!Number.isFinite(miles)) return null;
   return STANDARD_TIME_PRS.find((item) => Math.abs(item.target - miles) <= 0.002) || null;
+}
+
+function nearestStandardTimePr(value) {
+  const miles = Number(value);
+  if (!Number.isFinite(miles) || miles <= 0) return null;
+  return STANDARD_TIME_PRS
+    .map((item) => ({ item, differenceRatio: Math.abs(item.target - miles) / item.target }))
+    .filter(({ differenceRatio }) => differenceRatio <= 0.05)
+    .sort((left, right) => left.differenceRatio - right.differenceRatio)[0]?.item || null;
 }
 
 function manualTimePrLabel(distance) {
@@ -119,14 +129,26 @@ router.post('/auto-detect', auth, async (req, res) => {
 // GET /api/prs/time — returns best times for standard race distances (±5% tolerance)
 router.get('/time', auth, async (req, res) => {
   try {
-    const manualRows = await dbAll(
-      `SELECT id, label, value, achieved_at
-       FROM personal_records
-       WHERE user_id=? AND category='time_pr'
-       ORDER BY achieved_at DESC, id DESC`,
-      [req.user.id]
-    );
-    const results = await Promise.all(STANDARD_TIME_PRS.map(async dist => {
+    const [manualRows, candidateRuns] = await Promise.all([
+      dbAll(
+        `SELECT id, label, value, achieved_at
+         FROM personal_records
+         WHERE user_id=? AND category='time_pr'
+         ORDER BY achieved_at DESC, id DESC`,
+        [req.user.id]
+      ),
+      dbAll(
+        `SELECT id, distance_miles, duration_seconds, date
+         FROM runs
+         WHERE user_id=? AND distance_miles>=? AND distance_miles<=?
+           AND duration_seconds>0 AND ${runActivitySql()}`,
+        [req.user.id, STANDARD_TIME_PRS[0].min, STANDARD_TIME_PRS[STANDARD_TIME_PRS.length - 1].max]
+      ),
+    ]);
+    const classifiedRuns = candidateRuns
+      .map((run) => ({ run, distance: nearestStandardTimePr(run.distance_miles) }))
+      .filter(({ distance }) => distance);
+    const results = STANDARD_TIME_PRS.map(dist => {
       const manual = manualRows.find((row) => (
         row.label === manualTimePrLabel(dist) || row.label === legacyManualTimePrLabel(dist)
       ));
@@ -142,18 +164,25 @@ router.get('/time', auth, async (req, res) => {
           is_manual: true,
         };
       }
-      const run = await dbGet(
-        `SELECT id, distance_miles, duration_seconds, date
-         FROM runs
-         WHERE user_id=? AND distance_miles>=? AND distance_miles<=?
-           AND duration_seconds>0 AND ${runActivitySql()}
-         ORDER BY duration_seconds ASC LIMIT 1`,
-        [req.user.id, dist.min, dist.max]
-      );
+      const run = classifiedRuns
+        .filter(({ distance }) => distance.label === dist.label)
+        .map(({ run: classifiedRun }) => classifiedRun)
+        .sort((left, right) => (
+          (left.duration_seconds / left.distance_miles) - (right.duration_seconds / right.distance_miles)
+        ))[0];
       if (!run) return { distance: dist.label, best_time_seconds: null, pace: null, date: null, run_id: null, is_manual: false };
       const pace = run.duration_seconds / run.distance_miles;
-      return { distance: dist.label, best_time_seconds: run.duration_seconds, pace, date: run.date, run_id: run.id, is_manual: false };
-    }));
+      return {
+        distance: dist.label,
+        best_time_seconds: Math.round(pace * dist.target),
+        pace,
+        date: run.date,
+        run_id: run.id,
+        observed_distance_miles: run.distance_miles,
+        observed_time_seconds: run.duration_seconds,
+        is_manual: false,
+      };
+    });
 
     res.json({ times: results });
   } catch (err) {
@@ -213,6 +242,7 @@ module.exports = router;
 module.exports._test = {
   STANDARD_TIME_PRS,
   standardTimePrForDistance,
+  nearestStandardTimePr,
   manualTimePrLabel,
   legacyManualTimePrLabel,
   validDate,

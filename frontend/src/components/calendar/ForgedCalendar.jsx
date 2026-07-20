@@ -9,6 +9,28 @@ import './forgedCalendar.css'
 
 const MONTH_DOW = ['M', 'T', 'W', 'T', 'F', 'S', 'S']
 
+function formatGoalTime(seconds) {
+  const total = Math.round(Number(seconds))
+  if (!Number.isFinite(total) || total <= 0) return null
+  const hours = Math.floor(total / 3600)
+  const minutes = Math.floor((total % 3600) / 60)
+  const remaining = total % 60
+  return `${hours}:${String(minutes).padStart(2, '0')}:${String(remaining).padStart(2, '0')}`
+}
+
+function formatGoalPace(seconds) {
+  const total = Math.round(Number(seconds))
+  if (!Number.isFinite(total) || total <= 0) return null
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}/mi`
+}
+
+function performanceSourceLabel(source) {
+  if (source === 'apple_health+strava') return 'Apple Health + Strava'
+  if (source === 'apple_health') return 'Apple Health'
+  if (source === 'strava') return 'Strava'
+  return 'run history'
+}
+
 function Stamp({ kind, state, small }) {
   const Icon = kind === 'lift' ? Dumbbell : kind === 'rest' ? Moon : Footprints
   return (
@@ -91,6 +113,9 @@ export default function ForgedCalendar({
   const goal = model?.goal || {}
   const phase = model?.phaseForWeek(currentWeekIndex)
   const countdown = goal.dateISO ? countdownDays(goal.dateISO, todayISO) : null
+  const goalTimeLabel = formatGoalTime(goal.goalTimeSeconds)
+  const goalPaceLabel = goal.goalPaceLabel || formatGoalPace(goal.goalPaceSecondsPerMile)
+  const performanceAnchor = goal.paceContext?.performanceAnchor || null
 
   const monthGrid = useMemo(
     () => (view === 'month' ? buildMonthGrid(model, monthAnchor, { todayISO, completedSet }) : null),
@@ -135,6 +160,24 @@ export default function ForgedCalendar({
                 Number.isFinite(countdown) && countdown >= 0 ? `${countdown} days to go` : null,
               ].filter(Boolean).join(' · ')}
             </p>
+            {goalTimeLabel && goalPaceLabel && (
+              <p className="text-xs mt-1 font-bold" style={{ color: 'var(--accent)' }}>
+                {goal.goalTimeSource === 'performance_anchor' ? 'Auto target' : 'Goal'} {goalTimeLabel} · {goalPaceLabel}
+              </p>
+            )}
+            {performanceAnchor && (
+              <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+                {performanceAnchor.kind === 'cross_distance_estimate' ? 'Estimated from' : 'Benchmark'}{' '}
+                {performanceAnchor.observedDistanceMiles} mi at {performanceAnchor.observedPaceLabel} · {performanceSourceLabel(performanceAnchor.source)}
+              </p>
+            )}
+            {['stretch', 'build'].includes(goal.paceContext?.status) && (
+              <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+                {goal.paceContext.status === 'stretch'
+                  ? 'Stretch target · confirm with a controlled benchmark as the plan progresses.'
+                  : 'Progression target · race-specific work builds toward this pace.'}
+              </p>
+            )}
           </div>
           <div className="forged-seg" role="group" aria-label="Calendar view">
             <button type="button" aria-pressed={view === 'week'} onClick={() => setView('week')}>Week</button>

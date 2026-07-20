@@ -24,6 +24,10 @@ check(activityKind({ type: 'easy', watch_activity_type: 'Cycling' }) === 'cyclin
 check(activityKind({ type: 'easy' }) === 'run' && isRunActivity({ type: 'tempo' }), 'manual easy/tempo rows remain runs');
 check(!isRunActivity({ type: 'swimming' }) && !isRunActivity({ watch_normalized_type: 'walk_outdoor' }), 'cross-training and walks are excluded from run intelligence');
 check(autoUpdatePRs.buildRunPrCandidates({ type: 'walk', distance_miles: 5, duration_seconds: 3600 }).length === 0, 'manual walks cannot create running PR candidates');
+const tenMileCandidates = autoUpdatePRs.buildRunPrCandidates({ type: 'run', distance_miles: 10.02, duration_seconds: 5700 });
+check(tenMileCandidates.some((candidate) => candidate.label === '10 Mile PR'), 'synced Army Ten-Miler-distance runs create a 10-mile PR candidate');
+const adjacentDistanceCandidates = autoUpdatePRs.buildRunPrCandidates({ type: 'run', distance_miles: 9.7, duration_seconds: 5700 });
+check(adjacentDistanceCandidates.filter((candidate) => /(?:15K|10 Mile) PR/.test(candidate.label)).length === 1, 'one run maps to only its nearest standard race distance');
 const activitySql = runActivitySql('r');
 check(activitySql.includes("r.watch_activity_type") && activitySql.includes("NOT LIKE '%walk%'") && activitySql.includes("NOT LIKE '%cycl%'"), 'shared SQL guard checks raw and normalized activity types');
 
@@ -88,6 +92,7 @@ const runDetailSource = fs.readFileSync(path.join(root, 'frontend/src/components
 const hrZonesSource = fs.readFileSync(path.join(root, 'frontend/src/pages/HrZones.jsx'), 'utf8');
 const runsRouteSource = fs.readFileSync(path.join(root, 'backend/src/routes/runs.js'), 'utf8');
 const importRouteSource = fs.readFileSync(path.join(root, 'backend/src/routes/import.js'), 'utf8');
+const stravaRouteSource = fs.readFileSync(path.join(root, 'backend/src/routes/strava.js'), 'utf8');
 const prAutoSource = fs.readFileSync(path.join(root, 'backend/src/services/prAuto.js'), 'utf8');
 check(/HKSeriesType\.workoutRoute\(\)/.test(swift) && /row\["routeCoords"\]\s*=\s*route\.points/.test(swift), 'native bridge requests and serializes HealthKit workout routes');
 check(/workout\.statistics\(for: type\)/.test(swift) && /timeWeightedAverage/.test(swift), 'workout-owned HR summary wins over a time-weighted sparse-sample fallback');
@@ -101,6 +106,8 @@ check(/if \(history\.available\)[\s\S]*markWorkoutHistoryUpgraded\(\)[\s\S]*else
 check(/actualRuns[^\n]*filter\(isRunningActivity\)/.test(historySource), 'History run totals and charts use running activities only');
 check(/INSERT INTO run_import_tombstones[\s\S]*ON CONFLICT \(user_id, source_key\) DO NOTHING/.test(runsRouteSource), 'deleting a health import records a user-scoped tombstone before removing the run');
 check(/SELECT id FROM run_import_tombstones WHERE user_id=\? AND source_key=\?/.test(importRouteSource), 'future full health syncs honor deleted-run tombstones');
+check(/updateImportedRunPrs\(userId, runId\)/.test(importRouteSource), 'Apple Health and file imports update automatic PRs without requiring PR Wall to be opened');
+check(/autoUpdatePRs\(req\.user\.id, syncedRun, \{ tx \}\)/.test(stravaRouteSource), 'Strava sync updates automatic PRs in the same user-scoped transaction');
 check(/Pace Z\$\{paceZone\.zone\}/.test(historySource) && !/`Zone \$\{paceZone\.zone\}`/.test(historySource), 'pace zones are labeled so they cannot be mistaken for heart-rate zones');
 check(/activityLabel\(item\)/.test(insightsSource), 'recent activity cards display the imported workout kind');
 check(/T12:00:00/.test(insightsSource) && /T12:00:00/.test(runDetailSource), 'date-only HealthKit workouts render on the local calendar day');

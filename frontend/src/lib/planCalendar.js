@@ -133,11 +133,20 @@ export function getGoal(plan) {
   const data = planData(plan)
   const goal = data.goal || {}
   const dateISO = goal.date || goal.raceDate || data.raceDate || null
+  const distanceMiles = Number(goal.distanceMiles || goal.distance_miles || 0) || null
+  const goalTimeSeconds = Number(goal.goalTimeSeconds || goal.goal_time_seconds || 0) || null
+  const derivedPace = goalTimeSeconds && distanceMiles ? Math.round(goalTimeSeconds / distanceMiles) : null
   return {
     name: goal.name || data.raceName || plan?.name || null,
     dateISO: dateISO || null,
-    distanceMiles: Number(goal.distanceMiles || goal.distance_miles || 0) || null,
+    distanceMiles,
     goalType: goal.goalType || goal.goal_type || null,
+    goalTimeSeconds,
+    goalTimeSource: goal.goalTimeSource || goal.goal_time_source || null,
+    improvementTargetPercent: Number(goal.improvementTargetPercent || goal.improvement_target_percent || 0) || null,
+    goalPaceSecondsPerMile: Number(goal.goalPaceSecondsPerMile || goal.goal_pace_seconds_per_mile || derivedPace || 0) || null,
+    goalPaceLabel: goal.goalPaceLabel || goal.goal_pace_label || null,
+    paceContext: goal.paceContext || null,
   }
 }
 

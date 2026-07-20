@@ -140,6 +140,84 @@ for (const week of army.weeks) {
 }
 assert(interferenceSafe, 'lower-body strength never conflicts with adjacent hard/long run');
 
+section('timed race target progression');
+const performanceProfile = engine.buildRunPerformanceProfile([
+  { id: 'walk', date: '2026-07-10', distance_miles: 10, duration_seconds: 6000, health_source: 'apple_health', type: 'walk' },
+  { id: 'apple-10mi', date: '2026-06-10', distance_miles: 10.02, duration_seconds: 6000, health_source: 'apple_health', type: 'run' },
+  { id: 'strava-10mi', date: '2026-07-01', distance_miles: 9.98, duration_seconds: 5700, health_source: 'strava', type: 'run' },
+  { id: 'strava-5k', date: '2026-07-08', distance_miles: 3.107, duration_seconds: 1500, health_source: 'strava', type: 'run' },
+], { todayISO: '2026-07-13', targetDistanceMiles: 10 });
+assert(performanceProfile.sampleCount === 3 && performanceProfile.sources.includes('apple_health') && performanceProfile.sources.includes('strava'), 'Apple Health and Strava true runs share one performance history while walks are excluded');
+assert(performanceProfile.records.some((record) => record.key === '10_mile'), 'synced history produces a 10-mile observed best effort');
+assert(performanceProfile.targetAnchor.kind === 'observed_distance_band' && performanceProfile.targetAnchor.runId === 'strava-10mi', 'exact-distance best effort is preferred for the target race');
+
+const crossDistanceProfile = engine.buildRunPerformanceProfile([
+  { id: 'apple-7mi', date: '2026-07-10', distance_miles: 7.3, duration_seconds: 5100, health_source: 'apple_health', type: 'run' },
+], { todayISO: '2026-07-13', targetDistanceMiles: 10 });
+assert(crossDistanceProfile.targetAnchor.kind === 'cross_distance_estimate' && crossDistanceProfile.targetAnchor.observedDistanceMiles === 7.3, 'a credible nonstandard distance becomes a clearly labeled target-distance estimate');
+
+const automaticPrContext = context('run_only', {
+  history: { performanceProfile },
+  target: {
+    weeks: 12,
+    startDate: '2026-07-20',
+    raceDate: '2026-10-11',
+    raceName: 'Army Ten-Miler',
+    distanceMiles: 10,
+  },
+});
+const automaticPrPlan = engine.buildConcurrentPlan(automaticPrContext);
+assert(engine.validateConcurrentPlan(automaticPrPlan, automaticPrContext).valid, 'automatic performance-target plan validates');
+assert(automaticPrPlan.goal.goalTimeSource === 'performance_anchor' && automaticPrPlan.goal.improvementTargetPercent === 2, 'blank race time creates a conservative faster target from an observed same-distance benchmark');
+assert(automaticPrPlan.goal.goalTimeSeconds === Math.round(performanceProfile.targetAnchor.equivalentTimeSeconds * 0.98), 'automatic same-distance target is exactly two percent faster than the synced benchmark');
+const completionPlan = engine.buildConcurrentPlan({
+  ...automaticPrContext,
+  target: { ...automaticPrContext.target, goalType: 'completion' },
+});
+assert(completionPlan.goal.goalTimeSeconds === null, 'an explicit completion goal is never replaced by an automatic PR target');
+
+const staleProfile = engine.buildRunPerformanceProfile([
+  { id: 'old-10mi', date: '2025-01-01', distance_miles: 10, duration_seconds: 5400, health_source: 'strava', type: 'run' },
+], { todayISO: '2026-07-13', targetDistanceMiles: 10 });
+assert(staleProfile.targetAnchor === null && staleProfile.historicalTargetAnchor?.runId === 'old-10mi', 'an old PR remains visible as history but cannot set current training pace');
+
+const subNinetyContext = context('hybrid_maintain', {
+  history: {
+    performanceProfile,
+    acuteRunLoad: {
+      latestRun: { date: '2026-07-12', paceSecondsPerMile: 705, paceLabel: '11:45/mi' },
+    },
+  },
+  target: {
+    weeks: 12,
+    startDate: '2026-07-20',
+    raceDate: '2026-10-11',
+    raceName: 'Army Ten-Miler',
+    distanceMiles: 10,
+    goalTimeSeconds: 5400,
+  },
+});
+const subNinety = engine.buildConcurrentPlan(subNinetyContext);
+const subNinetyValidation = engine.validateConcurrentPlan(subNinety, subNinetyContext);
+const subNinetySessions = allSessions(subNinety);
+const goalPaceSessions = subNinetySessions.filter((session) => session.type !== 'race' && session.goal_pace_seconds_per_mile === 540);
+assert(subNinetyValidation.valid, `sub-90 Army plan validates: ${subNinetyValidation.errors.join('; ')}`);
+assert(subNinety.goal.goalTimeSeconds === 5400 && subNinety.goal.goalPaceLabel === '9:00/mi', '90-minute 10-mile goal derives and stores exact 9:00/mi pace');
+assert(subNinety.goal.paceContext.status === 'build' && subNinety.goal.paceContext.performanceAnchor.runId === 'strava-10mi', 'goal context uses the exact-distance synced benchmark instead of one arbitrary latest run');
+assert(subNinety.goal.paceContext.performanceSources.includes('apple_health') && subNinety.goal.paceContext.performanceSources.includes('strava'), 'goal context records imported performance provenance');
+assert(goalPaceSessions.some((session) => session.type === 'race_pace') && goalPaceSessions.some((session) => session.type === 'sharpen'), 'build/peak and taper contain structured exact-goal-pace work');
+assert(goalPaceSessions.every((session) => session.pace_target.includes('9:00/mi')), 'every structured goal-pace session displays the exact target pace');
+
+const lowRecoveryTimed = engine.buildConcurrentPlan({ ...subNinetyContext, recovery: { state: 'low' } });
+assert(lowRecoveryTimed.goal.goalTimeSeconds === 5400 && lowRecoveryTimed.goal.goalPaceSecondsPerMile === 540, 'sleep and recovery state never erase or slow the long-term race target');
+
+const missingGoalPace = JSON.parse(JSON.stringify(subNinety));
+for (const session of allSessions(missingGoalPace)) {
+  if (session.type !== 'race') delete session.goal_pace_seconds_per_mile;
+}
+const missingGoalPaceValidation = engine.validateConcurrentPlan(missingGoalPace, subNinetyContext);
+assert(!missingGoalPaceValidation.valid && missingGoalPaceValidation.errors.some((error) => /target-pace session/.test(error)), 'validator rejects timed race plans with no structured target-pace session');
+
 const movedRace = JSON.parse(JSON.stringify(army));
 const raceDay = movedRace.weeks[12].days[6];
 raceDay.date = '2026-10-10';

@@ -4,6 +4,7 @@ const router = require('express').Router();
 const { dbGet, dbRun, withUserMutation } = require('../db');
 const auth = require('../middleware/auth');
 const { chooseMatchingHealthRun, normalizeStravaRun } = require('../lib/stravaActivity');
+const autoUpdatePRs = require('../services/prAuto');
 
 const STRAVA_AUTH_URL = 'https://www.strava.com/oauth/authorize';
 const STRAVA_TOKEN_URL = 'https://www.strava.com/oauth/token';
@@ -579,6 +580,8 @@ router.post('/sync', auth, async (req, res) => {
         if (matchingHealthRun) {
           const updateResult = await enrichRunFromStrava(req.user.id, matchingHealthRun.id, incoming, tx);
           if (Number(updateResult?.changes || 0) > 0) enriched += 1;
+          const syncedRun = await tx.get('SELECT * FROM runs WHERE id=? AND user_id=?', [matchingHealthRun.id, req.user.id]);
+          if (syncedRun) await autoUpdatePRs(req.user.id, syncedRun, { tx });
           continue;
         }
 
@@ -625,6 +628,8 @@ router.post('/sync', auth, async (req, res) => {
         } else {
           await enrichRunFromStrava(req.user.id, runId, incoming, tx);
         }
+        const syncedRun = await tx.get('SELECT * FROM runs WHERE id=? AND user_id=?', [runId, req.user.id]);
+        if (syncedRun) await autoUpdatePRs(req.user.id, syncedRun, { tx });
       }
 
       await tx.run('UPDATE strava_tokens SET connected_at = NOW() WHERE user_id = ?', [req.user.id]);

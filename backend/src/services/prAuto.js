@@ -6,6 +6,8 @@ const RACE_WINDOWS = [
   { label: '1 Mile PR', miles: 1.0 },
   { label: '5K PR', miles: 3.107 },
   { label: '10K PR', miles: 6.214 },
+  { label: '15K PR', miles: 9.321 },
+  { label: '10 Mile PR', miles: 10.0 },
   { label: 'Half Marathon PR', miles: 13.109 },
   { label: 'Marathon PR', miles: 26.219 },
 ];
@@ -68,12 +70,13 @@ function buildRunPrCandidates(run) {
   }
 
   if (pacePerMile) {
-    RACE_WINDOWS.forEach(race => {
-      const diffRatio = Math.abs(distance - race.miles) / race.miles;
-      if (diffRatio <= DISTANCE_TOLERANCE) {
-        candidates.push({ label: race.label, value: round(pacePerMile), unit: 'min/mi', direction: 'lower' });
-      }
-    });
+    const closestRace = RACE_WINDOWS
+      .map((race) => ({ ...race, diffRatio: Math.abs(distance - race.miles) / race.miles }))
+      .filter((race) => race.diffRatio <= DISTANCE_TOLERANCE)
+      .sort((left, right) => left.diffRatio - right.diffRatio)[0];
+    if (closestRace) {
+      candidates.push({ label: closestRace.label, value: round(pacePerMile), unit: 'min/mi', direction: 'lower' });
+    }
   }
 
   return candidates;

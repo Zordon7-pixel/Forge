@@ -559,7 +559,7 @@ async function buildConcurrentContext(userId, profile, target) {
   start.setHours(12, 0, 0, 0);
   start.setDate(start.getDate() - 55);
   const sinceDate = start.toISOString().slice(0, 10);
-  const [runs, lifts, recentExercises, healthRow, activeInjury, dailyCheckin] = await Promise.all([
+  const [runs, performanceRuns, lifts, recentExercises, healthRow, activeInjury, dailyCheckin] = await Promise.all([
     dbAll(
       `SELECT date, distance_miles, duration_seconds, perceived_effort, avg_heart_rate,
               pain_level, post_energy, pace_avg, health_source, created_at,
@@ -569,6 +569,15 @@ async function buildConcurrentContext(userId, profile, target) {
        WHERE user_id=? AND date>=? AND date<=? AND ${runActivitySql()}
        ORDER BY date ASC, created_at ASC`,
       [userId, sinceDate, planningDateISO]
+    ),
+    dbAll(
+      `SELECT id, date, distance_miles, duration_seconds, health_source, watch_mode,
+              workout_metrics_json, type, watch_activity_type, watch_normalized_type
+       FROM runs
+       WHERE user_id=? AND date<=? AND distance_miles>0 AND duration_seconds>0 AND ${runActivitySql()}
+       ORDER BY date DESC, created_at DESC
+       LIMIT 5000`,
+      [userId, planningDateISO]
     ),
     dbAll('SELECT started_at FROM workout_sessions WHERE user_id=? AND started_at>=? AND ended_at IS NOT NULL ORDER BY started_at ASC', [userId, `${sinceDate}T00:00:00`]),
     dbAll(
@@ -646,6 +655,10 @@ async function buildConcurrentContext(userId, profile, target) {
     weeklyBaseline: weeklyMileageBaseline,
     recoveryState,
   });
+  const performanceProfile = concurrentPlan.buildRunPerformanceProfile(performanceRuns, {
+    todayISO: planningDateISO,
+    targetDistanceMiles: target.distanceMiles,
+  });
   return {
     profile,
     target,
@@ -656,6 +669,7 @@ async function buildConcurrentContext(userId, profile, target) {
       recentRunCount: (runs || []).length,
       recentLiftCount: (lifts || []).length,
       acuteRunLoad,
+      performanceProfile,
       recentExercises: summarizeRecentExercises(recentExercises || []),
       adherenceRate: expectedSessions ? clamp(completedSessions / expectedSessions, 0, 1) : null,
       missedWorkouts: expectedSessions ? Math.max(0, expectedSessions - completedSessions) : 0,

@@ -5,10 +5,21 @@ const planSchema = require('./planSchema');
 const raceCourse = require('./raceCourse');
 const strengthPrescription = require('./strengthPrescription');
 const trainingEvidence = require('./trainingEvidence');
+const { isRunActivity } = require('./runActivity');
 
 const DAY_ORDER = planSchema.DAY_ORDER;
 const VALID_MODES = planSchema.VALID_MODES;
 const HARD_RUN_PATTERN = /(long|quality|tempo|threshold|interval|hill|hard|speed|vo2|race|zone 3|zone 4|zone 5)/i;
+const PERFORMANCE_RECENCY_DAYS = 365;
+const STANDARD_PERFORMANCE_DISTANCES = Object.freeze([
+  { key: 'mile', label: '1 Mile', miles: 1 },
+  { key: '5k', label: '5K', miles: 3.107 },
+  { key: '10k', label: '10K', miles: 6.214 },
+  { key: '15k', label: '15K', miles: 9.321 },
+  { key: '10_mile', label: '10 Mile', miles: 10 },
+  { key: 'half_marathon', label: 'Half Marathon', miles: 13.109 },
+  { key: 'marathon', label: 'Marathon', miles: 26.219 },
+]);
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -17,6 +28,215 @@ function clamp(value, min, max) {
 function round(value, decimals = 1) {
   const factor = 10 ** decimals;
   return Math.round(Number(value || 0) * factor) / factor;
+}
+
+function resolvedGoalTime(target = {}, existingGoal = {}, history = {}) {
+  const requestedSeconds = Number(target.goalTimeSeconds ?? target.goal_time_seconds);
+  if (Number.isFinite(requestedSeconds) && requestedSeconds > 0) {
+    return { seconds: Math.round(requestedSeconds), source: 'user_defined', improvementPercent: null };
+  }
+  if (String(target.goalType || target.goal_type || '').toLowerCase() === 'completion') return null;
+  const existingSeconds = Number(existingGoal.goalTimeSeconds ?? existingGoal.goal_time_seconds);
+  if (Number.isFinite(existingSeconds) && existingSeconds > 0) {
+    return {
+      seconds: Math.round(existingSeconds),
+      source: existingGoal.goalTimeSource || existingGoal.goal_time_source || 'existing_plan',
+      improvementPercent: Number(existingGoal.improvementTargetPercent || 0) || null,
+    };
+  }
+  const anchor = history.performanceProfile?.targetAnchor || null;
+  const benchmarkSeconds = Number(anchor?.equivalentTimeSeconds || 0);
+  if (!(benchmarkSeconds > 0)) return null;
+  const improvementPercent = anchor.kind === 'observed_distance_band' ? 2 : 1;
+  return {
+    seconds: Math.round(benchmarkSeconds * (1 - (improvementPercent / 100))),
+    source: 'performance_anchor',
+    improvementPercent,
+  };
+}
+
+function goalTimeSecondsFor(target = {}, existingGoal = {}, history = {}) {
+  return resolvedGoalTime(target, existingGoal, history)?.seconds || null;
+}
+
+function goalPaceSecondsPerMile(target = {}, existingGoal = {}, history = {}) {
+  const seconds = goalTimeSecondsFor(target, existingGoal, history);
+  const distance = Number(target.distanceMiles ?? target.distance_miles ?? existingGoal.distanceMiles ?? existingGoal.distance_miles);
+  if (!seconds || !Number.isFinite(distance) || distance <= 0) return null;
+  const pace = seconds / distance;
+  return pace >= 180 && pace <= 1800 ? Math.round(pace) : null;
+}
+
+function formatPaceLabel(secondsPerMile) {
+  const total = Math.round(Number(secondsPerMile));
+  if (!Number.isFinite(total) || total <= 0) return null;
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  return `${minutes}:${String(seconds).padStart(2, '0')}/mi`;
+}
+
+function performanceSource(row = {}) {
+  const source = String(row.health_source || row.watch_mode || 'forged_hybrid').trim().toLowerCase();
+  let metrics = row.workout_metrics_json;
+  if (typeof metrics === 'string' && metrics.trim()) {
+    try {
+      metrics = JSON.parse(metrics);
+    } catch (err) {
+      console.error('[concurrentPlan] workout metrics parse failed:', err.message);
+      metrics = null;
+    }
+  }
+  if (source === 'apple_health' && metrics?.route_enriched_from_strava === 1) return 'apple_health+strava';
+  if (source.includes('strava')) return 'strava';
+  if (source.includes('apple')) return 'apple_health';
+  return source || 'forged_hybrid';
+}
+
+function normalizePerformanceRun(row = {}, todayISO) {
+  if (!isRunActivity(row)) return null;
+  const date = String(row.date || '').slice(0, 10);
+  const miles = Number(row.distance_miles || 0);
+  const durationSeconds = Number(row.duration_seconds || 0);
+  const paceSecondsPerMile = durationSeconds / miles;
+  if (!parseISODate(date) || date > todayISO) return null;
+  if (!Number.isFinite(miles) || miles < 0.5 || miles > 100) return null;
+  if (!Number.isFinite(durationSeconds) || durationSeconds < 180 || durationSeconds > 172800) return null;
+  if (!Number.isFinite(paceSecondsPerMile) || paceSecondsPerMile < 180 || paceSecondsPerMile > 1800) return null;
+  return {
+    id: row.id || null,
+    date,
+    miles,
+    durationSeconds: Math.round(durationSeconds),
+    paceSecondsPerMile,
+    paceLabel: formatPaceLabel(paceSecondsPerMile),
+    source: performanceSource(row),
+  };
+}
+
+function equivalentTimeSeconds(run, targetMiles) {
+  const sourceMiles = Number(run?.miles || 0);
+  const sourceSeconds = Number(run?.durationSeconds || 0);
+  const target = Number(targetMiles || 0);
+  if (!(sourceMiles > 0) || !(sourceSeconds > 0) || !(target > 0)) return null;
+  return Math.round(sourceSeconds * ((target / sourceMiles) ** 1.06));
+}
+
+function performanceAnchor(run, targetMiles, kind) {
+  if (!run) return null;
+  const equivalentSeconds = equivalentTimeSeconds(run, targetMiles);
+  if (!equivalentSeconds) return null;
+  return {
+    kind,
+    runId: run.id,
+    date: run.date,
+    source: run.source,
+    observedDistanceMiles: round(run.miles, 3),
+    observedDurationSeconds: run.durationSeconds,
+    observedPaceSecondsPerMile: Math.round(run.paceSecondsPerMile),
+    observedPaceLabel: run.paceLabel,
+    targetDistanceMiles: round(targetMiles, 3),
+    equivalentTimeSeconds: equivalentSeconds,
+    equivalentPaceSecondsPerMile: Math.round(equivalentSeconds / targetMiles),
+    equivalentPaceLabel: formatPaceLabel(equivalentSeconds / targetMiles),
+  };
+}
+
+function bestDistanceRecord(runs, distance) {
+  const candidates = runs.filter((run) => Math.abs(run.miles - distance.miles) / distance.miles <= 0.05);
+  if (!candidates.length) return null;
+  const best = candidates.slice().sort((left, right) => {
+    const timeDelta = (left.paceSecondsPerMile * distance.miles) - (right.paceSecondsPerMile * distance.miles);
+    return timeDelta || String(right.date).localeCompare(String(left.date));
+  })[0];
+  return {
+    key: distance.key,
+    label: distance.label,
+    distanceMiles: distance.miles,
+    ...performanceAnchor(best, distance.miles, 'observed_distance_band'),
+  };
+}
+
+function chooseTargetAnchor(runs, targetDistanceMiles) {
+  const target = Number(targetDistanceMiles || 0);
+  if (!(target > 0)) return null;
+  const exact = runs.filter((run) => Math.abs(run.miles - target) / target <= 0.05);
+  const pool = exact.length
+    ? exact
+    : runs.filter((run) => run.miles >= 1 && run.miles / target >= 0.3 && run.miles / target <= 1.5);
+  if (!pool.length) return null;
+  const best = pool.slice().sort((left, right) => (
+    equivalentTimeSeconds(left, target) - equivalentTimeSeconds(right, target)
+    || String(right.date).localeCompare(String(left.date))
+  ))[0];
+  return performanceAnchor(best, target, exact.length ? 'observed_distance_band' : 'cross_distance_estimate');
+}
+
+function buildRunPerformanceProfile(rows = [], options = {}) {
+  const todayISO = parseISODate(options.todayISO) ? options.todayISO : toISODate(new Date());
+  const targetDistanceMiles = Number(options.targetDistanceMiles || 0);
+  const normalized = (Array.isArray(rows) ? rows : [])
+    .map((row) => normalizePerformanceRun(row, todayISO))
+    .filter(Boolean);
+  const recent = normalized.filter((run) => {
+    const ageDays = dateDistanceDays(todayISO, run.date);
+    return ageDays !== null && ageDays >= 0 && ageDays <= PERFORMANCE_RECENCY_DAYS;
+  });
+  const records = STANDARD_PERFORMANCE_DISTANCES
+    .map((distance) => bestDistanceRecord(normalized, distance))
+    .filter(Boolean);
+  const targetAnchor = chooseTargetAnchor(recent, targetDistanceMiles);
+  const historicalTargetAnchor = targetAnchor ? null : chooseTargetAnchor(normalized, targetDistanceMiles);
+  return {
+    sampleCount: normalized.length,
+    recentSampleCount: recent.length,
+    sources: [...new Set(normalized.map((run) => run.source))].sort(),
+    records,
+    targetAnchor,
+    historicalTargetAnchor,
+    recencyDays: PERFORMANCE_RECENCY_DAYS,
+  };
+}
+
+function buildGoalPaceContext(target = {}, history = {}, existingGoal = {}) {
+  const targetPace = goalPaceSecondsPerMile(target, existingGoal, history);
+  if (!targetPace) return null;
+  const performanceProfile = history.performanceProfile || null;
+  const anchor = performanceProfile?.targetAnchor || null;
+  const recentRun = history.acuteRunLoad?.protectiveRun || history.acuteRunLoad?.latestRun || null;
+  const anchorPace = Number(anchor?.equivalentPaceSecondsPerMile || 0);
+  const recentPace = Number(recentRun?.paceSecondsPerMile || 0);
+  const benchmarkPace = Number.isFinite(anchorPace) && anchorPace > 0 ? anchorPace : recentPace;
+  let status = 'benchmark_needed';
+  if (Number.isFinite(benchmarkPace) && benchmarkPace > 0) {
+    if (targetPace <= benchmarkPace * 0.88) status = 'stretch';
+    else if (targetPace < benchmarkPace * 0.97) status = 'build';
+    else status = 'supported';
+  }
+  const benchmarkDescription = anchor
+    ? (anchor.kind === 'observed_distance_band' ? 'best observed effort near this race distance' : 'cross-distance performance estimate')
+    : 'latest logged run pace';
+  const notes = {
+    benchmark_needed: performanceProfile?.historicalTargetAnchor
+      ? 'Only an older performance anchor is available. Use a controlled current benchmark before treating this target as proven.'
+      : 'No recent run can confirm this target yet. Use the first controlled benchmark and live adaptations before treating it as proven.',
+    stretch: `This is a stretch target relative to your ${benchmarkDescription}. Progressive race-specific work and a controlled benchmark should confirm it.`,
+    build: `The target is faster than your ${benchmarkDescription} and needs progressive race-specific work.`,
+    supported: `The target is compatible with your ${benchmarkDescription}, while execution and recovery still control progression.`,
+  };
+  return {
+    status,
+    targetPaceSecondsPerMile: targetPace,
+    targetPaceLabel: formatPaceLabel(targetPace),
+    benchmarkKind: anchor?.kind || (recentRun ? 'latest_run_fallback' : null),
+    benchmarkPaceSecondsPerMile: Number.isFinite(benchmarkPace) && benchmarkPace > 0 ? Math.round(benchmarkPace) : null,
+    benchmarkPaceLabel: formatPaceLabel(benchmarkPace),
+    performanceAnchor: anchor,
+    performanceSources: performanceProfile?.sources || [],
+    recentRunPaceSecondsPerMile: Number.isFinite(recentPace) && recentPace > 0 ? Math.round(recentPace) : null,
+    recentRunPaceLabel: formatPaceLabel(recentPace),
+    recentRunDate: recentRun?.date || null,
+    note: notes[status],
+  };
 }
 
 function parseISODate(value) {
@@ -199,12 +419,13 @@ function selectRunDays(availableDays, count) {
   return DAY_ORDER.filter((day) => ordered.slice(0, Math.min(wanted, availableDays.length)).includes(day));
 }
 
-function runTypeFor(day, runDays, phase) {
+function runTypeFor(day, runDays, phase, options = {}) {
   const position = runDays.indexOf(day);
   if (position === runDays.length - 1) return 'long';
-  if (position === 0 && runDays.length >= 3) {
+  if (position === 0 && (runDays.length >= 3 || (options.hasTimedGoal && runDays.length >= 2))) {
     if (phase === 'base') return 'hills';
     if (phase === 'taper') return 'sharpen';
+    if (options.hasTimedGoal && (phase === 'peak' || (phase === 'build' && options.weekNumber % 2 === 0))) return 'race_pace';
     return 'quality';
   }
   return position === 1 && runDays.length >= 4 ? 'steady' : 'easy';
@@ -252,7 +473,7 @@ function durationForRun(type, distance, phase, history = {}) {
   const effortFactor = type === 'recovery' ? 1.15 : ['easy', 'long'].includes(type) ? 1.08 : type === 'steady' ? 1 : 0.92;
   const estimatedMinutes = Number(distance || 0) * basePaceSeconds * effortFactor / 60;
   if (type === 'long') return Math.round(clamp(estimatedMinutes, 30, phase === 'taper' ? 75 : 105));
-  if (type === 'quality') return Math.round(clamp(estimatedMinutes, 48, 65));
+  if (type === 'quality' || type === 'race_pace') return Math.round(clamp(estimatedMinutes, 48, 65));
   if (type === 'hills') return Math.round(clamp(estimatedMinutes, 42, 65));
   if (type === 'sharpen') return Math.round(clamp(estimatedMinutes, 35, 48));
   if (type === 'steady') return Math.round(clamp(estimatedMinutes, 25, 60));
@@ -260,7 +481,27 @@ function durationForRun(type, distance, phase, history = {}) {
   return Math.round(clamp(estimatedMinutes, 15, 50));
 }
 
-function runPrescription(type, phase, hilly) {
+function runPrescription(type, phase, hilly, options = {}) {
+  const goalPaceLabel = options.goalPaceLabel || null;
+  if (type === 'race_pace' && goalPaceLabel) {
+    const progress = Number(options.weekNumber || 1) / Math.max(1, Number(options.weekCount || 1));
+    const work = progress >= 0.75
+      ? ['3 x 10 min at goal pace', '3 min easy jog between repetitions']
+      : progress >= 0.55
+        ? ['3 x 8 min at goal pace', '3 min easy jog between repetitions']
+        : ['3 x 6 min at goal pace', '3 min easy jog between repetitions'];
+    return {
+      title: 'Goal-pace intervals',
+      target_zone: 'Race-specific effort',
+      pace_target: `${goalPaceLabel} during work intervals`,
+      intensity: 'Controlled goal pace',
+      warmup: ['12 min easy running', '4 x 20 sec relaxed strides'],
+      steps: [...work, ...(options.goalPaceStatus === 'stretch' ? ['Stop the work block if goal pace becomes a sprint or form deteriorates'] : [])],
+      cooldown: ['10 min easy running'],
+      progression: 'Complete every repetition evenly before extending the total time at goal pace.',
+      description: 'Practice the exact race target in controlled segments without turning the full run into a time trial.',
+    };
+  }
   if (type === 'long') {
     return {
       title: hilly ? 'Course-specific long run' : 'Long aerobic run',
@@ -275,16 +516,16 @@ function runPrescription(type, phase, hilly) {
     };
   }
   if (type === 'quality' || type === 'hills' || type === 'sharpen') {
-    const hillSession = hilly || type === 'hills';
     const sharpen = type === 'sharpen';
+    const hillSession = type === 'hills' || (hilly && !(sharpen && goalPaceLabel));
     return {
       title: hillSession ? (phase === 'taper' ? 'Hill strides' : 'Controlled hill repeats') : (phase === 'taper' ? 'Race-pace sharpening' : 'Threshold intervals'),
-      target_zone: phase === 'base' ? 'Zone 3' : 'Zone 3-4',
-      pace_target: hillSession ? 'Controlled uphill effort' : 'Current threshold effort',
+      target_zone: sharpen && goalPaceLabel ? 'Race-specific effort' : phase === 'base' ? 'Zone 3' : 'Zone 3-4',
+      pace_target: hillSession ? 'Controlled uphill effort' : sharpen && goalPaceLabel ? `${goalPaceLabel} during work intervals` : 'Current threshold effort',
       intensity: phase === 'taper' ? 'Short and controlled' : 'Hard but repeatable',
       warmup: sharpen ? ['10 min easy running', '4 x 20 sec relaxed strides'] : ['12 min easy running', '4 x 20 sec relaxed strides'],
       steps: sharpen
-        ? ['6 x 60 sec at goal 10-mile effort', '90 sec easy jog between repetitions']
+        ? [`6 x 60 sec at ${goalPaceLabel || 'goal race effort'}`, '90 sec easy jog between repetitions']
         : hillSession
           ? ['6-8 x 60 sec uphill', '90 sec easy jog down between repetitions']
           : ['4 x 5 min controlled hard', '2 min easy jog between repetitions'],
@@ -307,18 +548,22 @@ function runPrescription(type, phase, hilly) {
   };
 }
 
-function buildRunSession({ weekNumber, day, type, distance, phase, hilly, raceName, history }) {
+function buildRunSession({ weekNumber, weekCount, day, type, distance, phase, hilly, raceName, history, goalPaceContext }) {
+  const goalPace = goalPaceContext?.targetPaceSecondsPerMile || null;
+  const goalPaceLabel = goalPaceContext?.targetPaceLabel || null;
   if (type === 'race') {
     return {
       id: `h3-w${weekNumber}-${day.toLowerCase()}-run`, kind: 'run', type: 'race', workout_type: 'run',
       prescription_basis: 'distance',
-      title: raceName || 'Race day', distance_miles: Number(distance), target_zone: 'Race effort', pace_target: 'Goal race effort', intensity: 'Race',
+      title: raceName || 'Race day', distance_miles: Number(distance), target_zone: 'Race effort', pace_target: goalPaceLabel || 'Goal race effort', intensity: 'Race',
       warmup: ['10-15 min easy', '4 x 20 sec relaxed strides'], steps: ['Start controlled', 'Settle into goal effort', 'Race by effort over late hills'],
       cooldown: ['Walk until breathing settles'], progression: 'Execute the prepared race plan.', description: 'Race-day execution.',
       evidence_refs: trainingEvidence.runEvidenceRefs('race'),
+      ...(goalPace ? { goal_pace_seconds_per_mile: goalPace, goal_pace_label: goalPaceLabel } : {}),
     };
   }
   const estimatedDistance = round(Math.max(0.1, distance));
+  const usesGoalPace = goalPace && ['race_pace', 'sharpen'].includes(type);
   return {
     id: `h3-w${weekNumber}-${day.toLowerCase()}-run`, kind: 'run', type, workout_type: 'run',
     prescription_basis: 'time',
@@ -326,7 +571,13 @@ function buildRunSession({ weekNumber, day, type, distance, phase, hilly, raceNa
     distance_miles: estimatedDistance,
     distance_is_estimate: true,
     evidence_refs: trainingEvidence.runEvidenceRefs(type),
-    ...runPrescription(type, phase, hilly),
+    ...(usesGoalPace ? { goal_pace_seconds_per_mile: goalPace, goal_pace_label: goalPaceLabel } : {}),
+    ...runPrescription(type, phase, hilly, {
+      weekNumber,
+      weekCount,
+      goalPaceLabel,
+      goalPaceStatus: goalPaceContext?.status,
+    }),
   };
 }
 
@@ -726,17 +977,25 @@ function buildGoalCourse(target = {}) {
   return course;
 }
 
-function goalMetadata(target = {}, existingGoal = {}) {
+function goalMetadata(target = {}, existingGoal = {}, history = {}) {
   const raceDate = parseISODate(target.raceDate) ? target.raceDate : existingGoal.date || null;
   const raceDistance = Number(target.distanceMiles ?? existingGoal.distanceMiles ?? 6.2) || 6.2;
+  const resolvedTime = resolvedGoalTime(target, existingGoal, history);
+  const goalTimeSeconds = resolvedTime?.seconds || null;
+  const goalPace = goalPaceSecondsPerMile({ ...target, distanceMiles: raceDistance }, existingGoal, history);
   return Object.assign({}, existingGoal, {
     kind: raceDate ? 'race' : (existingGoal.kind || 'training_block'),
     raceId: target.raceId || existingGoal.raceId || null,
     name: target.raceName || target.goalName || existingGoal.name || `${raceDistance}-mile training block`,
     date: raceDate,
     distanceMiles: raceDistance,
-    goalType: target.goalType || existingGoal.goalType || (target.goalTimeSeconds ? 'pr' : 'completion'),
-    goalTimeSeconds: Number(target.goalTimeSeconds ?? existingGoal.goalTimeSeconds) || null,
+    goalType: target.goalType || existingGoal.goalType || (goalTimeSeconds ? 'pr' : 'completion'),
+    goalTimeSeconds,
+    goalTimeSource: resolvedTime?.source || null,
+    improvementTargetPercent: resolvedTime?.improvementPercent || null,
+    goalPaceSecondsPerMile: goalPace,
+    goalPaceLabel: formatPaceLabel(goalPace),
+    paceContext: buildGoalPaceContext({ ...target, distanceMiles: raceDistance, goalTimeSeconds }, history, existingGoal),
     course: buildGoalCourse(target),
   });
 }
@@ -773,6 +1032,7 @@ function buildConcurrentPlan(context = {}) {
   const trustedCourse = trustedCourseFacts(target);
   const trustedElevationGainFt = trustedCourse.trusted ? Number(trustedCourse.facts.elevationGainFt || 0) : 0;
   const hilly = trustedElevationGainFt / Math.max(1, raceDistance) >= 30;
+  const goalPaceContext = buildGoalPaceContext({ ...target, distanceMiles: raceDistance }, history);
 
   const weeks = [];
   for (let weekNumber = 1; weekNumber <= weekCount; weekNumber += 1) {
@@ -806,11 +1066,15 @@ function buildConcurrentPlan(context = {}) {
     });
     const runByDay = new Map();
     weekRunDays.forEach((day, index) => {
-      const scheduledType = runTypeFor(day, weekRunDays, phase);
+      const scheduledType = runTypeFor(day, weekRunDays, phase, {
+        weekNumber,
+        weekCount,
+        hasTimedGoal: Boolean(goalPaceContext),
+      });
       const longAlreadyCompleted = isCurrentWeek && currentWeekLoad.longRunCompleted && scheduledType === 'long';
       const qualitySlotTooSmall = ['quality', 'hills', 'sharpen'].includes(scheduledType) && Number(distances[index] || 0) < 1.5;
       const type = day === raceDay ? 'race' : (longAlreadyCompleted || qualitySlotTooSmall ? 'easy' : scheduledType);
-      runByDay.set(day, buildRunSession({ weekNumber, day, type, distance: distances[index], phase, hilly, raceName: target.raceName, history }));
+      runByDay.set(day, buildRunSession({ weekNumber, weekCount, day, type, distance: distances[index], phase, hilly, raceName: target.raceName, history, goalPaceContext }));
     });
 
     const effectiveLiftCount = mode === planSchema.PLAN_MODES.RUN_ONLY ? 0 : phase === 'race' ? Math.min(1, liftDaysPerWeek) : liftDaysPerWeek;
@@ -838,7 +1102,7 @@ function buildConcurrentPlan(context = {}) {
   const plan = {
     schemaVersion: planSchema.SCHEMA_VERSION,
     planMode: mode,
-    goal: goalMetadata(target, { kind: raceDate ? 'race' : 'training_block' }),
+    goal: goalMetadata(target, { kind: raceDate ? 'race' : 'training_block' }, history),
     strengthPolicy,
     generationSource: 'evidence_engine',
     generationValidationErrors: [],
@@ -885,6 +1149,8 @@ function validateConcurrentPlan(candidate, context = {}) {
   const target = context.target || {};
   const expectedMode = resolvePlanMode(context.profile || {}, target);
   const hasRace = Boolean(parseISODate(target.raceDate));
+  const expectedGoalTimeSeconds = goalTimeSecondsFor(target, {}, context.history || {});
+  const expectedGoalPace = goalPaceSecondsPerMile(target, {}, context.history || {});
   const expectedWeeks = clamp(Math.round(Number(target.weeks) || 8), hasRace ? 1 : 4, 20);
   const expectedStartDate = mondayFor(target.startDate || context.todayISO);
   const acuteLoad = context.history?.acuteRunLoad;
@@ -895,6 +1161,8 @@ function validateConcurrentPlan(candidate, context = {}) {
   if (candidate.planMode !== expectedMode) errors.push(`planMode must be ${expectedMode}`);
   if (!candidate.goal || Number(candidate.goal.distanceMiles) !== Number(target.distanceMiles || candidate.goal?.distanceMiles)) errors.push('goal distance is missing or changed');
   if (target.raceDate && candidate.goal?.date !== target.raceDate) errors.push('race date was not preserved');
+  if (expectedGoalTimeSeconds && Number(candidate.goal?.goalTimeSeconds) !== expectedGoalTimeSeconds) errors.push('goal time was not preserved');
+  if (expectedGoalPace && Number(candidate.goal?.goalPaceSecondsPerMile) !== expectedGoalPace) errors.push('goal pace was not derived from target time and distance');
   if (!Array.isArray(candidate.weeks) || candidate.weeks.length !== expectedWeeks) errors.push(`weeks must contain exactly ${expectedWeeks} entries`);
 
   const ids = new Set();
@@ -902,6 +1170,7 @@ function validateConcurrentPlan(candidate, context = {}) {
   const phases = new Set();
   let exactRaceSessionFound = false;
   let raceSpecificSessionFound = false;
+  let targetPaceSessionFound = false;
   const weeks = Array.isArray(candidate.weeks) ? candidate.weeks : [];
   weeks.forEach((week, weekIndex) => {
     const path = `weeks[${weekIndex}]`;
@@ -950,6 +1219,11 @@ function validateConcurrentPlan(candidate, context = {}) {
             }
           }
           if (/(hill|course-specific)/i.test([session.title, session.type, session.description].filter(Boolean).join(' '))) raceSpecificSessionFound = true;
+          if (String(session.type || '').toLowerCase() !== 'race'
+            && expectedGoalPace
+            && Math.abs(Number(session.goal_pace_seconds_per_mile || 0) - expectedGoalPace) <= 1) {
+            targetPaceSessionFound = true;
+          }
           if (String(session.type || '').toLowerCase() === 'race') {
             const exactDistance = Math.abs(Number(session.distance_miles) - Number(target.distanceMiles)) < 0.01;
             if (day.date === target.raceDate && exactDistance) exactRaceSessionFound = true;
@@ -1005,6 +1279,11 @@ function validateConcurrentPlan(candidate, context = {}) {
     if (!exactRaceSessionFound) errors.push('plan must include the exact race session on the target date');
     if (weeks.length >= 3 && !phases.has('peak')) errors.push('race plan must include a peak phase');
   }
+  const availableRunDays = normalizeWeekdays(target.trainingDays, ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']);
+  const plannedRunFrequency = Math.min(availableRunDays.length, clamp(Math.round(Number(target.runDaysPerWeek || context.profile?.run_days_per_week) || 3), 2, 6));
+  if (expectedGoalPace && expectedWeeks >= 4 && plannedRunFrequency >= 2 && !targetPaceSessionFound) {
+    errors.push('timed race plan must include a structured target-pace session before race day');
+  }
   if (expectedWeeks >= 8 && !phases.has('deload')) errors.push('plan must include a deload phase');
   // H7: only trusted, current course facts may require a hill session, and AI
   // candidates may not fabricate course facts absent from trusted structured data.
@@ -1053,16 +1332,22 @@ function applyTrainingEvidence(plan, mode) {
 }
 
 function selectPlanCandidate(candidate, context = {}) {
-  const preparedCandidate = applyTrainingEvidence(
+  const preparedWithEvidence = applyTrainingEvidence(
     strengthPrescription.applyStrengthPrescriptionData(candidate, context),
     resolvePlanMode(context.profile || {}, context.target || {})
   );
+  const preparedCandidate = preparedWithEvidence && typeof preparedWithEvidence === 'object'
+    ? {
+      ...preparedWithEvidence,
+      goal: goalMetadata(context.target || {}, preparedWithEvidence.goal || {}, context.history || {}),
+    }
+    : preparedWithEvidence;
   const validation = validateConcurrentPlan(preparedCandidate, context);
   if (validation.valid) {
     return {
       plan: {
         ...preparedCandidate,
-        goal: goalMetadata(context.target || {}, preparedCandidate.goal || {}),
+        goal: goalMetadata(context.target || {}, preparedCandidate.goal || {}, context.history || {}),
         generationSource: 'ai_validated',
         generationValidationErrors: [],
         inputSummary: summarizeInputs(context.profile || {}, context.history || {}, context.recovery || {}, context.checkin || null),
@@ -1095,5 +1380,13 @@ module.exports = {
   buildGoalCourse,
   trustedCourseFacts,
   goalMetadata,
+  goalTimeSecondsFor,
+  resolvedGoalTime,
+  goalPaceSecondsPerMile,
+  formatPaceLabel,
+  buildGoalPaceContext,
+  buildRunPerformanceProfile,
+  equivalentTimeSeconds,
+  STANDARD_PERFORMANCE_DISTANCES,
   isHardRun,
 };

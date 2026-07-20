@@ -348,6 +348,7 @@ export default function PRWall() {
                 { label: '5K', target: 3.107 },
                 { label: '10K', target: 6.214 },
                 { label: '15K', target: 9.321 },
+                { label: '10 Mile', target: 10.0 },
                 { label: 'Half Marathon', target: 13.109 },
                 { label: 'Marathon', target: 26.219 }
               ].map(dist => {

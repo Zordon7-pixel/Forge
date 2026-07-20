@@ -59,6 +59,7 @@ const RUN_REFS = Object.freeze({
   long: ['ten_mile_time_plan', 'elite_periodization'],
   hills: ['elite_periodization', 'ingebrigtsen_progression'],
   quality: ['elite_periodization', 'ingebrigtsen_progression'],
+  race_pace: ['elite_periodization', 'ten_mile_time_plan'],
   sharpen: ['elite_periodization', 'ingebrigtsen_progression'],
   race: ['elite_periodization', 'ten_mile_time_plan'],
 });
