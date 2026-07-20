@@ -71,13 +71,16 @@ export default function Layout({ children }) {
               paddingBottom: '0.75rem',
             }}
           >
-          <div className="flex min-w-0 items-center gap-2">
+          <div
+            className="grid min-w-0 items-center gap-2"
+            style={{ gridTemplateColumns: 'minmax(0, 1fr) auto minmax(0, 1fr)' }}
+          >
             <button
               type="button"
               onClick={() => navigate('/')}
               style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', flex: '0 0 auto' }}
               aria-label="Go Home"
-              className="pressable"
+              className="pressable justify-self-start"
             >
               <img src="/icon-192.png" alt="Forged Hybrid" className="w-9 h-9 rounded-xl object-cover" />
             </button>
@@ -85,7 +88,7 @@ export default function Layout({ children }) {
               refreshKey={location.key}
               onOpen={() => navigate('/?readiness=1')}
             />
-            <div className="ml-auto flex shrink-0 items-center gap-2">
+            <div className="flex shrink-0 items-center gap-2 justify-self-end">
               <button
                 type="button"
                 onClick={() => setFeedbackOpen(true)}

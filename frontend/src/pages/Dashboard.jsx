@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { App as CapacitorApp } from '@capacitor/app'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { CalendarClock, Flame, Footprints, Share2, X } from 'lucide-react'
+import { CalendarClock, Flame, Share2, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import InsightsSheet, { CalendarDayDetailSheet, DailyCoachFlow, ReadinessBreakdownModal, RecentActivityCard, TodayDetailSheet, WatchSyncWidget } from '../components/InsightsSheet'
 import { shareSummaryCard } from '../components/ActivityShareStudio'
@@ -998,23 +998,6 @@ export default function Dashboard() {
           setShowReadinessModal(true)
         }}
       />
-
-      <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-        {dailySteps !== null && (
-          <div>
-            <p className="text-xs flex items-center gap-2" style={{ color: 'var(--text-muted)', margin: 0 }}>
-              <Footprints size={14} />
-              <span>
-                <strong style={{ color: 'var(--text-primary)' }}>{Number(dailySteps).toLocaleString()} steps</strong>
-                {dailyStepsSource === 'watch' && <span style={{ marginLeft: 6, fontSize: 11, color: 'var(--success)' }}>⌚ synced</span>}
-              </span>
-            </p>
-          </div>
-        )}
-        {dailySteps === null && (
-          <p className="text-sm" style={{ color: 'var(--text-muted)', margin: 0 }}>Sync Apple Health to show today&apos;s steps.</p>
-        )}
-      </div>
 
       {watchSyncNotice && (
         <div className="rounded-xl p-3" style={{ background: 'var(--accent-dim)', border: '1px solid var(--border-subtle)' }}>

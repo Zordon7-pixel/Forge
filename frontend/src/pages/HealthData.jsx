@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { HeartPulse, Shield } from 'lucide-react'
+import { Footprints, HeartPulse, Shield } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import api from '../lib/api'
 import Skeleton from '../components/Skeleton'
@@ -34,22 +34,30 @@ export default function HealthData() {
   const [driversData, setDriversData] = useState(null)
   const [readinessHistory, setReadinessHistory] = useState([])
   const [engagement, setEngagement] = useState(null)
+  const [dailySteps, setDailySteps] = useState(null)
   const [loading, setLoading] = useState(true)
 
   const loadData = async () => {
     setLoading(true)
     try {
-      const [driversRes, readinessRes, engagementRes] = await Promise.all([
+      const [driversRes, readinessRes, engagementRes, healthRes] = await Promise.all([
         api.get('/body/drivers').catch(() => ({ data: null })),
         api.get('/recovery/readiness/history?days=14').catch(() => ({ data: null })),
         api.get('/stats/engagement').catch((error) => {
           console.error('[Body] engagement load failed:', error?.message || error)
           return { data: null }
         }),
+        api.get('/health/sync').catch((error) => {
+          console.error('[Body] health sync load failed:', error?.message || error)
+          return { data: null }
+        }),
       ])
       setDriversData(driversRes.data || { summary: t('body.allGood'), limiter: null, drivers: [] })
       setReadinessHistory(Array.isArray(readinessRes.data?.days) ? readinessRes.data.days : [])
       setEngagement(engagementRes.data || null)
+      const syncedSteps = healthRes.data?.steps_today
+      const numericSteps = syncedSteps == null ? null : Number(syncedSteps)
+      setDailySteps(Number.isFinite(numericSteps) && numericSteps >= 0 ? Math.round(numericSteps) : null)
     } finally {
       setLoading(false)
     }
@@ -91,6 +99,23 @@ export default function HealthData() {
           </div>
         </section>
       )}
+
+      <section className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+        <div className="flex items-center gap-3">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl" style={{ background: 'var(--accent-dim)', color: 'var(--accent)' }}>
+            <Footprints size={20} />
+          </span>
+          <div className="min-w-0">
+            <p className="text-xs font-black uppercase" style={{ color: 'var(--text-muted)' }}>Steps today</p>
+            <p className="mt-1 text-2xl font-black" style={{ color: 'var(--text-primary)' }}>
+              {dailySteps === null ? '--' : dailySteps.toLocaleString()}
+            </p>
+            <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+              {dailySteps === null ? 'No step data synced today.' : 'Synced from Apple Health.'}
+            </p>
+          </div>
+        </div>
+      </section>
 
       <YouVsLastMonthCard comparison={engagement?.youVsLastMonth} />
 
