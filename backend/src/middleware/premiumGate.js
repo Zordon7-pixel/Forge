@@ -1,5 +1,5 @@
 const { dbGet } = require('../db');
-const { betaAccessEnabled } = require('../lib/betaAccess');
+const { resolveEntitlement } = require('../lib/betaAccess');
 
 /**
  * Middleware that blocks free-tier users from premium-only routes.
@@ -8,9 +8,11 @@ const { betaAccessEnabled } = require('../lib/betaAccess');
 function requirePremium(featureName) {
   return async (req, res, next) => {
     try {
-      if (betaAccessEnabled()) return next();
-      const user = await dbGet('SELECT is_pro FROM users WHERE id = ?', [req.user.id]);
-      if (user?.is_pro) return next();
+      const user = await dbGet(
+        'SELECT is_pro, subscription_status FROM users WHERE id = ?',
+        [req.user.id]
+      );
+      if (resolveEntitlement(user).effectivePremiumAccess) return next();
 
       return res.status(402).json({
         error: `${featureName || 'This feature'} requires a Forged Hybrid Pro subscription.`,

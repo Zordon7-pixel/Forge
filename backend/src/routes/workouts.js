@@ -1,7 +1,7 @@
 const router = require('express').Router();
 const { dbGet, dbAll, dbRun, withTransaction } = require('../db');
 const auth = require('../middleware/auth');
-const { betaAccessEnabled } = require('../lib/betaAccess');
+const { aiUsageWindows, canUseAiFeedback, resolveEntitlement } = require('../lib/betaAccess');
 const { v4: uuidv4 } = require('uuid');
 const { generateWorkoutFeedback } = require('../services/ai');
 const { requestExerciseImageIfMissing } = require('../lib/exerciseImageRequests');
@@ -241,14 +241,15 @@ router.post('/:id/feedback', auth, async (req, res) => {
     if (session.ai_feedback) return res.json({ feedback: session.ai_feedback });
 
     const profile = await dbGet('SELECT * FROM users WHERE id=?', [req.user.id]);
-    const today = new Date().toISOString().slice(0, 10);
-    const monthStart = `${new Date().toISOString().slice(0, 7)}-01`;
+    const windows = aiUsageWindows();
     const [dailyRow, monthlyRow] = await Promise.all([
-      dbGet("SELECT COUNT(*) as cnt FROM ai_usage WHERE user_id=? AND created_at>=?", [req.user.id, today]),
-      dbGet("SELECT COUNT(*) as cnt FROM ai_usage WHERE user_id=? AND created_at>=?", [req.user.id, monthStart])
+      dbGet('SELECT COUNT(*) as cnt FROM ai_usage WHERE user_id=? AND created_at>=?', [req.user.id, windows.dailyStart]),
+      dbGet('SELECT COUNT(*) as cnt FROM ai_usage WHERE user_id=? AND created_at>=?', [req.user.id, windows.monthlyStart])
     ]);
-    const canCallAI = Number(dailyRow?.cnt || 0) < 10
-      && (profile?.is_pro || betaAccessEnabled() || Number(monthlyRow?.cnt || 0) < 5);
+    const canCallAI = canUseAiFeedback(resolveEntitlement(profile), {
+      dailyUsed: dailyRow?.cnt,
+      monthlyUsed: monthlyRow?.cnt,
+    });
     if (!canCallAI) return res.status(429).json({ error: 'AI limit reached for today. Try again tomorrow.' });
 
     const sets = await dbAll('SELECT * FROM workout_sets WHERE session_id=? AND user_id=? ORDER BY logged_at ASC', [req.params.id, req.user.id]);

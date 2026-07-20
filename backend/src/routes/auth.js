@@ -18,6 +18,7 @@ const backendPackage = require('../../package.json');
 const { WAIVER_VERSION } = require('../lib/waiverText');
 const { runActivitySql } = require('../lib/runActivity');
 const { cleanupOwnedSocialChallenges } = require('../lib/challengeOwnership');
+const { aiUsageWindows, resolveEntitlement } = require('../lib/betaAccess');
 
 const sign = (user) => jwt.sign(
   { id: user.id, name: user.name, email: user.email, onboarded: user.onboarded, coach_personality: user.coach_personality },
@@ -170,7 +171,7 @@ router.get('/me', auth, async (req, res) => {
       `SELECT id, name, email, sex, age, weight_lbs, max_heart_rate, weekly_miles_current, goal_type,
        goal_race_date, goal_race_distance, injury_notes, comeback_mode, onboarded, coach_personality,
        run_days_per_week, lift_days_per_week, injury_mode, injury_description, injury_date,
-       injury_limitations, units, is_pro, subscription_status FROM users WHERE id = ?`,
+       injury_limitations, units, is_pro, subscription_status, subscription_ends_at FROM users WHERE id = ?`,
       [req.user.id]
     );
     if (!user) return res.status(404).json({ error: 'User not found' });
@@ -196,6 +197,7 @@ router.get('/me', auth, async (req, res) => {
       injury_limitations: user.injury_limitations || '',
       is_pro: !!user.is_pro,
       subscription_status: user.subscription_status || 'free',
+      entitlement: resolveEntitlement(user),
       waiver_current: !!waiver
     };
     res.json({ user: normalized });
@@ -386,19 +388,35 @@ router.get('/me/streak', auth, async (req, res) => {
 
 router.get('/me/ai-usage', auth, async (req, res) => {
   try {
-    const today = new Date().toISOString().slice(0, 10);
-    const month = new Date().toISOString().slice(0, 7);
-    const user = await dbGet("SELECT is_pro FROM users WHERE id = ?", [req.user.id]);
+    const windows = aiUsageWindows();
+    const user = await dbGet(
+      'SELECT is_pro, subscription_status FROM users WHERE id = ?',
+      [req.user.id]
+    );
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    const entitlement = resolveEntitlement(user);
 
     const [dailyRow, monthlyRow] = await Promise.all([
-      dbGet("SELECT COUNT(*) as cnt FROM ai_usage WHERE user_id = ? AND created_at >= ?", [req.user.id, today + 'T00:00:00']),
-      dbGet("SELECT COUNT(*) as cnt FROM ai_usage WHERE user_id = ? AND created_at >= ?", [req.user.id, month + '-01T00:00:00'])
+      dbGet('SELECT COUNT(*) as cnt FROM ai_usage WHERE user_id = ? AND created_at >= ?', [req.user.id, windows.dailyStart]),
+      dbGet('SELECT COUNT(*) as cnt FROM ai_usage WHERE user_id = ? AND created_at >= ?', [req.user.id, windows.monthlyStart])
     ]);
 
     res.json({
-      is_pro: !!user?.is_pro,
-      daily: { used: Number(dailyRow?.cnt || 0), limit: 10 },
-      monthly: { used: Number(monthlyRow?.cnt || 0), limit: user?.is_pro ? null : 5 }
+      is_pro: entitlement.effectivePremiumAccess,
+      effective_premium_access: entitlement.effectivePremiumAccess,
+      access_source: entitlement.accessSource,
+      paid_tier: entitlement.paidTier,
+      entitlement,
+      daily: {
+        used: Number(dailyRow?.cnt || 0),
+        limit: entitlement.dailyAiLimit,
+        resets_at: windows.dailyResetAt,
+      },
+      monthly: {
+        used: Number(monthlyRow?.cnt || 0),
+        limit: entitlement.monthlyAiLimit,
+        resets_at: windows.monthlyResetAt,
+      }
     });
   } catch (err) { res.status(500).json({ error: 'AI usage fetch failed' }); }
 });

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Check, X } from 'lucide-react'
 import { useProContext } from '../context/ProContext'
 import api from '../lib/api'
+import { entitlementPresentation } from '../lib/entitlementPresentation'
 import { startStripeSubscription } from '../services/StripeService'
 
 const freeFeatures = [
@@ -32,7 +33,7 @@ function trialDaysLeft(date) {
 
 export default function Upgrade() {
   const navigate = useNavigate()
-  const { isPro, loading, subscriptionStatus, trialEndsAt, refreshPro } = useProContext()
+  const { isPro, loading, subscriptionStatus, trialEndsAt, accessSource, paidTier, refreshPro } = useProContext()
   const [selectedPlan, setSelectedPlan] = useState('monthly')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
@@ -45,7 +46,10 @@ export default function Upgrade() {
     () => plans.find((plan) => plan.id === selectedPlan)?.label || 'Monthly',
     [selectedPlan]
   )
-  const daysLeft = subscriptionStatus === 'trialing' ? trialDaysLeft(trialEndsAt) : null
+  const accessCopy = entitlementPresentation({ accessSource, paidTier })
+  const daysLeft = accessSource === 'subscription' && subscriptionStatus === 'trialing'
+    ? trialDaysLeft(trialEndsAt)
+    : null
 
   const startCheckout = async () => {
     setSubmitting(true)
@@ -94,14 +98,14 @@ export default function Upgrade() {
           className="rounded-2xl p-8"
           style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', textAlign: 'center', maxWidth: 420, width: '100%' }}
         >
-          <h1 className="text-2xl font-black" style={{ color: 'var(--text-primary)' }}>You are on Forged Hybrid Pro</h1>
+          <h1 className="text-2xl font-black" style={{ color: 'var(--text-primary)' }}>{accessCopy.title}</h1>
           {redeemSuccess && redeemMessage && <p className="mt-2 text-sm" style={{ color: 'var(--success)' }}>{redeemMessage}</p>}
           {daysLeft !== null && (
             <p className="mt-3 inline-flex rounded-full px-3 py-1 text-xs font-bold" style={{ background: 'var(--accent-dim)', color: 'var(--accent)', border: '1px solid var(--border-subtle)' }}>
               {daysLeft} {daysLeft === 1 ? 'day' : 'days'} left in trial
             </p>
           )}
-          <p className="mt-2" style={{ color: 'var(--text-muted)' }}>Apple Health sync and premium insights are unlocked.</p>
+          <p className="mt-2" style={{ color: 'var(--text-muted)' }}>{accessCopy.detail}</p>
           <button
             onClick={() => navigate(-1)}
             className="mt-6 rounded-lg px-5 py-3 text-sm font-bold"

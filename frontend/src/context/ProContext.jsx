@@ -7,6 +7,8 @@ const ProContext = createContext({
   loading: true,
   subscriptionStatus: '',
   trialEndsAt: null,
+  accessSource: 'free',
+  paidTier: null,
   refreshPro: async () => false,
 })
 
@@ -15,29 +17,38 @@ export function ProProvider({ children }) {
   const [loading, setLoading] = useState(true)
   const [subscriptionStatus, setSubscriptionStatus] = useState('')
   const [trialEndsAt, setTrialEndsAt] = useState(null)
+  const [accessSource, setAccessSource] = useState('free')
+  const [paidTier, setPaidTier] = useState(null)
 
   const refreshPro = useCallback(async () => {
     if (!isLoggedIn()) {
       setIsPro(false)
       setSubscriptionStatus('')
       setTrialEndsAt(null)
+      setAccessSource('free')
+      setPaidTier(null)
       setLoading(false)
       return false
     }
 
     try {
-      const res = await api.get('/stripe/status').catch(() => api.get('/payments/status'))
-      const status = String(res?.data?.subscription_status || '').toLowerCase()
-      const hasProFlag = Number(res?.data?.is_pro) === 1
-      const pro = Boolean(res?.data?.beta_access) || status === 'pro' || status === 'active' || status === 'trialing' || hasProFlag
+      const res = await api.get('/auth/me')
+      const user = res?.data?.user || {}
+      const entitlement = user.entitlement || {}
+      const status = String(user.subscription_status || '').toLowerCase()
+      const pro = entitlement.effectivePremiumAccess === true
       setIsPro(pro)
       setSubscriptionStatus(status)
-      setTrialEndsAt(res?.data?.subscription_ends_at || null)
+      setTrialEndsAt(user.subscription_ends_at || null)
+      setAccessSource(entitlement.accessSource || 'free')
+      setPaidTier(entitlement.paidTier || null)
       return pro
     } catch {
       setIsPro(false)
       setSubscriptionStatus('')
       setTrialEndsAt(null)
+      setAccessSource('free')
+      setPaidTier(null)
       return false
     } finally {
       setLoading(false)
@@ -49,7 +60,7 @@ export function ProProvider({ children }) {
   }, [refreshPro])
 
   return (
-    <ProContext.Provider value={{ isPro, loading, subscriptionStatus, trialEndsAt, refreshPro }}>
+    <ProContext.Provider value={{ isPro, loading, subscriptionStatus, trialEndsAt, accessSource, paidTier, refreshPro }}>
       {children}
     </ProContext.Provider>
   )

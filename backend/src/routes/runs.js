@@ -11,7 +11,7 @@ const { classifyRunZone } = require('../lib/runHistory');
 const { assessHeatDrift } = require('../lib/heatDrift');
 const { getHrProfile, zoneForHr } = require('../lib/hrZones');
 const { buildRunImportKeys } = require('../lib/runImportKey');
-const { betaAccessEnabled } = require('../lib/betaAccess');
+const { aiUsageWindows, canUseAiFeedback, resolveEntitlement } = require('../lib/betaAccess');
 const {
   DISTANCE_CONFIG,
   normalizeSex,
@@ -103,17 +103,16 @@ async function generateStoredRunFeedback(run, userId) {
         : { feedback: null, status: 'pending' };
     }
 
-    const today = new Date().toISOString().slice(0, 10);
-    const monthStart = `${new Date().toISOString().slice(0, 7)}-01`;
-    const [dailyRow, profile] = await Promise.all([
-      dbGet('SELECT COUNT(*) as cnt FROM ai_usage WHERE user_id=? AND created_at>=?', [userId, `${today}T00:00:00`]),
+    const windows = aiUsageWindows();
+    const [dailyRow, monthlyRow, profile] = await Promise.all([
+      dbGet('SELECT COUNT(*) as cnt FROM ai_usage WHERE user_id=? AND created_at>=?', [userId, windows.dailyStart]),
+      dbGet('SELECT COUNT(*) as cnt FROM ai_usage WHERE user_id=? AND created_at>=?', [userId, windows.monthlyStart]),
       dbGet('SELECT * FROM users WHERE id=?', [userId]),
     ]);
-    const monthlyRow = profile?.is_pro || betaAccessEnabled()
-      ? null
-      : await dbGet('SELECT COUNT(*) as cnt FROM ai_usage WHERE user_id=? AND created_at>=?', [userId, `${monthStart}T00:00:00`]);
-    const canCallAI = Number(dailyRow?.cnt || 0) < 10
-      && (profile?.is_pro || betaAccessEnabled() || Number(monthlyRow?.cnt || 0) < 5);
+    const canCallAI = canUseAiFeedback(resolveEntitlement(profile), {
+      dailyUsed: dailyRow?.cnt,
+      monthlyUsed: monthlyRow?.cnt,
+    });
     if (!canCallAI) {
       await dbRun(
         `UPDATE runs SET ai_feedback_requested_at=NULL
