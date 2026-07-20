@@ -3,7 +3,7 @@ const rateLimit = require('express-rate-limit');
 const { validate: isUuid, v4: uuidv4 } = require('uuid');
 const { dbAll, dbGet, dbRun, withTransaction } = require('../db');
 const auth = require('../middleware/auth');
-const { addDays, challengeTemplateLabel, effectiveChallengeStatus, normalizeChallengeInput } = require('../lib/challengeRules');
+const { addDays, challengeTemplateLabel, effectiveChallengeStatus, isHybridChallengeTemplate, normalizeChallengeInput } = require('../lib/challengeRules');
 const { rankChallengeScores, scoreChallenge } = require('../lib/challengeScoring');
 const { cleanText } = require('../lib/profanity');
 const { runActivitySql } = require('../lib/runActivity');
@@ -38,12 +38,14 @@ function optionalNumber(value) {
 }
 
 function serializeChallenge(row) {
+  const templateType = row.template_type;
   return {
     id: row.id,
     name: row.name,
     description: row.description || null,
-    template_type: row.template_type,
-    template_label: challengeTemplateLabel(row.template_type),
+    template_type: templateType,
+    template_label: challengeTemplateLabel(templateType),
+    requires_both_modalities: isHybridChallengeTemplate(templateType),
     start_date: row.start_date,
     end_date: row.end_date,
     timezone: row.timezone,

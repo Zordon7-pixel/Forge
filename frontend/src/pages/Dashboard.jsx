@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { App as CapacitorApp } from '@capacitor/app'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { Award, CalendarClock, Flame, Footprints, Minus, TrendingDown, TrendingUp, Trophy, X } from 'lucide-react'
+import { Award, CalendarClock, Flame, Footprints, Minus, Share2, TrendingDown, TrendingUp, Trophy, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import InsightsSheet, { CalendarDayDetailSheet, DailyCoachFlow, ReadinessBreakdownModal, RecentActivityCard, TodayDetailSheet, WatchSyncWidget } from '../components/InsightsSheet'
 import ReadinessCard from '../components/ReadinessCard'
+import { shareSummaryCard } from '../components/ActivityShareStudio'
 import { useUnits } from '../context/UnitsContext'
 import api from '../lib/api'
 import track from '../lib/track'
@@ -133,8 +134,11 @@ function TrainingGapPrompt({ proposal, deciding, error, onDecision }) {
 }
 
 function HybridScoreCard({ hybridScore, streakStats, streakCount }) {
+  const [sharing, setSharing] = useState(false)
+  const [shareStatus, setShareStatus] = useState('')
   if (!hybridScore && !streakStats) return null
   const components = hybridScore?.components || {}
+  const score = Math.round(Number(hybridScore?.score || 0))
   const current = Number.isFinite(Number(streakCount)) ? Number(streakCount) : Number(streakStats?.currentStreak || 0)
   const longest = Number(streakStats?.longestStreak || streakStats?.bestStreak || 0)
   const unit = streakStats?.unit === 'week' ? 'week' : 'day'
@@ -148,18 +152,58 @@ function HybridScoreCard({ hybridScore, streakStats, streakCount }) {
     ? hybridScore.drivers.join(' ')
     : 'Run and lift balance sets the ceiling.'
 
+  const shareHybridScore = async () => {
+    setSharing(true)
+    setShareStatus('')
+    try {
+      const result = await shareSummaryCard({
+        title: 'Forged Hybrid Score',
+        eyebrow: 'Hybrid Score',
+        primary: `${score}/100`,
+        subtitle: driver,
+        filename: 'hybrid-score',
+        metrics: bars.map((bar) => {
+          const value = Math.max(0, Math.min(100, Math.round(Number(bar.value || 0))))
+          return { label: bar.label, value, display: `${value}`, color: bar.color }
+        }),
+      })
+      if (result?.method === 'download') setShareStatus('Share card saved.')
+    } catch (error) {
+      if (error?.name !== 'AbortError') {
+        console.error('[Dashboard] hybrid score share failed:', error?.message || error)
+        setShareStatus('Share was not available.')
+      }
+    } finally {
+      setSharing(false)
+    }
+  }
+
   return (
     <section style={{ border: '1px solid var(--border-subtle)', borderRadius: 8, background: 'var(--bg-card)', padding: 16 }}>
       <div className="flex items-start justify-between gap-4">
         <div>
           <p className="text-[10px] font-black uppercase" style={{ color: 'var(--accent)', margin: 0 }}>Hybrid Score</p>
           <div className="mt-1 flex items-end gap-2">
-            <span className="text-4xl font-black leading-none" style={{ color: 'var(--text-primary)' }}>{Math.round(Number(hybridScore?.score || 0))}</span>
+            <span className="text-4xl font-black leading-none" style={{ color: 'var(--text-primary)' }}>{score}</span>
             <span className="pb-1 text-sm font-bold" style={{ color: 'var(--text-muted)' }}>/100</span>
           </div>
         </div>
-        <p className="max-w-[58%] text-right text-xs leading-5" style={{ color: 'var(--text-muted)', margin: 0 }}>{driver}</p>
+        <div className="flex max-w-[58%] flex-col items-end gap-2">
+          <p className="text-right text-xs leading-5" style={{ color: 'var(--text-muted)', margin: 0 }}>{driver}</p>
+          {hybridScore && (
+            <button
+              type="button"
+              className="pressable flex min-h-9 items-center gap-2 rounded-md px-3 text-xs font-black"
+              style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}
+              disabled={sharing}
+              onClick={shareHybridScore}
+            >
+              <Share2 size={14} />{sharing ? 'Sharing...' : 'Share'}
+            </button>
+          )}
+        </div>
       </div>
+      {shareStatus && <p role="status" className="mt-2 text-right text-[11px] font-semibold" style={{ color: 'var(--text-muted)', marginBottom: 0 }}>{shareStatus}</p>}
       <div className="mt-4 space-y-2">
         {bars.map((bar) => {
           const value = Math.max(0, Math.min(100, Math.round(Number(bar.value || 0))))

@@ -54,11 +54,27 @@ function templateNeedsRun(template) {
   return template !== 'strength_consistency'
 }
 
+function isHybridChallenge(challengeOrTemplate) {
+  if (typeof challengeOrTemplate === 'string') return challengeOrTemplate === 'hybrid_balance'
+  return Boolean(challengeOrTemplate?.requires_both_modalities) || challengeOrTemplate?.template_type === 'hybrid_balance'
+}
+
 function templateNeedsLift(template) {
-  return template === 'strength_consistency' || template === 'hybrid_balance'
+  return template === 'strength_consistency' || isHybridChallenge(template)
+}
+
+function templateLabel(challengeOrTemplate, t) {
+  if (isHybridChallenge(challengeOrTemplate)) return 'Hybrid challenge'
+  const template = typeof challengeOrTemplate === 'string'
+    ? challengeOrTemplate
+    : challengeOrTemplate?.template_type
+  return t(`challenges.template.${template}`)
 }
 
 function targetText(challenge, t) {
+  if (isHybridChallenge(challenge)) {
+    return `${challenge.run_target} ${t(`challenges.unit.${challenge.run_unit}`)} AND ${challenge.lift_target} ${t('challenges.unit.sessions')}`
+  }
   if (challenge.template_type === 'running_distance') {
     return t('challenges.distanceTarget', { value: challenge.run_target, unit: t(`challenges.unit.${challenge.run_unit}`) })
   }
@@ -86,7 +102,7 @@ function ChallengeCard({ challenge, busy, onOpen, onMembership }) {
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
         <div style={{ minWidth: 0 }}>
           <span style={{ color: invited ? 'var(--accent)' : 'var(--text-muted)', fontSize: 10, fontWeight: 900, textTransform: 'uppercase' }}>
-            {invited ? t('challenges.invitation') : t(`challenges.template.${challenge.template_type}`)}
+            {invited ? t('challenges.invitation') : templateLabel(challenge, t)}
           </span>
           <h3 style={{ color: 'var(--text-primary)', fontSize: 16, fontWeight: 900, margin: '4px 0 0', overflowWrap: 'anywhere' }}>{challenge.name}</h3>
         </div>
@@ -116,6 +132,32 @@ function contributionText(contribution, t) {
     return t('challenges.runContributionDistance', { value: Number(contribution.distance_miles).toFixed(2) })
   }
   return t('challenges.runContributionTime', { value: Math.round(Number(contribution.duration_seconds || 0) / 60) })
+}
+
+function ProgressLeg({ icon: Icon, label, progress, unitLabel }) {
+  const fallbackPercent = Number(progress?.target || 0) > 0
+    ? (Number(progress?.value || 0) / Number(progress.target)) * 100
+    : 0
+  const percent = Math.max(0, Math.min(100, Math.round(Number(progress?.percent ?? fallbackPercent))))
+  const completed = progress?.completed ?? percent >= 100
+  return (
+    <div style={{ border: '1px solid var(--border-subtle)', borderRadius: 8, background: 'var(--bg-input)', padding: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+        <p style={{ display: 'flex', alignItems: 'center', gap: 6, margin: 0, color: 'var(--text-primary)', fontSize: 12, fontWeight: 900 }}>
+          <Icon size={14} />{label}
+        </p>
+        <span style={{ color: completed ? 'var(--success)' : 'var(--text-muted)', fontSize: 11, fontWeight: 900 }}>
+          {completed ? 'Complete' : `${percent}%`}
+        </span>
+      </div>
+      <div style={{ height: 6, borderRadius: 3, background: 'var(--bg-card)', overflow: 'hidden', marginTop: 8 }}>
+        <div style={{ width: `${percent}%`, height: '100%', background: completed ? 'var(--success)' : 'var(--accent)' }} />
+      </div>
+      <p style={{ margin: '7px 0 0', color: 'var(--text-muted)', fontSize: 11, fontWeight: 750 }}>
+        {progress?.value}/{progress?.target} {unitLabel}
+      </p>
+    </div>
+  )
 }
 
 function LeaderboardSection({ data, loading, error, busy, onRetry, onRemoveMember, t }) {
@@ -412,7 +454,7 @@ export default function ChallengePanel({ friends = [] }) {
         <section style={{ borderTop: '2px solid var(--accent)', borderBottom: '1px solid var(--border-subtle)', padding: '16px 0 18px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start' }}>
             <div style={{ minWidth: 0 }}>
-              <p style={{ color: 'var(--accent)', fontSize: 10, fontWeight: 900, textTransform: 'uppercase', margin: 0 }}>{t(`challenges.template.${current.template_type}`)}</p>
+              <p style={{ color: 'var(--accent)', fontSize: 10, fontWeight: 900, textTransform: 'uppercase', margin: 0 }}>{templateLabel(current, t)}</p>
               <h2 style={{ color: 'var(--text-primary)', fontSize: 20, fontWeight: 900, margin: '5px 0 0', overflowWrap: 'anywhere' }}>{current.name}</h2>
             </div>
             <button type="button" className="pressable" aria-label={t('challenges.close')} title={t('challenges.close')} onClick={() => { setDetail(null); setLeaderboard(null); setReportOpen(false) }} style={{ width: 40, height: 40, border: 'none', background: 'transparent', color: 'var(--text-muted)', display: 'grid', placeItems: 'center' }}><X size={20} /></button>
@@ -428,9 +470,28 @@ export default function ChallengePanel({ friends = [] }) {
               <div style={{ height: 8, borderRadius: 4, background: 'var(--bg-input)', overflow: 'hidden', marginTop: 8 }}>
                 <div style={{ width: `${Math.max(0, Math.min(100, progress.percent))}%`, height: '100%', background: 'var(--accent)' }} />
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: progress.run && progress.lift ? '1fr 1fr' : '1fr', gap: 8, marginTop: 10 }}>
-                {progress.run && <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: 12 }}><Clock3 size={14} style={{ display: 'inline', marginRight: 5 }} />{progress.run.value}/{progress.run.target} {t(`challenges.unit.${progress.run.unit}`)}</p>}
-                {progress.lift && <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: 12 }}><Dumbbell size={14} style={{ display: 'inline', marginRight: 5 }} />{progress.lift.value}/{progress.lift.target} {t('challenges.unit.sessions')}</p>}
+              {isHybridChallenge(current) && (
+                <p style={{ color: 'var(--text-muted)', fontSize: 11, lineHeight: 1.45, margin: '8px 0 0' }}>
+                  Both legs must be complete: run and lift.
+                </p>
+              )}
+              <div style={{ display: 'grid', gridTemplateColumns: progress.run && progress.lift ? 'minmax(0, 1fr) minmax(0, 1fr)' : '1fr', gap: 8, marginTop: 10 }}>
+                {progress.run && (
+                  <ProgressLeg
+                    icon={Clock3}
+                    label={isHybridChallenge(current) ? 'Run leg' : 'Run'}
+                    progress={progress.run}
+                    unitLabel={t(`challenges.unit.${progress.run.unit}`)}
+                  />
+                )}
+                {progress.lift && (
+                  <ProgressLeg
+                    icon={Dumbbell}
+                    label={isHybridChallenge(current) ? 'Lift leg' : 'Lift'}
+                    progress={progress.lift}
+                    unitLabel={t('challenges.unit.sessions')}
+                  />
+                )}
               </div>
             </div>
           )}
@@ -495,7 +556,7 @@ export default function ChallengePanel({ friends = [] }) {
           </label>
           <label style={{ color: 'var(--text-muted)', fontSize: 11, fontWeight: 850 }}>{t('challenges.templateLabel')}
             <select value={form.template_type} onChange={(event) => setForm((currentForm) => ({ ...currentForm, template_type: event.target.value }))} style={{ width: '100%', minHeight: 44, marginTop: 6, border: '1px solid var(--border-subtle)', borderRadius: 8, background: 'var(--bg-input)', color: 'var(--text-primary)', padding: '0 11px' }}>
-              {TEMPLATE_OPTIONS.map((template) => <option key={template} value={template}>{t(`challenges.template.${template}`)}</option>)}
+              {TEMPLATE_OPTIONS.map((template) => <option key={template} value={template}>{templateLabel(template, t)}</option>)}
             </select>
           </label>
           <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 8 }}>
@@ -512,9 +573,9 @@ export default function ChallengePanel({ friends = [] }) {
           {templateNeedsRun(form.template_type) && (
             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 8 }}>
               <label style={{ color: 'var(--text-muted)', fontSize: 11, fontWeight: 850 }}>{form.template_type === 'running_consistency' ? t('challenges.runDays') : form.template_type === 'running_time' ? t('challenges.runMinutes') : t('challenges.runDistance')}
-                <input type="number" min="1" step={form.template_type === 'running_distance' || form.template_type === 'hybrid_balance' ? '0.1' : '1'} required value={form.run_target} onChange={(event) => setForm((currentForm) => ({ ...currentForm, run_target: event.target.value }))} style={{ width: '100%', minHeight: 44, marginTop: 6, boxSizing: 'border-box', border: '1px solid var(--border-subtle)', borderRadius: 8, background: 'var(--bg-input)', color: 'var(--text-primary)', padding: '0 11px' }} />
+                <input type="number" min="1" step={form.template_type === 'running_distance' || isHybridChallenge(form.template_type) ? '0.1' : '1'} required value={form.run_target} onChange={(event) => setForm((currentForm) => ({ ...currentForm, run_target: event.target.value }))} style={{ width: '100%', minHeight: 44, marginTop: 6, boxSizing: 'border-box', border: '1px solid var(--border-subtle)', borderRadius: 8, background: 'var(--bg-input)', color: 'var(--text-primary)', padding: '0 11px' }} />
               </label>
-              {(form.template_type === 'running_distance' || form.template_type === 'hybrid_balance') ? (
+              {(form.template_type === 'running_distance' || isHybridChallenge(form.template_type)) ? (
                 <label style={{ color: 'var(--text-muted)', fontSize: 11, fontWeight: 850 }}>{t('challenges.distanceUnit')}
                   <select value={form.run_unit} onChange={(event) => setForm((currentForm) => ({ ...currentForm, run_unit: event.target.value }))} style={{ width: '100%', minHeight: 44, marginTop: 6, border: '1px solid var(--border-subtle)', borderRadius: 8, background: 'var(--bg-input)', color: 'var(--text-primary)', padding: '0 8px' }}>
                     <option value="miles">{t('challenges.unit.miles')}</option>

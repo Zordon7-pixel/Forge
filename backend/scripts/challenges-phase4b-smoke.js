@@ -4,6 +4,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const {
+  challengeTemplateLabel,
   dateInTimezone,
   normalizeChallengeInput,
 } = require('../src/lib/challengeRules');
@@ -30,6 +31,7 @@ const valid = normalizeChallengeInput({
 }, now);
 assert.ok(valid.value);
 assert.strictEqual(valid.value.endDate, '2026-07-28');
+assert.strictEqual(challengeTemplateLabel(valid.value.templateType), 'Hybrid challenge');
 assert.ok(normalizeChallengeInput({ ...valid.value, template_type: 'unknown' }, now).error);
 assert.ok(normalizeChallengeInput({ ...valid.value, template_type: 'running_distance', duration_days: 9 }, now).error);
 assert.ok(normalizeChallengeInput({ ...valid.value, template_type: 'running_distance', duration_days: 7, start_date: '2026-07-14' }, now).error);
@@ -120,6 +122,51 @@ const hybrid = scoreChallenge({
 assert.strictEqual(hybrid.run.value, 10);
 assert.strictEqual(hybrid.lift.value, 4);
 assert.strictEqual(hybrid.percent, 50);
+assert.strictEqual(hybrid.requires_both_modalities, true);
+
+const hybridChallenge = {
+  ...challenge,
+  template_type: 'hybrid_balance',
+  run_target: 10,
+  run_unit: 'miles',
+  lift_target: 2,
+  lift_unit: 'sessions',
+};
+const runOnlyHybrid = scoreChallenge(hybridChallenge, {
+  runs: [{ id: 'run-only-hybrid', user_id: 'a', date: '2026-07-15', type: 'run', distance_miles: 10, duration_seconds: 3600 }],
+  workoutSessions: [],
+  lifts: [],
+}, 'a');
+assert.strictEqual(runOnlyHybrid.run.completed, true);
+assert.strictEqual(runOnlyHybrid.lift.completed, false);
+assert.strictEqual(runOnlyHybrid.completed, false);
+assert.strictEqual(runOnlyHybrid.percent, 0);
+
+const liftOnlyHybrid = scoreChallenge(hybridChallenge, {
+  runs: [],
+  workoutSessions: [
+    { id: 'hybrid-lift-1', user_id: 'a', started_at: '2026-07-15T14:00:00.000Z', ended_at: '2026-07-15T15:00:00.000Z' },
+    { id: 'hybrid-lift-2', user_id: 'a', started_at: '2026-07-17T14:00:00.000Z', ended_at: '2026-07-17T15:00:00.000Z' },
+  ],
+  lifts: [],
+}, 'a');
+assert.strictEqual(liftOnlyHybrid.run.completed, false);
+assert.strictEqual(liftOnlyHybrid.lift.completed, true);
+assert.strictEqual(liftOnlyHybrid.completed, false);
+assert.strictEqual(liftOnlyHybrid.percent, 0);
+
+const completeHybrid = scoreChallenge(hybridChallenge, {
+  runs: [{ id: 'complete-hybrid-run', user_id: 'a', date: '2026-07-15', type: 'run', distance_miles: 10, duration_seconds: 3600 }],
+  workoutSessions: [
+    { id: 'complete-hybrid-lift-1', user_id: 'a', started_at: '2026-07-15T14:00:00.000Z', ended_at: '2026-07-15T15:00:00.000Z' },
+    { id: 'complete-hybrid-lift-2', user_id: 'a', started_at: '2026-07-17T14:00:00.000Z', ended_at: '2026-07-17T15:00:00.000Z' },
+  ],
+  lifts: [],
+}, 'a');
+assert.strictEqual(completeHybrid.run.completed, true);
+assert.strictEqual(completeHybrid.lift.completed, true);
+assert.strictEqual(completeHybrid.completed, true);
+assert.strictEqual(completeHybrid.percent, 100);
 
 const ranked = rankChallengeScores([
   { user_id: 'b', score: 50 },

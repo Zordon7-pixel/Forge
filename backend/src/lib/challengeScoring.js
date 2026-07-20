@@ -1,5 +1,5 @@
 const { isRunActivity } = require('./runActivity');
-const { dateInTimezone } = require('./challengeRules');
+const { dateInTimezone, isHybridChallengeTemplate } = require('./challengeRules');
 
 const KM_PER_MILE = 1.609344;
 
@@ -56,6 +56,7 @@ function preferMoreComplete(existing, candidate, fields) {
 }
 
 function scoreChallenge(challenge, rows, userId) {
+  const isHybridChallenge = isHybridChallengeTemplate(challenge.template_type);
   const deviceOnly = challenge.verification_policy === 'device_only';
   const runMap = new Map();
   const runContributions = [];
@@ -119,14 +120,14 @@ function scoreChallenge(challenge, rows, userId) {
   const liftSessions = strengthMap.size;
 
   let runValue = null;
-  if (challenge.template_type === 'running_distance' || challenge.template_type === 'hybrid_balance') runValue = distanceValue;
+  if (challenge.template_type === 'running_distance' || isHybridChallenge) runValue = distanceValue;
   if (challenge.template_type === 'running_time') runValue = runMinutes;
   if (challenge.template_type === 'running_consistency') runValue = runDaysValue;
 
   const runRatio = challenge.run_target ? Math.max(0, Number(runValue || 0) / Number(challenge.run_target)) : null;
   const liftRatio = challenge.lift_target ? Math.max(0, liftSessions / Number(challenge.lift_target)) : null;
   let ratio = runRatio ?? liftRatio ?? 0;
-  if (challenge.template_type === 'hybrid_balance') ratio = Math.min(runRatio || 0, liftRatio || 0);
+  if (isHybridChallenge) ratio = Math.min(runRatio || 0, liftRatio || 0);
   const percent = round(Math.min(1, ratio) * 100);
 
   const contributions = [...runContributions, ...strengthContributions]
@@ -142,6 +143,8 @@ function scoreChallenge(challenge, rows, userId) {
       value: round(runValue),
       target: Number(challenge.run_target),
       unit: challenge.run_unit,
+      percent: round(Math.min(1, runRatio || 0) * 100),
+      completed: Number(runRatio || 0) >= 1,
       distance_miles: round(distanceMiles, 3),
       duration_minutes: round(runMinutes),
       active_days: runDaysValue,
@@ -150,7 +153,10 @@ function scoreChallenge(challenge, rows, userId) {
       value: liftSessions,
       target: Number(challenge.lift_target),
       unit: challenge.lift_unit || 'sessions',
+      percent: round(Math.min(1, liftRatio || 0) * 100),
+      completed: Number(liftRatio || 0) >= 1,
     } : null,
+    requires_both_modalities: isHybridChallenge,
     qualifying_counts: {
       runs: runMap.size,
       strength_sessions: liftSessions,

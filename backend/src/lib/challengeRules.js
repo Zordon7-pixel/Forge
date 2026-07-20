@@ -17,7 +17,7 @@ const TEMPLATE_LABELS = {
   running_time: 'Running time challenge',
   running_consistency: 'Running consistency challenge',
   strength_consistency: 'Strength consistency challenge',
-  hybrid_balance: 'Hybrid balance challenge',
+  hybrid_balance: 'Hybrid challenge',
 };
 
 function isDateString(value) {
@@ -61,6 +61,10 @@ function dateInTimezone(value, timezone) {
 
 function challengeTemplateLabel(templateType) {
   return TEMPLATE_LABELS[templateType] || 'Private training challenge';
+}
+
+function isHybridChallengeTemplate(templateType) {
+  return templateType === 'hybrid_balance';
 }
 
 function effectiveChallengeStatus(challenge, now = new Date()) {
@@ -159,6 +163,7 @@ module.exports = {
   challengeTemplateLabel,
   dateInTimezone,
   effectiveChallengeStatus,
+  isHybridChallengeTemplate,
   isDateString,
   isIanaTimezone,
   normalizeChallengeInput,

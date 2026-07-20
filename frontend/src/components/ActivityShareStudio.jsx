@@ -430,6 +430,119 @@ function cardDataForPost(source, transparent) {
   throw new Error('Share card is too large to post')
 }
 
+function drawWrappedText(ctx, text, x, y, maxWidth, lineHeight, maxLines) {
+  const words = String(text || '').split(/\s+/).filter(Boolean)
+  const lines = []
+  let line = ''
+  for (const word of words) {
+    const candidate = line ? `${line} ${word}` : word
+    if (ctx.measureText(candidate).width <= maxWidth || !line) {
+      line = candidate
+    } else {
+      lines.push(line)
+      line = word
+    }
+    if (lines.length === maxLines) break
+  }
+  if (line && lines.length < maxLines) lines.push(line)
+  lines.forEach((entry, index) => ctx.fillText(entry, x, y + index * lineHeight))
+}
+
+function drawSummaryTemplate(ctx, summary, logo) {
+  ctx.fillStyle = '#080808'
+  ctx.fillRect(0, 0, CARD_WIDTH, CARD_HEIGHT)
+  ctx.save()
+  ctx.strokeStyle = 'rgba(245,189,2,0.12)'
+  ctx.lineWidth = 3
+  for (let row = 0; row < 12; row += 1) {
+    ctx.beginPath()
+    for (let x = -70; x <= CARD_WIDTH + 70; x += 18) {
+      const y = 240 + row * 76 + Math.sin((x + row * 47) / 88) * 24
+      if (x === -70) ctx.moveTo(x, y)
+      else ctx.lineTo(x, y)
+    }
+    ctx.stroke()
+  }
+  ctx.restore()
+  drawBrand(ctx, logo)
+
+  ctx.fillStyle = '#F5BD02'
+  ctx.font = '900 28px -apple-system, BlinkMacSystemFont, sans-serif'
+  ctx.fillText(String(summary?.eyebrow || 'Hybrid Score').toUpperCase(), 76, 265)
+  ctx.fillStyle = '#FFFFFF'
+  ctx.font = '950 132px -apple-system, BlinkMacSystemFont, sans-serif'
+  ctx.fillText(String(summary?.primary || '--'), 72, 410)
+  ctx.fillStyle = '#D4D4D8'
+  ctx.font = '700 30px -apple-system, BlinkMacSystemFont, sans-serif'
+  drawWrappedText(ctx, summary?.subtitle || 'Run and lift balance sets the ceiling.', 80, 482, 920, 42, 3)
+
+  const metrics = Array.isArray(summary?.metrics) ? summary.metrics.slice(0, 4) : []
+  roundRect(ctx, 60, 650, 960, 420, 28, 'rgba(16,16,18,0.95)', '#2A2A2E')
+  metrics.forEach((metric, index) => {
+    const y = 735 + index * 86
+    const value = Math.max(0, Math.min(100, Math.round(Number(metric?.value || 0))))
+    ctx.fillStyle = '#A1A1AA'
+    ctx.font = '800 25px -apple-system, BlinkMacSystemFont, sans-serif'
+    ctx.fillText(String(metric?.label || 'Metric').toUpperCase(), 104, y)
+    roundRect(ctx, 338, y - 22, 506, 28, 14, '#2A2A2E')
+    const fillWidth = Math.round(506 * (value / 100))
+    if (fillWidth > 0) roundRect(ctx, 338, y - 22, fillWidth, 28, 14, metric?.color || '#F5BD02')
+    ctx.fillStyle = '#FFFFFF'
+    ctx.font = '900 32px -apple-system, BlinkMacSystemFont, sans-serif'
+    ctx.textAlign = 'right'
+    ctx.fillText(String(metric?.display || value), 930, y + 4)
+    ctx.textAlign = 'left'
+  })
+
+  ctx.fillStyle = '#F5BD02'
+  ctx.font = '900 34px -apple-system, BlinkMacSystemFont, sans-serif'
+  ctx.fillText('RUN + LIFT. BUILT IN FORGED HYBRID.', 80, 1212)
+}
+
+function summaryFilename(summary) {
+  const slug = String(summary?.filename || summary?.eyebrow || 'hybrid-score')
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 54) || 'hybrid-score'
+  return `forged-${slug}.jpg`
+}
+
+function summaryShareText(summary) {
+  const metricText = Array.isArray(summary?.metrics) && summary.metrics.length
+    ? summary.metrics.map((metric) => `${metric.label}: ${metric.display || Math.round(Number(metric.value || 0))}`).join(' · ')
+    : ''
+  return [summary?.title || 'Forged Hybrid', summary?.primary, metricText, 'Forged Hybrid'].filter(Boolean).join('\n')
+}
+
+export async function shareSummaryCard(summary) {
+  const canvas = document.createElement('canvas')
+  canvas.width = CARD_WIDTH
+  canvas.height = CARD_HEIGHT
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('Share card could not be created')
+  let logo = null
+  try {
+    logo = await loadImage('/icon-192.png')
+  } catch (error) {
+    console.error('[ActivityShareStudio] logo load failed:', error?.message || error)
+  }
+  drawSummaryTemplate(ctx, summary, logo)
+  const file = new File([await canvasBlob(canvas, 'image/jpeg', 0.92)], summaryFilename(summary), { type: 'image/jpeg' })
+  const shareData = { title: summary?.title || 'Forged Hybrid', text: summaryShareText(summary), files: [file] }
+  if (navigator.share && (!navigator.canShare || navigator.canShare({ files: [file] }))) {
+    await navigator.share(shareData)
+    return { method: 'share' }
+  }
+  const url = URL.createObjectURL(file)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = file.name
+  link.click()
+  URL.revokeObjectURL(url)
+  return { method: 'download' }
+}
+
 export default function ActivityShareStudio({ run, onClose }) {
   const navigate = useNavigate()
   const canvasRef = useRef(null)
