@@ -78,10 +78,10 @@ export default function RunHub() {
 
   return (
     <div className="space-y-4 py-2 pb-16">
-      <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>
-        <h2 className="text-2xl font-bold mb-1" style={{ color: 'var(--text-primary)' }}>Run Hub</h2>
-        <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Your last run translated into runner language.</p>
-      </div>
+      <header className="px-1 py-1">
+        <h1 className="text-2xl font-black" style={{ color: 'var(--text-primary)' }}>Train</h1>
+        <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>Today&apos;s run and the weeks ahead.</p>
+      </header>
 
       <Link
         to="/plan"
@@ -98,10 +98,14 @@ export default function RunHub() {
         <ChevronRight size={20} className="shrink-0" />
       </Link>
 
-      <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>
-        {loading ? (
+      {loading && (
+        <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>
           <p style={{ color: 'var(--text-muted)' }}>Loading run stats...</p>
-        ) : !latestRun ? (
+        </div>
+      )}
+
+      {!loading && !latestRun && (
+        <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>
           <div>
             <p className="text-base font-bold" style={{ color: 'var(--text-primary)' }}>First run sets your baseline</p>
             <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>Warm up, log the run, then Forged Hybrid will translate your pace and adjust the next recommendation.</p>
@@ -111,21 +115,8 @@ export default function RunHub() {
               </Link>
             </div>
           </div>
-        ) : (
-          <>
-            <p className="text-sm mb-1" style={{ color: 'var(--text-muted)' }}>Latest Pace</p>
-            <p className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>
-              {paceText}
-              {paceZone && (
-                <span style={{ color: paceZone.color }}>
-                  {' '}· Zone {paceZone.zone} {paceZone.label}
-                </span>
-              )}
-            </p>
-            {paceZone && <p className="text-sm mt-2" style={{ color: paceZone.color }}>{paceZone.description}</p>}
-          </>
-        )}
-      </div>
+        </div>
+      )}
 
       {recommendation && (
         <Link
@@ -165,23 +156,35 @@ export default function RunHub() {
       )}
 
       {latestRun && (
-        <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-          <p className="text-xs font-semibold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.8 }}>Recent Run Snapshot</p>
-          <div className="mt-3 grid grid-cols-3 gap-2">
-            <div className="rounded-xl p-2 text-center" style={{ background: 'var(--bg-input)' }}>
-              <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Distance</p>
-              <p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{fmt.distance(Number(latestRun.distance_miles || 0), 2)}</p>
-            </div>
-            <div className="rounded-xl p-2 text-center" style={{ background: 'var(--bg-input)' }}>
-              <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Duration</p>
-              <p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{Math.round(Number(latestRun.duration_seconds || 0) / 60)} min</p>
-            </div>
-            <div className="rounded-xl p-2 text-center" style={{ background: 'var(--bg-input)' }}>
-              <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Effort</p>
-              <p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{latestRun.perceived_effort ? `${latestRun.perceived_effort}/10` : '--'}</p>
+        <details className="rounded-2xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', overflow: 'hidden' }}>
+          <summary className="pressable flex min-h-16 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3">
+            <span className="min-w-0">
+              <span className="block text-[10px] font-black uppercase" style={{ color: 'var(--text-muted)' }}>Recent run</span>
+              <span className="mt-1 block truncate text-lg font-black" style={{ color: 'var(--text-primary)' }}>
+                {paceText}
+                {paceZone && <span style={{ color: paceZone.color }}> · Zone {paceZone.zone} {paceZone.label}</span>}
+              </span>
+            </span>
+            <ChevronRight size={18} color="var(--text-muted)" className="shrink-0" />
+          </summary>
+          <div className="border-t px-4 pb-4 pt-3" style={{ borderColor: 'var(--border-subtle)' }}>
+            {paceZone && <p className="mb-3 text-sm" style={{ color: paceZone.color }}>{paceZone.description}</p>}
+            <div className="grid grid-cols-3 gap-2">
+              <div className="rounded-xl p-2 text-center" style={{ background: 'var(--bg-input)' }}>
+                <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Distance</p>
+                <p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{fmt.distance(Number(latestRun.distance_miles || 0), 2)}</p>
+              </div>
+              <div className="rounded-xl p-2 text-center" style={{ background: 'var(--bg-input)' }}>
+                <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Duration</p>
+                <p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{Math.round(Number(latestRun.duration_seconds || 0) / 60)} min</p>
+              </div>
+              <div className="rounded-xl p-2 text-center" style={{ background: 'var(--bg-input)' }}>
+                <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Effort</p>
+                <p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{latestRun.perceived_effort ? `${latestRun.perceived_effort}/10` : '--'}</p>
+              </div>
             </div>
           </div>
-        </div>
+        </details>
       )}
 
       <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
@@ -204,10 +207,10 @@ export default function RunHub() {
 
       <Link
         to="/log-run"
-        className="block w-full rounded-xl py-3 text-center font-semibold"
-        style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}
+        className="block w-full rounded-xl py-3 text-center text-sm font-black"
+        style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)', textDecoration: 'none' }}
       >
-        Open Run Logger
+        Log a run manually
       </Link>
     </div>
   )

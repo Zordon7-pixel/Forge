@@ -1,10 +1,11 @@
 import { Link } from 'react-router-dom'
 import {
   CalendarDays,
+  ChevronDown,
   ChevronRight,
   Footprints,
   HeartPulse,
-  Medal,
+  Settings,
   ShieldAlert,
   Sparkles,
   Users,
@@ -26,15 +27,8 @@ const sections = (t) => [
     items: [
       { to: '/gear', label: 'Forged Closet', sub: "Shoes, wear, and today's pick", icon: Footprints, color: '#94A3B8' },
       { to: '/hr-zones', label: 'HR Zones', sub: 'Calibrate your training zones', icon: HeartPulse, color: 'var(--danger)' },
-      { to: '/plan', label: 'Plan', sub: 'Calendar, create/manage, races', icon: Sparkles, color: 'var(--accent)' },
       { to: '/history', label: 'History', sub: 'Runs, lifts, imports', icon: CalendarDays, color: '#3B82F6' },
       { to: '/injury', label: 'Injury Mode', sub: 'Pain, limitations, PT', icon: ShieldAlert, color: 'var(--warning)' },
-    ],
-  },
-  {
-    title: 'Progress',
-    items: [
-      { to: '/prs', label: 'PR Wall', sub: 'Personal records', icon: Medal, color: '#A855F7' },
     ],
   },
 ]
@@ -72,7 +66,7 @@ export default function More() {
                     textDecoration: 'none',
                   }}
                 >
-                  <span style={{ width: 40, height: 40, borderRadius: 10, background: `${color}1f`, display: 'grid', placeItems: 'center' }}>
+                  <span style={{ width: 40, height: 40, borderRadius: 10, background: 'var(--bg-input)', display: 'grid', placeItems: 'center' }}>
                     <Icon size={20} color={color} />
                   </span>
                   <span style={{ minWidth: 0 }}>
@@ -87,48 +81,60 @@ export default function More() {
         ))}
         <section>
           <h2 style={{ color: 'var(--text-muted)', fontSize: 12, fontWeight: 800, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 10 }}>
-            Product
+            App
           </h2>
-          <Link
-            to="/whats-new"
-            style={{ display: 'grid', gridTemplateColumns: '40px minmax(0, 1fr) 20px', alignItems: 'center', gap: 12, border: '1px solid var(--border-subtle)', borderRadius: 12, background: 'var(--bg-card)', padding: 12, textDecoration: 'none' }}
-          >
-            <span style={{ width: 40, height: 40, borderRadius: 10, background: 'var(--accent-dim)', display: 'grid', placeItems: 'center' }}>
-              <Sparkles size={20} color="var(--accent)" />
-            </span>
-            <span style={{ minWidth: 0 }}>
-              <span style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-primary)', fontWeight: 850, fontSize: 14 }}>
-                What's New
-                {unread && <span aria-label="Unread product updates" style={{ width: 8, height: 8, borderRadius: 999, background: 'var(--accent)', flexShrink: 0 }} />}
+          <div style={{ display: 'grid', gap: 8 }}>
+            <Link
+              to="/whats-new"
+              style={{ display: 'grid', gridTemplateColumns: '40px minmax(0, 1fr) 20px', alignItems: 'center', gap: 12, border: '1px solid var(--border-subtle)', borderRadius: 12, background: 'var(--bg-card)', padding: 12, textDecoration: 'none' }}
+            >
+              <span style={{ width: 40, height: 40, borderRadius: 10, background: 'var(--accent-dim)', display: 'grid', placeItems: 'center' }}>
+                <Sparkles size={20} color="var(--accent)" />
               </span>
-              <span style={{ display: 'block', color: 'var(--text-muted)', fontSize: 12, marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {unread ? 'New improvements are ready' : 'Recent improvements and new features'}
+              <span style={{ minWidth: 0 }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-primary)', fontWeight: 850, fontSize: 14 }}>
+                  What's New
+                  {unread && <span aria-label="Unread product updates" style={{ width: 8, height: 8, borderRadius: 999, background: 'var(--accent)', flexShrink: 0 }} />}
+                </span>
+                <span style={{ display: 'block', color: 'var(--text-muted)', fontSize: 12, marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {unread ? 'New improvements are ready' : 'Recent improvements and new features'}
+                </span>
               </span>
-            </span>
-            <ChevronRight size={18} color="var(--text-muted)" />
-          </Link>
-        </section>
-        <section>
-          <h2 style={{ color: 'var(--text-muted)', fontSize: 12, fontWeight: 800, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 10 }}>
-            Health & data
-          </h2>
-          <div style={{ display: 'grid', gap: 10 }}>
-            <WorkoutNotificationControl />
-            <HealthSourceManager />
+              <ChevronRight size={18} color="var(--text-muted)" />
+            </Link>
+            <Link
+              to="/settings"
+              style={{ display: 'grid', gridTemplateColumns: '40px minmax(0, 1fr) 20px', alignItems: 'center', gap: 12, border: '1px solid var(--border-subtle)', borderRadius: 12, background: 'var(--bg-card)', padding: 12, textDecoration: 'none' }}
+            >
+              <span style={{ width: 40, height: 40, borderRadius: 10, background: 'var(--bg-input)', display: 'grid', placeItems: 'center' }}>
+                <Settings size={20} color="var(--text-muted)" />
+              </span>
+              <span style={{ minWidth: 0 }}>
+                <span style={{ display: 'block', color: 'var(--text-primary)', fontWeight: 850, fontSize: 14 }}>Settings</span>
+                <span style={{ display: 'block', color: 'var(--text-muted)', fontSize: 12, marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Profile, privacy, and preferences</span>
+              </span>
+              <ChevronRight size={18} color="var(--text-muted)" />
+            </Link>
           </div>
         </section>
-        <Link
-          to="/settings"
-          style={{
-            justifySelf: 'start',
-            color: 'var(--text-muted)',
-            fontSize: 13,
-            fontWeight: 800,
-            textDecoration: 'none',
-          }}
-        >
-          Settings →
-        </Link>
+        <section>
+          <details>
+            <summary style={{ display: 'grid', gridTemplateColumns: '40px minmax(0, 1fr) 20px', alignItems: 'center', gap: 12, border: '1px solid var(--border-subtle)', borderRadius: 12, background: 'var(--bg-card)', padding: 12, cursor: 'pointer', listStyle: 'none' }}>
+              <span style={{ width: 40, height: 40, borderRadius: 10, background: 'var(--bg-input)', display: 'grid', placeItems: 'center' }}>
+                <HeartPulse size={20} color="var(--success)" />
+              </span>
+              <span style={{ minWidth: 0 }}>
+                <span style={{ display: 'block', color: 'var(--text-primary)', fontWeight: 850, fontSize: 14 }}>Data & alerts</span>
+                <span style={{ display: 'block', color: 'var(--text-muted)', fontSize: 12, marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Health sync and activity notifications</span>
+              </span>
+              <ChevronDown size={18} color="var(--text-muted)" />
+            </summary>
+            <div style={{ display: 'grid', gap: 10, marginTop: 10 }}>
+              <WorkoutNotificationControl />
+              <HealthSourceManager />
+            </div>
+          </details>
+        </section>
       </div>
     </div>
   )

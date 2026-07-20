@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { Accessibility, Flame, History } from 'lucide-react'
+import { Accessibility, ChevronRight, Flame, History } from 'lucide-react'
 import api from '../lib/api'
 import track from '../lib/track'
 import { queueRequest } from '../lib/offlineQueue'
@@ -455,29 +455,34 @@ export default function LogLift() {
   }
 
   return (
-    <div className="space-y-6 py-4">
+    <div className="space-y-4 py-2 pb-16">
       <div>
         <h2 className="text-2xl font-bold mb-1" style={{ color: 'var(--text-primary)' }}>Start Workout</h2>
         <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Select the muscle groups you are targeting today</p>
       </div>
 
       {latestLift && latestVolume && (
-        <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-          <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Last Logged Lift</p>
-          <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{latestLift.exercise_name || 'Lift'}</p>
-          <p className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>
-            {latestLift.sets} x {latestLift.reps} @ {latestLift.weight_lbs} lbs
-          </p>
-          <p className="text-sm mt-1" style={{ color: 'var(--text-primary)' }}>
-            Volume: {latestVolume.totalLbs.toLocaleString()} lbs - {latestVolume.label} effort
-          </p>
-          <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>{overloadTip}</p>
-        </div>
+        <details className="rounded-2xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', overflow: 'hidden' }}>
+          <summary className="pressable flex min-h-16 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3">
+            <span className="min-w-0">
+              <span className="block text-[10px] font-black uppercase" style={{ color: 'var(--text-muted)' }}>Last logged lift</span>
+              <span className="mt-1 block truncate text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{latestLift.exercise_name || 'Lift'}</span>
+              <span className="mt-0.5 block text-xs" style={{ color: 'var(--text-muted)' }}>{latestLift.sets} x {latestLift.reps} @ {latestLift.weight_lbs} lbs</span>
+            </span>
+            <ChevronRight size={18} color="var(--text-muted)" className="shrink-0" />
+          </summary>
+          <div className="border-t px-4 pb-4 pt-3" style={{ borderColor: 'var(--border-subtle)' }}>
+            <p className="text-sm" style={{ color: 'var(--text-primary)' }}>
+              Volume: {latestVolume.totalLbs.toLocaleString()} lbs - {latestVolume.label} effort
+            </p>
+            <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>{overloadTip}</p>
+          </div>
+        </details>
       )}
 
-      <div className="flex gap-2">
+      <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${scheduledLiftPlan ? 3 : 2}, minmax(0, 1fr))` }}>
         {[...(scheduledLiftPlan ? ['scheduled'] : []), 'manual', 'ai'].map((t) => (
-          <button key={t} onClick={() => setActiveTab(t)} className="rounded-full px-4 py-2 text-xs font-bold" style={{ background: activeTab===t ? 'var(--accent)' : 'var(--bg-input)', color: activeTab===t ? '#000' : 'var(--text-muted)' }}>{t === 'scheduled' ? 'From your plan' : t === 'manual' ? 'Manual' : 'AI Recommends'}</button>
+          <button key={t} onClick={() => setActiveTab(t)} className="min-h-11 rounded-lg px-2 py-2 text-xs font-bold leading-tight" style={{ background: activeTab===t ? 'var(--accent)' : 'var(--bg-input)', color: activeTab===t ? '#000' : 'var(--text-muted)' }}>{t === 'scheduled' ? 'From your plan' : t === 'manual' ? 'Manual' : 'AI Recommends'}</button>
         ))}
       </div>
 
@@ -639,15 +644,15 @@ export default function LogLift() {
         <p className="text-xs font-semibold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.8 }}>Quick Actions</p>
         <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>Prepared for {mobilityLabel}</p>
         <div className="mt-3 grid grid-cols-3 gap-2">
-          <button type="button" onClick={() => launchLiftMobility('warmup')} className="flex min-h-[76px] flex-col items-center justify-center gap-2 rounded-xl border-0 px-1.5 py-2 text-center text-xs font-bold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}>
+          <button type="button" onClick={() => launchLiftMobility('warmup')} className="flex min-h-16 flex-col items-center justify-center gap-1.5 rounded-xl border-0 px-1.5 py-2 text-center text-xs font-bold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}>
             <Flame size={19} color="var(--accent)" />
             <span>Lift Warm-Up</span>
           </button>
-          <button type="button" onClick={() => launchLiftMobility('recovery')} className="flex min-h-[76px] flex-col items-center justify-center gap-2 rounded-xl border-0 px-1.5 py-2 text-center text-xs font-bold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}>
+          <button type="button" onClick={() => launchLiftMobility('recovery')} className="flex min-h-16 flex-col items-center justify-center gap-1.5 rounded-xl border-0 px-1.5 py-2 text-center text-xs font-bold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}>
             <Accessibility size={19} color="var(--accent)" />
             <span>Post-Lift Stretch</span>
           </button>
-          <button type="button" onClick={() => navigate('/history')} className="flex min-h-[76px] flex-col items-center justify-center gap-2 rounded-xl border-0 px-1.5 py-2 text-center text-xs font-bold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}>
+          <button type="button" onClick={() => navigate('/history')} className="flex min-h-16 flex-col items-center justify-center gap-1.5 rounded-xl border-0 px-1.5 py-2 text-center text-xs font-bold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}>
             <History size={19} color="var(--accent)" />
             <span>Lift History</span>
           </button>

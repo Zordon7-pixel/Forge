@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Footprints, HeartPulse, Shield } from 'lucide-react'
+import { ChevronDown, Footprints, HeartPulse, Shield } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import api from '../lib/api'
 import Skeleton from '../components/Skeleton'
-import { YouVsLastMonthCard } from '../components/EngagementProgressCards'
+import { HybridScoreCard, YouVsLastMonthCard } from '../components/EngagementProgressCards'
 
 function trendMeta(trend) {
   if (trend === 'up') return { arrow: '↑', color: 'var(--success)' }
@@ -34,13 +34,15 @@ export default function HealthData() {
   const [driversData, setDriversData] = useState(null)
   const [readinessHistory, setReadinessHistory] = useState([])
   const [engagement, setEngagement] = useState(null)
+  const [hybridScore, setHybridScore] = useState(null)
+  const [hybridStreak, setHybridStreak] = useState(null)
   const [dailySteps, setDailySteps] = useState(null)
   const [loading, setLoading] = useState(true)
 
   const loadData = async () => {
     setLoading(true)
     try {
-      const [driversRes, readinessRes, engagementRes, healthRes] = await Promise.all([
+      const [driversRes, readinessRes, engagementRes, healthRes, hybridScoreRes, hybridStreakRes] = await Promise.all([
         api.get('/body/drivers').catch(() => ({ data: null })),
         api.get('/recovery/readiness/history?days=14').catch(() => ({ data: null })),
         api.get('/stats/engagement').catch((error) => {
@@ -51,10 +53,20 @@ export default function HealthData() {
           console.error('[Body] health sync load failed:', error?.message || error)
           return { data: null }
         }),
+        api.get('/stats/hybrid-score').catch((error) => {
+          console.error('[Body] hybrid score load failed:', error?.message || error)
+          return { data: null }
+        }),
+        api.get('/stats/hybrid-streak').catch((error) => {
+          console.error('[Body] hybrid streak load failed:', error?.message || error)
+          return { data: null }
+        }),
       ])
       setDriversData(driversRes.data || { summary: t('body.allGood'), limiter: null, drivers: [] })
       setReadinessHistory(Array.isArray(readinessRes.data?.days) ? readinessRes.data.days : [])
       setEngagement(engagementRes.data || null)
+      setHybridScore(hybridScoreRes.data || null)
+      setHybridStreak(hybridStreakRes.data || null)
       const syncedSteps = healthRes.data?.steps_today
       const numericSteps = syncedSteps == null ? null : Number(syncedSteps)
       setDailySteps(Number.isFinite(numericSteps) && numericSteps >= 0 ? Math.round(numericSteps) : null)
@@ -72,7 +84,7 @@ export default function HealthData() {
 
   return (
     <div className="space-y-4 pb-16">
-      <section className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+      <header className="px-1 py-1">
         <div className="flex items-start justify-between gap-3">
           <div>
             <h1 className="text-2xl font-black" style={{ color: 'var(--text-primary)' }}>Body</h1>
@@ -80,7 +92,7 @@ export default function HealthData() {
           </div>
           <Shield size={22} color="var(--accent)" />
         </div>
-      </section>
+      </header>
 
       {loading && <Skeleton rows={2} />}
 
@@ -117,8 +129,6 @@ export default function HealthData() {
         </div>
       </section>
 
-      <YouVsLastMonthCard comparison={engagement?.youVsLastMonth} />
-
       {drivers.length === 0 && !loading ? (
         <section className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
           <HeartPulse size={28} color="var(--accent)" style={{ marginBottom: 12 }} />
@@ -139,6 +149,30 @@ export default function HealthData() {
               <DriverCard key={driver.key} driver={driver} trendLabels={trendLabels} />
             ))}
           </div>
+        </section>
+      )}
+
+      {(hybridScore || hybridStreak || engagement?.youVsLastMonth) && (
+        <section>
+          <details>
+            <summary
+              className="pressable flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 border-y py-3"
+              style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}
+            >
+              <span>
+                <span className="block text-sm font-black">Training progress</span>
+                <span className="mt-1 block text-xs" style={{ color: 'var(--text-muted)' }}>Hybrid balance and monthly trend</span>
+              </span>
+              <span className="flex shrink-0 items-center gap-2 text-xs font-black" style={{ color: 'var(--accent)' }}>
+                {hybridScore ? `${Math.round(Number(hybridScore.score || 0))}/100` : 'View'}
+                <ChevronDown size={16} />
+              </span>
+            </summary>
+            <div className="mt-3 space-y-3">
+              <HybridScoreCard hybridScore={hybridScore} streakStats={hybridStreak} />
+              <YouVsLastMonthCard comparison={engagement?.youVsLastMonth} />
+            </div>
+          </details>
         </section>
       )}
     </div>

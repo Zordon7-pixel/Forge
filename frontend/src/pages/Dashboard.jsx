@@ -1,10 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { App as CapacitorApp } from '@capacitor/app'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { CalendarClock, Flame, Share2, X } from 'lucide-react'
+import { CalendarClock, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import InsightsSheet, { CalendarDayDetailSheet, DailyCoachFlow, ReadinessBreakdownModal, RecentActivityCard, TodayDetailSheet, WatchSyncWidget } from '../components/InsightsSheet'
-import { shareSummaryCard } from '../components/ActivityShareStudio'
 import { useUnits } from '../context/UnitsContext'
 import api from '../lib/api'
 import track from '../lib/track'
@@ -132,109 +131,6 @@ function TrainingGapPrompt({ proposal, deciding, error, onDecision }) {
   )
 }
 
-function HybridScoreCard({ hybridScore, streakStats, streakCount }) {
-  const [sharing, setSharing] = useState(false)
-  const [shareStatus, setShareStatus] = useState('')
-  if (!hybridScore && !streakStats) return null
-  const components = hybridScore?.components || {}
-  const score = Math.round(Number(hybridScore?.score || 0))
-  const current = Number.isFinite(Number(streakCount)) ? Number(streakCount) : Number(streakStats?.currentStreak || 0)
-  const longest = Number(streakStats?.longestStreak || streakStats?.bestStreak || 0)
-  const unit = streakStats?.unit === 'week' ? 'week' : 'day'
-  const unitLabel = `${unit}${current === 1 ? '' : 's'}`
-  const bars = [
-    { label: 'Run', value: components.run || 0, color: 'var(--accent)' },
-    { label: 'Lift', value: components.lift || 0, color: 'var(--success)' },
-    { label: 'Consistency', value: components.consistency || 0, color: 'var(--warning)' },
-  ]
-  const driver = Array.isArray(hybridScore?.drivers) && hybridScore.drivers.length
-    ? hybridScore.drivers.join(' ')
-    : 'Run and lift balance sets the ceiling.'
-
-  const shareHybridScore = async () => {
-    setSharing(true)
-    setShareStatus('')
-    try {
-      const result = await shareSummaryCard({
-        title: 'Forged Hybrid Score',
-        eyebrow: 'Hybrid Score',
-        primary: `${score}/100`,
-        subtitle: driver,
-        filename: 'hybrid-score',
-        metrics: bars.map((bar) => {
-          const value = Math.max(0, Math.min(100, Math.round(Number(bar.value || 0))))
-          return { label: bar.label, value, display: `${value}`, color: bar.color }
-        }),
-      })
-      if (result?.method === 'download') setShareStatus('Share card saved.')
-    } catch (error) {
-      if (error?.name !== 'AbortError') {
-        console.error('[Dashboard] hybrid score share failed:', error?.message || error)
-        setShareStatus('Share was not available.')
-      }
-    } finally {
-      setSharing(false)
-    }
-  }
-
-  return (
-    <section style={{ border: '1px solid var(--border-subtle)', borderRadius: 8, background: 'var(--bg-card)', padding: 16 }}>
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <p className="text-[10px] font-black uppercase" style={{ color: 'var(--accent)', margin: 0 }}>Hybrid Score</p>
-          <div className="mt-1 flex items-end gap-2">
-            <span className="text-4xl font-black leading-none" style={{ color: 'var(--text-primary)' }}>{score}</span>
-            <span className="pb-1 text-sm font-bold" style={{ color: 'var(--text-muted)' }}>/100</span>
-          </div>
-        </div>
-        <div className="flex max-w-[58%] flex-col items-end gap-2">
-          <p className="text-right text-xs leading-5" style={{ color: 'var(--text-muted)', margin: 0 }}>{driver}</p>
-          {hybridScore && (
-            <button
-              type="button"
-              className="pressable flex min-h-9 items-center gap-2 rounded-md px-3 text-xs font-black"
-              style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}
-              disabled={sharing}
-              onClick={shareHybridScore}
-            >
-              <Share2 size={14} />{sharing ? 'Sharing...' : 'Share'}
-            </button>
-          )}
-        </div>
-      </div>
-      {shareStatus && <p role="status" className="mt-2 text-right text-[11px] font-semibold" style={{ color: 'var(--text-muted)', marginBottom: 0 }}>{shareStatus}</p>}
-      <div className="mt-4 space-y-2">
-        {bars.map((bar) => {
-          const value = Math.max(0, Math.min(100, Math.round(Number(bar.value || 0))))
-          return (
-            <div key={bar.label} className="grid items-center gap-2" style={{ gridTemplateColumns: '86px 1fr 34px' }}>
-              <span className="text-xs font-bold" style={{ color: 'var(--text-muted)' }}>{bar.label}</span>
-              <div aria-hidden="true" style={{ height: 8, borderRadius: 999, background: 'var(--bg-input)', overflow: 'hidden' }}>
-                <div style={{ width: `${value}%`, height: '100%', borderRadius: 999, background: bar.color }} />
-              </div>
-              <span className="text-right text-xs font-black" style={{ color: 'var(--text-primary)' }}>{value}</span>
-            </div>
-          )
-        })}
-      </div>
-      <div className="mt-4 flex items-center justify-between gap-3 border-t pt-3" style={{ borderColor: 'var(--border-subtle)' }}>
-        <div className="flex min-w-0 items-center gap-2">
-          <Flame size={18} color="var(--accent)" style={{ flex: '0 0 auto' }} />
-          <div className="min-w-0">
-            <p className="text-[10px] font-black uppercase" style={{ color: 'var(--accent)', margin: 0 }}>Hybrid Streak</p>
-            <p className="text-sm font-bold" style={{ color: 'var(--text-primary)', margin: '2px 0 0' }}>
-              {current} {unitLabel}
-            </p>
-          </div>
-        </div>
-        <p className="shrink-0 text-right text-xs leading-5" style={{ color: 'var(--text-muted)', margin: 0 }}>
-          Best {longest}<br />{streakStats?.graceUsed ? 'Grace used' : 'Grace available'}
-        </p>
-      </div>
-    </section>
-  )
-}
-
 const CELEBRATION_CONFETTI = Array.from({ length: 14 }, (_, index) => index)
 
 function HybridMilestoneCelebration({ milestone, onDismiss }) {
@@ -303,11 +199,10 @@ export default function Dashboard() {
   const [checkedInToday, setCheckedInToday] = useState(false), [hasWatchData, setHasWatchData] = useState(false)
   const [goalMode, setGoalMode] = useState('auto'), [manualGoalMiles, setManualGoalMiles] = useState(null), [editingGoal, setEditingGoal] = useState(false), [goalInput, setGoalInput] = useState('')
   const [showReadinessModal, setShowReadinessModal] = useState(false), [selectedCalendarDay, setSelectedCalendarDay] = useState(null), [watchSyncNotice, setWatchSyncNotice] = useState(null)
-  const [otherActivities, setOtherActivities] = useState([]), [streakStats, setStreakStats] = useState({ currentStreak: 0, longestStreak: 0, unit: 'day', graceUsed: false })
+  const [otherActivities, setOtherActivities] = useState([])
   const [milestones, setMilestones] = useState([]), [celebrationQueue, setCelebrationQueue] = useState([]), [compliance, setCompliance] = useState(null), [showComplianceDetails, setShowComplianceDetails] = useState(false)
   const [loadAnalysis, setLoadAnalysis] = useState(null), [nextRace, setNextRace] = useState(null), [loadWarningDismissedUntil, setLoadWarningDismissedUntil] = useState(Number(localStorage.getItem('forge_load_warning_dismissed_until') || 0))
   const [shoeAlerts, setShoeAlerts] = useState([]), [weeklyCalories, setWeeklyCalories] = useState(0)
-  const [hybridScore, setHybridScore] = useState(null)
 
   useEffect(() => {
     const params = new URLSearchParams(location.search)
@@ -357,7 +252,7 @@ export default function Dashboard() {
 
   const fetchDashboardData = useCallback(async () => {
     try {
-        const [statsRes, runsRes, liftsRes, warningRes, checkinRes, goalRes, complianceRes, loadRes, nextRaceRes, gearRes, injuryRes, recapRes, recommendationRes, ageGradedRes, executionRes, groupRunsRes, adaptationRes, hybridScoreRes, hybridStreakRes] = await Promise.all([
+        const [statsRes, runsRes, liftsRes, warningRes, checkinRes, goalRes, complianceRes, loadRes, nextRaceRes, gearRes, injuryRes, recapRes, recommendationRes, ageGradedRes, executionRes, groupRunsRes, adaptationRes, hybridStreakRes] = await Promise.all([
           api.get('/auth/me/stats'),
           api.get('/runs', { params: { limit: 5 } }),
           api.get('/lifts'),
@@ -384,7 +279,6 @@ export default function Dashboard() {
             console.error('[Dashboard] training gap check failed:', error?.message || error)
             return { data: { proposal: null } }
           }),
-          api.get('/stats/hybrid-score').catch(() => ({ data: null })),
           api.get('/stats/hybrid-streak').catch(() => ({ data: { currentStreak: 0, longestStreak: 0, unit: 'day', graceUsed: false, milestones: [] } })),
         ])
         setExecution(executionRes || null)
@@ -415,7 +309,6 @@ export default function Dashboard() {
           setManualGoalMiles(goalRes.data.miles || null)
         }
         const hybridStreakData = hybridStreakRes.data || { currentStreak: 0, longestStreak: 0, unit: 'day', graceUsed: false, milestones: [] }
-        setStreakStats(hybridStreakData)
         const fetchedMilestones = Array.isArray(hybridStreakData.milestones) ? hybridStreakData.milestones : []
         setMilestones(fetchedMilestones)
         if (fetchedMilestones.length > 0) {
@@ -433,7 +326,6 @@ export default function Dashboard() {
         setWeeklyCalories(recapRes.data?.totalCalories || 0)
         setNextRecommendation(recommendationRes.data || null)
         setAgeGradedPerformance(ageGradedRes.data || null)
-        setHybridScore(hybridScoreRes.data || null)
         const nextProposal = adaptationRes.data?.proposal || null
         const pendingGap = trainingGapEvidence(nextProposal)
           && nextProposal?.status === 'proposal'
@@ -757,7 +649,6 @@ export default function Dashboard() {
   const periodStats = stats?.[period] || {}
   const milesCount = useCountUp(Math.round((periodStats.miles || 0) * 10), 900)
   const runsCount = useCountUp(periodStats.count || 0, 900)
-  const streakCount = useCountUp(streakStats.currentStreak || 0, 900)
 
   // Combined recent activity
   const recentActivity = useMemo(() => {
@@ -959,8 +850,6 @@ export default function Dashboard() {
         onReflect={() => navigate('/history')}
         onDetails={() => setShowTodayDetail(true)}
       />
-
-      <HybridScoreCard hybridScore={hybridScore} streakStats={streakStats} streakCount={streakCount} />
 
       {upcomingSocialRun && (
         <section style={{ border: '1px solid var(--border-subtle)', borderRadius: 8, background: 'var(--bg-card)', padding: 14 }}>
