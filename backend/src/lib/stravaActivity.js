@@ -46,6 +46,61 @@ function decodeSummaryPolyline(encodedValue) {
   return points;
 }
 
+function normalizeRouteCoords(value) {
+  if (!Array.isArray(value)) return [];
+  const points = [];
+  for (const raw of value.slice(0, 200000)) {
+    const lat = boundedNumber(raw?.lat ?? raw?.latitude ?? raw?.[0], -90, 90);
+    const lon = boundedNumber(raw?.lon ?? raw?.lng ?? raw?.longitude ?? raw?.[1], -180, 180);
+    if (lat === null || lon === null) continue;
+    const point = { lat, lon };
+    const altitude = boundedNumber(raw?.alt ?? raw?.altitude, -1000, 10000);
+    if (altitude !== null) point.alt = altitude;
+    const timestamp = new Date(raw?.time || raw?.timestamp || '').getTime();
+    if (Number.isFinite(timestamp)) point.time = new Date(timestamp).toISOString();
+    points.push(point);
+  }
+  if (points.length <= 5000) return points;
+  return Array.from({ length: 5000 }, (_, index) => {
+    const sourceIndex = Math.round((index * (points.length - 1)) / 4999);
+    return points[sourceIndex];
+  });
+}
+
+function stravaStreamData(streams, key) {
+  if (Array.isArray(streams)) {
+    const stream = streams.find((item) => item?.type === key || item?.series_type === key);
+    return Array.isArray(stream?.data) ? stream.data : [];
+  }
+  const stream = streams?.[key];
+  if (Array.isArray(stream)) return stream;
+  return Array.isArray(stream?.data) ? stream.data : [];
+}
+
+function routeCoordsFromStravaStreams(streams, startDate) {
+  const latLng = stravaStreamData(streams, 'latlng');
+  const altitude = stravaStreamData(streams, 'altitude');
+  const elapsedTime = stravaStreamData(streams, 'time');
+  const startTimestamp = new Date(startDate || '').getTime();
+  const points = [];
+
+  for (let index = 0; index < Math.min(latLng.length, 200000); index += 1) {
+    const lat = boundedNumber(latLng[index]?.[0], -90, 90);
+    const lon = boundedNumber(latLng[index]?.[1], -180, 180);
+    if (lat === null || lon === null) continue;
+    const point = { lat, lon };
+    const alt = boundedNumber(altitude[index], -1000, 10000);
+    if (alt !== null) point.alt = alt;
+    const seconds = boundedNumber(elapsedTime[index], 0, 172800);
+    if (Number.isFinite(startTimestamp) && seconds !== null) {
+      point.time = new Date(startTimestamp + seconds * 1000).toISOString();
+    }
+    points.push(point);
+  }
+
+  return normalizeRouteCoords(points);
+}
+
 function normalizeStravaRun(activity = {}) {
   const meters = boundedNumber(activity.distance, 0, 1000000) || 0;
   const distanceMiles = Number((meters / 1609.34).toFixed(3));
@@ -61,6 +116,7 @@ function normalizeStravaRun(activity = {}) {
     ? new Date(startTime + elapsedSeconds * 1000).toISOString()
     : null;
   const rawActivityId = String(activity.id || '').trim();
+  const suppliedRouteCoords = normalizeRouteCoords(activity.routeCoords);
   return {
     activityId: /^\d{1,30}$/.test(rawActivityId) ? rawActivityId : '',
     date: toDateString(activity.start_date_local || startDate),
@@ -73,7 +129,9 @@ function normalizeStravaRun(activity = {}) {
     perceivedEffort: perceivedEffort === null ? null : Math.round(perceivedEffort),
     averageHeartRate: averageHeartRate === null ? null : Math.round(averageHeartRate),
     elevationGainFeet: elevationMeters === null ? null : Number((elevationMeters * 3.280839895).toFixed(1)),
-    routeCoords: decodeSummaryPolyline(activity.map?.summary_polyline),
+    routeCoords: suppliedRouteCoords.length >= 2
+      ? suppliedRouteCoords
+      : decodeSummaryPolyline(activity.map?.polyline || activity.map?.summary_polyline),
     activityType: String(activity.sport_type || activity.type || 'Run').slice(0, 40),
     name: String(activity.name || 'Run').trim().slice(0, 120) || 'Run',
   };
@@ -104,4 +162,5 @@ module.exports = {
   chooseMatchingHealthRun,
   decodeSummaryPolyline,
   normalizeStravaRun,
+  routeCoordsFromStravaStreams,
 };

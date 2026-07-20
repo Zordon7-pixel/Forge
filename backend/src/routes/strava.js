@@ -4,7 +4,11 @@ const rateLimit = require('express-rate-limit');
 
 const { dbGet, dbRun, withUserMutation } = require('../db');
 const auth = require('../middleware/auth');
-const { chooseMatchingHealthRun, normalizeStravaRun } = require('../lib/stravaActivity');
+const {
+  chooseMatchingHealthRun,
+  normalizeStravaRun,
+  routeCoordsFromStravaStreams,
+} = require('../lib/stravaActivity');
 const autoUpdatePRs = require('../services/prAuto');
 const { createUserNotification } = require('../services/notifications');
 const { getWebhookVerifyToken, normalizeWebhookEvent, verifyWebhookToken } = require('../lib/stravaWebhook');
@@ -14,6 +18,7 @@ const STRAVA_TOKEN_URL = 'https://www.strava.com/oauth/token';
 const STRAVA_ACTIVITIES_URL = 'https://www.strava.com/api/v3/athlete/activities';
 const STRAVA_ACTIVITY_URL = 'https://www.strava.com/api/v3/activities';
 const STRAVA_ATHLETE_URL = 'https://www.strava.com/api/v3/athlete';
+const MAX_STREAM_LOOKUPS_PER_SYNC = 3;
 const OAUTH_STATE_TTL_SECONDS = 10 * 60;
 const ENCRYPTION_ALGO = 'aes-256-gcm';
 const webhookLimiter = rateLimit({
@@ -375,6 +380,63 @@ async function fetchStravaActivity(accessToken, activityId) {
   return payload;
 }
 
+async function fetchStravaActivityStreams(accessToken, activityId) {
+  const url = new URL(`${STRAVA_ACTIVITY_URL}/${encodeURIComponent(activityId)}/streams`);
+  url.searchParams.set('keys', 'latlng,altitude,time');
+  url.searchParams.set('key_by_type', 'true');
+  const response = await fetch(url.toString(), {
+    headers: { Authorization: `Bearer ${String(accessToken || '')}` },
+  });
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch (err) {
+    console.error('[strava] failed to parse activity streams response:', err.message);
+  }
+  if (!response.ok || !payload) {
+    const message = payload?.message || payload?.error || 'Failed to fetch Strava activity streams';
+    const err = new Error(String(message));
+    err.status = response.status;
+    throw err;
+  }
+  return payload;
+}
+
+async function hydrateMissingStravaRoutes(activities, accessToken, maxLookups = MAX_STREAM_LOOKUPS_PER_SYNC) {
+  const hydrated = Array.isArray(activities) ? [...activities] : [];
+  let lookups = 0;
+  for (let index = 0; index < hydrated.length && lookups < maxLookups; index += 1) {
+    const activity = hydrated[index];
+    const activityType = String(activity?.sport_type || activity?.type || '').toLowerCase();
+    if (!activityType.includes('run') || activity?.trainer === true) continue;
+    const normalized = normalizeStravaRun(activity);
+    if (!normalized.activityId || normalized.routeCoords.length >= 2) continue;
+
+    lookups += 1;
+    try {
+      const streams = await fetchStravaActivityStreams(accessToken, normalized.activityId);
+      const routeCoords = routeCoordsFromStravaStreams(streams, normalized.startDate);
+      if (routeCoords.length >= 2) hydrated[index] = { ...activity, routeCoords };
+    } catch (err) {
+      if (Number(err?.status || 0) === 401) throw err;
+      console.warn(`[strava/streams] route unavailable for activity ${normalized.activityId}:`, err.message);
+      if (Number(err?.status || 0) === 429) break;
+    }
+  }
+  return hydrated;
+}
+
+async function fetchStravaActivitiesWithRoutes(accessToken) {
+  const activities = await fetchStravaActivities(accessToken);
+  return hydrateMissingStravaRoutes(activities, accessToken);
+}
+
+async function fetchStravaActivityWithRoute(accessToken, activityId) {
+  const activity = await fetchStravaActivity(accessToken, activityId);
+  const hydrated = await hydrateMissingStravaRoutes([activity], accessToken, 1);
+  return hydrated[0] || activity;
+}
+
 async function fetchStravaAthlete(accessToken) {
   const response = await fetch(STRAVA_ATHLETE_URL, {
     headers: { Authorization: `Bearer ${String(accessToken || '')}` },
@@ -581,11 +643,11 @@ async function processWebhookEvent(event) {
   let tokens = await maybeRefreshAccessToken(connected.user_id, connected);
   let activity;
   try {
-    activity = await fetchStravaActivity(tokens.access_token, event.objectId);
+    activity = await fetchStravaActivityWithRoute(tokens.access_token, event.objectId);
   } catch (err) {
     if (Number(err?.status || 0) !== 401) throw err;
     tokens = await maybeRefreshAccessToken(connected.user_id, { ...tokens, expires_at: 0 });
-    activity = await fetchStravaActivity(tokens.access_token, event.objectId);
+    activity = await fetchStravaActivityWithRoute(tokens.access_token, event.objectId);
   }
   const syncResult = await syncStravaActivitiesForUser(connected.user_id, [activity]);
   const runId = syncResult.runIds?.[0];
@@ -773,11 +835,11 @@ router.post('/sync', auth, async (req, res) => {
     let activities = [];
 
     try {
-      activities = await fetchStravaActivities(tokens.access_token);
+      activities = await fetchStravaActivitiesWithRoutes(tokens.access_token);
     } catch (err) {
       if (Number(err?.status || 0) === 401) {
         tokens = await maybeRefreshAccessToken(req.user.id, { ...tokens, expires_at: 0 });
-        activities = await fetchStravaActivities(tokens.access_token);
+        activities = await fetchStravaActivitiesWithRoutes(tokens.access_token);
       } else {
         throw err;
       }

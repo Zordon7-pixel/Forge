@@ -6,6 +6,7 @@ const {
   chooseMatchingHealthRun,
   decodeSummaryPolyline,
   normalizeStravaRun,
+  routeCoordsFromStravaStreams,
 } = require('../src/lib/stravaActivity');
 const { normalizeWorkoutMetrics } = require('../src/lib/workoutMetrics');
 
@@ -43,6 +44,30 @@ assert.strictEqual(incoming.averageHeartRate, 143);
 assert.strictEqual(incoming.perceivedEffort, 6);
 assert.strictEqual(incoming.routeCoords.length, 3);
 
+const detailedRoute = normalizeStravaRun({
+  id: 12346,
+  type: 'Run',
+  distance: 6598.3,
+  moving_time: 2512,
+  elapsed_time: 2580,
+  start_date: '2026-07-18T10:00:00Z',
+  map: {
+    polyline: '_p~iF~ps|U_ulLnnqC_mqNvxq`@',
+    summary_polyline: '_p~iF~ps|U',
+  },
+});
+assert.strictEqual(detailedRoute.routeCoords.length, 3, 'detailed Strava polyline wins over the summary line');
+
+const streamedRoute = routeCoordsFromStravaStreams({
+  latlng: { data: [[38.9, -76.99], [38.901, -76.991], ['bad', -76.992]] },
+  altitude: { data: [10, 12, 13] },
+  time: { data: [0, 30, 60] },
+}, '2026-07-20T10:00:00Z');
+assert.deepStrictEqual(streamedRoute, [
+  { lat: 38.9, lon: -76.99, alt: 10, time: '2026-07-20T10:00:00.000Z' },
+  { lat: 38.901, lon: -76.991, alt: 12, time: '2026-07-20T10:00:30.000Z' },
+], 'Strava streams preserve valid GPS, altitude, and elapsed-time data');
+
 const matching = chooseMatchingHealthRun([
   { id: 'wrong-time', duration_seconds: 2510, health_start_at: '2026-07-18T08:00:00Z' },
   { id: 'right-time', duration_seconds: 2512, health_start_at: '2026-07-18T10:02:00Z' },
@@ -66,6 +91,7 @@ assert.strictEqual(metrics.elevation_enriched_from_strava, 1);
 
 assert(/WHERE user_id=\? AND date=\? AND health_source IN \('apple_health', 'forged_hybrid'\)/.test(stravaRoute), 'Strava matching enriches only user-scoped canonical health or Forged recordings');
 assert(/WHERE id=\? AND user_id=\?/.test(stravaRoute), 'Strava enrichment updates are user scoped');
+assert(/\/streams/.test(stravaRoute) && /latlng,altitude,time/.test(stravaRoute), 'Strava route recovery requests full GPS streams');
 assert(/perceived_effort = COALESCE\(\?, perceived_effort\)/.test(importRoute), 'Apple Health re-sync can add a real effort score to an existing run');
 assert(/workoutEffortScore/.test(swift) && /HKWorkoutEffortRelationshipQuery/.test(swift), 'native bridge requests the associated HealthKit effort rating');
 assert(/elevation_derived_from_route/.test(swift) && /verticalAccuracy/.test(swift), 'route elevation fallback accepts only bounded-accuracy altitude');
@@ -74,5 +100,6 @@ assert(/Recording details not shared/.test(recap) && /Rate this run/.test(recap)
 assert(/Calculated training effort/.test(recap) && /objective load estimate, not your personal RPE/.test(recap), 'recap labels calculated effort separately from athlete-rated RPE');
 assert(/backendEffortSource[\s\S]*effort_source/.test(recap), 'recap consumes backend effort provenance before using its legacy fallback');
 assert(/Runs started in Forged Hybrid record iPhone GPS and altitude/.test(recap), 'recap explains when the phone can capture route and elevation');
+assert(/fetchRecentWorkoutHistory/.test(swift) && /mergeWorkoutHistory/.test(swift), 'native sync rechecks recent workouts for late HealthKit routes');
 
 console.log('Run recap data smoke passed');

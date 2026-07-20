@@ -398,21 +398,31 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
                 return
             }
 
-            self.enrichWorkoutsWithHeartRate(workouts, suppliedMaxHR: suppliedMaxHR, suppliedZoneMinimums: suppliedZoneMinimums) { rows, observedMaxHR in
-                if let anchor = newAnchor {
-                    self.saveWorkoutAnchor(anchor)
-                }
-                self.enrichWorkoutRowsWithRunningDynamics(rows, workouts: workouts) { enrichedRows in
-                    DispatchQueue.main.async {
-                        call.resolve([
-                            "workouts": enrichedRows,
-                            "observedMaxHR": observedMaxHR.map { Int($0.rounded()) } ?? NSNull(),
-                            "incremental": usedAnchor,
-                            "startDate": self.isoDateTime(startDate),
-                            "endDate": self.isoDateTime(endDate)
-                        ])
+            let finish = { (resolvedWorkouts: [HKWorkout]) in
+                self.enrichWorkoutsWithHeartRate(resolvedWorkouts, suppliedMaxHR: suppliedMaxHR, suppliedZoneMinimums: suppliedZoneMinimums) { rows, observedMaxHR in
+                    if let anchor = newAnchor {
+                        self.saveWorkoutAnchor(anchor)
+                    }
+                    self.enrichWorkoutRowsWithRunningDynamics(rows, workouts: resolvedWorkouts) { enrichedRows in
+                        DispatchQueue.main.async {
+                            call.resolve([
+                                "workouts": enrichedRows,
+                                "observedMaxHR": observedMaxHR.map { Int($0.rounded()) } ?? NSNull(),
+                                "incremental": usedAnchor,
+                                "startDate": self.isoDateTime(startDate),
+                                "endDate": self.isoDateTime(endDate)
+                            ])
+                        }
                     }
                 }
+            }
+
+            guard !forceFullSync else {
+                finish(workouts)
+                return
+            }
+            self.fetchRecentWorkoutHistory(startDate: startDate, endDate: endDate) { recentWorkouts in
+                finish(self.mergeWorkoutHistory(workouts, recentWorkouts))
             }
         }
     }
@@ -882,6 +892,36 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
             completion(workouts, newAnchor, storedAnchor != nil, nil)
         }
         healthStore.execute(query)
+    }
+
+    private func fetchRecentWorkoutHistory(startDate: Date, endDate: Date, completion: @escaping ([HKWorkout]) -> Void) {
+        let sevenDaysAgo = Calendar.current.date(byAdding: .day, value: -7, to: endDate) ?? startDate
+        let recentStart = startDate > sevenDaysAgo ? startDate : sevenDaysAgo
+        let predicate = HKQuery.predicateForSamples(withStart: recentStart, end: endDate, options: .strictStartDate)
+        let sort = NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: false)
+        let query = HKSampleQuery(
+            sampleType: HKObjectType.workoutType(),
+            predicate: predicate,
+            limit: HKObjectQueryNoLimit,
+            sortDescriptors: [sort]
+        ) { _, samples, error in
+            if let error = error {
+                NSLog("ForgeHealthPlugin recent workout route refresh failed: %@", error.localizedDescription)
+                completion([])
+                return
+            }
+            let recentRuns = (samples as? [HKWorkout] ?? [])
+                .filter { $0.workoutActivityType == .running }
+                .sorted { $0.endDate > $1.endDate }
+            completion(recentRuns)
+        }
+        healthStore.execute(query)
+    }
+
+    private func mergeWorkoutHistory(_ anchored: [HKWorkout], _ recent: [HKWorkout]) -> [HKWorkout] {
+        var byId = Dictionary(uniqueKeysWithValues: anchored.map { ($0.uuid, $0) })
+        recent.forEach { byId[$0.uuid] = $0 }
+        return byId.values.sorted { $0.endDate > $1.endDate }
     }
 
     private struct WorkoutHeartRateSummary {
