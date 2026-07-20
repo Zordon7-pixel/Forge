@@ -27,8 +27,36 @@ function formatValue(value) {
   return String(value)
 }
 
+function formatTimestamp(value) {
+  if (!value) return '--'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return String(value)
+  return date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+}
+
+function formatClassification(value) {
+  return String(value || 'limited').replace(/_/g, ' ')
+}
+
+const HEALTH_FIELD_LABELS = {
+  steps_today: 'Steps today',
+  calories_today: 'Calories today',
+  avg_heart_rate_last_run: 'Avg heart rate last run',
+  total_miles_this_week: 'Total miles this week',
+  resting_heart_rate: 'Resting heart rate',
+  hrv_ms: 'HRV',
+  sleep_hours_last_night: 'Sleep last night',
+  active_minutes_this_week: 'Active minutes this week',
+  workout_count_this_week: 'Workout count this week',
+  last_workout_type: 'Last workout type',
+  last_workout_duration_seconds: 'Last workout duration',
+  last_workout_calories: 'Last workout calories',
+}
+
 export default function TestFlightDebugPanel({ open, onClose }) {
   const [buildMeta, setBuildMeta] = useState(null)
+  const [healthCoverage, setHealthCoverage] = useState(null)
+  const [healthCoverageError, setHealthCoverageError] = useState('')
   const [error, setError] = useState('')
   const [copied, setCopied] = useState(false)
   const user = getUser()
@@ -57,8 +85,31 @@ export default function TestFlightDebugPanel({ open, onClose }) {
     }
   }, [open, access.allowed])
 
+  useEffect(() => {
+    if (!open || !access.allowed) return
+    let active = true
+    setHealthCoverage(null)
+    setHealthCoverageError('')
+    api.get('/health/coverage')
+      .then((res) => {
+        if (active) setHealthCoverage(res.data || null)
+      })
+      .catch((err) => {
+        if (active) setHealthCoverageError(err?.response?.data?.error || 'Health coverage unavailable.')
+      })
+    return () => {
+      active = false
+    }
+  }, [open, access.allowed])
+
   if (!open) return null
 
+  const healthFieldRows = Object.entries(healthCoverage?.fields || {}).map(([key, field]) => ({
+    key,
+    label: HEALTH_FIELD_LABELS[key] || key,
+    present: Boolean(field?.present),
+  }))
+  const healthTrainingMetricKeys = healthCoverage?.training_metric_keys || []
   const expo = appConfig.expo || {}
   const ios = expo.ios || {}
   const payload = {
@@ -85,6 +136,13 @@ export default function TestFlightDebugPanel({ open, onClose }) {
       email: user?.email || null,
       onboarded: user?.onboarded ?? null,
     },
+    healthCoverage: healthCoverage ? {
+      classification: healthCoverage.classification,
+      synced_at: healthCoverage.synced_at,
+      stale: healthCoverage.stale,
+      presentFields: healthFieldRows.filter((field) => field.present).map((field) => field.key),
+      trainingMetricKeys: healthTrainingMetricKeys,
+    } : null,
     capturedAt: new Date().toISOString(),
   }
 
@@ -162,6 +220,47 @@ export default function TestFlightDebugPanel({ open, onClose }) {
                   <p className="mt-1 break-words text-sm font-semibold">{formatValue(value)}</p>
                 </div>
               ))}
+            </div>
+
+            <div className="mt-4 rounded-xl border p-4" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-input)' }}>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-[11px] font-bold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.5 }}>Health delivery</p>
+                  <p className="mt-1 text-lg font-black capitalize">{healthCoverage ? formatClassification(healthCoverage.classification) : 'Loading'}</p>
+                </div>
+                <div className="text-right text-xs" style={{ color: 'var(--text-muted)' }}>
+                  <p className="font-bold">{healthCoverage ? (healthCoverage.stale ? 'Stale' : 'Fresh') : 'Unknown'}</p>
+                  <p>{formatTimestamp(healthCoverage?.synced_at)}</p>
+                </div>
+              </div>
+
+              {healthCoverageError ? (
+                <p className="mt-3 rounded-lg border px-3 py-2 text-sm" style={{ borderColor: 'var(--warning-dim)', background: 'rgba(249,115,22,0.1)', color: 'var(--warning)' }}>
+                  {healthCoverageError}
+                </p>
+              ) : healthCoverage ? (
+                <>
+                  <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    {healthFieldRows.map((field) => (
+                      <div key={field.key} className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2 text-sm" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}>
+                        <span className="font-semibold">{field.label}</span>
+                        <span className="text-xs font-bold uppercase" style={{ color: field.present ? 'var(--success)' : 'var(--text-muted)', letterSpacing: 0.4 }}>
+                          {field.present ? 'Present' : 'Missing'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="mt-3 rounded-lg border px-3 py-2" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}>
+                    <p className="text-[11px] font-bold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.5 }}>Training metric keys</p>
+                    <p className="mt-1 break-words text-sm font-semibold">
+                      {healthTrainingMetricKeys.length ? healthTrainingMetricKeys.join(', ') : 'None'}
+                    </p>
+                  </div>
+                </>
+              ) : (
+                <p className="mt-3 text-sm" style={{ color: 'var(--text-muted)' }}>Loading health coverage...</p>
+              )}
             </div>
 
             {error && (

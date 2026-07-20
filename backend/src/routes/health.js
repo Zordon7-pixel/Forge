@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const rateLimit = require('express-rate-limit');
 const { dbGet } = require('../db');
+const { getHealthCoverage } = require('../lib/healthCoverage');
 const { coerceMetric, hydrateHealthRow, normalizeTrainingMetrics } = require('../lib/healthSyncMetrics');
 const auth = require('../middleware/auth');
 
@@ -52,6 +53,23 @@ router.post('/sync', auth, healthSyncLimiter, async (req, res) => {
     const droppedFields = [steps, calories, avgHeartRate, totalMiles, restingHeartRate, hrv, sleepHours, activeMinutes, workoutCount, lastWorkoutSeconds, lastWorkoutCaloriesValue]
       .filter((result) => result.dropped && result.field)
       .map((result) => result.field);
+    const receivedScalarFields = [
+      ['steps_today', steps],
+      ['calories_today', calories],
+      ['avg_heart_rate_last_run', avgHeartRate],
+      ['total_miles_this_week', totalMiles],
+      ['resting_heart_rate', restingHeartRate],
+      ['hrv_ms', hrv],
+      ['sleep_hours_last_night', sleepHours],
+      ['active_minutes_this_week', activeMinutes],
+      ['workout_count_this_week', workoutCount],
+      ['last_workout_type', { value: lastWorkoutType }],
+      ['last_workout_duration_seconds', lastWorkoutSeconds],
+      ['last_workout_calories', lastWorkoutCaloriesValue],
+    ]
+      .filter(([, result]) => result.value !== null && result.value !== undefined && result.value !== '')
+      .map(([field]) => field);
+    const receivedTrainingMetricKeys = Object.keys(trainingMetrics.metrics).sort();
 
     const row = await dbGet(
       `INSERT INTO health_sync (
@@ -105,10 +123,21 @@ router.post('/sync', auth, healthSyncLimiter, async (req, res) => {
       ]
     );
 
+    console.info(`[health] sync received fields: scalar=${receivedScalarFields.join(',') || 'none'} training=${receivedTrainingMetricKeys.join(',') || 'none'} dropped=${droppedFields.join(',') || 'none'}`);
+
     res.json({ ok: true, synced_at: row?.synced_at || new Date().toISOString(), ...(droppedFields.length ? { droppedFields } : {}) });
   } catch (err) {
     console.error('[health] sync failed:', err.message);
     res.status(500).json({ error: 'Failed to sync health metrics' });
+  }
+});
+
+router.get('/coverage', auth, async (req, res) => {
+  try {
+    res.json(await getHealthCoverage(req.user.id));
+  } catch (err) {
+    console.error('[health] coverage failed:', err.message);
+    res.status(500).json({ error: 'Failed to fetch health coverage' });
   }
 });
 
