@@ -7,6 +7,7 @@ import AiGuidanceNote from './AiGuidanceNote'
 import { Link } from 'react-router-dom'
 import { activityLabel, isRunningActivity } from '../lib/activityType'
 import { buildRunComparison, formatPlannedPaceTarget, normalizeRunSplits, parseRunRoute, parseZoneTimeline, resolveRunHeartRateZone } from '../lib/runRecap'
+import { providerSourcePresentation } from '../lib/deviceSourcePresentation'
 import ActivityShareStudio from './ActivityShareStudio'
 
 function fmtDuration(totalSeconds = 0) {
@@ -71,14 +72,6 @@ function FitRouteBounds({ positions }) {
   return null
 }
 
-function formatSourceLabel(healthSource, metricSource) {
-  const source = String(healthSource || metricSource || '').toLowerCase()
-  if (!source) return null
-  if (source === 'apple_health') return 'Apple Health'
-  if (source === 'garmin_csv' || source === 'garmin') return 'Garmin file'
-  return source.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())
-}
-
 export default function RunDetailModal({ run, hrZones = [], hrProfile = null, onClose, onDelete, onAddCheckIn, onFeedbackGenerated, standalone = false }) {
   const { units, fmt } = useUnits()
   const [feedback, setFeedback] = useState(run.ai_feedback || '')
@@ -105,8 +98,14 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
   const kind = activityLabel(run)
   const hr = run.avg_hr || run.avg_heart_rate || null
   const workoutMetrics = parseObject(run.workout_metrics_json)
-  const sourceLabel = formatSourceLabel(run.health_source, workoutMetrics.metric_source)
-  const isAppleHealthSource = sourceLabel === 'Apple Health'
+  const rawSource = run.health_source || workoutMetrics.metric_source
+  const sourcePresentation = providerSourcePresentation({
+    source: rawSource,
+    upstreamProvider: workoutMetrics.upstream_provider,
+  })
+  const sourceLabel = rawSource ? sourcePresentation.label : null
+  const isAppleHealthSource = sourcePresentation.kind === 'apple_health'
+    || sourcePresentation.kind === 'garmin_via_apple_health'
   const enrichedByStrava = workoutMetrics.route_enriched_from_strava === 1
     || workoutMetrics.elevation_enriched_from_strava === 1
   const displayedSourceLabel = isAppleHealthSource && enrichedByStrava
@@ -239,7 +238,7 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
           )}
           <div className="flex-1">
             <h2 className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>{isRun ? 'Run Recap' : `${kind} Detail`}</h2>
-            {displayedSourceLabel && <p className="mt-0.5 text-xs" style={{ color: 'var(--text-muted)' }}>Synced from {displayedSourceLabel}</p>}
+            {displayedSourceLabel && <p className="mt-0.5 text-xs" style={{ color: 'var(--text-muted)' }}>Source: {displayedSourceLabel}</p>}
           </div>
           {!standalone && <button type="button" onClick={onClose} aria-label="Close activity detail" className="ml-auto"><X size={20} style={{ color: 'var(--text-muted)' }} /></button>}
         </div>

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Activity, AlertTriangle, ChevronDown, ChevronRight, Gauge, HeartPulse, Save, Sparkles } from 'lucide-react'
 import api from '../lib/api'
 import LoadingRunner from '../components/LoadingRunner'
+import { formatFreshness, hrZoneSourcePresentation } from '../lib/deviceSourcePresentation'
 
 const ZONE_COLORS = ['var(--success)', '#84CC16', 'var(--accent)', 'var(--warning)', 'var(--danger)']
 const MODEL_LABELS = {
@@ -213,6 +214,8 @@ export default function HrZones() {
 
   const zones = Array.isArray(profile?.zones) ? profile.zones : []
   const hasZones = zones.length > 0
+  const zoneSource = hrZoneSourcePresentation(profile || {})
+  const zoneFreshness = formatFreshness(profile?.updatedAt, { prefix: 'Updated' })
 
   return (
     <div style={{ display: 'grid', gap: 14, paddingBottom: 96 }}>
@@ -243,7 +246,11 @@ export default function HrZones() {
               <StatChip label="Resting" value={profile?.restingHr} />
               <StatChip label="LTHR" value={profile?.lthr} />
               <StatChip label="Model" value={MODEL_LABELS[profile?.zoneModel] || profile?.zoneModel || '--'} />
-              <StatChip label="Source" value={profile?.source || '--'} />
+              <StatChip label="Source" value={zoneSource.label} />
+            </div>
+            <div style={{ margin: '-4px 0 16px', color: 'var(--text-muted)', fontSize: 12, lineHeight: 1.5 }}>
+              <p style={{ margin: 0 }}>{zoneSource.detail}</p>
+              {zoneFreshness && <p style={{ margin: '3px 0 0' }}>{zoneFreshness}</p>}
             </div>
             <ZoneBars zones={zones.slice(0, 5)} />
           </>

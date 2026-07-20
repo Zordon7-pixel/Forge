@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { App as CapacitorApp } from '@capacitor/app'
 import { useNavigate } from 'react-router-dom'
-import { ChevronRight, Download, Moon, RefreshCw, Shield, Sun, Trash2, Unplug, Watch } from 'lucide-react'
+import { ChevronRight, Download, Moon, RefreshCw, Shield, Sun, Trash2, Watch } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useUnits } from '../context/UnitsContext'
 import { useTheme } from '../context/ThemeContext'
 import api from '../lib/api'
 import { parseGarminCSV, parseStravaCSV } from '../lib/healthImport'
+import { formatFreshness, GARMIN_BETA_PRESENTATION } from '../lib/deviceSourcePresentation'
 import WatchDeliveryService from '../services/WatchDeliveryService'
 import { athleteWatchAvailabilityMessage, isInternalWatchDiagnostic } from '../services/watchWorkoutAvailability'
 import TestFlightDebugPanel from '../components/TestFlightDebugPanel'
@@ -66,9 +67,6 @@ export default function Settings() {
   const [importing, setImporting] = useState(false)
   const [importProgress, setImportProgress] = useState('')
   const [importNotice, setImportNotice] = useState(null)
-  const [garminStatus, setGarminStatus] = useState({ connected: false, lastSync: null, activityCount: 0, displayName: '' })
-  const [garminLoading, setGarminLoading] = useState(false)
-  const [garminNotice, setGarminNotice] = useState(null)
   const [deviceStatuses, setDeviceStatuses] = useState({})
   const [deviceSyncing, setDeviceSyncing] = useState({})
   const [deviceConnecting, setDeviceConnecting] = useState({})
@@ -139,14 +137,6 @@ export default function Settings() {
   }, [loadDeviceStatuses])
 
   useEffect(() => {
-    api.get('/garmin/status').then((r) => {
-      setGarminStatus({
-        connected: Boolean(r.data?.connected),
-        lastSync: r.data?.lastSync || null,
-        activityCount: Number(r.data?.activityCount || 0),
-        displayName: r.data?.displayName || '',
-      })
-    }).catch((error) => console.error('[settings/garmin-status] refresh failed:', error?.message))
     loadDeviceStatuses()
     WatchDeliveryService.getAvailability()
       .then((result) => {
@@ -204,12 +194,6 @@ export default function Settings() {
     const id = setTimeout(() => setImportNotice(null), 5000)
     return () => clearTimeout(id)
   }, [importNotice])
-
-  useEffect(() => {
-    if (!garminNotice) return
-    const id = setTimeout(() => setGarminNotice(null), 4000)
-    return () => clearTimeout(id)
-  }, [garminNotice])
 
   useEffect(() => {
     if (!deviceNotice) return
@@ -293,19 +277,6 @@ export default function Settings() {
       await runImport('/import/workouts', workouts)
     } catch (err) {
       setImportNotice({ ok: false, text: 'Could not parse file. Expected Garmin/Strava CSV or workout JSON.' })
-    }
-  }
-
-  const handleGarminDisconnect = async () => {
-    setGarminLoading(true)
-    try {
-      await api.delete('/garmin/disconnect')
-      setGarminStatus({ connected: false, lastSync: null, activityCount: 0, displayName: '' })
-      setGarminNotice({ ok: true, text: 'Garmin disconnected.' })
-    } catch (err) {
-      setGarminNotice({ ok: false, text: err?.response?.data?.error || 'Disconnect failed.' })
-    } finally {
-      setGarminLoading(false)
     }
   }
 
@@ -409,7 +380,6 @@ export default function Settings() {
   const sectionTitle = { fontSize: 18, fontWeight: 900, color: 'var(--text-primary)', margin: '0 0 10px' }
   const sectionGrid = { display: 'grid', gap: 12 }
   const label = { fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text-muted)', marginBottom: 12, display: 'block' }
-  const statusText = (value) => value ? new Date(value).toLocaleString() : 'Never'
   const watchProviderPill = (provider) => {
     const active = provider.id === 'apple-watch' && watchDelivery.canAutoSend
     const labelText = active ? 'Ready' : provider.status === 'planned' ? 'Planned' : provider.status === 'available' ? 'iPhone app' : 'API access needed'
@@ -545,58 +515,32 @@ export default function Settings() {
               <div>
                 <p style={{ margin: 0, fontSize: 15, fontWeight: 900, color: 'var(--text-primary)' }}>One Send to Watch flow</p>
                 <p style={{ margin: '5px 0 0', fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.55 }}>
-                  Forged Hybrid now builds provider-neutral structured workouts. Apple Watch is the direct path; Garmin, COROS, Polar, Suunto, Wahoo, and TrainingPeaks are adapter slots pending API access.
+                  Forged Hybrid builds provider-neutral structured workouts. Apple Watch is the direct path; other provider adapters are not available in this beta.
                 </p>
               </div>
               <Shield size={18} style={{ color: watchDelivery.canAutoSend ? 'var(--success)' : 'var(--text-muted)', flexShrink: 0 }} />
             </div>
             <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(min(150px, 100%), 1fr))', minWidth: 0 }}>
-              {(watchDelivery.providers?.length ? watchDelivery.providers : WatchDeliveryService.getProviders()).map(watchProviderPill)}
+              {(watchDelivery.providers?.length ? watchDelivery.providers : WatchDeliveryService.getProviders())
+                .filter((provider) => provider.id !== 'garmin')
+                .map(watchProviderPill)}
             </div>
             {watchDelivery.checked && watchDelivery.reason && (
               <p style={{ margin: '10px 0 0', fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.45 }}>{athleteWatchAvailabilityMessage(watchDelivery.reason)}</p>
             )}
           </div>
 
-          <div style={card}>
-            <span style={label}>Garmin</span>
-            {!garminStatus.connected ? (
-              <div style={{ display: 'grid', gap: 10 }}>
-                <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Watch size={15} />
-                  Status: Not connected
-                </p>
-                <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: 13, lineHeight: 1.6 }}>
-                  Direct Garmin login is paused until Forged Hybrid has official Garmin API access. Use Apple Health or File Import for Garmin watch data.
-                </p>
-              </div>
-            ) : (
-              <div style={{ display: 'grid', gap: 10 }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-                  <div>
-                    <p style={{ margin: 0, fontSize: 14, fontWeight: 800, color: 'var(--text-primary)' }}>{garminStatus.displayName || 'Garmin user'}</p>
-                    <p style={{ margin: '3px 0 0', fontSize: 12, color: 'var(--text-muted)' }}>Status: Connected</p>
-                    <p style={{ margin: '3px 0 0', fontSize: 12, color: 'var(--text-muted)' }}>Last sync: {statusText(garminStatus.lastSync)}</p>
-                    <p style={{ margin: '3px 0 0', fontSize: 12, color: 'var(--text-muted)' }}>Imported activities: {garminStatus.activityCount}</p>
-                  </div>
-                  <Shield size={18} style={{ color: 'var(--success)', flexShrink: 0 }} />
-                </div>
-                <div style={{ display: 'grid', gap: 8 }}>
-                  <p style={{ margin: 0, fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>
-                    Garmin sync is paused until official API access is available.
-                  </p>
-                  <button onClick={handleGarminDisconnect} disabled={garminLoading} style={{ border: '1px solid var(--border-subtle)', borderRadius: 10, padding: '10px 12px', fontSize: 13, fontWeight: 700, background: 'var(--bg-input)', color: 'var(--text-primary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
-                    <Unplug size={14} />
-                    Revoke
-                  </button>
-                </div>
-              </div>
-            )}
-            {garminNotice && (
-              <div style={{ marginTop: 10, borderRadius: 10, padding: '9px 10px', fontSize: 12, border: `1px solid ${garminNotice.ok ? 'rgba(34,197,94,0.35)' : 'var(--danger-dim)'}`, color: garminNotice.ok ? 'var(--success)' : 'var(--danger)', background: garminNotice.ok ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.1)' }}>
-                {garminNotice.text}
-              </div>
-            )}
+          <div data-device-provider="garmin" style={card}>
+            <span style={label}>{GARMIN_BETA_PRESENTATION.label}</span>
+            <div style={{ display: 'grid', gap: 10 }}>
+              <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Watch size={15} />
+                {GARMIN_BETA_PRESENTATION.status}
+              </p>
+              <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: 13, lineHeight: 1.6 }}>
+                {GARMIN_BETA_PRESENTATION.detail}
+              </p>
+            </div>
           </div>
 
           {deviceRows.map((device) => (
@@ -607,7 +551,7 @@ export default function Settings() {
                   <div>
                     <p style={{ margin: 0, fontSize: 14, fontWeight: 800, color: 'var(--text-primary)' }}>{device.detail || device.name}</p>
                     <p style={{ margin: '3px 0 0', fontSize: 12, color: 'var(--text-muted)' }}>Status: {device.connected ? 'Connected' : 'Not connected'}</p>
-                    <p style={{ margin: '3px 0 0', fontSize: 12, color: 'var(--text-muted)' }}>Last sync: {statusText(device.lastSync)}</p>
+                    <p style={{ margin: '3px 0 0', fontSize: 12, color: 'var(--text-muted)' }}>{formatFreshness(device.lastSync) || 'No sync yet'}</p>
                   </div>
                   <Shield size={18} style={{ color: device.connected ? 'var(--success)' : 'var(--text-muted)', flexShrink: 0 }} />
                 </div>

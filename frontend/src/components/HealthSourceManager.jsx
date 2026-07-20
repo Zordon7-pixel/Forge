@@ -1,16 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Activity, HeartPulse, RefreshCw, Watch } from 'lucide-react'
 import api from '../lib/api'
+import { formatFreshness, providerSourcePresentation } from '../lib/deviceSourcePresentation'
 import HealthService from '../services/HealthService'
 
 const HEALTH_SYNC_RESULT_KEY = 'forge_last_health_sync_result'
-
-function dateText(value) {
-  if (!value) return 'Never'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return 'Never'
-  return date.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
-}
 
 function getLastSyncResult() {
   try {
@@ -79,10 +73,15 @@ export default function HealthSourceManager() {
 
   const connectedSources = useMemo(() => {
     const sources = []
-    if (health?.synced_at || lastSyncResult?.syncedAt) {
-      sources.push({ key: 'apple', label: 'Apple Health', detail: dateText(health?.synced_at || lastSyncResult?.syncedAt), icon: Watch })
+    const activitySourceKinds = new Set(runs.map((run) => providerSourcePresentation(run.health_source).kind))
+    const appleFreshness = formatFreshness(health?.synced_at || lastSyncResult?.syncedAt)
+    if (appleFreshness || activitySourceKinds.has('apple_health') || activitySourceKinds.has('garmin_via_apple_health')) {
+      sources.push({ key: 'apple', label: 'Apple Health', detail: appleFreshness || 'Imported activity present', icon: Watch })
     }
-    if (runs.some((run) => run.garmin_activity_id || String(run.watch_activity_type || '').toLowerCase().includes('garmin') || String(run.health_source || '').toLowerCase().includes('garmin'))) {
+    if (activitySourceKinds.has('garmin_via_apple_health')) {
+      sources.push({ key: 'garmin-via-apple', label: 'Garmin via Apple Health', detail: 'Explicit workout provenance present', icon: Activity })
+    }
+    if (activitySourceKinds.has('garmin_file')) {
       sources.push({ key: 'garmin', label: 'Garmin file', detail: 'Imported activity present', icon: Activity })
     }
     return sources
@@ -113,7 +112,7 @@ export default function HealthSourceManager() {
           <p className="text-sm font-black" style={{ color: 'var(--text-primary)' }}>Health data & sync</p>
           <p className="mt-1 text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>
             {lastSyncResult
-              ? `${lastSyncResult.imported || 0} imported · ${lastSyncResult.skipped || 0} already saved · ${dateText(lastSyncResult.syncedAt)}`
+              ? `${lastSyncResult.imported || 0} imported · ${lastSyncResult.skipped || 0} already saved · ${formatFreshness(lastSyncResult.syncedAt) || 'No sync yet'}`
               : 'Manage the data sources that power readiness and training changes.'}
           </p>
         </div>

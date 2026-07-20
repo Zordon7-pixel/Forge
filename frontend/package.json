@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "test:device-source": "node test/deviceSourceTruth.smoke.mjs",
     "test:truth": "node test/truthConsistency.smoke.mjs",
     "preview": "vite preview",
     "cap:sync": "npm run build && npx cap sync",
