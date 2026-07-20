@@ -80,23 +80,30 @@ function describeAdjustment(action, patch, hasWorkoutToday = false) {
 
 function validateCheckinPayload(body = {}, options = {}) {
   const partial = Boolean(options.partial);
+  const hasValue = (value) => value !== null && value !== undefined && value !== '';
+  const legsProvided = hasValue(body.legs);
+  const driveProvided = hasValue(body.drive);
   const hasLegs = isInt13(body.legs);
   const hasDrive = isInt13(body.drive);
   const legs = hasLegs ? Number(body.legs) : null;
   const drive = hasDrive ? Number(body.drive) : null;
-  const hasValidAxes = hasLegs && hasDrive;
 
   const hasFeeling = body.feeling !== null && body.feeling !== undefined && body.feeling !== '';
   let feeling = hasFeeling ? Number(body.feeling) : null;
   const hasValidFeeling = Number.isInteger(feeling) && feeling >= 1 && feeling <= 5;
   let incomplete = false;
 
-  if (hasLegs || hasDrive) {
-    if (!hasValidAxes) {
-      if (partial) incomplete = true;
-      else return { error: 'Legs and drive must both be whole numbers from 1 to 3.' };
-    } else {
-      feeling = deriveFeelingFromAxes(legs, drive);
+  if (legsProvided || driveProvided) {
+    if (!hasLegs) {
+      if (partial && !legsProvided) incomplete = true;
+      else return { error: 'Legs must be a whole number from 1 to 3.' };
+    }
+    if (driveProvided && !hasDrive) {
+      return { error: 'Drive must be a whole number from 1 to 3.' };
+    }
+    if (!incomplete) {
+      if (hasDrive) feeling = deriveFeelingFromAxes(legs, drive);
+      else if (!hasValidFeeling) feeling = null;
     }
   } else if (!hasValidFeeling) {
     if (partial && !hasFeeling) incomplete = true;
@@ -123,8 +130,8 @@ function validateCheckinPayload(body = {}, options = {}) {
   return {
     value: {
       feeling,
-      legs: hasValidAxes ? legs : null,
-      drive: hasValidAxes ? drive : null,
+      legs: hasLegs ? legs : null,
+      drive: hasDrive ? drive : null,
       time_available: timeAvailable,
       sleep_hours: null,
       life_flags: Array.isArray(body.life_flags) ? body.life_flags.filter(flag => ALLOWED_LIFE_FLAGS.has(flag)) : [],

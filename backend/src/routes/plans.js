@@ -297,7 +297,18 @@ async function buildAdaptationInputs(userId, plan, active, planningDateISO) {
       return null;
     }),
   ]);
-  const activeInjury = Array.isArray(injuries) && injuries.length ? injuries[0] : null;
+  const openInjuries = (Array.isArray(injuries) ? injuries : []).map((injury) => ({
+    id: injury.id,
+    date: injury.date,
+    bodyPart: injury.body_part,
+    body_part: injury.body_part,
+    painLevel: injury.pain_level,
+    pain_level: injury.pain_level,
+    severity: injury.pain_level,
+    notes: injury.notes,
+    active: true,
+  }));
+  const activeInjury = openInjuries.length ? openInjuries[0] : null;
   const healthSignals = buildAdaptationHealthSignals(healthRow, planningDateISO);
   const scheduleType = String(profile?.schedule_type || 'adaptive').toLowerCase();
   const missedWorkoutPref = String(profile?.missed_workout_pref || 'adjust_week').toLowerCase();
@@ -315,11 +326,16 @@ async function buildAdaptationInputs(userId, plan, active, planningDateISO) {
     }),
     injuryState: activeInjury ? {
       active: true,
-      bodyPart: activeInjury.body_part,
+      bodyPart: activeInjury.bodyPart,
+      body_part: activeInjury.body_part,
+      painLevel: activeInjury.painLevel,
+      pain_level: activeInjury.pain_level,
+      severity: activeInjury.severity,
       notes: activeInjury.notes,
-      reason: [activeInjury.body_part, activeInjury.notes].filter(Boolean).join(': ') || 'active injury log',
+      openInjuries,
+      reason: [activeInjury.bodyPart, activeInjury.notes].filter(Boolean).join(': ') || 'active injury log',
       freshness: activeInjury.date || 'current',
-    } : { active: false },
+    } : { active: false, openInjuries: [] },
   };
 }
 

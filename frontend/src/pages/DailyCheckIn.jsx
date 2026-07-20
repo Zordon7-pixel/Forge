@@ -40,6 +40,10 @@ function todayISO() {
   return offsetDate.toISOString().slice(0, 10)
 }
 
+function appleHealthPresentFromPlan(data) {
+  return Boolean(data?.plan?.plan_data?.inputSummary?.appleHealth)
+}
+
 function ReadinessSegment({ title, helper, options, value, onChange, error, errorRef }) {
   return (
     <div ref={errorRef} style={{ marginBottom: 20 }}>
@@ -100,16 +104,37 @@ export default function DailyCheckIn({ onComplete }) {
   const [preview, setPreview] = useState(null)
   const [previewLoading, setPreviewLoading] = useState(false)
   const [previewError, setPreviewError] = useState(false)
+  const [appleHealthPresent, setAppleHealthPresent] = useState(false)
   const legsErrorRef = useRef(null)
   const driveErrorRef = useRef(null)
   const timeErrorRef = useRef(null)
 
   useEffect(() => {
+    let active = true
     api.get('/checkin/today').then(r => {
+      if (!active) return
       if (r.data) setAlreadyDone(true)
     }).catch((error) => {
       console.error('[DailyCheckIn] today status lookup failed:', error?.message || error)
     })
+
+    api.get('/plans/my').then(r => {
+      if (!active) return
+      const nextAppleHealthPresent = appleHealthPresentFromPlan(r.data)
+      setAppleHealthPresent(nextAppleHealthPresent)
+      if (nextAppleHealthPresent) {
+        setFieldErrors(prev => {
+          if (!prev.drive) return prev
+          const next = { ...prev }
+          delete next.drive
+          return next
+        })
+      }
+    }).catch((error) => {
+      console.error('[DailyCheckIn] Apple Health coverage lookup failed:', error?.message || error)
+    })
+
+    return () => { active = false }
   }, [])
 
   const toggleFlag = (val) => {
@@ -130,7 +155,10 @@ export default function DailyCheckIn({ onComplete }) {
   }
 
   useEffect(() => {
-    if (legs == null || drive == null) {
+    const previewReady = appleHealthPresent
+      ? legs != null && timeAvailable != null
+      : legs != null && drive != null
+    if (!previewReady) {
       setPreview(null)
       setPreviewLoading(false)
       setPreviewError(false)
@@ -144,7 +172,7 @@ export default function DailyCheckIn({ onComplete }) {
       try {
         const res = await api.post('/checkin/preview', {
           legs,
-          drive,
+          drive: drive ?? null,
           time_available: timeAvailable,
           life_flags: lifeFlags,
         })
@@ -169,16 +197,17 @@ export default function DailyCheckIn({ onComplete }) {
       cancelled = true
       clearTimeout(timer)
     }
-  }, [legs, drive, timeAvailable, lifeFlags])
+  }, [legs, drive, timeAvailable, lifeFlags, appleHealthPresent])
 
   const submit = async () => {
     const errors = {}
     if (legs == null) errors.legs = 'Select how your legs feel.'
-    if (drive == null) errors.drive = 'Select your drive today.'
+    if (!appleHealthPresent && drive == null) errors.drive = 'Select your drive today.'
     if (!timeAvailable) errors.time_available = 'Select available workout time.'
     setFieldErrors(errors)
     if (Object.keys(errors).length) {
-      scrollToFirstError({ legs: legsErrorRef, drive: driveErrorRef, time_available: timeErrorRef }, ['legs', 'drive', 'time_available'].filter(k => errors[k]))
+      const errorOrder = appleHealthPresent ? ['legs', 'time_available'] : ['legs', 'drive', 'time_available']
+      scrollToFirstError({ legs: legsErrorRef, drive: driveErrorRef, time_available: timeErrorRef }, errorOrder.filter(k => errors[k]))
       return
     }
     setSaving(true)
@@ -187,7 +216,7 @@ export default function DailyCheckIn({ onComplete }) {
       const res = await api.post('/checkin', {
         date: todayISO(),
         legs,
-        drive,
+        drive: drive ?? null,
         time_available: timeAvailable,
         life_flags: lifeFlags,
       })
@@ -411,14 +440,22 @@ export default function DailyCheckIn({ onComplete }) {
   }
 
   const previewDrivers = (preview?.drivers || []).slice(0, 2)
-  const previewCopy = legs == null || drive == null
-    ? 'Pick your legs + drive to see today\'s plan'
-    : preview?.headline || (previewError || preview ? 'Plan preview unavailable — submit to see your adjustment' : 'Pick your legs + drive to see today\'s plan')
+  const previewReady = appleHealthPresent
+    ? legs != null && timeAvailable != null
+    : legs != null && drive != null
+  const previewPrompt = appleHealthPresent
+    ? 'Pick your legs + time to see today\'s plan'
+    : 'Pick your legs + drive to see today\'s plan'
+  const previewCopy = !previewReady
+    ? previewPrompt
+    : preview?.headline || (previewError || preview ? 'Plan preview unavailable — submit to see your adjustment' : previewPrompt)
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-base)', padding: '24px 20px', paddingBottom: 100, maxWidth: 480, margin: '0 auto', boxSizing: 'border-box', width: '100%' }}>
       <h1 style={{ fontWeight: 900, fontSize: 26, color: 'var(--text-primary)', marginBottom: 4 }}>Morning Check-In</h1>
-      <p style={{ color: 'var(--text-muted)', fontSize: 14, marginBottom: 28 }}>3 taps — I'll adjust your plan around your day.</p>
+      <p style={{ color: 'var(--text-muted)', fontSize: 14, marginBottom: 28 }}>
+        {appleHealthPresent ? 'Quick soreness and schedule check. Apple Health covers recovery.' : '3 taps — I\'ll adjust your plan around your day.'}
+      </p>
 
       <ReadinessSegment
         title="How are your legs?"
@@ -434,8 +471,8 @@ export default function DailyCheckIn({ onComplete }) {
       />
 
       <ReadinessSegment
-        title="How is your drive?"
-        helper="Mental energy to train"
+        title={appleHealthPresent ? 'How is your drive? (optional)' : 'How is your drive?'}
+        helper={appleHealthPresent ? 'Optional mental note' : 'Mental energy to train'}
         options={DRIVE_OPTIONS}
         value={drive}
         onChange={(nextDrive) => {

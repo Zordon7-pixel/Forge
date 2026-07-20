@@ -6,6 +6,8 @@ const checkinOverride = require('./checkinOverride');
 
 const HARD_RUN_PATTERN = /(long|quality|tempo|threshold|interval|hill|hard|speed|vo2|race|zone 3|zone 4|zone 5|z3|z4|z5)/i;
 const HEALTH_STALE = new Set(['stale', 'suspect', 'missing', 'no_data', 'unknown']);
+const MODERATE_INJURY_WINDOW_DAYS = 14;
+const MODERATE_INJURY_VOLUME_MULTIPLIER = 0.75;
 
 function parseISODate(value) {
   const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -44,6 +46,13 @@ function compareISO(a, b) {
   return left.getTime() - right.getTime();
 }
 
+function daysBetweenISO(laterISO, earlierISO) {
+  const later = parseISODate(laterISO);
+  const earlier = parseISODate(earlierISO);
+  if (!later || !earlier) return null;
+  return Math.round((later.getTime() - earlier.getTime()) / 86400000);
+}
+
 function isWithin(date, start, end) {
   return /^\d{4}-\d{2}-\d{2}$/.test(String(date || ''))
     && compareISO(date, start) >= 0
@@ -66,6 +75,11 @@ function hasCheckinSignal(checkin = {}) {
   return ['legs', 'drive', 'feeling', 'sleep_hours', 'time_available'].some((key) => (
     checkin[key] !== undefined && checkin[key] !== null && checkin[key] !== ''
   )) || normalizeLifeFlags(checkin.life_flags).length > 0;
+}
+
+function normalizeAxis(value) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 1 && parsed <= 3 ? parsed : null;
 }
 
 function isHardRun(session = {}) {
@@ -91,6 +105,14 @@ function sessionSummary(session = {}) {
   else if (Number.isFinite(duration) && duration > 0) bits.push(`${Math.round(duration)} min`);
   if (session.intensity) bits.push(session.intensity);
   return bits.filter(Boolean).join(' - ');
+}
+
+function firstNumericSessionValue(session = {}, keys = []) {
+  for (const key of keys) {
+    const value = Number(session[key]);
+    if (Number.isFinite(value) && value > 0) return { key, value };
+  }
+  return null;
 }
 
 function sessionIdFor(day, session, sessionIndex, dayIndex) {
@@ -253,11 +275,29 @@ function buildHealthEvidence(healthSignals = {}) {
 
 function buildCheckinEvidence(checkin = {}, todaySessions = []) {
   if (!hasCheckinSignal(checkin)) return { evidence: [], action: 'keep', patch: {}, safety: false, directive: null };
-  const action = checkinOverride.deriveAction(checkin);
   const runToday = todaySessions.find((item) => item.kind === 'run');
-  const patch = runToday ? checkinOverride.buildPatch(action, runToday.session, checkin) : {};
-  const directive = checkinOverride.buildDirective(checkin, action, patch, Boolean(runToday), 0);
   const flags = normalizeLifeFlags(checkin.life_flags);
+  const legs = normalizeAxis(checkin.legs);
+  const feeling = Number(checkin.feeling || 3);
+  const timeAvailable = Number(checkin.time_available || 60);
+  const sleepHours = checkin.sleep_hours === null || checkin.sleep_hours === undefined || checkin.sleep_hours === ''
+    ? null
+    : Number(checkin.sleep_hours);
+  let action = checkinOverride.deriveAction(checkin);
+  let patch = runToday ? checkinOverride.buildPatch(action, runToday.session, checkin) : {};
+  const heavyLegsOnly = legs === 1
+    && action === 'recovery_swap'
+    && !flags.some((flag) => ['sick', 'injured', 'not_well', 'sore'].includes(flag))
+    && feeling > 2
+    && !(timeAvailable > 0 && timeAvailable <= 30)
+    && !flags.some((flag) => ['long_shift', 'traveling'].includes(flag))
+    && !(Number.isFinite(sleepHours) && sleepHours < 6);
+  if (heavyLegsOnly) {
+    action = 'keep';
+    patch = runToday && isHardRun(runToday.session) ? patchRunForHeavyLegs(runToday.session) : {};
+  }
+  const includeWhenKeep = heavyLegsOnly && Object.keys(patch || {}).length > 0;
+  const directive = checkinOverride.buildDirective(checkin, action, patch, Boolean(runToday), 0);
   const safety = flags.includes('sick') || flags.includes('injured');
   const drivers = Array.isArray(directive.drivers) ? directive.drivers : [];
   const evidence = drivers.length
@@ -275,7 +315,7 @@ function buildCheckinEvidence(checkin = {}, todaySessions = []) {
       freshness: 'today',
       detail: 'Subjective check-in was recorded and does not require a calendar change.',
     }];
-  return { evidence, action, patch, safety, directive };
+  return { evidence, action, patch, safety, directive, includeWhenKeep };
 }
 
 function buildCompletionEvidence(completion = {}) {
@@ -360,22 +400,161 @@ function buildRecentRunEvidence(recentRunLoad = {}) {
   };
 }
 
-function buildInjuryEvidence(injuryState = {}) {
-  const active = Boolean(injuryState && (injuryState.active || injuryState.hasActiveInjury || injuryState.sick));
-  if (!active) return { evidence: [], safety: false, reason: null };
-  const label = injuryState.sick ? 'sick' : 'active injury';
-  const bodyPart = injuryState.bodyPart || injuryState.body_part || injuryState.area || '';
-  const reason = injuryState.reason || injuryState.notes || `${label}${bodyPart ? ` (${bodyPart})` : ''}`;
+function formatBodyPart(value) {
+  return String(value || '').trim().toLowerCase().replace(/_/g, ' ') || 'unspecified body part';
+}
+
+function normalizeInjurySeverity(value) {
+  const raw = String(value ?? '').trim().toLowerCase();
+  if (['severe', 'high'].includes(raw)) return 'severe';
+  if (['moderate', 'medium'].includes(raw)) return 'moderate';
+  if (['mild', 'low', 'minor'].includes(raw)) return 'mild';
+  const score = Number(value);
+  if (!Number.isFinite(score)) return null;
+  if (score >= 8) return 'severe';
+  if (score >= 5) return 'moderate';
+  if (score >= 1) return 'mild';
+  return null;
+}
+
+function injuryFreshness(entry = {}, planningDateISO) {
+  const date = String(entry.date || entry.logged_at || entry.created_at || entry.freshness || '').slice(0, 10);
+  const daysAgo = daysBetweenISO(planningDateISO, date);
+  if (daysAgo === null) return { daysAgo: null, label: entry.freshness || 'current' };
+  if (daysAgo <= 0) return { daysAgo: 0, label: 'today' };
+  if (daysAgo === 1) return { daysAgo, label: 'yesterday' };
+  return { daysAgo, label: `${daysAgo} days ago` };
+}
+
+function injuryWithinWindow(injury, days) {
+  return injury.daysAgo === null || injury.daysAgo <= days;
+}
+
+function bodyPartModalities(bodyPart) {
+  const part = formatBodyPart(bodyPart);
+  const lower = /\b(foot|feet|toe|ankle|achilles|calf|shin|knee|quad|hamstring|hip|groin|glute|it band|plantar|leg|lower back|back)\b/.test(part);
+  const upper = /\b(shoulder|elbow|wrist|hand|forearm|bicep|tricep|chest|neck|upper back)\b/.test(part);
+  const unknown = !lower && !upper;
   return {
-    safety: true,
-    reason,
-    evidence: [{
-      signal: label,
-      source: 'injury',
-      objective: false,
-      freshness: injuryState.freshness || 'current',
-      detail: `User-logged ${label}: ${String(reason).slice(0, 180)}.`
-    }],
+    run: lower || unknown,
+    lowerLift: lower || unknown,
+    upperLift: upper || unknown,
+  };
+}
+
+function normalizeInjuryEntries(injuryState = {}, planningDateISO) {
+  const arrays = ['openInjuries', 'activeInjuries', 'injuries', 'logs', 'entries'];
+  const source = arrays.find((key) => Array.isArray(injuryState[key]));
+  const rows = source ? injuryState[source] : (injuryState.active || injuryState.hasActiveInjury ? [injuryState] : []);
+  return rows.map((row) => {
+    const cleared = row?.cleared === true || row?.cleared === 1 || String(row?.cleared) === '1';
+    if (!row || cleared || row.active === false) return null;
+    const freshness = injuryFreshness(row, planningDateISO);
+    const severity = normalizeInjurySeverity(
+      row.severity ?? row.injurySeverity ?? row.painSeverity ?? row.pain_level ?? row.painLevel
+    );
+    const bodyPart = formatBodyPart(row.bodyPart || row.body_part || row.area);
+    return {
+      id: row.id || null,
+      bodyPart,
+      severity,
+      notes: row.notes || '',
+      date: row.date || row.created_at || null,
+      daysAgo: freshness.daysAgo,
+      freshness: freshness.label,
+      modalities: bodyPartModalities(bodyPart),
+    };
+  }).filter(Boolean);
+}
+
+function injuryRuleDetail(prefix, injury) {
+  return `${prefix}: open ${injury.bodyPart} injury (${injury.severity || 'ungraded'}) logged ${injury.freshness}.`;
+}
+
+function buildInjuryEvidence(injuryState = {}, planningDateISO = null) {
+  const sick = Boolean(injuryState && injuryState.sick);
+  if (sick) {
+    return {
+      safety: true,
+      reason: injuryState.reason || injuryState.notes || 'sick',
+      rules: [],
+      evidence: [{
+        signal: 'sick',
+        source: 'injury',
+        objective: false,
+        freshness: injuryState.freshness || 'current',
+        detail: `User-logged sick: ${String(injuryState.reason || injuryState.notes || 'sick').slice(0, 180)}.`
+      }],
+    };
+  }
+
+  const entries = normalizeInjuryEntries(injuryState || {}, planningDateISO);
+  const hasArraySource = ['openInjuries', 'activeInjuries', 'injuries', 'logs', 'entries'].some((key) => Array.isArray(injuryState?.[key]));
+  const legacyActiveWithoutSeverity = Boolean(injuryState && (injuryState.active || injuryState.hasActiveInjury))
+    && !hasArraySource
+    && entries.length <= 1
+    && !entries[0]?.severity;
+  if (!entries.length && !legacyActiveWithoutSeverity) return { evidence: [], safety: false, reason: null, rules: [] };
+
+  // Injury thresholds: open pain 5-7/moderate within 14 days trims affected
+  // modality volume by 25% and caps intensity; open pain >=8/severe keeps the
+  // existing safety-hold path. Legacy active injuries with no severity also
+  // keep the existing safety behavior for compatibility.
+  const severe = entries.find((entry) => entry.severity === 'severe');
+  if (severe || legacyActiveWithoutSeverity) {
+    const fallback = entries[0] || {};
+    const reason = severe
+      ? `open ${severe.bodyPart} injury (${severe.severity}) logged ${severe.freshness}`
+      : injuryState.reason || injuryState.notes || `active injury${fallback.bodyPart ? ` (${fallback.bodyPart})` : ''}`;
+    return {
+      safety: true,
+      reason,
+      rules: [],
+      evidence: [{
+        signal: severe ? 'severe injury' : 'active injury',
+        source: 'injury',
+        objective: false,
+        freshness: severe?.freshness || injuryState.freshness || 'current',
+        detail: `User-logged ${reason}.`
+      }],
+    };
+  }
+
+  const rules = entries
+    .filter((entry) => entry.severity === 'moderate' && injuryWithinWindow(entry, MODERATE_INJURY_WINDOW_DAYS))
+    .map((entry) => ({
+      action: 'reduce',
+      volumeMultiplier: MODERATE_INJURY_VOLUME_MULTIPLIER,
+      ...entry,
+    }));
+  const evidence = rules.map((rule) => ({
+    signal: 'moderate injury',
+    source: 'injury',
+    objective: false,
+    freshness: rule.freshness,
+    detail: injuryRuleDetail('Reduced affected-modality load', rule),
+  }));
+  return {
+    safety: false,
+    reason: rules[0] ? injuryRuleDetail('Reduced affected-modality load', rules[0]) : null,
+    rules,
+    evidence,
+  };
+}
+
+function patchRunForHeavyLegs(session) {
+  if (!isHardRun(session)) return {};
+  return {
+    type: 'controlled',
+    workout_type: 'run',
+    title: 'Controlled aerobic run',
+    intensity: 'Moderate',
+    target_zone: 'Zone 2-3',
+    pace_target: 'Controlled aerobic effort; skip hard surges',
+    description: 'Intensity trimmed from today\'s heavy-leg check-in.',
+    steps: ['Keep the effort controlled', 'Skip hard repeats or surges', 'Stop if soreness changes your stride'],
+    progression: 'Do not add pace or extra reps today.',
+    checkin_override: { action: 'keep', label: 'Intensity trimmed from heavy legs' },
   };
 }
 
@@ -399,6 +578,108 @@ function patchRunForRecovery(session, severity, label) {
   const duration = Number(session.duration_min);
   if (Number.isFinite(duration) && duration > 0) next.duration_min = Math.max(10, Math.round(duration * multiplier));
   return next;
+}
+
+function patchRunForInjury(session, rule) {
+  const next = Object.assign({}, session, {
+    type: 'recovery',
+    workout_type: 'run',
+    title: 'Injury-adjusted easy run',
+    intensity: 'Easy',
+    target_zone: 'Zone 1-2',
+    pace_target: `Conversational effort; stop if ${rule.bodyPart} symptoms change your stride`,
+    description: injuryRuleDetail('Reduced run volume', rule),
+    warmup: ['5-10 min easy walking or jogging'],
+    steps: ['Stay in Zone 1-2', `Stop if ${rule.bodyPart} pain increases`, 'Keep the stride relaxed and symmetrical'],
+    cooldown: ['5 min easy walking', 'Hydrate and reassess symptoms'],
+    progression: 'Hold pace, repeats, and distance progression until the injury log is cleared.',
+    injury_adjustment: {
+      action: rule.action,
+      severity: rule.severity,
+      body_part: rule.bodyPart,
+      volume_multiplier: rule.volumeMultiplier,
+    },
+  });
+  const miles = firstNumericSessionValue(session, ['distance_miles', 'distance', 'miles']);
+  if (miles) next[miles.key] = Math.max(0.5, Math.round(miles.value * rule.volumeMultiplier * 10) / 10);
+  const duration = firstNumericSessionValue(session, ['duration_min', 'duration_minutes', 'minutes', 'time_minutes']);
+  if (duration) next[duration.key] = Math.max(10, Math.round(duration.value * rule.volumeMultiplier));
+  return next;
+}
+
+function reducedInjuryExercise(name, bodyPart) {
+  return {
+    name,
+    sets: 2,
+    reps: '8-10',
+    rest: '60 sec',
+    load: 'Very light',
+    rpe: '5-6',
+    cue: `Stay pain-free around the ${bodyPart}.`,
+    progression: 'No load progression today.',
+  };
+}
+
+function reduceLiftExercisesForInjury(session, rule) {
+  const source = Array.isArray(session.main) ? session.main : Array.isArray(session.exercises) ? session.exercises : [];
+  if (!source.length) {
+    return [
+      reducedInjuryExercise('Pain-free range-of-motion strength', rule.bodyPart),
+      reducedInjuryExercise('Light trunk stability drill', rule.bodyPart),
+    ];
+  }
+  return source.map((exercise) => {
+    const sets = Number(exercise.sets);
+    return {
+      ...exercise,
+      sets: Number.isInteger(sets) ? Math.max(1, Math.floor(sets * rule.volumeMultiplier)) : exercise.sets,
+      load: 'Light - about 25% below normal',
+      rpe: '5-6',
+      rir: '4+ RIR',
+      cue: exercise.cue || `Stay pain-free around the ${rule.bodyPart}.`,
+      progression: 'Hold load and volume today; resume progression after the injury log is cleared.',
+    };
+  });
+}
+
+function patchLiftForInjury(session, rule) {
+  const exercises = reduceLiftExercisesForInjury(session, rule);
+  const next = Object.assign({}, session, {
+    kind: 'lift',
+    type: 'strength',
+    workout_type: 'strength',
+    title: `Injury-adjusted ${session.title || 'strength session'}`,
+    focus: session.focus || (rule.modalities.upperLift && !rule.modalities.lowerLift ? 'Upper body' : 'Lower body'),
+    warmup: Array.isArray(session.warmup) && session.warmup.length
+      ? session.warmup
+      : ['5 min easy movement', 'Pain-free range-of-motion prep'],
+    main: exercises,
+    recovery: [
+      `Stop if ${rule.bodyPart} pain increases`,
+      'Resume normal strength loading only after symptoms settle',
+    ],
+    progression: 'Reduce volume by 25% today and avoid load progression.',
+    description: injuryRuleDetail('Reduced strength volume', rule),
+    injury_adjustment: {
+      action: rule.action,
+      severity: rule.severity,
+      body_part: rule.bodyPart,
+      volume_multiplier: rule.volumeMultiplier,
+    },
+  });
+  if (Array.isArray(session.exercises) && !Array.isArray(session.main)) {
+    delete next.main;
+    next.exercises = exercises;
+  }
+  return next;
+}
+
+function liftAffectedByInjury(session = {}, rule = {}) {
+  const focus = String(session.focus || session.title || '').toLowerCase();
+  if (!focus) return rule.modalities.lowerLift || rule.modalities.upperLift;
+  if (/lower/.test(focus)) return rule.modalities.lowerLift;
+  if (/upper/.test(focus)) return rule.modalities.upperLift;
+  return rule.modalities.lowerLift || rule.modalities.upperLift;
 }
 
 function safetyRestSession(session, reason) {
@@ -637,7 +918,7 @@ function buildAdaptationProposal(input = {}) {
   const normalWindowEnd = addDays(planningDate, 3);
   const windowStart = planningDate;
   const todaySessions = allDatedSessions(plan, planningDate, planningDate);
-  const injury = buildInjuryEvidence(input.injuryState || input.injury || {});
+  const injury = buildInjuryEvidence(input.injuryState || input.injury || {}, planningDate);
   const checkin = buildCheckinEvidence(input.checkin || {}, todaySessions);
   const health = buildHealthEvidence(input.healthSignals || {});
   const completion = buildCompletionEvidence(input.completion || input.adherence || {});
@@ -648,7 +929,7 @@ function buildAdaptationProposal(input = {}) {
   const evidence = [
     ...injury.evidence,
     ...checkin.evidence.filter((item) => {
-      if (checkin.action === 'keep' && !checkin.safety) return false;
+      if (checkin.action === 'keep' && !checkin.safety && !checkin.includeWhenKeep) return false;
       return true;
     }),
     ...health.evidence,
@@ -749,6 +1030,32 @@ function buildAdaptationProposal(input = {}) {
           after,
           `${sessionSummary(nextHard.session)} changes to ${sessionSummary(after)} from ${completion.trainingGap ? 'the recent training gap' : 'recent completion history'}.`
         );
+      }
+    }
+
+    if (Array.isArray(injury.rules) && injury.rules.length) {
+      for (const rule of injury.rules) {
+        for (const item of sessionsInWindow) {
+          if (item.kind === 'run' && rule.modalities.run && String(item.session.type || '').toLowerCase() !== 'race') {
+            const after = patchRunForInjury(item.session, rule);
+            addChange(
+              changes,
+              item,
+              after,
+              `${sessionSummary(item.session)} changes to ${sessionSummary(after)} because ${injuryRuleDetail('reduced run volume', rule)}`
+            );
+            continue;
+          }
+          if (item.kind === 'lift' && liftAffectedByInjury(item.session, rule)) {
+            const after = patchLiftForInjury(item.session, rule);
+            addChange(
+              changes,
+              item,
+              after,
+              `${sessionSummary(item.session)} changes to ${sessionSummary(after)} because ${injuryRuleDetail('reduced strength volume', rule)}`
+            );
+          }
+        }
       }
     }
 
