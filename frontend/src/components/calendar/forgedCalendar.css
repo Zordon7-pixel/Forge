@@ -273,6 +273,8 @@
 .forged-exercise-metrics strong { display: block; color: var(--ink); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 
 @media (min-width: 640px) {
+  .forged-cal-header { align-items: flex-start; display: flex; gap: 12px; justify-content: space-between; }
+  .forged-seg--calendar { margin-top: 0; min-width: 252px; width: auto; }
   .forged-exercise-metrics { grid-template-columns: repeat(5, minmax(0, 1fr)); }
   .forged-exercise-metrics span:nth-child(4) { grid-column: auto; }
 }

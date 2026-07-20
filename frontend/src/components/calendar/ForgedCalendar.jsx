@@ -245,7 +245,7 @@ export default function ForgedCalendar({
     <div className="forged-cal">
       {/* Header */}
       <div className="rounded-lg p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-        <div>
+        <div className="forged-cal-header">
           <div style={{ minWidth: 0 }}>
             <h2 className="text-lg font-bold" style={{ color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis' }}>
               {goal.name || 'Training plan'}
