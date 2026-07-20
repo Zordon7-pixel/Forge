@@ -133,6 +133,48 @@ function TrainingGapPrompt({ proposal, deciding, error, onDecision }) {
   )
 }
 
+function HybridScoreCard({ hybridScore }) {
+  if (!hybridScore) return null
+  const components = hybridScore.components || {}
+  const bars = [
+    { label: 'Run', value: components.run || 0, color: 'var(--accent)' },
+    { label: 'Lift', value: components.lift || 0, color: 'var(--success)' },
+    { label: 'Consistency', value: components.consistency || 0, color: 'var(--warning)' },
+  ]
+  const driver = Array.isArray(hybridScore.drivers) && hybridScore.drivers.length
+    ? hybridScore.drivers.join(' ')
+    : 'Run and lift balance sets the ceiling.'
+
+  return (
+    <section style={{ border: '1px solid var(--border-subtle)', borderRadius: 8, background: 'var(--bg-card)', padding: 16 }}>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className="text-[10px] font-black uppercase" style={{ color: 'var(--accent)', margin: 0 }}>Hybrid Score</p>
+          <div className="mt-1 flex items-end gap-2">
+            <span className="text-4xl font-black leading-none" style={{ color: 'var(--text-primary)' }}>{Math.round(Number(hybridScore.score || 0))}</span>
+            <span className="pb-1 text-sm font-bold" style={{ color: 'var(--text-muted)' }}>/100</span>
+          </div>
+        </div>
+        <p className="max-w-[58%] text-right text-xs leading-5" style={{ color: 'var(--text-muted)', margin: 0 }}>{driver}</p>
+      </div>
+      <div className="mt-4 space-y-2">
+        {bars.map((bar) => {
+          const value = Math.max(0, Math.min(100, Math.round(Number(bar.value || 0))))
+          return (
+            <div key={bar.label} className="grid items-center gap-2" style={{ gridTemplateColumns: '86px 1fr 34px' }}>
+              <span className="text-xs font-bold" style={{ color: 'var(--text-muted)' }}>{bar.label}</span>
+              <div aria-hidden="true" style={{ height: 8, borderRadius: 999, background: 'var(--bg-input)', overflow: 'hidden' }}>
+                <div style={{ width: `${value}%`, height: '100%', borderRadius: 999, background: bar.color }} />
+              </div>
+              <span className="text-right text-xs font-black" style={{ color: 'var(--text-primary)' }}>{value}</span>
+            </div>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
+
 export default function Dashboard() {
   const navigate = useNavigate()
   const location = useLocation()
@@ -147,6 +189,7 @@ export default function Dashboard() {
   const [milestones, setMilestones] = useState([]), [milestoneUnlock, setMilestoneUnlock] = useState(null), [compliance, setCompliance] = useState(null), [showComplianceDetails, setShowComplianceDetails] = useState(false)
   const [loadAnalysis, setLoadAnalysis] = useState(null), [nextRace, setNextRace] = useState(null), [loadWarningDismissedUntil, setLoadWarningDismissedUntil] = useState(Number(localStorage.getItem('forge_load_warning_dismissed_until') || 0))
   const [shoeAlerts, setShoeAlerts] = useState([]), [weeklyCalories, setWeeklyCalories] = useState(0)
+  const [hybridScore, setHybridScore] = useState(null)
 
   useEffect(() => {
     const params = new URLSearchParams(location.search)
@@ -196,7 +239,7 @@ export default function Dashboard() {
 
   const fetchDashboardData = useCallback(async () => {
     try {
-        const [statsRes, runsRes, liftsRes, warningRes, checkinRes, goalRes, streakRes, milestoneRes, complianceRes, loadRes, nextRaceRes, gearRes, injuryRes, recapRes, recommendationRes, ageGradedRes, executionRes, groupRunsRes, adaptationRes] = await Promise.all([
+        const [statsRes, runsRes, liftsRes, warningRes, checkinRes, goalRes, streakRes, milestoneRes, complianceRes, loadRes, nextRaceRes, gearRes, injuryRes, recapRes, recommendationRes, ageGradedRes, executionRes, groupRunsRes, adaptationRes, hybridScoreRes] = await Promise.all([
           api.get('/auth/me/stats'),
           api.get('/runs', { params: { limit: 5 } }),
           api.get('/lifts'),
@@ -225,6 +268,7 @@ export default function Dashboard() {
             console.error('[Dashboard] training gap check failed:', error?.message || error)
             return { data: { proposal: null } }
           }),
+          api.get('/stats/hybrid-score').catch(() => ({ data: null })),
         ])
         setExecution(executionRes || null)
         setUpcomingSocialRun(upcomingGroupRun(groupRunsRes.data?.group_runs || []))
@@ -273,6 +317,7 @@ export default function Dashboard() {
         setWeeklyCalories(recapRes.data?.totalCalories || 0)
         setNextRecommendation(recommendationRes.data || null)
         setAgeGradedPerformance(ageGradedRes.data || null)
+        setHybridScore(hybridScoreRes.data || null)
         const nextProposal = adaptationRes.data?.proposal || null
         const pendingGap = trainingGapEvidence(nextProposal)
           && nextProposal?.status === 'proposal'
@@ -799,6 +844,8 @@ export default function Dashboard() {
         onReflect={() => navigate('/history')}
         onDetails={() => setShowTodayDetail(true)}
       />
+
+      <HybridScoreCard hybridScore={hybridScore} />
 
       {upcomingSocialRun && (
         <section style={{ border: '1px solid var(--border-subtle)', borderRadius: 8, background: 'var(--bg-card)', padding: 14 }}>

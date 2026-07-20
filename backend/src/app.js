@@ -70,6 +70,7 @@ app.use('/api/auth/register',        authLimiter);
 app.use('/api/auth/forgot-password', authLimiter);
 app.use('/api/auth/reset-password',  authLimiter);
 app.use('/api/auth',        require('./routes/auth'));
+app.use('/api/stats',       require('./routes/stats'));
 app.use('/api/consent',     require('./routes/consent'));
 app.use('/api/users',       require('./routes/users'));
 app.use('/api/profile/hr-zones', require('./routes/hrProfile'));
