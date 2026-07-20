@@ -14,6 +14,7 @@ import HealthService from '../services/HealthService'
 import { useProContext } from '../context/ProContext'
 import { fetchDailyExecution, recommendationFromExecution, hasExecutableSession, runRouteState, localDateISO } from '../lib/dailyExecution'
 import { formatGroupRunDate, upcomingGroupRun } from '../lib/groupRuns'
+import { resolveReadiness } from '../lib/truthConsistency'
 
 function fmtPace(durationSeconds, distance) {
   if (!durationSeconds || !distance) return '--'
@@ -509,127 +510,12 @@ export default function Dashboard() {
   }, [])
 
 
-  // Compute readiness from stats
-  const { readiness, readinessBreakdown } = useMemo(() => {
-    const healthMetrics = healthSync.metrics || null
-    const hasHealthContext = Boolean(healthMetrics) || checkedInToday || hasWatchData
-    if (!stats || !hasHealthContext) return { readiness: null, readinessBreakdown: [] }
-    const { streak, week, all } = stats
-    let score = 50
-    const breakdown = []
-
-    breakdown.push({ label: 'Base score', value: 50, delta: 0, reason: 'Starting point for all athletes.' })
-
-    // Streak bonus
-    const streakBonus = Math.min(streak * 4, 20)
-    score += streakBonus
-    breakdown.push({
-      label: 'Consistency streak',
-      value: streakBonus,
-      delta: streakBonus,
-      reason: streak > 0
-        ? `${streak}-day active streak adds +${streakBonus} pts. Staying consistent pays off.`
-        : 'No active streak. Logging runs builds your streak bonus.'
-    })
-
-    // Volume
-    const activeWeeks = (stats.weeklyTrend || []).filter(w => Number(w.miles || 0) > 0)
-    const avgWeekly = activeWeeks.length
-      ? activeWeeks.reduce((sum, weekEntry) => sum + Number(weekEntry.miles || 0), 0) / activeWeeks.length
-      : 0
-    const weekRatio = avgWeekly > 0 ? week.miles / avgWeekly : 0
-    let volDelta = 0
-    let volReason = ''
-    if (avgWeekly <= 0) {
-      volReason = 'No recent weekly mileage baseline yet. Log a few weeks so Forged Hybrid can compare load safely.'
-    } else if (weekRatio < 0.5) {
-      volDelta = 15
-      volReason = `This week you ran ${fmt.distance(week.miles, 1)} vs your avg ${fmt.distance(avgWeekly, 1)} — low volume means your legs are fresh.`
-    } else if (weekRatio > 1.3) {
-      volDelta = -15
-      volReason = `This week you ran ${fmt.distance(week.miles, 1)} vs your avg ${fmt.distance(avgWeekly, 1)} — high volume week, body needs recovery.`
-    } else {
-      volReason = `This week (${fmt.distance(week.miles, 1)}) is on par with your average (${fmt.distance(avgWeekly, 1)}) — balanced load.`
-    }
-    score += volDelta
-    breakdown.push({ label: 'Weekly load', value: volDelta, delta: volDelta, reason: volReason })
-
-    const sleepHours = Number(healthMetrics?.sleepHoursLastNight || 0)
-    if (sleepHours > 0) {
-      const sleepDelta = sleepHours < 6 ? -12 : sleepHours >= 8 ? 5 : 0
-      score += sleepDelta
-      breakdown.push({
-        label: 'Sleep',
-        value: sleepDelta,
-        delta: sleepDelta,
-        reason: sleepHours < 6
-          ? `${sleepHours}h sleep lowers readiness today.`
-          : sleepHours >= 8
-            ? `${sleepHours}h sleep boosts recovery readiness.`
-            : `${sleepHours}h sleep is neutral for readiness.`,
-      })
-    }
-
-    const hrvMs = Number(healthMetrics?.heartRateVariabilityMs || 0)
-    if (hrvMs > 0) {
-      const hrvDelta = hrvMs < 35 ? -14 : hrvMs < 45 ? -8 : hrvMs >= 65 ? 5 : 0
-      score += hrvDelta
-      breakdown.push({
-        label: 'Apple Health HRV',
-        value: hrvDelta,
-        delta: hrvDelta,
-        reason: hrvMs < 35
-          ? `${hrvMs} ms HRV points to recovery stress.`
-          : hrvMs < 45
-            ? `${hrvMs} ms HRV is slightly suppressed today.`
-            : hrvMs >= 65
-              ? `${hrvMs} ms HRV supports readiness.`
-              : `${hrvMs} ms HRV is neutral for readiness.`,
-      })
-    }
-
-    const restingHr = Number(healthMetrics?.restingHeartRate || 0)
-    if (restingHr > 0) {
-      const rhrDelta = restingHr >= 85 ? -14 : restingHr >= 75 ? -7 : restingHr <= 60 ? 4 : 0
-      score += rhrDelta
-      breakdown.push({
-        label: 'Resting heart rate',
-        value: rhrDelta,
-        delta: rhrDelta,
-        reason: restingHr >= 85
-          ? `${restingHr} bpm resting HR is elevated, so Forged Hybrid lowers intensity.`
-          : restingHr >= 75
-            ? `${restingHr} bpm resting HR is above the preferred range.`
-            : restingHr <= 60
-              ? `${restingHr} bpm resting HR looks calm.`
-              : `${restingHr} bpm resting HR is neutral today.`,
-      })
-    }
-
-    const activeMinutes = Number(healthMetrics?.activeMinutesThisWeek || 0)
-    const workoutCount = Number(healthMetrics?.workoutCountThisWeek || 0)
-    if (activeMinutes > 0 || workoutCount > 0) {
-      const loadDelta = activeMinutes >= 420 || workoutCount >= 6 ? -8 : 0
-      score += loadDelta
-      breakdown.push({
-        label: 'Apple Health load',
-        value: loadDelta,
-        delta: loadDelta,
-        reason: loadDelta < 0
-          ? `${activeMinutes} active minutes and ${workoutCount} workouts this week mean recovery matters.`
-          : `${activeMinutes} active minutes and ${workoutCount} workouts this week are included in the score.`,
-      })
-    }
-
-    return {
-      readiness: Math.max(1, Math.min(99, Math.round(score))),
-      readinessBreakdown: breakdown
-    }
-  }, [stats, checkedInToday, hasWatchData, healthSync.metrics, fmt])
-  const passiveReadinessScore = Number.isFinite(Number(readinessState.data?.score))
-    ? Math.round(Number(readinessState.data.score))
-    : null
-  const userFacingReadiness = passiveReadinessScore !== null ? passiveReadinessScore : readiness
+  const readinessBreakdown = useMemo(() => {
+    if (!resolveReadiness(readinessState.data).available || !Array.isArray(readinessState.data?.drivers)) return []
+    return readinessState.data.drivers
+      .filter((reason) => typeof reason === 'string' && reason.trim())
+      .map((reason, index) => ({ label: `Recovery signal ${index + 1}`, reason }))
+  }, [readinessState.data])
 
   // Monthly challenge
   const monthlyGoal = useMemo(() => {
@@ -842,7 +728,7 @@ export default function Dashboard() {
 
       <DailyCoachFlow /* H5: effectiveRecommendation prefers calendar */
         checkedInToday={checkedInToday}
-        readiness={userFacingReadiness}
+        readinessData={readinessState.data}
         recommendation={effectiveRecommendation}
         todayWatchWorkout={todayWatchWorkout}
         onCheckIn={() => navigate('/checkin')}
@@ -869,7 +755,7 @@ export default function Dashboard() {
         open={showTodayDetail}
         onClose={() => setShowTodayDetail(false)}
         checkedInToday={checkedInToday}
-        readiness={userFacingReadiness}
+        readinessData={readinessState.data}
         readinessBreakdown={readinessBreakdown}
         recommendation={effectiveRecommendation}
         checkinData={checkinData}

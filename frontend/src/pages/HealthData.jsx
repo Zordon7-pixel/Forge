@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next'
 import api from '../lib/api'
 import Skeleton from '../components/Skeleton'
 import { HybridScoreCard, YouVsLastMonthCard } from '../components/EngagementProgressCards'
+import { finiteReadinessScore } from '../lib/truthConsistency'
 
 function trendMeta(trend) {
   if (trend === 'up') return { arrow: '↑', color: 'var(--success)' }
@@ -101,13 +102,16 @@ export default function HealthData() {
           <p className="text-sm font-black" style={{ color: 'var(--text-primary)' }}>Readiness history</p>
           <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>Recent recovery trend; missing days stay missing.</p>
           <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-            {readinessHistory.map((entry) => (
-              <div key={entry.date} className="rounded-xl p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
-                <p className="text-[10px] font-bold uppercase" style={{ color: 'var(--text-muted)' }}>{entry.date}</p>
-                <p className="mt-1 text-xl font-black" style={{ color: 'var(--text-primary)' }}>{entry.score}</p>
-                <p className="text-[10px] font-bold" style={{ color: entry.band === 'GREEN' ? 'var(--success)' : entry.band === 'RED' ? 'var(--danger)' : 'var(--warning)' }}>{entry.band}</p>
-              </div>
-            ))}
+            {readinessHistory.map((entry) => {
+              const score = finiteReadinessScore(entry.score)
+              return (
+                <div key={entry.date} className="rounded-xl p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
+                  <p className="text-[10px] font-bold uppercase" style={{ color: 'var(--text-muted)' }}>{entry.date}</p>
+                  <p className="mt-1 text-xl font-black" style={{ color: 'var(--text-primary)' }}>{score === null ? '--' : score}</p>
+                  <p className="text-[10px] font-bold" style={{ color: score === null ? 'var(--text-muted)' : entry.band === 'GREEN' ? 'var(--success)' : entry.band === 'RED' ? 'var(--danger)' : 'var(--warning)' }}>{score === null ? 'Unavailable' : entry.band}</p>
+                </div>
+              )
+            })}
           </div>
         </section>
       )}

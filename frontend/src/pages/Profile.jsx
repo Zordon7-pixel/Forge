@@ -4,6 +4,7 @@ import { ChevronRight, Settings as SettingsIcon, User, Dumbbell, HeartPulse, Act
 import { useTranslation } from 'react-i18next'
 import api from '../lib/api'
 import { logout as clearAuth } from '../lib/auth'
+import { resolveRecoveryState } from '../lib/truthConsistency'
 
 const personalityOptions = [
   { key: 'mentor', label: 'Mentor', description: 'Guidance and wisdom, no pressure' },
@@ -39,6 +40,7 @@ export default function Profile() {
   })
   const [profileStats, setProfileStats] = useState(null)
   const [injuryMode, setInjuryMode] = useState(false)
+  const [comebackMode, setComebackMode] = useState(false)
   const [injuryDescription, setInjuryDescription] = useState('')
   const [injuryLimitations, setInjuryLimitations] = useState('')
 
@@ -65,7 +67,9 @@ export default function Profile() {
           weekly_miles: user.weekly_miles ?? user.weekly_miles_current ?? ''
         })
         setProfileStats(statsRes?.data || null)
-        setInjuryMode(!!user.injury_mode)
+        const recoveryState = resolveRecoveryState(user)
+        setInjuryMode(recoveryState.activeInjuryMode)
+        setComebackMode(recoveryState.comebackMode)
         setInjuryDescription(user.injury_description || '')
         setInjuryLimitations(user.injury_limitations || '')
       } finally { setLoading(false) }
@@ -88,7 +92,9 @@ export default function Profile() {
     }
 
     try {
-      const injuryStatus = injuryMode ? (form.injury_status === 'none' ? 'recovering' : form.injury_status) : 'none'
+      const recoveryProtected = injuryMode || comebackMode
+      const injuryStatus = recoveryProtected ? (form.injury_status === 'none' ? 'recovering' : form.injury_status) : 'none'
+      const injuryDetail = recoveryProtected ? (injuryDescription || form.injury_detail) : ''
       await api.put('/auth/me/profile', {
         name: form.name,
         age: form.age === '' ? null : Number(form.age),
@@ -98,13 +104,13 @@ export default function Profile() {
         fitness_level: form.fitness_level,
         primary_goal: form.primary_goal,
         injury_status: injuryStatus,
-        injury_detail: injuryMode ? (injuryDescription || form.injury_detail) : '',
+        injury_detail: injuryDetail,
         coach_personality: form.coach_personality,
         weekly_miles: form.weekly_miles === '' ? null : Number(form.weekly_miles),
         weekly_miles_current: form.weekly_miles === '' ? null : Number(form.weekly_miles),
         goal_type: form.primary_goal,
-        injury_notes: injuryMode ? (injuryDescription || form.injury_detail) : '',
-        comeback_mode: injuryStatus !== 'none' ? 1 : 0
+        injury_notes: injuryDetail,
+        comeback_mode: recoveryProtected ? 1 : 0
       })
       await api.post('/auth/injury', {
         injury_mode: injuryMode,
@@ -112,6 +118,7 @@ export default function Profile() {
         injury_date: injuryMode ? new Date().toISOString().slice(0, 10) : '',
         injury_limitations: injuryLimitations,
       })
+      if (injuryMode) setComebackMode(true)
       setSaved(true)
       setTimeout(() => setSaved(false), 1800)
     } catch (err) {
@@ -132,6 +139,11 @@ export default function Profile() {
   const pillBase = { minWidth: 0, minHeight: 40, padding: '8px 12px', borderRadius: 20, fontSize: 13, lineHeight: 1.2, cursor: 'pointer' }
   const pillActive = { ...pillBase, background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', fontWeight: 700 }
   const pillInactive = { ...pillBase, background: 'var(--bg-input)', color: 'var(--text-muted)', border: '1px solid var(--border-subtle)', fontWeight: 400 }
+  const recoveryState = resolveRecoveryState({
+    injury_mode: injuryMode,
+    comeback_mode: comebackMode,
+    injury_status: form.injury_status,
+  })
 
   return (
     <div className="rounded-2xl p-3 sm:p-4" style={{ background: 'var(--bg-card)', maxWidth: '100%', overflowX: 'hidden' }}>
@@ -253,22 +265,23 @@ export default function Profile() {
             <div
               style={{
                 ...sectionStyle,
-                border: injuryMode ? '1px solid var(--accent)' : '1px solid var(--border-subtle)',
-                background: injuryMode ? 'var(--accent-dim)' : 'var(--bg-card)'
+                border: recoveryState.protected ? '1px solid var(--accent)' : '1px solid var(--border-subtle)',
+                background: recoveryState.protected ? 'var(--accent-dim)' : 'var(--bg-card)'
               }}
             >
-              <div style={{ ...sectionLabel, marginBottom: 10 }}>Injury Mode</div>
+              <div style={{ ...sectionLabel, marginBottom: 10 }}>Recovery Protection</div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: injuryMode ? 12 : 0, gap: 10 }}>
                 <div>
-                  <p style={{ fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>{injuryMode ? 'Recovery Plan Enabled' : 'Off'}</p>
-                  <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>Adjust training around injuries and current limitations.</p>
+                  <p style={{ fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>{recoveryState.label}</p>
+                  <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>{recoveryState.description}</p>
                 </div>
                 <button
                   type="button"
                   onClick={() => setInjuryMode(!injuryMode)}
                   style={injuryMode ? { ...pillActive, whiteSpace: 'nowrap' } : { ...pillInactive, whiteSpace: 'nowrap' }}
+                  aria-label={injuryMode ? 'Turn off active injury mode' : 'Turn on active injury mode'}
                 >
-                  {injuryMode ? 'ON' : 'OFF'}
+                  {injuryMode ? 'ACTIVE ON' : 'ACTIVE OFF'}
                 </button>
               </div>
 

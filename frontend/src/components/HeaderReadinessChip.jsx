@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import api from '../lib/api'
+import { resolveReadiness } from '../lib/truthConsistency'
 
 function bandColor(band) {
   if (band === 'GREEN') return 'var(--success)'
@@ -30,15 +31,14 @@ export default function HeaderReadinessChip({ onOpen, refreshKey }) {
     return () => { active = false }
   }, [refreshKey])
 
-  const available = Boolean(state.data?.available)
-  const score = available ? Math.round(Number(state.data?.score || 0)) : '--'
-  const color = bandColor(state.data?.band)
+  const readiness = resolveReadiness(state.data)
+  const color = readiness.available ? bandColor(state.data?.band) : 'var(--text-muted)'
 
   return (
     <button
       type="button"
       onClick={onOpen}
-      aria-label={available ? `Open recovery readiness, score ${score}` : 'Open recovery readiness'}
+      aria-label={readiness.available ? `Open recovery readiness, score ${readiness.score}` : 'Open recovery readiness'}
       aria-busy={state.loading}
       className="pressable flex h-9 min-w-0 items-center justify-center gap-2 rounded-lg px-2"
       style={{
@@ -54,7 +54,7 @@ export default function HeaderReadinessChip({ onOpen, refreshKey }) {
           Readiness
         </span>
         <span className="mt-1 block truncate text-xs font-black" style={{ color, lineHeight: 1 }}>
-          {state.loading ? '...' : score}
+          {state.loading ? '...' : readiness.display}
         </span>
       </span>
       <span aria-hidden="true" className="h-4 w-1 shrink-0 rounded-full" style={{ background: color }} />

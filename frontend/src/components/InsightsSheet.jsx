@@ -6,6 +6,7 @@ import WatchWorkoutSendButton from './WatchWorkoutSendButton'
 import { getToken } from '../lib/tokenStore'
 import AiGuidanceNote from './AiGuidanceNote'
 import { activityLabel, isRunningActivity } from '../lib/activityType'
+import { finiteReadinessScore, resolveReadiness } from '../lib/truthConsistency'
 
 function activityDateLabel(value) {
   if (!value) return '--'
@@ -95,9 +96,11 @@ function BlockRow({ block, t }) {
 export function ReadinessGauge({ score, onClick }) {
   const r = 28, cx = 36, cy = 36
   const circumference = 2 * Math.PI * r
-  const dash = (score / 100) * circumference
-  const color = score >= 75 ? 'var(--success)' : score >= 50 ? 'var(--accent)' : 'var(--danger)'
-  const label = score >= 80 ? 'Optimal' : score >= 60 ? 'Good' : score >= 40 ? 'Moderate' : 'Low'
+  const readinessScore = finiteReadinessScore(score)
+  const available = readinessScore !== null
+  const dash = available ? (readinessScore / 100) * circumference : 0
+  const color = !available ? 'var(--text-muted)' : readinessScore >= 75 ? 'var(--success)' : readinessScore >= 50 ? 'var(--accent)' : 'var(--danger)'
+  const label = !available ? 'Unavailable' : readinessScore >= 80 ? 'Optimal' : readinessScore >= 60 ? 'Good' : readinessScore >= 40 ? 'Moderate' : 'Low'
 
   return (
     <div onClick={onClick} style={{ cursor: 'pointer' }} className="flex flex-col">
@@ -109,13 +112,13 @@ export function ReadinessGauge({ score, onClick }) {
             strokeLinecap="round"
             transform={`rotate(-90 ${cx} ${cy})`} />
           <text x={cx} y={cy+1} textAnchor="middle" dominantBaseline="middle"
-            className="stat-num" fontSize="13" fontWeight="900" fill={color}>{score}</text>
+            className="stat-num" fontSize="13" fontWeight="900" fill={color}>{available ? readinessScore : '--'}</text>
         </svg>
         <div>
           <p className="font-bold text-base" style={{ color: 'var(--text-primary)' }}>{label}</p>
           <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>Readiness</p>
           <p className="text-xs mt-1" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>
-            {score >= 75 ? 'Go hard today.' : score >= 50 ? 'Moderate effort.' : 'Take it easy today.'}
+            {!available ? 'Sync Health data for a score.' : readinessScore >= 75 ? 'Go hard today.' : readinessScore >= 50 ? 'Moderate effort.' : 'Take it easy today.'}
           </p>
         </div>
       </div>
@@ -124,8 +127,9 @@ export function ReadinessGauge({ score, onClick }) {
   )
 }
 
-export function DailyCoachFlow({ checkedInToday, readiness, recommendation, todayWatchWorkout, onCheckIn, onStartWorkout, onReflect, onDetails }) {
+export function DailyCoachFlow({ checkedInToday, readinessData, recommendation, todayWatchWorkout, onCheckIn, onStartWorkout, onReflect, onDetails }) {
   const { t } = useTranslation()
+  const readiness = resolveReadiness(readinessData)
   const isRestDay = recommendation?.recommendationType === 'rest' || recommendation?.type === 'rest'
   const recommendationLabel = recommendation
     ? getRecommendationLabel(recommendation)
@@ -139,7 +143,7 @@ export function DailyCoachFlow({ checkedInToday, readiness, recommendation, toda
   const buildTodaySubtitle = () => {
     if (!recommendation) return "Check in to unlock today's plan."
     if (isRestDay) {
-      return `${readiness !== null ? `Readiness ${readiness}. ` : ''}Rest and recovery are scheduled today.`
+      return `${readiness.sentencePrefix}Rest and recovery are scheduled today.`
     }
 
     const parts = [recommendationLabel ? recommendationLabel.charAt(0).toUpperCase() + recommendationLabel.slice(1) : '']
@@ -163,7 +167,7 @@ export function DailyCoachFlow({ checkedInToday, readiness, recommendation, toda
     if (intensity) parts.push(intensity)
     if (durationText) parts.splice(1, 0, durationText)
 
-    return `${readiness !== null ? `Readiness ${readiness}. ` : ''}${parts.filter(Boolean).join(' · ')}.`
+    return `${readiness.sentencePrefix}${parts.filter(Boolean).join(' · ')}.`
   }
   const steps = [
     { key: 'checkin', label: 'Check in', done: checkedInToday, action: onCheckIn },
@@ -346,7 +350,7 @@ export function TodayDetailSheet({
   open,
   onClose,
   checkedInToday,
-  readiness,
+  readinessData,
   readinessBreakdown,
   recommendation,
   checkinData,
@@ -363,6 +367,7 @@ export function TodayDetailSheet({
 }) {
   const { t } = useTranslation()
   if (!open) return null
+  const readiness = resolveReadiness(readinessData)
   const isRestDay = recommendation?.recommendationType === 'rest' || recommendation?.type === 'rest'
   const recommendationLabel = recommendation ? getRecommendationLabel(recommendation) : null
   const durationText = formatPlanDuration(recommendation?.durationMinutes, recommendation?.durationIsEstimated)
@@ -414,8 +419,8 @@ export function TodayDetailSheet({
         <div className="mt-5 grid grid-cols-2 gap-3">
           <div className="rounded-xl p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
             <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Readiness</p>
-            <p className="mt-1 text-xl font-black" style={{ color: readiness === null ? 'var(--text-muted)' : 'var(--text-primary)' }}>
-              {readiness === null ? '--' : readiness}
+            <p className="mt-1 text-xl font-black" style={{ color: readiness.available ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+              {readiness.display}
             </p>
           </div>
           <div className="rounded-xl p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
@@ -506,7 +511,7 @@ export function TodayDetailSheet({
               Reflect
             </button>
           </div>
-          {readiness !== null && (
+          {readiness.available && (
             <button onClick={onOpenReadiness} className="mt-2 w-full rounded-xl px-3 py-3 text-sm font-bold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>
               Readiness breakdown
             </button>
@@ -689,14 +694,13 @@ function getReadinessBandColor(band) {
 export function ReadinessBreakdownModal({ open, onClose, readinessData }) {
   if (!open) return null
 
-  const score = Number(readinessData?.score || 0)
-  const hasReadinessScore = readinessData?.available && readinessData?.score !== null && readinessData?.score !== undefined
-  const drivers = !hasReadinessScore
+  const readiness = resolveReadiness(readinessData)
+  const drivers = !readiness.available
     ? ['Sync Health data to unlock today\'s readiness drivers.']
     : Array.isArray(readinessData?.drivers) && readinessData.drivers.length
     ? readinessData.drivers
     : ['Recovery signals look steady.']
-  const bandColor = getReadinessBandColor(readinessData?.band)
+  const bandColor = readiness.available ? getReadinessBandColor(readinessData?.band) : 'var(--text-muted)'
 
   return (
     <div
@@ -713,11 +717,11 @@ export function ReadinessBreakdownModal({ open, onClose, readinessData }) {
           <div>
             <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>Readiness</p>
             <p style={{ fontSize: 28, fontWeight: 900, color: bandColor }}>
-              {hasReadinessScore ? (
-                <>{score} <span style={{ fontSize: 14, fontWeight: 400, color: 'var(--text-muted)' }}>/ 100</span></>
+              {readiness.available ? (
+                <>{readiness.score} <span style={{ fontSize: 14, fontWeight: 400, color: 'var(--text-muted)' }}>/ 100</span></>
               ) : 'Readiness unavailable'}
             </p>
-            <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 2 }}>{hasReadinessScore ? readinessData.verdict : 'Sync Health data to unlock today\'s readiness score.'}</p>
+            <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 2 }}>{readiness.available ? readinessData.verdict : 'Sync Health data to unlock today\'s readiness score.'}</p>
           </div>
           <button onClick={onClose} style={{ background: 'var(--bg-input)', border: 'none', borderRadius: 10, padding: '8px 14px', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 13 }}>Close</button>
         </div>

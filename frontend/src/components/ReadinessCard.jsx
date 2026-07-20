@@ -1,4 +1,5 @@
 import { useMemo } from 'react'
+import { resolveReadiness } from '../lib/truthConsistency'
 
 const RADIUS = 42
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS
@@ -13,7 +14,8 @@ function getBandColor(band) {
 export default function ReadinessCard({ onOpenDetail, readinessState }) {
   const state = readinessState || { loading: true, error: false, locked: false, data: null }
   const readiness = state.data || {}
-  const score = Number(readiness.score || 0)
+  const readinessTruth = resolveReadiness(readiness)
+  const score = readinessTruth.score ?? 0
   const bandColor = getBandColor(readiness.band)
   const ringColor = bandColor
   const dashOffset = useMemo(() => CIRCUMFERENCE - (Math.max(0, Math.min(score, 100)) / 100) * CIRCUMFERENCE, [score])
@@ -52,7 +54,7 @@ export default function ReadinessCard({ onOpenDetail, readinessState }) {
     )
   }
 
-  if (!readiness.available) {
+  if (!readinessTruth.available) {
     return (
       <section className="rounded-2xl border border-subtle bg-card p-4">
         <p className="text-sm font-black text-primary" style={{ margin: 0 }}>Recovery readiness</p>
