@@ -4,6 +4,7 @@ const { dbAll, dbGet, dbRun } = require('../db');
 const auth = require('../middleware/auth');
 const { computeHybridScore } = require('../lib/hybridScore');
 const { computeHybridStreak, detectHybridMilestones, filterNewHybridMilestones } = require('../lib/streaks');
+const { computeBadges, buildYouVsLastMonth } = require('../lib/badges');
 const planSchema = require('../lib/planSchema');
 const { runActivitySql } = require('../lib/runActivity');
 
@@ -212,6 +213,94 @@ router.get('/hybrid-streak', auth, async (req, res) => {
   } catch (err) {
     console.error('[stats/hybrid-streak] failed:', err.message);
     res.status(500).json({ error: 'Hybrid streak fetch failed' });
+  }
+});
+
+router.get('/engagement', auth, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const now = new Date();
+    const todayISO = toISODate(now);
+    const currentStart = addDays(todayISO, -27);
+    const priorEnd = addDays(currentStart, -1);
+    const priorStart = addDays(priorEnd, -27);
+    const requestedPrLimit = Number(req.query.prLimit || 5);
+    const prLimit = Number.isFinite(requestedPrLimit)
+      ? Math.max(1, Math.min(10, Math.round(requestedPrLimit)))
+      : 5;
+
+    const [runs, lifts, prs, activePlan] = await Promise.all([
+      dbAll(
+        `SELECT date, distance_miles, duration_seconds, perceived_effort, avg_heart_rate,
+                pain_level, post_energy, pace_avg, health_source, created_at,
+                type, watch_activity_type, watch_normalized_type, watch_mode
+         FROM runs
+         WHERE user_id = ? AND ${runActivitySql()}
+         ORDER BY date ASC, created_at ASC`,
+        [userId]
+      ),
+      dbAll(
+        `SELECT date, muscle_groups, intensity, exercise_name, sets, reps, weight_lbs,
+                category, workout_duration_seconds, created_at
+         FROM lifts
+         WHERE user_id = ?
+         ORDER BY date ASC, created_at ASC`,
+        [userId]
+      ),
+      dbAll(
+        `SELECT id, category, label, value, unit, run_id, lift_id, achieved_at, source
+         FROM personal_records
+         WHERE user_id = ?
+         ORDER BY achieved_at DESC, id DESC`,
+        [userId]
+      ),
+      getActivePlanForUser(userId),
+    ]);
+
+    const currentPlanCompletion = buildPlanCompletion(activePlan, runs, lifts, currentStart, todayISO);
+    const priorPlanCompletion = buildPlanCompletion(activePlan, runs, lifts, priorStart, priorEnd);
+    const currentHybridScore = computeHybridScore({ userId, runs, lifts, planCompletion: currentPlanCompletion, now });
+    const priorHybridScore = computeHybridScore({
+      userId,
+      runs,
+      lifts,
+      planCompletion: priorPlanCompletion,
+      now: new Date(`${priorEnd}T12:00:00Z`),
+    });
+    const badges = computeBadges({
+      userId,
+      runs,
+      lifts,
+      prs,
+      activePlan,
+      hybridScore: currentHybridScore,
+      now,
+    });
+    const earnedBadges = badges
+      .filter((badge) => badge.earned)
+      .sort((left, right) => String(right.earnedAt || '').localeCompare(String(left.earnedAt || '')))
+      .slice(0, 4);
+    const nextBadges = badges
+      .filter((badge) => !badge.earned)
+      .sort((left, right) => Number(right.progress?.percent || 0) - Number(left.progress?.percent || 0))
+      .slice(0, 4);
+
+    res.json({
+      recentPrs: prs.slice(0, prLimit),
+      badges,
+      earnedBadges,
+      nextBadges,
+      youVsLastMonth: buildYouVsLastMonth({
+        runs,
+        lifts,
+        now,
+        currentHybridScore,
+        priorHybridScore,
+      }),
+    });
+  } catch (err) {
+    console.error('[stats/engagement] failed:', err.message);
+    res.status(500).json({ error: 'Engagement stats fetch failed' });
   }
 });
 
