@@ -56,6 +56,18 @@ function firstStr(...values) {
   }
   return ''
 }
+function boolValue(...values) {
+  for (const value of values) {
+    if (value === true || value === 'true') return true
+    if (value === false || value === 'false') return false
+  }
+  return false
+}
+function formatDurationLabel(label, isEstimated) {
+  const text = str(label)
+  if (!text || !isEstimated || /estimate/i.test(text)) return text
+  return `${text.startsWith('~') ? '' : '~'}${text} · estimate`
+}
 function formatAnchorRunDate(value) {
   if (!value) return ''
   const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})/)
@@ -71,14 +83,18 @@ function runFacts(session) {
   const raw = session.raw || {}
   const miles = Number(session.distanceMiles || p.distanceMiles || p.distance_miles || raw.distance_miles || 0)
   const durationMinutes = firstStr(p.duration_min, raw.duration_min)
+  const durationIsEstimated = boolValue(session.durationIsEstimated, p.durationIsEstimated, raw.durationIsEstimated, p.duration_is_estimate, raw.duration_is_estimate)
+  const durationLabel = firstStr(p.duration, p.time, raw.duration, durationMinutes ? `${durationMinutes} min` : '')
   const distanceIsEstimate = Boolean(session.distanceIsEstimate || p.distance_is_estimate || raw.distance_is_estimate)
   const prescriptionBasis = firstStr(session.prescriptionBasis, p.prescription_basis, raw.prescription_basis)
   const steps = structuredList(p.steps || p.blocks || p.structure || raw.steps || raw.structure)
   return {
     purpose: firstStr(p.purpose, p.focus, raw.purpose),
     distance: miles > 0 && prescriptionBasis !== 'time' ? `${distanceIsEstimate ? '~' : ''}${miles.toFixed(1)} mi${distanceIsEstimate ? ' estimated' : ''}` : '',
-    time: firstStr(p.duration, p.time, raw.duration, durationMinutes ? `${durationMinutes} min` : ''),
+    time: formatDurationLabel(durationLabel, durationIsEstimated),
+    durationLabel,
     durationMinutes: Number(durationMinutes || session.durationMinutes || 0) || 0,
+    durationIsEstimated,
     prescriptionBasis,
     pace: firstStr(p.pace, p.targetPace, p.pace_target, raw.pace, raw.pace_target),
     zone: firstStr(p.zone, p.hrZone, p.heartRateZone, p.target_zone, raw.zone, raw.target_zone),
@@ -214,7 +230,7 @@ export default function ForgedDayView({
       typeLabel: runSession.title,
       distanceLabel: f.distance,
       durationMinutes: f.durationMinutes,
-      durationLabel: f.time,
+      durationLabel: f.durationLabel,
       prescriptionBasis: f.prescriptionBasis,
       pace: f.pace || undefined,
       zone: f.zone || undefined,
@@ -243,6 +259,7 @@ export default function ForgedDayView({
           {f.zone && <span style={{ fontSize: px(13) }}>{zoneLabel}</span>}
           {f.intensity && <span className="forged-sec-red" style={{ fontSize: px(13) }}><Flame size={13} style={{ verticalAlign: -1 }} /> {f.intensity}</span>}
         </div>
+        {f.time && f.durationIsEstimated && <p style={{ fontSize: px(11), margin: '6px 0 0', color: 'var(--ink-soft, #5A554B)' }}>sharpens after a few runs</p>}
         {f.prescriptionBasis === 'time' && <p style={{ fontSize: px(11), margin: '6px 0 0', color: 'var(--ink-soft, #5A554B)' }}>Run by time and effort; distance is not the target.</p>}
         {evidenceSources.length > 0 && (
           <details style={{ marginTop: 10, padding: '8px 10px', borderLeft: '3px solid #C2410C', background: 'rgba(194,65,12,0.05)' }}>

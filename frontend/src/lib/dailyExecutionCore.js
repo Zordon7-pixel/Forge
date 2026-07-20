@@ -127,10 +127,13 @@ export function recommendationFromExecution(execution) {
   if (run) {
     const type = run.type || run.workout_type || 'run';
     const dist = Number(run.distance_miles || run.distance || 0);
+    const durationMinutes = Number(run.duration_min || run.durationMinutes || run.duration_minutes || 0) || 0;
     return {
       recommendationType: run.type || run.workout_type || 'run',
       type,
       suggestedDistance: dist || undefined,
+      durationMinutes: durationMinutes || undefined,
+      durationIsEstimated: run.durationIsEstimated === true || run.duration_is_estimate === true,
       suggestedPace: run.pace_target || run.pace || run.target_pace || undefined,
       targetZone: run.hrZone?.zoneLabel || run.target_zone || (run.hrZone ? `Zone ${run.hrZone.zone}` : '') || '',
       intensity: run.intensity || '',

@@ -160,6 +160,10 @@ function planAnchorMetadata(history = {}) {
     : { anchorState: 'needs_benchmark' };
 }
 
+function durationIsEstimatedFromAnchorState(anchorState) {
+  return anchorState !== 'anchored';
+}
+
 function bestDistanceRecord(runs, distance) {
   const candidates = runs.filter((run) => Math.abs(run.miles - distance.miles) / distance.miles <= 0.05);
   if (!candidates.length) return null;
@@ -567,7 +571,7 @@ function runPrescription(type, phase, hilly, options = {}) {
   };
 }
 
-function buildRunSession({ weekNumber, weekCount, day, type, distance, phase, hilly, raceName, history, goalPaceContext }) {
+function buildRunSession({ weekNumber, weekCount, day, type, distance, phase, hilly, raceName, history, goalPaceContext, durationIsEstimated = true }) {
   const goalPace = goalPaceContext?.targetPaceSecondsPerMile || null;
   const goalPaceLabel = goalPaceContext?.targetPaceLabel || null;
   if (type === 'race') {
@@ -587,6 +591,7 @@ function buildRunSession({ weekNumber, weekCount, day, type, distance, phase, hi
     id: `h3-w${weekNumber}-${day.toLowerCase()}-run`, kind: 'run', type, workout_type: 'run',
     prescription_basis: 'time',
     duration_min: durationForRun(type, estimatedDistance, phase, history),
+    durationIsEstimated: Boolean(durationIsEstimated),
     distance_miles: estimatedDistance,
     distance_is_estimate: true,
     evidence_refs: trainingEvidence.runEvidenceRefs(type),
@@ -624,6 +629,7 @@ function buildBenchmarkRunSession(session = {}) {
     evidence_refs: trainingEvidence.runEvidenceRefs('quality'),
   };
   delete next.duration_min;
+  delete next.durationIsEstimated;
   delete next.goal_pace_seconds_per_mile;
   delete next.goal_pace_label;
   return next;
@@ -1124,7 +1130,19 @@ function buildConcurrentPlan(context = {}) {
       const longAlreadyCompleted = isCurrentWeek && currentWeekLoad.longRunCompleted && scheduledType === 'long';
       const qualitySlotTooSmall = ['quality', 'hills', 'sharpen'].includes(scheduledType) && Number(distances[index] || 0) < 1.5;
       const type = day === raceDay ? 'race' : (longAlreadyCompleted || qualitySlotTooSmall ? 'easy' : scheduledType);
-      let runSession = buildRunSession({ weekNumber, weekCount, day, type, distance: distances[index], phase, hilly, raceName: target.raceName, history, goalPaceContext });
+      let runSession = buildRunSession({
+        weekNumber,
+        weekCount,
+        day,
+        type,
+        distance: distances[index],
+        phase,
+        hilly,
+        raceName: target.raceName,
+        history,
+        goalPaceContext,
+        durationIsEstimated: durationIsEstimatedFromAnchorState(anchorMetadata.anchorState),
+      });
       if (anchorMetadata.anchorState === 'needs_benchmark' && !benchmarkPrescribed && type !== 'race') {
         runSession = buildBenchmarkRunSession(runSession);
         benchmarkPrescribed = true;
@@ -1139,6 +1157,10 @@ function buildConcurrentPlan(context = {}) {
       const sessions = [runByDay.get(day), liftByDay.get(day)].filter(Boolean);
       const result = { date: addDays(weekStart, index), day, sessions, status: 'planned', anchorState: anchorMetadata.anchorState };
       if (anchorMetadata.anchoredBy) result.anchoredBy = anchorMetadata.anchoredBy;
+      const runDurationSession = sessions.find((session) => session.kind === 'run' && Number(session.duration_min || 0) > 0);
+      if (runDurationSession && typeof runDurationSession.durationIsEstimated === 'boolean') {
+        result.durationIsEstimated = runDurationSession.durationIsEstimated;
+      }
       if (sessions.some((session) => session.kind === 'run') && sessions.some((session) => session.kind === 'lift')) {
         result.orderGuidance = 'Run first; lift at least 6 hours later.';
       }
