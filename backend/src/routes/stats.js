@@ -1,7 +1,9 @@
 const router = require('express').Router();
-const { dbAll, dbGet } = require('../db');
+const { v4: uuidv4 } = require('uuid');
+const { dbAll, dbGet, dbRun } = require('../db');
 const auth = require('../middleware/auth');
 const { computeHybridScore } = require('../lib/hybridScore');
+const { computeHybridStreak, detectHybridMilestones, filterNewHybridMilestones } = require('../lib/streaks');
 const planSchema = require('../lib/planSchema');
 const { runActivitySql } = require('../lib/runActivity');
 
@@ -104,7 +106,8 @@ function buildPlanCompletion(active, runs, lifts, startISO, endISO) {
 
 async function getActivePlanForUser(userId) {
   const assigned = await dbGet(`
-    SELECT up.progress_json, up.started_at, tp.week_start, tp.plan_json, tp.plan_data
+    SELECT up.id as user_plan_id, up.plan_id, up.progress_json, up.started_at, up.current_week,
+           tp.week_start, tp.plan_json, tp.plan_data
     FROM user_plans up
     JOIN training_plans tp ON tp.id = up.plan_id
     WHERE up.user_id = ? AND up.status = 'active'
@@ -114,10 +117,24 @@ async function getActivePlanForUser(userId) {
   if (assigned) return { row: assigned };
 
   const legacy = await dbGet(
-    'SELECT week_start, plan_json, plan_data FROM training_plans WHERE user_id = ? ORDER BY created_at DESC LIMIT 1',
+    'SELECT id as plan_id, week_start, plan_json, plan_data FROM training_plans WHERE user_id = ? ORDER BY created_at DESC LIMIT 1',
     [userId]
   );
   return legacy ? { row: legacy } : null;
+}
+
+async function persistNewMilestones(userId, candidates) {
+  const seenRows = await dbAll('SELECT milestone_key FROM milestones_seen WHERE user_id = ?', [userId]);
+  const unseen = filterNewHybridMilestones(candidates, new Set(seenRows.map((row) => row.milestone_key)));
+  const inserted = [];
+  for (const milestone of unseen) {
+    const result = await dbRun(
+      'INSERT INTO milestones_seen (id, user_id, milestone_key) VALUES (?, ?, ?) ON CONFLICT (user_id, milestone_key) DO NOTHING',
+      [uuidv4(), userId, milestone.key]
+    );
+    if (result.changes > 0) inserted.push(milestone);
+  }
+  return inserted;
 }
 
 router.get('/hybrid-score', auth, async (req, res) => {
@@ -154,6 +171,47 @@ router.get('/hybrid-score', auth, async (req, res) => {
   } catch (err) {
     console.error('[stats/hybrid-score] failed:', err.message);
     res.status(500).json({ error: 'Hybrid score fetch failed' });
+  }
+});
+
+router.get('/hybrid-streak', auth, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const now = new Date();
+
+    const [runs, lifts, activePlan] = await Promise.all([
+      dbAll(
+        `SELECT date, distance_miles, duration_seconds, created_at,
+                type, watch_activity_type, watch_normalized_type, watch_mode
+         FROM runs
+         WHERE user_id = ? AND ${runActivitySql()}
+         ORDER BY date ASC, created_at ASC`,
+        [userId]
+      ),
+      dbAll(
+        `SELECT date, exercise_name, sets, reps, weight_lbs, workout_duration_seconds, created_at
+         FROM lifts
+         WHERE user_id = ?
+         ORDER BY date ASC, created_at ASC`,
+        [userId]
+      ),
+      getActivePlanForUser(userId),
+    ]);
+
+    const streak = computeHybridStreak({ runs, lifts, activePlan, now });
+    const candidates = detectHybridMilestones({ streak, runs, lifts, activePlan, now });
+    const milestones = await persistNewMilestones(userId, candidates);
+
+    res.json({
+      currentStreak: streak.currentStreak,
+      longestStreak: streak.longestStreak,
+      unit: streak.unit,
+      graceUsed: streak.graceUsed,
+      milestones,
+    });
+  } catch (err) {
+    console.error('[stats/hybrid-streak] failed:', err.message);
+    res.status(500).json({ error: 'Hybrid streak fetch failed' });
   }
 });
 

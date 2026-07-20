@@ -1,9 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { App as CapacitorApp } from '@capacitor/app'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { CalendarClock, Footprints, X } from 'lucide-react'
+import { CalendarClock, Flame, Footprints, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import AchievementUnlock from '../components/AchievementUnlock'
 import InsightsSheet, { CalendarDayDetailSheet, DailyCoachFlow, ReadinessBreakdownModal, RecentActivityCard, TodayDetailSheet, WatchSyncWidget } from '../components/InsightsSheet'
 import ReadinessCard from '../components/ReadinessCard'
 import { useUnits } from '../context/UnitsContext'
@@ -133,15 +132,19 @@ function TrainingGapPrompt({ proposal, deciding, error, onDecision }) {
   )
 }
 
-function HybridScoreCard({ hybridScore }) {
-  if (!hybridScore) return null
-  const components = hybridScore.components || {}
+function HybridScoreCard({ hybridScore, streakStats, streakCount }) {
+  if (!hybridScore && !streakStats) return null
+  const components = hybridScore?.components || {}
+  const current = Number.isFinite(Number(streakCount)) ? Number(streakCount) : Number(streakStats?.currentStreak || 0)
+  const longest = Number(streakStats?.longestStreak || streakStats?.bestStreak || 0)
+  const unit = streakStats?.unit === 'week' ? 'week' : 'day'
+  const unitLabel = `${unit}${current === 1 ? '' : 's'}`
   const bars = [
     { label: 'Run', value: components.run || 0, color: 'var(--accent)' },
     { label: 'Lift', value: components.lift || 0, color: 'var(--success)' },
     { label: 'Consistency', value: components.consistency || 0, color: 'var(--warning)' },
   ]
-  const driver = Array.isArray(hybridScore.drivers) && hybridScore.drivers.length
+  const driver = Array.isArray(hybridScore?.drivers) && hybridScore.drivers.length
     ? hybridScore.drivers.join(' ')
     : 'Run and lift balance sets the ceiling.'
 
@@ -151,7 +154,7 @@ function HybridScoreCard({ hybridScore }) {
         <div>
           <p className="text-[10px] font-black uppercase" style={{ color: 'var(--accent)', margin: 0 }}>Hybrid Score</p>
           <div className="mt-1 flex items-end gap-2">
-            <span className="text-4xl font-black leading-none" style={{ color: 'var(--text-primary)' }}>{Math.round(Number(hybridScore.score || 0))}</span>
+            <span className="text-4xl font-black leading-none" style={{ color: 'var(--text-primary)' }}>{Math.round(Number(hybridScore?.score || 0))}</span>
             <span className="pb-1 text-sm font-bold" style={{ color: 'var(--text-muted)' }}>/100</span>
           </div>
         </div>
@@ -171,7 +174,79 @@ function HybridScoreCard({ hybridScore }) {
           )
         })}
       </div>
+      <div className="mt-4 flex items-center justify-between gap-3 border-t pt-3" style={{ borderColor: 'var(--border-subtle)' }}>
+        <div className="flex min-w-0 items-center gap-2">
+          <Flame size={18} color="var(--accent)" style={{ flex: '0 0 auto' }} />
+          <div className="min-w-0">
+            <p className="text-[10px] font-black uppercase" style={{ color: 'var(--accent)', margin: 0 }}>Hybrid Streak</p>
+            <p className="text-sm font-bold" style={{ color: 'var(--text-primary)', margin: '2px 0 0' }}>
+              {current} {unitLabel}
+            </p>
+          </div>
+        </div>
+        <p className="shrink-0 text-right text-xs leading-5" style={{ color: 'var(--text-muted)', margin: 0 }}>
+          Best {longest}<br />{streakStats?.graceUsed ? 'Grace used' : 'Grace available'}
+        </p>
+      </div>
     </section>
+  )
+}
+
+const CELEBRATION_CONFETTI = Array.from({ length: 14 }, (_, index) => index)
+
+function HybridMilestoneCelebration({ milestone, onDismiss }) {
+  useEffect(() => {
+    if (!milestone) return undefined
+    const timer = setTimeout(onDismiss, 5200)
+    return () => clearTimeout(timer)
+  }, [milestone, onDismiss])
+
+  if (!milestone) return null
+
+  return (
+    <div
+      role="status"
+      className="fixed left-4 right-4 top-4 z-50 overflow-hidden rounded-xl p-4 shadow-xl"
+      style={{ background: 'var(--bg-card)', border: '1px solid var(--accent)', color: 'var(--text-primary)' }}
+    >
+      <div aria-hidden="true" className="pointer-events-none absolute inset-0">
+        {CELEBRATION_CONFETTI.map((item) => (
+          <span
+            key={item}
+            className="absolute block h-2 w-1 rounded-sm"
+            style={{
+              left: `${8 + item * 6.5}%`,
+              top: -8,
+              background: item % 3 === 0 ? 'var(--accent)' : item % 3 === 1 ? 'var(--success)' : 'var(--warning)',
+              animation: `hybridConfettiFall ${1200 + (item % 5) * 160}ms ease-out ${item * 45}ms both`,
+            }}
+          />
+        ))}
+      </div>
+      <div className="relative flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[10px] font-black uppercase" style={{ color: 'var(--accent)', margin: 0 }}>Milestone</p>
+          <p className="mt-1 text-base font-black" style={{ marginBottom: 0 }}>{milestone.title}</p>
+          <p className="mt-1 text-sm leading-5" style={{ color: 'var(--text-muted)', marginBottom: 0 }}>{milestone.description}</p>
+        </div>
+        <button
+          type="button"
+          aria-label="Dismiss milestone celebration"
+          onClick={onDismiss}
+          className="shrink-0 rounded-md p-1"
+          style={{ background: 'transparent', color: 'var(--text-muted)' }}
+        >
+          <X size={16} />
+        </button>
+      </div>
+      <style>{`
+        @keyframes hybridConfettiFall {
+          0% { opacity: 0; transform: translate3d(0, -12px, 0) rotate(0deg); }
+          15% { opacity: 1; }
+          100% { opacity: 0; transform: translate3d(18px, 74px, 0) rotate(230deg); }
+        }
+      `}</style>
+    </div>
   )
 }
 
@@ -185,8 +260,8 @@ export default function Dashboard() {
   const [checkedInToday, setCheckedInToday] = useState(false), [hasWatchData, setHasWatchData] = useState(false)
   const [goalMode, setGoalMode] = useState('auto'), [manualGoalMiles, setManualGoalMiles] = useState(null), [editingGoal, setEditingGoal] = useState(false), [goalInput, setGoalInput] = useState('')
   const [showReadinessModal, setShowReadinessModal] = useState(false), [selectedCalendarDay, setSelectedCalendarDay] = useState(null), [watchSyncNotice, setWatchSyncNotice] = useState(null)
-  const [otherActivities, setOtherActivities] = useState([]), [streakStats, setStreakStats] = useState({ currentStreak: 0, bestStreak: 0 })
-  const [milestones, setMilestones] = useState([]), [milestoneUnlock, setMilestoneUnlock] = useState(null), [compliance, setCompliance] = useState(null), [showComplianceDetails, setShowComplianceDetails] = useState(false)
+  const [otherActivities, setOtherActivities] = useState([]), [streakStats, setStreakStats] = useState({ currentStreak: 0, longestStreak: 0, unit: 'day', graceUsed: false })
+  const [milestones, setMilestones] = useState([]), [celebrationQueue, setCelebrationQueue] = useState([]), [compliance, setCompliance] = useState(null), [showComplianceDetails, setShowComplianceDetails] = useState(false)
   const [loadAnalysis, setLoadAnalysis] = useState(null), [nextRace, setNextRace] = useState(null), [loadWarningDismissedUntil, setLoadWarningDismissedUntil] = useState(Number(localStorage.getItem('forge_load_warning_dismissed_until') || 0))
   const [shoeAlerts, setShoeAlerts] = useState([]), [weeklyCalories, setWeeklyCalories] = useState(0)
   const [hybridScore, setHybridScore] = useState(null)
@@ -239,15 +314,13 @@ export default function Dashboard() {
 
   const fetchDashboardData = useCallback(async () => {
     try {
-        const [statsRes, runsRes, liftsRes, warningRes, checkinRes, goalRes, streakRes, milestoneRes, complianceRes, loadRes, nextRaceRes, gearRes, injuryRes, recapRes, recommendationRes, ageGradedRes, executionRes, groupRunsRes, adaptationRes, hybridScoreRes] = await Promise.all([
+        const [statsRes, runsRes, liftsRes, warningRes, checkinRes, goalRes, complianceRes, loadRes, nextRaceRes, gearRes, injuryRes, recapRes, recommendationRes, ageGradedRes, executionRes, groupRunsRes, adaptationRes, hybridScoreRes, hybridStreakRes] = await Promise.all([
           api.get('/auth/me/stats'),
           api.get('/runs', { params: { limit: 5 } }),
           api.get('/lifts'),
           api.get('/coach/warning'),
           api.get('/checkin/today').catch(() => ({ data: null })),
           api.get('/users/goal').catch(() => ({ data: null })),
-          api.get('/auth/me/streak').catch(() => ({ data: { currentStreak: 0, bestStreak: 0 } })),
-          api.get('/milestones/new').catch(() => ({ data: { milestones: [] } })),
           api.get('/plans/compliance').catch(() => ({ data: null })),
           api.get('/runs/load-analysis').catch(() => ({ data: null })),
           api.get('/races/next').catch(() => ({ data: { race: null } })),
@@ -269,6 +342,7 @@ export default function Dashboard() {
             return { data: { proposal: null } }
           }),
           api.get('/stats/hybrid-score').catch(() => ({ data: null })),
+          api.get('/stats/hybrid-streak').catch(() => ({ data: { currentStreak: 0, longestStreak: 0, unit: 'day', graceUsed: false, milestones: [] } })),
         ])
         setExecution(executionRes || null)
         setUpcomingSocialRun(upcomingGroupRun(groupRunsRes.data?.group_runs || []))
@@ -297,15 +371,14 @@ export default function Dashboard() {
           setGoalMode(goalRes.data.mode || 'auto')
           setManualGoalMiles(goalRes.data.miles || null)
         }
-        setStreakStats(streakRes.data || { currentStreak: 0, bestStreak: 0 })
-        const fetchedMilestones = milestoneRes.data?.milestones || []
+        const hybridStreakData = hybridStreakRes.data || { currentStreak: 0, longestStreak: 0, unit: 'day', graceUsed: false, milestones: [] }
+        setStreakStats(hybridStreakData)
+        const fetchedMilestones = Array.isArray(hybridStreakData.milestones) ? hybridStreakData.milestones : []
         setMilestones(fetchedMilestones)
         if (fetchedMilestones.length > 0) {
-          setMilestoneUnlock(prev => prev || {
-            name: fetchedMilestones[0].title,
-            description: fetchedMilestones[0].description,
-            icon: 'Award',
-            color: 'var(--accent)',
+          setCelebrationQueue(prev => {
+            const existing = new Set(prev.map((item) => item.key))
+            return prev.concat(fetchedMilestones.filter((item) => !existing.has(item.key)))
           })
         }
         setCompliance(complianceRes.data)
@@ -733,6 +806,10 @@ export default function Dashboard() {
     }
   }, [fetchDashboardData, trainingGapProposal])
 
+  const dismissCelebration = useCallback(() => {
+    setCelebrationQueue(prev => prev.slice(1))
+  }, [])
+
   if (loading) return <div className="space-y-4"><LoadingRunner message="Getting ready" /><Skeleton rows={3} /></div>
 
   return (
@@ -753,12 +830,7 @@ export default function Dashboard() {
           {isOnline ? `${queueCount} workouts queued for sync` : `📴 Offline — ${queueCount} workouts queued for sync`}
         </div>
       )}
-      {milestoneUnlock && (
-        <AchievementUnlock
-          badge={milestoneUnlock}
-          onDismiss={() => setMilestoneUnlock(null)}
-        />
-      )}
+      <HybridMilestoneCelebration milestone={celebrationQueue[0]} onDismiss={dismissCelebration} />
       <style>{`
         @keyframes spin {
           from { transform: rotate(0deg); }
@@ -845,7 +917,7 @@ export default function Dashboard() {
         onDetails={() => setShowTodayDetail(true)}
       />
 
-      <HybridScoreCard hybridScore={hybridScore} />
+      <HybridScoreCard hybridScore={hybridScore} streakStats={streakStats} streakCount={streakCount} />
 
       {upcomingSocialRun && (
         <section style={{ border: '1px solid var(--border-subtle)', borderRadius: 8, background: 'var(--bg-card)', padding: 14 }}>
