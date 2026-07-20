@@ -15,6 +15,14 @@ async function parseResponse(response) {
   }
 }
 
+function responseDetail(payload) {
+  const message = String(payload?.message || payload?.error || '').trim();
+  const errors = Array.isArray(payload?.errors)
+    ? payload.errors.map((error) => [error?.resource, error?.field, error?.code].filter(Boolean).join('.')).filter(Boolean)
+    : [];
+  return [message, ...errors].filter(Boolean).join(': ');
+}
+
 async function main() {
   const clientId = required('STRAVA_CLIENT_ID');
   const clientSecret = required('STRAVA_CLIENT_SECRET');
@@ -28,7 +36,10 @@ async function main() {
 
   const listResponse = await fetch(listUrl);
   const subscriptions = await parseResponse(listResponse);
-  if (!listResponse.ok) throw new Error(`Strava subscription lookup failed (${listResponse.status})`);
+  if (!listResponse.ok) {
+    const detail = responseDetail(subscriptions);
+    throw new Error(`Strava subscription lookup failed (${listResponse.status}${detail ? `: ${detail}` : ''})`);
+  }
   const rows = Array.isArray(subscriptions) ? subscriptions : [];
   if (rows.some((row) => row.callback_url === callbackUrl)) {
     console.log('Strava webhook already registered for Forged Hybrid.');
@@ -49,7 +60,10 @@ async function main() {
     }).toString(),
   });
   const result = await parseResponse(createResponse);
-  if (!createResponse.ok || !result?.id) throw new Error(`Strava webhook registration failed (${createResponse.status})`);
+  if (!createResponse.ok || !result?.id) {
+    const detail = responseDetail(result);
+    throw new Error(`Strava webhook registration failed (${createResponse.status}${detail ? `: ${detail}` : ''})`);
+  }
   console.log(`Strava webhook registered. Subscription id: ${result.id}`);
 }
 
