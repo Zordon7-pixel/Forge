@@ -174,6 +174,28 @@ const optedOutGap = adaptation.buildAdaptationProposal({
 });
 assert(optedOutGap.status === 'keep' && optedOutGap.changes.length === 0, 'structured or skip preference does not create an inactivity adjustment');
 
+const decidedGap = adaptation.buildAdaptationProposal({
+  plan: trainingGapPlan,
+  planningDateISO: '2026-07-13',
+  completion: {
+    adaptationEnabled: false,
+    gapPromptEnabled: false,
+    adherenceRate: 0.2,
+    missedWorkouts: 5,
+    missedRuns: 3,
+    daysInactive: 7,
+  },
+});
+assert(decidedGap.status === 'keep' && decidedGap.changes.length === 0, 'a decided completion prompt cannot regenerate from the same low-adherence evidence');
+
+const decidedGapWithSafety = adaptation.buildAdaptationProposal({
+  plan: trainingGapPlan,
+  planningDateISO: '2026-07-13',
+  completion: { adaptationEnabled: false, missedWorkouts: 5, daysInactive: 7 },
+  injuryState: { active: true, bodyPart: 'ankle', reason: 'new ankle pain' },
+});
+assert(decidedGapWithSafety.status === 'proposal' && decidedGapWithSafety.safetyException, 'completion suppression does not hide a fresh safety signal');
+
 const missedGap = adaptation.buildAdaptationProposal({
   plan: trainingGapPlan,
   planningDateISO: '2026-07-13',

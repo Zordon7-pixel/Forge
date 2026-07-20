@@ -280,6 +280,7 @@ function buildCheckinEvidence(checkin = {}, todaySessions = []) {
 
 function buildCompletionEvidence(completion = {}) {
   if (!completion || typeof completion !== 'object') return { evidence: [], driver: false };
+  if (completion.adaptationEnabled === false) return { evidence: [], driver: false };
   const adherence = Number(completion.adherenceRate ?? completion.adherence_rate);
   const missed = Number(completion.missedWorkouts ?? completion.missed_workouts ?? completion.missedCount ?? 0);
   const missedRuns = Number(completion.missedRuns ?? completion.missedRunCount ?? 0);

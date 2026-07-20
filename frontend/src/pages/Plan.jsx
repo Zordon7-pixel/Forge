@@ -28,7 +28,7 @@ export default function Plan() {
   const [adaptationOpen, setAdaptationOpen] = useState(false)
   const [routePlannerStatus, setRoutePlannerStatus] = useState({ available: false, requiresPro: false })
 
-  const loadAll = async () => {
+  const loadAll = async ({ includeAdaptation = true } = {}) => {
     setLoading(true)
     setAdaptationError('')
     try {
@@ -36,9 +36,9 @@ export default function Plan() {
       const nextPlan = myRes.data?.plan || null
       setMyPlan(nextPlan)
       setMyUserPlan(myRes.data?.user_plan || null)
-      setAdaptationProposal(null)
+      if (includeAdaptation) setAdaptationProposal(null)
       const isSchemaV2 = Number(nextPlan?.plan_data?.schemaVersion || 0) === 2
-      if (isSchemaV2) {
+      if (isSchemaV2 && includeAdaptation) {
         setAdaptationLoading(true)
         try {
           const adaptationRes = await api.get('/plans/adaptation/current', { params: { date: todayISO() } })
@@ -158,13 +158,10 @@ export default function Plan() {
     setAdaptationError('')
     try {
       await api.post(`/plans/adaptation/${adaptationProposal.id}/${decision}`)
-      if (decision === 'accept') {
-        await loadAll()
-        setAdaptationDecision('accepted')
-      } else {
-        setAdaptationProposal((prev) => prev ? { ...prev, decisionStatus: 'kept' } : prev)
-        setAdaptationDecision('kept')
-      }
+      setAdaptationProposal(null)
+      setAdaptationOpen(false)
+      setAdaptationDecision(decision === 'accept' ? 'accepted' : 'kept')
+      if (decision === 'accept') await loadAll({ includeAdaptation: false })
     } catch (err) {
       setAdaptationError(err?.response?.data?.error || 'Could not update this adjustment.')
     } finally {
@@ -266,7 +263,14 @@ export default function Plan() {
     && adaptationProposal?.decisionStatus !== 'kept'
     && adaptationProposal?.decisionStatus !== 'accepted'
 
-  const adaptationPanel = isActiveSchemaV2 ? (
+  const showAdaptationPanel = isActiveSchemaV2 && (
+    adaptationLoading
+    || Boolean(adaptationError)
+    || hasAdaptationChanges
+    || Boolean(adaptationProposal?.safetyException)
+  )
+
+  const adaptationPanel = showAdaptationPanel ? (
     <div className="rounded-lg min-w-0" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
       <button
         type="button"

@@ -390,6 +390,21 @@ async function findLatestAdaptation(userId, planningDateISO, planVersion) {
   );
 }
 
+async function hasDecidedCompletionAdaptation(userId, planningDateISO) {
+  const rows = await dbAll(
+    `SELECT evidence_json
+     FROM plan_adjustment_proposals
+     WHERE user_id=? AND planning_date=? AND status IN ('accepted','kept')
+     ORDER BY decided_at DESC, created_at DESC
+     LIMIT 20`,
+    [userId, planningDateISO]
+  );
+  return rows.some((row) => {
+    const evidence = parseJsonValue(row.evidence_json, []);
+    return Array.isArray(evidence) && evidence.some((item) => item?.source === 'completion');
+  });
+}
+
 async function persistAdaptationProposal(userId, active, planVersion, originalPlan, proposal) {
   const existing = await findPendingAdaptation(userId, proposal.planningDate, planVersion);
   if (existing) return proposalFromRow(existing);
@@ -1063,9 +1078,25 @@ router.get('/adaptation/current', auth, async (req, res) => {
     if (!planningDateISO) return res.status(400).json({ error: 'date must be the phone local date in YYYY-MM-DD format' });
     const planVersion = planVersionFor(active, parsed);
     const existing = await findLatestAdaptation(req.user.id, planningDateISO, planVersion);
-    if (existing) return res.json({ proposal: publicProposal(proposalFromRow(existing)) });
+    if (existing) {
+      const existingProposal = proposalFromRow(existing);
+      if (existing.status !== 'pending' || existingProposal.changes.length === 0) {
+        return res.json({ proposal: null, reason: 'Today\'s calendar check is complete.' });
+      }
+      return res.json({ proposal: publicProposal(existingProposal) });
+    }
 
-    const inputs = await buildAdaptationInputs(req.user.id, parsed, active, planningDateISO);
+    const [inputs, completionDecisionExists] = await Promise.all([
+      buildAdaptationInputs(req.user.id, parsed, active, planningDateISO),
+      hasDecidedCompletionAdaptation(req.user.id, planningDateISO),
+    ]);
+    if (completionDecisionExists) {
+      inputs.completion = {
+        ...(inputs.completion || {}),
+        adaptationEnabled: false,
+        gapPromptEnabled: false,
+      };
+    }
     const proposal = adaptationEngine.buildAdaptationProposal({
       plan: parsed,
       planningDateISO,
@@ -1076,6 +1107,9 @@ router.get('/adaptation/current', auth, async (req, res) => {
       recentRunLoad: inputs.recentRunLoad,
       injuryState: inputs.injuryState,
     });
+    if (proposal.status !== 'proposal' || !Array.isArray(proposal.changes) || proposal.changes.length === 0) {
+      return res.json({ proposal: null, reason: proposal.reason });
+    }
     const persisted = await persistAdaptationProposal(req.user.id, active, planVersion, parsed, proposal);
     res.json({ proposal: publicProposal(persisted) });
   } catch (err) {
