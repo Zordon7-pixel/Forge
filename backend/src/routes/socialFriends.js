@@ -1,9 +1,10 @@
 const router = require('express').Router();
 const rateLimit = require('express-rate-limit');
 const { validate: isUuid, v4: uuidv4 } = require('uuid');
-const { dbAll, dbGet, dbRun, withTransaction } = require('../db');
+const { dbAll, dbGet, dbRun, withTransaction, withUserMutation } = require('../db');
 const auth = require('../middleware/auth');
 const { cleanText } = require('../lib/profanity');
+const { validatePhotoPayload } = require('../lib/activityMedia');
 const { revokeBlockedGroupRunAccess } = require('../lib/groupRunRules');
 const { monthBounds, rankFriendMileage } = require('../lib/friendLeaderboard');
 const { runActivitySql } = require('../lib/runActivity');
@@ -26,6 +27,7 @@ const {
 
 const REPORT_CATEGORIES = new Set(['harassment', 'spam', 'impersonation', 'unsafe_content', 'other']);
 const REPORT_CONTEXTS = new Set(['profile', 'friendship']);
+const ACTIVITY_POST_TEMPLATES = new Set(['route', 'log', 'ember', 'contour', 'overlay', 'photo']);
 
 function limiter(windowMs, max, message) {
   return rateLimit({
@@ -57,6 +59,7 @@ const friendSearchLimiter = userLimiter(15 * 60 * 1000, 40, 'Too many searches. 
 const directRequestLimiter = userLimiter(15 * 60 * 1000, 20, 'Too many friend requests. Try again later.');
 const contactSuggestionLimiter = userLimiter(24 * 60 * 60 * 1000, 10, 'Too many contact checks. Try again tomorrow.');
 const leaderboardLimiter = userLimiter(15 * 60 * 1000, 60, 'Too many leaderboard refreshes. Try again later.');
+const activityPostLimiter = userLimiter(15 * 60 * 1000, 20, 'Too many activity posts. Try again later.');
 
 router.use(auth);
 
@@ -94,6 +97,61 @@ async function pairIsBlocked(tx, firstUserId, secondUserId) {
     [firstUserId, secondUserId, secondUserId, firstUserId]
   );
   return Boolean(row);
+}
+
+function parseJsonObject(value) {
+  if (!value) return {};
+  if (typeof value === 'object' && !Array.isArray(value)) return value;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (err) {
+    console.error('[social/activity-posts] stats parse failed:', err.message);
+    return {};
+  }
+}
+
+function activityPostTitle(run) {
+  const type = String(run?.type || '').replaceAll('_', ' ').trim();
+  if (!type || type === 'easy') return 'Run complete';
+  return `${type.replace(/\b\w/g, (letter) => letter.toUpperCase())} run`;
+}
+
+function activityPostStats(run) {
+  return {
+    date: String(run.date || '').slice(0, 10),
+    distance_miles: Number(run.distance_miles || 0),
+    duration_seconds: Number(run.duration_seconds || 0),
+    avg_heart_rate: run.avg_heart_rate == null ? null : Number(run.avg_heart_rate),
+    elevation_gain: run.elevation_gain == null ? null : Number(run.elevation_gain),
+    perceived_effort: run.perceived_effort == null ? null : Number(run.perceived_effort),
+    run_type: String(run.type || '').slice(0, 40),
+  };
+}
+
+async function canViewActivityPost(query, postId, viewerId) {
+  return query.get(
+    `SELECT p.id, p.user_id
+     FROM community_posts p
+     WHERE p.id = ?
+       AND (
+         p.user_id = ?
+         OR (
+           EXISTS (
+             SELECT 1 FROM friendships f
+             WHERE f.status = 'accepted'
+               AND ((f.requester_id = ? AND f.addressee_id = p.user_id)
+                 OR (f.addressee_id = ? AND f.requester_id = p.user_id))
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM user_blocks b
+             WHERE (b.blocker_id = ? AND b.blocked_id = p.user_id)
+                OR (b.blocker_id = p.user_id AND b.blocked_id = ?)
+           )
+         )
+       )`,
+    [postId, viewerId, viewerId, viewerId, viewerId, viewerId]
+  );
 }
 
 async function createFriendshipRequest(tx, requesterId, addresseeId) {
@@ -176,6 +234,194 @@ async function findDiscoverableAthlete(query, handle, viewerId) {
     [handle, viewerId, viewerId, viewerId]
   );
 }
+
+router.post('/activity-posts', activityPostLimiter, async (req, res) => {
+  const runId = boundedText(req.body?.run_id, 160);
+  const template = String(req.body?.template || '').trim().toLowerCase();
+  const caption = boundedText(cleanText(req.body?.caption), 280) || null;
+  const media = validatePhotoPayload({
+    data: req.body?.card_data,
+    mime_type: req.body?.mime_type,
+  });
+
+  if (!runId) return res.status(400).json({ error: 'Choose a saved run to post.' });
+  if (!ACTIVITY_POST_TEMPLATES.has(template)) return res.status(400).json({ error: 'Choose a valid card style.' });
+  if (media.error) return res.status(400).json({ error: media.error });
+
+  try {
+    const post = await withUserMutation(req.user.id, async (tx) => {
+      const run = await tx.get(
+        `SELECT id, date, type, distance_miles, duration_seconds, perceived_effort,
+                avg_heart_rate, elevation_gain
+         FROM runs WHERE id = ? AND user_id = ? FOR UPDATE`,
+        [runId, req.user.id]
+      );
+      if (!run) return null;
+
+      const statsJson = JSON.stringify(activityPostStats(run));
+      const existing = await tx.get(
+        'SELECT id FROM community_posts WHERE run_id = ? AND user_id = ? FOR UPDATE',
+        [runId, req.user.id]
+      );
+      const postId = existing?.id || uuidv4();
+      if (existing) {
+        const update = await tx.run(
+          `UPDATE community_posts
+           SET title = ?, body = ?, workout_type = ?, stats_json = ?, created_at = NOW()
+           WHERE id = ? AND run_id = ? AND user_id = ?`,
+          [activityPostTitle(run), caption, template, statsJson, postId, runId, req.user.id]
+        );
+        if (update.changes !== 1) throw new Error('Activity post update lost its ownership guard');
+      } else {
+        await tx.run(
+          `INSERT INTO community_posts
+           (id, user_id, run_id, title, body, workout_type, stats_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [postId, req.user.id, runId, activityPostTitle(run), caption, template, statsJson]
+        );
+      }
+
+      const existingMedia = await tx.get(
+        `SELECT id FROM activity_media
+         WHERE activity_id = ? AND activity_type = 'community_post' AND user_id = ?
+         FOR UPDATE`,
+        [postId, req.user.id]
+      );
+      if (existingMedia) {
+        const mediaUpdate = await tx.run(
+          `UPDATE activity_media
+           SET data = ?, mime_type = ?, visibility = 'friends'
+           WHERE id = ? AND activity_id = ? AND activity_type = 'community_post' AND user_id = ?`,
+          [media.data, media.mimeType, existingMedia.id, postId, req.user.id]
+        );
+        if (mediaUpdate.changes !== 1) throw new Error('Activity card update lost its ownership guard');
+      } else {
+        await tx.run(
+          `INSERT INTO activity_media
+           (id, activity_id, activity_type, user_id, data, mime_type, visibility)
+           VALUES (?, ?, 'community_post', ?, ?, ?, 'friends')`,
+          [uuidv4(), postId, req.user.id, media.data, media.mimeType]
+        );
+      }
+
+      return { id: postId, run_id: runId, template, caption };
+    });
+
+    if (!post) return res.status(404).json({ error: 'Saved run not found.' });
+    return res.status(201).json({ post });
+  } catch (err) {
+    console.error('[social/activity-posts] save failed:', err.message);
+    return res.status(500).json({ error: 'Could not post this run.' });
+  }
+});
+
+router.get('/activity-posts', async (req, res) => {
+  const limit = Math.min(30, Math.max(1, Number(req.query?.limit || 20)));
+  try {
+    const rows = await dbAll(
+      `WITH visible_users AS (
+         SELECT CAST(? AS TEXT) AS user_id
+         UNION
+         SELECT CASE WHEN f.requester_id = ? THEN f.addressee_id ELSE f.requester_id END
+         FROM friendships f
+         WHERE f.status = 'accepted' AND (f.requester_id = ? OR f.addressee_id = ?)
+       )
+       SELECT p.id, p.user_id, p.run_id, p.title, p.body, p.workout_type,
+              p.stats_json, p.created_at, u.name AS user_name, u.friend_handle,
+              EXISTS (
+                SELECT 1 FROM activity_media m
+                WHERE m.activity_id = p.id AND m.activity_type = 'community_post'
+                  AND m.user_id = p.user_id AND m.visibility = 'friends'
+              ) AS has_card
+       FROM community_posts p
+       JOIN visible_users visible ON visible.user_id = p.user_id
+       JOIN users u ON u.id = p.user_id
+       WHERE p.run_id IS NOT NULL
+         AND (
+           p.user_id = ?
+           OR NOT EXISTS (
+             SELECT 1 FROM user_blocks b
+             WHERE (b.blocker_id = ? AND b.blocked_id = p.user_id)
+                OR (b.blocker_id = p.user_id AND b.blocked_id = ?)
+           )
+         )
+       ORDER BY p.created_at DESC
+       LIMIT ?`,
+      [req.user.id, req.user.id, req.user.id, req.user.id, req.user.id, req.user.id, req.user.id, limit]
+    );
+    return res.json({
+      posts: rows.map((row) => ({
+        id: row.id,
+        run_id: row.run_id,
+        title: row.title,
+        caption: row.body || '',
+        template: row.workout_type || 'route',
+        stats: parseJsonObject(row.stats_json),
+        created_at: row.created_at,
+        has_card: Boolean(row.has_card),
+        is_owner: row.user_id === req.user.id,
+        athlete: {
+          id: row.user_id,
+          name: row.user_name || 'Athlete',
+          handle: row.friend_handle || null,
+        },
+      })),
+    });
+  } catch (err) {
+    console.error('[social/activity-posts] list failed:', err.message);
+    return res.status(500).json({ error: 'Could not load friend activity.' });
+  }
+});
+
+router.get('/activity-posts/:id/card', async (req, res) => {
+  if (!isUuid(req.params.id)) return res.status(404).json({ error: 'Activity post not found.' });
+  try {
+    const post = await canViewActivityPost({ get: dbGet }, req.params.id, req.user.id);
+    if (!post) return res.status(404).json({ error: 'Activity post not found.' });
+    const media = await dbGet(
+      `SELECT data, mime_type
+       FROM activity_media
+       WHERE activity_id = ? AND activity_type = 'community_post'
+         AND user_id = ? AND visibility = 'friends'
+       LIMIT 1`,
+      [req.params.id, post.user_id]
+    );
+    if (!media) return res.status(404).json({ error: 'Activity card not found.' });
+    res.set('Cache-Control', 'private, max-age=300');
+    return res.json({ card: media });
+  } catch (err) {
+    console.error('[social/activity-posts/card] fetch failed:', err.message);
+    return res.status(500).json({ error: 'Could not load this activity card.' });
+  }
+});
+
+router.delete('/activity-posts/:id', activityPostLimiter, async (req, res) => {
+  if (!isUuid(req.params.id)) return res.status(404).json({ error: 'Activity post not found.' });
+  try {
+    const deleted = await withUserMutation(req.user.id, async (tx) => {
+      const post = await tx.get(
+        'SELECT id FROM community_posts WHERE id = ? AND user_id = ? FOR UPDATE',
+        [req.params.id, req.user.id]
+      );
+      if (!post) return false;
+      await tx.run(
+        `DELETE FROM activity_media
+         WHERE activity_id = ? AND activity_type = 'community_post' AND user_id = ?`,
+        [req.params.id, req.user.id]
+      );
+      const result = await tx.run(
+        'DELETE FROM community_posts WHERE id = ? AND user_id = ?',
+        [req.params.id, req.user.id]
+      );
+      return result.changes === 1;
+    });
+    if (!deleted) return res.status(404).json({ error: 'Activity post not found.' });
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('[social/activity-posts] delete failed:', err.message);
+    return res.status(500).json({ error: 'Could not remove this activity post.' });
+  }
+});
 
 router.put('/friend-discovery-profile', handleUpdateLimiter, async (req, res) => {
   const rawHandle = req.body?.handle;

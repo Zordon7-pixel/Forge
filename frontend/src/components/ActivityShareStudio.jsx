@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Check, Copy, Download, ImagePlus, Share2, X } from 'lucide-react'
+import { Check, Copy, Download, ImagePlus, Share2, Users, X } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import api from '../lib/api'
 import { parsePlannedRun, parseRunRoute } from '../lib/runRecap'
 
 const CARD_WIDTH = 1080
@@ -8,6 +10,9 @@ const CARD_HEIGHT = 1350
 const TEMPLATES = [
   { id: 'route', label: 'Route' },
   { id: 'log', label: 'Training Log' },
+  { id: 'ember', label: 'Ember' },
+  { id: 'contour', label: 'Contour' },
+  { id: 'overlay', label: 'Overlay' },
   { id: 'photo', label: 'Photo' },
 ]
 
@@ -128,10 +133,10 @@ function fitRoute(points, x, y, width, height) {
   ])
 }
 
-function drawRoute(ctx, route, bounds) {
+function drawRoute(ctx, route, bounds, { routeColor = '#F5BD02', outlineColor = '#111111', emptyColor = '#71717A' } = {}) {
   const fitted = fitRoute(route, bounds.x, bounds.y, bounds.width, bounds.height)
   if (fitted.length < 2) {
-    ctx.fillStyle = '#71717A'
+    ctx.fillStyle = emptyColor
     ctx.font = '700 28px -apple-system, BlinkMacSystemFont, sans-serif'
     ctx.textAlign = 'center'
     ctx.fillText('Route was not shared by the recording source', CARD_WIDTH / 2, bounds.y + bounds.height / 2)
@@ -146,10 +151,10 @@ function drawRoute(ctx, route, bounds) {
   })
   ctx.lineCap = 'round'
   ctx.lineJoin = 'round'
-  ctx.strokeStyle = '#111111'
+  ctx.strokeStyle = outlineColor
   ctx.lineWidth = 18
   ctx.stroke()
-  ctx.strokeStyle = '#F5BD02'
+  ctx.strokeStyle = routeColor
   ctx.lineWidth = 10
   ctx.stroke()
 
@@ -253,6 +258,103 @@ function drawLogTemplate(ctx, run, logo) {
   ctx.fillText('FORGED, NOT FINISHED.', 110, 1216)
 }
 
+function drawEmberTemplate(ctx, run, logo) {
+  const distance = Number(run.distance_miles || 0).toFixed(2)
+  ctx.fillStyle = '#080808'
+  ctx.fillRect(0, 0, CARD_WIDTH, CARD_HEIGHT)
+
+  const ember = ctx.createLinearGradient(0, 160, CARD_WIDTH, 1120)
+  ember.addColorStop(0, '#21150A')
+  ember.addColorStop(0.52, '#A24327')
+  ember.addColorStop(1, '#F5BD02')
+  ctx.fillStyle = ember
+  ctx.beginPath()
+  ctx.moveTo(0, 760)
+  ctx.lineTo(CARD_WIDTH, 260)
+  ctx.lineTo(CARD_WIDTH, 680)
+  ctx.lineTo(0, 1180)
+  ctx.closePath()
+  ctx.fill()
+
+  drawBrand(ctx, logo)
+  ctx.fillStyle = '#FFFFFF'
+  ctx.font = '900 58px -apple-system, BlinkMacSystemFont, sans-serif'
+  ctx.fillText(titleForRun(run), 76, 272)
+  ctx.fillStyle = '#FDE68A'
+  ctx.font = '800 25px -apple-system, BlinkMacSystemFont, sans-serif'
+  ctx.fillText(formatDate(run.date || run.created_at), 78, 318)
+
+  ctx.fillStyle = '#FFFFFF'
+  ctx.font = '950 220px -apple-system, BlinkMacSystemFont, sans-serif'
+  ctx.fillText(distance, 66, 710)
+  ctx.font = '900 42px -apple-system, BlinkMacSystemFont, sans-serif'
+  ctx.fillText('MILES', 80, 770)
+
+  roundRect(ctx, 60, 905, 960, 330, 28, 'rgba(5,5,5,0.92)', 'rgba(255,255,255,0.18)')
+  drawMetric(ctx, 'Time', formatDuration(run.duration_seconds), 100, 995)
+  drawMetric(ctx, 'Pace', formatPace(run), 410, 995)
+  const heartRate = finiteMetric(run.avg_heart_rate ?? run.avg_hr)
+  drawMetric(ctx, 'Average HR', heartRate === null ? '--' : `${Math.round(heartRate)} bpm`, 720, 995)
+  ctx.fillStyle = '#F5BD02'
+  ctx.font = '900 28px -apple-system, BlinkMacSystemFont, sans-serif'
+  ctx.fillText('BANK THE WORK. BUILD THE ATHLETE.', 100, 1180)
+}
+
+function drawContourTemplate(ctx, run, route, logo) {
+  ctx.fillStyle = '#E9E3D5'
+  ctx.fillRect(0, 0, CARD_WIDTH, CARD_HEIGHT)
+  ctx.save()
+  ctx.strokeStyle = 'rgba(68,64,56,0.16)'
+  ctx.lineWidth = 3
+  for (let row = 0; row < 15; row += 1) {
+    ctx.beginPath()
+    for (let x = -50; x <= CARD_WIDTH + 50; x += 16) {
+      const y = 160 + row * 72 + Math.sin((x + row * 53) / 82) * 18 + Math.cos(x / 150) * 12
+      if (x === -50) ctx.moveTo(x, y)
+      else ctx.lineTo(x, y)
+    }
+    ctx.stroke()
+  }
+  ctx.restore()
+  drawBrand(ctx, logo, { dark: false })
+  drawRoute(ctx, route, { x: 86, y: 205, width: 908, height: 690 }, {
+    routeColor: '#A24327',
+    outlineColor: '#F7F2E8',
+    emptyColor: '#625E56',
+  })
+  roundRect(ctx, 58, 930, 964, 332, 22, 'rgba(247,242,232,0.94)', '#BDB3A0')
+  ctx.fillStyle = '#151515'
+  ctx.font = '900 52px Georgia, serif'
+  ctx.fillText(titleForRun(run), 96, 1008)
+  ctx.fillStyle = '#756E62'
+  ctx.font = '700 24px Georgia, serif'
+  ctx.fillText(formatDate(run.date || run.created_at), 98, 1050)
+  drawMetric(ctx, 'Distance', `${Number(run.distance_miles || 0).toFixed(2)} mi`, 98, 1115, { dark: false })
+  drawMetric(ctx, 'Time', formatDuration(run.duration_seconds), 406, 1115, { dark: false })
+  drawMetric(ctx, 'Pace', formatPace(run), 706, 1115, { dark: false })
+}
+
+function drawOverlayTemplate(ctx, run, route, logo) {
+  ctx.clearRect(0, 0, CARD_WIDTH, CARD_HEIGHT)
+  roundRect(ctx, 48, 48, 984, 156, 24, 'rgba(5,5,5,0.82)', 'rgba(255,255,255,0.26)')
+  drawBrand(ctx, logo)
+  drawRoute(ctx, route, { x: 110, y: 258, width: 860, height: 570 }, {
+    routeColor: '#F5BD02',
+    outlineColor: 'rgba(0,0,0,0.75)',
+    emptyColor: 'rgba(255,255,255,0.86)',
+  })
+  roundRect(ctx, 48, 890, 984, 398, 30, 'rgba(5,5,5,0.86)', 'rgba(255,255,255,0.28)')
+  ctx.fillStyle = '#FFFFFF'
+  ctx.font = '900 58px -apple-system, BlinkMacSystemFont, sans-serif'
+  ctx.fillText(titleForRun(run), 92, 980)
+  ctx.fillStyle = '#D4D4D8'
+  ctx.font = '700 24px -apple-system, BlinkMacSystemFont, sans-serif'
+  ctx.fillText(formatDate(run.date || run.created_at), 94, 1025)
+  drawMetric(ctx, 'Distance', `${Number(run.distance_miles || 0).toFixed(2)} mi`, 94, 1100)
+  drawMetric(ctx, 'Time', formatDuration(run.duration_seconds), 410, 1100)
+  drawMetric(ctx, 'Pace', formatPace(run), 712, 1100)
+}
+
 function drawPhotoTemplate(ctx, run, photo, logo) {
   ctx.fillStyle = '#090909'
   ctx.fillRect(0, 0, CARD_WIDTH, CARD_HEIGHT)
@@ -295,23 +397,53 @@ function captionForRun(run) {
   return `${titleForRun(run)} · ${Number(run.distance_miles || 0).toFixed(2)} mi · ${formatDuration(run.duration_seconds)} · ${formatPace(run)}\nForged Hybrid`
 }
 
-function canvasBlob(canvas) {
+function canvasBlob(canvas, mimeType = 'image/png', quality) {
   return new Promise((resolve, reject) => {
     canvas.toBlob((blob) => {
       if (blob) resolve(blob)
       else reject(new Error('Share card could not be created'))
-    }, 'image/png')
+    }, mimeType, quality)
   })
 }
 
+function resizedCanvas(source, width) {
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = Math.round(width * (CARD_HEIGHT / CARD_WIDTH))
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('Share card could not be resized')
+  ctx.drawImage(source, 0, 0, canvas.width, canvas.height)
+  return canvas
+}
+
+function cardDataForPost(source, transparent) {
+  const widths = [720, 600, 480]
+  const qualities = transparent ? [undefined] : [0.84, 0.74, 0.64]
+  const mimeType = transparent ? 'image/png' : 'image/jpeg'
+  for (const width of widths) {
+    const canvas = resizedCanvas(source, width)
+    for (const quality of qualities) {
+      const data = canvas.toDataURL(mimeType, quality)
+      if (data.length <= 980000) return { data, mimeType }
+    }
+  }
+  throw new Error('Share card is too large to post')
+}
+
 export default function ActivityShareStudio({ run, onClose }) {
+  const navigate = useNavigate()
   const canvasRef = useRef(null)
   const [template, setTemplate] = useState('route')
   const [photoUrl, setPhotoUrl] = useState('')
+  const [caption, setCaption] = useState('')
   const [status, setStatus] = useState('')
   const [busy, setBusy] = useState(false)
+  const [posted, setPosted] = useState(false)
   const route = useMemo(() => parseRunRoute(run?.route_coords), [run?.route_coords])
-  const filename = `forged-hybrid-run-${String(run?.date || 'activity').replace(/[^0-9a-z-]/gi, '-')}.png`
+  const transparent = template === 'overlay'
+  const fileType = transparent ? 'image/png' : 'image/jpeg'
+  const fileExtension = transparent ? 'png' : 'jpg'
+  const filename = `forged-hybrid-run-${String(run?.date || 'activity').replace(/[^0-9a-z-]/gi, '-')}.${fileExtension}`
 
   useEffect(() => () => {
     if (photoUrl) URL.revokeObjectURL(photoUrl)
@@ -341,6 +473,9 @@ export default function ActivityShareStudio({ run, onClose }) {
       if (cancelled) return
       ctx.clearRect(0, 0, CARD_WIDTH, CARD_HEIGHT)
       if (template === 'log') drawLogTemplate(ctx, run, logo)
+      else if (template === 'ember') drawEmberTemplate(ctx, run, logo)
+      else if (template === 'contour') drawContourTemplate(ctx, run, route, logo)
+      else if (template === 'overlay') drawOverlayTemplate(ctx, run, route, logo)
       else if (template === 'photo') drawPhotoTemplate(ctx, run, photo, logo)
       else drawRouteTemplate(ctx, run, route, logo)
     }
@@ -352,8 +487,8 @@ export default function ActivityShareStudio({ run, onClose }) {
   }, [photoUrl, route, run, template])
 
   const getFile = async () => {
-    const blob = await canvasBlob(canvasRef.current)
-    return new File([blob], filename, { type: 'image/png' })
+    const blob = await canvasBlob(canvasRef.current, fileType, transparent ? undefined : 0.92)
+    return new File([blob], filename, { type: fileType })
   }
 
   const handleShare = async () => {
@@ -361,7 +496,8 @@ export default function ActivityShareStudio({ run, onClose }) {
     setStatus('')
     try {
       const file = await getFile()
-      const shareData = { title: titleForRun(run), text: captionForRun(run), files: [file] }
+      const shareText = caption.trim() ? `${caption.trim()}\n${captionForRun(run)}` : captionForRun(run)
+      const shareData = { title: titleForRun(run), text: shareText, files: [file] }
       if (navigator.share && (!navigator.canShare || navigator.canShare({ files: [file] }))) {
         await navigator.share(shareData)
       } else {
@@ -424,6 +560,33 @@ export default function ActivityShareStudio({ run, onClose }) {
     }
   }
 
+  const handlePost = async () => {
+    if (!run?.id) {
+      setStatus('Save this run before posting it to friends.')
+      return
+    }
+    setBusy(true)
+    setPosted(false)
+    setStatus('')
+    try {
+      const card = cardDataForPost(canvasRef.current, transparent)
+      await api.post('/social/activity-posts', {
+        run_id: run.id,
+        caption: caption.trim(),
+        template,
+        card_data: card.data,
+        mime_type: card.mimeType,
+      })
+      setPosted(true)
+      setStatus('Posted to your accepted friends in Forged Hybrid.')
+    } catch (error) {
+      console.error('[ActivityShareStudio] post failed:', error?.message || error)
+      setStatus(error?.response?.data?.error || 'Could not post this run right now.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const handlePhoto = (event) => {
     const file = event.target.files?.[0]
     if (!file || !file.type.startsWith('image/')) return
@@ -434,6 +597,7 @@ export default function ActivityShareStudio({ run, onClose }) {
     }
     if (photoUrl) URL.revokeObjectURL(photoUrl)
     setStatus('')
+    setPosted(false)
     setPhotoUrl(URL.createObjectURL(file))
     setTemplate('photo')
     event.target.value = ''
@@ -452,17 +616,32 @@ export default function ActivityShareStudio({ run, onClose }) {
 
         <div className="mb-3 grid grid-cols-3 gap-1 rounded-lg p-1" style={{ background: 'var(--bg-base)' }}>
           {TEMPLATES.map((item) => (
-            <button key={item.id} type="button" onClick={() => setTemplate(item.id)} className="pressable min-h-10 rounded-md px-2 text-xs font-bold" style={{ background: template === item.id ? 'var(--accent)' : 'transparent', color: template === item.id ? 'var(--on-accent)' : 'var(--text-muted)' }}>
+            <button key={item.id} type="button" onClick={() => { setTemplate(item.id); setPosted(false); setStatus('') }} className="pressable min-h-10 rounded-md px-2 text-xs font-bold" style={{ background: template === item.id ? 'var(--accent)' : 'transparent', color: template === item.id ? 'var(--on-accent)' : 'var(--text-muted)' }}>
               {item.label}
             </button>
           ))}
         </div>
 
-        <canvas ref={canvasRef} width={CARD_WIDTH} height={CARD_HEIGHT} className="block aspect-[4/5] w-full rounded-lg object-contain" style={{ background: '#080808', border: '1px solid var(--border-subtle)' }} />
+        <canvas ref={canvasRef} width={CARD_WIDTH} height={CARD_HEIGHT} className="block aspect-[4/5] w-full rounded-lg object-contain" style={{ background: template === 'overlay' ? 'repeating-conic-gradient(#303033 0% 25%, #202023 0% 50%) 50% / 24px 24px' : '#080808', border: '1px solid var(--border-subtle)' }} />
 
         <p className="mt-2 text-center text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-          Share a Forged card through Messages, Mail, or any social app on your phone.
+          Choose an original Forged card, then post it to accepted friends or share it anywhere.
         </p>
+
+        <label className="mt-3 block text-xs font-bold" style={{ color: 'var(--text-muted)' }}>
+          Caption (optional)
+          <textarea value={caption} maxLength={280} rows={2} onChange={(event) => { setCaption(event.target.value); setPosted(false) }} placeholder="What did this run teach you?" className="mt-1 block w-full resize-none rounded-lg p-3 text-sm" style={{ boxSizing: 'border-box', border: '1px solid var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }} />
+        </label>
+
+        <button type="button" onClick={handlePost} disabled={busy || !run?.id} className="pressable mt-3 flex min-h-12 w-full items-center justify-center gap-2 rounded-lg text-sm font-black" style={{ background: 'var(--accent)', color: 'var(--on-accent)', opacity: busy || !run?.id ? 0.55 : 1 }}>
+          <Users size={18} /> {busy ? 'Posting…' : 'Post to Forged Hybrid'}
+        </button>
+        <p className="mt-1 text-center text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>Visible only to you and accepted friends.</p>
+        {posted && (
+          <button type="button" onClick={() => { onClose(); navigate('/community?tab=activity') }} className="pressable mt-2 min-h-11 w-full rounded-lg text-sm font-bold" style={{ border: '1px solid var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }}>
+            View friend activity
+          </button>
+        )}
 
         <div className="mt-3 grid grid-cols-3 gap-2">
           <button type="button" onClick={handleShare} disabled={busy} className="pressable flex min-h-12 items-center justify-center gap-2 rounded-lg text-sm font-black" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}><Share2 size={17} /> Share</button>

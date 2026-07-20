@@ -64,7 +64,7 @@ assert.strictEqual(metrics.elevation_derived_from_route, 1);
 assert.strictEqual(metrics.route_enriched_from_strava, 1);
 assert.strictEqual(metrics.elevation_enriched_from_strava, 1);
 
-assert(/WHERE user_id=\? AND date=\? AND health_source='apple_health'/.test(stravaRoute), 'Strava match lookup is user scoped');
+assert(/WHERE user_id=\? AND date=\? AND health_source IN \('apple_health', 'forged_hybrid'\)/.test(stravaRoute), 'Strava matching enriches only user-scoped canonical health or Forged recordings');
 assert(/WHERE id=\? AND user_id=\?/.test(stravaRoute), 'Strava enrichment updates are user scoped');
 assert(/perceived_effort = COALESCE\(\?, perceived_effort\)/.test(importRoute), 'Apple Health re-sync can add a real effort score to an existing run');
 assert(/workoutEffortScore/.test(swift) && /HKWorkoutEffortRelationshipQuery/.test(swift), 'native bridge requests the associated HealthKit effort rating');

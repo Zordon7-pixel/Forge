@@ -2,9 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import {
+  Activity,
   AtSign,
   Ban,
-  CalendarClock,
   Check,
   Copy,
   Eye,
@@ -25,8 +25,8 @@ import {
 } from 'lucide-react'
 import api from '../lib/api'
 import ChallengePanel from '../components/ChallengePanel'
+import CommunityActivityPanel from '../components/CommunityActivityPanel'
 import FriendLeaderboard from '../components/FriendLeaderboard'
-import GroupRunPanel from '../components/GroupRunPanel'
 import { isContactMatchingAvailable, readPermittedContactEmails } from '../services/ContactService'
 
 const EMPTY_DATA = {
@@ -137,7 +137,8 @@ export default function Community() {
   const [reportNote, setReportNote] = useState('')
   const [activeTab, setActiveTab] = useState(() => {
     const requestedTab = searchParams.get('tab')
-    return ['runs', 'challenges', 'leaderboard', 'friends'].includes(requestedTab) ? requestedTab : 'runs'
+    if (requestedTab === 'runs') return 'activity'
+    return ['activity', 'challenges', 'leaderboard', 'friends'].includes(requestedTab) ? requestedTab : 'activity'
   })
   const processedInviteRef = useRef('')
   const processedHandleRef = useRef('')
@@ -508,14 +509,14 @@ export default function Community() {
       )}
 
       <div role="tablist" aria-label={t('community.title')} style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', width: '100%', maxWidth: '100%', minWidth: 0, gap: 3, padding: 4, marginBottom: 16, border: '1px solid var(--border-subtle)', borderRadius: 8, background: 'var(--bg-card)' }}>
-        <button type="button" role="tab" aria-selected={activeTab === 'runs'} className="pressable" onClick={() => selectTab('runs')} style={{ minWidth: 0, minHeight: 54, padding: '4px 2px', border: 'none', borderRadius: 6, background: activeTab === 'runs' ? 'var(--accent)' : 'transparent', color: activeTab === 'runs' ? 'var(--on-accent)' : 'var(--text-muted)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, fontSize: 10, fontWeight: 900 }}><CalendarClock size={15} />{t('community.runsTab')}</button>
+        <button type="button" role="tab" aria-selected={activeTab === 'activity'} className="pressable" onClick={() => selectTab('activity')} style={{ minWidth: 0, minHeight: 54, padding: '4px 2px', border: 'none', borderRadius: 6, background: activeTab === 'activity' ? 'var(--accent)' : 'transparent', color: activeTab === 'activity' ? 'var(--on-accent)' : 'var(--text-muted)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, fontSize: 10, fontWeight: 900 }}><Activity size={15} />{t('community.activityTab')}</button>
         <button type="button" role="tab" aria-selected={activeTab === 'challenges'} className="pressable" onClick={() => selectTab('challenges')} style={{ minWidth: 0, minHeight: 54, padding: '4px 2px', border: 'none', borderRadius: 6, background: activeTab === 'challenges' ? 'var(--accent)' : 'transparent', color: activeTab === 'challenges' ? 'var(--on-accent)' : 'var(--text-muted)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, fontSize: 10, fontWeight: 900 }}><Trophy size={15} />{t('community.challengesTab')}</button>
         <button type="button" role="tab" aria-selected={activeTab === 'leaderboard'} className="pressable" onClick={() => selectTab('leaderboard')} style={{ minWidth: 0, minHeight: 54, padding: '4px 2px', border: 'none', borderRadius: 6, background: activeTab === 'leaderboard' ? 'var(--accent)' : 'transparent', color: activeTab === 'leaderboard' ? 'var(--on-accent)' : 'var(--text-muted)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, fontSize: 10, fontWeight: 900 }}><Medal size={15} />{t('community.leaderboardTab')}</button>
         <button type="button" role="tab" aria-selected={activeTab === 'friends'} className="pressable" onClick={() => selectTab('friends')} style={{ minWidth: 0, minHeight: 54, padding: '4px 2px', border: 'none', borderRadius: 6, background: activeTab === 'friends' ? 'var(--accent)' : 'transparent', color: activeTab === 'friends' ? 'var(--on-accent)' : 'var(--text-muted)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, fontSize: 10, fontWeight: 900 }}><Users size={15} />{t('community.friendsTab')}</button>
       </div>
 
-      {activeTab === 'runs' ? (
-        <GroupRunPanel friends={data.friends} />
+      {activeTab === 'activity' ? (
+        <CommunityActivityPanel friends={data.friends} />
       ) : activeTab === 'challenges' ? (
         <ChallengePanel friends={data.friends} />
       ) : activeTab === 'leaderboard' ? (

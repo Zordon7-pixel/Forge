@@ -621,6 +621,8 @@ export default function ActiveRun() {
       finalDistance = fmt.milesFromKm(finalDistance)
     }
     const runDate = todayISO()
+    const startedAt = Number(startTimestampRef.current || 0)
+    const endedAt = startedAt > 0 ? Math.max(startedAt, startedAt + (elapsed * 1000)) : 0
     return {
       id: clientRunIdRef.current,
       date: runDate,
@@ -629,6 +631,8 @@ export default function ActiveRun() {
       surface: runSurface,
       distance_miles: finalDistance,
       duration_seconds: elapsed,
+      activity_start_at: startedAt > 0 ? new Date(startedAt).toISOString() : null,
+      activity_end_at: endedAt > 0 ? new Date(endedAt).toISOString() : null,
       notes: buildGpsGapNote(),
       target_zone: workoutTarget?.zone || null,
       plan_session_id: planSessionId,

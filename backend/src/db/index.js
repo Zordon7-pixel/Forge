@@ -1061,6 +1061,8 @@ async function initDb() {
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
     `);
+    await client.query('CREATE INDEX IF NOT EXISTS idx_community_posts_user_created ON community_posts(user_id, created_at DESC)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_community_posts_user_run ON community_posts(user_id, run_id)');
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS saved_workouts (

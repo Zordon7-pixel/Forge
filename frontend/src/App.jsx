@@ -85,6 +85,8 @@ const Upgrade = lazyWithRetry(() => import('./pages/Upgrade'))
 
 const AUTO_HEALTH_SYNC_LAST_SYNC_KEY = 'forge_auto_health_sync_last_sync_at'
 const AUTO_HEALTH_SYNC_MIN_INTERVAL_MS = 5 * 60 * 1000
+const AUTO_STRAVA_SYNC_LAST_SYNC_KEY = 'forge_auto_strava_sync_last_sync_at'
+const AUTO_STRAVA_SYNC_MIN_INTERVAL_MS = 15 * 60 * 1000
 
 function isNativeRuntime() {
   return typeof Capacitor !== 'undefined'
@@ -98,6 +100,26 @@ function shouldAttemptSync() {
     return !lastSyncAt || Date.now() - lastSyncAt >= AUTO_HEALTH_SYNC_MIN_INTERVAL_MS
   } catch {
     return true
+  }
+}
+
+function shouldAttemptStravaSync() {
+  try {
+    const lastSyncAt = Number(localStorage.getItem(AUTO_STRAVA_SYNC_LAST_SYNC_KEY) || 0)
+    return !lastSyncAt || Date.now() - lastSyncAt >= AUTO_STRAVA_SYNC_MIN_INTERVAL_MS
+  } catch {
+    return true
+  }
+}
+
+async function syncConnectedStrava() {
+  if (!shouldAttemptStravaSync()) return
+  const status = await api.get('/strava/status')
+  if (status.data?.connected) await api.post('/strava/sync')
+  try {
+    localStorage.setItem(AUTO_STRAVA_SYNC_LAST_SYNC_KEY, String(Date.now()))
+  } catch (error) {
+    console.warn('[AutoHealthSync] Strava sync timestamp save failed:', error?.message || error)
   }
 }
 
@@ -124,6 +146,11 @@ function AutoHealthSync() {
         await HealthService.syncNativeData()
       } catch (error) {
         console.warn('[AutoHealthSync] sync failed:', error?.message)
+      }
+      try {
+        await syncConnectedStrava()
+      } catch (error) {
+        console.warn('[AutoHealthSync] Strava enrichment failed:', error?.message || error)
       } finally {
         syncInFlightRef.current = false
       }

@@ -213,11 +213,11 @@ function buildAthleteName(athlete = {}) {
   return fullName || null;
 }
 
-async function findMatchingAppleHealthRun(userId, incoming, query) {
+async function findMatchingCanonicalRun(userId, incoming, query) {
   const candidates = await query.all(
     `SELECT id, duration_seconds, health_start_at, workout_metrics_json
      FROM runs
-     WHERE user_id=? AND date=? AND health_source='apple_health'
+     WHERE user_id=? AND date=? AND health_source IN ('apple_health', 'forged_hybrid')
        AND ABS(COALESCE(distance_miles, 0) - ?) <= 0.10
        AND COALESCE(watch_normalized_type, type, '') NOT IN ('walk', 'walking')
      LIMIT 20`,
@@ -272,6 +272,7 @@ async function enrichRunFromStrava(userId, runId, incoming, query) {
   if (addRoute) metrics.route_enriched_from_strava = 1;
   if (addElevation) metrics.elevation_enriched_from_strava = 1;
   if (addEffort) metrics.workout_effort_user_rated = 1;
+  metrics.strava_activity_id = incoming.activityId;
   return query.run(
     `UPDATE runs SET
        route_coords = CASE WHEN ?=1 THEN ? ELSE route_coords END,
@@ -468,13 +469,13 @@ async function syncStravaActivitiesForUser(userId, activities = []) {
       const incoming = normalizeStravaRun(activity);
       if (!incoming.activityId) continue;
 
-      const matchingHealthRun = await findMatchingAppleHealthRun(userId, incoming, tx);
-      if (matchingHealthRun) {
-        const updateResult = await enrichRunFromStrava(userId, matchingHealthRun.id, incoming, tx);
+      const matchingCanonicalRun = await findMatchingCanonicalRun(userId, incoming, tx);
+      if (matchingCanonicalRun) {
+        const updateResult = await enrichRunFromStrava(userId, matchingCanonicalRun.id, incoming, tx);
         if (Number(updateResult?.changes || 0) > 0) enriched += 1;
-        const syncedRun = await tx.get('SELECT * FROM runs WHERE id=? AND user_id=?', [matchingHealthRun.id, userId]);
+        const syncedRun = await tx.get('SELECT * FROM runs WHERE id=? AND user_id=?', [matchingCanonicalRun.id, userId]);
         if (syncedRun) await autoUpdatePRs(userId, syncedRun, { tx });
-        runIds.push(matchingHealthRun.id);
+        runIds.push(matchingCanonicalRun.id);
         continue;
       }
 

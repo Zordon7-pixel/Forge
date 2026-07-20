@@ -71,6 +71,12 @@ function optionalBoundedNumber(value, maximum) {
   return Number.isFinite(number) && number >= 0 && number <= maximum ? number : null;
 }
 
+function optionalIsoDate(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
 async function generateStoredRunFeedback(run, userId) {
   if (run?.ai_feedback) return { feedback: run.ai_feedback, status: 'existing' };
   let claimed = false;
@@ -757,7 +763,8 @@ router.post('/', auth, async (req, res) => {
       vo2_max, training_effect_aerobic, training_effect_anaerobic, recovery_time_hours,
       detected_surface_type, temperature_f, calories, treadmill_brand, treadmill_model,
       watch_sync_id, watch_activity_type, watch_normalized_type, gps_available,
-      target_zone, plan_session_id, planned_session, id: clientRunId
+      target_zone, plan_session_id, planned_session, activity_start_at, activity_end_at,
+      id: clientRunId
     } = req.body;
     if (!date || !type) return res.status(400).json({ error: 'date and type required' });
     if (perceived_effort !== undefined && perceived_effort !== null) {
@@ -772,6 +779,14 @@ router.post('/', auth, async (req, res) => {
     const resolvedElevationGain = optionalBoundedNumber(elevation_gain, 100000);
     const resolvedElevationLoss = optionalBoundedNumber(elevation_loss, 100000);
     const normalizedRouteCoords = normalizeRouteCoords(route_coords);
+    const resolvedActivityStart = optionalIsoDate(activity_start_at);
+    const candidateActivityEnd = optionalIsoDate(activity_end_at);
+    const resolvedActivityEnd = resolvedActivityStart && candidateActivityEnd
+      && new Date(candidateActivityEnd).getTime() >= new Date(resolvedActivityStart).getTime()
+      ? candidateActivityEnd
+      : null;
+    const recordingHealthSource = resolvedActivityStart ? 'forged_hybrid' : null;
+    const recordingSourceId = recordingHealthSource ? id : null;
     let resolvedPlanSessionId = normalizePlanSessionId(plan_session_id);
     let resolvedPlannedSession = normalizePlannedSession(planned_session, resolvedPlanSessionId);
     if (!hasMeaningfulPlannedRun(resolvedPlannedSession)
@@ -800,8 +815,9 @@ router.post('/', auth, async (req, res) => {
       vo2_max, training_effect_aerobic, training_effect_anaerobic, recovery_time_hours,
       detected_surface_type, temperature_f, calories, treadmill_brand, treadmill_model,
       watch_sync_id, watch_activity_type, watch_normalized_type, gps_available,
-      plan_session_id, planned_session_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      plan_session_id, planned_session_json, health_source, health_source_workout_id,
+      health_start_at, health_end_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (id) DO NOTHING`, [
       id, req.user.id, date, type, distance_miles || 0, duration_seconds || 0, perceived_effort ?? null, notes || null,
       resolvedSurface, resolvedSurface, incline_pct || 0, treadmill_speed || 0, JSON.stringify(normalizedRouteCoords), watch_mode || null,
@@ -810,7 +826,8 @@ router.post('/', auth, async (req, res) => {
       vo2_max || null, training_effect_aerobic || null, training_effect_anaerobic || null, recovery_time_hours || null,
       detected_surface_type || null, temperature_f || null, calories || 0, treadmill_brand || null, treadmill_model || null,
       watch_sync_id || null, watch_activity_type || null, watch_normalized_type || null, gps_available === false ? 0 : 1,
-      resolvedPlanSessionId, JSON.stringify(resolvedPlannedSession || {})
+      resolvedPlanSessionId, JSON.stringify(resolvedPlannedSession || {}), recordingHealthSource, recordingSourceId,
+      resolvedActivityStart, resolvedActivityEnd
     ]);
     if (insertResult.changes === 0) {
       const existingRun = await dbGet('SELECT * FROM runs WHERE id=? AND user_id=?', [id, req.user.id]);
@@ -1058,6 +1075,18 @@ router.delete('/:id', auth, async (req, res) => {
           [uuidv4(), req.user.id, sourceKey]
         );
       }
+      await tx.run(
+        `DELETE FROM activity_media
+         WHERE user_id=? AND activity_type='community_post'
+           AND activity_id IN (
+             SELECT id FROM community_posts WHERE run_id=? AND user_id=?
+           )`,
+        [req.user.id, req.params.id, req.user.id]
+      );
+      await tx.run(
+        'DELETE FROM community_posts WHERE run_id=? AND user_id=?',
+        [req.params.id, req.user.id]
+      );
       await tx.run('DELETE FROM runs WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
       await autoUpdatePRs.recomputeRunPrCategories(req.user.id, prRows.map((row) => row.label), { tx });
     });

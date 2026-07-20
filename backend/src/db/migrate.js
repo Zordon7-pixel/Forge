@@ -284,6 +284,22 @@ async function runAlwaysMigrations() {
   await pg.query('CREATE INDEX IF NOT EXISTS idx_activity_media_owner_activity ON activity_media(user_id, activity_type, activity_id)');
 
   await pg.query(`
+    CREATE TABLE IF NOT EXISTS community_posts (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      workout_id TEXT,
+      run_id TEXT,
+      title TEXT NOT NULL,
+      body TEXT,
+      workout_type TEXT,
+      stats_json TEXT DEFAULT '{}',
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+  await pg.query('CREATE INDEX IF NOT EXISTS idx_community_posts_user_created ON community_posts(user_id, created_at DESC)');
+  await pg.query('CREATE INDEX IF NOT EXISTS idx_community_posts_user_run ON community_posts(user_id, run_id)');
+
+  await pg.query(`
     CREATE TABLE IF NOT EXISTS user_consents (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
