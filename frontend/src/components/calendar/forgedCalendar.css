@@ -38,6 +38,58 @@
   background: var(--accent);
   color: var(--on-accent, #000);
 }
+.forged-seg--calendar {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  width: 100%;
+  margin-top: 12px;
+}
+.forged-seg--calendar button { min-width: 0; padding-inline: 8px; }
+
+/* ---- Whole-plan overview ---- */
+.forged-overview { margin-top: 12px; }
+.forged-overview-intro { padding: 4px 2px 12px; }
+.forged-overview-intro h3 { color: var(--text-primary); font-size: 18px; font-weight: 900; margin: 0; }
+.forged-overview-intro p { color: var(--text-muted); font-size: 12px; line-height: 1.55; margin: 5px 0 0; }
+.forged-overview-weeks { border-block: 1px solid var(--border-subtle); }
+.forged-overview-week { border-bottom: 1px solid var(--border-subtle); }
+.forged-overview-week:last-child { border-bottom: 0; }
+.forged-overview-week summary {
+  align-items: center;
+  color: var(--text-primary);
+  cursor: pointer;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  list-style: none;
+  min-height: 84px;
+  padding: 14px 4px;
+}
+.forged-overview-week summary::-webkit-details-marker { display: none; }
+.forged-overview-week summary > svg { color: var(--text-muted); flex: 0 0 auto; transition: transform 160ms ease; }
+.forged-overview-week[open] summary > svg { transform: rotate(180deg); }
+.forged-overview-week-main { display: grid; gap: 3px; min-width: 0; }
+.forged-overview-week-main strong { font-size: 15px; overflow-wrap: anywhere; }
+.forged-overview-week-main > span:last-child { color: var(--text-muted); font-size: 11px; line-height: 1.4; }
+.forged-overview-kicker { color: var(--accent) !important; font-size: 10px !important; font-weight: 900; text-transform: uppercase; }
+.forged-overview-week-body { padding: 0 4px 18px; }
+.forged-overview-purpose {
+  background: var(--bg-input);
+  border-left: 3px solid var(--accent);
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.55;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+}
+.forged-overview-sessions { list-style: none; margin: 0; padding: 0; }
+.forged-overview-sessions li { border-top: 1px solid var(--border-subtle); padding: 11px 0; }
+.forged-overview-sessions li:first-child { border-top: 0; }
+.forged-overview-session-head { align-items: baseline; display: grid; gap: 4px 8px; grid-template-columns: 30px minmax(0, 1fr) auto; }
+.forged-overview-session-head > span:first-child { color: var(--accent); font-size: 10px; font-weight: 900; text-transform: uppercase; }
+.forged-overview-session-head strong { color: var(--text-primary); font-size: 12px; min-width: 0; overflow-wrap: anywhere; }
+.forged-overview-session-head > span:last-child { color: var(--text-muted); font-size: 10px; white-space: nowrap; }
+.forged-overview-sessions p { color: var(--text-muted); font-size: 11px; line-height: 1.5; margin: 4px 0 0 38px; }
 
 /* ---- Original session stamps (lucide icon inside a stamped badge) ---- */
 .forged-stamp {

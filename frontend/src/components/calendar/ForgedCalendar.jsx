@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from 'react'
 import {
-  Footprints, Dumbbell, Moon, ChevronLeft, ChevronRight, ChevronRight as OpenIcon,
+  Footprints, Dumbbell, Moon, ChevronDown, ChevronLeft, ChevronRight, ChevronRight as OpenIcon,
 } from 'lucide-react'
 import {
   buildMonthGrid, addMonths, dayMarks, dayStatus, countdownDays, WEEKDAYS,
@@ -8,6 +8,14 @@ import {
 import './forgedCalendar.css'
 
 const MONTH_DOW = ['M', 'T', 'W', 'T', 'F', 'S', 'S']
+const PHASE_PURPOSE = Object.freeze({
+  base: 'Establish consistent aerobic volume and durable movement before race-specific load increases.',
+  build: 'Increase sustainable speed and long-run durability with controlled weekly progression.',
+  deload: 'Reduce training stress so the previous work can be absorbed without losing rhythm.',
+  peak: 'Practice the race demands at the highest sustainable load before the taper.',
+  taper: 'Lower fatigue while preserving goal-pace familiarity and movement quality.',
+  race: 'Arrive rested, confident, and ready to execute the prepared race strategy.',
+})
 
 function formatGoalTime(seconds) {
   const total = Math.round(Number(seconds))
@@ -29,6 +37,95 @@ function performanceSourceLabel(source) {
   if (source === 'apple_health') return 'Apple Health'
   if (source === 'strava') return 'Strava'
   return 'run history'
+}
+
+function sessionTarget(session) {
+  if (session.kind === 'lift') return String(session.prescription?.focus || 'Strength').replaceAll('_', ' ')
+  if (session.prescriptionBasis === 'time' && session.durationMinutes > 0) return `${Math.round(session.durationMinutes)} min`
+  if (session.distanceMiles > 0) return `${session.distanceIsEstimate ? '~' : ''}${session.distanceMiles.toFixed(1)} mi`
+  return 'Run'
+}
+
+function sessionPurpose(session) {
+  return session.prescription?.description
+    || session.raw?.description
+    || (session.kind === 'lift'
+      ? 'Preserve strength and movement quality alongside the running block.'
+      : 'Develop the fitness required for the plan goal at a controlled dose.')
+}
+
+function weekOverview(week, strengthEnabled) {
+  const sessions = (week?.days || []).flatMap((day) => (
+    (day.sessions || []).map((session) => ({ day, session }))
+  ))
+  const runs = sessions.filter(({ session }) => session.kind === 'run')
+  const lifts = sessions.filter(({ session }) => session.kind === 'lift')
+  const totalMiles = runs.reduce((sum, { session }) => sum + Number(session.distanceMiles || 0), 0)
+  const longRun = runs
+    .map(({ session }) => session)
+    .filter((session) => ['long', 'race'].includes(String(session.type || '').toLowerCase()))
+    .sort((left, right) => Number(right.distanceMiles || 0) - Number(left.distanceMiles || 0))[0]
+  const restDays = (week?.days || []).filter((day) => day.isRest).length
+  const phasePurpose = PHASE_PURPOSE[week?.phase] || 'Progress the plan with a repeatable balance of training and recovery.'
+  return {
+    sessions,
+    summary: [
+      `${runs.length} run${runs.length === 1 ? '' : 's'}`,
+      strengthEnabled ? `${lifts.length} lift${lifts.length === 1 ? '' : 's'}` : null,
+      totalMiles > 0 ? `${totalMiles.toFixed(1)} planned mi` : null,
+      longRun ? `long ${sessionTarget(longRun)}` : null,
+      `${restDays} rest day${restDays === 1 ? '' : 's'}`,
+    ].filter(Boolean).join(' · '),
+    purpose: lifts.length
+      ? `${phasePurpose} Strength work supports the run goal without replacing recovery.`
+      : phasePurpose,
+  }
+}
+
+function PlanOverview({ model, currentWeekIndex }) {
+  return (
+    <section className="forged-overview" aria-labelledby="forged-plan-overview-title">
+      <div className="forged-overview-intro">
+        <h3 id="forged-plan-overview-title">Plan overview</h3>
+        <p>Review how every week and workout advances the goal. Open a week for the day-by-day purpose.</p>
+      </div>
+      <div className="forged-overview-weeks">
+        {(model?.weeks || []).map((week) => {
+          const overview = weekOverview(week, model?.strengthEnabled)
+          const isCurrent = week.weekIndex === currentWeekIndex
+          return (
+            <details className="forged-overview-week" key={`overview-${week.weekIndex}`} open={isCurrent}>
+              <summary>
+                <span className="forged-overview-week-main">
+                  <span className="forged-overview-kicker">
+                    Week {week.weekNumber} of {model.weekCount}{isCurrent ? ' · Current' : ''}
+                  </span>
+                  <strong>{String(week.phase || 'training').replace(/^./, (letter) => letter.toUpperCase())} focus</strong>
+                  <span>{overview.summary}</span>
+                </span>
+                <ChevronDown size={18} aria-hidden="true" />
+              </summary>
+              <div className="forged-overview-week-body">
+                <p className="forged-overview-purpose">{overview.purpose}</p>
+                <ol className="forged-overview-sessions">
+                  {overview.sessions.map(({ day, session }) => (
+                    <li key={`${day.dateISO}-${session.id}`}>
+                      <span className="forged-overview-session-head">
+                        <span>{day.dayLabel}</span>
+                        <strong>{session.title}</strong>
+                        <span>{sessionTarget(session)}</span>
+                      </span>
+                      <p>{sessionPurpose(session)}</p>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            </details>
+          )
+        })}
+      </div>
+    </section>
+  )
 }
 
 function Stamp({ kind, state, small }) {
@@ -148,7 +245,7 @@ export default function ForgedCalendar({
     <div className="forged-cal">
       {/* Header */}
       <div className="rounded-lg p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-        <div className="flex items-start justify-between gap-3">
+        <div>
           <div style={{ minWidth: 0 }}>
             <h2 className="text-lg font-bold" style={{ color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis' }}>
               {goal.name || 'Training plan'}
@@ -179,8 +276,9 @@ export default function ForgedCalendar({
               </p>
             )}
           </div>
-          <div className="forged-seg" role="group" aria-label="Calendar view">
+          <div className="forged-seg forged-seg--calendar" role="group" aria-label="Plan view">
             <button type="button" aria-pressed={view === 'week'} onClick={() => setView('week')}>Week</button>
+            <button type="button" aria-pressed={view === 'overview'} onClick={() => setView('overview')}>Overview</button>
             <button type="button" aria-pressed={view === 'month'} onClick={() => {
               setMonthAnchor(week?.startISO || todayISO)
               setView('month')
@@ -259,6 +357,10 @@ export default function ForgedCalendar({
             </button>
           )}
         </div>
+      )}
+
+      {view === 'overview' && (
+        <PlanOverview model={model} currentWeekIndex={currentWeekIndex} />
       )}
 
       {view === 'month' && monthGrid && (
