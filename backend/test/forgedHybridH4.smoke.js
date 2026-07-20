@@ -249,6 +249,52 @@ assert(safety.status === 'proposal' && safety.safetyException === true, 'active 
 assert(safety.reason.includes('safety exception') && safety.evidence.some((item) => item.source === 'injury'), 'safety proposal has a labelled safety reason');
 assert(safety.changes.some((change) => change.date > adaptation.addDays('2026-07-13', 3)), 'safety exception may extend beyond 72 hours');
 
+section('graded injury and soreness downshift');
+const injuryPlan = clone(army);
+setHardRun(injuryPlan, '2026-07-13', 'moderate-calf-run');
+const healthyReadiness = {
+  metrics: {
+    readinessScore: { value: 86, source: 'apple_health', asOf: '2026-07-13', freshness: 'fresh', suspect: false },
+  },
+};
+const moderateInjury = adaptation.buildAdaptationProposal({
+  plan: injuryPlan,
+  planningDateISO: '2026-07-13',
+  healthSignals: healthyReadiness,
+  injuryState: {
+    active: true,
+    openInjuries: [{ bodyPart: 'calf', pain_level: 5, date: '2026-07-11', active: true }],
+  },
+});
+const moderateRunChange = moderateInjury.changes.find((change) => change.sessionId === 'moderate-calf-run');
+const expectedModerateMiles = Math.max(0.5, Math.round(Number(moderateRunChange?.before.distance_miles || 0) * 0.75 * 10) / 10);
+assert(moderateInjury.status === 'proposal' && !moderateInjury.safetyException, 'open moderate injury downshifts without forcing full rest');
+assert(moderateRunChange && moderateRunChange.after.distance_miles === expectedModerateMiles, 'moderate calf injury applies the fixed 25% run-volume reduction');
+assert(moderateRunChange?.summary.includes('open calf injury') && moderateInjury.evidence.some((item) => item.detail.includes('open calf injury')), 'moderate injury driver cites the injured body part');
+assert(healthyReadiness.metrics.readinessScore.value === 86, 'injury rules do not change the passive Apple Health readiness number');
+
+const severeInjury = adaptation.buildAdaptationProposal({
+  plan: injuryPlan,
+  planningDateISO: '2026-07-13',
+  injuryState: {
+    active: true,
+    openInjuries: [{ bodyPart: 'calf', pain_level: 10, date: '2026-07-13', active: true }],
+  },
+});
+assert(severeInjury.status === 'proposal' && severeInjury.safetyException, 'open severe injury keeps the safety hold path');
+assert(severeInjury.changes.some((change) => change.after.kind === 'rest'), 'severe injury rests scheduled training');
+
+const heavyLegsPlan = clone(army);
+setHardRun(heavyLegsPlan, '2026-07-13', 'heavy-legs-run');
+const heavyLegs = adaptation.buildAdaptationProposal({
+  plan: heavyLegsPlan,
+  planningDateISO: '2026-07-13',
+  checkin: { legs: 1, feeling: 3, drive: 2, sleep_hours: null, time_available: 60, life_flags: [] },
+});
+const heavyLegsChange = heavyLegs.changes.find((change) => change.sessionId === 'heavy-legs-run');
+assert(heavyLegsChange?.after.intensity === 'Moderate', 'Heavy legs trims hard-session intensity instead of swapping to recovery');
+assert(heavyLegsChange?.after.distance_miles === heavyLegsChange?.before.distance_miles, 'Heavy legs intensity trim leaves planned volume unchanged');
+
 section('invariant rejection');
 const invalidCandidate = clone(army);
 invalidCandidate.goal.date = '2026-10-12';
