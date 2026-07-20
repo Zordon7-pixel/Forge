@@ -147,6 +147,8 @@ export function getGoal(plan) {
     goalPaceSecondsPerMile: Number(goal.goalPaceSecondsPerMile || goal.goal_pace_seconds_per_mile || derivedPace || 0) || null,
     goalPaceLabel: goal.goalPaceLabel || goal.goal_pace_label || null,
     paceContext: goal.paceContext || null,
+    anchorState: data.anchorState || goal.anchorState || plan?.anchorState || null,
+    anchoredBy: data.anchoredBy || goal.anchoredBy || plan?.anchoredBy || null,
   }
 }
 
@@ -284,6 +286,9 @@ export function normalizeSession(rawSession, context = {}) {
     durationMinutes,
     prescriptionBasis,
     distanceIsEstimate: Boolean(firstDefined(rawSession.distance_is_estimate, prescription.distanceIsEstimate, prescription.distance_is_estimate, false)),
+    isBenchmark: Boolean(firstDefined(rawSession.benchmark, prescription.benchmark, false)),
+    benchmarkDistanceMiles: Number(firstDefined(rawSession.benchmark_distance_miles, prescription.benchmarkDistanceMiles, prescription.benchmark_distance_miles, 0)) || null,
+    anchorState: firstDefined(rawSession.anchorState, prescription.anchorState, rawSession.anchor_state, prescription.anchor_state),
     status: String(rawSession.status || prescription.status || '').toLowerCase() || null,
     adjusted: Boolean(safeRaw.adjusted || safeRaw.status === 'adjusted' || prescription.adjusted || normalized.adjusted),
     prescription,
@@ -383,6 +388,8 @@ export function buildWeekDays(weekData, weekStartDate, options = {}) {
       orderGuidance: firstDefined(...mappedEntries.flatMap(({ entry: item }) => [item?.orderGuidance, item?.order_guidance])),
       whyToday: firstDefined(...mappedEntries.flatMap(({ entry: item }) => [item?.whyToday, item?.why_today, item?.explanation])),
       recovery: firstDefined(...mappedEntries.flatMap(({ entry: item }) => [item?.recovery, item?.recoveryNote])),
+      anchorState: firstDefined(...mappedEntries.flatMap(({ entry: item }) => [item?.anchorState, item?.anchor_state])),
+      anchoredBy: firstDefined(...mappedEntries.flatMap(({ entry: item }) => [item?.anchoredBy, item?.anchored_by])),
       status: String(entry?.status || '').toLowerCase() || (isRest ? 'rest' : 'planned'),
       raw: entry,
     })

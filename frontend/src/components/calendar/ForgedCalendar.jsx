@@ -32,11 +32,14 @@ function formatGoalPace(seconds) {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}/mi`
 }
 
-function performanceSourceLabel(source) {
-  if (source === 'apple_health+strava') return 'Apple Health + Strava'
-  if (source === 'apple_health') return 'Apple Health'
-  if (source === 'strava') return 'Strava'
-  return 'run history'
+function formatAnchorRunDate(value) {
+  if (!value) return ''
+  const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})/)
+  const date = match
+    ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
+    : new Date(value)
+  if (Number.isNaN(date.getTime())) return String(value)
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
 function sessionTarget(session) {
@@ -213,7 +216,8 @@ export default function ForgedCalendar({
   const countdown = goal.dateISO ? countdownDays(goal.dateISO, todayISO) : null
   const goalTimeLabel = formatGoalTime(goal.goalTimeSeconds)
   const goalPaceLabel = goal.goalPaceLabel || formatGoalPace(goal.goalPaceSecondsPerMile)
-  const performanceAnchor = goal.paceContext?.performanceAnchor || null
+  const anchoredBy = goal.anchoredBy || null
+  const anchorRunDate = formatAnchorRunDate(anchoredBy?.runDate)
 
   const monthGrid = useMemo(
     () => (view === 'month' ? buildMonthGrid(model, monthAnchor, { todayISO, completedSet }) : null),
@@ -263,10 +267,9 @@ export default function ForgedCalendar({
                 {goal.goalTimeSource === 'performance_anchor' ? 'Auto target' : 'Goal'} {goalTimeLabel} · {goalPaceLabel}
               </p>
             )}
-            {performanceAnchor && (
+            {anchoredBy && anchorRunDate && (
               <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
-                {performanceAnchor.kind === 'cross_distance_estimate' ? 'Estimated from' : 'Benchmark'}{' '}
-                {performanceAnchor.observedDistanceMiles} mi at {performanceAnchor.observedPaceLabel} · {performanceSourceLabel(performanceAnchor.source)}
+                Target set from your {anchorRunDate} run
               </p>
             )}
             {['stretch', 'build'].includes(goal.paceContext?.status) && (

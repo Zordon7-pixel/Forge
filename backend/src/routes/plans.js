@@ -93,6 +93,26 @@ function parseJsonValue(raw, fallback) {
   }
 }
 
+function planAnchorPayload(planJson) {
+  if (!planJson || typeof planJson !== 'object') return {};
+  const anchorState = ['anchored', 'needs_benchmark'].includes(String(planJson.anchorState || ''))
+    ? planJson.anchorState
+    : null;
+  const anchoredBy = planJson.anchoredBy && typeof planJson.anchoredBy === 'object'
+    ? planJson.anchoredBy
+    : null;
+  return {
+    ...(anchorState ? { anchorState } : {}),
+    ...(anchoredBy ? { anchoredBy } : {}),
+  };
+}
+
+function withPlanAnchorPayload(value, planJson) {
+  if (!value || typeof value !== 'object') return value;
+  const payload = planAnchorPayload(planJson);
+  return Object.keys(payload).length ? { ...value, ...payload } : value;
+}
+
 function planVersionFor(active, parsedPlan) {
   return crypto
     .createHash('sha256')
@@ -1321,6 +1341,7 @@ router.get('/my', auth, async (req, res) => {
       );
       if (!legacy) return res.json({ plan: null });
       const legacyPlan = parsePlan(legacy) || { weeks: [] };
+      const anchorPayload = planAnchorPayload(legacyPlan);
       return res.json({
         source: 'legacy',
         plan: {
@@ -1329,6 +1350,7 @@ router.get('/my', auth, async (req, res) => {
           type: legacy.type,
           weeks: Number(legacy.weeks || legacyPlan.weeks?.length || 1),
           description: legacy.description,
+          ...anchorPayload,
           plan_data: legacyPlan,
         },
         user_plan: null,
@@ -1340,6 +1362,8 @@ router.get('/my', auth, async (req, res) => {
     } catch (err) {
       console.error('[plans/my] invalid progress JSON:', err.message);
     }
+    const parsedPlan = parsePlan(row) || { weeks: [] };
+    const anchorPayload = planAnchorPayload(parsedPlan);
     res.json({
       plan: {
         id: row.plan_id,
@@ -1347,7 +1371,8 @@ router.get('/my', auth, async (req, res) => {
         type: row.type,
         weeks: row.weeks,
         description: row.description,
-        plan_data: parsePlan(row) || { weeks: [] },
+        ...anchorPayload,
+        plan_data: parsedPlan,
       },
       user_plan: {
         id: row.id,
@@ -1482,6 +1507,7 @@ router.get('/today', auth, async (req, res) => {
     const active = await getActivePlanForUser(req.user.id);
     if (!active) return res.json({ today: null, execution: { hasPlan: false, hasDay: false, date: dateISO } });
     const parsed = parsePlan(active.row);
+    const anchorPayload = planAnchorPayload(parsed);
 
     // H5: select the EXACT dated schema-v2 day (legacy plans fall back to a
     // weekday match among undated days only). Replaces the old first-weekday
@@ -1507,7 +1533,7 @@ router.get('/today', auth, async (req, res) => {
 
     // Legacy `today` shape is preserved for existing consumers.
     const baseDay = selectedEntry ? planSchema.flattenDayForConsumer(selectedEntry) : null;
-    const legacyToday = baseDay ? (patch ? applyOverride(baseDay, patch) : baseDay) : null;
+    const legacyToday = baseDay ? withPlanAnchorPayload(patch ? applyOverride(baseDay, patch) : baseDay, parsed) : null;
 
     // Completion state + calibrated HR profile for the canonical execution object.
     const [progressRow, hrProfile] = await Promise.all([
@@ -1541,7 +1567,7 @@ router.get('/today', auth, async (req, res) => {
       hrProfile,
     });
 
-    res.json({ today: legacyToday, execution });
+    res.json({ today: legacyToday, execution: withPlanAnchorPayload(execution, parsed), ...anchorPayload });
   } catch (err) {
     console.error('[plans] GET today failed:', err);
     res.status(500).json({ error: 'Failed to fetch today' });
@@ -1553,9 +1579,11 @@ router.get('/current', auth, async (req, res) => {
     const active = await getActivePlanForUser(req.user.id);
     if (!active) return res.json({ plan: null });
     const parsed = parsePlan(active.row) || { weeks: [] };
+    const anchorPayload = planAnchorPayload(parsed);
     res.json({
       plan: {
         ...active.row,
+        ...anchorPayload,
         plan_json: parsed,
         plan_data: parsed,
         current_week: Number(active.row.current_week || 1),
@@ -1949,7 +1977,7 @@ router.post('/generate', auth, requirePremium('Race Programs'), async (req, res)
       description: `${selected.plan.weeks.length}-week evidence-backed concurrent plan generated from profile and recent training history.`,
     });
     res.status(201).json({
-      plan: { id: persisted.planId, user_id: req.user.id, week_start: persisted.weekStart, plan_json: selected.plan, plan_data: selected.plan },
+      plan: { id: persisted.planId, user_id: req.user.id, week_start: persisted.weekStart, ...planAnchorPayload(selected.plan), plan_json: selected.plan, plan_data: selected.plan },
       user_plan_id: persisted.userPlanId,
       generation_source: selected.source,
     });
@@ -1991,7 +2019,7 @@ router.post('/generate-for-race/:raceId', auth, requirePremium('Race Programs'),
       description: `${weeks}-week course-aware plan for ${race.race_name}.`,
     });
     res.status(201).json({
-      plan: { id: persisted.planId, user_id: req.user.id, week_start: persisted.weekStart, plan_json: selected.plan, plan_data: selected.plan },
+      plan: { id: persisted.planId, user_id: req.user.id, week_start: persisted.weekStart, ...planAnchorPayload(selected.plan), plan_json: selected.plan, plan_data: selected.plan },
       user_plan_id: persisted.userPlanId,
       generation_source: selected.source,
       weeks,

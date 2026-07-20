@@ -9,7 +9,7 @@ const { isRunActivity } = require('./runActivity');
 
 const DAY_ORDER = planSchema.DAY_ORDER;
 const VALID_MODES = planSchema.VALID_MODES;
-const HARD_RUN_PATTERN = /(long|quality|tempo|threshold|interval|hill|hard|speed|vo2|race|zone 3|zone 4|zone 5)/i;
+const HARD_RUN_PATTERN = /(long|quality|tempo|threshold|interval|hill|hard|speed|vo2|race|benchmark|time-trial|zone 3|zone 4|zone 5)/i;
 const PERFORMANCE_RECENCY_DAYS = 365;
 const STANDARD_PERFORMANCE_DISTANCES = Object.freeze([
   { key: 'mile', label: '1 Mile', miles: 1 },
@@ -139,6 +139,25 @@ function performanceAnchor(run, targetMiles, kind) {
     equivalentPaceSecondsPerMile: Math.round(equivalentSeconds / targetMiles),
     equivalentPaceLabel: formatPaceLabel(equivalentSeconds / targetMiles),
   };
+}
+
+function anchoredByFromHistory(history = {}) {
+  const anchor = history.performanceProfile?.targetAnchor || null;
+  const equivalentTimeSeconds = Number(anchor?.equivalentTimeSeconds || 0);
+  if (!(equivalentTimeSeconds > 0)) return null;
+  return {
+    runDate: anchor.date || null,
+    equivalentTimeSeconds: Math.round(equivalentTimeSeconds),
+    kind: anchor.kind || null,
+    source: 'performance_anchor',
+  };
+}
+
+function planAnchorMetadata(history = {}) {
+  const anchoredBy = anchoredByFromHistory(history);
+  return anchoredBy
+    ? { anchorState: 'anchored', anchoredBy }
+    : { anchorState: 'needs_benchmark' };
 }
 
 function bestDistanceRecord(runs, distance) {
@@ -579,6 +598,35 @@ function buildRunSession({ weekNumber, weekCount, day, type, distance, phase, hi
       goalPaceStatus: goalPaceContext?.status,
     }),
   };
+}
+
+function buildBenchmarkRunSession(session = {}) {
+  const totalDistanceMiles = round(Math.max(1, Number(session.distance_miles || 0) || 1));
+  const next = {
+    ...session,
+    type: 'benchmark',
+    workout_type: 'run',
+    title: 'Benchmark run',
+    prescription_basis: 'distance',
+    distance_miles: totalDistanceMiles,
+    distance_is_estimate: false,
+    benchmark: true,
+    benchmark_distance_miles: 1,
+    anchorState: 'needs_benchmark',
+    target_zone: 'Moderate time-trial effort',
+    pace_target: 'Strong, even 1-mile effort by feel',
+    intensity: 'Benchmark',
+    warmup: ['10 min easy running', '4 x 20 sec relaxed strides'],
+    steps: ['Run 1 mile at a strong but controlled effort', 'Start slightly conservative, then hold even effort', 'Record the finish time for target calibration'],
+    cooldown: ['10 min easy running', 'Walk 3-5 min until breathing settles'],
+    progression: 'Use the result to calibrate plan targets before adding goal-pace work.',
+    description: 'Calibrate training targets with a controlled 1-mile benchmark instead of guessing from a default pace.',
+    evidence_refs: trainingEvidence.runEvidenceRefs('quality'),
+  };
+  delete next.duration_min;
+  delete next.goal_pace_seconds_per_mile;
+  delete next.goal_pace_label;
+  return next;
 }
 
 function buildLiftSession({ weekNumber, day, focus, mode, phase, context = {} }) {
@@ -1033,6 +1081,8 @@ function buildConcurrentPlan(context = {}) {
   const trustedElevationGainFt = trustedCourse.trusted ? Number(trustedCourse.facts.elevationGainFt || 0) : 0;
   const hilly = trustedElevationGainFt / Math.max(1, raceDistance) >= 30;
   const goalPaceContext = buildGoalPaceContext({ ...target, distanceMiles: raceDistance }, history);
+  const anchorMetadata = planAnchorMetadata(history);
+  let benchmarkPrescribed = false;
 
   const weeks = [];
   for (let weekNumber = 1; weekNumber <= weekCount; weekNumber += 1) {
@@ -1074,7 +1124,12 @@ function buildConcurrentPlan(context = {}) {
       const longAlreadyCompleted = isCurrentWeek && currentWeekLoad.longRunCompleted && scheduledType === 'long';
       const qualitySlotTooSmall = ['quality', 'hills', 'sharpen'].includes(scheduledType) && Number(distances[index] || 0) < 1.5;
       const type = day === raceDay ? 'race' : (longAlreadyCompleted || qualitySlotTooSmall ? 'easy' : scheduledType);
-      runByDay.set(day, buildRunSession({ weekNumber, weekCount, day, type, distance: distances[index], phase, hilly, raceName: target.raceName, history, goalPaceContext }));
+      let runSession = buildRunSession({ weekNumber, weekCount, day, type, distance: distances[index], phase, hilly, raceName: target.raceName, history, goalPaceContext });
+      if (anchorMetadata.anchorState === 'needs_benchmark' && !benchmarkPrescribed && type !== 'race') {
+        runSession = buildBenchmarkRunSession(runSession);
+        benchmarkPrescribed = true;
+      }
+      runByDay.set(day, runSession);
     });
 
     const effectiveLiftCount = mode === planSchema.PLAN_MODES.RUN_ONLY ? 0 : phase === 'race' ? Math.min(1, liftDaysPerWeek) : liftDaysPerWeek;
@@ -1082,7 +1137,8 @@ function buildConcurrentPlan(context = {}) {
     const liftByDay = new Map(liftAssignments.map(({ day, focus }) => [day, buildLiftSession({ weekNumber, day, focus, mode, phase, context })]));
     const days = DAY_ORDER.map((day, index) => {
       const sessions = [runByDay.get(day), liftByDay.get(day)].filter(Boolean);
-      const result = { date: addDays(weekStart, index), day, sessions, status: 'planned' };
+      const result = { date: addDays(weekStart, index), day, sessions, status: 'planned', anchorState: anchorMetadata.anchorState };
+      if (anchorMetadata.anchoredBy) result.anchoredBy = anchorMetadata.anchoredBy;
       if (sessions.some((session) => session.kind === 'run') && sessions.some((session) => session.kind === 'lift')) {
         result.orderGuidance = 'Run first; lift at least 6 hours later.';
       }
@@ -1104,6 +1160,8 @@ function buildConcurrentPlan(context = {}) {
     planMode: mode,
     goal: goalMetadata(target, { kind: raceDate ? 'race' : 'training_block' }, history),
     strengthPolicy,
+    anchorState: anchorMetadata.anchorState,
+    ...(anchorMetadata.anchoredBy ? { anchoredBy: anchorMetadata.anchoredBy } : {}),
     generationSource: 'evidence_engine',
     generationValidationErrors: [],
     trainingEvidence: trainingEvidence.planEvidence(mode),

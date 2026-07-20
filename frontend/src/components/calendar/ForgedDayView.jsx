@@ -56,6 +56,15 @@ function firstStr(...values) {
   }
   return ''
 }
+function formatAnchorRunDate(value) {
+  if (!value) return ''
+  const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})/)
+  const date = match
+    ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
+    : new Date(value)
+  if (Number.isNaN(date.getTime())) return String(value)
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+}
 
 function runFacts(session) {
   const p = session.prescription || {}
@@ -160,6 +169,8 @@ export default function ForgedDayView({
   const runSession = sessions.find((s) => s.kind === 'run') || null
   const liftSession = sessions.find((s) => s.kind === 'lift') || null
   const isRest = !day || day.isRest
+  const anchoredBy = planContext.goal?.anchoredBy || day?.anchoredBy || null
+  const anchorRunDate = formatAnchorRunDate(anchoredBy?.runDate)
 
   const dateLabel = useMemo(() => {
     if (!day?.date) return day?.dayLabel || ''
@@ -215,9 +226,15 @@ export default function ForgedDayView({
     const zoneLabel = /^\d+$/.test(f.zone) ? `Zone ${f.zone}` : f.zone
     const evidenceById = new Map((planContext.trainingEvidence || []).map((source) => [source.id, source]))
     const evidenceSources = f.evidenceRefs.map((id) => evidenceById.get(id)).filter(Boolean)
+    const isBenchmarkRun = Boolean(runSession.isBenchmark || runSession.raw?.benchmark || runSession.prescription?.benchmark || runSession.type === 'benchmark')
     return (
       <PaperSection title={firstStr(runSession.title, 'Run')} tone="run" px={px}
         icon={<span className="forged-stamp forged-stamp--run" data-state={sessionState(runSession, completedSet)}><Footprints size={16} /></span>}>
+        {isBenchmarkRun && (
+          <p className="forged-hand forged-sec-red" style={{ fontSize: px(14), margin: '0 0 8px', fontWeight: 800 }}>
+            Benchmark run — this calibrates your targets
+          </p>
+        )}
         {f.purpose && <p className="forged-hand" style={{ fontSize: px(15), margin: '0 0 8px' }}>{f.purpose}</p>}
         <div className="forged-paper-metric" style={{ display: 'flex', flexWrap: 'wrap', gap: 14 }}>
           {f.time && <span style={{ fontSize: px(13) }}><Timer size={13} style={{ verticalAlign: -1 }} /> {f.time}</span>}
@@ -371,6 +388,7 @@ export default function ForgedDayView({
           </button>
           <h3 className="forged-hand" style={{ fontSize: px(24), fontWeight: 700, margin: '6px 0 0' }}>{dateLabel}</h3>
           {planContext.phase && <p style={{ fontSize: px(12), margin: '2px 0 0', color: 'var(--ink-soft, #5A554B)' }}>{planContext.phase} · {planContext.modeLabel}</p>}
+          {anchorRunDate && <p style={{ fontSize: px(12), margin: '2px 0 0', color: 'var(--ink-soft, #5A554B)' }}>Target set from your {anchorRunDate} run</p>}
         </div>
         <div className="forged-paper-controls">
           <button type="button" onClick={() => setScaleIndex((v) => Math.max(0, v - 1))} disabled={scaleIndex === 0} aria-label="Make text smaller" title="Smaller text" style={{ opacity: scaleIndex === 0 ? 0.4 : 1 }}><Minus size={16} /></button>
