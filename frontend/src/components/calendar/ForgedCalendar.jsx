@@ -90,11 +90,12 @@ function PlanOverview({ model, currentWeekIndex }) {
         <p>Review how every week and workout advances the goal. Open a week for the day-by-day purpose.</p>
       </div>
       <div className="forged-overview-weeks">
-        {(model?.weeks || []).map((week) => {
+        {(model?.weeks || []).map((week, overviewIndex) => {
           const overview = weekOverview(week, model?.strengthEnabled)
-          const isCurrent = week.weekIndex === currentWeekIndex
+          const resolvedWeekIndex = Number.isInteger(week.weekIndex) ? week.weekIndex : overviewIndex
+          const isCurrent = resolvedWeekIndex === currentWeekIndex
           return (
-            <details className="forged-overview-week" key={`overview-${week.weekIndex}`} open={isCurrent}>
+            <details className="forged-overview-week" key={`overview-${resolvedWeekIndex}`} open={isCurrent}>
               <summary>
                 <span className="forged-overview-week-main">
                   <span className="forged-overview-kicker">
@@ -108,8 +109,8 @@ function PlanOverview({ model, currentWeekIndex }) {
               <div className="forged-overview-week-body">
                 <p className="forged-overview-purpose">{overview.purpose}</p>
                 <ol className="forged-overview-sessions">
-                  {overview.sessions.map(({ day, session }) => (
-                    <li key={`${day.dateISO}-${session.id}`}>
+                  {overview.sessions.map(({ day, session }, sessionIndex) => (
+                    <li key={`${day.dateISO || day.slot || resolvedWeekIndex}-${session.id || sessionIndex}`}>
                       <span className="forged-overview-session-head">
                         <span>{day.dayLabel}</span>
                         <strong>{session.title}</strong>

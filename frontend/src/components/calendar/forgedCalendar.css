@@ -12,6 +12,7 @@
   --fc-adjust: #EAB308;
   --fc-skip: #EF4444;
 }
+.forged-cal-header { display: block; min-width: 0; }
 
 /* ---- Segmented view switch ---- */
 .forged-seg {
