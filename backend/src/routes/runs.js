@@ -22,6 +22,7 @@ const {
 } = require('../lib/ageGrading');
 const { buildHealthSignals } = require('../lib/healthSignals');
 const { activityKind, isRunActivity, runActivitySql } = require('../lib/runActivity');
+const { resolveRunEffort, withCalculatedEffort } = require('../lib/runEffort');
 const { findPlannedRunForDate, hasMeaningfulPlannedRun } = require('../lib/plannedRunMatch');
 const {
   normalizePlanSessionId,
@@ -317,7 +318,7 @@ function isoDateDaysAgo(days) {
 router.get('/', auth, async (req, res) => {
   try {
     const runs = await dbAll('SELECT * FROM runs WHERE user_id = ? ORDER BY date DESC, created_at DESC LIMIT 50', [req.user.id]);
-    res.json({ runs });
+    res.json({ runs: runs.map(withCalculatedEffort) });
   } catch (err) { res.status(500).json({ error: 'Failed to fetch runs' }); }
 });
 
@@ -337,7 +338,12 @@ router.get('/load-analysis', auth, async (req, res) => {
     const [twRow, lwRow, runs] = await Promise.all([
       dbGet(`SELECT COALESCE(SUM(distance_miles),0) as miles FROM runs WHERE user_id=? AND date>=? AND date<? AND ${runActivitySql()}`, [req.user.id, thisWeekStart, thisWeekEnd]),
       dbGet(`SELECT COALESCE(SUM(distance_miles),0) as miles FROM runs WHERE user_id=? AND date>=? AND date<? AND ${runActivitySql()}`, [req.user.id, lastWeekStart, thisWeekStart]),
-      dbAll(`SELECT date, perceived_effort FROM runs WHERE user_id=? AND date>=? AND date<? AND ${runActivitySql()} ORDER BY date ASC`, [req.user.id, thisWeekStart, thisWeekEnd])
+      dbAll(`SELECT date, duration_seconds, perceived_effort, heart_rate_zones,
+                    workout_metrics_json, watch_mode, notes, pain_level, post_energy,
+                    type, watch_activity_type, watch_normalized_type
+             FROM runs
+             WHERE user_id=? AND date>=? AND date<? AND ${runActivitySql()}
+             ORDER BY date ASC`, [req.user.id, thisWeekStart, thisWeekEnd])
     ]);
 
     const thisWeekMiles = Number(twRow?.miles || 0);
@@ -346,7 +352,7 @@ router.get('/load-analysis', auth, async (req, res) => {
 
     let hardStreak = 0, maxHardStreak = 0;
     for (const r of runs) {
-      if (Number(r.perceived_effort || 0) >= 7) { hardStreak++; maxHardStreak = Math.max(maxHardStreak, hardStreak); }
+      if (Number(resolveRunEffort(r).score || 0) >= 7) { hardStreak++; maxHardStreak = Math.max(maxHardStreak, hardStreak); }
       else { hardStreak = 0; }
     }
 
@@ -720,12 +726,13 @@ router.get('/:id', auth, async (req, res) => {
   try {
     const run = await dbGet('SELECT * FROM runs WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
     if (!run) return res.status(404).json({ error: 'Run not found' });
+    const enrichedRun = withCalculatedEffort(run);
     if (isRunActivity(run) && !hasMeaningfulPlannedRun(run.planned_session_json)) {
       const planned = await findPlannedRunForDate(req.user.id, String(run.date || '').slice(0, 10));
       if (planned) {
         return res.json({
           run: {
-            ...run,
+            ...enrichedRun,
             plan_session_id: planned.sessionId || null,
             planned_session_json: JSON.stringify(planned),
             planned_match_source: planned.matchSource,
@@ -733,7 +740,7 @@ router.get('/:id', auth, async (req, res) => {
         });
       }
     }
-    res.json({ run: { ...run, planned_match_source: hasMeaningfulPlannedRun(run.planned_session_json) ? 'saved' : null } });
+    res.json({ run: { ...enrichedRun, planned_match_source: hasMeaningfulPlannedRun(run.planned_session_json) ? 'saved' : null } });
   } catch (err) {
     console.error('[runs/detail] fetch failed:', err.message);
     res.status(500).json({ error: 'Failed to fetch run' });
@@ -940,7 +947,7 @@ async function updateRunHandler(req, res) {
       }
       return nextRun;
     });
-    res.json(updated);
+    res.json(withCalculatedEffort(updated));
   } catch (err) {
     if (err.status === 404) return res.status(404).json({ error: 'Run not found' });
     console.error('[runs/update] failed:', err.message);
@@ -987,7 +994,7 @@ router.patch('/:id/check-in', auth, async (req, res) => {
       : await generateStoredRunFeedback(updatedRun, req.user.id);
     res.json({
       ok: true,
-      run: updatedRun,
+      run: withCalculatedEffort(updatedRun),
       feedback: feedbackResult.feedback || null,
       feedbackStatus: feedbackResult.status,
     });

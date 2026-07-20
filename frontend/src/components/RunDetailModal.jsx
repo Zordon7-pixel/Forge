@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, X, Brain, MapPin, Trash2 } from 'lucide-react'
+import { ArrowLeft, X, Brain, Gauge, MapPin, Trash2 } from 'lucide-react'
 import { CircleMarker, MapContainer, Polyline, TileLayer, useMap } from 'react-leaflet'
 import api from '../lib/api'
 import { useUnits } from '../context/UnitsContext'
@@ -137,13 +137,24 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
     ? { label: ZONE_LABELS[dominantZoneIndex], ...(hrZones[dominantZoneIndex] || {}), zone: dominantZoneIndex + 1, color: ZONE_COLORS[dominantZoneIndex] }
     : averageZone
   const zoneModelLabel = ZONE_MODEL_LABELS[hrProfile?.zoneModel] || 'saved profile'
+  const backendEffortSource = String(run.effort_source || '')
   const importedLegacyEffort = run.watch_mode === 'import' && run.notes === 'Imported workout'
-  const hasTrustedEffort = run.perceived_effort != null && (
-    !importedLegacyEffort
-    || workoutMetrics.workout_effort_user_rated === 1
-    || Boolean(run.pain_level)
-    || Boolean(run.post_energy)
-  )
+  const hasTrustedEffort = backendEffortSource
+    ? backendEffortSource === 'user_rated'
+    : run.perceived_effort != null && (
+      !importedLegacyEffort
+      || workoutMetrics.workout_effort_user_rated === 1
+      || Boolean(run.pain_level)
+      || Boolean(run.post_energy)
+    )
+  const calculatedEffort = Number(run.calculated_effort)
+  const hasCalculatedEffort = !hasTrustedEffort && Number.isFinite(calculatedEffort) && calculatedEffort >= 1 && calculatedEffort <= 10
+  const calculatedEffortCoverage = Number(run.calculated_effort_coverage_pct)
+  const effortLabel = hasTrustedEffort
+    ? `${run.perceived_effort}/10 - ${EFFORT_LABELS[Math.round(Number(run.perceived_effort))] || 'Rated'}`
+    : hasCalculatedEffort
+      ? `${calculatedEffort}/10 - Calculated`
+      : isAppleHealthSource ? 'Not enough HR data' : '--'
   const elevationGain = run.elevation_gain === null || run.elevation_gain === undefined || run.elevation_gain === ''
     ? Number.NaN
     : Number(run.elevation_gain)
@@ -156,7 +167,7 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
     { label: 'Duration', value: run.duration_seconds ? fmtDuration(run.duration_seconds) : '--' },
     { label: 'Pace', value: run.distance_miles && run.duration_seconds ? fmt.pace(run.duration_seconds / run.distance_miles) : '--' },
     { label: calorieLabel, value: run.calories ? `${run.calories} cal` : '--' },
-    { label: 'Effort', value: hasTrustedEffort ? `${run.perceived_effort}/10 - ${EFFORT_LABELS[run.perceived_effort] || ''}` : isAppleHealthSource ? 'Not rated' : '--' },
+    { label: 'Effort', value: effortLabel },
     { label: 'Surface', value: run.surface || run.run_type || '--' },
     { label: 'Elevation Gain', value: elevationLabel },
   ]
@@ -179,7 +190,7 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
   const inferredPlanMatch = comparison.planned?.matchSource === 'scheduled_date' || run.planned_match_source === 'scheduled_date'
   const splits = normalizeRunSplits(run.pace_splits)
   const routePositions = parseRunRoute(run.route_coords)
-  const checkInAvailable = run.perceived_effort != null || run.pain_level || run.post_energy
+  const checkInAvailable = hasTrustedEffort || run.pain_level || run.post_energy
   const checkInComplete = hasTrustedEffort && Boolean(run.pain_level) && Boolean(run.post_energy)
   const missingAppleRoute = isRun && isAppleHealthSource && routePositions.length < 2
   const missingAppleElevation = isRun && isAppleHealthSource && !Number.isFinite(elevationGain)
@@ -264,9 +275,9 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
               <div>
                 <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Recording details not shared</p>
                 <p className="mt-1 text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-                  The app or watch that saved this workout to Apple Health did not include {missingAppleRoute && missingAppleElevation ? 'a GPS route or elevation gain' : missingAppleRoute ? 'a GPS route' : 'elevation gain'}. Forged Hybrid will not guess missing activity data.
+                  The app or watch that saved this workout to Apple Health did not include {missingAppleRoute && missingAppleElevation ? 'a GPS route or elevation gain' : missingAppleRoute ? 'a GPS route' : 'elevation gain'}. Past activity details cannot be recreated after the recording source omits them.
                 </p>
-                <p className="mt-1 text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>If the same run is in a connected Strava account, syncing Strava can fill supported route and elevation fields without duplicating the run.</p>
+                <p className="mt-1 text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>Runs started in Forged Hybrid record iPhone GPS and altitude when location access is granted. A matching Strava activity can also fill supported route and elevation fields without duplicating the run.</p>
                 <Link to="/settings" className="mt-2 inline-flex text-xs font-bold" style={{ color: 'var(--accent)' }}>Open connected sources</Link>
               </div>
             </div>
@@ -281,6 +292,20 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
             </div>
           ))}
         </div>
+
+        {isRun && hasCalculatedEffort && (
+          <div className="mb-5 rounded-xl p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
+            <div className="flex items-start gap-2">
+              <Gauge size={16} className="mt-0.5 shrink-0" style={{ color: 'var(--accent)' }} />
+              <div>
+                <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Calculated training effort</p>
+                <p className="mt-1 text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                  Based on workout duration and time in heart-rate zones{Number.isFinite(calculatedEffortCoverage) ? ` with ${calculatedEffortCoverage.toFixed(0)}% timeline coverage` : ''}. This is an objective load estimate, not your personal RPE.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {isRun && (
           <div className="rounded-xl p-4 mb-5" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
@@ -393,7 +418,7 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
           <div className="mb-5 rounded-xl p-4" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
             <p className="text-xs font-bold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.6 }}>Post-run check-in</p>
             <div className="mt-3 grid grid-cols-3 gap-2">
-              <div><p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Effort</p><p className="mt-1 text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{run.perceived_effort != null ? `${run.perceived_effort}/10` : '--'}</p></div>
+              <div><p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Effort</p><p className="mt-1 text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{hasTrustedEffort ? `${run.perceived_effort}/10` : '--'}</p></div>
               <div><p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Pain</p><p className="mt-1 text-sm font-semibold capitalize" style={{ color: run.pain_level === 'moderate' || run.pain_level === 'severe' ? 'var(--danger)' : 'var(--text-primary)' }}>{run.pain_level || '--'}</p></div>
               <div><p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Energy</p><p className="mt-1 text-sm font-semibold capitalize" style={{ color: run.post_energy === 'low' ? 'var(--warning)' : 'var(--text-primary)' }}>{run.post_energy || '--'}</p></div>
             </div>
@@ -406,7 +431,7 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
         {isRun && !checkInAvailable && onAddCheckIn && (
           <div className="mb-5 rounded-xl p-4" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
             <p className="text-xs font-bold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.6 }}>How did it feel?</p>
-            <p className="mt-1 text-sm leading-relaxed" style={{ color: 'var(--text-muted)' }}>Apple Health did not include a rated effort. Add your effort, pain, and post-run energy so future training can adapt to what the run actually cost you.</p>
+            <p className="mt-1 text-sm leading-relaxed" style={{ color: 'var(--text-muted)' }}>{hasCalculatedEffort ? 'Forged Hybrid calculated training effort from reliable heart-rate data, but only you can rate how it felt.' : 'Apple Health did not include enough reliable data for a rated or calculated effort.'} Add your effort, pain, and post-run energy so future training can adapt to what the run actually cost you.</p>
             <button type="button" onClick={onAddCheckIn} className="mt-3 w-full rounded-lg py-2.5 text-sm font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>Rate this run</button>
           </div>
         )}

@@ -1,6 +1,7 @@
 // Pure recent-run load summary used by plan generation and live adaptation.
 
 const { isRunActivity } = require('./runActivity');
+const { resolveRunEffort } = require('./runEffort');
 
 function parseISODate(value) {
   const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -65,6 +66,7 @@ function normalizeRun(row = {}) {
   const storedPaceRaw = finiteNumber(row.pace_avg, 3, 2400);
   const storedPace = storedPaceRaw && storedPaceRaw < 60 ? storedPaceRaw * 60 : storedPaceRaw;
   const paceSecondsPerMile = computedPace && computedPace >= 180 && computedPace <= 2400 ? computedPace : storedPace;
+  const effort = resolveRunEffort(row);
   return {
     date,
     distanceMiles,
@@ -72,7 +74,10 @@ function normalizeRun(row = {}) {
     durationMinutes: durationSeconds > 0 ? round(durationSeconds / 60, 1) : null,
     paceSecondsPerMile: paceSecondsPerMile ? Math.round(paceSecondsPerMile) : null,
     paceLabel: paceLabel(paceSecondsPerMile),
-    perceivedEffort: finiteNumber(row.perceived_effort, 1, 10),
+    perceivedEffort: effort.source === 'user_rated' ? effort.score : null,
+    effectiveEffort: effort.score,
+    effortSource: effort.source,
+    effortCoveragePct: effort.coveragePct || null,
     avgHeartRate: finiteNumber(row.avg_heart_rate, 30, 240),
     postRunPain: normalizedChoice(row.pain_level, ['none', 'mild', 'moderate', 'severe']),
     postRunEnergy: normalizedChoice(row.post_energy, ['low', 'medium', 'high']),
@@ -91,7 +96,7 @@ function summarizeRecentRunLoad(rows = [], options = {}) {
   const meaningful = normalized.filter((run) => (
     run.distanceMiles >= 1
     || run.durationSeconds >= 600
-    || Number(run.perceivedEffort || 0) >= 7
+    || Number(run.effectiveEffort || 0) >= 7
     || ['moderate', 'severe'].includes(run.postRunPain)
     || run.postRunEnergy === 'low'
   ));
@@ -110,7 +115,7 @@ function summarizeRecentRunLoad(rows = [], options = {}) {
   const annotate = (run) => {
     const daysSince = daysBetween(todayISO, run.date);
     const isLong = run.distanceMiles >= longRunThresholdMiles || run.durationSeconds >= 75 * 60;
-    const isHard = Number(run.perceivedEffort || 0) >= 7;
+    const isHard = Number(run.effectiveEffort || 0) >= 7;
     const postRunCaution = ['moderate', 'severe'].includes(run.postRunPain) || run.postRunEnergy === 'low';
     const postRunSevere = run.postRunPain === 'severe';
     return {
@@ -162,8 +167,8 @@ function summarizeRecentRunLoad(rows = [], options = {}) {
       Number(right.postRunSevere) - Number(left.postRunSevere)
       || Number(right.postRunCaution) - Number(left.postRunCaution)
       || Number(right.isLong && right.isHard) - Number(left.isLong && left.isHard)
-      || Math.max(right.distanceMiles / longRunThresholdMiles, right.durationSeconds / 4500, Number(right.perceivedEffort || 0) / 7)
-        - Math.max(left.distanceMiles / longRunThresholdMiles, left.durationSeconds / 4500, Number(left.perceivedEffort || 0) / 7)
+      || Math.max(right.distanceMiles / longRunThresholdMiles, right.durationSeconds / 4500, Number(right.effectiveEffort || 0) / 7)
+        - Math.max(left.distanceMiles / longRunThresholdMiles, left.durationSeconds / 4500, Number(left.effectiveEffort || 0) / 7)
       || right.date.localeCompare(left.date)
     ))[0] || null;
   const recoveryCaution = ['low', 'recovery', 'caution'].includes(recoveryState);
@@ -183,6 +188,7 @@ function summarizeRecentRunLoad(rows = [], options = {}) {
     reasonRun.paceLabel,
     reasonRun.durationMinutes ? `${Math.round(reasonRun.durationMinutes)} min` : null,
     reasonRun.avgHeartRate ? `avg HR ${Math.round(reasonRun.avgHeartRate)}` : null,
+    reasonRun.effectiveEffort ? `${reasonRun.effortSource === 'user_rated' ? 'rated RPE' : 'calculated effort'} ${reasonRun.effectiveEffort}/10` : null,
     reasonRun.postRunPain && reasonRun.postRunPain !== 'none' ? `${reasonRun.postRunPain} post-run pain` : null,
     reasonRun.postRunEnergy === 'low' ? 'low post-run energy' : null,
   ].filter(Boolean).join(', ');

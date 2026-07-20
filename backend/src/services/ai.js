@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const { trustedCourseFacts } = require('../lib/concurrentPlan');
+const { resolveRunEffort } = require('../lib/runEffort');
 
 const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
 const OPENAI_RESPONSES_TIMEOUT_MS = 75_000;
@@ -245,8 +246,11 @@ async function generateTrainingPlan(profile, target = null, trainingContext = nu
   const adherence = Number(observed.adherenceRate);
   const recentRunLoad = observed.acuteRunLoad || {};
   const latestRun = recentRunLoad.latestRun || null;
+  const latestRunEffort = latestRun?.effectiveEffort
+    ? `, ${latestRun.effortSource === 'user_rated' ? 'rated RPE' : 'calculated effort'} ${Number(latestRun.effectiveEffort)}`
+    : '';
   const recentRunLine = latestRun
-    ? `${Number(latestRun.distanceMiles || 0).toFixed(1)} miles on ${sanitize(latestRun.date, 10)}${latestRun.durationMinutes ? ` in ${Math.round(Number(latestRun.durationMinutes))} min` : ''}${latestRun.paceLabel ? ` (${sanitize(latestRun.paceLabel, 20)})` : ''}${latestRun.avgHeartRate ? `, avg HR ${Math.round(Number(latestRun.avgHeartRate))}` : ''}${latestRun.perceivedEffort ? `, RPE ${Number(latestRun.perceivedEffort)}` : ''}`
+    ? `${Number(latestRun.distanceMiles || 0).toFixed(1)} miles on ${sanitize(latestRun.date, 10)}${latestRun.durationMinutes ? ` in ${Math.round(Number(latestRun.durationMinutes))} min` : ''}${latestRun.paceLabel ? ` (${sanitize(latestRun.paceLabel, 20)})` : ''}${latestRun.avgHeartRate ? `, avg HR ${Math.round(Number(latestRun.avgHeartRate))}` : ''}${latestRunEffort}`
     : 'none available';
   const protection = recentRunLoad.protection || {};
   const healthMetrics = trainingContext?.recovery?.metrics || {};
@@ -369,6 +373,12 @@ async function generateRunFeedback(run, profile) {
   const injuryCtx = sanitize(profile?.injury_notes) ? `, currently managing: ${sanitize(profile.injury_notes)}` : '';
   const notesCtx = sanitize(run.notes) ? `\nAthlete note: "${sanitize(run.notes)}"` : '';
   const postRunCtx = `\nPost-run check-in: pain ${sanitize(run.pain_level, 20) || 'not reported'}, energy ${sanitize(run.post_energy, 20) || 'not reported'}.`;
+  const resolvedEffort = resolveRunEffort(run);
+  const effortCtx = resolvedEffort.score
+    ? resolvedEffort.source === 'user_rated'
+      ? `athlete-rated RPE ${resolvedEffort.score}/10`
+      : `calculated training effort ${resolvedEffort.score}/10 from heart-rate zones and duration (not athlete-rated RPE)`
+    : 'effort not available';
   let plannedSession = null;
   try {
     plannedSession = typeof run.planned_session_json === 'string'
@@ -381,9 +391,9 @@ async function generateRunFeedback(run, profile) {
     ? `\nPlanned prescription: ${JSON.stringify(sanitizeObj(plannedSession))}`
     : '';
 
-  const prompt = `You are a sharp, experienced hybrid runner/lifter coach who specializes in concurrent training (runners who also lift) reviewing a training log entry. Write 2-3 sentences of feedback. Sound like a knowledgeable training partner — direct, specific to the numbers, no fluff. Don't open with praise like "Great job" or "Well done". Don't mention weight or BMI. Reference the actual pace and effort.
+  const prompt = `You are a sharp, experienced hybrid runner/lifter coach who specializes in concurrent training (runners who also lift) reviewing a training log entry. Write 2-3 sentences of feedback. Sound like a knowledgeable training partner — direct, specific to the numbers, no fluff. Don't open with praise like "Great job" or "Well done". Don't mention weight or BMI. Reference the actual pace and available effort. Never describe calculated effort as athlete-rated RPE.
 
-${sanitize(run.type, 40) || 'Run'} — ${Number(run.distance_miles) || 0} miles in ${durationMin} min (${pace}), effort ${Number(run.perceived_effort) || 'not reported'}/10${notesCtx}${postRunCtx}${plannedCtx}
+${sanitize(run.type, 40) || 'Run'} — ${Number(run.distance_miles) || 0} miles in ${durationMin} min (${pace}), ${effortCtx}${notesCtx}${postRunCtx}${plannedCtx}
 Context: ${Number(profile?.weekly_miles_current) || 0} mi/week base, goal: ${sanitize(profile?.goal_type, 30) || 'fitness'}${injuryCtx}
 
 Under 60 words. No headers. No bullet points. If the athlete's recent lifts are heavy (lower body), mention CNS load or leg fatigue when relevant. Talk like someone who lifts AND runs.`;

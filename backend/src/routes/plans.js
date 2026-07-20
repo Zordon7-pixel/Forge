@@ -281,7 +281,9 @@ async function buildAdaptationInputs(userId, plan, active, planningDateISO) {
     }),
     dbAll(
       `SELECT date, distance_miles, duration_seconds, perceived_effort, avg_heart_rate,
-              pain_level, post_energy, pace_avg, health_source, created_at
+              pain_level, post_energy, pace_avg, health_source, created_at,
+              heart_rate_zones, workout_metrics_json, watch_mode, notes,
+              type, watch_activity_type, watch_normalized_type
        FROM runs
        WHERE user_id=? AND date>=? AND date<=? AND ${runActivitySql()}
        ORDER BY date ASC, created_at ASC`,
@@ -545,7 +547,9 @@ async function buildConcurrentContext(userId, profile, target) {
   const [runs, lifts, recentExercises, healthRow, activeInjury, dailyCheckin] = await Promise.all([
     dbAll(
       `SELECT date, distance_miles, duration_seconds, perceived_effort, avg_heart_rate,
-              pain_level, post_energy, pace_avg, health_source, created_at
+              pain_level, post_energy, pace_avg, health_source, created_at,
+              heart_rate_zones, workout_metrics_json, watch_mode, notes,
+              type, watch_activity_type, watch_normalized_type
        FROM runs
        WHERE user_id=? AND date>=? AND date<=? AND ${runActivitySql()}
        ORDER BY date ASC, created_at ASC`,
