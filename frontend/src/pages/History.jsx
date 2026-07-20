@@ -374,11 +374,10 @@ export default function History() {
 
       {(tab === 'all' || tab === 'runs') && (
         <div className="space-y-3 mb-3">
-          {filteredRuns.map(run => (
+          {filteredRuns.map(run => {
+            const heartRateZone = isRunningActivity(run) ? resolveRunHeartRateZone(run, hrZones) : null
+            return (
             <div key={run.id} onClick={() => openRunDetail(run)} className="cursor-pointer rounded-xl p-4" style={{ background: 'var(--bg-card)' }}>
-              {(() => {
-                const heartRateZone = isRunningActivity(run) ? resolveRunHeartRateZone(run, hrZones) : null
-                return (
               <div className="mb-2 flex items-center justify-between">
                 <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{formatHistoryDate(getRunDate(run))}</p>
                 <div className="flex items-center gap-2">
@@ -389,17 +388,18 @@ export default function History() {
                   <button type="button" aria-label="Delete run" title="Delete run" onClick={e => requestDelete('run', run, e)} className="transition-colors" style={{ color: 'var(--text-muted)' }}><Trash2 size={14} /></button>
                 </div>
               </div>
-                )
-              })()}
 
               <p className="text-sm" style={{ color: 'var(--text-primary)' }}>
                 {fmt.distance(Number(run.distance_miles || 0), 2)} · {formatDuration(run.duration_seconds)} · {Number(run.distance_miles || 0) > 0 && Number(run.duration_seconds || 0) > 0 ? fmt.pace(run.duration_seconds / run.distance_miles) : '--'}
                 {(run.calories_burned || run.calories) > 0 && <span> · {run.calories_burned || run.calories} cal</span>}
               </p>
 
+              {heartRateZone && <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>{heartRateZone.source === 'timeline' ? `Dominant HR zone Z${heartRateZone.zone}${Number.isFinite(heartRateZone.dominantPct) ? ` for ${heartRateZone.dominantPct.toFixed(0)}% of recorded HR time` : ''}` : `Average HR classified as Z${heartRateZone.zone} with your saved zones`}</p>}
+
               {run.notes && <p className="mt-1 text-xs italic" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>&quot;{run.notes}&quot;</p>}
             </div>
-          ))}
+            )
+          })}
 
           {filteredRuns.length === 0 && tab !== 'lifts' && (
             <div className="flex flex-col items-center justify-center gap-4 py-12">

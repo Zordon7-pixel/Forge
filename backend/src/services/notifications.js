@@ -16,6 +16,13 @@ function normalizeNotification(payload = {}) {
   return { type, title, body, href, sourceKey };
 }
 
+function notificationSourceFromKey(sourceKey) {
+  const key = cleanText(sourceKey, 180).toLowerCase();
+  if (key.startsWith('strava:')) return 'strava';
+  if (key.startsWith('apple_health:')) return 'apple_health';
+  return 'forged_hybrid';
+}
+
 async function createUserNotification(userId, payload = {}) {
   if (!userId) throw new Error('Notification user is required');
   const normalized = normalizeNotification(payload);
@@ -39,9 +46,10 @@ async function createUserNotification(userId, payload = {}) {
       url: normalized.href || '/',
       notificationId: notification?.id || id,
       type: normalized.type,
+      source: notificationSourceFromKey(normalized.sourceKey),
     })
     : { sent: 0, duplicate: true };
   return { notification, push: pushResult };
 }
 
-module.exports = { createUserNotification, normalizeNotification };
+module.exports = { createUserNotification, normalizeNotification, notificationSourceFromKey };

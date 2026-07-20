@@ -6,7 +6,7 @@ import { useUnits } from '../context/UnitsContext'
 import AiGuidanceNote from './AiGuidanceNote'
 import { Link } from 'react-router-dom'
 import { activityLabel, isRunningActivity } from '../lib/activityType'
-import { buildRunComparison, formatPlannedPaceTarget, normalizeRunSplits, parseRunRoute, parseZoneTimeline } from '../lib/runRecap'
+import { buildRunComparison, formatPlannedPaceTarget, normalizeRunSplits, parseRunRoute, parseZoneTimeline, resolveRunHeartRateZone } from '../lib/runRecap'
 import ActivityShareStudio from './ActivityShareStudio'
 
 function fmtDuration(totalSeconds = 0) {
@@ -41,16 +41,6 @@ function parseObject(value) {
     console.error('[RunDetailModal] workout metrics parse failed:', error?.message || error)
     return {}
   }
-}
-
-function findZone(hr, zones) {
-  if (!Number.isFinite(Number(hr)) || !Array.isArray(zones) || zones.length !== 5) return null
-  const value = Number(hr)
-  const index = zones.findIndex((entry, zoneIndex) => (
-    value >= Number(entry.minBpm) && (zoneIndex === zones.length - 1 || value < Number(zones[zoneIndex + 1].minBpm))
-  ))
-  if (index < 0) return value < Number(zones[0]?.minBpm) ? { ...zones[0], zone: 1, below: true, color: ZONE_COLORS[0] } : null
-  return { ...zones[index], zone: index + 1, color: ZONE_COLORS[index] }
 }
 
 function formatSeconds(value) {
@@ -114,7 +104,6 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
   const isRun = isRunningActivity(run)
   const kind = activityLabel(run)
   const hr = run.avg_hr || run.avg_heart_rate || null
-  const averageZone = findZone(hr, hrZones)
   const workoutMetrics = parseObject(run.workout_metrics_json)
   const sourceLabel = formatSourceLabel(run.health_source, workoutMetrics.metric_source)
   const isAppleHealthSource = sourceLabel === 'Apple Health'
@@ -129,15 +118,13 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
       ? 'Garmin calories'
       : 'Calories'
   const timeline = parseZoneTimeline(run.heart_rate_zones, run.duration_seconds)
-  const metricCoverage = Number(workoutMetrics.hr_sample_coverage_pct)
-  const hrCoverage = Number.isFinite(metricCoverage) ? metricCoverage : timeline.coveragePct
-  const hasTrustedHrCoverage = Number.isFinite(hrCoverage) && hrCoverage >= 70
-  const dominantZoneIndex = hasTrustedHrCoverage && timeline.totalSeconds > 0
-    ? timeline.seconds.indexOf(Math.max(...timeline.seconds))
-    : -1
-  const zone = dominantZoneIndex >= 0
-    ? { label: ZONE_LABELS[dominantZoneIndex], ...(hrZones[dominantZoneIndex] || {}), zone: dominantZoneIndex + 1, color: ZONE_COLORS[dominantZoneIndex] }
-    : averageZone
+  const zoneEvidence = resolveRunHeartRateZone(run, hrZones)
+  const hrCoverage = zoneEvidence?.coveragePct ?? timeline.coveragePct
+  const hasTrustedHrCoverage = zoneEvidence?.source === 'timeline'
+  const dominantZonePct = zoneEvidence?.dominantPct
+  const zone = zoneEvidence
+    ? { ...(hrZones[zoneEvidence.zone - 1] || {}), ...zoneEvidence }
+    : null
   const zoneModelLabel = ZONE_MODEL_LABELS[hrProfile?.zoneModel] || 'saved profile'
   const backendEffortSource = String(run.effort_source || '')
   const importedLegacyEffort = run.watch_mode === 'import' && run.notes === 'Imported workout'
@@ -364,10 +351,11 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
 
         {hr && zone && (
           <div className="rounded-xl p-3 mb-5" style={{ background: 'var(--bg-input)' }}>
-            <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>{sourceLabel === 'Apple Health' ? 'Apple Health average' : 'Average heart rate'}</p>
-            <div className="flex flex-wrap items-center gap-2"><p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{hr} bpm</p><span className="rounded-full px-2 py-1 text-xs" style={{ background: `${zone.color}22`, color: zone.color }}>Z{zone.zone} · {zone.label}</span></div>
+            <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Heart-rate evidence</p>
+            <div className="flex flex-wrap items-center gap-2"><p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{hasTrustedHrCoverage ? `Dominant Z${zone.zone}` : `${hr} bpm average`}</p><span className="rounded-full px-2 py-1 text-xs" style={{ background: `${zone.color}22`, color: zone.color }}>{zone.label}</span></div>
+            {hasTrustedHrCoverage && <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>{Number.isFinite(dominantZonePct) ? `${dominantZonePct.toFixed(0)}% of recorded HR time` : 'Dominant recorded zone'} · {hr} bpm average</p>}
             <div className="mt-2 h-1.5 rounded-full" style={{ background: 'var(--bg-base)' }}><div className="h-full rounded-full" style={{ width: `${zone.zone * 20}%`, background: zone.color }} /></div>
-            <p className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>{hasTrustedHrCoverage ? `Dominant zone from ${hrCoverage.toFixed(0)}% of the workout timeline.` : `Classified with your ${zoneModelLabel} profile.`}</p>
+            <p className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>{hasTrustedHrCoverage ? `Heart-rate samples cover ${hrCoverage.toFixed(0)}% of this workout.` : `Average classified with your ${zoneModelLabel} profile.`}</p>
             {hasTrustedHrCoverage && (
               <div className="mt-3 space-y-2" aria-label="Heart-rate zone time distribution">
                 {timeline.seconds.map((seconds, index) => (

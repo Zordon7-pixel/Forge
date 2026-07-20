@@ -40,7 +40,7 @@ for (const release of RELEASES) {
 
 const webReleases = eligibleReleases({ platform: 'web' })
 check(webReleases.length === RELEASES.filter((release) => release.delivery === 'web' && release.audience === 'all').length, 'all current web releases are eligible')
-check(webReleases.at(-1)?.id === 'forged-closet', 'Forged Closet is the newest web release')
+check(webReleases.at(-1)?.id === 'activity-alert-proof', 'activity alert proof is the newest web release')
 check(!isAllowedReleaseCta('https://example.com'), 'external CTA is rejected')
 check(!isAllowedReleaseCta('//example.com'), 'protocol-relative CTA is rejected')
 const contextSource = fs.readFileSync(new URL('../src/context/ReleaseNotesContext.jsx', import.meta.url), 'utf8')

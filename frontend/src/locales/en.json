@@ -443,6 +443,14 @@
         "zones": "Run History now labels recorded heart-rate intensity instead of assigning a zone from pace.",
         "alerts": "In-app activity alerts are live. Apple Health lock-screen alerts require the next approved TestFlight build.",
         "cta": "Review run history"
+      },
+      "activityAlertProof": {
+        "title": "Activity alerts with proof",
+        "summary": "Synced activities now identify their source, and run zones explain the evidence behind the label.",
+        "sources": "In-app alerts identify Strava, Apple Health, or Forged Hybrid instead of hiding the source.",
+        "recap": "Apple Health notification taps are prepared to sync and open the matching recap in the next approved iOS build.",
+        "zones": "History and Run Recap show dominant-zone time, average heart rate, and workout coverage separately.",
+        "cta": "Review run history"
       }
     }
   },

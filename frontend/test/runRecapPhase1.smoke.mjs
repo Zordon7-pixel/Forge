@@ -7,6 +7,7 @@ import {
   parsePlannedRun,
   parseRunRoute,
   parseZoneTimeline,
+  resolveRunHeartRateZone,
   targetZoneNumber,
   targetZoneNumbers,
 } from '../src/lib/runRecap.js'
@@ -69,6 +70,20 @@ const partial = buildRunComparison({
 })
 check(partial.zoneAdherencePct === null, 'sparse timeline never claims zone adherence')
 check(partial.adherenceScore === null, 'a zone-only target with sparse coverage never fabricates adherence')
+
+const dominantZone = resolveRunHeartRateZone({
+  duration_seconds: 1200,
+  avg_hr: 129,
+  heart_rate_zones: { z1: 120, z2: 180, z3: 780, z4: 60, z5: 0 },
+}, [
+  { minBpm: 96 },
+  { minBpm: 117 },
+  { minBpm: 137 },
+  { minBpm: 156 },
+  { minBpm: 176 },
+])
+check(dominantZone?.zone === 3 && dominantZone.source === 'timeline', 'trusted heart-rate timeline wins over average-HR classification')
+check(Math.round(dominantZone?.dominantPct || 0) === 68, 'dominant-zone percentage explains the recorded evidence')
 
 console.log('\n== splits and route normalization ==')
 const splits = normalizeRunSplits(JSON.stringify([

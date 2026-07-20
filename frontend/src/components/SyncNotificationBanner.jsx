@@ -3,6 +3,12 @@ import { Bell, ChevronRight, X } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import api from '../lib/api'
 
+const SOURCE_LABELS = {
+  apple_health: 'Apple Health',
+  strava: 'Strava',
+  forged_hybrid: 'Forged Hybrid',
+}
+
 export default function SyncNotificationBanner() {
   const navigate = useNavigate()
   const [notification, setNotification] = useState(null)
@@ -59,6 +65,7 @@ export default function SyncNotificationBanner() {
     <div className="mb-3 grid grid-cols-[36px_minmax(0,1fr)_28px] items-center gap-2 rounded-xl p-3" style={{ background: 'var(--accent-dim)', border: '1px solid color-mix(in srgb, var(--accent) 45%, transparent)' }} role="status">
       <button type="button" onClick={openNotification} className="pressable grid h-9 w-9 place-items-center rounded-full" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }} aria-label="Open activity notification"><Bell size={17} /></button>
       <button type="button" onClick={openNotification} className="min-w-0 text-left">
+        <span className="mb-0.5 block text-[10px] font-bold uppercase" style={{ color: 'var(--accent)', letterSpacing: 0 }}>{SOURCE_LABELS[notification.source] || 'Forged Hybrid'}</span>
         <span className="block truncate text-sm font-black" style={{ color: 'var(--text-primary)' }}>{notification.title}</span>
         <span className="mt-0.5 block text-xs leading-snug" style={{ color: 'var(--text-muted)' }}>{notification.body}</span>
         {notification.href && <span className="mt-1 inline-flex items-center gap-1 text-xs font-bold" style={{ color: 'var(--accent)' }}>Review <ChevronRight size={13} /></span>}

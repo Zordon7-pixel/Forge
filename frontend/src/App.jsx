@@ -1,13 +1,14 @@
-import React, { Suspense, lazy, useEffect, useRef, useState } from 'react'
+import React, { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react'
 import { App as CapacitorApp } from '@capacitor/app'
 import { Capacitor } from '@capacitor/core'
-import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
+import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { isLoggedIn, getUser } from './lib/auth'
 import { clearToken, rememberPostAuthRedirect } from './lib/tokenStore'
 import track from './lib/track'
 import Layout from './components/Layout'
 import { ProProvider } from './context/ProContext'
 import HealthService from './services/HealthService'
+import NativeNotificationService from './services/NativeNotificationService'
 import api, { acceptWaiver } from './lib/api'
 import ConsentWaiver from './components/ConsentWaiver'
 
@@ -197,6 +198,80 @@ function AutoHealthSync() {
   return null
 }
 
+function NativeNotificationNavigation() {
+  const navigate = useNavigate()
+  const handledRef = useRef(new Set())
+
+  const findImportedRun = useCallback(async (sourceWorkoutId) => {
+    const normalizedId = String(sourceWorkoutId || '').toLowerCase()
+    if (!normalizedId) return null
+    const { data } = await api.get('/runs')
+    const runs = Array.isArray(data) ? data : data?.runs || []
+    return runs.find((run) => (
+      String(run.health_source || '').toLowerCase() === 'apple_health'
+      && String(run.health_source_workout_id || '').toLowerCase() === normalizedId
+    )) || null
+  }, [])
+
+  const handleNavigation = useCallback(async (payload) => {
+    if (!payload) return
+    const eventKey = payload.notificationId || `${payload.source}:${payload.sourceWorkoutId}:${payload.path}`
+    if (handledRef.current.has(eventKey)) return
+    handledRef.current.add(eventKey)
+
+    const fallbackPath = payload.path || '/history'
+    if (!isLoggedIn()) {
+      rememberPostAuthRedirect(fallbackPath)
+      navigate('/login')
+      return
+    }
+
+    if (payload.source === 'apple_health' && payload.sourceWorkoutId) {
+      navigate('/history')
+      try {
+        let run = await findImportedRun(payload.sourceWorkoutId)
+        if (!run) {
+          await HealthService.syncNativeData()
+          run = await findImportedRun(payload.sourceWorkoutId)
+        }
+        if (run?.id) {
+          navigate(`/run/recap/${encodeURIComponent(run.id)}`)
+          return
+        }
+      } catch (error) {
+        console.warn('[NativeNotification] workout recap resolution failed:', error?.message || error)
+      }
+    }
+
+    navigate(fallbackPath)
+  }, [findImportedRun, navigate])
+
+  useEffect(() => {
+    if (!NativeNotificationService.isAvailable()) return undefined
+    let cancelled = false
+    let listenerHandle = null
+
+    ;(async () => {
+      try {
+        listenerHandle = await NativeNotificationService.addNavigationListener((payload) => {
+          if (!cancelled) handleNavigation(payload)
+        })
+        const pending = await NativeNotificationService.consumePendingNavigation()
+        if (!cancelled && pending) await handleNavigation(pending)
+      } catch (error) {
+        console.warn('[NativeNotification] listener setup failed:', error?.message || error)
+      }
+    })()
+
+    return () => {
+      cancelled = true
+      listenerHandle?.remove?.()
+    }
+  }, [handleNavigation])
+
+  return null
+}
+
 const PageFallback = () => (
   <div style={{
     minHeight: '100vh',
@@ -295,6 +370,7 @@ export default function App() {
     <BrowserRouter>
       <ProProvider>
         <AutoHealthSync />
+        <NativeNotificationNavigation />
         <Suspense fallback={<PageFallback />}>
           <Routes>
         <Route path="/login" element={<Login />} />

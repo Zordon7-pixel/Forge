@@ -3,6 +3,7 @@ const { v4: uuidv4 } = require('uuid');
 const { dbAll, dbRun } = require('../db');
 const auth = require('../middleware/auth');
 const push = require('../services/push');
+const { notificationSourceFromKey } = require('../services/notifications');
 
 function validPushSubscription(body = {}) {
   const endpoint = String(body.endpoint || '').trim();
@@ -24,14 +25,19 @@ router.get('/', auth, async (req, res) => {
     const limit = Number.isInteger(requestedLimit) ? Math.min(50, Math.max(1, requestedLimit)) : 10;
     const unreadOnly = String(req.query.unread || '') === '1';
     const rows = await dbAll(
-      `SELECT id, type, title, body, href, read_at, created_at
+      `SELECT id, type, title, body, href, source_key, read_at, created_at
        FROM user_notifications
        WHERE user_id = ?${unreadOnly ? ' AND read_at IS NULL' : ''}
        ORDER BY created_at DESC
        LIMIT ?`,
       [req.user.id, limit]
     );
-    return res.json({ notifications: rows });
+    return res.json({
+      notifications: rows.map(({ source_key: sourceKey, ...notification }) => ({
+        ...notification,
+        source: notificationSourceFromKey(sourceKey),
+      })),
+    });
   } catch (err) {
     console.error('[notifications/list] failed:', err.message);
     return res.status(500).json({ error: 'Failed to load notifications' });

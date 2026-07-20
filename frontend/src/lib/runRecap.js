@@ -140,12 +140,14 @@ export function resolveRunHeartRateZone(run = {}, zones = []) {
 
   if (coveragePct !== null && coveragePct >= MIN_TRUSTED_ZONE_COVERAGE_PCT && timeline.dominantZone) {
     const meta = HEART_RATE_ZONE_META[timeline.dominantZone - 1]
+    const dominantSeconds = timeline.seconds[timeline.dominantZone - 1]
     return {
       zone: timeline.dominantZone,
       label: meta.label,
       color: meta.color,
       source: 'timeline',
       coveragePct,
+      dominantPct: timeline.totalSeconds > 0 ? (dominantSeconds / timeline.totalSeconds) * 100 : null,
     }
   }
 

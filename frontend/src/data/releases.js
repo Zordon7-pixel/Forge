@@ -90,6 +90,26 @@ export const RELEASES = Object.freeze([
     minAndroidBuild: null,
     audience: 'all',
   }),
+  Object.freeze({
+    id: 'activity-alert-proof',
+    sequence: 5,
+    publishedAt: '2026-07-20',
+    titleKey: 'whatsNew.releases.activityAlertProof.title',
+    summaryKey: 'whatsNew.releases.activityAlertProof.summary',
+    highlightKeys: Object.freeze([
+      'whatsNew.releases.activityAlertProof.sources',
+      'whatsNew.releases.activityAlertProof.recap',
+      'whatsNew.releases.activityAlertProof.zones',
+    ]),
+    cta: Object.freeze({
+      labelKey: 'whatsNew.releases.activityAlertProof.cta',
+      to: '/history',
+    }),
+    delivery: 'web',
+    minIosBuild: null,
+    minAndroidBuild: null,
+    audience: 'all',
+  }),
 ])
 
 export function isAllowedReleaseCta(path = '') {

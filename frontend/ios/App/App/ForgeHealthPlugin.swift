@@ -135,11 +135,16 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
             guard previousEnd > 0, currentEnd > previousEnd + 1 else { return }
 
             let workoutType = self.workoutTypeName(workout.workoutActivityType)
+            let sourceWorkoutId = workout.uuid.uuidString
             self.notifyListeners("workoutObserved", data: [
                 "type": workoutType,
-                "endedAt": self.isoDateTime(workout.endDate)
+                "endedAt": self.isoDateTime(workout.endDate),
+                "sourceWorkoutId": sourceWorkoutId
             ], retainUntilConsumed: true)
-            self.scheduleWorkoutReadyNotification(workoutType: workoutType)
+            self.scheduleWorkoutReadyNotification(
+                workoutType: workoutType,
+                sourceWorkoutId: sourceWorkoutId
+            )
         }
         healthStore.execute(query)
     }
@@ -152,16 +157,26 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
-    private func scheduleWorkoutReadyNotification(workoutType: String) {
+    private func scheduleWorkoutReadyNotification(workoutType: String, sourceWorkoutId: String) {
         let center = UNUserNotificationCenter.current()
         center.getNotificationSettings { settings in
             guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else { return }
             let content = UNMutableNotificationContent()
-            content.title = "Workout ready"
-            content.body = "Your latest \(workoutType) is ready to sync and review in Forged Hybrid."
+            content.title = "Apple Health workout ready"
+            content.body = "Open Forged Hybrid to sync and review your latest \(workoutType)."
             content.sound = .default
-            content.userInfo = ["path": "/history"]
-            let request = UNNotificationRequest(identifier: "forge-health-\(UUID().uuidString)", content: content, trigger: nil)
+            content.threadIdentifier = "forged-hybrid-activity-sync"
+            content.userInfo = [
+                "path": "/history",
+                "source": "apple_health",
+                "sourceWorkoutId": sourceWorkoutId,
+                "notificationId": "apple_health:\(sourceWorkoutId)"
+            ]
+            let request = UNNotificationRequest(
+                identifier: "forge-health-\(sourceWorkoutId.lowercased())",
+                content: content,
+                trigger: nil
+            )
             center.add(request) { error in
                 if let error = error {
                     NSLog("ForgeHealthPlugin workout notification failed: %@", error.localizedDescription)
