@@ -286,6 +286,7 @@ export function normalizeSession(rawSession, context = {}) {
     durationMinutes,
     prescriptionBasis,
     distanceIsEstimate: Boolean(firstDefined(rawSession.distance_is_estimate, prescription.distanceIsEstimate, prescription.distance_is_estimate, false)),
+    durationIsEstimated: Boolean(firstDefined(rawSession.durationIsEstimated, prescription.durationIsEstimated, rawSession.duration_is_estimate, prescription.duration_is_estimate, false)),
     isBenchmark: Boolean(firstDefined(rawSession.benchmark, prescription.benchmark, false)),
     benchmarkDistanceMiles: Number(firstDefined(rawSession.benchmark_distance_miles, prescription.benchmarkDistanceMiles, prescription.benchmark_distance_miles, 0)) || null,
     anchorState: firstDefined(rawSession.anchorState, prescription.anchorState, rawSession.anchor_state, prescription.anchor_state),

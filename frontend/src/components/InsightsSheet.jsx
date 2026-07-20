@@ -56,6 +56,12 @@ function getPhaseLabel(phase, t) {
   return t('today.phaseMain')
 }
 
+function formatPlanDuration(minutes, isEstimated) {
+  const value = Number(minutes || 0)
+  if (!(value > 0)) return ''
+  return `${isEstimated ? '~' : ''}${Math.round(value)} min${isEstimated ? ' · estimate' : ''}`
+}
+
 function BlockRow({ block, t }) {
   const phase = block.phase || 'main'
   const metric = block.durationMinutes
@@ -125,6 +131,7 @@ export function DailyCoachFlow({ checkedInToday, readiness, recommendation, toda
     ? getRecommendationLabel(recommendation)
     : "today's plan"
   const structure = Array.isArray(recommendation?.structure) ? recommendation.structure : []
+  const durationText = formatPlanDuration(recommendation?.durationMinutes, recommendation?.durationIsEstimated)
   const interferenceReason = recommendation?.interference?.adjusted && typeof recommendation?.interference?.reason === 'string'
     ? recommendation.interference.reason.trim()
     : ''
@@ -154,6 +161,7 @@ export function DailyCoachFlow({ checkedInToday, readiness, recommendation, toda
     }
     if (targetZone) parts.push(targetZone.toLowerCase().startsWith('zone') ? targetZone : `Zone ${targetZone}`)
     if (intensity) parts.push(intensity)
+    if (durationText) parts.splice(1, 0, durationText)
 
     return `${readiness !== null ? `Readiness ${readiness}. ` : ''}${parts.filter(Boolean).join(' · ')}.`
   }
@@ -176,6 +184,11 @@ export function DailyCoachFlow({ checkedInToday, readiness, recommendation, toda
           <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
             {buildTodaySubtitle()}
           </p>
+          {durationText && recommendation?.durationIsEstimated && (
+            <p className="mt-1 text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>
+              sharpens after a few runs
+            </p>
+          )}
           {coachWhy && (
             <>
               <p className="mt-2 text-sm italic" style={{ color: 'var(--text-primary)', opacity: 0.9, lineHeight: 1.4 }}>
@@ -352,6 +365,7 @@ export function TodayDetailSheet({
   if (!open) return null
   const isRestDay = recommendation?.recommendationType === 'rest' || recommendation?.type === 'rest'
   const recommendationLabel = recommendation ? getRecommendationLabel(recommendation) : null
+  const durationText = formatPlanDuration(recommendation?.durationMinutes, recommendation?.durationIsEstimated)
   const topFactors = (readinessBreakdown || []).filter((item) => item.label !== 'Base score').slice(0, 2)
   const interferenceReason = recommendation?.interference?.adjusted && typeof recommendation?.interference?.reason === 'string'
     ? recommendation.interference.reason.trim()
@@ -411,6 +425,12 @@ export function TodayDetailSheet({
             </p>
             {recommendation && Number(recommendation.suggestedDistance || 0) > 0 && (
               <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{recommendation.suggestedDistance} mi</p>
+            )}
+            {durationText && (
+              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{durationText}</p>
+            )}
+            {durationText && recommendation?.durationIsEstimated && (
+              <p className="text-[10px] font-semibold" style={{ color: 'var(--text-muted)' }}>sharpens after a few runs</p>
             )}
           </div>
         </div>

@@ -107,6 +107,119 @@ function planAnchorPayload(planJson) {
   };
 }
 
+function validAnchorState(value) {
+  const state = String(value || '');
+  return ['anchored', 'needs_benchmark'].includes(state) ? state : null;
+}
+
+function durationIsEstimatedFromAnchorState(anchorState) {
+  return anchorState !== 'anchored';
+}
+
+function runShowsDuration(session = {}) {
+  if (planSchema.kindFromSession(session) !== 'run') return false;
+  return Number(
+    session.duration_min
+    ?? session.durationMinutes
+    ?? session.duration_minutes
+    ?? session.minutes
+    ?? session.time_minutes
+    ?? 0
+  ) > 0;
+}
+
+function withDurationEstimatePlanPayload(planJson) {
+  if (!planJson || typeof planJson !== 'object') return planJson;
+  const planAnchorState = validAnchorState(planJson.anchorState);
+  if (!planAnchorState || !Array.isArray(planJson.weeks)) return planJson;
+
+  let weeksChanged = false;
+  const weeks = planJson.weeks.map((week) => {
+    if (!week || typeof week !== 'object') return week;
+    const entriesKey = Array.isArray(week.days) ? 'days' : Array.isArray(week.sessions) ? 'sessions' : null;
+    if (!entriesKey) return week;
+
+    let entriesChanged = false;
+    const entries = week[entriesKey].map((day) => {
+      if (!day || typeof day !== 'object') return day;
+      const anchorState = validAnchorState(day.anchorState) || planAnchorState;
+      const durationIsEstimated = durationIsEstimatedFromAnchorState(anchorState);
+
+      if (Array.isArray(day.sessions)) {
+        let dayFlag = null;
+        let sessionsChanged = false;
+        const sessions = day.sessions.map((session) => {
+          if (!runShowsDuration(session)) return session;
+          dayFlag = durationIsEstimated;
+          if (session.durationIsEstimated === durationIsEstimated) return session;
+          sessionsChanged = true;
+          return { ...session, durationIsEstimated };
+        });
+        if (dayFlag === null) return day;
+        if (!sessionsChanged && day.durationIsEstimated === dayFlag) return day;
+        entriesChanged = true;
+        return { ...day, sessions: sessionsChanged ? sessions : day.sessions, durationIsEstimated: dayFlag };
+      }
+
+      if (!runShowsDuration(day)) return day;
+      if (day.durationIsEstimated === durationIsEstimated) return day;
+      entriesChanged = true;
+      return { ...day, durationIsEstimated };
+    });
+
+    if (!entriesChanged) return week;
+    weeksChanged = true;
+    return { ...week, [entriesKey]: entries };
+  });
+
+  return weeksChanged ? { ...planJson, weeks } : planJson;
+}
+
+function withDurationEstimateExecutionPayload(execution, planJson) {
+  if (!execution || typeof execution !== 'object') return execution;
+  const anchorState = validAnchorState(execution.anchorState) || validAnchorState(planJson?.anchorState);
+  if (!anchorState) return execution;
+  const durationIsEstimated = durationIsEstimatedFromAnchorState(anchorState);
+  let changed = false;
+
+  const annotate = (session) => {
+    if (!runShowsDuration(session)) return session;
+    if (session.durationIsEstimated === durationIsEstimated) return session;
+    changed = true;
+    return { ...session, durationIsEstimated };
+  };
+
+  const sessions = Array.isArray(execution.sessions)
+    ? execution.sessions.map(annotate)
+    : execution.sessions;
+  const run = execution.run ? annotate(execution.run) : execution.run;
+  if (!changed) return execution;
+  return { ...execution, sessions, run };
+}
+
+function withDurationEstimateDayPayload(day, planJson) {
+  if (!day || typeof day !== 'object') return day;
+  const anchorState = validAnchorState(day.anchorState) || validAnchorState(planJson?.anchorState);
+  if (!anchorState) return day;
+  const durationIsEstimated = durationIsEstimatedFromAnchorState(anchorState);
+  let changed = false;
+
+  const annotate = (session) => {
+    if (!runShowsDuration(session)) return session;
+    if (session.durationIsEstimated === durationIsEstimated) return session;
+    changed = true;
+    return { ...session, durationIsEstimated };
+  };
+
+  const sessions = Array.isArray(day.sessions) ? day.sessions.map(annotate) : day.sessions;
+  const topLevel = runShowsDuration(day) && day.durationIsEstimated !== durationIsEstimated
+    ? { durationIsEstimated }
+    : null;
+  if (topLevel) changed = true;
+  if (!changed) return day;
+  return { ...day, ...(Array.isArray(day.sessions) ? { sessions } : {}), ...(topLevel || {}) };
+}
+
 function withPlanAnchorPayload(value, planJson) {
   if (!value || typeof value !== 'object') return value;
   const payload = planAnchorPayload(planJson);
@@ -1340,7 +1453,7 @@ router.get('/my', auth, async (req, res) => {
         [req.user.id]
       );
       if (!legacy) return res.json({ plan: null });
-      const legacyPlan = parsePlan(legacy) || { weeks: [] };
+      const legacyPlan = withDurationEstimatePlanPayload(parsePlan(legacy) || { weeks: [] });
       const anchorPayload = planAnchorPayload(legacyPlan);
       return res.json({
         source: 'legacy',
@@ -1362,7 +1475,7 @@ router.get('/my', auth, async (req, res) => {
     } catch (err) {
       console.error('[plans/my] invalid progress JSON:', err.message);
     }
-    const parsedPlan = parsePlan(row) || { weeks: [] };
+    const parsedPlan = withDurationEstimatePlanPayload(parsePlan(row) || { weeks: [] });
     const anchorPayload = planAnchorPayload(parsedPlan);
     res.json({
       plan: {
@@ -1506,7 +1619,7 @@ router.get('/today', auth, async (req, res) => {
 
     const active = await getActivePlanForUser(req.user.id);
     if (!active) return res.json({ today: null, execution: { hasPlan: false, hasDay: false, date: dateISO } });
-    const parsed = parsePlan(active.row);
+    const parsed = withDurationEstimatePlanPayload(parsePlan(active.row));
     const anchorPayload = planAnchorPayload(parsed);
 
     // H5: select the EXACT dated schema-v2 day (legacy plans fall back to a
@@ -1533,7 +1646,9 @@ router.get('/today', auth, async (req, res) => {
 
     // Legacy `today` shape is preserved for existing consumers.
     const baseDay = selectedEntry ? planSchema.flattenDayForConsumer(selectedEntry) : null;
-    const legacyToday = baseDay ? withPlanAnchorPayload(patch ? applyOverride(baseDay, patch) : baseDay, parsed) : null;
+    const legacyToday = baseDay
+      ? withDurationEstimateDayPayload(withPlanAnchorPayload(patch ? applyOverride(baseDay, patch) : baseDay, parsed), parsed)
+      : null;
 
     // Completion state + calibrated HR profile for the canonical execution object.
     const [progressRow, hrProfile] = await Promise.all([
@@ -1567,7 +1682,11 @@ router.get('/today', auth, async (req, res) => {
       hrProfile,
     });
 
-    res.json({ today: legacyToday, execution: withPlanAnchorPayload(execution, parsed), ...anchorPayload });
+    res.json({
+      today: legacyToday,
+      execution: withPlanAnchorPayload(withDurationEstimateExecutionPayload(execution, parsed), parsed),
+      ...anchorPayload,
+    });
   } catch (err) {
     console.error('[plans] GET today failed:', err);
     res.status(500).json({ error: 'Failed to fetch today' });
@@ -1578,7 +1697,7 @@ router.get('/current', auth, async (req, res) => {
   try {
     const active = await getActivePlanForUser(req.user.id);
     if (!active) return res.json({ plan: null });
-    const parsed = parsePlan(active.row) || { weeks: [] };
+    const parsed = withDurationEstimatePlanPayload(parsePlan(active.row) || { weeks: [] });
     const anchorPayload = planAnchorPayload(parsed);
     res.json({
       plan: {
