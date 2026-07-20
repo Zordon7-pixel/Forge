@@ -6,6 +6,7 @@ import {
   loadPostRunCheckInDraft,
   savePostRunCheckInDraft,
 } from '../lib/postRunCheckInDraft'
+import { getRecurringInjuryWarning, validateInjuryLog } from '../utils/validation'
 
 const STEPS = [
   { key: 'effort', label: 'Effort' },
@@ -27,6 +28,16 @@ const ENERGY_OPTIONS = [
   ['high', 'Energized'],
 ]
 
+const INJURY_BODY_PARTS = ['knee', 'hip', 'ankle', 'shin', 'calf', 'hamstring', 'lower back', 'shoulder', 'other']
+const POST_RUN_PAIN_TO_INJURY_SEVERITY = {
+  moderate: 5,
+  severe: 10,
+}
+
+function formatBodyPart(part) {
+  return String(part || '').replace(/_/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase())
+}
+
 export default function PostRunCheckIn({ runId, heatDrift, onDone, onCancel }) {
   const [initialDraft] = useState(() => loadPostRunCheckInDraft(runId))
   const [step, setStep] = useState(initialDraft?.step || 0)
@@ -38,6 +49,15 @@ export default function PostRunCheckIn({ runId, heatDrift, onDone, onCancel }) {
   const [warning, setWarning] = useState(null)
   const [pendingStep, setPendingStep] = useState(null)
   const [submitError, setSubmitError] = useState('')
+  const [injuryLogDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const [injuryBodyPart, setInjuryBodyPart] = useState('')
+  const [injuryErrors, setInjuryErrors] = useState({})
+  const [injurySubmitError, setInjurySubmitError] = useState('')
+  const [injuryMessage, setInjuryMessage] = useState('')
+  const [injurySubmitting, setInjurySubmitting] = useState(false)
+  const [allInjuries, setAllInjuries] = useState([])
+  const [injuriesLoaded, setInjuriesLoaded] = useState(false)
+  const [loggedInjury, setLoggedInjury] = useState(null)
 
   useEffect(() => {
     savePostRunCheckInDraft({
@@ -55,13 +75,12 @@ export default function PostRunCheckIn({ runId, heatDrift, onDone, onCancel }) {
     0: effort !== null,
     1: Boolean(pain),
     2: Boolean(energy),
-    3: effort !== null && Boolean(pain) && Boolean(energy),
+    3: effort !== null && Boolean(pain),
   }), [effort, pain, energy])
 
   const firstIncomplete = useMemo(() => {
     if (!completion[0]) return 0
     if (!completion[1]) return 1
-    if (!completion[2]) return 2
     return 3
   }, [completion])
 
@@ -74,6 +93,76 @@ export default function PostRunCheckIn({ runId, heatDrift, onDone, onCancel }) {
 
   const painLabel = PAIN_OPTIONS.find(([value]) => value === pain)?.[1] || '--'
   const energyLabel = ENERGY_OPTIONS.find(([value]) => value === energy)?.[1] || '--'
+  const injurySeverity = POST_RUN_PAIN_TO_INJURY_SEVERITY[pain] || null
+  const recurringInjuryWarning = useMemo(() => (
+    getRecurringInjuryWarning({ bodyPart: injuryBodyPart, injuries: allInjuries })
+  ), [allInjuries, injuryBodyPart])
+  const selectedInjuryLogged = Boolean(
+    loggedInjury
+    && loggedInjury.bodyPart === injuryBodyPart
+    && loggedInjury.severity === injurySeverity
+  )
+
+  useEffect(() => {
+    if (!injurySeverity) {
+      setInjuryBodyPart('')
+      setInjuryErrors({})
+      setInjurySubmitError('')
+      setInjuryMessage('')
+      setLoggedInjury(null)
+      return
+    }
+
+    let cancelled = false
+    if (!injuriesLoaded) {
+      api.get('/injury')
+        .then((response) => {
+          if (!cancelled) setAllInjuries(response.data?.injuries || [])
+        })
+        .catch((error) => {
+          console.error('[post-run/check-in] injury history load failed:', error?.message || error)
+        })
+        .finally(() => {
+          if (!cancelled) setInjuriesLoaded(true)
+        })
+    }
+
+    return () => { cancelled = true }
+  }, [injuriesLoaded, injurySeverity])
+
+  useEffect(() => {
+    setInjuryErrors({})
+    setInjurySubmitError('')
+    setInjuryMessage('')
+    setLoggedInjury(null)
+  }, [pain])
+
+  const submitInjuryLog = async () => {
+    const { errors: nextErrors } = validateInjuryLog({ bodyPart: injuryBodyPart, severity: injurySeverity })
+    setInjuryErrors(nextErrors)
+    setInjurySubmitError('')
+    setInjuryMessage('')
+    if (Object.keys(nextErrors).length) return
+
+    setInjurySubmitting(true)
+    try {
+      const response = await api.post('/injury', {
+        body_part: injuryBodyPart,
+        pain_level: injurySeverity,
+        notes: `Post-run check-in reported ${pain} pain after run ${runId}.`,
+        date: injuryLogDate,
+      })
+      const injury = response.data?.injury
+      if (injury) setAllInjuries(prev => [injury, ...prev])
+      setLoggedInjury({ bodyPart: injuryBodyPart, severity: injurySeverity })
+      setInjuryMessage('Logged to injury log')
+    } catch (error) {
+      console.error('[post-run/check-in] injury log failed:', error?.message || error)
+      setInjurySubmitError(error?.response?.data?.error || 'Could not log this injury right now.')
+    } finally {
+      setInjurySubmitting(false)
+    }
+  }
 
   const submit = async () => {
     const payload = {
@@ -131,7 +220,6 @@ export default function PostRunCheckIn({ runId, heatDrift, onDone, onCancel }) {
     const nextErrors = {}
     if (step === 0 && effort === null) nextErrors.effort = 'Select an effort score before continuing.'
     if (step === 1 && !pain) nextErrors.pain = 'Select a pain/discomfort level before continuing.'
-    if (step === 2 && !energy) nextErrors.energy = 'Select your post-run energy before continuing.'
     setErrors(prev => ({ ...prev, ...nextErrors }))
     return Object.keys(nextErrors).length === 0
   }
@@ -174,11 +262,61 @@ export default function PostRunCheckIn({ runId, heatDrift, onDone, onCancel }) {
   const next = () => {
     if (!validateCurrentStep()) return
     setWarning(null)
+    if (step === 1) {
+      setStep(3)
+      return
+    }
     if (step < 3) {
       setStep(step + 1)
       return
     }
     submit()
+  }
+
+  const renderInjuryPrompt = () => {
+    if (!injurySeverity) return null
+
+    return (
+      <div style={{ marginBottom: 18, borderRadius: 14, border: '1px solid rgba(239,68,68,0.35)', background: 'var(--danger-dim)', padding: 14 }}>
+        <p style={{ margin: '0 0 4px', color: 'var(--text-primary)', fontSize: 13, fontWeight: 900 }}>
+          Log this to the injury log
+        </p>
+        <p style={{ margin: '0 0 12px', color: 'var(--text-muted)', fontSize: 12, lineHeight: 1.45 }}>
+          Carry {pain} pain as {injurySeverity}/10 and choose the body part that felt off.
+        </p>
+        <label style={{ display: 'block', color: 'var(--text-muted)', fontSize: 12, fontWeight: 800, marginBottom: 6 }}>
+          Body part
+        </label>
+        <select
+          value={injuryBodyPart}
+          onChange={(event) => {
+            setInjuryBodyPart(event.target.value)
+            setInjuryErrors(prev => ({ ...prev, body_part: null }))
+            setInjurySubmitError('')
+            setInjuryMessage('')
+          }}
+          style={{ width: '100%', borderRadius: 12, border: `1px solid ${injuryErrors.body_part ? 'var(--danger)' : 'var(--border-subtle)'}`, background: 'var(--bg-input)', color: 'var(--text-primary)', padding: '12px 10px', fontWeight: 700 }}
+        >
+          <option value="">Select body part</option>
+          {INJURY_BODY_PARTS.map(part => (
+            <option key={part} value={part}>{formatBodyPart(part)}</option>
+          ))}
+        </select>
+        {injuryErrors.body_part && <p style={{ color: 'var(--danger)', fontSize: 12, margin: '6px 0 0' }}>{injuryErrors.body_part}</p>}
+        {injuryErrors.pain_level && <p style={{ color: 'var(--danger)', fontSize: 12, margin: '6px 0 0' }}>{injuryErrors.pain_level}</p>}
+        {recurringInjuryWarning && <p style={{ color: 'var(--warning)', fontSize: 12, margin: '8px 0 0', fontWeight: 700 }}>{recurringInjuryWarning}</p>}
+        {injuryMessage && <p style={{ color: 'var(--success)', fontSize: 12, margin: '8px 0 0', fontWeight: 700 }}>{injuryMessage}</p>}
+        {injurySubmitError && <p style={{ color: 'var(--danger)', fontSize: 12, margin: '8px 0 0' }}>{injurySubmitError}</p>}
+        <button
+          type="button"
+          onClick={submitInjuryLog}
+          disabled={injurySubmitting || selectedInjuryLogged}
+          style={{ width: '100%', marginTop: 12, padding: 12, borderRadius: 12, border: 'none', background: selectedInjuryLogged ? 'var(--bg-input)' : 'var(--danger)', color: selectedInjuryLogged ? 'var(--success)' : '#fff', fontWeight: 900, cursor: injurySubmitting || selectedInjuryLogged ? 'default' : 'pointer', opacity: injurySubmitting ? 0.65 : 1 }}
+        >
+          {selectedInjuryLogged ? 'Logged to Injury Log' : injurySubmitting ? 'Logging...' : 'Log to Injury Log'}
+        </button>
+      </div>
+    )
   }
 
   return (
@@ -309,6 +447,7 @@ export default function PostRunCheckIn({ runId, heatDrift, onDone, onCancel }) {
               ))}
             </div>
             {errors.pain && <p style={{ color: 'var(--danger)', fontSize: 12, margin: '0 0 12px' }}>{errors.pain}</p>}
+            {renderInjuryPrompt()}
             <div style={{ display: 'flex', gap: 10 }}>
               <button type="button" onClick={() => requestStepChange(0)}
                 style={{ flex: 1, padding: 14, background: 'var(--bg-input)', color: 'var(--text-primary)', fontWeight: 800, borderRadius: 14, border: '1px solid var(--border-subtle)', cursor: 'pointer' }}>
@@ -325,7 +464,7 @@ export default function PostRunCheckIn({ runId, heatDrift, onDone, onCancel }) {
         {step === 2 && (
           <div style={{ animation: 'checkinFade 180ms ease' }}>
             <p style={{ fontWeight: 800, fontSize: 18, color: 'var(--text-primary)', marginBottom: 6 }}>Energy level after?</p>
-            <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 20 }}>This helps Forged Hybrid plan your recovery time.</p>
+            <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 20 }}>Optional — add it if it feels useful today.</p>
             <div style={{ display: 'flex', gap: 10, marginBottom: 20 }}>
               {ENERGY_OPTIONS.map(([val, label]) => (
                 <button key={val} type="button" onClick={() => selectStepValue(2, setEnergy, val, energy)}
@@ -342,7 +481,7 @@ export default function PostRunCheckIn({ runId, heatDrift, onDone, onCancel }) {
               </button>
               <button type="button" onClick={next}
                 style={{ flex: 2, padding: 14, background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 900, borderRadius: 14, border: 'none', cursor: 'pointer', fontSize: 15 }}>
-                Review
+                {energy ? 'Review' : 'Skip to Review'}
               </button>
             </div>
           </div>
@@ -362,13 +501,25 @@ export default function PostRunCheckIn({ runId, heatDrift, onDone, onCancel }) {
                 <p style={{ margin: '4px 0 0', color: 'var(--text-primary)', fontWeight: 800 }}>{painLabel}</p>
               </div>
               <div style={{ padding: 12, borderRadius: 12, border: '1px solid var(--border-subtle)', background: 'var(--bg-input)' }}>
-                <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: 12 }}>Energy</p>
-                <p style={{ margin: '4px 0 0', color: 'var(--text-primary)', fontWeight: 800 }}>{energyLabel}</p>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                  <div>
+                    <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: 12 }}>Energy optional</p>
+                    <p style={{ margin: '4px 0 0', color: 'var(--text-primary)', fontWeight: 800 }}>{energy ? energyLabel : 'Not set'}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => requestStepChange(2)}
+                    style={{ border: '1px solid var(--border-subtle)', borderRadius: 10, padding: '8px 10px', background: 'var(--bg-card)', color: 'var(--accent)', fontSize: 12, fontWeight: 900, cursor: 'pointer' }}
+                  >
+                    {energy ? 'Change' : 'Add'}
+                  </button>
+                </div>
               </div>
             </div>
+            {renderInjuryPrompt()}
             {submitError && <p role="alert" style={{ color: 'var(--danger)', fontSize: 12, margin: '0 0 12px' }}>{submitError}</p>}
             <div style={{ display: 'flex', gap: 10 }}>
-              <button type="button" onClick={() => requestStepChange(2)}
+              <button type="button" onClick={() => requestStepChange(1)}
                 style={{ flex: 1, padding: 14, background: 'var(--bg-input)', color: 'var(--text-primary)', fontWeight: 800, borderRadius: 14, border: '1px solid var(--border-subtle)', cursor: 'pointer' }}>
                 Back
               </button>

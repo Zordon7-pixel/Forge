@@ -46,6 +46,7 @@ const planned = normalizePlannedSession({
 check(planned.sessionId === 'session-1' && planned.distanceMiles === 3, 'planned prescription is normalized');
 check(!Object.prototype.hasOwnProperty.call(planned, 'untrustedExtra'), 'unknown planned-session fields are dropped');
 check(Boolean(normalizePostRunCheckIn({ perceived_effort: 7, pain_level: 'moderate', post_energy: 'low' }).value), 'complete check-in is accepted');
+check(normalizePostRunCheckIn({ perceived_effort: 7, pain_level: 'moderate', post_energy: null }).value?.post_energy === null, 'post-run energy is optional');
 check(Boolean(normalizePostRunCheckIn({ perceived_effort: 11, pain_level: 'none', post_energy: 'high' }).error), 'invalid effort is rejected');
 check(shouldInvalidateRunFeedback({ pain_level: 'moderate' }), 'pain edits invalidate stored run feedback');
 check(shouldInvalidateRunFeedback({ notes: 'Felt smooth' }), 'note edits invalidate stored run feedback');

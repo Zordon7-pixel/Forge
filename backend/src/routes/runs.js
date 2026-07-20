@@ -976,7 +976,7 @@ router.patch('/:id/check-in', auth, async (req, res) => {
       const values = normalized.value;
       const changed = Number(run.perceived_effort) !== values.perceived_effort
         || String(run.pain_level || '') !== values.pain_level
-        || String(run.post_energy || '') !== values.post_energy;
+        || String(run.post_energy || '') !== String(values.post_energy || '');
       if (changed) {
         await tx.run(
           `UPDATE runs

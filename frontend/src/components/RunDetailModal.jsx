@@ -191,7 +191,7 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
   const splits = normalizeRunSplits(run.pace_splits)
   const routePositions = parseRunRoute(run.route_coords)
   const checkInAvailable = hasTrustedEffort || run.pain_level || run.post_energy
-  const checkInComplete = hasTrustedEffort && Boolean(run.pain_level) && Boolean(run.post_energy)
+  const checkInComplete = hasTrustedEffort && Boolean(run.pain_level)
   const missingAppleRoute = isRun && isAppleHealthSource && routePositions.length < 2
   const missingAppleElevation = isRun && isAppleHealthSource && !Number.isFinite(elevationGain)
   const comparisonRows = comparison.hasPlan ? [
@@ -431,7 +431,7 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
         {isRun && !checkInAvailable && onAddCheckIn && (
           <div className="mb-5 rounded-xl p-4" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
             <p className="text-xs font-bold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.6 }}>How did it feel?</p>
-            <p className="mt-1 text-sm leading-relaxed" style={{ color: 'var(--text-muted)' }}>{hasCalculatedEffort ? 'Forged Hybrid calculated training effort from reliable heart-rate data, but only you can rate how it felt.' : 'Apple Health did not include enough reliable data for a rated or calculated effort.'} Add your effort, pain, and post-run energy so future training can adapt to what the run actually cost you.</p>
+            <p className="mt-1 text-sm leading-relaxed" style={{ color: 'var(--text-muted)' }}>{hasCalculatedEffort ? 'Forged Hybrid calculated training effort from reliable heart-rate data, but only you can rate how it felt.' : 'Apple Health did not include enough reliable data for a rated or calculated effort.'} Add your effort and pain so future training can adapt to what the run actually cost you. Post-run energy is optional.</p>
             <button type="button" onClick={onAddCheckIn} className="mt-3 w-full rounded-lg py-2.5 text-sm font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>Rate this run</button>
           </div>
         )}

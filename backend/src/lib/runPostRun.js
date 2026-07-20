@@ -98,14 +98,16 @@ function normalizeRouteCoords(value) {
 function normalizePostRunCheckIn(value = {}) {
   const effort = Number(value.perceived_effort);
   const pain = String(value.pain_level || '');
-  const energy = String(value.post_energy || '');
+  const energy = value.post_energy === undefined || value.post_energy === null || value.post_energy === ''
+    ? null
+    : String(value.post_energy);
   if (!Number.isInteger(effort) || effort < 1 || effort > 10) {
     return { error: 'perceived_effort must be an integer between 1 and 10' };
   }
   if (!['none', 'mild', 'moderate', 'severe'].includes(pain)) {
     return { error: 'Invalid pain_level' };
   }
-  if (!['low', 'medium', 'high'].includes(energy)) {
+  if (energy !== null && !['low', 'medium', 'high'].includes(energy)) {
     return { error: 'Invalid post_energy' };
   }
   return { value: { perceived_effort: effort, pain_level: pain, post_energy: energy } };
