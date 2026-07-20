@@ -12,7 +12,7 @@ import PostRunCheckIn from '../components/PostRunCheckIn'
 import RunDetailModal from '../components/RunDetailModal'
 import WorkoutDetailModal from '../components/WorkoutDetailModal'
 import LoadingRunner from '../components/LoadingRunner'
-import { getPaceZone } from '../lib/athleteLanguage'
+import { resolveRunHeartRateZone } from '../lib/runRecap'
 import { chartAccent, chartAxisProps, chartTooltipProps } from '../lib/chartTheme'
 import { activityLabel, isRunningActivity } from '../lib/activityType'
 
@@ -377,14 +377,13 @@ export default function History() {
           {filteredRuns.map(run => (
             <div key={run.id} onClick={() => openRunDetail(run)} className="cursor-pointer rounded-xl p-4" style={{ background: 'var(--bg-card)' }}>
               {(() => {
-                const paceMinPerMile = run.distance_miles ? run.duration_seconds / 60 / run.distance_miles : null
-                const paceZone = isRunningActivity(run) ? getPaceZone(paceMinPerMile) : null
+                const heartRateZone = isRunningActivity(run) ? resolveRunHeartRateZone(run, hrZones) : null
                 return (
               <div className="mb-2 flex items-center justify-between">
                 <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{formatHistoryDate(getRunDate(run))}</p>
                 <div className="flex items-center gap-2">
                   <span className="rounded-full px-2 py-1 text-xs font-semibold" style={{ background: isRunningActivity(run) ? 'var(--accent-dim)' : 'rgba(34,197,94,0.12)', color: isRunningActivity(run) ? 'var(--accent)' : 'var(--success)' }}>{activityLabel(run)}</span>
-                  {paceZone ? <span className="rounded-full px-2 py-1 text-xs font-semibold" style={{ background: `${paceZone.color}22`, color: paceZone.color }}>{`Pace Z${paceZone.zone}`}</span> : null}
+                  {heartRateZone ? <span className="rounded-full px-2 py-1 text-xs font-semibold" title={`${heartRateZone.source === 'timeline' ? 'Dominant recorded' : 'Average'} heart-rate zone`} style={{ background: `${heartRateZone.color}22`, color: heartRateZone.color }}>{`HR Z${heartRateZone.zone}`}</span> : null}
                   {run.perceived_effort && hasTrustedEffort(run) ? <span className="rounded-full px-2 py-1 text-xs" style={{ background: 'var(--bg-input)', color: 'var(--text-muted)' }}>Effort {run.perceived_effort}/10</span> : null}
                   <button type="button" aria-label="Edit run" title="Edit run" onClick={e => { e.stopPropagation(); setEditingRun(run) }} className="transition-colors" style={{ color: 'var(--text-muted)' }}><Pencil size={14} /></button>
                   <button type="button" aria-label="Delete run" title="Delete run" onClick={e => requestDelete('run', run, e)} className="transition-colors" style={{ color: 'var(--text-muted)' }}><Trash2 size={14} /></button>

@@ -70,6 +70,26 @@ export const RELEASES = Object.freeze([
     minAndroidBuild: null,
     audience: 'all',
   }),
+  Object.freeze({
+    id: 'cleaner-training-signals',
+    sequence: 4,
+    publishedAt: '2026-07-20',
+    titleKey: 'whatsNew.releases.cleanerTrainingSignals.title',
+    summaryKey: 'whatsNew.releases.cleanerTrainingSignals.summary',
+    highlightKeys: Object.freeze([
+      'whatsNew.releases.cleanerTrainingSignals.organization',
+      'whatsNew.releases.cleanerTrainingSignals.zones',
+      'whatsNew.releases.cleanerTrainingSignals.alerts',
+    ]),
+    cta: Object.freeze({
+      labelKey: 'whatsNew.releases.cleanerTrainingSignals.cta',
+      to: '/history',
+    }),
+    delivery: 'web',
+    minIosBuild: null,
+    minAndroidBuild: null,
+    audience: 'all',
+  }),
 ])
 
 export function isAllowedReleaseCta(path = '') {

@@ -435,6 +435,14 @@
         "races": "Set standard race targets from the mile through the marathon, or enter a custom distance.",
         "sync": "Activity alerts are ready; automatic Strava delivery activates after Strava approves the app webhook.",
         "cta": "Open run history"
+      },
+      "cleanerTrainingSignals": {
+        "title": "Cleaner tabs, truer run zones",
+        "summary": "Your core training signals now live where they are easiest to scan without crowding Today.",
+        "organization": "Steps and month-over-month progress moved to Body; PRs and badges moved to Community.",
+        "zones": "Run History now labels recorded heart-rate intensity instead of assigning a zone from pace.",
+        "alerts": "In-app activity alerts are live. Apple Health lock-screen alerts require the next approved TestFlight build.",
+        "cta": "Review run history"
       }
     }
   },

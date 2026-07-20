@@ -1,4 +1,11 @@
 const MIN_TRUSTED_ZONE_COVERAGE_PCT = 70
+const HEART_RATE_ZONE_META = Object.freeze([
+  Object.freeze({ label: 'Recovery', color: '#6B7280' }),
+  Object.freeze({ label: 'Easy', color: '#3B82F6' }),
+  Object.freeze({ label: 'Aerobic', color: '#22C55E' }),
+  Object.freeze({ label: 'Threshold', color: '#EAB308' }),
+  Object.freeze({ label: 'Maximum', color: '#EF4444' }),
+])
 
 function finiteNumber(value) {
   if (value === undefined || value === null || value === '') return null
@@ -122,6 +129,46 @@ export function parseZoneTimeline(value, durationSeconds = 0) {
     coveragePct,
     trusted: Number.isFinite(coveragePct) && coveragePct >= MIN_TRUSTED_ZONE_COVERAGE_PCT,
     dominantZone: dominantIndex >= 0 ? dominantIndex + 1 : null,
+  }
+}
+
+export function resolveRunHeartRateZone(run = {}, zones = []) {
+  const timeline = parseZoneTimeline(run.heart_rate_zones, run.duration_seconds)
+  const workoutMetrics = parseJson(run.workout_metrics_json, {})
+  const metricCoverage = finiteNumber(workoutMetrics?.hr_sample_coverage_pct)
+  const coveragePct = metricCoverage ?? timeline.coveragePct
+
+  if (coveragePct !== null && coveragePct >= MIN_TRUSTED_ZONE_COVERAGE_PCT && timeline.dominantZone) {
+    const meta = HEART_RATE_ZONE_META[timeline.dominantZone - 1]
+    return {
+      zone: timeline.dominantZone,
+      label: meta.label,
+      color: meta.color,
+      source: 'timeline',
+      coveragePct,
+    }
+  }
+
+  const averageHeartRate = finiteNumber(run.avg_hr ?? run.avg_heart_rate)
+  if (averageHeartRate === null || !Array.isArray(zones) || zones.length !== 5) return null
+  const minimums = zones.map((entry) => finiteNumber(entry?.minBpm ?? entry?.min_bpm))
+  if (minimums.some((minimum) => minimum === null)) return null
+
+  let index = minimums.findIndex((minimum, zoneIndex) => (
+    averageHeartRate >= minimum
+    && (zoneIndex === minimums.length - 1 || averageHeartRate < minimums[zoneIndex + 1])
+  ))
+  if (index < 0 && averageHeartRate < minimums[0]) index = 0
+  if (index < 0) return null
+
+  const meta = HEART_RATE_ZONE_META[index]
+  return {
+    zone: index + 1,
+    label: meta.label,
+    color: meta.color,
+    source: 'average',
+    averageHeartRate,
+    coveragePct,
   }
 }
 
