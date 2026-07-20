@@ -218,6 +218,14 @@ for (const session of allSessions(missingGoalPace)) {
 const missingGoalPaceValidation = engine.validateConcurrentPlan(missingGoalPace, subNinetyContext);
 assert(!missingGoalPaceValidation.valid && missingGoalPaceValidation.errors.some((error) => /target-pace session/.test(error)), 'validator rejects timed race plans with no structured target-pace session');
 
+const alteredRacePace = JSON.parse(JSON.stringify(subNinety));
+const alteredRaceSession = allSessions(alteredRacePace).find((session) => session.type === 'race');
+alteredRaceSession.goal_pace_seconds_per_mile = 600;
+alteredRaceSession.goal_pace_label = '10:00/mi';
+alteredRaceSession.pace_target = '10:00/mi';
+const alteredRacePaceValidation = engine.validateConcurrentPlan(alteredRacePace, subNinetyContext);
+assert(!alteredRacePaceValidation.valid && alteredRacePaceValidation.errors.some((error) => /preserve the exact goal pace/.test(error)), 'validator rejects a race-day session whose pace drifted from the athlete goal');
+
 const movedRace = JSON.parse(JSON.stringify(army));
 const raceDay = movedRace.weeks[12].days[6];
 raceDay.date = '2026-10-10';

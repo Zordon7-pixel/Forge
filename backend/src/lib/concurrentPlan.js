@@ -1228,6 +1228,13 @@ function validateConcurrentPlan(candidate, context = {}) {
             const exactDistance = Math.abs(Number(session.distance_miles) - Number(target.distanceMiles)) < 0.01;
             if (day.date === target.raceDate && exactDistance) exactRaceSessionFound = true;
             else errors.push(`${sessionPath} race session must preserve the target date and distance`);
+            if (expectedGoalPace) {
+              const expectedPaceLabel = formatPaceLabel(expectedGoalPace);
+              const paceMatches = Math.abs(Number(session.goal_pace_seconds_per_mile || 0) - expectedGoalPace) <= 1;
+              const labelMatches = session.goal_pace_label === expectedPaceLabel
+                && String(session.pace_target || '').includes(expectedPaceLabel);
+              if (!paceMatches || !labelMatches) errors.push(`${sessionPath} race session must preserve the exact goal pace`);
+            }
           }
         } else if (kind === 'lift') {
           lifts += 1;
