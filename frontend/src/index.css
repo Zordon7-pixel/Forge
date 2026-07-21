@@ -18,10 +18,16 @@ html {
   --warning-dim: rgba(249, 115, 22, 0.12);
   --danger: #EF4444;
   --danger-dim: rgba(239, 68, 68, 0.12);
+  --z1: #5E6C7B;
+  --z2: #EAB308;
+  --z3: #F97316;
+  --z4: #E5484D;
+  --z5: #FFF6DC;
+  --ember-grad: linear-gradient(135deg,#EAB308,#F97316);
   --on-accent: #000000;
-  --bg-base: #000000;
-  --bg-card: #111111;
-  --bg-input: #0a0a0a;
+  --bg-base: #0C0A07;
+  --bg-card: #16130D;
+  --bg-input: #211C14;
   --text-primary: #ffffff;
   --text-muted: #9ca3af;
   --border-subtle: rgba(255,255,255,0.08);
@@ -49,6 +55,12 @@ html {
   --warning-dim: rgba(234, 88, 12, 0.08);
   --danger: #DC2626;
   --danger-dim: rgba(220, 38, 38, 0.08);
+  --z1: #5E6C7B;
+  --z2: #EAB308;
+  --z3: #F97316;
+  --z4: #E5484D;
+  --z5: #FFF6DC;
+  --ember-grad: linear-gradient(135deg,#EAB308,#F97316);
   --on-accent: #000000;
   --bg-base: #f9fafb;
   --bg-card: #ffffff;
@@ -197,6 +209,15 @@ body {
   font-variant-numeric: tabular-nums;
   font-weight: 900;
   letter-spacing: -0.02em;
+}
+
+.num-ember {
+  background: var(--ember-grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  font-variant-numeric: tabular-nums;
+  font-weight: 900;
 }
 
 .t-title {
