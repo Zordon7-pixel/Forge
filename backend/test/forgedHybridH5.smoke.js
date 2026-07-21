@@ -32,7 +32,13 @@ const hybridPlan = {
           day: 'Mon',
           sessions: [
             { id: 'run-1', kind: 'run', prescription: { workout_type: 'easy', distance_miles: 4, target_zone: 'Z2', description: 'Easy Zone 2' } },
-            { id: 'lift-1', kind: 'lift', prescription: { title: 'Lower Body', sets: 3, reps: 5, rest_seconds: 180, rpe: 8, focus: 'squat' } },
+            {
+              id: 'lift-1', kind: 'lift', title: 'Lower Body', focus: 'squat',
+              warmup: ['Bodyweight squat x 10'],
+              main: [{ name: 'Back squat', sets: 3, reps: 5, rest: '3 min', rpe: 8 }],
+              recovery: ['Leave one full day before repeating lower body'],
+              progression: 'Add load only when all reps are clean.',
+            },
           ],
           orderGuidance: 'Run first; lift at least 6 hours later',
           status: 'planned',
@@ -91,7 +97,8 @@ const monday = build(hybridPlan, '2026-07-13', 'Mon', [], hrrProfile);
 assert(monday.hasPlan && monday.hasDay && monday.isRest === false, 'monday is an executable plan day');
 assert(monday.sessions.length === 2, 'hybrid day exposes BOTH sessions (no flatten to one)');
 assert(monday.run && monday.run.id === 'run-1' && monday.lift && monday.lift.id === 'lift-1', 'run and lift both surfaced with stable ids');
-assert(monday.lift.sets === 3 && monday.lift.reps === 5 && monday.lift.rpe === 8, 'lift prescription (sets/reps/rpe) preserved');
+assert(monday.lift.main?.[0]?.sets === 3 && monday.lift.main?.[0]?.reps === 5 && monday.lift.main?.[0]?.rpe === 8, 'top-level lift exercise prescription is preserved');
+assert(monday.lift.warmup?.[0] === 'Bodyweight squat x 10' && monday.lift.recovery?.length === 1 && monday.lift.progression, 'top-level lift warmup/recovery/progression are preserved');
 assert(monday.mode === 'hybrid_maintain' && monday.phase === 'base' && monday.week === 1, 'plan/phase/week context present');
 assert(monday.goal && monday.goal.name === 'Army Ten-Miler', 'goal context present');
 

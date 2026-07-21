@@ -625,6 +625,24 @@ export default function Dashboard() {
     navigate(`/log-run${params.toString() ? `?${params.toString()}` : ''}`)
   }, [navigate, nextRecommendation, execution, calendarRec, calendarOwnsToday])
 
+  const handleStartTodayRun = useCallback(() => {
+    if (!execution?.run) return
+    track('recommendation_followed', { via: 'today_details_run', source: 'calendar' })
+    navigate('/log-run', { state: runRouteState(execution) })
+  }, [navigate, execution])
+
+  const handleStartTodayLift = useCallback(() => {
+    if (!execution?.lift) return
+    track('recommendation_followed', { via: 'today_details_lift', source: 'calendar' })
+    navigate('/log-lift', {
+      state: {
+        planSessionId: execution.lift.id || null,
+        currentWeek: execution.week ?? null,
+        scheduledLift: execution.lift,
+      },
+    })
+  }, [navigate, execution])
+
   const decideTrainingGap = useCallback(async (decision) => {
     if (!trainingGapProposal?.id || !['accept', 'keep'].includes(decision)) return
     setTrainingGapDecision(decision)
@@ -745,6 +763,7 @@ export default function Dashboard() {
         checkedInToday={checkedInToday}
         readinessData={readinessState.data}
         recommendation={effectiveRecommendation}
+        execution={execution}
         todayWatchWorkout={todayWatchWorkout}
         onCheckIn={() => navigate('/checkin')}
         onStartWorkout={handleStartWorkout}
@@ -773,6 +792,7 @@ export default function Dashboard() {
         readinessData={readinessState.data}
         readinessBreakdown={readinessBreakdown}
         recommendation={effectiveRecommendation}
+        execution={execution}
         checkinData={checkinData}
         dailySteps={dailySteps}
         dailyStepsSource={dailyStepsSource}
@@ -781,6 +801,8 @@ export default function Dashboard() {
         compliance={compliance}
         onCheckIn={() => navigate('/checkin')}
         onStartWorkout={handleStartWorkout}
+        onStartRun={handleStartTodayRun}
+        onStartLift={handleStartTodayLift}
         onWarmup={() => navigate('/prep?mode=warmup')}
         onReflect={() => navigate('/history')}
         onOpenReadiness={() => {

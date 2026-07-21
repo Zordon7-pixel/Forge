@@ -128,6 +128,21 @@ function normalizeSession(session, fallbackId) {
       steps: s.steps,
       structure: s.structure,
       focus: s.focus,
+      warmup: s.warmup,
+      main: s.main,
+      exercises: s.exercises,
+      recovery: s.recovery,
+      cooldown: s.cooldown,
+      progression: s.progression,
+      prescriptionBasis: s.prescriptionBasis,
+      prescription_basis: s.prescription_basis,
+      purpose: s.purpose,
+      recoveries: s.recoveries,
+      evidence_refs: s.evidence_refs,
+      durationIsEstimated: s.durationIsEstimated,
+      duration_is_estimate: s.duration_is_estimate,
+      distance_is_estimate: s.distance_is_estimate,
+      benchmark: s.benchmark,
     })
   );
 }

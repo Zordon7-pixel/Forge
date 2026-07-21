@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { Activity, ArrowDownRight, ArrowUpRight, Brain, ChevronRight, Lock, Watch, AlertTriangle } from 'lucide-react'
+import { Activity, ArrowDownRight, ArrowUpRight, Brain, ChevronRight, Lock, Watch, AlertTriangle, Footprints, Dumbbell, CheckCircle2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import AgeGradedPerformanceCard from './AgeGradedPerformanceCard'
 import WatchWorkoutSendButton from './WatchWorkoutSendButton'
@@ -64,6 +64,14 @@ function formatPlanDuration(minutes, isEstimated) {
 }
 
 function BlockRow({ block, t }) {
+  if (!block) return null
+  if (typeof block === 'string') {
+    return (
+      <div className="rounded-xl p-3 text-sm" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}>
+        {block}
+      </div>
+    )
+  }
   const phase = block.phase || 'main'
   const metric = block.durationMinutes
     ? `${block.durationMinutes} min`
@@ -90,6 +98,106 @@ function BlockRow({ block, t }) {
       </div>
       {summary && <p className="mt-1 text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>{summary}</p>}
     </div>
+  )
+}
+
+function calendarSessionKind(session) {
+  return String(session?.kind || session?.type || session?.workout_type || '').toLowerCase() === 'lift' || /strength|lift/.test(String(session?.type || session?.workout_type || '').toLowerCase())
+    ? 'lift'
+    : 'run'
+}
+
+function calendarSessionTitle(session) {
+  const kind = calendarSessionKind(session)
+  return session?.title || session?.label || session?.workout_name || (kind === 'lift' ? 'Strength workout' : 'Run workout')
+}
+
+function calendarSessionMetrics(session) {
+  if (!session) return []
+  const kind = calendarSessionKind(session)
+  if (kind === 'lift') {
+    return [session.focus].filter(Boolean)
+  }
+  const distance = Number(session.distance_miles || session.distance || 0)
+  const duration = Number(session.duration_min || session.durationMinutes || session.duration_minutes || 0)
+  return [
+    distance > 0 ? `${distance} mi` : '',
+    duration > 0 ? `${Math.round(duration)} min` : '',
+    session.pace_target || session.pace || session.target_pace || '',
+    session.hrZone?.zoneLabel || session.target_zone || '',
+  ].filter(Boolean)
+}
+
+function sessionStructure(session) {
+  if (Array.isArray(session?.structure)) return session.structure
+  if (Array.isArray(session?.steps)) return session.steps
+  return []
+}
+
+function sessionExercises(session) {
+  if (Array.isArray(session?.main)) return session.main
+  if (Array.isArray(session?.exercises)) return session.exercises
+  return []
+}
+
+function TodayCalendarSession({ session, onStartRun, onStartLift, t }) {
+  const kind = calendarSessionKind(session)
+  const metrics = calendarSessionMetrics(session)
+  const structure = sessionStructure(session)
+  const exercises = sessionExercises(session)
+  const start = kind === 'lift' ? onStartLift : onStartRun
+  const Icon = kind === 'lift' ? Dumbbell : Footprints
+
+  return (
+    <article className="rounded-xl p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="flex items-center gap-2 text-sm font-black" style={{ color: 'var(--text-primary)' }}>
+            <Icon size={16} color={kind === 'lift' ? 'var(--warning)' : 'var(--accent)'} />
+            <span className="break-words">{calendarSessionTitle(session)}</span>
+          </p>
+          {metrics.length > 0 && <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>{metrics.join(' · ')}</p>}
+          {session?.description && <p className="mt-2 text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>{session.description}</p>}
+        </div>
+        {session?.completed && (
+          <span className="flex shrink-0 items-center gap-1 text-[10px] font-black uppercase" style={{ color: 'var(--success)' }}>
+            <CheckCircle2 size={14} /> Done
+          </span>
+        )}
+      </div>
+
+      {structure.length > 0 && (
+        <div className="mt-3 space-y-2">
+          {structure.map((block, index) => (
+            <BlockRow key={`session-${session?.id || kind}-${index}`} block={block} t={t} />
+          ))}
+        </div>
+      )}
+
+      {exercises.length > 0 && (
+        <div className="mt-3 space-y-2">
+          {exercises.map((exercise, index) => {
+            const name = exercise?.name || exercise?.exercise || `Exercise ${index + 1}`
+            const prescription = [
+              exercise?.sets && exercise?.reps ? `${exercise.sets} x ${exercise.reps}` : exercise?.sets ? `${exercise.sets} sets` : exercise?.reps || '',
+              exercise?.rest ? `${exercise.rest} rest` : '',
+            ].filter(Boolean).join(' · ')
+            return (
+              <div key={`${name}-${index}`} className="rounded-lg px-3 py-2" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+                <p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{name}</p>
+                {prescription && <p className="mt-0.5 text-xs" style={{ color: 'var(--text-muted)' }}>{prescription}</p>}
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {!session?.completed && typeof start === 'function' && (
+        <button type="button" onClick={() => start(session)} className="pressable mt-3 w-full rounded-lg px-3 py-2 text-sm font-black" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>
+          {kind === 'lift' ? 'Start lift' : 'Start run'}
+        </button>
+      )}
+    </article>
   )
 }
 
@@ -127,7 +235,7 @@ export function ReadinessGauge({ score, onClick }) {
   )
 }
 
-export function DailyCoachFlow({ checkedInToday, readinessData, recommendation, todayWatchWorkout, onCheckIn, onStartWorkout, onReflect, onDetails }) {
+export function DailyCoachFlow({ checkedInToday, readinessData, recommendation, execution, todayWatchWorkout, onCheckIn, onStartWorkout, onReflect, onDetails }) {
   const { t } = useTranslation()
   const readiness = resolveReadiness(readinessData)
   const isRestDay = recommendation?.recommendationType === 'rest' || recommendation?.type === 'rest'
@@ -135,6 +243,13 @@ export function DailyCoachFlow({ checkedInToday, readinessData, recommendation, 
     ? getRecommendationLabel(recommendation)
     : "today's plan"
   const structure = Array.isArray(recommendation?.structure) ? recommendation.structure : []
+  const calendarSessions = execution?.hasDay && Array.isArray(execution.sessions) ? execution.sessions : []
+  const calendarKinds = [...new Set(calendarSessions.map(calendarSessionKind))]
+  const calendarLabel = calendarKinds.length > 1
+    ? 'run + lift'
+    : calendarKinds[0] === 'lift'
+      ? 'strength'
+      : null
   const durationText = formatPlanDuration(recommendation?.durationMinutes, recommendation?.durationIsEstimated)
   const interferenceReason = recommendation?.interference?.adjusted && typeof recommendation?.interference?.reason === 'string'
     ? recommendation.interference.reason.trim()
@@ -146,7 +261,8 @@ export function DailyCoachFlow({ checkedInToday, readinessData, recommendation, 
       return `${readiness.sentencePrefix}Rest and recovery are scheduled today.`
     }
 
-    const parts = [recommendationLabel ? recommendationLabel.charAt(0).toUpperCase() + recommendationLabel.slice(1) : '']
+    const summaryLabel = calendarLabel || recommendationLabel
+    const parts = [summaryLabel ? summaryLabel.charAt(0).toUpperCase() + summaryLabel.slice(1) : '']
     const distance = Number(recommendation.suggestedDistance || 0)
     const pace = recommendation.suggestedPace && recommendation.suggestedPace !== '--'
       ? String(recommendation.suggestedPace)
@@ -234,18 +350,6 @@ export function DailyCoachFlow({ checkedInToday, readinessData, recommendation, 
           </button>
         ))}
       </div>
-      {structure.length > 0 && (
-        <div className="mt-3 rounded-xl p-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-          <p className="text-xs font-black uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.8 }}>
-            {t('today.workoutBreakdown')}
-          </p>
-          <div className="mt-2 space-y-2">
-            {structure.map((block, index) => (
-              <BlockRow key={`${block.phase || 'block'}-${index}`} block={block} t={t} />
-            ))}
-          </div>
-        </div>
-      )}
       {todayWatchWorkout && (
         <WatchWorkoutSendButton
           workout={todayWatchWorkout}
@@ -353,6 +457,7 @@ export function TodayDetailSheet({
   readinessData,
   readinessBreakdown,
   recommendation,
+  execution,
   checkinData,
   dailySteps,
   dailyStepsSource,
@@ -361,6 +466,8 @@ export function TodayDetailSheet({
   compliance,
   onCheckIn,
   onStartWorkout,
+  onStartRun,
+  onStartLift,
   onWarmup,
   onReflect,
   onOpenReadiness,
@@ -368,8 +475,14 @@ export function TodayDetailSheet({
   const { t } = useTranslation()
   if (!open) return null
   const readiness = resolveReadiness(readinessData)
-  const isRestDay = recommendation?.recommendationType === 'rest' || recommendation?.type === 'rest'
-  const recommendationLabel = recommendation ? getRecommendationLabel(recommendation) : null
+  const calendarSessions = execution?.hasDay && Array.isArray(execution.sessions) ? execution.sessions : []
+  const calendarKinds = [...new Set(calendarSessions.map(calendarSessionKind))]
+  const isRestDay = execution?.isRest === true || recommendation?.recommendationType === 'rest' || recommendation?.type === 'rest'
+  const recommendationLabel = calendarKinds.length > 1
+    ? 'Run + lift'
+    : calendarKinds[0] === 'lift'
+      ? 'Strength'
+      : recommendation ? getRecommendationLabel(recommendation) : null
   const durationText = formatPlanDuration(recommendation?.durationMinutes, recommendation?.durationIsEstimated)
   const topFactors = (readinessBreakdown || []).filter((item) => item.label !== 'Base score').slice(0, 2)
   const interferenceReason = recommendation?.interference?.adjusted && typeof recommendation?.interference?.reason === 'string'
@@ -461,7 +574,23 @@ export function TodayDetailSheet({
           </div>
         </section>
 
-        {Array.isArray(recommendation?.structure) && recommendation.structure.length > 0 && (
+        {calendarSessions.length > 0 ? (
+          <section className="mt-5">
+            <p className="text-xs font-bold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.8 }}>Today's sessions</p>
+            {execution?.orderGuidance && <p className="mt-2 text-sm" style={{ color: 'var(--text-muted)' }}>{execution.orderGuidance}</p>}
+            <div className="mt-2 space-y-3">
+              {calendarSessions.map((session, index) => (
+                <TodayCalendarSession
+                  key={session?.id || `${calendarSessionKind(session)}-${index}`}
+                  session={session}
+                  onStartRun={onStartRun}
+                  onStartLift={onStartLift}
+                  t={t}
+                />
+              ))}
+            </div>
+          </section>
+        ) : Array.isArray(recommendation?.structure) && recommendation.structure.length > 0 ? (
           <section className="mt-5">
             <p className="text-xs font-bold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.8 }}>{t('today.workoutBreakdown')}</p>
             <div className="mt-2 space-y-2">
@@ -470,7 +599,7 @@ export function TodayDetailSheet({
               ))}
             </div>
           </section>
-        )}
+        ) : null}
 
         {coachWhy && (
           <section className="mt-5">
@@ -501,9 +630,11 @@ export function TodayDetailSheet({
             <button onClick={onCheckIn} className="rounded-xl px-3 py-3 text-sm font-bold" style={{ background: checkedInToday ? 'var(--bg-input)' : 'var(--accent)', color: checkedInToday ? 'var(--text-primary)' : '#000' }}>
               {checkedInToday ? 'Edit check-in' : 'Check in'}
             </button>
-            <button onClick={onStartWorkout} className="rounded-xl px-3 py-3 text-sm font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>
-              {isRestDay ? 'View calendar' : 'Start/log'}
-            </button>
+            {(calendarSessions.length === 0 || isRestDay) && (
+              <button onClick={onStartWorkout} className="rounded-xl px-3 py-3 text-sm font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>
+                {isRestDay ? 'View calendar' : 'Start/log'}
+              </button>
+            )}
             <button onClick={onWarmup} className="rounded-xl px-3 py-3 text-sm font-bold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>
               Warm-up
             </button>

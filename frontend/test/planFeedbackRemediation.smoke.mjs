@@ -18,6 +18,7 @@ function assert(condition, message) {
 
 const plan = read('src/pages/Plan.jsx')
 const insights = read('src/components/InsightsSheet.jsx')
+const dashboard = read('src/pages/Dashboard.jsx')
 const movement = read('src/components/MovementDemo.jsx')
 
 console.log('\n== Calendar day detail ==')
@@ -31,6 +32,19 @@ assert(insights.includes("isRestDay ? 'View week' : 'Start'"), 'Today primary ac
 assert(insights.includes("isRestDay ? 'View calendar' : 'Start/log'"), 'Today details route rest days to the calendar')
 assert(insights.includes('Recovery is the plan today'), 'rest-day heading is explicit')
 assert(insights.includes("disabled={step.key === 'train' && isRestDay}"), 'completed rest step is not a redundant interactive control')
+
+console.log('\n== Today calendar completeness ==')
+const coachStart = insights.indexOf('export function DailyCoachFlow')
+const detailsStart = insights.indexOf('export function TodayDetailSheet')
+const coachSource = insights.slice(coachStart, detailsStart)
+const detailsSource = insights.slice(detailsStart)
+assert(!coachSource.includes("{t('today.workoutBreakdown')}"), 'compact Today card does not duplicate the full workout breakdown')
+assert(coachSource.includes("? 'run + lift'"), 'compact Today summary identifies a hybrid run + lift day')
+assert(detailsSource.includes("calendarSessions.map((session, index)"), 'Today details render every calendar session instead of only the preferred run')
+assert(detailsSource.includes('<TodayCalendarSession') && insights.includes('sessionExercises(session)'), 'Today details render lift exercise prescriptions when present')
+assert(insights.includes("{kind === 'lift' ? 'Start lift' : 'Start run'}"), 'each calendar session has an unambiguous start action')
+assert(detailsSource.includes('(calendarSessions.length === 0 || isRestDay)'), 'calendar days do not repeat an ambiguous generic Start/log action')
+assert(dashboard.includes('execution={execution}') && dashboard.includes('onStartRun={handleStartTodayRun}') && dashboard.includes('onStartLift={handleStartTodayLift}'), 'Dashboard passes complete execution and kind-specific start handlers to Today details')
 
 console.log('\n== Profile-matched form images ==')
 assert(movement.includes("male: '/stretches/leg-swings-male.png'") && movement.includes("female: '/stretches/leg-swings-female.png'"), 'leg swings use one profile-matched athlete')
