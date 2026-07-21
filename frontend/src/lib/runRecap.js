@@ -1,12 +1,10 @@
+import { ZONE_HEAT_PALETTE } from './athleteLanguage.js'
+
 const MIN_TRUSTED_ZONE_COVERAGE_PCT = 70
-// hex required: consumed by `${color}XX` alpha templates — do not tokenize
-const HEART_RATE_ZONE_META = Object.freeze([
-  Object.freeze({ label: 'Recovery', color: '#5E6C7B' }),
-  Object.freeze({ label: 'Easy', color: '#EAB308' }),
-  Object.freeze({ label: 'Aerobic', color: '#F97316' }),
-  Object.freeze({ label: 'Threshold', color: '#E5484D' }),
-  Object.freeze({ label: 'Maximum', color: '#FFF6DC', textColor: '#B8A86A' }),
-])
+const HEART_RATE_ZONE_META = Object.freeze(
+  ['Recovery', 'Easy', 'Aerobic', 'Threshold', 'Maximum']
+    .map((label, index) => Object.freeze({ label, ...ZONE_HEAT_PALETTE[index] }))
+)
 
 function finiteNumber(value) {
   if (value === undefined || value === null || value === '') return null

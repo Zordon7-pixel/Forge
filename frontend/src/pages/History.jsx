@@ -459,7 +459,6 @@ export default function History() {
               </div>
               <p className="mt-1 text-sm" style={{ color: 'var(--text-primary)' }}>
                 Duration: {session.total_seconds ? formatWorkoutDuration(session.total_seconds) : '--'}
-                {session.calories_burned > 0 && <span> · {session.calories_burned} cal</span>}
               </p>
               {Array.isArray(session.muscle_groups) && session.muscle_groups.length > 0 && (
                 <div className="mt-2 flex flex-wrap gap-2">

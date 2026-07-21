@@ -9,6 +9,7 @@ import { activityLabel, isRunningActivity } from '../lib/activityType'
 import { buildRunComparison, formatPlannedPaceTarget, normalizeRunSplits, parseRunRoute, parseZoneTimeline, resolveRunHeartRateZone } from '../lib/runRecap'
 import { providerSourcePresentation } from '../lib/deviceSourcePresentation'
 import ActivityShareStudio from './ActivityShareStudio'
+import { ZONE_HEAT_PALETTE } from '../lib/athleteLanguage'
 
 function fmtDuration(totalSeconds = 0) {
   const h = Math.floor(totalSeconds / 3600)
@@ -27,9 +28,8 @@ function formatActivityDate(value) {
 }
 
 const EFFORT_LABELS = ['', 'Very Easy', 'Easy', 'Easy-Moderate', 'Moderate', 'Moderate-Hard', 'Hard', 'Hard', 'Very Hard', 'Very Hard', 'Max']
-// hex required: consumed by `${color}XX` alpha templates — do not tokenize
-const ZONE_COLORS = ['#5E6C7B', '#EAB308', '#F97316', '#E5484D', '#FFF6DC']
-const ZONE_TEXT_COLORS = ['#5E6C7B', '#EAB308', '#F97316', '#E5484D', '#B8A86A']
+const ZONE_COLORS = ZONE_HEAT_PALETTE.map(({ color }) => color)
+const ZONE_TEXT_COLORS = ZONE_HEAT_PALETTE.map(({ textColor }) => textColor)
 const ZONE_LABELS = ['Recovery', 'Easy', 'Aerobic', 'Threshold', 'Maximum']
 const ZONE_MODEL_LABELS = { custom: 'Watch zones', hrr: 'HR Reserve', maxhr: 'Max-HR %', lthr: 'LTHR' }
 

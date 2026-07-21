@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useParams, useNavigate, useLocation, Link } from 'react-router-dom'
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip, BarChart, XAxis, YAxis, Bar } from 'recharts'
-import { Flame } from 'lucide-react'
 import api from '../lib/api'
 import MuscleDiagram from '../components/MuscleDiagram'
 import { getMuscleBreakdown } from '../lib/muscleMap'
@@ -40,6 +39,12 @@ function parseSecondaryMuscles(raw) {
     .split(',')
     .map((m) => m.trim().toLowerCase())
     .filter(Boolean)
+}
+
+function recordedNonNegativeNumber(value) {
+  if (value === null || value === undefined || value === '') return null
+  const number = Number(value)
+  return Number.isFinite(number) && number >= 0 ? number : null
 }
 
 function trustedZoneMinutes(session) {
@@ -86,7 +91,11 @@ export default function WorkoutSummary() {
       setAiLoading(true)
       api.post('/ai/session-feedback', { sessionType: 'lift', sessionId: session.id })
         .then((r) => setAiFeedback(r.data?.feedback || null))
-        .catch(() => setAiFeedback({ analysis: 'Solid work completing your lift session.', didWell: 'You finished the workout and logged your effort.', suggestion: 'Keep technique crisp and add small progress next session.', recovery: 'easy day' }))
+        .catch((error) => {
+          console.error('[WorkoutSummary] AI feedback unavailable:', error?.message || error)
+          setAiFeedback(null)
+          setShowAiCard(false)
+        })
         .finally(() => setAiLoading(false))
     }
   }, [session?.id])
@@ -129,15 +138,19 @@ export default function WorkoutSummary() {
     return [...extras]
   }, [sets, primary])
 
-  const totalReps = sets.reduce((acc, s) => acc + (s.reps || 0), 0)
-  const totalVolumeLbs = sets.reduce((acc, s) => acc + ((s.reps || 0) * (s.weight_lbs || 0)), 0)
-  const intensityPct = sets.length ? Math.round((sets.reduce((sum, s) => sum + ((s.weight_lbs || 0) / Math.max((s.weight_lbs || 1) * 1.2, 1)), 0) / sets.length) * 100) : 0
-  const muscleVolumeData = Object.entries(sets.reduce((acc, s) => { const key = (s.muscle_group || 'other').toLowerCase(); acc[key] = (acc[key] || 0) + (s.weight_lbs || 0) * (s.reps || 0); return acc }, {})).map(([name, value]) => ({ name, value }))
+  const totalReps = sets.reduce((acc, set) => acc + Math.max(0, Number(set.reps) || 0), 0)
+  const totalVolumeLbs = sets.reduce((acc, set) => acc + (Math.max(0, Number(set.reps) || 0) * Math.max(0, Number(set.weight_lbs) || 0)), 0)
+  const muscleVolumeData = Object.entries(sets.reduce((acc, set) => { const key = (set.muscle_group || 'other').toLowerCase(); acc[key] = (acc[key] || 0) + Math.max(0, Number(set.weight_lbs) || 0) * Math.max(0, Number(set.reps) || 0); return acc }, {})).map(([name, value]) => ({ name, value }))
   const zoneMinutes = trustedZoneMinutes(session)
   const hrZonesData = zoneMinutes?.map((min, index) => ({ zone: `Z${index + 1}`, min })) || null
-  const totalCalories = Math.round(((session?.total_seconds || 0) / 60) * 5)
-  const workTimeSec = sets.reduce((sum, set) => sum + (set.duration_seconds || 30), 0)
-  const restTimeSec = (session?.total_seconds || 0) - workTimeSec
+  const hasCompleteSetTiming = sets.length > 0 && sets.every((set) => recordedNonNegativeNumber(set.duration_seconds) !== null)
+  const workTimeSec = hasCompleteSetTiming
+    ? sets.reduce((sum, set) => sum + recordedNonNegativeNumber(set.duration_seconds), 0)
+    : null
+  const sessionTimeSec = recordedNonNegativeNumber(session?.total_seconds)
+  const restTimeSec = workTimeSec !== null && sessionTimeSec !== null && workTimeSec <= sessionTimeSec
+    ? sessionTimeSec - workTimeSec
+    : null
 
   const routeCoords = useMemo(() => {
     if (!session?.route_coords) return null
@@ -211,15 +224,6 @@ export default function WorkoutSummary() {
                 <p style={{ fontSize: 22, fontWeight: 900, color: 'var(--text-primary)' }}>{fmtDuration(session.total_seconds)}</p>
               </div>
               <div style={{ background: 'var(--bg-input)', borderRadius: 12, padding: 16 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
-                  <Flame size={11} color="var(--accent)" />
-                  <p style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, margin: 0 }}>Calories</p>
-                </div>
-                <p style={{ fontSize: 22, fontWeight: 900, color: 'var(--text-primary)' }}>
-                  {session?.calories_burned || totalCalories || '--'}
-                </p>
-              </div>
-              <div style={{ background: 'var(--bg-input)', borderRadius: 12, padding: 16 }}>
                 <p style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>Total Sets</p>
                 <p style={{ fontSize: 22, fontWeight: 900, color: 'var(--text-primary)' }}>{sets.length}</p>
               </div>
@@ -261,7 +265,7 @@ export default function WorkoutSummary() {
             <SectionHeader label="Timing" />
             <StatRow label="Total Time" value={fmtDuration(session.total_seconds)} />
             <StatRow label="Work Time" value={fmtDuration(workTimeSec)} />
-            <StatRow label="Rest Time" value={fmtDuration(Math.max(0, restTimeSec))} />
+            <StatRow label="Rest Time" value={fmtDuration(restTimeSec)} />
 
             <SectionHeader label="Heart Rate" />
             <StatRow label="Avg Heart Rate" value={session.avg_heart_rate ? `${session.avg_heart_rate} bpm` : '--'} />
@@ -272,16 +276,10 @@ export default function WorkoutSummary() {
             <StatRow label="Anaerobic" value={session.anaerobic_effect ?? '--'} />
             <StatRow label="Exercise Load" value={session.exercise_load ?? '--'} />
 
-            <SectionHeader label="Nutrition" />
-            <StatRow label="Resting Cal" value={Math.round((session.total_seconds || 0) / 60)} />
-            <StatRow label="Active Cal" value={session?.calories_burned || totalCalories} />
-            <StatRow label="Total Cal Burned" value={session?.calories_burned || (totalCalories + Math.round((session.total_seconds || 0) / 60))} />
-
             <SectionHeader label="Workout Details" />
             <StatRow label="Total Reps" value={totalReps} />
             <StatRow label="Total Sets" value={sets.length} />
             <StatRow label="Total Volume" value={totalVolumeLbs > 0 ? `${totalVolumeLbs.toLocaleString()} lbs` : '--'} />
-            <StatRow label="Intensity (% est. 1RM)" value={`${intensityPct}%`} />
           </>
         )}
 

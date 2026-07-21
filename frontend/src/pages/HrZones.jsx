@@ -3,9 +3,10 @@ import { Activity, AlertTriangle, ChevronDown, ChevronRight, Gauge, HeartPulse, 
 import api from '../lib/api'
 import LoadingRunner from '../components/LoadingRunner'
 import { formatFreshness, hrZoneSourcePresentation } from '../lib/deviceSourcePresentation'
+import { ZONE_HEAT_PALETTE } from '../lib/athleteLanguage'
 
-const ZONE_COLORS = ['#5E6C7B', '#EAB308', '#F97316', '#E5484D', '#FFF6DC']
-const ZONE_TEXT_COLORS = ['#5E6C7B', '#EAB308', '#F97316', '#E5484D', '#B8A86A']
+const ZONE_COLORS = ZONE_HEAT_PALETTE.map(({ color }) => color)
+const ZONE_TEXT_COLORS = ZONE_HEAT_PALETTE.map(({ textColor }) => textColor)
 const MODEL_LABELS = {
   hrr: 'HR Reserve',
   maxhr: 'Max-HR %',

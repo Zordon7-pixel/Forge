@@ -1,11 +1,20 @@
-// hex required: consumed by `${color}XX` alpha templates — do not tokenize
+// Raw hex is required because live surfaces construct alpha colors with
+// `${color}XX`. Keep this palette in sync with --z1 through --z5 in index.css.
+export const ZONE_HEAT_PALETTE = Object.freeze([
+  Object.freeze({ color: '#5E6C7B', textColor: '#5E6C7B' }),
+  Object.freeze({ color: '#EAB308', textColor: '#EAB308' }),
+  Object.freeze({ color: '#F97316', textColor: '#F97316' }),
+  Object.freeze({ color: '#E5484D', textColor: '#E5484D' }),
+  Object.freeze({ color: '#FFF6DC', textColor: '#B8A86A' }),
+])
+
 const PACE_ZONES = [
-  { zone: 1, label: 'Easy', description: 'Conversational pace - builds aerobic base', color: '#5E6C7B' },
-  { zone: 2, label: 'Moderate', description: 'Steady aerobic work - improves endurance efficiency', color: '#EAB308' },
-  { zone: 3, label: 'Tempo', description: 'Comfortably hard - strengthens sustained speed', color: '#F97316' },
-  { zone: 4, label: 'Threshold', description: 'Controlled discomfort - raises lactate threshold', color: '#E5484D' },
-  { zone: 5, label: 'Race Pace', description: 'High intensity effort - race-specific speed', color: '#FFF6DC', textColor: '#B8A86A' },
-]
+  { zone: 1, label: 'Easy', description: 'Conversational pace - builds aerobic base' },
+  { zone: 2, label: 'Moderate', description: 'Steady aerobic work - improves endurance efficiency' },
+  { zone: 3, label: 'Tempo', description: 'Comfortably hard - strengthens sustained speed' },
+  { zone: 4, label: 'Threshold', description: 'Controlled discomfort - raises lactate threshold' },
+  { zone: 5, label: 'Race Pace', description: 'High intensity effort - race-specific speed' },
+].map((zone, index) => Object.freeze({ ...zone, ...ZONE_HEAT_PALETTE[index] }))
 
 const RPE_LABELS = {
   1: 'Very easy - recovery effort',
@@ -64,12 +73,13 @@ export function getVolumeLoad(sets, reps, weight) {
   }
 }
 
-function sessionVolume(session = {}) {
-  if (session.totalVolume != null) return Math.max(0, Number(session.totalVolume) || 0)
-  if (session.volume != null) return Math.max(0, Number(session.volume) || 0)
+function sessionVolume(session) {
+  const source = session || {}
+  if (source.totalVolume != null) return Math.max(0, Number(source.totalVolume) || 0)
+  if (source.volume != null) return Math.max(0, Number(source.volume) || 0)
   return Math.max(
     0,
-    (Number(session.sets) || 0) * (Number(session.reps) || 0) * (Number(session.weight) || 0)
+    (Number(source.sets) || 0) * (Number(source.reps) || 0) * (Number(source.weight) || 0)
   )
 }
 

@@ -13,6 +13,7 @@ import { clearActiveRunSession, elapsedFromSession, loadActiveRunSession, saveAc
 import { loadPostRunCheckInDraft, savePostRunCheckInDraft } from '../lib/postRunCheckInDraft'
 import { buildPlannedSessionSnapshot } from '../lib/runProvenance'
 import { getAuthenticatedUserId } from '../lib/auth'
+import { ZONE_HEAT_PALETTE } from '../lib/athleteLanguage'
 import {
   canRestoreGroupRunNavigation,
   groupRunIdFromNavigationState,
@@ -34,14 +35,13 @@ function haversineMiles(a, b) {
   return 2 * R * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x))
 }
 
-// hex required: consumed by `${color}XX` alpha templates — do not tokenize
 const ZONES = [
-  { key: 'Z1', min: 0.5, max: 0.6, name: 'Recovery', color: '#5E6C7B' },
-  { key: 'Z2', min: 0.6, max: 0.7, name: 'Aerobic Base', color: '#EAB308' },
-  { key: 'Z3', min: 0.7, max: 0.8, name: 'Tempo', color: '#F97316' },
-  { key: 'Z4', min: 0.8, max: 0.9, name: 'Threshold', color: '#E5484D' },
-  { key: 'Z5', min: 0.9, max: 1.01, name: 'Max Effort', color: '#FFF6DC', textColor: '#B8A86A' },
-]
+  { key: 'Z1', min: 0.5, max: 0.6, name: 'Recovery' },
+  { key: 'Z2', min: 0.6, max: 0.7, name: 'Aerobic Base' },
+  { key: 'Z3', min: 0.7, max: 0.8, name: 'Tempo' },
+  { key: 'Z4', min: 0.8, max: 0.9, name: 'Threshold' },
+  { key: 'Z5', min: 0.9, max: 1.01, name: 'Max Effort' },
+].map((zone, index) => ({ ...zone, ...ZONE_HEAT_PALETTE[index] }))
 
 function getZone(hr, maxHr, savedZones = []) {
   if (!hr) return null
