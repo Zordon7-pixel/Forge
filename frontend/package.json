@@ -22,7 +22,7 @@
     "@capacitor/ios": "^8.2.0",
     "@garmin/fitsdk": "^21.208.0",
     "@stripe/stripe-react-native": "^0.54.0",
-    "axios": "^1.7.9",
+    "axios": "^1.18.1",
     "i18next": "^25.8.13",
     "i18next-browser-languagedetector": "^8.2.1",
     "leaflet": "^1.9.4",
