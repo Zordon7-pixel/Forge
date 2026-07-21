@@ -9,6 +9,7 @@ import PhotoUploader from '../components/PhotoUploader'
 import AICoachFeedbackCard from '../components/AICoachFeedbackCard'
 import WorkoutCard from '../components/WorkoutCard'
 import { getPaceZone } from '../lib/athleteLanguage'
+import { parseZoneTimeline } from '../lib/runRecap'
 import { chartAccent, chartAxisProps, chartContrast, chartTooltipProps } from '../lib/chartTheme'
 
 function fmtDuration(s) {
@@ -39,6 +40,14 @@ function parseSecondaryMuscles(raw) {
     .split(',')
     .map((m) => m.trim().toLowerCase())
     .filter(Boolean)
+}
+
+function trustedZoneMinutes(session) {
+  const durationSeconds = session?.duration_seconds ?? session?.total_seconds
+  const timeline = parseZoneTimeline(session?.heart_rate_zones, durationSeconds)
+  if (!timeline.trusted || !(timeline.totalSeconds > 0)) return null
+  const minutes = timeline.seconds.map((seconds) => Math.round(seconds / 60))
+  return minutes.some((minute) => minute > 0) ? minutes : null
 }
 
 export default function WorkoutSummary() {
@@ -124,9 +133,8 @@ export default function WorkoutSummary() {
   const totalVolumeLbs = sets.reduce((acc, s) => acc + ((s.reps || 0) * (s.weight_lbs || 0)), 0)
   const intensityPct = sets.length ? Math.round((sets.reduce((sum, s) => sum + ((s.weight_lbs || 0) / Math.max((s.weight_lbs || 1) * 1.2, 1)), 0) / sets.length) * 100) : 0
   const muscleVolumeData = Object.entries(sets.reduce((acc, s) => { const key = (s.muscle_group || 'other').toLowerCase(); acc[key] = (acc[key] || 0) + (s.weight_lbs || 0) * (s.reps || 0); return acc }, {})).map(([name, value]) => ({ name, value }))
-  const hrZonesData = [
-    { zone: 'Z1', min: 0.35 }, { zone: 'Z2', min: 0.3 }, { zone: 'Z3', min: 0.2 }, { zone: 'Z4', min: 0.1 }, { zone: 'Z5', min: 0.05 }
-  ].map((z) => ({ ...z, min: Math.round((session?.total_seconds || 0) * z.min / 60) }))
+  const zoneMinutes = trustedZoneMinutes(session)
+  const hrZonesData = zoneMinutes?.map((min, index) => ({ zone: `Z${index + 1}`, min })) || null
   const totalCalories = Math.round(((session?.total_seconds || 0) / 60) * 5)
   const workTimeSec = sets.reduce((sum, set) => sum + (set.duration_seconds || 30), 0)
   const restTimeSec = (session?.total_seconds || 0) - workTimeSec
@@ -274,7 +282,6 @@ export default function WorkoutSummary() {
             <StatRow label="Total Sets" value={sets.length} />
             <StatRow label="Total Volume" value={totalVolumeLbs > 0 ? `${totalVolumeLbs.toLocaleString()} lbs` : '--'} />
             <StatRow label="Intensity (% est. 1RM)" value={`${intensityPct}%`} />
-            <StatRow label="Comparison" value={`vs last ${sessionMuscles[0] || 'similar'} day: +12% volume`} />
           </>
         )}
 
@@ -288,11 +295,13 @@ export default function WorkoutSummary() {
                 </PieChart>
               </ResponsiveContainer>
             </div>
-            <div style={{ width: '100%', height: 220, background: 'var(--bg-input)', borderRadius: 12, padding: 8, marginTop: 10 }}>
-              <ResponsiveContainer>
-                <BarChart data={hrZonesData}><XAxis dataKey="zone" {...chartAxisProps} /><YAxis {...chartAxisProps} /><Tooltip {...chartTooltipProps} /><Bar dataKey="min" fill={chartAccent} /></BarChart>
-              </ResponsiveContainer>
-            </div>
+            {hrZonesData && (
+              <div style={{ width: '100%', height: 220, background: 'var(--bg-input)', borderRadius: 12, padding: 8, marginTop: 10 }}>
+                <ResponsiveContainer>
+                  <BarChart data={hrZonesData}><XAxis dataKey="zone" {...chartAxisProps} /><YAxis {...chartAxisProps} /><Tooltip {...chartTooltipProps} /><Bar dataKey="min" fill={chartAccent} /></BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
           </div>
         )}
 
