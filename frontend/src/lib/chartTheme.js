@@ -18,3 +18,13 @@ export const chartTooltipProps = {
 
 export const chartAccent = 'var(--accent)'
 export const chartContrast = 'var(--text-primary)'
+
+export function isUsableChartValue(value) {
+  if (value === null || value === undefined || value === '') return false
+  return Number.isFinite(typeof value === 'number' ? value : Number(value))
+}
+
+export function hasUsableChartData(data, dataKey) {
+  if (!Array.isArray(data) || !dataKey) return false
+  return data.some((point) => point && isUsableChartValue(point[dataKey]))
+}

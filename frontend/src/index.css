@@ -6,6 +6,7 @@ html {
   font-size: 16px;
   -webkit-text-size-adjust: 100%;
   overflow-x: hidden;
+  scroll-padding-bottom: calc(var(--app-bottom-nav-height) + var(--app-bottom-content-gap));
 }
 
 :root {
@@ -34,6 +35,9 @@ html {
   --dur-med: 250ms;
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --app-bottom-nav-base-height: 59px;
+  --app-bottom-nav-height: calc(var(--app-bottom-nav-base-height) + var(--safe-bottom));
+  --app-bottom-content-gap: 16px;
 }
 
 .light {
@@ -141,6 +145,32 @@ body {
   display: flex;
   gap: 8px;
   min-width: 0;
+}
+
+.app-shell-main {
+  min-width: 0;
+  padding-bottom: calc(var(--app-bottom-nav-height) + var(--app-bottom-content-gap));
+}
+
+.app-shell-main :is(button, a, input, select, textarea, summary, [tabindex]):focus-visible,
+.app-shell-main details[open] {
+  scroll-margin-bottom: calc(var(--app-bottom-nav-height) + var(--app-bottom-content-gap));
+}
+
+.strength-workout-title {
+  display: -webkit-box;
+  overflow: hidden;
+  overflow-wrap: normal;
+  text-overflow: ellipsis;
+  word-break: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+@media (max-height: 700px) {
+  :root {
+    --app-bottom-content-gap: 24px;
+  }
 }
 
 @media (max-width: 390px) {

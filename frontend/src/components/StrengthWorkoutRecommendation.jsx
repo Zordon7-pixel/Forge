@@ -49,6 +49,7 @@ export default function StrengthWorkoutRecommendation({
   const scale = TEXT_SCALES[scaleIndex]
   const px = (value) => `${Math.round(value * scale)}px`
   const exercises = Array.isArray(plan?.main) ? plan.main : []
+  const fullTitle = title || plan?.workoutName || 'Forged Hybrid Workout'
 
   useEffect(() => {
     if (!expanded) return undefined
@@ -87,7 +88,7 @@ export default function StrengthWorkoutRecommendation({
       ref={containerRef}
       role={expanded ? 'dialog' : undefined}
       aria-modal={expanded ? 'true' : undefined}
-      aria-label={expanded ? `${title || 'Strength workout'} expanded` : undefined}
+      aria-label={expanded ? `${fullTitle} expanded` : undefined}
       tabIndex={expanded ? -1 : undefined}
       className="p-4"
       style={{
@@ -110,8 +111,13 @@ export default function StrengthWorkoutRecommendation({
             <Zap size={17} />
             <span style={{ fontSize: px(11), fontWeight: 950, textTransform: 'uppercase' }}>Strength + speed session</span>
           </div>
-          <h3 style={{ color: 'var(--text-primary)', fontSize: px(22), lineHeight: 1.2, fontWeight: 950, margin: '8px 0 0' }}>
-            {title || plan?.workoutName || 'Forged Hybrid Workout'}
+          <h3
+            className={expanded ? undefined : 'strength-workout-title'}
+            title={expanded ? undefined : fullTitle}
+            aria-label={fullTitle}
+            style={{ color: 'var(--text-primary)', fontSize: px(22), lineHeight: 1.2, fontWeight: 950, margin: '8px 0 0' }}
+          >
+            {fullTitle}
           </h3>
         </div>
 
