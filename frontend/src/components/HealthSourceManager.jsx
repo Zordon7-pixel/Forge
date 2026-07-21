@@ -5,8 +5,9 @@ import { formatFreshness, providerSourcePresentation } from '../lib/deviceSource
 import HealthService from '../services/HealthService'
 import {
   getLastHealthSyncResult,
-  HEALTH_SYNC_COMPLETED_EVENT,
+  HEALTH_SYNC_RESULT_EVENT,
   healthSyncFailureMessage,
+  healthSyncNotice,
 } from '../lib/healthSync'
 
 function SourcePill({ icon: Icon, label, detail }) {
@@ -46,12 +47,12 @@ export default function HealthSourceManager() {
 
   useEffect(() => {
     loadSources()
-    const handleCompleted = () => {
+    const handleSyncResult = () => {
       setLastSyncResult(getLastHealthSyncResult())
       loadSources()
     }
-    window.addEventListener(HEALTH_SYNC_COMPLETED_EVENT, handleCompleted)
-    return () => window.removeEventListener(HEALTH_SYNC_COMPLETED_EVENT, handleCompleted)
+    window.addEventListener(HEALTH_SYNC_RESULT_EVENT, handleSyncResult)
+    return () => window.removeEventListener(HEALTH_SYNC_RESULT_EVENT, handleSyncResult)
   }, [])
 
   const connectedSources = useMemo(() => {
@@ -76,8 +77,7 @@ export default function HealthSourceManager() {
     try {
       const result = await HealthService.syncNativeData({ requestPermission: true })
       setLastSyncResult(getLastHealthSyncResult())
-      const scanned = Array.isArray(result?.workouts) ? result.workouts.length : Number(result?.scanned || 0)
-      setNotice(`Apple Health synced: ${scanned} scanned, ${result.imported || 0} imported, ${result.skipped || 0} already saved.`)
+      setNotice(healthSyncNotice(result))
       await loadSources()
     } catch (err) {
       console.error('[health-sources] Apple Health sync failed:', err?.message || err)
@@ -94,7 +94,7 @@ export default function HealthSourceManager() {
           <p className="text-sm font-black" style={{ color: 'var(--text-primary)' }}>Health data & sync</p>
           <p className="mt-1 text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>
             {lastSyncResult
-              ? `${lastSyncResult.imported || 0} imported · ${lastSyncResult.skipped || 0} already saved · ${formatFreshness(lastSyncResult.syncedAt) || 'No sync yet'}`
+              ? `${lastSyncResult.complete === false ? `Partial · ${lastSyncResult.unresolved || 0} unresolved · ` : ''}${lastSyncResult.imported || 0} imported · ${lastSyncResult.skipped || 0} already saved · ${formatFreshness(lastSyncResult.syncedAt) || 'No sync yet'}`
               : 'Manage the data sources that power readiness and training changes.'}
           </p>
         </div>

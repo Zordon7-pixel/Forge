@@ -102,7 +102,7 @@ check(/call\.getArray\("zoneMinimums"/.test(swift) && /historyOptions\.zoneMinim
 check(/REQUIRED_HEALTH_AUTH_VERSION\s*=\s*4/.test(service) && /REQUIRED_WORKOUT_IMPORT_VERSION\s*=\s*5/.test(service), 'workout-effort permission upgrade and corrected workout summaries trigger a v5 full-history refresh once');
 check(/workoutUpgradeAvailable[\s\S]*workoutHistoryUpgradeRequired/.test(service), 'an old native shell cannot mark the v5 import complete before the corrected plugin arrives');
 check(/let profile\s*=\s*null[\s\S]*profile\s*=\s*data\?\.profile/.test(service), 'native sync keeps the HR profile in scope for its response');
-check(/if \(history\.available\)[\s\S]*markWorkoutHistoryUpgraded\(\)[\s\S]*else[\s\S]*markHealthResyncNeeded\(\)/.test(service), 'only a successful full-history read completes the import upgrade');
+check(/isHealthHistoryImportComplete\([\s\S]*historyAvailable: history\.available[\s\S]*errors: importResult\.errors[\s\S]*if \(importComplete && workoutUpgradeAvailable\)[\s\S]*const complete = importComplete && upgradeCommitted[\s\S]*if \(complete\)[\s\S]*clearHealthHistoryTransferPending\(\)/.test(service), 'only a successful full-history read without retryable row failures completes the import upgrade');
 check(/actualRuns[^\n]*filter\(isRunningActivity\)/.test(historySource), 'History run totals and charts use running activities only');
 check(/INSERT INTO run_import_tombstones[\s\S]*ON CONFLICT \(user_id, source_key\) DO NOTHING/.test(runsRouteSource), 'deleting a health import records a user-scoped tombstone before removing the run');
 check(/SELECT id FROM run_import_tombstones WHERE user_id=\? AND source_key=\?/.test(importRouteSource), 'future full health syncs honor deleted-run tombstones');

@@ -1,16 +1,21 @@
 import { Capacitor, registerPlugin } from '@capacitor/core'
 import api from '../lib/api'
 import {
-  announceHealthSyncCompleted,
-  createHealthImportBatches,
+  announceHealthSyncResult,
+  clearHealthHistoryTransferPending,
+  createHealthSyncCoordinator,
   HEALTH_IMPORT_TIMEOUT_MS,
+  importHealthWorkoutBatches,
+  isHealthHistoryImportComplete,
+  isHealthHistoryTransferPending,
+  markHealthHistoryTransferPending,
+  retryableHealthSyncErrors,
 } from '../lib/healthSync'
 
 const IOS_UA_REGEX = /iP(ad|hone|od)/i
 const NATIVE_HEALTH_AUTH_KEY = 'forge_health_authorized'
 const NATIVE_HEALTH_AUTH_VERSION_KEY = 'forge_health_authorized_version'
 const REQUIRED_HEALTH_AUTH_VERSION = 4
-const HEALTH_RESYNC_NEEDED_KEY = 'forge.health.resyncNeeded'
 const AUTO_HEALTH_SYNC_LAST_SYNC_KEY = 'forge_auto_health_sync_last_sync_at'
 const WORKOUT_IMPORT_VERSION_KEY = 'forge_health_workout_import_version'
 const REQUIRED_WORKOUT_IMPORT_VERSION = 5
@@ -85,31 +90,6 @@ function hasExpandedNativeAuthorization() {
   }
 }
 
-function healthResyncNeeded() {
-  try {
-    return localStorage.getItem(HEALTH_RESYNC_NEEDED_KEY) === '1'
-  } catch (error) {
-    console.error('[HealthService] resync state could not be read:', error?.message || error)
-    return false
-  }
-}
-
-function markHealthResyncNeeded() {
-  try {
-    localStorage.setItem(HEALTH_RESYNC_NEEDED_KEY, '1')
-  } catch (error) {
-    console.error('[HealthService] resync state could not be saved:', error?.message || error)
-  }
-}
-
-function clearHealthResyncNeeded() {
-  try {
-    localStorage.removeItem(HEALTH_RESYNC_NEEDED_KEY)
-  } catch (error) {
-    console.error('[HealthService] resync state could not be cleared:', error?.message || error)
-  }
-}
-
 function workoutHistoryUpgradeRequired() {
   try {
     return Number(localStorage.getItem(WORKOUT_IMPORT_VERSION_KEY) || 0) < REQUIRED_WORKOUT_IMPORT_VERSION
@@ -122,8 +102,10 @@ function workoutHistoryUpgradeRequired() {
 function markWorkoutHistoryUpgraded() {
   try {
     localStorage.setItem(WORKOUT_IMPORT_VERSION_KEY, String(REQUIRED_WORKOUT_IMPORT_VERSION))
+    return true
   } catch (error) {
     console.error('[HealthService] workout import version could not be saved:', error?.message || error)
+    return false
   }
 }
 
@@ -146,7 +128,7 @@ function nativeBridgeUnavailableReason(error) {
 class HealthService {
   constructor() {
     this.healthKit = null
-    this.nativeSyncPromise = null
+    this.nativeSyncCoordinator = createHealthSyncCoordinator((options) => this.performNativeSync(options))
   }
 
   async loadHealthKit() {
@@ -316,22 +298,7 @@ class HealthService {
   }
 
   async syncNativeData(options = {}) {
-    if (this.nativeSyncPromise) {
-      try {
-        const sharedResult = await this.nativeSyncPromise
-        if (!options.requestPermission || !sharedResult?.authorizationUpgradeRequired) return sharedResult
-      } catch (error) {
-        if (!options.requestPermission) throw error
-      }
-    }
-
-    const syncPromise = this.performNativeSync(options)
-    this.nativeSyncPromise = syncPromise
-    try {
-      return await syncPromise
-    } finally {
-      if (this.nativeSyncPromise === syncPromise) this.nativeSyncPromise = null
-    }
+    return this.nativeSyncCoordinator.run(options)
   }
 
   async performNativeSync({ requestPermission = false } = {}) {
@@ -343,7 +310,7 @@ class HealthService {
     await this.syncToProfile(result.metrics)
     const nativeMetricsVersion = Number(result.metrics?.metricsSchemaVersion || 1)
     const workoutUpgradeAvailable = nativeMetricsVersion >= REQUIRED_WORKOUT_IMPORT_VERSION
-    const historyOptions = (healthResyncNeeded() || (workoutUpgradeAvailable && workoutHistoryUpgradeRequired())) ? { forceFullSync: true } : {}
+    const historyOptions = (isHealthHistoryTransferPending() || (workoutUpgradeAvailable && workoutHistoryUpgradeRequired())) ? { forceFullSync: true } : {}
     let profile = null
     try {
       const { data } = await api.get('/profile/hr-zones')
@@ -356,34 +323,40 @@ class HealthService {
     } catch (error) {
       console.error('[HealthService] HR zone profile lookup failed:', error?.message || error)
     }
+
+    // HealthKit advances its native anchor when history is read. Persist the retry checkpoint first.
+    if (!markHealthHistoryTransferPending()) {
+      throw new Error('Unable to checkpoint Apple Health history before syncing. Please try again.')
+    }
     const history = await this.getWorkoutHistory(historyOptions)
     const workouts = history.available && history.workouts.length > 0 ? history.workouts : result.workouts
     let importResult = { imported: 0, skipped: 0, errors: [] }
     if (Array.isArray(workouts) && workouts.length > 0) {
       try {
-        let offset = 0
-        for (const batch of createHealthImportBatches(workouts)) {
+        importResult = await importHealthWorkoutBatches(workouts, async (batch) => {
           const { data } = await api.post('/import/health', { workouts: batch }, { timeout: HEALTH_IMPORT_TIMEOUT_MS })
-          importResult.imported += Number(data?.imported || 0)
-          importResult.skipped += Number(data?.skipped || 0)
-          const batchErrors = Array.isArray(data?.errors) ? data.errors : []
-          importResult.errors.push(...batchErrors.map((item) => ({
-            ...item,
-            index: Number.isInteger(Number(item?.index)) ? offset + Number(item.index) : item?.index,
-          })))
-          offset += batch.length
-        }
+          return data
+        })
       } catch (error) {
-        markHealthResyncNeeded()
+        markHealthHistoryTransferPending()
         throw error
       }
     }
 
-    if (history.available) {
-      clearHealthResyncNeeded()
-      if (workoutUpgradeAvailable) markWorkoutHistoryUpgraded()
+    const unresolved = retryableHealthSyncErrors(importResult.errors)
+    const importComplete = isHealthHistoryImportComplete({
+      historyAvailable: history.available,
+      errors: importResult.errors,
+    })
+    let upgradeCommitted = true
+    if (importComplete && workoutUpgradeAvailable) {
+      upgradeCommitted = markWorkoutHistoryUpgraded()
+    }
+    const complete = importComplete && upgradeCommitted
+    if (complete) {
+      clearHealthHistoryTransferPending()
     } else {
-      markHealthResyncNeeded()
+      markHealthHistoryTransferPending()
     }
 
     markAutoHealthSyncAttempted()
@@ -396,8 +369,11 @@ class HealthService {
       imported: Number(importResult.imported || 0),
       skipped: Number(importResult.skipped || 0),
       errors: importResult.errors || [],
+      unresolved: unresolved.length,
+      complete,
+      status: complete ? 'complete' : 'partial',
     }
-    announceHealthSyncCompleted(syncResult)
+    announceHealthSyncResult(syncResult, { complete })
     return syncResult
   }
 

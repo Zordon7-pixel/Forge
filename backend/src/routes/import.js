@@ -1,12 +1,17 @@
 const router = require('express').Router();
+const crypto = require('node:crypto');
 const { v4: uuidv4 } = require('uuid');
-const { dbAll, dbGet, dbRun } = require('../db');
+const { dbGet, withTransaction } = require('../db');
 const auth = require('../middleware/auth');
 const { activityKind } = require('../lib/runActivity');
 const { buildRunImportKeys } = require('../lib/runImportKey');
 const { normalizeWorkoutMetrics } = require('../lib/workoutMetrics');
 const { findPlannedRunForDate, hasMeaningfulPlannedRun } = require('../lib/plannedRunMatch');
 const autoUpdatePRs = require('../services/prAuto');
+
+function hashImportKey(parts) {
+  return crypto.createHash('sha256').update(JSON.stringify(parts)).digest('hex');
+}
 
 function asNumber(value, fallback = 0) {
   const num = Number(value);
@@ -174,9 +179,9 @@ function startsMatch(existingStart, importedStart) {
   return Math.abs(existingTime - importedTime) <= 30 * 60 * 1000;
 }
 
-async function findExistingRun(userId, item) {
+async function findExistingRun(db, userId, item) {
   if (item.sourceWorkoutId) {
-    const exact = await dbGet(
+    const exact = await db.get(
       `SELECT id, date, type, watch_mode, watch_activity_type, watch_normalized_type,
               health_start_at, perceived_effort, pain_level, post_energy, notes,
               planned_session_json, workout_metrics_json
@@ -188,7 +193,7 @@ async function findExistingRun(userId, item) {
     if (exact) return exact;
   }
 
-  const candidates = await dbAll(
+  const candidates = await db.all(
     `SELECT id, date, type, watch_mode, watch_activity_type, watch_normalized_type,
             health_start_at, perceived_effort, pain_level, post_energy, notes,
             planned_session_json, workout_metrics_json
@@ -217,10 +222,28 @@ function importKeysForItem(item) {
   });
 }
 
-async function isDeletedImport(userId, item) {
+function canonicalImportSourceKey(item) {
+  const key = importKeysForItem(item)[0];
+  if (key) return key;
+  const source = String(item.source || 'imported').trim().toLowerCase().slice(0, 40) || 'imported';
+  return `${source}:fallback:${hashImportKey([
+    item.date,
+    item.startDate,
+    item.section,
+    item.runType,
+    item.liftCategory,
+    String(item.raw?.type || item.raw?.activityType || '').trim().toLowerCase(),
+    Number(item.distanceMiles || 0).toFixed(3),
+    Math.max(0, Math.round(Number(item.durationSeconds || 0))),
+    item.avgHeartRate,
+    item.calories,
+  ])}`;
+}
+
+async function isDeletedImport(db, userId, item) {
   const keys = importKeysForItem(item);
   for (const key of keys) {
-    const tombstone = await dbGet(
+    const tombstone = await db.get(
       'SELECT id FROM run_import_tombstones WHERE user_id=? AND source_key=? LIMIT 1',
       [userId, key]
     );
@@ -229,19 +252,18 @@ async function isDeletedImport(userId, item) {
   return false;
 }
 
-async function liftExists(userId, date, distanceMiles, durationSeconds) {
+async function findExistingLift(db, userId, date, distanceMiles, durationSeconds) {
   const distanceTag = `[import_distance:${Number(distanceMiles || 0).toFixed(3)}]`;
-  const existing = await dbGet(
+  return db.get(
     'SELECT id FROM lifts WHERE user_id=? AND date=? AND (notes LIKE ? OR ABS(COALESCE(workout_duration_seconds,0) - ?) <= 60) LIMIT 1',
     [userId, date, `%${distanceTag}%`, durationSeconds]
   );
-  return Boolean(existing);
 }
 
-async function insertRun(userId, item) {
+async function insertRun(db, userId, item) {
   const runId = uuidv4();
-  const planned = item.section === 'run' ? await findPlannedRunForDate(userId, item.date) : null;
-  await dbRun(
+  const planned = item.section === 'run' ? await findPlannedRunForDate(userId, item.date, { get: db.get }) : null;
+  await db.run(
     `INSERT INTO runs (
       id, user_id, date, type, distance_miles, duration_seconds, perceived_effort, notes,
       avg_heart_rate, max_heart_rate, heart_rate_zones, calories, watch_mode, watch_activity_type,
@@ -287,12 +309,12 @@ async function insertRun(userId, item) {
   return runId;
 }
 
-async function updateExistingRunHealth(userId, existingRun, item) {
+async function updateExistingRunHealth(db, userId, existingRun, item) {
   const normalizedZones = item.zoneSeconds || normalizeZoneSeconds();
   const totalZoneSeconds = ['z1', 'z2', 'z3', 'z4', 'z5'].reduce((sum, zone) => sum + asNumber(normalizedZones[zone], 0), 0);
   const zoneParam = totalZoneSeconds > 0 ? JSON.stringify(normalizedZones) : null;
   const planned = item.section === 'run' && !hasMeaningfulPlannedRun(existingRun.planned_session_json)
-    ? await findPlannedRunForDate(userId, item.date)
+    ? await findPlannedRunForDate(userId, item.date, { get: db.get })
     : null;
   const storedWorkoutMetrics = parseStoredWorkoutMetrics(existingRun.workout_metrics_json);
   const existingEffortIsTrusted = storedWorkoutMetrics.workout_effort_user_rated === 1
@@ -308,7 +330,7 @@ async function updateExistingRunHealth(userId, existingRun, item) {
     ...item.workoutMetrics,
   };
 
-  await dbRun(
+  await db.run(
     `UPDATE runs SET
       perceived_effort = COALESCE(?, perceived_effort),
       avg_heart_rate = COALESCE(?, avg_heart_rate),
@@ -377,10 +399,10 @@ async function updateImportedRunPrs(userId, runId) {
   if (run) await autoUpdatePRs(userId, run);
 }
 
-async function insertLift(userId, item) {
+async function insertLift(db, userId, item) {
   const liftId = uuidv4();
   const distanceTag = `[import_distance:${Number(item.distanceMiles || 0).toFixed(3)}]`;
-  await dbRun(
+  await db.run(
     `INSERT INTO lifts (
       id, user_id, date, muscle_groups, intensity, notes, exercise_name,
       workout_duration_seconds, avg_heart_rate, category, watch_activity_type, watch_normalized_type
@@ -400,9 +422,112 @@ async function insertLift(userId, item) {
       'imported',
     ]
   );
+  return liftId;
 }
 
-async function importRows(userId, rawRows) {
+async function findRunById(db, userId, runId) {
+  return db.get(
+    `SELECT id, date, type, watch_mode, watch_activity_type, watch_normalized_type,
+            health_start_at, perceived_effort, pain_level, post_energy, notes,
+            planned_session_json, workout_metrics_json
+     FROM runs
+     WHERE id=? AND user_id=?
+     LIMIT 1`,
+    [runId, userId]
+  );
+}
+
+async function claimImportedActivity(db, userId, item) {
+  const sourceKey = canonicalImportSourceKey(item);
+  const claimToken = uuidv4();
+  await db.run(
+    `INSERT INTO activity_import_claims (user_id, source_key, claim_token)
+     VALUES (?, ?, ?)
+     ON CONFLICT (user_id, source_key) DO NOTHING`,
+    [userId, sourceKey, claimToken]
+  );
+  const claim = await db.get(
+    `SELECT source_key, claim_token, activity_kind, activity_id
+     FROM activity_import_claims
+     WHERE user_id=? AND source_key=?
+     FOR UPDATE`,
+    [userId, sourceKey]
+  );
+  if (!claim) {
+    const error = new Error('Unable to acquire workout import claim');
+    error.code = 'IMPORT_CLAIM_FAILED';
+    throw error;
+  }
+  return { ...claim, sourceKey, claimToken, owned: claim.claim_token === claimToken };
+}
+
+async function recoverStaleClaim(db, userId, claim) {
+  const result = await db.run(
+    `UPDATE activity_import_claims
+     SET claim_token=?, activity_kind=NULL, activity_id=NULL, updated_at=NOW()
+     WHERE user_id=? AND source_key=? AND claim_token=?`,
+    [claim.claimToken, userId, claim.sourceKey, claim.claim_token]
+  );
+  if (result.changes !== 1) {
+    const error = new Error('Workout import claim changed before recovery');
+    error.code = 'IMPORT_CLAIM_FAILED';
+    throw error;
+  }
+}
+
+async function finalizeImportClaim(db, userId, claim, activityKindName, activityId) {
+  const result = await db.run(
+    `UPDATE activity_import_claims
+     SET activity_kind=?, activity_id=?, updated_at=NOW()
+     WHERE user_id=? AND source_key=? AND claim_token=?`,
+    [activityKindName, activityId, userId, claim.sourceKey, claim.claimToken]
+  );
+  if (result.changes !== 1) {
+    const error = new Error('Workout import claim could not be finalized');
+    error.code = 'IMPORT_CLAIM_FAILED';
+    throw error;
+  }
+}
+
+async function importItem(db, userId, item) {
+  if ((item.section === 'run' || item.section === 'activity') && await isDeletedImport(db, userId, item)) {
+    return { status: 'skipped', runId: null };
+  }
+
+  const claim = await claimImportedActivity(db, userId, item);
+  if (!claim.owned) {
+    if (claim.activity_kind === 'run' && claim.activity_id) {
+      const claimedRun = await findRunById(db, userId, claim.activity_id);
+      if (claimedRun) {
+        const runId = await updateExistingRunHealth(db, userId, claimedRun, item);
+        return { status: 'skipped', runId };
+      }
+    } else if (claim.activity_kind === 'lift' && claim.activity_id) {
+      const claimedLift = await db.get('SELECT id FROM lifts WHERE id=? AND user_id=? LIMIT 1', [claim.activity_id, userId]);
+      if (claimedLift) return { status: 'skipped', runId: null };
+    }
+    await recoverStaleClaim(db, userId, claim);
+  }
+
+  if (item.section === 'run' || item.section === 'activity') {
+    const existing = await findExistingRun(db, userId, item);
+    const runId = existing
+      ? await updateExistingRunHealth(db, userId, existing, item)
+      : await insertRun(db, userId, item);
+    await finalizeImportClaim(db, userId, claim, 'run', runId);
+    return { status: existing ? 'skipped' : 'imported', runId };
+  }
+
+  const existingLift = await findExistingLift(db, userId, item.date, item.distanceMiles, item.durationSeconds);
+  const liftId = existingLift?.id || await insertLift(db, userId, item);
+  await finalizeImportClaim(db, userId, claim, 'lift', liftId);
+  return { status: existingLift ? 'skipped' : 'imported', runId: null };
+}
+
+async function importRows(userId, rawRows, {
+  transaction = withTransaction,
+  updateRunPrs = updateImportedRunPrs,
+} = {}) {
   const errors = [];
   let imported = 0;
   let skipped = 0;
@@ -415,35 +540,28 @@ async function importRows(userId, rawRows) {
         skipped += 1;
         continue;
       }
+      const outcome = await transaction(
+        (tx) => importItem(tx, userId, item),
+        { userIds: [userId], requireUserIds: [userId] }
+      );
+      if (outcome.status === 'imported') imported += 1;
+      else skipped += 1;
 
-      if (item.section === 'run' || item.section === 'activity') {
-        if (await isDeletedImport(userId, item)) {
-          skipped += 1;
-          continue;
+      if (outcome.runId) {
+        try {
+          await updateRunPrs(userId, outcome.runId);
+        } catch (error) {
+          console.error(`[import] PR refresh failed for run ${outcome.runId}:`, error.message);
         }
-        const existing = await findExistingRun(userId, item);
-        if (existing) {
-          const runId = await updateExistingRunHealth(userId, existing, item);
-          await updateImportedRunPrs(userId, runId);
-          skipped += 1;
-          continue;
-        }
-        const runId = await insertRun(userId, item);
-        await updateImportedRunPrs(userId, runId);
-        imported += 1;
-        continue;
       }
-
-      const exists = await liftExists(userId, item.date, item.distanceMiles, item.durationSeconds);
-      if (exists) {
-        skipped += 1;
-        continue;
-      }
-      await insertLift(userId, item);
-      imported += 1;
     } catch (err) {
       console.error(`[import] row ${i} failed:`, err.message);
-      errors.push({ index: i, error: err.message || 'Import failed for row' });
+      errors.push({
+        index: i,
+        error: err.message || 'Import failed for row',
+        code: err.code || 'IMPORT_OPERATION_FAILED',
+        retryable: err.code !== 'IMPORT_ROW_INVALID',
+      });
     }
   }
 
@@ -475,6 +593,8 @@ router.post('/workouts', auth, async (req, res) => {
 module.exports = router;
 module.exports._test = {
   classifyType,
+  canonicalImportSourceKey,
+  importRows,
   normalizeRouteCoords,
   normalizeRow,
   importKeysForItem,

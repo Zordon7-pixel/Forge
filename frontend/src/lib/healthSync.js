@@ -1,8 +1,39 @@
+export const HEALTH_SYNC_RESULT_EVENT = 'forge-health-sync-result'
 export const HEALTH_SYNC_COMPLETED_EVENT = 'forge-health-sync-completed'
 export const HEALTH_IMPORT_BATCH_SIZE = 10
 export const HEALTH_IMPORT_TIMEOUT_MS = 30000
 
 const HEALTH_SYNC_RESULT_KEY = 'forge_last_health_sync_result'
+const HEALTH_HISTORY_TRANSFER_PENDING_KEY = 'forge.health.resyncNeeded'
+
+export function isHealthHistoryTransferPending() {
+  try {
+    return localStorage.getItem(HEALTH_HISTORY_TRANSFER_PENDING_KEY) === '1'
+  } catch (error) {
+    console.warn('[health-sync] transfer state lookup failed:', error?.message || error)
+    return true
+  }
+}
+
+export function markHealthHistoryTransferPending() {
+  try {
+    localStorage.setItem(HEALTH_HISTORY_TRANSFER_PENDING_KEY, '1')
+    return true
+  } catch (error) {
+    console.error('[health-sync] transfer state save failed:', error?.message || error)
+    return false
+  }
+}
+
+export function clearHealthHistoryTransferPending() {
+  try {
+    localStorage.removeItem(HEALTH_HISTORY_TRANSFER_PENDING_KEY)
+    return true
+  } catch (error) {
+    console.error('[health-sync] transfer state cleanup failed:', error?.message || error)
+    return false
+  }
+}
 
 export function createHealthImportBatches(workouts, batchSize = HEALTH_IMPORT_BATCH_SIZE) {
   if (!Array.isArray(workouts) || workouts.length === 0) return []
@@ -16,6 +47,80 @@ export function createHealthImportBatches(workouts, batchSize = HEALTH_IMPORT_BA
   return batches
 }
 
+export async function importHealthWorkoutBatches(workouts, sendBatch) {
+  const result = { imported: 0, skipped: 0, errors: [] }
+  let offset = 0
+
+  for (const batch of createHealthImportBatches(workouts)) {
+    try {
+      const data = await sendBatch(batch)
+      result.imported += Number(data?.imported || 0)
+      result.skipped += Number(data?.skipped || 0)
+      const batchErrors = Array.isArray(data?.errors) ? data.errors : []
+      result.errors.push(...batchErrors.map((item) => ({
+        ...item,
+        index: Number.isInteger(Number(item?.index)) ? offset + Number(item.index) : item?.index,
+      })))
+      offset += batch.length
+    } catch (error) {
+      error.partialImportResult = { ...result, errors: [...result.errors] }
+      throw error
+    }
+  }
+
+  return result
+}
+
+export function retryableHealthSyncErrors(errors) {
+  return (Array.isArray(errors) ? errors : []).filter((error) => error?.retryable !== false)
+}
+
+export function isHealthHistoryImportComplete({ historyAvailable, errors } = {}) {
+  return Boolean(historyAvailable) && retryableHealthSyncErrors(errors).length === 0
+}
+
+export function createHealthSyncCoordinator(performSync) {
+  if (typeof performSync !== 'function') throw new Error('Health sync coordinator requires an executor.')
+  let activeOperation = null
+
+  return {
+    async run(options = {}) {
+      const requestPermission = Boolean(options.requestPermission)
+
+      while (true) {
+        const sharedOperation = activeOperation
+        if (sharedOperation) {
+          try {
+            const sharedResult = await sharedOperation.promise
+            if (!requestPermission || sharedOperation.requestPermission || !sharedResult?.authorizationUpgradeRequired) {
+              return sharedResult
+            }
+          } catch (error) {
+            if (!requestPermission || sharedOperation.requestPermission) throw error
+          }
+          continue
+        }
+
+        const operation = {
+          requestPermission,
+          promise: null,
+        }
+        operation.promise = Promise.resolve().then(() => performSync({ ...options, requestPermission }))
+        activeOperation = operation
+
+        try {
+          return await operation.promise
+        } finally {
+          if (activeOperation === operation) activeOperation = null
+        }
+      }
+    },
+    hasActiveOperation() {
+      return Boolean(activeOperation)
+    },
+  }
+}
+
 export function getLastHealthSyncResult() {
   try {
     const parsed = JSON.parse(localStorage.getItem(HEALTH_SYNC_RESULT_KEY) || 'null')
@@ -26,13 +131,17 @@ export function getLastHealthSyncResult() {
   }
 }
 
-export function announceHealthSyncCompleted(result) {
+export function announceHealthSyncResult(result, { complete = true } = {}) {
   const scanned = Array.isArray(result?.workouts) ? result.workouts.length : Number(result?.scanned || result?.total || 0)
+  const retryableErrors = retryableHealthSyncErrors(result?.errors)
   const summary = {
     scanned: Number(scanned || 0),
     imported: Number(result?.imported || 0),
     skipped: Number(result?.skipped || 0),
     errors: Array.isArray(result?.errors) ? result.errors : [],
+    unresolved: retryableErrors.length,
+    complete: Boolean(complete),
+    status: complete ? 'complete' : 'partial',
     authorizationUpgradeRequired: Boolean(result?.authorizationUpgradeRequired),
     syncedAt: new Date().toISOString(),
   }
@@ -44,12 +153,21 @@ export function announceHealthSyncCompleted(result) {
   }
 
   if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent(HEALTH_SYNC_COMPLETED_EVENT, {
-      detail: { ...summary, metrics: result?.metrics || null },
-    }))
+    const detail = { ...summary, metrics: result?.metrics || null }
+    window.dispatchEvent(new CustomEvent(HEALTH_SYNC_RESULT_EVENT, { detail }))
+    if (complete) window.dispatchEvent(new CustomEvent(HEALTH_SYNC_COMPLETED_EVENT, { detail }))
   }
 
   return summary
+}
+
+export function healthSyncNotice(result) {
+  const scanned = Array.isArray(result?.workouts) ? result.workouts.length : Number(result?.scanned || 0)
+  if (result?.complete === false) {
+    const unresolved = Number(result?.unresolved || retryableHealthSyncErrors(result?.errors).length || 0)
+    return `Apple Health partially synced: ${scanned} scanned, ${result?.imported || 0} imported, ${result?.skipped || 0} already saved, ${unresolved} unresolved. Forged Hybrid will retry automatically.`
+  }
+  return `Apple Health synced: ${scanned} scanned, ${result?.imported || 0} imported, ${result?.skipped || 0} already saved.`
 }
 
 export function healthSyncFailureMessage(error) {

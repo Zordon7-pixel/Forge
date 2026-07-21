@@ -106,6 +106,19 @@ CREATE TABLE IF NOT EXISTS run_import_tombstones (
 
 CREATE INDEX IF NOT EXISTS idx_run_import_tombstones_user ON run_import_tombstones(user_id);
 
+CREATE TABLE IF NOT EXISTS activity_import_claims (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  source_key TEXT NOT NULL,
+  claim_token TEXT NOT NULL,
+  activity_kind TEXT,
+  activity_id TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(user_id, source_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_activity_import_claims_activity ON activity_import_claims(user_id, activity_kind, activity_id);
+
 CREATE TABLE IF NOT EXISTS shoe_catalog (
   id TEXT PRIMARY KEY,
   brand TEXT NOT NULL,

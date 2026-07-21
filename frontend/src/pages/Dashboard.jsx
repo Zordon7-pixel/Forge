@@ -15,7 +15,7 @@ import { useProContext } from '../context/ProContext'
 import { fetchDailyExecution, recommendationFromExecution, hasExecutableSession, runRouteState, localDateISO } from '../lib/dailyExecution'
 import { formatGroupRunDate, upcomingGroupRun } from '../lib/groupRuns'
 import { resolveReadiness } from '../lib/truthConsistency'
-import { HEALTH_SYNC_COMPLETED_EVENT } from '../lib/healthSync'
+import { HEALTH_SYNC_RESULT_EVENT } from '../lib/healthSync'
 
 function fmtPace(durationSeconds, distance) {
   if (!durationSeconds || !distance) return '--'
@@ -369,7 +369,7 @@ export default function Dashboard() {
       fetchDashboardData()
       fetchReadinessData()
     }
-    window.addEventListener(HEALTH_SYNC_COMPLETED_EVENT, handleHealthSyncCompleted)
+    window.addEventListener(HEALTH_SYNC_RESULT_EVENT, handleHealthSyncCompleted)
 
     try {
       const appStateHandle = CapacitorApp.addListener('appStateChange', ({ isActive }) => {
@@ -401,7 +401,7 @@ export default function Dashboard() {
     return () => {
       cancelled = true
       document.removeEventListener('visibilitychange', handleVisibility)
-      window.removeEventListener(HEALTH_SYNC_COMPLETED_EVENT, handleHealthSyncCompleted)
+      window.removeEventListener(HEALTH_SYNC_RESULT_EVENT, handleHealthSyncCompleted)
       listenerHandles.forEach((handle) => handle?.remove?.())
     }
   }, [fetchDashboardData, fetchReadinessData])

@@ -323,6 +323,19 @@ async function initDb() {
       );
     `);
     await client.query('CREATE INDEX IF NOT EXISTS idx_run_import_tombstones_user ON run_import_tombstones(user_id)');
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS activity_import_claims (
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        source_key TEXT NOT NULL,
+        claim_token TEXT NOT NULL,
+        activity_kind TEXT,
+        activity_id TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY(user_id, source_key)
+      );
+    `);
+    await client.query('CREATE INDEX IF NOT EXISTS idx_activity_import_claims_activity ON activity_import_claims(user_id, activity_kind, activity_id)');
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS shoe_catalog (
