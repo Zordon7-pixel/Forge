@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { App as CapacitorApp } from '@capacitor/app'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { CalendarClock, X } from 'lucide-react'
+import { CalendarClock, Dumbbell, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import InsightsSheet, { CalendarDayDetailSheet, DailyCoachFlow, ReadinessBreakdownModal, RecentActivityCard, TodayDetailSheet, WatchSyncWidget } from '../components/InsightsSheet'
 import { useUnits } from '../context/UnitsContext'
@@ -133,6 +133,59 @@ function TrainingGapPrompt({ proposal, deciding, error, onDecision }) {
   )
 }
 
+function HybridSessionPrompt({ reconciliation, deciding, error, onDecision }) {
+  if (!reconciliation) return null
+  const choices = [
+    ['completed_untracked', 'Completed it — forgot to track'],
+    ['later', 'Doing it later'],
+    ['life_event', 'Life got in the way'],
+    ['skipped', 'Skipped this one'],
+  ]
+  return (
+    <section
+      aria-labelledby="hybrid-reconciliation-title"
+      className="rounded-xl p-4"
+      style={{ background: 'var(--bg-card)', border: '1px solid var(--accent)' }}
+    >
+      <div className="flex items-start gap-3">
+        <Dumbbell size={20} color="var(--accent)" style={{ flex: '0 0 auto', marginTop: 2 }} />
+        <div className="min-w-0 flex-1">
+          <p className="text-[10px] font-black uppercase" style={{ color: 'var(--accent)', margin: 0 }}>Hybrid session check</p>
+          <h2 id="hybrid-reconciliation-title" className="mt-1 text-lg font-black" style={{ color: 'var(--text-primary)' }}>How did strength go?</h2>
+          <p className="mt-1 text-sm leading-6" style={{ color: 'var(--text-muted)' }}>
+            We found your run from {reconciliation.sessionDate}, but not the paired strength session: {reconciliation.liftTitle}.
+          </p>
+          <p className="mt-2 text-xs leading-5" style={{ color: 'var(--text-muted)' }}>
+            Pick what happened. This is schedule context, not a failure score.
+          </p>
+          {reconciliation.pattern?.reviewRecommended && (
+            <p className="mt-3 rounded-lg p-2 text-xs leading-5" style={{ background: 'var(--accent-dim)', color: 'var(--text-primary)' }}>
+              This has happened {reconciliation.pattern.count} times recently. After this choice, consider fewer double days or a different strength frequency.
+            </p>
+          )}
+        </div>
+      </div>
+      {error && <p role="alert" className="mt-3 rounded-lg p-2 text-sm" style={{ background: 'var(--danger-dim)', color: 'var(--danger)' }}>{error}</p>}
+      <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+        {choices.map(([value, label], index) => (
+          <button
+            key={value}
+            type="button"
+            className="min-h-11 rounded-lg px-3 py-2 text-sm font-bold disabled:opacity-60"
+            style={index === 0
+              ? { background: 'var(--accent)', color: 'var(--on-accent)' }
+              : { background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}
+            disabled={Boolean(deciding)}
+            onClick={() => onDecision(value)}
+          >
+            {deciding === value ? 'Saving...' : label}
+          </button>
+        ))}
+      </div>
+    </section>
+  )
+}
+
 const CELEBRATION_CONFETTI = Array.from({ length: 14 }, (_, index) => index)
 
 function HybridMilestoneCelebration({ milestone, onDismiss }) {
@@ -234,6 +287,10 @@ export default function Dashboard() {
   const [trainingGapDecision, setTrainingGapDecision] = useState(null)
   const [trainingGapError, setTrainingGapError] = useState('')
   const [trainingGapNotice, setTrainingGapNotice] = useState('')
+  const [hybridReconciliation, setHybridReconciliation] = useState(null)
+  const [hybridReconciliationDecision, setHybridReconciliationDecision] = useState(null)
+  const [hybridReconciliationError, setHybridReconciliationError] = useState('')
+  const [hybridReconciliationNotice, setHybridReconciliationNotice] = useState('')
   const { isOnline, queueCount } = useOnlineStatus()
   const { isPro, loading: proLoading } = useProContext()
 
@@ -254,7 +311,7 @@ export default function Dashboard() {
 
   const fetchDashboardData = useCallback(async () => {
     try {
-        const [statsRes, runsRes, liftsRes, warningRes, checkinRes, goalRes, complianceRes, loadRes, nextRaceRes, gearRes, injuryRes, recapRes, recommendationRes, ageGradedRes, executionRes, groupRunsRes, adaptationRes, hybridStreakRes] = await Promise.all([
+        const [statsRes, runsRes, liftsRes, warningRes, checkinRes, goalRes, complianceRes, loadRes, nextRaceRes, gearRes, injuryRes, recapRes, recommendationRes, ageGradedRes, executionRes, groupRunsRes, adaptationRes, reconciliationRes, hybridStreakRes] = await Promise.all([
           api.get('/auth/me/stats'),
           api.get('/runs', { params: { limit: 5 } }),
           api.get('/lifts'),
@@ -280,6 +337,10 @@ export default function Dashboard() {
           api.get('/plans/adaptation/current', { params: { date: localDateISO() } }).catch((error) => {
             console.error('[Dashboard] training gap check failed:', error?.message || error)
             return { data: { proposal: null } }
+          }),
+          api.get('/plans/reconciliation/current', { params: { date: localDateISO(), hour: new Date().getHours() } }).catch((error) => {
+            console.error('[Dashboard] hybrid session reconciliation check failed:', error?.message || error)
+            return { data: { reconciliation: null } }
           }),
           api.get('/stats/hybrid-streak').catch(() => ({ data: { currentStreak: 0, longestStreak: 0, unit: 'day', graceUsed: false, milestones: [] } })),
         ])
@@ -334,6 +395,7 @@ export default function Dashboard() {
           && (nextProposal?.changes || []).length > 0
           && !['accepted', 'kept'].includes(nextProposal?.decisionStatus)
         setTrainingGapProposal(pendingGap ? nextProposal : null)
+        setHybridReconciliation(reconciliationRes.data?.reconciliation || null)
         const isSunday = new Date().getDay() === 0
         const weekKey = `recap-seen-${getWeekKey()}`
         if (isSunday && localStorage.getItem(weekKey) !== '1') {
@@ -659,6 +721,30 @@ export default function Dashboard() {
     }
   }, [fetchDashboardData, trainingGapProposal])
 
+  const decideHybridReconciliation = useCallback(async (decision) => {
+    if (!hybridReconciliation || !['completed_untracked', 'later', 'life_event', 'skipped'].includes(decision)) return
+    setHybridReconciliationDecision(decision)
+    setHybridReconciliationError('')
+    try {
+      const response = await api.post('/plans/reconciliation/respond', {
+        session_date: hybridReconciliation.sessionDate,
+        lift_session_id: hybridReconciliation.liftSessionId,
+        response: decision,
+        current_date: localDateISO(),
+      })
+      setHybridReconciliation(null)
+      const planFitNote = response.data?.pattern?.reviewRecommended
+        ? ' Forged Hybrid has noticed a recurring pattern; review whether fewer double days would fit your life better.'
+        : ''
+      setHybridReconciliationNotice(`${response.data?.message || 'Hybrid session updated.'}${planFitNote}`)
+      await fetchDashboardData()
+    } catch (error) {
+      setHybridReconciliationError(error?.response?.data?.error || 'Could not save that choice. Please try again.')
+    } finally {
+      setHybridReconciliationDecision(null)
+    }
+  }, [fetchDashboardData, hybridReconciliation])
+
   const dismissCelebration = useCallback(() => {
     setCelebrationQueue(prev => prev.slice(1))
   }, [])
@@ -676,6 +762,12 @@ export default function Dashboard() {
         <div className="flex min-h-11 items-center justify-between gap-3 rounded-xl px-3 py-2 text-sm font-semibold" style={{ background: 'var(--accent-dim)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}>
           <span>{trainingGapNotice}</span>
           <button type="button" aria-label="Dismiss plan update" onClick={() => setTrainingGapNotice('')} className="shrink-0 rounded-md p-1" style={{ background: 'transparent', color: 'var(--text-muted)' }}><X size={16} /></button>
+        </div>
+      )}
+      {hybridReconciliationNotice && (
+        <div className="flex min-h-11 items-center justify-between gap-3 rounded-xl px-3 py-2 text-sm font-semibold" style={{ background: 'var(--accent-dim)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}>
+          <span>{hybridReconciliationNotice}</span>
+          <button type="button" aria-label="Dismiss hybrid session update" onClick={() => setHybridReconciliationNotice('')} className="shrink-0 rounded-md p-1" style={{ background: 'transparent', color: 'var(--text-muted)' }}><X size={16} /></button>
         </div>
       )}
       {(!isOnline || queueCount > 0) && (
@@ -751,6 +843,13 @@ export default function Dashboard() {
           </div>
         </div>
       )}
+
+      <HybridSessionPrompt
+        reconciliation={hybridReconciliation}
+        deciding={hybridReconciliationDecision}
+        error={hybridReconciliationError}
+        onDecision={decideHybridReconciliation}
+      />
 
       <TrainingGapPrompt
         proposal={trainingGapProposal}

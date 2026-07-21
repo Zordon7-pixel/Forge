@@ -16,6 +16,7 @@ const { summarizeRecentRunLoad } = require('../lib/recentRunLoad');
 const { repairPlanPrescriptions } = require('../lib/prescriptionIntegrity');
 const { summarizeRecentExercises } = require('../lib/strengthPrescription');
 const { runActivitySql } = require('../lib/runActivity');
+const hybridReconciliation = require('../lib/hybridReconciliation');
 
 const ADAPTATION_POLICY_VERSION = 'training-gap-v1';
 
@@ -227,6 +228,11 @@ function withPlanAnchorPayload(value, planJson) {
 }
 
 function planVersionFor(active, parsedPlan) {
+  const progress = parseJsonValue(active?.row?.progress_json, {});
+  const reconciliationState = Object.fromEntries(
+    Object.entries(progress?.hybridSessionReconciliations || {})
+      .sort(([left], [right]) => left.localeCompare(right))
+  );
   return crypto
     .createHash('sha256')
     .update(JSON.stringify({
@@ -235,6 +241,7 @@ function planVersionFor(active, parsedPlan) {
       planId: active?.row?.id || null,
       userPlanId: active?.row?.user_plan_id || null,
       plan: parsedPlan || null,
+      reconciliationState,
     }))
     .digest('hex')
     .slice(0, 32);
@@ -328,6 +335,9 @@ async function buildCompletionSummaryForAdaptation(userId, plan, active, plannin
   const planned = plannedSessionsBetween(plan, since, adaptationEngine.addDays(planningDateISO, -1));
   const progress = parseJsonValue(active?.row?.progress_json, {});
   const completedIds = new Set((Array.isArray(progress?.completedSessionIds) ? progress.completedSessionIds : []).map(String));
+  const reconciliations = progress?.hybridSessionReconciliations && typeof progress.hybridSessionReconciliations === 'object'
+    ? progress.hybridSessionReconciliations
+    : {};
   const [runs, lifts, workouts, lastRun, lastLift, lastWorkout] = await Promise.all([
     dbAll(`SELECT id, date FROM runs WHERE user_id=? AND date>=? AND date<=? AND ${runActivitySql()}`, [userId, since, planningDateISO]),
     dbAll('SELECT id, date FROM lifts WHERE user_id=? AND date>=? AND date<=?', [userId, since, planningDateISO]),
@@ -350,6 +360,7 @@ async function buildCompletionSummaryForAdaptation(userId, plan, active, plannin
   ].filter(Boolean);
 
   let completed = 0;
+  let excused = 0;
   let missedRuns = 0;
   let missedLifts = 0;
   for (const item of planned) {
@@ -359,6 +370,13 @@ async function buildCompletionSummaryForAdaptation(userId, plan, active, plannin
       : liftDates.some((date) => dateWithinOneDay(date, item.date));
     if (completedByProgress || completedByLog) completed += 1;
     else {
+      const reconciliation = item.kind === 'lift'
+        ? reconciliations[hybridReconciliation.reconciliationKey(item.date, item.sessionId)]
+        : null;
+      if (reconciliation && ['life_event', 'skipped'].includes(reconciliation.response)) {
+        excused += 1;
+        continue;
+      }
       if (item.kind === 'run') missedRuns += 1;
       else missedLifts += 1;
     }
@@ -381,10 +399,11 @@ async function buildCompletionSummaryForAdaptation(userId, plan, active, plannin
   return {
     planned: planned.length,
     completed,
+    excused,
     missedRuns,
     missedLifts,
     missedWorkouts: missedRuns + missedLifts,
-    adherenceRate: planned.length ? completed / planned.length : null,
+    adherenceRate: planned.length > excused ? completed / (planned.length - excused) : null,
     freshness: `${since} to ${planningDateISO}`,
     lastActivityDate,
     daysInactive,
@@ -1227,6 +1246,187 @@ function publicProposal(proposal) {
   const { proposedPlan, plan, ...rest } = proposal;
   return rest;
 }
+
+function completedSessionIdsFromProgress(progress) {
+  return Array.isArray(progress?.completedSessionIds) ? progress.completedSessionIds.map(String) : [];
+}
+
+async function hybridCompletionEvidence(userId, startISO, endISO, db = null) {
+  const all = db?.all || dbAll;
+  const [runs, lifts, workouts] = await Promise.all([
+    all(`SELECT id, date FROM runs WHERE user_id=? AND date>=? AND date<=? AND ${runActivitySql()}`, [userId, startISO, endISO]),
+    all('SELECT id, date FROM lifts WHERE user_id=? AND date>=? AND date<=?', [userId, startISO, endISO]),
+    all(
+      'SELECT id, started_at FROM workout_sessions WHERE user_id=? AND started_at>=? AND started_at<=? AND ended_at IS NOT NULL',
+      [userId, `${startISO}T00:00:00`, `${endISO}T23:59:59`]
+    ),
+  ]);
+  return {
+    runDates: (runs || []).map((row) => String(row.date || '').slice(0, 10)).filter(Boolean),
+    liftDates: [
+      ...(lifts || []).map((row) => String(row.date || '').slice(0, 10)),
+      ...(workouts || []).map((row) => String(row.started_at || '').slice(0, 10)),
+    ].filter(Boolean),
+  };
+}
+
+router.get('/reconciliation/current', auth, async (req, res) => {
+  try {
+    const planningDateISO = getPlanningDateFromRequest(req);
+    const localHour = Number(req.query?.hour ?? new Date().getHours());
+    if (!planningDateISO) return res.status(400).json({ error: 'date must be the phone local date in YYYY-MM-DD format' });
+    if (!Number.isInteger(localHour) || localHour < 0 || localHour > 23) {
+      return res.status(400).json({ error: 'hour must be a whole number from 0 through 23' });
+    }
+
+    const active = await getActivePlanForUser(req.user.id);
+    if (!active || !active.row?.user_plan_id) {
+      return res.json({ reconciliation: null, reason: 'No assigned hybrid plan is active.' });
+    }
+    const parsed = parsePlan(active.row);
+    if (!parsed || !planSchema.isSchemaV2(parsed)) {
+      return res.json({ reconciliation: null, reason: 'Hybrid reconciliation requires a dated plan.' });
+    }
+
+    const progress = parseJsonValue(active.row.progress_json, {});
+    const startISO = hybridReconciliation.addDays(planningDateISO, -hybridReconciliation.LOOKBACK_DAYS);
+    const evidence = await hybridCompletionEvidence(req.user.id, startISO, planningDateISO);
+    const reconciliation = hybridReconciliation.buildCurrentPrompt({
+      plan: parsed,
+      planningDateISO,
+      localHour,
+      completedSessionIds: completedSessionIdsFromProgress(progress),
+      reconciliations: progress.hybridSessionReconciliations,
+      runDates: evidence.runDates,
+      liftDates: evidence.liftDates,
+    });
+
+    res.json({
+      reconciliation: reconciliation ? {
+        ...reconciliation,
+        choices: ['completed_untracked', 'later', 'life_event', 'skipped'],
+      } : null,
+    });
+  } catch (err) {
+    console.error('[plans/reconciliation/current] failed:', err.message);
+    res.status(500).json({ error: 'Failed to check the hybrid session' });
+  }
+});
+
+router.post('/reconciliation/respond', auth, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const sessionDate = String(body.session_date || '').slice(0, 10);
+    const liftSessionId = String(body.lift_session_id || '').trim();
+    const response = String(body.response || '').trim();
+    const planningDateISO = getPlanningDateFromRequest({ query: { date: body.current_date } });
+    const age = hybridReconciliation.daysBetween(planningDateISO, sessionDate);
+    if (!planningDateISO || !/^\d{4}-\d{2}-\d{2}$/.test(sessionDate) || age === null || age < 0 || age > hybridReconciliation.LOOKBACK_DAYS) {
+      return res.status(400).json({ error: 'Invalid hybrid session date' });
+    }
+    if (!liftSessionId || liftSessionId.length > 128) return res.status(400).json({ error: 'Invalid lift session' });
+    if (!hybridReconciliation.VALID_RESPONSES.has(response)) return res.status(400).json({ error: 'Invalid reconciliation choice' });
+
+    const result = await withTransaction(async (tx) => {
+      const row = await tx.get(`
+        SELECT up.id AS user_plan_id, up.progress_json, up.current_week, up.started_at, up.status,
+               tp.*
+        FROM user_plans up
+        JOIN training_plans tp ON tp.id = up.plan_id
+        WHERE up.user_id=? AND up.status='active'
+        ORDER BY up.created_at DESC
+        LIMIT 1
+        FOR UPDATE OF up
+      `, [req.user.id]);
+      if (!row) return { notFound: true };
+
+      const active = { source: 'assigned', row };
+      const parsed = parsePlan(row);
+      if (!parsed || !planSchema.isSchemaV2(parsed)) return { conflict: 'Hybrid reconciliation requires a dated plan.' };
+      const progress = parseJsonValue(row.progress_json, {});
+      const records = progress.hybridSessionReconciliations && typeof progress.hybridSessionReconciliations === 'object'
+        ? { ...progress.hybridSessionReconciliations }
+        : {};
+      const key = hybridReconciliation.reconciliationKey(sessionDate, liftSessionId);
+      const existing = records[key];
+      if (existing && existing.response === response && existing.response !== 'later') {
+        return {
+          ok: true,
+          idempotent: true,
+          message: existing.message || 'That hybrid session is already reconciled.',
+          adjustment: existing.adjustment || null,
+          pattern: hybridReconciliation.patternSummary(records, planningDateISO),
+        };
+      }
+      if (existing && existing.response !== 'later' && existing.response !== response) {
+        return { conflict: 'That hybrid session has already been reconciled.' };
+      }
+
+      const candidate = hybridReconciliation.findCandidate(parsed, sessionDate, liftSessionId);
+      if (!candidate) return { conflict: 'The planned hybrid session changed. Refresh Today and try again.' };
+      const completed = new Set(completedSessionIdsFromProgress(progress));
+      const evidence = await hybridCompletionEvidence(req.user.id, sessionDate, sessionDate, tx);
+      const runDetected = candidate.runSessionIds.some((id) => completed.has(id)) || evidence.runDates.includes(sessionDate);
+      const liftDetected = completed.has(liftSessionId) || evidence.liftDates.includes(sessionDate);
+      if (!runDetected) return { conflict: 'The paired run is not recorded yet. Sync again before reconciling this session.' };
+      if (liftDetected) return { alreadyComplete: true };
+
+      let adjustment = null;
+      let message = '';
+      if (response === 'completed_untracked') {
+        completed.add(liftSessionId);
+        message = 'Strength session marked complete without inventing workout metrics.';
+      } else if (response === 'later') {
+        message = 'Got it. We will check again tomorrow only if the strength session is still missing.';
+      } else {
+        const moved = hybridReconciliation.moveLiftToNextAvailableRestDay(parsed, candidate, planningDateISO);
+        if (moved.adjusted) {
+          await updateActivePlanData(active, req.user.id, moved.plan, tx);
+          adjustment = { adjusted: true, movedFrom: moved.movedFrom, movedTo: moved.movedTo };
+          message = `Strength moved from ${moved.movedFrom} to ${moved.movedTo}. This is a schedule signal, not a failure.`;
+        } else {
+          adjustment = { adjusted: false, reason: moved.reason };
+          message = 'Noted. No make-up session was forced into the week, so recovery space stays protected.';
+        }
+      }
+
+      records[key] = {
+        sessionDate,
+        runSessionIds: candidate.runSessionIds,
+        liftSessionId,
+        response,
+        respondedAt: new Date().toISOString(),
+        respondedDate: planningDateISO,
+        adjustment,
+        message,
+      };
+      const update = await tx.run(
+        'UPDATE user_plans SET progress_json=? WHERE id=? AND user_id=?',
+        [JSON.stringify({
+          ...progress,
+          completedSessionIds: Array.from(completed),
+          hybridSessionReconciliations: records,
+        }), row.user_plan_id, req.user.id]
+      );
+      if (update.changes === 0) throw new Error('Hybrid reconciliation progress update failed');
+
+      return {
+        ok: true,
+        message,
+        adjustment,
+        pattern: hybridReconciliation.patternSummary(records, planningDateISO),
+      };
+    }, { userIds: [req.user.id], requireUserIds: [req.user.id] });
+
+    if (result.notFound) return res.status(404).json({ error: 'No active plan is assigned.' });
+    if (result.conflict) return res.status(409).json({ error: result.conflict });
+    if (result.alreadyComplete) return res.json({ ok: true, message: 'The strength session is already recorded.', alreadyComplete: true });
+    res.json(result);
+  } catch (err) {
+    console.error('[plans/reconciliation/respond] failed:', err.message);
+    res.status(500).json({ error: 'Failed to reconcile the hybrid session' });
+  }
+});
 
 router.get('/adaptation/current', auth, async (req, res) => {
   try {
