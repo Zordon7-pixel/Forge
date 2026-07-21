@@ -24,6 +24,21 @@ function normalizeGuidance(items, fallback) {
   return normalized.length ? normalized : fallback;
 }
 
+function sanitizeSemanticTitle(value, maxLength = 240) {
+  const normalized = String(value || '').replace(/[\r\n]+/g, ' ').trim();
+  if (!normalized || normalized.length <= maxLength) return normalized;
+
+  const words = normalized.split(/\s+/);
+  let shortened = '';
+  for (const word of words) {
+    const candidate = shortened ? `${shortened} ${word}` : word;
+    if (candidate.length + 1 > maxLength) break;
+    shortened = candidate;
+  }
+
+  return shortened ? `${shortened}…` : '…';
+}
+
 function normalizeStrengthRecommendation(value) {
   if (!value || typeof value !== 'object') return null;
   const main = (Array.isArray(value.main) ? value.main : [])
@@ -47,8 +62,8 @@ function normalizeStrengthRecommendation(value) {
   if (main.length < 4) return null;
 
   return {
-    workoutName: sanitize(value.workoutName, 100) || 'Hybrid Strength and Speed',
-    target: sanitize(value.target, 80) || 'Full Body',
+    workoutName: sanitizeSemanticTitle(value.workoutName) || 'Hybrid Strength and Speed',
+    target: sanitizeSemanticTitle(value.target) || 'Full Body',
     warmup: normalizeGuidance(value.warmup, ['Easy movement x 3 min', 'Dynamic leg swings x 8/side', 'Bodyweight squat x 10']),
     main,
     recovery: normalizeGuidance(value.recovery, ['Easy walk x 3 min', 'Hip flexor stretch x 45s/side']),

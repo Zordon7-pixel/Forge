@@ -218,7 +218,7 @@ export default function HrZones() {
   const zoneFreshness = formatFreshness(profile?.updatedAt, { prefix: 'Updated' })
 
   return (
-    <div style={{ display: 'grid', gap: 14, paddingBottom: 96 }}>
+    <div style={{ display: 'grid', gap: 14 }}>
       <header style={{ marginBottom: 4 }}>
         <p style={{ color: 'var(--accent)', fontSize: 12, fontWeight: 800, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6 }}>Forged Hybrid</p>
         <h1 style={{ color: 'var(--text-primary)', fontSize: 28, fontWeight: 900, margin: 0 }}>HR Zones</h1>

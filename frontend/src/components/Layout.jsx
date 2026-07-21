@@ -58,9 +58,9 @@ export default function Layout({ children }) {
 
   return (
     <ReleaseNotesProvider suppressed={isImmersive || feedbackOpen}>
-    <div className="min-h-screen" style={{ background: 'var(--bg-base)', color: 'var(--text-primary)', minHeight: '100dvh', '--app-bottom-nav-height': 'calc(59px + env(safe-area-inset-bottom, 0px))' }}>
+    <div className="min-h-screen" style={{ background: 'var(--bg-base)', color: 'var(--text-primary)', minHeight: '100dvh' }}>
       <SwipeBackGesture onBeforeBack={interceptSwipeBack} />
-      <div className={`mx-auto w-full max-w-[480px] px-3 sm:px-4 ${isImmersive ? 'pb-0' : 'pb-28'}`} style={{ maxWidth: 'min(480px, 100vw)', overflowX: 'hidden', boxSizing: 'border-box' }}>
+      <div className="mx-auto w-full max-w-[480px] px-3 sm:px-4" style={{ maxWidth: 'min(480px, 100vw)', overflowX: 'hidden', boxSizing: 'border-box' }}>
         {!isImmersive && (
           <header
             className="sticky top-0 z-20 border-b backdrop-blur"
@@ -118,7 +118,7 @@ export default function Layout({ children }) {
           <main className="pb-0 pt-0" style={{ minWidth: 0 }}>{children}</main>
         ) : (
           <PullToRefresh>
-            <main className="pb-24 pt-4" style={{ minWidth: 0 }}><SyncNotificationBanner />{children}</main>
+            <main className="app-shell-main pt-4"><SyncNotificationBanner />{children}</main>
           </PullToRefresh>
         )}
       </div>

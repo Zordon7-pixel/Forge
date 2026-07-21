@@ -77,7 +77,7 @@ export default function RunHub() {
   }, [calendarOwnsToday, recommendation])
 
   return (
-    <div className="space-y-4 py-2 pb-16">
+    <div className="space-y-4 py-2">
       <header className="px-1 py-1">
         <h1 className="text-2xl font-black" style={{ color: 'var(--text-primary)' }}>Train</h1>
         <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>Today&apos;s run and the weeks ahead.</p>

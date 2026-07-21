@@ -13,7 +13,7 @@ import RunDetailModal from '../components/RunDetailModal'
 import WorkoutDetailModal from '../components/WorkoutDetailModal'
 import LoadingRunner from '../components/LoadingRunner'
 import { resolveRunHeartRateZone } from '../lib/runRecap'
-import { chartAccent, chartAxisProps, chartTooltipProps } from '../lib/chartTheme'
+import { chartAccent, chartAxisProps, chartTooltipProps, hasUsableChartData, isUsableChartValue } from '../lib/chartTheme'
 import { activityLabel, isRunningActivity } from '../lib/activityType'
 
 function getRunDate(run) {
@@ -219,16 +219,37 @@ export default function History() {
   }, [actualRuns, fmt])
 
   const weeklyMileage = useMemo(() => {
+    const mileageRuns = runs
+      .filter(isRunningActivity)
+      .filter((run) => isUsableChartValue(run.distance_miles))
+    if (mileageRuns.length === 0) return []
+
     const out = []
     for (let i = 7; i >= 0; i -= 1) {
       const start = new Date(); start.setDate(start.getDate() - i * 7)
       const end = new Date(start); end.setDate(end.getDate() + 6)
-      const miles = runs.filter(isRunningActivity).filter((r) => { const d = new Date((r.date || r.created_at || '') + 'T12:00:00'); return d >= start && d <= end }).reduce((sum, r) => sum + Number(r.distance_miles || 0), 0)
+      const miles = mileageRuns.filter((r) => { const d = new Date((r.date || r.created_at || '') + 'T12:00:00'); return d >= start && d <= end }).reduce((sum, r) => sum + Number(r.distance_miles), 0)
       out.push({ week: `${start.getMonth()+1}/${start.getDate()}`, miles: Number(miles.toFixed(1)) })
     }
     return out
   }, [runs])
-  const paceTrend = useMemo(() => actualRuns.slice(0, 20).reverse().map((r, i) => ({ idx: i + 1, pace: r.distance_miles ? Number((r.duration_seconds / 60 / r.distance_miles).toFixed(2)) : 0 })).filter((x) => x.pace > 0), [actualRuns])
+  const paceTrend = useMemo(() => actualRuns
+    .slice(0, 20)
+    .reverse()
+    .map((run, index) => {
+      const distance = Number(run.distance_miles)
+      const duration = Number(run.duration_seconds)
+      const pace = isUsableChartValue(run.distance_miles)
+        && isUsableChartValue(run.duration_seconds)
+        && distance > 0
+        && duration > 0
+        ? Number((duration / 60 / distance).toFixed(2))
+        : null
+      return { idx: index + 1, pace }
+    })
+    .filter((point) => isUsableChartValue(point.pace)), [actualRuns])
+  const hasWeeklyMileage = hasUsableChartData(weeklyMileage, 'miles')
+  const hasPaceTrend = hasUsableChartData(paceTrend, 'pace')
 
   if (loading) return <LoadingRunner message="Loading history" />
 
@@ -259,22 +280,28 @@ export default function History() {
         </Link>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 mb-4">
-        <div className="rounded-xl p-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-          <div style={{ width: '100%', height: 180 }}>
-            <ResponsiveContainer>
-              <BarChart data={weeklyMileage}><XAxis dataKey="week" {...chartAxisProps} /><YAxis {...chartAxisProps} /><Tooltip {...chartTooltipProps} /><Bar dataKey="miles" fill={chartAccent} /></BarChart>
-            </ResponsiveContainer>
-          </div>
+      {(hasWeeklyMileage || hasPaceTrend) && (
+        <div className="grid grid-cols-1 gap-3 mb-4">
+          {hasWeeklyMileage && (
+            <div className="rounded-xl p-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+              <div style={{ width: '100%', height: 180 }}>
+                <ResponsiveContainer>
+                  <BarChart data={weeklyMileage}><XAxis dataKey="week" {...chartAxisProps} /><YAxis {...chartAxisProps} /><Tooltip {...chartTooltipProps} /><Bar dataKey="miles" fill={chartAccent} /></BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
+          {hasPaceTrend && (
+            <div className="rounded-xl p-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+              <div style={{ width: '100%', height: 180 }}>
+                <ResponsiveContainer>
+                  <LineChart data={paceTrend}><XAxis dataKey="idx" {...chartAxisProps} /><YAxis {...chartAxisProps} /><Tooltip {...chartTooltipProps} /><Line type="monotone" dataKey="pace" stroke={chartAccent} strokeWidth={2} dot={false} /></LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
         </div>
-        <div className="rounded-xl p-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-          <div style={{ width: '100%', height: 180 }}>
-            <ResponsiveContainer>
-              <LineChart data={paceTrend}><XAxis dataKey="idx" {...chartAxisProps} /><YAxis {...chartAxisProps} /><Tooltip {...chartTooltipProps} /><Line type="monotone" dataKey="pace" stroke={chartAccent} strokeWidth={2} dot={false} /></LineChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-      </div>
+      )}
 
       <div className="mb-4">
         <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 4, marginBottom: 12 }}>

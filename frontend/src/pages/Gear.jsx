@@ -285,7 +285,7 @@ export default function Gear() {
   if (loading) return <LoadingRunner message="Loading closet" />
 
   return (
-    <div className="space-y-4 py-2" style={{ paddingBottom: 96 }}>
+    <div className="space-y-4 py-2">
       <header className="flex items-start justify-between gap-3">
         <div>
           <p style={{ color: 'var(--accent)', fontSize: 11, fontWeight: 900, textTransform: 'uppercase', margin: '0 0 3px', letterSpacing: 0 }}>Shoe rotation</p>
