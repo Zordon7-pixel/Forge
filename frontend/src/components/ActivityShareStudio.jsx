@@ -16,6 +16,20 @@ const TEMPLATES = [
   { id: 'photo', label: 'Photo' },
 ]
 
+// Card headline quotes — kept ≤21 chars so they fit every template's title line
+const FORGED_QUOTES = [
+  'Forged, not finished.',
+  'Effort is heat.',
+  'The work adds up.',
+  'Struck while hot.',
+  'Earned, not given.',
+  'Miles and iron.',
+  'Run far. Lift heavy.',
+  'Built by the hammer.',
+  'Chase the white-hot.',
+  'Forge day. Every day.',
+]
+
 function loadImage(src) {
   return new Promise((resolve, reject) => {
     const image = new Image()
@@ -808,10 +822,17 @@ export default function ActivityShareStudio({ run, onClose }) {
   const [template, setTemplate] = useState('route')
   const [photoUrl, setPhotoUrl] = useState('')
   const [caption, setCaption] = useState('')
+  const [cardTitle, setCardTitle] = useState('')
   const [status, setStatus] = useState('')
   const [busy, setBusy] = useState(false)
   const [posted, setPosted] = useState(false)
   const route = useMemo(() => parseRunRoute(run?.route_coords), [run?.route_coords])
+  // Custom headline (edited title or picked quote) flows through titleForRun
+  // via the name field — cards, share text, and posts all stay in sync.
+  const cardRun = useMemo(() => {
+    const custom = cardTitle.trim()
+    return custom ? { ...run, name: custom } : run
+  }, [run, cardTitle])
   const transparent = template === 'overlay'
   const fileType = transparent ? 'image/png' : 'image/jpeg'
   const fileExtension = transparent ? 'png' : 'jpg'
@@ -844,19 +865,19 @@ export default function ActivityShareStudio({ run, onClose }) {
       }
       if (cancelled) return
       ctx.clearRect(0, 0, CARD_WIDTH, CARD_HEIGHT)
-      if (template === 'log') drawLogTemplate(ctx, run, logo)
-      else if (template === 'ember') drawEmberTemplate(ctx, run, logo)
-      else if (template === 'contour') drawContourTemplate(ctx, run, route, logo)
-      else if (template === 'overlay') drawOverlayTemplate(ctx, run, route, logo)
-      else if (template === 'photo') drawPhotoTemplate(ctx, run, photo, logo)
-      else drawRouteTemplate(ctx, run, route, logo)
+      if (template === 'log') drawLogTemplate(ctx, cardRun, logo)
+      else if (template === 'ember') drawEmberTemplate(ctx, cardRun, logo)
+      else if (template === 'contour') drawContourTemplate(ctx, cardRun, route, logo)
+      else if (template === 'overlay') drawOverlayTemplate(ctx, cardRun, route, logo)
+      else if (template === 'photo') drawPhotoTemplate(ctx, cardRun, photo, logo)
+      else drawRouteTemplate(ctx, cardRun, route, logo)
     }
     render().catch((error) => {
       console.error('[ActivityShareStudio] render failed:', error?.message || error)
       setStatus('Could not render this share card.')
     })
     return () => { cancelled = true }
-  }, [photoUrl, route, run, template])
+  }, [photoUrl, route, cardRun, template])
 
   const getFile = async () => {
     const blob = await canvasBlob(canvasRef.current, fileType, transparent ? undefined : 0.92)
@@ -868,8 +889,8 @@ export default function ActivityShareStudio({ run, onClose }) {
     setStatus('')
     try {
       const file = await getFile()
-      const shareText = caption.trim() ? `${caption.trim()}\n${captionForRun(run)}` : captionForRun(run)
-      const shareData = { title: titleForRun(run), text: shareText, files: [file] }
+      const shareText = caption.trim() ? `${caption.trim()}\n${captionForRun(cardRun)}` : captionForRun(cardRun)
+      const shareData = { title: titleForRun(cardRun), text: shareText, files: [file] }
       if (navigator.share && (!navigator.canShare || navigator.canShare({ files: [file] }))) {
         await navigator.share(shareData)
       } else {
@@ -921,7 +942,7 @@ export default function ActivityShareStudio({ run, onClose }) {
         await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
         setStatus('Image copied.')
       } else {
-        await navigator.clipboard.writeText(captionForRun(run))
+        await navigator.clipboard.writeText(captionForRun(cardRun))
         setStatus('Run summary copied.')
       }
     } catch (error) {
@@ -999,6 +1020,31 @@ export default function ActivityShareStudio({ run, onClose }) {
         <p className="mt-2 text-center text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>
           Choose an original Forged card, then post it to accepted friends or share it anywhere.
         </p>
+
+        <label className="mt-3 block text-xs font-bold" style={{ color: 'var(--text-muted)' }}>
+          Card title
+          <input
+            value={cardTitle}
+            maxLength={48}
+            onChange={(event) => { setCardTitle(event.target.value); setPosted(false) }}
+            placeholder={titleForRun(run)}
+            className="mt-1 block w-full rounded-lg p-3 text-sm"
+            style={{ boxSizing: 'border-box', border: '1px solid var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)' }}
+          />
+        </label>
+        <div className="mt-2 flex gap-2 overflow-x-auto pb-1" aria-label="Quote suggestions">
+          {FORGED_QUOTES.map((quote) => (
+            <button
+              key={quote}
+              type="button"
+              onClick={() => { setCardTitle(cardTitle === quote ? '' : quote); setPosted(false) }}
+              className="pressable shrink-0 rounded-full px-3 py-1.5 text-xs font-bold"
+              style={{ background: cardTitle === quote ? 'var(--accent)' : 'var(--bg-input)', color: cardTitle === quote ? 'var(--on-accent)' : 'var(--text-muted)', border: '1px solid var(--border-subtle)', whiteSpace: 'nowrap' }}
+            >
+              {quote}
+            </button>
+          ))}
+        </div>
 
         <label className="mt-3 block text-xs font-bold" style={{ color: 'var(--text-muted)' }}>
           Caption (optional)
