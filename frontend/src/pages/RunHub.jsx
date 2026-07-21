@@ -162,13 +162,13 @@ export default function RunHub() {
               <span className="block text-[10px] font-black uppercase" style={{ color: 'var(--text-muted)' }}>Recent run</span>
               <span className="mt-1 block truncate text-lg font-black" style={{ color: 'var(--text-primary)' }}>
                 {paceText}
-                {paceZone && <span style={{ color: paceZone.color }}> · Zone {paceZone.zone} {paceZone.label}</span>}
+                {paceZone && <span style={{ color: paceZone.textColor || paceZone.color }}> · Zone {paceZone.zone} {paceZone.label}</span>}
               </span>
             </span>
             <ChevronRight size={18} color="var(--text-muted)" className="shrink-0" />
           </summary>
           <div className="border-t px-4 pb-4 pt-3" style={{ borderColor: 'var(--border-subtle)' }}>
-            {paceZone && <p className="mb-3 text-sm" style={{ color: paceZone.color }}>{paceZone.description}</p>}
+            {paceZone && <p className="mb-3 text-sm" style={{ color: paceZone.textColor || paceZone.color }}>{paceZone.description}</p>}
             <div className="grid grid-cols-3 gap-2">
               <div className="rounded-xl p-2 text-center" style={{ background: 'var(--bg-input)' }}>
                 <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Distance</p>

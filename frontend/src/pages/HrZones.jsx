@@ -4,7 +4,8 @@ import api from '../lib/api'
 import LoadingRunner from '../components/LoadingRunner'
 import { formatFreshness, hrZoneSourcePresentation } from '../lib/deviceSourcePresentation'
 
-const ZONE_COLORS = ['var(--success)', '#84CC16', 'var(--accent)', 'var(--warning)', 'var(--danger)']
+const ZONE_COLORS = ['#5E6C7B', '#EAB308', '#F97316', '#E5484D', '#FFF6DC']
+const ZONE_TEXT_COLORS = ['#5E6C7B', '#EAB308', '#F97316', '#E5484D', '#B8A86A']
 const MODEL_LABELS = {
   hrr: 'HR Reserve',
   maxhr: 'Max-HR %',
@@ -56,7 +57,7 @@ function ZoneBars({ zones }) {
           <div key={zone.zone || index}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 5 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                <span style={{ color, fontSize: 12, fontWeight: 900 }}>Z{zone.zone || index + 1}</span>
+                <span style={{ color: ZONE_TEXT_COLORS[index], fontSize: 12, fontWeight: 900 }}>Z{zone.zone || index + 1}</span>
                 <span style={{ color: 'var(--text-primary)', fontSize: 13, fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{zone.label || 'Zone'}</span>
               </div>
               <span style={{ color: 'var(--text-muted)', fontSize: 12, fontWeight: 800 }}>{formatRange(zone)} bpm</span>
@@ -331,7 +332,7 @@ export default function HrZones() {
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: 7 }}>
                   {form.customMinimums.map((value, index) => (
                     <label key={`custom-zone-${index + 1}`} style={{ minWidth: 0 }}>
-                      <span style={{ display: 'block', color: ZONE_COLORS[index], fontSize: 11, fontWeight: 900, marginBottom: 5 }}>Z{index + 1}</span>
+                      <span style={{ display: 'block', color: ZONE_TEXT_COLORS[index], fontSize: 11, fontWeight: 900, marginBottom: 5 }}>Z{index + 1}</span>
                       <input
                         type="number"
                         min="30"

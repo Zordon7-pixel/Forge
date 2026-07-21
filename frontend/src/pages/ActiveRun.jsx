@@ -36,11 +36,11 @@ function haversineMiles(a, b) {
 
 // hex required: consumed by `${color}XX` alpha templates — do not tokenize
 const ZONES = [
-  { key: 'Z1', min: 0.5, max: 0.6, name: 'Recovery', color: '#6B7280' },
-  { key: 'Z2', min: 0.6, max: 0.7, name: 'Aerobic Base', color: '#3B82F6' },
-  { key: 'Z3', min: 0.7, max: 0.8, name: 'Tempo', color: '#22C55E' },
-  { key: 'Z4', min: 0.8, max: 0.9, name: 'Threshold', color: '#EAB308' },
-  { key: 'Z5', min: 0.9, max: 1.01, name: 'Max Effort', color: '#EF4444' },
+  { key: 'Z1', min: 0.5, max: 0.6, name: 'Recovery', color: '#5E6C7B' },
+  { key: 'Z2', min: 0.6, max: 0.7, name: 'Aerobic Base', color: '#EAB308' },
+  { key: 'Z3', min: 0.7, max: 0.8, name: 'Tempo', color: '#F97316' },
+  { key: 'Z4', min: 0.8, max: 0.9, name: 'Threshold', color: '#E5484D' },
+  { key: 'Z5', min: 0.9, max: 1.01, name: 'Max Effort', color: '#FFF6DC', textColor: '#B8A86A' },
 ]
 
 function getZone(hr, maxHr, savedZones = []) {
@@ -57,6 +57,7 @@ function getZone(hr, maxHr, savedZones = []) {
       key: `Z${resolvedIndex + 1}`,
       name: savedZone?.label || ZONES[resolvedIndex].name,
       color: ZONES[resolvedIndex].color,
+      textColor: ZONES[resolvedIndex].textColor || ZONES[resolvedIndex].color,
       pct: Math.min(1, Math.max(0, value / (Number(maxHr) || 230))),
     }
   }
@@ -786,7 +787,7 @@ export default function ActiveRun() {
               <p className="stat-num" style={{ color: 'var(--text-primary)', fontSize: 24, lineHeight: 1 }}>{liveHr} bpm</p>
               <span style={{ width: 8, height: 8, borderRadius: '50%', background: hrLastUpdated && Date.now() - hrLastUpdated < 10000 ? 'var(--success)' : '#6b7280', animation: hrLastUpdated && Date.now() - hrLastUpdated < 10000 ? 'pulse 2s infinite' : 'none' }} />
               {hrLastUpdated && Date.now() - hrLastUpdated > 60000 && <span className="text-xs" style={{ color: 'var(--text-muted)' }}>(last known)</span>}
-              {hrZone && <span className="px-2 py-0.5 rounded-full text-xs font-semibold" style={{ background: `${hrZone.color}22`, color: hrZone.color }}>{hrZone.key} · {hrZone.name}</span>}
+              {hrZone && <span className="px-2 py-0.5 rounded-full text-xs font-semibold" style={{ background: `${hrZone.color}22`, color: hrZone.textColor || hrZone.color }}>{hrZone.key} · {hrZone.name}</span>}
             </div>
             {hrZone && <div className="mt-3 h-2 rounded-full" style={{ background: 'var(--bg-base)' }}><div className="h-full rounded-full" style={{ width: `${Math.min(100, Math.max(0, (hrZone.pct * 100))) }%`, background: hrZone.color, transition: 'width var(--dur-med) var(--ease-out)' }} /></div>}
             <style>{`@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }`}</style>

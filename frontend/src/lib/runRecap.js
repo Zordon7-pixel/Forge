@@ -1,10 +1,11 @@
 const MIN_TRUSTED_ZONE_COVERAGE_PCT = 70
+// hex required: consumed by `${color}XX` alpha templates — do not tokenize
 const HEART_RATE_ZONE_META = Object.freeze([
-  Object.freeze({ label: 'Recovery', color: '#6B7280' }),
-  Object.freeze({ label: 'Easy', color: '#3B82F6' }),
-  Object.freeze({ label: 'Aerobic', color: '#22C55E' }),
-  Object.freeze({ label: 'Threshold', color: '#EAB308' }),
-  Object.freeze({ label: 'Maximum', color: '#EF4444' }),
+  Object.freeze({ label: 'Recovery', color: '#5E6C7B' }),
+  Object.freeze({ label: 'Easy', color: '#EAB308' }),
+  Object.freeze({ label: 'Aerobic', color: '#F97316' }),
+  Object.freeze({ label: 'Threshold', color: '#E5484D' }),
+  Object.freeze({ label: 'Maximum', color: '#FFF6DC', textColor: '#B8A86A' }),
 ])
 
 function finiteNumber(value) {
@@ -145,6 +146,7 @@ export function resolveRunHeartRateZone(run = {}, zones = []) {
       zone: timeline.dominantZone,
       label: meta.label,
       color: meta.color,
+      textColor: meta.textColor || meta.color,
       source: 'timeline',
       coveragePct,
       dominantPct: timeline.totalSeconds > 0 ? (dominantSeconds / timeline.totalSeconds) * 100 : null,
@@ -168,6 +170,7 @@ export function resolveRunHeartRateZone(run = {}, zones = []) {
     zone: index + 1,
     label: meta.label,
     color: meta.color,
+    textColor: meta.textColor || meta.color,
     source: 'average',
     averageHeartRate,
     coveragePct,

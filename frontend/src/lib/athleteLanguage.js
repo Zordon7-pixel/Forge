@@ -1,9 +1,10 @@
+// hex required: consumed by `${color}XX` alpha templates — do not tokenize
 const PACE_ZONES = [
-  { zone: 1, label: 'Easy', description: 'Conversational pace - builds aerobic base', color: '#4CAF50' },
-  { zone: 2, label: 'Moderate', description: 'Steady aerobic work - improves endurance efficiency', color: '#8BC34A' },
-  { zone: 3, label: 'Tempo', description: 'Comfortably hard - strengthens sustained speed', color: '#FFC107' },
-  { zone: 4, label: 'Threshold', description: 'Controlled discomfort - raises lactate threshold', color: '#FF9800' },
-  { zone: 5, label: 'Race Pace', description: 'High intensity effort - race-specific speed', color: '#F44336' },
+  { zone: 1, label: 'Easy', description: 'Conversational pace - builds aerobic base', color: '#5E6C7B' },
+  { zone: 2, label: 'Moderate', description: 'Steady aerobic work - improves endurance efficiency', color: '#EAB308' },
+  { zone: 3, label: 'Tempo', description: 'Comfortably hard - strengthens sustained speed', color: '#F97316' },
+  { zone: 4, label: 'Threshold', description: 'Controlled discomfort - raises lactate threshold', color: '#E5484D' },
+  { zone: 5, label: 'Race Pace', description: 'High intensity effort - race-specific speed', color: '#FFF6DC', textColor: '#B8A86A' },
 ]
 
 const RPE_LABELS = {

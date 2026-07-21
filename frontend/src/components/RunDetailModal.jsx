@@ -28,7 +28,8 @@ function formatActivityDate(value) {
 
 const EFFORT_LABELS = ['', 'Very Easy', 'Easy', 'Easy-Moderate', 'Moderate', 'Moderate-Hard', 'Hard', 'Hard', 'Very Hard', 'Very Hard', 'Max']
 // hex required: consumed by `${color}XX` alpha templates — do not tokenize
-const ZONE_COLORS = ['#6B7280', '#3B82F6', '#22C55E', '#EAB308', '#EF4444']
+const ZONE_COLORS = ['#5E6C7B', '#EAB308', '#F97316', '#E5484D', '#FFF6DC']
+const ZONE_TEXT_COLORS = ['#5E6C7B', '#EAB308', '#F97316', '#E5484D', '#B8A86A']
 const ZONE_LABELS = ['Recovery', 'Easy', 'Aerobic', 'Threshold', 'Maximum']
 const ZONE_MODEL_LABELS = { custom: 'Watch zones', hrr: 'HR Reserve', maxhr: 'Max-HR %', lthr: 'LTHR' }
 
@@ -351,7 +352,7 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
         {hr && zone && (
           <div className="rounded-xl p-3 mb-5" style={{ background: 'var(--bg-input)' }}>
             <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Heart-rate evidence</p>
-            <div className="flex flex-wrap items-center gap-2"><p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{hasTrustedHrCoverage ? `Dominant Z${zone.zone}` : `${hr} bpm average`}</p><span className="rounded-full px-2 py-1 text-xs" style={{ background: `${zone.color}22`, color: zone.color }}>{zone.label}</span></div>
+            <div className="flex flex-wrap items-center gap-2"><p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{hasTrustedHrCoverage ? `Dominant Z${zone.zone}` : `${hr} bpm average`}</p><span className="rounded-full px-2 py-1 text-xs" style={{ background: `${zone.color}22`, color: zone.textColor || ZONE_TEXT_COLORS[zone.zone - 1] }}>{zone.label}</span></div>
             {hasTrustedHrCoverage && <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>{Number.isFinite(dominantZonePct) ? `${dominantZonePct.toFixed(0)}% of recorded HR time` : 'Dominant recorded zone'} · {hr} bpm average</p>}
             <div className="mt-2 h-1.5 rounded-full" style={{ background: 'var(--bg-base)' }}><div className="h-full rounded-full" style={{ width: `${zone.zone * 20}%`, background: zone.color }} /></div>
             <p className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>{hasTrustedHrCoverage ? `Heart-rate samples cover ${hrCoverage.toFixed(0)}% of this workout.` : `Average classified with your ${zoneModelLabel} profile.`}</p>
@@ -359,7 +360,7 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
               <div className="mt-3 space-y-2" aria-label="Heart-rate zone time distribution">
                 {timeline.seconds.map((seconds, index) => (
                   <div key={`zone-time-${index + 1}`} className="grid grid-cols-[70px_1fr_72px] items-center gap-2 text-xs">
-                    <span className="font-semibold" style={{ color: ZONE_COLORS[index] }}>Z{index + 1} {ZONE_LABELS[index]}</span>
+                    <span className="font-semibold" style={{ color: ZONE_TEXT_COLORS[index] }}>Z{index + 1} {ZONE_LABELS[index]}</span>
                     <div style={{ height: 6, borderRadius: 999, background: 'var(--bg-base)' }}><div style={{ width: `${Math.round((seconds / timeline.totalSeconds) * 100)}%`, height: '100%', borderRadius: 999, background: ZONE_COLORS[index], opacity: seconds > 0 ? 1 : 0.25 }} /></div>
                     <span className="text-right" style={{ color: 'var(--text-muted)' }}>{formatSeconds(seconds) || '0m'} · {Math.round((seconds / timeline.totalSeconds) * 100)}%</span>
                   </div>
