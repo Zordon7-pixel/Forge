@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import api from '../lib/api'
 import HealthService from '../services/HealthService'
 import { consumePostAuthRedirect, setToken } from '../lib/tokenStore'
+import { healthSyncFailureMessage } from '../lib/healthSync'
 
 const personalityOptions = [
   { key: 'mentor', label: 'Mentor' },
@@ -42,7 +43,7 @@ export default function Onboarding() {
       const scanned = Array.isArray(result?.workouts) ? result.workouts.length : Number(result?.scanned || 0)
       setHealthNotice(`Apple Health synced: ${scanned} scanned, ${result.imported || 0} imported, ${result.skipped || 0} already saved.`)
     } catch (err) {
-      setHealthNotice(err?.message || 'Unable to sync Apple Health on this device.')
+      setHealthNotice(healthSyncFailureMessage(err))
     } finally {
       setHealthSyncing(false)
     }

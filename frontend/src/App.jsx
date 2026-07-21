@@ -157,7 +157,8 @@ function AutoHealthSync() {
       }
     }
 
-    sync()
+    // A cold launch must attempt an incremental sync even if the previous process synced recently.
+    sync({ force: true, bypassInterval: true })
     const interval = window.setInterval(() => sync(), AUTO_HEALTH_SYNC_MIN_INTERVAL_MS)
 
     const handleVisibility = () => {

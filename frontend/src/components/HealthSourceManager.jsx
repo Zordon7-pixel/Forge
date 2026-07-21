@@ -3,34 +3,11 @@ import { Activity, HeartPulse, RefreshCw, Watch } from 'lucide-react'
 import api from '../lib/api'
 import { formatFreshness, providerSourcePresentation } from '../lib/deviceSourcePresentation'
 import HealthService from '../services/HealthService'
-
-const HEALTH_SYNC_RESULT_KEY = 'forge_last_health_sync_result'
-
-function getLastSyncResult() {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(HEALTH_SYNC_RESULT_KEY) || 'null')
-    return parsed && typeof parsed === 'object' ? parsed : null
-  } catch (err) {
-    console.warn('[health-sources] sync result parse failed:', err.message)
-    return null
-  }
-}
-
-function saveLastSyncResult(result) {
-  try {
-    const scanned = Array.isArray(result?.workouts) ? result.workouts.length : Number(result?.scanned || result?.total || 0)
-    localStorage.setItem(HEALTH_SYNC_RESULT_KEY, JSON.stringify({
-      scanned: Number(scanned || 0),
-      imported: Number(result?.imported || 0),
-      skipped: Number(result?.skipped || 0),
-      errors: Array.isArray(result?.errors) ? result.errors : [],
-      authorizationUpgradeRequired: Boolean(result?.authorizationUpgradeRequired),
-      syncedAt: new Date().toISOString(),
-    }))
-  } catch (err) {
-    console.warn('[health-sources] sync result save failed:', err.message)
-  }
-}
+import {
+  getLastHealthSyncResult,
+  HEALTH_SYNC_COMPLETED_EVENT,
+  healthSyncFailureMessage,
+} from '../lib/healthSync'
 
 function SourcePill({ icon: Icon, label, detail }) {
   return (
@@ -47,7 +24,7 @@ function SourcePill({ icon: Icon, label, detail }) {
 export default function HealthSourceManager() {
   const [health, setHealth] = useState(null)
   const [runs, setRuns] = useState([])
-  const [lastSyncResult, setLastSyncResult] = useState(() => getLastSyncResult())
+  const [lastSyncResult, setLastSyncResult] = useState(() => getLastHealthSyncResult())
   const [syncing, setSyncing] = useState(false)
   const [notice, setNotice] = useState('')
   const isNativeRuntime = typeof window !== 'undefined' && Boolean(window.Capacitor?.isNativePlatform?.())
@@ -69,6 +46,12 @@ export default function HealthSourceManager() {
 
   useEffect(() => {
     loadSources()
+    const handleCompleted = () => {
+      setLastSyncResult(getLastHealthSyncResult())
+      loadSources()
+    }
+    window.addEventListener(HEALTH_SYNC_COMPLETED_EVENT, handleCompleted)
+    return () => window.removeEventListener(HEALTH_SYNC_COMPLETED_EVENT, handleCompleted)
   }, [])
 
   const connectedSources = useMemo(() => {
@@ -92,14 +75,13 @@ export default function HealthSourceManager() {
     setNotice('')
     try {
       const result = await HealthService.syncNativeData({ requestPermission: true })
-      saveLastSyncResult(result)
-      setLastSyncResult(getLastSyncResult())
+      setLastSyncResult(getLastHealthSyncResult())
       const scanned = Array.isArray(result?.workouts) ? result.workouts.length : Number(result?.scanned || 0)
       setNotice(`Apple Health synced: ${scanned} scanned, ${result.imported || 0} imported, ${result.skipped || 0} already saved.`)
       await loadSources()
     } catch (err) {
       console.error('[health-sources] Apple Health sync failed:', err?.message || err)
-      setNotice(err?.message || 'Unable to sync Apple Health on this device.')
+      setNotice(healthSyncFailureMessage(err))
     } finally {
       setSyncing(false)
     }

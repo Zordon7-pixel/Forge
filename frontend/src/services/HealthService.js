@@ -1,5 +1,10 @@
 import { Capacitor, registerPlugin } from '@capacitor/core'
 import api from '../lib/api'
+import {
+  announceHealthSyncCompleted,
+  createHealthImportBatches,
+  HEALTH_IMPORT_TIMEOUT_MS,
+} from '../lib/healthSync'
 
 const IOS_UA_REGEX = /iP(ad|hone|od)/i
 const NATIVE_HEALTH_AUTH_KEY = 'forge_health_authorized'
@@ -141,6 +146,7 @@ function nativeBridgeUnavailableReason(error) {
 class HealthService {
   constructor() {
     this.healthKit = null
+    this.nativeSyncPromise = null
   }
 
   async loadHealthKit() {
@@ -309,7 +315,26 @@ class HealthService {
     return data
   }
 
-  async syncNativeData({ requestPermission = false } = {}) {
+  async syncNativeData(options = {}) {
+    if (this.nativeSyncPromise) {
+      try {
+        const sharedResult = await this.nativeSyncPromise
+        if (!options.requestPermission || !sharedResult?.authorizationUpgradeRequired) return sharedResult
+      } catch (error) {
+        if (!options.requestPermission) throw error
+      }
+    }
+
+    const syncPromise = this.performNativeSync(options)
+    this.nativeSyncPromise = syncPromise
+    try {
+      return await syncPromise
+    } finally {
+      if (this.nativeSyncPromise === syncPromise) this.nativeSyncPromise = null
+    }
+  }
+
+  async performNativeSync({ requestPermission = false } = {}) {
     const result = await this.getHealthSummary({ requestPermission })
     if (!result?.available) {
       throw new Error(result?.reason || 'Apple Health is not available.')
@@ -336,8 +361,18 @@ class HealthService {
     let importResult = { imported: 0, skipped: 0, errors: [] }
     if (Array.isArray(workouts) && workouts.length > 0) {
       try {
-        const { data } = await api.post('/import/health', { workouts })
-        importResult = data || importResult
+        let offset = 0
+        for (const batch of createHealthImportBatches(workouts)) {
+          const { data } = await api.post('/import/health', { workouts: batch }, { timeout: HEALTH_IMPORT_TIMEOUT_MS })
+          importResult.imported += Number(data?.imported || 0)
+          importResult.skipped += Number(data?.skipped || 0)
+          const batchErrors = Array.isArray(data?.errors) ? data.errors : []
+          importResult.errors.push(...batchErrors.map((item) => ({
+            ...item,
+            index: Number.isInteger(Number(item?.index)) ? offset + Number(item.index) : item?.index,
+          })))
+          offset += batch.length
+        }
       } catch (error) {
         markHealthResyncNeeded()
         throw error
@@ -353,7 +388,7 @@ class HealthService {
 
     markAutoHealthSyncAttempted()
 
-    return {
+    const syncResult = {
       ...result,
       profile,
       observedMaxHR: history.observedMaxHR,
@@ -362,6 +397,8 @@ class HealthService {
       skipped: Number(importResult.skipped || 0),
       errors: importResult.errors || [],
     }
+    announceHealthSyncCompleted(syncResult)
+    return syncResult
   }
 
   markAutoHealthSyncAttempted() {
