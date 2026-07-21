@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Check, Copy, Download, ImagePlus, Share2, Users, X } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import api from '../lib/api'
-import { parsePlannedRun, parseRunRoute } from '../lib/runRecap'
+import { parsePlannedRun, parseRunRoute, parseZoneTimeline } from '../lib/runRecap'
 
 const CARD_WIDTH = 1080
 const CARD_HEIGHT = 1350
@@ -91,25 +91,116 @@ function drawCoverImage(ctx, image, x, y, width, height) {
   ctx.drawImage(image, x + (width - drawWidth) / 2, y + (height - drawHeight) / 2, drawWidth, drawHeight)
 }
 
-function drawBrand(ctx, logo, { dark = true } = {}) {
-  if (logo) ctx.drawImage(logo, 72, 62, 78, 78)
-  ctx.fillStyle = dark ? '#F5BD02' : '#8A5A00'
-  ctx.font = '800 28px -apple-system, BlinkMacSystemFont, sans-serif'
-  ctx.fillText('FORGED HYBRID', 174, 92)
-  ctx.fillStyle = dark ? '#A7A7B0' : '#5E5A51'
-  ctx.font = '600 20px -apple-system, BlinkMacSystemFont, sans-serif'
-  ctx.fillText('Built for the athlete you are becoming', 174, 126)
+// Tempered Steel & Ember share-card palette — hex required: canvas API, no CSS vars
+const CARD_FONT = '-apple-system, BlinkMacSystemFont, sans-serif'
+const CARD_GOLD = '#EAB308'
+const CARD_EMBER = '#F97316'
+const CARD_HOT = '#FFF6DC'
+const CARD_COAL = '#0C0A07'
+const CARD_STEEL = '#16130D'
+const CARD_ZONES = [
+  { key: 'Z1', color: '#5E6C7B' },
+  { key: 'Z2', color: '#EAB308' },
+  { key: 'Z3', color: '#F97316' },
+  { key: 'Z4', color: '#E5484D' },
+  { key: 'Z5', color: '#FFF6DC' },
+]
+
+function mulberry32(seed) {
+  let a = seed | 0
+  return function next() {
+    a = (a + 0x6D2B79F5) | 0
+    let t = Math.imul(a ^ (a >>> 15), 1 | a)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
 }
 
-function drawMetric(ctx, label, value, x, y, { dark = true, align = 'left' } = {}) {
-  ctx.textAlign = align
-  ctx.fillStyle = dark ? '#9CA3AF' : '#625E56'
-  ctx.font = '700 20px -apple-system, BlinkMacSystemFont, sans-serif'
-  ctx.fillText(label.toUpperCase(), x, y)
-  ctx.fillStyle = dark ? '#FFFFFF' : '#151515'
-  ctx.font = '900 42px -apple-system, BlinkMacSystemFont, sans-serif'
-  ctx.fillText(value, x, y + 52)
-  ctx.textAlign = 'left'
+function emberGradient(ctx, x0, y0, x1, y1) {
+  const gradient = ctx.createLinearGradient(x0, y0, x1, y1)
+  gradient.addColorStop(0, CARD_GOLD)
+  gradient.addColorStop(1, CARD_EMBER)
+  return gradient
+}
+
+function drawTracked(ctx, text, x, y, letterSpacing) {
+  let cursor = x
+  for (const char of String(text)) {
+    ctx.fillText(char, cursor, y)
+    cursor += ctx.measureText(char).width + letterSpacing
+  }
+  return cursor - letterSpacing
+}
+
+function drawMicro(ctx, text, x, y, color) {
+  ctx.fillStyle = color
+  ctx.font = `800 22px ${CARD_FONT}`
+  drawTracked(ctx, String(text).toUpperCase(), x, y, 5)
+}
+
+function drawBrand(ctx, logo, { dark = true, x = 72, y = 64 } = {}) {
+  if (logo) {
+    ctx.save()
+    ctx.beginPath()
+    ctx.roundRect(x, y, 64, 64, 16)
+    ctx.clip()
+    ctx.drawImage(logo, x, y, 64, 64)
+    ctx.restore()
+  }
+  ctx.fillStyle = dark ? CARD_HOT : '#1C1812'
+  ctx.font = `900 30px ${CARD_FONT}`
+  drawTracked(ctx, 'FORGED HYBRID', x + 86, y + 40, 7)
+  ctx.fillStyle = emberGradient(ctx, x + 86, 0, x + 326, 0)
+  ctx.fillRect(x + 86, y + 52, 118, 4)
+}
+
+function drawStatRow(ctx, items, x, y, gap, { dark = true, valueSize = 58 } = {}) {
+  let cursor = x
+  items.forEach(([label, value, width], index) => {
+    if (index > 0) {
+      ctx.fillStyle = dark ? 'rgba(255,246,220,0.14)' : 'rgba(28,24,18,0.18)'
+      ctx.fillRect(cursor - gap / 2, y - 46, 2, 86)
+    }
+    ctx.fillStyle = dark ? '#8E877A' : '#6E6656'
+    ctx.font = `800 21px ${CARD_FONT}`
+    drawTracked(ctx, label.toUpperCase(), cursor, y, 4)
+    ctx.fillStyle = dark ? '#FFFFFF' : '#151210'
+    ctx.font = `900 ${valueSize}px ${CARD_FONT}`
+    ctx.fillText(value, cursor, y + 62)
+    cursor += width + gap
+  })
+}
+
+function trustedZoneMinutes(run) {
+  const timeline = parseZoneTimeline(run?.heart_rate_zones, run?.duration_seconds)
+  if (!timeline.trusted || !(timeline.totalSeconds > 0)) return null
+  const minutes = timeline.seconds.map((seconds) => Math.round(seconds / 60))
+  return minutes.some((minute) => minute > 0) ? minutes : null
+}
+
+function drawZoneBar(ctx, minutes, x, y, width, { dark = true } = {}) {
+  const total = minutes.reduce((sum, minute) => sum + minute, 0)
+  if (!(total > 0)) return
+  const gap = 6
+  const barHeight = 34
+  let cursor = x
+  minutes.forEach((minute, index) => {
+    const segmentWidth = Math.max(10, (width - gap * 4) * (minute / total))
+    if (index === 4) {
+      ctx.save()
+      ctx.shadowColor = CARD_HOT
+      ctx.shadowBlur = 22
+    }
+    roundRect(ctx, cursor, y, segmentWidth, barHeight, 8, CARD_ZONES[index].color)
+    if (index === 4) ctx.restore()
+    ctx.fillStyle = dark ? '#8E877A' : '#6E6656'
+    ctx.font = `800 20px ${CARD_FONT}`
+    ctx.fillText(CARD_ZONES[index].key, cursor, y - 14)
+    ctx.fillStyle = dark ? '#5B5648' : '#8A8272'
+    ctx.font = `700 19px ${CARD_FONT}`
+    ctx.fillText(`${minute}m`, cursor, y + barHeight + 28)
+    cursor += segmentWidth + gap
+  })
 }
 
 function fitRoute(points, x, y, width, height) {
@@ -133,264 +224,432 @@ function fitRoute(points, x, y, width, height) {
   ])
 }
 
-function drawRoute(ctx, route, bounds, { routeColor = '#F5BD02', outlineColor = '#111111', emptyColor = '#71717A' } = {}) {
+function drawRoute(ctx, route, bounds, { casing = '#1A150C', glow = CARD_EMBER, gradient = true, routeColor = CARD_GOLD, lineWidth = 11, emptyColor = '#71717A' } = {}) {
   const fitted = fitRoute(route, bounds.x, bounds.y, bounds.width, bounds.height)
   if (fitted.length < 2) {
     ctx.fillStyle = emptyColor
-    ctx.font = '700 28px -apple-system, BlinkMacSystemFont, sans-serif'
+    ctx.font = `700 28px ${CARD_FONT}`
     ctx.textAlign = 'center'
     ctx.fillText('Route was not shared by the recording source', CARD_WIDTH / 2, bounds.y + bounds.height / 2)
     ctx.textAlign = 'left'
     return
   }
 
-  ctx.beginPath()
-  fitted.forEach(([pointX, pointY], index) => {
-    if (index === 0) ctx.moveTo(pointX, pointY)
-    else ctx.lineTo(pointX, pointY)
-  })
+  const trace = () => {
+    ctx.beginPath()
+    fitted.forEach(([pointX, pointY], index) => {
+      if (index === 0) ctx.moveTo(pointX, pointY)
+      else ctx.lineTo(pointX, pointY)
+    })
+  }
+  ctx.save()
   ctx.lineCap = 'round'
   ctx.lineJoin = 'round'
-  ctx.strokeStyle = outlineColor
-  ctx.lineWidth = 18
+  ctx.save()
+  ctx.shadowColor = glow
+  ctx.shadowBlur = 46
+  trace()
+  ctx.strokeStyle = 'rgba(249,115,22,0.42)'
+  ctx.lineWidth = lineWidth + 8
   ctx.stroke()
-  ctx.strokeStyle = routeColor
-  ctx.lineWidth = 10
+  ctx.restore()
+  trace()
+  ctx.strokeStyle = casing
+  ctx.lineWidth = lineWidth + 11
+  ctx.stroke()
+  trace()
+  if (gradient) {
+    const xs = fitted.map((point) => point[0])
+    const ys = fitted.map((point) => point[1])
+    ctx.strokeStyle = emberGradient(ctx, Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys))
+  } else {
+    ctx.strokeStyle = routeColor
+  }
+  ctx.lineWidth = lineWidth
   ctx.stroke()
 
   const [startX, startY] = fitted[0]
   const [endX, endY] = fitted.at(-1)
-  ctx.fillStyle = '#22C55E'
+  ctx.fillStyle = '#5E6C7B'
   ctx.beginPath()
-  ctx.arc(startX, startY, 16, 0, Math.PI * 2)
+  ctx.arc(startX, startY, 13, 0, Math.PI * 2)
   ctx.fill()
-  ctx.strokeStyle = '#FFFFFF'
+  ctx.strokeStyle = casing
   ctx.lineWidth = 5
   ctx.stroke()
-  ctx.fillStyle = '#EF4444'
+  ctx.save()
+  ctx.shadowColor = CARD_HOT
+  ctx.shadowBlur = 30
+  ctx.fillStyle = CARD_HOT
   ctx.beginPath()
-  ctx.arc(endX, endY, 16, 0, Math.PI * 2)
+  ctx.arc(endX, endY, 15, 0, Math.PI * 2)
   ctx.fill()
+  ctx.restore()
+  ctx.strokeStyle = casing
+  ctx.lineWidth = 5
+  ctx.beginPath()
+  ctx.arc(endX, endY, 15, 0, Math.PI * 2)
   ctx.stroke()
+  ctx.restore()
 }
 
 function drawRouteTemplate(ctx, run, route, logo) {
-  ctx.fillStyle = '#070707'
+  const ground = ctx.createRadialGradient(CARD_WIDTH / 2, 470, 120, CARD_WIDTH / 2, 600, 900)
+  ground.addColorStop(0, '#171208')
+  ground.addColorStop(0.55, CARD_COAL)
+  ground.addColorStop(1, '#070503')
+  ctx.fillStyle = ground
   ctx.fillRect(0, 0, CARD_WIDTH, CARD_HEIGHT)
-  drawBrand(ctx, logo)
-
-  ctx.save()
-  ctx.strokeStyle = 'rgba(245,189,2,0.08)'
-  ctx.lineWidth = 3
-  for (let row = 0; row < 11; row += 1) {
+  ctx.strokeStyle = 'rgba(255,246,220,0.035)'
+  ctx.lineWidth = 1
+  for (let x = 90; x < CARD_WIDTH; x += 100) {
     ctx.beginPath()
-    for (let x = -60; x <= CARD_WIDTH + 60; x += 18) {
-      const y = 190 + row * 76 + Math.sin((x + row * 41) / 95) * 24
-      if (x === -60) ctx.moveTo(x, y)
-      else ctx.lineTo(x, y)
-    }
+    ctx.moveTo(x, 180)
+    ctx.lineTo(x, 905)
     ctx.stroke()
   }
-  ctx.restore()
-
-  drawRoute(ctx, route, { x: 92, y: 230, width: 896, height: 650 })
-  roundRect(ctx, 60, 930, 960, 330, 30, 'rgba(16,16,18,0.94)', '#2A2A2E')
+  for (let y = 230; y < 910; y += 100) {
+    ctx.beginPath()
+    ctx.moveTo(60, y)
+    ctx.lineTo(CARD_WIDTH - 60, y)
+    ctx.stroke()
+  }
+  drawBrand(ctx, logo)
+  drawRoute(ctx, route, { x: 140, y: 250, width: 800, height: 600 })
   ctx.fillStyle = '#FFFFFF'
-  ctx.font = '900 52px -apple-system, BlinkMacSystemFont, sans-serif'
-  ctx.fillText(titleForRun(run), 98, 1005)
-  ctx.fillStyle = '#A1A1AA'
-  ctx.font = '600 24px -apple-system, BlinkMacSystemFont, sans-serif'
-  ctx.fillText(formatDate(run.date || run.created_at), 98, 1046)
-  drawMetric(ctx, 'Distance', `${Number(run.distance_miles || 0).toFixed(2)} mi`, 98, 1111)
-  drawMetric(ctx, 'Time', formatDuration(run.duration_seconds), 408, 1111)
-  drawMetric(ctx, 'Pace', formatPace(run), 708, 1111)
+  ctx.font = `900 58px ${CARD_FONT}`
+  ctx.fillText(titleForRun(run), 72, 985)
+  drawMicro(ctx, formatDate(run.date || run.created_at), 74, 1026, '#8E877A')
+  const distance = Number(run.distance_miles || 0).toFixed(2)
+  ctx.fillStyle = '#FFFFFF'
+  ctx.font = `900 148px ${CARD_FONT}`
+  ctx.fillText(distance, 66, 1210)
+  const distanceWidth = ctx.measureText(distance).width
+  ctx.fillStyle = CARD_GOLD
+  ctx.font = `900 40px ${CARD_FONT}`
+  ctx.fillText('MI', 84 + distanceWidth, 1210)
+  const heartRate = finiteMetric(run.avg_heart_rate ?? run.avg_hr)
+  drawStatRow(ctx, [
+    ['Time', formatDuration(run.duration_seconds), 148],
+    ['Pace', formatPace(run), 192],
+    ['Avg HR', heartRate === null ? '--' : `${Math.round(heartRate)}`, 90],
+  ], 500, 1122, 42, { valueSize: 44 })
 }
 
 function drawLogTemplate(ctx, run, logo) {
-  ctx.fillStyle = '#F3EFE4'
+  ctx.fillStyle = '#0A0806'
   ctx.fillRect(0, 0, CARD_WIDTH, CARD_HEIGHT)
-  ctx.strokeStyle = '#D9D1BE'
-  ctx.lineWidth = 2
-  for (let y = 185; y < CARD_HEIGHT; y += 64) {
-    ctx.beginPath()
-    ctx.moveTo(0, y)
-    ctx.lineTo(CARD_WIDTH, y)
-    ctx.stroke()
-  }
-  ctx.strokeStyle = '#DC8D79'
-  ctx.beginPath()
-  ctx.moveTo(118, 0)
-  ctx.lineTo(118, CARD_HEIGHT)
-  ctx.stroke()
-  drawBrand(ctx, logo, { dark: false })
-
+  roundRect(ctx, 44, 44, CARD_WIDTH - 88, CARD_HEIGHT - 88, 34, CARD_STEEL)
+  const rand = mulberry32(7)
   ctx.save()
-  ctx.translate(96, 265)
-  ctx.rotate(-0.012)
-  ctx.fillStyle = '#121212'
-  ctx.font = '900 68px Georgia, serif'
-  ctx.fillText(titleForRun(run), 0, 0)
-  ctx.fillStyle = '#756E62'
-  ctx.font = '600 28px Georgia, serif'
-  ctx.fillText(formatDate(run.date || run.created_at), 4, 48)
+  ctx.beginPath()
+  ctx.roundRect(44, 44, CARD_WIDTH - 88, CARD_HEIGHT - 88, 34)
+  ctx.clip()
+  for (let x = 44; x < CARD_WIDTH - 44; x += 3) {
+    ctx.fillStyle = `rgba(255,246,220,${0.004 + rand() * 0.014})`
+    ctx.fillRect(x, 44, 1, CARD_HEIGHT - 88)
+  }
   ctx.restore()
-
-  roundRect(ctx, 78, 360, 924, 304, 20, 'rgba(255,255,255,0.46)', '#CFC6B2')
-  drawMetric(ctx, 'Distance', `${Number(run.distance_miles || 0).toFixed(2)} mi`, 120, 435, { dark: false })
-  drawMetric(ctx, 'Time', formatDuration(run.duration_seconds), 570, 435, { dark: false })
-  drawMetric(ctx, 'Average pace', formatPace(run), 120, 565, { dark: false })
-  const averageHeartRate = finiteMetric(run.avg_heart_rate ?? run.avg_hr)
-  drawMetric(ctx, 'Average HR', averageHeartRate === null ? '--' : `${Math.round(averageHeartRate)} bpm`, 570, 565, { dark: false })
-
-  ctx.fillStyle = '#A24327'
-  ctx.font = 'italic 700 36px Georgia, serif'
-  ctx.fillText('THE WORK ADDS UP.', 94, 772)
-  ctx.fillStyle = '#1F1F1D'
-  ctx.font = '700 32px Georgia, serif'
-  const details = [
-    `Effort: ${run.perceived_effort ? `${run.perceived_effort}/10` : 'not rated'}`,
-    `Elevation: ${finiteMetric(run.elevation_gain) === null ? 'not shared' : `${Math.round(finiteMetric(run.elevation_gain))} ft`}`,
-    'Next step: recover, learn, return stronger.',
+  roundRect(ctx, 44, 44, CARD_WIDTH - 88, CARD_HEIGHT - 88, 34, null, 'rgba(255,246,220,0.10)')
+  roundRect(ctx, 60, 60, CARD_WIDTH - 120, CARD_HEIGHT - 120, 26, null, 'rgba(0,0,0,0.55)')
+  ;[[92, 92], [CARD_WIDTH - 92, 92], [92, CARD_HEIGHT - 92], [CARD_WIDTH - 92, CARD_HEIGHT - 92]].forEach(([x, y]) => {
+    ctx.fillStyle = '#0E0B07'
+    ctx.beginPath()
+    ctx.arc(x, y, 13, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.strokeStyle = 'rgba(255,246,220,0.22)'
+    ctx.lineWidth = 2.5
+    ctx.beginPath()
+    ctx.arc(x, y, 13, Math.PI * 0.8, Math.PI * 1.7)
+    ctx.stroke()
+  })
+  drawBrand(ctx, logo, { x: 110, y: 104 })
+  ctx.save()
+  ctx.shadowColor = 'rgba(0,0,0,0.95)'
+  ctx.shadowOffsetY = 3
+  ctx.fillStyle = '#B9AE93'
+  ctx.font = `900 33px ${CARD_FONT}`
+  drawTracked(ctx, 'TRAINING LOG', 110, 268, 13)
+  ctx.restore()
+  const serial = String(run.date || run.created_at || '').slice(0, 10).replace(/-/g, '') || '00000000'
+  ctx.fillStyle = '#5B5648'
+  ctx.font = '800 26px ui-monospace, Menlo, monospace'
+  ctx.textAlign = 'right'
+  ctx.fillText(`Nº ${serial}`, CARD_WIDTH - 110, 268)
+  ctx.textAlign = 'left'
+  ctx.fillStyle = 'rgba(255,246,220,0.10)'
+  ctx.fillRect(110, 296, CARD_WIDTH - 220, 2)
+  ctx.fillStyle = '#FFFFFF'
+  ctx.font = `900 68px ${CARD_FONT}`
+  ctx.fillText(titleForRun(run), 108, 392)
+  drawMicro(ctx, formatDate(run.date || run.created_at), 110, 436, '#8E877A')
+  const heartRate = finiteMetric(run.avg_heart_rate ?? run.avg_hr)
+  const elevation = finiteMetric(run.elevation_gain)
+  const rows = [
+    ['DISTANCE', `${Number(run.distance_miles || 0).toFixed(2)} MI`],
+    ['TIME', formatDuration(run.duration_seconds)],
+    ['PACE', formatPace(run).toUpperCase()],
+    ['AVG HEART RATE', heartRate === null ? '--' : `${Math.round(heartRate)} BPM`],
+    ['ELEVATION', elevation === null ? 'NOT SHARED' : `${Math.round(elevation)} FT`],
+    ['EFFORT', run.perceived_effort ? `${run.perceived_effort} / 10` : 'NOT RATED'],
   ]
-  details.forEach((line, index) => ctx.fillText(line, 110, 874 + index * 82))
-  ctx.fillStyle = '#8A5A00'
-  ctx.font = '900 30px -apple-system, BlinkMacSystemFont, sans-serif'
-  ctx.fillText('FORGED, NOT FINISHED.', 110, 1216)
+  rows.forEach((row, index) => {
+    const y = 560 + index * 104
+    ctx.fillStyle = '#8E877A'
+    ctx.font = `800 26px ${CARD_FONT}`
+    const labelEnd = drawTracked(ctx, row[0], 110, y, 4)
+    ctx.fillStyle = '#FFFFFF'
+    ctx.font = `900 46px ${CARD_FONT}`
+    ctx.textAlign = 'right'
+    ctx.fillText(row[1], CARD_WIDTH - 110, y + 2)
+    const valueWidth = ctx.measureText(row[1]).width
+    ctx.textAlign = 'left'
+    ctx.fillStyle = 'rgba(255,246,220,0.16)'
+    for (let dotX = labelEnd + 26; dotX < CARD_WIDTH - 130 - valueWidth; dotX += 16) ctx.fillRect(dotX, y - 6, 4, 4)
+    if (index < rows.length - 1) {
+      ctx.fillStyle = 'rgba(255,246,220,0.05)'
+      ctx.fillRect(110, y + 46, CARD_WIDTH - 220, 1)
+    }
+  })
+  ctx.save()
+  ctx.translate(CARD_WIDTH - 330, 1216)
+  ctx.rotate(-0.075)
+  ctx.strokeStyle = 'rgba(234,179,8,0.85)'
+  ctx.lineWidth = 5
+  ctx.beginPath()
+  ctx.roundRect(-10, -46, 232, 72, 10)
+  ctx.stroke()
+  ctx.fillStyle = 'rgba(234,179,8,0.9)'
+  ctx.font = `900 40px ${CARD_FONT}`
+  drawTracked(ctx, 'FORGED', 22, 6, 8)
+  ctx.restore()
+  ctx.fillStyle = CARD_GOLD
+  ctx.font = `900 26px ${CARD_FONT}`
+  drawTracked(ctx, 'THE WORK ADDS UP.', 110, 1228, 6)
 }
 
 function drawEmberTemplate(ctx, run, logo) {
-  const distance = Number(run.distance_miles || 0).toFixed(2)
-  ctx.fillStyle = '#080808'
+  ctx.fillStyle = '#070503'
   ctx.fillRect(0, 0, CARD_WIDTH, CARD_HEIGHT)
-
-  const ember = ctx.createLinearGradient(0, 160, CARD_WIDTH, 1120)
-  ember.addColorStop(0, '#21150A')
-  ember.addColorStop(0.52, '#A24327')
-  ember.addColorStop(1, '#F5BD02')
-  ctx.fillStyle = ember
-  ctx.beginPath()
-  ctx.moveTo(0, 760)
-  ctx.lineTo(CARD_WIDTH, 260)
-  ctx.lineTo(CARD_WIDTH, 680)
-  ctx.lineTo(0, 1180)
-  ctx.closePath()
-  ctx.fill()
-
+  const heat = ctx.createLinearGradient(0, 640, 0, CARD_HEIGHT)
+  heat.addColorStop(0, 'rgba(122,46,18,0)')
+  heat.addColorStop(0.42, 'rgba(160,58,16,0.55)')
+  heat.addColorStop(0.78, 'rgba(249,115,22,0.82)')
+  heat.addColorStop(1, 'rgba(234,179,8,0.95)')
+  ctx.fillStyle = heat
+  ctx.fillRect(0, 640, CARD_WIDTH, CARD_HEIGHT - 640)
+  const core = ctx.createRadialGradient(CARD_WIDTH / 2, CARD_HEIGHT + 140, 60, CARD_WIDTH / 2, CARD_HEIGHT + 140, 760)
+  core.addColorStop(0, 'rgba(255,246,220,0.85)')
+  core.addColorStop(0.4, 'rgba(249,115,22,0.35)')
+  core.addColorStop(1, 'rgba(249,115,22,0)')
+  ctx.fillStyle = core
+  ctx.fillRect(0, 560, CARD_WIDTH, CARD_HEIGHT - 560)
+  const rand = mulberry32(42)
+  for (let i = 0; i < 64; i += 1) {
+    const x = rand() * CARD_WIDTH
+    const y = 660 + rand() * 640
+    const radius = 1.5 + rand() * 4
+    const alpha = 0.18 + rand() * 0.6
+    ctx.save()
+    ctx.shadowColor = rand() > 0.5 ? CARD_GOLD : CARD_HOT
+    ctx.shadowBlur = 14
+    ctx.fillStyle = `rgba(255,${200 + Math.floor(rand() * 55)},140,${alpha})`
+    ctx.beginPath()
+    ctx.arc(x, y, radius, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.restore()
+  }
   drawBrand(ctx, logo)
   ctx.fillStyle = '#FFFFFF'
-  ctx.font = '900 58px -apple-system, BlinkMacSystemFont, sans-serif'
-  ctx.fillText(titleForRun(run), 76, 272)
-  ctx.fillStyle = '#FDE68A'
-  ctx.font = '800 25px -apple-system, BlinkMacSystemFont, sans-serif'
-  ctx.fillText(formatDate(run.date || run.created_at), 78, 318)
-
-  ctx.fillStyle = '#FFFFFF'
-  ctx.font = '950 220px -apple-system, BlinkMacSystemFont, sans-serif'
-  ctx.fillText(distance, 66, 710)
-  ctx.font = '900 42px -apple-system, BlinkMacSystemFont, sans-serif'
-  ctx.fillText('MILES', 80, 770)
-
-  roundRect(ctx, 60, 905, 960, 330, 28, 'rgba(5,5,5,0.92)', 'rgba(255,255,255,0.18)')
-  drawMetric(ctx, 'Time', formatDuration(run.duration_seconds), 100, 995)
-  drawMetric(ctx, 'Pace', formatPace(run), 410, 995)
+  ctx.font = `900 56px ${CARD_FONT}`
+  ctx.fillText(titleForRun(run), 72, 258)
+  drawMicro(ctx, formatDate(run.date || run.created_at), 74, 300, '#8E877A')
+  ctx.save()
+  ctx.shadowColor = 'rgba(255,246,220,0.55)'
+  ctx.shadowBlur = 42
+  const distanceGradient = ctx.createLinearGradient(0, 380, 0, 660)
+  distanceGradient.addColorStop(0, '#FFFFFF')
+  distanceGradient.addColorStop(1, CARD_HOT)
+  ctx.fillStyle = distanceGradient
+  ctx.font = `900 252px ${CARD_FONT}`
+  ctx.fillText(Number(run.distance_miles || 0).toFixed(2), 52, 646)
+  ctx.restore()
+  ctx.fillStyle = CARD_GOLD
+  ctx.font = `900 44px ${CARD_FONT}`
+  drawTracked(ctx, 'MILES', 66, 712, 12)
+  roundRect(ctx, 60, 880, CARD_WIDTH - 120, 336, 28, 'rgba(7,5,3,0.88)', 'rgba(255,246,220,0.16)')
   const heartRate = finiteMetric(run.avg_heart_rate ?? run.avg_hr)
-  drawMetric(ctx, 'Average HR', heartRate === null ? '--' : `${Math.round(heartRate)} bpm`, 720, 995)
-  ctx.fillStyle = '#F5BD02'
-  ctx.font = '900 28px -apple-system, BlinkMacSystemFont, sans-serif'
-  ctx.fillText('BANK THE WORK. BUILD THE ATHLETE.', 100, 1180)
+  const zoneMinutes = trustedZoneMinutes(run)
+  const statY = zoneMinutes ? 968 : 1020
+  drawStatRow(ctx, [
+    ['Time', formatDuration(run.duration_seconds), 250],
+    ['Pace', formatPace(run), 268],
+    ['Avg HR', heartRate === null ? '--' : `${Math.round(heartRate)} bpm`, 210],
+  ], 118, statY, 52)
+  if (zoneMinutes) drawZoneBar(ctx, zoneMinutes, 118, 1094, CARD_WIDTH - 236)
+  ctx.fillStyle = CARD_HOT
+  ctx.font = `900 27px ${CARD_FONT}`
+  drawTracked(ctx, 'EFFORT IS HEAT.', 66, 1292, 7)
 }
 
 function drawContourTemplate(ctx, run, route, logo) {
-  ctx.fillStyle = '#E9E3D5'
+  ctx.fillStyle = '#EFE9DB'
   ctx.fillRect(0, 0, CARD_WIDTH, CARD_HEIGHT)
-  ctx.save()
-  ctx.strokeStyle = 'rgba(68,64,56,0.16)'
-  ctx.lineWidth = 3
-  for (let row = 0; row < 15; row += 1) {
+  const centerX = CARD_WIDTH / 2
+  const centerY = 545
+  ctx.strokeStyle = 'rgba(90,80,60,0.12)'
+  ctx.lineWidth = 2
+  for (let ring = 70; ring <= 760; ring += 46) {
     ctx.beginPath()
-    for (let x = -50; x <= CARD_WIDTH + 50; x += 16) {
-      const y = 160 + row * 72 + Math.sin((x + row * 53) / 82) * 18 + Math.cos(x / 150) * 12
-      if (x === -50) ctx.moveTo(x, y)
-      else ctx.lineTo(x, y)
+    for (let angle = 0; angle <= Math.PI * 2 + 0.05; angle += 0.04) {
+      const radius = ring * (1 + 0.09 * Math.sin(3 * angle + ring * 0.02) + 0.05 * Math.cos(5 * angle - ring * 0.013))
+      const pointX = centerX + radius * Math.cos(angle) * 1.12
+      const pointY = centerY + radius * Math.sin(angle) * 0.8
+      if (angle === 0) ctx.moveTo(pointX, pointY)
+      else ctx.lineTo(pointX, pointY)
     }
     ctx.stroke()
   }
-  ctx.restore()
+  const fade = ctx.createLinearGradient(0, 760, 0, 980)
+  fade.addColorStop(0, 'rgba(239,233,219,0)')
+  fade.addColorStop(1, '#EFE9DB')
+  ctx.fillStyle = fade
+  ctx.fillRect(0, 760, CARD_WIDTH, 240)
   drawBrand(ctx, logo, { dark: false })
-  drawRoute(ctx, route, { x: 86, y: 205, width: 908, height: 690 }, {
-    routeColor: '#A24327',
-    outlineColor: '#F7F2E8',
+  drawRoute(ctx, route, { x: 170, y: 240, width: 740, height: 560 }, {
+    casing: '#F7F2E6',
+    glow: 'rgba(184,74,23,0.55)',
+    gradient: false,
+    routeColor: '#B84A17',
+    lineWidth: 12,
     emptyColor: '#625E56',
   })
-  roundRect(ctx, 58, 930, 964, 332, 22, 'rgba(247,242,232,0.94)', '#BDB3A0')
-  ctx.fillStyle = '#151515'
-  ctx.font = '900 52px Georgia, serif'
-  ctx.fillText(titleForRun(run), 96, 1008)
-  ctx.fillStyle = '#756E62'
-  ctx.font = '700 24px Georgia, serif'
-  ctx.fillText(formatDate(run.date || run.created_at), 98, 1050)
-  drawMetric(ctx, 'Distance', `${Number(run.distance_miles || 0).toFixed(2)} mi`, 98, 1115, { dark: false })
-  drawMetric(ctx, 'Time', formatDuration(run.duration_seconds), 406, 1115, { dark: false })
-  drawMetric(ctx, 'Pace', formatPace(run), 706, 1115, { dark: false })
+  ctx.fillStyle = '#151210'
+  ctx.font = '900 74px Georgia, serif'
+  ctx.fillText(titleForRun(run), 96, 1015)
+  ctx.fillStyle = emberGradient(ctx, 96, 0, 356, 0)
+  ctx.fillRect(98, 1042, 190, 5)
+  ctx.fillStyle = '#8A8272'
+  ctx.font = '700 25px Georgia, serif'
+  ctx.fillText(formatDate(run.date || run.created_at), 98, 1092)
+  ctx.fillStyle = 'rgba(28,24,18,0.16)'
+  ctx.fillRect(96, 1122, CARD_WIDTH - 192, 2)
+  const values = [
+    ['Distance', `${Number(run.distance_miles || 0).toFixed(2)} mi`],
+    ['Time', formatDuration(run.duration_seconds)],
+    ['Pace', formatPace(run)],
+  ]
+  values.forEach(([label, value], index) => {
+    const x = 98 + index * 310
+    ctx.fillStyle = '#8A8272'
+    ctx.font = `800 21px ${CARD_FONT}`
+    drawTracked(ctx, label.toUpperCase(), x, 1176, 4)
+    ctx.fillStyle = '#1C1812'
+    ctx.font = '900 52px Georgia, serif'
+    ctx.fillText(value, x, 1244)
+  })
 }
 
 function drawOverlayTemplate(ctx, run, route, logo) {
   ctx.clearRect(0, 0, CARD_WIDTH, CARD_HEIGHT)
-  roundRect(ctx, 48, 48, 984, 156, 24, 'rgba(5,5,5,0.82)', 'rgba(255,255,255,0.26)')
-  drawBrand(ctx, logo)
-  drawRoute(ctx, route, { x: 110, y: 258, width: 860, height: 570 }, {
-    routeColor: '#F5BD02',
-    outlineColor: 'rgba(0,0,0,0.75)',
+  roundRect(ctx, 64, 64, 438, 104, 999, 'rgba(7,5,3,0.78)', 'rgba(255,246,220,0.22)')
+  if (logo) {
+    ctx.save()
+    ctx.beginPath()
+    ctx.roundRect(82, 80, 72, 72, 999)
+    ctx.clip()
+    ctx.drawImage(logo, 82, 80, 72, 72)
+    ctx.restore()
+  }
+  ctx.fillStyle = CARD_HOT
+  ctx.font = `900 27px ${CARD_FONT}`
+  drawTracked(ctx, 'FORGED HYBRID', 172, 130, 5)
+  drawRoute(ctx, route, { x: CARD_WIDTH - 372, y: 236, width: 300, height: 300 }, {
+    casing: 'rgba(0,0,0,0.7)',
+    lineWidth: 9,
     emptyColor: 'rgba(255,255,255,0.86)',
   })
-  roundRect(ctx, 48, 890, 984, 398, 30, 'rgba(5,5,5,0.86)', 'rgba(255,255,255,0.28)')
+  ctx.save()
+  ctx.shadowColor = 'rgba(0,0,0,0.8)'
+  ctx.shadowBlur = 26
+  ctx.shadowOffsetY = 4
+  ctx.fillStyle = emberGradient(ctx, 72, 0, 72, CARD_HEIGHT)
+  ctx.fillRect(72, 842, 7, 392)
   ctx.fillStyle = '#FFFFFF'
-  ctx.font = '900 58px -apple-system, BlinkMacSystemFont, sans-serif'
-  ctx.fillText(titleForRun(run), 92, 980)
-  ctx.fillStyle = '#D4D4D8'
-  ctx.font = '700 24px -apple-system, BlinkMacSystemFont, sans-serif'
-  ctx.fillText(formatDate(run.date || run.created_at), 94, 1025)
-  drawMetric(ctx, 'Distance', `${Number(run.distance_miles || 0).toFixed(2)} mi`, 94, 1100)
-  drawMetric(ctx, 'Time', formatDuration(run.duration_seconds), 410, 1100)
-  drawMetric(ctx, 'Pace', formatPace(run), 712, 1100)
+  ctx.font = `900 56px ${CARD_FONT}`
+  ctx.fillText(titleForRun(run), 118, 900)
+  ctx.fillStyle = 'rgba(255,255,255,0.82)'
+  ctx.font = `800 24px ${CARD_FONT}`
+  drawTracked(ctx, formatDate(run.date || run.created_at).toUpperCase(), 120, 944, 5)
+  ctx.fillStyle = '#FFFFFF'
+  ctx.font = `900 104px ${CARD_FONT}`
+  ctx.fillText(`${Number(run.distance_miles || 0).toFixed(2)} MI`, 114, 1066)
+  ctx.font = `900 74px ${CARD_FONT}`
+  const timeText = formatDuration(run.duration_seconds)
+  ctx.fillText(timeText, 114, 1168)
+  const timeWidth = ctx.measureText(timeText).width
+  ctx.fillStyle = CARD_HOT
+  ctx.font = `900 46px ${CARD_FONT}`
+  ctx.fillText(formatPace(run), 132 + timeWidth, 1160)
+  ctx.restore()
 }
 
 function drawPhotoTemplate(ctx, run, photo, logo) {
-  ctx.fillStyle = '#090909'
+  ctx.fillStyle = '#070503'
   ctx.fillRect(0, 0, CARD_WIDTH, CARD_HEIGHT)
   if (photo) {
     drawCoverImage(ctx, photo, 0, 0, CARD_WIDTH, CARD_HEIGHT)
-    const gradient = ctx.createLinearGradient(0, 420, 0, CARD_HEIGHT)
-    gradient.addColorStop(0, 'rgba(0,0,0,0.05)')
-    gradient.addColorStop(0.72, 'rgba(0,0,0,0.72)')
-    gradient.addColorStop(1, 'rgba(0,0,0,0.96)')
-    ctx.fillStyle = gradient
+    ctx.fillStyle = 'rgba(234,179,8,0.05)'
     ctx.fillRect(0, 0, CARD_WIDTH, CARD_HEIGHT)
+    const gradient = ctx.createLinearGradient(0, CARD_HEIGHT - 720, 0, CARD_HEIGHT - 300)
+    gradient.addColorStop(0, 'rgba(7,5,3,0)')
+    gradient.addColorStop(1, 'rgba(7,5,3,0.72)')
+    ctx.fillStyle = gradient
+    ctx.fillRect(0, CARD_HEIGHT - 720, CARD_WIDTH, 420)
   } else {
-    ctx.fillStyle = '#141417'
-    ctx.fillRect(62, 196, 956, 780)
-    ctx.strokeStyle = '#34343A'
-    ctx.lineWidth = 3
-    ctx.setLineDash([18, 14])
-    ctx.strokeRect(62, 196, 956, 780)
-    ctx.setLineDash([])
-    ctx.fillStyle = '#71717A'
-    ctx.font = '800 30px -apple-system, BlinkMacSystemFont, sans-serif'
+    const rand = mulberry32(11)
+    for (let i = 0; i < 26; i += 1) {
+      const x = rand() * CARD_WIDTH
+      const y = rand() * 880
+      const radius = 1 + rand() * 2.5
+      ctx.fillStyle = `rgba(255,246,220,${0.05 + rand() * 0.12})`
+      ctx.beginPath()
+      ctx.arc(x, y, radius, 0, Math.PI * 2)
+      ctx.fill()
+    }
+    roundRect(ctx, 120, 300, CARD_WIDTH - 240, 480, 28, 'rgba(255,246,220,0.03)', 'rgba(255,246,220,0.14)')
+    ctx.strokeStyle = 'rgba(255,246,220,0.3)'
+    ctx.lineWidth = 6
+    ctx.lineCap = 'round'
+    ctx.beginPath()
+    ctx.moveTo(CARD_WIDTH / 2 - 44, 516)
+    ctx.lineTo(CARD_WIDTH / 2 + 44, 516)
+    ctx.moveTo(CARD_WIDTH / 2, 472)
+    ctx.lineTo(CARD_WIDTH / 2, 560)
+    ctx.stroke()
+    ctx.fillStyle = '#8E877A'
+    ctx.font = `900 30px ${CARD_FONT}`
     ctx.textAlign = 'center'
-    ctx.fillText('ADD A PHOTO', CARD_WIDTH / 2, 590)
+    ctx.fillText('A D D   A   P H O T O', CARD_WIDTH / 2, 640)
+    ctx.fillStyle = '#5B5648'
+    ctx.font = `700 24px ${CARD_FONT}`
+    ctx.fillText('It becomes the whole card', CARD_WIDTH / 2, 684)
     ctx.textAlign = 'left'
   }
   drawBrand(ctx, logo)
-
+  ctx.fillStyle = emberGradient(ctx, 0, 0, CARD_WIDTH, 0)
+  ctx.fillRect(0, CARD_HEIGHT - 330, CARD_WIDTH, 6)
+  ctx.fillStyle = 'rgba(7,5,3,0.96)'
+  ctx.fillRect(0, CARD_HEIGHT - 324, CARD_WIDTH, 324)
   ctx.fillStyle = '#FFFFFF'
-  ctx.font = '900 62px -apple-system, BlinkMacSystemFont, sans-serif'
-  ctx.fillText(titleForRun(run), 76, 1042)
-  ctx.fillStyle = '#D4D4D8'
-  ctx.font = '600 25px -apple-system, BlinkMacSystemFont, sans-serif'
-  ctx.fillText(formatDate(run.date || run.created_at), 78, 1086)
-  drawMetric(ctx, 'Distance', `${Number(run.distance_miles || 0).toFixed(2)} mi`, 78, 1156)
-  drawMetric(ctx, 'Time', formatDuration(run.duration_seconds), 425, 1156)
-  drawMetric(ctx, 'Pace', formatPace(run), 740, 1156)
+  ctx.font = `900 54px ${CARD_FONT}`
+  ctx.fillText(titleForRun(run), 72, CARD_HEIGHT - 234)
+  drawMicro(ctx, formatDate(run.date || run.created_at), 74, CARD_HEIGHT - 192, '#8E877A')
+  drawStatRow(ctx, [
+    ['Distance', `${Number(run.distance_miles || 0).toFixed(2)} mi`, 300],
+    ['Time', formatDuration(run.duration_seconds), 250],
+    ['Pace', formatPace(run), 240],
+  ], 74, CARD_HEIGHT - 108, 56)
 }
 
 function captionForRun(run) {
@@ -466,7 +725,7 @@ function drawSummaryTemplate(ctx, summary, logo) {
   ctx.restore()
   drawBrand(ctx, logo)
 
-  ctx.fillStyle = '#F5BD02'
+  ctx.fillStyle = '#EAB308'
   ctx.font = '900 28px -apple-system, BlinkMacSystemFont, sans-serif'
   ctx.fillText(String(summary?.eyebrow || 'Hybrid Score').toUpperCase(), 76, 265)
   ctx.fillStyle = '#FFFFFF'
@@ -486,7 +745,7 @@ function drawSummaryTemplate(ctx, summary, logo) {
     ctx.fillText(String(metric?.label || 'Metric').toUpperCase(), 104, y)
     roundRect(ctx, 338, y - 22, 506, 28, 14, '#2A2A2E')
     const fillWidth = Math.round(506 * (value / 100))
-    if (fillWidth > 0) roundRect(ctx, 338, y - 22, fillWidth, 28, 14, metric?.color || '#F5BD02')
+    if (fillWidth > 0) roundRect(ctx, 338, y - 22, fillWidth, 28, 14, metric?.color || '#EAB308')
     ctx.fillStyle = '#FFFFFF'
     ctx.font = '900 32px -apple-system, BlinkMacSystemFont, sans-serif'
     ctx.textAlign = 'right'
@@ -494,7 +753,7 @@ function drawSummaryTemplate(ctx, summary, logo) {
     ctx.textAlign = 'left'
   })
 
-  ctx.fillStyle = '#F5BD02'
+  ctx.fillStyle = '#EAB308'
   ctx.font = '900 34px -apple-system, BlinkMacSystemFont, sans-serif'
   ctx.fillText('RUN + LIFT. BUILT IN FORGED HYBRID.', 80, 1212)
 }
