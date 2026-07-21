@@ -85,20 +85,21 @@ export default function Upgrade() {
 
   if (loading) {
     return (
-      <div style={{ minHeight: 'calc(100vh - 120px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <p style={{ color: 'var(--text-muted)' }}>Loading subscription status...</p>
+      <div className="flex items-center justify-center" style={{ minHeight: 'calc(100vh - 120px)', background: 'var(--bg-base)' }}>
+        <p className="t-micro">Loading subscription status...</p>
       </div>
     )
   }
 
   if (isPro) {
     return (
-      <div style={{ minHeight: 'calc(100vh - 120px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div className="flex items-center justify-center px-4" style={{ minHeight: 'calc(100vh - 120px)', background: 'var(--bg-base)' }}>
         <div
-          className="rounded-2xl p-8"
-          style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', textAlign: 'center', maxWidth: 420, width: '100%' }}
+          className="card-hero w-full p-8 text-center"
+          style={{ maxWidth: 420 }}
         >
-          <h1 className="text-2xl font-black" style={{ color: 'var(--text-primary)' }}>{accessCopy.title}</h1>
+          <p className="t-micro" style={{ color: 'var(--accent)' }}>Forged Hybrid Access</p>
+          <h1 className="t-title mt-3" style={{ color: 'var(--text-primary)' }}>{accessCopy.title}</h1>
           {redeemSuccess && redeemMessage && <p className="mt-2 text-sm" style={{ color: 'var(--success)' }}>{redeemMessage}</p>}
           {daysLeft !== null && (
             <p className="mt-3 inline-flex rounded-full px-3 py-1 text-xs font-bold" style={{ background: 'var(--accent-dim)', color: 'var(--accent)', border: '1px solid var(--border-subtle)' }}>
@@ -108,11 +109,12 @@ export default function Upgrade() {
           <p className="mt-2" style={{ color: 'var(--text-muted)' }}>{accessCopy.detail}</p>
           <button
             onClick={() => navigate(-1)}
-            className="mt-6 rounded-lg px-5 py-3 text-sm font-bold"
+            className="pressable mt-6 min-h-12 rounded-lg px-5 py-3 text-sm font-bold"
             style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', cursor: 'pointer' }}
           >
             Back
           </button>
+          <p className="t-micro mt-8">Forged, not finished.</p>
         </div>
       </div>
     )
@@ -120,15 +122,19 @@ export default function Upgrade() {
 
   return (
     <div style={{ minHeight: 'calc(100vh - 120px)', background: 'var(--bg-base)' }}>
-      <div className="mx-auto w-full max-w-5xl px-4 py-8">
-        <h1 className="text-3xl font-black" style={{ color: 'var(--text-primary)' }}>Forged Hybrid Subscription</h1>
-        <p className="mt-2 text-sm" style={{ color: 'var(--text-muted)' }}>Free tier supports basic workout logging. Pro unlocks Apple Health sync and premium insights.</p>
+      <div className="mx-auto w-full max-w-4xl px-4 py-8 sm:py-12">
+        <header className="max-w-2xl">
+          <p className="t-micro" style={{ color: 'var(--accent)' }}>Forged Hybrid Membership</p>
+          <h1 className="t-title mt-3" style={{ color: 'var(--text-primary)' }}>Train with the full signal.</h1>
+          <p className="t-body mt-3" style={{ color: 'var(--text-muted)' }}>Free tier supports basic workout logging. Pro unlocks Apple Health sync and premium insights.</p>
+        </header>
 
         <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2">
-          <section className="rounded-2xl p-5" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-            <p className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Free</p>
-            <p className="mt-2 text-2xl font-black" style={{ color: 'var(--text-primary)' }}>$0</p>
-            <div className="mt-4 space-y-3">
+          <section className="card p-5 sm:p-6">
+            <p className="t-micro">Free</p>
+            <p className="stat-num mt-3 text-4xl" style={{ color: 'var(--text-primary)' }}>$0</p>
+            <p className="t-micro mt-6">Core tools</p>
+            <div className="mt-3 space-y-3">
               {freeFeatures.map((feature) => (
                 <div key={feature} className="flex items-center gap-2">
                   <Check size={16} color="var(--success)" />
@@ -144,10 +150,12 @@ export default function Upgrade() {
             </div>
           </section>
 
-          <section className="rounded-2xl p-5" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-            <p className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--accent)' }}>Pro</p>
-            <p className="mt-2 text-2xl font-black" style={{ color: 'var(--text-primary)' }}>{plans.find((plan) => plan.id === selectedPlan)?.price}</p>
-            <div className="mt-4 space-y-3">
+          <section className="card-hero p-5 sm:p-6">
+            <p className="t-micro" style={{ color: 'var(--accent)' }}>Pro</p>
+            <p className="num-ember mt-3 text-4xl leading-none">{plans.find((plan) => plan.id === selectedPlan)?.price}</p>
+            <p className="t-micro mt-2">{selectedPlanLabel} access</p>
+            <p className="t-micro mt-6">Full coaching signal</p>
+            <div className="mt-3 space-y-3">
               {proFeatures.map((feature) => (
                 <div key={feature} className="flex items-center gap-2">
                   <Check size={16} color="var(--accent)" />
@@ -158,14 +166,14 @@ export default function Upgrade() {
           </section>
         </div>
 
-        <div className="mt-6">
-          <p className="mb-2 text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Choose plan</p>
+        <section className="mt-7">
+          <p className="t-micro mb-3">Choose plan</p>
           <div className="flex flex-wrap gap-2">
             {plans.map((plan) => (
               <button
                 key={plan.id}
                 onClick={() => setSelectedPlan(plan.id)}
-                className="rounded-full px-4 py-2 text-sm font-semibold"
+                className="pressable min-h-12 rounded-lg px-4 py-2 text-sm font-semibold"
                 style={selectedPlan === plan.id
                   ? { background: 'var(--accent)', color: 'var(--on-accent)', border: '1px solid var(--accent)' }
                   : { background: 'var(--bg-input)', color: 'var(--text-muted)', border: '1px solid var(--border-subtle)' }}
@@ -174,21 +182,21 @@ export default function Upgrade() {
               </button>
             ))}
           </div>
-        </div>
+        </section>
 
-        <div className="mt-7 flex flex-col items-start gap-3">
+        <div className="mt-7 flex flex-col items-stretch gap-3">
           <button
             onClick={startCheckout}
             disabled={submitting}
-            className="rounded-lg px-6 py-3 text-sm font-bold disabled:opacity-60"
-            style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', cursor: 'pointer' }}
+            className="pressable min-h-12 rounded-lg px-6 py-3 text-sm font-black disabled:opacity-60"
+            style={{ background: 'var(--ember-grad)', color: 'var(--on-accent)', border: 'none', cursor: 'pointer' }}
           >
             {submitting ? 'Starting...' : `Continue with ${selectedPlanLabel}`}
           </button>
           {error && <p className="text-sm" style={{ color: 'var(--danger)' }}>{error}</p>}
-          <form onSubmit={redeemCompCode} className="mt-3 flex w-full max-w-md flex-col gap-2 sm:flex-row">
+          <form onSubmit={redeemCompCode} className="card mt-3 flex w-full flex-col gap-2 p-4 sm:flex-row">
             <input
-              className="rounded-lg px-3 py-3 text-sm"
+              className="min-h-12 rounded-lg px-3 py-3 text-sm"
               style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', flex: 1 }}
               placeholder="Comp code"
               value={compCode}
@@ -197,7 +205,7 @@ export default function Upgrade() {
             <button
               type="submit"
               disabled={redeeming || !compCode.trim()}
-              className="rounded-lg px-5 py-3 text-sm font-bold disabled:opacity-60"
+              className="pressable min-h-12 rounded-lg px-5 py-3 text-sm font-bold disabled:opacity-60"
               style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', cursor: 'pointer' }}
             >
               {redeeming ? 'Redeeming...' : 'Redeem'}
@@ -206,12 +214,13 @@ export default function Upgrade() {
           {redeemMessage && <p className="text-sm" style={{ color: redeemSuccess ? 'var(--success)' : 'var(--danger)' }}>{redeemMessage}</p>}
           <button
             onClick={() => navigate(-1)}
-            className="text-sm underline"
+            className="pressable min-h-12 self-center px-4 text-sm underline"
             style={{ color: 'var(--text-muted)', background: 'transparent', border: 'none', cursor: 'pointer' }}
           >
             Maybe later
           </button>
         </div>
+        <p className="t-micro mt-10 text-center">Forged, not finished.</p>
       </div>
     </div>
   )
