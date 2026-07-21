@@ -7,7 +7,11 @@ const { computeHybridStreak, detectHybridMilestones, filterNewHybridMilestones }
 const { computeBadges, buildYouVsLastMonth } = require('../lib/badges');
 const planSchema = require('../lib/planSchema');
 const { runActivitySql } = require('../lib/runActivity');
-const { reconciliationKey } = require('../lib/hybridReconciliation');
+const {
+  reconciliationKey,
+  sessionEvidenceKey,
+  allocateSessionEvidence,
+} = require('../lib/hybridReconciliation');
 
 function toISODate(value) {
   const date = value instanceof Date ? value : new Date(value || Date.now());
@@ -69,13 +73,6 @@ function rowDate(row) {
   return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : null;
 }
 
-function dateWithinOneDay(actualISO, targetISO) {
-  const actual = new Date(`${actualISO}T12:00:00Z`);
-  const target = new Date(`${targetISO}T12:00:00Z`);
-  if (Number.isNaN(actual.getTime()) || Number.isNaN(target.getTime())) return false;
-  return Math.abs(actual.getTime() - target.getTime()) <= 86400000;
-}
-
 function buildPlanCompletion(active, runs, lifts, startISO, endISO) {
   const planned = plannedSessionsBetween(active, startISO, endISO);
   if (!planned.length) return { planned: 0, completed: 0, adherenceRate: null };
@@ -85,23 +82,21 @@ function buildPlanCompletion(active, runs, lifts, startISO, endISO) {
   const reconciliations = progress?.hybridSessionReconciliations && typeof progress.hybridSessionReconciliations === 'object'
     ? progress.hybridSessionReconciliations
     : {};
-  const usedRunIndexes = new Set();
-  const usedLiftIndexes = new Set();
+  const completionAllocation = allocateSessionEvidence({
+    sessions: planned,
+    completedSessionIds: Array.from(completedIds),
+    reconciliations,
+    evidence: [
+      ...(Array.isArray(runs) ? runs : []).map((row) => ({ date: rowDate(row), kind: 'run' })),
+      ...(Array.isArray(lifts) ? lifts : []).map((row) => ({ date: rowDate(row), kind: 'lift' })),
+    ],
+    maxDayDistance: 1,
+  });
   let completed = 0;
   let excused = 0;
 
   planned.forEach((session) => {
-    if (completedIds.has(String(session.sessionId))) {
-      completed += 1;
-      return;
-    }
-    const bucket = session.type === 'lift' ? lifts : runs;
-    const used = session.type === 'lift' ? usedLiftIndexes : usedRunIndexes;
-    const hitIndex = (Array.isArray(bucket) ? bucket : []).findIndex((row, index) => (
-      !used.has(index) && dateWithinOneDay(rowDate(row), session.date)
-    ));
-    if (hitIndex >= 0) {
-      used.add(hitIndex);
+    if (completionAllocation.completedKeys.has(sessionEvidenceKey(session))) {
       completed += 1;
       return;
     }

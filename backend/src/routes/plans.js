@@ -326,11 +326,6 @@ function plannedSessionsBetween(plan, startISO, endISO) {
   return rows;
 }
 
-function dateWithinOneDay(actualISO, targetISO) {
-  const diff = daysBetween(String(actualISO || '').slice(0, 10), targetISO);
-  return diff !== null && Math.abs(diff) <= 1;
-}
-
 async function buildCompletionSummaryForAdaptation(userId, plan, active, planningDateISO) {
   const since = adaptationEngine.addDays(planningDateISO, -7);
   const planned = plannedSessionsBetween(plan, since, adaptationEngine.addDays(planningDateISO, -1));
@@ -359,17 +354,24 @@ async function buildCompletionSummaryForAdaptation(userId, plan, active, plannin
     ...(lifts || []).map((row) => String(row.date || '').slice(0, 10)),
     ...(workouts || []).map((row) => String(row.started_at || '').slice(0, 10)),
   ].filter(Boolean);
+  const completionAllocation = hybridReconciliation.allocateSessionEvidence({
+    sessions: planned,
+    completedSessionIds: Array.from(completedIds),
+    reconciliations,
+    evidence: [
+      ...runDates.map((date) => ({ date, kind: 'run' })),
+      ...liftDates.map((date) => ({ date, kind: 'lift' })),
+    ],
+    maxDayDistance: 1,
+  });
 
   let completed = 0;
   let excused = 0;
   let missedRuns = 0;
   let missedLifts = 0;
   for (const item of planned) {
-    const completedByProgress = completedIds.has(String(item.sessionId));
-    const completedByLog = item.kind === 'run'
-      ? runDates.some((date) => dateWithinOneDay(date, item.date))
-      : liftDates.some((date) => dateWithinOneDay(date, item.date));
-    if (completedByProgress || completedByLog) completed += 1;
+    const evidenceKey = hybridReconciliation.sessionEvidenceKey(item);
+    if (completionAllocation.completedKeys.has(evidenceKey)) completed += 1;
     else {
       const reconciliation = item.kind === 'lift'
         ? reconciliations[hybridReconciliation.reconciliationKey(item.date, item.sessionId)]
@@ -1369,14 +1371,25 @@ router.post('/reconciliation/respond', auth, async (req, res) => {
         return { conflict: 'That hybrid session has already been reconciled.' };
       }
 
-      const candidate = hybridReconciliation.findCandidate(parsed, sessionDate, liftSessionId);
+      const candidates = hybridReconciliation.hybridCandidates(parsed, sessionDate, planningDateISO);
+      const candidate = candidates.find((item) => item.liftSessionId === liftSessionId) || null;
       if (!candidate) return { conflict: 'The planned hybrid session changed. Refresh Today and try again.' };
       const completed = new Set(completedSessionIdsFromProgress(progress));
       const evidence = await hybridCompletionEvidence(req.user.id, sessionDate, planningDateISO, timezone, tx);
+      const liftAllocation = hybridReconciliation.allocateSessionEvidence({
+        sessions: candidates.map((item) => ({
+          key: item.key,
+          date: item.date,
+          sessionId: item.liftSessionId,
+          kind: 'lift',
+        })),
+        completedSessionIds: Array.from(completed),
+        reconciliations: records,
+        evidence: evidence.liftDates.map((date) => ({ date, kind: 'lift' })),
+        allowNextDayForLater: true,
+      });
       const runDetected = candidate.runSessionIds.some((id) => completed.has(id)) || evidence.runDates.includes(sessionDate);
-      const liftDetected = completed.has(liftSessionId)
-        || evidence.liftDates.includes(sessionDate)
-        || (existing?.response === 'later' && evidence.liftDates.includes(hybridReconciliation.addDays(sessionDate, 1)));
+      const liftDetected = liftAllocation.completedKeys.has(candidate.key);
       if (!runDetected) return { conflict: 'The paired run is not recorded yet. Sync again before reconciling this session.' };
       if (liftDetected) return { alreadyComplete: true };
 

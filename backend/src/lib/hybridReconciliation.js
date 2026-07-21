@@ -32,6 +32,108 @@ function reconciliationKey(sessionDate, liftSessionId) {
   return `${String(sessionDate || '').slice(0, 10)}:${String(liftSessionId || '')}`;
 }
 
+function sessionEvidenceKey(session, index = 0) {
+  const explicit = String(session?.key || '').trim();
+  if (explicit) return explicit;
+  const date = String(session?.date || '').slice(0, 10);
+  const sessionId = String(session?.sessionId || session?.liftSessionId || '').trim();
+  const kind = String(session?.kind || session?.type || 'session').trim().toLowerCase();
+  return `${kind}:${date}:${sessionId || index}`;
+}
+
+function allocateSessionEvidence({
+  sessions = [],
+  completedSessionIds = [],
+  reconciliations = {},
+  evidence = [],
+  maxDayDistance = 0,
+  allowNextDayForLater = false,
+} = {}) {
+  const records = normalizeRecords(reconciliations);
+  const completedIds = new Set(completedSessionIds.map(String));
+  const normalizedSessions = (Array.isArray(sessions) ? sessions : []).map((session, index) => {
+    const date = String(session?.date || '').slice(0, 10);
+    const sessionId = String(session?.sessionId || session?.liftSessionId || '').trim();
+    const key = sessionEvidenceKey(session, index);
+    const record = records[reconciliationKey(date, sessionId)];
+    const completedUntracked = record?.response === 'completed_untracked';
+    return {
+      ...session,
+      date,
+      sessionId,
+      key,
+      kind: String(session?.kind || session?.type || '').trim().toLowerCase(),
+      record,
+      completedUntracked,
+      completedByProgress: completedIds.has(sessionId) || completedUntracked,
+    };
+  }).filter((session) => parseISODate(session.date) && session.sessionId);
+  const normalizedEvidence = (Array.isArray(evidence) ? evidence : []).map((item, index) => ({
+    index,
+    date: String(typeof item === 'string' ? item : item?.date || '').slice(0, 10),
+    kind: String(typeof item === 'string' ? '' : item?.kind || item?.type || '').trim().toLowerCase(),
+  })).filter((item) => parseISODate(item.date));
+  const completedKeys = new Set();
+  const usedEvidenceIndexes = new Set();
+  const sourceByKey = new Map();
+
+  for (const session of normalizedSessions) {
+    if (!session.completedByProgress) continue;
+    completedKeys.add(session.key);
+    sourceByKey.set(session.key, session.completedUntracked ? 'completed_untracked' : 'progress');
+  }
+
+  const compatibleKind = (session, item) => !session.kind || !item.kind || session.kind === item.kind;
+  const distance = (session, item) => Math.abs(daysBetween(item.date, session.date));
+  const consume = (session, predicate, markComplete) => {
+    const item = normalizedEvidence.find((candidate) => (
+      !usedEvidenceIndexes.has(candidate.index)
+      && compatibleKind(session, candidate)
+      && predicate(candidate)
+    ));
+    if (!item) return false;
+    usedEvidenceIndexes.add(item.index);
+    if (markComplete) completedKeys.add(session.key);
+    sourceByKey.set(session.key, session.completedByProgress ? 'progress_and_log' : 'log');
+    return true;
+  };
+
+  const progressSessions = normalizedSessions.filter((session) => (
+    session.completedByProgress && !session.completedUntracked
+  ));
+  const incompleteSessions = () => normalizedSessions.filter((session) => !completedKeys.has(session.key));
+
+  // Consume exact-date logs that overlap a tracked completion before those logs
+  // are offered to another planned session. Explicit untracked completion never
+  // consumes a real activity row.
+  progressSessions.forEach((session) => consume(session, (item) => item.date === session.date, false));
+  incompleteSessions().forEach((session) => consume(session, (item) => item.date === session.date, true));
+
+  const dayWindow = Math.max(0, Math.floor(Number(maxDayDistance) || 0));
+  if (dayWindow > 0) {
+    progressSessions.forEach((session) => consume(session, (item) => {
+      const dayDistance = distance(session, item);
+      return dayDistance > 0 && dayDistance <= dayWindow;
+    }, false));
+    incompleteSessions().forEach((session) => consume(session, (item) => {
+      const dayDistance = distance(session, item);
+      return dayDistance > 0 && dayDistance <= dayWindow;
+    }, true));
+  }
+
+  if (allowNextDayForLater) {
+    incompleteSessions()
+      .filter((session) => session.record?.response === 'later')
+      .forEach((session) => consume(session, (item) => item.date === addDays(session.date, 1), true));
+  }
+
+  return {
+    completedKeys,
+    usedEvidenceIndexes,
+    sourceByKey,
+  };
+}
+
 function hybridCandidates(plan, startISO, endISO) {
   const candidates = [];
   const weeks = Array.isArray(plan?.weeks) ? plan.weeks : [];
@@ -101,40 +203,23 @@ function buildCurrentPrompt({
   const startISO = addDays(planningDateISO, -LOOKBACK_DAYS);
   if (!startISO) return null;
   const candidates = hybridCandidates(plan, startISO, planningDateISO);
-  const availableLiftEvidence = liftDates.reduce((counts, value) => {
-    const date = String(value || '').slice(0, 10);
-    if (parseISODate(date)) counts.set(date, (counts.get(date) || 0) + 1);
-    return counts;
-  }, new Map());
-  const completedByLog = new Set();
-
-  // Allocate exact-date lift evidence first so one recorded workout can satisfy
-  // only one planned lift. Unused next-day evidence may then satisfy a session
-  // the athlete explicitly said they would complete later.
-  for (const candidate of candidates) {
-    if (completed.has(candidate.liftSessionId)) continue;
-    const available = availableLiftEvidence.get(candidate.date) || 0;
-    if (available > 0) {
-      completedByLog.add(candidate.key);
-      availableLiftEvidence.set(candidate.date, available - 1);
-    }
-  }
-  for (const candidate of candidates) {
-    if (completed.has(candidate.liftSessionId) || completedByLog.has(candidate.key)) continue;
-    const prior = records[candidate.key];
-    if (prior?.response !== 'later') continue;
-    const nextDate = addDays(candidate.date, 1);
-    const available = availableLiftEvidence.get(nextDate) || 0;
-    if (available > 0) {
-      completedByLog.add(candidate.key);
-      availableLiftEvidence.set(nextDate, available - 1);
-    }
-  }
+  const liftAllocation = allocateSessionEvidence({
+    sessions: candidates.map((candidate) => ({
+      key: candidate.key,
+      date: candidate.date,
+      sessionId: candidate.liftSessionId,
+      kind: 'lift',
+    })),
+    completedSessionIds,
+    reconciliations: records,
+    evidence: liftDates.map((date) => ({ date, kind: 'lift' })),
+    allowNextDayForLater: true,
+  });
 
   for (const candidate of candidates) {
     if (candidate.date === planningDateISO && (!Number.isInteger(hour) || hour < PROMPT_HOUR)) continue;
     const runComplete = candidate.runSessionIds.some((id) => completed.has(id)) || runDateSet.has(candidate.date);
-    const liftComplete = completed.has(candidate.liftSessionId) || completedByLog.has(candidate.key);
+    const liftComplete = liftAllocation.completedKeys.has(candidate.key);
     if (!runComplete || liftComplete) continue;
 
     const prior = records[candidate.key];
@@ -197,6 +282,8 @@ module.exports = {
   addDays,
   daysBetween,
   reconciliationKey,
+  sessionEvidenceKey,
+  allocateSessionEvidence,
   hybridCandidates,
   patternSummary,
   buildCurrentPrompt,

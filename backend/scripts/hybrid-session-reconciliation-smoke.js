@@ -77,6 +77,47 @@ check(reconciliation.buildCurrentPrompt({
   localHour: 20,
   liftDates: ['2026-07-20'],
 })?.liftSessionId === 'lift-2', 'one recorded lift resolves only one of two planned lifts');
+check(reconciliation.buildCurrentPrompt({
+  ...base,
+  plan: twoLiftPlan,
+  localHour: 20,
+  completedSessionIds: ['lift-1'],
+  liftDates: ['2026-07-20'],
+})?.liftSessionId === 'lift-2', 'a tracked completion id and its lift row cannot resolve a second planned lift');
+check(reconciliation.buildCurrentPrompt({
+  ...base,
+  plan: twoLiftPlan,
+  localHour: 20,
+  completedSessionIds: ['lift-1'],
+  liftDates: ['2026-07-20', '2026-07-20'],
+}) === null, 'two distinct lift rows resolve two planned lifts');
+
+const firstLiftKey = reconciliation.reconciliationKey('2026-07-20', 'lift-1');
+check(reconciliation.buildCurrentPrompt({
+  ...base,
+  plan: twoLiftPlan,
+  localHour: 20,
+  completedSessionIds: ['lift-1'],
+  reconciliations: {
+    [firstLiftKey]: { response: 'completed_untracked', sessionDate: '2026-07-20' },
+  },
+  liftDates: ['2026-07-20'],
+}) === null, 'untracked completion does not consume the separate real lift for the second session');
+
+const overlapAllocation = reconciliation.allocateSessionEvidence({
+  sessions: [
+    { date: '2026-07-20', sessionId: 'lift-1', kind: 'lift' },
+    { date: '2026-07-20', sessionId: 'lift-2', kind: 'lift' },
+  ],
+  completedSessionIds: ['lift-1'],
+  evidence: [{ date: '2026-07-20', kind: 'lift' }],
+  maxDayDistance: 1,
+});
+check(overlapAllocation.completedKeys.size === 1, 'score and adaptation allocation counts an overlapping completion id and log once');
+check(
+  !overlapAllocation.completedKeys.has(reconciliation.sessionEvidenceKey({ date: '2026-07-20', sessionId: 'lift-2', kind: 'lift' })),
+  'the unresolved second lift remains eligible for a life-event or skipped response'
+);
 
 const pattern = reconciliation.patternSummary({
   a: { response: 'life_event', sessionDate: '2026-07-01' },
@@ -108,7 +149,10 @@ check(routeSource.includes("['life_event', 'skipped'].includes(reconciliation.re
 check(routeSource.includes('reconciliationState,'), 'a reconciliation invalidates stale completion-driven adaptation proposals');
 check(routeSource.includes("existing.respondedDate === planningDateISO"), 'same-day doing-it-later retries are idempotent');
 check(routeSource.includes('dateInTimezone(row.started_at, timezone)'), 'workout-session evidence uses the phone timezone');
+check(routeSource.includes('const liftDetected = liftAllocation.completedKeys.has(candidate.key)'), 'POST uses the same one-use evidence allocation as GET');
+check(routeSource.includes('completionAllocation.completedKeys.has(evidenceKey)'), 'adaptation uses one-use completion evidence');
 check(statsSource.includes('scheduled: planned.length') && statsSource.includes('planned: eligiblePlanned'), 'excused hybrid sessions do not lower Hybrid Score consistency');
+check(statsSource.includes('allocateSessionEvidence({'), 'Hybrid Score uses canonical one-use completion evidence');
 check(streakSource.includes('if (excused) continue;'), 'excused hybrid lifts do not break the athlete streak');
 
 console.log(`HYBRID SESSION RECONCILIATION SMOKE OK (${checks})`);
