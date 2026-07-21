@@ -7,6 +7,7 @@ const { computeHybridStreak, detectHybridMilestones, filterNewHybridMilestones }
 const { computeBadges, buildYouVsLastMonth } = require('../lib/badges');
 const planSchema = require('../lib/planSchema');
 const { runActivitySql } = require('../lib/runActivity');
+const { reconciliationKey } = require('../lib/hybridReconciliation');
 
 function toISODate(value) {
   const date = value instanceof Date ? value : new Date(value || Date.now());
@@ -81,11 +82,19 @@ function buildPlanCompletion(active, runs, lifts, startISO, endISO) {
 
   const progress = parseJsonValue(active?.row?.progress_json, {});
   const completedIds = new Set((Array.isArray(progress?.completedSessionIds) ? progress.completedSessionIds : []).map(String));
+  const reconciliations = progress?.hybridSessionReconciliations && typeof progress.hybridSessionReconciliations === 'object'
+    ? progress.hybridSessionReconciliations
+    : {};
   const usedRunIndexes = new Set();
   const usedLiftIndexes = new Set();
+  let completed = 0;
+  let excused = 0;
 
-  const completed = planned.filter((session) => {
-    if (completedIds.has(String(session.sessionId))) return true;
+  planned.forEach((session) => {
+    if (completedIds.has(String(session.sessionId))) {
+      completed += 1;
+      return;
+    }
     const bucket = session.type === 'lift' ? lifts : runs;
     const used = session.type === 'lift' ? usedLiftIndexes : usedRunIndexes;
     const hitIndex = (Array.isArray(bucket) ? bucket : []).findIndex((row, index) => (
@@ -93,15 +102,23 @@ function buildPlanCompletion(active, runs, lifts, startISO, endISO) {
     ));
     if (hitIndex >= 0) {
       used.add(hitIndex);
-      return true;
+      completed += 1;
+      return;
     }
-    return false;
-  }).length;
+    const reconciliation = session.type === 'lift'
+      ? reconciliations[reconciliationKey(session.date, session.sessionId)]
+      : null;
+    if (reconciliation && ['life_event', 'skipped'].includes(reconciliation.response)) excused += 1;
+  });
+
+  const eligiblePlanned = Math.max(0, planned.length - excused);
 
   return {
-    planned: planned.length,
+    planned: eligiblePlanned,
+    scheduled: planned.length,
     completed,
-    adherenceRate: planned.length ? completed / planned.length : null,
+    excused,
+    adherenceRate: eligiblePlanned ? completed / eligiblePlanned : null,
   };
 }
 

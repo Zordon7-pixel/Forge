@@ -97,15 +97,44 @@ function buildCurrentPrompt({
   const hour = Number(localHour);
   const completed = new Set(completedSessionIds.map(String));
   const runDateSet = new Set(runDates.map((date) => String(date || '').slice(0, 10)));
-  const liftDateSet = new Set(liftDates.map((date) => String(date || '').slice(0, 10)));
   const records = normalizeRecords(reconciliations);
   const startISO = addDays(planningDateISO, -LOOKBACK_DAYS);
   if (!startISO) return null;
+  const candidates = hybridCandidates(plan, startISO, planningDateISO);
+  const availableLiftEvidence = liftDates.reduce((counts, value) => {
+    const date = String(value || '').slice(0, 10);
+    if (parseISODate(date)) counts.set(date, (counts.get(date) || 0) + 1);
+    return counts;
+  }, new Map());
+  const completedByLog = new Set();
 
-  for (const candidate of hybridCandidates(plan, startISO, planningDateISO)) {
+  // Allocate exact-date lift evidence first so one recorded workout can satisfy
+  // only one planned lift. Unused next-day evidence may then satisfy a session
+  // the athlete explicitly said they would complete later.
+  for (const candidate of candidates) {
+    if (completed.has(candidate.liftSessionId)) continue;
+    const available = availableLiftEvidence.get(candidate.date) || 0;
+    if (available > 0) {
+      completedByLog.add(candidate.key);
+      availableLiftEvidence.set(candidate.date, available - 1);
+    }
+  }
+  for (const candidate of candidates) {
+    if (completed.has(candidate.liftSessionId) || completedByLog.has(candidate.key)) continue;
+    const prior = records[candidate.key];
+    if (prior?.response !== 'later') continue;
+    const nextDate = addDays(candidate.date, 1);
+    const available = availableLiftEvidence.get(nextDate) || 0;
+    if (available > 0) {
+      completedByLog.add(candidate.key);
+      availableLiftEvidence.set(nextDate, available - 1);
+    }
+  }
+
+  for (const candidate of candidates) {
     if (candidate.date === planningDateISO && (!Number.isInteger(hour) || hour < PROMPT_HOUR)) continue;
     const runComplete = candidate.runSessionIds.some((id) => completed.has(id)) || runDateSet.has(candidate.date);
-    const liftComplete = completed.has(candidate.liftSessionId) || liftDateSet.has(candidate.date);
+    const liftComplete = completed.has(candidate.liftSessionId) || completedByLog.has(candidate.key);
     if (!runComplete || liftComplete) continue;
 
     const prior = records[candidate.key];
@@ -139,21 +168,14 @@ function moveLiftToNextAvailableRestDay(plan, candidate, planningDateISO) {
   const moved = planSchema.rescheduleSessionInWeek(sourceWeek, candidate.liftSessionId);
   if (moved.error) return { adjusted: false, reason: moved.error };
 
-  const movedSession = hybridCandidates(
-    { weeks: [moved.week] },
-    planningDateISO,
-    addDays(planningDateISO, 7)
-  ).find((item) => item.liftSessionId === candidate.liftSessionId);
-  if (!movedSession) {
-    const targetDay = planSchema.getDayEntries(moved.week).find((day) => (
-      planSchema.daySessions(day).some((session, index) => (
-        planSchema.sessionIdentifier(day, session, index) === candidate.liftSessionId
-      ))
-    ));
-    const targetDate = String(targetDay?.date || '').slice(0, 10);
-    if (!parseISODate(targetDate) || targetDate < planningDateISO) {
-      return { adjusted: false, reason: 'no_future_target' };
-    }
+  const targetDay = planSchema.getDayEntries(moved.week).find((day) => (
+    planSchema.daySessions(day).some((session, index) => (
+      planSchema.sessionIdentifier(day, session, index) === candidate.liftSessionId
+    ))
+  ));
+  const targetDate = String(targetDay?.date || '').slice(0, 10);
+  if (!parseISODate(targetDate) || targetDate <= planningDateISO) {
+    return { adjusted: false, reason: 'no_future_target' };
   }
 
   const nextWeeks = weeks.slice();

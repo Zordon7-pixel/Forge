@@ -74,6 +74,15 @@ function getWeekKey() {
   return `${now.getFullYear()}-${String(weekNumber).padStart(2, '0')}`
 }
 
+function localTimezone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+  } catch (error) {
+    console.warn('[Dashboard] local timezone unavailable:', error?.message)
+    return 'UTC'
+  }
+}
+
 const TODAY_CARD_VIEWED_KEY = 'forge_track_today_card_viewed'
 
 function trainingGapEvidence(proposal) {
@@ -338,7 +347,7 @@ export default function Dashboard() {
             console.error('[Dashboard] training gap check failed:', error?.message || error)
             return { data: { proposal: null } }
           }),
-          api.get('/plans/reconciliation/current', { params: { date: localDateISO(), hour: new Date().getHours() } }).catch((error) => {
+          api.get('/plans/reconciliation/current', { params: { date: localDateISO(), hour: new Date().getHours(), timezone: localTimezone() } }).catch((error) => {
             console.error('[Dashboard] hybrid session reconciliation check failed:', error?.message || error)
             return { data: { reconciliation: null } }
           }),
@@ -394,8 +403,9 @@ export default function Dashboard() {
           && nextProposal?.status === 'proposal'
           && (nextProposal?.changes || []).length > 0
           && !['accepted', 'kept'].includes(nextProposal?.decisionStatus)
-        setTrainingGapProposal(pendingGap ? nextProposal : null)
-        setHybridReconciliation(reconciliationRes.data?.reconciliation || null)
+        const nextReconciliation = reconciliationRes.data?.reconciliation || null
+        setHybridReconciliation(nextReconciliation)
+        setTrainingGapProposal(!nextReconciliation && pendingGap ? nextProposal : null)
         const isSunday = new Date().getDay() === 0
         const weekKey = `recap-seen-${getWeekKey()}`
         if (isSunday && localStorage.getItem(weekKey) !== '1') {
@@ -731,6 +741,7 @@ export default function Dashboard() {
         lift_session_id: hybridReconciliation.liftSessionId,
         response: decision,
         current_date: localDateISO(),
+        timezone: localTimezone(),
       })
       setHybridReconciliation(null)
       const planFitNote = response.data?.pattern?.reviewRecommended

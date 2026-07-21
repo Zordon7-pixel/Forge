@@ -17,5 +17,7 @@ check(source.includes('Skipped this one'), 'intentional skip is an explicit choi
 check(source.includes('This is schedule context, not a failure score.'), 'prompt avoids failure language')
 check(source.includes('consider fewer double days or a different strength frequency'), 'recurring pattern offers a plan-fit review')
 check(source.indexOf('<HybridSessionPrompt') < source.indexOf('<DailyCoachFlow'), 'reconciliation appears before the normal Today flow')
+check(source.includes('setTrainingGapProposal(!nextReconciliation && pendingGap ? nextProposal : null)'), 'specific hybrid prompt suppresses the generic training-gap prompt')
+check(source.includes('timezone: localTimezone()'), 'phone timezone accompanies reconciliation evidence and decisions')
 
 console.log(`HYBRID SESSION RECONCILIATION UI SMOKE OK (${checks})`)

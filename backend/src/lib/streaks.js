@@ -1,5 +1,6 @@
 const planSchema = require('./planSchema');
 const { addDays, serverUtcAnchorCandidates } = require('./streak');
+const { reconciliationKey } = require('./hybridReconciliation');
 
 const HYBRID_STREAK_CONSTANTS = Object.freeze({
   MIN_RUN_MILES: 1,
@@ -132,6 +133,9 @@ function buildPlannedDaysBetween(activePlan, startISO, endISO) {
   const planStart = planStartDate(activePlan, plan) || startISO;
   const progress = parseJsonValue(row?.progress_json, {});
   const completedIds = new Set((Array.isArray(progress?.completedSessionIds) ? progress.completedSessionIds : []).map(String));
+  const reconciliations = progress?.hybridSessionReconciliations && typeof progress.hybridSessionReconciliations === 'object'
+    ? progress.hybridSessionReconciliations
+    : {};
   const byDate = new Map();
 
   plan.weeks.forEach((week, weekIndex) => {
@@ -152,8 +156,14 @@ function buildPlannedDaysBetween(activePlan, startISO, endISO) {
       existing.isRest = existing.isRest && sessions.length === 0 && planSchema.isRestEntry(day);
       for (const session of sessions) {
         existing.isRest = false;
+        const completed = completedIds.has(String(session.sessionId));
+        const reconciliation = session.type === 'lift'
+          ? reconciliations[reconciliationKey(date, session.sessionId)]
+          : null;
+        const excused = !completed && reconciliation && ['life_event', 'skipped'].includes(reconciliation.response);
+        if (excused) continue;
         existing.requiredTypes.add(session.type);
-        if (completedIds.has(String(session.sessionId))) existing.completedTypes.add(session.type);
+        if (completed) existing.completedTypes.add(session.type);
       }
       byDate.set(date, existing);
     });

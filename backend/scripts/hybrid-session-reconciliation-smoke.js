@@ -61,6 +61,22 @@ check(reconciliation.buildCurrentPrompt({
   localHour: 9,
   reconciliations: { [key]: { response: 'later', respondedDate: '2026-07-20', sessionDate: '2026-07-20' } },
 })?.liftSessionId === 'lift-1', 'doing-it-later rechecks the next day if the lift remains absent');
+check(reconciliation.buildCurrentPrompt({
+  ...base,
+  planningDateISO: '2026-07-21',
+  localHour: 9,
+  liftDates: ['2026-07-21'],
+  reconciliations: { [key]: { response: 'later', respondedDate: '2026-07-20', sessionDate: '2026-07-20' } },
+}) === null, 'a lift completed the next day resolves a doing-it-later decision');
+
+const twoLiftPlan = JSON.parse(JSON.stringify(plan));
+twoLiftPlan.weeks[0].days[0].sessions.push({ id: 'lift-2', kind: 'lift', title: 'Accessory strength' });
+check(reconciliation.buildCurrentPrompt({
+  ...base,
+  plan: twoLiftPlan,
+  localHour: 20,
+  liftDates: ['2026-07-20'],
+})?.liftSessionId === 'lift-2', 'one recorded lift resolves only one of two planned lifts');
 
 const pattern = reconciliation.patternSummary({
   a: { response: 'life_event', sessionDate: '2026-07-01' },
@@ -76,13 +92,23 @@ const moved = reconciliation.moveLiftToNextAvailableRestDay(plan, candidate, '20
 check(moved.adjusted === true, 'life-event adjustment can move strength to the next rest day');
 check(moved.movedFrom === 'Mon' && moved.movedTo === 'Tue', 'adjustment reports the exact calendar move');
 check(plan.weeks[0].days[0].sessions.length === 2, 'copy-on-write helper does not mutate the source plan');
+check(
+  reconciliation.moveLiftToNextAvailableRestDay(plan, candidate, '2026-07-21').reason === 'no_future_target',
+  'a past lift is never moved onto the current date'
+);
 
 const routeSource = fs.readFileSync(path.join(__dirname, '../src/routes/plans.js'), 'utf8');
+const statsSource = fs.readFileSync(path.join(__dirname, '../src/routes/stats.js'), 'utf8');
+const streakSource = fs.readFileSync(path.join(__dirname, '../src/lib/streaks.js'), 'utf8');
 check(routeSource.includes("router.get('/reconciliation/current', auth"), 'read endpoint requires authentication');
 check(routeSource.includes("router.post('/reconciliation/respond', auth"), 'decision endpoint requires authentication');
 check(routeSource.includes("UPDATE user_plans SET progress_json=? WHERE id=? AND user_id=?"), 'progress mutation is owner scoped');
 check(routeSource.includes('Strength session marked complete without inventing workout metrics.'), 'untracked completion copy states the truth boundary');
 check(routeSource.includes("['life_event', 'skipped'].includes(reconciliation.response)"), 'acknowledged schedule context is excused from the old missed-workout score');
 check(routeSource.includes('reconciliationState,'), 'a reconciliation invalidates stale completion-driven adaptation proposals');
+check(routeSource.includes("existing.respondedDate === planningDateISO"), 'same-day doing-it-later retries are idempotent');
+check(routeSource.includes('dateInTimezone(row.started_at, timezone)'), 'workout-session evidence uses the phone timezone');
+check(statsSource.includes('scheduled: planned.length') && statsSource.includes('planned: eligiblePlanned'), 'excused hybrid sessions do not lower Hybrid Score consistency');
+check(streakSource.includes('if (excused) continue;'), 'excused hybrid lifts do not break the athlete streak');
 
 console.log(`HYBRID SESSION RECONCILIATION SMOKE OK (${checks})`);

@@ -17,6 +17,7 @@ const { repairPlanPrescriptions } = require('../lib/prescriptionIntegrity');
 const { summarizeRecentExercises } = require('../lib/strengthPrescription');
 const { runActivitySql } = require('../lib/runActivity');
 const hybridReconciliation = require('../lib/hybridReconciliation');
+const { dateInTimezone, isIanaTimezone } = require('../lib/challengeRules');
 
 const ADAPTATION_POLICY_VERSION = 'training-gap-v1';
 
@@ -1251,22 +1252,24 @@ function completedSessionIdsFromProgress(progress) {
   return Array.isArray(progress?.completedSessionIds) ? progress.completedSessionIds.map(String) : [];
 }
 
-async function hybridCompletionEvidence(userId, startISO, endISO, db = null) {
+async function hybridCompletionEvidence(userId, startISO, endISO, timezone, db = null) {
   const all = db?.all || dbAll;
+  const workoutQueryStart = hybridReconciliation.addDays(startISO, -1);
+  const workoutQueryEnd = hybridReconciliation.addDays(endISO, 1);
   const [runs, lifts, workouts] = await Promise.all([
     all(`SELECT id, date FROM runs WHERE user_id=? AND date>=? AND date<=? AND ${runActivitySql()}`, [userId, startISO, endISO]),
     all('SELECT id, date FROM lifts WHERE user_id=? AND date>=? AND date<=?', [userId, startISO, endISO]),
     all(
       'SELECT id, started_at FROM workout_sessions WHERE user_id=? AND started_at>=? AND started_at<=? AND ended_at IS NOT NULL',
-      [userId, `${startISO}T00:00:00`, `${endISO}T23:59:59`]
+      [userId, `${workoutQueryStart}T00:00:00Z`, `${workoutQueryEnd}T23:59:59Z`]
     ),
   ]);
   return {
     runDates: (runs || []).map((row) => String(row.date || '').slice(0, 10)).filter(Boolean),
     liftDates: [
       ...(lifts || []).map((row) => String(row.date || '').slice(0, 10)),
-      ...(workouts || []).map((row) => String(row.started_at || '').slice(0, 10)),
-    ].filter(Boolean),
+      ...(workouts || []).map((row) => dateInTimezone(row.started_at, timezone)),
+    ].filter((date) => date && date >= startISO && date <= endISO),
   };
 }
 
@@ -1274,10 +1277,12 @@ router.get('/reconciliation/current', auth, async (req, res) => {
   try {
     const planningDateISO = getPlanningDateFromRequest(req);
     const localHour = Number(req.query?.hour ?? new Date().getHours());
+    const timezone = String(req.query?.timezone || 'UTC').trim();
     if (!planningDateISO) return res.status(400).json({ error: 'date must be the phone local date in YYYY-MM-DD format' });
     if (!Number.isInteger(localHour) || localHour < 0 || localHour > 23) {
       return res.status(400).json({ error: 'hour must be a whole number from 0 through 23' });
     }
+    if (!isIanaTimezone(timezone)) return res.status(400).json({ error: 'timezone must be a valid IANA timezone' });
 
     const active = await getActivePlanForUser(req.user.id);
     if (!active || !active.row?.user_plan_id) {
@@ -1290,7 +1295,7 @@ router.get('/reconciliation/current', auth, async (req, res) => {
 
     const progress = parseJsonValue(active.row.progress_json, {});
     const startISO = hybridReconciliation.addDays(planningDateISO, -hybridReconciliation.LOOKBACK_DAYS);
-    const evidence = await hybridCompletionEvidence(req.user.id, startISO, planningDateISO);
+    const evidence = await hybridCompletionEvidence(req.user.id, startISO, planningDateISO, timezone);
     const reconciliation = hybridReconciliation.buildCurrentPrompt({
       plan: parsed,
       planningDateISO,
@@ -1319,6 +1324,7 @@ router.post('/reconciliation/respond', auth, async (req, res) => {
     const sessionDate = String(body.session_date || '').slice(0, 10);
     const liftSessionId = String(body.lift_session_id || '').trim();
     const response = String(body.response || '').trim();
+    const timezone = String(body.timezone || 'UTC').trim();
     const planningDateISO = getPlanningDateFromRequest({ query: { date: body.current_date } });
     const age = hybridReconciliation.daysBetween(planningDateISO, sessionDate);
     if (!planningDateISO || !/^\d{4}-\d{2}-\d{2}$/.test(sessionDate) || age === null || age < 0 || age > hybridReconciliation.LOOKBACK_DAYS) {
@@ -1326,6 +1332,7 @@ router.post('/reconciliation/respond', auth, async (req, res) => {
     }
     if (!liftSessionId || liftSessionId.length > 128) return res.status(400).json({ error: 'Invalid lift session' });
     if (!hybridReconciliation.VALID_RESPONSES.has(response)) return res.status(400).json({ error: 'Invalid reconciliation choice' });
+    if (!isIanaTimezone(timezone)) return res.status(400).json({ error: 'Invalid timezone' });
 
     const result = await withTransaction(async (tx) => {
       const row = await tx.get(`
@@ -1349,7 +1356,7 @@ router.post('/reconciliation/respond', auth, async (req, res) => {
         : {};
       const key = hybridReconciliation.reconciliationKey(sessionDate, liftSessionId);
       const existing = records[key];
-      if (existing && existing.response === response && existing.response !== 'later') {
+      if (existing && existing.response === response && (existing.response !== 'later' || existing.respondedDate === planningDateISO)) {
         return {
           ok: true,
           idempotent: true,
@@ -1365,9 +1372,11 @@ router.post('/reconciliation/respond', auth, async (req, res) => {
       const candidate = hybridReconciliation.findCandidate(parsed, sessionDate, liftSessionId);
       if (!candidate) return { conflict: 'The planned hybrid session changed. Refresh Today and try again.' };
       const completed = new Set(completedSessionIdsFromProgress(progress));
-      const evidence = await hybridCompletionEvidence(req.user.id, sessionDate, sessionDate, tx);
+      const evidence = await hybridCompletionEvidence(req.user.id, sessionDate, planningDateISO, timezone, tx);
       const runDetected = candidate.runSessionIds.some((id) => completed.has(id)) || evidence.runDates.includes(sessionDate);
-      const liftDetected = completed.has(liftSessionId) || evidence.liftDates.includes(sessionDate);
+      const liftDetected = completed.has(liftSessionId)
+        || evidence.liftDates.includes(sessionDate)
+        || (existing?.response === 'later' && evidence.liftDates.includes(hybridReconciliation.addDays(sessionDate, 1)));
       if (!runDetected) return { conflict: 'The paired run is not recorded yet. Sync again before reconciling this session.' };
       if (liftDetected) return { alreadyComplete: true };
 
