@@ -5,6 +5,7 @@ import LoadingRunner from '../components/LoadingRunner'
 import RunDetailModal from '../components/RunDetailModal'
 import RunMediaManager from '../components/RunMediaManager'
 import PostRunCheckIn from '../components/PostRunCheckIn'
+import ForgedStrike from '../components/ForgedStrike'
 
 export default function RunRecap() {
   const { id } = useParams()
@@ -15,6 +16,7 @@ export default function RunRecap() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [showCheckIn, setShowCheckIn] = useState(false)
+  const [showStrike, setShowStrike] = useState(true)
 
   useEffect(() => {
     let active = true
@@ -56,6 +58,12 @@ export default function RunRecap() {
 
   return (
     <div className="pt-2">
+      {showStrike && (
+        <ForgedStrike
+          subline={run.name || run.title || 'Run Complete'}
+          onDone={() => setShowStrike(false)}
+        />
+      )}
       <RunDetailModal
         standalone
         run={run}
