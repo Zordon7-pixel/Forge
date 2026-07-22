@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const {
+  allocatePlanSessionRunEvidence,
   explicitNoPlanMatchSnapshot,
   findPlannedRunForDate,
   findPlanSessionRunEvidence,
@@ -51,6 +52,20 @@ check(findPlanSessionRunEvidence(evidenceRuns, { sessionId: 'run-1', date: '2026
 check(findPlanSessionRunEvidence(evidenceRuns, { sessionId: 'run-3', date: '2026-07-14' })?.id === 'legacy', 'legacy unlinked evidence may match within the existing one-day tolerance')
 check(findPlanSessionRunEvidence(evidenceRuns, { sessionId: 'run-3', date: '2026-07-14', dateToleranceDays: 0 }) === null, 'explicit extras and differently linked runs cannot block a same-day make-up')
 
+const allocationSessions = [
+  { sessionId: 'run-mon', date: '2026-07-13' },
+  { sessionId: 'run-tue', date: '2026-07-14' },
+];
+const allocationRuns = [
+  { id: 'legacy-tue', date: '2026-07-14', plan_session_id: null, planned_session_json: '{}' },
+];
+const progressAllocation = allocatePlanSessionRunEvidence(allocationSessions, allocationRuns, {
+  completedSessionIds: ['run-mon'],
+});
+check(progressAllocation[0].evidence === null && progressAllocation[1].evidence?.id === 'legacy-tue', 'progress-completed sessions do not consume another session evidence')
+const exactDateAllocation = allocatePlanSessionRunEvidence(allocationSessions, allocationRuns);
+check(exactDateAllocation[0].evidence === null && exactDateAllocation[1].evidence?.id === 'legacy-tue', 'exact-date legacy allocation runs before adjacent-date fallback globally')
+
 const queries = [];
 findPlannedRunForDate('user-1', '2026-07-14', {
   get: async (sql, params) => {
@@ -63,11 +78,13 @@ findPlannedRunForDate('user-1', '2026-07-14', {
 
   const importSource = fs.readFileSync(path.join(__dirname, '../src/routes/import.js'), 'utf8');
   const runsSource = fs.readFileSync(path.join(__dirname, '../src/routes/runs.js'), 'utf8');
+  const aiSource = fs.readFileSync(path.join(__dirname, '../src/services/ai.js'), 'utf8');
   check(importSource.includes("item.section === 'run' ? await findPlannedRunForDate"), 'walks and non-run imports cannot claim a run prescription')
   check(/UPDATE runs SET[\s\S]*WHERE id=\? AND user_id=\?/.test(importSource), 'import enrichment update remains owner scoped')
   check(runsSource.includes('!isExplicitlyUnlinkedRun(run.planned_session_json)') && runsSource.includes('!hasMeaningfulPlannedRun(run.planned_session_json)'), 'run detail preserves explicit opt-out and existing immutable snapshots')
   check(runsSource.includes('resolvedPlannedSession = scheduledRun'), 'manual run save freezes an exact-date scheduled target before insert')
   check(runsSource.includes('isRunActivity({ type, watch_activity_type, watch_normalized_type })'), 'manual non-run activities cannot claim a run prescription')
+  check(aiSource.includes('hasMeaningfulPlannedRun(plannedSession)'), 'AI feedback excludes explicit opt-out metadata from planned-prescription context')
 
   console.log(`PASSED: ${passed}  FAILED: 0`);
   console.log('PLANNED RUN MATCH SMOKE OK');

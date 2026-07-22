@@ -121,6 +121,7 @@ function findPlanSessionRunEvidence(runs, {
   sessionId,
   date,
   usedIds = new Set(),
+  allowDateFallback = true,
   dateToleranceDays = 1,
 } = {}) {
   const candidates = Array.isArray(runs)
@@ -131,12 +132,42 @@ function findPlanSessionRunEvidence(runs, {
     const exact = candidates.find((run) => String(run.plan_session_id ?? '').trim() === normalizedSessionId);
     if (exact) return exact;
   }
+  if (!allowDateFallback) return null;
   return candidates.find((run) => {
     if (String(run.plan_session_id ?? '').trim()) return false;
     if (isExplicitlyUnlinkedRun(run.planned_session_json)) return false;
     const distance = dateDistanceDays(String(run.date || '').slice(0, 10), date);
     return distance !== null && distance <= dateToleranceDays;
   }) || null;
+}
+
+function allocatePlanSessionRunEvidence(sessions, runs, {
+  completedSessionIds = [],
+  dateToleranceDays = 1,
+} = {}) {
+  const completed = new Set(Array.from(completedSessionIds || [], String));
+  const allocations = (Array.isArray(sessions) ? sessions : []).map((session) => ({ session, evidence: null }));
+  const pending = allocations.filter(({ session }) => !completed.has(String(session?.sessionId)));
+  const usedIds = new Set();
+  const allocatePass = (options) => {
+    for (const allocation of pending) {
+      if (allocation.evidence) continue;
+      const evidence = findPlanSessionRunEvidence(runs, {
+        sessionId: allocation.session?.sessionId,
+        date: allocation.session?.date,
+        usedIds,
+        ...options,
+      });
+      if (!evidence) continue;
+      allocation.evidence = evidence;
+      usedIds.add(evidence.id);
+    }
+  };
+
+  allocatePass({ allowDateFallback: false });
+  allocatePass({ dateToleranceDays: 0 });
+  if (dateToleranceDays > 0) allocatePass({ dateToleranceDays });
+  return allocations;
 }
 
 async function findPlannedRunForDate(userId, date, { get = dbGet } = {}) {
@@ -160,6 +191,7 @@ async function findPlannedRunForDate(userId, date, { get = dbGet } = {}) {
 }
 
 module.exports = {
+  allocatePlanSessionRunEvidence,
   explicitNoPlanMatchSnapshot,
   findPlannedRunForDate,
   findPlanSessionRunEvidence,

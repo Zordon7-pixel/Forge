@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const { trustedCourseFacts } = require('../lib/concurrentPlan');
+const { hasMeaningfulPlannedRun } = require('../lib/plannedRunMatch');
 const { resolveRunEffort } = require('../lib/runEffort');
 
 const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
@@ -387,7 +388,7 @@ async function generateRunFeedback(run, profile) {
   } catch (err) {
     console.error('[AI/run-feedback] planned session parse skipped:', err.message);
   }
-  const plannedCtx = plannedSession && Object.keys(plannedSession).length
+  const plannedCtx = hasMeaningfulPlannedRun(plannedSession)
     ? `\nPlanned prescription: ${JSON.stringify(sanitizeObj(plannedSession))}`
     : '';
 

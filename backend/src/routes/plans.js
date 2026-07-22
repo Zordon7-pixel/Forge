@@ -16,7 +16,7 @@ const { summarizeRecentRunLoad } = require('../lib/recentRunLoad');
 const { repairPlanPrescriptions } = require('../lib/prescriptionIntegrity');
 const { summarizeRecentExercises } = require('../lib/strengthPrescription');
 const { runActivitySql } = require('../lib/runActivity');
-const { findPlanSessionRunEvidence } = require('../lib/plannedRunMatch');
+const { allocatePlanSessionRunEvidence, findPlanSessionRunEvidence } = require('../lib/plannedRunMatch');
 const hybridReconciliation = require('../lib/hybridReconciliation');
 const { dateInTimezone, isIanaTimezone } = require('../lib/challengeRules');
 
@@ -2045,19 +2045,20 @@ router.get('/compliance', auth, async (req, res) => {
 
     const progress = parseJsonValue(active.row.progress_json, {});
     const completedSessionIds = new Set(completedSessionIdsFromProgress(progress));
-    const usedRunIds = new Set();
+    const runEvidenceBySession = new Map(allocatePlanSessionRunEvidence(
+      plannedSessions.filter((session) => session.type === 'run'),
+      runs,
+      { completedSessionIds }
+    ).map(({ session, evidence }) => [session, evidence]));
     const usedLiftIds = new Set();
 
     const statusItems = plannedSessions.map((s) => {
+      const completedFromProgress = completedSessionIds.has(String(s.sessionId));
+      if (completedFromProgress) return { ...s, completed: true };
       const target = new Date(`${s.date}T12:00:00`).getTime();
       let hit = null;
       if (s.type === 'run') {
-        hit = findPlanSessionRunEvidence(runs, {
-          sessionId: s.sessionId,
-          date: s.date,
-          usedIds: usedRunIds,
-        });
-        if (hit) usedRunIds.add(hit.id);
+        hit = runEvidenceBySession.get(s) || null;
       } else {
         for (const item of lifts) {
           if (usedLiftIds.has(item.id)) continue;
@@ -2069,8 +2070,7 @@ router.get('/compliance', auth, async (req, res) => {
           }
         }
       }
-      const completedFromProgress = completedSessionIds.has(String(s.sessionId));
-      return { ...s, completed: completedFromProgress || !!hit };
+      return { ...s, completed: !!hit };
     });
 
     const completed = statusItems.filter((s) => s.completed).length;

@@ -220,8 +220,8 @@ assert(plansRouteSource.includes('getActivePlanForMutation(req.user.id, tx)') &&
 assert(plansRouteSource.includes("requestedSession.type !== 'run'") && plansRouteSource.includes('requestedSession.date >= planningDateISO'), 'make-up reschedule rejects lifts and non-missed dates');
 assert(plansRouteSource.includes('completedIds.has(String(requestedSession.sessionId))') && plansRouteSource.includes('findPlanSessionRunEvidence(recordedRuns'), 'make-up reschedule rechecks progress and explicit-extra-safe run evidence inside the transaction');
 assert(plansRouteSource.includes('const selectedWeekStart = activeWeekStart') && plansRouteSource.includes('d, idx, d.date'), 'compliance preserves authoritative current-week dates instead of reusing week one');
-assert(plansRouteSource.includes('completedSessionIds.has(String(s.sessionId))'), 'compliance honors sessions completed through plan progress');
-assert(plansRouteSource.includes('findPlanSessionRunEvidence(runs'), 'compliance prefers exact run-session evidence and excludes explicit extras from date fallback');
+assert(plansRouteSource.includes('if (completedFromProgress) return { ...s, completed: true }'), 'compliance honors progress completion before consuming activity evidence');
+assert(plansRouteSource.includes('allocatePlanSessionRunEvidence('), 'compliance globally prefers exact run linkage and exact dates before adjacent fallback');
 assert(overrideOk, 'override projection identical across all 91 days');
 // legacy checkinOverride.applyOverride must be byte-identical to {...day,...patch} for legacy days
 const sampleLegacy = legacy.weeks[0].days[1];
