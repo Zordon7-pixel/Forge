@@ -1,6 +1,18 @@
 import { useEffect, useRef, useState } from 'react'
+import { Capacitor } from '@capacitor/core'
+import { isLoggedIn } from '../lib/auth'
+import HealthService from '../services/HealthService'
 
 const THRESHOLD = 80 // px to pull before triggering refresh
+
+async function syncHealthBeforePageReload() {
+  if (!isLoggedIn() || !Capacitor.isNativePlatform()) return
+  try {
+    await HealthService.syncNativeData()
+  } catch (error) {
+    console.error('[PullToRefresh] Apple Health sync failed:', error?.message || error)
+  }
+}
 
 export default function PullToRefresh({ children }) {
   const [pulling, setPulling] = useState(false)
@@ -15,7 +27,7 @@ export default function PullToRefresh({ children }) {
 
     const onTouchStart = (e) => {
       // Only activate when scrolled to the very top
-      if (window.scrollY === 0) {
+      if (!refreshing && window.scrollY === 0) {
         startY.current = e.touches[0].clientY
       }
     }
@@ -33,11 +45,12 @@ export default function PullToRefresh({ children }) {
     }
 
     const onTouchEnd = async () => {
-      if (pulling && pullDistance >= THRESHOLD) {
+      if (!refreshing && pulling && pullDistance >= THRESHOLD) {
         setRefreshing(true)
         setPullDistance(THRESHOLD)
-        // Give a brief moment for the spinner to show
-        await new Promise(r => setTimeout(r, 800))
+        await syncHealthBeforePageReload()
+        // Let the completion state paint before page data is requested again.
+        await new Promise(r => setTimeout(r, 150))
         window.location.reload()
       }
       startY.current = null
@@ -54,7 +67,7 @@ export default function PullToRefresh({ children }) {
       el.removeEventListener('touchmove', onTouchMove)
       el.removeEventListener('touchend', onTouchEnd)
     }
-  }, [pulling, pullDistance])
+  }, [pulling, pullDistance, refreshing])
 
   const progress = Math.min(pullDistance / THRESHOLD, 1)
   const showIndicator = pulling && pullDistance > 10

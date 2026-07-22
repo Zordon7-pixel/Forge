@@ -23,6 +23,7 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../
 const read = (relativePath) => fs.readFileSync(path.join(repoRoot, relativePath), 'utf8')
 const app = read('frontend/src/App.jsx')
 const service = read('frontend/src/services/HealthService.js')
+const pullToRefresh = read('frontend/src/components/PullToRefresh.jsx')
 
 class MemoryStorage {
   constructor() { this.values = new Map() }
@@ -156,5 +157,8 @@ assert.ok(service.indexOf('markHealthHistoryTransferPending()') < service.indexO
 assert.ok(service.includes("api.post('/import/health', { workouts: batch }, { timeout: HEALTH_IMPORT_TIMEOUT_MS })"), 'each workout batch has a dedicated timeout')
 assert.ok(service.includes('createHealthSyncCoordinator'), 'native calls use the behavioral single-flight coordinator')
 assert.ok(service.includes('announceHealthSyncResult(syncResult, { complete })'), 'sync result distinguishes complete from partial')
+assert.ok(pullToRefresh.includes('await HealthService.syncNativeData()'), 'native pull-to-refresh waits for Apple Health sync')
+assert.ok(pullToRefresh.indexOf('await HealthService.syncNativeData()') < pullToRefresh.indexOf('window.location.reload()'), 'page data reloads only after the health sync attempt')
+assert.ok(pullToRefresh.includes("console.error('[PullToRefresh] Apple Health sync failed:'"), 'pull sync failures retain diagnostic context')
 
-console.log('HEALTH AUTO-SYNC SMOKE OK (32)')
+console.log('HEALTH AUTO-SYNC SMOKE OK (35)')
