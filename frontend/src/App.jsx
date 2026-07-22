@@ -9,6 +9,7 @@ import Layout from './components/Layout'
 import { ProProvider } from './context/ProContext'
 import HealthService from './services/HealthService'
 import NativeNotificationService from './services/NativeNotificationService'
+import { normalizeForgedDeepLink } from './lib/nativeDeepLink'
 import api, { acceptWaiver } from './lib/api'
 import ConsentWaiver from './components/ConsentWaiver'
 
@@ -269,6 +270,38 @@ function NativeNotificationNavigation() {
       listenerHandle?.remove?.()
     }
   }, [handleNavigation])
+
+  useEffect(() => {
+    if (!isNativeRuntime()) return undefined
+    let cancelled = false
+    let urlHandle = null
+
+    const openDeepLink = (url) => {
+      const path = normalizeForgedDeepLink(url)
+      if (!path || cancelled) return
+      if (!isLoggedIn()) {
+        rememberPostAuthRedirect(path)
+        navigate('/login')
+        return
+      }
+      navigate(path)
+    }
+
+    ;(async () => {
+      try {
+        urlHandle = await CapacitorApp.addListener('appUrlOpen', ({ url }) => openDeepLink(url))
+        const launch = await CapacitorApp.getLaunchUrl()
+        if (launch?.url) openDeepLink(launch.url)
+      } catch (error) {
+        console.warn('[NativeDeepLink] listener setup failed:', error?.message || error)
+      }
+    })()
+
+    return () => {
+      cancelled = true
+      urlHandle?.remove?.()
+    }
+  }, [navigate])
 
   return null
 }

@@ -2,6 +2,7 @@
   "expo": {
     "name": "Forged Hybrid",
     "slug": "forge-athlete",
+    "scheme": "forgedhybrid",
     "version": "1.0.5",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -12,7 +13,7 @@
     },
     "ios": {
       "bundleIdentifier": "com.zordontech.forge",
-      "buildNumber": "18",
+      "buildNumber": "19",
       "ascAppId": "6759941190",
       "supportsTablet": true,
       "entitlements": {
@@ -23,6 +24,7 @@
         "usesNonExemptEncryption": false
       },
       "infoPlist": {
+        "NSSupportsLiveActivities": true,
         "NSHealthShareUsageDescription": "Forged Hybrid reads workouts, activity, heart rate, HRV, sleep, cardio fitness, and running dynamics to personalize your training plan.",
         "NSHealthUpdateUsageDescription": "Forged Hybrid uses Apple workout APIs to schedule workouts you explicitly send to Apple Watch. It does not automatically add or change your Apple Health records.",
         "NSContactsUsageDescription": "Forged Hybrid reads permitted contact email addresses only when you choose Find beta friends. Your address book is not stored.",

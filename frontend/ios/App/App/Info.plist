@@ -22,6 +22,17 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.zordontech.forge</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>forgedhybrid</string>
+			</array>
+		</dict>
+	</array>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>ITSAppUsesNonExemptEncryption</key>
@@ -38,6 +49,8 @@
 	<string>Forged Hybrid keeps recording your route in the background so your run does not stop when your screen is off.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>Forged Hybrid saves a run share card to your Photos library only when you tap Save.</string>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>

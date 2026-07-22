@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { CircleMarker, MapContainer, Polyline, TileLayer, useMap } from 'react-leaflet'
+import { App as CapacitorApp } from '@capacitor/app'
 import { Capacitor, registerPlugin } from '@capacitor/core'
 import { useUnits } from '../context/UnitsContext'
 import api from '../lib/api'
@@ -14,6 +15,8 @@ import { loadPostRunCheckInDraft, savePostRunCheckInDraft } from '../lib/postRun
 import { buildPlannedSessionSnapshot } from '../lib/runProvenance'
 import { getAuthenticatedUserId } from '../lib/auth'
 import { ZONE_HEAT_PALETTE } from '../lib/athleteLanguage'
+import { buildLiveActivityStart, buildLiveActivityUpdate } from '../lib/liveActivityState'
+import LiveActivityService from '../services/LiveActivityService'
 import {
   canRestoreGroupRunNavigation,
   groupRunIdFromNavigationState,
@@ -23,6 +26,7 @@ import {
 } from '../lib/groupRuns'
 
 const BackgroundGeolocation = registerPlugin('BackgroundGeolocation')
+const LIVE_ACTIVITY_UPDATE_INTERVAL_MS = 10_000
 
 function haversineMiles(a, b) {
   const R = 3958.8
@@ -237,6 +241,8 @@ export default function ActiveRun() {
   const clientRunIdRef = useRef(restoredSession?.clientRunId || createClientRunId())
   const resumeAttemptedRef = useRef(false)
   const sessionStateRef = useRef(null)
+  const liveActivityAttributesRef = useRef(null)
+  const liveActivityContentRef = useRef(null)
   const actualElevation = useMemo(() => calculateElevationStats(routeCoords), [routeCoords])
   const plannedRoutePositions = useMemo(() => (
     plannedRoute?.coordinates?.map(([lat, lon]) => [lat, lon]) || []
@@ -293,6 +299,7 @@ export default function ActiveRun() {
         && ['running', 'awaiting_distance'].includes(currentSession?.phase)
       if (!canPreserveStats) {
         sessionStateRef.current = { ...currentSession, navigationState: {} }
+        void LiveActivityService.end()
         clearActiveRunSession()
         return
       }
@@ -388,6 +395,7 @@ export default function ActiveRun() {
     if (!running && !awaitingManualDistance) return
     const persist = () => {
       if (!activeRunOwnerId || getAuthenticatedUserId() !== activeRunOwnerId) {
+        void LiveActivityService.end()
         clearActiveRunSession()
         return
       }
@@ -435,6 +443,75 @@ export default function ActiveRun() {
 
   const maxHr = savedHrProfile?.maxHr || userProfile?.max_heart_rate || (userProfile?.age ? 220 - Number(userProfile.age) : null)
   const hrZone = getZone(liveHr, maxHr, savedHrZones)
+
+  liveActivityAttributesRef.current = buildLiveActivityStart({
+    clientRunId: clientRunIdRef.current,
+    startedAt: startTimestampRef.current,
+    units,
+    runType,
+    workoutTarget,
+  })
+  liveActivityContentRef.current = buildLiveActivityUpdate({
+    startedAt: startTimestampRef.current,
+    elapsed,
+    distanceMiles,
+    units,
+    liveHr,
+    hrLastUpdated,
+    hrZone,
+    mapMyRun,
+    gpsStarted,
+    gpsAvailable,
+    currentAccuracy,
+  })
+
+  useEffect(() => {
+    if (!running || !LiveActivityService.isPluginAvailable()) return undefined
+    let cancelled = false
+    let operationInFlight = false
+    const listenerHandles = []
+
+    const syncLiveActivity = async () => {
+      if (cancelled || operationInFlight) return
+      operationInFlight = true
+      try {
+        if (!await LiveActivityService.isAvailable()) return
+        const currentActivityId = await LiveActivityService.currentActivityId()
+        if (cancelled) return
+        if (currentActivityId) {
+          await LiveActivityService.update(liveActivityContentRef.current)
+        } else {
+          await LiveActivityService.start(liveActivityAttributesRef.current, liveActivityContentRef.current)
+        }
+      } finally {
+        operationInFlight = false
+      }
+    }
+
+    syncLiveActivity()
+    const interval = window.setInterval(syncLiveActivity, LIVE_ACTIVITY_UPDATE_INTERVAL_MS)
+    Promise.all([
+      CapacitorApp.addListener('appStateChange', ({ isActive }) => {
+        if (isActive) syncLiveActivity()
+      }),
+      CapacitorApp.addListener('resume', syncLiveActivity),
+    ]).then((handles) => {
+      if (cancelled) handles.forEach((handle) => handle?.remove?.())
+      else listenerHandles.push(...handles)
+    }).catch((error) => {
+      console.warn('[LiveActivity] resume listener setup failed:', error?.message || error)
+    })
+
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+      listenerHandles.forEach((handle) => handle?.remove?.())
+    }
+  }, [running])
+
+  useEffect(() => {
+    if (!['running', 'awaiting_distance'].includes(restoredSession?.phase)) void LiveActivityService.end()
+  }, [restoredSession?.phase])
 
   const handlePoint = useCallback((lat, lon, alt, accuracy, timestamp) => {
     const latitude = Number(lat)
@@ -740,6 +817,7 @@ export default function ActiveRun() {
 
   const finishRun = async () => {
     setRunning(false)
+    await LiveActivityService.end()
     const gapSummary = getGpsGapSummary()
     if (gapSummary) setGpsGapSummary(gapSummary)
     if (!gpsStarted || !gpsAvailable || distanceMiles <= 0) {

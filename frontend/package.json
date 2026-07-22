@@ -8,6 +8,7 @@
     "test:device-source": "node test/deviceSourceTruth.smoke.mjs",
     "test:truth": "node test/truthConsistency.smoke.mjs",
     "test:health-sync": "node test/healthAutoSync.smoke.mjs",
+    "test:live-activity": "node test/liveActivity.smoke.mjs",
     "preview": "vite preview",
     "cap:sync": "npm run build && npx cap sync",
     "cap:ios": "npm run build && npx cap sync ios && npx cap open ios",

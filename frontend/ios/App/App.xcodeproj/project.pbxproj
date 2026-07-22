@@ -21,7 +21,37 @@
 		A7F200000000000000000008 /* ForgeContactsPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7F200000000000000000009 /* ForgeContactsPlugin.swift */; };
 		A7F20000000000000000000A /* ForgeNotificationPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7F20000000000000000000B /* ForgeNotificationPlugin.swift */; };
 		A7F20000000000000000000C /* ForgePhotosPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7F20000000000000000000D /* ForgePhotosPlugin.swift */; };
+		A7F300000000000000000011 /* ForgeRunAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7F300000000000000000001 /* ForgeRunAttributes.swift */; };
+		A7F300000000000000000012 /* ForgeLiveActivityPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7F300000000000000000002 /* ForgeLiveActivityPlugin.swift */; };
+		A7F300000000000000000013 /* ForgeRunAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7F300000000000000000001 /* ForgeRunAttributes.swift */; };
+		A7F300000000000000000014 /* ForgeRunActivityBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7F300000000000000000004 /* ForgeRunActivityBundle.swift */; };
+		A7F300000000000000000015 /* ForgeRunLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7F300000000000000000005 /* ForgeRunLiveActivity.swift */; };
+		A7F300000000000000000016 /* ForgeRunActivity.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = A7F300000000000000000007 /* ForgeRunActivity.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, CodeSignOnCopy, ); }; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		A7F300000000000000000032 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 504EC2FC1FED79650016851F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A7F300000000000000000031;
+			remoteInfo = ForgeRunActivity;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		A7F300000000000000000024 /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				A7F300000000000000000016 /* ForgeRunActivity.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		2FAD9762203C412B000D30F8 /* config.xml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = config.xml; sourceTree = "<group>"; };
@@ -41,6 +71,12 @@
 		A7F20000000000000000000B /* ForgeNotificationPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeNotificationPlugin.swift; sourceTree = "<group>"; };
 		A7F20000000000000000000D /* ForgePhotosPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgePhotosPlugin.swift; sourceTree = "<group>"; };
 		A7F200000000000000000003 /* App.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = App.entitlements; sourceTree = "<group>"; };
+		A7F300000000000000000001 /* ForgeRunAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeRunAttributes.swift; sourceTree = "<group>"; };
+		A7F300000000000000000002 /* ForgeLiveActivityPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeLiveActivityPlugin.swift; sourceTree = "<group>"; };
+		A7F300000000000000000004 /* ForgeRunActivityBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeRunActivityBundle.swift; sourceTree = "<group>"; };
+		A7F300000000000000000005 /* ForgeRunLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeRunLiveActivity.swift; sourceTree = "<group>"; };
+		A7F300000000000000000006 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A7F300000000000000000007 /* ForgeRunActivity.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ForgeRunActivity.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -52,6 +88,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A7F300000000000000000022 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -60,6 +103,7 @@
 			children = (
 				958DCC722DB07C7200EA8C5F /* debug.xcconfig */,
 				504EC3061FED79650016851F /* App */,
+				A7F300000000000000000003 /* ForgeRunActivity */,
 				504EC3051FED79650016851F /* Products */,
 			);
 			sourceTree = "<group>";
@@ -68,6 +112,7 @@
 			isa = PBXGroup;
 			children = (
 				504EC3041FED79650016851F /* App.app */,
+				A7F300000000000000000007 /* ForgeRunActivity.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -83,6 +128,8 @@
 				A7F200000000000000000009 /* ForgeContactsPlugin.swift */,
 				A7F20000000000000000000B /* ForgeNotificationPlugin.swift */,
 				A7F20000000000000000000D /* ForgePhotosPlugin.swift */,
+				A7F300000000000000000001 /* ForgeRunAttributes.swift */,
+				A7F300000000000000000002 /* ForgeLiveActivityPlugin.swift */,
 				504EC30B1FED79650016851F /* Main.storyboard */,
 				504EC30E1FED79650016851F /* Assets.xcassets */,
 				504EC3101FED79650016851F /* LaunchScreen.storyboard */,
@@ -92,6 +139,16 @@
 				50B271D01FEDC1A000F3C39B /* public */,
 			);
 			path = App;
+			sourceTree = "<group>";
+		};
+		A7F300000000000000000003 /* ForgeRunActivity */ = {
+			isa = PBXGroup;
+			children = (
+				A7F300000000000000000004 /* ForgeRunActivityBundle.swift */,
+				A7F300000000000000000005 /* ForgeRunLiveActivity.swift */,
+				A7F300000000000000000006 /* Info.plist */,
+			);
+			path = ForgeRunActivity;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -104,10 +161,12 @@
 				504EC3001FED79650016851F /* Sources */,
 				504EC3011FED79650016851F /* Frameworks */,
 				504EC3021FED79650016851F /* Resources */,
+				A7F300000000000000000024 /* Embed App Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				A7F300000000000000000033 /* PBXTargetDependency */,
 			);
 			name = App;
 			packageProductDependencies = (
@@ -116,6 +175,25 @@
 			productName = App;
 			productReference = 504EC3041FED79650016851F /* App.app */;
 			productType = "com.apple.product-type.application";
+		};
+		A7F300000000000000000031 /* ForgeRunActivity */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A7F300000000000000000043 /* Build configuration list for PBXNativeTarget "ForgeRunActivity" */;
+			buildPhases = (
+				A7F300000000000000000021 /* Sources */,
+				A7F300000000000000000022 /* Frameworks */,
+				A7F300000000000000000023 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = ForgeRunActivity;
+			packageProductDependencies = (
+			);
+			productName = ForgeRunActivity;
+			productReference = A7F300000000000000000007 /* ForgeRunActivity.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -129,6 +207,10 @@
 					504EC3031FED79650016851F = {
 						CreatedOnToolsVersion = 9.2;
 						LastSwiftMigration = 1100;
+						ProvisioningStyle = Automatic;
+					};
+					A7F300000000000000000031 = {
+						CreatedOnToolsVersion = 16.4;
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -150,6 +232,7 @@
 			projectRoot = "";
 			targets = (
 				504EC3031FED79650016851F /* App */,
+				A7F300000000000000000031 /* ForgeRunActivity */,
 			);
 		};
 /* End PBXProject section */
@@ -168,6 +251,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A7F300000000000000000023 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -182,10 +272,30 @@
 				A7F200000000000000000008 /* ForgeContactsPlugin.swift in Sources */,
 				A7F20000000000000000000A /* ForgeNotificationPlugin.swift in Sources */,
 				A7F20000000000000000000C /* ForgePhotosPlugin.swift in Sources */,
+				A7F300000000000000000011 /* ForgeRunAttributes.swift in Sources */,
+				A7F300000000000000000012 /* ForgeLiveActivityPlugin.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A7F300000000000000000021 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A7F300000000000000000013 /* ForgeRunAttributes.swift in Sources */,
+				A7F300000000000000000014 /* ForgeRunActivityBundle.swift in Sources */,
+				A7F300000000000000000015 /* ForgeRunLiveActivity.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		A7F300000000000000000033 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A7F300000000000000000031 /* ForgeRunActivity */;
+			targetProxy = A7F300000000000000000032 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin PBXVariantGroup section */
 		504EC30B1FED79650016851F /* Main.storyboard */ = {
@@ -323,7 +433,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 18;
+				CURRENT_PROJECT_VERSION = 19;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -346,7 +456,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 18;
+				CURRENT_PROJECT_VERSION = 19;
 				DEVELOPMENT_TEAM = T353V77HNW;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
@@ -358,6 +468,57 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.zordontech.forge;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		A7F300000000000000000041 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 19;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ForgeRunActivity/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.1;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.5;
+				PRODUCT_BUNDLE_IDENTIFIER = com.zordontech.forge.runactivity;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		A7F300000000000000000042 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 19;
+				DEVELOPMENT_TEAM = T353V77HNW;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ForgeRunActivity/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.1;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.5;
+				PRODUCT_BUNDLE_IDENTIFIER = com.zordontech.forge.runactivity;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -380,6 +541,15 @@
 			buildConfigurations = (
 				504EC3171FED79650016851F /* Debug */,
 				504EC3181FED79650016851F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A7F300000000000000000043 /* Build configuration list for PBXNativeTarget "ForgeRunActivity" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A7F300000000000000000041 /* Debug */,
+				A7F300000000000000000042 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
