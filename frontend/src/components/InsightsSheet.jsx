@@ -235,7 +235,7 @@ export function ReadinessGauge({ score, onClick }) {
   )
 }
 
-export function DailyCoachFlow({ checkedInToday, readinessData, recommendation, execution, todayWatchWorkout, onCheckIn, onStartWorkout, onReflect, onDetails }) {
+export function DailyCoachFlow({ checkedInToday, readinessData, recommendation, execution, todayWatchWorkout, onCheckIn, onStartWorkout, onStartUnplannedRun, onReflect, onDetails }) {
   const { t } = useTranslation()
   const readiness = resolveReadiness(readinessData)
   const isRestDay = recommendation?.recommendationType === 'rest' || recommendation?.type === 'rest'
@@ -333,6 +333,16 @@ export function DailyCoachFlow({ checkedInToday, readinessData, recommendation, 
           >
             Details
           </button>
+          {checkedInToday && isRestDay && (
+            <button
+              type="button"
+              onClick={onStartUnplannedRun}
+              className="pressable rounded-xl px-3 py-2 text-xs font-bold"
+              style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}
+            >
+              Start a run
+            </button>
+          )}
         </div>
       </div>
       <div className="mt-4 grid grid-cols-3 gap-2">
@@ -468,6 +478,7 @@ export function TodayDetailSheet({
   onStartWorkout,
   onStartRun,
   onStartLift,
+  onStartUnplannedRun,
   onWarmup,
   onReflect,
   onOpenReadiness,
@@ -633,6 +644,11 @@ export function TodayDetailSheet({
             {(calendarSessions.length === 0 || isRestDay) && (
               <button onClick={onStartWorkout} className="rounded-xl px-3 py-3 text-sm font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>
                 {isRestDay ? 'View calendar' : 'Start/log'}
+              </button>
+            )}
+            {isRestDay && (
+              <button onClick={onStartUnplannedRun} className="rounded-xl px-3 py-3 text-sm font-bold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>
+                Start a run
               </button>
             )}
             <button onClick={onWarmup} className="rounded-xl px-3 py-3 text-sm font-bold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>

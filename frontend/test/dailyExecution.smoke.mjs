@@ -12,6 +12,8 @@ import {
   scheduledLiftFromExecution,
   recommendationFromExecution,
   runRouteState,
+  unplannedRunRouteState,
+  makeupRunRouteState,
   planSessionIdFromState,
   currentWeekFromState,
   isRetryableCompletionFailure,
@@ -112,6 +114,21 @@ assert(rs && rs.planSessionId === 'run-1' && rs.currentWeek === 1, 'runRouteStat
 assert(rs.scheduledRun && rs.scheduledRun.id === 'run-1', 'runRouteState embeds the scheduled run');
 assert(rs.prescription && rs.prescription.zone === 'Z2', 'runRouteState prescription carries the plan zone');
 assert(runRouteState(r) === null && runRouteState(n) === null, 'no executable run → null route state');
+const unplanned = unplannedRunRouteState({ countdown: 5, runType: 'tempo', surface: 'track' });
+assert(unplanned.source === 'unplanned' && unplanned.planSessionId === null && unplanned.currentWeek === null, 'unplanned run has no plan linkage');
+assert(unplanned.startAfterWarmup && unplanned.mapMyRun && unplanned.trackMode, 'unplanned outdoor run preserves warm-up and route capture');
+assert(planSessionIdFromState(unplanned) === null, 'unplanned run can never resolve a plan session id');
+
+const makeup = makeupRunRouteState({
+  sessionId: 'mon-run',
+  date: '2026-07-20',
+  distance: 4,
+  raw: { id: 'mon-run', kind: 'run', type: 'tempo', pace_target: '9:00/mi', target_zone: 'Zone 3' },
+}, { environment: 'indoor', treadmillBrand: 'Peloton' });
+assert(makeup.source === 'makeup' && makeup.planSessionId === 'mon-run', 'make-up run preserves the exact missed session id');
+assert(makeup.runEnvironment === 'indoor' && makeup.surface === 'treadmill' && makeup.mapMyRun === false, 'make-up run supports indoor manual-distance capture');
+assert(makeup.workoutTarget.distanceMiles === 4 && makeup.workoutTarget.zone === 'Zone 3', 'make-up run carries the original prescription');
+assert(makeupRunRouteState(null) === null, 'make-up run rejects a missing session');
 assert(planSessionIdFromState({ planSessionId: 42 }) === '42', 'planSessionIdFromState stringifies planSessionId');
 assert(planSessionIdFromState({ scheduledRun: { id: 'run-7' } }) === 'run-7', 'planSessionIdFromState falls back to scheduledRun.id');
 assert(planSessionIdFromState({ planSessionId: null, scheduledRun: { id: 'group-run-7' } }) === null, 'an explicit null plan id never falls back to a synthetic scheduled-run id');

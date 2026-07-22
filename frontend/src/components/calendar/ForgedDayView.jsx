@@ -169,6 +169,7 @@ export default function ForgedDayView({
   onToggleComplete,
   onStartRun,
   onStartLift,
+  onStartUnplannedRun,
   onBack,
   updating = false,
   isScheduledToday = true,
@@ -426,6 +427,19 @@ export default function ForgedDayView({
           <span className="forged-stamp forged-stamp--rest" style={{ margin: '0 auto' }}><Moon size={16} /></span>
           <h4 className="forged-hand" style={{ fontSize: px(20), fontWeight: 700, marginTop: 10 }}>Rest day</h4>
           <p style={{ fontSize: px(13), color: 'var(--ink-soft, #5A554B)', marginTop: 4 }}>Recover well and come back ready.</p>
+          {isScheduledToday && (
+            <>
+              <button
+                type="button"
+                onClick={onStartUnplannedRun}
+                disabled={typeof onStartUnplannedRun !== 'function'}
+                style={{ marginTop: 16, width: '100%', border: '1px solid rgba(60,55,45,0.24)', borderRadius: 8, padding: '12px 14px', background: 'rgba(255,255,255,0.3)', color: 'var(--ink, #241F18)', fontWeight: 800, cursor: typeof onStartUnplannedRun === 'function' ? 'pointer' : 'not-allowed', opacity: typeof onStartUnplannedRun === 'function' ? 1 : 0.5 }}
+              >
+                Start a run
+              </button>
+              <p style={{ fontSize: px(11), color: 'var(--ink-soft, #5A554B)', marginTop: 6 }}>Choose an extra run or move a missed session onto today.</p>
+            </>
+          )}
         </section>
       ) : (
         <>

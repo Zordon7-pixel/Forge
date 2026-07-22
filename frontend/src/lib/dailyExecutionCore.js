@@ -175,6 +175,77 @@ export function runRouteState(execution) {
   };
 }
 
+// Build an explicitly ad-hoc run handoff. The null plan identifiers are
+// intentional: an extra run must never complete or rewrite a scheduled day.
+export function unplannedRunRouteState({
+  countdown = 3,
+  runType = 'easy',
+  surface = 'road',
+  mapMyRun = true,
+} = {}) {
+  const safeCountdown = Number(countdown);
+  const safeRunType = typeof runType === 'string' && runType.trim() ? runType.trim() : 'easy';
+  const safeSurface = ['road', 'track', 'trail', 'other'].includes(surface) ? surface : 'road';
+  return {
+    source: 'unplanned',
+    planSessionId: null,
+    currentWeek: null,
+    scheduledRun: null,
+    countdown: Number.isInteger(safeCountdown) && safeCountdown >= 0 && safeCountdown <= 10 ? safeCountdown : 3,
+    runType: safeRunType,
+    runEnvironment: 'outdoor',
+    surface: safeSurface,
+    mapMyRun: mapMyRun !== false,
+    trackMode: safeSurface === 'track',
+    startAfterWarmup: true,
+    workoutTarget: null,
+  };
+}
+
+// Build a make-up handoff from the owner-scoped /plans/compliance response.
+// Unlike an extra run, this intentionally preserves the missed session ID so
+// the saved activity completes that exact calendar prescription.
+export function makeupRunRouteState(missedSession, {
+  countdown = 3,
+  environment = 'outdoor',
+  surface = 'road',
+  treadmillBrand = null,
+} = {}) {
+  const missed = missedSession && typeof missedSession === 'object' ? missedSession : {};
+  const raw = missed.raw && typeof missed.raw === 'object' ? missed.raw : {};
+  const sessionId = missed.sessionId ?? raw.id;
+  if (sessionId === null || sessionId === undefined || String(sessionId).trim() === '') return null;
+  const scheduledRun = {
+    ...raw,
+    id: String(sessionId),
+    kind: 'run',
+    original_date: missed.date || raw.date || null,
+  };
+  const distanceMiles = Number(raw.distance_miles ?? raw.distance ?? missed.distance ?? 0) || null;
+  const pace = raw.pace_target || raw.pace || raw.target_pace || null;
+  const zone = raw.target_zone || raw.zone || null;
+  const isIndoor = environment === 'indoor';
+  const safeCountdown = Number(countdown);
+  const safeSurface = isIndoor
+    ? 'treadmill'
+    : ['road', 'track', 'trail', 'other'].includes(surface) ? surface : 'road';
+  return {
+    source: 'makeup',
+    planSessionId: String(sessionId),
+    currentWeek: null,
+    scheduledRun,
+    countdown: Number.isInteger(safeCountdown) && safeCountdown >= 0 && safeCountdown <= 10 ? safeCountdown : 3,
+    runType: raw.type || raw.workout_type || 'run',
+    runEnvironment: isIndoor ? 'indoor' : 'outdoor',
+    surface: safeSurface,
+    mapMyRun: !isIndoor,
+    trackMode: safeSurface === 'track',
+    treadmillBrand: isIndoor && treadmillBrand ? String(treadmillBrand) : null,
+    startAfterWarmup: true,
+    workoutTarget: { distanceMiles, pace, zone },
+  };
+}
+
 // Read the plan session id back out of an incoming navigation state so warmup /
 // active handoffs keep the canonical scheduled session. Returns a String id or
 // null.

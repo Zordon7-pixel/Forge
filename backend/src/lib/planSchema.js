@@ -221,7 +221,7 @@ function plannedSessionsForDay(dayEntry, idx, dateStr) {
 // Move one planned session into the next rest day without dropping a sibling
 // session. Compliance and reschedule share sessionIdentifier(), so id-less
 // legacy and v2 plans remain addressable across repeated reads.
-function rescheduleSessionInWeek(week, sessionId) {
+function rescheduleSessionInWeek(week, sessionId, { targetDate = null } = {}) {
   const entries = getDayEntries(week);
   const wanted = String(sessionId);
   let sourceIndex = -1;
@@ -248,7 +248,10 @@ function rescheduleSessionInWeek(week, sessionId) {
   }
 
   if (sourceIndex < 0) return { error: 'not_found' };
-  const targetIndex = entries.findIndex((entry, index) => index > sourceIndex && isRestEntry(entry));
+  const requestedDate = typeof targetDate === 'string' ? targetDate.trim() : '';
+  const targetIndex = requestedDate
+    ? entries.findIndex((entry, index) => index !== sourceIndex && entry?.date === requestedDate && isRestEntry(entry))
+    : entries.findIndex((entry, index) => index > sourceIndex && isRestEntry(entry));
   if (targetIndex < 0) return { error: 'no_target' };
 
   const source = entries[sourceIndex];
@@ -289,6 +292,8 @@ function rescheduleSessionInWeek(week, sessionId) {
     week: setDayEntries(week, nextEntries),
     movedFrom,
     movedTo,
+    movedFromDate: source.date || null,
+    movedToDate: target.date || null,
   };
 }
 

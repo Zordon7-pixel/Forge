@@ -226,6 +226,10 @@ export default function Plan() {
     } })
   }
 
+  const startUnplannedRun = () => {
+    navigate('/log-run?tab=manual&intent=rest-day')
+  }
+
   if (loading) {
     return (
       <ProGate isPro={isPro} loading={proLoading} message="Adaptive training plans are a Pro feature">
@@ -402,6 +406,7 @@ export default function Plan() {
               onToggleComplete={toggleSession}
               onStartRun={startRunSession}
               onStartLift={startLiftSession}
+              onStartUnplannedRun={startUnplannedRun}
               onBack={() => setSelectedDayISO(null)}
               updating={updating}
               isScheduledToday={selectedDay.dateISO === today}

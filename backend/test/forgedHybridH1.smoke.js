@@ -15,6 +15,7 @@ const fs = require('fs');
 const path = require('path');
 const schema = require('../src/lib/planSchema');
 const checkin = require('../src/lib/checkinOverride');
+const plansRouteSource = fs.readFileSync(path.join(__dirname, '../src/routes/plans.js'), 'utf8');
 
 let passed = 0;
 let failed = 0;
@@ -214,6 +215,7 @@ for (let wi = 0; wi < 13; wi += 1) {
 }
 assert(todayOk, 'today projection identical (type/distance/day) across all 91 days');
 assert(complianceOk, 'compliance projection identical (type/distance/date) across all 91 days');
+assert(plansRouteSource.includes('raw: s.raw'), 'missed-session response preserves the exact prescription for make-up runs');
 assert(overrideOk, 'override projection identical across all 91 days');
 // legacy checkinOverride.applyOverride must be byte-identical to {...day,...patch} for legacy days
 const sampleLegacy = legacy.weeks[0].days[1];
@@ -275,6 +277,18 @@ assert(schema.daySessions(movedV2.week.days[1]).length === 1 && schema.daySessio
 assert(!movedV2.week.days[0].orderGuidance && !movedV2.week.days[1].orderGuidance, 'reschedule removes stale run/lift ordering guidance');
 const repeatedV2Id = schema.plannedSessionsForDay(movedV2.week.days[1], 1, '2026-07-16')[0].sessionId;
 assert(repeatedV2Id === 'wed-run', 'moved v2 session keeps its stable id');
+
+const targetedMakeupWeek = {
+  days: [
+    { date: '2026-07-20', day: 'Mon', sessions: [{ id: 'missed-run', kind: 'run', type: 'easy', distance_miles: 4 }] },
+    { date: '2026-07-21', day: 'Tue', sessions: [] },
+    { date: '2026-07-22', day: 'Wed', sessions: [] },
+  ],
+};
+const targetedMakeup = schema.rescheduleSessionInWeek(targetedMakeupWeek, 'missed-run', { targetDate: '2026-07-22' });
+assert(!targetedMakeup.error && schema.daySessions(targetedMakeup.week.days[2])[0].id === 'missed-run', 'make-up reschedule targets the requested recovery date');
+const invalidMakeupTarget = schema.rescheduleSessionInWeek(targetedMakeupWeek, 'missed-run', { targetDate: '2026-07-19' });
+assert(invalidMakeupTarget.error === 'no_target', 'make-up reschedule rejects a date outside the week recovery days');
 
 const v2IdlessDay = { date: '2026-07-17', day: 'Fri', sessions: [{ kind: 'run', type: 'easy' }] };
 const v2IdA = schema.plannedSessionsForDay(v2IdlessDay, 4, '2026-07-17')[0].sessionId;

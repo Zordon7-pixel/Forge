@@ -11,7 +11,7 @@ import AiGuidanceNote from '../components/AiGuidanceNote'
 import { queueRequest } from '../lib/offlineQueue'
 import { scrollToFirstError, validateRunLog } from '../utils/validation'
 import WatchWorkoutService from '../services/WatchWorkoutService'
-import { fetchDailyExecution, scheduledRunFromExecution, planSessionIdFromState, currentWeekFromState, markSessionComplete, queueSessionComplete, isRetryableCompletionFailure, localDateISO } from '../lib/dailyExecution'
+import { fetchDailyExecution, scheduledRunFromExecution, planSessionIdFromState, currentWeekFromState, markSessionComplete, queueSessionComplete, isRetryableCompletionFailure, localDateISO, unplannedRunRouteState, makeupRunRouteState } from '../lib/dailyExecution'
 import { loadPostRunCheckInDraft, savePostRunCheckInDraft } from '../lib/postRunCheckInDraft'
 import { buildPlannedSessionSnapshot } from '../lib/runProvenance'
 
@@ -239,7 +239,11 @@ export default function LogRun() {
     const params = new URLSearchParams(window.location.search)
     return params.get('warmup') === 'true' ? 'warmup' : 'done'
   })
-  const [activeTab, setActiveTab] = useState('today')
+  const [activeTab, setActiveTab] = useState(() => {
+    if (query.get('tab') === 'manual') return 'log'
+    if (query.get('tab') === 'week') return 'week'
+    return 'today'
+  })
   const [countdown, setCountdown] = useState(3)
   const [surface, setSurface] = useState('road')
   const [runType, setRunType] = useState(() => {
@@ -290,6 +294,12 @@ export default function LogRun() {
   const [selectedDay, setSelectedDay] = useState(null)
   const [showWatchModal, setShowWatchModal] = useState(false)
   const [routePlannerStatus, setRoutePlannerStatus] = useState({ available: false, requiresPro: false })
+  const [runIntentOpen, setRunIntentOpen] = useState(() => query.get('intent') === 'rest-day')
+  const [runIntentLoading, setRunIntentLoading] = useState(false)
+  const [runIntentError, setRunIntentError] = useState('')
+  const [missedRunOptions, setMissedRunOptions] = useState([])
+  const [todayIsPlanRestDay, setTodayIsPlanRestDay] = useState(false)
+  const [startingMakeupId, setStartingMakeupId] = useState(null)
 
   const [selectedRun, setSelectedRun] = useState(null)
   const [showCustomize, setShowCustomize] = useState(false)
@@ -307,8 +317,40 @@ export default function LogRun() {
   const todayCoachingIsAi = runBriefIsAi || Boolean(todayWorkout?.aiReason)
 
   useEffect(() => {
-    if (warmUpState === 'done') setActiveTab('today')
-  }, [warmUpState])
+    if (warmUpState !== 'done') return
+    if (query.get('tab') === 'manual') setActiveTab('log')
+    else if (query.get('tab') === 'week') setActiveTab('week')
+    else setActiveTab('today')
+    if (query.get('intent') === 'rest-day') setRunIntentOpen(true)
+  }, [query, warmUpState])
+
+  useEffect(() => {
+    if (!runIntentOpen) return undefined
+    let active = true
+    setRunIntentLoading(true)
+    setRunIntentError('')
+    Promise.all([
+      api.get('/plans/compliance'),
+      fetchDailyExecution(localDateISO()),
+    ])
+      .then(([complianceRes, execution]) => {
+        if (!active) return
+        const missed = Array.isArray(complianceRes.data?.missed) ? complianceRes.data.missed : []
+        setMissedRunOptions(missed.filter((item) => item?.type === 'run').sort((a, b) => String(b.date || '').localeCompare(String(a.date || ''))))
+        setTodayIsPlanRestDay(Boolean(execution?.hasPlan && execution?.hasDay && execution?.isRest))
+      })
+      .catch((err) => {
+        if (!active) return
+        console.error('[LogRun] missed-run choices failed:', err?.message || err)
+        setMissedRunOptions([])
+        setTodayIsPlanRestDay(false)
+        setRunIntentError('Forged Hybrid could not check missed sessions right now. You can still start an extra run.')
+      })
+      .finally(() => {
+        if (active) setRunIntentLoading(false)
+      })
+    return () => { active = false }
+  }, [runIntentOpen])
 
   useEffect(() => {
     let active = true
@@ -512,13 +554,17 @@ export default function LogRun() {
 
     const clientRunId = createClientRunId()
     const resolvedSurface = environment === 'inside' ? 'treadmill' : surface
+    // The Manual tab records an ad-hoc activity. It must not inherit a plan
+    // session just because the athlete arrived here from a scheduled workout.
+    const submittedPlanSessionId = activeTab === 'log' ? null : planSessionId
+    const submittedScheduledRun = submittedPlanSessionId ? todayWorkout : null
     const plannedSession = buildPlannedSessionSnapshot({
-      planSessionId,
-      scheduledRun: todayWorkout,
+      planSessionId: submittedPlanSessionId,
+      scheduledRun: submittedScheduledRun,
       workoutTarget: {
-        distanceMiles: todayWorkout?.distanceMiles || null,
-        pace: todayWorkout?.pace || null,
-        zone: todayWorkout?.targetZone || null,
+        distanceMiles: submittedScheduledRun?.distanceMiles || null,
+        pace: submittedScheduledRun?.pace || null,
+        zone: submittedScheduledRun?.targetZone || null,
       },
       date,
     })
@@ -534,24 +580,20 @@ export default function LogRun() {
       perceived_effort: Number(effort),
       treadmill_brand: treadmillType,
       shoe_id: selectedShoeId || null,
-      target_zone: todayWorkout?.targetZone || null,
-      plan_session_id: planSessionId,
+      target_zone: submittedScheduledRun?.targetZone || null,
+      plan_session_id: submittedPlanSessionId,
       planned_session: plannedSession,
     }
 
     try {
       setLoading(true)
-      if (resolvedSurface === 'treadmill') {
-        navigate('/run/treadmill', { state: { treadmillType } })
-        return
-      }
       if (!navigator.onLine) {
         await queueRequest('/api/runs', 'POST', runPayload)
         // H5: order completion AFTER the queued run so it replays second.
         let progressNotice = ''
-        if (planSessionId) {
+        if (submittedPlanSessionId) {
           try {
-            await queueSessionComplete(planSessionId, planCurrentWeek)
+            await queueSessionComplete(submittedPlanSessionId, planCurrentWeek)
           } catch (completionErr) {
             console.error('[LogRun] failed to queue plan completion:', completionErr?.message || completionErr)
             progressNotice = ' Open Plan after the run syncs to mark this session complete.'
@@ -599,14 +641,14 @@ export default function LogRun() {
       // saved successfully. A failed completion must never roll back the run —
       // surface a non-blocking notice instead.
       let planProgressNotice = ''
-      if (planSessionId) {
+      if (submittedPlanSessionId) {
         try {
-          await markSessionComplete(planSessionId, planCurrentWeek)
+          await markSessionComplete(submittedPlanSessionId, planCurrentWeek)
         } catch (completionErr) {
           console.error('[LogRun] plan completion failed:', completionErr?.message || completionErr)
           if (isRetryableCompletionFailure(completionErr)) {
             try {
-              await queueSessionComplete(planSessionId, planCurrentWeek)
+              await queueSessionComplete(submittedPlanSessionId, planCurrentWeek)
               planProgressNotice = 'Plan progress is queued for sync.'
             } catch (queueErr) {
               console.error('[LogRun] failed to queue completion retry:', queueErr?.message || queueErr)
@@ -624,9 +666,9 @@ export default function LogRun() {
         await queueRequest('/api/runs', 'POST', runPayload)
         // H5: order completion AFTER the queued run so it replays second.
         let progressNotice = ''
-        if (planSessionId) {
+        if (submittedPlanSessionId) {
           try {
-            await queueSessionComplete(planSessionId, planCurrentWeek)
+            await queueSessionComplete(submittedPlanSessionId, planCurrentWeek)
           } catch (completionErr) {
             console.error('[LogRun] failed to queue plan completion:', completionErr?.message || completionErr)
             progressNotice = ' Open Plan after the run syncs to mark this session complete.'
@@ -696,6 +738,69 @@ export default function LogRun() {
         },
       },
     })
+  }
+
+  const startUnplannedRun = () => {
+    track('unplanned_run_started', { via: activeTab === 'log' ? 'manual_tab' : 'rest_day' })
+    if (environment === 'inside') {
+      navigate('/run/treadmill', { state: { treadmillType } })
+      return
+    }
+    const selectedSurface = trackWorkout === 'yes'
+      ? 'track'
+      : surface === 'treadmill' ? 'road' : surface
+    navigate('/warmup', {
+      state: unplannedRunRouteState({ countdown, runType, surface: selectedSurface }),
+    })
+  }
+
+  const openRunIntent = () => {
+    setRunIntentError('')
+    setRunIntentOpen(true)
+    track('run_intent_opened', { via: activeTab === 'log' ? 'manual_tab' : 'rest_day' })
+  }
+
+  const startExtraRun = () => {
+    setRunIntentOpen(false)
+    startUnplannedRun()
+  }
+
+  const startMakeupRun = async (missed) => {
+    const state = makeupRunRouteState(missed, {
+      countdown,
+      environment: environment === 'inside' ? 'indoor' : 'outdoor',
+      surface: trackWorkout === 'yes' ? 'track' : surface,
+      treadmillBrand: treadmillType,
+    })
+    if (!state) {
+      setRunIntentError('That missed session is no longer available. Refresh and choose another run.')
+      return
+    }
+    if (!todayIsPlanRestDay) {
+      setRunIntentError('Make-up runs can replace a plan rest day only. Start an extra run or open the calendar to avoid stacking workouts.')
+      return
+    }
+
+    setStartingMakeupId(state.planSessionId)
+    setRunIntentError('')
+    try {
+      const targetDate = localDateISO()
+      const response = await api.post('/plans/reschedule-missed', {
+        sessionId: state.planSessionId,
+        targetDate,
+      })
+      if (response.data?.movedToDate && response.data.movedToDate !== targetDate) {
+        throw new Error('The missed session was not moved onto today.')
+      }
+      track('makeup_run_started', { session_id: state.planSessionId, missed_date: missed.date || null })
+      setRunIntentOpen(false)
+      navigate('/warmup', { state })
+    } catch (err) {
+      console.error('[LogRun] make-up reschedule failed:', err?.message || err)
+      setRunIntentError(err?.response?.data?.error || 'Forged Hybrid could not move that workout onto today. Your plan was not changed.')
+    } finally {
+      setStartingMakeupId(null)
+    }
   }
 
   const saveNotes = async () => {
@@ -825,8 +930,10 @@ export default function LogRun() {
               </div>
             ) : (
               <div className="rounded-2xl p-4" style={{ background: 'var(--bg-base)', border: '1px solid var(--border-subtle)' }}>
-                <p style={{ color: 'var(--text-muted)' }}>No workout scheduled today — rest up or log a free run.</p>
-                <button onClick={() => setActiveTab('log')} className="mt-4 rounded-xl px-4 py-2 font-semibold" style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', cursor: 'pointer' }}>Log Free Run</button>
+                <p className="font-bold" style={{ color: 'var(--text-primary)' }}>No run is scheduled today.</p>
+                <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>Run extra or make up a missed plan session. Forged Hybrid will ask before changing the calendar.</p>
+                <button type="button" onClick={openRunIntent} className="mt-4 w-full rounded-xl px-4 py-3 font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', cursor: 'pointer' }}>Start a Run</button>
+                <button type="button" onClick={() => setActiveTab('log')} className="mt-2 w-full rounded-xl px-4 py-3 font-semibold" style={{ background: 'var(--bg-card)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', cursor: 'pointer' }}>Log a Completed Run</button>
               </div>
             )}
           </div>
@@ -930,6 +1037,14 @@ export default function LogRun() {
               )}
             </div>
             <div className="rounded-2xl p-4" style={{ background: 'var(--bg-base)', border: '1px solid var(--border-subtle)' }}>
+              <p className="text-base font-black" style={{ color: 'var(--text-primary)' }}>Run now</p>
+              <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>Choose whether this is extra work or a missed plan session you are making up.</p>
+              <button type="button" onClick={openRunIntent} className="mt-4 w-full rounded-xl py-3 font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', cursor: 'pointer' }}>
+                Choose Run
+              </button>
+            </div>
+            <p className="text-xs font-bold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.8 }}>Already finished? Log it below</p>
+            <div className="rounded-2xl p-4" style={{ background: 'var(--bg-base)', border: '1px solid var(--border-subtle)' }}>
               <div className="text-center py-6">
                 <input aria-label={`Run distance in ${fmt.distanceLabel}`} type="number" step="0.01" min="0" required className="text-5xl font-bold bg-transparent text-center w-32 focus:outline-none" style={{ color: 'var(--accent)' }} value={distance} onChange={e => setDistance(e.target.value)} placeholder="0.0" />
                 <div className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>Distance ({fmt.distanceLabel})</div>
@@ -998,6 +1113,56 @@ export default function LogRun() {
       </div>
 
       {showWatchModal && <WorkoutWatchModal workout={todayWorkout} onClose={() => setShowWatchModal(false)} />}
+
+      {runIntentOpen && (
+        <div className="fixed inset-0 z-[70] flex items-end justify-center sm:items-center sm:px-4" style={{ background: 'rgba(0,0,0,0.78)' }}>
+          <section role="dialog" aria-modal="true" aria-labelledby="run-intent-title" className="w-full max-w-md rounded-t-2xl p-5 sm:rounded-2xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', maxHeight: '88vh', overflowY: 'auto' }}>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-black uppercase" style={{ color: 'var(--accent)', letterSpacing: 0.8 }}>Run today</p>
+                <h2 id="run-intent-title" className="mt-1 text-xl font-black" style={{ color: 'var(--text-primary)' }}>Why are you running?</h2>
+              </div>
+              <button type="button" onClick={() => setRunIntentOpen(false)} aria-label="Close run choices" className="rounded-full px-3 py-2 text-sm font-bold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>Close</button>
+            </div>
+
+            <button type="button" onClick={startExtraRun} className="mt-5 w-full rounded-xl p-4 text-left" style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none' }}>
+              <span className="block text-base font-black">Extra run</span>
+              <span className="mt-1 block text-sm font-semibold">Push today without completing or moving a scheduled workout. The activity still informs future load decisions.</span>
+            </button>
+
+            <div className="mt-5">
+              <p className="text-xs font-black uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.8 }}>Make up a missed run</p>
+              <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>Select a recent missed session. Forged Hybrid moves it onto today before you start.</p>
+              {runIntentLoading && <p className="mt-3 text-sm" style={{ color: 'var(--text-muted)' }}>Checking your calendar...</p>}
+              {!runIntentLoading && !todayIsPlanRestDay && (
+                <p className="mt-3 rounded-xl p-3 text-sm" style={{ background: 'var(--bg-input)', color: 'var(--text-muted)', border: '1px solid var(--border-subtle)' }}>Today is not an available plan rest day, so Forged Hybrid will not stack a missed workout here.</p>
+              )}
+              {!runIntentLoading && todayIsPlanRestDay && missedRunOptions.length === 0 && (
+                <p className="mt-3 rounded-xl p-3 text-sm" style={{ background: 'var(--bg-input)', color: 'var(--text-muted)', border: '1px solid var(--border-subtle)' }}>No missed run is available in this training week.</p>
+              )}
+              {!runIntentLoading && todayIsPlanRestDay && missedRunOptions.map((missed) => {
+                const raw = missed.raw || {}
+                const title = raw.title || cleanRunType(raw.type || raw.workout_type || 'Run')
+                const distanceMiles = Number(raw.distance_miles ?? missed.distance ?? 0)
+                const detail = [
+                  missed.date || null,
+                  distanceMiles > 0 ? `${distanceMiles.toFixed(1)} mi` : null,
+                  raw.pace_target || raw.target_zone || null,
+                ].filter(Boolean).join(' · ')
+                const id = String(missed.sessionId || raw.id || '')
+                return (
+                  <button key={id} type="button" onClick={() => startMakeupRun(missed)} disabled={Boolean(startingMakeupId)} className="mt-3 w-full rounded-xl p-4 text-left disabled:opacity-60" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>
+                    <span className="block text-sm font-black">{title}</span>
+                    <span className="mt-1 block text-xs" style={{ color: 'var(--text-muted)' }}>{detail || 'Missed plan session'}</span>
+                    {startingMakeupId === id && <span className="mt-2 block text-xs font-bold" style={{ color: 'var(--accent)' }}>Moving workout onto today...</span>}
+                  </button>
+                )
+              })}
+            </div>
+            {runIntentError && <p role="alert" className="mt-4 rounded-xl p-3 text-sm" style={{ background: 'var(--danger-dim)', color: 'var(--danger)' }}>{runIntentError}</p>}
+          </section>
+        </div>
+      )}
 
       {selectedRun && (
         <div className="fixed inset-0 z-50" style={{ background: 'var(--bg-base)' }}>

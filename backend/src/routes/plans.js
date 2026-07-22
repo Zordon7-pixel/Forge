@@ -1993,7 +1993,14 @@ router.get('/compliance', auth, async (req, res) => {
     const today = new Date().toISOString().slice(0, 10);
     const missed = statusItems
       .filter((s) => !s.completed && s.date < today)
-      .map((s) => ({ sessionId: s.sessionId, day: s.day, date: s.date, type: s.type, distance: s.distance }));
+      .map((s) => ({
+        sessionId: s.sessionId,
+        day: s.day,
+        date: s.date,
+        type: s.type,
+        distance: s.distance,
+        raw: s.raw,
+      }));
 
     const week = (() => {
       const d = new Date(`${weekStart}T12:00:00`);
@@ -2011,8 +2018,11 @@ router.get('/compliance', auth, async (req, res) => {
 
 router.post('/reschedule-missed', auth, async (req, res) => {
   try {
-    const { sessionId } = req.body || {};
+    const { sessionId, targetDate } = req.body || {};
     if (!sessionId) return res.status(400).json({ error: 'sessionId required' });
+    if (targetDate !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(String(targetDate))) {
+      return res.status(400).json({ error: 'targetDate must be YYYY-MM-DD' });
+    }
 
     const active = await getActivePlanForUser(req.user.id);
     if (!active) return res.status(404).json({ error: 'No plan found' });
@@ -2022,15 +2032,29 @@ router.post('/reschedule-missed', auth, async (req, res) => {
     const week = parsed?.weeks?.[currentWeek];
     if (!planSchema.getDayEntries(week).length) return res.status(400).json({ error: 'Invalid plan format' });
 
-    const result = planSchema.rescheduleSessionInWeek(week, sessionId);
+    const result = planSchema.rescheduleSessionInWeek(week, sessionId, { targetDate });
     if (result.error === 'not_found') return res.status(404).json({ error: 'Session not found in plan' });
-    if (result.error === 'no_target') return res.status(409).json({ error: 'No later recovery day is available' });
+    if (result.error === 'no_target') {
+      return res.status(409).json({
+        error: targetDate
+          ? 'The selected date is not an available recovery day in this week.'
+          : 'No later recovery day is available',
+      });
+    }
     parsed.weeks[currentWeek] = result.week;
 
     await withTransaction(async (tx) => {
       await updateActivePlanData(active, req.user.id, parsed, tx);
     });
-    res.json({ ok: true, movedFrom: result.movedFrom, movedTo: result.movedTo, plan: parsed, aiSuggestion: 'Week rebalanced after missed session. Keep next run easy and preserve long run.' });
+    res.json({
+      ok: true,
+      movedFrom: result.movedFrom,
+      movedTo: result.movedTo,
+      movedFromDate: result.movedFromDate,
+      movedToDate: result.movedToDate,
+      plan: parsed,
+      aiSuggestion: 'Week rebalanced after missed session. Keep next run easy and preserve long run.',
+    });
   } catch (err) {
     console.error('[plans/reschedule-missed] failed:', err.message);
     res.status(500).json({ error: 'Reschedule failed' });

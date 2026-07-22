@@ -715,6 +715,12 @@ export default function Dashboard() {
     })
   }, [navigate, execution])
 
+  const handleStartUnplannedRun = useCallback(() => {
+    track('unplanned_run_selected', { via: 'today_rest_day' })
+    setShowTodayDetail(false)
+    navigate('/log-run?tab=manual&intent=rest-day')
+  }, [navigate])
+
   const decideTrainingGap = useCallback(async (decision) => {
     if (!trainingGapProposal?.id || !['accept', 'keep'].includes(decision)) return
     setTrainingGapDecision(decision)
@@ -877,6 +883,7 @@ export default function Dashboard() {
         todayWatchWorkout={todayWatchWorkout}
         onCheckIn={() => navigate('/checkin')}
         onStartWorkout={handleStartWorkout}
+        onStartUnplannedRun={handleStartUnplannedRun}
         onReflect={() => navigate('/history')}
         onDetails={() => setShowTodayDetail(true)}
       />
@@ -913,6 +920,7 @@ export default function Dashboard() {
         onStartWorkout={handleStartWorkout}
         onStartRun={handleStartTodayRun}
         onStartLift={handleStartTodayLift}
+        onStartUnplannedRun={handleStartUnplannedRun}
         onWarmup={() => navigate('/prep?mode=warmup')}
         onReflect={() => navigate('/history')}
         onOpenReadiness={() => {
