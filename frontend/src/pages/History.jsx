@@ -54,6 +54,47 @@ function hasTrustedEffort(activity) {
   return !(activity?.watch_mode === 'import' && activity?.notes === 'Imported workout')
 }
 
+function monthKeyFor(value) {
+  const raw = String(value || '')
+  const isoMatch = raw.match(/^(\d{4})-(\d{2})/)
+  if (isoMatch) return `${isoMatch[1]}-${isoMatch[2]}`
+  const date = new Date(raw)
+  if (Number.isNaN(date.getTime())) return 'unknown'
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+}
+
+function monthLabelFor(key) {
+  if (key === 'unknown') return 'Date unavailable'
+  const [year, month] = key.split('-').map(Number)
+  return new Date(year, month - 1, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
+}
+
+function MonthGroups({ items, getDate, itemNoun, children }) {
+  const groups = new Map()
+  items.forEach((item) => {
+    const key = monthKeyFor(getDate(item))
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key).push(item)
+  })
+  const ordered = [...groups.entries()].sort(([left], [right]) => {
+    if (left === 'unknown') return 1
+    if (right === 'unknown') return -1
+    return right.localeCompare(left)
+  })
+
+  return ordered.map(([key, groupedItems], index) => (
+    <details key={key} defaultOpen={index === 0} className="overflow-hidden rounded-xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+      <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3">
+        <span className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{monthLabelFor(key)}</span>
+        <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{groupedItems.length} {itemNoun}{groupedItems.length === 1 ? '' : 's'}</span>
+      </summary>
+      <div className="space-y-2 border-t p-2" style={{ borderColor: 'var(--border-subtle)' }}>
+        {groupedItems.map(children)}
+      </div>
+    </details>
+  ))
+}
+
 export default function History() {
   const location = useLocation()
   const { fmt } = useUnits()
@@ -205,6 +246,10 @@ export default function History() {
   const actualRuns = useMemo(() => filteredRuns.filter(isRunningActivity), [filteredRuns])
   const filteredLifts = filterItems(lifts, 'date')
   const filteredWorkoutSessions = filterItems(workoutSessions, 'started_at')
+  const trainingHistoryItems = useMemo(() => [
+    ...filteredWorkoutSessions.map((session) => ({ kind: 'workout', id: `workout-${session.id}`, date: session.started_at || session.created_at, value: session })),
+    ...filteredLifts.map((lift) => ({ kind: 'lift', id: `lift-${lift.id}`, date: lift.date || lift.created_at, value: lift })),
+  ].sort((a, b) => String(b.date || '').localeCompare(String(a.date || ''))), [filteredLifts, filteredWorkoutSessions])
 
   const periodMiles = useMemo(
     () => actualRuns.reduce((s, r) => s + Number(r.distance_miles || 0), 0),
@@ -281,9 +326,13 @@ export default function History() {
       </div>
 
       {(hasWeeklyMileage || hasPaceTrend) && (
-        <div className="grid grid-cols-1 gap-3 mb-4">
+        <details className="mb-4 overflow-hidden rounded-xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+          <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between px-4 py-3 text-sm font-bold" style={{ color: 'var(--text-primary)' }}>
+            <span>Trends</span><span className="text-xs font-normal" style={{ color: 'var(--text-muted)' }}>Mileage and pace</span>
+          </summary>
+          <div className="grid grid-cols-1 gap-3 border-t p-3" style={{ borderColor: 'var(--border-subtle)' }}>
           {hasWeeklyMileage && (
-            <div className="rounded-xl p-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+            <div className="rounded-xl p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
               <div style={{ width: '100%', height: 180 }}>
                 <ResponsiveContainer>
                   <BarChart data={weeklyMileage}><XAxis dataKey="week" {...chartAxisProps} /><YAxis {...chartAxisProps} /><Tooltip {...chartTooltipProps} /><Bar dataKey="miles" fill={chartAccent} /></BarChart>
@@ -292,7 +341,7 @@ export default function History() {
             </div>
           )}
           {hasPaceTrend && (
-            <div className="rounded-xl p-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+            <div className="rounded-xl p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
               <div style={{ width: '100%', height: 180 }}>
                 <ResponsiveContainer>
                   <LineChart data={paceTrend}><XAxis dataKey="idx" {...chartAxisProps} /><YAxis {...chartAxisProps} /><Tooltip {...chartTooltipProps} /><Line type="monotone" dataKey="pace" stroke={chartAccent} strokeWidth={2} dot={false} /></LineChart>
@@ -300,7 +349,8 @@ export default function History() {
               </div>
             </div>
           )}
-        </div>
+          </div>
+        </details>
       )}
 
       <div className="mb-4">
@@ -401,10 +451,10 @@ export default function History() {
 
       {(tab === 'all' || tab === 'runs') && (
         <div className="space-y-3 mb-3">
-          {filteredRuns.map(run => {
+          <MonthGroups items={filteredRuns} getDate={getRunDate} itemNoun="activity">{run => {
             const heartRateZone = isRunningActivity(run) ? resolveRunHeartRateZone(run, hrZones) : null
             return (
-            <div key={run.id} onClick={() => openRunDetail(run)} className="cursor-pointer rounded-xl p-4" style={{ background: 'var(--bg-card)' }}>
+            <div key={run.id} onClick={() => openRunDetail(run)} className="cursor-pointer rounded-lg p-4" style={{ background: 'var(--bg-input)' }}>
               <div className="mb-2 flex items-center justify-between">
                 <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{formatHistoryDate(getRunDate(run))}</p>
                 <div className="flex items-center gap-2">
@@ -426,7 +476,7 @@ export default function History() {
               {run.notes && <p className="mt-1 text-xs italic" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>&quot;{run.notes}&quot;</p>}
             </div>
             )
-          })}
+          }}</MonthGroups>
 
           {filteredRuns.length === 0 && tab !== 'lifts' && (
             <div className="flex flex-col items-center justify-center gap-4 py-12">
@@ -446,10 +496,13 @@ export default function History() {
 
       {(tab === 'all' || tab === 'lifts') && (
         <div className="space-y-3">
-          <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{t('history.workouts')} & {t('history.races')}</p>
+          <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{t('history.workouts')}</p>
 
-          {filteredWorkoutSessions.map(session => (
-            <div key={session.id} onClick={() => setSelectedWorkout(session)} className="cursor-pointer rounded-xl p-4" style={{ background: 'var(--bg-card)' }}>
+          <MonthGroups items={trainingHistoryItems} getDate={(item) => item.date} itemNoun="workout">{item => {
+            if (item.kind === 'workout') {
+              const session = item.value
+              return (
+            <div key={item.id} onClick={() => setSelectedWorkout(session)} className="cursor-pointer rounded-lg p-4" style={{ background: 'var(--bg-input)' }}>
               <div className="flex items-center justify-between">
                 <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{formatHistoryDate(session.started_at || session.created_at)}</p>
                 <div className="flex items-center gap-2">
@@ -468,14 +521,14 @@ export default function History() {
                 </div>
               )}
             </div>
-          ))}
-
-          {filteredLifts.map(lift => {
+              )
+            }
+            const lift = item.value
             let tags = []
             try { tags = Array.isArray(lift.muscle_groups) ? lift.muscle_groups : JSON.parse(lift.muscle_groups || '[]') } catch { tags = [] }
 
             return (
-              <div key={lift.id} className="cursor-pointer rounded-xl p-4" style={{ background: 'var(--bg-card)' }}>
+              <div key={item.id} className="cursor-pointer rounded-lg p-4" style={{ background: 'var(--bg-input)' }}>
                 <div className="flex items-center justify-between">
                   <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{formatHistoryDate(lift.date || lift.created_at)}</p>
                   <div className="flex items-center gap-2">
@@ -490,7 +543,7 @@ export default function History() {
                 </div>
               </div>
             )
-          })}
+          }}</MonthGroups>
 
           {filteredLifts.length === 0 && filteredWorkoutSessions.length === 0 && tab !== 'runs' && (
             <div className="flex flex-col items-center justify-center gap-4 py-12">
@@ -507,8 +560,8 @@ export default function History() {
           {races.length === 0 ? (
             <p className="text-center py-8" style={{ color: 'var(--text-muted)', fontSize: 14 }}>{t('history.noRaces')}</p>
           ) : (
-            races.map(r => (
-              <div key={r.id} className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+            <MonthGroups items={races} getDate={(race) => race.race_date} itemNoun="race">{r => (
+              <div key={r.id} className="rounded-lg p-4" style={{ background: 'var(--bg-input)' }}>
                 <div className="flex justify-between items-start">
                   <div>
                     <p className="font-bold" style={{ color: 'var(--text-primary)' }}>{r.race_name}</p>
@@ -524,7 +577,7 @@ export default function History() {
                   </p>
                 )}
               </div>
-            ))
+            )}</MonthGroups>
           )}
           <button onClick={() => window.location.href = '/races'} style={{ width: '100%', padding: '10px 0', borderRadius: 12, background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)', fontSize: 13, cursor: 'pointer' }}>
             + Add Race
