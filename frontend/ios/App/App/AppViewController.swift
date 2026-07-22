@@ -7,5 +7,6 @@ class AppViewController: CAPBridgeViewController {
         bridge?.registerPluginInstance(ForgeWatchWorkoutPlugin())
         bridge?.registerPluginInstance(ForgeContactsPlugin())
         bridge?.registerPluginInstance(ForgeNotificationPlugin())
+        bridge?.registerPluginInstance(ForgePhotosPlugin())
     }
 }

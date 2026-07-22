@@ -69,6 +69,27 @@ function monthLabelFor(key) {
   return new Date(year, month - 1, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
 }
 
+function pluralizeItemNoun(noun, count) {
+  if (count === 1) return noun
+  return noun.endsWith('y') ? `${noun.slice(0, -1)}ies` : `${noun}s`
+}
+
+function MonthGroup({ label, count, itemNoun, initiallyOpen, children }) {
+  const [open, setOpen] = useState(initiallyOpen)
+
+  return (
+    <details open={open} onToggle={(event) => setOpen(event.currentTarget.open)} className="overflow-hidden rounded-xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+      <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3">
+        <span className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{label}</span>
+        <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{count} {pluralizeItemNoun(itemNoun, count)}</span>
+      </summary>
+      <div className="space-y-2 border-t p-2" style={{ borderColor: 'var(--border-subtle)' }}>
+        {children}
+      </div>
+    </details>
+  )
+}
+
 function MonthGroups({ items, getDate, itemNoun, children }) {
   const groups = new Map()
   items.forEach((item) => {
@@ -83,15 +104,15 @@ function MonthGroups({ items, getDate, itemNoun, children }) {
   })
 
   return ordered.map(([key, groupedItems], index) => (
-    <details key={key} defaultOpen={index === 0} className="overflow-hidden rounded-xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-      <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3">
-        <span className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{monthLabelFor(key)}</span>
-        <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{groupedItems.length} {itemNoun}{groupedItems.length === 1 ? '' : 's'}</span>
-      </summary>
-      <div className="space-y-2 border-t p-2" style={{ borderColor: 'var(--border-subtle)' }}>
-        {groupedItems.map(children)}
-      </div>
-    </details>
+    <MonthGroup
+      key={key}
+      label={monthLabelFor(key)}
+      count={groupedItems.length}
+      itemNoun={itemNoun}
+      initiallyOpen={index === 0}
+    >
+      {groupedItems.map(children)}
+    </MonthGroup>
   ))
 }
 
