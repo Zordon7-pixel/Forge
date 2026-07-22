@@ -41,7 +41,7 @@ assert(plan.includes("navigate('/log-run?tab=manual&intent=rest-day')"), 'Plan w
 assert(dashboard.includes('onStartUnplannedRun={handleStartUnplannedRun}'), 'Dashboard wires the Today rest action')
 assert(dashboard.includes("navigate('/log-run?tab=manual&intent=rest-day')"), 'Dashboard opens the rest-day intent chooser')
 assert(logRun.includes("query.get('tab') === 'manual'") && logRun.includes('Choose Run'), 'manual deep link opens the run-intent action')
-assert(logRun.includes("api.get('/plans/compliance')") && logRun.includes("api.post('/plans/reschedule-missed'"), 'make-up choices use owner-scoped missed-session and reschedule APIs')
+assert(logRun.includes('api.get(`/plans/compliance?date=') && logRun.includes("api.post('/plans/reschedule-missed'"), 'make-up choices use phone-local, owner-scoped missed-session and reschedule APIs')
 assert(logRun.includes('const targetDate = localDateISO()') && logRun.includes('targetDate,'), 'make-up flow targets the phone-local rest date')
 assert(logRun.includes('const state = makeupRunRouteState(missed'), 'make-up run carries the exact missed prescription into Active Run')
 assert(logRun.includes("const submittedPlanSessionId = activeTab === 'log' ? null : planSessionId"), 'manual run saves cannot inherit plan completion linkage')

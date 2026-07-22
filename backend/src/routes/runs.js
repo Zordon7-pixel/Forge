@@ -811,7 +811,10 @@ router.post('/', auth, async (req, res) => {
     };
     let resolvedPlanSessionId = normalizePlanSessionId(plan_session_id);
     let resolvedPlannedSession = normalizePlannedSession(planned_session, resolvedPlanSessionId);
-    if (!hasMeaningfulPlannedRun(resolvedPlannedSession)
+    const planMatchExplicitlyDisabled = Object.prototype.hasOwnProperty.call(req.body || {}, 'plan_session_id')
+      && plan_session_id === null;
+    if (!planMatchExplicitlyDisabled
+      && !hasMeaningfulPlannedRun(resolvedPlannedSession)
       && isRunActivity({ type, watch_activity_type, watch_normalized_type })) {
       const scheduledRun = await findPlannedRunForDate(req.user.id, String(date).slice(0, 10));
       if (scheduledRun) {

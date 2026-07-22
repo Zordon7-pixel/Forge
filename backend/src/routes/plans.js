@@ -665,6 +665,35 @@ function dayToDate(weekStart, dayLabel) {
   return d.toISOString().slice(0, 10);
 }
 
+function activeWeekStart(parsed, activeRow, weekIndex, fallbackWeekStart) {
+  const week = parsed?.weeks?.[weekIndex] || {};
+  const direct = [week.startDate, week.week_start]
+    .map((value) => String(value || '').slice(0, 10))
+    .find((value) => /^\d{4}-\d{2}-\d{2}$/.test(value));
+  if (direct) return direct;
+
+  const firstWeekStart = String(parsed?.weeks?.[0]?.startDate || parsed?.weeks?.[0]?.week_start || '').slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(firstWeekStart)) {
+    return hybridReconciliation.addDays(firstWeekStart, weekIndex * 7);
+  }
+
+  const assignedStart = String(activeRow?.week_start || activeRow?.started_at || '').slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(assignedStart)) {
+    return hybridReconciliation.addDays(assignedStart, weekIndex * 7);
+  }
+  return fallbackWeekStart;
+}
+
+function withCanonicalWeekDates(week, weekStart) {
+  const entries = planSchema.getDayEntries(week).map((entry) => {
+    const explicitDate = String(entry?.date || '').slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(explicitDate)) return entry;
+    const derivedDate = dayToDate(weekStart, entry?.day);
+    return derivedDate ? { ...entry, date: derivedDate } : entry;
+  });
+  return planSchema.setDayEntries(week, entries);
+}
+
 async function getActivePlanForUser(userId, tx = null) {
   const get = tx?.get || dbGet;
   const assigned = await get(`
@@ -681,6 +710,41 @@ async function getActivePlanForUser(userId, tx = null) {
   const legacy = await get('SELECT * FROM training_plans WHERE user_id = ? ORDER BY created_at DESC LIMIT 1', [userId]);
   if (legacy) return { source: 'legacy', row: legacy };
   return null;
+}
+
+// Lock the owner-scoped assignment before reading its current plan pointer.
+// This keeps copy-on-write and whole-plan JSON mutation inside one serializable
+// read/validate/write sequence for a given athlete.
+async function getActivePlanForMutation(userId, tx) {
+  const assignment = await tx.get(`
+    SELECT up.id AS user_plan_id, up.plan_id, up.current_week, up.started_at,
+           up.status, up.progress_json
+    FROM user_plans up
+    WHERE up.user_id=? AND up.status='active'
+    ORDER BY up.created_at DESC
+    LIMIT 1
+    FOR UPDATE OF up
+  `, [userId]);
+  if (assignment) {
+    const plan = await tx.get(`
+      SELECT tp.*
+      FROM training_plans tp
+      JOIN user_plans owner_up ON owner_up.plan_id=tp.id
+      WHERE tp.id=? AND owner_up.id=? AND owner_up.user_id=?
+      FOR UPDATE OF tp
+    `, [assignment.plan_id, assignment.user_plan_id, userId]);
+    if (!plan) return null;
+    return { source: 'assigned', row: { ...plan, ...assignment, id: plan.id } };
+  }
+
+  const legacy = await tx.get(`
+    SELECT * FROM training_plans
+    WHERE user_id=?
+    ORDER BY created_at DESC
+    LIMIT 1
+    FOR UPDATE
+  `, [userId]);
+  return legacy ? { source: 'legacy', row: legacy } : null;
 }
 
 async function ensureWritablePlan(active, userId, tx) {
@@ -1938,7 +2002,9 @@ router.get('/current', auth, async (req, res) => {
 
 router.get('/compliance', auth, async (req, res) => {
   try {
-    const weekStart = getMonday();
+    const planningDateISO = getPlanningDateFromRequest(req);
+    if (!planningDateISO) return res.status(400).json({ error: 'date must be the phone local date in YYYY-MM-DD format' });
+    const weekStart = getMonday(new Date(`${planningDateISO}T12:00:00`));
     const weekEndDate = new Date(`${weekStart}T12:00:00`);
     weekEndDate.setDate(weekEndDate.getDate() + 7);
     const weekEnd = weekEndDate.toISOString().slice(0, 10);
@@ -1948,14 +2014,16 @@ router.get('/compliance', auth, async (req, res) => {
 
     const parsed = parsePlan(active.row) || { weeks: [] };
     const currentWeek = Number(active.row.current_week || 1);
-    const weekBucket = parsed?.weeks?.[Math.max(0, currentWeek - 1)] || parsed?.weeks?.[0] || {};
-    const days = planSchema.getDayEntries(weekBucket);
+    const weekIndex = Math.max(0, currentWeek - 1);
+    const weekBucket = parsed?.weeks?.[weekIndex] || parsed?.weeks?.[0] || {};
+    const selectedWeekStart = activeWeekStart(parsed, active.row, weekIndex, weekStart);
+    const days = planSchema.getDayEntries(withCanonicalWeekDates(weekBucket, selectedWeekStart));
     // Session-aware (H1): each day expands to one planned row per run/lift
     // session. Legacy / run-only days collapse to exactly one row, matching the
     // previous mapType behaviour.
     const plannedSessions = days
       .flatMap((d, idx) => planSchema.plannedSessionsForDay(
-        d, idx, dayToDate(active.row.week_start || active.row.started_at || weekStart, d.day)
+        d, idx, d.date
       ))
       .filter((d) => d.type !== 'rest' && d.date && d.date >= weekStart && d.date < weekEnd);
 
@@ -1990,7 +2058,7 @@ router.get('/compliance', auth, async (req, res) => {
       else { current = 0; }
     }
 
-    const today = new Date().toISOString().slice(0, 10);
+    const today = planningDateISO;
     const missed = statusItems
       .filter((s) => !s.completed && s.date < today)
       .map((s) => ({
@@ -2020,41 +2088,64 @@ router.post('/reschedule-missed', auth, async (req, res) => {
   try {
     const { sessionId, targetDate } = req.body || {};
     if (!sessionId) return res.status(400).json({ error: 'sessionId required' });
-    if (targetDate !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(String(targetDate))) {
-      return res.status(400).json({ error: 'targetDate must be YYYY-MM-DD' });
+    const planningDateISO = getPlanningDateFromRequest({ query: { date: targetDate } });
+    if (!targetDate || !planningDateISO) {
+      return res.status(400).json({ error: 'targetDate must be the phone local date in YYYY-MM-DD format' });
     }
 
-    const active = await getActivePlanForUser(req.user.id);
-    if (!active) return res.status(404).json({ error: 'No plan found' });
+    const mutation = await withTransaction(async (tx) => {
+      const active = await getActivePlanForMutation(req.user.id, tx);
+      if (!active) return { status: 404, error: 'No plan found' };
 
-    const parsed = parsePlan(active.row);
-    const currentWeek = Math.max(0, Number(active.row.current_week || 1) - 1);
-    const week = parsed?.weeks?.[currentWeek];
-    if (!planSchema.getDayEntries(week).length) return res.status(400).json({ error: 'Invalid plan format' });
+      const parsed = parsePlan(active.row);
+      const weekIndex = Math.max(0, Number(active.row.current_week || 1) - 1);
+      const rawWeek = parsed?.weeks?.[weekIndex];
+      if (!planSchema.getDayEntries(rawWeek).length) return { status: 400, error: 'Invalid plan format' };
+      const fallbackWeekStart = getMonday(new Date(`${planningDateISO}T12:00:00`));
+      const selectedWeekStart = activeWeekStart(parsed, active.row, weekIndex, fallbackWeekStart);
+      const week = withCanonicalWeekDates(rawWeek, selectedWeekStart);
+      const requestedSession = planSchema.getDayEntries(week)
+        .flatMap((day, index) => planSchema.plannedSessionsForDay(day, index, day.date))
+        .find((session) => String(session.sessionId) === String(sessionId));
 
-    const result = planSchema.rescheduleSessionInWeek(week, sessionId, { targetDate });
-    if (result.error === 'not_found') return res.status(404).json({ error: 'Session not found in plan' });
-    if (result.error === 'no_target') {
-      return res.status(409).json({
-        error: targetDate
-          ? 'The selected date is not an available recovery day in this week.'
-          : 'No later recovery day is available',
-      });
-    }
-    parsed.weeks[currentWeek] = result.week;
+      if (!requestedSession) return { status: 404, error: 'Session not found in plan' };
+      if (requestedSession.type !== 'run') return { status: 409, error: 'Only a missed run can be moved onto today.' };
+      if (!requestedSession.date || requestedSession.date >= planningDateISO) {
+        return { status: 409, error: 'Only a run missed before today can be moved.' };
+      }
 
-    await withTransaction(async (tx) => {
+      const progress = parseJsonValue(active.row.progress_json, {});
+      const completedIds = new Set(completedSessionIdsFromProgress(progress));
+      if (completedIds.has(String(requestedSession.sessionId))) {
+        return { status: 409, error: 'That run is already complete. Refresh your calendar.' };
+      }
+      const recordedRun = await tx.get(`
+        SELECT id FROM runs
+        WHERE user_id=? AND (plan_session_id=? OR date=?) AND ${runActivitySql()}
+        LIMIT 1
+      `, [req.user.id, String(requestedSession.sessionId), requestedSession.date]);
+      if (recordedRun) return { status: 409, error: 'That run is already recorded. Sync and refresh your calendar.' };
+
+      const result = planSchema.rescheduleSessionInWeek(week, sessionId, { targetDate: planningDateISO });
+      if (result.error === 'not_found') return { status: 404, error: 'Session not found in plan' };
+      if (result.error === 'no_target') {
+        return { status: 409, error: 'Today is not an available recovery day in this training week.' };
+      }
+      parsed.weeks[weekIndex] = result.week;
       await updateActivePlanData(active, req.user.id, parsed, tx);
-    });
-    res.json({
-      ok: true,
-      movedFrom: result.movedFrom,
-      movedTo: result.movedTo,
-      movedFromDate: result.movedFromDate,
-      movedToDate: result.movedToDate,
-      plan: parsed,
-      aiSuggestion: 'Week rebalanced after missed session. Keep next run easy and preserve long run.',
-    });
+      return {
+        ok: true,
+        movedFrom: result.movedFrom,
+        movedTo: result.movedTo,
+        movedFromDate: result.movedFromDate,
+        movedToDate: result.movedToDate,
+        plan: parsed,
+        aiSuggestion: 'Week rebalanced after missed session. Keep next run easy and preserve long run.',
+      };
+    }, { userLock: 'update', requireUserIds: [req.user.id] });
+
+    if (mutation.error) return res.status(mutation.status || 409).json({ error: mutation.error });
+    res.json(mutation);
   } catch (err) {
     console.error('[plans/reschedule-missed] failed:', err.message);
     res.status(500).json({ error: 'Reschedule failed' });

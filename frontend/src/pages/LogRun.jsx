@@ -330,7 +330,7 @@ export default function LogRun() {
     setRunIntentLoading(true)
     setRunIntentError('')
     Promise.all([
-      api.get('/plans/compliance'),
+      api.get(`/plans/compliance?date=${encodeURIComponent(localDateISO())}`),
       fetchDailyExecution(localDateISO()),
     ])
       .then(([complianceRes, execution]) => {
@@ -743,7 +743,7 @@ export default function LogRun() {
   const startUnplannedRun = () => {
     track('unplanned_run_started', { via: activeTab === 'log' ? 'manual_tab' : 'rest_day' })
     if (environment === 'inside') {
-      navigate('/run/treadmill', { state: { treadmillType } })
+      navigate('/run/treadmill', { state: { treadmillType, disablePlanMatch: true } })
       return
     }
     const selectedSurface = trackWorkout === 'yes'

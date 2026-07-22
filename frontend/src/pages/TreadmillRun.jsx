@@ -20,6 +20,7 @@ export default function TreadmillRun() {
   const [speed, setSpeed] = useState(location.state?.speed || '')
   const [incline, setIncline] = useState(location.state?.incline || '0')
   const [treadmillType, setTreadmillType] = useState(location.state?.treadmillType || 'Generic')
+  const disablePlanMatch = location.state?.disablePlanMatch === true
   const [effort, setEffort] = useState(5)
   const [notes, setNotes] = useState('')
   const [saving, setSaving] = useState(false)
@@ -89,6 +90,7 @@ export default function TreadmillRun() {
         calories: watchMetrics?.calories,
         treadmill_brand: watchMetrics?.treadmill_brand || treadmillType,
         treadmill_model: watchMetrics?.treadmill_model,
+        ...(disablePlanMatch ? { plan_session_id: null } : {}),
       })
       setFeedback('Run saved!')
       setTimeout(() => navigate('/'), 1500)
