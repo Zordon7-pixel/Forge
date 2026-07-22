@@ -9,6 +9,7 @@ import { activityLabel, isRunningActivity } from '../lib/activityType'
 import { buildRunComparison, formatPlannedPaceTarget, normalizeRunSplits, parseRunRoute, parseZoneTimeline, resolveRunHeartRateZone } from '../lib/runRecap'
 import { providerSourcePresentation } from '../lib/deviceSourcePresentation'
 import ActivityShareStudio from './ActivityShareStudio'
+import RunPlanImpact from './RunPlanImpact'
 import { ZONE_HEAT_PALETTE } from '../lib/athleteLanguage'
 
 function fmtDuration(totalSeconds = 0) {
@@ -431,6 +432,8 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
             <button type="button" onClick={onAddCheckIn} className="mt-3 w-full rounded-lg py-2.5 text-sm font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>Rate this run</button>
           </div>
         )}
+
+        {isRun && <RunPlanImpact run={run} />}
 
         {advancedStats.length > 0 && (
           <div className="mb-5">
