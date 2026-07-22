@@ -838,6 +838,7 @@ export default function ActivityShareStudio({ run, onClose }) {
   const fileType = transparent ? 'image/png' : 'image/jpeg'
   const fileExtension = transparent ? 'png' : 'jpg'
   const filename = `forged-hybrid-run-${String(run?.date || 'activity').replace(/[^0-9a-z-]/gi, '-')}.${fileExtension}`
+  const usesLegacyPhotoSave = PhotoLibraryService.isNativeRuntime() && !PhotoLibraryService.isDirectSaveAvailable()
 
   useEffect(() => () => {
     if (photoUrl) URL.revokeObjectURL(photoUrl)
@@ -1074,6 +1075,11 @@ export default function ActivityShareStudio({ run, onClose }) {
           </button>
         )}
 
+        {usesLegacyPhotoSave && (
+          <p className="mt-3 rounded-lg px-3 py-2 text-center text-xs font-semibold leading-relaxed" style={{ background: 'var(--bg-input)', color: 'var(--text-muted)' }}>
+            On this app build, Save opens the iPhone share sheet. Choose Save Image to add the card to Photos.
+          </p>
+        )}
         <div className="mt-3 grid grid-cols-3 gap-2">
           <button type="button" onClick={handleShare} disabled={busy} className="pressable flex min-h-12 items-center justify-center gap-2 rounded-lg text-sm font-black" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}><Share2 size={17} /> Share</button>
           <button type="button" onClick={handleSave} disabled={busy} className="pressable flex min-h-12 items-center justify-center gap-2 rounded-lg text-sm font-bold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}><Download size={17} /> Save</button>

@@ -16,6 +16,10 @@ function fileDataUrl(file) {
 }
 
 const PhotoLibraryService = {
+  isNativeRuntime() {
+    return isNativeRuntime()
+  },
+
   isDirectSaveAvailable() {
     return isNativeRuntime() && Capacitor.isPluginAvailable('ForgePhotos')
   },

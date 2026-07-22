@@ -418,6 +418,13 @@ async function buildCompletionSummaryForAdaptation(userId, plan, active, plannin
 
 async function buildAdaptationInputs(userId, plan, active, planningDateISO, options = {}) {
   const recentRunSince = adaptationEngine.addDays(planningDateISO, -34);
+  const focusRunId = options.focusRunId ? String(options.focusRunId).trim() : '';
+  const recentRunWindow = focusRunId
+    ? '((date>=? AND date<=?) OR id=?)'
+    : '(date>=? AND date<=?)';
+  const recentRunParams = focusRunId
+    ? [userId, recentRunSince, planningDateISO, focusRunId]
+    : [userId, recentRunSince, planningDateISO];
   const [healthRow, checkin, injuries, completion, recentRuns, profile] = await Promise.all([
     dbGet('SELECT * FROM health_sync WHERE user_id=?', [userId]).catch((err) => {
       console.error('[plans/adaptation] health sync lookup failed:', err.message);
@@ -441,9 +448,9 @@ async function buildAdaptationInputs(userId, plan, active, planningDateISO, opti
               heart_rate_zones, workout_metrics_json, watch_mode, notes,
               type, watch_activity_type, watch_normalized_type
        FROM runs
-       WHERE user_id=? AND date>=? AND date<=? AND ${runActivitySql()}
+       WHERE user_id=? AND ${recentRunWindow} AND ${runActivitySql()}
        ORDER BY date ASC, created_at ASC`,
-      [userId, recentRunSince, planningDateISO]
+      recentRunParams
     ).catch((err) => {
       console.error('[plans/adaptation] recent run lookup failed:', err.message);
       return [];
@@ -479,7 +486,7 @@ async function buildAdaptationInputs(userId, plan, active, planningDateISO, opti
       todayISO: planningDateISO,
       weeklyBaseline: Number(plan?.inputSummary?.weeklyMileageBaseline || 0),
       recoveryState: healthSignals.recoveryState,
-      focusRunId: options.focusRunId || null,
+      focusRunId: focusRunId || null,
     }),
     injuryState: activeInjury ? {
       active: true,
@@ -1736,7 +1743,14 @@ router.get('/adaptation/run/:runId', auth, async (req, res) => {
         Number(run.avg_heart_rate || 0) > 0 ? `avg HR ${Math.round(Number(run.avg_heart_rate))}` : null,
       ].filter(Boolean).join(', ') || 'Saved run',
     }, ...(Array.isArray(proposal.evidence) ? proposal.evidence : [])];
-    if (!Array.isArray(proposal.changes) || proposal.changes.length === 0) {
+    const runAgeDays = daysBetween(planningDateISO, run.date);
+    if (runAgeDays !== null && runAgeDays > 34) {
+      proposal.changes = [];
+      proposal.proposedPlan = parsed;
+      proposal.safetyException = false;
+      proposal.headline = 'Historical run reviewed';
+      proposal.reason = 'This run remains part of your training history, but it is too old to change the current 72-hour plan.';
+    } else if (!Array.isArray(proposal.changes) || proposal.changes.length === 0) {
       proposal.headline = 'Plan stays as written';
       proposal.reason = 'This run is included in your training load and does not require changing the next 72 hours.';
     }
@@ -1751,7 +1765,7 @@ router.get('/adaptation/run/:runId', auth, async (req, res) => {
 router.post('/adaptation/:proposalId/accept', auth, async (req, res) => {
   try {
     const result = await withTransaction(async (tx) => {
-      const row = await tx.get('SELECT * FROM plan_adjustment_proposals WHERE id=? AND user_id=?', [req.params.proposalId, req.user.id]);
+      const row = await tx.get('SELECT * FROM plan_adjustment_proposals WHERE id=? AND user_id=? FOR UPDATE', [req.params.proposalId, req.user.id]);
       if (!row) return { notFound: true };
       if (row.trigger_run_id) {
         const ownedRun = await tx.get(`SELECT id FROM runs WHERE id=? AND user_id=? AND ${runActivitySql()}`, [row.trigger_run_id, req.user.id]);
@@ -1760,7 +1774,7 @@ router.post('/adaptation/:proposalId/accept', auth, async (req, res) => {
       if (row.status === 'accepted') return { ok: true, status: 'accepted', proposal: proposalFromRow(row), idempotent: true };
       if (row.status !== 'pending') return { conflict: true, reason: 'Proposal is no longer pending.' };
 
-      const active = await getActivePlanForUser(req.user.id, tx);
+      const active = await getActivePlanForMutation(req.user.id, tx);
       if (!active) return { conflict: true, reason: 'No active plan is assigned.' };
       const parsed = parsePlan(active.row);
       const currentVersion = planVersionFor(active, parsed);
@@ -1777,7 +1791,7 @@ router.post('/adaptation/:proposalId/accept', auth, async (req, res) => {
       );
       if (update.changes === 0) throw new Error('Proposal accept status update failed');
       return { ok: true, status: 'accepted', proposal: proposalFromRow({ ...row, status: 'accepted' }) };
-    });
+    }, { userLock: 'update', requireUserIds: [req.user.id] });
 
     if (result.notFound) return res.status(404).json({ error: 'Proposal not found' });
     if (result.conflict) return res.status(409).json({ error: result.reason });
@@ -1791,7 +1805,7 @@ router.post('/adaptation/:proposalId/accept', auth, async (req, res) => {
 router.post('/adaptation/:proposalId/keep', auth, async (req, res) => {
   try {
     const result = await withTransaction(async (tx) => {
-      const row = await tx.get('SELECT * FROM plan_adjustment_proposals WHERE id=? AND user_id=?', [req.params.proposalId, req.user.id]);
+      const row = await tx.get('SELECT * FROM plan_adjustment_proposals WHERE id=? AND user_id=? FOR UPDATE', [req.params.proposalId, req.user.id]);
       if (!row) return { notFound: true };
       if (row.trigger_run_id) {
         const ownedRun = await tx.get(`SELECT id FROM runs WHERE id=? AND user_id=? AND ${runActivitySql()}`, [row.trigger_run_id, req.user.id]);
@@ -1799,7 +1813,7 @@ router.post('/adaptation/:proposalId/keep', auth, async (req, res) => {
       }
       if (row.status === 'kept') return { ok: true, status: 'kept', proposal: proposalFromRow(row), idempotent: true };
       if (row.status !== 'pending') return { conflict: true, reason: 'Proposal is no longer pending.' };
-      const active = await getActivePlanForUser(req.user.id, tx);
+      const active = await getActivePlanForMutation(req.user.id, tx);
       if (!active) return { conflict: true, reason: 'No active plan is assigned.' };
       const parsed = parsePlan(active.row);
       const currentVersion = planVersionFor(active, parsed);
@@ -1812,7 +1826,7 @@ router.post('/adaptation/:proposalId/keep', auth, async (req, res) => {
       );
       if (update.changes === 0) throw new Error('Proposal keep status update failed');
       return { ok: true, status: 'kept', proposal: proposalFromRow({ ...row, status: 'kept' }) };
-    });
+    }, { userLock: 'update', requireUserIds: [req.user.id] });
 
     if (result.notFound) return res.status(404).json({ error: 'Proposal not found' });
     if (result.conflict) return res.status(409).json({ error: result.reason });

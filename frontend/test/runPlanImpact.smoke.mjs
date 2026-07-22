@@ -23,13 +23,19 @@ assert.ok(impact.includes("'Apply adjustment'"), 'the user can apply a proposed 
 assert.ok(impact.includes("'Keep plan'"), 'the user can keep the original plan')
 assert.match(plans, /router\.get\('\/adaptation\/run\/:runId', auth/, 'the run-impact endpoint requires authentication')
 assert.match(plans, /WHERE id=\? AND user_id=\? AND \$\{runActivitySql\(\)\}/, 'the analyzed run is selected by id and owner')
+assert.match(plans, /recentRunWindow = focusRunId[\s\S]*OR id=\?/, 'an older focused run is included outside the rolling input window')
 assert.match(plans, /WHERE user_id=\? AND trigger_run_id=\?/, 'run impact lookup is owner and run scoped')
 assert.match(plans, /existing\.status === 'accepted' \|\| existing\.status === 'kept'/, 'completed run-plan decisions remain immutable')
 assert.match(plans, /WHERE id=\? AND user_id=\? AND trigger_run_id=\? AND status IN \('pending','reviewed'\)/, 'undecided impact is refreshed from the current owner-scoped run record')
 assert.match(plans, /source: 'run',[\s\S]*runId: run\.id/, 'stored evidence names the exact viewed run')
 assert.match(plans, /ownedRun = await tx\.get\(`SELECT id FROM runs WHERE id=\? AND user_id=\?/, 'accept and keep re-check trigger-run ownership')
+assert.equal((plans.match(/SELECT \* FROM plan_adjustment_proposals WHERE id=\? AND user_id=\? FOR UPDATE/g) || []).length, 2, 'accept and keep serialize on the proposal row')
+assert.ok((plans.match(/const active = await getActivePlanForMutation\(req\.user\.id, tx\)/g) || []).length >= 2, 'accept and keep lock and re-read the active plan before version validation')
+assert.ok((plans.match(/userLock: 'update', requireUserIds: \[req\.user\.id\]/g) || []).length >= 2, 'accept and keep take the exclusive per-user mutation guard')
 assert.match(plans, /trigger_run_id IS NULL/, 'daily adaptation queries exclude run-triggered reviews')
 assert.match(migration, /idx_plan_adjustment_proposals_run[\s\S]*user_id, trigger_run_id/, 'one durable impact record is indexed per user-owned run')
+assert.match(migration, /DO \$\$[\s\S]*existing_predicate[\s\S]*pending_replacement/, 'the legacy daily index is replaced atomically only when its predicate is stale')
+assert.doesNotMatch(migration, /await pg\.query\('DROP INDEX IF EXISTS idx_plan_adjustment_proposals_pending'/, 'startup does not unconditionally drop the daily uniqueness index')
 assert.match(recentRunLoad, /focusRunId[\s\S]*run\.id === focusRunId/, 'load analysis focuses the selected run instead of another same-day run')
 const focused = summarizeRecentRunLoad([
   { id: 'longer-run', date: '2026-07-22', type: 'run', distance_miles: 8, duration_seconds: 4200 },
@@ -41,6 +47,11 @@ const insignificant = summarizeRecentRunLoad([
   { id: 'viewed-warmup', date: '2026-07-22', type: 'run', distance_miles: 0.2, duration_seconds: 120 },
 ], { todayISO: '2026-07-22', weeklyBaseline: 12, focusRunId: 'viewed-warmup' })
 assert.equal(insignificant.available, false, 'an insignificant viewed run cannot inherit another run\'s plan impact')
+const historical = summarizeRecentRunLoad([
+  { id: 'historical-run', date: '2026-05-01', type: 'run', distance_miles: 6, duration_seconds: 3600 },
+], { todayISO: '2026-07-22', weeklyBaseline: 12, focusRunId: 'historical-run' })
+assert.equal(historical.latestRun?.id, 'historical-run', 'an explicitly included historical run remains the analyzed evidence')
+assert.match(plans, /runAgeDays > 34[\s\S]*Historical run reviewed[\s\S]*too old to change the current 72-hour plan/, 'historical recaps use honest no-current-plan-impact copy')
 assert.doesNotMatch(impact, /ai\/|openai|anthropic/i, 'run-plan impact does not add an LLM path')
 
-console.log('RUN PLAN IMPACT SMOKE OK (19)')
+console.log('RUN PLAN IMPACT SMOKE OK (27)')

@@ -271,8 +271,39 @@ async function runAlwaysMigrations() {
 
   await pg.query('ALTER TABLE plan_adjustment_proposals ADD COLUMN IF NOT EXISTS trigger_run_id TEXT');
   await pg.query('CREATE INDEX IF NOT EXISTS idx_plan_adjustment_proposals_user_status ON plan_adjustment_proposals(user_id, status)');
-  await pg.query('DROP INDEX IF EXISTS idx_plan_adjustment_proposals_pending');
-  await pg.query("CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_adjustment_proposals_pending ON plan_adjustment_proposals(user_id, planning_date, plan_version) WHERE status='pending' AND trigger_run_id IS NULL");
+  await pg.query(`
+    DO $$
+    DECLARE
+      index_exists BOOLEAN := FALSE;
+      existing_predicate TEXT;
+    BEGIN
+      SELECT EXISTS (
+        SELECT 1
+        FROM pg_class index_class
+        JOIN pg_namespace index_namespace ON index_namespace.oid = index_class.relnamespace
+        WHERE index_class.relname = 'idx_plan_adjustment_proposals_pending'
+          AND index_namespace.nspname = current_schema()
+      ) INTO index_exists;
+
+      IF index_exists THEN
+        SELECT pg_get_expr(index_record.indpred, index_record.indrelid)
+        INTO existing_predicate
+        FROM pg_index index_record
+        JOIN pg_class index_class ON index_class.oid = index_record.indexrelid
+        JOIN pg_namespace index_namespace ON index_namespace.oid = index_class.relnamespace
+        WHERE index_class.relname = 'idx_plan_adjustment_proposals_pending'
+          AND index_namespace.nspname = current_schema();
+      END IF;
+
+      IF NOT index_exists THEN
+        EXECUTE 'CREATE UNIQUE INDEX idx_plan_adjustment_proposals_pending ON plan_adjustment_proposals(user_id, planning_date, plan_version) WHERE status=''pending'' AND trigger_run_id IS NULL';
+      ELSIF existing_predicate IS NULL OR POSITION('trigger_run_id IS NULL' IN existing_predicate) = 0 THEN
+        EXECUTE 'CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_adjustment_proposals_pending_replacement ON plan_adjustment_proposals(user_id, planning_date, plan_version) WHERE status=''pending'' AND trigger_run_id IS NULL';
+        EXECUTE 'DROP INDEX idx_plan_adjustment_proposals_pending';
+        EXECUTE 'ALTER INDEX idx_plan_adjustment_proposals_pending_replacement RENAME TO idx_plan_adjustment_proposals_pending';
+      END IF;
+    END $$
+  `);
   await pg.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_adjustment_proposals_run ON plan_adjustment_proposals(user_id, trigger_run_id) WHERE trigger_run_id IS NOT NULL');
 
   await pg.query(`
