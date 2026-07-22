@@ -47,6 +47,22 @@ Every actively recorded run needs enough identity and provenance to be reconcile
 
 All coordinates and numeric values must be bounded and validated. All user data queries and mutations must be scoped to `req.user.id` / `user_id`.
 
+### Canonical distance evidence
+
+- Canonical stored and compared distance is `distance_miles` with canonical unit `miles` and an explicit `distance_source`.
+- Provider evidence may arrive in miles, kilometers, or meters, but every candidate must declare its unit through an explicit field name or supported unit value before reconciliation or identity-key generation.
+- Convert with 1 mile = 1.609344 kilometers = 1609.344 meters, then compare canonical mile values. Equivalent evidence is one value, never summed or duplicated; the deterministic winning source remains attached to that value.
+- Unknown units, invalid numeric values, and materially non-equivalent candidates in one evidence set fail closed instead of being guessed or merged.
+
+### Route integrity status
+
+- `missing`: zero valid route points.
+- `insufficient`: exactly one valid route point.
+- `partial`: two or more valid route points plus explicit evidence of a material recording gap, a discarded catch-up segment, or otherwise known incomplete sampled coverage.
+- `complete`: two or more valid route points with no known material recording gap or incomplete coverage.
+
+Route length alone never makes a route `partial`; a short but valid recording with no known material gap is `complete`.
+
 ## Source Precedence
 
 Use the richest trustworthy source per field, not one global winner:

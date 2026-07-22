@@ -1,4 +1,21 @@
 const MAX_ROUTE_POINTS = 5000;
+const MAX_DISTANCE_MILES = 500;
+const DISTANCE_EQUIVALENCE_TOLERANCE_MILES = 0.001;
+const DISTANCE_UNIT_TO_MILES = Object.freeze({
+  mi: 1,
+  mile: 1,
+  miles: 1,
+  km: 1 / 1.609344,
+  kilometer: 1 / 1.609344,
+  kilometers: 1 / 1.609344,
+  kilometre: 1 / 1.609344,
+  kilometres: 1 / 1.609344,
+  m: 1 / 1609.344,
+  meter: 1 / 1609.344,
+  meters: 1 / 1609.344,
+  metre: 1 / 1609.344,
+  metres: 1 / 1609.344,
+});
 const RUN_FEEDBACK_INPUT_FIELDS = new Set([
   'distance_miles',
   'duration_seconds',
@@ -107,6 +124,55 @@ function normalizeRouteCoords(value) {
   return downsampleRouteCoords(points);
 }
 
+function normalizeDistanceEvidence(candidates = []) {
+  const supplied = Array.isArray(candidates) ? candidates : [];
+  if (supplied.length === 0) {
+    return { miles: null, unit: 'miles', source: null };
+  }
+
+  const normalized = [];
+  for (const candidate of supplied) {
+    const unit = String(candidate?.unit || '').trim().toLowerCase();
+    const factor = DISTANCE_UNIT_TO_MILES[unit];
+    const source = boundedString(candidate?.source, 80);
+    const value = Number(candidate?.value);
+    if (!factor) return { error: `Unsupported distance unit: ${unit || 'missing'}` };
+    if (!source) return { error: 'Distance evidence source is required' };
+    if (!Number.isFinite(value) || value < 0) return { error: 'Distance evidence must be a non-negative finite number' };
+    const miles = value * factor;
+    if (!Number.isFinite(miles) || miles > MAX_DISTANCE_MILES) {
+      return { error: `Distance evidence must not exceed ${MAX_DISTANCE_MILES} miles` };
+    }
+    normalized.push({ miles, source });
+  }
+
+  const canonical = normalized[0];
+  const conflicting = normalized.some((candidate) => (
+    Math.abs(candidate.miles - canonical.miles) > DISTANCE_EQUIVALENCE_TOLERANCE_MILES
+  ));
+  if (conflicting) return { error: 'Conflicting distance evidence' };
+
+  return {
+    miles: Number(canonical.miles.toFixed(6)),
+    unit: 'miles',
+    source: canonical.source,
+  };
+}
+
+function classifyRouteIntegrity({ routeCoords = [], materialGap = false, coverageIncomplete = false } = {}) {
+  const pointCount = normalizeRouteCoords(routeCoords).length;
+  if (pointCount === 0) {
+    return { status: 'missing', pointCount, reason: 'no_valid_route_points' };
+  }
+  if (pointCount === 1) {
+    return { status: 'insufficient', pointCount, reason: 'one_valid_route_point' };
+  }
+  if (materialGap === true || coverageIncomplete === true) {
+    return { status: 'partial', pointCount, reason: 'known_incomplete_coverage' };
+  }
+  return { status: 'complete', pointCount, reason: 'valid_recording_no_known_material_gaps' };
+}
+
 function normalizePostRunCheckIn(value = {}) {
   const effort = Number(value.perceived_effort);
   const pain = String(value.pain_level || '');
@@ -132,6 +198,8 @@ function shouldInvalidateRunFeedback(value = {}) {
 
 module.exports = {
   MAX_ROUTE_POINTS,
+  classifyRouteIntegrity,
+  normalizeDistanceEvidence,
   normalizePlanSessionId,
   normalizePlannedSession,
   normalizePostRunCheckIn,

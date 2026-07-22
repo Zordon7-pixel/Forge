@@ -25,6 +25,8 @@ const { activityKind, isRunActivity, runActivitySql } = require('../lib/runActiv
 const { resolveRunEffort, withCalculatedEffort } = require('../lib/runEffort');
 const { findPlannedRunForDate, hasMeaningfulPlannedRun } = require('../lib/plannedRunMatch');
 const {
+  classifyRouteIntegrity,
+  normalizeDistanceEvidence,
   normalizePlanSessionId,
   normalizePlannedSession,
   normalizePostRunCheckIn,
@@ -786,6 +788,27 @@ router.post('/', auth, async (req, res) => {
       : null;
     const recordingHealthSource = resolvedActivityStart ? 'forged_hybrid' : null;
     const recordingSourceId = recordingHealthSource ? id : null;
+    const distanceEvidence = normalizeDistanceEvidence(
+      distance_miles === undefined || distance_miles === null || distance_miles === ''
+        ? []
+        : [{ value: distance_miles, unit: 'miles', source: recordingHealthSource ? 'forged_phone' : 'manual' }]
+    );
+    if (distanceEvidence.error) return res.status(400).json({ error: distanceEvidence.error });
+    const resolvedDistanceMiles = distanceEvidence.miles ?? 0;
+    const routeIntegrity = classifyRouteIntegrity({
+      routeCoords: normalizedRouteCoords,
+      materialGap: typeof notes === 'string' && /^\[gps_gap_notice:/.test(notes),
+      coverageIncomplete: gps_available === false,
+    });
+    const recordingMetrics = {
+      ...(distanceEvidence.source ? {
+        distance_source: distanceEvidence.source,
+        distance_unit: distanceEvidence.unit,
+      } : {}),
+      route_status: routeIntegrity.status,
+      route_point_count: routeIntegrity.pointCount,
+      route_status_reason: routeIntegrity.reason,
+    };
     let resolvedPlanSessionId = normalizePlanSessionId(plan_session_id);
     let resolvedPlannedSession = normalizePlannedSession(planned_session, resolvedPlanSessionId);
     if (!hasMeaningfulPlannedRun(resolvedPlannedSession)
@@ -815,10 +838,10 @@ router.post('/', auth, async (req, res) => {
       detected_surface_type, temperature_f, calories, treadmill_brand, treadmill_model,
       watch_sync_id, watch_activity_type, watch_normalized_type, gps_available,
       plan_session_id, planned_session_json, health_source, health_source_workout_id,
-      health_start_at, health_end_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      health_start_at, health_end_at, workout_metrics_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (id) DO NOTHING`, [
-      id, req.user.id, date, type, distance_miles || 0, duration_seconds || 0, perceived_effort ?? null, notes || null,
+      id, req.user.id, date, type, resolvedDistanceMiles, duration_seconds || 0, perceived_effort ?? null, notes || null,
       resolvedSurface, resolvedSurface, incline_pct || 0, treadmill_speed || 0, JSON.stringify(normalizedRouteCoords), watch_mode || null,
       avg_heart_rate || null, max_heart_rate || null, min_heart_rate || null, JSON.stringify(heart_rate_zones || []),
       cadence_spm || null, resolvedElevationGain, resolvedElevationLoss, pace_avg || null, JSON.stringify(pace_splits || []),
@@ -826,7 +849,7 @@ router.post('/', auth, async (req, res) => {
       detected_surface_type || null, temperature_f || null, calories || 0, treadmill_brand || null, treadmill_model || null,
       watch_sync_id || null, watch_activity_type || null, watch_normalized_type || null, gps_available === false ? 0 : 1,
       resolvedPlanSessionId, JSON.stringify(resolvedPlannedSession || {}), recordingHealthSource, recordingSourceId,
-      resolvedActivityStart, resolvedActivityEnd
+      resolvedActivityStart, resolvedActivityEnd, JSON.stringify(recordingMetrics)
     ]);
     if (insertResult.changes === 0) {
       const existingRun = await dbGet('SELECT * FROM runs WHERE id=? AND user_id=?', [id, req.user.id]);
@@ -844,15 +867,15 @@ router.post('/', auth, async (req, res) => {
       getHrProfile(req.user.id, dbGet),
     ]);
     const weightLbs = userProfile?.weight_lbs || 185;
-    const computedCalories = Math.round(0.75 * weightLbs * (distance_miles || 0));
+    const computedCalories = Math.round(0.75 * weightLbs * resolvedDistanceMiles);
     const resolvedCalories = Number(calories || 0) > 0 ? Number(calories) : computedCalories;
     if (resolvedCalories > 0) {
       await dbRun('UPDATE runs SET calories=? WHERE id=? AND user_id=?', [resolvedCalories, id, req.user.id]);
     }
 
-    if ((duration_seconds || 0) > 0 && (distance_miles || 0) > 0) {
+    if ((duration_seconds || 0) > 0 && resolvedDistanceMiles > 0) {
       const durationHours = (duration_seconds || 0) / 3600;
-      const paceMinsPerMile = ((duration_seconds || 0) / 60) / (distance_miles || 1);
+      const paceMinsPerMile = ((duration_seconds || 0) / 60) / resolvedDistanceMiles;
       const met = paceMinsPerMile < 8 ? 12.0 : paceMinsPerMile <= 10 ? 10.0 : 8.0;
       const weightKg = weightLbs / 2.205;
       const calories_burned = Math.round(met * weightKg * durationHours);

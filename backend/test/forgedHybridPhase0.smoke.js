@@ -5,11 +5,14 @@ const fs = require('fs');
 const path = require('path');
 const {
   MAX_ROUTE_POINTS,
+  classifyRouteIntegrity,
+  normalizeDistanceEvidence,
   normalizePlannedSession,
   normalizePostRunCheckIn,
   normalizeRouteCoords,
   shouldInvalidateRunFeedback,
 } = require('../src/lib/runPostRun');
+const { importKeysForItem, normalizeRow, resolveCanonicalDistanceSource } = require('../src/routes/import')._test;
 const { summarizeRecentRunLoad } = require('../src/lib/recentRunLoad');
 const { buildAdaptationProposal } = require('../src/lib/adaptationEngine');
 
@@ -44,6 +47,68 @@ const boundedRoute = normalizeRouteCoords(longRouteInput);
 check(boundedRoute.length === MAX_ROUTE_POINTS, 'backend route normalization enforces the point limit');
 check(boundedRoute[0].lat === longRouteInput[0].lat && boundedRoute.at(-1).lat === longRouteInput.at(-1).lat, 'backend route bounding preserves the recorded start and finish');
 check(!Object.prototype.hasOwnProperty.call(boundedRoute[1], 'accuracy'), 'out-of-range horizontal accuracy is discarded at the backend boundary');
+
+const missingRoute = classifyRouteIntegrity({ routeCoords: [] });
+const insufficientRoute = classifyRouteIntegrity({ routeCoords: [{ lat: 38.9, lon: -76.95 }] });
+const partialRoute = classifyRouteIntegrity({
+  routeCoords: [{ lat: 38.9, lon: -76.95 }, { lat: 38.90001, lon: -76.95001 }],
+  materialGap: true,
+});
+const completeShortRoute = classifyRouteIntegrity({
+  routeCoords: [{ lat: 38.9, lon: -76.95 }, { lat: 38.90001, lon: -76.95001 }],
+});
+check(missingRoute.status === 'missing', 'zero valid route points are missing');
+check(insufficientRoute.status === 'insufficient', 'one valid route point is insufficient');
+check(partialRoute.status === 'partial', 'two or more valid route points with an explicit material gap are partial');
+check(completeShortRoute.status === 'complete', 'a complete valid recording is complete even when its route is short');
+
+console.log('\n== canonical distance evidence ==');
+const equivalentDistance = normalizeDistanceEvidence([
+  { value: 5, unit: 'kilometers', source: 'forged_phone' },
+  { value: 5000, unit: 'meters', source: 'apple_health' },
+  { value: 3.106855961, unit: 'miles', source: 'strava' },
+]);
+check(equivalentDistance.miles === 3.106856 && equivalentDistance.unit === 'miles', 'equivalent kilometer, meter, and mile evidence becomes one canonical mile value');
+check(equivalentDistance.source === 'forged_phone', 'canonical distance retains the deterministic winning source');
+check(Boolean(normalizeDistanceEvidence([
+  { value: 5, unit: 'kilometers', source: 'forged_phone' },
+  { value: 3.2, unit: 'miles', source: 'apple_health' },
+]).error), 'non-equivalent distance evidence is rejected as conflicting');
+check(Boolean(normalizeDistanceEvidence([{ value: 5, unit: 'furlongs', source: 'apple_health' }]).error), 'unknown distance units are rejected fail-closed');
+
+const distanceFixture = {
+  type: 'Running',
+  startDate: '2026-07-14T12:00:00.000Z',
+  durationSeconds: 1500,
+  source: 'apple_health',
+};
+const fiveKilometers = normalizeRow({ ...distanceFixture, distance: 5, distanceUnit: 'km' });
+const fiveThousandMeters = normalizeRow({ ...distanceFixture, distanceMeters: 5000 });
+const equivalentMiles = normalizeRow({ ...distanceFixture, distanceMiles: 3.106855961 });
+const nonEquivalentDistance = normalizeRow({ ...distanceFixture, distanceKilometers: 5.2 });
+const allEquivalent = normalizeRow({
+  ...distanceFixture,
+  distanceKilometers: 5,
+  distanceMeters: 5000,
+  distanceMiles: 3.106855961,
+});
+const canonicalKeys = [fiveKilometers, fiveThousandMeters, equivalentMiles, allEquivalent]
+  .map((item) => importKeysForItem(item)[0]);
+check(new Set(canonicalKeys).size === 1, 'equivalent 5 km, 5000 m, and 3.106855... mi imports share one reconciliation identity');
+check(importKeysForItem(nonEquivalentDistance)[0] !== canonicalKeys[0], 'non-equivalent normalized distance keeps a distinct reconciliation identity');
+check(allEquivalent.distanceMiles === 3.107 && allEquivalent.workoutMetrics.distance_unit === 'miles' && allEquivalent.workoutMetrics.distance_source === 'apple_health', 'equivalent evidence is persisted once with canonical unit and explicit source');
+check(resolveCanonicalDistanceSource(
+  { distance_source: 'forged_phone' },
+  { health_source: 'forged_hybrid', watch_mode: null },
+  { source: 'apple_health' }
+) === 'forged_phone', 'provider enrichment preserves the canonical phone distance source');
+let conflictingImportRejected = false;
+try {
+  normalizeRow({ ...distanceFixture, distanceKilometers: 5, distanceMiles: 3.2 });
+} catch (error) {
+  conflictingImportRejected = error.code === 'IMPORT_ROW_INVALID';
+}
+check(conflictingImportRejected, 'non-equivalent import candidates fail closed before reconciliation');
 
 const planned = normalizePlannedSession({
   sessionId: 'session-1',
@@ -146,6 +211,8 @@ check(/router\.patch\('\/:id\/check-in'/.test(runsRoute), 'post-run check-in has
 check(/router\.post\('\/', auth/.test(runsRoute), 'run creation remains authenticated');
 check(/ON CONFLICT \(id\) DO NOTHING/.test(runsRoute) && /SELECT \* FROM runs WHERE id=\? AND user_id=\?/.test(runsRoute), 'replayed client capture ids resolve to one user-scoped canonical run');
 check(/JSON\.stringify\(normalizedRouteCoords\)/.test(runsRoute), 'only backend-normalized route points are persisted');
+check(/route_status: routeIntegrity\.status/.test(runsRoute) && /workout_metrics_json/.test(runsRoute), 'run creation persists executable route-integrity status with the canonical run');
+check(/\^\\\[gps_gap_notice:/.test(runsRoute), 'the existing ActiveRun material-gap evidence drives server route classification');
 check(/sanitizeObj\(sessionData \|\| \{\}\)/.test(aiService), 'structured AI session data is sanitized before prompting');
 check(!activeRun.includes('/ai/session-feedback'), 'ActiveRun no longer requests analysis before the check-in');
 

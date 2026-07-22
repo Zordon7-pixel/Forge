@@ -5,6 +5,7 @@ const { dbGet, withTransaction } = require('../db');
 const auth = require('../middleware/auth');
 const { activityKind } = require('../lib/runActivity');
 const { buildRunImportKeys } = require('../lib/runImportKey');
+const { classifyRouteIntegrity, normalizeDistanceEvidence } = require('../lib/runPostRun');
 const { normalizeWorkoutMetrics } = require('../lib/workoutMetrics');
 const { findPlannedRunForDate, hasMeaningfulPlannedRun } = require('../lib/plannedRunMatch');
 const autoUpdatePRs = require('../services/prAuto');
@@ -69,6 +70,30 @@ function optionalNumber(raw, keys, min, max) {
   return Number.isFinite(number) && number >= min && number <= max ? number : null;
 }
 
+function distanceEvidenceCandidates(raw, source) {
+  const candidates = [];
+  const append = (keys, unit) => {
+    for (const key of keys) {
+      if (raw[key] !== null && raw[key] !== undefined && raw[key] !== '') {
+        candidates.push({ value: raw[key], unit, source });
+      }
+    }
+  };
+  append(['distanceMiles', 'distance_miles'], 'miles');
+  append(['distanceKilometers', 'distance_kilometers', 'distanceKm', 'distance_km'], 'kilometers');
+  append(['distanceMeters', 'distance_meters', 'distanceM', 'distance_m'], 'meters');
+
+  const genericDistance = firstValue(raw, ['distance', 'totalDistance', 'total_distance']);
+  if (genericDistance !== null) {
+    candidates.push({
+      value: genericDistance,
+      unit: firstValue(raw, ['distanceUnit', 'distance_unit', 'unit']),
+      source,
+    });
+  }
+  return candidates;
+}
+
 function normalizeRouteCoords(value) {
   let parsed = value;
   if (typeof parsed === 'string' && parsed.trim()) {
@@ -108,6 +133,13 @@ function parseStoredWorkoutMetrics(value) {
   }
 }
 
+function resolveCanonicalDistanceSource(storedWorkoutMetrics, existingRun, item) {
+  if (storedWorkoutMetrics.distance_source) return storedWorkoutMetrics.distance_source;
+  if (existingRun.health_source === 'forged_hybrid') return 'forged_phone';
+  if (existingRun.health_source) return existingRun.health_source;
+  return existingRun.watch_mode === 'import' ? item.source : 'manual';
+}
+
 function classifyType(rawType = '') {
   const value = String(rawType || '').toLowerCase().trim();
   if (value.includes('strength') || value.includes('lift') || value.includes('weight') || value.includes('resistance')) {
@@ -130,14 +162,33 @@ function normalizeRow(raw = {}) {
   const endDate = normalizeDateTime(raw.endDate || raw.end_date || raw.end || raw.activityEndDate);
   const date = normalizeDate(raw.date || startDate || raw.startDate || raw.start_date || raw.activityDate || raw['Activity Date']);
   const type = classifyType(raw.type || raw.activityType || raw['Activity Type']);
-  const distanceMiles = Number(asNumber(raw.distanceMiles || raw.distance_miles || raw.distance || 0, 0).toFixed(3));
+  const source = String(raw.source || 'imported').slice(0, 40);
+  const distanceEvidence = normalizeDistanceEvidence(distanceEvidenceCandidates(raw, source));
+  if (distanceEvidence.error) {
+    const error = new Error(distanceEvidence.error);
+    error.code = 'IMPORT_ROW_INVALID';
+    throw error;
+  }
+  const distanceMiles = distanceEvidence.miles === null ? 0 : Number(distanceEvidence.miles.toFixed(3));
   const durationSeconds = Math.max(0, Math.round(asNumber(raw.durationSeconds || raw.duration_seconds || raw.duration || raw.elapsedTime || 0, 0)));
   const avgHeartRate = normalizeHeartRate(raw.avgHR || raw.avgHeartRate || raw.avg_heart_rate || raw.average_heart_rate || raw['Average Heart Rate'] || null);
   const maxHeartRate = normalizeHeartRate(raw.maxHR || raw.maxHeartRate || raw.max_heart_rate || raw.maximum_heart_rate || raw['Max Heart Rate'] || null);
   const zoneSeconds = normalizeZoneSeconds(raw.zoneSeconds || raw.zone_seconds || raw.heart_rate_zones);
-  const source = String(raw.source || 'imported').slice(0, 40);
   const sourceWorkoutId = String(raw.sourceWorkoutId || raw.source_workout_id || raw.id || raw.uuid || '').trim().slice(0, 200) || null;
+  const routeCoords = normalizeRouteCoords(raw.routeCoords || raw.route_coords || raw.route);
+  const routeIntegrity = classifyRouteIntegrity({
+    routeCoords,
+    materialGap: raw.routeMaterialGap === true || raw.route_material_gap === true || raw.discardedCatchUpSegment === true,
+    coverageIncomplete: raw.routeCoverageIncomplete === true || raw.route_coverage_incomplete === true || raw.routeStatus === 'partial' || raw.route_status === 'partial',
+  });
   const workoutMetrics = normalizeWorkoutMetrics({ ...raw, metric_source: source });
+  if (distanceEvidence.miles !== null) {
+    workoutMetrics.metrics.distance_source = distanceEvidence.source;
+    workoutMetrics.metrics.distance_unit = distanceEvidence.unit;
+  }
+  workoutMetrics.metrics.route_status = routeIntegrity.status;
+  workoutMetrics.metrics.route_point_count = routeIntegrity.pointCount;
+  workoutMetrics.metrics.route_status_reason = routeIntegrity.reason;
   const totalZoneSeconds = Object.values(zoneSeconds).reduce((sum, seconds) => sum + seconds, 0);
   if (durationSeconds > 0 && totalZoneSeconds > 0 && workoutMetrics.metrics.hr_sample_coverage_pct === undefined) {
     workoutMetrics.metrics.hr_sample_coverage_pct = Math.min(100, Math.round((totalZoneSeconds / durationSeconds) * 1000) / 10);
@@ -164,7 +215,7 @@ function normalizeRow(raw = {}) {
     trainingEffectAnaerobic: optionalNumber(raw, ['trainingEffectAnaerobic', 'training_effect_anaerobic', 'anaerobicTrainingEffect', 'Anaerobic TE'], 0, 10),
     recoveryTimeHours: optionalNumber(raw, ['recoveryTimeHours', 'recovery_time_hours', 'Recovery Time'], 0, 1000),
     temperatureF: optionalNumber(raw, ['temperatureF', 'temperature_f', 'avgTemperatureF', 'Average Temperature'], -100, 150),
-    routeCoords: normalizeRouteCoords(raw.routeCoords || raw.route_coords || raw.route),
+    routeCoords,
     workoutMetrics: workoutMetrics.metrics,
     droppedMetricFields: workoutMetrics.droppedFields,
     raw,
@@ -183,7 +234,7 @@ async function findExistingRun(db, userId, item) {
   if (item.sourceWorkoutId) {
     const exact = await db.get(
       `SELECT id, date, type, watch_mode, watch_activity_type, watch_normalized_type,
-              health_start_at, perceived_effort, pain_level, post_energy, notes,
+              health_start_at, health_source, distance_miles, route_coords, perceived_effort, pain_level, post_energy, notes,
               planned_session_json, workout_metrics_json
        FROM runs
        WHERE user_id=? AND health_source=? AND health_source_workout_id=?
@@ -195,7 +246,7 @@ async function findExistingRun(db, userId, item) {
 
   const candidates = await db.all(
     `SELECT id, date, type, watch_mode, watch_activity_type, watch_normalized_type,
-            health_start_at, perceived_effort, pain_level, post_energy, notes,
+            health_start_at, health_source, distance_miles, route_coords, perceived_effort, pain_level, post_energy, notes,
             planned_session_json, workout_metrics_json
      FROM runs
      WHERE user_id=? AND date=? AND ABS(COALESCE(distance_miles,0) - ?) < 0.05
@@ -325,9 +376,32 @@ async function updateExistingRunHealth(db, userId, existingRun, item) {
     && (existingRun.perceived_effort == null || !existingEffortIsTrusted)
     ? item.perceivedEffort
     : null;
+  const storedRouteCoords = normalizeRouteCoords(existingRun.route_coords);
+  const incomingRouteReplacesStored = item.routeCoords.length >= 2
+    && (item.workoutMetrics.route_status === 'complete' || storedRouteCoords.length < 2);
+  const storedRouteIntegrity = classifyRouteIntegrity({
+    routeCoords: storedRouteCoords,
+    coverageIncomplete: storedWorkoutMetrics.route_status === 'partial',
+  });
+  const canonicalRouteMetrics = incomingRouteReplacesStored
+    ? {
+      route_status: item.workoutMetrics.route_status,
+      route_point_count: item.workoutMetrics.route_point_count,
+      route_status_reason: item.workoutMetrics.route_status_reason,
+    }
+    : {
+      route_status: storedRouteIntegrity.status,
+      route_point_count: storedRouteIntegrity.pointCount,
+      route_status_reason: storedWorkoutMetrics.route_status === storedRouteIntegrity.status
+        ? storedWorkoutMetrics.route_status_reason || storedRouteIntegrity.reason
+        : storedRouteIntegrity.reason,
+    };
   const mergedWorkoutMetrics = {
     ...storedWorkoutMetrics,
     ...item.workoutMetrics,
+    ...canonicalRouteMetrics,
+    distance_source: resolveCanonicalDistanceSource(storedWorkoutMetrics, existingRun, item),
+    distance_unit: 'miles',
   };
 
   await db.run(
@@ -376,7 +450,7 @@ async function updateExistingRunHealth(db, userId, existingRun, item) {
       item.cadenceSpm,
       item.elevationGain,
       item.elevationLoss,
-      JSON.stringify(item.routeCoords),
+      JSON.stringify(incomingRouteReplacesStored ? item.routeCoords : []),
       item.vo2Max,
       item.trainingEffectAerobic,
       item.trainingEffectAnaerobic,
@@ -428,7 +502,7 @@ async function insertLift(db, userId, item) {
 async function findRunById(db, userId, runId) {
   return db.get(
     `SELECT id, date, type, watch_mode, watch_activity_type, watch_normalized_type,
-            health_start_at, perceived_effort, pain_level, post_energy, notes,
+            health_start_at, health_source, distance_miles, route_coords, perceived_effort, pain_level, post_energy, notes,
             planned_session_json, workout_metrics_json
      FROM runs
      WHERE id=? AND user_id=?
@@ -598,4 +672,5 @@ module.exports._test = {
   normalizeRouteCoords,
   normalizeRow,
   importKeysForItem,
+  resolveCanonicalDistanceSource,
 };
