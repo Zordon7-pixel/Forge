@@ -925,8 +925,8 @@ export default function ActivityShareStudio({ run, onClose }) {
         return
       }
       if (nativeResult.requiresNativeUpdate && navigator.share && (!navigator.canShare || navigator.canShare({ files: [file] }))) {
+        setStatus('In the share sheet, choose Save Image to add this card to Photos.')
         await navigator.share({ title: 'Save Forged Hybrid share card', files: [file] })
-        setStatus('To add it to Photos, choose Save Image in the share sheet.')
         return
       }
       url = URL.createObjectURL(file)

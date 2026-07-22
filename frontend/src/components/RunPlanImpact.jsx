@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { CalendarCheck2 } from 'lucide-react'
 import api from '../lib/api'
 import { todayISO } from '../lib/planCalendar'
@@ -16,52 +16,74 @@ export default function RunPlanImpact({ run }) {
   const [error, setError] = useState('')
   const [decision, setDecision] = useState('')
   const [deciding, setDeciding] = useState('')
+  const requestTokenRef = useRef(0)
+  const proposalIdRef = useRef(null)
 
   useEffect(() => {
-    let active = true
+    const requestToken = requestTokenRef.current + 1
+    requestTokenRef.current = requestToken
     setLoading(true)
     setError('')
     setDecision('')
-    api.get('/plans/adaptation/current', { params: { date: todayISO() } })
+    setDeciding('')
+    setProposal(null)
+    proposalIdRef.current = null
+    setReason('')
+    if (!run?.id) {
+      setLoading(false)
+      return () => { requestTokenRef.current += 1 }
+    }
+    api.get(`/plans/adaptation/run/${encodeURIComponent(run.id)}`, { params: { date: todayISO() } })
       .then((response) => {
-        if (!active) return
-        setProposal(response.data?.proposal || null)
+        if (requestTokenRef.current !== requestToken) return
+        const nextProposal = response.data?.impact || null
+        proposalIdRef.current = nextProposal?.id || null
+        setProposal(nextProposal)
         setReason(response.data?.reason || '')
       })
       .catch((requestError) => {
-        if (!active) return
+        if (requestTokenRef.current !== requestToken) return
         console.error('[RunPlanImpact] analysis failed:', requestError?.message || requestError)
         setProposal(null)
         setReason('')
         setError(requestError?.response?.data?.error || 'Plan impact is unavailable right now.')
       })
       .finally(() => {
-        if (active) setLoading(false)
+        if (requestTokenRef.current === requestToken) setLoading(false)
       })
-    return () => { active = false }
+    return () => {
+      if (requestTokenRef.current === requestToken) requestTokenRef.current += 1
+    }
   }, [run?.id, run?.perceived_effort, run?.pain_level, run?.post_energy])
 
   const decide = async (nextDecision) => {
     if (!proposal?.id || deciding) return
+    const requestToken = requestTokenRef.current
+    const proposalId = proposal.id
     setDeciding(nextDecision)
     setError('')
     try {
-      const response = await api.post(`/plans/adaptation/${proposal.id}/${nextDecision}`)
+      const response = await api.post(`/plans/adaptation/${proposalId}/${nextDecision}`)
+      if (requestTokenRef.current !== requestToken || proposalIdRef.current !== proposalId) return
       setDecision(response.data?.status || (nextDecision === 'accept' ? 'accepted' : 'kept'))
-      setProposal(null)
+      const nextProposal = response.data?.proposal || proposal
+      proposalIdRef.current = nextProposal?.id || null
+      setProposal(nextProposal)
     } catch (requestError) {
+      if (requestTokenRef.current !== requestToken) return
       console.error(`[RunPlanImpact] ${nextDecision} failed:`, requestError?.message || requestError)
       setError(requestError?.response?.data?.error || 'The plan decision could not be saved.')
     } finally {
-      setDeciding('')
+      if (requestTokenRef.current === requestToken && proposalIdRef.current === proposalId) setDeciding('')
     }
   }
 
   const changes = Array.isArray(proposal?.changes) ? proposal.changes : []
-  const hasChanges = proposal?.status === 'proposal' && changes.length > 0
-  const statusTitle = decision === 'accepted'
+  const effectiveDecision = decision || proposal?.decisionStatus || ''
+  const hasChanges = proposal?.status === 'proposal' && proposal?.decisionStatus === 'pending' && changes.length > 0
+  const statusTitle = effectiveDecision === 'accepted'
     ? 'Plan adjusted'
-    : decision === 'kept'
+    : effectiveDecision === 'kept'
       ? 'Original plan kept'
       : hasChanges
         ? proposal.headline || 'Plan adjustment available'
@@ -76,15 +98,15 @@ export default function RunPlanImpact({ run }) {
           <p className="mt-1 text-sm font-bold" style={{ color: 'var(--text-primary)' }}>
             {loading ? 'Analyzing this run...' : statusTitle}
           </p>
-          {!loading && !error && !decision && (
+          {!loading && !error && !['accepted', 'kept'].includes(effectiveDecision) && (
             <p className="mt-1 text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>
               {hasChanges
                 ? proposal.reason
                 : reason || 'This run is included in your current training load. No calendar change is recommended.'}
             </p>
           )}
-          {decision === 'accepted' && <p className="mt-1 text-xs" style={{ color: 'var(--success)' }}>The proposed change is now on your calendar.</p>}
-          {decision === 'kept' && <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>This run still counts toward future analysis; today&apos;s calendar remains unchanged.</p>}
+          {effectiveDecision === 'accepted' && <p className="mt-1 text-xs" style={{ color: 'var(--success)' }}>The proposed change is now on your calendar.</p>}
+          {effectiveDecision === 'kept' && <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>This run still counts toward future analysis; today&apos;s calendar remains unchanged.</p>}
           {error && <p role="alert" className="mt-1 text-xs" style={{ color: 'var(--danger)' }}>{error}</p>}
         </div>
       </div>

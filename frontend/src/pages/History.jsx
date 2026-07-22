@@ -90,7 +90,7 @@ function MonthGroup({ label, count, itemNoun, initiallyOpen, children }) {
   )
 }
 
-function MonthGroups({ items, getDate, itemNoun, children }) {
+function MonthGroups({ items, getDate, itemNoun, resetKey, children }) {
   const groups = new Map()
   items.forEach((item) => {
     const key = monthKeyFor(getDate(item))
@@ -105,7 +105,7 @@ function MonthGroups({ items, getDate, itemNoun, children }) {
 
   return ordered.map(([key, groupedItems], index) => (
     <MonthGroup
-      key={key}
+      key={`${resetKey}:${key}`}
       label={monthLabelFor(key)}
       count={groupedItems.length}
       itemNoun={itemNoun}
@@ -267,6 +267,7 @@ export default function History() {
   const actualRuns = useMemo(() => filteredRuns.filter(isRunningActivity), [filteredRuns])
   const filteredLifts = filterItems(lifts, 'date')
   const filteredWorkoutSessions = filterItems(workoutSessions, 'started_at')
+  const monthGroupResetKey = `${tab}:${period}:${selectedYear || ''}:${customRange.from}:${customRange.to}`
   const trainingHistoryItems = useMemo(() => [
     ...filteredWorkoutSessions.map((session) => ({ kind: 'workout', id: `workout-${session.id}`, date: session.started_at || session.created_at, value: session })),
     ...filteredLifts.map((lift) => ({ kind: 'lift', id: `lift-${lift.id}`, date: lift.date || lift.created_at, value: lift })),
@@ -472,18 +473,18 @@ export default function History() {
 
       {(tab === 'all' || tab === 'runs') && (
         <div className="space-y-3 mb-3">
-          <MonthGroups items={filteredRuns} getDate={getRunDate} itemNoun="activity">{run => {
+          <MonthGroups items={filteredRuns} getDate={getRunDate} itemNoun="activity" resetKey={monthGroupResetKey}>{run => {
             const heartRateZone = isRunningActivity(run) ? resolveRunHeartRateZone(run, hrZones) : null
             return (
             <div key={run.id} onClick={() => openRunDetail(run)} className="cursor-pointer rounded-lg p-4" style={{ background: 'var(--bg-input)' }}>
-              <div className="mb-2 flex items-center justify-between">
-                <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{formatHistoryDate(getRunDate(run))}</p>
-                <div className="flex items-center gap-2">
+              <div className="mb-2 flex min-w-0 flex-wrap items-start gap-2">
+                <p className="min-w-0 flex-1 text-sm" style={{ color: 'var(--text-muted)' }}>{formatHistoryDate(getRunDate(run))}</p>
+                <div className="ml-auto flex max-w-full flex-wrap items-center justify-end gap-1.5">
                   <span className="rounded-full px-2 py-1 text-xs font-semibold" style={{ background: isRunningActivity(run) ? 'var(--accent-dim)' : 'rgba(34,197,94,0.12)', color: isRunningActivity(run) ? 'var(--accent)' : 'var(--success)' }}>{activityLabel(run)}</span>
                   {heartRateZone ? <span className="rounded-full px-2 py-1 text-xs font-semibold" title={`${heartRateZone.source === 'timeline' ? 'Dominant recorded' : 'Average'} heart-rate zone`} style={{ background: `${heartRateZone.color}22`, color: heartRateZone.textColor || heartRateZone.color }}>{`HR Z${heartRateZone.zone}`}</span> : null}
                   {run.perceived_effort && hasTrustedEffort(run) ? <span className="rounded-full px-2 py-1 text-xs" style={{ background: 'var(--bg-input)', color: 'var(--text-muted)' }}>Effort {run.perceived_effort}/10</span> : null}
-                  <button type="button" aria-label="Edit run" title="Edit run" onClick={e => { e.stopPropagation(); setEditingRun(run) }} className="transition-colors" style={{ color: 'var(--text-muted)' }}><Pencil size={14} /></button>
-                  <button type="button" aria-label="Delete run" title="Delete run" onClick={e => requestDelete('run', run, e)} className="transition-colors" style={{ color: 'var(--text-muted)' }}><Trash2 size={14} /></button>
+                  <button type="button" aria-label="Edit run" title="Edit run" onClick={e => { e.stopPropagation(); setEditingRun(run) }} className="grid h-8 w-8 shrink-0 place-items-center rounded-md transition-colors" style={{ color: 'var(--text-muted)' }}><Pencil size={14} /></button>
+                  <button type="button" aria-label="Delete run" title="Delete run" onClick={e => requestDelete('run', run, e)} className="grid h-8 w-8 shrink-0 place-items-center rounded-md transition-colors" style={{ color: 'var(--text-muted)' }}><Trash2 size={14} /></button>
                 </div>
               </div>
 
@@ -519,7 +520,7 @@ export default function History() {
         <div className="space-y-3">
           <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{t('history.workouts')}</p>
 
-          <MonthGroups items={trainingHistoryItems} getDate={(item) => item.date} itemNoun="workout">{item => {
+          <MonthGroups items={trainingHistoryItems} getDate={(item) => item.date} itemNoun="workout" resetKey={monthGroupResetKey}>{item => {
             if (item.kind === 'workout') {
               const session = item.value
               return (
@@ -581,7 +582,7 @@ export default function History() {
           {races.length === 0 ? (
             <p className="text-center py-8" style={{ color: 'var(--text-muted)', fontSize: 14 }}>{t('history.noRaces')}</p>
           ) : (
-            <MonthGroups items={races} getDate={(race) => race.race_date} itemNoun="race">{r => (
+            <MonthGroups items={races} getDate={(race) => race.race_date} itemNoun="race" resetKey={monthGroupResetKey}>{r => (
               <div key={r.id} className="rounded-lg p-4" style={{ background: 'var(--bg-input)' }}>
                 <div className="flex justify-between items-start">
                   <div>

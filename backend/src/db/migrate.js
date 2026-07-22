@@ -250,6 +250,7 @@ async function runAlwaysMigrations() {
     CREATE TABLE IF NOT EXISTS plan_adjustment_proposals (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      trigger_run_id TEXT,
       user_plan_id TEXT,
       plan_id TEXT,
       plan_version TEXT,
@@ -268,8 +269,11 @@ async function runAlwaysMigrations() {
     )
   `);
 
+  await pg.query('ALTER TABLE plan_adjustment_proposals ADD COLUMN IF NOT EXISTS trigger_run_id TEXT');
   await pg.query('CREATE INDEX IF NOT EXISTS idx_plan_adjustment_proposals_user_status ON plan_adjustment_proposals(user_id, status)');
-  await pg.query("CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_adjustment_proposals_pending ON plan_adjustment_proposals(user_id, planning_date, plan_version) WHERE status='pending'");
+  await pg.query('DROP INDEX IF EXISTS idx_plan_adjustment_proposals_pending');
+  await pg.query("CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_adjustment_proposals_pending ON plan_adjustment_proposals(user_id, planning_date, plan_version) WHERE status='pending' AND trigger_run_id IS NULL");
+  await pg.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_adjustment_proposals_run ON plan_adjustment_proposals(user_id, trigger_run_id) WHERE trigger_run_id IS NOT NULL');
 
   await pg.query(`
     CREATE TABLE IF NOT EXISTS events (

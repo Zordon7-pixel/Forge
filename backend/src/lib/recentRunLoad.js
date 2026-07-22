@@ -68,6 +68,7 @@ function normalizeRun(row = {}) {
   const paceSecondsPerMile = computedPace && computedPace >= 180 && computedPace <= 2400 ? computedPace : storedPace;
   const effort = resolveRunEffort(row);
   return {
+    id: row.id ? String(row.id) : null,
     date,
     distanceMiles,
     durationSeconds,
@@ -88,6 +89,7 @@ function normalizeRun(row = {}) {
 
 function summarizeRecentRunLoad(rows = [], options = {}) {
   const todayISO = parseISODate(options.todayISO) ? options.todayISO : null;
+  const focusRunId = options.focusRunId ? String(options.focusRunId) : null;
   const weeklyBaseline = Math.max(0, Number(options.weeklyBaseline || 0));
   const recoveryState = String(options.recoveryState || 'unknown').toLowerCase();
   const normalized = (Array.isArray(rows) ? rows : [])
@@ -101,11 +103,16 @@ function summarizeRecentRunLoad(rows = [], options = {}) {
     || run.postRunEnergy === 'low'
   ));
   const latestDate = meaningful.reduce((latest, run) => (!latest || run.date > latest ? run.date : latest), null);
-  const latestRun = latestDate
-    ? meaningful
-      .filter((run) => run.date === latestDate)
-      .sort((left, right) => right.distanceMiles - left.distanceMiles || String(right.createdAt || '').localeCompare(String(left.createdAt || '')))[0]
+  const focusedRun = focusRunId
+    ? meaningful.find((run) => run.id === focusRunId) || null
     : null;
+  const latestRun = focusRunId
+    ? focusedRun
+    : latestDate
+      ? meaningful
+        .filter((run) => run.date === latestDate)
+        .sort((left, right) => right.distanceMiles - left.distanceMiles || String(right.createdAt || '').localeCompare(String(left.createdAt || '')))[0]
+      : null;
   const sevenDayStart = todayISO ? addDays(todayISO, -6) : null;
   const sevenDayMiles = round(normalized
     .filter((run) => !sevenDayStart || (run.date >= sevenDayStart && run.date <= todayISO))
@@ -160,9 +167,12 @@ function summarizeRecentRunLoad(rows = [], options = {}) {
     };
   }
 
-  const protectiveRun = meaningful
+  const protectiveCandidates = meaningful
     .map(annotate)
-    .filter((run) => run.daysSince !== null && run.daysSince >= 0 && run.daysSince <= 3 && (run.isLong || run.isHard || run.postRunCaution))
+    .filter((run) => run.daysSince !== null && run.daysSince >= 0 && run.daysSince <= 3 && (run.isLong || run.isHard || run.postRunCaution));
+  const protectiveRun = (focusRunId
+    ? protectiveCandidates.filter((run) => run.id === focusRunId)
+    : protectiveCandidates)
     .sort((left, right) => (
       Number(right.postRunSevere) - Number(left.postRunSevere)
       || Number(right.postRunCaution) - Number(left.postRunCaution)

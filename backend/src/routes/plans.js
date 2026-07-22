@@ -416,7 +416,7 @@ async function buildCompletionSummaryForAdaptation(userId, plan, active, plannin
   };
 }
 
-async function buildAdaptationInputs(userId, plan, active, planningDateISO) {
+async function buildAdaptationInputs(userId, plan, active, planningDateISO, options = {}) {
   const recentRunSince = adaptationEngine.addDays(planningDateISO, -34);
   const [healthRow, checkin, injuries, completion, recentRuns, profile] = await Promise.all([
     dbGet('SELECT * FROM health_sync WHERE user_id=?', [userId]).catch((err) => {
@@ -436,7 +436,7 @@ async function buildAdaptationInputs(userId, plan, active, planningDateISO) {
       return {};
     }),
     dbAll(
-      `SELECT date, distance_miles, duration_seconds, perceived_effort, avg_heart_rate,
+      `SELECT id, date, distance_miles, duration_seconds, perceived_effort, avg_heart_rate,
               pain_level, post_energy, pace_avg, health_source, created_at,
               heart_rate_zones, workout_metrics_json, watch_mode, notes,
               type, watch_activity_type, watch_normalized_type
@@ -479,6 +479,7 @@ async function buildAdaptationInputs(userId, plan, active, planningDateISO) {
       todayISO: planningDateISO,
       weeklyBaseline: Number(plan?.inputSummary?.weeklyMileageBaseline || 0),
       recoveryState: healthSignals.recoveryState,
+      focusRunId: options.focusRunId || null,
     }),
     injuryState: activeInjury ? {
       active: true,
@@ -536,6 +537,7 @@ function proposalFromRow(row) {
     planVersion: row.plan_version || null,
     planId: row.plan_id || null,
     userPlanId: row.user_plan_id || null,
+    triggerRunId: row.trigger_run_id || null,
   };
 }
 
@@ -544,7 +546,7 @@ async function findPendingAdaptation(userId, planningDateISO, planVersion, tx = 
   return get(
     `SELECT *
      FROM plan_adjustment_proposals
-     WHERE user_id=? AND planning_date=? AND plan_version=? AND status='pending'
+     WHERE user_id=? AND planning_date=? AND plan_version=? AND status='pending' AND trigger_run_id IS NULL
      ORDER BY created_at DESC
      LIMIT 1`,
     [userId, planningDateISO, planVersion]
@@ -555,7 +557,7 @@ async function findLatestAdaptation(userId, planningDateISO, planVersion) {
   return dbGet(
     `SELECT *
      FROM plan_adjustment_proposals
-     WHERE user_id=? AND planning_date=? AND plan_version=?
+     WHERE user_id=? AND planning_date=? AND plan_version=? AND trigger_run_id IS NULL
      ORDER BY created_at DESC
      LIMIT 1`,
     [userId, planningDateISO, planVersion]
@@ -566,7 +568,7 @@ async function hasDecidedCompletionAdaptation(userId, planningDateISO) {
   const rows = await dbAll(
     `SELECT evidence_json
      FROM plan_adjustment_proposals
-     WHERE user_id=? AND planning_date=? AND status IN ('accepted','kept')
+     WHERE user_id=? AND planning_date=? AND status IN ('accepted','kept') AND trigger_run_id IS NULL
      ORDER BY decided_at DESC, created_at DESC
      LIMIT 20`,
     [userId, planningDateISO]
@@ -619,6 +621,91 @@ async function persistAdaptationProposal(userId, active, planVersion, originalPl
     planId: active?.row?.id || null,
     userPlanId: active?.row?.user_plan_id || null,
   });
+}
+
+async function findRunAdaptation(userId, runId, tx = null) {
+  const get = tx?.get || dbGet;
+  return get(
+    `SELECT *
+     FROM plan_adjustment_proposals
+     WHERE user_id=? AND trigger_run_id=?
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [userId, runId]
+  );
+}
+
+async function persistRunAdaptation(userId, run, active, planVersion, originalPlan, proposal) {
+  const existing = await findRunAdaptation(userId, run.id);
+  const hasChanges = Array.isArray(proposal.changes) && proposal.changes.length > 0;
+  const nextStatus = hasChanges ? 'pending' : 'reviewed';
+  if (existing) {
+    if (existing.status === 'accepted' || existing.status === 'kept') return proposalFromRow(existing);
+    const updated = await dbRun(
+      `UPDATE plan_adjustment_proposals
+       SET user_plan_id=?, plan_id=?, plan_version=?, window_start=?, window_end=?,
+           planning_date=?, status=?, safety_exception=?, original_json=?, proposed_json=?,
+           changes_json=?, evidence_json=?, reason=?, decided_at=NULL
+       WHERE id=? AND user_id=? AND trigger_run_id=? AND status IN ('pending','reviewed')`,
+      [
+        active?.row?.user_plan_id || null,
+        active?.row?.id || null,
+        planVersion,
+        proposal.windowStart,
+        proposal.windowEnd,
+        proposal.planningDate,
+        nextStatus,
+        proposal.safetyException ? 1 : 0,
+        JSON.stringify(originalPlan || null),
+        JSON.stringify(proposal.proposedPlan || originalPlan || null),
+        JSON.stringify(proposal.changes || []),
+        JSON.stringify(proposal.evidence || []),
+        encodeProposalReason(proposal),
+        existing.id,
+        userId,
+        run.id,
+      ]
+    );
+    if (updated.changes === 0) {
+      const concurrentlyDecided = await findRunAdaptation(userId, run.id);
+      if (!concurrentlyDecided) throw new Error('Run adaptation review update could not be resolved');
+      return proposalFromRow(concurrentlyDecided);
+    }
+    const refreshed = await findRunAdaptation(userId, run.id);
+    if (!refreshed) throw new Error('Run adaptation review could not be refreshed');
+    return proposalFromRow(refreshed);
+  }
+  const id = uuidv4();
+  await dbRun(
+    `INSERT INTO plan_adjustment_proposals (
+      id, user_id, trigger_run_id, user_plan_id, plan_id, plan_version,
+      window_start, window_end, planning_date, status, safety_exception,
+      original_json, proposed_json, changes_json, evidence_json, reason
+    )
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT DO NOTHING`,
+    [
+      id,
+      userId,
+      run.id,
+      active?.row?.user_plan_id || null,
+      active?.row?.id || null,
+      planVersion,
+      proposal.windowStart,
+      proposal.windowEnd,
+      proposal.planningDate,
+      nextStatus,
+      proposal.safetyException ? 1 : 0,
+      JSON.stringify(originalPlan || null),
+      JSON.stringify(proposal.proposedPlan || originalPlan || null),
+      JSON.stringify(proposal.changes || []),
+      JSON.stringify(proposal.evidence || []),
+      encodeProposalReason(proposal),
+    ]
+  );
+  const stored = await findRunAdaptation(userId, run.id);
+  if (!stored) throw new Error('Run adaptation review could not be persisted');
+  return proposalFromRow(stored);
 }
 
 function courseTargetFromRace(race = {}) {
@@ -1568,11 +1655,108 @@ router.get('/adaptation/current', auth, async (req, res) => {
   }
 });
 
+router.get('/adaptation/run/:runId', auth, async (req, res) => {
+  try {
+    const runId = String(req.params.runId || '').trim();
+    if (!runId || runId.length > 128) return res.status(400).json({ error: 'runId is invalid' });
+    const planningDateISO = getPlanningDateFromRequest(req);
+    if (!planningDateISO) return res.status(400).json({ error: 'date must be the phone local date in YYYY-MM-DD format' });
+
+    const run = await dbGet(
+      `SELECT id, date, type, distance_miles, duration_seconds, perceived_effort,
+              avg_heart_rate, pain_level, post_energy, pace_avg, health_source,
+              created_at, heart_rate_zones, workout_metrics_json, watch_mode,
+              notes, watch_activity_type, watch_normalized_type
+       FROM runs
+       WHERE id=? AND user_id=? AND ${runActivitySql()}`,
+      [runId, req.user.id]
+    );
+    if (!run) return res.status(404).json({ error: 'Run not found' });
+
+    const existing = await findRunAdaptation(req.user.id, run.id);
+    if (existing && (existing.status === 'accepted' || existing.status === 'kept')) {
+      return res.json({ impact: publicProposal(proposalFromRow(existing)) });
+    }
+
+    const active = await getActivePlanForUser(req.user.id);
+    if (!active) {
+      return res.json({
+        impact: {
+          status: 'keep',
+          decisionStatus: 'reviewed',
+          triggerRunId: run.id,
+          planningDate: planningDateISO,
+          changes: [],
+          evidence: [{ source: 'run', runId: run.id, date: run.date }],
+          headline: 'Run reviewed',
+          reason: 'This run is saved, but there is no active plan to adjust.',
+        },
+      });
+    }
+    const parsed = parsePlan(active.row);
+    if (!parsed || !planSchema.isSchemaV2(parsed)) {
+      return res.json({
+        impact: {
+          status: 'keep',
+          decisionStatus: 'reviewed',
+          triggerRunId: run.id,
+          planningDate: planningDateISO,
+          changes: [],
+          evidence: [{ source: 'run', runId: run.id, date: run.date }],
+          headline: 'Run reviewed',
+          reason: 'This run is saved. Plan impact is available for dated calendars.',
+        },
+      });
+    }
+
+    const planVersion = planVersionFor(active, parsed);
+    const inputs = await buildAdaptationInputs(req.user.id, parsed, active, planningDateISO, { focusRunId: run.id });
+    const proposal = adaptationEngine.buildAdaptationProposal({
+      plan: parsed,
+      planningDateISO,
+      planVersion,
+      healthSignals: { available: false },
+      checkin: null,
+      completion: {},
+      recentRunLoad: inputs.recentRunLoad,
+      injuryState: { active: false, openInjuries: [] },
+    });
+    const runDistance = Number(run.distance_miles || 0);
+    const runDurationMinutes = Math.round(Number(run.duration_seconds || 0) / 60);
+    proposal.evidence = [{
+      signal: 'viewed run',
+      source: 'run',
+      runId: run.id,
+      date: run.date,
+      objective: true,
+      freshness: run.date === planningDateISO ? 'today' : run.date,
+      detail: [
+        runDistance > 0 ? `${runDistance.toFixed(2)} mi` : null,
+        runDurationMinutes > 0 ? `${runDurationMinutes} min` : null,
+        Number(run.avg_heart_rate || 0) > 0 ? `avg HR ${Math.round(Number(run.avg_heart_rate))}` : null,
+      ].filter(Boolean).join(', ') || 'Saved run',
+    }, ...(Array.isArray(proposal.evidence) ? proposal.evidence : [])];
+    if (!Array.isArray(proposal.changes) || proposal.changes.length === 0) {
+      proposal.headline = 'Plan stays as written';
+      proposal.reason = 'This run is included in your training load and does not require changing the next 72 hours.';
+    }
+    const persisted = await persistRunAdaptation(req.user.id, run, active, planVersion, parsed, proposal);
+    res.json({ impact: publicProposal(persisted) });
+  } catch (err) {
+    console.error('[plans/adaptation/run] failed:', err.message);
+    res.status(500).json({ error: 'Failed to compute this run\'s plan impact' });
+  }
+});
+
 router.post('/adaptation/:proposalId/accept', auth, async (req, res) => {
   try {
     const result = await withTransaction(async (tx) => {
       const row = await tx.get('SELECT * FROM plan_adjustment_proposals WHERE id=? AND user_id=?', [req.params.proposalId, req.user.id]);
       if (!row) return { notFound: true };
+      if (row.trigger_run_id) {
+        const ownedRun = await tx.get(`SELECT id FROM runs WHERE id=? AND user_id=? AND ${runActivitySql()}`, [row.trigger_run_id, req.user.id]);
+        if (!ownedRun) return { notFound: true };
+      }
       if (row.status === 'accepted') return { ok: true, status: 'accepted', proposal: proposalFromRow(row), idempotent: true };
       if (row.status !== 'pending') return { conflict: true, reason: 'Proposal is no longer pending.' };
 
@@ -1609,6 +1793,10 @@ router.post('/adaptation/:proposalId/keep', auth, async (req, res) => {
     const result = await withTransaction(async (tx) => {
       const row = await tx.get('SELECT * FROM plan_adjustment_proposals WHERE id=? AND user_id=?', [req.params.proposalId, req.user.id]);
       if (!row) return { notFound: true };
+      if (row.trigger_run_id) {
+        const ownedRun = await tx.get(`SELECT id FROM runs WHERE id=? AND user_id=? AND ${runActivitySql()}`, [row.trigger_run_id, req.user.id]);
+        if (!ownedRun) return { notFound: true };
+      }
       if (row.status === 'kept') return { ok: true, status: 'kept', proposal: proposalFromRow(row), idempotent: true };
       if (row.status !== 'pending') return { conflict: true, reason: 'Proposal is no longer pending.' };
       const active = await getActivePlanForUser(req.user.id, tx);
