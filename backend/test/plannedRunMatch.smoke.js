@@ -2,8 +2,11 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const {
+  explicitNoPlanMatchSnapshot,
   findPlannedRunForDate,
+  findPlanSessionRunEvidence,
   hasMeaningfulPlannedRun,
+  isExplicitlyUnlinkedRun,
   matchPlannedRunInPlan,
 } = require('../src/lib/plannedRunMatch');
 
@@ -36,6 +39,18 @@ check(matchPlannedRunInPlan(ambiguous, '2026-07-14') === null, 'two scheduled ru
 check(hasMeaningfulPlannedRun(JSON.stringify(exact)), 'stored snapshot is recognized')
 check(!hasMeaningfulPlannedRun('{}') && !hasMeaningfulPlannedRun('bad json'), 'empty and malformed snapshots fail closed')
 
+const explicitExtra = explicitNoPlanMatchSnapshot();
+check(isExplicitlyUnlinkedRun(explicitExtra) && !hasMeaningfulPlannedRun(explicitExtra), 'an explicit extra-run marker is durable without becoming a prescription')
+const evidenceRuns = [
+  { id: 'extra', date: '2026-07-14', plan_session_id: null, planned_session_json: JSON.stringify(explicitExtra) },
+  { id: 'other-plan', date: '2026-07-14', plan_session_id: 'run-2', planned_session_json: '{}' },
+  { id: 'legacy', date: '2026-07-15', plan_session_id: null, planned_session_json: '{}' },
+  { id: 'exact', date: '2026-07-20', plan_session_id: 'run-1', planned_session_json: '{}' },
+];
+check(findPlanSessionRunEvidence(evidenceRuns, { sessionId: 'run-1', date: '2026-07-14' })?.id === 'exact', 'exact session evidence wins regardless of activity date')
+check(findPlanSessionRunEvidence(evidenceRuns, { sessionId: 'run-3', date: '2026-07-14' })?.id === 'legacy', 'legacy unlinked evidence may match within the existing one-day tolerance')
+check(findPlanSessionRunEvidence(evidenceRuns, { sessionId: 'run-3', date: '2026-07-14', dateToleranceDays: 0 }) === null, 'explicit extras and differently linked runs cannot block a same-day make-up')
+
 const queries = [];
 findPlannedRunForDate('user-1', '2026-07-14', {
   get: async (sql, params) => {
@@ -50,7 +65,7 @@ findPlannedRunForDate('user-1', '2026-07-14', {
   const runsSource = fs.readFileSync(path.join(__dirname, '../src/routes/runs.js'), 'utf8');
   check(importSource.includes("item.section === 'run' ? await findPlannedRunForDate"), 'walks and non-run imports cannot claim a run prescription')
   check(/UPDATE runs SET[\s\S]*WHERE id=\? AND user_id=\?/.test(importSource), 'import enrichment update remains owner scoped')
-  check(runsSource.includes('!hasMeaningfulPlannedRun(run.planned_session_json)'), 'run detail preserves an existing immutable snapshot')
+  check(runsSource.includes('!isExplicitlyUnlinkedRun(run.planned_session_json)') && runsSource.includes('!hasMeaningfulPlannedRun(run.planned_session_json)'), 'run detail preserves explicit opt-out and existing immutable snapshots')
   check(runsSource.includes('resolvedPlannedSession = scheduledRun'), 'manual run save freezes an exact-date scheduled target before insert')
   check(runsSource.includes('isRunActivity({ type, watch_activity_type, watch_normalized_type })'), 'manual non-run activities cannot claim a run prescription')
 

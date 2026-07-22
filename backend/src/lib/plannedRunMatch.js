@@ -2,6 +2,19 @@ const { dbGet } = require('../db');
 const planSchema = require('./planSchema');
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const EXPLICIT_NO_PLAN_MATCH = 'explicit_none';
+
+function parsePlannedRunValue(value) {
+  if (!value) return null;
+  if (typeof value === 'object' && !Array.isArray(value)) return value;
+  if (typeof value !== 'string') return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
 
 function parsePlanRow(row) {
   const raw = row?.plan_data ?? row?.plan_json;
@@ -73,12 +86,8 @@ function matchPlannedRunInPlan(plan, date, planId = null) {
 }
 
 function hasMeaningfulPlannedRun(value) {
-  if (!value) return false;
-  let parsed = value;
-  if (typeof value === 'string') {
-    try { parsed = JSON.parse(value); } catch { return false; }
-  }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
+  const parsed = parsePlannedRunValue(value);
+  if (!parsed) return false;
   return [
     parsed.sessionId,
     parsed.title,
@@ -89,6 +98,45 @@ function hasMeaningfulPlannedRun(value) {
     parsed.paceTarget,
     parsed.targetZone,
   ].some((item) => item !== undefined && item !== null && item !== '');
+}
+
+function explicitNoPlanMatchSnapshot() {
+  return { schemaVersion: 1, planMatchMode: EXPLICIT_NO_PLAN_MATCH };
+}
+
+function isExplicitlyUnlinkedRun(value) {
+  const parsed = parsePlannedRunValue(value);
+  return parsed?.planMatchMode === EXPLICIT_NO_PLAN_MATCH
+    || parsed?.plan_match_mode === EXPLICIT_NO_PLAN_MATCH;
+}
+
+function dateDistanceDays(first, second) {
+  if (!ISO_DATE.test(String(first || '')) || !ISO_DATE.test(String(second || ''))) return null;
+  const firstTime = new Date(`${first}T12:00:00Z`).getTime();
+  const secondTime = new Date(`${second}T12:00:00Z`).getTime();
+  return Math.round(Math.abs(firstTime - secondTime) / 86400000);
+}
+
+function findPlanSessionRunEvidence(runs, {
+  sessionId,
+  date,
+  usedIds = new Set(),
+  dateToleranceDays = 1,
+} = {}) {
+  const candidates = Array.isArray(runs)
+    ? runs.filter((run) => run?.id && !usedIds.has(run.id))
+    : [];
+  const normalizedSessionId = String(sessionId ?? '').trim();
+  if (normalizedSessionId) {
+    const exact = candidates.find((run) => String(run.plan_session_id ?? '').trim() === normalizedSessionId);
+    if (exact) return exact;
+  }
+  return candidates.find((run) => {
+    if (String(run.plan_session_id ?? '').trim()) return false;
+    if (isExplicitlyUnlinkedRun(run.planned_session_json)) return false;
+    const distance = dateDistanceDays(String(run.date || '').slice(0, 10), date);
+    return distance !== null && distance <= dateToleranceDays;
+  }) || null;
 }
 
 async function findPlannedRunForDate(userId, date, { get = dbGet } = {}) {
@@ -112,8 +160,11 @@ async function findPlannedRunForDate(userId, date, { get = dbGet } = {}) {
 }
 
 module.exports = {
+  explicitNoPlanMatchSnapshot,
   findPlannedRunForDate,
+  findPlanSessionRunEvidence,
   hasMeaningfulPlannedRun,
+  isExplicitlyUnlinkedRun,
   matchPlannedRunInPlan,
   plannedRunSnapshot,
 };

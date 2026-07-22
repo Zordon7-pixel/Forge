@@ -23,7 +23,12 @@ const {
 const { buildHealthSignals } = require('../lib/healthSignals');
 const { activityKind, isRunActivity, runActivitySql } = require('../lib/runActivity');
 const { resolveRunEffort, withCalculatedEffort } = require('../lib/runEffort');
-const { findPlannedRunForDate, hasMeaningfulPlannedRun } = require('../lib/plannedRunMatch');
+const {
+  explicitNoPlanMatchSnapshot,
+  findPlannedRunForDate,
+  hasMeaningfulPlannedRun,
+  isExplicitlyUnlinkedRun,
+} = require('../lib/plannedRunMatch');
 const {
   classifyRouteIntegrity,
   normalizeDistanceEvidence,
@@ -734,7 +739,9 @@ router.get('/:id', auth, async (req, res) => {
     const run = await dbGet('SELECT * FROM runs WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
     if (!run) return res.status(404).json({ error: 'Run not found' });
     const enrichedRun = withCalculatedEffort(run);
-    if (isRunActivity(run) && !hasMeaningfulPlannedRun(run.planned_session_json)) {
+    if (isRunActivity(run)
+      && !isExplicitlyUnlinkedRun(run.planned_session_json)
+      && !hasMeaningfulPlannedRun(run.planned_session_json)) {
       const planned = await findPlannedRunForDate(req.user.id, String(run.date || '').slice(0, 10));
       if (planned) {
         return res.json({
@@ -822,6 +829,9 @@ router.post('/', auth, async (req, res) => {
         resolvedPlanSessionId = scheduledRun.sessionId || resolvedPlanSessionId;
       }
     }
+    const storedPlannedSession = planMatchExplicitlyDisabled
+      ? explicitNoPlanMatchSnapshot()
+      : resolvedPlannedSession;
     let prescribedTargetZone = typeof target_zone === 'string' && target_zone.length <= 20 ? target_zone.trim() || null : null;
     if (!prescribedTargetZone) {
       try {
@@ -851,7 +861,7 @@ router.post('/', auth, async (req, res) => {
       vo2_max || null, training_effect_aerobic || null, training_effect_anaerobic || null, recovery_time_hours || null,
       detected_surface_type || null, temperature_f || null, calories || 0, treadmill_brand || null, treadmill_model || null,
       watch_sync_id || null, watch_activity_type || null, watch_normalized_type || null, gps_available === false ? 0 : 1,
-      resolvedPlanSessionId, JSON.stringify(resolvedPlannedSession || {}), recordingHealthSource, recordingSourceId,
+      resolvedPlanSessionId, JSON.stringify(storedPlannedSession || {}), recordingHealthSource, recordingSourceId,
       resolvedActivityStart, resolvedActivityEnd, JSON.stringify(recordingMetrics)
     ]);
     if (insertResult.changes === 0) {

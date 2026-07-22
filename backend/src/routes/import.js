@@ -7,7 +7,11 @@ const { activityKind } = require('../lib/runActivity');
 const { buildRunImportKeys } = require('../lib/runImportKey');
 const { classifyRouteIntegrity, normalizeDistanceEvidence } = require('../lib/runPostRun');
 const { normalizeWorkoutMetrics } = require('../lib/workoutMetrics');
-const { findPlannedRunForDate, hasMeaningfulPlannedRun } = require('../lib/plannedRunMatch');
+const {
+  findPlannedRunForDate,
+  hasMeaningfulPlannedRun,
+  isExplicitlyUnlinkedRun,
+} = require('../lib/plannedRunMatch');
 const autoUpdatePRs = require('../services/prAuto');
 
 function hashImportKey(parts) {
@@ -364,7 +368,9 @@ async function updateExistingRunHealth(db, userId, existingRun, item) {
   const normalizedZones = item.zoneSeconds || normalizeZoneSeconds();
   const totalZoneSeconds = ['z1', 'z2', 'z3', 'z4', 'z5'].reduce((sum, zone) => sum + asNumber(normalizedZones[zone], 0), 0);
   const zoneParam = totalZoneSeconds > 0 ? JSON.stringify(normalizedZones) : null;
-  const planned = item.section === 'run' && !hasMeaningfulPlannedRun(existingRun.planned_session_json)
+  const planned = item.section === 'run'
+    && !isExplicitlyUnlinkedRun(existingRun.planned_session_json)
+    && !hasMeaningfulPlannedRun(existingRun.planned_session_json)
     ? await findPlannedRunForDate(userId, item.date, { get: db.get })
     : null;
   const storedWorkoutMetrics = parseStoredWorkoutMetrics(existingRun.workout_metrics_json);

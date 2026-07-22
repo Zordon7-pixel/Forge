@@ -138,7 +138,7 @@ check(/Active calories/.test(detail) && /Garmin calories/.test(detail) && /Revie
 check(/keeps an imported activity hidden from future syncs/.test(history), 'delete confirmation explains the permanent import tombstone behavior')
 check(/savedHrZones/.test(activeRun) && /profile\/hr-zones/.test(activeRun), 'live-run zones use the same saved watch profile as History')
 check(logRun.includes('disablePlanMatch: true') && treadmillRun.includes("disablePlanMatch ? { plan_session_id: null }"), 'an extra indoor run explicitly opts out of scheduled-plan matching')
-check(runsRoute.includes('planMatchExplicitlyDisabled') && runsRoute.includes("plan_session_id')") && runsRoute.includes('plan_session_id === null'), 'the run API honors an explicit null plan link instead of silently rematching it')
+check(runsRoute.includes('planMatchExplicitlyDisabled') && runsRoute.includes('explicitNoPlanMatchSnapshot()') && runsRoute.includes('JSON.stringify(storedPlannedSession || {})'), 'the run API durably records an explicit null plan link instead of silently rematching it')
 
 console.log('\n== HealthKit source truth ==')
 const swift = read('frontend/ios/App/App/ForgeHealthPlugin.swift')

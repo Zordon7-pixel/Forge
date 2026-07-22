@@ -16,6 +16,7 @@ const { summarizeRecentRunLoad } = require('../lib/recentRunLoad');
 const { repairPlanPrescriptions } = require('../lib/prescriptionIntegrity');
 const { summarizeRecentExercises } = require('../lib/strengthPrescription');
 const { runActivitySql } = require('../lib/runActivity');
+const { findPlanSessionRunEvidence } = require('../lib/plannedRunMatch');
 const hybridReconciliation = require('../lib/hybridReconciliation');
 const { dateInTimezone, isIanaTimezone } = require('../lib/challengeRules');
 
@@ -2027,25 +2028,49 @@ router.get('/compliance', auth, async (req, res) => {
       ))
       .filter((d) => d.type !== 'rest' && d.date && d.date >= weekStart && d.date < weekEnd);
 
+    const runSessionIds = [...new Set(plannedSessions
+      .filter((session) => session.type === 'run')
+      .map((session) => String(session.sessionId || '').trim())
+      .filter(Boolean))];
+    const linkedRunClause = runSessionIds.length
+      ? ` OR plan_session_id IN (${runSessionIds.map(() => '?').join(', ')})`
+      : '';
     const [runs, lifts] = await Promise.all([
-      dbAll(`SELECT id, date, distance_miles FROM runs WHERE user_id=? AND date>=? AND date<? AND ${runActivitySql()}`, [req.user.id, weekStart, weekEnd]),
+      dbAll(`SELECT id, date, distance_miles, plan_session_id, planned_session_json
+        FROM runs
+        WHERE user_id=? AND ((date>=? AND date<?)${linkedRunClause}) AND ${runActivitySql()}`,
+      [req.user.id, weekStart, weekEnd, ...runSessionIds]),
       dbAll('SELECT id, date FROM lifts WHERE user_id=? AND date>=? AND date<?', [req.user.id, weekStart, weekEnd])
     ]);
 
+    const progress = parseJsonValue(active.row.progress_json, {});
+    const completedSessionIds = new Set(completedSessionIdsFromProgress(progress));
     const usedRunIds = new Set();
     const usedLiftIds = new Set();
 
     const statusItems = plannedSessions.map((s) => {
       const target = new Date(`${s.date}T12:00:00`).getTime();
-      const bucket = s.type === 'lift' ? lifts : runs;
-      const used = s.type === 'lift' ? usedLiftIds : usedRunIds;
       let hit = null;
-      for (const item of bucket) {
-        if (used.has(item.id)) continue;
-        const t = new Date(`${item.date}T12:00:00`).getTime();
-        if (Math.abs(t - target) <= 24 * 60 * 60 * 1000) { hit = item; used.add(item.id); break; }
+      if (s.type === 'run') {
+        hit = findPlanSessionRunEvidence(runs, {
+          sessionId: s.sessionId,
+          date: s.date,
+          usedIds: usedRunIds,
+        });
+        if (hit) usedRunIds.add(hit.id);
+      } else {
+        for (const item of lifts) {
+          if (usedLiftIds.has(item.id)) continue;
+          const t = new Date(`${item.date}T12:00:00`).getTime();
+          if (Math.abs(t - target) <= 24 * 60 * 60 * 1000) {
+            hit = item;
+            usedLiftIds.add(item.id);
+            break;
+          }
+        }
       }
-      return { ...s, completed: !!hit };
+      const completedFromProgress = completedSessionIds.has(String(s.sessionId));
+      return { ...s, completed: completedFromProgress || !!hit };
     });
 
     const completed = statusItems.filter((s) => s.completed).length;
@@ -2119,11 +2144,15 @@ router.post('/reschedule-missed', auth, async (req, res) => {
       if (completedIds.has(String(requestedSession.sessionId))) {
         return { status: 409, error: 'That run is already complete. Refresh your calendar.' };
       }
-      const recordedRun = await tx.get(`
-        SELECT id FROM runs
+      const recordedRuns = await tx.all(`
+        SELECT id, date, plan_session_id, planned_session_json FROM runs
         WHERE user_id=? AND (plan_session_id=? OR date=?) AND ${runActivitySql()}
-        LIMIT 1
       `, [req.user.id, String(requestedSession.sessionId), requestedSession.date]);
+      const recordedRun = findPlanSessionRunEvidence(recordedRuns, {
+        sessionId: requestedSession.sessionId,
+        date: requestedSession.date,
+        dateToleranceDays: 0,
+      });
       if (recordedRun) return { status: 409, error: 'That run is already recorded. Sync and refresh your calendar.' };
 
       const result = planSchema.rescheduleSessionInWeek(week, sessionId, { targetDate: planningDateISO });
