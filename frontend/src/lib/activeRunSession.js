@@ -20,9 +20,17 @@ function finiteNumber(value, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback
 }
 
+function downsampleRouteCoords(points) {
+  if (points.length <= MAX_ROUTE_POINTS) return points
+  return Array.from({ length: MAX_ROUTE_POINTS }, (_, index) => {
+    const sourceIndex = Math.round((index * (points.length - 1)) / (MAX_ROUTE_POINTS - 1))
+    return points[sourceIndex]
+  })
+}
+
 function normalizeRouteCoords(value) {
   if (!Array.isArray(value)) return []
-  return value.slice(-MAX_ROUTE_POINTS).filter((point) => (
+  const points = value.filter((point) => (
     Array.isArray(point)
     && Number.isFinite(Number(point[0]))
     && Number.isFinite(Number(point[1]))
@@ -35,7 +43,11 @@ function normalizeRouteCoords(value) {
     Number(point[1]),
     point[2] === null || point[2] === undefined || !Number.isFinite(Number(point[2])) ? null : Number(point[2]),
     point[3] === null || point[3] === undefined || !Number.isFinite(Number(point[3])) ? null : Number(point[3]),
+    point[4] === null || point[4] === undefined || !Number.isFinite(Number(point[4])) || Number(point[4]) < 0 || Number(point[4]) > 10_000
+      ? null
+      : Number(point[4]),
   ])
+  return downsampleRouteCoords(points)
 }
 
 export function clearActiveRunSession(storage) {

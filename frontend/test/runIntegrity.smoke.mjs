@@ -41,7 +41,7 @@ saveActiveRunSession({
   startedAt: now - 31_000,
   elapsed: 26,
   distanceMiles: 0.11,
-  routeCoords: [[38.9, -76.95, 14], [38.901, -76.951, 15]],
+  routeCoords: [[38.9, -76.95, 14, now - 2_000, 4.5], [38.901, -76.951, 15, now - 1_000, 6]],
   mapMyRun: true,
   gpsStarted: true,
   gpsAvailable: true,
@@ -51,12 +51,21 @@ saveActiveRunSession({
 }, ownerUserId, storage, now)
 const restored = loadActiveRunSession(ownerUserId, storage, now + 4_000)
 check(restored?.routeCoords.length === 2 && restored?.distanceMiles === 0.11, 'route and distance survive a reload')
+check(restored?.routeCoords[0][3] === now - 2_000 && restored?.routeCoords[0][4] === 4.5, 'GPS sample timestamps and horizontal accuracy survive a reload')
 check(restored?.lastFixAt === now - 1_000, 'the last GPS fix timestamp survives a reload')
 check(elapsedFromSession(restored, now + 4_000) === 35, 'elapsed time is rebuilt from the persisted start timestamp')
+check(restored?.startedAt === now - 31_000 && restored?.clientRunId === 'run-client-id', 'capture identity and start time stay stable across a reload')
 check(restored?.navigationState?.plannedRoute?.coordinates?.length === 2, 'planned route survives a reload')
 check(restored?.ownerUserId === ownerUserId, 'restored session remains bound to its authenticated owner')
 clearActiveRunSession(storage)
 check(storage.getItem(ACTIVE_RUN_SESSION_KEY) === null, 'saved session is removed after a durable run save')
+
+const longRouteStorage = new MemoryStorage()
+const longRoute = Array.from({ length: 5002 }, (_, index) => [38.9 + index / 1_000_000, -76.95, 10, now + index, 5])
+saveActiveRunSession({ phase: 'running', startedAt: now, routeCoords: longRoute }, ownerUserId, longRouteStorage, now)
+const restoredLongRoute = loadActiveRunSession(ownerUserId, longRouteStorage, now + 1000)?.routeCoords || []
+check(restoredLongRoute.length === 5000, 'persisted active routes are bounded to 5,000 points')
+check(restoredLongRoute[0]?.[0] === longRoute[0][0] && restoredLongRoute.at(-1)?.[0] === longRoute.at(-1)[0], 'route bounding preserves both the start and finish instead of dropping the beginning')
 
 saveActiveRunSession({ phase: 'running', startedAt: now - 90_000_000, elapsed: 1 }, ownerUserId, storage, now - 90_000_000)
 check(loadActiveRunSession(ownerUserId, storage, now) === null, 'stale sessions do not resurrect old runs')
@@ -114,6 +123,11 @@ const detail = read('frontend/src/components/RunDetailModal.jsx')
 const history = read('frontend/src/pages/History.jsx')
 check(/isImmersive\s*\?\s*\([\s\S]*?<main[\s\S]*?:\s*\([\s\S]*?<PullToRefresh>/.test(layout), 'immersive workout routes bypass destructive pull-to-refresh')
 check(/saveActiveRunSession/.test(activeRun) && /loadActiveRunSession/.test(activeRun) && /clearActiveRunSession/.test(activeRun), 'ActiveRun persists, restores, and clears its session')
+check(activeRun.includes('Your iPhone records the route. Keep your watch running too — Forged Hybrid will combine the data after sync.'), 'the one Start Run action explains phone route recording and later watch enrichment')
+check(!activeRun.includes('Record route: On') && !activeRun.includes('Record route: Off'), 'ActiveRun no longer exposes a competing route-only mode')
+check(activeRun.includes('loc.accuracy') && activeRun.includes('pos.coords.accuracy'), 'native and web GPS forward horizontal accuracy into the route')
+check(activeRun.indexOf('const savePromise = saveRun()') < activeRun.indexOf('await clearActiveWatch()', activeRun.indexOf('const savePromise = saveRun()')), 'finish starts the durable save before watcher cleanup')
+check(/failed to remove native GPS watcher/.test(activeRun) && /failed to clear web GPS watcher/.test(activeRun), 'watcher cleanup errors are fail-soft and observable')
 check(/FollowCurrentLocation/.test(activeRun) && /You are here/.test(activeRun) && /radius=\{15\}/.test(activeRun), 'map follows a prominent yellow current-location marker')
 check(/enabled=\{!running \|\| plannedRoutePositions\.length > 0\}/.test(activeRun), 'ad-hoc runs follow the athlete without refitting the whole route on every GPS fix')
 check(/Delete this \{isRun \? 'run' : 'activity'\}/.test(detail) && /onDelete=\{\(\) =>/.test(history), 'run detail exposes the confirmed delete flow')

@@ -4,6 +4,7 @@
 const fs = require('fs');
 const path = require('path');
 const {
+  MAX_ROUTE_POINTS,
   normalizePlannedSession,
   normalizePostRunCheckIn,
   normalizeRouteCoords,
@@ -25,13 +26,24 @@ function check(condition, message) {
 
 console.log('\n== post-run input boundaries ==');
 const route = normalizeRouteCoords([
-  [38.91, -76.95, 25, 1784030400000],
-  { lat: 38.92, lng: -76.96, altitude: 26, timestamp: '2026-07-14T12:01:00Z' },
+  [38.91, -76.95, 25, 1784030400000, 4.5],
+  { lat: 38.92, lng: -76.96, altitude: 26, timestamp: '2026-07-14T12:01:00Z', horizontal_accuracy: 8 },
   [200, -76.97, 27, 1784030520000],
 ]);
 check(route.length === 2, 'invalid route points are discarded');
 check(route[0].time === '2026-07-14T12:00:00.000Z', 'numeric GPS timestamps are normalized');
 check(route[1].time === '2026-07-14T12:01:00.000Z', 'ISO GPS timestamps are preserved');
+check(route[0].accuracy === 4.5 && route[1].accuracy === 8, 'bounded horizontal accuracy is retained from native and aliased route fields');
+
+const longRouteInput = Array.from({ length: MAX_ROUTE_POINTS + 2 }, (_, index) => ({
+  lat: 38.9 + index / 1_000_000,
+  lon: -76.95,
+  accuracy: index === 1 ? 20_000 : 5,
+}));
+const boundedRoute = normalizeRouteCoords(longRouteInput);
+check(boundedRoute.length === MAX_ROUTE_POINTS, 'backend route normalization enforces the point limit');
+check(boundedRoute[0].lat === longRouteInput[0].lat && boundedRoute.at(-1).lat === longRouteInput.at(-1).lat, 'backend route bounding preserves the recorded start and finish');
+check(!Object.prototype.hasOwnProperty.call(boundedRoute[1], 'accuracy'), 'out-of-range horizontal accuracy is discarded at the backend boundary');
 
 const planned = normalizePlannedSession({
   sessionId: 'session-1',
@@ -131,6 +143,9 @@ const aiService = fs.readFileSync(path.join(root, 'backend/src/services/ai.js'),
 const activeRun = fs.readFileSync(path.join(root, 'frontend/src/pages/ActiveRun.jsx'), 'utf8');
 check(/ai_feedback_requested_at < CURRENT_TIMESTAMP - INTERVAL '10 minutes'/.test(runsRoute), 'feedback generation has a stale-claim retry guard');
 check(/router\.patch\('\/:id\/check-in'/.test(runsRoute), 'post-run check-in has a dedicated endpoint');
+check(/router\.post\('\/', auth/.test(runsRoute), 'run creation remains authenticated');
+check(/ON CONFLICT \(id\) DO NOTHING/.test(runsRoute) && /SELECT \* FROM runs WHERE id=\? AND user_id=\?/.test(runsRoute), 'replayed client capture ids resolve to one user-scoped canonical run');
+check(/JSON\.stringify\(normalizedRouteCoords\)/.test(runsRoute), 'only backend-normalized route points are persisted');
 check(/sanitizeObj\(sessionData \|\| \{\}\)/.test(aiService), 'structured AI session data is sanitized before prompting');
 check(!activeRun.includes('/ai/session-feedback'), 'ActiveRun no longer requests analysis before the check-in');
 

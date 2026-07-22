@@ -77,22 +77,34 @@ function normalizeTimestamp(value) {
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
+function downsampleRouteCoords(points) {
+  if (points.length <= MAX_ROUTE_POINTS) return points;
+  return Array.from({ length: MAX_ROUTE_POINTS }, (_, index) => {
+    const sourceIndex = Math.round((index * (points.length - 1)) / (MAX_ROUTE_POINTS - 1));
+    return points[sourceIndex];
+  });
+}
+
 function normalizeRouteCoords(value) {
   if (!Array.isArray(value)) return [];
-  return value.slice(-MAX_ROUTE_POINTS).map((raw) => {
+  const points = value.map((raw) => {
     const lat = Number(Array.isArray(raw) ? raw[0] : raw?.lat);
     const lon = Number(Array.isArray(raw) ? raw[1] : raw?.lon ?? raw?.lng);
     if (!Number.isFinite(lat) || lat < -90 || lat > 90 || !Number.isFinite(lon) || lon < -180 || lon > 180) return null;
     const rawAltitude = Array.isArray(raw) ? raw[2] : raw?.alt ?? raw?.altitude;
     const altitude = boundedNumber(rawAltitude, -2000, 100000);
     const time = normalizeTimestamp(Array.isArray(raw) ? raw[3] : raw?.time ?? raw?.timestamp);
+    const rawAccuracy = Array.isArray(raw) ? raw[4] : raw?.accuracy ?? raw?.horizontalAccuracy ?? raw?.horizontal_accuracy;
+    const accuracy = boundedNumber(rawAccuracy, 0, 10000);
     return {
       lat,
       lon,
       alt: altitude,
       ...(time ? { time } : {}),
+      ...(accuracy !== null ? { accuracy } : {}),
     };
   }).filter(Boolean);
+  return downsampleRouteCoords(points);
 }
 
 function normalizePostRunCheckIn(value = {}) {

@@ -209,7 +209,7 @@ export default function ActiveRun() {
   const planSessionId = isGroupRunNavigation ? null : planSessionIdFromState(navigationState)
   const planCurrentWeek = currentWeekFromState(navigationState)
   const [savedHeatDrift, setSavedHeatDrift] = useState(pendingPostRunDraft?.heatDrift || null)
-  const [mapMyRun, setMapMyRun] = useState(restoredSession?.mapMyRun ?? navigationState.mapMyRun ?? false)
+  const [mapMyRun, setMapMyRun] = useState(restoredSession?.mapMyRun ?? true)
   const [routeCoords, setRouteCoords] = useState(restoredSession?.routeCoords || [])
   const [runEnvironment, setRunEnvironment] = useState(restoredSession?.runEnvironment ?? navigationState.runEnvironment ?? 'outdoor')
   const [surface, setSurface] = useState(restoredSession?.surface ?? navigationState.surface ?? 'road')
@@ -247,6 +247,7 @@ export default function ActiveRun() {
   ), [plannedRoutePositions, recordedRoutePositions])
   const mapBoundsPositions = plannedRoutePositions.length ? plannedRoutePositions : recordedRoutePositions
   const currentPosition = recordedRoutePositions.at(-1) || null
+  const currentAccuracy = routeCoords.at(-1)?.[4]
 
   sessionStateRef.current = {
     phase: running ? 'running' : awaitingManualDistance ? 'awaiting_distance' : null,
@@ -435,15 +436,18 @@ export default function ActiveRun() {
   const maxHr = savedHrProfile?.maxHr || userProfile?.max_heart_rate || (userProfile?.age ? 220 - Number(userProfile.age) : null)
   const hrZone = getZone(liveHr, maxHr, savedHrZones)
 
-  const handlePoint = useCallback((lat, lon, alt, tsMillis) => {
+  const handlePoint = useCallback((lat, lon, alt, accuracy, timestamp) => {
     const latitude = Number(lat)
     const longitude = Number(lon)
     if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90 || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) return
     setGpsAvailable(true)
     setGpsStarted(true)
 
-    const parsedTs = Number(tsMillis)
-    const fixAt = Number.isFinite(parsedTs) ? parsedTs : Date.now()
+    const parsedTimestamp = Number(timestamp)
+    const parsedDateTimestamp = typeof timestamp === 'string' ? Date.parse(timestamp) : Number.NaN
+    const fixAt = Number.isFinite(parsedTimestamp)
+      ? parsedTimestamp
+      : Number.isFinite(parsedDateTimestamp) ? parsedDateTimestamp : Date.now()
     if (lastFixAtRef.current) {
       const gapSeconds = Math.round((fixAt - lastFixAtRef.current) / 1000)
       if (gapSeconds > 15) {
@@ -451,7 +455,14 @@ export default function ActiveRun() {
         gpsGapCountRef.current += 1
       }
     }
-    const point = { lat: latitude, lon: longitude, alt: alt ?? null }
+    const parsedAltitude = alt === null || alt === undefined || alt === '' ? Number.NaN : Number(alt)
+    const parsedAccuracy = accuracy === null || accuracy === undefined || accuracy === '' ? Number.NaN : Number(accuracy)
+    const point = {
+      lat: latitude,
+      lon: longitude,
+      alt: Number.isFinite(parsedAltitude) && parsedAltitude >= -2000 && parsedAltitude <= 100000 ? parsedAltitude : null,
+      accuracy: Number.isFinite(parsedAccuracy) && parsedAccuracy >= 0 && parsedAccuracy <= 10000 ? parsedAccuracy : null,
+    }
     if (lastPointRef.current) {
       const segment = haversineMiles(lastPointRef.current, point)
       if (segment > 0 && segment < 0.25) {
@@ -460,7 +471,7 @@ export default function ActiveRun() {
         discardedSegmentRef.current = true
       }
     }
-    setRouteCoords((prev) => [...prev, [point.lat, point.lon, point.alt, fixAt]])
+    setRouteCoords((prev) => [...prev, [point.lat, point.lon, point.alt, fixAt, point.accuracy]])
     lastPointRef.current = point
     lastFixAtRef.current = fixAt
   }, [])
@@ -497,7 +508,7 @@ export default function ActiveRun() {
     nativeWatchRef.current = false
     watchRef.current = navigator.geolocation.watchPosition(
       pos => {
-        handlePoint(pos.coords.latitude, pos.coords.longitude, pos.coords.altitude, Date.now())
+        handlePoint(pos.coords.latitude, pos.coords.longitude, pos.coords.altitude, pos.coords.accuracy, Date.now())
       },
       () => {
         setGpsError('GPS unavailable — tracking time and effort only')
@@ -541,7 +552,7 @@ export default function ActiveRun() {
             return
           }
           if (!loc) return
-          handlePoint(loc.latitude, loc.longitude, loc.altitude, loc.time || Date.now())
+          handlePoint(loc.latitude, loc.longitude, loc.altitude, loc.accuracy, loc.time || Date.now())
         })
         watchRef.current = id
         nativeWatchRef.current = true
@@ -647,7 +658,13 @@ export default function ActiveRun() {
       avg_heart_rate: liveHr || null,
       elevation_gain: actualElevation.available ? actualElevation.gainFeet : null,
       elevation_loss: actualElevation.available ? actualElevation.lossFeet : null,
-      route_coords: routeCoords.map(([lat, lon, alt, time]) => ({ lat, lon, alt: alt ?? null, time: time ?? null })),
+      route_coords: routeCoords.map(([lat, lon, alt, time, accuracy]) => ({
+        lat,
+        lon,
+        alt: alt ?? null,
+        time: time ?? null,
+        accuracy: accuracy ?? null,
+      })),
       treadmill_brand: treadmillBrand || null
     }
   }
@@ -833,7 +850,21 @@ export default function ActiveRun() {
         </div>
       )}
 
-      {!running && !countingDown && !awaitingManualDistance && <>{plannedRoute ? <div className="w-full py-2 text-center text-sm font-semibold mb-2" style={{ borderRadius: 8, background: 'var(--bg-input)', color: 'var(--text-primary)' }}>Planned course loaded · GPS recording on</div> : <button onClick={() => setMapMyRun(v => !v)} className="pressable w-full rounded-xl py-2 font-semibold mb-2" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}>{mapMyRun ? 'Record route: On' : 'Record route: Off'}</button>}<button disabled={groupRunAuthorization === 'pending'} onClick={() => { setCountdownVal(selectedCountdown); setCountingDown(selectedCountdown > 0); if (selectedCountdown === 0) startGPS() }} className="pressable w-full rounded-xl py-3 font-black" style={{ background: 'var(--accent)', color: 'var(--on-accent)', opacity: groupRunAuthorization === 'pending' ? 0.55 : 1 }}>{groupRunAuthorization === 'pending' ? 'Verifying Group Run...' : 'Start Run'}</button></>}
+      {!running && !countingDown && !awaitingManualDistance && (
+        <div>
+          {plannedRoute && <div className="w-full py-2 text-center text-sm font-semibold mb-2" style={{ borderRadius: 8, background: 'var(--bg-input)', color: 'var(--text-primary)' }}>Planned course loaded · GPS recording ready</div>}
+          <div className="rounded-xl p-3 mb-3" role="status" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
+            <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Your iPhone records the route. Keep your watch running too — Forged Hybrid will combine the data after sync.</p>
+            <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>Location access is requested when you start and recording continues in the background during the run.</p>
+          </div>
+          <button disabled={groupRunAuthorization === 'pending'} onClick={() => { setCountdownVal(selectedCountdown); setCountingDown(selectedCountdown > 0); if (selectedCountdown === 0) startGPS() }} className="pressable w-full rounded-xl py-3 font-black" style={{ background: 'var(--accent)', color: 'var(--on-accent)', opacity: groupRunAuthorization === 'pending' ? 0.55 : 1 }}>{groupRunAuthorization === 'pending' ? 'Verifying Group Run...' : 'Start Run'}</button>
+        </div>
+      )}
+      {running && mapMyRun && (
+        <div className="rounded-xl p-3 mb-3 text-sm font-semibold" role="status" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.3)', color: 'var(--success)' }}>
+          iPhone route recording active in the background · {currentAccuracy !== null && currentAccuracy !== undefined && Number.isFinite(Number(currentAccuracy)) ? `GPS ±${Math.round(Number(currentAccuracy))} m` : 'Acquiring GPS'}
+        </div>
+      )}
       {running && <button onClick={finishRun} disabled={saving} className="pressable w-full rounded-xl py-3 font-black" style={{ background: 'var(--accent)', color: 'var(--on-accent)', opacity: saving ? 0.5 : 1, minHeight: 56 }}>{saving ? 'Saving...' : 'Finish Run'}</button>}
 
       {awaitingManualDistance && (
