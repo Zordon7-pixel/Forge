@@ -25,7 +25,8 @@
       "infoPlist": {
         "NSHealthShareUsageDescription": "Forged Hybrid reads workouts, activity, heart rate, HRV, sleep, cardio fitness, and running dynamics to personalize your training plan.",
         "NSHealthUpdateUsageDescription": "Forged Hybrid uses Apple workout APIs to schedule workouts you explicitly send to Apple Watch. It does not automatically add or change your Apple Health records.",
-        "NSContactsUsageDescription": "Forged Hybrid reads permitted contact email addresses only when you choose Find beta friends. Your address book is not stored."
+        "NSContactsUsageDescription": "Forged Hybrid reads permitted contact email addresses only when you choose Find beta friends. Your address book is not stored.",
+        "NSPhotoLibraryAddUsageDescription": "Forged Hybrid saves a run share card to your Photos library only when you tap Save."
       }
     },
     "extra": {

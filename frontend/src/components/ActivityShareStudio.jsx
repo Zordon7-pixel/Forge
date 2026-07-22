@@ -3,6 +3,7 @@ import { Check, Copy, Download, ImagePlus, Share2, Users, X } from 'lucide-react
 import { useNavigate } from 'react-router-dom'
 import api from '../lib/api'
 import { parsePlannedRun, parseRunRoute, parseZoneTimeline } from '../lib/runRecap'
+import PhotoLibraryService from '../services/PhotoLibraryService'
 
 const CARD_WIDTH = 1080
 const CARD_HEIGHT = 1350
@@ -918,15 +919,27 @@ export default function ActivityShareStudio({ run, onClose }) {
     let url = null
     try {
       const file = await getFile()
+      const nativeResult = await PhotoLibraryService.saveImage(file)
+      if (nativeResult.saved) {
+        setStatus('Saved to Photos.')
+        return
+      }
+      if (nativeResult.requiresNativeUpdate && navigator.share && (!navigator.canShare || navigator.canShare({ files: [file] }))) {
+        await navigator.share({ title: 'Save Forged Hybrid share card', files: [file] })
+        setStatus('To add it to Photos, choose Save Image in the share sheet.')
+        return
+      }
       url = URL.createObjectURL(file)
       const link = document.createElement('a')
       link.href = url
       link.download = filename
       link.click()
-      setStatus('Share card saved.')
+      setStatus(nativeResult.requiresNativeUpdate ? 'Saved as a download. Direct Photos saving requires the next app build.' : 'Share card saved.')
     } catch (error) {
-      console.error('[ActivityShareStudio] save failed:', error?.message || error)
-      setStatus('Could not save this share card.')
+      if (error?.name !== 'AbortError') {
+        console.error('[ActivityShareStudio] save failed:', error?.message || error)
+        setStatus(/photos access/i.test(String(error?.message || '')) ? error.message : 'Could not save this share card.')
+      }
     } finally {
       if (url) window.setTimeout(() => URL.revokeObjectURL(url), 1000)
       setBusy(false)
