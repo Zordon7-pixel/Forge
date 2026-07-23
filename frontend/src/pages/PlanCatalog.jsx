@@ -4,6 +4,8 @@ import { CalendarDays, ChevronRight, MapPin, Search, X } from 'lucide-react'
 import api from '../lib/api'
 import { activateModalDialog } from '../lib/modalDialog'
 import { useProContext } from '../context/ProContext'
+import DurationPicker from '../components/DurationPicker'
+import { formatDuration, normalizeDurationSeconds } from '../lib/duration'
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 const PLAN_GENERATION_TIMEOUT_MS = 90000
@@ -33,41 +35,6 @@ function plausibleGoalTime(seconds, distanceMiles) {
   if (!Number.isFinite(seconds) || seconds <= 0 || !Number.isFinite(distance) || distance <= 0) return false
   const pace = seconds / distance
   return pace >= 180 && pace <= 1800
-}
-
-function parseGoalTime(value, distanceMiles) {
-  const parts = String(value || '').trim().split(':').filter(Boolean)
-  if (!parts.length) return undefined
-  if (parts.length > 3 || parts.some((part) => !/^\d+$/.test(part))) return null
-
-  const numbers = parts.map(Number)
-  if (numbers.some((part) => Number.isNaN(part) || part < 0)) return null
-
-  if (numbers.length === 1) {
-    const seconds = numbers[0] * 60
-    return plausibleGoalTime(seconds, distanceMiles) ? seconds : null
-  }
-  if (numbers.length === 2) {
-    const [first, second] = numbers
-    const minuteSeconds = second < 60 ? first * 60 + second : null
-    const hourSeconds = second < 60 ? first * 3600 + second * 60 : null
-    const candidates = [minuteSeconds, hourSeconds].filter((seconds) => plausibleGoalTime(seconds, distanceMiles))
-    if (candidates.length === 1) return candidates[0]
-    if (candidates.length > 1) return candidates[0]
-    return null
-  }
-  if (numbers[1] >= 60 || numbers[2] >= 60) return null
-  const seconds = numbers[0] * 3600 + numbers[1] * 60 + numbers[2]
-  return plausibleGoalTime(seconds, distanceMiles) ? seconds : null
-}
-
-function formatGoalTime(seconds) {
-  const total = Number(seconds)
-  if (!Number.isFinite(total) || total <= 0) return ''
-  const hours = Math.floor(total / 3600)
-  const minutes = Math.floor((total % 3600) / 60)
-  const remaining = Math.floor(total % 60)
-  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(remaining).padStart(2, '0')}`
 }
 
 function formatGoalPace(seconds, distanceMiles) {
@@ -131,7 +98,7 @@ export default function PlanCatalog() {
   const [liftDaysPerWeek, setLiftDaysPerWeek] = useState(0)
   const [equipmentPreset, setEquipmentPreset] = useState('full_gym')
   const [weeks, setWeeks] = useState('')
-  const [goalTime, setGoalTime] = useState('')
+  const [goalTime, setGoalTime] = useState(0)
   const [customDistance, setCustomDistance] = useState('')
   const [raceQuery, setRaceQuery] = useState('')
   const [raceResults, setRaceResults] = useState([])
@@ -149,10 +116,9 @@ export default function PlanCatalog() {
       ? Number(customDistance || 0)
       : selectedGoal.distanceMiles
   }, [customDistance, selectedGoal])
-  const parsedGoalTime = useMemo(
-    () => parseGoalTime(goalTime, selectedDistance),
-    [goalTime, selectedDistance],
-  )
+  const parsedGoalTime = goalTime > 0
+    ? (plausibleGoalTime(goalTime, selectedDistance) ? goalTime : null)
+    : undefined
   const raceWeeks = useMemo(() => weeksToRace(raceDraft.date), [raceDraft.date])
   const selectedCourse = raceSelection?.race?.course_intelligence || null
 
@@ -218,7 +184,7 @@ export default function PlanCatalog() {
     if (!ensurePro()) return
     setSelectedGoal(goal)
     setError('')
-    setGoalTime('')
+    setGoalTime(0)
     setWeeks('')
     setCustomDistance(goal.key === 'custom' ? '' : String(goal.distanceMiles))
     setRaceSelection(null)
@@ -238,7 +204,7 @@ export default function PlanCatalog() {
       feel: race ? 'Course-aware race build' : 'Enter the event details',
     })
     setError('')
-    setGoalTime(formatGoalTime(race?.goal_time_seconds))
+    setGoalTime(normalizeDurationSeconds(race?.goal_time_seconds))
     setWeeks('')
     setCustomDistance(race ? String(raceDistance(race)) : '')
     setRaceSelection(race ? { type: selectionType, race } : null)
@@ -317,7 +283,7 @@ export default function PlanCatalog() {
       return
     }
     if (goalTimeSeconds === null) {
-      setError('Enter a realistic goal as hours:minutes, hh:mm:ss, or total minutes.')
+      setError('Choose a goal pace between 3:00 and 30:00 per mile.')
       return
     }
     if (!isRacePlan && weeks && (!Number.isInteger(parsedWeeks) || parsedWeeks < 4 || parsedWeeks > 20)) {
@@ -631,14 +597,14 @@ export default function PlanCatalog() {
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
                 <label style={{ display: 'grid', gap: 8 }}>
                   <span style={{ color: 'var(--text-primary)', fontSize: 13, fontWeight: 850 }}>Goal time</span>
-                  <input value={goalTime} onChange={(event) => setGoalTime(event.target.value)} placeholder="1:30 or 01:30:00" inputMode="numeric" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', borderRadius: 8, padding: '12px 14px', fontSize: 16 }} />
-                  {goalTime && parsedGoalTime && (
+                  <DurationPicker value={goalTime} onChange={setGoalTime} idPrefix="plan-goal" />
+                  {goalTime > 0 && parsedGoalTime && (
                     <span style={{ color: 'var(--accent)', fontSize: 12, fontWeight: 850 }}>
-                      Target: {formatGoalTime(parsedGoalTime)} · {formatGoalPace(parsedGoalTime, selectedDistance)}
+                      Target: {formatDuration(parsedGoalTime, { padHours: true })} · {formatGoalPace(parsedGoalTime, selectedDistance)}
                     </span>
                   )}
-                  {goalTime && parsedGoalTime === null && (
-                    <span style={{ color: 'var(--danger)', fontSize: 12 }}>Check the time. For a 90-minute goal, enter 1:30 or 90.</span>
+                  {goalTime > 0 && parsedGoalTime === null && (
+                    <span style={{ color: 'var(--danger)', fontSize: 12 }}>Choose a goal pace between 3:00 and 30:00 per mile.</span>
                   )}
                   {!goalTime && (
                     <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>Optional. Leave blank for a conservative faster target based on recent synced best efforts.</span>

@@ -1,19 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { CalendarDays, Clock3, MapPin, X } from 'lucide-react'
 import { activateModalDialog } from '../../lib/modalDialog'
+import DurationPicker from '../DurationPicker'
+import { normalizeDurationSeconds } from '../../lib/duration'
 
 function localTodayISO() {
   const now = new Date()
   return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10)
-}
-
-function formatGoalTime(seconds) {
-  const total = Number(seconds)
-  if (!Number.isFinite(total) || total <= 0) return ''
-  const hours = Math.floor(total / 3600)
-  const minutes = Math.floor((total % 3600) / 60)
-  const remaining = Math.floor(total % 60)
-  return `${hours}:${String(minutes).padStart(2, '0')}:${String(remaining).padStart(2, '0')}`
 }
 
 function plausibleGoalTime(seconds, distanceMiles) {
@@ -21,28 +14,6 @@ function plausibleGoalTime(seconds, distanceMiles) {
   if (!Number.isFinite(seconds) || seconds <= 0 || !Number.isFinite(distance) || distance <= 0) return false
   const pace = seconds / distance
   return pace >= 180 && pace <= 1800
-}
-
-function parseGoalTime(value, distanceMiles) {
-  const raw = String(value || '').trim()
-  if (!raw) return undefined
-  const parts = raw.split(':')
-  if (parts.length > 3 || parts.some((part) => !/^\d+$/.test(part))) return null
-  const numbers = parts.map(Number)
-  if (numbers.length === 1) {
-    const seconds = numbers[0] * 60
-    return plausibleGoalTime(seconds, distanceMiles) ? seconds : null
-  }
-  if (numbers.length === 2) {
-    const [first, second] = numbers
-    if (second >= 60) return null
-    const candidates = [first * 60 + second, first * 3600 + second * 60]
-      .filter((seconds) => plausibleGoalTime(seconds, distanceMiles))
-    return candidates[0] ?? null
-  }
-  if (numbers[1] >= 60 || numbers[2] >= 60) return null
-  const seconds = numbers[0] * 3600 + numbers[1] * 60 + numbers[2]
-  return plausibleGoalTime(seconds, distanceMiles) ? seconds : null
 }
 
 function inputStyle() {
@@ -65,14 +36,10 @@ export default function RaceEditSheet({ race, onClose, onSave, saving = false, s
     race_date: race?.race_date || '',
     distance_miles: race?.distance_miles != null ? String(race.distance_miles) : '',
     location: race?.location || '',
-    goal_time: formatGoalTime(race?.goal_time_seconds),
+    goal_time_seconds: normalizeDurationSeconds(race?.goal_time_seconds),
     notes: race?.notes || '',
   }))
   const [error, setError] = useState('')
-  const goalTimeSeconds = useMemo(
-    () => parseGoalTime(draft.goal_time, Number(draft.distance_miles)),
-    [draft.goal_time, draft.distance_miles],
-  )
 
   useEffect(() => {
     return activateModalDialog({
@@ -94,14 +61,14 @@ export default function RaceEditSheet({ race, onClose, onSave, saving = false, s
     if (!draft.race_name.trim()) return setError('Enter the race name.')
     if (!/^\d{4}-\d{2}-\d{2}$/.test(draft.race_date) || draft.race_date < localTodayISO()) return setError('Choose today or a future race date.')
     if (!Number.isFinite(distance) || distance <= 0 || distance > 100) return setError('Distance must be between 0.1 and 100 miles.')
-    if (goalTimeSeconds === null) return setError('Use hours:minutes:seconds, minutes:seconds, or total minutes for the goal time.')
+    if (draft.goal_time_seconds > 0 && !plausibleGoalTime(draft.goal_time_seconds, distance)) return setError('Choose a goal pace between 3:00 and 30:00 per mile.')
 
     const payload = {
       race_name: draft.race_name.trim(),
       race_date: draft.race_date,
       distance_miles: distance,
       location: draft.location.trim() || null,
-      goal_time_seconds: goalTimeSeconds || null,
+      goal_time_seconds: draft.goal_time_seconds || null,
       notes: draft.notes.trim() || null,
       status: race.status || 'upcoming',
     }
@@ -153,11 +120,19 @@ export default function RaceEditSheet({ race, onClose, onSave, saving = false, s
               <input type="number" min="0.1" max="100" step="0.1" inputMode="decimal" value={draft.distance_miles} onChange={update('distance_miles')} style={inputStyle()} />
             </label>
           </div>
-          <label style={{ display: 'grid', gap: 6 }}>
+          <div style={{ display: 'grid', gap: 6 }}>
             <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-primary)', fontSize: 13, fontWeight: 850 }}><Clock3 size={15} color="var(--accent)" /> Goal time</span>
-            <input value={draft.goal_time} onChange={update('goal_time')} inputMode="numeric" placeholder="1:30:00" aria-describedby="goal-time-help" style={inputStyle()} />
-            <span id="goal-time-help" style={{ color: 'var(--text-muted)', fontSize: 11 }}>Leave blank for no time target. Examples: 1:30:00 or 90.</span>
-          </label>
+            <DurationPicker
+              value={draft.goal_time_seconds}
+              onChange={(value) => {
+                setError('')
+                setDraft((current) => ({ ...current, goal_time_seconds: value }))
+              }}
+              disabled={saving}
+              idPrefix="race-goal"
+            />
+            {!draft.goal_time_seconds && <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>No time target selected.</span>}
+          </div>
           <label style={{ display: 'grid', gap: 6 }}>
             <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-primary)', fontSize: 13, fontWeight: 850 }}><MapPin size={15} color="var(--accent)" /> Location</span>
             <input value={draft.location} onChange={update('location')} maxLength={200} placeholder="City, state or country" style={inputStyle()} />

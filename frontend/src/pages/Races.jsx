@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useProContext } from '../context/ProContext'
+import DurationPicker from '../components/DurationPicker'
 import api from '../lib/api'
 import { RACE_DISTANCE_OPTIONS, STANDARD_RACE_DISTANCES } from '../lib/raceDistances'
 
@@ -159,7 +160,7 @@ export default function Races() {
   const navigate = useNavigate()
   const { isPro } = useProContext()
   const [races, setRaces] = useState([])
-  const [form, setForm] = useState({ race_name: '', race_date: '', distance_key: '5K', distance_miles: RACE_DISTANCE_OPTIONS['5K'], location: '', goal_time: '' })
+  const [form, setForm] = useState({ race_name: '', race_date: '', distance_key: '5K', distance_miles: RACE_DISTANCE_OPTIONS['5K'], location: '', goal_time_seconds: 0 })
   const [catalogForm, setCatalogForm] = useState({ q: '', distance: '', month: '', state: '' })
   const [catalogRaces, setCatalogRaces] = useState([])
   const [catalogSearched, setCatalogSearched] = useState(false)
@@ -183,19 +184,18 @@ export default function Races() {
 
   const submit = async (e) => {
     e.preventDefault()
-    const goal_time_seconds = form.goal_time ? form.goal_time.split(':').reduce((acc, v) => acc * 60 + Number(v), 0) : null
     const payload = {
       race_name: form.race_name,
       race_date: form.race_date,
       distance_miles: Number(form.distance_miles),
       location: form.location,
-      goal_time_seconds,
+      goal_time_seconds: form.goal_time_seconds || null,
     }
     const res = await api.post('/races', payload)
     setMessage('Race added')
     const race = res.data.race
     setPlanPromptRace(race)
-    setForm({ race_name: '', race_date: '', distance_key: '5K', distance_miles: RACE_DISTANCE_OPTIONS['5K'], location: '', goal_time: '' })
+    setForm({ race_name: '', race_date: '', distance_key: '5K', distance_miles: RACE_DISTANCE_OPTIONS['5K'], location: '', goal_time_seconds: 0 })
     load()
   }
 
@@ -404,7 +404,10 @@ export default function Races() {
           <input type="number" min="0.1" max="100" step="0.1" className="rounded-lg px-3 py-2" style={{ background: 'var(--bg-input)' }} placeholder="Miles" value={form.distance_miles} onChange={(e) => setForm({ ...form, distance_miles: e.target.value })} required />
         </div>
         <input className="w-full rounded-lg px-3 py-2" style={{ background: 'var(--bg-input)' }} placeholder="Location" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} />
-        <input className="w-full rounded-lg px-3 py-2" style={{ background: 'var(--bg-input)' }} placeholder="Goal time (hh:mm:ss)" value={form.goal_time} onChange={(e) => setForm({ ...form, goal_time: e.target.value })} />
+        <div className="space-y-1">
+          <p className="text-xs font-bold" style={{ color: 'var(--text-muted)' }}>Goal time</p>
+          <DurationPicker value={form.goal_time_seconds} onChange={(value) => setForm((current) => ({ ...current, goal_time_seconds: value }))} idPrefix="new-race-goal" />
+        </div>
         <button className="rounded-lg px-4 py-2 font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>Save Race</button>
         {message && <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{message}</p>}
       </form>
