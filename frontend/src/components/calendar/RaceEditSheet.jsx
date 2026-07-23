@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { CalendarDays, Clock3, MapPin, X } from 'lucide-react'
+import { activateModalDialog } from '../../lib/modalDialog'
 
 function localTodayISO() {
   const now = new Date()
@@ -74,26 +75,12 @@ export default function RaceEditSheet({ race, onClose, onSave, saving = false, s
   )
 
   useEffect(() => {
-    const previousOverflow = document.body.style.overflow
-    const previousFocus = document.activeElement
-    const handleKeyDown = (event) => {
-      if (event.key === 'Escape' && !saving) onClose?.()
-      if (event.key !== 'Tab') return
-      const focusable = Array.from(dialogRef.current?.querySelectorAll('button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])') || [])
-      if (!focusable.length) return
-      const first = focusable[0]
-      const last = focusable[focusable.length - 1]
-      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus() }
-      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
-    }
-    document.body.style.overflow = 'hidden'
-    document.addEventListener('keydown', handleKeyDown)
-    dialogRef.current?.focus()
-    return () => {
-      document.body.style.overflow = previousOverflow
-      document.removeEventListener('keydown', handleKeyDown)
-      previousFocus?.focus?.()
-    }
+    return activateModalDialog({
+      dialog: dialogRef.current,
+      onClose: () => {
+        if (!saving) onClose?.()
+      },
+    })
   }, [onClose, saving])
 
   const update = (field) => (event) => {

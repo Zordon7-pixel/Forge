@@ -35,6 +35,7 @@ assert.match(raceEditor, /Goal time/, 'race editor exposes the goal-time control
 assert.match(raceEditor, /race_name:[\s\S]*race_date:[\s\S]*distance_miles:[\s\S]*goal_time_seconds:/, 'race editor submits the editable race identity and goal')
 assert.match(raceEditor, /race\.race_name[\s\S]*race\.race_date[\s\S]*race\.distance_miles[\s\S]*race\.goal_time_seconds[\s\S]*race\.location/, 'every race identity, course, or goal edit prompts a plan rebuild review')
 assert.match(raceEditor, /fontSize: 16/, 'race form controls avoid iOS input auto-zoom')
+assert.match(raceEditor, /activateModalDialog\([\s\S]*dialog: dialogRef\.current[\s\S]*if \(!saving\) onClose/, 'race editor uses the behavior-tested modal controller without allowing Escape during save')
 assert.match(plan, /indexRecordedRuns\(runs\)/, 'recorded runs are indexed separately from plan sessions')
 assert.match(calendar, /recordedRunsByDate\?\.get\(day\.dateISO\)/, 'week rows receive same-date recorded runs')
 assert.match(calendar, /cell\.hasRecordedRun/, 'activity-only month dates remain openable')
@@ -139,4 +140,4 @@ assert.equal(page.getAttribute('aria-hidden'), null, 'cleanup removes newly adde
 assert.equal(outsideFooter.getAttribute('aria-hidden'), 'false', 'cleanup restores an existing aria-hidden value')
 assert.equal(documentRef.activeElement, opener, 'cleanup restores focus to the opener')
 
-console.log('RACE CALENDAR ACTIVITY SMOKE OK (45)')
+console.log('RACE CALENDAR ACTIVITY SMOKE OK (46)')
