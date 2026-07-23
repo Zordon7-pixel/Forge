@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Footprints, Dumbbell, Moon, Timer, Gauge, Route, Flame, Brain,
-  Maximize2, Minimize2, Minus, Plus, ChevronLeft, CheckCircle2, Circle,
+  Maximize2, Minimize2, Minus, Plus, ChevronLeft, ChevronRight, CheckCircle2, Circle,
 } from 'lucide-react'
 import WatchWorkoutSendButton from '../WatchWorkoutSendButton'
 import AiGuidanceNote from '../AiGuidanceNote'
@@ -76,6 +76,22 @@ function formatAnchorRunDate(value) {
     : new Date(value)
   if (Number.isNaN(date.getTime())) return String(value)
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+function formatRecordedDuration(totalSeconds) {
+  const total = Math.max(0, Math.round(Number(totalSeconds) || 0))
+  const hours = Math.floor(total / 3600)
+  const minutes = Math.floor((total % 3600) / 60)
+  const seconds = total % 60
+  return hours > 0
+    ? `${hours}h ${String(minutes).padStart(2, '0')}m`
+    : `${minutes}:${String(seconds).padStart(2, '0')}`
+}
+
+function formatRecordedPace(secondsPerMile) {
+  const total = Math.round(Number(secondsPerMile) || 0)
+  if (total <= 0) return ''
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}/mi`
 }
 
 function runFacts(session) {
@@ -170,6 +186,7 @@ export default function ForgedDayView({
   onStartRun,
   onStartLift,
   onStartUnplannedRun,
+  onOpenRecordedRun,
   onBack,
   updating = false,
   isScheduledToday = true,
@@ -183,6 +200,7 @@ export default function ForgedDayView({
   const rulePx = `${Math.round(30 * scale)}px`
 
   const sessions = day?.sessions || []
+  const recordedRuns = Array.isArray(day?.activities) ? day.activities.filter((activity) => activity.kind === 'run') : []
   const runSession = sessions.find((s) => s.kind === 'run') || null
   const liftSession = sessions.find((s) => s.kind === 'lift') || null
   const isRest = !day || day.isRest
@@ -221,6 +239,50 @@ export default function ForgedDayView({
   const whyToday = firstStr(day?.whyToday, runSession?.prescription?.explanation, liftSession?.prescription?.explanation)
   const recovery = firstStr(day?.recovery, runSession?.prescription?.recovery, liftSession?.prescription?.recovery)
   const orderGuidance = firstStr(day?.orderGuidance)
+  const plannedSessionIds = new Set(sessions.map((session) => String(session.id)))
+
+  const renderRecordedRuns = () => {
+    if (!recordedRuns.length) return null
+    return (
+      <section style={{ marginTop: 16, padding: '12px 0', borderTop: '1px solid rgba(60,55,45,0.16)', borderBottom: '1px solid rgba(60,55,45,0.16)' }}>
+        <div className="flex items-center gap-2">
+          <span className="forged-stamp forged-stamp--run" data-state="completed"><Footprints size={15} /></span>
+          <div>
+            <h4 className="forged-hand" style={{ fontSize: px(17), fontWeight: 700, margin: 0 }}>Recorded on this date</h4>
+            <p style={{ fontSize: px(11), color: 'var(--ink-soft, #5A554B)', margin: '2px 0 0' }}>Saved activity stays separate from the planned prescription.</p>
+          </div>
+        </div>
+        <div style={{ display: 'grid', gap: 8, marginTop: 10 }}>
+          {recordedRuns.map((activity) => {
+            const linked = Boolean(activity.planSessionId && plannedSessionIds.has(String(activity.planSessionId)))
+            const facts = [
+              activity.distanceMiles > 0 ? `${activity.distanceMiles.toFixed(2)} mi` : null,
+              activity.durationSeconds > 0 ? formatRecordedDuration(activity.durationSeconds) : null,
+              formatRecordedPace(activity.paceSecondsPerMile),
+            ].filter(Boolean).join(' · ')
+            return (
+              <button
+                key={activity.id}
+                type="button"
+                onClick={() => onOpenRecordedRun?.(activity)}
+                disabled={typeof onOpenRecordedRun !== 'function'}
+                style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '10px 11px', textAlign: 'left', borderRadius: 8, border: '1px solid rgba(60,55,45,0.14)', background: 'rgba(255,255,255,0.28)', color: 'var(--ink, #241F18)' }}
+              >
+                <span style={{ minWidth: 0 }}>
+                  <strong style={{ display: 'block', fontSize: px(13) }}>Run complete</strong>
+                  {facts && <span style={{ display: 'block', fontSize: px(12), marginTop: 2 }}>{facts}</span>}
+                  <span style={{ display: 'block', fontSize: px(10), marginTop: 3, color: linked ? '#15803D' : '#9A3412', fontWeight: 800 }}>
+                    {linked ? 'Linked to this planned run' : 'Recorded separately from this plan'}
+                  </span>
+                </span>
+                {typeof onOpenRecordedRun === 'function' && <ChevronRight size={17} style={{ flex: '0 0 auto' }} />}
+              </button>
+            )
+          })}
+        </div>
+      </section>
+    )
+  }
 
   const renderRun = () => {
     if (!runSession) return null
@@ -422,11 +484,13 @@ export default function ForgedDayView({
         </p>
       )}
 
+      {renderRecordedRuns()}
+
       {isRest ? (
         <section style={{ marginTop: 24, textAlign: 'center' }}>
           <span className="forged-stamp forged-stamp--rest" style={{ margin: '0 auto' }}><Moon size={16} /></span>
-          <h4 className="forged-hand" style={{ fontSize: px(20), fontWeight: 700, marginTop: 10 }}>Rest day</h4>
-          <p style={{ fontSize: px(13), color: 'var(--ink-soft, #5A554B)', marginTop: 4 }}>Recover well and come back ready.</p>
+          <h4 className="forged-hand" style={{ fontSize: px(20), fontWeight: 700, marginTop: 10 }}>{day?.hasPlan === false ? 'No planned workout' : 'Planned rest day'}</h4>
+          <p style={{ fontSize: px(13), color: 'var(--ink-soft, #5A554B)', marginTop: 4 }}>{day?.hasPlan === false ? 'This recorded run was outside the active plan.' : 'Recover well and come back ready.'}</p>
           {isScheduledToday && (
             <>
               <button

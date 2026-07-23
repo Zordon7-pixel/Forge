@@ -9,6 +9,7 @@ import {
   addDays,
   startOfWeekMonday,
   countdownDays,
+  getGoal,
   getPlanMode,
   planModeLabel,
   buildWeekDays,
@@ -21,6 +22,10 @@ import {
   normalizePrescription,
   normalizeLiftExercisePrescription,
   normalizeSession,
+  normalizeRecordedRun,
+  indexRecordedRuns,
+  dayWithRecordedRuns,
+  goalWithRace,
 } from '../src/lib/planCalendar.js'
 
 let passed = 0
@@ -273,6 +278,65 @@ check('g: month grid marks scheduled dates and finds days', () => {
   // A date with no plan has no mark.
   const empty = flat.find((c) => c.dateISO === '2026-07-20')
   assert.equal(empty.mark, null)
+})
+
+check('g2: plan goal exposes race ownership and editable race truth overlays stale metadata', () => {
+  const planGoal = getGoal({ plan_data: { goal: {
+    raceId: 'race-1',
+    name: 'Old name',
+    date: '2026-10-11',
+    distanceMiles: 10,
+    goalTimeSeconds: 5400,
+    goalPaceLabel: '9:00/mi',
+    anchoredBy: { runDate: '2026-07-01' },
+  } } })
+  assert.equal(planGoal.raceId, 'race-1')
+  const updated = goalWithRace(planGoal, {
+    id: 'race-1',
+    race_name: 'Army Ten-Miler',
+    race_date: '2026-10-18',
+    distance_miles: 10,
+    goal_time_seconds: 5100,
+    location: 'Washington, DC',
+  })
+  assert.equal(updated.name, 'Army Ten-Miler')
+  assert.equal(updated.dateISO, '2026-10-18')
+  assert.equal(updated.goalTimeSeconds, 5100)
+  assert.equal(updated.goalPaceSecondsPerMile, 510)
+  assert.equal(updated.goalPaceLabel, null)
+  assert.equal(updated.anchoredBy, null)
+})
+
+check('g3: recorded runs index by real date while non-run activities stay out', () => {
+  const runsByDate = indexRecordedRuns([
+    { id: 'run-1', date: '2026-07-14', workout_type: 'Running', distance_miles: 3.11, duration_seconds: 1800 },
+    { id: 'walk-1', date: '2026-07-14', workout_type: 'Walking', distance_miles: 1 },
+  ])
+  assert.equal(runsByDate.get('2026-07-14').length, 1)
+  assert.equal(runsByDate.get('2026-07-14')[0].paceSecondsPerMile, 1800 / 3.11)
+  assert.equal(normalizeRecordedRun({ id: 'walk', date: '2026-07-14', workout_type: 'Walking' }), null)
+
+  const recordedDay = dayWithRecordedRuns(null, '2026-07-14', runsByDate)
+  assert.equal(recordedDay.hasPlan, false)
+  assert.equal(recordedDay.isRest, true)
+  assert.equal(recordedDay.activities[0].id, 'run-1')
+})
+
+check('g4: month grid marks an unplanned recorded run without inventing a plan day', () => {
+  const plan = {
+    weeks: 1,
+    plan_data: { planMode: 'run_only', weeks: [{ week: 1, startDate: '2026-07-13', days: [] }] },
+  }
+  const model = buildCalendarModel(plan, {}, { now: WEEK_START })
+  const recordedRunsByDate = indexRecordedRuns([
+    { id: 'extra', date: '2026-07-20', workout_type: 'Running', distance_miles: 2, duration_seconds: 1200 },
+  ])
+  const grid = buildMonthGrid(model, '2026-07-13', { todayISO: '2026-07-14', recordedRunsByDate })
+  const cell = grid.rows.flat().find((item) => item.dateISO === '2026-07-20')
+  assert.equal(cell.hasPlan, false)
+  assert.equal(cell.hasRecordedRun, true)
+  assert.equal(cell.mark, 'run')
+  assert.equal(cell.state, 'recorded')
 })
 
 // ---------------------------------------------------------------------------

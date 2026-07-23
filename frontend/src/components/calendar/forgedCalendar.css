@@ -149,6 +149,7 @@
 .forged-day-main { min-width: 0; flex: 1; display: grid; gap: 3px; }
 .forged-day-title { font-size: 13px; font-weight: 700; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .forged-day-sub { font-size: 11px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.forged-day-recorded { font-size: 10px; font-weight: 800; color: var(--success); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .forged-day-stamps { display: flex; gap: 6px; flex: 0 0 auto; }
 
 /* Today primary action pinned under the header */
@@ -209,6 +210,7 @@
 .forged-mark-dot--hybrid { background: linear-gradient(90deg, var(--fc-run) 50%, var(--fc-lift) 50%); }
 .forged-mark-dot--rest { background: transparent; border: 1px dashed var(--fc-rest); }
 .forged-month-cell[data-state="completed"] .forged-mark-dot { outline: 1.5px solid var(--fc-done); outline-offset: 1px; }
+.forged-month-cell[data-state="recorded"] .forged-mark-dot { outline: 1.5px solid var(--success); outline-offset: 1px; }
 .forged-month-cell[data-state="adjusted"] .forged-mark-dot { outline: 1.5px solid var(--fc-adjust); outline-offset: 1px; }
 
 /* ---- Day paper sheet ---- */

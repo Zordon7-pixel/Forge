@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from 'react'
 import {
-  Footprints, Dumbbell, Moon, ChevronDown, ChevronLeft, ChevronRight, ChevronRight as OpenIcon,
+  Footprints, Dumbbell, Moon, ChevronDown, ChevronLeft, ChevronRight, ChevronRight as OpenIcon, Pencil,
 } from 'lucide-react'
 import {
   buildMonthGrid, addMonths, dayMarks, dayStatus, countdownDays, WEEKDAYS,
@@ -145,12 +145,24 @@ function Stamp({ kind, state, small }) {
   )
 }
 
-function WeekRow({ day, isToday, completedSet, onOpen }) {
+function recordedRunSummary(activities = []) {
+  if (!activities.length) return ''
+  const totalMiles = activities.reduce((sum, activity) => sum + Number(activity.distanceMiles || 0), 0)
+  const runLabel = activities.length === 1 ? 'Recorded run' : `${activities.length} recorded runs`
+  return totalMiles > 0 ? `${runLabel} · ${totalMiles.toFixed(2)} mi` : runLabel
+}
+
+function WeekRow({ day, isToday, completedSet, recordedRuns = [], onOpen }) {
   const marks = dayMarks(day, completedSet)
   const status = dayStatus(day, completedSet)
   const runSession = day.sessions.find((s) => s.kind === 'run')
   const liftSession = day.sessions.find((s) => s.kind === 'lift')
-  const title = day.isRest
+  const hasRecordedRun = recordedRuns.length > 0
+  const plannedIds = new Set(day.sessions.map((session) => String(session.id)))
+  const unlinkedRun = recordedRuns.some((activity) => !activity.planSessionId || !plannedIds.has(String(activity.planSessionId)))
+  const title = day.isRest && hasRecordedRun
+    ? 'Recorded run'
+    : day.isRest
     ? 'Rest day'
     : [runSession?.title, liftSession?.title].filter(Boolean).join(' + ') || 'Session'
   const runTarget = runSession?.prescriptionBasis === 'time' && runSession.durationMinutes > 0
@@ -158,7 +170,9 @@ function WeekRow({ day, isToday, completedSet, onOpen }) {
     : runSession && runSession.distanceMiles > 0
       ? `${runSession.distanceIsEstimate ? '~' : ''}${runSession.distanceMiles.toFixed(1)} mi`
       : (runSession ? 'Run' : '')
-  const sub = day.isRest
+  const sub = day.isRest && hasRecordedRun
+    ? `${recordedRunSummary(recordedRuns).replace(/^Recorded run · /, '')}${unlinkedRun ? ' · Not scheduled' : ''}`
+    : day.isRest
     ? 'Recover'
     : [
         runTarget,
@@ -169,7 +183,7 @@ function WeekRow({ day, isToday, completedSet, onOpen }) {
       type="button"
       className="forged-day-row"
       data-today={isToday || undefined}
-      data-rest={day.isRest || undefined}
+      data-rest={(day.isRest && !hasRecordedRun) || undefined}
       data-status={status}
       onClick={() => onOpen(day)}
     >
@@ -180,9 +194,14 @@ function WeekRow({ day, isToday, completedSet, onOpen }) {
       <span className="forged-day-main">
         <span className="forged-day-title">{title}</span>
         <span className="forged-day-sub">{sub || (isToday ? 'Today' : 'Planned')}</span>
+        {!day.isRest && hasRecordedRun && (
+          <span className="forged-day-recorded">{recordedRunSummary(recordedRuns)}{unlinkedRun ? ' · Not linked to plan' : ''}</span>
+        )}
       </span>
       <span className="forged-day-stamps">
-        {day.isRest
+        {day.isRest && hasRecordedRun
+          ? <Stamp kind="run" state="completed" small />
+          : day.isRest
           ? <Stamp kind="rest" small />
           : marks.map((m) => <Stamp key={m.id} kind={m.kind} state={m.state} small />)}
       </span>
@@ -200,6 +219,8 @@ export default function ForgedCalendar({
   onNextWeek,
   onOpenDay,
   onOpenToday,
+  onEditGoal,
+  recordedRunsByDate,
   canPrev,
   canNext,
 }) {
@@ -220,8 +241,8 @@ export default function ForgedCalendar({
   const anchorRunDate = formatAnchorRunDate(anchoredBy?.runDate)
 
   const monthGrid = useMemo(
-    () => (view === 'month' ? buildMonthGrid(model, monthAnchor, { todayISO, completedSet }) : null),
-    [view, model, monthAnchor, todayISO, completedSet],
+    () => (view === 'month' ? buildMonthGrid(model, monthAnchor, { todayISO, completedSet, recordedRunsByDate }) : null),
+    [view, model, monthAnchor, todayISO, completedSet, recordedRunsByDate],
   )
 
   const todayInWeek = useMemo(
@@ -252,9 +273,16 @@ export default function ForgedCalendar({
       <div className="rounded-lg p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
         <div className="forged-cal-header">
           <div style={{ minWidth: 0 }}>
-            <h2 className="text-lg font-bold" style={{ color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {goal.name || 'Training plan'}
-            </h2>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+              {typeof onEditGoal === 'function' ? (
+                <button type="button" onClick={onEditGoal} aria-label={`Edit ${goal.name || 'upcoming race'}`} title="Edit upcoming race" style={{ minWidth: 0, display: 'flex', alignItems: 'center', gap: 8, padding: 0, border: 0, background: 'transparent', color: 'var(--text-primary)', textAlign: 'left' }}>
+                  <h2 className="text-lg font-bold" style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{goal.name || 'Training plan'}</h2>
+                  <span style={{ flex: '0 0 auto', width: 32, height: 32, display: 'grid', placeItems: 'center', borderRadius: 8, background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--accent)' }}><Pencil size={15} /></span>
+                </button>
+              ) : (
+                <h2 className="text-lg font-bold" style={{ color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis' }}>{goal.name || 'Training plan'}</h2>
+              )}
+            </div>
             <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
               {[
                 phase ? `${phase} phase` : null,
@@ -350,6 +378,7 @@ export default function ForgedCalendar({
                 day={day}
                 isToday={day.dateISO === todayISO}
                 completedSet={completedSet}
+                recordedRuns={recordedRunsByDate?.get(day.dateISO) || []}
                 onOpen={onOpenDay}
               />
             ))}
@@ -409,7 +438,7 @@ export default function ForgedCalendar({
                     data-state={cell.state || undefined}
                     onClick={() => {
                       const day = model?.findDayByDate(cell.dateISO)
-                      if (day) onOpenDay(day)
+                      if (day || cell.hasRecordedRun) onOpenDay(day || { dateISO: cell.dateISO })
                     }}
                     aria-label={`${cell.dateISO}${cell.mark ? ` ${cell.mark}` : ''}`}
                   >

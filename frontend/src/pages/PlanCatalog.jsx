@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { CalendarDays, ChevronRight, MapPin, Search, X } from 'lucide-react'
 import api from '../lib/api'
 import { useProContext } from '../context/ProContext'
@@ -113,6 +113,8 @@ function weeksToRace(value) {
 
 export default function PlanCatalog() {
   const navigate = useNavigate()
+  const location = useLocation()
+  const requestedRaceHandledRef = useRef(false)
   const { isPro, loading: proLoading } = useProContext()
   const todayISO = localTodayISO()
   const [selectedGoal, setSelectedGoal] = useState(null)
@@ -237,6 +239,17 @@ export default function PlanCatalog() {
     })
     await loadPrefill()
   }
+
+  useEffect(() => {
+    const requestedRaceId = location.state?.raceId
+    if (!requestedRaceId || requestedRaceHandledRef.current || !savedRaces.length) return
+    const race = savedRaces.find((item) => String(item.id) === String(requestedRaceId))
+    requestedRaceHandledRef.current = true
+    navigate(location.pathname, { replace: true, state: null })
+    if (race) void openRace(race, 'owned')
+    // openRace intentionally runs once for the navigation state handoff.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.pathname, location.state?.raceId, navigate, savedRaces])
 
   const searchRaces = async (event) => {
     event.preventDefault()

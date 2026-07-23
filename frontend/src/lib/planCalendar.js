@@ -8,6 +8,8 @@
 // 'YYYY-MM-DD' to `new Date()` (which parses as UTC and drifts a day), and day
 // arithmetic uses the local Date(y, m, d + n) constructor which is DST-safe.
 
+import { isRunningActivity } from './activityType.js'
+
 export const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
 const DAY_NAME_TO_INDEX = {
@@ -137,6 +139,7 @@ export function getGoal(plan) {
   const goalTimeSeconds = Number(goal.goalTimeSeconds || goal.goal_time_seconds || 0) || null
   const derivedPace = goalTimeSeconds && distanceMiles ? Math.round(goalTimeSeconds / distanceMiles) : null
   return {
+    raceId: goal.raceId || goal.race_id || data.raceId || data.race_id || null,
     name: goal.name || data.raceName || plan?.name || null,
     dateISO: dateISO || null,
     distanceMiles,
@@ -149,6 +152,34 @@ export function getGoal(plan) {
     paceContext: goal.paceContext || null,
     anchorState: data.anchorState || goal.anchorState || plan?.anchorState || null,
     anchoredBy: data.anchoredBy || goal.anchoredBy || plan?.anchoredBy || null,
+  }
+}
+
+// Race rows remain the editable source of truth. Overlay them on the persisted
+// plan goal for display without pretending the existing workout calendar was
+// regenerated from an edited date, distance, or target.
+export function goalWithRace(goal = {}, race = null) {
+  if (!race) return goal
+  const distanceMiles = Number(race.distance_miles || 0) || null
+  const goalTimeSeconds = Number(race.goal_time_seconds || 0) || null
+  const goalChanged = Number(goal.distanceMiles || 0) !== Number(distanceMiles || 0)
+    || Number(goal.goalTimeSeconds || 0) !== Number(goalTimeSeconds || 0)
+  const derivedPace = goalTimeSeconds && distanceMiles
+    ? Math.round(goalTimeSeconds / distanceMiles)
+    : null
+  return {
+    ...goal,
+    raceId: race.id || goal.raceId || null,
+    name: race.race_name || goal.name || null,
+    dateISO: race.race_date || goal.dateISO || null,
+    distanceMiles,
+    location: race.location || null,
+    goalTimeSeconds,
+    goalTimeSource: goalChanged ? (goalTimeSeconds ? 'user' : null) : goal.goalTimeSource,
+    goalPaceSecondsPerMile: derivedPace,
+    goalPaceLabel: goalChanged ? null : goal.goalPaceLabel,
+    paceContext: goalChanged ? null : goal.paceContext,
+    anchoredBy: goalChanged ? null : goal.anchoredBy,
   }
 }
 
@@ -297,6 +328,61 @@ export function normalizeSession(rawSession, context = {}) {
   }
 }
 
+// Normalize real run rows for calendar overlays. These are deliberately kept
+// separate from plan sessions: recording a run does not prove that a specific
+// scheduled workout was completed unless the saved plan_session_id says so.
+export function normalizeRecordedRun(activity = {}) {
+  if (!activity?.id || !isRunningActivity(activity)) return null
+  const dateValue = activity.date || activity.started_at || activity.start_time || activity.created_at
+  const dateISO = toISODate(parseLocalDate(dateValue))
+  if (!dateISO) return null
+  const distanceMiles = Number(activity.distance_miles || 0) || 0
+  const durationSeconds = Number(activity.duration_seconds || 0) || 0
+  return {
+    id: String(activity.id),
+    kind: 'run',
+    title: 'Recorded run',
+    dateISO,
+    distanceMiles,
+    durationSeconds,
+    paceSecondsPerMile: distanceMiles > 0 && durationSeconds > 0 ? durationSeconds / distanceMiles : null,
+    planSessionId: activity.plan_session_id != null ? String(activity.plan_session_id) : null,
+    source: activity.import_source || activity.source || activity.watch_source || activity.watch_mode || null,
+    raw: activity,
+  }
+}
+
+export function indexRecordedRuns(activities = []) {
+  const byDate = new Map()
+  for (const activity of activities) {
+    const normalized = normalizeRecordedRun(activity)
+    if (!normalized) continue
+    const existing = byDate.get(normalized.dateISO) || []
+    existing.push(normalized)
+    byDate.set(normalized.dateISO, existing)
+  }
+  return byDate
+}
+
+export function dayWithRecordedRuns(dayModel, dateISO, recordedRunsByDate) {
+  const activities = recordedRunsByDate?.get(dateISO) || []
+  if (dayModel) return { ...dayModel, activities, hasPlan: true }
+  if (!activities.length) return null
+  const date = parseLocalDate(dateISO)
+  const slot = date ? (date.getDay() + 6) % 7 : 0
+  return {
+    slot,
+    dayLabel: WEEKDAYS[slot],
+    dateISO,
+    date,
+    sessions: [],
+    activities,
+    isRest: true,
+    hasPlan: false,
+    status: 'recorded',
+  }
+}
+
 export function sessionState(session, completedSet) {
   if (!session) return 'rest'
   if (session.kind === 'rest') return 'rest'
@@ -438,6 +524,16 @@ export function monthMark(dayModel) {
   return 'rest'
 }
 
+export function monthMarkWithRecordedRuns(dayModel, activities = []) {
+  const hasRecordedRun = activities.some((activity) => activity.kind === 'run')
+  const hasRun = dayHasRun(dayModel) || hasRecordedRun
+  const hasLift = dayHasLift(dayModel)
+  if (hasRun && hasLift) return 'hybrid'
+  if (hasLift) return 'lift'
+  if (hasRun) return 'run'
+  return dayModel ? 'rest' : null
+}
+
 // ---------------------------------------------------------------------------
 // Full calendar model
 // ---------------------------------------------------------------------------
@@ -500,14 +596,16 @@ export function buildMonthGrid(model, anchorISO, options = {}) {
       const cellDate = addDays(gridStart, week * 7 + day)
       const iso = toISODate(cellDate)
       const dayModel = model?.findDayByDate ? model.findDayByDate(iso) : null
+      const recordedRuns = options.recordedRunsByDate?.get(iso) || []
       cells.push({
         dateISO: iso,
         dayOfMonth: cellDate.getDate(),
         inMonth: cellDate.getMonth() === month,
         isToday: iso === nowISO,
-        mark: dayModel ? monthMark(dayModel) : null,
-        state: dayModel ? dayStatus(dayModel, options.completedSet) : null,
+        mark: monthMarkWithRecordedRuns(dayModel, recordedRuns),
+        state: recordedRuns.length ? 'recorded' : dayModel ? dayStatus(dayModel, options.completedSet) : null,
         hasPlan: Boolean(dayModel),
+        hasRecordedRun: recordedRuns.length > 0,
       })
     }
     rows.push(cells)

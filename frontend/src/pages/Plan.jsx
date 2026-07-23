@@ -7,7 +7,10 @@ import ProGate from '../components/ProGate'
 import AiGuidanceNote from '../components/AiGuidanceNote'
 import ForgedCalendar from '../components/calendar/ForgedCalendar'
 import ForgedDayView from '../components/calendar/ForgedDayView'
-import { buildCalendarModel, todayISO } from '../lib/planCalendar'
+import RaceEditSheet from '../components/calendar/RaceEditSheet'
+import {
+  buildCalendarModel, dayWithRecordedRuns, goalWithRace, indexRecordedRuns, todayISO,
+} from '../lib/planCalendar'
 
 const RoutePlanner = lazy(() => import('../components/RoutePlanner'))
 
@@ -27,6 +30,12 @@ export default function Plan() {
   const [manageOpen, setManageOpen] = useState(false)
   const [adaptationOpen, setAdaptationOpen] = useState(false)
   const [routePlannerStatus, setRoutePlannerStatus] = useState({ available: false, requiresPro: false })
+  const [races, setRaces] = useState([])
+  const [runs, setRuns] = useState([])
+  const [raceEditorOpen, setRaceEditorOpen] = useState(false)
+  const [raceSaving, setRaceSaving] = useState(false)
+  const [raceSaveError, setRaceSaveError] = useState('')
+  const [raceSaveNotice, setRaceSaveNotice] = useState(null)
 
   const loadAll = async ({ includeAdaptation = true } = {}) => {
     setLoading(true)
@@ -36,6 +45,18 @@ export default function Plan() {
       const nextPlan = myRes.data?.plan || null
       setMyPlan(nextPlan)
       setMyUserPlan(myRes.data?.user_plan || null)
+      const [racesRes, runsRes] = await Promise.all([
+        api.get('/races').catch((err) => {
+          console.error('[Plan] race list load failed:', err?.message || err)
+          return null
+        }),
+        api.get('/runs').catch((err) => {
+          console.error('[Plan] recorded runs load failed:', err?.message || err)
+          return null
+        }),
+      ])
+      if (racesRes) setRaces(Array.isArray(racesRes.data?.races) ? racesRes.data.races : [])
+      if (runsRes) setRuns(Array.isArray(runsRes.data) ? runsRes.data : Array.isArray(runsRes.data?.runs) ? runsRes.data.runs : [])
       if (includeAdaptation) setAdaptationProposal(null)
       const isSchemaV2 = Number(nextPlan?.plan_data?.schemaVersion || 0) === 2
       if (isSchemaV2 && includeAdaptation) {
@@ -101,14 +122,32 @@ export default function Plan() {
     () => (myPlan ? buildCalendarModel(myPlan, myUserPlan) : null),
     [myPlan, myUserPlan],
   )
+  const recordedRunsByDate = useMemo(() => indexRecordedRuns(runs), [runs])
+  const activeRace = useMemo(() => {
+    if (!model?.goal) return null
+    if (model.goal.raceId) {
+      const exact = races.find((race) => String(race.id) === String(model.goal.raceId))
+      if (exact) return exact
+    }
+    const normalizedGoalName = String(model.goal.name || '').trim().toLowerCase()
+    return races.find((race) => (
+      race.race_date === model.goal.dateISO
+      && String(race.race_name || '').trim().toLowerCase() === normalizedGoalName
+    )) || null
+  }, [model, races])
+  const calendarModel = useMemo(() => (
+    model && activeRace ? { ...model, goal: goalWithRace(model.goal, activeRace) } : model
+  ), [model, activeRace])
   const isActiveSchemaV2 = Number(myPlan?.plan_data?.schemaVersion || 0) === 2
-  const weekCount = Number(myPlan?.weeks || model?.weekCount || 0)
+  const weekCount = Number(myPlan?.weeks || calendarModel?.weekCount || 0)
 
   // Derive the selected day from the live model so completion toggles stay fresh
   // across reloads (we store the ISO date, not a stale day object).
   const selectedDay = useMemo(
-    () => (selectedDayISO && model ? model.findDayByDate(selectedDayISO) : null),
-    [selectedDayISO, model],
+    () => (selectedDayISO && calendarModel
+      ? dayWithRecordedRuns(calendarModel.findDayByDate(selectedDayISO), selectedDayISO, recordedRunsByDate)
+      : null),
+    [selectedDayISO, calendarModel, recordedRunsByDate],
   )
   const selectedRunSession = useMemo(
     () => selectedDay?.sessions?.find((session) => session.kind === 'run') || null,
@@ -124,9 +163,9 @@ export default function Plan() {
     }
   }, [selectedRunSession])
   const selectedPhase = useMemo(() => {
-    if (!selectedDay || !model) return null
-    return model.phaseForWeek(selectedDay.weekIndex)
-  }, [selectedDay, model])
+    if (!selectedDay || !calendarModel || !Number.isInteger(selectedDay.weekIndex)) return null
+    return calendarModel.phaseForWeek(selectedDay.weekIndex)
+  }, [selectedDay, calendarModel])
 
   const toggleSession = async (sessionId) => {
     if (!sessionId) return
@@ -230,6 +269,27 @@ export default function Plan() {
     navigate('/log-run?tab=manual&intent=rest-day')
   }
 
+  const saveRace = async (payload, { affectsPlan } = {}) => {
+    if (!activeRace?.id) return
+    setRaceSaving(true)
+    setRaceSaveError('')
+    try {
+      const { data } = await api.patch(`/races/${encodeURIComponent(activeRace.id)}`, payload)
+      const updated = data?.race
+      if (!updated) throw new Error('Race update did not return the saved race.')
+      setRaces((current) => current.map((race) => String(race.id) === String(updated.id) ? updated : race))
+      setRaceEditorOpen(false)
+      setRaceSaveNotice(affectsPlan
+        ? { raceId: updated.id, affectsPlan: true, message: 'Race saved. Review your training days before rebuilding workouts for the new target.' }
+        : { raceId: updated.id, affectsPlan: false, message: 'Race details saved.' })
+    } catch (err) {
+      console.error('[Plan] race update failed:', err?.message || err)
+      setRaceSaveError(err?.response?.data?.error || err?.message || 'Could not update this race.')
+    } finally {
+      setRaceSaving(false)
+    }
+  }
+
   if (loading) {
     return (
       <ProGate isPro={isPro} loading={proLoading} message="Adaptive training plans are a Pro feature">
@@ -238,7 +298,7 @@ export default function Plan() {
     )
   }
 
-  const course = model?.goal?.course || myPlan?.plan_data?.goal?.course || null
+  const course = calendarModel?.goal?.course || myPlan?.plan_data?.goal?.course || null
   const planInputs = myPlan?.plan_data?.inputSummary || null
   const trainingEvidence = Array.isArray(myPlan?.plan_data?.trainingEvidence)
     ? myPlan.plan_data.trainingEvidence
@@ -397,16 +457,17 @@ export default function Plan() {
         )}
 
         {/* Active plan: the Forged Training Calendar is primary */}
-        {myPlan && model && (
+        {myPlan && calendarModel && (
           selectedDay ? (
             <ForgedDayView
               day={selectedDay}
-              planContext={{ goal: model.goal, mode: model.mode, modeLabel: model.modeLabel, phase: selectedPhase, inputSummary: planInputs, trainingEvidence }}
+              planContext={{ goal: calendarModel.goal, mode: calendarModel.mode, modeLabel: calendarModel.modeLabel, phase: selectedPhase, inputSummary: planInputs, trainingEvidence }}
               completedSet={completedSet}
               onToggleComplete={toggleSession}
               onStartRun={startRunSession}
               onStartLift={startLiftSession}
               onStartUnplannedRun={startUnplannedRun}
+              onOpenRecordedRun={(activity) => navigate(`/history?runId=${encodeURIComponent(activity.id)}`)}
               onBack={() => setSelectedDayISO(null)}
               updating={updating}
               isScheduledToday={selectedDay.dateISO === today}
@@ -425,18 +486,35 @@ export default function Plan() {
           ) : (
             <>
               <ForgedCalendar
-                model={model}
+                model={calendarModel}
                 currentWeekIndex={weekIndex}
                 weekCount={weekCount}
                 completedSet={completedSet}
                 todayISO={today}
+                recordedRunsByDate={recordedRunsByDate}
                 onPrevWeek={() => goToWeek(Math.max(1, currentWeek - 1))}
                 onNextWeek={() => goToWeek(Math.min(weekCount || currentWeek, currentWeek + 1))}
                 onOpenDay={(day) => setSelectedDayISO(day.dateISO)}
                 onOpenToday={(day) => setSelectedDayISO(day.dateISO)}
+                onEditGoal={activeRace ? () => {
+                  setRaceSaveError('')
+                  setRaceSaveNotice(null)
+                  setRaceEditorOpen(true)
+                } : null}
                 canPrev={currentWeek > 1 && !updating}
                 canNext={currentWeek < (weekCount || currentWeek) && !updating}
               />
+
+              {raceSaveNotice && (
+                <div role="status" className="rounded-lg p-3" style={{ marginTop: 12, background: raceSaveNotice.affectsPlan ? 'var(--accent-dim)' : 'rgba(22,163,74,0.12)', border: '1px solid var(--border-subtle)' }}>
+                  <p className="text-sm" style={{ color: 'var(--text-primary)', margin: 0 }}>{raceSaveNotice.message}</p>
+                  {raceSaveNotice.affectsPlan && (
+                    <button type="button" onClick={() => navigate('/plan-catalog', { state: { raceId: raceSaveNotice.raceId } })} style={{ marginTop: 8, padding: 0, border: 0, background: 'transparent', color: 'var(--accent)', fontSize: 12, fontWeight: 900 }}>
+                      Review and rebuild calendar →
+                    </button>
+                  )}
+                </div>
+              )}
 
               {adaptationPanel}
 
@@ -468,6 +546,21 @@ export default function Plan() {
               </div>
             </>
           )
+        )}
+
+        {raceEditorOpen && activeRace && (
+          <RaceEditSheet
+            key={`${activeRace.id}-${activeRace.updated_at || ''}`}
+            race={activeRace}
+            saving={raceSaving}
+            serverError={raceSaveError}
+            onClose={() => {
+              if (raceSaving) return
+              setRaceSaveError('')
+              setRaceEditorOpen(false)
+            }}
+            onSave={saveRace}
+          />
         )}
       </div>
     </ProGate>
