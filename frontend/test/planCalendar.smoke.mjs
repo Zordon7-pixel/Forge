@@ -14,6 +14,7 @@ import {
   planModeLabel,
   buildWeekDays,
   buildCalendarModel,
+  calendarDateRange,
   buildMonthGrid,
   dayHasLift,
   dayMarks,
@@ -289,6 +290,7 @@ check('g2: plan goal exposes race ownership and editable race truth overlays sta
     goalTimeSeconds: 5400,
     goalPaceLabel: '9:00/mi',
     anchoredBy: { runDate: '2026-07-01' },
+    course: { state: 'verified', elevationGainFt: 620 },
   } } })
   assert.equal(planGoal.raceId, 'race-1')
   const updated = goalWithRace(planGoal, {
@@ -305,6 +307,7 @@ check('g2: plan goal exposes race ownership and editable race truth overlays sta
   assert.equal(updated.goalPaceSecondsPerMile, 510)
   assert.equal(updated.goalPaceLabel, null)
   assert.equal(updated.anchoredBy, null)
+  assert.equal(updated.course, null)
 })
 
 check('g3: recorded runs index by real date while non-run activities stay out', () => {
@@ -337,6 +340,18 @@ check('g4: month grid marks an unplanned recorded run without inventing a plan d
   assert.equal(cell.hasRecordedRun, true)
   assert.equal(cell.mark, 'run')
   assert.equal(cell.state, 'recorded')
+})
+
+check('g5: active calendar range is bounded to plan dates and includes today', () => {
+  const plan = {
+    weeks: 1,
+    plan_data: { planMode: 'run_only', weeks: [{ week: 1, startDate: '2026-07-13', days: [] }] },
+  }
+  const model = buildCalendarModel(plan, {}, { now: WEEK_START })
+  assert.deepEqual(calendarDateRange(model, '2026-07-22'), {
+    start_date: '2026-07-13',
+    end_date: '2026-07-22',
+  })
 })
 
 // ---------------------------------------------------------------------------

@@ -152,6 +152,7 @@ export function getGoal(plan) {
     paceContext: goal.paceContext || null,
     anchorState: data.anchorState || goal.anchorState || plan?.anchorState || null,
     anchoredBy: data.anchoredBy || goal.anchoredBy || plan?.anchoredBy || null,
+    course: goal.course || data.course || null,
   }
 }
 
@@ -162,6 +163,10 @@ export function goalWithRace(goal = {}, race = null) {
   if (!race) return goal
   const distanceMiles = Number(race.distance_miles || 0) || null
   const goalTimeSeconds = Number(race.goal_time_seconds || 0) || null
+  const identityChanged = String(goal.name || '').trim().toLowerCase() !== String(race.race_name || '').trim().toLowerCase()
+    || String(goal.dateISO || '') !== String(race.race_date || '')
+    || Number(goal.distanceMiles || 0) !== Number(distanceMiles || 0)
+  const courseInvalidated = identityChanged || race.course_intelligence?.trusted === false
   const goalChanged = Number(goal.distanceMiles || 0) !== Number(distanceMiles || 0)
     || Number(goal.goalTimeSeconds || 0) !== Number(goalTimeSeconds || 0)
   const derivedPace = goalTimeSeconds && distanceMiles
@@ -180,6 +185,7 @@ export function goalWithRace(goal = {}, race = null) {
     goalPaceLabel: goalChanged ? null : goal.goalPaceLabel,
     paceContext: goalChanged ? null : goal.paceContext,
     anchoredBy: goalChanged ? null : goal.anchoredBy,
+    course: courseInvalidated ? null : goal.course,
   }
 }
 
@@ -577,6 +583,16 @@ export function buildCalendarModel(plan, userPlan, options = {}) {
     findDayByDate: (dateISO) => daysByDate.get(dateISO) || null,
     daysByDate,
   }
+}
+
+export function calendarDateRange(model, includeISO = null) {
+  const dates = model?.daysByDate instanceof Map
+    ? [...model.daysByDate.keys()].filter(Boolean)
+    : []
+  if (includeISO && /^\d{4}-\d{2}-\d{2}$/.test(includeISO)) dates.push(includeISO)
+  if (!dates.length) return null
+  dates.sort()
+  return { start_date: dates[0], end_date: dates[dates.length - 1] }
 }
 
 // Quiet Month overview grid: six Monday-anchored rows covering the month that

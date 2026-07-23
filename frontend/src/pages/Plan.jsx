@@ -9,7 +9,7 @@ import ForgedCalendar from '../components/calendar/ForgedCalendar'
 import ForgedDayView from '../components/calendar/ForgedDayView'
 import RaceEditSheet from '../components/calendar/RaceEditSheet'
 import {
-  buildCalendarModel, dayWithRecordedRuns, goalWithRace, indexRecordedRuns, todayISO,
+  buildCalendarModel, calendarDateRange, dayWithRecordedRuns, goalWithRace, indexRecordedRuns, todayISO,
 } from '../lib/planCalendar'
 
 const RoutePlanner = lazy(() => import('../components/RoutePlanner'))
@@ -43,14 +43,17 @@ export default function Plan() {
     try {
       const myRes = await api.get('/plans/my')
       const nextPlan = myRes.data?.plan || null
+      const nextUserPlan = myRes.data?.user_plan || null
       setMyPlan(nextPlan)
-      setMyUserPlan(myRes.data?.user_plan || null)
+      setMyUserPlan(nextUserPlan)
+      const nextCalendar = nextPlan ? buildCalendarModel(nextPlan, nextUserPlan) : null
+      const runDateRange = calendarDateRange(nextCalendar, todayISO())
       const [racesRes, runsRes] = await Promise.all([
         api.get('/races').catch((err) => {
           console.error('[Plan] race list load failed:', err?.message || err)
           return null
         }),
-        api.get('/runs').catch((err) => {
+        api.get('/runs', { params: runDateRange ? { ...runDateRange, limit: 500 } : { limit: 50 } }).catch((err) => {
           console.error('[Plan] recorded runs load failed:', err?.message || err)
           return null
         }),
@@ -133,6 +136,7 @@ export default function Plan() {
     return races.find((race) => (
       race.race_date === model.goal.dateISO
       && String(race.race_name || '').trim().toLowerCase() === normalizedGoalName
+      && (!model.goal.distanceMiles || Math.abs(Number(race.distance_miles || 0) - Number(model.goal.distanceMiles)) < 0.01)
     )) || null
   }, [model, races])
   const calendarModel = useMemo(() => (
@@ -274,6 +278,12 @@ export default function Plan() {
     setRaceSaving(true)
     setRaceSaveError('')
     try {
+      if (!model?.goal?.raceId) {
+        const { data: linkData } = await api.put('/plans/my/race-link', { race_id: activeRace.id })
+        if (linkData?.plan_data) {
+          setMyPlan((current) => current ? { ...current, plan_data: linkData.plan_data } : current)
+        }
+      }
       const { data } = await api.patch(`/races/${encodeURIComponent(activeRace.id)}`, payload)
       const updated = data?.race
       if (!updated) throw new Error('Race update did not return the saved race.')
@@ -298,7 +308,7 @@ export default function Plan() {
     )
   }
 
-  const course = calendarModel?.goal?.course || myPlan?.plan_data?.goal?.course || null
+  const course = calendarModel?.goal?.course || null
   const planInputs = myPlan?.plan_data?.inputSummary || null
   const trainingEvidence = Array.isArray(myPlan?.plan_data?.trainingEvidence)
     ? myPlan.plan_data.trainingEvidence

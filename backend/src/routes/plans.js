@@ -1990,6 +1990,48 @@ router.get('/my', auth, async (req, res) => {
   }
 });
 
+router.put('/my/race-link', auth, async (req, res) => {
+  try {
+    const raceId = String(req.body?.race_id || '').trim();
+    if (!raceId || raceId.length > 128) return res.status(400).json({ error: 'race_id is required' });
+
+    const result = await withTransaction(async (tx) => {
+      const race = await tx.get('SELECT * FROM race_events WHERE id=? AND user_id=?', [raceId, req.user.id]);
+      if (!race) return { status: 404, error: 'Race not found' };
+      const active = await getActivePlanForMutation(req.user.id, tx);
+      if (!active) return { status: 404, error: 'Active plan not found' };
+      const parsed = parsePlan(active.row);
+      if (!parsed) return { status: 409, error: 'Active plan could not be read' };
+
+      const goal = parsed.goal || {};
+      const existingRaceId = String(goal.raceId || goal.race_id || parsed.raceId || parsed.race_id || '').trim();
+      if (existingRaceId) {
+        if (existingRaceId !== raceId) return { status: 409, error: 'Active plan is linked to another race' };
+        return { status: 200, planData: parsed };
+      }
+
+      const normalizeName = (value) => String(value || '').trim().toLowerCase();
+      const goalName = goal.name || parsed.raceName || parsed.race_name;
+      const goalDate = goal.date || goal.raceDate || parsed.raceDate || parsed.race_date;
+      const goalDistance = Number(goal.distanceMiles || goal.distance_miles || parsed.distanceMiles || parsed.distance_miles || 0);
+      const sameIdentity = normalizeName(goalName) === normalizeName(race.race_name)
+        && String(goalDate || '') === String(race.race_date || '')
+        && (!goalDistance || Math.abs(goalDistance - Number(race.distance_miles || 0)) < 0.01);
+      if (!sameIdentity) return { status: 409, error: 'Race no longer matches the active plan target' };
+
+      const nextPlan = { ...parsed, goal: { ...goal, raceId: race.id } };
+      await updateActivePlanData(active, req.user.id, nextPlan, tx);
+      return { status: 200, planData: nextPlan };
+    });
+
+    if (result.error) return res.status(result.status).json({ error: result.error });
+    res.json({ ok: true, plan_data: result.planData });
+  } catch (err) {
+    console.error('[plans/my/race-link] failed:', err.message);
+    res.status(500).json({ error: 'Could not link this race to the active plan' });
+  }
+});
+
 router.put('/my/progress', auth, async (req, res) => {
   try {
     const body = req.body || {};

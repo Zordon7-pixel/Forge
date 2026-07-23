@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ResponsiveContainer, BarChart, LineChart, XAxis, YAxis, Tooltip, Bar, Line } from 'recharts'
 import { useLocation, Link } from 'react-router-dom'
 import { Pencil, Trash2 } from 'lucide-react'
@@ -138,6 +138,7 @@ export default function History() {
   const [pendingDelete, setPendingDelete] = useState(null)
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState('')
+  const requestedRunIdRef = useRef(null)
 
   const currentYear = new Date().getFullYear()
   const [selectedYear, setSelectedYear] = useState(null)
@@ -182,19 +183,35 @@ export default function History() {
 
 
   useEffect(() => {
+    let active = true
     if (!loading) {
       const params = new URLSearchParams(location.search)
       const runId = params.get('runId')
       const workoutId = params.get('workoutId')
       if (runId) {
         const r = runs.find((x) => x.id === runId)
-        if (r) openRunDetail(r)
+        if (r) {
+          requestedRunIdRef.current = runId
+          openRunDetail(r)
+        } else if (requestedRunIdRef.current !== runId) {
+          requestedRunIdRef.current = runId
+          api.get(`/runs/${encodeURIComponent(runId)}`)
+            .then((response) => {
+              if (!active) return
+              const detailedRun = response.data?.run
+              if (detailedRun) setSelectedRun(detailedRun)
+            })
+            .catch((error) => {
+              console.error('[history/run-link] requested run load failed:', error?.message || error)
+            })
+        }
       }
       if (workoutId) {
         const w = workoutSessions.find((x) => x.id === workoutId)
         if (w) setSelectedWorkout(w)
       }
     }
+    return () => { active = false }
   }, [loading, location.search, openRunDetail, runs, workoutSessions])
 
   const requestDelete = (type, item, e) => {

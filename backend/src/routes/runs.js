@@ -329,9 +329,34 @@ function isoDateDaysAgo(days) {
 
 router.get('/', auth, async (req, res) => {
   try {
-    const runs = await dbAll('SELECT * FROM runs WHERE user_id = ? ORDER BY date DESC, created_at DESC LIMIT 50', [req.user.id]);
+    const startDate = String(req.query.start_date || '').trim();
+    const endDate = String(req.query.end_date || '').trim();
+    const hasDateRange = Boolean(startDate || endDate);
+    const validDate = (value) => {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+      const parsed = Date.parse(`${value}T00:00:00.000Z`);
+      return Number.isFinite(parsed) && new Date(parsed).toISOString().slice(0, 10) === value;
+    };
+    if (hasDateRange && (!validDate(startDate) || !validDate(endDate) || startDate > endDate)) {
+      return res.status(400).json({ error: 'start_date and end_date must be a valid ordered YYYY-MM-DD range' });
+    }
+
+    const requestedLimit = Number.parseInt(req.query.limit, 10);
+    const limit = Math.min(hasDateRange ? 500 : 200, Math.max(1, Number.isFinite(requestedLimit) ? requestedLimit : 50));
+    const runs = hasDateRange
+      ? await dbAll(
+        'SELECT * FROM runs WHERE user_id = ? AND date >= ? AND date <= ? ORDER BY date DESC, created_at DESC LIMIT ?',
+        [req.user.id, startDate, endDate, limit]
+      )
+      : await dbAll(
+        'SELECT * FROM runs WHERE user_id = ? ORDER BY date DESC, created_at DESC LIMIT ?',
+        [req.user.id, limit]
+      );
     res.json({ runs: runs.map(withCalculatedEffort) });
-  } catch (err) { res.status(500).json({ error: 'Failed to fetch runs' }); }
+  } catch (err) {
+    console.error('[runs/list] failed:', err.message);
+    res.status(500).json({ error: 'Failed to fetch runs' });
+  }
 });
 
 router.get('/load-analysis', auth, async (req, res) => {

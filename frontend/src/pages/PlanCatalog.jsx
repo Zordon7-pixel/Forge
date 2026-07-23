@@ -115,6 +115,7 @@ export default function PlanCatalog() {
   const navigate = useNavigate()
   const location = useLocation()
   const requestedRaceHandledRef = useRef(false)
+  const planDialogRef = useRef(null)
   const { isPro, loading: proLoading } = useProContext()
   const todayISO = localTodayISO()
   const [selectedGoal, setSelectedGoal] = useState(null)
@@ -153,6 +154,53 @@ export default function PlanCatalog() {
   )
   const raceWeeks = useMemo(() => weeksToRace(raceDraft.date), [raceDraft.date])
   const selectedCourse = raceSelection?.race?.course_intelligence || null
+
+  useEffect(() => {
+    if (!selectedGoal) return undefined
+    const previousFocus = document.activeElement
+    const previousOverflow = document.body.style.overflow
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        setSelectedGoal(null)
+        return
+      }
+      if (event.key !== 'Tab') return
+      const focusable = Array.from(planDialogRef.current?.querySelectorAll(
+        'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ) || [])
+      if (!focusable.length) return
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+    const overlay = planDialogRef.current?.parentElement
+    const backgroundNodes = Array.from(overlay?.parentElement?.children || [])
+      .filter((node) => node !== overlay)
+      .map((node) => ({ node, inert: node.inert, ariaHidden: node.getAttribute('aria-hidden') }))
+    backgroundNodes.forEach(({ node }) => {
+      node.inert = true
+      node.setAttribute('aria-hidden', 'true')
+    })
+    document.body.style.overflow = 'hidden'
+    document.addEventListener('keydown', handleKeyDown)
+    planDialogRef.current?.focus()
+    return () => {
+      document.body.style.overflow = previousOverflow
+      document.removeEventListener('keydown', handleKeyDown)
+      backgroundNodes.forEach(({ node, inert, ariaHidden }) => {
+        node.inert = inert
+        if (ariaHidden === null) node.removeAttribute('aria-hidden')
+        else node.setAttribute('aria-hidden', ariaHidden)
+      })
+      previousFocus?.focus?.()
+    }
+  }, [selectedGoal])
 
   useEffect(() => {
     let active = true
@@ -513,19 +561,21 @@ export default function PlanCatalog() {
 
       {selectedGoal && (
         <div
-          role="dialog"
-          aria-modal="true"
-          aria-label={isRacePlan ? 'Race plan options' : 'Training block options'}
           style={{ position: 'fixed', inset: 0, zIndex: 50, background: 'rgba(0,0,0,0.68)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', padding: 10 }}
         >
           <div
+            ref={planDialogRef}
+            tabIndex={-1}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="plan-options-title"
             className="rounded-lg p-4"
             style={{ width: 'min(660px, 100%)', maxHeight: '92vh', overflowY: 'auto', background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', boxShadow: '0 24px 80px rgba(0,0,0,0.45)' }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, marginBottom: 16 }}>
               <div style={{ minWidth: 0 }}>
                 <p style={{ color: 'var(--accent)', fontSize: 12, fontWeight: 900, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 4 }}>{isRacePlan ? 'Race Target' : 'Training Block'}</p>
-                <h2 style={{ color: 'var(--text-primary)', fontSize: 23, fontWeight: 950, margin: 0, overflowWrap: 'anywhere' }}>{isRacePlan ? raceDraft.name || 'Custom race' : selectedGoal.name}</h2>
+                <h2 id="plan-options-title" style={{ color: 'var(--text-primary)', fontSize: 23, fontWeight: 950, margin: 0, overflowWrap: 'anywhere' }}>{isRacePlan ? raceDraft.name || 'Custom race' : selectedGoal.name}</h2>
                 <p style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 4 }}>{selectedGoal.duration} / {selectedGoal.feel}</p>
               </div>
               <button type="button" onClick={() => setSelectedGoal(null)} aria-label="Close plan options" style={{ flex: '0 0 auto', width: 38, height: 38, display: 'grid', placeItems: 'center', background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', borderRadius: 8, color: 'var(--text-primary)' }}>

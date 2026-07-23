@@ -397,9 +397,23 @@ router.patch('/:id', auth, async (req, res) => {
     if (!Number.isFinite(next.distance_miles) || next.distance_miles <= 0 || next.distance_miles > 100) return res.status(400).json({ error: 'distance_miles must be between 0 and 100' });
     if (!RACE_STATUSES.has(next.status)) return res.status(400).json({ error: 'status is invalid' });
     if (Number.isNaN(next.goal_time_seconds)) return res.status(400).json({ error: 'goal_time_seconds is invalid' });
+    const identityChanged = raceCourse.normalizeRaceName(next.race_name) !== raceCourse.normalizeRaceName(race.race_name)
+      || String(next.race_date) !== String(race.race_date)
+      || Math.abs(Number(next.distance_miles) - Number(race.distance_miles)) >= 0.01
+      || String(next.location || '').trim().toLowerCase() !== String(race.location || '').trim().toLowerCase();
+    const course = identityChanged
+      ? { elevation_gain_ft: null, max_altitude_ft: null, terrain: null, course_profile_json: null, source: null, url: null }
+      : race;
     await dbRun(
-      `UPDATE race_events SET race_name=?, race_date=?, distance_miles=?, location=?, goal_time_seconds=?, status=?, notes=? WHERE id=? AND user_id=?`,
-      [next.race_name, next.race_date, next.distance_miles, next.location, next.goal_time_seconds, next.status, next.notes, req.params.id, req.user.id]
+      `UPDATE race_events
+       SET race_name=?, race_date=?, distance_miles=?, location=?, goal_time_seconds=?, status=?, notes=?,
+           elevation_gain_ft=?, max_altitude_ft=?, terrain=?, course_profile_json=?, source=?, url=?
+       WHERE id=? AND user_id=?`,
+      [
+        next.race_name, next.race_date, next.distance_miles, next.location, next.goal_time_seconds, next.status, next.notes,
+        course.elevation_gain_ft, course.max_altitude_ft, course.terrain, course.course_profile_json, course.source, course.url,
+        req.params.id, req.user.id,
+      ]
     );
 
     const updated = await dbGet('SELECT * FROM race_events WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
