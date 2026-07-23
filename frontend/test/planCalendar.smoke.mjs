@@ -310,6 +310,28 @@ check('g2: plan goal exposes race ownership and editable race truth overlays sta
   assert.equal(updated.course, null)
 })
 
+check('g2b: a goal-time-only race edit preserves trusted course facts', () => {
+  const course = { state: 'verified', elevationGainFt: 620 }
+  const goal = {
+    raceId: 'race-1',
+    name: 'Army Ten-Miler',
+    dateISO: '2026-10-11',
+    distanceMiles: 10,
+    goalTimeSeconds: 5400,
+    course,
+  }
+  const updated = goalWithRace(goal, {
+    id: 'race-1',
+    race_name: 'Army Ten-Miler',
+    race_date: '2026-10-11',
+    distance_miles: 10,
+    goal_time_seconds: 5100,
+    course_intelligence: { trusted: true },
+  })
+  assert.deepEqual(updated.course, course)
+  assert.equal(updated.goalTimeSeconds, 5100)
+})
+
 check('g3: recorded runs index by real date while non-run activities stay out', () => {
   const runsByDate = indexRecordedRuns([
     { id: 'run-1', date: '2026-07-14', workout_type: 'Running', distance_miles: 3.11, duration_seconds: 1800 },

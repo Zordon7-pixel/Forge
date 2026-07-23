@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { activateModalDialog } from '../src/lib/modalDialog.js'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const read = (relativePath) => fs.readFileSync(path.join(repoRoot, relativePath), 'utf8')
@@ -15,6 +16,7 @@ const racesRoute = read('backend/src/routes/races.js')
 const plansRoute = read('backend/src/routes/plans.js')
 const runsRoute = read('backend/src/routes/runs.js')
 const history = read('frontend/src/pages/History.jsx')
+const modalDialog = read('frontend/src/lib/modalDialog.js')
 
 assert.match(plan, /api\.get\('\/races'\)/, 'Train loads the user-owned race row')
 assert.match(plan, /api\.get\('\/runs'/, 'Train loads recorded activities for calendar overlays')
@@ -39,7 +41,102 @@ assert.match(calendar, /cell\.hasRecordedRun/, 'activity-only month dates remain
 assert.match(dayView, /Recorded separately from this plan/, 'off-plan activity is never presented as plan completion')
 assert.match(plan, /navigate\(`\/history\?runId=\$\{encodeURIComponent\(activity\.id\)\}`\)/, 'recorded activity opens its existing History recap')
 assert.match(catalog, /location\.state\?\.raceId[\s\S]*openRace\(race, 'owned'\)/, 'plan rebuild handoff opens the exact edited race')
-assert.match(catalog, /planDialogRef[\s\S]*event\.key === 'Escape'[\s\S]*node\.inert = true[\s\S]*document\.body\.style\.overflow = 'hidden'/, 'rebuild dialog traps focus, closes with Escape, makes the background inert, and locks scrolling')
+assert.match(catalog, /activateModalDialog\([\s\S]*dialog: planDialogRef\.current[\s\S]*setSelectedGoal\(null\)/, 'rebuild dialog activates the shared modal behavior controller')
+assert.match(modalDialog, /event\.key === 'Escape'[\s\S]*node\.inert = true[\s\S]*documentRef\.body\.style\.overflow = 'hidden'/, 'modal controller handles Escape, inert background, and scroll lock')
 assert.match(catalog, /role="dialog"[\s\S]*aria-modal="true"[\s\S]*aria-labelledby="plan-options-title"/, 'rebuild dialog exposes modal semantics and an accessible title')
 
-console.log('RACE CALENDAR ACTIVITY SMOKE OK (25)')
+function createElement(name, documentRef) {
+  const attributes = new Map()
+  return {
+    name,
+    inert: false,
+    style: {},
+    children: [],
+    parentElement: null,
+    focus() { documentRef.activeElement = this },
+    getAttribute(key) { return attributes.has(key) ? attributes.get(key) : null },
+    setAttribute(key, value) { attributes.set(key, String(value)) },
+    removeAttribute(key) { attributes.delete(key) },
+    contains(target) {
+      if (target === this) return true
+      return this.children.some((child) => child.contains(target))
+    },
+    querySelectorAll() { return [] },
+  }
+}
+
+function append(parent, child) {
+  parent.children.push(child)
+  child.parentElement = parent
+}
+
+function dispatchKey(documentRef, key, shiftKey = false) {
+  const event = new Event('keydown', { cancelable: true })
+  Object.defineProperty(event, 'key', { value: key })
+  Object.defineProperty(event, 'shiftKey', { value: shiftKey })
+  documentRef.dispatchEvent(event)
+  return event
+}
+
+const documentRef = new EventTarget()
+const body = createElement('body', documentRef)
+const root = createElement('root', documentRef)
+const page = createElement('page', documentRef)
+const overlay = createElement('overlay', documentRef)
+const dialog = createElement('dialog', documentRef)
+const firstButton = createElement('first-button', documentRef)
+const lastButton = createElement('last-button', documentRef)
+const outsideFooter = createElement('footer', documentRef)
+const opener = createElement('opener', documentRef)
+body.style.overflow = 'auto'
+outsideFooter.setAttribute('aria-hidden', 'false')
+append(body, root)
+append(body, outsideFooter)
+append(root, page)
+append(root, overlay)
+append(page, opener)
+append(overlay, dialog)
+append(dialog, firstButton)
+append(dialog, lastButton)
+dialog.querySelectorAll = () => [firstButton, lastButton]
+documentRef.body = body
+documentRef.activeElement = opener
+
+let closeCount = 0
+const cleanupModal = activateModalDialog({
+  dialog,
+  documentRef,
+  onClose: () => { closeCount += 1 },
+})
+
+assert.equal(documentRef.activeElement, dialog, 'opening the dialog moves focus inside it')
+assert.equal(body.style.overflow, 'hidden', 'opening the dialog locks body scroll')
+assert.equal(page.inert, true, 'page content behind the dialog becomes inert')
+assert.equal(outsideFooter.inert, true, 'background outside the page branch also becomes inert')
+assert.equal(page.getAttribute('aria-hidden'), 'true', 'page content is hidden from assistive technology')
+assert.equal(outsideFooter.getAttribute('aria-hidden'), 'true', 'outer background is hidden from assistive technology')
+
+lastButton.focus()
+const forwardTab = dispatchKey(documentRef, 'Tab')
+assert.equal(forwardTab.defaultPrevented, true, 'forward Tab is contained at the last control')
+assert.equal(documentRef.activeElement, firstButton, 'forward Tab wraps to the first control')
+firstButton.focus()
+const backwardTab = dispatchKey(documentRef, 'Tab', true)
+assert.equal(backwardTab.defaultPrevented, true, 'reverse Tab is contained at the first control')
+assert.equal(documentRef.activeElement, lastButton, 'reverse Tab wraps to the last control')
+opener.focus()
+dispatchKey(documentRef, 'Tab')
+assert.equal(documentRef.activeElement, firstButton, 'focus forced outside the dialog is recovered')
+const escape = dispatchKey(documentRef, 'Escape')
+assert.equal(escape.defaultPrevented, true, 'Escape is consumed by the dialog')
+assert.equal(closeCount, 1, 'Escape requests one close')
+
+cleanupModal()
+assert.equal(body.style.overflow, 'auto', 'cleanup restores the prior body scroll state')
+assert.equal(page.inert, false, 'cleanup restores page inert state')
+assert.equal(outsideFooter.inert, false, 'cleanup restores outer inert state')
+assert.equal(page.getAttribute('aria-hidden'), null, 'cleanup removes newly added aria-hidden')
+assert.equal(outsideFooter.getAttribute('aria-hidden'), 'false', 'cleanup restores an existing aria-hidden value')
+assert.equal(documentRef.activeElement, opener, 'cleanup restores focus to the opener')
+
+console.log('RACE CALENDAR ACTIVITY SMOKE OK (45)')

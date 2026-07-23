@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { CalendarDays, ChevronRight, MapPin, Search, X } from 'lucide-react'
 import api from '../lib/api'
+import { activateModalDialog } from '../lib/modalDialog'
 import { useProContext } from '../context/ProContext'
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
@@ -157,49 +158,10 @@ export default function PlanCatalog() {
 
   useEffect(() => {
     if (!selectedGoal) return undefined
-    const previousFocus = document.activeElement
-    const previousOverflow = document.body.style.overflow
-    const handleKeyDown = (event) => {
-      if (event.key === 'Escape') {
-        setSelectedGoal(null)
-        return
-      }
-      if (event.key !== 'Tab') return
-      const focusable = Array.from(planDialogRef.current?.querySelectorAll(
-        'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-      ) || [])
-      if (!focusable.length) return
-      const first = focusable[0]
-      const last = focusable[focusable.length - 1]
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault()
-        last.focus()
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault()
-        first.focus()
-      }
-    }
-    const overlay = planDialogRef.current?.parentElement
-    const backgroundNodes = Array.from(overlay?.parentElement?.children || [])
-      .filter((node) => node !== overlay)
-      .map((node) => ({ node, inert: node.inert, ariaHidden: node.getAttribute('aria-hidden') }))
-    backgroundNodes.forEach(({ node }) => {
-      node.inert = true
-      node.setAttribute('aria-hidden', 'true')
+    return activateModalDialog({
+      dialog: planDialogRef.current,
+      onClose: () => setSelectedGoal(null),
     })
-    document.body.style.overflow = 'hidden'
-    document.addEventListener('keydown', handleKeyDown)
-    planDialogRef.current?.focus()
-    return () => {
-      document.body.style.overflow = previousOverflow
-      document.removeEventListener('keydown', handleKeyDown)
-      backgroundNodes.forEach(({ node, inert, ariaHidden }) => {
-        node.inert = inert
-        if (ariaHidden === null) node.removeAttribute('aria-hidden')
-        else node.setAttribute('aria-hidden', ariaHidden)
-      })
-      previousFocus?.focus?.()
-    }
   }, [selectedGoal])
 
   useEffect(() => {
