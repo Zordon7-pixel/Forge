@@ -191,7 +191,15 @@ async function verifyLegacyRaceLinkRoute(raceLinkHandler) {
     progress_json: '{}',
   };
   const races = new Map([
-    ['race-a', { id: 'race-a', user_id: 'user-a', race_name: 'Army Ten-Miler', race_date: '2026-10-11', distance_miles: 10 }],
+    ['race-a', {
+      id: 'race-a',
+      user_id: 'user-a',
+      race_name: 'Army Ten-Miler',
+      race_date: '2026-10-11',
+      distance_miles: 10,
+      location: 'Washington, DC',
+      goal_time_seconds: 5400,
+    }],
     ['race-b', { id: 'race-b', user_id: 'user-b', race_name: 'Other Race', race_date: '2026-10-11', distance_miles: 10 }],
   ]);
   const writes = [];
@@ -265,13 +273,31 @@ async function verifyLegacyRaceLinkRoute(raceLinkHandler) {
   });
   assert.equal(linked.statusCode, 200);
   assert.equal(linked.payload.plan_data.goal.raceId, 'race-a');
+  assert.deepEqual(linked.payload.plan_data.goal.raceTarget, {
+    raceId: 'race-a',
+    name: 'Army Ten-Miler',
+    date: '2026-10-11',
+    distanceMiles: 10,
+    location: 'Washington, DC',
+    goalTimeSeconds: 5400,
+  }, 'linking snapshots the exact persisted race target before any edit');
   assert.equal(assignment.plan_id === 'template-1', false, 'the user assignment must repoint to a private clone');
   assert.equal(JSON.parse(plans.get('template-1').plan_data).goal.raceId, undefined, 'the shared template must stay pristine');
   const clone = plans.get(assignment.plan_id);
   assert.equal(clone.user_id, 'user-a');
   assert.equal(JSON.parse(clone.plan_data).goal.raceId, 'race-a');
+  assert.equal(JSON.parse(plans.get('template-1').plan_data).goal.raceTarget, undefined, 'the shared template must not receive the user race snapshot');
   assert.ok(writes.some(({ sql, params }) => /UPDATE user_plans/.test(sql) && params.at(-1) === 'user-a'));
   assert.ok(writes.some(({ sql, params }) => /UPDATE training_plans/.test(sql) && params.at(-1) === 'user-a'));
+
+  races.get('race-a').goal_time_seconds = 5100;
+  const writesBeforeRelink = writes.length;
+  const relinked = await invoke(raceLinkHandler, {
+    user: { id: 'user-a' }, body: { race_id: 'race-a' }, params: {}, query: {},
+  });
+  assert.equal(relinked.statusCode, 200);
+  assert.equal(relinked.payload.plan_data.goal.raceTarget.goalTimeSeconds, 5400, 'a later edit cannot overwrite the plan build snapshot');
+  assert.equal(writes.length, writesBeforeRelink, 'a linked plan with a complete target snapshot does not mutate again');
 }
 
 async function main() {

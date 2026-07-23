@@ -72,11 +72,11 @@ export default function RaceEditSheet({ race, onClose, onSave, saving = false, s
       notes: draft.notes.trim() || null,
       status: race.status || 'upcoming',
     }
-    const affectsPlan = String(race.race_name || '').trim().toLowerCase() !== payload.race_name.toLowerCase()
+    const affectsPlan = String(race.race_name || '').trim() !== payload.race_name
       || String(race.race_date || '') !== payload.race_date
       || Number(race.distance_miles || 0) !== Number(payload.distance_miles || 0)
       || Number(race.goal_time_seconds || 0) !== Number(payload.goal_time_seconds || 0)
-      || String(race.location || '').trim().toLowerCase() !== String(payload.location || '').trim().toLowerCase()
+      || String(race.location || '').trim() !== String(payload.location || '').trim()
     await onSave?.(payload, { affectsPlan })
   }
 

@@ -27,7 +27,9 @@ import {
   indexRecordedRuns,
   dayWithRecordedRuns,
   goalWithRace,
+  racePlanReview,
 } from '../src/lib/planCalendar.js'
+import { durationPartsToSeconds } from '../src/lib/duration.js'
 
 let passed = 0
 function check(name, fn) {
@@ -330,6 +332,87 @@ check('g2b: a goal-time-only race edit preserves trusted course facts', () => {
   })
   assert.deepEqual(updated.course, course)
   assert.equal(updated.goalTimeSeconds, 5100)
+})
+
+check('g2c: duration-picker edits derive durable plan review until the same-race rebuild succeeds', () => {
+  const originalRace = {
+    id: 'race-1',
+    race_name: 'Army Ten-Miler',
+    race_date: '2026-10-11',
+    distance_miles: 10,
+    location: 'Washington, DC',
+    goal_time_seconds: 5400,
+    notes: 'Original note',
+  }
+  const originalPlanData = {
+    goal: {
+      raceId: 'race-1',
+      name: originalRace.race_name,
+      date: originalRace.race_date,
+      distanceMiles: originalRace.distance_miles,
+      goalTimeSeconds: originalRace.goal_time_seconds,
+      raceTarget: {
+        raceId: originalRace.id,
+        name: originalRace.race_name,
+        date: originalRace.race_date,
+        distanceMiles: originalRace.distance_miles,
+        location: originalRace.location,
+        goalTimeSeconds: originalRace.goal_time_seconds,
+      },
+    },
+  }
+  const pickerSeconds = durationPartsToSeconds({ hours: 1, minutes: 25, seconds: 0 })
+  assert.equal(pickerSeconds, 5100, 'the shipped duration picker payload remains whole seconds')
+  const editedRace = { ...originalRace, goal_time_seconds: pickerSeconds }
+  const originalGoal = getGoal({ plan_data: originalPlanData })
+
+  const afterSave = racePlanReview(originalGoal, editedRace)
+  assert.equal(afterSave.required, true)
+  assert.deepEqual(afterSave.changedFields, ['goal_time'])
+
+  const reloadedGoal = getGoal(JSON.parse(JSON.stringify({ plan_data: originalPlanData })))
+  const reloadedRace = JSON.parse(JSON.stringify(editedRace))
+  assert.equal(racePlanReview(reloadedGoal, reloadedRace).required, true, 'dismiss and reload retain persisted mismatch truth')
+  assert.equal(racePlanReview(originalGoal, { ...originalRace, notes: 'Notes only changed' }).required, false, 'notes do not stale the plan')
+  assert.equal(racePlanReview(originalGoal, editedRace).required, true, 'a failed rebuild leaves the old plan snapshot mismatched')
+
+  const rebuiltPlanData = JSON.parse(JSON.stringify(originalPlanData))
+  rebuiltPlanData.goal.goalTimeSeconds = pickerSeconds
+  rebuiltPlanData.goal.raceTarget.goalTimeSeconds = pickerSeconds
+  const rebuiltGoal = getGoal({ plan_data: rebuiltPlanData })
+  assert.equal(racePlanReview(rebuiltGoal, editedRace).required, false, 'a successful same-race rebuild snapshots the current target and clears review')
+})
+
+check('g2d: every plan-affecting race field is compared while notes remain outside the snapshot', () => {
+  const race = {
+    id: 'race-1',
+    race_name: 'Army Ten-Miler',
+    race_date: '2026-10-11',
+    distance_miles: 10,
+    location: 'Washington, DC',
+    goal_time_seconds: 5400,
+  }
+  const goal = getGoal({ plan_data: { goal: {
+    raceId: race.id,
+    raceTarget: {
+      raceId: race.id,
+      name: race.race_name,
+      date: race.race_date,
+      distanceMiles: race.distance_miles,
+      location: race.location,
+      goalTimeSeconds: race.goal_time_seconds,
+    },
+  } } })
+  const cases = [
+    [{ ...race, race_name: 'Army 10 Miler' }, 'name'],
+    [{ ...race, race_date: '2026-10-18' }, 'date'],
+    [{ ...race, distance_miles: 10.1 }, 'distance'],
+    [{ ...race, goal_time_seconds: 5100 }, 'goal_time'],
+    [{ ...race, location: 'Arlington, VA' }, 'location'],
+  ]
+  for (const [edited, expectedField] of cases) {
+    assert.deepEqual(racePlanReview(goal, edited).changedFields, [expectedField])
+  }
 })
 
 check('g3: recorded runs index by real date while non-run activities stay out', () => {

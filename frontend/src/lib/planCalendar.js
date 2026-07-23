@@ -137,6 +137,17 @@ export function getGoal(plan) {
   const dateISO = goal.date || goal.raceDate || data.raceDate || null
   const distanceMiles = Number(goal.distanceMiles || goal.distance_miles || 0) || null
   const goalTimeSeconds = Number(goal.goalTimeSeconds || goal.goal_time_seconds || 0) || null
+  const rawRaceTarget = goal.raceTarget || goal.race_target || data.raceTarget || data.race_target || null
+  const raceTarget = rawRaceTarget && typeof rawRaceTarget === 'object'
+    ? {
+        raceId: rawRaceTarget.raceId || rawRaceTarget.race_id || null,
+        name: rawRaceTarget.name || rawRaceTarget.raceName || rawRaceTarget.race_name || null,
+        dateISO: rawRaceTarget.date || rawRaceTarget.raceDate || rawRaceTarget.race_date || null,
+        distanceMiles: Number(rawRaceTarget.distanceMiles || rawRaceTarget.distance_miles || 0) || null,
+        location: rawRaceTarget.location || null,
+        goalTimeSeconds: Number(rawRaceTarget.goalTimeSeconds || rawRaceTarget.goal_time_seconds || 0) || null,
+      }
+    : null
   const derivedPace = goalTimeSeconds && distanceMiles ? Math.round(goalTimeSeconds / distanceMiles) : null
   return {
     raceId: goal.raceId || goal.race_id || data.raceId || data.race_id || null,
@@ -153,7 +164,40 @@ export function getGoal(plan) {
     anchorState: data.anchorState || goal.anchorState || plan?.anchorState || null,
     anchoredBy: data.anchoredBy || goal.anchoredBy || plan?.anchoredBy || null,
     course: goal.course || data.course || null,
+    raceTarget,
   }
+}
+
+function normalizedTargetText(value) {
+  return String(value || '').trim()
+}
+
+// The race row is the editable target; the plan goal keeps the exact race
+// target it was built from. Comparing those two persisted values makes review
+// state survive reloads, navigation, force-close, and another signed-in device.
+export function racePlanReview(goal = {}, race = null) {
+  if (!race) return { required: false, changedFields: [] }
+  const stored = goal.raceTarget || {
+    raceId: goal.raceId || null,
+    name: goal.name || null,
+    dateISO: goal.dateISO || null,
+    distanceMiles: goal.distanceMiles || null,
+    location: undefined,
+    goalTimeSeconds: goal.goalTimeSource === 'performance_anchor' ? null : goal.goalTimeSeconds || null,
+  }
+  if (stored.raceId && race.id && String(stored.raceId) !== String(race.id)) {
+    return { required: false, changedFields: [] }
+  }
+
+  const changedFields = []
+  if (normalizedTargetText(stored.name) !== normalizedTargetText(race.race_name)) changedFields.push('name')
+  if (String(stored.dateISO || '') !== String(race.race_date || '')) changedFields.push('date')
+  if (Number(stored.distanceMiles || 0) !== Number(race.distance_miles || 0)) changedFields.push('distance')
+  if (Number(stored.goalTimeSeconds || 0) !== Number(race.goal_time_seconds || 0)) changedFields.push('goal_time')
+  if (stored.location !== undefined && normalizedTargetText(stored.location) !== normalizedTargetText(race.location)) {
+    changedFields.push('location')
+  }
+  return { required: changedFields.length > 0, changedFields }
 }
 
 // Race rows remain the editable source of truth. Overlay them on the persisted

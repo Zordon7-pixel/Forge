@@ -1037,6 +1037,9 @@ function goalMetadata(target = {}, existingGoal = {}, history = {}) {
   const resolvedTime = resolvedGoalTime(target, existingGoal, history);
   const goalTimeSeconds = resolvedTime?.seconds || null;
   const goalPace = goalPaceSecondsPerMile({ ...target, distanceMiles: raceDistance }, existingGoal, history);
+  const raceTarget = target.raceTarget && typeof target.raceTarget === 'object'
+    ? { ...target.raceTarget }
+    : existingGoal.raceTarget || null;
   return Object.assign({}, existingGoal, {
     kind: raceDate ? 'race' : (existingGoal.kind || 'training_block'),
     raceId: target.raceId || existingGoal.raceId || null,
@@ -1051,6 +1054,7 @@ function goalMetadata(target = {}, existingGoal = {}, history = {}) {
     goalPaceLabel: formatPaceLabel(goalPace),
     paceContext: buildGoalPaceContext({ ...target, distanceMiles: raceDistance, goalTimeSeconds }, history, existingGoal),
     course: buildGoalCourse(target),
+    raceTarget,
   });
 }
 
@@ -1241,6 +1245,10 @@ function validateConcurrentPlan(candidate, context = {}) {
   if (candidate.planMode !== expectedMode) errors.push(`planMode must be ${expectedMode}`);
   if (!candidate.goal || Number(candidate.goal.distanceMiles) !== Number(target.distanceMiles || candidate.goal?.distanceMiles)) errors.push('goal distance is missing or changed');
   if (target.raceDate && candidate.goal?.date !== target.raceDate) errors.push('race date was not preserved');
+  if (target.raceId && String(candidate.goal?.raceId || '') !== String(target.raceId)) errors.push('race id was not preserved');
+  if (target.raceTarget && JSON.stringify(candidate.goal?.raceTarget || null) !== JSON.stringify(target.raceTarget)) {
+    errors.push('race target snapshot was not preserved');
+  }
   if (expectedGoalTimeSeconds && Number(candidate.goal?.goalTimeSeconds) !== expectedGoalTimeSeconds) errors.push('goal time was not preserved');
   if (expectedGoalPace && Number(candidate.goal?.goalPaceSecondsPerMile) !== expectedGoalPace) errors.push('goal pace was not derived from target time and distance');
   if (!Array.isArray(candidate.weeks) || candidate.weeks.length !== expectedWeeks) errors.push(`weeks must contain exactly ${expectedWeeks} entries`);

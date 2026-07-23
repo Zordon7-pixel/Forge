@@ -9,7 +9,7 @@ import ForgedCalendar from '../components/calendar/ForgedCalendar'
 import ForgedDayView from '../components/calendar/ForgedDayView'
 import RaceEditSheet from '../components/calendar/RaceEditSheet'
 import {
-  buildCalendarModel, calendarDateRange, dayWithRecordedRuns, goalWithRace, indexRecordedRuns, todayISO,
+  buildCalendarModel, calendarDateRange, dayWithRecordedRuns, goalWithRace, indexRecordedRuns, racePlanReview, todayISO,
 } from '../lib/planCalendar'
 
 const RoutePlanner = lazy(() => import('../components/RoutePlanner'))
@@ -142,6 +142,10 @@ export default function Plan() {
   const calendarModel = useMemo(() => (
     model && activeRace ? { ...model, goal: goalWithRace(model.goal, activeRace) } : model
   ), [model, activeRace])
+  const planReview = useMemo(
+    () => racePlanReview(model?.goal, activeRace),
+    [model, activeRace],
+  )
   const isActiveSchemaV2 = Number(myPlan?.plan_data?.schemaVersion || 0) === 2
   const weekCount = Number(myPlan?.weeks || calendarModel?.weekCount || 0)
 
@@ -278,7 +282,9 @@ export default function Plan() {
     setRaceSaving(true)
     setRaceSaveError('')
     try {
-      if (!model?.goal?.raceId) {
+      if (affectsPlan) {
+        // Persist the exact pre-edit race target in the active plan before the
+        // race changes. Existing linked plans no-op once that snapshot exists.
         const { data: linkData } = await api.put('/plans/my/race-link', { race_id: activeRace.id })
         if (linkData?.plan_data) {
           setMyPlan((current) => current ? { ...current, plan_data: linkData.plan_data } : current)
@@ -289,9 +295,7 @@ export default function Plan() {
       if (!updated) throw new Error('Race update did not return the saved race.')
       setRaces((current) => current.map((race) => String(race.id) === String(updated.id) ? updated : race))
       setRaceEditorOpen(false)
-      setRaceSaveNotice(affectsPlan
-        ? { raceId: updated.id, affectsPlan: true, message: 'Race saved. Review your training days before rebuilding workouts for the new target.' }
-        : { raceId: updated.id, affectsPlan: false, message: 'Race details saved.' })
+      setRaceSaveNotice(affectsPlan ? null : { message: 'Race details saved.' })
     } catch (err) {
       console.error('[Plan] race update failed:', err?.message || err)
       setRaceSaveError(err?.response?.data?.error || err?.message || 'Could not update this race.')
@@ -468,7 +472,33 @@ export default function Plan() {
 
         {/* Active plan: the Forged Training Calendar is primary */}
         {myPlan && calendarModel && (
-          selectedDay ? (
+          <>
+            {planReview.required && activeRace && (
+              <div
+                role="status"
+                aria-label="Plan needs review"
+                className="rounded-lg p-4 min-w-0"
+                style={{ background: 'var(--accent-dim)', border: '1px solid var(--accent)', overflowWrap: 'anywhere' }}
+              >
+                <p className="text-xs font-black uppercase" style={{ color: 'var(--accent)', margin: 0 }}>Plan needs review</p>
+                <p className="text-sm font-bold" style={{ color: 'var(--text-primary)', margin: '5px 0 0' }}>
+                  Your race target changed. Your current workouts have not changed.
+                </p>
+                <p className="text-xs" style={{ color: 'var(--text-muted)', margin: '5px 0 0' }}>
+                  Review how goal pace, quality-session targets, progression, peak, and taper may change. You can keep this plan until you explicitly rebuild it.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => navigate('/plan-catalog', { state: { raceId: activeRace.id, reviewUpdatedPlan: true } })}
+                  className="rounded-lg"
+                  style={{ width: '100%', minWidth: 0, minHeight: 44, marginTop: 12, padding: '10px 14px', border: 0, background: 'var(--accent)', color: 'var(--on-accent)', fontSize: 14, fontWeight: 900 }}
+                >
+                  Review updated plan
+                </button>
+              </div>
+            )}
+
+            {selectedDay ? (
             <ForgedDayView
               day={selectedDay}
               planContext={{ goal: calendarModel.goal, mode: calendarModel.mode, modeLabel: calendarModel.modeLabel, phase: selectedPhase, inputSummary: planInputs, trainingEvidence }}
@@ -493,7 +523,7 @@ export default function Plan() {
                 </Suspense>
               ) : null}
             />
-          ) : (
+            ) : (
             <>
               <ForgedCalendar
                 model={calendarModel}
@@ -516,13 +546,8 @@ export default function Plan() {
               />
 
               {raceSaveNotice && (
-                <div role="status" className="rounded-lg p-3" style={{ marginTop: 12, background: raceSaveNotice.affectsPlan ? 'var(--accent-dim)' : 'rgba(22,163,74,0.12)', border: '1px solid var(--border-subtle)' }}>
+                <div role="status" className="rounded-lg p-3" style={{ marginTop: 12, background: 'rgba(22,163,74,0.12)', border: '1px solid var(--border-subtle)' }}>
                   <p className="text-sm" style={{ color: 'var(--text-primary)', margin: 0 }}>{raceSaveNotice.message}</p>
-                  {raceSaveNotice.affectsPlan && (
-                    <button type="button" onClick={() => navigate('/plan-catalog', { state: { raceId: raceSaveNotice.raceId } })} style={{ marginTop: 8, padding: 0, border: 0, background: 'transparent', color: 'var(--accent)', fontSize: 12, fontWeight: 900 }}>
-                      Review and rebuild calendar →
-                    </button>
-                  )}
                 </div>
               )}
 
@@ -555,7 +580,8 @@ export default function Plan() {
                 )}
               </div>
             </>
-          )
+            )}
+          </>
         )}
 
         {raceEditorOpen && activeRace && (

@@ -9,6 +9,10 @@ const indexCss = read('src/index.css')
 const indexHtml = read('index.html')
 const community = read('src/pages/Community.jsx')
 const layout = read('src/components/Layout.jsx')
+const plan = read('src/pages/Plan.jsx')
+const planCatalog = read('src/pages/PlanCatalog.jsx')
+const raceEditor = read('src/components/calendar/RaceEditSheet.jsx')
+const durationPicker = read('src/components/DurationPicker.jsx')
 
 let passed = 0
 function check(condition, message) {
@@ -26,5 +30,20 @@ check(community.includes("overflowX: 'clip'"), 'Community contains accidental ho
 check((community.match(/maxWidth: 'calc\(100vw - 24px\)'/g) || []).length === 2, 'friend action menus are capped to the phone viewport')
 check(layout.includes('grid-cols-5'), 'bottom navigation remains a stable five-column grid')
 check(layout.includes("maxWidth: 'min(480px, 100vw)'"), 'app shell stays bounded to the device viewport')
+check(plan.includes('className="rounded-lg p-4 min-w-0"') && plan.includes("overflowWrap: 'anywhere'"), 'the durable plan-review status wraps inside narrow phones')
+check(planCatalog.includes("width: 'min(660px, 100%)'") && planCatalog.includes("maxHeight: 'calc(100dvh - env(safe-area-inset-top, 0px) - 18px)'"), 'the review dialog is viewport- and safe-area-bounded')
+check(planCatalog.includes("paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 16px)'") && planCatalog.includes("overscrollBehavior: 'contain'"), 'the review dialog preserves bottom-safe actions and contained scrolling')
+
+for (const viewportWidth of [320, 375]) {
+  const overlayContentWidth = viewportWidth - 20
+  const reviewDialogWidth = Math.min(660, overlayContentWidth)
+  const raceDialogWidth = Math.min(620, overlayContentWidth)
+  check(reviewDialogWidth > 0 && reviewDialogWidth <= viewportWidth, `${viewportWidth}px review dialog has no horizontal overflow`)
+  check(raceDialogWidth > 0 && raceDialogWidth <= viewportWidth, `${viewportWidth}px race editor has no horizontal overflow`)
+}
+
+check(raceEditor.includes('fontSize: 16') && durationPicker.includes('fontSize: 20'), 'race and duration-picker form controls remain above the 16px mobile zoom threshold')
+check((planCatalog.match(/<select[\s\S]{0,300}fontSize: 16/g) || []).length >= 3, 'review-plan selects use at least 16px text')
+check(planCatalog.includes('activateModalDialog({') && planCatalog.includes('role="dialog"') && planCatalog.includes('aria-modal="true"'), 'the review dialog retains focus management and modal semantics')
 
 console.log(`MOBILE VIEWPORT SMOKE OK (${passed})`)

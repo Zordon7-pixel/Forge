@@ -110,6 +110,7 @@ export default function PlanCatalog() {
   const [raceDraft, setRaceDraft] = useState({ name: '', date: '', location: '' })
 
   const isRacePlan = selectedGoal?.kind === 'race'
+  const reviewingUpdatedPlan = Boolean(selectedGoal?.reviewingUpdatedPlan)
   const selectedDistance = useMemo(() => {
     if (!selectedGoal) return ''
     return selectedGoal.key === 'custom' || selectedGoal.kind === 'race'
@@ -192,7 +193,7 @@ export default function PlanCatalog() {
     await loadPrefill()
   }
 
-  const openRace = async (race = null, selectionType = 'catalog') => {
+  const openRace = async (race = null, selectionType = 'catalog', { reviewing = false } = {}) => {
     if (!ensurePro()) return
     const name = race ? raceName(race) : ''
     setSelectedGoal({
@@ -202,6 +203,7 @@ export default function PlanCatalog() {
       distanceMiles: race ? raceDistance(race) : null,
       duration: 'Through race day',
       feel: race ? 'Course-aware race build' : 'Enter the event details',
+      reviewingUpdatedPlan: reviewing,
     })
     setError('')
     setGoalTime(normalizeDurationSeconds(race?.goal_time_seconds))
@@ -221,11 +223,12 @@ export default function PlanCatalog() {
     if (!requestedRaceId || requestedRaceHandledRef.current || !savedRaces.length) return
     const race = savedRaces.find((item) => String(item.id) === String(requestedRaceId))
     requestedRaceHandledRef.current = true
+    const reviewing = Boolean(location.state?.reviewUpdatedPlan)
     navigate(location.pathname, { replace: true, state: null })
-    if (race) void openRace(race, 'owned')
+    if (race) void openRace(race, 'owned', { reviewing })
     // openRace intentionally runs once for the navigation state handoff.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [location.pathname, location.state?.raceId, navigate, savedRaces])
+  }, [location.pathname, location.state?.raceId, location.state?.reviewUpdatedPlan, navigate, savedRaces])
 
   const searchRaces = async (event) => {
     event.preventDefault()
@@ -404,7 +407,7 @@ export default function PlanCatalog() {
                 if (race) openRace(race, 'owned')
               }}
               aria-label="Use a saved race"
-              style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', borderRadius: 8, padding: '11px 12px', fontSize: 14 }}
+              style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', borderRadius: 8, padding: '11px 12px', fontSize: 16 }}
             >
               <option value="">Select a saved race</option>
               {savedRaces.map((race) => <option key={race.id} value={race.id}>{raceName(race)} - {formatRaceDate(race.race_date)}</option>)}
@@ -498,13 +501,13 @@ export default function PlanCatalog() {
             aria-modal="true"
             aria-labelledby="plan-options-title"
             className="rounded-lg p-4"
-            style={{ width: 'min(660px, 100%)', maxHeight: '92vh', overflowY: 'auto', background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', boxShadow: '0 24px 80px rgba(0,0,0,0.45)' }}
+            style={{ width: 'min(660px, 100%)', maxHeight: 'calc(100dvh - env(safe-area-inset-top, 0px) - 18px)', overflowY: 'auto', overscrollBehavior: 'contain', paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 16px)', background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', boxShadow: '0 24px 80px rgba(0,0,0,0.45)' }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, marginBottom: 16 }}>
               <div style={{ minWidth: 0 }}>
-                <p style={{ color: 'var(--accent)', fontSize: 12, fontWeight: 900, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 4 }}>{isRacePlan ? 'Race Target' : 'Training Block'}</p>
-                <h2 id="plan-options-title" style={{ color: 'var(--text-primary)', fontSize: 23, fontWeight: 950, margin: 0, overflowWrap: 'anywhere' }}>{isRacePlan ? raceDraft.name || 'Custom race' : selectedGoal.name}</h2>
-                <p style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 4 }}>{selectedGoal.duration} / {selectedGoal.feel}</p>
+                <p style={{ color: 'var(--accent)', fontSize: 12, fontWeight: 900, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 4 }}>{reviewingUpdatedPlan ? 'Plan review' : isRacePlan ? 'Race Target' : 'Training Block'}</p>
+                <h2 id="plan-options-title" style={{ color: 'var(--text-primary)', fontSize: 23, fontWeight: 950, margin: 0, overflowWrap: 'anywhere' }}>{reviewingUpdatedPlan ? 'Review updated plan' : isRacePlan ? raceDraft.name || 'Custom race' : selectedGoal.name}</h2>
+                <p style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 4 }}>{reviewingUpdatedPlan ? raceDraft.name : `${selectedGoal.duration} / ${selectedGoal.feel}`}</p>
               </div>
               <button type="button" onClick={() => setSelectedGoal(null)} aria-label="Close plan options" style={{ flex: '0 0 auto', width: 38, height: 38, display: 'grid', placeItems: 'center', background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', borderRadius: 8, color: 'var(--text-primary)' }}>
                 <X size={18} />
@@ -513,27 +516,37 @@ export default function PlanCatalog() {
 
             {prefillLoading && <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 12 }}>Loading your usual training rhythm...</p>}
             {error && <div role="alert" className="rounded-lg p-3" style={{ background: 'var(--danger-dim)', border: '1px solid var(--danger-dim)', color: 'var(--danger)', fontSize: 13, fontWeight: 700, marginBottom: 12 }}>{error}</div>}
+            {reviewingUpdatedPlan && (
+              <div className="rounded-lg p-3" style={{ minWidth: 0, background: 'var(--accent-dim)', border: '1px solid var(--border-subtle)', marginBottom: 12, overflowWrap: 'anywhere' }}>
+                <p style={{ color: 'var(--text-primary)', fontSize: 13, fontWeight: 850, margin: 0 }}>
+                  Your current calendar is still intact.
+                </p>
+                <p style={{ color: 'var(--text-muted)', fontSize: 12, margin: '5px 0 0' }}>
+                  Rebuilding this same race plan can update goal pace, quality-session targets, progression, peak, and taper. Nothing changes unless the rebuild succeeds.
+                </p>
+              </div>
+            )}
 
             <div style={{ display: 'grid', gap: 16 }}>
               {isRacePlan && (
                 <section aria-label="Race details" style={{ display: 'grid', gap: 12 }}>
                   <label style={{ display: 'grid', gap: 7 }}>
                     <span style={{ color: 'var(--text-primary)', fontSize: 13, fontWeight: 850 }}>Race name</span>
-                    <input value={raceDraft.name} onChange={(event) => updateRaceDraft('name', event.target.value)} placeholder="Race or event name" maxLength={200} style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', borderRadius: 8, padding: '12px 14px', fontSize: 16 }} />
+                    <input value={raceDraft.name} onChange={(event) => updateRaceDraft('name', event.target.value)} readOnly={reviewingUpdatedPlan} placeholder="Race or event name" maxLength={200} style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', borderRadius: 8, padding: '12px 14px', fontSize: 16 }} />
                   </label>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
                     <label style={{ display: 'grid', gap: 7 }}>
                       <span style={{ color: 'var(--text-primary)', fontSize: 13, fontWeight: 850, display: 'flex', alignItems: 'center', gap: 6 }}><CalendarDays size={15} color="var(--accent)" /> Race date</span>
-                      <input type="date" min={todayISO} value={raceDraft.date} onChange={(event) => updateRaceDraft('date', event.target.value)} style={{ minWidth: 0, background: 'var(--bg-input)', color: 'var(--text-primary)', colorScheme: 'dark', border: '1px solid var(--border-subtle)', borderRadius: 8, padding: '11px 12px', fontSize: 16 }} />
+                      <input type="date" min={todayISO} value={raceDraft.date} onChange={(event) => updateRaceDraft('date', event.target.value)} readOnly={reviewingUpdatedPlan} style={{ minWidth: 0, background: 'var(--bg-input)', color: 'var(--text-primary)', colorScheme: 'dark', border: '1px solid var(--border-subtle)', borderRadius: 8, padding: '11px 12px', fontSize: 16 }} />
                     </label>
                     <label style={{ display: 'grid', gap: 7 }}>
                       <span style={{ color: 'var(--text-primary)', fontSize: 13, fontWeight: 850 }}>Distance miles</span>
-                      <input type="number" min="0.1" max="100" step="0.1" value={customDistance} onChange={(event) => { setRaceSelection(null); setCustomDistance(event.target.value) }} inputMode="decimal" placeholder="10.0" style={{ minWidth: 0, background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', borderRadius: 8, padding: '12px 14px', fontSize: 16 }} />
+                      <input type="number" min="0.1" max="100" step="0.1" value={customDistance} onChange={(event) => { setRaceSelection(null); setCustomDistance(event.target.value) }} readOnly={reviewingUpdatedPlan} inputMode="decimal" placeholder="10.0" style={{ minWidth: 0, background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', borderRadius: 8, padding: '12px 14px', fontSize: 16 }} />
                     </label>
                   </div>
                   <label style={{ display: 'grid', gap: 7 }}>
                     <span style={{ color: 'var(--text-primary)', fontSize: 13, fontWeight: 850 }}>Location</span>
-                    <input value={raceDraft.location} onChange={(event) => updateRaceDraft('location', event.target.value)} placeholder="City, state or country" maxLength={200} style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', borderRadius: 8, padding: '12px 14px', fontSize: 16 }} />
+                    <input value={raceDraft.location} onChange={(event) => updateRaceDraft('location', event.target.value)} readOnly={reviewingUpdatedPlan} placeholder="City, state or country" maxLength={200} style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', borderRadius: 8, padding: '12px 14px', fontSize: 16 }} />
                   </label>
                   {raceDraft.date && (
                     <p style={{ color: 'var(--text-muted)', fontSize: 12, margin: 0 }}>
@@ -580,14 +593,14 @@ export default function PlanCatalog() {
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12 }}>
                 <label style={{ display: 'grid', gap: 7 }}>
                   <span style={{ color: 'var(--text-primary)', fontSize: 13, fontWeight: 850 }}>Run days each week</span>
-                  <select value={runDaysPerWeek} onChange={(event) => setRunDaysPerWeek(Number(event.target.value))} style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', borderRadius: 8, padding: '12px 14px', fontSize: 15 }}>
+                  <select value={runDaysPerWeek} onChange={(event) => setRunDaysPerWeek(Number(event.target.value))} style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', borderRadius: 8, padding: '12px 14px', fontSize: 16 }}>
                     {Array.from({ length: Math.max(1, trainingDays.length) }, (_, index) => index + 1).map((count) => <option key={count} value={count}>{count} run day{count === 1 ? '' : 's'}</option>)}
                   </select>
                 </label>
                 {liftingEnabled && (
                   <label style={{ display: 'grid', gap: 7 }}>
                     <span style={{ color: 'var(--text-primary)', fontSize: 13, fontWeight: 850 }}>Lift days each week</span>
-                    <select value={Math.max(1, liftDaysPerWeek)} onChange={(event) => setLiftDaysPerWeek(Number(event.target.value))} style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', borderRadius: 8, padding: '12px 14px', fontSize: 15 }}>
+                    <select value={Math.max(1, liftDaysPerWeek)} onChange={(event) => setLiftDaysPerWeek(Number(event.target.value))} style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', borderRadius: 8, padding: '12px 14px', fontSize: 16 }}>
                       {Array.from({ length: Math.max(1, Math.min(4, trainingDays.length)) }, (_, index) => index + 1).map((count) => <option key={count} value={count}>{count} lift day{count === 1 ? '' : 's'}</option>)}
                     </select>
                   </label>
@@ -652,7 +665,7 @@ export default function PlanCatalog() {
               {liftingEnabled && (
                 <label style={{ display: 'grid', gap: 8 }}>
                   <span style={{ color: 'var(--text-primary)', fontSize: 13, fontWeight: 850 }}>Equipment available</span>
-                  <select value={equipmentPreset} onChange={(event) => setEquipmentPreset(event.target.value)} style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', borderRadius: 8, padding: '12px 14px', fontSize: 15 }}>
+                  <select value={equipmentPreset} onChange={(event) => setEquipmentPreset(event.target.value)} style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', borderRadius: 8, padding: '12px 14px', fontSize: 16 }}>
                     <option value="full_gym">Full gym</option>
                     <option value="home_gym">Barbell, rack and dumbbells</option>
                     <option value="dumbbells">Dumbbells and bench</option>
@@ -662,7 +675,7 @@ export default function PlanCatalog() {
               )}
 
               <button type="button" onClick={generatePlan} disabled={generating || prefillLoading} className="rounded-lg p-4" style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', fontSize: 15, fontWeight: 950, opacity: generating || prefillLoading ? 0.65 : 1 }}>
-                {generating ? generationStep || 'Generating...' : isRacePlan ? 'Build Race Calendar' : 'Generate Training Block'}
+                {generating ? generationStep || 'Generating...' : reviewingUpdatedPlan ? 'Rebuild updated plan' : isRacePlan ? 'Build Race Calendar' : 'Generate Training Block'}
               </button>
             </div>
           </div>

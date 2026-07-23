@@ -715,9 +715,27 @@ async function persistRunAdaptation(userId, run, active, planVersion, originalPl
   return proposalFromRow(stored);
 }
 
+function raceTargetSnapshot(race = {}) {
+  return {
+    raceId: race.id || null,
+    name: race.race_name || null,
+    date: race.race_date || null,
+    distanceMiles: Number(race.distance_miles || 0) || null,
+    location: race.location || null,
+    goalTimeSeconds: race.goal_time_seconds ?? null,
+  };
+}
+
+function hasCompleteRaceTargetSnapshot(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') return false;
+  return ['raceId', 'name', 'date', 'distanceMiles', 'location', 'goalTimeSeconds']
+    .every((key) => Object.prototype.hasOwnProperty.call(snapshot, key));
+}
+
 function courseTargetFromRace(race = {}) {
   return {
     raceId: race.id || null,
+    raceTarget: raceTargetSnapshot(race),
     elevation_gain_ft: race.elevation_gain_ft,
     max_altitude_ft: race.max_altitude_ft,
     terrain: race.terrain || null,
@@ -732,7 +750,7 @@ const CLIENT_COURSE_KEYS = [
   'elevation_gain_ft', 'elevationGainFt', 'max_altitude_ft', 'maxAltitudeFt',
   'terrain', 'courseTerrain', 'course_profile_json', 'courseProfile',
   'source', 'courseSource', 'url', 'courseUrl', 'provenance', 'courseProvenance',
-  'nowISO', 'todayISO',
+  'raceTarget', 'race_target', 'nowISO', 'todayISO',
 ];
 
 // Course facts may only enter plan generation from an owned race row. A generic
@@ -2004,22 +2022,39 @@ router.put('/my/race-link', auth, async (req, res) => {
       if (!parsed) return { status: 409, error: 'Active plan could not be read' };
 
       const goal = parsed.goal || {};
-      const existingRaceId = String(goal.raceId || goal.race_id || parsed.raceId || parsed.race_id || '').trim();
+      const existingTarget = goal.raceTarget || goal.race_target || null;
+      const existingRaceId = String(
+        goal.raceId || goal.race_id || existingTarget?.raceId || existingTarget?.race_id
+        || parsed.raceId || parsed.race_id || ''
+      ).trim();
+      const hasCurrentTargetSnapshot = hasCompleteRaceTargetSnapshot(existingTarget)
+        && String(existingTarget.raceId || '') === raceId;
       if (existingRaceId) {
         if (existingRaceId !== raceId) return { status: 409, error: 'Active plan is linked to another race' };
-        return { status: 200, planData: parsed };
+        if (hasCurrentTargetSnapshot) return { status: 200, planData: parsed };
       }
 
-      const normalizeName = (value) => String(value || '').trim().toLowerCase();
-      const goalName = goal.name || parsed.raceName || parsed.race_name;
-      const goalDate = goal.date || goal.raceDate || parsed.raceDate || parsed.race_date;
-      const goalDistance = Number(goal.distanceMiles || goal.distance_miles || parsed.distanceMiles || parsed.distance_miles || 0);
-      const sameIdentity = normalizeName(goalName) === normalizeName(race.race_name)
-        && String(goalDate || '') === String(race.race_date || '')
-        && (!goalDistance || Math.abs(goalDistance - Number(race.distance_miles || 0)) < 0.01);
-      if (!sameIdentity) return { status: 409, error: 'Race no longer matches the active plan target' };
+      if (!existingRaceId) {
+        const normalizeName = (value) => String(value || '').trim().toLowerCase();
+        const goalName = goal.name || parsed.raceName || parsed.race_name;
+        const goalDate = goal.date || goal.raceDate || parsed.raceDate || parsed.race_date;
+        const goalDistance = Number(goal.distanceMiles || goal.distance_miles || parsed.distanceMiles || parsed.distance_miles || 0);
+        const sameIdentity = normalizeName(goalName) === normalizeName(race.race_name)
+          && String(goalDate || '') === String(race.race_date || '')
+          && (!goalDistance || Math.abs(goalDistance - Number(race.distance_miles || 0)) < 0.01);
+        if (!sameIdentity) return { status: 409, error: 'Race no longer matches the active plan target' };
+      }
 
-      const nextPlan = { ...parsed, goal: { ...goal, raceId: race.id } };
+      const nextPlan = {
+        ...parsed,
+        goal: {
+          ...goal,
+          raceId: race.id,
+          raceTarget: hasCurrentTargetSnapshot
+            ? existingTarget
+            : raceTargetSnapshot(race),
+        },
+      };
       await updateActivePlanData(active, req.user.id, nextPlan, tx);
       return { status: 200, planData: nextPlan };
     });
