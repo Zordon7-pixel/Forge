@@ -434,13 +434,76 @@ function buildMileageTargets(weekCount, baseline, hasRace, recovery, history, ta
 }
 
 function selectRunDays(availableDays, count) {
-  const wanted = clamp(Math.round(Number(count) || 3), 1, 6);
+  const parsedCount = Number(count);
+  const wanted = clamp(Number.isFinite(parsedCount) ? Math.round(parsedCount) : 3, 0, 6);
   const preferred = ['Tue', 'Thu', 'Sat', 'Sun', 'Wed', 'Mon', 'Fri'];
   const ordered = [
     ...preferred.filter((day) => availableDays.includes(day)),
     ...availableDays.filter((day) => !preferred.includes(day)),
   ];
   return DAY_ORDER.filter((day) => ordered.slice(0, Math.min(wanted, availableDays.length)).includes(day));
+}
+
+function currentWeekRunSchedule({ weekStart, todayISO, currentWeekLoad, runSchedule, raceDay = null }) {
+  const weekEnd = addDays(weekStart, 6);
+  if (!currentWeekLoad
+    || currentWeekLoad.startDate !== weekStart
+    || !parseISODate(todayISO)
+    || todayISO < weekStart
+    || todayISO > weekEnd) {
+    return null;
+  }
+
+  const completedRunDates = new Set(
+    (Array.isArray(currentWeekLoad.runDates) ? currentWeekLoad.runDates : [])
+      .map((date) => String(date || '').slice(0, 10))
+      .filter((date) => parseISODate(date) && date >= weekStart && date <= todayISO)
+  );
+  const reportedCompletedRuns = Math.max(0, Math.floor(Number(currentWeekLoad.runCount) || 0));
+  const completedMeaningfulRuns = Math.max(reportedCompletedRuns, completedRunDates.size);
+  const completedRunsAppliedToQuota = Math.min(completedMeaningfulRuns, runSchedule.runDaysPerWeek);
+  const remainingRunQuota = Math.max(0, runSchedule.runDaysPerWeek - completedRunsAppliedToQuota);
+  const eligibleSelectedDays = runSchedule.trainingDays.filter((day) => {
+    const date = addDays(weekStart, DAY_ORDER.indexOf(day));
+    return date >= todayISO && !completedRunDates.has(date);
+  });
+  const raceDate = raceDay ? addDays(weekStart, DAY_ORDER.indexOf(raceDay)) : null;
+  const scheduleRace = Boolean(
+    remainingRunQuota > 0
+    && raceDay
+    && raceDate >= todayISO
+    && !completedRunDates.has(raceDate)
+  );
+  const selectedQuota = Math.max(0, remainingRunQuota - Number(scheduleRace));
+  const selectedRunDays = selectRunDays(
+    eligibleSelectedDays.filter((day) => day !== raceDay),
+    selectedQuota
+  );
+  const runDays = DAY_ORDER.filter((day) => selectedRunDays.includes(day) || (scheduleRace && day === raceDay));
+
+  return {
+    completedRunDates,
+    completedMeaningfulRuns,
+    completedRunsAppliedToQuota,
+    remainingRunQuota,
+    eligibleSelectedDays,
+    runDays,
+  };
+}
+
+function partialCurrentWeekConstraint(quota, requestedRunDaysPerWeek) {
+  if (!quota || quota.runDays.length >= requestedRunDaysPerWeek) return null;
+  const scheduledRunCount = quota.runDays.length;
+  return {
+    status: 'partial_current_week',
+    requestedRunDaysPerWeek,
+    completedMeaningfulRuns: quota.completedMeaningfulRuns,
+    completedRunsAppliedToQuota: quota.completedRunsAppliedToQuota,
+    remainingRunQuota: quota.remainingRunQuota,
+    scheduledRunCount,
+    totalRunsTowardTarget: quota.completedRunsAppliedToQuota + scheduledRunCount,
+    explanation: `This current week is partial: completed runs and remaining selected weekdays set the sessions shown. The full ${requestedRunDaysPerWeek}-day selected frequency starts next week.`,
+  };
 }
 
 function runTypeFor(day, runDays, phase, options = {}) {
@@ -890,6 +953,16 @@ function applyAcuteRunProtection(plan, context = {}) {
       .flatMap((day) => day.sessions || [])
       .filter((session) => session.kind === 'run')
       .reduce((sum, session) => sum + Number(session.distance_miles || 0), 0));
+    if (week.currentWeekConstraint) {
+      const scheduledRunCount = days
+        .flatMap((day) => day.sessions || [])
+        .filter((session) => session.kind === 'run').length;
+      week.currentWeekConstraint.scheduledRunCount = scheduledRunCount;
+      week.currentWeekConstraint.totalRunsTowardTarget = Math.min(
+        week.currentWeekConstraint.requestedRunDaysPerWeek,
+        week.currentWeekConstraint.completedRunsAppliedToQuota + scheduledRunCount
+      );
+    }
     if (weekChanged) week.acuteLoadAdjusted = true;
   }
 
@@ -1100,17 +1173,15 @@ function buildConcurrentPlan(context = {}) {
     const raceDay = raceDate && DAY_ORDER.find((day, index) => addDays(weekStart, index) === raceDate);
     let weekRunDays = raceDay && !runDays.includes(raceDay) ? [...runDays.slice(0, Math.max(1, runDays.length - 1)), raceDay] : runDays.slice();
     const currentWeekLoad = history.acuteRunLoad?.currentWeek;
-    const isCurrentWeek = weekNumber === 1
-      && currentWeekLoad?.startDate === weekStart
-      && context.todayISO >= weekStart
-      && context.todayISO <= addDays(weekStart, 6);
-    const completedRunDates = new Set(isCurrentWeek ? currentWeekLoad.runDates || [] : []);
-    if (isCurrentWeek) {
-      weekRunDays = weekRunDays.filter((day) => {
-        const date = addDays(weekStart, DAY_ORDER.indexOf(day));
-        return date >= context.todayISO && !completedRunDates.has(date);
-      });
-    }
+    const currentWeekQuota = weekNumber === 1 ? currentWeekRunSchedule({
+      weekStart,
+      todayISO: context.todayISO,
+      currentWeekLoad,
+      runSchedule,
+      raceDay,
+    }) : null;
+    const isCurrentWeek = Boolean(currentWeekQuota);
+    if (currentWeekQuota) weekRunDays = currentWeekQuota.runDays;
     let scheduledMileageTarget = mileageTargets[weekNumber - 1];
     if (isCurrentWeek) scheduledMileageTarget = Math.max(0, scheduledMileageTarget - Number(currentWeekLoad.miles || 0));
     const priorScheduledMiles = Number(weeks[weeks.length - 1]?.totalMiles || 0);
@@ -1170,13 +1241,15 @@ function buildConcurrentPlan(context = {}) {
       return result;
     });
     const totalMiles = round(days.flatMap((day) => day.sessions).filter((session) => session.kind === 'run').reduce((sum, session) => sum + Number(session.distance_miles || 0), 0));
+    const currentWeekConstraint = partialCurrentWeekConstraint(currentWeekQuota, runSchedule.runDaysPerWeek);
     weeks.push({
       week: weekNumber,
       phase,
       startDate: weekStart,
       totalMiles,
-      completedRunsAtGeneration: isCurrentWeek ? completedRunDates.size : 0,
+      completedRunsAtGeneration: currentWeekQuota?.completedMeaningfulRuns || 0,
       completedMilesAtGeneration: isCurrentWeek ? round(Number(currentWeekLoad.miles || 0)) : 0,
+      ...(currentWeekConstraint ? { currentWeekConstraint } : {}),
       days,
     });
   }
@@ -1246,6 +1319,7 @@ function validateConcurrentPlan(candidate, context = {}) {
   const expectedGoalPace = goalPaceSecondsPerMile(target, {}, context.history || {});
   const expectedWeeks = clamp(Math.round(Number(target.weeks) || 8), hasRace ? 1 : 4, 20);
   const expectedStartDate = mondayFor(target.startDate || context.todayISO);
+  const currentWeekLoad = context.history?.acuteRunLoad?.currentWeek;
   const acuteLoad = context.history?.acuteRunLoad;
   const acuteProtection = acuteLoad?.protection?.active ? acuteLoad.protection : null;
   const latestRunDate = acuteProtection?.anchorDate || acuteLoad?.protectiveRun?.date || acuteLoad?.latestRun?.date || null;
@@ -1268,6 +1342,7 @@ function validateConcurrentPlan(candidate, context = {}) {
   const weekMiles = [];
   const phases = new Set();
   let exactRaceSessionFound = false;
+  let currentWeekRaceQuotaAlreadyMet = false;
   let raceSpecificSessionFound = false;
   let targetPaceSessionFound = false;
   const weeks = Array.isArray(candidate.weeks) ? candidate.weeks : [];
@@ -1282,6 +1357,17 @@ function validateConcurrentPlan(candidate, context = {}) {
     if (!Array.isArray(week.days) || week.days.length !== 7) {
       errors.push(`${path}.days must contain seven dated days`);
       return;
+    }
+    const raceDay = target.raceDate && DAY_ORDER.find((day, dayIndex) => addDays(week.startDate, dayIndex) === target.raceDate);
+    const currentWeekQuota = weekIndex === 0 ? currentWeekRunSchedule({
+      weekStart: week.startDate,
+      todayISO: context.todayISO,
+      currentWeekLoad,
+      runSchedule,
+      raceDay,
+    }) : null;
+    if (currentWeekQuota && raceDay && currentWeekQuota.remainingRunQuota === 0) {
+      currentWeekRaceQuotaAlreadyMet = true;
     }
     let restDays = 0;
     let lifts = 0;
@@ -1308,6 +1394,10 @@ function validateConcurrentPlan(candidate, context = {}) {
         if (kind === 'run') {
           runs += 1;
           validateRun(session, sessionPath, errors);
+          if (currentWeekQuota
+            && (day.date < context.todayISO || currentWeekQuota.completedRunDates.has(day.date))) {
+            errors.push(`${sessionPath} is scheduled in the past or on an already completed date`);
+          }
           if (String(session.type || '').toLowerCase() !== 'race' && !allowedRunDays.has(day.day)) {
             errors.push(`${sessionPath} is scheduled outside the selected trainingDays`);
           }
@@ -1354,11 +1444,29 @@ function validateConcurrentPlan(candidate, context = {}) {
       if (kinds.has('run') && kinds.has('lift') && !String(day.orderGuidance || '').trim()) errors.push(`${dayPath}.orderGuidance is required for same-day run and lift`);
     });
     if (restDays < 1) errors.push(`${path} must contain at least one full rest day`);
-    const completedRunsAtGeneration = Math.max(0, Number(week.completedRunsAtGeneration || 0));
-    if (!['taper', 'race'].includes(week.phase)
+    const maximumRuns = currentWeekQuota?.runDays.length ?? runSchedule.runDaysPerWeek;
+    if (currentWeekQuota && runs > maximumRuns) {
+      errors.push(`${path} exceeds the current-week remaining quota of ${maximumRuns} scheduled runs`);
+    } else if (!['taper', 'race'].includes(week.phase)
       && !week.acuteLoadAdjusted
-      && runs + completedRunsAtGeneration !== runSchedule.runDaysPerWeek) {
-      errors.push(`${path} must contain exactly ${runSchedule.runDaysPerWeek} weekly runs`);
+      && runs !== maximumRuns) {
+      errors.push(currentWeekQuota
+        ? `${path} must contain ${maximumRuns} scheduled runs after current-week quota and eligible-day constraints`
+        : `${path} must contain exactly ${runSchedule.runDaysPerWeek} weekly runs`);
+    }
+    if (currentWeekQuota && maximumRuns < runSchedule.runDaysPerWeek) {
+      const constraint = week.currentWeekConstraint;
+      if (constraint?.status !== 'partial_current_week') errors.push(`${path}.currentWeekConstraint must mark the partial current week`);
+      if (Number(constraint?.requestedRunDaysPerWeek) !== runSchedule.runDaysPerWeek) errors.push(`${path}.currentWeekConstraint requested frequency is inaccurate`);
+      if (Number(constraint?.completedMeaningfulRuns) !== currentWeekQuota.completedMeaningfulRuns) errors.push(`${path}.currentWeekConstraint completed run count is inaccurate`);
+      if (Number(constraint?.completedRunsAppliedToQuota) !== currentWeekQuota.completedRunsAppliedToQuota) errors.push(`${path}.currentWeekConstraint quota credit is inaccurate`);
+      if (Number(constraint?.remainingRunQuota) !== currentWeekQuota.remainingRunQuota) errors.push(`${path}.currentWeekConstraint remaining quota is inaccurate`);
+      if (Number(constraint?.scheduledRunCount) !== runs) errors.push(`${path}.currentWeekConstraint scheduled run count is inaccurate`);
+      const expectedTotal = Math.min(runSchedule.runDaysPerWeek, currentWeekQuota.completedRunsAppliedToQuota + runs);
+      if (Number(constraint?.totalRunsTowardTarget) !== expectedTotal) errors.push(`${path}.currentWeekConstraint total run count is inaccurate`);
+      if (!String(constraint?.explanation || '').includes(`full ${runSchedule.runDaysPerWeek}-day selected frequency starts next week`)) {
+        errors.push(`${path}.currentWeekConstraint explanation is missing`);
+      }
     }
     if (expectedMode === planSchema.PLAN_MODES.RUN_ONLY && lifts > 0) errors.push(`${path} run_only plans cannot contain lifts`);
     if (expectedMode !== planSchema.PLAN_MODES.RUN_ONLY && week.phase !== 'race') {
@@ -1384,16 +1492,18 @@ function validateConcurrentPlan(candidate, context = {}) {
   for (let index = 1; index < weeks.length; index += 1) {
     const phase = weeks[index]?.phase;
     const previousPhase = weeks[index - 1]?.phase;
-    if (!weeks[index - 1]?.acuteLoadAdjusted && !['deload', 'taper', 'race'].includes(phase) && previousPhase !== 'deload' && weekMiles[index] > weekMiles[index - 1] * 1.11 + 0.2) {
+    const previousWeekIsPartial = index === 1
+      && weeks[0]?.currentWeekConstraint?.status === 'partial_current_week';
+    if (!previousWeekIsPartial && !weeks[index - 1]?.acuteLoadAdjusted && !['deload', 'taper', 'race'].includes(phase) && previousPhase !== 'deload' && weekMiles[index] > weekMiles[index - 1] * 1.11 + 0.2) {
       errors.push(`weeks[${index}].totalMiles increases more than 10%`);
     }
-    if (phase === 'deload' && weekMiles[index] >= weekMiles[index - 1] * 0.9) errors.push(`weeks[${index}] deload must reduce mileage by at least 10%`);
-    if (phase === 'taper' && weekMiles[index] >= weekMiles[index - 1] * 0.8) errors.push(`weeks[${index}] taper must reduce mileage by at least 20%`);
+    if (!previousWeekIsPartial && phase === 'deload' && weekMiles[index] >= weekMiles[index - 1] * 0.9) errors.push(`weeks[${index}] deload must reduce mileage by at least 10%`);
+    if (!previousWeekIsPartial && phase === 'taper' && weekMiles[index] >= weekMiles[index - 1] * 0.8) errors.push(`weeks[${index}] taper must reduce mileage by at least 20%`);
   }
   if (target.raceDate && weeks.length) {
     if (weeks[weeks.length - 1]?.phase !== 'race') errors.push('final week must be race phase');
     if (weeks.length > 1 && weeks[weeks.length - 2]?.phase !== 'taper') errors.push('week before race must be taper phase');
-    if (!exactRaceSessionFound) errors.push('plan must include the exact race session on the target date');
+    if (!exactRaceSessionFound && !currentWeekRaceQuotaAlreadyMet) errors.push('plan must include the exact race session on the target date');
     if (weeks.length >= 3 && !phases.has('peak')) errors.push('race plan must include a peak phase');
   }
   const plannedRunFrequency = runSchedule.runDaysPerWeek;

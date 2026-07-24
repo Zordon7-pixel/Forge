@@ -147,6 +147,9 @@ export default function Plan() {
   const planReviewRequired = myUserPlan?.progress?.planReviewRequired
     || myPlan?.plan_data?.planReviewRequired
     || null
+  const currentWeekConstraint = currentWeek === 1
+    ? myPlan?.plan_data?.weeks?.[0]?.currentWeekConstraint
+    : null
 
   // Derive the selected day from the live model so completion toggles stay fresh
   // across reloads (we store the ISO date, not a stale day object).
@@ -484,6 +487,13 @@ export default function Plan() {
             >
               Review and rebuild calendar →
             </button>
+          </div>
+        )}
+
+        {myPlan && currentWeekConstraint?.status === 'partial_current_week' && (
+          <div role="status" className="rounded-xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}>
+            <h2 className="text-base font-bold">Your first week is partial</h2>
+            <p className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>{currentWeekConstraint.explanation}</p>
           </div>
         )}
 
