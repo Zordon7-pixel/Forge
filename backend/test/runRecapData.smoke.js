@@ -104,6 +104,8 @@ assert(/Runs started in Forged Hybrid record iPhone GPS and altitude/.test(recap
 assert(/isRun && !shareOpen && routePositions\.length >= 2/.test(recap), 'the interactive Leaflet map unmounts while the share studio is open');
 assert(/z-\[2000\][\s\S]*zIndex: 2000/.test(shareStudio), 'the share studio sits above all Leaflet panes and controls');
 assert(!/MapContainer/.test(shareStudio), 'share cards render one canvas route instead of nesting an interactive map');
+assert(/ROUTE_START_COLOR\s*=\s*'#22C55E'/.test(shareStudio), 'share routes mark the first coordinate in green');
+assert(/ROUTE_END_COLOR\s*=\s*'#EF4444'/.test(shareStudio), 'share routes mark the last coordinate in red');
 assert(/fetchRecentWorkoutHistory/.test(swift) && /mergeWorkoutHistory/.test(swift), 'native sync rechecks recent workouts for late HealthKit routes');
 
 console.log('Run recap data smoke passed');

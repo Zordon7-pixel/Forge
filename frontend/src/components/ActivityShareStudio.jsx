@@ -7,6 +7,8 @@ import PhotoLibraryService from '../services/PhotoLibraryService'
 
 const CARD_WIDTH = 1080
 const CARD_HEIGHT = 1350
+const ROUTE_START_COLOR = '#22C55E'
+const ROUTE_END_COLOR = '#EF4444'
 
 const TEMPLATES = [
   { id: 'route', label: 'Route' },
@@ -285,7 +287,7 @@ function drawRoute(ctx, route, bounds, { casing = '#1A150C', glow = CARD_EMBER, 
 
   const [startX, startY] = fitted[0]
   const [endX, endY] = fitted.at(-1)
-  ctx.fillStyle = '#5E6C7B'
+  ctx.fillStyle = ROUTE_START_COLOR
   ctx.beginPath()
   ctx.arc(startX, startY, 13, 0, Math.PI * 2)
   ctx.fill()
@@ -293,9 +295,9 @@ function drawRoute(ctx, route, bounds, { casing = '#1A150C', glow = CARD_EMBER, 
   ctx.lineWidth = 5
   ctx.stroke()
   ctx.save()
-  ctx.shadowColor = CARD_HOT
+  ctx.shadowColor = ROUTE_END_COLOR
   ctx.shadowBlur = 30
-  ctx.fillStyle = CARD_HOT
+  ctx.fillStyle = ROUTE_END_COLOR
   ctx.beginPath()
   ctx.arc(endX, endY, 15, 0, Math.PI * 2)
   ctx.fill()
