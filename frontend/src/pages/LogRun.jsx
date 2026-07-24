@@ -1,4 +1,5 @@
 import { lazy, Suspense, useState, useEffect, useMemo, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { Link, Navigate, useNavigate, useLocation } from 'react-router-dom'
 import { MapPin, Mountain, RefreshCw, Gauge, Pencil } from 'lucide-react'
 import { useUnits } from '../context/UnitsContext'
@@ -14,6 +15,7 @@ import WatchWorkoutService from '../services/WatchWorkoutService'
 import { fetchDailyExecution, scheduledRunFromExecution, planSessionIdFromState, currentWeekFromState, markSessionComplete, queueSessionComplete, isRetryableCompletionFailure, localDateISO, unplannedRunRouteState, makeupRunRouteState } from '../lib/dailyExecution'
 import { loadPostRunCheckInDraft, savePostRunCheckInDraft } from '../lib/postRunCheckInDraft'
 import { buildPlannedSessionSnapshot } from '../lib/runProvenance'
+import { lockDocumentScroll } from '../lib/documentScrollLock'
 
 const RoutePlanner = lazy(() => import('../components/RoutePlanner'))
 
@@ -300,6 +302,7 @@ export default function LogRun() {
   const [missedRunOptions, setMissedRunOptions] = useState([])
   const [todayIsPlanRestDay, setTodayIsPlanRestDay] = useState(false)
   const [startingMakeupId, setStartingMakeupId] = useState(null)
+  const [selectedRunIntentId, setSelectedRunIntentId] = useState('extra')
 
   const [selectedRun, setSelectedRun] = useState(null)
   const [showCustomize, setShowCustomize] = useState(false)
@@ -313,6 +316,7 @@ export default function LogRun() {
   const [checkInCompleted, setCheckInCompleted] = useState(false)
   const distanceErrorRef = useRef(null)
   const durationErrorRef = useRef(null)
+  const runIntentDialogRef = useRef(null)
   const runBriefIsAi = runBrief?.source === 'ai'
   const todayCoachingIsAi = runBriefIsAi || Boolean(todayWorkout?.aiReason)
 
@@ -350,6 +354,28 @@ export default function LogRun() {
         if (active) setRunIntentLoading(false)
       })
     return () => { active = false }
+  }, [runIntentOpen])
+
+  useEffect(() => {
+    if (!runIntentOpen) return undefined
+    const previouslyFocused = document.activeElement
+    const unlockDocumentScroll = lockDocumentScroll()
+    const focusFrame = window.requestAnimationFrame(() => {
+      runIntentDialogRef.current?.focus({ preventScroll: true })
+    })
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') setRunIntentOpen(false)
+    }
+    window.addEventListener('keydown', onKeyDown)
+
+    return () => {
+      window.cancelAnimationFrame(focusFrame)
+      window.removeEventListener('keydown', onKeyDown)
+      unlockDocumentScroll()
+      if (previouslyFocused instanceof HTMLElement && previouslyFocused.isConnected) {
+        window.requestAnimationFrame(() => previouslyFocused.focus({ preventScroll: true }))
+      }
+    }
   }, [runIntentOpen])
 
   useEffect(() => {
@@ -756,6 +782,7 @@ export default function LogRun() {
 
   const openRunIntent = () => {
     setRunIntentError('')
+    setSelectedRunIntentId('extra')
     setRunIntentOpen(true)
     track('run_intent_opened', { via: activeTab === 'log' ? 'manual_tab' : 'rest_day' })
   }
@@ -801,6 +828,18 @@ export default function LogRun() {
     } finally {
       setStartingMakeupId(null)
     }
+  }
+
+  const selectedMissedRun = selectedRunIntentId === 'extra'
+    ? null
+    : missedRunOptions.find((missed) => String(missed.sessionId || missed.raw?.id || '') === selectedRunIntentId)
+
+  const continueRunIntent = () => {
+    if (selectedRunIntentId === 'extra') {
+      startExtraRun()
+      return
+    }
+    if (selectedMissedRun) startMakeupRun(selectedMissedRun)
   }
 
   const saveNotes = async () => {
@@ -1114,54 +1153,108 @@ export default function LogRun() {
 
       {showWatchModal && <WorkoutWatchModal workout={todayWorkout} onClose={() => setShowWatchModal(false)} />}
 
-      {runIntentOpen && (
-        <div className="fixed inset-0 z-[70] flex items-end justify-center sm:items-center sm:px-4" style={{ background: 'rgba(0,0,0,0.78)' }}>
-          <section role="dialog" aria-modal="true" aria-labelledby="run-intent-title" className="w-full max-w-md rounded-t-2xl p-5 sm:rounded-2xl" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', maxHeight: '88vh', overflowY: 'auto' }}>
-            <div className="flex items-start justify-between gap-3">
+      {runIntentOpen && createPortal(
+        <div className="run-intent-overlay" data-testid="run-intent-overlay">
+          <button
+            type="button"
+            tabIndex={-1}
+            aria-label="Dismiss run choices"
+            className="run-intent-backdrop"
+            onClick={() => setRunIntentOpen(false)}
+          />
+          <section
+            ref={runIntentDialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="run-intent-title"
+            tabIndex={-1}
+            data-swipe-back-ignore
+            className="run-intent-sheet"
+          >
+            <div className="run-intent-header">
               <div>
                 <p className="text-xs font-black uppercase" style={{ color: 'var(--accent)', letterSpacing: 0.8 }}>Run today</p>
                 <h2 id="run-intent-title" className="mt-1 text-xl font-black" style={{ color: 'var(--text-primary)' }}>Why are you running?</h2>
               </div>
-              <button type="button" onClick={() => setRunIntentOpen(false)} aria-label="Close run choices" className="rounded-full px-3 py-2 text-sm font-bold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>Close</button>
+              <button type="button" onClick={() => setRunIntentOpen(false)} aria-label="Close run choices" className="run-intent-close rounded-full px-3 py-2 text-sm font-bold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>Close</button>
             </div>
 
-            <button type="button" onClick={startExtraRun} className="mt-5 w-full rounded-xl p-4 text-left" style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none' }}>
-              <span className="block text-base font-black">Extra run</span>
-              <span className="mt-1 block text-sm font-semibold">Push today without completing or moving a scheduled workout. The activity still informs future load decisions.</span>
-            </button>
+            <div className="run-intent-scrollport" data-testid="run-intent-scrollport" data-swipe-back-ignore>
+              <div className="run-intent-content">
+                <button
+                  type="button"
+                  aria-pressed={selectedRunIntentId === 'extra'}
+                  onClick={() => setSelectedRunIntentId('extra')}
+                  className="run-intent-option w-full rounded-xl p-4 text-left"
+                  style={{
+                    background: selectedRunIntentId === 'extra' ? 'var(--accent)' : 'var(--bg-input)',
+                    color: selectedRunIntentId === 'extra' ? 'var(--on-accent)' : 'var(--text-primary)',
+                    border: selectedRunIntentId === 'extra' ? '1px solid var(--accent)' : '1px solid var(--border-subtle)',
+                  }}
+                >
+                  <span className="block text-base font-black">Extra run</span>
+                  <span className="mt-1 block text-sm font-semibold">Push today without completing or moving a scheduled workout. The activity still informs future load decisions.</span>
+                </button>
 
-            <div className="mt-5">
-              <p className="text-xs font-black uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.8 }}>Make up a missed run</p>
-              <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>Select a recent missed session. Forged Hybrid moves it onto today before you start.</p>
-              {runIntentLoading && <p className="mt-3 text-sm" style={{ color: 'var(--text-muted)' }}>Checking your calendar...</p>}
-              {!runIntentLoading && !todayIsPlanRestDay && (
-                <p className="mt-3 rounded-xl p-3 text-sm" style={{ background: 'var(--bg-input)', color: 'var(--text-muted)', border: '1px solid var(--border-subtle)' }}>Today is not an available plan rest day, so Forged Hybrid will not stack a missed workout here.</p>
-              )}
-              {!runIntentLoading && todayIsPlanRestDay && missedRunOptions.length === 0 && (
-                <p className="mt-3 rounded-xl p-3 text-sm" style={{ background: 'var(--bg-input)', color: 'var(--text-muted)', border: '1px solid var(--border-subtle)' }}>No missed run is available in this training week.</p>
-              )}
-              {!runIntentLoading && todayIsPlanRestDay && missedRunOptions.map((missed) => {
-                const raw = missed.raw || {}
-                const title = raw.title || cleanRunType(raw.type || raw.workout_type || 'Run')
-                const distanceMiles = Number(raw.distance_miles ?? missed.distance ?? 0)
-                const detail = [
-                  missed.date || null,
-                  distanceMiles > 0 ? `${distanceMiles.toFixed(1)} mi` : null,
-                  raw.pace_target || raw.target_zone || null,
-                ].filter(Boolean).join(' · ')
-                const id = String(missed.sessionId || raw.id || '')
-                return (
-                  <button key={id} type="button" onClick={() => startMakeupRun(missed)} disabled={Boolean(startingMakeupId)} className="mt-3 w-full rounded-xl p-4 text-left disabled:opacity-60" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>
-                    <span className="block text-sm font-black">{title}</span>
-                    <span className="mt-1 block text-xs" style={{ color: 'var(--text-muted)' }}>{detail || 'Missed plan session'}</span>
-                    {startingMakeupId === id && <span className="mt-2 block text-xs font-bold" style={{ color: 'var(--accent)' }}>Moving workout onto today...</span>}
-                  </button>
-                )
-              })}
+                <div className="mt-5">
+                  <p className="text-xs font-black uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.8 }}>Make up a missed run</p>
+                  <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>Select a recent missed session. Forged Hybrid moves it onto today before you start.</p>
+                  {runIntentLoading && <p className="mt-3 text-sm" style={{ color: 'var(--text-muted)' }}>Checking your calendar...</p>}
+                  {!runIntentLoading && !todayIsPlanRestDay && (
+                    <p className="mt-3 rounded-xl p-3 text-sm" style={{ background: 'var(--bg-input)', color: 'var(--text-muted)', border: '1px solid var(--border-subtle)' }}>Today is not an available plan rest day, so Forged Hybrid will not stack a missed workout here.</p>
+                  )}
+                  {!runIntentLoading && todayIsPlanRestDay && missedRunOptions.length === 0 && (
+                    <p className="mt-3 rounded-xl p-3 text-sm" style={{ background: 'var(--bg-input)', color: 'var(--text-muted)', border: '1px solid var(--border-subtle)' }}>No missed run is available in this training week.</p>
+                  )}
+                  {!runIntentLoading && todayIsPlanRestDay && missedRunOptions.map((missed) => {
+                    const raw = missed.raw || {}
+                    const title = raw.title || cleanRunType(raw.type || raw.workout_type || 'Run')
+                    const distanceMiles = Number(raw.distance_miles ?? missed.distance ?? 0)
+                    const detail = [
+                      missed.date || null,
+                      distanceMiles > 0 ? `${distanceMiles.toFixed(1)} mi` : null,
+                      raw.pace_target || raw.target_zone || null,
+                    ].filter(Boolean).join(' · ')
+                    const id = String(missed.sessionId || raw.id || '')
+                    const isSelected = selectedRunIntentId === id
+                    return (
+                      <button
+                        key={id}
+                        type="button"
+                        aria-pressed={isSelected}
+                        onClick={() => setSelectedRunIntentId(id)}
+                        disabled={Boolean(startingMakeupId)}
+                        className="run-intent-option mt-3 w-full rounded-xl p-4 text-left disabled:opacity-60"
+                        style={{
+                          background: isSelected ? 'var(--accent-dim)' : 'var(--bg-input)',
+                          color: 'var(--text-primary)',
+                          border: isSelected ? '2px solid var(--accent)' : '1px solid var(--border-subtle)',
+                        }}
+                      >
+                        <span className="block text-sm font-black">{title}</span>
+                        <span className="mt-1 block text-xs" style={{ color: 'var(--text-muted)' }}>{detail || 'Missed plan session'}</span>
+                        {startingMakeupId === id && <span className="mt-2 block text-xs font-bold" style={{ color: 'var(--accent)' }}>Moving workout onto today...</span>}
+                      </button>
+                    )
+                  })}
+                </div>
+                {runIntentError && <p role="alert" className="mt-4 rounded-xl p-3 text-sm" style={{ background: 'var(--danger-dim)', color: 'var(--danger)' }}>{runIntentError}</p>}
+                <button
+                  type="button"
+                  onClick={continueRunIntent}
+                  disabled={Boolean(startingMakeupId) || (selectedRunIntentId !== 'extra' && !selectedMissedRun)}
+                  className="run-intent-primary mt-5 w-full rounded-xl py-3 font-black disabled:opacity-60"
+                  style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none' }}
+                >
+                  {startingMakeupId
+                    ? 'Moving workout...'
+                    : selectedRunIntentId === 'extra' ? 'Start extra run' : 'Move workout & start'}
+                </button>
+              </div>
             </div>
-            {runIntentError && <p role="alert" className="mt-4 rounded-xl p-3 text-sm" style={{ background: 'var(--danger-dim)', color: 'var(--danger)' }}>{runIntentError}</p>}
           </section>
-        </div>
+        </div>,
+        document.body,
       )}
 
       {selectedRun && (
