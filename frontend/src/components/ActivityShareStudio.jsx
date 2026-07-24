@@ -1011,7 +1011,7 @@ export default function ActivityShareStudio({ run, onClose }) {
   }
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-end justify-center" style={{ background: 'rgba(0,0,0,0.82)' }} onClick={(event) => { event.stopPropagation(); onClose() }}>
+    <div className="fixed inset-0 z-[2000] isolate flex items-end justify-center" style={{ background: 'rgba(0,0,0,0.82)', zIndex: 2000 }} onClick={(event) => { event.stopPropagation(); onClose() }}>
       <section className="max-h-[94dvh] w-full max-w-[480px] overflow-y-auto rounded-t-2xl px-4 pb-8 pt-4" style={{ background: 'var(--bg-card)' }} onClick={(event) => event.stopPropagation()} aria-label="Share run">
         <header className="mb-4 flex items-center justify-between gap-3">
           <div>

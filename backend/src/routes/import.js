@@ -8,6 +8,15 @@ const { buildRunImportKeys } = require('../lib/runImportKey');
 const { classifyRouteIntegrity, normalizeDistanceEvidence } = require('../lib/runPostRun');
 const { normalizeWorkoutMetrics } = require('../lib/workoutMetrics');
 const {
+  chooseForgedRunMatch,
+  distanceTolerance,
+  durationTolerance,
+  hasForgedRecordingProvenance,
+  isTrustedSensorSummarySource,
+  normalizedSource,
+  sensorSummarySourcePriority,
+} = require('../lib/canonicalRunMatch');
+const {
   findPlannedRunForDate,
   hasMeaningfulPlannedRun,
   isExplicitlyUnlinkedRun,
@@ -137,7 +146,224 @@ function parseStoredWorkoutMetrics(value) {
   }
 }
 
-function resolveCanonicalDistanceSource(storedWorkoutMetrics, existingRun, item) {
+function normalizedText(value) {
+  const text = String(value ?? '').trim();
+  return text || null;
+}
+
+function meaningfulRunNote(value) {
+  const note = normalizedText(value);
+  if (!note) return null;
+  if (/^imported workout(?:\s+\[.*\])?$/i.test(note)) return null;
+  if (/^synced (?:from|via)\b/i.test(note)) return null;
+  return note;
+}
+
+function runPlanState(run = {}) {
+  const planSessionId = normalizedText(run.plan_session_id);
+  let snapshot = null;
+  if (run.planned_session_json && typeof run.planned_session_json === 'object') {
+    snapshot = run.planned_session_json;
+  } else if (run.planned_session_json) {
+    try {
+      const parsed = JSON.parse(run.planned_session_json);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) snapshot = parsed;
+    } catch {
+      snapshot = null;
+    }
+  }
+  const meaningful = hasMeaningfulPlannedRun(snapshot) || isExplicitlyUnlinkedRun(snapshot);
+  const snapshotSessionId = normalizedText(snapshot?.sessionId ?? snapshot?.session_id);
+  return {
+    hasPlan: Boolean(planSessionId || meaningful),
+    planSessionId: planSessionId || snapshotSessionId,
+    explicitNone: isExplicitlyUnlinkedRun(snapshot),
+    snapshot,
+  };
+}
+
+function sameOptionalValue(left, right) {
+  return normalizedText(left) === normalizedText(right);
+}
+
+function numericRunValue(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function parsedStructuredValue(value) {
+  if (typeof value !== 'string') return value;
+  const text = value.trim();
+  if (!text || (!text.startsWith('{') && !text.startsWith('['))) return value;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return value;
+  }
+}
+
+function stableStructuredValue(value) {
+  const parsed = parsedStructuredValue(value);
+  if (Array.isArray(parsed)) return parsed.map(stableStructuredValue);
+  if (!parsed || typeof parsed !== 'object') return parsed;
+  return Object.fromEntries(
+    Object.keys(parsed)
+      .sort()
+      .filter((key) => parsed[key] !== undefined)
+      .map((key) => [key, stableStructuredValue(parsed[key])])
+  );
+}
+
+function structuredValuesEqual(left, right) {
+  return JSON.stringify(stableStructuredValue(left)) === JSON.stringify(stableStructuredValue(right));
+}
+
+function planSnapshotsEquivalent(left, right) {
+  if (!left || !right) return false;
+  const withoutSessionId = (snapshot) => {
+    const comparable = { ...snapshot };
+    delete comparable.sessionId;
+    delete comparable.session_id;
+    return comparable;
+  };
+  return structuredValuesEqual(withoutSessionId(left), withoutSessionId(right));
+}
+
+function storedValueMissing(value) {
+  return value === null || value === undefined || value === '';
+}
+
+const LOWER_PRIORITY_FILLABLE_WORKOUT_METRICS = new Set([
+  'running_power_watts',
+  'running_speed_mps',
+  'running_stride_length_m',
+  'running_vertical_oscillation_cm',
+  'running_ground_contact_time_ms',
+  'running_vertical_ratio_pct',
+  'ground_contact_balance_left_pct',
+  'ground_contact_balance_right_pct',
+  'respiratory_rate_avg',
+  'respiratory_rate_max',
+  'performance_condition',
+  'run_time_seconds',
+  'walk_time_seconds',
+  'idle_time_seconds',
+  'hr_sample_coverage_pct',
+]);
+
+function mergeMissingWorkoutMetrics(storedMetrics, incomingMetrics, source) {
+  const merged = { ...storedMetrics };
+  const metricSources = {
+    ...(storedMetrics.metric_sources && typeof storedMetrics.metric_sources === 'object'
+      ? storedMetrics.metric_sources
+      : {}),
+  };
+  let enriched = false;
+  for (const key of LOWER_PRIORITY_FILLABLE_WORKOUT_METRICS) {
+    const incomingValue = incomingMetrics[key];
+    if (storedValueMissing(incomingValue) || !storedValueMissing(merged[key])) continue;
+    merged[key] = incomingValue;
+    metricSources[key] = source;
+    enriched = true;
+  }
+  if (enriched) merged.metric_sources = metricSources;
+  return merged;
+}
+
+function mergeAuthoritativeWorkoutMetrics(storedMetrics, incomingMetrics, source) {
+  const merged = { ...storedMetrics, ...incomingMetrics };
+  const metricSources = {
+    ...(storedMetrics.metric_sources && typeof storedMetrics.metric_sources === 'object'
+      ? storedMetrics.metric_sources
+      : {}),
+  };
+  for (const key of LOWER_PRIORITY_FILLABLE_WORKOUT_METRICS) {
+    if (!storedValueMissing(incomingMetrics[key])) metricSources[key] = source;
+  }
+  if (Object.keys(metricSources).length) merged.metric_sources = metricSources;
+  return merged;
+}
+
+function incomingValueChangesStored(incomingValue, storedValue) {
+  if (storedValueMissing(incomingValue)) return false;
+  if (typeof incomingValue === 'number') {
+    const storedNumber = numericRunValue(storedValue);
+    return storedNumber === null || Math.abs(storedNumber - incomingValue) > 0.0001;
+  }
+  return !structuredValuesEqual(incomingValue, storedValue);
+}
+
+function analyzeRunConsolidation(canonicalRun, duplicateRun, item) {
+  const conflicts = [];
+  if (normalizedText(duplicateRun.date) && duplicateRun.date !== item.date) conflicts.push('date');
+  if (activityKind(duplicateRun) !== activityKind({ type: item.runType })) conflicts.push('activity type');
+
+  const duplicateDistance = numericRunValue(duplicateRun.distance_miles);
+  if (
+    duplicateDistance !== null
+    && item.distanceMiles > 0
+    && Math.abs(duplicateDistance - item.distanceMiles) > distanceTolerance(item.distanceMiles)
+  ) {
+    conflicts.push('distance');
+  }
+  const duplicateDuration = numericRunValue(duplicateRun.duration_seconds);
+  if (
+    duplicateDuration !== null
+    && item.durationSeconds > 0
+    && Math.abs(duplicateDuration - item.durationSeconds) > durationTolerance(item.durationSeconds)
+  ) {
+    conflicts.push('duration');
+  }
+
+  const canonicalNote = meaningfulRunNote(canonicalRun.notes);
+  const duplicateNote = meaningfulRunNote(duplicateRun.notes);
+  if (canonicalNote && duplicateNote && canonicalNote !== duplicateNote) conflicts.push('notes');
+
+  const canonicalEffort = numericRunValue(canonicalRun.perceived_effort);
+  const duplicateEffort = numericRunValue(duplicateRun.perceived_effort);
+  if (canonicalEffort !== null && duplicateEffort !== null && canonicalEffort !== duplicateEffort) {
+    conflicts.push('effort');
+  }
+  if (canonicalRun.pain_level && duplicateRun.pain_level && !sameOptionalValue(canonicalRun.pain_level, duplicateRun.pain_level)) {
+    conflicts.push('pain');
+  }
+  if (canonicalRun.post_energy && duplicateRun.post_energy && !sameOptionalValue(canonicalRun.post_energy, duplicateRun.post_energy)) {
+    conflicts.push('post-run energy');
+  }
+  if (canonicalRun.shoe_id && duplicateRun.shoe_id && !sameOptionalValue(canonicalRun.shoe_id, duplicateRun.shoe_id)) {
+    conflicts.push('shoe');
+  }
+
+  const canonicalPlan = runPlanState(canonicalRun);
+  const duplicatePlan = runPlanState(duplicateRun);
+  if (canonicalPlan.hasPlan && duplicatePlan.hasPlan) {
+    const incompatibleMode = canonicalPlan.explicitNone !== duplicatePlan.explicitNone;
+    const bothSessionIds = canonicalPlan.planSessionId && duplicatePlan.planSessionId;
+    const matchingSessionIds = bothSessionIds
+      && canonicalPlan.planSessionId === duplicatePlan.planSessionId;
+    const equivalentSnapshots = planSnapshotsEquivalent(canonicalPlan.snapshot, duplicatePlan.snapshot);
+    if (incompatibleMode || (!matchingSessionIds && !equivalentSnapshots)) conflicts.push('plan link');
+  }
+
+  return {
+    conflicts: [...new Set(conflicts)],
+    patch: {
+      notes: canonicalNote ? null : duplicateNote,
+      perceivedEffort: canonicalEffort === null ? duplicateEffort : null,
+      painLevel: canonicalRun.pain_level ? null : normalizedText(duplicateRun.pain_level),
+      postEnergy: canonicalRun.post_energy ? null : normalizedText(duplicateRun.post_energy),
+      shoeId: canonicalRun.shoe_id ? null : normalizedText(duplicateRun.shoe_id),
+      planSessionId: canonicalPlan.hasPlan ? null : duplicatePlan.planSessionId,
+      plannedSessionJson: canonicalPlan.hasPlan || !duplicatePlan.hasPlan
+        ? null
+        : JSON.stringify(duplicatePlan.snapshot || {}),
+    },
+  };
+}
+
+function resolveCanonicalDistanceSource(storedWorkoutMetrics, existingRun, item, sensorSummaryWins = false) {
+  if (sensorSummaryWins) return item.source;
   if (storedWorkoutMetrics.distance_source) return storedWorkoutMetrics.distance_source;
   if (existingRun.health_source === 'forged_hybrid') return 'forged_phone';
   if (existingRun.health_source) return existingRun.health_source;
@@ -164,6 +390,7 @@ function classifyType(rawType = '') {
 function normalizeRow(raw = {}) {
   const startDate = normalizeDateTime(raw.startDate || raw.start_date || raw.start || raw.activityStartDate);
   const endDate = normalizeDateTime(raw.endDate || raw.end_date || raw.end || raw.activityEndDate);
+  const createdAt = normalizeDateTime(raw.createdAt || raw.created_at || raw.importCreatedAt || raw.import_created_at);
   const date = normalizeDate(raw.date || startDate || raw.startDate || raw.start_date || raw.activityDate || raw['Activity Date']);
   const type = classifyType(raw.type || raw.activityType || raw['Activity Type']);
   const source = String(raw.source || 'imported').slice(0, 40);
@@ -201,6 +428,7 @@ function normalizeRow(raw = {}) {
     date,
     startDate,
     endDate,
+    createdAt,
     ...type,
     distanceMiles,
     durationSeconds,
@@ -234,27 +462,80 @@ function startsMatch(existingStart, importedStart) {
   return Math.abs(existingTime - importedTime) <= 30 * 60 * 1000;
 }
 
+async function findMatchingForgedRun(db, userId, item, { excludeId = null } = {}) {
+  if (
+    !isTrustedSensorSummarySource(item.source)
+    || (!item.startDate && !item.createdAt)
+    || item.distanceMiles <= 0
+    || item.durationSeconds <= 0
+  ) {
+    return null;
+  }
+  const candidates = await db.all(
+    `SELECT id, date, type, watch_mode, watch_activity_type, watch_normalized_type,
+            duration_seconds, health_start_at, created_at, health_source, health_source_workout_id,
+            distance_miles, route_coords, perceived_effort, pain_level, post_energy, notes,
+            avg_heart_rate, max_heart_rate, heart_rate_zones, cadence_spm,
+            elevation_gain, elevation_loss, vo2_max, training_effect_aerobic,
+            training_effect_anaerobic, recovery_time_hours, temperature_f,
+            calories, calories_burned, calories_watch, shoe_id, plan_session_id,
+            planned_session_json, workout_metrics_json, ai_feedback, ai_feedback_requested_at
+     FROM runs
+     WHERE user_id=? AND date=?
+       AND (
+         health_source='forged_hybrid'
+         OR COALESCE(workout_metrics_json, '') LIKE '%"forged_recording_id"%'
+         OR COALESCE(workout_metrics_json, '') LIKE '%"route_source":"forged_phone"%'
+       )
+       AND ABS(COALESCE(distance_miles, 0) - ?) <= ?
+     LIMIT 20
+     FOR UPDATE`,
+    [userId, item.date, item.distanceMiles, distanceTolerance(item.distanceMiles)]
+  );
+  const incomingKind = activityKind({ type: item.runType });
+  const sameActivity = candidates.filter((row) => activityKind(row) === incomingKind);
+  return chooseForgedRunMatch(sameActivity, item, { excludeId });
+}
+
 async function findExistingRun(db, userId, item) {
   if (item.sourceWorkoutId) {
     const exact = await db.get(
       `SELECT id, date, type, watch_mode, watch_activity_type, watch_normalized_type,
-              health_start_at, health_source, distance_miles, route_coords, perceived_effort, pain_level, post_energy, notes,
-              planned_session_json, workout_metrics_json
+              duration_seconds, health_start_at, created_at, health_source, health_source_workout_id,
+              distance_miles, route_coords, perceived_effort, pain_level, post_energy, notes,
+              avg_heart_rate, max_heart_rate, heart_rate_zones, cadence_spm,
+              elevation_gain, elevation_loss, vo2_max, training_effect_aerobic,
+              training_effect_anaerobic, recovery_time_hours, temperature_f,
+              calories, calories_burned, calories_watch, shoe_id, plan_session_id,
+              planned_session_json, workout_metrics_json, ai_feedback, ai_feedback_requested_at
        FROM runs
        WHERE user_id=? AND health_source=? AND health_source_workout_id=?
-       LIMIT 1`,
+       LIMIT 1
+       FOR UPDATE`,
       [userId, item.source, item.sourceWorkoutId]
     );
     if (exact) return exact;
   }
 
+  const forgedMatch = await findMatchingForgedRun(db, userId, item);
+  if (forgedMatch) return forgedMatch;
+
   const candidates = await db.all(
     `SELECT id, date, type, watch_mode, watch_activity_type, watch_normalized_type,
-            health_start_at, health_source, distance_miles, route_coords, perceived_effort, pain_level, post_energy, notes,
-            planned_session_json, workout_metrics_json
+            duration_seconds, health_start_at, created_at, health_source, health_source_workout_id,
+            distance_miles, route_coords, perceived_effort, pain_level, post_energy, notes,
+            avg_heart_rate, max_heart_rate, heart_rate_zones, cadence_spm,
+            elevation_gain, elevation_loss, vo2_max, training_effect_aerobic,
+            training_effect_anaerobic, recovery_time_hours, temperature_f,
+            calories, calories_burned, calories_watch, shoe_id, plan_session_id,
+            planned_session_json, workout_metrics_json, ai_feedback, ai_feedback_requested_at
      FROM runs
      WHERE user_id=? AND date=? AND ABS(COALESCE(distance_miles,0) - ?) < 0.05
-     LIMIT 25`,
+       AND COALESCE(health_source, '')<>'forged_hybrid'
+       AND COALESCE(workout_metrics_json, '') NOT LIKE '%"forged_recording_id"%'
+       AND COALESCE(workout_metrics_json, '') NOT LIKE '%"route_source":"forged_phone"%'
+     LIMIT 25
+     FOR UPDATE`,
     [userId, item.date, item.distanceMiles]
   );
   const incomingKind = activityKind({ type: item.runType });
@@ -374,16 +655,40 @@ async function updateExistingRunHealth(db, userId, existingRun, item) {
     ? await findPlannedRunForDate(userId, item.date, { get: db.get })
     : null;
   const storedWorkoutMetrics = parseStoredWorkoutMetrics(existingRun.workout_metrics_json);
+  const isForgedCapture = hasForgedRecordingProvenance(existingRun);
+  const incomingSource = normalizedSource(item.source);
+  const storedSummarySource = normalizedSource(
+    storedWorkoutMetrics.summary_source
+      || (isForgedCapture && normalizedSource(existingRun.health_source) === 'forged_hybrid'
+        ? null
+        : existingRun.health_source)
+  );
+  const incomingSourcePriority = sensorSummarySourcePriority(incomingSource);
+  const storedSourcePriority = sensorSummarySourcePriority(storedSummarySource);
+  const summaryUpdateAllowed = incomingSourcePriority > 0
+    ? storedSourcePriority === 0 || incomingSourcePriority >= storedSourcePriority
+    : !isForgedCapture
+      && storedSourcePriority === 0
+      && Boolean(incomingSource)
+      && incomingSource === storedSummarySource;
+  const sensorSummaryWins = isForgedCapture
+    && summaryUpdateAllowed
+    && isTrustedSensorSummarySource(incomingSource);
+  const authorityChanged = sensorSummaryWins && incomingSource !== storedSummarySource;
   const existingEffortIsTrusted = storedWorkoutMetrics.workout_effort_user_rated === 1
     || Boolean(existingRun.pain_level)
     || Boolean(existingRun.post_energy)
     || !(existingRun.watch_mode === 'import' && existingRun.notes === 'Imported workout');
-  const importedEffort = item.perceivedEffort != null
+  const importedEffort = summaryUpdateAllowed
+    && item.perceivedEffort != null
     && (existingRun.perceived_effort == null || !existingEffortIsTrusted)
     ? item.perceivedEffort
     : null;
   const storedRouteCoords = normalizeRouteCoords(existingRun.route_coords);
-  const incomingRouteReplacesStored = item.routeCoords.length >= 2
+  const preserveForgedRoute = isForgedCapture && storedRouteCoords.length >= 2;
+  const incomingRouteReplacesStored = isTrustedSensorSummarySource(incomingSource)
+    && item.routeCoords.length >= 2
+    && !preserveForgedRoute
     && (item.workoutMetrics.route_status === 'complete' || storedRouteCoords.length < 2);
   const storedRouteIntegrity = classifyRouteIntegrity({
     routeCoords: storedRouteCoords,
@@ -402,16 +707,123 @@ async function updateExistingRunHealth(db, userId, existingRun, item) {
         ? storedWorkoutMetrics.route_status_reason || storedRouteIntegrity.reason
         : storedRouteIntegrity.reason,
     };
+  const baseWorkoutMetrics = summaryUpdateAllowed
+    ? mergeAuthoritativeWorkoutMetrics(storedWorkoutMetrics, item.workoutMetrics, item.source)
+    : isTrustedSensorSummarySource(incomingSource)
+      ? mergeMissingWorkoutMetrics(storedWorkoutMetrics, item.workoutMetrics, item.source)
+      : storedWorkoutMetrics;
   const mergedWorkoutMetrics = {
-    ...storedWorkoutMetrics,
-    ...item.workoutMetrics,
+    ...baseWorkoutMetrics,
     ...canonicalRouteMetrics,
-    distance_source: resolveCanonicalDistanceSource(storedWorkoutMetrics, existingRun, item),
+    distance_source: resolveCanonicalDistanceSource(storedWorkoutMetrics, existingRun, item, sensorSummaryWins),
     distance_unit: 'miles',
+    ...(summaryUpdateAllowed && isTrustedSensorSummarySource(incomingSource) ? {
+      summary_source: item.source,
+    } : {}),
+    ...(isForgedCapture ? {
+      forged_recording_id: storedWorkoutMetrics.forged_recording_id || existingRun.id,
+    } : {}),
+    ...(incomingRouteReplacesStored ? { route_source: item.source } : {}),
+    ...(preserveForgedRoute ? { route_source: 'forged_phone' } : {}),
   };
+  const canonicalDistance = summaryUpdateAllowed && item.distanceMiles > 0 ? item.distanceMiles : null;
+  const canonicalDuration = summaryUpdateAllowed && item.durationSeconds > 0 ? item.durationSeconds : null;
+  const canonicalPace = canonicalDistance && canonicalDuration
+    ? canonicalDuration / canonicalDistance
+    : null;
+  const incomingCalories = asNumber(item.calories, null);
+  const canonicalSensorCalories = sensorSummaryWins
+    ? (incomingCalories > 0 ? Math.round(incomingCalories) : null)
+    : null;
+  const sensorCalorieAction = sensorSummaryWins
+    ? incomingCalories > 0
+      ? 1
+      : authorityChanged && storedSourcePriority === 0
+        ? 2
+        : 0
+    : 0;
+  const importedCalories = summaryUpdateAllowed && incomingCalories > 0
+    ? Math.round(incomingCalories)
+    : 0;
+  const summaryValue = (value) => (summaryUpdateAllowed ? value : null);
+  const fillMissingSummaryValue = (value, storedValue) => (
+    summaryUpdateAllowed || (
+      isTrustedSensorSummarySource(incomingSource)
+      && (storedValue === null || storedValue === undefined || storedValue === '')
+    )
+      ? value
+      : null
+  );
+  const canonicalAvgHeartRate = fillMissingSummaryValue(item.avgHeartRate, existingRun.avg_heart_rate);
+  const canonicalMaxHeartRate = fillMissingSummaryValue(item.maxHeartRate, existingRun.max_heart_rate);
+  const canonicalZones = fillMissingSummaryValue(zoneParam, existingRun.heart_rate_zones);
+  const canonicalHealthSource = summaryValue(item.source);
+  const canonicalHealthSourceWorkoutId = summaryValue(item.sourceWorkoutId);
+  const canonicalHealthStartAt = summaryValue(item.startDate);
+  const canonicalHealthEndAt = summaryValue(item.endDate);
+  const canonicalType = summaryValue(item.section === 'activity' ? item.runType : null);
+  const canonicalWatchActivityType = summaryValue(String(item.raw?.type || item.raw?.activityType || 'imported'));
+  const canonicalWatchNormalizedType = summaryValue(item.runType);
+  const canonicalCadence = fillMissingSummaryValue(item.cadenceSpm, existingRun.cadence_spm);
+  const canonicalElevationGain = fillMissingSummaryValue(item.elevationGain, existingRun.elevation_gain);
+  const canonicalElevationLoss = fillMissingSummaryValue(item.elevationLoss, existingRun.elevation_loss);
+  const canonicalVo2Max = fillMissingSummaryValue(item.vo2Max, existingRun.vo2_max);
+  const canonicalTrainingEffectAerobic = fillMissingSummaryValue(
+    item.trainingEffectAerobic,
+    existingRun.training_effect_aerobic
+  );
+  const canonicalTrainingEffectAnaerobic = fillMissingSummaryValue(
+    item.trainingEffectAnaerobic,
+    existingRun.training_effect_anaerobic
+  );
+  const canonicalRecoveryTimeHours = fillMissingSummaryValue(
+    item.recoveryTimeHours,
+    existingRun.recovery_time_hours
+  );
+  const canonicalTemperatureF = fillMissingSummaryValue(item.temperatureF, existingRun.temperature_f);
+  const routeChanged = incomingRouteReplacesStored
+    && !structuredValuesEqual(item.routeCoords, storedRouteCoords);
+  const workoutMetricsChanged = !structuredValuesEqual(mergedWorkoutMetrics, storedWorkoutMetrics);
+  const sensorCaloriesChanged = sensorCalorieAction === 1
+    ? incomingValueChangesStored(canonicalSensorCalories, existingRun.calories)
+      || incomingValueChangesStored(canonicalSensorCalories, existingRun.calories_burned)
+      || incomingValueChangesStored(canonicalSensorCalories, existingRun.calories_watch)
+    : sensorCalorieAction === 2
+      && [existingRun.calories, existingRun.calories_burned, existingRun.calories_watch]
+        .some((value) => !storedValueMissing(value));
+  const importedCaloriesChanged = sensorCalorieAction === 0
+    && importedCalories > 0
+    && incomingValueChangesStored(importedCalories, existingRun.calories);
+  const summaryChanged = [
+    [canonicalDistance, existingRun.distance_miles],
+    [canonicalDuration, existingRun.duration_seconds],
+    [importedEffort, existingRun.perceived_effort],
+    [canonicalAvgHeartRate, existingRun.avg_heart_rate],
+    [canonicalMaxHeartRate, existingRun.max_heart_rate],
+    [canonicalZones, existingRun.heart_rate_zones],
+    [canonicalType, existingRun.type],
+    [canonicalWatchActivityType, existingRun.watch_activity_type],
+    [canonicalWatchNormalizedType, existingRun.watch_normalized_type],
+    [canonicalCadence, existingRun.cadence_spm],
+    [canonicalElevationGain, existingRun.elevation_gain],
+    [canonicalElevationLoss, existingRun.elevation_loss],
+    [canonicalVo2Max, existingRun.vo2_max],
+    [canonicalTrainingEffectAerobic, existingRun.training_effect_aerobic],
+    [canonicalTrainingEffectAnaerobic, existingRun.training_effect_anaerobic],
+    [canonicalRecoveryTimeHours, existingRun.recovery_time_hours],
+    [canonicalTemperatureF, existingRun.temperature_f],
+  ].some(([incomingValue, storedValue]) => incomingValueChangesStored(incomingValue, storedValue))
+    || routeChanged
+    || workoutMetricsChanged
+    || sensorCaloriesChanged
+    || importedCaloriesChanged;
+  const invalidateAiFeedback = authorityChanged || summaryChanged;
 
   await db.run(
     `UPDATE runs SET
+      distance_miles = COALESCE(?, distance_miles),
+      duration_seconds = COALESCE(?, duration_seconds),
+      pace_avg = COALESCE(?, pace_avg),
       perceived_effort = COALESCE(?, perceived_effort),
       avg_heart_rate = COALESCE(?, avg_heart_rate),
       max_heart_rate = COALESCE(?, max_heart_rate),
@@ -432,41 +844,56 @@ async function updateExistingRunHealth(db, userId, existingRun, item) {
       training_effect_anaerobic = COALESCE(?, training_effect_anaerobic),
       recovery_time_hours = COALESCE(?, recovery_time_hours),
       temperature_f = COALESCE(?, temperature_f),
-      calories = CASE WHEN ?>0 THEN ? ELSE calories END,
+      calories = CASE ? WHEN 1 THEN ? WHEN 2 THEN NULL ELSE CASE WHEN ?>0 THEN ? ELSE calories END END,
+      calories_burned = CASE ? WHEN 1 THEN ? WHEN 2 THEN NULL ELSE calories_burned END,
+      calories_watch = CASE ? WHEN 1 THEN ? WHEN 2 THEN NULL ELSE calories_watch END,
       workout_metrics_json = COALESCE(NULLIF(?, '{}'), workout_metrics_json),
       plan_session_id = COALESCE(NULLIF(plan_session_id, ''), ?),
       planned_session_json = CASE
         WHEN planned_session_json IS NULL OR planned_session_json='' OR planned_session_json='{}'
           THEN COALESCE(?, '{}')
         ELSE planned_session_json
-      END
+      END,
+      ai_feedback = CASE WHEN ?=1 THEN NULL ELSE ai_feedback END,
+      ai_feedback_requested_at = CASE WHEN ?=1 THEN NULL ELSE ai_feedback_requested_at END
      WHERE id=? AND user_id=?`,
     [
+      canonicalDistance,
+      canonicalDuration,
+      canonicalPace,
       importedEffort,
-      item.avgHeartRate,
-      item.maxHeartRate,
-      zoneParam,
-      item.source,
-      item.sourceWorkoutId,
-      item.startDate,
-      item.endDate,
-      item.section === 'activity' ? item.runType : null,
-      String(item.raw?.type || item.raw?.activityType || 'imported'),
-      item.runType,
-      item.cadenceSpm,
-      item.elevationGain,
-      item.elevationLoss,
+      canonicalAvgHeartRate,
+      canonicalMaxHeartRate,
+      canonicalZones,
+      canonicalHealthSource,
+      canonicalHealthSourceWorkoutId,
+      canonicalHealthStartAt,
+      canonicalHealthEndAt,
+      canonicalType,
+      canonicalWatchActivityType,
+      canonicalWatchNormalizedType,
+      canonicalCadence,
+      canonicalElevationGain,
+      canonicalElevationLoss,
       JSON.stringify(incomingRouteReplacesStored ? item.routeCoords : []),
-      item.vo2Max,
-      item.trainingEffectAerobic,
-      item.trainingEffectAnaerobic,
-      item.recoveryTimeHours,
-      item.temperatureF,
-      asNumber(item.calories, 0),
-      Math.round(asNumber(item.calories, 0)),
+      canonicalVo2Max,
+      canonicalTrainingEffectAerobic,
+      canonicalTrainingEffectAnaerobic,
+      canonicalRecoveryTimeHours,
+      canonicalTemperatureF,
+      sensorCalorieAction,
+      canonicalSensorCalories,
+      importedCalories,
+      importedCalories,
+      sensorCalorieAction,
+      canonicalSensorCalories,
+      sensorCalorieAction,
+      canonicalSensorCalories,
       JSON.stringify(mergedWorkoutMetrics),
       planned?.sessionId || null,
       planned ? JSON.stringify(planned) : null,
+      invalidateAiFeedback ? 1 : 0,
+      invalidateAiFeedback ? 1 : 0,
       existingRun.id,
       userId,
     ]
@@ -508,13 +935,156 @@ async function insertLift(db, userId, item) {
 async function findRunById(db, userId, runId) {
   return db.get(
     `SELECT id, date, type, watch_mode, watch_activity_type, watch_normalized_type,
-            health_start_at, health_source, distance_miles, route_coords, perceived_effort, pain_level, post_energy, notes,
-            planned_session_json, workout_metrics_json
+            duration_seconds, health_start_at, created_at, health_source, health_source_workout_id,
+            distance_miles, route_coords, perceived_effort, pain_level, post_energy, notes,
+            avg_heart_rate, max_heart_rate, heart_rate_zones, cadence_spm,
+            elevation_gain, elevation_loss, vo2_max, training_effect_aerobic,
+            training_effect_anaerobic, recovery_time_hours, temperature_f,
+            calories, calories_burned, calories_watch, shoe_id, plan_session_id,
+            planned_session_json, workout_metrics_json, ai_feedback, ai_feedback_requested_at
      FROM runs
      WHERE id=? AND user_id=?
-     LIMIT 1`,
+     LIMIT 1
+     FOR UPDATE`,
     [runId, userId]
   );
+}
+
+async function hasDirectRunInteractions(db, userId, runId) {
+  const row = await db.get(
+    `SELECT
+       CASE WHEN EXISTS (
+         SELECT 1
+         FROM runs
+         WHERE id=? AND user_id=?
+       ) THEN
+         (SELECT COUNT(*) FROM activity_likes WHERE activity_id=? AND (activity_type='run' OR activity_type IS NULL)) +
+         (SELECT COUNT(*) FROM activity_comments WHERE activity_id=? AND (activity_type='run' OR activity_type IS NULL))
+       ELSE 0 END AS interaction_count`,
+    [runId, userId, runId, runId]
+  );
+  return Number(row?.interaction_count || 0) > 0;
+}
+
+async function findRunAdjustmentProposal(db, userId, runId) {
+  return db.get(
+    `SELECT id
+     FROM plan_adjustment_proposals
+     WHERE user_id=? AND trigger_run_id=?
+     LIMIT 1
+     FOR UPDATE`,
+    [userId, runId]
+  );
+}
+
+async function applyRunConsolidationPatch(db, userId, canonicalRunId, patch) {
+  await db.run(
+    `UPDATE runs SET
+       notes=COALESCE(?, notes),
+       perceived_effort=COALESCE(?, perceived_effort),
+       pain_level=COALESCE(?, pain_level),
+       post_energy=COALESCE(?, post_energy),
+       shoe_id=COALESCE(?, shoe_id),
+       plan_session_id=COALESCE(?, plan_session_id),
+       planned_session_json=CASE
+         WHEN ? IS NOT NULL THEN ?
+         ELSE planned_session_json
+       END
+     WHERE id=? AND user_id=?`,
+    [
+      patch.notes,
+      patch.perceivedEffort,
+      patch.painLevel,
+      patch.postEnergy,
+      patch.shoeId,
+      patch.planSessionId,
+      patch.plannedSessionJson,
+      patch.plannedSessionJson,
+      canonicalRunId,
+      userId,
+    ]
+  );
+}
+
+async function repointOwnedRunReferences(db, userId, duplicateRunId, canonicalRunId, {
+  duplicateProposal = null,
+} = {}) {
+  await db.run(
+    'UPDATE personal_records SET run_id=? WHERE run_id=? AND user_id=?',
+    [canonicalRunId, duplicateRunId, userId]
+  );
+  await db.run(
+    'UPDATE shared_routes SET run_id=? WHERE run_id=? AND user_id=?',
+    [canonicalRunId, duplicateRunId, userId]
+  );
+  await db.run(
+    'UPDATE community_posts SET run_id=? WHERE run_id=? AND user_id=?',
+    [canonicalRunId, duplicateRunId, userId]
+  );
+  await db.run(
+    "UPDATE activity_media SET activity_id=? WHERE activity_id=? AND user_id=? AND activity_type='run'",
+    [canonicalRunId, duplicateRunId, userId]
+  );
+
+  if (duplicateProposal) {
+    await db.run(
+      'UPDATE plan_adjustment_proposals SET trigger_run_id=? WHERE trigger_run_id=? AND user_id=?',
+      [canonicalRunId, duplicateRunId, userId]
+    );
+  }
+  await db.run(
+    `UPDATE activity_import_claims
+     SET activity_id=?, updated_at=NOW()
+     WHERE activity_kind='run' AND activity_id=? AND user_id=?`,
+    [canonicalRunId, duplicateRunId, userId]
+  );
+}
+
+async function consolidateImportedRunIntoForged(db, userId, importedRun, item) {
+  if (
+    !importedRun
+    || hasForgedRecordingProvenance(importedRun)
+    || !isTrustedSensorSummarySource(item.source)
+  ) {
+    return null;
+  }
+  const forgedRun = await findMatchingForgedRun(db, userId, {
+    ...item,
+    startDate: importedRun.health_start_at || item.startDate,
+    createdAt: importedRun.created_at || item.createdAt,
+  }, { excludeId: importedRun.id });
+  if (!forgedRun) return null;
+  if (await hasDirectRunInteractions(db, userId, importedRun.id)) {
+    console.warn(`[import] skipped automatic run consolidation for ${importedRun.id}: direct activity interactions exist`);
+    return null;
+  }
+  const canonicalProposal = await findRunAdjustmentProposal(db, userId, forgedRun.id);
+  const duplicateProposal = await findRunAdjustmentProposal(db, userId, importedRun.id);
+  if (canonicalProposal && duplicateProposal) {
+    console.warn(`[import] skipped automatic run consolidation for ${importedRun.id}: both runs have plan adjustment decisions`);
+    return null;
+  }
+  const merge = analyzeRunConsolidation(forgedRun, importedRun, item);
+  if (merge.conflicts.length) {
+    console.warn(`[import] skipped automatic run consolidation for ${importedRun.id}: conflicting ${merge.conflicts.join(', ')}`);
+    return null;
+  }
+
+  await applyRunConsolidationPatch(db, userId, forgedRun.id, merge.patch);
+  const patchedForgedRun = {
+    ...forgedRun,
+    notes: merge.patch.notes || forgedRun.notes,
+    perceived_effort: merge.patch.perceivedEffort ?? forgedRun.perceived_effort,
+    pain_level: merge.patch.painLevel || forgedRun.pain_level,
+    post_energy: merge.patch.postEnergy || forgedRun.post_energy,
+    shoe_id: merge.patch.shoeId || forgedRun.shoe_id,
+    plan_session_id: merge.patch.planSessionId || forgedRun.plan_session_id,
+    planned_session_json: merge.patch.plannedSessionJson || forgedRun.planned_session_json,
+  };
+  const canonicalRunId = await updateExistingRunHealth(db, userId, patchedForgedRun, item);
+  await repointOwnedRunReferences(db, userId, importedRun.id, canonicalRunId, { duplicateProposal });
+  await db.run('DELETE FROM runs WHERE id=? AND user_id=?', [importedRun.id, userId]);
+  return canonicalRunId;
 }
 
 async function claimImportedActivity(db, userId, item) {
@@ -579,6 +1149,8 @@ async function importItem(db, userId, item) {
     if (claim.activity_kind === 'run' && claim.activity_id) {
       const claimedRun = await findRunById(db, userId, claim.activity_id);
       if (claimedRun) {
+        const consolidatedRunId = await consolidateImportedRunIntoForged(db, userId, claimedRun, item);
+        if (consolidatedRunId) return { status: 'skipped', runId: consolidatedRunId };
         const runId = await updateExistingRunHealth(db, userId, claimedRun, item);
         return { status: 'skipped', runId };
       }
@@ -591,6 +1163,11 @@ async function importItem(db, userId, item) {
 
   if (item.section === 'run' || item.section === 'activity') {
     const existing = await findExistingRun(db, userId, item);
+    const consolidatedRunId = await consolidateImportedRunIntoForged(db, userId, existing, item);
+    if (consolidatedRunId) {
+      await finalizeImportClaim(db, userId, claim, 'run', consolidatedRunId);
+      return { status: 'skipped', runId: consolidatedRunId };
+    }
     const runId = existing
       ? await updateExistingRunHealth(db, userId, existing, item)
       : await insertRun(db, userId, item);
@@ -672,6 +1249,7 @@ router.post('/workouts', auth, async (req, res) => {
 
 module.exports = router;
 module.exports._test = {
+  analyzeRunConsolidation,
   classifyType,
   canonicalImportSourceKey,
   importRows,
@@ -679,4 +1257,7 @@ module.exports._test = {
   normalizeRow,
   importKeysForItem,
   resolveCanonicalDistanceSource,
+  chooseForgedRunMatch,
+  consolidateImportedRunIntoForged,
+  updateExistingRunHealth,
 };
