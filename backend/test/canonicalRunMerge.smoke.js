@@ -115,6 +115,11 @@ async function runCanonicalRunMergeSmoke() {
     /UPDATE personal_records SET run_id=\? WHERE run_id=\? AND user_id=\?/,
     'run-linked personal records follow the canonical run'
   );
+  assert.match(
+    importSource,
+    /CASE WHEN EXISTS \(\s*SELECT 1\s*FROM runs\s*WHERE id=\? AND user_id=\?/,
+    'the interaction safety gate first verifies the duplicate belongs to the importing user'
+  );
 
   const statements = [];
   const canonicalRun = forgedCandidate({
@@ -310,8 +315,22 @@ async function runCanonicalRunMergeSmoke() {
   const lowerPriorityUpdate = lowerPriorityStatements[0];
   assert.equal(lowerPriorityUpdate.params[0], null, 'lower-priority Strava distance cannot replace Apple Health');
   assert.equal(lowerPriorityUpdate.params[1], null, 'lower-priority Strava duration cannot replace Apple Health');
-  assert.equal(lowerPriorityUpdate.params[4], null, 'lower-priority Strava heart rate cannot replace Apple Health');
+  assert.equal(lowerPriorityUpdate.params[4], 160, 'lower-priority Strava can fill heart rate Apple Health did not provide');
   assert.equal(JSON.parse(lowerPriorityUpdate.params[31]).summary_source, 'apple_health', 'summary provenance remains Apple Health');
+
+  const protectedHeartRateStatements = [];
+  await importTest.updateExistingRunHealth({
+    async get() { return null; },
+    async run(sql, params) {
+      protectedHeartRateStatements.push({ sql, params });
+      return { changes: 1 };
+    },
+  }, 'athlete-1', { ...appleCanonical, avg_heart_rate: 149 }, stravaItem);
+  assert.equal(
+    protectedHeartRateStatements[0].params[4],
+    null,
+    'lower-priority Strava cannot replace heart rate Apple Health already provided'
+  );
 
   let proposalLookup = 0;
   const conflictStatements = [];

@@ -684,9 +684,9 @@ async function updateExistingRunHealth(db, userId, existingRun, item) {
       canonicalDuration,
       canonicalPace,
       importedEffort,
-      summaryValue(item.avgHeartRate),
-      summaryValue(item.maxHeartRate),
-      summaryValue(zoneParam),
+      fillMissingSummaryValue(item.avgHeartRate, existingRun.avg_heart_rate),
+      fillMissingSummaryValue(item.maxHeartRate, existingRun.max_heart_rate),
+      fillMissingSummaryValue(zoneParam, existingRun.heart_rate_zones),
       summaryValue(item.source),
       summaryValue(item.sourceWorkoutId),
       summaryValue(item.startDate),
@@ -772,12 +772,18 @@ async function findRunById(db, userId, runId) {
   );
 }
 
-async function hasDirectRunInteractions(db, runId) {
+async function hasDirectRunInteractions(db, userId, runId) {
   const row = await db.get(
     `SELECT
-       (SELECT COUNT(*) FROM activity_likes WHERE activity_id=? AND (activity_type='run' OR activity_type IS NULL)) +
-       (SELECT COUNT(*) FROM activity_comments WHERE activity_id=? AND (activity_type='run' OR activity_type IS NULL)) AS interaction_count`,
-    [runId, runId]
+       CASE WHEN EXISTS (
+         SELECT 1
+         FROM runs
+         WHERE id=? AND user_id=?
+       ) THEN
+         (SELECT COUNT(*) FROM activity_likes WHERE activity_id=? AND (activity_type='run' OR activity_type IS NULL)) +
+         (SELECT COUNT(*) FROM activity_comments WHERE activity_id=? AND (activity_type='run' OR activity_type IS NULL))
+       ELSE 0 END AS interaction_count`,
+    [runId, userId, runId, runId]
   );
   return Number(row?.interaction_count || 0) > 0;
 }
@@ -866,7 +872,7 @@ async function consolidateImportedRunIntoForged(db, userId, importedRun, item) {
   }
   const forgedRun = await findMatchingForgedRun(db, userId, item, { excludeId: importedRun.id });
   if (!forgedRun) return null;
-  if (await hasDirectRunInteractions(db, importedRun.id)) {
+  if (await hasDirectRunInteractions(db, userId, importedRun.id)) {
     console.warn(`[import] skipped automatic run consolidation for ${importedRun.id}: direct activity interactions exist`);
     return null;
   }
