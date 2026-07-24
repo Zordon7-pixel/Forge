@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const {
+  FORGED_TRUSTED_SENSOR_SYNC_WINDOW_MS,
   chooseForgedRunMatch,
   distanceTolerance,
   durationTolerance,
@@ -10,30 +11,44 @@ const {
 } = require('../src/lib/canonicalRunMatch');
 const { _test: importTest } = require('../src/routes/import');
 
+const PRODUCTION_PAIR = Object.freeze({
+  forgedCreatedAt: '2026-07-24T14:45:13.089Z',
+  forgedDistanceMiles: 3.191156,
+  forgedDurationSeconds: 1774,
+  appleCreatedAt: '2026-07-24T14:55:17.613Z',
+  appleDistanceMiles: 3.109,
+  appleDurationSeconds: 1755,
+  appleAvgHeartRate: 158,
+});
+
 function forgedCandidate(overrides = {}) {
   return {
     id: 'forged-run',
     health_source: 'forged_hybrid',
-    health_start_at: '2026-07-24T12:00:00.000Z',
-    duration_seconds: 1774,
-    distance_miles: 3.19,
+    health_start_at: null,
+    created_at: PRODUCTION_PAIR.forgedCreatedAt,
+    duration_seconds: PRODUCTION_PAIR.forgedDurationSeconds,
+    distance_miles: PRODUCTION_PAIR.forgedDistanceMiles,
     ...overrides,
   };
 }
 
 function incomingRun(overrides = {}) {
   return {
-    startDate: '2026-07-24T12:00:20.000Z',
-    durationSeconds: 1755,
-    distanceMiles: 3.11,
+    source: 'apple_health',
+    startDate: null,
+    createdAt: PRODUCTION_PAIR.appleCreatedAt,
+    durationSeconds: PRODUCTION_PAIR.appleDurationSeconds,
+    distanceMiles: PRODUCTION_PAIR.appleDistanceMiles,
     ...overrides,
   };
 }
 
 async function runCanonicalRunMergeSmoke() {
-  const screenshotMatch = chooseForgedRunMatch([forgedCandidate()], incomingRun());
-  assert.equal(screenshotMatch?.id, 'forged-run', 'the reported 3.19/3.11 mile duplicate resolves to the Forged recording');
-  assert.equal(distanceTolerance(3.11), 0.1555, 'distance tolerance is 5% for a 3.11 mile run');
+  const productionMatch = chooseForgedRunMatch([forgedCandidate()], incomingRun());
+  assert.equal(productionMatch?.id, 'forged-run', 'the exact production 3.191156/3.109 mile pair resolves to the Forged recording');
+  assert.equal(FORGED_TRUSTED_SENSOR_SYNC_WINDOW_MS, 15 * 60 * 1000, 'the cross-source sync-latency window is exactly 15 minutes');
+  assert.equal(distanceTolerance(3.109), 0.15545, 'distance tolerance remains 5% for the production Apple distance');
   assert.equal(durationTolerance(1755), 90, 'short-run duration tolerance stays bounded at 90 seconds');
   assert.equal(isTrustedSensorSummarySource('apple_health'), true, 'Apple Health is a trusted sensor summary');
   assert.equal(isTrustedSensorSummarySource('imported'), false, 'generic imports cannot claim summary authority');
@@ -42,6 +57,11 @@ async function runCanonicalRunMergeSmoke() {
     'Apple Health remains the canonical summary when a lower-priority Strava copy arrives later'
   );
 
+  assert.equal(
+    chooseForgedRunMatch([forgedCandidate()], incomingRun({ source: 'manual_json' })),
+    null,
+    'the wider window is unavailable to untrusted or manual imports'
+  );
   assert.equal(
     chooseForgedRunMatch([forgedCandidate({ health_source: 'apple_health' })], incomingRun()),
     null,
@@ -61,9 +81,40 @@ async function runCanonicalRunMergeSmoke() {
     'a previously merged row retains Forged recording provenance for later syncs'
   );
   assert.equal(
-    chooseForgedRunMatch([forgedCandidate({ health_start_at: '2026-07-24T12:06:00.000Z' })], incomingRun()),
+    chooseForgedRunMatch([forgedCandidate({ created_at: '2026-07-24T14:40:17.612Z' })], incomingRun()),
     null,
-    'start times outside five minutes do not merge'
+    'start times even one millisecond outside 15 minutes do not merge'
+  );
+  assert.equal(
+    chooseForgedRunMatch([
+      forgedCandidate({
+        created_at: '2026-07-24T14:50:00.000Z',
+        duration_seconds: 2500,
+        distance_miles: 4.25,
+      }),
+    ], incomingRun()),
+    null,
+    'two dissimilar legitimate runs inside 15 minutes remain separate'
+  );
+  assert.equal(
+    chooseForgedRunMatch([
+      forgedCandidate({
+        health_start_at: '2026-07-24T10:00:00.000Z',
+        created_at: PRODUCTION_PAIR.forgedCreatedAt,
+      }),
+    ], incomingRun({
+      startDate: '2026-07-24T10:00:10.000Z',
+      createdAt: PRODUCTION_PAIR.appleCreatedAt,
+    }))?.id,
+    'forged-run',
+    'actual activity starts remain authoritative over import-created timestamps'
+  );
+  assert.equal(
+    chooseForgedRunMatch([
+      forgedCandidate({ health_start_at: '2026-07-24T10:00:00.000Z' }),
+    ], incomingRun({ startDate: '2026-07-24T10:20:00.000Z' })),
+    null,
+    'close created timestamps cannot override materially different actual starts'
   );
   assert.equal(
     chooseForgedRunMatch([forgedCandidate({ duration_seconds: 1950 })], incomingRun()),
@@ -78,7 +129,7 @@ async function runCanonicalRunMergeSmoke() {
   assert.equal(
     chooseForgedRunMatch([
       forgedCandidate({ id: 'candidate-a' }),
-      forgedCandidate({ id: 'candidate-b', health_start_at: '2026-07-24T12:00:25.000Z' }),
+      forgedCandidate({ id: 'candidate-b', created_at: '2026-07-24T14:45:18.089Z' }),
     ], incomingRun()),
     null,
     'ambiguous candidates remain separate instead of guessing'
@@ -157,10 +208,16 @@ async function runCanonicalRunMergeSmoke() {
     id: 'apple-run',
     date: '2026-07-24',
     type: 'easy',
-    duration_seconds: 1755,
-    health_start_at: '2026-07-24T12:00:20.000Z',
+    duration_seconds: PRODUCTION_PAIR.appleDurationSeconds,
+    health_start_at: null,
+    created_at: PRODUCTION_PAIR.appleCreatedAt,
     health_source: 'apple_health',
-    distance_miles: 3.11,
+    distance_miles: PRODUCTION_PAIR.appleDistanceMiles,
+    route_coords: JSON.stringify([
+      { lat: 38.91, lon: -76.95 },
+      { lat: 38.921, lon: -76.939 },
+    ]),
+    avg_heart_rate: PRODUCTION_PAIR.appleAvgHeartRate,
     perceived_effort: null,
     pain_level: null,
     post_energy: null,
@@ -174,14 +231,19 @@ async function runCanonicalRunMergeSmoke() {
     source: 'apple_health',
     sourceWorkoutId: 'apple-workout-id',
     type: 'running',
-    startDate: '2026-07-24T12:00:20.000Z',
-    endDate: '2026-07-24T12:29:35.000Z',
-    distanceMiles: 3.11,
-    durationSeconds: 1755,
-    avgHeartRate: 153,
+    date: '2026-07-24',
+    createdAt: PRODUCTION_PAIR.appleCreatedAt,
+    endDate: '2026-07-24T15:24:32.613Z',
+    distanceMiles: PRODUCTION_PAIR.appleDistanceMiles,
+    durationSeconds: PRODUCTION_PAIR.appleDurationSeconds,
+    avgHeartRate: PRODUCTION_PAIR.appleAvgHeartRate,
     maxHeartRate: 181,
     calories: 362,
     heart_rate_zones: { z1: 0, z2: 300, z3: 600, z4: 842, z5: 13 },
+    routeCoords: [
+      { lat: 38.91, lon: -76.95 },
+      { lat: 38.921, lon: -76.939 },
+    ],
   });
   const db = {
     async all(sql) {
@@ -214,9 +276,10 @@ async function runCanonicalRunMergeSmoke() {
     );
   }
   const summaryUpdate = statements.find((statement) => statement.sql.includes('distance_miles = COALESCE'));
-  assert.equal(summaryUpdate.params[0], 3.11, 'Apple Health distance becomes canonical');
-  assert.equal(summaryUpdate.params[1], 1755, 'Apple Health duration becomes canonical');
+  assert.equal(summaryUpdate.params[0], PRODUCTION_PAIR.appleDistanceMiles, 'Apple Health distance becomes canonical');
+  assert.equal(summaryUpdate.params[1], PRODUCTION_PAIR.appleDurationSeconds, 'Apple Health duration becomes canonical');
   assert.equal(summaryUpdate.params[3], null, 'the user-rated Forged effort is never overwritten');
+  assert.equal(summaryUpdate.params[4], PRODUCTION_PAIR.appleAvgHeartRate, 'Apple Health heart rate enriches the surviving row');
   assert.equal(summaryUpdate.params[17], '[]', 'the Apple import cannot replace an existing Forged route');
   assert.equal(summaryUpdate.params[24], 362, 'Apple Health calories become canonical');
   assert.equal(summaryUpdate.params[28], 362, 'the stale phone calorie estimate is replaced');

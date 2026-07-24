@@ -9,6 +9,10 @@ function timestampMs(value) {
   return Number.isFinite(timestamp) ? timestamp : null;
 }
 
+function preferredTimestampMs(actualValue, createdValue) {
+  return timestampMs(actualValue) ?? timestampMs(createdValue);
+}
+
 function distanceTolerance(distanceMiles) {
   const distance = Math.max(0, finiteNumber(distanceMiles) || 0);
   return Math.min(0.25, Math.max(0.1, distance * 0.05));
@@ -27,6 +31,8 @@ const SENSOR_SUMMARY_SOURCE_PRIORITY = Object.freeze({
   strava: 80,
   strava_csv: 80,
 });
+
+const FORGED_TRUSTED_SENSOR_SYNC_WINDOW_MS = 15 * 60 * 1000;
 
 function normalizedSource(value) {
   return String(value || '').trim().toLowerCase();
@@ -53,10 +59,22 @@ function hasForgedRecordingProvenance(candidate = {}) {
 }
 
 function scoreForgedRunMatch(candidate = {}, incoming = {}) {
-  if (!hasForgedRecordingProvenance(candidate)) return null;
+  if (
+    !hasForgedRecordingProvenance(candidate)
+    || !isTrustedSensorSummarySource(incoming.source)
+  ) {
+    return null;
+  }
 
-  const existingStart = timestampMs(candidate.health_start_at);
-  const incomingStart = timestampMs(incoming.startDate);
+  // Actual activity starts win whenever present. Created-at is a fallback for
+  // legacy/missing starts, where delayed HealthKit/watch delivery can create the
+  // observed write skew. This 15-minute bound is isolated to Forged-phone ↔
+  // trusted-sensor matching and does not relax same-source deduping.
+  const existingStart = preferredTimestampMs(candidate.health_start_at, candidate.created_at);
+  const incomingStart = preferredTimestampMs(
+    incoming.startDate,
+    incoming.createdAt ?? incoming.created_at
+  );
   const existingDuration = finiteNumber(candidate.duration_seconds);
   const incomingDuration = finiteNumber(incoming.durationSeconds);
   const existingDistance = finiteNumber(candidate.distance_miles);
@@ -79,7 +97,7 @@ function scoreForgedRunMatch(candidate = {}, incoming = {}) {
   const startDeltaMs = Math.abs(existingStart - incomingStart);
   const durationDelta = Math.abs(existingDuration - incomingDuration);
   const distanceDelta = Math.abs(existingDistance - incomingDistance);
-  const allowedStartMs = 5 * 60 * 1000;
+  const allowedStartMs = FORGED_TRUSTED_SENSOR_SYNC_WINDOW_MS;
   const allowedDuration = durationTolerance(incomingDuration);
   const allowedDistance = distanceTolerance(incomingDistance);
   if (
@@ -109,6 +127,7 @@ function chooseForgedRunMatch(candidates, incoming, { excludeId = null } = {}) {
 }
 
 module.exports = {
+  FORGED_TRUSTED_SENSOR_SYNC_WINDOW_MS,
   chooseForgedRunMatch,
   distanceTolerance,
   durationTolerance,

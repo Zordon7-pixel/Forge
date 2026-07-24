@@ -290,6 +290,7 @@ function classifyType(rawType = '') {
 function normalizeRow(raw = {}) {
   const startDate = normalizeDateTime(raw.startDate || raw.start_date || raw.start || raw.activityStartDate);
   const endDate = normalizeDateTime(raw.endDate || raw.end_date || raw.end || raw.activityEndDate);
+  const createdAt = normalizeDateTime(raw.createdAt || raw.created_at || raw.importCreatedAt || raw.import_created_at);
   const date = normalizeDate(raw.date || startDate || raw.startDate || raw.start_date || raw.activityDate || raw['Activity Date']);
   const type = classifyType(raw.type || raw.activityType || raw['Activity Type']);
   const source = String(raw.source || 'imported').slice(0, 40);
@@ -327,6 +328,7 @@ function normalizeRow(raw = {}) {
     date,
     startDate,
     endDate,
+    createdAt,
     ...type,
     distanceMiles,
     durationSeconds,
@@ -363,7 +365,7 @@ function startsMatch(existingStart, importedStart) {
 async function findMatchingForgedRun(db, userId, item, { excludeId = null } = {}) {
   if (
     !isTrustedSensorSummarySource(item.source)
-    || !item.startDate
+    || (!item.startDate && !item.createdAt)
     || item.distanceMiles <= 0
     || item.durationSeconds <= 0
   ) {
@@ -371,7 +373,7 @@ async function findMatchingForgedRun(db, userId, item, { excludeId = null } = {}
   }
   const candidates = await db.all(
     `SELECT id, date, type, watch_mode, watch_activity_type, watch_normalized_type,
-            duration_seconds, health_start_at, health_source, health_source_workout_id,
+            duration_seconds, health_start_at, created_at, health_source, health_source_workout_id,
             distance_miles, route_coords, perceived_effort, pain_level, post_energy, notes,
             avg_heart_rate, max_heart_rate, heart_rate_zones, cadence_spm,
             elevation_gain, elevation_loss, vo2_max, training_effect_aerobic,
@@ -399,7 +401,7 @@ async function findExistingRun(db, userId, item) {
   if (item.sourceWorkoutId) {
     const exact = await db.get(
       `SELECT id, date, type, watch_mode, watch_activity_type, watch_normalized_type,
-              duration_seconds, health_start_at, health_source, health_source_workout_id,
+              duration_seconds, health_start_at, created_at, health_source, health_source_workout_id,
               distance_miles, route_coords, perceived_effort, pain_level, post_energy, notes,
               avg_heart_rate, max_heart_rate, heart_rate_zones, cadence_spm,
               elevation_gain, elevation_loss, vo2_max, training_effect_aerobic,
@@ -420,7 +422,7 @@ async function findExistingRun(db, userId, item) {
 
   const candidates = await db.all(
     `SELECT id, date, type, watch_mode, watch_activity_type, watch_normalized_type,
-            duration_seconds, health_start_at, health_source, health_source_workout_id,
+            duration_seconds, health_start_at, created_at, health_source, health_source_workout_id,
             distance_miles, route_coords, perceived_effort, pain_level, post_energy, notes,
             avg_heart_rate, max_heart_rate, heart_rate_zones, cadence_spm,
             elevation_gain, elevation_loss, vo2_max, training_effect_aerobic,
@@ -757,7 +759,7 @@ async function insertLift(db, userId, item) {
 async function findRunById(db, userId, runId) {
   return db.get(
     `SELECT id, date, type, watch_mode, watch_activity_type, watch_normalized_type,
-            duration_seconds, health_start_at, health_source, health_source_workout_id,
+            duration_seconds, health_start_at, created_at, health_source, health_source_workout_id,
             distance_miles, route_coords, perceived_effort, pain_level, post_energy, notes,
             avg_heart_rate, max_heart_rate, heart_rate_zones, cadence_spm,
             elevation_gain, elevation_loss, vo2_max, training_effect_aerobic,
@@ -870,7 +872,11 @@ async function consolidateImportedRunIntoForged(db, userId, importedRun, item) {
   ) {
     return null;
   }
-  const forgedRun = await findMatchingForgedRun(db, userId, item, { excludeId: importedRun.id });
+  const forgedRun = await findMatchingForgedRun(db, userId, {
+    ...item,
+    startDate: importedRun.health_start_at || item.startDate,
+    createdAt: importedRun.created_at || item.createdAt,
+  }, { excludeId: importedRun.id });
   if (!forgedRun) return null;
   if (await hasDirectRunInteractions(db, userId, importedRun.id)) {
     console.warn(`[import] skipped automatic run consolidation for ${importedRun.id}: direct activity interactions exist`);
