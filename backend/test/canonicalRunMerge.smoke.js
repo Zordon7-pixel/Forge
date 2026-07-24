@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const {
+  FORGED_TRUSTED_SENSOR_ACTIVITY_WINDOW_MS,
   FORGED_TRUSTED_SENSOR_SYNC_WINDOW_MS,
   chooseForgedRunMatch,
   distanceTolerance,
@@ -47,6 +48,7 @@ function incomingRun(overrides = {}) {
 async function runCanonicalRunMergeSmoke() {
   const productionMatch = chooseForgedRunMatch([forgedCandidate()], incomingRun());
   assert.equal(productionMatch?.id, 'forged-run', 'the exact production 3.191156/3.109 mile pair resolves to the Forged recording');
+  assert.equal(FORGED_TRUSTED_SENSOR_ACTIVITY_WINDOW_MS, 5 * 60 * 1000, 'reliable activity starts use the tight five-minute window');
   assert.equal(FORGED_TRUSTED_SENSOR_SYNC_WINDOW_MS, 15 * 60 * 1000, 'the cross-source sync-latency window is exactly 15 minutes');
   assert.equal(distanceTolerance(3.109), 0.15545, 'distance tolerance remains 5% for the production Apple distance');
   assert.equal(durationTolerance(1755), 90, 'short-run duration tolerance stays bounded at 90 seconds');
@@ -111,6 +113,32 @@ async function runCanonicalRunMergeSmoke() {
   );
   assert.equal(
     chooseForgedRunMatch([
+      forgedCandidate({
+        health_start_at: '2026-07-24T10:00:00.000Z',
+        created_at: PRODUCTION_PAIR.forgedCreatedAt,
+      }),
+    ], incomingRun({
+      startDate: '2026-07-24T10:06:00.000Z',
+      createdAt: '2026-07-24T14:45:20.000Z',
+    })),
+    null,
+    'reliable activity starts six minutes apart never use the wider delivery-time fallback'
+  );
+  assert.equal(
+    chooseForgedRunMatch([
+      forgedCandidate({
+        health_start_at: '2026-07-24T10:00:00.000Z',
+        created_at: PRODUCTION_PAIR.forgedCreatedAt,
+      }),
+    ], incomingRun({
+      startDate: null,
+      createdAt: '2026-07-24T14:45:20.000Z',
+    })),
+    null,
+    'mixed actual-start and delivery-time evidence is never compared'
+  );
+  assert.equal(
+    chooseForgedRunMatch([
       forgedCandidate({ health_start_at: '2026-07-24T10:00:00.000Z' }),
     ], incomingRun({ startDate: '2026-07-24T10:20:00.000Z' })),
     null,
@@ -141,8 +169,8 @@ async function runCanonicalRunMergeSmoke() {
   );
   assert.match(importSource, /distance_miles = COALESCE\(\?, distance_miles\)/, 'watch distance replaces the phone summary');
   assert.match(importSource, /duration_seconds = COALESCE\(\?, duration_seconds\)/, 'watch duration replaces the phone summary');
-  assert.match(importSource, /calories_burned = CASE WHEN \?=1 THEN \? ELSE calories_burned END/, 'watch calories replace the phone estimate');
-  assert.match(importSource, /calories_watch = CASE WHEN \?=1 THEN \? ELSE calories_watch END/, 'watch calories are retained with sensor provenance');
+  assert.match(importSource, /calories_burned = CASE \? WHEN 1 THEN \? WHEN 2 THEN NULL ELSE calories_burned END/, 'watch calories replace or explicitly clear the phone estimate');
+  assert.match(importSource, /calories_watch = CASE \? WHEN 1 THEN \? WHEN 2 THEN NULL ELSE calories_watch END/, 'watch calories are retained with sensor provenance');
   assert.match(importSource, /ai_feedback = CASE WHEN \?=1 THEN NULL ELSE ai_feedback END/, 'stale AI feedback is cleared when the summary changes');
   assert.match(importSource, /route_source: 'forged_phone'/, 'Forged route provenance is retained');
   assert.match(importSource, /FOR UPDATE/, 'matching runs are row-locked during import consolidation');
@@ -296,6 +324,64 @@ async function runCanonicalRunMergeSmoke() {
     'the redundant Apple row is removed in the same transaction'
   );
 
+  const runHealthUpdate = async (existing, incoming) => {
+    const updates = [];
+    await importTest.updateExistingRunHealth({
+      async get() { return null; },
+      async run(sql, params) {
+        updates.push({ sql, params });
+        return { changes: 1 };
+      },
+    }, 'athlete-1', existing, incoming);
+    assert.equal(updates.length, 1, 'the health enrichment issues exactly one run update');
+    return updates[0];
+  };
+  const repeatedAppleCanonical = {
+    ...canonicalRun,
+    distance_miles: item.distanceMiles,
+    duration_seconds: item.durationSeconds,
+    avg_heart_rate: item.avgHeartRate,
+    max_heart_rate: item.maxHeartRate,
+    heart_rate_zones: JSON.stringify(item.zoneSeconds),
+    health_source: item.source,
+    health_source_workout_id: item.sourceWorkoutId,
+    health_start_at: item.startDate,
+    health_end_at: item.endDate,
+    watch_activity_type: 'running',
+    watch_normalized_type: item.runType,
+    calories: 362,
+    calories_burned: 362,
+    calories_watch: 362,
+    workout_metrics_json: JSON.stringify(metrics),
+    ai_feedback: 'Current Apple-summary feedback',
+    ai_feedback_requested_at: '2026-07-24T15:30:00.000Z',
+  };
+  const identicalRepeat = await runHealthUpdate(repeatedAppleCanonical, item);
+  assert.equal(identicalRepeat.params[23], 1, 'a repeated Apple payload with calories keeps explicit sensor authority');
+  assert.equal(identicalRepeat.params[24], 362, 'the repeated Apple calorie value remains available');
+  assert.equal(identicalRepeat.params[34], 0, 'an identical Apple retry preserves existing AI feedback');
+  assert.equal(identicalRepeat.params[35], 0, 'an identical Apple retry preserves the feedback request marker');
+
+  const appleWithoutCalories = importTest.normalizeRow({
+    ...item.raw,
+    calories: undefined,
+  });
+  const omittedCaloriesRepeat = await runHealthUpdate(repeatedAppleCanonical, appleWithoutCalories);
+  assert.equal(omittedCaloriesRepeat.params[23], 0, 'a same-source Apple retry that omits calories preserves stored sensor calories');
+  assert.equal(omittedCaloriesRepeat.params[34], 0, 'omitted optional calories alone do not invalidate AI feedback');
+
+  const changedAppleItem = importTest.normalizeRow({
+    ...item.raw,
+    avgHeartRate: PRODUCTION_PAIR.appleAvgHeartRate + 1,
+  });
+  const materiallyChangedRepeat = await runHealthUpdate(repeatedAppleCanonical, changedAppleItem);
+  assert.equal(materiallyChangedRepeat.params[34], 1, 'a material sensor-summary change invalidates stale AI feedback');
+  assert.equal(materiallyChangedRepeat.params[35], 1, 'a material sensor-summary change invalidates an in-flight feedback request');
+
+  const firstAppleWithoutCalories = await runHealthUpdate(canonicalRun, appleWithoutCalories);
+  assert.equal(firstAppleWithoutCalories.params[23], 2, 'first trusted authority without calories explicitly clears the phone estimate');
+  assert.equal(firstAppleWithoutCalories.params[24], null, 'no sensor calories are invented during the authority change');
+
   const transferable = importTest.analyzeRunConsolidation(
     forgedCandidate({
       perceived_effort: null,
@@ -344,6 +430,40 @@ async function runCanonicalRunMergeSmoke() {
   assert.ok(conflicting.conflicts.includes('notes'), 'conflicting notes prevent destructive consolidation');
   assert.ok(conflicting.conflicts.includes('plan link'), 'conflicting plan links prevent destructive consolidation');
 
+  const mixedPlanConflict = importTest.analyzeRunConsolidation(
+    forgedCandidate({
+      plan_session_id: 'session-a',
+      planned_session_json: JSON.stringify({ sessionId: 'session-a', title: 'Tempo', distanceMiles: 4 }),
+    }),
+    {
+      ...importedRun,
+      plan_session_id: null,
+      planned_session_json: JSON.stringify({ title: 'Easy', distanceMiles: 3 }),
+    },
+    item
+  );
+  assert.ok(
+    mixedPlanConflict.conflicts.includes('plan link'),
+    'one session ID and a materially different unidentified plan snapshot refuse consolidation'
+  );
+  const equivalentMixedPlan = importTest.analyzeRunConsolidation(
+    forgedCandidate({
+      plan_session_id: 'session-a',
+      planned_session_json: JSON.stringify({ sessionId: 'session-a', title: 'Tempo', distanceMiles: 4 }),
+    }),
+    {
+      ...importedRun,
+      plan_session_id: null,
+      planned_session_json: JSON.stringify({ distanceMiles: 4, title: 'Tempo' }),
+    },
+    item
+  );
+  assert.equal(
+    equivalentMixedPlan.conflicts.includes('plan link'),
+    false,
+    'semantically equivalent snapshots remain mergeable when only one copy retained its session ID'
+  );
+
   const lowerPriorityStatements = [];
   const appleCanonical = {
     ...canonicalRun,
@@ -354,7 +474,11 @@ async function runCanonicalRunMergeSmoke() {
       forged_recording_id: 'forged-run',
       route_source: 'forged_phone',
       summary_source: 'apple_health',
+      distance_source: 'apple_health',
+      distance_unit: 'miles',
       route_status: 'complete',
+      running_stride_length_m: 1.0,
+      metric_sources: { running_stride_length_m: 'apple_health' },
     }),
   };
   const stravaItem = importTest.normalizeRow({
@@ -367,6 +491,8 @@ async function runCanonicalRunMergeSmoke() {
     durationSeconds: 1700,
     avgHeartRate: 160,
     calories: 400,
+    runningPowerWatts: 300,
+    runningStrideLengthM: 1.2,
   });
   await importTest.updateExistingRunHealth({
     async get() { return null; },
@@ -379,7 +505,12 @@ async function runCanonicalRunMergeSmoke() {
   assert.equal(lowerPriorityUpdate.params[0], null, 'lower-priority Strava distance cannot replace Apple Health');
   assert.equal(lowerPriorityUpdate.params[1], null, 'lower-priority Strava duration cannot replace Apple Health');
   assert.equal(lowerPriorityUpdate.params[4], 160, 'lower-priority Strava can fill heart rate Apple Health did not provide');
-  assert.equal(JSON.parse(lowerPriorityUpdate.params[31]).summary_source, 'apple_health', 'summary provenance remains Apple Health');
+  const lowerPriorityMetrics = JSON.parse(lowerPriorityUpdate.params[31]);
+  assert.equal(lowerPriorityMetrics.summary_source, 'apple_health', 'summary provenance remains Apple Health');
+  assert.equal(lowerPriorityMetrics.running_power_watts, 300, 'lower-priority Strava fills missing JSON-only power');
+  assert.equal(lowerPriorityMetrics.running_stride_length_m, 1, 'lower-priority Strava cannot overwrite Apple stride length');
+  assert.equal(lowerPriorityMetrics.metric_sources.running_power_watts, 'strava', 'filled JSON metrics retain field-level provenance');
+  assert.equal(lowerPriorityMetrics.metric_sources.running_stride_length_m, 'apple_health', 'existing metric provenance remains intact');
 
   const protectedHeartRateStatements = [];
   await importTest.updateExistingRunHealth({

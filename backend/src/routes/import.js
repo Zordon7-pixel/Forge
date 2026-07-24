@@ -192,6 +192,108 @@ function numericRunValue(value) {
   return Number.isFinite(number) ? number : null;
 }
 
+function parsedStructuredValue(value) {
+  if (typeof value !== 'string') return value;
+  const text = value.trim();
+  if (!text || (!text.startsWith('{') && !text.startsWith('['))) return value;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return value;
+  }
+}
+
+function stableStructuredValue(value) {
+  const parsed = parsedStructuredValue(value);
+  if (Array.isArray(parsed)) return parsed.map(stableStructuredValue);
+  if (!parsed || typeof parsed !== 'object') return parsed;
+  return Object.fromEntries(
+    Object.keys(parsed)
+      .sort()
+      .filter((key) => parsed[key] !== undefined)
+      .map((key) => [key, stableStructuredValue(parsed[key])])
+  );
+}
+
+function structuredValuesEqual(left, right) {
+  return JSON.stringify(stableStructuredValue(left)) === JSON.stringify(stableStructuredValue(right));
+}
+
+function planSnapshotsEquivalent(left, right) {
+  if (!left || !right) return false;
+  const withoutSessionId = (snapshot) => {
+    const comparable = { ...snapshot };
+    delete comparable.sessionId;
+    delete comparable.session_id;
+    return comparable;
+  };
+  return structuredValuesEqual(withoutSessionId(left), withoutSessionId(right));
+}
+
+function storedValueMissing(value) {
+  return value === null || value === undefined || value === '';
+}
+
+const LOWER_PRIORITY_FILLABLE_WORKOUT_METRICS = new Set([
+  'running_power_watts',
+  'running_speed_mps',
+  'running_stride_length_m',
+  'running_vertical_oscillation_cm',
+  'running_ground_contact_time_ms',
+  'running_vertical_ratio_pct',
+  'ground_contact_balance_left_pct',
+  'ground_contact_balance_right_pct',
+  'respiratory_rate_avg',
+  'respiratory_rate_max',
+  'performance_condition',
+  'run_time_seconds',
+  'walk_time_seconds',
+  'idle_time_seconds',
+  'hr_sample_coverage_pct',
+]);
+
+function mergeMissingWorkoutMetrics(storedMetrics, incomingMetrics, source) {
+  const merged = { ...storedMetrics };
+  const metricSources = {
+    ...(storedMetrics.metric_sources && typeof storedMetrics.metric_sources === 'object'
+      ? storedMetrics.metric_sources
+      : {}),
+  };
+  let enriched = false;
+  for (const key of LOWER_PRIORITY_FILLABLE_WORKOUT_METRICS) {
+    const incomingValue = incomingMetrics[key];
+    if (storedValueMissing(incomingValue) || !storedValueMissing(merged[key])) continue;
+    merged[key] = incomingValue;
+    metricSources[key] = source;
+    enriched = true;
+  }
+  if (enriched) merged.metric_sources = metricSources;
+  return merged;
+}
+
+function mergeAuthoritativeWorkoutMetrics(storedMetrics, incomingMetrics, source) {
+  const merged = { ...storedMetrics, ...incomingMetrics };
+  const metricSources = {
+    ...(storedMetrics.metric_sources && typeof storedMetrics.metric_sources === 'object'
+      ? storedMetrics.metric_sources
+      : {}),
+  };
+  for (const key of LOWER_PRIORITY_FILLABLE_WORKOUT_METRICS) {
+    if (!storedValueMissing(incomingMetrics[key])) metricSources[key] = source;
+  }
+  if (Object.keys(metricSources).length) merged.metric_sources = metricSources;
+  return merged;
+}
+
+function incomingValueChangesStored(incomingValue, storedValue) {
+  if (storedValueMissing(incomingValue)) return false;
+  if (typeof incomingValue === 'number') {
+    const storedNumber = numericRunValue(storedValue);
+    return storedNumber === null || Math.abs(storedNumber - incomingValue) > 0.0001;
+  }
+  return !structuredValuesEqual(incomingValue, storedValue);
+}
+
 function analyzeRunConsolidation(canonicalRun, duplicateRun, item) {
   const conflicts = [];
   if (normalizedText(duplicateRun.date) && duplicateRun.date !== item.date) conflicts.push('date');
@@ -237,13 +339,11 @@ function analyzeRunConsolidation(canonicalRun, duplicateRun, item) {
   const duplicatePlan = runPlanState(duplicateRun);
   if (canonicalPlan.hasPlan && duplicatePlan.hasPlan) {
     const incompatibleMode = canonicalPlan.explicitNone !== duplicatePlan.explicitNone;
-    const incompatibleSession = canonicalPlan.planSessionId
-      && duplicatePlan.planSessionId
-      && canonicalPlan.planSessionId !== duplicatePlan.planSessionId;
-    const unknownDifferentSnapshots = !canonicalPlan.planSessionId
-      && !duplicatePlan.planSessionId
-      && JSON.stringify(canonicalPlan.snapshot || {}) !== JSON.stringify(duplicatePlan.snapshot || {});
-    if (incompatibleMode || incompatibleSession || unknownDifferentSnapshots) conflicts.push('plan link');
+    const bothSessionIds = canonicalPlan.planSessionId && duplicatePlan.planSessionId;
+    const matchingSessionIds = bothSessionIds
+      && canonicalPlan.planSessionId === duplicatePlan.planSessionId;
+    const equivalentSnapshots = planSnapshotsEquivalent(canonicalPlan.snapshot, duplicatePlan.snapshot);
+    if (incompatibleMode || (!matchingSessionIds && !equivalentSnapshots)) conflicts.push('plan link');
   }
 
   return {
@@ -574,6 +674,7 @@ async function updateExistingRunHealth(db, userId, existingRun, item) {
   const sensorSummaryWins = isForgedCapture
     && summaryUpdateAllowed
     && isTrustedSensorSummarySource(incomingSource);
+  const authorityChanged = sensorSummaryWins && incomingSource !== storedSummarySource;
   const existingEffortIsTrusted = storedWorkoutMetrics.workout_effort_user_rated === 1
     || Boolean(existingRun.pain_level)
     || Boolean(existingRun.post_energy)
@@ -606,9 +707,13 @@ async function updateExistingRunHealth(db, userId, existingRun, item) {
         ? storedWorkoutMetrics.route_status_reason || storedRouteIntegrity.reason
         : storedRouteIntegrity.reason,
     };
+  const baseWorkoutMetrics = summaryUpdateAllowed
+    ? mergeAuthoritativeWorkoutMetrics(storedWorkoutMetrics, item.workoutMetrics, item.source)
+    : isTrustedSensorSummarySource(incomingSource)
+      ? mergeMissingWorkoutMetrics(storedWorkoutMetrics, item.workoutMetrics, item.source)
+      : storedWorkoutMetrics;
   const mergedWorkoutMetrics = {
-    ...storedWorkoutMetrics,
-    ...(summaryUpdateAllowed ? item.workoutMetrics : {}),
+    ...baseWorkoutMetrics,
     ...canonicalRouteMetrics,
     distance_source: resolveCanonicalDistanceSource(storedWorkoutMetrics, existingRun, item, sensorSummaryWins),
     distance_unit: 'miles',
@@ -630,6 +735,13 @@ async function updateExistingRunHealth(db, userId, existingRun, item) {
   const canonicalSensorCalories = sensorSummaryWins
     ? (incomingCalories > 0 ? Math.round(incomingCalories) : null)
     : null;
+  const sensorCalorieAction = sensorSummaryWins
+    ? incomingCalories > 0
+      ? 1
+      : authorityChanged && storedSourcePriority === 0
+        ? 2
+        : 0
+    : 0;
   const importedCalories = summaryUpdateAllowed && incomingCalories > 0
     ? Math.round(incomingCalories)
     : 0;
@@ -642,6 +754,70 @@ async function updateExistingRunHealth(db, userId, existingRun, item) {
       ? value
       : null
   );
+  const canonicalAvgHeartRate = fillMissingSummaryValue(item.avgHeartRate, existingRun.avg_heart_rate);
+  const canonicalMaxHeartRate = fillMissingSummaryValue(item.maxHeartRate, existingRun.max_heart_rate);
+  const canonicalZones = fillMissingSummaryValue(zoneParam, existingRun.heart_rate_zones);
+  const canonicalHealthSource = summaryValue(item.source);
+  const canonicalHealthSourceWorkoutId = summaryValue(item.sourceWorkoutId);
+  const canonicalHealthStartAt = summaryValue(item.startDate);
+  const canonicalHealthEndAt = summaryValue(item.endDate);
+  const canonicalType = summaryValue(item.section === 'activity' ? item.runType : null);
+  const canonicalWatchActivityType = summaryValue(String(item.raw?.type || item.raw?.activityType || 'imported'));
+  const canonicalWatchNormalizedType = summaryValue(item.runType);
+  const canonicalCadence = fillMissingSummaryValue(item.cadenceSpm, existingRun.cadence_spm);
+  const canonicalElevationGain = fillMissingSummaryValue(item.elevationGain, existingRun.elevation_gain);
+  const canonicalElevationLoss = fillMissingSummaryValue(item.elevationLoss, existingRun.elevation_loss);
+  const canonicalVo2Max = fillMissingSummaryValue(item.vo2Max, existingRun.vo2_max);
+  const canonicalTrainingEffectAerobic = fillMissingSummaryValue(
+    item.trainingEffectAerobic,
+    existingRun.training_effect_aerobic
+  );
+  const canonicalTrainingEffectAnaerobic = fillMissingSummaryValue(
+    item.trainingEffectAnaerobic,
+    existingRun.training_effect_anaerobic
+  );
+  const canonicalRecoveryTimeHours = fillMissingSummaryValue(
+    item.recoveryTimeHours,
+    existingRun.recovery_time_hours
+  );
+  const canonicalTemperatureF = fillMissingSummaryValue(item.temperatureF, existingRun.temperature_f);
+  const routeChanged = incomingRouteReplacesStored
+    && !structuredValuesEqual(item.routeCoords, storedRouteCoords);
+  const workoutMetricsChanged = !structuredValuesEqual(mergedWorkoutMetrics, storedWorkoutMetrics);
+  const sensorCaloriesChanged = sensorCalorieAction === 1
+    ? incomingValueChangesStored(canonicalSensorCalories, existingRun.calories)
+      || incomingValueChangesStored(canonicalSensorCalories, existingRun.calories_burned)
+      || incomingValueChangesStored(canonicalSensorCalories, existingRun.calories_watch)
+    : sensorCalorieAction === 2
+      && [existingRun.calories, existingRun.calories_burned, existingRun.calories_watch]
+        .some((value) => !storedValueMissing(value));
+  const importedCaloriesChanged = sensorCalorieAction === 0
+    && importedCalories > 0
+    && incomingValueChangesStored(importedCalories, existingRun.calories);
+  const summaryChanged = [
+    [canonicalDistance, existingRun.distance_miles],
+    [canonicalDuration, existingRun.duration_seconds],
+    [importedEffort, existingRun.perceived_effort],
+    [canonicalAvgHeartRate, existingRun.avg_heart_rate],
+    [canonicalMaxHeartRate, existingRun.max_heart_rate],
+    [canonicalZones, existingRun.heart_rate_zones],
+    [canonicalType, existingRun.type],
+    [canonicalWatchActivityType, existingRun.watch_activity_type],
+    [canonicalWatchNormalizedType, existingRun.watch_normalized_type],
+    [canonicalCadence, existingRun.cadence_spm],
+    [canonicalElevationGain, existingRun.elevation_gain],
+    [canonicalElevationLoss, existingRun.elevation_loss],
+    [canonicalVo2Max, existingRun.vo2_max],
+    [canonicalTrainingEffectAerobic, existingRun.training_effect_aerobic],
+    [canonicalTrainingEffectAnaerobic, existingRun.training_effect_anaerobic],
+    [canonicalRecoveryTimeHours, existingRun.recovery_time_hours],
+    [canonicalTemperatureF, existingRun.temperature_f],
+  ].some(([incomingValue, storedValue]) => incomingValueChangesStored(incomingValue, storedValue))
+    || routeChanged
+    || workoutMetricsChanged
+    || sensorCaloriesChanged
+    || importedCaloriesChanged;
+  const invalidateAiFeedback = authorityChanged || summaryChanged;
 
   await db.run(
     `UPDATE runs SET
@@ -668,9 +844,9 @@ async function updateExistingRunHealth(db, userId, existingRun, item) {
       training_effect_anaerobic = COALESCE(?, training_effect_anaerobic),
       recovery_time_hours = COALESCE(?, recovery_time_hours),
       temperature_f = COALESCE(?, temperature_f),
-      calories = CASE WHEN ?=1 THEN ? WHEN ?>0 THEN ? ELSE calories END,
-      calories_burned = CASE WHEN ?=1 THEN ? ELSE calories_burned END,
-      calories_watch = CASE WHEN ?=1 THEN ? ELSE calories_watch END,
+      calories = CASE ? WHEN 1 THEN ? WHEN 2 THEN NULL ELSE CASE WHEN ?>0 THEN ? ELSE calories END END,
+      calories_burned = CASE ? WHEN 1 THEN ? WHEN 2 THEN NULL ELSE calories_burned END,
+      calories_watch = CASE ? WHEN 1 THEN ? WHEN 2 THEN NULL ELSE calories_watch END,
       workout_metrics_json = COALESCE(NULLIF(?, '{}'), workout_metrics_json),
       plan_session_id = COALESCE(NULLIF(plan_session_id, ''), ?),
       planned_session_json = CASE
@@ -686,38 +862,38 @@ async function updateExistingRunHealth(db, userId, existingRun, item) {
       canonicalDuration,
       canonicalPace,
       importedEffort,
-      fillMissingSummaryValue(item.avgHeartRate, existingRun.avg_heart_rate),
-      fillMissingSummaryValue(item.maxHeartRate, existingRun.max_heart_rate),
-      fillMissingSummaryValue(zoneParam, existingRun.heart_rate_zones),
-      summaryValue(item.source),
-      summaryValue(item.sourceWorkoutId),
-      summaryValue(item.startDate),
-      summaryValue(item.endDate),
-      summaryValue(item.section === 'activity' ? item.runType : null),
-      summaryValue(String(item.raw?.type || item.raw?.activityType || 'imported')),
-      summaryValue(item.runType),
-      fillMissingSummaryValue(item.cadenceSpm, existingRun.cadence_spm),
-      fillMissingSummaryValue(item.elevationGain, existingRun.elevation_gain),
-      fillMissingSummaryValue(item.elevationLoss, existingRun.elevation_loss),
+      canonicalAvgHeartRate,
+      canonicalMaxHeartRate,
+      canonicalZones,
+      canonicalHealthSource,
+      canonicalHealthSourceWorkoutId,
+      canonicalHealthStartAt,
+      canonicalHealthEndAt,
+      canonicalType,
+      canonicalWatchActivityType,
+      canonicalWatchNormalizedType,
+      canonicalCadence,
+      canonicalElevationGain,
+      canonicalElevationLoss,
       JSON.stringify(incomingRouteReplacesStored ? item.routeCoords : []),
-      fillMissingSummaryValue(item.vo2Max, existingRun.vo2_max),
-      fillMissingSummaryValue(item.trainingEffectAerobic, existingRun.training_effect_aerobic),
-      fillMissingSummaryValue(item.trainingEffectAnaerobic, existingRun.training_effect_anaerobic),
-      fillMissingSummaryValue(item.recoveryTimeHours, existingRun.recovery_time_hours),
-      fillMissingSummaryValue(item.temperatureF, existingRun.temperature_f),
-      sensorSummaryWins ? 1 : 0,
+      canonicalVo2Max,
+      canonicalTrainingEffectAerobic,
+      canonicalTrainingEffectAnaerobic,
+      canonicalRecoveryTimeHours,
+      canonicalTemperatureF,
+      sensorCalorieAction,
       canonicalSensorCalories,
       importedCalories,
       importedCalories,
-      sensorSummaryWins ? 1 : 0,
+      sensorCalorieAction,
       canonicalSensorCalories,
-      sensorSummaryWins ? 1 : 0,
+      sensorCalorieAction,
       canonicalSensorCalories,
       JSON.stringify(mergedWorkoutMetrics),
       planned?.sessionId || null,
       planned ? JSON.stringify(planned) : null,
-      sensorSummaryWins ? 1 : 0,
-      sensorSummaryWins ? 1 : 0,
+      invalidateAiFeedback ? 1 : 0,
+      invalidateAiFeedback ? 1 : 0,
       existingRun.id,
       userId,
     ]
