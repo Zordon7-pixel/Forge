@@ -6,6 +6,7 @@ const raceCourse = require('./raceCourse');
 const strengthPrescription = require('./strengthPrescription');
 const trainingEvidence = require('./trainingEvidence');
 const { isRunActivity } = require('./runActivity');
+const { resolveRunSchedule } = require('./runSchedule');
 
 const DAY_ORDER = planSchema.DAY_ORDER;
 const VALID_MODES = planSchema.VALID_MODES;
@@ -433,7 +434,7 @@ function buildMileageTargets(weekCount, baseline, hasRace, recovery, history, ta
 }
 
 function selectRunDays(availableDays, count) {
-  const wanted = clamp(Math.round(Number(count) || 3), 2, 6);
+  const wanted = clamp(Math.round(Number(count) || 3), 1, 6);
   const preferred = ['Tue', 'Thu', 'Sat', 'Sun', 'Wed', 'Mon', 'Fri'];
   const ordered = [
     ...preferred.filter((day) => availableDays.includes(day)),
@@ -1064,8 +1065,10 @@ function buildConcurrentPlan(context = {}) {
   const weekCount = clamp(Math.round(Number(target.weeks) || 8), raceDate ? 1 : 4, 20);
   const startDate = mondayFor(target.startDate || context.todayISO || toISODate(new Date()));
   const raceDistance = clamp(Number(target.distanceMiles || profile.goal_race_distance || 6.2) || 6.2, 1, 100);
-  const availableDays = normalizeWeekdays(target.trainingDays, ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']);
-  const runDays = selectRunDays(availableDays, target.runDaysPerWeek || profile.run_days_per_week || 3);
+  const runSchedule = resolveRunSchedule(profile, target);
+  if (!runSchedule.valid) throw new Error(runSchedule.error);
+  const availableDays = runSchedule.trainingDays;
+  const runDays = selectRunDays(availableDays, runSchedule.runDaysPerWeek);
   const requestedLiftDays = mode === planSchema.PLAN_MODES.RUN_ONLY ? 0 : clamp(Math.max(
     mode === planSchema.PLAN_MODES.HYBRID_BUILD ? 3 : 1,
     Math.round(Number(target.liftDaysPerWeek || profile.lift_days_per_week) || (mode === planSchema.PLAN_MODES.HYBRID_BUILD ? 3 : 2)),
@@ -1172,6 +1175,7 @@ function buildConcurrentPlan(context = {}) {
       phase,
       startDate: weekStart,
       totalMiles,
+      completedRunsAtGeneration: isCurrentWeek ? completedRunDates.size : 0,
       completedMilesAtGeneration: isCurrentWeek ? round(Number(currentWeekLoad.miles || 0)) : 0,
       days,
     });
@@ -1189,6 +1193,12 @@ function buildConcurrentPlan(context = {}) {
     trainingEvidence: trainingEvidence.planEvidence(mode),
     methodologyNote: 'Research and athlete practice set the training principles; your history, recovery, availability, and race set the dosage. Elite volume is never copied.',
     inputSummary: summarizeInputs(profile, history, recovery, context.checkin),
+    schedulePreferences: {
+      runDaysPerWeek: runSchedule.runDaysPerWeek,
+      trainingDays: runSchedule.trainingDays,
+      runDaysSource: target.runDaysSource || runSchedule.runDaysSource,
+      trainingDaysSource: target.trainingDaysSource || runSchedule.trainingDaysSource,
+    },
     weeks,
   };
   return applyAcuteRunProtection(plan, context);
@@ -1227,6 +1237,9 @@ function validateRun(session, path, errors) {
 function validateConcurrentPlan(candidate, context = {}) {
   const errors = [];
   const target = context.target || {};
+  const runSchedule = resolveRunSchedule(context.profile || {}, target);
+  if (!runSchedule.valid) return { valid: false, errors: [runSchedule.error] };
+  const allowedRunDays = new Set(runSchedule.trainingDays);
   const expectedMode = resolvePlanMode(context.profile || {}, target);
   const hasRace = Boolean(parseISODate(target.raceDate));
   const expectedGoalTimeSeconds = goalTimeSecondsFor(target, {}, context.history || {});
@@ -1239,6 +1252,12 @@ function validateConcurrentPlan(candidate, context = {}) {
   if (!candidate || typeof candidate !== 'object') return { valid: false, errors: ['candidate is missing'] };
   if (Number(candidate.schemaVersion) !== planSchema.SCHEMA_VERSION) errors.push(`schemaVersion must be ${planSchema.SCHEMA_VERSION}`);
   if (candidate.planMode !== expectedMode) errors.push(`planMode must be ${expectedMode}`);
+  if (Number(candidate.schedulePreferences?.runDaysPerWeek) !== runSchedule.runDaysPerWeek) {
+    errors.push(`schedulePreferences.runDaysPerWeek must be ${runSchedule.runDaysPerWeek}`);
+  }
+  if (JSON.stringify(candidate.schedulePreferences?.trainingDays || []) !== JSON.stringify(runSchedule.trainingDays)) {
+    errors.push('schedulePreferences.trainingDays must preserve the selected weekdays');
+  }
   if (!candidate.goal || Number(candidate.goal.distanceMiles) !== Number(target.distanceMiles || candidate.goal?.distanceMiles)) errors.push('goal distance is missing or changed');
   if (target.raceDate && candidate.goal?.date !== target.raceDate) errors.push('race date was not preserved');
   if (expectedGoalTimeSeconds && Number(candidate.goal?.goalTimeSeconds) !== expectedGoalTimeSeconds) errors.push('goal time was not preserved');
@@ -1266,6 +1285,7 @@ function validateConcurrentPlan(candidate, context = {}) {
     }
     let restDays = 0;
     let lifts = 0;
+    let runs = 0;
     let miles = 0;
     const hardRunIndexes = new Set();
     const lowerLiftIndexes = new Set();
@@ -1286,7 +1306,11 @@ function validateConcurrentPlan(candidate, context = {}) {
         if (kinds.has(kind)) errors.push(`${dayPath} cannot contain duplicate ${kind} sessions`);
         kinds.add(kind);
         if (kind === 'run') {
+          runs += 1;
           validateRun(session, sessionPath, errors);
+          if (String(session.type || '').toLowerCase() !== 'race' && !allowedRunDays.has(day.day)) {
+            errors.push(`${sessionPath} is scheduled outside the selected trainingDays`);
+          }
           miles += Number(session.distance_miles || 0);
           if (isHardRun(session)) hardRunIndexes.add(dayIndex);
           if (acuteProtection && String(session.type || '').toLowerCase() !== 'race') {
@@ -1330,6 +1354,12 @@ function validateConcurrentPlan(candidate, context = {}) {
       if (kinds.has('run') && kinds.has('lift') && !String(day.orderGuidance || '').trim()) errors.push(`${dayPath}.orderGuidance is required for same-day run and lift`);
     });
     if (restDays < 1) errors.push(`${path} must contain at least one full rest day`);
+    const completedRunsAtGeneration = Math.max(0, Number(week.completedRunsAtGeneration || 0));
+    if (!['taper', 'race'].includes(week.phase)
+      && !week.acuteLoadAdjusted
+      && runs + completedRunsAtGeneration !== runSchedule.runDaysPerWeek) {
+      errors.push(`${path} must contain exactly ${runSchedule.runDaysPerWeek} weekly runs`);
+    }
     if (expectedMode === planSchema.PLAN_MODES.RUN_ONLY && lifts > 0) errors.push(`${path} run_only plans cannot contain lifts`);
     if (expectedMode !== planSchema.PLAN_MODES.RUN_ONLY && week.phase !== 'race') {
       const floor = Number(candidate.strengthPolicy?.minimumSessionsPerWeek || 0);
@@ -1366,8 +1396,7 @@ function validateConcurrentPlan(candidate, context = {}) {
     if (!exactRaceSessionFound) errors.push('plan must include the exact race session on the target date');
     if (weeks.length >= 3 && !phases.has('peak')) errors.push('race plan must include a peak phase');
   }
-  const availableRunDays = normalizeWeekdays(target.trainingDays, ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']);
-  const plannedRunFrequency = Math.min(availableRunDays.length, clamp(Math.round(Number(target.runDaysPerWeek || context.profile?.run_days_per_week) || 3), 2, 6));
+  const plannedRunFrequency = runSchedule.runDaysPerWeek;
   if (expectedGoalPace && expectedWeeks >= 4 && plannedRunFrequency >= 2 && !targetPaceSessionFound) {
     errors.push('timed race plan must include a structured target-pace session before race day');
   }

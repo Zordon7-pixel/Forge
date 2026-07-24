@@ -144,6 +144,9 @@ export default function Plan() {
   ), [model, activeRace])
   const isActiveSchemaV2 = Number(myPlan?.plan_data?.schemaVersion || 0) === 2
   const weekCount = Number(myPlan?.weeks || calendarModel?.weekCount || 0)
+  const planReviewRequired = myUserPlan?.progress?.planReviewRequired
+    || myPlan?.plan_data?.planReviewRequired
+    || null
 
   // Derive the selected day from the live model so completion toggles stay fresh
   // across reloads (we store the ISO date, not a stale day object).
@@ -463,6 +466,24 @@ export default function Plan() {
                 Manage races
               </button>
             </div>
+          </div>
+        )}
+
+        {myPlan && planReviewRequired && (
+          <div role="status" className="rounded-xl p-4" style={{ background: 'var(--accent-dim)', border: '1px solid var(--accent)', color: 'var(--text-primary)' }}>
+            <h2 className="text-base font-bold">Your plan needs a frequency review</h2>
+            <p className="text-sm mt-1">
+              Your saved preference is now {planReviewRequired.requestedRunDaysPerWeek} run day{Number(planReviewRequired.requestedRunDaysPerWeek) === 1 ? '' : 's'} per week.
+              The active calendar has not been rewritten; review the eligible weekdays and rebuild it explicitly.
+            </p>
+            <button
+              type="button"
+              onClick={() => navigate('/plan-catalog', { state: activeRace?.id ? { raceId: activeRace.id } : null })}
+              className="mt-3 text-sm font-bold"
+              style={{ background: 'transparent', border: 0, color: 'var(--accent)', padding: 0, cursor: 'pointer' }}
+            >
+              Review and rebuild calendar →
+            </button>
           </div>
         )}
 

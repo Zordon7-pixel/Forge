@@ -19,6 +19,7 @@ const { runActivitySql } = require('../lib/runActivity');
 const { allocatePlanSessionRunEvidence, findPlanSessionRunEvidence } = require('../lib/plannedRunMatch');
 const hybridReconciliation = require('../lib/hybridReconciliation');
 const { dateInTimezone, isIanaTimezone } = require('../lib/challengeRules');
+const { resolveRunSchedule } = require('../lib/runSchedule');
 
 const ADAPTATION_POLICY_VERSION = 'training-gap-v1';
 
@@ -944,7 +945,17 @@ async function buildConcurrentContext(userId, profile, target) {
   const weeksObserved = activityDates.length
     ? clamp(Math.ceil((Date.now() - new Date(`${activityDates[0]}T12:00:00`).getTime()) / (7 * 86400000)) || 1, 1, 8)
     : 0;
-  const expectedPerWeek = clampInt(profile.run_days_per_week, 1, 6, 3) + clampInt(profile.lift_days_per_week, 0, 4, 0);
+  const expectedPerWeek = clampInt(
+    target.runDaysPerWeek,
+    1,
+    6,
+    clampInt(profile.run_days_per_week, 1, 6, 3)
+  ) + clampInt(
+    target.liftDaysPerWeek,
+    0,
+    4,
+    clampInt(profile.lift_days_per_week, 0, 4, 0)
+  );
   const expectedSessions = weeksObserved * expectedPerWeek;
   const completedSessions = (runs || []).length + (lifts || []).length;
   const healthSignals = buildHealthSignals(healthRow || {});
@@ -1030,6 +1041,14 @@ async function persistConcurrentPlan(userId, plan, meta = {}) {
   const weekStart = plan.weeks?.[0]?.startDate || getMonday();
   const serialized = JSON.stringify(plan);
   await withTransaction(async (tx) => {
+    const schedule = plan.schedulePreferences || {};
+    if (schedule.runDaysSource === 'target' && schedule.trainingDaysSource === 'target') {
+      const preferenceResult = await tx.run(
+        'UPDATE users SET run_days_per_week=?, preferred_workout_days=? WHERE id=?',
+        [schedule.runDaysPerWeek, JSON.stringify(schedule.trainingDays || []), userId]
+      );
+      if (preferenceResult.changes === 0) throw new Error('Plan preferences update failed');
+    }
     await tx.run("UPDATE user_plans SET status='inactive' WHERE user_id=? AND status='active'", [userId]);
     await tx.run(
       `INSERT INTO training_plans (id, user_id, week_start, plan_json, name, type, weeks, description, plan_data)
@@ -1084,11 +1103,11 @@ function getPlanTargetOptions(target = null) {
 }
 
 function defaultPrefillFromProfile(profile = {}) {
-  const runDaysPerWeek = clampInt(profile.run_days_per_week, 1, 7, 3);
+  const schedule = resolveRunSchedule(profile);
   const liftDaysPerWeek = clampInt(profile.lift_days_per_week, 0, 7, 2);
   return {
-    inferredTrainingDays: [],
-    runDaysPerWeek,
+    inferredTrainingDays: schedule.trainingDaysSource === 'profile' ? schedule.trainingDays : [],
+    runDaysPerWeek: schedule.runDaysPerWeek,
     liftDaysPerWeek,
     liftingEnabled: liftDaysPerWeek > 0,
   };
@@ -1840,7 +1859,7 @@ router.post('/adaptation/:proposalId/keep', auth, async (req, res) => {
 router.get('/prefill', auth, async (req, res) => {
   let fallback = defaultPrefillFromProfile();
   try {
-    const profile = await dbGet('SELECT run_days_per_week, lift_days_per_week FROM users WHERE id=?', [req.user.id]);
+    const profile = await dbGet('SELECT run_days_per_week, lift_days_per_week, preferred_workout_days FROM users WHERE id=?', [req.user.id]);
     fallback = defaultPrefillFromProfile(profile || {});
 
     const since = new Date();
@@ -1854,7 +1873,12 @@ router.get('/prefill', auth, async (req, res) => {
       .map((row) => weekdayFromDateString(row.date))
       .filter(Boolean))];
 
-    res.json({ ...fallback, inferredTrainingDays });
+    res.json({
+      ...fallback,
+      inferredTrainingDays: fallback.inferredTrainingDays.length
+        ? fallback.inferredTrainingDays
+        : inferredTrainingDays,
+    });
   } catch (err) {
     console.error('[plans/prefill] failed soft:', err.message);
     res.json(fallback);
@@ -2676,6 +2700,8 @@ router.post('/generate', auth, requirePremium('Race Programs'), async (req, res)
     const profile = await dbGet('SELECT * FROM users WHERE id = ?', [req.user.id]);
     if (!profile) return res.status(404).json({ error: 'User not found' });
     const requested = stripClientCourseFacts(req.body?.target || {});
+    const runSchedule = resolveRunSchedule(profile, requested, { requireCompleteSelection: true });
+    if (!runSchedule.valid) return res.status(400).json({ error: runSchedule.error });
     const distanceMiles = clamp(parsePositiveNumber(requested.distanceMiles ?? requested.distance_miles) || 6.2, 1, 100);
     const requestedRaceDate = /^\d{4}-\d{2}-\d{2}$/.test(String(requested.raceDate || ''))
       && !Number.isNaN(new Date(`${requested.raceDate}T12:00:00`).getTime())
@@ -2686,6 +2712,10 @@ router.post('/generate', auth, requirePremium('Race Programs'), async (req, res)
     const startDate = raceWindow?.startDate || getPlanStartMonday();
     const target = {
       ...requested,
+      trainingDays: runSchedule.trainingDays,
+      runDaysPerWeek: runSchedule.runDaysPerWeek,
+      runDaysSource: runSchedule.runDaysSource,
+      trainingDaysSource: runSchedule.trainingDaysSource,
       distanceMiles,
       raceDate: requestedRaceDate,
       weeks: raceWindow?.weeks || clampInt(requested.weeks, 4, 20, defaultWeeksForDistance(distanceMiles)),
@@ -2724,8 +2754,14 @@ router.post('/generate-for-race/:raceId', auth, requirePremium('Race Programs'),
     if (!raceWindow) return res.status(400).json({ error: 'Race date must be today or later' });
     const { startDate, weeks } = raceWindow;
     const requested = stripClientCourseFacts(req.body?.target || {});
+    const runSchedule = resolveRunSchedule(profile, requested, { requireCompleteSelection: true });
+    if (!runSchedule.valid) return res.status(400).json({ error: runSchedule.error });
     const target = {
       ...requested,
+      trainingDays: runSchedule.trainingDays,
+      runDaysPerWeek: runSchedule.runDaysPerWeek,
+      runDaysSource: runSchedule.runDaysSource,
+      trainingDaysSource: runSchedule.trainingDaysSource,
       raceDate: race.race_date,
       raceName: race.race_name,
       distanceMiles: clamp(Number(race.distance_miles) || 6.2, 1, 100),

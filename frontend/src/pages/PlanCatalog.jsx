@@ -161,7 +161,7 @@ export default function PlanCatalog() {
         ? data.inferredTrainingDays
         : ['Tue', 'Thu', 'Sat']
       const available = sortDays(inferred)
-      const runCount = Math.max(1, Math.min(available.length, Number(data?.runDaysPerWeek || 3)))
+      const runCount = Math.max(1, Math.min(6, available.length, Number(data?.runDaysPerWeek || 3)))
       const liftCount = Math.max(0, Math.min(available.length, Number(data?.liftDaysPerWeek || 0)))
       setTrainingDays(available)
       setRunDaysPerWeek(runCount)
@@ -257,7 +257,7 @@ export default function PlanCatalog() {
   const toggleDay = (day) => {
     setTrainingDays((prev) => {
       const next = sortDays(prev.includes(day) ? prev.filter((item) => item !== day) : [...prev, day])
-      setRunDaysPerWeek((current) => Math.max(1, Math.min(current, Math.max(1, next.length))))
+      setRunDaysPerWeek((current) => Math.max(1, Math.min(6, current, Math.max(1, next.length))))
       setLiftDaysPerWeek((current) => Math.min(current, next.length))
       return next
     })
@@ -294,8 +294,8 @@ export default function PlanCatalog() {
       setError('Choose at least one available training day.')
       return
     }
-    if (!Number.isInteger(runCount) || runCount < 1 || runCount > trainingDays.length) {
-      setError('Run days must fit inside your available training days.')
+    if (!Number.isInteger(runCount) || runCount < 1 || runCount > 6 || runCount > trainingDays.length) {
+      setError('Run days must be a whole number from 1 to 6 and fit inside your eligible weekdays.')
       return
     }
     if (liftingEnabled && (!Number.isInteger(liftCount) || liftCount < 1 || liftCount > trainingDays.length)) {
@@ -562,9 +562,10 @@ export default function PlanCatalog() {
 
               <section>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 10 }}>
-                  <span style={{ color: 'var(--text-primary)', fontSize: 13, fontWeight: 850 }}>Days available to train</span>
+                  <span style={{ color: 'var(--text-primary)', fontSize: 13, fontWeight: 850 }}>Eligible workout weekdays</span>
                   <span style={{ color: 'var(--text-muted)', fontSize: 12, fontWeight: 800 }}>{trainingDays.length} days/week</span>
                 </div>
+                <p style={{ color: 'var(--text-muted)', fontSize: 12, margin: '0 0 10px' }}>Runs are scheduled only on these weekdays. Choose the exact number of weekly runs below.</p>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', gap: 6 }}>
                   {DAYS.map((day) => {
                     const active = trainingDays.includes(day)
@@ -579,9 +580,9 @@ export default function PlanCatalog() {
 
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12 }}>
                 <label style={{ display: 'grid', gap: 7 }}>
-                  <span style={{ color: 'var(--text-primary)', fontSize: 13, fontWeight: 850 }}>Run days each week</span>
+                  <span style={{ color: 'var(--text-primary)', fontSize: 13, fontWeight: 850 }}>How many days do you want to run?</span>
                   <select value={runDaysPerWeek} onChange={(event) => setRunDaysPerWeek(Number(event.target.value))} style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', borderRadius: 8, padding: '12px 14px', fontSize: 15 }}>
-                    {Array.from({ length: Math.max(1, trainingDays.length) }, (_, index) => index + 1).map((count) => <option key={count} value={count}>{count} run day{count === 1 ? '' : 's'}</option>)}
+                    {Array.from({ length: Math.max(1, Math.min(6, trainingDays.length)) }, (_, index) => index + 1).map((count) => <option key={count} value={count}>{count} run day{count === 1 ? '' : 's'}</option>)}
                   </select>
                 </label>
                 {liftingEnabled && (

@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const { trustedCourseFacts } = require('../lib/concurrentPlan');
 const { hasMeaningfulPlannedRun } = require('../lib/plannedRunMatch');
 const { resolveRunEffort } = require('../lib/runEffort');
+const { resolveRunSchedule } = require('../lib/runSchedule');
 
 const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
 const OPENAI_RESPONSES_TIMEOUT_MS = 75_000;
@@ -113,29 +114,24 @@ function clampInt(value, min, max, fallback) {
 }
 
 function resolvePlanFrequency(profile = {}, target = null) {
-  const profileRunDays = clampInt(profile.run_days_per_week, 1, 7, 3);
   const profileLiftDays = clampInt(profile.lift_days_per_week, 0, 7, 2);
-  const hasRunOverride = target && Object.prototype.hasOwnProperty.call(target, 'runDaysPerWeek') && target.runDaysPerWeek !== undefined;
   const hasLiftOverride = target && Object.prototype.hasOwnProperty.call(target, 'liftDaysPerWeek') && target.liftDaysPerWeek !== undefined;
   const liftingExplicitlyDisabled = target?.liftingEnabled === false;
   const liftingEnabled = liftingExplicitlyDisabled ? false : (target?.liftingEnabled === true || profileLiftDays > 0);
+  const runSchedule = resolveRunSchedule(profile, target || {}, { requireCompleteSelection: true });
+  if (!runSchedule.valid) throw new Error(runSchedule.error);
 
   return {
-    runDaysPerWeek: hasRunOverride ? clampInt(target.runDaysPerWeek, 1, 7, profileRunDays) : profileRunDays,
+    runDaysPerWeek: runSchedule.runDaysPerWeek,
+    trainingDays: runSchedule.trainingDays,
+    runDaysSource: runSchedule.runDaysSource,
+    trainingDaysSource: runSchedule.trainingDaysSource,
     liftDaysPerWeek: liftingEnabled
       ? (hasLiftOverride ? clampInt(target.liftDaysPerWeek, 0, 7, profileLiftDays) : profileLiftDays)
       : 0,
     liftingEnabled,
     liftingExplicitlyDisabled,
   };
-}
-
-function normalizeTrainingDays(raw) {
-  if (!Array.isArray(raw)) return [];
-  const byKey = { sun: 'Sun', mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri', sat: 'Sat' };
-  return [...new Set(raw
-    .map((day) => byKey[String(day || '').trim().slice(0, 3).toLowerCase()])
-    .filter(Boolean))];
 }
 
 const aiCache = new Map();
@@ -181,7 +177,7 @@ async function generateTrainingPlan(profile, target = null, trainingContext = nu
   const planMode = ['run_only', 'hybrid_maintain', 'hybrid_build'].includes(requestedMode)
     ? requestedMode
     : frequency.liftingExplicitlyDisabled ? 'run_only' : 'hybrid_maintain';
-  const trainingDays = normalizeTrainingDays(target?.trainingDays);
+  const trainingDays = frequency.trainingDays;
   const trainingDaysLine = trainingDays.length
     ? `\n- Actual available training weekdays: ${trainingDays.join(', ')}. Schedule non-rest sessions only on these weekdays unless unavoidable for race-week taper.`
     : '';
@@ -193,7 +189,7 @@ async function generateTrainingPlan(profile, target = null, trainingContext = nu
     : [];
   const equipmentLine = equipment.length ? equipment.join(', ') : 'barbell, dumbbell, rack, bench';
   const sessionCountRule = trainingDays.length
-    ? '- Schedule non-rest sessions only on the listed available training weekdays; do not add sessions on other days to satisfy a minimum session count.'
+    ? `- Schedule exactly ${frequency.runDaysPerWeek} run sessions in every non-taper, non-race week, only on the listed available training weekdays. Never replace this explicit frequency with the profile value or a default.`
     : '- Include at least 6 training sessions each week (non-rest days)';
   const liftingRules = planMode === 'run_only'
     ? `- This is a RUN-ONLY plan: include zero lifting, strength, weighted circuit, kettlebell, rucking, sled, or hybrid cross-training sessions.
@@ -332,6 +328,7 @@ Return ONLY valid JSON in this exact format, no other text:
   "planMode": "${planMode}",
   "goal": {"kind":"${target?.raceDate ? 'race' : 'training_block'}","name":${JSON.stringify(raceName)},"date":${target?.raceDate ? JSON.stringify(sanitize(target.raceDate, 10)) : 'null'},"distanceMiles":${Number(target?.distanceMiles) || 6.2},"goalType":"${target?.goalTimeSeconds ? 'pr' : 'completion'}","goalTimeSeconds":${Number(target?.goalTimeSeconds) || 'null'}},
   "strengthPolicy": {"enabled":${planMode !== 'run_only'},"goal":"${planMode === 'hybrid_build' ? 'build' : planMode === 'hybrid_maintain' ? 'maintain' : 'none'}","sessionsPerWeek":${planMode === 'run_only' ? 0 : Math.max(1, frequency.liftDaysPerWeek)},"minimumSessionsPerWeek":${planMode === 'run_only' ? 0 : Math.min(2, Math.max(1, frequency.liftDaysPerWeek))}},
+  "schedulePreferences": {"runDaysPerWeek":${frequency.runDaysPerWeek},"trainingDays":${JSON.stringify(trainingDays)},"runDaysSource":"${frequency.runDaysSource}","trainingDaysSource":"${frequency.trainingDaysSource}"},
   "weeks": [{"week":1,"phase":"base","startDate":"${startDate || 'YYYY-MM-DD'}","totalMiles":0,"days":[{"date":"${startDate || 'YYYY-MM-DD'}","day":"Mon","sessions":[{"id":"w1-mon-run","kind":"run","type":"easy","workout_type":"run","title":"Easy aerobic run","distance_miles":3,"pace_target":"Conversational effort","target_zone":"Zone 2","intensity":"Easy","warmup":["5 min easy"],"steps":["Hold conversational effort"],"cooldown":["5 min walk"],"progression":"Add time before pace","description":"Aerobic development"}],"status":"planned"}]}]
 }
 Rules:

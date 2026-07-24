@@ -19,6 +19,7 @@ const { WAIVER_VERSION } = require('../lib/waiverText');
 const { runActivitySql } = require('../lib/runActivity');
 const { cleanupOwnedSocialChallenges } = require('../lib/challengeOwnership');
 const { aiUsageWindows, resolveEntitlement } = require('../lib/betaAccess');
+const { normalizeTrainingDays } = require('../lib/runSchedule');
 
 const sign = (user) => jwt.sign(
   { id: user.id, name: user.name, email: user.email, onboarded: user.onboarded, coach_personality: user.coach_personality },
@@ -223,68 +224,162 @@ router.put('/me/profile', auth, async (req, res) => {
     if (max_heart_rate !== undefined && max_heart_rate !== null && (Number(max_heart_rate) < 100 || Number(max_heart_rate) > 220)) {
       return res.status(400).json({ error: 'Max heart rate must be between 100 and 220 bpm.' });
     }
+    const hasRunFrequency = run_days_per_week !== undefined && run_days_per_week !== null;
+    const normalizedRunFrequency = hasRunFrequency ? Number(run_days_per_week) : null;
+    if (hasRunFrequency && (!Number.isInteger(normalizedRunFrequency) || normalizedRunFrequency < 1 || normalizedRunFrequency > 6)) {
+      return res.status(400).json({ error: 'Run days per week must be a whole number from 1 to 6.' });
+    }
+    const hasPreferredDays = preferred_workout_days !== undefined && preferred_workout_days !== null;
+    const normalizedPreferredDays = hasPreferredDays ? normalizeTrainingDays(preferred_workout_days) : null;
+    if (hasPreferredDays && (!Array.isArray(preferred_workout_days)
+      || normalizedPreferredDays.length !== new Set(preferred_workout_days.map((day) => String(day || '').trim().slice(0, 3).toLowerCase())).size)) {
+      return res.status(400).json({ error: 'Preferred workout days must contain valid weekdays.' });
+    }
 
     const mappedWeekly = weekly_miles ?? weekly_miles_current;
     const mappedGoal = primary_goal ?? goal_type;
     const mappedInjury = injury_detail ?? injury_notes;
     const mappedComeback = comeback_mode ?? (injury_status && injury_status !== 'none' ? 1 : null);
 
-    await dbRun(`UPDATE users SET
-      name = COALESCE(?, name),
-      weekly_miles_current = COALESCE(?, weekly_miles_current),
-      goal_type = COALESCE(?, goal_type),
-      goal_race_date = COALESCE(?, goal_race_date),
-      goal_race_distance = COALESCE(?, goal_race_distance),
-      injury_notes = COALESCE(?, injury_notes),
-      comeback_mode = COALESCE(?, comeback_mode),
-      coach_personality = COALESCE(?, coach_personality),
-      run_days_per_week = COALESCE(?, run_days_per_week),
-      lift_days_per_week = COALESCE(?, lift_days_per_week),
-      sex = COALESCE(?, sex),
-      schedule_type = COALESCE(?, schedule_type),
-      lifestyle = COALESCE(?, lifestyle),
-      preferred_workout_time = COALESCE(?, preferred_workout_time),
-      preferred_workout_days = COALESCE(?, preferred_workout_days),
-      missed_workout_pref = COALESCE(?, missed_workout_pref),
-      weekly_workout_days = COALESCE(?, weekly_workout_days),
-      age = COALESCE(?, age),
-      weight_lbs = COALESCE(?, weight_lbs),
-      max_heart_rate = COALESCE(?, max_heart_rate),
-      units = COALESCE(?, units),
-      onboarded = 1
-      WHERE id = ?`, [
-      name ?? null,
-      mappedWeekly ?? null,
-      mappedGoal ?? null,
-      goal_race_date ?? null,
-      goal_race_distance ?? null,
-      mappedInjury ?? null,
-      mappedComeback ?? null,
-      coach_personality ?? null,
-      run_days_per_week ?? null,
-      lift_days_per_week ?? null,
-      sex ?? null,
-      schedule_type ?? null,
-      lifestyle ?? null,
-      preferred_workout_time ?? null,
-      preferred_workout_days ? JSON.stringify(preferred_workout_days) : null,
-      missed_workout_pref ?? null,
-      weekly_workout_days ?? null,
-      age ?? null,
-      weight_lbs ?? null,
-      max_heart_rate ?? null,
-      units ?? null,
-      req.user.id
-    ]);
-    const user = await dbGet(
-      `SELECT id, name, email, onboarded, coach_personality, age, weight_lbs, max_heart_rate,
-       weekly_miles_current, goal_type, goal_race_date, goal_race_distance, injury_notes,
-       comeback_mode, run_days_per_week, lift_days_per_week, sex, schedule_type, lifestyle,
-       preferred_workout_time, preferred_workout_days, missed_workout_pref,
-       weekly_workout_days, units, is_pro, subscription_status
-       FROM users WHERE id = ?`,
-      [req.user.id]
-    );
+    const mutation = await withUserMutation(req.user.id, async (tx) => {
+      const previous = await tx.get(
+        'SELECT run_days_per_week, preferred_workout_days FROM users WHERE id=? FOR UPDATE',
+        [req.user.id]
+      );
+      if (!previous) return { notFound: true };
+      const previousPreferredDays = normalizeTrainingDays(previous.preferred_workout_days);
+      const nextRunFrequency = hasRunFrequency ? normalizedRunFrequency : Number(previous.run_days_per_week || 3);
+      const nextPreferredDays = hasPreferredDays ? normalizedPreferredDays : previousPreferredDays;
+      if (nextPreferredDays.length > 0 && nextRunFrequency > nextPreferredDays.length) {
+        return { validationError: 'Run days per week cannot exceed the selected preferred workout days.' };
+      }
+
+      const updateResult = await tx.run(`UPDATE users SET
+        name = COALESCE(?, name),
+        weekly_miles_current = COALESCE(?, weekly_miles_current),
+        goal_type = COALESCE(?, goal_type),
+        goal_race_date = COALESCE(?, goal_race_date),
+        goal_race_distance = COALESCE(?, goal_race_distance),
+        injury_notes = COALESCE(?, injury_notes),
+        comeback_mode = COALESCE(?, comeback_mode),
+        coach_personality = COALESCE(?, coach_personality),
+        run_days_per_week = COALESCE(?, run_days_per_week),
+        lift_days_per_week = COALESCE(?, lift_days_per_week),
+        sex = COALESCE(?, sex),
+        schedule_type = COALESCE(?, schedule_type),
+        lifestyle = COALESCE(?, lifestyle),
+        preferred_workout_time = COALESCE(?, preferred_workout_time),
+        preferred_workout_days = COALESCE(?, preferred_workout_days),
+        missed_workout_pref = COALESCE(?, missed_workout_pref),
+        weekly_workout_days = COALESCE(?, weekly_workout_days),
+        age = COALESCE(?, age),
+        weight_lbs = COALESCE(?, weight_lbs),
+        max_heart_rate = COALESCE(?, max_heart_rate),
+        units = COALESCE(?, units),
+        onboarded = 1
+        WHERE id = ?`, [
+        name ?? null,
+        mappedWeekly ?? null,
+        mappedGoal ?? null,
+        goal_race_date ?? null,
+        goal_race_distance ?? null,
+        mappedInjury ?? null,
+        mappedComeback ?? null,
+        coach_personality ?? null,
+        hasRunFrequency ? normalizedRunFrequency : null,
+        lift_days_per_week ?? null,
+        sex ?? null,
+        schedule_type ?? null,
+        lifestyle ?? null,
+        preferred_workout_time ?? null,
+        hasPreferredDays ? JSON.stringify(normalizedPreferredDays) : null,
+        missed_workout_pref ?? null,
+        weekly_workout_days ?? null,
+        age ?? null,
+        weight_lbs ?? null,
+        max_heart_rate ?? null,
+        units ?? null,
+        req.user.id
+      ]);
+      if (updateResult.changes !== 1) throw new Error('Profile owner update failed');
+
+      const frequencyChanged = hasRunFrequency && Number(previous.run_days_per_week) !== normalizedRunFrequency;
+      const weekdaysChanged = hasPreferredDays
+        && JSON.stringify(previousPreferredDays) !== JSON.stringify(normalizedPreferredDays);
+      if (frequencyChanged || weekdaysChanged) {
+        const reviewRequired = {
+          reason: frequencyChanged ? 'run_frequency_changed' : 'training_days_changed',
+          previousRunDaysPerWeek: Number(previous.run_days_per_week || 3),
+          requestedRunDaysPerWeek: nextRunFrequency,
+          previousWeekdayCount: previousPreferredDays.length,
+          requestedWeekdayCount: hasPreferredDays ? normalizedPreferredDays.length : previousPreferredDays.length,
+          changedAt: new Date().toISOString(),
+        };
+        const activePlan = await tx.get(
+          `SELECT id, progress_json FROM user_plans
+           WHERE user_id=? AND status='active'
+           ORDER BY created_at DESC LIMIT 1
+           FOR UPDATE`,
+          [req.user.id]
+        );
+        if (activePlan) {
+          let progress = {};
+          try {
+            progress = JSON.parse(activePlan.progress_json || '{}');
+          } catch (err) {
+            console.error('[auth/profile] invalid active plan progress JSON:', err.message);
+          }
+          progress.planReviewRequired = reviewRequired;
+          const reviewResult = await tx.run(
+            `UPDATE user_plans SET progress_json=?
+             WHERE id=? AND user_id=? AND status='active'`,
+            [JSON.stringify(progress), activePlan.id, req.user.id]
+          );
+          if (reviewResult.changes !== 1) throw new Error('Active plan review marker update failed');
+        } else {
+          const legacyPlan = await tx.get(
+            `SELECT id, plan_json, plan_data FROM training_plans
+             WHERE user_id=? ORDER BY created_at DESC LIMIT 1
+             FOR UPDATE`,
+            [req.user.id]
+          );
+          if (legacyPlan) {
+            let planData = {};
+            try {
+              planData = JSON.parse(legacyPlan.plan_data || legacyPlan.plan_json || '{}');
+            } catch (err) {
+              console.error('[auth/profile] invalid legacy plan JSON:', err.message);
+            }
+            planData.planReviewRequired = reviewRequired;
+            const serialized = JSON.stringify(planData);
+            const reviewResult = legacyPlan.plan_data
+              ? await tx.run(
+                'UPDATE training_plans SET plan_data=? WHERE id=? AND user_id=?',
+                [serialized, legacyPlan.id, req.user.id]
+              )
+              : await tx.run(
+                'UPDATE training_plans SET plan_json=? WHERE id=? AND user_id=?',
+                [serialized, legacyPlan.id, req.user.id]
+              );
+            if (reviewResult.changes !== 1) throw new Error('Legacy plan review marker update failed');
+          }
+        }
+      }
+
+      const user = await tx.get(
+        `SELECT id, name, email, onboarded, coach_personality, age, weight_lbs, max_heart_rate,
+         weekly_miles_current, goal_type, goal_race_date, goal_race_distance, injury_notes,
+         comeback_mode, run_days_per_week, lift_days_per_week, sex, schedule_type, lifestyle,
+         preferred_workout_time, preferred_workout_days, missed_workout_pref,
+         weekly_workout_days, units, is_pro, subscription_status
+         FROM users WHERE id = ?`,
+        [req.user.id]
+      );
+      return { user };
+    });
+    if (mutation.notFound) return res.status(404).json({ error: 'User not found' });
+    if (mutation.validationError) return res.status(400).json({ error: mutation.validationError });
+    const user = mutation.user;
     res.json({ token: sign(user), user });
   } catch (err) {
     console.error('[auth/profile] update failed:', err.message);
