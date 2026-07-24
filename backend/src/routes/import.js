@@ -8,6 +8,10 @@ const { buildRunImportKeys } = require('../lib/runImportKey');
 const { classifyRouteIntegrity, normalizeDistanceEvidence } = require('../lib/runPostRun');
 const { normalizeWorkoutMetrics } = require('../lib/workoutMetrics');
 const {
+  chooseForgedRunMatch,
+  distanceTolerance,
+} = require('../lib/canonicalRunMatch');
+const {
   findPlannedRunForDate,
   hasMeaningfulPlannedRun,
   isExplicitlyUnlinkedRun,
@@ -137,7 +141,8 @@ function parseStoredWorkoutMetrics(value) {
   }
 }
 
-function resolveCanonicalDistanceSource(storedWorkoutMetrics, existingRun, item) {
+function resolveCanonicalDistanceSource(storedWorkoutMetrics, existingRun, item, sensorSummaryWins = false) {
+  if (sensorSummaryWins) return item.source;
   if (storedWorkoutMetrics.distance_source) return storedWorkoutMetrics.distance_source;
   if (existingRun.health_source === 'forged_hybrid') return 'forged_phone';
   if (existingRun.health_source) return existingRun.health_source;
@@ -234,11 +239,30 @@ function startsMatch(existingStart, importedStart) {
   return Math.abs(existingTime - importedTime) <= 30 * 60 * 1000;
 }
 
+async function findMatchingForgedRun(db, userId, item, { excludeId = null } = {}) {
+  if (!item.startDate || item.distanceMiles <= 0 || item.durationSeconds <= 0) return null;
+  const candidates = await db.all(
+    `SELECT id, date, type, watch_mode, watch_activity_type, watch_normalized_type,
+            duration_seconds, health_start_at, health_source, health_source_workout_id,
+            distance_miles, route_coords, perceived_effort, pain_level, post_energy, notes,
+            planned_session_json, workout_metrics_json
+     FROM runs
+     WHERE user_id=? AND date=? AND health_source='forged_hybrid'
+       AND ABS(COALESCE(distance_miles, 0) - ?) <= ?
+     LIMIT 20`,
+    [userId, item.date, item.distanceMiles, distanceTolerance(item.distanceMiles)]
+  );
+  const incomingKind = activityKind({ type: item.runType });
+  const sameActivity = candidates.filter((row) => activityKind(row) === incomingKind);
+  return chooseForgedRunMatch(sameActivity, item, { excludeId });
+}
+
 async function findExistingRun(db, userId, item) {
   if (item.sourceWorkoutId) {
     const exact = await db.get(
       `SELECT id, date, type, watch_mode, watch_activity_type, watch_normalized_type,
-              health_start_at, health_source, distance_miles, route_coords, perceived_effort, pain_level, post_energy, notes,
+              duration_seconds, health_start_at, health_source, health_source_workout_id,
+              distance_miles, route_coords, perceived_effort, pain_level, post_energy, notes,
               planned_session_json, workout_metrics_json
        FROM runs
        WHERE user_id=? AND health_source=? AND health_source_workout_id=?
@@ -248,9 +272,13 @@ async function findExistingRun(db, userId, item) {
     if (exact) return exact;
   }
 
+  const forgedMatch = await findMatchingForgedRun(db, userId, item);
+  if (forgedMatch) return forgedMatch;
+
   const candidates = await db.all(
     `SELECT id, date, type, watch_mode, watch_activity_type, watch_normalized_type,
-            health_start_at, health_source, distance_miles, route_coords, perceived_effort, pain_level, post_energy, notes,
+            duration_seconds, health_start_at, health_source, health_source_workout_id,
+            distance_miles, route_coords, perceived_effort, pain_level, post_energy, notes,
             planned_session_json, workout_metrics_json
      FROM runs
      WHERE user_id=? AND date=? AND ABS(COALESCE(distance_miles,0) - ?) < 0.05
@@ -383,7 +411,15 @@ async function updateExistingRunHealth(db, userId, existingRun, item) {
     ? item.perceivedEffort
     : null;
   const storedRouteCoords = normalizeRouteCoords(existingRun.route_coords);
+  const isForgedCapture = existingRun.health_source === 'forged_hybrid'
+    || storedWorkoutMetrics.route_source === 'forged_phone'
+    || Boolean(storedWorkoutMetrics.forged_recording_id);
+  const sensorSummaryWins = isForgedCapture
+    && Boolean(item.source)
+    && item.source !== 'forged_hybrid';
+  const preserveForgedRoute = isForgedCapture && storedRouteCoords.length >= 2;
   const incomingRouteReplacesStored = item.routeCoords.length >= 2
+    && !preserveForgedRoute
     && (item.workoutMetrics.route_status === 'complete' || storedRouteCoords.length < 2);
   const storedRouteIntegrity = classifyRouteIntegrity({
     routeCoords: storedRouteCoords,
@@ -406,12 +442,25 @@ async function updateExistingRunHealth(db, userId, existingRun, item) {
     ...storedWorkoutMetrics,
     ...item.workoutMetrics,
     ...canonicalRouteMetrics,
-    distance_source: resolveCanonicalDistanceSource(storedWorkoutMetrics, existingRun, item),
+    distance_source: resolveCanonicalDistanceSource(storedWorkoutMetrics, existingRun, item, sensorSummaryWins),
     distance_unit: 'miles',
+    ...(sensorSummaryWins ? {
+      summary_source: item.source,
+      forged_recording_id: storedWorkoutMetrics.forged_recording_id || existingRun.id,
+    } : {}),
+    ...(preserveForgedRoute ? { route_source: 'forged_phone' } : {}),
   };
+  const canonicalDistance = sensorSummaryWins && item.distanceMiles > 0 ? item.distanceMiles : null;
+  const canonicalDuration = sensorSummaryWins && item.durationSeconds > 0 ? item.durationSeconds : null;
+  const canonicalPace = canonicalDistance && canonicalDuration
+    ? canonicalDuration / canonicalDistance
+    : null;
 
   await db.run(
     `UPDATE runs SET
+      distance_miles = COALESCE(?, distance_miles),
+      duration_seconds = COALESCE(?, duration_seconds),
+      pace_avg = COALESCE(?, pace_avg),
       perceived_effort = COALESCE(?, perceived_effort),
       avg_heart_rate = COALESCE(?, avg_heart_rate),
       max_heart_rate = COALESCE(?, max_heart_rate),
@@ -442,6 +491,9 @@ async function updateExistingRunHealth(db, userId, existingRun, item) {
       END
      WHERE id=? AND user_id=?`,
     [
+      canonicalDistance,
+      canonicalDuration,
+      canonicalPace,
       importedEffort,
       item.avgHeartRate,
       item.maxHeartRate,
@@ -508,13 +560,80 @@ async function insertLift(db, userId, item) {
 async function findRunById(db, userId, runId) {
   return db.get(
     `SELECT id, date, type, watch_mode, watch_activity_type, watch_normalized_type,
-            health_start_at, health_source, distance_miles, route_coords, perceived_effort, pain_level, post_energy, notes,
+            duration_seconds, health_start_at, health_source, health_source_workout_id,
+            distance_miles, route_coords, perceived_effort, pain_level, post_energy, notes,
             planned_session_json, workout_metrics_json
      FROM runs
      WHERE id=? AND user_id=?
      LIMIT 1`,
     [runId, userId]
   );
+}
+
+async function hasDirectRunInteractions(db, runId) {
+  const row = await db.get(
+    `SELECT
+       (SELECT COUNT(*) FROM activity_likes WHERE activity_id=? AND (activity_type='run' OR activity_type IS NULL)) +
+       (SELECT COUNT(*) FROM activity_comments WHERE activity_id=? AND (activity_type='run' OR activity_type IS NULL)) AS interaction_count`,
+    [runId, runId]
+  );
+  return Number(row?.interaction_count || 0) > 0;
+}
+
+async function repointOwnedRunReferences(db, userId, duplicateRunId, canonicalRunId) {
+  await db.run(
+    'UPDATE personal_records SET run_id=? WHERE run_id=? AND user_id=?',
+    [canonicalRunId, duplicateRunId, userId]
+  );
+  await db.run(
+    'UPDATE shared_routes SET run_id=? WHERE run_id=? AND user_id=?',
+    [canonicalRunId, duplicateRunId, userId]
+  );
+  await db.run(
+    'UPDATE community_posts SET run_id=? WHERE run_id=? AND user_id=?',
+    [canonicalRunId, duplicateRunId, userId]
+  );
+  await db.run(
+    "UPDATE activity_media SET activity_id=? WHERE activity_id=? AND user_id=? AND activity_type='run'",
+    [canonicalRunId, duplicateRunId, userId]
+  );
+
+  const canonicalProposal = await db.get(
+    'SELECT id FROM plan_adjustment_proposals WHERE user_id=? AND trigger_run_id=? LIMIT 1',
+    [userId, canonicalRunId]
+  );
+  if (canonicalProposal) {
+    await db.run(
+      'DELETE FROM plan_adjustment_proposals WHERE trigger_run_id=? AND user_id=?',
+      [duplicateRunId, userId]
+    );
+  } else {
+    await db.run(
+      'UPDATE plan_adjustment_proposals SET trigger_run_id=? WHERE trigger_run_id=? AND user_id=?',
+      [canonicalRunId, duplicateRunId, userId]
+    );
+  }
+  await db.run(
+    `UPDATE activity_import_claims
+     SET activity_id=?, updated_at=NOW()
+     WHERE activity_kind='run' AND activity_id=? AND user_id=?`,
+    [canonicalRunId, duplicateRunId, userId]
+  );
+}
+
+async function consolidateImportedRunIntoForged(db, userId, importedRun, item) {
+  if (!importedRun || importedRun.health_source === 'forged_hybrid') return null;
+  const forgedRun = await findMatchingForgedRun(db, userId, item, { excludeId: importedRun.id });
+  if (!forgedRun) return null;
+  if (await hasDirectRunInteractions(db, importedRun.id)) {
+    console.warn(`[import] skipped automatic run consolidation for ${importedRun.id}: direct activity interactions exist`);
+    return null;
+  }
+
+  const canonicalRunId = await updateExistingRunHealth(db, userId, forgedRun, item);
+  await repointOwnedRunReferences(db, userId, importedRun.id, canonicalRunId);
+  await db.run('DELETE FROM runs WHERE id=? AND user_id=?', [importedRun.id, userId]);
+  return canonicalRunId;
 }
 
 async function claimImportedActivity(db, userId, item) {
@@ -579,6 +698,8 @@ async function importItem(db, userId, item) {
     if (claim.activity_kind === 'run' && claim.activity_id) {
       const claimedRun = await findRunById(db, userId, claim.activity_id);
       if (claimedRun) {
+        const consolidatedRunId = await consolidateImportedRunIntoForged(db, userId, claimedRun, item);
+        if (consolidatedRunId) return { status: 'skipped', runId: consolidatedRunId };
         const runId = await updateExistingRunHealth(db, userId, claimedRun, item);
         return { status: 'skipped', runId };
       }
@@ -591,6 +712,11 @@ async function importItem(db, userId, item) {
 
   if (item.section === 'run' || item.section === 'activity') {
     const existing = await findExistingRun(db, userId, item);
+    const consolidatedRunId = await consolidateImportedRunIntoForged(db, userId, existing, item);
+    if (consolidatedRunId) {
+      await finalizeImportClaim(db, userId, claim, 'run', consolidatedRunId);
+      return { status: 'skipped', runId: consolidatedRunId };
+    }
     const runId = existing
       ? await updateExistingRunHealth(db, userId, existing, item)
       : await insertRun(db, userId, item);
@@ -679,4 +805,6 @@ module.exports._test = {
   normalizeRow,
   importKeysForItem,
   resolveCanonicalDistanceSource,
+  chooseForgedRunMatch,
+  consolidateImportedRunIntoForged,
 };
