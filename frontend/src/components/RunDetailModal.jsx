@@ -246,7 +246,7 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
         </div>
         <p className="text-sm mb-5" style={{ color: 'var(--text-muted)' }}>{date}</p>
 
-        {isRun && routePositions.length >= 2 && (
+        {isRun && !shareOpen && routePositions.length >= 2 && (
           <div className="mb-5 overflow-hidden rounded-xl" style={{ height: 220, border: '1px solid var(--border-subtle)' }}>
             <MapContainer key={run.id} center={routePositions[0]} zoom={14} scrollWheelZoom={false} style={{ height: '100%', width: '100%' }}>
               <FitRouteBounds positions={routePositions} />

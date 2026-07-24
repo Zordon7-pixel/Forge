@@ -16,6 +16,7 @@ const importRoute = fs.readFileSync(path.join(root, 'backend/src/routes/import.j
 const swift = fs.readFileSync(path.join(root, 'frontend/ios/App/App/ForgeHealthPlugin.swift'), 'utf8');
 const healthService = fs.readFileSync(path.join(root, 'frontend/src/services/HealthService.js'), 'utf8');
 const recap = fs.readFileSync(path.join(root, 'frontend/src/components/RunDetailModal.jsx'), 'utf8');
+const shareStudio = fs.readFileSync(path.join(root, 'frontend/src/components/ActivityShareStudio.jsx'), 'utf8');
 
 const decoded = decodeSummaryPolyline('_p~iF~ps|U_ulLnnqC_mqNvxq`@');
 assert.deepStrictEqual(decoded.slice(0, 3), [
@@ -100,6 +101,9 @@ assert(/Recording details not shared/.test(recap) && /Rate this run/.test(recap)
 assert(/Calculated training effort/.test(recap) && /objective load estimate, not your personal RPE/.test(recap), 'recap labels calculated effort separately from athlete-rated RPE');
 assert(/backendEffortSource[\s\S]*effort_source/.test(recap), 'recap consumes backend effort provenance before using its legacy fallback');
 assert(/Runs started in Forged Hybrid record iPhone GPS and altitude/.test(recap), 'recap explains when the phone can capture route and elevation');
+assert(/isRun && !shareOpen && routePositions\.length >= 2/.test(recap), 'the interactive Leaflet map unmounts while the share studio is open');
+assert(/z-\[2000\][\s\S]*zIndex: 2000/.test(shareStudio), 'the share studio sits above all Leaflet panes and controls');
+assert(!/MapContainer/.test(shareStudio), 'share cards render one canvas route instead of nesting an interactive map');
 assert(/fetchRecentWorkoutHistory/.test(swift) && /mergeWorkoutHistory/.test(swift), 'native sync rechecks recent workouts for late HealthKit routes');
 
 console.log('Run recap data smoke passed');

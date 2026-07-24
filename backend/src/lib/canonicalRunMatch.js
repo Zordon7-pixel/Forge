@@ -19,8 +19,41 @@ function durationTolerance(durationSeconds) {
   return Math.min(300, Math.max(90, duration * 0.05));
 }
 
+const SENSOR_SUMMARY_SOURCE_PRIORITY = Object.freeze({
+  apple_health: 100,
+  watch_sync: 95,
+  garmin: 90,
+  garmin_csv: 90,
+  strava: 80,
+  strava_csv: 80,
+});
+
+function normalizedSource(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function sensorSummarySourcePriority(source) {
+  return SENSOR_SUMMARY_SOURCE_PRIORITY[normalizedSource(source)] || 0;
+}
+
+function isTrustedSensorSummarySource(source) {
+  return sensorSummarySourcePriority(source) > 0;
+}
+
+function hasForgedRecordingProvenance(candidate = {}) {
+  if (normalizedSource(candidate.health_source) === 'forged_hybrid') return true;
+  const rawMetrics = candidate.workout_metrics_json;
+  if (!rawMetrics) return false;
+  try {
+    const metrics = typeof rawMetrics === 'object' ? rawMetrics : JSON.parse(rawMetrics);
+    return metrics?.route_source === 'forged_phone' || Boolean(metrics?.forged_recording_id);
+  } catch {
+    return false;
+  }
+}
+
 function scoreForgedRunMatch(candidate = {}, incoming = {}) {
-  if (candidate.health_source !== 'forged_hybrid') return null;
+  if (!hasForgedRecordingProvenance(candidate)) return null;
 
   const existingStart = timestampMs(candidate.health_start_at);
   const incomingStart = timestampMs(incoming.startDate);
@@ -79,5 +112,9 @@ module.exports = {
   chooseForgedRunMatch,
   distanceTolerance,
   durationTolerance,
+  hasForgedRecordingProvenance,
+  isTrustedSensorSummarySource,
+  normalizedSource,
+  sensorSummarySourcePriority,
   scoreForgedRunMatch,
 };
