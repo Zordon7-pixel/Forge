@@ -601,6 +601,32 @@ async function runCanonicalRunMergeSmoke() {
     false,
     'different calendar outcomes continue to block consolidation'
   );
+  assert.equal(
+    importTest.canPreserveExplicitUnlinkedPlan(
+      {
+        planned_session_json: JSON.stringify({ schemaVersion: 1, planMatchMode: 'explicit_none' }),
+      },
+      {
+        plan_session_id: 'scheduled-run',
+        planned_session_json: JSON.stringify({ schemaVersion: 1, sessionId: 'scheduled-run', title: 'Recovery run' }),
+      }
+    ),
+    true,
+    'the canonical phone recording can retain an explicit manual-run choice'
+  );
+  assert.equal(
+    importTest.canPreserveExplicitUnlinkedPlan(
+      {
+        plan_session_id: 'scheduled-run',
+        planned_session_json: JSON.stringify({ schemaVersion: 1, sessionId: 'scheduled-run', title: 'Recovery run' }),
+      },
+      {
+        planned_session_json: JSON.stringify({ schemaVersion: 1, planMatchMode: 'explicit_none' }),
+      }
+    ),
+    false,
+    'a sensor-side explicit-none marker cannot detach an already linked canonical run'
+  );
 
   let equivalentProposalLookup = 0;
   const equivalentProposalStatements = [];
@@ -657,6 +683,84 @@ async function runCanonicalRunMergeSmoke() {
   );
   assert.equal(runConflictWithEquivalentProposals, null, 'run-level conflicts still block otherwise-equivalent proposal consolidation');
   assert.equal(equivalentProposalStatements.length, 0, 'proposal deletion waits until every run-level conflict check passes');
+
+  equivalentProposalLookup = 0;
+  equivalentProposalStatements.length = 0;
+  const explicitManualPlanDb = {
+    ...equivalentProposalDb,
+    async all(sql) {
+      if (sql.includes("health_source='forged_hybrid'")) {
+        return [{
+          ...canonicalRun,
+          planned_session_json: JSON.stringify({ schemaVersion: 1, planMatchMode: 'explicit_none' }),
+        }];
+      }
+      throw new Error(`Unexpected all query: ${sql}`);
+    },
+  };
+  const explicitManualPlanResult = await importTest.consolidateImportedRunIntoForged(
+    explicitManualPlanDb,
+    'athlete-1',
+    {
+      ...importedRun,
+      plan_session_id: 'scheduled-run',
+      planned_session_json: JSON.stringify({
+        schemaVersion: 1,
+        matchSource: 'scheduled_date',
+        sessionId: 'scheduled-run',
+        title: 'Recovery run',
+      }),
+    },
+    item
+  );
+  assert.equal(
+    explicitManualPlanResult,
+    'forged-run',
+    'equivalent adaptations allow one physical run to merge while preserving the explicit manual-run choice'
+  );
+  const explicitManualPlanPatch = equivalentProposalStatements.find((statement) => (
+    statement.sql.includes('UPDATE runs SET')
+    && statement.sql.includes('plan_session_id=COALESCE')
+  ));
+  assert.ok(explicitManualPlanPatch, 'the canonical run receives the normal owner-scoped consolidation patch');
+  assert.equal(explicitManualPlanPatch.params[5], null, 'the duplicate scheduled session is not copied onto the manual run');
+  assert.equal(explicitManualPlanPatch.params[6], null, 'the explicit-none snapshot is not replaced by the scheduled snapshot');
+
+  let unproposedPlanLookup = 0;
+  const unproposedPlanStatements = [];
+  const unproposedPlanDb = {
+    ...explicitManualPlanDb,
+    async get(sql) {
+      if (sql.includes('activity_likes')) return { interaction_count: 0 };
+      if (sql.includes('plan_adjustment_proposals')) {
+        unproposedPlanLookup += 1;
+        return null;
+      }
+      throw new Error(`Unexpected get query: ${sql}`);
+    },
+    async run(sql, params) {
+      unproposedPlanStatements.push({ sql, params });
+      return { changes: 1 };
+    },
+  };
+  const unproposedPlanResult = await importTest.consolidateImportedRunIntoForged(
+    unproposedPlanDb,
+    'athlete-1',
+    {
+      ...importedRun,
+      plan_session_id: 'scheduled-run',
+      planned_session_json: JSON.stringify({
+        schemaVersion: 1,
+        matchSource: 'scheduled_date',
+        sessionId: 'scheduled-run',
+        title: 'Recovery run',
+      }),
+    },
+    item
+  );
+  assert.equal(unproposedPlanLookup, 2, 'both run proposal slots are checked before considering the plan-link exception');
+  assert.equal(unproposedPlanResult, null, 'a plan-link conflict still blocks when no equivalent proposal pair exists');
+  assert.equal(unproposedPlanStatements.length, 0, 'a blocked plan-link conflict leaves both runs untouched');
 
   console.log('CANONICAL RUN MERGE SMOKE OK');
 }

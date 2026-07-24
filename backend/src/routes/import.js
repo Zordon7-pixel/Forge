@@ -237,6 +237,12 @@ function runAdjustmentProposalsEquivalent(left, right) {
   );
 }
 
+function canPreserveExplicitUnlinkedPlan(canonicalRun, duplicateRun) {
+  const canonicalPlan = runPlanState(canonicalRun);
+  const duplicatePlan = runPlanState(duplicateRun);
+  return canonicalPlan.explicitNone && duplicatePlan.hasPlan && !duplicatePlan.explicitNone;
+}
+
 function planSnapshotsEquivalent(left, right) {
   if (!left || !right) return false;
   const withoutSessionId = (snapshot) => {
@@ -1090,8 +1096,13 @@ async function consolidateImportedRunIntoForged(db, userId, importedRun, item) {
     }
   }
   const merge = analyzeRunConsolidation(forgedRun, importedRun, item);
-  if (merge.conflicts.length) {
-    console.warn(`[import] skipped automatic run consolidation for ${importedRun.id}: conflicting ${merge.conflicts.join(', ')}`);
+  const blockingConflicts = merge.conflicts.filter((conflict) => (
+    conflict !== 'plan link'
+    || !hasEquivalentDualProposals
+    || !canPreserveExplicitUnlinkedPlan(forgedRun, importedRun)
+  ));
+  if (blockingConflicts.length) {
+    console.warn(`[import] skipped automatic run consolidation for ${importedRun.id}: conflicting ${blockingConflicts.join(', ')}`);
     return null;
   }
   if (hasEquivalentDualProposals) {
@@ -1290,6 +1301,7 @@ module.exports._test = {
   normalizeRow,
   importKeysForItem,
   resolveCanonicalDistanceSource,
+  canPreserveExplicitUnlinkedPlan,
   runAdjustmentProposalsEquivalent,
   chooseForgedRunMatch,
   consolidateImportedRunIntoForged,
