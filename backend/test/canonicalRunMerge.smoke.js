@@ -174,10 +174,10 @@ async function runCanonicalRunMergeSmoke() {
   assert.match(importSource, /ai_feedback = CASE WHEN \?=1 THEN NULL ELSE ai_feedback END/, 'stale AI feedback is cleared when the summary changes');
   assert.match(importSource, /route_source: 'forged_phone'/, 'Forged route provenance is retained');
   assert.match(importSource, /FOR UPDATE/, 'matching runs are row-locked during import consolidation');
-  assert.doesNotMatch(
+  assert.match(
     importSource,
-    /DELETE FROM plan_adjustment_proposals/,
-    'plan adjustment decisions are never deleted during consolidation'
+    /DELETE FROM plan_adjustment_proposals[\s\S]*WHERE id=\? AND user_id=\? AND trigger_run_id=\? AND status IN \('pending','reviewed'\)/,
+    'only equivalent undecided proposals can be consolidated with owner and run scope'
   );
   assert.match(
     importSource,
@@ -554,6 +554,109 @@ async function runCanonicalRunMergeSmoke() {
   );
   assert.equal(proposalConflictResult, null, 'two plan adjustment decisions prevent consolidation');
   assert.equal(conflictStatements.length, 0, 'proposal conflicts leave both runs untouched');
+
+  const equivalentProposalBase = {
+    user_plan_id: 'user-plan-1',
+    plan_id: 'plan-1',
+    plan_version: 'version-1',
+    window_start: '2026-07-24',
+    window_end: '2026-07-27',
+    planning_date: '2026-07-24',
+    status: 'pending',
+    safety_exception: 0,
+    original_json: JSON.stringify({ sessions: [{ id: 'scheduled-run', kind: 'run' }] }),
+    proposed_json: JSON.stringify({ sessions: [{ id: 'scheduled-run', kind: 'rest' }] }),
+    reason: JSON.stringify({ headline: 'Small transparent calendar adjustment' }),
+  };
+  assert.equal(
+    importTest.runAdjustmentProposalsEquivalent(
+      { ...equivalentProposalBase, id: 'canonical-proposal' },
+      {
+        ...equivalentProposalBase,
+        id: 'duplicate-proposal',
+        changes_json: JSON.stringify([{ summary: '3.1 mi run completed' }]),
+        evidence_json: JSON.stringify([{ source: 'apple_health', avgHeartRate: 158 }]),
+      }
+    ),
+    true,
+    'equivalent pending proposals may differ in source evidence while producing the same calendar'
+  );
+  assert.equal(
+    importTest.runAdjustmentProposalsEquivalent(
+      { ...equivalentProposalBase, id: 'canonical-proposal', status: 'accepted' },
+      { ...equivalentProposalBase, id: 'duplicate-proposal', status: 'accepted' }
+    ),
+    false,
+    'decided proposals are never automatically consolidated'
+  );
+  assert.equal(
+    importTest.runAdjustmentProposalsEquivalent(
+      { ...equivalentProposalBase, id: 'canonical-proposal' },
+      {
+        ...equivalentProposalBase,
+        id: 'duplicate-proposal',
+        proposed_json: JSON.stringify({ sessions: [{ id: 'scheduled-run', kind: 'run' }] }),
+      }
+    ),
+    false,
+    'different calendar outcomes continue to block consolidation'
+  );
+
+  let equivalentProposalLookup = 0;
+  const equivalentProposalStatements = [];
+  const equivalentProposalDb = {
+    async all(sql) {
+      if (sql.includes("health_source='forged_hybrid'")) return [canonicalRun];
+      throw new Error(`Unexpected all query: ${sql}`);
+    },
+    async get(sql) {
+      if (sql.includes('activity_likes')) return { interaction_count: 0 };
+      if (sql.includes('plan_adjustment_proposals')) {
+        equivalentProposalLookup += 1;
+        return {
+          ...equivalentProposalBase,
+          id: equivalentProposalLookup === 1 ? 'canonical-proposal' : 'duplicate-proposal',
+        };
+      }
+      if (sql.includes('FROM user_plans') || sql.includes('FROM training_plans')) return null;
+      throw new Error(`Unexpected get query: ${sql}`);
+    },
+    async run(sql, params) {
+      equivalentProposalStatements.push({ sql, params });
+      return { changes: 1 };
+    },
+  };
+  const equivalentProposalResult = await importTest.consolidateImportedRunIntoForged(
+    equivalentProposalDb,
+    'athlete-1',
+    importedRun,
+    item
+  );
+  assert.equal(equivalentProposalResult, 'forged-run', 'equivalent pending proposals no longer keep one physical run duplicated');
+  assert.ok(
+    equivalentProposalStatements.some((statement) => statement.sql.includes('DELETE FROM plan_adjustment_proposals')
+      && statement.params[0] === 'canonical-proposal'
+      && statement.params[1] === 'athlete-1'
+      && statement.params[2] === 'forged-run'),
+    'the redundant pending proposal is removed with owner and canonical-run scope'
+  );
+  assert.ok(
+    equivalentProposalStatements.some((statement) => statement.sql.includes('UPDATE plan_adjustment_proposals SET trigger_run_id=?')
+      && statement.params[0] === 'forged-run'
+      && statement.params[1] === 'apple-run'
+      && statement.params[2] === 'athlete-1'),
+    'the sensor-backed proposal follows the surviving Forged run'
+  );
+  equivalentProposalLookup = 0;
+  equivalentProposalStatements.length = 0;
+  const runConflictWithEquivalentProposals = await importTest.consolidateImportedRunIntoForged(
+    equivalentProposalDb,
+    'athlete-1',
+    { ...importedRun, perceived_effort: 6 },
+    item
+  );
+  assert.equal(runConflictWithEquivalentProposals, null, 'run-level conflicts still block otherwise-equivalent proposal consolidation');
+  assert.equal(equivalentProposalStatements.length, 0, 'proposal deletion waits until every run-level conflict check passes');
 
   console.log('CANONICAL RUN MERGE SMOKE OK');
 }

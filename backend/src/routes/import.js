@@ -219,6 +219,24 @@ function structuredValuesEqual(left, right) {
   return JSON.stringify(stableStructuredValue(left)) === JSON.stringify(stableStructuredValue(right));
 }
 
+function runAdjustmentProposalsEquivalent(left, right) {
+  if (!left || !right) return false;
+  const mergeableStatuses = new Set(['pending', 'reviewed']);
+  if (!mergeableStatuses.has(left.status) || left.status !== right.status) return false;
+  return (
+    sameOptionalValue(left.user_plan_id, right.user_plan_id)
+    && sameOptionalValue(left.plan_id, right.plan_id)
+    && sameOptionalValue(left.plan_version, right.plan_version)
+    && sameOptionalValue(left.window_start, right.window_start)
+    && sameOptionalValue(left.window_end, right.window_end)
+    && sameOptionalValue(left.planning_date, right.planning_date)
+    && Number(left.safety_exception || 0) === Number(right.safety_exception || 0)
+    && structuredValuesEqual(left.original_json, right.original_json)
+    && structuredValuesEqual(left.proposed_json, right.proposed_json)
+    && sameOptionalValue(left.reason, right.reason)
+  );
+}
+
 function planSnapshotsEquivalent(left, right) {
   if (!left || !right) return false;
   const withoutSessionId = (snapshot) => {
@@ -968,7 +986,9 @@ async function hasDirectRunInteractions(db, userId, runId) {
 
 async function findRunAdjustmentProposal(db, userId, runId) {
   return db.get(
-    `SELECT id
+    `SELECT id, trigger_run_id, user_plan_id, plan_id, plan_version,
+            window_start, window_end, planning_date, status, safety_exception,
+            original_json, proposed_json, changes_json, evidence_json, reason
      FROM plan_adjustment_proposals
      WHERE user_id=? AND trigger_run_id=?
      LIMIT 1
@@ -1060,14 +1080,27 @@ async function consolidateImportedRunIntoForged(db, userId, importedRun, item) {
   }
   const canonicalProposal = await findRunAdjustmentProposal(db, userId, forgedRun.id);
   const duplicateProposal = await findRunAdjustmentProposal(db, userId, importedRun.id);
+  const hasEquivalentDualProposals = canonicalProposal
+    && duplicateProposal
+    && runAdjustmentProposalsEquivalent(canonicalProposal, duplicateProposal);
   if (canonicalProposal && duplicateProposal) {
-    console.warn(`[import] skipped automatic run consolidation for ${importedRun.id}: both runs have plan adjustment decisions`);
-    return null;
+    if (!hasEquivalentDualProposals) {
+      console.warn(`[import] skipped automatic run consolidation for ${importedRun.id}: both runs have different plan adjustment decisions`);
+      return null;
+    }
   }
   const merge = analyzeRunConsolidation(forgedRun, importedRun, item);
   if (merge.conflicts.length) {
     console.warn(`[import] skipped automatic run consolidation for ${importedRun.id}: conflicting ${merge.conflicts.join(', ')}`);
     return null;
+  }
+  if (hasEquivalentDualProposals) {
+    const removed = await db.run(
+      `DELETE FROM plan_adjustment_proposals
+       WHERE id=? AND user_id=? AND trigger_run_id=? AND status IN ('pending','reviewed')`,
+      [canonicalProposal.id, userId, forgedRun.id]
+    );
+    if (removed.changes !== 1) throw new Error('Equivalent run adjustment proposal could not be consolidated');
   }
 
   await applyRunConsolidationPatch(db, userId, forgedRun.id, merge.patch);
@@ -1257,6 +1290,7 @@ module.exports._test = {
   normalizeRow,
   importKeysForItem,
   resolveCanonicalDistanceSource,
+  runAdjustmentProposalsEquivalent,
   chooseForgedRunMatch,
   consolidateImportedRunIntoForged,
   updateExistingRunHealth,
