@@ -169,9 +169,11 @@ async function runCanonicalRunMergeSmoke() {
   );
   assert.match(importSource, /distance_miles = COALESCE\(\?, distance_miles\)/, 'watch distance replaces the phone summary');
   assert.match(importSource, /duration_seconds = COALESCE\(\?, duration_seconds\)/, 'watch duration replaces the phone summary');
-  assert.match(importSource, /calories_burned = CASE \? WHEN 1 THEN \? WHEN 2 THEN NULL ELSE calories_burned END/, 'watch calories replace or explicitly clear the phone estimate');
-  assert.match(importSource, /calories_watch = CASE \? WHEN 1 THEN \? WHEN 2 THEN NULL ELSE calories_watch END/, 'watch calories are retained with sensor provenance');
-  assert.match(importSource, /ai_feedback = CASE WHEN \?=1 THEN NULL ELSE ai_feedback END/, 'stale AI feedback is cleared when the summary changes');
+  assert.match(importSource, /calories = CASE CAST\(\? AS INTEGER\)[\s\S]*CASE WHEN CAST\(\? AS INTEGER\)>0/, 'calorie update controls have explicit PostgreSQL integer bind types');
+  assert.match(importSource, /calories_burned = CASE CAST\(\? AS INTEGER\) WHEN 1 THEN \? WHEN 2 THEN NULL ELSE calories_burned END/, 'watch calories replace or explicitly clear the phone estimate');
+  assert.match(importSource, /calories_watch = CASE CAST\(\? AS INTEGER\) WHEN 1 THEN \? WHEN 2 THEN NULL ELSE calories_watch END/, 'watch calories are retained with sensor provenance');
+  assert.match(importSource, /ai_feedback = CASE WHEN CAST\(\? AS INTEGER\)=1 THEN NULL ELSE ai_feedback END/, 'stale AI feedback is cleared when the summary changes');
+  assert.match(importSource, /ai_feedback_requested_at = CASE WHEN CAST\(\? AS INTEGER\)=1 THEN NULL ELSE ai_feedback_requested_at END/, 'stale AI feedback requests use an explicitly typed invalidation control');
   assert.match(importSource, /route_source: 'forged_phone'/, 'Forged route provenance is retained');
   assert.match(importSource, /FOR UPDATE/, 'matching runs are row-locked during import consolidation');
   assert.match(

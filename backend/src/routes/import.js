@@ -868,9 +868,9 @@ async function updateExistingRunHealth(db, userId, existingRun, item) {
       training_effect_anaerobic = COALESCE(?, training_effect_anaerobic),
       recovery_time_hours = COALESCE(?, recovery_time_hours),
       temperature_f = COALESCE(?, temperature_f),
-      calories = CASE ? WHEN 1 THEN ? WHEN 2 THEN NULL ELSE CASE WHEN ?>0 THEN ? ELSE calories END END,
-      calories_burned = CASE ? WHEN 1 THEN ? WHEN 2 THEN NULL ELSE calories_burned END,
-      calories_watch = CASE ? WHEN 1 THEN ? WHEN 2 THEN NULL ELSE calories_watch END,
+      calories = CASE CAST(? AS INTEGER) WHEN 1 THEN ? WHEN 2 THEN NULL ELSE CASE WHEN CAST(? AS INTEGER)>0 THEN ? ELSE calories END END,
+      calories_burned = CASE CAST(? AS INTEGER) WHEN 1 THEN ? WHEN 2 THEN NULL ELSE calories_burned END,
+      calories_watch = CASE CAST(? AS INTEGER) WHEN 1 THEN ? WHEN 2 THEN NULL ELSE calories_watch END,
       workout_metrics_json = COALESCE(NULLIF(?, '{}'), workout_metrics_json),
       plan_session_id = COALESCE(NULLIF(plan_session_id, ''), ?),
       planned_session_json = CASE
@@ -878,8 +878,8 @@ async function updateExistingRunHealth(db, userId, existingRun, item) {
           THEN COALESCE(?, '{}')
         ELSE planned_session_json
       END,
-      ai_feedback = CASE WHEN ?=1 THEN NULL ELSE ai_feedback END,
-      ai_feedback_requested_at = CASE WHEN ?=1 THEN NULL ELSE ai_feedback_requested_at END
+      ai_feedback = CASE WHEN CAST(? AS INTEGER)=1 THEN NULL ELSE ai_feedback END,
+      ai_feedback_requested_at = CASE WHEN CAST(? AS INTEGER)=1 THEN NULL ELSE ai_feedback_requested_at END
      WHERE id=? AND user_id=?`,
     [
       canonicalDistance,
