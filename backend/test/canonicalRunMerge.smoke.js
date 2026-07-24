@@ -723,6 +723,11 @@ async function runCanonicalRunMergeSmoke() {
     && statement.sql.includes('plan_session_id=COALESCE')
   ));
   assert.ok(explicitManualPlanPatch, 'the canonical run receives the normal owner-scoped consolidation patch');
+  assert.match(
+    explicitManualPlanPatch.sql,
+    /WHEN CAST\(\? AS TEXT\) IS NOT NULL THEN \?/,
+    'nullable plan snapshots have an explicit PostgreSQL bind type'
+  );
   assert.equal(explicitManualPlanPatch.params[5], null, 'the duplicate scheduled session is not copied onto the manual run');
   assert.equal(explicitManualPlanPatch.params[6], null, 'the explicit-none snapshot is not replaced by the scheduled snapshot');
 

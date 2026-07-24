@@ -1013,7 +1013,7 @@ async function applyRunConsolidationPatch(db, userId, canonicalRunId, patch) {
        shoe_id=COALESCE(?, shoe_id),
        plan_session_id=COALESCE(?, plan_session_id),
        planned_session_json=CASE
-         WHEN ? IS NOT NULL THEN ?
+         WHEN CAST(? AS TEXT) IS NOT NULL THEN ?
          ELSE planned_session_json
        END
      WHERE id=? AND user_id=?`,
