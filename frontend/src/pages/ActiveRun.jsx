@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { CircleMarker, MapContainer, Polyline, TileLayer, useMap } from 'react-leaflet'
+import { useLocation, useNavigate } from 'react-router-dom'
+import { CircleMarker, MapContainer, Polyline, TileLayer, useMapEvents } from 'react-leaflet'
 import { App as CapacitorApp } from '@capacitor/app'
 import { Capacitor, registerPlugin } from '@capacitor/core'
+import { LocateFixed, MapPinned } from 'lucide-react'
 import { useUnits } from '../context/UnitsContext'
 import api from '../lib/api'
 import { queueRequest } from '../lib/offlineQueue'
@@ -24,6 +25,17 @@ import {
   groupRunWarmupState,
   isGroupRunNavigationState,
 } from '../lib/groupRuns'
+import {
+  ACTIVE_RUN_MAP_LAYOUTS,
+  activeRunBackDecision,
+  activeRunMapCommand,
+  loadActiveRunMapLayout,
+  normalizeMapPosition,
+  resolveActiveRunReturnTarget,
+  saveActiveRunMapLayout,
+  shouldProtectActiveRunNavigation,
+  validMapPositions,
+} from '../lib/activeRunControls'
 
 const BackgroundGeolocation = registerPlugin('BackgroundGeolocation')
 const LIVE_ACTIVITY_UPDATE_INTERVAL_MS = 10_000
@@ -121,8 +133,11 @@ function normalizePlannedRoute(value) {
   const coordinates = Array.isArray(value.coordinates)
     ? value.coordinates
       .slice(0, 800)
-      .filter((point) => Array.isArray(point) && Number.isFinite(Number(point[0])) && Number.isFinite(Number(point[1])))
-      .map((point) => [Number(point[0]), Number(point[1]), optionalNumber(point[2])])
+      .map((point) => {
+        const position = normalizeMapPosition(point)
+        return position ? [...position, optionalNumber(point[2])] : null
+      })
+      .filter(Boolean)
     : []
   if (coordinates.length < 2) return null
   return {
@@ -135,19 +150,29 @@ function normalizePlannedRoute(value) {
   }
 }
 
-function FitMapBounds({ positions, enabled = true }) {
-  const map = useMap()
-  useEffect(() => {
-    if (enabled && positions.length > 1) map.fitBounds(positions, { padding: [18, 18] })
-  }, [enabled, map, positions])
-  return null
-}
+function MapViewController({
+  command,
+  followPaused,
+  onFollowPaused,
+  recenterToken,
+  reduceMotion,
+}) {
+  const map = useMapEvents({
+    dragstart: () => {
+      if (command.type === 'follow') onFollowPaused()
+    },
+  })
 
-function FollowCurrentLocation({ position, enabled }) {
-  const map = useMap()
   useEffect(() => {
-    if (enabled && position) map.panTo(position, { animate: true, duration: 0.5 })
-  }, [enabled, map, position])
+    map.invalidateSize({ animate: false })
+    if (command.type === 'fit') {
+      if (command.positions.length === 1) map.setView(command.positions[0], 15, { animate: false })
+      else if (command.positions.length > 1) map.fitBounds(command.positions, { padding: [24, 24], animate: !reduceMotion })
+    }
+    if (command.type === 'follow' && !followPaused) {
+      map.panTo(command.position, { animate: !reduceMotion, duration: reduceMotion ? 0 : 0.35 })
+    }
+  }, [command, followPaused, map, recenterToken, reduceMotion])
   return null
 }
 
@@ -226,6 +251,18 @@ export default function ActiveRun() {
   const [hrLastUpdated, setHrLastUpdated] = useState(null)
   const [gpsStarted, setGpsStarted] = useState(Boolean(restoredSession?.gpsStarted || restoredSession?.routeCoords?.length))
   const [gpsGapSummary, setGpsGapSummary] = useState(null)
+  const [mapLayout, setMapLayout] = useState(() => loadActiveRunMapLayout())
+  const [followPaused, setFollowPaused] = useState(false)
+  const [recenterToken, setRecenterToken] = useState(0)
+  const [backWarningOpen, setBackWarningOpen] = useState(false)
+  const reduceMotion = useMemo(() => (
+    typeof window !== 'undefined'
+    && typeof window.matchMedia === 'function'
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  ), [])
+  const activeRunReturnTarget = useMemo(() => (
+    resolveActiveRunReturnTarget(incomingNavigationState.activeRunReturnTo)
+  ), [incomingNavigationState.activeRunReturnTo])
   const watchRef = useRef(null)
   const nativeWatchRef = useRef(false)
   const lastPointRef = useRef(restoredSession?.routeCoords?.length ? {
@@ -243,17 +280,58 @@ export default function ActiveRun() {
   const sessionStateRef = useRef(null)
   const liveActivityAttributesRef = useRef(null)
   const liveActivityContentRef = useRef(null)
+  const historyGuardRef = useRef(false)
+  const pendingExitRef = useRef(null)
+  const navigationProtectedRef = useRef(false)
+  const activeRunReturnTargetRef = useRef(activeRunReturnTarget)
+  const requestBackRef = useRef(null)
   const actualElevation = useMemo(() => calculateElevationStats(routeCoords), [routeCoords])
   const plannedRoutePositions = useMemo(() => (
-    plannedRoute?.coordinates?.map(([lat, lon]) => [lat, lon]) || []
+    validMapPositions(plannedRoute?.coordinates)
   ), [plannedRoute])
-  const recordedRoutePositions = useMemo(() => routeCoords.map(([lat, lon]) => [lat, lon]), [routeCoords])
+  const recordedRoutePositions = useMemo(() => validMapPositions(routeCoords), [routeCoords])
   const allMapPositions = useMemo(() => (
-    plannedRoutePositions.length ? [...plannedRoutePositions, ...recordedRoutePositions] : recordedRoutePositions
+    [...recordedRoutePositions, ...plannedRoutePositions]
   ), [plannedRoutePositions, recordedRoutePositions])
-  const mapBoundsPositions = plannedRoutePositions.length ? plannedRoutePositions : recordedRoutePositions
   const currentPosition = recordedRoutePositions.at(-1) || null
   const currentAccuracy = routeCoords.at(-1)?.[4]
+  const mapCommand = useMemo(() => (
+    activeRunMapCommand(mapLayout, { recordedPositions: recordedRoutePositions, plannedPositions: plannedRoutePositions })
+  ), [mapLayout, plannedRoutePositions, recordedRoutePositions])
+  const mapControlsMeaningful = mapMyRun && (running || allMapPositions.length > 0)
+  const navigationProtected = shouldProtectActiveRunNavigation({
+    running,
+    countingDown,
+    awaitingManualDistance,
+    saving,
+  })
+
+  navigationProtectedRef.current = navigationProtected
+  activeRunReturnTargetRef.current = activeRunReturnTarget
+
+  const exitActiveRun = useCallback((to, options = { replace: true }) => {
+    pendingExitRef.current = { to, options }
+    if (historyGuardRef.current && typeof window !== 'undefined') {
+      window.history.back()
+      return
+    }
+    pendingExitRef.current = null
+    navigate(to, options)
+  }, [navigate])
+
+  const requestBack = useCallback(() => {
+    const decision = activeRunBackDecision({
+      protectedNavigation: navigationProtectedRef.current,
+      returnTarget: activeRunReturnTargetRef.current,
+    })
+    if (decision.action === 'block') {
+      setBackWarningOpen(true)
+      return
+    }
+    exitActiveRun(decision.to, decision.options)
+  }, [exitActiveRun])
+
+  requestBackRef.current = requestBack
 
   sessionStateRef.current = {
     phase: running ? 'running' : awaitingManualDistance ? 'awaiting_distance' : null,
@@ -276,6 +354,78 @@ export default function ActiveRun() {
     discardedSegment: discardedSegmentRef.current,
     navigationState,
   }
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined
+    let active = true
+
+    const pushGuard = () => {
+      try {
+        window.history.pushState(
+          { ...(window.history.state || {}), forgeActiveRunGuard: true },
+          '',
+          `${window.location.pathname}${window.location.search}${window.location.hash}`,
+        )
+        historyGuardRef.current = true
+      } catch (error) {
+        historyGuardRef.current = false
+        console.warn('[ActiveRun] navigation guard setup failed:', error?.message || error)
+      }
+    }
+
+    const onPopState = () => {
+      if (!active || !historyGuardRef.current) return
+      historyGuardRef.current = false
+      const pendingExit = pendingExitRef.current
+      pendingExitRef.current = null
+      const decision = activeRunBackDecision({
+        pendingExit,
+        protectedNavigation: navigationProtectedRef.current,
+        returnTarget: activeRunReturnTargetRef.current,
+      })
+      if (decision.action === 'block') {
+        setBackWarningOpen(true)
+        pushGuard()
+        return
+      }
+      navigate(decision.to, decision.options)
+    }
+
+    pushGuard()
+    window.addEventListener('popstate', onPopState)
+    return () => {
+      active = false
+      window.removeEventListener('popstate', onPopState)
+    }
+  }, [navigate])
+
+  useEffect(() => {
+    if (!navigationProtected || typeof window === 'undefined') return undefined
+    const warnBeforeUnload = (event) => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', warnBeforeUnload)
+    return () => window.removeEventListener('beforeunload', warnBeforeUnload)
+  }, [navigationProtected])
+
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return undefined
+    let active = true
+    let listenerHandle = null
+    CapacitorApp.addListener('backButton', () => requestBackRef.current?.())
+      .then((handle) => {
+        if (!active) handle?.remove?.()
+        else listenerHandle = handle
+      })
+      .catch((error) => {
+        console.warn('[ActiveRun] native back listener setup failed:', error?.message || error)
+      })
+    return () => {
+      active = false
+      listenerHandle?.remove?.()
+    }
+  }, [])
 
   useEffect(() => {
     if (!isGroupRunNavigation) return undefined
@@ -831,9 +981,57 @@ export default function ActiveRun() {
     await savePromise
   }
 
+  const selectMapLayout = (layout) => {
+    const selectedLayout = saveActiveRunMapLayout(layout)
+    setMapLayout(selectedLayout)
+    if (selectedLayout === 'follow') {
+      setFollowPaused(false)
+      setRecenterToken((value) => value + 1)
+    }
+  }
+
   return (
-    <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>
+    <div
+      className="rounded-2xl p-4"
+      style={{
+        background: 'var(--bg-card)',
+        minHeight: '100dvh',
+        paddingTop: 'calc(env(safe-area-inset-top, 0px) + 1rem)',
+        paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 1rem)',
+        boxSizing: 'border-box',
+      }}
+    >
       {countingDown && <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: '#000' }}><div className="text-center"><p className="text-9xl font-black" style={{ color: 'var(--accent)' }}>{countdownVal}</p><p className="text-xl mt-4" style={{ color: 'var(--text-muted)' }}>Get ready...</p></div></div>}
+      {backWarningOpen && (
+        <div className="fixed inset-0 z-[60] grid place-items-center p-5" style={{ background: 'rgba(0,0,0,0.82)' }}>
+          <section
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="active-run-back-warning-title"
+            data-testid="active-run-navigation-warning"
+            className="w-full max-w-sm rounded-2xl p-5"
+            style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', boxShadow: '0 18px 60px rgba(0,0,0,0.5)' }}
+          >
+            <h2 id="active-run-back-warning-title" className="text-xl font-black" style={{ color: 'var(--text-primary)' }}>
+              {running || countingDown ? 'Run still recording' : 'Run not saved yet'}
+            </h2>
+            <p className="mt-2 text-sm leading-6" style={{ color: 'var(--text-muted)' }}>
+              {running || countingDown
+                ? 'Stay on this screen to finish safely. Back will not stop or discard your recording.'
+                : 'Enter and save the distance before leaving so this run is not lost.'}
+            </p>
+            <button
+              type="button"
+              autoFocus
+              onClick={() => setBackWarningOpen(false)}
+              className="pressable mt-5 w-full rounded-xl px-4 py-3 font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+              style={{ minHeight: 48, background: 'var(--accent)', color: 'var(--on-accent)', outlineColor: 'var(--accent)' }}
+            >
+              {running || countingDown ? 'Keep recording' : 'Continue run'}
+            </button>
+          </section>
+        </div>
+      )}
       <h2 className="t-micro mb-4">Active Run</h2>
 
       {plannedRoute && (
@@ -909,22 +1107,110 @@ export default function ActiveRun() {
       {saveError && <div className="rounded-xl p-3 mb-3" style={{ background: queuedOffline ? 'rgba(34,197,94,0.12)' : 'var(--danger-dim)', border: `1px solid ${queuedOffline ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'}`, color: queuedOffline ? 'var(--success)' : 'var(--danger)' }}>{saveError}</div>}
       {planProgressNotice && <div className="rounded-xl p-3 mb-3" role="status" style={{ background: 'var(--accent-dim)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}>{planProgressNotice}</div>}
 
-      {mapMyRun && allMapPositions.length > 0 && (
-        <div className="mb-4 overflow-hidden" style={{ minHeight: 280, height: 280, borderRadius: 8, position: 'relative' }}>
-          <MapContainer center={recordedRoutePositions.at(-1) || plannedRoutePositions[0]} zoom={15} style={{ height: '100%', width: '100%' }}>
+      {mapControlsMeaningful && (
+        <div className="mb-3" data-testid="active-run-map-layout">
+          <div
+            role="group"
+            aria-label="Live map view"
+            className="grid grid-cols-3 gap-1 rounded-xl p-1"
+            style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}
+          >
+            {ACTIVE_RUN_MAP_LAYOUTS.map((layout) => {
+              const label = layout[0].toUpperCase() + layout.slice(1)
+              const selected = mapLayout === layout
+              return (
+                <button
+                  key={layout}
+                  type="button"
+                  aria-pressed={selected}
+                  aria-label={`${label} live map view`}
+                  data-testid={`map-layout-${layout}`}
+                  onClick={() => selectMapLayout(layout)}
+                  className="pressable rounded-lg px-2 py-2 text-sm font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+                  style={{
+                    minHeight: 44,
+                    background: selected ? 'var(--accent)' : 'transparent',
+                    color: selected ? 'var(--on-accent)' : 'var(--text-primary)',
+                    outlineColor: 'var(--accent)',
+                  }}
+                >
+                  {label}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {mapMyRun && mapLayout !== 'stats' && allMapPositions.length > 0 && (
+        <div
+          className="mb-2 overflow-hidden"
+          data-testid="active-run-map"
+          style={{ minHeight: 210, height: 'clamp(210px, 34vh, 280px)', borderRadius: 10, position: 'relative', border: '1px solid var(--border-subtle)' }}
+        >
+          <MapContainer center={currentPosition || plannedRoutePositions[0]} zoom={15} style={{ height: '100%', width: '100%' }}>
             <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-            <FitMapBounds positions={mapBoundsPositions} enabled={!running || plannedRoutePositions.length > 0} />
-            <FollowCurrentLocation position={currentPosition} enabled={running} />
-            {plannedRoutePositions.length > 0 && <Polyline positions={plannedRoutePositions} pathOptions={{ color: '#9CA3AF', weight: 5, opacity: 0.85, dashArray: '8 8' }} />}
-            {recordedRoutePositions.length > 0 && <Polyline positions={recordedRoutePositions} pathOptions={{ color: '#EAB308', weight: 5 }} />}
+            <MapViewController
+              command={mapCommand}
+              followPaused={followPaused}
+              onFollowPaused={() => setFollowPaused(true)}
+              recenterToken={recenterToken}
+              reduceMotion={reduceMotion}
+            />
+            {plannedRoutePositions.length > 0 && <Polyline positions={plannedRoutePositions} pathOptions={{ color: '#D1D5DB', weight: 4, opacity: 0.9, dashArray: '7 9' }} />}
+            {recordedRoutePositions.length > 0 && <Polyline positions={recordedRoutePositions} pathOptions={{ color: '#EAB308', weight: 6, opacity: 1 }} />}
             {currentPosition && <CircleMarker center={currentPosition} radius={15} pathOptions={{ color: '#EAB308', fillColor: '#EAB308', fillOpacity: 0.2, weight: 2 }} />}
             {currentPosition && <CircleMarker center={currentPosition} radius={8} pathOptions={{ color: '#FFFFFF', fillColor: '#EAB308', fillOpacity: 1, weight: 3 }} />}
           </MapContainer>
-          {currentPosition && (
-            <div style={{ position: 'absolute', top: 10, right: 10, zIndex: 500, display: 'flex', alignItems: 'center', gap: 6, borderRadius: 999, padding: '6px 9px', background: 'rgba(0,0,0,0.82)', color: '#FFFFFF', fontSize: 11, fontWeight: 800, pointerEvents: 'none' }}>
+          {currentPosition && !followPaused && mapLayout === 'follow' && (
+            <div style={{ position: 'absolute', top: 10, left: 10, zIndex: 500, display: 'flex', alignItems: 'center', gap: 6, borderRadius: 999, padding: '7px 10px', background: 'rgba(0,0,0,0.86)', color: '#FFFFFF', fontSize: 11, fontWeight: 800, pointerEvents: 'none' }}>
               <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#EAB308', border: '2px solid #FFFFFF' }} /> You are here
             </div>
           )}
+          {currentPosition && followPaused && mapLayout === 'follow' && (
+            <button
+              type="button"
+              aria-label="Recenter map on current position"
+              data-testid="map-recenter"
+              onClick={() => {
+                setFollowPaused(false)
+                setRecenterToken((value) => value + 1)
+              }}
+              className="pressable focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+              style={{ position: 'absolute', top: 10, right: 10, zIndex: 500, minWidth: 44, minHeight: 44, borderRadius: 999, padding: '0 12px', border: '1px solid rgba(255,255,255,0.35)', background: 'rgba(0,0,0,0.9)', color: '#FFFFFF', fontSize: 12, fontWeight: 900, display: 'flex', alignItems: 'center', gap: 7, outlineColor: 'var(--accent)' }}
+            >
+              <LocateFixed size={17} aria-hidden="true" /> Recenter
+            </button>
+          )}
+        </div>
+      )}
+      {mapMyRun && mapLayout !== 'stats' && running && allMapPositions.length === 0 && (
+        <div className="mb-3 grid min-h-[150px] place-items-center rounded-xl p-5 text-center" data-testid="active-run-map-empty" role="status" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
+          <div>
+            <MapPinned size={28} aria-hidden="true" style={{ color: 'var(--accent)', margin: '0 auto 8px' }} />
+            <p className="font-black" style={{ color: 'var(--text-primary)' }}>Acquiring GPS</p>
+            <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>The live route appears after the first valid location.</p>
+          </div>
+        </div>
+      )}
+      {mapControlsMeaningful && mapLayout === 'stats' && (
+        <div className="mb-3 rounded-xl p-3 text-sm font-semibold" data-testid="active-run-map-hidden" role="status" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}>
+          Map hidden for Stats view · GPS recording and run metrics continue.
+        </div>
+      )}
+      {mapMyRun && !running && !countingDown && !awaitingManualDistance && !plannedRoute && (
+        <div className="mb-3 flex min-h-[92px] items-center gap-3 rounded-xl p-3" data-testid="active-run-map-ready" role="status" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
+          <MapPinned size={26} aria-hidden="true" style={{ color: 'var(--accent)', flex: '0 0 auto' }} />
+          <div>
+            <p className="text-sm font-black" style={{ color: 'var(--text-primary)' }}>Live map ready</p>
+            <p className="mt-1 text-xs leading-5" style={{ color: 'var(--text-muted)' }}>Follow your position, view the whole route, or switch to Stats after you start.</p>
+          </div>
+        </div>
+      )}
+      {allMapPositions.length > 0 && mapLayout !== 'stats' && (
+        <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-1 px-1 text-[11px] font-bold" aria-label="Map route legend" style={{ color: 'var(--text-muted)' }}>
+          {recordedRoutePositions.length > 0 && <span><span aria-hidden="true" style={{ display: 'inline-block', width: 18, borderTop: '4px solid #EAB308', marginRight: 6, verticalAlign: 'middle' }} />Recorded</span>}
+          {plannedRoutePositions.length > 0 && <span><span aria-hidden="true" style={{ display: 'inline-block', width: 18, borderTop: '3px dashed #D1D5DB', marginRight: 6, verticalAlign: 'middle' }} />Planned</span>}
         </div>
       )}
 
@@ -935,7 +1221,7 @@ export default function ActiveRun() {
             <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Your iPhone records the route. Keep your watch running too — Forged Hybrid will combine the data after sync.</p>
             <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>Location access is requested when you start and recording continues in the background during the run.</p>
           </div>
-          <button disabled={groupRunAuthorization === 'pending'} onClick={() => { setCountdownVal(selectedCountdown); setCountingDown(selectedCountdown > 0); if (selectedCountdown === 0) startGPS() }} className="pressable w-full rounded-xl py-3 font-black" style={{ background: 'var(--accent)', color: 'var(--on-accent)', opacity: groupRunAuthorization === 'pending' ? 0.55 : 1 }}>{groupRunAuthorization === 'pending' ? 'Verifying Group Run...' : 'Start Run'}</button>
+          <button type="button" disabled={groupRunAuthorization === 'pending'} onClick={() => { setCountdownVal(selectedCountdown); setCountingDown(selectedCountdown > 0); if (selectedCountdown === 0) startGPS() }} className="pressable w-full rounded-xl py-3 font-black" style={{ minHeight: 52, background: 'var(--accent)', color: 'var(--on-accent)', opacity: groupRunAuthorization === 'pending' ? 0.55 : 1 }}>{groupRunAuthorization === 'pending' ? 'Verifying Group Run...' : 'Start Run'}</button>
         </div>
       )}
       {running && mapMyRun && (
@@ -943,14 +1229,14 @@ export default function ActiveRun() {
           iPhone route recording active in the background · {currentAccuracy !== null && currentAccuracy !== undefined && Number.isFinite(Number(currentAccuracy)) ? `GPS ±${Math.round(Number(currentAccuracy))} m` : 'Acquiring GPS'}
         </div>
       )}
-      {running && <button onClick={finishRun} disabled={saving} className="pressable w-full rounded-xl py-3 font-black" style={{ background: 'var(--accent)', color: 'var(--on-accent)', opacity: saving ? 0.5 : 1, minHeight: 56 }}>{saving ? 'Saving...' : 'Finish Run'}</button>}
+      {running && <button type="button" data-testid="finish-run" onClick={finishRun} disabled={saving} className="pressable w-full rounded-xl py-3 font-black" style={{ background: 'var(--accent)', color: 'var(--on-accent)', opacity: saving ? 0.5 : 1, minHeight: 56 }}>{saving ? 'Saving...' : 'Finish Run'}</button>}
 
       {awaitingManualDistance && (
         <div className="rounded-xl p-3" style={{ background: 'var(--bg-input)' }}>
           <p className="text-sm font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>How far did you run? ({fmt.distanceLabel})</p>
           {distanceMiles > 0 && <p className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>Forged Hybrid measured {fmt.distance(distanceMiles, 2)} before GPS stopped or route recording ended. Adjust if needed.</p>}
           <input aria-label={`Run distance in ${fmt.distanceLabel}`} value={manualDistance} onChange={e => setManualDistance(e.target.value)} type="number" min="0" step="0.01" className="w-full rounded-xl px-3 py-2" style={{ background: 'var(--bg-base)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }} placeholder={fmt.distanceLabel} />
-          <button onClick={saveRun} className="w-full mt-2 rounded-xl py-2 font-semibold" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>Save Run</button>
+          <button type="button" onClick={saveRun} className="w-full mt-2 rounded-xl py-2 font-semibold" style={{ minHeight: 44, background: 'var(--accent)', color: 'var(--on-accent)' }}>Save Run</button>
         </div>
       )}
 
@@ -969,9 +1255,17 @@ export default function ActiveRun() {
 
       {showPostCheckIn && savedRunId && <PostRunCheckIn runId={savedRunId} heatDrift={savedHeatDrift} onDone={(result) => {
         setShowPostCheckIn(false)
-        navigate(result?.queued ? '/' : `/run/recap/${savedRunId}`, { replace: true })
+        exitActiveRun(result?.queued ? '/' : `/run/recap/${savedRunId}`)
       }} />}
-      <Link to="/log-run" className="mt-5 inline-block text-sm" style={{ color: 'var(--text-muted)' }}>← Back</Link>
+      <button
+        type="button"
+        data-testid="active-run-back"
+        onClick={requestBack}
+        className="pressable mt-4 flex w-full items-center justify-center rounded-xl px-4 py-3 text-sm font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+        style={{ minHeight: 48, background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', outlineColor: 'var(--accent)' }}
+      >
+        ← Back
+      </button>
     </div>
   )
 }

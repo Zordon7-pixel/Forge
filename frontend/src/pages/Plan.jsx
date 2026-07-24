@@ -11,6 +11,7 @@ import RaceEditSheet from '../components/calendar/RaceEditSheet'
 import {
   buildCalendarModel, calendarDateRange, dayWithRecordedRuns, goalWithRace, indexRecordedRuns, todayISO,
 } from '../lib/planCalendar'
+import { withActiveRunReturnTarget } from '../lib/activeRunControls'
 
 const RoutePlanner = lazy(() => import('../components/RoutePlanner'))
 
@@ -246,7 +247,7 @@ export default function Plan() {
 
   const startRunSession = (runSession, { plannedRoute = null, surface = 'road' } = {}) => {
     if (!runSession || !confirmOffScheduleStart('This run')) return
-    navigate('/warmup', { state: {
+    navigate('/warmup', { state: withActiveRunReturnTarget({
       planSessionId: runSession.id != null ? String(runSession.id) : null,
       currentWeek: Number.isFinite(selectedDay?.weekIndex) ? selectedDay.weekIndex + 1 : currentWeek,
       scheduledRun: runSession,
@@ -263,7 +264,7 @@ export default function Plan() {
         pace: runSession.prescription?.pace_target || runSession.prescription?.pace || null,
         zone: runSession.prescription?.target_zone || null,
       },
-    } })
+    }, '/plan') })
   }
 
   const startLiftSession = (liftSession) => {

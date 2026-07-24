@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../lib/api'
+import { withActiveRunReturnTarget } from '../lib/activeRunControls'
 import track from '../lib/track'
 import { scrollToFirstError } from '../utils/validation'
 import { normalizeExecution, runRouteState, scheduledLiftFromExecution } from '../lib/dailyExecution'
@@ -334,7 +335,10 @@ export default function DailyCheckIn({ onComplete }) {
   if (showStretchGate) {
     const startRun = (withWarmup) => {
       onComplete?.()
-      const state = { ...(workoutHandoff?.state || {}), startAfterWarmup: withWarmup }
+      const state = withActiveRunReturnTarget({
+        ...(workoutHandoff?.state || {}),
+        startAfterWarmup: withWarmup,
+      }, '/checkin')
       navigate(withWarmup ? '/warmup' : '/run/active', { state })
     }
     return (

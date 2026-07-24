@@ -16,6 +16,7 @@ import { fetchDailyExecution, scheduledRunFromExecution, planSessionIdFromState,
 import { loadPostRunCheckInDraft, savePostRunCheckInDraft } from '../lib/postRunCheckInDraft'
 import { buildPlannedSessionSnapshot } from '../lib/runProvenance'
 import { lockDocumentScroll } from '../lib/documentScrollLock'
+import { activeRunReturnTargetFromLocation, withActiveRunReturnTarget } from '../lib/activeRunControls'
 
 const RoutePlanner = lazy(() => import('../components/RoutePlanner'))
 
@@ -235,6 +236,7 @@ function WorkoutWatchModal({ workout, onClose }) {
 export default function LogRun() {
   const navigate = useNavigate()
   const location = useLocation()
+  const activeRunReturnTo = activeRunReturnTargetFromLocation(location.pathname, location.search)
   const query = useMemo(() => new URLSearchParams(location.search), [location.search])
   const { units, fmt } = useUnits()
   const [warmUpState] = useState(() => {
@@ -724,7 +726,7 @@ export default function LogRun() {
 
   const startPlannedRoute = (plannedRoute, routeSurface) => {
     navigate('/run/active', {
-      state: {
+      state: withActiveRunReturnTarget({
         countdown,
         runType: todayWorkout?.rawType || 'easy',
         runEnvironment: 'outdoor',
@@ -740,7 +742,7 @@ export default function LogRun() {
           pace: todayWorkout?.pace || null,
           zone: todayWorkout?.targetZone || null,
         },
-      },
+      }, activeRunReturnTo),
     })
   }
 
@@ -748,7 +750,7 @@ export default function LogRun() {
   // calendar session into ActiveRun. Manual logging remains secondary.
   const startScheduledRun = () => {
     navigate('/warmup', {
-      state: {
+      state: withActiveRunReturnTarget({
         countdown,
         runType: todayWorkout?.rawType || 'easy',
         runEnvironment: 'outdoor',
@@ -762,7 +764,7 @@ export default function LogRun() {
           pace: todayWorkout?.pace || null,
           zone: todayWorkout?.targetZone || null,
         },
-      },
+      }, activeRunReturnTo),
     })
   }
 
@@ -776,7 +778,10 @@ export default function LogRun() {
       ? 'track'
       : surface === 'treadmill' ? 'road' : surface
     navigate('/warmup', {
-      state: unplannedRunRouteState({ countdown, runType, surface: selectedSurface }),
+      state: withActiveRunReturnTarget(
+        unplannedRunRouteState({ countdown, runType, surface: selectedSurface }),
+        activeRunReturnTo,
+      ),
     })
   }
 
@@ -821,7 +826,7 @@ export default function LogRun() {
       }
       track('makeup_run_started', { session_id: state.planSessionId, missed_date: missed.date || null })
       setRunIntentOpen(false)
-      navigate('/warmup', { state })
+      navigate('/warmup', { state: withActiveRunReturnTarget(state, activeRunReturnTo) })
     } catch (err) {
       console.error('[LogRun] make-up reschedule failed:', err?.message || err)
       setRunIntentError(err?.response?.data?.error || 'Forged Hybrid could not move that workout onto today. Your plan was not changed.')
@@ -1035,7 +1040,7 @@ export default function LogRun() {
                               </div>
                             )}
                             {!day.rest && isToday && (
-                              <button onClick={e => { e.stopPropagation(); navigate('/run/active', { state: { countdown, runType: day.type || 'easy', runEnvironment: 'outdoor', surface: trackWorkout === 'yes' ? 'track' : 'road', mapMyRun: true, trackMode: trackWorkout === 'yes' } }) }}
+                              <button onClick={e => { e.stopPropagation(); navigate('/run/active', { state: withActiveRunReturnTarget({ countdown, runType: day.type || 'easy', runEnvironment: 'outdoor', surface: trackWorkout === 'yes' ? 'track' : 'road', mapMyRun: true, trackMode: trackWorkout === 'yes' }, activeRunReturnTo) }) }}
                                 style={{ width: '100%', background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 900, borderRadius: 10, padding: '12px', border: 'none', cursor: 'pointer', fontSize: 14 }}>
                                 Start This Run
                               </button>
