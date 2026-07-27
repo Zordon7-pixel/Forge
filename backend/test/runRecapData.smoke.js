@@ -97,7 +97,7 @@ assert(/perceived_effort = COALESCE\(\?, perceived_effort\)/.test(importRoute), 
 assert(/workoutEffortScore/.test(swift) && /HKWorkoutEffortRelationshipQuery/.test(swift), 'native bridge requests the associated HealthKit effort rating');
 assert(/elevation_derived_from_route/.test(swift) && /verticalAccuracy/.test(swift), 'route elevation fallback accepts only bounded-accuracy altitude');
 assert(/REQUIRED_HEALTH_AUTH_VERSION\s*=\s*4/.test(healthService) && /REQUIRED_WORKOUT_IMPORT_VERSION\s*=\s*5/.test(healthService), 'native authorization and full-history upgrades are versioned');
-assert(/Recording details not shared/.test(recap) && /Rate this run/.test(recap), 'recap explains missing source data and offers a check-in');
+assert(/Recording details not shared/.test(recap) && /Add how you felt/.test(recap), 'recap explains missing source data and offers a check-in');
 assert(/Calculated training effort/.test(recap) && /objective load estimate, not your personal RPE/.test(recap), 'recap labels calculated effort separately from athlete-rated RPE');
 assert(/backendEffortSource[\s\S]*effort_source/.test(recap), 'recap consumes backend effort provenance before using its legacy fallback');
 assert(/Runs started in Forged Hybrid record iPhone GPS and altitude/.test(recap), 'recap explains when the phone can capture route and elevation');
