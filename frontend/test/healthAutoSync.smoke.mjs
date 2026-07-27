@@ -19,6 +19,7 @@ import {
   retryableHealthSyncErrors,
   runHealthAwarePageRefresh,
 } from '../src/lib/healthSync.js'
+import { createPullToRefreshEndHandler } from '../src/lib/pullToRefresh.js'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const read = (relativePath) => fs.readFileSync(path.join(repoRoot, relativePath), 'utf8')
@@ -213,6 +214,75 @@ assert.ok(!timeoutCopy.includes('15000ms'), 'timeout copy does not expose an imp
 }
 
 {
+  const syncGate = deferred()
+  const refreshInFlight = { current: false }
+  let coordinatorCalls = 0
+  let reloadCalls = 0
+  let gestureResets = 0
+  const onTouchEnd = createPullToRefreshEndHandler({
+    refreshInFlight,
+    shouldRefresh: () => true,
+    onRefreshStart: () => {},
+    runPageRefresh: () => {
+      coordinatorCalls += 1
+      return runHealthAwarePageRefresh({
+        authenticated: true,
+        native: true,
+        syncNativeData: () => syncGate.promise,
+        refreshPage: () => {
+          reloadCalls += 1
+        },
+      })
+    },
+    onRefreshFailure: () => {},
+    resetGesture: () => {
+      gestureResets += 1
+    },
+  })
+
+  const firstTouchEnd = onTouchEnd()
+  await Promise.resolve()
+  const secondTouchEnd = onTouchEnd()
+  assert.equal(await secondTouchEnd, false, 'a second touchend is ignored while the first page refresh is unsettled')
+  assert.equal(coordinatorCalls, 1, 'duplicate touchend events launch exactly one page-refresh coordinator call')
+  assert.equal(refreshInFlight.current, true, 'the gesture guard remains raised during the active refresh')
+  syncGate.resolve({ complete: true })
+  assert.equal(await firstTouchEnd, true)
+  assert.equal(reloadCalls, 1, 'the guarded refresh invokes the reload path exactly once')
+  assert.equal(refreshInFlight.current, true, 'a successful reload path keeps the gesture guard raised until navigation')
+  assert.equal(gestureResets, 2, 'every touchend still cleans up its gesture state')
+}
+
+{
+  const refreshInFlight = { current: false }
+  let coordinatorCalls = 0
+  let failureCalls = 0
+  const onTouchEnd = createPullToRefreshEndHandler({
+    refreshInFlight,
+    shouldRefresh: () => true,
+    onRefreshStart: () => {},
+    runPageRefresh: () => {
+      coordinatorCalls += 1
+      return runHealthAwarePageRefresh({
+        refreshPage: () => {
+          if (coordinatorCalls === 1) throw new Error('reload unavailable')
+        },
+      })
+    },
+    onRefreshFailure: () => {
+      failureCalls += 1
+    },
+    resetGesture: () => {},
+  })
+
+  assert.equal(await onTouchEnd(), false, 'a failed reload path does not leave the refresh active')
+  assert.equal(refreshInFlight.current, false, 'a failed reload path safely lowers the gesture guard')
+  assert.equal(failureCalls, 1, 'a failed reload path reports the failure once')
+  assert.equal(await onTouchEnd(), true, 'the gesture can retry after a failed reload path')
+  assert.equal(coordinatorCalls, 2, 'failure recovery permits one later page-refresh coordinator call')
+}
+
+{
   let calls = 0
   await assert.rejects(
     importHealthWorkoutBatches(workouts, async (batch) => {
@@ -270,6 +340,6 @@ assert.ok(service.includes('announceHealthSyncResult(syncResult, { complete })')
 assert.ok(pullToRefresh.includes('await runHealthAwarePageRefresh({'), 'pull-to-refresh delegates sync and reload ordering to the tested coordinator')
 assert.ok(pullToRefresh.includes('syncNativeData: (options) => HealthService.syncNativeData(options)'), 'pull-to-refresh forwards forced manual sync options to HealthService')
 assert.ok(pullToRefresh.includes("console.error('[PullToRefresh] Apple Health sync failed:'"), 'pull sync failures retain diagnostic context')
-assert.ok(pullToRefresh.includes('refreshInFlight.current = true'), 'gesture refresh is synchronously guarded against duplicate completion events')
+assert.ok(pullToRefresh.includes('createPullToRefreshEndHandler({'), 'pull-to-refresh uses the executable gesture guard')
 
 console.log('HEALTH AUTO-SYNC SMOKE OK')

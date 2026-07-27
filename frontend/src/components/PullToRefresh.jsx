@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Capacitor } from '@capacitor/core'
 import { isLoggedIn } from '../lib/auth'
 import { runHealthAwarePageRefresh } from '../lib/healthSync'
+import { createPullToRefreshEndHandler } from '../lib/pullToRefresh'
 import HealthService from '../services/HealthService'
 
 const THRESHOLD = 80 // px to pull before triggering refresh
@@ -37,32 +38,36 @@ export default function PullToRefresh({ children }) {
       }
     }
 
-    const onTouchEnd = async () => {
-      try {
-        if (!refreshInFlight.current && pulling && pullDistance >= THRESHOLD) {
-          refreshInFlight.current = true
-          setRefreshing(true)
-          setPullDistance(THRESHOLD)
-          await runHealthAwarePageRefresh({
-            authenticated: isLoggedIn(),
-            native: Capacitor.isNativePlatform(),
-            syncNativeData: (options) => HealthService.syncNativeData(options),
-            onHealthSyncError: (error) => {
-              console.error('[PullToRefresh] Apple Health sync failed:', error?.message || error)
-            },
-            // Let the completion state paint before page data is requested again.
-            afterHealthSync: () => new Promise(r => setTimeout(r, 150)),
-            refreshPage: () => window.location.reload(),
-          })
-        }
-      } finally {
-        refreshInFlight.current = false
+    const onTouchEnd = createPullToRefreshEndHandler({
+      refreshInFlight,
+      shouldRefresh: () => pulling && pullDistance >= THRESHOLD,
+      onRefreshStart: () => {
+        setRefreshing(true)
+        setPullDistance(THRESHOLD)
+      },
+      runPageRefresh: async () => {
+        await runHealthAwarePageRefresh({
+          authenticated: isLoggedIn(),
+          native: Capacitor.isNativePlatform(),
+          syncNativeData: (options) => HealthService.syncNativeData(options),
+          onHealthSyncError: (error) => {
+            console.error('[PullToRefresh] Apple Health sync failed:', error?.message || error)
+          },
+          // Let the completion state paint before page data is requested again.
+          afterHealthSync: () => new Promise(r => setTimeout(r, 150)),
+          refreshPage: () => window.location.reload(),
+        })
+      },
+      onRefreshFailure: (error) => {
+        console.error('[PullToRefresh] Page refresh failed:', error?.message || error)
         setRefreshing(false)
+      },
+      resetGesture: () => {
         startY.current = null
         setPulling(false)
         setPullDistance(0)
-      }
-    }
+      },
+    })
 
     el.addEventListener('touchstart', onTouchStart, { passive: true })
     el.addEventListener('touchmove', onTouchMove, { passive: false })
