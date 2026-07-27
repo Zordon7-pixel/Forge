@@ -894,7 +894,7 @@ export default function LogRun() {
     const returnSearch = returnParams.toString()
     const returnTo = `/log-run${returnSearch ? `?${returnSearch}` : ''}`
     const incomingState = location.state && typeof location.state === 'object' ? location.state : {}
-    return <Navigate to="/warmup" replace state={{ ...incomingState, warmupReturnTo: returnTo }} />
+    return <Navigate to="/warmup" replace state={{ ...incomingState, warmupReturnTo: returnTo, checkinCompleted: true, checkinDate: todayISO() }} />
   }
 
   return (

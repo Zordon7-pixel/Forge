@@ -9,6 +9,7 @@ import { preRunStretches } from '../data/stretches'
 import { chooseRotatingRoutine, rememberRoutine } from '../lib/routineRotation'
 import { SWIPE_BACK_EVENT } from '../lib/swipeBack'
 import { groupRunNavigationProvenance, isGroupRunNavigationState } from '../lib/groupRuns'
+import { localDateISO } from '../lib/dailyExecution'
 
 const WARMUP_ROTATION_SCOPE = 'warmup'
 const WARMUP_STEP_COUNT = 5
@@ -224,7 +225,7 @@ function WarmupSteps({ steps, stepIndex, onNext, onSkip, sex }) {
   )
 }
 
-function WarmupDone({ onStartRun }) {
+function WarmupDone({ onStartRun, checkinConfirmed = false, checkinDate }) {
   const { t } = useTranslation()
   const navigate = useNavigate()
   const [stats, setStats] = useState(null)
@@ -232,21 +233,21 @@ function WarmupDone({ onStartRun }) {
   const [plan, setPlan] = useState(null)
   const [recommendedStretches, setRecommendedStretches] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [checkInCompleted, setCheckInCompleted] = useState(false)
+  const [checkInCompleted, setCheckInCompleted] = useState(checkinConfirmed)
 
   useEffect(() => {
     const load = async () => {
       try {
         const [statsRes, checkinRes, planRes, stretchRes] = await Promise.all([
           api.get('/auth/me/stats').catch(() => ({ data: null })),
-          api.get('/checkin/today').catch(() => ({ data: null })),
+          api.get('/checkin/today', { params: { date: checkinDate || localDateISO() } }).catch(() => ({ data: null })),
           api.get('/plans/current').catch(() => ({ data: null })),
           api.get('/stretches/recommended').catch(() => ({ data: null })),
         ])
         setStats(statsRes?.data)
         const checkinData = checkinRes?.data
         setCheckin(checkinData)
-        setCheckInCompleted(Boolean(checkinData?.completed ?? checkinData?.id ?? checkinData))
+        setCheckInCompleted(Boolean(checkinConfirmed || (checkinData?.completed ?? checkinData?.id ?? checkinData)))
         setPlan(planRes?.data?.plan || planRes?.data)
         if (stretchRes?.data?.stretches?.length > 0) {
           setRecommendedStretches({
@@ -260,7 +261,7 @@ function WarmupDone({ onStartRun }) {
       }
     }
     load()
-  }, [])
+  }, [checkinConfirmed, checkinDate])
 
   if (loading) return <LoadingRunner message="Assessing readiness" />
 
@@ -300,6 +301,41 @@ function WarmupDone({ onStartRun }) {
       }}
     >
       <div className="px-4 pt-6 max-w-[480px] mx-auto space-y-4">
+        <div
+          className="card-hero"
+          style={{
+            padding: 24,
+            textAlign: 'center',
+          }}
+        >
+          <p className="t-micro" style={{ color: 'var(--accent)', margin: 0 }}>Ready</p>
+          <h1 style={{ color: 'var(--text-primary)', fontSize: 30, lineHeight: 1.1, fontWeight: 950, margin: '8px 0' }}>Warm-up complete</h1>
+          <p style={{ color: 'var(--text-muted)', fontSize: 14, lineHeight: 1.5, margin: '0 auto 18px', maxWidth: 340 }}>
+            Your check-in is saved. Start today's scheduled run when you are ready.
+          </p>
+          <button
+            type="button"
+            onClick={onStartRun}
+            className="pressable"
+            style={{
+              width: '100%',
+              minHeight: 56,
+              fontSize: 17,
+              fontWeight: 900,
+              borderRadius: 12,
+              border: 'none',
+              background: 'var(--accent)',
+              color: 'var(--on-accent)',
+              cursor: 'pointer',
+            }}
+          >
+            {t('run.startRun')}
+          </button>
+          <p style={{ color: 'var(--text-muted)', fontSize: 12, lineHeight: 1.45, margin: '12px 0 0' }}>
+            GPS starts only after you tap Start Run.
+          </p>
+        </div>
+
         <div
           style={{
             background: 'var(--bg-card)',
@@ -529,29 +565,6 @@ function WarmupDone({ onStartRun }) {
           </div>
         )}
 
-        <button
-          onClick={onStartRun}
-          style={{
-            width: '100%',
-            padding: '20px 0',
-            fontSize: 16,
-            fontWeight: 800,
-            textTransform: 'uppercase',
-            letterSpacing: 1.2,
-            borderRadius: 24,
-            border: 'none',
-            background: 'var(--accent)',
-            color: 'var(--on-accent)',
-            cursor: 'pointer',
-            boxShadow: '0 8px 24px rgba(234, 179, 8, 0.3)',
-            transition: 'all 0.2s ease',
-            marginTop: 24,
-          }}
-          onMouseEnter={e => (e.target.style.boxShadow = '0 12px 32px rgba(234, 179, 8, 0.5)')}
-          onMouseLeave={e => (e.target.style.boxShadow = '0 8px 24px rgba(234, 179, 8, 0.3)')}
-        >
-          {t('run.startRun')}
-        </button>
       </div>
     </div>
   )
@@ -624,7 +637,7 @@ export default function Warmup() {
 
   const handleStartRun = () => {
     const incomingState = location.state && typeof location.state === 'object' ? location.state : {}
-    const { warmupReturnTo, ...nextState } = incomingState
+    const { warmupReturnTo, checkinCompleted, checkinDate, ...nextState } = incomingState
     if (isGroupRunNavigationState(nextState)) {
       navigate('/run/active', { replace: true, state: groupRunNavigationProvenance(nextState) })
       return
@@ -646,7 +659,13 @@ export default function Warmup() {
       {runState === 'warmup-steps' && (
         <WarmupSteps steps={warmupSteps} stepIndex={stepIndex} onNext={handleNextStep} onSkip={handleSkipWarmup} sex={sex} />
       )}
-      {runState === 'warmup-done' && <WarmupDone onStartRun={handleStartRun} />}
+      {runState === 'warmup-done' && (
+        <WarmupDone
+          onStartRun={handleStartRun}
+          checkinConfirmed={Boolean(location.state?.checkinCompleted)}
+          checkinDate={location.state?.checkinDate}
+        />
+      )}
     </div>
   )
 }

@@ -325,7 +325,7 @@ export default function Dashboard() {
           api.get('/runs', { params: { limit: 5 } }),
           api.get('/lifts'),
           api.get('/coach/warning'),
-          api.get('/checkin/today').catch(() => ({ data: null })),
+          api.get('/checkin/today', { params: { date: localDateISO() } }).catch(() => ({ data: null })),
           api.get('/users/goal').catch(() => ({ data: null })),
           api.get('/plans/compliance').catch(() => ({ data: null })),
           api.get('/runs/load-analysis').catch(() => ({ data: null })),

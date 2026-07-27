@@ -112,7 +112,7 @@ export default function DailyCheckIn({ onComplete }) {
 
   useEffect(() => {
     let active = true
-    api.get('/checkin/today').then(r => {
+    api.get('/checkin/today', { params: { date: todayISO() } }).then(r => {
       if (!active) return
       if (r.data) setAlreadyDone(true)
     }).catch((error) => {
@@ -337,8 +337,10 @@ export default function DailyCheckIn({ onComplete }) {
       onComplete?.()
       const state = withActiveRunReturnTarget({
         ...(workoutHandoff?.state || {}),
+        checkinCompleted: true,
+        checkinDate: todayISO(),
         startAfterWarmup: withWarmup,
-      }, '/checkin')
+      }, '/')
       navigate(withWarmup ? '/warmup' : '/run/active', { state })
     }
     return (
