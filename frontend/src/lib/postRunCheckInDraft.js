@@ -1,6 +1,7 @@
 export const POST_RUN_CHECKIN_DRAFT_KEY = 'forged_hybrid_post_run_checkin_v1'
 
 const MAX_DRAFT_AGE_MS = 24 * 60 * 60 * 1000
+const PROVENANCE_VALUES = new Set(['manual', 'live_tracked', 'imported', 'unknown'])
 
 function storageOrNull(storage) {
   if (storage) return storage
@@ -18,6 +19,7 @@ function normalizeDraft(value, now = Date.now()) {
     createdAt: Number(value.createdAt || updatedAt),
     updatedAt,
     runQueued: Boolean(value.runQueued),
+    provenance: PROVENANCE_VALUES.has(value.provenance) ? value.provenance : 'unknown',
     heatDrift: value.heatDrift && typeof value.heatDrift === 'object' ? value.heatDrift : null,
     step: Number.isInteger(Number(value.step)) ? Math.max(0, Math.min(3, Number(value.step))) : 0,
     effort: Number.isInteger(Number(value.effort)) && Number(value.effort) >= 1 && Number(value.effort) <= 10 ? Number(value.effort) : null,

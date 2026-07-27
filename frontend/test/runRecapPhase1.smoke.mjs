@@ -114,7 +114,7 @@ const recapSource = fs.readFileSync(new URL('../src/pages/RunRecap.jsx', import.
 const runsRouteSource = fs.readFileSync(new URL('../../backend/src/routes/runs.js', import.meta.url), 'utf8')
 check(appSource.includes('path="/run/recap/:id"'), 'authenticated app route exposes the dedicated recap')
 check(activeRunSource.includes('`/run/recap/${savedRunId}`'), 'tracked runs continue to the saved recap')
-check(logRunSource.includes('`/run/recap/${savedRunId}`'), 'manual runs continue to the saved recap')
+check(logRunSource.includes('navigate(completion.destination, { replace: true })'), 'manual runs continue directly to the provenance-aware saved recap')
 check(recapSource.includes('api.get(`/runs/${encodeURIComponent(id)}`)'), 'recap fetches the exact run instead of a capped history page')
 const historySource = fs.readFileSync(new URL('../src/pages/History.jsx', import.meta.url), 'utf8')
 check(historySource.includes('api.get(`/runs/${encodeURIComponent(run.id)}`)'), 'History enriches an imported run before opening its comparison')

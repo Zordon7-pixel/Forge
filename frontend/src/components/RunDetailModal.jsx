@@ -6,6 +6,7 @@ import { useUnits } from '../context/UnitsContext'
 import AiGuidanceNote from './AiGuidanceNote'
 import { Link } from 'react-router-dom'
 import { activityLabel, isRunningActivity } from '../lib/activityType'
+import { runProvenanceFromRecord, RUN_PROVENANCE } from '../lib/runCompletionPolicy'
 import { buildRunComparison, formatPlannedPaceTarget, normalizeRunSplits, parseRunRoute, parseZoneTimeline, resolveRunHeartRateZone } from '../lib/runRecap'
 import { providerSourcePresentation } from '../lib/deviceSourcePresentation'
 import ActivityShareStudio from './ActivityShareStudio'
@@ -106,6 +107,7 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
     upstreamProvider: workoutMetrics.upstream_provider,
   })
   const sourceLabel = rawSource ? sourcePresentation.label : null
+  const runProvenance = runProvenanceFromRecord(run)
   const isAppleHealthSource = sourcePresentation.kind === 'apple_health'
     || sourcePresentation.kind === 'garmin_via_apple_health'
   const enrichedByStrava = workoutMetrics.route_enriched_from_strava === 1
@@ -420,7 +422,7 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
               <div><p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Energy</p><p className="mt-1 text-sm font-semibold capitalize" style={{ color: run.post_energy === 'low' ? 'var(--warning)' : 'var(--text-primary)' }}>{run.post_energy || '--'}</p></div>
             </div>
             {!checkInComplete && onAddCheckIn && (
-              <button type="button" onClick={onAddCheckIn} className="mt-3 w-full rounded-lg py-2.5 text-sm font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>Complete check-in</button>
+              <button type="button" onClick={onAddCheckIn} className="mt-3 w-full rounded-lg py-2.5 text-sm font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>Add how you felt</button>
             )}
           </div>
         )}
@@ -428,8 +430,8 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
         {isRun && !checkInAvailable && onAddCheckIn && (
           <div className="mb-5 rounded-xl p-4" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
             <p className="text-xs font-bold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.6 }}>How did it feel?</p>
-            <p className="mt-1 text-sm leading-relaxed" style={{ color: 'var(--text-muted)' }}>{hasCalculatedEffort ? 'Forged Hybrid calculated training effort from reliable heart-rate data, but only you can rate how it felt.' : 'Apple Health did not include enough reliable data for a rated or calculated effort.'} Add your effort and pain so future training can adapt to what the run actually cost you. Post-run energy is optional.</p>
-            <button type="button" onClick={onAddCheckIn} className="mt-3 w-full rounded-lg py-2.5 text-sm font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>Rate this run</button>
+            <p className="mt-1 text-sm leading-relaxed" style={{ color: 'var(--text-muted)' }}>{hasCalculatedEffort ? 'Forged Hybrid calculated training effort from reliable heart-rate data, but only you can rate how it felt.' : runProvenance === RUN_PROVENANCE.IMPORTED && isAppleHealthSource ? 'Apple Health did not include enough reliable data for a rated or calculated effort.' : 'No athlete-rated effort or pain has been saved for this run.'} Add your effort and pain so future training can adapt to what the run actually cost you. Post-run energy is optional.</p>
+            <button type="button" onClick={onAddCheckIn} className="mt-3 w-full rounded-lg py-2.5 text-sm font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>Add how you felt</button>
           </div>
         )}
 

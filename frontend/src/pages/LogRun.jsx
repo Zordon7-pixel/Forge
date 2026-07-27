@@ -13,10 +13,11 @@ import { queueRequest } from '../lib/offlineQueue'
 import { scrollToFirstError, validateRunLog } from '../utils/validation'
 import WatchWorkoutService from '../services/WatchWorkoutService'
 import { fetchDailyExecution, scheduledRunFromExecution, planSessionIdFromState, currentWeekFromState, markSessionComplete, queueSessionComplete, isRetryableCompletionFailure, localDateISO, unplannedRunRouteState, makeupRunRouteState } from '../lib/dailyExecution'
-import { loadPostRunCheckInDraft, savePostRunCheckInDraft } from '../lib/postRunCheckInDraft'
+import { loadPostRunCheckInDraft } from '../lib/postRunCheckInDraft'
 import { buildPlannedSessionSnapshot } from '../lib/runProvenance'
 import { lockDocumentScroll } from '../lib/documentScrollLock'
 import { activeRunReturnTargetFromLocation, withActiveRunReturnTarget } from '../lib/activeRunControls'
+import { resolveRunCompletion, RUN_PROVENANCE } from '../lib/runCompletionPolicy'
 
 const RoutePlanner = lazy(() => import('../components/RoutePlanner'))
 
@@ -162,9 +163,20 @@ function parseSplits(run) {
 function EffortBar({ effort, setEffort }) {
   return (
     <div>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>Effort (optional)</p>
+          <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Leave blank if you would rather add how you felt from the recap.</p>
+        </div>
+        {effort !== null && (
+          <button type="button" onClick={() => setEffort(null)} className="text-xs font-bold" style={{ color: 'var(--accent)' }}>
+            Clear
+          </button>
+        )}
+      </div>
       <div style={{ display: 'flex', gap: 4 }}>
         {Array.from({ length: 10 }, (_, i) => i + 1).map(level => {
-          const isActive = level <= effort
+          const isActive = effort !== null && level <= effort
           return (
             <button
               key={level}
@@ -186,10 +198,10 @@ function EffortBar({ effort, setEffort }) {
       </div>
       <div style={{ marginTop: 10, textAlign: 'center' }}>
         <span style={{ fontSize: 36, fontWeight: 900, color: getEffortColor(effort), lineHeight: 1 }}>
-          {effort}
+          {effort ?? '—'}
         </span>
         <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 3, fontWeight: 600 }}>
-          {getEffortLabel(effort)}
+          {effort === null ? 'Not provided' : getEffortLabel(effort)}
         </div>
       </div>
     </div>
@@ -273,7 +285,7 @@ export default function LogRun() {
     return '30:00'
   })
   const [notes, setNotes] = useState('')
-  const [effort, setEffort] = useState(5)
+  const [effort, setEffort] = useState(null)
   const [loading, setLoading] = useState(false)
   const [pendingPostRunDraft] = useState(() => loadPostRunCheckInDraft())
   const [feedback, setFeedback] = useState('')
@@ -605,7 +617,8 @@ export default function LogRun() {
       distance_miles: distanceMiles,
       duration_seconds: seconds,
       notes,
-      perceived_effort: Number(effort),
+      perceived_effort: effort,
+      watch_mode: RUN_PROVENANCE.MANUAL,
       treadmill_brand: treadmillType,
       shoe_id: selectedShoeId || null,
       target_zone: submittedScheduledRun?.targetZone || null,
@@ -627,44 +640,24 @@ export default function LogRun() {
             progressNotice = ' Open Plan after the run syncs to mark this session complete.'
           }
         }
-        savePostRunCheckInDraft({
+        const completion = resolveRunCompletion({
+          provenance: RUN_PROVENANCE.MANUAL,
           runId: clientRunId,
-          heatDrift: null,
-          runQueued: true,
-          effort: Number(effort),
-          step: 1,
+          queued: true,
         })
-        setSavedRunId(clientRunId)
-        setSavedHeatDrift(null)
-        setShowPostCheckIn(true)
+        setShowPostCheckIn(completion.requiresImmediateCheckIn)
         setFeedback(`Saved offline — will sync when connected.${progressNotice}`)
+        setShowRecoveryPrompt(true)
         return
       }
 
       const runRes = await api.post('/runs', runPayload)
       track('run_logged')
-      const runId = runRes.data?.id || runRes.data?.run?.id
+      const runId = runRes.data?.id || runRes.data?.run?.id || clientRunId
       if (runId) api.post('/prs/auto-detect', { run_id: runId }).catch((err) => {
         console.error('[LogRun] PR auto-detect failed:', err?.message || err)
       })
       // Phase 2L — /badges/check removed (display retired in 2K).
-      if (!runId) {
-        setFeedback('Run saved. Your coach will update after the next sync.')
-        setShowRecoveryPrompt(true)
-        return
-      }
-
-      setSavedRunId(runId)
-      setSavedHeatDrift(runRes.data?.heatDrift || null)
-      savePostRunCheckInDraft({
-        runId,
-        heatDrift: runRes.data?.heatDrift || null,
-        runQueued: false,
-        effort: Number(effort),
-        step: 1,
-      })
-      setShowPostCheckIn(true)
-
       // H5: mark the scheduled calendar session complete ONLY after the run
       // saved successfully. A failed completion must never roll back the run —
       // surface a non-blocking notice instead.
@@ -689,6 +682,13 @@ export default function LogRun() {
       }
 
       setFeedback(planProgressNotice)
+      const completion = resolveRunCompletion({
+        provenance: RUN_PROVENANCE.MANUAL,
+        runId,
+      })
+      if (completion.destination) {
+        navigate(completion.destination, { replace: true })
+      }
     } catch (err) {
       if (!err?.response) {
         await queueRequest('/api/runs', 'POST', runPayload)
@@ -702,17 +702,14 @@ export default function LogRun() {
             progressNotice = ' Open Plan after the run syncs to mark this session complete.'
           }
         }
-        savePostRunCheckInDraft({
+        const completion = resolveRunCompletion({
+          provenance: RUN_PROVENANCE.MANUAL,
           runId: clientRunId,
-          heatDrift: null,
-          runQueued: true,
-          effort: Number(effort),
-          step: 1,
+          queued: true,
         })
-        setSavedRunId(clientRunId)
-        setSavedHeatDrift(null)
-        setShowPostCheckIn(true)
+        setShowPostCheckIn(completion.requiresImmediateCheckIn)
         setFeedback(`Saved offline — will sync when connected.${progressNotice}`)
+        setShowRecoveryPrompt(true)
         setError('')
         return
       }

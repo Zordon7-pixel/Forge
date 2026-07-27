@@ -14,6 +14,7 @@ import { calculateElevationStats } from '../utils/elevation'
 import { clearActiveRunSession, elapsedFromSession, loadActiveRunSession, saveActiveRunSession } from '../lib/activeRunSession'
 import { loadPostRunCheckInDraft, savePostRunCheckInDraft } from '../lib/postRunCheckInDraft'
 import { buildPlannedSessionSnapshot } from '../lib/runProvenance'
+import { resolveRunCompletion, RUN_PROVENANCE } from '../lib/runCompletionPolicy'
 import { getAuthenticatedUserId } from '../lib/auth'
 import { ZONE_HEAT_PALETTE } from '../lib/athleteLanguage'
 import { buildLiveActivityStart, buildLiveActivityUpdate } from '../lib/liveActivityState'
@@ -911,12 +912,21 @@ export default function ActiveRun() {
       const res = await api.post('/runs', payload)
       const runId = res.data?.id || res.data?.run?.id
       if (runId) {
+        const completion = resolveRunCompletion({
+          provenance: RUN_PROVENANCE.LIVE_TRACKED,
+          runId,
+        })
         clearActiveRunSession()
         setSavedRunId(runId)
         setAwaitingManualDistance(false)
         setSavedHeatDrift(res.data?.heatDrift || null)
-        savePostRunCheckInDraft({ runId, heatDrift: res.data?.heatDrift || null, runQueued: false })
-        setShowPostCheckIn(true)
+        savePostRunCheckInDraft({
+          runId,
+          heatDrift: res.data?.heatDrift || null,
+          runQueued: false,
+          provenance: completion.provenance,
+        })
+        setShowPostCheckIn(completion.requiresImmediateCheckIn)
         // H5: mark the scheduled calendar session complete ONLY after the run
         // durably saved. A failed completion must never roll back the run.
         if (planSessionId) {
@@ -956,8 +966,18 @@ export default function ActiveRun() {
         clearActiveRunSession()
         setSavedRunId(payload.id)
         setAwaitingManualDistance(false)
-        savePostRunCheckInDraft({ runId: payload.id, heatDrift: null, runQueued: true })
-        setShowPostCheckIn(true)
+        const completion = resolveRunCompletion({
+          provenance: RUN_PROVENANCE.LIVE_TRACKED,
+          runId: payload.id,
+          queued: true,
+        })
+        savePostRunCheckInDraft({
+          runId: payload.id,
+          heatDrift: null,
+          runQueued: true,
+          provenance: completion.provenance,
+        })
+        setShowPostCheckIn(completion.requiresImmediateCheckIn)
         setSaveError(`Saved offline — Forged Hybrid will sync this run when your connection is back.${progressNotice}`)
       } else {
         setSaveError(err?.response?.data?.error || 'Could not save this run. Check the details and try again.')
