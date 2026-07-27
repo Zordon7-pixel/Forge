@@ -86,26 +86,34 @@ export function createHealthSyncCoordinator(performSync) {
   return {
     async run(options = {}) {
       const requestPermission = Boolean(options.requestPermission)
+      const forceFresh = Boolean(options.forceFresh)
 
       while (true) {
         const sharedOperation = activeOperation
         if (sharedOperation) {
           try {
             const sharedResult = await sharedOperation.promise
-            if (!requestPermission || sharedOperation.requestPermission || !sharedResult?.authorizationUpgradeRequired) {
+            const needsFreshOperation = forceFresh && !sharedOperation.forceFresh
+            const needsPermissionOperation = requestPermission
+              && !sharedOperation.requestPermission
+              && sharedResult?.authorizationUpgradeRequired
+            if (!needsFreshOperation && !needsPermissionOperation) {
               return sharedResult
             }
           } catch (error) {
-            if (!requestPermission || sharedOperation.requestPermission) throw error
+            const canRetryFresh = forceFresh && !sharedOperation.forceFresh
+            const canRetryWithPermission = requestPermission && !sharedOperation.requestPermission
+            if (!canRetryFresh && !canRetryWithPermission) throw error
           }
           continue
         }
 
         const operation = {
+          forceFresh,
           requestPermission,
           promise: null,
         }
-        operation.promise = Promise.resolve().then(() => performSync({ ...options, requestPermission }))
+        operation.promise = Promise.resolve().then(() => performSync({ ...options, forceFresh, requestPermission }))
         activeOperation = operation
 
         try {
@@ -118,6 +126,42 @@ export function createHealthSyncCoordinator(performSync) {
     hasActiveOperation() {
       return Boolean(activeOperation)
     },
+  }
+}
+
+export async function runHealthAwarePageRefresh({
+  authenticated = false,
+  native = false,
+  syncNativeData,
+  afterHealthSync,
+  onHealthSyncError,
+  refreshPage,
+} = {}) {
+  let healthSyncAttempted = false
+  let healthSyncResult = null
+  let healthSyncError = null
+
+  if (authenticated && native) {
+    healthSyncAttempted = true
+    try {
+      healthSyncResult = await syncNativeData({ forceFresh: true })
+    } catch (error) {
+      healthSyncError = error
+      try {
+        onHealthSyncError?.(error)
+      } catch {
+        // Error reporting must not prevent the page refresh fallback.
+      }
+    }
+  }
+
+  await afterHealthSync?.()
+  await refreshPage?.()
+
+  return {
+    healthSyncAttempted,
+    healthSyncResult,
+    healthSyncError,
   }
 }
 

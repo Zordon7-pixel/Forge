@@ -1,23 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
 import { Capacitor } from '@capacitor/core'
 import { isLoggedIn } from '../lib/auth'
+import { runHealthAwarePageRefresh } from '../lib/healthSync'
 import HealthService from '../services/HealthService'
 
 const THRESHOLD = 80 // px to pull before triggering refresh
-
-async function syncHealthBeforePageReload() {
-  if (!isLoggedIn() || !Capacitor.isNativePlatform()) return
-  try {
-    await HealthService.syncNativeData()
-  } catch (error) {
-    console.error('[PullToRefresh] Apple Health sync failed:', error?.message || error)
-  }
-}
 
 export default function PullToRefresh({ children }) {
   const [pulling, setPulling] = useState(false)
   const [pullDistance, setPullDistance] = useState(0)
   const [refreshing, setRefreshing] = useState(false)
+  const refreshInFlight = useRef(false)
   const startY = useRef(null)
   const containerRef = useRef(null)
 
@@ -27,7 +20,7 @@ export default function PullToRefresh({ children }) {
 
     const onTouchStart = (e) => {
       // Only activate when scrolled to the very top
-      if (!refreshing && window.scrollY === 0) {
+      if (!refreshInFlight.current && window.scrollY === 0) {
         startY.current = e.touches[0].clientY
       }
     }
@@ -45,17 +38,30 @@ export default function PullToRefresh({ children }) {
     }
 
     const onTouchEnd = async () => {
-      if (!refreshing && pulling && pullDistance >= THRESHOLD) {
-        setRefreshing(true)
-        setPullDistance(THRESHOLD)
-        await syncHealthBeforePageReload()
-        // Let the completion state paint before page data is requested again.
-        await new Promise(r => setTimeout(r, 150))
-        window.location.reload()
+      try {
+        if (!refreshInFlight.current && pulling && pullDistance >= THRESHOLD) {
+          refreshInFlight.current = true
+          setRefreshing(true)
+          setPullDistance(THRESHOLD)
+          await runHealthAwarePageRefresh({
+            authenticated: isLoggedIn(),
+            native: Capacitor.isNativePlatform(),
+            syncNativeData: (options) => HealthService.syncNativeData(options),
+            onHealthSyncError: (error) => {
+              console.error('[PullToRefresh] Apple Health sync failed:', error?.message || error)
+            },
+            // Let the completion state paint before page data is requested again.
+            afterHealthSync: () => new Promise(r => setTimeout(r, 150)),
+            refreshPage: () => window.location.reload(),
+          })
+        }
+      } finally {
+        refreshInFlight.current = false
+        setRefreshing(false)
+        startY.current = null
+        setPulling(false)
+        setPullDistance(0)
       }
-      startY.current = null
-      setPulling(false)
-      setPullDistance(0)
     }
 
     el.addEventListener('touchstart', onTouchStart, { passive: true })
@@ -67,7 +73,7 @@ export default function PullToRefresh({ children }) {
       el.removeEventListener('touchmove', onTouchMove)
       el.removeEventListener('touchend', onTouchEnd)
     }
-  }, [pulling, pullDistance, refreshing])
+  }, [pulling, pullDistance])
 
   const progress = Math.min(pullDistance / THRESHOLD, 1)
   const showIndicator = pulling && pullDistance > 10

@@ -17,6 +17,7 @@ import {
   isHealthHistoryTransferPending,
   markHealthHistoryTransferPending,
   retryableHealthSyncErrors,
+  runHealthAwarePageRefresh,
 } from '../src/lib/healthSync.js'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
@@ -103,6 +104,115 @@ assert.ok(!timeoutCopy.includes('15000ms'), 'timeout copy does not expose an imp
 }
 
 {
+  const automaticGate = deferred()
+  const manualGate = deferred()
+  const calls = []
+  const coordinator = createHealthSyncCoordinator(async (options) => {
+    calls.push(options)
+    if (calls.length === 1) {
+      await automaticGate.promise
+      return { complete: true, source: 'automatic' }
+    }
+    await manualGate.promise
+    return { complete: true, source: 'manual' }
+  })
+  const automatic = coordinator.run()
+  await Promise.resolve()
+  const manualOne = coordinator.run({ forceFresh: true })
+  const manualTwo = coordinator.run({ forceFresh: true })
+  assert.equal(calls.length, 1, 'manual callers do not start alongside an active automatic sync')
+  automaticGate.resolve()
+  await automatic
+  await Promise.resolve()
+  await Promise.resolve()
+  assert.equal(calls.length, 2, 'manual callers queue one fresh sync after an active automatic sync')
+  assert.equal(calls[1].forceFresh, true, 'the queued sync retains manual freshness semantics')
+  manualGate.resolve()
+  const manualResults = await Promise.all([manualOne, manualTwo])
+  assert.deepEqual(manualResults.map((result) => result.source), ['manual', 'manual'])
+  assert.equal(calls.length, 2, 'concurrent manual callers share the same fresh sync')
+}
+
+{
+  const syncGate = deferred()
+  const calls = []
+  const events = []
+  const refresh = runHealthAwarePageRefresh({
+    authenticated: true,
+    native: true,
+    syncNativeData: async (options) => {
+      calls.push(options)
+      events.push('health-started')
+      const result = await syncGate.promise
+      events.push('health-settled')
+      return result
+    },
+    afterHealthSync: () => {
+      events.push('post-sync')
+    },
+    refreshPage: () => {
+      events.push('page-refreshed')
+    },
+  })
+  await Promise.resolve()
+  assert.deepEqual(calls, [{ forceFresh: true }], 'authenticated native pull refresh requests exactly one forced HealthKit sync')
+  assert.deepEqual(events, ['health-started'], 'page refresh waits while the HealthKit sync is unsettled')
+  syncGate.resolve({ complete: true })
+  const outcome = await refresh
+  assert.deepEqual(events, ['health-started', 'health-settled', 'post-sync', 'page-refreshed'])
+  assert.equal(outcome.healthSyncAttempted, true)
+  assert.equal(outcome.healthSyncResult.complete, true)
+  assert.equal(outcome.healthSyncError, null)
+}
+
+{
+  const syncGate = deferred()
+  const events = []
+  const refresh = runHealthAwarePageRefresh({
+    authenticated: true,
+    native: true,
+    syncNativeData: () => syncGate.promise,
+    onHealthSyncError: (error) => events.push(`health-failed:${error.message}`),
+    refreshPage: () => events.push('page-refreshed'),
+  })
+  await Promise.resolve()
+  assert.deepEqual(events, [], 'handled sync failure does not refresh before the failure settles')
+  syncGate.reject(new Error('server unavailable'))
+  const outcome = await refresh
+  assert.deepEqual(events, ['health-failed:server unavailable', 'page-refreshed'])
+  assert.equal(outcome.healthSyncAttempted, true)
+  assert.equal(outcome.healthSyncResult, null)
+  assert.match(outcome.healthSyncError.message, /server unavailable/)
+}
+
+{
+  let healthCalls = 0
+  let refreshCalls = 0
+  const syncNativeData = () => {
+    healthCalls += 1
+  }
+  const refreshPage = () => {
+    refreshCalls += 1
+  }
+  const webOutcome = await runHealthAwarePageRefresh({
+    authenticated: true,
+    native: false,
+    syncNativeData,
+    refreshPage,
+  })
+  const loggedOutOutcome = await runHealthAwarePageRefresh({
+    authenticated: false,
+    native: true,
+    syncNativeData,
+    refreshPage,
+  })
+  assert.equal(healthCalls, 0, 'web and logged-out pull refreshes never invoke HealthKit')
+  assert.equal(refreshCalls, 2, 'web and logged-out pulls still refresh page data')
+  assert.equal(webOutcome.healthSyncAttempted, false)
+  assert.equal(loggedOutOutcome.healthSyncAttempted, false)
+}
+
+{
   let calls = 0
   await assert.rejects(
     importHealthWorkoutBatches(workouts, async (batch) => {
@@ -157,8 +267,9 @@ assert.ok(service.indexOf('markHealthHistoryTransferPending()') < service.indexO
 assert.ok(service.includes("api.post('/import/health', { workouts: batch }, { timeout: HEALTH_IMPORT_TIMEOUT_MS })"), 'each workout batch has a dedicated timeout')
 assert.ok(service.includes('createHealthSyncCoordinator'), 'native calls use the behavioral single-flight coordinator')
 assert.ok(service.includes('announceHealthSyncResult(syncResult, { complete })'), 'sync result distinguishes complete from partial')
-assert.ok(pullToRefresh.includes('await HealthService.syncNativeData()'), 'native pull-to-refresh waits for Apple Health sync')
-assert.ok(pullToRefresh.indexOf('await HealthService.syncNativeData()') < pullToRefresh.indexOf('window.location.reload()'), 'page data reloads only after the health sync attempt')
+assert.ok(pullToRefresh.includes('await runHealthAwarePageRefresh({'), 'pull-to-refresh delegates sync and reload ordering to the tested coordinator')
+assert.ok(pullToRefresh.includes('syncNativeData: (options) => HealthService.syncNativeData(options)'), 'pull-to-refresh forwards forced manual sync options to HealthService')
 assert.ok(pullToRefresh.includes("console.error('[PullToRefresh] Apple Health sync failed:'"), 'pull sync failures retain diagnostic context')
+assert.ok(pullToRefresh.includes('refreshInFlight.current = true'), 'gesture refresh is synchronously guarded against duplicate completion events')
 
-console.log('HEALTH AUTO-SYNC SMOKE OK (35)')
+console.log('HEALTH AUTO-SYNC SMOKE OK')
