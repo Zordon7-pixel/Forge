@@ -1,0 +1,27 @@
+You are wiring the already-built, already-QA-passed adaptive modules into the Forge backend plan flow. Branch feat/adaptive-plan-wiring. The three modules exist and are tested: backend/src/lib/weeklyRampEngine.js (decideWeeklyRamp), backend/src/lib/planEffort.js (annotate run sessions with targetBpmRange), backend/src/lib/strengthAdjunct.js (equipment substitution). Spec: FORGE-ADAPTIVE-PLAN-CALENDAR-SPEC.md.
+
+ABSOLUTE SAFETY RULE: users with NO hr profile and NO mileage history and NO equipment profile must get byte-identical plan output to today. Every wiring point must be a no-op when its input data is absent. This is a live app serving every user; a regression here breaks everyone.
+
+STEP 0 — READ FIRST (do not edit yet):
+- backend/src/routes/plans.js (2796 lines) — find (a) where a plan's upcoming weekly volume / next-week mileage target is computed, (b) where run sessions are serialized for the client response, (c) where strength sessions are built (grep buildStrengthExercises / exerciseCatalog / normalizeEquipment).
+- backend/src/lib/weeklyRampEngine.js, planEffort.js, strengthAdjunct.js to know their exact signatures.
+- backend/src/lib/runHistory.js and healthSignals.js for how to source weekly mileage history + readiness trend.
+
+STEP 1 — FIX the zero-mileage MEDIUM in weeklyRampEngine.js (QA finding, weeklyRampEngine.js ~line 90-103):
+- If the most recent completed week mileage is 0 (rest week / injury week / gap), the current ADVANCE branch computes hardCap = 0*1.10 = 0 and prescribes 0 miles. That is wrong.
+- Fix: when currentWeekMiles <= 0, return a PASSTHROUGH decision with targetMiles = plannedNextWeekMiles (do not force zero). Add a smoke assertion in backend/test/weeklyRampEngine.smoke.js covering currentWeekMiles=0 => passthrough (targetMiles === planned).
+
+STEP 2 — WIRE P1 (ramp) into plans.js:
+- Where next-week target volume is determined, call decideWeeklyRamp with real inputs (weekly mileage history from runHistory, planned next-week volume already in the plan, ACWR inputs, readiness trend from healthSignals).
+- Attach the ramp decision + reason to the week object in the response (e.g. week.rampDecision = { decision, targetMiles, reason }). Do NOT overwrite the planned mileage silently — surface the recommendation; only adjust the served target if you are confident the existing flow expects it. If unsure, attach as advisory metadata and leave existing volume untouched. Prefer additive metadata over mutating existing numbers.
+- If history is insufficient, attach nothing (byte-identical).
+
+STEP 3 — WIRE P2 (effort) into plans.js:
+- Where run sessions are serialized, run them through annotatePlanEffort with the user hr profile. No profile => output unchanged.
+
+STEP 4 — RECONCILE P3 (strength):
+- The repo ALREADY has equipment substitution via buildStrengthExercises/exerciseCatalog. Determine whether strengthAdjunct.js duplicates it.
+- If the existing path already covers equipment substitution, DO NOT double-apply. Instead ensure the served strength session exposes an adjustedForGear flag consistent with strengthAdjunct's contract (either by surfacing it from the existing path, or leave a short code comment documenting that strengthAdjunct is the standalone/testable form of the same rules). Report which choice you made and why.
+- Do NOT run both substitution engines on the same session.
+
+GATES: node --check every edited file. Run the full existing backend test suite (npm test or the repo's test script) plus the 3 adaptive smokes. Keep files changed at or under 6. Report exactly: files changed, the STEP 4 reconciliation decision, and all test results.
