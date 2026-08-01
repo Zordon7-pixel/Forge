@@ -23,6 +23,8 @@ import {
   requestNativeRunLocation,
   requestWebRunLocation,
   canAcceptRunLocationPoint,
+  createRunLocationWatcherCallbacks,
+  createRunLocationWatcherLifecycle,
   RUN_LOCATION_STATUS,
   runLocationErrorStatus,
   runLocationStatusMessage,
@@ -291,8 +293,12 @@ export default function ActiveRun() {
   const pausedDurationMsRef = useRef(restoredSession?.pausedDurationMs || 0)
   const pauseStartedAtRef = useRef(restoredSession?.pauseStartedAt || null)
   const finishedAtRef = useRef(restoredSession?.finishedAt || null)
-  const routeRecordingActiveRef = useRef(restoredSession?.phase === 'running')
-  const routeRecordingEpochRef = useRef(0)
+  const routeRecordingLifecycleRef = useRef(null)
+  if (!routeRecordingLifecycleRef.current) {
+    routeRecordingLifecycleRef.current = createRunLocationWatcherLifecycle({
+      active: restoredSession?.phase === 'running',
+    })
+  }
   const clientRunIdRef = useRef(restoredSession?.clientRunId || createClientRunId())
   const resumeAttemptedRef = useRef(false)
   const sessionStateRef = useRef(null)
@@ -304,14 +310,10 @@ export default function ActiveRun() {
   const activeRunReturnTargetRef = useRef(activeRunReturnTarget)
   const requestBackRef = useRef(null)
   const beginRouteRecording = useCallback(() => {
-    const epoch = routeRecordingEpochRef.current + 1
-    routeRecordingEpochRef.current = epoch
-    routeRecordingActiveRef.current = true
-    return epoch
+    return routeRecordingLifecycleRef.current.begin()
   }, [])
   const stopRouteRecording = useCallback(() => {
-    routeRecordingActiveRef.current = false
-    routeRecordingEpochRef.current += 1
+    routeRecordingLifecycleRef.current.stop()
   }, [])
   const actualElevation = useMemo(() => calculateElevationStats(routeCoords), [routeCoords])
   const plannedRoutePositions = useMemo(() => (
@@ -698,9 +700,8 @@ export default function ActiveRun() {
 
   const handlePoint = useCallback((lat, lon, alt, accuracy, timestamp, recordingEpoch) => {
     if (!canAcceptRunLocationPoint({
-      recordingActive: routeRecordingActiveRef.current,
+      watcherLifecycle: routeRecordingLifecycleRef.current,
       recordingEpoch,
-      activeEpoch: routeRecordingEpochRef.current,
       latitude: lat,
       longitude: lon,
     })) return
@@ -784,14 +785,20 @@ export default function ActiveRun() {
     }
 
     const recordingEpoch = beginRouteRecording()
-    nativeWatchRef.current = false
-    watchRef.current = navigator.geolocation.watchPosition(
-      pos => {
+    const watcherCallbacks = createRunLocationWatcherCallbacks({
+      watcherLifecycle: routeRecordingLifecycleRef.current,
+      recordingEpoch,
+      onLocation: (pos) => {
         handlePoint(pos.coords.latitude, pos.coords.longitude, pos.coords.altitude, pos.coords.accuracy, Date.now(), recordingEpoch)
       },
-      (error) => {
+      onError: (error) => {
         setLocationFailure(runLocationErrorStatus(error))
       },
+    })
+    nativeWatchRef.current = false
+    watchRef.current = navigator.geolocation.watchPosition(
+      watcherCallbacks.location,
+      watcherCallbacks.error,
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 1000 }
     )
     return true
@@ -835,6 +842,18 @@ export default function ActiveRun() {
       try {
         let registrationError = null
         const recordingEpoch = beginRouteRecording()
+        const watcherCallbacks = createRunLocationWatcherCallbacks({
+          watcherLifecycle: routeRecordingLifecycleRef.current,
+          recordingEpoch,
+          onLocation: (loc) => {
+            handlePoint(loc.latitude, loc.longitude, loc.altitude, loc.accuracy, loc.time || Date.now(), recordingEpoch)
+          },
+          onError: (err) => {
+            console.error('[ActiveRun] bg-geo error', err.message)
+            registrationError = err
+            setLocationFailure(runLocationErrorStatus(err))
+          },
+        })
         const id = await BackgroundGeolocation.addWatcher({
           backgroundMessage: 'Forged Hybrid is recording your run',
           backgroundTitle: 'Forged Hybrid',
@@ -843,13 +862,11 @@ export default function ActiveRun() {
           distanceFilter: 5,
         }, (loc, err) => {
           if (err) {
-            console.error('[ActiveRun] bg-geo error', err.message)
-            registrationError = err
-            setLocationFailure(runLocationErrorStatus(err))
+            watcherCallbacks.error(err)
             return
           }
           if (!loc) return
-          handlePoint(loc.latitude, loc.longitude, loc.altitude, loc.accuracy, loc.time || Date.now(), recordingEpoch)
+          watcherCallbacks.location(loc)
         })
         if (registrationError) {
           await BackgroundGeolocation.removeWatcher({ id }).catch((error) => {

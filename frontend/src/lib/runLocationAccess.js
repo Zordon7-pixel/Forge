@@ -28,14 +28,56 @@ function validPosition(position) {
 }
 
 export function canAcceptRunLocationPoint({
+  watcherLifecycle,
   recordingActive,
   recordingEpoch,
   activeEpoch,
   latitude,
   longitude,
 } = {}) {
-  if (!recordingActive || Number(recordingEpoch) !== Number(activeEpoch)) return false
+  const isCurrentWatcher = watcherLifecycle?.accepts
+    ? watcherLifecycle.accepts(recordingEpoch)
+    : Boolean(recordingActive) && Number(recordingEpoch) === Number(activeEpoch)
+  if (!isCurrentWatcher) return false
   return validPosition({ latitude, longitude })
+}
+
+export function createRunLocationWatcherLifecycle({ active = false } = {}) {
+  let recordingActive = Boolean(active)
+  let activeEpoch = 0
+
+  return {
+    begin() {
+      activeEpoch += 1
+      recordingActive = true
+      return activeEpoch
+    },
+    stop() {
+      recordingActive = false
+      activeEpoch += 1
+    },
+    accepts(recordingEpoch) {
+      return recordingActive && Number(recordingEpoch) === activeEpoch
+    },
+  }
+}
+
+export function createRunLocationWatcherCallbacks({
+  watcherLifecycle,
+  recordingEpoch,
+  onLocation,
+  onError,
+} = {}) {
+  const dispatch = (callback, value) => {
+    if (!watcherLifecycle?.accepts?.(recordingEpoch)) return false
+    callback?.(value)
+    return true
+  }
+
+  return {
+    location: (location) => dispatch(onLocation, location),
+    error: (error) => dispatch(onError, error),
+  }
 }
 
 export async function requestNativeRunLocation(plugin, timeoutMs = 15_000) {

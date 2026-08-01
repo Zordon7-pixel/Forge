@@ -82,6 +82,20 @@ clearActiveRunSession(storage)
 check(storage.getItem(ACTIVE_RUN_SESSION_KEY) === null, 'saved session is removed after a durable run save')
 
 saveActiveRunSession({
+  phase: 'awaiting_distance',
+  startedAt: now - 90_000,
+  elapsed: 42,
+}, ownerUserId, storage, now)
+const restoredLegacyFinish = loadActiveRunSession(ownerUserId, storage, now + 1_000)
+check(restoredLegacyFinish?.finishedAt === 0, 'legacy manual-distance recovery does not invent a finish time from savedAt')
+check(resolveActivityEndTimestamp({
+  startedAt: restoredLegacyFinish?.startedAt,
+  elapsedSeconds: restoredLegacyFinish?.elapsed,
+  finishedAt: restoredLegacyFinish?.finishedAt,
+}) === now - 48_000, 'legacy manual-distance recovery resolves end time from active duration')
+clearActiveRunSession(storage)
+
+saveActiveRunSession({
   phase: 'paused',
   startedAt: now - 90_000,
   elapsed: 42,
@@ -165,7 +179,7 @@ check(!activeRun.includes('Record route: On') && !activeRun.includes('Record rou
 check(activeRun.includes('loc.accuracy') && activeRun.includes('pos.coords.accuracy'), 'native and web GPS forward horizontal accuracy into the route')
 check(activeRun.indexOf('const savePromise = saveRun()') < activeRun.indexOf('await clearActiveWatch()', activeRun.indexOf('const savePromise = saveRun()')), 'finish starts the durable save before watcher cleanup')
 check(/failed to remove native GPS watcher/.test(activeRun) && /failed to clear web GPS watcher/.test(activeRun), 'watcher cleanup errors are fail-soft and observable')
-check(/routeRecordingActiveRef\.current/.test(activeRun) && /recordingEpoch/.test(activeRun), 'GPS callbacks are gated by the current recording epoch')
+check(/createRunLocationWatcherLifecycle/.test(activeRun) && /createRunLocationWatcherCallbacks/.test(activeRun), 'position and error callbacks share the current watcher lifecycle gate')
 check(/finishedAtRef\.current/.test(activeRun) && /resolveActivityEndTimestamp/.test(activeRun), 'run payload keeps wall-clock finish separate from active duration')
 check(/MapViewController/.test(activeRun) && /map\.panTo\(command\.position/.test(activeRun) && /You are here/.test(activeRun) && /radius=\{15\}/.test(activeRun), 'Follow view pans to a prominent yellow current-location marker')
 check(/activeRunMapCommand\(mapLayout/.test(activeRun) && /command\.type === 'fit'/.test(activeRun) && /command\.type === 'follow'/.test(activeRun), 'map fitting is isolated to Overview while Follow tracks the latest valid position')

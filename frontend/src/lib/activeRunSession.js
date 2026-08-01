@@ -93,8 +93,8 @@ export function loadActiveRunSession(ownerUserId, storage, now = Date.now()) {
       startedAt,
       savedAt,
       elapsed: Math.min(86_400, Math.max(0, Math.round(finiteNumber(parsed.elapsed, 0)))),
-      finishedAt: parsed.phase === 'awaiting_distance'
-        ? Math.max(startedAt, finiteNumber(parsed.finishedAt, savedAt))
+      finishedAt: parsed.phase === 'awaiting_distance' && finiteNumber(parsed.finishedAt, 0) >= startedAt
+        ? finiteNumber(parsed.finishedAt, 0)
         : 0,
       pausedDurationMs: Math.min(MAX_SESSION_AGE_MS, Math.max(0, Math.round(finiteNumber(parsed.pausedDurationMs, 0)))),
       pauseStartedAt: parsed.phase === 'paused' ? Math.max(0, finiteNumber(parsed.pauseStartedAt, savedAt)) : 0,
