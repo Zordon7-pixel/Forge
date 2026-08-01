@@ -1,8 +1,8 @@
 // Forged Hybrid H6 — permanent simplification/migration route + surface scan.
 // Run: node frontend/test/h6RouteScan.smoke.mjs
 // Proves the H6 invariants hold so a future refactor can't silently regress them:
-//  - More exposes exactly ONE plan destination (no competing Adaptive Plan / Plan
-//    Catalog / Races nav entries), while catalog/race routes stay reachable.
+//  - More exposes no duplicate plan/PR destinations; Train owns the unified plan,
+//    while Community owns PRs/badges and catalog/race routes stay reachable.
 //  - Old direct routes still resolve (backward compatibility preserved).
 //  - No user-data routes were removed.
 //  - The shared AI-guidance note carries the exact required copy and appears on
@@ -66,13 +66,17 @@ for (const rel of ['components/ReadinessCard.jsx', 'components/TodaysPickCard.js
   assert(!/AiGuidanceNote/.test(src), `${rel} (deterministic) does not carry the AI note`);
 }
 
-console.log('\n== More exposes exactly one plan destination ==');
+console.log('\n== More stays free of duplicate plan and PR destinations ==');
 const more = read('pages/More.jsx');
 const planEntries = (more.match(/to:\s*'\/plan'/g) || []).length;
-assert(planEntries === 1, 'More has exactly one /plan nav entry');
+assert(planEntries === 0, 'More does not duplicate the unified plan owned by Train');
 assert(!/to:\s*'\/plan-catalog'/.test(more), 'More no longer lists a competing Plan Catalog nav entry');
 assert(!/to:\s*'\/races'/.test(more), 'More no longer lists a competing Races nav entry');
-assert(/to:\s*'\/prs'/.test(more), 'PR Wall stays reachable under Progress');
+assert(!/to:\s*'\/prs'/.test(more), 'More does not duplicate PR Wall after it moved to Community');
+const community = read('pages/Community.jsx');
+const engagementCards = read('components/EngagementProgressCards.jsx');
+assert(/<EngagementHighlights engagement=\{engagement\}/.test(community), 'Community renders the PR and badge highlights');
+assert(/navigate\('\/prs'\)/.test(engagementCards), 'Community keeps PR Wall reachable from its progress card');
 
 console.log('\n== catalog/races stay reachable from the Plan flow ==');
 const plan = read('pages/Plan.jsx');

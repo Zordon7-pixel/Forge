@@ -16,9 +16,9 @@ check(planSource.includes('aria-expanded={adaptationOpen}'), 'calendar adaptatio
 check(planSource.includes("setAdaptationOpen(Boolean(adaptationProposal.safetyException || hasPendingChanges))"), 'pending or safety adaptations open automatically')
 check(planSource.includes('}, [adaptationProposal])'), 'adaptation disclosure re-evaluates when safety state changes on the same proposal')
 
-check(!bodySource.includes("api.get('/health/sync')"), 'Body does not fetch the raw health metric strip')
+check(bodySource.includes("api.get('/health/sync')") && bodySource.includes('healthRes.data?.steps_today'), 'Body limits the health sync read to the requested steps card')
 check(!bodySource.includes('How your plan uses this data'), 'Body omits the repeated plan explanation')
-check(!bodySource.includes('Apple Health'), 'Body uses source-neutral recovery copy')
+check((bodySource.match(/Apple Health/g) || []).length === 1 && bodySource.includes("'Synced from Apple Health.'"), 'Body names Apple Health only as the truthful source for the steps card')
 check(bodySource.indexOf('Readiness history') < bodySource.indexOf('What may affect today'), 'readiness history precedes the driver cards')
 check(bodySource.includes('to="/more"'), 'empty-state action opens Health & data in More')
 

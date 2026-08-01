@@ -7,6 +7,7 @@ const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), 'u
 
 const layout = read('src/components/Layout.jsx')
 const stretches = read('src/pages/Stretches.jsx')
+const css = read('src/index.css')
 
 let passed = 0
 function check(condition, message) {
@@ -14,7 +15,7 @@ function check(condition, message) {
   passed += 1
 }
 
-check(layout.includes("'--app-bottom-nav-height': 'calc(59px + env(safe-area-inset-bottom, 0px))'"), 'layout defines one safe-area-aware bottom-nav height')
+check(css.includes('--app-bottom-nav-height: calc(var(--app-bottom-nav-base-height) + var(--safe-bottom))'), 'shared CSS defines one safe-area-aware bottom-nav height')
 check(layout.includes("height: 'var(--app-bottom-nav-height)'"), 'bottom navigation consumes the shared height')
 check(stretches.includes("bottom: 'var(--app-bottom-nav-height, 59px)'"), 'stretch action bar sits above the bottom navigation')
 check(stretches.includes('zIndex: 25'), 'stretch action bar remains below the navigation stacking layer')
