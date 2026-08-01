@@ -7,6 +7,7 @@ import { getToken } from '../lib/tokenStore'
 import AiGuidanceNote from './AiGuidanceNote'
 import { activityLabel, isRunningActivity } from '../lib/activityType'
 import { finiteReadinessScore, resolveReadiness } from '../lib/truthConsistency'
+import { resolveTodayPlanAccess, resolveTodayWorkoutLabel } from '../lib/todayPlanAccess'
 
 function activityDateLabel(value) {
   if (!value) return '--'
@@ -238,12 +239,22 @@ export function ReadinessGauge({ score, onClick }) {
 export function DailyCoachFlow({ checkedInToday, readinessData, recommendation, execution, todayWatchWorkout, onCheckIn, onStartWorkout, onStartUnplannedRun, onReflect, onDetails }) {
   const { t } = useTranslation()
   const readiness = resolveReadiness(readinessData)
-  const isRestDay = recommendation?.recommendationType === 'rest' || recommendation?.type === 'rest'
+  const isRestDay = execution?.isRest === true || recommendation?.recommendationType === 'rest' || recommendation?.type === 'rest'
   const recommendationLabel = recommendation
     ? getRecommendationLabel(recommendation)
     : "today's plan"
   const structure = Array.isArray(recommendation?.structure) ? recommendation.structure : []
   const calendarSessions = execution?.hasDay && Array.isArray(execution.sessions) ? execution.sessions : []
+  const planAccess = resolveTodayPlanAccess({
+    checkedInToday,
+    recommendation,
+    calendarSessions,
+    isRestDay,
+    onCheckIn,
+    onStartWorkout,
+    onDetails,
+  })
+  const { hasViewablePlan } = planAccess
   const calendarKinds = [...new Set(calendarSessions.map(calendarSessionKind))]
   const calendarLabel = calendarKinds.length > 1
     ? 'run + lift'
@@ -256,7 +267,16 @@ export function DailyCoachFlow({ checkedInToday, readinessData, recommendation, 
     : ''
   const coachWhy = interferenceReason || (typeof recommendation?.brief?.why === 'string' ? recommendation.brief.why.trim() : '')
   const buildTodaySubtitle = () => {
-    if (!recommendation) return "Check in to unlock today's plan."
+    if (!recommendation && isRestDay) return 'Rest and recovery are scheduled today.'
+    if (!recommendation && calendarSessions.length > 0) {
+      const summaryLabel = calendarLabel || 'training'
+      return `${summaryLabel.charAt(0).toUpperCase() + summaryLabel.slice(1)} is scheduled today. Check in only if you want the effort adjusted.`
+    }
+    if (!recommendation) {
+      return checkedInToday
+        ? 'No workout is available yet. Review your check-in or open the calendar.'
+        : "No workout is scheduled yet. Check in to build today's recommendation."
+    }
     if (isRestDay) {
       return `${readiness.sentencePrefix}Rest and recovery are scheduled today.`
     }
@@ -287,7 +307,14 @@ export function DailyCoachFlow({ checkedInToday, readinessData, recommendation, 
   }
   const steps = [
     { key: 'checkin', label: 'Check in', done: checkedInToday, action: onCheckIn },
-    { key: 'train', label: isRestDay ? 'Rest day' : (recommendation ? recommendationLabel : 'Train'), done: isRestDay, action: onStartWorkout },
+    {
+      key: 'train',
+      label: !hasViewablePlan
+        ? checkedInToday ? 'Review check-in' : 'Plan pending'
+        : isRestDay ? 'Rest day' : (recommendation ? recommendationLabel : 'Train'),
+      done: isRestDay,
+      action: planAccess.trainAction,
+    },
     { key: 'reflect', label: 'Reflect', done: false, action: onReflect },
   ]
 
@@ -297,9 +324,13 @@ export function DailyCoachFlow({ checkedInToday, readinessData, recommendation, 
         <div>
           <p className="t-micro" style={{ color: 'var(--accent)' }}>Today</p>
           <h2 className="t-title mt-1" style={{ color: 'var(--text-primary)' }}>
-            {checkedInToday
-              ? (isRestDay ? 'Recovery is the plan today' : 'Train from the plan')
-              : 'Check in before today\'s plan'}
+            {hasViewablePlan
+              ? checkedInToday
+                ? (isRestDay ? 'Recovery is the plan today' : 'Train from the plan')
+                : 'Review today\'s plan'
+              : checkedInToday
+                ? 'Today\'s plan is not ready'
+                : 'Check in for today\'s recommendation'}
           </h2>
           <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
             {buildTodaySubtitle()}
@@ -320,19 +351,21 @@ export function DailyCoachFlow({ checkedInToday, readinessData, recommendation, 
         </div>
         <div className="flex flex-col gap-2">
           <button
-            onClick={checkedInToday ? onStartWorkout : onCheckIn}
+            onClick={planAccess.primaryAction}
             className="pressable rounded-xl px-3 py-2 text-xs font-black"
             style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none' }}
           >
-            {checkedInToday ? (isRestDay ? 'View week' : 'Start') : 'Check in'}
+            {planAccess.primaryLabel}
           </button>
-          <button
-            onClick={onDetails}
-            className="pressable rounded-xl px-3 py-2 text-xs font-bold"
-            style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}
-          >
-            Details
-          </button>
+          {planAccess.secondaryAction && (
+            <button
+              onClick={planAccess.secondaryAction}
+              className="pressable rounded-xl px-3 py-2 text-xs font-bold"
+              style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}
+            >
+              {planAccess.secondaryLabel}
+            </button>
+          )}
           {checkedInToday && isRestDay && (
             <button
               type="button"
@@ -489,11 +522,12 @@ export function TodayDetailSheet({
   const calendarSessions = execution?.hasDay && Array.isArray(execution.sessions) ? execution.sessions : []
   const calendarKinds = [...new Set(calendarSessions.map(calendarSessionKind))]
   const isRestDay = execution?.isRest === true || recommendation?.recommendationType === 'rest' || recommendation?.type === 'rest'
-  const recommendationLabel = calendarKinds.length > 1
-    ? 'Run + lift'
-    : calendarKinds[0] === 'lift'
-      ? 'Strength'
-      : recommendation ? getRecommendationLabel(recommendation) : null
+  const planAccess = resolveTodayPlanAccess({ checkedInToday, recommendation, calendarSessions, isRestDay })
+  const { hasViewablePlan } = planAccess
+  const recommendationLabel = resolveTodayWorkoutLabel({
+    calendarKinds,
+    recommendationLabel: recommendation ? getRecommendationLabel(recommendation) : null,
+  })
   const durationText = formatPlanDuration(recommendation?.durationMinutes, recommendation?.durationIsEstimated)
   const topFactors = (readinessBreakdown || []).filter((item) => item.label !== 'Base score').slice(0, 2)
   const interferenceReason = recommendation?.interference?.adjusted && typeof recommendation?.interference?.reason === 'string'
@@ -508,7 +542,8 @@ export function TodayDetailSheet({
     .map((target) => ({ ...target, value: target.value === null || target.value === undefined ? '' : String(target.value).trim() }))
     .filter((target) => target.value)
   const planSignals = [
-    !checkedInToday ? 'Today starts with check-in data so Forged Hybrid can adjust effort before you train.' : null,
+    !checkedInToday ? planAccess.uncheckedSignal : null,
+    checkedInToday && !hasViewablePlan ? 'No workout recommendation is available yet. Review your check-in or open the calendar.' : null,
     activeInjury ? `Recovery mode is active for ${activeInjury.body_part || 'your injury'}, so workouts are softened until return.` : null,
     watchSyncNotice ? 'A new watch activity was synced and may change load, recovery, and the next workout.' : null,
     compliance && compliance.completed < compliance.planned ? 'Missed planned sessions this week can shift the next run toward base or recovery work.' : null,
@@ -530,9 +565,7 @@ export function TodayDetailSheet({
           <div>
             <p className="text-xs font-bold uppercase" style={{ color: 'var(--accent)', letterSpacing: 0.8 }}>Today</p>
             <h2 className="mt-1 text-2xl font-black" style={{ color: 'var(--text-primary)' }}>
-              {checkedInToday
-                ? (isRestDay ? 'Recovery is the plan today' : 'Plan locked for today')
-                : 'Check in before training'}
+              {isRestDay ? 'Recovery is the plan today' : (hasViewablePlan ? 'Today\'s training plan' : 'No workout scheduled')}
             </h2>
           </div>
           <button onClick={onClose} className="rounded-lg px-3 py-2 text-xs" style={{ background: 'var(--bg-input)', color: 'var(--text-muted)' }}>
@@ -550,7 +583,7 @@ export function TodayDetailSheet({
           <div className="rounded-xl p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
             <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Workout</p>
             <p className="mt-1 text-sm font-bold capitalize" style={{ color: 'var(--text-primary)' }}>
-              {recommendationLabel || 'After check-in'}
+              {recommendationLabel || (isRestDay ? 'Rest day' : 'No workout scheduled')}
             </p>
             {recommendation && Number(recommendation.suggestedDistance || 0) > 0 && (
               <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{recommendation.suggestedDistance} mi</p>
@@ -578,7 +611,7 @@ export function TodayDetailSheet({
               </p>
             )) : (
               <p className="rounded-xl p-3 text-sm" style={{ background: 'var(--bg-input)', color: 'var(--text-muted)' }}>
-                Complete check-in and sync a watch to unlock the readiness explanation.
+                {planAccess.readinessFallback}
               </p>
             )}
             {(recommendation?.reason || coachWhy) && <AiGuidanceNote />}
@@ -641,7 +674,7 @@ export function TodayDetailSheet({
             <button onClick={onCheckIn} className="rounded-xl px-3 py-3 text-sm font-bold" style={{ background: checkedInToday ? 'var(--bg-input)' : 'var(--accent)', color: checkedInToday ? 'var(--text-primary)' : '#000' }}>
               {checkedInToday ? 'Edit check-in' : 'Check in'}
             </button>
-            {(calendarSessions.length === 0 || isRestDay) && (
+            {planAccess.showStartLog && (
               <button onClick={onStartWorkout} className="rounded-xl px-3 py-3 text-sm font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>
                 {isRestDay ? 'View calendar' : 'Start/log'}
               </button>

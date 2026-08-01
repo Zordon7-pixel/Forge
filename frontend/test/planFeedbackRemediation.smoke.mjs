@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { resolveTodayPlanAccess, resolveTodayWorkoutLabel } from '../src/lib/todayPlanAccess.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const frontend = path.resolve(here, '..')
@@ -29,8 +30,7 @@ const evidenceUse = plan.indexOf('inputSummary: planInputs, trainingEvidence')
 assert(evidenceDeclaration >= 0 && evidenceDeclaration < evidenceUse, 'training evidence is declared before the selected-day view uses it')
 
 console.log('\n== Rest-day actions ==')
-assert(insights.includes("const isRestDay = recommendation?.recommendationType === 'rest' || recommendation?.type === 'rest'"), 'Today surfaces identify explicit rest recommendations')
-assert(insights.includes("isRestDay ? 'View week' : 'Start'"), 'Today primary action never labels a rest day Start')
+assert(insights.includes("const isRestDay = execution?.isRest === true || recommendation?.recommendationType === 'rest' || recommendation?.type === 'rest'"), 'Today surfaces identify calendar and recommendation rest days')
 assert(insights.includes("isRestDay ? 'View calendar' : 'Start/log'"), 'Today details route rest days to the calendar')
 assert(insights.includes('Recovery is the plan today'), 'rest-day heading is explicit')
 assert(insights.includes("disabled={step.key === 'train' && isRestDay}"), 'completed rest step is not a redundant interactive control')
@@ -55,11 +55,74 @@ const coachSource = insights.slice(coachStart, detailsStart)
 const detailsSource = insights.slice(detailsStart)
 assert(!coachSource.includes("{t('today.workoutBreakdown')}"), 'compact Today card does not duplicate the full workout breakdown')
 assert(coachSource.includes("? 'run + lift'"), 'compact Today summary identifies a hybrid run + lift day')
+assert(coachSource.includes('resolveTodayPlanAccess({'), 'Today card delegates access-state decisions to the tested resolver')
+assert(detailsSource.includes('const recommendationLabel = resolveTodayWorkoutLabel({'), 'Today details use the tested workout-label resolver')
+assert(coachSource.includes("calendarSessions.length > 0") && coachSource.includes('Check in only if you want the effort adjusted.'), 'calendar sessions remain truthfully summarized when no daily recommendation is available')
 assert(detailsSource.includes("calendarSessions.map((session, index)"), 'Today details render every calendar session instead of only the preferred run')
 assert(detailsSource.includes('<TodayCalendarSession') && insights.includes('sessionExercises(session)'), 'Today details render lift exercise prescriptions when present')
 assert(insights.includes("{kind === 'lift' ? 'Start lift' : 'Start run'}"), 'each calendar session has an unambiguous start action')
-assert(detailsSource.includes('(calendarSessions.length === 0 || isRestDay)'), 'calendar days do not repeat an ambiguous generic Start/log action')
+assert(detailsSource.includes('planAccess.showStartLog'), 'calendar days do not repeat an ambiguous generic Start/log action')
 assert(dashboard.includes('execution={execution}') && dashboard.includes('onStartRun={handleStartTodayRun}') && dashboard.includes('onStartLift={handleStartTodayLift}'), 'Dashboard passes complete execution and kind-specific start handlers to Today details')
+assert(!detailsSource.includes('Check in before training') && !detailsSource.includes('After check-in'), 'Today details never present the scheduled plan as check-in locked')
+
+console.log('\n== Plan access behavior ==')
+const calls = []
+const handlers = {
+  onCheckIn: () => calls.push('checkin'),
+  onStartWorkout: () => calls.push('start'),
+  onDetails: () => calls.push('details'),
+}
+const accessFor = (overrides = {}) => resolveTodayPlanAccess({ ...handlers, ...overrides })
+
+const recommendationOnly = accessFor({ recommendation: { type: 'easy' } })
+assert(recommendationOnly.hasViewablePlan && recommendationOnly.primaryLabel === 'View plan', 'recommendation-only days expose View plan before check-in')
+recommendationOnly.primaryAction()
+recommendationOnly.secondaryAction()
+recommendationOnly.trainAction()
+assert(calls.splice(0).join(',') === 'details,checkin,details', 'recommendation-only plan, check-in, and Train actions route correctly')
+assert(recommendationOnly.showStartLog, 'recommendation-only details retain the existing Start/log action')
+const checkedRecommendation = accessFor({ checkedInToday: true, recommendation: { type: 'easy' } })
+checkedRecommendation.primaryAction()
+checkedRecommendation.secondaryAction()
+checkedRecommendation.trainAction()
+assert(calls.splice(0).join(',') === 'start,details,start', 'checked-in recommendation primary, Details, and Train actions preserve start behavior')
+
+const calendarOnly = accessFor({ calendarSessions: [{ id: 'run-1' }] })
+calendarOnly.primaryAction()
+calendarOnly.secondaryAction()
+calendarOnly.trainAction()
+assert(calls.splice(0).join(',') === 'details,checkin,details', 'calendar-only plan, check-in, and Train actions route correctly')
+assert(calendarOnly.hasViewablePlan && !calendarOnly.showStartLog, 'calendar-only days use their session-specific start controls')
+const checkedCalendar = accessFor({ checkedInToday: true, calendarSessions: [{ id: 'run-1' }] })
+checkedCalendar.primaryAction()
+checkedCalendar.secondaryAction()
+checkedCalendar.trainAction()
+assert(calls.splice(0).join(',') === 'start,details,start', 'checked-in calendar primary, Details, and Train actions preserve start behavior')
+assert(resolveTodayWorkoutLabel({ calendarKinds: ['run'] }) === 'Run', 'run-only calendar details identify the workout as Run')
+assert(resolveTodayWorkoutLabel({ calendarKinds: ['lift'] }) === 'Strength', 'lift-only calendar details identify the workout as Strength')
+assert(resolveTodayWorkoutLabel({ calendarKinds: ['run', 'lift'] }) === 'Run + lift', 'hybrid calendar details identify both sessions')
+
+const restDay = accessFor({ isRestDay: true })
+restDay.primaryAction()
+restDay.secondaryAction()
+assert(calls.splice(0).join(',') === 'details,checkin', 'rest-day plan review and optional check-in route correctly')
+assert(restDay.primaryLabel === 'View plan' && restDay.showStartLog, 'rest days remain viewable and retain their explicit calendar/run choices')
+const checkedRestDay = accessFor({ checkedInToday: true, isRestDay: true })
+checkedRestDay.primaryAction()
+assert(calls.splice(0).join(',') === 'start' && checkedRestDay.primaryLabel === 'View week', 'checked-in rest days route to the week without using a Start label')
+
+const noPlan = accessFor()
+noPlan.primaryAction()
+noPlan.trainAction()
+assert(calls.splice(0).join(',') === 'checkin,checkin', 'no-plan primary and Train actions route to check-in')
+assert(!noPlan.hasViewablePlan && noPlan.secondaryAction === null && !noPlan.showStartLog, 'no-plan state exposes no false Details or Start/log actions')
+assert(noPlan.uncheckedSignal === "Check in to build today's recommendation." && !noPlan.readinessFallback.includes('remains visible'), 'no-plan details never claim that a schedule exists')
+const checkedNoPlan = accessFor({ checkedInToday: true })
+checkedNoPlan.primaryAction()
+checkedNoPlan.trainAction()
+assert(calls.splice(0).join(',') === 'checkin,checkin', 'checked-in/no-plan primary and Train actions return to check-in instead of starting a false workout')
+assert(checkedNoPlan.primaryLabel === 'Edit check-in' && checkedNoPlan.secondaryAction === null && !checkedNoPlan.showStartLog, 'checked-in/no-plan state exposes no false Start, Details, or Start/log controls')
+assert(checkedNoPlan.readinessFallback.includes('No recommendation is available yet.'), 'checked-in/no-plan details explain the missing recommendation truthfully')
 
 console.log('\n== Profile-matched form images ==')
 assert(movement.includes("male: '/stretches/leg-swings-male.png'") && movement.includes("female: '/stretches/leg-swings-female.png'"), 'leg swings use one profile-matched athlete')
