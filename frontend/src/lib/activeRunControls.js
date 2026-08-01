@@ -51,11 +51,12 @@ export function activeRunReturnTargetFromLocation(pathname, search = '') {
 
 export function shouldProtectActiveRunNavigation({
   running = false,
+  paused = false,
   countingDown = false,
   awaitingManualDistance = false,
   saving = false,
 } = {}) {
-  return Boolean(running || countingDown || awaitingManualDistance || saving)
+  return Boolean(running || paused || countingDown || awaitingManualDistance || saving)
 }
 
 export function activeRunBackDecision({

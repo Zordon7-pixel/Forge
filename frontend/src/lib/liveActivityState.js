@@ -44,6 +44,7 @@ export function buildLiveActivityUpdate({
   gpsStarted,
   gpsAvailable,
   currentAccuracy,
+  paused = false,
   now = Date.now(),
 } = {}) {
   const normalizedUnit = units === 'metric' ? 'km' : 'mi'
@@ -60,12 +61,17 @@ export function buildLiveActivityUpdate({
     && heartRateUpdatedAt > 0
     && now - heartRateUpdatedAt <= HEART_RATE_FRESH_MS
   const accuracy = finiteNumber(currentAccuracy, -1)
-  const gpsState = !mapMyRun
+  const gpsState = paused
+    ? 'paused'
+    : !mapMyRun
     ? 'off'
     : gpsStarted && gpsAvailable ? 'tracking' : 'acquiring'
 
   return {
-    timerStartDateEpochMs: Math.max(0, Math.round(finiteNumber(startedAt, now - (elapsedSeconds * 1000)))),
+    // ActivityKit owns the ticking clock. Re-anchor it to measured active time so pauses never count.
+    timerStartDateEpochMs: Math.max(0, Math.round(now - (elapsedSeconds * 1000))),
+    elapsedSeconds,
+    isPaused: Boolean(paused),
     distance: mapMyRun ? Number(measuredDistance.toFixed(3)) : -1,
     paceSecPerUnit,
     heartRate: hrFresh ? heartRate : 0,

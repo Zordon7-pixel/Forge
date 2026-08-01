@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { CheckCircle2 } from 'lucide-react'
 import { postRunStretches, preRunStretches } from '../data/stretches'
@@ -7,6 +7,7 @@ import api from '../lib/api'
 import LoadingRunner from '../components/LoadingRunner'
 import { chooseRotatingRoutine, rememberRoutine } from '../lib/routineRotation'
 import { getLiftMobilityPool } from '../data/liftMobility'
+import { stretchSideCount, stretchSideLabel, stretchTimerSeconds } from '../lib/stretchTimer'
 
 const STRETCH_SESSION_COUNT = 6
 
@@ -55,13 +56,22 @@ export default function StretchSession() {
   }, [isLift, isPre, liftPhase, location.state?.routine, rotationScope])
 
   const [current, setCurrent] = useState(0)
-  const [secondsLeft, setSecondsLeft] = useState(stretches[0]?.duration || 30)
+  const [secondsLeft, setSecondsLeft] = useState(stretchTimerSeconds(stretches[0]))
+  const [sideIndex, setSideIndex] = useState(0)
   const [paused, setPaused] = useState(false)
   const [transitioning, setTransitioning] = useState(false)
+  const [transitionKind, setTransitionKind] = useState('exercise')
   const [nextName, setNextName] = useState('')
   const [done, setDone] = useState(false)
   const [sex, setSex] = useState(null)
   const [profileReady, setProfileReady] = useState(false)
+  const transitionTimeoutRef = useRef(null)
+
+  const currentStretch = stretches[current]
+  const nextStretch = stretches[current + 1]
+  const currentSideCount = stretchSideCount(currentStretch)
+  const currentSideLabel = stretchSideLabel(currentStretch, sideIndex)
+  const progress = Math.round(((current + (currentSideCount === 2 ? sideIndex / 2 : 0)) / stretches.length) * 100)
 
   useEffect(() => {
     rememberRoutine(rotationScope, stretches)
@@ -87,12 +97,18 @@ export default function StretchSession() {
 
   useEffect(() => {
     setCurrent(0)
-    setSecondsLeft(stretches[0]?.duration || 30)
+    setSecondsLeft(stretchTimerSeconds(stretches[0]))
+    setSideIndex(0)
     setPaused(false)
     setTransitioning(false)
+    setTransitionKind('exercise')
     setNextName('')
     setDone(false)
   }, [stretches])
+
+  useEffect(() => () => {
+    if (transitionTimeoutRef.current) clearTimeout(transitionTimeoutRef.current)
+  }, [])
 
   useEffect(() => {
     if (!profileReady || paused || transitioning || done) return
@@ -101,6 +117,19 @@ export default function StretchSession() {
       setSecondsLeft(prev => {
         if (prev <= 1) {
           clearInterval(timer)
+          if (currentSideCount === 2 && sideIndex === 0) {
+            setNextName(currentStretch.name)
+            setTransitionKind('side')
+            setTransitioning(true)
+            transitionTimeoutRef.current = setTimeout(() => {
+              setSideIndex(1)
+              setSecondsLeft(stretchTimerSeconds(currentStretch))
+              setTransitioning(false)
+              setNextName('')
+              transitionTimeoutRef.current = null
+            }, 2000)
+            return 0
+          }
           if (current >= stretches.length - 1) {
             setDone(true)
             return 0
@@ -108,13 +137,16 @@ export default function StretchSession() {
 
           const upcoming = stretches[current + 1]
           setNextName(upcoming.name)
+          setTransitionKind('exercise')
           setTransitioning(true)
 
-          setTimeout(() => {
+          transitionTimeoutRef.current = setTimeout(() => {
             setCurrent(prevCurrent => prevCurrent + 1)
-            setSecondsLeft(upcoming.duration)
+            setSideIndex(0)
+            setSecondsLeft(stretchTimerSeconds(upcoming))
             setTransitioning(false)
             setNextName('')
+            transitionTimeoutRef.current = null
           }, 2000)
 
           return 0
@@ -124,11 +156,7 @@ export default function StretchSession() {
     }, 1000)
 
     return () => clearInterval(timer)
-  }, [profileReady, paused, transitioning, done, current, stretches])
-
-  const currentStretch = stretches[current]
-  const nextStretch = stretches[current + 1]
-  const progress = Math.round((current / stretches.length) * 100)
+  }, [profileReady, paused, transitioning, done, current, currentSideCount, currentStretch, sideIndex, stretches])
 
   const skipToNext = () => {
     if (current >= stretches.length - 1) {
@@ -139,15 +167,38 @@ export default function StretchSession() {
 
     const upcoming = stretches[current + 1]
     setNextName(upcoming.name)
+    setTransitionKind('exercise')
     setTransitioning(true)
     setSecondsLeft(0)
 
-    setTimeout(() => {
+    if (transitionTimeoutRef.current) clearTimeout(transitionTimeoutRef.current)
+    transitionTimeoutRef.current = setTimeout(() => {
       setCurrent(prev => prev + 1)
-      setSecondsLeft(upcoming.duration)
+      setSideIndex(0)
+      setSecondsLeft(stretchTimerSeconds(upcoming))
       setTransitioning(false)
       setNextName('')
+      transitionTimeoutRef.current = null
     }, 2000)
+  }
+
+  const goBack = () => {
+    if (transitionTimeoutRef.current) {
+      clearTimeout(transitionTimeoutRef.current)
+      transitionTimeoutRef.current = null
+    }
+    if (current === 0) {
+      navigate(-1)
+      return
+    }
+    const previous = stretches[current - 1]
+    setCurrent(value => value - 1)
+    setSideIndex(0)
+    setSecondsLeft(stretchTimerSeconds(previous))
+    setPaused(false)
+    setTransitioning(false)
+    setTransitionKind('exercise')
+    setNextName('')
   }
 
   if (!profileReady) return <LoadingRunner message="Preparing stretches" />
@@ -184,7 +235,7 @@ export default function StretchSession() {
           </div>
 
           <header className="mb-6 flex items-center justify-between">
-            <button onClick={() => navigate(-1)} className="text-text-muted">← Back</button>
+            <button onClick={goBack} className="text-text-muted">← {current > 0 ? 'Previous' : 'Back'}</button>
             <div className="text-center">
               <h1 className="text-lg font-bold">{isLift ? (liftPhase === 'warmup' ? 'Lift Warm-Up' : 'Post-Lift Stretch') : (isPre ? 'Pre-Run Warmup' : 'Post-Run Recovery')}</h1>
               <p className="text-xs text-text-muted">{Math.min(current + 1, stretches.length)} / {stretches.length}</p>
@@ -194,7 +245,7 @@ export default function StretchSession() {
 
           {transitioning ? (
             <div className="my-auto rounded-2xl border border-border-subtle bg-bg-card p-8 text-center animate-transition-in">
-              <p className="text-sm text-text-muted">Next up:</p>
+              <p className="text-sm text-text-muted">{transitionKind === 'side' ? 'Switch sides' : 'Next up:'}</p>
               <p className="mt-2 text-2xl font-black text-accent">{nextName}</p>
             </div>
           ) : done ? (
@@ -222,6 +273,11 @@ export default function StretchSession() {
                 <h2 className="mt-3 text-3xl font-black text-text-primary">{currentStretch.name}</h2>
                 <p className="mt-3 text-sm text-text-muted">{currentStretch.cue}</p>
                 <p className="mt-3 text-sm font-semibold text-text-muted">{currentStretch.reps}</p>
+                {currentSideLabel && (
+                  <p className="mt-3 inline-flex rounded-full bg-accent-dim px-3 py-1 text-xs font-black text-accent" role="status">
+                    {currentSideLabel} · {stretchTimerSeconds(currentStretch)} seconds
+                  </p>
+                )}
 
                 <div className="mt-4 text-xs" style={{ color: 'var(--accent)', fontWeight: 700 }}>
                   Review the visual guide and movement cue before starting.

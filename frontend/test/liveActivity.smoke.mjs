@@ -41,12 +41,18 @@ const fresh = buildLiveActivityUpdate({
 check(fresh.distance === 1.609 && fresh.paceSecPerUnit === 373, 'metric distance and measured average pace are derived from recorded values')
 check(fresh.heartRate === 151 && fresh.hrFresh && fresh.hrZoneKey === 'Z3', 'fresh HR and its measured zone are included')
 check(fresh.gpsState === 'tracking' && fresh.gpsAccuracyMeters === 6, 'GPS status and accuracy are explicit')
+check(fresh.timerStartDateEpochMs === 1_699_999_420_000, 'the ActivityKit timer anchor excludes any paused duration')
 
 const stale = buildLiveActivityUpdate({ liveHr: 151, hrLastUpdated: 1, hrZone: { key: 'Z5', color: '#FFF6DC' }, mapMyRun: false, now: 100_000 })
 check(stale.heartRate === 0 && !stale.hrFresh && stale.hrZoneKey === '', 'stale HR never appears as live')
 check(stale.distance === -1 && stale.gpsState === 'off', 'route-off mode does not invent measured distance')
 
+const paused = buildLiveActivityUpdate({ startedAt: 1_700_000_000_000, elapsed: 721, paused: true, mapMyRun: true })
+check(paused.isPaused && paused.elapsedSeconds === 721 && paused.gpsState === 'paused', 'paused Live Activity state freezes the recorded elapsed time')
+
 check(normalizeForgedDeepLink('forgedhybrid://run/active') === '/run/active', 'widget deep link resolves to the active run')
+check(normalizeForgedDeepLink('forgedhybrid://run/active?command=pause') === '/run/active?command=pause', 'only the approved lock-screen pause command survives normalization')
+check(normalizeForgedDeepLink('forgedhybrid://run/active?command=delete') === '/run/active', 'unapproved run commands are discarded')
 check(normalizeForgedDeepLink('forgedhybrid://history') === null && normalizeForgedDeepLink('https://example.com/run/active') === null, 'unapproved deep links fail closed')
 
 const activeRun = read('frontend/src/pages/ActiveRun.jsx')
@@ -61,5 +67,6 @@ check(appInfo.includes('<key>NSSupportsLiveActivities</key>') && appInfo.include
 check(project.includes('ForgeRunActivity.appex') && project.includes('Embed App Extensions'), 'widget extension is embedded in the app target')
 check(widget.includes('widgetURL(URL(string: "forgedhybrid://run/active"))'), 'Live Activity taps reopen the active run')
 check(widget.includes('Text(timerInterval:'), 'elapsed time is rendered by ActivityKit without per-second bridge traffic')
+check(widget.includes('Link(destination: controlURL)') && widget.includes('?command='), 'the lock-screen pause/resume control returns to the canonical recorder')
 
 console.log(`LIVE ACTIVITY SMOKE OK (${passed})`)

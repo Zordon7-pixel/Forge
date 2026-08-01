@@ -60,6 +60,18 @@ check(restored?.ownerUserId === ownerUserId, 'restored session remains bound to 
 clearActiveRunSession(storage)
 check(storage.getItem(ACTIVE_RUN_SESSION_KEY) === null, 'saved session is removed after a durable run save')
 
+saveActiveRunSession({
+  phase: 'paused',
+  startedAt: now - 90_000,
+  elapsed: 42,
+  pausedDurationMs: 20_000,
+  pauseStartedAt: now - 28_000,
+}, ownerUserId, storage, now)
+const restoredPaused = loadActiveRunSession(ownerUserId, storage, now + 30_000)
+check(restoredPaused?.phase === 'paused' && restoredPaused?.pauseStartedAt === now - 28_000, 'a paused run survives app reload with its pause boundary')
+check(elapsedFromSession(restoredPaused, now + 30_000) === 42, 'elapsed time remains frozen while a restored run is paused')
+clearActiveRunSession(storage)
+
 const longRouteStorage = new MemoryStorage()
 const longRoute = Array.from({ length: 5002 }, (_, index) => [38.9 + index / 1_000_000, -76.95, 10, now + index, 5])
 saveActiveRunSession({ phase: 'running', startedAt: now, routeCoords: longRoute }, ownerUserId, longRouteStorage, now)
@@ -125,6 +137,7 @@ const logRun = read('frontend/src/pages/LogRun.jsx')
 const treadmillRun = read('frontend/src/pages/TreadmillRun.jsx')
 const runsRoute = read('backend/src/routes/runs.js')
 check(/isImmersive\s*\?\s*\([\s\S]*?<main[\s\S]*?:\s*\([\s\S]*?<PullToRefresh>/.test(layout), 'immersive workout routes bypass destructive pull-to-refresh')
+check(layout.includes('data-testid="immersive-feedback-button"') && layout.includes("env(safe-area-inset-top"), 'every immersive workout screen keeps feedback above the iPhone safe area')
 check(/saveActiveRunSession/.test(activeRun) && /loadActiveRunSession/.test(activeRun) && /clearActiveRunSession/.test(activeRun), 'ActiveRun persists, restores, and clears its session')
 check(activeRun.includes('Your iPhone records the route. Keep your watch running too — Forged Hybrid will combine the data after sync.'), 'the one Start Run action explains phone route recording and later watch enrichment')
 check(!activeRun.includes('Record route: On') && !activeRun.includes('Record route: Off'), 'ActiveRun no longer exposes a competing route-only mode')

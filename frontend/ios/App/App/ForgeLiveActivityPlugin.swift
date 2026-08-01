@@ -135,11 +135,13 @@ public class ForgeLiveActivityPlugin: CAPPlugin, CAPBridgedPlugin {
     @available(iOS 16.1, *)
     private func buildContentState(_ payload: [String: Any]) -> ForgeRunAttributes.ContentState {
         let gpsState = boundedString(payload["gpsState"], maximumLength: 12)
-        let normalizedGpsState = ["acquiring", "tracking", "off"].contains(gpsState) ? gpsState : "acquiring"
+        let normalizedGpsState = ["acquiring", "tracking", "paused", "off"].contains(gpsState) ? gpsState : "acquiring"
         let color = boundedString(payload["hrZoneColorHex"], maximumLength: 7)
         let normalizedColor = color.range(of: "^#[0-9A-Fa-f]{6}$", options: .regularExpression) == nil ? "" : color.uppercased()
         return ForgeRunAttributes.ContentState(
             timerStartDateEpochMs: boundedDouble(payload["timerStartDateEpochMs"], minimum: 0, maximum: 4_102_444_800_000),
+            elapsedSeconds: boundedInt(payload["elapsedSeconds"], minimum: 0, maximum: 86_400),
+            isPaused: boolValue(payload["isPaused"]),
             distance: boundedDouble(payload["distance"], minimum: -1, maximum: 10_000),
             paceSecPerUnit: boundedInt(payload["paceSecPerUnit"], minimum: 0, maximum: 86_400),
             heartRate: boundedInt(payload["heartRate"], minimum: 0, maximum: 250),

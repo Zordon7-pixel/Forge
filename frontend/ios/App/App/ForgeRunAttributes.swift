@@ -5,6 +5,8 @@ import Foundation
 struct ForgeRunAttributes: ActivityAttributes {
     struct ContentState: Codable, Hashable {
         let timerStartDateEpochMs: Double
+        let elapsedSeconds: Int
+        let isPaused: Bool
         let distance: Double
         let paceSecPerUnit: Int
         let heartRate: Int

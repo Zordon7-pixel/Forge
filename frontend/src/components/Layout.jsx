@@ -158,8 +158,14 @@ export default function Layout({ children }) {
         <button
           type="button"
           onClick={() => setFeedbackOpen(true)}
-          className="pressable fixed right-3 top-3 z-40 flex h-9 w-9 items-center justify-center rounded-full shadow-lg"
-          style={{ background: 'var(--bg-card)', color: 'var(--accent)', border: '1px solid var(--border-subtle)' }}
+          data-testid="immersive-feedback-button"
+          className="pressable fixed right-3 z-40 flex h-9 w-9 items-center justify-center rounded-full shadow-lg"
+          style={{
+            top: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)',
+            background: 'var(--bg-card)',
+            color: 'var(--accent)',
+            border: '1px solid var(--border-subtle)',
+          }}
           aria-label="Send feedback"
           title="Send feedback"
         >

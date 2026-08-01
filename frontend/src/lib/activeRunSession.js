@@ -2,6 +2,7 @@ export const ACTIVE_RUN_SESSION_KEY = 'forged_hybrid_active_run_v1'
 
 const MAX_SESSION_AGE_MS = 24 * 60 * 60 * 1000
 const MAX_ROUTE_POINTS = 5000
+const ACTIVE_RUN_PHASES = ['running', 'paused', 'awaiting_distance']
 
 function storageOrNull(storage) {
   if (storage) return storage
@@ -74,7 +75,7 @@ export function loadActiveRunSession(ownerUserId, storage, now = Date.now()) {
       target.removeItem(ACTIVE_RUN_SESSION_KEY)
       return null
     }
-    if (!['running', 'awaiting_distance'].includes(parsed.phase)) {
+    if (!ACTIVE_RUN_PHASES.includes(parsed.phase)) {
       target.removeItem(ACTIVE_RUN_SESSION_KEY)
       return null
     }
@@ -92,6 +93,8 @@ export function loadActiveRunSession(ownerUserId, storage, now = Date.now()) {
       startedAt,
       savedAt,
       elapsed: Math.min(86_400, Math.max(0, Math.round(finiteNumber(parsed.elapsed, 0)))),
+      pausedDurationMs: Math.min(MAX_SESSION_AGE_MS, Math.max(0, Math.round(finiteNumber(parsed.pausedDurationMs, 0)))),
+      pauseStartedAt: parsed.phase === 'paused' ? Math.max(0, finiteNumber(parsed.pauseStartedAt, savedAt)) : 0,
       distanceMiles: Math.min(500, Math.max(0, finiteNumber(parsed.distanceMiles, 0))),
       routeCoords: normalizeRouteCoords(parsed.routeCoords),
       manualDistance: String(parsed.manualDistance || ''),
@@ -121,7 +124,8 @@ export function loadActiveRunSession(ownerUserId, storage, now = Date.now()) {
 export function elapsedFromSession(session, now = Date.now()) {
   if (!session?.startedAt) return 0
   if (session.phase !== 'running') return Math.max(0, Number(session.elapsed || 0))
-  return Math.max(Number(session.elapsed || 0), Math.round((now - session.startedAt) / 1000))
+  const activeMilliseconds = now - session.startedAt - Math.max(0, Number(session.pausedDurationMs || 0))
+  return Math.max(Number(session.elapsed || 0), Math.round(activeMilliseconds / 1000))
 }
 
 export function saveActiveRunSession(session, ownerUserId, storage, now = Date.now()) {
@@ -134,7 +138,7 @@ export function saveActiveRunSession(session, ownerUserId, storage, now = Date.n
       target.removeItem(ACTIVE_RUN_SESSION_KEY)
       return
     }
-    if (!session || !['running', 'awaiting_distance'].includes(session.phase)) return
+    if (!session || !ACTIVE_RUN_PHASES.includes(session.phase)) return
 
     target.setItem(ACTIVE_RUN_SESSION_KEY, JSON.stringify({
       ...session,

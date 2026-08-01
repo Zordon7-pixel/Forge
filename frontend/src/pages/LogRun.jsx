@@ -1252,6 +1252,9 @@ export default function LogRun() {
                     ? 'Moving workout...'
                     : selectedRunIntentId === 'extra' ? 'Start extra run' : 'Move workout & start'}
                 </button>
+                <p className="mt-3 text-center text-xs leading-5" style={{ color: 'var(--text-muted)' }}>
+                  Outdoor runs check iPhone Location access before the timer starts. You can continue without a route if GPS is unavailable.
+                </p>
               </div>
             </div>
           </section>

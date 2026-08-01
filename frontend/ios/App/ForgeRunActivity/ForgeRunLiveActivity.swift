@@ -15,7 +15,7 @@ struct ForgeRunLiveActivity: Widget {
                     ForgeRunBrandMark()
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    ForgeElapsedTime(startedAtEpochMs: context.state.timerStartDateEpochMs, font: .title3)
+                    ForgeElapsedTime(startedAtEpochMs: context.state.timerStartDateEpochMs, elapsedSeconds: context.state.elapsedSeconds, isPaused: context.state.isPaused, font: .title3)
                 }
                 DynamicIslandExpandedRegion(.center) {
                     Text(context.attributes.title)
@@ -29,7 +29,7 @@ struct ForgeRunLiveActivity: Widget {
                 Image(systemName: "figure.run")
                     .foregroundStyle(.yellow)
             } compactTrailing: {
-                ForgeElapsedTime(startedAtEpochMs: context.state.timerStartDateEpochMs, font: .caption)
+                ForgeElapsedTime(startedAtEpochMs: context.state.timerStartDateEpochMs, elapsedSeconds: context.state.elapsedSeconds, isPaused: context.state.isPaused, font: .caption)
                     .frame(maxWidth: 58)
             } minimal: {
                 Image(systemName: "figure.run")
@@ -68,10 +68,19 @@ private struct ForgeRunLockScreenView: View {
                     }
                 }
                 Spacer(minLength: 8)
-                ForgeElapsedTime(startedAtEpochMs: context.state.timerStartDateEpochMs, font: .title2)
+                ForgeElapsedTime(startedAtEpochMs: context.state.timerStartDateEpochMs, elapsedSeconds: context.state.elapsedSeconds, isPaused: context.state.isPaused, font: .title2)
             }
 
             ForgeRunMetrics(context: context, compact: false)
+
+            Link(destination: controlURL) {
+                Label(context.state.isPaused ? "Resume" : "Pause", systemImage: context.state.isPaused ? "play.fill" : "pause.fill")
+                    .font(.caption.weight(.black))
+                    .foregroundStyle(.black)
+                    .frame(maxWidth: .infinity, minHeight: 34)
+                    .background(Color.yellow)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
         }
         .padding(16)
     }
@@ -80,17 +89,22 @@ private struct ForgeRunLockScreenView: View {
         switch context.state.gpsState {
         case "tracking":
             return context.state.gpsAccuracyMeters >= 0 ? "GPS ±\(context.state.gpsAccuracyMeters)m" : "GPS active"
+        case "paused": return "Run paused"
         case "off": return "Route off"
         default: return "Finding GPS"
         }
     }
 
     private var gpsSymbol: String {
-        context.state.gpsState == "tracking" ? "location.fill" : "location"
+        context.state.gpsState == "paused" ? "pause.fill" : context.state.gpsState == "tracking" ? "location.fill" : "location"
     }
 
     private var gpsColor: Color {
-        context.state.gpsState == "tracking" ? Color.green : Color.white.opacity(0.58)
+        context.state.gpsState == "tracking" ? Color.green : context.state.gpsState == "paused" ? Color.yellow : Color.white.opacity(0.58)
+    }
+
+    private var controlURL: URL {
+        URL(string: "forgedhybrid://run/active?command=\(context.state.isPaused ? "resume" : "pause")")!
     }
 }
 
@@ -105,18 +119,35 @@ private struct ForgeRunBrandMark: View {
 
 private struct ForgeElapsedTime: View {
     let startedAtEpochMs: Double
+    let elapsedSeconds: Int
+    let isPaused: Bool
     let font: Font
 
     var body: some View {
-        Text(timerInterval: startDate...Date.distantFuture, countsDown: false)
-            .font(font.weight(.black).monospacedDigit())
-            .foregroundStyle(.white)
-            .lineLimit(1)
+        Group {
+            if isPaused {
+                Text(pausedTime)
+            } else {
+                Text(timerInterval: startDate...Date.distantFuture, countsDown: false)
+            }
+        }
+        .font(font.weight(.black).monospacedDigit())
+        .foregroundStyle(.white)
+        .lineLimit(1)
     }
 
     private var startDate: Date {
         let timestamp = startedAtEpochMs > 0 ? startedAtEpochMs : Date().timeIntervalSince1970 * 1000
         return Date(timeIntervalSince1970: timestamp / 1000)
+    }
+
+    private var pausedTime: String {
+        let hours = elapsedSeconds / 3600
+        let minutes = (elapsedSeconds % 3600) / 60
+        let seconds = elapsedSeconds % 60
+        return hours > 0
+            ? String(format: "%d:%02d:%02d", hours, minutes, seconds)
+            : String(format: "%d:%02d", minutes, seconds)
     }
 }
 
