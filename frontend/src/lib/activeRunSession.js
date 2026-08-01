@@ -93,6 +93,9 @@ export function loadActiveRunSession(ownerUserId, storage, now = Date.now()) {
       startedAt,
       savedAt,
       elapsed: Math.min(86_400, Math.max(0, Math.round(finiteNumber(parsed.elapsed, 0)))),
+      finishedAt: parsed.phase === 'awaiting_distance'
+        ? Math.max(startedAt, finiteNumber(parsed.finishedAt, savedAt))
+        : 0,
       pausedDurationMs: Math.min(MAX_SESSION_AGE_MS, Math.max(0, Math.round(finiteNumber(parsed.pausedDurationMs, 0)))),
       pauseStartedAt: parsed.phase === 'paused' ? Math.max(0, finiteNumber(parsed.pauseStartedAt, savedAt)) : 0,
       distanceMiles: Math.min(500, Math.max(0, finiteNumber(parsed.distanceMiles, 0))),
@@ -126,6 +129,14 @@ export function elapsedFromSession(session, now = Date.now()) {
   if (session.phase !== 'running') return Math.max(0, Number(session.elapsed || 0))
   const activeMilliseconds = now - session.startedAt - Math.max(0, Number(session.pausedDurationMs || 0))
   return Math.max(Number(session.elapsed || 0), Math.round(activeMilliseconds / 1000))
+}
+
+export function resolveActivityEndTimestamp({ startedAt, elapsedSeconds, finishedAt } = {}) {
+  const start = finiteNumber(startedAt, 0)
+  if (start <= 0) return 0
+  const finish = finiteNumber(finishedAt, 0)
+  if (finish >= start) return finish
+  return Math.max(start, start + (Math.max(0, finiteNumber(elapsedSeconds, 0)) * 1000))
 }
 
 export function saveActiveRunSession(session, ownerUserId, storage, now = Date.now()) {

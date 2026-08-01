@@ -11,7 +11,7 @@ import { planSessionIdFromState, currentWeekFromState, markSessionComplete, queu
 import PostRunCheckIn from '../components/PostRunCheckIn'
 import WorkoutCard from '../components/WorkoutCard'
 import { calculateElevationStats } from '../utils/elevation'
-import { clearActiveRunSession, elapsedFromSession, loadActiveRunSession, saveActiveRunSession } from '../lib/activeRunSession'
+import { clearActiveRunSession, elapsedFromSession, loadActiveRunSession, resolveActivityEndTimestamp, saveActiveRunSession } from '../lib/activeRunSession'
 import { loadPostRunCheckInDraft, savePostRunCheckInDraft } from '../lib/postRunCheckInDraft'
 import { buildPlannedSessionSnapshot } from '../lib/runProvenance'
 import { resolveRunCompletion, RUN_PROVENANCE } from '../lib/runCompletionPolicy'
@@ -22,6 +22,7 @@ import LiveActivityService from '../services/LiveActivityService'
 import {
   requestNativeRunLocation,
   requestWebRunLocation,
+  canAcceptRunLocationPoint,
   RUN_LOCATION_STATUS,
   runLocationErrorStatus,
   runLocationStatusMessage,
@@ -289,6 +290,9 @@ export default function ActiveRun() {
   const startTimestampRef = useRef(restoredSession?.startedAt || null)
   const pausedDurationMsRef = useRef(restoredSession?.pausedDurationMs || 0)
   const pauseStartedAtRef = useRef(restoredSession?.pauseStartedAt || null)
+  const finishedAtRef = useRef(restoredSession?.finishedAt || null)
+  const routeRecordingActiveRef = useRef(restoredSession?.phase === 'running')
+  const routeRecordingEpochRef = useRef(0)
   const clientRunIdRef = useRef(restoredSession?.clientRunId || createClientRunId())
   const resumeAttemptedRef = useRef(false)
   const sessionStateRef = useRef(null)
@@ -299,6 +303,16 @@ export default function ActiveRun() {
   const navigationProtectedRef = useRef(false)
   const activeRunReturnTargetRef = useRef(activeRunReturnTarget)
   const requestBackRef = useRef(null)
+  const beginRouteRecording = useCallback(() => {
+    const epoch = routeRecordingEpochRef.current + 1
+    routeRecordingEpochRef.current = epoch
+    routeRecordingActiveRef.current = true
+    return epoch
+  }, [])
+  const stopRouteRecording = useCallback(() => {
+    routeRecordingActiveRef.current = false
+    routeRecordingEpochRef.current += 1
+  }, [])
   const actualElevation = useMemo(() => calculateElevationStats(routeCoords), [routeCoords])
   const plannedRoutePositions = useMemo(() => (
     validMapPositions(plannedRoute?.coordinates)
@@ -351,6 +365,7 @@ export default function ActiveRun() {
   sessionStateRef.current = {
     phase: running ? 'running' : pausedRun ? 'paused' : awaitingManualDistance ? 'awaiting_distance' : null,
     startedAt: startTimestampRef.current,
+    finishedAt: finishedAtRef.current,
     elapsed,
     pausedDurationMs: pausedDurationMsRef.current,
     pauseStartedAt: pauseStartedAtRef.current,
@@ -681,10 +696,16 @@ export default function ActiveRun() {
     if (!['running', 'paused', 'awaiting_distance'].includes(restoredSession?.phase)) void LiveActivityService.end()
   }, [restoredSession?.phase])
 
-  const handlePoint = useCallback((lat, lon, alt, accuracy, timestamp) => {
+  const handlePoint = useCallback((lat, lon, alt, accuracy, timestamp, recordingEpoch) => {
+    if (!canAcceptRunLocationPoint({
+      recordingActive: routeRecordingActiveRef.current,
+      recordingEpoch,
+      activeEpoch: routeRecordingEpochRef.current,
+      latitude: lat,
+      longitude: lon,
+    })) return
     const latitude = Number(lat)
     const longitude = Number(lon)
-    if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90 || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) return
     setGpsAvailable(true)
     setGpsStarted(true)
     setLocationStatus(RUN_LOCATION_STATUS.READY)
@@ -745,6 +766,7 @@ export default function ActiveRun() {
   }, [])
 
   const setLocationFailure = useCallback((status) => {
+    stopRouteRecording()
     const normalizedStatus = Object.values(RUN_LOCATION_STATUS).includes(status)
       ? status
       : RUN_LOCATION_STATUS.UNAVAILABLE
@@ -752,18 +774,20 @@ export default function ActiveRun() {
     setGpsAvailable(false)
     setGpsStarted(false)
     setGpsError(runLocationStatusMessage(normalizedStatus))
-  }, [])
+  }, [stopRouteRecording])
 
   const startWebGeolocation = useCallback(() => {
     if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      stopRouteRecording()
       setLocationFailure(RUN_LOCATION_STATUS.UNAVAILABLE)
       return false
     }
 
+    const recordingEpoch = beginRouteRecording()
     nativeWatchRef.current = false
     watchRef.current = navigator.geolocation.watchPosition(
       pos => {
-        handlePoint(pos.coords.latitude, pos.coords.longitude, pos.coords.altitude, pos.coords.accuracy, Date.now())
+        handlePoint(pos.coords.latitude, pos.coords.longitude, pos.coords.altitude, pos.coords.accuracy, Date.now(), recordingEpoch)
       },
       (error) => {
         setLocationFailure(runLocationErrorStatus(error))
@@ -771,7 +795,7 @@ export default function ActiveRun() {
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 1000 }
     )
     return true
-  }, [handlePoint, setLocationFailure])
+  }, [beginRouteRecording, handlePoint, setLocationFailure, stopRouteRecording])
 
   const activateRunTimer = useCallback(() => {
     const now = Date.now()
@@ -795,6 +819,7 @@ export default function ActiveRun() {
       discardedSegmentRef.current = false
     }
     if (!recordRoute) {
+      stopRouteRecording()
       setGpsStarted(false)
       setGpsAvailable(false)
       setLocationStatus(RUN_LOCATION_STATUS.IDLE)
@@ -809,6 +834,7 @@ export default function ActiveRun() {
     if (Capacitor.isNativePlatform()) {
       try {
         let registrationError = null
+        const recordingEpoch = beginRouteRecording()
         const id = await BackgroundGeolocation.addWatcher({
           backgroundMessage: 'Forged Hybrid is recording your run',
           backgroundTitle: 'Forged Hybrid',
@@ -823,7 +849,7 @@ export default function ActiveRun() {
             return
           }
           if (!loc) return
-          handlePoint(loc.latitude, loc.longitude, loc.altitude, loc.accuracy, loc.time || Date.now())
+          handlePoint(loc.latitude, loc.longitude, loc.altitude, loc.accuracy, loc.time || Date.now(), recordingEpoch)
         })
         if (registrationError) {
           await BackgroundGeolocation.removeWatcher({ id }).catch((error) => {
@@ -836,12 +862,13 @@ export default function ActiveRun() {
         activateRunTimer()
         return
       } catch (err) {
+        stopRouteRecording()
         console.warn('[ActiveRun] background geolocation unavailable, falling back to web GPS:', err?.message)
       }
     }
 
     if (startWebGeolocation()) activateRunTimer()
-  }, [activateRunTimer, handlePoint, mapMyRun, setLocationFailure, startWebGeolocation])
+  }, [activateRunTimer, beginRouteRecording, handlePoint, mapMyRun, setLocationFailure, startWebGeolocation, stopRouteRecording])
 
   const checkLocationBeforeRun = useCallback(async () => {
     setLocationStatus(RUN_LOCATION_STATUS.CHECKING)
@@ -918,6 +945,7 @@ export default function ActiveRun() {
 
   const pauseRun = useCallback(async () => {
     if (!running || !startTimestampRef.current) return
+    stopRouteRecording()
     const now = Date.now()
     const frozenElapsed = Math.max(0, Math.round((now - startTimestampRef.current - pausedDurationMsRef.current) / 1000))
     setElapsed(frozenElapsed)
@@ -927,7 +955,7 @@ export default function ActiveRun() {
     setRunning(false)
     setPausedRun(true)
     await clearActiveWatch()
-  }, [clearActiveWatch, running])
+  }, [clearActiveWatch, running, stopRouteRecording])
 
   const resumeRun = useCallback(async () => {
     if (!pausedRun) return
@@ -942,7 +970,10 @@ export default function ActiveRun() {
     navigate(location.pathname, { replace: true, state: location.state })
   }, [location.pathname, location.search, location.state, navigate, pauseRun, pausedRun, resumeRun, running])
 
-  useEffect(() => () => { clearActiveWatch() }, [clearActiveWatch])
+  useEffect(() => () => {
+    stopRouteRecording()
+    clearActiveWatch()
+  }, [clearActiveWatch, stopRouteRecording])
 
   const pace = useMemo(() => {
     const dist = gpsAvailable ? distanceMiles : Number(manualDistance || distanceMiles || 0)
@@ -987,7 +1018,11 @@ export default function ActiveRun() {
     }
     const runDate = todayISO()
     const startedAt = Number(startTimestampRef.current || 0)
-    const endedAt = startedAt > 0 ? Math.max(startedAt, startedAt + (elapsed * 1000)) : 0
+    const endedAt = resolveActivityEndTimestamp({
+      startedAt,
+      elapsedSeconds: elapsed,
+      finishedAt: finishedAtRef.current,
+    })
     return {
       id: clientRunIdRef.current,
       date: runDate,
@@ -1111,6 +1146,8 @@ export default function ActiveRun() {
   }
 
   const finishRun = async () => {
+    stopRouteRecording()
+    if (!finishedAtRef.current) finishedAtRef.current = Date.now()
     setRunning(false)
     setPausedRun(false)
     pauseStartedAtRef.current = null

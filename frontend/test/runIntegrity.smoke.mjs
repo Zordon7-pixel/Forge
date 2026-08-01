@@ -9,6 +9,7 @@ import {
   clearActiveRunSession,
   elapsedFromSession,
   loadActiveRunSession,
+  resolveActivityEndTimestamp,
   saveActiveRunSession,
 } from '../src/lib/activeRunSession.js'
 import { getAuthenticatedUserId } from '../src/lib/auth.js'
@@ -57,6 +58,26 @@ check(elapsedFromSession(restored, now + 4_000) === 35, 'elapsed time is rebuilt
 check(restored?.startedAt === now - 31_000 && restored?.clientRunId === 'run-client-id', 'capture identity and start time stay stable across a reload')
 check(restored?.navigationState?.plannedRoute?.coordinates?.length === 2, 'planned route survives a reload')
 check(restored?.ownerUserId === ownerUserId, 'restored session remains bound to its authenticated owner')
+clearActiveRunSession(storage)
+
+const wallClockFinish = now + 30_000
+saveActiveRunSession({
+  phase: 'awaiting_distance',
+  startedAt: now - 90_000,
+  finishedAt: wallClockFinish,
+  elapsed: 42,
+}, ownerUserId, storage, wallClockFinish)
+const restoredFinished = loadActiveRunSession(ownerUserId, storage, wallClockFinish + 1_000)
+check(restoredFinished?.finishedAt === wallClockFinish, 'the wall-clock finish survives manual-distance recovery')
+check(resolveActivityEndTimestamp({
+  startedAt: now - 90_000,
+  elapsedSeconds: 42,
+  finishedAt: wallClockFinish,
+}) === wallClockFinish, 'saved activity end time includes wall-clock pauses')
+check(resolveActivityEndTimestamp({
+  startedAt: now - 90_000,
+  elapsedSeconds: 42,
+}) === now - 48_000, 'legacy sessions still fall back to active duration')
 clearActiveRunSession(storage)
 check(storage.getItem(ACTIVE_RUN_SESSION_KEY) === null, 'saved session is removed after a durable run save')
 
@@ -144,6 +165,8 @@ check(!activeRun.includes('Record route: On') && !activeRun.includes('Record rou
 check(activeRun.includes('loc.accuracy') && activeRun.includes('pos.coords.accuracy'), 'native and web GPS forward horizontal accuracy into the route')
 check(activeRun.indexOf('const savePromise = saveRun()') < activeRun.indexOf('await clearActiveWatch()', activeRun.indexOf('const savePromise = saveRun()')), 'finish starts the durable save before watcher cleanup')
 check(/failed to remove native GPS watcher/.test(activeRun) && /failed to clear web GPS watcher/.test(activeRun), 'watcher cleanup errors are fail-soft and observable')
+check(/routeRecordingActiveRef\.current/.test(activeRun) && /recordingEpoch/.test(activeRun), 'GPS callbacks are gated by the current recording epoch')
+check(/finishedAtRef\.current/.test(activeRun) && /resolveActivityEndTimestamp/.test(activeRun), 'run payload keeps wall-clock finish separate from active duration')
 check(/MapViewController/.test(activeRun) && /map\.panTo\(command\.position/.test(activeRun) && /You are here/.test(activeRun) && /radius=\{15\}/.test(activeRun), 'Follow view pans to a prominent yellow current-location marker')
 check(/activeRunMapCommand\(mapLayout/.test(activeRun) && /command\.type === 'fit'/.test(activeRun) && /command\.type === 'follow'/.test(activeRun), 'map fitting is isolated to Overview while Follow tracks the latest valid position')
 check(/Delete this \{isRun \? 'run' : 'activity'\}/.test(detail) && /onDelete=\{\(\) =>/.test(history), 'run detail exposes the confirmed delete flow')

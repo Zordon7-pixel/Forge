@@ -27,6 +27,17 @@ function validPosition(position) {
     && longitude <= 180
 }
 
+export function canAcceptRunLocationPoint({
+  recordingActive,
+  recordingEpoch,
+  activeEpoch,
+  latitude,
+  longitude,
+} = {}) {
+  if (!recordingActive || Number(recordingEpoch) !== Number(activeEpoch)) return false
+  return validPosition({ latitude, longitude })
+}
+
 export async function requestNativeRunLocation(plugin, timeoutMs = 15_000) {
   if (!plugin?.addWatcher || !plugin?.removeWatcher) {
     return { status: RUN_LOCATION_STATUS.UNAVAILABLE }
@@ -43,7 +54,7 @@ export async function requestNativeRunLocation(plugin, timeoutMs = 15_000) {
   try {
     const watcherPromise = plugin.addWatcher({
       requestPermissions: true,
-      stale: true,
+      stale: false,
       distanceFilter: 0,
     }, (position, error) => {
       if (error) {
