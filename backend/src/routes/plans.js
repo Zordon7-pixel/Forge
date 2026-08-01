@@ -5,13 +5,16 @@ const { requirePremium } = require('../middleware/premiumGate');
 const { v4: uuidv4 } = require('uuid');
 const crypto = require('crypto');
 const { generateRaceAdjustment } = require('../services/ai');
-const { buildHealthSignals } = require('../lib/healthSignals');
+const { buildHealthSignals, buildReadinessBand, readinessTrendFromHistory } = require('../lib/healthSignals');
 const { applyOverride } = require('../lib/checkinOverride');
 const planSchema = require('../lib/planSchema');
 const concurrentPlan = require('../lib/concurrentPlan');
 const adaptationEngine = require('../lib/adaptationEngine');
 const dailyExecution = require('../lib/dailyExecution');
 const { getHrProfile } = require('../lib/hrZones');
+const { completedWeeklyMileageHistory } = require('../lib/runHistory');
+const { decideWeeklyRamp } = require('../lib/weeklyRampEngine');
+const { annotatePlanEffort } = require('../lib/planEffort');
 const { summarizeRecentRunLoad } = require('../lib/recentRunLoad');
 const { repairPlanPrescriptions } = require('../lib/prescriptionIntegrity');
 const { summarizeRecentExercises } = require('../lib/strengthPrescription');
@@ -20,6 +23,10 @@ const { allocatePlanSessionRunEvidence, findPlanSessionRunEvidence } = require('
 const hybridReconciliation = require('../lib/hybridReconciliation');
 const { dateInTimezone, isIanaTimezone } = require('../lib/challengeRules');
 const { resolveRunSchedule } = require('../lib/runSchedule');
+
+// Strength sessions are already equipment-filtered by concurrentPlan's
+// buildStrengthExercises/exerciseCatalog path. strengthAdjunct is the standalone
+// form of those rules and must not be applied again to served sessions.
 
 const ADAPTATION_POLICY_VERSION = 'training-gap-v1';
 
@@ -222,6 +229,165 @@ function withDurationEstimateDayPayload(day, planJson) {
   if (topLevel) changed = true;
   if (!changed) return day;
   return { ...day, ...(Array.isArray(day.sessions) ? { sessions } : {}), ...(topLevel || {}) };
+}
+
+function datedRunSessionsExist(planJson) {
+  if (!Array.isArray(planJson?.weeks)) return false;
+  return planJson.weeks.some((week) => planSchema.getDayEntries(week).some((day) => (
+    /^\d{4}-\d{2}-\d{2}$/.test(String(day?.date || ''))
+    && planSchema.daySessions(day).some((session) => planSchema.kindFromSession(session) === 'run')
+  )));
+}
+
+function annotateSessionsForDate(sessions, date, hrProfile) {
+  if (!hrProfile || !Array.isArray(sessions)) return sessions;
+  const contextDate = /^\d{4}-\d{2}-\d{2}$/.test(String(date || '')) ? date : null;
+  const prepared = sessions.map((session) => {
+    if (!session || typeof session !== 'object' || !contextDate) return { session, injectedDate: false, priorDate: undefined, hadDate: false };
+    const hasOwnDate = Object.prototype.hasOwnProperty.call(session, 'date');
+    const hasSessionDate = /^\d{4}-\d{2}-\d{2}$/.test(String(
+      session.date || session.scheduled_date || session.scheduledDate || ''
+    ));
+    return hasSessionDate
+      ? { session, injectedDate: false, priorDate: session.date, hadDate: hasOwnDate }
+      : { session: { ...session, date: contextDate }, injectedDate: true, priorDate: session.date, hadDate: hasOwnDate };
+  });
+  const annotated = annotatePlanEffort(prepared.map((item) => item.session), hrProfile);
+  return annotated.map((session, index) => {
+    const context = prepared[index];
+    if (!context.injectedDate || !session || typeof session !== 'object') return session;
+    const restored = { ...session };
+    if (context.hadDate) restored.date = context.priorDate;
+    else delete restored.date;
+    return restored;
+  });
+}
+
+function withPlanEffortDayPayload(day, hrProfile) {
+  if (!hrProfile || !day || typeof day !== 'object') return day;
+  if (Array.isArray(day.sessions)) {
+    return { ...day, sessions: annotateSessionsForDate(day.sessions, day.date, hrProfile) };
+  }
+  return annotateSessionsForDate([day], day.date, hrProfile)[0];
+}
+
+function withPlanEffortPayload(planJson, hrProfile) {
+  if (!hrProfile || !datedRunSessionsExist(planJson)) return planJson;
+  const weeks = planJson.weeks.map((week) => {
+    const days = planSchema.getDayEntries(week).map((day) => withPlanEffortDayPayload(day, hrProfile));
+    return planSchema.setDayEntries(week, days);
+  });
+  return { ...planJson, weeks };
+}
+
+function plannedWeekMiles(week) {
+  const explicit = Number(week?.totalMiles ?? week?.total_miles ?? week?.targetMiles ?? week?.target_miles);
+  if (Number.isFinite(explicit) && explicit >= 0) return explicit;
+  if (!week || typeof week !== 'object') return null;
+  let total = 0;
+  let foundRun = false;
+  for (const day of planSchema.getDayEntries(week)) {
+    for (const session of planSchema.daySessions(day)) {
+      if (planSchema.kindFromSession(session) !== 'run') continue;
+      const miles = Number(session.distance_miles ?? session.distanceMiles ?? session.distance);
+      if (!Number.isFinite(miles) || miles < 0) continue;
+      total += miles;
+      foundRun = true;
+    }
+  }
+  return foundRun ? Math.round(total * 100) / 100 : null;
+}
+
+function nextWeekRampCandidate(planJson, currentWeek) {
+  if (!Array.isArray(planJson?.weeks)) return null;
+  const current = Number(currentWeek);
+  const nextWeekIndex = Number.isInteger(current) && current >= 1 ? current : 1;
+  const week = planJson.weeks[nextWeekIndex];
+  const plannedNextWeekMiles = plannedWeekMiles(week);
+  return week && plannedNextWeekMiles !== null
+    ? { nextWeekIndex, plannedNextWeekMiles }
+    : null;
+}
+
+function withRampDecisionPayload(planJson, nextWeekIndex, rampDecision) {
+  const week = planJson?.weeks?.[nextWeekIndex];
+  if (!week || !rampDecision) return planJson;
+  const weeks = [...planJson.weeks];
+  weeks[nextWeekIndex] = {
+    ...week,
+    rampDecision: {
+      decision: rampDecision.decision,
+      targetMiles: rampDecision.targetMiles,
+      reason: rampDecision.reason,
+      acwr: rampDecision.acwr,
+      drivers: rampDecision.drivers,
+    },
+  };
+  return { ...planJson, weeks };
+}
+
+async function buildAdaptivePlanView(userId, planJson, currentWeek) {
+  if (!planJson || typeof planJson !== 'object') return planJson;
+  const effortNeeded = datedRunSessionsExist(planJson);
+  const rampCandidate = nextWeekRampCandidate(planJson, currentWeek);
+  if (!effortNeeded && !rampCandidate) return planJson;
+
+  const todayISO = getTodayISO();
+  const currentWeekStart = getMonday(new Date(`${todayISO}T12:00:00`));
+  const historyStart = adaptationEngine.addDays(currentWeekStart, -28);
+  const [hrProfile, rampInputs] = await Promise.all([
+    effortNeeded ? getHrProfile(userId, dbGet) : Promise.resolve(null),
+    rampCandidate ? Promise.all([
+      dbAll(
+        `SELECT date, distance_miles, type, watch_activity_type, watch_normalized_type
+         FROM runs
+         WHERE user_id=? AND date>=? AND date<? AND ${runActivitySql()}
+         ORDER BY date ASC`,
+        [userId, historyStart, currentWeekStart]
+      ).catch((err) => {
+        console.error('[plans/adaptive-view] weekly mileage lookup failed:', err.message);
+        return [];
+      }),
+      dbGet('SELECT * FROM health_sync WHERE user_id=?', [userId]).catch((err) => {
+        console.error('[plans/adaptive-view] health sync lookup failed:', err.message);
+        return null;
+      }),
+      dbAll(
+        `SELECT score_date, score, band
+         FROM readiness_scores
+         WHERE user_id=? AND score_date<=?
+         ORDER BY score_date DESC
+         LIMIT 14`,
+        [userId, todayISO]
+      ).catch((err) => {
+        console.error('[plans/adaptive-view] readiness history lookup failed:', err.message);
+        return [];
+      }),
+    ]) : Promise.resolve(null),
+  ]);
+
+  let servedPlan = withPlanEffortPayload(planJson, hrProfile);
+  if (!rampCandidate || !rampInputs) return servedPlan;
+  const [recentRuns, healthRow, readinessRows] = rampInputs;
+  const weeklyMileageHistory = completedWeeklyMileageHistory(recentRuns, { asOfDate: todayISO, weeks: 4 });
+  if (weeklyMileageHistory.length < 4) return servedPlan;
+
+  const healthSignals = buildHealthSignals(healthRow || {}, { now: new Date(`${todayISO}T12:00:00`) });
+  if (!healthSignals.available || !Number.isFinite(Number(healthSignals.readinessScore))) return servedPlan;
+  const readinessBand = buildReadinessBand(healthSignals.readinessScore);
+  const readinessTrend = readinessTrendFromHistory([
+    ...(Array.isArray(readinessRows) ? readinessRows : []),
+    { score_date: todayISO, score: healthSignals.readinessScore, band: readinessBand.band },
+  ]);
+  if (!readinessTrend) return servedPlan;
+
+  const rampDecision = decideWeeklyRamp({
+    weeklyMileageHistory,
+    plannedNextWeekMiles: rampCandidate.plannedNextWeekMiles,
+    readinessTrend,
+  });
+  servedPlan = withRampDecisionPayload(servedPlan, rampCandidate.nextWeekIndex, rampDecision);
+  return servedPlan;
 }
 
 function withPlanAnchorPayload(value, planJson) {
@@ -1966,7 +2132,8 @@ router.get('/my', auth, async (req, res) => {
         [req.user.id]
       );
       if (!legacy) return res.json({ plan: null });
-      const legacyPlan = withDurationEstimatePlanPayload(parsePlan(legacy) || { weeks: [] });
+      const servedLegacyPlan = await buildAdaptivePlanView(req.user.id, parsePlan(legacy) || { weeks: [] }, 1);
+      const legacyPlan = withDurationEstimatePlanPayload(servedLegacyPlan);
       const anchorPayload = planAnchorPayload(legacyPlan);
       return res.json({
         source: 'legacy',
@@ -1988,7 +2155,8 @@ router.get('/my', auth, async (req, res) => {
     } catch (err) {
       console.error('[plans/my] invalid progress JSON:', err.message);
     }
-    const parsedPlan = withDurationEstimatePlanPayload(parsePlan(row) || { weeks: [] });
+    const servedPlan = await buildAdaptivePlanView(req.user.id, parsePlan(row) || { weeks: [] }, Number(row.current_week || 1));
+    const parsedPlan = withDurationEstimatePlanPayload(servedPlan);
     const anchorPayload = planAnchorPayload(parsedPlan);
     res.json({
       plan: {
@@ -2226,11 +2394,13 @@ router.get('/today', auth, async (req, res) => {
     const overriddenEntry = (patch && selectedEntry)
       ? planSchema.applyOverrideToDay(selectedEntry, patch)
       : selectedEntry;
+    const effortEntry = withPlanEffortDayPayload(overriddenEntry, hrProfile);
+    const effortToday = withPlanEffortDayPayload(legacyToday, hrProfile);
     const execution = dailyExecution.buildDailyExecution({
       plan: parsed,
       dateISO,
       weekdayShort,
-      selectedEntry: overriddenEntry,
+      selectedEntry: effortEntry,
       selectedWeek,
       selectedDayIndex,
       completedSessionIds,
@@ -2238,7 +2408,7 @@ router.get('/today', auth, async (req, res) => {
     });
 
     res.json({
-      today: legacyToday,
+      today: effortToday,
       execution: withPlanAnchorPayload(withDurationEstimateExecutionPayload(execution, parsed), parsed),
       ...anchorPayload,
     });
@@ -2252,7 +2422,12 @@ router.get('/current', auth, async (req, res) => {
   try {
     const active = await getActivePlanForUser(req.user.id);
     if (!active) return res.json({ plan: null });
-    const parsed = withDurationEstimatePlanPayload(parsePlan(active.row) || { weeks: [] });
+    const servedPlan = await buildAdaptivePlanView(
+      req.user.id,
+      parsePlan(active.row) || { weeks: [] },
+      Number(active.row.current_week || 1)
+    );
+    const parsed = withDurationEstimatePlanPayload(servedPlan);
     const anchorPayload = planAnchorPayload(parsed);
     res.json({
       plan: {

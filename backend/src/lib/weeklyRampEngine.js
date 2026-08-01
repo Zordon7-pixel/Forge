@@ -88,6 +88,10 @@ function decideWeeklyRamp({ weeklyMileageHistory, plannedNextWeekMiles, readines
   }
 
   const currentWeekMiles = recentWeeks[recentWeeks.length - 1];
+  if (currentWeekMiles <= 0) {
+    return passthrough(plannedNextWeekMiles, 'Most recent completed week has zero mileage.');
+  }
+
   const acuteDailyLoad = currentWeekMiles / 7;
   const chronicDailyLoad = chronicMiles / 28;
   const rawAcwr = chronicDailyLoad > 0 ? acuteDailyLoad / chronicDailyLoad : null;

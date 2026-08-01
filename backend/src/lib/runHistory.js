@@ -19,6 +19,49 @@ function getRunDate(run = {}) {
   return date && !Number.isNaN(date.getTime()) ? date : null;
 }
 
+function isoDate(value) {
+  const direct = String(value || '').slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(direct)) return direct;
+  const parsed = value ? new Date(value) : null;
+  return parsed && !Number.isNaN(parsed.getTime()) ? parsed.toISOString().slice(0, 10) : null;
+}
+
+function addDays(dateISO, amount) {
+  const date = new Date(`${dateISO}T12:00:00`);
+  date.setDate(date.getDate() + amount);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function completedWeeklyMileageHistory(runs = [], options = {}) {
+  const requestedWeeks = Number(options.weeks || 4);
+  const weeks = Number.isInteger(requestedWeeks) && requestedWeeks > 0 ? requestedWeeks : 4;
+  const asOfISO = isoDate(options.asOfDate || options.now || new Date());
+  if (!asOfISO) return [];
+
+  const asOf = new Date(`${asOfISO}T12:00:00`);
+  const daysSinceMonday = (asOf.getDay() + 6) % 7;
+  const currentWeekStart = addDays(asOfISO, -daysSinceMonday);
+  const historyStart = addDays(currentWeekStart, -(weeks * 7));
+  const totals = Array.from({ length: weeks }, () => 0);
+  let hasMileage = false;
+
+  for (const run of (Array.isArray(runs) ? runs : []).filter(isRunActivity)) {
+    const date = isoDate(run?.date || run?.created_at);
+    const miles = toNumber(run?.distance_miles ?? run?.distanceMiles);
+    if (!date || miles === null || miles < 0 || date < historyStart || date >= currentWeekStart) continue;
+    for (let index = 0; index < weeks; index += 1) {
+      const weekStart = addDays(historyStart, index * 7);
+      const weekEnd = addDays(weekStart, 7);
+      if (date < weekStart || date >= weekEnd) continue;
+      totals[index] += miles;
+      if (miles > 0) hasMileage = true;
+      break;
+    }
+  }
+
+  return hasMileage ? totals.map((miles) => round(miles, 2)) : [];
+}
+
 function computeHrZones(maxHr) {
   const max = toNumber(maxHr);
   if (max === null || max <= 0) return null;
@@ -240,5 +283,6 @@ module.exports = {
   computeHrZones,
   classifyRunZone,
   parseZoneSeconds,
+  completedWeeklyMileageHistory,
   analyzeRunHistory,
 };

@@ -395,9 +395,34 @@ function applyHealthDelta(baseScore, signals) {
   return Math.max(1, Math.min(99, Math.round(initial + signals.scoreDelta)));
 }
 
+function readinessTrendFromHistory(rows = []) {
+  const byDate = new Map();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const date = String(row?.score_date || row?.date || '').slice(0, 10);
+    const score = toNumber(row?.score ?? row?.readinessScore);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || score === null || score < 0 || score > 100) continue;
+    byDate.set(date, { date, score, band: String(row?.band || '').toUpperCase() });
+  }
+
+  const history = [...byDate.values()].sort((left, right) => left.date.localeCompare(right.date));
+  if (history.length < 2) return null;
+  const midpoint = Math.ceil(history.length / 2);
+  const older = history.slice(0, midpoint);
+  const recent = history.slice(midpoint);
+  const average = (entries) => entries.reduce((sum, entry) => sum + entry.score, 0) / entries.length;
+  const delta = average(recent) - average(older);
+  const latest = history[history.length - 1];
+
+  if (latest.band === 'RED' && delta <= 0) return 'red-trend';
+  if (delta <= -5) return 'declining';
+  if (delta >= 5) return 'improving';
+  return 'flat';
+}
+
 module.exports = {
   buildHealthSignals,
   buildReadinessBand,
   computeAcuteChronicRatio,
   applyHealthDelta,
+  readinessTrendFromHistory,
 };

@@ -62,6 +62,14 @@ const capped = decideWeeklyRamp({
 assert.equal(capped.decision, 'ADVANCE');
 assert.equal(capped.targetMiles, 22);
 
+const zeroMileageWeek = decideWeeklyRamp({
+  weeklyMileageHistory: [12, 14, 10, 0],
+  plannedNextWeekMiles: 16,
+  readinessTrend: 'improving',
+});
+assert.equal(zeroMileageWeek.decision, 'PASSTHROUGH');
+assert.equal(zeroMileageWeek.targetMiles, 16);
+
 const emptyHistory = decideWeeklyRamp({
   weeklyMileageHistory: [],
   plannedNextWeekMiles: 24,
