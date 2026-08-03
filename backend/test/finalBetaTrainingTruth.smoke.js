@@ -188,15 +188,14 @@ const repoRoot = path.join(__dirname, '..', '..');
 const appSource = fs.readFileSync(path.join(repoRoot, 'frontend/src/App.jsx'), 'utf8');
 const healthServiceSource = fs.readFileSync(path.join(repoRoot, 'frontend/src/services/HealthService.js'), 'utf8');
 check(/if \(!isNativeRuntime\(\)\) return undefined/.test(appSource), 'automatic health sync is native-only');
-check(/sync\(\)[\s\S]*setInterval\(\(\) => sync\(\)/.test(appSource), 'native app open starts sync and retains a bounded refresh interval');
+check(/sync\(\{ force: true, bypassInterval: true \}\)[\s\S]*window\.setInterval\(\(\) => sync\(\), AUTO_HEALTH_SYNC_MIN_INTERVAL_MS\)/.test(appSource), 'native cold launch forces one sync and retains the bounded refresh interval');
 check(/visibilityState === 'visible'[\s\S]*sync\(\{ force: true \}\)/.test(appSource), 'returning to the foreground triggers a bounded sync');
 check(/appStateChange[\s\S]*isActive[\s\S]*sync\(\{ force: true \}\)/.test(appSource), 'Capacitor active-state changes trigger sync');
 check(/await this\.syncToProfile\(result\.metrics\)/.test(healthServiceSource), 'native summary metrics are sent to the authenticated profile');
 check(/await this\.getWorkoutHistory\(historyOptions\)/.test(healthServiceSource), 'automatic sync requests workout history');
-check(/api\.post\('\/import\/health', \{ workouts \}\)/.test(healthServiceSource), 'automatic sync imports classified workouts through the idempotent endpoint');
+check(/importHealthWorkoutBatches\(workouts,[\s\S]*api\.post\('\/import\/health', \{ workouts: batch \}, \{ timeout: HEALTH_IMPORT_TIMEOUT_MS \}\)/.test(healthServiceSource), 'automatic sync batches classified workouts through the idempotent endpoint');
 check(/markAutoHealthSyncAttempted\(\)/.test(healthServiceSource), 'only the completed sync path records the throttle timestamp');
 
 console.log(`\nPASSED: ${passed}  FAILED: ${failed}`);
 if (failed) process.exit(1);
 console.log('FINAL BETA TRAINING TRUTH SMOKE OK');
-

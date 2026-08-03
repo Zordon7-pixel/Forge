@@ -10,9 +10,9 @@ function check(condition, message) {
 }
 
 check(source.includes("api.get('/plans/adaptation/current', { params: { date: localDateISO() } })"), 'Today requests the phone-local transparent adaptation')
-check(source.includes("item?.signal === 'training_gap'"), 'Today limits the inactivity card to a real training-gap signal')
+check(source.includes("['run_gap', 'training_gap'].includes(item?.signal)"), 'Today limits the inactivity card to current or legacy training-gap evidence')
 check(source.includes('Everything okay?'), 'training-gap card asks before changing the plan')
-check(source.includes('Adjust plan') && source.includes('Leave as is'), 'both consent choices are visible')
+check(source.includes('Ease my return') && source.includes('Keep original'), 'both consent choices are visible')
 check(source.includes('`/plans/adaptation/${trainingGapProposal.id}/${decision}`'), 'choices use the existing owner-scoped adaptation decision route')
 check(source.indexOf('<TrainingGapPrompt') < source.indexOf('<DailyCoachFlow'), 'training-gap decision appears before the normal Today flow')
 
