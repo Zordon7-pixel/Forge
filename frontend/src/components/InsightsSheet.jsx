@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react'
 import { Activity, ArrowDownRight, ArrowUpRight, Brain, ChevronRight, Lock, Watch, AlertTriangle, Footprints, Dumbbell, CheckCircle2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import AgeGradedPerformanceCard from './AgeGradedPerformanceCard'
-import WatchWorkoutSendButton from './WatchWorkoutSendButton'
 import { getToken } from '../lib/tokenStore'
 import AiGuidanceNote from './AiGuidanceNote'
 import { activityLabel, isRunningActivity } from '../lib/activityType'
@@ -141,7 +140,14 @@ function sessionExercises(session) {
   return []
 }
 
-function TodayCalendarSession({ session, onStartRun, onStartLift, t }) {
+function calendarSessionSupportsRoute(session) {
+  if (calendarSessionKind(session) !== 'run') return false
+  const type = String(session?.type || session?.workout_type || session?.prescription?.workout_type || '').toLowerCase()
+  const distance = Number(session?.distance_miles || session?.distance || session?.prescription?.distance_miles || 0)
+  return distance > 0 && !/treadmill|indoor|track/.test(type)
+}
+
+function TodayCalendarSession({ session, onStartRun, onStartLift, onPlanRoute, t }) {
   const kind = calendarSessionKind(session)
   const metrics = calendarSessionMetrics(session)
   const structure = sessionStructure(session)
@@ -193,10 +199,19 @@ function TodayCalendarSession({ session, onStartRun, onStartLift, t }) {
         </div>
       )}
 
-      {!session?.completed && typeof start === 'function' && (
-        <button type="button" onClick={() => start(session)} className="pressable mt-3 w-full rounded-lg px-3 py-2 text-sm font-black" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>
-          {kind === 'lift' ? 'Start lift' : 'Start run'}
-        </button>
+      {!session?.completed && (typeof start === 'function' || (calendarSessionSupportsRoute(session) && typeof onPlanRoute === 'function')) && (
+        <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+          {typeof start === 'function' && (
+            <button type="button" onClick={() => start(session)} className="pressable w-full rounded-lg px-3 py-2 text-sm font-black" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>
+              {kind === 'lift' ? 'Start lift' : 'Start run'}
+            </button>
+          )}
+          {calendarSessionSupportsRoute(session) && typeof onPlanRoute === 'function' && (
+            <button type="button" onClick={() => onPlanRoute(session)} className="pressable w-full rounded-lg px-3 py-2 text-sm font-black" style={{ background: 'var(--bg-card)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>
+              Map route
+            </button>
+          )}
+        </div>
       )}
     </article>
   )
@@ -236,22 +251,24 @@ export function ReadinessGauge({ score, onClick }) {
   )
 }
 
-export function DailyCoachFlow({ checkedInToday, readinessData, recommendation, execution, todayWatchWorkout, onCheckIn, onStartWorkout, onStartUnplannedRun, onReflect, onDetails }) {
-  const { t } = useTranslation()
+export function DailyCoachFlow({ checkedInToday, readinessData, recommendation, execution, hasRunRecordedToday = false, onCheckIn, onStartWorkout, onStartUnplannedRun, onDetails }) {
   const readiness = resolveReadiness(readinessData)
   const isRestDay = execution?.isRest === true || recommendation?.recommendationType === 'rest' || recommendation?.type === 'rest'
   const recommendationLabel = recommendation
     ? getRecommendationLabel(recommendation)
     : "today's plan"
-  const structure = Array.isArray(recommendation?.structure) ? recommendation.structure : []
   const calendarSessions = execution?.hasDay && Array.isArray(execution.sessions) ? execution.sessions : []
+  const pendingCalendarSessions = calendarSessions.filter((session) => session?.completed !== true)
+  const allScheduledComplete = calendarSessions.length > 0 && pendingCalendarSessions.length === 0
   const planAccess = resolveTodayPlanAccess({
     checkedInToday,
     recommendation,
     calendarSessions,
     isRestDay,
+    hasRunRecordedToday,
     onCheckIn,
     onStartWorkout,
+    onStartUnplannedRun,
     onDetails,
   })
   const { hasViewablePlan } = planAccess
@@ -267,6 +284,8 @@ export function DailyCoachFlow({ checkedInToday, readinessData, recommendation, 
     : ''
   const coachWhy = interferenceReason || (typeof recommendation?.brief?.why === 'string' ? recommendation.brief.why.trim() : '')
   const buildTodaySubtitle = () => {
+    if (allScheduledComplete) return 'All scheduled sessions are complete. Review the work or recover for the next session.'
+    if (isRestDay && hasRunRecordedToday) return 'An extra run is already logged today. Recovery remains the scheduled plan.'
     if (!recommendation && isRestDay) return 'Rest and recovery are scheduled today.'
     if (!recommendation && calendarSessions.length > 0) {
       const summaryLabel = calendarLabel || 'training'
@@ -305,27 +324,16 @@ export function DailyCoachFlow({ checkedInToday, readinessData, recommendation, 
 
     return `${readiness.sentencePrefix}${parts.filter(Boolean).join(' · ')}.`
   }
-  const steps = [
-    { key: 'checkin', label: 'Check in', done: checkedInToday, action: onCheckIn },
-    {
-      key: 'train',
-      label: !hasViewablePlan
-        ? checkedInToday ? 'Review check-in' : 'Plan pending'
-        : isRestDay ? 'Rest day' : (recommendation ? recommendationLabel : 'Train'),
-      done: isRestDay,
-      action: planAccess.trainAction,
-    },
-    { key: 'reflect', label: 'Reflect', done: false, action: onReflect },
-  ]
-
   return (
     <section className="card-hero p-5">
-      <div className="flex items-start justify-between gap-3">
-        <div>
+      <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
           <p className="t-micro" style={{ color: 'var(--accent)' }}>Today</p>
           <h2 className="t-title mt-1" style={{ color: 'var(--text-primary)' }}>
             {hasViewablePlan
-              ? checkedInToday
+              ? allScheduledComplete
+                ? 'Today\'s plan is complete'
+                : checkedInToday
                 ? (isRestDay ? 'Recovery is the plan today' : 'Train from the plan')
                 : 'Review today\'s plan'
               : checkedInToday
@@ -349,7 +357,7 @@ export function DailyCoachFlow({ checkedInToday, readinessData, recommendation, 
             </>
           )}
         </div>
-        <div className="flex flex-col gap-2">
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:min-w-32">
           <button
             onClick={planAccess.primaryAction}
             className="pressable rounded-xl px-3 py-2 text-xs font-black"
@@ -366,56 +374,8 @@ export function DailyCoachFlow({ checkedInToday, readinessData, recommendation, 
               {planAccess.secondaryLabel}
             </button>
           )}
-          {checkedInToday && isRestDay && (
-            <button
-              type="button"
-              onClick={onStartUnplannedRun}
-              className="pressable rounded-xl px-3 py-2 text-xs font-bold"
-              style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}
-            >
-              Start a run
-            </button>
-          )}
         </div>
       </div>
-      <div className="mt-4 grid grid-cols-3 gap-2">
-        {steps.map((step, index) => (
-          <button
-            key={step.key}
-            type="button"
-            onClick={step.action}
-            disabled={step.key === 'train' && isRestDay}
-            className="card pressable px-2 py-3 text-left"
-            style={{ background: step.done ? 'rgba(34,197,94,0.12)' : 'var(--bg-input)', border: `1px solid ${step.done ? 'rgba(34,197,94,0.35)' : 'var(--border-subtle)'}` }}
-          >
-            <span className="text-[10px] font-bold" style={{ color: step.done ? 'var(--success)' : 'var(--text-muted)' }}>{index + 1}</span>
-            <p className="mt-1 text-xs font-semibold capitalize" style={{ color: 'var(--text-primary)' }}>{step.label}</p>
-          </button>
-        ))}
-      </div>
-      {todayWatchWorkout && (
-        <WatchWorkoutSendButton
-          workout={todayWatchWorkout}
-          label={t('today.sendToWatch')}
-          className="mt-2"
-          compact
-        />
-      )}
-      {structure.length > 0 && (
-        <div
-          role="status"
-          className="mt-2 flex w-full items-center justify-between gap-3 rounded-xl px-3 py-3"
-          style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}
-        >
-          <span className="flex items-center gap-2 text-left text-sm font-bold">
-            <Watch size={17} color="var(--text-muted)" />
-            {t('today.thirdPartyWatchSync')}
-          </span>
-          <span className="shrink-0 text-xs font-black uppercase" style={{ color: 'var(--accent)' }}>
-            {t('profile.comingSoon')}
-          </span>
-        </div>
-      )}
     </section>
   )
 }
@@ -501,6 +461,7 @@ export function TodayDetailSheet({
   readinessBreakdown,
   recommendation,
   execution,
+  hasRunRecordedToday = false,
   checkinData,
   dailySteps,
   dailyStepsSource,
@@ -511,6 +472,7 @@ export function TodayDetailSheet({
   onStartWorkout,
   onStartRun,
   onStartLift,
+  onPlanRoute,
   onStartUnplannedRun,
   onWarmup,
   onReflect,
@@ -522,7 +484,14 @@ export function TodayDetailSheet({
   const calendarSessions = execution?.hasDay && Array.isArray(execution.sessions) ? execution.sessions : []
   const calendarKinds = [...new Set(calendarSessions.map(calendarSessionKind))]
   const isRestDay = execution?.isRest === true || recommendation?.recommendationType === 'rest' || recommendation?.type === 'rest'
-  const planAccess = resolveTodayPlanAccess({ checkedInToday, recommendation, calendarSessions, isRestDay })
+  const planAccess = resolveTodayPlanAccess({
+    checkedInToday,
+    recommendation,
+    calendarSessions,
+    isRestDay,
+    hasRunRecordedToday,
+    onStartUnplannedRun,
+  })
   const { hasViewablePlan } = planAccess
   const recommendationLabel = resolveTodayWorkoutLabel({
     calendarKinds,
@@ -597,8 +566,8 @@ export function TodayDetailSheet({
           </div>
         </div>
 
-        <section className="mt-5">
-          <p className="text-xs font-bold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.8 }}>Why this plan</p>
+        <details className="mt-5 rounded-xl p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
+          <summary className="cursor-pointer text-sm font-bold" style={{ color: 'var(--text-primary)' }}>Why this workout</summary>
           <div className="mt-2 space-y-2">
             {recommendation?.reason && (
               <p className="rounded-xl p-3 text-sm" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}>
@@ -616,7 +585,7 @@ export function TodayDetailSheet({
             )}
             {(recommendation?.reason || coachWhy) && <AiGuidanceNote />}
           </div>
-        </section>
+        </details>
 
         {calendarSessions.length > 0 ? (
           <section className="mt-5">
@@ -629,6 +598,7 @@ export function TodayDetailSheet({
                   session={session}
                   onStartRun={onStartRun}
                   onStartLift={onStartLift}
+                  onPlanRoute={onPlanRoute}
                   t={t}
                 />
               ))}
@@ -668,20 +638,20 @@ export function TodayDetailSheet({
           </section>
         )}
 
-        <section className="mt-5">
-          <p className="text-xs font-bold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.8 }}>Actions</p>
+        <details className="mt-5 rounded-xl p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
+          <summary className="cursor-pointer text-sm font-bold" style={{ color: 'var(--text-primary)' }}>Check-in and recovery tools</summary>
           <div className="mt-2 grid grid-cols-2 gap-2">
             <button onClick={onCheckIn} className="rounded-xl px-3 py-3 text-sm font-bold" style={{ background: checkedInToday ? 'var(--bg-input)' : 'var(--accent)', color: checkedInToday ? 'var(--text-primary)' : '#000' }}>
               {checkedInToday ? 'Edit check-in' : 'Check in'}
             </button>
-            {planAccess.showStartLog && (
+            {planAccess.showStartLog && calendarSessions.length === 0 && (
               <button onClick={onStartWorkout} className="rounded-xl px-3 py-3 text-sm font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>
                 {isRestDay ? 'View calendar' : 'Start/log'}
               </button>
             )}
-            {isRestDay && (
-              <button onClick={onStartUnplannedRun} className="rounded-xl px-3 py-3 text-sm font-bold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>
-                Start a run
+            {isRestDay && planAccess.secondaryAction && (
+              <button onClick={planAccess.secondaryAction} className="rounded-xl px-3 py-3 text-sm font-bold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>
+                {planAccess.secondaryLabel}
               </button>
             )}
             <button onClick={onWarmup} className="rounded-xl px-3 py-3 text-sm font-bold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>
@@ -696,10 +666,10 @@ export function TodayDetailSheet({
               Readiness breakdown
             </button>
           )}
-        </section>
+        </details>
 
-        <section className="mt-5">
-          <p className="text-xs font-bold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.8 }}>Adjustment history</p>
+        <details className="mt-5 rounded-xl p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
+          <summary className="cursor-pointer text-sm font-bold" style={{ color: 'var(--text-primary)' }}>Plan context</summary>
           <div className="mt-2 space-y-2">
             {(planSignals.length ? planSignals : ['Forged Hybrid has not detected any missed-session, recovery-mode, or new sync signals today.']).map((signal) => (
               <p key={signal} className="rounded-xl p-3 text-sm" style={{ background: 'var(--bg-input)', color: 'var(--text-muted)' }}>
@@ -707,7 +677,7 @@ export function TodayDetailSheet({
               </p>
             ))}
           </div>
-        </section>
+        </details>
       </div>
     </div>
   )

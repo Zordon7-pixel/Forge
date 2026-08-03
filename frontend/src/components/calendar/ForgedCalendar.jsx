@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from 'react'
 import {
-  Footprints, Dumbbell, Moon, ChevronDown, ChevronLeft, ChevronRight, ChevronRight as OpenIcon, Pencil,
+  Footprints, Dumbbell, Moon, ChevronDown, ChevronLeft, ChevronRight, Pencil,
 } from 'lucide-react'
 import {
   buildMonthGrid, addMonths, dayMarks, dayStatus, countdownDays, WEEKDAYS,
@@ -218,7 +218,6 @@ export default function ForgedCalendar({
   onPrevWeek,
   onNextWeek,
   onOpenDay,
-  onOpenToday,
   onEditGoal,
   recordedRunsByDate,
   canPrev,
@@ -245,10 +244,6 @@ export default function ForgedCalendar({
     [view, model, monthAnchor, todayISO, completedSet, recordedRunsByDate],
   )
 
-  const todayInWeek = useMemo(
-    () => (week ? week.days.find((d) => d.dateISO === todayISO) : null),
-    [week, todayISO],
-  )
   const weekProgress = useMemo(() => {
     const sessions = (week?.days || []).flatMap((day) => day.sessions || [])
     const total = sessions.length
@@ -397,12 +392,6 @@ export default function ForgedCalendar({
               />
             ))}
           </div>
-
-          {todayInWeek && (
-            <button type="button" className="forged-today-cta" style={{ marginTop: 12 }} onClick={() => onOpenToday(todayInWeek)}>
-              Open today <OpenIcon size={16} style={{ verticalAlign: -3 }} />
-            </button>
-          )}
         </div>
       )}
 

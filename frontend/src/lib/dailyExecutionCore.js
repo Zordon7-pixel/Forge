@@ -59,12 +59,15 @@ export function normalizeExecution(body) {
   };
 }
 
-// True when there is an executable scheduled session today (run or lift that is
-// not a rest day). Home uses this to prefer the calendar over the legacy
-// next-recommendation fallback. A rest day is never executable.
+function isPendingSession(session) {
+  return Boolean(session) && session.completed !== true;
+}
+
+// True when there is an unfinished scheduled session today. Completed sessions
+// remain reviewable, but they must never reopen from Today's primary action.
 export function hasExecutableSession(execution) {
   if (!execution || !execution.hasDay || execution.isRest) return false;
-  return Boolean(execution.run || execution.lift);
+  return isPendingSession(execution.run) || isPendingSession(execution.lift);
 }
 
 // Human-readable HR-zone string, or the plain plan zone label when the user has
@@ -98,13 +101,13 @@ export function completionBody(sessionId, currentWeek) {
 // The scheduled run session for today, or null when there is no executable
 // calendar run (rest day, lift-only day, or no plan). Never fabricates a run.
 export function scheduledRunFromExecution(execution) {
-  return hasExecutableSession(execution) && execution.run ? execution.run : null;
+  return hasExecutableSession(execution) && isPendingSession(execution.run) ? execution.run : null;
 }
 
 // The scheduled lift session for today, or null when there is no executable
 // calendar lift. Never fabricates a lift.
 export function scheduledLiftFromExecution(execution) {
-  return hasExecutableSession(execution) && execution.lift ? execution.lift : null;
+  return hasExecutableSession(execution) && isPendingSession(execution.lift) ? execution.lift : null;
 }
 
 // Map today's executable calendar session into the `recommendation` shape the
@@ -123,7 +126,7 @@ export function recommendationFromExecution(execution) {
     };
   }
   if (!hasExecutableSession(execution)) return null;
-  const run = execution.run || null;
+  const run = scheduledRunFromExecution(execution);
   if (run) {
     const type = run.type || run.workout_type || 'run';
     const dist = Number(run.distance_miles || run.distance || 0);
@@ -144,7 +147,7 @@ export function recommendationFromExecution(execution) {
       source: 'calendar',
     };
   }
-  const lift = execution.lift || null;
+  const lift = scheduledLiftFromExecution(execution);
   return {
     recommendationType: 'strength',
     type: 'strength',

@@ -33,8 +33,8 @@ console.log('\n== Rest-day actions ==')
 assert(insights.includes("const isRestDay = execution?.isRest === true || recommendation?.recommendationType === 'rest' || recommendation?.type === 'rest'"), 'Today surfaces identify calendar and recommendation rest days')
 assert(insights.includes("isRestDay ? 'View calendar' : 'Start/log'"), 'Today details route rest days to the calendar')
 assert(insights.includes('Recovery is the plan today'), 'rest-day heading is explicit')
-assert(insights.includes("disabled={step.key === 'train' && isRestDay}"), 'completed rest step is not a redundant interactive control')
-assert(insights.includes('Start a run') && insights.includes('onStartUnplannedRun'), 'Today rest details expose a separate run-intent action')
+assert(!insights.includes("disabled={step.key === 'train' && isRestDay}"), 'Today no longer renders a redundant disabled workflow step on rest days')
+assert(insights.includes('isRestDay && planAccess.secondaryAction') && insights.includes('onStartUnplannedRun'), 'Today rest details expose the guarded extra-run action')
 assert(dayView.includes('Choose an extra run or move a missed session onto today.'), 'calendar rest detail explains both rest-day intents')
 assert(dayView.includes('{isScheduledToday && ('), 'future calendar rest days cannot start a run today')
 assert(plan.includes("navigate('/log-run?tab=manual&intent=rest-day')"), 'Plan wires today rest runs to the intent chooser')
@@ -70,12 +70,13 @@ const calls = []
 const handlers = {
   onCheckIn: () => calls.push('checkin'),
   onStartWorkout: () => calls.push('start'),
+  onStartUnplannedRun: () => calls.push('extra'),
   onDetails: () => calls.push('details'),
 }
 const accessFor = (overrides = {}) => resolveTodayPlanAccess({ ...handlers, ...overrides })
 
 const recommendationOnly = accessFor({ recommendation: { type: 'easy' } })
-assert(recommendationOnly.hasViewablePlan && recommendationOnly.primaryLabel === 'View plan', 'recommendation-only days expose View plan before check-in')
+assert(recommendationOnly.hasViewablePlan && recommendationOnly.primaryLabel === 'View workout', 'recommendation-only days expose the workout before check-in')
 recommendationOnly.primaryAction()
 recommendationOnly.secondaryAction()
 recommendationOnly.trainAction()
@@ -105,11 +106,11 @@ assert(resolveTodayWorkoutLabel({ calendarKinds: ['run', 'lift'] }) === 'Run + l
 const restDay = accessFor({ isRestDay: true })
 restDay.primaryAction()
 restDay.secondaryAction()
-assert(calls.splice(0).join(',') === 'details,checkin', 'rest-day plan review and optional check-in route correctly')
-assert(restDay.primaryLabel === 'View plan' && restDay.showStartLog, 'rest days remain viewable and retain their explicit calendar/run choices')
+assert(calls.splice(0).join(',') === 'details,extra', 'rest-day review and explicit extra-run actions route correctly')
+assert(restDay.primaryLabel === 'View rest day' && !restDay.showStartLog, 'rest days remain viewable without an ambiguous generic Start/log action')
 const checkedRestDay = accessFor({ checkedInToday: true, isRestDay: true })
 checkedRestDay.primaryAction()
-assert(calls.splice(0).join(',') === 'start' && checkedRestDay.primaryLabel === 'View week', 'checked-in rest days route to the week without using a Start label')
+assert(calls.splice(0).join(',') === 'details' && checkedRestDay.primaryLabel === 'View rest day', 'checked-in rest days stay reviewable without using a Start label')
 
 const noPlan = accessFor()
 noPlan.primaryAction()

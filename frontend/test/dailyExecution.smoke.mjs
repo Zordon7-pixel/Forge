@@ -89,7 +89,7 @@ assert(completionBody('run-1', 0).current_week === undefined, 'completion body r
 
 console.log('\n== scheduled run/lift extractors (calendar preference) ==');
 assert(scheduledRunFromExecution(h) && scheduledRunFromExecution(h).id === 'run-1', 'scheduledRunFromExecution returns the executable run');
-assert(scheduledLiftFromExecution(h) && scheduledLiftFromExecution(h).id === 'lift-1', 'scheduledLiftFromExecution returns the executable lift');
+assert(scheduledLiftFromExecution(h) === null, 'scheduledLiftFromExecution excludes a completed lift');
 assert(scheduledRunFromExecution(r) === null, 'rest day yields no scheduled run');
 assert(scheduledLiftFromExecution(r) === null, 'rest day yields no scheduled lift');
 assert(scheduledRunFromExecution(n) === null, 'no-plan yields no scheduled run');
@@ -107,6 +107,29 @@ assert(stepsRec && stepsRec.structure.length === 3, 'run steps remain visible wh
 const liftOnly = normalizeExecution({ execution: { hasPlan: true, hasDay: true, isRest: false, week: 3, sessions: [{ id: 'lift-9', kind: 'lift', title: 'Upper' }], run: null, lift: { id: 'lift-9', kind: 'lift', title: 'Upper' } } });
 const liftRec = recommendationFromExecution(liftOnly);
 assert(liftRec && liftRec.recommendationType === 'strength' && liftRec.planSessionId === 'lift-9', 'lift-only day → strength recommendation with lift session id');
+const liftPendingAfterRun = normalizeExecution({ execution: {
+  hasPlan: true,
+  hasDay: true,
+  isRest: false,
+  week: 3,
+  sessions: [{ id: 'run-done', kind: 'run', completed: true }, { id: 'lift-next', kind: 'lift', completed: false }],
+  run: { id: 'run-done', kind: 'run', completed: true },
+  lift: { id: 'lift-next', kind: 'lift', completed: false },
+} });
+assert(hasExecutableSession(liftPendingAfterRun) === true, 'hybrid day stays executable while the lift remains unfinished');
+assert(scheduledRunFromExecution(liftPendingAfterRun) === null, 'completed run cannot reopen from Today');
+assert(scheduledLiftFromExecution(liftPendingAfterRun)?.id === 'lift-next', 'unfinished lift becomes the next executable session');
+assert(recommendationFromExecution(liftPendingAfterRun)?.recommendationType === 'strength', 'Today recommends the pending lift after the run is complete');
+const allComplete = normalizeExecution({ execution: {
+  hasPlan: true,
+  hasDay: true,
+  isRest: false,
+  sessions: [{ id: 'run-done', kind: 'run', completed: true }, { id: 'lift-done', kind: 'lift', completed: true }],
+  run: { id: 'run-done', kind: 'run', completed: true },
+  lift: { id: 'lift-done', kind: 'lift', completed: true },
+} });
+assert(hasExecutableSession(allComplete) === false, 'fully completed day has no executable session');
+assert(recommendationFromExecution(allComplete) === null, 'fully completed day cannot create a new start recommendation');
 
 console.log('\n== runRouteState + state readers ==');
 const rs = runRouteState(h);

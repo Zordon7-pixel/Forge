@@ -551,7 +551,6 @@ export default function Plan() {
                 onPrevWeek={() => goToWeek(Math.max(1, currentWeek - 1))}
                 onNextWeek={() => goToWeek(Math.min(weekCount || currentWeek, currentWeek + 1))}
                 onOpenDay={(day) => setSelectedDayISO(day.dateISO)}
-                onOpenToday={(day) => setSelectedDayISO(day.dateISO)}
                 onEditGoal={activeRace ? () => {
                   if ((calendarModel.goals || []).length > 1) {
                     navigate('/races')

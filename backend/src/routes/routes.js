@@ -3,7 +3,7 @@ const { v4: uuidv4 } = require('uuid');
 const rateLimit = require('express-rate-limit');
 const { dbGet, dbAll, dbRun } = require('../db');
 const auth = require('../middleware/auth');
-const { generateElevationAwareRoute, RouteEngineError } = require('../services/routeEngine');
+const { generateElevationAwareRoute, searchRouteStartPlaces, RouteEngineError } = require('../services/routeEngine');
 const { resolveEntitlement } = require('../lib/betaAccess');
 
 const routeGenerationLimiter = rateLimit({
@@ -11,6 +11,15 @@ const routeGenerationLimiter = rateLimit({
   max: 8,
   keyGenerator: (req) => String(req.user.id),
   message: { error: 'Too many route requests. Try again in 15 minutes.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const placeSearchLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  keyGenerator: (req) => String(req.user.id),
+  message: { error: 'Too many location searches. Try again in 15 minutes.' },
   standardHeaders: true,
   legacyHeaders: false,
 });
@@ -31,6 +40,25 @@ router.get('/planner-status', auth, async (req, res) => {
   } catch (err) {
     console.error('[routes/planner-status]', err.message);
     res.status(500).json({ error: 'Failed to load route planner status.' });
+  }
+});
+
+// POST /api/routes/search-start -- find a travel start without exposing the provider key
+router.post('/search-start', auth, placeSearchLimiter, async (req, res) => {
+  try {
+    const user = await dbGet('SELECT is_pro, subscription_status FROM users WHERE id=?', [req.user.id]);
+    if (!resolveEntitlement(user).effectivePremiumAccess) {
+      return res.status(403).json({ error: 'Elevation route planning requires Forged Hybrid Pro.', code: 'PRO_REQUIRED' });
+    }
+    const places = await searchRouteStartPlaces(req.body?.query);
+    return res.json({ places });
+  } catch (err) {
+    if (err instanceof RouteEngineError) {
+      if (err.status >= 500) console.error('[routes/search-start]', err.code, err.message);
+      return res.status(err.status).json({ error: err.message, code: err.code });
+    }
+    console.error('[routes/search-start] unexpected failure:', err.message);
+    return res.status(500).json({ error: 'Location search failed.' });
   }
 });
 

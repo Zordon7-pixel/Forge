@@ -1,9 +1,11 @@
 const crypto = require('crypto');
 
 const ORS_BASE_URL = 'https://api.heigit.org/openrouteservice/v2/directions';
+const ORS_GEOCODE_URL = 'https://api.openrouteservice.org/geocode/search';
 const METERS_PER_MILE = 1609.344;
 const FEET_PER_METER = 3.28084;
 const ROUTE_TIMEOUT_MS = 10000;
+const GEOCODE_TIMEOUT_MS = 8000;
 const ROUTE_CACHE_TTL_MS = 20 * 60 * 1000;
 const MAX_CACHE_ENTRIES = 100;
 const CANDIDATE_COUNT = 3;
@@ -23,6 +25,14 @@ function finiteNumber(value) {
   if (value === undefined || value === null || value === '') return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
+}
+
+function validatePlaceQuery(value) {
+  const query = String(value ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (query.length < 3 || query.length > 120) {
+    throw new RouteEngineError('Enter a place or address between 3 and 120 characters.', { status: 400, code: 'INVALID_PLACE_QUERY' });
+  }
+  return query;
 }
 
 function validateRouteInput(input = {}) {
@@ -319,6 +329,60 @@ async function generateElevationAwareRoute(rawInput, options = {}) {
   };
 }
 
+async function searchRouteStartPlaces(rawQuery, options = {}) {
+  const query = validatePlaceQuery(rawQuery);
+  const apiKey = options.apiKey ?? process.env.OPENROUTESERVICE_API_KEY;
+  const fetchImpl = options.fetchImpl || fetch;
+  if (!apiKey) {
+    throw new RouteEngineError('Route planning is temporarily unavailable.', { status: 503, code: 'ROUTE_PROVIDER_NOT_CONFIGURED' });
+  }
+
+  const url = new URL(ORS_GEOCODE_URL);
+  url.searchParams.set('text', query);
+  url.searchParams.set('size', '5');
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), GEOCODE_TIMEOUT_MS);
+  try {
+    const response = await fetchImpl(url.toString(), {
+      method: 'GET',
+      headers: { Authorization: apiKey, Accept: 'application/geo+json, application/json' },
+      signal: controller.signal,
+    });
+    let payload = null;
+    try {
+      payload = await response.json();
+    } catch (err) {
+      throw new RouteEngineError('The location provider returned an invalid response.', { status: 502, code: 'INVALID_GEOCODE_RESPONSE' });
+    }
+    if (!response.ok) throw providerError(response.status, payload);
+
+    const seen = new Set();
+    return (Array.isArray(payload?.features) ? payload.features : [])
+      .map((feature) => {
+        const coordinates = feature?.geometry?.coordinates;
+        const longitude = finiteNumber(coordinates?.[0]);
+        const latitude = finiteNumber(coordinates?.[1]);
+        if (latitude === null || longitude === null || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) return null;
+        const properties = feature?.properties || {};
+        const label = String(properties.label || properties.name || '').trim().slice(0, 160);
+        if (!label) return null;
+        const key = `${latitude.toFixed(5)}:${longitude.toFixed(5)}`;
+        if (seen.has(key)) return null;
+        seen.add(key);
+        return { label, latitude, longitude };
+      })
+      .filter(Boolean)
+      .slice(0, 5);
+  } catch (err) {
+    if (err?.name === 'AbortError') {
+      throw new RouteEngineError('Location search timed out. Try again.', { status: 504, code: 'GEOCODE_TIMEOUT' });
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function clearRouteCache() {
   routeCache.clear();
 }
@@ -327,5 +391,7 @@ module.exports = {
   RouteEngineError,
   clearRouteCache,
   generateElevationAwareRoute,
+  searchRouteStartPlaces,
+  validatePlaceQuery,
   validateRouteInput,
 };

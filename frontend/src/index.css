@@ -169,6 +169,14 @@ body {
   scroll-margin-bottom: calc(var(--app-bottom-nav-height) + var(--app-bottom-content-gap));
 }
 
+.route-planner-controls {
+  padding-bottom: calc(var(--app-bottom-nav-height) + var(--app-bottom-content-gap));
+}
+
+.route-planner-controls :is(button, input) {
+  scroll-margin-bottom: calc(var(--app-bottom-nav-height) + var(--app-bottom-content-gap));
+}
+
 .run-intent-overlay {
   position: fixed;
   inset: 0;

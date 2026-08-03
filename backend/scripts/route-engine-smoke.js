@@ -4,6 +4,8 @@ const {
   RouteEngineError,
   clearRouteCache,
   generateElevationAwareRoute,
+  searchRouteStartPlaces,
+  validatePlaceQuery,
   validateRouteInput,
 } = require('../src/services/routeEngine');
 
@@ -81,6 +83,46 @@ async function generate(preference) {
     (err) => err instanceof RouteEngineError && err.status === 400,
     'oversized distance should fail at the boundary',
   );
+
+  assert.throws(
+    () => validatePlaceQuery('  x  '),
+    (err) => err instanceof RouteEngineError && err.code === 'INVALID_PLACE_QUERY',
+    'short place searches should fail at the boundary',
+  );
+  assert.throws(
+    () => validatePlaceQuery('x'.repeat(121)),
+    (err) => err instanceof RouteEngineError && err.code === 'INVALID_PLACE_QUERY',
+    'oversized place searches should fail at the boundary',
+  );
+
+  let geocodeUrl = '';
+  let geocodeHeaders = null;
+  const places = await searchRouteStartPlaces(' Portland,   Maine ', {
+    apiKey: 'test-key',
+    fetchImpl: async (url, init) => {
+      geocodeUrl = url;
+      geocodeHeaders = init.headers;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          features: [
+            { geometry: { coordinates: [-70.2568, 43.6591] }, properties: { label: 'Portland, Cumberland County, Maine, USA' } },
+            { geometry: { coordinates: [-70.2568, 43.6591] }, properties: { label: 'Duplicate Portland' } },
+            { geometry: { coordinates: [-68.0, 45.0] }, properties: { label: 'Maine, USA' } },
+            { geometry: { coordinates: ['bad', 44] }, properties: { label: 'Invalid coordinates' } },
+          ],
+        }),
+      };
+    },
+  });
+  assert(geocodeUrl.startsWith('https://api.openrouteservice.org/geocode/search?'), 'place search uses the ORS geocoder host');
+  assert(geocodeUrl.includes('text=Portland%2C+Maine') && geocodeUrl.includes('size=5'), 'place search normalizes and bounds the query');
+  assert.strictEqual(geocodeHeaders.Authorization, 'test-key', 'provider key stays in the server-side authorization header');
+  assert.deepStrictEqual(places, [
+    { label: 'Portland, Cumberland County, Maine, USA', latitude: 43.6591, longitude: -70.2568 },
+    { label: 'Maine, USA', latitude: 45, longitude: -68 },
+  ], 'place search returns unique validated coordinates only');
 
   await assert.rejects(
     () => generateElevationAwareRoute({ latitude: 39, longitude: -76, distanceMiles: 3 }),

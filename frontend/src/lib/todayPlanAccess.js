@@ -3,11 +3,16 @@ export function resolveTodayPlanAccess({
   recommendation = null,
   calendarSessions = [],
   isRestDay = false,
+  hasRunRecordedToday = false,
   onCheckIn,
   onStartWorkout,
+  onStartUnplannedRun,
   onDetails,
 } = {}) {
-  const sessionCount = Array.isArray(calendarSessions) ? calendarSessions.length : 0
+  const sessions = Array.isArray(calendarSessions) ? calendarSessions : []
+  const sessionCount = sessions.length
+  const pendingSessionCount = sessions.filter((session) => session?.completed !== true).length
+  const allScheduledComplete = sessionCount > 0 && pendingSessionCount === 0
   const hasRecommendation = Boolean(recommendation)
   const hasViewablePlan = hasRecommendation || sessionCount > 0 || isRestDay
 
@@ -27,14 +32,40 @@ export function resolveTodayPlanAccess({
     }
   }
 
+  if (isRestDay) {
+    return {
+      hasViewablePlan: true,
+      primaryAction: onDetails || onStartWorkout,
+      primaryLabel: 'View rest day',
+      secondaryAction: hasRunRecordedToday ? null : onStartUnplannedRun,
+      secondaryLabel: hasRunRecordedToday ? null : 'Start extra run',
+      trainAction: onDetails || onStartWorkout,
+      uncheckedSignal: 'Rest is scheduled today. Check in only if you want recovery guidance adjusted.',
+      readinessFallback: 'Rest is scheduled today. A check-in can add recovery context without hiding the calendar.',
+      showStartLog: false,
+    }
+  }
+
+  if (allScheduledComplete) {
+    return {
+      hasViewablePlan: true,
+      primaryAction: onDetails,
+      primaryLabel: 'Review completed workout',
+      secondaryAction: null,
+      secondaryLabel: null,
+      trainAction: onDetails,
+      uncheckedSignal: "Today's scheduled workout is complete.",
+      readinessFallback: "Today's scheduled workout is complete.",
+      showStartLog: false,
+    }
+  }
+
   return {
     hasViewablePlan: true,
     primaryAction: checkedInToday
       ? onStartWorkout
       : onDetails,
-    primaryLabel: checkedInToday
-      ? isRestDay ? 'View week' : 'Start'
-      : 'View plan',
+    primaryLabel: checkedInToday ? 'Start workout' : 'View workout',
     secondaryAction: checkedInToday
       ? onDetails
       : onCheckIn,

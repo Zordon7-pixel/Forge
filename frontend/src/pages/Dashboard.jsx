@@ -16,6 +16,7 @@ import { fetchDailyExecution, recommendationFromExecution, hasExecutableSession,
 import { formatGroupRunDate, upcomingGroupRun } from '../lib/groupRuns'
 import { resolveReadiness } from '../lib/truthConsistency'
 import { HEALTH_SYNC_RESULT_EVENT } from '../lib/healthSync'
+import { isRunningActivity } from '../lib/activityType'
 
 function fmtPace(durationSeconds, distance) {
   if (!durationSeconds || !distance) return '--'
@@ -52,20 +53,6 @@ function getRecommendationLabel(recommendation) {
     : "today's session"
 }
 
-function structureToWatchSteps(structure = []) {
-  if (!Array.isArray(structure)) return []
-  return structure.map((block) => {
-    const parts = [
-      block?.label || block?.phase,
-      block?.hrZone ? `Z${block.hrZone}` : '',
-      block?.durationMinutes ? `${block.durationMinutes} min` : '',
-      block?.distanceMiles ? `${block.distanceMiles} mi` : '',
-      block?.description || '',
-    ].filter(Boolean)
-    return parts.join(' - ')
-  }).filter(Boolean)
-}
-
 function getWeekKey() {
   const now = new Date()
   const weekStart = new Date(Date.UTC(now.getFullYear(), 0, 1))
@@ -81,6 +68,15 @@ function localTimezone() {
     console.warn('[Dashboard] local timezone unavailable:', error?.message)
     return 'UTC'
   }
+}
+
+function runOccurredOnDate(run, dateISO) {
+  const raw = run?.date || run?.started_at || run?.start_time || run?.created_at
+  if (!raw) return false
+  const text = String(raw)
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text === dateISO
+  const parsed = new Date(text)
+  return !Number.isNaN(parsed.getTime()) && localDateISO(parsed) === dateISO
 }
 
 const TODAY_CARD_VIEWED_KEY = 'forge_track_today_card_viewed'
@@ -643,23 +639,10 @@ export default function Dashboard() {
   const calendarRec = useMemo(() => recommendationFromExecution(execution), [execution])
   const calendarOwnsToday = Boolean(execution?.hasPlan && execution?.hasDay)
   const effectiveRecommendation = calendarRec || (calendarOwnsToday ? null : nextRecommendation)
-
-  const todayWatchWorkout = useMemo(() => {
-    if (!effectiveRecommendation) return null
-    const hasDistance = Number(effectiveRecommendation.suggestedDistance || 0) > 0
-    const hasPace = Boolean(effectiveRecommendation.suggestedPace)
-    if (!hasDistance && !hasPace) return null
-    return {
-      typeLabel: effectiveRecommendation.type || effectiveRecommendation.recommendationType || 'Forged Hybrid Workout',
-      distanceLabel: hasDistance ? `${effectiveRecommendation.suggestedDistance} mi` : '',
-      pace: effectiveRecommendation.suggestedPace || '',
-      progression: effectiveRecommendation.progression || effectiveRecommendation.summary || '',
-      description: effectiveRecommendation.interference?.reason || effectiveRecommendation.reason || effectiveRecommendation.why || '',
-      zone: effectiveRecommendation.targetZone || '',
-      intensity: effectiveRecommendation.intensity || '',
-      steps: structureToWatchSteps(effectiveRecommendation.structure),
-    }
-  }, [effectiveRecommendation])
+  const hasRunRecordedToday = useMemo(() => {
+    const todayISO = localDateISO()
+    return runs.some((run) => isRunningActivity(run) && runOccurredOnDate(run, todayISO))
+  }, [runs])
 
   const showLoadWarning = loadAnalysis && ['elevated', 'high', 'danger'].includes(loadAnalysis.loadStatus) && Date.now() > loadWarningDismissedUntil
   const complianceColor = compliance?.score >= 80 ? 'var(--success)' : compliance?.score >= 50 ? 'var(--accent)' : 'var(--danger)'
@@ -713,6 +696,12 @@ export default function Dashboard() {
         scheduledLift: execution.lift,
       },
     })
+  }, [navigate, execution])
+
+  const handlePlanTodayRoute = useCallback(() => {
+    if (!execution?.run) return
+    track('route_planner_opened', { via: 'today_details', source: 'calendar' })
+    navigate('/log-run', { state: { ...runRouteState(execution), openRoutePlanner: true } })
   }, [navigate, execution])
 
   const handleStartUnplannedRun = useCallback(() => {
@@ -880,11 +869,10 @@ export default function Dashboard() {
         readinessData={readinessState.data}
         recommendation={effectiveRecommendation}
         execution={execution}
-        todayWatchWorkout={todayWatchWorkout}
+        hasRunRecordedToday={hasRunRecordedToday}
         onCheckIn={() => navigate('/checkin')}
         onStartWorkout={handleStartWorkout}
         onStartUnplannedRun={handleStartUnplannedRun}
-        onReflect={() => navigate('/history')}
         onDetails={() => setShowTodayDetail(true)}
       />
 
@@ -910,6 +898,7 @@ export default function Dashboard() {
         readinessBreakdown={readinessBreakdown}
         recommendation={effectiveRecommendation}
         execution={execution}
+        hasRunRecordedToday={hasRunRecordedToday}
         checkinData={checkinData}
         dailySteps={dailySteps}
         dailyStepsSource={dailyStepsSource}
@@ -920,6 +909,7 @@ export default function Dashboard() {
         onStartWorkout={handleStartWorkout}
         onStartRun={handleStartTodayRun}
         onStartLift={handleStartTodayLift}
+        onPlanRoute={handlePlanTodayRoute}
         onStartUnplannedRun={handleStartUnplannedRun}
         onWarmup={() => navigate('/prep?mode=warmup')}
         onReflect={() => navigate('/history')}

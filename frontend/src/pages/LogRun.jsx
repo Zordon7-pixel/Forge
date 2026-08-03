@@ -959,7 +959,7 @@ export default function LogRun() {
                 </button>
                 {routePlannerStatus.available && (
                   <Suspense fallback={<p className="mt-4 text-sm" style={{ color: 'var(--text-muted)' }}>Loading route planner...</p>}>
-                    <RoutePlanner workout={todayWorkout} onStart={startPlannedRoute} />
+                    <RoutePlanner workout={todayWorkout} onStart={startPlannedRoute} initialExpanded={Boolean(location.state?.openRoutePlanner)} />
                   </Suspense>
                 )}
                 {routePlannerStatus.requiresPro && (

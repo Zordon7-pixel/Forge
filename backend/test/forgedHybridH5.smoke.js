@@ -184,7 +184,7 @@ assert(/confirmOffScheduleStart/.test(plan) && /isScheduledToday/.test(forgedDay
 assert(/<RoutePlanner/.test(plan) && /Map this run/.test(plan) && /plannedRoute/.test(plan), 'the selected calendar run exposes route planning and carries the planned course into execution');
 assert(logRun.indexOf('Start Scheduled Run') < logRun.indexOf('routePlannerStatus.available &&'), 'scheduled run start is available even when route planning is unavailable');
 assert(/navigate\('\/warmup'/.test(logRun) && /startAfterWarmup:\s*true/.test(logRun), 'scheduled run keeps the warm-up before ActiveRun');
-assert(/target_zone:\s*todayWorkout\?\.targetZone/.test(logRun), 'LogRun stores the raw plan zone, not display-only BPM text');
+assert(/target_zone:\s*submittedScheduledRun\?\.targetZone/.test(logRun), 'LogRun stores the raw plan zone, not display-only BPM text');
 assert(/target_zone:\s*workoutTarget\?\.zone/.test(activeRun), 'ActiveRun stores the scheduled plan zone');
 assert(/execution\?\.hasPlan && execution\?\.hasDay/.test(logRun), 'LogRun does not reinterpret a calendar rest/lift day as a run');
 const plansRoute = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'plans.js'), 'utf8');

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { CircleMarker, MapContainer, Polyline, TileLayer, useMap } from 'react-leaflet'
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { ChevronDown, ChevronUp, LoaderCircle, MapPin, Mountain, Navigation, Route as RouteIcon, Trees } from 'lucide-react'
+import { ChevronDown, ChevronUp, LoaderCircle, MapPin, Mountain, Navigation, Route as RouteIcon, Search, Trees } from 'lucide-react'
 import api from '../lib/api'
 import { useUnits } from '../context/UnitsContext'
 
@@ -49,11 +49,16 @@ function FitRouteBounds({ positions }) {
   return null
 }
 
-export default function RoutePlanner({ workout, onStart, title = 'Plan an elevation route', startLabel = 'Start this route', variant = 'default' }) {
+export default function RoutePlanner({ workout, onStart, title = 'Plan an elevation route', startLabel = 'Start this route', variant = 'default', initialExpanded = false }) {
   const { units, fmt } = useUnits()
-  const [expanded, setExpanded] = useState(false)
+  const [expanded, setExpanded] = useState(Boolean(initialExpanded))
   const [surface, setSurface] = useState('road')
   const [elevationPreference, setElevationPreference] = useState(() => defaultElevationPreference(workout))
+  const [startMode, setStartMode] = useState('current')
+  const [placeQuery, setPlaceQuery] = useState('')
+  const [placeResults, setPlaceResults] = useState([])
+  const [selectedPlace, setSelectedPlace] = useState(null)
+  const [searching, setSearching] = useState(false)
   const [route, setRoute] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -96,20 +101,71 @@ export default function RoutePlanner({ workout, onStart, title = 'Plan an elevat
     setError('')
     setRoute(null)
     try {
-      const start = await currentPosition()
+      const start = startMode === 'current' ? await currentPosition() : selectedPlace
+      if (!start) throw new Error('Choose a starting place before generating the route.')
       const response = await api.post('/routes/generate', {
         ...start,
         distanceMiles: targetDistanceMiles,
         elevationPreference,
         surface,
       }, { timeout: 30000 })
-      setRoute(response.data?.route || null)
+      const generated = response.data?.route || null
+      setRoute(generated ? {
+        ...generated,
+        startLabel: startMode === 'current' ? 'Current iPhone location' : selectedPlace.label,
+      } : null)
     } catch (err) {
       console.error('[RoutePlanner] generation failed:', err.message)
       setError(err?.response?.data?.error || err.message || 'Forged Hybrid could not plan this route.')
     } finally {
       setLoading(false)
     }
+  }
+
+  const searchPlaces = async (event) => {
+    event?.preventDefault?.()
+    const query = placeQuery.replace(/\s+/g, ' ').trim()
+    if (query.length < 3) {
+      setError('Enter at least 3 characters for a place or address.')
+      return
+    }
+    setSearching(true)
+    setError('')
+    setPlaceResults([])
+    setSelectedPlace(null)
+    setRoute(null)
+    try {
+      const response = await api.post('/routes/search-start', { query }, { timeout: 12000 })
+      const places = Array.isArray(response.data?.places) ? response.data.places : []
+      setPlaceResults(places)
+      if (!places.length) setError('No matching starting place was found. Try a city and state or a full address.')
+    } catch (err) {
+      console.error('[RoutePlanner] place search failed:', err.message)
+      setError(err?.response?.data?.error || err.message || 'Forged Hybrid could not search that place.')
+    } finally {
+      setSearching(false)
+    }
+  }
+
+  const changeStartMode = (value) => {
+    setStartMode(value)
+    setRoute(null)
+    setError('')
+  }
+
+  const choosePlace = (place) => {
+    setSelectedPlace(place)
+    setPlaceQuery(place.label)
+    setRoute(null)
+    setError('')
+  }
+
+  const changePlaceQuery = (value) => {
+    setPlaceQuery(value)
+    setPlaceResults([])
+    setSelectedPlace(null)
+    setRoute(null)
+    setError('')
   }
 
   const changeElevation = (value) => {
@@ -138,7 +194,7 @@ export default function RoutePlanner({ workout, onStart, title = 'Plan an elevat
       </button>
 
       {expanded && (
-        <div className="pt-3">
+        <div className="route-planner-controls pt-3">
           <div className="flex items-center justify-between gap-3 mb-4">
             <div>
               <p className="text-xs font-bold uppercase" style={{ color: 'var(--text-muted)' }}>Target course</p>
@@ -146,6 +202,68 @@ export default function RoutePlanner({ workout, onStart, title = 'Plan an elevat
             </div>
             <Navigation size={22} style={{ color: 'var(--accent)' }} />
           </div>
+
+          <p className="text-xs font-bold uppercase mb-2" style={{ color: 'var(--text-muted)' }}>Start</p>
+          <div className="grid grid-cols-2 gap-2 mb-3" role="group" aria-label="Route starting point">
+            <button
+              type="button"
+              aria-pressed={startMode === 'current'}
+              onClick={() => changeStartMode('current')}
+              className="pressable py-2 text-sm font-bold"
+              style={{ minHeight: 44, borderRadius: 8, border: `1px solid ${startMode === 'current' ? 'var(--accent)' : 'var(--border-subtle)'}`, background: startMode === 'current' ? 'var(--accent-dim)' : 'var(--bg-card)', color: startMode === 'current' ? 'var(--accent)' : 'var(--text-primary)' }}
+            >
+              Current location
+            </button>
+            <button
+              type="button"
+              aria-pressed={startMode === 'search'}
+              onClick={() => changeStartMode('search')}
+              className="pressable py-2 text-sm font-bold"
+              style={{ minHeight: 44, borderRadius: 8, border: `1px solid ${startMode === 'search' ? 'var(--accent)' : 'var(--border-subtle)'}`, background: startMode === 'search' ? 'var(--accent-dim)' : 'var(--bg-card)', color: startMode === 'search' ? 'var(--accent)' : 'var(--text-primary)' }}
+            >
+              Another place
+            </button>
+          </div>
+          {startMode === 'current' ? (
+            <p className="text-[11px] mb-4" style={{ color: 'var(--text-muted)' }}>The loop starts where this iPhone is when you generate it.</p>
+          ) : (
+            <div className="mb-4">
+              <form onSubmit={searchPlaces} className="flex gap-2">
+                <label className="sr-only" htmlFor="route-place-search">City, landmark, or address</label>
+                <input
+                  id="route-place-search"
+                  value={placeQuery}
+                  onChange={(event) => changePlaceQuery(event.target.value)}
+                  maxLength={120}
+                  placeholder="Portland, Maine"
+                  className="min-w-0 flex-1 rounded-lg px-3 py-2 text-sm"
+                  style={{ minHeight: 44, background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}
+                />
+                <button type="submit" disabled={searching} aria-label="Search starting places" className="pressable grid place-items-center rounded-lg" style={{ width: 44, minWidth: 44, minHeight: 44, border: 'none', background: 'var(--accent)', color: 'var(--on-accent)', opacity: searching ? 0.65 : 1 }}>
+                  {searching ? <LoaderCircle size={18} className="animate-spin" /> : <Search size={18} />}
+                </button>
+              </form>
+              {placeResults.length > 0 && (
+                <div className="mt-2 space-y-2" role="group" aria-label="Starting place results">
+                  {placeResults.map((place) => {
+                    const selected = selectedPlace?.latitude === place.latitude && selectedPlace?.longitude === place.longitude
+                    return (
+                      <button
+                        type="button"
+                        aria-pressed={selected}
+                        key={`${place.latitude}:${place.longitude}`}
+                        onClick={() => choosePlace(place)}
+                        className="pressable w-full rounded-lg px-3 py-2 text-left text-xs font-bold"
+                        style={{ minHeight: 44, border: `1px solid ${selected ? 'var(--accent)' : 'var(--border-subtle)'}`, background: selected ? 'var(--accent-dim)' : 'var(--bg-card)', color: selected ? 'var(--accent)' : 'var(--text-primary)' }}
+                      >
+                        {place.label}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )}
 
           <p className="text-xs font-bold uppercase mb-2" style={{ color: 'var(--text-muted)' }}>Elevation</p>
           <div className="grid grid-cols-3 gap-2 mb-4">
@@ -188,6 +306,7 @@ export default function RoutePlanner({ workout, onStart, title = 'Plan an elevat
                   onClick={() => changeSurface(value)}
                   className="pressable flex items-center justify-center gap-2 py-2 text-sm font-bold"
                   style={{
+                    minHeight: 44,
                     borderRadius: 8,
                     border: `1px solid ${selected ? 'var(--accent)' : 'var(--border-subtle)'}`,
                     background: selected ? 'var(--accent-dim)' : 'var(--bg-card)',
@@ -203,9 +322,9 @@ export default function RoutePlanner({ workout, onStart, title = 'Plan an elevat
           <button
             type="button"
             onClick={generateRoute}
-            disabled={loading}
+            disabled={loading || (startMode === 'search' && !selectedPlace)}
             className="pressable w-full flex items-center justify-center gap-2 py-3 font-black"
-            style={{ borderRadius: 8, border: 'none', background: 'var(--accent)', color: 'var(--on-accent)', opacity: loading ? 0.65 : 1 }}
+            style={{ borderRadius: 8, border: 'none', background: 'var(--accent)', color: 'var(--on-accent)', opacity: loading || (startMode === 'search' && !selectedPlace) ? 0.55 : 1 }}
           >
             {loading ? <LoaderCircle size={18} className="animate-spin" /> : <RouteIcon size={18} />}
             {loading ? 'Comparing routes...' : route ? 'Generate another route' : 'Generate route'}
@@ -231,9 +350,11 @@ export default function RoutePlanner({ workout, onStart, title = 'Plan an elevat
                   <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
                   <FitRouteBounds positions={positions} />
                   <Polyline positions={positions} pathOptions={{ color: '#EAB308', weight: 5 }} />
-                  <CircleMarker center={positions[0]} radius={6} pathOptions={{ color: '#111111', fillColor: '#EAB308', fillOpacity: 1, weight: 2 }} />
+                  <CircleMarker center={positions[0]} radius={9} pathOptions={{ color: '#FFFFFF', fillColor: '#22C55E', fillOpacity: 1, weight: 2 }} />
+                  <CircleMarker center={positions[positions.length - 1]} radius={6} pathOptions={{ color: '#FFFFFF', fillColor: '#EF4444', fillOpacity: 1, weight: 2 }} />
                 </MapContainer>
               </div>
+              <p className="text-[11px] mt-2" style={{ color: 'var(--text-muted)' }}>Green is the start. Red is the finish.{route.startLabel ? ` Start: ${route.startLabel}.` : ''}</p>
 
               {route.elevationProfile?.length > 1 && (
                 <div className="mt-3" style={{ height: 120 }}>
