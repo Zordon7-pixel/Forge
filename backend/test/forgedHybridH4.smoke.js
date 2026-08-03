@@ -143,32 +143,31 @@ const suspectSleep = adaptation.buildAdaptationProposal({
 });
 assert(!suspectSleep.evidence.some((item) => item.source === 'apple_health' && item.objective), 'suspect sleep-only metric is not an objective driver');
 
-section('adaptive training-gap consent');
+section('adaptive run-gap consent');
 const trainingGapPlan = clone(army);
 setHardRun(trainingGapPlan, '2026-07-14', 'gap-hard-run');
 const trainingGap = adaptation.buildAdaptationProposal({
   plan: trainingGapPlan,
   planningDateISO: '2026-07-13',
   completion: {
-    daysInactive: 5,
-    lastActivityDate: '2026-07-08',
+    daysSinceRun: 7,
+    lastRunDate: '2026-07-06',
     missedWorkouts: 0,
-    isPlanStartWindow: true,
     gapPromptEnabled: true,
     freshness: 'recent',
   },
 });
-assert(trainingGap.status === 'proposal' && trainingGap.changes.length > 0, 'established adaptive athlete gets a pre-plan gap proposal before a demanding run');
-assert(trainingGap.headline === 'Everything okay?' && trainingGap.evidence.some((item) => item.signal === 'training_gap' && item.daysInactive === 5), 'training-gap proposal carries user-facing gap evidence');
-assert(trainingGap.reason.includes('leave the calendar exactly as it is'), 'training-gap proposal preserves explicit consent');
+assert(trainingGap.status === 'proposal' && trainingGap.changes.length > 0, 'seven days without a run produces a bounded re-entry proposal');
+assert(trainingGap.headline === 'Ready to ease back into running?' && trainingGap.evidence.some((item) => item.signal === 'run_gap' && item.daysSinceRun === 7), 'run-gap proposal carries user-facing gap evidence');
+assert(trainingGap.reason.includes('leave the calendar exactly as it is'), 'run-gap proposal preserves explicit consent');
 
 const optedOutGap = adaptation.buildAdaptationProposal({
   plan: trainingGapPlan,
   planningDateISO: '2026-07-13',
   completion: {
-    daysInactive: 5,
+    daysSinceRun: 8,
+    lastRunDate: '2026-07-05',
     missedWorkouts: 0,
-    isPlanStartWindow: true,
     gapPromptEnabled: false,
   },
 });
@@ -183,7 +182,8 @@ const decidedGap = adaptation.buildAdaptationProposal({
     adherenceRate: 0.2,
     missedWorkouts: 5,
     missedRuns: 3,
-    daysInactive: 7,
+    daysSinceRun: 9,
+    lastRunDate: '2026-07-04',
   },
 });
 assert(decidedGap.status === 'keep' && decidedGap.changes.length === 0, 'a decided completion prompt cannot regenerate from the same low-adherence evidence');
@@ -191,7 +191,7 @@ assert(decidedGap.status === 'keep' && decidedGap.changes.length === 0, 'a decid
 const decidedGapWithSafety = adaptation.buildAdaptationProposal({
   plan: trainingGapPlan,
   planningDateISO: '2026-07-13',
-  completion: { adaptationEnabled: false, missedWorkouts: 5, daysInactive: 7 },
+  completion: { adaptationEnabled: false, missedWorkouts: 5, daysSinceRun: 9, lastRunDate: '2026-07-04' },
   injuryState: { active: true, bodyPart: 'ankle', reason: 'new ankle pain' },
 });
 assert(decidedGapWithSafety.status === 'proposal' && decidedGapWithSafety.safetyException, 'completion suppression does not hide a fresh safety signal');
@@ -200,22 +200,22 @@ const missedGap = adaptation.buildAdaptationProposal({
   plan: trainingGapPlan,
   planningDateISO: '2026-07-13',
   completion: {
-    daysInactive: 3,
+    daysSinceRun: 6,
+    lastRunDate: '2026-07-07',
     missedRuns: 1,
     missedWorkouts: 1,
-    isPlanStartWindow: false,
     gapPromptEnabled: true,
   },
 });
-assert(missedGap.status === 'proposal' && missedGap.evidence.some((item) => item.signal === 'training_gap'), 'one missed scheduled session plus a three-day gap is enough to ask');
+assert(missedGap.status === 'keep' && !missedGap.evidence.some((item) => item.signal === 'run_gap'), 'six days without a run does not trigger the seven-day prompt');
 
 const plannedRestGap = adaptation.buildAdaptationProposal({
   plan: trainingGapPlan,
   planningDateISO: '2026-07-13',
   completion: {
-    daysInactive: 4,
+    daysSinceRun: 4,
+    lastRunDate: '2026-07-09',
     missedWorkouts: 0,
-    isPlanStartWindow: false,
     gapPromptEnabled: true,
   },
 });
@@ -225,9 +225,9 @@ const noHistoryGap = adaptation.buildAdaptationProposal({
   plan: trainingGapPlan,
   planningDateISO: '2026-07-13',
   completion: {
-    daysInactive: null,
+    daysSinceRun: null,
+    lastRunDate: null,
     missedWorkouts: 1,
-    isPlanStartWindow: true,
     gapPromptEnabled: true,
   },
 });

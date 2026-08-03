@@ -702,6 +702,7 @@ CREATE TABLE IF NOT EXISTS plan_adjustment_proposals (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   trigger_run_id TEXT,
+  episode_key TEXT,
   user_plan_id TEXT,
   plan_id TEXT,
   plan_version TEXT,
@@ -722,6 +723,7 @@ CREATE TABLE IF NOT EXISTS plan_adjustment_proposals (
 CREATE INDEX IF NOT EXISTS idx_plan_adjustment_proposals_user_status ON plan_adjustment_proposals(user_id, status);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_adjustment_proposals_pending ON plan_adjustment_proposals(user_id, planning_date, plan_version) WHERE status='pending' AND trigger_run_id IS NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_adjustment_proposals_run ON plan_adjustment_proposals(user_id, trigger_run_id) WHERE trigger_run_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_adjustment_proposals_episode ON plan_adjustment_proposals(user_id, episode_key) WHERE episode_key IS NOT NULL AND trigger_run_id IS NULL;
 
 CREATE TABLE IF NOT EXISTS comp_codes (
   code TEXT PRIMARY KEY,

@@ -86,7 +86,7 @@ function localTimezone() {
 const TODAY_CARD_VIEWED_KEY = 'forge_track_today_card_viewed'
 
 function trainingGapEvidence(proposal) {
-  return (proposal?.evidence || []).find((item) => item?.signal === 'training_gap') || null
+  return (proposal?.evidence || []).find((item) => ['run_gap', 'training_gap'].includes(item?.signal)) || null
 }
 
 function TrainingGapPrompt({ proposal, deciding, error, onDecision }) {
@@ -94,7 +94,7 @@ function TrainingGapPrompt({ proposal, deciding, error, onDecision }) {
   const changes = Array.isArray(proposal?.changes) ? proposal.changes : []
   if (!gap || proposal?.status !== 'proposal' || changes.length === 0) return null
 
-  const days = Number(gap.daysInactive || 0)
+  const days = Number(gap.daysSinceRun ?? gap.daysInactive ?? 0)
   const firstChange = changes[0]
   return (
     <section
@@ -108,7 +108,7 @@ function TrainingGapPrompt({ proposal, deciding, error, onDecision }) {
           <p className="text-[10px] font-black uppercase" style={{ color: 'var(--accent)', margin: 0 }}>Adaptive plan check</p>
           <h2 id="training-gap-title" className="mt-1 text-lg font-black" style={{ color: 'var(--text-primary)' }}>Everything okay?</h2>
           <p className="mt-1 text-sm leading-6" style={{ color: 'var(--text-muted)' }}>
-            We have not seen a logged run or lift in {days} days. Do you want to ease the next demanding session, or leave your calendar as it is?
+            We have not seen a logged run in {days} days. Lifting still counts; this check is only about returning to running safely. Ease the next seven days, or keep the original calendar.
           </p>
           {firstChange?.summary && (
             <p className="mt-3 border-t pt-3 text-xs leading-5" style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-muted)' }}>
@@ -126,7 +126,7 @@ function TrainingGapPrompt({ proposal, deciding, error, onDecision }) {
           disabled={Boolean(deciding)}
           onClick={() => onDecision('accept')}
         >
-          {deciding === 'accept' ? 'Adjusting...' : 'Adjust plan'}
+          {deciding === 'accept' ? 'Adjusting...' : 'Ease my return'}
         </button>
         <button
           type="button"
@@ -135,7 +135,7 @@ function TrainingGapPrompt({ proposal, deciding, error, onDecision }) {
           disabled={Boolean(deciding)}
           onClick={() => onDecision('keep')}
         >
-          {deciding === 'keep' ? 'Saving...' : 'Leave as is'}
+          {deciding === 'keep' ? 'Saving...' : 'Keep original'}
         </button>
       </div>
     </section>
@@ -728,7 +728,7 @@ export default function Dashboard() {
     try {
       await api.post(`/plans/adaptation/${trainingGapProposal.id}/${decision}`)
       setTrainingGapProposal(null)
-      setTrainingGapNotice(decision === 'accept' ? 'Plan adjusted for a safer return.' : 'Calendar left as planned.')
+      setTrainingGapNotice(decision === 'accept' ? 'Next seven days adjusted for a safer return.' : 'Calendar left as planned.')
       if (decision === 'accept') await fetchDashboardData()
     } catch (error) {
       setTrainingGapError(error?.response?.data?.error || 'Could not save that choice. Please try again.')

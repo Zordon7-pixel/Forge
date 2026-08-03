@@ -251,6 +251,7 @@ async function runAlwaysMigrations() {
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       trigger_run_id TEXT,
+      episode_key TEXT,
       user_plan_id TEXT,
       plan_id TEXT,
       plan_version TEXT,
@@ -270,6 +271,7 @@ async function runAlwaysMigrations() {
   `);
 
   await pg.query('ALTER TABLE plan_adjustment_proposals ADD COLUMN IF NOT EXISTS trigger_run_id TEXT');
+  await pg.query('ALTER TABLE plan_adjustment_proposals ADD COLUMN IF NOT EXISTS episode_key TEXT');
   await pg.query('CREATE INDEX IF NOT EXISTS idx_plan_adjustment_proposals_user_status ON plan_adjustment_proposals(user_id, status)');
   await pg.query(`
     DO $$
@@ -305,6 +307,7 @@ async function runAlwaysMigrations() {
     END $$
   `);
   await pg.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_adjustment_proposals_run ON plan_adjustment_proposals(user_id, trigger_run_id) WHERE trigger_run_id IS NOT NULL');
+  await pg.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_adjustment_proposals_episode ON plan_adjustment_proposals(user_id, episode_key) WHERE episode_key IS NOT NULL AND trigger_run_id IS NULL');
 
   await pg.query(`
     CREATE TABLE IF NOT EXISTS events (

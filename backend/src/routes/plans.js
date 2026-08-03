@@ -553,7 +553,11 @@ async function buildCompletionSummaryForAdaptation(userId, plan, active, plannin
     }
   }
 
-  const lastActivityDate = [lastRun?.last_date, lastLift?.last_date, lastWorkout?.last_date]
+  const lastRunDate = String(lastRun?.last_date || '').slice(0, 10);
+  const normalizedLastRunDate = /^\d{4}-\d{2}-\d{2}$/.test(lastRunDate) && lastRunDate <= planningDateISO
+    ? lastRunDate
+    : null;
+  const lastActivityDate = [normalizedLastRunDate, lastLift?.last_date, lastWorkout?.last_date]
     .map((value) => String(value || '').slice(0, 10))
     .filter((value) => /^\d{4}-\d{2}-\d{2}$/.test(value) && value <= planningDateISO)
     .sort()
@@ -561,6 +565,9 @@ async function buildCompletionSummaryForAdaptation(userId, plan, active, plannin
   const daysInactive = lastActivityDate === null
     ? null
     : Math.max(0, daysBetween(planningDateISO, lastActivityDate));
+  const daysSinceRun = normalizedLastRunDate === null
+    ? null
+    : Math.max(0, daysBetween(planningDateISO, normalizedLastRunDate));
   const planStartDate = (Array.isArray(plan?.weeks) ? plan.weeks : [])
     .flatMap((week) => planSchema.getDayEntries(week))
     .map((day) => String(day?.date || '').slice(0, 10))
@@ -576,8 +583,13 @@ async function buildCompletionSummaryForAdaptation(userId, plan, active, plannin
     missedWorkouts: missedRuns + missedLifts,
     adherenceRate: planned.length > excused ? completed / (planned.length - excused) : null,
     freshness: `${since} to ${planningDateISO}`,
+    lastRunDate: normalizedLastRunDate,
+    daysSinceRun,
     lastActivityDate,
+    lastTrainingDate: lastActivityDate,
     daysInactive,
+    daysSinceAnyTraining: daysInactive,
+    weeklyMileageBaseline: Math.max(0, Number(plan?.inputSummary?.weeklyMileageBaseline || 0)),
     planStartDate,
     isPlanStartWindow: Boolean(planStartDate && planningDateISO <= planStartDate),
   };
@@ -712,6 +724,7 @@ function proposalFromRow(row) {
     planId: row.plan_id || null,
     userPlanId: row.user_plan_id || null,
     triggerRunId: row.trigger_run_id || null,
+    episodeKey: row.episode_key || null,
   };
 }
 
@@ -753,21 +766,45 @@ async function hasDecidedCompletionAdaptation(userId, planningDateISO) {
   });
 }
 
+async function findRunGapEpisode(userId, episodeKey, tx = null) {
+  if (!episodeKey) return null;
+  const get = tx?.get || dbGet;
+  return get(
+    `SELECT *
+     FROM plan_adjustment_proposals
+     WHERE user_id=? AND episode_key=? AND trigger_run_id IS NULL
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [userId, episodeKey]
+  );
+}
+
+function runGapEpisodeKey(evidence) {
+  const item = (Array.isArray(evidence) ? evidence : []).find((entry) => (
+    entry?.signal === 'run_gap' && typeof entry?.episodeKey === 'string'
+  ));
+  return item?.episodeKey || null;
+}
+
 async function persistAdaptationProposal(userId, active, planVersion, originalPlan, proposal) {
-  const existing = await findPendingAdaptation(userId, proposal.planningDate, planVersion);
+  const episodeKey = runGapEpisodeKey(proposal.evidence);
+  const existing = episodeKey
+    ? await findRunGapEpisode(userId, episodeKey)
+    : await findPendingAdaptation(userId, proposal.planningDate, planVersion);
   if (existing) return proposalFromRow(existing);
   const id = uuidv4();
   const inserted = await dbRun(
     `INSERT INTO plan_adjustment_proposals (
-      id, user_id, user_plan_id, plan_id, plan_version, window_start, window_end,
+      id, user_id, episode_key, user_plan_id, plan_id, plan_version, window_start, window_end,
       planning_date, status, safety_exception, original_json, proposed_json,
       changes_json, evidence_json, reason
     )
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     ON CONFLICT DO NOTHING`,
     [
       id,
       userId,
+      episodeKey,
       active?.row?.user_plan_id || null,
       active?.row?.id || null,
       planVersion,
@@ -784,7 +821,9 @@ async function persistAdaptationProposal(userId, active, planVersion, originalPl
     ]
   );
   if (inserted.changes === 0) {
-    const concurrent = await findPendingAdaptation(userId, proposal.planningDate, planVersion);
+    const concurrent = episodeKey
+      ? await findRunGapEpisode(userId, episodeKey)
+      : await findPendingAdaptation(userId, proposal.planningDate, planVersion);
     if (!concurrent) throw new Error('Pending adaptation proposal conflict could not be resolved');
     return proposalFromRow(concurrent);
   }
@@ -1817,11 +1856,22 @@ router.get('/adaptation/current', auth, async (req, res) => {
       return res.json({ proposal: publicProposal(existingProposal) });
     }
 
-    const [inputs, completionDecisionExists] = await Promise.all([
-      buildAdaptationInputs(req.user.id, parsed, active, planningDateISO),
+    const inputs = await buildAdaptationInputs(req.user.id, parsed, active, planningDateISO);
+    const runGapEpisodeKey = inputs.completion?.lastRunDate
+      ? `run-gap:${inputs.completion.lastRunDate}`
+      : null;
+    inputs.completion = { ...(inputs.completion || {}), runGapEpisodeKey };
+    const [completionDecisionExists, runGapEpisode] = await Promise.all([
       hasDecidedCompletionAdaptation(req.user.id, planningDateISO),
+      findRunGapEpisode(req.user.id, runGapEpisodeKey),
     ]);
-    if (completionDecisionExists) {
+    if (runGapEpisode?.status === 'pending') {
+      const pendingProposal = proposalFromRow(runGapEpisode);
+      if (pendingProposal.changes.length > 0) {
+        return res.json({ proposal: publicProposal(pendingProposal) });
+      }
+    }
+    if (completionDecisionExists || runGapEpisode) {
       inputs.completion = {
         ...(inputs.completion || {}),
         adaptationEnabled: false,

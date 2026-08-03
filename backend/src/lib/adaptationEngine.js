@@ -326,31 +326,42 @@ function buildCompletionEvidence(completion = {}) {
   const missedRuns = Number(completion.missedRuns ?? completion.missedRunCount ?? 0);
   const missedLifts = Number(completion.missedLifts ?? completion.missedLiftCount ?? 0);
   const daysInactive = Number(completion.daysInactive ?? completion.days_inactive);
+  const daysSinceRun = Number(completion.daysSinceRun ?? completion.days_since_run);
+  const lastRunDate = completion.lastRunDate || completion.last_run_date || null;
+  const runGapEpisodeKey = completion.runGapEpisodeKey || completion.run_gap_episode_key
+    || (lastRunDate ? `run-gap:${lastRunDate}` : null);
   const gapPromptEnabled = completion.gapPromptEnabled !== false;
-  const isPlanStartWindow = completion.isPlanStartWindow === true;
-  const trainingGap = gapPromptEnabled
-    && Number.isFinite(daysInactive)
-    && daysInactive >= (missed >= 1 ? 3 : 4)
-    && (missed >= 1 || isPlanStartWindow);
-  const driver = trainingGap || (Number.isFinite(adherence) && adherence < 0.65) || missed >= 2 || missedRuns >= 2;
+  const runGap = gapPromptEnabled
+    && Boolean(lastRunDate)
+    && Number.isFinite(daysSinceRun)
+    && daysSinceRun >= 7;
+  const driver = runGap || (Number.isFinite(adherence) && adherence < 0.65) || missed >= 2 || missedRuns >= 2;
   if (!driver) return { evidence: [], driver: false };
   const details = [];
   if (Number.isFinite(adherence)) details.push(`${Math.round(adherence * 100)}% recent adherence`);
   if (missedRuns || missedLifts || missed) details.push(`${missedRuns || 0} missed runs, ${missedLifts || 0} missed lifts`);
-  if (trainingGap) details.unshift(`${Math.round(daysInactive)} days since the last logged run or lift`);
+  if (runGap) details.unshift(`${Math.round(daysSinceRun)} days since the last logged run`);
   return {
     driver: true,
-    trainingGap,
-    daysInactive: trainingGap ? Math.round(daysInactive) : null,
+    runGap,
+    trainingGap: runGap,
+    daysSinceRun: runGap ? Math.round(daysSinceRun) : null,
+    daysInactive: runGap ? Math.round(daysSinceRun) : null,
+    lastRunDate: runGap ? lastRunDate : null,
+    episodeKey: runGap ? runGapEpisodeKey : null,
+    weeklyMileageBaseline: Math.max(0, Number(completion.weeklyMileageBaseline || 0)),
     evidence: [{
-      signal: trainingGap ? 'training_gap' : 'adherence',
+      signal: runGap ? 'run_gap' : 'adherence',
       source: 'completion',
       objective: true,
       freshness: completion.freshness || 'recent',
-      daysInactive: trainingGap ? Math.round(daysInactive) : null,
+      daysSinceRun: runGap ? Math.round(daysSinceRun) : null,
+      daysInactive: runGap ? Math.round(daysSinceRun) : null,
+      lastRunDate: runGap ? lastRunDate : null,
+      episodeKey: runGap ? runGapEpisodeKey : null,
       missedWorkouts: Math.max(0, missed || 0),
-      detail: trainingGap
-        ? `Forged Hybrid has not seen a logged run or lift for ${Math.round(daysInactive)} days${missed > 0 ? ` and found ${missed} missed scheduled session${missed === 1 ? '' : 's'}` : ' as the dated plan begins'}. The next demanding run is reviewed before any change is made.`
+      detail: runGap
+        ? `Forged Hybrid has not seen a logged run for ${Math.round(daysSinceRun)} days. Lifting and life events do not hide the running gap; a bounded easy re-entry is offered without treating it as failure.`
         : `Logged completion history shows ${details.join('; ') || 'recent missed sessions'}, so the next hard run is reduced instead of forcing a catch-up.`
     }],
   };
@@ -577,7 +588,94 @@ function patchRunForRecovery(session, severity, label) {
   if (Number.isFinite(miles) && miles > 0) next.distance_miles = Math.max(0.5, Math.round(miles * multiplier * 10) / 10);
   const duration = Number(session.duration_min);
   if (Number.isFinite(duration) && duration > 0) next.duration_min = Math.max(10, Math.round(duration * multiplier));
+  if (session.injury_adjustment) {
+    next.pace_target = session.pace_target;
+    next.description = session.description;
+    next.steps = clone(session.steps);
+    next.cooldown = clone(session.cooldown);
+    next.progression = session.progression;
+  }
   return next;
+}
+
+function patchRunForReentry(session, index, distanceLimit = null, plannedMiles = null) {
+  const next = patchRunForRecovery(
+    session,
+    'reduce',
+    index === 0
+      ? 'First easy run after a seven-day running gap.'
+      : 'Easy re-entry running while consistency is rebuilt.'
+  );
+  next.title = index === 0 ? 'Return-to-running easy run' : 'Easy re-entry run';
+  next.prescription_basis = 'time';
+  const originalDuration = Number(session.duration_min);
+  next.duration_min = Number.isFinite(originalDuration) && originalDuration > 0
+    ? Math.min(originalDuration, index === 0 ? 30 : 45)
+    : (index === 0 ? 25 : 30);
+  const originalMiles = Number(session.distance_miles);
+  if (Number.isFinite(originalMiles) && originalMiles > 0) {
+    next.distance_miles = Number.isFinite(distanceLimit)
+      ? Math.max(0, Math.min(originalMiles, distanceLimit))
+      : originalMiles;
+  }
+  if (session.injury_adjustment) {
+    next.title = 'Injury-adjusted re-entry run';
+    next.pace_target = session.pace_target;
+    next.description = session.description;
+    next.steps = clone(session.steps);
+    next.cooldown = clone(session.cooldown);
+    next.progression = session.progression;
+  }
+  const finalMiles = Number(next.distance_miles);
+  const actualMileageScale = Number.isFinite(plannedMiles) && plannedMiles > 0 && Number.isFinite(finalMiles)
+    ? Math.round((finalMiles / plannedMiles) * 1000) / 1000
+    : null;
+  next.reentry_adjustment = {
+    day: index + 1,
+    intensity: 'easy',
+    mileageScale: actualMileageScale,
+  };
+  return next;
+}
+
+function enforceRunGapConstraints(changeMap, constraint) {
+  if (!constraint) return;
+  const {
+    plannedRuns,
+    retainedRunCount,
+    mileageScale,
+    mileageCap,
+  } = constraint;
+  let remainingTenths = Math.max(0, Math.floor((mileageCap * 10) + 1e-9));
+
+  plannedRuns.forEach((item, index) => {
+    const key = `${item.date}:${item.sessionId}`;
+    const current = changeMap.get(key)?.after || item.session;
+    if (index >= retainedRunCount) {
+      addChange(
+        changeMap,
+        item,
+        safetyRestSession(item.session, 'the seven-day re-entry week is capped at three easy runs'),
+        `${sessionSummary(item.session)} is removed from this re-entry week so the return stays capped at three easy runs.`
+      );
+      return;
+    }
+    if (String(current?.type || '').toLowerCase() === 'rest') return;
+
+    const originalMiles = Number(item.session?.distance_miles);
+    const desiredTenths = Number.isFinite(originalMiles) && originalMiles > 0
+      ? Math.max(0, Math.floor((originalMiles * mileageScale * 10) + 1e-9))
+      : 0;
+    const allocatedTenths = Math.min(desiredTenths, remainingTenths);
+    remainingTenths -= allocatedTenths;
+    const after = patchRunForReentry(current, index, allocatedTenths / 10, originalMiles);
+    addChange(
+      changeMap,
+      item,
+      after,
+      `${sessionSummary(item.session)} changes to ${sessionSummary(after)} for a bounded, nonpunitive return to running.`
+    );
+  });
 }
 
 function patchRunForInjury(session, rule) {
@@ -875,7 +973,7 @@ function keepProposal(input, planningDate, windowStart, windowEnd, evidence, hea
   };
 }
 
-function validateCandidateOrKeep(input, proposal, candidate, normalWindowEnd) {
+function validateCandidateOrKeep(input, proposal, candidate, allowedWindowEnd) {
   const plan = input.plan;
   const planningDate = proposal.planningDate;
   if (!deepEqual(invariantSignature(plan), invariantSignature(candidate))) {
@@ -883,21 +981,21 @@ function validateCandidateOrKeep(input, proposal, candidate, normalWindowEnd) {
       input,
       planningDate,
       proposal.windowStart,
-      normalWindowEnd,
+      allowedWindowEnd,
       proposal.evidence,
       'Keep the calendar as planned',
       'A candidate adjustment attempted to change protected race, course, phase, mode, or strength-policy metadata, so it was rejected.'
     );
   }
-  if (!outsideWindowDaysEqual(plan, candidate, proposal.windowStart, normalWindowEnd, proposal.safetyException)) {
+  if (!outsideWindowDaysEqual(plan, candidate, proposal.windowStart, allowedWindowEnd, proposal.safetyException)) {
     return keepProposal(
       input,
       planningDate,
       proposal.windowStart,
-      normalWindowEnd,
+      allowedWindowEnd,
       proposal.evidence,
       'Keep the calendar as planned',
-      'A candidate adjustment changed sessions outside the allowed 72-hour window, so it was rejected.'
+      `A candidate adjustment changed sessions outside the allowed window ending ${allowedWindowEnd}, so it was rejected.`
     );
   }
   if (!proposal.safetyException && !strengthFloorPreserved(candidate)) {
@@ -905,7 +1003,7 @@ function validateCandidateOrKeep(input, proposal, candidate, normalWindowEnd) {
       input,
       planningDate,
       proposal.windowStart,
-      normalWindowEnd,
+      allowedWindowEnd,
       proposal.evidence,
       'Keep the calendar as planned',
       'A candidate adjustment would drop lifting below the protected weekly strength floor, so it was rejected.'
@@ -956,6 +1054,8 @@ function buildAdaptationProposal(input = {}) {
     safetyException = true;
     safetyReason = injury.reason || 'sick or injured check-in';
     windowEnd = addDays(planningDate, 6);
+  } else if (completion.runGap) {
+    windowEnd = addDays(planningDate, 6);
   }
 
   if (input.candidatePlan) {
@@ -976,6 +1076,7 @@ function buildAdaptationProposal(input = {}) {
   }
 
   const changes = new Map();
+  let runGapConstraint = null;
   const sessionsInWindow = allDatedSessions(plan, windowStart, windowEnd);
 
   if (safetyException) {
@@ -1028,25 +1129,44 @@ function buildAdaptationProposal(input = {}) {
       }
     }
 
-    if (completion.driver) {
+    if (completion.runGap) {
+      const plannedRuns = sessionsInWindow.filter((item) => (
+        item.kind === 'run' && String(item.session?.type || '').toLowerCase() !== 'race'
+      ));
+      const baselineMiles = Number(completion.weeklyMileageBaseline || 0);
+      const originalMiles = plannedRuns.reduce((sum, item) => {
+        const miles = Number(item.session?.distance_miles);
+        return sum + (Number.isFinite(miles) && miles > 0 ? miles : 0);
+      }, 0);
+      const mileageCap = baselineMiles > 0
+        ? Math.min(originalMiles * 0.8, baselineMiles * 0.7)
+        : Math.min(originalMiles > 0 ? originalMiles * 0.8 : 9, 9);
+      const mileageScale = originalMiles > 0
+        ? Math.min(1, Math.max(0, mileageCap / originalMiles))
+        : 0.7;
+      runGapConstraint = {
+        plannedRuns,
+        retainedRunCount: baselineMiles > 0 ? plannedRuns.length : Math.min(plannedRuns.length, 3),
+        mileageScale,
+        mileageCap,
+      };
+    } else if (completion.driver) {
       const nextHard = sessionsInWindow.find((item) => (
         item.kind === 'run'
         && String(item.session?.type || '').toLowerCase() !== 'race'
-        && (completion.trainingGap ? isDemandingRun(item.session) : isHardRun(item.session))
+        && isHardRun(item.session)
       ));
       if (nextHard) {
         const after = patchRunForRecovery(
           nextHard.session,
           'reduce',
-          completion.trainingGap
-            ? 'Easier re-entry version after a recent training gap.'
-            : 'Easier version from recent completion and missed-session history.'
+          'Easier version from recent completion and missed-session history.'
         );
         addChange(
           changes,
           nextHard,
           after,
-          `${sessionSummary(nextHard.session)} changes to ${sessionSummary(after)} from ${completion.trainingGap ? 'the recent training gap' : 'recent completion history'}.`
+          `${sessionSummary(nextHard.session)} changes to ${sessionSummary(after)} from recent completion history.`
         );
       }
     }
@@ -1054,8 +1174,10 @@ function buildAdaptationProposal(input = {}) {
     if (Array.isArray(injury.rules) && injury.rules.length) {
       for (const rule of injury.rules) {
         for (const item of sessionsInWindow) {
+          const key = `${item.date}:${item.sessionId}`;
+          const current = changes.get(key)?.after || item.session;
           if (item.kind === 'run' && rule.modalities.run && String(item.session.type || '').toLowerCase() !== 'race') {
-            const after = patchRunForInjury(item.session, rule);
+            const after = patchRunForInjury(current, rule);
             addChange(
               changes,
               item,
@@ -1064,8 +1186,8 @@ function buildAdaptationProposal(input = {}) {
             );
             continue;
           }
-          if (item.kind === 'lift' && liftAffectedByInjury(item.session, rule)) {
-            const after = patchLiftForInjury(item.session, rule);
+          if (item.kind === 'lift' && liftAffectedByInjury(current, rule)) {
+            const after = patchLiftForInjury(current, rule);
             addChange(
               changes,
               item,
@@ -1079,11 +1201,13 @@ function buildAdaptationProposal(input = {}) {
 
     if (recentRun.driver) {
       for (const item of sessionsInWindow) {
+        const key = `${item.date}:${item.sessionId}`;
+        const current = changes.get(key)?.after || item.session;
         if (item.kind === 'run' && recentRun.protection.noAdditionalRunOnDate === item.date && String(item.session.type || '').toLowerCase() !== 'race') {
           addChange(
             changes,
             item,
-            safetyRestSession(item.session, 'a run is already logged for today'),
+            safetyRestSession(current, 'a run is already logged for today'),
             `${sessionSummary(item.session)} is removed because the ${Number(recentRun.latest.distanceMiles || 0).toFixed(1)} mi run is already logged today.`
           );
           continue;
@@ -1092,14 +1216,14 @@ function buildAdaptationProposal(input = {}) {
           addChange(
             changes,
             item,
-            safetyRestSession(item.session, 'severe pain was reported after the recent run'),
+            safetyRestSession(current, 'severe pain was reported after the recent run'),
             `${sessionSummary(item.session)} is held because severe post-run pain protects running through ${recentRun.protection.hardRunsThrough}.`
           );
           continue;
         }
         if (item.kind === 'run' && isDemandingRun(item.session) && item.date <= recentRun.protection.hardRunsThrough && String(item.session.type || '').toLowerCase() !== 'race') {
           const after = patchRunForRecovery(
-            item.session,
+            current,
             'reduce',
             `Recovery version after the ${Number(recentRun.latest.distanceMiles || 0).toFixed(1)} mi recent run.`
           );
@@ -1111,8 +1235,8 @@ function buildAdaptationProposal(input = {}) {
           );
           continue;
         }
-        if (item.kind === 'lift' && /lower/i.test(String(item.session.focus || '')) && item.date <= recentRun.protection.lowerBodyThrough) {
-          const after = replaceLowerBodyAfterRun(item.session, recentRun.latest);
+        if (item.kind === 'lift' && /lower/i.test(String(current.focus || '')) && item.date <= recentRun.protection.lowerBodyThrough) {
+          const after = replaceLowerBodyAfterRun(current, recentRun.latest);
           addChange(
             changes,
             item,
@@ -1121,8 +1245,8 @@ function buildAdaptationProposal(input = {}) {
           );
           continue;
         }
-        if (item.kind === 'lift' && /upper/i.test(String(item.session.focus || '')) && item.date <= recentRun.protection.upperBodyOptionalThrough) {
-          const after = markUpperBodyOptionalAfterRun(item.session, recentRun.latest);
+        if (item.kind === 'lift' && /upper/i.test(String(current.focus || '')) && item.date <= recentRun.protection.upperBodyOptionalThrough) {
+          const after = markUpperBodyOptionalAfterRun(current, recentRun.latest);
           addChange(
             changes,
             item,
@@ -1135,6 +1259,8 @@ function buildAdaptationProposal(input = {}) {
 
   }
 
+  enforceRunGapConstraints(changes, runGapConstraint);
+
   const changeList = Array.from(changes.values()).sort((a, b) => (
     compareISO(a.date, b.date) || String(a.sessionId).localeCompare(String(b.sessionId))
   ));
@@ -1144,7 +1270,7 @@ function buildAdaptationProposal(input = {}) {
       input,
       planningDate,
       windowStart,
-      normalWindowEnd,
+      windowEnd,
       evidence,
       'Keep the calendar as planned',
       evidence.length
@@ -1164,16 +1290,16 @@ function buildAdaptationProposal(input = {}) {
     changes: changeList,
     headline: safetyException
       ? 'Safety hold for the live calendar'
-      : completion.trainingGap ? 'Everything okay?' : 'Small transparent calendar adjustment',
+      : completion.runGap ? 'Ready to ease back into running?' : 'Small transparent calendar adjustment',
     choices: ['accept', 'keep_original'],
     reason: safetyException
       ? `A safety exception is marked because ${safetyReason}; the hold can extend beyond 72 hours.`
-      : completion.trainingGap
-        ? `We have not seen a logged run or lift in ${completion.daysInactive} days. You can ease the next demanding session or leave the calendar exactly as it is.`
+      : completion.runGap
+        ? `We have not seen a logged run in ${completion.daysSinceRun} days. Lifting still counts; this optional change only eases the next seven days of running, and you can leave the calendar exactly as it is.`
         : 'Only dated sessions inside the next 72 hours are changed from current recovery, recent-run load, check-in, and completion evidence; race target, phases, course facts, and the strength policy stay fixed.',
     planVersion: input.planVersion || null,
   };
-  return validateCandidateOrKeep(input, proposal, candidate, normalWindowEnd);
+  return validateCandidateOrKeep(input, proposal, candidate, windowEnd);
 }
 
 function applyProposalToPlan(plan, proposal = {}) {
