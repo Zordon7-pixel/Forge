@@ -7,6 +7,15 @@ export const RUN_LOCATION_STATUS = Object.freeze({
   UNAVAILABLE: 'unavailable',
 })
 
+export function consumeRunAutoStartState(state) {
+  const navigationState = state && typeof state === 'object' && !Array.isArray(state) ? state : {}
+  const { autoStart, ...nextState } = navigationState
+  return {
+    requested: autoStart === true,
+    state: nextState,
+  }
+}
+
 export function runLocationErrorStatus(error = {}) {
   const code = String(error?.code || '').toUpperCase()
   if (code === 'NOT_AUTHORIZED' || code === 'PERMISSION_DENIED' || Number(error?.code) === 1) {

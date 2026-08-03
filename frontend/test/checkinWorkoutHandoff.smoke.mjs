@@ -26,10 +26,23 @@ check(dashboard.includes("api.get('/checkin/today', { params: { date: localDateI
 check(warmup.includes("params: { date: checkinDate || localDateISO() }"), 'warm-up confirmation uses the same phone-local calendar date')
 check(checkin.includes('checkinCompleted: true') && checkin.includes('checkinDate: todayISO()'), 'a successful check-in remains confirmed through warm-up')
 check(checkin.includes("}, '/')"), 'the completed run returns to Today instead of restarting Check-In')
-check(warmup.includes('Warm-up complete') && warmup.includes('GPS starts only after you tap Start Run.'), 'warm-up completion exposes an explicit run-start handoff')
+check(warmup.includes('Warm-up complete') && warmup.includes('Start Run checks Location, then begins the timer and route recording.'), 'warm-up completion explains the single-tap location and run-start handoff')
+const autoStartSanitizedAt = activeRun.indexOf('state: autoStart.state')
+const autoStartReplayGuardAt = activeRun.indexOf('if (autoStartExecutedRef.current) return')
+const autoStartConsumedAt = activeRun.indexOf('autoStartExecutedRef.current = true')
+const restoredSessionGuardAt = activeRun.indexOf('if (restoredSession || running || pausedRun || countingDown || awaitingManualDistance) return')
+check(
+  autoStartSanitizedAt >= 0
+    && autoStartReplayGuardAt > autoStartSanitizedAt
+    && autoStartConsumedAt > autoStartReplayGuardAt
+    && restoredSessionGuardAt > autoStartConsumedAt,
+  'one-shot start state is always sanitized while execution stays guarded before restored-session checks',
+)
 check(
   checkin.includes('...runState')
-    && warmup.includes("navigate('/run/active', { state: nextState })")
+    && warmup.includes("navigate('/run/active', { state: { ...nextState, autoStart: true } })")
+    && activeRun.includes('consumeRunAutoStartState(location.state)')
+    && activeRun.includes('autoStartExecutedRef.current = true')
     && activeRun.includes('planSessionIdFromState(navigationState)')
     && activeRun.includes('markSessionComplete(planSessionId, planCurrentWeek)'),
   'plan session id survives check-in, warm-up, and active-run completion handoff',

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import {
   canAcceptRunLocationPoint,
+  consumeRunAutoStartState,
   createRunLocationWatcherCallbacks,
   createRunLocationWatcherLifecycle,
   requestNativeRunLocation,
@@ -8,6 +9,22 @@ import {
   RUN_LOCATION_STATUS,
   runLocationStatusMessage,
 } from '../src/lib/runLocationAccess.js'
+
+const autoStart = consumeRunAutoStartState({
+  autoStart: true,
+  planSessionId: 'session-1',
+  workoutTarget: { distanceMiles: 3 },
+})
+assert.equal(autoStart.requested, true)
+assert.deepEqual(autoStart.state, {
+  planSessionId: 'session-1',
+  workoutTarget: { distanceMiles: 3 },
+}, 'consuming auto-start preserves the scheduled workout handoff')
+assert.deepEqual(consumeRunAutoStartState({ autoStart: false, runType: 'easy' }), {
+  requested: false,
+  state: { runType: 'easy' },
+}, 'a false one-shot flag is removed without starting')
+assert.deepEqual(consumeRunAutoStartState(null), { requested: false, state: {} })
 
 const removed = []
 let nativeWatcherOptions = null
@@ -78,4 +95,4 @@ assert.equal(webDenied.status, RUN_LOCATION_STATUS.DENIED)
 assert.match(runLocationStatusMessage(RUN_LOCATION_STATUS.DENIED), /iPhone Settings/)
 assert.match(runLocationStatusMessage(RUN_LOCATION_STATUS.READY), /Location connected/)
 
-console.log('RUN LOCATION ACCESS SMOKE OK (19)')
+console.log('RUN LOCATION ACCESS SMOKE OK (23)')

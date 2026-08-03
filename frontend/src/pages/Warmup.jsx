@@ -332,7 +332,7 @@ function WarmupDone({ onStartRun, checkinConfirmed = false, checkinDate }) {
             {t('run.startRun')}
           </button>
           <p style={{ color: 'var(--text-muted)', fontSize: 12, lineHeight: 1.45, margin: '12px 0 0' }}>
-            GPS starts only after you tap Start Run.
+            Start Run checks Location, then begins the timer and route recording.
           </p>
         </div>
 
@@ -643,7 +643,7 @@ export default function Warmup() {
       return
     }
     if (nextState.startAfterWarmup) {
-      navigate('/run/active', { state: nextState })
+      navigate('/run/active', { state: { ...nextState, autoStart: true } })
       return
     }
     const returnTo = typeof warmupReturnTo === 'string' && /^\/log-run(?:\?|$)/.test(warmupReturnTo)

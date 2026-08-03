@@ -23,6 +23,7 @@ import {
   requestNativeRunLocation,
   requestWebRunLocation,
   canAcceptRunLocationPoint,
+  consumeRunAutoStartState,
   createRunLocationWatcherCallbacks,
   createRunLocationWatcherLifecycle,
   RUN_LOCATION_STATUS,
@@ -301,6 +302,7 @@ export default function ActiveRun() {
   }
   const clientRunIdRef = useRef(restoredSession?.clientRunId || createClientRunId())
   const resumeAttemptedRef = useRef(false)
+  const autoStartExecutedRef = useRef(false)
   const sessionStateRef = useRef(null)
   const liveActivityAttributesRef = useRef(null)
   const liveActivityContentRef = useRef(null)
@@ -934,6 +936,35 @@ export default function ActiveRun() {
       console.error('[ActiveRun] failed to open location settings:', error?.message || error)
     }
   }, [])
+
+  useEffect(() => {
+    const autoStart = consumeRunAutoStartState(location.state)
+    if (!autoStart.requested) return
+
+    navigate(`${location.pathname}${location.search}${location.hash}`, {
+      replace: true,
+      state: autoStart.state,
+    })
+    if (autoStartExecutedRef.current) return
+
+    autoStartExecutedRef.current = true
+    if (restoredSession || running || pausedRun || countingDown || awaitingManualDistance) return
+    if (groupRunAuthorization === 'pending') return
+    void beginRun()
+  }, [
+    awaitingManualDistance,
+    beginRun,
+    countingDown,
+    groupRunAuthorization,
+    location.hash,
+    location.pathname,
+    location.search,
+    location.state,
+    navigate,
+    pausedRun,
+    restoredSession,
+    running,
+  ])
 
   useEffect(() => {
     const command = new URLSearchParams(location.search).get('command')
