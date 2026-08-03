@@ -160,6 +160,7 @@ export default function Races() {
   const navigate = useNavigate()
   const { isPro } = useProContext()
   const [races, setRaces] = useState([])
+  const [activePlan, setActivePlan] = useState(null)
   const [form, setForm] = useState({ race_name: '', race_date: '', distance_key: '5K', distance_miles: RACE_DISTANCE_OPTIONS['5K'], location: '', goal_time_seconds: 0 })
   const [catalogForm, setCatalogForm] = useState({ q: '', distance: '', month: '', state: '' })
   const [catalogRaces, setCatalogRaces] = useState([])
@@ -172,8 +173,24 @@ export default function Races() {
   const [planPromptRace, setPlanPromptRace] = useState(null)
   const [generatingPlanId, setGeneratingPlanId] = useState(null)
 
-  const load = () => api.get('/races').then((r) => setRaces(r.data.races || []))
+  const load = async () => {
+    const [raceResponse, planResponse] = await Promise.all([
+      api.get('/races'),
+      api.get('/plans/my').catch((err) => {
+        console.error('[Races] active plan load failed:', err?.message || err)
+        return null
+      }),
+    ])
+    setRaces(raceResponse.data.races || [])
+    setActivePlan(planResponse?.data?.plan || null)
+  }
   useEffect(() => { load() }, [])
+
+  const activePlanRaceIds = useMemo(() => {
+    const data = activePlan?.plan_data || activePlan?.plan_json || {}
+    const goals = Array.isArray(data.goals) && data.goals.length ? data.goals : (data.goal ? [data.goal] : [])
+    return goals.map((goal) => String(goal.raceId || goal.race_id || '')).filter(Boolean)
+  }, [activePlan])
 
   const upcoming = useMemo(() => races
     .filter((r) => r.status === 'upcoming' && r.race_date >= todayDateKey())
@@ -247,7 +264,16 @@ export default function Races() {
 
     try {
       setGeneratingPlanId(race.id)
-      await api.post(`/plans/generate-for-race/${race.id}`)
+      const raceId = String(race.id)
+      const alreadyIncluded = activePlanRaceIds.includes(raceId)
+      if (!alreadyIncluded && activePlanRaceIds.length >= 2) {
+        setMessage('Two PR race goals are already protected. Remove or finish one before adding another.')
+        return
+      }
+      const raceIds = alreadyIncluded ? activePlanRaceIds : [...activePlanRaceIds, raceId]
+      if (raceIds.length > 1) await api.post('/plans/generate-for-races', { race_ids: raceIds })
+      else await api.post(`/plans/generate-for-race/${race.id}`)
+      await load()
       onSuccess()
     } catch (err) {
       if (err?.response?.status === 402) {
@@ -258,6 +284,14 @@ export default function Races() {
     } finally {
       setGeneratingPlanId(null)
     }
+  }
+
+  const racePlanActionLabel = (race) => {
+    if (generatingPlanId === race.id) return 'Building...'
+    if (activePlanRaceIds.includes(String(race.id))) return activePlanRaceIds.length > 1 ? 'Rebuild combined plan' : 'Rebuild plan'
+    if (activePlanRaceIds.length === 1) return 'Add as second PR race'
+    if (activePlanRaceIds.length >= 2) return 'Two race goals active'
+    return 'Build race plan'
   }
 
   return (
@@ -277,8 +311,9 @@ export default function Races() {
                 setPlanPromptRace(null)
                 setMessage(`Your training plan has been updated around ${planPromptRace.race_name}`)
               })}
+              disabled={generatingPlanId === planPromptRace.id || (!activePlanRaceIds.includes(String(planPromptRace.id)) && activePlanRaceIds.length >= 2)}
             >
-              {generatingPlanId === planPromptRace.id ? 'Generating...' : 'Generate Race Plan'}
+              {racePlanActionLabel(planPromptRace)}
             </button>
             <button className="rounded-lg px-3 py-1.5 text-xs" style={{ background: 'var(--bg-input)', color: 'var(--text-muted)', border: '1px solid var(--border-subtle)' }} onClick={() => setPlanPromptRace(null)}>Not now</button>
           </div>
@@ -429,8 +464,9 @@ export default function Races() {
               onClick={() => generateRacePlan(r, () => {
                 setMessage(`Your training plan has been updated around ${r.race_name}`)
               })}
+              disabled={generatingPlanId === r.id || (!activePlanRaceIds.includes(String(r.id)) && activePlanRaceIds.length >= 2)}
             >
-              {generatingPlanId === r.id ? 'Generating...' : 'Generate Race Plan'}
+              {racePlanActionLabel(r)}
             </button>
           </div>
         })}

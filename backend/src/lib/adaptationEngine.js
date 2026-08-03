@@ -795,23 +795,38 @@ function applyChangesToClone(plan, changes) {
 
 function invariantSignature(plan) {
   const goal = plan && plan.goal ? plan.goal : {};
+  const goalSignature = (entry = {}) => ({
+    kind: entry.kind,
+    raceId: entry.raceId,
+    name: entry.name,
+    date: entry.date,
+    distanceMiles: entry.distanceMiles,
+    goalType: entry.goalType,
+    goalTimeSeconds: entry.goalTimeSeconds,
+    goalPaceSecondsPerMile: entry.goalPaceSecondsPerMile,
+    priority: entry.priority,
+    sequence: entry.sequence,
+    role: entry.role,
+    course: entry.course === undefined ? null : entry.course,
+  });
+  const raceSessions = [];
+  iterateDays(plan, ({ day }) => {
+    for (const session of Array.isArray(day?.sessions) ? day.sessions : []) {
+      if (String(session?.type || '').toLowerCase() !== 'race') continue;
+      raceSessions.push({ date: day.date, session: clone(session) });
+    }
+  });
   return {
     schemaVersion: plan && plan.schemaVersion,
     planMode: plan && plan.planMode,
     strengthPolicy: plan && plan.strengthPolicy,
-    goal: {
-      kind: goal.kind,
-      raceId: goal.raceId,
-      name: goal.name,
-      date: goal.date,
-      distanceMiles: goal.distanceMiles,
-      goalType: goal.goalType,
-      course: goal.course === undefined ? null : goal.course,
-    },
+    goal: goalSignature(goal),
+    goals: (Array.isArray(plan && plan.goals) ? plan.goals : []).map(goalSignature),
     phases: (Array.isArray(plan && plan.weeks) ? plan.weeks : []).map((week) => ({
       week: week && week.week,
       phase: week && week.phase,
     })),
+    raceSessions,
   };
 }
 
@@ -966,6 +981,7 @@ function buildAdaptationProposal(input = {}) {
   if (safetyException) {
     for (const item of sessionsInWindow) {
       if (item.kind !== 'run' && item.kind !== 'lift') continue;
+      if (String(item.session?.type || '').toLowerCase() === 'race') continue;
       addChange(
         changes,
         item,
@@ -995,7 +1011,7 @@ function buildAdaptationProposal(input = {}) {
 
     if (health.severity !== 'none') {
       for (const item of sessionsInWindow) {
-        if (item.kind !== 'run' || !isHardRun(item.session)) continue;
+        if (item.kind !== 'run' || String(item.session?.type || '').toLowerCase() === 'race' || !isHardRun(item.session)) continue;
         const after = patchRunForRecovery(
           item.session,
           health.severity,
@@ -1014,7 +1030,9 @@ function buildAdaptationProposal(input = {}) {
 
     if (completion.driver) {
       const nextHard = sessionsInWindow.find((item) => (
-        item.kind === 'run' && (completion.trainingGap ? isDemandingRun(item.session) : isHardRun(item.session))
+        item.kind === 'run'
+        && String(item.session?.type || '').toLowerCase() !== 'race'
+        && (completion.trainingGap ? isDemandingRun(item.session) : isHardRun(item.session))
       ));
       if (nextHard) {
         const after = patchRunForRecovery(

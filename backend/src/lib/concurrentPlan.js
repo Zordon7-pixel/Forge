@@ -266,8 +266,19 @@ function buildGoalPaceContext(target = {}, history = {}, existingGoal = {}) {
 function parseISODate(value) {
   const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!match) return null;
-  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12);
-  return Number.isNaN(date.getTime()) ? null : date;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(year, month - 1, day, 12);
+  if (Number.isNaN(date.getTime())
+    || date.getFullYear() !== year
+    || date.getMonth() !== month - 1
+    || date.getDate() !== day) return null;
+  return date;
+}
+
+function isValidISODate(value) {
+  return Boolean(parseISODate(value));
 }
 
 function toISODate(date) {
@@ -387,6 +398,54 @@ function phaseForWeek(weekNumber, weekCount, hasRace) {
   return weekNumber <= baseWeeks ? 'base' : 'build';
 }
 
+function normalizedRaceTargets(target = {}) {
+  const supplied = Array.isArray(target.raceTargets) ? target.raceTargets : [];
+  const source = supplied.length ? supplied : (parseISODate(target.raceDate) ? [target] : []);
+  if (supplied.length > 2) throw new RangeError('A plan can protect no more than two race goals');
+  if (supplied.some((race) => !race || !parseISODate(race.raceDate))) {
+    throw new TypeError('Every protected race goal must include a valid raceDate');
+  }
+  const normalized = source
+    .map((race) => ({ ...race }))
+    .sort((a, b) => String(a.raceDate).localeCompare(String(b.raceDate)));
+  if (new Set(normalized.map((race) => race.raceDate)).size !== normalized.length) {
+    throw new RangeError('Protected race goals must use different dates');
+  }
+  if (normalized.length === 2) {
+    const gapDays = Math.round((parseISODate(normalized[1].raceDate) - parseISODate(normalized[0].raceDate)) / 86400000);
+    if (gapDays < 21) throw new RangeError('Two PR race goals must be at least 21 days apart');
+  }
+  return normalized;
+}
+
+function raceTargetForDate(dateISO, raceTargets = []) {
+  return raceTargets.find((race) => race.raceDate === dateISO) || null;
+}
+
+function activeRaceTargetForWeek(weekStart, raceTargets = [], fallback = {}) {
+  const weekEnd = addDays(weekStart, 6);
+  return raceTargets.find((race) => race.raceDate >= weekStart && race.raceDate <= weekEnd)
+    || raceTargets.find((race) => race.raceDate > weekEnd)
+    || raceTargets[raceTargets.length - 1]
+    || fallback;
+}
+
+function phasesForRaceTargets(startDate, weekCount, raceTargets = []) {
+  if (raceTargets.length <= 1) {
+    return Array.from({ length: weekCount }, (_, index) => phaseForWeek(index + 1, weekCount, raceTargets.length === 1));
+  }
+  const raceWeekIndexes = raceTargets.map((race) => (
+    Math.floor((parseISODate(mondayFor(race.raceDate)) - parseISODate(startDate)) / (7 * 86400000))
+  ));
+  return Array.from({ length: weekCount }, (_, index) => {
+    if (raceWeekIndexes.includes(index)) return 'race';
+    if (raceWeekIndexes.some((raceIndex) => index === raceIndex - 1)) return 'taper';
+    if (raceWeekIndexes.slice(0, -1).some((raceIndex) => index === raceIndex + 1)) return 'deload';
+    if (raceWeekIndexes.some((raceIndex) => index === raceIndex - 2)) return 'peak';
+    return phaseForWeek(index + 1, weekCount, true);
+  });
+}
+
 function distanceCategory(distanceMiles) {
   const distance = Number(distanceMiles || 0);
   if (distance >= 20) return 'marathon';
@@ -412,23 +471,23 @@ function buildMileageTargets(weekCount, baseline, hasRace, recovery, history, ta
   const goalType = String(target.goalType || target.goal_type || '').toLowerCase();
   const growthRate = hasRace && (goalType === 'pr' || Number(target.goalTimeSeconds || target.goal_time_seconds) > 0) ? 1.08 : 1.06;
   for (let weekNumber = 1; weekNumber <= weekCount; weekNumber += 1) {
-    const phase = phaseForWeek(weekNumber, weekCount, hasRace);
-    let target;
+    const phase = target.weekPhases?.[weekNumber - 1] || phaseForWeek(weekNumber, weekCount, hasRace);
+    let mileageTarget;
     if (phase === 'deload') {
-      target = priorBuild * 0.8;
+      mileageTarget = priorBuild * 0.8;
     } else if (phase === 'taper') {
-      target = priorBuild * 0.65;
+      mileageTarget = priorBuild * 0.65;
     } else if (phase === 'race') {
-      target = priorBuild * 0.45;
+      mileageTarget = priorBuild * 0.45;
     } else if (weekNumber === 1) {
-      target = lastBuild;
-      priorBuild = target;
+      mileageTarget = lastBuild;
+      priorBuild = mileageTarget;
     } else {
-      target = priorBuild * (phase === 'peak' ? 1.04 : growthRate);
-      priorBuild = target;
+      mileageTarget = priorBuild * (phase === 'peak' ? 1.04 : growthRate);
+      priorBuild = mileageTarget;
     }
-    lastBuild = target;
-    targets.push(round(target));
+    lastBuild = mileageTarget;
+    targets.push(round(mileageTarget));
   }
   return targets;
 }
@@ -469,8 +528,7 @@ function currentWeekRunSchedule({ weekStart, todayISO, currentWeekLoad, runSched
   });
   const raceDate = raceDay ? addDays(weekStart, DAY_ORDER.indexOf(raceDay)) : null;
   const scheduleRace = Boolean(
-    remainingRunQuota > 0
-    && raceDay
+    raceDay
     && raceDate >= todayISO
     && !completedRunDates.has(raceDate)
   );
@@ -502,7 +560,10 @@ function partialCurrentWeekConstraint(quota, requestedRunDaysPerWeek) {
     remainingRunQuota: quota.remainingRunQuota,
     scheduledRunCount,
     totalRunsTowardTarget: quota.completedRunsAppliedToQuota + scheduledRunCount,
-    explanation: `This current week is partial: completed runs and remaining selected weekdays set the sessions shown. The full ${requestedRunDaysPerWeek}-day selected frequency starts next week.`,
+    protectedRaceBeyondQuota: quota.remainingRunQuota === 0 && scheduledRunCount > 0,
+    explanation: quota.remainingRunQuota === 0 && scheduledRunCount > 0
+      ? `The normal weekly run quota is complete, but the protected race remains on its exact date. The full ${requestedRunDaysPerWeek}-day selected frequency starts next week.`
+      : `This current week is partial: completed runs and remaining selected weekdays set the sessions shown. The full ${requestedRunDaysPerWeek}-day selected frequency starts next week.`,
   };
 }
 
@@ -958,10 +1019,7 @@ function applyAcuteRunProtection(plan, context = {}) {
         .flatMap((day) => day.sessions || [])
         .filter((session) => session.kind === 'run').length;
       week.currentWeekConstraint.scheduledRunCount = scheduledRunCount;
-      week.currentWeekConstraint.totalRunsTowardTarget = Math.min(
-        week.currentWeekConstraint.requestedRunDaysPerWeek,
-        week.currentWeekConstraint.completedRunsAppliedToQuota + scheduledRunCount
-      );
+      week.currentWeekConstraint.totalRunsTowardTarget = week.currentWeekConstraint.completedRunsAppliedToQuota + scheduledRunCount;
     }
     if (weekChanged) week.acuteLoadAdjusted = true;
   }
@@ -1128,16 +1186,28 @@ function goalMetadata(target = {}, existingGoal = {}, history = {}) {
   });
 }
 
+function goalsMetadata(target = {}, existingGoals = [], history = {}) {
+  const raceTargets = normalizedRaceTargets(target);
+  return raceTargets.map((raceTarget, index) => ({
+    ...goalMetadata({ ...target, ...raceTarget }, existingGoals[index] || {}, history),
+    priority: 'A',
+    sequence: index + 1,
+    role: index === raceTargets.length - 1 ? 'final_peak' : 'first_peak',
+  }));
+}
+
 function buildConcurrentPlan(context = {}) {
   const profile = context.profile || {};
   const target = context.target || {};
   const history = context.history || {};
   const recovery = context.recovery || {};
   const mode = resolvePlanMode(profile, target);
-  const raceDate = parseISODate(target.raceDate) ? target.raceDate : null;
+  const raceTargets = normalizedRaceTargets(target);
+  const finalRaceTarget = raceTargets[raceTargets.length - 1] || target;
+  const raceDate = parseISODate(finalRaceTarget.raceDate) ? finalRaceTarget.raceDate : null;
   const weekCount = clamp(Math.round(Number(target.weeks) || 8), raceDate ? 1 : 4, 20);
   const startDate = mondayFor(target.startDate || context.todayISO || toISODate(new Date()));
-  const raceDistance = clamp(Number(target.distanceMiles || profile.goal_race_distance || 6.2) || 6.2, 1, 100);
+  const raceDistance = clamp(Number(finalRaceTarget.distanceMiles || profile.goal_race_distance || 6.2) || 6.2, 1, 100);
   const runSchedule = resolveRunSchedule(profile, target);
   if (!runSchedule.valid) throw new Error(runSchedule.error);
   const availableDays = runSchedule.trainingDays;
@@ -1157,20 +1227,24 @@ function buildConcurrentPlan(context = {}) {
       preferredDays: availableDays,
     }, mode);
   const baseline = Number(history.weeklyMileageBaseline ?? profile.weekly_miles_current) || Math.max(6, raceDistance);
-  const mileageTargets = buildMileageTargets(weekCount, baseline, Boolean(raceDate), recovery, history, target);
-  // H7: only trusted, current structured course facts may drive hill work.
-  const trustedCourse = trustedCourseFacts(target);
-  const trustedElevationGainFt = trustedCourse.trusted ? Number(trustedCourse.facts.elevationGainFt || 0) : 0;
-  const hilly = trustedElevationGainFt / Math.max(1, raceDistance) >= 30;
-  const goalPaceContext = buildGoalPaceContext({ ...target, distanceMiles: raceDistance }, history);
+  const weekPhases = phasesForRaceTargets(startDate, weekCount, raceTargets);
+  const mileageTargets = buildMileageTargets(weekCount, baseline, Boolean(raceDate), recovery, history, { ...target, weekPhases });
   const anchorMetadata = planAnchorMetadata(history);
   let benchmarkPrescribed = false;
 
   const weeks = [];
   for (let weekNumber = 1; weekNumber <= weekCount; weekNumber += 1) {
     const weekStart = addDays(startDate, (weekNumber - 1) * 7);
-    const phase = phaseForWeek(weekNumber, weekCount, Boolean(raceDate));
-    const raceDay = raceDate && DAY_ORDER.find((day, index) => addDays(weekStart, index) === raceDate);
+    const phase = weekPhases[weekNumber - 1];
+    const weekRaceTarget = raceTargets.find((race) => race.raceDate >= weekStart && race.raceDate <= addDays(weekStart, 6)) || null;
+    const activeRaceTarget = activeRaceTargetForWeek(weekStart, raceTargets, finalRaceTarget);
+    const activeTarget = { ...target, ...activeRaceTarget };
+    const activeRaceDistance = clamp(Number(activeRaceTarget.distanceMiles || raceDistance) || raceDistance, 1, 100);
+    const raceDay = weekRaceTarget && DAY_ORDER.find((day, index) => addDays(weekStart, index) === weekRaceTarget.raceDate);
+    const trustedCourse = trustedCourseFacts(activeTarget);
+    const trustedElevationGainFt = trustedCourse.trusted ? Number(trustedCourse.facts.elevationGainFt || 0) : 0;
+    const hilly = trustedElevationGainFt / Math.max(1, activeRaceDistance) >= 30;
+    const goalPaceContext = buildGoalPaceContext({ ...activeTarget, distanceMiles: activeRaceDistance }, history);
     let weekRunDays = raceDay && !runDays.includes(raceDay) ? [...runDays.slice(0, Math.max(1, runDays.length - 1)), raceDay] : runDays.slice();
     const currentWeekLoad = history.acuteRunLoad?.currentWeek;
     const currentWeekQuota = weekNumber === 1 ? currentWeekRunSchedule({
@@ -1187,7 +1261,7 @@ function buildConcurrentPlan(context = {}) {
     const priorScheduledMiles = Number(weeks[weeks.length - 1]?.totalMiles || 0);
     if (phase === 'deload' && priorScheduledMiles > 0) scheduledMileageTarget = Math.min(scheduledMileageTarget, priorScheduledMiles * 0.8);
     if (phase === 'taper' && priorScheduledMiles > 0) scheduledMileageTarget = Math.min(scheduledMileageTarget, priorScheduledMiles * 0.65);
-    const distances = allocateRunDistances(scheduledMileageTarget, weekRunDays, phase, raceDistance, raceDay, {
+    const distances = allocateRunDistances(scheduledMileageTarget, weekRunDays, phase, activeRaceDistance, raceDay, {
       weekNumber,
       recentLongMiles: (history.acuteRunLoad?.protectiveRun || history.acuteRunLoad?.latestRun)?.isLong
         ? (history.acuteRunLoad.protectiveRun || history.acuteRunLoad.latestRun).distanceMiles
@@ -1212,7 +1286,7 @@ function buildConcurrentPlan(context = {}) {
         distance: distances[index],
         phase,
         hilly,
-        raceName: target.raceName,
+        raceName: activeRaceTarget.raceName,
         history,
         goalPaceContext,
         durationIsEstimated: durationIsEstimatedFromAnchorState(anchorMetadata.anchorState),
@@ -1254,10 +1328,14 @@ function buildConcurrentPlan(context = {}) {
     });
   }
 
+  const goals = goalsMetadata(target, [], history);
+  const finalGoal = goals[goals.length - 1]
+    || goalMetadata(target, { kind: raceDate ? 'race' : 'training_block' }, history);
   const plan = {
     schemaVersion: planSchema.SCHEMA_VERSION,
     planMode: mode,
-    goal: goalMetadata(target, { kind: raceDate ? 'race' : 'training_block' }, history),
+    goal: finalGoal,
+    ...(goals.length ? { goals } : {}),
     strengthPolicy,
     anchorState: anchorMetadata.anchorState,
     ...(anchorMetadata.anchoredBy ? { anchoredBy: anchorMetadata.anchoredBy } : {}),
@@ -1310,15 +1388,18 @@ function validateRun(session, path, errors) {
 function validateConcurrentPlan(candidate, context = {}) {
   const errors = [];
   const target = context.target || {};
+  const raceTargets = normalizedRaceTargets(target);
+  const finalRaceTarget = raceTargets[raceTargets.length - 1] || target;
   const runSchedule = resolveRunSchedule(context.profile || {}, target);
   if (!runSchedule.valid) return { valid: false, errors: [runSchedule.error] };
   const allowedRunDays = new Set(runSchedule.trainingDays);
   const expectedMode = resolvePlanMode(context.profile || {}, target);
-  const hasRace = Boolean(parseISODate(target.raceDate));
-  const expectedGoalTimeSeconds = goalTimeSecondsFor(target, {}, context.history || {});
-  const expectedGoalPace = goalPaceSecondsPerMile(target, {}, context.history || {});
+  const hasRace = Boolean(parseISODate(finalRaceTarget.raceDate));
+  const expectedGoalTimeSeconds = goalTimeSecondsFor(finalRaceTarget, {}, context.history || {});
+  const expectedGoalPace = goalPaceSecondsPerMile(finalRaceTarget, {}, context.history || {});
   const expectedWeeks = clamp(Math.round(Number(target.weeks) || 8), hasRace ? 1 : 4, 20);
   const expectedStartDate = mondayFor(target.startDate || context.todayISO);
+  const expectedWeekPhases = phasesForRaceTargets(expectedStartDate, expectedWeeks, raceTargets);
   const currentWeekLoad = context.history?.acuteRunLoad?.currentWeek;
   const acuteLoad = context.history?.acuteRunLoad;
   const acuteProtection = acuteLoad?.protection?.active ? acuteLoad.protection : null;
@@ -1332,19 +1413,40 @@ function validateConcurrentPlan(candidate, context = {}) {
   if (JSON.stringify(candidate.schedulePreferences?.trainingDays || []) !== JSON.stringify(runSchedule.trainingDays)) {
     errors.push('schedulePreferences.trainingDays must preserve the selected weekdays');
   }
-  if (!candidate.goal || Number(candidate.goal.distanceMiles) !== Number(target.distanceMiles || candidate.goal?.distanceMiles)) errors.push('goal distance is missing or changed');
-  if (target.raceDate && candidate.goal?.date !== target.raceDate) errors.push('race date was not preserved');
+  if (!candidate.goal || Number(candidate.goal.distanceMiles) !== Number(finalRaceTarget.distanceMiles || candidate.goal?.distanceMiles)) errors.push('goal distance is missing or changed');
+  if (finalRaceTarget.raceDate && candidate.goal?.date !== finalRaceTarget.raceDate) errors.push('race date was not preserved');
   if (expectedGoalTimeSeconds && Number(candidate.goal?.goalTimeSeconds) !== expectedGoalTimeSeconds) errors.push('goal time was not preserved');
   if (expectedGoalPace && Number(candidate.goal?.goalPaceSecondsPerMile) !== expectedGoalPace) errors.push('goal pace was not derived from target time and distance');
+  const expectedGoals = goalsMetadata(target, [], context.history || {});
+  const expectedFinalGoal = expectedGoals[expectedGoals.length - 1]
+    || goalMetadata(target, {}, context.history || {});
+  if (candidate.goal?.name !== expectedFinalGoal.name) errors.push('goal name is missing or changed');
+  if (JSON.stringify(candidate.goal?.course ?? null) !== JSON.stringify(expectedFinalGoal.course ?? null)) errors.push('goal course metadata is missing or changed');
+  if (expectedGoals.length) {
+    if (!Array.isArray(candidate.goals) || candidate.goals.length !== expectedGoals.length) {
+      errors.push(`goals must preserve exactly ${expectedGoals.length} race targets`);
+    } else {
+      expectedGoals.forEach((goal, index) => {
+        const actual = candidate.goals[index] || {};
+        if (actual.raceId !== goal.raceId || actual.date !== goal.date || Number(actual.distanceMiles) !== Number(goal.distanceMiles)) {
+          errors.push(`goals[${index}] must preserve race identity, date, and distance`);
+        }
+        if (goal.goalTimeSeconds && Number(actual.goalTimeSeconds) !== Number(goal.goalTimeSeconds)) errors.push(`goals[${index}] must preserve goal time`);
+        if (goal.goalPaceSecondsPerMile && Number(actual.goalPaceSecondsPerMile) !== Number(goal.goalPaceSecondsPerMile)) errors.push(`goals[${index}] must preserve goal pace`);
+        if (actual.priority !== 'A' || Number(actual.sequence) !== index + 1 || actual.role !== goal.role) errors.push(`goals[${index}] must preserve A-race ordering`);
+        if (actual.name !== goal.name) errors.push(`goals[${index}] must preserve race name`);
+        if (JSON.stringify(actual.course ?? null) !== JSON.stringify(goal.course ?? null)) errors.push(`goals[${index}] must preserve course metadata`);
+      });
+    }
+  }
   if (!Array.isArray(candidate.weeks) || candidate.weeks.length !== expectedWeeks) errors.push(`weeks must contain exactly ${expectedWeeks} entries`);
 
   const ids = new Set();
   const weekMiles = [];
   const phases = new Set();
-  let exactRaceSessionFound = false;
-  let currentWeekRaceQuotaAlreadyMet = false;
+  const exactRaceSessionDates = new Set();
   let raceSpecificSessionFound = false;
-  let targetPaceSessionFound = false;
+  const targetPaceRaceIds = new Set();
   const weeks = Array.isArray(candidate.weeks) ? candidate.weeks : [];
   weeks.forEach((week, weekIndex) => {
     const path = `weeks[${weekIndex}]`;
@@ -1353,12 +1455,16 @@ function validateConcurrentPlan(candidate, context = {}) {
     if (weekIndex === 0 && week.startDate !== expectedStartDate) errors.push(`${path}.startDate must be ${expectedStartDate}`);
     if (weekIndex > 0 && week.startDate !== addDays(weeks[weekIndex - 1]?.startDate, 7)) errors.push(`${path}.startDate must follow the prior week`);
     if (!['base', 'build', 'deload', 'peak', 'taper', 'race'].includes(week.phase)) errors.push(`${path}.phase is invalid`);
-    else phases.add(week.phase);
+    else {
+      phases.add(week.phase);
+      if (week.phase !== expectedWeekPhases[weekIndex]) errors.push(`${path}.phase must be ${expectedWeekPhases[weekIndex]}`);
+    }
     if (!Array.isArray(week.days) || week.days.length !== 7) {
       errors.push(`${path}.days must contain seven dated days`);
       return;
     }
-    const raceDay = target.raceDate && DAY_ORDER.find((day, dayIndex) => addDays(week.startDate, dayIndex) === target.raceDate);
+    const weekRaceTarget = raceTargets.find((race) => race.raceDate >= week.startDate && race.raceDate <= addDays(week.startDate, 6)) || null;
+    const raceDay = weekRaceTarget && DAY_ORDER.find((day, dayIndex) => addDays(week.startDate, dayIndex) === weekRaceTarget.raceDate);
     const currentWeekQuota = weekIndex === 0 ? currentWeekRunSchedule({
       weekStart: week.startDate,
       todayISO: context.todayISO,
@@ -1366,9 +1472,6 @@ function validateConcurrentPlan(candidate, context = {}) {
       runSchedule,
       raceDay,
     }) : null;
-    if (currentWeekQuota && raceDay && currentWeekQuota.remainingRunQuota === 0) {
-      currentWeekRaceQuotaAlreadyMet = true;
-    }
     let restDays = 0;
     let lifts = 0;
     let runs = 0;
@@ -1413,18 +1516,24 @@ function validateConcurrentPlan(candidate, context = {}) {
             }
           }
           if (/(hill|course-specific)/i.test([session.title, session.type, session.description].filter(Boolean).join(' '))) raceSpecificSessionFound = true;
-          if (String(session.type || '').toLowerCase() !== 'race'
-            && expectedGoalPace
-            && Math.abs(Number(session.goal_pace_seconds_per_mile || 0) - expectedGoalPace) <= 1) {
-            targetPaceSessionFound = true;
+          if (String(session.type || '').toLowerCase() !== 'race') {
+            for (const race of raceTargets) {
+              const racePace = goalPaceSecondsPerMile(race, {}, context.history || {});
+              if (day.date < race.raceDate && racePace && Math.abs(Number(session.goal_pace_seconds_per_mile || 0) - racePace) <= 1) {
+                targetPaceRaceIds.add(race.raceId || race.raceDate);
+              }
+            }
           }
           if (String(session.type || '').toLowerCase() === 'race') {
-            const exactDistance = Math.abs(Number(session.distance_miles) - Number(target.distanceMiles)) < 0.01;
-            if (day.date === target.raceDate && exactDistance) exactRaceSessionFound = true;
+            const matchingRace = raceTargetForDate(day.date, raceTargets);
+            const exactDistance = matchingRace && Math.abs(Number(session.distance_miles) - Number(matchingRace.distanceMiles)) < 0.01;
+            if (matchingRace && exactDistance) exactRaceSessionDates.add(day.date);
             else errors.push(`${sessionPath} race session must preserve the target date and distance`);
-            if (expectedGoalPace) {
-              const expectedPaceLabel = formatPaceLabel(expectedGoalPace);
-              const paceMatches = Math.abs(Number(session.goal_pace_seconds_per_mile || 0) - expectedGoalPace) <= 1;
+            if (matchingRace?.raceName && session.title !== matchingRace.raceName) errors.push(`${sessionPath} race session must preserve the target name`);
+            const matchingGoalPace = matchingRace ? goalPaceSecondsPerMile(matchingRace, {}, context.history || {}) : null;
+            if (matchingGoalPace) {
+              const expectedPaceLabel = formatPaceLabel(matchingGoalPace);
+              const paceMatches = Math.abs(Number(session.goal_pace_seconds_per_mile || 0) - matchingGoalPace) <= 1;
               const labelMatches = session.goal_pace_label === expectedPaceLabel
                 && String(session.pace_target || '').includes(expectedPaceLabel);
               if (!paceMatches || !labelMatches) errors.push(`${sessionPath} race session must preserve the exact goal pace`);
@@ -1462,8 +1571,11 @@ function validateConcurrentPlan(candidate, context = {}) {
       if (Number(constraint?.completedRunsAppliedToQuota) !== currentWeekQuota.completedRunsAppliedToQuota) errors.push(`${path}.currentWeekConstraint quota credit is inaccurate`);
       if (Number(constraint?.remainingRunQuota) !== currentWeekQuota.remainingRunQuota) errors.push(`${path}.currentWeekConstraint remaining quota is inaccurate`);
       if (Number(constraint?.scheduledRunCount) !== runs) errors.push(`${path}.currentWeekConstraint scheduled run count is inaccurate`);
-      const expectedTotal = Math.min(runSchedule.runDaysPerWeek, currentWeekQuota.completedRunsAppliedToQuota + runs);
+      const expectedTotal = currentWeekQuota.completedRunsAppliedToQuota + runs;
       if (Number(constraint?.totalRunsTowardTarget) !== expectedTotal) errors.push(`${path}.currentWeekConstraint total run count is inaccurate`);
+      if (Boolean(constraint?.protectedRaceBeyondQuota) !== Boolean(currentWeekQuota.remainingRunQuota === 0 && runs > 0)) {
+        errors.push(`${path}.currentWeekConstraint protected-race flag is inaccurate`);
+      }
       if (!String(constraint?.explanation || '').includes(`full ${runSchedule.runDaysPerWeek}-day selected frequency starts next week`)) {
         errors.push(`${path}.currentWeekConstraint explanation is missing`);
       }
@@ -1500,25 +1612,46 @@ function validateConcurrentPlan(candidate, context = {}) {
     if (!previousWeekIsPartial && phase === 'deload' && weekMiles[index] >= weekMiles[index - 1] * 0.9) errors.push(`weeks[${index}] deload must reduce mileage by at least 10%`);
     if (!previousWeekIsPartial && phase === 'taper' && weekMiles[index] >= weekMiles[index - 1] * 0.8) errors.push(`weeks[${index}] taper must reduce mileage by at least 20%`);
   }
-  if (target.raceDate && weeks.length) {
+  if (raceTargets.length && weeks.length) {
     if (weeks[weeks.length - 1]?.phase !== 'race') errors.push('final week must be race phase');
     if (weeks.length > 1 && weeks[weeks.length - 2]?.phase !== 'taper') errors.push('week before race must be taper phase');
-    if (!exactRaceSessionFound && !currentWeekRaceQuotaAlreadyMet) errors.push('plan must include the exact race session on the target date');
-    if (weeks.length >= 3 && !phases.has('peak')) errors.push('race plan must include a peak phase');
+    raceTargets.forEach((race, raceIndex) => {
+      const raceWeekIndex = weeks.findIndex((week) => race.raceDate >= week.startDate && race.raceDate <= addDays(week.startDate, 6));
+      if (raceWeekIndex < 0 || weeks[raceWeekIndex]?.phase !== 'race') errors.push(`race target ${race.raceDate} must have a race-phase week`);
+      if (raceWeekIndex > 0 && weeks[raceWeekIndex - 1]?.phase !== 'taper') errors.push(`week before race target ${race.raceDate} must be taper phase`);
+      if (raceIndex < raceTargets.length - 1 && raceWeekIndex >= 0 && raceWeekIndex + 1 < weeks.length && weeks[raceWeekIndex + 1]?.phase !== 'deload') {
+        errors.push(`week after race target ${race.raceDate} must be deload phase`);
+      }
+      if (!exactRaceSessionDates.has(race.raceDate)) {
+        errors.push(`plan must include the exact race session on ${race.raceDate}`);
+      }
+    });
   }
   const plannedRunFrequency = runSchedule.runDaysPerWeek;
-  if (expectedGoalPace && expectedWeeks >= 4 && plannedRunFrequency >= 2 && !targetPaceSessionFound) {
-    errors.push('timed race plan must include a structured target-pace session before race day');
-  }
+  raceTargets.forEach((race) => {
+    const racePace = goalPaceSecondsPerMile(race, {}, context.history || {});
+    const weeksToRace = Math.floor((parseISODate(race.raceDate) - parseISODate(expectedStartDate)) / (7 * 86400000)) + 1;
+    if (racePace && weeksToRace >= 2 && plannedRunFrequency >= 2 && !targetPaceRaceIds.has(race.raceId || race.raceDate)) {
+      errors.push(`timed race plan must include a structured target-pace session before ${race.raceDate}`);
+    }
+  });
   if (expectedWeeks >= 8 && !phases.has('deload')) errors.push('plan must include a deload phase');
   // H7: only trusted, current course facts may require a hill session, and AI
   // candidates may not fabricate course facts absent from trusted structured data.
-  const trustedCourse = trustedCourseFacts(target);
-  const trustedElevationGainFt = trustedCourse.trusted ? Number(trustedCourse.facts.elevationGainFt || 0) : 0;
-  const elevationPerMile = trustedElevationGainFt / Math.max(1, Number(target.distanceMiles || 0));
-  if (elevationPerMile >= 30 && expectedWeeks > 1 && !raceSpecificSessionFound) errors.push('hilly race plan must include a hill or course-specific session');
-  const candidateCourse = candidate && candidate.goal && typeof candidate.goal.course === 'object' ? candidate.goal.course : null;
-  if (candidateCourse) {
+  const candidateGoals = Array.isArray(candidate.goals) && candidate.goals.length ? candidate.goals : [candidate.goal];
+  const courseTargets = raceTargets.length ? raceTargets : [finalRaceTarget];
+  courseTargets.forEach((courseTarget, index) => {
+    const trustedCourse = trustedCourseFacts(courseTarget);
+    const trustedElevationGainFt = trustedCourse.trusted ? Number(trustedCourse.facts.elevationGainFt || 0) : 0;
+    const elevationPerMile = trustedElevationGainFt / Math.max(1, Number(courseTarget.distanceMiles || 0));
+    if (elevationPerMile >= 30 && expectedWeeks > 1 && !raceSpecificSessionFound) errors.push('hilly race plan must include a hill or course-specific session');
+    const candidateCourse = candidateGoals[index] && typeof candidateGoals[index].course === 'object' ? candidateGoals[index].course : null;
+    const expectedCourse = buildGoalCourse(courseTarget);
+    if (JSON.stringify(candidateCourse) !== JSON.stringify(expectedCourse)) {
+      errors.push(`race target ${courseTarget.raceDate || index + 1} course metadata must be preserved exactly`);
+      return;
+    }
+    if (!candidateCourse) return;
     const claimedElevation = numberOrNull(candidateCourse.elevationGainFt);
     const claimedAltitude = numberOrNull(candidateCourse.maxAltitudeFt);
     const claimedTerrain = candidateCourse.terrain || null;
@@ -1531,7 +1664,7 @@ function validateConcurrentPlan(candidate, context = {}) {
       if (claimedAltitude !== null && Number(trustedCourse.facts.maxAltitudeFt) !== claimedAltitude) errors.push('candidate altitude does not match trusted course data');
       if (claimedTerrain && String(trustedCourse.facts.terrain || '') !== String(claimedTerrain)) errors.push('candidate terrain does not match trusted course data');
     }
-  }
+  });
   return { valid: errors.length === 0, errors };
 }
 
@@ -1562,10 +1695,18 @@ function selectPlanCandidate(candidate, context = {}) {
     strengthPrescription.applyStrengthPrescriptionData(candidate, context),
     resolvePlanMode(context.profile || {}, context.target || {})
   );
+  const normalizedGoals = goalsMetadata(
+    context.target || {},
+    Array.isArray(preparedWithEvidence?.goals) ? preparedWithEvidence.goals : [],
+    context.history || {}
+  );
+  const normalizedGoal = normalizedGoals[normalizedGoals.length - 1]
+    || goalMetadata(context.target || {}, preparedWithEvidence?.goal || {}, context.history || {});
   const preparedCandidate = preparedWithEvidence && typeof preparedWithEvidence === 'object'
     ? {
       ...preparedWithEvidence,
-      goal: goalMetadata(context.target || {}, preparedWithEvidence.goal || {}, context.history || {}),
+      goal: normalizedGoal,
+      ...(normalizedGoals.length ? { goals: normalizedGoals } : {}),
     }
     : preparedWithEvidence;
   const validation = validateConcurrentPlan(preparedCandidate, context);
@@ -1573,7 +1714,8 @@ function selectPlanCandidate(candidate, context = {}) {
     return {
       plan: {
         ...preparedCandidate,
-        goal: goalMetadata(context.target || {}, preparedCandidate.goal || {}, context.history || {}),
+        goal: normalizedGoal,
+        ...(normalizedGoals.length ? { goals: normalizedGoals } : {}),
         generationSource: 'ai_validated',
         generationValidationErrors: [],
         inputSummary: summarizeInputs(context.profile || {}, context.history || {}, context.recovery || {}, context.checkin || null),
@@ -1593,6 +1735,7 @@ function selectPlanCandidate(candidate, context = {}) {
 
 module.exports = {
   addDays,
+  isValidISODate,
   mondayFor,
   racePlanWindow,
   resolvePlanMode,
@@ -1606,6 +1749,9 @@ module.exports = {
   buildGoalCourse,
   trustedCourseFacts,
   goalMetadata,
+  goalsMetadata,
+  normalizedRaceTargets,
+  phasesForRaceTargets,
   goalTimeSecondsFor,
   resolvedGoalTime,
   goalPaceSecondsPerMile,

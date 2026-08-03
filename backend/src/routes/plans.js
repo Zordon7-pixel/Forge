@@ -908,6 +908,8 @@ const CLIENT_COURSE_KEYS = [
 function stripClientCourseFacts(target = {}) {
   const safe = { ...target };
   for (const key of CLIENT_COURSE_KEYS) delete safe[key];
+  delete safe.raceTargets;
+  delete safe.race_targets;
   return safe;
 }
 
@@ -2874,6 +2876,9 @@ router.post('/generate', auth, requirePremium('Race Programs'), async (req, res)
   try {
     const profile = await dbGet('SELECT * FROM users WHERE id = ?', [req.user.id]);
     if (!profile) return res.status(404).json({ error: 'User not found' });
+    if (Array.isArray(req.body?.target?.raceTargets) || Array.isArray(req.body?.target?.race_targets)) {
+      return res.status(400).json({ error: 'Use the owned-race planner to build a two-race plan' });
+    }
     const requested = stripClientCourseFacts(req.body?.target || {});
     const runSchedule = resolveRunSchedule(profile, requested, { requireCompleteSelection: true });
     if (!runSchedule.valid) return res.status(400).json({ error: runSchedule.error });
@@ -2916,6 +2921,94 @@ router.post('/generate', auth, requirePremium('Race Programs'), async (req, res)
       generation_source: selected.source,
     });
   } catch (err) { console.error('generate failed:', err.message); res.status(500).json({ error: 'Plan generation failed' }); }
+});
+
+router.post('/generate-for-races', auth, requirePremium('Race Programs'), async (req, res) => {
+  try {
+    const rawRaceIds = req.body?.race_ids;
+    if (!Array.isArray(rawRaceIds) || rawRaceIds.length < 1 || rawRaceIds.length > 2) {
+      return res.status(400).json({ error: 'Choose one or two races' });
+    }
+    if (rawRaceIds.some((id) => typeof id !== 'string' || !id.trim() || id.trim().length > 128)) {
+      return res.status(400).json({ error: 'Each race ID must be a non-empty string' });
+    }
+    const submittedRaceIds = rawRaceIds.map((id) => id.trim());
+    const raceIds = [...new Set(submittedRaceIds)];
+    if (raceIds.length !== submittedRaceIds.length) {
+      return res.status(400).json({ error: 'Choose each race only once' });
+    }
+    const profile = await dbGet('SELECT * FROM users WHERE id = ?', [req.user.id]);
+    if (!profile) return res.status(404).json({ error: 'User not found' });
+    const races = await Promise.all(raceIds.map((raceId) => (
+      dbGet('SELECT * FROM race_events WHERE id = ? AND user_id = ?', [raceId, req.user.id])
+    )));
+    if (races.some((race) => !race)) return res.status(404).json({ error: 'Race not found' });
+    if (races.some((race) => !concurrentPlan.isValidISODate(race.race_date))) {
+      return res.status(400).json({ error: 'Race dates must use valid YYYY-MM-DD calendar dates' });
+    }
+    const orderedRaces = races.slice().sort((a, b) => String(a.race_date).localeCompare(String(b.race_date)));
+    if (new Set(orderedRaces.map((race) => race.race_date)).size !== orderedRaces.length) {
+      return res.status(400).json({ error: 'Race dates must be different' });
+    }
+    if (orderedRaces.length === 2) {
+      const firstDate = new Date(`${orderedRaces[0].race_date}T12:00:00Z`);
+      const secondDate = new Date(`${orderedRaces[1].race_date}T12:00:00Z`);
+      const gapDays = Math.round((secondDate.getTime() - firstDate.getTime()) / 86400000);
+      if (gapDays < 21) {
+        return res.status(400).json({ error: 'Two PR races must be at least 21 days apart for recovery and tapering' });
+      }
+    }
+    if (orderedRaces.some((race) => !concurrentPlan.racePlanWindow(race.race_date, getTodayISO()))) {
+      return res.status(400).json({ error: 'Race dates must be today or later' });
+    }
+    const finalRace = orderedRaces[orderedRaces.length - 1];
+    const raceWindow = concurrentPlan.racePlanWindow(finalRace.race_date, getTodayISO());
+    const requested = stripClientCourseFacts(req.body?.target || {});
+    const runSchedule = resolveRunSchedule(profile, requested, { requireCompleteSelection: true });
+    if (!runSchedule.valid) return res.status(400).json({ error: runSchedule.error });
+    const raceTargets = orderedRaces.map((race) => ({
+      raceDate: race.race_date,
+      raceName: race.race_name,
+      distanceMiles: clamp(Number(race.distance_miles) || 6.2, 1, 100),
+      goalTimeSeconds: race.goal_time_seconds ?? null,
+      goalType: Number(race.goal_time_seconds || 0) > 0 ? 'pr' : 'completion',
+      ...courseTargetFromRace(race),
+    }));
+    const finalTarget = raceTargets[raceTargets.length - 1];
+    const target = {
+      ...requested,
+      ...finalTarget,
+      raceTargets,
+      trainingDays: runSchedule.trainingDays,
+      runDaysPerWeek: runSchedule.runDaysPerWeek,
+      runDaysSource: runSchedule.runDaysSource,
+      trainingDaysSource: runSchedule.trainingDaysSource,
+      weeks: raceWindow.weeks,
+      startDate: raceWindow.startDate,
+      todayISO: getTodayISO(),
+      nowISO: `${getTodayISO()}T12:00:00.000Z`,
+    };
+    target.planMode = concurrentPlan.resolvePlanMode(profile, target);
+    const context = await buildConcurrentContext(req.user.id, profile, target);
+    const evidencePlan = concurrentPlan.buildConcurrentPlan(context);
+    const validation = concurrentPlan.validateConcurrentPlan(evidencePlan, context);
+    if (!validation.valid) throw new Error(`Evidence multi-race plan failed validation: ${validation.errors.join('; ')}`);
+    const persisted = await persistConcurrentPlan(req.user.id, evidencePlan, {
+      name: orderedRaces.map((race) => race.race_name).join(' + '),
+      type: evidencePlan.planMode,
+      description: `${raceWindow.weeks}-week plan with ${orderedRaces.length} protected PR race goal${orderedRaces.length === 1 ? '' : 's'}.`,
+    });
+    return res.status(201).json({
+      plan: { id: persisted.planId, user_id: req.user.id, week_start: persisted.weekStart, ...planAnchorPayload(evidencePlan), plan_json: evidencePlan, plan_data: evidencePlan },
+      user_plan_id: persisted.userPlanId,
+      generation_source: 'evidence_engine',
+      weeks: raceWindow.weeks,
+      races: orderedRaces.map((race) => ({ id: race.id, name: race.race_name, date: race.race_date })),
+    });
+  } catch (err) {
+    console.error('[plans/generate-for-races] failed:', err.message);
+    return res.status(500).json({ error: 'Multi-race plan generation failed' });
+  }
 });
 
 router.post('/generate-for-race/:raceId', auth, requirePremium('Race Programs'), async (req, res) => {

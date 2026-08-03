@@ -127,22 +127,36 @@ export default function Plan() {
     [myPlan, myUserPlan],
   )
   const recordedRunsByDate = useMemo(() => indexRecordedRuns(runs), [runs])
-  const activeRace = useMemo(() => {
-    if (!model?.goal) return null
-    if (model.goal.raceId) {
-      const exact = races.find((race) => String(race.id) === String(model.goal.raceId))
+  const findRaceForGoal = (goal) => {
+    if (!goal) return null
+    if (goal.raceId) {
+      const exact = races.find((race) => String(race.id) === String(goal.raceId))
       if (exact) return exact
     }
-    const normalizedGoalName = String(model.goal.name || '').trim().toLowerCase()
+    const normalizedGoalName = String(goal.name || '').trim().toLowerCase()
     return races.find((race) => (
-      race.race_date === model.goal.dateISO
+      race.race_date === goal.dateISO
       && String(race.race_name || '').trim().toLowerCase() === normalizedGoalName
-      && (!model.goal.distanceMiles || Math.abs(Number(race.distance_miles || 0) - Number(model.goal.distanceMiles)) < 0.01)
+      && (!goal.distanceMiles || Math.abs(Number(race.distance_miles || 0) - Number(goal.distanceMiles)) < 0.01)
     )) || null
-  }, [model, races])
+  }
+  const activeRaces = useMemo(
+    () => (model?.goals?.length ? model.goals : [model?.goal]).map(findRaceForGoal).filter(Boolean),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [model, races],
+  )
+  const activeRace = activeRaces[activeRaces.length - 1] || null
   const calendarModel = useMemo(() => (
-    model && activeRace ? { ...model, goal: goalWithRace(model.goal, activeRace) } : model
-  ), [model, activeRace])
+    model ? {
+      ...model,
+      goal: activeRace ? goalWithRace(model.goal, activeRace) : model.goal,
+      goals: (model.goals || []).map((goal) => {
+        const race = findRaceForGoal(goal)
+        return race ? goalWithRace(goal, race) : goal
+      }),
+    } : model
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  ), [model, activeRace, races])
   const isActiveSchemaV2 = Number(myPlan?.plan_data?.schemaVersion || 0) === 2
   const weekCount = Number(myPlan?.weeks || calendarModel?.weekCount || 0)
   const planReviewRequired = myUserPlan?.progress?.planReviewRequired
@@ -539,6 +553,10 @@ export default function Plan() {
                 onOpenDay={(day) => setSelectedDayISO(day.dateISO)}
                 onOpenToday={(day) => setSelectedDayISO(day.dateISO)}
                 onEditGoal={activeRace ? () => {
+                  if ((calendarModel.goals || []).length > 1) {
+                    navigate('/races')
+                    return
+                  }
                   setRaceSaveError('')
                   setRaceSaveNotice(null)
                   setRaceEditorOpen(true)

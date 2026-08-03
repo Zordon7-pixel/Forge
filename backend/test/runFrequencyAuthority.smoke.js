@@ -452,7 +452,11 @@ async function checkPartialWeekRoutesDoNotReject() {
       user: { id: profile.id },
     });
     assert.equal(response.statusCode, 201, `race-week completed quota must not return HTTP ${response.statusCode}: ${response.payload?.error || ''}`);
-    assert.equal(runSessions(response.payload.plan.plan_data.weeks[0]).length, 0);
+    const protectedRaceSessions = runSessions(response.payload.plan.plan_data.weeks[0]);
+    assert.equal(protectedRaceSessions.length, 1);
+    assert.equal(protectedRaceSessions[0].day, 'Sun');
+    assert.equal(protectedRaceSessions[0].session.type, 'race');
+    assert.equal(response.payload.plan.plan_data.weeks[0].currentWeekConstraint.protectedRaceBeyondQuota, true);
   } finally {
     global.Date = RealDate;
     delete require.cache[plansRoutePath];

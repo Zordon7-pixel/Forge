@@ -131,9 +131,7 @@ export function isStrengthEnabled(plan) {
   return getPlanMode(plan) !== 'run_only'
 }
 
-export function getGoal(plan) {
-  const data = planData(plan)
-  const goal = data.goal || {}
+function normalizeGoal(data, plan, goal = {}) {
   const dateISO = goal.date || goal.raceDate || data.raceDate || null
   const distanceMiles = Number(goal.distanceMiles || goal.distance_miles || 0) || null
   const goalTimeSeconds = Number(goal.goalTimeSeconds || goal.goal_time_seconds || 0) || null
@@ -153,7 +151,22 @@ export function getGoal(plan) {
     anchorState: data.anchorState || goal.anchorState || plan?.anchorState || null,
     anchoredBy: data.anchoredBy || goal.anchoredBy || plan?.anchoredBy || null,
     course: goal.course || data.course || null,
+    priority: goal.priority || null,
+    sequence: Number(goal.sequence || 0) || null,
+    role: goal.role || null,
   }
+}
+
+export function getGoals(plan) {
+  const data = planData(plan)
+  const goals = Array.isArray(data.goals) ? data.goals : []
+  return goals.map((goal) => normalizeGoal(data, plan, goal))
+}
+
+export function getGoal(plan) {
+  const data = planData(plan)
+  const goals = getGoals(plan)
+  return goals[goals.length - 1] || normalizeGoal(data, plan, data.goal || {})
 }
 
 // Race rows remain the editable source of truth. Overlay them on the persisted
@@ -576,6 +589,7 @@ export function buildCalendarModel(plan, userPlan, options = {}) {
     runOnly,
     strengthEnabled: !runOnly,
     goal: getGoal(plan),
+    goals: getGoals(plan),
     phaseForWeek: (weekIndex) => weekModels[weekIndex]?.phase || null,
     weekCount: weekCount || weekModels.length,
     weeks: weekModels,

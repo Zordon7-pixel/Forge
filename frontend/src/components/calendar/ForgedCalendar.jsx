@@ -317,6 +317,20 @@ export default function ForgedCalendar({
             }}>Month</button>
           </div>
         </div>
+        {(model?.goals || []).length > 1 && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2" style={{ marginTop: 12 }} aria-label="Protected race goals">
+            {model.goals.map((raceGoal, index) => (
+              <div key={raceGoal.raceId || raceGoal.dateISO} className="rounded-lg p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
+                <p className="text-[10px] font-black uppercase" style={{ color: 'var(--accent)', margin: 0 }}>A{index + 1} · {raceGoal.role === 'final_peak' ? 'Final peak' : 'First peak'}</p>
+                <p className="text-sm font-bold" style={{ color: 'var(--text-primary)', margin: '4px 0 0' }}>{raceGoal.name}</p>
+                <p className="text-xs" style={{ color: 'var(--text-muted)', margin: '3px 0 0' }}>
+                  {formatAnchorRunDate(raceGoal.dateISO)} · {Number(raceGoal.distanceMiles || 0).toFixed(1)} mi
+                  {raceGoal.goalTimeSeconds ? ` · ${formatGoalTime(raceGoal.goalTimeSeconds)}` : ''}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {view === 'week' && (
