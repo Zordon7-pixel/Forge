@@ -1649,7 +1649,6 @@ function validateConcurrentPlan(candidate, context = {}) {
     const expectedCourse = buildGoalCourse(courseTarget);
     if (JSON.stringify(candidateCourse) !== JSON.stringify(expectedCourse)) {
       errors.push(`race target ${courseTarget.raceDate || index + 1} course metadata must be preserved exactly`);
-      return;
     }
     if (!candidateCourse) return;
     const claimedElevation = numberOrNull(candidateCourse.elevationGainFt);
