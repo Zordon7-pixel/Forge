@@ -109,6 +109,7 @@ app.use('/api/recovery',    require('./routes/recovery'));
 app.use('/api/import',      require('./routes/import'));
 app.use('/api/races',       require('./routes/races'));
 app.use('/api/routes',      require('./routes/routes'));
+app.use('/api/travel-context', require('./routes/travelContext'));
 app.use('/api/gear',        require('./routes/gear'));
 app.use('/api/stretches',   require('./routes/stretches'));
 app.use('/api/injury',      require('./routes/injury'));

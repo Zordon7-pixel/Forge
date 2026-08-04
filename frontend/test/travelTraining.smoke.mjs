@@ -10,6 +10,9 @@ import {
 } from '../src/lib/travelTraining.js'
 
 const today = '2026-08-03'
+const awayContext = { status: 'away', confidence: 'high', distanceBand: 'over_150_miles', reason: 'confirmed_away_from_home' }
+const homeContext = { status: 'home', confidence: 'high', distanceBand: 'within_15_miles', reason: 'within_home_training_area' }
+const unknownContext = { status: 'unknown', confidence: 'none', distanceBand: 'unknown', reason: 'insufficient_home_history' }
 const armyGoal = { raceId: 'army', name: 'Army Ten-Miler', dateISO: '2026-10-11' }
 const army = {
   id: 'army', race_name: 'Army Ten-Miler', race_date: '2026-10-11', status: 'upcoming', goal_time_seconds: 5220,
@@ -59,6 +62,7 @@ const travelingLift = deriveTravelTrainingChoices({
   readiness: green,
   activeInjury: null,
   hasRunRecordedToday: false,
+  travelContext: awayContext,
 })
 assert.equal(travelingLift.shouldPrompt, true)
 assert.ok(travelingLift.choices.some((choice) => choice.kind === 'bodyweight_strength' && choice.sessionId === 'lift-5'))
@@ -76,6 +80,7 @@ const travelingRun = deriveTravelTrainingChoices({
   readiness: green,
   activeInjury: null,
   hasRunRecordedToday: false,
+  travelContext: awayContext,
 })
 const scheduledChoice = travelingRun.choices.find((choice) => choice.kind === 'scheduled_run')
 assert.equal(scheduledChoice.routeState.planSessionId, 'run-5')
@@ -89,6 +94,16 @@ const ordinaryRun = deriveTravelTrainingChoices({
   readiness: green,
 })
 assert.equal(ordinaryRun.shouldPrompt, false, 'ordinary planned run does not add duplicate coaching')
+assert.equal(ordinaryRun.needsLocation, true, 'an unfinished scheduled run is relevant before location is known')
+const scheduledRunWithoutReadiness = deriveTravelTrainingChoices({
+  execution: runExecution,
+  readiness: { available: false, score: null, band: null },
+  activeInjury: null,
+  hasRunRecordedToday: false,
+  travelContext: awayContext,
+})
+assert.equal(scheduledRunWithoutReadiness.shouldPrompt, true,
+  'location gating must not add a readiness paywall to an existing scheduled run')
 
 const restExecution = { hasPlan: true, hasDay: true, isRest: true, date: today, week: 5, sessions: [], run: null, lift: null }
 const gapProposal = { status: 'proposal', evidence: [{ signal: 'run_gap', daysSinceRun: 8 }] }
@@ -99,6 +114,7 @@ const recoveryChoices = deriveTravelTrainingChoices({
   readiness: { available: true, score: 58, band: 'AMBER' },
   activeInjury: null,
   hasRunRecordedToday: false,
+  travelContext: awayContext,
 })
 const recoveryRun = recoveryChoices.choices.find((choice) => choice.kind === 'recovery_run')
 assert.ok(recoveryRun)
@@ -127,6 +143,86 @@ const genericGapChoices = deriveTravelTrainingChoices({
 })
 assert.equal(genericGapChoices.shouldPrompt, false)
 assert.equal(genericGapChoices.choices.some((choice) => choice.kind === 'recovery_run'), false)
+
+const combinedExecution = {
+  ...runExecution,
+  sessions: [scheduledRun, liftExecution.lift],
+  lift: liftExecution.lift,
+}
+const verifiedAwayChoices = deriveTravelTrainingChoices({
+  execution: combinedExecution,
+  readiness: green,
+  activeInjury: null,
+  hasRunRecordedToday: false,
+  travelContext: awayContext,
+})
+assert.equal(verifiedAwayChoices.shouldPrompt, true)
+assert.ok(verifiedAwayChoices.choices.some((choice) => choice.kind === 'scheduled_run'))
+assert.ok(verifiedAwayChoices.choices.some((choice) => choice.kind === 'bodyweight_strength'))
+
+for (const travelContext of [
+  homeContext,
+  unknownContext,
+  { status: 'unknown', reason: 'location_denied' },
+  { status: 'unknown', reason: 'location_timeout' },
+]) {
+  const gated = deriveTravelTrainingChoices({
+    execution: combinedExecution,
+    checkinData: { life_flags: ['traveling'] },
+    readiness: green,
+    activeInjury: null,
+    hasRunRecordedToday: false,
+    travelContext,
+  })
+  assert.equal(gated.shouldPrompt, false, `${travelContext.reason} must suppress the automatic prompt`)
+}
+
+const alreadyRan = deriveTravelTrainingChoices({
+  execution: runExecution,
+  adaptationProposal: gapProposal,
+  readiness: green,
+  activeInjury: null,
+  hasRunRecordedToday: true,
+  travelContext: awayContext,
+})
+assert.equal(alreadyRan.shouldPrompt, false, 'a recorded run suppresses scheduled-run and run-gap choices')
+assert.equal(alreadyRan.choices.some((choice) => ['scheduled_run', 'recovery_run'].includes(choice.kind)), false)
+
+const allWorkComplete = deriveTravelTrainingChoices({
+  execution: {
+    ...combinedExecution,
+    sessions: [{ ...scheduledRun, completed: true }, { ...liftExecution.lift, completed: true }],
+    run: { ...scheduledRun, completed: true },
+    lift: { ...liftExecution.lift, completed: true },
+  },
+  checkinData: { life_flags: ['traveling'] },
+  readiness: green,
+  activeInjury: null,
+  hasRunRecordedToday: true,
+  travelContext: awayContext,
+})
+assert.equal(allWorkComplete.shouldPrompt, false)
+assert.equal(allWorkComplete.needsLocation, false, 'all completed work must not request foreground location')
+assert.deepEqual(allWorkComplete.choices, [])
+
+const completedLift = deriveTravelTrainingChoices({
+  execution: { ...liftExecution, lift: { ...liftExecution.lift, completed: true } },
+  checkinData: { life_flags: ['traveling'] },
+  readiness: green,
+  activeInjury: null,
+  travelContext: awayContext,
+})
+assert.equal(completedLift.shouldPrompt, false, 'a completed lift suppresses its no-equipment choice')
+assert.equal(completedLift.choices.some((choice) => choice.kind === 'bodyweight_strength'), false)
+
+const staleTravelFlagAtHome = deriveTravelTrainingChoices({
+  execution: liftExecution,
+  checkinData: { life_flags: ['traveling'] },
+  readiness: green,
+  activeInjury: null,
+  travelContext: homeContext,
+})
+assert.equal(staleTravelFlagAtHome.shouldPrompt, false, 'a stale traveling flag cannot override verified home context')
 
 const injuredLift = deriveTravelTrainingChoices({
   execution: liftExecution,
@@ -185,6 +281,14 @@ assert.match(planSource, /disabled=\{busy\}/)
 
 const promptSource = fs.readFileSync(new URL('../src/components/TravelTrainingPrompt.jsx', import.meta.url), 'utf8')
 assert.match(promptSource, /api\.post\('\/plans\/today\/bodyweight-alternative'/)
+assert.match(promptSource, /api\.post\('\/travel-context', payload\)/)
+assert.match(promptSource, /if \(!result\.needsLocation \|\| dismissed \|\| !resolvedDate\)/,
+  'foreground location must only run for an unfinished meaningful travel choice')
+assert.match(promptSource, /requestNativeRunLocation\(BackgroundGeolocation, LOCATION_TIMEOUT_MS\)/)
+assert.match(promptSource, /requestWebRunLocation\([^)]*navigator\.geolocation[^)]*LOCATION_TIMEOUT_MS\)/)
+assert.match(promptSource, /localStorage\.setItem\(dismissalKey\(resolvedDate\), '1'\)/,
+  'dismissal must survive a new app session for the local date')
+assert.doesNotMatch(promptSource, /sessionStorage/)
 assert.match(promptSource, /planSessionId:\s*choice\.sessionId[\s\S]*currentWeek:\s*choice\.currentWeek/)
 assert.match(promptSource, /min-h-11[\s\S]*role="status"|role="status"[\s\S]*min-h-11/)
 

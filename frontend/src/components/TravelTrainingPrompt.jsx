@@ -1,20 +1,46 @@
 import { useEffect, useId, useMemo, useState } from 'react'
+import { Capacitor, registerPlugin } from '@capacitor/core'
 import { useNavigate } from 'react-router-dom'
 import api from '../lib/api'
+import {
+  RUN_LOCATION_STATUS,
+  requestNativeRunLocation,
+  requestWebRunLocation,
+} from '../lib/runLocationAccess'
 import { deriveTravelTrainingChoices } from '../lib/travelTraining'
+
+const BackgroundGeolocation = registerPlugin('BackgroundGeolocation')
+const LOCATION_TIMEOUT_MS = 10_000
 
 function dismissalKey(dateISO) {
   return `forge-travel-training-dismissed-${dateISO || 'unknown-date'}`
 }
 
 function readDismissed(dateISO) {
-  if (typeof sessionStorage === 'undefined') return false
+  if (typeof localStorage === 'undefined') return false
   try {
-    return sessionStorage.getItem(dismissalKey(dateISO)) === '1'
+    return localStorage.getItem(dismissalKey(dateISO)) === '1'
   } catch (error) {
     console.warn('[TravelTrainingPrompt] dismissal state unavailable:', error?.message || error)
     return false
   }
+}
+
+function currentLocationPayload(result, date) {
+  const position = result?.position
+  const latitude = position?.latitude ?? position?.coords?.latitude
+  const longitude = position?.longitude ?? position?.coords?.longitude
+  const accuracy = position?.accuracy ?? position?.coords?.accuracy
+  if (typeof latitude !== 'number' || !Number.isFinite(latitude)
+    || typeof longitude !== 'number' || !Number.isFinite(longitude)
+    || typeof accuracy !== 'number' || !Number.isFinite(accuracy)) return null
+  return { latitude, longitude, accuracy_meters: accuracy, date }
+}
+
+function requestForegroundLocation() {
+  return Capacitor.isNativePlatform()
+    ? requestNativeRunLocation(BackgroundGeolocation, LOCATION_TIMEOUT_MS)
+    : requestWebRunLocation(typeof navigator === 'undefined' ? null : navigator.geolocation, LOCATION_TIMEOUT_MS)
 }
 
 export default function TravelTrainingPrompt({
@@ -32,6 +58,7 @@ export default function TravelTrainingPrompt({
   const [dismissed, setDismissed] = useState(() => readDismissed(resolvedDate))
   const [loadingChoice, setLoadingChoice] = useState(null)
   const [error, setError] = useState('')
+  const [travelContext, setTravelContext] = useState(null)
   const result = useMemo(() => deriveTravelTrainingChoices({
     execution,
     checkinData,
@@ -39,13 +66,63 @@ export default function TravelTrainingPrompt({
     readiness,
     activeInjury,
     hasRunRecordedToday: runRecordedToday,
-  }), [execution, checkinData, adaptationProposal, readiness, activeInjury, runRecordedToday])
+    travelContext,
+  }), [execution, checkinData, adaptationProposal, readiness, activeInjury, runRecordedToday, travelContext])
 
   useEffect(() => {
     setDismissed(readDismissed(resolvedDate))
+    setTravelContext(null)
     setError('')
     setLoadingChoice(null)
   }, [resolvedDate])
+
+  useEffect(() => {
+    let cancelled = false
+    if (!result.needsLocation || dismissed || !resolvedDate) {
+      setTravelContext(null)
+      return () => { cancelled = true }
+    }
+
+    setTravelContext({ status: 'checking' })
+    requestForegroundLocation()
+      .then(async (locationResult) => {
+        if (cancelled) return
+        if (locationResult?.status !== RUN_LOCATION_STATUS.READY) {
+          setTravelContext({ status: 'unknown', reason: `location_${locationResult?.status || 'unavailable'}` })
+          return
+        }
+        const payload = currentLocationPayload(locationResult, resolvedDate)
+        if (!payload) {
+          setTravelContext({ status: 'unknown', reason: 'location_invalid' })
+          return
+        }
+        try {
+          const response = await api.post('/travel-context', payload)
+          if (cancelled) return
+          const status = String(response.data?.status || '').toLowerCase()
+          setTravelContext(['away', 'home', 'unknown'].includes(status)
+            ? {
+                status,
+                confidence: response.data?.confidence || null,
+                distanceBand: response.data?.distanceBand || 'unknown',
+                reason: response.data?.reason || null,
+              }
+            : { status: 'unknown', reason: 'context_invalid' })
+        } catch (requestError) {
+          if (!cancelled) {
+            console.warn('[TravelTrainingPrompt] travel context unavailable:', requestError?.message || requestError)
+            setTravelContext({ status: 'unknown', reason: 'context_unavailable' })
+          }
+        }
+      })
+      .catch((locationError) => {
+        if (!cancelled) {
+          console.warn('[TravelTrainingPrompt] foreground location unavailable:', locationError?.message || locationError)
+          setTravelContext({ status: 'unknown', reason: 'location_unavailable' })
+        }
+      })
+    return () => { cancelled = true }
+  }, [dismissed, resolvedDate, result.needsLocation])
 
   if (!result.shouldPrompt || dismissed) return null
 
@@ -62,9 +139,9 @@ export default function TravelTrainingPrompt({
       return
     }
     if (choice.kind === 'keep') {
-      if (typeof sessionStorage !== 'undefined') {
+      if (typeof localStorage !== 'undefined') {
         try {
-          sessionStorage.setItem(dismissalKey(resolvedDate), '1')
+          localStorage.setItem(dismissalKey(resolvedDate), '1')
         } catch (storageError) {
           console.warn('[TravelTrainingPrompt] could not save dismissal:', storageError?.message || storageError)
         }
