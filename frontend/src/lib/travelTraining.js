@@ -194,6 +194,7 @@ export function deriveTravelTrainingChoices({
   readiness,
   activeInjury,
   hasRunRecordedToday,
+  travelContext,
 } = {}) {
   const lifeFlags = checkinLifeFlags(checkinData)
   const traveling = lifeFlags.includes('traveling')
@@ -201,13 +202,12 @@ export function deriveTravelTrainingChoices({
   const gapDecision = String(adaptationProposal?.decisionStatus || '').toLowerCase()
   const activeGap = Boolean(gapEvidence) && !['accepted', 'kept'].includes(gapDecision)
   const scheduledLift = execution?.lift && execution.lift.completed !== true ? execution.lift : null
-  const scheduledRunState = runRouteState(execution)
-  const shouldPrompt = traveling || Boolean(scheduledLift) || activeGap
-  if (!shouldPrompt) return { shouldPrompt: false, reasons: [], choices: [], gapEvidence: null }
-
   const injuryBlocked = hasActiveInjury(activeInjury) || lifeFlags.includes('injured')
   const readinessTruth = readinessState(readiness)
   const choices = []
+  const safeToTrain = !injuryBlocked && readinessTruth.available && !readinessTruth.poor
+  const runAlreadyComplete = hasRunRecordedToday === true
+  const scheduledRunState = runAlreadyComplete ? null : runRouteState(execution)
 
   if (scheduledRunState) {
     choices.push({
@@ -217,7 +217,7 @@ export function deriveTravelTrainingChoices({
       description: 'Map today\'s exact scheduled run from your current location.',
       routeState: scheduledRunState,
     })
-  } else if (activeGap && !injuryBlocked && readinessTruth.available && !readinessTruth.poor && hasRunRecordedToday !== true) {
+  } else if (!scheduledRunState && activeGap && safeToTrain && !runAlreadyComplete) {
     const workout = buildTravelRecoveryWorkout({ date: execution?.date || null })
     choices.push({
       id: 'run_near_me',
@@ -234,7 +234,7 @@ export function deriveTravelTrainingChoices({
     })
   }
 
-  if (scheduledLift && !injuryBlocked && readinessTruth.available && !readinessTruth.poor) {
+  if (scheduledLift && safeToTrain) {
     choices.push({
       id: 'bodyweight_strength',
       kind: 'bodyweight_strength',
@@ -243,6 +243,24 @@ export function deriveTravelTrainingChoices({
       sessionId: String(scheduledLift.id || ''),
       currentWeek: execution?.week ?? null,
     })
+  }
+
+  const meaningfulChoiceCount = choices.length
+  const reasons = [
+    traveling ? 'traveling' : null,
+    scheduledRunState ? 'scheduled_run' : null,
+    scheduledLift ? 'scheduled_lift' : null,
+    activeGap ? 'training_gap' : null,
+  ].filter(Boolean)
+  if (meaningfulChoiceCount === 0) {
+    return {
+      shouldPrompt: false,
+      needsLocation: false,
+      reasons,
+      choices: [],
+      gapEvidence: activeGap ? gapEvidence : null,
+      locationStatus: String(travelContext?.status || 'unchecked'),
+    }
   }
 
   choices.push({
@@ -259,9 +277,11 @@ export function deriveTravelTrainingChoices({
   })
 
   return {
-    shouldPrompt: true,
-    reasons: [traveling ? 'traveling' : null, scheduledLift ? 'scheduled_lift' : null, activeGap ? 'training_gap' : null].filter(Boolean),
+    shouldPrompt: String(travelContext?.status || '').toLowerCase() === 'away',
+    needsLocation: true,
+    reasons,
     choices,
     gapEvidence: activeGap ? gapEvidence : null,
+    locationStatus: String(travelContext?.status || 'unchecked').toLowerCase(),
   }
 }
