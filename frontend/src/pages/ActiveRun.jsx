@@ -8,13 +8,18 @@ import { useUnits } from '../context/UnitsContext'
 import api from '../lib/api'
 import { queueRequest } from '../lib/offlineQueue'
 import { planSessionIdFromState, currentWeekFromState, markSessionComplete, queueSessionComplete, isRetryableCompletionFailure } from '../lib/dailyExecution'
-import PostRunCheckIn from '../components/PostRunCheckIn'
-import WorkoutCard from '../components/WorkoutCard'
 import { calculateElevationStats } from '../utils/elevation'
 import { clearActiveRunSession, elapsedFromSession, loadActiveRunSession, resolveActivityEndTimestamp, saveActiveRunSession } from '../lib/activeRunSession'
-import { loadPostRunCheckInDraft, savePostRunCheckInDraft } from '../lib/postRunCheckInDraft'
+import { savePostRunCheckInDraft } from '../lib/postRunCheckInDraft'
 import { buildPlannedSessionSnapshot } from '../lib/runProvenance'
 import { resolveRunCompletion, RUN_PROVENANCE } from '../lib/runCompletionPolicy'
+import {
+  buildRunCompletionSnapshot,
+  loadRunCompletionHandoff,
+  runCompletionNavigation,
+  saveRunCompletionHandoff,
+  updateRunCompletionHandoff,
+} from '../lib/runCompletionHandoff'
 import { getAuthenticatedUserId } from '../lib/auth'
 import { ZONE_HEAT_PALETTE } from '../lib/athleteLanguage'
 import { buildLiveActivityStart, buildLiveActivityUpdate } from '../lib/liveActivityState'
@@ -193,7 +198,13 @@ export default function ActiveRun() {
   const navigate = useNavigate()
   const { fmt, units } = useUnits()
   const [activeRunOwnerId] = useState(() => getAuthenticatedUserId())
+  const [pendingCompletionHandoff] = useState(() => (
+    loadRunCompletionHandoff(null, activeRunOwnerId)
+  ))
   const [restoreContext] = useState(() => {
+    if (pendingCompletionHandoff) {
+      return { session: null, isGroupRunNavigation: false, groupRunId: null, groupRunProvenance: null }
+    }
     const session = loadActiveRunSession(activeRunOwnerId)
     const locationState = location?.state && typeof location.state === 'object' && !Array.isArray(location.state)
       ? location.state
@@ -209,7 +220,6 @@ export default function ActiveRun() {
     return { session: redactedSession, isGroupRunNavigation, groupRunId, groupRunProvenance }
   })
   const restoredSession = restoreContext.session
-  const [pendingPostRunDraft] = useState(() => restoredSession ? null : loadPostRunCheckInDraft())
   const incomingNavigationState = useMemo(() => (
     restoredSession?.navigationState
     || (location?.state && typeof location.state === 'object' && !Array.isArray(location.state) ? location.state : {})
@@ -245,15 +255,10 @@ export default function ActiveRun() {
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState('')
   const [restoredNotice, setRestoredNotice] = useState(Boolean(restoredSession))
-  const [planProgressNotice, setPlanProgressNotice] = useState('')
-  const [queuedOffline, setQueuedOffline] = useState(false)
-  const [showPostCheckIn, setShowPostCheckIn] = useState(Boolean(pendingPostRunDraft))
-  const [savedRunId, setSavedRunId] = useState(pendingPostRunDraft?.runId || null)
   // H5: canonical plan session carried from LogRun/Warmup so a durable run save
   // marks the exact calendar session complete. Null for ad-hoc/manual runs.
   const planSessionId = isGroupRunNavigation ? null : planSessionIdFromState(navigationState)
   const planCurrentWeek = currentWeekFromState(navigationState)
-  const [savedHeatDrift, setSavedHeatDrift] = useState(pendingPostRunDraft?.heatDrift || null)
   const [mapMyRun, setMapMyRun] = useState(restoredSession?.mapMyRun ?? true)
   const [routeCoords, setRouteCoords] = useState(restoredSession?.routeCoords || [])
   const [runEnvironment, setRunEnvironment] = useState(restoredSession?.runEnvironment ?? navigationState.runEnvironment ?? 'outdoor')
@@ -392,6 +397,14 @@ export default function ActiveRun() {
   }
 
   useEffect(() => {
+    const completionNavigation = runCompletionNavigation(pendingCompletionHandoff)
+    if (completionNavigation) {
+      navigate(completionNavigation.destination, completionNavigation.options)
+    }
+  }, [navigate, pendingCompletionHandoff])
+
+  useEffect(() => {
+    if (pendingCompletionHandoff) return undefined
     if (typeof window === 'undefined') return undefined
     let active = true
 
@@ -433,7 +446,7 @@ export default function ActiveRun() {
       active = false
       window.removeEventListener('popstate', onPopState)
     }
-  }, [navigate])
+  }, [navigate, pendingCompletionHandoff])
 
   useEffect(() => {
     if (!navigationProtected || typeof window === 'undefined') return undefined
@@ -446,6 +459,7 @@ export default function ActiveRun() {
   }, [navigationProtected])
 
   useEffect(() => {
+    if (pendingCompletionHandoff) return undefined
     if (!Capacitor.isNativePlatform()) return undefined
     let active = true
     let listenerHandle = null
@@ -461,7 +475,7 @@ export default function ActiveRun() {
       active = false
       listenerHandle?.remove?.()
     }
-  }, [])
+  }, [pendingCompletionHandoff])
 
   useEffect(() => {
     if (!isGroupRunNavigation) return undefined
@@ -598,6 +612,7 @@ export default function ActiveRun() {
   }, [awaitingManualDistance, pausedRun, running])
 
   useEffect(() => {
+    if (pendingCompletionHandoff) return undefined
     api.get('/auth/me')
       .then(r => setUserProfile(r.data?.user || null))
       .catch((err) => { console.error('[ActiveRun] Failed to load profile:', err.message) })
@@ -607,7 +622,7 @@ export default function ActiveRun() {
         setSavedHrZones(Array.isArray(response.data?.zones) ? response.data.zones : [])
       })
       .catch((err) => { console.error('[ActiveRun] Failed to load HR zones:', err.message) })
-  }, [])
+  }, [pendingCompletionHandoff])
   
   useEffect(() => {
     const poll = async () => {
@@ -938,6 +953,7 @@ export default function ActiveRun() {
   }, [])
 
   useEffect(() => {
+    if (pendingCompletionHandoff) return
     const autoStart = consumeRunAutoStartState(location.state)
     if (!autoStart.requested) return
 
@@ -961,6 +977,7 @@ export default function ActiveRun() {
     location.search,
     location.state,
     navigate,
+    pendingCompletionHandoff,
     pausedRun,
     restoredSession,
     running,
@@ -1104,11 +1121,71 @@ export default function ActiveRun() {
       treadmill_brand: treadmillBrand || null
     }
   }
+
+  const syncPlanProgressAfterSave = async (runId, queuedRun) => {
+    if (!planSessionId) return
+    let notice = null
+    try {
+      if (queuedRun) {
+        await queueSessionComplete(planSessionId, planCurrentWeek)
+        notice = 'Plan progress is queued behind this run and will sync afterward.'
+      } else {
+        await markSessionComplete(planSessionId, planCurrentWeek)
+      }
+    } catch (completionErr) {
+      console.error('[ActiveRun] plan completion failed:', completionErr?.message || completionErr)
+      if (!queuedRun && isRetryableCompletionFailure(completionErr)) {
+        try {
+          await queueSessionComplete(planSessionId, planCurrentWeek)
+          notice = 'Run saved. Plan progress is queued for sync.'
+        } catch (queueErr) {
+          console.error('[ActiveRun] failed to queue completion retry:', queueErr?.message || queueErr)
+          notice = 'Run saved. Open Plan to mark this session complete.'
+        }
+      } else {
+        notice = queuedRun
+          ? 'Run saved offline. Open Plan after it syncs to confirm this session is complete.'
+          : 'Run saved. Open Plan to mark this session complete.'
+      }
+    }
+    updateRunCompletionHandoff(runId, activeRunOwnerId, { planProgressNotice: notice })
+  }
+
+  const persistCompletionAndOpenRecap = ({ runId, queued, payload, savedRun, heatDrift }) => {
+    const completion = resolveRunCompletion({
+      provenance: RUN_PROVENANCE.LIVE_TRACKED,
+      runId,
+      queued,
+    })
+    savePostRunCheckInDraft({
+      runId,
+      heatDrift: heatDrift || null,
+      runQueued: queued,
+      provenance: completion.provenance,
+    })
+    const handoff = saveRunCompletionHandoff({
+      runId,
+      queued,
+      checkInPending: completion.requiresImmediateCheckIn,
+      heatDrift: heatDrift || null,
+      provenance: completion.provenance,
+      snapshot: buildRunCompletionSnapshot(payload, savedRun, {
+        id: runId,
+        health_source: 'forged_hybrid',
+      }),
+    }, activeRunOwnerId)
+    const completionNavigation = runCompletionNavigation(handoff)
+    if (!handoff || !completionNavigation) return false
+
+    clearActiveRunSession()
+    setAwaitingManualDistance(false)
+    exitActiveRun(completionNavigation.destination, completionNavigation.options)
+    void syncPlanProgressAfterSave(runId, queued)
+    return true
+  }
   
   const saveRun = async () => {
     setSaveError('')
-    setPlanProgressNotice('')
-    setQueuedOffline(false)
     const payload = buildRunPayload()
     if (!Number.isFinite(payload.distance_miles) || payload.distance_miles <= 0) {
       setSaveError(`Enter a distance greater than 0 ${fmt.distanceLabel} before saving.`)
@@ -1120,73 +1197,39 @@ export default function ActiveRun() {
       const res = await api.post('/runs', payload)
       const runId = res.data?.id || res.data?.run?.id
       if (runId) {
-        const completion = resolveRunCompletion({
-          provenance: RUN_PROVENANCE.LIVE_TRACKED,
+        const openedRecap = persistCompletionAndOpenRecap({
           runId,
-        })
-        clearActiveRunSession()
-        setSavedRunId(runId)
-        setAwaitingManualDistance(false)
-        setSavedHeatDrift(res.data?.heatDrift || null)
-        savePostRunCheckInDraft({
-          runId,
+          queued: false,
+          payload,
+          savedRun: res.data?.run,
           heatDrift: res.data?.heatDrift || null,
-          runQueued: false,
-          provenance: completion.provenance,
         })
-        setShowPostCheckIn(completion.requiresImmediateCheckIn)
-        // H5: mark the scheduled calendar session complete ONLY after the run
-        // durably saved. A failed completion must never roll back the run.
-        if (planSessionId) {
-          try {
-            await markSessionComplete(planSessionId, planCurrentWeek)
-          } catch (completionErr) {
-            console.error('[ActiveRun] plan completion failed:', completionErr?.message || completionErr)
-            if (isRetryableCompletionFailure(completionErr)) {
-              try {
-                await queueSessionComplete(planSessionId, planCurrentWeek)
-                setPlanProgressNotice('Run saved. Plan progress is queued for sync.')
-              } catch (queueErr) {
-                console.error('[ActiveRun] failed to queue completion retry:', queueErr?.message || queueErr)
-                setPlanProgressNotice('Run saved. Open Plan to mark this session complete.')
-              }
-            } else {
-              setPlanProgressNotice('Run saved. Open Plan to mark this session complete.')
-            }
-          }
+        if (!openedRecap) {
+          setSaveError('Run saved, but the recap could not be prepared on this device. Open History to review the saved run.')
         }
+      } else {
+        setSaveError('Run saved, but the response did not include its recap identifier. Open History to review the saved run.')
       }
     } catch (err) {
       console.error('Failed to save run:', err)
       if (!err?.response || Number(err?.response?.status || 0) >= 500) {
-        await queueRequest('/api/runs', 'POST', payload)
-        // H5: order completion AFTER the queued run so it replays second.
-        let progressNotice = ''
-        if (planSessionId) {
-          try {
-            await queueSessionComplete(planSessionId, planCurrentWeek)
-          } catch (completionErr) {
-            console.error('[ActiveRun] failed to queue plan completion:', completionErr?.message || completionErr)
-            progressNotice = ' Open Plan after the run syncs to mark this session complete.'
-          }
+        try {
+          await queueRequest('/api/runs', 'POST', payload)
+        } catch (queueError) {
+          console.error('[ActiveRun] failed to queue run save:', queueError?.message || queueError)
+          setSaveError('Could not save or queue this run. Your completed run is still on this screen; try again.')
+          return
         }
-        setQueuedOffline(true)
-        clearActiveRunSession()
-        setSavedRunId(payload.id)
-        setAwaitingManualDistance(false)
-        const completion = resolveRunCompletion({
-          provenance: RUN_PROVENANCE.LIVE_TRACKED,
+        const openedRecap = persistCompletionAndOpenRecap({
           runId: payload.id,
           queued: true,
-        })
-        savePostRunCheckInDraft({
-          runId: payload.id,
+          payload,
+          savedRun: null,
           heatDrift: null,
-          runQueued: true,
-          provenance: completion.provenance,
         })
-        setShowPostCheckIn(completion.requiresImmediateCheckIn)
-        setSaveError(`Saved offline — Forged Hybrid will sync this run when your connection is back.${progressNotice}`)
+        if (!openedRecap) {
+          setSaveError('Run saved offline, but the recap could not be prepared on this device. The queued run will still sync when connected.')
+        }
       } else {
         setSaveError(err?.response?.data?.error || 'Could not save this run. Check the details and try again.')
       }
@@ -1220,6 +1263,18 @@ export default function ActiveRun() {
       setFollowPaused(false)
       setRecenterToken((value) => value + 1)
     }
+  }
+
+  if (pendingCompletionHandoff) {
+    return (
+      <div
+        className="fixed inset-0 z-50 grid place-items-center px-6 text-center"
+        role="status"
+        style={{ background: 'var(--bg-base)', color: 'var(--text-primary)' }}
+      >
+        <p className="text-sm font-semibold">Opening your saved run recap...</p>
+      </div>
+    )
   }
 
   return (
@@ -1336,8 +1391,14 @@ export default function ActiveRun() {
           GPS paused during this run{gpsGapSummary.seconds > 0 ? ` for about ${formatGapDuration(gpsGapSummary.seconds)}` : ''}. Review the distance; Forged Hybrid saves a note that the route may be incomplete.
         </div>
       )}
-      {saveError && <div className="rounded-xl p-3 mb-3" style={{ background: queuedOffline ? 'rgba(34,197,94,0.12)' : 'var(--danger-dim)', border: `1px solid ${queuedOffline ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'}`, color: queuedOffline ? 'var(--success)' : 'var(--danger)' }}>{saveError}</div>}
-      {planProgressNotice && <div className="rounded-xl p-3 mb-3" role="status" style={{ background: 'var(--accent-dim)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}>{planProgressNotice}</div>}
+      {saveError && (
+        <div className="rounded-xl p-3 mb-3" role="alert" style={{ background: 'var(--danger-dim)', border: '1px solid rgba(239,68,68,0.3)', color: 'var(--danger)' }}>
+          <p>{saveError}</p>
+          {!running && !pausedRun && !countingDown && !awaitingManualDistance && elapsed > 0 && (
+            <button type="button" onClick={saveRun} disabled={saving} className="mt-3 w-full rounded-lg px-3 py-2 text-sm font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)', opacity: saving ? 0.6 : 1 }}>{saving ? 'Retrying...' : 'Retry save'}</button>
+          )}
+        </div>
+      )}
 
       {mapControlsMeaningful && (
         <div className="mb-3" data-testid="active-run-map-layout">
@@ -1500,23 +1561,6 @@ export default function ActiveRun() {
         </div>
       )}
 
-      {!running && !countingDown && savedRunId && (
-        <WorkoutCard
-          workoutType="Run"
-          date={new Date().toISOString()}
-          stats={{
-            distance: fmt.distance(gpsAvailable ? distanceMiles : Number(manualDistance || 0), 2),
-            pace,
-            duration: timeDisplay,
-          }}
-          summaryText={`Forged Hybrid Run · ${fmt.distance(gpsAvailable ? distanceMiles : Number(manualDistance || 0), 2)} · ${pace} · ${timeDisplay}`}
-        />
-      )}
-
-      {showPostCheckIn && savedRunId && <PostRunCheckIn runId={savedRunId} heatDrift={savedHeatDrift} onDone={(result) => {
-        setShowPostCheckIn(false)
-        exitActiveRun(result?.queued ? '/' : `/run/recap/${savedRunId}`)
-      }} />}
       <button
         type="button"
         data-testid="active-run-back"

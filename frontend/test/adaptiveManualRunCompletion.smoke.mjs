@@ -34,7 +34,7 @@ const live = resolveRunCompletion({
   provenance: RUN_PROVENANCE.LIVE_TRACKED,
   runId: 'live-run-1',
 })
-check(live.requiresImmediateCheckIn && live.destination === null, 'live tracked completion remains blocked on immediate check-in')
+check(live.requiresImmediateCheckIn && live.destination === '/run/recap/live-run-1', 'live tracked check-in moves to the dedicated recap owner')
 
 const imported = runCompletionPolicy(RUN_PROVENANCE.IMPORTED)
 check(!imported.requiresImmediateCheckIn, 'provider imports are never interrupted by a mandatory check-in')
@@ -45,7 +45,7 @@ const queuedManual = resolveRunCompletion({
   runId: 'queued-manual',
   queued: true,
 })
-check(!queuedManual.requiresImmediateCheckIn && queuedManual.destination === null, 'offline manual save stays queued without opening an unavailable recap or check-in')
+check(!queuedManual.requiresImmediateCheckIn && queuedManual.destination === '/run/recap/queued-manual', 'offline manual save retains its factual recap destination')
 
 console.log('\n== explicit provenance only ==')
 check(runProvenanceFromRecord({ watch_mode: 'manual' }) === RUN_PROVENANCE.MANUAL, 'manual watch mode is explicit provenance')
@@ -95,8 +95,8 @@ check(manualSubmit.includes('RUN_PROVENANCE.MANUAL') && manualSubmit.includes('n
 check(!manualSubmit.includes('savePostRunCheckInDraft') && !manualSubmit.includes('setShowPostCheckIn(true)'), 'manual completion does not create or open a mandatory check-in')
 check(manualSubmit.includes('plan_session_id: submittedPlanSessionId') && logRunSource.includes("const submittedPlanSessionId = activeTab === 'log' ? null : planSessionId"), 'manual payload explicitly opts out of inherited session completion')
 check(manualSubmit.includes('perceived_effort: effort') && logRunSource.includes('useState(null)'), 'untouched manual effort is saved as null instead of a default RPE')
-check(activeRunSource.includes('RUN_PROVENANCE.LIVE_TRACKED') && activeRunSource.includes('setShowPostCheckIn(completion.requiresImmediateCheckIn)'), 'ActiveRun retains provenance-gated immediate check-in')
-check(activeRunSource.includes('savePostRunCheckInDraft') && activeRunSource.includes('PostRunCheckIn'), 'live check-in answers retain durable recovery')
+check(activeRunSource.includes('RUN_PROVENANCE.LIVE_TRACKED') && activeRunSource.includes('checkInPending: completion.requiresImmediateCheckIn'), 'ActiveRun hands provenance-gated check-in ownership to recap')
+check(activeRunSource.includes('savePostRunCheckInDraft') && !activeRunSource.includes('<PostRunCheckIn'), 'live check-in answers retain durable recovery without mounting over Active Run')
 check(recapSource.includes('PostRunCheckIn') && detailSource.includes('Add how you felt'), 'manual and imported details retain the optional retrospective action')
 
 console.log(`\nPASSED: ${passed}  FAILED: 0`)

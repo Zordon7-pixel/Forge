@@ -1,4 +1,5 @@
 import { clearActiveRunSession } from './activeRunSession.js'
+import { discardRunCompletionHandoff } from './runCompletionHandoff.js'
 
 const TOKEN_KEY = 'forge_token'
 const POST_AUTH_REDIRECT_KEY = 'forge_post_auth_redirect'
@@ -19,6 +20,7 @@ export function setToken(token) {
   localStorage.setItem(TOKEN_KEY, token)
   if (previousToken !== null && previousToken !== String(token)) {
     clearActiveRunSession()
+    discardRunCompletionHandoff()
   }
 }
 
@@ -28,6 +30,7 @@ export function clearToken() {
     localStorage.removeItem(POST_AUTH_REDIRECT_KEY)
   } finally {
     clearActiveRunSession()
+    discardRunCompletionHandoff()
   }
 }
 

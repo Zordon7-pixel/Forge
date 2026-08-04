@@ -52,7 +52,7 @@ export function runCompletionPolicy(provenance) {
 export function resolveRunCompletion({ provenance, runId, queued = false } = {}) {
   const policy = runCompletionPolicy(provenance)
   const normalizedRunId = String(runId || '').trim()
-  const recapPath = !queued && normalizedRunId
+  const recapPath = normalizedRunId
     ? `/run/recap/${encodeURIComponent(normalizedRunId)}`
     : null
   return {
@@ -60,7 +60,7 @@ export function resolveRunCompletion({ provenance, runId, queued = false } = {})
     runId: normalizedRunId || null,
     queued: Boolean(queued),
     recapPath,
-    destination: policy.requiresImmediateCheckIn ? null : recapPath,
+    destination: recapPath,
   }
 }
 
