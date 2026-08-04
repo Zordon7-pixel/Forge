@@ -75,12 +75,16 @@ function FitRouteBounds({ positions }) {
   return null
 }
 
-export default function RunDetailModal({ run, hrZones = [], hrProfile = null, onClose, onDelete, onAddCheckIn, onFeedbackGenerated, standalone = false }) {
+export default function RunDetailModal({ run, hrZones = [], hrProfile = null, onClose, onDelete, onAddCheckIn, onFeedbackGenerated, standalone = false, activePanel = null }) {
   const { units, fmt } = useUnits()
   const [feedback, setFeedback] = useState(run.ai_feedback || '')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [shareOpen, setShareOpen] = useState(false)
+
+  useEffect(() => {
+    setFeedback(run.ai_feedback || '')
+  }, [run.ai_feedback, run.id])
 
   const generateFeedback = async () => {
     setLoading(true)
@@ -100,6 +104,8 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
   const isRun = isRunningActivity(run)
   const kind = activityLabel(run)
   const hr = run.avg_hr || run.avg_heart_rate || null
+  const maxHr = run.max_hr || run.max_heart_rate || null
+  const minHr = run.min_hr || run.min_heart_rate || null
   const workoutMetrics = parseObject(run.workout_metrics_json)
   const rawSource = run.health_source || workoutMetrics.metric_source
   const sourcePresentation = providerSourcePresentation({
@@ -153,6 +159,12 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
   const elevationLabel = Number.isFinite(elevationGain)
     ? units === 'metric' ? `${Math.round(elevationGain * 0.3048)} m` : `${Math.round(elevationGain)} ft`
     : isAppleHealthSource ? 'Not shared' : '--'
+  const elevationLoss = run.elevation_loss === null || run.elevation_loss === undefined || run.elevation_loss === ''
+    ? Number.NaN
+    : Number(run.elevation_loss)
+  const elevationLossLabel = Number.isFinite(elevationLoss)
+    ? units === 'metric' ? `${Math.round(elevationLoss * 0.3048)} m` : `${Math.round(elevationLoss)} ft`
+    : isAppleHealthSource ? 'Not shared' : '--'
 
   const stats = [
     { label: 'Distance', value: run.distance_miles ? fmt.distance(Number(run.distance_miles), 2) : '--' },
@@ -174,9 +186,15 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
     { label: 'Respiration', value: workoutMetrics.respiratory_rate_avg != null ? `${Number(workoutMetrics.respiratory_rate_avg).toFixed(0)} brpm avg${workoutMetrics.respiratory_rate_max != null ? ` · ${Number(workoutMetrics.respiratory_rate_max).toFixed(0)} max` : ''}` : null },
     { label: 'Run / walk', value: workoutMetrics.run_time_seconds || workoutMetrics.walk_time_seconds ? `${formatSeconds(workoutMetrics.run_time_seconds) || '0m'} / ${formatSeconds(workoutMetrics.walk_time_seconds) || '0m'}` : null },
     { label: 'Performance condition', value: workoutMetrics.performance_condition != null ? `${Number(workoutMetrics.performance_condition) > 0 ? '+' : ''}${Number(workoutMetrics.performance_condition)}` : null },
+    { label: 'VO₂ max', value: run.vo2_max != null ? `${Number(run.vo2_max).toFixed(1)} ml/kg/min` : null },
+    { label: 'Recovery time', value: run.recovery_time_hours != null ? `${Number(run.recovery_time_hours)} hr` : null },
     { label: 'Temperature', value: run.temperature_f != null ? `${Math.round(Number(run.temperature_f))}°F` : null },
     { label: 'Aerobic / anaerobic TE', value: run.training_effect_aerobic != null || run.training_effect_anaerobic != null ? `${run.training_effect_aerobic ?? '--'} / ${run.training_effect_anaerobic ?? '--'}` : null },
+    { label: 'Treadmill', value: run.treadmill_brand || run.treadmill_model ? [run.treadmill_brand, run.treadmill_model].filter(Boolean).join(' ') : null },
+    { label: 'Incline', value: run.incline_pct != null && Number(run.incline_pct) !== 0 ? `${Number(run.incline_pct).toFixed(1)}%` : null },
+    { label: 'Detected surface', value: run.detected_surface_type || null },
   ].filter((item) => item.value)
+  const hasHeartRateEvidence = Boolean(hr || maxHr || minHr || timeline.totalSeconds > 0)
   const hasPartialHrCoverage = Number.isFinite(hrCoverage) && hrCoverage > 0 && hrCoverage < 70
   const comparison = buildRunComparison(run)
   const inferredPlanMatch = comparison.planned?.matchSource === 'scheduled_date' || run.planned_match_source === 'scheduled_date'
@@ -220,6 +238,7 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
       note: comparison.zoneAdherencePct != null ? `${comparison.zoneAdherencePct.toFixed(0)}% adherence` : null,
     } : null,
   ].filter(Boolean) : []
+  const panelIs = (...keys) => !activePanel || keys.includes(activePanel)
 
   return (
     <div
@@ -248,7 +267,7 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
         </div>
         <p className="text-sm mb-5" style={{ color: 'var(--text-muted)' }}>{date}</p>
 
-        {isRun && !shareOpen && routePositions.length >= 2 && (
+        {panelIs('route') && isRun && !shareOpen && routePositions.length >= 2 && (
           <div className="mb-5 overflow-hidden rounded-xl" style={{ height: 220, border: '1px solid var(--border-subtle)' }}>
             <MapContainer key={run.id} center={routePositions[0]} zoom={14} scrollWheelZoom={false} style={{ height: '100%', width: '100%' }}>
               <FitRouteBounds positions={routePositions} />
@@ -260,7 +279,7 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
           </div>
         )}
 
-        {(missingAppleRoute || missingAppleElevation) && (
+        {panelIs('route') && (missingAppleRoute || missingAppleElevation) && (
           <div className="mb-5 rounded-xl p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
             <div className="flex items-start gap-2">
               <MapPin size={16} className="mt-0.5 shrink-0" style={{ color: 'var(--accent)' }} />
@@ -276,22 +295,31 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
           </div>
         )}
 
-        <div className="grid grid-cols-2 gap-3 mb-5">
+        {panelIs('route') && (
+          <div className="mb-5 grid grid-cols-2 gap-3 rounded-xl border p-4" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)' }}>
+            <div><p className="text-xs" style={{ color: 'var(--text-muted)' }}>Recorded route</p><p className="mt-1 text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{routePositions.length >= 2 ? `${routePositions.length} GPS points` : 'Not available'}</p></div>
+            <div><p className="text-xs" style={{ color: 'var(--text-muted)' }}>Elevation gain</p><p className="mt-1 text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{elevationLabel}</p></div>
+            <div><p className="text-xs" style={{ color: 'var(--text-muted)' }}>Elevation loss</p><p className="mt-1 text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{elevationLossLabel}</p></div>
+            <div><p className="text-xs" style={{ color: 'var(--text-muted)' }}>GPS status</p><p className="mt-1 text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{run.gps_available === false || run.gps_available === 0 ? 'Not recorded' : routePositions.length >= 2 ? 'Route recorded' : 'Unavailable'}</p></div>
+          </div>
+        )}
+
+        {panelIs('summary') && <div className="grid grid-cols-2 gap-3 mb-5">
           {stats.map(({ label, value }) => (
             <div key={label} className="rounded-xl p-3" style={{ background: 'var(--bg-input)' }}>
               <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>{label}</p>
               <p className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>{value}</p>
             </div>
           ))}
-        </div>
+        </div>}
 
-        {isRun && (
+        {panelIs('media') && isRun && (
           <button type="button" onClick={() => setShareOpen(true)} className="pressable mb-5 flex w-full items-center justify-center gap-2 rounded-xl py-3 text-sm font-black" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>
             <Share2 size={18} /> Share run recap
           </button>
         )}
 
-        {isRun && hasCalculatedEffort && (
+        {panelIs('summary') && isRun && hasCalculatedEffort && (
           <div className="mb-5 rounded-xl p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
             <div className="flex items-start gap-2">
               <Gauge size={16} className="mt-0.5 shrink-0" style={{ color: 'var(--accent)' }} />
@@ -305,7 +333,7 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
           </div>
         )}
 
-        {isRun && (
+        {panelIs('workout') && isRun && (
           <div className="rounded-xl p-4 mb-5" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
             <p className="text-xs font-bold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.6 }}>Workout match</p>
             {comparison.hasPlan ? (
@@ -352,11 +380,11 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
           </div>
         )}
 
-        {hr && zone && (
+        {panelIs('heart_rate') && zone && (hr || hasTrustedHrCoverage) && (
           <div className="rounded-xl p-3 mb-5" style={{ background: 'var(--bg-input)' }}>
             <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Heart-rate evidence</p>
             <div className="flex flex-wrap items-center gap-2"><p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{hasTrustedHrCoverage ? `Dominant Z${zone.zone}` : `${hr} bpm average`}</p><span className="rounded-full px-2 py-1 text-xs" style={{ background: `${zone.color}22`, color: zone.textColor || ZONE_TEXT_COLORS[zone.zone - 1] }}>{zone.label}</span></div>
-            {hasTrustedHrCoverage && <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>{Number.isFinite(dominantZonePct) ? `${dominantZonePct.toFixed(0)}% of recorded HR time` : 'Dominant recorded zone'} · {hr} bpm average</p>}
+            {hasTrustedHrCoverage && <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>{Number.isFinite(dominantZonePct) ? `${dominantZonePct.toFixed(0)}% of recorded HR time` : 'Dominant recorded zone'}{hr ? ` · ${hr} bpm average` : ''}</p>}
             <div className="mt-2 h-1.5 rounded-full" style={{ background: 'var(--bg-base)' }}><div className="h-full rounded-full" style={{ width: `${zone.zone * 20}%`, background: zone.color }} /></div>
             <p className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>{hasTrustedHrCoverage ? `Heart-rate samples cover ${hrCoverage.toFixed(0)}% of this workout.` : `Average classified with your ${zoneModelLabel} profile.`}</p>
             {hasTrustedHrCoverage && (
@@ -375,7 +403,7 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
           </div>
         )}
 
-        {hr && !zone && (
+        {panelIs('heart_rate') && hr && !zone && (
           <div className="rounded-xl p-3 mb-5" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
             <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Average heart rate</p>
             <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{hr} bpm</p>
@@ -384,7 +412,28 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
           </div>
         )}
 
-        {isRun && splits.length > 0 && (
+        {panelIs('heart_rate') && (maxHr || minHr) && (
+          <div className="mb-5 grid grid-cols-2 gap-3 rounded-xl border p-4" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)' }}>
+            <div><p className="text-xs" style={{ color: 'var(--text-muted)' }}>Maximum</p><p className="mt-1 text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{maxHr ? `${maxHr} bpm` : 'Not available'}</p></div>
+            <div><p className="text-xs" style={{ color: 'var(--text-muted)' }}>Minimum</p><p className="mt-1 text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{minHr ? `${minHr} bpm` : 'Not available'}</p></div>
+          </div>
+        )}
+
+        {panelIs('heart_rate') && !hr && !zone && timeline.totalSeconds > 0 && (
+          <div className="mb-5 rounded-xl border p-4" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)' }}>
+            <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Partial zone samples</p>
+            <p className="mt-1 text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>{formatSeconds(timeline.totalSeconds)} of zone time was recorded, but coverage is too sparse to classify the run&apos;s intensity.</p>
+          </div>
+        )}
+
+        {panelIs('heart_rate') && !hasHeartRateEvidence && (
+          <div className="mb-5 rounded-xl border p-4" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)' }}>
+            <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Heart rate unavailable</p>
+            <p className="mt-1 text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>This run has no recorded average heart rate or trustworthy zone timeline. No heart-rate value is estimated.</p>
+          </div>
+        )}
+
+        {panelIs('pace') && isRun && splits.length > 0 && (
           <div className="mb-5 rounded-xl p-4" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
             <p className="text-xs font-bold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.6 }}>Splits</p>
             <div className="mt-2 overflow-hidden rounded-lg" style={{ border: '1px solid var(--border-subtle)' }}>
@@ -413,7 +462,18 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
           </div>
         )}
 
-        {isRun && checkInAvailable && (
+        {panelIs('pace') && isRun && splits.length === 0 && (
+          <div className="mb-5 rounded-xl border p-4" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)' }}>
+            <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Splits unavailable</p>
+            <p className="mt-1 text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+              {run.distance_miles && run.duration_seconds
+                ? `Recorded overall pace: ${fmt.pace(run.duration_seconds / run.distance_miles)}. This source did not provide individual splits.`
+                : 'This run does not contain enough recorded distance and time to calculate overall pace, and no individual splits were provided.'}
+            </p>
+          </div>
+        )}
+
+        {panelIs('recovery') && isRun && checkInAvailable && (
           <div className="mb-5 rounded-xl p-4" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
             <p className="text-xs font-bold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.6 }}>Post-run check-in</p>
             <div className="mt-3 grid grid-cols-3 gap-2">
@@ -427,7 +487,7 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
           </div>
         )}
 
-        {isRun && !checkInAvailable && onAddCheckIn && (
+        {panelIs('recovery') && isRun && !checkInAvailable && onAddCheckIn && (
           <div className="mb-5 rounded-xl p-4" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
             <p className="text-xs font-bold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.6 }}>How did it feel?</p>
             <p className="mt-1 text-sm leading-relaxed" style={{ color: 'var(--text-muted)' }}>{hasCalculatedEffort ? 'Forged Hybrid calculated training effort from reliable heart-rate data, but only you can rate how it felt.' : runProvenance === RUN_PROVENANCE.IMPORTED && isAppleHealthSource ? 'Apple Health did not include enough reliable data for a rated or calculated effort.' : 'No athlete-rated effort or pain has been saved for this run.'} Add your effort and pain so future training can adapt to what the run actually cost you. Post-run energy is optional.</p>
@@ -435,9 +495,9 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
           </div>
         )}
 
-        {isRun && <RunPlanImpact run={run} />}
+        {panelIs('workout') && isRun && <RunPlanImpact run={run} />}
 
-        {advancedStats.length > 0 && (
+        {panelIs('summary') && advancedStats.length > 0 && (
           <div className="mb-5">
             <p className="mb-2 text-xs font-bold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.6 }}>Training metrics</p>
             <div className="grid grid-cols-2 gap-3">
@@ -451,20 +511,20 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
           </div>
         )}
 
-        {!isRun && (
+        {panelIs('summary') && !isRun && (
           <div className="rounded-xl p-3 mb-5" style={{ background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.25)' }}>
             <p className="text-xs leading-relaxed" style={{ color: 'var(--success)' }}>This walk stays in your activity and recovery history, but it does not count toward running mileage, pace trends, PRs, or plan load.</p>
           </div>
         )}
 
-        {run.notes && (
+        {panelIs('summary') && run.notes && (
           <div className="rounded-xl p-3 mb-5" style={{ background: 'var(--bg-input)' }}>
             <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Notes</p>
             <p className="text-sm italic" style={{ color: 'var(--text-primary)' }}>&quot;{run.notes}&quot;</p>
           </div>
         )}
 
-        {isRun && <div className="rounded-xl p-4" style={{ background: 'var(--bg-base)', border: '1px solid var(--border-subtle)' }}>
+        {panelIs('summary') && isRun && <div className="rounded-xl p-4" style={{ background: 'var(--bg-base)', border: '1px solid var(--border-subtle)' }}>
           <div className="flex items-center gap-2 mb-3">
             <Brain size={16} style={{ color: 'var(--accent)' }} />
             <span className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>Coach evaluation</span>
@@ -490,7 +550,7 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
           )}
         </div>}
 
-        {onDelete && (
+        {panelIs('summary') && onDelete && (
           <button type="button" onClick={onDelete} className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl border py-3 text-sm font-semibold" style={{ borderColor: 'rgba(239,68,68,0.45)', color: 'var(--danger)', background: 'var(--danger-dim)' }}>
             <Trash2 size={16} /> Delete this {isRun ? 'run' : 'activity'}
           </button>
