@@ -18,6 +18,7 @@ import { buildPlannedSessionSnapshot } from '../lib/runProvenance'
 import { lockDocumentScroll } from '../lib/documentScrollLock'
 import { activeRunReturnTargetFromLocation, withActiveRunReturnTarget } from '../lib/activeRunControls'
 import { resolveRunCompletion, RUN_PROVENANCE } from '../lib/runCompletionPolicy'
+import { normalizeTravelWorkoutOverride } from '../lib/travelTraining'
 
 const RoutePlanner = lazy(() => import('../components/RoutePlanner'))
 
@@ -129,6 +130,30 @@ function getRunCoachingDetails(type = '', pace = '') {
     intensity: 'Conversational aerobic',
     progression: 'Easy aerobic run — build consistency without forcing speed.',
     steps: ['5-10 min relaxed warm-up', 'Hold steady conversational pace', 'Cool down easy'],
+  }
+}
+
+function travelWorkoutForDisplay(workout) {
+  if (!workout) return null
+  return {
+    id: '',
+    source: 'travel_recovery',
+    day: new Date().toLocaleDateString(undefined, { weekday: 'short' }),
+    typeLabel: 'Recovery',
+    rawType: 'recovery',
+    distanceMiles: 2,
+    distanceLabel: '2.0 miles maximum',
+    pace: workout.pace_target,
+    targetZone: 'Zone 1-2',
+    zone: 'Zone 1-2',
+    intensity: 'Recovery',
+    progression: workout.progression,
+    steps: workout.steps,
+    durationLabel: '20:00',
+    description: workout.description,
+    walkingAllowed: true,
+    aiReason: '',
+    healthAdjusted: false,
   }
 }
 
@@ -248,6 +273,10 @@ function WorkoutWatchModal({ workout, onClose }) {
 export default function LogRun() {
   const navigate = useNavigate()
   const location = useLocation()
+  const travelWorkoutOverride = useMemo(
+    () => normalizeTravelWorkoutOverride(location.state?.travelWorkoutOverride),
+    [location.state],
+  )
   const activeRunReturnTo = activeRunReturnTargetFromLocation(location.pathname, location.search)
   const query = useMemo(() => new URLSearchParams(location.search), [location.search])
   const { units, fmt } = useUnits()
@@ -299,11 +328,11 @@ export default function LogRun() {
   const [recentRuns, setRecentRuns] = useState([])
   const [runsLoading, setRunsLoading] = useState(false)
 
-  const [todayWorkout, setTodayWorkout] = useState(null)
+  const [todayWorkout, setTodayWorkout] = useState(() => travelWorkoutForDisplay(travelWorkoutOverride))
   // H5: canonical scheduled-run handoff — the plan session id + week survive
   // through warmup / ActiveRun so completion targets the exact calendar session.
-  const [planSessionId, setPlanSessionId] = useState(() => planSessionIdFromState(location.state))
-  const [planCurrentWeek, setPlanCurrentWeek] = useState(() => currentWeekFromState(location.state))
+  const [planSessionId, setPlanSessionId] = useState(() => travelWorkoutOverride ? null : planSessionIdFromState(location.state))
+  const [planCurrentWeek, setPlanCurrentWeek] = useState(() => travelWorkoutOverride ? null : currentWeekFromState(location.state))
   const [todayLoading, setTodayLoading] = useState(false)
   const [weekPlan, setWeekPlan] = useState(null)
   const [weekPlanLoading, setWeekPlanLoading] = useState(false)
@@ -890,7 +919,16 @@ export default function LogRun() {
     returnParams.delete('warmup')
     const returnSearch = returnParams.toString()
     const returnTo = `/log-run${returnSearch ? `?${returnSearch}` : ''}`
-    const incomingState = location.state && typeof location.state === 'object' ? location.state : {}
+    const rawIncomingState = location.state && typeof location.state === 'object' ? location.state : {}
+    const incomingState = travelWorkoutOverride
+      ? {
+          ...rawIncomingState,
+          planSessionId: null,
+          currentWeek: null,
+          scheduledRun: null,
+          travelWorkoutOverride,
+        }
+      : rawIncomingState
     return <Navigate to="/warmup" replace state={{ ...incomingState, warmupReturnTo: returnTo, checkinCompleted: true, checkinDate: todayISO() }} />
   }
 

@@ -23,6 +23,7 @@ const { allocatePlanSessionRunEvidence, findPlanSessionRunEvidence } = require('
 const hybridReconciliation = require('../lib/hybridReconciliation');
 const { dateInTimezone, isIanaTimezone } = require('../lib/challengeRules');
 const { resolveRunSchedule } = require('../lib/runSchedule');
+const { buildBodyweightAlternative } = require('../lib/travelTraining');
 
 // Strength sessions are already equipment-filtered by concurrentPlan's
 // buildStrengthExercises/exerciseCatalog path. strengthAdjunct is the standalone
@@ -69,13 +70,17 @@ function getTodayISO(date = new Date()) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-function getPlanningDateFromRequest(req) {
+function normalizePlanningDate(value, { defaultToToday = false } = {}) {
   const serverDate = getTodayISO();
-  const requested = String(req.query?.date || '').trim();
-  if (!requested) return serverDate;
+  const requested = String(value || '').trim();
+  if (!requested) return defaultToToday ? serverDate : null;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(requested)) return null;
   const offsetDays = daysBetween(requested, serverDate);
   return offsetDays !== null && Math.abs(offsetDays) <= 1 ? requested : null;
+}
+
+function getPlanningDateFromRequest(req) {
+  return normalizePlanningDate(req.query?.date, { defaultToToday: true });
 }
 
 function parsePlan(plan) {
@@ -2383,6 +2388,89 @@ router.put('/my/progress', auth, async (req, res) => {
   } catch (err) {
     console.error('[plans/my/progress] failed:', err.message);
     res.status(500).json({ error: 'Failed to update progress' });
+  }
+});
+
+router.post('/today/bodyweight-alternative', auth, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const dateISO = normalizePlanningDate(body.date);
+    if (!dateISO) {
+      return res.status(400).json({ error: 'date must be the phone-local date in YYYY-MM-DD format' });
+    }
+    if (typeof body.session_id !== 'string') {
+      return res.status(400).json({ error: 'session_id must be a non-empty string' });
+    }
+    const sessionId = body.session_id.trim();
+    if (!sessionId || sessionId.length > 128) {
+      return res.status(400).json({ error: 'session_id must be a non-empty string of at most 128 characters' });
+    }
+
+    const active = await getActivePlanForUser(req.user.id);
+    if (!active) return res.status(404).json({ error: 'Active plan not found' });
+    const parsed = parsePlan(active.row);
+    if (!parsed) return res.status(409).json({ error: 'Active plan could not be read' });
+
+    const weekdayShort = dailyExecution.weekdayShortForDate(dateISO);
+    const selection = dailyExecution.selectDayForDate(parsed, dateISO, weekdayShort);
+    if (!selection || String(selection.entry?.date || '') !== dateISO) {
+      return res.status(404).json({ error: 'Scheduled lift session not found for this date' });
+    }
+
+    const entry = selection.entry;
+    const storedSessions = Array.isArray(entry.sessions)
+      ? entry.sessions
+      : planSchema.isRestEntry(entry) ? [] : [entry];
+    let exactSession = null;
+    let exactKind = null;
+    for (let index = 0; index < storedSessions.length; index += 1) {
+      const stored = storedSessions[index];
+      const stableId = planSchema.sessionIdentifier(entry, stored, index, selection.dayIndex);
+      if (stableId !== sessionId) continue;
+      exactKind = planSchema.kindFromSession(stored);
+      exactSession = { ...planSchema.normalizeSession(stored, stableId), id: stableId };
+      break;
+    }
+    if (!exactSession) {
+      return res.status(404).json({ error: 'Scheduled lift session not found for this date' });
+    }
+    if (exactKind !== 'lift') {
+      return res.status(409).json({ error: 'The requested plan session is not a lift' });
+    }
+
+    const progress = parseJsonValue(active.row.progress_json, {});
+    const completedIds = new Set(completedSessionIdsFromProgress(progress).map(String));
+    const storedStatus = String(
+      storedSessions.find((stored, index) => (
+        planSchema.sessionIdentifier(entry, stored, index, selection.dayIndex) === sessionId
+      ))?.status || ''
+    ).toLowerCase();
+    if (
+      completedIds.has(sessionId)
+      || storedSessions.some((stored, index) => (
+        planSchema.sessionIdentifier(entry, stored, index, selection.dayIndex) === sessionId
+        && stored?.completed === true
+      ))
+      || storedStatus === 'completed'
+      || String(entry.status || '').toLowerCase() === 'completed'
+    ) {
+      return res.status(409).json({ error: 'This lift session is already completed' });
+    }
+
+    const alternative = buildBodyweightAlternative({
+      session: exactSession,
+      sessionId,
+      date: dateISO,
+      week: selection.week?.week ?? selection.weekIndex + 1,
+      phase: selection.week?.phase || null,
+    });
+    if (!alternative) {
+      return res.status(409).json({ error: 'This lift could not be translated safely for no-equipment training' });
+    }
+    return res.json({ alternative });
+  } catch (err) {
+    console.error('[plans/today/bodyweight-alternative] failed:', err.message);
+    return res.status(500).json({ error: 'Could not build the no-equipment alternative' });
   }
 });
 

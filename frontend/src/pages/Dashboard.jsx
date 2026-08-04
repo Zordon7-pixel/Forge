@@ -17,6 +17,7 @@ import { formatGroupRunDate, upcomingGroupRun } from '../lib/groupRuns'
 import { resolveReadiness } from '../lib/truthConsistency'
 import { HEALTH_SYNC_RESULT_EVENT } from '../lib/healthSync'
 import { isRunningActivity } from '../lib/activityType'
+import TravelTrainingPrompt from '../components/TravelTrainingPrompt'
 
 function fmtPace(durationSeconds, distance) {
   if (!durationSeconds || !distance) return '--'
@@ -275,6 +276,7 @@ export default function Dashboard() {
   const [dailySteps, setDailySteps] = useState(null)
   const [dailyStepsSource, setDailyStepsSource] = useState('manual')
   const [activeInjury, setActiveInjury] = useState(null)
+  const [injurySafetyAvailable, setInjurySafetyAvailable] = useState(false)
   const [injuryBannerDismissed, setInjuryBannerDismissed] = useState(false)
   const [weeklyRecap, setWeeklyRecap] = useState(null)
   const [showWeeklyRecap, setShowWeeklyRecap] = useState(false)
@@ -327,7 +329,10 @@ export default function Dashboard() {
           api.get('/runs/load-analysis').catch(() => ({ data: null })),
           api.get('/races/next').catch(() => ({ data: { race: null } })),
           api.get('/gear/shoes').catch(() => ({ data: { shoes: [] } })),
-          api.get('/injury/active').catch(() => ({ data: { injuries: [] } })),
+          api.get('/injury/active').catch((error) => {
+            console.error('[Dashboard] injury safety lookup failed:', error?.message || error)
+            return { data: { injuries: [], safetyUnavailable: true } }
+          }),
           api.get('/recap/weekly').catch(() => ({ data: null })),
           api.get('/runs/next-recommendation').catch(() => ({ data: null })),
           api.get('/runs/age-graded-performance').catch(() => ({ data: null })),
@@ -391,6 +396,7 @@ export default function Dashboard() {
         const gearShoes = gearRes.data?.shoes || []
         setShoeAlerts(gearShoes.filter((shoe) => Boolean(shoe.alert)))
         setActiveInjury((injuryRes.data?.injuries || [])[0] || null)
+        setInjurySafetyAvailable(injuryRes.data?.safetyUnavailable !== true)
         setWeeklyCalories(recapRes.data?.totalCalories || 0)
         setNextRecommendation(recommendationRes.data || null)
         setAgeGradedPerformance(ageGradedRes.data || null)
@@ -643,6 +649,10 @@ export default function Dashboard() {
     const todayISO = localDateISO()
     return runs.some((run) => isRunningActivity(run) && runOccurredOnDate(run, todayISO))
   }, [runs])
+  const travelReadiness = useMemo(() => ({
+    ...resolveReadiness(readinessState.data),
+    band: readinessState.data?.band || null,
+  }), [readinessState.data])
 
   const showLoadWarning = loadAnalysis && ['elevated', 'high', 'danger'].includes(loadAnalysis.loadStatus) && Date.now() > loadWarningDismissedUntil
   const complianceColor = compliance?.score >= 80 ? 'var(--success)' : compliance?.score >= 50 ? 'var(--accent)' : 'var(--danger)'
@@ -862,6 +872,16 @@ export default function Dashboard() {
         deciding={trainingGapDecision}
         error={trainingGapError}
         onDecision={decideTrainingGap}
+      />
+
+      <TravelTrainingPrompt
+        execution={execution}
+        checkinData={checkinData}
+        adaptationProposal={trainingGapProposal}
+        readiness={travelReadiness}
+        activeInjury={injurySafetyAvailable ? activeInjury : { unknown: true }}
+        runRecordedToday={hasRunRecordedToday}
+        dateISO={localDateISO()}
       />
 
       <DailyCoachFlow /* H5: effectiveRecommendation prefers calendar */

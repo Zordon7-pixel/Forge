@@ -12,8 +12,87 @@ import {
   buildCalendarModel, calendarDateRange, dayWithRecordedRuns, goalWithRace, indexRecordedRuns, todayISO,
 } from '../lib/planCalendar'
 import { withActiveRunReturnTarget } from '../lib/activeRunControls'
+import { resolveReadiness } from '../lib/truthConsistency'
+import { deriveRacePlanReconciliation } from '../lib/travelTraining'
+import TravelTrainingPrompt from '../components/TravelTrainingPrompt'
 
 const RoutePlanner = lazy(() => import('../components/RoutePlanner'))
+
+function executionFromCalendar(model, dateISO, completedSet) {
+  if (!model) return null
+  const day = model.findDayByDate(dateISO)
+  if (!day) return { hasPlan: true, hasDay: false, isRest: false, date: dateISO, sessions: [], run: null, lift: null }
+  const sessions = (day.sessions || []).map((session) => ({
+    ...(session.prescription || {}),
+    ...(session.raw || {}),
+    id: String(session.id),
+    kind: session.kind,
+    type: session.type,
+    title: session.title,
+    distance_miles: session.distanceMiles,
+    duration_min: session.durationMinutes,
+    completed: completedSet?.has(String(session.id))
+      || session.completed === true
+      || session.raw?.completed === true
+      || String(session.raw?.status || '').toLowerCase() === 'completed',
+  }))
+  return {
+    hasPlan: true,
+    hasDay: true,
+    isRest: sessions.length === 0,
+    date: day.dateISO,
+    day: day.dayLabel,
+    week: Number.isInteger(day.weekIndex) ? day.weekIndex + 1 : null,
+    phase: day.phase || null,
+    goal: model.goal || null,
+    sessions,
+    run: sessions.find((session) => session.kind === 'run') || null,
+    lift: sessions.find((session) => session.kind === 'lift') || null,
+  }
+}
+
+function formatRaceDate(race) {
+  const match = String(race?.race_date || '').match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!match) return race?.race_date || 'date unavailable'
+  return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3])).toLocaleDateString(undefined, {
+    month: 'short', day: 'numeric', year: 'numeric',
+  })
+}
+
+function RacePlanReconciliationCard({ candidate, busy, error, onAdd, onReview }) {
+  if (!candidate) return null
+  const direct = candidate.kind === 'direct'
+  return (
+    <section aria-labelledby="race-plan-reconciliation-title" className="min-w-0 rounded-xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--accent)' }}>
+      <p className="text-[10px] font-black uppercase" style={{ color: 'var(--accent)', margin: 0 }}>
+        {direct ? 'Race not in this plan' : 'Race plan review'}
+      </p>
+      <h2 id="race-plan-reconciliation-title" className="mt-1 break-words text-lg font-black" style={{ color: 'var(--text-primary)' }}>
+        {direct
+          ? `Add ${candidate.missingRace.race_name} to your ${candidate.protectedRace.race_name} plan?`
+          : 'Review which upcoming races this plan should protect'}
+      </h2>
+      <p className="mt-1 break-words text-sm leading-6" style={{ color: 'var(--text-muted)' }}>
+        {direct
+          ? `${formatRaceDate(candidate.orderedRaces[0])} and ${formatRaceDate(candidate.orderedRaces[1])}. One plan will protect both peaks.`
+          : candidate.reason === 'close_dates'
+            ? 'These races are less than 21 days apart. Review them before choosing how the calendar should handle recovery and tapering.'
+            : 'More than one eligible saved race is outside this plan, so Forged Hybrid will not guess which pair to use.'}
+      </p>
+      {error && <p role="alert" aria-live="assertive" className="mt-3 break-words rounded-lg p-3 text-sm" style={{ background: 'var(--danger-dim)', color: 'var(--danger)' }}>{error}</p>}
+      <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+        {direct && (
+          <button type="button" onClick={onAdd} disabled={busy} className="min-h-11 rounded-lg px-4 py-3 text-sm font-black disabled:opacity-60" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>
+            {busy ? 'Adding to plan…' : 'Add to this plan'}
+          </button>
+        )}
+        <button type="button" onClick={onReview} disabled={busy} className="min-h-11 rounded-lg px-4 py-3 text-sm font-bold disabled:opacity-60" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>
+          Review races
+        </button>
+      </div>
+    </section>
+  )
+}
 
 export default function Plan() {
   const navigate = useNavigate()
@@ -37,6 +116,13 @@ export default function Plan() {
   const [raceSaving, setRaceSaving] = useState(false)
   const [raceSaveError, setRaceSaveError] = useState('')
   const [raceSaveNotice, setRaceSaveNotice] = useState(null)
+  const [reconcilingRaces, setReconcilingRaces] = useState(false)
+  const [raceReconciliationError, setRaceReconciliationError] = useState('')
+  const [raceReconciliationNotice, setRaceReconciliationNotice] = useState('')
+  const [travelCheckin, setTravelCheckin] = useState(null)
+  const [travelReadinessData, setTravelReadinessData] = useState(null)
+  const [travelActiveInjury, setTravelActiveInjury] = useState(null)
+  const [travelInjurySafetyAvailable, setTravelInjurySafetyAvailable] = useState(false)
 
   const loadAll = async ({ includeAdaptation = true } = {}) => {
     setLoading(true)
@@ -49,7 +135,7 @@ export default function Plan() {
       setMyUserPlan(nextUserPlan)
       const nextCalendar = nextPlan ? buildCalendarModel(nextPlan, nextUserPlan) : null
       const runDateRange = calendarDateRange(nextCalendar, todayISO())
-      const [racesRes, runsRes] = await Promise.all([
+      const [racesRes, runsRes, checkinRes, injuryRes, readinessRes] = await Promise.all([
         api.get('/races').catch((err) => {
           console.error('[Plan] race list load failed:', err?.message || err)
           return null
@@ -58,9 +144,25 @@ export default function Plan() {
           console.error('[Plan] recorded runs load failed:', err?.message || err)
           return null
         }),
+        api.get('/checkin/today', { params: { date: todayISO() } }).catch((err) => {
+          console.error('[Plan] travel check-in load failed:', err?.message || err)
+          return { data: null }
+        }),
+        api.get('/injury/active').catch((err) => {
+          console.error('[Plan] injury safety load failed:', err?.message || err)
+          return { data: { injuries: [], safetyUnavailable: true } }
+        }),
+        api.get('/recovery/readiness').catch((err) => {
+          console.error('[Plan] readiness safety load failed:', err?.message || err)
+          return { data: null }
+        }),
       ])
       if (racesRes) setRaces(Array.isArray(racesRes.data?.races) ? racesRes.data.races : [])
       if (runsRes) setRuns(Array.isArray(runsRes.data) ? runsRes.data : Array.isArray(runsRes.data?.runs) ? runsRes.data.runs : [])
+      setTravelCheckin(checkinRes.data || null)
+      setTravelActiveInjury((injuryRes.data?.injuries || [])[0] || null)
+      setTravelInjurySafetyAvailable(injuryRes.data?.safetyUnavailable !== true)
+      setTravelReadinessData(readinessRes.data || null)
       if (includeAdaptation) setAdaptationProposal(null)
       const isSchemaV2 = Number(nextPlan?.plan_data?.schemaVersion || 0) === 2
       if (isSchemaV2 && includeAdaptation) {
@@ -157,6 +259,23 @@ export default function Plan() {
     } : model
     // eslint-disable-next-line react-hooks/exhaustive-deps
   ), [model, activeRace, races])
+  const racePlanReconciliation = useMemo(() => deriveRacePlanReconciliation({
+    calendarGoals: model?.goals?.length ? model.goals : model?.goal ? [model.goal] : [],
+    savedRaces: races,
+    todayISO: today,
+  }), [model, races, today])
+  const travelExecution = useMemo(
+    () => executionFromCalendar(calendarModel, today, completedSet),
+    [calendarModel, today, completedSet],
+  )
+  const hasRunRecordedToday = useMemo(
+    () => Boolean(recordedRunsByDate.get(today)?.length),
+    [recordedRunsByDate, today],
+  )
+  const travelReadiness = useMemo(() => ({
+    ...resolveReadiness(travelReadinessData),
+    band: travelReadinessData?.band || null,
+  }), [travelReadinessData])
   const isActiveSchemaV2 = Number(myPlan?.plan_data?.schemaVersion || 0) === 2
   const weekCount = Number(myPlan?.weeks || calendarModel?.weekCount || 0)
   const planReviewRequired = myUserPlan?.progress?.planReviewRequired
@@ -213,6 +332,24 @@ export default function Plan() {
       await loadAll()
     } finally {
       setUpdating(false)
+    }
+  }
+
+  const addRaceToPlan = async () => {
+    if (racePlanReconciliation?.kind !== 'direct' || reconcilingRaces) return
+    setReconcilingRaces(true)
+    setRaceReconciliationError('')
+    setRaceReconciliationNotice('')
+    try {
+      await api.post('/plans/generate-for-races', {
+        race_ids: racePlanReconciliation.orderedRaceIds,
+      })
+      setRaceReconciliationNotice('Both race peaks are now protected in one plan.')
+      await loadAll()
+    } catch (err) {
+      setRaceReconciliationError(err?.response?.data?.error || 'Could not add this race to the plan. Your current plan is unchanged.')
+    } finally {
+      setReconcilingRaces(false)
     }
   }
 
@@ -562,6 +699,30 @@ export default function Plan() {
                 } : null}
                 canPrev={currentWeek > 1 && !updating}
                 canNext={currentWeek < (weekCount || currentWeek) && !updating}
+              />
+
+              <RacePlanReconciliationCard
+                candidate={racePlanReconciliation}
+                busy={reconcilingRaces}
+                error={raceReconciliationError}
+                onAdd={addRaceToPlan}
+                onReview={() => navigate('/races')}
+              />
+
+              {raceReconciliationNotice && (
+                <p role="status" aria-live="polite" className="rounded-lg p-3 text-sm" style={{ background: 'rgba(22,163,74,0.12)', color: 'var(--success)', border: '1px solid var(--border-subtle)' }}>
+                  {raceReconciliationNotice}
+                </p>
+              )}
+
+              <TravelTrainingPrompt
+                execution={travelExecution}
+                checkinData={travelCheckin}
+                adaptationProposal={adaptationProposal}
+                readiness={travelReadiness}
+                activeInjury={travelInjurySafetyAvailable ? travelActiveInjury : { unknown: true }}
+                runRecordedToday={hasRunRecordedToday}
+                dateISO={today}
               />
 
               {raceSaveNotice && (
