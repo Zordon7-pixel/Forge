@@ -92,6 +92,7 @@ assert.equal(ordinaryRun.shouldPrompt, false, 'ordinary planned run does not add
 
 const restExecution = { hasPlan: true, hasDay: true, isRest: true, date: today, week: 5, sessions: [], run: null, lift: null }
 const gapProposal = { status: 'proposal', evidence: [{ signal: 'run_gap', daysSinceRun: 8 }] }
+const genericTrainingGapProposal = { status: 'proposal', evidence: [{ signal: 'training_gap', daysSinceRun: 8 }] }
 const recoveryChoices = deriveTravelTrainingChoices({
   execution: restExecution,
   adaptationProposal: gapProposal,
@@ -116,6 +117,16 @@ for (const unsafe of [
   const result = deriveTravelTrainingChoices({ execution: restExecution, adaptationProposal: gapProposal, ...unsafe })
   assert.equal(result.choices.some((choice) => choice.kind === 'recovery_run'), false)
 }
+
+const genericGapChoices = deriveTravelTrainingChoices({
+  execution: restExecution,
+  adaptationProposal: genericTrainingGapProposal,
+  readiness: green,
+  activeInjury: null,
+  hasRunRecordedToday: false,
+})
+assert.equal(genericGapChoices.shouldPrompt, false)
+assert.equal(genericGapChoices.choices.some((choice) => choice.kind === 'recovery_run'), false)
 
 const injuredLift = deriveTravelTrainingChoices({
   execution: liftExecution,

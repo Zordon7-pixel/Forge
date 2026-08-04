@@ -131,7 +131,7 @@ export function checkinLifeFlags(checkinData) {
 
 export function trainingGapEvidence(proposal) {
   const evidence = Array.isArray(proposal?.evidence) ? proposal.evidence : []
-  return evidence.find((item) => ['run_gap', 'training_gap'].includes(String(item?.signal || '').toLowerCase())) || null
+  return evidence.find((item) => String(item?.signal || '').toLowerCase() === 'run_gap') || null
 }
 
 function readinessState(readiness) {
