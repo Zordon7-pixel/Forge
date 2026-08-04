@@ -14,10 +14,28 @@ import {
 } from 'lucide-react'
 import api from '../lib/api'
 import MovementDemo from '../components/MovementDemo'
-import { getPreviousRoutineIds, rememberRoutine } from '../lib/routineRotation'
+import { getMostRecentRoutineIds, getPreviousRoutineIds, rememberRoutine } from '../lib/routineRotation'
 import { SWIPE_BACK_EVENT } from '../lib/swipeBack'
 
 const STRETCH_ROTATION_SCOPE = 'stretch-library'
+const ROUTINE_SIZES = [
+  { count: 5, label: 'Quick Reset' },
+  { count: 8, label: 'Daily Runner' },
+  { count: 12, label: 'Full Mobility' },
+]
+
+function estimateRoutineSeconds(stretches) {
+  return (Array.isArray(stretches) ? stretches : []).reduce((total, stretch) => {
+    const duration = Number(stretch?.duration)
+    if (!Number.isFinite(duration) || duration < 0) return total
+    return total + duration * (stretch?.sides === 2 ? 2 : 1)
+  }, 0)
+}
+
+function formatEstimatedTime(seconds) {
+  const minutes = Math.max(1, Math.ceil(Number(seconds || 0) / 60))
+  return `About ${minutes} min`
+}
 
 /* ─── Category icon map ─── */
 const CATEGORY_ICONS = {
@@ -73,7 +91,7 @@ function CountdownRing({ total, remaining }) {
 }
 
 /* ─── Stretch session screen ─── */
-function StretchSession({ stretches, onDone, onBack, sex = 'male' }) {
+function StretchSession({ stretches, estimatedSeconds, onDone, onBack, sex = 'male' }) {
   const { t } = useTranslation()
   const [stepIndex, setStepIndex]       = useState(0)
   const [remaining, setRemaining]       = useState(stretches[0]?.duration || 30)
@@ -156,9 +174,12 @@ function StretchSession({ stretches, onDone, onBack, sex = 'male' }) {
       <div style={{ flex: 1, maxWidth: 480, margin: '0 auto', width: '100%', padding: '20px 16px 120px', display: 'flex', flexDirection: 'column' }}>
         {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 28 }}>
-          <span style={{ color: 'var(--text-muted)', fontSize: 13, fontWeight: 600 }}>
-            {stepIndex + 1} {t('run.of')} {stretches.length}
-          </span>
+          <div>
+            <span style={{ color: 'var(--text-muted)', fontSize: 13, fontWeight: 600 }}>
+              {stepIndex + 1} {t('run.of')} {stretches.length}
+            </span>
+            <span style={{ color: 'var(--text-muted)', fontSize: 12 }}> · {formatEstimatedTime(estimatedSeconds)} total</span>
+          </div>
           <button
             onClick={handleExit}
             style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', borderRadius: '50%', width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
@@ -265,6 +286,8 @@ export default function Stretches() {
   const [stretches, setStretches] = useState([])
   const [aiData, setAiData]       = useState(null) // { recommendedCategory, reason }
   const [doneCount, setDoneCount] = useState(0)
+  const [routineCount, setRoutineCount] = useState(8)
+  const [estimatedSeconds, setEstimatedSeconds] = useState(0)
   const [sex, setSex]             = useState(null)
   const [profileReady, setProfileReady] = useState(false)
 
@@ -295,9 +318,13 @@ export default function Stretches() {
     setScreen('loading')
     try {
       const exclude = getPreviousRoutineIds(STRETCH_ROTATION_SCOPE)
-      const r = await api.get('/stretches', { params: { category: categoryId, exclude: exclude.join(',') } })
+      const previous = getMostRecentRoutineIds(STRETCH_ROTATION_SCOPE)
+      const r = await api.get('/stretches', {
+        params: { category: categoryId, count: routineCount, exclude: exclude.join(','), previous: previous.join(',') },
+      })
       rememberRoutine(STRETCH_ROTATION_SCOPE, r.data.stretches)
       setStretches(r.data.stretches)
+      setEstimatedSeconds(estimateRoutineSeconds(r.data.stretches))
       setScreen('session')
     } catch (err) {
       console.error('[stretches] category routine load failed:', err?.message || err)
@@ -309,13 +336,17 @@ export default function Stretches() {
     setScreen('loading')
     try {
       const exclude = getPreviousRoutineIds(STRETCH_ROTATION_SCOPE)
-      const r = await api.get('/stretches/recommended', { params: { exclude: exclude.join(',') } })
+      const previous = getMostRecentRoutineIds(STRETCH_ROTATION_SCOPE)
+      const r = await api.get('/stretches/recommended', {
+        params: { count: routineCount, exclude: exclude.join(','), previous: previous.join(',') },
+      })
       rememberRoutine(STRETCH_ROTATION_SCOPE, r.data.stretches)
       setAiData({
         recommendedCategory: r.data.recommendedCategory,
         reason: r.data.reason,
       })
       setStretches(r.data.stretches)
+      setEstimatedSeconds(estimateRoutineSeconds(r.data.stretches))
       setScreen('ai-banner')
     } catch (err) {
       console.error('[stretches] recommended routine load failed:', err?.message || err)
@@ -364,7 +395,9 @@ export default function Stretches() {
               </div>
               <div>
                 <p style={{ color: 'var(--text-primary)', fontWeight: 800, fontSize: 20, margin: 0 }}>{catLabel}</p>
-                <p style={{ color: 'var(--text-muted)', fontSize: 13, margin: 0 }}>{stretches.length} {t('stretches.stretchesReady')}</p>
+                <p style={{ color: 'var(--text-muted)', fontSize: 13, margin: 0 }}>
+                  {stretches.length} {t('stretches.stretchesReady')} · {formatEstimatedTime(estimatedSeconds)}
+                </p>
               </div>
             </div>
             <p style={{ color: 'var(--text-muted)', fontSize: 13, lineHeight: 1.6, margin: 0 }}>{aiData.reason}</p>
@@ -392,6 +425,7 @@ export default function Stretches() {
     return (
       <StretchSession
         stretches={stretches}
+        estimatedSeconds={estimatedSeconds}
         onDone={handleSessionDone}
         onBack={() => setScreen('categories')}
         sex={sex}
@@ -432,6 +466,34 @@ export default function Stretches() {
           </h1>
           <p style={{ color: 'var(--text-muted)', fontSize: 14 }}>{t('stretches.subtitle')}</p>
         </header>
+
+        <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', borderRadius: 18, padding: 16, marginBottom: 16 }}>
+          <p style={{ color: 'var(--text-primary)', fontWeight: 900, fontSize: 17, margin: 0 }}>Routine length</p>
+          <p style={{ color: 'var(--text-muted)', fontSize: 12, margin: '4px 0 14px' }}>Choose the amount of mobility work for this session.</p>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8 }}>
+            {ROUTINE_SIZES.map(option => (
+              <button
+                key={option.count}
+                type="button"
+                aria-pressed={routineCount === option.count}
+                onClick={() => setRoutineCount(option.count)}
+                style={{
+                  background: routineCount === option.count ? 'var(--accent-dim)' : 'var(--bg-input)',
+                  border: `1px solid ${routineCount === option.count ? 'var(--accent)' : 'var(--border-subtle)'}`,
+                  borderRadius: 12,
+                  color: routineCount === option.count ? 'var(--accent)' : 'var(--text-primary)',
+                  cursor: 'pointer',
+                  fontSize: 12,
+                  fontWeight: 800,
+                  minHeight: 64,
+                  padding: '8px 4px',
+                }}
+              >
+                {option.label} · {option.count}
+              </button>
+            ))}
+          </div>
+        </div>
 
         <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', borderRadius: 18, padding: 16, marginBottom: 16 }}>
           <p style={{ color: 'var(--text-primary)', fontWeight: 900, fontSize: 17, margin: 0 }}>
