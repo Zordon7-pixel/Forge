@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Activity,
@@ -9,10 +9,10 @@ import {
   Sparkles,
   CheckCircle2,
   ChevronRight,
-  Check,
   X,
 } from 'lucide-react'
 import api from '../lib/api'
+import GuidedMovementTimer from '../components/GuidedMovementTimer'
 import MovementDemo from '../components/MovementDemo'
 import { getMostRecentRoutineIds, getPreviousRoutineIds, rememberRoutine } from '../lib/routineRotation'
 import { SWIPE_BACK_EVENT } from '../lib/swipeBack'
@@ -64,104 +64,26 @@ const TIGHTNESS_OPTIONS = [
   { id: 'full-body', label: 'Full body', category: 'full-body' },
 ]
 
-/* ─── Countdown ring ─── */
-const RING_R    = 44
-const RING_CIRC = 2 * Math.PI * RING_R
-
-function CountdownRing({ total, remaining }) {
-  const pct    = remaining / total
-  const offset = RING_CIRC * (1 - pct)
-  return (
-    <svg width="110" height="110" viewBox="0 0 110 110">
-      <circle cx="55" cy="55" r={RING_R} fill="none" stroke="var(--bg-card)" strokeWidth="7" />
-      <circle
-        cx="55" cy="55" r={RING_R} fill="none"
-        stroke="var(--accent)" strokeWidth="7" strokeLinecap="round"
-        strokeDasharray={RING_CIRC} strokeDashoffset={offset}
-        style={{ transform: 'rotate(-90deg)', transformOrigin: '55px 55px', transition: 'stroke-dashoffset 1s linear' }}
-      />
-      <text
-        x="55" y="55" textAnchor="middle" dominantBaseline="central"
-        fill="var(--accent)" fontSize="26" fontWeight="900" fontFamily="system-ui,sans-serif"
-      >
-        {remaining}
-      </text>
-    </svg>
-  )
-}
-
 /* ─── Stretch session screen ─── */
 function StretchSession({ stretches, estimatedSeconds, onDone, onBack, sex = 'male' }) {
   const { t } = useTranslation()
-  const [stepIndex, setStepIndex]       = useState(0)
-  const [remaining, setRemaining]       = useState(stretches[0]?.duration || 30)
-  const [phase, setPhase]               = useState('active') // active | transition | done
-  const [transCountdown, setTransCount] = useState(3)
-  const intervalRef = useRef(null)
-  const transRef    = useRef(null)
+  const [stepIndex, setStepIndex] = useState(0)
 
-  const stretch    = stretches[stepIndex]
+  const stretch = stretches[stepIndex]
   const nextStretch = stepIndex < stretches.length - 1 ? stretches[stepIndex + 1] : null
-  const isLast     = stepIndex >= stretches.length - 1
+  const isLast = stepIndex >= stretches.length - 1
   const progressPct = Math.round((stepIndex / stretches.length) * 100)
 
-  // Reset state when step changes
-  useEffect(() => {
-    setRemaining(stretch.duration)
-    setPhase('active')
-    setTransCount(3)
-  }, [stepIndex, stretch.duration])
-
-  // Main countdown
-  useEffect(() => {
-    if (phase !== 'active') return
-    intervalRef.current = setInterval(() => {
-      setRemaining(prev => {
-        if (prev <= 1) {
-          clearInterval(intervalRef.current)
-          setPhase(isLast ? 'done' : 'transition')
-          return 0
-        }
-        return prev - 1
-      })
-    }, 1000)
-    return () => clearInterval(intervalRef.current)
-  }, [phase, isLast])
-
-  // Transition auto-advance
-  useEffect(() => {
-    if (phase !== 'transition') return
-    setTransCount(3)
-    let tc = 3
-    transRef.current = setInterval(() => {
-      tc -= 1
-      setTransCount(tc)
-      if (tc <= 0) {
-        clearInterval(transRef.current)
-        setStepIndex(prev => prev + 1)
-      }
-    }, 1000)
-    return () => clearInterval(transRef.current)
-  }, [phase])
-
-  const handleNext = () => {
-    clearInterval(intervalRef.current)
-    clearInterval(transRef.current)
+  const advance = () => {
     if (isLast) {
       onDone()
     } else {
-      setStepIndex(prev => prev + 1)
+      setStepIndex(value => value + 1)
     }
   }
 
-  const handleExit = () => {
-    clearInterval(intervalRef.current)
-    clearInterval(transRef.current)
-    onBack()
-  }
-
-  const handleSkip = () => {
-    handleNext()
+  const goPrevious = () => {
+    if (stepIndex > 0) setStepIndex(value => value - 1)
   }
 
   return (
@@ -171,7 +93,7 @@ function StretchSession({ stretches, estimatedSeconds, onDone, onBack, sex = 'ma
         <div style={{ height: '100%', background: 'var(--accent)', width: `${progressPct}%`, transition: 'width 0.3s ease' }} />
       </div>
 
-      <div style={{ flex: 1, maxWidth: 480, margin: '0 auto', width: '100%', padding: '20px 16px 120px', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ flex: 1, maxWidth: 480, margin: '0 auto', width: '100%', padding: '20px 16px 220px', display: 'flex', flexDirection: 'column' }}>
         {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 28 }}>
           <div>
@@ -181,8 +103,8 @@ function StretchSession({ stretches, estimatedSeconds, onDone, onBack, sex = 'ma
             <span style={{ color: 'var(--text-muted)', fontSize: 12 }}> · {formatEstimatedTime(estimatedSeconds)} total</span>
           </div>
           <button
-            onClick={handleExit}
-            style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', borderRadius: '50%', width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
+            onClick={onBack}
+            style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', borderRadius: '50%', width: 44, height: 44, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
             aria-label="Exit"
           >
             <X size={16} color="var(--text-muted)" />
@@ -204,75 +126,20 @@ function StretchSession({ stretches, estimatedSeconds, onDone, onBack, sex = 'ma
 
         <MovementDemo name={stretch.name} compact sex={sex} imageUrl={stretch.image_url || stretch.imageUrl} cue={stretch.cue} />
 
-        {/* Timer */}
-        {phase === 'active' && (
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 24 }}>
-            <CountdownRing total={stretch.duration} remaining={remaining} />
-            <p style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 8 }}>{t('stretches.secsRemaining')}</p>
-          </div>
-        )}
-
-        {/* Transition */}
-        {phase === 'transition' && nextStretch && (
-          <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', borderRadius: 16, padding: 20, textAlign: 'center', marginBottom: 24 }}>
-            <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 6 }}>
-              {t('stretches.nextUp')} {transCountdown}...
-            </p>
-            <p style={{ color: 'var(--accent)', fontWeight: 800, fontSize: 18 }}>{nextStretch.name}</p>
-          </div>
-        )}
-
-        {/* Done state */}
-        {phase === 'done' && (
-          <div style={{ background: 'var(--bg-card)', border: '1px solid rgba(34,197,94,0.3)', borderRadius: 16, padding: 20, textAlign: 'center', marginBottom: 24, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
-            <Check size={28} color="var(--success)" />
-            <p style={{ color: 'var(--success)', fontWeight: 800, fontSize: 16 }}>
-              {isLast ? t('stretches.routineComplete') : t('stretches.stretchComplete')}
-            </p>
-          </div>
-        )}
+        <GuidedMovementTimer
+          key={'library:' + stepIndex + ':' + stretch.id}
+          movement={stretch}
+          movementKey={'library:' + stepIndex + ':' + stretch.id}
+          onComplete={advance}
+          onSkip={advance}
+          onPrevious={goPrevious}
+          canPrevious={stepIndex > 0}
+          skipLabel={nextStretch ? 'Skip' : 'Skip and finish'}
+        />
 
         <div style={{ flex: 1 }} />
       </div>
 
-      {/* Fixed bottom buttons */}
-      <div style={{ position: 'fixed', bottom: 'var(--app-bottom-nav-height, 59px)', left: 0, right: 0, zIndex: 25, padding: '12px 16px', background: 'var(--bg-base)', borderTop: '1px solid var(--border-subtle)' }}>
-        <div style={{ maxWidth: 480, margin: '0 auto', display: 'flex', gap: 12 }}>
-          <button
-            onClick={handleExit}
-            style={{ flex: 1, background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', borderRadius: 14, padding: '14px 0', fontSize: 14, fontWeight: 600, color: 'var(--text-muted)', cursor: 'pointer' }}
-          >
-            {t('common.done')}
-          </button>
-          {phase !== 'done' && (
-            <>
-              <button
-                onClick={handleSkip}
-                style={{ flex: 1, background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', borderRadius: 14, padding: '14px 0', fontSize: 14, fontWeight: 800, color: 'var(--text-primary)', cursor: 'pointer' }}
-              >
-                Skip
-              </button>
-              <button
-                onClick={handleNext}
-                style={{ flex: 2, background: 'var(--accent)', border: 'none', borderRadius: 14, padding: '14px 0', fontSize: 14, fontWeight: 900, color: 'var(--on-accent)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
-              >
-                {nextStretch
-                  ? <>{t('common.next')} <ChevronRight size={16} /></>
-                  : <>{t('stretches.finish')} <Check size={16} /></>
-                }
-              </button>
-            </>
-          )}
-          {phase === 'done' && (
-            <button
-              onClick={onDone}
-              style={{ flex: 2, background: 'var(--success)', border: 'none', borderRadius: 14, padding: '14px 0', fontSize: 14, fontWeight: 900, color: 'var(--on-accent)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
-            >
-              <Check size={16} /> {t('common.done')}
-            </button>
-          )}
-        </div>
-      </div>
     </div>
   )
 }
