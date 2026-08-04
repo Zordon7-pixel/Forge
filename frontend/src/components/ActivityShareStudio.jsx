@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Check, Copy, Download, ImagePlus, Share2, Users, X } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import api from '../lib/api'
+import { unreadableActivitySharePhotoMessage, validateActivitySharePhoto } from '../lib/activitySharePhoto'
 import { parsePlannedRun, parseRunRoute, parseZoneTimeline } from '../lib/runRecap'
 import PhotoLibraryService from '../services/PhotoLibraryService'
 
@@ -9,6 +10,7 @@ const CARD_WIDTH = 1080
 const CARD_HEIGHT = 1350
 const ROUTE_START_COLOR = '#22C55E'
 const ROUTE_END_COLOR = '#EF4444'
+const MODAL_FOCUSABLE_SELECTOR = 'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
 
 const TEMPLATES = [
   { id: 'route', label: 'Route' },
@@ -822,8 +824,17 @@ export async function shareSummaryCard(summary) {
 export default function ActivityShareStudio({ run, onClose }) {
   const navigate = useNavigate()
   const canvasRef = useRef(null)
+  const dialogRef = useRef(null)
+  const closeButtonRef = useRef(null)
+  const fileInputRef = useRef(null)
+  const ownedPhotoUrlsRef = useRef(new Set())
+  const photoSelectionVersionRef = useRef(0)
+  const onCloseRef = useRef(onClose)
+  const photoInputId = useId()
+  const photoFeedbackId = `${photoInputId}-feedback`
   const [template, setTemplate] = useState('route')
   const [photoUrl, setPhotoUrl] = useState('')
+  const [photoFeedback, setPhotoFeedback] = useState({ kind: '', message: '' })
   const [caption, setCaption] = useState('')
   const [cardTitle, setCardTitle] = useState('')
   const [status, setStatus] = useState('')
@@ -842,9 +853,83 @@ export default function ActivityShareStudio({ run, onClose }) {
   const filename = `forged-hybrid-run-${String(run?.date || 'activity').replace(/[^0-9a-z-]/gi, '-')}.${fileExtension}`
   const usesLegacyPhotoSave = PhotoLibraryService.isNativeRuntime() && !PhotoLibraryService.isDirectSaveAvailable()
 
+  const revokeOwnedPhotoUrl = (url) => {
+    if (!url || !ownedPhotoUrlsRef.current.has(url)) return
+    URL.revokeObjectURL(url)
+    ownedPhotoUrlsRef.current.delete(url)
+  }
+
+  useEffect(() => {
+    onCloseRef.current = onClose
+  }, [onClose])
+
   useEffect(() => () => {
-    if (photoUrl) URL.revokeObjectURL(photoUrl)
-  }, [photoUrl])
+    photoSelectionVersionRef.current += 1
+    for (const url of ownedPhotoUrlsRef.current) URL.revokeObjectURL(url)
+    ownedPhotoUrlsRef.current.clear()
+  }, [])
+
+  useEffect(() => {
+    const body = document.body
+    const previousBodyStyle = {
+      overflow: body.style.overflow,
+      overscrollBehavior: body.style.overscrollBehavior,
+      position: body.style.position,
+      left: body.style.left,
+      top: body.style.top,
+      width: body.style.width,
+    }
+    const scrollX = window.scrollX
+    const scrollY = window.scrollY
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null
+
+    body.style.overflow = 'hidden'
+    body.style.overscrollBehavior = 'none'
+    body.style.position = 'fixed'
+    body.style.left = `-${scrollX}px`
+    body.style.top = `-${scrollY}px`
+    body.style.width = '100%'
+
+    const focusFrame = window.requestAnimationFrame(() => {
+      ;(closeButtonRef.current || dialogRef.current)?.focus({ preventScroll: true })
+    })
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        event.stopPropagation()
+        onCloseRef.current?.()
+        return
+      }
+      if (event.key !== 'Tab') return
+      const focusable = Array.from(dialogRef.current?.querySelectorAll(MODAL_FOCUSABLE_SELECTOR) || [])
+        .filter((element) => element.getClientRects().length > 0 && element.getAttribute('aria-hidden') !== 'true')
+      if (focusable.length === 0) {
+        event.preventDefault()
+        dialogRef.current?.focus({ preventScroll: true })
+        return
+      }
+      const activeIndex = focusable.indexOf(document.activeElement)
+      const movingBeforeFirst = event.shiftKey && activeIndex <= 0
+      const movingAfterLast = !event.shiftKey && (activeIndex === -1 || activeIndex === focusable.length - 1)
+      if (!movingBeforeFirst && !movingAfterLast) return
+      event.preventDefault()
+      focusable[movingBeforeFirst ? focusable.length - 1 : 0].focus({ preventScroll: true })
+    }
+    document.addEventListener('keydown', handleKeyDown, true)
+
+    return () => {
+      window.cancelAnimationFrame(focusFrame)
+      document.removeEventListener('keydown', handleKeyDown, true)
+      body.style.overflow = previousBodyStyle.overflow
+      body.style.overscrollBehavior = previousBodyStyle.overscrollBehavior
+      body.style.position = previousBodyStyle.position
+      body.style.left = previousBodyStyle.left
+      body.style.top = previousBodyStyle.top
+      body.style.width = previousBodyStyle.width
+      window.scrollTo(scrollX, scrollY)
+      previouslyFocused?.focus({ preventScroll: true })
+    }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -996,32 +1081,86 @@ export default function ActivityShareStudio({ run, onClose }) {
     }
   }
 
-  const handlePhoto = (event) => {
-    const file = event.target.files?.[0]
-    if (!file || !file.type.startsWith('image/')) return
-    if (file.size > 15 * 1024 * 1024) {
-      setStatus('Choose a photo smaller than 15 MB.')
-      event.target.value = ''
+  const openPhotoPicker = () => {
+    const input = fileInputRef.current
+    if (!input) return
+    input.value = ''
+    input.click()
+  }
+
+  const handlePhoto = async (event) => {
+    const input = event.currentTarget
+    const file = input.files?.[0]
+    if (!file) return
+    const selectionVersion = photoSelectionVersionRef.current + 1
+    photoSelectionVersionRef.current = selectionVersion
+    const validation = validateActivitySharePhoto(file)
+    if (!validation.ok) {
+      setPhotoFeedback({ kind: 'error', message: validation.message })
+      input.value = ''
       return
     }
-    if (photoUrl) URL.revokeObjectURL(photoUrl)
-    setStatus('')
-    setPosted(false)
-    setPhotoUrl(URL.createObjectURL(file))
-    setTemplate('photo')
-    event.target.value = ''
+
+    const nextPhotoUrl = URL.createObjectURL(file)
+    ownedPhotoUrlsRef.current.add(nextPhotoUrl)
+    try {
+      await loadImage(nextPhotoUrl)
+      if (selectionVersion !== photoSelectionVersionRef.current) {
+        revokeOwnedPhotoUrl(nextPhotoUrl)
+        return
+      }
+      if (photoUrl) revokeOwnedPhotoUrl(photoUrl)
+      const displayName = String(file.name || 'photo').replace(/[\r\n]+/g, ' ').trim().slice(0, 80) || 'photo'
+      setStatus('')
+      setPosted(false)
+      setPhotoUrl(nextPhotoUrl)
+      setPhotoFeedback({ kind: 'selected', message: `Photo selected: ${displayName}.` })
+      setTemplate('photo')
+    } catch (error) {
+      revokeOwnedPhotoUrl(nextPhotoUrl)
+      if (selectionVersion !== photoSelectionVersionRef.current) return
+      console.warn('[ActivityShareStudio] selected photo was not browser-readable:', error?.message || error)
+      setPhotoFeedback({ kind: 'error', message: unreadableActivitySharePhotoMessage(file) })
+    } finally {
+      input.value = ''
+    }
   }
 
   return (
-    <div className="fixed inset-0 z-[2000] isolate flex items-end justify-center" style={{ background: 'rgba(0,0,0,0.82)', zIndex: 2000 }} onClick={(event) => { event.stopPropagation(); onClose() }}>
-      <section className="max-h-[94dvh] w-full max-w-[480px] overflow-y-auto rounded-t-2xl px-4 pb-8 pt-4" style={{ background: 'var(--bg-card)' }} onClick={(event) => event.stopPropagation()} aria-label="Share run">
-        <header className="mb-4 flex items-center justify-between gap-3">
+    <div
+      className="fixed inset-0 z-[2000] isolate flex items-end justify-center sm:items-center"
+      data-testid="share-studio-backdrop"
+      style={{ background: 'var(--bg-base)', zIndex: 2000 }}
+      onClick={(event) => {
+        event.stopPropagation()
+        if (event.target === event.currentTarget) onCloseRef.current?.()
+      }}
+      onPointerDown={(event) => event.stopPropagation()}
+      onTouchStart={(event) => event.stopPropagation()}
+    >
+      <section
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="share-studio-title"
+        tabIndex={-1}
+        className="flex max-h-[100dvh] w-full max-w-[480px] flex-col overflow-hidden rounded-t-2xl sm:max-h-[94dvh] sm:rounded-2xl"
+        style={{ background: 'var(--bg-card)', boxShadow: '0 18px 60px rgba(0,0,0,0.55)' }}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <header className="flex shrink-0 items-center justify-between gap-3 px-4 pb-4" style={{ paddingTop: 'max(1rem, env(safe-area-inset-top, 0px))' }}>
           <div>
             <p className="text-xs font-black uppercase" style={{ color: 'var(--accent)', letterSpacing: 1 }}>Forged Hybrid</p>
-            <h2 className="mt-1 text-xl font-black" style={{ color: 'var(--text-primary)' }}>Share your run</h2>
+            <h2 id="share-studio-title" className="mt-1 text-xl font-black" style={{ color: 'var(--text-primary)' }}>Share your run</h2>
           </div>
-          <button type="button" onClick={onClose} aria-label="Close share studio" className="pressable grid h-10 w-10 place-items-center rounded-full" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}><X size={20} /></button>
+          <button ref={closeButtonRef} type="button" onClick={onClose} aria-label="Close share studio" className="pressable grid h-10 w-10 place-items-center rounded-full" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}><X size={20} /></button>
         </header>
+
+        <div
+          className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4"
+          data-testid="share-studio-scrollport"
+          style={{ WebkitOverflowScrolling: 'touch', paddingBottom: 'max(2rem, env(safe-area-inset-bottom, 0px))' }}
+        >
 
         <div className="mb-3 grid grid-cols-3 gap-1 rounded-lg p-1" style={{ background: 'var(--bg-base)' }}>
           {TEMPLATES.map((item) => (
@@ -1031,7 +1170,34 @@ export default function ActivityShareStudio({ run, onClose }) {
           ))}
         </div>
 
-        <canvas ref={canvasRef} width={CARD_WIDTH} height={CARD_HEIGHT} className="block aspect-[4/5] w-full rounded-lg object-contain" style={{ background: template === 'overlay' ? 'repeating-conic-gradient(#303033 0% 25%, #202023 0% 50%) 50% / 24px 24px' : '#080808', border: '1px solid var(--border-subtle)' }} />
+        <div className="relative">
+          <canvas ref={canvasRef} width={CARD_WIDTH} height={CARD_HEIGHT} className="block aspect-[4/5] w-full rounded-lg object-contain" style={{ background: template === 'overlay' ? 'repeating-conic-gradient(#303033 0% 25%, #202023 0% 50%) 50% / 24px 24px' : '#080808', border: '1px solid var(--border-subtle)' }} />
+          {template === 'photo' && !photoUrl && (
+            <button
+              type="button"
+              data-testid="photo-canvas-picker"
+              aria-label="Add a photo to this share card"
+              aria-controls={photoInputId}
+              aria-describedby={photoFeedback.message ? photoFeedbackId : undefined}
+              onClick={openPhotoPicker}
+              className="pressable absolute rounded-xl bg-transparent focus-visible:outline-none focus-visible:ring-4"
+              style={{ left: '11.111%', top: '22.222%', width: '77.778%', height: '35.556%', touchAction: 'manipulation', '--tw-ring-color': 'var(--accent)' }}
+            >
+              <span className="sr-only">Add a photo</span>
+            </button>
+          )}
+        </div>
+
+        {photoFeedback.message && (
+          <p
+            id={photoFeedbackId}
+            role={photoFeedback.kind === 'error' ? 'alert' : 'status'}
+            className="mt-2 text-center text-xs font-semibold leading-relaxed"
+            style={{ color: photoFeedback.kind === 'error' ? 'var(--danger)' : 'var(--success)' }}
+          >
+            {photoFeedback.message}
+          </p>
+        )}
 
         <p className="mt-2 text-center text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>
           Choose an original Forged card, then post it to accepted friends or share it anywhere.
@@ -1088,11 +1254,29 @@ export default function ActivityShareStudio({ run, onClose }) {
           <button type="button" onClick={handleCopy} disabled={busy} className="pressable flex min-h-12 items-center justify-center gap-2 rounded-lg text-sm font-bold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}><Copy size={17} /> Copy</button>
         </div>
 
-        <label className="pressable mt-2 flex min-h-12 cursor-pointer items-center justify-center gap-2 rounded-lg text-sm font-bold" style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}>
+        <button
+          type="button"
+          data-testid="photo-control-picker"
+          aria-controls={photoInputId}
+          aria-describedby={photoFeedback.message ? photoFeedbackId : undefined}
+          onClick={openPhotoPicker}
+          className="pressable mt-2 flex min-h-12 w-full items-center justify-center gap-2 rounded-lg text-sm font-bold"
+          style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}
+        >
           <ImagePlus size={17} /> {photoUrl ? 'Change photo' : 'Add a photo'}
-          <input type="file" accept="image/*" className="sr-only" onChange={handlePhoto} />
-        </label>
+        </button>
         {status && <p role="status" className="mt-3 flex items-center justify-center gap-2 text-center text-xs font-semibold" style={{ color: 'var(--text-muted)' }}><Check size={14} style={{ color: 'var(--success)' }} /> {status}</p>}
+        </div>
+        <input
+          ref={fileInputRef}
+          id={photoInputId}
+          type="file"
+          accept="image/*"
+          aria-hidden="true"
+          tabIndex={-1}
+          className="sr-only"
+          onChange={handlePhoto}
+        />
       </section>
     </div>
   )
