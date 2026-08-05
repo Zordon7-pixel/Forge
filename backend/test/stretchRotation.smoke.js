@@ -23,7 +23,7 @@ Module._load = originalLoad;
 
 const publicRoot = path.resolve(__dirname, '../../frontend/public');
 for (const [category, pool] of Object.entries(POOLS)) {
-  assert(pool.length >= 12, `${category} must expose at least 12 movements`);
+  assert(pool.length >= 16, `${category} must expose enough movements to rotate a 12-movement routine`);
   assert.equal(new Set(pool.map((movement) => movement.id)).size, pool.length, `${category} IDs must be unique`);
 
   for (const movement of pool) {
@@ -43,6 +43,14 @@ for (const [category, pool] of Object.entries(POOLS)) {
     assert.equal(new Set(routine.map((movement) => movement.id)).size, routine.length, `${category} routine contains duplicates`);
     assert.equal(estimateRoutineSeconds(routine), routine.reduce((sum, movement) => sum + movement.duration * movement.sides, 0));
   }
+
+  const priorFullRoutine = pool.slice(0, 12).map((movement) => movement.id);
+  const nextFullRoutine = selectRoutine(pool, priorFullRoutine, 12, () => 0.25, priorFullRoutine);
+  assert.equal(nextFullRoutine.length, 12, `${category} full routine must keep its requested size`);
+  assert(
+    nextFullRoutine.some((movement) => !priorFullRoutine.includes(movement.id)),
+    `${category} full routine must rotate movement membership, not only ordering`
+  );
 }
 
 assert.equal(parseRoutineCount(undefined), 8, 'missing count must default to 8');

@@ -116,11 +116,11 @@ function withLocalImage(stretch) {
 }
 
 const POOL_IDS = {
-  'hip-focused': ['hip-flexor-lunge', 'pigeon-pose', 'butterfly', 'figure-4', 'lateral-lunge-hold', 'sumo-squat-hold', 'standing-hip-circle', 'seated-hip-rotation', 'knee-to-chest', 'pelvic-tilt', 'bridge-hold', 'worlds-greatest'],
-  'leg-focused': ['quad-stretch', 'hamstring-seated', 'calf-wall', 'standing-it-band', 'standing-hamstring-fold', 'inner-thigh-stretch', 'kneeling-quad', 'toe-touch-both', 'downward-dog', 'lateral-lunge-hold', 'hip-flexor-lunge', 'butterfly'],
-  'full-body': ['childs-pose', 'cat-cow', 'downward-dog', 'cobra', 'worlds-greatest', 'standing-side-bend', 'inchworm', 'trunk-rotation', 'pelvic-tilt', 'bridge-hold', 'knee-to-chest', 'butterfly'],
-  'upper-body': ['shoulder-cross', 'chest-opener', 'tricep-stretch', 'neck-tilt', 'overhead-lat', 'wrist-flexor', 'doorway-chest', 'upper-trap', 'standing-side-bend', 'trunk-rotation', 'cat-cow', 'childs-pose'],
-  'lower-back': ['cat-cow', 'knee-to-chest', 'supine-twist', 'childs-pose', 'bridge-hold', 'pelvic-tilt', 'trunk-rotation', 'hip-flexor-lunge', 'cobra', 'downward-dog', 'seated-hip-rotation', 'figure-4'],
+  'hip-focused': ['hip-flexor-lunge', 'pigeon-pose', 'butterfly', 'figure-4', 'lateral-lunge-hold', 'sumo-squat-hold', 'standing-hip-circle', 'seated-hip-rotation', 'knee-to-chest', 'pelvic-tilt', 'bridge-hold', 'worlds-greatest', 'inner-thigh-stretch', 'kneeling-quad', 'standing-it-band', 'supine-twist'],
+  'leg-focused': ['quad-stretch', 'hamstring-seated', 'calf-wall', 'standing-it-band', 'standing-hamstring-fold', 'inner-thigh-stretch', 'kneeling-quad', 'toe-touch-both', 'downward-dog', 'lateral-lunge-hold', 'hip-flexor-lunge', 'butterfly', 'figure-4', 'standing-hip-circle', 'bridge-hold', 'worlds-greatest'],
+  'full-body': ['childs-pose', 'cat-cow', 'downward-dog', 'cobra', 'worlds-greatest', 'standing-side-bend', 'inchworm', 'trunk-rotation', 'pelvic-tilt', 'bridge-hold', 'knee-to-chest', 'butterfly', 'hip-flexor-lunge', 'calf-wall', 'chest-opener', 'supine-twist'],
+  'upper-body': ['shoulder-cross', 'chest-opener', 'tricep-stretch', 'neck-tilt', 'overhead-lat', 'wrist-flexor', 'doorway-chest', 'upper-trap', 'standing-side-bend', 'trunk-rotation', 'cat-cow', 'childs-pose', 'worlds-greatest', 'inchworm', 'cobra', 'downward-dog'],
+  'lower-back': ['cat-cow', 'knee-to-chest', 'supine-twist', 'childs-pose', 'bridge-hold', 'pelvic-tilt', 'trunk-rotation', 'hip-flexor-lunge', 'cobra', 'downward-dog', 'seated-hip-rotation', 'figure-4', 'standing-hamstring-fold', 'hamstring-seated', 'pigeon-pose', 'worlds-greatest'],
 };
 
 const MOBILITY_IDS = new Set([

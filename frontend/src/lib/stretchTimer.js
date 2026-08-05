@@ -90,6 +90,7 @@ export function stretchTimerReducer(state, action = {}) {
       return {
         ...state,
         remaining: state.duration,
+        sideIndex: 0,
         switchRemaining: SWITCH_SIDE_SECONDS,
         phase: TIMER_PHASE.READY,
         resumePhase: TIMER_PHASE.RUNNING,

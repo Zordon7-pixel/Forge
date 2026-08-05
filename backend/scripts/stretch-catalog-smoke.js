@@ -12,6 +12,9 @@ if (ids.size !== stretches.length) {
 }
 
 for (const [category, pool] of Object.entries(_test.POOLS)) {
+  if (pool.length < 16) {
+    throw new Error(`${category} must provide more movements than the 12-item full routine`);
+  }
   const poolIds = new Set(pool.map((stretch) => stretch.id));
   if (poolIds.size !== pool.length) {
     throw new Error(`${category} contains duplicate stretch IDs: ${poolIds.size}/${pool.length}`);

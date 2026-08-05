@@ -49,6 +49,11 @@ assert.equal(pausedSwitch.switchRemaining, 3, 'pause freezes the switch transiti
 pausedSwitch = reduce(pausedSwitch, TIMER_ACTION.START)
 assert.equal(tick(pausedSwitch, 3).phase, TIMER_PHASE.RUNNING, 'resume completes exactly three switch ticks')
 
+const restartedSwitch = reduce(state, TIMER_ACTION.RESTART)
+assert.equal(restartedSwitch.phase, TIMER_PHASE.READY, 'restart during the switch returns to ready')
+assert.equal(restartedSwitch.sideIndex, 0, 'restart during the switch returns to the left side')
+assert.equal(restartedSwitch.remaining, 5, 'restart during the switch restores the full duration')
+
 const cancelledSwitch = reduce(state, TIMER_ACTION.CANCEL)
 assert.equal(cancelledSwitch.phase, TIMER_PHASE.READY, 'navigation cancels a pending switch transition')
 assert.equal(reduce(cancelledSwitch, TIMER_ACTION.TICK).switchRemaining, 3, 'cancelled transitions cannot keep ticking')
@@ -56,6 +61,10 @@ assert.equal(reduce(cancelledSwitch, TIMER_ACTION.TICK).switchRemaining, 3, 'can
 state = tick(state, 3)
 assert.equal(state.phase, TIMER_PHASE.RUNNING, 'three-second switch resumes on the right')
 assert.equal(state.remaining, 5, 'right side starts with the full duration')
+const restartedRight = reduce(state, TIMER_ACTION.RESTART)
+assert.equal(restartedRight.phase, TIMER_PHASE.READY, 'restart on the right returns to ready')
+assert.equal(restartedRight.sideIndex, 0, 'restart on the right returns to the left side')
+assert.equal(restartedRight.remaining, 5, 'restart on the right restores the full left-side duration')
 state = tick(state, 5)
 assert.equal(state.phase, TIMER_PHASE.COMPLETE, 'right side completes the unilateral hold')
 assert.equal(state.completionCount, 1)
