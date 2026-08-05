@@ -79,6 +79,32 @@ Update tests so they fail on the old four-step page. At minimum prove:
 
 Source-string-only assertions are insufficient if a practical component/unit behavior test already exists; extend the production test seam instead of duplicating a fake implementation.
 
+## Phase B — iPhone post-recap Startup Error closure
+
+**Direct device evidence:** `/Users/zordon/.hermes/cache/images/img_090265c98ea0.jpg`
+
+The screenshot is a full black ErrorBoundary screen with the non-recoverable title `Forged Hybrid — Startup Error`, message `Forged Hybrid could not finish starting. Reload and try again.`, and one Reload button. This is occurring after completing the run recap on the remotely loaded Capacitor iPhone app.
+
+### Required investigation and correction
+
+- Trace the actual boundary path across `App.jsx`, `ErrorBoundary.jsx`, `chunkRecovery.js`, Vite preload handling, and the recap lazy import. Do not assume the existing `lazyWithRetry` catch covers all iOS `Load failed` variants—the screenshot proves one path still reaches ErrorBoundary as non-recoverable.
+- Make the ErrorBoundary and lazy-import recovery classification consistent for the iOS generic `Load failed` that occurs at a known dynamic-import/startup boundary.
+- Recovery must be bounded to one cache-busted replacement per failed shell and must not create an infinite reload loop.
+- If the first automatic recovery cannot complete, show a truthful updating/recovery screen rather than misclassifying a stale app chunk as a generic Startup Error.
+- Preserve genuine non-chunk runtime errors as Startup Error; do not turn every React error into a reload.
+- The manual Reload action must clear/reset the one-shot guard or otherwise provide a real second recovery attempt rather than repeating the same blocked state.
+- Preserve privacy and current URL/recap ID; only add the cache-busting query parameter.
+- Add regression tests that reproduce the exact generic `Load failed` entering through ErrorBoundary and prove bounded automatic recovery, correct fallback copy/classification, manual retry semantics, and genuine runtime-error non-recovery.
+- Do not add a service worker, dependency, native plugin, or TestFlight requirement.
+
+Expected additional files are limited to:
+- `frontend/src/components/ErrorBoundary.jsx`
+- `frontend/src/lib/chunkRecovery.js`
+- `frontend/test/chunkRecovery.smoke.mjs`
+- `frontend/src/App.jsx` only if root-cause evidence requires it
+
+The whole branch must remain at or below 8 changed files.
+
 ## Completion contract
 
 Codex must edit and test only. Do not commit, push, merge, or deploy. Return root cause, files changed, exact test output, and residual device-only verification. No bare `fixed` wording; status is `patched` until independent QA and production verification.

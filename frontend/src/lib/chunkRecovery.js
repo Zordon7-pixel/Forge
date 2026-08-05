@@ -1,5 +1,7 @@
 const RECOVERY_KEY = 'forge_chunk_recovery_attempted'
 const RECOVERY_CLEAR_MS = 15000
+// Keeps generic Safari failures recoverable only when a dynamic-import boundary observed them.
+const chunkBoundaryErrors = new WeakSet()
 
 function errorText(error) {
   return `${error?.message || ''} ${error?.stack || ''}`.toLowerCase()
@@ -23,6 +25,29 @@ export function isRecoverableChunkError(error, { allowGenericLoadFailure = false
     || (allowGenericLoadFailure && text.includes('load failed'))
 }
 
+export function markChunkBoundaryError(error) {
+  if (error && (typeof error === 'object' || typeof error === 'function')) {
+    chunkBoundaryErrors.add(error)
+  }
+  return error
+}
+
+export function isRecoverableChunkBoundaryError(error) {
+  return isRecoverableChunkError(error, {
+    allowGenericLoadFailure: Boolean(
+      error
+      && (typeof error === 'object' || typeof error === 'function')
+      && chunkBoundaryErrors.has(error),
+    ),
+  })
+}
+
+function replaceCurrentShell() {
+  const url = new URL(window.location.href)
+  url.searchParams.set('_forge_reload', String(Date.now()))
+  window.location.replace(url.toString())
+}
+
 export function recoverFromChunkError(error, options) {
   if (typeof window === 'undefined' || !isRecoverableChunkError(error, options)) return false
 
@@ -34,9 +59,21 @@ export function recoverFromChunkError(error, options) {
     return false
   }
 
-  const url = new URL(window.location.href)
-  url.searchParams.set('_forge_reload', String(Date.now()))
-  window.location.replace(url.toString())
+  replaceCurrentShell()
+  return true
+}
+
+export function retryChunkRecovery() {
+  if (typeof window === 'undefined') return false
+
+  try {
+    window.sessionStorage.removeItem(RECOVERY_KEY)
+    window.sessionStorage.setItem(RECOVERY_KEY, '1')
+  } catch (storageError) {
+    console.warn('[chunkRecovery] manual retry flag unavailable:', storageError?.message || storageError)
+  }
+
+  replaceCurrentShell()
   return true
 }
 
@@ -52,8 +89,12 @@ export function installChunkRecovery() {
   }, RECOVERY_CLEAR_MS)
 
   window.addEventListener('vite:preloadError', (event) => {
-    event.preventDefault()
-    recoverFromChunkError(event.payload || new Error('vite:preloadError'))
+    const error = markChunkBoundaryError(event.payload || new Error('vite:preloadError'))
+    // Canceling makes Vite resolve the import. If no reload starts, let the original
+    // marked error continue into lazyWithRetry/ErrorBoundary instead.
+    if (recoverFromChunkError(error, { allowGenericLoadFailure: true })) {
+      event.preventDefault()
+    }
   })
 
   window.addEventListener('unhandledrejection', (event) => {

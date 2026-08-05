@@ -12,13 +12,14 @@ import NativeNotificationService from './services/NativeNotificationService'
 import { normalizeForgedDeepLink } from './lib/nativeDeepLink'
 import api, { acceptWaiver } from './lib/api'
 import ConsentWaiver from './components/ConsentWaiver'
-import { recoverFromChunkError } from './lib/chunkRecovery'
+import { markChunkBoundaryError, recoverFromChunkError } from './lib/chunkRecovery'
 
 function lazyWithRetry(factory) {
   return lazy(async () => {
     try {
       return await factory()
     } catch (err) {
+      markChunkBoundaryError(err)
       if (recoverFromChunkError(err, { allowGenericLoadFailure: true })) {
         console.warn('[lazyWithRetry] stale chunk detected; loading the current app shell:', err?.message)
         return new Promise(() => {})
