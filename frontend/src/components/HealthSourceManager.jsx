@@ -8,6 +8,7 @@ import {
   HEALTH_SYNC_RESULT_EVENT,
   healthSyncFailureMessage,
   healthSyncNotice,
+  shouldRefreshPageForHealthSyncEvent,
 } from '../lib/healthSync'
 
 function SourcePill({ icon: Icon, label, detail }) {
@@ -47,9 +48,9 @@ export default function HealthSourceManager() {
 
   useEffect(() => {
     loadSources()
-    const handleSyncResult = () => {
+    const handleSyncResult = (event) => {
       setLastSyncResult(getLastHealthSyncResult())
-      loadSources()
+      if (shouldRefreshPageForHealthSyncEvent(event)) loadSources()
     }
     window.addEventListener(HEALTH_SYNC_RESULT_EVENT, handleSyncResult)
     return () => window.removeEventListener(HEALTH_SYNC_RESULT_EVENT, handleSyncResult)

@@ -1,20 +1,11 @@
 export const HEALTH_SYNC_RESULT_EVENT = 'forge-health-sync-result'
 export const HEALTH_SYNC_COMPLETED_EVENT = 'forge-health-sync-completed'
+export const HEALTH_SYNC_ORIGIN_PULL_REFRESH = 'pull_to_refresh'
 export const HEALTH_IMPORT_BATCH_SIZE = 10
 export const HEALTH_IMPORT_TIMEOUT_MS = 30000
-export const HEALTH_PULL_REFRESH_TIMEOUT_MS = 15000
 
 const HEALTH_SYNC_RESULT_KEY = 'forge_last_health_sync_result'
 const HEALTH_HISTORY_TRANSFER_PENDING_KEY = 'forge.health.resyncNeeded'
-
-export class HealthSyncTimeoutError extends Error {
-  constructor(timeoutMs = HEALTH_PULL_REFRESH_TIMEOUT_MS) {
-    super(`Apple Health sync timed out after ${timeoutMs}ms during pull-to-refresh.`)
-    this.name = 'HealthSyncTimeoutError'
-    this.code = 'HEALTH_SYNC_TIMEOUT'
-    this.timeoutMs = timeoutMs
-  }
-}
 
 export function isHealthHistoryTransferPending() {
   try {
@@ -146,8 +137,6 @@ export async function runHealthAwarePageRefresh({
   afterHealthSync,
   onHealthSyncError,
   refreshPage,
-  scheduleTimeout = (callback, timeoutMs) => setTimeout(callback, timeoutMs),
-  cancelTimeout = (timeoutHandle) => clearTimeout(timeoutHandle),
 } = {}) {
   let healthSyncAttempted = false
   let healthSyncResult = null
@@ -156,19 +145,10 @@ export async function runHealthAwarePageRefresh({
   if (authenticated && native) {
     healthSyncAttempted = true
     try {
-      const healthSyncPromise = Promise.resolve().then(() => syncNativeData({ forceFresh: true }))
-      let timeoutHandle
-      const timeoutPromise = new Promise((resolve, reject) => {
-        timeoutHandle = scheduleTimeout(
-          () => reject(new HealthSyncTimeoutError()),
-          HEALTH_PULL_REFRESH_TIMEOUT_MS,
-        )
-      })
-      try {
-        healthSyncResult = await Promise.race([healthSyncPromise, timeoutPromise])
-      } finally {
-        cancelTimeout(timeoutHandle)
-      }
+      healthSyncResult = await Promise.resolve().then(() => syncNativeData({
+        forceFresh: true,
+        syncOrigin: HEALTH_SYNC_ORIGIN_PULL_REFRESH,
+      }))
     } catch (error) {
       healthSyncError = error
       try {
@@ -199,7 +179,11 @@ export function getLastHealthSyncResult() {
   }
 }
 
-export function announceHealthSyncResult(result, { complete = true } = {}) {
+export function shouldRefreshPageForHealthSyncEvent(event) {
+  return event?.detail?.origin !== HEALTH_SYNC_ORIGIN_PULL_REFRESH
+}
+
+export function announceHealthSyncResult(result, { complete = true, origin = null } = {}) {
   const scanned = Array.isArray(result?.workouts) ? result.workouts.length : Number(result?.scanned || result?.total || 0)
   const retryableErrors = retryableHealthSyncErrors(result?.errors)
   const summary = {
@@ -221,7 +205,7 @@ export function announceHealthSyncResult(result, { complete = true } = {}) {
   }
 
   if (typeof window !== 'undefined') {
-    const detail = { ...summary, metrics: result?.metrics || null }
+    const detail = { ...summary, metrics: result?.metrics || null, origin }
     window.dispatchEvent(new CustomEvent(HEALTH_SYNC_RESULT_EVENT, { detail }))
     if (complete) window.dispatchEvent(new CustomEvent(HEALTH_SYNC_COMPLETED_EVENT, { detail }))
   }

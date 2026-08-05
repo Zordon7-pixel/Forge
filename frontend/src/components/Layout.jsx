@@ -38,8 +38,8 @@ export default function Layout({ children }) {
   const navigate = useNavigate()
   const [feedbackOpen, setFeedbackOpen] = useState(false)
   const [appRefreshKey, setAppRefreshKey] = useState(0)
-  const isWorkout = location.pathname.startsWith('/workout/')
-  const isImmersive = isWorkout
+  const isActiveWorkout = /^\/workout\/active(?:\/|$)/.test(location.pathname)
+  const isImmersive = isActiveWorkout
     || location.pathname.startsWith('/stretches/session')
     || location.pathname.startsWith('/run/active')
   const avatarLabel = getAvatarLabel(getUser())

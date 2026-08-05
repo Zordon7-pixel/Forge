@@ -301,7 +301,7 @@ class HealthService {
     return this.nativeSyncCoordinator.run(options)
   }
 
-  async performNativeSync({ requestPermission = false } = {}) {
+  async performNativeSync({ requestPermission = false, syncOrigin = null } = {}) {
     const result = await this.getHealthSummary({ requestPermission })
     if (!result?.available) {
       throw new Error(result?.reason || 'Apple Health is not available.')
@@ -373,7 +373,7 @@ class HealthService {
       complete,
       status: complete ? 'complete' : 'partial',
     }
-    announceHealthSyncResult(syncResult, { complete })
+    announceHealthSyncResult(syncResult, { complete, origin: syncOrigin })
     return syncResult
   }
 

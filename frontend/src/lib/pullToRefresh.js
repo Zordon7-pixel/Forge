@@ -50,8 +50,8 @@ export function createPullToRefreshEndHandler({
   onRefreshFailure,
   resetGesture,
 }) {
-  return async function onTouchEnd() {
-    if (refreshInFlight.current || !shouldRefresh()) {
+  return async function onTouchEnd(event) {
+    if (event?.touches?.length > 0 || refreshInFlight.current || !shouldRefresh()) {
       resetGesture()
       return false
     }

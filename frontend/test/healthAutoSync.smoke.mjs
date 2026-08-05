@@ -8,10 +8,9 @@ import {
   createHealthImportBatches,
   createHealthSyncCoordinator,
   HEALTH_IMPORT_BATCH_SIZE,
-  HEALTH_PULL_REFRESH_TIMEOUT_MS,
   HEALTH_SYNC_COMPLETED_EVENT,
+  HEALTH_SYNC_ORIGIN_PULL_REFRESH,
   HEALTH_SYNC_RESULT_EVENT,
-  HealthSyncTimeoutError,
   healthSyncFailureMessage,
   healthSyncNotice,
   importHealthWorkoutBatches,
@@ -20,6 +19,7 @@ import {
   markHealthHistoryTransferPending,
   retryableHealthSyncErrors,
   runHealthAwarePageRefresh,
+  shouldRefreshPageForHealthSyncEvent,
 } from '../src/lib/healthSync.js'
 import {
   createPullToRefreshEndHandler,
@@ -35,6 +35,8 @@ const layout = read('frontend/src/components/Layout.jsx')
 const service = read('frontend/src/services/HealthService.js')
 const pullToRefresh = read('frontend/src/components/PullToRefresh.jsx')
 const healthSyncSource = read('frontend/src/lib/healthSync.js')
+const dashboardSource = read('frontend/src/pages/Dashboard.jsx')
+const healthSourceManager = read('frontend/src/components/HealthSourceManager.jsx')
 
 class MemoryStorage {
   constructor() { this.values = new Map() }
@@ -160,8 +162,14 @@ assert.ok(!timeoutCopy.includes('15000ms'), 'timeout copy does not expose an imp
   })
   const automatic = coordinator.run()
   await Promise.resolve()
-  const manualOne = coordinator.run({ forceFresh: true })
-  const manualTwo = coordinator.run({ forceFresh: true })
+  const manualOne = coordinator.run({
+    forceFresh: true,
+    syncOrigin: HEALTH_SYNC_ORIGIN_PULL_REFRESH,
+  })
+  const manualTwo = coordinator.run({
+    forceFresh: true,
+    syncOrigin: HEALTH_SYNC_ORIGIN_PULL_REFRESH,
+  })
   assert.equal(calls.length, 1, 'manual callers do not start alongside an active automatic sync')
   automaticGate.resolve()
   await automatic
@@ -169,6 +177,7 @@ assert.ok(!timeoutCopy.includes('15000ms'), 'timeout copy does not expose an imp
   await Promise.resolve()
   assert.equal(calls.length, 2, 'manual callers queue one fresh sync after an active automatic sync')
   assert.equal(calls[1].forceFresh, true, 'the queued sync retains manual freshness semantics')
+  assert.equal(calls[1].syncOrigin, HEALTH_SYNC_ORIGIN_PULL_REFRESH, 'the queued sync retains pull-refresh provenance')
   manualGate.resolve()
   const manualResults = await Promise.all([manualOne, manualTwo])
   assert.deepEqual(manualResults.map((result) => result.source), ['manual', 'manual'])
@@ -197,7 +206,10 @@ assert.ok(!timeoutCopy.includes('15000ms'), 'timeout copy does not expose an imp
     },
   })
   await Promise.resolve()
-  assert.deepEqual(calls, [{ forceFresh: true }], 'authenticated native pull refresh requests exactly one forced HealthKit sync')
+  assert.deepEqual(calls, [{
+    forceFresh: true,
+    syncOrigin: HEALTH_SYNC_ORIGIN_PULL_REFRESH,
+  }], 'authenticated native pull refresh requests exactly one forced HealthKit sync with pull provenance')
   assert.deepEqual(events, ['health-started'], 'page refresh waits while the HealthKit sync is unsettled')
   syncGate.resolve({ complete: true })
   const outcome = await refresh
@@ -230,89 +242,23 @@ assert.ok(!timeoutCopy.includes('15000ms'), 'timeout copy does not expose an imp
 {
   const syncGate = deferred()
   const events = []
-  const calls = []
-  let cancelCalls = 0
-  let scheduledTimeoutMs = null
+  let settled = false
   const refresh = runHealthAwarePageRefresh({
     authenticated: true,
     native: true,
-    syncNativeData: (options) => {
-      calls.push(options)
-      return syncGate.promise
-    },
+    syncNativeData: () => syncGate.promise,
     onHealthSyncError: (error) => events.push(`health-failed:${error.message}`),
     afterHealthSync: () => events.push('post-sync'),
     refreshPage: () => events.push('page-refreshed'),
-    scheduleTimeout: (callback, timeoutMs) => {
-      scheduledTimeoutMs = timeoutMs
-      queueMicrotask(callback)
-      return 1
-    },
-    cancelTimeout: () => {
-      cancelCalls += 1
-    },
   })
-  const settledRefresh = refresh.then((outcome) => ({ outcome, settled: true }))
-  const deadlineOutcome = await Promise.race([
-    settledRefresh,
-    new Promise((resolve) => setTimeout(() => resolve({ settled: false }), 0)),
-  ])
-  assert.equal(deadlineOutcome.settled, true, 'an unresolved native sync settles through the manual-refresh deadline')
-  assert.deepEqual(calls, [{ forceFresh: true }], 'the bounded path still requests exactly one forced-fresh native sync')
-  assert.equal(scheduledTimeoutMs, HEALTH_PULL_REFRESH_TIMEOUT_MS, 'the manual-refresh deadline uses the exported mobile UX timeout')
-  assert.equal(cancelCalls, 1, 'the deadline handle is cleaned up after bounded settlement')
-  assert.deepEqual(events, [
-    `health-failed:${deadlineOutcome.outcome.healthSyncError.message}`,
-    'post-sync',
-    'page-refreshed',
-  ], 'the deadline reports one handled Health failure before refreshing exactly once')
-  assert.equal(deadlineOutcome.outcome.healthSyncAttempted, true)
-  assert.equal(deadlineOutcome.outcome.healthSyncResult, null, 'a timed-out sync does not emit a false Health success')
-  assert.ok(deadlineOutcome.outcome.healthSyncError instanceof HealthSyncTimeoutError, 'the deadline exposes a named Health timeout')
-  assert.match(healthSyncFailureMessage(deadlineOutcome.outcome.healthSyncError), /taking longer than expected/)
-
+  refresh.finally(() => { settled = true })
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(settled, false, 'a long-running valid HealthKit import is not abandoned for a stale page refresh')
+  assert.deepEqual(events, [], 'post-sync work remains blocked until HealthKit actually settles')
   syncGate.resolve({ complete: true })
-  await Promise.resolve()
-  await Promise.resolve()
-  assert.equal(events.filter((event) => event === 'page-refreshed').length, 1, 'a late Health success does not refresh twice')
-  assert.equal(events.filter((event) => event.startsWith('health-failed:')).length, 1, 'a late Health success does not report another failure')
-}
-
-{
-  const syncGate = deferred()
-  const unhandledRejections = []
-  let errorCalls = 0
-  let refreshCalls = 0
-  const captureUnhandledRejection = (error) => {
-    unhandledRejections.push(error)
-  }
-  process.on('unhandledRejection', captureUnhandledRejection)
-  try {
-    const outcome = await runHealthAwarePageRefresh({
-      authenticated: true,
-      native: true,
-      syncNativeData: () => syncGate.promise,
-      onHealthSyncError: () => {
-        errorCalls += 1
-      },
-      refreshPage: () => {
-        refreshCalls += 1
-      },
-      scheduleTimeout: (callback) => {
-        queueMicrotask(callback)
-        return 1
-      },
-      cancelTimeout: () => {},
-    })
-    assert.ok(outcome.healthSyncError instanceof HealthSyncTimeoutError)
-    syncGate.reject(new Error('late native rejection'))
-    await new Promise((resolve) => setImmediate(resolve))
-  } finally {
-    process.off('unhandledRejection', captureUnhandledRejection)
-  }
-  assert.equal(errorCalls, 1, 'a late Health rejection does not invoke the handled error callback twice')
-  assert.equal(refreshCalls, 1, 'a late Health rejection does not refresh twice')
-  assert.deepEqual(unhandledRejections, [], 'a late Health rejection remains observed after the deadline')
+  await refresh
+  assert.equal(settled, true)
+  assert.deepEqual(events, ['post-sync', 'page-refreshed'], 'HealthKit settlement is followed by exactly one current-screen refresh')
 }
 
 {
@@ -385,9 +331,8 @@ assert.ok(!timeoutCopy.includes('15000ms'), 'timeout copy does not expose an imp
 {
   const syncGate = deferred()
   const refreshInFlight = { current: false }
-  let fireDeadline
   let coordinatorCalls = 0
-  let reloadCalls = 0
+  let refreshCalls = 0
   const onTouchEnd = createPullToRefreshEndHandler({
     refreshInFlight,
     shouldRefresh: () => true,
@@ -399,13 +344,8 @@ assert.ok(!timeoutCopy.includes('15000ms'), 'timeout copy does not expose an imp
         native: true,
         syncNativeData: () => syncGate.promise,
         refreshPage: () => {
-          reloadCalls += 1
+          refreshCalls += 1
         },
-        scheduleTimeout: (callback) => {
-          fireDeadline = callback
-          return 1
-        },
-        cancelTimeout: () => {},
       })
     },
     onRefreshFailure: () => {},
@@ -414,13 +354,32 @@ assert.ok(!timeoutCopy.includes('15000ms'), 'timeout copy does not expose an imp
 
   const firstTouchEnd = onTouchEnd()
   const secondTouchEnd = onTouchEnd()
-  assert.equal(await secondTouchEnd, false, 'a duplicate touchend cannot start a second deadline-bounded refresh')
-  assert.equal(coordinatorCalls, 1, 'the synchronous gesture latch guards the timeout path')
-  fireDeadline()
-  assert.equal(await firstTouchEnd, true)
-  assert.equal(reloadCalls, 1, 'the timeout path invokes ordinary reload exactly once')
-  assert.equal(refreshInFlight.current, false, 'the timeout fallback still releases the gesture guard')
+  assert.equal(await secondTouchEnd, false, 'a duplicate touchend cannot start a second long-running refresh')
+  assert.equal(coordinatorCalls, 1, 'the synchronous gesture latch guards the full HealthKit operation')
+  assert.equal(refreshCalls, 0, 'a long-running HealthKit operation cannot expose stale page data')
+  assert.equal(refreshInFlight.current, true, 'the gesture guard remains raised until HealthKit settles')
   syncGate.resolve({ complete: true })
+  assert.equal(await firstTouchEnd, true)
+  assert.equal(refreshCalls, 1, 'HealthKit settlement invokes one current-screen refresh')
+  assert.equal(refreshInFlight.current, false, 'the settled operation releases the gesture guard')
+}
+
+{
+  const refreshInFlight = { current: false }
+  let refreshCalls = 0
+  let gestureResets = 0
+  const onTouchEnd = createPullToRefreshEndHandler({
+    refreshInFlight,
+    shouldRefresh: () => true,
+    onRefreshStart: () => {},
+    runPageRefresh: async () => { refreshCalls += 1 },
+    onRefreshFailure: () => {},
+    resetGesture: () => { gestureResets += 1 },
+  })
+
+  assert.equal(await onTouchEnd({ touches: [{}] }), false, 'lifting one finger from a multi-touch gesture never refreshes')
+  assert.equal(refreshCalls, 0)
+  assert.equal(gestureResets, 1, 'multi-touch cancellation clears the stale gesture')
 }
 
 {
@@ -491,7 +450,11 @@ assert.equal(isHealthHistoryTransferPending(), false)
 
 let resultEvents = 0
 let completionEvents = 0
-window.addEventListener(HEALTH_SYNC_RESULT_EVENT, () => { resultEvents += 1 })
+let lastResultEvent = null
+window.addEventListener(HEALTH_SYNC_RESULT_EVENT, (event) => {
+  resultEvents += 1
+  lastResultEvent = event
+})
 window.addEventListener(HEALTH_SYNC_COMPLETED_EVENT, () => { completionEvents += 1 })
 const partialSummary = announceHealthSyncResult({ scanned: 2, imported: 1, errors: [{ retryable: true }] }, { complete: false })
 assert.equal(partialSummary.status, 'partial')
@@ -501,12 +464,20 @@ assert.match(healthSyncNotice(partialSummary), /1 unresolved/)
 announceHealthSyncResult({ scanned: 2, imported: 2, errors: [] }, { complete: true })
 assert.equal(resultEvents, 2)
 assert.equal(completionEvents, 1, 'one complete sync emits exactly one completion-success event')
+announceHealthSyncResult(
+  { scanned: 1, imported: 1, errors: [] },
+  { complete: true, origin: HEALTH_SYNC_ORIGIN_PULL_REFRESH },
+)
+assert.equal(resultEvents, 3)
+assert.equal(lastResultEvent.detail.origin, HEALTH_SYNC_ORIGIN_PULL_REFRESH, 'pull provenance reaches Health result listeners')
+assert.equal(shouldRefreshPageForHealthSyncEvent(lastResultEvent), false, 'pull-origin events defer network reloads to the shared app remount')
+assert.equal(shouldRefreshPageForHealthSyncEvent({ detail: { origin: null } }), true, 'automatic Health events still refresh mounted data')
 
 assert.ok(app.includes('sync({ force: true, bypassInterval: true })'), 'cold native launch bypasses the persisted sync throttle once')
 assert.ok(service.indexOf('markHealthHistoryTransferPending()') < service.indexOf('this.getWorkoutHistory(historyOptions)'), 'durable transfer marker is written before native history advances')
 assert.ok(service.includes("api.post('/import/health', { workouts: batch }, { timeout: HEALTH_IMPORT_TIMEOUT_MS })"), 'each workout batch has a dedicated timeout')
 assert.ok(service.includes('createHealthSyncCoordinator'), 'native calls use the behavioral single-flight coordinator')
-assert.ok(service.includes('announceHealthSyncResult(syncResult, { complete })'), 'sync result distinguishes complete from partial')
+assert.ok(service.includes('announceHealthSyncResult(syncResult, { complete, origin: syncOrigin })'), 'sync result distinguishes complete from partial and preserves refresh provenance')
 assert.ok(pullToRefresh.includes('await runHealthAwarePageRefresh({'), 'pull-to-refresh delegates sync and reload ordering to the tested coordinator')
 assert.ok(pullToRefresh.includes('syncNativeData: (options) => HealthService.syncNativeData(options)'), 'pull-to-refresh forwards forced manual sync options to HealthService')
 assert.ok(pullToRefresh.includes("console.error('[PullToRefresh] Apple Health sync failed:'"), 'pull sync failures retain diagnostic context')
@@ -515,11 +486,17 @@ assert.ok(pullToRefresh.includes('createPullToRefreshEndHandler({'), 'pull-to-re
 assert.ok(pullToRefresh.includes("window.addEventListener('touchstart'"), 'pull-to-refresh starts above the sticky header on every primary tab')
 assert.ok(pullToRefresh.includes("window.addEventListener('touchcancel'"), 'cancelled iOS gestures cannot leave stale pull state')
 assert.ok(!pullToRefresh.includes('}, [pulling, pullDistance])'), 'gesture listeners are stable throughout a pull')
+assert.ok(pullToRefresh.includes("'form'") && pullToRefresh.includes("'[role=\"dialog\"]'"), 'forms and dialogs are excluded from destructive pull gestures')
+assert.ok(pullToRefresh.includes('event.touches.length !== 1') && pullToRefresh.includes('resetGesture()'), 'multi-touch transitions cancel the stored pull gesture')
 assert.ok(pullToRefresh.includes("'Syncing Apple Health'"), 'native refresh exposes clear HealthKit progress')
 assert.ok(pullToRefresh.includes('refreshPage: () => onRefreshCompleteRef.current?.()'), 'pull refresh remounts current data without a duplicate cold-launch HealthKit sync')
 assert.ok(!pullToRefresh.includes('window.location.reload()'), 'pull refresh does not hard-reload the native shell')
+assert.ok(!healthSyncSource.includes('Promise.race([healthSyncPromise'), 'pull refresh waits for the actual HealthKit import instead of exposing stale data at a UI deadline')
+assert.ok(dashboardSource.includes('shouldRefreshPageForHealthSyncEvent(event)'), 'Dashboard suppresses its duplicate fetch burst for pull-origin Health events')
+assert.ok(healthSourceManager.includes('shouldRefreshPageForHealthSyncEvent(event)'), 'connected sources suppress duplicate pull-origin fetches')
 assert.ok(layout.includes('<PullToRefresh onRefreshComplete={refreshAppShell}>'), 'the shared app shell owns the refresh completion')
 assert.ok(layout.includes('<main key={appRefreshKey}'), 'the active screen remounts after HealthKit settles')
 assert.ok(layout.includes('refreshKey={`${location.key}:${appRefreshKey}`}'), 'header readiness refreshes with the active screen')
+assert.ok(layout.includes("/^\\/workout\\/active(?:\\/|$)/"), 'only an active workout is immersive; workout summaries retain pull-to-refresh')
 
 console.log('HEALTH AUTO-SYNC SMOKE OK')

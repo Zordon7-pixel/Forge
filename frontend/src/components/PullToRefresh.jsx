@@ -16,6 +16,14 @@ const PULL_REFRESH_IGNORE_SELECTOR = [
   'input',
   'textarea',
   'select',
+  'form',
+  'button',
+  'a[href]',
+  'label',
+  'fieldset',
+  'dialog',
+  '[role="dialog"]',
+  '[role="button"]',
   '[contenteditable="true"]',
   '[role="slider"]',
 ].join(',')
@@ -46,9 +54,12 @@ export default function PullToRefresh({ children, onRefreshComplete }) {
     }
 
     const onTouchStart = (event) => {
+      if (event.touches.length !== 1) {
+        resetGesture()
+        return
+      }
       if (
         refreshInFlight.current
-        || event.touches.length !== 1
         || readPullRefreshScrollTop() > 1
         || shouldIgnorePullTarget(event.target)
       ) return
@@ -64,7 +75,11 @@ export default function PullToRefresh({ children, onRefreshComplete }) {
 
     const onTouchMove = (event) => {
       const gesture = gestureRef.current
-      if (!gesture || event.touches.length !== 1) return
+      if (!gesture) return
+      if (event.touches.length !== 1) {
+        resetGesture()
+        return
+      }
 
       const touch = event.touches[0]
       const measurement = measurePullRefreshGesture({

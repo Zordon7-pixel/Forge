@@ -15,7 +15,7 @@ import { useProContext } from '../context/ProContext'
 import { fetchDailyExecution, recommendationFromExecution, hasExecutableSession, runRouteState, localDateISO } from '../lib/dailyExecution'
 import { formatGroupRunDate, upcomingGroupRun } from '../lib/groupRuns'
 import { resolveReadiness } from '../lib/truthConsistency'
-import { HEALTH_SYNC_RESULT_EVENT } from '../lib/healthSync'
+import { HEALTH_SYNC_RESULT_EVENT, shouldRefreshPageForHealthSyncEvent } from '../lib/healthSync'
 import { isRunningActivity } from '../lib/activityType'
 import TravelTrainingPrompt from '../components/TravelTrainingPrompt'
 
@@ -440,8 +440,10 @@ export default function Dashboard() {
         setDailyStepsSource('watch')
       }
       if (metrics) setHealthSync({ loading: false, available: true, reason: null, metrics })
-      fetchDashboardData()
-      fetchReadinessData()
+      if (shouldRefreshPageForHealthSyncEvent(event)) {
+        fetchDashboardData()
+        fetchReadinessData()
+      }
     }
     window.addEventListener(HEALTH_SYNC_RESULT_EVENT, handleHealthSyncCompleted)
 
