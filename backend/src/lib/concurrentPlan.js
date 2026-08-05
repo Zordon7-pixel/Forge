@@ -569,6 +569,7 @@ function partialCurrentWeekConstraint(quota, requestedRunDaysPerWeek) {
 
 function runTypeFor(day, runDays, phase, options = {}) {
   const position = runDays.indexOf(day);
+  if (position === 0 && runDays.length === 1 && phase === 'taper' && options.hasTimedGoal) return 'sharpen';
   if (position === runDays.length - 1) return 'long';
   if (position === 0 && (runDays.length >= 3 || (options.hasTimedGoal && runDays.length >= 2))) {
     if (phase === 'base') return 'hills';
@@ -579,30 +580,69 @@ function runTypeFor(day, runDays, phase, options = {}) {
   return position === 1 && runDays.length >= 4 ? 'steady' : 'easy';
 }
 
-function preserveTimedTaperDistance(distances, minimumDistance = 1.5) {
-  if (!Array.isArray(distances) || distances.length < 2 || Number(distances[0] || 0) >= minimumDistance) {
-    return distances;
+function timedTaperMinimumDistance(type) {
+  if (type === 'sharpen' || type === 'steady' || type === 'long') return 1.5;
+  return 1;
+}
+
+function selectTimedTaperRunDays(runDays, totalMiles, options = {}) {
+  if (!Array.isArray(runDays) || runDays.length <= 1) return runDays;
+  const availableMiles = round(Math.max(0, Number(totalMiles || 0)));
+
+  for (let count = runDays.length; count >= 1; count -= 1) {
+    let candidate;
+    if (count === 1) {
+      candidate = [runDays[0]];
+    } else if (count === 2) {
+      candidate = [runDays[0], runDays[runDays.length - 1]];
+    } else {
+      const middle = selectRunDays(runDays.slice(1, -1), count - 2);
+      const selected = new Set([runDays[0], ...middle, runDays[runDays.length - 1]]);
+      candidate = DAY_ORDER.filter((day) => selected.has(day));
+    }
+    const requiredMiles = round(candidate.reduce((sum, day) => (
+      sum + timedTaperMinimumDistance(runTypeFor(day, candidate, 'taper', {
+        ...options,
+        hasTimedGoal: true,
+      }))
+    ), 0));
+    if (availableMiles + 0.05 >= requiredMiles) return candidate;
   }
 
-  const adjusted = distances.map((distance) => round(Math.max(0.1, Number(distance || 0))));
-  let needed = round(minimumDistance - adjusted[0]);
-  const middleDonors = adjusted
-    .slice(1, -1)
-    .map((distance, offset) => ({ index: offset + 1, distance }))
-    .sort((a, b) => b.distance - a.distance)
-    .map(({ index }) => index);
-  const donorIndexes = [...middleDonors, adjusted.length - 1];
+  return runDays;
+}
 
-  for (const index of donorIndexes) {
-    if (needed <= 0) break;
-    const available = round(Math.max(0, adjusted[index] - 0.1));
-    const transferred = round(Math.min(needed, available));
-    adjusted[index] = round(adjusted[index] - transferred);
-    adjusted[0] = round(adjusted[0] + transferred);
-    needed = round(needed - transferred);
+function preserveTimedTaperDistance(distances, minimumDistances = []) {
+  if (!Array.isArray(distances) || !distances.length || minimumDistances.length !== distances.length) return distances;
+  const totalUnits = Math.round(distances.reduce((sum, distance) => sum + Number(distance || 0), 0) * 10);
+  const floorUnits = minimumDistances.map((distance) => Math.round(Number(distance || 0) * 10));
+  const floorTotalUnits = floorUnits.reduce((sum, distance) => sum + distance, 0);
+  if (totalUnits < floorTotalUnits) return distances;
+
+  const currentUnits = distances.map((distance) => Math.round(Number(distance || 0) * 10));
+  if (currentUnits.every((distance, index) => distance >= floorUnits[index])) return distances;
+
+  const extraUnits = totalUnits - floorTotalUnits;
+  const weights = currentUnits.map((distance, index) => Math.max(0, distance - floorUnits[index]));
+  const weightTotal = weights.reduce((sum, weight) => sum + weight, 0);
+  const allocations = floorUnits.slice();
+  if (extraUnits > 0 && weightTotal > 0) {
+    const exactExtras = weights.map((weight) => extraUnits * weight / weightTotal);
+    const assignedExtras = exactExtras.map(Math.floor);
+    let unassigned = extraUnits - assignedExtras.reduce((sum, units) => sum + units, 0);
+    const byRemainder = exactExtras
+      .map((value, index) => ({ index, remainder: value - assignedExtras[index] }))
+      .sort((a, b) => b.remainder - a.remainder || a.index - b.index);
+    for (const { index } of byRemainder) {
+      if (unassigned <= 0) break;
+      assignedExtras[index] += 1;
+      unassigned -= 1;
+    }
+    assignedExtras.forEach((units, index) => { allocations[index] += units; });
+  } else if (extraUnits > 0) {
+    allocations[allocations.length - 1] += extraUnits;
   }
-
-  return needed <= 0 ? adjusted : distances;
+  return allocations.map((units) => units / 10);
 }
 
 function allocateRunDistances(totalMiles, runDays, phase, raceDistance, raceDay, options = {}) {
@@ -640,7 +680,7 @@ function allocateRunDistances(totalMiles, runDays, phase, raceDistance, raceDay,
   const scale = rawTotal > 0 && totalMiles > 0 ? totalMiles / rawTotal : 1;
   const scaled = raw.map((value) => round(Math.max(0.1, value * scale)));
   return phase === 'taper' && options.preserveTimedTaperSharpening
-    ? preserveTimedTaperDistance(scaled)
+    ? preserveTimedTaperDistance(scaled, options.minimumDistances)
     : scaled;
 }
 
@@ -1290,6 +1330,17 @@ function buildConcurrentPlan(context = {}) {
     const priorScheduledMiles = Number(weeks[weeks.length - 1]?.totalMiles || 0);
     if (phase === 'deload' && priorScheduledMiles > 0) scheduledMileageTarget = Math.min(scheduledMileageTarget, priorScheduledMiles * 0.8);
     if (phase === 'taper' && priorScheduledMiles > 0) scheduledMileageTarget = Math.min(scheduledMileageTarget, priorScheduledMiles * 0.65);
+    if (phase === 'taper' && goalPaceContext && !raceDay) {
+      weekRunDays = selectTimedTaperRunDays(weekRunDays, scheduledMileageTarget, {
+        weekNumber,
+        weekCount,
+      });
+    }
+    const minimumDistances = weekRunDays.map((day) => timedTaperMinimumDistance(runTypeFor(day, weekRunDays, phase, {
+      weekNumber,
+      weekCount,
+      hasTimedGoal: Boolean(goalPaceContext),
+    })));
     const distances = allocateRunDistances(scheduledMileageTarget, weekRunDays, phase, activeRaceDistance, raceDay, {
       weekNumber,
       recentLongMiles: (history.acuteRunLoad?.protectiveRun || history.acuteRunLoad?.latestRun)?.isLong
@@ -1297,6 +1348,7 @@ function buildConcurrentPlan(context = {}) {
         : 0,
       longRunCompleted: Boolean(isCurrentWeek && currentWeekLoad.longRunCompleted),
       preserveTimedTaperSharpening: Boolean(goalPaceContext),
+      minimumDistances,
     });
     const runByDay = new Map();
     weekRunDays.forEach((day, index) => {
@@ -1413,6 +1465,11 @@ function validateRun(session, path, errors) {
     errors.push(`${path}.duration_min must be positive for a time-based session`);
   }
   if (!Array.isArray(session.evidence_refs) || session.evidence_refs.length === 0) errors.push(`${path}.evidence_refs is required`);
+}
+
+function isStructuredTargetPaceSession(session = {}) {
+  return ['race_pace', 'sharpen'].includes(String(session.type || '').toLowerCase())
+    && ['warmup', 'steps', 'cooldown'].every((field) => Array.isArray(session[field]) && session[field].length > 0);
 }
 
 function validateConcurrentPlan(candidate, context = {}) {
@@ -1546,7 +1603,7 @@ function validateConcurrentPlan(candidate, context = {}) {
             }
           }
           if (/(hill|course-specific)/i.test([session.title, session.type, session.description].filter(Boolean).join(' '))) raceSpecificSessionFound = true;
-          if (String(session.type || '').toLowerCase() !== 'race') {
+          if (isStructuredTargetPaceSession(session)) {
             for (const race of raceTargets) {
               const racePace = goalPaceSecondsPerMile(race, {}, context.history || {});
               if (day.date < race.raceDate && racePace && Math.abs(Number(session.goal_pace_seconds_per_mile || 0) - racePace) <= 1) {

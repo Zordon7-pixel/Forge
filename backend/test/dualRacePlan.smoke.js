@@ -156,11 +156,41 @@ for (const runDaysPerWeek of [2, 3, 4, 5]) {
       && session.goal_pace_seconds_per_mile === 522
     ));
     assert.ok(finalTaperSession, 'the second race retains a target-pace session after the first race');
-    if (finalTaperSession.session.type === 'sharpen') {
-      assert.ok(Number(finalTaperSession.session.distance_miles) >= 1.5, 'timed taper sharpening receives a viable distance allocation');
+    assert.equal(finalTaperSession.session.type, 'sharpen', 'the second-race target pace is a real sharpening session');
+    assert.ok(Number(finalTaperSession.session.distance_miles) >= 1.5, 'timed taper sharpening receives a viable distance allocation');
+    for (const field of ['warmup', 'steps', 'cooldown']) {
+      assert.ok(Array.isArray(finalTaperSession.session[field]) && finalTaperSession.session[field].length > 0, `sharpening ${field} is structured`);
+    }
+    for (const week of matrixPlan.weeks.filter((candidate) => candidate.phase === 'taper')) {
+      const taperRuns = week.days.flatMap((day) => day.sessions).filter((session) => session.kind === 'run');
+      taperRuns.forEach((session) => {
+        const minimumDistance = ['sharpen', 'steady', 'long'].includes(session.type) ? 1.5 : 1;
+        assert.ok(
+          Number(session.distance_miles) >= minimumDistance,
+          `${session.type} must remain credible in the ${runDaysPerWeek}-day / ${weeklyMileageBaseline}-mile taper`
+        );
+      });
     }
   }
 }
+
+const unstructuredTargetPace = JSON.parse(JSON.stringify(plan));
+const unstructuredSession = unstructuredTargetPace.weeks
+  .flatMap((week) => week.days)
+  .flatMap((day) => day.sessions.map((session) => ({ date: day.date, session })))
+  .find(({ date, session }) => (
+    date > raceTargets[0].raceDate
+    && date < raceTargets[1].raceDate
+    && session.goal_pace_seconds_per_mile === 522
+  ));
+assert.ok(unstructuredSession, 'test fixture includes the second-race sharpening session');
+unstructuredSession.session.type = 'easy';
+const unstructuredValidation = concurrent.validateConcurrentPlan(unstructuredTargetPace, context);
+assert.equal(unstructuredValidation.valid, false, 'goal-pace metadata on an unstructured easy run cannot satisfy the validator');
+assert.equal(
+  unstructuredValidation.errors.some((error) => error.includes('structured target-pace session before 2026-10-11')),
+  true
+);
 
 const droppedGoal = JSON.parse(JSON.stringify(plan));
 droppedGoal.goals = [droppedGoal.goals[1]];
