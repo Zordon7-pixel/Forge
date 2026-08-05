@@ -26,12 +26,17 @@ function shouldIgnorePullTarget(target) {
     : false
 }
 
-export default function PullToRefresh({ children }) {
+export default function PullToRefresh({ children, onRefreshComplete }) {
   const [pulling, setPulling] = useState(false)
   const [pullDistance, setPullDistance] = useState(0)
   const [refreshing, setRefreshing] = useState(false)
   const refreshInFlight = useRef(false)
   const gestureRef = useRef(null)
+  const onRefreshCompleteRef = useRef(onRefreshComplete)
+
+  useEffect(() => {
+    onRefreshCompleteRef.current = onRefreshComplete
+  }, [onRefreshComplete])
 
   useEffect(() => {
     const resetGesture = () => {
@@ -104,8 +109,10 @@ export default function PullToRefresh({ children }) {
           },
           // Let the completion state paint before page data is requested again.
           afterHealthSync: () => new Promise(r => setTimeout(r, 150)),
-          refreshPage: () => window.location.reload(),
+          refreshPage: () => onRefreshCompleteRef.current?.(),
         })
+        refreshInFlight.current = false
+        setRefreshing(false)
       },
       onRefreshFailure: (error) => {
         console.error('[PullToRefresh] Page refresh failed:', error?.message || error)

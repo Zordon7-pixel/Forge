@@ -37,6 +37,7 @@ export default function Layout({ children }) {
   const location = useLocation()
   const navigate = useNavigate()
   const [feedbackOpen, setFeedbackOpen] = useState(false)
+  const [appRefreshKey, setAppRefreshKey] = useState(0)
   const isWorkout = location.pathname.startsWith('/workout/')
   const isImmersive = isWorkout
     || location.pathname.startsWith('/stretches/session')
@@ -55,6 +56,10 @@ export default function Layout({ children }) {
     }
     return false
   }, [feedbackOpen])
+
+  const refreshAppShell = useCallback(() => {
+    setAppRefreshKey((current) => current + 1)
+  }, [])
 
   return (
     <ReleaseNotesProvider suppressed={isImmersive || feedbackOpen}>
@@ -85,7 +90,7 @@ export default function Layout({ children }) {
               <img src="/icon-192.png" alt="Forged Hybrid" className="w-9 h-9 rounded-xl object-cover" />
             </button>
             <HeaderReadinessChip
-              refreshKey={location.key}
+              refreshKey={`${location.key}:${appRefreshKey}`}
               onOpen={() => navigate('/?readiness=1')}
             />
             <div className="flex shrink-0 items-center gap-2 justify-self-end">
@@ -117,8 +122,8 @@ export default function Layout({ children }) {
         {isImmersive ? (
           <main className="pb-0 pt-0" style={{ minWidth: 0 }}>{children}</main>
         ) : (
-          <PullToRefresh>
-            <main className="app-shell-main pt-4"><SyncNotificationBanner />{children}</main>
+          <PullToRefresh onRefreshComplete={refreshAppShell}>
+            <main key={appRefreshKey} className="app-shell-main pt-4"><SyncNotificationBanner />{children}</main>
           </PullToRefresh>
         )}
       </div>

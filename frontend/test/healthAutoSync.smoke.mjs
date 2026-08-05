@@ -31,6 +31,7 @@ import {
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const read = (relativePath) => fs.readFileSync(path.join(repoRoot, relativePath), 'utf8')
 const app = read('frontend/src/App.jsx')
+const layout = read('frontend/src/components/Layout.jsx')
 const service = read('frontend/src/services/HealthService.js')
 const pullToRefresh = read('frontend/src/components/PullToRefresh.jsx')
 
@@ -513,5 +514,10 @@ assert.ok(pullToRefresh.includes("window.addEventListener('touchstart'"), 'pull-
 assert.ok(pullToRefresh.includes("window.addEventListener('touchcancel'"), 'cancelled iOS gestures cannot leave stale pull state')
 assert.ok(!pullToRefresh.includes('}, [pulling, pullDistance])'), 'gesture listeners are stable throughout a pull')
 assert.ok(pullToRefresh.includes("'Syncing Apple Health'"), 'native refresh exposes clear HealthKit progress')
+assert.ok(pullToRefresh.includes('refreshPage: () => onRefreshCompleteRef.current?.()'), 'pull refresh remounts current data without a duplicate cold-launch HealthKit sync')
+assert.ok(!pullToRefresh.includes('window.location.reload()'), 'pull refresh does not hard-reload the native shell')
+assert.ok(layout.includes('<PullToRefresh onRefreshComplete={refreshAppShell}>'), 'the shared app shell owns the refresh completion')
+assert.ok(layout.includes('<main key={appRefreshKey}'), 'the active screen remounts after HealthKit settles')
+assert.ok(layout.includes('refreshKey={`${location.key}:${appRefreshKey}`}'), 'header readiness refreshes with the active screen')
 
 console.log('HEALTH AUTO-SYNC SMOKE OK')
