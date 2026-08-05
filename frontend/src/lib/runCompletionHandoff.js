@@ -63,7 +63,8 @@ function parseStructured(value) {
   if (typeof value !== 'string' || !value.trim()) return null
   try {
     return JSON.parse(value)
-  } catch {
+  } catch (error) {
+    console.warn('[run-completion] structured field parse failed:', error?.message || error)
     return null
   }
 }
@@ -75,7 +76,8 @@ function boundedStructured(value) {
     const serialized = JSON.stringify(parsed)
     if (serialized.length > MAX_STRUCTURED_LENGTH) return null
     return JSON.parse(serialized)
-  } catch {
+  } catch (error) {
+    console.warn('[run-completion] structured field normalization failed:', error?.message || error)
     return null
   }
 }
