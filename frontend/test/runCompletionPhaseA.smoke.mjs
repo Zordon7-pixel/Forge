@@ -13,6 +13,7 @@ import {
   updateRunCompletionHandoff,
 } from '../src/lib/runCompletionHandoff.js'
 import { resolveRunCompletion, RUN_PROVENANCE } from '../src/lib/runCompletionPolicy.js'
+import { validatePostRunCheckInAnswers } from '../src/lib/postRunCheckIn.js'
 
 class MemoryStorage {
   constructor() { this.values = new Map() }
@@ -81,11 +82,23 @@ check(livePolicy.requiresImmediateCheckIn && livePolicy.destination === '/run/re
 const queuedPolicy = resolveRunCompletion({ provenance: RUN_PROVENANCE.LIVE_TRACKED, runId: 'queued-live', queued: true })
 check(queuedPolicy.destination === '/run/recap/queued-live', 'queued policy never resets to Active Run')
 
+console.log('\n== single-screen check-in validation ==')
+const unansweredCheckIn = validatePostRunCheckInAnswers({ effort: null, pain: null, energy: null })
+check(!unansweredCheckIn.valid && Boolean(unansweredCheckIn.errors.effort) && Boolean(unansweredCheckIn.errors.pain), 'effort and pain are both required')
+check(unansweredCheckIn.firstInvalid === 'effort', 'effort is the first invalid section when both required answers are missing')
+const missingPain = validatePostRunCheckInAnswers({ effort: 7, pain: null, energy: null })
+check(!missingPain.valid && missingPain.firstInvalid === 'pain' && !missingPain.errors.effort, 'validation advances focus to pain after effort is answered')
+const optionalEnergy = validatePostRunCheckInAnswers({ effort: 7, pain: 'none', energy: null })
+check(optionalEnergy.valid && Object.keys(optionalEnergy.errors).length === 0, 'energy remains optional')
+
 console.log('\n== semantic source gates ==')
 const activeRun = read('src/pages/ActiveRun.jsx')
 const recap = read('src/pages/RunRecap.jsx')
 const detail = read('src/components/RunDetailModal.jsx')
 const checkIn = read('src/components/PostRunCheckIn.jsx')
+const pageStart = checkIn.indexOf('if (isPage)')
+const sheetStart = checkIn.indexOf('className="sheet-backdrop"', pageStart)
+const pagePresentation = checkIn.slice(pageStart, sheetStart)
 check(!activeRun.includes('<PostRunCheckIn') && !activeRun.includes('<WorkoutCard'), 'ActiveRun renders neither check-in nor saved workout after completion')
 const persistAt = activeRun.indexOf('saveRunCompletionHandoff({')
 check(persistAt >= 0 && activeRun.indexOf('clearActiveRunSession()', persistAt) > persistAt, 'handoff persists before active-session clearing')
@@ -108,5 +121,18 @@ check(recap.includes('data-testid="post-run-checkin-viewport"'), 'immediate post
 check(recap.includes('presentation="page"'), 'recap renders immediate post-run questions as page content rather than a map overlay')
 check(checkIn.includes("presentation = 'sheet'") && checkIn.includes("presentation === 'page'"), 'check-in keeps retrospective sheets and supports the dedicated completion page')
 check(checkIn.includes("maxHeight: 'calc(100dvh") && checkIn.includes("overflowY: 'auto'"), 'check-in remains internally scrollable inside mobile safe areas')
+check(pageStart >= 0 && sheetStart > pageStart, 'page and retrospective sheet presentations have separate render branches')
+const effortAt = pagePresentation.indexOf('data-testid="post-run-checkin-page-effort"')
+const painAt = pagePresentation.indexOf('data-testid="post-run-checkin-page-pain"')
+const energyAt = pagePresentation.indexOf('data-testid="post-run-checkin-page-energy"')
+const saveAt = pagePresentation.indexOf('data-testid="post-run-checkin-page-submit"')
+check(effortAt >= 0 && painAt > effortAt && energyAt > painAt && saveAt > energyAt, 'page renders effort, pain, energy, and one save action together in form order')
+check((pagePresentation.match(/type="submit"/g) || []).length === 1 && pagePresentation.includes('Save check-in and view recap'), 'page exposes one primary submit action')
+check(!pagePresentation.includes('STEPS.map') && !pagePresentation.includes('requestStepChange') && !pagePresentation.includes('Confirm your check-in'), 'page omits numbered step navigation, review flow, and downstream-reset controls')
+const validateAt = checkIn.indexOf('validatePostRunCheckInAnswers({ effort, pain })')
+const submitAt = checkIn.indexOf('void submit()', validateAt)
+check(validateAt >= 0 && submitAt > validateAt, 'page validates required answers before invoking shared submission')
+check(pagePresentation.includes('role="radiogroup"') && pagePresentation.includes('aria-checked=') && pagePresentation.includes('<fieldset'), 'page answer groups expose accessible selection semantics')
+check(checkIn.includes('invalidSection.focus') && checkIn.includes('invalidSection.scrollIntoView'), 'invalid page submission focuses and scrolls to the first required section')
 
 console.log(`\nRUN COMPLETION PHASE A SMOKE OK (${passed})`)

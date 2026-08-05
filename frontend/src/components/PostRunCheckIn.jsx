@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import api from '../lib/api'
 import { flushQueue, queueRequest } from '../lib/offlineQueue'
+import { validatePostRunCheckInAnswers } from '../lib/postRunCheckIn'
 import {
   clearPostRunCheckInDraft,
   loadPostRunCheckInDraft,
@@ -58,6 +59,8 @@ export default function PostRunCheckIn({ runId, heatDrift, onDone, onCancel, pre
   const [allInjuries, setAllInjuries] = useState([])
   const [injuriesLoaded, setInjuriesLoaded] = useState(false)
   const [loggedInjury, setLoggedInjury] = useState(null)
+  const effortSectionRef = useRef(null)
+  const painSectionRef = useRef(null)
 
   useEffect(() => {
     savePostRunCheckInDraft({
@@ -216,6 +219,26 @@ export default function PostRunCheckIn({ runId, heatDrift, onDone, onCancel, pre
     }
   }
 
+  const submitPage = (event) => {
+    event.preventDefault()
+    const validation = validatePostRunCheckInAnswers({ effort, pain })
+    setErrors(validation.errors)
+    setSubmitError('')
+    if (!validation.valid) {
+      const invalidSection = validation.firstInvalid === 'effort'
+        ? effortSectionRef.current
+        : painSectionRef.current
+      if (invalidSection) {
+        window.requestAnimationFrame(() => {
+          invalidSection.focus({ preventScroll: true })
+          invalidSection.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        })
+      }
+      return
+    }
+    void submit()
+  }
+
   const validateCurrentStep = () => {
     const nextErrors = {}
     if (step === 0 && effort === null) nextErrors.effort = 'Select an effort score before continuing.'
@@ -321,19 +344,143 @@ export default function PostRunCheckIn({ runId, heatDrift, onDone, onCancel, pre
 
   const isPage = presentation === 'page'
 
+  if (isPage) {
+    return (
+      <div
+        className="post-run-checkin-page"
+        data-testid="post-run-checkin-page"
+        style={{ width: '100%', minHeight: '100%', background: 'var(--bg-base)' }}
+      >
+        <form
+          className="post-run-checkin-panel"
+          noValidate
+          onSubmit={submitPage}
+          style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', borderRadius: 16, padding: 20, width: '100%' }}
+        >
+          {onCancel && (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 16 }}>
+              <h2 style={{ margin: 0, color: 'var(--text-primary)', fontWeight: 900, fontSize: 18 }}>Post-run check-in</h2>
+              <button type="button" onClick={onCancel} style={{ border: '1px solid var(--border-subtle)', borderRadius: 10, padding: '8px 10px', background: 'var(--bg-input)', color: 'var(--text-muted)', fontWeight: 800, cursor: 'pointer' }}>Not now</button>
+            </div>
+          )}
+
+          {heatDrift?.drifted && (
+            <div style={{ marginBottom: 20, borderRadius: 12, border: '1px solid var(--border-subtle)', background: 'var(--bg-card)', padding: '10px 12px' }}>
+              <p style={{ margin: '0 0 4px', color: 'var(--accent)', fontSize: 11, fontWeight: 900, textTransform: 'uppercase', letterSpacing: 0 }}>
+                {heatDrift.label}
+              </p>
+              <p style={{ margin: 0, color: 'var(--text-primary)', fontSize: 12, lineHeight: 1.45 }}>
+                {heatDrift.reason}
+              </p>
+            </div>
+          )}
+
+          <fieldset
+            ref={effortSectionRef}
+            data-testid="post-run-checkin-page-effort"
+            tabIndex={-1}
+            aria-invalid={Boolean(errors.effort)}
+            aria-describedby={errors.effort ? 'post-run-effort-error' : 'post-run-effort-help'}
+            style={{ border: 0, padding: 0, margin: '0 0 26px', minWidth: 0, scrollMarginTop: 16 }}
+          >
+            <legend style={{ fontWeight: 800, fontSize: 18, color: 'var(--text-primary)', padding: 0 }}>Effort</legend>
+            <p id="post-run-effort-help" style={{ fontSize: 13, color: 'var(--text-muted)', margin: '6px 0 16px' }}>How hard was that? Rate it from 1 easy to 10 all out.</p>
+            <div role="radiogroup" aria-label="Effort from 1 to 10" style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8 }}>
+              {[1,2,3,4,5,6,7,8,9,10].map(n => (
+                <button
+                  key={n}
+                  type="button"
+                  role="radio"
+                  aria-checked={effort === n}
+                  onClick={() => {
+                    setEffort(n)
+                    setErrors(prev => ({ ...prev, effort: null }))
+                  }}
+                  style={{ padding: '12px 4px', borderRadius: 12, border: `2px solid ${effort === n ? 'var(--accent)' : 'var(--border-subtle)'}`, background: effort === n ? 'var(--accent-dim)' : 'var(--bg-input)', color: effort === n ? 'var(--accent)' : 'var(--text-muted)', fontWeight: 700, fontSize: 16, cursor: 'pointer' }}
+                >
+                  {n}
+                </button>
+              ))}
+            </div>
+            {errors.effort && <p id="post-run-effort-error" role="alert" style={{ color: 'var(--danger)', fontSize: 12, margin: '10px 0 0' }}>{errors.effort}</p>}
+          </fieldset>
+
+          <fieldset
+            ref={painSectionRef}
+            data-testid="post-run-checkin-page-pain"
+            tabIndex={-1}
+            aria-invalid={Boolean(errors.pain)}
+            aria-describedby={errors.pain ? 'post-run-pain-error' : 'post-run-pain-help'}
+            style={{ border: 0, padding: 0, margin: '0 0 26px', minWidth: 0, scrollMarginTop: 16 }}
+          >
+            <legend style={{ fontWeight: 800, fontSize: 18, color: 'var(--text-primary)', padding: 0 }}>Pain / Discomfort</legend>
+            <p id="post-run-pain-help" style={{ fontSize: 13, color: 'var(--text-muted)', margin: '6px 0 16px' }}>Be honest — Forged Hybrid adjusts your next session.</p>
+            <div role="radiogroup" aria-label="Pain or discomfort level" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {PAIN_OPTIONS.map(([val, label]) => (
+                <button
+                  key={val}
+                  type="button"
+                  role="radio"
+                  aria-checked={pain === val}
+                  onClick={() => {
+                    setPain(val)
+                    setErrors(prev => ({ ...prev, pain: null }))
+                  }}
+                  style={{ padding: '14px 16px', borderRadius: 14, border: `2px solid ${pain === val ? 'var(--accent)' : 'var(--border-subtle)'}`, background: pain === val ? 'var(--accent-dim)' : 'var(--bg-input)', color: pain === val ? 'var(--accent)' : 'var(--text-primary)', fontWeight: 600, fontSize: 14, cursor: 'pointer', textAlign: 'left' }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {errors.pain && <p id="post-run-pain-error" role="alert" style={{ color: 'var(--danger)', fontSize: 12, margin: '10px 0 0' }}>{errors.pain}</p>}
+            {injurySeverity && <div style={{ marginTop: 16 }}>{renderInjuryPrompt()}</div>}
+          </fieldset>
+
+          <fieldset
+            data-testid="post-run-checkin-page-energy"
+            style={{ border: 0, padding: 0, margin: '0 0 26px', minWidth: 0 }}
+          >
+            <legend style={{ fontWeight: 800, fontSize: 18, color: 'var(--text-primary)', padding: 0 }}>Energy</legend>
+            <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '6px 0 16px' }}>Optional — add it if it feels useful today.</p>
+            <div role="radiogroup" aria-label="Energy level after the run" style={{ display: 'flex', gap: 10 }}>
+              {ENERGY_OPTIONS.map(([val, label]) => (
+                <button
+                  key={val}
+                  type="button"
+                  role="radio"
+                  aria-checked={energy === val}
+                  onClick={() => setEnergy(val)}
+                  style={{ flex: 1, padding: '16px 8px', borderRadius: 14, border: `2px solid ${energy === val ? 'var(--accent)' : 'var(--border-subtle)'}`, background: energy === val ? 'var(--accent-dim)' : 'var(--bg-input)', color: energy === val ? 'var(--accent)' : 'var(--text-muted)', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </fieldset>
+
+          {submitError && <p role="alert" style={{ color: 'var(--danger)', fontSize: 12, margin: '0 0 12px' }}>{submitError}</p>}
+          <button
+            data-testid="post-run-checkin-page-submit"
+            type="submit"
+            disabled={saving}
+            style={{ width: '100%', padding: 16, background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 900, borderRadius: 14, border: 'none', cursor: saving ? 'default' : 'pointer', fontSize: 15, opacity: saving ? 0.55 : 1 }}
+          >
+            {saving ? 'Saving...' : 'Save check-in and view recap'}
+          </button>
+        </form>
+      </div>
+    )
+  }
+
   return (
     <div
-      className={isPage ? 'post-run-checkin-page' : 'sheet-backdrop'}
-      data-testid={isPage ? 'post-run-checkin-page' : 'post-run-checkin-sheet'}
-      style={isPage
-        ? { width: '100%' }
-        : { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 50, padding: 'max(12px, env(safe-area-inset-top, 0px)) 12px max(12px, env(safe-area-inset-bottom, 0px))' }}
+      className="sheet-backdrop"
+      data-testid="post-run-checkin-sheet"
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 50, padding: 'max(12px, env(safe-area-inset-top, 0px)) 12px max(12px, env(safe-area-inset-bottom, 0px))' }}
     >
       <div
-        className={isPage ? 'post-run-checkin-panel' : 'sheet-panel'}
-        style={isPage
-          ? { background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', borderRadius: 16, padding: 20, width: '100%' }
-          : { background: 'var(--bg-card)', borderRadius: '24px 24px 16px 16px', padding: 24, width: '100%', maxWidth: 480, maxHeight: 'calc(100dvh - max(24px, env(safe-area-inset-top, 0px)) - max(24px, env(safe-area-inset-bottom, 0px)))', overflowY: 'auto', overscrollBehavior: 'contain' }}
+        className="sheet-panel"
+        style={{ background: 'var(--bg-card)', borderRadius: '24px 24px 16px 16px', padding: 24, width: '100%', maxWidth: 480, maxHeight: 'calc(100dvh - max(24px, env(safe-area-inset-top, 0px)) - max(24px, env(safe-area-inset-bottom, 0px)))', overflowY: 'auto', overscrollBehavior: 'contain' }}
       >
 
         {onCancel && (
