@@ -21,7 +21,12 @@ import {
   retryableHealthSyncErrors,
   runHealthAwarePageRefresh,
 } from '../src/lib/healthSync.js'
-import { createPullToRefreshEndHandler } from '../src/lib/pullToRefresh.js'
+import {
+  createPullToRefreshEndHandler,
+  measurePullRefreshGesture,
+  PULL_REFRESH_THRESHOLD_PX,
+  readPullRefreshScrollTop,
+} from '../src/lib/pullToRefresh.js'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const read = (relativePath) => fs.readFileSync(path.join(repoRoot, relativePath), 'utf8')
@@ -58,6 +63,38 @@ function deferred() {
 }
 
 const workouts = Array.from({ length: HEALTH_IMPORT_BATCH_SIZE * 2 + 3 }, (_, index) => ({ id: index }))
+
+{
+  const verticalPull = measurePullRefreshGesture({
+    startX: 100,
+    startY: 20,
+    currentX: 104,
+    currentY: 20 + PULL_REFRESH_THRESHOLD_PX,
+    atTop: true,
+  })
+  assert.equal(verticalPull.pulling, true, 'a deliberate vertical pull at the page top is recognized')
+  assert.equal(verticalPull.distance, PULL_REFRESH_THRESHOLD_PX, 'the raw trigger distance remains available to touchend')
+
+  const horizontalSwipe = measurePullRefreshGesture({
+    startX: 5,
+    startY: 20,
+    currentX: 80,
+    currentY: 35,
+    atTop: true,
+  })
+  assert.equal(horizontalSwipe.cancelled, true, 'horizontal navigation cancels pull-to-refresh')
+
+  const scrolledPull = measurePullRefreshGesture({
+    startX: 100,
+    startY: 20,
+    currentX: 100,
+    currentY: 120,
+    atTop: false,
+  })
+  assert.equal(scrolledPull.cancelled, true, 'pull-to-refresh cannot trigger away from the top')
+  assert.equal(readPullRefreshScrollTop({ scrollingElement: { scrollTop: 0.5 } }, { scrollY: 30 }), 0.5, 'the document scroll root wins over window fallback')
+  assert.equal(readPullRefreshScrollTop({}, { scrollY: 12 }), 12, 'window scroll position remains a safe fallback')
+}
 const batches = createHealthImportBatches(workouts)
 assert.deepEqual(batches.map((batch) => batch.length), [10, 10, 3], 'large health imports split into bounded batches')
 assert.deepEqual(batches.flat(), workouts, 'batching preserves every workout and its order')
@@ -472,5 +509,9 @@ assert.ok(pullToRefresh.includes('await runHealthAwarePageRefresh({'), 'pull-to-
 assert.ok(pullToRefresh.includes('syncNativeData: (options) => HealthService.syncNativeData(options)'), 'pull-to-refresh forwards forced manual sync options to HealthService')
 assert.ok(pullToRefresh.includes("console.error('[PullToRefresh] Apple Health sync failed:'"), 'pull sync failures retain diagnostic context')
 assert.ok(pullToRefresh.includes('createPullToRefreshEndHandler({'), 'pull-to-refresh uses the executable gesture guard')
+assert.ok(pullToRefresh.includes("window.addEventListener('touchstart'"), 'pull-to-refresh starts above the sticky header on every primary tab')
+assert.ok(pullToRefresh.includes("window.addEventListener('touchcancel'"), 'cancelled iOS gestures cannot leave stale pull state')
+assert.ok(!pullToRefresh.includes('}, [pulling, pullDistance])'), 'gesture listeners are stable throughout a pull')
+assert.ok(pullToRefresh.includes("'Syncing Apple Health'"), 'native refresh exposes clear HealthKit progress')
 
 console.log('HEALTH AUTO-SYNC SMOKE OK')
