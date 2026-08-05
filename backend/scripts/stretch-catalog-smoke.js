@@ -3,11 +3,24 @@ const path = require('path');
 const { _test } = require('../src/routes/stretches');
 
 const publicRoot = path.resolve(__dirname, '../../frontend/public');
-const stretches = Object.values(_test.POOLS).flat();
+const poolEntries = Object.values(_test.POOLS).flat();
+const stretches = Object.values(_test.MOVEMENTS);
 const ids = new Set(stretches.map((stretch) => stretch.id));
 
 if (ids.size !== stretches.length) {
-  throw new Error(`Stretch IDs must be unique: ${ids.size}/${stretches.length}`);
+  throw new Error(`Canonical stretch IDs must be unique: ${ids.size}/${stretches.length}`);
+}
+
+for (const [category, pool] of Object.entries(_test.POOLS)) {
+  const poolIds = new Set(pool.map((stretch) => stretch.id));
+  if (poolIds.size !== pool.length) {
+    throw new Error(`${category} contains duplicate stretch IDs: ${poolIds.size}/${pool.length}`);
+  }
+  for (const stretch of pool) {
+    if (_test.MOVEMENTS[stretch.id] !== stretch) {
+      throw new Error(`${category}/${stretch.id} must reuse its canonical movement definition`);
+    }
+  }
 }
 
 for (const stretch of stretches) {
@@ -56,4 +69,4 @@ if (parsedExclusions.join(',') !== 'hip-flexor-lunge,pigeon-pose') {
   throw new Error('Stretch exclusion parsing did not reject malformed IDs');
 }
 
-console.log(`Stretch catalog OK: ${stretches.length} entries, ${ids.size} local image mappings, exclusion rotation verified`);
+console.log(`Stretch catalog OK: ${poolEntries.length} pool entries, ${ids.size} canonical local image mappings, exclusion rotation verified`);

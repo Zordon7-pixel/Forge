@@ -151,10 +151,10 @@ export default function GuidedMovementTimer({
           aria-label={'Countdown ' + clock}
           style={{
             color: displaySeconds <= 5 ? 'var(--warning, #eab308)' : 'var(--accent)',
-            fontSize: 'clamp(3.5rem, 20vw, 5rem)',
+            fontSize: '4.5rem',
             fontVariantNumeric: 'tabular-nums',
             fontWeight: 900,
-            letterSpacing: '-0.06em',
+            letterSpacing: 0,
             lineHeight: 1,
             margin: '10px 0 0',
             maxWidth: '100%',
