@@ -549,9 +549,8 @@ function currentWeekRunSchedule({ weekStart, todayISO, currentWeekLoad, runSched
   };
 }
 
-function partialCurrentWeekConstraint(quota, requestedRunDaysPerWeek) {
-  if (!quota || quota.runDays.length >= requestedRunDaysPerWeek) return null;
-  const scheduledRunCount = quota.runDays.length;
+function partialCurrentWeekConstraint(quota, requestedRunDaysPerWeek, scheduledRunCount = quota?.runDays?.length || 0) {
+  if (!quota || scheduledRunCount >= requestedRunDaysPerWeek) return null;
   return {
     status: 'partial_current_week',
     requestedRunDaysPerWeek,
@@ -654,8 +653,17 @@ function allocateRunDistances(totalMiles, runDays, phase, raceDistance, raceDay,
   }
   if (runDays.length === 1) return [round(Math.max(0.1, Math.min(maxLongRun(raceDistance), totalMiles)))];
   if (options.longRunCompleted) {
-    const perRun = Math.max(0.1, Number(totalMiles || 0) / Math.max(1, runDays.length));
-    return runDays.map(() => round(perRun));
+    const totalUnits = Math.max(runDays.length, Math.round(Number(totalMiles || 0) * 10));
+    const baseUnits = Math.floor(totalUnits / runDays.length);
+    let remainder = totalUnits - (baseUnits * runDays.length);
+    const equalDistances = runDays.map(() => {
+      const units = baseUnits + (remainder > 0 ? 1 : 0);
+      remainder = Math.max(0, remainder - 1);
+      return units / 10;
+    });
+    return phase === 'taper' && options.preserveTimedTaperSharpening
+      ? preserveTimedTaperDistance(equalDistances, options.minimumDistances)
+      : equalDistances;
   }
   const longShare = phase === 'taper' ? 0.3 : phase === 'base' ? 0.42 : 0.45;
   const qualityShare = runDays.length >= 3 ? 0.22 : 0;
@@ -1397,7 +1405,11 @@ function buildConcurrentPlan(context = {}) {
       return result;
     });
     const totalMiles = round(days.flatMap((day) => day.sessions).filter((session) => session.kind === 'run').reduce((sum, session) => sum + Number(session.distance_miles || 0), 0));
-    const currentWeekConstraint = partialCurrentWeekConstraint(currentWeekQuota, runSchedule.runDaysPerWeek);
+    const currentWeekConstraint = partialCurrentWeekConstraint(
+      currentWeekQuota,
+      runSchedule.runDaysPerWeek,
+      weekRunDays.length
+    );
     weeks.push({
       week: weekNumber,
       phase,
@@ -1650,7 +1662,7 @@ function validateConcurrentPlan(candidate, context = {}) {
         ? `${path} must contain ${maximumRuns} scheduled runs after current-week quota and eligible-day constraints`
         : `${path} must contain exactly ${runSchedule.runDaysPerWeek} weekly runs`);
     }
-    if (currentWeekQuota && maximumRuns < runSchedule.runDaysPerWeek) {
+    if (currentWeekQuota && runs < runSchedule.runDaysPerWeek) {
       const constraint = week.currentWeekConstraint;
       if (constraint?.status !== 'partial_current_week') errors.push(`${path}.currentWeekConstraint must mark the partial current week`);
       if (Number(constraint?.requestedRunDaysPerWeek) !== runSchedule.runDaysPerWeek) errors.push(`${path}.currentWeekConstraint requested frequency is inaccurate`);

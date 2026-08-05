@@ -174,6 +174,75 @@ for (const runDaysPerWeek of [2, 3, 4, 5]) {
   }
 }
 
+const currentWeekTaperTarget = {
+  raceId: 'army-current-week-taper',
+  raceName: 'Army Ten-Miler',
+  raceDate: '2026-08-16',
+  distanceMiles: 10,
+  goalType: 'pr',
+  goalTimeSeconds: 5220,
+};
+
+function currentWeekTaperContext(longRunCompleted) {
+  return {
+    todayISO: '2026-08-05',
+    profile: { weekly_miles_current: 8, run_days_per_week: 5, lift_days_per_week: 0 },
+    target: {
+      ...currentWeekTaperTarget,
+      weeks: 2,
+      startDate: '2026-08-03',
+      planMode: 'run_only',
+      trainingDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+      runDaysPerWeek: 5,
+      liftDaysPerWeek: 0,
+    },
+    history: {
+      weeklyMileageBaseline: 8,
+      recentRunCount: 8,
+      recentLiftCount: 0,
+      performanceProfile: {
+        targetAnchor: {
+          equivalentTimeSeconds: 5400,
+          equivalentPaceSecondsPerMile: 540,
+          date: '2026-07-20',
+          kind: 'cross_distance_estimate',
+        },
+      },
+      acuteRunLoad: {
+        available: true,
+        protection: { active: false },
+        currentWeek: {
+          startDate: '2026-08-03',
+          runCount: 1,
+          runDates: ['2026-08-03'],
+          miles: 1.2,
+          longRunCompleted,
+        },
+        latestRun: {
+          date: '2026-08-03',
+          distanceMiles: 1.2,
+          paceSecondsPerMile: 600,
+        },
+      },
+    },
+    recovery: { state: 'normal', available: true, metrics: {} },
+  };
+}
+
+for (const longRunCompleted of [false, true]) {
+  const taperContext = currentWeekTaperContext(longRunCompleted);
+  const taperPlan = concurrent.buildConcurrentPlan(taperContext);
+  const taperValidation = concurrent.validateConcurrentPlan(taperPlan, taperContext);
+  assert.equal(taperValidation.valid, true, taperValidation.errors.join('; '));
+  const taperWeek = taperPlan.weeks[0];
+  const taperRuns = taperWeek.days.flatMap((day) => day.sessions).filter((session) => session.kind === 'run');
+  assert.equal(taperRuns.length, 3, 'the current-week taper trims infeasible run slots');
+  assert.equal(taperWeek.currentWeekConstraint.scheduledRunCount, taperRuns.length);
+  assert.equal(taperWeek.currentWeekConstraint.totalRunsTowardTarget, 4);
+  assert.equal(taperWeek.totalMiles, 4, 'the current-week taper conserves the remaining mileage target');
+  assert.ok(taperRuns.some((session) => session.type === 'sharpen' && session.distance_miles >= 1.5));
+}
+
 const unstructuredTargetPace = JSON.parse(JSON.stringify(plan));
 const unstructuredSession = unstructuredTargetPace.weeks
   .flatMap((week) => week.days)
