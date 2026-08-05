@@ -34,6 +34,7 @@ const app = read('frontend/src/App.jsx')
 const layout = read('frontend/src/components/Layout.jsx')
 const service = read('frontend/src/services/HealthService.js')
 const pullToRefresh = read('frontend/src/components/PullToRefresh.jsx')
+const healthSyncSource = read('frontend/src/lib/healthSync.js')
 
 class MemoryStorage {
   constructor() { this.values = new Map() }
@@ -509,6 +510,7 @@ assert.ok(service.includes('announceHealthSyncResult(syncResult, { complete })')
 assert.ok(pullToRefresh.includes('await runHealthAwarePageRefresh({'), 'pull-to-refresh delegates sync and reload ordering to the tested coordinator')
 assert.ok(pullToRefresh.includes('syncNativeData: (options) => HealthService.syncNativeData(options)'), 'pull-to-refresh forwards forced manual sync options to HealthService')
 assert.ok(pullToRefresh.includes("console.error('[PullToRefresh] Apple Health sync failed:'"), 'pull sync failures retain diagnostic context')
+assert.ok(healthSyncSource.includes("console.warn('[healthSync] refresh error reporter failed:'"), 'refresh error reporter failures retain diagnostic context')
 assert.ok(pullToRefresh.includes('createPullToRefreshEndHandler({'), 'pull-to-refresh uses the executable gesture guard')
 assert.ok(pullToRefresh.includes("window.addEventListener('touchstart'"), 'pull-to-refresh starts above the sticky header on every primary tab')
 assert.ok(pullToRefresh.includes("window.addEventListener('touchcancel'"), 'cancelled iOS gestures cannot leave stale pull state')

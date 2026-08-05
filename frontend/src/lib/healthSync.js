@@ -173,8 +173,8 @@ export async function runHealthAwarePageRefresh({
       healthSyncError = error
       try {
         onHealthSyncError?.(error)
-      } catch {
-        // Error reporting must not prevent the page refresh fallback.
+      } catch (reportingError) {
+        console.warn('[healthSync] refresh error reporter failed:', reportingError?.message || reportingError)
       }
     }
   }
