@@ -104,6 +104,9 @@ check(recap.includes("event.key === 'ArrowRight'") && recap.includes("event.key 
 check(detail.includes('No heart-rate value is estimated') && detail.includes('Splits unavailable'), 'unavailable metrics are explicit and never fabricated')
 check(detail.includes('Elevation loss') && detail.includes('VO₂ max') && detail.includes('Recovery time'), 'available route and workout facts have dedicated recap output')
 check(recap.includes("style={{ background: 'var(--bg-base)'") && recap.includes('data-testid="run-recap-viewport"'), 'recap owns an opaque full viewport')
+check(recap.includes('data-testid="post-run-checkin-viewport"'), 'immediate post-run questions own a separate full-screen viewport')
+check(recap.includes('presentation="page"'), 'recap renders immediate post-run questions as page content rather than a map overlay')
+check(checkIn.includes("presentation = 'sheet'") && checkIn.includes("presentation === 'page'"), 'check-in keeps retrospective sheets and supports the dedicated completion page')
 check(checkIn.includes("maxHeight: 'calc(100dvh") && checkIn.includes("overflowY: 'auto'"), 'check-in remains internally scrollable inside mobile safe areas')
 
 console.log(`\nRUN COMPLETION PHASE A SMOKE OK (${passed})`)

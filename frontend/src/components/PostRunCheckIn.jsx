@@ -38,7 +38,7 @@ function formatBodyPart(part) {
   return String(part || '').replace(/_/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase())
 }
 
-export default function PostRunCheckIn({ runId, heatDrift, onDone, onCancel }) {
+export default function PostRunCheckIn({ runId, heatDrift, onDone, onCancel, presentation = 'sheet' }) {
   const [initialDraft] = useState(() => loadPostRunCheckInDraft(runId))
   const [step, setStep] = useState(initialDraft?.step || 0)
   const [effort, setEffort] = useState(initialDraft?.effort || null)
@@ -319,9 +319,22 @@ export default function PostRunCheckIn({ runId, heatDrift, onDone, onCancel }) {
     )
   }
 
+  const isPage = presentation === 'page'
+
   return (
-    <div className="sheet-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 50, padding: 'max(12px, env(safe-area-inset-top, 0px)) 12px max(12px, env(safe-area-inset-bottom, 0px))' }}>
-      <div className="sheet-panel" style={{ background: 'var(--bg-card)', borderRadius: '24px 24px 16px 16px', padding: 24, width: '100%', maxWidth: 480, maxHeight: 'calc(100dvh - max(24px, env(safe-area-inset-top, 0px)) - max(24px, env(safe-area-inset-bottom, 0px)))', overflowY: 'auto', overscrollBehavior: 'contain' }}>
+    <div
+      className={isPage ? 'post-run-checkin-page' : 'sheet-backdrop'}
+      data-testid={isPage ? 'post-run-checkin-page' : 'post-run-checkin-sheet'}
+      style={isPage
+        ? { width: '100%' }
+        : { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 50, padding: 'max(12px, env(safe-area-inset-top, 0px)) 12px max(12px, env(safe-area-inset-bottom, 0px))' }}
+    >
+      <div
+        className={isPage ? 'post-run-checkin-panel' : 'sheet-panel'}
+        style={isPage
+          ? { background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', borderRadius: 16, padding: 20, width: '100%' }
+          : { background: 'var(--bg-card)', borderRadius: '24px 24px 16px 16px', padding: 24, width: '100%', maxWidth: 480, maxHeight: 'calc(100dvh - max(24px, env(safe-area-inset-top, 0px)) - max(24px, env(safe-area-inset-bottom, 0px)))', overflowY: 'auto', overscrollBehavior: 'contain' }}
+      >
 
         {onCancel && (
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 16 }}>

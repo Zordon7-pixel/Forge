@@ -132,6 +132,49 @@ export default function RunRecap() {
 
   const queued = Boolean(handoff?.queued)
 
+  if (showCheckIn) {
+    return (
+      <div
+        className="fixed inset-0 z-40 overflow-y-auto overscroll-contain"
+        data-testid="post-run-checkin-viewport"
+        style={{ background: 'var(--bg-base)', color: 'var(--text-primary)' }}
+      >
+        <main
+          className="mx-auto min-h-full w-full max-w-md px-4"
+          style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 1.25rem)', paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 1.25rem)' }}
+        >
+          <header className="mb-5">
+            <p className="t-micro" style={{ color: 'var(--accent)' }}>Run saved</p>
+            <h1 className="mt-2 text-3xl font-black">How did that run feel?</h1>
+            <p className="mt-2 text-sm leading-6" style={{ color: 'var(--text-muted)' }}>
+              Your answers tune recovery and the next few training days. The run is already saved.
+            </p>
+            {queued && (
+              <p className="mt-3 rounded-xl p-3 text-sm font-semibold" style={{ background: 'var(--accent-dim)', border: '1px solid var(--border-subtle)', color: 'var(--accent)' }}>
+                Saved offline. Your check-in will queue with the run.
+              </p>
+            )}
+          </header>
+          <PostRunCheckIn
+            presentation="page"
+            runId={run.id}
+            heatDrift={handoff?.heatDrift}
+            onCancel={() => {
+              clearPostRunCheckInDraft(run.id)
+              finishHandoff()
+              setShowCheckIn(false)
+            }}
+            onDone={(result) => {
+              if (result?.run) setRun(result.run)
+              finishHandoff()
+              setShowCheckIn(false)
+            }}
+          />
+        </main>
+      </div>
+    )
+  }
+
   return (
     <div
       className="fixed inset-0 z-40 overflow-y-auto overscroll-contain"
@@ -235,22 +278,6 @@ export default function RunRecap() {
         </div>
       </div>
 
-      {showCheckIn && (
-        <PostRunCheckIn
-          runId={run.id}
-          heatDrift={handoff?.heatDrift}
-          onCancel={() => {
-            clearPostRunCheckInDraft(run.id)
-            finishHandoff()
-            setShowCheckIn(false)
-          }}
-          onDone={(result) => {
-            if (result?.run) setRun(result.run)
-            finishHandoff()
-            setShowCheckIn(false)
-          }}
-        />
-      )}
     </div>
   )
 }
