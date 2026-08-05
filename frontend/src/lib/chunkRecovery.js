@@ -9,7 +9,10 @@ export function isRecoverableChunkError(error) {
   const text = errorText(error)
   return [
     'failed to fetch dynamically imported module',
+    'error loading dynamically imported module',
     'importing a module script failed',
+    'module script load failed',
+    'load failed',
     'is not a valid javascript mime type',
     'strict mime type checking is enforced',
     'chunkloaderror',

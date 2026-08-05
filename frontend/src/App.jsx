@@ -12,37 +12,18 @@ import NativeNotificationService from './services/NativeNotificationService'
 import { normalizeForgedDeepLink } from './lib/nativeDeepLink'
 import api, { acceptWaiver } from './lib/api'
 import ConsentWaiver from './components/ConsentWaiver'
+import { recoverFromChunkError } from './lib/chunkRecovery'
 
 function lazyWithRetry(factory) {
   return lazy(async () => {
-    const KEY = 'forge_chunk_reloaded'
     try {
-      const mod = await factory()
-      try {
-        sessionStorage.removeItem(KEY)
-      } catch (error) {
-        console.warn('[lazyWithRetry] recovery flag cleanup failed:', error?.message || error)
-      }
-      return mod
+      return await factory()
     } catch (err) {
-      // stale/failed chunk after a deploy -> force one full reload to get fresh index.html + chunks
-      let shouldReload = false
-      try {
-        shouldReload = !sessionStorage.getItem(KEY)
-        if (shouldReload) {
-          sessionStorage.setItem(KEY, '1')
-        }
-      } catch (storageError) {
-        console.warn('[lazyWithRetry] recovery flag lookup failed:', storageError?.message || storageError)
-      }
-
-      if (shouldReload) {
-        console.warn('[lazyWithRetry] chunk load failed, reloading:', err?.message)
-        window.location.reload()
-        // return a never-resolving module so Suspense holds until reload
+      if (recoverFromChunkError(err)) {
+        console.warn('[lazyWithRetry] stale chunk detected; loading the current app shell:', err?.message)
         return new Promise(() => {})
       }
-      throw err // already reloaded once; let the error surface rather than loop
+      throw err
     }
   })
 }
