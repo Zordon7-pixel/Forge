@@ -114,6 +114,54 @@ const finalGoalPaceWork = sessions.some(({ day, session }) => (
 assert.equal(firstGoalPaceWork, true);
 assert.equal(finalGoalPaceWork, true);
 
+for (const runDaysPerWeek of [2, 3, 4, 5]) {
+  for (const weeklyMileageBaseline of [5, 6, 10, 16]) {
+    const matrixContext = {
+      ...context,
+      profile: {
+        ...context.profile,
+        weekly_miles_current: weeklyMileageBaseline,
+        run_days_per_week: runDaysPerWeek,
+      },
+      target: {
+        ...context.target,
+        runDaysPerWeek,
+      },
+      history: {
+        ...context.history,
+        weeklyMileageBaseline,
+      },
+    };
+    const matrixPlan = concurrent.buildConcurrentPlan(matrixContext);
+    const matrixValidation = concurrent.validateConcurrentPlan(matrixPlan, matrixContext);
+    assert.equal(
+      matrixValidation.valid,
+      true,
+      `${runDaysPerWeek} run days / ${weeklyMileageBaseline} baseline: ${matrixValidation.errors.join('; ')}`
+    );
+    const matrixSessions = matrixPlan.weeks.flatMap((week) => week.days.flatMap((day) => (
+      day.sessions.map((session) => ({ date: day.date, session }))
+    )));
+    for (const race of raceTargets) {
+      const targetPace = Math.round(race.goalTimeSeconds / race.distanceMiles);
+      assert.equal(matrixSessions.some(({ date, session }) => (
+        date < race.raceDate
+        && session.type !== 'race'
+        && Math.abs(Number(session.goal_pace_seconds_per_mile || 0) - targetPace) <= 1
+      )), true, `${race.raceName} target pace is protected for the ${runDaysPerWeek}-day / ${weeklyMileageBaseline}-mile profile`);
+    }
+    const finalTaperSession = matrixSessions.find(({ date, session }) => (
+      date > raceTargets[0].raceDate
+      && date < raceTargets[1].raceDate
+      && session.goal_pace_seconds_per_mile === 522
+    ));
+    assert.ok(finalTaperSession, 'the second race retains a target-pace session after the first race');
+    if (finalTaperSession.session.type === 'sharpen') {
+      assert.ok(Number(finalTaperSession.session.distance_miles) >= 1.5, 'timed taper sharpening receives a viable distance allocation');
+    }
+  }
+}
+
 const droppedGoal = JSON.parse(JSON.stringify(plan));
 droppedGoal.goals = [droppedGoal.goals[1]];
 const droppedValidation = concurrent.validateConcurrentPlan(droppedGoal, context);

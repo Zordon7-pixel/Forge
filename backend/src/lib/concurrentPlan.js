@@ -579,6 +579,32 @@ function runTypeFor(day, runDays, phase, options = {}) {
   return position === 1 && runDays.length >= 4 ? 'steady' : 'easy';
 }
 
+function preserveTimedTaperDistance(distances, minimumDistance = 1.5) {
+  if (!Array.isArray(distances) || distances.length < 2 || Number(distances[0] || 0) >= minimumDistance) {
+    return distances;
+  }
+
+  const adjusted = distances.map((distance) => round(Math.max(0.1, Number(distance || 0))));
+  let needed = round(minimumDistance - adjusted[0]);
+  const middleDonors = adjusted
+    .slice(1, -1)
+    .map((distance, offset) => ({ index: offset + 1, distance }))
+    .sort((a, b) => b.distance - a.distance)
+    .map(({ index }) => index);
+  const donorIndexes = [...middleDonors, adjusted.length - 1];
+
+  for (const index of donorIndexes) {
+    if (needed <= 0) break;
+    const available = round(Math.max(0, adjusted[index] - 0.1));
+    const transferred = round(Math.min(needed, available));
+    adjusted[index] = round(adjusted[index] - transferred);
+    adjusted[0] = round(adjusted[0] + transferred);
+    needed = round(needed - transferred);
+  }
+
+  return needed <= 0 ? adjusted : distances;
+}
+
 function allocateRunDistances(totalMiles, runDays, phase, raceDistance, raceDay, options = {}) {
   if (!runDays.length) return [];
   if (raceDay) {
@@ -612,7 +638,10 @@ function allocateRunDistances(totalMiles, runDays, phase, raceDistance, raceDay,
   });
   const rawTotal = raw.reduce((sum, value) => sum + value, 0);
   const scale = rawTotal > 0 && totalMiles > 0 ? totalMiles / rawTotal : 1;
-  return raw.map((value) => round(Math.max(0.1, value * scale)));
+  const scaled = raw.map((value) => round(Math.max(0.1, value * scale)));
+  return phase === 'taper' && options.preserveTimedTaperSharpening
+    ? preserveTimedTaperDistance(scaled)
+    : scaled;
 }
 
 function durationForRun(type, distance, phase, history = {}) {
@@ -1267,6 +1296,7 @@ function buildConcurrentPlan(context = {}) {
         ? (history.acuteRunLoad.protectiveRun || history.acuteRunLoad.latestRun).distanceMiles
         : 0,
       longRunCompleted: Boolean(isCurrentWeek && currentWeekLoad.longRunCompleted),
+      preserveTimedTaperSharpening: Boolean(goalPaceContext),
     });
     const runByDay = new Map();
     weekRunDays.forEach((day, index) => {
