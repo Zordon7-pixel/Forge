@@ -111,7 +111,6 @@ export default function PullToRefresh({ children, onRefreshComplete }) {
           afterHealthSync: () => new Promise(r => setTimeout(r, 150)),
           refreshPage: () => onRefreshCompleteRef.current?.(),
         })
-        refreshInFlight.current = false
         setRefreshing(false)
       },
       onRefreshFailure: (error) => {

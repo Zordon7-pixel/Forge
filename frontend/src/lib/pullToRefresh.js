@@ -63,10 +63,10 @@ export function createPullToRefreshEndHandler({
       await runPageRefresh()
       return true
     } catch (error) {
-      refreshInFlight.current = false
       onRefreshFailure(error)
       return false
     } finally {
+      refreshInFlight.current = false
       resetGesture()
     }
   }

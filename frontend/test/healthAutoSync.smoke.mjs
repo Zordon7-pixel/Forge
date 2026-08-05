@@ -377,7 +377,7 @@ assert.ok(!timeoutCopy.includes('15000ms'), 'timeout copy does not expose an imp
   syncGate.resolve({ complete: true })
   assert.equal(await firstTouchEnd, true)
   assert.equal(reloadCalls, 1, 'the guarded refresh invokes the reload path exactly once')
-  assert.equal(refreshInFlight.current, true, 'a successful reload path keeps the gesture guard raised until navigation')
+  assert.equal(refreshInFlight.current, false, 'a successful in-place refresh releases the gesture guard')
   assert.equal(gestureResets, 2, 'every touchend still cleans up its gesture state')
 }
 
@@ -418,7 +418,7 @@ assert.ok(!timeoutCopy.includes('15000ms'), 'timeout copy does not expose an imp
   fireDeadline()
   assert.equal(await firstTouchEnd, true)
   assert.equal(reloadCalls, 1, 'the timeout path invokes ordinary reload exactly once')
-  assert.equal(refreshInFlight.current, true, 'the timeout reload path keeps the gesture guard raised until navigation')
+  assert.equal(refreshInFlight.current, false, 'the timeout fallback still releases the gesture guard')
   syncGate.resolve({ complete: true })
 }
 

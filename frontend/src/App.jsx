@@ -19,7 +19,7 @@ function lazyWithRetry(factory) {
     try {
       return await factory()
     } catch (err) {
-      if (recoverFromChunkError(err)) {
+      if (recoverFromChunkError(err, { allowGenericLoadFailure: true })) {
         console.warn('[lazyWithRetry] stale chunk detected; loading the current app shell:', err?.message)
         return new Promise(() => {})
       }

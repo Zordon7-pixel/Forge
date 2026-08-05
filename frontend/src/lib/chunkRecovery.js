@@ -5,29 +5,32 @@ function errorText(error) {
   return `${error?.message || ''} ${error?.stack || ''}`.toLowerCase()
 }
 
-export function isRecoverableChunkError(error) {
+export function isRecoverableChunkError(error, { allowGenericLoadFailure = false } = {}) {
   const text = errorText(error)
-  return [
+  const strongChunkSignals = [
     'failed to fetch dynamically imported module',
     'error loading dynamically imported module',
     'importing a module script failed',
     'module script load failed',
-    'load failed',
     'is not a valid javascript mime type',
     'strict mime type checking is enforced',
     'chunkloaderror',
     'loading chunk',
     'vite:preloaderror',
-  ].some((needle) => text.includes(needle))
+  ]
+
+  return strongChunkSignals.some((needle) => text.includes(needle))
+    || (allowGenericLoadFailure && text.includes('load failed'))
 }
 
-export function recoverFromChunkError(error) {
-  if (typeof window === 'undefined' || !isRecoverableChunkError(error)) return false
+export function recoverFromChunkError(error, options) {
+  if (typeof window === 'undefined' || !isRecoverableChunkError(error, options)) return false
 
   try {
     if (window.sessionStorage.getItem(RECOVERY_KEY) === '1') return false
     window.sessionStorage.setItem(RECOVERY_KEY, '1')
-  } catch {
+  } catch (storageError) {
+    console.warn('[chunkRecovery] session flag unavailable:', storageError?.message || storageError)
     return false
   }
 

@@ -834,7 +834,6 @@ export default function ActiveRun() {
 
   const startGPS = useCallback(async ({ resume = false, recordRoute = mapMyRun } = {}) => {
     setSaveError('')
-    setQueuedOffline(false)
     setGpsGapSummary(null)
     if (!resume) {
       lastFixAtRef.current = null
