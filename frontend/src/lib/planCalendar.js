@@ -135,6 +135,17 @@ function normalizeGoal(data, plan, goal = {}) {
   const dateISO = goal.date || goal.raceDate || data.raceDate || null
   const distanceMiles = Number(goal.distanceMiles || goal.distance_miles || 0) || null
   const goalTimeSeconds = Number(goal.goalTimeSeconds || goal.goal_time_seconds || 0) || null
+  const rawRaceTarget = goal.raceTarget || goal.race_target || data.raceTarget || data.race_target || null
+  const raceTarget = rawRaceTarget && typeof rawRaceTarget === 'object'
+    ? {
+        raceId: rawRaceTarget.raceId || rawRaceTarget.race_id || null,
+        name: rawRaceTarget.name || rawRaceTarget.raceName || rawRaceTarget.race_name || null,
+        dateISO: rawRaceTarget.date || rawRaceTarget.raceDate || rawRaceTarget.race_date || null,
+        distanceMiles: Number(rawRaceTarget.distanceMiles || rawRaceTarget.distance_miles || 0) || null,
+        location: rawRaceTarget.location ?? null,
+        goalTimeSeconds: Number(rawRaceTarget.goalTimeSeconds || rawRaceTarget.goal_time_seconds || 0) || null,
+      }
+    : null
   const derivedPace = goalTimeSeconds && distanceMiles ? Math.round(goalTimeSeconds / distanceMiles) : null
   return {
     raceId: goal.raceId || goal.race_id || data.raceId || data.race_id || null,
@@ -154,7 +165,31 @@ function normalizeGoal(data, plan, goal = {}) {
     priority: goal.priority || null,
     sequence: Number(goal.sequence || 0) || null,
     role: goal.role || null,
+    raceTarget,
   }
+}
+
+function normalizedTargetText(value) {
+  return String(value || '').trim().toLowerCase()
+}
+
+// A race row is editable, while raceTarget is the owned target used when the
+// workouts were generated. Comparing both keeps review state durable.
+export function racePlanReview(goal = {}, race = null) {
+  if (!goal || !race) return { required: false, changedFields: [] }
+  const stored = goal.raceTarget
+  if (!stored) return { required: false, changedFields: [] }
+  if (stored.raceId && race.id && String(stored.raceId) !== String(race.id)) {
+    return { required: false, changedFields: [] }
+  }
+
+  const changedFields = []
+  if (normalizedTargetText(stored.name) !== normalizedTargetText(race.race_name)) changedFields.push('name')
+  if (String(stored.dateISO || '') !== String(race.race_date || '')) changedFields.push('date')
+  if (Number(stored.distanceMiles || 0) !== Number(race.distance_miles || 0)) changedFields.push('distance')
+  if (Number(stored.goalTimeSeconds || 0) !== Number(race.goal_time_seconds || 0)) changedFields.push('goal_time')
+  if (normalizedTargetText(stored.location) !== normalizedTargetText(race.location)) changedFields.push('location')
+  return { required: changedFields.length > 0, changedFields }
 }
 
 export function getGoals(plan) {

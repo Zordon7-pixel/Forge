@@ -27,6 +27,7 @@ import {
   indexRecordedRuns,
   dayWithRecordedRuns,
   goalWithRace,
+  racePlanReview,
 } from '../src/lib/planCalendar.js'
 
 let passed = 0
@@ -330,6 +331,46 @@ check('g2b: a goal-time-only race edit preserves trusted course facts', () => {
   })
   assert.deepEqual(updated.course, course)
   assert.equal(updated.goalTimeSeconds, 5100)
+})
+
+check('g2c: persisted race target review ignores notes but catches plan inputs', () => {
+  const goal = getGoal({ plan_data: { goal: {
+    raceId: 'race-1',
+    name: 'Army Ten-Miler',
+    date: '2026-10-11',
+    distanceMiles: 10,
+    goalTimeSeconds: 5400,
+    raceTarget: {
+      raceId: 'race-1',
+      name: 'Army Ten-Miler',
+      date: '2026-10-11',
+      distanceMiles: 10,
+      location: 'Washington, DC',
+      goalTimeSeconds: 5400,
+    },
+  } } })
+  const unchanged = racePlanReview(goal, {
+    id: 'race-1', race_name: 'Army Ten-Miler', race_date: '2026-10-11', distance_miles: 10,
+    location: 'Washington, DC', goal_time_seconds: 5400, notes: 'Updated note', status: 'upcoming',
+  })
+  assert.deepEqual(unchanged, { required: false, changedFields: [] })
+
+  const edited = racePlanReview(goal, {
+    id: 'race-1', race_name: 'Army Ten-Miler', race_date: '2026-10-18', distance_miles: 10,
+    location: 'Washington, DC', goal_time_seconds: 5220,
+  })
+  assert.equal(edited.required, true)
+  assert.deepEqual(edited.changedFields, ['date', 'goal_time'])
+})
+
+check('g2d: race review never compares a different protected race', () => {
+  const review = racePlanReview({
+    raceId: 'race-a',
+    raceTarget: { raceId: 'race-a', name: 'A1', dateISO: '2026-09-20', distanceMiles: 13.1, location: 'Yonkers, NY', goalTimeSeconds: 7200 },
+  }, {
+    id: 'race-b', race_name: 'A2', race_date: '2026-10-11', distance_miles: 10, location: 'Washington, DC', goal_time_seconds: 5400,
+  })
+  assert.deepEqual(review, { required: false, changedFields: [] })
 })
 
 check('g3: recorded runs index by real date while non-run activities stay out', () => {

@@ -1246,6 +1246,9 @@ function goalMetadata(target = {}, existingGoal = {}, history = {}) {
   const resolvedTime = resolvedGoalTime(target, existingGoal, history);
   const goalTimeSeconds = resolvedTime?.seconds || null;
   const goalPace = goalPaceSecondsPerMile({ ...target, distanceMiles: raceDistance }, existingGoal, history);
+  const raceTarget = target.raceTarget && typeof target.raceTarget === 'object'
+    ? { ...target.raceTarget }
+    : existingGoal.raceTarget || null;
   return Object.assign({}, existingGoal, {
     kind: raceDate ? 'race' : (existingGoal.kind || 'training_block'),
     raceId: target.raceId || existingGoal.raceId || null,
@@ -1260,6 +1263,7 @@ function goalMetadata(target = {}, existingGoal = {}, history = {}) {
     goalPaceLabel: formatPaceLabel(goalPace),
     paceContext: buildGoalPaceContext({ ...target, distanceMiles: raceDistance, goalTimeSeconds }, history, existingGoal),
     course: buildGoalCourse(target),
+    raceTarget,
   });
 }
 
@@ -1521,6 +1525,7 @@ function validateConcurrentPlan(candidate, context = {}) {
     || goalMetadata(target, {}, context.history || {});
   if (candidate.goal?.name !== expectedFinalGoal.name) errors.push('goal name is missing or changed');
   if (JSON.stringify(candidate.goal?.course ?? null) !== JSON.stringify(expectedFinalGoal.course ?? null)) errors.push('goal course metadata is missing or changed');
+  if (JSON.stringify(candidate.goal?.raceTarget ?? null) !== JSON.stringify(expectedFinalGoal.raceTarget ?? null)) errors.push('goal race target snapshot is missing or changed');
   if (expectedGoals.length) {
     if (!Array.isArray(candidate.goals) || candidate.goals.length !== expectedGoals.length) {
       errors.push(`goals must preserve exactly ${expectedGoals.length} race targets`);
@@ -1535,6 +1540,7 @@ function validateConcurrentPlan(candidate, context = {}) {
         if (actual.priority !== 'A' || Number(actual.sequence) !== index + 1 || actual.role !== goal.role) errors.push(`goals[${index}] must preserve A-race ordering`);
         if (actual.name !== goal.name) errors.push(`goals[${index}] must preserve race name`);
         if (JSON.stringify(actual.course ?? null) !== JSON.stringify(goal.course ?? null)) errors.push(`goals[${index}] must preserve course metadata`);
+        if (JSON.stringify(actual.raceTarget ?? null) !== JSON.stringify(goal.raceTarget ?? null)) errors.push(`goals[${index}] must preserve the race target snapshot`);
       });
     }
   }

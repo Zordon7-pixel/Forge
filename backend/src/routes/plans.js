@@ -926,9 +926,33 @@ async function persistRunAdaptation(userId, run, active, planVersion, originalPl
   return proposalFromRow(stored);
 }
 
+function raceTargetSnapshot(race = {}) {
+  return {
+    raceId: race.id || null,
+    name: race.race_name || null,
+    date: race.race_date || null,
+    distanceMiles: Number(race.distance_miles || 0) || null,
+    location: race.location || null,
+    goalTimeSeconds: race.goal_time_seconds ?? null,
+  };
+}
+
+function completeRaceTargetSnapshot(snapshot, raceId) {
+  if (!snapshot || typeof snapshot !== 'object') return false;
+  return String(snapshot.raceId || snapshot.race_id || '') === String(raceId || '')
+    && ['name', 'date', 'distanceMiles', 'location', 'goalTimeSeconds']
+      .every((key) => Object.prototype.hasOwnProperty.call(snapshot, key));
+}
+
+function goalRaceId(goal = {}) {
+  const target = goal.raceTarget || goal.race_target || {};
+  return String(goal.raceId || goal.race_id || target.raceId || target.race_id || '').trim();
+}
+
 function courseTargetFromRace(race = {}) {
   return {
     raceId: race.id || null,
+    raceTarget: raceTargetSnapshot(race),
     elevation_gain_ft: race.elevation_gain_ft,
     max_altitude_ft: race.max_altitude_ft,
     terrain: race.terrain || null,
@@ -943,7 +967,7 @@ const CLIENT_COURSE_KEYS = [
   'elevation_gain_ft', 'elevationGainFt', 'max_altitude_ft', 'maxAltitudeFt',
   'terrain', 'courseTerrain', 'course_profile_json', 'courseProfile',
   'source', 'courseSource', 'url', 'courseUrl', 'provenance', 'courseProvenance',
-  'nowISO', 'todayISO',
+  'raceTarget', 'race_target', 'nowISO', 'todayISO',
 ];
 
 // Course facts may only enter plan generation from an owned race row. A generic
@@ -2252,23 +2276,50 @@ router.put('/my/race-link', auth, async (req, res) => {
       const parsed = parsePlan(active.row);
       if (!parsed) return { status: 409, error: 'Active plan could not be read' };
 
-      const goal = parsed.goal || {};
-      const existingRaceId = String(goal.raceId || goal.race_id || parsed.raceId || parsed.race_id || '').trim();
-      if (existingRaceId) {
-        if (existingRaceId !== raceId) return { status: 409, error: 'Active plan is linked to another race' };
-        return { status: 200, planData: parsed };
-      }
-
       const normalizeName = (value) => String(value || '').trim().toLowerCase();
-      const goalName = goal.name || parsed.raceName || parsed.race_name;
-      const goalDate = goal.date || goal.raceDate || parsed.raceDate || parsed.race_date;
-      const goalDistance = Number(goal.distanceMiles || goal.distance_miles || parsed.distanceMiles || parsed.distance_miles || 0);
-      const sameIdentity = normalizeName(goalName) === normalizeName(race.race_name)
-        && String(goalDate || '') === String(race.race_date || '')
-        && (!goalDistance || Math.abs(goalDistance - Number(race.distance_miles || 0)) < 0.01);
-      if (!sameIdentity) return { status: 409, error: 'Race no longer matches the active plan target' };
+      const sameIdentity = (goal = {}) => {
+        const goalName = goal.name || parsed.raceName || parsed.race_name;
+        const goalDate = goal.date || goal.raceDate || parsed.raceDate || parsed.race_date;
+        const goalDistance = Number(goal.distanceMiles || goal.distance_miles || parsed.distanceMiles || parsed.distance_miles || 0);
+        return normalizeName(goalName) === normalizeName(race.race_name)
+          && String(goalDate || '') === String(race.race_date || '')
+          && (!goalDistance || Math.abs(goalDistance - Number(race.distance_miles || 0)) < 0.01);
+      };
+      const storedGoals = Array.isArray(parsed.goals) && parsed.goals.length
+        ? parsed.goals
+        : [parsed.goal || {}];
+      let matchIndex = storedGoals.findIndex((goal) => goalRaceId(goal) === raceId);
+      if (matchIndex < 0 && storedGoals.length === 1 && !goalRaceId(storedGoals[0]) && sameIdentity(storedGoals[0])) {
+        matchIndex = 0;
+      }
+      if (matchIndex < 0) return { status: 409, error: 'Race is not linked to the active plan' };
 
-      const nextPlan = { ...parsed, goal: { ...goal, raceId: race.id } };
+      const snapshot = raceTargetSnapshot(race);
+      const nextGoals = storedGoals.map((goal, index) => {
+        if (index !== matchIndex) return goal;
+        const existingTarget = goal.raceTarget || goal.race_target || null;
+        return {
+          ...goal,
+          raceId: race.id,
+          raceTarget: completeRaceTargetSnapshot(existingTarget, raceId) ? existingTarget : snapshot,
+        };
+      });
+      const finalStoredGoal = parsed.goal || {};
+      const finalMatches = goalRaceId(finalStoredGoal) === raceId
+        || (storedGoals.length === 1 && matchIndex === 0 && sameIdentity(finalStoredGoal));
+      const finalTarget = finalStoredGoal.raceTarget || finalStoredGoal.race_target || null;
+      const nextGoal = finalMatches
+        ? {
+          ...finalStoredGoal,
+          raceId: race.id,
+          raceTarget: completeRaceTargetSnapshot(finalTarget, raceId) ? finalTarget : snapshot,
+        }
+        : finalStoredGoal;
+      const nextPlan = {
+        ...parsed,
+        goal: nextGoal,
+        ...(Array.isArray(parsed.goals) && parsed.goals.length ? { goals: nextGoals } : {}),
+      };
       await updateActivePlanData(active, req.user.id, nextPlan, tx);
       return { status: 200, planData: nextPlan };
     });

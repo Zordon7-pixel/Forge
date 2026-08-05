@@ -265,6 +265,14 @@ async function verifyLegacyRaceLinkRoute(raceLinkHandler) {
   });
   assert.equal(linked.statusCode, 200);
   assert.equal(linked.payload.plan_data.goal.raceId, 'race-a');
+  assert.deepEqual(linked.payload.plan_data.goal.raceTarget, {
+    raceId: 'race-a',
+    name: 'Army Ten-Miler',
+    date: '2026-10-11',
+    distanceMiles: 10,
+    location: null,
+    goalTimeSeconds: null,
+  });
   assert.equal(assignment.plan_id === 'template-1', false, 'the user assignment must repoint to a private clone');
   assert.equal(JSON.parse(plans.get('template-1').plan_data).goal.raceId, undefined, 'the shared template must stay pristine');
   const clone = plans.get(assignment.plan_id);
@@ -272,6 +280,40 @@ async function verifyLegacyRaceLinkRoute(raceLinkHandler) {
   assert.equal(JSON.parse(clone.plan_data).goal.raceId, 'race-a');
   assert.ok(writes.some(({ sql, params }) => /UPDATE user_plans/.test(sql) && params.at(-1) === 'user-a'));
   assert.ok(writes.some(({ sql, params }) => /UPDATE training_plans/.test(sql) && params.at(-1) === 'user-a'));
+
+  const privatePlan = plans.get(assignment.plan_id);
+  privatePlan.plan_data = JSON.stringify({
+    schemaVersion: 2,
+    goal: { raceId: 'race-c', name: 'Army Ten-Miler', date: '2026-10-11', distanceMiles: 10 },
+    goals: [
+      { raceId: 'race-a', name: 'Yonkers Half Marathon', date: '2026-09-20', distanceMiles: 13.1 },
+      { raceId: 'race-c', name: 'Army Ten-Miler', date: '2026-10-11', distanceMiles: 10 },
+    ],
+    weeks: [],
+  });
+  races.set('race-a', { id: 'race-a', user_id: 'user-a', race_name: 'Yonkers Half Marathon', race_date: '2026-09-20', distance_miles: 13.1, location: 'Yonkers, NY', goal_time_seconds: 7200 });
+  races.set('race-c', { id: 'race-c', user_id: 'user-a', race_name: 'Army Ten-Miler', race_date: '2026-10-11', distance_miles: 10, location: 'Washington, DC', goal_time_seconds: 5400 });
+
+  const linkedA1 = await invoke(raceLinkHandler, {
+    user: { id: 'user-a' }, body: { race_id: 'race-a' }, params: {}, query: {},
+  });
+  assert.equal(linkedA1.statusCode, 200);
+  assert.equal(linkedA1.payload.plan_data.goals[0].raceTarget.name, 'Yonkers Half Marathon');
+  assert.equal(linkedA1.payload.plan_data.goals[1].raceTarget, undefined);
+  assert.equal(linkedA1.payload.plan_data.goal.raceTarget, undefined, 'A1 linkage must not rewrite the final A2 goal');
+
+  const linkedA2 = await invoke(raceLinkHandler, {
+    user: { id: 'user-a' }, body: { race_id: 'race-c' }, params: {}, query: {},
+  });
+  assert.equal(linkedA2.statusCode, 200);
+  assert.equal(linkedA2.payload.plan_data.goals[1].raceTarget.raceId, 'race-c');
+  assert.equal(linkedA2.payload.plan_data.goal.raceTarget.raceId, 'race-c');
+
+  races.get('race-c').goal_time_seconds = 5100;
+  const relinkedA2 = await invoke(raceLinkHandler, {
+    user: { id: 'user-a' }, body: { race_id: 'race-c' }, params: {}, query: {},
+  });
+  assert.equal(relinkedA2.payload.plan_data.goal.raceTarget.goalTimeSeconds, 5400, 'an edit must not overwrite the target used to generate workouts');
 }
 
 async function main() {

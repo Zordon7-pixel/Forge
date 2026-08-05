@@ -9,7 +9,7 @@ import ForgedCalendar from '../components/calendar/ForgedCalendar'
 import ForgedDayView from '../components/calendar/ForgedDayView'
 import RaceEditSheet from '../components/calendar/RaceEditSheet'
 import {
-  buildCalendarModel, calendarDateRange, dayWithRecordedRuns, goalWithRace, indexRecordedRuns, todayISO,
+  buildCalendarModel, calendarDateRange, dayWithRecordedRuns, goalWithRace, indexRecordedRuns, racePlanReview, todayISO,
 } from '../lib/planCalendar'
 import { withActiveRunReturnTarget } from '../lib/activeRunControls'
 import { resolveReadiness } from '../lib/truthConsistency'
@@ -116,6 +116,8 @@ export default function Plan() {
   const [raceSaving, setRaceSaving] = useState(false)
   const [raceSaveError, setRaceSaveError] = useState('')
   const [raceSaveNotice, setRaceSaveNotice] = useState(null)
+  const [planReviewBusy, setPlanReviewBusy] = useState(false)
+  const [planReviewError, setPlanReviewError] = useState('')
   const [reconcilingRaces, setReconcilingRaces] = useState(false)
   const [raceReconciliationError, setRaceReconciliationError] = useState('')
   const [raceReconciliationNotice, setRaceReconciliationNotice] = useState('')
@@ -248,6 +250,14 @@ export default function Plan() {
     [model, races],
   )
   const activeRace = activeRaces[activeRaces.length - 1] || null
+  const racePlanReviews = useMemo(() => {
+    const goals = model?.goals?.length ? model.goals : model?.goal ? [model.goal] : []
+    return goals.map((goal) => {
+      const race = findRaceForGoal(goal)
+      return { goal, race, review: racePlanReview(goal, race) }
+    }).filter((entry) => entry.race && entry.review.required)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [model, races])
   const calendarModel = useMemo(() => (
     model ? {
       ...model,
@@ -353,6 +363,41 @@ export default function Plan() {
     }
   }
 
+  const rebuildRacePlan = async () => {
+    if (!racePlanReviews.length || planReviewBusy) return
+    const goals = model?.goals?.length ? model.goals : model?.goal ? [model.goal] : []
+    const raceIds = goals.map((goal) => findRaceForGoal(goal)?.id).filter(Boolean)
+    if (!raceIds.length || raceIds.length !== goals.length) {
+      setPlanReviewError('Review the saved races before rebuilding this calendar.')
+      return
+    }
+    const planData = myPlan?.plan_data || {}
+    const strengthPolicy = planData.strengthPolicy || {}
+    setPlanReviewBusy(true)
+    setPlanReviewError('')
+    try {
+      await api.post('/plans/generate-for-races', {
+        race_ids: raceIds,
+        target: {
+          trainingDays: planData.schedulePreferences?.trainingDays || [],
+          runDaysPerWeek: planData.schedulePreferences?.runDaysPerWeek || null,
+          planMode: planData.planMode || 'run_only',
+          liftingEnabled: Boolean(strengthPolicy.enabled),
+          liftDaysPerWeek: strengthPolicy.sessionsPerWeek || 0,
+          strengthGoal: strengthPolicy.goal || 'maintain',
+          equipment: Array.isArray(strengthPolicy.equipment) ? strengthPolicy.equipment : [],
+        },
+      }, { timeout: 90000 })
+      setRaceSaveNotice({ message: 'Training calendar rebuilt for the updated race target.' })
+      await loadAll()
+    } catch (err) {
+      console.error('[Plan] race plan rebuild failed:', err?.message || err)
+      setPlanReviewError(err?.response?.data?.error || 'Could not rebuild this race plan. Your current workouts are unchanged.')
+    } finally {
+      setPlanReviewBusy(false)
+    }
+  }
+
   const decideAdaptation = async (decision) => {
     if (!adaptationProposal?.id) return
     setDecidingAdaptation(decision)
@@ -436,7 +481,7 @@ export default function Plan() {
     setRaceSaving(true)
     setRaceSaveError('')
     try {
-      if (!model?.goal?.raceId) {
+      if (affectsPlan) {
         const { data: linkData } = await api.put('/plans/my/race-link', { race_id: activeRace.id })
         if (linkData?.plan_data) {
           setMyPlan((current) => current ? { ...current, plan_data: linkData.plan_data } : current)
@@ -447,9 +492,7 @@ export default function Plan() {
       if (!updated) throw new Error('Race update did not return the saved race.')
       setRaces((current) => current.map((race) => String(race.id) === String(updated.id) ? updated : race))
       setRaceEditorOpen(false)
-      setRaceSaveNotice(affectsPlan
-        ? { raceId: updated.id, affectsPlan: true, message: 'Race saved. Review your training days before rebuilding workouts for the new target.' }
-        : { raceId: updated.id, affectsPlan: false, message: 'Race details saved.' })
+      setRaceSaveNotice(affectsPlan ? null : { message: 'Race details saved.' })
     } catch (err) {
       console.error('[Plan] race update failed:', err?.message || err)
       setRaceSaveError(err?.response?.data?.error || err?.message || 'Could not update this race.')
@@ -649,6 +692,29 @@ export default function Plan() {
           </div>
         )}
 
+        {myPlan && racePlanReviews.length > 0 && (
+          <section role="status" aria-labelledby="race-plan-review-title" className="min-w-0 rounded-xl p-4" style={{ background: 'var(--accent-dim)', border: '1px solid var(--accent)' }}>
+            <p className="text-[10px] font-black uppercase" style={{ color: 'var(--accent)', margin: 0 }}>Plan needs review</p>
+            <h2 id="race-plan-review-title" className="mt-1 break-words text-base font-black" style={{ color: 'var(--text-primary)' }}>
+              {racePlanReviews.length === 1
+                ? `${racePlanReviews[0].race.race_name} changed`
+                : 'Your protected race targets changed'}
+            </h2>
+            <p className="mt-1 text-sm leading-6" style={{ color: 'var(--text-muted)' }}>
+              The race details are saved, but the current workouts still use the previous target. Rebuild explicitly to preserve every protected race and recalculate pace, progression, peak, and taper.
+            </p>
+            {planReviewError && <p role="alert" className="mt-3 rounded-lg p-3 text-sm" style={{ background: 'var(--danger-dim)', color: 'var(--danger)' }}>{planReviewError}</p>}
+            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <button type="button" onClick={rebuildRacePlan} disabled={planReviewBusy} className="min-h-11 rounded-lg px-4 py-3 text-sm font-black disabled:opacity-60" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>
+                {planReviewBusy ? 'Rebuilding…' : 'Rebuild for updated races'}
+              </button>
+              <button type="button" onClick={() => navigate('/races')} disabled={planReviewBusy} className="min-h-11 rounded-lg px-4 py-3 text-sm font-bold disabled:opacity-60" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>
+                Review races
+              </button>
+            </div>
+          </section>
+        )}
+
         {/* Active plan: the Forged Training Calendar is primary */}
         {myPlan && calendarModel && (
           selectedDay ? (
@@ -726,13 +792,8 @@ export default function Plan() {
               />
 
               {raceSaveNotice && (
-                <div role="status" className="rounded-lg p-3" style={{ marginTop: 12, background: raceSaveNotice.affectsPlan ? 'var(--accent-dim)' : 'rgba(22,163,74,0.12)', border: '1px solid var(--border-subtle)' }}>
+                <div role="status" className="rounded-lg p-3" style={{ marginTop: 12, background: 'rgba(22,163,74,0.12)', border: '1px solid var(--border-subtle)' }}>
                   <p className="text-sm" style={{ color: 'var(--text-primary)', margin: 0 }}>{raceSaveNotice.message}</p>
-                  {raceSaveNotice.affectsPlan && (
-                    <button type="button" onClick={() => navigate('/plan-catalog', { state: { raceId: raceSaveNotice.raceId } })} style={{ marginTop: 8, padding: 0, border: 0, background: 'transparent', color: 'var(--accent)', fontSize: 12, fontWeight: 900 }}>
-                      Review and rebuild calendar →
-                    </button>
-                  )}
                 </div>
               )}
 
