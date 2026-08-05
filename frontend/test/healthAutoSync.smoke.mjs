@@ -8,8 +8,10 @@ import {
   createHealthImportBatches,
   createHealthSyncCoordinator,
   HEALTH_IMPORT_BATCH_SIZE,
+  HEALTH_PULL_REFRESH_TIMEOUT_MS,
   HEALTH_SYNC_COMPLETED_EVENT,
   HEALTH_SYNC_RESULT_EVENT,
+  HealthSyncTimeoutError,
   healthSyncFailureMessage,
   healthSyncNotice,
   importHealthWorkoutBatches,
@@ -187,6 +189,94 @@ assert.ok(!timeoutCopy.includes('15000ms'), 'timeout copy does not expose an imp
 }
 
 {
+  const syncGate = deferred()
+  const events = []
+  const calls = []
+  let cancelCalls = 0
+  let scheduledTimeoutMs = null
+  const refresh = runHealthAwarePageRefresh({
+    authenticated: true,
+    native: true,
+    syncNativeData: (options) => {
+      calls.push(options)
+      return syncGate.promise
+    },
+    onHealthSyncError: (error) => events.push(`health-failed:${error.message}`),
+    afterHealthSync: () => events.push('post-sync'),
+    refreshPage: () => events.push('page-refreshed'),
+    scheduleTimeout: (callback, timeoutMs) => {
+      scheduledTimeoutMs = timeoutMs
+      queueMicrotask(callback)
+      return 1
+    },
+    cancelTimeout: () => {
+      cancelCalls += 1
+    },
+  })
+  const settledRefresh = refresh.then((outcome) => ({ outcome, settled: true }))
+  const deadlineOutcome = await Promise.race([
+    settledRefresh,
+    new Promise((resolve) => setTimeout(() => resolve({ settled: false }), 0)),
+  ])
+  assert.equal(deadlineOutcome.settled, true, 'an unresolved native sync settles through the manual-refresh deadline')
+  assert.deepEqual(calls, [{ forceFresh: true }], 'the bounded path still requests exactly one forced-fresh native sync')
+  assert.equal(scheduledTimeoutMs, HEALTH_PULL_REFRESH_TIMEOUT_MS, 'the manual-refresh deadline uses the exported mobile UX timeout')
+  assert.equal(cancelCalls, 1, 'the deadline handle is cleaned up after bounded settlement')
+  assert.deepEqual(events, [
+    `health-failed:${deadlineOutcome.outcome.healthSyncError.message}`,
+    'post-sync',
+    'page-refreshed',
+  ], 'the deadline reports one handled Health failure before refreshing exactly once')
+  assert.equal(deadlineOutcome.outcome.healthSyncAttempted, true)
+  assert.equal(deadlineOutcome.outcome.healthSyncResult, null, 'a timed-out sync does not emit a false Health success')
+  assert.ok(deadlineOutcome.outcome.healthSyncError instanceof HealthSyncTimeoutError, 'the deadline exposes a named Health timeout')
+  assert.match(healthSyncFailureMessage(deadlineOutcome.outcome.healthSyncError), /taking longer than expected/)
+
+  syncGate.resolve({ complete: true })
+  await Promise.resolve()
+  await Promise.resolve()
+  assert.equal(events.filter((event) => event === 'page-refreshed').length, 1, 'a late Health success does not refresh twice')
+  assert.equal(events.filter((event) => event.startsWith('health-failed:')).length, 1, 'a late Health success does not report another failure')
+}
+
+{
+  const syncGate = deferred()
+  const unhandledRejections = []
+  let errorCalls = 0
+  let refreshCalls = 0
+  const captureUnhandledRejection = (error) => {
+    unhandledRejections.push(error)
+  }
+  process.on('unhandledRejection', captureUnhandledRejection)
+  try {
+    const outcome = await runHealthAwarePageRefresh({
+      authenticated: true,
+      native: true,
+      syncNativeData: () => syncGate.promise,
+      onHealthSyncError: () => {
+        errorCalls += 1
+      },
+      refreshPage: () => {
+        refreshCalls += 1
+      },
+      scheduleTimeout: (callback) => {
+        queueMicrotask(callback)
+        return 1
+      },
+      cancelTimeout: () => {},
+    })
+    assert.ok(outcome.healthSyncError instanceof HealthSyncTimeoutError)
+    syncGate.reject(new Error('late native rejection'))
+    await new Promise((resolve) => setImmediate(resolve))
+  } finally {
+    process.off('unhandledRejection', captureUnhandledRejection)
+  }
+  assert.equal(errorCalls, 1, 'a late Health rejection does not invoke the handled error callback twice')
+  assert.equal(refreshCalls, 1, 'a late Health rejection does not refresh twice')
+  assert.deepEqual(unhandledRejections, [], 'a late Health rejection remains observed after the deadline')
+}
+
+{
   let healthCalls = 0
   let refreshCalls = 0
   const syncNativeData = () => {
@@ -251,6 +341,47 @@ assert.ok(!timeoutCopy.includes('15000ms'), 'timeout copy does not expose an imp
   assert.equal(reloadCalls, 1, 'the guarded refresh invokes the reload path exactly once')
   assert.equal(refreshInFlight.current, true, 'a successful reload path keeps the gesture guard raised until navigation')
   assert.equal(gestureResets, 2, 'every touchend still cleans up its gesture state')
+}
+
+{
+  const syncGate = deferred()
+  const refreshInFlight = { current: false }
+  let fireDeadline
+  let coordinatorCalls = 0
+  let reloadCalls = 0
+  const onTouchEnd = createPullToRefreshEndHandler({
+    refreshInFlight,
+    shouldRefresh: () => true,
+    onRefreshStart: () => {},
+    runPageRefresh: () => {
+      coordinatorCalls += 1
+      return runHealthAwarePageRefresh({
+        authenticated: true,
+        native: true,
+        syncNativeData: () => syncGate.promise,
+        refreshPage: () => {
+          reloadCalls += 1
+        },
+        scheduleTimeout: (callback) => {
+          fireDeadline = callback
+          return 1
+        },
+        cancelTimeout: () => {},
+      })
+    },
+    onRefreshFailure: () => {},
+    resetGesture: () => {},
+  })
+
+  const firstTouchEnd = onTouchEnd()
+  const secondTouchEnd = onTouchEnd()
+  assert.equal(await secondTouchEnd, false, 'a duplicate touchend cannot start a second deadline-bounded refresh')
+  assert.equal(coordinatorCalls, 1, 'the synchronous gesture latch guards the timeout path')
+  fireDeadline()
+  assert.equal(await firstTouchEnd, true)
+  assert.equal(reloadCalls, 1, 'the timeout path invokes ordinary reload exactly once')
+  assert.equal(refreshInFlight.current, true, 'the timeout reload path keeps the gesture guard raised until navigation')
+  syncGate.resolve({ complete: true })
 }
 
 {
