@@ -5,7 +5,8 @@
   "scripts": {
     "start": "node src/app.js",
     "dev": "node src/app.js",
-    "check:account-data": "node scripts/check-account-data-coverage.js"
+    "check:account-data": "node scripts/check-account-data-coverage.js",
+    "test:smoke": "node scripts/run-smoke-suite.js"
   },
   "dependencies": {
     "bad-words": "^3.0.4",

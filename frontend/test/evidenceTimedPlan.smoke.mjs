@@ -7,7 +7,12 @@ import { fileURLToPath } from 'node:url'
 import { createServer } from 'vite'
 
 const frontendRoot = fileURLToPath(new URL('..', import.meta.url))
-const vite = await createServer({ root: frontendRoot, server: { middlewareMode: true }, appType: 'custom' })
+const vite = await createServer({
+  root: frontendRoot,
+  server: { middlewareMode: true },
+  appType: 'custom',
+  optimizeDeps: { noDiscovery: true },
+})
 const { default: WatchWorkoutService } = await vite.ssrLoadModule('/src/services/WatchWorkoutService.js')
 const { default: WatchDeliveryService } = await vite.ssrLoadModule('/src/services/WatchDeliveryService.js')
 const { trainingEvidenceKindLabel } = await vite.ssrLoadModule('/src/lib/trainingEvidence.js')

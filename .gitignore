@@ -28,5 +28,9 @@ frontend/dist/
 *.log
 npm-debug.log*
 
+# Browser QA artifacts
+frontend/playwright-report/
+frontend/test-results/
+
 # Local agent usage telemetry
 .build-prompts/*-usage.json

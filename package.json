@@ -4,9 +4,12 @@
   "scripts": {
     "build": "cd frontend && npm install && npm run build",
     "start": "cd backend && node src/app.js",
-    "install:all": "cd backend && npm install && cd ../frontend && npm install"
+    "install:all": "cd backend && npm install && cd ../frontend && npm install",
+    "qa:smoke": "npm --prefix frontend run test:smoke && npm --prefix backend run test:smoke",
+    "qa:browser": "npm --prefix frontend run test:e2e",
+    "qa": "npm run qa:smoke && npm --prefix frontend run build && npm --prefix frontend run test:e2e"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   }
 }
