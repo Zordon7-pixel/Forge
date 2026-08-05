@@ -193,12 +193,18 @@ assert(/collectSessionIds\(parsed\)/.test(plansRoute), 'plan progress rejects se
 assert(/requestedWeek < 1/.test(plansRoute), 'plan progress rejects week zero at the API boundary');
 
 section('completion is called ONLY on the success path (static)');
-// lastIndexOf targets the CALL SITE (the import line is the first occurrence).
-// ActiveRun: markSessionComplete must sit inside the durable-save success block
-// (after runId truthy), before the outer save catch; queueSessionComplete only
-// after the queued run request.
-assert(activeRun.indexOf('if (runId) {') < activeRun.lastIndexOf('markSessionComplete') && activeRun.lastIndexOf('markSessionComplete') < activeRun.indexOf("Failed to save run"), 'ActiveRun completion is inside the runId success block, before the save catch');
-assert(activeRun.indexOf("queueRequest('/api/runs', 'POST', payload)") < activeRun.lastIndexOf('queueSessionComplete'), 'ActiveRun offline completion is queued AFTER the run request');
+// ActiveRun now hands durable saves to the recap route before syncing plan
+// progress. Assert the handoff starts only after an online ID or offline queue.
+const activeRunSave = activeRun.indexOf("const res = await api.post('/runs', payload)");
+const activeRunIdGuard = activeRun.indexOf('if (runId) {', activeRunSave);
+const activeRunOnlineHandoff = activeRun.indexOf('persistCompletionAndOpenRecap({', activeRunIdGuard);
+const activeRunSaveCatch = activeRun.indexOf("console.error('Failed to save run:'", activeRunOnlineHandoff);
+assert(activeRunSave < activeRunIdGuard && activeRunIdGuard < activeRunOnlineHandoff && activeRunOnlineHandoff < activeRunSaveCatch, 'ActiveRun online completion handoff starts only after the saved run returns an id');
+const activeRunQueuedSave = activeRun.indexOf("queueRequest('/api/runs', 'POST', payload)", activeRunSaveCatch);
+const activeRunOfflineHandoff = activeRun.indexOf('persistCompletionAndOpenRecap({', activeRunQueuedSave);
+assert(activeRunQueuedSave >= 0 && activeRunQueuedSave < activeRunOfflineHandoff, 'ActiveRun offline completion handoff starts only after the run request is queued');
+const activeRunHandoffHelper = activeRun.indexOf('const persistCompletionAndOpenRecap');
+assert(activeRunHandoffHelper < activeRun.indexOf('void syncPlanProgressAfterSave(runId, queued)', activeRunHandoffHelper), 'ActiveRun syncs plan progress from the durable completion handoff');
 // LogRun: online completion after setShowPostCheckIn(true); offline completion after queueRequest.
 assert(logRun.indexOf('setShowPostCheckIn(true)') < logRun.lastIndexOf('markSessionComplete'), 'LogRun online completion runs after the successful save');
 assert((logRun.match(/queueSessionComplete\(/g) || []).length >= 2, 'LogRun queues completion on both offline branches');
