@@ -499,7 +499,16 @@ export default function Dashboard() {
 
     const syncHealthSummary = async (attempt = 0) => {
       try {
-        const result = await HealthService.getHealthSummary()
+        let profileAlreadySynced = false
+        let result = HealthService.getRecentNativeSyncResult()
+        if (result) {
+          profileAlreadySynced = true
+        } else if (HealthService.hasNativeSyncInFlight()) {
+          result = await HealthService.syncNativeData()
+          profileAlreadySynced = true
+        } else {
+          result = await HealthService.getHealthSummary()
+        }
         if (!active) return
 
         if (result?.available && result?.metrics) {
@@ -509,7 +518,7 @@ export default function Dashboard() {
             setDailyStepsSource('watch')
           }
           try {
-            await HealthService.syncToProfile(result.metrics)
+            if (!profileAlreadySynced) await HealthService.syncToProfile(result.metrics)
             if (active) setHealthSyncNotice('')
           } catch (error) {
             console.warn('[HealthSync] profile sync failed:', error?.message)

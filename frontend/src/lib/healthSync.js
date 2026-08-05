@@ -6,6 +6,7 @@ export const HEALTH_IMPORT_TIMEOUT_MS = 30000
 
 const HEALTH_SYNC_RESULT_KEY = 'forge_last_health_sync_result'
 const HEALTH_HISTORY_TRANSFER_PENDING_KEY = 'forge.health.resyncNeeded'
+let activeHealthPullRefreshes = 0
 
 export function isHealthHistoryTransferPending() {
   try {
@@ -141,31 +142,41 @@ export async function runHealthAwarePageRefresh({
   let healthSyncAttempted = false
   let healthSyncResult = null
   let healthSyncError = null
+  const suppressHealthEventRefreshes = Boolean(authenticated && native)
 
-  if (authenticated && native) {
-    healthSyncAttempted = true
-    try {
-      healthSyncResult = await Promise.resolve().then(() => syncNativeData({
-        forceFresh: true,
-        syncOrigin: HEALTH_SYNC_ORIGIN_PULL_REFRESH,
-      }))
-    } catch (error) {
-      healthSyncError = error
+  if (suppressHealthEventRefreshes) activeHealthPullRefreshes += 1
+
+  try {
+    if (suppressHealthEventRefreshes) {
+      healthSyncAttempted = true
       try {
-        onHealthSyncError?.(error)
-      } catch (reportingError) {
-        console.warn('[healthSync] refresh error reporter failed:', reportingError?.message || reportingError)
+        healthSyncResult = await Promise.resolve().then(() => syncNativeData({
+          forceFresh: true,
+          syncOrigin: HEALTH_SYNC_ORIGIN_PULL_REFRESH,
+        }))
+      } catch (error) {
+        healthSyncError = error
+        try {
+          onHealthSyncError?.(error)
+        } catch (reportingError) {
+          console.warn('[healthSync] refresh error reporter failed:', reportingError?.message || reportingError)
+        }
       }
     }
-  }
 
-  await afterHealthSync?.()
-  await refreshPage?.()
+    const outcome = {
+      healthSyncAttempted,
+      healthSyncResult,
+      healthSyncError,
+    }
 
-  return {
-    healthSyncAttempted,
-    healthSyncResult,
-    healthSyncError,
+    await afterHealthSync?.()
+    await refreshPage?.(outcome)
+    return outcome
+  } finally {
+    if (suppressHealthEventRefreshes) {
+      activeHealthPullRefreshes = Math.max(0, activeHealthPullRefreshes - 1)
+    }
   }
 }
 
@@ -180,7 +191,8 @@ export function getLastHealthSyncResult() {
 }
 
 export function shouldRefreshPageForHealthSyncEvent(event) {
-  return event?.detail?.origin !== HEALTH_SYNC_ORIGIN_PULL_REFRESH
+  return activeHealthPullRefreshes === 0
+    && event?.detail?.origin !== HEALTH_SYNC_ORIGIN_PULL_REFRESH
 }
 
 export function announceHealthSyncResult(result, { complete = true, origin = null } = {}) {

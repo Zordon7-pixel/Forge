@@ -128,6 +128,7 @@ function nativeBridgeUnavailableReason(error) {
 class HealthService {
   constructor() {
     this.healthKit = null
+    this.lastNativeSync = null
     this.nativeSyncCoordinator = createHealthSyncCoordinator((options) => this.performNativeSync(options))
   }
 
@@ -301,6 +302,16 @@ class HealthService {
     return this.nativeSyncCoordinator.run(options)
   }
 
+  hasNativeSyncInFlight() {
+    return this.nativeSyncCoordinator.hasActiveOperation()
+  }
+
+  getRecentNativeSyncResult(maxAgeMs = 30000) {
+    const completedAt = Number(this.lastNativeSync?.completedAt || 0)
+    if (!completedAt || Date.now() - completedAt > maxAgeMs) return null
+    return this.lastNativeSync.result || null
+  }
+
   async performNativeSync({ requestPermission = false, syncOrigin = null } = {}) {
     const result = await this.getHealthSummary({ requestPermission })
     if (!result?.available) {
@@ -373,6 +384,7 @@ class HealthService {
       complete,
       status: complete ? 'complete' : 'partial',
     }
+    this.lastNativeSync = { result: syncResult, completedAt: Date.now() }
     announceHealthSyncResult(syncResult, { complete, origin: syncOrigin })
     return syncResult
   }

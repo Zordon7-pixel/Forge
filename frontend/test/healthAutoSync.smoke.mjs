@@ -211,12 +211,22 @@ assert.ok(!timeoutCopy.includes('15000ms'), 'timeout copy does not expose an imp
     syncOrigin: HEALTH_SYNC_ORIGIN_PULL_REFRESH,
   }], 'authenticated native pull refresh requests exactly one forced HealthKit sync with pull provenance')
   assert.deepEqual(events, ['health-started'], 'page refresh waits while the HealthKit sync is unsettled')
+  assert.equal(
+    shouldRefreshPageForHealthSyncEvent({ detail: { origin: null } }),
+    false,
+    'an automatic sync event settling while a pull waits cannot trigger an intermediate page fetch',
+  )
   syncGate.resolve({ complete: true })
   const outcome = await refresh
   assert.deepEqual(events, ['health-started', 'health-settled', 'post-sync', 'page-refreshed'])
   assert.equal(outcome.healthSyncAttempted, true)
   assert.equal(outcome.healthSyncResult.complete, true)
   assert.equal(outcome.healthSyncError, null)
+  assert.equal(
+    shouldRefreshPageForHealthSyncEvent({ detail: { origin: null } }),
+    true,
+    'ordinary automatic events resume page refresh behavior after the pull settles',
+  )
 }
 
 {
@@ -237,6 +247,11 @@ assert.ok(!timeoutCopy.includes('15000ms'), 'timeout copy does not expose an imp
   assert.equal(outcome.healthSyncAttempted, true)
   assert.equal(outcome.healthSyncResult, null)
   assert.match(outcome.healthSyncError.message, /server unavailable/)
+  assert.equal(
+    shouldRefreshPageForHealthSyncEvent({ detail: { origin: null } }),
+    true,
+    'a failed pull releases automatic Health event refreshes',
+  )
 }
 
 {
@@ -478,6 +493,8 @@ assert.ok(service.indexOf('markHealthHistoryTransferPending()') < service.indexO
 assert.ok(service.includes("api.post('/import/health', { workouts: batch }, { timeout: HEALTH_IMPORT_TIMEOUT_MS })"), 'each workout batch has a dedicated timeout')
 assert.ok(service.includes('createHealthSyncCoordinator'), 'native calls use the behavioral single-flight coordinator')
 assert.ok(service.includes('announceHealthSyncResult(syncResult, { complete, origin: syncOrigin })'), 'sync result distinguishes complete from partial and preserves refresh provenance')
+assert.ok(service.includes('this.lastNativeSync = { result: syncResult, completedAt: Date.now() }'), 'the completed native result is cached for the keyed Dashboard remount')
+assert.ok(service.includes('hasNativeSyncInFlight()'), 'Dashboard can join a cold-launch native sync instead of starting a parallel HealthKit read')
 assert.ok(pullToRefresh.includes('await runHealthAwarePageRefresh({'), 'pull-to-refresh delegates sync and reload ordering to the tested coordinator')
 assert.ok(pullToRefresh.includes('syncNativeData: (options) => HealthService.syncNativeData(options)'), 'pull-to-refresh forwards forced manual sync options to HealthService')
 assert.ok(pullToRefresh.includes("console.error('[PullToRefresh] Apple Health sync failed:'"), 'pull sync failures retain diagnostic context')
@@ -493,6 +510,8 @@ assert.ok(pullToRefresh.includes('refreshPage: () => onRefreshCompleteRef.curren
 assert.ok(!pullToRefresh.includes('window.location.reload()'), 'pull refresh does not hard-reload the native shell')
 assert.ok(!healthSyncSource.includes('Promise.race([healthSyncPromise'), 'pull refresh waits for the actual HealthKit import instead of exposing stale data at a UI deadline')
 assert.ok(dashboardSource.includes('shouldRefreshPageForHealthSyncEvent(event)'), 'Dashboard suppresses its duplicate fetch burst for pull-origin Health events')
+assert.ok(dashboardSource.includes('HealthService.getRecentNativeSyncResult()'), 'Dashboard reuses the pull sync result instead of reading HealthKit again after remount')
+assert.ok(dashboardSource.includes('HealthService.hasNativeSyncInFlight()'), 'Dashboard joins an active automatic sync instead of duplicating it')
 assert.ok(healthSourceManager.includes('shouldRefreshPageForHealthSyncEvent(event)'), 'connected sources suppress duplicate pull-origin fetches')
 assert.ok(layout.includes('<PullToRefresh onRefreshComplete={refreshAppShell}>'), 'the shared app shell owns the refresh completion')
 assert.ok(layout.includes('<main key={appRefreshKey}'), 'the active screen remounts after HealthKit settles')
