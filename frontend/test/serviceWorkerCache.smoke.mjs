@@ -10,8 +10,10 @@ const source = fs.readFileSync(path.join(root, 'public/sw.js'), 'utf8')
 function buildWorkerHarness() {
   const listeners = new Map()
   const puts = []
+  const deletes = []
   let nextResponse = new Response('', { status: 500 })
   let fetchError = null
+  let cacheNames = []
 
   const cache = {
     addAll: async () => {},
@@ -31,8 +33,12 @@ function buildWorkerHarness() {
     },
     caches: {
       open: async () => cache,
-      keys: async () => [],
-      delete: async () => true,
+      keys: async () => [...cacheNames],
+      delete: async (name) => {
+        deletes.push(name)
+        cacheNames = cacheNames.filter((candidate) => candidate !== name)
+        return true
+      },
       match: async () => null,
     },
     self: {
@@ -51,6 +57,10 @@ function buildWorkerHarness() {
   return {
     listeners,
     puts,
+    deletes,
+    setCacheNames(names) {
+      cacheNames = [...names]
+    },
     setResponse(response) {
       nextResponse = response
       fetchError = null
@@ -59,6 +69,17 @@ function buildWorkerHarness() {
       fetchError = error
     },
   }
+}
+
+async function dispatchLifecycle(harness, type) {
+  let workPromise
+  harness.listeners.get(type)({
+    waitUntil(value) {
+      workPromise = Promise.resolve(value)
+    },
+  })
+  assert.ok(workPromise, `${type} handler registers lifecycle work`)
+  await workPromise
 }
 
 async function dispatchFetch(harness, pathname) {
@@ -78,6 +99,11 @@ async function dispatchFetch(harness, pathname) {
 async function runServiceWorkerCacheSmoke() {
   assert.match(source, /const CACHE = 'forge-v5'/, 'cache version purges pre-fix responses')
   assert.match(source, /hasExpectedAssetType\(url, response\)/, 'static responses are type-checked before caching')
+
+  const activation = buildWorkerHarness()
+  activation.setCacheNames(['forge-v4', 'forge-v5', 'forge-api-v1'])
+  await dispatchLifecycle(activation, 'activate')
+  assert.deepEqual(activation.deletes, ['forge-v4'], 'v5 activation deletes the poisoned v4 cache only')
 
   const validJs = buildWorkerHarness()
   validJs.setResponse(new Response('export default true', {
@@ -117,7 +143,7 @@ async function runServiceWorkerCacheSmoke() {
   assert.equal(offlineResponse.status, 503, 'uncached offline JavaScript returns an explicit unavailable response')
   assert.match(offlineResponse.headers.get('content-type') || '', /^text\/plain/i, 'offline JavaScript never receives the HTML shell')
 
-  console.log('SERVICE WORKER CACHE SMOKE OK (8)')
+  console.log('SERVICE WORKER CACHE SMOKE OK (9)')
 }
 
 await runServiceWorkerCacheSmoke()

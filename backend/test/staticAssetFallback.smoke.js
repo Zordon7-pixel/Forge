@@ -15,8 +15,13 @@ function runStaticAssetFallbackSmoke() {
     /status\(404\).*type\('text\/plain'\)/s,
     'missing assets return a plain-text 404 instead of index.html'
   );
+  assert.match(
+    appSource,
+    /process\.env\.RAILWAY_GIT_COMMIT_SHA[\s\S]*res\.set\('X-Forge-Revision', deploymentRevision\)/,
+    'Railway responses expose the exact deployed Git revision for release-bound QA'
+  );
 
-  console.log('STATIC ASSET FALLBACK SMOKE OK (3)');
+  console.log('STATIC ASSET FALLBACK SMOKE OK (4)');
 }
 
 if (require.main === module) runStaticAssetFallbackSmoke();

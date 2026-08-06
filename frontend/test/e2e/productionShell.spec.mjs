@@ -1,5 +1,8 @@
 import { expect, test } from '@playwright/test'
 
+const EXPECTED_ASSET_PATH = String(process.env.FORGE_QA_EXPECTED_ASSET || '').trim()
+const EXPECTED_REVISION = String(process.env.FORGE_QA_EXPECTED_REVISION || '').trim().toLowerCase()
+
 const PUBLIC_ROUTES = [
   { path: '/', heading: /The coach for runners who lift/i },
   { path: '/login', heading: 'Log In' },
@@ -19,6 +22,11 @@ async function waitForServiceWorkerControl(page) {
 test('live production shell, hashed assets, and offline cache remain healthy', async ({ page, context, request }) => {
   const pageErrors = []
   page.on('pageerror', (error) => pageErrors.push(error.message))
+
+  if (EXPECTED_REVISION) {
+    const rootResponse = await request.get('/')
+    expect(String(rootResponse.headers()['x-forge-revision'] || '').toLowerCase()).toBe(EXPECTED_REVISION)
+  }
 
   for (const { path, heading } of PUBLIC_ROUTES) {
     await page.goto(path, { waitUntil: 'domcontentloaded' })
@@ -40,6 +48,12 @@ test('live production shell, hashed assets, and offline cache remain healthy', a
     ...document.querySelectorAll('script[type="module"][src], link[rel="stylesheet"][href]'),
   ].map((element) => element.src || element.href))
   expect(assets.length).toBeGreaterThanOrEqual(2)
+
+  if (EXPECTED_ASSET_PATH) {
+    const entryAsset = assets.find((assetUrl) => new URL(assetUrl).pathname.endsWith('.js'))
+    expect(entryAsset).toBeTruthy()
+    expect(new URL(entryAsset).pathname).toBe(EXPECTED_ASSET_PATH)
+  }
 
   for (const assetUrl of assets) {
     const response = await request.get(assetUrl)

@@ -12,6 +12,22 @@ test('service worker purges old caches and never stores or serves HTML as JavaSc
   await page.goto('/login', { waitUntil: 'domcontentloaded' })
   await waitForServiceWorkerControl(page)
 
+  await page.evaluate(async () => {
+    const registrations = await navigator.serviceWorker.getRegistrations()
+    await Promise.all(registrations.map((registration) => registration.unregister()))
+    const oldCache = await caches.open('forge-v4')
+    await oldCache.put('/assets/poisoned-old-chunk.js', new Response('<!doctype html>', {
+      status: 200,
+      headers: { 'Content-Type': 'text/html; charset=UTF-8' },
+    }))
+  })
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await waitForServiceWorkerControl(page)
+
+  await expect.poll(() => page.evaluate(async () => {
+    const names = await caches.keys()
+    return names.includes('forge-v5') && !names.includes('forge-v4')
+  })).toBe(true)
   const cacheNames = await page.evaluate(() => caches.keys())
   expect(cacheNames).toContain('forge-v5')
   expect(cacheNames).not.toContain('forge-v4')

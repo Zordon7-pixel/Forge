@@ -107,6 +107,12 @@ jobs:
       - name: Install Chromium
         working-directory: frontend
         run: npx playwright install --with-deps chromium
+      - name: Export expected pushed revision and bundle identity
+        if: github.event_name != 'schedule'
+        run: |
+          npm --prefix frontend run build
+          echo "FORGE_QA_EXPECTED_REVISION=$GITHUB_SHA" >> "$GITHUB_ENV"
+          node frontend/scripts/export-built-entry.mjs >> "$GITHUB_ENV"
       - name: Wait for the pushed Railway shell
         env:
           FORGE_QA_BASE_URL: https://forge-production-773f.up.railway.app
