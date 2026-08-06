@@ -1,23 +1,60 @@
-const CACHE = 'forge-v5';
-const API_CACHE = 'forge-api-v1';
-const STATIC = ['/'];
+const CACHE = 'forge-v6';
+const API_CACHE = 'forge-api-v2';
 const API_GET_CACHE_PATHS = ['/api/user', '/api/workouts/recent'];
 const DB_NAME = 'forge-offline-queue';
 const DB_VERSION = 1;
 const STORE_NAME = 'requests';
 
+async function precacheAppShell() {
+  const cache = await caches.open(CACHE);
+  const rootRequest = new Request(new URL('/', self.location.origin), { cache: 'reload' });
+  const manifestRequest = new Request(new URL('/asset-manifest.json', self.location.origin), { cache: 'reload' });
+  const shellResponse = await fetch(rootRequest);
+  if (!shellResponse.ok) throw new Error(`App shell fetch failed (${shellResponse.status})`);
+  const manifestResponse = await fetch(manifestRequest);
+  if (!manifestResponse.ok) throw new Error(`Asset manifest fetch failed (${manifestResponse.status})`);
+
+  const shellHtml = await shellResponse.clone().text();
+  const manifest = await manifestResponse.clone().json();
+  const shellAssetUrls = [...shellHtml.matchAll(/\b(?:src|href)=["']([^"']+)["']/gi)]
+    .map((match) => new URL(match[1], self.location.origin))
+    .filter((url) => url.origin === self.location.origin && isCodeAsset(url));
+  const manifestAssetUrls = Object.values(manifest || {}).flatMap((entry) => [
+    entry?.file,
+    ...(Array.isArray(entry?.css) ? entry.css : []),
+  ]).filter(Boolean).map((assetPath) => new URL(assetPath, self.location.origin))
+    .filter((url) => url.origin === self.location.origin && isCodeAsset(url));
+  const assetUrls = [...new Set([...shellAssetUrls, ...manifestAssetUrls].map((url) => url.href))];
+
+  await cache.put(rootRequest, shellResponse);
+  await cache.put(manifestRequest, manifestResponse);
+  await Promise.all(assetUrls.map(async (assetUrl) => {
+    const assetRequest = new Request(assetUrl, { cache: 'reload' });
+    const assetResponse = await fetch(assetRequest);
+    if (!assetResponse.ok || !hasExpectedAssetType(new URL(assetUrl), assetResponse)) {
+      throw new Error(`App shell asset fetch failed: ${assetUrl}`);
+    }
+    await cache.put(assetRequest, assetResponse);
+  }));
+}
+
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(CACHE).then((c) => c.addAll(STATIC)));
-  self.skipWaiting();
+  event.waitUntil(Promise.all([
+    precacheAppShell().catch((error) => {
+      console.error('[service-worker/install] app shell precache failed:', error?.message || error);
+      throw error;
+    }),
+    self.skipWaiting(),
+  ]));
 });
 
 self.addEventListener('activate', (event) => {
-  event.waitUntil(
+  event.waitUntil(Promise.all([
     caches.keys().then((keys) =>
       Promise.all(keys.filter((k) => k !== CACHE && k !== API_CACHE).map((k) => caches.delete(k)))
-    )
-  );
-  self.clients.claim();
+    ),
+    self.clients.claim(),
+  ]));
 });
 
 self.addEventListener('push', (event) => {
@@ -144,6 +181,12 @@ function isCacheableApiGet(request, url) {
   return API_GET_CACHE_PATHS.some((path) => url.pathname.startsWith(path));
 }
 
+function variesByAuthorization(response) {
+  return String(response.headers.get('vary') || '')
+    .split(',')
+    .some((value) => value.trim().toLowerCase() === 'authorization');
+}
+
 function hasExpectedAssetType(url, response) {
   const contentType = String(response.headers.get('content-type') || '').toLowerCase();
   if (url.pathname.endsWith('.js')) {
@@ -155,6 +198,11 @@ function hasExpectedAssetType(url, response) {
 
 function isCodeAsset(url) {
   return url.pathname.endsWith('.js') || url.pathname.endsWith('.css');
+}
+
+async function matchStatic(request) {
+  const cache = await caches.open(CACHE);
+  return cache.match(request, { ignoreVary: true });
 }
 
 self.addEventListener('fetch', (event) => {
@@ -177,14 +225,20 @@ self.addEventListener('fetch', (event) => {
   if (isCacheableApiGet(event.request, url)) {
     event.respondWith(
       fetch(event.request)
-        .then((response) => {
-          if (response.ok) {
-            caches.open(API_CACHE).then((cache) => cache.put(event.request, response.clone()));
+        .then(async (response) => {
+          if (response.ok && variesByAuthorization(response)) {
+            try {
+              const cache = await caches.open(API_CACHE);
+              await cache.put(event.request, response.clone());
+            } catch (error) {
+              console.error('[service-worker/cache] API response write failed:', error?.message || error);
+            }
           }
           return response;
         })
         .catch(async () => {
-          const cached = await caches.match(event.request);
+          const cache = await caches.open(API_CACHE);
+          const cached = await cache.match(event.request);
           if (cached) return cached;
           return new Response(JSON.stringify({ error: 'Offline and no cached data available' }), {
             status: 503,
@@ -201,14 +255,19 @@ self.addEventListener('fetch', (event) => {
 
   event.respondWith(
     fetch(event.request)
-      .then((response) => {
+      .then(async (response) => {
         if (response.ok && hasExpectedAssetType(url, response)) {
-          caches.open(CACHE).then((cache) => cache.put(event.request, response.clone()));
+          try {
+            const cache = await caches.open(CACHE);
+            await cache.put(event.request, response.clone());
+          } catch (error) {
+            console.error('[service-worker/cache] static response write failed:', error?.message || error);
+          }
         }
         return response;
       })
       .catch(async () => {
-        const cached = await caches.match(event.request);
+        const cached = await matchStatic(event.request);
         if (cached) return cached;
         if (isCodeAsset(url)) {
           return new Response('Asset unavailable offline', {
@@ -216,7 +275,13 @@ self.addEventListener('fetch', (event) => {
             headers: { 'Content-Type': 'text/plain; charset=UTF-8' },
           });
         }
-        return caches.match('/');
+        if (event.request.mode === 'navigate') {
+          return matchStatic(new Request(new URL('/', self.location.origin)));
+        }
+        return new Response('Resource unavailable offline', {
+          status: 503,
+          headers: { 'Content-Type': 'text/plain; charset=UTF-8' },
+        });
       })
   );
 });

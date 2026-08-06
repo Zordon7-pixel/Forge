@@ -77,6 +77,7 @@ test('live production shell, hashed assets, and offline cache remain healthy', a
 
   await page.goto('/login', { waitUntil: 'domcontentloaded' })
   await waitForServiceWorkerControl(page)
+  await expect(page.getByRole('heading', { name: 'Log In', exact: true })).toBeVisible()
   await context.setOffline(true)
   await page.reload({ waitUntil: 'domcontentloaded' })
   await expect(page.getByRole('heading', { name: 'Log In', exact: true })).toBeVisible()

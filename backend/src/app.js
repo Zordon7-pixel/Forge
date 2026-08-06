@@ -65,6 +65,12 @@ app.use(helmet({
   },
 }));
 
+// Service-worker API caches must partition authenticated responses by bearer token.
+app.use('/api', (_req, res, next) => {
+  res.vary('Authorization');
+  next();
+});
+
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 20,
