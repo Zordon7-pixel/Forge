@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import { App as CapacitorApp } from '@capacitor/app'
 import { Capacitor } from '@capacitor/core'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router'
 import { getAuthenticatedUserId } from '../lib/auth'
 import track from '../lib/track'
 import { normalizeBuildNumber } from '../services/watchWorkoutAvailability'

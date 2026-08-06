@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { App as CapacitorApp } from '@capacitor/app'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 import { ChevronRight, Download, Moon, RefreshCw, Shield, Sun, Trash2, Watch } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useUnits } from '../context/UnitsContext'

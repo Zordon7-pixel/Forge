@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useState } from 'react'
 import { Capacitor, registerPlugin } from '@capacitor/core'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 import api from '../lib/api'
 import {
   RUN_LOCATION_STATUS,

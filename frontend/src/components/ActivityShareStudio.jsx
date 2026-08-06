@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Check, Copy, Download, ImagePlus, Share2, Users, X } from 'lucide-react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 import api from '../lib/api'
 import { unreadableActivitySharePhotoMessage, validateActivitySharePhoto } from '../lib/activitySharePhoto'
 import { parsePlannedRun, parseRunRoute, parseZoneTimeline } from '../lib/runRecap'

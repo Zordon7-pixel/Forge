@@ -1,5 +1,5 @@
 import { Lock } from 'lucide-react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 
 export default function ProGate({ children, isPro, loading, message }) {
   const navigate = useNavigate()

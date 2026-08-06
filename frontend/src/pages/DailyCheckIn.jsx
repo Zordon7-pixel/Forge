@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 import api from '../lib/api'
 import { withActiveRunReturnTarget } from '../lib/activeRunControls'
 import track from '../lib/track'

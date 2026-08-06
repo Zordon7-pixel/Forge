@@ -1,5 +1,5 @@
 import React, { Suspense, lazy } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useSearchParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import LoadingRunner from '../components/LoadingRunner'
 

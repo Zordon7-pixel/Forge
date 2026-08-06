@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { NavLink, useLocation, useNavigate } from 'react-router-dom'
+import { NavLink, useLocation, useNavigate } from 'react-router'
 import { Activity, Dumbbell, HeartPulse, MessageSquarePlus, MoreHorizontal } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { getUser } from '../lib/auth'

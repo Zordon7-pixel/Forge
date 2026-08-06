@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useNavigate, useLocation } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router'
 import { TrendingUp, Calendar, Zap, Heart } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import api from '../lib/api'

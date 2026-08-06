@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Award, Flame, Minus, Share2, TrendingDown, TrendingUp, Trophy } from 'lucide-react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 import { shareSummaryCard } from './ActivityShareStudio'
 
 function formatPrValue(pr) {

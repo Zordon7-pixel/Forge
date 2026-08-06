@@ -1,6 +1,6 @@
 import { lazy, Suspense, useState, useEffect, useMemo, useRef } from 'react'
 import { createPortal } from 'react-dom'
-import { Link, Navigate, useNavigate, useLocation } from 'react-router-dom'
+import { Link, Navigate, useNavigate, useLocation } from 'react-router'
 import { MapPin, Mountain, RefreshCw, Gauge, Pencil } from 'lucide-react'
 import { useUnits } from '../context/UnitsContext'
 import api from '../lib/api'

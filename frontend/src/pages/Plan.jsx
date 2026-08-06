@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 import { ChevronDown, ChevronUp } from 'lucide-react'
 import api from '../lib/api'
 import { useProContext } from '../context/ProContext'

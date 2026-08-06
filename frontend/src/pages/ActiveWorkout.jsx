@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
-import { useParams, useNavigate, useLocation } from 'react-router-dom'
+import { useParams, useNavigate, useLocation } from 'react-router'
 import { Pause, Play, Plus, X } from 'lucide-react'
 import api from '../lib/api'
 import ExercisePickerModal from '../components/ExercisePickerModal'

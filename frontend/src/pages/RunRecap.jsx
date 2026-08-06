@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router'
 import api from '../lib/api'
 import LoadingRunner from '../components/LoadingRunner'
 import RunDetailModal from '../components/RunDetailModal'

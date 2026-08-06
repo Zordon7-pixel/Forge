@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import { Accessibility, CalendarDays, ChevronRight, Flame, HeartPulse, History, Lightbulb, Medal } from 'lucide-react'
 import { useUnits } from '../context/UnitsContext'
 import api from '../lib/api'

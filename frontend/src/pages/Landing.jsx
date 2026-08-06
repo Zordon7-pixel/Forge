@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import { Flame, Watch, Brain } from 'lucide-react'
 
 // Tempered Steel & Ember marketing surface. Hex required: public page renders

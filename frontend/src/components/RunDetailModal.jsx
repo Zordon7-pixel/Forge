@@ -4,7 +4,7 @@ import { CircleMarker, MapContainer, Polyline, TileLayer, useMap } from 'react-l
 import api from '../lib/api'
 import { useUnits } from '../context/UnitsContext'
 import AiGuidanceNote from './AiGuidanceNote'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import { activityLabel, isRunningActivity } from '../lib/activityType'
 import { runProvenanceFromRecord, RUN_PROVENANCE } from '../lib/runCompletionPolicy'
 import { buildRunComparison, formatPlannedPaceTarget, normalizeRunSplits, parseRunRoute, parseZoneTimeline, resolveRunHeartRateZone } from '../lib/runRecap'

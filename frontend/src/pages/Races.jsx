@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 import { useProContext } from '../context/ProContext'
 import DurationPicker from '../components/DurationPicker'
 import api from '../lib/api'

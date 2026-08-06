@@ -12,6 +12,6 @@
     "qa": "npm run qa:smoke && npm --prefix frontend run build && npm run qa:browser && npm run qa:native"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.22.0"
   }
 }
