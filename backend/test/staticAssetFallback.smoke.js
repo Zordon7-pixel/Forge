@@ -20,8 +20,13 @@ function runStaticAssetFallbackSmoke() {
     /process\.env\.RAILWAY_GIT_COMMIT_SHA[\s\S]*res\.set\('X-Forge-Revision', deploymentRevision\)/,
     'Railway responses expose the exact deployed Git revision for release-bound QA'
   );
+  assert.match(
+    appSource,
+    /app\.use\('\/api',[\s\S]*res\.vary\('Authorization'\)/,
+    'authenticated API responses vary by Authorization before service-worker caching'
+  );
 
-  console.log('STATIC ASSET FALLBACK SMOKE OK (4)');
+  console.log('STATIC ASSET FALLBACK SMOKE OK (5)');
 }
 
 if (require.main === module) runStaticAssetFallbackSmoke();

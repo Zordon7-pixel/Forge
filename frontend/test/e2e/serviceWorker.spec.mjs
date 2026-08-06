@@ -15,10 +15,15 @@ test('service worker purges old caches and never stores or serves HTML as JavaSc
   await page.evaluate(async () => {
     const registrations = await navigator.serviceWorker.getRegistrations()
     await Promise.all(registrations.map((registration) => registration.unregister()))
-    const oldCache = await caches.open('forge-v4')
+    const oldCache = await caches.open('forge-v5')
     await oldCache.put('/assets/poisoned-old-chunk.js', new Response('<!doctype html>', {
       status: 200,
       headers: { 'Content-Type': 'text/html; charset=UTF-8' },
+    }))
+    const oldApiCache = await caches.open('forge-api-v1')
+    await oldApiCache.put('/api/users/settings', new Response('{"account":"stale"}', {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
     }))
   })
   await page.reload({ waitUntil: 'domcontentloaded' })
@@ -26,11 +31,12 @@ test('service worker purges old caches and never stores or serves HTML as JavaSc
 
   await expect.poll(() => page.evaluate(async () => {
     const names = await caches.keys()
-    return names.includes('forge-v5') && !names.includes('forge-v4')
+    return names.includes('forge-v6') && !names.includes('forge-v5') && !names.includes('forge-api-v1')
   })).toBe(true)
   const cacheNames = await page.evaluate(() => caches.keys())
-  expect(cacheNames).toContain('forge-v5')
-  expect(cacheNames).not.toContain('forge-v4')
+  expect(cacheNames).toContain('forge-v6')
+  expect(cacheNames).not.toContain('forge-v5')
+  expect(cacheNames).not.toContain('forge-api-v1')
 
   const staleAsset = await page.evaluate(async () => {
     const url = '/assets/forge-stale-chunk-probe.js'
@@ -57,4 +63,64 @@ test('service worker purges old caches and never stores or serves HTML as JavaSc
 
   expect(offlineAsset.status).toBe(503)
   expect(offlineAsset.contentType).toMatch(/^text\/plain/i)
+})
+
+test('a rendered login page survives an immediate offline reload', async ({ page, context }) => {
+  await page.goto('/login', { waitUntil: 'domcontentloaded' })
+  await waitForServiceWorkerControl(page)
+  await expect(page.getByRole('heading', { name: 'Log In', exact: true })).toBeVisible()
+  await expect.poll(() => page.evaluate(async () => {
+    const cache = await caches.open('forge-v6')
+    const codeUrls = [
+      ...document.querySelectorAll('script[type="module"][src], link[rel="stylesheet"][href]'),
+    ].map((element) => element.src || element.href).concat(
+      performance.getEntriesByType('resource').map((entry) => entry.name),
+    )
+      .filter((url) => new URL(url).origin === window.location.origin)
+      .filter((url) => /\.(?:js|css)(?:\?|$)/i.test(new URL(url).pathname))
+    const uniqueCodeUrls = [...new Set(codeUrls)]
+    const responses = await Promise.all(uniqueCodeUrls.map((url) => cache.match(url, { ignoreVary: true })))
+    return uniqueCodeUrls.length >= 3 && responses.every(Boolean)
+  })).toBe(true)
+
+  await context.setOffline(true)
+  await page.reload({ waitUntil: 'domcontentloaded' })
+
+  await expect(page.getByRole('heading', { name: 'Log In', exact: true })).toBeVisible()
+  await expect(page.getByText('Forged Hybrid — Startup Error')).toHaveCount(0)
+  await context.setOffline(false)
+})
+
+test('authenticated API cache entries are isolated by bearer token', async ({ page }) => {
+  await page.goto('/login', { waitUntil: 'domcontentloaded' })
+  await waitForServiceWorkerControl(page)
+
+  const result = await page.evaluate(async () => {
+    const cache = await caches.open('forge-api-v2')
+    const url = new URL('/api/users/settings', window.location.origin)
+    const accountARequest = new Request(url, {
+      headers: { Authorization: 'Bearer account-a-token' },
+    })
+    const accountBRequest = new Request(url, {
+      headers: { Authorization: 'Bearer account-b-token' },
+    })
+    await cache.put(accountARequest, new Response('{"account":"a"}', {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/json',
+        Vary: 'Origin, Authorization',
+      },
+    }))
+
+    const accountAResponse = await cache.match(accountARequest)
+    const accountBResponse = await cache.match(accountBRequest)
+    await cache.delete(accountARequest)
+    return {
+      accountABody: accountAResponse ? await accountAResponse.text() : null,
+      accountBMatched: Boolean(accountBResponse),
+    }
+  })
+
+  expect(result.accountABody).toBe('{"account":"a"}')
+  expect(result.accountBMatched).toBe(false)
 })

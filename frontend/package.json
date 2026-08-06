@@ -12,7 +12,7 @@
     "test:smoke": "node scripts/run-smoke-suite.mjs",
     "pretest:e2e": "playwright install chromium",
     "test:e2e": "playwright test",
-    "pretest:e2e:sw": "playwright install chromium",
+    "pretest:e2e:sw": "npm run build && playwright install chromium",
     "test:e2e:sw": "playwright test --config=playwright.service-worker.config.mjs",
     "pretest:e2e:production": "playwright install chromium",
     "test:e2e:production": "playwright test --config=playwright.production.config.mjs",

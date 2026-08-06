@@ -12,14 +12,19 @@ function buildWorkerHarness() {
   const puts = []
   const deletes = []
   let nextResponse = new Response('', { status: 500 })
+  let responseQueue = []
   let fetchError = null
   let cacheNames = []
+  let cachePutWait = Promise.resolve()
+  const cacheMatches = new Map()
 
   const cache = {
     addAll: async () => {},
     put: async (request, response) => {
       puts.push({ request, response })
+      await cachePutWait
     },
+    match: async (request, options) => cacheMatches.get(`${typeof request === 'string' ? request : request.url}|${Boolean(options?.ignoreVary)}`) || null,
   }
 
   const sandbox = {
@@ -29,6 +34,7 @@ function buildWorkerHarness() {
     console,
     fetch: async () => {
       if (fetchError) throw fetchError
+      if (responseQueue.length) return responseQueue.shift().clone()
       return nextResponse.clone()
     },
     caches: {
@@ -39,7 +45,7 @@ function buildWorkerHarness() {
         cacheNames = cacheNames.filter((candidate) => candidate !== name)
         return true
       },
-      match: async () => null,
+    match: async (request, options) => cacheMatches.get(`${typeof request === 'string' ? request : request.url}|${Boolean(options?.ignoreVary)}`) || null,
     },
     self: {
       addEventListener: (type, handler) => listeners.set(type, handler),
@@ -63,10 +69,21 @@ function buildWorkerHarness() {
     },
     setResponse(response) {
       nextResponse = response
+      responseQueue = []
+      fetchError = null
+    },
+    setResponses(responses) {
+      responseQueue = [...responses]
       fetchError = null
     },
     setFetchError(error) {
       fetchError = error
+    },
+    setCachePutWait(value) {
+      cachePutWait = value
+    },
+    setCacheMatch(request, response, options = {}) {
+      cacheMatches.set(`${typeof request === 'string' ? request : request.url}|${Boolean(options.ignoreVary)}`, response)
     },
   }
 }
@@ -82,10 +99,10 @@ async function dispatchLifecycle(harness, type) {
   await workPromise
 }
 
-async function dispatchFetch(harness, pathname) {
+async function dispatchFetch(harness, pathname, init = {}) {
   let responsePromise
   harness.listeners.get('fetch')({
-    request: new Request(`https://forge.test${pathname}`),
+    request: new Request(`https://forge.test${pathname}`, init),
     respondWith(value) {
       responsePromise = Promise.resolve(value)
     },
@@ -97,13 +114,50 @@ async function dispatchFetch(harness, pathname) {
 }
 
 async function runServiceWorkerCacheSmoke() {
-  assert.match(source, /const CACHE = 'forge-v5'/, 'cache version purges pre-fix responses')
+  assert.match(source, /const CACHE = 'forge-v6'/, 'cache version purges incomplete v5 app shells')
   assert.match(source, /hasExpectedAssetType\(url, response\)/, 'static responses are type-checked before caching')
 
+  const installation = buildWorkerHarness()
+  installation.setResponses([
+    new Response('<link rel="stylesheet" href="/assets/app.css"><script type="module" src="/assets/app.js"></script>', {
+      status: 200,
+      headers: { 'content-type': 'text/html' },
+    }),
+    new Response(JSON.stringify({
+      'src/main.jsx': { file: 'assets/app.js', css: ['assets/app.css'] },
+      'src/pages/Login.jsx': { file: 'assets/login.js' },
+    }), { status: 200, headers: { 'content-type': 'application/json' } }),
+    new Response('body{}', { status: 200, headers: { 'content-type': 'text/css' } }),
+    new Response('export default true', { status: 200, headers: { 'content-type': 'application/javascript' } }),
+    new Response('export default true', { status: 200, headers: { 'content-type': 'application/javascript' } }),
+  ])
+  await dispatchLifecycle(installation, 'install')
+  assert.deepEqual(
+    installation.puts.map(({ request }) => new URL(typeof request === 'string' ? request : request.url).pathname).sort(),
+    ['/', '/asset-manifest.json', '/assets/app.css', '/assets/app.js', '/assets/login.js'],
+    'install atomically precaches the HTML shell, asset manifest, and every generated code chunk',
+  )
+
   const activation = buildWorkerHarness()
-  activation.setCacheNames(['forge-v4', 'forge-v5', 'forge-api-v1'])
+  activation.setCacheNames(['forge-v4', 'forge-v5', 'forge-v6', 'forge-api-v1', 'forge-api-v2'])
   await dispatchLifecycle(activation, 'activate')
-  assert.deepEqual(activation.deletes, ['forge-v4'], 'v5 activation deletes the poisoned v4 cache only')
+  assert.deepEqual(activation.deletes, ['forge-v4', 'forge-v5', 'forge-api-v1'], 'activation deletes incomplete app caches and the unpartitioned API cache')
+
+  const isolatedApi = buildWorkerHarness()
+  isolatedApi.setResponse(new Response('{"units":"imperial"}', {
+    status: 200,
+    headers: { 'content-type': 'application/json', vary: 'Origin, Authorization' },
+  }))
+  await dispatchFetch(isolatedApi, '/api/users/settings', { headers: { Authorization: 'Bearer user-a' } })
+  assert.equal(isolatedApi.puts.length, 1, 'authorization-varying API responses are cached')
+
+  const unpartitionedApi = buildWorkerHarness()
+  unpartitionedApi.setResponse(new Response('{"units":"imperial"}', {
+    status: 200,
+    headers: { 'content-type': 'application/json', vary: 'Origin' },
+  }))
+  await dispatchFetch(unpartitionedApi, '/api/users/settings', { headers: { Authorization: 'Bearer user-a' } })
+  assert.equal(unpartitionedApi.puts.length, 0, 'API responses without Authorization variance are never cached')
 
   const validJs = buildWorkerHarness()
   validJs.setResponse(new Response('export default true', {
@@ -112,6 +166,25 @@ async function runServiceWorkerCacheSmoke() {
   }))
   await dispatchFetch(validJs, '/assets/app.js')
   assert.equal(validJs.puts.length, 1, 'valid JavaScript is cached')
+
+  let releaseCacheWrite
+  const durableJs = buildWorkerHarness()
+  durableJs.setResponse(new Response('export default true', {
+    status: 200,
+    headers: { 'content-type': 'application/javascript' },
+  }))
+  durableJs.setCachePutWait(new Promise((resolve) => {
+    releaseCacheWrite = resolve
+  }))
+  let durableResponseSettled = false
+  const durableResponse = dispatchFetch(durableJs, '/assets/durable.js').then((response) => {
+    durableResponseSettled = true
+    return response
+  })
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(durableResponseSettled, false, 'static response waits for its offline cache write')
+  releaseCacheWrite()
+  assert.equal((await durableResponse).status, 200, 'static response returns after its offline cache is durable')
 
   const htmlAsJs = buildWorkerHarness()
   htmlAsJs.setResponse(new Response('<!doctype html>', {
@@ -137,13 +210,23 @@ async function runServiceWorkerCacheSmoke() {
   await dispatchFetch(htmlAsCss, '/assets/missing.css')
   assert.equal(htmlAsCss.puts.length, 0, 'HTML returned for CSS is never cached')
 
+  const cachedVaryingJs = buildWorkerHarness()
+  cachedVaryingJs.setFetchError(new Error('offline'))
+  cachedVaryingJs.setCacheMatch(
+    'https://forge.test/assets/cached.js',
+    new Response('export default true', { status: 200, headers: { 'content-type': 'application/javascript' } }),
+    { ignoreVary: true },
+  )
+  const cachedVaryingResponse = await dispatchFetch(cachedVaryingJs, '/assets/cached.js')
+  assert.equal(cachedVaryingResponse.status, 200, 'offline static lookup ignores server Vary headers for the same versioned URL')
+
   const offlineJs = buildWorkerHarness()
   offlineJs.setFetchError(new Error('offline'))
   const offlineResponse = await dispatchFetch(offlineJs, '/assets/uncached.js')
   assert.equal(offlineResponse.status, 503, 'uncached offline JavaScript returns an explicit unavailable response')
   assert.match(offlineResponse.headers.get('content-type') || '', /^text\/plain/i, 'offline JavaScript never receives the HTML shell')
 
-  console.log('SERVICE WORKER CACHE SMOKE OK (9)')
+  console.log('SERVICE WORKER CACHE SMOKE OK (15)')
 }
 
 await runServiceWorkerCacheSmoke()
