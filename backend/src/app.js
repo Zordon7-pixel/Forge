@@ -128,6 +128,12 @@ app.use('/assets', express.static(path.join(__dirname, '../../frontend/public/as
 // Serve frontend static files after all API routes
 app.use(express.static(dist));
 
+// Missing hashed assets must stay missing. Serving index.html here causes
+// browsers and service workers to treat HTML as JavaScript after a deploy.
+app.get('/assets/*', (_req, res) => {
+  res.status(404).type('text/plain').send('Asset not found');
+});
+
 // SPA fallback — serve index.html for all non-API routes
 app.get('*', (req, res) => {
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');

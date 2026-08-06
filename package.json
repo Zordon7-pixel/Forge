@@ -6,8 +6,10 @@
     "start": "cd backend && node src/app.js",
     "install:all": "cd backend && npm install && cd ../frontend && npm install",
     "qa:smoke": "npm --prefix frontend run test:smoke && npm --prefix backend run test:smoke",
-    "qa:browser": "npm --prefix frontend run test:e2e",
-    "qa": "npm run qa:smoke && npm --prefix frontend run build && npm --prefix frontend run test:e2e"
+    "qa:browser": "npm --prefix frontend run test:e2e && npm --prefix frontend run test:e2e:sw",
+    "qa:native": "npm --prefix frontend run test:ios-contract",
+    "qa:production": "npm --prefix frontend run test:e2e:production",
+    "qa": "npm run qa:smoke && npm --prefix frontend run build && npm run qa:browser && npm run qa:native"
   },
   "engines": {
     "node": ">=20"

@@ -1,7 +1,7 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'com.zordon.forge',
+  appId: 'com.zordontech.forge',
   appName: 'Forged Hybrid',
   webDir: 'dist',
   server: {
