@@ -1,4 +1,4 @@
-const CACHE = 'forge-v4';
+const CACHE = 'forge-v5';
 const API_CACHE = 'forge-api-v1';
 const STATIC = ['/'];
 const API_GET_CACHE_PATHS = ['/api/user', '/api/workouts/recent'];
@@ -144,6 +144,19 @@ function isCacheableApiGet(request, url) {
   return API_GET_CACHE_PATHS.some((path) => url.pathname.startsWith(path));
 }
 
+function hasExpectedAssetType(url, response) {
+  const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+  if (url.pathname.endsWith('.js')) {
+    return contentType.includes('javascript') || contentType.includes('ecmascript');
+  }
+  if (url.pathname.endsWith('.css')) return contentType.includes('text/css');
+  return true;
+}
+
+function isCodeAsset(url) {
+  return url.pathname.endsWith('.js') || url.pathname.endsWith('.css');
+}
+
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
@@ -189,11 +202,21 @@ self.addEventListener('fetch', (event) => {
   event.respondWith(
     fetch(event.request)
       .then((response) => {
-        if (response.ok) {
+        if (response.ok && hasExpectedAssetType(url, response)) {
           caches.open(CACHE).then((cache) => cache.put(event.request, response.clone()));
         }
         return response;
       })
-      .catch(() => caches.match(event.request).then((cached) => cached || caches.match('/')))
+      .catch(async () => {
+        const cached = await caches.match(event.request);
+        if (cached) return cached;
+        if (isCodeAsset(url)) {
+          return new Response('Asset unavailable offline', {
+            status: 503,
+            headers: { 'Content-Type': 'text/plain; charset=UTF-8' },
+          });
+        }
+        return caches.match('/');
+      })
   );
 });
