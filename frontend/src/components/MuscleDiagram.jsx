@@ -255,7 +255,7 @@ export default function MuscleDiagram({
   const secondarySet = new Set([...normalizedSecondary].filter((m) => allowed.has(m) && !primarySet.has(m)))
 
   return (
-    <svg viewBox="0 0 200 400" width="100%" height="auto" xmlns="http://www.w3.org/2000/svg" role="img" aria-label={`${view} ${sex} muscle diagram`}>
+    <svg viewBox="0 0 200 400" width="100%" style={{ height: 'auto' }} xmlns="http://www.w3.org/2000/svg" role="img" aria-label={`${view} ${sex} muscle diagram`}>
       <BackgroundFrame />
       {view === 'back' ? (
         <BackFigure sex={sex} primarySet={primarySet} secondarySet={secondarySet} />
