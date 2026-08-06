@@ -294,3 +294,134 @@ test('adaptive plan keeps the original calendar only after an explicit decision'
   expect(requestsFor(apiState, 'POST', '/api/plans/adaptation/journey-adaptation/keep')).toHaveLength(1)
   assertCleanApiAndRuntime(apiState, runtimeErrors)
 })
+
+test('active plan run days can be edited and rebuilt without returning to plan setup', async ({ page }) => {
+  const runtimeErrors = collectRuntimeErrors(page)
+  let plan = {
+    id: 'schedule-plan',
+    name: 'Army Ten-Miler plan',
+    type: 'hybrid_maintain',
+    weeks: 1,
+    plan_data: {
+      schemaVersion: 2,
+      planMode: 'hybrid_maintain',
+      schedulePreferences: {
+        runDaysPerWeek: 3,
+        trainingDays: ['Tue', 'Thu', 'Sat'],
+        runDaysSource: 'target',
+        trainingDaysSource: 'target',
+      },
+      strengthPolicy: { enabled: true, sessionsPerWeek: 2, goal: 'maintain', equipment: ['dumbbells'] },
+      goal: { name: 'Army Ten-Miler', dateISO: today, distanceMiles: 10, goalTimeSeconds: 5400 },
+      weeks: [{
+        week: 1,
+        phase: 'base',
+        startDate: today,
+        days: [{ date: today, day: todayDay, sessions: [{ id: plannedRun.id, kind: 'run', prescription: plannedRun }] }],
+      }],
+    },
+  }
+  const userPlan = { current_week: 1, started_at: today, progress: { completedSessionIds: [] } }
+  const apiState = await installAuthenticatedApi(page, {
+    responses: new Map([
+      ['GET /api/plans/my', () => ({ plan, user_plan: userPlan })],
+      ['POST /api/plans/generate', ({ body }) => {
+        plan = {
+          ...plan,
+          plan_data: {
+            ...plan.plan_data,
+            schedulePreferences: {
+              runDaysPerWeek: body.target.runDaysPerWeek,
+              trainingDays: body.target.trainingDays,
+              runDaysSource: 'target',
+              trainingDaysSource: 'target',
+            },
+          },
+        }
+        return { plan, user_plan_id: 'schedule-user-plan', generation_source: 'evidence_engine' }
+      }],
+    ]),
+  })
+
+  await page.goto('/plan')
+  await page.getByRole('button', { name: 'Manage plan', exact: true }).click()
+  await expect(page.getByText('3 run days · Tue, Thu, Sat', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Edit days', exact: true }).click()
+  await page.getByRole('button', { name: 'Sun', exact: true }).click()
+  await page.getByLabel('Runs each week').selectOption('4')
+  await expect(page.getByText(/Four days separate quality, easy, steady, and long work/)).toBeVisible()
+  await page.getByRole('button', { name: 'Rebuild remaining calendar', exact: true }).click()
+
+  await expect(page.getByText('4 run days · Tue, Thu, Sat, Sun', { exact: true })).toBeVisible()
+  const requests = requestsFor(apiState, 'POST', '/api/plans/generate')
+  expect(requests).toHaveLength(1)
+  expect(requests[0].body.target).toMatchObject({
+    runDaysPerWeek: 4,
+    trainingDays: ['Tue', 'Thu', 'Sat', 'Sun'],
+    planMode: 'hybrid_maintain',
+    liftingEnabled: true,
+    liftDaysPerWeek: 2,
+    distanceMiles: 10,
+    goalTimeSeconds: 5400,
+  })
+  assertCleanApiAndRuntime(apiState, runtimeErrors)
+})
+
+test('two-race schedule rebuild preserves both goals when the race list is empty', async ({ page }) => {
+  const runtimeErrors = collectRuntimeErrors(page)
+  let plan = {
+    id: 'dual-race-schedule-plan',
+    name: 'Yonkers + Army plan',
+    type: 'hybrid_maintain',
+    weeks: 1,
+    plan_data: {
+      schemaVersion: 2,
+      planMode: 'hybrid_maintain',
+      schedulePreferences: { runDaysPerWeek: 3, trainingDays: ['Tue', 'Thu', 'Sat'] },
+      strengthPolicy: { enabled: true, sessionsPerWeek: 2, goal: 'maintain', equipment: ['dumbbells'] },
+      goals: [
+        { raceId: 'yonkers-half', name: 'Yonkers Half Marathon', date: today, distanceMiles: 13.1 },
+        { raceId: 'army-ten', name: 'Army Ten-Miler', date: today, distanceMiles: 10 },
+      ],
+      weeks: [{
+        week: 1,
+        phase: 'base',
+        startDate: today,
+        days: [{ date: today, day: todayDay, sessions: [{ id: plannedRun.id, kind: 'run', prescription: plannedRun }] }],
+      }],
+    },
+  }
+  const apiState = await installAuthenticatedApi(page, {
+    responses: new Map([
+      ['GET /api/plans/my', () => ({ plan, user_plan: { current_week: 1, started_at: today, progress: { completedSessionIds: [] } } })],
+      ['POST /api/plans/generate-for-races', ({ body }) => {
+        plan = {
+          ...plan,
+          plan_data: {
+            ...plan.plan_data,
+            schedulePreferences: {
+              runDaysPerWeek: body.target.runDaysPerWeek,
+              trainingDays: body.target.trainingDays,
+            },
+          },
+        }
+        return { plan, user_plan_id: 'dual-race-user-plan', generation_source: 'evidence_engine' }
+      }],
+    ]),
+  })
+
+  await page.goto('/plan')
+  await page.getByRole('button', { name: 'Manage plan', exact: true }).click()
+  await page.getByRole('button', { name: 'Edit days', exact: true }).click()
+  await page.getByRole('button', { name: 'Sun', exact: true }).click()
+  await page.getByLabel('Runs each week').selectOption('4')
+  await page.getByRole('button', { name: 'Rebuild remaining calendar', exact: true }).click()
+
+  await expect(page.getByText('4 run days · Tue, Thu, Sat, Sun', { exact: true })).toBeVisible()
+  const requests = requestsFor(apiState, 'POST', '/api/plans/generate-for-races')
+  expect(requests).toHaveLength(1)
+  expect(requests[0].body.race_ids).toEqual(['yonkers-half', 'army-ten'])
+  expect(requestsFor(apiState, 'POST', '/api/plans/generate-for-race/yonkers-half')).toHaveLength(0)
+  expect(requestsFor(apiState, 'POST', '/api/plans/generate')).toHaveLength(0)
+  assertCleanApiAndRuntime(apiState, runtimeErrors)
+})

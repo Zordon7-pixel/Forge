@@ -15,6 +15,16 @@ import { withActiveRunReturnTarget } from '../lib/activeRunControls'
 import { resolveReadiness } from '../lib/truthConsistency'
 import { deriveRacePlanReconciliation } from '../lib/travelTraining'
 import TravelTrainingPrompt from '../components/TravelTrainingPrompt'
+import {
+  buildScheduleRebuildRequest,
+  protectedRaceIdsFromGoals,
+  scheduleDraftFromPlan,
+  scheduleFrequencyGuidance,
+  scheduleHasChanges,
+  toggleTrainingDay,
+  TRAINING_DAY_OPTIONS,
+  validateScheduleDraft,
+} from '../lib/planSchedule'
 
 const RoutePlanner = lazy(() => import('../components/RoutePlanner'))
 
@@ -125,6 +135,11 @@ export default function Plan() {
   const [travelReadinessData, setTravelReadinessData] = useState(null)
   const [travelActiveInjury, setTravelActiveInjury] = useState(null)
   const [travelInjurySafetyAvailable, setTravelInjurySafetyAvailable] = useState(false)
+  const [scheduleEditing, setScheduleEditing] = useState(false)
+  const [scheduleDraft, setScheduleDraft] = useState(() => scheduleDraftFromPlan())
+  const [scheduleSaving, setScheduleSaving] = useState(false)
+  const [scheduleError, setScheduleError] = useState('')
+  const [scheduleNotice, setScheduleNotice] = useState('')
 
   const loadAll = async ({ includeAdaptation = true } = {}) => {
     setLoading(true)
@@ -193,6 +208,11 @@ export default function Plan() {
     loadAll()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  useEffect(() => {
+    if (scheduleSaving) return
+    setScheduleDraft(scheduleDraftFromPlan(myPlan?.plan_data))
+  }, [myPlan, scheduleSaving])
 
   useEffect(() => {
     if (!adaptationProposal?.id) return
@@ -395,6 +415,46 @@ export default function Plan() {
       setPlanReviewError(err?.response?.data?.error || 'Could not rebuild this race plan. Your current workouts are unchanged.')
     } finally {
       setPlanReviewBusy(false)
+    }
+  }
+
+  const rebuildTrainingSchedule = async () => {
+    if (scheduleSaving) return
+    const validationError = validateScheduleDraft(scheduleDraft)
+    if (validationError) {
+      setScheduleError(validationError)
+      return
+    }
+    if (!scheduleHasChanges(myPlan?.plan_data, scheduleDraft)) {
+      setScheduleEditing(false)
+      setScheduleError('')
+      return
+    }
+
+    setScheduleSaving(true)
+    setScheduleError('')
+    setScheduleNotice('')
+    try {
+      const request = buildScheduleRebuildRequest({
+        planData: myPlan?.plan_data,
+        goal: calendarModel?.goal,
+        raceIds: protectedRaceIdsFromGoals(
+          calendarModel?.goals?.length
+            ? calendarModel.goals
+            : calendarModel?.goal ? [calendarModel.goal] : [],
+        ),
+        draft: scheduleDraft,
+        weekCount,
+      })
+      await api.post(request.path, request.body, { timeout: 90000 })
+      setScheduleNotice(`Calendar rebuilt for ${scheduleDraft.runDaysPerWeek} run days per week. Recorded workouts remain in your history and still inform the plan.`)
+      setScheduleEditing(false)
+      await loadAll()
+    } catch (err) {
+      console.error('[Plan] schedule rebuild failed:', err?.message || err)
+      setScheduleError(err?.response?.data?.error || err?.message || 'Could not rebuild the training schedule. Your current calendar is unchanged.')
+    } finally {
+      setScheduleSaving(false)
     }
   }
 
@@ -813,6 +873,85 @@ export default function Plan() {
                     <div className="rounded-lg p-3" style={{ background: 'var(--bg-input)' }}>
                       <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{myPlan.name}</p>
                       <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>{myPlan.type} · Week {currentWeek} of {myPlan.weeks}</p>
+                    </div>
+                    <div className="rounded-lg p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-sm font-bold" style={{ color: 'var(--text-primary)', margin: 0 }}>Training rhythm</p>
+                          <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                            {scheduleDraftFromPlan(myPlan.plan_data).runDaysPerWeek} run days · {scheduleDraftFromPlan(myPlan.plan_data).trainingDays.join(', ')}
+                          </p>
+                        </div>
+                        {!scheduleEditing && (
+                          <button type="button" onClick={() => {
+                            setScheduleDraft(scheduleDraftFromPlan(myPlan.plan_data))
+                            setScheduleError('')
+                            setScheduleEditing(true)
+                          }} className="shrink-0 text-xs font-black" style={{ background: 'transparent', border: 0, color: 'var(--accent)', padding: 0 }}>
+                            Edit days
+                          </button>
+                        )}
+                      </div>
+
+                      {scheduleNotice && !scheduleEditing && (
+                        <p role="status" className="mt-3 rounded-lg p-3 text-xs" style={{ background: 'rgba(22,163,74,0.12)', color: 'var(--success)' }}>{scheduleNotice}</p>
+                      )}
+
+                      {scheduleEditing && (
+                        <div className="mt-4 space-y-4">
+                          <div>
+                            <div className="flex items-center justify-between gap-3">
+                              <p className="text-xs font-bold" style={{ color: 'var(--text-primary)', margin: 0 }}>Eligible training weekdays</p>
+                              <span className="text-[11px] font-bold" style={{ color: 'var(--text-muted)' }}>{scheduleDraft.trainingDays.length} selected</span>
+                            </div>
+                            <div className="mt-2 grid grid-cols-7 gap-1.5">
+                              {TRAINING_DAY_OPTIONS.map((day) => {
+                                const active = scheduleDraft.trainingDays.includes(day)
+                                return (
+                                  <button key={day} type="button" aria-pressed={active} onClick={() => {
+                                    setScheduleDraft((current) => toggleTrainingDay(current, day))
+                                    setScheduleError('')
+                                  }} className="min-h-11 min-w-0 rounded-lg text-[10px] font-black" style={{ border: `1px solid ${active ? 'var(--accent)' : 'var(--border-subtle)'}`, background: active ? 'var(--accent-dim)' : 'var(--bg-card)', color: active ? 'var(--accent)' : 'var(--text-muted)' }}>
+                                    {day}
+                                  </button>
+                                )
+                              })}
+                            </div>
+                          </div>
+
+                          <label className="grid gap-2">
+                            <span className="text-xs font-bold" style={{ color: 'var(--text-primary)' }}>Runs each week</span>
+                            <select value={scheduleDraft.runDaysPerWeek} onChange={(event) => {
+                              setScheduleDraft((current) => ({ ...current, runDaysPerWeek: Number(event.target.value) }))
+                              setScheduleError('')
+                            }} className="min-h-11 rounded-lg px-3 text-sm" style={{ background: 'var(--bg-card)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>
+                              {Array.from({ length: Math.max(1, Math.min(6, scheduleDraft.trainingDays.length)) }, (_, index) => index + 1).map((count) => (
+                                <option key={count} value={count}>{count} run day{count === 1 ? '' : 's'}</option>
+                              ))}
+                            </select>
+                          </label>
+
+                          <p className="text-xs leading-5" style={{ color: 'var(--text-muted)', margin: 0 }}>
+                            {scheduleFrequencyGuidance(scheduleDraft.runDaysPerWeek)}
+                          </p>
+                          <p className="text-xs leading-5" style={{ color: 'var(--text-muted)', margin: 0 }}>
+                            Rebuilding changes today and future workouts. Recorded runs, lifts, and health data remain intact and set the safe mileage progression.
+                          </p>
+                          {scheduleError && <p role="alert" className="rounded-lg p-3 text-xs" style={{ background: 'var(--danger-dim)', color: 'var(--danger)' }}>{scheduleError}</p>}
+                          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                            <button type="button" onClick={rebuildTrainingSchedule} disabled={scheduleSaving || !scheduleHasChanges(myPlan.plan_data, scheduleDraft)} className="min-h-11 rounded-lg px-3 text-xs font-black disabled:opacity-50" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>
+                              {scheduleSaving ? 'Rebuilding…' : 'Rebuild remaining calendar'}
+                            </button>
+                            <button type="button" onClick={() => {
+                              setScheduleDraft(scheduleDraftFromPlan(myPlan.plan_data))
+                              setScheduleError('')
+                              setScheduleEditing(false)
+                            }} disabled={scheduleSaving} className="min-h-11 rounded-lg px-3 text-xs font-bold disabled:opacity-50" style={{ background: 'var(--bg-card)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                     <div className="flex flex-wrap gap-3">
                       <button type="button" onClick={() => navigate('/plan-catalog')} className="text-xs font-bold" style={{ background: 'transparent', border: 'none', color: 'var(--accent)', padding: 0, cursor: 'pointer' }}>
