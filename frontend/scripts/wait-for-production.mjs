@@ -1,5 +1,5 @@
 const baseUrl = String(process.env.FORGE_QA_BASE_URL || 'https://forge-production-773f.up.railway.app').replace(/\/$/, '')
-const timeoutMs = Number(process.env.FORGE_QA_TIMEOUT_MS || 300_000)
+const timeoutMs = Number(process.env.FORGE_QA_TIMEOUT_MS || 600_000)
 const deadline = Date.now() + timeoutMs
 let attempt = 0
 let lastError = null
