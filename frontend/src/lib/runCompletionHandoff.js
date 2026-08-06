@@ -245,13 +245,32 @@ export function clearRunCompletionHandoff(runId, ownerUserId, storage) {
   const target = storageOrNull(storage)
   if (!target) return false
   try {
-    const current = loadRunCompletionHandoff(null, ownerUserId, target)
-    if (!current || (runId && current.runId !== String(runId))) return false
+    const stored = target.getItem(RUN_COMPLETION_HANDOFF_KEY)
+    if (!stored) return false
+    const current = JSON.parse(stored)
+    const currentRunId = boundedString(current?.runId, 160)
+    const currentOwnerId = boundedString(current?.ownerUserId, 160)
+    const runIdProvided = runId !== null && runId !== undefined
+    const expectedRunId = runIdProvided ? boundedString(runId, 160) : null
+    const expectedOwnerId = boundedString(ownerUserId, 160)
+    if (!expectedOwnerId) return false
+    if (runIdProvided && !expectedRunId) return false
+    if (!currentRunId || !currentOwnerId) {
+      console.error('[run-completion] handoff clear rejected malformed identity')
+      target.removeItem(RUN_COMPLETION_HANDOFF_KEY)
+      return false
+    }
+    if (currentOwnerId !== expectedOwnerId || (expectedRunId && currentRunId !== expectedRunId)) return false
     target.removeItem(RUN_COMPLETION_HANDOFF_KEY)
     notifyHandoffChange()
     return true
   } catch (error) {
     console.error('[run-completion] handoff clear failed:', error?.message || error)
+    try {
+      target.removeItem(RUN_COMPLETION_HANDOFF_KEY)
+    } catch (cleanupError) {
+      console.error('[run-completion] malformed handoff cleanup failed:', cleanupError?.message || cleanupError)
+    }
     return false
   }
 }

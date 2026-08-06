@@ -62,6 +62,29 @@ check(afterPlanFailure?.planProgressNotice.includes('Run saved'), 'plan failure 
 check(clearRunCompletionHandoff('saved-run', owner, storage), 'check-in cancel/complete can terminate the handoff')
 check(storage.getItem(RUN_COMPLETION_HANDOFF_KEY) === null, 'terminal completion clears persisted handoff state')
 
+const staleStorage = new MemoryStorage()
+saveRunCompletionHandoff({ runId: 'stale-run', snapshot: { id: 'stale-run' } }, owner, staleStorage, 1)
+check(!clearRunCompletionHandoff('stale-run', null, staleStorage), 'a missing caller identity cannot clear a stale handoff')
+check(staleStorage.getItem(RUN_COMPLETION_HANDOFF_KEY) !== null, 'missing caller identity leaves the stale handoff untouched')
+check(!clearRunCompletionHandoff('   ', owner, staleStorage), 'an invalid supplied run identity cannot become an unscoped clear')
+check(staleStorage.getItem(RUN_COMPLETION_HANDOFF_KEY) !== null, 'invalid supplied run identity leaves the stale handoff untouched')
+check(!clearRunCompletionHandoff('stale-run', 'another-owner', staleStorage), 'another owner cannot clear a stale handoff')
+check(staleStorage.getItem(RUN_COMPLETION_HANDOFF_KEY) !== null, 'owner mismatch leaves the stale handoff untouched')
+check(!clearRunCompletionHandoff('another-run', owner, staleStorage), 'a different run cannot clear a stale handoff')
+check(staleStorage.getItem(RUN_COMPLETION_HANDOFF_KEY) !== null, 'run mismatch leaves the stale handoff untouched')
+check(clearRunCompletionHandoff('stale-run', owner, staleStorage), 'the owning run can clear a handoff after restore expiry')
+check(staleStorage.getItem(RUN_COMPLETION_HANDOFF_KEY) === null, 'stale handoff cleanup removes persisted state')
+
+const malformedStorage = new MemoryStorage()
+malformedStorage.setItem(RUN_COMPLETION_HANDOFF_KEY, '{bad json')
+check(!clearRunCompletionHandoff('malformed-run', owner, malformedStorage), 'malformed handoff cleanup fails visibly')
+check(malformedStorage.getItem(RUN_COMPLETION_HANDOFF_KEY) === null, 'malformed handoff state is removed after the logged failure')
+
+const malformedIdentityStorage = new MemoryStorage()
+malformedIdentityStorage.setItem(RUN_COMPLETION_HANDOFF_KEY, JSON.stringify({ ownerUserId: owner }))
+check(!clearRunCompletionHandoff('malformed-run', owner, malformedIdentityStorage), 'stored handoff without a run identity is rejected')
+check(malformedIdentityStorage.getItem(RUN_COMPLETION_HANDOFF_KEY) === null, 'stored malformed identity is removed after the logged failure')
+
 const queued = saveRunCompletionHandoff({
   runId: 'queued/run',
   queued: true,
