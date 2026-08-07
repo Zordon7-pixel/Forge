@@ -417,6 +417,24 @@ function normalizedRaceTargets(target = {}) {
   return normalized;
 }
 
+const RACE_SCOPED_TARGET_KEYS = [
+  'raceId', 'race_id', 'raceName', 'race_name', 'raceDate', 'race_date',
+  'distanceMiles', 'distance_miles', 'goalTimeSeconds', 'goal_time_seconds',
+  'goalType', 'goal_type', 'raceTarget', 'race_target',
+  'elevation_gain_ft', 'elevationGainFt', 'max_altitude_ft', 'maxAltitudeFt',
+  'terrain', 'courseTerrain', 'course_profile_json', 'courseProfile',
+  'source', 'courseSource', 'url', 'courseUrl', 'provenance', 'courseProvenance',
+];
+
+// Multi-race requests put the final race on the top-level target for legacy
+// consumers. Remove those race-specific facts before applying another target,
+// otherwise a missing field on A1 silently inherits A2's course metadata.
+function targetForRace(target = {}, raceTarget = {}) {
+  const shared = { ...target };
+  for (const key of RACE_SCOPED_TARGET_KEYS) delete shared[key];
+  return { ...shared, ...raceTarget };
+}
+
 function raceTargetForDate(dateISO, raceTargets = []) {
   return raceTargets.find((race) => race.raceDate === dateISO) || null;
 }
@@ -1356,7 +1374,7 @@ function goalMetadata(target = {}, existingGoal = {}, history = {}) {
 function goalsMetadata(target = {}, existingGoals = [], history = {}) {
   const raceTargets = normalizedRaceTargets(target);
   return raceTargets.map((raceTarget, index) => ({
-    ...goalMetadata({ ...target, ...raceTarget }, existingGoals[index] || {}, history),
+    ...goalMetadata(targetForRace(target, raceTarget), existingGoals[index] || {}, history),
     priority: 'A',
     sequence: index + 1,
     role: index === raceTargets.length - 1 ? 'final_peak' : 'first_peak',
@@ -1405,7 +1423,7 @@ function buildConcurrentPlan(context = {}) {
     const phase = weekPhases[weekNumber - 1];
     const weekRaceTarget = raceTargets.find((race) => race.raceDate >= weekStart && race.raceDate <= addDays(weekStart, 6)) || null;
     const activeRaceTarget = activeRaceTargetForWeek(weekStart, raceTargets, finalRaceTarget);
-    const activeTarget = { ...target, ...activeRaceTarget };
+    const activeTarget = targetForRace(target, activeRaceTarget);
     const activeRaceDistance = clamp(Number(activeRaceTarget.distanceMiles || raceDistance) || raceDistance, 1, 100);
     const raceDay = weekRaceTarget && DAY_ORDER.find((day, index) => addDays(weekStart, index) === weekRaceTarget.raceDate);
     const trustedCourse = trustedCourseFacts(activeTarget);
@@ -1728,11 +1746,10 @@ function validateConcurrentPlan(candidate, context = {}) {
     }
     const weekRaceTarget = raceTargets.find((race) => race.raceDate >= week.startDate && race.raceDate <= addDays(week.startDate, 6)) || null;
     const activeRaceTarget = activeRaceTargetForWeek(week.startDate, raceTargets, finalRaceTarget);
-    const activeGoalPaceContext = buildGoalPaceContext({
-      ...target,
+    const activeGoalPaceContext = buildGoalPaceContext(targetForRace(target, {
       ...activeRaceTarget,
       distanceMiles: Number(activeRaceTarget.distanceMiles || finalRaceTarget.distanceMiles || 0),
-    }, context.history || {});
+    }), context.history || {});
     const weekQualitySafety = qualitySafetyForWeek(context, {
       weekNumber: week.week,
       weekStart: week.startDate,

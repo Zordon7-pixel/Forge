@@ -45,6 +45,9 @@ const raceTargets = [
     source: 'Official Army Ten-Miler page',
     url: 'https://www.armytenmiler.com/live-race-info/',
     courseProvenance: 'curated',
+    elevation_gain_ft: 190,
+    max_altitude_ft: 100,
+    terrain: 'road',
   },
 ];
 
@@ -82,6 +85,8 @@ assert.deepEqual(plan.goals.map((goal) => goal.role), ['first_peak', 'final_peak
 assert.equal(plan.goal.raceId, 'army-ten-miler-2026');
 assert.equal(plan.goal.goalTimeSeconds, 5220);
 assert.equal(plan.goal.goalPaceSecondsPerMile, 522);
+assert.equal(plan.goals[0].course?.elevationGainFt, undefined, 'A1 must not inherit A2 elevation data');
+assert.equal(plan.goals[0].course?.terrain, undefined, 'A1 must not inherit A2 terrain data');
 
 const sessions = plan.weeks.flatMap((week) => week.days.flatMap((day) => (
   day.sessions.map((session) => ({ week, day, session }))
