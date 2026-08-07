@@ -49,7 +49,7 @@ export function runNameCategory(session = {}) {
 }
 
 function explicitDisplayName(session = {}, ignorePersisted = false) {
-  const candidates = [...(ignorePersisted ? [] : [session.display_name, session.displayName]), session.name, session.title]
+  const candidates = [...(ignorePersisted ? [] : [session.display_name, session.displayName]), session.name]
   for (const value of candidates) {
     const clean = String(value || '').trim()
     if (clean && !GENERIC_TITLES.has(normalizedText(clean))) return clean

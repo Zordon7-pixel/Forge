@@ -24,7 +24,7 @@ const canonical = {
           ],
         },
         { day: 'Tue', date: '2026-08-04', sessions: [] },
-        { day: 'Wed', date: '2026-08-05', sessions: [{ id: 'hill-1', kind: 'run', type: 'hills', title: 'Hill repeats', distance_miles: 5 }] },
+        { day: 'Wed', date: '2026-08-05', sessions: [{ id: 'hill-1', kind: 'run', type: 'hills', title: '8 × 45-sec hill repeats', distance_miles: 5 }] },
       ],
     },
     {
@@ -48,19 +48,29 @@ assert.ok(model.entries.filter((entry) => entry.sessions.some((session) => sessi
   entry.sessions.filter((session) => session.kind === 'run').every((session) => session.displayName)
 )), 'every normalized run receives a display name')
 assert.equal(model.weeks[0].entries[0].sessions[1].displayName, '', 'strength is excluded from run naming')
+assert.equal(model.weeks[0].entries[2].sessions[0].displayName, 'Hills Pay the Bills')
+assert.equal(model.weeks[0].entries[2].sessions[0].title, '8 × 45-sec hill repeats', 'normalization preserves the technical prescription')
 
-const hills = { id: 'hill-1', kind: 'run', type: 'hill_repeats', title: 'Hill repeats' }
+const hills = { id: 'hill-1', kind: 'run', type: 'hill_repeats', title: '8 × 45-sec hill repeats' }
 assert.equal(motivationalRunName(hills, { date: '2026-08-05' }), 'Hills Pay the Bills')
+assert.equal(hills.title, '8 × 45-sec hill repeats', 'technical workout titles remain unchanged')
 assert.equal(
   motivationalRunName(hills, { date: '2026-08-05' }),
   motivationalRunName(hills, { date: '2026-08-05' }),
   'run names are deterministic',
 )
 assert.equal(motivationalRunName({ kind: 'run', display_name: 'Sunrise Swagger', type: 'easy' }), 'Sunrise Swagger')
+assert.equal(motivationalRunName({ kind: 'run', displayName: 'Morning Momentum', type: 'easy' }), 'Morning Momentum')
+assert.equal(motivationalRunName({ kind: 'run', name: 'Sunday Sendoff', type: 'long' }), 'Sunday Sendoff')
 assert.equal(motivationalRunName({ kind: 'lift', type: 'strength', title: 'Heavy day' }), '')
 
 for (const type of ['easy', 'recovery', 'shakeout', 'long', 'hills', 'intervals', 'speed', 'track', 'tempo', 'threshold', 'race_pace', 'progression', 'run']) {
-  assert.ok(motivationalRunName({ id: `run-${type}`, kind: 'run', type }, { date: '2026-08-06' }), `${type} has a curated fallback`)
+  const session = { id: `run-${type}`, kind: 'run', type, title: `Technical prescription for ${type}` }
+  const context = { date: '2026-08-06' }
+  const displayName = motivationalRunName(session, context)
+  assert.ok(displayName, `${type} has a curated fallback`)
+  assert.equal(displayName, motivationalRunName(session, context), `${type} has a deterministic motivational name`)
+  assert.equal(session.title, `Technical prescription for ${type}`, `${type} retains its technical title`)
 }
 
 const legacy = normalizePlanSchedule({
@@ -74,7 +84,8 @@ const legacy = normalizePlanSchedule({
 }, { todayISO: '2026-08-06' })
 assert.equal(legacy.status, 'ready')
 assert.equal(legacy.entries[0].date, '2026-08-06', 'legacy dates derive from the week start and weekday')
-assert.equal(legacy.entries[0].sessions[0].displayName, 'Threshold Thursday', 'explicit legacy names survive')
+assert.notEqual(legacy.entries[0].sessions[0].displayName, 'Threshold Thursday', 'technical legacy titles do not suppress motivational names')
+assert.equal(legacy.entries[0].sessions[0].title, 'Threshold Thursday', 'technical legacy titles survive normalization')
 assert.equal(legacy.entries[1].classification, 'Rest')
 
 const august = calendarMonthView(model, '2026-08', { todayISO: '2026-08-03' })
@@ -96,6 +107,7 @@ const logRunSource = fs.readFileSync(fileURLToPath(new URL('../src/pages/LogRun.
 assert.match(logRunSource, /label: 'Month'/, 'Log Run exposes the Month tab')
 assert.match(logRunSource, /normalizePlanSchedule/, 'Week and Month use the shared normalized payload')
 assert.match(logRunSource, /entry\.sessions\.map\(\(session\) => <ScheduledSessionDetails/, 'the UI renders every session on a canonical day')
+assert.match(logRunSource, /isRun \? session\.displayName[\s\S]*session\.title && session\.title !== session\.displayName/, 'the UI keeps technical titles beneath motivational run names')
 assert.match(logRunSource, /planSessionId: session\.id/, 'Start This Run preserves the normalized run session ID')
 assert.match(logRunSource, /planScheduleState === 'loading'[\s\S]*planScheduleState === 'empty'[\s\S]*planScheduleState === 'malformed'[\s\S]*planScheduleState === 'error'/, 'calendar loading, empty, malformed, and API error states stay distinct')
 assert.doesNotMatch(logRunSource, /day\.(?:type|distance_miles|rest)/, 'JSX never reinterprets canonical days as legacy flat workouts')

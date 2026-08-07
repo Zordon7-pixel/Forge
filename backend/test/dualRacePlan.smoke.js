@@ -7,6 +7,7 @@ const path = require('node:path');
 const concurrent = require('../src/lib/concurrentPlan');
 const adaptation = require('../src/lib/adaptationEngine');
 const planSchema = require('../src/lib/planSchema');
+const { motivationalRunName } = require('../../shared/runDisplayName.mjs');
 
 function routeHandler(router, routePath, method) {
   const layer = router.stack.find((item) => item.route?.path === routePath && item.route?.methods?.[method]);
@@ -112,6 +113,9 @@ const sessions = plan.weeks.flatMap((week) => week.days.flatMap((day) => (
   day.sessions.map((session) => ({ week, day, session }))
 )));
 const generatedRuns = sessions.filter(({ session }) => session.kind === 'run');
+const canonicalHill = { kind: 'run', type: 'hill_repeats', title: '8 × 45-sec hill repeats' };
+assert.equal(motivationalRunName(canonicalHill), 'Hills Pay the Bills', 'technical hill titles never replace motivational names');
+assert.equal(canonicalHill.title, '8 × 45-sec hill repeats', 'motivational naming leaves the technical title unchanged');
 assert.equal(generatedRuns.every(({ session }) => String(session.display_name || '').trim()), true, 'every generated run persists a display name');
 assert.equal(
   planSchema.daySessions(generatedRuns[0].day)[0].display_name,
