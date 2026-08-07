@@ -126,6 +126,17 @@ const mismatchValidation = concurrent.validateConcurrentPlan(mismatchedPlan, prC
 assert.equal(mismatchValidation.valid, false);
 assert.ok(mismatchValidation.errors.some((error) => error.includes('canonical tempo_threshold prescription')));
 
+const falsePacePlan = JSON.parse(JSON.stringify(prPlan));
+const falsePaceSession = sessions(falsePacePlan).find(({ session }) => session.workout_id === 'race_pace_intervals').session;
+falsePaceSession.goal_pace_label = '8:00/mi';
+falsePaceSession.pace_target = '8:00/mi during work intervals';
+falsePaceSession.quality_prescription.target = '8:00/mi';
+falsePaceSession.steps[0] = falsePaceSession.steps[0].replace(/at .*$/, 'at 8:00/mi');
+const falsePaceValidation = concurrent.validateConcurrentPlan(falsePacePlan, prContext);
+assert.equal(falsePaceValidation.valid, false);
+assert.ok(falsePaceValidation.errors.some((error) => error.includes('goal_pace_label must match the trusted race target')));
+assert.ok(falsePaceValidation.errors.some((error) => error.includes('canonical race_pace_intervals prescription')));
+
 console.log('\n== race, goal, and mode matrix ==');
 for (const distanceMiles of [3.1, 6.2, 10, 13.109, 26.2]) {
   for (const planMode of ['run_only', 'hybrid_maintain']) {
@@ -166,6 +177,22 @@ const establishedQuality = sessions(establishedComebackPlan)
 assert.ok(establishedQuality.length > 0);
 assert.ok(establishedQuality.every(({ session }) => session.workout_id === 'strides'), 'active injury/comeback blocks hills, intervals, threshold, progression, and race-pace work');
 assert.equal(sessions(establishedComebackPlan).some(({ session }) => session.workout_id === 'benchmark_mile'), false);
+const unsafePersistentPlan = JSON.parse(JSON.stringify(prPlan));
+const unsafePersistentValidation = concurrent.validateConcurrentPlan(unsafePersistentPlan, establishedComebackContext);
+assert.equal(unsafePersistentValidation.valid, false);
+assert.ok(unsafePersistentValidation.errors.some((error) => error.includes('must be strides while quality safety protection is active')));
+
+const unanchoredUnsafeContext = context({ anchored: false });
+const unanchoredUnsafePlan = concurrent.buildConcurrentPlan(unanchoredUnsafeContext);
+const protectedUnanchoredContext = context({
+  anchored: false,
+  profile: { comeback_mode: 1, injury_notes: 'Active calf tightness' },
+  safety: { activeInjury: true, comebackMode: true, injuryNotesPresent: true },
+  recovery: { state: 'low', available: true, metrics: {} },
+});
+const protectedBenchmarkValidation = concurrent.validateConcurrentPlan(unanchoredUnsafePlan, protectedUnanchoredContext);
+assert.equal(protectedBenchmarkValidation.valid, false);
+assert.ok(protectedBenchmarkValidation.errors.some((error) => error.includes('cannot be benchmark_mile while quality safety protection is active')));
 
 const transientLowContext = context({
   recovery: { state: 'low', available: true, metrics: {} },
@@ -184,6 +211,17 @@ assert.ok(transientCurrentQuality.every(({ session }) => session.workout_id === 
 assert.ok(sessions({ weeks: transientLowPlan.weeks.slice(1) }).some(({ session }) => (
   taxonomy.isQualityWorkout(session.workout_id) && !['race', 'strides'].includes(session.workout_id)
 )), 'future quality progression remains after a transient low-recovery day');
+const ordinaryCurrentWeekContext = context({
+  acuteRunLoad: {
+    available: true,
+    protection: { active: false },
+    currentWeek: { startDate: '2026-08-03', runCount: 0, runDates: [], miles: 0, longRunCompleted: false },
+  },
+});
+const unsafeTransientPlan = concurrent.buildConcurrentPlan(ordinaryCurrentWeekContext);
+const unsafeTransientValidation = concurrent.validateConcurrentPlan(unsafeTransientPlan, transientLowContext);
+assert.equal(unsafeTransientValidation.valid, false);
+assert.ok(unsafeTransientValidation.errors.some((error) => error.includes('must be strides while quality safety protection is active')));
 
 const protectedContext = context({
   acuteRunLoad: {
