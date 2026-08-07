@@ -374,6 +374,8 @@ export default function Plan() {
       await api.post('/plans/generate-for-races', {
         race_ids: racePlanReconciliation.orderedRaceIds,
       })
+      setScheduleError('')
+      setPlanReviewError('')
       setRaceReconciliationNotice('Both race peaks are now protected in one plan.')
       await loadAll()
     } catch (err) {
@@ -408,6 +410,8 @@ export default function Plan() {
           equipment: Array.isArray(strengthPolicy.equipment) ? strengthPolicy.equipment : [],
         },
       }, { timeout: 90000 })
+      setScheduleError('')
+      setRaceReconciliationError('')
       setRaceSaveNotice({ message: 'Training calendar rebuilt for the updated race target.' })
       await loadAll()
     } catch (err) {
@@ -447,6 +451,8 @@ export default function Plan() {
         weekCount,
       })
       await api.post(request.path, request.body, { timeout: 90000 })
+      setRaceReconciliationError('')
+      setPlanReviewError('')
       setScheduleNotice(`Calendar rebuilt for ${scheduleDraft.runDaysPerWeek} run days per week. Recorded workouts remain in your history and still inform the plan.`)
       setScheduleEditing(false)
       await loadAll()

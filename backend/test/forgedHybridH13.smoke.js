@@ -125,7 +125,13 @@ const lowMileageValidation = concurrent.validateConcurrentPlan(lowMileagePlan, l
 const lowMileageRuns = sessions(lowMileagePlan).filter(({ session }) => session.kind === 'run' && session.type !== 'race');
 check(lowMileageValidation.valid, `low-mileage plan validates instead of returning a generation 500: ${lowMileageValidation.errors.join('; ')}`);
 check(lowMileageRuns.every(({ session }) => Number(session.distance_miles) > 0), 'scaled internal distance estimates remain positive');
-check(lowMileageRuns.filter(({ session }) => ['quality', 'hills', 'sharpen'].includes(session.type)).every(({ session }) => Number(session.distance_miles) >= 1.5), 'undersized quality slots become easy time instead of oversized interval work');
+const lowMileageQuality = lowMileageRuns.filter(({ session }) => session.workout_id === 'strides');
+check(lowMileageQuality.length > 0, 'low-mileage athletes retain a safe speed-development stimulus');
+check(lowMileageQuality.every(({ session }) => (
+  session.prescription_basis === 'time'
+  && session.quality_prescription?.work === '20 sec relaxed fast'
+  && /never sprint/i.test(session.quality_prescription?.target || '')
+)), 'undersized quality slots become controlled strides instead of oversized interval work');
 
 console.log(`\nPASSED: ${passed}  FAILED: ${failed}`);
 if (failed) process.exit(1);

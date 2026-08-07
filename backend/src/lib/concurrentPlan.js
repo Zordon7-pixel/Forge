@@ -5,6 +5,7 @@ const planSchema = require('./planSchema');
 const raceCourse = require('./raceCourse');
 const strengthPrescription = require('./strengthPrescription');
 const trainingEvidence = require('./trainingEvidence');
+const runWorkoutTaxonomy = require('./runWorkoutTaxonomy');
 const { isRunActivity } = require('./runActivity');
 const { resolveRunSchedule } = require('./runSchedule');
 
@@ -358,14 +359,12 @@ function racePlanWindow(raceDateValue, planningDateValue) {
   const planningDate = parseISODate(planningDateValue);
   if (!raceDate || !planningDate || raceDate < planningDate) return null;
   const currentMonday = mondayFor(planningDateValue);
-  const planningDay = DAY_ORDER[(planningDate.getDay() + 6) % 7];
-  const upcomingMonday = planningDay === 'Mon' ? currentMonday : addDays(currentMonday, 7);
   const raceWeekMonday = mondayFor(raceDateValue);
-  let startDate = raceDate < parseISODate(upcomingMonday) ? currentMonday : upcomingMonday;
+  let startDate = currentMonday;
   const rawWeeks = Math.floor((parseISODate(raceWeekMonday) - parseISODate(startDate)) / (7 * 86400000)) + 1;
   const weeks = clamp(rawWeeks, 1, 20);
   if (rawWeeks > 20) startDate = addDays(raceWeekMonday, -(weeks - 1) * 7);
-  return { startDate, weeks, startsLater: startDate > upcomingMonday };
+  return { startDate, weeks, startsLater: startDate > currentMonday };
 }
 
 function normalizeWeekdays(values, fallback) {
@@ -571,7 +570,7 @@ function runTypeFor(day, runDays, phase, options = {}) {
   if (position === 0 && runDays.length === 1 && phase === 'taper' && options.hasTimedGoal) return 'sharpen';
   if (position === runDays.length - 1) return 'long';
   if (position === 0 && (runDays.length >= 3 || (options.hasTimedGoal && runDays.length >= 2))) {
-    if (phase === 'base') return 'hills';
+    if (phase === 'base') return options.weekNumber % 2 === 0 ? 'quality' : 'hills';
     if (phase === 'taper') return 'sharpen';
     if (options.hasTimedGoal && (phase === 'peak' || (phase === 'build' && options.weekNumber % 2 === 0))) return 'race_pace';
     return 'quality';
@@ -706,6 +705,23 @@ function durationForRun(type, distance, phase, history = {}) {
   return Math.round(clamp(estimatedMinutes, 15, 50));
 }
 
+function durationForWorkout(workoutId, fallbackMinutes) {
+  const durations = {
+    strides: 35,
+    short_hill_sprints: 40,
+    aerobic_hill_repeats: 45,
+    uphill_threshold_repeats: 52,
+    fartlek: 42,
+    short_intervals: 45,
+    long_intervals: 52,
+    tempo_threshold: 55,
+    progression_run: 45,
+    race_pace_intervals: 55,
+    sharpening_strides: 35,
+  };
+  return durations[workoutId] || fallbackMinutes;
+}
+
 function runPrescription(type, phase, hilly, options = {}) {
   const goalPaceLabel = options.goalPaceLabel || null;
   if (type === 'race_pace' && goalPaceLabel) {
@@ -773,12 +789,13 @@ function runPrescription(type, phase, hilly, options = {}) {
   };
 }
 
-function buildRunSession({ weekNumber, weekCount, day, type, distance, phase, hilly, raceName, history, goalPaceContext, durationIsEstimated = true }) {
+function buildRunSession({ weekNumber, weekCount, day, type, workoutId, distance, phase, hilly, raceName, history, goalPaceContext, durationIsEstimated = true }) {
   const goalPace = goalPaceContext?.targetPaceSecondsPerMile || null;
   const goalPaceLabel = goalPaceContext?.targetPaceLabel || null;
   if (type === 'race') {
     return {
       id: `h3-w${weekNumber}-${day.toLowerCase()}-run`, kind: 'run', type: 'race', workout_type: 'run',
+      workout_id: 'race', workout_family: 'race',
       prescription_basis: 'distance',
       title: raceName || 'Race day', distance_miles: Number(distance), target_zone: 'Race effort', pace_target: goalPaceLabel || 'Goal race effort', intensity: 'Race',
       warmup: ['10-15 min easy', '4 x 20 sec relaxed strides'], steps: ['Start controlled', 'Settle into goal effort', 'Race by effort over late hills'],
@@ -788,22 +805,33 @@ function buildRunSession({ weekNumber, weekCount, day, type, distance, phase, hi
     };
   }
   const estimatedDistance = round(Math.max(0.1, distance));
-  const usesGoalPace = goalPace && ['race_pace', 'sharpen'].includes(type);
+  const taxonomyWorkout = runWorkoutTaxonomy.workoutForId(workoutId);
+  const effectiveType = taxonomyWorkout?.type || type;
+  const usesGoalPace = goalPace && ['race_pace_intervals', 'sharpening_strides'].includes(workoutId);
+  const canonicalPrescription = runWorkoutTaxonomy.prescriptionFor(workoutId, {
+    phase,
+    weekNumber,
+    weekCount,
+    goalPaceLabel,
+  });
+  const fallbackDuration = durationForRun(effectiveType, estimatedDistance, phase, history);
   return {
-    id: `h3-w${weekNumber}-${day.toLowerCase()}-run`, kind: 'run', type, workout_type: 'run',
+    id: `h3-w${weekNumber}-${day.toLowerCase()}-run`, kind: 'run', type: effectiveType, workout_type: 'run',
+    workout_id: workoutId || runWorkoutTaxonomy.workoutIdForSession(effectiveType),
+    workout_family: taxonomyWorkout?.family || effectiveType,
     prescription_basis: 'time',
-    duration_min: durationForRun(type, estimatedDistance, phase, history),
+    duration_min: durationForWorkout(workoutId, fallbackDuration),
     durationIsEstimated: Boolean(durationIsEstimated),
     distance_miles: estimatedDistance,
     distance_is_estimate: true,
-    evidence_refs: trainingEvidence.runEvidenceRefs(type),
+    evidence_refs: trainingEvidence.runEvidenceRefs(workoutId || effectiveType),
     ...(usesGoalPace ? { goal_pace_seconds_per_mile: goalPace, goal_pace_label: goalPaceLabel } : {}),
-    ...runPrescription(type, phase, hilly, {
+    ...(canonicalPrescription || runPrescription(effectiveType, phase, hilly, {
       weekNumber,
       weekCount,
       goalPaceLabel,
       goalPaceStatus: goalPaceContext?.status,
-    }),
+    })),
   };
 }
 
@@ -813,6 +841,8 @@ function buildBenchmarkRunSession(session = {}) {
     ...session,
     type: 'benchmark',
     workout_type: 'run',
+    workout_id: 'benchmark_mile',
+    workout_family: 'benchmark',
     title: 'Benchmark run',
     prescription_basis: 'distance',
     distance_miles: totalDistanceMiles,
@@ -824,10 +854,17 @@ function buildBenchmarkRunSession(session = {}) {
     pace_target: 'Strong, even 1-mile effort by feel',
     intensity: 'Benchmark',
     warmup: ['10 min easy running', '4 x 20 sec relaxed strides'],
+    quality_prescription: {
+      repetitions: 1,
+      work: '1 mile at a strong, controlled effort',
+      recovery: { type: 'easy cooldown', duration: '10 min' },
+      target: 'Even pacing; finish knowing one more repetition was possible',
+    },
     steps: ['Run 1 mile at a strong but controlled effort', 'Start slightly conservative, then hold even effort', 'Record the finish time for target calibration'],
     cooldown: ['10 min easy running', 'Walk 3-5 min until breathing settles'],
     progression: 'Use the result to calibrate plan targets before adding goal-pace work.',
     description: 'Calibrate training targets with a controlled 1-mile benchmark instead of guessing from a default pace.',
+    purpose: 'Establish a measured performance anchor before prescribing exact pace targets.',
     evidence_refs: trainingEvidence.runEvidenceRefs('quality'),
   };
   delete next.duration_min;
@@ -878,6 +915,8 @@ function recoveryRunAfterRecentLoad(session, latestRun) {
     ...session,
     type: 'recovery',
     workout_type: 'recovery',
+    workout_id: 'recovery_run',
+    workout_family: 'recovery',
     title: 'Recovery run',
     prescription_basis: 'time',
     duration_min: duration,
@@ -1370,13 +1409,25 @@ function buildConcurrentPlan(context = {}) {
         hasTimedGoal: Boolean(goalPaceContext),
       });
       const longAlreadyCompleted = isCurrentWeek && currentWeekLoad.longRunCompleted && scheduledType === 'long';
-      const qualitySlotTooSmall = ['quality', 'hills', 'sharpen'].includes(scheduledType) && Number(distances[index] || 0) < 1.5;
-      const type = day === raceDay ? 'race' : (longAlreadyCompleted || qualitySlotTooSmall ? 'easy' : scheduledType);
+      const type = day === raceDay ? 'race' : (longAlreadyCompleted ? 'easy' : scheduledType);
+      const conservativeQuality = ['quality', 'hills', 'race_pace', 'sharpen'].includes(type)
+        && Number(distances[index] || 0) < 1.5;
+      const workoutId = runWorkoutTaxonomy.workoutIdForSession(type, {
+        phase,
+        weekNumber,
+        weekCount,
+        hilly,
+        hasTimedGoal: Boolean(goalPaceContext),
+        weeklyMiles: baseline,
+        meaningfulRunCount: Number(history.mileageBaseline?.meaningfulRunCount ?? history.recentRunCount ?? 0),
+        conservative: conservativeQuality,
+      });
       let runSession = buildRunSession({
         weekNumber,
         weekCount,
         day,
         type,
+        workoutId,
         distance: distances[index],
         phase,
         hilly,
@@ -1393,7 +1444,10 @@ function buildConcurrentPlan(context = {}) {
     });
 
     const effectiveLiftCount = mode === planSchema.PLAN_MODES.RUN_ONLY ? 0 : phase === 'race' ? Math.min(1, liftDaysPerWeek) : liftDaysPerWeek;
-    const liftAssignments = chooseLiftDays(availableDays, runByDay, effectiveLiftCount);
+    const liftAvailableDays = isCurrentWeek
+      ? availableDays.filter((day) => addDays(weekStart, DAY_ORDER.indexOf(day)) >= context.todayISO)
+      : availableDays;
+    const liftAssignments = chooseLiftDays(liftAvailableDays, runByDay, Math.min(effectiveLiftCount, liftAvailableDays.length));
     const liftByDay = new Map(liftAssignments.map(({ day, focus }) => [day, buildLiftSession({ weekNumber, day, focus, mode, phase, context })]));
     const days = DAY_ORDER.map((day, index) => {
       const sessions = [runByDay.get(day), liftByDay.get(day)].filter(Boolean);
@@ -1481,6 +1535,23 @@ function validateRun(session, path, errors) {
     errors.push(`${path}.duration_min must be positive for a time-based session`);
   }
   if (!Array.isArray(session.evidence_refs) || session.evidence_refs.length === 0) errors.push(`${path}.evidence_refs is required`);
+  const workoutId = String(session.workout_id || '');
+  const taxonomyWorkout = runWorkoutTaxonomy.workoutForId(workoutId);
+  if (!workoutId) errors.push(`${path}.workout_id is required`);
+  if (!taxonomyWorkout) errors.push(`${path}.workout_id is not canonical`);
+  if (taxonomyWorkout && session.workout_family !== taxonomyWorkout.family) errors.push(`${path}.workout_family must match ${taxonomyWorkout.family}`);
+  if (taxonomyWorkout?.quality && workoutId !== 'race') {
+    const quality = session.quality_prescription;
+    if (!quality || typeof quality !== 'object') errors.push(`${path}.quality_prescription is required`);
+    if (!(Number(quality?.repetitions) > 0)) errors.push(`${path}.quality_prescription.repetitions must be positive`);
+    for (const field of ['work', 'target']) {
+      if (!String(quality?.[field] || '').trim()) errors.push(`${path}.quality_prescription.${field} is required`);
+    }
+    for (const field of ['type', 'duration']) {
+      if (!String(quality?.recovery?.[field] || '').trim()) errors.push(`${path}.quality_prescription.recovery.${field} is required`);
+    }
+    if (!String(session.purpose || '').trim()) errors.push(`${path}.purpose is required for quality work`);
+  }
 }
 
 function isStructuredTargetPaceSession(session = {}) {
@@ -1590,6 +1661,9 @@ function validateConcurrentPlan(candidate, context = {}) {
       if (day.date !== expectedDate) errors.push(`${dayPath}.date must be ${expectedDate}`);
       if (!Array.isArray(day.sessions) || day.sessions.length > 2) errors.push(`${dayPath}.sessions must contain zero to two sessions`);
       const sessions = Array.isArray(day.sessions) ? day.sessions : [];
+      if (currentWeekQuota && day.date < context.todayISO && sessions.length > 0) {
+        errors.push(`${dayPath} cannot schedule sessions before the current planning date`);
+      }
       if (sessions.length === 0) restDays += 1;
       const kinds = new Set();
       sessions.forEach((session, sessionIndex) => {
