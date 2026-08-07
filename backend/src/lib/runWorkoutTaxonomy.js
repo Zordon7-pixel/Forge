@@ -44,11 +44,11 @@ function workoutIdForSession(type, options = {}) {
   if (normalizedType === 'long') return 'long_aerobic';
   if (normalizedType === 'recovery') return 'recovery_run';
   if (normalizedType === 'easy') return 'easy_aerobic';
+  if (conservative) return 'strides';
   if (normalizedType === 'steady') return 'progression_run';
-  if (normalizedType === 'race_pace') return conservative ? 'strides' : 'race_pace_intervals';
+  if (normalizedType === 'race_pace') return 'race_pace_intervals';
   if (normalizedType === 'sharpen') return 'sharpening_strides';
 
-  if (conservative) return 'strides';
   if (normalizedType === 'hills') {
     if (phase === 'peak' && experienced) return 'uphill_threshold_repeats';
     return weekNumber % 2 === 0 ? 'short_hill_sprints' : 'aerobic_hill_repeats';

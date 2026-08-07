@@ -1240,6 +1240,11 @@ async function buildConcurrentContext(userId, profile, target) {
     profile,
     target,
     todayISO: planningDateISO,
+    safety: {
+      activeInjury: Boolean(activeInjury),
+      comebackMode: Boolean(profile.comeback_mode),
+      injuryNotesPresent: Boolean(String(profile.injury_notes || '').trim()),
+    },
     history: {
       weeklyMileageBaseline,
       mileageBaseline,

@@ -705,7 +705,13 @@ function durationForRun(type, distance, phase, history = {}) {
   return Math.round(clamp(estimatedMinutes, 15, 50));
 }
 
-function durationForWorkout(workoutId, fallbackMinutes) {
+function durationForWorkout(workoutId, fallbackMinutes, options = {}) {
+  if (workoutId === 'race_pace_intervals') {
+    const progress = Number(options.weekNumber || 1) / Math.max(1, Number(options.weekCount || 1));
+    const workMinutes = progress >= 0.75 ? 10 : progress >= 0.55 ? 8 : 6;
+    // Warm-up + four strides + three work intervals + two between-rep recoveries + cooldown.
+    return Math.ceil(15 + (4 * 20 / 60) + (3 * workMinutes) + (2 * 3) + 10);
+  }
   const durations = {
     strides: 35,
     short_hill_sprints: 40,
@@ -716,7 +722,6 @@ function durationForWorkout(workoutId, fallbackMinutes) {
     long_intervals: 52,
     tempo_threshold: 55,
     progression_run: 45,
-    race_pace_intervals: 55,
     sharpening_strides: 35,
   };
   return durations[workoutId] || fallbackMinutes;
@@ -820,7 +825,7 @@ function buildRunSession({ weekNumber, weekCount, day, type, workoutId, distance
     workout_id: workoutId || runWorkoutTaxonomy.workoutIdForSession(effectiveType),
     workout_family: taxonomyWorkout?.family || effectiveType,
     prescription_basis: 'time',
-    duration_min: durationForWorkout(workoutId, fallbackDuration),
+    duration_min: durationForWorkout(workoutId, fallbackDuration, { weekNumber, weekCount }),
     durationIsEstimated: Boolean(durationIsEstimated),
     distance_miles: estimatedDistance,
     distance_is_estimate: true,
@@ -1227,6 +1232,29 @@ function summarizeInputs(profile = {}, history = {}, recovery = {}, checkin = nu
   };
 }
 
+function hasPersistentQualityProtection(context = {}) {
+  const profile = context.profile || {};
+  const safety = context.safety || {};
+  return Boolean(
+    safety.activeInjury
+    || safety.comebackMode
+    || safety.injuryNotesPresent
+    || profile.comeback_mode
+    || String(profile.injury_notes || '').trim()
+  );
+}
+
+function hasCurrentWeekRecoveryProtection(context = {}) {
+  return ['low', 'recovery'].includes(String(context.recovery?.state || context.recovery?.recoveryState || '').toLowerCase());
+}
+
+function hasPlanWideQualityProtection(context = {}) {
+  const history = context.history || {};
+  const baseline = Number(history.weeklyMileageBaseline ?? context.profile?.weekly_miles_current) || 0;
+  const meaningfulRunCount = Number(history.mileageBaseline?.meaningfulRunCount ?? history.recentRunCount ?? 0);
+  return hasPersistentQualityProtection(context) || baseline < 5 || meaningfulRunCount < 3;
+}
+
 function numberOrNull(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
@@ -1350,6 +1378,8 @@ function buildConcurrentPlan(context = {}) {
   const weekPhases = phasesForRaceTargets(startDate, weekCount, raceTargets);
   const mileageTargets = buildMileageTargets(weekCount, baseline, Boolean(raceDate), recovery, history, { ...target, weekPhases });
   const anchorMetadata = planAnchorMetadata(history);
+  const persistentQualityProtection = hasPersistentQualityProtection(context);
+  const currentWeekRecoveryProtection = hasCurrentWeekRecoveryProtection(context);
   let benchmarkPrescribed = false;
 
   const weeks = [];
@@ -1375,6 +1405,10 @@ function buildConcurrentPlan(context = {}) {
       raceDay,
     }) : null;
     const isCurrentWeek = Boolean(currentWeekQuota);
+    const isPlanningCurrentWeek = weekNumber === 1
+      && parseISODate(context.todayISO)
+      && context.todayISO >= weekStart
+      && context.todayISO <= addDays(weekStart, 6);
     if (currentWeekQuota) weekRunDays = currentWeekQuota.runDays;
     let scheduledMileageTarget = mileageTargets[weekNumber - 1];
     if (isCurrentWeek) scheduledMileageTarget = Math.max(0, scheduledMileageTarget - Number(currentWeekLoad.miles || 0));
@@ -1410,8 +1444,10 @@ function buildConcurrentPlan(context = {}) {
       });
       const longAlreadyCompleted = isCurrentWeek && currentWeekLoad.longRunCompleted && scheduledType === 'long';
       const type = day === raceDay ? 'race' : (longAlreadyCompleted ? 'easy' : scheduledType);
-      const conservativeQuality = ['quality', 'hills', 'race_pace', 'sharpen'].includes(type)
-        && Number(distances[index] || 0) < 1.5;
+      const qualityCandidate = ['quality', 'hills', 'race_pace', 'sharpen', 'steady'].includes(type);
+      const protectQualityThisWeek = persistentQualityProtection || (isPlanningCurrentWeek && currentWeekRecoveryProtection);
+      const conservativeQuality = qualityCandidate
+        && (protectQualityThisWeek || Number(distances[index] || 0) < 1.5);
       const workoutId = runWorkoutTaxonomy.workoutIdForSession(type, {
         phase,
         weekNumber,
@@ -1436,7 +1472,10 @@ function buildConcurrentPlan(context = {}) {
         goalPaceContext,
         durationIsEstimated: durationIsEstimatedFromAnchorState(anchorMetadata.anchorState),
       });
-      if (anchorMetadata.anchorState === 'needs_benchmark' && !benchmarkPrescribed && type !== 'race') {
+      if (anchorMetadata.anchorState === 'needs_benchmark'
+        && !benchmarkPrescribed
+        && type !== 'race'
+        && !protectQualityThisWeek) {
         runSession = buildBenchmarkRunSession(runSession);
         benchmarkPrescribed = true;
       }
@@ -1525,7 +1564,11 @@ function validateLift(session, path, errors) {
   });
 }
 
-function validateRun(session, path, errors) {
+function sameStructuredValue(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function validateRun(session, path, errors, options = {}) {
   for (const field of ['title', 'distance_miles', 'pace_target', 'target_zone', 'intensity', 'warmup', 'steps', 'cooldown', 'progression', 'description']) {
     const value = session[field];
     if (value === undefined || value === null || value === '' || (Array.isArray(value) && value.length === 0)) errors.push(`${path}.${field} is required`);
@@ -1540,6 +1583,24 @@ function validateRun(session, path, errors) {
   if (!workoutId) errors.push(`${path}.workout_id is required`);
   if (!taxonomyWorkout) errors.push(`${path}.workout_id is not canonical`);
   if (taxonomyWorkout && session.workout_family !== taxonomyWorkout.family) errors.push(`${path}.workout_family must match ${taxonomyWorkout.family}`);
+  if (taxonomyWorkout && session.type !== taxonomyWorkout.type) errors.push(`${path}.type must match ${taxonomyWorkout.type}`);
+  const canonicalPrescription = taxonomyWorkout && runWorkoutTaxonomy.prescriptionFor(workoutId, {
+    phase: options.phase,
+    weekNumber: options.weekNumber,
+    weekCount: options.weekCount,
+    goalPaceLabel: session.goal_pace_label || null,
+  });
+  if (canonicalPrescription) {
+    for (const field of [
+      'title', 'target_zone', 'pace_target', 'intensity', 'warmup', 'quality_prescription',
+      'steps', 'cooldown', 'progression', 'description', 'purpose', 'prescription_basis',
+      'workout_id', 'workout_family', 'phase',
+    ]) {
+      if (!sameStructuredValue(session[field], canonicalPrescription[field])) {
+        errors.push(`${path}.${field} must match the canonical ${workoutId} prescription`);
+      }
+    }
+  }
   if (taxonomyWorkout?.quality && workoutId !== 'race') {
     const quality = session.quality_prescription;
     if (!quality || typeof quality !== 'object') errors.push(`${path}.quality_prescription is required`);
@@ -1577,6 +1638,7 @@ function validateConcurrentPlan(candidate, context = {}) {
   const currentWeekLoad = context.history?.acuteRunLoad?.currentWeek;
   const acuteLoad = context.history?.acuteRunLoad;
   const acuteProtection = acuteLoad?.protection?.active ? acuteLoad.protection : null;
+  const planWideQualityProtection = hasPlanWideQualityProtection(context);
   const latestRunDate = acuteProtection?.anchorDate || acuteLoad?.protectiveRun?.date || acuteLoad?.latestRun?.date || null;
   if (!candidate || typeof candidate !== 'object') return { valid: false, errors: ['candidate is missing'] };
   if (Number(candidate.schemaVersion) !== planSchema.SCHEMA_VERSION) errors.push(`schemaVersion must be ${planSchema.SCHEMA_VERSION}`);
@@ -1675,7 +1737,11 @@ function validateConcurrentPlan(candidate, context = {}) {
         kinds.add(kind);
         if (kind === 'run') {
           runs += 1;
-          validateRun(session, sessionPath, errors);
+          validateRun(session, sessionPath, errors, {
+            phase: week.phase,
+            weekNumber: week.week,
+            weekCount: weeks.length,
+          });
           if (currentWeekQuota
             && (day.date < context.todayISO || currentWeekQuota.completedRunDates.has(day.date))) {
             errors.push(`${sessionPath} is scheduled in the past or on an already completed date`);
@@ -1816,7 +1882,11 @@ function validateConcurrentPlan(candidate, context = {}) {
   raceTargets.forEach((race) => {
     const racePace = goalPaceSecondsPerMile(race, {}, context.history || {});
     const weeksToRace = Math.floor((parseISODate(race.raceDate) - parseISODate(expectedStartDate)) / (7 * 86400000)) + 1;
-    if (racePace && weeksToRace >= 2 && plannedRunFrequency >= 2 && !targetPaceRaceIds.has(race.raceId || race.raceDate)) {
+    if (!planWideQualityProtection
+      && racePace
+      && weeksToRace >= 2
+      && plannedRunFrequency >= 2
+      && !targetPaceRaceIds.has(race.raceId || race.raceDate)) {
       errors.push(`timed race plan must include a structured target-pace session before ${race.raceDate}`);
     }
   });
@@ -1829,7 +1899,9 @@ function validateConcurrentPlan(candidate, context = {}) {
     const trustedCourse = trustedCourseFacts(courseTarget);
     const trustedElevationGainFt = trustedCourse.trusted ? Number(trustedCourse.facts.elevationGainFt || 0) : 0;
     const elevationPerMile = trustedElevationGainFt / Math.max(1, Number(courseTarget.distanceMiles || 0));
-    if (elevationPerMile >= 30 && expectedWeeks > 1 && !raceSpecificSessionFound) errors.push('hilly race plan must include a hill or course-specific session');
+    if (!planWideQualityProtection && elevationPerMile >= 30 && expectedWeeks > 1 && !raceSpecificSessionFound) {
+      errors.push('hilly race plan must include a hill or course-specific session');
+    }
     const candidateCourse = candidateGoals[index] && typeof candidateGoals[index].course === 'object' ? candidateGoals[index].course : null;
     const expectedCourse = buildGoalCourse(courseTarget);
     if (JSON.stringify(candidateCourse) !== JSON.stringify(expectedCourse)) {

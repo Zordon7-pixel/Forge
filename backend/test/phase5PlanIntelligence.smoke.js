@@ -25,6 +25,7 @@ function context(overrides = {}) {
       weekly_miles_current: baseline,
       run_days_per_week: overrides.runDaysPerWeek || 4,
       lift_days_per_week: planMode === 'run_only' ? 0 : 2,
+      ...(overrides.profile || {}),
     },
     target: {
       weeks: overrides.weeks || 12,
@@ -57,6 +58,7 @@ function context(overrides = {}) {
       acuteRunLoad: overrides.acuteRunLoad || { available: false, protection: { active: false } },
     },
     recovery: overrides.recovery || { state: 'normal', available: true, metrics: {} },
+    ...(overrides.safety ? { safety: overrides.safety } : {}),
   };
 }
 
@@ -110,6 +112,19 @@ assert.ok(prRuns.filter(({ session }) => taxonomy.isQualityWorkout(session.worko
   && session.quality_prescription?.target
   && session.purpose
 )), 'every planned quality run is fully actionable');
+for (const { week, session } of prRuns.filter(({ session }) => session.workout_id === 'race_pace_intervals')) {
+  const workMinutes = Number.parseInt(session.quality_prescription.work, 10);
+  const minimumDuration = Math.ceil(15 + (4 * 20 / 60) + (3 * workMinutes) + (2 * 3) + 10);
+  assert.ok(session.duration_min >= minimumDuration, `week ${week.week} race-pace duration covers the full prescription`);
+}
+
+const mismatchedPlan = JSON.parse(JSON.stringify(prPlan));
+const mismatchedThreshold = sessions(mismatchedPlan).find(({ session }) => session.workout_id === 'tempo_threshold').session;
+mismatchedThreshold.target_zone = 'Zone 2';
+mismatchedThreshold.pace_target = 'Easy conversational running';
+const mismatchValidation = concurrent.validateConcurrentPlan(mismatchedPlan, prContext);
+assert.equal(mismatchValidation.valid, false);
+assert.ok(mismatchValidation.errors.some((error) => error.includes('canonical tempo_threshold prescription')));
 
 console.log('\n== race, goal, and mode matrix ==');
 for (const distanceMiles of [3.1, 6.2, 10, 13.109, 26.2]) {
@@ -137,6 +152,38 @@ assert.equal(comebackValidation.valid, true, comebackValidation.errors.join('; '
 const comebackQuality = sessions(comebackPlan).filter(({ session }) => taxonomy.isQualityWorkout(session.workout_id) && !['race', 'sharpening_strides', 'benchmark_mile'].includes(session.workout_id));
 assert.ok(comebackQuality.length > 0);
 assert.ok(comebackQuality.every(({ session }) => session.workout_id === 'strides'), 'comeback plan uses strides instead of oversized intervals');
+
+const establishedComebackContext = context({
+  profile: { comeback_mode: 1, injury_notes: 'Active calf tightness' },
+  safety: { activeInjury: true, comebackMode: true, injuryNotesPresent: true },
+  recovery: { state: 'low', available: true, metrics: {} },
+});
+const establishedComebackPlan = concurrent.buildConcurrentPlan(establishedComebackContext);
+const establishedComebackValidation = concurrent.validateConcurrentPlan(establishedComebackPlan, establishedComebackContext);
+assert.equal(establishedComebackValidation.valid, true, establishedComebackValidation.errors.join('; '));
+const establishedQuality = sessions(establishedComebackPlan)
+  .filter(({ session }) => taxonomy.isQualityWorkout(session.workout_id) && session.workout_id !== 'race');
+assert.ok(establishedQuality.length > 0);
+assert.ok(establishedQuality.every(({ session }) => session.workout_id === 'strides'), 'active injury/comeback blocks hills, intervals, threshold, progression, and race-pace work');
+assert.equal(sessions(establishedComebackPlan).some(({ session }) => session.workout_id === 'benchmark_mile'), false);
+
+const transientLowContext = context({
+  recovery: { state: 'low', available: true, metrics: {} },
+  acuteRunLoad: {
+    available: true,
+    protection: { active: false },
+    currentWeek: { startDate: '2026-08-03', runCount: 0, runDates: [], miles: 0, longRunCompleted: false },
+  },
+});
+const transientLowPlan = concurrent.buildConcurrentPlan(transientLowContext);
+const transientLowValidation = concurrent.validateConcurrentPlan(transientLowPlan, transientLowContext);
+assert.equal(transientLowValidation.valid, true, transientLowValidation.errors.join('; '));
+const transientCurrentQuality = sessions({ weeks: [transientLowPlan.weeks[0]] })
+  .filter(({ session }) => taxonomy.isQualityWorkout(session.workout_id) && session.workout_id !== 'race');
+assert.ok(transientCurrentQuality.every(({ session }) => session.workout_id === 'strides'), 'low recovery protects only the actionable current week');
+assert.ok(sessions({ weeks: transientLowPlan.weeks.slice(1) }).some(({ session }) => (
+  taxonomy.isQualityWorkout(session.workout_id) && !['race', 'strides'].includes(session.workout_id)
+)), 'future quality progression remains after a transient low-recovery day');
 
 const protectedContext = context({
   acuteRunLoad: {
@@ -212,6 +259,10 @@ for (const lateWeekFixture of [
   assert.equal(lateWeekPlan.weeks[0].days
     .filter((day) => day.date < lateWeekFixture.todayISO)
     .every((day) => day.sessions.length === 0), true);
+  for (const futureWeek of lateWeekPlan.weeks.slice(1).filter((week) => week.phase !== 'race')) {
+    const futureLifts = sessions({ weeks: [futureWeek] }).filter(({ session }) => session.kind === 'lift');
+    assert.ok(futureLifts.length >= lateWeekPlan.strengthPolicy.minimumSessionsPerWeek, `${lateWeekFixture.todayISO}: week ${futureWeek.week} restores the full lift floor`);
+  }
 }
 
 console.log('PHASE 5 PLAN INTELLIGENCE SMOKE OK');
