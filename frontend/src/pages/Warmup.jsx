@@ -1,4 +1,5 @@
 import { useEffect, useReducer, useState } from 'react'
+import { App as CapacitorApp } from '@capacitor/app'
 import { useNavigate, useLocation } from 'react-router'
 import { TrendingUp, Calendar, Zap, Heart } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -79,11 +80,49 @@ function WarmupCountdown({ movement, movementKey }) {
   }, [state.phase])
 
   useEffect(() => {
-    const pauseWhenHidden = () => {
-      if (document.visibilityState === 'hidden') dispatch({ type: TIMER_ACTION.PAUSE })
+    let active = true
+    let appStateHandle = null
+
+    const pauseCountdown = () => {
+      if (active) dispatch({ type: TIMER_ACTION.PAUSE })
     }
+    const pauseWhenHidden = () => {
+      if (document.visibilityState === 'hidden') pauseCountdown()
+    }
+    const removeAppStateListener = async (handle) => {
+      try {
+        await handle?.remove?.()
+      } catch (error) {
+        console.warn('[WarmupCountdown] app state listener cleanup failed:', error?.message || error)
+      }
+    }
+    const registerAppStateListener = async () => {
+      try {
+        const handle = await CapacitorApp.addListener('appStateChange', ({ isActive }) => {
+          if (!isActive) pauseCountdown()
+        })
+        if (!active) {
+          await removeAppStateListener(handle)
+          return
+        }
+        appStateHandle = handle
+      } catch (error) {
+        console.warn('[WarmupCountdown] app state listener setup failed:', error?.message || error)
+      }
+    }
+
     document.addEventListener('visibilitychange', pauseWhenHidden)
-    return () => document.removeEventListener('visibilitychange', pauseWhenHidden)
+    void registerAppStateListener()
+
+    return () => {
+      active = false
+      document.removeEventListener('visibilitychange', pauseWhenHidden)
+      if (appStateHandle) {
+        const handle = appStateHandle
+        appStateHandle = null
+        void removeAppStateListener(handle)
+      }
+    }
   }, [])
 
   const running = state.phase === TIMER_PHASE.RUNNING
