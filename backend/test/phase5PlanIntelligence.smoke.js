@@ -83,6 +83,9 @@ for (const source of Object.values(evidence.SOURCES)) {
   assert.equal(source.executable, false);
   assert.equal(source.productionRuleApproved, false);
   assert.equal(source.qualifiedReviewer, null);
+  assert.equal(Object.isFrozen(source), true);
+  assert.equal(Object.isFrozen(source.dosageBounds), true);
+  assert.equal(Object.isFrozen(source.contraindications), true);
 }
 for (const id of workoutIds) {
   for (const ref of evidence.runEvidenceRefs(id)) assert.ok(evidence.SOURCES[ref], `${id} resolves evidence ${ref}`);
@@ -183,5 +186,32 @@ assert.deepEqual(
   ['2026-08-06', '2026-08-07', '2026-08-08']
 );
 assert.deepEqual(currentWeekPlan.goals.map((goal) => goal.raceId), races.map((race) => race.raceId));
+
+console.log('\n== late-week hybrid strength-floor regression ==');
+for (const lateWeekFixture of [
+  { todayISO: '2026-08-07', trainingDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'], expectedLifts: 1 },
+  { todayISO: '2026-08-09', trainingDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'], expectedLifts: 1 },
+]) {
+  const lateWeekContext = context({
+    todayISO: lateWeekFixture.todayISO,
+    startDate: '2026-08-03',
+    runDaysPerWeek: 3,
+    trainingDays: lateWeekFixture.trainingDays,
+    acuteRunLoad: {
+      available: true,
+      protection: { active: false },
+      currentWeek: { startDate: '2026-08-03', runCount: 0, runDates: [], miles: 0, longRunCompleted: false },
+    },
+  });
+  const lateWeekPlan = concurrent.buildConcurrentPlan(lateWeekContext);
+  const lateWeekValidation = concurrent.validateConcurrentPlan(lateWeekPlan, lateWeekContext);
+  assert.equal(lateWeekValidation.valid, true, `${lateWeekFixture.todayISO}: ${lateWeekValidation.errors.join('; ')}`);
+  const currentWeekLifts = sessions({ weeks: [lateWeekPlan.weeks[0]] })
+    .filter(({ session }) => session.kind === 'lift');
+  assert.equal(currentWeekLifts.length, lateWeekFixture.expectedLifts);
+  assert.equal(lateWeekPlan.weeks[0].days
+    .filter((day) => day.date < lateWeekFixture.todayISO)
+    .every((day) => day.sessions.length === 0), true);
+}
 
 console.log('PHASE 5 PLAN INTELLIGENCE SMOKE OK');

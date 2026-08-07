@@ -3,8 +3,14 @@
 
 const ACCESSED_ON = '2026-08-06';
 
+function deepFreeze(value) {
+  if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
+  Object.values(value).forEach(deepFreeze);
+  return Object.freeze(value);
+}
+
 function source(record) {
-  return Object.freeze({
+  return deepFreeze({
     version: 1,
     activationStatus: 'cataloged',
     productionRuleApproved: false,
@@ -202,7 +208,7 @@ const RUN_REFS = Object.freeze({
 
 function sourceForId(id) {
   const record = SOURCES[id];
-  return record ? { ...record } : null;
+  return record ? JSON.parse(JSON.stringify(record)) : null;
 }
 
 function runEvidenceRefs(workoutId) {

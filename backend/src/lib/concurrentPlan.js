@@ -1761,7 +1761,13 @@ function validateConcurrentPlan(candidate, context = {}) {
     }
     if (expectedMode === planSchema.PLAN_MODES.RUN_ONLY && lifts > 0) errors.push(`${path} run_only plans cannot contain lifts`);
     if (expectedMode !== planSchema.PLAN_MODES.RUN_ONLY && week.phase !== 'race') {
-      const floor = Number(candidate.strengthPolicy?.minimumSessionsPerWeek || 0);
+      const configuredFloor = Number(candidate.strengthPolicy?.minimumSessionsPerWeek || 0);
+      const remainingLiftCapacity = currentWeekQuota
+        ? runSchedule.trainingDays.filter((day) => (
+          addDays(week.startDate, DAY_ORDER.indexOf(day)) >= context.todayISO
+        )).length
+        : configuredFloor;
+      const floor = Math.min(configuredFloor, remainingLiftCapacity);
       if (lifts < floor) errors.push(`${path} has ${lifts} lifts below strength floor ${floor}`);
     }
     for (const lowerIndex of lowerLiftIndexes) {
