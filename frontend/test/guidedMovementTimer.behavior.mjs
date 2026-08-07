@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { preRunStretches } from '../src/data/stretches.js'
 import {
   createStretchTimerState,
   formatTimerClock,
+  isTimePrescribedMovement,
   stretchTimerReducer,
   TIMER_ACTION,
   TIMER_PHASE,
@@ -74,5 +77,22 @@ assert.equal(reset.movementKey, 'next', 'Skip or Previous movement changes reset
 assert.equal(reset.sideIndex, 0)
 assert.equal(reset.phase, TIMER_PHASE.READY)
 assert.equal(formatTimerClock(125), '02:05', 'all countdowns use MM:SS formatting')
+
+assert.equal(isTimePrescribedMovement({ duration: 30, reps: '30 seconds', durationLabel: '30 sec' }), true, 'an explicit timed prescription receives a countdown')
+assert.equal(isTimePrescribedMovement({ duration: 30, reps: '10 each side', durationLabel: '30 sec · 10 each side' }), false, 'a display duration cannot turn a rep prescription into a countdown')
+assert.equal(isTimePrescribedMovement({ duration: 30, reps: '20 reps', durationLabel: '30 sec · 20 reps' }), false, 'rep-only movements remain manual')
+assert.equal(isTimePrescribedMovement({ duration: 0, reps: '30 seconds' }), false, 'a timed label without a positive numeric duration is ineligible')
+assert.equal(isTimePrescribedMovement({ duration: Number.NaN, reps: '30 seconds' }), false, 'an invalid duration is ineligible')
+assert.equal(isTimePrescribedMovement(preRunStretches.find((movement) => movement.id === 'butt-kicks')), true, 'Butt Kicks receives its prescribed 30-second countdown')
+assert.equal(isTimePrescribedMovement(preRunStretches.find((movement) => movement.id === 'leg-swings')), false, 'Leg Swings remains a manual rep movement despite its display estimate')
+
+const warmupSource = readFileSync(new URL('../src/pages/Warmup.jsx', import.meta.url), 'utf8')
+assert.match(warmupSource, /isTimePrescribedMovement\(step\)/, 'warm-up applies the explicit timed-vs-rep eligibility rule')
+assert.match(warmupSource, /TIMER_ACTION\.RESET/, 'changing warm-up steps resets the countdown state')
+assert.match(warmupSource, /window\.setInterval[\s\S]*window\.clearInterval/, 'warm-up timer owns strict-mode-safe interval cleanup')
+assert.match(warmupSource, /primaryLabel[\s\S]{0,160}'Resume'[\s\S]{0,80}'Pause'[\s\S]{0,80}'Start'/, 'timed warm-up exposes explicit Start, Pause, and Resume states')
+assert.match(warmupSource, />\s*Restart\s*</, 'timed warm-up exposes Restart')
+assert.match(warmupSource, /Movement complete/, 'zero has a clear completion state')
+assert.doesNotMatch(warmupSource, /completionCount[\s\S]{0,160}onNext/, 'timer completion never auto-navigates the warm-up')
 
 console.log('GUIDED MOVEMENT TIMER BEHAVIOR OK')

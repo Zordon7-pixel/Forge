@@ -3,6 +3,16 @@ export const HEALTH_SYNC_COMPLETED_EVENT = 'forge-health-sync-completed'
 export const HEALTH_SYNC_ORIGIN_PULL_REFRESH = 'pull_to_refresh'
 export const HEALTH_IMPORT_BATCH_SIZE = 10
 export const HEALTH_IMPORT_TIMEOUT_MS = 30000
+export const HEALTH_PULL_REFRESH_DEADLINE_MS = 15000
+
+export class HealthPullRefreshTimeoutError extends Error {
+  constructor(deadlineMs = HEALTH_PULL_REFRESH_DEADLINE_MS) {
+    super(`Apple Health pull-to-sync timed out after ${deadlineMs}ms.`)
+    this.name = 'HealthPullRefreshTimeoutError'
+    this.code = 'HEALTH_PULL_REFRESH_TIMEOUT'
+    this.deadlineMs = deadlineMs
+  }
+}
 
 const HEALTH_SYNC_RESULT_KEY = 'forge_last_health_sync_result'
 const HEALTH_HISTORY_TRANSFER_PENDING_KEY = 'forge.health.resyncNeeded'
@@ -138,6 +148,8 @@ export async function runHealthAwarePageRefresh({
   afterHealthSync,
   onHealthSyncError,
   refreshPage,
+  scheduleDeadline = (callback, delay) => globalThis.setTimeout(callback, delay),
+  cancelDeadline = (deadlineId) => globalThis.clearTimeout(deadlineId),
 } = {}) {
   let healthSyncAttempted = false
   let healthSyncResult = null
@@ -149,17 +161,43 @@ export async function runHealthAwarePageRefresh({
   try {
     if (suppressHealthEventRefreshes) {
       healthSyncAttempted = true
+      let deadlineExpired = false
+      let deadlineScheduled = false
+      let deadlineId
+      const healthSyncPromise = Promise.resolve().then(() => syncNativeData({
+        forceFresh: true,
+        syncOrigin: HEALTH_SYNC_ORIGIN_PULL_REFRESH,
+      }))
+      // Promise.race observes the losing branch, and this explicit observer
+      // keeps that contract obvious if the bridge rejects after the gesture.
+      void healthSyncPromise.catch((error) => {
+        if (deadlineExpired) {
+          console.warn('[healthSync] native sync rejected after pull deadline:', error?.message || error)
+        }
+      })
+      const deadlinePromise = new Promise((resolve, reject) => {
+        deadlineId = scheduleDeadline(() => {
+          deadlineExpired = true
+          reject(new HealthPullRefreshTimeoutError())
+        }, HEALTH_PULL_REFRESH_DEADLINE_MS)
+        deadlineScheduled = true
+      })
       try {
-        healthSyncResult = await Promise.resolve().then(() => syncNativeData({
-          forceFresh: true,
-          syncOrigin: HEALTH_SYNC_ORIGIN_PULL_REFRESH,
-        }))
+        healthSyncResult = await Promise.race([healthSyncPromise, deadlinePromise])
       } catch (error) {
         healthSyncError = error
         try {
           onHealthSyncError?.(error)
         } catch (reportingError) {
           console.warn('[healthSync] refresh error reporter failed:', reportingError?.message || reportingError)
+        }
+      } finally {
+        if (deadlineScheduled && !deadlineExpired) {
+          try {
+            cancelDeadline(deadlineId)
+          } catch (error) {
+            console.warn('[healthSync] pull deadline cancellation failed:', error?.message || error)
+          }
         }
       }
     }

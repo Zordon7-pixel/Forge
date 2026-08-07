@@ -105,6 +105,17 @@ check(livePolicy.requiresImmediateCheckIn && livePolicy.destination === '/run/re
 const queuedPolicy = resolveRunCompletion({ provenance: RUN_PROVENANCE.LIVE_TRACKED, runId: 'queued-live', queued: true })
 check(queuedPolicy.destination === '/run/recap/queued-live', 'queued policy never resets to Active Run')
 
+const manualDistanceStorage = new MemoryStorage()
+const manualDistanceHandoff = saveRunCompletionHandoff({
+  runId: 'manual-distance-run',
+  queued: false,
+  checkInPending: true,
+  provenance: RUN_PROVENANCE.LIVE_TRACKED,
+  snapshot: { id: 'manual-distance-run', distance_miles: 3.1, gps_available: false },
+}, owner, manualDistanceStorage, now + 6000)
+check(manualDistanceHandoff.snapshot.distance_miles === 3.1 && manualDistanceHandoff.snapshot.gps_available === false, 'manual distance survives the durable recap handoff without changing live-run provenance')
+check(runCompletionNavigation(manualDistanceHandoff)?.destination === '/run/recap/manual-distance-run', 'manual-distance completion targets its deterministic recap route')
+
 console.log('\n== single-screen check-in validation ==')
 const unansweredCheckIn = validatePostRunCheckInAnswers({ effort: null, pain: null, energy: null })
 check(!unansweredCheckIn.valid && Boolean(unansweredCheckIn.errors.effort) && Boolean(unansweredCheckIn.errors.pain), 'effort and pain are both required')
@@ -123,6 +134,11 @@ const pageStart = checkIn.indexOf('if (isPage)')
 const sheetStart = checkIn.indexOf('className="sheet-backdrop"', pageStart)
 const pagePresentation = checkIn.slice(pageStart, sheetStart)
 check(!activeRun.includes('<PostRunCheckIn') && !activeRun.includes('<WorkoutCard'), 'ActiveRun renders neither check-in nor saved workout after completion')
+check(activeRun.includes("import { Navigate, useLocation, useNavigate } from 'react-router'"), 'restored completion uses React Router render-time navigation')
+check(/completionNavigation[\s\S]*<Navigate[\s\S]*replace/.test(activeRun), 'a valid restored handoff renders a deterministic replace redirect')
+check(!/useEffect\(\(\) => \{\s*const completionNavigation = runCompletionNavigation/.test(activeRun), 'restored completion no longer depends on a passive navigation effect')
+check(!activeRun.includes('Opening your saved run recap...'), 'the unbounded passive loading surface is removed')
+check(activeRun.includes('Run recap needs recovery') && activeRun.includes('Open History') && activeRun.includes('Retry recap'), 'an invalid restored handoff exposes bounded retry and History recovery')
 const persistAt = activeRun.indexOf('saveRunCompletionHandoff({')
 check(persistAt >= 0 && activeRun.indexOf('clearActiveRunSession()', persistAt) > persistAt, 'handoff persists before active-session clearing')
 check(activeRun.indexOf('exitActiveRun(completionNavigation.destination', persistAt) > activeRun.indexOf('clearActiveRunSession()', persistAt), 'replace navigation follows durable handoff and active-session clearing')

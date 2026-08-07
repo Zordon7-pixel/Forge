@@ -1,5 +1,6 @@
 const EACH_SIDE_PATTERN = /\b(?:each|per)\s+(?:side|leg|arm)\b/i
 const HOLD_PATTERN = /\bhold\b/i
+const TIME_PRESCRIPTION_PATTERN = /\b\d+(?:\.\d+)?\s*(?:s|secs?|seconds?|m|mins?|minutes?)\b/i
 
 export const SWITCH_SIDE_SECONDS = 3
 
@@ -31,6 +32,15 @@ export function stretchTimerSeconds(stretch = {}) {
   const holdMatch = text.match(/\bhold\s*(\d{1,3})\s*(?:s|sec|seconds?)\b/i)
     || text.match(/\b(\d{1,3})\s*(?:s|sec|seconds?)\s*(?:each|per)\s+(?:side|leg|arm)\b/i)
   return boundedDuration(holdMatch?.[1] ?? stretch.duration)
+}
+
+// A catalog display label may include an estimated duration alongside a rep
+// prescription. Only the athlete-facing prescription makes a warm-up timed.
+export function isTimePrescribedMovement(stretch = {}) {
+  const duration = Number(stretch.duration)
+  return Number.isFinite(duration)
+    && duration > 0
+    && TIME_PRESCRIPTION_PATTERN.test(String(stretch.reps || ''))
 }
 
 export function stretchSideCount(stretch = {}) {

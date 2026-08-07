@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useReducer, useState } from 'react'
 import { useNavigate, useLocation } from 'react-router'
 import { TrendingUp, Calendar, Zap, Heart } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -10,6 +10,13 @@ import { chooseRotatingRoutine, rememberRoutine } from '../lib/routineRotation'
 import { SWIPE_BACK_EVENT } from '../lib/swipeBack'
 import { groupRunNavigationProvenance, isGroupRunNavigationState } from '../lib/groupRuns'
 import { localDateISO } from '../lib/dailyExecution'
+import {
+  createStretchTimerState,
+  isTimePrescribedMovement,
+  stretchTimerReducer,
+  TIMER_ACTION,
+  TIMER_PHASE,
+} from '../lib/stretchTimer'
 
 const WARMUP_ROTATION_SCOPE = 'warmup'
 const WARMUP_STEP_COUNT = 5
@@ -52,14 +59,89 @@ function getReadinessAdvice(stats) {
   return "You're ready. Trust your training."
 }
 
+function WarmupCountdown({ movement, movementKey }) {
+  const [state, dispatch] = useReducer(
+    stretchTimerReducer,
+    null,
+    () => createStretchTimerState(movement, movementKey),
+  )
+
+  useEffect(() => {
+    dispatch({ type: TIMER_ACTION.RESET, stretch: movement, movementKey })
+  }, [movement, movementKey])
+
+  useEffect(() => {
+    if (state.phase !== TIMER_PHASE.RUNNING) return undefined
+    const intervalId = window.setInterval(() => {
+      dispatch({ type: TIMER_ACTION.TICK })
+    }, 1000)
+    return () => window.clearInterval(intervalId)
+  }, [state.phase])
+
+  useEffect(() => {
+    const pauseWhenHidden = () => {
+      if (document.visibilityState === 'hidden') dispatch({ type: TIMER_ACTION.PAUSE })
+    }
+    document.addEventListener('visibilitychange', pauseWhenHidden)
+    return () => document.removeEventListener('visibilitychange', pauseWhenHidden)
+  }, [])
+
+  const running = state.phase === TIMER_PHASE.RUNNING
+  const complete = state.phase === TIMER_PHASE.COMPLETE
+  const primaryLabel = state.phase === TIMER_PHASE.PAUSED ? 'Resume' : running ? 'Pause' : 'Start'
+  const status = complete
+    ? 'Movement complete'
+    : state.phase === TIMER_PHASE.PAUSED ? 'Timer paused' : running ? 'Timer running' : 'Timer ready'
+
+  return (
+    <section
+      aria-label="Warm-up countdown"
+      className="mt-5 w-full max-w-sm rounded-2xl p-4 text-center"
+      style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}
+    >
+      <p aria-live="polite" className="text-xs font-black uppercase tracking-widest" style={{ color: complete ? 'var(--success, #22c55e)' : 'var(--text-muted)' }}>
+        {status}
+      </p>
+      <p
+        aria-label={`${state.remaining} seconds remaining`}
+        className="mt-1 text-6xl font-black tabular-nums"
+        style={{ color: complete ? 'var(--success, #22c55e)' : 'var(--accent)', lineHeight: 1 }}
+      >
+        {state.remaining}
+      </p>
+      <p className="mt-1 text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>seconds remaining</p>
+      <div className="mt-4 grid grid-cols-2 gap-3">
+        <button
+          type="button"
+          disabled={complete}
+          onClick={() => dispatch({ type: running ? TIMER_ACTION.PAUSE : TIMER_ACTION.START })}
+          className="rounded-xl px-3 py-2 text-sm font-black"
+          style={{ minHeight: 44, background: 'var(--accent)', color: 'var(--on-accent)', opacity: complete ? 0.55 : 1 }}
+        >
+          {primaryLabel}
+        </button>
+        <button
+          type="button"
+          onClick={() => dispatch({ type: TIMER_ACTION.RESTART })}
+          className="rounded-xl border px-3 py-2 text-sm font-black"
+          style={{ minHeight: 44, background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}
+        >
+          Restart
+        </button>
+      </div>
+    </section>
+  )
+}
+
 function WarmupSteps({ steps, stepIndex, onNext, onSkip, sex }) {
   const { t } = useTranslation()
   const step = steps[stepIndex]
   const progress = ((stepIndex + 1) / steps.length) * 100
+  const timed = isTimePrescribedMovement(step)
 
   return (
     <div
-      className="flex flex-col min-h-screen justify-between relative overflow-hidden"
+      className="flex flex-col min-h-screen justify-between relative overflow-y-auto"
       style={{
         background: 'linear-gradient(135deg, var(--bg-base) 0%, rgba(0,0,0,0.3) 100%)',
         paddingBottom: 'calc(var(--app-bottom-nav-height, 59px) + 132px)',
@@ -145,6 +227,14 @@ function WarmupSteps({ steps, stepIndex, onNext, onSkip, sex }) {
 
         <MovementDemo name={step.name} compact sex={sex} imageUrl={step.image_url} cue={step.cue} />
 
+        {timed && (
+          <WarmupCountdown
+            key={`${stepIndex}:${step.id}`}
+            movement={step}
+            movementKey={`${stepIndex}:${step.id}`}
+          />
+        )}
+
         <p
           style={{
             fontSize: 14,
@@ -154,7 +244,7 @@ function WarmupSteps({ steps, stepIndex, onNext, onSkip, sex }) {
             fontStyle: 'italic',
           }}
         >
-          Complete this movement, then tap Next
+          {timed ? 'Use the timer when ready. Next stays in your control.' : 'Complete this movement, then tap Next'}
         </p>
       </div>
 

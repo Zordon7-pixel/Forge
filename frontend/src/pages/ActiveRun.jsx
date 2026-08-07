@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useLocation, useNavigate } from 'react-router'
+import { Navigate, useLocation, useNavigate } from 'react-router'
 import { CircleMarker, MapContainer, Polyline, TileLayer, useMapEvents } from 'react-leaflet'
 import { App as CapacitorApp } from '@capacitor/app'
 import { Capacitor, registerPlugin } from '@capacitor/core'
@@ -17,6 +17,7 @@ import {
   buildRunCompletionSnapshot,
   loadRunCompletionHandoff,
   runCompletionNavigation,
+  RUN_COMPLETION_HANDOFF_KEY,
   saveRunCompletionHandoff,
   updateRunCompletionHandoff,
 } from '../lib/runCompletionHandoff'
@@ -56,6 +57,18 @@ import {
 
 const BackgroundGeolocation = registerPlugin('BackgroundGeolocation')
 const LIVE_ACTIVITY_UPDATE_INTERVAL_MS = 10_000
+
+function restoreCompletionHandoff(ownerUserId) {
+  let hadStoredHandoff = false
+  try {
+    hadStoredHandoff = typeof window !== 'undefined'
+      && Boolean(window.localStorage.getItem(RUN_COMPLETION_HANDOFF_KEY))
+  } catch (error) {
+    console.warn('[ActiveRun] completion handoff lookup failed:', error?.message || error)
+  }
+  const handoff = loadRunCompletionHandoff(null, ownerUserId)
+  return { handoff, invalid: hadStoredHandoff && !handoff }
+}
 
 function haversineMiles(a, b) {
   const R = 3958.8
@@ -198,11 +211,14 @@ export default function ActiveRun() {
   const navigate = useNavigate()
   const { fmt, units } = useUnits()
   const [activeRunOwnerId] = useState(() => getAuthenticatedUserId())
-  const [pendingCompletionHandoff] = useState(() => (
-    loadRunCompletionHandoff(null, activeRunOwnerId)
+  const [completionRestore, setCompletionRestore] = useState(() => (
+    restoreCompletionHandoff(activeRunOwnerId)
   ))
+  const [completionRetryFailed, setCompletionRetryFailed] = useState(false)
+  const pendingCompletionHandoff = completionRestore.handoff
+  const completionRestorePending = Boolean(pendingCompletionHandoff || completionRestore.invalid)
   const [restoreContext] = useState(() => {
-    if (pendingCompletionHandoff) {
+    if (completionRestorePending) {
       return { session: null, isGroupRunNavigation: false, groupRunId: null, groupRunProvenance: null }
     }
     const session = loadActiveRunSession(activeRunOwnerId)
@@ -397,14 +413,7 @@ export default function ActiveRun() {
   }
 
   useEffect(() => {
-    const completionNavigation = runCompletionNavigation(pendingCompletionHandoff)
-    if (completionNavigation) {
-      navigate(completionNavigation.destination, completionNavigation.options)
-    }
-  }, [navigate, pendingCompletionHandoff])
-
-  useEffect(() => {
-    if (pendingCompletionHandoff) return undefined
+    if (completionRestorePending) return undefined
     if (typeof window === 'undefined') return undefined
     let active = true
 
@@ -446,7 +455,7 @@ export default function ActiveRun() {
       active = false
       window.removeEventListener('popstate', onPopState)
     }
-  }, [navigate, pendingCompletionHandoff])
+  }, [completionRestorePending, navigate])
 
   useEffect(() => {
     if (!navigationProtected || typeof window === 'undefined') return undefined
@@ -459,7 +468,7 @@ export default function ActiveRun() {
   }, [navigationProtected])
 
   useEffect(() => {
-    if (pendingCompletionHandoff) return undefined
+    if (completionRestorePending) return undefined
     if (!Capacitor.isNativePlatform()) return undefined
     let active = true
     let listenerHandle = null
@@ -475,7 +484,7 @@ export default function ActiveRun() {
       active = false
       listenerHandle?.remove?.()
     }
-  }, [pendingCompletionHandoff])
+  }, [completionRestorePending])
 
   useEffect(() => {
     if (!isGroupRunNavigation) return undefined
@@ -612,7 +621,7 @@ export default function ActiveRun() {
   }, [awaitingManualDistance, pausedRun, running])
 
   useEffect(() => {
-    if (pendingCompletionHandoff) return undefined
+    if (completionRestorePending) return undefined
     api.get('/auth/me')
       .then(r => setUserProfile(r.data?.user || null))
       .catch((err) => { console.error('[ActiveRun] Failed to load profile:', err.message) })
@@ -622,7 +631,7 @@ export default function ActiveRun() {
         setSavedHrZones(Array.isArray(response.data?.zones) ? response.data.zones : [])
       })
       .catch((err) => { console.error('[ActiveRun] Failed to load HR zones:', err.message) })
-  }, [pendingCompletionHandoff])
+  }, [completionRestorePending])
   
   useEffect(() => {
     const poll = async () => {
@@ -952,7 +961,7 @@ export default function ActiveRun() {
   }, [])
 
   useEffect(() => {
-    if (pendingCompletionHandoff) return
+    if (completionRestorePending) return
     const autoStart = consumeRunAutoStartState(location.state)
     if (!autoStart.requested) return
 
@@ -976,7 +985,7 @@ export default function ActiveRun() {
     location.search,
     location.state,
     navigate,
-    pendingCompletionHandoff,
+    completionRestorePending,
     pausedRun,
     restoredSession,
     running,
@@ -1264,14 +1273,55 @@ export default function ActiveRun() {
     }
   }
 
-  if (pendingCompletionHandoff) {
+  const completionNavigation = runCompletionNavigation(pendingCompletionHandoff)
+  if (completionNavigation) {
+    return <Navigate to={completionNavigation.destination} replace />
+  }
+
+  if (completionRestore.invalid) {
     return (
       <div
-        className="fixed inset-0 z-50 grid place-items-center px-6 text-center"
-        role="status"
+        className="fixed inset-0 z-50 grid place-items-center overflow-y-auto px-6 text-center"
+        role="alert"
         style={{ background: 'var(--bg-base)', color: 'var(--text-primary)' }}
       >
-        <p className="text-sm font-semibold">Opening your saved run recap...</p>
+        <section className="w-full max-w-sm rounded-2xl p-5" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+          <h1 className="text-xl font-black">Run recap needs recovery</h1>
+          <p className="mt-2 text-sm leading-6" style={{ color: 'var(--text-muted)' }}>
+            Forge could not identify the recap from this device handoff. Open History to find any saved run.
+          </p>
+          {completionRetryFailed && (
+            <p className="mt-3 rounded-xl p-3 text-sm" role="status" style={{ background: 'var(--bg-input)', color: 'var(--text-muted)' }}>
+              No valid recap handoff was found. Open History to continue.
+            </p>
+          )}
+          <div className="mt-5 grid grid-cols-2 gap-3">
+            <button
+              type="button"
+              onClick={() => {
+                const retried = restoreCompletionHandoff(activeRunOwnerId)
+                if (retried.handoff) {
+                  setCompletionRetryFailed(false)
+                  setCompletionRestore(retried)
+                } else {
+                  setCompletionRetryFailed(true)
+                }
+              }}
+              className="rounded-xl px-3 py-3 text-sm font-black"
+              style={{ minHeight: 48, background: 'var(--accent)', color: 'var(--on-accent)' }}
+            >
+              Retry recap
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate('/history', { replace: true })}
+              className="rounded-xl border px-3 py-3 text-sm font-black"
+              style={{ minHeight: 48, background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}
+            >
+              Open History
+            </button>
+          </div>
+        </section>
       </div>
     )
   }
