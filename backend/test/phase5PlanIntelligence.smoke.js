@@ -163,6 +163,16 @@ assert.equal(comebackValidation.valid, true, comebackValidation.errors.join('; '
 const comebackQuality = sessions(comebackPlan).filter(({ session }) => taxonomy.isQualityWorkout(session.workout_id) && !['race', 'sharpening_strides', 'benchmark_mile'].includes(session.workout_id));
 assert.ok(comebackQuality.length > 0);
 assert.ok(comebackQuality.every(({ session }) => session.workout_id === 'strides'), 'comeback plan uses strides instead of oversized intervals');
+const unsafeNovicePlan = JSON.parse(JSON.stringify(comebackPlan));
+const unsafeNoviceEntry = sessions(unsafeNovicePlan).find(({ session }) => session.workout_id === 'strides');
+Object.assign(unsafeNoviceEntry.session, taxonomy.prescriptionFor('tempo_threshold', {
+  phase: unsafeNoviceEntry.week.phase,
+  weekNumber: unsafeNoviceEntry.week.week,
+  weekCount: unsafeNovicePlan.weeks.length,
+}));
+const unsafeNoviceValidation = concurrent.validateConcurrentPlan(unsafeNovicePlan, comebackContext);
+assert.equal(unsafeNoviceValidation.valid, false);
+assert.ok(unsafeNoviceValidation.errors.some((error) => error.includes('must be strides while quality safety protection is active')));
 
 const establishedComebackContext = context({
   profile: { comeback_mode: 1, injury_notes: 'Active calf tightness' },

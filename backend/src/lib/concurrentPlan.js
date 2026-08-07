@@ -1248,6 +1248,13 @@ function hasCurrentWeekRecoveryProtection(context = {}) {
   return ['low', 'recovery'].includes(String(context.recovery?.state || context.recovery?.recoveryState || '').toLowerCase());
 }
 
+function hasLowExperienceQualityProtection(context = {}) {
+  const history = context.history || {};
+  const baseline = Number(history.weeklyMileageBaseline ?? context.profile?.weekly_miles_current) || 0;
+  const meaningfulRunCount = Number(history.mileageBaseline?.meaningfulRunCount ?? history.recentRunCount ?? 0);
+  return baseline < 5 || meaningfulRunCount < 3;
+}
+
 function qualitySafetyForWeek(context = {}, options = {}) {
   const weekStart = options.weekStart;
   const weekNumber = Number(options.weekNumber || 0);
@@ -1259,14 +1266,12 @@ function qualitySafetyForWeek(context = {}, options = {}) {
     && todayISO <= addDays(weekStart, 6);
   const persistent = hasPersistentQualityProtection(context);
   const transient = actionableCurrentWeek && hasCurrentWeekRecoveryProtection(context);
-  return { active: persistent || transient, persistent, transient };
+  const lowExperience = hasLowExperienceQualityProtection(context);
+  return { active: persistent || transient || lowExperience, persistent, transient, lowExperience };
 }
 
 function hasPlanWideQualityProtection(context = {}) {
-  const history = context.history || {};
-  const baseline = Number(history.weeklyMileageBaseline ?? context.profile?.weekly_miles_current) || 0;
-  const meaningfulRunCount = Number(history.mileageBaseline?.meaningfulRunCount ?? history.recentRunCount ?? 0);
-  return hasPersistentQualityProtection(context) || baseline < 5 || meaningfulRunCount < 3;
+  return hasPersistentQualityProtection(context) || hasLowExperienceQualityProtection(context);
 }
 
 function numberOrNull(value) {
