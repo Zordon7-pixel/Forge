@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const concurrent = require('../src/lib/concurrentPlan');
 const adaptation = require('../src/lib/adaptationEngine');
+const planSchema = require('../src/lib/planSchema');
 
 function routeHandler(router, routePath, method) {
   const layer = router.stack.find((item) => item.route?.path === routePath && item.route?.methods?.[method]);
@@ -110,6 +111,23 @@ assert.equal(Number.isFinite(corruptBaselinePlan.inputSummary.weeklyMileageBasel
 const sessions = plan.weeks.flatMap((week) => week.days.flatMap((day) => (
   day.sessions.map((session) => ({ week, day, session }))
 )));
+const generatedRuns = sessions.filter(({ session }) => session.kind === 'run');
+assert.equal(generatedRuns.every(({ session }) => String(session.display_name || '').trim()), true, 'every generated run persists a display name');
+assert.equal(
+  planSchema.daySessions(generatedRuns[0].day)[0].display_name,
+  generatedRuns[0].session.display_name,
+  'the canonical session adapter preserves the persisted display name',
+);
+assert.equal(
+  sessions.filter(({ session }) => session.kind === 'lift').every(({ session }) => session.display_name === undefined),
+  true,
+  'strength sessions are excluded from run naming',
+);
+assert.equal(
+  generatedRuns.filter(({ session }) => session.type === 'hills').every(({ session }) => session.display_name === 'Hills Pay the Bills'),
+  true,
+  'generated hill work uses the owned motivational taxonomy',
+);
 const races = sessions.filter(({ session }) => session.type === 'race');
 assert.equal(races.length, 2);
 assert.deepEqual(races.map(({ day }) => day.date), ['2026-09-20', '2026-10-11']);
@@ -429,8 +447,10 @@ async function checkDedicatedRouteBoundary() {
     injury_notes: '',
   };
   const raceRows = new Map();
+  let recentRunRows = [];
   let failTransaction = false;
   let transactionCalls = 0;
+  const committedTransactionStatements = [];
 
   function raceRow(id, date, owner = ownerId) {
     return {
@@ -459,17 +479,21 @@ async function checkDedicatedRouteBoundary() {
       }
       return null;
     },
-    dbAll: async () => [],
+    dbAll: async (sql) => sql.includes('FROM runs') ? recentRunRows.map((run) => ({ ...run })) : [],
     dbRun: async () => ({ changes: 1 }),
     withTransaction: async (fn) => {
       transactionCalls += 1;
+      const stagedStatements = [];
       const tx = {
         run: async (sql) => {
           if (failTransaction && sql.includes('INSERT INTO training_plans')) throw new Error('intentional transaction failure');
+          stagedStatements.push(sql);
           return { changes: 1 };
         },
       };
-      return fn(tx);
+      const result = await fn(tx);
+      committedTransactionStatements.push(...stagedStatements);
+      return result;
     },
   };
 
@@ -487,6 +511,7 @@ async function checkDedicatedRouteBoundary() {
   try {
     const plansRouter = require('../src/routes/plans');
     const generateForRaces = routeHandler(plansRouter, '/generate-for-races', 'post');
+    const generateForRace = routeHandler(plansRouter, '/generate-for-race/:raceId', 'post');
     const generate = routeHandler(plansRouter, '/generate', 'post');
     const baseRequest = {
       user: { id: ownerId },
@@ -540,6 +565,16 @@ async function checkDedicatedRouteBoundary() {
     assert.equal(response.statusCode, 400, 'a 20-day pair is rejected at the route boundary');
 
     raceRows.set('army', raceRow('army', '2026-10-11'));
+    response = await invoke(generateForRaces, {
+      ...baseRequest,
+      body: {
+        race_ids: ['yonkers', 'army'],
+        target: { trainingDays: ['Mon'], runDaysPerWeek: 2, planMode: 'run_only', liftingEnabled: false },
+      },
+    });
+    assert.equal(response.statusCode, 400, 'an impossible selected frequency is an actionable client error');
+    assert.match(response.payload.error, /cannot exceed the number of selected trainingDays/);
+
     profile.weekly_miles_current = 'Infinity';
     profile.lift_days_per_week = 2;
     response = await invoke(generateForRaces, {
@@ -566,12 +601,64 @@ async function checkDedicatedRouteBoundary() {
     assert.equal(Number.isFinite(response.payload.plan.plan_data.inputSummary.weeklyMileageBaseline), true);
     assert.equal(transactionCalls, 1, 'the successful rebuild uses one transaction');
 
+    // Regression: the production rebuild happens late in the current week, not
+    // from an empty Monday. The edited weekdays leave no safe pre-race quality
+    // slot before the first of two races; elapsed days must not be backfilled.
+    raceRows.set('near-a', raceRow('near-a', '2026-08-10'));
+    raceRows.set('near-b', raceRow('near-b', '2026-08-31'));
+    recentRunRows = [
+      { id: 'prior-1', date: '2026-07-27', distance_miles: 5, duration_seconds: 2700, type: 'easy' },
+      { id: 'prior-2', date: '2026-07-30', distance_miles: 5, duration_seconds: 2700, type: 'easy' },
+      { id: 'today-run', date: '2026-08-07', distance_miles: 4, duration_seconds: 2100, type: 'easy' },
+    ];
+    response = await invoke(generateForRaces, {
+      ...baseRequest,
+      body: {
+        race_ids: ['near-a', 'near-b'],
+        target: {
+          trainingDays: ['Mon', 'Wed', 'Fri'],
+          runDaysPerWeek: 3,
+          liftDaysPerWeek: 0,
+          planMode: 'run_only',
+          liftingEnabled: false,
+        },
+      },
+    });
+    assert.equal(response.statusCode, 201, response.payload?.error || 'a partial-current-week two-race rebuild should generate');
+    assert.equal(response.payload.plan.plan_data.schedulePreferences.runDaysPerWeek, 3);
+    assert.deepEqual(response.payload.plan.plan_data.schedulePreferences.trainingDays, ['Mon', 'Wed', 'Fri']);
+    assert.deepEqual(
+      response.payload.plan.plan_data.weeks[0].days.flatMap((day) => day.sessions.map(() => day.date)),
+      [],
+      'the rebuild never backfills elapsed edited weekdays or duplicates today\'s completed run',
+    );
+    assert.equal(response.payload.plan.plan_data.weeks[0].currentWeekConstraint.totalRunsTowardTarget, 1);
+
+    response = await invoke(generateForRace, {
+      ...baseRequest,
+      params: { raceId: 'near-a' },
+      body: {
+        target: {
+          trainingDays: ['Mon', 'Wed', 'Fri'],
+          runDaysPerWeek: 3,
+          liftDaysPerWeek: 0,
+          planMode: 'run_only',
+          liftingEnabled: false,
+        },
+      },
+    });
+    assert.equal(response.statusCode, 201, response.payload?.error || 'the same partial-current-week fix applies to a one-race rebuild');
+    assert.equal(response.payload.plan.plan_data.schedulePreferences.runDaysPerWeek, 3);
+
+    recentRunRows = [];
     failTransaction = true;
+    const committedBeforeFailure = committedTransactionStatements.length;
     response = await invoke(generateForRaces, {
       ...baseRequest,
       body: { ...baseRequest.body, race_ids: ['yonkers', 'army'] },
     });
     assert.equal(response.statusCode, 500, 'transaction failure cannot return a successful plan replacement');
+    assert.equal(committedTransactionStatements.length, committedBeforeFailure, 'a failed replacement rolls back the staged active-plan deactivation');
   } finally {
     global.Date = RealDate;
     delete require.cache[plansRoutePath];

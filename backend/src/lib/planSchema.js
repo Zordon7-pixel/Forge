@@ -119,6 +119,7 @@ function normalizeSession(session, fallbackId) {
       type: s.type,
       workout_type: s.workout_type,
       title: s.title,
+      display_name: s.display_name ?? s.displayName,
       distance_miles: s.distance_miles,
       duration_min: s.duration_min,
       description: s.description,

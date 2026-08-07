@@ -8,6 +8,7 @@ const trainingEvidence = require('./trainingEvidence');
 const runWorkoutTaxonomy = require('./runWorkoutTaxonomy');
 const { isRunActivity } = require('./runActivity');
 const { resolveRunSchedule } = require('./runSchedule');
+const { motivationalRunName } = require('../../../shared/runDisplayName.mjs');
 
 const DAY_ORDER = planSchema.DAY_ORDER;
 const VALID_MODES = planSchema.VALID_MODES;
@@ -1172,6 +1173,21 @@ function applyAcuteRunProtection(plan, context = {}) {
   return next;
 }
 
+function withMotivationalRunNames(plan) {
+  for (const week of plan?.weeks || []) {
+    for (const day of week.days || []) {
+      for (const session of day.sessions || []) {
+        if (planSchema.kindFromSession(session) !== 'run') continue;
+        session.display_name = motivationalRunName(session, {
+          date: day.date,
+          sessionId: session.id,
+        });
+      }
+    }
+  }
+  return plan;
+}
+
 function isHardRun(session) {
   return session?.kind === 'run' && HARD_RUN_PATTERN.test([session.title, session.type, session.intensity, session.target_zone].filter(Boolean).join(' '));
 }
@@ -1581,7 +1597,7 @@ function buildConcurrentPlan(context = {}) {
     },
     weeks,
   };
-  return applyAcuteRunProtection(plan, context);
+  return withMotivationalRunNames(applyAcuteRunProtection(plan, context));
 }
 
 function validateLift(session, path, errors) {
@@ -1667,6 +1683,34 @@ function validateRun(session, path, errors, options = {}) {
 function isStructuredTargetPaceSession(session = {}) {
   return ['race_pace', 'sharpen'].includes(String(session.type || '').toLowerCase())
     && ['warmup', 'steps', 'cooldown'].every((field) => Array.isArray(session[field]) && session[field].length > 0);
+}
+
+function hasFeasibleTargetPaceOpportunity(candidate, race, context = {}) {
+  const planningDate = parseISODate(context.todayISO) ? context.todayISO : null;
+  const protection = context.history?.acuteRunLoad?.protection;
+  const protectedThrough = protection?.active ? protection.hardRunsThrough : null;
+  const runSchedule = resolveRunSchedule(context.profile || {}, context.target || {});
+  const currentWeekLoad = context.history?.acuteRunLoad?.currentWeek;
+  return (candidate?.weeks || []).some((week, weekIndex) => {
+    const qualitySafety = qualitySafetyForWeek(context, { weekNumber: week.week, weekStart: week.startDate });
+    if (qualitySafety.active) return false;
+    const raceDay = race.raceDate >= week.startDate && race.raceDate <= addDays(week.startDate, 6)
+      ? DAY_ORDER.find((day, index) => addDays(week.startDate, index) === race.raceDate)
+      : null;
+    const currentWeekQuota = weekIndex === 0 ? currentWeekRunSchedule({
+      weekStart: week.startDate,
+      todayISO: context.todayISO,
+      currentWeekLoad,
+      runSchedule,
+      raceDay,
+    }) : null;
+    const eligibleRunDays = new Set(currentWeekQuota?.runDays || selectRunDays(runSchedule.trainingDays, runSchedule.runDaysPerWeek));
+    return (week.days || []).some((day) => {
+      if (!parseISODate(day.date) || day.date >= race.raceDate || (planningDate && day.date < planningDate)) return false;
+      if (protectedThrough && dateInRange(day.date, protection.anchorDate, protectedThrough)) return false;
+      return eligibleRunDays.has(day.day);
+    });
+  });
 }
 
 function validateConcurrentPlan(candidate, context = {}) {
@@ -1949,10 +1993,15 @@ function validateConcurrentPlan(candidate, context = {}) {
   raceTargets.forEach((race) => {
     const racePace = goalPaceSecondsPerMile(race, {}, context.history || {});
     const weeksToRace = Math.floor((parseISODate(race.raceDate) - parseISODate(expectedStartDate)) / (7 * 86400000)) + 1;
+    // Root cause of the rebuild incident: the old validator counted a partial
+    // current week as a full pre-race week, then required target-pace work even
+    // when elapsed edited weekdays and safety protection left no legal slot.
+    // Validation must never demand that generation backfill or overpack one.
     if (!planWideQualityProtection
       && racePace
       && weeksToRace >= 2
       && plannedRunFrequency >= 2
+      && hasFeasibleTargetPaceOpportunity(candidate, race, context)
       && !targetPaceRaceIds.has(race.raceId || race.raceDate)) {
       errors.push(`timed race plan must include a structured target-pace session before ${race.raceDate}`);
     }
@@ -2035,7 +2084,7 @@ function selectPlanCandidate(candidate, context = {}) {
   const validation = validateConcurrentPlan(preparedCandidate, context);
   if (validation.valid) {
     return {
-      plan: {
+      plan: withMotivationalRunNames({
         ...preparedCandidate,
         goal: normalizedGoal,
         ...(normalizedGoals.length ? { goals: normalizedGoals } : {}),
@@ -2043,7 +2092,7 @@ function selectPlanCandidate(candidate, context = {}) {
         generationValidationErrors: [],
         inputSummary: summarizeInputs(context.profile || {}, context.history || {}, context.recovery || {}, context.checkin || null),
         ...(context.history?.acuteRunLoad?.protection?.active ? { acuteLoadAdjustment: acuteLoadMetadata(context.history) } : {}),
-      },
+      }),
       source: 'ai_validated',
       validationErrors: [],
     };

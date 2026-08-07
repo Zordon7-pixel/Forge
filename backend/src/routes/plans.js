@@ -981,6 +981,14 @@ function stripClientCourseFacts(target = {}) {
   return safe;
 }
 
+const DETERMINISTIC_PLAN_CONFLICT = /(current-week|scheduled runs?|weekly runs?|selected trainingDays|full rest day|strength floor|lower-body strength conflicts|target-pace session|taper must reduce|deload must reduce)/i;
+
+function sendPlanScheduleConflict(res, validation) {
+  if (!validation?.errors?.some((error) => DETERMINISTIC_PLAN_CONFLICT.test(String(error)))) return false;
+  res.status(422).json({ code: 'PLAN_SCHEDULE_CONFLICT', error: 'This race timing and training schedule cannot be rebuilt safely. Adjust the race goals, selected days, or weekly frequency and try again.' });
+  return true;
+}
+
 function mapType(day = {}) {
   const t = String(day.workout_type || day.type || '').toLowerCase();
   if (t.includes('rest')) return 'rest';
@@ -3101,7 +3109,10 @@ router.post('/generate', auth, requirePremium('Race Programs'), async (req, res)
     const context = await buildConcurrentContext(req.user.id, profile, target);
     const evidencePlan = concurrentPlan.buildConcurrentPlan(context);
     const validation = concurrentPlan.validateConcurrentPlan(evidencePlan, context);
-    if (!validation.valid) throw new Error(`Evidence plan failed validation: ${validation.errors.join('; ')}`);
+    if (!validation.valid) {
+      if (sendPlanScheduleConflict(res, validation)) return;
+      throw new Error(`Evidence plan failed validation: ${validation.errors.join('; ')}`);
+    }
     const selected = { plan: evidencePlan, source: 'evidence_engine' };
     const name = selected.plan.goal?.name || 'Forged Hybrid training block';
     const persisted = await persistConcurrentPlan(req.user.id, selected.plan, {
@@ -3186,7 +3197,10 @@ router.post('/generate-for-races', auth, requirePremium('Race Programs'), async 
     const context = await buildConcurrentContext(req.user.id, profile, target);
     const evidencePlan = concurrentPlan.buildConcurrentPlan(context);
     const validation = concurrentPlan.validateConcurrentPlan(evidencePlan, context);
-    if (!validation.valid) throw new Error(`Evidence multi-race plan failed validation: ${validation.errors.join('; ')}`);
+    if (!validation.valid) {
+      if (sendPlanScheduleConflict(res, validation)) return;
+      throw new Error(`Evidence multi-race plan failed validation: ${validation.errors.join('; ')}`);
+    }
     const persisted = await persistConcurrentPlan(req.user.id, evidencePlan, {
       name: orderedRaces.map((race) => race.race_name).join(' + '),
       type: evidencePlan.planMode,
@@ -3238,7 +3252,10 @@ router.post('/generate-for-race/:raceId', auth, requirePremium('Race Programs'),
     const context = await buildConcurrentContext(req.user.id, profile, target);
     const evidencePlan = concurrentPlan.buildConcurrentPlan(context);
     const validation = concurrentPlan.validateConcurrentPlan(evidencePlan, context);
-    if (!validation.valid) throw new Error(`Evidence race plan failed validation: ${validation.errors.join('; ')}`);
+    if (!validation.valid) {
+      if (sendPlanScheduleConflict(res, validation)) return;
+      throw new Error(`Evidence race plan failed validation: ${validation.errors.join('; ')}`);
+    }
     const selected = { plan: evidencePlan, source: 'evidence_engine' };
     const persisted = await persistConcurrentPlan(req.user.id, selected.plan, {
       name: race.race_name,

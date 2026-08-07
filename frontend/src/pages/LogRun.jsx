@@ -19,6 +19,7 @@ import { lockDocumentScroll } from '../lib/documentScrollLock'
 import { activeRunReturnTargetFromLocation, withActiveRunReturnTarget } from '../lib/activeRunControls'
 import { resolveRunCompletion, RUN_PROVENANCE } from '../lib/runCompletionPolicy'
 import { normalizeTravelWorkoutOverride } from '../lib/travelTraining'
+import { calendarMonthView, motivationalRunName, normalizePlanSchedule, shiftCalendarMonth } from '../lib/planRunCalendar'
 
 const RoutePlanner = lazy(() => import('../components/RoutePlanner'))
 
@@ -270,6 +271,99 @@ function WorkoutWatchModal({ workout, onClose }) {
   )
 }
 
+function scheduledDateLabel(date) {
+  const parsed = new Date(`${date}T12:00:00`)
+  return Number.isNaN(parsed.getTime())
+    ? date
+    : parsed.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+}
+
+function ScheduledSessionDetails({ session }) {
+  const isRun = session.kind === 'run'
+  const structure = [
+    ...(Array.isArray(session.warmup) ? session.warmup : []),
+    ...(Array.isArray(session.steps) ? session.steps : []),
+    ...(Array.isArray(session.cooldown) ? session.cooldown : []),
+  ]
+  return (
+    <div className="rounded-xl p-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+      <p className="text-sm font-black" style={{ color: 'var(--text-primary)' }}>
+        {isRun ? session.displayName : session.title || session.typeLabel}
+      </p>
+      <p className="mt-1 text-xs font-bold" style={{ color: 'var(--text-muted)' }}>
+        {session.typeLabel}{session.title && session.title !== session.displayName ? ` · ${session.title}` : ''}
+      </p>
+      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs" style={{ color: 'var(--text-primary)' }}>
+        {Number(session.distance_miles) > 0 && <span><strong>{Number(session.distance_miles).toFixed(1)} mi</strong></span>}
+        {Number(session.duration_min) > 0 && <span><strong>{Number(session.duration_min)} min</strong></span>}
+        {session.pace_target && <span>Pace: <strong>{session.pace_target}</strong></span>}
+        {session.target_zone && <span>Zone: <strong>{session.target_zone}</strong></span>}
+        {session.intensity && <span>Intensity: <strong>{session.intensity}</strong></span>}
+        {!isRun && session.focus && <span>Focus: <strong>{session.focus}</strong></span>}
+      </div>
+      {session.description && <p className="mt-2 text-xs leading-5" style={{ color: 'var(--text-muted)' }}>{session.description}</p>}
+      {session.progression && <p className="mt-2 text-xs leading-5" style={{ color: 'var(--text-primary)' }}>{session.progression}</p>}
+      {structure.length > 0 && (
+        <ol className="mt-2 list-decimal space-y-1 pl-4 text-xs" style={{ color: 'var(--text-muted)' }}>
+          {structure.map((step, index) => <li key={`${step}-${index}`}>{step}</li>)}
+        </ol>
+      )}
+    </div>
+  )
+}
+
+function ScheduledEntries({ entries, selectedKey, onSelect, onStartRun }) {
+  return (
+    <div className="flex flex-col gap-2">
+      {entries.map((entry) => {
+        const expanded = selectedKey === entry.key
+        const runSessions = entry.sessions.filter((session) => session.kind === 'run')
+        const title = entry.isRest
+          ? 'Rest and recovery'
+          : entry.sessions.map((session) => session.kind === 'run' ? session.displayName : session.title || session.typeLabel).join(' + ')
+        return (
+          <article key={entry.key} className="rounded-2xl p-3" style={{ background: entry.isToday ? 'var(--accent-dim)' : 'var(--bg-base)', border: `1.5px solid ${entry.isToday ? 'var(--accent)' : 'var(--border-subtle)'}` }}>
+            <button
+              type="button"
+              aria-expanded={expanded}
+              onClick={() => onSelect(expanded ? null : entry.key)}
+              className="flex w-full items-center justify-between gap-3 text-left"
+              style={{ background: 'transparent', border: 0, padding: 0, color: 'inherit' }}
+            >
+              <span className="flex min-w-0 items-center gap-3">
+                <span className="w-12 shrink-0 text-center">
+                  <span className="block text-xs font-bold" style={{ color: entry.isToday ? 'var(--accent)' : 'var(--text-muted)' }}>{entry.day}</span>
+                  <span className="block text-[10px]" style={{ color: 'var(--text-muted)' }}>{scheduledDateLabel(entry.date)}</span>
+                  {entry.isToday && <span className="block text-[9px] font-black" style={{ color: 'var(--accent)' }}>TODAY</span>}
+                </span>
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{title}</span>
+                  {!entry.isRest && <span className="mt-0.5 block text-xs" style={{ color: 'var(--text-muted)' }}>{entry.sessions.map((session) => session.typeLabel).join(' · ')}</span>}
+                </span>
+              </span>
+              <span className="shrink-0 rounded-lg px-2 py-1 text-[10px] font-black" style={{ border: '1px solid var(--border-subtle)', color: entry.isRest ? 'var(--text-muted)' : 'var(--accent)' }}>{entry.classification}</span>
+            </button>
+
+            {expanded && (
+              <div className="mt-3 space-y-2 border-t pt-3" style={{ borderColor: 'var(--border-subtle)' }}>
+                {entry.description && <p className="text-xs leading-5" style={{ color: 'var(--text-muted)' }}>{entry.description}</p>}
+                {entry.isRest ? (
+                  <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No run or strength session is prescribed for this date.</p>
+                ) : entry.sessions.map((session) => <ScheduledSessionDetails key={session.id} session={session} />)}
+                {entry.isToday && runSessions.map((session) => (
+                  <button key={`start-${session.id}`} type="button" onClick={() => onStartRun(session, entry)} className="w-full rounded-xl py-3 text-sm font-black" style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none' }}>
+                    Start This Run
+                  </button>
+                ))}
+              </div>
+            )}
+          </article>
+        )
+      })}
+    </div>
+  )
+}
+
 export default function LogRun() {
   const navigate = useNavigate()
   const location = useLocation()
@@ -287,6 +381,7 @@ export default function LogRun() {
   const [activeTab, setActiveTab] = useState(() => {
     if (query.get('tab') === 'manual') return 'log'
     if (query.get('tab') === 'week') return 'week'
+    if (query.get('tab') === 'month') return 'month'
     return 'today'
   })
   const [countdown, setCountdown] = useState(3)
@@ -334,9 +429,11 @@ export default function LogRun() {
   const [planSessionId, setPlanSessionId] = useState(() => travelWorkoutOverride ? null : planSessionIdFromState(location.state))
   const [planCurrentWeek, setPlanCurrentWeek] = useState(() => travelWorkoutOverride ? null : currentWeekFromState(location.state))
   const [todayLoading, setTodayLoading] = useState(false)
-  const [weekPlan, setWeekPlan] = useState(null)
-  const [weekPlanLoading, setWeekPlanLoading] = useState(false)
-  const [selectedDay, setSelectedDay] = useState(null)
+  const [planSchedule, setPlanSchedule] = useState(null)
+  const [planScheduleState, setPlanScheduleState] = useState('idle')
+  const [planScheduleError, setPlanScheduleError] = useState('')
+  const [selectedScheduleEntry, setSelectedScheduleEntry] = useState(null)
+  const [monthCursor, setMonthCursor] = useState(() => /^\d{4}-\d{2}$/.test(query.get('month') || '') ? query.get('month') : todayISO().slice(0, 7))
   const [showWatchModal, setShowWatchModal] = useState(false)
   const [routePlannerStatus, setRoutePlannerStatus] = useState({ available: false, requiresPro: false })
   const [runIntentOpen, setRunIntentOpen] = useState(() => query.get('intent') === 'rest-day')
@@ -362,12 +459,18 @@ export default function LogRun() {
   const runIntentDialogRef = useRef(null)
   const runBriefIsAi = runBrief?.source === 'ai'
   const todayCoachingIsAi = runBriefIsAi || Boolean(todayWorkout?.aiReason)
+  const monthView = useMemo(
+    () => planSchedule ? calendarMonthView(planSchedule, monthCursor, { todayISO: localDateISO() }) : null,
+    [monthCursor, planSchedule],
+  )
 
   useEffect(() => {
     if (warmUpState !== 'done') return
     if (query.get('tab') === 'manual') setActiveTab('log')
     else if (query.get('tab') === 'week') setActiveTab('week')
+    else if (query.get('tab') === 'month') setActiveTab('month')
     else setActiveTab('today')
+    if (/^\d{4}-\d{2}$/.test(query.get('month') || '')) setMonthCursor(query.get('month'))
     if (query.get('intent') === 'rest-day') setRunIntentOpen(true)
   }, [query, warmUpState])
 
@@ -497,6 +600,8 @@ export default function LogRun() {
             id: scheduledRun.id || '',
             source: 'calendar',
             day: execution.day || new Date().toLocaleDateString(undefined, { weekday: 'short' }),
+            displayName: motivationalRunName(scheduledRun, { date: execution.date || localDateISO(), sessionId: scheduledRun.id }),
+            title: scheduledRun.title || '',
             typeLabel: cleanRunType(type),
             rawType: type,
             distanceMiles,
@@ -541,6 +646,8 @@ export default function LogRun() {
           id: source.id || '',
           source: w ? 'legacy-plan' : 'recommendation',
           day: source.day || source.day_of_week || new Date().toLocaleDateString(undefined, { weekday: 'short' }),
+          displayName: motivationalRunName(source, { date: localDateISO(), sessionId: source.id }),
+          title: source.title || '',
           typeLabel: cleanRunType(type),
           rawType: type,
           distanceMiles,
@@ -574,22 +681,23 @@ export default function LogRun() {
   }, [])
 
   useEffect(() => {
-    if (activeTab !== 'week' || weekPlan) return
-    setWeekPlanLoading(true)
+    if (!['week', 'month'].includes(activeTab) || planScheduleState !== 'idle') return
+    setPlanScheduleState('loading')
+    setPlanScheduleError('')
     api.get('/plans/my')
       .then(res => {
         const planJson = res.data?.plan?.plan_data || res.data?.plan?.plan_json
         const currentWeek = Math.max(1, Number(res.data?.user_plan?.current_week || 1))
-        if (planJson?.weeks?.length) {
-          const week = planJson.weeks[currentWeek - 1] || planJson.weeks[0]
-          setWeekPlan(week?.days || week?.sessions || [])
-        }
+        const normalized = normalizePlanSchedule(planJson || { weeks: [] }, { currentWeek, todayISO: localDateISO() })
+        setPlanSchedule(normalized)
+        setPlanScheduleState(normalized.status)
       })
       .catch((err) => {
         console.error('[LogRun] week plan fetch failed:', err?.message || err)
+        setPlanScheduleError('Your training plan could not be loaded. Try again without losing any logged activity.')
+        setPlanScheduleState('error')
       })
-      .finally(() => setWeekPlanLoading(false))
-  }, [activeTab, weekPlan])
+  }, [activeTab, planScheduleState])
 
 
   const estimatedTime = useMemo(() => {
@@ -794,6 +902,26 @@ export default function LogRun() {
     })
   }
 
+  const startCalendarRun = (session, entry) => {
+    navigate('/warmup', {
+      state: withActiveRunReturnTarget({
+        countdown,
+        runType: session.type || session.workout_type || 'easy',
+        runEnvironment: 'outdoor',
+        mapMyRun: true,
+        planSessionId: session.id,
+        currentWeek: entry.weekIndex + 1,
+        scheduledRun: session,
+        startAfterWarmup: true,
+        workoutTarget: {
+          distanceMiles: Number(session.distance_miles || 0) || null,
+          pace: session.pace_target || null,
+          zone: session.target_zone || null,
+        },
+      }, activeRunReturnTo),
+    })
+  }
+
   const startUnplannedRun = () => {
     track('unplanned_run_started', { via: activeTab === 'log' ? 'manual_tab' : 'rest_day' })
     if (environment === 'inside') {
@@ -936,7 +1064,7 @@ export default function LogRun() {
     <>
       <div className="rounded-2xl p-4" style={{ background: 'var(--bg-card)' }}>
         <div className="flex gap-2 mb-5 flex-wrap">
-          {[{ key: 'today', label: 'Today' }, { key: 'week', label: 'Week' }, { key: 'log', label: 'Manual' }].map(tab => (
+          {[{ key: 'today', label: 'Today' }, { key: 'week', label: 'Week' }, { key: 'month', label: 'Month' }, { key: 'log', label: 'Manual' }].map(tab => (
             <button key={tab.key} onClick={() => setActiveTab(tab.key)} style={{ padding: '5px 18px', borderRadius: 999, border: activeTab === tab.key ? '1.5px solid var(--accent)' : '1.5px solid var(--border-subtle)', background: activeTab === tab.key ? 'var(--accent)' : 'transparent', color: activeTab === tab.key ? '#000' : 'var(--text-muted)', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>{tab.label}</button>
           ))}
         </div>
@@ -954,6 +1082,8 @@ export default function LogRun() {
                     {todayCoachingIsAi ? 'AI coach' : 'Data coach'}
                   </span>
                 </div>
+                {todayWorkout.displayName && <h2 className="text-xl font-black" style={{ color: 'var(--text-primary)' }}>{todayWorkout.displayName}</h2>}
+                {todayWorkout.title && <p className="mt-1 text-xs font-bold" style={{ color: 'var(--text-muted)' }}>{todayWorkout.typeLabel} · {todayWorkout.title}</p>}
                 <p className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>{todayWorkout.distanceLabel}</p>
                 <div className="mt-3 grid grid-cols-2 gap-2">
                   <div className="rounded-xl p-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
@@ -1018,77 +1148,38 @@ export default function LogRun() {
           </div>
         )}
 
-        {activeTab === 'week' && (
-          <div>
-            {weekPlanLoading && <p style={{ color: 'var(--text-muted)', fontSize: 14 }}>Loading your week...</p>}
-            {!weekPlanLoading && !weekPlan && (
-              <div style={{ textAlign: 'center', padding: '24px 0', color: 'var(--text-muted)', fontSize: 14 }}>
-                No training plan yet. Go to your Plan tab to generate one.
+        {['week', 'month'].includes(activeTab) && (
+          <section aria-live="polite">
+            {planScheduleState === 'loading' && <p role="status" className="text-sm" style={{ color: 'var(--text-muted)' }}>Loading your training calendar...</p>}
+            {planScheduleState === 'empty' && (
+              <div className="py-6 text-center text-sm" style={{ color: 'var(--text-muted)' }}>No training plan yet. Go to your Plan tab to generate one.</div>
+            )}
+            {planScheduleState === 'malformed' && (
+              <div role="alert" className="rounded-xl p-4 text-sm" style={{ background: 'var(--danger-dim)', color: 'var(--danger)' }}>This plan could not be displayed because its calendar entries are malformed. Your stored plan was not changed.</div>
+            )}
+            {planScheduleState === 'error' && (
+              <div role="alert" className="rounded-xl p-4 text-sm" style={{ background: 'var(--danger-dim)', color: 'var(--danger)' }}>
+                <p>{planScheduleError}</p>
+                <button type="button" onClick={() => setPlanScheduleState('idle')} className="mt-3 rounded-lg px-3 py-2 text-xs font-black" style={{ background: 'var(--bg-card)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>Try again</button>
               </div>
             )}
-            {weekPlan && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {(() => {
-                  const todayShort = new Date().toLocaleDateString('en-US', { weekday: 'short' })
-                  return weekPlan.map((day, i) => {
-                    const isToday = day.day === todayShort
-                    const isExpanded = selectedDay === i
-                    const typeColor = day.rest ? 'var(--text-muted)' : day.type === 'long' ? '#3b82f6' : 'var(--accent)'
-                    return (
-                      <div key={i}
-                        onClick={() => setSelectedDay(isExpanded ? null : i)}
-                        style={{
-                          borderRadius: 14, padding: '12px 16px', cursor: 'pointer',
-                          background: isToday ? 'var(--accent-dim)' : 'var(--bg-base)',
-                          border: `1.5px solid ${isToday ? 'var(--accent)' : 'var(--border-subtle)'}`,
-                          transition: 'background 0.15s',
-                        }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                            <div style={{ width: 36, textAlign: 'center' }}>
-                              <p style={{ fontSize: 12, fontWeight: 700, color: isToday ? 'var(--accent)' : 'var(--text-muted)' }}>{day.day}</p>
-                              {isToday && <p style={{ fontSize: 9, color: 'var(--accent)', fontWeight: 700 }}>TODAY</p>}
-                            </div>
-                            <div>
-                              <p style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', textTransform: 'capitalize' }}>
-                                {day.rest ? 'Rest Day' : day.type === 'long' ? 'Long Run' : day.type === 'easy' ? 'Easy Run' : String(day.type).replace(/_/g,' ')}
-                              </p>
-                              {!day.rest && day.distance_miles > 0 && (
-                                <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>{Number(day.distance_miles).toFixed(1)} miles</p>
-                              )}
-                            </div>
-                          </div>
-                          <span style={{ fontSize: 11, fontWeight: 700, color: typeColor, background: day.rest ? 'var(--bg-card)' : 'transparent',
-                            padding: '3px 8px', borderRadius: 8, border: `1px solid ${typeColor}` }}>
-                            {day.rest ? 'Rest' : day.type === 'long' ? 'Long' : 'Easy'}
-                          </span>
-                        </div>
-
-                        {isExpanded && (
-                          <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border-subtle)' }}>
-                            {day.description && <p style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.6, marginBottom: 12 }}>{day.description}</p>}
-                            {!day.rest && (
-                              <div style={{ display: 'flex', gap: 16, marginBottom: 12 }}>
-                                {day.distance_miles > 0 && <div><p style={{ fontSize: 18, fontWeight: 900, color: 'var(--text-primary)' }}>{Number(day.distance_miles).toFixed(1)}</p><p style={{ fontSize: 11, color: 'var(--text-muted)' }}>miles</p></div>}
-                                {day.duration_min > 0 && <div><p style={{ fontSize: 18, fontWeight: 900, color: 'var(--text-primary)' }}>{day.duration_min}</p><p style={{ fontSize: 11, color: 'var(--text-muted)' }}>minutes</p></div>}
-                                {day.pace_target && <div><p style={{ fontSize: 18, fontWeight: 900, color: 'var(--text-primary)' }}>{day.pace_target}</p><p style={{ fontSize: 11, color: 'var(--text-muted)' }}>target pace</p></div>}
-                              </div>
-                            )}
-                            {!day.rest && isToday && (
-                              <button onClick={e => { e.stopPropagation(); navigate('/run/active', { state: withActiveRunReturnTarget({ countdown, runType: day.type || 'easy', runEnvironment: 'outdoor', surface: trackWorkout === 'yes' ? 'track' : 'road', mapMyRun: true, trackMode: trackWorkout === 'yes' }, activeRunReturnTo) }) }}
-                                style={{ width: '100%', background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 900, borderRadius: 10, padding: '12px', border: 'none', cursor: 'pointer', fontSize: 14 }}>
-                                Start This Run
-                              </button>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })
-                })()}
+            {planScheduleState === 'ready' && planSchedule?.malformedCount > 0 && (
+              <p role="alert" className="mb-3 rounded-lg p-3 text-xs" style={{ background: 'var(--danger-dim)', color: 'var(--danger)' }}>Some malformed calendar entries were skipped; valid dated sessions are shown below.</p>
+            )}
+            {planScheduleState === 'ready' && activeTab === 'week' && (
+              <ScheduledEntries entries={planSchedule.activeWeek?.entries || []} selectedKey={selectedScheduleEntry} onSelect={setSelectedScheduleEntry} onStartRun={startCalendarRun} />
+            )}
+            {planScheduleState === 'ready' && activeTab === 'month' && monthView && (
+              <div>
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  {monthView.canPrevious ? <button type="button" aria-label="Previous plan month" onClick={() => setMonthCursor(shiftCalendarMonth(monthCursor, -1))} className="rounded-lg px-3 py-2 font-black" style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}>←</button> : <span />}
+                  <h2 className="text-sm font-black" style={{ color: 'var(--text-primary)' }}>{monthView.label}</h2>
+                  {monthView.canNext ? <button type="button" aria-label="Next plan month" onClick={() => setMonthCursor(shiftCalendarMonth(monthCursor, 1))} className="rounded-lg px-3 py-2 font-black" style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}>→</button> : <span />}
+                </div>
+                <ScheduledEntries entries={monthView.entries} selectedKey={selectedScheduleEntry} onSelect={setSelectedScheduleEntry} onStartRun={startCalendarRun} />
               </div>
             )}
-          </div>
+          </section>
         )}
 
         {activeTab === 'log' && (
