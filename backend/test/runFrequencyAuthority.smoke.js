@@ -290,6 +290,20 @@ async function checkProfileReviewMarker() {
   try {
     const authRouter = require('../src/routes/auth');
     const handler = routeHandler(authRouter, '/me/profile', 'put');
+    const blankMileage = await invoke(handler, {
+      body: { weekly_miles_current: ' ' },
+      user: { id: user.id },
+    });
+    assert.equal(blankMileage.statusCode, 400);
+    assert.match(blankMileage.payload.error, /Weekly miles must be between 0 and 300/);
+
+    const invalidMileage = await invoke(handler, {
+      body: { weekly_miles_current: 'Infinity' },
+      user: { id: user.id },
+    });
+    assert.equal(invalidMileage.statusCode, 400);
+    assert.match(invalidMileage.payload.error, /Weekly miles must be between 0 and 300/);
+
     const response = await invoke(handler, {
       body: {
         run_days_per_week: 5,

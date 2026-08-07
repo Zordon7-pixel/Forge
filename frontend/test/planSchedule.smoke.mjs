@@ -6,6 +6,7 @@ import {
   scheduleDraftFromPlan,
   scheduleFrequencyGuidance,
   scheduleHasChanges,
+  shouldRefreshScheduleDraft,
   toggleTrainingDay,
   validateScheduleDraft,
 } from '../src/lib/planSchedule.js'
@@ -49,6 +50,9 @@ assert.deepEqual(fourDayDraft.trainingDays, ['Tue', 'Thu', 'Sat', 'Sun'])
 assert.equal(validateScheduleDraft(fourDayDraft), '')
 assert.equal(scheduleHasChanges(planData, fourDayDraft), true)
 assert.match(scheduleFrequencyGuidance(4), /quality, easy, steady, and long/)
+assert.equal(shouldRefreshScheduleDraft(), true)
+assert.equal(shouldRefreshScheduleDraft({ editing: true }), false)
+assert.equal(shouldRefreshScheduleDraft({ saving: true }), false)
 
 const twoRaceRequest = buildScheduleRebuildRequest({
   planData,
@@ -86,4 +90,4 @@ assert.equal(generalRequest.body.target.weeks, 8)
 assert.equal(validateScheduleDraft({ trainingDays: [], runDaysPerWeek: 1 }), 'Choose at least one eligible running day.')
 assert.throws(() => buildScheduleRebuildRequest({ planData, raceIds: ['a', 'b', 'c'], draft: fourDayDraft }), /at most two races/)
 
-console.log('PLAN SCHEDULE SMOKE OK (28 assertions)')
+console.log('PLAN SCHEDULE SMOKE OK (31 assertions)')

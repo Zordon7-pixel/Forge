@@ -32,6 +32,11 @@ function round(value, decimals = 1) {
   return Math.round(Number(value || 0) * factor) / factor;
 }
 
+function finiteNonNegative(value, fallback = 0, maximum = Number.MAX_SAFE_INTEGER) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 && parsed <= maximum ? parsed : fallback;
+}
+
 function resolvedGoalTime(target = {}, existingGoal = {}, history = {}) {
   const requestedSeconds = Number(target.goalTimeSeconds ?? target.goal_time_seconds);
   if (Number.isFinite(requestedSeconds) && requestedSeconds > 0) {
@@ -302,12 +307,12 @@ function dateDistanceDays(laterValue, earlierValue) {
 
 function estimateWeeklyMileageBaseline(rows = [], options = {}) {
   const planningDateISO = parseISODate(options.planningDateISO) ? options.planningDateISO : toISODate(new Date());
-  const profileWeeklyMiles = Math.max(0, Number(options.profileWeeklyMiles || 0));
+  const profileWeeklyMiles = finiteNonNegative(options.profileWeeklyMiles, 0, 300);
   const normalized = (Array.isArray(rows) ? rows : [])
     .map((row) => ({
       date: String(row?.date || '').slice(0, 10),
-      miles: Math.max(0, Number(row?.distance_miles || 0)),
-      durationSeconds: Math.max(0, Number(row?.duration_seconds || 0)),
+      miles: finiteNonNegative(row?.distance_miles, 0, 500),
+      durationSeconds: finiteNonNegative(row?.duration_seconds, 0, 172800),
     }))
     .filter((row) => (
       parseISODate(row.date)
@@ -483,7 +488,7 @@ function buildMileageTargets(weekCount, baseline, hasRace, recovery, history, ta
   const targets = [];
   // Recovery and check-in state change the next 48-72 hours through
   // applyAcuteRunProtection. They must not silently shrink an entire block.
-  let lastBuild = Math.max(4, Number(baseline || 0));
+  let lastBuild = Math.max(4, finiteNonNegative(baseline, 0, 300));
   let priorBuild = lastBuild;
   const goalType = String(target.goalType || target.goal_type || '').toLowerCase();
   const growthRate = hasRace && (goalType === 'pr' || Number(target.goalTimeSeconds || target.goal_time_seconds) > 0) ? 1.08 : 1.06;
@@ -1204,7 +1209,7 @@ function summarizeInputs(profile = {}, history = {}, recovery = {}, checkin = nu
     ? Number(value)
     : null;
   return {
-    weeklyMileageBaseline: round(Number(history.weeklyMileageBaseline ?? profile.weekly_miles_current) || 0),
+    weeklyMileageBaseline: round(finiteNonNegative(history.weeklyMileageBaseline ?? profile.weekly_miles_current, 0, 300)),
     mileageBaseline: history.mileageBaseline || null,
     recentRunCount: clamp(Math.round(Number(history.recentRunCount || 0)), 0, 100),
     recentLiftCount: clamp(Math.round(Number(history.recentLiftCount || 0)), 0, 100),
@@ -1268,7 +1273,7 @@ function hasCurrentWeekRecoveryProtection(context = {}) {
 
 function hasLowExperienceQualityProtection(context = {}) {
   const history = context.history || {};
-  const baseline = Number(history.weeklyMileageBaseline ?? context.profile?.weekly_miles_current) || 0;
+  const baseline = finiteNonNegative(history.weeklyMileageBaseline ?? context.profile?.weekly_miles_current, 0, 300);
   const meaningfulRunCount = Number(history.mileageBaseline?.meaningfulRunCount ?? history.recentRunCount ?? 0);
   return baseline < 5 || meaningfulRunCount < 3;
 }
@@ -1411,7 +1416,8 @@ function buildConcurrentPlan(context = {}) {
       equipment: Array.isArray(target.equipment) ? target.equipment : ['barbell', 'dumbbell', 'rack', 'bench'],
       preferredDays: availableDays,
     }, mode);
-  const baseline = Number(history.weeklyMileageBaseline ?? profile.weekly_miles_current) || Math.max(6, raceDistance);
+  const rawBaseline = finiteNonNegative(history.weeklyMileageBaseline ?? profile.weekly_miles_current, 0, 300);
+  const baseline = rawBaseline > 0 ? rawBaseline : Math.max(6, raceDistance);
   const weekPhases = phasesForRaceTargets(startDate, weekCount, raceTargets);
   const mileageTargets = buildMileageTargets(weekCount, baseline, Boolean(raceDate), recovery, history, { ...target, weekPhases });
   const anchorMetadata = planAnchorMetadata(history);

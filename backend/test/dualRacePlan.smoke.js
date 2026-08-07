@@ -88,6 +88,25 @@ assert.equal(plan.goal.goalPaceSecondsPerMile, 522);
 assert.equal(plan.goals[0].course?.elevationGainFt, undefined, 'A1 must not inherit A2 elevation data');
 assert.equal(plan.goals[0].course?.terrain, undefined, 'A1 must not inherit A2 terrain data');
 
+const corruptBaselineContext = {
+  ...context,
+  profile: { ...context.profile, weekly_miles_current: 'Infinity' },
+  history: { ...context.history, weeklyMileageBaseline: Number.POSITIVE_INFINITY },
+};
+const corruptBaseline = concurrent.estimateWeeklyMileageBaseline([
+  { date: '2026-07-27', distance_miles: Number.POSITIVE_INFINITY, duration_seconds: 1800 },
+], { planningDateISO: '2026-08-03', profileWeeklyMiles: 'Infinity' });
+assert.equal(corruptBaseline.weeklyMiles, 0, 'non-finite legacy mileage is discarded at the baseline boundary');
+assert.equal(
+  concurrent.estimateWeeklyMileageBaseline([], { planningDateISO: '2026-08-03', profileWeeklyMiles: 5000 }).weeklyMiles,
+  0,
+  'legacy mileage above the profile boundary is discarded',
+);
+const corruptBaselinePlan = concurrent.buildConcurrentPlan(corruptBaselineContext);
+const corruptBaselineValidation = concurrent.validateConcurrentPlan(corruptBaselinePlan, corruptBaselineContext);
+assert.equal(corruptBaselineValidation.valid, true, corruptBaselineValidation.errors.join('; '));
+assert.equal(Number.isFinite(corruptBaselinePlan.inputSummary.weeklyMileageBaseline), true);
+
 const sessions = plan.weeks.flatMap((week) => week.days.flatMap((day) => (
   day.sessions.map((session) => ({ week, day, session }))
 )));
@@ -426,9 +445,9 @@ async function checkDedicatedRouteBoundary() {
 
   class FixedDate extends RealDate {
     constructor(...args) {
-      super(...(args.length ? args : ['2026-08-03T12:00:00.000Z']));
+      super(...(args.length ? args : ['2026-08-07T12:00:00.000Z']));
     }
-    static now() { return new RealDate('2026-08-03T12:00:00.000Z').getTime(); }
+    static now() { return new RealDate('2026-08-07T12:00:00.000Z').getTime(); }
   }
 
   const mockDb = {
@@ -475,7 +494,7 @@ async function checkDedicatedRouteBoundary() {
       body: {
         race_ids: [],
         target: {
-          trainingDays: ['Mon', 'Tue', 'Thu', 'Sat'],
+          trainingDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
           runDaysPerWeek: 4,
           liftDaysPerWeek: 0,
           planMode: 'run_only',
@@ -521,12 +540,30 @@ async function checkDedicatedRouteBoundary() {
     assert.equal(response.statusCode, 400, 'a 20-day pair is rejected at the route boundary');
 
     raceRows.set('army', raceRow('army', '2026-10-11'));
+    profile.weekly_miles_current = 'Infinity';
+    profile.lift_days_per_week = 2;
     response = await invoke(generateForRaces, {
       ...baseRequest,
-      body: { ...baseRequest.body, race_ids: ['yonkers', 'army'] },
+      body: {
+        ...baseRequest.body,
+        race_ids: ['yonkers', 'army'],
+        target: {
+          ...baseRequest.body.target,
+          planMode: 'hybrid_maintain',
+          liftingEnabled: true,
+          liftDaysPerWeek: 2,
+        },
+      },
     });
     assert.equal(response.statusCode, 201, response.payload?.error || 'a 21-day pair should generate');
     assert.deepEqual(response.payload.plan.plan_data.goals.map((goal) => goal.date), ['2026-09-20', '2026-10-11']);
+    assert.equal(response.payload.plan.week_start, '2026-08-03', 'a rebuild starts in the current training week');
+    assert.equal(response.payload.plan.plan_data.schedulePreferences.runDaysPerWeek, 4, 'the edited frequency reaches the rebuilt plan');
+    const currentWeekRunDates = response.payload.plan.plan_data.weeks[0].days.flatMap((day) => (
+      day.sessions.some((session) => session.kind === 'run') ? [day.date] : []
+    ));
+    assert.deepEqual(currentWeekRunDates, ['2026-08-07', '2026-08-08'], 'a Friday rebuild schedules only today and remaining eligible dates');
+    assert.equal(Number.isFinite(response.payload.plan.plan_data.inputSummary.weeklyMileageBaseline), true);
     assert.equal(transactionCalls, 1, 'the successful rebuild uses one transaction');
 
     failTransaction = true;

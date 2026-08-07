@@ -23,6 +23,10 @@ export function scheduleDraftFromPlan(planData = {}) {
   }
 }
 
+export function shouldRefreshScheduleDraft({ editing = false, saving = false } = {}) {
+  return !editing && !saving
+}
+
 export function toggleTrainingDay(draft, day) {
   if (!DAY_ORDER.includes(day)) return draft
   const current = normalizeTrainingDays(draft?.trainingDays)

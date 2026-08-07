@@ -21,6 +21,7 @@ import {
   scheduleDraftFromPlan,
   scheduleFrequencyGuidance,
   scheduleHasChanges,
+  shouldRefreshScheduleDraft,
   toggleTrainingDay,
   TRAINING_DAY_OPTIONS,
   validateScheduleDraft,
@@ -210,9 +211,9 @@ export default function Plan() {
   }, [])
 
   useEffect(() => {
-    if (scheduleSaving) return
+    if (!shouldRefreshScheduleDraft({ editing: scheduleEditing, saving: scheduleSaving })) return
     setScheduleDraft(scheduleDraftFromPlan(myPlan?.plan_data))
-  }, [myPlan, scheduleSaving])
+  }, [myPlan, scheduleEditing, scheduleSaving])
 
   useEffect(() => {
     if (!adaptationProposal?.id) return

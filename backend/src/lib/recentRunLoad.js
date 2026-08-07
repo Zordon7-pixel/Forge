@@ -90,7 +90,7 @@ function normalizeRun(row = {}) {
 function summarizeRecentRunLoad(rows = [], options = {}) {
   const todayISO = parseISODate(options.todayISO) ? options.todayISO : null;
   const focusRunId = options.focusRunId ? String(options.focusRunId) : null;
-  const weeklyBaseline = Math.max(0, Number(options.weeklyBaseline || 0));
+  const weeklyBaseline = finiteNumber(options.weeklyBaseline, 0, 500) || 0;
   const recoveryState = String(options.recoveryState || 'unknown').toLowerCase();
   const normalized = (Array.isArray(rows) ? rows : [])
     .map(normalizeRun)

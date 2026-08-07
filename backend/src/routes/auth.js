@@ -237,6 +237,15 @@ router.put('/me/profile', auth, async (req, res) => {
     }
 
     const mappedWeekly = weekly_miles ?? weekly_miles_current;
+    if (mappedWeekly !== undefined && mappedWeekly !== null) {
+      const normalizedWeeklyMiles = Number(mappedWeekly);
+      if ((typeof mappedWeekly === 'string' && !mappedWeekly.trim())
+        || !Number.isFinite(normalizedWeeklyMiles)
+        || normalizedWeeklyMiles < 0
+        || normalizedWeeklyMiles > 300) {
+        return res.status(400).json({ error: 'Weekly miles must be between 0 and 300.' });
+      }
+    }
     const mappedGoal = primary_goal ?? goal_type;
     const mappedInjury = injury_detail ?? injury_notes;
     const mappedComeback = comeback_mode ?? (injury_status && injury_status !== 'none' ? 1 : null);
