@@ -1,3 +1,5 @@
+import { candidateFeasibilityCanApply } from './planCandidateFeasibility.js'
+
 let activeReviewer = null
 
 export class PlanCandidateReviewCancelled extends Error {
@@ -23,6 +25,23 @@ export async function requestPlanCandidateReview(preview) {
     throw error
   }
   return activeReviewer(preview)
+}
+
+export function planCandidateRequiresReview(preview = {}) {
+  const plan = preview?.plan?.plan_data || preview?.candidate?.plan_data || {}
+  const feasibility = String(plan?.overall_feasibility || '').toLowerCase()
+  return Boolean(preview?.replaces_active_plan)
+    || feasibility === 'stretch'
+    || !candidateFeasibilityCanApply(plan)
+}
+
+export async function reviewPlanCandidateBeforeApply(preview, apply) {
+  if (typeof apply !== 'function') throw new TypeError('Plan apply callback is required.')
+  if (planCandidateRequiresReview(preview)) {
+    const decision = await requestPlanCandidateReview(preview)
+    if (decision !== 'apply') throw new PlanCandidateReviewCancelled(decision)
+  }
+  return apply()
 }
 
 export function isPlanCandidateReviewCancelled(error) {

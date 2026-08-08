@@ -7,7 +7,7 @@ require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
 const { dbAll, dbGet, pool } = require('../src/db');
 const plansRouter = require('../src/routes/plans');
 const { buildPlanDiagnosticBundle } = require('../src/lib/racePlanDiagnostics');
-const { RACE_PLAN_POLICY_V1, addDays } = require('../src/lib/racePlanPolicy');
+const { addDays } = require('../src/lib/racePlanPolicy');
 const {
   assertApplyAuthorized,
   buildBackupManifest,

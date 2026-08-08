@@ -199,6 +199,19 @@ async function run() {
     'dated race candidates cannot bypass feasibility through not_applicable'
   );
   assert.equal(plansRouter._test.candidateFeasibilityCanApply({ overall_feasibility: '' }), false);
+  assert.equal(
+    plansRouter._test.getTimezoneOffsetFromRequest({ body: {}, headers: {} }),
+    undefined,
+    'a missing timezone header is not silently converted to UTC'
+  );
+  await assert.rejects(
+    plansRouter._test.previewPlanForUser(ownerId, {
+      planning_date_local: new Date().toISOString().slice(0, 10),
+      race_ids: [],
+    }),
+    (error) => error?.code === 'INVALID_TIMEZONE_OFFSET' && error?.status === 400,
+    'candidate preview rejects clients without explicit phone timezone authority'
+  );
 
   const pruneCalls = [];
   await plansRouter._test.pruneExpiredPlanCandidates({

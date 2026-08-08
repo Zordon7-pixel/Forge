@@ -138,7 +138,7 @@ function getTimezoneOffsetFromRequest(req) {
   const headerValue = typeof req.get === 'function'
     ? req.get('x-forged-timezone-offset-minutes')
     : req.headers?.['x-forged-timezone-offset-minutes'];
-  return headerValue === undefined || headerValue === null || headerValue === '' ? 0 : headerValue;
+  return headerValue === undefined || headerValue === null || headerValue === '' ? undefined : headerValue;
 }
 
 function withRequestPlanningClock(req, body = {}, overrides = {}) {
@@ -1427,7 +1427,7 @@ function getPlanTargetOptions(target = null) {
 function acceptedPlanningClock(body = {}) {
   const clock = acceptPlanningClock({
     planning_date_local: body.planning_date_local || getTodayISO(),
-    timezone_offset_minutes: body.timezone_offset_minutes ?? 0,
+    timezone_offset_minutes: body.timezone_offset_minutes,
   }, getTodayISO());
   if (!clock.valid) {
     throw candidateError(400, clock.reason, 'Use the current phone date and a valid timezone offset.');

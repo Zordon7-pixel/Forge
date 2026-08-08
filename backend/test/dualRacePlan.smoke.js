@@ -538,10 +538,15 @@ async function checkDedicatedRouteBoundary() {
     const generateForRaces = routeHandler(plansRouter, '/generate-for-races', 'post');
     const generateForRace = routeHandler(plansRouter, '/generate-for-race/:raceId', 'post');
     const generate = routeHandler(plansRouter, '/generate', 'post');
+    const planningClock = {
+      planning_date_local: '2026-08-07',
+      timezone_offset_minutes: 240,
+    };
     const baseRequest = {
       user: { id: ownerId },
       query: {},
       body: {
+        ...planningClock,
         race_ids: [],
         target: {
           trainingDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
@@ -593,6 +598,7 @@ async function checkDedicatedRouteBoundary() {
     response = await invoke(generateForRaces, {
       ...baseRequest,
       body: {
+        ...planningClock,
         race_ids: ['yonkers', 'army'],
         target: { trainingDays: ['Mon'], runDaysPerWeek: 2, planMode: 'run_only', liftingEnabled: false },
       },
@@ -654,6 +660,7 @@ async function checkDedicatedRouteBoundary() {
     response = await invoke(generateForRaces, {
       ...baseRequest,
       body: {
+        ...planningClock,
         race_ids: ['near-a', 'near-b'],
         target: {
           trainingDays: ['Mon', 'Wed', 'Fri'],
@@ -678,6 +685,7 @@ async function checkDedicatedRouteBoundary() {
       ...baseRequest,
       params: { raceId: 'near-a' },
       body: {
+        ...planningClock,
         target: {
           trainingDays: ['Mon', 'Wed', 'Fri'],
           runDaysPerWeek: 3,

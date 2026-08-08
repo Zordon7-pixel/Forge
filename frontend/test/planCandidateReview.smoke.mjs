@@ -5,7 +5,9 @@ import { fileURLToPath } from 'node:url'
 import {
   PlanCandidateReviewCancelled,
   isPlanCandidateReviewCancelled,
+  planCandidateRequiresReview,
   registerPlanCandidateReviewer,
+  reviewPlanCandidateBeforeApply,
   requestPlanCandidateReview,
 } from '../src/lib/planCandidateReview.js'
 import { candidateFeasibilityCanApply } from '../src/lib/planCandidateFeasibility.js'
@@ -45,14 +47,15 @@ assert.equal(candidateFeasibilityCanApply({ overall_feasibility: 'stretch' }), t
 assert.equal(candidateFeasibilityCanApply({ overall_feasibility: 'not_applicable', goals: [] }), true, 'non-race blocks do not require a race feasibility verdict')
 assert.equal(candidateFeasibilityCanApply({ overall_feasibility: 'not_applicable', goals: [{ date: '2026-10-11' }] }), false, 'dated race plans cannot bypass feasibility')
 assert.equal(candidateFeasibilityCanApply({ overall_feasibility: '' }), false)
-assert.match(helper, /preview\.data\?\.replaces_active_plan[\s\S]*!candidateFeasibilityCanApply\(plan\)/, 'active-plan replacements and unsafe or missing feasibility targets require review')
-assert.match(helper, /requestPlanCandidateReview\(preview\.data\)/, 'the preview is shown before applying')
+assert.equal(planCandidateRequiresReview({ plan: { plan_data: { overall_feasibility: 'stretch' } } }), true, 'a first-plan stretch target requires athlete review')
+assert.equal(planCandidateRequiresReview({ plan: { plan_data: { overall_feasibility: 'supported' } } }), false)
+assert.equal(planCandidateRequiresReview({ replaces_active_plan: true, plan: { plan_data: { overall_feasibility: 'supported' } } }), true)
+assert.match(helper, /reviewPlanCandidateBeforeApply\([\s\S]*preview\.data/, 'candidate consent gates the apply request')
 assert.ok(
-  helper.indexOf('requestPlanCandidateReview(preview.data)')
+  helper.indexOf('reviewPlanCandidateBeforeApply(')
     < helper.indexOf("`/plans/candidates/${encodeURIComponent(candidateId)}/apply`"),
-  'review happens before the apply request',
+  'the decision controller owns the apply request',
 )
-assert.match(helper, /decision !== 'apply'[\s\S]*PlanCandidateReviewCancelled/, 'keeping the current plan cannot fall through to apply')
 assert.match(sheet, /feasibility === 'unsafe'[\s\S]*canApply = candidateFeasibilityCanApply\(plan\)/, 'unsafe plans never receive an apply action')
 assert.match(sheet, /Apply reviewed plan[\s\S]*Review race target[\s\S]*Keep current plan/, 'the athlete sees explicit apply, review, and keep choices')
 assert.match(sheet, /current plan stays in place today[\s\S]*This plan starts/, 'replacement review explains the protected-day cutover before apply')
@@ -63,8 +66,44 @@ assert.match(sheet, /role="dialog"[\s\S]*aria-modal="true"/, 'the review sheet e
 assert.match(app, /<PlanCandidateDecisionSheet \/>/, 'the reviewer is available to every plan-generation surface')
 assert.match(route, /replaces_active_plan: Boolean\(candidate\.replacesActivePlan\)/, 'the backend tells the client when a preview replaces an active plan')
 
+let releaseStretchReview
+let stretchApplyCalls = 0
+const unregisterStretch = registerPlanCandidateReviewer(() => new Promise((resolve) => {
+  releaseStretchReview = resolve
+}))
+const pendingStretchApply = reviewPlanCandidateBeforeApply(
+  { candidate_id: 'stretch-1', plan: { plan_data: { overall_feasibility: 'stretch' } } },
+  async () => {
+    stretchApplyCalls += 1
+    return { applied: true }
+  },
+)
+await Promise.resolve()
+assert.equal(stretchApplyCalls, 0, 'stretch apply waits for the athlete decision')
+releaseStretchReview('apply')
+assert.deepEqual(await pendingStretchApply, { applied: true })
+assert.equal(stretchApplyCalls, 1, 'explicit athlete approval applies exactly once')
+unregisterStretch()
+
+for (const decision of ['cancel', 'review_goal']) {
+  let cancelledApplyCalls = 0
+  const unregisterCancellation = registerPlanCandidateReviewer(async () => decision)
+  await assert.rejects(
+    reviewPlanCandidateBeforeApply(
+      { candidate_id: `stretch-${decision}`, plan: { plan_data: { overall_feasibility: 'stretch' } } },
+      async () => {
+        cancelledApplyCalls += 1
+        return { applied: true }
+      },
+    ),
+    (error) => isPlanCandidateReviewCancelled(error) && error.decision === decision,
+  )
+  assert.equal(cancelledApplyCalls, 0, `${decision} leaves the athlete without a new assignment`)
+  unregisterCancellation()
+}
+
 for (const page of ['Onboarding.jsx', 'Plan.jsx', 'PlanCatalog.jsx', 'Races.jsx']) {
   assert.match(read(`frontend/src/pages/${page}`), /isPlanCandidateReviewCancelled\(err\)/, `${page} treats an athlete cancellation as a non-error`)
 }
 
-console.log('PLAN CANDIDATE REVIEW SMOKE OK (23)')
+console.log('PLAN CANDIDATE REVIEW SMOKE OK (34)')

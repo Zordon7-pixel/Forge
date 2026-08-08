@@ -75,12 +75,6 @@ function normalizeRolloutTrainingDays(raw) {
   }));
 }
 
-function ownValue(object, camelKey, snakeKey) {
-  if (object && Object.prototype.hasOwnProperty.call(object, camelKey)) return object[camelKey];
-  if (object && Object.prototype.hasOwnProperty.call(object, snakeKey)) return object[snakeKey];
-  return undefined;
-}
-
 function authoritativePlanTarget(activePlan = {}, profile = {}) {
   const rawTrainingDays = parseJson(profile.preferred_workout_days, profile.preferred_workout_days);
   const rawRunDays = profile.run_days_per_week;

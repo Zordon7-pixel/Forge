@@ -365,6 +365,10 @@ async function runPlanFallbackSmoke() {
   const originalPlansRoute = require.cache[plansRoutePath];
   const writes = [];
   let generateCalls = 0;
+  const planningClock = {
+    planning_date_local: new Date().toISOString().slice(0, 10),
+    timezone_offset_minutes: new Date().getTimezoneOffset(),
+  };
   const profile = {
     id: 'plan-owner-h8',
     name: 'H8 Athlete',
@@ -449,7 +453,7 @@ async function runPlanFallbackSmoke() {
     const raceHandler = routeHandler(plansRouter, '/generate-for-race/:raceId', 'post');
     check(typeof handler === 'function' && typeof raceHandler === 'function', 'ordinary and race plan generation handlers are registered');
     let response = await invoke(handler, {
-      body: { target: { trainingDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'], planMode: 'run_only', liftingEnabled: false } },
+      body: { ...planningClock, target: { trainingDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'], planMode: 'run_only', liftingEnabled: false } },
       query: {},
       user: { id: profile.id },
     });
@@ -457,7 +461,7 @@ async function runPlanFallbackSmoke() {
     check(writes.length === 0, 'a partial run schedule is rejected before persistence');
 
     response = await invoke(handler, {
-      body: { target: { weeks: 4, planMode: 'run_only', liftingEnabled: false } },
+      body: { ...planningClock, target: { weeks: 4, planMode: 'run_only', liftingEnabled: false } },
       query: {},
       user: { id: profile.id },
     });
@@ -472,7 +476,7 @@ async function runPlanFallbackSmoke() {
 
     response = await invoke(raceHandler, {
       params: { raceId: race.id },
-      body: { target: { trainingDays: ['Tue', 'Thu', 'Sat'], runDaysPerWeek: 3, planMode: 'run_only', liftingEnabled: false } },
+      body: { ...planningClock, target: { trainingDays: ['Tue', 'Thu', 'Sat'], runDaysPerWeek: 3, planMode: 'run_only', liftingEnabled: false } },
       query: {},
       user: { id: profile.id },
     });

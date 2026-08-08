@@ -153,10 +153,12 @@ function mondayFor(value) {
 
 function acceptPlanningClock(input = {}, serverDateISO) {
   const planningDateLocal = String(input.planningDateLocal || input.planning_date_local || '').trim();
-  const timezoneOffsetMinutes = Number(input.timezoneOffsetMinutes ?? input.timezone_offset_minutes);
+  const rawTimezoneOffset = input.timezoneOffsetMinutes ?? input.timezone_offset_minutes;
+  const timezoneOffsetMinutes = Number(rawTimezoneOffset);
   const serverDate = parseISODate(serverDateISO) ? serverDateISO : toISODate(new Date());
   if (!parseISODate(planningDateLocal)) return { valid: false, reason: 'INVALID_PLANNING_DATE' };
-  if (!Number.isInteger(timezoneOffsetMinutes)
+  if (rawTimezoneOffset === undefined || rawTimezoneOffset === null || rawTimezoneOffset === ''
+    || !Number.isInteger(timezoneOffsetMinutes)
     || Math.abs(timezoneOffsetMinutes) > RACE_PLAN_POLICY_V1.calendar.maximumTimezoneOffsetMinutes) {
     return { valid: false, reason: 'INVALID_TIMEZONE_OFFSET' };
   }

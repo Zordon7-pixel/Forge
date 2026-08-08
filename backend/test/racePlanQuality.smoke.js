@@ -208,6 +208,16 @@ if (process.argv.includes('--semantic-acceptance')) {
     acceptPlanningClock({ planningDateLocal: '2026-08-09', timezoneOffsetMinutes: -840 }, '2026-08-08'),
     { valid: true, planningDateLocal: '2026-08-09', timezoneOffsetMinutes: -840 }
   );
+  assert.deepEqual(
+    acceptPlanningClock({ planningDateLocal: '2026-08-08' }, '2026-08-08'),
+    { valid: false, reason: 'INVALID_TIMEZONE_OFFSET' },
+    'missing phone timezone authority fails closed'
+  );
+  assert.deepEqual(
+    acceptPlanningClock({ planningDateLocal: '2026-08-08', timezoneOffsetMinutes: '' }, '2026-08-08'),
+    { valid: false, reason: 'INVALID_TIMEZONE_OFFSET' },
+    'blank phone timezone authority fails closed'
+  );
   assert.equal(canonicalHash({ b: 2, a: 1 }), canonicalHash({ a: 1, b: 2 }));
   assert.deepEqual(trainingEvidence.validateRegistry(), { valid: true, errors: [] });
 

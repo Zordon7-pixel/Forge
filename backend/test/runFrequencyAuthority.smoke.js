@@ -457,7 +457,7 @@ async function checkPartialWeekRoutesDoNotReject() {
 
     scenario.runs = [runRow('same-day-selected', scenario.todayISO)];
     let response = await invoke(generate, {
-      body: { target: { weeks: 4, trainingDays: ['Mon', 'Tue', 'Thu', 'Sat'], runDaysPerWeek: 4, planMode: 'run_only', liftingEnabled: false } },
+      body: { planning_date_local: scenario.todayISO, timezone_offset_minutes: 0, target: { weeks: 4, trainingDays: ['Mon', 'Tue', 'Thu', 'Sat'], runDaysPerWeek: 4, planMode: 'run_only', liftingEnabled: false } },
       query: {},
       user: { id: profile.id },
     });
@@ -466,7 +466,7 @@ async function checkPartialWeekRoutesDoNotReject() {
 
     scenario.runs = [runRow('same-day-off-day', scenario.todayISO)];
     response = await invoke(generate, {
-      body: { target: { weeks: 4, trainingDays: ['Tue', 'Wed', 'Thu', 'Sat'], runDaysPerWeek: 4, planMode: 'run_only', liftingEnabled: false } },
+      body: { planning_date_local: scenario.todayISO, timezone_offset_minutes: 0, target: { weeks: 4, trainingDays: ['Tue', 'Wed', 'Thu', 'Sat'], runDaysPerWeek: 4, planMode: 'run_only', liftingEnabled: false } },
       query: {},
       user: { id: profile.id },
     });
@@ -475,7 +475,7 @@ async function checkPartialWeekRoutesDoNotReject() {
 
     scenario.runs = [0, 1, 2, 3, 4].map((index) => runRow(`quota-met-${index}`, scenario.todayISO));
     response = await invoke(generate, {
-      body: { target: { weeks: 4, trainingDays: ['Mon', 'Tue', 'Thu', 'Sat'], runDaysPerWeek: 4, planMode: 'run_only', liftingEnabled: false } },
+      body: { planning_date_local: scenario.todayISO, timezone_offset_minutes: 0, target: { weeks: 4, trainingDays: ['Mon', 'Tue', 'Thu', 'Sat'], runDaysPerWeek: 4, planMode: 'run_only', liftingEnabled: false } },
       query: {},
       user: { id: profile.id },
     });
@@ -494,7 +494,7 @@ async function checkPartialWeekRoutesDoNotReject() {
     };
     response = await invoke(generateForRace, {
       params: { raceId: scenario.race.id },
-      body: { target: { trainingDays: ['Tue', 'Thu', 'Sat', 'Sun'], runDaysPerWeek: 4, planMode: 'run_only', liftingEnabled: false } },
+      body: { planning_date_local: scenario.todayISO, timezone_offset_minutes: 0, target: { trainingDays: ['Tue', 'Thu', 'Sat', 'Sun'], runDaysPerWeek: 4, planMode: 'run_only', liftingEnabled: false } },
       query: {},
       user: { id: profile.id },
     });
@@ -504,7 +504,7 @@ async function checkPartialWeekRoutesDoNotReject() {
     scenario.runs = [0, 1, 2, 3].map((index) => runRow(`race-week-quota-met-${index}`, scenario.todayISO));
     response = await invoke(generateForRace, {
       params: { raceId: scenario.race.id },
-      body: { target: { trainingDays: ['Tue', 'Thu', 'Sat', 'Sun'], runDaysPerWeek: 4, planMode: 'run_only', liftingEnabled: false } },
+      body: { planning_date_local: scenario.todayISO, timezone_offset_minutes: 0, target: { trainingDays: ['Tue', 'Thu', 'Sat', 'Sun'], runDaysPerWeek: 4, planMode: 'run_only', liftingEnabled: false } },
       query: {},
       user: { id: profile.id },
     });
