@@ -5,6 +5,14 @@ function localISODate(now = new Date()) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
+function localDateForOffset(now, timezoneOffsetMinutes) {
+  const offset = Number(timezoneOffsetMinutes);
+  if (!Number.isFinite(offset) || offset < -840 || offset > 840) {
+    throw new Error('timezone offset must be between -840 and 840 minutes');
+  }
+  return new Date(new Date(now).getTime() - offset * 60000).toISOString().slice(0, 10);
+}
+
 function isISODate(value) {
   if (typeof value !== 'string' || !ISO_DATE.test(value)) return false;
   const parsed = new Date(`${value}T12:00:00Z`);
@@ -48,6 +56,7 @@ module.exports = {
   dayDistance,
   isISODate,
   isPlanningDateAllowed,
+  localDateForOffset,
   localISODate,
   requestPlanningDate,
 };

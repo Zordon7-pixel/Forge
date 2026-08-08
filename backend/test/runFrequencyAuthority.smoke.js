@@ -238,17 +238,47 @@ async function checkProfileReviewMarker() {
     lift_days_per_week: 0,
     preferred_workout_days: JSON.stringify(['Tue', 'Thu', 'Sat']),
   };
-  let progress = { completedSessionIds: ['already-done'] };
+  const today = new Date();
+  const todayISO = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  const tomorrow = new Date(today);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const tomorrowISO = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, '0')}-${String(tomorrow.getDate()).padStart(2, '0')}`;
+  const assignmentProgress = {
+    'active-user-plan': { completedSessionIds: ['already-done'] },
+    'pending-user-plan': { completedSessionIds: [] },
+  };
+  const visiblePlan = {
+    user_plan_id: 'active-user-plan',
+    plan_id: 'active-training-plan',
+    id: 'active-training-plan',
+    status: 'superseded',
+    effective_from: todayISO,
+    supersedes_user_plan_id: null,
+  };
+  const pendingPlan = {
+    user_plan_id: 'pending-user-plan',
+    plan_id: 'pending-training-plan',
+    id: 'pending-training-plan',
+    status: 'active',
+    effective_from: tomorrowISO,
+    supersedes_user_plan_id: 'active-user-plan',
+  };
   const tx = {
-    get: async (sql) => {
+    get: async (sql, params = []) => {
       if (sql.includes('SELECT run_days_per_week, preferred_workout_days FROM users')) {
         return {
           run_days_per_week: user.run_days_per_week,
           preferred_workout_days: user.preferred_workout_days,
         };
       }
-      if (sql.includes('SELECT id, progress_json FROM user_plans')) {
-        return { id: 'active-user-plan', progress_json: JSON.stringify(progress) };
+      if (sql.includes('FROM user_plans up')) {
+        const assignment = sql.includes('up.id=?') && params[0] === 'active-user-plan'
+          ? visiblePlan
+          : pendingPlan;
+        return {
+          ...assignment,
+          progress_json: JSON.stringify(assignmentProgress[assignment.user_plan_id]),
+        };
       }
       if (sql.includes('SELECT id, name, email, onboarded')) return { ...user };
       return null;
@@ -260,7 +290,7 @@ async function checkProfileReviewMarker() {
         return { changes: 1 };
       }
       if (sql.includes('UPDATE user_plans SET progress_json')) {
-        progress = JSON.parse(params[0]);
+        assignmentProgress[params[1]] = JSON.parse(params[0]);
         return { changes: 1 };
       }
       return { changes: 1 };
@@ -310,16 +340,22 @@ async function checkProfileReviewMarker() {
         run_days_per_week: 5,
         preferred_workout_days: ['Mon', 'Tue', 'Wed', 'Thu', 'Sat'],
       },
+      headers: { 'x-forged-local-date': todayISO },
       user: { id: user.id },
     });
 
     assert.equal(response.statusCode, 200);
     assert.equal(user.run_days_per_week, 5);
     assert.deepEqual(JSON.parse(user.preferred_workout_days), ['Mon', 'Tue', 'Wed', 'Thu', 'Sat']);
-    assert.deepEqual(progress.completedSessionIds, ['already-done']);
-    assert.equal(progress.planReviewRequired.reason, 'run_frequency_changed');
-    assert.equal(progress.planReviewRequired.previousRunDaysPerWeek, 3);
-    assert.equal(progress.planReviewRequired.requestedRunDaysPerWeek, 5);
+    assert.deepEqual(assignmentProgress['active-user-plan'].completedSessionIds, ['already-done']);
+    assert.equal(assignmentProgress['active-user-plan'].planReviewRequired.reason, 'run_frequency_changed');
+    assert.equal(assignmentProgress['active-user-plan'].planReviewRequired.previousRunDaysPerWeek, 3);
+    assert.equal(assignmentProgress['active-user-plan'].planReviewRequired.requestedRunDaysPerWeek, 5);
+    assert.equal(
+      assignmentProgress['pending-user-plan'].planReviewRequired.reason,
+      'run_frequency_changed',
+      'a pending replacement retains the review marker after its effective-date cutover'
+    );
   } finally {
     delete require.cache[authRoutePath];
     delete require.cache[authMiddlewarePath];

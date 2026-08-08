@@ -74,11 +74,6 @@ async function findDuplicateActivePlans(all = dbAll, userIds = []) {
 
 function orderAssignments(rows = []) {
   return [...rows].sort((left, right) => {
-    const version = Number(right.plan_version || 0) - Number(left.plan_version || 0);
-    if (version) return version;
-    const effective = String(right.effective_from || right.started_at || '')
-      .localeCompare(String(left.effective_from || left.started_at || ''));
-    if (effective) return effective;
     const created = String(right.created_at || '').localeCompare(String(left.created_at || ''));
     return created || String(right.id).localeCompare(String(left.id));
   });

@@ -20,10 +20,10 @@ async function run() {
   assert.deepEqual(queries[0].params, ['a']);
 
   const rows = [
-    { id: 'older', plan_version: 2, effective_from: '2026-08-01', created_at: '2026-08-01T12:00:00Z' },
-    { id: 'newer', plan_version: 3, effective_from: '2026-08-09', created_at: '2026-08-08T12:00:00Z' },
+    { id: 'older', plan_version: 9, effective_from: '2026-08-09', created_at: '2026-08-01T12:00:00Z' },
+    { id: 'newer', plan_version: 1, effective_from: '2026-08-01', created_at: '2026-08-08T12:00:00Z' },
   ];
-  assert.equal(repair.orderAssignments(rows)[0].id, 'newer');
+  assert.equal(repair.orderAssignments(rows)[0].id, 'newer', 'repair survivor ordering matches the active resolver created_at ordering');
 
   const writes = [];
   let lockedSelect = '';

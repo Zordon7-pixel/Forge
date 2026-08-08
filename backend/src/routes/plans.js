@@ -24,6 +24,7 @@ const { dateInTimezone, isIanaTimezone } = require('../lib/challengeRules');
 const { resolveRunSchedule } = require('../lib/runSchedule');
 const { buildBodyweightAlternative } = require('../lib/travelTraining');
 const { planningInputUnchanged } = require('../lib/planningRevision');
+const { localDateForOffset } = require('../lib/requestPlanningDate');
 const { buildRacePlanCandidate, semanticCandidateErrors } = require('../lib/racePlanCandidateEngine');
 const {
   RACE_PLAN_POLICY_V1,
@@ -1799,6 +1800,18 @@ function replacementLineageForActivePlan(active, fallbackUserPlanId) {
   };
 }
 
+function assertCandidatePlanningDateCurrent(row, now = new Date()) {
+  const currentLocalDate = localDateForOffset(now, row.timezone_offset_minutes);
+  if (currentLocalDate !== row.planning_date_local) {
+    throw candidateError(
+      409,
+      'CANDIDATE_PLANNING_DATE_CHANGED',
+      'Your local date changed. Preview the plan again before applying it.'
+    );
+  }
+  return currentLocalDate;
+}
+
 async function applyPlanCandidate(userId, candidateId, body = {}) {
   const choice = String(body.choice || '').trim();
   const suppliedHash = String(body.candidate_hash || '').trim();
@@ -1816,7 +1829,6 @@ async function applyPlanCandidate(userId, candidateId, body = {}) {
       'SELECT * FROM plan_generation_candidates WHERE id=? AND user_id=? FOR UPDATE',
       [candidateId, userId]
     );
-    await pruneExpiredPlanCandidates(tx, userId, { excludeCandidateId: row?.id || null });
     if (!row) return planningInputUnchanged({ status: 404, error: 'Candidate not found', code: 'CANDIDATE_NOT_FOUND' });
     if (row.status === 'applied') {
       if (row.applied_choice !== choice || row.candidate_hash !== suppliedHash) {
@@ -1829,6 +1841,8 @@ async function applyPlanCandidate(userId, candidateId, body = {}) {
     if (row.status !== 'preview') {
       return planningInputUnchanged({ status: 409, error: 'Candidate is no longer available.', code: 'CANDIDATE_UNAVAILABLE' });
     }
+    assertCandidatePlanningDateCurrent(row);
+    await pruneExpiredPlanCandidates(tx, userId, { excludeCandidateId: row.id });
     if (new Date(row.expires_at).getTime() <= Date.now()) {
       return planningInputUnchanged({ status: 409, error: 'Candidate expired. Preview again.', code: 'CANDIDATE_EXPIRED' });
     }
@@ -1889,6 +1903,8 @@ async function applyPlanCandidate(userId, candidateId, body = {}) {
       return planningInputUnchanged({ status: 409, error: 'Active plan changed. Preview again.', code: 'CANDIDATE_STALE' });
     }
 
+    // Recheck at the write boundary so a midnight cutover rolls back this transaction.
+    assertCandidatePlanningDateCurrent(row);
     const schedule = validatedPlan.schedulePreferences || {};
     if (schedule.runDaysSource === 'target' && schedule.trainingDaysSource === 'target') {
       const preferenceResult = await tx.run(
@@ -2934,7 +2950,7 @@ router.get('/my', auth, async (req, res) => {
        WHERE up.user_id=? AND up.lineage_id=? AND up.id<>?
        ORDER BY up.plan_version DESC
        LIMIT 8`,
-      [req.user.id, row.lineage_id, row.id]
+      [req.user.id, row.lineage_id, row.user_plan_id]
     ) : [];
     const lineageHistory = lineageRows.map((prior) => ({
       effective_from: prior.effective_from || prior.started_at || null,
@@ -2957,8 +2973,8 @@ router.get('/my', auth, async (req, res) => {
       },
       user_plan: {
         effective_from: row.effective_from || row.started_at,
-        id: row.id,
-        lineage_id: row.lineage_id || row.id,
+        id: row.user_plan_id,
+        lineage_id: row.lineage_id || row.user_plan_id,
         plan_version: Number(row.plan_version || 1),
         started_at: row.started_at,
         supersedes_user_plan_id: row.supersedes_user_plan_id || null,
@@ -3839,6 +3855,7 @@ router.post('/generate-for-race/:raceId', auth, requirePremium('Race Programs'),
 
 router._test = {
   applyPlanCandidate,
+  assertCandidatePlanningDateCurrent,
   candidateEffectiveFrom,
   getActivePlanForMutation,
   getActivePlanForUser,

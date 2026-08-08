@@ -175,6 +175,22 @@ async function run() {
     supersedesUserPlanId: null,
   }, 'legacy plans create a first assignment instead of superseding an undefined assignment');
 
+  assert.equal(
+    plansRouter._test.assertCandidatePlanningDateCurrent(
+      { planning_date_local: '2026-08-08', timezone_offset_minutes: 0 },
+      new Date('2026-08-08T23:59:59.000Z')
+    ),
+    '2026-08-08'
+  );
+  assert.throws(
+    () => plansRouter._test.assertCandidatePlanningDateCurrent(
+      { planning_date_local: '2026-08-08', timezone_offset_minutes: 0 },
+      new Date('2026-08-09T00:00:01.000Z')
+    ),
+    (error) => error?.code === 'CANDIDATE_PLANNING_DATE_CHANGED' && error?.status === 409,
+    'candidate application fails closed when the tester local date crosses midnight'
+  );
+
   const pruneCalls = [];
   await plansRouter._test.pruneExpiredPlanCandidates({
     run: async (sql, params) => {
@@ -197,8 +213,11 @@ async function run() {
   assert.match(source, /storedFeasibility === 'unsafe'[\s\S]*CANDIDATE_UNSAFE/);
   assert.match(source, /!\['supported', 'stretch'\]\.includes\(storedFeasibility\)[\s\S]*CANDIDATE_FEASIBILITY_MISSING/);
   assert.match(source, /includeFuture: true/);
+  const writeBoundaryGuard = source.lastIndexOf('assertCandidatePlanningDateCurrent(row);');
+  const firstPlanWrite = source.indexOf("'UPDATE users SET run_days_per_week=?", writeBoundaryGuard);
+  assert.ok(writeBoundaryGuard > 0 && firstPlanWrite > writeBoundaryGuard, 'the local-date guard runs inside apply immediately before plan writes');
 
-  console.log('PLAN CANDIDATE LIFECYCLE SMOKE OK (37)');
+  console.log('PLAN CANDIDATE LIFECYCLE SMOKE OK (40)');
 }
 
 run().catch((error) => {

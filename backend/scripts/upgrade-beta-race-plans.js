@@ -286,13 +286,12 @@ function assertSupportedCandidate(candidate) {
   }
 }
 
-async function verifyApply(context, result, expectedCandidateHash, now = new Date()) {
+async function verifyApply(context, result, expectedCandidateHash) {
   const payload = result?.payload || {};
   const expectedEffectiveFrom = addDays(context.clock.planningDateLocal, 1);
   if (result?.status !== 200) throw rolloutError('APPLY_RESPONSE_INVALID');
   if (payload.candidate_hash !== expectedCandidateHash) throw rolloutError('POST_APPLY_HASH_MISMATCH');
   if (payload.effective_from !== expectedEffectiveFrom) throw rolloutError('CUTOVER_INVALID');
-  assertPlanningDateStable(context, now);
   const rows = await dbAll(
     `SELECT id, plan_id, status, plan_version, lineage_id, supersedes_user_plan_id, effective_from
      FROM user_plans
@@ -427,7 +426,7 @@ async function run() {
         choice: 'train_for_target',
         planning_date_local: context.clock.planningDateLocal,
       });
-      const verified = await verifyApply(context, result, stored.candidateHash, new Date());
+      const verified = await verifyApply(context, result, stored.candidateHash);
       applied.push(verified);
       console.log(JSON.stringify({ mode: 'applied', ...verified }));
     } catch (err) {

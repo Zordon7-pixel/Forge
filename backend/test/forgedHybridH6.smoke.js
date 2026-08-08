@@ -30,7 +30,20 @@ async function run() {
       if (sql.includes('FROM training_plans WHERE user_id = ?')) return legacyRow ? { ...legacyRow } : null;
       return null;
     },
-    dbAll: async () => [],
+    dbAll: async (sql, params) => {
+      calls.push({ sql, params });
+      if (assignedRow && sql.includes('up.lineage_id=?') && params[2] !== assignedRow.user_plan_id) {
+        return [{
+          id: assignedRow.user_plan_id,
+          plan_id: assignedRow.plan_id,
+          plan_data: assignedRow.plan_data,
+          plan_version: assignedRow.plan_version,
+          progress_json: assignedRow.progress_json,
+          status: assignedRow.status,
+        }];
+      }
+      return [];
+    },
     dbRun: async () => { writeCount += 1; return { changes: 0 }; },
     withTransaction: async () => { writeCount += 1; throw new Error('GET /plans/my must not start a write transaction'); },
   };
@@ -63,8 +76,11 @@ async function run() {
     };
 
     assignedRow = {
-      id: 'assignment-h6',
+      id: 'catalog-plan-h6',
+      user_plan_id: 'assignment-h6',
       plan_id: 'catalog-plan-h6',
+      lineage_id: 'lineage-h6',
+      plan_version: 2,
       name: 'Assigned hybrid plan',
       type: 'hybrid',
       weeks: 2,
@@ -86,7 +102,9 @@ async function run() {
     let response = await invoke();
     assert(response.statusCode === 200 && response.payload?.plan?.id === 'catalog-plan-h6', 'assigned active plan remains authoritative');
     assert(response.payload?.user_plan?.id === 'assignment-h6' && response.payload?.user_plan?.current_week === 2, 'assigned progress contract is unchanged');
-    assert(calls.length === 1 && calls[0].params?.[0] === 'user-h6', 'assigned lookup is scoped to the authenticated user');
+    assert(response.payload?.lineage_history?.length === 0, 'the served assignment is excluded from its own lineage history');
+    assert(calls.length === 2 && calls.every((call) => call.params?.[0] === 'user-h6'), 'assigned and lineage lookups are scoped to the authenticated user');
+    assert(calls[1].params?.[2] === 'assignment-h6', 'lineage exclusion binds the user-plan assignment ID');
 
     assignedRow = null;
     legacyRow = {

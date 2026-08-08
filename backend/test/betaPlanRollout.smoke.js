@@ -199,6 +199,11 @@ function run() {
   );
   assert.match(scriptSource, /finally \{[\s\S]*replacePrivateJson\(resultFile, resultJournal\)/);
   assert.doesNotMatch(scriptSource, /(?:UPDATE|DELETE)\s+(?:users|user_plans|training_plans|race_events)/i);
+  assert.doesNotMatch(
+    String(rolloutScript.verifyApply),
+    /assertPlanningDateStable/,
+    'post-commit verification does not mislabel a successful apply when midnight follows the transaction'
+  );
 
   console.log('BETA PLAN ROLLOUT SMOKE OK');
 }

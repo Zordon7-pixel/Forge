@@ -1,6 +1,7 @@
 const planSchema = require('./planSchema');
 const { DAY_ORDER, normalizeTrainingDays } = require('./runSchedule');
 const { RACE_PLAN_POLICY_V1, addDays, canonicalHash } = require('./racePlanPolicy');
+const { localDateForOffset } = require('./requestPlanningDate');
 
 const MAX_PROTECTED_RACES = 2;
 const MIN_RACE_GAP_DAYS = 21;
@@ -138,14 +139,6 @@ function isCurrentRolloutPlan(activePlan = {}, raceIds = []) {
     && activePlan.invariantVersion === RACE_PLAN_POLICY_V1.invariantVersion
     && activeRaceIds.length === protectedRaceIds.length
     && activeRaceIds.every((id, index) => id === protectedRaceIds[index]);
-}
-
-function localDateForOffset(now, timezoneOffsetMinutes) {
-  const offset = Number(timezoneOffsetMinutes);
-  if (!Number.isFinite(offset) || offset < -840 || offset > 840) {
-    throw new Error('timezone offset must be between -840 and 840 minutes');
-  }
-  return new Date(new Date(now).getTime() - offset * 60000).toISOString().slice(0, 10);
 }
 
 function assertApplyAuthorized({ apply, confirmation, betaAccessEnabled }) {

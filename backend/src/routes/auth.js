@@ -27,6 +27,8 @@ const { runActivitySql } = require('../lib/runActivity');
 const { cleanupOwnedSocialChallenges } = require('../lib/challengeOwnership');
 const { aiUsageWindows, resolveEntitlement } = require('../lib/betaAccess');
 const { normalizeTrainingDays } = require('../lib/runSchedule');
+const { resolveAssignedPlanForDate } = require('../lib/planAssignmentLifecycle');
+const { requestPlanningDate } = require('../lib/requestPlanningDate');
 
 const sign = (user) => jwt.sign(
   { id: user.id, name: user.name, email: user.email, onboarded: user.onboarded, coach_personality: user.coach_personality },
@@ -35,6 +37,23 @@ const sign = (user) => jwt.sign(
 );
 
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+async function storePlanReviewRequired(tx, userId, assignment, reviewRequired) {
+  const assignmentId = String(assignment?.user_plan_id || '').trim();
+  if (!assignmentId) return;
+  let progress = {};
+  try {
+    progress = JSON.parse(assignment.progress_json || '{}');
+  } catch (err) {
+    console.error('[auth/profile] invalid assigned plan progress JSON:', err.message);
+  }
+  progress.planReviewRequired = reviewRequired;
+  const result = await tx.run(
+    'UPDATE user_plans SET progress_json=? WHERE id=? AND user_id=?',
+    [JSON.stringify(progress), assignmentId, userId]
+  );
+  if (result.changes !== 1) throw new Error('Assigned plan review marker update failed');
+}
 
 const forgotPasswordResponses = {
   emailSent: {
@@ -331,27 +350,25 @@ router.put('/me/profile', auth, async (req, res) => {
           requestedWeekdayCount: hasPreferredDays ? normalizedPreferredDays.length : previousPreferredDays.length,
           changedAt: new Date().toISOString(),
         };
-        const activePlan = await tx.get(
-          `SELECT id, progress_json FROM user_plans
-           WHERE user_id=? AND status='active'
-           ORDER BY created_at DESC LIMIT 1
+        const pendingPlan = await tx.get(
+          `SELECT up.id AS user_plan_id, up.progress_json
+           FROM user_plans up
+           WHERE up.user_id=? AND up.status='active'
+           ORDER BY up.created_at DESC LIMIT 1
            FOR UPDATE`,
           [req.user.id]
         );
-        if (activePlan) {
-          let progress = {};
-          try {
-            progress = JSON.parse(activePlan.progress_json || '{}');
-          } catch (err) {
-            console.error('[auth/profile] invalid active plan progress JSON:', err.message);
+        const visiblePlan = await resolveAssignedPlanForDate(req.user.id, tx.get.bind(tx), {
+          planningDateLocal: requestPlanningDate(req),
+        });
+        const assignments = new Map();
+        [visiblePlan, pendingPlan].filter(Boolean).forEach((assignment) => {
+          assignments.set(String(assignment.user_plan_id), assignment);
+        });
+        if (assignments.size) {
+          for (const assignment of assignments.values()) {
+            await storePlanReviewRequired(tx, req.user.id, assignment, reviewRequired);
           }
-          progress.planReviewRequired = reviewRequired;
-          const reviewResult = await tx.run(
-            `UPDATE user_plans SET progress_json=?
-             WHERE id=? AND user_id=? AND status='active'`,
-            [JSON.stringify(progress), activePlan.id, req.user.id]
-          );
-          if (reviewResult.changes !== 1) throw new Error('Active plan review marker update failed');
         } else {
           const legacyPlan = await tx.get(
             `SELECT id, plan_json, plan_data FROM training_plans
