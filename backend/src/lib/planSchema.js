@@ -55,6 +55,30 @@ function stripUndefined(obj) {
   return out;
 }
 
+const SESSION_FIELD_DENYLIST = new Set([
+  'access_token',
+  'api_key',
+  'auth_token',
+  'authorization',
+  'password',
+  'password_hash',
+  'refresh_token',
+  'response_state',
+  'secret',
+  'transient_response_state',
+]);
+
+function cloneCanonicalValue(value) {
+  if (Array.isArray(value)) return value.map(cloneCanonicalValue);
+  if (!value || typeof value !== 'object') return value;
+  return Object.keys(value).reduce((result, key) => {
+    if (!SESSION_FIELD_DENYLIST.has(String(key).toLowerCase()) && value[key] !== undefined) {
+      result[key] = cloneCanonicalValue(value[key]);
+    }
+    return result;
+  }, {});
+}
+
 function kindFromLegacy(entry) {
   const e = entry || {};
   const t = String(e.workout_type || e.type || '').toLowerCase();
@@ -107,14 +131,17 @@ function normalizeSession(session, fallbackId) {
   const s = session || {};
   const kind = kindFromSession(s);
   const prescription = s.prescription && typeof s.prescription === 'object' ? s.prescription : null;
-  const flat = prescription ? Object.assign({}, prescription) : {};
+  const preserved = cloneCanonicalValue(s);
+  const flat = prescription ? cloneCanonicalValue(prescription) : {};
   const id = s.id !== undefined && s.id !== null && String(s.id).length
     ? String(s.id)
     : fallbackId;
   return Object.assign(
+    {},
+    flat,
+    preserved,
     { kind },
     id ? { id } : {},
-    flat,
     stripUndefined({
       type: s.type,
       workout_type: s.workout_type,

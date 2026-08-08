@@ -4,6 +4,18 @@ const {
   buildConcurrentPlan,
   validateConcurrentPlan,
 } = require('../src/lib/concurrentPlan');
+const planSchema = require('../src/lib/planSchema');
+const trainingEvidence = require('../src/lib/trainingEvidence');
+const {
+  RACE_PLAN_POLICY_V1,
+  acceptPlanningClock,
+  canonicalHash,
+  firstFullMonday,
+  longRunIdentityFloor,
+  peakLongRunDemand,
+  requiredPeakWeeklyMiles,
+  taperWeeksForDistance,
+} = require('../src/lib/racePlanPolicy');
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -72,7 +84,67 @@ if (process.argv.includes('--semantic-acceptance')) {
     assert.equal(Array.isArray(generated.weeks), true, `${name} fixture should generate weeks`);
   }
 
-  console.log('RACE PLAN QUALITY CHARACTERIZATION OK (5 variants + exact regression)');
+  const canonicalSession = {
+    id: 'session-round-trip',
+    kind: 'run',
+    type: 'quality',
+    workout_type: 'run',
+    workout_id: 'race_pace_intervals',
+    workout_family: 'race_pace',
+    goal_pace_seconds_per_mile: 540,
+    goal_pace_label: '9:00/mi',
+    quality_prescription: {
+      repetitions: 3,
+      work: { duration_seconds: 480, pace_source: 'race' },
+      recovery: { duration_seconds: 180, pace_source: 'easy' },
+    },
+    prescription: {
+      warmup: [{ kind: 'run', duration_seconds: 720, pace_source: 'easy' }],
+      segments: [{ kind: 'work', repeats: 3, duration_seconds: 480, pace_source: 'race' }],
+      cooldown: [{ kind: 'run', duration_seconds: 600, pace_source: 'easy' }],
+    },
+    distance_miles: 6.2,
+    duration_min: 64,
+    distance_is_estimate: false,
+    durationIsEstimated: false,
+    anchorState: 'anchored',
+    purpose: 'Practice goal pace under control.',
+    evidence_refs: ['elite_periodization'],
+    reason_codes: ['PACE_EQUIVALENCY_USED'],
+    safety_annotations: [{ code: 'LOWER_BODY_SEPARATION', active: true }],
+    completion_ref: 'completion-1',
+    future_engine_field: { nested: ['preserved'] },
+    access_token: 'must-not-survive',
+  };
+  const normalizedOnce = planSchema.normalizeSession(canonicalSession);
+  const normalizedTwice = planSchema.normalizeSession(JSON.parse(JSON.stringify(normalizedOnce)));
+  assert.deepEqual(normalizedTwice, normalizedOnce, 'canonical session normalization must be lossless and stable');
+  assert.deepEqual(normalizedOnce.future_engine_field, { nested: ['preserved'] });
+  assert.equal(Object.hasOwn(normalizedOnce, 'access_token'), false, 'explicit secret denylist must be enforced');
+
+  assert.equal(Object.isFrozen(RACE_PLAN_POLICY_V1), true);
+  assert.equal(taperWeeksForDistance(6.214), 1);
+  assert.equal(taperWeeksForDistance(13.109), 2);
+  assert.equal(taperWeeksForDistance(26.219), 3);
+  assert.equal(longRunIdentityFloor(10), 5);
+  assert.equal(peakLongRunDemand(13.109, 'pr'), 10);
+  assert.equal(requiredPeakWeeklyMiles(13.109, 'pr'), 22.5);
+  assert.equal(firstFullMonday('2026-08-07', []), '2026-08-10');
+  assert.equal(firstFullMonday('2026-08-09', []), '2026-08-10');
+  assert.equal(firstFullMonday('2026-08-10', []), '2026-08-10');
+  assert.equal(firstFullMonday('2026-08-10', ['2026-08-10']), '2026-08-17');
+  assert.deepEqual(
+    acceptPlanningClock({ planningDateLocal: '2026-08-07', timezoneOffsetMinutes: 840 }, '2026-08-08'),
+    { valid: true, planningDateLocal: '2026-08-07', timezoneOffsetMinutes: 840 }
+  );
+  assert.deepEqual(
+    acceptPlanningClock({ planningDateLocal: '2026-08-09', timezoneOffsetMinutes: -840 }, '2026-08-08'),
+    { valid: true, planningDateLocal: '2026-08-09', timezoneOffsetMinutes: -840 }
+  );
+  assert.equal(canonicalHash({ b: 2, a: 1 }), canonicalHash({ a: 1, b: 2 }));
+  assert.deepEqual(trainingEvidence.validateRegistry(), { valid: true, errors: [] });
+
+  console.log('RACE PLAN QUALITY CHARACTERIZATION OK (5 variants + exact regression + P1 policy/schema)');
 }
 
 module.exports = { semanticLongRunErrors };

@@ -2,6 +2,12 @@
 // A source never changes production dosage without qualified reviewer approval.
 
 const ACCESSED_ON = '2026-08-06';
+const RACE_PLAN_POLICY_REVIEW = Object.freeze({
+  policyVersion: 'race-plan-policy-v1',
+  reviewer: 'Forged Hybrid product safety review',
+  reviewedOn: '2026-08-07',
+  status: 'approved_for_deterministic_product_rules',
+});
 
 function deepFreeze(value) {
   if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
@@ -42,6 +48,7 @@ const SOURCES = Object.freeze({
     dosageBounds: { lowIntensityShare: 'Most weekly running; never inferred from a single workout.' },
     contraindications: ['Do not convert an incomplete heart-rate timeline into intensity distribution.', 'Do not copy elite volume.'],
     principle: 'Keep most running low intensity and use a smaller dose of threshold or high-intensity work.',
+    reviewedProductionRules: [{ ...RACE_PLAN_POLICY_REVIEW, ruleIds: ['quality_exposure', 'demanding_session_spacing'] }],
   }),
   elite_periodization: source({
     id: 'elite_periodization',
@@ -62,6 +69,7 @@ const SOURCES = Object.freeze({
     dosageBounds: { transferRule: 'Principles only; scale frequency and volume to the athlete history.' },
     contraindications: ['Elite frequency and volume cannot be copied into a recreational plan.'],
     principle: 'Use hard-day/easy-day structure and progress from general aerobic work toward race-specific training.',
+    reviewedProductionRules: [{ ...RACE_PLAN_POLICY_REVIEW, ruleIds: ['calendar_phases', 'race_specific_exposure'] }],
   }),
   interval_programming: source({
     id: 'interval_programming',
@@ -82,6 +90,7 @@ const SOURCES = Object.freeze({
     dosageBounds: { transferRule: 'Use the minimum effective interval dose and scale by training status.' },
     contraindications: ['Do not prescribe sprint-interval work to comeback athletes as a default.', 'More interval volume is not automatically better.'],
     principle: 'Use repeatable interval work scaled to training status; increasing dose beyond minimum requirements may not add benefit.',
+    reviewedProductionRules: [{ ...RACE_PLAN_POLICY_REVIEW, ruleIds: ['quality_exposure', 'checkpoint_placement'] }],
   }),
   taper_meta_analysis: source({
     id: 'taper_meta_analysis',
@@ -102,6 +111,7 @@ const SOURCES = Object.freeze({
     dosageBounds: { duration: 'Up to 21 days', volumeReduction: 'Progressive reduction; exact dose remains a reviewed product rule.' },
     contraindications: ['Do not remove all intensity during taper.', 'Do not use the registry entry as an athlete-specific dosage calculator.'],
     principle: 'Reduce volume before the race while retaining a small dose of familiar intensity and normal frequency when recovery permits.',
+    reviewedProductionRules: [{ ...RACE_PLAN_POLICY_REVIEW, ruleIds: ['taper_weeks', 'taper_exposure'] }],
   }),
   ten_mile_time_plan: source({
     id: 'ten_mile_time_plan',
@@ -249,6 +259,16 @@ function validateRegistry() {
     if (record.executable || record.productionRuleApproved || record.qualifiedReviewer) {
       errors.push(`${key} cannot execute without qualified review`);
     }
+    for (const review of record.reviewedProductionRules || []) {
+      if (review.policyVersion !== RACE_PLAN_POLICY_REVIEW.policyVersion
+        || review.status !== RACE_PLAN_POLICY_REVIEW.status
+        || !String(review.reviewer || '').trim()
+        || !/^\d{4}-\d{2}-\d{2}$/.test(String(review.reviewedOn || ''))
+        || !Array.isArray(review.ruleIds)
+        || review.ruleIds.length === 0) {
+        errors.push(`${key}.reviewedProductionRules contains invalid governance metadata`);
+      }
+    }
   });
   Object.entries(RUN_REFS).forEach(([workoutId, refs]) => {
     refs.forEach((ref) => {
@@ -259,6 +279,7 @@ function validateRegistry() {
 }
 
 module.exports = {
+  RACE_PLAN_POLICY_REVIEW,
   SOURCES,
   RUN_REFS,
   sourceForId,
