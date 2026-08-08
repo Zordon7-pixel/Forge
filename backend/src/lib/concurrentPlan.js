@@ -876,9 +876,10 @@ function rebuildCanonicalRunSession({
   phase,
   context = {},
   reasonCodes = [],
+  workoutId: requestedWorkoutId = null,
 }) {
   const history = context.history || {};
-  const workoutId = runWorkoutTaxonomy.workoutIdForSession(type, {
+  const workoutId = requestedWorkoutId || runWorkoutTaxonomy.workoutIdForSession(type, {
     phase,
     weekNumber,
     weekCount,
@@ -897,7 +898,11 @@ function rebuildCanonicalRunSession({
     hilly: false,
     raceName: null,
     history,
-    goalPaceContext: null,
+    goalPaceContext: session?.goal_pace_seconds_per_mile ? {
+      targetPaceSecondsPerMile: Number(session.goal_pace_seconds_per_mile),
+      targetPaceLabel: session.goal_pace_label || null,
+      status: session.goal_pace_status || null,
+    } : null,
     durationIsEstimated: true,
   });
   return {
@@ -2177,6 +2182,7 @@ module.exports = {
   formatPaceLabel,
   buildGoalPaceContext,
   buildRunPerformanceProfile,
+  buildBenchmarkRunSession,
   rebuildCanonicalRunSession,
   equivalentTimeSeconds,
   STANDARD_PERFORMANCE_DISTANCES,
