@@ -1,0 +1,70 @@
+{
+  "todayISO": "2026-08-07",
+  "profile": {
+    "weekly_miles_current": 16,
+    "run_days_per_week": 4,
+    "lift_days_per_week": 0
+  },
+  "target": {
+    "raceId": "ten",
+    "raceName": "Ten",
+    "raceDate": "2026-10-11",
+    "distanceMiles": 10,
+    "goalType": "pr",
+    "goalTimeSeconds": 5220,
+    "raceTargets": [
+      {
+        "raceId": "half",
+        "raceName": "Half",
+        "raceDate": "2026-09-20",
+        "distanceMiles": 13.109,
+        "goalType": "pr",
+        "goalTimeSeconds": 7200
+      },
+      {
+        "raceId": "ten",
+        "raceName": "Ten",
+        "raceDate": "2026-10-11",
+        "distanceMiles": 10,
+        "goalType": "pr",
+        "goalTimeSeconds": 5220
+      }
+    ],
+    "weeks": 10,
+    "startDate": "2026-08-03",
+    "planMode": "run_only",
+    "trainingDays": ["Mon", "Thu", "Fri", "Sun"],
+    "runDaysPerWeek": 4,
+    "liftDaysPerWeek": 0
+  },
+  "history": {
+    "weeklyMileageBaseline": 16,
+    "recentRunCount": 12,
+    "recentLiftCount": 0,
+    "performanceProfile": {
+      "targetAnchor": {
+        "equivalentTimeSeconds": 5400,
+        "equivalentPaceSecondsPerMile": 540,
+        "date": "2026-07-20",
+        "kind": "race"
+      }
+    },
+    "acuteRunLoad": {
+      "available": true,
+      "protection": { "active": false },
+      "currentWeek": {
+        "startDate": "2026-08-03",
+        "runCount": 2,
+        "runDates": ["2026-08-03", "2026-08-06"],
+        "miles": 13.8,
+        "longRunCompleted": false
+      },
+      "latestRun": {
+        "date": "2026-08-06",
+        "distanceMiles": 3,
+        "paceSecondsPerMile": 600
+      }
+    }
+  },
+  "recovery": { "state": "normal", "available": true, "metrics": {} }
+}
