@@ -4,7 +4,78 @@ const path = require('path');
 const { seedRaceCatalog } = require('./race-catalog-seed');
 const { seedShoeCatalog } = require('./shoe-catalog-seed');
 
+async function ensureUniqueActiveUserPlanIndex(query = pg.query) {
+  const duplicateResult = await query(`
+    SELECT user_id, COUNT(*)::int AS active_count
+    FROM user_plans
+    WHERE status = 'active'
+    GROUP BY user_id
+    HAVING COUNT(*) > 1
+    ORDER BY user_id
+  `);
+  const duplicates = duplicateResult.rows || [];
+  if (duplicates.length) {
+    const summary = duplicates.map((row) => `${row.user_id}:${row.active_count}`).join(', ');
+    const err = new Error(`Duplicate active user plans require owner-scoped repair before migration: ${summary}`);
+    err.code = 'DUPLICATE_ACTIVE_USER_PLANS';
+    err.duplicates = duplicates;
+    throw err;
+  }
+  await query("CREATE UNIQUE INDEX IF NOT EXISTS idx_user_plans_one_active_per_user ON user_plans(user_id) WHERE status='active'");
+}
+
 async function runAlwaysMigrations() {
+  await pg.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS planning_input_revision BIGINT NOT NULL DEFAULT 0');
+  await pg.query('ALTER TABLE user_plans ADD COLUMN IF NOT EXISTS plan_version BIGINT NOT NULL DEFAULT 1');
+  await pg.query('ALTER TABLE user_plans ADD COLUMN IF NOT EXISTS lineage_id TEXT');
+  await pg.query('ALTER TABLE user_plans ADD COLUMN IF NOT EXISTS supersedes_user_plan_id TEXT');
+  await pg.query('ALTER TABLE user_plans ADD COLUMN IF NOT EXISTS effective_from TEXT');
+  await pg.query('UPDATE user_plans SET lineage_id=id WHERE lineage_id IS NULL');
+  await pg.query('UPDATE user_plans SET effective_from=started_at WHERE effective_from IS NULL');
+  await ensureUniqueActiveUserPlanIndex();
+  await pg.query(`
+    CREATE TABLE IF NOT EXISTS plan_generation_candidates (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      status TEXT NOT NULL DEFAULT 'preview' CHECK (status IN ('preview', 'applied', 'expired', 'superseded')),
+      training_plan_id TEXT,
+      user_plan_id TEXT,
+      active_plan_version BIGINT,
+      planning_input_revision BIGINT NOT NULL,
+      planning_date_local TEXT NOT NULL,
+      timezone_offset_minutes INTEGER NOT NULL,
+      input_hash TEXT NOT NULL,
+      candidate_hash TEXT NOT NULL,
+      engine_version TEXT NOT NULL,
+      policy_version TEXT NOT NULL,
+      invariant_version TEXT NOT NULL,
+      planning_snapshot_json JSONB NOT NULL,
+      candidate_plan_json JSONB NOT NULL,
+      generation_trace_json JSONB NOT NULL,
+      applied_choice TEXT,
+      applied_training_plan_id TEXT,
+      applied_user_plan_id TEXT,
+      replay_result_json JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      expires_at TIMESTAMPTZ NOT NULL,
+      applied_at TIMESTAMPTZ
+    )
+  `);
+  await pg.query('CREATE INDEX IF NOT EXISTS idx_plan_candidates_user_status_expiry ON plan_generation_candidates(user_id, status, expires_at)');
+  await pg.query(`
+    CREATE TABLE IF NOT EXISTS diagnostic_access_audit (
+      id TEXT PRIMARY KEY,
+      actor_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      target_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      training_plan_id TEXT,
+      user_plan_id TEXT,
+      candidate_id TEXT,
+      action TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pg.query('CREATE INDEX IF NOT EXISTS idx_diagnostic_access_audit_created ON diagnostic_access_audit(created_at)');
+  await pg.query('CREATE INDEX IF NOT EXISTS idx_diagnostic_access_audit_target ON diagnostic_access_audit(target_user_id, created_at DESC)');
   await pg.query(`
     CREATE TABLE IF NOT EXISTS activity_import_claims (
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -518,4 +589,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { runMigrations, runAlwaysMigrations };
+module.exports = { ensureUniqueActiveUserPlanIndex, runMigrations, runAlwaysMigrations };

@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS users (
   friend_handle TEXT,
   friend_discoverable INTEGER DEFAULT 0,
   contact_discoverable INTEGER DEFAULT 0,
+  planning_input_revision BIGINT NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -404,8 +405,61 @@ CREATE TABLE IF NOT EXISTS user_plans (
   current_week INTEGER DEFAULT 1,
   status TEXT DEFAULT 'active',
   created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-  progress_json TEXT DEFAULT '{}'
+  progress_json TEXT DEFAULT '{}',
+  plan_version BIGINT NOT NULL DEFAULT 1,
+  lineage_id TEXT,
+  supersedes_user_plan_id TEXT,
+  effective_from TEXT
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_plans_one_active_per_user
+  ON user_plans(user_id) WHERE status='active';
+
+CREATE TABLE IF NOT EXISTS plan_generation_candidates (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'preview' CHECK (status IN ('preview', 'applied', 'expired', 'superseded')),
+  training_plan_id TEXT,
+  user_plan_id TEXT,
+  active_plan_version BIGINT,
+  planning_input_revision BIGINT NOT NULL,
+  planning_date_local TEXT NOT NULL,
+  timezone_offset_minutes INTEGER NOT NULL,
+  input_hash TEXT NOT NULL,
+  candidate_hash TEXT NOT NULL,
+  engine_version TEXT NOT NULL,
+  policy_version TEXT NOT NULL,
+  invariant_version TEXT NOT NULL,
+  planning_snapshot_json JSONB NOT NULL,
+  candidate_plan_json JSONB NOT NULL,
+  generation_trace_json JSONB NOT NULL,
+  applied_choice TEXT,
+  applied_training_plan_id TEXT,
+  applied_user_plan_id TEXT,
+  replay_result_json JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  expires_at TIMESTAMPTZ NOT NULL,
+  applied_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_plan_candidates_user_status_expiry
+  ON plan_generation_candidates(user_id, status, expires_at);
+
+CREATE TABLE IF NOT EXISTS diagnostic_access_audit (
+  id TEXT PRIMARY KEY,
+  actor_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  target_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  training_plan_id TEXT,
+  user_plan_id TEXT,
+  candidate_id TEXT,
+  action TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_diagnostic_access_audit_created
+  ON diagnostic_access_audit(created_at);
+CREATE INDEX IF NOT EXISTS idx_diagnostic_access_audit_target
+  ON diagnostic_access_audit(target_user_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS watch_sync (
   id TEXT PRIMARY KEY,

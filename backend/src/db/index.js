@@ -1,5 +1,6 @@
 const { Pool, types } = require('pg');
 const { AsyncLocalStorage } = require('node:async_hooks');
+const { createPlanningInputMutationRunner } = require('../lib/planningRevision');
 
 // Parse int8 (bigint) as JavaScript integer — COUNT(*) returns int8 in PG
 types.setTypeParser(20, parseInt);
@@ -144,6 +145,8 @@ async function withUserMutation(userId, fn) {
   });
 }
 
+const withPlanningInputMutation = createPlanningInputMutationRunner(withUserMutation);
+
 async function initDb() {
   const client = await pool.connect();
   try {
@@ -194,6 +197,7 @@ async function initDb() {
         stripe_subscription_id TEXT,
         subscription_status TEXT DEFAULT 'free',
         subscription_ends_at TEXT,
+        planning_input_revision BIGINT NOT NULL DEFAULT 0,
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
     `);
@@ -229,6 +233,7 @@ async function initDb() {
       'ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_subscription_id TEXT',
       "ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_status TEXT DEFAULT 'free'",
       'ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_ends_at TEXT',
+      'ALTER TABLE users ADD COLUMN IF NOT EXISTS planning_input_revision BIGINT NOT NULL DEFAULT 0',
       "ALTER TABLE users ADD COLUMN IF NOT EXISTS fitness_level TEXT DEFAULT 'beginner'",
       'ALTER TABLE users ADD COLUMN IF NOT EXISTS current_streak INTEGER DEFAULT 0',
       'ALTER TABLE users ADD COLUMN IF NOT EXISTS longest_streak INTEGER DEFAULT 0',
@@ -470,9 +475,65 @@ async function initDb() {
         current_week INTEGER DEFAULT 1,
         status TEXT DEFAULT 'active',
         created_at TIMESTAMPTZ DEFAULT NOW(),
-        progress_json TEXT DEFAULT '{}'
+        progress_json TEXT DEFAULT '{}',
+        plan_version BIGINT NOT NULL DEFAULT 1,
+        lineage_id TEXT,
+        supersedes_user_plan_id TEXT,
+        effective_from TEXT
       );
     `);
+    await client.query('ALTER TABLE user_plans ADD COLUMN IF NOT EXISTS plan_version BIGINT NOT NULL DEFAULT 1');
+    await client.query('ALTER TABLE user_plans ADD COLUMN IF NOT EXISTS lineage_id TEXT');
+    await client.query('ALTER TABLE user_plans ADD COLUMN IF NOT EXISTS supersedes_user_plan_id TEXT');
+    await client.query('ALTER TABLE user_plans ADD COLUMN IF NOT EXISTS effective_from TEXT');
+    await client.query('UPDATE user_plans SET lineage_id=id WHERE lineage_id IS NULL');
+    await client.query('UPDATE user_plans SET effective_from=started_at WHERE effective_from IS NULL');
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS plan_generation_candidates (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        status TEXT NOT NULL DEFAULT 'preview',
+        training_plan_id TEXT,
+        user_plan_id TEXT,
+        active_plan_version BIGINT,
+        planning_input_revision BIGINT NOT NULL,
+        planning_date_local TEXT NOT NULL,
+        timezone_offset_minutes INTEGER NOT NULL,
+        input_hash TEXT NOT NULL,
+        candidate_hash TEXT NOT NULL,
+        engine_version TEXT NOT NULL,
+        policy_version TEXT NOT NULL,
+        invariant_version TEXT NOT NULL,
+        planning_snapshot_json JSONB NOT NULL,
+        candidate_plan_json JSONB NOT NULL,
+        generation_trace_json JSONB NOT NULL,
+        applied_choice TEXT,
+        applied_training_plan_id TEXT,
+        applied_user_plan_id TEXT,
+        replay_result_json JSONB,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        expires_at TIMESTAMPTZ NOT NULL,
+        applied_at TIMESTAMPTZ,
+        CHECK (status IN ('preview', 'applied', 'expired', 'superseded'))
+      );
+    `);
+    await client.query('CREATE INDEX IF NOT EXISTS idx_plan_candidates_user_status_expiry ON plan_generation_candidates(user_id, status, expires_at)');
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS diagnostic_access_audit (
+        id TEXT PRIMARY KEY,
+        actor_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+        target_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+        training_plan_id TEXT,
+        user_plan_id TEXT,
+        candidate_id TEXT,
+        action TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+    await client.query('CREATE INDEX IF NOT EXISTS idx_diagnostic_access_audit_created ON diagnostic_access_audit(created_at)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_diagnostic_access_audit_target ON diagnostic_access_audit(target_user_id, created_at DESC)');
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS ai_usage (
@@ -1447,6 +1508,7 @@ module.exports = {
   runWithUserContext,
   withTransaction,
   withUserMutation,
+  withPlanningInputMutation,
   initDb,
   _test: { lockAuthenticatedUser, lockUserRows },
 };
