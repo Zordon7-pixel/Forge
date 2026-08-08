@@ -1,10 +1,11 @@
 const router = require('express').Router();
 const multer = require('multer');
 const rateLimit = require('express-rate-limit');
-const { dbGet, dbAll, dbRun } = require('../db');
+const { dbGet, dbAll, withPlanningInputMutation } = require('../db');
 const auth = require('../middleware/auth');
 const { v4: uuidv4 } = require('uuid');
 const raceCourse = require('../lib/raceCourse');
+const { planningInputUnchanged } = require('../lib/planningRevision');
 
 // GPX uploads are held in memory only; raw coordinates are never persisted.
 const gpxUpload = multer({
@@ -218,19 +219,20 @@ router.post('/', auth, async (req, res) => {
     }
 
     const id = uuidv4();
-    await dbRun(
-      `INSERT INTO race_events (
-        id, user_id, race_name, race_date, distance_miles, location, goal_time_seconds, status, notes,
-        elevation_gain_ft, max_altitude_ft, terrain, course_profile_json, source, url
-      )
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      [
-        id, req.user.id, race_name, race_date, distance, location, goalTimeSeconds, status, notes,
-        course.elevation_gain_ft, course.max_altitude_ft, course.terrain, course.course_profile_json, course.source, course.url,
-      ]
-    );
-
-    const race = await dbGet('SELECT * FROM race_events WHERE id=? AND user_id=?', [id, req.user.id]);
+    const race = await withPlanningInputMutation(req.user.id, async (tx) => {
+      await tx.run(
+        `INSERT INTO race_events (
+          id, user_id, race_name, race_date, distance_miles, location, goal_time_seconds, status, notes,
+          elevation_gain_ft, max_altitude_ft, terrain, course_profile_json, source, url
+        )
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        [
+          id, req.user.id, race_name, race_date, distance, location, goalTimeSeconds, status, notes,
+          course.elevation_gain_ft, course.max_altitude_ft, course.terrain, course.course_profile_json, course.source, course.url,
+        ]
+      );
+      return tx.get('SELECT * FROM race_events WHERE id=? AND user_id=?', [id, req.user.id]);
+    });
     res.status(201).json({ race: withCourseIntelligence(race) });
   } catch (err) {
     console.error('[races/create] failed:', err.message);
@@ -249,69 +251,74 @@ router.post('/from-catalog/:catalogId', auth, async (req, res) => {
     if (!catalogRace) return res.status(404).json({ error: 'Catalog race not found' });
 
     const canonical = catalogRaceFields(catalogRace);
-    const candidates = await dbAll(
-      `SELECT * FROM race_events
-       WHERE user_id=? AND race_date=? AND distance_miles=?
-       ORDER BY created_at ASC, id ASC`,
-      [req.user.id, canonical.race_date, canonical.distance_miles]
-    );
-    const existingRace = candidates.find((race) => isSameCatalogEdition(race, catalogRace));
+    const mutation = await withPlanningInputMutation(req.user.id, async (tx) => {
+      const candidates = await tx.all(
+        `SELECT * FROM race_events
+         WHERE user_id=? AND race_date=? AND distance_miles=?
+         ORDER BY created_at ASC, id ASC
+         FOR UPDATE`,
+        [req.user.id, canonical.race_date, canonical.distance_miles]
+      );
+      const existingRace = candidates.find((race) => isSameCatalogEdition(race, catalogRace));
 
-    if (existingRace) {
-      const goalTimeSeconds = hasGoalTime ? requestedGoalTime : (existingRace.goal_time_seconds ?? null);
-      await dbRun(
-        `UPDATE race_events
-         SET race_name=?, race_date=?, distance_miles=?, location=?, goal_time_seconds=?,
-             elevation_gain_ft=?, max_altitude_ft=?, terrain=?, course_profile_json=?, source=?, url=?
-         WHERE id=? AND user_id=?`,
+      if (existingRace) {
+        const goalTimeSeconds = hasGoalTime ? requestedGoalTime : (existingRace.goal_time_seconds ?? null);
+        await tx.run(
+          `UPDATE race_events
+           SET race_name=?, race_date=?, distance_miles=?, location=?, goal_time_seconds=?,
+               elevation_gain_ft=?, max_altitude_ft=?, terrain=?, course_profile_json=?, source=?, url=?
+           WHERE id=? AND user_id=?`,
+          [
+            canonical.race_name,
+            canonical.race_date,
+            canonical.distance_miles,
+            canonical.location,
+            goalTimeSeconds,
+            canonical.elevation_gain_ft,
+            canonical.max_altitude_ft,
+            canonical.terrain,
+            canonical.course_profile_json,
+            canonical.source,
+            canonical.url,
+            existingRace.id,
+            req.user.id,
+          ]
+        );
+        const refreshed = await tx.get('SELECT * FROM race_events WHERE id=? AND user_id=?', [existingRace.id, req.user.id]);
+        return { race: refreshed, existing: true };
+      }
+
+      const id = uuidv4();
+      await tx.run(
+        `INSERT INTO race_events (
+          id, user_id, race_name, race_date, distance_miles, location, goal_time_seconds, status,
+          elevation_gain_ft, max_altitude_ft, terrain, course_profile_json, source, url
+         )
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
+          id,
+          req.user.id,
           canonical.race_name,
           canonical.race_date,
           canonical.distance_miles,
           canonical.location,
-          goalTimeSeconds,
+          requestedGoalTime,
+          'upcoming',
           canonical.elevation_gain_ft,
           canonical.max_altitude_ft,
           canonical.terrain,
           canonical.course_profile_json,
           canonical.source,
-          canonical.url,
-          existingRace.id,
-          req.user.id,
+          canonical.url
         ]
       );
-      const refreshed = await dbGet('SELECT * FROM race_events WHERE id=? AND user_id=?', [existingRace.id, req.user.id]);
-      return res.json({ race: withCourseIntelligence(refreshed), existing: true });
-    }
-
-    const id = uuidv4();
-
-    await dbRun(
-      `INSERT INTO race_events (
-        id, user_id, race_name, race_date, distance_miles, location, goal_time_seconds, status,
-        elevation_gain_ft, max_altitude_ft, terrain, course_profile_json, source, url
-       )
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      [
-        id,
-        req.user.id,
-        canonical.race_name,
-        canonical.race_date,
-        canonical.distance_miles,
-        canonical.location,
-        requestedGoalTime,
-        'upcoming',
-        canonical.elevation_gain_ft,
-        canonical.max_altitude_ft,
-        canonical.terrain,
-        canonical.course_profile_json,
-        canonical.source,
-        canonical.url
-      ]
-    );
-
-    const race = await dbGet('SELECT * FROM race_events WHERE id=? AND user_id=?', [id, req.user.id]);
-    res.status(201).json({ race: withCourseIntelligence(race), existing: false });
+      const race = await tx.get('SELECT * FROM race_events WHERE id=? AND user_id=?', [id, req.user.id]);
+      return { race, existing: false };
+    });
+    res.status(mutation.existing ? 200 : 201).json({
+      race: withCourseIntelligence(mutation.race),
+      existing: mutation.existing,
+    });
   } catch (err) {
     console.error('[races/from-catalog] failed:', err.message);
     res.status(500).json({ error: 'Failed to add race from catalog' });
@@ -336,32 +343,45 @@ router.post('/:id/course/gpx', auth, gpxUploadLimiter, receiveGpx, async (req, r
       return res.status(400).json({ error: `Could not read GPX: ${parseErr.message}` });
     }
 
-    if (!raceCourse.courseDistanceMatchesRace(analysis.distanceMiles, race.distance_miles)) {
-      return res.status(400).json({
-        error: `GPX distance (${analysis.distanceMiles} mi) does not match this ${Number(race.distance_miles)} mi race`,
+    const mutation = await withPlanningInputMutation(req.user.id, async (tx) => {
+      const ownedRace = await tx.get(
+        'SELECT * FROM race_events WHERE id=? AND user_id=? FOR UPDATE',
+        [req.params.id, req.user.id]
+      );
+      if (!ownedRace) return planningInputUnchanged({ notFound: true });
+      if (!raceCourse.courseDistanceMatchesRace(analysis.distanceMiles, ownedRace.distance_miles)) {
+        return planningInputUnchanged({
+          validationError: `GPX distance (${analysis.distanceMiles} mi) does not match this ${Number(ownedRace.distance_miles)} mi race`,
+        });
+      }
+      const envelope = raceCourse.buildUserGpxEnvelope(analysis, {
+        baseEnvelope: ownedRace.course_profile_json,
+        raceDate: ownedRace.race_date,
       });
-    }
-
-    const envelope = raceCourse.buildUserGpxEnvelope(analysis, {
-      baseEnvelope: race.course_profile_json,
-      raceDate: race.race_date,
+      await tx.run(
+        `UPDATE race_events
+         SET elevation_gain_ft=?, max_altitude_ft=?, terrain=?, course_profile_json=?, source=?
+         WHERE id=? AND user_id=?`,
+        [
+          analysis.elevationGainFt,
+          analysis.maxAltitudeFt,
+          analysis.terrain,
+          JSON.stringify(envelope),
+          'user_gpx',
+          req.params.id,
+          req.user.id,
+        ]
+      );
+      return {
+        updated: await tx.get(
+          'SELECT * FROM race_events WHERE id=? AND user_id=?',
+          [req.params.id, req.user.id]
+        ),
+      };
     });
-    await dbRun(
-      `UPDATE race_events
-       SET elevation_gain_ft=?, max_altitude_ft=?, terrain=?, course_profile_json=?, source=?
-       WHERE id=? AND user_id=?`,
-      [
-        analysis.elevationGainFt,
-        analysis.maxAltitudeFt,
-        analysis.terrain,
-        JSON.stringify(envelope),
-        'user_gpx',
-        req.params.id,
-        req.user.id,
-      ]
-    );
-
-    const updated = await dbGet('SELECT * FROM race_events WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
+    if (mutation.notFound) return res.status(404).json({ error: 'Race not found' });
+    if (mutation.validationError) return res.status(400).json({ error: mutation.validationError });
+    const updated = mutation.updated;
     res.json({
       race: withCourseIntelligence(updated),
       analysis: {
@@ -381,43 +401,61 @@ router.post('/:id/course/gpx', auth, gpxUploadLimiter, receiveGpx, async (req, r
 
 router.patch('/:id', auth, async (req, res) => {
   try {
-    const race = await dbGet('SELECT * FROM race_events WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
-    if (!race) return res.status(404).json({ error: 'Race not found' });
+    const body = req.body || {};
+    const mutation = await withPlanningInputMutation(req.user.id, async (tx) => {
+      const race = await tx.get(
+        'SELECT * FROM race_events WHERE id=? AND user_id=? FOR UPDATE',
+        [req.params.id, req.user.id]
+      );
+      if (!race) return planningInputUnchanged({ notFound: true });
 
-    const next = { ...race, ...req.body };
-    next.race_name = cleanString(next.race_name, 200);
-    next.race_date = cleanString(next.race_date, 10);
-    next.location = cleanString(next.location, 200) || null;
-    next.notes = cleanString(next.notes, 2000) || null;
-    next.status = cleanString(next.status, 20).toLowerCase();
-    next.distance_miles = Number(next.distance_miles);
-    next.goal_time_seconds = parseGoalTime(next.goal_time_seconds);
-    if (!next.race_name) return res.status(400).json({ error: 'race_name is required' });
-    if (!isValidISODate(next.race_date)) return res.status(400).json({ error: 'race_date must be YYYY-MM-DD' });
-    if (!Number.isFinite(next.distance_miles) || next.distance_miles <= 0 || next.distance_miles > 100) return res.status(400).json({ error: 'distance_miles must be between 0 and 100' });
-    if (!RACE_STATUSES.has(next.status)) return res.status(400).json({ error: 'status is invalid' });
-    if (Number.isNaN(next.goal_time_seconds)) return res.status(400).json({ error: 'goal_time_seconds is invalid' });
-    const identityChanged = raceCourse.normalizeRaceName(next.race_name) !== raceCourse.normalizeRaceName(race.race_name)
-      || String(next.race_date) !== String(race.race_date)
-      || Math.abs(Number(next.distance_miles) - Number(race.distance_miles)) >= 0.01
-      || String(next.location || '').trim().toLowerCase() !== String(race.location || '').trim().toLowerCase();
-    const course = identityChanged
-      ? { elevation_gain_ft: null, max_altitude_ft: null, terrain: null, course_profile_json: null, source: null, url: null }
-      : race;
-    await dbRun(
-      `UPDATE race_events
-       SET race_name=?, race_date=?, distance_miles=?, location=?, goal_time_seconds=?, status=?, notes=?,
-           elevation_gain_ft=?, max_altitude_ft=?, terrain=?, course_profile_json=?, source=?, url=?
-       WHERE id=? AND user_id=?`,
-      [
-        next.race_name, next.race_date, next.distance_miles, next.location, next.goal_time_seconds, next.status, next.notes,
-        course.elevation_gain_ft, course.max_altitude_ft, course.terrain, course.course_profile_json, course.source, course.url,
-        req.params.id, req.user.id,
-      ]
-    );
-
-    const updated = await dbGet('SELECT * FROM race_events WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
-    res.json({ race: withCourseIntelligence(updated) });
+      const next = { ...race, ...body };
+      next.race_name = cleanString(next.race_name, 200);
+      next.race_date = cleanString(next.race_date, 10);
+      next.location = cleanString(next.location, 200) || null;
+      next.notes = cleanString(next.notes, 2000) || null;
+      next.status = cleanString(next.status, 20).toLowerCase();
+      next.distance_miles = Number(next.distance_miles);
+      next.goal_time_seconds = parseGoalTime(next.goal_time_seconds);
+      if (!next.race_name) return planningInputUnchanged({ validationError: 'race_name is required' });
+      if (!isValidISODate(next.race_date)) {
+        return planningInputUnchanged({ validationError: 'race_date must be YYYY-MM-DD' });
+      }
+      if (!Number.isFinite(next.distance_miles) || next.distance_miles <= 0 || next.distance_miles > 100) {
+        return planningInputUnchanged({ validationError: 'distance_miles must be between 0 and 100' });
+      }
+      if (!RACE_STATUSES.has(next.status)) return planningInputUnchanged({ validationError: 'status is invalid' });
+      if (Number.isNaN(next.goal_time_seconds)) {
+        return planningInputUnchanged({ validationError: 'goal_time_seconds is invalid' });
+      }
+      const identityChanged = raceCourse.normalizeRaceName(next.race_name) !== raceCourse.normalizeRaceName(race.race_name)
+        || String(next.race_date) !== String(race.race_date)
+        || Math.abs(Number(next.distance_miles) - Number(race.distance_miles)) >= 0.01
+        || String(next.location || '').trim().toLowerCase() !== String(race.location || '').trim().toLowerCase();
+      const course = identityChanged
+        ? { elevation_gain_ft: null, max_altitude_ft: null, terrain: null, course_profile_json: null, source: null, url: null }
+        : race;
+      await tx.run(
+        `UPDATE race_events
+         SET race_name=?, race_date=?, distance_miles=?, location=?, goal_time_seconds=?, status=?, notes=?,
+             elevation_gain_ft=?, max_altitude_ft=?, terrain=?, course_profile_json=?, source=?, url=?
+         WHERE id=? AND user_id=?`,
+        [
+          next.race_name, next.race_date, next.distance_miles, next.location, next.goal_time_seconds, next.status, next.notes,
+          course.elevation_gain_ft, course.max_altitude_ft, course.terrain, course.course_profile_json, course.source, course.url,
+          req.params.id, req.user.id,
+        ]
+      );
+      return {
+        updated: await tx.get(
+          'SELECT * FROM race_events WHERE id=? AND user_id=?',
+          [req.params.id, req.user.id]
+        ),
+      };
+    });
+    if (mutation.notFound) return res.status(404).json({ error: 'Race not found' });
+    if (mutation.validationError) return res.status(400).json({ error: mutation.validationError });
+    res.json({ race: withCourseIntelligence(mutation.updated) });
   } catch (err) {
     console.error('[races/patch] failed:', err.message);
     res.status(500).json({ error: 'Update failed' });
@@ -426,7 +464,10 @@ router.patch('/:id', auth, async (req, res) => {
 
 router.delete('/:id', auth, async (req, res) => {
   try {
-    await dbRun('DELETE FROM race_events WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
+    await withPlanningInputMutation(req.user.id, async (tx) => {
+      const result = await tx.run('DELETE FROM race_events WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
+      return result.changes ? true : planningInputUnchanged(false);
+    });
     res.json({ ok: true });
   } catch (err) {
     console.error('[races/delete] failed:', err.message);

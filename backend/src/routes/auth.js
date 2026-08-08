@@ -2,7 +2,14 @@ const router  = require('express').Router();
 const bcrypt  = require('bcryptjs');
 const jwt     = require('jsonwebtoken');
 const crypto  = require('crypto');
-const { dbGet, dbAll, dbRun, withTransaction, withUserMutation } = require('../db');
+const {
+  dbGet,
+  dbAll,
+  dbRun,
+  withTransaction,
+  withUserMutation,
+  withPlanningInputMutation,
+} = require('../db');
 const auth    = require('../middleware/auth');
 const { v4: uuidv4 } = require('uuid');
 const { isMailConfigured, sendPasswordResetEmail } = require('../services/mail');
@@ -250,7 +257,7 @@ router.put('/me/profile', auth, async (req, res) => {
     const mappedInjury = injury_detail ?? injury_notes;
     const mappedComeback = comeback_mode ?? (injury_status && injury_status !== 'none' ? 1 : null);
 
-    const mutation = await withUserMutation(req.user.id, async (tx) => {
+    const mutation = await withPlanningInputMutation(req.user.id, async (tx) => {
       const previous = await tx.get(
         'SELECT run_days_per_week, preferred_workout_days FROM users WHERE id=? FOR UPDATE',
         [req.user.id]
@@ -399,10 +406,17 @@ router.put('/me/profile', auth, async (req, res) => {
 router.post('/injury', auth, async (req, res) => {
   try {
     const { injury_mode, injury_description, injury_date, injury_limitations } = req.body;
-    await dbRun(`UPDATE users SET injury_mode=?, injury_description=?, injury_date=?, injury_limitations=? WHERE id=?`,
-      [injury_mode ? 1 : 0, injury_description || '', injury_date || '', injury_limitations || '', req.user.id]);
+    await withPlanningInputMutation(req.user.id, (tx) => tx.run(
+      `UPDATE users
+       SET injury_mode=?, injury_description=?, injury_date=?, injury_limitations=?
+       WHERE id=?`,
+      [injury_mode ? 1 : 0, injury_description || '', injury_date || '', injury_limitations || '', req.user.id]
+    ));
     res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: 'Failed to update injury' }); }
+  } catch (err) {
+    console.error('[auth/injury] update failed:', err.message);
+    res.status(500).json({ error: 'Failed to update injury' });
+  }
 });
 
 router.get('/me/stats', auth, async (req, res) => {

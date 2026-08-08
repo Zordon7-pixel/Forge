@@ -1,5 +1,5 @@
 const router = require('express').Router();
-const { dbGet, dbRun } = require('../db');
+const { dbGet, withPlanningInputMutation } = require('../db');
 const auth = require('../middleware/auth');
 const { deriveAction, buildPatch, buildDirective, estimateWorkoutMinutes } = require('../lib/checkinOverride');
 
@@ -51,8 +51,8 @@ function normalizeTodayEntry(planJson) {
   return null;
 }
 
-async function getActivePlanForUser(userId) {
-  const assigned = await dbGet(`
+async function getActivePlanForUser(userId, database = { get: dbGet }) {
+  const assigned = await database.get(`
     SELECT up.id as user_plan_id, up.current_week, up.started_at, up.status, up.progress_json,
            tp.*
     FROM user_plans up
@@ -63,7 +63,7 @@ async function getActivePlanForUser(userId) {
   `, [userId]);
   if (assigned) return assigned;
 
-  return dbGet('SELECT * FROM training_plans WHERE user_id = ? ORDER BY created_at DESC LIMIT 1', [userId]);
+  return database.get('SELECT * FROM training_plans WHERE user_id = ? ORDER BY created_at DESC LIMIT 1', [userId]);
 }
 
 function describeAdjustment(action, patch, hasWorkoutToday = false) {
@@ -139,7 +139,7 @@ function validateCheckinPayload(body = {}, options = {}) {
   };
 }
 
-async function computeCheckinDirective(userId, checkinInput) {
+async function computeCheckinDirective(userId, checkinInput, database) {
   const checkin = {
     feeling: checkinInput.feeling,
     legs: checkinInput.legs,
@@ -148,7 +148,7 @@ async function computeCheckinDirective(userId, checkinInput) {
     life_flags: checkinInput.life_flags,
   };
   let action = deriveAction(checkin);
-  const activePlan = await getActivePlanForUser(userId);
+  const activePlan = await getActivePlanForUser(userId, database);
   const todayDay = activePlan ? normalizeTodayEntry(parsePlan(activePlan)) : null;
   const plannedMinutes = estimateWorkoutMinutes(todayDay || {});
   if (action === 'keep' && plannedMinutes && checkin.time_available < plannedMinutes) {
@@ -186,35 +186,43 @@ router.post('/', auth, async (req, res) => {
     }
     const today = isISODate(req.body?.date) ? req.body.date : new Date().toISOString().slice(0,10);
 
-    const existing = await dbGet('SELECT id FROM daily_checkins WHERE user_id=? AND checkin_date=?', [req.user.id, today]);
-    if (existing) {
-      await dbRun('UPDATE daily_checkins SET feeling=?, legs=?, drive=?, time_available=?, sleep_hours=?, life_flags=? WHERE id=? AND user_id=?',
-        [feeling, legs, drive, time_available, parsedSleep, JSON.stringify(life_flags), existing.id, req.user.id]);
-    } else {
-      const id = require('crypto').randomBytes(8).toString('hex');
-      await dbRun(
-        'INSERT INTO daily_checkins (id, user_id, checkin_date, feeling, legs, drive, time_available, sleep_hours, life_flags) VALUES (?,?,?,?,?,?,?,?,?)',
-        [id, req.user.id, today, feeling, legs, drive, time_available, parsedSleep, JSON.stringify(life_flags)]
+    const directive = await withPlanningInputMutation(req.user.id, async (tx) => {
+      const existing = await tx.get(
+        'SELECT id FROM daily_checkins WHERE user_id=? AND checkin_date=? FOR UPDATE',
+        [req.user.id, today]
       );
-    }
+      if (existing) {
+        await tx.run(
+          'UPDATE daily_checkins SET feeling=?, legs=?, drive=?, time_available=?, sleep_hours=?, life_flags=? WHERE id=? AND user_id=?',
+          [feeling, legs, drive, time_available, parsedSleep, JSON.stringify(life_flags), existing.id, req.user.id]
+        );
+      } else {
+        const id = require('crypto').randomBytes(8).toString('hex');
+        await tx.run(
+          'INSERT INTO daily_checkins (id, user_id, checkin_date, feeling, legs, drive, time_available, sleep_hours, life_flags) VALUES (?,?,?,?,?,?,?,?,?)',
+          [id, req.user.id, today, feeling, legs, drive, time_available, parsedSleep, JSON.stringify(life_flags)]
+        );
+      }
 
-    const directive = await computeCheckinDirective(req.user.id, {
-      feeling,
-      legs,
-      drive,
-      time_available,
-      life_flags,
+      const nextDirective = await computeCheckinDirective(req.user.id, {
+        feeling,
+        legs,
+        drive,
+        time_available,
+        life_flags,
+      }, tx);
+      const overrideId = require('crypto').randomBytes(8).toString('hex');
+
+      await tx.run(
+        `INSERT INTO checkin_overrides (id, user_id, date, action, patch_json)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT (user_id, date) DO UPDATE SET
+           action = excluded.action,
+           patch_json = excluded.patch_json`,
+        [overrideId, req.user.id, today, nextDirective.action, JSON.stringify(nextDirective.patch)]
+      );
+      return nextDirective;
     });
-    const overrideId = require('crypto').randomBytes(8).toString('hex');
-
-    await dbRun(
-      `INSERT INTO checkin_overrides (id, user_id, date, action, patch_json)
-       VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT (user_id, date) DO UPDATE SET
-         action = excluded.action,
-         patch_json = excluded.patch_json`,
-      [overrideId, req.user.id, today, directive.action, JSON.stringify(directive.patch)]
-    );
 
     res.json({
       ok: true,

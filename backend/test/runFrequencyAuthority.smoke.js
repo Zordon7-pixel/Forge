@@ -272,6 +272,7 @@ async function checkProfileReviewMarker() {
     dbRun: async () => ({ changes: 1 }),
     withTransaction: async (fn) => fn(tx),
     withUserMutation: async (_userId, fn) => fn(tx),
+    withPlanningInputMutation: async (_userId, fn) => fn(tx),
     runWithUserContext: async (_userId, fn) => fn(),
   };
 

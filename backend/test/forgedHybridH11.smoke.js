@@ -156,6 +156,11 @@ async function routeSmoke() {
   const originalRoute = require.cache[routePath];
   const calls = [];
   let selectedRow = null;
+  const fakeGet = async (sql, params = []) => {
+    calls.push({ sql, params: [...params] });
+    if (/^\s*SELECT/i.test(sql)) return selectedRow;
+    return { synced_at: recordedAt };
+  };
   require.cache[dbPath] = {
     id: dbPath,
     filename: dbPath,
@@ -163,11 +168,8 @@ async function routeSmoke() {
     children: [],
     paths: [],
     exports: {
-      dbGet: async (sql, params = []) => {
-        calls.push({ sql, params: [...params] });
-        if (/^\s*SELECT/i.test(sql)) return selectedRow;
-        return { synced_at: recordedAt };
-      },
+      dbGet: fakeGet,
+      withPlanningInputMutation: async (_userId, mutation) => mutation({ get: fakeGet }),
     },
   };
   delete require.cache[routePath];

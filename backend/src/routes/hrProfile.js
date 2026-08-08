@@ -1,5 +1,5 @@
 const router = require('express').Router();
-const { dbGet, dbAll, dbRun } = require('../db');
+const { dbGet, dbAll, withPlanningInputMutation } = require('../db');
 const auth = require('../middleware/auth');
 const { computeZones, parseCustomMinimums } = require('../lib/hrZones');
 const { deriveHrProfileFromHistory, computeFieldTestLthr } = require('../lib/hrCalibration');
@@ -85,23 +85,24 @@ router.post('/field-test', auth, async (req, res) => {
       return res.status(400).json({ error: result.error });
     }
 
-    await dbRun(
-      `INSERT INTO user_hr_profile (user_id, lthr, zone_model, source, updated_at)
-       VALUES (?, ?, 'lthr', 'field_test', now())
-       ON CONFLICT (user_id) DO UPDATE SET
-         lthr = EXCLUDED.lthr,
-         zone_model = 'lthr',
-         source = 'field_test',
-         updated_at = now()`,
-      [req.user.id, result.lthr]
-    );
-
-    const row = await dbGet(
-      `SELECT max_hr, resting_hr, lthr, custom_zones_json, zone_model, source, updated_at
-       FROM user_hr_profile
-       WHERE user_id = ?`,
-      [req.user.id]
-    );
+    const row = await withPlanningInputMutation(req.user.id, async (tx) => {
+      await tx.run(
+        `INSERT INTO user_hr_profile (user_id, lthr, zone_model, source, updated_at)
+         VALUES (?, ?, 'lthr', 'field_test', now())
+         ON CONFLICT (user_id) DO UPDATE SET
+           lthr = EXCLUDED.lthr,
+           zone_model = 'lthr',
+           source = 'field_test',
+           updated_at = now()`,
+        [req.user.id, result.lthr]
+      );
+      return tx.get(
+        `SELECT max_hr, resting_hr, lthr, custom_zones_json, zone_model, source, updated_at
+         FROM user_hr_profile
+         WHERE user_id = ?`,
+        [req.user.id]
+      );
+    });
 
     res.json({ profile: profileFromRow(row), zones: result.zones });
   } catch (err) {
@@ -145,7 +146,7 @@ router.put('/', auth, async (req, res) => {
       return res.status(400).json({ error: 'customMinimums must contain five strictly increasing bpm values between 30 and 230' });
     }
 
-    const row = await dbGet(
+    const row = await withPlanningInputMutation(req.user.id, (tx) => tx.get(
       `INSERT INTO user_hr_profile (user_id, max_hr, resting_hr, lthr, custom_zones_json, zone_model, source, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, now())
        ON CONFLICT (user_id) DO UPDATE SET
@@ -166,7 +167,7 @@ router.put('/', auth, async (req, res) => {
         zoneModel,
         zoneModel === 'custom' ? 'manual_watch' : 'manual',
       ]
-    );
+    ));
 
     res.json(responseFromRow(row));
   } catch (err) {

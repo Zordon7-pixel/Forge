@@ -205,6 +205,11 @@ async function runRaceRouteSmoke() {
       return { changes: 0 };
     },
   };
+  mockDb.withPlanningInputMutation = async (_userId, mutation) => mutation({
+    get: mockDb.dbGet,
+    all: mockDb.dbAll,
+    run: mockDb.dbRun,
+  });
 
   require.cache[dbModulePath] = {
     id: dbModulePath,
