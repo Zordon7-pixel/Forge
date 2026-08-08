@@ -400,7 +400,7 @@ async function runPlanFallbackSmoke() {
     },
     dbAll: async () => [],
     dbRun: async () => ({ changes: 0 }),
-    withTransaction: async (fn) => fn({
+    withPlanningInputMutation: async (_userId, fn) => fn({
       run: async (sql, params = []) => {
         writes.push({ sql, params: [...params] });
         return { changes: 1 };

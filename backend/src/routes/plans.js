@@ -1,5 +1,5 @@
 const router = require('express').Router();
-const { dbGet, dbAll, dbRun, withTransaction } = require('../db');
+const { dbGet, dbAll, dbRun, withPlanningInputMutation } = require('../db');
 const auth = require('../middleware/auth');
 const { requirePremium } = require('../middleware/premiumGate');
 const { v4: uuidv4 } = require('uuid');
@@ -24,6 +24,7 @@ const hybridReconciliation = require('../lib/hybridReconciliation');
 const { dateInTimezone, isIanaTimezone } = require('../lib/challengeRules');
 const { resolveRunSchedule } = require('../lib/runSchedule');
 const { buildBodyweightAlternative } = require('../lib/travelTraining');
+const { planningInputUnchanged } = require('../lib/planningRevision');
 
 // Strength sessions are already equipment-filtered by concurrentPlan's
 // buildStrengthExercises/exerciseCatalog path. strengthAdjunct is the standalone
@@ -1289,7 +1290,7 @@ async function persistConcurrentPlan(userId, plan, meta = {}) {
   const userPlanId = uuidv4();
   const weekStart = plan.weeks?.[0]?.startDate || getMonday();
   const serialized = JSON.stringify(plan);
-  await withTransaction(async (tx) => {
+  await withPlanningInputMutation(userId, async (tx) => {
     const schedule = plan.schedulePreferences || {};
     if (schedule.runDaysSource === 'target' && schedule.trainingDaysSource === 'target') {
       const preferenceResult = await tx.run(
@@ -1305,9 +1306,22 @@ async function persistConcurrentPlan(userId, plan, meta = {}) {
       [planId, userId, weekStart, serialized, meta.name, meta.type, plan.weeks.length, meta.description, serialized]
     );
     await tx.run(
-      `INSERT INTO user_plans (id, user_id, plan_id, started_at, current_week, status, progress_json)
-       VALUES (?,?,?,?,?,?,?)`,
-      [userPlanId, userId, planId, weekStart, 1, 'active', JSON.stringify({ completedSessionIds: [] })]
+      `INSERT INTO user_plans (
+         id, user_id, plan_id, started_at, current_week, status, progress_json,
+         plan_version, lineage_id, effective_from
+       ) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      [
+        userPlanId,
+        userId,
+        planId,
+        weekStart,
+        1,
+        'active',
+        JSON.stringify({ completedSessionIds: [] }),
+        1,
+        userPlanId,
+        weekStart,
+      ]
     );
   });
   return { planId, userPlanId, weekStart };
@@ -1763,7 +1777,7 @@ router.post('/reconciliation/respond', auth, async (req, res) => {
     if (!hybridReconciliation.VALID_RESPONSES.has(response)) return res.status(400).json({ error: 'Invalid reconciliation choice' });
     if (!isIanaTimezone(timezone)) return res.status(400).json({ error: 'Invalid timezone' });
 
-    const result = await withTransaction(async (tx) => {
+    const result = await withPlanningInputMutation(req.user.id, async (tx) => {
       const row = await tx.get(`
         SELECT up.id AS user_plan_id, up.progress_json, up.current_week, up.started_at, up.status,
                tp.*
@@ -1774,11 +1788,13 @@ router.post('/reconciliation/respond', auth, async (req, res) => {
         LIMIT 1
         FOR UPDATE OF up
       `, [req.user.id]);
-      if (!row) return { notFound: true };
+      if (!row) return planningInputUnchanged({ notFound: true });
 
       const active = { source: 'assigned', row };
       const parsed = parsePlan(row);
-      if (!parsed || !planSchema.isSchemaV2(parsed)) return { conflict: 'Hybrid reconciliation requires a dated plan.' };
+      if (!parsed || !planSchema.isSchemaV2(parsed)) {
+        return planningInputUnchanged({ conflict: 'Hybrid reconciliation requires a dated plan.' });
+      }
       const progress = parseJsonValue(row.progress_json, {});
       const records = progress.hybridSessionReconciliations && typeof progress.hybridSessionReconciliations === 'object'
         ? { ...progress.hybridSessionReconciliations }
@@ -1786,21 +1802,23 @@ router.post('/reconciliation/respond', auth, async (req, res) => {
       const key = hybridReconciliation.reconciliationKey(sessionDate, liftSessionId);
       const existing = records[key];
       if (existing && existing.response === response && (existing.response !== 'later' || existing.respondedDate === planningDateISO)) {
-        return {
+        return planningInputUnchanged({
           ok: true,
           idempotent: true,
           message: existing.message || 'That hybrid session is already reconciled.',
           adjustment: existing.adjustment || null,
           pattern: hybridReconciliation.patternSummary(records, planningDateISO),
-        };
+        });
       }
       if (existing && existing.response !== 'later' && existing.response !== response) {
-        return { conflict: 'That hybrid session has already been reconciled.' };
+        return planningInputUnchanged({ conflict: 'That hybrid session has already been reconciled.' });
       }
 
       const candidates = hybridReconciliation.hybridCandidates(parsed, sessionDate, planningDateISO);
       const candidate = candidates.find((item) => item.liftSessionId === liftSessionId) || null;
-      if (!candidate) return { conflict: 'The planned hybrid session changed. Refresh Today and try again.' };
+      if (!candidate) {
+        return planningInputUnchanged({ conflict: 'The planned hybrid session changed. Refresh Today and try again.' });
+      }
       const completed = new Set(completedSessionIdsFromProgress(progress));
       const evidence = await hybridCompletionEvidence(req.user.id, sessionDate, planningDateISO, timezone, tx);
       const liftAllocation = hybridReconciliation.allocateSessionEvidence({
@@ -1817,8 +1835,10 @@ router.post('/reconciliation/respond', auth, async (req, res) => {
       });
       const runDetected = candidate.runSessionIds.some((id) => completed.has(id)) || evidence.runDates.includes(sessionDate);
       const liftDetected = liftAllocation.completedKeys.has(candidate.key);
-      if (!runDetected) return { conflict: 'The paired run is not recorded yet. Sync again before reconciling this session.' };
-      if (liftDetected) return { alreadyComplete: true };
+      if (!runDetected) {
+        return planningInputUnchanged({ conflict: 'The paired run is not recorded yet. Sync again before reconciling this session.' });
+      }
+      if (liftDetected) return planningInputUnchanged({ alreadyComplete: true });
 
       let adjustment = null;
       let message = '';
@@ -1865,7 +1885,7 @@ router.post('/reconciliation/respond', auth, async (req, res) => {
         adjustment,
         pattern: hybridReconciliation.patternSummary(records, planningDateISO),
       };
-    }, { userIds: [req.user.id], requireUserIds: [req.user.id] });
+    });
 
     if (result.notFound) return res.status(404).json({ error: 'No active plan is assigned.' });
     if (result.conflict) return res.status(409).json({ error: result.conflict });
@@ -2043,22 +2063,26 @@ router.get('/adaptation/run/:runId', auth, async (req, res) => {
 
 router.post('/adaptation/:proposalId/accept', auth, async (req, res) => {
   try {
-    const result = await withTransaction(async (tx) => {
+    const result = await withPlanningInputMutation(req.user.id, async (tx) => {
       const row = await tx.get('SELECT * FROM plan_adjustment_proposals WHERE id=? AND user_id=? FOR UPDATE', [req.params.proposalId, req.user.id]);
-      if (!row) return { notFound: true };
+      if (!row) return planningInputUnchanged({ notFound: true });
       if (row.trigger_run_id) {
         const ownedRun = await tx.get(`SELECT id FROM runs WHERE id=? AND user_id=? AND ${runActivitySql()}`, [row.trigger_run_id, req.user.id]);
-        if (!ownedRun) return { notFound: true };
+        if (!ownedRun) return planningInputUnchanged({ notFound: true });
       }
-      if (row.status === 'accepted') return { ok: true, status: 'accepted', proposal: proposalFromRow(row), idempotent: true };
-      if (row.status !== 'pending') return { conflict: true, reason: 'Proposal is no longer pending.' };
+      if (row.status === 'accepted') {
+        return planningInputUnchanged({ ok: true, status: 'accepted', proposal: proposalFromRow(row), idempotent: true });
+      }
+      if (row.status !== 'pending') {
+        return planningInputUnchanged({ conflict: true, reason: 'Proposal is no longer pending.' });
+      }
 
       const active = await getActivePlanForMutation(req.user.id, tx);
-      if (!active) return { conflict: true, reason: 'No active plan is assigned.' };
+      if (!active) return planningInputUnchanged({ conflict: true, reason: 'No active plan is assigned.' });
       const parsed = parsePlan(active.row);
       const currentVersion = planVersionFor(active, parsed);
       if (String(currentVersion) !== String(row.plan_version || '')) {
-        return { conflict: true, reason: 'The active plan changed after this proposal was computed.' };
+        return planningInputUnchanged({ conflict: true, reason: 'The active plan changed after this proposal was computed.' });
       }
 
       const proposedPlan = parseJsonValue(row.proposed_json, null);
@@ -2070,7 +2094,7 @@ router.post('/adaptation/:proposalId/accept', auth, async (req, res) => {
       );
       if (update.changes === 0) throw new Error('Proposal accept status update failed');
       return { ok: true, status: 'accepted', proposal: proposalFromRow({ ...row, status: 'accepted' }) };
-    }, { userLock: 'update', requireUserIds: [req.user.id] });
+    });
 
     if (result.notFound) return res.status(404).json({ error: 'Proposal not found' });
     if (result.conflict) return res.status(409).json({ error: result.reason });
@@ -2083,21 +2107,25 @@ router.post('/adaptation/:proposalId/accept', auth, async (req, res) => {
 
 router.post('/adaptation/:proposalId/keep', auth, async (req, res) => {
   try {
-    const result = await withTransaction(async (tx) => {
+    const result = await withPlanningInputMutation(req.user.id, async (tx) => {
       const row = await tx.get('SELECT * FROM plan_adjustment_proposals WHERE id=? AND user_id=? FOR UPDATE', [req.params.proposalId, req.user.id]);
-      if (!row) return { notFound: true };
+      if (!row) return planningInputUnchanged({ notFound: true });
       if (row.trigger_run_id) {
         const ownedRun = await tx.get(`SELECT id FROM runs WHERE id=? AND user_id=? AND ${runActivitySql()}`, [row.trigger_run_id, req.user.id]);
-        if (!ownedRun) return { notFound: true };
+        if (!ownedRun) return planningInputUnchanged({ notFound: true });
       }
-      if (row.status === 'kept') return { ok: true, status: 'kept', proposal: proposalFromRow(row), idempotent: true };
-      if (row.status !== 'pending') return { conflict: true, reason: 'Proposal is no longer pending.' };
+      if (row.status === 'kept') {
+        return planningInputUnchanged({ ok: true, status: 'kept', proposal: proposalFromRow(row), idempotent: true });
+      }
+      if (row.status !== 'pending') {
+        return planningInputUnchanged({ conflict: true, reason: 'Proposal is no longer pending.' });
+      }
       const active = await getActivePlanForMutation(req.user.id, tx);
-      if (!active) return { conflict: true, reason: 'No active plan is assigned.' };
+      if (!active) return planningInputUnchanged({ conflict: true, reason: 'No active plan is assigned.' });
       const parsed = parsePlan(active.row);
       const currentVersion = planVersionFor(active, parsed);
       if (String(currentVersion) !== String(row.plan_version || '')) {
-        return { conflict: true, reason: 'The active plan changed after this proposal was computed.' };
+        return planningInputUnchanged({ conflict: true, reason: 'The active plan changed after this proposal was computed.' });
       }
       const update = await tx.run(
         "UPDATE plan_adjustment_proposals SET status='kept', decided_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=? AND status='pending'",
@@ -2105,7 +2133,7 @@ router.post('/adaptation/:proposalId/keep', auth, async (req, res) => {
       );
       if (update.changes === 0) throw new Error('Proposal keep status update failed');
       return { ok: true, status: 'kept', proposal: proposalFromRow({ ...row, status: 'kept' }) };
-    }, { userLock: 'update', requireUserIds: [req.user.id] });
+    });
 
     if (result.notFound) return res.status(404).json({ error: 'Proposal not found' });
     if (result.conflict) return res.status(409).json({ error: result.reason });
@@ -2157,7 +2185,7 @@ router.post('/adaptive/accept', auth, async (req, res) => {
     const intensityLabel = adaptive.intensity.charAt(0).toUpperCase() + adaptive.intensity.slice(1);
     const planName = `Adaptive Week - ${weekStart}`;
 
-    await withTransaction(async (tx) => {
+    await withPlanningInputMutation(req.user.id, async (tx) => {
       await tx.run("UPDATE user_plans SET status = 'inactive' WHERE user_id = ? AND status = 'active'", [req.user.id]);
       await tx.run(
         `INSERT INTO training_plans (id, user_id, week_start, plan_json, name, type, weeks, description, plan_data)
@@ -2175,9 +2203,22 @@ router.post('/adaptive/accept', auth, async (req, res) => {
         ]
       );
       await tx.run(
-        `INSERT INTO user_plans (id, user_id, plan_id, started_at, current_week, status, progress_json)
-         VALUES (?,?,?,?,?,?,?)`,
-        [userPlanId, req.user.id, planId, weekStart, 1, 'active', JSON.stringify({ completedSessionIds: [] })]
+        `INSERT INTO user_plans (
+           id, user_id, plan_id, started_at, current_week, status, progress_json,
+           plan_version, lineage_id, effective_from
+         ) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+        [
+          userPlanId,
+          req.user.id,
+          planId,
+          weekStart,
+          1,
+          'active',
+          JSON.stringify({ completedSessionIds: [] }),
+          1,
+          userPlanId,
+          weekStart,
+        ]
       );
     });
 
@@ -2194,12 +2235,25 @@ router.post('/assign/:planId', auth, async (req, res) => {
     if (!plan) return res.status(404).json({ error: 'Plan not found' });
 
     const id = uuidv4();
-    await withTransaction(async (tx) => {
+    await withPlanningInputMutation(req.user.id, async (tx) => {
       await tx.run("UPDATE user_plans SET status = 'inactive' WHERE user_id = ? AND status = 'active'", [req.user.id]);
       await tx.run(
-        `INSERT INTO user_plans (id, user_id, plan_id, started_at, current_week, status, progress_json)
-         VALUES (?,?,?,?,?,?,?)`,
-        [id, req.user.id, plan.id, new Date().toISOString().slice(0, 10), 1, 'active', JSON.stringify({ completedSessionIds: [] })]
+        `INSERT INTO user_plans (
+           id, user_id, plan_id, started_at, current_week, status, progress_json,
+           plan_version, lineage_id, effective_from
+         ) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+        [
+          id,
+          req.user.id,
+          plan.id,
+          new Date().toISOString().slice(0, 10),
+          1,
+          'active',
+          JSON.stringify({ completedSessionIds: [] }),
+          1,
+          id,
+          new Date().toISOString().slice(0, 10),
+        ]
       );
     });
     res.status(201).json({ ok: true, assignment_id: id });
@@ -2281,13 +2335,13 @@ router.put('/my/race-link', auth, async (req, res) => {
     const raceId = String(req.body?.race_id || '').trim();
     if (!raceId || raceId.length > 128) return res.status(400).json({ error: 'race_id is required' });
 
-    const result = await withTransaction(async (tx) => {
+    const result = await withPlanningInputMutation(req.user.id, async (tx) => {
       const race = await tx.get('SELECT * FROM race_events WHERE id=? AND user_id=?', [raceId, req.user.id]);
-      if (!race) return { status: 404, error: 'Race not found' };
+      if (!race) return planningInputUnchanged({ status: 404, error: 'Race not found' });
       const active = await getActivePlanForMutation(req.user.id, tx);
-      if (!active) return { status: 404, error: 'Active plan not found' };
+      if (!active) return planningInputUnchanged({ status: 404, error: 'Active plan not found' });
       const parsed = parsePlan(active.row);
-      if (!parsed) return { status: 409, error: 'Active plan could not be read' };
+      if (!parsed) return planningInputUnchanged({ status: 409, error: 'Active plan could not be read' });
 
       const normalizeName = (value) => String(value || '').trim().toLowerCase();
       const sameIdentity = (goal = {}) => {
@@ -2305,7 +2359,9 @@ router.put('/my/race-link', auth, async (req, res) => {
       if (matchIndex < 0 && storedGoals.length === 1 && !goalRaceId(storedGoals[0]) && sameIdentity(storedGoals[0])) {
         matchIndex = 0;
       }
-      if (matchIndex < 0) return { status: 409, error: 'Race is not linked to the active plan' };
+      if (matchIndex < 0) {
+        return planningInputUnchanged({ status: 409, error: 'Race is not linked to the active plan' });
+      }
 
       const snapshot = raceTargetSnapshot(race);
       const nextGoals = storedGoals.map((goal, index) => {
@@ -2360,7 +2416,7 @@ router.put('/my/progress', auth, async (req, res) => {
       return res.status(400).json({ error: 'Invalid plan session' });
     }
 
-    const result = await withTransaction(async (tx) => {
+    const result = await withPlanningInputMutation(req.user.id, async (tx) => {
       const findAssigned = () => tx.get(`
         SELECT up.id, up.progress_json, up.current_week,
                tp.weeks, tp.plan_data, tp.plan_json
@@ -2383,7 +2439,7 @@ router.put('/my/progress', auth, async (req, res) => {
           LIMIT 1
           FOR UPDATE OF tp
         `, [req.user.id]);
-        if (!legacy) return { notFound: true };
+        if (!legacy) return planningInputUnchanged({ notFound: true });
 
         // The legacy-row lock serializes first completion. Recheck so a
         // concurrent request can reuse the assignment created while waiting.
@@ -2402,7 +2458,7 @@ router.put('/my/progress', auth, async (req, res) => {
       const parsed = parsePlan(row);
       const sessionIds = dailyExecution.collectSessionIds(parsed);
       const requestedId = completedId || unsetId;
-      if (requestedId && !sessionIds.has(requestedId)) return { invalidSession: true };
+      if (requestedId && !sessionIds.has(requestedId)) return planningInputUnchanged({ invalidSession: true });
 
       const rawWeekCount = Number(parsed?.weeks?.length || row.weeks || 1);
       const maxWeek = Number.isInteger(rawWeekCount) && rawWeekCount >= 1 ? rawWeekCount : 1;
@@ -2410,7 +2466,7 @@ router.put('/my/progress', auth, async (req, res) => {
       if (hasCurrentWeek) {
         const requestedWeek = Number(body.current_week);
         if (!Number.isInteger(requestedWeek) || requestedWeek < 1 || requestedWeek > maxWeek) {
-          return { invalidWeek: true };
+          return planningInputUnchanged({ invalidWeek: true });
         }
         nextWeek = requestedWeek;
       }
@@ -2427,6 +2483,21 @@ router.put('/my/progress', auth, async (req, res) => {
       const completed = new Set(Array.isArray(progress.completedSessionIds) ? progress.completedSessionIds.map(String) : []);
       if (completedId) completed.add(completedId);
       if (unsetId) completed.delete(unsetId);
+
+      const previousCompleted = new Set(Array.isArray(progress.completedSessionIds)
+        ? progress.completedSessionIds.map(String)
+        : []);
+      const progressChanged = previousCompleted.size !== completed.size
+        || Array.from(previousCompleted).some((id) => !completed.has(id));
+      const weekChanged = nextWeek !== Number(row.current_week || 1);
+      if (!legacyPlanId && !progressChanged && !weekChanged) {
+        return planningInputUnchanged({
+          ok: true,
+          current_week: nextWeek,
+          completedSessionIds: Array.from(completed),
+          idempotent: true,
+        });
+      }
 
       if (legacyPlanId) {
         const insert = await tx.run(
@@ -2765,14 +2836,16 @@ router.post('/reschedule-missed', auth, async (req, res) => {
       return res.status(400).json({ error: 'targetDate must be the phone local date in YYYY-MM-DD format' });
     }
 
-    const mutation = await withTransaction(async (tx) => {
+    const mutation = await withPlanningInputMutation(req.user.id, async (tx) => {
       const active = await getActivePlanForMutation(req.user.id, tx);
-      if (!active) return { status: 404, error: 'No plan found' };
+      if (!active) return planningInputUnchanged({ status: 404, error: 'No plan found' });
 
       const parsed = parsePlan(active.row);
       const weekIndex = Math.max(0, Number(active.row.current_week || 1) - 1);
       const rawWeek = parsed?.weeks?.[weekIndex];
-      if (!planSchema.getDayEntries(rawWeek).length) return { status: 400, error: 'Invalid plan format' };
+      if (!planSchema.getDayEntries(rawWeek).length) {
+        return planningInputUnchanged({ status: 400, error: 'Invalid plan format' });
+      }
       const fallbackWeekStart = getMonday(new Date(`${planningDateISO}T12:00:00`));
       const selectedWeekStart = activeWeekStart(parsed, active.row, weekIndex, fallbackWeekStart);
       const week = withCanonicalWeekDates(rawWeek, selectedWeekStart);
@@ -2780,16 +2853,18 @@ router.post('/reschedule-missed', auth, async (req, res) => {
         .flatMap((day, index) => planSchema.plannedSessionsForDay(day, index, day.date))
         .find((session) => String(session.sessionId) === String(sessionId));
 
-      if (!requestedSession) return { status: 404, error: 'Session not found in plan' };
-      if (requestedSession.type !== 'run') return { status: 409, error: 'Only a missed run can be moved onto today.' };
+      if (!requestedSession) return planningInputUnchanged({ status: 404, error: 'Session not found in plan' });
+      if (requestedSession.type !== 'run') {
+        return planningInputUnchanged({ status: 409, error: 'Only a missed run can be moved onto today.' });
+      }
       if (!requestedSession.date || requestedSession.date >= planningDateISO) {
-        return { status: 409, error: 'Only a run missed before today can be moved.' };
+        return planningInputUnchanged({ status: 409, error: 'Only a run missed before today can be moved.' });
       }
 
       const progress = parseJsonValue(active.row.progress_json, {});
       const completedIds = new Set(completedSessionIdsFromProgress(progress));
       if (completedIds.has(String(requestedSession.sessionId))) {
-        return { status: 409, error: 'That run is already complete. Refresh your calendar.' };
+        return planningInputUnchanged({ status: 409, error: 'That run is already complete. Refresh your calendar.' });
       }
       const recordedRuns = await tx.all(`
         SELECT id, date, plan_session_id, planned_session_json FROM runs
@@ -2800,12 +2875,16 @@ router.post('/reschedule-missed', auth, async (req, res) => {
         date: requestedSession.date,
         dateToleranceDays: 0,
       });
-      if (recordedRun) return { status: 409, error: 'That run is already recorded. Sync and refresh your calendar.' };
+      if (recordedRun) {
+        return planningInputUnchanged({ status: 409, error: 'That run is already recorded. Sync and refresh your calendar.' });
+      }
 
       const result = planSchema.rescheduleSessionInWeek(week, sessionId, { targetDate: planningDateISO });
-      if (result.error === 'not_found') return { status: 404, error: 'Session not found in plan' };
+      if (result.error === 'not_found') {
+        return planningInputUnchanged({ status: 404, error: 'Session not found in plan' });
+      }
       if (result.error === 'no_target') {
-        return { status: 409, error: 'Today is not an available recovery day in this training week.' };
+        return planningInputUnchanged({ status: 409, error: 'Today is not an available recovery day in this training week.' });
       }
       parsed.weeks[weekIndex] = result.week;
       await updateActivePlanData(active, req.user.id, parsed, tx);
@@ -2818,7 +2897,7 @@ router.post('/reschedule-missed', auth, async (req, res) => {
         plan: parsed,
         aiSuggestion: 'Week rebalanced after missed session. Keep next run easy and preserve long run.',
       };
-    }, { userLock: 'update', requireUserIds: [req.user.id] });
+    });
 
     if (mutation.error) return res.status(mutation.status || 409).json({ error: mutation.error });
     res.json(mutation);
@@ -2848,8 +2927,11 @@ router.post('/race-adjust', auth, async (req, res) => {
       return res.status(503).json({ error: 'Race adjustment is temporarily unavailable. Your current plan was not changed.' });
     }
     const nextPlan = adjusted;
-    await withTransaction(async (tx) => {
-      await updateActivePlanData(plan, req.user.id, nextPlan, tx);
+    await withPlanningInputMutation(req.user.id, async (tx) => {
+      const active = await getActivePlanForMutation(req.user.id, tx);
+      if (!active) return planningInputUnchanged(false);
+      await updateActivePlanData(active, req.user.id, nextPlan, tx);
+      return true;
     });
     res.json({ ok: true, plan: nextPlan });
   } catch (err) {

@@ -188,7 +188,7 @@ assert(/target_zone:\s*submittedScheduledRun\?\.targetZone/.test(logRun), 'LogRu
 assert(/target_zone:\s*workoutTarget\?\.zone/.test(activeRun), 'ActiveRun stores the scheduled plan zone');
 assert(/execution\?\.hasPlan && execution\?\.hasDay/.test(logRun), 'LogRun does not reinterpret a calendar rest/lift day as a run');
 const plansRoute = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'plans.js'), 'utf8');
-assert(/withTransaction\(async \(tx\)/.test(plansRoute) && /FOR UPDATE OF up/.test(plansRoute), 'plan progress read-modify-write is transactionally locked');
+assert(/withPlanningInputMutation\(req\.user\.id, async \(tx\)/.test(plansRoute) && /FOR UPDATE OF up/.test(plansRoute), 'plan progress read-modify-write is revisioned and transactionally locked');
 assert(/collectSessionIds\(parsed\)/.test(plansRoute), 'plan progress rejects session ids outside the active plan');
 assert(/requestedWeek < 1/.test(plansRoute), 'plan progress rejects week zero at the API boundary');
 
@@ -259,7 +259,10 @@ async function runProgressRouteHarness() {
     dbGet: async () => null,
     dbAll: async () => [],
     dbRun: async () => ({ changes: 0 }),
-    withTransaction: async (fn) => fn(tx),
+    withPlanningInputMutation: async (_userId, fn) => {
+      const result = await fn(tx);
+      return result && Object.prototype.hasOwnProperty.call(result, 'marker') ? result.value : result;
+    },
   };
   require.cache[dbModulePath] = {
     id: dbModulePath,

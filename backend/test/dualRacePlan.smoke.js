@@ -485,7 +485,7 @@ async function checkDedicatedRouteBoundary() {
     },
     dbAll: async (sql) => sql.includes('FROM runs') ? recentRunRows.map((run) => ({ ...run })) : [],
     dbRun: async () => ({ changes: 1 }),
-    withTransaction: async (fn) => {
+    withPlanningInputMutation: async (_userId, fn) => {
       transactionCalls += 1;
       const stagedStatements = [];
       const tx = {

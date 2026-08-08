@@ -394,7 +394,7 @@ async function checkPartialWeekRoutesDoNotReject() {
       return [];
     },
     dbRun: async () => ({ changes: 1 }),
-    withTransaction: async (fn) => fn({ run: async () => ({ changes: 1 }) }),
+    withPlanningInputMutation: async (_userId, fn) => fn({ run: async () => ({ changes: 1 }) }),
   };
 
   require.cache[dbModulePath] = {
