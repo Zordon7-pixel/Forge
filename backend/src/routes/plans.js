@@ -1674,6 +1674,7 @@ function publicCandidatePayload(candidate) {
     candidate_hash: candidate.candidateHash,
     candidate_id: candidate.id,
     generation_source: 'race_plan_candidate_engine',
+    replaces_active_plan: Boolean(candidate.replacesActivePlan),
     plan: {
       id: candidate.id,
       ...planAnchorPayload(plan),
@@ -1709,6 +1710,7 @@ async function previewPlanForUser(userId, body = {}, { store = true } = {}) {
     plan: normalized.plan,
     planningDateLocal: clock.planningDateLocal,
     races: initial.races,
+    replacesActivePlan: Boolean(initial.active),
   };
   if (!store) {
     return {
@@ -1807,6 +1809,21 @@ async function applyPlanCandidate(userId, candidateId, body = {}) {
 
     const storedSnapshot = parseCandidateJson(row.planning_snapshot_json, {});
     const storedPlan = parseCandidateJson(row.candidate_plan_json, null);
+    const storedFeasibility = String(storedPlan?.overall_feasibility || '').toLowerCase();
+    if (storedFeasibility === 'unsafe') {
+      return planningInputUnchanged({
+        status: 409,
+        error: 'This target needs adjustment before it can replace the active plan.',
+        code: 'CANDIDATE_UNSAFE',
+      });
+    }
+    if (!['supported', 'stretch'].includes(storedFeasibility)) {
+      return planningInputUnchanged({
+        status: 409,
+        error: 'Candidate feasibility is unavailable. Preview again.',
+        code: 'CANDIDATE_FEASIBILITY_MISSING',
+      });
+    }
     const request = normalizeCandidateRequest(storedSnapshot.request || {});
     const clock = {
       planningDateLocal: row.planning_date_local,
@@ -1891,6 +1908,7 @@ async function applyPlanCandidate(userId, candidateId, body = {}) {
     );
     const payload = {
       candidate_id: row.id,
+      candidate_hash: row.candidate_hash,
       effective_from: effectiveFrom,
       ok: true,
       plan_id: planId,

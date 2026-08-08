@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const {
+  authoritativePlanTarget,
   assertApplyAuthorized,
   assertRedactedBackup,
   buildBackupManifest,
@@ -34,23 +35,39 @@ function run() {
     ['race-a1', 'race-a2'],
     'existing protected race goals take precedence over an unrelated earlier race',
   );
+  assert.deepEqual(
+    selectProtectedRaces(races, { goals: [{ raceId: 'race-a2' }] }, '2026-08-08').map((race) => race.id),
+    ['race-a2'],
+    'a one-race plan stays a one-race plan during rollout',
+  );
+  assert.deepEqual(selectProtectedRaces(races, {}, '2026-08-08'), [], 'rollout never guesses a race for an unanchored plan');
+  assert.deepEqual(
+    selectProtectedRaces(races, { goals: [{ raceId: 'missing-race' }] }, '2026-08-08'),
+    [],
+    'rollout refuses a plan whose protected race no longer belongs to the account',
+  );
 
-  const target = preservedPlanTarget(activePlan, {
-    run_days_per_week: 2,
-    lift_days_per_week: 1,
-    preferred_workout_days: '[2,4]',
-  });
+  const target = preservedPlanTarget(activePlan);
   assert.deepEqual(target.trainingDays, ['Mon', 'Wed', 'Fri', 'Sat'], 'active plan weekdays take precedence over stale profile weekdays');
   assert.equal(target.runDaysPerWeek, 4);
   assert.equal(target.planMode, 'hybrid_maintain');
   assert.equal(target.liftingEnabled, true);
   assert.equal(target.liftDaysPerWeek, 2);
   assert.deepEqual(target.equipment, ['dumbbells']);
+  assert.equal(authoritativePlanTarget({ ...activePlan, schedulePreferences: {} }).valid, false);
+  assert.equal(authoritativePlanTarget({ ...activePlan, planMode: '' }).valid, false);
+  assert.equal(authoritativePlanTarget({ ...activePlan, strengthPolicy: { enabled: false } }).valid, false);
+  assert.equal(isCurrentRolloutPlan({
+    ...activePlan,
+    engineVersion: RACE_PLAN_POLICY_V1.engineVersion,
+    invariantVersion: RACE_PLAN_POLICY_V1.invariantVersion,
+    policyVersion: RACE_PLAN_POLICY_V1.version,
+  }, ['race-a2', 'race-a1']), true);
   assert.equal(isCurrentRolloutPlan({
     ...activePlan,
     engineVersion: RACE_PLAN_POLICY_V1.engineVersion,
     policyVersion: RACE_PLAN_POLICY_V1.version,
-  }, ['race-a2', 'race-a1']), true);
+  }, ['race-a2', 'race-a1']), false, 'rollout invariant version is part of current-plan identity');
   assert.equal(isCurrentRolloutPlan(activePlan, ['race-a1', 'race-a2']), false);
 
   assert.equal(localDateForOffset('2026-08-08T02:00:00.000Z', 240), '2026-08-07');
@@ -74,6 +91,10 @@ function run() {
 
   assert.equal(rolloutScript.parseArgs([]).apply, false, 'rollout defaults to a no-write dry run');
   assert.throws(() => rolloutScript.parseArgs(['--apply']), /--backup-dir is required/);
+  assert.throws(() => rolloutScript.parseArgs([
+    '--apply',
+    `--backup-dir=${path.resolve(__dirname, '../rollout-backup')}`,
+  ]), /outside the repository checkout/);
   const parsed = rolloutScript.parseArgs([
     '--apply',
     '--backup-dir=/tmp/forged-rollout-test',
@@ -110,9 +131,29 @@ function run() {
     const filename = rolloutScript.writePrivateJson(temp, 'manifest', manifest);
     assert.equal(fs.statSync(temp).mode & 0o777, 0o700);
     assert.equal(fs.statSync(filename).mode & 0o777, 0o600);
+    rolloutScript.replacePrivateJson(filename, { schema_version: 1, status: 'updated' });
+    assert.deepEqual(JSON.parse(fs.readFileSync(filename, 'utf8')), { schema_version: 1, status: 'updated' });
+    assert.equal(fs.statSync(filename).mode & 0o777, 0o600);
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });
   }
+
+  assert.equal(
+    rolloutScript.assertPlanningDateStable({ clock: { planningDateLocal: '2026-08-08', timezoneOffsetMinutes: 0 } }, new Date('2026-08-08T12:00:00Z')),
+    '2026-08-08',
+  );
+  assert.throws(
+    () => rolloutScript.assertPlanningDateStable({ clock: { planningDateLocal: '2026-08-08', timezoneOffsetMinutes: 0 } }, new Date('2026-08-09T00:00:01Z')),
+    /PLANNING_DATE_CHANGED/,
+  );
+  assert.doesNotThrow(() => rolloutScript.assertSupportedCandidate({ plan: { overall_feasibility: 'supported' } }));
+  assert.throws(() => rolloutScript.assertSupportedCandidate({ plan: { overall_feasibility: 'stretch' } }), /CANDIDATE_FEASIBILITY_REVIEW_REQUIRED/);
+  assert.throws(() => rolloutScript.assertSupportedCandidate({ plan: { overall_feasibility: 'unsafe' } }), /CANDIDATE_FEASIBILITY_REVIEW_REQUIRED/);
+  assert.deepEqual(
+    rolloutScript.safeFailure('sha256:test', new Error('private database detail'), 'ROLLOUT_APPLY_FAILED'),
+    { target_ref: 'sha256:test', code: 'ROLLOUT_APPLY_FAILED' },
+    'unknown errors are reduced to a safe operational code',
+  );
 
   const scriptSource = fs.readFileSync(path.join(__dirname, '../scripts/upgrade-beta-race-plans.js'), 'utf8');
   assert.match(scriptSource, /u\.onboarded=1/);
@@ -124,14 +165,25 @@ function run() {
   assert.match(scriptSource, /writePrivateJson\(options\.backupDir, 'pre-apply'/);
   assert.match(scriptSource, /previewPlanForUser\(context\.userId, context\.request, \{ store: true \}\)/);
   assert.match(scriptSource, /applyPlanCandidate\(context\.userId, stored\.id/);
+  assert.match(scriptSource, /stored\.candidateHash !== context\.candidate\.candidateHash/);
+  assert.match(scriptSource, /throw rolloutError\('CANDIDATE_HASH_DRIFT'\)/);
+  assert.match(scriptSource, /assertSupportedCandidate\(stored\)/);
+  assert.match(scriptSource, /unmatchedUserIds[\s\S]*EXPLICIT_TARGET_NOT_ELIGIBLE/);
+  assert.doesNotMatch(scriptSource, /err\.message|error:\s*err/);
   assert.ok(
     scriptSource.indexOf("writePrivateJson(options.backupDir, 'pre-apply'")
       < scriptSource.indexOf('previewPlanForUser(context.userId, context.request, { store: true })'),
     'redacted rollback manifest must be durable before the first write',
   );
+  assert.ok(
+    scriptSource.indexOf("writePrivateJson(options.backupDir, 'apply-result'")
+      < scriptSource.indexOf('for (const context of contexts)'),
+    'the durable result journal exists before the first account write',
+  );
+  assert.match(scriptSource, /finally \{[\s\S]*replacePrivateJson\(resultFile, resultJournal\)/);
   assert.doesNotMatch(scriptSource, /(?:UPDATE|DELETE)\s+(?:users|user_plans|training_plans|race_events)/i);
 
-  console.log('BETA PLAN ROLLOUT SMOKE OK (35)');
+  console.log('BETA PLAN ROLLOUT SMOKE OK');
 }
 
 run();

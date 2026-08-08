@@ -275,7 +275,8 @@ assert.equal(normalizeTravelWorkoutOverride({ type: 'tempo', planSessionId: 'bad
 assert.equal(normalizeTravelWorkoutOverride({ travelRecovery: true, type: 'tempo' }), null)
 
 const planSource = fs.readFileSync(new URL('../src/pages/Plan.jsx', import.meta.url), 'utf8')
-assert.match(planSource, /api\.post\('\/plans\/generate-for-races',\s*\{\s*race_ids:\s*racePlanReconciliation\.orderedRaceIds,?\s*\}\)/)
+assert.match(planSource, /previewAndApplyPlan\('\/plans\/generate-for-races',\s*\{\s*race_ids:\s*racePlanReconciliation\.orderedRaceIds,?\s*\}\)/,
+  'adding a protected race must use the reviewed candidate lifecycle')
 assert.match(planSource, /setRaceReconciliationNotice[\s\S]*await loadAll\(\)/)
 assert.match(planSource, /disabled=\{busy\}/)
 

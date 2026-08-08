@@ -26,7 +26,7 @@ const logRun = read('src/pages/LogRun.jsx')
 
 console.log('\n== Calendar day detail ==')
 const evidenceDeclaration = plan.indexOf('const trainingEvidence = Array.isArray')
-const evidenceUse = plan.indexOf('inputSummary: planInputs, trainingEvidence')
+const evidenceUse = plan.indexOf('trainingEvidence: calendarModel.trainingEvidence?.length ? calendarModel.trainingEvidence : trainingEvidence')
 assert(evidenceDeclaration >= 0 && evidenceDeclaration < evidenceUse, 'training evidence is declared before the selected-day view uses it')
 
 console.log('\n== Rest-day actions ==')

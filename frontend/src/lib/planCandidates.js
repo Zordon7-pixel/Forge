@@ -1,4 +1,8 @@
 import api from './api'
+import {
+  PlanCandidateReviewCancelled,
+  requestPlanCandidateReview,
+} from './planCandidateReview'
 
 export function phonePlanningClock(date = new Date()) {
   const year = date.getFullYear()
@@ -19,6 +23,14 @@ export async function previewAndApplyPlan(path, body = {}, config = {}) {
   const candidateHash = String(preview.data.candidate_hash || '').trim()
   if (!candidateId || !candidateHash) {
     throw new Error('Plan preview did not include an apply token.')
+  }
+
+  const plan = preview.data?.plan?.plan_data || preview.data?.candidate?.plan_data || {}
+  const feasibility = String(plan?.overall_feasibility || '').toLowerCase()
+  const needsReview = Boolean(preview.data?.replaces_active_plan) || feasibility !== 'supported'
+  if (needsReview) {
+    const decision = await requestPlanCandidateReview(preview.data)
+    if (decision !== 'apply') throw new PlanCandidateReviewCancelled(decision)
   }
 
   const applied = await api.post(

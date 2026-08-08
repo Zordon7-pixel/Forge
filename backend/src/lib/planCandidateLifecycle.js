@@ -16,6 +16,17 @@ const REDACTED_KEYS = new Set([
   'secret',
 ]);
 
+const ALLOWED_LIFE_FLAGS = new Set([
+  'all_good',
+  'injured',
+  'long_shift',
+  'not_well',
+  'sick',
+  'sore',
+  'stressed',
+  'traveling',
+]);
+
 function cloneJson(value) {
   return JSON.parse(JSON.stringify(value));
 }
@@ -49,9 +60,28 @@ function normalizeProfile(profile = {}) {
   };
 }
 
+function normalizeCheckin(checkin) {
+  if (!checkin || typeof checkin !== 'object' || Array.isArray(checkin)) return null;
+  const finiteNumber = (value) => {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+  };
+  return {
+    date: /^\d{4}-\d{2}-\d{2}$/.test(String(checkin.date || '')) ? checkin.date : null,
+    drive: finiteNumber(checkin.drive),
+    feeling: finiteNumber(checkin.feeling),
+    legs: finiteNumber(checkin.legs),
+    lifeFlags: [...new Set((Array.isArray(checkin.lifeFlags) ? checkin.lifeFlags : [])
+      .map((flag) => String(flag || '').trim().toLowerCase())
+      .filter((flag) => ALLOWED_LIFE_FLAGS.has(flag)))].sort(),
+    sleepHours: finiteNumber(checkin.sleepHours),
+    timeAvailable: finiteNumber(checkin.timeAvailable),
+  };
+}
+
 function normalizeContext(context = {}) {
   return redactSnapshotValue({
-    checkin: context.checkin || null,
+    checkin: normalizeCheckin(context.checkin),
     history: context.history || {},
     profile: normalizeProfile(context.profile || {}),
     recovery: context.recovery || {},
@@ -204,12 +234,14 @@ function parseJson(value, fallback = null) {
 }
 
 module.exports = {
+  ALLOWED_LIFE_FLAGS,
   HASH_PREFIX,
   assertBoundedJson,
   assertPersistablePlan,
   buildPlanningSnapshot,
   jsonBytes,
   normalizeContext,
+  normalizeCheckin,
   parseJson,
   prefixedHash,
   redactSnapshotValue,

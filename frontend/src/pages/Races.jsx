@@ -4,6 +4,7 @@ import { useProContext } from '../context/ProContext'
 import DurationPicker from '../components/DurationPicker'
 import api from '../lib/api'
 import { previewAndApplyPlan } from '../lib/planCandidates'
+import { isPlanCandidateReviewCancelled } from '../lib/planCandidateReview'
 import { RACE_DISTANCE_OPTIONS, STANDARD_RACE_DISTANCES } from '../lib/raceDistances'
 
 function daysTo(date) {
@@ -277,6 +278,7 @@ export default function Races() {
       await load()
       onSuccess()
     } catch (err) {
+      if (isPlanCandidateReviewCancelled(err)) return
       if (err?.response?.status === 402) {
         navigate('/upgrade')
         return

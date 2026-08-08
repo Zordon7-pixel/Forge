@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import api from '../lib/api'
 import { previewAndApplyPlan } from '../lib/planCandidates'
+import { isPlanCandidateReviewCancelled } from '../lib/planCandidateReview'
 import HealthService from '../services/HealthService'
 import { consumePostAuthRedirect, setToken } from '../lib/tokenStore'
 import { healthSyncFailureMessage, healthSyncNotice } from '../lib/healthSync'
@@ -68,6 +69,10 @@ export default function Onboarding() {
       await previewAndApplyPlan('/plans/generate')
       window.location.href = consumePostAuthRedirect() || '/'
     } catch (err) {
+      if (isPlanCandidateReviewCancelled(err)) {
+        setSaving(false)
+        return
+      }
       setError(err?.response?.data?.error || 'Could not finish onboarding. Please try again.')
       setSaving(false)
     }

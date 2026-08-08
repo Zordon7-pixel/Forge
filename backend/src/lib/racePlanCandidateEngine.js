@@ -791,6 +791,7 @@ function buildRacePlanCandidate(context = {}, options = {}) {
   if (firstFullWeek) firstFullWeek.fullWeekFloorRestored = true;
   plan.policyVersion = RACE_PLAN_POLICY_V1.version;
   plan.engineVersion = RACE_PLAN_POLICY_V1.engineVersion;
+  plan.invariantVersion = RACE_PLAN_POLICY_V1.invariantVersion;
   plan.planningClock = {
     planningDateLocal,
     timezoneOffsetMinutes: Number(options.timezoneOffsetMinutes ?? context.timezone_offset_minutes ?? 0),

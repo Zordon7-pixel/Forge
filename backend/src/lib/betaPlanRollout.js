@@ -1,5 +1,5 @@
 const planSchema = require('./planSchema');
-const { DAY_ORDER, normalizeTrainingDays, DEFAULT_TRAINING_DAYS } = require('./runSchedule');
+const { DAY_ORDER, normalizeTrainingDays } = require('./runSchedule');
 const { RACE_PLAN_POLICY_V1, addDays, canonicalHash } = require('./racePlanPolicy');
 
 const MAX_PROTECTED_RACES = 2;
@@ -46,29 +46,21 @@ function selectProtectedRaces(races = [], activePlan = {}, planningDateLocal) {
     .filter((race) => String(race?.race_date || '').slice(0, 10) >= planningDateLocal)
     .sort((left, right) => String(left.race_date).localeCompare(String(right.race_date)));
   const byId = new Map(eligible.map((race) => [String(race.id), race]));
-  const selected = planGoalRaceIds(activePlan).map((id) => byId.get(id)).filter(Boolean);
+  const goalIds = planGoalRaceIds(activePlan);
+  if (goalIds.length < 1 || goalIds.length > MAX_PROTECTED_RACES) return [];
+  const selected = goalIds.map((id) => byId.get(id)).filter(Boolean);
+  if (selected.length !== goalIds.length) return [];
   const orderedSelected = [...new Map(selected.map((race) => [String(race.id), race])).values()]
     .sort((left, right) => String(left.race_date).localeCompare(String(right.race_date)));
 
-  let protectedRaces = [];
-  for (const race of orderedSelected) {
-    if (protectedRaces.length === 0 || compatibleRacePair(protectedRaces[0], race)) protectedRaces.push(race);
-    if (protectedRaces.length === MAX_PROTECTED_RACES) break;
-  }
-  if (protectedRaces.length === 0 && eligible[0]) protectedRaces.push(eligible[0]);
-  if (protectedRaces.length === 1) {
-    const second = eligible.find((race) => (
-      String(race.id) !== String(protectedRaces[0].id) && compatibleRacePair(protectedRaces[0], race)
-    ));
-    if (second) protectedRaces.push(second);
-  }
-  return protectedRaces.slice(0, MAX_PROTECTED_RACES);
+  if (orderedSelected.length === 2 && !compatibleRacePair(orderedSelected[0], orderedSelected[1])) return [];
+  return orderedSelected;
 }
 
-function integer(value, fallback, minimum, maximum) {
+function integer(value, minimum, maximum) {
   const parsed = Number(value);
-  if (!Number.isInteger(parsed)) return fallback;
-  return Math.max(minimum, Math.min(maximum, parsed));
+  if (!Number.isInteger(parsed) || parsed < minimum || parsed > maximum) return null;
+  return parsed;
 }
 
 function normalizeRolloutTrainingDays(raw) {
@@ -82,41 +74,59 @@ function normalizeRolloutTrainingDays(raw) {
   }));
 }
 
-function preservedPlanTarget(activePlan = {}, profile = {}) {
+function ownValue(object, camelKey, snakeKey) {
+  if (object && Object.prototype.hasOwnProperty.call(object, camelKey)) return object[camelKey];
+  if (object && Object.prototype.hasOwnProperty.call(object, snakeKey)) return object[snakeKey];
+  return undefined;
+}
+
+function authoritativePlanTarget(activePlan = {}) {
   const schedule = activePlan.schedulePreferences || activePlan.schedule_preferences || {};
-  const planTrainingDays = normalizeRolloutTrainingDays(schedule.trainingDays || schedule.training_days);
-  const profileTrainingDays = normalizeRolloutTrainingDays(profile.preferred_workout_days);
-  const trainingDays = planTrainingDays.length ? planTrainingDays : profileTrainingDays;
-  const availableDays = trainingDays.length ? trainingDays : DEFAULT_TRAINING_DAYS.slice();
-  const requestedRuns = integer(
-    schedule.runDaysPerWeek ?? schedule.run_days_per_week ?? profile.run_days_per_week,
-    Math.min(3, availableDays.length),
-    1,
-    6
-  );
-  const runDaysPerWeek = Math.min(requestedRuns, availableDays.length);
+  const rawTrainingDays = ownValue(schedule, 'trainingDays', 'training_days');
+  const rawRunDays = ownValue(schedule, 'runDaysPerWeek', 'run_days_per_week');
+  if (!Array.isArray(rawTrainingDays) || rawTrainingDays.length < 1) {
+    return { valid: false, reason: 'MISSING_SCHEDULE_AUTHORITY' };
+  }
+  const trainingDays = normalizeRolloutTrainingDays(rawTrainingDays);
+  if (trainingDays.length !== new Set(rawTrainingDays.map((day) => String(day))).size) {
+    return { valid: false, reason: 'MISSING_SCHEDULE_AUTHORITY' };
+  }
+  const runDaysPerWeek = integer(rawRunDays, 1, 6);
+  if (!runDaysPerWeek || runDaysPerWeek > trainingDays.length) {
+    return { valid: false, reason: 'MISSING_SCHEDULE_AUTHORITY' };
+  }
   const strength = activePlan.strengthPolicy || activePlan.strength_policy || {};
   const rawMode = String(activePlan.planMode || activePlan.plan_mode || '').trim();
-  const profileLiftDays = integer(profile.lift_days_per_week, 0, 0, 4);
-  const mode = Object.values(planSchema.PLAN_MODES).includes(rawMode)
-    ? rawMode
-    : profileLiftDays > 0
-      ? planSchema.PLAN_MODES.HYBRID_MAINTAIN
-      : planSchema.PLAN_MODES.RUN_ONLY;
-  const liftingEnabled = mode !== planSchema.PLAN_MODES.RUN_ONLY && strength.enabled !== false;
-  const liftDaysPerWeek = liftingEnabled
-    ? integer(strength.sessionsPerWeek ?? strength.sessions_per_week ?? profileLiftDays, Math.max(1, profileLiftDays), 1, 4)
-    : 0;
+  if (!Object.values(planSchema.PLAN_MODES).includes(rawMode)) {
+    return { valid: false, reason: 'MISSING_SCHEDULE_AUTHORITY' };
+  }
+  const liftingEnabled = rawMode !== planSchema.PLAN_MODES.RUN_ONLY;
+  let liftDaysPerWeek = 0;
+  if (liftingEnabled) {
+    if (strength.enabled !== true) return { valid: false, reason: 'MISSING_SCHEDULE_AUTHORITY' };
+    liftDaysPerWeek = integer(ownValue(strength, 'sessionsPerWeek', 'sessions_per_week'), 1, 4);
+    if (!liftDaysPerWeek) return { valid: false, reason: 'MISSING_SCHEDULE_AUTHORITY' };
+  }
 
-  return {
-    trainingDays: availableDays,
+  return { valid: true, target: {
+    trainingDays,
     runDaysPerWeek,
-    planMode: mode,
+    planMode: rawMode,
     liftingEnabled,
     liftDaysPerWeek,
-    strengthGoal: String(strength.goal || (mode === planSchema.PLAN_MODES.HYBRID_BUILD ? 'build' : 'maintain')),
+    strengthGoal: String(strength.goal || (rawMode === planSchema.PLAN_MODES.HYBRID_BUILD ? 'build' : 'maintain')),
     equipment: Array.isArray(strength.equipment) ? strength.equipment.slice(0, 20) : [],
-  };
+  } };
+}
+
+function preservedPlanTarget(activePlan = {}) {
+  const result = authoritativePlanTarget(activePlan);
+  if (!result.valid) {
+    const error = new Error('Active plan does not contain an authoritative schedule.');
+    error.code = result.reason;
+    throw error;
+  }
+  return result.target;
 }
 
 function isCurrentRolloutPlan(activePlan = {}, raceIds = []) {
@@ -124,6 +134,7 @@ function isCurrentRolloutPlan(activePlan = {}, raceIds = []) {
   const protectedRaceIds = [...new Set(raceIds.map((id) => String(id || '').trim()).filter(Boolean))].sort();
   return activePlan.engineVersion === RACE_PLAN_POLICY_V1.engineVersion
     && activePlan.policyVersion === RACE_PLAN_POLICY_V1.version
+    && activePlan.invariantVersion === RACE_PLAN_POLICY_V1.invariantVersion
     && activeRaceIds.length === protectedRaceIds.length
     && activeRaceIds.every((id, index) => id === protectedRaceIds[index]);
 }
@@ -195,6 +206,7 @@ function buildBackupManifest({ entries, createdAt = new Date().toISOString(), mo
 
 module.exports = {
   MAX_PROTECTED_RACES,
+  authoritativePlanTarget,
   assertApplyAuthorized,
   assertRedactedBackup,
   buildBackupManifest,

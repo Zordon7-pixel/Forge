@@ -13,6 +13,7 @@ import { normalizeForgedDeepLink } from './lib/nativeDeepLink'
 import api, { acceptWaiver } from './lib/api'
 import ConsentWaiver from './components/ConsentWaiver'
 import { markChunkBoundaryError, recoverFromChunkError } from './lib/chunkRecovery'
+import PlanCandidateDecisionSheet from './components/PlanCandidateDecisionSheet'
 
 function lazyWithRetry(factory) {
   return lazy(async () => {
@@ -387,6 +388,7 @@ export default function App() {
       <ProProvider>
         <AutoHealthSync />
         <NativeNotificationNavigation />
+        <PlanCandidateDecisionSheet />
         <Suspense fallback={<PageFallback />}>
           <Routes>
         <Route path="/login" element={<Login />} />

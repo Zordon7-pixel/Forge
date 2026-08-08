@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router'
 import { CalendarDays, ChevronRight, MapPin, Search, X } from 'lucide-react'
 import api from '../lib/api'
 import { previewAndApplyPlan } from '../lib/planCandidates'
+import { isPlanCandidateReviewCancelled } from '../lib/planCandidateReview'
 import { activateModalDialog } from '../lib/modalDialog'
 import { useProContext } from '../context/ProContext'
 import DurationPicker from '../components/DurationPicker'
@@ -361,6 +362,7 @@ export default function PlanCatalog() {
       }
       navigate('/plan')
     } catch (err) {
+      if (isPlanCandidateReviewCancelled(err)) return
       if (err?.response?.status === 402) {
         navigate('/upgrade')
         return

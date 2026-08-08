@@ -136,16 +136,19 @@ async function withTransaction(fn, {
   }
 }
 
-async function withUserMutation(userId, fn) {
+async function withUserMutation(userId, fn, { userLock = 'key_share' } = {}) {
   const normalizedUserId = String(userId || '').trim();
   if (!normalizedUserId) throw accountUnavailableError();
   return withTransaction(fn, {
     userIds: [normalizedUserId],
+    userLock,
     requireUserIds: [normalizedUserId],
   });
 }
 
-const withPlanningInputMutation = createPlanningInputMutationRunner(withUserMutation);
+const withPlanningInputMutation = createPlanningInputMutationRunner((userId, fn) => (
+  withUserMutation(userId, fn, { userLock: 'update' })
+));
 
 async function initDb() {
   const client = await pool.connect();

@@ -119,6 +119,12 @@ async function run() {
   const snapshot = candidateLifecycle.buildPlanningSnapshot({
     activePlan: { planVersion: 3, trainingPlanId: 'tp-old', userPlanId: 'up-old' },
     context: {
+      checkin: {
+        date: '2026-08-08',
+        feeling: 3,
+        lifeFlags: ['stressed', 'private free text', 'STRESSED'],
+        privateNote: 'must not persist',
+      },
       profile: { email: 'hidden@example.com', phone: '555-0100', weekly_miles_current: Infinity },
       target: { distanceMiles: 10 },
     },
@@ -130,6 +136,8 @@ async function run() {
   assert.equal(snapshot.context.profile.email, undefined);
   assert.equal(snapshot.context.profile.phone, undefined);
   assert.equal(snapshot.context.profile.weekly_miles_current, 0);
+  assert.deepEqual(snapshot.context.checkin.lifeFlags, ['stressed']);
+  assert.equal(snapshot.context.checkin.privateNote, undefined);
   assert.equal(snapshot.request.email, undefined);
 
   const plan = {
@@ -155,9 +163,11 @@ async function run() {
   assert.match(source, /active\s*\?\s*addPolicyDays\(row\.planning_date_local, 1\)/);
   assert.match(source, /row\.status === 'applied'/);
   assert.match(source, /CANDIDATE_DETERMINISM_MISMATCH/);
+  assert.match(source, /storedFeasibility === 'unsafe'[\s\S]*CANDIDATE_UNSAFE/);
+  assert.match(source, /!\['supported', 'stretch'\]\.includes\(storedFeasibility\)[\s\S]*CANDIDATE_FEASIBILITY_MISSING/);
   assert.match(source, /includeFuture: true/);
 
-  console.log('PLAN CANDIDATE LIFECYCLE SMOKE OK (25)');
+  console.log('PLAN CANDIDATE LIFECYCLE SMOKE OK (29)');
 }
 
 run().catch((error) => {
