@@ -1710,7 +1710,17 @@ async function previewPlanForUser(userId, body = {}, { store = true } = {}) {
     planningDateLocal: clock.planningDateLocal,
     races: initial.races,
   };
-  if (!store) return response;
+  if (!store) {
+    return {
+      ...response,
+      diagnostics: {
+        active_plan: initial.activePlan,
+        active_plan_data: initial.active ? parsePlan(initial.active.row) : null,
+        snapshot: normalized.snapshot,
+        trace: normalized.trace,
+      },
+    };
+  }
 
   await withUserMutation(userId, async (tx) => {
     const current = await loadCandidateInputState(userId, request, clock, tx);
@@ -3102,9 +3112,10 @@ router.put('/my/progress', auth, async (req, res) => {
         if (insert.changes === 0) throw new Error('Legacy plan assignment migration failed');
       }
 
+      const assignmentId = row.user_plan_id || row.id;
       const update = await tx.run(
         'UPDATE user_plans SET current_week = ?, progress_json = ? WHERE id = ? AND user_id = ?',
-        [nextWeek, JSON.stringify({ ...progress, completedSessionIds: Array.from(completed) }), row.id, req.user.id]
+        [nextWeek, JSON.stringify({ ...progress, completedSessionIds: Array.from(completed) }), assignmentId, req.user.id]
       );
       if (update.changes === 0) throw new Error('Active plan progress update failed');
       return { ok: true, current_week: nextWeek, completedSessionIds: Array.from(completed) };

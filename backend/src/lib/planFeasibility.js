@@ -345,7 +345,7 @@ function sessionsBefore(plan, throughDate) {
 }
 
 function qualityExposure(plan, goal, calendar) {
-  if (goal.goalType !== 'pr') return { status: 'supported', counts: {}, required: {} };
+  if (goal.goalType !== 'pr') return { status: 'supported', counts: {}, required: {}, ratio: 1, reasons: [] };
   const counts = { hillsOrStrides: 0, thresholdOrIntervals: 0, racePace: 0 };
   for (const { session } of sessionsBefore(plan, calendar.latestPeakMonday ? addDays(calendar.latestPeakMonday, 6) : goal.date)) {
     const id = String(session.workout_id || '');

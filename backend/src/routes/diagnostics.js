@@ -1,6 +1,10 @@
 const router = require('express').Router();
 const auth = require('../middleware/auth');
-const { pool, dbGet, dbAll } = require('../db');
+const { randomUUID } = require('node:crypto');
+const { pool, dbGet, dbAll, withTransaction } = require('../db');
+const plansRouter = require('./plans');
+const { RACE_PLAN_POLICY_V1 } = require('../lib/racePlanPolicy');
+const { buildPlanDiagnosticBundle } = require('../lib/racePlanDiagnostics');
 
 function diagnosticsAdmins() {
   return String(process.env.DIAGNOSTICS_ADMIN_EMAILS || process.env.ADMIN_EMAILS || '')
@@ -84,6 +88,79 @@ router.post('/heal', auth, requireDiagnosticsAdmin, async (req, res) => {
 
   if (actions.length === 0) actions.push('No issues found — everything looks healthy');
   res.json({ ok: true, actions });
+});
+
+// POST /api/diagnostics/plan-audit — one owner-scoped, no-write plan shadow.
+router.post('/plan-audit', auth, requireDiagnosticsAdmin, async (req, res) => {
+  const targetUserId = typeof req.body?.user_id === 'string' ? req.body.user_id.trim() : '';
+  if (!targetUserId || targetUserId.length > 128) {
+    return res.status(400).json({ error: 'A valid user_id target is required.' });
+  }
+
+  try {
+    const planningDate = typeof req.body?.planning_date_local === 'string'
+      ? req.body.planning_date_local.trim()
+      : new Date().toISOString().slice(0, 10);
+    let raceIds = Array.isArray(req.body?.race_ids)
+      ? req.body.race_ids.map((id) => String(id || '').trim()).filter(Boolean)
+      : [];
+    if (raceIds.length === 0) {
+      const races = await dbAll(
+        `SELECT id FROM race_events
+         WHERE user_id=? AND status='upcoming' AND race_date>=?
+         ORDER BY race_date ASC LIMIT 2`,
+        [targetUserId, planningDate]
+      );
+      raceIds = races.map((race) => race.id);
+    }
+    if (raceIds.length < 1 || raceIds.length > 2) {
+      return res.status(409).json({ error: 'The target needs one or two future owned races for this audit.' });
+    }
+
+    const candidate = await plansRouter._test.previewPlanForUser(targetUserId, {
+      race_ids: raceIds,
+      target: req.body?.target || {},
+      planning_date_local: planningDate,
+      timezone_offset_minutes: Number(req.body?.timezone_offset_minutes || 0),
+    }, { store: false });
+    const bundle = buildPlanDiagnosticBundle({ targetUserId, candidate });
+
+    await withTransaction(async (tx) => {
+      await tx.run(
+        `DELETE FROM diagnostic_access_audit
+         WHERE created_at < CURRENT_TIMESTAMP - (?::integer * INTERVAL '1 day')
+           AND (actor_user_id=? OR target_user_id=?)`,
+        [RACE_PLAN_POLICY_V1.diagnostics.retentionDays, req.user.id, targetUserId]
+      );
+      await tx.run(
+        `INSERT INTO diagnostic_access_audit (
+           id, actor_user_id, target_user_id, training_plan_id, user_plan_id, candidate_id, action
+         ) VALUES (?,?,?,?,?,?,?)`,
+        [
+          randomUUID(),
+          req.user.id,
+          targetUserId,
+          bundle.active_plan.training_plan_id,
+          bundle.active_plan.user_plan_id,
+          bundle.candidate.id,
+          'plan_shadow_audit',
+        ]
+      );
+    }, {
+      userIds: [req.user.id, targetUserId],
+      requireUserIds: [req.user.id, targetUserId],
+    });
+
+    return res.json({ ok: true, diagnostic: bundle });
+  } catch (err) {
+    console.error('[diagnostics/plan-audit] failed:', err.message);
+    return res.status(Number(err.status) || 500).json({
+      error: Number(err.status) && Number(err.status) < 500
+        ? err.message
+        : 'Unable to build the plan diagnostic.',
+      ...(err.code ? { code: err.code } : {}),
+    });
+  }
 });
 
 router.requireDiagnosticsAdmin = requireDiagnosticsAdmin;

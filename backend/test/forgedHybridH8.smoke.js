@@ -392,8 +392,8 @@ async function runPlanFallbackSmoke() {
   };
   const mockDb = {
     dbGet: async (sql, params = []) => {
-      if (sql.includes('FROM users WHERE id = ?')) return params[0] === profile.id ? { ...profile } : null;
-      if (sql.includes('FROM race_events WHERE id = ? AND user_id = ?')) {
+      if (/FROM users WHERE id\s*=\s*\?/.test(sql)) return params[0] === profile.id ? { ...profile } : null;
+      if (/FROM race_events WHERE id\s*=\s*\? AND user_id\s*=\s*\?/.test(sql)) {
         return params[0] === race.id && params[1] === profile.id ? { ...race } : null;
       }
       return null;
@@ -401,12 +401,22 @@ async function runPlanFallbackSmoke() {
     dbAll: async () => [],
     dbRun: async () => ({ changes: 0 }),
     withPlanningInputMutation: async (_userId, fn) => fn({
+      get: async (sql, params = []) => mockDb.dbGet(sql, params),
+      all: async (sql, params = []) => mockDb.dbAll(sql, params),
       run: async (sql, params = []) => {
         writes.push({ sql, params: [...params] });
         return { changes: 1 };
       },
     }),
   };
+  mockDb.withUserMutation = async (_userId, fn) => fn({
+    get: async (sql, params = []) => mockDb.dbGet(sql, params),
+    all: async (sql, params = []) => mockDb.dbAll(sql, params),
+    run: async (sql, params = []) => {
+      writes.push({ sql, params: [...params] });
+      return { changes: 1 };
+    },
+  });
   const mockAi = {
     generateTrainingPlan: async (_profile, target) => {
       generateCalls += 1;
@@ -452,9 +462,10 @@ async function runPlanFallbackSmoke() {
       user: { id: profile.id },
     });
     check(generateCalls === 0, 'plan route does not spend an LLM request');
-    check(response.statusCode === 201 && response.payload?.generation_source === 'evidence_engine', 'POST /plans/generate succeeds with evidence_engine');
-    check(response.payload?.plan?.plan_data?.generationSource === 'evidence_engine', 'persisted response carries evidence-engine provenance');
-    check(writes.length === 3 && writes.every((write) => write.params.includes(profile.id)), 'evidence plan persistence remains scoped to the authenticated user');
+    check(response.statusCode === 201 && response.payload?.generation_source === 'race_plan_candidate_engine', 'POST /plans/generate succeeds with a reviewed candidate preview');
+    check(response.payload?.requires_apply === true && response.payload?.plan?.preview === true, 'ordinary generation requires explicit candidate apply');
+    check(response.payload?.plan?.plan_data?.engineVersion === 'race-plan-candidate-v1' && response.payload?.plan?.plan_data?.policyVersion === 'race-plan-policy-v1', 'candidate response carries deterministic engine and policy provenance');
+    check(writes.length === 1 && writes[0].sql.includes('INSERT INTO plan_generation_candidates') && writes[0].params.includes(profile.id), 'ordinary preview stores one owner-bound candidate without replacing the active plan');
 
     response = await invoke(raceHandler, {
       params: { raceId: race.id },
@@ -463,12 +474,13 @@ async function runPlanFallbackSmoke() {
       user: { id: profile.id },
     });
     check(generateCalls === 0, 'race plan route also avoids an LLM request');
-    check(response.statusCode === 201 && response.payload?.generation_source === 'evidence_engine', 'POST /plans/generate-for-race succeeds with evidence_engine');
-    check(response.payload?.plan?.plan_data?.generationSource === 'evidence_engine', 'race plan persistence carries evidence-engine provenance');
+    check(response.statusCode === 201 && response.payload?.generation_source === 'race_plan_candidate_engine', 'POST /plans/generate-for-race succeeds with a reviewed candidate preview');
+    check(response.payload?.requires_apply === true && response.payload?.plan?.preview === true, 'race generation requires explicit candidate apply');
+    check(response.payload?.plan?.plan_data?.engineVersion === 'race-plan-candidate-v1' && response.payload?.plan?.plan_data?.policyVersion === 'race-plan-policy-v1', 'race candidate carries deterministic engine and policy provenance');
     check(response.payload?.race?.id === race.id && response.payload?.plan?.plan_data?.goal?.name === race.race_name && response.payload?.plan?.plan_data?.goal?.date === raceDate, 'race plan uses the owned race identity and date');
-    const preferenceWrite = writes.find((write) => write.sql.includes('UPDATE users SET run_days_per_week'));
-    check(writes.length === 7 && writes.every((write) => write.params.includes(profile.id)), 'race evidence and preference persistence remain scoped to the authenticated user');
-    check(preferenceWrite?.params[0] === 3 && preferenceWrite?.params[1] === JSON.stringify(['Tue', 'Thu', 'Sat']), 'race generation persists the authoritative run count and selected weekdays');
+    check(writes.length === 2 && writes.every((write) => write.sql.includes('INSERT INTO plan_generation_candidates') && write.params.includes(profile.id)), 'each preview stores exactly one candidate scoped to the authenticated user');
+    check(response.payload?.plan?.plan_data?.schedulePreferences?.runDaysPerWeek === 3 && same(response.payload?.plan?.plan_data?.schedulePreferences?.trainingDays, ['Tue', 'Thu', 'Sat']), 'race candidate retains the authoritative run count and selected weekdays');
+    check(!writes.some((write) => /INSERT INTO training_plans|INSERT INTO user_plans|UPDATE users/.test(write.sql)), 'preview does not replace a plan or persist profile preferences before apply');
   } finally {
     delete require.cache[plansRoutePath];
     if (originalPlansRoute) require.cache[plansRoutePath] = originalPlansRoute;

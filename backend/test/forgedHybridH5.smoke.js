@@ -224,14 +224,34 @@ async function runProgressRouteHarness() {
   const originalPlansRoute = require.cache[plansRoutePath];
   let routeRow = null;
   let legacyRow = null;
-  let selectParams = null;
+  let assignmentSelectParams = null;
   let updateParams = null;
   let insertParams = null;
 
   const tx = {
     get: async (sql, params) => {
-      selectParams = params;
-      if (sql.includes('FROM user_plans up')) return routeRow ? { ...routeRow } : null;
+      if (sql.includes('FROM user_plans up')) {
+        assignmentSelectParams = params;
+        return routeRow ? {
+          user_plan_id: routeRow.id,
+          plan_id: routeRow.plan_id,
+          current_week: routeRow.current_week,
+          progress_json: routeRow.progress_json,
+          status: 'active',
+          plan_version: 1,
+          lineage_id: routeRow.id,
+          effective_from: '2026-07-13',
+        } : null;
+      }
+      if (sql.includes('JOIN user_plans owner_up')) {
+        return routeRow ? {
+          id: routeRow.plan_id,
+          weeks: routeRow.weeks,
+          plan_data: routeRow.plan_data,
+          plan_json: routeRow.plan_json,
+          user_id: 'user-h5',
+        } : null;
+      }
       if (sql.includes('FROM training_plans tp')) return legacyRow ? { ...legacyRow } : null;
       return null;
     },
@@ -292,6 +312,7 @@ async function runProgressRouteHarness() {
     };
     const freshRow = () => ({
       id: 'user-plan-h5',
+      plan_id: 'training-plan-h5',
       current_week: 1,
       progress_json: JSON.stringify({ completedSessionIds: [] }),
       weeks: hybridPlan.weeks.length,
@@ -304,7 +325,7 @@ async function runProgressRouteHarness() {
     updateParams = null;
     let response = await invoke({ completed_session_id: 'run-1', current_week: 1 });
     assert(response.statusCode === 200 && response.payload?.completedSessionIds?.includes('run-1'), 'valid completion returns 200 and records the plan session');
-    assert(selectParams?.[0] === 'user-h5' && updateParams?.[3] === 'user-h5', 'progress SELECT and UPDATE bind the authenticated user id');
+    assert(assignmentSelectParams?.[0] === 'user-h5' && updateParams?.[2] === 'user-plan-h5' && updateParams?.[3] === 'user-h5', 'progress SELECT and UPDATE bind the authenticated user and assignment ids');
 
     response = await invoke({ completed_session_id: 'run-1', current_week: 1 });
     const repeated = JSON.parse(routeRow.progress_json).completedSessionIds.filter((id) => id === 'run-1');

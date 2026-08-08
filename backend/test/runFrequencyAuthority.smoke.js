@@ -383,8 +383,8 @@ async function checkPartialWeekRoutesDoNotReject() {
 
   const mockDb = {
     dbGet: async (sql, params = []) => {
-      if (sql.includes('FROM users WHERE id = ?')) return params[0] === profile.id ? { ...profile } : null;
-      if (sql.includes('FROM race_events WHERE id = ? AND user_id = ?')) {
+      if (/FROM users WHERE id\s*=\s*\?/.test(sql)) return params[0] === profile.id ? { ...profile } : null;
+      if (/FROM race_events WHERE id\s*=\s*\? AND user_id\s*=\s*\?/.test(sql)) {
         return scenario.race?.id === params[0] && profile.id === params[1] ? { ...scenario.race } : null;
       }
       return null;
@@ -394,8 +394,14 @@ async function checkPartialWeekRoutesDoNotReject() {
       return [];
     },
     dbRun: async () => ({ changes: 1 }),
-    withPlanningInputMutation: async (_userId, fn) => fn({ run: async () => ({ changes: 1 }) }),
   };
+  const tx = {
+    get: (sql, params = []) => mockDb.dbGet(sql, params),
+    all: (sql, params = []) => mockDb.dbAll(sql, params),
+    run: (sql, params = []) => mockDb.dbRun(sql, params),
+  };
+  mockDb.withUserMutation = async (_userId, fn) => fn(tx);
+  mockDb.withPlanningInputMutation = async (_userId, fn) => fn(tx);
 
   require.cache[dbModulePath] = {
     id: dbModulePath,
@@ -419,7 +425,7 @@ async function checkPartialWeekRoutesDoNotReject() {
       query: {},
       user: { id: profile.id },
     });
-    assert.equal(response.statusCode, 201, `Monday same-day route must not return HTTP ${response.statusCode}: ${response.payload?.error || ''}`);
+    assert.equal(response.statusCode, 201, `Monday same-day route must not return HTTP ${response.statusCode}: ${response.payload?.error || ''} ${JSON.stringify(response.payload?.details || [])}`);
     assert.equal(runSessions(response.payload.plan.plan_data.weeks[0]).length, 3);
 
     scenario.runs = [runRow('same-day-off-day', scenario.todayISO)];

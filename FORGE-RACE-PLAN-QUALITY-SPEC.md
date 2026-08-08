@@ -930,6 +930,8 @@ No automatic active-plan replacement.
 11. Bryan reviews the candidate block in the running app and explicitly chooses apply.
 12. Only after those gates may the new engine become the default for new previews. Existing plans remain unchanged until their owner applies a reviewed candidate.
 
+Bryan additionally authorized a one-time beta-cohort upgrade on 2026-08-08. That operator action does not weaken the default product rule above: it must run only after independent QA and Hermes approval, default to a no-write dry run, target only onboarded beta accounts with an active plan plus future owned race, write a redacted pre-apply backup, require the checked-in hard confirmation phrase, use the exact preview/apply transaction path, and make each replacement effective on the next phone-local date. The current assignment remains authoritative for the rest of the apply day and lineage remains available for rollback.
+
 P0 through P3 stay dark and pure on one integration branch. They cannot change the default behavior of current `buildConcurrentPlan()` callers, be wired to current `/generate*` persistence, merge to production independently, or deploy before P4A and P4B complete. `racePlanCandidateEngine.js` is a temporary compatibility seam that emits the existing canonical plan schema, not a second plan model; P4B makes it the preview implementation and removes redundant legacy generation only after differential tests pass. First product activation is preview-only through P4B; active replacement remains explicit apply.
 
 ## Required acceptance matrix

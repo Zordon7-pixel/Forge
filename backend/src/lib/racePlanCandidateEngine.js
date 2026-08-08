@@ -554,7 +554,7 @@ function moveQualityEntry(plan, context, sourceEntry) {
     reasonCodes: ['DEMANDING_SESSION_SPACING'],
   });
   rebuildEntry(targetEntry, plan, context, {
-    sourceSession,
+    sourceSession: { ...sourceSession, id: targetSession.id },
     type: sourceSession.type,
     workoutId: sourceSession.workout_id,
     distance: targetSession.distance_miles,

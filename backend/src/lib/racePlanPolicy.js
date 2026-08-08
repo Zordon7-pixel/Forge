@@ -94,6 +94,11 @@ const RACE_PLAN_POLICY_V1 = deepFreeze({
     maximumResponseBytes: 256 * 1024,
     retentionDays: 365,
   },
+  rollout: {
+    engineMode: 'preview_shadow',
+    automaticActiveReplacement: false,
+    betaApplyConfirmation: 'APPLY_FUTURE_BETA_PLANS',
+  },
   reasonCodes: [
     'NO_WEEKLY_BASELINE',
     'NO_LONG_RUN_ANCHOR',
