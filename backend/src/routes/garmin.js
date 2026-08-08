@@ -2,7 +2,7 @@ const router = require('express').Router();
 const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
 const { GarminConnect } = require('garmin-connect');
-const { dbGet, dbAll, dbRun } = require('../db');
+const { dbGet, dbAll, dbRun, withPlanningInputMutation } = require('../db');
 const auth = require('../middleware/auth');
 const watchSync = require('./watchSync');
 
@@ -164,9 +164,9 @@ function normalizeSleepPayload(rawSleepData = {}) {
   };
 }
 
-async function upsertGarminSleep(userId, payload) {
+async function upsertGarminSleep(userId, payload, db = { run: dbRun }) {
   const now = new Date().toISOString();
-  const updateResult = await dbRun(
+  const updateResult = await db.run(
     `UPDATE garmin_sleep
       SET sleep_start_gmt=?,
           sleep_end_gmt=?,
@@ -197,7 +197,7 @@ async function upsertGarminSleep(userId, payload) {
 
   if ((updateResult?.changes || 0) > 0) return;
 
-  await dbRun(
+  await db.run(
     `INSERT INTO garmin_sleep (
       id, user_id, calendar_date, sleep_start_gmt, sleep_end_gmt,
       deep_sleep_seconds, light_sleep_seconds, rem_sleep_seconds, awake_seconds, unmeasurable_seconds,
@@ -298,6 +298,7 @@ router.post('/sync', auth, async (req, res) => {
     }
 
     let sleepSynced = 0;
+    const sleepPayloads = [];
     for (const day of getLookbackDates(SLEEP_LOOKBACK_DAYS)) {
       let sleepData = null;
       try {
@@ -307,8 +308,14 @@ router.post('/sync', auth, async (req, res) => {
       }
       const normalizedSleep = normalizeSleepPayload(sleepData);
       if (!normalizedSleep) continue;
-      await upsertGarminSleep(req.user.id, normalizedSleep);
+      sleepPayloads.push(normalizedSleep);
       sleepSynced += 1;
+    }
+
+    if (sleepPayloads.length) {
+      await withPlanningInputMutation(req.user.id, async (tx) => {
+        for (const payload of sleepPayloads) await upsertGarminSleep(req.user.id, payload, tx);
+      });
     }
 
     const now = new Date().toISOString();

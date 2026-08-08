@@ -1,6 +1,6 @@
 const router = require('express').Router();
 const { v4: uuidv4 } = require('uuid');
-const { dbGet, dbAll, dbRun, withTransaction } = require('../db');
+const { dbGet, dbAll, dbRun, withPlanningInputMutation } = require('../db');
 const auth = require('../middleware/auth');
 const multer = require('multer');
 const { parseStringPromise } = require('xml2js');
@@ -227,7 +227,7 @@ async function ingestActivity(userId, payload = {}) {
   const syncUuid = normalizeSyncUuid(payload);
   const garminActivityId = normalizeGarminActivityId(payload);
 
-  return withTransaction(async (tx) => {
+  return withPlanningInputMutation(userId, async (tx) => {
     await tx.run(`INSERT INTO watch_sync (
     id, user_id, activity_type, activity_name, normalized_type, routed_section,
     distance_miles, duration_seconds, avg_pace, pace_splits_json,

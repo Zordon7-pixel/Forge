@@ -1,7 +1,7 @@
 const crypto = require('crypto');
 const router = require('express').Router();
 const { v4: uuidv4 } = require('uuid');
-const { dbGet, dbAll, dbRun, withUserMutation } = require('../db');
+const { dbGet, dbAll, dbRun, withUserMutation, withPlanningInputMutation } = require('../db');
 const auth = require('../middleware/auth');
 const { requirePremium } = require('../middleware/premiumGate');
 
@@ -388,6 +388,7 @@ router.post('/sync', auth, requirePremium('WHOOP sync'), async (req, res) => {
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
     const now = new Date().toISOString();
     let synced = 0;
+    const syncPayloads = [];
 
     // Sync recovery data
     try {
@@ -400,7 +401,7 @@ router.post('/sync', auth, requirePremium('WHOOP sync'), async (req, res) => {
         const date = String(record?.created_at || '').slice(0, 10);
         if (!date) continue;
 
-        await upsertWhoopData(req.user.id, {
+        syncPayloads.push({
           date,
           data_type: 'recovery',
           recovery_score: Number(score.recovery_score || 0),
@@ -428,7 +429,7 @@ router.post('/sync', auth, requirePremium('WHOOP sync'), async (req, res) => {
         const date = String(record?.start || record?.created_at || '').slice(0, 10);
         if (!date) continue;
 
-        await upsertWhoopData(req.user.id, {
+        syncPayloads.push({
           date,
           data_type: 'strain',
           strain_score: Number(score.strain || 0),
@@ -456,7 +457,7 @@ router.post('/sync', auth, requirePremium('WHOOP sync'), async (req, res) => {
         if (!date) continue;
 
         const stages = score?.stage_summary || {};
-        await upsertWhoopData(req.user.id, {
+        syncPayloads.push({
           date,
           data_type: 'sleep',
           sleep_performance_pct: Number(score.sleep_performance_percentage || 0),
@@ -476,11 +477,18 @@ router.post('/sync', auth, requirePremium('WHOOP sync'), async (req, res) => {
       // Sleep fetch failed, continue
     }
 
-    // Update last sync timestamp
-    await dbRun('UPDATE whoop_tokens SET updated_at = ? WHERE user_id = ?', [now, req.user.id]);
+    if (syncPayloads.length) {
+      await withPlanningInputMutation(req.user.id, async (tx) => {
+        for (const payload of syncPayloads) await upsertWhoopData(req.user.id, payload, tx);
+        await tx.run('UPDATE whoop_tokens SET updated_at = ? WHERE user_id = ?', [now, req.user.id]);
+      });
+    } else {
+      await dbRun('UPDATE whoop_tokens SET updated_at = ? WHERE user_id = ?', [now, req.user.id]);
+    }
 
     return res.json({ synced });
-  } catch {
+  } catch (err) {
+    console.error('[whoop/sync] failed:', err.message);
     return res.status(500).json({ error: 'WHOOP sync failed' });
   }
 });
@@ -522,10 +530,10 @@ router.delete('/disconnect', auth, async (req, res) => {
 });
 
 // ── Data upsert helper ──────────────────────────────────────────────────────
-async function upsertWhoopData(userId, payload) {
+async function upsertWhoopData(userId, payload, db = { run: dbRun }) {
   const now = new Date().toISOString();
 
-  const updated = await dbRun(
+  const updated = await db.run(
     `UPDATE whoop_data SET
       recovery_score = ?, resting_heart_rate = ?, hrv_rmssd = ?,
       spo2_pct = ?, skin_temp_celsius = ?,
@@ -549,7 +557,7 @@ async function upsertWhoopData(userId, payload) {
 
   if ((updated?.changes || 0) > 0) return;
 
-  await dbRun(
+  await db.run(
     `INSERT INTO whoop_data (
       id, user_id, date, data_type,
       recovery_score, resting_heart_rate, hrv_rmssd, spo2_pct, skin_temp_celsius,

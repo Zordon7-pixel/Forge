@@ -1,7 +1,7 @@
 const crypto = require('crypto');
 const router = require('express').Router();
 const { v4: uuidv4 } = require('uuid');
-const { dbGet, dbAll, dbRun, withUserMutation } = require('../db');
+const { dbGet, dbAll, dbRun, withUserMutation, withPlanningInputMutation } = require('../db');
 const auth = require('../middleware/auth');
 const { requirePremium } = require('../middleware/premiumGate');
 
@@ -448,6 +448,7 @@ router.post('/sync', auth, requirePremium('Oura sync'), async (req, res) => {
     const endDate = new Date().toISOString().slice(0, 10);
     const now = new Date().toISOString();
     let synced = 0;
+    const syncPayloads = [];
 
     // Sync daily sleep scores
     try {
@@ -459,7 +460,7 @@ router.post('/sync', auth, requirePremium('Oura sync'), async (req, res) => {
         if (!date) continue;
 
         const contributors = record?.contributors || {};
-        await upsertOuraData(req.user.id, {
+        syncPayloads.push({
           date,
           data_type: 'sleep',
           sleep_score: Number(record.score || 0),
@@ -486,7 +487,7 @@ router.post('/sync', auth, requirePremium('Oura sync'), async (req, res) => {
         if (!date) continue;
 
         const contributors = record?.contributors || {};
-        await upsertOuraData(req.user.id, {
+        syncPayloads.push({
           date,
           data_type: 'readiness',
           readiness_score: Number(record.score || 0),
@@ -522,7 +523,7 @@ router.post('/sync', auth, requirePremium('Oura sync'), async (req, res) => {
       }
 
       for (const [date, stats] of Object.entries(dailyHrv)) {
-        await upsertOuraData(req.user.id, {
+        syncPayloads.push({
           date,
           data_type: 'heartrate',
           hrv_avg: stats.count > 0 ? stats.sum / stats.count : null,
@@ -537,11 +538,18 @@ router.post('/sync', auth, requirePremium('Oura sync'), async (req, res) => {
       // Heart rate fetch failed, continue
     }
 
-    // Update last sync timestamp
-    await dbRun('UPDATE oura_tokens SET updated_at = ? WHERE user_id = ?', [now, req.user.id]);
+    if (syncPayloads.length) {
+      await withPlanningInputMutation(req.user.id, async (tx) => {
+        for (const payload of syncPayloads) await upsertOuraData(req.user.id, payload, tx);
+        await tx.run('UPDATE oura_tokens SET updated_at = ? WHERE user_id = ?', [now, req.user.id]);
+      });
+    } else {
+      await dbRun('UPDATE oura_tokens SET updated_at = ? WHERE user_id = ?', [now, req.user.id]);
+    }
 
     return res.json({ synced });
-  } catch {
+  } catch (err) {
+    console.error('[oura/sync] failed:', err.message);
     return res.status(500).json({ error: 'Oura sync failed' });
   }
 });
@@ -583,10 +591,10 @@ router.delete('/disconnect', auth, async (req, res) => {
 });
 
 // ── Data upsert helper ──────────────────────────────────────────────────────
-async function upsertOuraData(userId, payload) {
+async function upsertOuraData(userId, payload, db = { run: dbRun }) {
   const now = new Date().toISOString();
 
-  const updated = await dbRun(
+  const updated = await db.run(
     `UPDATE oura_data SET
       sleep_score = ?, total_sleep_seconds = ?, rem_sleep_seconds = ?,
       deep_sleep_seconds = ?, light_sleep_seconds = ?, awake_seconds = ?,
@@ -614,7 +622,7 @@ async function upsertOuraData(userId, payload) {
 
   if ((updated?.changes || 0) > 0) return;
 
-  await dbRun(
+  await db.run(
     `INSERT INTO oura_data (
       id, user_id, date, data_type,
       sleep_score, total_sleep_seconds, rem_sleep_seconds,

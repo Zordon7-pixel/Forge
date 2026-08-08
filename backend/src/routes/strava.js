@@ -2,7 +2,7 @@ const crypto = require('crypto');
 const router = require('express').Router();
 const rateLimit = require('express-rate-limit');
 
-const { dbGet, dbRun, withUserMutation } = require('../db');
+const { dbGet, dbRun, withUserMutation, withPlanningInputMutation } = require('../db');
 const auth = require('../middleware/auth');
 const {
   chooseMatchingHealthRun,
@@ -10,6 +10,7 @@ const {
   routeCoordsFromStravaStreams,
 } = require('../lib/stravaActivity');
 const autoUpdatePRs = require('../services/prAuto');
+const { planningInputUnchanged } = require('../lib/planningRevision');
 const { createUserNotification } = require('../services/notifications');
 const { getWebhookVerifyToken, normalizeWebhookEvent, verifyWebhookToken } = require('../lib/stravaWebhook');
 
@@ -522,7 +523,7 @@ async function maybeRefreshAccessToken(userId, tokens) {
 
 async function syncStravaActivitiesForUser(userId, activities = []) {
   const runs = activities.filter((activity) => String(activity?.type || activity?.sport_type || '').toLowerCase().includes('run'));
-  const result = await withUserMutation(userId, async (tx) => {
+  const result = await withPlanningInputMutation(userId, async (tx) => {
     let imported = 0;
     let enriched = 0;
     const runIds = [];
@@ -590,7 +591,8 @@ async function syncStravaActivitiesForUser(userId, activities = []) {
     }
 
     await tx.run('UPDATE strava_tokens SET connected_at = NOW() WHERE user_id = ?', [userId]);
-    return { imported, enriched, runIds };
+    const syncResult = { imported, enriched, runIds };
+    return runs.length ? syncResult : planningInputUnchanged(syncResult);
   });
   return { ...result, total: runs.length };
 }

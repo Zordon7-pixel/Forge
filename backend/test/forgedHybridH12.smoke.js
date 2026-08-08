@@ -106,9 +106,9 @@ check(/isHealthHistoryImportComplete\([\s\S]*historyAvailable: history\.availabl
 check(/actualRuns[^\n]*filter\(isRunningActivity\)/.test(historySource), 'History run totals and charts use running activities only');
 check(/INSERT INTO run_import_tombstones[\s\S]*ON CONFLICT \(user_id, source_key\) DO NOTHING/.test(runsRouteSource), 'deleting a health import records a user-scoped tombstone before removing the run');
 check(/SELECT id FROM run_import_tombstones WHERE user_id=\? AND source_key=\?/.test(importRouteSource), 'future full health syncs honor deleted-run tombstones');
-check(/updateImportedRunPrs\(userId, runId\)/.test(importRouteSource), 'Apple Health and file imports update automatic PRs without requiring PR Wall to be opened');
+check(/updateRunPrs\(userId, importedItem\.runId, \{ tx \}\)/.test(importRouteSource), 'Apple Health and file imports update automatic PRs inside the owner-scoped import transaction');
 const stravaPrUpdateCalls = stravaRouteSource.match(/autoUpdatePRs\(userId, syncedRun, \{ tx \}\)/g) || [];
-check(/withUserMutation\(userId, async \(tx\)/.test(stravaRouteSource) && stravaPrUpdateCalls.length === 2, 'Strava sync updates automatic PRs in the same user-scoped transaction');
+check(/withPlanningInputMutation\(userId, async \(tx\)/.test(stravaRouteSource) && stravaPrUpdateCalls.length === 2, 'Strava sync updates automatic PRs in the same user-scoped planning transaction');
 check(/resolveRunHeartRateZone\(run, hrZones\)/.test(historySource) && /`HR Z\$\{heartRateZone\.zone\}`/.test(historySource) && !/Pace Z\$\{paceZone\.zone\}/.test(historySource), 'history zones are explicitly labeled as heart-rate zones');
 check(/activityLabel\(item\)/.test(insightsSource), 'recent activity cards display the imported workout kind');
 check(/T12:00:00/.test(insightsSource) && /T12:00:00/.test(runDetailSource), 'date-only HealthKit workouts render on the local calendar day');
