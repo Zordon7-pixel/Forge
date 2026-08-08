@@ -9,12 +9,17 @@ const files = readdirSync(testDir)
   .sort();
 
 for (const file of files) {
-  console.log(`\n[backend smoke] ${file}`);
-  const result = spawnSync(process.execPath, [path.join(testDir, file)], {
-    cwd: root,
-    stdio: 'inherit',
-  });
-  if (result.status !== 0) process.exit(result.status || 1);
+  const argumentSets = file === 'racePlanQuality.smoke.js'
+    ? [[], ['--semantic-acceptance']]
+    : [[]];
+  for (const args of argumentSets) {
+    console.log(`\n[backend smoke] ${file}${args.length ? ' --semantic-acceptance' : ''}`);
+    const result = spawnSync(process.execPath, [path.join(testDir, file), ...args], {
+      cwd: root,
+      stdio: 'inherit',
+    });
+    if (result.status !== 0) process.exit(result.status || 1);
+  }
 }
 
 console.log(`\nBACKEND SMOKE SUITE OK (${files.length} files)`);

@@ -1129,7 +1129,7 @@ async function getAssignedPlanForMutation(userId, tx, options = {}) {
            up.supersedes_user_plan_id, up.effective_from
     FROM user_plans up
     WHERE up.user_id=? AND up.status='active'
-    ORDER BY up.created_at DESC
+    ORDER BY up.created_at DESC, up.id DESC
     LIMIT 1
     FOR UPDATE OF up
   `, [userId]);
@@ -1800,6 +1800,14 @@ function replacementLineageForActivePlan(active, fallbackUserPlanId) {
   };
 }
 
+function candidateFeasibilityCanApply(plan = {}) {
+  const feasibility = String(plan.overall_feasibility || '').toLowerCase();
+  if (feasibility === 'supported' || feasibility === 'stretch') return true;
+  if (feasibility !== 'not_applicable') return false;
+  const goals = Array.isArray(plan.goals) ? plan.goals : plan.goal ? [plan.goal] : [];
+  return !goals.some((goal) => concurrentPlan.isValidISODate(goal?.date || goal?.raceDate || goal?.race_date));
+}
+
 function assertCandidatePlanningDateCurrent(row, now = new Date()) {
   const currentLocalDate = localDateForOffset(now, row.timezone_offset_minutes);
   if (currentLocalDate !== row.planning_date_local) {
@@ -1863,7 +1871,7 @@ async function applyPlanCandidate(userId, candidateId, body = {}) {
         code: 'CANDIDATE_UNSAFE',
       });
     }
-    if (!['supported', 'stretch'].includes(storedFeasibility)) {
+    if (!candidateFeasibilityCanApply(storedPlan)) {
       return planningInputUnchanged({
         status: 409,
         error: 'Candidate feasibility is unavailable. Preview again.',
@@ -3856,6 +3864,7 @@ router.post('/generate-for-race/:raceId', auth, requirePremium('Race Programs'),
 router._test = {
   applyPlanCandidate,
   assertCandidatePlanningDateCurrent,
+  candidateFeasibilityCanApply,
   candidateEffectiveFrom,
   getActivePlanForMutation,
   getActivePlanForUser,

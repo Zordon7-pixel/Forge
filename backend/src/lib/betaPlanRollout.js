@@ -81,10 +81,9 @@ function ownValue(object, camelKey, snakeKey) {
   return undefined;
 }
 
-function authoritativePlanTarget(activePlan = {}) {
-  const schedule = activePlan.schedulePreferences || activePlan.schedule_preferences || {};
-  const rawTrainingDays = ownValue(schedule, 'trainingDays', 'training_days');
-  const rawRunDays = ownValue(schedule, 'runDaysPerWeek', 'run_days_per_week');
+function authoritativePlanTarget(activePlan = {}, profile = {}) {
+  const rawTrainingDays = parseJson(profile.preferred_workout_days, profile.preferred_workout_days);
+  const rawRunDays = profile.run_days_per_week;
   if (!Array.isArray(rawTrainingDays) || rawTrainingDays.length < 1) {
     return { valid: false, reason: 'MISSING_SCHEDULE_AUTHORITY' };
   }
@@ -110,9 +109,7 @@ function authoritativePlanTarget(activePlan = {}) {
     if (!Array.isArray(strength.equipment)) return { valid: false, reason: 'MISSING_SCHEDULE_AUTHORITY' };
   }
 
-  return { valid: true, target: {
-    trainingDays,
-    runDaysPerWeek,
+  return { valid: true, profileSchedule: { trainingDays, runDaysPerWeek }, target: {
     planMode: rawMode,
     liftingEnabled,
     liftDaysPerWeek,
@@ -121,10 +118,10 @@ function authoritativePlanTarget(activePlan = {}) {
   } };
 }
 
-function preservedPlanTarget(activePlan = {}) {
-  const result = authoritativePlanTarget(activePlan);
+function preservedPlanTarget(activePlan = {}, profile = {}) {
+  const result = authoritativePlanTarget(activePlan, profile);
   if (!result.valid) {
-    const error = new Error('Active plan does not contain an authoritative schedule.');
+    const error = new Error('The active plan or current profile does not contain authoritative rollout inputs.');
     error.code = result.reason;
     throw error;
   }

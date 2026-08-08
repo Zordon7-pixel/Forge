@@ -61,6 +61,19 @@ if (process.argv.includes('--semantic-acceptance')) {
     planningDateLocal: fixture.todayISO,
     timezoneOffsetMinutes: 240,
   });
+  const noRaceContext = clone(fixture);
+  delete noRaceContext.target.raceId;
+  delete noRaceContext.target.raceName;
+  delete noRaceContext.target.raceDate;
+  delete noRaceContext.target.raceTargets;
+  delete noRaceContext.target.goalTimeSeconds;
+  noRaceContext.target.goalType = 'completion';
+  const noRaceCandidate = buildRacePlanCandidate(noRaceContext, {
+    planningDateLocal: fixture.todayISO,
+    timezoneOffsetMinutes: 240,
+  });
+  assert.equal(noRaceCandidate.validation.valid, true, 'non-race training blocks remain structurally valid');
+  assert.equal(noRaceCandidate.plan.overall_feasibility, 'not_applicable', 'non-race blocks are explicit rather than misclassified as unsafe');
   const errors = [...semanticLongRunErrors(candidate.plan), ...candidate.validation.errors];
   if (errors.length) {
     console.error(`RACE PLAN QUALITY ACCEPTANCE RED: ${errors[0].code} at ${errors[0].path || errors[0].message || 'candidate'}`);

@@ -34,7 +34,7 @@ async function resolveAssignedPlanForDate(userId, get, options = {}) {
     FROM user_plans up
     JOIN training_plans tp ON tp.id = up.plan_id
     WHERE up.user_id = ? AND up.status = 'active'
-    ORDER BY up.created_at DESC
+    ORDER BY up.created_at DESC, up.id DESC
     LIMIT 1
   `, [ownerId]);
   const visited = new Set();

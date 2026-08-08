@@ -3,6 +3,7 @@ import {
   PlanCandidateReviewCancelled,
   requestPlanCandidateReview,
 } from './planCandidateReview'
+import { candidateFeasibilityCanApply } from './planCandidateFeasibility'
 
 export function phonePlanningClock(date = new Date()) {
   const year = date.getFullYear()
@@ -27,7 +28,7 @@ export async function previewAndApplyPlan(path, body = {}, config = {}) {
 
   const plan = preview.data?.plan?.plan_data || preview.data?.candidate?.plan_data || {}
   const feasibility = String(plan?.overall_feasibility || '').toLowerCase()
-  const needsReview = Boolean(preview.data?.replaces_active_plan) || feasibility !== 'supported'
+  const needsReview = Boolean(preview.data?.replaces_active_plan) || !candidateFeasibilityCanApply(plan)
   if (needsReview) {
     const decision = await requestPlanCandidateReview(preview.data)
     if (decision !== 'apply') throw new PlanCandidateReviewCancelled(decision)

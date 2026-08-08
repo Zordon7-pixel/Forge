@@ -15,6 +15,7 @@ const {
   targetRef,
 } = require('../src/lib/betaPlanRollout');
 const { RACE_PLAN_POLICY_V1 } = require('../src/lib/racePlanPolicy');
+const { resolveRunSchedule } = require('../src/lib/runSchedule');
 const rolloutScript = require('../scripts/upgrade-beta-race-plans');
 
 function run() {
@@ -29,6 +30,11 @@ function run() {
     goals: [{ raceId: 'race-a1' }, { raceId: 'race-a2' }],
     schedulePreferences: { trainingDays: [1, 3, 5, 6], runDaysPerWeek: 4 },
     strengthPolicy: { enabled: true, sessionsPerWeek: 2, goal: 'maintain', equipment: ['dumbbells'] },
+  };
+  const currentProfile = {
+    run_days_per_week: 5,
+    lift_days_per_week: 2,
+    preferred_workout_days: JSON.stringify(['Mon', 'Tue', 'Wed', 'Thu', 'Sat']),
   };
   assert.deepEqual(
     selectProtectedRaces(races, activePlan, '2026-08-08').map((race) => race.id),
@@ -47,21 +53,30 @@ function run() {
     'rollout refuses a plan whose protected race no longer belongs to the account',
   );
 
-  const target = preservedPlanTarget(activePlan);
-  assert.deepEqual(target.trainingDays, ['Mon', 'Wed', 'Fri', 'Sat'], 'active plan weekdays take precedence over stale profile weekdays');
-  assert.equal(target.runDaysPerWeek, 4);
+  const target = preservedPlanTarget(activePlan, currentProfile);
+  assert.equal(Object.hasOwn(target, 'trainingDays'), false, 'rollout never sends stale plan weekdays as an explicit target');
+  assert.equal(Object.hasOwn(target, 'runDaysPerWeek'), false, 'rollout never sends stale plan frequency as an explicit target');
   assert.equal(target.planMode, 'hybrid_maintain');
   assert.equal(target.liftingEnabled, true);
   assert.equal(target.liftDaysPerWeek, 2);
   assert.deepEqual(target.equipment, ['dumbbells']);
-  assert.equal(authoritativePlanTarget({ ...activePlan, schedulePreferences: {} }).valid, false);
-  assert.equal(authoritativePlanTarget({ ...activePlan, planMode: '' }).valid, false);
-  assert.equal(authoritativePlanTarget({ ...activePlan, strengthPolicy: { enabled: false } }).valid, false);
+  assert.deepEqual(resolveRunSchedule(currentProfile, target, { requireCompleteSelection: true }), {
+    valid: true,
+    runDaysPerWeek: 5,
+    trainingDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Sat'],
+    runDaysSource: 'profile',
+    trainingDaysSource: 'profile',
+    explicitSelection: false,
+    legacyAdjusted: false,
+  }, 'candidate generation reads the current profile without creating an apply-time profile write');
+  assert.equal(authoritativePlanTarget(activePlan, { ...currentProfile, preferred_workout_days: null }).valid, false);
+  assert.equal(authoritativePlanTarget({ ...activePlan, planMode: '' }, currentProfile).valid, false);
+  assert.equal(authoritativePlanTarget({ ...activePlan, strengthPolicy: { enabled: false } }, currentProfile).valid, false);
   assert.equal(
     authoritativePlanTarget({
       ...activePlan,
       strengthPolicy: { enabled: true, sessionsPerWeek: 2, goal: 'maintain' },
-    }).valid,
+    }, currentProfile).valid,
     false,
     'lifting rollout requires an authoritative equipment selection',
   );
@@ -70,7 +85,7 @@ function run() {
       ...activePlan,
       planMode: 'run_only',
       strengthPolicy: {},
-    }).equipment,
+    }, currentProfile).equipment,
     [],
     'run-only rollout does not require strength equipment',
   );
@@ -124,6 +139,12 @@ function run() {
   assert.equal(parsed.apply, true);
   assert.deepEqual(parsed.userIds, ['user-1']);
   assert.equal(parsed.planningDateLocal, '2026-08-08');
+  assert.equal(parsed.timezoneOffsetExplicit, true);
+  assert.throws(
+    () => rolloutScript.parseArgs(['--planning-date=2026-08-08']),
+    /requires an explicit --timezone-offset-minutes/,
+  );
+  assert.equal(rolloutScript.parseArgs([]).timezoneOffsetExplicit, false);
 
   const rawUserId = 'private-beta-user-id';
   const entry = redactedBackupEntry({
@@ -178,6 +199,7 @@ function run() {
   assert.doesNotMatch(scriptSource, /OR EXISTS \(SELECT 1 FROM training_plans tp WHERE tp\.user_id=u\.id\)/);
   assert.match(scriptSource, /race\.user_id=u\.id AND race\.status='upcoming'/);
   assert.match(scriptSource, /WHERE user_id=\? AND status='upcoming' AND race_date>=\?/);
+  assert.match(scriptSource, /skipReason: 'missing_timezone_authority'/);
   assert.match(scriptSource, /previewPlanForUser\(row\.id, request, \{ store: false \}\)/);
   assert.match(scriptSource, /writePrivateJson\(options\.backupDir, 'pre-apply'/);
   assert.match(scriptSource, /previewPlanForUser\(context\.userId, context\.request, \{ store: true \}\)/);

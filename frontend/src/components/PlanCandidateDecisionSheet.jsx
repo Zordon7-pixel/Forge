@@ -5,6 +5,7 @@ import { activateModalDialog } from '../lib/modalDialog'
 import {
   registerPlanCandidateReviewer,
 } from '../lib/planCandidateReview'
+import { candidateFeasibilityCanApply } from '../lib/planCandidateFeasibility'
 
 function candidatePlan(preview = {}) {
   return preview?.plan?.plan_data || preview?.candidate?.plan_data || {}
@@ -83,7 +84,7 @@ export default function PlanCandidateDecisionSheet() {
   const feasibility = String(plan?.overall_feasibility || '').toLowerCase()
   const copy = decisionCopy(feasibility)
   const reasons = Array.isArray(plan?.reasons) ? plan.reasons.slice(0, 3) : []
-  const canApply = feasibility === 'supported' || feasibility === 'stretch'
+  const canApply = candidateFeasibilityCanApply(plan)
   const effectiveDate = displayDate(preview?.effective_from || preview?.candidate?.effective_from)
 
   if (!preview) return null

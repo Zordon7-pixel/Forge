@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const repair = require('../scripts/repair-active-plan-assignments');
 
 async function run() {
@@ -49,8 +51,16 @@ async function run() {
   assert.match(writes[0].sql, /SET status='superseded'/);
   assert.deepEqual(writes[0].params, ['older', 'a'], 'repair leaves the deterministic newest assignment active and demotes only the older duplicate');
   assert.doesNotMatch(lockedSelect, /plan_version|lineage_id|supersedes_user_plan_id|effective_from/, 'repair remains usable before the new lifecycle columns exist');
+  const railwayConfig = fs.readFileSync(path.resolve(__dirname, '../../railway.toml'), 'utf8');
+  assert.match(
+    railwayConfig,
+    /preDeployCommand = "cd backend && npm run check:active-plans"/,
+    'Railway blocks a new release before traffic cutover when duplicate active assignments exist'
+  );
+  const lifecycleSource = fs.readFileSync(path.resolve(__dirname, '../src/lib/planAssignmentLifecycle.js'), 'utf8');
+  assert.match(lifecycleSource, /ORDER BY up\.created_at DESC, up\.id DESC/, 'runtime and repair use the same deterministic tie-breaker');
 
-  console.log('ACTIVE PLAN REPAIR SMOKE OK (13)');
+  console.log('ACTIVE PLAN REPAIR SMOKE OK (15)');
 }
 
 run().catch((err) => {

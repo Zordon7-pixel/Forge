@@ -70,6 +70,7 @@ export default function Onboarding() {
       window.location.href = consumePostAuthRedirect() || '/'
     } catch (err) {
       if (isPlanCandidateReviewCancelled(err)) {
+        setError('Plan creation was canceled. Review your setup and try again when you are ready.')
         setSaving(false)
         return
       }

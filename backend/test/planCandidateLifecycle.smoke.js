@@ -190,6 +190,15 @@ async function run() {
     (error) => error?.code === 'CANDIDATE_PLANNING_DATE_CHANGED' && error?.status === 409,
     'candidate application fails closed when the tester local date crosses midnight'
   );
+  assert.equal(plansRouter._test.candidateFeasibilityCanApply({ overall_feasibility: 'supported' }), true);
+  assert.equal(plansRouter._test.candidateFeasibilityCanApply({ overall_feasibility: 'stretch' }), true);
+  assert.equal(plansRouter._test.candidateFeasibilityCanApply({ overall_feasibility: 'not_applicable', goals: [] }), true);
+  assert.equal(
+    plansRouter._test.candidateFeasibilityCanApply({ overall_feasibility: 'not_applicable', goals: [{ date: '2026-10-11' }] }),
+    false,
+    'dated race candidates cannot bypass feasibility through not_applicable'
+  );
+  assert.equal(plansRouter._test.candidateFeasibilityCanApply({ overall_feasibility: '' }), false);
 
   const pruneCalls = [];
   await plansRouter._test.pruneExpiredPlanCandidates({
@@ -211,13 +220,13 @@ async function run() {
   assert.match(source, /row\.status === 'applied'/);
   assert.match(source, /CANDIDATE_DETERMINISM_MISMATCH/);
   assert.match(source, /storedFeasibility === 'unsafe'[\s\S]*CANDIDATE_UNSAFE/);
-  assert.match(source, /!\['supported', 'stretch'\]\.includes\(storedFeasibility\)[\s\S]*CANDIDATE_FEASIBILITY_MISSING/);
+  assert.match(source, /!candidateFeasibilityCanApply\(storedPlan\)[\s\S]*CANDIDATE_FEASIBILITY_MISSING/);
   assert.match(source, /includeFuture: true/);
   const writeBoundaryGuard = source.lastIndexOf('assertCandidatePlanningDateCurrent(row);');
   const firstPlanWrite = source.indexOf("'UPDATE users SET run_days_per_week=?", writeBoundaryGuard);
   assert.ok(writeBoundaryGuard > 0 && firstPlanWrite > writeBoundaryGuard, 'the local-date guard runs inside apply immediately before plan writes');
 
-  console.log('PLAN CANDIDATE LIFECYCLE SMOKE OK (40)');
+  console.log('PLAN CANDIDATE LIFECYCLE SMOKE OK (45)');
 }
 
 run().catch((error) => {

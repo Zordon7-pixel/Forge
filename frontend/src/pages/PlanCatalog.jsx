@@ -362,7 +362,10 @@ export default function PlanCatalog() {
       }
       navigate('/plan')
     } catch (err) {
-      if (isPlanCandidateReviewCancelled(err)) return
+      if (isPlanCandidateReviewCancelled(err)) {
+        setError('Your current plan was kept. No calendar changes were made.')
+        return
+      }
       if (err?.response?.status === 402) {
         navigate('/upgrade')
         return

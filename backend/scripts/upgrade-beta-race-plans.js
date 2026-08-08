@@ -79,6 +79,7 @@ function parseArgs(argv) {
     confirmation: '',
     defaultTimezoneOffsetMinutes: new Date().getTimezoneOffset(),
     planningDateLocal: '',
+    timezoneOffsetExplicit: false,
     userIds: [],
   };
   for (const arg of argv) {
@@ -86,7 +87,10 @@ function parseArgs(argv) {
     else if (arg.startsWith('--confirm=')) options.confirmation = arg.slice('--confirm='.length);
     else if (arg.startsWith('--backup-dir=')) options.backupDir = path.resolve(arg.slice('--backup-dir='.length));
     else if (arg.startsWith('--planning-date=')) options.planningDateLocal = arg.slice('--planning-date='.length);
-    else if (arg.startsWith('--timezone-offset-minutes=')) options.defaultTimezoneOffsetMinutes = Number(arg.slice('--timezone-offset-minutes='.length));
+    else if (arg.startsWith('--timezone-offset-minutes=')) {
+      options.defaultTimezoneOffsetMinutes = Number(arg.slice('--timezone-offset-minutes='.length));
+      options.timezoneOffsetExplicit = true;
+    }
     else if (arg.startsWith('--user-id=')) options.userIds.push(arg.slice('--user-id='.length).trim());
     else throw new Error(`Unknown argument: ${arg}`);
   }
@@ -97,6 +101,9 @@ function parseArgs(argv) {
     || options.defaultTimezoneOffsetMinutes < -840
     || options.defaultTimezoneOffsetMinutes > 840) {
     throw new Error('--timezone-offset-minutes must be between -840 and 840');
+  }
+  if (options.planningDateLocal && !options.timezoneOffsetExplicit) {
+    throw new Error('--planning-date requires an explicit --timezone-offset-minutes');
   }
   if (options.apply && !options.backupDir) {
     throw new Error('--backup-dir is required with --apply so the redacted rollback manifest is stored outside the checkout');
@@ -131,9 +138,10 @@ async function eligibleTesterRows(options) {
 async function planningClockForUser(userId, options, now) {
   if (options.planningDateLocal) {
     return {
+      authoritative: true,
       planningDateLocal: options.planningDateLocal,
       timezoneOffsetMinutes: options.defaultTimezoneOffsetMinutes,
-      source: 'operator',
+      source: 'operator_explicit_offset',
     };
   }
   const recent = await dbGet(
@@ -143,10 +151,19 @@ async function planningClockForUser(userId, options, now) {
      ORDER BY created_at DESC LIMIT 1`,
     [userId]
   );
+  if (!recent && !options.timezoneOffsetExplicit) {
+    return {
+      authoritative: false,
+      planningDateLocal: null,
+      source: 'missing_timezone_authority',
+      timezoneOffsetMinutes: null,
+    };
+  }
   const offset = Number.isFinite(Number(recent?.timezone_offset_minutes))
     ? Number(recent.timezone_offset_minutes)
     : options.defaultTimezoneOffsetMinutes;
   return {
+    authoritative: true,
     planningDateLocal: localDateForOffset(now, offset),
     timezoneOffsetMinutes: offset,
     source: recent ? 'latest_candidate_offset' : 'operator_default_offset',
@@ -155,6 +172,14 @@ async function planningClockForUser(userId, options, now) {
 
 async function preflightUser(row, options, now) {
   const clock = await planningClockForUser(row.id, options, now);
+  if (!clock.authoritative) {
+    return {
+      clock,
+      skipReason: 'missing_timezone_authority',
+      targetRef: targetRef(row.id),
+      userId: row.id,
+    };
+  }
   const active = await plansRouter._test.getActivePlanForUser(row.id, null, {
     includeFuture: true,
     planningDateLocal: clock.planningDateLocal,
@@ -189,7 +214,7 @@ async function preflightUser(row, options, now) {
   }
   let target;
   try {
-    target = preservedPlanTarget(activePlan);
+    target = preservedPlanTarget(activePlan, row);
   } catch (error) {
     if (error?.code !== 'MISSING_SCHEDULE_AUTHORITY') throw error;
     return {

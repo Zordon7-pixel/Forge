@@ -8,6 +8,7 @@ import {
   registerPlanCandidateReviewer,
   requestPlanCandidateReview,
 } from '../src/lib/planCandidateReview.js'
+import { candidateFeasibilityCanApply } from '../src/lib/planCandidateFeasibility.js'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const read = (relativePath) => fs.readFileSync(path.join(repoRoot, relativePath), 'utf8')
@@ -37,7 +38,12 @@ const sheet = read('frontend/src/components/PlanCandidateDecisionSheet.jsx')
 const app = read('frontend/src/App.jsx')
 const route = read('backend/src/routes/plans.js')
 
-assert.match(helper, /preview\.data\?\.replaces_active_plan[\s\S]*feasibility !== 'supported'/, 'active-plan replacements and non-supported targets require review')
+assert.equal(candidateFeasibilityCanApply({ overall_feasibility: 'supported' }), true)
+assert.equal(candidateFeasibilityCanApply({ overall_feasibility: 'stretch' }), true)
+assert.equal(candidateFeasibilityCanApply({ overall_feasibility: 'not_applicable', goals: [] }), true, 'non-race blocks do not require a race feasibility verdict')
+assert.equal(candidateFeasibilityCanApply({ overall_feasibility: 'not_applicable', goals: [{ date: '2026-10-11' }] }), false, 'dated race plans cannot bypass feasibility')
+assert.equal(candidateFeasibilityCanApply({ overall_feasibility: '' }), false)
+assert.match(helper, /preview\.data\?\.replaces_active_plan[\s\S]*!candidateFeasibilityCanApply\(plan\)/, 'active-plan replacements and unsafe or missing feasibility targets require review')
 assert.match(helper, /requestPlanCandidateReview\(preview\.data\)/, 'the preview is shown before applying')
 assert.ok(
   helper.indexOf('requestPlanCandidateReview(preview.data)')
@@ -45,7 +51,7 @@ assert.ok(
   'review happens before the apply request',
 )
 assert.match(helper, /decision !== 'apply'[\s\S]*PlanCandidateReviewCancelled/, 'keeping the current plan cannot fall through to apply')
-assert.match(sheet, /feasibility === 'unsafe'[\s\S]*canApply = feasibility === 'supported' \|\| feasibility === 'stretch'/, 'unsafe plans never receive an apply action')
+assert.match(sheet, /feasibility === 'unsafe'[\s\S]*canApply = candidateFeasibilityCanApply\(plan\)/, 'unsafe plans never receive an apply action')
 assert.match(sheet, /Apply reviewed plan[\s\S]*Review race target[\s\S]*Keep current plan/, 'the athlete sees explicit apply, review, and keep choices')
 assert.match(sheet, /current plan stays in place today[\s\S]*This plan starts/, 'replacement review explains the protected-day cutover before apply')
 assert.match(sheet, /activateModalDialog/, 'the review sheet uses the shared focus and scroll-lock controller')
