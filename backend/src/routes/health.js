@@ -1,6 +1,6 @@
 const router = require('express').Router();
 const rateLimit = require('express-rate-limit');
-const { dbGet } = require('../db');
+const { dbGet, withPlanningInputMutation } = require('../db');
 const { getHealthCoverage } = require('../lib/healthCoverage');
 const { coerceMetric, hydrateHealthRow, normalizeTrainingMetrics } = require('../lib/healthSyncMetrics');
 const auth = require('../middleware/auth');
@@ -71,7 +71,7 @@ router.post('/sync', auth, healthSyncLimiter, async (req, res) => {
       .map(([field]) => field);
     const receivedTrainingMetricKeys = Object.keys(trainingMetrics.metrics).sort();
 
-    const row = await dbGet(
+    const row = await withPlanningInputMutation(req.user.id, (tx) => tx.get(
       `INSERT INTO health_sync (
         user_id,
         steps_today,
@@ -121,7 +121,7 @@ router.post('/sync', auth, healthSyncLimiter, async (req, res) => {
         lastWorkoutCaloriesValue.value,
         JSON.stringify(trainingMetrics.metrics),
       ]
-    );
+    ));
 
     console.info(`[health] sync received fields: scalar=${receivedScalarFields.join(',') || 'none'} training=${receivedTrainingMetricKeys.join(',') || 'none'} dropped=${droppedFields.join(',') || 'none'}`);
 

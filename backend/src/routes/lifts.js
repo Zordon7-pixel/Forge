@@ -1,5 +1,5 @@
 const router = require('express').Router();
-const { dbGet, dbAll, dbRun } = require('../db');
+const { dbAll, withPlanningInputMutation } = require('../db');
 const auth = require('../middleware/auth');
 const { v4: uuidv4 } = require('uuid');
 const { requestExerciseImageIfMissing } = require('../lib/exerciseImageRequests');
@@ -34,20 +34,20 @@ router.post('/', auth, async (req, res) => {
       }
     }
     const id = uuidv4();
-    await dbRun(
-      `INSERT INTO lifts (id, user_id, date, muscle_groups, intensity, notes, exercise_name, sets, reps, weight_lbs) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, req.user.id, date, JSON.stringify(muscle_groups || []), intensity || 'moderate', notes || null, exercise_name || null, sets || null, reps || null, weight_lbs || null]
-    );
+    const lift = await withPlanningInputMutation(req.user.id, async (tx) => {
+      await tx.run(
+        `INSERT INTO lifts (id, user_id, date, muscle_groups, intensity, notes, exercise_name, sets, reps, weight_lbs) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [id, req.user.id, date, JSON.stringify(muscle_groups || []), intensity || 'moderate', notes || null, exercise_name || null, sets || null, reps || null, weight_lbs || null]
+      );
+      return tx.get('SELECT * FROM lifts WHERE id=? AND user_id=?', [id, req.user.id]);
+    });
     await requestExerciseImageIfMissing({ userId: req.user.id, exerciseName: exercise_name, source: 'lift_log' });
-    const lift = await dbGet('SELECT * FROM lifts WHERE id = ?', [id]);
     res.status(201).json({ ...lift, muscle_groups: JSON.parse(lift.muscle_groups || '[]') });
   } catch (err) { res.status(500).json({ error: 'Failed to save lift' }); }
 });
 
 router.put('/:id', auth, async (req, res) => {
   try {
-    const lift = await dbGet('SELECT * FROM lifts WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
-    if (!lift) return res.status(404).json({ error: 'Lift not found' });
     const { exercise_name, sets, reps, weight_lbs, notes, date } = req.body;
     const updates = [];
     const params = [];
@@ -67,11 +67,20 @@ router.put('/:id', auth, async (req, res) => {
 
     if (!updates.length) return res.status(400).json({ error: 'Nothing to update' });
 
-    await dbRun(`UPDATE lifts SET ${updates.join(', ')} WHERE id=? AND user_id=?`, [...params, req.params.id, req.user.id]);
+    const updated = await withPlanningInputMutation(req.user.id, async (tx) => {
+      const lift = await tx.get('SELECT id FROM lifts WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
+      if (!lift) {
+        const err = new Error('Lift not found');
+        err.code = 'LIFT_NOT_FOUND';
+        throw err;
+      }
+      await tx.run(`UPDATE lifts SET ${updates.join(', ')} WHERE id=? AND user_id=?`, [...params, req.params.id, req.user.id]);
+      return tx.get('SELECT * FROM lifts WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
+    });
     await requestExerciseImageIfMissing({ userId: req.user.id, exerciseName: exercise_name, source: 'lift_update' });
-    const updated = await dbGet('SELECT * FROM lifts WHERE id=?', [req.params.id]);
     res.json({ ...updated, muscle_groups: JSON.parse(updated.muscle_groups || '[]') });
   } catch (err) {
+    if (err.code === 'LIFT_NOT_FOUND') return res.status(404).json({ error: err.message });
     console.error('[lifts/update] failed:', err.message);
     res.status(500).json({ error: 'Update failed' });
   }
@@ -79,11 +88,21 @@ router.put('/:id', auth, async (req, res) => {
 
 router.delete('/:id', auth, async (req, res) => {
   try {
-    const lift = await dbGet('SELECT * FROM lifts WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
-    if (!lift) return res.status(404).json({ error: 'Not found' });
-    await dbRun('DELETE FROM lifts WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
+    await withPlanningInputMutation(req.user.id, async (tx) => {
+      const lift = await tx.get('SELECT id FROM lifts WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
+      if (!lift) {
+        const err = new Error('Not found');
+        err.code = 'LIFT_NOT_FOUND';
+        throw err;
+      }
+      await tx.run('DELETE FROM lifts WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
+    });
     res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: 'Delete failed' }); }
+  } catch (err) {
+    if (err.code === 'LIFT_NOT_FOUND') return res.status(404).json({ error: err.message });
+    console.error('[lifts/delete] failed:', err.message);
+    res.status(500).json({ error: 'Delete failed' });
+  }
 });
 
 module.exports = router;

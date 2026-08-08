@@ -1,10 +1,11 @@
 const router = require('express').Router();
-const { dbGet, dbAll, dbRun, withTransaction } = require('../db');
+const { dbGet, dbAll, dbRun, withPlanningInputMutation } = require('../db');
 const auth = require('../middleware/auth');
 const { aiUsageWindows, canUseAiFeedback, resolveEntitlement } = require('../lib/betaAccess');
 const { v4: uuidv4 } = require('uuid');
 const { generateWorkoutFeedback } = require('../services/ai');
 const { requestExerciseImageIfMissing } = require('../lib/exerciseImageRequests');
+const { planningInputUnchanged } = require('../lib/planningRevision');
 
 router.post('/strength', auth, async (req, res) => {
   try {
@@ -14,7 +15,7 @@ router.post('/strength', auth, async (req, res) => {
     const muscleGroups = [];
     const exerciseImageNames = [];
 
-    await withTransaction(async (tx) => {
+    const calories_burned = await withPlanningInputMutation(req.user.id, async (tx) => {
       await tx.run(
         'INSERT INTO workout_sessions (id, user_id, started_at, ended_at, muscle_groups, notes, total_seconds) VALUES (?, ?, ?, ?, ?, ?, ?)',
         [id, req.user.id, started_at, started_at, JSON.stringify(muscleGroups), name || 'Strength Session', 0]
@@ -34,19 +35,18 @@ router.post('/strength', auth, async (req, res) => {
           await tx.run('UPDATE workout_sessions SET muscle_groups=? WHERE id=? AND user_id=?', [JSON.stringify(muscleGroups), id, req.user.id]);
         }
       }
+
+      const profile = await tx.get('SELECT weight_lbs FROM users WHERE id=?', [req.user.id]);
+      const weightKg = (profile?.weight_lbs || 154.35) / 2.205;
+      const calculatedCalories = Math.round(5.0 * weightKg * (45 / 60));
+      if (calculatedCalories > 0) {
+        await tx.run('UPDATE workout_sessions SET calories_burned=? WHERE id=? AND user_id=?', [calculatedCalories, id, req.user.id]);
+      }
+      return calculatedCalories;
     });
 
     for (const exerciseName of exerciseImageNames) {
       await requestExerciseImageIfMissing({ userId: req.user.id, exerciseName, source: 'strength_workout_import' });
-    }
-
-    const profile = await dbGet('SELECT weight_lbs FROM users WHERE id=?', [req.user.id]);
-    const weightKg = (profile?.weight_lbs || 154.35) / 2.205;
-    const MET_STRENGTH = 5.0;
-    const durationHours = 45 / 60;
-    const calories_burned = Math.round(MET_STRENGTH * weightKg * durationHours);
-    if (calories_burned > 0) {
-      await dbRun('UPDATE workout_sessions SET calories_burned=? WHERE id=? AND user_id=?', [calories_burned, id, req.user.id]);
     }
 
     res.status(201).json({
@@ -63,8 +63,10 @@ router.post('/start', auth, async (req, res) => {
     const { muscle_groups } = req.body;
     const id = uuidv4();
     const started_at = new Date().toISOString();
-    await dbRun('INSERT INTO workout_sessions (id, user_id, started_at, muscle_groups) VALUES (?, ?, ?, ?)',
-      [id, req.user.id, started_at, JSON.stringify(muscle_groups || [])]);
+    await withPlanningInputMutation(req.user.id, (tx) => tx.run(
+      'INSERT INTO workout_sessions (id, user_id, started_at, muscle_groups) VALUES (?, ?, ?, ?)',
+      [id, req.user.id, started_at, JSON.stringify(muscle_groups || [])]
+    ));
     res.status(201).json({ session: { id, started_at, muscle_groups: muscle_groups || [] } });
   } catch (err) {
     if (err.message && err.message.includes('FOREIGN KEY')) {
@@ -78,49 +80,60 @@ router.post('/start', auth, async (req, res) => {
 router.put('/:id/end', auth, async (req, res) => {
   try {
     const { notes } = req.body;
-    const session = await dbGet('SELECT * FROM workout_sessions WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
-    if (!session) return res.status(404).json({ error: 'Session not found' });
+    const result = await withPlanningInputMutation(req.user.id, async (tx) => {
+      const session = await tx.get('SELECT * FROM workout_sessions WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
+      if (!session) {
+        const err = new Error('Session not found');
+        err.status = 404;
+        throw err;
+      }
 
-    let total_seconds = session.total_seconds;
-    let ended_at = session.ended_at;
-    if (!session.ended_at) {
-      ended_at = new Date().toISOString();
-      total_seconds = Math.round((new Date(ended_at) - new Date(session.started_at)) / 1000);
-    }
+      let total_seconds = session.total_seconds;
+      let ended_at = session.ended_at;
+      if (!session.ended_at) {
+        ended_at = new Date().toISOString();
+        total_seconds = Math.round((new Date(ended_at) - new Date(session.started_at)) / 1000);
+      }
 
-    await dbRun('UPDATE workout_sessions SET ended_at=?, notes=?, total_seconds=? WHERE id=? AND user_id=?',
-      [ended_at, notes || null, total_seconds, req.params.id, req.user.id]);
+      const userProfile = await tx.get('SELECT weight_lbs FROM users WHERE id=?', [req.user.id]);
+      const weightKg = (userProfile?.weight_lbs || 154.35) / 2.205;
+      const durationHours = (total_seconds > 0 ? total_seconds : 45 * 60) / 3600;
+      const calories_burned = Math.round(5.0 * weightKg * durationHours);
+      await tx.run(
+        'UPDATE workout_sessions SET ended_at=?, notes=?, total_seconds=?, calories_burned=? WHERE id=? AND user_id=?',
+        [ended_at, notes || null, total_seconds, calories_burned > 0 ? calories_burned : null, req.params.id, req.user.id]
+      );
+      return { total_seconds, calories_burned };
+    });
 
-    const userProfile = await dbGet('SELECT weight_lbs FROM users WHERE id=?', [req.user.id]);
-    const weightKg = (userProfile?.weight_lbs || 154.35) / 2.205;
-    const MET_STRENGTH = 5.0;
-    const durationHours = (total_seconds > 0 ? total_seconds : 45 * 60) / 3600;
-    const calories_burned = Math.round(MET_STRENGTH * weightKg * durationHours);
-    if (calories_burned > 0) {
-      await dbRun('UPDATE workout_sessions SET calories_burned=? WHERE id=? AND user_id=?', [calories_burned, req.params.id, req.user.id]);
-    }
-
-    res.json({ ok: true, total_seconds, calories_burned });
-  } catch (err) { res.status(500).json({ error: 'End workout failed' }); }
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    if (err.status === 404) return res.status(404).json({ error: err.message });
+    console.error('[workouts/end] failed:', err.message);
+    res.status(500).json({ error: 'End workout failed' });
+  }
 });
 
 router.put('/:id', auth, async (req, res) => {
   try {
-    const session = await dbGet('SELECT * FROM workout_sessions WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
-    if (!session) return res.status(404).json({ error: 'Session not found' });
-
     const { exercise_name, sets, reps, weight_lbs, date } = req.body || {};
     const setCount = Math.max(0, Number(sets || 0));
     const repsValue = Number(reps || 0);
     const weightValue = Number(weight_lbs || 0);
     const exerciseName = String(exercise_name || '').trim();
 
-    const nextStartedAt = date
-      ? `${date}T${(session.started_at || '').split('T')[1] || '12:00:00'}`
-      : session.started_at;
     let shouldRequestExerciseImage = false;
 
-    const refreshed = await withTransaction(async (tx) => {
+    const refreshed = await withPlanningInputMutation(req.user.id, async (tx) => {
+      const session = await tx.get('SELECT * FROM workout_sessions WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
+      if (!session) {
+        const err = new Error('Session not found');
+        err.status = 404;
+        throw err;
+      }
+      const nextStartedAt = date
+        ? `${date}T${(session.started_at || '').split('T')[1] || '12:00:00'}`
+        : session.started_at;
       await tx.run('UPDATE workout_sessions SET started_at=? WHERE id=? AND user_id=?', [nextStartedAt, req.params.id, req.user.id]);
 
       const existingSets = await tx.all(
@@ -169,6 +182,8 @@ router.put('/:id', auth, async (req, res) => {
     }
     res.json(refreshed);
   } catch (err) {
+    if (err.status === 404) return res.status(404).json({ error: err.message });
+    console.error('[workouts/update] failed:', err.message);
     res.status(500).json({ error: 'Update failed' });
   }
 });
@@ -178,7 +193,7 @@ router.post('/:id/sets', auth, async (req, res) => {
     const { exercise_name, muscle_group, reps, weight_lbs, set_number } = req.body;
     if (!exercise_name) return res.status(400).json({ error: 'exercise_name required' });
     const id = uuidv4();
-    const set = await withTransaction(async (tx) => {
+    const set = await withPlanningInputMutation(req.user.id, async (tx) => {
       const session = await tx.get('SELECT muscle_groups FROM workout_sessions WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
       if (!session) {
         const notFound = new Error('Session not found');
@@ -219,9 +234,9 @@ router.get('/:id/sets', auth, async (req, res) => {
 
 router.delete('/:id', auth, async (req, res) => {
   try {
-    const deleted = await withTransaction(async (tx) => {
+    const deleted = await withPlanningInputMutation(req.user.id, async (tx) => {
       const session = await tx.get('SELECT id FROM workout_sessions WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
-      if (!session) return false;
+      if (!session) return planningInputUnchanged(false);
       await tx.run('DELETE FROM workout_sets WHERE session_id=? AND user_id=?', [req.params.id, req.user.id]);
       await tx.run('DELETE FROM workout_sessions WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
       return true;

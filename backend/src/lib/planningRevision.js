@@ -8,6 +8,12 @@ function normalizePlanningUserId(userId) {
   return normalized;
 }
 
+const PLANNING_INPUT_UNCHANGED = Symbol('planning-input-unchanged');
+
+function planningInputUnchanged(value) {
+  return { marker: PLANNING_INPUT_UNCHANGED, value };
+}
+
 async function incrementPlanningInputRevision(tx, userId) {
   if (!tx || typeof tx.get !== 'function') {
     throw new TypeError('Planning revision increment requires a transaction');
@@ -38,6 +44,7 @@ function createPlanningInputMutationRunner(withUserMutation) {
     const normalizedUserId = normalizePlanningUserId(userId);
     return withUserMutation(normalizedUserId, async (tx) => {
       const result = await mutation(tx);
+      if (result?.marker === PLANNING_INPUT_UNCHANGED) return result.value;
       await incrementPlanningInputRevision(tx, normalizedUserId);
       return result;
     });
@@ -48,4 +55,5 @@ module.exports = {
   createPlanningInputMutationRunner,
   incrementPlanningInputRevision,
   normalizePlanningUserId,
+  planningInputUnchanged,
 };

@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 
 const assert = require('node:assert/strict');
-const { createPlanningInputMutationRunner } = require('../src/lib/planningRevision');
+const {
+  createPlanningInputMutationRunner,
+  planningInputUnchanged,
+} = require('../src/lib/planningRevision');
 
 function createSerializedOwnerStore() {
   const revisions = new Map();
@@ -53,6 +56,13 @@ async function runPlanningRevisionConcurrencySmoke() {
     /rollback/
   );
   assert.equal(store.revisions.get('user-a'), 24, 'failed owner mutation must not advance revision');
+
+  const noOpResult = await withPlanningInputMutation(
+    'user-a',
+    async () => planningInputUnchanged({ unchanged: true })
+  );
+  assert.deepEqual(noOpResult, { unchanged: true });
+  assert.equal(store.revisions.get('user-a'), 24, 'idempotent no-op must not advance revision');
 }
 
 if (require.main === module) {

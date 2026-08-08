@@ -1,7 +1,7 @@
 const router = require('express').Router();
 const crypto = require('node:crypto');
 const { v4: uuidv4 } = require('uuid');
-const { dbGet, withTransaction } = require('../db');
+const { dbGet, withPlanningInputMutation } = require('../db');
 const auth = require('../middleware/auth');
 const { activityKind } = require('../lib/runActivity');
 const { buildRunImportKeys } = require('../lib/runImportKey');
@@ -22,6 +22,7 @@ const {
   isExplicitlyUnlinkedRun,
 } = require('../lib/plannedRunMatch');
 const autoUpdatePRs = require('../services/prAuto');
+const { planningInputUnchanged } = require('../lib/planningRevision');
 
 function hashImportKey(parts) {
   return crypto.createHash('sha256').update(JSON.stringify(parts)).digest('hex');
@@ -925,9 +926,10 @@ async function updateExistingRunHealth(db, userId, existingRun, item) {
   return existingRun.id;
 }
 
-async function updateImportedRunPrs(userId, runId) {
-  const run = await dbGet('SELECT * FROM runs WHERE id=? AND user_id=?', [runId, userId]);
-  if (run) await autoUpdatePRs(userId, run);
+async function updateImportedRunPrs(userId, runId, { tx = null } = {}) {
+  const get = tx?.get || dbGet;
+  const run = await get('SELECT * FROM runs WHERE id=? AND user_id=?', [runId, userId]);
+  if (run) await autoUpdatePRs(userId, run, tx ? { tx } : undefined);
 }
 
 async function insertLift(db, userId, item) {
@@ -1185,7 +1187,7 @@ async function finalizeImportClaim(db, userId, claim, activityKindName, activity
 
 async function importItem(db, userId, item) {
   if ((item.section === 'run' || item.section === 'activity') && await isDeletedImport(db, userId, item)) {
-    return { status: 'skipped', runId: null };
+    return { status: 'skipped', runId: null, changed: false };
   }
 
   const claim = await claimImportedActivity(db, userId, item);
@@ -1194,13 +1196,13 @@ async function importItem(db, userId, item) {
       const claimedRun = await findRunById(db, userId, claim.activity_id);
       if (claimedRun) {
         const consolidatedRunId = await consolidateImportedRunIntoForged(db, userId, claimedRun, item);
-        if (consolidatedRunId) return { status: 'skipped', runId: consolidatedRunId };
+        if (consolidatedRunId) return { status: 'skipped', runId: consolidatedRunId, changed: true };
         const runId = await updateExistingRunHealth(db, userId, claimedRun, item);
-        return { status: 'skipped', runId };
+        return { status: 'skipped', runId, changed: true };
       }
     } else if (claim.activity_kind === 'lift' && claim.activity_id) {
       const claimedLift = await db.get('SELECT id FROM lifts WHERE id=? AND user_id=? LIMIT 1', [claim.activity_id, userId]);
-      if (claimedLift) return { status: 'skipped', runId: null };
+      if (claimedLift) return { status: 'skipped', runId: null, changed: false };
     }
     await recoverStaleClaim(db, userId, claim);
   }
@@ -1210,29 +1212,33 @@ async function importItem(db, userId, item) {
     const consolidatedRunId = await consolidateImportedRunIntoForged(db, userId, existing, item);
     if (consolidatedRunId) {
       await finalizeImportClaim(db, userId, claim, 'run', consolidatedRunId);
-      return { status: 'skipped', runId: consolidatedRunId };
+      return { status: 'skipped', runId: consolidatedRunId, changed: true };
     }
     const runId = existing
       ? await updateExistingRunHealth(db, userId, existing, item)
       : await insertRun(db, userId, item);
     await finalizeImportClaim(db, userId, claim, 'run', runId);
-    return { status: existing ? 'skipped' : 'imported', runId };
+    return { status: existing ? 'skipped' : 'imported', runId, changed: true };
   }
 
   const existingLift = await findExistingLift(db, userId, item.date, item.distanceMiles, item.durationSeconds);
   const liftId = existingLift?.id || await insertLift(db, userId, item);
   await finalizeImportClaim(db, userId, claim, 'lift', liftId);
-  return { status: existingLift ? 'skipped' : 'imported', runId: null };
+  return { status: existingLift ? 'skipped' : 'imported', runId: null, changed: !existingLift };
 }
 
 async function importRows(userId, rawRows, {
-  transaction = withTransaction,
+  transaction = null,
   updateRunPrs = updateImportedRunPrs,
 } = {}) {
   const errors = [];
   let imported = 0;
   let skipped = 0;
   const rows = Array.isArray(rawRows) ? rawRows : [];
+  const transactionRunner = transaction || ((callback) => withPlanningInputMutation(userId, async (tx) => {
+    const outcome = await callback(tx);
+    return outcome.changed ? outcome : planningInputUnchanged(outcome);
+  }));
 
   for (let i = 0; i < rows.length; i += 1) {
     try {
@@ -1241,20 +1247,23 @@ async function importRows(userId, rawRows, {
         skipped += 1;
         continue;
       }
-      const outcome = await transaction(
-        (tx) => importItem(tx, userId, item),
+      const outcome = await transactionRunner(
+        async (tx) => {
+          const importedItem = await importItem(tx, userId, item);
+          if (importedItem.runId) {
+            try {
+              await updateRunPrs(userId, importedItem.runId, { tx });
+            } catch (error) {
+              console.error(`[import] PR refresh failed for run ${importedItem.runId}:`, error.message);
+            }
+          }
+          return importedItem;
+        },
         { userIds: [userId], requireUserIds: [userId] }
       );
       if (outcome.status === 'imported') imported += 1;
       else skipped += 1;
 
-      if (outcome.runId) {
-        try {
-          await updateRunPrs(userId, outcome.runId);
-        } catch (error) {
-          console.error(`[import] PR refresh failed for run ${outcome.runId}:`, error.message);
-        }
-      }
     } catch (err) {
       console.error(`[import] row ${i} failed:`, err.message);
       errors.push({

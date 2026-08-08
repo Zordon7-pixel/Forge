@@ -1,5 +1,5 @@
 const router = require('express').Router();
-const { dbGet, dbAll, dbRun, withTransaction } = require('../db');
+const { dbGet, dbAll, dbRun, withPlanningInputMutation } = require('../db');
 const auth   = require('../middleware/auth');
 const { v4: uuidv4, validate: uuidValidate } = require('uuid');
 const { generateRunFeedback, generateLoadWarning, generateRunBrief } = require('../services/ai');
@@ -38,6 +38,7 @@ const {
   normalizeRouteCoords,
   shouldInvalidateRunFeedback,
 } = require('../lib/runPostRun');
+const { planningInputUnchanged } = require('../lib/planningRevision');
 
 function startOfDay(d) {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
@@ -867,62 +868,78 @@ router.post('/', auth, async (req, res) => {
       }
     }
 
-    const insertResult = await dbRun(`INSERT INTO runs (
-      id, user_id, date, type, distance_miles, duration_seconds, perceived_effort, notes,
-      run_surface, surface, incline_pct, treadmill_speed, route_coords, watch_mode,
-      avg_heart_rate, max_heart_rate, min_heart_rate, heart_rate_zones,
-      cadence_spm, elevation_gain, elevation_loss, pace_avg, pace_splits,
-      vo2_max, training_effect_aerobic, training_effect_anaerobic, recovery_time_hours,
-      detected_surface_type, temperature_f, calories, treadmill_brand, treadmill_model,
-      watch_sync_id, watch_activity_type, watch_normalized_type, gps_available,
-      plan_session_id, planned_session_json, health_source, health_source_workout_id,
-      health_start_at, health_end_at, workout_metrics_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT (id) DO NOTHING`, [
-      id, req.user.id, date, type, resolvedDistanceMiles, duration_seconds || 0, perceived_effort ?? null, notes || null,
-      resolvedSurface, resolvedSurface, incline_pct || 0, treadmill_speed || 0, JSON.stringify(normalizedRouteCoords), watch_mode || null,
-      avg_heart_rate || null, max_heart_rate || null, min_heart_rate || null, JSON.stringify(heart_rate_zones || []),
-      cadence_spm || null, resolvedElevationGain, resolvedElevationLoss, pace_avg || null, JSON.stringify(pace_splits || []),
-      vo2_max || null, training_effect_aerobic || null, training_effect_anaerobic || null, recovery_time_hours || null,
-      detected_surface_type || null, temperature_f || null, calories || 0, treadmill_brand || null, treadmill_model || null,
-      watch_sync_id || null, watch_activity_type || null, watch_normalized_type || null, gps_available === false ? 0 : 1,
-      resolvedPlanSessionId, JSON.stringify(storedPlannedSession || {}), recordingHealthSource, recordingSourceId,
-      resolvedActivityStart, resolvedActivityEnd, JSON.stringify(recordingMetrics)
-    ]);
-    if (insertResult.changes === 0) {
-      const existingRun = await dbGet('SELECT * FROM runs WHERE id=? AND user_id=?', [id, req.user.id]);
-      if (!existingRun) return res.status(409).json({ error: 'Run id already exists' });
+    const writeResult = await withPlanningInputMutation(req.user.id, async (tx) => {
+      const insertResult = await tx.run(`INSERT INTO runs (
+        id, user_id, date, type, distance_miles, duration_seconds, perceived_effort, notes,
+        run_surface, surface, incline_pct, treadmill_speed, route_coords, watch_mode,
+        avg_heart_rate, max_heart_rate, min_heart_rate, heart_rate_zones,
+        cadence_spm, elevation_gain, elevation_loss, pace_avg, pace_splits,
+        vo2_max, training_effect_aerobic, training_effect_anaerobic, recovery_time_hours,
+        detected_surface_type, temperature_f, calories, treadmill_brand, treadmill_model,
+        watch_sync_id, watch_activity_type, watch_normalized_type, gps_available,
+        plan_session_id, planned_session_json, health_source, health_source_workout_id,
+        health_start_at, health_end_at, workout_metrics_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT (id) DO NOTHING`, [
+        id, req.user.id, date, type, resolvedDistanceMiles, duration_seconds || 0, perceived_effort ?? null, notes || null,
+        resolvedSurface, resolvedSurface, incline_pct || 0, treadmill_speed || 0, JSON.stringify(normalizedRouteCoords), watch_mode || null,
+        avg_heart_rate || null, max_heart_rate || null, min_heart_rate || null, JSON.stringify(heart_rate_zones || []),
+        cadence_spm || null, resolvedElevationGain, resolvedElevationLoss, pace_avg || null, JSON.stringify(pace_splits || []),
+        vo2_max || null, training_effect_aerobic || null, training_effect_anaerobic || null, recovery_time_hours || null,
+        detected_surface_type || null, temperature_f || null, calories || 0, treadmill_brand || null, treadmill_model || null,
+        watch_sync_id || null, watch_activity_type || null, watch_normalized_type || null, gps_available === false ? 0 : 1,
+        resolvedPlanSessionId, JSON.stringify(storedPlannedSession || {}), recordingHealthSource, recordingSourceId,
+        resolvedActivityStart, resolvedActivityEnd, JSON.stringify(recordingMetrics)
+      ]);
+      if (insertResult.changes === 0) {
+        const existingRun = await tx.get('SELECT * FROM runs WHERE id=? AND user_id=?', [id, req.user.id]);
+        if (!existingRun) {
+          const conflict = new Error('Run id already exists');
+          conflict.status = 409;
+          throw conflict;
+        }
+        return planningInputUnchanged({ inserted: false, run: existingRun, userProfile: null, prResult: null });
+      }
+
+      const userProfile = await tx.get('SELECT weight_lbs, max_heart_rate FROM users WHERE id=?', [req.user.id]);
+      const weightLbs = userProfile?.weight_lbs || 185;
+      const computedCalories = Math.round(0.75 * weightLbs * resolvedDistanceMiles);
+      const resolvedCalories = Number(calories || 0) > 0 ? Number(calories) : computedCalories;
+      if (resolvedCalories > 0) {
+        await tx.run('UPDATE runs SET calories=? WHERE id=? AND user_id=?', [resolvedCalories, id, req.user.id]);
+      }
+
+      if ((duration_seconds || 0) > 0 && resolvedDistanceMiles > 0) {
+        const durationHours = (duration_seconds || 0) / 3600;
+        const paceMinsPerMile = ((duration_seconds || 0) / 60) / resolvedDistanceMiles;
+        const met = paceMinsPerMile < 8 ? 12.0 : paceMinsPerMile <= 10 ? 10.0 : 8.0;
+        const weightKg = weightLbs / 2.205;
+        const caloriesBurned = Math.round(met * weightKg * durationHours);
+        if (caloriesBurned > 0) {
+          await tx.run('UPDATE runs SET calories_burned=? WHERE id=? AND user_id=?', [caloriesBurned, id, req.user.id]);
+        }
+      }
+
+      const run = await tx.get('SELECT * FROM runs WHERE id=? AND user_id=?', [id, req.user.id]);
+      let prResult = { newPRs: [], discrepancies: [] };
+      try {
+        prResult = await autoUpdatePRs(req.user.id, run, { tx }) || prResult;
+      } catch (err) {
+        console.error('[runs] PR auto-detect failed:', err.message);
+      }
+      return { inserted: true, run, userProfile, prResult };
+    });
+    if (!writeResult.inserted) {
       return res.status(200).json({
-        run: existingRun,
+        run: writeResult.run,
         heatDrift: { drifted: false },
         newPRs: [],
         discrepancies: [],
       });
     }
 
-    const [userProfile, hrProfile] = await Promise.all([
-      dbGet('SELECT weight_lbs, max_heart_rate FROM users WHERE id=?', [req.user.id]),
-      getHrProfile(req.user.id, dbGet),
-    ]);
-    const weightLbs = userProfile?.weight_lbs || 185;
-    const computedCalories = Math.round(0.75 * weightLbs * resolvedDistanceMiles);
-    const resolvedCalories = Number(calories || 0) > 0 ? Number(calories) : computedCalories;
-    if (resolvedCalories > 0) {
-      await dbRun('UPDATE runs SET calories=? WHERE id=? AND user_id=?', [resolvedCalories, id, req.user.id]);
-    }
-
-    if ((duration_seconds || 0) > 0 && resolvedDistanceMiles > 0) {
-      const durationHours = (duration_seconds || 0) / 3600;
-      const paceMinsPerMile = ((duration_seconds || 0) / 60) / resolvedDistanceMiles;
-      const met = paceMinsPerMile < 8 ? 12.0 : paceMinsPerMile <= 10 ? 10.0 : 8.0;
-      const weightKg = weightLbs / 2.205;
-      const calories_burned = Math.round(met * weightKg * durationHours);
-      if (calories_burned > 0) {
-        await dbRun('UPDATE runs SET calories_burned=? WHERE id=? AND user_id=?', [calories_burned, id, req.user.id]);
-      }
-    }
-
-    const run = await dbGet('SELECT * FROM runs WHERE id = ? AND user_id = ?', [id, req.user.id]);
+    const { run, userProfile, prResult } = writeResult;
+    const hrProfile = await getHrProfile(req.user.id, dbGet);
     let heatDrift = { drifted: false };
     try {
       const actualZone = zoneForHr(avg_heart_rate, hrProfile)
@@ -943,12 +960,11 @@ router.post('/', auth, async (req, res) => {
       heatDrift = { drifted: false };
     }
 
-    let prResult = { newPRs: [], discrepancies: [] };
-    try { prResult = await autoUpdatePRs(req.user.id, run) || prResult; } catch (e) { console.error('PR auto-detect:', e); }
-
     res.status(201).json({ run, heatDrift, newPRs: prResult.newPRs, discrepancies: prResult.discrepancies });
 
   } catch (err) {
+    if (err.status === 409) return res.status(409).json({ error: err.message });
+    console.error('[runs/create] failed:', err.message);
     if (!res.headersSent) res.status(500).json({ error: 'Failed to save run' });
   }
 });
@@ -967,7 +983,7 @@ async function updateRunHandler(req, res) {
       return res.status(400).json({ error: 'Invalid post_energy' });
     }
 
-    const updated = await withTransaction(async (tx) => {
+    const updated = await withPlanningInputMutation(req.user.id, async (tx) => {
       const run = await tx.get('SELECT * FROM runs WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
       if (!run) {
         const notFound = new Error('Run not found');
@@ -1037,7 +1053,7 @@ router.patch('/:id/check-in', auth, async (req, res) => {
   if (normalized.error) return res.status(400).json({ error: normalized.error });
 
   try {
-    const updatedRun = await withTransaction(async (tx) => {
+    const updatedRun = await withPlanningInputMutation(req.user.id, async (tx) => {
       const run = await tx.get('SELECT * FROM runs WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
       if (!run) {
         const notFound = new Error('Run not found');
@@ -1063,7 +1079,8 @@ router.patch('/:id/check-in', auth, async (req, res) => {
           [values.perceived_effort, values.pain_level, values.post_energy, req.params.id, req.user.id]
         );
       }
-      return tx.get('SELECT * FROM runs WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
+      const refreshed = await tx.get('SELECT * FROM runs WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
+      return changed ? refreshed : planningInputUnchanged(refreshed);
     });
 
     const feedbackResult = updatedRun.ai_feedback
@@ -1106,7 +1123,7 @@ router.post('/:id/feedback', auth, async (req, res) => {
 
 router.delete('/:id', auth, async (req, res) => {
   try {
-    await withTransaction(async (tx) => {
+    await withPlanningInputMutation(req.user.id, async (tx) => {
       const run = await tx.get('SELECT * FROM runs WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
       if (!run) {
         const notFound = new Error('Run not found');
