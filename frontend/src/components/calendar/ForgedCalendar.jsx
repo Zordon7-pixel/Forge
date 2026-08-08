@@ -57,6 +57,49 @@ function sessionPurpose(session) {
       : 'Develop the fitness required for the plan goal at a controlled dose.')
 }
 
+const FEASIBILITY_REASON_LABELS = Object.freeze({
+  NO_PERFORMANCE_ANCHOR: 'No recent performance anchor is available yet.',
+  ANCHOR_EXPIRED: 'The performance anchor is too old to support the target.',
+  BROAD_EQUIVALENCY_ONLY: 'Current performance evidence gives only a broad pace estimate.',
+  PACE_EQUIVALENCY_USED: 'Goal pace uses an equivalent recorded performance.',
+  QUALITY_EXPOSURE_MISSING: 'The block needs another race-specific quality exposure.',
+  PEAK_DEMAND_UNREACHABLE: 'The available weeks cannot safely reach the required peak load.',
+  CHECKPOINT_UNPLACEABLE: 'There is not enough calendar space for a safe checkpoint.',
+  RACE_SPACING_CONFLICT: 'The protected races are close enough to constrain recovery and sharpening.',
+})
+
+function readableReason(reason) {
+  if (!reason) return ''
+  return FEASIBILITY_REASON_LABELS[reason]
+    || String(reason).replaceAll('_', ' ').toLowerCase().replace(/^./, (letter) => letter.toUpperCase())
+}
+
+function formatMinutes(totalMinutes) {
+  const total = Math.round(Number(totalMinutes || 0))
+  if (total <= 0) return null
+  const hours = Math.floor(total / 60)
+  const minutes = total % 60
+  return hours ? `${hours}h${minutes ? ` ${minutes}m` : ''}` : `${minutes} min`
+}
+
+function qualityFallback(runs) {
+  return runs.find(({ session }) => (
+    /(hill|interval|repeat|tempo|threshold|fartlek|speed|race.?pace|benchmark)/i.test(
+      [session.type, session.title, session.raw?.workout_id].filter(Boolean).join(' '),
+    )
+  )) || null
+}
+
+function targetFromMetadata(target, fallbackSession) {
+  if (target && typeof target === 'object') {
+    const distance = Number(target.distance_miles || target.distanceMiles || 0)
+    const duration = Number(target.duration_min || target.durationMinutes || 0)
+    const parts = [distance > 0 ? `${distance.toFixed(1)} mi` : null, formatMinutes(duration)].filter(Boolean)
+    if (parts.length) return parts.join(' · ')
+  }
+  return fallbackSession ? sessionTarget(fallbackSession) : 'Not scheduled'
+}
+
 function weekOverview(week, strengthEnabled) {
   const sessions = (week?.days || []).flatMap((day) => (
     (day.sessions || []).map((session) => ({ day, session }))
@@ -64,34 +107,123 @@ function weekOverview(week, strengthEnabled) {
   const runs = sessions.filter(({ session }) => session.kind === 'run')
   const lifts = sessions.filter(({ session }) => session.kind === 'lift')
   const totalMiles = runs.reduce((sum, { session }) => sum + Number(session.distanceMiles || 0), 0)
-  const longRun = runs
+  const totalMinutes = runs.reduce((sum, { session }) => sum + Number(session.durationMinutes || 0), 0)
+  const longRunEntry = runs
     .map(({ session }) => session)
-    .filter((session) => ['long', 'race'].includes(String(session.type || '').toLowerCase()))
+    .filter((session) => ['long', 'race'].includes(String(session.type || '').toLowerCase())
+      || String(session.raw?.workout_id || '').toLowerCase() === 'long_aerobic')
     .sort((left, right) => Number(right.distanceMiles || 0) - Number(left.distanceMiles || 0))[0]
+  const explicitQuality = week?.keyQualitySession && typeof week.keyQualitySession === 'object'
+    ? week.keyQualitySession
+    : null
+  const fallbackQuality = qualityFallback(runs)
+  const keyQuality = explicitQuality
+    ? {
+        title: explicitQuality.title || String(explicitQuality.workout_id || '').replaceAll('_', ' '),
+        purpose: explicitQuality.purpose || '',
+      }
+    : fallbackQuality
+      ? { title: fallbackQuality.session.title, purpose: sessionPurpose(fallbackQuality.session) }
+      : null
   const restDays = (week?.days || []).filter((day) => day.isRest).length
   const phasePurpose = PHASE_PURPOSE[week?.phase] || 'Progress the plan with a repeatable balance of training and recovery.'
+  const explicitStrengthIntent = String(week?.strengthIntent || '')
+  const strengthIntent = !strengthEnabled
+    ? 'Run-only mode; no strength session is required.'
+    : lifts.length > 0 && /no strength/i.test(explicitStrengthIntent)
+      ? `${lifts.length} scheduled strength session${lifts.length === 1 ? '' : 's'} preserve the selected strength floor.`
+      : explicitStrengthIntent || (lifts.length
+        ? `${lifts.length} scheduled strength session${lifts.length === 1 ? '' : 's'} support the running block.`
+        : 'No strength session is scheduled this week.')
+  const purpose = week?.purpose || (lifts.length
+    ? `${phasePurpose} Strength work supports the run goal without replacing recovery.`
+    : phasePurpose)
+  const whyAdvances = keyQuality?.purpose
+    || (longRunEntry
+      ? 'The planned quality and endurance doses progress race readiness while the remaining days protect recovery.'
+      : purpose)
   return {
     sessions,
     summary: [
       `${runs.length} run${runs.length === 1 ? '' : 's'}`,
       strengthEnabled ? `${lifts.length} lift${lifts.length === 1 ? '' : 's'}` : null,
       totalMiles > 0 ? `${totalMiles.toFixed(1)} planned mi` : null,
-      longRun ? `long ${sessionTarget(longRun)}` : null,
+      totalMinutes > 0 ? formatMinutes(totalMinutes) : null,
       `${restDays} rest day${restDays === 1 ? '' : 's'}`,
     ].filter(Boolean).join(' · '),
-    purpose: lifts.length
-      ? `${phasePurpose} Strength work supports the run goal without replacing recovery.`
-      : phasePurpose,
+    purpose,
+    keyQuality,
+    longRun: targetFromMetadata(week?.longRunTarget, longRunEntry),
+    strengthIntent,
+    whyAdvances,
+    safetyNote: week?.safetyHold || week?.deloadReason || null,
   }
+}
+
+function weeksToGoals(model, week) {
+  return (model?.goals || []).map((goal, index) => {
+    const days = countdownDays(goal.dateISO, week.startISO)
+    if (!Number.isFinite(days)) return null
+    return `A${index + 1}: ${Math.max(0, Math.ceil(days / 7))} weeks`
+  }).filter(Boolean).join(' · ')
+}
+
+function EvidenceSummary({ model }) {
+  const why = model?.whyThisPlan
+  if (!why) return null
+  const baseline = why.baseline || model?.engineMetadata?.anchor?.weekly_baseline
+  const endurance = why.endurance || model?.engineMetadata?.anchor?.recent_endurance
+  const input = model?.inputSummary || {}
+  const reasonCodes = Array.isArray(why.reason_codes) ? why.reason_codes : []
+  const performance = model?.feasibility?.goals?.find((goal) => goal?.pace)?.pace
+  const evidence = model?.trainingEvidence || []
+  const baselineText = Number(baseline?.value) > 0
+    ? `${Number(baseline.value).toFixed(1)} mi weekly baseline · ${String(baseline.confidence || 'recorded').replaceAll('_', ' ')}`
+    : 'Weekly mileage baseline is not established yet.'
+  const enduranceText = Number(endurance?.value) > 0
+    ? `${Number(endurance.value).toFixed(1)} mi recent endurance anchor · ${String(endurance.confidence || 'recorded').replaceAll('_', ' ')}`
+    : 'No recent endurance anchor is available.'
+  return (
+    <details style={{ marginTop: 12, minWidth: 0, border: '1px solid var(--border-subtle)', borderRadius: 8, background: 'var(--bg-card)', overflow: 'hidden' }}>
+      <summary style={{ minHeight: 48, padding: '12px 14px', cursor: 'pointer', color: 'var(--text-primary)', fontWeight: 800 }}>Why this plan</summary>
+      <div style={{ padding: '0 14px 14px', minWidth: 0, color: 'var(--text-muted)', fontSize: 13, lineHeight: 1.55, overflowWrap: 'anywhere' }}>
+        {why.summary && <p style={{ margin: '0 0 10px', color: 'var(--text-primary)' }}>{why.summary}</p>}
+        <ul style={{ margin: 0, paddingLeft: 18 }}>
+          <li>{baselineText}</li>
+          <li>{enduranceText}</li>
+          {Number(input.recentRunCount || 0) > 0 && <li>{Number(input.recentRunCount)} recent run{Number(input.recentRunCount) === 1 ? '' : 's'} reviewed.</li>}
+          {Number(input.mileageBaseline?.meaningfulRunCount || 0) > 0 && <li>{Number(input.mileageBaseline.meaningfulRunCount)} meaningful run{Number(input.mileageBaseline.meaningfulRunCount) === 1 ? '' : 's'} informed the baseline.</li>}
+          {performance?.anchorClass && <li>Performance anchor: {String(performance.anchorClass).replaceAll('_', ' ')}{Number.isFinite(Number(performance.anchorAgeDays)) ? ` · ${Number(performance.anchorAgeDays)} days old` : ''}.</li>}
+          {reasonCodes.map((reason) => <li key={reason}>{readableReason(reason)}</li>)}
+          {evidence.length > 0 && <li>{evidence.length} reviewed evidence reference{evidence.length === 1 ? '' : 's'} support the programming rules.</li>}
+        </ul>
+      </div>
+    </details>
+  )
 }
 
 function PlanOverview({ model, currentWeekIndex }) {
   return (
-    <section className="forged-overview" aria-labelledby="forged-plan-overview-title">
+    <section className="forged-overview" aria-labelledby="forged-plan-overview-title" style={{ minWidth: 0, maxWidth: '100%', overflowX: 'clip' }}>
       <div className="forged-overview-intro">
         <h3 id="forged-plan-overview-title">Plan overview</h3>
-        <p>Review how every week and workout advances the goal. Open a week for the day-by-day purpose.</p>
+        <p>Review the complete block before opening individual workouts.</p>
       </div>
+      {model?.feasibility?.label && (
+        <div role="status" style={{ marginTop: 12, minWidth: 0, padding: 14, borderRadius: 8, border: '1px solid var(--border-subtle)', background: 'var(--bg-card)', overflowWrap: 'anywhere' }}>
+          <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: 11, fontWeight: 900, textTransform: 'uppercase' }}>Goal feasibility</p>
+          <p style={{ margin: '4px 0 0', color: 'var(--text-primary)', fontSize: 18, fontWeight: 900 }}>{model.feasibility.label}</p>
+          {model.feasibility.goals.length > 1 && model.feasibility.goals.map((goal, index) => (
+            <p key={goal.raceId || goal.raceName || index} style={{ margin: '6px 0 0', color: 'var(--text-muted)', fontSize: 12 }}>
+              A{index + 1} · {goal.raceName || `Race ${index + 1}`}: <strong style={{ color: 'var(--text-primary)' }}>{goal.label || goal.status}</strong>
+            </p>
+          ))}
+          {(model.feasibility.reasons || []).slice(0, 3).map((reason) => (
+            <p key={reason} style={{ margin: '5px 0 0', color: 'var(--text-muted)', fontSize: 12 }}>{readableReason(reason)}</p>
+          ))}
+        </div>
+      )}
+      <EvidenceSummary model={model} />
       <div className="forged-overview-weeks">
         {(model?.weeks || []).map((week, overviewIndex) => {
           const overview = weekOverview(week, model?.strengthEnabled)
@@ -104,25 +236,37 @@ function PlanOverview({ model, currentWeekIndex }) {
                   <span className="forged-overview-kicker">
                     Week {week.weekNumber} of {model.weekCount}{isCurrent ? ' · Current' : ''}
                   </span>
-                  <strong>{String(week.phase || 'training').replace(/^./, (letter) => letter.toUpperCase())} focus</strong>
+                  <strong>{week.bridgeWeek ? 'Bridge Week' : `${String(week.phase || 'training').replace(/^./, (letter) => letter.toUpperCase())} focus`}</strong>
+                  <span>{weeksToGoals(model, week)}</span>
                   <span>{overview.summary}</span>
                 </span>
                 <ChevronDown size={18} aria-hidden="true" />
               </summary>
               <div className="forged-overview-week-body">
                 <p className="forged-overview-purpose">{overview.purpose}</p>
-                <ol className="forged-overview-sessions">
-                  {overview.sessions.map(({ day, session }, sessionIndex) => (
-                    <li key={`${day.dateISO || day.slot || resolvedWeekIndex}-${session.id || sessionIndex}`}>
-                      <span className="forged-overview-session-head">
-                        <span>{day.dayLabel}</span>
-                        <strong>{session.title}</strong>
-                        <span>{sessionTarget(session)}</span>
-                      </span>
-                      <p>{sessionPurpose(session)}</p>
-                    </li>
-                  ))}
-                </ol>
+                <dl style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 10, margin: '12px 0 0', minWidth: 0 }}>
+                  <div><dt style={{ color: 'var(--text-muted)', fontSize: 11, fontWeight: 900, textTransform: 'uppercase' }}>Key quality</dt><dd style={{ margin: '2px 0 0', overflowWrap: 'anywhere' }}>{overview.keyQuality?.title || 'No quality session scheduled'}</dd></div>
+                  <div><dt style={{ color: 'var(--text-muted)', fontSize: 11, fontWeight: 900, textTransform: 'uppercase' }}>Long run</dt><dd style={{ margin: '2px 0 0' }}>{overview.longRun}</dd></div>
+                  <div><dt style={{ color: 'var(--text-muted)', fontSize: 11, fontWeight: 900, textTransform: 'uppercase' }}>Strength intent</dt><dd style={{ margin: '2px 0 0', overflowWrap: 'anywhere' }}>{overview.strengthIntent}</dd></div>
+                  <div><dt style={{ color: 'var(--text-muted)', fontSize: 11, fontWeight: 900, textTransform: 'uppercase' }}>Why it advances the goal</dt><dd style={{ margin: '2px 0 0', overflowWrap: 'anywhere' }}>{overview.whyAdvances}</dd></div>
+                  {overview.safetyNote && <div><dt style={{ color: 'var(--text-muted)', fontSize: 11, fontWeight: 900, textTransform: 'uppercase' }}>Safety hold / deload</dt><dd style={{ margin: '2px 0 0', overflowWrap: 'anywhere' }}>{overview.safetyNote}</dd></div>}
+                </dl>
+                <details style={{ marginTop: 12, minWidth: 0 }}>
+                  <summary style={{ minHeight: 44, display: 'flex', alignItems: 'center', cursor: 'pointer', fontWeight: 800 }}>Week schedule</summary>
+                  <ol className="forged-overview-sessions" style={{ minWidth: 0 }}>
+                    {overview.sessions.map(({ day, session }, sessionIndex) => (
+                      <li key={`${day.dateISO || day.slot || resolvedWeekIndex}-${session.id || sessionIndex}`} style={{ minWidth: 0 }}>
+                        <span className="forged-overview-session-head" style={{ minWidth: 0, display: 'flex', flexWrap: 'wrap' }}>
+                          <span>{day.dayLabel}</span>
+                          <strong style={{ overflowWrap: 'anywhere' }}>{session.title}</strong>
+                          <span>{sessionTarget(session)}</span>
+                        </span>
+                        {session.motivationalTitle && <p style={{ fontWeight: 800 }}>{session.motivationalTitle}</p>}
+                        <p>{sessionPurpose(session)}</p>
+                      </li>
+                    ))}
+                  </ol>
+                </details>
               </div>
             </details>
           )
@@ -263,7 +407,7 @@ export default function ForgedCalendar({
   }
 
   return (
-    <div className="forged-cal">
+    <div className="forged-cal" style={{ width: '100%', maxWidth: '100%', minWidth: 0, overflowX: 'clip' }}>
       {/* Header */}
       <div className="rounded-lg p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
         <div className="forged-cal-header">
@@ -293,13 +437,6 @@ export default function ForgedCalendar({
             {anchoredBy && anchorRunDate && (
               <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
                 Target set from your {anchorRunDate} run
-              </p>
-            )}
-            {['stretch', 'build'].includes(goal.paceContext?.status) && (
-              <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
-                {goal.paceContext.status === 'stretch'
-                  ? 'Stretch target · confirm with a controlled benchmark as the plan progresses.'
-                  : 'Progression target · race-specific work builds toward this pace.'}
               </p>
             )}
           </div>

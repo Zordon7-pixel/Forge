@@ -9,6 +9,7 @@ import {
   addDays,
   startOfWeekMonday,
   countdownDays,
+  feasibilityLabel,
   getGoal,
   getPlanMode,
   planModeLabel,
@@ -479,6 +480,91 @@ check('h5: unsupported legacy lift percentages fall back to honest effort calibr
   assert.match(normalized.loadSource, /no matching logged set/i)
   const anchored = normalizeLiftExercisePrescription({ name: 'Dumbbell bench press', load: '52.5 lb starting load', loadSource: 'Conservative estimate from a recent set', rpe: '7-8' })
   assert.equal(anchored.load, '52.5 lb starting load')
+})
+
+check('p5: calendar adapter preserves engine explanations and complete prescriptions', () => {
+  const whyThisPlan = {
+    summary: 'This block needs a successful checkpoint before the goal can be treated as supported.',
+    baseline: { value: 18.5, confidence: 'trusted', trustedWeeks: 3, source: 'recorded_complete_weeks' },
+    endurance: { value: 8, confidence: 'trusted', source: 'recorded_endurance_runs' },
+    reason_codes: ['PACE_EQUIVALENCY_USED'],
+  }
+  const keyQualitySession = {
+    date: '2026-07-15',
+    workout_id: 'threshold_intervals',
+    title: 'Threshold intervals',
+    purpose: 'Develop sustainable race-specific speed.',
+  }
+  const longRunTarget = { date: '2026-07-18', distance_miles: 9, duration_min: 90 }
+  const planData = {
+    planMode: 'hybrid_maintain',
+    overall_feasibility: 'stretch',
+    goal_feasibilities: [{
+      race_id: 'race-a1',
+      race_name: 'Yonkers Half Marathon',
+      feasibility: 'stretch',
+      full_training_weeks: 7,
+      reasons: ['PACE_EQUIVALENCY_USED'],
+      pace: { anchorClass: 'equivalent', anchorAgeDays: 12 },
+    }],
+    whyThisPlan,
+    weekly_curve: [{ week: 1, targetWeeklyMiles: 20, targetLongMiles: 9 }],
+    peak_long_run: { week: 5, distance_miles: 11, date: '2026-08-15' },
+    generationTraceSchemaVersion: 1,
+    engineVersion: 'race-plan-v2',
+    policyVersion: 'race-plan-policy-v1',
+    invariantVersion: 'plan-invariants-v2',
+    inputHash: 'input-hash',
+    candidateHash: 'candidate-hash',
+    inputSummary: { recentRunCount: 8, mileageBaseline: { meaningfulRunCount: 6 } },
+    trainingEvidence: [{ id: 'evidence-1', publisher: 'Reviewed source' }],
+    goals: [{ raceId: 'race-a1', name: 'Yonkers Half Marathon', date: '2026-09-20', distanceMiles: 13.109, goalType: 'pr' }],
+    weeks: [{
+      week: 1,
+      startDate: '2026-07-13',
+      phase: 'build',
+      purpose: 'Build endurance and sustainable speed toward race demand.',
+      keyQualitySession,
+      longRunTarget,
+      strengthIntent: 'One scheduled strength session preserves the selected strength floor.',
+      days: [{
+        date: '2026-07-15',
+        day: 'Wed',
+        sessions: [{
+          id: 'quality-1',
+          kind: 'run',
+          type: 'threshold',
+          title: 'Threshold intervals',
+          display_name: 'Hold the Line',
+          prescription: {
+            title: 'Threshold intervals',
+            warmup: ['10 min easy'],
+            steps: ['4 x 5 min threshold', '2 min easy between reps'],
+            cooldown: ['10 min easy'],
+          },
+        }],
+      }],
+    }],
+  }
+  const model = buildCalendarModel({ plan_data: planData }, {}, { now: WEEK_START })
+  const week = model.getWeek(0)
+  const session = week.days[2].sessions[0]
+
+  assert.equal(feasibilityLabel('supported'), 'On track')
+  assert.equal(model.feasibility.status, 'stretch')
+  assert.equal(model.feasibility.label, 'Stretch target')
+  assert.equal(model.feasibility.goals[0].raceName, 'Yonkers Half Marathon')
+  assert.strictEqual(model.whyThisPlan, whyThisPlan)
+  assert.strictEqual(model.engineMetadata.raw, planData)
+  assert.deepEqual(model.engineMetadata.weeklyCurve, planData.weekly_curve)
+  assert.equal(model.engineMetadata.candidateHash, 'candidate-hash')
+  assert.equal(week.purpose, planData.weeks[0].purpose)
+  assert.strictEqual(week.keyQualitySession, keyQualitySession)
+  assert.strictEqual(week.longRunTarget, longRunTarget)
+  assert.equal(week.strengthIntent, planData.weeks[0].strengthIntent)
+  assert.equal(session.title, 'Threshold intervals')
+  assert.equal(session.motivationalTitle, 'Hold the Line')
+  assert.deepEqual(session.prescription.steps, ['4 x 5 min threshold', '2 min easy between reps'])
 })
 
 console.log(`\nplanCalendar smoke: ${passed} checks passed`)

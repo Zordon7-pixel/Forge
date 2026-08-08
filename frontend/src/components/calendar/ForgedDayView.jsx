@@ -78,6 +78,30 @@ function formatAnchorRunDate(value) {
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
+function canonicalWorkoutLabel(session) {
+  if (!session) return ''
+  if (session.kind === 'lift') {
+    const focus = firstStr(session.prescription?.focus, session.raw?.focus)
+    return focus ? `${labelText(focus)} strength` : 'Strength session'
+  }
+  const identity = [session.raw?.workout_id, session.type, session.title].filter(Boolean).join(' ').toLowerCase()
+  if (/benchmark/.test(identity)) return 'Benchmark run'
+  if (/race.?pace|goal.?pace/.test(identity)) return 'Race-pace workout'
+  if (/hill/.test(identity)) return 'Hill workout'
+  if (/interval|repeat|speed/.test(identity)) return 'Interval workout'
+  if (/threshold|tempo/.test(identity)) return 'Tempo / threshold run'
+  if (/progression/.test(identity)) return 'Progression run'
+  if (/long|race/.test(identity)) return 'Long run'
+  if (/recovery/.test(identity)) return 'Recovery run'
+  if (/easy/.test(identity)) return 'Easy aerobic run'
+  return 'Run session'
+}
+
+function secondaryWorkoutTitle(session, canonicalTitle) {
+  const title = firstStr(session?.motivationalTitle, session?.title)
+  return title && title.toLowerCase() !== canonicalTitle.toLowerCase() ? title : ''
+}
+
 function formatRecordedDuration(totalSeconds) {
   const total = Math.max(0, Math.round(Number(totalSeconds) || 0))
   const hours = Math.floor(total / 3600)
@@ -240,6 +264,12 @@ export default function ForgedDayView({
   const recovery = firstStr(day?.recovery, runSession?.prescription?.recovery, liftSession?.prescription?.recovery)
   const orderGuidance = firstStr(day?.orderGuidance)
   const plannedSessionIds = new Set(sessions.map((session) => String(session.id)))
+  const runDone = Boolean(runSession && completedSet?.has(String(runSession.id)))
+  const liftDone = Boolean(liftSession && completedSet?.has(String(liftSession.id)))
+  const liftFirst = Boolean(runSession && liftSession && /lift first/i.test(orderGuidance))
+  const primarySessionKind = liftFirst
+    ? (!liftDone ? 'lift' : !runDone ? 'run' : null)
+    : (!runDone && runSession ? 'run' : !liftDone && liftSession ? 'lift' : null)
 
   const renderRecordedRuns = () => {
     if (!recordedRuns.length) return null
@@ -306,9 +336,13 @@ export default function ForgedDayView({
     const evidenceById = new Map((planContext.trainingEvidence || []).map((source) => [source.id, source]))
     const evidenceSources = f.evidenceRefs.map((id) => evidenceById.get(id)).filter(Boolean)
     const isBenchmarkRun = Boolean(runSession.isBenchmark || runSession.raw?.benchmark || runSession.prescription?.benchmark || runSession.type === 'benchmark')
+    const canonicalTitle = canonicalWorkoutLabel(runSession)
+    const secondaryTitle = secondaryWorkoutTitle(runSession, canonicalTitle)
+    const isPrimary = primarySessionKind === 'run'
     return (
-      <PaperSection title={firstStr(runSession.title, 'Run')} tone="run" px={px}
+      <PaperSection title={canonicalTitle} tone="run" px={px}
         icon={<span className="forged-stamp forged-stamp--run" data-state={sessionState(runSession, completedSet)}><Footprints size={16} /></span>}>
+        {secondaryTitle && <p className="forged-hand" style={{ fontSize: px(15), margin: '0 0 8px', fontWeight: 800 }}>{secondaryTitle}</p>}
         {isBenchmarkRun && (
           <p className="forged-hand forged-sec-red" style={{ fontSize: px(14), margin: '0 0 8px', fontWeight: 800 }}>
             Benchmark run — this calibrates your targets
@@ -359,7 +393,7 @@ export default function ForgedDayView({
         <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
           <button type="button" onClick={() => onStartRun?.(runSession)} disabled={typeof onStartRun !== 'function'}
             title="Start this scheduled run"
-            className="forged-start-run" style={{ flex: '1 1 140px', border: 'none', borderRadius: 8, padding: '12px', fontWeight: 900, fontSize: px(14), cursor: typeof onStartRun === 'function' ? 'pointer' : 'not-allowed', opacity: typeof onStartRun === 'function' ? 1 : 0.5 }}>
+            className={isPrimary ? 'forged-start-run' : undefined} style={{ flex: '1 1 140px', minHeight: 48, border: isPrimary ? 'none' : '1px solid rgba(60,55,45,0.24)', borderRadius: 8, padding: '12px', background: isPrimary ? undefined : 'transparent', color: isPrimary ? undefined : 'var(--ink, #241F18)', fontWeight: 900, fontSize: px(14), cursor: typeof onStartRun === 'function' ? 'pointer' : 'not-allowed', opacity: typeof onStartRun === 'function' ? 1 : 0.5 }}>
             Start Run
           </button>
           <button type="button" onClick={() => onToggleComplete?.(runSession.id)} disabled={updating}
@@ -385,9 +419,13 @@ export default function ForgedDayView({
       recovery: f.recovery,
       explanation: firstStr(liftSession.prescription?.explanation, liftSession.raw?.explanation),
     })
+    const canonicalTitle = canonicalWorkoutLabel(liftSession)
+    const secondaryTitle = secondaryWorkoutTitle(liftSession, canonicalTitle)
+    const isPrimary = primarySessionKind === 'lift'
     return (
-      <PaperSection title={firstStr(liftSession.title, 'Strength')} px={px}
+      <PaperSection title={canonicalTitle} px={px}
         icon={<span className="forged-stamp forged-stamp--lift" data-state={sessionState(liftSession, completedSet)}><Dumbbell size={16} /></span>}>
+        {secondaryTitle && <p className="forged-hand" style={{ fontSize: px(15), margin: '0 0 8px', fontWeight: 800 }}>{secondaryTitle}</p>}
         {f.focus && <p className="forged-hand" style={{ fontSize: px(15), margin: '0 0 8px' }}>{f.focus}</p>}
         <div style={{ marginBottom: 10, padding: '9px 10px', border: '1px solid rgba(60,55,45,0.14)', borderRadius: 8, background: 'rgba(255,255,255,0.28)' }}>
           <p style={{ margin: 0, fontSize: px(13), fontWeight: 800 }}>{f.exercises.length} exercises · {f.totalSets || '—'} working sets</p>
@@ -427,7 +465,7 @@ export default function ForgedDayView({
         <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
           <button type="button" onClick={() => onStartLift?.(liftSession)} disabled={typeof onStartLift !== 'function'}
             title="Start this scheduled lift"
-            className="forged-start-lift" style={{ flex: '1 1 140px', border: 'none', borderRadius: 8, padding: '12px', fontWeight: 900, fontSize: px(14), cursor: typeof onStartLift === 'function' ? 'pointer' : 'not-allowed', opacity: typeof onStartLift === 'function' ? 1 : 0.5 }}>
+            className={isPrimary ? 'forged-start-lift' : undefined} style={{ flex: '1 1 140px', minHeight: 48, border: isPrimary ? 'none' : '1px solid rgba(60,55,45,0.24)', borderRadius: 8, padding: '12px', background: isPrimary ? undefined : 'transparent', color: isPrimary ? undefined : 'var(--ink, #241F18)', fontWeight: 900, fontSize: px(14), cursor: typeof onStartLift === 'function' ? 'pointer' : 'not-allowed', opacity: typeof onStartLift === 'function' ? 1 : 0.5 }}>
             Start Lift
           </button>
           <button type="button" onClick={() => onToggleComplete?.(liftSession.id)} disabled={updating}
@@ -455,12 +493,16 @@ export default function ForgedDayView({
         zIndex: expanded ? 70 : 'auto',
         height: expanded ? '100dvh' : 'auto',
         overflowY: expanded ? 'auto' : 'visible',
+        overflowX: 'hidden',
+        width: '100%',
+        maxWidth: '100%',
+        minWidth: 0,
         padding: 16,
         paddingTop: expanded ? 'calc(env(safe-area-inset-top, 0px) + 16px)' : 16,
         paddingBottom: expanded ? 'calc(env(safe-area-inset-bottom, 0px) + 24px)' : 16,
       }}
     >
-      <header className="flex items-start justify-between gap-3">
+      <header className="flex items-start justify-between gap-3" style={{ flexWrap: 'wrap', minWidth: 0 }}>
         <div style={{ minWidth: 0 }}>
           <button type="button" onClick={onBack}
             style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: 'transparent', border: 'none', color: 'var(--ink-soft, #5A554B)', fontSize: px(12), fontWeight: 700, padding: 0, cursor: 'pointer' }}>
@@ -470,7 +512,7 @@ export default function ForgedDayView({
           {planContext.phase && <p style={{ fontSize: px(12), margin: '2px 0 0', color: 'var(--ink-soft, #5A554B)' }}>{planContext.phase} · {planContext.modeLabel}</p>}
           {anchorRunDate && <p style={{ fontSize: px(12), margin: '2px 0 0', color: 'var(--ink-soft, #5A554B)' }}>Target set from your {anchorRunDate} run</p>}
         </div>
-        <div className="forged-paper-controls">
+        <div className="forged-paper-controls" style={{ maxWidth: '100%', marginLeft: 'auto' }}>
           <button type="button" onClick={() => setScaleIndex((v) => Math.max(0, v - 1))} disabled={scaleIndex === 0} aria-label="Make text smaller" title="Smaller text" style={{ opacity: scaleIndex === 0 ? 0.4 : 1 }}><Minus size={16} /></button>
           <span aria-live="polite" style={{ width: 40, textAlign: 'center', fontSize: 11, fontWeight: 800 }}>{Math.round(scale * 100)}%</span>
           <button type="button" onClick={() => setScaleIndex((v) => Math.min(TEXT_SCALES.length - 1, v + 1))} disabled={scaleIndex === TEXT_SCALES.length - 1} aria-label="Make text larger" title="Larger text" style={{ opacity: scaleIndex === TEXT_SCALES.length - 1 ? 0.4 : 1 }}><Plus size={16} /></button>
@@ -497,7 +539,8 @@ export default function ForgedDayView({
                 type="button"
                 onClick={onStartUnplannedRun}
                 disabled={typeof onStartUnplannedRun !== 'function'}
-                style={{ marginTop: 16, width: '100%', border: '1px solid rgba(60,55,45,0.24)', borderRadius: 8, padding: '12px 14px', background: 'rgba(255,255,255,0.3)', color: 'var(--ink, #241F18)', fontWeight: 800, cursor: typeof onStartUnplannedRun === 'function' ? 'pointer' : 'not-allowed', opacity: typeof onStartUnplannedRun === 'function' ? 1 : 0.5 }}
+                className="forged-start-run"
+                style={{ marginTop: 16, width: '100%', minHeight: 48, border: 'none', borderRadius: 8, padding: '12px 14px', fontWeight: 900, cursor: typeof onStartUnplannedRun === 'function' ? 'pointer' : 'not-allowed', opacity: typeof onStartUnplannedRun === 'function' ? 1 : 0.5 }}
               >
                 Start a run
               </button>

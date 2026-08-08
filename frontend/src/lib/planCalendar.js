@@ -28,6 +28,13 @@ const PLAN_MODE_LABELS = {
   hybrid_build: 'Build strength',
 }
 
+const FEASIBILITY_LABELS = Object.freeze({
+  supported: 'On track',
+  stretch: 'Stretch target',
+  unsafe: 'Goal needs adjustment',
+  not_applicable: 'Completion goal',
+})
+
 // ---------------------------------------------------------------------------
 // Local-date-safe helpers
 // ---------------------------------------------------------------------------
@@ -125,6 +132,10 @@ export function getPlanMode(plan) {
 
 export function planModeLabel(mode) {
   return PLAN_MODE_LABELS[mode] || 'Run only'
+}
+
+export function feasibilityLabel(status) {
+  return FEASIBILITY_LABELS[String(status || '').toLowerCase()] || null
 }
 
 export function isStrengthEnabled(plan) {
@@ -362,11 +373,20 @@ export function normalizeSession(rawSession, context = {}) {
     prescription.name,
     kind === 'lift' ? 'Strength' : kind === 'rest' ? 'Rest day' : 'Run',
   )
+  const displayName = firstDefined(
+    rawSession.display_name,
+    rawSession.displayName,
+    prescription.display_name,
+    prescription.displayName,
+  )
   return {
     id: String(id),
     kind,
     type,
     title,
+    motivationalTitle: displayName && String(displayName).trim() !== String(title).trim()
+      ? String(displayName).trim()
+      : null,
     distanceMiles,
     durationMinutes,
     prescriptionBasis,
@@ -594,6 +614,7 @@ export function monthMarkWithRecordedRuns(dayModel, activities = []) {
 
 export function buildCalendarModel(plan, userPlan, options = {}) {
   const now = options.now || new Date()
+  const data = planData(plan)
   const mode = getPlanMode(plan)
   const runOnly = mode === 'run_only'
   const weeks = getWeeks(plan)
@@ -608,6 +629,14 @@ export function buildCalendarModel(plan, userPlan, options = {}) {
       startDate,
       startISO: toISODate(startDate),
       days: buildWeekDays(weekData, startDate, { runOnly }),
+      purpose: firstDefined(weekData?.purpose, weekData?.weekPurpose, weekData?.week_purpose),
+      keyQualitySession: firstDefined(weekData?.keyQualitySession, weekData?.key_quality_session),
+      longRunTarget: firstDefined(weekData?.longRunTarget, weekData?.long_run_target),
+      strengthIntent: firstDefined(weekData?.strengthIntent, weekData?.strength_intent),
+      safetyHold: firstDefined(weekData?.safetyHold, weekData?.safety_hold, weekData?.holdReason, weekData?.hold_reason),
+      deloadReason: firstDefined(weekData?.deloadReason, weekData?.deload_reason),
+      bridgeWeek: Boolean(firstDefined(weekData?.bridgeWeek, weekData?.bridge_week, false)),
+      raw: weekData,
     }
   })
 
@@ -618,6 +647,26 @@ export function buildCalendarModel(plan, userPlan, options = {}) {
     })
   })
 
+  const overallFeasibility = String(firstDefined(data.overall_feasibility, data.overallFeasibility, '') || '').toLowerCase()
+  const goalFeasibilities = firstDefined(data.goal_feasibilities, data.goalFeasibilities, [])
+  const normalizedGoalFeasibilities = Array.isArray(goalFeasibilities)
+    ? goalFeasibilities.map((goalFeasibility) => {
+        const status = String(firstDefined(goalFeasibility?.feasibility, goalFeasibility?.status, '') || '').toLowerCase()
+        return {
+          ...goalFeasibility,
+          status,
+          label: feasibilityLabel(status),
+          raceId: firstDefined(goalFeasibility?.race_id, goalFeasibility?.raceId),
+          raceName: firstDefined(goalFeasibility?.race_name, goalFeasibility?.raceName),
+          fullTrainingWeeks: firstDefined(goalFeasibility?.full_training_weeks, goalFeasibility?.fullTrainingWeeks),
+          reasons: Array.isArray(goalFeasibility?.reasons) ? goalFeasibility.reasons : [],
+        }
+      })
+    : []
+  const whyThisPlan = firstDefined(data.whyThisPlan, data.why_this_plan)
+  const inputSummary = firstDefined(data.inputSummary, data.input_summary)
+  const trainingEvidence = firstDefined(data.trainingEvidence, data.training_evidence)
+
   return {
     mode,
     modeLabel: planModeLabel(mode),
@@ -625,6 +674,40 @@ export function buildCalendarModel(plan, userPlan, options = {}) {
     strengthEnabled: !runOnly,
     goal: getGoal(plan),
     goals: getGoals(plan),
+    feasibility: {
+      status: overallFeasibility || null,
+      label: feasibilityLabel(overallFeasibility),
+      goals: normalizedGoalFeasibilities,
+      checkpoint: firstDefined(data.checkpoint),
+      reasons: Array.isArray(data.reasons) ? data.reasons : [],
+    },
+    whyThisPlan: whyThisPlan && typeof whyThisPlan === 'object' ? whyThisPlan : null,
+    inputSummary: inputSummary && typeof inputSummary === 'object' ? inputSummary : null,
+    trainingEvidence: Array.isArray(trainingEvidence) ? trainingEvidence : [],
+    engineMetadata: {
+      generationTraceSchemaVersion: firstDefined(data.generationTraceSchemaVersion, data.generation_trace_schema_version),
+      engineVersion: firstDefined(data.engineVersion, data.engine_version),
+      policyVersion: firstDefined(data.policyVersion, data.policy_version),
+      invariantVersion: firstDefined(data.invariantVersion, data.invariant_version),
+      generatedAt: firstDefined(data.generatedAt, data.generated_at),
+      planningClock: firstDefined(data.planningClock, data.planning_clock),
+      inputHash: firstDefined(data.inputHash, data.input_hash),
+      candidateHash: firstDefined(data.candidateHash, data.candidate_hash),
+      generationTrace: firstDefined(data.generationTrace, data.generation_trace),
+      bridgeWeek: firstDefined(data.bridgeWeek, data.bridge_week),
+      overallFeasibility: firstDefined(data.overall_feasibility, data.overallFeasibility),
+      goalFeasibilities,
+      weeklyCurve: firstDefined(data.weekly_curve, data.weeklyCurve),
+      peakLongRun: firstDefined(data.peak_long_run, data.peakLongRun),
+      anchor: firstDefined(data.anchor),
+      checkpoint: firstDefined(data.checkpoint),
+      reasons: firstDefined(data.reasons),
+      choices: firstDefined(data.choices),
+      whyThisPlan,
+      inputSummary,
+      trainingEvidence,
+      raw: data,
+    },
     phaseForWeek: (weekIndex) => weekModels[weekIndex]?.phase || null,
     weekCount: weekCount || weekModels.length,
     weeks: weekModels,
