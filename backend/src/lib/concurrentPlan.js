@@ -864,6 +864,53 @@ function buildRunSession({ weekNumber, weekCount, day, type, workoutId, distance
   };
 }
 
+// Candidate engines must rebuild every identity-bearing field together when a
+// session changes meaning. Keeping this seam here prevents partial relabels.
+function rebuildCanonicalRunSession({
+  session,
+  weekNumber,
+  weekCount,
+  day,
+  type,
+  distance,
+  phase,
+  context = {},
+  reasonCodes = [],
+}) {
+  const history = context.history || {};
+  const workoutId = runWorkoutTaxonomy.workoutIdForSession(type, {
+    phase,
+    weekNumber,
+    weekCount,
+    weeklyMiles: Number(history.weeklyMileageBaseline || context.profile?.weekly_miles_current || 0),
+    meaningfulRunCount: Number(history.mileageBaseline?.meaningfulRunCount ?? history.recentRunCount ?? 0),
+    conservative: type === 'recovery',
+  });
+  const rebuilt = buildRunSession({
+    weekNumber,
+    weekCount,
+    day,
+    type,
+    workoutId,
+    distance,
+    phase,
+    hilly: false,
+    raceName: null,
+    history,
+    goalPaceContext: null,
+    durationIsEstimated: true,
+  });
+  return {
+    ...rebuilt,
+    id: session?.id || rebuilt.id,
+    purpose: rebuilt.purpose || rebuilt.description,
+    reason_codes: [...new Set([
+      ...(Array.isArray(session?.reason_codes) ? session.reason_codes : []),
+      ...reasonCodes,
+    ])],
+  };
+}
+
 function buildBenchmarkRunSession(session = {}) {
   const totalDistanceMiles = round(Math.max(1, Number(session.distance_miles || 0) || 1));
   const next = {
@@ -2130,6 +2177,7 @@ module.exports = {
   formatPaceLabel,
   buildGoalPaceContext,
   buildRunPerformanceProfile,
+  rebuildCanonicalRunSession,
   equivalentTimeSeconds,
   STANDARD_PERFORMANCE_DISTANCES,
   isHardRun,

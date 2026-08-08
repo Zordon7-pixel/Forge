@@ -4,6 +4,7 @@ const {
   buildConcurrentPlan,
   validateConcurrentPlan,
 } = require('../src/lib/concurrentPlan');
+const { buildRacePlanCandidate } = require('../src/lib/racePlanCandidateEngine');
 const planSchema = require('../src/lib/planSchema');
 const trainingEvidence = require('../src/lib/trainingEvidence');
 const {
@@ -56,11 +57,34 @@ const validation = validateConcurrentPlan(plan, clone(fixture));
 const summary = runSummary(plan);
 
 if (process.argv.includes('--semantic-acceptance')) {
-  const errors = semanticLongRunErrors(plan);
+  const candidate = buildRacePlanCandidate(clone(fixture), {
+    planningDateLocal: fixture.todayISO,
+    timezoneOffsetMinutes: 240,
+  });
+  const errors = [...semanticLongRunErrors(candidate.plan), ...candidate.validation.errors];
   if (errors.length) {
-    console.error(`RACE PLAN QUALITY ACCEPTANCE RED: ${errors[0].code} at ${errors[0].path}`);
+    console.error(`RACE PLAN QUALITY ACCEPTANCE RED: ${errors[0].code} at ${errors[0].path || errors[0].message || 'candidate'}`);
     process.exitCode = 1;
   } else {
+    const bridgeRuns = runSummary(candidate.plan);
+    assert.deepEqual(bridgeRuns, [
+      { date: '2026-08-07', type: 'quality', workout_id: 'strides', miles: 1.3, min: 35 },
+      { date: '2026-08-09', type: 'easy', workout_id: 'easy_aerobic', miles: 0.9, min: 10 },
+    ]);
+    assert.equal(candidate.plan.weeks[0].bridgeWeek, true);
+    assert.equal(candidate.plan.weeks[0].weekLabel, 'Bridge Week');
+    assert.equal(candidate.plan.weeks[1].fullWeekFloorRestored, true);
+    assert.equal(candidate.plan.weeks[1].days.flatMap((day) => day.sessions).filter((session) => session.kind === 'run').length, 4);
+    const lowData = clone(fixture);
+    delete lowData.history.acuteRunLoad.currentWeek;
+    const friday = buildRacePlanCandidate(lowData, { planningDateLocal: '2026-08-07', timezoneOffsetMinutes: 240 });
+    const sunday = buildRacePlanCandidate(lowData, { planningDateLocal: '2026-08-09', timezoneOffsetMinutes: 240 });
+    assert.equal(friday.plan.weeks[0].bridgeWeek, true);
+    assert.equal(sunday.plan.weeks[0].bridgeWeek, true);
+    assert.equal(friday.plan.bridgeWeek.firstFullWeekStart, '2026-08-10');
+    assert.equal(sunday.plan.bridgeWeek.firstFullWeekStart, '2026-08-10');
+    assert.equal(friday.plan.weeks[0].days.filter((day) => day.date < '2026-08-07').every((day) => day.sessions.length === 0), true);
+    assert.equal(sunday.plan.weeks[0].days.filter((day) => day.date < '2026-08-09').every((day) => day.sessions.length === 0), true);
     console.log('RACE PLAN QUALITY ACCEPTANCE OK');
   }
 } else {
