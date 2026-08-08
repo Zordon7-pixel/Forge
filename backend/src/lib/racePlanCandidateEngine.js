@@ -1,6 +1,7 @@
 const {
   buildBenchmarkRunSession,
   buildConcurrentPlan,
+  qualitySafetyForWeek,
   rebuildCanonicalRunSession,
   validateConcurrentPlan,
 } = require('./concurrentPlan');
@@ -266,6 +267,7 @@ function selectQualityEntry(plan, entries) {
 function assignQualityProgression(plan, context, planningModel) {
   for (const week of plan.weeks || []) {
     if (!isOrdinaryWeek(week)) continue;
+    if (qualitySafetyForWeek(context, { weekNumber: week.week, weekStart: week.startDate }).active) continue;
     const goal = goalForWeek(planningModel, week);
     const goalCalendar = planningModel.calendars.find((entry) => entry.goal.raceId === goal?.raceId);
     const workoutId = goalCalendar ? desiredQualityWorkout(goalCalendar.calendar, week.startDate, goal) : null;
@@ -390,6 +392,7 @@ function placeRequiredBenchmark(plan, context, planningModel) {
     .sort()[0];
   const week = (plan.weeks || []).find((candidate) => candidate.startDate === firstEligibleStart);
   if (!week) return;
+  if (qualitySafetyForWeek(context, { weekNumber: week.week, weekStart: week.startDate }).active) return;
   const entry = runEntriesForWeek(week).find(({ session }) => (
     session.type !== 'race' && !isLongSession(session) && runWorkoutTaxonomy.isQualityWorkout(session.workout_id)
   ));

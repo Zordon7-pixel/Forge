@@ -32,6 +32,11 @@ function worstStatus(...statuses) {
   ), 'not_applicable');
 }
 
+function finitePositive(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
 function recentRunRows(history = {}) {
   return [history.recentRuns, history.meaningfulRuns, history.runs]
     .find(Array.isArray) || [];
@@ -99,14 +104,14 @@ function baselineEvidence(context = {}) {
     if (totals.length >= 2) return { value: median(totals), confidence: 'trusted', trustedWeeks: totals.length, source: 'recorded_complete_weeks' };
     if (totals.length === 1) return { value: totals[0], confidence: 'low_confidence', trustedWeeks: 1, source: 'recorded_complete_week' };
   }
-  const summarized = Number(history.weeklyMileageBaseline || 0);
+  const summarized = finitePositive(history.weeklyMileageBaseline);
   const method = String(history.mileageBaseline?.method || '');
   const count = Number(history.mileageBaseline?.meaningfulRunCount ?? history.recentRunCount ?? 0);
-  if (summarized > 0 && method === 'bounded_recent_history' && count >= 4) {
+  if (summarized !== null && method === 'bounded_recent_history' && count >= 4) {
     return { value: summarized, confidence: 'trusted', trustedWeeks: null, source: 'bounded_recorded_history' };
   }
-  const selfReported = Number(context.profile?.weekly_miles_current || summarized || 0);
-  if (selfReported > 0) return { value: selfReported, confidence: 'self_reported', trustedWeeks: 0, source: 'profile' };
+  const selfReported = finitePositive(context.profile?.weekly_miles_current) ?? summarized;
+  if (selfReported !== null) return { value: selfReported, confidence: 'self_reported', trustedWeeks: 0, source: 'profile' };
   return { value: null, confidence: 'unknown', trustedWeeks: 0, source: null };
 }
 

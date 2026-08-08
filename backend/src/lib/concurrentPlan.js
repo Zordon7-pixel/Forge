@@ -2165,6 +2165,7 @@ module.exports = {
   resolvePlanMode,
   phaseForWeek,
   estimateWeeklyMileageBaseline,
+  qualitySafetyForWeek,
   buildMileageTargets,
   buildConcurrentPlan,
   applyAcuteRunProtection,

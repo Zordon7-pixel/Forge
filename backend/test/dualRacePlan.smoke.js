@@ -428,10 +428,11 @@ assert.match(deletedRaceProposal.reason, /protected race/);
 
 const routeSource = fs.readFileSync(path.join(__dirname, '../src/routes/plans.js'), 'utf8');
 assert.match(routeSource, /delete safe\.raceTargets/);
-assert.match(routeSource, /Use the owned-race planner to build a two-race plan/);
-assert.match(routeSource, /SELECT \* FROM race_events WHERE id = \? AND user_id = \?/);
-assert.match(routeSource, /Two PR races must be at least 21 days apart for recovery and tapering/);
-assert.match(routeSource, /persistConcurrentPlan\(req\.user\.id, evidencePlan/);
+assert.match(routeSource, /previewPlanForUser\(req\.user\.id/);
+assert.match(routeSource, /plan_generation_candidates/);
+assert.match(routeSource, /SELECT \* FROM race_events WHERE id=\? AND user_id=\?/);
+assert.match(routeSource, /Two PR races must be at least 21 days apart/);
+assert.doesNotMatch(routeSource, /persistConcurrentPlan\(req\.user\.id, evidencePlan/);
 
 async function checkDedicatedRouteBoundary() {
   const dbModulePath = require.resolve('../src/db');
@@ -449,6 +450,7 @@ async function checkDedicatedRouteBoundary() {
     goal_type: 'race',
     comeback_mode: 0,
     injury_notes: '',
+    planning_input_revision: 0,
   };
   const raceRows = new Map();
   let recentRunRows = [];
@@ -485,6 +487,25 @@ async function checkDedicatedRouteBoundary() {
     },
     dbAll: async (sql) => sql.includes('FROM runs') ? recentRunRows.map((run) => ({ ...run })) : [],
     dbRun: async () => ({ changes: 1 }),
+    withUserMutation: async (_userId, fn) => {
+      transactionCalls += 1;
+      const tx = {
+        all: async (sql) => sql.includes('FROM runs') ? recentRunRows.map((run) => ({ ...run })) : [],
+        get: async (sql, params = []) => {
+          if (sql.includes('FROM users WHERE id=?')) return params[0] === ownerId ? { ...profile } : null;
+          if (sql.includes('FROM race_events WHERE id=? AND user_id=?')) {
+            const race = raceRows.get(params[0]);
+            return race && race.user_id === params[1] ? { ...race } : null;
+          }
+          return null;
+        },
+        run: async (sql) => {
+          committedTransactionStatements.push(sql);
+          return { changes: 1 };
+        },
+      };
+      return fn(tx);
+    },
     withPlanningInputMutation: async (_userId, fn) => {
       transactionCalls += 1;
       const stagedStatements = [];
@@ -581,6 +602,7 @@ async function checkDedicatedRouteBoundary() {
 
     profile.weekly_miles_current = 'Infinity';
     profile.lift_days_per_week = 2;
+    const transactionsBeforeSuccessfulPreview = transactionCalls;
     response = await invoke(generateForRaces, {
       ...baseRequest,
       body: {
@@ -594,16 +616,30 @@ async function checkDedicatedRouteBoundary() {
         },
       },
     });
-    assert.equal(response.statusCode, 201, response.payload?.error || 'a 21-day pair should generate');
+    assert.equal(
+      response.statusCode,
+      201,
+      response.payload ? JSON.stringify(response.payload) : 'a 21-day pair should generate',
+    );
+    assert.equal(response.payload.requires_apply, true, 'generation returns an explicit candidate preview');
     assert.deepEqual(response.payload.plan.plan_data.goals.map((goal) => goal.date), ['2026-09-20', '2026-10-11']);
-    assert.equal(response.payload.plan.week_start, '2026-08-03', 'a rebuild starts in the current training week');
+    assert.equal(response.payload.plan.plan_data.weeks[0].startDate, '2026-08-03', 'a rebuild starts in the current training week');
     assert.equal(response.payload.plan.plan_data.schedulePreferences.runDaysPerWeek, 4, 'the edited frequency reaches the rebuilt plan');
     const currentWeekRunDates = response.payload.plan.plan_data.weeks[0].days.flatMap((day) => (
       day.sessions.some((session) => session.kind === 'run') ? [day.date] : []
     ));
     assert.deepEqual(currentWeekRunDates, ['2026-08-07', '2026-08-08'], 'a Friday rebuild schedules only today and remaining eligible dates');
     assert.equal(Number.isFinite(response.payload.plan.plan_data.inputSummary.weeklyMileageBaseline), true);
-    assert.equal(transactionCalls, 1, 'the successful rebuild uses one transaction');
+    assert.equal(
+      transactionCalls - transactionsBeforeSuccessfulPreview,
+      2,
+      'preview reads consistently, then stores only after the revision recheck',
+    );
+    assert.equal(
+      committedTransactionStatements.filter((sql) => /training_plans|user_plans/.test(sql)).length,
+      0,
+      'preview never writes an active or historical plan',
+    );
 
     // Regression: the production rebuild happens late in the current week, not
     // from an empty Monday. The edited weekdays leave no safe pre-race quality
@@ -654,15 +690,11 @@ async function checkDedicatedRouteBoundary() {
     assert.equal(response.statusCode, 201, response.payload?.error || 'the same partial-current-week fix applies to a one-race rebuild');
     assert.equal(response.payload.plan.plan_data.schedulePreferences.runDaysPerWeek, 3);
 
-    recentRunRows = [];
-    failTransaction = true;
-    const committedBeforeFailure = committedTransactionStatements.length;
-    response = await invoke(generateForRaces, {
-      ...baseRequest,
-      body: { ...baseRequest.body, race_ids: ['yonkers', 'army'] },
-    });
-    assert.equal(response.statusCode, 500, 'transaction failure cannot return a successful plan replacement');
-    assert.equal(committedTransactionStatements.length, committedBeforeFailure, 'a failed replacement rolls back the staged active-plan deactivation');
+    assert.equal(
+      committedTransactionStatements.filter((sql) => sql.includes('INSERT INTO plan_generation_candidates')).length,
+      3,
+      'each successful preview stores one owner-bound candidate',
+    );
   } finally {
     global.Date = RealDate;
     delete require.cache[plansRoutePath];

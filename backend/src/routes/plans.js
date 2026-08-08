@@ -1,10 +1,9 @@
 const router = require('express').Router();
-const { dbGet, dbAll, dbRun, withPlanningInputMutation } = require('../db');
+const { dbGet, dbAll, dbRun, withPlanningInputMutation, withUserMutation } = require('../db');
 const auth = require('../middleware/auth');
 const { requirePremium } = require('../middleware/premiumGate');
 const { v4: uuidv4 } = require('uuid');
 const crypto = require('crypto');
-const { generateRaceAdjustment } = require('../services/ai');
 const { buildHealthSignals, buildReadinessBand, readinessTrendFromHistory } = require('../lib/healthSignals');
 const { applyOverride } = require('../lib/checkinOverride');
 const planSchema = require('../lib/planSchema');
@@ -25,12 +24,50 @@ const { dateInTimezone, isIanaTimezone } = require('../lib/challengeRules');
 const { resolveRunSchedule } = require('../lib/runSchedule');
 const { buildBodyweightAlternative } = require('../lib/travelTraining');
 const { planningInputUnchanged } = require('../lib/planningRevision');
+const { buildRacePlanCandidate, semanticCandidateErrors } = require('../lib/racePlanCandidateEngine');
+const {
+  RACE_PLAN_POLICY_V1,
+  acceptPlanningClock,
+  addDays: addPolicyDays,
+} = require('../lib/racePlanPolicy');
+const {
+  assertPersistablePlan,
+  buildPlanningSnapshot,
+  parseJson: parseCandidateJson,
+  prefixedHash,
+  validateCandidateBundle,
+} = require('../lib/planCandidateLifecycle');
+const { shouldFollowSupersededAssignment } = require('../lib/planAssignmentLifecycle');
 
 // Strength sessions are already equipment-filtered by concurrentPlan's
 // buildStrengthExercises/exerciseCatalog path. strengthAdjunct is the standalone
 // form of those rules and must not be applied again to served sessions.
 
 const ADAPTATION_POLICY_VERSION = 'training-gap-v1';
+
+class PlanCandidateError extends Error {
+  constructor(status, code, message, details = null) {
+    super(message);
+    this.status = status;
+    this.code = code;
+    this.details = details;
+  }
+}
+
+function candidateError(status, code, message, details = null) {
+  return new PlanCandidateError(status, code, message, details);
+}
+
+function sendCandidateError(res, err, context) {
+  const status = Number(err?.status) || 500;
+  if (status >= 500) console.error(`[plans/${context}] failed:`, err.message);
+  else console.error(`[plans/${context}] rejected (${err.code || status}):`, err.message);
+  return res.status(status).json({
+    error: err.message || 'Plan request failed',
+    code: err.code || 'PLAN_REQUEST_FAILED',
+    ...(err.details ? { details: err.details } : {}),
+  });
+}
 
 function getDayShort() {
   return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date().getDay()];
@@ -81,7 +118,13 @@ function normalizePlanningDate(value, { defaultToToday = false } = {}) {
 }
 
 function getPlanningDateFromRequest(req) {
-  return normalizePlanningDate(req.query?.date, { defaultToToday: true });
+  const headerDate = typeof req.get === 'function'
+    ? req.get('x-forged-local-date')
+    : req.headers?.['x-forged-local-date'];
+  return normalizePlanningDate(
+    req.query?.date || req.body?.planning_date_local || headerDate,
+    { defaultToToday: true }
+  );
 }
 
 function parsePlan(plan) {
@@ -1035,10 +1078,12 @@ function withCanonicalWeekDates(week, weekStart) {
   return planSchema.setDayEntries(week, entries);
 }
 
-async function getActivePlanForUser(userId, tx = null) {
+async function getAssignedPlanForUser(userId, tx = null, options = {}) {
   const get = tx?.get || dbGet;
-  const assigned = await get(`
+  const planningDateLocal = options.planningDateLocal || getTodayISO();
+  let assigned = await get(`
     SELECT up.id as user_plan_id, up.current_week, up.started_at, up.status, up.progress_json,
+           up.plan_version, up.lineage_id, up.supersedes_user_plan_id, up.effective_from,
            tp.*
     FROM user_plans up
     JOIN training_plans tp ON tp.id = up.plan_id
@@ -1046,8 +1091,31 @@ async function getActivePlanForUser(userId, tx = null) {
     ORDER BY up.created_at DESC
     LIMIT 1
   `, [userId]);
-  if (assigned) return { source: 'assigned', row: assigned };
+  const visited = new Set();
+  while (shouldFollowSupersededAssignment(assigned, planningDateLocal, options)) {
+    const predecessorId = String(assigned.supersedes_user_plan_id);
+    if (visited.has(predecessorId)) throw new Error('Plan assignment lineage contains a cycle');
+    visited.add(predecessorId);
+    const predecessor = await get(`
+      SELECT up.id as user_plan_id, up.current_week, up.started_at, up.status, up.progress_json,
+             up.plan_version, up.lineage_id, up.supersedes_user_plan_id, up.effective_from,
+             tp.*
+      FROM user_plans up
+      JOIN training_plans tp ON tp.id = up.plan_id
+      WHERE up.id=? AND up.user_id=?
+      LIMIT 1
+    `, [predecessorId, userId]);
+    if (!predecessor) throw new Error('Plan assignment predecessor is unavailable');
+    assigned = predecessor;
+  }
+  return assigned ? { source: 'assigned', row: assigned } : null;
+}
 
+async function getActivePlanForUser(userId, tx = null, options = {}) {
+  const assigned = await getAssignedPlanForUser(userId, tx, options);
+  if (assigned) return assigned;
+
+  const get = tx?.get || dbGet;
   const legacy = await get('SELECT * FROM training_plans WHERE user_id = ? ORDER BY created_at DESC LIMIT 1', [userId]);
   if (legacy) return { source: 'legacy', row: legacy };
   return null;
@@ -1056,16 +1124,34 @@ async function getActivePlanForUser(userId, tx = null) {
 // Lock the owner-scoped assignment before reading its current plan pointer.
 // This keeps copy-on-write and whole-plan JSON mutation inside one serializable
 // read/validate/write sequence for a given athlete.
-async function getActivePlanForMutation(userId, tx) {
-  const assignment = await tx.get(`
+async function getAssignedPlanForMutation(userId, tx, options = {}) {
+  const planningDateLocal = options.planningDateLocal || getTodayISO();
+  let assignment = await tx.get(`
     SELECT up.id AS user_plan_id, up.plan_id, up.current_week, up.started_at,
-           up.status, up.progress_json
+           up.status, up.progress_json, up.plan_version, up.lineage_id,
+           up.supersedes_user_plan_id, up.effective_from
     FROM user_plans up
     WHERE up.user_id=? AND up.status='active'
     ORDER BY up.created_at DESC
     LIMIT 1
     FOR UPDATE OF up
   `, [userId]);
+  const visited = new Set();
+  while (shouldFollowSupersededAssignment(assignment, planningDateLocal, options)) {
+    const predecessorId = String(assignment.supersedes_user_plan_id);
+    if (visited.has(predecessorId)) throw new Error('Plan assignment lineage contains a cycle');
+    visited.add(predecessorId);
+    const predecessor = await tx.get(`
+      SELECT up.id AS user_plan_id, up.plan_id, up.current_week, up.started_at,
+             up.status, up.progress_json, up.plan_version, up.lineage_id,
+             up.supersedes_user_plan_id, up.effective_from
+      FROM user_plans up
+      WHERE up.id=? AND up.user_id=?
+      FOR UPDATE OF up
+    `, [predecessorId, userId]);
+    if (!predecessor) throw new Error('Plan assignment predecessor is unavailable');
+    assignment = predecessor;
+  }
   if (assignment) {
     const plan = await tx.get(`
       SELECT tp.*
@@ -1077,6 +1163,13 @@ async function getActivePlanForMutation(userId, tx) {
     if (!plan) return null;
     return { source: 'assigned', row: { ...plan, ...assignment, id: plan.id } };
   }
+
+  return null;
+}
+
+async function getActivePlanForMutation(userId, tx, options = {}) {
+  const assignment = await getAssignedPlanForMutation(userId, tx, options);
+  if (assignment) return assignment;
 
   const legacy = await tx.get(`
     SELECT * FROM training_plans
@@ -1112,12 +1205,21 @@ async function ensureWritablePlan(active, userId, tx) {
 }
 
 async function updateActivePlanData(active, userId, planJson, tx) {
+  const validatedPlan = assertPersistablePlan(planJson);
   const planId = await ensureWritablePlan(active, userId, tx);
-  const serialized = JSON.stringify(planJson);
+  const serialized = JSON.stringify(validatedPlan);
   const result = active.source === 'assigned'
     ? await tx.run('UPDATE training_plans SET plan_data=? WHERE id=? AND user_id=?', [serialized, planId, userId])
     : await tx.run('UPDATE training_plans SET plan_json=? WHERE id=? AND user_id=?', [serialized, planId, userId]);
   if (result.changes === 0) throw new Error('Active plan update failed');
+  if (active.source === 'assigned') {
+    const versionResult = await tx.run(
+      'UPDATE user_plans SET plan_version=plan_version+1 WHERE id=? AND user_id=?',
+      [active.row.user_plan_id, userId]
+    );
+    if (versionResult.changes === 0) throw new Error('Active plan version update failed');
+    active.row.plan_version = Number(active.row.plan_version || 1) + 1;
+  }
   return planId;
 }
 
@@ -1129,14 +1231,16 @@ function defaultWeeksForDistance(distanceMiles) {
   return 8;
 }
 
-async function buildConcurrentContext(userId, profile, target) {
+async function buildConcurrentContext(userId, profile, target, tx = null) {
+  const all = tx?.all || dbAll;
+  const get = tx?.get || dbGet;
   const planningDateISO = /^\d{4}-\d{2}-\d{2}$/.test(String(target.todayISO || '')) ? target.todayISO : getTodayISO();
   const start = new Date();
   start.setHours(12, 0, 0, 0);
   start.setDate(start.getDate() - 55);
   const sinceDate = start.toISOString().slice(0, 10);
   const [runs, performanceRuns, lifts, recentExercises, healthRow, activeInjury, dailyCheckin] = await Promise.all([
-    dbAll(
+    all(
       `SELECT date, distance_miles, duration_seconds, perceived_effort, avg_heart_rate,
               pain_level, post_energy, pace_avg, health_source, created_at,
               heart_rate_zones, workout_metrics_json, watch_mode, notes,
@@ -1146,7 +1250,7 @@ async function buildConcurrentContext(userId, profile, target) {
        ORDER BY date ASC, created_at ASC`,
       [userId, sinceDate, planningDateISO]
     ),
-    dbAll(
+    all(
       `SELECT id, date, distance_miles, duration_seconds, health_source, watch_mode,
               workout_metrics_json, type, watch_activity_type, watch_normalized_type
        FROM runs
@@ -1155,8 +1259,8 @@ async function buildConcurrentContext(userId, profile, target) {
        LIMIT 5000`,
       [userId, planningDateISO]
     ),
-    dbAll('SELECT started_at FROM workout_sessions WHERE user_id=? AND started_at>=? AND ended_at IS NOT NULL ORDER BY started_at ASC', [userId, `${sinceDate}T00:00:00`]),
-    dbAll(
+    all('SELECT started_at FROM workout_sessions WHERE user_id=? AND started_at>=? AND ended_at IS NOT NULL ORDER BY started_at ASC', [userId, `${sinceDate}T00:00:00`]),
+    all(
       `SELECT exercise_name, session_id, reps, weight_lbs, logged_at
        FROM workout_sets
        WHERE user_id=? AND logged_at>=?
@@ -1167,15 +1271,15 @@ async function buildConcurrentContext(userId, profile, target) {
       console.error('[plans/generate] recent exercise lookup failed:', err.message);
       return [];
     }),
-    dbGet('SELECT * FROM health_sync WHERE user_id=?', [userId]).catch((err) => {
+    get('SELECT * FROM health_sync WHERE user_id=?', [userId]).catch((err) => {
       console.error('[plans/generate] health sync lookup failed:', err.message);
       return null;
     }),
-    dbGet('SELECT id FROM injury_logs WHERE user_id=? AND cleared=0 ORDER BY date DESC LIMIT 1', [userId]).catch((err) => {
+    get('SELECT id FROM injury_logs WHERE user_id=? AND cleared=0 ORDER BY date DESC LIMIT 1', [userId]).catch((err) => {
       console.error('[plans/generate] injury lookup failed:', err.message);
       return null;
     }),
-    dbGet(
+    get(
       'SELECT feeling, legs, drive, sleep_hours, time_available, life_flags, checkin_date FROM daily_checkins WHERE user_id=? AND checkin_date=?',
       [userId, planningDateISO]
     ).catch((err) => {
@@ -1286,10 +1390,11 @@ async function buildConcurrentContext(userId, profile, target) {
 }
 
 async function persistConcurrentPlan(userId, plan, meta = {}) {
+  const validatedPlan = assertPersistablePlan(plan);
   const planId = uuidv4();
   const userPlanId = uuidv4();
-  const weekStart = plan.weeks?.[0]?.startDate || getMonday();
-  const serialized = JSON.stringify(plan);
+  const weekStart = validatedPlan.weeks?.[0]?.startDate || getMonday();
+  const serialized = JSON.stringify(validatedPlan);
   await withPlanningInputMutation(userId, async (tx) => {
     const schedule = plan.schedulePreferences || {};
     if (schedule.runDaysSource === 'target' && schedule.trainingDaysSource === 'target') {
@@ -1303,7 +1408,7 @@ async function persistConcurrentPlan(userId, plan, meta = {}) {
     await tx.run(
       `INSERT INTO training_plans (id, user_id, week_start, plan_json, name, type, weeks, description, plan_data)
        VALUES (?,?,?,?,?,?,?,?,?)`,
-      [planId, userId, weekStart, serialized, meta.name, meta.type, plan.weeks.length, meta.description, serialized]
+      [planId, userId, weekStart, serialized, meta.name, meta.type, validatedPlan.weeks.length, meta.description, serialized]
     );
     await tx.run(
       `INSERT INTO user_plans (
@@ -1363,6 +1468,440 @@ function getPlanTargetOptions(target = null) {
     courseHighAltitude: maxAltitudeFt ? maxAltitudeFt >= 5000 : false,
     courseTerrain: courseTrust.trusted ? (courseTrust.facts.terrain || null) : null,
   };
+}
+
+function acceptedPlanningClock(body = {}) {
+  const clock = acceptPlanningClock({
+    planning_date_local: body.planning_date_local || getTodayISO(),
+    timezone_offset_minutes: body.timezone_offset_minutes ?? 0,
+  }, getTodayISO());
+  if (!clock.valid) {
+    throw candidateError(400, clock.reason, 'Use the current phone date and a valid timezone offset.');
+  }
+  return clock;
+}
+
+function normalizeCandidateRequest(body = {}) {
+  const rawRaceIds = Array.isArray(body.race_ids)
+    ? body.race_ids
+    : body.race_id ? [body.race_id] : [];
+  if (rawRaceIds.length > 2) throw candidateError(400, 'TOO_MANY_RACES', 'Choose one or two races.');
+  if (rawRaceIds.some((id) => typeof id !== 'string')) {
+    throw candidateError(400, 'INVALID_RACE_ID', 'Each race ID must be a non-empty string.');
+  }
+  const raceIds = rawRaceIds.map((id) => String(id || '').trim());
+  if (raceIds.some((id) => !id || id.length > 128)) {
+    throw candidateError(400, 'INVALID_RACE_ID', 'Each race ID must be a non-empty string.');
+  }
+  if (new Set(raceIds).size !== raceIds.length) {
+    throw candidateError(400, 'DUPLICATE_RACE_ID', 'Choose each race only once.');
+  }
+  return {
+    race_ids: raceIds,
+    target: stripClientCourseFacts(body.target || {}),
+  };
+}
+
+function activeCandidateMetadata(active) {
+  if (!active) return null;
+  return {
+    planVersion: active.source === 'assigned' ? Number(active.row.plan_version || 1) : null,
+    trainingPlanId: active.row.id || null,
+    userPlanId: active.row.user_plan_id || null,
+  };
+}
+
+async function ownedRacesForCandidate(userId, raceIds, tx) {
+  const races = [];
+  for (const raceId of raceIds) {
+    const race = await tx.get('SELECT * FROM race_events WHERE id=? AND user_id=?', [raceId, userId]);
+    if (!race) throw candidateError(404, 'RACE_NOT_FOUND', 'Race not found.');
+    if (!concurrentPlan.isValidISODate(race.race_date)) {
+      throw candidateError(400, 'INVALID_RACE_DATE', 'Race dates must use valid YYYY-MM-DD calendar dates.');
+    }
+    races.push(race);
+  }
+  const ordered = races.sort((left, right) => String(left.race_date).localeCompare(String(right.race_date)));
+  if (new Set(ordered.map((race) => race.race_date)).size !== ordered.length) {
+    throw candidateError(400, 'DUPLICATE_RACE_DATE', 'Race dates must be different.');
+  }
+  if (ordered.length === 2) {
+    const gapDays = daysBetween(ordered[1].race_date, ordered[0].race_date);
+    if (gapDays < 21) {
+      throw candidateError(400, 'RACE_SPACING_CONFLICT', 'Two PR races must be at least 21 days apart.');
+    }
+  }
+  return ordered;
+}
+
+function targetFromOwnedRaces(profile, races, requested, planningDateLocal) {
+  const finalRace = races[races.length - 1];
+  const raceWindow = concurrentPlan.racePlanWindow(finalRace.race_date, planningDateLocal);
+  if (!raceWindow) throw candidateError(400, 'RACE_DATE_PASSED', 'Race dates must be today or later.');
+  if (races[0].race_date < raceWindow.startDate) {
+    throw candidateError(
+      400,
+      'PROTECTED_RACE_OUTSIDE_PLAN_WINDOW',
+      'The first protected race falls outside this plan window. Create a separate earlier block.'
+    );
+  }
+  const runSchedule = resolveRunSchedule(profile, requested, { requireCompleteSelection: true });
+  if (!runSchedule.valid) throw candidateError(400, 'INVALID_RUN_SCHEDULE', runSchedule.error);
+  const raceTargets = races.map((race) => ({
+    raceDate: race.race_date,
+    raceId: race.id,
+    raceName: race.race_name,
+    distanceMiles: clamp(Number(race.distance_miles) || 6.2, 1, 100),
+    goalTimeSeconds: race.goal_time_seconds ?? null,
+    goalType: Number(race.goal_time_seconds || 0) > 0 ? 'pr' : 'completion',
+    ...courseTargetFromRace(race),
+  }));
+  const finalTarget = raceTargets[raceTargets.length - 1];
+  const target = {
+    ...requested,
+    ...finalTarget,
+    raceTargets,
+    trainingDays: runSchedule.trainingDays,
+    runDaysPerWeek: runSchedule.runDaysPerWeek,
+    runDaysSource: runSchedule.runDaysSource,
+    trainingDaysSource: runSchedule.trainingDaysSource,
+    weeks: raceWindow.weeks,
+    startDate: raceWindow.startDate,
+    todayISO: planningDateLocal,
+    nowISO: `${planningDateLocal}T12:00:00.000Z`,
+  };
+  target.planMode = concurrentPlan.resolvePlanMode(profile, target);
+  return { target, raceWindow };
+}
+
+function targetWithoutOwnedRace(profile, requested, planningDateLocal) {
+  if (Array.isArray(requested.raceTargets) || Array.isArray(requested.race_targets)) {
+    throw candidateError(400, 'OWNED_RACES_REQUIRED', 'Use owned race IDs to build a multi-race plan.');
+  }
+  const runSchedule = resolveRunSchedule(profile, requested, { requireCompleteSelection: true });
+  if (!runSchedule.valid) throw candidateError(400, 'INVALID_RUN_SCHEDULE', runSchedule.error);
+  const distanceMiles = clamp(parsePositiveNumber(requested.distanceMiles ?? requested.distance_miles) || 6.2, 1, 100);
+  const requestedRaceDate = concurrentPlan.isValidISODate(requested.raceDate) ? requested.raceDate : null;
+  const raceWindow = requestedRaceDate
+    ? concurrentPlan.racePlanWindow(requestedRaceDate, planningDateLocal)
+    : null;
+  if (requestedRaceDate && !raceWindow) {
+    throw candidateError(400, 'RACE_DATE_PASSED', 'Race date must be today or later.');
+  }
+  const target = {
+    ...requested,
+    trainingDays: runSchedule.trainingDays,
+    runDaysPerWeek: runSchedule.runDaysPerWeek,
+    runDaysSource: runSchedule.runDaysSource,
+    trainingDaysSource: runSchedule.trainingDaysSource,
+    distanceMiles,
+    raceDate: requestedRaceDate,
+    weeks: raceWindow?.weeks || clampInt(requested.weeks, 4, 20, defaultWeeksForDistance(distanceMiles)),
+    startDate: raceWindow?.startDate || getPlanStartMonday(new Date(`${planningDateLocal}T12:00:00`)),
+    planMode: concurrentPlan.resolvePlanMode(profile, requested),
+    todayISO: planningDateLocal,
+    nowISO: `${planningDateLocal}T12:00:00.000Z`,
+  };
+  return { target, raceWindow };
+}
+
+async function loadCandidateInputState(userId, request, clock, tx) {
+  const profile = await tx.get('SELECT * FROM users WHERE id=?', [userId]);
+  if (!profile) throw candidateError(404, 'USER_NOT_FOUND', 'User not found.');
+  const races = await ownedRacesForCandidate(userId, request.race_ids, tx);
+  const resolved = races.length
+    ? targetFromOwnedRaces(profile, races, request.target, clock.planningDateLocal)
+    : targetWithoutOwnedRace(profile, request.target, clock.planningDateLocal);
+  const context = await buildConcurrentContext(userId, profile, resolved.target, tx);
+  const active = await getActivePlanForUser(userId, tx, {
+    includeFuture: true,
+    planningDateLocal: clock.planningDateLocal,
+  });
+  const activePlan = activeCandidateMetadata(active);
+  const snapshot = buildPlanningSnapshot({
+    activePlan,
+    context,
+    planningDateLocal: clock.planningDateLocal,
+    planningInputRevision: profile.planning_input_revision,
+    request,
+    timezoneOffsetMinutes: clock.timezoneOffsetMinutes,
+  });
+  const names = races.map((race) => race.race_name);
+  return {
+    active,
+    activePlan,
+    context,
+    inputHash: prefixedHash(snapshot),
+    meta: {
+      description: races.length
+        ? `${resolved.target.weeks}-week plan with ${races.length} protected race goal${races.length === 1 ? '' : 's'}.`
+        : `${resolved.target.weeks}-week evidence-backed concurrent plan.`,
+      name: names.length ? names.join(' + ') : resolved.target.raceName || 'Forged Hybrid training block',
+      type: resolved.target.planMode,
+    },
+    planningInputRevision: Number(profile.planning_input_revision || 0),
+    races,
+    request,
+    snapshot,
+    target: resolved.target,
+  };
+}
+
+function buildCandidateTrace(state, built) {
+  return {
+    engine_version: RACE_PLAN_POLICY_V1.engineVersion,
+    feasibility: built.plan.overall_feasibility || null,
+    goal_feasibilities: built.plan.goal_feasibilities || [],
+    invariant_version: RACE_PLAN_POLICY_V1.invariantVersion,
+    planning_date_local: state.snapshot.planning_date_local,
+    policy_version: RACE_PLAN_POLICY_V1.version,
+    reason_codes: built.plan.reasons || [],
+    validation: built.validation,
+  };
+}
+
+function publicCandidatePayload(candidate) {
+  const plan = candidate.plan;
+  return {
+    candidate: {
+      candidate_hash: candidate.candidateHash,
+      expires_at: candidate.expiresAt,
+      id: candidate.id,
+      planning_date_local: candidate.planningDateLocal,
+      plan_data: plan,
+      status: 'preview',
+    },
+    candidate_hash: candidate.candidateHash,
+    candidate_id: candidate.id,
+    generation_source: 'race_plan_candidate_engine',
+    plan: {
+      id: candidate.id,
+      ...planAnchorPayload(plan),
+      plan_data: plan,
+      plan_json: plan,
+      preview: true,
+    },
+    requires_apply: true,
+  };
+}
+
+async function previewPlanForUser(userId, body = {}, { store = true } = {}) {
+  const clock = acceptedPlanningClock(body);
+  const request = normalizeCandidateRequest(body);
+  const initial = await withUserMutation(userId, (tx) => loadCandidateInputState(userId, request, clock, tx));
+  const built = buildRacePlanCandidate(initial.context, {
+    planningDateLocal: clock.planningDateLocal,
+    timezoneOffsetMinutes: clock.timezoneOffsetMinutes,
+  });
+  if (!built.validation.valid) {
+    throw candidateError(422, 'PLAN_VALIDATION_FAILED', 'The requested plan did not pass safety validation.', built.validation.errors);
+  }
+  const trace = buildCandidateTrace(initial, built);
+  const normalized = validateCandidateBundle({ plan: built.plan, snapshot: initial.snapshot, trace });
+  const candidateHash = prefixedHash(normalized.plan);
+  const candidateId = uuidv4();
+  const expiresAt = new Date(Date.now() + (RACE_PLAN_POLICY_V1.candidate.ttlHours * 60 * 60 * 1000)).toISOString();
+  const response = {
+    candidateHash,
+    expiresAt,
+    id: candidateId,
+    meta: initial.meta,
+    plan: normalized.plan,
+    planningDateLocal: clock.planningDateLocal,
+    races: initial.races,
+  };
+  if (!store) return response;
+
+  await withUserMutation(userId, async (tx) => {
+    const current = await loadCandidateInputState(userId, request, clock, tx);
+    if (current.planningInputRevision !== initial.planningInputRevision || current.inputHash !== initial.inputHash) {
+      throw candidateError(409, 'CANDIDATE_STALE', 'Training data changed while the preview was being built. Preview again.');
+    }
+    await tx.run(
+      `INSERT INTO plan_generation_candidates (
+         id, user_id, status, training_plan_id, user_plan_id, active_plan_version,
+         planning_input_revision, planning_date_local, timezone_offset_minutes,
+         input_hash, candidate_hash, engine_version, policy_version, invariant_version,
+         planning_snapshot_json, candidate_plan_json, generation_trace_json, expires_at
+       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [
+        candidateId,
+        userId,
+        'preview',
+        initial.activePlan?.trainingPlanId || null,
+        initial.activePlan?.userPlanId || null,
+        initial.activePlan?.planVersion ?? null,
+        initial.planningInputRevision,
+        clock.planningDateLocal,
+        clock.timezoneOffsetMinutes,
+        initial.inputHash,
+        candidateHash,
+        RACE_PLAN_POLICY_V1.engineVersion,
+        RACE_PLAN_POLICY_V1.version,
+        RACE_PLAN_POLICY_V1.invariantVersion,
+        JSON.stringify(normalized.snapshot),
+        JSON.stringify(normalized.plan),
+        JSON.stringify(normalized.trace),
+        expiresAt,
+      ]
+    );
+  });
+  return response;
+}
+
+function sameCapturedActivePlan(row, active) {
+  const meta = activeCandidateMetadata(active);
+  return String(row.training_plan_id || '') === String(meta?.trainingPlanId || '')
+    && String(row.user_plan_id || '') === String(meta?.userPlanId || '')
+    && String(row.active_plan_version ?? '') === String(meta?.planVersion ?? '');
+}
+
+async function applyPlanCandidate(userId, candidateId, body = {}) {
+  const choice = String(body.choice || '').trim();
+  const suppliedHash = String(body.candidate_hash || '').trim();
+  const acceptedDate = normalizePlanningDate(body.planning_date_local, { defaultToToday: true });
+  if (!acceptedDate) throw candidateError(400, 'INVALID_PLANNING_DATE', 'Use the current phone date.');
+  if (choice !== 'train_for_target') {
+    throw candidateError(409, 'CANDIDATE_CHOICE_REQUIRES_PREVIEW', 'Preview the revised goal before applying that choice.');
+  }
+  if (!suppliedHash.startsWith('sha256:')) {
+    throw candidateError(400, 'CANDIDATE_HASH_REQUIRED', 'candidate_hash is required.');
+  }
+
+  return withPlanningInputMutation(userId, async (tx) => {
+    const row = await tx.get(
+      'SELECT * FROM plan_generation_candidates WHERE id=? AND user_id=? FOR UPDATE',
+      [candidateId, userId]
+    );
+    if (!row) return planningInputUnchanged({ status: 404, error: 'Candidate not found', code: 'CANDIDATE_NOT_FOUND' });
+    if (row.status === 'applied') {
+      if (row.applied_choice !== choice || row.candidate_hash !== suppliedHash) {
+        return planningInputUnchanged({ status: 409, error: 'Candidate was already applied with different inputs.', code: 'CANDIDATE_REPLAY_CONFLICT' });
+      }
+      const replay = parseCandidateJson(row.replay_result_json, null);
+      if (!replay) return planningInputUnchanged({ status: 409, error: 'Applied candidate replay is unavailable.', code: 'CANDIDATE_REPLAY_UNAVAILABLE' });
+      return planningInputUnchanged({ status: 200, replay: true, payload: replay });
+    }
+    if (row.status !== 'preview') {
+      return planningInputUnchanged({ status: 409, error: 'Candidate is no longer available.', code: 'CANDIDATE_UNAVAILABLE' });
+    }
+    if (new Date(row.expires_at).getTime() <= Date.now()) {
+      return planningInputUnchanged({ status: 409, error: 'Candidate expired. Preview again.', code: 'CANDIDATE_EXPIRED' });
+    }
+    if (row.planning_date_local !== acceptedDate) {
+      return planningInputUnchanged({ status: 409, error: 'The phone date changed. Preview again.', code: 'CANDIDATE_STALE' });
+    }
+    if (row.candidate_hash !== suppliedHash) {
+      return planningInputUnchanged({ status: 409, error: 'Candidate hash does not match.', code: 'CANDIDATE_HASH_MISMATCH' });
+    }
+
+    const storedSnapshot = parseCandidateJson(row.planning_snapshot_json, {});
+    const storedPlan = parseCandidateJson(row.candidate_plan_json, null);
+    const request = normalizeCandidateRequest(storedSnapshot.request || {});
+    const clock = {
+      planningDateLocal: row.planning_date_local,
+      timezoneOffsetMinutes: Number(row.timezone_offset_minutes),
+    };
+    const current = await loadCandidateInputState(userId, request, clock, tx);
+    if (current.planningInputRevision !== Number(row.planning_input_revision)
+      || current.inputHash !== row.input_hash
+      || !sameCapturedActivePlan(row, current.active)) {
+      return planningInputUnchanged({ status: 409, error: 'Training inputs changed. Preview again.', code: 'CANDIDATE_STALE' });
+    }
+
+    const fresh = buildRacePlanCandidate(current.context, {
+      planningDateLocal: clock.planningDateLocal,
+      timezoneOffsetMinutes: clock.timezoneOffsetMinutes,
+    });
+    if (!fresh.validation.valid) {
+      return planningInputUnchanged({ status: 409, error: 'Candidate no longer passes validation.', code: 'CANDIDATE_INVALID' });
+    }
+    const currentSemanticErrors = semanticCandidateErrors(storedPlan, current.context, clock.planningDateLocal);
+    if (currentSemanticErrors.length || prefixedHash(storedPlan) !== row.candidate_hash
+      || prefixedHash(fresh.plan) !== row.candidate_hash) {
+      return planningInputUnchanged({ status: 409, error: 'Candidate could not be reproduced safely.', code: 'CANDIDATE_DETERMINISM_MISMATCH' });
+    }
+    const validatedPlan = assertPersistablePlan(storedPlan);
+    const active = current.active ? await getActivePlanForMutation(userId, tx, {
+      includeFuture: true,
+      planningDateLocal: clock.planningDateLocal,
+    }) : null;
+    if (!sameCapturedActivePlan(row, active)) {
+      return planningInputUnchanged({ status: 409, error: 'Active plan changed. Preview again.', code: 'CANDIDATE_STALE' });
+    }
+
+    const schedule = validatedPlan.schedulePreferences || {};
+    if (schedule.runDaysSource === 'target' && schedule.trainingDaysSource === 'target') {
+      const preferenceResult = await tx.run(
+        'UPDATE users SET run_days_per_week=?, preferred_workout_days=? WHERE id=?',
+        [schedule.runDaysPerWeek, JSON.stringify(schedule.trainingDays || []), userId]
+      );
+      if (preferenceResult.changes === 0) throw new Error('Plan preferences update failed');
+    }
+
+    const effectiveFrom = active
+      ? addPolicyDays(row.planning_date_local, 1)
+      : row.planning_date_local;
+    const planId = uuidv4();
+    const userPlanId = uuidv4();
+    const serialized = JSON.stringify(validatedPlan);
+    const weekStart = validatedPlan.weeks?.[0]?.startDate || effectiveFrom;
+    if (active) {
+      const supersede = await tx.run(
+        "UPDATE user_plans SET status='superseded' WHERE id=? AND user_id=? AND status='active'",
+        [active.row.user_plan_id, userId]
+      );
+      if (supersede.changes === 0) throw new Error('Active plan supersede failed');
+    }
+    await tx.run(
+      `INSERT INTO training_plans (id, user_id, week_start, plan_json, name, type, weeks, description, plan_data)
+       VALUES (?,?,?,?,?,?,?,?,?)`,
+      [planId, userId, weekStart, serialized, current.meta.name, current.meta.type, validatedPlan.weeks.length, current.meta.description, serialized]
+    );
+    const priorVersion = Number(active?.row?.plan_version || 0);
+    const lineageId = active?.row?.lineage_id || active?.row?.user_plan_id || userPlanId;
+    await tx.run(
+      `INSERT INTO user_plans (
+         id, user_id, plan_id, started_at, current_week, status, progress_json,
+         plan_version, lineage_id, supersedes_user_plan_id, effective_from
+       ) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+      [
+        userPlanId,
+        userId,
+        planId,
+        effectiveFrom,
+        1,
+        'active',
+        JSON.stringify({ completedSessionIds: [] }),
+        priorVersion + 1,
+        lineageId,
+        active?.row?.user_plan_id || null,
+        effectiveFrom,
+      ]
+    );
+    const payload = {
+      candidate_id: row.id,
+      effective_from: effectiveFrom,
+      ok: true,
+      plan_id: planId,
+      user_plan_id: userPlanId,
+    };
+    validateCandidateBundle({
+      plan: validatedPlan,
+      snapshot: storedSnapshot,
+      trace: parseCandidateJson(row.generation_trace_json, {}),
+      replay: payload,
+    });
+    const candidateUpdate = await tx.run(
+      `UPDATE plan_generation_candidates
+       SET status='applied', applied_choice=?, applied_training_plan_id=?, applied_user_plan_id=?,
+           replay_result_json=?, applied_at=CURRENT_TIMESTAMP
+       WHERE id=? AND user_id=? AND status='preview'`,
+      [choice, planId, userPlanId, JSON.stringify(payload), row.id, userId]
+    );
+    if (candidateUpdate.changes === 0) throw new Error('Candidate apply status update failed');
+    return { status: 200, payload };
+  });
 }
 
 function defaultPrefillFromProfile(profile = {}) {
@@ -1727,7 +2266,7 @@ router.get('/reconciliation/current', auth, async (req, res) => {
     }
     if (!isIanaTimezone(timezone)) return res.status(400).json({ error: 'timezone must be a valid IANA timezone' });
 
-    const active = await getActivePlanForUser(req.user.id);
+    const active = await getActivePlanForUser(req.user.id, null, { planningDateLocal: planningDateISO });
     if (!active || !active.row?.user_plan_id) {
       return res.json({ reconciliation: null, reason: 'No assigned hybrid plan is active.' });
     }
@@ -1778,19 +2317,11 @@ router.post('/reconciliation/respond', auth, async (req, res) => {
     if (!isIanaTimezone(timezone)) return res.status(400).json({ error: 'Invalid timezone' });
 
     const result = await withPlanningInputMutation(req.user.id, async (tx) => {
-      const row = await tx.get(`
-        SELECT up.id AS user_plan_id, up.progress_json, up.current_week, up.started_at, up.status,
-               tp.*
-        FROM user_plans up
-        JOIN training_plans tp ON tp.id = up.plan_id
-        WHERE up.user_id=? AND up.status='active'
-        ORDER BY up.created_at DESC
-        LIMIT 1
-        FOR UPDATE OF up
-      `, [req.user.id]);
-      if (!row) return planningInputUnchanged({ notFound: true });
-
-      const active = { source: 'assigned', row };
+      const active = await getAssignedPlanForMutation(req.user.id, tx, {
+        planningDateLocal: planningDateISO,
+      });
+      if (!active) return planningInputUnchanged({ notFound: true });
+      const row = active.row;
       const parsed = parsePlan(row);
       if (!parsed || !planSchema.isSchemaV2(parsed)) {
         return planningInputUnchanged({ conflict: 'Hybrid reconciliation requires a dated plan.' });
@@ -1899,15 +2430,15 @@ router.post('/reconciliation/respond', auth, async (req, res) => {
 
 router.get('/adaptation/current', auth, async (req, res) => {
   try {
-    const active = await getActivePlanForUser(req.user.id);
+    const planningDateISO = getPlanningDateFromRequest(req);
+    if (!planningDateISO) return res.status(400).json({ error: 'date must be the phone local date in YYYY-MM-DD format' });
+    const active = await getActivePlanForUser(req.user.id, null, { planningDateLocal: planningDateISO });
     if (!active) return res.json({ proposal: null, reason: 'No active plan is assigned yet.' });
     const parsed = parsePlan(active.row);
     if (!parsed || !planSchema.isSchemaV2(parsed)) {
       return res.json({ proposal: null, reason: 'Transparent adaptation is available for schema-v2 dated calendars only.' });
     }
 
-    const planningDateISO = getPlanningDateFromRequest(req);
-    if (!planningDateISO) return res.status(400).json({ error: 'date must be the phone local date in YYYY-MM-DD format' });
     const planVersion = planVersionFor(active, parsed);
     const existing = await findLatestAdaptation(req.user.id, planningDateISO, planVersion);
     if (existing) {
@@ -1984,7 +2515,7 @@ router.get('/adaptation/run/:runId', auth, async (req, res) => {
       return res.json({ impact: publicProposal(proposalFromRow(existing)) });
     }
 
-    const active = await getActivePlanForUser(req.user.id);
+    const active = await getActivePlanForUser(req.user.id, null, { planningDateLocal: planningDateISO });
     if (!active) {
       return res.json({
         impact: {
@@ -2077,7 +2608,9 @@ router.post('/adaptation/:proposalId/accept', auth, async (req, res) => {
         return planningInputUnchanged({ conflict: true, reason: 'Proposal is no longer pending.' });
       }
 
-      const active = await getActivePlanForMutation(req.user.id, tx);
+      const active = await getActivePlanForMutation(req.user.id, tx, {
+        planningDateLocal: normalizePlanningDate(row.planning_date, { defaultToToday: true }),
+      });
       if (!active) return planningInputUnchanged({ conflict: true, reason: 'No active plan is assigned.' });
       const parsed = parsePlan(active.row);
       const currentVersion = planVersionFor(active, parsed);
@@ -2120,7 +2653,9 @@ router.post('/adaptation/:proposalId/keep', auth, async (req, res) => {
       if (row.status !== 'pending') {
         return planningInputUnchanged({ conflict: true, reason: 'Proposal is no longer pending.' });
       }
-      const active = await getActivePlanForMutation(req.user.id, tx);
+      const active = await getActivePlanForMutation(req.user.id, tx, {
+        planningDateLocal: normalizePlanningDate(row.planning_date, { defaultToToday: true }),
+      });
       if (!active) return planningInputUnchanged({ conflict: true, reason: 'No active plan is assigned.' });
       const parsed = parsePlan(active.row);
       const currentVersion = planVersionFor(active, parsed);
@@ -2173,15 +2708,48 @@ router.get('/prefill', auth, async (req, res) => {
   }
 });
 
+router.post('/preview', auth, requirePremium('Race Programs'), async (req, res) => {
+  try {
+    const candidate = await previewPlanForUser(req.user.id, req.body || {});
+    return res.status(201).json(publicCandidatePayload(candidate));
+  } catch (err) {
+    return sendCandidateError(res, err, 'preview');
+  }
+});
+
+router.post('/candidates/:candidateId/apply', auth, requirePremium('Race Programs'), async (req, res) => {
+  try {
+    const candidateId = String(req.params.candidateId || '').trim();
+    if (!candidateId || candidateId.length > 128) {
+      throw candidateError(400, 'INVALID_CANDIDATE_ID', 'Candidate ID is required.');
+    }
+    const result = await applyPlanCandidate(req.user.id, candidateId, req.body || {});
+    if (result.error) return res.status(result.status || 409).json({ error: result.error, code: result.code });
+    return res.status(result.status || 200).json({ ...result.payload, replay: Boolean(result.replay) });
+  } catch (err) {
+    return sendCandidateError(res, err, 'candidate-apply');
+  }
+});
+
 router.post('/adaptive/accept', auth, async (req, res) => {
   try {
+    const planningDateISO = getPlanningDateFromRequest(req);
+    const current = await getActivePlanForUser(req.user.id, null, { planningDateLocal: planningDateISO });
+    const currentPlan = current ? parsePlan(current.row) : null;
+    if (planSchema.isSchemaV2(currentPlan)
+      && (Array.isArray(currentPlan.goals) || currentPlan.goal?.date || currentPlan.goal?.raceDate)) {
+      return res.status(409).json({
+        error: 'Preview and apply a new race plan instead of replacing the active plan.',
+        code: 'RACE_PLAN_PREVIEW_REQUIRED',
+      });
+    }
     const adaptive = await buildAdaptiveRecommendation(req.user.id, req.body || {});
     if (!adaptive) return res.status(404).json({ error: 'User not found' });
 
     const weekStart = getMonday();
     const planId = uuidv4();
     const userPlanId = uuidv4();
-    const planData = { weeks: [{ week: 1, sessions: adaptive.sessions }] };
+    const planData = assertPersistablePlan({ weeks: [{ week: 1, sessions: adaptive.sessions }] });
     const intensityLabel = adaptive.intensity.charAt(0).toUpperCase() + adaptive.intensity.slice(1);
     const planName = `Adaptive Week - ${weekStart}`;
 
@@ -2265,21 +2833,11 @@ router.post('/assign/:planId', auth, async (req, res) => {
 
 router.get('/my', auth, async (req, res) => {
   try {
-    const row = await dbGet(`
-      SELECT up.*, tp.name, tp.type, tp.weeks, tp.description, tp.plan_data
-      FROM user_plans up
-      JOIN training_plans tp ON tp.id = up.plan_id
-      WHERE up.user_id = ? AND up.status = 'active'
-      ORDER BY up.created_at DESC
-      LIMIT 1
-    `, [req.user.id]);
-
-    if (!row) {
-      const legacy = await dbGet(
-        'SELECT * FROM training_plans WHERE user_id = ? ORDER BY created_at DESC LIMIT 1',
-        [req.user.id]
-      );
-      if (!legacy) return res.json({ plan: null });
+    const planningDateISO = getPlanningDateFromRequest(req);
+    const active = await getActivePlanForUser(req.user.id, null, { planningDateLocal: planningDateISO });
+    if (!active) return res.json({ plan: null });
+    if (active.source === 'legacy') {
+      const legacy = active.row;
       const servedLegacyPlan = await buildAdaptivePlanView(req.user.id, parsePlan(legacy) || { weeks: [] }, 1);
       const legacyPlan = withDurationEstimatePlanPayload(servedLegacyPlan);
       const anchorPayload = planAnchorPayload(legacyPlan);
@@ -2297,6 +2855,7 @@ router.get('/my', auth, async (req, res) => {
         user_plan: null,
       });
     }
+    const row = active.row;
     let progress = {};
     try {
       progress = JSON.parse(row.progress_json || '{}');
@@ -2306,6 +2865,25 @@ router.get('/my', auth, async (req, res) => {
     const servedPlan = await buildAdaptivePlanView(req.user.id, parsePlan(row) || { weeks: [] }, Number(row.current_week || 1));
     const parsedPlan = withDurationEstimatePlanPayload(servedPlan);
     const anchorPayload = planAnchorPayload(parsedPlan);
+    const lineageRows = row.lineage_id ? await dbAll(
+      `SELECT up.id, up.plan_id, up.status, up.started_at, up.effective_from,
+              up.plan_version, up.progress_json, tp.plan_data
+       FROM user_plans up
+       JOIN training_plans tp ON tp.id=up.plan_id
+       WHERE up.user_id=? AND up.lineage_id=? AND up.id<>?
+       ORDER BY up.plan_version DESC
+       LIMIT 8`,
+      [req.user.id, row.lineage_id, row.id]
+    ) : [];
+    const lineageHistory = lineageRows.map((prior) => ({
+      effective_from: prior.effective_from || prior.started_at || null,
+      id: prior.id,
+      plan_data: withDurationEstimatePlanPayload(parsePlan(prior) || { weeks: [] }),
+      plan_id: prior.plan_id,
+      plan_version: Number(prior.plan_version || 1),
+      progress: parseJsonValue(prior.progress_json, {}),
+      status: prior.status,
+    }));
     res.json({
       plan: {
         id: row.plan_id,
@@ -2317,12 +2895,17 @@ router.get('/my', auth, async (req, res) => {
         plan_data: parsedPlan,
       },
       user_plan: {
+        effective_from: row.effective_from || row.started_at,
         id: row.id,
+        lineage_id: row.lineage_id || row.id,
+        plan_version: Number(row.plan_version || 1),
         started_at: row.started_at,
+        supersedes_user_plan_id: row.supersedes_user_plan_id || null,
         current_week: Number(row.current_week || 1),
         status: row.status,
         progress,
       },
+      lineage_history: lineageHistory,
     });
   } catch (err) {
     console.error('[plans/my] failed:', err.message);
@@ -2332,13 +2915,14 @@ router.get('/my', auth, async (req, res) => {
 
 router.put('/my/race-link', auth, async (req, res) => {
   try {
+    const planningDateISO = getPlanningDateFromRequest(req);
     const raceId = String(req.body?.race_id || '').trim();
     if (!raceId || raceId.length > 128) return res.status(400).json({ error: 'race_id is required' });
 
     const result = await withPlanningInputMutation(req.user.id, async (tx) => {
       const race = await tx.get('SELECT * FROM race_events WHERE id=? AND user_id=?', [raceId, req.user.id]);
       if (!race) return planningInputUnchanged({ status: 404, error: 'Race not found' });
-      const active = await getActivePlanForMutation(req.user.id, tx);
+      const active = await getActivePlanForMutation(req.user.id, tx, { planningDateLocal: planningDateISO });
       if (!active) return planningInputUnchanged({ status: 404, error: 'Active plan not found' });
       const parsed = parsePlan(active.row);
       if (!parsed) return planningInputUnchanged({ status: 409, error: 'Active plan could not be read' });
@@ -2403,6 +2987,7 @@ router.put('/my/race-link', auth, async (req, res) => {
 
 router.put('/my/progress', auth, async (req, res) => {
   try {
+    const planningDateISO = getPlanningDateFromRequest(req);
     const body = req.body || {};
     const hasCurrentWeek = Object.prototype.hasOwnProperty.call(body, 'current_week');
     const completedId = body.completed_session_id === null || body.completed_session_id === undefined
@@ -2417,16 +3002,12 @@ router.put('/my/progress', auth, async (req, res) => {
     }
 
     const result = await withPlanningInputMutation(req.user.id, async (tx) => {
-      const findAssigned = () => tx.get(`
-        SELECT up.id, up.progress_json, up.current_week,
-               tp.weeks, tp.plan_data, tp.plan_json
-        FROM user_plans up
-        JOIN training_plans tp ON tp.id = up.plan_id
-        WHERE up.user_id = ? AND up.status = 'active'
-        ORDER BY up.created_at DESC
-        LIMIT 1
-        FOR UPDATE OF up
-      `, [req.user.id]);
+      const findAssigned = async () => {
+        const assigned = await getAssignedPlanForMutation(req.user.id, tx, {
+          planningDateLocal: planningDateISO,
+        });
+        return assigned?.row || null;
+      };
       let row = await findAssigned();
       let legacyPlanId = null;
       if (!row) {
@@ -2501,9 +3082,22 @@ router.put('/my/progress', auth, async (req, res) => {
 
       if (legacyPlanId) {
         const insert = await tx.run(
-          `INSERT INTO user_plans (id, user_id, plan_id, started_at, current_week, status, progress_json)
-           VALUES (?,?,?,?,?,?,?)`,
-          [row.id, req.user.id, legacyPlanId, row.week_start || getTodayISO(), 1, 'active', JSON.stringify({ completedSessionIds: [] })]
+          `INSERT INTO user_plans (
+             id, user_id, plan_id, started_at, current_week, status, progress_json,
+             plan_version, lineage_id, effective_from
+           ) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+          [
+            row.id,
+            req.user.id,
+            legacyPlanId,
+            row.week_start || planningDateISO,
+            1,
+            'active',
+            JSON.stringify({ completedSessionIds: [] }),
+            1,
+            row.id,
+            row.week_start || planningDateISO,
+          ]
         );
         if (insert.changes === 0) throw new Error('Legacy plan assignment migration failed');
       }
@@ -2541,7 +3135,7 @@ router.post('/today/bodyweight-alternative', auth, async (req, res) => {
       return res.status(400).json({ error: 'session_id must be a non-empty string of at most 128 characters' });
     }
 
-    const active = await getActivePlanForUser(req.user.id);
+    const active = await getActivePlanForUser(req.user.id, null, { planningDateLocal: dateISO });
     if (!active) return res.status(404).json({ error: 'Active plan not found' });
     const parsed = parsePlan(active.row);
     if (!parsed) return res.status(409).json({ error: 'Active plan could not be read' });
@@ -2615,7 +3209,7 @@ router.get('/today', auth, async (req, res) => {
     const dateISO = getPlanningDateFromRequest(req);
     if (dateISO === null) return res.status(400).json({ error: 'Invalid date' });
 
-    const active = await getActivePlanForUser(req.user.id);
+    const active = await getActivePlanForUser(req.user.id, null, { planningDateLocal: dateISO });
     if (!active) return res.json({ today: null, execution: { hasPlan: false, hasDay: false, date: dateISO } });
     const parsed = withDurationEstimatePlanPayload(parsePlan(active.row));
     const anchorPayload = planAnchorPayload(parsed);
@@ -2650,10 +3244,7 @@ router.get('/today', auth, async (req, res) => {
 
     // Completion state + calibrated HR profile for the canonical execution object.
     const [progressRow, hrProfile] = await Promise.all([
-      dbGet(
-        "SELECT progress_json FROM user_plans WHERE user_id=? AND status='active' ORDER BY created_at DESC LIMIT 1",
-        [req.user.id]
-      ),
+      Promise.resolve(active.source === 'assigned' ? active.row : null),
       getHrProfile(req.user.id, dbGet),
     ]);
     let completedSessionIds = [];
@@ -2695,7 +3286,8 @@ router.get('/today', auth, async (req, res) => {
 
 router.get('/current', auth, async (req, res) => {
   try {
-    const active = await getActivePlanForUser(req.user.id);
+    const planningDateISO = getPlanningDateFromRequest(req);
+    const active = await getActivePlanForUser(req.user.id, null, { planningDateLocal: planningDateISO });
     if (!active) return res.json({ plan: null });
     const servedPlan = await buildAdaptivePlanView(
       req.user.id,
@@ -2728,7 +3320,7 @@ router.get('/compliance', auth, async (req, res) => {
     weekEndDate.setDate(weekEndDate.getDate() + 7);
     const weekEnd = weekEndDate.toISOString().slice(0, 10);
 
-    const active = await getActivePlanForUser(req.user.id);
+    const active = await getActivePlanForUser(req.user.id, null, { planningDateLocal: planningDateISO });
     if (!active) return res.json({ week: weekStart, planned: 0, completed: 0, score: 0, missed: [], streak: { current: 0, best: 0 } });
 
     const parsed = parsePlan(active.row) || { weeks: [] };
@@ -2837,7 +3429,7 @@ router.post('/reschedule-missed', auth, async (req, res) => {
     }
 
     const mutation = await withPlanningInputMutation(req.user.id, async (tx) => {
-      const active = await getActivePlanForMutation(req.user.id, tx);
+      const active = await getActivePlanForMutation(req.user.id, tx, { planningDateLocal: planningDateISO });
       if (!active) return planningInputUnchanged({ status: 404, error: 'No plan found' });
 
       const parsed = parsePlan(active.row);
@@ -2911,32 +3503,13 @@ router.post('/race-adjust', auth, async (req, res) => {
   try {
     const { raceId } = req.body || {};
     if (!raceId) return res.status(400).json({ error: 'raceId required' });
-
-    const [race, plan, profile] = await Promise.all([
-      dbGet('SELECT * FROM race_events WHERE id=? AND user_id=?', [raceId, req.user.id]),
-      getActivePlanForUser(req.user.id),
-      dbGet('SELECT * FROM users WHERE id=?', [req.user.id])
-    ]);
-
-    if (!race) return res.status(404).json({ error: 'Race not found' });
-    if (!plan) return res.status(404).json({ error: 'No plan found' });
-
-    const parsed = parsePlan(plan.row) || { weeks: [] };
-    const adjusted = await generateRaceAdjustment({ profile, race, currentPlan: parsed });
-    if (!Array.isArray(adjusted?.weeks) || adjusted.weeks.length === 0) {
-      return res.status(503).json({ error: 'Race adjustment is temporarily unavailable. Your current plan was not changed.' });
-    }
-    const nextPlan = adjusted;
-    await withPlanningInputMutation(req.user.id, async (tx) => {
-      const active = await getActivePlanForMutation(req.user.id, tx);
-      if (!active) return planningInputUnchanged(false);
-      await updateActivePlanData(active, req.user.id, nextPlan, tx);
-      return true;
+    const candidate = await previewPlanForUser(req.user.id, {
+      ...(req.body || {}),
+      race_ids: [String(raceId)],
     });
-    res.json({ ok: true, plan: nextPlan });
+    return res.status(201).json(publicCandidatePayload(candidate));
   } catch (err) {
-    console.error('[plans/race-adjust] failed:', err.message);
-    res.status(500).json({ error: 'Race adjust failed' });
+    return sendCandidateError(res, err, 'race-adjust');
   }
 });
 
@@ -3158,200 +3731,54 @@ function enforcePlanSessionRules(planData = {}, options = {}) {
 
 router.post('/generate', auth, requirePremium('Race Programs'), async (req, res) => {
   try {
-    const profile = await dbGet('SELECT * FROM users WHERE id = ?', [req.user.id]);
-    if (!profile) return res.status(404).json({ error: 'User not found' });
-    if (Array.isArray(req.body?.target?.raceTargets) || Array.isArray(req.body?.target?.race_targets)) {
-      return res.status(400).json({ error: 'Use the owned-race planner to build a two-race plan' });
+    if (Array.isArray(req.body?.target?.raceTargets) && req.body.target.raceTargets.length > 0) {
+      throw candidateError(400, 'RACE_ROUTE_REQUIRED', 'Use the race plan route for race-based plans.');
     }
-    const requested = stripClientCourseFacts(req.body?.target || {});
-    const runSchedule = resolveRunSchedule(profile, requested, { requireCompleteSelection: true });
-    if (!runSchedule.valid) return res.status(400).json({ error: runSchedule.error });
-    const distanceMiles = clamp(parsePositiveNumber(requested.distanceMiles ?? requested.distance_miles) || 6.2, 1, 100);
-    const requestedRaceDate = /^\d{4}-\d{2}-\d{2}$/.test(String(requested.raceDate || ''))
-      && !Number.isNaN(new Date(`${requested.raceDate}T12:00:00`).getTime())
-      ? requested.raceDate
-      : null;
-    const raceWindow = requestedRaceDate ? concurrentPlan.racePlanWindow(requestedRaceDate, getTodayISO()) : null;
-    if (requestedRaceDate && !raceWindow) return res.status(400).json({ error: 'Race date must be today or later' });
-    const startDate = raceWindow?.startDate || getPlanStartMonday();
-    const target = {
-      ...requested,
-      trainingDays: runSchedule.trainingDays,
-      runDaysPerWeek: runSchedule.runDaysPerWeek,
-      runDaysSource: runSchedule.runDaysSource,
-      trainingDaysSource: runSchedule.trainingDaysSource,
-      distanceMiles,
-      raceDate: requestedRaceDate,
-      weeks: raceWindow?.weeks || clampInt(requested.weeks, 4, 20, defaultWeeksForDistance(distanceMiles)),
-      startDate,
-      planMode: concurrentPlan.resolvePlanMode(profile, requested),
-      todayISO: getTodayISO(),
-      nowISO: `${getTodayISO()}T12:00:00.000Z`,
-    };
-    const context = await buildConcurrentContext(req.user.id, profile, target);
-    const evidencePlan = concurrentPlan.buildConcurrentPlan(context);
-    const validation = concurrentPlan.validateConcurrentPlan(evidencePlan, context);
-    if (!validation.valid) {
-      if (sendPlanScheduleConflict(res, validation)) return;
-      throw new Error(`Evidence plan failed validation: ${validation.errors.join('; ')}`);
-    }
-    const selected = { plan: evidencePlan, source: 'evidence_engine' };
-    const name = selected.plan.goal?.name || 'Forged Hybrid training block';
-    const persisted = await persistConcurrentPlan(req.user.id, selected.plan, {
-      name,
-      type: selected.plan.planMode,
-      description: `${selected.plan.weeks.length}-week evidence-backed concurrent plan generated from profile and recent training history.`,
-    });
-    res.status(201).json({
-      plan: { id: persisted.planId, user_id: req.user.id, week_start: persisted.weekStart, ...planAnchorPayload(selected.plan), plan_json: selected.plan, plan_data: selected.plan },
-      user_plan_id: persisted.userPlanId,
-      generation_source: selected.source,
-    });
-  } catch (err) { console.error('generate failed:', err.message); res.status(500).json({ error: 'Plan generation failed' }); }
+    const candidate = await previewPlanForUser(req.user.id, { ...(req.body || {}), race_ids: [] });
+    return res.status(201).json(publicCandidatePayload(candidate));
+  } catch (err) {
+    return sendCandidateError(res, err, 'generate');
+  }
 });
 
 router.post('/generate-for-races', auth, requirePremium('Race Programs'), async (req, res) => {
   try {
-    const rawRaceIds = req.body?.race_ids;
-    if (!Array.isArray(rawRaceIds) || rawRaceIds.length < 1 || rawRaceIds.length > 2) {
-      return res.status(400).json({ error: 'Choose one or two races' });
+    if (!Array.isArray(req.body?.race_ids) || req.body.race_ids.length < 1) {
+      throw candidateError(400, 'RACES_REQUIRED', 'Choose one or two races.');
     }
-    if (rawRaceIds.some((id) => typeof id !== 'string' || !id.trim() || id.trim().length > 128)) {
-      return res.status(400).json({ error: 'Each race ID must be a non-empty string' });
-    }
-    const submittedRaceIds = rawRaceIds.map((id) => id.trim());
-    const raceIds = [...new Set(submittedRaceIds)];
-    if (raceIds.length !== submittedRaceIds.length) {
-      return res.status(400).json({ error: 'Choose each race only once' });
-    }
-    const profile = await dbGet('SELECT * FROM users WHERE id = ?', [req.user.id]);
-    if (!profile) return res.status(404).json({ error: 'User not found' });
-    const races = await Promise.all(raceIds.map((raceId) => (
-      dbGet('SELECT * FROM race_events WHERE id = ? AND user_id = ?', [raceId, req.user.id])
-    )));
-    if (races.some((race) => !race)) return res.status(404).json({ error: 'Race not found' });
-    if (races.some((race) => !concurrentPlan.isValidISODate(race.race_date))) {
-      return res.status(400).json({ error: 'Race dates must use valid YYYY-MM-DD calendar dates' });
-    }
-    const orderedRaces = races.slice().sort((a, b) => String(a.race_date).localeCompare(String(b.race_date)));
-    if (new Set(orderedRaces.map((race) => race.race_date)).size !== orderedRaces.length) {
-      return res.status(400).json({ error: 'Race dates must be different' });
-    }
-    if (orderedRaces.length === 2) {
-      const firstDate = new Date(`${orderedRaces[0].race_date}T12:00:00Z`);
-      const secondDate = new Date(`${orderedRaces[1].race_date}T12:00:00Z`);
-      const gapDays = Math.round((secondDate.getTime() - firstDate.getTime()) / 86400000);
-      if (gapDays < 21) {
-        return res.status(400).json({ error: 'Two PR races must be at least 21 days apart for recovery and tapering' });
-      }
-    }
-    if (orderedRaces.some((race) => !concurrentPlan.racePlanWindow(race.race_date, getTodayISO()))) {
-      return res.status(400).json({ error: 'Race dates must be today or later' });
-    }
-    const finalRace = orderedRaces[orderedRaces.length - 1];
-    const raceWindow = concurrentPlan.racePlanWindow(finalRace.race_date, getTodayISO());
-    const requested = stripClientCourseFacts(req.body?.target || {});
-    const runSchedule = resolveRunSchedule(profile, requested, { requireCompleteSelection: true });
-    if (!runSchedule.valid) return res.status(400).json({ error: runSchedule.error });
-    const raceTargets = orderedRaces.map((race) => ({
-      raceDate: race.race_date,
-      raceName: race.race_name,
-      distanceMiles: clamp(Number(race.distance_miles) || 6.2, 1, 100),
-      goalTimeSeconds: race.goal_time_seconds ?? null,
-      goalType: Number(race.goal_time_seconds || 0) > 0 ? 'pr' : 'completion',
-      ...courseTargetFromRace(race),
-    }));
-    const finalTarget = raceTargets[raceTargets.length - 1];
-    const target = {
-      ...requested,
-      ...finalTarget,
-      raceTargets,
-      trainingDays: runSchedule.trainingDays,
-      runDaysPerWeek: runSchedule.runDaysPerWeek,
-      runDaysSource: runSchedule.runDaysSource,
-      trainingDaysSource: runSchedule.trainingDaysSource,
-      weeks: raceWindow.weeks,
-      startDate: raceWindow.startDate,
-      todayISO: getTodayISO(),
-      nowISO: `${getTodayISO()}T12:00:00.000Z`,
-    };
-    target.planMode = concurrentPlan.resolvePlanMode(profile, target);
-    const context = await buildConcurrentContext(req.user.id, profile, target);
-    const evidencePlan = concurrentPlan.buildConcurrentPlan(context);
-    const validation = concurrentPlan.validateConcurrentPlan(evidencePlan, context);
-    if (!validation.valid) {
-      if (sendPlanScheduleConflict(res, validation)) return;
-      throw new Error(`Evidence multi-race plan failed validation: ${validation.errors.join('; ')}`);
-    }
-    const persisted = await persistConcurrentPlan(req.user.id, evidencePlan, {
-      name: orderedRaces.map((race) => race.race_name).join(' + '),
-      type: evidencePlan.planMode,
-      description: `${raceWindow.weeks}-week plan with ${orderedRaces.length} protected PR race goal${orderedRaces.length === 1 ? '' : 's'}.`,
-    });
+    const candidate = await previewPlanForUser(req.user.id, req.body || {});
     return res.status(201).json({
-      plan: { id: persisted.planId, user_id: req.user.id, week_start: persisted.weekStart, ...planAnchorPayload(evidencePlan), plan_json: evidencePlan, plan_data: evidencePlan },
-      user_plan_id: persisted.userPlanId,
-      generation_source: 'evidence_engine',
-      weeks: raceWindow.weeks,
-      races: orderedRaces.map((race) => ({ id: race.id, name: race.race_name, date: race.race_date })),
+      ...publicCandidatePayload(candidate),
+      races: candidate.races.map((race) => ({ id: race.id, name: race.race_name, date: race.race_date })),
+      weeks: candidate.plan.weeks.length,
     });
   } catch (err) {
-    console.error('[plans/generate-for-races] failed:', err.message);
-    return res.status(500).json({ error: 'Multi-race plan generation failed' });
+    return sendCandidateError(res, err, 'generate-for-races');
   }
 });
 
 router.post('/generate-for-race/:raceId', auth, requirePremium('Race Programs'), async (req, res) => {
   try {
-    const profile = await dbGet('SELECT * FROM users WHERE id = ?', [req.user.id]);
-    if (!profile) return res.status(404).json({ error: 'User not found' });
-    const race = await dbGet('SELECT * FROM race_events WHERE id = ? AND user_id = ?', [req.params.raceId, req.user.id]);
-    if (!race) return res.status(404).json({ error: 'Race not found' });
-    // Cover every dated week through race day from the next plan Monday.
-    const raceWindow = concurrentPlan.racePlanWindow(race.race_date, getTodayISO());
-    if (!raceWindow) return res.status(400).json({ error: 'Race date must be today or later' });
-    const { startDate, weeks } = raceWindow;
-    const requested = stripClientCourseFacts(req.body?.target || {});
-    const runSchedule = resolveRunSchedule(profile, requested, { requireCompleteSelection: true });
-    if (!runSchedule.valid) return res.status(400).json({ error: runSchedule.error });
-    const target = {
-      ...requested,
-      trainingDays: runSchedule.trainingDays,
-      runDaysPerWeek: runSchedule.runDaysPerWeek,
-      runDaysSource: runSchedule.runDaysSource,
-      trainingDaysSource: runSchedule.trainingDaysSource,
-      raceDate: race.race_date,
-      raceName: race.race_name,
-      distanceMiles: clamp(Number(race.distance_miles) || 6.2, 1, 100),
-      goalTimeSeconds: race.goal_time_seconds ?? null,
-      weeks,
-      startDate,
-      ...courseTargetFromRace(race),
-      todayISO: getTodayISO(),
-      nowISO: `${getTodayISO()}T12:00:00.000Z`,
-    };
-    target.planMode = concurrentPlan.resolvePlanMode(profile, target);
-    const context = await buildConcurrentContext(req.user.id, profile, target);
-    const evidencePlan = concurrentPlan.buildConcurrentPlan(context);
-    const validation = concurrentPlan.validateConcurrentPlan(evidencePlan, context);
-    if (!validation.valid) {
-      if (sendPlanScheduleConflict(res, validation)) return;
-      throw new Error(`Evidence race plan failed validation: ${validation.errors.join('; ')}`);
-    }
-    const selected = { plan: evidencePlan, source: 'evidence_engine' };
-    const persisted = await persistConcurrentPlan(req.user.id, selected.plan, {
-      name: race.race_name,
-      type: selected.plan.planMode,
-      description: `${weeks}-week course-aware plan for ${race.race_name}.`,
+    const candidate = await previewPlanForUser(req.user.id, {
+      ...(req.body || {}),
+      race_ids: [String(req.params.raceId || '')],
     });
-    res.status(201).json({
-      plan: { id: persisted.planId, user_id: req.user.id, week_start: persisted.weekStart, ...planAnchorPayload(selected.plan), plan_json: selected.plan, plan_data: selected.plan },
-      user_plan_id: persisted.userPlanId,
-      generation_source: selected.source,
-      weeks,
-      race: { id: race.id, name: race.race_name, date: race.race_date },
+    const race = candidate.races[0];
+    return res.status(201).json({
+      ...publicCandidatePayload(candidate),
+      race: race ? { id: race.id, name: race.race_name, date: race.race_date } : null,
+      weeks: candidate.plan.weeks.length,
     });
-  } catch (err) { console.error('generate-for-race failed:', err.message); res.status(500).json({ error: 'Race plan generation failed' }); }
+  } catch (err) {
+    return sendCandidateError(res, err, 'generate-for-race');
+  }
 });
+
+router._test = {
+  applyPlanCandidate,
+  getActivePlanForMutation,
+  getActivePlanForUser,
+  previewPlanForUser,
+};
 
 module.exports = router;

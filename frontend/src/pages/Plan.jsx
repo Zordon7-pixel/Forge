@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { ChevronDown, ChevronUp } from 'lucide-react'
 import api from '../lib/api'
+import { previewAndApplyPlan } from '../lib/planCandidates'
 import { useProContext } from '../context/ProContext'
 import ProGate from '../components/ProGate'
 import AiGuidanceNote from '../components/AiGuidanceNote'
@@ -341,6 +342,10 @@ export default function Plan() {
     if (!selectedDay || !calendarModel || !Number.isInteger(selectedDay.weekIndex)) return null
     return calendarModel.phaseForWeek(selectedDay.weekIndex)
   }, [selectedDay, calendarModel])
+  const selectedWeek = useMemo(() => {
+    if (!selectedDay || !calendarModel || !Number.isInteger(selectedDay.weekIndex)) return null
+    return calendarModel.getWeek(selectedDay.weekIndex)
+  }, [selectedDay, calendarModel])
 
   const toggleSession = async (sessionId) => {
     if (!sessionId) return
@@ -372,7 +377,7 @@ export default function Plan() {
     setRaceReconciliationError('')
     setRaceReconciliationNotice('')
     try {
-      await api.post('/plans/generate-for-races', {
+      await previewAndApplyPlan('/plans/generate-for-races', {
         race_ids: racePlanReconciliation.orderedRaceIds,
       })
       setScheduleError('')
@@ -399,7 +404,7 @@ export default function Plan() {
     setPlanReviewBusy(true)
     setPlanReviewError('')
     try {
-      await api.post('/plans/generate-for-races', {
+      await previewAndApplyPlan('/plans/generate-for-races', {
         race_ids: raceIds,
         target: {
           trainingDays: planData.schedulePreferences?.trainingDays || [],
@@ -451,7 +456,7 @@ export default function Plan() {
         draft: scheduleDraft,
         weekCount,
       })
-      await api.post(request.path, request.body, { timeout: 90000 })
+      await previewAndApplyPlan(request.path, request.body, { timeout: 90000 })
       setRaceReconciliationError('')
       setPlanReviewError('')
       setScheduleNotice(`Calendar rebuilt for ${scheduleDraft.runDaysPerWeek} run days per week. Recorded workouts remain in your history and still inform the plan.`)
@@ -787,7 +792,16 @@ export default function Plan() {
           selectedDay ? (
             <ForgedDayView
               day={selectedDay}
-              planContext={{ goal: calendarModel.goal, mode: calendarModel.mode, modeLabel: calendarModel.modeLabel, phase: selectedPhase, inputSummary: planInputs, trainingEvidence }}
+              planContext={{
+                goal: calendarModel.goal,
+                mode: calendarModel.mode,
+                modeLabel: calendarModel.modeLabel,
+                phase: selectedPhase,
+                week: selectedWeek,
+                feasibility: calendarModel.feasibility,
+                inputSummary: calendarModel.inputSummary || planInputs,
+                trainingEvidence: calendarModel.trainingEvidence?.length ? calendarModel.trainingEvidence : trainingEvidence,
+              }}
               completedSet={completedSet}
               onToggleComplete={toggleSession}
               onStartRun={startRunSession}

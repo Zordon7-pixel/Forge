@@ -12,6 +12,14 @@ const api = axios.create({ baseURL: API_BASE_URL, timeout: 15000 })
 api.interceptors.request.use(cfg => {
   const token = getToken()
   if (token) cfg.headers.Authorization = `Bearer ${token}`
+  const now = new Date()
+  const localDate = [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, '0'),
+    String(now.getDate()).padStart(2, '0'),
+  ].join('-')
+  cfg.headers['X-Forged-Local-Date'] = localDate
+  cfg.headers['X-Forged-Timezone-Offset-Minutes'] = String(now.getTimezoneOffset())
   return cfg
 })
 
@@ -38,4 +46,3 @@ export default api
 export const getWaiverVersion = () => api.get('/consent/version')
 export const getCurrentWaiver = () => api.get('/consent/current')
 export const acceptWaiver = (version) => api.post('/consent/accept', { version })
-export const generatePlanForRace = (raceId) => api.post(`/plans/generate-for-race/${raceId}`)

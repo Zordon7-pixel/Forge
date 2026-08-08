@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router'
 import { CalendarDays, ChevronRight, MapPin, Search, X } from 'lucide-react'
 import api from '../lib/api'
+import { previewAndApplyPlan } from '../lib/planCandidates'
 import { activateModalDialog } from '../lib/modalDialog'
 import { useProContext } from '../context/ProContext'
 import DurationPicker from '../components/DurationPicker'
@@ -348,7 +349,7 @@ export default function PlanCatalog() {
         if (!ownedRace?.id) throw new Error('Race could not be saved before plan generation.')
         setRaceSelection({ type: 'owned', race: ownedRace })
         setGenerationStep('Building your race calendar...')
-        await api.post(
+        await previewAndApplyPlan(
           `/plans/generate-for-race/${encodeURIComponent(ownedRace.id)}`,
           { target },
           { timeout: PLAN_GENERATION_TIMEOUT_MS },
@@ -356,7 +357,7 @@ export default function PlanCatalog() {
       } else {
         if (weeks) target.weeks = parsedWeeks
         setGenerationStep('Building your calendar...')
-        await api.post('/plans/generate', { target }, { timeout: PLAN_GENERATION_TIMEOUT_MS })
+        await previewAndApplyPlan('/plans/generate', { target }, { timeout: PLAN_GENERATION_TIMEOUT_MS })
       }
       navigate('/plan')
     } catch (err) {

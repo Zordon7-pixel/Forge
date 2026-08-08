@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router'
 import { useProContext } from '../context/ProContext'
 import DurationPicker from '../components/DurationPicker'
 import api from '../lib/api'
+import { previewAndApplyPlan } from '../lib/planCandidates'
 import { RACE_DISTANCE_OPTIONS, STANDARD_RACE_DISTANCES } from '../lib/raceDistances'
 
 function daysTo(date) {
@@ -271,8 +272,8 @@ export default function Races() {
         return
       }
       const raceIds = alreadyIncluded ? activePlanRaceIds : [...activePlanRaceIds, raceId]
-      if (raceIds.length > 1) await api.post('/plans/generate-for-races', { race_ids: raceIds })
-      else await api.post(`/plans/generate-for-race/${race.id}`)
+      if (raceIds.length > 1) await previewAndApplyPlan('/plans/generate-for-races', { race_ids: raceIds })
+      else await previewAndApplyPlan(`/plans/generate-for-race/${race.id}`)
       await load()
       onSuccess()
     } catch (err) {
