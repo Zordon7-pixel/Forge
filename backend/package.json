@@ -5,6 +5,7 @@
   "scripts": {
     "start": "node src/app.js",
     "dev": "node src/app.js",
+    "check:active-plans": "node scripts/repair-active-plan-assignments.js",
     "check:account-data": "node scripts/check-account-data-coverage.js",
     "test:smoke": "node scripts/run-smoke-suite.js"
   },

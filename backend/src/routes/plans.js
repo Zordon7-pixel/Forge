@@ -37,7 +37,11 @@ const {
   prefixedHash,
   validateCandidateBundle,
 } = require('../lib/planCandidateLifecycle');
-const { shouldFollowSupersededAssignment } = require('../lib/planAssignmentLifecycle');
+const {
+  resolveActivePlanForDate,
+  resolveAssignedPlanForDate,
+  shouldFollowSupersededAssignment,
+} = require('../lib/planAssignmentLifecycle');
 
 // Strength sessions are already equipment-filtered by concurrentPlan's
 // buildStrengthExercises/exerciseCatalog path. strengthAdjunct is the standalone
@@ -63,9 +67,9 @@ function sendCandidateError(res, err, context) {
   if (status >= 500) console.error(`[plans/${context}] failed:`, err.message);
   else console.error(`[plans/${context}] rejected (${err.code || status}):`, err.message);
   return res.status(status).json({
-    error: err.message || 'Plan request failed',
-    code: err.code || 'PLAN_REQUEST_FAILED',
-    ...(err.details ? { details: err.details } : {}),
+    error: status >= 500 ? 'Unable to process this plan request.' : (err.message || 'Plan request failed'),
+    code: status >= 500 ? 'PLAN_REQUEST_FAILED' : (err.code || 'PLAN_REQUEST_FAILED'),
+    ...(status < 500 && err.details ? { details: err.details } : {}),
   });
 }
 
@@ -125,6 +129,24 @@ function getPlanningDateFromRequest(req) {
     req.query?.date || req.body?.planning_date_local || headerDate,
     { defaultToToday: true }
   );
+}
+
+function getTimezoneOffsetFromRequest(req) {
+  const bodyValue = req.body?.timezone_offset_minutes;
+  if (bodyValue !== undefined && bodyValue !== null && bodyValue !== '') return bodyValue;
+  const headerValue = typeof req.get === 'function'
+    ? req.get('x-forged-timezone-offset-minutes')
+    : req.headers?.['x-forged-timezone-offset-minutes'];
+  return headerValue === undefined || headerValue === null || headerValue === '' ? 0 : headerValue;
+}
+
+function withRequestPlanningClock(req, body = {}, overrides = {}) {
+  const request = { ...(body || {}), ...overrides };
+  return {
+    ...request,
+    planning_date_local: request.planning_date_local || getPlanningDateFromRequest(req),
+    timezone_offset_minutes: request.timezone_offset_minutes ?? getTimezoneOffsetFromRequest(req),
+  };
 }
 
 function parsePlan(plan) {
@@ -1080,45 +1102,19 @@ function withCanonicalWeekDates(week, weekStart) {
 
 async function getAssignedPlanForUser(userId, tx = null, options = {}) {
   const get = tx?.get || dbGet;
-  const planningDateLocal = options.planningDateLocal || getTodayISO();
-  let assigned = await get(`
-    SELECT up.id as user_plan_id, up.current_week, up.started_at, up.status, up.progress_json,
-           up.plan_version, up.lineage_id, up.supersedes_user_plan_id, up.effective_from,
-           tp.*
-    FROM user_plans up
-    JOIN training_plans tp ON tp.id = up.plan_id
-    WHERE up.user_id = ? AND up.status = 'active'
-    ORDER BY up.created_at DESC
-    LIMIT 1
-  `, [userId]);
-  const visited = new Set();
-  while (shouldFollowSupersededAssignment(assigned, planningDateLocal, options)) {
-    const predecessorId = String(assigned.supersedes_user_plan_id);
-    if (visited.has(predecessorId)) throw new Error('Plan assignment lineage contains a cycle');
-    visited.add(predecessorId);
-    const predecessor = await get(`
-      SELECT up.id as user_plan_id, up.current_week, up.started_at, up.status, up.progress_json,
-             up.plan_version, up.lineage_id, up.supersedes_user_plan_id, up.effective_from,
-             tp.*
-      FROM user_plans up
-      JOIN training_plans tp ON tp.id = up.plan_id
-      WHERE up.id=? AND up.user_id=?
-      LIMIT 1
-    `, [predecessorId, userId]);
-    if (!predecessor) throw new Error('Plan assignment predecessor is unavailable');
-    assigned = predecessor;
-  }
+  const assigned = await resolveAssignedPlanForDate(userId, get, {
+    ...options,
+    planningDateLocal: options.planningDateLocal || getTodayISO(),
+  });
   return assigned ? { source: 'assigned', row: assigned } : null;
 }
 
 async function getActivePlanForUser(userId, tx = null, options = {}) {
-  const assigned = await getAssignedPlanForUser(userId, tx, options);
-  if (assigned) return assigned;
-
   const get = tx?.get || dbGet;
-  const legacy = await get('SELECT * FROM training_plans WHERE user_id = ? ORDER BY created_at DESC LIMIT 1', [userId]);
-  if (legacy) return { source: 'legacy', row: legacy };
-  return null;
+  return resolveActivePlanForDate(userId, get, {
+    ...options,
+    planningDateLocal: options.planningDateLocal || getTodayISO(),
+  });
 }
 
 // Lock the owner-scoped assignment before reading its current plan pointer.
@@ -2764,7 +2760,7 @@ router.get('/prefill', auth, async (req, res) => {
 
 router.post('/preview', auth, requirePremium('Race Programs'), async (req, res) => {
   try {
-    const candidate = await previewPlanForUser(req.user.id, req.body || {});
+    const candidate = await previewPlanForUser(req.user.id, withRequestPlanningClock(req, req.body));
     return res.status(201).json(publicCandidatePayload(candidate));
   } catch (err) {
     return sendCandidateError(res, err, 'preview');
@@ -2777,7 +2773,11 @@ router.post('/candidates/:candidateId/apply', auth, requirePremium('Race Program
     if (!candidateId || candidateId.length > 128) {
       throw candidateError(400, 'INVALID_CANDIDATE_ID', 'Candidate ID is required.');
     }
-    const result = await applyPlanCandidate(req.user.id, candidateId, req.body || {});
+    const result = await applyPlanCandidate(
+      req.user.id,
+      candidateId,
+      withRequestPlanningClock(req, req.body)
+    );
     if (result.error) return res.status(result.status || 409).json({ error: result.error, code: result.code });
     return res.status(result.status || 200).json({ ...result.payload, replay: Boolean(result.replay) });
   } catch (err) {
@@ -3558,10 +3558,9 @@ router.post('/race-adjust', auth, requirePremium('Race Programs'), async (req, r
   try {
     const { raceId } = req.body || {};
     if (!raceId) return res.status(400).json({ error: 'raceId required' });
-    const candidate = await previewPlanForUser(req.user.id, {
-      ...(req.body || {}),
+    const candidate = await previewPlanForUser(req.user.id, withRequestPlanningClock(req, req.body, {
       race_ids: [String(raceId)],
-    });
+    }));
     return res.status(201).json(publicCandidatePayload(candidate));
   } catch (err) {
     return sendCandidateError(res, err, 'race-adjust');
@@ -3789,7 +3788,10 @@ router.post('/generate', auth, requirePremium('Race Programs'), async (req, res)
     if (Array.isArray(req.body?.target?.raceTargets) && req.body.target.raceTargets.length > 0) {
       throw candidateError(400, 'RACE_ROUTE_REQUIRED', 'Use the race plan route for race-based plans.');
     }
-    const candidate = await previewPlanForUser(req.user.id, { ...(req.body || {}), race_ids: [] });
+    const candidate = await previewPlanForUser(
+      req.user.id,
+      withRequestPlanningClock(req, req.body, { race_ids: [] })
+    );
     return res.status(201).json(publicCandidatePayload(candidate));
   } catch (err) {
     return sendCandidateError(res, err, 'generate');
@@ -3801,7 +3803,7 @@ router.post('/generate-for-races', auth, requirePremium('Race Programs'), async 
     if (!Array.isArray(req.body?.race_ids) || req.body.race_ids.length < 1) {
       throw candidateError(400, 'RACES_REQUIRED', 'Choose one or two races.');
     }
-    const candidate = await previewPlanForUser(req.user.id, req.body || {});
+    const candidate = await previewPlanForUser(req.user.id, withRequestPlanningClock(req, req.body));
     return res.status(201).json({
       ...publicCandidatePayload(candidate),
       races: candidate.races.map((race) => ({ id: race.id, name: race.race_name, date: race.race_date })),
@@ -3814,10 +3816,9 @@ router.post('/generate-for-races', auth, requirePremium('Race Programs'), async 
 
 router.post('/generate-for-race/:raceId', auth, requirePremium('Race Programs'), async (req, res) => {
   try {
-    const candidate = await previewPlanForUser(req.user.id, {
-      ...(req.body || {}),
+    const candidate = await previewPlanForUser(req.user.id, withRequestPlanningClock(req, req.body, {
       race_ids: [String(req.params.raceId || '')],
-    });
+    }));
     const race = candidate.races[0];
     return res.status(201).json({
       ...publicCandidatePayload(candidate),
@@ -3833,9 +3834,12 @@ router._test = {
   applyPlanCandidate,
   getActivePlanForMutation,
   getActivePlanForUser,
+  getTimezoneOffsetFromRequest,
   pruneExpiredPlanCandidates,
   previewPlanForUser,
   replacementLineageForActivePlan,
+  sendCandidateError,
+  withRequestPlanningClock,
 };
 
 module.exports = router;

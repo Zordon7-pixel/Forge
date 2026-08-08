@@ -491,6 +491,7 @@ async function initDb() {
     await client.query('ALTER TABLE user_plans ADD COLUMN IF NOT EXISTS effective_from TEXT');
     await client.query('UPDATE user_plans SET lineage_id=id WHERE lineage_id IS NULL');
     await client.query('UPDATE user_plans SET effective_from=started_at WHERE effective_from IS NULL');
+    await client.query("CREATE UNIQUE INDEX IF NOT EXISTS idx_user_plans_one_active_per_user ON user_plans(user_id) WHERE status='active'");
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS plan_generation_candidates (

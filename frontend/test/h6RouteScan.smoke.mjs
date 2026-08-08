@@ -123,7 +123,9 @@ assert(!/to="\/plan-catalog"/.test(runHub), 'RunHub no longer bypasses the unifi
 
 console.log('\n== legacy owned plans remain visible without migration writes ==');
 const plansRoute = readRepo('backend/src/routes/plans.js');
-assert(/SELECT \* FROM training_plans WHERE user_id = \? ORDER BY created_at DESC LIMIT 1/.test(plansRoute), '/plans/my falls back to a user-scoped legacy plan');
+const assignmentLifecycle = readRepo('backend/src/lib/planAssignmentLifecycle.js');
+assert(/resolveActivePlanForDate/.test(plansRoute), '/plans/my uses the shared date-aware assignment resolver');
+assert(/SELECT \* FROM training_plans WHERE user_id = \? ORDER BY created_at DESC LIMIT 1/.test(assignmentLifecycle), 'the shared resolver falls back to a user-scoped legacy plan');
 assert(/source:\s*'legacy'/.test(plansRoute) && /user_plan:\s*null/.test(plansRoute), 'legacy fallback is explicitly read-only until normal progress migration');
 
 console.log(`\nPASSED: ${passed}  FAILED: ${failed}`);

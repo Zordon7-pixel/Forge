@@ -2,6 +2,10 @@ const router = require('express').Router();
 const { dbGet, withPlanningInputMutation } = require('../db');
 const auth = require('../middleware/auth');
 const { deriveAction, buildPatch, buildDirective, estimateWorkoutMinutes } = require('../lib/checkinOverride');
+const dailyExecution = require('../lib/dailyExecution');
+const planSchema = require('../lib/planSchema');
+const { resolveActivePlanForDate } = require('../lib/planAssignmentLifecycle');
+const { isISODate, requestPlanningDate } = require('../lib/requestPlanningDate');
 
 const ALLOWED_LIFE_FLAGS = new Set(['long_shift', 'sore', 'traveling', 'sick', 'injured', 'stressed', 'all_good']);
 
@@ -20,14 +24,6 @@ function isInt13(value) {
   return Number.isInteger(parsed) && parsed >= 1 && parsed <= 3;
 }
 
-function isISODate(value) {
-  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value);
-}
-
-function getDayShort() {
-  return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date().getDay()];
-}
-
 function parsePlan(plan) {
   try {
     if (plan?.plan_data) {
@@ -40,30 +36,13 @@ function parsePlan(plan) {
   }
 }
 
-function normalizeTodayEntry(planJson) {
-  if (!planJson?.weeks?.length) return null;
-  const today = getDayShort();
-  for (const week of planJson.weeks) {
-    const days = Array.isArray(week.days) ? week.days : Array.isArray(week.sessions) ? week.sessions : [];
-    const hit = days.find(d => d?.day === today);
-    if (hit) return hit;
-  }
-  return null;
+function normalizeTodayEntry(planJson, planningDateLocal) {
+  const selected = dailyExecution.selectDayForDate(planJson, planningDateLocal);
+  return selected ? planSchema.flattenDayForConsumer(selected.entry) : null;
 }
 
-async function getActivePlanForUser(userId, database = { get: dbGet }) {
-  const assigned = await database.get(`
-    SELECT up.id as user_plan_id, up.current_week, up.started_at, up.status, up.progress_json,
-           tp.*
-    FROM user_plans up
-    JOIN training_plans tp ON tp.id = up.plan_id
-    WHERE up.user_id = ? AND up.status = 'active'
-    ORDER BY up.created_at DESC
-    LIMIT 1
-  `, [userId]);
-  if (assigned) return assigned;
-
-  return database.get('SELECT * FROM training_plans WHERE user_id = ? ORDER BY created_at DESC LIMIT 1', [userId]);
+async function getActivePlanForUser(userId, database = { get: dbGet }, options = {}) {
+  return resolveActivePlanForDate(userId, database.get, options);
 }
 
 function describeAdjustment(action, patch, hasWorkoutToday = false) {
@@ -139,7 +118,7 @@ function validateCheckinPayload(body = {}, options = {}) {
   };
 }
 
-async function computeCheckinDirective(userId, checkinInput, database) {
+async function computeCheckinDirective(userId, checkinInput, database, options = {}) {
   const checkin = {
     feeling: checkinInput.feeling,
     legs: checkinInput.legs,
@@ -148,8 +127,9 @@ async function computeCheckinDirective(userId, checkinInput, database) {
     life_flags: checkinInput.life_flags,
   };
   let action = deriveAction(checkin);
-  const activePlan = await getActivePlanForUser(userId, database);
-  const todayDay = activePlan ? normalizeTodayEntry(parsePlan(activePlan)) : null;
+  const planningDateLocal = options.planningDateLocal || requestPlanningDate({});
+  const activePlan = await getActivePlanForUser(userId, database, { planningDateLocal });
+  const todayDay = activePlan ? normalizeTodayEntry(parsePlan(activePlan.row), planningDateLocal) : null;
   const plannedMinutes = estimateWorkoutMinutes(todayDay || {});
   if (action === 'keep' && plannedMinutes && checkin.time_available < plannedMinutes) {
     action = 'shorten';
@@ -184,7 +164,7 @@ router.post('/', auth, async (req, res) => {
     if (req.body?.date !== undefined && req.body?.date !== null && !isISODate(req.body.date)) {
       return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
     }
-    const today = isISODate(req.body?.date) ? req.body.date : new Date().toISOString().slice(0,10);
+    const today = requestPlanningDate(req, { bodyKeys: ['date'], queryKeys: [] });
 
     const directive = await withPlanningInputMutation(req.user.id, async (tx) => {
       const existing = await tx.get(
@@ -210,7 +190,7 @@ router.post('/', auth, async (req, res) => {
         drive,
         time_available,
         life_flags,
-      }, tx);
+      }, tx, { planningDateLocal: today });
       const overrideId = require('crypto').randomBytes(8).toString('hex');
 
       await tx.run(
@@ -249,7 +229,16 @@ router.post('/preview', auth, async (req, res) => {
       return res.json({ headline: null, adjustment: null, drivers: [] });
     }
 
-    const directive = await computeCheckinDirective(req.user.id, validation.value);
+    if (req.body?.date !== undefined && req.body?.date !== null && !isISODate(req.body.date)) {
+      return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
+    }
+    const planningDateLocal = requestPlanningDate(req, { bodyKeys: ['date'], queryKeys: [] });
+    const directive = await computeCheckinDirective(
+      req.user.id,
+      validation.value,
+      undefined,
+      { planningDateLocal }
+    );
 
     res.json({
       headline: directive.headline,
@@ -267,7 +256,7 @@ router.get('/today', auth, async (req, res) => {
     if (req.query?.date !== undefined && req.query?.date !== null && !isISODate(req.query.date)) {
       return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
     }
-    const today = isISODate(req.query?.date) ? req.query.date : new Date().toISOString().slice(0,10);
+    const today = requestPlanningDate(req, { bodyKeys: [], queryKeys: ['date'] });
     const checkin = await dbGet('SELECT * FROM daily_checkins WHERE user_id=? AND checkin_date=?', [req.user.id, today]);
     res.json(checkin || null);
   } catch(err) {
@@ -275,5 +264,11 @@ router.get('/today', auth, async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch check-in' });
   }
 });
+
+router._test = {
+  computeCheckinDirective,
+  getActivePlanForUser,
+  normalizeTodayEntry,
+};
 
 module.exports = router;

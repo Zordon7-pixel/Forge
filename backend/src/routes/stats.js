@@ -7,17 +7,13 @@ const { computeHybridStreak, detectHybridMilestones, filterNewHybridMilestones }
 const { computeBadges, buildYouVsLastMonth } = require('../lib/badges');
 const planSchema = require('../lib/planSchema');
 const { runActivitySql } = require('../lib/runActivity');
+const { resolveActivePlanForDate } = require('../lib/planAssignmentLifecycle');
+const { requestPlanningDate } = require('../lib/requestPlanningDate');
 const {
   reconciliationKey,
   sessionEvidenceKey,
   allocateSessionEvidence,
 } = require('../lib/hybridReconciliation');
-
-function toISODate(value) {
-  const date = value instanceof Date ? value : new Date(value || Date.now());
-  if (Number.isNaN(date.getTime())) return new Date().toISOString().slice(0, 10);
-  return date.toISOString().slice(0, 10);
-}
 
 function addDays(iso, amount) {
   const date = new Date(`${iso}T12:00:00Z`);
@@ -117,23 +113,8 @@ function buildPlanCompletion(active, runs, lifts, startISO, endISO) {
   };
 }
 
-async function getActivePlanForUser(userId) {
-  const assigned = await dbGet(`
-    SELECT up.id as user_plan_id, up.plan_id, up.progress_json, up.started_at, up.current_week,
-           tp.week_start, tp.plan_json, tp.plan_data
-    FROM user_plans up
-    JOIN training_plans tp ON tp.id = up.plan_id
-    WHERE up.user_id = ? AND up.status = 'active'
-    ORDER BY up.created_at DESC
-    LIMIT 1
-  `, [userId]);
-  if (assigned) return { row: assigned };
-
-  const legacy = await dbGet(
-    'SELECT id as plan_id, week_start, plan_json, plan_data FROM training_plans WHERE user_id = ? ORDER BY created_at DESC LIMIT 1',
-    [userId]
-  );
-  return legacy ? { row: legacy } : null;
+async function getActivePlanForUser(userId, planningDateLocal, database = { get: dbGet }) {
+  return resolveActivePlanForDate(userId, database.get, { planningDateLocal });
 }
 
 async function persistNewMilestones(userId, candidates) {
@@ -153,8 +134,8 @@ async function persistNewMilestones(userId, candidates) {
 router.get('/hybrid-score', auth, async (req, res) => {
   try {
     const userId = req.user.id;
-    const now = new Date();
-    const todayISO = toISODate(now);
+    const todayISO = requestPlanningDate(req, { bodyKeys: [], queryKeys: [] });
+    const now = new Date(`${todayISO}T12:00:00Z`);
     const currentStart = addDays(todayISO, -27);
     const baselineStart = addDays(currentStart, -28);
 
@@ -176,7 +157,7 @@ router.get('/hybrid-score', auth, async (req, res) => {
          ORDER BY date ASC, created_at ASC`,
         [userId, baselineStart, todayISO]
       ),
-      getActivePlanForUser(userId),
+      getActivePlanForUser(userId, todayISO),
     ]);
 
     const planCompletion = buildPlanCompletion(activePlan, runs, lifts, currentStart, todayISO);
@@ -190,7 +171,8 @@ router.get('/hybrid-score', auth, async (req, res) => {
 router.get('/hybrid-streak', auth, async (req, res) => {
   try {
     const userId = req.user.id;
-    const now = new Date();
+    const todayISO = requestPlanningDate(req, { bodyKeys: [], queryKeys: [] });
+    const now = new Date(`${todayISO}T12:00:00Z`);
 
     const [runs, lifts, activePlan] = await Promise.all([
       dbAll(
@@ -208,7 +190,7 @@ router.get('/hybrid-streak', auth, async (req, res) => {
          ORDER BY date ASC, created_at ASC`,
         [userId]
       ),
-      getActivePlanForUser(userId),
+      getActivePlanForUser(userId, todayISO),
     ]);
 
     const streak = computeHybridStreak({ runs, lifts, activePlan, now });
@@ -231,8 +213,8 @@ router.get('/hybrid-streak', auth, async (req, res) => {
 router.get('/engagement', auth, async (req, res) => {
   try {
     const userId = req.user.id;
-    const now = new Date();
-    const todayISO = toISODate(now);
+    const todayISO = requestPlanningDate(req, { bodyKeys: [], queryKeys: [] });
+    const now = new Date(`${todayISO}T12:00:00Z`);
     const currentStart = addDays(todayISO, -27);
     const priorEnd = addDays(currentStart, -1);
     const priorStart = addDays(priorEnd, -27);
@@ -266,7 +248,7 @@ router.get('/engagement', auth, async (req, res) => {
          ORDER BY achieved_at DESC, id DESC`,
         [userId]
       ),
-      getActivePlanForUser(userId),
+      getActivePlanForUser(userId, todayISO),
     ]);
 
     const currentPlanCompletion = buildPlanCompletion(activePlan, runs, lifts, currentStart, todayISO);
@@ -315,5 +297,7 @@ router.get('/engagement', auth, async (req, res) => {
     res.status(500).json({ error: 'Engagement stats fetch failed' });
   }
 });
+
+router._test = { getActivePlanForUser };
 
 module.exports = router;
