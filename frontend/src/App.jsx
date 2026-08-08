@@ -10,6 +10,7 @@ import { ProProvider } from './context/ProContext'
 import HealthService from './services/HealthService'
 import NativeNotificationService from './services/NativeNotificationService'
 import { normalizeForgedDeepLink } from './lib/nativeDeepLink'
+import { emitAppOpenTelemetry } from './lib/appOpenTelemetry'
 import api, { acceptWaiver } from './lib/api'
 import ConsentWaiver from './components/ConsentWaiver'
 import { markChunkBoundaryError, recoverFromChunkError } from './lib/chunkRecovery'
@@ -95,6 +96,26 @@ function shouldAttemptStravaSync() {
   } catch {
     return true
   }
+}
+
+function AppOpenTelemetry() {
+  const location = useLocation()
+  const sentRef = useRef(false)
+
+  useEffect(() => {
+    if (sentRef.current || !isLoggedIn()) return undefined
+    let active = true
+    emitAppOpenTelemetry({ capacitor: Capacitor, capacitorApp: CapacitorApp, track })
+      .then(() => {
+        if (active) sentRef.current = true
+      })
+      .catch((error) => {
+        console.warn('[AppOpenTelemetry] native identity unavailable:', error?.message || error)
+      })
+    return () => { active = false }
+  }, [location.pathname])
+
+  return null
 }
 
 async function syncConnectedStrava() {
@@ -379,12 +400,9 @@ function WaiverGate({ children }) {
 }
 
 export default function App() {
-  useEffect(() => {
-    track('app_open')
-  }, [])
-
   return (
     <BrowserRouter>
+      <AppOpenTelemetry />
       <ProProvider>
         <AutoHealthSync />
         <NativeNotificationNavigation />

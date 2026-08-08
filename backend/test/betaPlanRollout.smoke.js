@@ -18,7 +18,7 @@ const { RACE_PLAN_POLICY_V1 } = require('../src/lib/racePlanPolicy');
 const { resolveRunSchedule } = require('../src/lib/runSchedule');
 const rolloutScript = require('../scripts/upgrade-beta-race-plans');
 
-function run() {
+async function run() {
   const races = [
     { id: 'race-early', race_date: '2026-09-01', status: 'upcoming' },
     { id: 'race-a1', race_date: '2026-09-20', status: 'upcoming' },
@@ -128,29 +128,105 @@ function run() {
   }));
 
   assert.equal(rolloutScript.parseArgs([]).apply, false, 'rollout defaults to a no-write dry run');
-  assert.throws(() => rolloutScript.parseArgs(['--apply']), /--backup-dir is required/);
+  assert.throws(() => rolloutScript.parseArgs(['--apply']), /explicit --user-id/);
+  assert.throws(() => rolloutScript.parseArgs(['--apply', '--user-id=user-1']), /--backup-dir is required/);
   assert.throws(() => rolloutScript.parseArgs([
     '--apply',
+    '--user-id=user-1',
     `--backup-dir=${path.resolve(__dirname, '../rollout-backup')}`,
   ]), /outside the repository checkout/);
   const parsed = rolloutScript.parseArgs([
     '--apply',
     '--backup-dir=/tmp/forged-rollout-test',
     `--confirm=${RACE_PLAN_POLICY_V1.rollout.betaApplyConfirmation}`,
-    '--planning-date=2026-08-08',
-    '--timezone-offset-minutes=240',
     '--user-id=user-1',
     '--user-id=user-1',
   ]);
   assert.equal(parsed.apply, true);
   assert.deepEqual(parsed.userIds, ['user-1']);
-  assert.equal(parsed.planningDateLocal, '2026-08-08');
-  assert.equal(parsed.timezoneOffsetExplicit, true);
   assert.throws(
     () => rolloutScript.parseArgs(['--planning-date=2026-08-08']),
-    /requires an explicit --timezone-offset-minutes/,
+    /Operator-supplied planning clocks are not accepted/,
   );
-  assert.equal(rolloutScript.parseArgs([]).timezoneOffsetExplicit, false);
+  assert.throws(
+    () => rolloutScript.parseArgs(['--timezone-offset-minutes=240']),
+    /Operator-supplied planning clocks are not accepted/,
+  );
+
+  const now = new Date('2026-08-08T16:00:00.000Z');
+  const nativeProps = {
+    app_id: 'com.zordontech.forge',
+    app_version: '1.0.5',
+    build_number: 19,
+    native_runtime: true,
+    platform: 'ios_native',
+    timezone_offset_minutes: 240,
+  };
+  assert.deepEqual(
+    rolloutScript.clockFromNativeAppOpen({ props: nativeProps, created_at: '2026-08-08T15:00:00.000Z' }, now),
+    {
+      authoritative: true,
+      planningDateLocal: '2026-08-08',
+      timezoneOffsetMinutes: 240,
+      source: 'fresh_native_ios_app_open',
+    },
+  );
+  assert.equal(
+    rolloutScript.clockFromNativeAppOpen({ props: nativeProps, created_at: '2026-08-07T15:59:59.000Z' }, now),
+    null,
+    'native timezone authority expires after the observation window',
+  );
+  for (const malformedOffset of ['   ', '\t', false, [], {}]) {
+    assert.equal(
+      rolloutScript.clockFromNativeAppOpen({
+        props: { ...nativeProps, timezone_offset_minutes: malformedOffset },
+        created_at: '2026-08-08T15:00:00.000Z',
+      }, now),
+      null,
+      `rollout rejects malformed native timezone authority: ${JSON.stringify(malformedOffset)}`,
+    );
+  }
+  assert.ok(rolloutScript.clockFromNativeAppOpen({
+    props: { ...nativeProps, timezone_offset_minutes: 0 },
+    created_at: '2026-08-08T15:00:00.000Z',
+  }, now));
+  assert.ok(rolloutScript.clockFromNativeAppOpen({
+    props: { ...nativeProps, timezone_offset_minutes: '0' },
+    created_at: '2026-08-08T15:00:00.000Z',
+  }, now));
+
+  const candidateClockRow = {
+    planning_date_local: '2026-08-08',
+    timezone_offset_minutes: 240,
+    status: 'preview',
+    created_at: '2026-08-08T15:30:00.000Z',
+    expires_at: '2026-08-08T16:30:00.000Z',
+  };
+  assert.deepEqual(
+    rolloutScript.clockFromUnexpiredCandidate(candidateClockRow, now),
+    {
+      authoritative: true,
+      planningDateLocal: '2026-08-08',
+      timezoneOffsetMinutes: 240,
+      source: 'unexpired_current_candidate',
+    },
+  );
+  assert.equal(rolloutScript.clockFromUnexpiredCandidate({ ...candidateClockRow, status: 'applied' }, now), null);
+  assert.equal(rolloutScript.clockFromUnexpiredCandidate({ ...candidateClockRow, expires_at: now.toISOString() }, now), null);
+  assert.equal(rolloutScript.clockFromUnexpiredCandidate({ ...candidateClockRow, planning_date_local: '2026-08-07' }, now), null);
+
+  const nativeClock = await rolloutScript.planningClockForUser('user-1', {}, now, {
+    dbAll: async (sql) => sql.includes('FROM events')
+      ? [{ props: nativeProps, created_at: '2026-08-08T15:00:00.000Z' }]
+      : [],
+  });
+  assert.equal(nativeClock.source, 'fresh_native_ios_app_open');
+  const candidateClock = await rolloutScript.planningClockForUser('user-1', {}, now, {
+    dbAll: async (sql) => sql.includes('FROM events') ? [] : [candidateClockRow],
+  });
+  assert.equal(candidateClock.source, 'unexpired_current_candidate');
+  const missingClock = await rolloutScript.planningClockForUser('user-1', {}, now, { dbAll: async () => [] });
+  assert.equal(missingClock.authoritative, false);
 
   const rawUserId = 'private-beta-user-id';
   const entry = redactedBackupEntry({
@@ -206,6 +282,9 @@ function run() {
   assert.match(scriptSource, /race\.user_id=u\.id AND race\.status='upcoming'/);
   assert.match(scriptSource, /WHERE user_id=\? AND status='upcoming' AND race_date>=\?/);
   assert.match(scriptSource, /skipReason: 'missing_timezone_authority'/);
+  assert.match(scriptSource, /event_name='app_open'/);
+  assert.match(scriptSource, /status='preview' AND expires_at>\?/);
+  assert.doesNotMatch(scriptSource, /operator_default_offset|operator_explicit_offset/);
   assert.match(scriptSource, /previewPlanForUser\(row\.id, request, \{ store: false \}\)/);
   assert.match(scriptSource, /writePrivateJson\(options\.backupDir, 'pre-apply'/);
   assert.match(scriptSource, /previewPlanForUser\(context\.userId, context\.request, \{ store: true \}\)/);
@@ -236,4 +315,7 @@ function run() {
   console.log('BETA PLAN ROLLOUT SMOKE OK');
 }
 
-run();
+run().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

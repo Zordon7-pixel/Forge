@@ -218,6 +218,21 @@ if (process.argv.includes('--semantic-acceptance')) {
     { valid: false, reason: 'INVALID_TIMEZONE_OFFSET' },
     'blank phone timezone authority fails closed'
   );
+  for (const malformedOffset of ['   ', '\t', false, [], {}]) {
+    assert.deepEqual(
+      acceptPlanningClock({ planningDateLocal: '2026-08-08', timezoneOffsetMinutes: malformedOffset }, '2026-08-08'),
+      { valid: false, reason: 'INVALID_TIMEZONE_OFFSET' },
+      `non-integer timezone authority fails closed: ${JSON.stringify(malformedOffset)}`
+    );
+  }
+  assert.deepEqual(
+    acceptPlanningClock({ planningDateLocal: '2026-08-08', timezoneOffsetMinutes: 0 }, '2026-08-08'),
+    { valid: true, planningDateLocal: '2026-08-08', timezoneOffsetMinutes: 0 }
+  );
+  assert.deepEqual(
+    acceptPlanningClock({ planningDateLocal: '2026-08-08', timezoneOffsetMinutes: '0' }, '2026-08-08'),
+    { valid: true, planningDateLocal: '2026-08-08', timezoneOffsetMinutes: 0 }
+  );
   assert.equal(canonicalHash({ b: 2, a: 1 }), canonicalHash({ a: 1, b: 2 }));
   assert.deepEqual(trainingEvidence.validateRegistry(), { valid: true, errors: [] });
 

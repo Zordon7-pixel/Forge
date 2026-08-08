@@ -151,14 +151,22 @@ function mondayFor(value) {
   return addDays(value, -offset);
 }
 
+function parseStrictInteger(value) {
+  if (typeof value === 'number') return Number.isSafeInteger(value) ? value : null;
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim();
+  if (!/^[+-]?\d+$/.test(normalized)) return null;
+  const parsed = Number(normalized);
+  return Number.isSafeInteger(parsed) ? parsed : null;
+}
+
 function acceptPlanningClock(input = {}, serverDateISO) {
   const planningDateLocal = String(input.planningDateLocal || input.planning_date_local || '').trim();
   const rawTimezoneOffset = input.timezoneOffsetMinutes ?? input.timezone_offset_minutes;
-  const timezoneOffsetMinutes = Number(rawTimezoneOffset);
+  const timezoneOffsetMinutes = parseStrictInteger(rawTimezoneOffset);
   const serverDate = parseISODate(serverDateISO) ? serverDateISO : toISODate(new Date());
   if (!parseISODate(planningDateLocal)) return { valid: false, reason: 'INVALID_PLANNING_DATE' };
-  if (rawTimezoneOffset === undefined || rawTimezoneOffset === null || rawTimezoneOffset === ''
-    || !Number.isInteger(timezoneOffsetMinutes)
+  if (timezoneOffsetMinutes === null
     || Math.abs(timezoneOffsetMinutes) > RACE_PLAN_POLICY_V1.calendar.maximumTimezoneOffsetMinutes) {
     return { valid: false, reason: 'INVALID_TIMEZONE_OFFSET' };
   }
@@ -249,6 +257,7 @@ module.exports = {
   longRunIdentityFloor,
   mondayFor,
   peakLongRunDemand,
+  parseStrictInteger,
   raceCategory,
   requiredPeakWeeklyMiles,
   taperWeeksForDistance,

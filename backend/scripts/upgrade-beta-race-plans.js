@@ -4,10 +4,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
 
-const { dbAll, dbGet, pool } = require('../src/db');
+const { dbAll, pool } = require('../src/db');
 const plansRouter = require('../src/routes/plans');
 const { buildPlanDiagnosticBundle } = require('../src/lib/racePlanDiagnostics');
-const { addDays } = require('../src/lib/racePlanPolicy');
+const { RACE_PLAN_POLICY_V1, addDays, parseStrictInteger } = require('../src/lib/racePlanPolicy');
 const {
   assertApplyAuthorized,
   buildBackupManifest,
@@ -21,6 +21,9 @@ const {
 } = require('../src/lib/betaPlanRollout');
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
+const FORGED_IOS_APP_ID = 'com.zordontech.forge';
+const NATIVE_CLOCK_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const CLOCK_FUTURE_SKEW_MS = 5 * 60 * 1000;
 const SAFE_FAILURE_CODES = new Set([
   'ACTIVE_PLAN_MISSING',
   'APPLY_RESPONSE_INVALID',
@@ -77,39 +80,26 @@ function parseArgs(argv) {
     apply: false,
     backupDir: '',
     confirmation: '',
-    defaultTimezoneOffsetMinutes: new Date().getTimezoneOffset(),
-    planningDateLocal: '',
-    timezoneOffsetExplicit: false,
     userIds: [],
   };
   for (const arg of argv) {
     if (arg === '--apply') options.apply = true;
     else if (arg.startsWith('--confirm=')) options.confirmation = arg.slice('--confirm='.length);
     else if (arg.startsWith('--backup-dir=')) options.backupDir = path.resolve(arg.slice('--backup-dir='.length));
-    else if (arg.startsWith('--planning-date=')) options.planningDateLocal = arg.slice('--planning-date='.length);
-    else if (arg.startsWith('--timezone-offset-minutes=')) {
-      options.defaultTimezoneOffsetMinutes = Number(arg.slice('--timezone-offset-minutes='.length));
-      options.timezoneOffsetExplicit = true;
+    else if (arg.startsWith('--planning-date=') || arg.startsWith('--timezone-offset-minutes=')) {
+      throw new Error('Operator-supplied planning clocks are not accepted; use fresh authenticated iOS telemetry');
     }
     else if (arg.startsWith('--user-id=')) options.userIds.push(arg.slice('--user-id='.length).trim());
     else throw new Error(`Unknown argument: ${arg}`);
   }
-  if (options.planningDateLocal && !/^\d{4}-\d{2}-\d{2}$/.test(options.planningDateLocal)) {
-    throw new Error('--planning-date must use YYYY-MM-DD');
-  }
-  if (!Number.isFinite(options.defaultTimezoneOffsetMinutes)
-    || options.defaultTimezoneOffsetMinutes < -840
-    || options.defaultTimezoneOffsetMinutes > 840) {
-    throw new Error('--timezone-offset-minutes must be between -840 and 840');
-  }
-  if (options.planningDateLocal && !options.timezoneOffsetExplicit) {
-    throw new Error('--planning-date requires an explicit --timezone-offset-minutes');
+  options.userIds = [...new Set(options.userIds.filter(Boolean))];
+  if (options.apply && options.userIds.length === 0) {
+    throw new Error('At least one explicit --user-id is required with --apply');
   }
   if (options.apply && !options.backupDir) {
     throw new Error('--backup-dir is required with --apply so the redacted rollback manifest is stored outside the checkout');
   }
   if (options.apply) options.backupDir = assertExternalBackupDirectory(options.backupDir);
-  options.userIds = [...new Set(options.userIds.filter(Boolean))];
   return options;
 }
 
@@ -135,38 +125,105 @@ async function eligibleTesterRows(options) {
   );
 }
 
-async function planningClockForUser(userId, options, now) {
-  if (options.planningDateLocal) {
-    return {
-      authoritative: true,
-      planningDateLocal: options.planningDateLocal,
-      timezoneOffsetMinutes: options.defaultTimezoneOffsetMinutes,
-      source: 'operator_explicit_offset',
-    };
+function parseJsonObject(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+  if (typeof value !== 'string') return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
   }
-  const recent = await dbGet(
-    `SELECT planning_date_local, timezone_offset_minutes
-     FROM plan_generation_candidates
-     WHERE user_id=?
-     ORDER BY created_at DESC LIMIT 1`,
-    [userId]
-  );
-  if (!recent && !options.timezoneOffsetExplicit) {
-    return {
-      authoritative: false,
-      planningDateLocal: null,
-      source: 'missing_timezone_authority',
-      timezoneOffsetMinutes: null,
-    };
+}
+
+function timestampMs(value) {
+  const parsed = value instanceof Date ? value.getTime() : Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function clockFromNativeAppOpen(row, now = new Date()) {
+  const nowMs = timestampMs(now);
+  const createdAtMs = timestampMs(row?.created_at);
+  const props = parseJsonObject(row?.props);
+  if (nowMs === null || createdAtMs === null || !props) return null;
+  if (createdAtMs > nowMs + CLOCK_FUTURE_SKEW_MS || nowMs - createdAtMs > NATIVE_CLOCK_MAX_AGE_MS) return null;
+
+  const timezoneOffsetMinutes = parseStrictInteger(props.timezone_offset_minutes);
+  const buildNumber = parseStrictInteger(props.build_number);
+  if (props.platform !== 'ios_native'
+    || props.native_runtime !== true
+    || props.app_id !== FORGED_IOS_APP_ID
+    || buildNumber === null
+    || buildNumber <= 0
+    || timezoneOffsetMinutes === null
+    || Math.abs(timezoneOffsetMinutes) > RACE_PLAN_POLICY_V1.calendar.maximumTimezoneOffsetMinutes) {
+    return null;
   }
-  const offset = Number.isFinite(Number(recent?.timezone_offset_minutes))
-    ? Number(recent.timezone_offset_minutes)
-    : options.defaultTimezoneOffsetMinutes;
+
   return {
     authoritative: true,
-    planningDateLocal: localDateForOffset(now, offset),
-    timezoneOffsetMinutes: offset,
-    source: recent ? 'latest_candidate_offset' : 'operator_default_offset',
+    planningDateLocal: localDateForOffset(now, timezoneOffsetMinutes),
+    timezoneOffsetMinutes,
+    source: 'fresh_native_ios_app_open',
+  };
+}
+
+function clockFromUnexpiredCandidate(row, now = new Date()) {
+  const nowMs = timestampMs(now);
+  const createdAtMs = timestampMs(row?.created_at);
+  const expiresAtMs = timestampMs(row?.expires_at);
+  const timezoneOffsetMinutes = parseStrictInteger(row?.timezone_offset_minutes);
+  if (nowMs === null
+    || createdAtMs === null
+    || expiresAtMs === null
+    || row?.status !== 'preview'
+    || createdAtMs > nowMs + CLOCK_FUTURE_SKEW_MS
+    || expiresAtMs <= nowMs
+    || timezoneOffsetMinutes === null
+    || Math.abs(timezoneOffsetMinutes) > RACE_PLAN_POLICY_V1.calendar.maximumTimezoneOffsetMinutes) {
+    return null;
+  }
+  const planningDateLocal = localDateForOffset(now, timezoneOffsetMinutes);
+  if (row.planning_date_local !== planningDateLocal) return null;
+  return {
+    authoritative: true,
+    planningDateLocal,
+    timezoneOffsetMinutes,
+    source: 'unexpired_current_candidate',
+  };
+}
+
+async function planningClockForUser(userId, _options, now, dependencies = {}) {
+  const queryAll = dependencies.dbAll || dbAll;
+  const nativeEvents = await queryAll(
+    `SELECT props, created_at
+     FROM events
+     WHERE user_id=? AND event_name='app_open'
+     ORDER BY created_at DESC LIMIT 20`,
+    [userId]
+  );
+  for (const row of nativeEvents) {
+    const clock = clockFromNativeAppOpen(row, now);
+    if (clock) return clock;
+  }
+
+  const candidates = await queryAll(
+    `SELECT planning_date_local, timezone_offset_minutes, status, created_at, expires_at
+     FROM plan_generation_candidates
+     WHERE user_id=? AND status='preview' AND expires_at>?
+     ORDER BY created_at DESC LIMIT 20`,
+    [userId, new Date(now).toISOString()]
+  );
+  for (const row of candidates) {
+    const clock = clockFromUnexpiredCandidate(row, now);
+    if (clock) return clock;
+  }
+
+  return {
+    authoritative: false,
+    planningDateLocal: null,
+    source: 'missing_timezone_authority',
+    timezoneOffsetMinutes: null,
   };
 }
 
@@ -491,6 +548,8 @@ module.exports = {
   assertExternalBackupDirectory,
   assertPlanningDateStable,
   assertSupportedCandidate,
+  clockFromNativeAppOpen,
+  clockFromUnexpiredCandidate,
   eligibleTesterRows,
   parseArgs,
   planningClockForUser,

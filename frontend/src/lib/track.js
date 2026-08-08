@@ -1,7 +1,7 @@
 import api from './api'
 import { getToken } from './tokenStore'
 
-const APP_OPEN_KEY = 'forge_track_app_open'
+const APP_OPEN_KEY = 'forge_track_app_open_native_v1'
 
 const ALLOWED_EVENTS = new Set([
   'app_open',
