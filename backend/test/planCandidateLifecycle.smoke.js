@@ -189,14 +189,16 @@ async function run() {
   assert.match(source, /SELECT \* FROM plan_generation_candidates WHERE id=\? AND user_id=\? FOR UPDATE/);
   assert.match(source, /WHERE id=\? AND user_id=\? AND status='preview'/);
   assert.match(source, /WHERE id=\? AND user_id=\? AND status='active'/);
-  assert.match(source, /active\s*\?\s*addPolicyDays\(row\.planning_date_local, 1\)/);
+  assert.equal(plansRouter._test.candidateEffectiveFrom({ source: 'assigned' }, '2026-08-08'), '2026-08-09');
+  assert.equal(plansRouter._test.candidateEffectiveFrom({ source: 'legacy' }, '2026-08-08'), '2026-08-08');
+  assert.match(source, /candidateEffectiveFrom\(active, row\.planning_date_local\)/);
   assert.match(source, /row\.status === 'applied'/);
   assert.match(source, /CANDIDATE_DETERMINISM_MISMATCH/);
   assert.match(source, /storedFeasibility === 'unsafe'[\s\S]*CANDIDATE_UNSAFE/);
   assert.match(source, /!\['supported', 'stretch'\]\.includes\(storedFeasibility\)[\s\S]*CANDIDATE_FEASIBILITY_MISSING/);
   assert.match(source, /includeFuture: true/);
 
-  console.log('PLAN CANDIDATE LIFECYCLE SMOKE OK (35)');
+  console.log('PLAN CANDIDATE LIFECYCLE SMOKE OK (37)');
 }
 
 run().catch((error) => {

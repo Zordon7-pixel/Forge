@@ -1,5 +1,6 @@
 const { dbGet } = require('../db');
 const planSchema = require('./planSchema');
+const { resolveActivePlanForDate } = require('./planAssignmentLifecycle');
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const EXPLICIT_NO_PLAN_MATCH = 'explicit_none';
@@ -172,22 +173,10 @@ function allocatePlanSessionRunEvidence(sessions, runs, {
 
 async function findPlannedRunForDate(userId, date, { get = dbGet } = {}) {
   if (!userId || !ISO_DATE.test(String(date || ''))) return null;
-  const assigned = await get(
-    `SELECT tp.id, tp.plan_data, tp.plan_json
-     FROM user_plans up
-     JOIN training_plans tp ON tp.id=up.plan_id
-     WHERE up.user_id=? AND up.status='active'
-     ORDER BY up.created_at DESC
-     LIMIT 1`,
-    [userId]
-  );
-  if (assigned) return matchPlannedRunInPlan(parsePlanRow(assigned), date, assigned.id);
-
-  const legacy = await get(
-    'SELECT id, plan_data, plan_json FROM training_plans WHERE user_id=? ORDER BY created_at DESC LIMIT 1',
-    [userId]
-  );
-  return legacy ? matchPlannedRunInPlan(parsePlanRow(legacy), date, legacy.id) : null;
+  const active = await resolveActivePlanForDate(userId, get, { planningDateLocal: date });
+  return active
+    ? matchPlannedRunInPlan(parsePlanRow(active.row), date, active.row.id || active.row.plan_id)
+    : null;
 }
 
 module.exports = {

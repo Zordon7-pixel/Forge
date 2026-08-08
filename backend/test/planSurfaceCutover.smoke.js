@@ -47,6 +47,22 @@ function createDatabase() {
 }
 
 async function run() {
+  assert.equal(
+    plansRouter._test.candidateEffectiveFrom({ source: 'assigned' }, '2026-08-08'),
+    '2026-08-09',
+    'an assigned-plan replacement protects the current calendar day'
+  );
+  assert.equal(
+    plansRouter._test.candidateEffectiveFrom({ source: 'legacy' }, '2026-08-08'),
+    '2026-08-08',
+    'a legacy replacement without assignment lineage starts on the visible planning day'
+  );
+  assert.equal(
+    plansRouter._test.candidateEffectiveFrom(null, '2026-08-08'),
+    '2026-08-08',
+    'a first plan starts on the visible planning day'
+  );
+
   for (const [surface, resolve] of [
     ['Train', (database) => plansRouter._test.getActivePlanForUser(ownerId, database, { planningDateLocal: '2026-08-08' })],
     ['Check-In', (database) => checkinRouter._test.getActivePlanForUser(ownerId, database, { planningDateLocal: '2026-08-08' })],
@@ -100,7 +116,7 @@ async function run() {
   });
   assert.match(logged.join('\n'), /database secret and stack detail/, 'internal failures remain available in server logs');
 
-  console.log('PLAN SURFACE CUTOVER SMOKE OK (13)');
+  console.log('PLAN SURFACE CUTOVER SMOKE OK (16)');
 }
 
 run().catch((err) => {

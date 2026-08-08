@@ -70,11 +70,54 @@ const queries = [];
 findPlannedRunForDate('user-1', '2026-07-14', {
   get: async (sql, params) => {
     queries.push({ sql, params });
-    return { id: 'plan-1', plan_data: plan };
+    return {
+      id: 'plan-1',
+      user_plan_id: 'up-1',
+      effective_from: '2026-07-14',
+      plan_data: plan,
+    };
   },
-}).then((found) => {
+}).then(async (found) => {
   check(found?.sessionId === 'run-1', 'active assigned plan resolves through injected DB lookup')
-  check(queries[0].sql.includes('up.user_id=?') && queries[0].params[0] === 'user-1', 'active-plan lookup is owner scoped')
+  check(/up\.user_id\s*=\s*\?/.test(queries[0].sql) && queries[0].params[0] === 'user-1', 'active-plan lookup is owner scoped')
+
+  const predecessorPlan = JSON.parse(JSON.stringify(plan));
+  predecessorPlan.weeks[0].days[0].sessions[0].title = 'Protected predecessor run';
+  const replacementPlan = {
+    schemaVersion: 2,
+    weeks: [{
+      days: [{
+        date: '2026-07-15',
+        sessions: [{ id: 'replacement-run', kind: 'run', title: 'Replacement run' }],
+      }],
+    }],
+  };
+  const cutoverQueries = [];
+  const cutover = await findPlannedRunForDate('user-1', '2026-07-14', {
+    get: async (sql, params) => {
+      cutoverQueries.push({ sql, params });
+      if (/up\.status\s*=\s*'active'/.test(sql)) {
+        return {
+          id: 'plan-new',
+          user_plan_id: 'up-new',
+          effective_from: '2026-07-15',
+          supersedes_user_plan_id: 'up-old',
+          plan_data: replacementPlan,
+        };
+      }
+      if (/up\.id\s*=\s*\?/.test(sql) && params[0] === 'up-old') {
+        return {
+          id: 'plan-old',
+          user_plan_id: 'up-old',
+          effective_from: '2026-07-01',
+          plan_data: predecessorPlan,
+        };
+      }
+      return null;
+    },
+  });
+  check(cutover?.planId === 'plan-old' && cutover?.title === 'Protected predecessor run', 'rollout-day run matching follows the protected predecessor until replacement cutover')
+  check(cutoverQueries.some(({ sql, params }) => /up\.id\s*=\s*\?/.test(sql) && params[0] === 'up-old' && params[1] === 'user-1'), 'predecessor lookup remains owner scoped')
 
   const importSource = fs.readFileSync(path.join(__dirname, '../src/routes/import.js'), 'utf8');
   const runsSource = fs.readFileSync(path.join(__dirname, '../src/routes/runs.js'), 'utf8');

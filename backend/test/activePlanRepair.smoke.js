@@ -26,11 +26,13 @@ async function run() {
   assert.equal(repair.orderAssignments(rows)[0].id, 'newer');
 
   const writes = [];
+  let lockedSelect = '';
   const result = await repair.repairDuplicateActivePlansForUser('a', async (userId, fn, options) => {
     assert.equal(userId, 'a');
     assert.equal(options.userLock, 'update');
     return fn({
       all: async (sql, params) => {
+        lockedSelect = sql;
         assert.match(sql, /FOR UPDATE/);
         assert.deepEqual(params, ['a']);
         return rows;
@@ -42,12 +44,13 @@ async function run() {
     });
   });
   assert.deepEqual(result, { activeCount: 1, repaired: 1 });
-  assert.equal(writes.length, 2);
+  assert.equal(writes.length, 1);
   assert.ok(writes.every((write) => /WHERE id=\? AND user_id=\? AND status='active'/.test(write.sql)));
-  assert.match(writes[1].sql, /SET status='superseded'/);
-  assert.equal(writes[0].params[1], 'older', 'newest active assignment links to the immediate predecessor');
+  assert.match(writes[0].sql, /SET status='superseded'/);
+  assert.deepEqual(writes[0].params, ['older', 'a'], 'repair leaves the deterministic newest assignment active and demotes only the older duplicate');
+  assert.doesNotMatch(lockedSelect, /plan_version|lineage_id|supersedes_user_plan_id|effective_from/, 'repair remains usable before the new lifecycle columns exist');
 
-  console.log('ACTIVE PLAN REPAIR SMOKE OK (12)');
+  console.log('ACTIVE PLAN REPAIR SMOKE OK (13)');
 }
 
 run().catch((err) => {

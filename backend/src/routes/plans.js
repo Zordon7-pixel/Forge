@@ -1661,6 +1661,7 @@ function publicCandidatePayload(candidate) {
   return {
     candidate: {
       candidate_hash: candidate.candidateHash,
+      effective_from: candidate.effectiveFrom,
       expires_at: candidate.expiresAt,
       id: candidate.id,
       planning_date_local: candidate.planningDateLocal,
@@ -1669,6 +1670,7 @@ function publicCandidatePayload(candidate) {
     },
     candidate_hash: candidate.candidateHash,
     candidate_id: candidate.id,
+    effective_from: candidate.effectiveFrom,
     generation_source: 'race_plan_candidate_engine',
     replaces_active_plan: Boolean(candidate.replacesActivePlan),
     plan: {
@@ -1680,6 +1682,12 @@ function publicCandidatePayload(candidate) {
     },
     requires_apply: true,
   };
+}
+
+function candidateEffectiveFrom(active, planningDateLocal) {
+  return active?.source === 'assigned'
+    ? addPolicyDays(planningDateLocal, 1)
+    : planningDateLocal;
 }
 
 async function pruneExpiredPlanCandidates(tx, userId, {
@@ -1716,6 +1724,7 @@ async function previewPlanForUser(userId, body = {}, { store = true } = {}) {
   const expiresAt = new Date(Date.now() + (RACE_PLAN_POLICY_V1.candidate.ttlHours * 60 * 60 * 1000)).toISOString();
   const response = {
     candidateHash,
+    effectiveFrom: candidateEffectiveFrom(initial.active, clock.planningDateLocal),
     expiresAt,
     id: candidateId,
     meta: initial.meta,
@@ -1889,9 +1898,7 @@ async function applyPlanCandidate(userId, candidateId, body = {}) {
       if (preferenceResult.changes === 0) throw new Error('Plan preferences update failed');
     }
 
-    const effectiveFrom = active
-      ? addPolicyDays(row.planning_date_local, 1)
-      : row.planning_date_local;
+    const effectiveFrom = candidateEffectiveFrom(active, row.planning_date_local);
     const planId = uuidv4();
     const userPlanId = uuidv4();
     const replacementLineage = replacementLineageForActivePlan(active, userPlanId);
@@ -3832,6 +3839,7 @@ router.post('/generate-for-race/:raceId', auth, requirePremium('Race Programs'),
 
 router._test = {
   applyPlanCandidate,
+  candidateEffectiveFrom,
   getActivePlanForMutation,
   getActivePlanForUser,
   getTimezoneOffsetFromRequest,

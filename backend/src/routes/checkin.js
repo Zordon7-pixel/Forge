@@ -5,7 +5,7 @@ const { deriveAction, buildPatch, buildDirective, estimateWorkoutMinutes } = req
 const dailyExecution = require('../lib/dailyExecution');
 const planSchema = require('../lib/planSchema');
 const { resolveActivePlanForDate } = require('../lib/planAssignmentLifecycle');
-const { isISODate, requestPlanningDate } = require('../lib/requestPlanningDate');
+const { isPlanningDateAllowed, requestPlanningDate } = require('../lib/requestPlanningDate');
 
 const ALLOWED_LIFE_FLAGS = new Set(['long_shift', 'sore', 'traveling', 'sick', 'injured', 'stressed', 'all_good']);
 
@@ -161,8 +161,8 @@ router.post('/', auth, async (req, res) => {
 
     const { feeling, legs, drive, time_available, life_flags } = validation.value;
     const parsedSleep = null;
-    if (req.body?.date !== undefined && req.body?.date !== null && !isISODate(req.body.date)) {
-      return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
+    if (req.body?.date !== undefined && req.body?.date !== null && !isPlanningDateAllowed(req.body.date)) {
+      return res.status(400).json({ error: 'date must be the current phone date' });
     }
     const today = requestPlanningDate(req, { bodyKeys: ['date'], queryKeys: [] });
 
@@ -229,8 +229,8 @@ router.post('/preview', auth, async (req, res) => {
       return res.json({ headline: null, adjustment: null, drivers: [] });
     }
 
-    if (req.body?.date !== undefined && req.body?.date !== null && !isISODate(req.body.date)) {
-      return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
+    if (req.body?.date !== undefined && req.body?.date !== null && !isPlanningDateAllowed(req.body.date)) {
+      return res.status(400).json({ error: 'date must be the current phone date' });
     }
     const planningDateLocal = requestPlanningDate(req, { bodyKeys: ['date'], queryKeys: [] });
     const directive = await computeCheckinDirective(
@@ -253,8 +253,8 @@ router.post('/preview', auth, async (req, res) => {
 
 router.get('/today', auth, async (req, res) => {
   try {
-    if (req.query?.date !== undefined && req.query?.date !== null && !isISODate(req.query.date)) {
-      return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
+    if (req.query?.date !== undefined && req.query?.date !== null && !isPlanningDateAllowed(req.query.date)) {
+      return res.status(400).json({ error: 'date must be the current phone date' });
     }
     const today = requestPlanningDate(req, { bodyKeys: [], queryKeys: ['date'] });
     const checkin = await dbGet('SELECT * FROM daily_checkins WHERE user_id=? AND checkin_date=?', [req.user.id, today]);

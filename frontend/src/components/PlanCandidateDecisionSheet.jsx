@@ -32,6 +32,15 @@ function decisionCopy(feasibility) {
   }
 }
 
+function displayDate(value) {
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(String(value || ''))
+    ? new Date(`${value}T12:00:00`)
+    : null
+  return date && !Number.isNaN(date.getTime())
+    ? date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+    : null
+}
+
 export default function PlanCandidateDecisionSheet() {
   const navigate = useNavigate()
   const dialogRef = useRef(null)
@@ -75,6 +84,7 @@ export default function PlanCandidateDecisionSheet() {
   const copy = decisionCopy(feasibility)
   const reasons = Array.isArray(plan?.reasons) ? plan.reasons.slice(0, 3) : []
   const canApply = feasibility === 'supported' || feasibility === 'stretch'
+  const effectiveDate = displayDate(preview?.effective_from || preview?.candidate?.effective_from)
 
   if (!preview) return null
 
@@ -112,6 +122,11 @@ export default function PlanCandidateDecisionSheet() {
           {feasibility === 'unsafe' ? <AlertTriangle size={22} /> : <ShieldCheck size={22} />}
         </div>
         <p className="mt-3 text-sm leading-relaxed" style={{ color: 'var(--text-muted)' }}>{copy.summary}</p>
+        {effectiveDate && (
+          <p className="mt-2 text-sm font-bold" style={{ color: 'var(--text-primary)' }}>
+            {preview?.replaces_active_plan ? `Your current plan stays in place today. This plan starts ${effectiveDate}.` : `This plan starts ${effectiveDate}.`}
+          </p>
+        )}
 
         {reasons.length > 0 && (
           <div className="mt-4 rounded-xl p-4" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>

@@ -1,6 +1,7 @@
 const { Pool, types } = require('pg');
 const { AsyncLocalStorage } = require('node:async_hooks');
 const { createPlanningInputMutationRunner } = require('../lib/planningRevision');
+const { ensureUniqueActiveUserPlanIndex } = require('./activePlanIndex');
 
 // Parse int8 (bigint) as JavaScript integer — COUNT(*) returns int8 in PG
 types.setTypeParser(20, parseInt);
@@ -152,8 +153,10 @@ const withPlanningInputMutation = createPlanningInputMutationRunner((userId, fn)
 
 async function initDb() {
   const client = await pool.connect();
+  let transactionOpen = false;
   try {
     await client.query('BEGIN');
+    transactionOpen = true;
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS users (
@@ -491,7 +494,6 @@ async function initDb() {
     await client.query('ALTER TABLE user_plans ADD COLUMN IF NOT EXISTS effective_from TEXT');
     await client.query('UPDATE user_plans SET lineage_id=id WHERE lineage_id IS NULL');
     await client.query('UPDATE user_plans SET effective_from=started_at WHERE effective_from IS NULL');
-    await client.query("CREATE UNIQUE INDEX IF NOT EXISTS idx_user_plans_one_active_per_user ON user_plans(user_id) WHERE status='active'");
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS plan_generation_candidates (
@@ -1495,9 +1497,11 @@ async function initDb() {
     }
 
     await client.query('COMMIT');
+    transactionOpen = false;
+    await ensureUniqueActiveUserPlanIndex((sql, params = []) => client.query(sql, params));
     console.log('[DB] PostgreSQL schema ready');
   } catch (err) {
-    await client.query('ROLLBACK');
+    if (transactionOpen) await client.query('ROLLBACK');
     throw err;
   } finally {
     client.release();

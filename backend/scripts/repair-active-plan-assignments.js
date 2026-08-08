@@ -6,6 +6,7 @@ const path = require('node:path');
 require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
 
 const { dbAll, pool, withUserMutation } = require('../src/db');
+const { ensureUniqueActiveUserPlanIndex } = require('../src/db/activePlanIndex');
 
 const APPLY_CONFIRMATION = 'REPAIR_DUPLICATE_ACTIVE_PLANS';
 const REPO_ROOT = path.resolve(__dirname, '../..');
@@ -86,38 +87,22 @@ function orderAssignments(rows = []) {
 async function repairDuplicateActivePlansForUser(userId, mutationRunner = withUserMutation) {
   return mutationRunner(userId, async (tx) => {
     const rows = orderAssignments(await tx.all(
-      `SELECT id, user_id, plan_id, status, started_at, created_at, plan_version,
-              lineage_id, supersedes_user_plan_id, effective_from
+      `SELECT id, user_id, plan_id, status, started_at, created_at
        FROM user_plans
        WHERE user_id=? AND status='active'
-       ORDER BY plan_version DESC, effective_from DESC NULLS LAST, created_at DESC, id DESC
+       ORDER BY created_at DESC, id DESC
        FOR UPDATE`,
       [userId]
     ));
     if (rows.length <= 1) return { activeCount: rows.length, repaired: 0 };
 
-    const keeper = rows[0];
-    const lineageId = keeper.lineage_id || keeper.id;
-    const immediatePredecessor = rows[1]?.id || null;
-    const keeperUpdate = await tx.run(
-      `UPDATE user_plans
-       SET lineage_id=COALESCE(lineage_id, ?),
-           supersedes_user_plan_id=COALESCE(supersedes_user_plan_id, ?)
-       WHERE id=? AND user_id=? AND status='active'`,
-      [lineageId, immediatePredecessor, keeper.id, userId]
-    );
-    if (keeperUpdate.changes !== 1) throw new Error('Active plan repair lost the selected keeper');
-
     for (let index = 1; index < rows.length; index += 1) {
       const row = rows[index];
-      const predecessorId = rows[index + 1]?.id || null;
       const result = await tx.run(
         `UPDATE user_plans
-         SET status='superseded',
-             lineage_id=COALESCE(lineage_id, ?),
-             supersedes_user_plan_id=COALESCE(supersedes_user_plan_id, ?)
+         SET status='superseded'
          WHERE id=? AND user_id=? AND status='active'`,
-        [lineageId, predecessorId, row.id, userId]
+        [row.id, userId]
       );
       if (result.changes !== 1) throw new Error('Active plan repair could not demote a duplicate assignment');
     }
@@ -129,11 +114,15 @@ function writeBackup(directory, rowsByUser) {
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
   fs.chmodSync(directory, 0o700);
   const filename = path.join(directory, `active-plan-repair-${new Date().toISOString().replace(/[:.]/g, '-')}.json`);
-  fs.writeFileSync(filename, `${JSON.stringify({ created_at: new Date().toISOString(), rows: rowsByUser }, null, 2)}\n`, {
-    encoding: 'utf8',
-    flag: 'wx',
-    mode: 0o600,
-  });
+  const descriptor = fs.openSync(filename, 'wx', 0o600);
+  try {
+    fs.writeFileSync(descriptor, `${JSON.stringify({ created_at: new Date().toISOString(), rows: rowsByUser }, null, 2)}\n`, 'utf8');
+    fs.fsyncSync(descriptor);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+  const directoryDescriptor = fs.openSync(directory, 'r');
+  try { fs.fsyncSync(directoryDescriptor); } finally { fs.closeSync(directoryDescriptor); }
   return filename;
 }
 
@@ -141,10 +130,9 @@ async function loadRepairBackupRows(duplicates) {
   const rows = [];
   for (const duplicate of duplicates) {
     const assignments = await dbAll(
-      `SELECT id, user_id, plan_id, status, started_at, created_at, plan_version,
-              lineage_id, supersedes_user_plan_id, effective_from
+      `SELECT id, user_id, plan_id, status, started_at, created_at
        FROM user_plans WHERE user_id=? AND status='active'
-       ORDER BY plan_version DESC, created_at DESC, id DESC`,
+       ORDER BY created_at DESC, id DESC`,
       [duplicate.user_id]
     );
     rows.push({ target_ref: targetRef(duplicate.user_id), assignments });
@@ -161,7 +149,13 @@ async function run() {
     target_ref: targetRef(row.user_id),
   })));
   if (!duplicates.length) {
-    console.log(JSON.stringify({ duplicates: 0, mode: 'preflight', writes: 0 }));
+    if (!options.apply) {
+      console.log(JSON.stringify({ duplicates: 0, mode: 'preflight', writes: 0 }));
+      return;
+    }
+    const backupFile = writeBackup(options.backupDir, []);
+    await ensureUniqueActiveUserPlanIndex((sql, params = []) => pool.query(sql, params));
+    console.log(JSON.stringify({ backup_file: backupFile, duplicates: 0, index_ready: true, mode: 'repair_complete', repaired: 0 }));
     return;
   }
   if (!options.apply) {
@@ -179,7 +173,8 @@ async function run() {
   }
   const remaining = await findDuplicateActivePlans(dbAll, options.userIds);
   if (remaining.length) throw new Error('Duplicate active plans remain after repair');
-  console.log(JSON.stringify({ backup_file: backupFile, duplicates: duplicates.length, mode: 'repair_complete', repaired }));
+  await ensureUniqueActiveUserPlanIndex((sql, params = []) => pool.query(sql, params));
+  console.log(JSON.stringify({ backup_file: backupFile, duplicates: duplicates.length, index_ready: true, mode: 'repair_complete', repaired }));
 }
 
 if (require.main === module) {

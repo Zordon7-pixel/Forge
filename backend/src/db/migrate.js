@@ -3,26 +3,9 @@ const fs = require('fs');
 const path = require('path');
 const { seedRaceCatalog } = require('./race-catalog-seed');
 const { seedShoeCatalog } = require('./shoe-catalog-seed');
+const { ensureUniqueActiveUserPlanIndex: ensureActivePlanIndex } = require('./activePlanIndex');
 
-async function ensureUniqueActiveUserPlanIndex(query = pg.query) {
-  const duplicateResult = await query(`
-    SELECT user_id, COUNT(*)::int AS active_count
-    FROM user_plans
-    WHERE status = 'active'
-    GROUP BY user_id
-    HAVING COUNT(*) > 1
-    ORDER BY user_id
-  `);
-  const duplicates = duplicateResult.rows || [];
-  if (duplicates.length) {
-    const summary = duplicates.map((row) => `${row.user_id}:${row.active_count}`).join(', ');
-    const err = new Error(`Duplicate active user plans require owner-scoped repair before migration: ${summary}`);
-    err.code = 'DUPLICATE_ACTIVE_USER_PLANS';
-    err.duplicates = duplicates;
-    throw err;
-  }
-  await query("CREATE UNIQUE INDEX IF NOT EXISTS idx_user_plans_one_active_per_user ON user_plans(user_id) WHERE status='active'");
-}
+const ensureUniqueActiveUserPlanIndex = (query = pg.query) => ensureActivePlanIndex(query);
 
 async function runAlwaysMigrations() {
   await pg.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS planning_input_revision BIGINT NOT NULL DEFAULT 0');

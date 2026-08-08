@@ -47,6 +47,7 @@ assert.ok(
 assert.match(helper, /decision !== 'apply'[\s\S]*PlanCandidateReviewCancelled/, 'keeping the current plan cannot fall through to apply')
 assert.match(sheet, /feasibility === 'unsafe'[\s\S]*canApply = feasibility === 'supported' \|\| feasibility === 'stretch'/, 'unsafe plans never receive an apply action')
 assert.match(sheet, /Apply reviewed plan[\s\S]*Review race target[\s\S]*Keep current plan/, 'the athlete sees explicit apply, review, and keep choices')
+assert.match(sheet, /current plan stays in place today[\s\S]*This plan starts/, 'replacement review explains the protected-day cutover before apply')
 assert.match(sheet, /activateModalDialog/, 'the review sheet uses the shared focus and scroll-lock controller')
 assert.match(sheet, /role="dialog"[\s\S]*aria-modal="true"/, 'the review sheet exposes modal semantics')
 assert.match(app, /<PlanCandidateDecisionSheet \/>/, 'the reviewer is available to every plan-generation surface')
@@ -56,4 +57,4 @@ for (const page of ['Onboarding.jsx', 'Plan.jsx', 'PlanCatalog.jsx', 'Races.jsx'
   assert.match(read(`frontend/src/pages/${page}`), /isPlanCandidateReviewCancelled\(err\)/, `${page} treats an athlete cancellation as a non-error`)
 }
 
-console.log('PLAN CANDIDATE REVIEW SMOKE OK (20)')
+console.log('PLAN CANDIDATE REVIEW SMOKE OK (21)')
