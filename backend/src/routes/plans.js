@@ -1386,49 +1386,6 @@ async function buildConcurrentContext(userId, profile, target, tx = null) {
   };
 }
 
-async function persistConcurrentPlan(userId, plan, meta = {}) {
-  const validatedPlan = assertPersistablePlan(plan);
-  const planId = uuidv4();
-  const userPlanId = uuidv4();
-  const weekStart = validatedPlan.weeks?.[0]?.startDate || getMonday();
-  const serialized = JSON.stringify(validatedPlan);
-  await withPlanningInputMutation(userId, async (tx) => {
-    const schedule = plan.schedulePreferences || {};
-    if (schedule.runDaysSource === 'target' && schedule.trainingDaysSource === 'target') {
-      const preferenceResult = await tx.run(
-        'UPDATE users SET run_days_per_week=?, preferred_workout_days=? WHERE id=?',
-        [schedule.runDaysPerWeek, JSON.stringify(schedule.trainingDays || []), userId]
-      );
-      if (preferenceResult.changes === 0) throw new Error('Plan preferences update failed');
-    }
-    await tx.run("UPDATE user_plans SET status='inactive' WHERE user_id=? AND status='active'", [userId]);
-    await tx.run(
-      `INSERT INTO training_plans (id, user_id, week_start, plan_json, name, type, weeks, description, plan_data)
-       VALUES (?,?,?,?,?,?,?,?,?)`,
-      [planId, userId, weekStart, serialized, meta.name, meta.type, validatedPlan.weeks.length, meta.description, serialized]
-    );
-    await tx.run(
-      `INSERT INTO user_plans (
-         id, user_id, plan_id, started_at, current_week, status, progress_json,
-         plan_version, lineage_id, effective_from
-       ) VALUES (?,?,?,?,?,?,?,?,?,?)`,
-      [
-        userPlanId,
-        userId,
-        planId,
-        weekStart,
-        1,
-        'active',
-        JSON.stringify({ completedSessionIds: [] }),
-        1,
-        userPlanId,
-        weekStart,
-      ]
-    );
-  });
-  return { planId, userPlanId, weekStart };
-}
-
 function clamp(n, min, max) {
   return Math.max(min, Math.min(max, n));
 }

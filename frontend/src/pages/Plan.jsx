@@ -386,7 +386,10 @@ export default function Plan() {
       setRaceReconciliationNotice('Both race peaks are now protected in one plan.')
       await loadAll()
     } catch (err) {
-      if (isPlanCandidateReviewCancelled(err)) return
+      if (isPlanCandidateReviewCancelled(err)) {
+        setRaceReconciliationNotice('Your current plan was kept. No calendar changes were made.')
+        return
+      }
       setRaceReconciliationError(err?.response?.data?.error || 'Could not add this race to the plan. Your current plan is unchanged.')
     } finally {
       setReconcilingRaces(false)
@@ -423,7 +426,10 @@ export default function Plan() {
       setRaceSaveNotice({ message: 'Training calendar rebuilt for the updated race target.' })
       await loadAll()
     } catch (err) {
-      if (isPlanCandidateReviewCancelled(err)) return
+      if (isPlanCandidateReviewCancelled(err)) {
+        setRaceSaveNotice({ message: 'Your current plan was kept. No calendar changes were made.' })
+        return
+      }
       console.error('[Plan] race plan rebuild failed:', err?.message || err)
       setPlanReviewError(err?.response?.data?.error || 'Could not rebuild this race plan. Your current workouts are unchanged.')
     } finally {
@@ -466,7 +472,10 @@ export default function Plan() {
       setScheduleEditing(false)
       await loadAll()
     } catch (err) {
-      if (isPlanCandidateReviewCancelled(err)) return
+      if (isPlanCandidateReviewCancelled(err)) {
+        setScheduleNotice('Your current plan was kept. No calendar changes were made.')
+        return
+      }
       console.error('[Plan] schedule rebuild failed:', err?.message || err)
       setScheduleError(err?.response?.data?.error || err?.message || 'Could not rebuild the training schedule. Your current calendar is unchanged.')
     } finally {

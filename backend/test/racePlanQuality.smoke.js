@@ -52,12 +52,39 @@ function semanticLongRunErrors(plan) {
   return errors;
 }
 
+function semanticLongRunMiles(plan) {
+  const miles = [];
+  for (const week of plan.weeks || []) {
+    for (const day of week.days || []) {
+      for (const session of day.sessions || []) {
+        if (session.type === 'long' || session.workout_id === 'long_aerobic') {
+          miles.push(Number(session.distance_miles || 0));
+        }
+      }
+    }
+  }
+  return miles;
+}
+
 const plan = buildConcurrentPlan(clone(fixture));
 const validation = validateConcurrentPlan(plan, clone(fixture));
 const summary = runSummary(plan);
 
 if (process.argv.includes('--semantic-acceptance')) {
-  const candidate = buildRacePlanCandidate(clone(fixture), {
+  const acceptanceContext = clone(fixture);
+  acceptanceContext.history.recentRuns = [
+    { date: '2026-07-13', distanceMiles: 4, durationMinutes: 42, type: 'easy' },
+    { date: '2026-07-15', distanceMiles: 4, durationMinutes: 41, type: 'easy' },
+    { date: '2026-07-18', distanceMiles: 8, durationMinutes: 86, type: 'long' },
+    { date: '2026-07-20', distanceMiles: 4, durationMinutes: 40, type: 'easy' },
+    { date: '2026-07-22', distanceMiles: 5, durationMinutes: 51, type: 'easy' },
+    { date: '2026-07-25', distanceMiles: 9, durationMinutes: 95, type: 'long' },
+  ];
+  acceptanceContext.history.mileageBaseline = {
+    method: 'bounded_recent_history',
+    meaningfulRunCount: acceptanceContext.history.recentRuns.length,
+  };
+  const candidate = buildRacePlanCandidate(acceptanceContext, {
     planningDateLocal: fixture.todayISO,
     timezoneOffsetMinutes: 240,
   });
@@ -74,6 +101,9 @@ if (process.argv.includes('--semantic-acceptance')) {
   });
   assert.equal(noRaceCandidate.validation.valid, true, 'non-race training blocks remain structurally valid');
   assert.equal(noRaceCandidate.plan.overall_feasibility, 'not_applicable', 'non-race blocks are explicit rather than misclassified as unsafe');
+  const longRunMiles = semanticLongRunMiles(candidate.plan);
+  assert.ok(longRunMiles.length >= 2, 'evidence-backed race plans retain multiple long-run sessions');
+  assert.ok(Math.max(...longRunMiles) > longRunMiles[0], 'long-run demand progresses beyond its first scheduled long run');
   const errors = [...semanticLongRunErrors(candidate.plan), ...candidate.validation.errors];
   if (errors.length) {
     console.error(`RACE PLAN QUALITY ACCEPTANCE RED: ${errors[0].code} at ${errors[0].path || errors[0].message || 'candidate'}`);

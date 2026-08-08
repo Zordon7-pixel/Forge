@@ -29,11 +29,11 @@ function run() {
     planMode: 'hybrid_maintain',
     goals: [{ raceId: 'race-a1' }, { raceId: 'race-a2' }],
     schedulePreferences: { trainingDays: [1, 3, 5, 6], runDaysPerWeek: 4 },
-    strengthPolicy: { enabled: true, sessionsPerWeek: 2, goal: 'maintain', equipment: ['dumbbells'] },
+    strengthPolicy: { enabled: true, sessionsPerWeek: 3, goal: 'maintain', equipment: ['dumbbells'] },
   };
   const currentProfile = {
     run_days_per_week: 5,
-    lift_days_per_week: 2,
+    lift_days_per_week: 1,
     preferred_workout_days: JSON.stringify(['Mon', 'Tue', 'Wed', 'Thu', 'Sat']),
   };
   assert.deepEqual(
@@ -56,9 +56,9 @@ function run() {
   const target = preservedPlanTarget(activePlan, currentProfile);
   assert.equal(Object.hasOwn(target, 'trainingDays'), false, 'rollout never sends stale plan weekdays as an explicit target');
   assert.equal(Object.hasOwn(target, 'runDaysPerWeek'), false, 'rollout never sends stale plan frequency as an explicit target');
+  assert.equal(Object.hasOwn(target, 'liftDaysPerWeek'), false, 'rollout never sends stale plan lift frequency as an explicit target');
   assert.equal(target.planMode, 'hybrid_maintain');
   assert.equal(target.liftingEnabled, true);
-  assert.equal(target.liftDaysPerWeek, 2);
   assert.deepEqual(target.equipment, ['dumbbells']);
   assert.deepEqual(resolveRunSchedule(currentProfile, target, { requireCompleteSelection: true }), {
     valid: true,
@@ -69,7 +69,13 @@ function run() {
     explicitSelection: false,
     legacyAdjusted: false,
   }, 'candidate generation reads the current profile without creating an apply-time profile write');
+  assert.equal(
+    Number(target.liftDaysPerWeek || currentProfile.lift_days_per_week),
+    1,
+    'candidate generation reads current profile lift frequency instead of the stale active plan',
+  );
   assert.equal(authoritativePlanTarget(activePlan, { ...currentProfile, preferred_workout_days: null }).valid, false);
+  assert.equal(authoritativePlanTarget(activePlan, { ...currentProfile, lift_days_per_week: null }).valid, false);
   assert.equal(authoritativePlanTarget({ ...activePlan, planMode: '' }, currentProfile).valid, false);
   assert.equal(authoritativePlanTarget({ ...activePlan, strengthPolicy: { enabled: false } }, currentProfile).valid, false);
   assert.equal(

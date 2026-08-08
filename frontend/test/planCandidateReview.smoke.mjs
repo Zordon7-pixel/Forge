@@ -37,6 +37,8 @@ const helper = read('frontend/src/lib/planCandidates.js')
 const sheet = read('frontend/src/components/PlanCandidateDecisionSheet.jsx')
 const app = read('frontend/src/App.jsx')
 const route = read('backend/src/routes/plans.js')
+const planPage = read('frontend/src/pages/Plan.jsx')
+const racesPage = read('frontend/src/pages/Races.jsx')
 
 assert.equal(candidateFeasibilityCanApply({ overall_feasibility: 'supported' }), true)
 assert.equal(candidateFeasibilityCanApply({ overall_feasibility: 'stretch' }), true)
@@ -55,6 +57,8 @@ assert.match(sheet, /feasibility === 'unsafe'[\s\S]*canApply = candidateFeasibil
 assert.match(sheet, /Apply reviewed plan[\s\S]*Review race target[\s\S]*Keep current plan/, 'the athlete sees explicit apply, review, and keep choices')
 assert.match(sheet, /current plan stays in place today[\s\S]*This plan starts/, 'replacement review explains the protected-day cutover before apply')
 assert.match(sheet, /activateModalDialog/, 'the review sheet uses the shared focus and scroll-lock controller')
+assert.equal((planPage.match(/isPlanCandidateReviewCancelled\(err\)[\s\S]{0,180}current plan was kept/g) || []).length, 3, 'all Plan cancellation paths confirm the current plan was kept')
+assert.match(racesPage, /isPlanCandidateReviewCancelled\(err\)[\s\S]{0,180}current plan was kept/, 'Races confirms cancellation without applying')
 assert.match(sheet, /role="dialog"[\s\S]*aria-modal="true"/, 'the review sheet exposes modal semantics')
 assert.match(app, /<PlanCandidateDecisionSheet \/>/, 'the reviewer is available to every plan-generation surface')
 assert.match(route, /replaces_active_plan: Boolean\(candidate\.replacesActivePlan\)/, 'the backend tells the client when a preview replaces an active plan')
@@ -63,4 +67,4 @@ for (const page of ['Onboarding.jsx', 'Plan.jsx', 'PlanCatalog.jsx', 'Races.jsx'
   assert.match(read(`frontend/src/pages/${page}`), /isPlanCandidateReviewCancelled\(err\)/, `${page} treats an athlete cancellation as a non-error`)
 }
 
-console.log('PLAN CANDIDATE REVIEW SMOKE OK (21)')
+console.log('PLAN CANDIDATE REVIEW SMOKE OK (23)')

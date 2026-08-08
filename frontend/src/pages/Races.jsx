@@ -278,7 +278,10 @@ export default function Races() {
       await load()
       onSuccess()
     } catch (err) {
-      if (isPlanCandidateReviewCancelled(err)) return
+      if (isPlanCandidateReviewCancelled(err)) {
+        setMessage('Your current plan was kept. No calendar changes were made.')
+        return
+      }
       if (err?.response?.status === 402) {
         navigate('/upgrade')
         return

@@ -10,13 +10,13 @@ function count(pattern) {
 
 assert.doesNotMatch(source, /withTransaction\(/, 'plan routes must not bypass planning revision transactions');
 assert.ok(
-  count(/withPlanningInputMutation\(/g) >= 10,
+  count(/withPlanningInputMutation\(/g) >= 9,
   'generation, assignment, progress, reconciliation, adaptation, race-link, and rescheduling must share the planning owner lock'
 );
 assert.match(
   source,
-  /persistConcurrentPlan[\s\S]*withPlanningInputMutation\(userId[\s\S]*plan_version, lineage_id, effective_from/,
-  'new evidence plans must persist revision lineage and effective date under the owner lock'
+  /async function applyPlanCandidate[\s\S]*withPlanningInputMutation\(userId[\s\S]*plan_version, lineage_id, supersedes_user_plan_id, effective_from/,
+  'reviewed candidate plans must persist replacement lineage and effective date under the owner lock'
 );
 assert.match(
   source,

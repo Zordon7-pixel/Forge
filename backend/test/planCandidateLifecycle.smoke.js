@@ -222,11 +222,12 @@ async function run() {
   assert.match(source, /storedFeasibility === 'unsafe'[\s\S]*CANDIDATE_UNSAFE/);
   assert.match(source, /!candidateFeasibilityCanApply\(storedPlan\)[\s\S]*CANDIDATE_FEASIBILITY_MISSING/);
   assert.match(source, /includeFuture: true/);
+  assert.doesNotMatch(source, /function persistConcurrentPlan\(/, 'obsolete direct plan persistence cannot bypass candidate lineage');
   const writeBoundaryGuard = source.lastIndexOf('assertCandidatePlanningDateCurrent(row);');
   const firstPlanWrite = source.indexOf("'UPDATE users SET run_days_per_week=?", writeBoundaryGuard);
   assert.ok(writeBoundaryGuard > 0 && firstPlanWrite > writeBoundaryGuard, 'the local-date guard runs inside apply immediately before plan writes');
 
-  console.log('PLAN CANDIDATE LIFECYCLE SMOKE OK (45)');
+  console.log('PLAN CANDIDATE LIFECYCLE SMOKE OK (46)');
 }
 
 run().catch((error) => {

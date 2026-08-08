@@ -84,6 +84,7 @@ function ownValue(object, camelKey, snakeKey) {
 function authoritativePlanTarget(activePlan = {}, profile = {}) {
   const rawTrainingDays = parseJson(profile.preferred_workout_days, profile.preferred_workout_days);
   const rawRunDays = profile.run_days_per_week;
+  const rawLiftDays = profile.lift_days_per_week;
   if (!Array.isArray(rawTrainingDays) || rawTrainingDays.length < 1) {
     return { valid: false, reason: 'MISSING_SCHEDULE_AUTHORITY' };
   }
@@ -104,15 +105,14 @@ function authoritativePlanTarget(activePlan = {}, profile = {}) {
   let liftDaysPerWeek = 0;
   if (liftingEnabled) {
     if (strength.enabled !== true) return { valid: false, reason: 'MISSING_SCHEDULE_AUTHORITY' };
-    liftDaysPerWeek = integer(ownValue(strength, 'sessionsPerWeek', 'sessions_per_week'), 1, 4);
+    liftDaysPerWeek = integer(rawLiftDays, 1, 4);
     if (!liftDaysPerWeek) return { valid: false, reason: 'MISSING_SCHEDULE_AUTHORITY' };
     if (!Array.isArray(strength.equipment)) return { valid: false, reason: 'MISSING_SCHEDULE_AUTHORITY' };
   }
 
-  return { valid: true, profileSchedule: { trainingDays, runDaysPerWeek }, target: {
+  return { valid: true, profileSchedule: { trainingDays, runDaysPerWeek, liftDaysPerWeek }, target: {
     planMode: rawMode,
     liftingEnabled,
-    liftDaysPerWeek,
     strengthGoal: String(strength.goal || (rawMode === planSchema.PLAN_MODES.HYBRID_BUILD ? 'build' : 'maintain')),
     equipment: liftingEnabled ? strength.equipment.slice(0, 20) : [],
   } };
