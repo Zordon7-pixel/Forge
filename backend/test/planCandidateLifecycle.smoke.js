@@ -156,6 +156,35 @@ async function run() {
   duplicate.weeks[0].days.push({ date: '2026-08-10', sessions: [{ ...duplicate.weeks[0].days[0].sessions[0] }] });
   assert.equal(candidateLifecycle.validatePlanStructure(duplicate).valid, false);
 
+  const assignedLineage = plansRouter._test.replacementLineageForActivePlan({
+    source: 'assigned',
+    row: { user_plan_id: 'up-current', lineage_id: 'lineage-current', plan_version: 4 },
+  }, 'up-next');
+  assert.deepEqual(assignedLineage, {
+    lineageId: 'lineage-current',
+    priorVersion: 4,
+    supersedesUserPlanId: 'up-current',
+  });
+  const legacyLineage = plansRouter._test.replacementLineageForActivePlan({
+    source: 'legacy',
+    row: { id: 'legacy-training-plan' },
+  }, 'up-next');
+  assert.deepEqual(legacyLineage, {
+    lineageId: 'up-next',
+    priorVersion: 0,
+    supersedesUserPlanId: null,
+  }, 'legacy plans create a first assignment instead of superseding an undefined assignment');
+
+  const pruneCalls = [];
+  await plansRouter._test.pruneExpiredPlanCandidates({
+    run: async (sql, params) => {
+      pruneCalls.push({ sql, params });
+      return { changes: 1 };
+    },
+  }, ownerId, { excludeCandidateId: 'candidate-current', now: new Date('2026-08-08T12:00:00.000Z') });
+  assert.match(pruneCalls[0].sql, /DELETE FROM plan_generation_candidates WHERE user_id=\? AND expires_at<\? AND id<>\?/);
+  assert.deepEqual(pruneCalls[0].params, [ownerId, '2026-08-07T12:00:00.000Z', 'candidate-current']);
+
   const source = fs.readFileSync(path.join(__dirname, '../src/routes/plans.js'), 'utf8');
   assert.match(source, /SELECT \* FROM plan_generation_candidates WHERE id=\? AND user_id=\? FOR UPDATE/);
   assert.match(source, /WHERE id=\? AND user_id=\? AND status='preview'/);
@@ -167,7 +196,7 @@ async function run() {
   assert.match(source, /!\['supported', 'stretch'\]\.includes\(storedFeasibility\)[\s\S]*CANDIDATE_FEASIBILITY_MISSING/);
   assert.match(source, /includeFuture: true/);
 
-  console.log('PLAN CANDIDATE LIFECYCLE SMOKE OK (29)');
+  console.log('PLAN CANDIDATE LIFECYCLE SMOKE OK (35)');
 }
 
 run().catch((error) => {

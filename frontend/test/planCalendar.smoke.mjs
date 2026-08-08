@@ -4,6 +4,7 @@
 
 import assert from 'node:assert/strict'
 import {
+  canonicalWorkoutLabel,
   parseLocalDate,
   toISODate,
   addDays,
@@ -39,6 +40,12 @@ function check(name, fn) {
 }
 
 const WEEK_START = parseLocalDate('2026-07-13') // Monday
+
+check('race sessions are labeled as race day rather than long runs', () => {
+  assert.equal(canonicalWorkoutLabel({ kind: 'run', type: 'race', title: 'Army Ten-Miler' }), 'Race day')
+  assert.equal(canonicalWorkoutLabel({ kind: 'run', type: 'long', title: 'Long aerobic run' }), 'Long run')
+  assert.equal(canonicalWorkoutLabel({ kind: 'run', type: 'race_pace', title: 'Goal pace repeats' }), 'Race-pace workout')
+})
 
 // ---------------------------------------------------------------------------
 // (a) legacy week.sessions — dates + ids preserved

@@ -106,6 +106,7 @@ function authoritativePlanTarget(activePlan = {}) {
     if (strength.enabled !== true) return { valid: false, reason: 'MISSING_SCHEDULE_AUTHORITY' };
     liftDaysPerWeek = integer(ownValue(strength, 'sessionsPerWeek', 'sessions_per_week'), 1, 4);
     if (!liftDaysPerWeek) return { valid: false, reason: 'MISSING_SCHEDULE_AUTHORITY' };
+    if (!Array.isArray(strength.equipment)) return { valid: false, reason: 'MISSING_SCHEDULE_AUTHORITY' };
   }
 
   return { valid: true, target: {
@@ -115,7 +116,7 @@ function authoritativePlanTarget(activePlan = {}) {
     liftingEnabled,
     liftDaysPerWeek,
     strengthGoal: String(strength.goal || (rawMode === planSchema.PLAN_MODES.HYBRID_BUILD ? 'build' : 'maintain')),
-    equipment: Array.isArray(strength.equipment) ? strength.equipment.slice(0, 20) : [],
+    equipment: liftingEnabled ? strength.equipment.slice(0, 20) : [],
   } };
 }
 

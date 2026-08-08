@@ -57,6 +57,23 @@ function run() {
   assert.equal(authoritativePlanTarget({ ...activePlan, schedulePreferences: {} }).valid, false);
   assert.equal(authoritativePlanTarget({ ...activePlan, planMode: '' }).valid, false);
   assert.equal(authoritativePlanTarget({ ...activePlan, strengthPolicy: { enabled: false } }).valid, false);
+  assert.equal(
+    authoritativePlanTarget({
+      ...activePlan,
+      strengthPolicy: { enabled: true, sessionsPerWeek: 2, goal: 'maintain' },
+    }).valid,
+    false,
+    'lifting rollout requires an authoritative equipment selection',
+  );
+  assert.deepEqual(
+    preservedPlanTarget({
+      ...activePlan,
+      planMode: 'run_only',
+      strengthPolicy: {},
+    }).equipment,
+    [],
+    'run-only rollout does not require strength equipment',
+  );
   assert.equal(isCurrentRolloutPlan({
     ...activePlan,
     engineVersion: RACE_PLAN_POLICY_V1.engineVersion,

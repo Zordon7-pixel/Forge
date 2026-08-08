@@ -465,7 +465,10 @@ async function runPlanFallbackSmoke() {
     check(response.statusCode === 201 && response.payload?.generation_source === 'race_plan_candidate_engine', 'POST /plans/generate succeeds with a reviewed candidate preview');
     check(response.payload?.requires_apply === true && response.payload?.plan?.preview === true, 'ordinary generation requires explicit candidate apply');
     check(response.payload?.plan?.plan_data?.engineVersion === 'race-plan-candidate-v1' && response.payload?.plan?.plan_data?.policyVersion === 'race-plan-policy-v1', 'candidate response carries deterministic engine and policy provenance');
-    check(writes.length === 1 && writes[0].sql.includes('INSERT INTO plan_generation_candidates') && writes[0].params.includes(profile.id), 'ordinary preview stores one owner-bound candidate without replacing the active plan');
+    check(writes.filter((write) => write.sql.includes('INSERT INTO plan_generation_candidates')).length === 1
+      && writes.find((write) => write.sql.includes('INSERT INTO plan_generation_candidates')).params.includes(profile.id), 'ordinary preview stores one owner-bound candidate without replacing the active plan');
+    check(writes.filter((write) => write.sql.includes('DELETE FROM plan_generation_candidates')).length === 1
+      && writes.find((write) => write.sql.includes('DELETE FROM plan_generation_candidates')).params[0] === profile.id, 'ordinary preview prunes retained candidates only for the authenticated user');
 
     response = await invoke(raceHandler, {
       params: { raceId: race.id },
@@ -478,7 +481,10 @@ async function runPlanFallbackSmoke() {
     check(response.payload?.requires_apply === true && response.payload?.plan?.preview === true, 'race generation requires explicit candidate apply');
     check(response.payload?.plan?.plan_data?.engineVersion === 'race-plan-candidate-v1' && response.payload?.plan?.plan_data?.policyVersion === 'race-plan-policy-v1', 'race candidate carries deterministic engine and policy provenance');
     check(response.payload?.race?.id === race.id && response.payload?.plan?.plan_data?.goal?.name === race.race_name && response.payload?.plan?.plan_data?.goal?.date === raceDate, 'race plan uses the owned race identity and date');
-    check(writes.length === 2 && writes.every((write) => write.sql.includes('INSERT INTO plan_generation_candidates') && write.params.includes(profile.id)), 'each preview stores exactly one candidate scoped to the authenticated user');
+    const candidateWrites = writes.filter((write) => write.sql.includes('INSERT INTO plan_generation_candidates'));
+    const pruneWrites = writes.filter((write) => write.sql.includes('DELETE FROM plan_generation_candidates'));
+    check(candidateWrites.length === 2 && candidateWrites.every((write) => write.params.includes(profile.id)), 'each preview stores exactly one candidate scoped to the authenticated user');
+    check(pruneWrites.length === 2 && pruneWrites.every((write) => write.params[0] === profile.id), 'each preview keeps candidate retention cleanup owner-scoped');
     check(response.payload?.plan?.plan_data?.schedulePreferences?.runDaysPerWeek === 3 && same(response.payload?.plan?.plan_data?.schedulePreferences?.trainingDays, ['Tue', 'Thu', 'Sat']), 'race candidate retains the authoritative run count and selected weekdays');
     check(!writes.some((write) => /INSERT INTO training_plans|INSERT INTO user_plans|UPDATE users/.test(write.sql)), 'preview does not replace a plan or persist profile preferences before apply');
   } finally {

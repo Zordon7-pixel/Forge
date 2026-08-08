@@ -1686,6 +1686,22 @@ function publicCandidatePayload(candidate) {
   };
 }
 
+async function pruneExpiredPlanCandidates(tx, userId, {
+  excludeCandidateId = null,
+  now = new Date(),
+} = {}) {
+  const cutoff = new Date(
+    new Date(now).getTime() - (RACE_PLAN_POLICY_V1.candidate.ttlHours * 60 * 60 * 1000)
+  ).toISOString();
+  const exclusion = excludeCandidateId ? ' AND id<>?' : '';
+  const params = [userId, cutoff];
+  if (excludeCandidateId) params.push(excludeCandidateId);
+  return tx.run(
+    `DELETE FROM plan_generation_candidates WHERE user_id=? AND expires_at<?${exclusion}`,
+    params
+  );
+}
+
 async function previewPlanForUser(userId, body = {}, { store = true } = {}) {
   const clock = acceptedPlanningClock(body);
   const request = normalizeCandidateRequest(body);
@@ -1729,6 +1745,7 @@ async function previewPlanForUser(userId, body = {}, { store = true } = {}) {
     if (current.planningInputRevision !== initial.planningInputRevision || current.inputHash !== initial.inputHash) {
       throw candidateError(409, 'CANDIDATE_STALE', 'Training data changed while the preview was being built. Preview again.');
     }
+    await pruneExpiredPlanCandidates(tx, userId);
     await tx.run(
       `INSERT INTO plan_generation_candidates (
          id, user_id, status, training_plan_id, user_plan_id, active_plan_version,
@@ -1768,6 +1785,15 @@ function sameCapturedActivePlan(row, active) {
     && String(row.active_plan_version ?? '') === String(meta?.planVersion ?? '');
 }
 
+function replacementLineageForActivePlan(active, fallbackUserPlanId) {
+  const supersedesUserPlanId = active?.row?.user_plan_id || null;
+  return {
+    lineageId: active?.row?.lineage_id || supersedesUserPlanId || fallbackUserPlanId,
+    priorVersion: Number(active?.row?.plan_version || 0),
+    supersedesUserPlanId,
+  };
+}
+
 async function applyPlanCandidate(userId, candidateId, body = {}) {
   const choice = String(body.choice || '').trim();
   const suppliedHash = String(body.candidate_hash || '').trim();
@@ -1785,6 +1811,7 @@ async function applyPlanCandidate(userId, candidateId, body = {}) {
       'SELECT * FROM plan_generation_candidates WHERE id=? AND user_id=? FOR UPDATE',
       [candidateId, userId]
     );
+    await pruneExpiredPlanCandidates(tx, userId, { excludeCandidateId: row?.id || null });
     if (!row) return planningInputUnchanged({ status: 404, error: 'Candidate not found', code: 'CANDIDATE_NOT_FOUND' });
     if (row.status === 'applied') {
       if (row.applied_choice !== choice || row.candidate_hash !== suppliedHash) {
@@ -1871,12 +1898,13 @@ async function applyPlanCandidate(userId, candidateId, body = {}) {
       : row.planning_date_local;
     const planId = uuidv4();
     const userPlanId = uuidv4();
+    const replacementLineage = replacementLineageForActivePlan(active, userPlanId);
     const serialized = JSON.stringify(validatedPlan);
     const weekStart = validatedPlan.weeks?.[0]?.startDate || effectiveFrom;
-    if (active) {
+    if (replacementLineage.supersedesUserPlanId) {
       const supersede = await tx.run(
         "UPDATE user_plans SET status='superseded' WHERE id=? AND user_id=? AND status='active'",
-        [active.row.user_plan_id, userId]
+        [replacementLineage.supersedesUserPlanId, userId]
       );
       if (supersede.changes === 0) throw new Error('Active plan supersede failed');
     }
@@ -1885,8 +1913,6 @@ async function applyPlanCandidate(userId, candidateId, body = {}) {
        VALUES (?,?,?,?,?,?,?,?,?)`,
       [planId, userId, weekStart, serialized, current.meta.name, current.meta.type, validatedPlan.weeks.length, current.meta.description, serialized]
     );
-    const priorVersion = Number(active?.row?.plan_version || 0);
-    const lineageId = active?.row?.lineage_id || active?.row?.user_plan_id || userPlanId;
     await tx.run(
       `INSERT INTO user_plans (
          id, user_id, plan_id, started_at, current_week, status, progress_json,
@@ -1900,9 +1926,9 @@ async function applyPlanCandidate(userId, candidateId, body = {}) {
         1,
         'active',
         JSON.stringify({ completedSessionIds: [] }),
-        priorVersion + 1,
-        lineageId,
-        active?.row?.user_plan_id || null,
+        replacementLineage.priorVersion + 1,
+        replacementLineage.lineageId,
+        replacementLineage.supersedesUserPlanId,
         effectiveFrom,
       ]
     );
@@ -3528,7 +3554,7 @@ router.post('/reschedule-missed', auth, async (req, res) => {
   }
 });
 
-router.post('/race-adjust', auth, async (req, res) => {
+router.post('/race-adjust', auth, requirePremium('Race Programs'), async (req, res) => {
   try {
     const { raceId } = req.body || {};
     if (!raceId) return res.status(400).json({ error: 'raceId required' });
@@ -3807,7 +3833,9 @@ router._test = {
   applyPlanCandidate,
   getActivePlanForMutation,
   getActivePlanForUser,
+  pruneExpiredPlanCandidates,
   previewPlanForUser,
+  replacementLineageForActivePlan,
 };
 
 module.exports = router;

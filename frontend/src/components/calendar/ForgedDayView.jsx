@@ -6,7 +6,7 @@ import {
 import WatchWorkoutSendButton from '../WatchWorkoutSendButton'
 import AiGuidanceNote from '../AiGuidanceNote'
 import WatchWorkoutService from '../../services/WatchWorkoutService'
-import { normalizeLiftExercisePrescription, sessionState } from '../../lib/planCalendar'
+import { canonicalWorkoutLabel, normalizeLiftExercisePrescription, sessionState } from '../../lib/planCalendar'
 import { trainingEvidenceKindLabel } from '../../lib/trainingEvidence'
 import './forgedCalendar.css'
 
@@ -76,25 +76,6 @@ function formatAnchorRunDate(value) {
     : new Date(value)
   if (Number.isNaN(date.getTime())) return String(value)
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
-}
-
-function canonicalWorkoutLabel(session) {
-  if (!session) return ''
-  if (session.kind === 'lift') {
-    const focus = firstStr(session.prescription?.focus, session.raw?.focus)
-    return focus ? `${labelText(focus)} strength` : 'Strength session'
-  }
-  const identity = [session.raw?.workout_id, session.type, session.title].filter(Boolean).join(' ').toLowerCase()
-  if (/benchmark/.test(identity)) return 'Benchmark run'
-  if (/race.?pace|goal.?pace/.test(identity)) return 'Race-pace workout'
-  if (/hill/.test(identity)) return 'Hill workout'
-  if (/interval|repeat|speed/.test(identity)) return 'Interval workout'
-  if (/threshold|tempo/.test(identity)) return 'Tempo / threshold run'
-  if (/progression/.test(identity)) return 'Progression run'
-  if (/long|race/.test(identity)) return 'Long run'
-  if (/recovery/.test(identity)) return 'Recovery run'
-  if (/easy/.test(identity)) return 'Easy aerobic run'
-  return 'Run session'
 }
 
 function secondaryWorkoutTitle(session, canonicalTitle) {

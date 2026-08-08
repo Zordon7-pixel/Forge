@@ -283,6 +283,27 @@ export function sessionKind(rawSession = {}) {
   return 'run'
 }
 
+export function canonicalWorkoutLabel(session) {
+  if (!session) return ''
+  if (session.kind === 'lift') {
+    const focus = String(session.prescription?.focus || session.raw?.focus || '').trim()
+    const label = focus.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())
+    return label ? `${label} strength` : 'Strength session'
+  }
+  if (session.type === 'race' || session.raw?.workout_id === 'race') return 'Race day'
+  const identity = [session.raw?.workout_id, session.type, session.title].filter(Boolean).join(' ').toLowerCase()
+  if (/benchmark/.test(identity)) return 'Benchmark run'
+  if (/race.?pace|goal.?pace/.test(identity)) return 'Race-pace workout'
+  if (/hill/.test(identity)) return 'Hill workout'
+  if (/interval|repeat|speed/.test(identity)) return 'Interval workout'
+  if (/threshold|tempo/.test(identity)) return 'Tempo / threshold run'
+  if (/progression/.test(identity)) return 'Progression run'
+  if (/long/.test(identity)) return 'Long run'
+  if (/recovery/.test(identity)) return 'Recovery run'
+  if (/easy/.test(identity)) return 'Easy aerobic run'
+  return 'Run session'
+}
+
 function firstDefined(...values) {
   for (const value of values) {
     if (value !== undefined && value !== null && value !== '') return value
