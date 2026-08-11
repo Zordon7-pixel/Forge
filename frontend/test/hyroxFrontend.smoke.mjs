@@ -119,6 +119,11 @@ assert.match(dayView, /stationSequence[\s\S]*exactStation[\s\S]*substitute/, 'da
 assert.match(dayView, /distanceMeters|repetitions|officialStandard/, 'day details keep metric station prescriptions visible')
 assert.match(dayView, /minWidth:\s*0|overflowWrap:\s*'anywhere'/, 'HYROX detail content is constrained at 320px')
 assert.match(setup, /minHeight:\s*44/, 'HYROX setup touch controls meet the 44px target')
+assert.ok(setup.includes("paddingTop: 'max(10px, env(safe-area-inset-top, 0px))'"), 'opened HYROX setup starts below the top safe area')
+assert.ok(setup.includes("paddingBottom: 'max(10px, env(safe-area-inset-bottom, 0px))'"), 'opened HYROX setup ends above the bottom safe area')
+assert.ok(setup.includes("gridTemplateRows: 'auto minmax(0, 1fr)'") && setup.includes("overflow: 'hidden'"), 'HYROX header stays fixed while the body owns the bounded scrollport')
+assert.ok(setup.includes('data-hyrox-scrollport') && setup.includes("minHeight: 0") && setup.includes("overflowY: 'auto'"), 'all HYROX fields and the final action remain internally scrollable')
+assert.equal(setup.includes('calc(100dvh - 20px)'), false, 'HYROX setup does not size beneath iOS system chrome with a raw dvh subtraction')
 assert.match(reviewSheet, /min-h-12|min-h-11/, 'candidate actions retain accessible touch targets')
 
 assert.match(catalog, /PLAN_GOALS\.map/, 'legacy no-date running blocks remain wired')

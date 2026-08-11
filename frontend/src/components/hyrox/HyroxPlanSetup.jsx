@@ -183,9 +183,9 @@ export default function HyroxPlanSetup({ savedRaces = [], onClose, onComplete })
   const inputStyle = { width: '100%', minWidth: 0, minHeight: 44, padding: '11px 12px', borderRadius: 8, background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', fontSize: 15 }
 
   return (
-    <div role="presentation" style={{ position: 'fixed', inset: 0, zIndex: 80, display: 'grid', alignItems: 'end', justifyItems: 'center', padding: 10, background: 'rgba(0,0,0,0.76)' }}>
-      <section ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="hyrox-setup-title" style={{ width: 'min(680px, 100%)', maxWidth: '100%', minWidth: 0, maxHeight: 'calc(100dvh - 20px)', overflowY: 'auto', padding: 16, paddingBottom: 'calc(18px + env(safe-area-inset-bottom, 0px))', borderRadius: 12, background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-        <header style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+    <div role="presentation" style={{ position: 'fixed', inset: 0, zIndex: 80, display: 'grid', alignItems: 'end', justifyItems: 'center', boxSizing: 'border-box', overflow: 'hidden', paddingTop: 'max(10px, env(safe-area-inset-top, 0px))', paddingRight: 10, paddingBottom: 'max(10px, env(safe-area-inset-bottom, 0px))', paddingLeft: 10, background: 'rgba(0,0,0,0.76)' }}>
+      <section ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="hyrox-setup-title" style={{ width: 'min(680px, 100%)', maxWidth: '100%', minWidth: 0, maxHeight: '100%', display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr)', overflow: 'hidden', borderRadius: 12, background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+        <header style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, padding: '16px 16px 0' }}>
           <div style={{ minWidth: 0 }}>
             <p style={{ margin: 0, color: 'var(--accent)', fontSize: 11, fontWeight: 900, textTransform: 'uppercase' }}>{tx('eyebrow', 'Worldwide event plan')}</p>
             <h2 id="hyrox-setup-title" style={{ margin: '4px 0 0', color: 'var(--text-primary)', fontSize: 24, fontWeight: 950 }}>{candidate ? tx('review.title', 'Review your HYROX plan') : tx('title', 'Build a HYROX plan')}</h2>
@@ -193,7 +193,8 @@ export default function HyroxPlanSetup({ savedRaces = [], onClose, onComplete })
           <button type="button" onClick={onClose} disabled={busy} aria-label={tx('close', 'Close HYROX setup')} style={{ width: 44, height: 44, flex: '0 0 auto', display: 'grid', placeItems: 'center', borderRadius: 8, background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}><X size={19} /></button>
         </header>
 
-        {error && <p role="alert" aria-live="assertive" style={{ margin: '12px 0 0', padding: 12, borderRadius: 8, background: 'var(--danger-dim)', color: 'var(--danger)', fontSize: 13, fontWeight: 750 }}>{error}</p>}
+        <div data-hyrox-scrollport style={{ minWidth: 0, minHeight: 0, overflowX: 'hidden', overflowY: 'auto', overscrollBehavior: 'contain', padding: '0 16px 18px', scrollPaddingBottom: 18 }}>
+          {error && <p role="alert" aria-live="assertive" style={{ margin: '12px 0 0', padding: 12, borderRadius: 8, background: 'var(--danger-dim)', color: 'var(--danger)', fontSize: 13, fontWeight: 750 }}>{error}</p>}
 
         {candidate && review ? (
           <div style={{ display: 'grid', gap: 12, marginTop: 16, minWidth: 0 }}>
@@ -353,6 +354,7 @@ export default function HyroxPlanSetup({ savedRaces = [], onClose, onComplete })
             <p style={{ margin: 0, display: 'flex', gap: 7, color: 'var(--text-muted)', fontSize: 11 }}><Check size={14} style={{ flex: '0 0 auto', color: 'var(--success)' }} />{tx('preview.consent', 'Nothing replaces the current calendar until you explicitly apply the reviewed candidate.')}</p>
           </div>
         )}
+        </div>
       </section>
     </div>
   )

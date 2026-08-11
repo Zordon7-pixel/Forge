@@ -607,6 +607,9 @@ function syncOrderGuidance(day) {
 function reconcileLowerBodyStrength(plan) {
   const allowedDays = new Set(plan.schedulePreferences?.trainingDays || []);
   for (const week of plan.weeks || []) {
+    const earliestTargetDate = week.bridgeWeek && plan.planningClock
+      ? plan.planningClock.planningDateLocal
+      : null;
     const hardIndexes = new Set();
     for (const [dayIndex, day] of (week.days || []).entries()) {
       if ((day.sessions || []).some((session) => session.kind === 'run' && isDemanding({ session }))) {
@@ -621,6 +624,7 @@ function reconcileLowerBodyStrength(plan) {
       const targetIndex = (week.days || []).findIndex((day, dayIndex) => (
         dayIndex !== sourceIndex
         && allowedDays.has(day.day)
+        && (!earliestTargetDate || day.date >= earliestTargetDate)
         && [...hardIndexes].every((hardIndex) => Math.abs(hardIndex - dayIndex) > 1)
         && !(day.sessions || []).some((session) => (
           session.kind === 'strength' || session.kind === 'lift'
