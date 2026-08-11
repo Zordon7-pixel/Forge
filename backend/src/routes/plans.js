@@ -26,6 +26,7 @@ const { buildBodyweightAlternative } = require('../lib/travelTraining');
 const { planningInputUnchanged } = require('../lib/planningRevision');
 const { localDateForOffset } = require('../lib/requestPlanningDate');
 const { buildRacePlanCandidate, semanticCandidateErrors } = require('../lib/racePlanCandidateEngine');
+const hyroxPlan = require('../lib/hyroxPlan');
 const {
   RACE_PLAN_POLICY_V1,
   acceptPlanningClock,
@@ -122,12 +123,16 @@ function normalizePlanningDate(value, { defaultToToday = false } = {}) {
   return offsetDays !== null && Math.abs(offsetDays) <= 1 ? requested : null;
 }
 
-function getPlanningDateFromRequest(req) {
+function getPlanningDateInputFromRequest(req) {
   const headerDate = typeof req.get === 'function'
     ? req.get('x-forged-local-date')
     : req.headers?.['x-forged-local-date'];
+  return req.query?.date || req.body?.planning_date_local || headerDate;
+}
+
+function getPlanningDateFromRequest(req) {
   return normalizePlanningDate(
-    req.query?.date || req.body?.planning_date_local || headerDate,
+    getPlanningDateInputFromRequest(req),
     { defaultToToday: true }
   );
 }
@@ -145,7 +150,7 @@ function withRequestPlanningClock(req, body = {}, overrides = {}) {
   const request = { ...(body || {}), ...overrides };
   return {
     ...request,
-    planning_date_local: request.planning_date_local || getPlanningDateFromRequest(req),
+    planning_date_local: request.planning_date_local || getPlanningDateInputFromRequest(req) || getTodayISO(),
     timezone_offset_minutes: request.timezone_offset_minutes ?? getTimezoneOffsetFromRequest(req),
   };
 }
@@ -1450,9 +1455,19 @@ function normalizeCandidateRequest(body = {}) {
   if (new Set(raceIds).size !== raceIds.length) {
     throw candidateError(400, 'DUPLICATE_RACE_ID', 'Choose each race only once.');
   }
+  const operation = body.operation === 'remove_race' ? 'remove_race' : 'plan_preview';
+  const removeRaceId = operation === 'remove_race' ? String(body.remove_race_id || '').trim() : null;
+  if (operation === 'remove_race' && (!removeRaceId || removeRaceId.length > 128)) {
+    throw candidateError(400, 'INVALID_RACE_ID', 'The race to remove is invalid.');
+  }
+  if (operation === 'remove_race' && raceIds.includes(removeRaceId)) {
+    throw candidateError(400, 'REMOVAL_RACE_RETAINED', 'The removal candidate cannot retain the selected race.');
+  }
   return {
     race_ids: raceIds,
     target: stripClientCourseFacts(body.target || {}),
+    operation,
+    remove_race_id: removeRaceId,
   };
 }
 
@@ -1488,7 +1503,72 @@ async function ownedRacesForCandidate(userId, raceIds, tx) {
   return ordered;
 }
 
+function storedEventConfig(race = {}) {
+  if (!race.event_config_json) return {};
+  if (typeof race.event_config_json === 'object') return race.event_config_json;
+  try {
+    const parsed = JSON.parse(race.event_config_json);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (error) {
+    throw candidateError(409, 'EVENT_CONFIG_CORRUPT', 'Stored event equipment data is invalid.');
+  }
+}
+
 function targetFromOwnedRaces(profile, races, requested, planningDateLocal) {
+  const hyroxRace = races.find((race) => String(race.event_kind || 'run_race') === 'hyrox');
+  if (hyroxRace) {
+    if (races[0].id !== hyroxRace.id || races.some((race, index) => index > 0 && String(race.event_kind || 'run_race') !== 'run_race')) {
+      throw candidateError(400, 'INVALID_HYROX_GOAL_ORDER', 'HYROX must be the near-term goal followed by at most one running race.');
+    }
+    const runSchedule = resolveRunSchedule(profile, requested, { requireCompleteSelection: true });
+    if (!runSchedule.valid) throw candidateError(400, 'INVALID_RUN_SCHEDULE', runSchedule.error);
+    if (![3, 4].includes(runSchedule.runDaysPerWeek)) {
+      throw candidateError(400, 'INVALID_HYROX_RUN_FREQUENCY', 'HYROX plans require three or four run days per week.');
+    }
+    const localDate = hyroxRace.event_local_date || hyroxRace.race_date;
+    const daysToEvent = daysBetween(localDate, planningDateLocal);
+    if (!Number.isInteger(daysToEvent) || daysToEvent < 0) {
+      throw candidateError(400, 'RACE_DATE_PASSED', 'HYROX event date must be today or later.');
+    }
+    const config = storedEventConfig(hyroxRace);
+    const secondary = races[1] ? {
+      kind: 'run_race',
+      raceId: races[1].id,
+      name: races[1].race_name,
+      eventLocalDate: races[1].event_local_date || races[1].race_date,
+      eventTimezone: races[1].event_timezone || hyroxRace.event_timezone,
+      distanceMiles: Number(races[1].distance_miles),
+    } : null;
+    const target = {
+      ...requested,
+      planMode: 'hyrox_build',
+      distanceMiles: Number(hyroxRace.distance_miles),
+      raceDate: localDate,
+      raceId: hyroxRace.id,
+      raceName: hyroxRace.race_name,
+      runDaysPerWeek: runSchedule.runDaysPerWeek,
+      trainingDays: runSchedule.trainingDays,
+      runDaysSource: runSchedule.runDaysSource,
+      trainingDaysSource: runSchedule.trainingDaysSource,
+      weeks: Math.max(1, Math.ceil(daysToEvent / 7)),
+      startDate: planningDateLocal,
+      todayISO: planningDateLocal,
+      nowISO: `${planningDateLocal}T12:00:00.000Z`,
+      hyroxEvent: {
+        raceId: hyroxRace.id,
+        name: hyroxRace.race_name,
+        eventLocalDate: localDate,
+        eventTimezone: hyroxRace.event_timezone,
+        format: hyroxRace.event_format,
+        category: hyroxRace.event_category,
+        rulesVersion: hyroxRace.rules_version,
+        runningPriority: config.runningPriority || 'maintain',
+      },
+      hyroxEquipment: Array.isArray(config.equipment) ? config.equipment : [],
+      secondaryRace: secondary,
+    };
+    return { target, raceWindow: { weeks: target.weeks, startDate: target.startDate } };
+  }
   const finalRace = races[races.length - 1];
   const raceWindow = concurrentPlan.racePlanWindow(finalRace.race_date, planningDateLocal);
   if (!raceWindow) throw candidateError(400, 'RACE_DATE_PASSED', 'Race dates must be today or later.');
@@ -1534,6 +1614,9 @@ function targetWithoutOwnedRace(profile, requested, planningDateLocal) {
   }
   const runSchedule = resolveRunSchedule(profile, requested, { requireCompleteSelection: true });
   if (!runSchedule.valid) throw candidateError(400, 'INVALID_RUN_SCHEDULE', runSchedule.error);
+  if (requested.hyroxEvent && ![3, 4].includes(runSchedule.runDaysPerWeek)) {
+    throw candidateError(400, 'INVALID_HYROX_RUN_FREQUENCY', 'HYROX plans require three or four run days per week.');
+  }
   const distanceMiles = clamp(parsePositiveNumber(requested.distanceMiles ?? requested.distance_miles) || 6.2, 1, 100);
   const requestedRaceDate = concurrentPlan.isValidISODate(requested.raceDate) ? requested.raceDate : null;
   const raceWindow = requestedRaceDate
@@ -1552,7 +1635,7 @@ function targetWithoutOwnedRace(profile, requested, planningDateLocal) {
     raceDate: requestedRaceDate,
     weeks: raceWindow?.weeks || clampInt(requested.weeks, 4, 20, defaultWeeksForDistance(distanceMiles)),
     startDate: raceWindow?.startDate || getPlanStartMonday(new Date(`${planningDateLocal}T12:00:00`)),
-    planMode: concurrentPlan.resolvePlanMode(profile, requested),
+    planMode: requested.hyroxEvent ? 'hyrox_build' : concurrentPlan.resolvePlanMode(profile, requested),
     todayISO: planningDateLocal,
     nowISO: `${planningDateLocal}T12:00:00.000Z`,
   };
@@ -1562,6 +1645,14 @@ function targetWithoutOwnedRace(profile, requested, planningDateLocal) {
 async function loadCandidateInputState(userId, request, clock, tx) {
   const profile = await tx.get('SELECT * FROM users WHERE id=?', [userId]);
   if (!profile) throw candidateError(404, 'USER_NOT_FOUND', 'User not found.');
+  let removalRace = null;
+  if (request.operation === 'remove_race') {
+    removalRace = await tx.get(
+      'SELECT * FROM race_events WHERE id=? AND user_id=?',
+      [request.remove_race_id, userId],
+    );
+    if (!removalRace) throw candidateError(404, 'RACE_NOT_FOUND', 'Race not found.');
+  }
   const races = await ownedRacesForCandidate(userId, request.race_ids, tx);
   const resolved = races.length
     ? targetFromOwnedRaces(profile, races, request.target, clock.planningDateLocal)
@@ -1571,6 +1662,14 @@ async function loadCandidateInputState(userId, request, clock, tx) {
     includeFuture: true,
     planningDateLocal: clock.planningDateLocal,
   });
+  if (request.operation === 'remove_race') {
+    const impact = active ? raceRemovalImpact(parsePlan(active.row) || {}, request.remove_race_id) : null;
+    const expected = impact?.remainingRaceIds || [];
+    const requested = request.race_ids.slice().sort();
+    if (!impact?.linked || JSON.stringify(expected.slice().sort()) !== JSON.stringify(requested)) {
+      throw candidateError(409, 'REMOVAL_IMPACT_CHANGED', 'The active-plan race goals changed. Preview removal again.');
+    }
+  }
   const activePlan = activeCandidateMetadata(active);
   const snapshot = buildPlanningSnapshot({
     activePlan,
@@ -1595,6 +1694,7 @@ async function loadCandidateInputState(userId, request, clock, tx) {
     },
     planningInputRevision: Number(profile.planning_input_revision || 0),
     races,
+    removalRace,
     request,
     snapshot,
     target: resolved.target,
@@ -1603,15 +1703,32 @@ async function loadCandidateInputState(userId, request, clock, tx) {
 
 function buildCandidateTrace(state, built) {
   return {
-    engine_version: RACE_PLAN_POLICY_V1.engineVersion,
+    engine_version: built.plan.engineVersion || RACE_PLAN_POLICY_V1.engineVersion,
     feasibility: built.plan.overall_feasibility || null,
     goal_feasibilities: built.plan.goal_feasibilities || [],
-    invariant_version: RACE_PLAN_POLICY_V1.invariantVersion,
+    invariant_version: built.plan.invariantVersion || RACE_PLAN_POLICY_V1.invariantVersion,
     planning_date_local: state.snapshot.planning_date_local,
-    policy_version: RACE_PLAN_POLICY_V1.version,
+    policy_version: built.plan.policyVersion || RACE_PLAN_POLICY_V1.version,
     reason_codes: built.plan.reasons || [],
     validation: built.validation,
   };
+}
+
+function buildDeterministicCandidate(context, options) {
+  if (!context?.target?.hyroxEvent) return buildRacePlanCandidate(context, options);
+  const plan = hyroxPlan.generateHyroxPlan({
+    athlete: { ...context.profile, readiness: context.recovery?.state },
+    currentLoad: {
+      weeklyMiles: context.history?.weeklyMileageBaseline,
+      readiness: context.recovery?.state,
+    },
+    planningLocalDate: options.planningDateLocal,
+    event: context.target.hyroxEvent,
+    equipment: context.target.hyroxEquipment,
+    availableDays: context.target.trainingDays,
+    secondaryRace: context.target.secondaryRace,
+  });
+  return { plan, validation: hyroxPlan.validateHyroxPlan(plan) };
 }
 
 function publicCandidatePayload(candidate) {
@@ -1642,8 +1759,8 @@ function publicCandidatePayload(candidate) {
   };
 }
 
-function candidateEffectiveFrom(active, planningDateLocal) {
-  return active?.source === 'assigned'
+function candidateEffectiveFrom(active, planningDateLocal, { immediate = false } = {}) {
+  return active?.source === 'assigned' && !immediate
     ? addPolicyDays(planningDateLocal, 1)
     : planningDateLocal;
 }
@@ -1668,7 +1785,7 @@ async function previewPlanForUser(userId, body = {}, { store = true } = {}) {
   const clock = acceptedPlanningClock(body);
   const request = normalizeCandidateRequest(body);
   const initial = await withUserMutation(userId, (tx) => loadCandidateInputState(userId, request, clock, tx));
-  const built = buildRacePlanCandidate(initial.context, {
+  const built = buildDeterministicCandidate(initial.context, {
     planningDateLocal: clock.planningDateLocal,
     timezoneOffsetMinutes: clock.timezoneOffsetMinutes,
   });
@@ -1682,7 +1799,9 @@ async function previewPlanForUser(userId, body = {}, { store = true } = {}) {
   const expiresAt = new Date(Date.now() + (RACE_PLAN_POLICY_V1.candidate.ttlHours * 60 * 60 * 1000)).toISOString();
   const response = {
     candidateHash,
-    effectiveFrom: candidateEffectiveFrom(initial.active, clock.planningDateLocal),
+    effectiveFrom: candidateEffectiveFrom(initial.active, clock.planningDateLocal, {
+      immediate: request.operation === 'remove_race',
+    }),
     expiresAt,
     id: candidateId,
     meta: initial.meta,
@@ -1728,9 +1847,9 @@ async function previewPlanForUser(userId, body = {}, { store = true } = {}) {
         clock.timezoneOffsetMinutes,
         initial.inputHash,
         candidateHash,
-        RACE_PLAN_POLICY_V1.engineVersion,
-        RACE_PLAN_POLICY_V1.version,
-        RACE_PLAN_POLICY_V1.invariantVersion,
+        normalized.plan.engineVersion || RACE_PLAN_POLICY_V1.engineVersion,
+        normalized.plan.policyVersion || RACE_PLAN_POLICY_V1.version,
+        normalized.plan.invariantVersion || RACE_PLAN_POLICY_V1.invariantVersion,
         JSON.stringify(normalized.snapshot),
         JSON.stringify(normalized.plan),
         JSON.stringify(normalized.trace),
@@ -1775,6 +1894,69 @@ function assertCandidatePlanningDateCurrent(row, now = new Date()) {
     );
   }
   return currentLocalDate;
+}
+
+function raceRemovalImpact(plan = {}, raceId) {
+  const goalRows = Array.isArray(plan.goals) ? plan.goals : [plan.goal].filter(Boolean);
+  const goalIds = [...new Set(goalRows
+    .map((goal) => String(goal?.raceId || goal?.race_id || '').trim())
+    .filter(Boolean))];
+  const sessionIds = (plan.weeks || []).flatMap((week) => planSchema.getDayEntries(week))
+    .flatMap((day) => planSchema.daySessions(day))
+    .map((session) => String(session.goalRaceId || session.goal_race_id || '').trim())
+    .filter(Boolean);
+  const wanted = String(raceId || '');
+  return {
+    linked: goalIds.includes(wanted) || sessionIds.includes(wanted),
+    remainingRaceIds: goalIds.filter((id) => id !== wanted),
+  };
+}
+
+async function raceRemovalImpactForUser(userId, raceId, tx) {
+  const active = await getActivePlanForMutation(userId, tx, { includeFuture: true });
+  return active ? raceRemovalImpact(parsePlan(active.row) || {}, raceId) : { linked: false, remainingRaceIds: [] };
+}
+
+async function previewRaceRemovalForUser(userId, raceId, body = {}) {
+  const state = await withUserMutation(userId, async (tx) => {
+    const race = await tx.get('SELECT * FROM race_events WHERE id=? AND user_id=?', [raceId, userId]);
+    if (!race) throw candidateError(404, 'RACE_NOT_FOUND', 'Race not found.');
+    const active = await getActivePlanForUser(userId, tx, { includeFuture: true, planningDateLocal: body.planning_date_local });
+    const impact = active ? raceRemovalImpact(parsePlan(active.row) || {}, raceId) : { linked: false, remainingRaceIds: [] };
+    return { impact, race };
+  });
+  if (!state.impact.linked) {
+    return {
+      requires_apply: false,
+      impact: 'direct_remove',
+      race: { id: state.race.id, name: state.race.race_name },
+    };
+  }
+  const candidate = await previewPlanForUser(userId, {
+    ...body,
+    operation: 'remove_race',
+    remove_race_id: raceId,
+    race_ids: state.impact.remainingRaceIds,
+  });
+  return {
+    ...publicCandidatePayload(candidate),
+    impact: 'active_plan_rebuild',
+    removal: { race_id: raceId, remaining_race_ids: state.impact.remainingRaceIds },
+  };
+}
+
+async function deleteOwnedRaceForCandidate(tx, userId, raceId) {
+  const race = await tx.get(
+    'SELECT id FROM race_events WHERE id=? AND user_id=? FOR UPDATE',
+    [raceId, userId],
+  );
+  if (!race) throw candidateError(404, 'RACE_NOT_FOUND', 'Race not found.');
+  const result = await tx.run(
+    'DELETE FROM race_events WHERE id=? AND user_id=?',
+    [raceId, userId],
+  );
+  if (result.changes === 0) throw new Error('Owned race deletion failed');
+  return true;
 }
 
 async function applyPlanCandidate(userId, candidateId, body = {}) {
@@ -1847,14 +2029,16 @@ async function applyPlanCandidate(userId, candidateId, body = {}) {
       return planningInputUnchanged({ status: 409, error: 'Training inputs changed. Preview again.', code: 'CANDIDATE_STALE' });
     }
 
-    const fresh = buildRacePlanCandidate(current.context, {
+    const fresh = buildDeterministicCandidate(current.context, {
       planningDateLocal: clock.planningDateLocal,
       timezoneOffsetMinutes: clock.timezoneOffsetMinutes,
     });
     if (!fresh.validation.valid) {
       return planningInputUnchanged({ status: 409, error: 'Candidate no longer passes validation.', code: 'CANDIDATE_INVALID' });
     }
-    const currentSemanticErrors = semanticCandidateErrors(storedPlan, current.context, clock.planningDateLocal);
+    const currentSemanticErrors = storedPlan?.planMode === 'hyrox_build'
+      ? hyroxPlan.validateHyroxPlan(storedPlan).errors
+      : semanticCandidateErrors(storedPlan, current.context, clock.planningDateLocal);
     if (currentSemanticErrors.length || prefixedHash(storedPlan) !== row.candidate_hash
       || prefixedHash(fresh.plan) !== row.candidate_hash) {
       return planningInputUnchanged({ status: 409, error: 'Candidate could not be reproduced safely.', code: 'CANDIDATE_DETERMINISM_MISMATCH' });
@@ -1879,7 +2063,9 @@ async function applyPlanCandidate(userId, candidateId, body = {}) {
       if (preferenceResult.changes === 0) throw new Error('Plan preferences update failed');
     }
 
-    const effectiveFrom = candidateEffectiveFrom(active, row.planning_date_local);
+    const effectiveFrom = request.operation === 'remove_race'
+      ? row.planning_date_local
+      : candidateEffectiveFrom(active, row.planning_date_local);
     const planId = uuidv4();
     const userPlanId = uuidv4();
     const replacementLineage = replacementLineageForActivePlan(active, userPlanId);
@@ -1916,6 +2102,9 @@ async function applyPlanCandidate(userId, candidateId, body = {}) {
         effectiveFrom,
       ]
     );
+    if (request.operation === 'remove_race') {
+      await deleteOwnedRaceForCandidate(tx, userId, request.remove_race_id);
+    }
     const payload = {
       candidate_id: row.id,
       candidate_hash: row.candidate_hash,
@@ -3821,13 +4010,18 @@ router.post('/generate-for-race/:raceId', auth, requirePremium('Race Programs'),
 router._test = {
   applyPlanCandidate,
   assertCandidatePlanningDateCurrent,
+  buildDeterministicCandidate,
   candidateFeasibilityCanApply,
   candidateEffectiveFrom,
   getActivePlanForMutation,
   getActivePlanForUser,
   getTimezoneOffsetFromRequest,
+  deleteOwnedRaceForCandidate,
   pruneExpiredPlanCandidates,
   previewPlanForUser,
+  previewRaceRemovalForUser,
+  raceRemovalImpact,
+  raceRemovalImpactForUser,
   replacementLineageForActivePlan,
   sendCandidateError,
   withRequestPlanningClock,

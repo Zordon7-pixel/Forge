@@ -494,8 +494,17 @@ async function runAlwaysMigrations() {
       ADD COLUMN IF NOT EXISTS terrain TEXT,
       ADD COLUMN IF NOT EXISTS course_profile_json TEXT,
       ADD COLUMN IF NOT EXISTS source TEXT,
-      ADD COLUMN IF NOT EXISTS url TEXT
+      ADD COLUMN IF NOT EXISTS url TEXT,
+      ADD COLUMN IF NOT EXISTS event_kind TEXT NOT NULL DEFAULT 'run_race',
+      ADD COLUMN IF NOT EXISTS event_format TEXT,
+      ADD COLUMN IF NOT EXISTS event_category TEXT,
+      ADD COLUMN IF NOT EXISTS event_local_date TEXT,
+      ADD COLUMN IF NOT EXISTS event_timezone TEXT,
+      ADD COLUMN IF NOT EXISTS rules_version TEXT,
+      ADD COLUMN IF NOT EXISTS event_config_json JSONB
   `);
+  await pg.query("UPDATE race_events SET event_kind='run_race' WHERE event_kind IS NULL");
+  await pg.query('UPDATE race_events SET event_local_date=race_date WHERE event_local_date IS NULL');
 
   await seedRaceCatalog();
   await seedShoeCatalog();

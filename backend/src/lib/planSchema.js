@@ -22,6 +22,7 @@ const PLAN_MODES = Object.freeze({
   RUN_ONLY: 'run_only',
   HYBRID_MAINTAIN: 'hybrid_maintain',
   HYBRID_BUILD: 'hybrid_build',
+  HYROX_BUILD: 'hyrox_build',
 });
 
 const VALID_MODES = new Set(Object.values(PLAN_MODES));
@@ -44,7 +45,9 @@ function isSchemaV2(plan) {
 }
 
 function isHybridMode(mode) {
-  return mode === PLAN_MODES.HYBRID_MAINTAIN || mode === PLAN_MODES.HYBRID_BUILD;
+  return mode === PLAN_MODES.HYBRID_MAINTAIN
+    || mode === PLAN_MODES.HYBRID_BUILD
+    || mode === PLAN_MODES.HYROX_BUILD;
 }
 
 function stripUndefined(obj) {
@@ -91,7 +94,7 @@ function kindFromLegacy(entry) {
 function kindFromSession(session) {
   const s = session || {};
   const k = String(s.kind || '').toLowerCase();
-  if (k === 'run' || k === 'lift' || k === 'rest') return k;
+  if (k === 'run' || k === 'lift' || k === 'rest' || k === 'hyrox') return k;
   return kindFromLegacy(s);
 }
 
@@ -240,7 +243,7 @@ function plannedSessionsForDay(dayEntry, idx, dateStr) {
     sessionId: sessionIdentifier(d, Array.isArray(d.sessions) ? d.sessions[sIdx] : d, sIdx, idx),
     day: d.day || ('Day ' + (idx + 1)),
     date: dateStr,
-    type: s.kind === 'lift' ? 'lift' : 'run',
+    type: s.kind === 'lift' ? 'lift' : s.kind === 'hyrox' ? 'hyrox' : 'run',
     distance: Number(s.distance_miles || 0),
     raw: s,
   }));
