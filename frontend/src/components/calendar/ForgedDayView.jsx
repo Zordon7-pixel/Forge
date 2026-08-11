@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Footprints, Dumbbell, Moon, Timer, Gauge, Route, Flame, Brain,
+  Activity, Footprints, Dumbbell, Moon, Timer, Gauge, Route, Flame, Brain,
   Maximize2, Minimize2, Minus, Plus, ChevronLeft, ChevronRight, CheckCircle2, Circle,
 } from 'lucide-react'
 import WatchWorkoutSendButton from '../WatchWorkoutSendButton'
@@ -170,6 +170,34 @@ function liftFacts(session, planContext = {}) {
   }
 }
 
+function officialMetricFacts(officialStandard = {}) {
+  return [
+    officialStandard.loadKgIncludingSled != null ? `${officialStandard.loadKgIncludingSled} kg including sled` : '',
+    officialStandard.loadKgPerImplement != null ? `${officialStandard.implements || 2} × ${officialStandard.loadKgPerImplement} kg` : '',
+    officialStandard.loadKg != null ? `${officialStandard.loadKg} kg` : '',
+    officialStandard.ballKg != null ? `${officialStandard.ballKg} kg ball` : '',
+    officialStandard.targetHeightMeters != null ? `${officialStandard.targetHeightMeters} m target` : '',
+  ].filter(Boolean)
+}
+
+function hyroxFacts(session) {
+  const raw = session.raw || session.prescription || {}
+  const stationSequence = Array.isArray(raw.stationSequence) ? raw.stationSequence : []
+  return {
+    purpose: firstStr(raw.purpose),
+    duration: Number(raw.durationMin || session.durationMinutes || 0),
+    stationSequence,
+    runs: Array.isArray(raw.runSequenceMeters) ? raw.runSequenceMeters : [],
+    warmUp: list(raw.warmUp || raw.warmup),
+    runningTarget: displayValue(raw.runningTarget),
+    transitionRest: firstStr(raw.transitionRest),
+    stopScaleCriteria: list(raw.stopScaleCriteria),
+    canonicalUnits: firstStr(raw.canonicalUnits, 'metric'),
+    exactCount: stationSequence.filter((station) => station.exactStation).length,
+    substitutions: stationSequence.filter((station) => !station.exactStation && station.substitute).length,
+  }
+}
+
 function PaperSection({ title, tone, icon, children, px }) {
   const toneClass = tone === 'green' ? 'forged-sec-green' : tone === 'red' ? 'forged-sec-red' : tone === 'run' ? 'forged-sec-run' : ''
   return (
@@ -208,6 +236,7 @@ export default function ForgedDayView({
   const recordedRuns = Array.isArray(day?.activities) ? day.activities.filter((activity) => activity.kind === 'run') : []
   const runSession = sessions.find((s) => s.kind === 'run') || null
   const liftSession = sessions.find((s) => s.kind === 'lift') || null
+  const hyroxSessions = sessions.filter((s) => s.kind === 'hyrox')
   const isRest = !day || day.isRest
   const anchoredBy = planContext.goal?.anchoredBy || day?.anchoredBy || null
   const anchorRunDate = formatAnchorRunDate(anchoredBy?.runDate)
@@ -241,8 +270,8 @@ export default function ForgedDayView({
     }
   }, [expanded])
 
-  const whyToday = firstStr(day?.whyToday, runSession?.prescription?.explanation, liftSession?.prescription?.explanation)
-  const recovery = firstStr(day?.recovery, runSession?.prescription?.recovery, liftSession?.prescription?.recovery)
+  const whyToday = firstStr(day?.whyToday, hyroxSessions[0]?.raw?.purpose, runSession?.prescription?.explanation, liftSession?.prescription?.explanation)
+  const recovery = firstStr(day?.recovery, hyroxSessions[0]?.raw?.transitionRest, runSession?.prescription?.recovery, liftSession?.prescription?.recovery)
   const orderGuidance = firstStr(day?.orderGuidance)
   const plannedSessionIds = new Set(sessions.map((session) => String(session.id)))
   const runDone = Boolean(runSession && completedSet?.has(String(runSession.id)))
@@ -292,6 +321,52 @@ export default function ForgedDayView({
           })}
         </div>
       </section>
+    )
+  }
+
+  const renderHyrox = (hyroxSession) => {
+    const facts = hyroxFacts(hyroxSession)
+    const done = completedSet?.has(String(hyroxSession.id))
+    return (
+      <PaperSection key={hyroxSession.id} title={hyroxSession.title || 'HYROX session'} tone="red" px={px}
+        icon={<span className="forged-stamp forged-stamp--hyrox" data-state={sessionState(hyroxSession, completedSet)}><Activity size={16} /></span>}>
+        <p className="forged-hand" style={{ margin: '0 0 8px', fontSize: px(15), fontWeight: 800 }}>HYROX-specific session · canonical metric prescription</p>
+        {facts.purpose && <p style={{ margin: '0 0 9px', fontSize: px(13), lineHeight: 1.5 }}>{facts.purpose}</p>}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, padding: '9px 10px', borderRadius: 8, background: 'rgba(194,65,12,0.05)', fontSize: px(12) }}>
+          {facts.duration > 0 && <span><Timer size={13} style={{ verticalAlign: -2 }} /> {facts.duration} min</span>}
+          {facts.runs.length > 0 && <span><Route size={13} style={{ verticalAlign: -2 }} /> {facts.runs.length} × 1,000 m run</span>}
+          <span>{facts.stationSequence.length} ordered stations</span>
+          <span>{facts.canonicalUnits} canonical</span>
+        </div>
+        {facts.runningTarget && <p style={{ margin: '8px 0 0', fontSize: px(12) }}><strong>Running target:</strong> {facts.runningTarget}</p>}
+        {facts.warmUp.length > 0 && <div style={{ marginTop: 10 }}><strong style={{ fontSize: px(13) }}>Warm-up</strong><ol style={{ margin: '4px 0 0', paddingLeft: 18, fontSize: px(12) }}>{facts.warmUp.map((item, index) => <li key={`hyrox-warm-${index}`}>{item}</li>)}</ol></div>}
+        <ol style={{ display: 'grid', gap: 8, margin: '12px 0 0', padding: 0, listStyle: 'none', minWidth: 0 }}>
+          {facts.stationSequence.map((station, index) => {
+            const dose = [station.distanceMeters != null ? `${station.distanceMeters} m` : '', station.repetitions != null ? `${station.repetitions} reps` : ''].filter(Boolean).join(' · ')
+            const official = officialMetricFacts(station.officialStandard)
+            return (
+              <li key={`${station.id || station.name}-${index}`} style={{ minWidth: 0, padding: 10, borderRadius: 8, border: '1px solid rgba(60,55,45,0.15)', background: 'rgba(255,255,255,0.25)', overflowWrap: 'anywhere' }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
+                  <strong style={{ fontSize: px(13) }}>{index + 1}. {station.name || labelText(station.id)}</strong>
+                  <span style={{ flex: '0 0 auto', fontSize: px(10), fontWeight: 900 }}>{station.exactStation ? 'EXACT STATION' : 'PATTERN ONLY'}</span>
+                </div>
+                {dose && <p style={{ margin: '4px 0 0', fontSize: px(12) }}>{dose}</p>}
+                {station.loadGuidance && <p style={{ margin: '3px 0 0', fontSize: px(11) }}><strong>Training load:</strong> {station.loadGuidance}</p>}
+                {official.length > 0 && <p style={{ margin: '3px 0 0', fontSize: px(11) }}><strong>Official metric reference:</strong> {official.join(' · ')}</p>}
+                {!station.exactStation && station.substitute && <p style={{ margin: '5px 0 0', fontSize: px(11), color: '#9A3412', fontWeight: 800 }}>Substitute: {station.substitute}. This does not claim exact station readiness.</p>}
+              </li>
+            )
+          })}
+        </ol>
+        {facts.substitutions > 0 && <p role="status" style={{ margin: '10px 0 0', padding: 9, borderRadius: 8, background: 'rgba(194,65,12,0.08)', fontSize: px(11), fontWeight: 800 }}>{facts.substitutions} station pattern{facts.substitutions === 1 ? '' : 's'} use truthful substitutions; exact readiness is not claimed.</p>}
+        {facts.transitionRest && <p style={{ margin: '9px 0 0', fontSize: px(12) }}><strong>Transition / rest:</strong> {facts.transitionRest}</p>}
+        {facts.stopScaleCriteria.length > 0 && (
+          <div style={{ marginTop: 10 }}><strong style={{ fontSize: px(13) }}>Stop or scale when</strong><ul style={{ margin: '4px 0 0', paddingLeft: 18, fontSize: px(12) }}>{facts.stopScaleCriteria.map((item, index) => <li key={`hyrox-stop-${index}`}>{item}</li>)}</ul></div>
+        )}
+        <button type="button" onClick={() => onToggleComplete?.(hyroxSession.id)} disabled={updating} style={{ width: '100%', minHeight: 48, marginTop: 12, border: '1px solid rgba(60,55,45,0.2)', borderRadius: 8, padding: '12px 14px', background: 'transparent', fontSize: px(13), fontWeight: 850 }}>
+          {done ? <CheckCircle2 size={16} color="#15803D" style={{ display: 'inline', marginRight: 6, verticalAlign: -3 }} /> : <Circle size={16} style={{ display: 'inline', marginRight: 6, verticalAlign: -3 }} />}{done ? 'HYROX session done' : 'Mark HYROX session done'}
+        </button>
+      </PaperSection>
     )
   }
 
@@ -531,6 +606,7 @@ export default function ForgedDayView({
         </section>
       ) : (
         <>
+          {hyroxSessions.map(renderHyrox)}
           {orderGuidance && (runSession && liftSession) && (
             <p className="forged-hand" style={{ fontSize: px(14), marginTop: 12, padding: '8px 10px', background: 'rgba(60,55,45,0.05)', borderRadius: 8 }}>{orderGuidance}</p>
           )}

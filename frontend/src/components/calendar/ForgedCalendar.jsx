@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from 'react'
 import {
-  Footprints, Dumbbell, Moon, ChevronDown, ChevronLeft, ChevronRight, Pencil,
+  Activity, Footprints, Dumbbell, Moon, ChevronDown, ChevronLeft, ChevronRight, Pencil,
 } from 'lucide-react'
 import {
   buildMonthGrid, addMonths, dayMarks, dayStatus, countdownDays, WEEKDAYS,
@@ -43,6 +43,11 @@ function formatAnchorRunDate(value) {
 }
 
 function sessionTarget(session) {
+  if (session.kind === 'hyrox') {
+    const stations = Array.isArray(session.raw?.stationSequence) ? session.raw.stationSequence.length : 0
+    const runs = Array.isArray(session.raw?.runSequenceMeters) ? session.raw.runSequenceMeters.length : 0
+    return [runs ? `${runs} × 1 km` : null, stations ? `${stations} station${stations === 1 ? '' : 's'}` : null].filter(Boolean).join(' · ') || 'HYROX'
+  }
   if (session.kind === 'lift') return String(session.prescription?.focus || 'Strength').replaceAll('_', ' ')
   if (session.prescriptionBasis === 'time' && session.durationMinutes > 0) return `${Math.round(session.durationMinutes)} min`
   if (session.distanceMiles > 0) return `${session.distanceIsEstimate ? '~' : ''}${session.distanceMiles.toFixed(1)} mi`
@@ -50,7 +55,9 @@ function sessionTarget(session) {
 }
 
 function sessionPurpose(session) {
-  return session.prescription?.description
+  return session.prescription?.purpose
+    || session.prescription?.description
+    || session.raw?.purpose
     || session.raw?.description
     || (session.kind === 'lift'
       ? 'Preserve strength and movement quality alongside the running block.'
@@ -106,6 +113,8 @@ function weekOverview(week, strengthEnabled) {
   ))
   const runs = sessions.filter(({ session }) => session.kind === 'run')
   const lifts = sessions.filter(({ session }) => session.kind === 'lift')
+  const hyrox = sessions.filter(({ session }) => session.kind === 'hyrox')
+  const runExposures = runs.length + hyrox.filter(({ session }) => session.raw?.includesRun).length
   const totalMiles = runs.reduce((sum, { session }) => sum + Number(session.distanceMiles || 0), 0)
   const totalMinutes = runs.reduce((sum, { session }) => sum + Number(session.durationMinutes || 0), 0)
   const longRunEntry = runs
@@ -128,14 +137,18 @@ function weekOverview(week, strengthEnabled) {
   const restDays = (week?.days || []).filter((day) => day.isRest).length
   const phasePurpose = PHASE_PURPOSE[week?.phase] || 'Progress the plan with a repeatable balance of training and recovery.'
   const explicitStrengthIntent = String(week?.strengthIntent || '')
-  const strengthIntent = !strengthEnabled
+  const strengthIntent = hyrox.length
+    ? `${hyrox.length} HYROX session${hyrox.length === 1 ? '' : 's'} carry the station-strength and skill intent without becoming fake running mileage.`
+    : !strengthEnabled
     ? 'Run-only mode; no strength session is required.'
     : lifts.length > 0 && /no strength/i.test(explicitStrengthIntent)
       ? `${lifts.length} scheduled strength session${lifts.length === 1 ? '' : 's'} preserve the selected strength floor.`
       : explicitStrengthIntent || (lifts.length
         ? `${lifts.length} scheduled strength session${lifts.length === 1 ? '' : 's'} support the running block.`
         : 'No strength session is scheduled this week.')
-  const purpose = week?.purpose || (lifts.length
+  const purpose = week?.purpose || (hyrox.length
+    ? `${phasePurpose} HYROX work supplements the running foundation within the hard-day limit.`
+    : lifts.length
     ? `${phasePurpose} Strength work supports the run goal without replacing recovery.`
     : phasePurpose)
   const whyAdvances = keyQuality?.purpose
@@ -145,8 +158,9 @@ function weekOverview(week, strengthEnabled) {
   return {
     sessions,
     summary: [
-      `${runs.length} run${runs.length === 1 ? '' : 's'}`,
-      strengthEnabled ? `${lifts.length} lift${lifts.length === 1 ? '' : 's'}` : null,
+      `${runExposures} run exposure${runExposures === 1 ? '' : 's'}`,
+      hyrox.length ? `${hyrox.length} HYROX exposure${hyrox.length === 1 ? '' : 's'}` : null,
+      strengthEnabled && !hyrox.length ? `${lifts.length} lift${lifts.length === 1 ? '' : 's'}` : null,
       totalMiles > 0 ? `${totalMiles.toFixed(1)} planned mi` : null,
       totalMinutes > 0 ? formatMinutes(totalMinutes) : null,
       `${restDays} rest day${restDays === 1 ? '' : 's'}`,
@@ -277,7 +291,7 @@ function PlanOverview({ model, currentWeekIndex }) {
 }
 
 function Stamp({ kind, state, small }) {
-  const Icon = kind === 'lift' ? Dumbbell : kind === 'rest' ? Moon : Footprints
+  const Icon = kind === 'lift' ? Dumbbell : kind === 'rest' ? Moon : kind === 'hyrox' ? Activity : Footprints
   return (
     <span
       className={`forged-stamp forged-stamp--${kind}${small ? ' forged-stamp--sm' : ''}`}
@@ -301,6 +315,7 @@ function WeekRow({ day, isToday, completedSet, recordedRuns = [], onOpen }) {
   const status = dayStatus(day, completedSet)
   const runSession = day.sessions.find((s) => s.kind === 'run')
   const liftSession = day.sessions.find((s) => s.kind === 'lift')
+  const hyroxSession = day.sessions.find((s) => s.kind === 'hyrox')
   const hasRecordedRun = recordedRuns.length > 0
   const plannedIds = new Set(day.sessions.map((session) => String(session.id)))
   const unlinkedRun = recordedRuns.some((activity) => !activity.planSessionId || !plannedIds.has(String(activity.planSessionId)))
@@ -308,7 +323,7 @@ function WeekRow({ day, isToday, completedSet, recordedRuns = [], onOpen }) {
     ? 'Recorded run'
     : day.isRest
     ? 'Rest day'
-    : [runSession?.title, liftSession?.title].filter(Boolean).join(' + ') || 'Session'
+    : [hyroxSession?.title, runSession?.title, liftSession?.title].filter(Boolean).join(' + ') || 'Session'
   const runTarget = runSession?.prescriptionBasis === 'time' && runSession.durationMinutes > 0
     ? `${Math.round(runSession.durationMinutes)} min`
     : runSession && runSession.distanceMiles > 0
@@ -319,6 +334,7 @@ function WeekRow({ day, isToday, completedSet, recordedRuns = [], onOpen }) {
     : day.isRest
     ? 'Recover'
     : [
+        hyroxSession ? sessionTarget(hyroxSession) : '',
         runTarget,
         liftSession ? 'Lift' : '',
       ].filter(Boolean).join(' · ')
@@ -456,7 +472,7 @@ export default function ForgedCalendar({
                 <p className="text-[10px] font-black uppercase" style={{ color: 'var(--accent)', margin: 0 }}>A{index + 1} · {raceGoal.role === 'final_peak' ? 'Final peak' : 'First peak'}</p>
                 <p className="text-sm font-bold" style={{ color: 'var(--text-primary)', margin: '4px 0 0' }}>{raceGoal.name}</p>
                 <p className="text-xs" style={{ color: 'var(--text-muted)', margin: '3px 0 0' }}>
-                  {formatAnchorRunDate(raceGoal.dateISO)} · {Number(raceGoal.distanceMiles || 0).toFixed(1)} mi
+                  {formatAnchorRunDate(raceGoal.dateISO)} · {raceGoal.kind === 'hyrox' ? 'HYROX' : `${Number(raceGoal.distanceMiles || 0).toFixed(1)} mi`}
                   {raceGoal.goalTimeSeconds ? ` · ${formatGoalTime(raceGoal.goalTimeSeconds)}` : ''}
                 </p>
               </div>
@@ -585,6 +601,7 @@ export default function ForgedCalendar({
                     <span className="forged-month-num">{cell.dayOfMonth}</span>
                     <span className="forged-month-marks">
                       {cell.mark === 'hybrid' && <span className="forged-mark-dot forged-mark-dot--hybrid" />}
+                      {cell.mark === 'hyrox' && <span aria-label="HYROX" style={{ color: 'var(--accent)', fontSize: 9, fontWeight: 950 }}>H</span>}
                       {cell.mark === 'run' && <span className="forged-mark-dot forged-mark-dot--run" />}
                       {cell.mark === 'lift' && <span className="forged-mark-dot forged-mark-dot--lift" />}
                       {cell.mark === 'rest' && <span className="forged-mark-dot forged-mark-dot--rest" />}

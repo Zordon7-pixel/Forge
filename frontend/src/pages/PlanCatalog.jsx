@@ -7,6 +7,7 @@ import { isPlanCandidateReviewCancelled } from '../lib/planCandidateReview'
 import { activateModalDialog } from '../lib/modalDialog'
 import { useProContext } from '../context/ProContext'
 import DurationPicker from '../components/DurationPicker'
+import HyroxPlanSetup from '../components/hyrox/HyroxPlanSetup'
 import { formatDuration, normalizeDurationSeconds } from '../lib/duration'
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
@@ -110,6 +111,7 @@ export default function PlanCatalog() {
   const [savedRaces, setSavedRaces] = useState([])
   const [raceSelection, setRaceSelection] = useState(null)
   const [raceDraft, setRaceDraft] = useState({ name: '', date: '', location: '' })
+  const [hyroxSetupOpen, setHyroxSetupOpen] = useState(false)
 
   const isRacePlan = selectedGoal?.kind === 'race'
   const selectedDistance = useMemo(() => {
@@ -138,7 +140,7 @@ export default function PlanCatalog() {
       .then(({ data }) => {
         if (!active) return
         const upcoming = (Array.isArray(data?.races) ? data.races : [])
-          .filter((race) => race.status === 'upcoming' && race.race_date >= todayISO)
+          .filter((race) => race.status === 'upcoming' && race.race_date >= todayISO && String(race.event_kind || 'run_race') === 'run_race')
           .sort((a, b) => String(a.race_date).localeCompare(String(b.race_date)))
         setSavedRaces(upcoming)
       })
@@ -458,6 +460,23 @@ export default function PlanCatalog() {
         )}
       </section>
 
+      <section aria-labelledby="hyrox-plan-choice" style={{ marginBottom: 22 }}>
+        <h2 id="hyrox-plan-choice" style={{ color: 'var(--text-primary)', fontSize: 18, fontWeight: 950, margin: '0 0 4px' }}>Training for HYROX?</h2>
+        <p style={{ color: 'var(--text-muted)', fontSize: 13, margin: '0 0 12px' }}>Build a running-first worldwide HYROX plan around an exact event date, or start with an eight-week foundation block.</p>
+        <button
+          type="button"
+          onClick={() => { if (ensurePro()) setHyroxSetupOpen(true) }}
+          className="rounded-lg p-4"
+          style={{ width: '100%', maxWidth: 560, minWidth: 0, minHeight: 110, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, textAlign: 'left', background: 'var(--bg-card)', color: 'var(--text-primary)', border: '1px solid var(--accent)' }}
+        >
+          <span style={{ minWidth: 0 }}>
+            <span style={{ display: 'block', fontSize: 23, fontWeight: 950 }}>HYROX</span>
+            <span style={{ display: 'block', marginTop: 5, color: 'var(--text-muted)', fontSize: 13, overflowWrap: 'anywhere' }}>Exact station order · equipment-aware · adaptive runway</span>
+          </span>
+          <ChevronRight size={22} color="var(--accent)" style={{ flex: '0 0 auto' }} />
+        </button>
+      </section>
+
       <section>
         <h2 style={{ color: 'var(--text-primary)', fontSize: 18, fontWeight: 950, margin: '0 0 4px' }}>No race selected?</h2>
         <p style={{ color: 'var(--text-muted)', fontSize: 13, margin: '0 0 12px' }}>Build a distance-focused training block without a race date.</p>
@@ -492,6 +511,14 @@ export default function PlanCatalog() {
           ))}
         </div>
       </section>
+
+      {hyroxSetupOpen && (
+        <HyroxPlanSetup
+          savedRaces={savedRaces}
+          onClose={() => setHyroxSetupOpen(false)}
+          onComplete={() => navigate('/plan')}
+        />
+      )}
 
       {selectedGoal && (
         <div

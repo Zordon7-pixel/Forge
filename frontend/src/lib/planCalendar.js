@@ -26,6 +26,7 @@ const PLAN_MODE_LABELS = {
   run_only: 'Run only',
   hybrid_maintain: 'Maintain strength',
   hybrid_build: 'Build strength',
+  hyrox_build: 'HYROX build',
 }
 
 const FEASIBILITY_LABELS = Object.freeze({
@@ -34,6 +35,51 @@ const FEASIBILITY_LABELS = Object.freeze({
   unsafe: 'Goal needs adjustment',
   not_applicable: 'Completion goal',
 })
+
+const HYROX_RUNWAY_LABELS = Object.freeze({
+  foundation_only: 'Eight-week HYROX foundation',
+  race_week: 'Race-week HYROX taper',
+  readiness_bridge: 'HYROX readiness bridge',
+  short_runway: 'Short-runway HYROX specialization',
+  standard_build: 'Standard HYROX build',
+  full_build: 'Full HYROX foundation and build',
+  base_then_build: 'Base development before HYROX-specific work',
+})
+
+function readableHyroxKey(value) {
+  return String(value || '').replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())
+}
+
+export function hyroxCandidateReviewModel(plan = {}) {
+  const policy = plan.hyroxPolicy || {}
+  const weeks = Array.isArray(plan.weeks) ? plan.weeks : []
+  const phases = [...new Set(weeks.map((week) => week?.phase).filter(Boolean))]
+  const goals = Array.isArray(plan.goals) ? plan.goals : plan.goal ? [plan.goal] : []
+  const secondary = goals.find((goal) => String(goal?.kind || goal?.eventKind) === 'run_race')
+  const missingEquipment = Array.isArray(policy.missingEquipment) ? policy.missingEquipment : []
+  const availableEquipment = Array.isArray(policy.equipment) ? policy.equipment : []
+  const hardDayLimit = Number(policy.maximumHardLowerBodyDaysPerRollingSeven || 0)
+  const runDays = Number(plan.schedulePreferences?.runDaysPerWeek || 0)
+  const hyroxDays = Number(policy.sessionsPerWeek || 0)
+  return {
+    daysRemaining: Number.isInteger(policy.daysToEventAtGeneration) ? policy.daysToEventAtGeneration : null,
+    runwayClass: String(policy.runwayClass || ''),
+    runwayLabel: HYROX_RUNWAY_LABELS[policy.runwayClass] || readableHyroxKey(policy.runwayClass),
+    phases,
+    phaseLabels: phases.map(readableHyroxKey),
+    weekCount: weeks.length,
+    sessionSummary: `${runDays} run exposures · ${hyroxDays} HYROX exposures · ${hardDayLimit} hard lower-body days`,
+    missingEquipment,
+    availableEquipment,
+    equipmentTruth: missingEquipment.length
+      ? `Missing ${missingEquipment.map(readableHyroxKey).join(', ')}. The plan uses pattern-only substitutions and does not claim exact station readiness.`
+      : 'Required station equipment is available; exact prescriptions remain canonical metric values.',
+    safetyPolicy: `No more than ${hardDayLimit} hard lower-body days in a rolling seven-day window. Compromised sessions replace another hard stimulus.`,
+    recoveryTransition: secondary && phases.includes('post_hyrox_recovery')
+      ? `Post-HYROX recovery comes before the running-specific transition to ${secondary.name || 'the secondary running race'}.`
+      : '',
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Local-date-safe helpers
@@ -109,7 +155,7 @@ function planData(plan) {
 export function getPlanMode(plan) {
   const data = planData(plan)
   const raw = String(data.planMode || data.plan_mode || '').toLowerCase()
-  if (raw === 'run_only' || raw === 'hybrid_maintain' || raw === 'hybrid_build') return raw
+  if (raw === 'run_only' || raw === 'hybrid_maintain' || raw === 'hybrid_build' || raw === 'hyrox_build') return raw
   // Infer from strength policy / plan type when explicit mode is absent (legacy).
   const policy = data.strengthPolicy || data.strength_policy
   if (policy && policy.enabled === false) return 'run_only'
@@ -159,6 +205,7 @@ function normalizeGoal(data, plan, goal = {}) {
     : null
   const derivedPace = goalTimeSeconds && distanceMiles ? Math.round(goalTimeSeconds / distanceMiles) : null
   return {
+    kind: goal.kind || goal.eventKind || goal.event_kind || 'run_race',
     raceId: goal.raceId || goal.race_id || data.raceId || data.race_id || null,
     name: goal.name || data.raceName || plan?.name || null,
     dateISO: dateISO || null,
@@ -279,12 +326,14 @@ export function sessionKind(rawSession = {}) {
     rawSession.kind || rawSession.workout_type || rawSession.type || '',
   ).toLowerCase()
   if (raw.includes('rest')) return 'rest'
+  if (rawSession.kind === 'hyrox' || raw.startsWith('hyrox')) return 'hyrox'
   if (raw.includes('strength') || raw.includes('lift') || raw.includes('cross')) return 'lift'
   return 'run'
 }
 
 export function canonicalWorkoutLabel(session) {
   if (!session) return ''
+  if (session.kind === 'hyrox') return session.title || 'HYROX session'
   if (session.kind === 'lift') {
     const focus = String(session.prescription?.focus || session.raw?.focus || '').trim()
     const label = focus.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())
@@ -385,14 +434,14 @@ export function normalizeSession(rawSession, context = {}) {
   const distanceMiles =
     Number(firstDefined(rawSession.distance_miles, prescription.distanceMiles, prescription.distance_miles, 0)) || 0
   const durationMinutes =
-    Number(firstDefined(rawSession.duration_min, prescription.durationMinutes, prescription.duration_min, 0)) || 0
+    Number(firstDefined(rawSession.durationMin, rawSession.duration_min, prescription.durationMinutes, prescription.duration_min, 0)) || 0
   const prescriptionBasis = String(firstDefined(rawSession.prescription_basis, prescription.prescriptionBasis, prescription.prescription_basis, '') || '').toLowerCase()
   const type = firstDefined(prescription.type, safeRaw.type, kind === 'lift' ? 'strength' : kind)
   const title = firstDefined(
     prescription.title,
     safeRaw.title,
     prescription.name,
-    kind === 'lift' ? 'Strength' : kind === 'rest' ? 'Rest day' : 'Run',
+    kind === 'lift' ? 'Strength' : kind === 'rest' ? 'Rest day' : kind === 'hyrox' ? 'HYROX session' : 'Run',
   )
   const displayName = firstDefined(
     rawSession.display_name,
@@ -591,7 +640,7 @@ export function dayHasRun(dayModel) {
 export function dayMarks(dayModel, completedSet) {
   if (!dayModel || dayModel.isRest) return []
   const marks = []
-  for (const kind of ['run', 'lift']) {
+  for (const kind of ['run', 'lift', 'hyrox']) {
     const session = dayModel.sessions.find((item) => item.kind === kind)
     if (session) marks.push({ kind, state: sessionState(session, completedSet), id: session.id })
   }
@@ -613,6 +662,8 @@ export function monthMark(dayModel) {
   if (!dayModel || dayModel.isRest) return 'rest'
   const hasRun = dayHasRun(dayModel)
   const hasLift = dayHasLift(dayModel)
+  const hasHyrox = dayModel.sessions?.some((session) => session.kind === 'hyrox')
+  if (hasHyrox) return 'hyrox'
   if (hasRun && hasLift) return 'hybrid'
   if (hasLift) return 'lift'
   if (hasRun) return 'run'

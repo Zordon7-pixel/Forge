@@ -2,8 +2,10 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useProContext } from '../context/ProContext'
 import DurationPicker from '../components/DurationPicker'
+import RaceEditSheet from '../components/calendar/RaceEditSheet'
+import RaceRemoveSheet from '../components/races/RaceRemoveSheet'
 import api from '../lib/api'
-import { previewAndApplyPlan } from '../lib/planCandidates'
+import { phonePlanningClock, previewAndApplyPlan } from '../lib/planCandidates'
 import { isPlanCandidateReviewCancelled } from '../lib/planCandidateReview'
 import { RACE_DISTANCE_OPTIONS, STANDARD_RACE_DISTANCES } from '../lib/raceDistances'
 
@@ -174,6 +176,13 @@ export default function Races() {
   const [message, setMessage] = useState('')
   const [planPromptRace, setPlanPromptRace] = useState(null)
   const [generatingPlanId, setGeneratingPlanId] = useState(null)
+  const [raceEditor, setRaceEditor] = useState(null)
+  const [raceSaving, setRaceSaving] = useState(false)
+  const [raceSaveError, setRaceSaveError] = useState('')
+  const [removalPreviewingId, setRemovalPreviewingId] = useState(null)
+  const [removalState, setRemovalState] = useState(null)
+  const [removalApplying, setRemovalApplying] = useState(false)
+  const [removalError, setRemovalError] = useState('')
 
   const load = async () => {
     const [raceResponse, planResponse] = await Promise.all([
@@ -255,6 +264,82 @@ export default function Races() {
       setCatalogError(err?.response?.data?.error || 'Unable to add race')
     } finally {
       setAddingCatalogId(null)
+    }
+  }
+
+  const saveRaceEdit = async (payload, { affectsPlan } = {}) => {
+    if (!raceEditor || raceSaving) return
+    setRaceSaving(true)
+    setRaceSaveError('')
+    const protectedGoal = activePlanRaceIds.includes(String(raceEditor.id))
+    try {
+      await api.patch(`/races/${encodeURIComponent(raceEditor.id)}`, payload)
+      await load()
+      if (affectsPlan && protectedGoal) {
+        try {
+          await previewAndApplyPlan('/plans/generate-for-races', { race_ids: activePlanRaceIds })
+          await load()
+          setMessage('Race details and the reviewed replacement calendar were applied.')
+        } catch (err) {
+          if (isPlanCandidateReviewCancelled(err)) {
+            setMessage('Race details were saved, but your current calendar was kept. Rebuild it later from Training Plan.')
+          } else {
+            setMessage(err?.response?.data?.error || 'Race details were saved, but the current calendar was not rebuilt. Review it from Training Plan.')
+          }
+        }
+      } else {
+        setMessage('Race details saved.')
+      }
+      setRaceEditor(null)
+    } catch (err) {
+      setRaceSaveError(err?.response?.data?.error || 'Could not save this race. No race details were changed.')
+    } finally {
+      setRaceSaving(false)
+    }
+  }
+
+  const openRaceRemoval = async (race) => {
+    if (removalPreviewingId || removalApplying) return
+    setRemovalPreviewingId(race.id)
+    setRemovalError('')
+    try {
+      const { data } = await api.post(
+        `/races/${encodeURIComponent(race.id)}/removal-preview`,
+        phonePlanningClock(),
+      )
+      setRemovalState({ race, preview: data })
+    } catch (err) {
+      setMessage(err?.response?.data?.error || 'Could not review removal impact. The race and current plan are unchanged.')
+    } finally {
+      setRemovalPreviewingId(null)
+    }
+  }
+
+  const confirmRaceRemoval = async () => {
+    if (!removalState || removalApplying) return
+    setRemovalApplying(true)
+    setRemovalError('')
+    try {
+      if (removalState.preview.requires_apply) {
+        const candidateId = String(removalState.preview.candidate_id || '')
+        const candidateHash = String(removalState.preview.candidate_hash || '')
+        if (!candidateId || !candidateHash) throw new Error('Removal preview is missing its apply token. Preview again.')
+        const clock = phonePlanningClock()
+        await api.post(`/plans/candidates/${encodeURIComponent(candidateId)}/apply`, {
+          candidate_hash: candidateHash,
+          choice: 'train_for_target',
+          ...clock,
+        })
+      } else {
+        await api.delete(`/races/${encodeURIComponent(removalState.race.id)}`)
+      }
+      await load()
+      setMessage(`${removalState.race.race_name} was removed. Recorded history was preserved.`)
+      setRemovalState(null)
+    } catch (err) {
+      setRemovalError(err?.response?.data?.error || err?.message || 'Could not remove this race. Your race and current plan are still visible; no reviewed change was applied.')
+    } finally {
+      setRemovalApplying(false)
     }
   }
 
@@ -457,12 +542,29 @@ export default function Races() {
         <p className="text-sm font-semibold">Upcoming</p>
         {upcoming.map((r) => {
           const d = daysTo(r.race_date)
-          return <div key={r.id} className="rounded-xl p-3" style={{ background: 'var(--bg-card)' }}>
-            <p className="font-bold">{r.race_name}</p>
+          return <div key={r.id} className="rounded-xl p-3" style={{ minWidth: 0, background: 'var(--bg-card)' }}>
+            <p className="font-bold" style={{ overflowWrap: 'anywhere' }}>{r.race_name}</p>
             <p className="text-xs" style={{ color: 'var(--accent)' }}>{d} days to go</p>
-            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{r.distance_miles} mi {r.location ? `· ${r.location}` : ''}</p>
+            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+              {r.event_kind === 'hyrox' ? `HYROX · ${String(r.event_format || '').replaceAll('_', ' ')}` : `${r.distance_miles} mi`}
+              {r.location ? ` · ${r.location}` : ''}
+            </p>
             <CourseStats race={r} />
             {r.course_intelligence && <div><CourseIntelligenceChip intelligence={r.course_intelligence} /></div>}
+            <div aria-label={`Manage ${r.race_name}`} style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8, marginTop: 10 }}>
+              <button
+                type="button"
+                onClick={() => { setRaceSaveError(''); setRaceEditor(r) }}
+                disabled={Boolean(removalPreviewingId) || removalApplying}
+                style={{ minWidth: 0, minHeight: 44, borderRadius: 8, padding: '10px 12px', background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', fontSize: 13, fontWeight: 850 }}
+              >Edit</button>
+              <button
+                type="button"
+                onClick={() => openRaceRemoval(r)}
+                disabled={Boolean(removalPreviewingId) || removalApplying}
+                style={{ minWidth: 0, minHeight: 44, borderRadius: 8, padding: '10px 12px', background: 'var(--danger-dim)', color: 'var(--danger)', border: '1px solid var(--danger)', fontSize: 13, fontWeight: 900 }}
+              >{removalPreviewingId === r.id ? 'Reviewing…' : <span>Remove</span>}</button>
+            </div>
             <GpxUploadControl race={r} onUploaded={load} />
             <button
               className="mt-2 rounded-lg px-3 py-1.5 text-xs font-bold"
@@ -482,6 +584,23 @@ export default function Races() {
         <p className="text-sm font-semibold">Past</p>
         {past.map((r) => <div key={r.id} className="rounded-xl p-3" style={{ background: 'var(--bg-card)' }}><p className="font-semibold">{r.race_name}</p></div>)}
       </section>
+
+      {raceEditor && (
+        <RaceEditSheet
+          race={raceEditor}
+          onClose={() => { if (!raceSaving) setRaceEditor(null) }}
+          onSave={saveRaceEdit}
+          saving={raceSaving}
+          serverError={raceSaveError}
+        />
+      )}
+      <RaceRemoveSheet
+        state={removalState}
+        applying={removalApplying}
+        error={removalError}
+        onClose={() => { if (!removalApplying) setRemovalState(null) }}
+        onConfirm={confirmRaceRemoval}
+      />
     </div>
   )
 }
