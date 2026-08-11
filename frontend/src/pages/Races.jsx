@@ -1,9 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useProContext } from '../context/ProContext'
 import DurationPicker from '../components/DurationPicker'
 import RaceEditSheet from '../components/calendar/RaceEditSheet'
-import RaceRemoveSheet from '../components/races/RaceRemoveSheet'
 import api from '../lib/api'
 import { phonePlanningClock, previewAndApplyPlan } from '../lib/planCandidates'
 import { isPlanCandidateReviewCancelled } from '../lib/planCandidateReview'
@@ -179,10 +178,8 @@ export default function Races() {
   const [raceEditor, setRaceEditor] = useState(null)
   const [raceSaving, setRaceSaving] = useState(false)
   const [raceSaveError, setRaceSaveError] = useState('')
-  const [removalPreviewingId, setRemovalPreviewingId] = useState(null)
-  const [removalState, setRemovalState] = useState(null)
-  const [removalApplying, setRemovalApplying] = useState(false)
-  const [removalError, setRemovalError] = useState('')
+  const [removingRaceId, setRemovingRaceId] = useState(null)
+  const removalInFlightRef = useRef(false)
 
   const load = async () => {
     const [raceResponse, planResponse] = await Promise.all([
@@ -299,31 +296,20 @@ export default function Races() {
   }
 
   const openRaceRemoval = async (race) => {
-    if (removalPreviewingId || removalApplying) return
-    setRemovalPreviewingId(race.id)
-    setRemovalError('')
+    if (removingRaceId) return
+    if (removalInFlightRef.current) return
+    removalInFlightRef.current = true
+    setRemovingRaceId(race.id)
+    setMessage('')
     try {
       const { data } = await api.post(
         `/races/${encodeURIComponent(race.id)}/removal-preview`,
         phonePlanningClock(),
       )
-      setRemovalState({ race, preview: data })
-    } catch (err) {
-      setMessage(err?.response?.data?.error || 'Could not review removal impact. The race and current plan are unchanged.')
-    } finally {
-      setRemovalPreviewingId(null)
-    }
-  }
-
-  const confirmRaceRemoval = async () => {
-    if (!removalState || removalApplying) return
-    setRemovalApplying(true)
-    setRemovalError('')
-    try {
-      if (removalState.preview.requires_apply) {
-        const candidateId = String(removalState.preview.candidate_id || '')
-        const candidateHash = String(removalState.preview.candidate_hash || '')
-        if (!candidateId || !candidateHash) throw new Error('Removal preview is missing its apply token. Preview again.')
+      if (data.requires_apply) {
+        const candidateId = String(data.candidate_id || '')
+        const candidateHash = String(data.candidate_hash || '')
+        if (!candidateId || !candidateHash) throw new Error('The safe replacement plan is missing its apply token.')
         const clock = phonePlanningClock()
         await api.post(`/plans/candidates/${encodeURIComponent(candidateId)}/apply`, {
           candidate_hash: candidateHash,
@@ -331,15 +317,24 @@ export default function Races() {
           ...clock,
         })
       } else {
-        await api.delete(`/races/${encodeURIComponent(removalState.race.id)}`)
+        await api.delete(`/races/${encodeURIComponent(race.id)}`)
       }
-      await load()
-      setMessage(`${removalState.race.race_name} was removed. Recorded history was preserved.`)
-      setRemovalState(null)
+      const successMessage = `${race.race_name} was removed. Recorded runs, lifts, health data, check-ins, and training history were preserved.`
+      setRaces((current) => current.filter((item) => String(item.id) !== String(race.id)))
+      try {
+        await load()
+      } catch (reloadError) {
+        console.error('[Races] removed race reload failed:', reloadError?.message || reloadError)
+        setMessage(`${successMessage} The latest plan will refresh when this screen reloads.`)
+        return
+      }
+      setMessage(successMessage)
     } catch (err) {
-      setRemovalError(err?.response?.data?.error || err?.message || 'Could not remove this race. Your race and current plan are still visible; no reviewed change was applied.')
+      const reason = err?.response?.data?.error || err?.message || `Could not remove ${race.race_name}.`
+      setMessage(`${reason} The race and current plan are unchanged.`)
     } finally {
-      setRemovalApplying(false)
+      removalInFlightRef.current = false
+      setRemovingRaceId(null)
     }
   }
 
@@ -555,15 +550,15 @@ export default function Races() {
               <button
                 type="button"
                 onClick={() => { setRaceSaveError(''); setRaceEditor(r) }}
-                disabled={Boolean(removalPreviewingId) || removalApplying}
+                disabled={Boolean(removingRaceId)}
                 style={{ minWidth: 0, minHeight: 44, borderRadius: 8, padding: '10px 12px', background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', fontSize: 13, fontWeight: 850 }}
               >Edit</button>
               <button
                 type="button"
                 onClick={() => openRaceRemoval(r)}
-                disabled={Boolean(removalPreviewingId) || removalApplying}
+                disabled={Boolean(removingRaceId)}
                 style={{ minWidth: 0, minHeight: 44, borderRadius: 8, padding: '10px 12px', background: 'var(--danger-dim)', color: 'var(--danger)', border: '1px solid var(--danger)', fontSize: 13, fontWeight: 900 }}
-              >{removalPreviewingId === r.id ? 'Reviewing…' : <span>Remove</span>}</button>
+              >{removingRaceId === r.id ? 'Removing…' : <span>Remove</span>}</button>
             </div>
             <GpxUploadControl race={r} onUploaded={load} />
             <button
@@ -594,13 +589,6 @@ export default function Races() {
           serverError={raceSaveError}
         />
       )}
-      <RaceRemoveSheet
-        state={removalState}
-        applying={removalApplying}
-        error={removalError}
-        onClose={() => { if (!removalApplying) setRemovalState(null) }}
-        onConfirm={confirmRaceRemoval}
-      />
     </div>
   )
 }

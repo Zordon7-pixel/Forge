@@ -5,9 +5,96 @@ const fs = require('node:fs');
 const path = require('node:path');
 const plansRouter = require('../src/routes/plans');
 const racesRouter = require('../src/routes/races');
+const { buildRacePlanCandidate } = require('../src/lib/racePlanCandidateEngine');
+const { summarizeRecentRunLoad } = require('../src/lib/recentRunLoad');
 
 const OWNER = 'removal-owner';
 const OTHER = 'different-owner';
+
+function exactArmyReductionContext() {
+  const planningDateLocal = '2026-08-11';
+  const historyRows = [{
+    id: 'recent-army-distance',
+    date: '2026-07-20',
+    distance_miles: 10,
+    duration_seconds: 7800,
+    type: 'long',
+    perceived_effort: 5,
+    created_at: '2026-07-20T12:00:00.000Z',
+  }];
+  return {
+    planningDateLocal,
+    context: {
+      todayISO: planningDateLocal,
+      profile: {
+        weekly_miles_current: 20,
+        run_days_per_week: 4,
+        lift_days_per_week: 3,
+      },
+      target: {
+        raceId: 'army-2026',
+        raceName: 'Army 10-Miler',
+        raceDate: '2026-10-11',
+        distanceMiles: 10,
+        goalType: 'completion',
+        goalTimeSeconds: null,
+        raceTargets: [{
+          raceId: 'army-2026',
+          raceName: 'Army 10-Miler',
+          raceDate: '2026-10-11',
+          distanceMiles: 10,
+          goalType: 'completion',
+          goalTimeSeconds: null,
+        }],
+        weeks: 9,
+        startDate: '2026-08-10',
+        planMode: 'hybrid_maintain',
+        trainingDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+        runDaysPerWeek: 4,
+      },
+      history: {
+        weeklyMileageBaseline: 20,
+        recentRunCount: 17,
+        recentLiftCount: 8,
+        acuteRunLoad: summarizeRecentRunLoad(historyRows, {
+          todayISO: planningDateLocal,
+          weeklyBaseline: 20,
+          recoveryState: 'normal',
+        }),
+        performanceProfile: {
+          targetAnchor: {
+            equivalentTimeSeconds: 7800,
+            equivalentPaceSecondsPerMile: 780,
+            date: '2026-07-20',
+            kind: 'observed_distance_band',
+          },
+        },
+      },
+      recovery: { state: 'normal', available: true, metrics: {} },
+    },
+  };
+}
+
+function assertExactReductionCandidate() {
+  const fixture = exactArmyReductionContext();
+  const built = buildRacePlanCandidate(fixture.context, {
+    planningDateLocal: fixture.planningDateLocal,
+    timezoneOffsetMinutes: 240,
+  });
+  assert.equal(
+    built.validation.valid,
+    true,
+    'Army-only replacement must validate; errors: ' + JSON.stringify(built.validation.errors),
+  );
+  assert.deepEqual(built.plan.goals.map((goal) => goal.raceId), ['army-2026']);
+  assert.equal(
+    built.plan.weeks[0].days
+      .filter((day) => day.date < fixture.planningDateLocal)
+      .every((day) => day.sessions.length === 0),
+    true,
+    'the Tuesday bridge never reintroduces work on elapsed Monday',
+  );
+}
 
 function assertImpactContract() {
   const plan = {
@@ -106,6 +193,7 @@ async function assertFailedApplyRollsBackModel() {
 }
 
 async function run() {
+  assertExactReductionCandidate();
   assertImpactContract();
   await assertOwnerScopedDeletion();
   assertAtomicRouteSource();
