@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Brain, Maximize2, Minimize2, Minus, Plus, Zap } from 'lucide-react'
 import WatchWorkoutSendButton from './WatchWorkoutSendButton'
 import AiGuidanceNote from './AiGuidanceNote'
+import ExerciseGuideAction from './ExerciseGuideAction'
 
 const TEXT_SCALES = [0.9, 1, 1.15, 1.3]
 
@@ -42,6 +43,7 @@ export default function StrengthWorkoutRecommendation({
   startBusy = false,
   onRegenerate,
   watchWorkout,
+  sex = '',
 }) {
   const [scaleIndex, setScaleIndex] = useState(1)
   const [expanded, setExpanded] = useState(false)
@@ -189,6 +191,9 @@ export default function StrengthWorkoutRecommendation({
                     <span style={{ fontSize: px(12) }}>Rest<br /><strong style={{ color: 'var(--text-primary)', fontSize: px(17) }}>{exercise?.rest || '-'}</strong></span>
                   </div>
                   {exercise?.cue && <p style={{ color: 'var(--text-muted)', fontSize: px(14), lineHeight: 1.5, margin: '10px 0 0' }}>{exercise.cue}</p>}
+                  <div className="mt-3">
+                    <ExerciseGuideAction exercise={exercise} sex={sex} />
+                  </div>
                 </div>
               </div>
             </article>

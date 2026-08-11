@@ -26,6 +26,7 @@ const { buildBodyweightAlternative } = require('../lib/travelTraining');
 const { planningInputUnchanged } = require('../lib/planningRevision');
 const { localDateForOffset } = require('../lib/requestPlanningDate');
 const { buildRacePlanCandidate, semanticCandidateErrors } = require('../lib/racePlanCandidateEngine');
+const { requestImagesForWorkoutItems } = require('../lib/exerciseImageRequests');
 const hyroxPlan = require('../lib/hyroxPlan');
 const {
   RACE_PLAN_POLICY_V1,
@@ -77,6 +78,32 @@ function sendCandidateError(res, err, context) {
 
 function getDayShort() {
   return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date().getDay()];
+}
+
+function uniqueLiftExerciseItems(sessions) {
+  const seen = new Set();
+  const items = [];
+  for (const session of Array.isArray(sessions) ? sessions : []) {
+    if (session?.kind !== 'lift') continue;
+    for (const item of [...(Array.isArray(session.exercises) ? session.exercises : []), ...(Array.isArray(session.main) ? session.main : [])]) {
+      const name = typeof item === 'string' ? item : item?.name || item?.exercise || item?.exercise_name;
+      const key = String(name || '').trim().toLowerCase();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      items.push(item);
+    }
+  }
+  return items.slice(0, 80);
+}
+
+function plannedLiftExerciseItems(plan) {
+  const sessions = [];
+  for (const week of Array.isArray(plan?.weeks) ? plan.weeks : []) {
+    for (const day of planSchema.getDayEntries(week)) {
+      sessions.push(...planSchema.daySessions(day));
+    }
+  }
+  return uniqueLiftExerciseItems(sessions);
 }
 
 function normalizeTodayEntry(planJson) {
@@ -3510,6 +3537,12 @@ router.get('/today', auth, async (req, res) => {
       execution: withPlanAnchorPayload(withDurationEstimateExecutionPayload(execution, parsed), parsed),
       ...anchorPayload,
     });
+    void requestImagesForWorkoutItems({
+      userId: req.user.id,
+      items: uniqueLiftExerciseItems(execution.lift ? [execution.lift] : []),
+      source: 'scheduled_plan_today',
+      ensureOnly: true,
+    }).catch((queueErr) => console.error('[plans/today] exercise image review queue failed:', queueErr.message));
   } catch (err) {
     console.error('[plans] GET today failed:', err);
     res.status(500).json({ error: 'Failed to fetch today' });
@@ -3537,6 +3570,12 @@ router.get('/current', auth, async (req, res) => {
         current_week: Number(active.row.current_week || 1),
       },
     });
+    void requestImagesForWorkoutItems({
+      userId: req.user.id,
+      items: plannedLiftExerciseItems(parsed),
+      source: 'scheduled_plan_current',
+      ensureOnly: true,
+    }).catch((queueErr) => console.error('[plans/current] exercise image review queue failed:', queueErr.message));
   } catch (err) {
     console.error('[plans/current] failed:', err.message);
     res.status(500).json({ error: 'Failed to fetch current plan' });

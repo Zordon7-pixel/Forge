@@ -6,6 +6,7 @@ import {
 import WatchWorkoutSendButton from '../WatchWorkoutSendButton'
 import AiGuidanceNote from '../AiGuidanceNote'
 import WatchWorkoutService from '../../services/WatchWorkoutService'
+import ExerciseGuideAction from '../ExerciseGuideAction'
 import { canonicalWorkoutLabel, normalizeLiftExercisePrescription, sessionState } from '../../lib/planCalendar'
 import { trainingEvidenceKindLabel } from '../../lib/trainingEvidence'
 import './forgedCalendar.css'
@@ -515,6 +516,9 @@ export default function ForgedDayView({
             {ex.loadSource && <p style={{ fontSize: px(11), marginTop: 6, color: 'var(--ink-soft, #5A554B)' }}><strong>Load basis:</strong> {ex.loadSource}</p>}
             {ex.cue && <p style={{ fontSize: px(12), marginTop: 6, color: 'var(--ink-soft, #5A554B)' }}>{ex.cue}</p>}
             {ex.progression && <p style={{ fontSize: px(11), marginTop: 4, color: 'var(--ink-soft, #5A554B)' }}><strong>Progress:</strong> {ex.progression}</p>}
+            <div style={{ marginTop: 8 }}>
+              <ExerciseGuideAction exercise={ex} />
+            </div>
           </div>
         ))}
         {f.progression && <p style={{ fontSize: px(12), marginTop: 8 }}><strong>Session progression:</strong> {f.progression}</p>}

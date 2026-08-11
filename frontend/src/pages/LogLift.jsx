@@ -493,6 +493,7 @@ export default function LogLift() {
           onStart={beginScheduled}
           startBusy={loading}
           watchWorkout={scheduledWatchWorkout}
+          sex={userSex}
         />
       )}
 
@@ -520,6 +521,7 @@ export default function LogLift() {
               onStart={beginAI}
               startBusy={loading}
               watchWorkout={aiWatchWorkout}
+              sex={userSex}
             />
           )}
         </>
@@ -621,6 +623,7 @@ export default function LogLift() {
               startBusy={loading}
               onRegenerate={generateManualWorkout}
               watchWorkout={manualWatchWorkout}
+              sex={userSex}
             />
           )}
         </div>

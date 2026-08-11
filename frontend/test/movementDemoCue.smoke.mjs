@@ -16,7 +16,7 @@ function check(condition, message) {
 }
 
 check(movementDemo.includes("cue = ''"), 'MovementDemo accepts an optional authoritative cue')
-check(movementDemo.includes('cue || getSetupCue(kind)'), 'catalog cue takes precedence over name-based fallback text')
+check(movementDemo.includes('const displayCue = cue || (photoSrc') && movementDemo.includes('{displayCue}</p>'), 'catalog cue takes precedence over the visual-aware fallback text')
 check(/<MovementDemo[^>]+cue=\{stretch\.cue\}/.test(stretches), 'inline stretch flow passes the catalog cue')
 check(/<MovementDemo[^>]+cue=\{currentStretch\.cue\}/.test(stretchSession), 'pre-run stretch flow passes the catalog cue')
 

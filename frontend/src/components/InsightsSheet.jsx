@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import AgeGradedPerformanceCard from './AgeGradedPerformanceCard'
 import { getToken } from '../lib/tokenStore'
 import AiGuidanceNote from './AiGuidanceNote'
+import ExerciseGuideAction from './ExerciseGuideAction'
 import { activityLabel, isRunningActivity } from '../lib/activityType'
 import { finiteReadinessScore, resolveReadiness } from '../lib/truthConsistency'
 import { resolveTodayPlanAccess, resolveTodayWorkoutLabel } from '../lib/todayPlanAccess'
@@ -193,6 +194,9 @@ function TodayCalendarSession({ session, onStartRun, onStartLift, onPlanRoute, t
               <div key={`${name}-${index}`} className="rounded-lg px-3 py-2" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
                 <p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{name}</p>
                 {prescription && <p className="mt-0.5 text-xs" style={{ color: 'var(--text-muted)' }}>{prescription}</p>}
+                <div className="mt-2">
+                  <ExerciseGuideAction exercise={exercise} />
+                </div>
               </div>
             )
           })}

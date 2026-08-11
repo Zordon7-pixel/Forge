@@ -5,343 +5,363 @@ const PANEL = 'rgba(234,179,8,0.08)'
 const PHOTO_DEMOS = [
   // Paired sources are female-left/male-right and cropped to the profile sex.
   {
-    match: (lower) => lower.includes('90/90 breathing'),
+    match: (lower) => /^90\/90 breathing$/.test(lower),
     src: '/exercises/90-90-breathing.jpg',
     cropToSex: true,
     maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes('90/90 hip switch'),
+    match: (lower) => /^90\/90 hip switch(?:es)?$/.test(lower),
     src: '/exercises/90-90-hip-switch.jpg',
     cropToSex: true,
     maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes('low box jump'),
+    match: (lower) => /^low box jumps?$/.test(lower),
     src: '/exercises/low-box-jump.jpg',
     cropToSex: true,
     maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes('box jump'),
+    match: (lower) => /^box jumps?$/.test(lower),
     src: '/exercises/box-jump.jpg',
     cropToSex: true,
     maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes('a-skip') || lower.includes('a skip'),
+    match: (lower) => /^a[- ]skips?$/.test(lower),
     src: '/exercises/a-skips.jpg',
     cropToSex: true,
     maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes('a-march') || lower.includes('a march'),
+    match: (lower) => /^a[- ]march(?:es)?$/.test(lower),
     src: '/exercises/a-march.jpg',
     cropToSex: true,
     maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes('pogo hop') || lower.includes('pogo jump'),
+    match: (lower) => /^pogo (?:hops?|jumps?)$/.test(lower),
     src: '/exercises/pogo-hops.jpg',
     cropToSex: true,
     maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes('dead bug'),
+    match: (lower) => /^dead bug$/.test(lower),
     src: '/exercises/dead-bug.jpg',
     cropToSex: true,
     maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes('pallof press'),
+    match: (lower) => /^pallof press$/.test(lower),
     src: '/exercises/pallof-press.jpg',
     cropToSex: true,
     maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes('seated calf raise'),
+    match: (lower) => /^seated calf raises?$/.test(lower),
     src: '/exercises/seated-calf-raise.jpg',
     cropToSex: true,
     maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes('standing calf raise') || lower.includes('single-leg calf raise') || lower.includes('single leg calf raise'),
+    match: (lower) => /^(?:bodyweight )?standing calf raises?$/.test(lower),
     src: '/exercises/standing-calf-raise.jpg',
     cropToSex: true,
     maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes('kettlebell swing'),
+    match: (lower) => /^kettlebell swings?$/.test(lower),
     src: '/exercises/kettlebell-swing.jpg',
     cropToSex: true,
     maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes('band pull-apart') || lower.includes('band pull apart'),
+    match: (lower) => /^band pull[- ]aparts?$/.test(lower),
     src: '/exercises/band-pull-apart.jpg',
     cropToSex: true,
     maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes('shoulder circle'),
+    match: (lower) => /^shoulder circles?$/.test(lower),
     src: '/exercises/shoulder-circles.jpg',
     cropToSex: true,
     maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes('foam roll'),
+    match: (lower) => /^foam rolling$/.test(lower),
     src: '/exercises/foam-rolling.jpg',
     cropToSex: true,
     maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes('barbell bench press'),
+    match: (lower) => /^(?:flat )?(?:barbell )?bench press$/.test(lower),
     src: '/exercises/barbell-bench-press.jpg',
     cropToSex: true,
     maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes('chest-supported row') || lower.includes('chest supported row'),
+    match: (lower) => /^chest[- ]supported rows?$/.test(lower),
     src: '/exercises/chest-supported-row.jpg',
     cropToSex: true,
     maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes('incline dumbbell press'),
+    match: (lower) => /^incline dumbbell press$/.test(lower),
     src: '/exercises/incline-dumbbell-press.jpg',
     cropToSex: true,
     maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes('dumbbell bench press') || (lower.includes('bench') && lower.includes('press')),
+    match: (lower) => /^(?:flat )?dumbbell bench press$/.test(lower),
     male: '/exercises/dumbbell-bench-press-male.png',
     female: '/exercises/dumbbell-bench-press-female.png',
   },
   {
-    match: (lower) => lower.includes('leg press') || (lower.includes('squat') && !lower.includes('stretch') && !lower.includes('hold')),
+    match: (lower) => /^(?:barbell )?(?:back )?squat$/.test(lower),
     src: '/exercises/squat.png',
+    cropToSex: true,
+    maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes('deadlift') || lower.includes('romanian deadlift'),
+    match: (lower) => /^(?:conventional |barbell )?deadlift$/.test(lower),
     src: '/exercises/deadlift.png',
+    cropToSex: true,
+    maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes('barbell row') || lower.includes('dumbbell row') || lower.includes('cable row') || lower.includes('single-arm dumbbell row'),
+    match: (lower) => /^barbell (?:bent[- ]over )?row$/.test(lower),
     src: '/exercises/barbell-row.png',
+    cropToSex: true,
+    maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes('overhead press') || lower.includes('arnold press') || lower.includes('shoulder press'),
+    match: (lower) => /^(?:standing )?dumbbell (?:overhead|shoulder) press$/.test(lower),
     src: '/exercises/overhead-press.png',
+    cropToSex: true,
+    maleSide: 'left',
   },
   {
-    match: (lower) => lower.includes('push-up') || lower.includes('push up'),
+    match: (lower) => /^(?:standard )?push[- ]?ups?$/.test(lower),
     src: '/exercises/push-ups.png',
+    cropToSex: true,
+    maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes('plank'),
+    match: (lower) => /^(?:front |forearm )?plank(?: hold)?$/.test(lower),
     src: '/exercises/plank.png',
+    cropToSex: true,
+    maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes('barbell curl') || lower.includes('hammer curl') || lower.includes('preacher curl') || lower.includes('curl'),
+    match: (lower) => /^barbell (?:biceps )?curl$/.test(lower),
     src: '/exercises/barbell-curl.png',
+    cropToSex: true,
+    maleSide: 'left',
   },
   {
-    match: (lower) => lower.includes('tricep pushdown') || (lower.includes('tricep') && !lower.includes('stretch')) || lower.includes('skull crusher'),
+    match: (lower) => /^(?:rope )?triceps? pushdown$/.test(lower),
     src: '/exercises/tricep-pushdown.png',
+    cropToSex: true,
+    maleSide: 'left',
   },
   {
-    match: (lower) => lower.includes('pull-up') || lower.includes('pull up'),
+    match: (lower) => /^(?:strict )?pull[- ]?ups?$/.test(lower),
     src: '/exercises/pull-ups.png',
+    cropToSex: true,
+    maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes('lat pulldown') || lower.includes('pulldown'),
+    match: (lower) => /^lat pulldown$/.test(lower),
     src: '/exercises/lat-pulldown.png',
+    cropToSex: true,
+    maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes('leg swing'),
+    match: (lower) => /^(?:dynamic )?leg swings?$/.test(lower),
     male: '/stretches/leg-swings-male.png',
     female: '/stretches/leg-swings-female.png',
   },
   {
-    match: (lower) => lower.includes('hip flexor'),
+    match: (lower) => /^(?:kneeling )?hip flexor (?:stretch|lunge)$/.test(lower),
     male: '/stretches/hip-flexor-male.png',
     female: '/stretches/hip-flexor-female.png',
   },
   {
-    match: (lower) => lower.includes('hip circle'),
+    match: (lower) => /^hip circles?$/.test(lower),
     src: '/stretches/hip-circles.png',
     cropToSex: true,
     maleSide: 'left',
   },
   {
-    match: (lower) => lower.includes('high knee'),
+    match: (lower) => /^high knees$/.test(lower),
     src: '/stretches/high-knees.png',
     cropToSex: true,
     maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes('butt kick'),
+    match: (lower) => /^butt kicks$/.test(lower),
     src: '/stretches/butt-kicks.png',
     cropToSex: true,
     maleSide: 'left',
   },
   {
-    match: (lower) => lower.includes('ankle roll') || lower.includes('ankle circle'),
+    match: (lower) => /^(?:ankle rolls?|ankle circles?)$/.test(lower),
     src: '/stretches/ankle-rolls.png',
     cropToSex: true,
     maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes('arm swing'),
+    match: (lower) => /^arm swings?$/.test(lower),
     src: '/stretches/arm-swings.png',
     cropToSex: true,
     maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes('walking lunge') || lower === 'lunges' || (lower.includes('lunge') && !lower.includes('lateral')),
+    match: (lower) => /^walking lunges$/.test(lower),
     src: '/stretches/walking-lunges.png',
     cropToSex: true,
     maleSide: 'left',
   },
   {
-    match: (lower) => lower.includes('standing quad') || (lower.includes('quad stretch') && !lower.includes('kneeling')),
+    match: (lower) => /^(?:standing )?quad stretch$/.test(lower),
     src: '/stretches/standing-quad.png',
     cropToSex: true,
     maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes('hamstring stretch') || lower.includes('toe touch') || lower.includes('forward fold'),
+    match: (lower) => /^hamstring stretch$/.test(lower),
     src: '/stretches/hamstring-stretch.png',
     cropToSex: true,
     maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes('calf stretch'),
+    match: (lower) => /^calf stretch$/.test(lower),
     src: '/stretches/calf-stretch.png',
     cropToSex: true,
     maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes('figure four') || lower.includes('figure-4') || lower.includes('piriformis'),
+    match: (lower) => /^(?:figure[- ]?four(?: \(piriformis\))?|piriformis stretch)$/.test(lower),
     src: '/stretches/figure-four.png',
     cropToSex: true,
     maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes("child's pose") || lower.includes('childs pose'),
+    match: (lower) => /^child'?s pose$/.test(lower),
     src: '/stretches/childs-pose.png',
     cropToSex: true,
     maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes('inchworm'),
+    match: (lower) => /^inchworms?$/.test(lower),
     src: '/stretches/inchworm.webp',
     cropToSex: true,
     maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes("world's greatest") || lower.includes('worlds greatest'),
+    match: (lower) => /^world'?s greatest stretch$/.test(lower),
     src: '/stretches/worlds-greatest.webp',
     cropToSex: true,
     maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes('trunk rotation'),
+    match: (lower) => /^(?:seated )?trunk rotations?$/.test(lower),
     male: '/stretches/trunk-rotation-male.png',
     female: '/stretches/trunk-rotation-female.png',
   },
   {
-    match: (lower) => lower.includes('cat-cow') || lower.includes('cat cow'),
+    match: (lower) => /^cat[- ]cow(?: flow)?$/.test(lower),
     src: '/stretches/cat-cow.webp',
     cropToSex: true,
     maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes('bridge hold') || lower.includes('glute bridge'),
+    match: (lower) => /^(?:glute )?bridge (?:hold|reps)$/.test(lower),
     src: '/stretches/bridge-hold.webp',
     cropToSex: true,
     maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes('chest opener'),
+    match: (lower) => /^chest opener(?: (?:pulses|stretch))?$/.test(lower),
     src: '/stretches/chest-opener.webp',
     cropToSex: true,
     maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes('cross-body shoulder') || lower.includes('cross body shoulder'),
+    match: (lower) => /^cross[- ]body shoulder (?:sweeps|stretch)$/.test(lower),
     src: '/stretches/cross-body-shoulder.webp',
     cropToSex: true,
     maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes('overhead lat'),
+    match: (lower) => /^overhead lat (?:reaches|stretch)$/.test(lower),
     src: '/stretches/overhead-lat.webp',
     cropToSex: true,
     maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes('wrist flexor'),
+    match: (lower) => /^wrist flexor (?:pulses|stretch)$/.test(lower),
     src: '/stretches/wrist-flexor.webp',
     cropToSex: true,
     maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes('pelvic tilt'),
+    match: (lower) => /^pelvic tilts?$/.test(lower),
     src: '/stretches/pelvic-tilt.webp',
     cropToSex: true,
     maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes('lateral lunge'),
+    match: (lower) => /^lateral lunge (?:shift|hold)$/.test(lower),
     src: '/stretches/lateral-lunge-hold.webp',
     cropToSex: true,
     maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes('doorway chest'),
+    match: (lower) => /^doorway chest stretch$/.test(lower),
     src: '/stretches/doorway-chest.webp',
     cropToSex: true,
     maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes('overhead tricep'),
+    match: (lower) => /^overhead triceps? stretch$/.test(lower),
     src: '/stretches/overhead-tricep.webp',
     cropToSex: true,
     maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes('upper trap'),
+    match: (lower) => /^upper trap stretch$/.test(lower),
     src: '/stretches/upper-trap.webp',
     cropToSex: true,
     maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes('cobra'),
+    match: (lower) => /^cobra stretch$/.test(lower),
     src: '/stretches/cobra.webp',
     cropToSex: true,
     maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes('supine spinal twist') || lower.includes('supine twist'),
+    match: (lower) => /^(?:supine spinal twist|supine twist)$/.test(lower),
     src: '/stretches/supine-twist.webp',
     cropToSex: true,
     maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes('knee-to-chest') || lower.includes('knee to chest'),
+    match: (lower) => /^knee[- ]to[- ]chest stretch$/.test(lower),
     src: '/stretches/knee-to-chest.webp',
     cropToSex: true,
     maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes('kneeling quad'),
+    match: (lower) => /^kneeling quad stretch$/.test(lower),
     src: '/stretches/kneeling-quad.webp',
     cropToSex: true,
     maleSide: 'right',
   },
   {
-    match: (lower) => lower.includes('butterfly'),
+    match: (lower) => /^butterfly stretch$/.test(lower),
     src: '/stretches/butterfly.webp',
     cropToSex: true,
     maleSide: 'right',
@@ -706,6 +726,9 @@ export default function MovementDemo({ name, label, compact = false, sex = 'male
             : { src: providedImage, cropToSex: providedImageNeedsCrop, maleSide: photoDemo?.maleSide || 'right' })
         : getPhotoConfig(photoDemo, sex))
   const photoSrc = photoConfig.src
+  const displayCue = cue || (photoSrc
+    ? getSetupCue(kind)
+    : 'Follow the written prescription with a controlled range of motion. Ask a qualified coach if the setup is unfamiliar.')
   const shouldCropToSex = Boolean(photoConfig.cropToSex)
   const cropSide = normalizedSex === 'male'
     ? photoConfig.maleSide
@@ -753,7 +776,7 @@ export default function MovementDemo({ name, label, compact = false, sex = 'male
       ) : (
         <div
           role="img"
-          aria-label={`${title} image is being prepared`}
+          aria-label={`A vetted ${title} form image is not available yet`}
           style={{
             minHeight: compact ? 138 : 170,
             borderRadius: 16,
@@ -769,19 +792,19 @@ export default function MovementDemo({ name, label, compact = false, sex = 'male
         >
           <div style={{ width: 44, height: 4, borderRadius: 999, background: ACCENT, marginBottom: 14 }} />
           <p style={{ margin: 0, color: ACCENT, fontSize: 11, fontWeight: 900, letterSpacing: 1.4, textTransform: 'uppercase' }}>
-            Form image queued
+            Visual guide pending review
           </p>
           <p style={{ margin: '8px 0 0', color: 'var(--text-primary)', fontSize: compact ? 14 : 16, fontWeight: 900 }}>
             {title}
           </p>
           <p style={{ margin: '6px 0 0', color: MUTED, fontSize: compact ? 12 : 13, lineHeight: 1.45, maxWidth: 260 }}>
-            Follow the cue below for this round.
+            Use the written form cue below. No substitute image is shown.
           </p>
         </div>
       )}
       <div style={{ display: 'grid', gap: 4 }}>
         <p style={{ margin: 0, color: 'var(--text-primary)', fontWeight: 900, fontSize: compact ? 14 : 16 }}>{title}</p>
-        <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: compact ? 12 : 13, lineHeight: 1.45 }}>{cue || getSetupCue(kind)}</p>
+        <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: compact ? 12 : 13, lineHeight: 1.45 }}>{displayCue}</p>
       </div>
     </div>
   )

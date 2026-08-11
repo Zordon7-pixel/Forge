@@ -52,7 +52,10 @@ const plannedLift = {
   title: 'Strength maintenance',
   focus: 'full body',
   warmup: ['Bodyweight squat x 10'],
-  main: [{ name: 'Goblet Squat', sets: 3, reps: '8', rest: '90 sec', cue: 'Brace before each rep.' }],
+  main: [
+    { name: 'Low Box Jump', sets: 3, reps: '5', rest: '90 sec', cue: 'Land softly with control.' },
+    { name: 'Goblet Squat', sets: 3, reps: '8', rest: '90 sec', cue: 'Brace before each rep.' },
+  ],
   completed: false,
 }
 
@@ -115,6 +118,7 @@ test('check-in hands off through warm-up, run save, recovery check-in, and recap
   let savedRun = null
   let checkInPayload = null
   const apiState = await installAuthenticatedApi(page, {
+    user: { sex: 'female' },
     responses: new Map([
       ['POST /api/checkin/preview', { headline: 'Easy aerobic work fits today.', drivers: [{ label: 'Fresh legs' }] }],
       ['POST /api/checkin', { headline: 'Easy aerobic work fits today.', adjustment: 'Easy aerobic work fits today.', drivers: [{ label: 'Fresh legs', detail: 'No recovery limiter detected.' }] }],
@@ -224,6 +228,31 @@ test('scheduled lift logs one set, opens the large rest timer, and completes the
 
   await page.goto('/log-lift')
   await expect(page.getByRole('button', { name: 'From your plan' })).toBeVisible()
+  const guideButtons = page.getByRole('button', { name: 'View how' })
+  await guideButtons.nth(0).click()
+  const mappedGuide = page.getByRole('dialog', { name: 'Low Box Jump' })
+  await expect(mappedGuide).toBeVisible()
+  await expect(mappedGuide.getByRole('button', { name: 'Close exercise guide' })).toBeFocused()
+  await expect.poll(() => page.locator('body').evaluate((body) => body.style.overflow)).toBe('hidden')
+  await expect(mappedGuide.locator('img[src="/exercises/low-box-jump.jpg"]')).toBeVisible()
+  await mappedGuide.getByRole('button', { name: 'Close exercise guide' }).click()
+  await expect(mappedGuide).toBeHidden()
+  await expect(guideButtons.nth(0)).toBeFocused()
+  await expect.poll(() => page.locator('body').evaluate((body) => body.style.overflow)).toBe('')
+
+  await guideButtons.nth(1).click()
+  const fallbackGuide = page.getByRole('dialog', { name: 'Goblet Squat' })
+  await expect(fallbackGuide.getByText('Visual guide pending review')).toBeVisible()
+  await expect(fallbackGuide.getByText('No substitute image is shown.')).toBeVisible()
+  await page.locator('[data-exercise-guide-dialog="true"]').click({ position: { x: 4, y: 4 } })
+  await expect(fallbackGuide).toBeHidden()
+  await expect(guideButtons.nth(1)).toBeFocused()
+
+  await guideButtons.nth(1).click()
+  await expect(fallbackGuide).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(fallbackGuide).toBeHidden()
+
   await page.getByRole('button', { name: 'Start Workout', exact: true }).click()
   await expect(page).toHaveURL(/\/workout\/active\/journey-workout$/)
   await page.getByLabel('Reps').fill('8')
