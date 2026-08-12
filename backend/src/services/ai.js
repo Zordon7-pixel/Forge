@@ -522,9 +522,15 @@ Rules:
   }
 }
 
-async function generateWorkoutRecommendation({ profile, recentRuns, recentWorkouts, userId }) {
+async function generateWorkoutRecommendation({ profile, recentRuns, recentWorkouts, todayTraining, userId }) {
   try {
-    const cacheKey = makeCacheKey('workout-recommendation', { userId, recentRuns: (recentRuns || []).slice(0, 5), recentWorkouts: (recentWorkouts || []).slice(0, 5), goal: profile?.goal_type });
+    const cacheKey = makeCacheKey('workout-recommendation', {
+      userId,
+      recentRuns: (recentRuns || []).slice(0, 5),
+      recentWorkouts: (recentWorkouts || []).slice(0, 5),
+      todayTraining: todayTraining || null,
+      goal: profile?.goal_type,
+    });
     const cached = getCached(cacheKey);
     if (cached) return cached;
 
@@ -533,10 +539,12 @@ Create a complete hybrid-athlete strength and speed session, not a summary of wh
 - main must contain 4-6 executable exercises with a specific name, numeric sets, reps, rest, short focus label, and one concise form cue.
 - Build strength, force production, running economy, and speed using an appropriate mix of compound strength, unilateral/posterior-chain work, power or plyometrics, calf/ankle work, and trunk stability.
 - If recent running or lifting shows lower-body fatigue, reduce impact and shift emphasis instead of forcing jumps or heavy leg work.
+- Do not repeat the same exercise lineup as a recent completed workout. Change the substantive session, not just its title.
+- Coordinate with today's scheduled training. If a run is scheduled without a lift, avoid adding unsafe same-muscle fatigue or lower-body impact that conflicts with that run.
 - warmup must contain 3 specific movements. recovery must contain 2 specific actions.
 - explanation is a separate 1-2 sentence coach rationale based on the athlete's data. Do not place rationale inside main.
 - restExplanation briefly explains how to use the listed rest periods.
-Athlete: ${sanitize(profile?.name, 50) || 'athlete'}. Goal: ${sanitize(profile?.goal_type, 30) || 'fitness'}. Recent runs: ${JSON.stringify(sanitizeObj((recentRuns || []).slice(0,5)))}. Recent workouts: ${JSON.stringify(sanitizeObj((recentWorkouts || []).slice(0,5)))}.`;
+Athlete: ${sanitize(profile?.name, 50) || 'athlete'}. Goal: ${sanitize(profile?.goal_type, 30) || 'fitness'}. Today's scheduled training: ${JSON.stringify(sanitizeObj(todayTraining || {}))}. Recent runs: ${JSON.stringify(sanitizeObj((recentRuns || []).slice(0,5)))}. Recent completed workouts with exercise content: ${JSON.stringify(sanitizeObj((recentWorkouts || []).slice(0,5)))}.`;
     const msg = await getClient().messages.create({ model: 'frequent', max_tokens: 750, messages: [{ role: 'user', content: prompt }] });
     const text = msg.content?.[0]?.text || '{}';
     const jsonMatch = text.match(/\{[\s\S]*\}/);

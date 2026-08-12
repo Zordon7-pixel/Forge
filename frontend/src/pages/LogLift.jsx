@@ -156,7 +156,7 @@ export default function LogLift() {
   useEffect(() => {
     setAiLoading(true)
     setAiError(null)
-    api.get('/ai/workout-recommendation?date=today').then((r) => {
+    api.get('/ai/workout-recommendation', { params: { date: localDateISO() } }).then((r) => {
       setAiRecommendation(r.data?.recommendation || null)
     }).catch((err) => {
       console.error('Failed to fetch AI recommendation:', err)

@@ -307,14 +307,60 @@ export function deriveWeekStart(plan, userPlan, weekIndex, now = new Date()) {
   const explicit = parseLocalDate(week?.startDate || week?.start_date)
   if (explicit) return startOfWeekMonday(explicit)
 
+  const firstDatedEntry = weekEntries(week)
+    .map((entry) => ({
+      date: parseLocalDate(entry?.date),
+      weekdayIndex: normalizeDayName(entry?.day || entry?.dayName),
+    }))
+    .filter((entry) => entry.date)
+    .sort((a, b) => a.date.getTime() - b.date.getTime())[0]
+  if (firstDatedEntry) {
+    return addDays(
+      firstDatedEntry.date,
+      -(firstDatedEntry.weekdayIndex ?? ((firstDatedEntry.date.getDay() + 6) % 7)),
+    )
+  }
+
   const data = planData(plan)
   const planStart = parseLocalDate(
-    data.startDate || data.start_date || userPlan?.started_at || userPlan?.startedAt,
+    data.startDate || data.start_date
+      || userPlan?.effective_from || userPlan?.effectiveFrom
+      || userPlan?.started_at || userPlan?.startedAt,
   )
   if (planStart) return addDays(startOfWeekMonday(planStart), weekIndex * 7)
 
   // Last resort: anchor on the current local week so rows still render dated.
-  return startOfWeekMonday(new Date(now.getFullYear(), now.getMonth(), now.getDate()))
+  return addDays(
+    startOfWeekMonday(new Date(now.getFullYear(), now.getMonth(), now.getDate())),
+    weekIndex * 7,
+  )
+}
+
+// Resolve presentation state from the plan's dated week contract. Persisted
+// `user_plans.current_week` is progress metadata, not a reliable screen-open
+// cursor, so it deliberately does not participate in this calculation.
+export function deriveCurrentPlanWeekIndex(plan, userPlan, now = new Date()) {
+  const weeks = getWeeks(plan)
+  if (!weeks.length) return 0
+  const localToday = parseLocalDate(now)
+  if (!localToday) return 0
+
+  let selectedIndex = 0
+  for (let weekIndex = 0; weekIndex < weeks.length; weekIndex += 1) {
+    const start = deriveWeekStart(plan, userPlan, weekIndex, localToday)
+    if (start && start.getTime() <= localToday.getTime()) selectedIndex = weekIndex
+  }
+  return Math.max(0, Math.min(weeks.length - 1, selectedIndex))
+}
+
+// A non-null selection belongs only to the mounted Plan screen. Keeping it
+// wins during in-session reloads; a remount passes null and re-derives today.
+export function resolvePlanWeekSelection(plan, userPlan, selectedWeekIndex, now = new Date()) {
+  const weekCount = Math.max(1, getWeeks(plan).length || Number(plan?.weeks || 0) || 1)
+  if (Number.isInteger(selectedWeekIndex)) {
+    return Math.max(0, Math.min(weekCount - 1, selectedWeekIndex))
+  }
+  return deriveCurrentPlanWeekIndex(plan, userPlan, now)
 }
 
 // ---------------------------------------------------------------------------

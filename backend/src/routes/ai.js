@@ -5,6 +5,13 @@ const auth = require('../middleware/auth');
 const { generateRunBrief, generateLiftPlan, generateWorkoutRecommendation, generateSessionFeedback, generateBodyPartWorkout, generatePostSessionInsight, sanitize } = require('../services/ai');
 const { requestExerciseImageIfMissing, requestImagesForWorkoutItems } = require('../lib/exerciseImageRequests');
 const { isRunActivity, runActivitySql } = require('../lib/runActivity');
+const dailyExecution = require('../lib/dailyExecution');
+const planSchema = require('../lib/planSchema');
+const { resolveActivePlanForDate } = require('../lib/planAssignmentLifecycle');
+const {
+  buildCompletedWorkoutHistory,
+  selectDistinctRecommendation,
+} = require('../lib/workoutRecommendationHistory');
 
 const FALLBACK_ACCESSORIES = {
   chest: ['Incline Dumbbell Press', 'Push-Up'],
@@ -92,6 +99,56 @@ function fallbackStrengthRecommendation({ bodyPart = 'full', exercise = '' } = {
     explanation: 'This session develops usable strength and force production while covering the single-leg, calf, and trunk qualities that support faster running.',
     restExplanation: 'Take the full rest on strength and power work so every set stays crisp; shorten rest only on the final accessories.',
   };
+}
+
+function localDateISO(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function recommendationDate(value) {
+  const requested = String(value || '').trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(requested) ? requested : localDateISO();
+}
+
+function parseStoredPlan(row) {
+  const raw = row?.plan_data ?? row?.plan_json;
+  if (!raw) return null;
+  if (typeof raw === 'object') return raw;
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    console.error('[ai/workout-recommendation] invalid active plan JSON:', err.message);
+    return null;
+  }
+}
+
+async function loadTodayTraining(userId, dateISO) {
+  try {
+    const active = await resolveActivePlanForDate(userId, dbGet, { planningDateLocal: dateISO });
+    const plan = parseStoredPlan(active?.row);
+    if (!plan) return null;
+    const selection = dailyExecution.selectDayForDate(
+      plan,
+      dateISO,
+      dailyExecution.weekdayShortForDate(dateISO),
+    );
+    if (!selection?.entry) return null;
+    const sessions = planSchema.daySessions(selection.entry);
+    return {
+      date: dateISO,
+      week: Number(selection.week?.week || selection.weekIndex + 1),
+      phase: selection.week?.phase || null,
+      orderGuidance: selection.entry.orderGuidance || null,
+      run: sessions.find((session) => session.kind === 'run') || null,
+      lift: sessions.find((session) => session.kind === 'lift') || null,
+    };
+  } catch (err) {
+    console.error('[ai/workout-recommendation] scheduled training lookup failed:', err.message);
+    return null;
+  }
 }
 
 router.post('/session-feedback', auth, async (req, res) => {
@@ -353,14 +410,40 @@ router.post('/lift-plan', auth, async (req, res) => {
 router.get('/workout-recommendation', auth, async (req, res) => {
   try {
     const userId = req.user.id;
-    const [profile, recentRuns, recentWorkouts] = await Promise.all([
+    const dateISO = recommendationDate(req.query?.date);
+    const [profile, recentRuns, recentSessions, recentSets, todayTraining] = await Promise.all([
       dbGet('SELECT * FROM users WHERE id=?', [userId]),
       dbAll(`SELECT * FROM runs WHERE user_id=? AND ${runActivitySql()} ORDER BY date DESC, created_at DESC LIMIT 10`, [userId]),
-      dbAll('SELECT * FROM workout_sessions WHERE user_id=? ORDER BY started_at DESC LIMIT 8', [userId])
+      dbAll(
+        'SELECT id, started_at, ended_at, muscle_groups, total_seconds FROM workout_sessions WHERE user_id=? AND ended_at IS NOT NULL ORDER BY started_at DESC LIMIT 8',
+        [userId]
+      ),
+      dbAll(
+        `SELECT wset.session_id, wset.exercise_name, wset.muscle_group, wset.set_number, wset.reps, wset.weight_lbs
+         FROM workout_sets wset
+         JOIN workout_sessions session ON session.id=wset.session_id AND session.user_id=wset.user_id
+         WHERE wset.user_id=? AND session.user_id=? AND session.ended_at IS NOT NULL
+         ORDER BY session.started_at DESC, wset.set_number ASC, wset.logged_at ASC
+         LIMIT 160`,
+        [userId, userId]
+      ),
+      loadTodayTraining(userId, dateISO),
     ]);
+    const recentCompletedWorkouts = buildCompletedWorkoutHistory(recentSessions, recentSets);
 
-    const generated = await generateWorkoutRecommendation({ profile, recentRuns, recentWorkouts, userId });
-    const recommendation = normalizeStrengthRecommendation(generated) || fallbackStrengthRecommendation();
+    const generated = await generateWorkoutRecommendation({
+      profile,
+      recentRuns,
+      recentWorkouts: recentCompletedWorkouts,
+      todayTraining,
+      userId,
+    });
+    const normalized = normalizeStrengthRecommendation(generated) || fallbackStrengthRecommendation();
+    const recommendation = selectDistinctRecommendation({
+      recommendation: normalized,
+      recentCompletedWorkouts,
+      todayRun: todayTraining?.run || null,
+    });
     await requestImagesForWorkoutItems({ userId, items: recommendation.main, source: 'ai_workout_recommendation' });
     await requestImagesForWorkoutItems({ userId, items: recommendation.warmup, source: 'ai_workout_recommendation' });
     await requestImagesForWorkoutItems({ userId, items: recommendation.recovery, source: 'ai_workout_recommendation' });

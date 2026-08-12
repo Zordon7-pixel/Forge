@@ -11,7 +11,8 @@ import ForgedCalendar from '../components/calendar/ForgedCalendar'
 import ForgedDayView from '../components/calendar/ForgedDayView'
 import RaceEditSheet from '../components/calendar/RaceEditSheet'
 import {
-  buildCalendarModel, calendarDateRange, dayWithRecordedRuns, goalWithRace, indexRecordedRuns, racePlanReview, todayISO,
+  buildCalendarModel, calendarDateRange, dayWithRecordedRuns, goalWithRace, indexRecordedRuns, racePlanReview,
+  resolvePlanWeekSelection, todayISO,
 } from '../lib/planCalendar'
 import { withActiveRunReturnTarget } from '../lib/activeRunControls'
 import { resolveReadiness } from '../lib/truthConsistency'
@@ -120,6 +121,7 @@ export default function Plan() {
   const [loading, setLoading] = useState(true)
   const [updating, setUpdating] = useState(false)
   const [selectedDayISO, setSelectedDayISO] = useState(null)
+  const [selectedWeekIndex, setSelectedWeekIndex] = useState(null)
   const [manageOpen, setManageOpen] = useState(false)
   const [adaptationOpen, setAdaptationOpen] = useState(false)
   const [routePlannerStatus, setRoutePlannerStatus] = useState({ available: false, requiresPro: false })
@@ -241,8 +243,6 @@ export default function Plan() {
     return () => { active = false }
   }, [])
 
-  const currentWeek = Math.max(1, Number(myUserPlan?.current_week || 1))
-  const weekIndex = currentWeek - 1
   const today = todayISO()
   const completedSet = useMemo(
     () => new Set((myUserPlan?.progress?.completedSessionIds || []).map(String)),
@@ -253,6 +253,10 @@ export default function Plan() {
     () => (myPlan ? buildCalendarModel(myPlan, myUserPlan) : null),
     [myPlan, myUserPlan],
   )
+  const weekIndex = myPlan
+    ? resolvePlanWeekSelection(myPlan, myUserPlan, selectedWeekIndex)
+    : 0
+  const currentWeek = weekIndex + 1
   const recordedRunsByDate = useMemo(() => indexRecordedRuns(runs), [runs])
   const findRaceForGoal = (goal) => {
     if (!goal) return null
@@ -362,14 +366,9 @@ export default function Plan() {
     }
   }
 
-  const goToWeek = async (nextWeek) => {
-    setUpdating(true)
-    try {
-      await api.put('/plans/my/progress', { current_week: nextWeek })
-      await loadAll()
-    } finally {
-      setUpdating(false)
-    }
+  const goToWeek = (nextWeek) => {
+    const nextIndex = Math.max(0, Math.min((weekCount || 1) - 1, Number(nextWeek) - 1))
+    setSelectedWeekIndex(nextIndex)
   }
 
   const addRaceToPlan = async () => {
