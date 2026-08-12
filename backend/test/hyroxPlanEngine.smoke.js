@@ -27,7 +27,7 @@ function fixture(days, overrides = {}) {
       ...overrides.event,
     },
     equipment: overrides.equipment || EQUIPMENT,
-    availableDays: overrides.availableDays || ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+    availableDays: overrides.availableDays || ['Tue', 'Thu', 'Sat', 'Sun'],
     secondaryRace: overrides.secondaryRace || null,
   };
 }
@@ -145,6 +145,30 @@ function assertSafetyAndOrder() {
   assert.equal(allSessions(foundation).some((session) => session.sessionType === 'hyrox_race'), false);
 }
 
+function assertSaturdayEventCrossWeekSafety() {
+  const eventLocalDate = '2026-10-10';
+  const days = hyrox.daysBetweenLocalDates(eventLocalDate, TODAY);
+  const plan = hyrox.generateHyroxPlan(fixture(days, {
+    event: { eventLocalDate },
+    availableDays: ['Tue', 'Thu', 'Sat', 'Sun'],
+  }));
+  const validation = hyrox.validateHyroxPlan(plan);
+  assert.equal(validation.valid, true, JSON.stringify(validation.errors));
+  const entries = plan.weeks.flatMap((week) => week.days.flatMap((day) => (
+    day.sessions.map((session) => ({ date: day.date, session }))
+  )));
+  const heavyStations = entries.filter(({ session }) => session.heavyStationWork);
+  const hardOrLongRuns = entries.filter(({ session }) => (
+    ['hard', 'long', 'race'].includes(session.runningStress)
+    && (session.kind === 'run' || session.includesRun)
+  ));
+  assert.ok(heavyStations.length > 0, 'cross-week safety must not erase all heavy station work');
+  assert.ok(heavyStations.every((heavy) => hardOrLongRuns.every((run) => (
+    run.date === heavy.date
+    || Math.abs(hyrox.daysBetweenLocalDates(run.date, heavy.date)) > 1
+  ))), 'heavy stations must remain separated from adjacent hard or long running across week boundaries');
+}
+
 function raceSessionFor(format, category = 'men') {
   const plan = hyrox.generateHyroxPlan(fixture(35, {
     event: { format, category },
@@ -231,6 +255,7 @@ function run() {
   assertTimezoneStability();
   assertFrequencyAndEquipment();
   assertSafetyAndOrder();
+  assertSaturdayEventCrossWeekSafety();
   assertRaceDayTruthByFormat();
   assertSecondaryTransition();
   console.log('HYROX PLAN ENGINE SMOKE OK');

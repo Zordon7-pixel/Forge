@@ -378,6 +378,7 @@ function buildWeek({
   planningDate,
   safetyHold,
   eventFormat,
+  precedingHardOrLongRunDates = [],
 }) {
   const days = Array.from({ length: 7 }, (_, offset) => {
     const date = addLocalDays(startDate, offset);
@@ -393,9 +394,22 @@ function buildWeek({
   used.add(compromisedSlot);
   const eventSlot = isRaceWeek ? days.findIndex((day) => day.date === eventDate) : -1;
   const stationAvailable = isRaceWeek ? allowed.filter((slot) => slot !== eventSlot) : allowed;
-  const stationSlot = nearestSlot(1, stationAvailable.length ? stationAvailable : allowed, used);
   const hardStationPhase = ['build', 'peak_partial_simulation', 'specific'].includes(phase);
-  const safeStationGap = Math.abs(stationSlot - compromisedSlot) > 1 && Math.abs(stationSlot - longSlot) > 1;
+  const stationPool = stationAvailable.length ? stationAvailable : allowed;
+  const unoccupiedStationSlots = stationPool.filter((slot) => !used.has(slot));
+  const stationCandidates = (unoccupiedStationSlots.length ? unoccupiedStationSlots : stationPool)
+    .slice()
+    .sort((left, right) => Math.abs(left - 1) - Math.abs(right - 1) || left - right);
+  const isSafeStationSlot = (slot) => (
+    Math.abs(slot - compromisedSlot) > 1
+    && Math.abs(slot - longSlot) > 1
+    && precedingHardOrLongRunDates.every((runDate) => (
+      Math.abs(daysBetweenLocalDates(days[slot].date, runDate)) > 1
+    ))
+  );
+  const safeStationSlot = stationCandidates.find(isSafeStationSlot);
+  const stationSlot = safeStationSlot ?? stationCandidates[0];
+  const safeStationGap = safeStationSlot != null;
   const heavyStation = hardStationPhase && safeStationGap && !isRaceWeek && !safetyHold;
 
   if (!isRaceWeek) {
@@ -535,22 +549,33 @@ function generateHyroxPlan(input = {}) {
     ? planningDate
     : addLocalDays(event.eventLocalDate, -(totalWeeks * 7) + 1);
   const phases = allocatePhases(runway, totalWeeks);
-  const weeks = phases.map((phase, weekIndex) => buildWeek({
-    startDate: addLocalDays(startDate, weekIndex * 7),
-    phase,
-    weekIndex,
-    totalWeeks,
-    eventDate: event.eventLocalDate || null,
-    goalRaceId: event.raceId || null,
-    runDays: requestedRunDays,
-    availableDays,
-    weeklyMiles: effectiveWeeklyMiles,
-    standards: resolved.stations,
-    equipment,
-    planningDate,
-    safetyHold,
-    eventFormat: resolved.format,
-  }));
+  const weeks = [];
+  for (const [weekIndex, phase] of phases.entries()) {
+    const precedingHardOrLongRunDates = (weeks.at(-1)?.days || [])
+      .flatMap((day) => day.sessions.map((session) => ({ date: day.date, session })))
+      .filter(({ session }) => (
+        ['hard', 'long', 'race'].includes(session.runningStress)
+        && (session.kind === 'run' || session.includesRun)
+      ))
+      .map(({ date }) => date);
+    weeks.push(buildWeek({
+      startDate: addLocalDays(startDate, weekIndex * 7),
+      phase,
+      weekIndex,
+      totalWeeks,
+      eventDate: event.eventLocalDate || null,
+      goalRaceId: event.raceId || null,
+      runDays: requestedRunDays,
+      availableDays,
+      weeklyMiles: effectiveWeeklyMiles,
+      standards: resolved.stations,
+      equipment,
+      planningDate,
+      safetyHold,
+      eventFormat: resolved.format,
+      precedingHardOrLongRunDates,
+    }));
+  }
 
   const hyroxGoal = {
     kind: 'hyrox',

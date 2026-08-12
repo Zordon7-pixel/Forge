@@ -236,6 +236,68 @@ function assertPreviewGenerationContract() {
     ),
     (error) => error.status === 400 && error.code === 'INVALID_PLANNING_DATE',
   );
+
+  const supportedDivisions = [
+    ['individual_open', 'women'],
+    ['individual_open', 'men'],
+    ['individual_pro', 'women'],
+    ['individual_pro', 'men'],
+    ['doubles', 'women'],
+    ['doubles', 'men'],
+    ['doubles', 'mixed'],
+    ['relay', 'women'],
+    ['relay', 'men'],
+    ['relay', 'mixed'],
+  ];
+  const eventDatesByWeekday = [
+    ['Sun', '2026-10-04'],
+    ['Mon', '2026-10-05'],
+    ['Tue', '2026-10-06'],
+    ['Wed', '2026-10-07'],
+    ['Thu', '2026-10-08'],
+    ['Fri', '2026-10-09'],
+    ['Sat', '2026-10-10'],
+  ];
+  for (const [eventWeekday, eventLocalDate] of eventDatesByWeekday) {
+    for (const [format, category] of supportedDivisions) {
+      for (const runDaysPerWeek of [3, 4]) {
+        const base = hyroxContext();
+        const built = plansRouter._test.buildDeterministicCandidate(hyroxContext({
+          target: {
+            runDaysPerWeek,
+            trainingDays: ['Tue', 'Thu', 'Sat', 'Sun'],
+            hyroxEvent: {
+              ...base.target.hyroxEvent,
+              eventLocalDate,
+              format,
+              category,
+            },
+          },
+        }), { planningDateLocal: '2026-08-11', timezoneOffsetMinutes: 240 });
+        assert.equal(
+          built.validation.valid,
+          true,
+          `${eventWeekday} ${format}/${category} ${runDaysPerWeek} days: ${JSON.stringify(built.validation.errors)}`,
+        );
+      }
+    }
+  }
+
+  const saturdayNoMonday = plansRouter._test.buildDeterministicCandidate(hyroxContext({
+    target: {
+      runDaysPerWeek: 4,
+      trainingDays: ['Tue', 'Thu', 'Sat', 'Sun'],
+      hyroxEvent: {
+        ...hyroxContext().target.hyroxEvent,
+        eventLocalDate: '2026-10-10',
+      },
+    },
+  }), { planningDateLocal: '2026-08-11', timezoneOffsetMinutes: 240 });
+  assert.equal(
+    saturdayNoMonday.validation.valid,
+    true,
+    `Sat+Sun/no-Mon: ${JSON.stringify(saturdayNoMonday.validation.errors)}`,
+  );
 }
 
 function assertPersistenceAndWiring() {
