@@ -26,7 +26,9 @@ export default function ExercisePickerModal({ muscleGroup, onSelect, onClose }) 
   }, [muscleGroup])
 
   useEffect(() => {
-    api.get('/auth/me').then((r) => setUserSex(r.data?.user?.sex || '')).catch(() => {})
+    api.get('/auth/me').then((r) => setUserSex(r.data?.user?.sex || '')).catch((error) => {
+      console.error('[exercise-picker/profile] lookup failed:', error?.message || error)
+    })
   }, [])
 
   useEffect(() => {

@@ -202,11 +202,15 @@ function stationForTraining(standard, equipment, intensity = 'RPE 6-7', doseFrac
   if (!hasEquipment) return { ...base, substitute: SUBSTITUTIONS[standard.id] };
   return {
     ...base,
-    officialStandard: Object.keys(standard).reduce((result, key) => {
-      if (/Kg|Meters|repetitions|implements/.test(key) || key === 'loadsByAthleteCategory') result[key] = standard[key];
-      return result;
-    }, {}),
+    officialStandard: officialStandardForStation(standard),
   };
+}
+
+function officialStandardForStation(standard = {}) {
+  return Object.keys(standard).reduce((result, key) => {
+    if (/Kg|Meters|repetitions|implements/.test(key) || key === 'loadsByAthleteCategory') result[key] = standard[key];
+    return result;
+  }, {});
 }
 
 function stationSubset(standards, phase, weekIndex) {
@@ -298,14 +302,31 @@ function buildRunSession(id, type, distanceMiles, loadFactor) {
   };
 }
 
-function buildRaceSession(standards, goalRaceId) {
-  const session = sessionBase('hyrox-race-day', 'hyrox_race', 'HYROX race', 'Execute eight 1 km runs and the eight official stations in order.');
-  const stationSequence = standards.map((station) => ({
+function buildRaceSession(standards, goalRaceId, eventFormat) {
+  const isRelay = eventFormat === 'relay';
+  const session = sessionBase(
+    'hyrox-race-day',
+    'hyrox_race',
+    isRelay ? 'HYROX Relay race' : 'HYROX race',
+    isRelay
+      ? 'Complete this athlete’s two assigned 1 km legs and two team-assigned stations; the four-person team completes the full official order.'
+      : eventFormat === 'doubles'
+        ? 'Run all eight 1 km legs together and share the eight official stations with your partner in order.'
+        : 'Execute eight 1 km runs and the eight official stations in order.',
+  );
+  const officialTeamStationSequence = standards.map((station) => ({
     ...station,
+    officialStandard: officialStandardForStation(station),
     exactStation: true,
     readinessClaim: 'official_race_standard',
     provenance: `${REGISTRY.rulesVersion}:${station.id}`,
   }));
+  const athleteRunCount = isRelay ? 2 : 8;
+  const stationSequence = isRelay ? [] : officialTeamStationSequence;
+  const officialTeamRaceSequence = officialTeamStationSequence.flatMap((station, index) => [
+    { kind: 'run', order: index * 2 + 1, distanceMeters: 1000 },
+    { kind: 'station', order: index * 2 + 2, station },
+  ]);
   return {
     ...session,
     goalRaceId: goalRaceId || null,
@@ -314,14 +335,20 @@ function buildRaceSession(standards, goalRaceId) {
     hardLowerBody: true,
     includesRun: true,
     runningStress: 'race',
-    runSequenceMeters: Array(8).fill(1000),
-    distanceMeters: 8000,
-    distance_miles: Number((8 / 1.609344).toFixed(2)),
+    eventFormat,
+    participationScope: isRelay ? 'relay_athlete' : eventFormat === 'doubles' ? 'doubles_athlete' : 'individual_athlete',
+    runSequenceMeters: Array(athleteRunCount).fill(1000),
+    distanceMeters: athleteRunCount * 1000,
+    distance_miles: Number((athleteRunCount / 1.609344).toFixed(2)),
     stationSequence,
-    raceSequence: stationSequence.flatMap((station, index) => [
-      { kind: 'run', order: index * 2 + 1, distanceMeters: 1000 },
-      { kind: 'station', order: index * 2 + 2, station },
-    ]),
+    athleteStationAssignment: isRelay ? {
+      stationCount: 2,
+      status: 'team_assignment_required',
+      instruction: 'Confirm this athlete’s two stations with the relay team before race day.',
+    } : null,
+    raceSequence: isRelay ? [] : officialTeamRaceSequence,
+    officialTeamStationSequence,
+    officialTeamRaceSequence,
   };
 }
 
@@ -350,6 +377,7 @@ function buildWeek({
   equipment,
   planningDate,
   safetyHold,
+  eventFormat,
 }) {
   const days = Array.from({ length: 7 }, (_, offset) => {
     const date = addLocalDays(startDate, offset);
@@ -375,7 +403,7 @@ function buildWeek({
     days[compromisedSlot].sessions.push(buildCompromisedSession({ phase, weekIndex, standards, equipment, safetyHold }));
     days[longSlot].sessions.push(buildRunSession(`run-${weekIndex + 1}-long`, 'long', Math.max(4, weeklyMiles * 0.34), loadFactor));
   } else {
-    days[Math.max(0, eventSlot)].sessions.push(buildRaceSession(standards, goalRaceId));
+    days[Math.max(0, eventSlot)].sessions.push(buildRaceSession(standards, goalRaceId, eventFormat));
     days[stationSlot].sessions.push(buildStationSession({ phase, weekIndex, standards, equipment, heavy: false }));
   }
 
@@ -521,6 +549,7 @@ function generateHyroxPlan(input = {}) {
     equipment,
     planningDate,
     safetyHold,
+    eventFormat: resolved.format,
   }));
 
   const hyroxGoal = {
@@ -688,12 +717,45 @@ function validateHyroxPlan(plan = {}) {
     }
   }
   for (const race of entries.filter((entry) => entry.session.sessionType === 'hyrox_race')) {
-    const order = (race.session.stationSequence || []).map((station) => station.id);
+    const officialTeamStations = race.session.officialTeamStationSequence || [];
+    const order = officialTeamStations.map((station) => station.id);
     if (JSON.stringify(order) !== JSON.stringify(STATION_ORDER)) {
       errors.push({ code: 'OFFICIAL_STATION_ORDER', path: race.path });
     }
-    if (JSON.stringify(race.session.runSequenceMeters) !== JSON.stringify(Array(8).fill(1000))) {
+    if (officialTeamStations.some((station) => !station.officialStandard)) {
+      errors.push({ code: 'OFFICIAL_STATION_STANDARD', path: race.path });
+    }
+    const officialTeamRaceSequence = race.session.officialTeamRaceSequence || [];
+    const expectedTeamKinds = Array.from({ length: 16 }, (_, index) => (index % 2 === 0 ? 'run' : 'station'));
+    const officialTeamRaceStationOrder = officialTeamRaceSequence
+      .filter((item) => item.kind === 'station')
+      .map((item) => item.station?.id);
+    if (JSON.stringify(officialTeamRaceSequence.map((item) => item.kind)) !== JSON.stringify(expectedTeamKinds)
+      || JSON.stringify(officialTeamRaceStationOrder) !== JSON.stringify(STATION_ORDER)) {
+      errors.push({ code: 'OFFICIAL_TEAM_RACE_SEQUENCE', path: race.path });
+    }
+    const isRelay = race.session.eventFormat === 'relay';
+    const expectedRuns = Array(isRelay ? 2 : 8).fill(1000);
+    if (JSON.stringify(race.session.runSequenceMeters) !== JSON.stringify(expectedRuns)) {
       errors.push({ code: 'OFFICIAL_RUN_ORDER', path: race.path });
+    }
+    if (isRelay) {
+      if ((race.session.stationSequence || []).length !== 0
+        || race.session.athleteStationAssignment?.stationCount !== 2
+        || race.session.athleteStationAssignment?.status !== 'team_assignment_required'
+        || race.session.distanceMeters !== 2000
+        || race.session.distance_miles !== 1.24
+        || race.session.participationScope !== 'relay_athlete'
+        || (race.session.raceSequence || []).length !== 0) {
+        errors.push({ code: 'UNTRUTHFUL_RELAY_ATHLETE_VOLUME', path: race.path });
+      }
+    } else {
+      if (JSON.stringify((race.session.stationSequence || []).map((station) => station.id)) !== JSON.stringify(STATION_ORDER)
+        || JSON.stringify((race.session.raceSequence || []).map((item) => item.kind)) !== JSON.stringify(expectedTeamKinds)
+        || race.session.distanceMeters !== 8000
+        || race.session.distance_miles !== 4.97) {
+        errors.push({ code: 'OFFICIAL_ATHLETE_RACE_STRUCTURE', path: race.path });
+      }
     }
   }
   if (plan.hyroxPolicy?.runwayClass === 'foundation_only'

@@ -529,6 +529,77 @@ test('the current plan item opens its existing calendar without changing navigat
   assertCleanApiAndRuntime(apiState, runtimeErrors)
 })
 
+test('HYROX relay race day shows athlete scope and official team station loads', async ({ page }) => {
+  const runtimeErrors = collectRuntimeErrors(page)
+  const station = (id, name, officialStandard) => ({
+    id,
+    name,
+    exactStation: true,
+    readinessClaim: 'official_race_standard',
+    officialStandard,
+  })
+  const officialTeamStationSequence = [
+    station('ski_erg', 'SkiErg', { distanceMeters: 1000 }),
+    station('sled_push', 'Sled push', { distanceMeters: 50, loadKgIncludingSled: 102 }),
+    station('sled_pull', 'Sled pull', { distanceMeters: 50, loadKgIncludingSled: 78 }),
+    station('burpee_broad_jump', 'Burpee broad jumps', { distanceMeters: 80 }),
+    station('row', 'Row', { distanceMeters: 1000 }),
+    station('farmers_carry', 'Farmers carry', { distanceMeters: 200, implements: 2, loadKgPerImplement: 16 }),
+    station('sandbag_lunge', 'Sandbag lunges', { distanceMeters: 100, loadKg: 10 }),
+    station('wall_ball', 'Wall balls', { repetitions: 100, ballKg: 4, targetHeightMeters: 2.7 }),
+  ]
+  const relayRace = {
+    id: 'hyrox-relay-race-day',
+    kind: 'hyrox',
+    sessionType: 'hyrox_race',
+    title: 'HYROX Relay race',
+    purpose: 'Complete this athlete’s assigned relay scope while the team covers the full official order.',
+    eventFormat: 'relay',
+    participationScope: 'relay_athlete',
+    canonicalUnits: 'metric',
+    runSequenceMeters: [1000, 1000],
+    distanceMeters: 2000,
+    distance_miles: 1.24,
+    stationSequence: [],
+    athleteStationAssignment: {
+      stationCount: 2,
+      status: 'team_assignment_required',
+      instruction: 'Confirm this athlete’s two stations with the relay team before race day.',
+    },
+    officialTeamStationSequence,
+  }
+  const plan = {
+    id: 'hyrox-relay-plan',
+    name: 'HYROX Relay plan',
+    type: 'hyrox',
+    weeks: 1,
+    plan_data: {
+      schemaVersion: 2,
+      planMode: 'hyrox_build',
+      goal: { name: 'HYROX Relay', dateISO: today, kind: 'hyrox', division: 'relay', category: 'women' },
+      weeks: [{
+        week: 1,
+        phase: 'taper_race',
+        startDate: today,
+        days: [{ date: today, day: todayDay, sessions: [relayRace] }],
+      }],
+    },
+  }
+  const apiState = await installAuthenticatedApi(page, {
+    responses: new Map([
+      ['GET /api/plans/my', { plan, user_plan: { current_week: 1, started_at: today, progress: { completedSessionIds: [] } } }],
+    ]),
+  })
+
+  await page.goto('/plan')
+  await page.locator('button').filter({ hasText: 'HYROX Relay race' }).first().click()
+  await expect(page.getByText('Athlete scope: 2 × 1,000 m run + 2 team-assigned stations.', { exact: false })).toBeVisible()
+  await expect(page.getByText('Official team station order — assign two stations to this athlete', { exact: true })).toBeVisible()
+  await expect(page.getByText('102 kg including sled', { exact: false })).toBeVisible()
+  await expect(page.getByText('2 × 16 kg', { exact: false })).toBeVisible()
+  assertCleanApiAndRuntime(apiState, runtimeErrors)
+})
+
 test('active plan run days can be edited and rebuilt without returning to plan setup', async ({ page }) => {
   const runtimeErrors = collectRuntimeErrors(page)
   let plan = {

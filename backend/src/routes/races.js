@@ -86,7 +86,9 @@ function normalizeRaceEvent(body = {}) {
     if (!eventCategory) return { valid: false, error: 'event_category is required for HYROX' };
     const standard = hyroxStandards.resolveHyroxStandard({ format: eventFormat, category: eventCategory, rulesVersion });
     if (standard.status !== 'exact') return { valid: false, error: `HYROX standards are unavailable: ${standard.status}` };
-    distanceMiles = hyroxStandards.HYROX_RUN_DISTANCE_MILES;
+    // Relay records describe this athlete's two 1 km legs, not the team's
+    // full eight-leg course. Individual and Doubles athletes run all eight.
+    distanceMiles = hyroxStandards.hyroxAthleteRunDistanceMiles(eventFormat);
   } else if (!Number.isFinite(distanceMiles) || distanceMiles <= 0 || distanceMiles > 100) {
     return { valid: false, error: 'distance_miles must be between 0 and 100' };
   }

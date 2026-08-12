@@ -6,7 +6,7 @@ import { getToken } from '../lib/tokenStore'
 import MovementDemo from './MovementDemo'
 
 const FOCUSABLE = 'button:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
-let cachedProfile = { token: '', sex: '', promise: null }
+let cachedProfile = { token: '', sex: '', resolved: false, promise: null }
 
 export function normalizeExerciseGuide(exercise = {}) {
   const source = exercise && typeof exercise === 'object' ? exercise : { name: exercise }
@@ -25,22 +25,22 @@ export function normalizeExerciseGuide(exercise = {}) {
 
 async function loadProfileSex() {
   const token = getToken() || ''
-  if (cachedProfile.token === token && cachedProfile.sex) return cachedProfile.sex
+  if (cachedProfile.token === token && cachedProfile.resolved) return cachedProfile.sex
   if (cachedProfile.token === token && cachedProfile.promise) return cachedProfile.promise
 
   const promise = api.get('/auth/me')
     .then((response) => {
       const sex = String(response.data?.user?.sex || '').toLowerCase()
-      cachedProfile = { token, sex: sex === 'female' || sex === 'male' ? sex : '', promise: null }
+      cachedProfile = { token, sex: sex === 'female' || sex === 'male' ? sex : '', resolved: true, promise: null }
       return cachedProfile.sex
     })
     .catch((error) => {
       console.error('[exercise-guide] profile load failed:', error?.message || error)
-      cachedProfile = { token, sex: '', promise: null }
+      cachedProfile = { token, sex: '', resolved: true, promise: null }
       return ''
     })
 
-  cachedProfile = { token, sex: '', promise }
+  cachedProfile = { token, sex: '', resolved: false, promise }
   return promise
 }
 

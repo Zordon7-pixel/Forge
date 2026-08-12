@@ -4,6 +4,7 @@ import { CheckCircle2 } from 'lucide-react'
 import { postRunStretches, preRunStretches } from '../data/stretches'
 import GuidedMovementTimer from '../components/GuidedMovementTimer'
 import MovementDemo from '../components/MovementDemo'
+import { normalizeProfileSex } from '../lib/exerciseGuidePolicy'
 import api from '../lib/api'
 import LoadingRunner from '../components/LoadingRunner'
 import { chooseRotatingRoutine, rememberRoutine } from '../lib/routineRotation'
@@ -75,11 +76,11 @@ export default function StretchSession() {
     let active = true
     api.get('/auth/me')
       .then((res) => {
-        if (active) setSex(String(res.data?.user?.sex || res.data?.sex || '').toLowerCase() === 'female' ? 'female' : 'male')
+        if (active) setSex(normalizeProfileSex(res.data?.user?.sex || res.data?.sex))
       })
       .catch((err) => {
         console.error('[stretch-session] profile load failed:', err?.message || err)
-        if (active) setSex('male')
+        if (active) setSex('')
       })
       .finally(() => {
         if (active) setProfileReady(true)

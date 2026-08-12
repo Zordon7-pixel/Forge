@@ -46,7 +46,11 @@ function sessionTarget(session) {
   if (session.kind === 'hyrox') {
     const stations = Array.isArray(session.raw?.stationSequence) ? session.raw.stationSequence.length : 0
     const runs = Array.isArray(session.raw?.runSequenceMeters) ? session.raw.runSequenceMeters.length : 0
-    return [runs ? `${runs} × 1 km` : null, stations ? `${stations} station${stations === 1 ? '' : 's'}` : null].filter(Boolean).join(' · ') || 'HYROX'
+    const relayStations = Number(session.raw?.athleteStationAssignment?.stationCount || 0)
+    return [
+      runs ? `${runs} × 1 km` : null,
+      relayStations ? `${relayStations} team-assigned stations` : stations ? `${stations} station${stations === 1 ? '' : 's'}` : null,
+    ].filter(Boolean).join(' · ') || 'HYROX'
   }
   if (session.kind === 'lift') return String(session.prescription?.focus || 'Strength').replaceAll('_', ' ')
   if (session.prescriptionBasis === 'time' && session.durationMinutes > 0) return `${Math.round(session.durationMinutes)} min`

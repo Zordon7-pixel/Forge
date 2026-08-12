@@ -714,6 +714,7 @@ export default function MovementDemo({ name, label, compact = false, sex = '', i
     : (photoConfig.maleSide === 'left' ? 'right' : 'left')
   return (
     <div
+      role="group"
       style={{
         width: '100%',
         border: '1px solid rgba(234,179,8,0.24)',

@@ -88,6 +88,23 @@ function assertEventNormalization() {
   assert.equal(normalized.value.distance_miles, standards.HYROX_RUN_DISTANCE_MILES);
   assert.deepEqual(JSON.parse(normalized.value.event_config_json).equipment, ['ski_erg', 'row_erg']);
 
+  const relay = racesRouter._test.normalizeRaceEvent({
+    race_name: 'HYROX Relay',
+    event_kind: 'hyrox',
+    event_local_date: '2026-10-18',
+    event_timezone: 'Asia/Tokyo',
+    event_format: 'relay',
+    event_category: 'women',
+    rules_version: '2026-2027',
+  });
+  assert.equal(relay.valid, true, relay.error);
+  assert.equal(
+    relay.value.distance_miles,
+    standards.HYROX_RELAY_ATHLETE_RUN_DISTANCE_MILES,
+    'relay race records store the athlete-specific two-leg run distance',
+  );
+  assert.equal(standards.hyroxAthleteRunDistanceMiles('doubles'), standards.HYROX_RUN_DISTANCE_MILES);
+
   const invalidZone = racesRouter._test.normalizeRaceEvent({
     race_name: 'HYROX Anywhere',
     event_kind: 'hyrox',
@@ -131,6 +148,13 @@ function assertEventNormalization() {
       rules_version: '2026-2027',
     });
     assert.equal(supported.valid, true, `${eventFormat}/${eventCategory}: ${supported.error}`);
+    assert.equal(
+      supported.value.distance_miles,
+      eventFormat === 'relay'
+        ? standards.HYROX_RELAY_ATHLETE_RUN_DISTANCE_MILES
+        : standards.HYROX_RUN_DISTANCE_MILES,
+      `${eventFormat}/${eventCategory} persists truthful athlete run distance`,
+    );
   }
 }
 

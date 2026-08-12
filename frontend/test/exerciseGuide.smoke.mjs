@@ -26,6 +26,9 @@ const insights = read('src/components/InsightsSheet.jsx')
 const logLift = read('src/pages/LogLift.jsx')
 const activeWorkout = read('src/pages/ActiveWorkout.jsx')
 const exercisePicker = read('src/components/ExercisePickerModal.jsx')
+const warmup = read('src/pages/Warmup.jsx')
+const stretches = read('src/pages/Stretches.jsx')
+const stretchSession = read('src/pages/StretchSession.jsx')
 const exerciseSeed = read('../backend/src/db/exercises-seed.js')
 
 let passed = 0
@@ -51,6 +54,7 @@ check(photoTable.includes('/^walking lunges$/') && photoTable.includes('/^(?:fla
 check(movement.includes('Visual guide pending review') && movement.includes('No substitute image is shown.'), 'unknown exercises use a truthful non-image fallback')
 check(movement.includes('Follow the written prescription with a controlled range of motion.') && movement.includes('const displayCue = photoConfig.cue || cue || (photoSrc'), 'missing-image exercises without a supplied cue receive truthful non-image guidance')
 check(movement.includes('const photoConfig = resolveExerciseGuidePhoto({') && movement.includes('src={photoSrc}'), 'the trusted guide resolver directly controls the rendered image src')
+check(movement.includes('role="group"') && movement.includes('aria-label={`${title} visual demonstration`}'), 'movement guide uses a named semantic group')
 check(movement.includes('imageUrl,') && guidePolicy.includes('getTrustedCatalogExerciseAsset'), 'catalog image URLs pass through an exact name/asset allowlist')
 for (const exerciseName of SCREENSHOT_PROVEN_GUIDE_CASES) {
   const policy = getVettedExerciseGuide(exerciseName)
@@ -160,5 +164,17 @@ for (const [surface, source] of [
   check(source.includes("const [userSex, setUserSex] = useState('')"), `${surface} does not guess a profile sex before auth resolves`)
   check(!source.includes("sex || 'male'"), `${surface} preserves an unknown profile sex for the safe uncropped guide fallback`)
 }
+for (const [surface, source] of [
+  ['Warmup', warmup],
+  ['Stretches', stretches],
+  ['Stretch Session', stretchSession],
+]) {
+  check(source.includes('normalizeProfileSex'), `${surface} normalizes only an explicit supported profile sex`)
+  check(!source.includes("setSex('male')"), `${surface} does not coerce a failed or missing profile lookup to male`)
+  check(source.includes("setSex('')"), `${surface} preserves an unknown profile for the safe guide fallback`)
+}
+check(stretches.includes("function StretchSession({ stretches, estimatedSeconds, onDone, onBack, sex = ''"), 'embedded stretch session starts from an unknown profile sex')
+check(exercisePicker.includes("console.error('[exercise-picker/profile] lookup failed:'"), 'Exercise Picker reports profile lookup failures truthfully')
+check(guide.includes('resolved: true') && guide.includes('cachedProfile.token === token && cachedProfile.resolved'), 'profile lookup caches the resolved unknown-sex sentinel without repeated silent fetches')
 
 console.log(`EXERCISE GUIDE SMOKE OK (${passed})`)

@@ -129,6 +129,13 @@ function assertSafetyAndOrder() {
   }
   const race = allSessions(plan).find((session) => session.sessionType === 'hyrox_race');
   assert.deepEqual(race.stationSequence.map((station) => station.id), STATION_ORDER);
+  assert.deepEqual(race.officialTeamStationSequence.map((station) => station.id), STATION_ORDER);
+  assert.ok(race.officialTeamStationSequence.every((station) => station.officialStandard));
+  assert.equal(
+    race.officialTeamStationSequence.find((station) => station.id === 'sled_push')
+      .officialStandard.loadKgIncludingSled,
+    152,
+  );
   assert.deepEqual(race.runSequenceMeters, Array(8).fill(1000));
   assert.deepEqual(race.raceSequence.map((item) => item.kind), Array.from({ length: 16 }, (_, index) => (
     index % 2 === 0 ? 'run' : 'station'
@@ -136,6 +143,65 @@ function assertSafetyAndOrder() {
   const foundation = hyrox.generateHyroxPlan(fixture(null));
   assert.equal(foundation.weeks.length, 8);
   assert.equal(allSessions(foundation).some((session) => session.sessionType === 'hyrox_race'), false);
+}
+
+function raceSessionFor(format, category = 'men') {
+  const plan = hyrox.generateHyroxPlan(fixture(35, {
+    event: { format, category },
+  }));
+  const validation = hyrox.validateHyroxPlan(plan);
+  assert.equal(validation.valid, true, `${format}/${category}: ${JSON.stringify(validation.errors)}`);
+  return {
+    plan,
+    race: plan.weeks.flatMap((week) => week.days)
+      .flatMap((day) => day.sessions)
+      .find((session) => session.sessionType === 'hyrox_race'),
+  };
+}
+
+function assertRaceDayTruthByFormat() {
+  for (const format of ['individual_open', 'doubles']) {
+    const { race } = raceSessionFor(format);
+    assert.deepEqual(race.runSequenceMeters, Array(8).fill(1000), `${format} athlete runs all 8 legs`);
+    assert.equal(race.distanceMeters, 8000);
+    assert.equal(race.distance_miles, 4.97);
+    assert.deepEqual(race.stationSequence.map((station) => station.id), STATION_ORDER);
+    assert.deepEqual(race.officialTeamStationSequence.map((station) => station.id), STATION_ORDER);
+    assert.deepEqual(race.officialTeamRaceSequence.map((item) => item.kind), Array.from({ length: 16 }, (_, index) => (
+      index % 2 === 0 ? 'run' : 'station'
+    )));
+  }
+
+  const { plan: relayPlan, race: relay } = raceSessionFor('relay', 'women');
+  assert.equal(relay.participationScope, 'relay_athlete');
+  assert.deepEqual(relay.runSequenceMeters, [1000, 1000]);
+  assert.equal(relay.distanceMeters, 2000);
+  assert.equal(relay.distance_miles, 1.24);
+  assert.deepEqual(relay.stationSequence, [], 'relay athlete stations must be assigned by the team');
+  assert.deepEqual(relay.raceSequence, [], 'relay athlete sequence must not claim the complete team race');
+  assert.deepEqual(relay.athleteStationAssignment, {
+    stationCount: 2,
+    status: 'team_assignment_required',
+    instruction: 'Confirm this athlete’s two stations with the relay team before race day.',
+  });
+  assert.deepEqual(relay.officialTeamStationSequence.map((station) => station.id), STATION_ORDER);
+  assert.deepEqual(relay.officialTeamRaceSequence.map((item) => item.kind), Array.from({ length: 16 }, (_, index) => (
+    index % 2 === 0 ? 'run' : 'station'
+  )));
+  assert.equal(
+    relay.officialTeamStationSequence.find((station) => station.id === 'sled_push')
+      .officialStandard.loadKgIncludingSled,
+    102,
+  );
+
+  relay.runSequenceMeters = Array(8).fill(1000);
+  relay.distanceMeters = 8000;
+  assert.ok(
+    hyrox.validateHyroxPlan(relayPlan).errors.some((error) => (
+      ['OFFICIAL_RUN_ORDER', 'UNTRUTHFUL_RELAY_ATHLETE_VOLUME'].includes(error.code)
+    )),
+    'validator rejects the old full-individual relay-athlete volume',
+  );
 }
 
 function assertSecondaryTransition() {
@@ -165,6 +231,7 @@ function run() {
   assertTimezoneStability();
   assertFrequencyAndEquipment();
   assertSafetyAndOrder();
+  assertRaceDayTruthByFormat();
   assertSecondaryTransition();
   console.log('HYROX PLAN ENGINE SMOKE OK');
 }

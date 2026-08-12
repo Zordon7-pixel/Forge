@@ -89,7 +89,7 @@ export function getTrustedCatalogExerciseAsset(name = '', imageUrl = '') {
   return TRUSTED_CATALOG_ASSETS.get(normalizedName)?.has(src) ? src : ''
 }
 
-function normalizeSex(sex = '') {
+export function normalizeProfileSex(sex = '') {
   const normalized = String(sex || '').toLowerCase()
   if (normalized === 'female') return 'female'
   if (normalized === 'male') return 'male'
@@ -98,7 +98,7 @@ function normalizeSex(sex = '') {
 
 function photoConfig(photoDemo, sex) {
   if (!photoDemo) return { src: '', cropToSex: false, maleSide: 'right' }
-  const normalizedSex = normalizeSex(sex)
+  const normalizedSex = normalizeProfileSex(sex)
   // A trusted paired-composite asset is truthful in full when profile sex is
   // unknown. Do not guess a crop; separate male/female files still fail closed.
   if (!normalizedSex && photoDemo.src) {
@@ -118,7 +118,7 @@ function photoConfig(photoDemo, sex) {
 
 export function resolveExerciseGuidePhoto({ name = '', imageUrl = '', sex = '', localPhotoDemo = null } = {}) {
   const vettedGuide = getVettedExerciseGuide(name)
-  const normalizedSex = normalizeSex(sex)
+  const normalizedSex = normalizeProfileSex(sex)
   const catalogSrc = getTrustedCatalogExerciseAsset(name, imageUrl)
 
   if (vettedGuide) {

@@ -193,18 +193,26 @@ function officialMetricFacts(officialStandard = {}) {
 function hyroxFacts(session) {
   const raw = session.raw || session.prescription || {}
   const stationSequence = Array.isArray(raw.stationSequence) ? raw.stationSequence : []
+  const officialTeamStationSequence = Array.isArray(raw.officialTeamStationSequence)
+    ? raw.officialTeamStationSequence
+    : stationSequence
+  const isRelay = raw.eventFormat === 'relay' || raw.participationScope === 'relay_athlete'
   return {
     purpose: firstStr(raw.purpose),
     duration: Number(raw.durationMin || session.durationMinutes || 0),
     stationSequence,
+    displayedStationSequence: isRelay ? officialTeamStationSequence : stationSequence,
+    isRelay,
+    athleteStationCount: Number(raw.athleteStationAssignment?.stationCount || stationSequence.length),
+    athleteStationInstruction: firstStr(raw.athleteStationAssignment?.instruction),
     runs: Array.isArray(raw.runSequenceMeters) ? raw.runSequenceMeters : [],
     warmUp: list(raw.warmUp || raw.warmup),
     runningTarget: displayValue(raw.runningTarget),
     transitionRest: firstStr(raw.transitionRest),
     stopScaleCriteria: list(raw.stopScaleCriteria),
     canonicalUnits: firstStr(raw.canonicalUnits, 'metric'),
-    exactCount: stationSequence.filter((station) => station.exactStation).length,
-    substitutions: stationSequence.filter((station) => !station.exactStation && station.substitute).length,
+    exactCount: officialTeamStationSequence.filter((station) => station.exactStation).length,
+    substitutions: officialTeamStationSequence.filter((station) => !station.exactStation && station.substitute).length,
   }
 }
 
@@ -345,13 +353,15 @@ export default function ForgedDayView({
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, padding: '9px 10px', borderRadius: 8, background: 'rgba(194,65,12,0.05)', fontSize: px(12) }}>
           {facts.duration > 0 && <span><Timer size={13} style={{ verticalAlign: -2 }} /> {facts.duration} min</span>}
           {facts.runs.length > 0 && <span><Route size={13} style={{ verticalAlign: -2 }} /> {facts.runs.length} × 1,000 m run</span>}
-          <span>{facts.stationSequence.length} ordered stations</span>
+          <span>{facts.isRelay ? `${facts.athleteStationCount} team-assigned stations` : `${facts.stationSequence.length} ordered stations`}</span>
           <span>{facts.canonicalUnits} canonical</span>
         </div>
+        {facts.isRelay && <p role="note" style={{ margin: '8px 0 0', fontSize: px(12), fontWeight: 800 }}>Athlete scope: 2 × 1,000 m run + 2 team-assigned stations. {facts.athleteStationInstruction}</p>}
         {facts.runningTarget && <p style={{ margin: '8px 0 0', fontSize: px(12) }}><strong>Running target:</strong> {facts.runningTarget}</p>}
         {facts.warmUp.length > 0 && <div style={{ marginTop: 10 }}><strong style={{ fontSize: px(13) }}>Warm-up</strong><ol style={{ margin: '4px 0 0', paddingLeft: 18, fontSize: px(12) }}>{facts.warmUp.map((item, index) => <li key={`hyrox-warm-${index}`}>{item}</li>)}</ol></div>}
+        {facts.isRelay && <p style={{ margin: '12px 0 0', fontSize: px(13), fontWeight: 900 }}>Official team station order — assign two stations to this athlete</p>}
         <ol style={{ display: 'grid', gap: 8, margin: '12px 0 0', padding: 0, listStyle: 'none', minWidth: 0 }}>
-          {facts.stationSequence.map((station, index) => {
+          {facts.displayedStationSequence.map((station, index) => {
             const dose = [station.distanceMeters != null ? `${station.distanceMeters} m` : '', station.repetitions != null ? `${station.repetitions} reps` : ''].filter(Boolean).join(' · ')
             const official = officialMetricFacts(station.officialStandard)
             return (

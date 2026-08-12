@@ -14,6 +14,7 @@ import {
 import api from '../lib/api'
 import GuidedMovementTimer from '../components/GuidedMovementTimer'
 import MovementDemo from '../components/MovementDemo'
+import { normalizeProfileSex } from '../lib/exerciseGuidePolicy'
 import { getMostRecentRoutineIds, getPreviousRoutineIds, rememberRoutine } from '../lib/routineRotation'
 import { SWIPE_BACK_EVENT } from '../lib/swipeBack'
 
@@ -65,7 +66,7 @@ const TIGHTNESS_OPTIONS = [
 ]
 
 /* ─── Stretch session screen ─── */
-function StretchSession({ stretches, estimatedSeconds, onDone, onBack, sex = 'male' }) {
+function StretchSession({ stretches, estimatedSeconds, onDone, onBack, sex = '' }) {
   const { t } = useTranslation()
   const [stepIndex, setStepIndex] = useState(0)
 
@@ -163,10 +164,10 @@ export default function Stretches() {
       .then(r => setCategories(r.data.categories))
       .catch((err) => console.error('[stretches] category load failed:', err?.message || err))
     api.get('/auth/me')
-      .then((r) => setSex(String(r.data?.user?.sex || r.data?.sex || '').toLowerCase() === 'female' ? 'female' : 'male'))
+      .then((r) => setSex(normalizeProfileSex(r.data?.user?.sex || r.data?.sex)))
       .catch((err) => {
         console.error('[stretches] profile load failed:', err?.message || err)
-        setSex('male')
+        setSex('')
       })
       .finally(() => setProfileReady(true))
   }, [])

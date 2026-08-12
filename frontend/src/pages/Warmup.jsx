@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next'
 import api from '../lib/api'
 import LoadingRunner from '../components/LoadingRunner'
 import MovementDemo from '../components/MovementDemo'
+import { normalizeProfileSex } from '../lib/exerciseGuidePolicy'
 import { preRunStretches } from '../data/stretches'
 import { chooseRotatingRoutine, rememberRoutine } from '../lib/routineRotation'
 import { SWIPE_BACK_EVENT } from '../lib/swipeBack'
@@ -738,11 +739,11 @@ export default function Warmup() {
     api.get('/auth/me')
       .then((res) => {
         if (!active) return
-        setSex(String(res.data?.user?.sex || res.data?.sex || '').toLowerCase() === 'female' ? 'female' : 'male')
+        setSex(normalizeProfileSex(res.data?.user?.sex || res.data?.sex))
       })
       .catch((err) => {
         console.error('[warmup] profile load failed:', err?.message || err)
-        if (active) setSex('male')
+        if (active) setSex('')
       })
       .finally(() => {
         if (active) setProfileReady(true)

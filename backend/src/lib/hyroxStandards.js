@@ -1,4 +1,5 @@
 const HYROX_RUN_DISTANCE_MILES = 8 / 1.609344;
+const HYROX_RELAY_ATHLETE_RUN_DISTANCE_MILES = 2 / 1.609344;
 
 const STATION_ORDER = Object.freeze([
   'ski_erg',
@@ -105,6 +106,12 @@ function normalizeHyroxCategory(value) {
   return CATEGORY_ALIASES[String(value || '').trim().toLowerCase()] || null;
 }
 
+function hyroxAthleteRunDistanceMiles(format) {
+  return normalizeHyroxFormat(format) === 'relay'
+    ? HYROX_RELAY_ATHLETE_RUN_DISTANCE_MILES
+    : HYROX_RUN_DISTANCE_MILES;
+}
+
 function normalizeEquipment(value) {
   const raw = Array.isArray(value) ? value : [];
   const available = new Set(raw.map((item) => String(item || '').trim().toLowerCase()));
@@ -151,8 +158,10 @@ deepFreeze(REGISTRY);
 module.exports = {
   EQUIPMENT_KEYS,
   HYROX_RUN_DISTANCE_MILES,
+  HYROX_RELAY_ATHLETE_RUN_DISTANCE_MILES,
   REGISTRY,
   STATION_ORDER,
+  hyroxAthleteRunDistanceMiles,
   normalizeEquipment,
   normalizeHyroxCategory,
   normalizeHyroxFormat,
