@@ -1,16 +1,19 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { getVettedExerciseGuide, isVettedExerciseAsset, SCREENSHOT_PROVEN_GUIDE_CASES } from '../src/lib/exerciseGuidePolicy.js'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), 'utf8')
 
 const guide = read('src/components/ExerciseGuideAction.jsx')
 const movement = read('src/components/MovementDemo.jsx')
+const guidePolicy = read('src/lib/exerciseGuidePolicy.js')
 const recommendation = read('src/components/StrengthWorkoutRecommendation.jsx')
 const dayView = read('src/components/calendar/ForgedDayView.jsx')
 const insights = read('src/components/InsightsSheet.jsx')
 const logLift = read('src/pages/LogLift.jsx')
+const exerciseSeed = read('../backend/src/db/exercises-seed.js')
 
 let passed = 0
 function check(condition, message) {
@@ -33,7 +36,26 @@ check(movement.includes("/^barbell (?:bent[- ]over )?row$/.test(lower)") && move
 check(movement.includes("src: '/exercises/squat.png'") && movement.includes("src: '/exercises/deadlift.png'") && movement.includes("cropToSex: true"), 'paired strength images crop to the profile-matched athlete')
 check(photoTable.includes('/^walking lunges$/') && photoTable.includes('/^(?:flat )?(?:barbell )?bench press$/'), 'walking-lunge and standard-bench images are limited to their vetted mechanics')
 check(movement.includes('Visual guide pending review') && movement.includes('No substitute image is shown.'), 'unknown exercises use a truthful non-image fallback')
-check(movement.includes('Follow the written prescription with a controlled range of motion.') && movement.includes('const displayCue = cue || (photoSrc'), 'missing-image exercises without a supplied cue receive truthful non-image guidance')
+check(movement.includes('Follow the written prescription with a controlled range of motion.') && movement.includes('const displayCue = vettedGuide?.cue || cue || (photoSrc'), 'missing-image exercises without a supplied cue receive truthful non-image guidance')
+check(movement.includes('const vettedGuide = getVettedExerciseGuide(title)') && movement.includes('const photoConfig = getPhotoConfig(photoDemo, sex)'), 'only the exact vetted movement catalog selects a local form image')
+check(!movement.includes('const providedImage =') && !movement.includes('providedImageMatchesProfile'), 'database image URLs cannot override a mechanically exact guide mapping')
+for (const exerciseName of SCREENSHOT_PROVEN_GUIDE_CASES) {
+  const policy = getVettedExerciseGuide(exerciseName)
+  check(Boolean(policy?.src && policy?.cue), `${exerciseName} has a vetted asset and movement-specific cue`)
+  check(isVettedExerciseAsset(exerciseName, policy.src), `${exerciseName} accepts its own exact asset`)
+}
+check(!isVettedExerciseAsset('Trap Bar Deadlift', '/exercises/deadlift.png'), 'Trap Bar Deadlift rejects the conventional deadlift asset')
+check(!isVettedExerciseAsset('Rear-Foot-Elevated Split Squat', '/exercises/squat.png'), 'RFESS rejects the bilateral squat asset')
+check(isVettedExerciseAsset('Dumbbell Bulgarian Split Squat', '/exercises/rear-foot-elevated-split-squat.webp'), 'equipment-prefixed RFESS aliases resolve to the exact split-squat guide')
+check(!isVettedExerciseAsset('Single-Leg Romanian Deadlift', '/exercises/deadlift.png'), 'single-leg RDL rejects the bilateral conventional deadlift asset')
+const seededExerciseNames = [...exerciseSeed.matchAll(/\{ name: '([^']+)'/g)].map((match) => match[1])
+check(seededExerciseNames.length >= 35, 'the full seeded exercise catalog is included in guide coverage')
+check(!exerciseSeed.includes("instructions: ''"), 'every seeded exercise has a written fallback cue')
+const referencedAssets = [...`${movement}\n${guidePolicy}`.matchAll(/(?:src|male|female): '([^']+)'/g)]
+  .map((match) => match[1])
+  .filter((asset) => asset.startsWith('/exercises/') || asset.startsWith('/stretches/'))
+check(referencedAssets.length >= 55, 'the exact-name guide catalog covers the repository exercise and stretch media inventory')
+check(referencedAssets.every((asset) => fs.existsSync(path.join(root, 'public', asset))), 'every vetted guide asset exists in the shipped public bundle')
 check(recommendation.includes('<ExerciseGuideAction exercise={exercise} sex={sex} />'), 'AI and scheduled lift recommendations expose View how')
 check(dayView.includes('<ExerciseGuideAction exercise={ex} />'), 'calendar lift prescriptions expose View how')
 check(insights.includes('<ExerciseGuideAction exercise={exercise} />'), 'Today lift prescriptions expose View how')
