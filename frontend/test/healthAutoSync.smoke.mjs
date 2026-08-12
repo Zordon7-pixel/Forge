@@ -217,6 +217,13 @@ assert.ok(!timeoutCopy.includes('15000ms'), 'timeout copy does not expose an imp
   const deadline = manualDeadline()
   const calls = []
   const events = []
+  const refreshCurrentPage = (source) => {
+    events.push(`page-refreshed:${source}`)
+  }
+  const handleHealthSyncResult = (event) => {
+    if (shouldRefreshPageForHealthSyncEvent(event)) refreshCurrentPage('health-event')
+  }
+  window.addEventListener(HEALTH_SYNC_RESULT_EVENT, handleHealthSyncResult)
   const refresh = runHealthAwarePageRefresh({
     authenticated: true,
     native: true,
@@ -225,14 +232,16 @@ assert.ok(!timeoutCopy.includes('15000ms'), 'timeout copy does not expose an imp
       events.push('health-started')
       const result = await syncGate.promise
       events.push('health-settled')
+      announceHealthSyncResult(result, {
+        complete: true,
+        origin: HEALTH_SYNC_ORIGIN_PULL_REFRESH,
+      })
       return result
     },
     afterHealthSync: () => {
       events.push('post-sync')
     },
-    refreshPage: () => {
-      events.push('page-refreshed')
-    },
+    refreshPage: () => refreshCurrentPage('pull'),
     scheduleDeadline: deadline.schedule,
     cancelDeadline: deadline.cancel,
   })
@@ -249,7 +258,8 @@ assert.ok(!timeoutCopy.includes('15000ms'), 'timeout copy does not expose an imp
   )
   syncGate.resolve({ complete: true })
   const outcome = await refresh
-  assert.deepEqual(events, ['health-started', 'health-settled', 'post-sync', 'page-refreshed'])
+  window.removeEventListener(HEALTH_SYNC_RESULT_EVENT, handleHealthSyncResult)
+  assert.deepEqual(events, ['health-started', 'health-settled', 'post-sync', 'page-refreshed:pull'], 'under-deadline pull success uses its coordinated page refresh exactly once')
   assert.equal(outcome.healthSyncAttempted, true)
   assert.equal(outcome.healthSyncResult.complete, true)
   assert.equal(outcome.healthSyncError, null)
@@ -291,25 +301,55 @@ assert.ok(!timeoutCopy.includes('15000ms'), 'timeout copy does not expose an imp
   const syncGate = deferred()
   const deadline = manualDeadline()
   const events = []
+  const serverRows = []
+  let visibleRows = []
+  let healthCalls = 0
+  let pageRefreshes = 0
+  const refreshCurrentPage = (source) => {
+    pageRefreshes += 1
+    visibleRows = [...serverRows]
+    events.push(`page-refreshed:${source}:${visibleRows.length}`)
+  }
+  const handleHealthSyncResult = (event) => {
+    if (shouldRefreshPageForHealthSyncEvent(event)) refreshCurrentPage('late-health-event')
+  }
+  window.addEventListener(HEALTH_SYNC_RESULT_EVENT, handleHealthSyncResult)
   const refresh = runHealthAwarePageRefresh({
     authenticated: true,
     native: true,
-    syncNativeData: () => syncGate.promise,
+    syncNativeData: async () => {
+      healthCalls += 1
+      await syncGate.promise
+      serverRows.push({ id: 'just-finished-health-workout' })
+      const result = { complete: true, scanned: 1, imported: 1, errors: [] }
+      announceHealthSyncResult(result, {
+        complete: true,
+        origin: HEALTH_SYNC_ORIGIN_PULL_REFRESH,
+      })
+      return result
+    },
     onHealthSyncError: (error) => events.push(`health-failed:${error.message}`),
     afterHealthSync: () => events.push('post-sync'),
-    refreshPage: () => events.push('page-refreshed'),
+    refreshPage: () => refreshCurrentPage('deadline'),
     scheduleDeadline: deadline.schedule,
     cancelDeadline: deadline.cancel,
   })
   await Promise.resolve()
+  assert.deepEqual(serverRows, [], 'the authenticated native pull begins before the new workout exists on the server')
+  assert.deepEqual(visibleRows, [], 'the current page begins without the new workout')
   deadline.expire()
   const outcome = await refresh
   assert.equal(outcome.healthSyncResult, null, 'deadline never fabricates a successful Health sync result')
   assert.ok(outcome.healthSyncError instanceof HealthPullRefreshTimeoutError, 'unresolved native promise settles with the named gesture timeout')
-  assert.deepEqual(events, [`health-failed:${outcome.healthSyncError.message}`, 'post-sync', 'page-refreshed'], 'deadline reports one Health failure and refreshes ordinary page data exactly once')
-  syncGate.resolve({ complete: true })
-  await Promise.resolve()
-  assert.equal(events.filter((event) => event === 'page-refreshed').length, 1, 'late native success cannot duplicate the page refresh')
+  assert.deepEqual(events, [`health-failed:${outcome.healthSyncError.message}`, 'post-sync', 'page-refreshed:deadline:0'], 'deadline reports one Health failure, releases the gesture, and performs one ordinary stale page refresh')
+  assert.equal(healthCalls, 1, 'the deadline leaves the real native sync alive without starting a replacement')
+  syncGate.resolve()
+  await new Promise((resolve) => setImmediate(resolve))
+  window.removeEventListener(HEALTH_SYNC_RESULT_EVENT, handleHealthSyncResult)
+  assert.deepEqual(serverRows, [{ id: 'just-finished-health-workout' }], 'the late native sync still imports the completed workout')
+  assert.deepEqual(visibleRows, serverRows, 'the late pull-origin success refresh makes the imported workout visible')
+  assert.equal(pageRefreshes, 2, 'late success performs exactly one additional current-page refresh')
+  assert.equal(healthCalls, 1, 'the late event refresh never re-runs HealthKit or creates a sync loop')
   assert.equal(events.filter((event) => event.startsWith('health-failed:')).length, 1, 'late native success cannot duplicate the error callback')
 }
 
@@ -547,7 +587,7 @@ announceHealthSyncResult(
 )
 assert.equal(resultEvents, 3)
 assert.equal(lastResultEvent.detail.origin, HEALTH_SYNC_ORIGIN_PULL_REFRESH, 'pull provenance reaches Health result listeners')
-assert.equal(shouldRefreshPageForHealthSyncEvent(lastResultEvent), false, 'pull-origin events defer network reloads to the shared app remount')
+assert.equal(shouldRefreshPageForHealthSyncEvent(lastResultEvent), true, 'a pull-origin result may refresh mounted data after its gesture coordinator releases')
 assert.equal(shouldRefreshPageForHealthSyncEvent({ detail: { origin: null } }), true, 'automatic Health events still refresh mounted data')
 
 assert.ok(app.includes('sync({ force: true, bypassInterval: true })'), 'cold native launch bypasses the persisted sync throttle once')

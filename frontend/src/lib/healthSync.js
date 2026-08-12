@@ -228,9 +228,8 @@ export function getLastHealthSyncResult() {
   }
 }
 
-export function shouldRefreshPageForHealthSyncEvent(event) {
+export function shouldRefreshPageForHealthSyncEvent() {
   return activeHealthPullRefreshes === 0
-    && event?.detail?.origin !== HEALTH_SYNC_ORIGIN_PULL_REFRESH
 }
 
 export function announceHealthSyncResult(result, { complete = true, origin = null } = {}) {
