@@ -827,7 +827,12 @@ export default function Plan() {
 
         {/* Active plan: the Forged Training Calendar is primary */}
         {myPlan && calendarModel && (
-          selectedDay ? (
+          <section
+            id="current-plan-calendar"
+            aria-label={`Current plan calendar for ${myPlan.name}`}
+            style={{ scrollMarginTop: 'calc(env(safe-area-inset-top, 0px) + 76px)' }}
+          >
+            {selectedDay ? (
             <ForgedDayView
               day={selectedDay}
               planContext={{
@@ -929,10 +934,15 @@ export default function Plan() {
                 </button>
                 {manageOpen && (
                   <div className="p-4 pt-0 space-y-3">
-                    <div className="rounded-lg p-3" style={{ background: 'var(--bg-input)' }}>
+                    <a
+                      href="#current-plan-calendar"
+                      aria-label={`Open current plan ${myPlan.name}`}
+                      className="block rounded-lg p-3"
+                      style={{ background: 'var(--bg-input)', color: 'inherit', textDecoration: 'none', cursor: 'pointer' }}
+                    >
                       <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{myPlan.name}</p>
                       <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>{myPlan.type} · Week {currentWeek} of {myPlan.weeks}</p>
-                    </div>
+                    </a>
                     <div className="rounded-lg p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
@@ -1024,7 +1034,8 @@ export default function Plan() {
                 )}
               </div>
             </>
-          )
+            )}
+          </section>
         )}
 
         {raceEditorOpen && activeRace && (

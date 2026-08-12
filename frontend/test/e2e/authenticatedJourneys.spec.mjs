@@ -324,6 +324,55 @@ test('adaptive plan keeps the original calendar only after an explicit decision'
   assertCleanApiAndRuntime(apiState, runtimeErrors)
 })
 
+test('the current plan item opens its existing calendar without mutating the plan', async ({ page }) => {
+  const runtimeErrors = collectRuntimeErrors(page)
+  const plan = {
+    id: 'current-plan-navigation',
+    name: 'Current Army Ten-Miler plan',
+    type: 'run_only',
+    weeks: 1,
+    plan_data: {
+      schemaVersion: 2,
+      planMode: 'run_only',
+      goal: { name: 'Army Ten-Miler', dateISO: today, distanceMiles: 10 },
+      weeks: [{
+        week: 1,
+        phase: 'base',
+        startDate: today,
+        days: [{ date: today, day: todayDay, sessions: [{ id: plannedRun.id, kind: 'run', prescription: plannedRun }] }],
+      }],
+    },
+  }
+  const apiState = await installAuthenticatedApi(page, {
+    responses: new Map([
+      ['GET /api/plans/my', { plan, user_plan: { current_week: 1, started_at: today, progress: { completedSessionIds: [] } } }],
+    ]),
+  })
+
+  await page.goto('/plan')
+  await page.getByRole('button', { name: 'Manage plan', exact: true }).click()
+
+  const currentPlanItem = page.getByRole('link', { name: `Open current plan ${plan.name}` })
+  await expect(currentPlanItem).toBeVisible()
+  await expect(currentPlanItem.locator('a, button')).toHaveCount(0)
+  await currentPlanItem.click()
+
+  await expect(page).toHaveURL(/\/plan#current-plan-calendar$/)
+  await expect(page.locator('#current-plan-calendar')).toBeInViewport()
+  await expect(page.getByRole('heading', { name: 'Army Ten-Miler', exact: true })).toBeVisible()
+
+  await page.goBack()
+  await currentPlanItem.focus()
+  await page.keyboard.press('Enter')
+  await expect(page).toHaveURL(/\/plan#current-plan-calendar$/)
+
+  const planWrites = apiState.requests.filter((request) => (
+    request.pathname.startsWith('/api/plans/') && request.method !== 'GET'
+  ))
+  expect(planWrites, 'Opening the active plan must not replace, create, delete, or advance it').toEqual([])
+  assertCleanApiAndRuntime(apiState, runtimeErrors)
+})
+
 test('active plan run days can be edited and rebuilt without returning to plan setup', async ({ page }) => {
   const runtimeErrors = collectRuntimeErrors(page)
   let plan = {
