@@ -1,3 +1,5 @@
+import { getVettedExerciseGuide } from '../lib/exerciseGuidePolicy'
+
 const ACCENT = '#EAB308'
 const BODY = '#d1d5db'
 const MUTED = '#6b7280'
@@ -701,32 +703,20 @@ function getPhotoConfig(photoDemo, sex) {
   return { src: photoDemo?.male || '', cropToSex: false, maleSide: photoDemo.maleSide || 'right' }
 }
 
-function isLocalFormAsset(src = '') {
-  return String(src).startsWith('/exercises/') || String(src).startsWith('/stretches/')
-}
-
 export default function MovementDemo({ name, label, compact = false, sex = 'male', imageUrl = '', cue = '' }) {
   const kind = getDemoKind(name)
   const title = label || name || 'Movement demo'
   const lower = String(title || '').toLowerCase()
-  const photoDemo = PHOTO_DEMOS.find((demo) => demo.match(lower))
-  const providedImage = isLocalFormAsset(imageUrl) ? imageUrl : ''
+  const vettedGuide = getVettedExerciseGuide(title)
+  const photoDemo = vettedGuide
+    ? { src: vettedGuide.src, cropToSex: true, maleSide: 'right' }
+    : PHOTO_DEMOS.find((demo) => demo.match(lower))
   const normalizedSex = normalizeSex(sex)
-  const providedImageNeedsCrop = Boolean(photoDemo?.cropToSex)
-  const providedImageSex = providedImage.includes('-female')
-    ? 'female'
-    : (providedImage.includes('-male') ? 'male' : '')
-  const providedImageMatchesProfile = !providedImageSex || providedImageSex === normalizedSex
-  const hasProfilePair = Boolean(photoDemo?.male || photoDemo?.female)
-  const photoConfig = hasProfilePair
-    ? getPhotoConfig(photoDemo, sex)
-    : (providedImage && providedImageMatchesProfile
-        ? (providedImageNeedsCrop && !normalizedSex
-            ? { src: '', cropToSex: false, maleSide: photoDemo?.maleSide || 'right' }
-            : { src: providedImage, cropToSex: providedImageNeedsCrop, maleSide: photoDemo?.maleSide || 'right' })
-        : getPhotoConfig(photoDemo, sex))
+  // Database URLs never override the exact movement catalog. A similar-looking
+  // local asset can be mechanically wrong and unsafe for this exercise.
+  const photoConfig = getPhotoConfig(photoDemo, sex)
   const photoSrc = photoConfig.src
-  const displayCue = cue || (photoSrc
+  const displayCue = vettedGuide?.cue || cue || (photoSrc
     ? getSetupCue(kind)
     : 'Follow the written prescription with a controlled range of motion. Ask a qualified coach if the setup is unfamiliar.')
   const shouldCropToSex = Boolean(photoConfig.cropToSex)
