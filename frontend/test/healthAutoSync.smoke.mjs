@@ -217,7 +217,12 @@ assert.ok(!timeoutCopy.includes('15000ms'), 'timeout copy does not expose an imp
   const deadline = manualDeadline()
   const calls = []
   const events = []
+  const serverRows = []
+  let visibleRows = []
+  let pageRefreshes = 0
   const refreshCurrentPage = (source) => {
+    pageRefreshes += 1
+    visibleRows = [...serverRows]
     events.push(`page-refreshed:${source}`)
   }
   const handleHealthSyncResult = (event) => {
@@ -231,6 +236,7 @@ assert.ok(!timeoutCopy.includes('15000ms'), 'timeout copy does not expose an imp
       calls.push(options)
       events.push('health-started')
       const result = await syncGate.promise
+      serverRows.push({ id: 'under-deadline-health-workout' })
       events.push('health-settled')
       announceHealthSyncResult(result, {
         complete: true,
@@ -260,6 +266,8 @@ assert.ok(!timeoutCopy.includes('15000ms'), 'timeout copy does not expose an imp
   const outcome = await refresh
   window.removeEventListener(HEALTH_SYNC_RESULT_EVENT, handleHealthSyncResult)
   assert.deepEqual(events, ['health-started', 'health-settled', 'post-sync', 'page-refreshed:pull'], 'under-deadline pull success uses its coordinated page refresh exactly once')
+  assert.deepEqual(visibleRows, serverRows, 'under-deadline pull success refreshes the current Dashboard data')
+  assert.equal(pageRefreshes, 1, 'under-deadline pull success performs one current-page refresh')
   assert.equal(outcome.healthSyncAttempted, true)
   assert.equal(outcome.healthSyncResult.complete, true)
   assert.equal(outcome.healthSyncError, null)
@@ -612,11 +620,20 @@ assert.ok(pullToRefresh.includes('refreshPage: () => onRefreshCompleteRef.curren
 assert.ok(!pullToRefresh.includes('window.location.reload()'), 'pull refresh does not hard-reload the native shell')
 assert.ok(healthSyncSource.includes('HEALTH_PULL_REFRESH_DEADLINE_MS'), 'pull refresh owns one named gesture deadline')
 assert.ok(healthSyncSource.includes('HealthPullRefreshTimeoutError'), 'pull refresh uses a distinguishable timeout error')
-assert.ok(pullToRefresh.includes('healthSyncFailureMessage') && pullToRefresh.includes('healthSyncNotice'), 'pull refresh surfaces truthful Health success and failure results')
+assert.ok(!/\bhealthSync(?:Notice|FailureMessage)\b/.test(pullToRefresh), 'pull refresh neither imports nor invokes diagnostic Health result copy')
+assert.ok(!pullToRefresh.includes('refreshNotice'), 'pull refresh has no completed-result notice state')
+assert.ok(!pullToRefresh.includes('showTemporaryNotice'), 'pull refresh has no post-refresh notice helper')
+assert.ok(!pullToRefresh.includes('noticeTimerRef') && !pullToRefresh.includes('5000'), 'pull refresh has no five-second post-refresh timer')
+assert.ok(pullToRefresh.includes('{(showIndicator || refreshing) && ('), 'the fixed pull indicator renders only while actively pulling or refreshing')
+assert.ok(!pullToRefresh.includes('App refreshed.') && !pullToRefresh.includes('Could not refresh this page.'), 'ordinary and failed pulls leave no completed-result banner copy')
 assert.ok(dashboardSource.includes('shouldRefreshPageForHealthSyncEvent(event)'), 'Dashboard suppresses its duplicate fetch burst for pull-origin Health events')
 assert.ok(dashboardSource.includes('HealthService.getRecentNativeSyncResult()'), 'Dashboard reuses the pull sync result instead of reading HealthKit again after remount')
 assert.ok(dashboardSource.includes('HealthService.hasNativeSyncInFlight()'), 'Dashboard joins an active automatic sync instead of duplicating it')
 assert.ok(healthSourceManager.includes('shouldRefreshPageForHealthSyncEvent(event)'), 'connected sources suppress duplicate pull-origin fetches')
+assert.ok(healthSourceManager.includes('setNotice(healthSyncNotice(result))'), 'explicit Apple Health sync retains successful diagnostic counts')
+assert.ok(healthSourceManager.includes('setNotice(healthSyncFailureMessage(err))'), 'explicit Apple Health sync retains failure diagnostics')
+assert.ok(dashboardSource.includes("api.get('/runs', { params: { limit: 5 } })") && dashboardSource.includes("api.get('/lifts')"), 'Dashboard refreshes the runs and lifts that feed Recent Activity')
+assert.ok(dashboardSource.includes('<RecentActivityCard recentActivity={recentActivity}'), 'Recent Activity remains the visible Dashboard result of ordinary and late successful imports')
 assert.ok(layout.includes('<PullToRefresh onRefreshComplete={refreshAppShell}>'), 'the shared app shell owns the refresh completion')
 assert.ok(layout.includes('<main key={appRefreshKey}'), 'the active screen remounts after HealthKit settles')
 assert.ok(layout.includes('refreshKey={`${location.key}:${appRefreshKey}`}'), 'header readiness refreshes with the active screen')

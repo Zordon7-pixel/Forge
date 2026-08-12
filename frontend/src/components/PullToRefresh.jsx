@@ -1,11 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Capacitor } from '@capacitor/core'
 import { isLoggedIn } from '../lib/auth'
-import {
-  healthSyncFailureMessage,
-  healthSyncNotice,
-  runHealthAwarePageRefresh,
-} from '../lib/healthSync'
+import { runHealthAwarePageRefresh } from '../lib/healthSync'
 import {
   createPullToRefreshEndHandler,
   measurePullRefreshGesture,
@@ -42,34 +38,19 @@ export default function PullToRefresh({ children, onRefreshComplete }) {
   const [pulling, setPulling] = useState(false)
   const [pullDistance, setPullDistance] = useState(0)
   const [refreshing, setRefreshing] = useState(false)
-  const [refreshNotice, setRefreshNotice] = useState('')
   const refreshInFlight = useRef(false)
   const gestureRef = useRef(null)
-  const noticeTimerRef = useRef(null)
   const onRefreshCompleteRef = useRef(onRefreshComplete)
 
   useEffect(() => {
     onRefreshCompleteRef.current = onRefreshComplete
   }, [onRefreshComplete])
 
-  useEffect(() => () => {
-    if (noticeTimerRef.current) window.clearTimeout(noticeTimerRef.current)
-  }, [])
-
   useEffect(() => {
     const resetGesture = () => {
       gestureRef.current = null
       setPulling(false)
       setPullDistance(0)
-    }
-
-    const showTemporaryNotice = (message) => {
-      if (noticeTimerRef.current) window.clearTimeout(noticeTimerRef.current)
-      setRefreshNotice(message)
-      noticeTimerRef.current = window.setTimeout(() => {
-        noticeTimerRef.current = null
-        setRefreshNotice('')
-      }, 5000)
     }
 
     const onTouchStart = (event) => {
@@ -130,14 +111,11 @@ export default function PullToRefresh({ children, onRefreshComplete }) {
         && gestureRef.current.distance >= PULL_REFRESH_THRESHOLD_PX
       ),
       onRefreshStart: () => {
-        if (noticeTimerRef.current) window.clearTimeout(noticeTimerRef.current)
-        noticeTimerRef.current = null
-        setRefreshNotice('')
         setRefreshing(true)
         setPullDistance(PULL_REFRESH_THRESHOLD_PX)
       },
       runPageRefresh: async () => {
-        const outcome = await runHealthAwarePageRefresh({
+        await runHealthAwarePageRefresh({
           authenticated: isLoggedIn(),
           native: Capacitor.isNativePlatform(),
           syncNativeData: (options) => HealthService.syncNativeData(options),
@@ -149,16 +127,10 @@ export default function PullToRefresh({ children, onRefreshComplete }) {
           refreshPage: () => onRefreshCompleteRef.current?.(),
         })
         setRefreshing(false)
-        showTemporaryNotice(outcome.healthSyncAttempted
-          ? outcome.healthSyncError
-            ? healthSyncFailureMessage(outcome.healthSyncError)
-            : healthSyncNotice(outcome.healthSyncResult)
-          : 'App refreshed.')
       },
       onRefreshFailure: (error) => {
         console.error('[PullToRefresh] Page refresh failed:', error?.message || error)
         setRefreshing(false)
-        showTemporaryNotice('Could not refresh this page. Pull down to try again.')
       },
       resetGesture,
     })
@@ -183,14 +155,14 @@ export default function PullToRefresh({ children, onRefreshComplete }) {
   const progress = Math.min(pullDistance / PULL_REFRESH_THRESHOLD_PX, 1)
   const showIndicator = pulling && pullDistance > 10
   const nativeHealthSync = Capacitor.isNativePlatform() && isLoggedIn()
-  const indicatorLabel = refreshNotice || (refreshing
+  const indicatorLabel = refreshing
     ? nativeHealthSync ? 'Syncing Apple Health' : 'Refreshing app'
-    : progress >= 1 ? 'Release to sync' : 'Pull to sync')
+    : progress >= 1 ? 'Release to sync' : 'Pull to sync'
 
   return (
     <div style={{ position: 'relative' }}>
       {/* Pull indicator */}
-      {(showIndicator || refreshing || refreshNotice) && (
+      {(showIndicator || refreshing) && (
         <div role="status" aria-live="polite" style={{
           position: 'fixed',
           top: 'calc(env(safe-area-inset-top, 0px) + 0.5rem)',
