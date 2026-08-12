@@ -16,7 +16,7 @@ function check(condition, message) {
 }
 
 check(movementDemo.includes("cue = ''"), 'MovementDemo accepts an optional authoritative cue')
-check(movementDemo.includes('const displayCue = vettedGuide?.cue || cue || (photoSrc') && movementDemo.includes('{displayCue}</p>'), 'a vetted movement-specific cue overrides stale catalog copy, while other catalog cues still precede fallback text')
+check(movementDemo.includes('const displayCue = photoConfig.cue || cue || (photoSrc') && movementDemo.includes('{displayCue}</p>'), 'the resolved movement-specific cue overrides stale catalog copy, while other catalog cues still precede fallback text')
 check(/<MovementDemo[^>]+cue=\{stretch\.cue\}/.test(stretches), 'inline stretch flow passes the catalog cue')
 check(/<MovementDemo[^>]+cue=\{currentStretch\.cue\}/.test(stretchSession), 'pre-run stretch flow passes the catalog cue')
 

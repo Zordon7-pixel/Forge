@@ -31,6 +31,31 @@ function assertStandards() {
   assert.equal(resolved.stations.length, 8);
   assert.equal(resolved.stations.find((station) => station.id === 'sled_push').distanceMeters, 50);
   assert.equal(resolved.stations.find((station) => station.id === 'wall_ball').repetitions, 100);
+  const mixedDoubles = standards.resolveHyroxStandard({
+    format: 'doubles', category: 'mixed', rulesVersion: '2026-2027',
+  });
+  assert.equal(mixedDoubles.status, 'exact');
+  assert.equal(mixedDoubles.stations.find((station) => station.id === 'sled_push').loadKgIncludingSled, 152);
+  assert.equal(mixedDoubles.stations.find((station) => station.id === 'farmers_carry').loadKgPerImplement, 24);
+  assert.equal(mixedDoubles.stations.find((station) => station.id === 'wall_ball').ballKg, 6);
+  const mixedRelay = standards.resolveHyroxStandard({
+    format: 'relay', category: 'mixed', rulesVersion: '2026-2027',
+  });
+  assert.equal(mixedRelay.status, 'exact');
+  const relayPush = mixedRelay.stations.find((station) => station.id === 'sled_push');
+  assert.equal(relayPush.loadKgIncludingSled, undefined, 'mixed relay must not claim one shared men-only sled load');
+  assert.deepEqual(relayPush.loadsByAthleteCategory, {
+    women: { loadKgIncludingSled: 102 },
+    men: { loadKgIncludingSled: 152 },
+  });
+  assert.deepEqual(mixedRelay.stations.find((station) => station.id === 'farmers_carry').loadsByAthleteCategory, {
+    women: { implements: 2, loadKgPerImplement: 16 },
+    men: { implements: 2, loadKgPerImplement: 24 },
+  });
+  assert.deepEqual(mixedRelay.stations.find((station) => station.id === 'wall_ball').loadsByAthleteCategory, {
+    women: { ballKg: 4, targetHeightMeters: 2.7 },
+    men: { ballKg: 6, targetHeightMeters: 3.0 },
+  });
   assert.equal(standards.resolveHyroxStandard({
     format: 'individual_open', category: null, rulesVersion: '2026-2027',
   }).status, 'incomplete');
@@ -171,6 +196,21 @@ function assertPreviewGenerationContract() {
       && error.code === 'INVALID_RUN_SCHEDULE'
       && /at least as many training weekdays/i.test(error.message)
     ),
+  );
+  assert.throws(
+    () => plansRouter._test.buildDeterministicCandidate(hyroxContext({
+      target: {
+        hyroxEvent: { ...hyroxContext().target.hyroxEvent, format: 'invented-format' },
+      },
+    }), { planningDateLocal: '2026-08-11', timezoneOffsetMinutes: 240 }),
+    (error) => error.status === 400 && error.code === 'UNSUPPORTED_HYROX_DIVISION',
+  );
+  assert.throws(
+    () => plansRouter._test.buildDeterministicCandidate(
+      hyroxContext(),
+      { planningDateLocal: 'not-a-date', timezoneOffsetMinutes: 240 },
+    ),
+    (error) => error.status === 400 && error.code === 'INVALID_PLANNING_DATE',
   );
 }
 

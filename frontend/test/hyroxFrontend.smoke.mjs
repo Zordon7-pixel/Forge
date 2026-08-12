@@ -117,6 +117,7 @@ assert.match(setup, /setCandidate\(data\)[\s\S]*applyCandidate[\s\S]*candidate_h
 assert.match(calendar, /kind === 'hyrox'|kind="hyrox"/, 'calendar visibly distinguishes HYROX sessions')
 assert.match(dayView, /stationSequence[\s\S]*exactStation[\s\S]*substitute/, 'day details show ordered stations and truthful substitutions')
 assert.match(dayView, /distanceMeters|repetitions|officialStandard/, 'day details keep metric station prescriptions visible')
+assert.match(dayView, /loadsByAthleteCategory[\s\S]*Women:[\s\S]*Men:/, 'mixed-relay day details show athlete-category-specific official loads')
 assert.match(dayView, /minWidth:\s*0|overflowWrap:\s*'anywhere'/, 'HYROX detail content is constrained at 320px')
 assert.match(setup, /minHeight:\s*44/, 'HYROX setup touch controls meet the 44px target')
 assert.match(reviewSheet, /min-h-12|min-h-11/, 'candidate actions retain accessible touch targets')

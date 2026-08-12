@@ -195,7 +195,7 @@ export default function ActiveWorkout() {
   const restRef = useRef(null)
 
   const [hrInfo, setHrInfo] = useState(null)
-  const [userSex, setUserSex] = useState('male')
+  const [userSex, setUserSex] = useState('')
 
   const [ending, setEnding] = useState(false)
   const repsErrorRef = useRef(null)
@@ -246,7 +246,7 @@ export default function ActiveWorkout() {
   }, [])
 
   useEffect(() => {
-    api.get('/auth/me').then((r) => setUserSex(r.data?.user?.sex || 'male')).catch((error) => {
+    api.get('/auth/me').then((r) => setUserSex(r.data?.user?.sex || '')).catch((error) => {
       console.error('[active-workout/profile] lookup failed:', error?.message || error)
     })
   }, [])

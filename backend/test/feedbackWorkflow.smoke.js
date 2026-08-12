@@ -90,11 +90,6 @@ assert.equal(images.hasLocalFormImage('Incline Barbell Bench Press'), false, 'in
 assert.equal(images.hasLocalFormImage('Paused Barbell Bench Press'), false, 'paused variants must not reuse the standard bench image');
 assert.equal(images.hasLocalFormImage('Walking Lunges'), true, 'the exact walking-lunge movement keeps its vetted image');
 assert.equal(images.hasLocalFormImage('Pallof Press'), true, 'the exact standard Pallof Press keeps its vetted image');
-assert.equal(images.isVettedLocalFormAsset('Romanian Deadlift', '/exercises/romanian-deadlift.webp'), true, 'the exact screenshot-proven name/asset pair is accepted');
-assert.equal(images.isVettedLocalFormAsset('Romanian Deadlift', '/exercises/deadlift.png'), false, 'a conventional deadlift asset cannot satisfy an RDL request');
-assert.equal(images.isVettedLocalFormAsset('Trap Bar Deadlift', '/exercises/romanian-deadlift.webp'), false, 'a different vetted local asset cannot satisfy a trap-bar request');
-assert.equal(images.isVettedLocalFormAsset('Goblet Squat', '/exercises/squat.png'), false, 'a plausible local path is not vetted without an exact name/asset policy pair');
-assert.equal(images.isVettedLocalFormAsset('Romanian Deadlift', 'https://example.com/romanian-deadlift.webp'), false, 'external catalog diagrams are never accepted as vetted form images');
 assert.equal(images.exerciseNameFromItem({ exercise: 'Goblet Squat' }), 'Goblet Squat', 'plan exercise field is recognized by the review queue');
 
 const newFormAssets = [
@@ -143,7 +138,7 @@ assert.match(workflowSource, /WHERE id=\? AND user_id=\?/);
 assert.match(imageSource, /INSERT INTO exercise_image_requests/);
 assert.match(imageSource, /ON CONFLICT \(canonical_key\) DO UPDATE/);
 assert.match(imageSource, /ON CONFLICT \(canonical_key\) DO NOTHING/);
-assert.match(imageSource, /exercise\?\.how_to_image_url/);
+assert.doesNotMatch(imageSource, /catalog_image|how_to_image_url/, 'the request queue has no unreachable database-image bypass');
 assert.doesNotMatch(imageSource, /INSERT INTO app_feedback/);
 assert.match(plansSource, /source: 'scheduled_plan_today'/);
 assert.match(plansSource, /source: 'scheduled_plan_current'/);

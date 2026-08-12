@@ -21,6 +21,7 @@ const plan = read('src/pages/Plan.jsx')
 const insights = read('src/components/InsightsSheet.jsx')
 const dashboard = read('src/pages/Dashboard.jsx')
 const movement = read('src/components/MovementDemo.jsx')
+const guidePolicy = read('src/lib/exerciseGuidePolicy.js')
 const dayView = read('src/components/calendar/ForgedDayView.jsx')
 const logRun = read('src/pages/LogRun.jsx')
 
@@ -128,7 +129,12 @@ assert(checkedNoPlan.readinessFallback.includes('No recommendation is available 
 console.log('\n== Profile-matched form images ==')
 assert(movement.includes("male: '/stretches/leg-swings-male.png'") && movement.includes("female: '/stretches/leg-swings-female.png'"), 'leg swings use one profile-matched athlete')
 assert(movement.includes("male: '/stretches/trunk-rotation-male.png'") && movement.includes("female: '/stretches/trunk-rotation-female.png'"), 'trunk rotations use one profile-matched athlete')
-assert(movement.includes('if (photoDemo?.[normalizedSex])') && !movement.includes('const providedImage ='), 'profile pairs stay profile-matched and legacy database image URLs cannot override vetted media')
+assert(
+  guidePolicy.includes('if (photoDemo?.[normalizedSex])')
+    && guidePolicy.includes('getTrustedCatalogExerciseAsset(name, imageUrl)')
+    && movement.includes('resolveExerciseGuidePhoto({'),
+  'profile pairs stay profile-matched while catalog media passes through the exact name-and-asset policy',
+)
 
 for (const asset of [
   'public/stretches/leg-swings-male.png',

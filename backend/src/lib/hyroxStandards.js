@@ -36,6 +36,17 @@ const OPEN_WOMEN = loads(102, 78, 16, 10, 4, 2.7);
 const OPEN_MEN = loads(152, 103, 24, 20, 6, 3.0);
 const PRO_WOMEN = loads(152, 103, 24, 20, 6, 2.7);
 const PRO_MEN = loads(202, 153, 32, 30, 9, 3.0);
+const MIXED_RELAY = Object.fromEntries(STATION_ORDER.map((stationId) => {
+  const women = OPEN_WOMEN[stationId];
+  const men = OPEN_MEN[stationId];
+  if (!women && !men) return [stationId, {}];
+  return [stationId, {
+    loadsByAthleteCategory: {
+      women: clone(women || {}),
+      men: clone(men || {}),
+    },
+  }];
+}));
 
 const REGISTRY = {
   schemaVersion: 1,
@@ -46,6 +57,7 @@ const REGISTRY = {
     singles: 'https://hyrox.com/wp-content/uploads/2025/06/25_26-Singles-Rulebook_en_R1.pdf',
     doubles: 'https://hyrox.com/wp-content/uploads/2025/06/25-26-Doubles-Rulebook_en-R1.pdf',
     relay: 'https://hyrox.com/wp-content/uploads/2025/06/25-26-Relay-Rulebook_en-R1.pdf',
+    judgesTraining: 'https://hyrox.com/judges-training/',
   },
   canonicalUnits: 'metric',
   stationOrder: STATION_ORDER,
@@ -54,7 +66,9 @@ const REGISTRY = {
     individual_open: { women: OPEN_WOMEN, men: OPEN_MEN },
     individual_pro: { women: PRO_WOMEN, men: PRO_MEN },
     doubles: { women: OPEN_WOMEN, men: OPEN_MEN, mixed: OPEN_MEN },
-    relay: { women: OPEN_WOMEN, men: OPEN_MEN, mixed: OPEN_MEN },
+    // Mixed Doubles uses Open Men's loads for both athletes. Mixed Relay does
+    // not: each working athlete uses the load for their own category.
+    relay: { women: OPEN_WOMEN, men: OPEN_MEN, mixed: MIXED_RELAY },
   },
 };
 

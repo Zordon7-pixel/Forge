@@ -19,14 +19,14 @@ export default function ExercisePickerModal({ muscleGroup, onSelect, onClose }) 
   const [howToExercise, setHowToExercise] = useState(null)
   const [addFeedback, setAddFeedback] = useState('')
   const [addLoading, setAddLoading] = useState(false)
-  const [userSex, setUserSex] = useState('male')
+  const [userSex, setUserSex] = useState('')
 
   useEffect(() => {
     loadExercises()
   }, [muscleGroup])
 
   useEffect(() => {
-    api.get('/auth/me').then((r) => setUserSex(r.data?.user?.sex || 'male')).catch(() => {})
+    api.get('/auth/me').then((r) => setUserSex(r.data?.user?.sex || '')).catch(() => {})
   }, [])
 
   useEffect(() => {

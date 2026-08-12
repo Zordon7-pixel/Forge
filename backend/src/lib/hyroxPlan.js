@@ -203,7 +203,7 @@ function stationForTraining(standard, equipment, intensity = 'RPE 6-7', doseFrac
   return {
     ...base,
     officialStandard: Object.keys(standard).reduce((result, key) => {
-      if (/Kg|Meters|repetitions|implements/.test(key)) result[key] = standard[key];
+      if (/Kg|Meters|repetitions|implements/.test(key) || key === 'loadsByAthleteCategory') result[key] = standard[key];
       return result;
     }, {}),
   };

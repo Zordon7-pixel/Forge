@@ -125,7 +125,7 @@ export default function LogLift() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [selectedExercise, setSelectedExercise] = useState(null)
-  const [userSex, setUserSex] = useState('male')
+  const [userSex, setUserSex] = useState('')
   const [timeAvailable, setTimeAvailable] = useState('')
   const [liftPlan, setLiftPlan] = useState(null)
   const [activeTab, setActiveTab] = useState(incomingScheduledLift ? 'scheduled' : 'ai')
@@ -141,7 +141,7 @@ export default function LogLift() {
 
   useEffect(() => {
     api.get('/auth/me').then(res => {
-      setUserSex(res.data.user?.sex || 'male')
+      setUserSex(res.data.user?.sex || '')
     }).catch((err) => console.error('[LogLift] profile load failed:', err?.message || err))
   }, [])
 

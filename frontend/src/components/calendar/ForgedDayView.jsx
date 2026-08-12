@@ -172,12 +172,21 @@ function liftFacts(session, planContext = {}) {
 }
 
 function officialMetricFacts(officialStandard = {}) {
-  return [
+  const sharedFacts = [
     officialStandard.loadKgIncludingSled != null ? `${officialStandard.loadKgIncludingSled} kg including sled` : '',
     officialStandard.loadKgPerImplement != null ? `${officialStandard.implements || 2} × ${officialStandard.loadKgPerImplement} kg` : '',
     officialStandard.loadKg != null ? `${officialStandard.loadKg} kg` : '',
     officialStandard.ballKg != null ? `${officialStandard.ballKg} kg ball` : '',
     officialStandard.targetHeightMeters != null ? `${officialStandard.targetHeightMeters} m target` : '',
+  ].filter(Boolean)
+  const split = officialStandard.loadsByAthleteCategory
+  if (!split) return sharedFacts
+  const women = officialMetricFacts(split.women || {})
+  const men = officialMetricFacts(split.men || {})
+  return [
+    ...sharedFacts,
+    women.length ? `Women: ${women.join(', ')}` : '',
+    men.length ? `Men: ${men.join(', ')}` : '',
   ].filter(Boolean)
 }
 

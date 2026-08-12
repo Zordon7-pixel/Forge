@@ -306,6 +306,49 @@ test('scheduled lift logs one set, opens the large rest timer, and completes the
   assertCleanApiAndRuntime(apiState, runtimeErrors)
 })
 
+test('exercise guides render exact catalog media and an uncropped vetted fallback before profile sex resolves', async ({ page }) => {
+  const runtimeErrors = collectRuntimeErrors(page)
+  const noProfileLift = {
+    ...plannedLift,
+    main: [
+      {
+        name: 'Pigeon Pose',
+        image_url: '/stretches/pigeon-pose.webp',
+        cue: 'Keep the front knee comfortable and avoid forcing hip range.',
+      },
+      {
+        name: 'Trap Bar Deadlift',
+        cue: 'Stale generic deadlift cue.',
+      },
+    ],
+  }
+  const apiState = await installAuthenticatedApi(page, {
+    user: { sex: '' },
+    responses: new Map([
+      ['GET /api/plans/today', executionWith({ run: null, lift: noProfileLift })],
+    ]),
+  })
+
+  await page.goto('/log-lift')
+  const guideButtons = page.getByRole('button', { name: 'View how' })
+  await guideButtons.nth(0).click()
+  const catalogGuide = page.getByRole('dialog', { name: 'Pigeon Pose' })
+  await expect(catalogGuide.locator('img[src="/stretches/pigeon-pose.webp"]')).toBeVisible()
+  await catalogGuide.getByRole('button', { name: 'Close exercise guide' }).click()
+
+  await guideButtons.nth(1).click()
+  const vettedGuide = page.getByRole('dialog', { name: 'Trap Bar Deadlift' })
+  const vettedImage = vettedGuide.locator('img[src="/exercises/trap-bar-deadlift.webp"]')
+  await expect(vettedImage).toBeVisible()
+  await expect.poll(() => vettedImage.evaluate((image) => ({
+    position: image.style.position,
+    width: image.style.width,
+  }))).toEqual({ position: '', width: '100%' })
+  await vettedGuide.getByRole('button', { name: 'Close exercise guide' }).click()
+
+  assertCleanApiAndRuntime(apiState, runtimeErrors)
+})
+
 test('adaptive plan keeps the original calendar only after an explicit decision', async ({ page }) => {
   const runtimeErrors = collectRuntimeErrors(page)
   const plan = {
