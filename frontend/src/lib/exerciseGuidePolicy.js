@@ -96,6 +96,11 @@ export function normalizeProfileSex(sex = '') {
   return ''
 }
 
+function assetProfileSex(src = '') {
+  const match = String(src).toLowerCase().match(/(?:^|[-_/])(male|female)(?=\.[a-z0-9]+$|[-_/])/)
+  return match?.[1] || ''
+}
+
 function photoConfig(photoDemo, sex) {
   if (!photoDemo) return { src: '', cropToSex: false, maleSide: 'right' }
   const normalizedSex = normalizeProfileSex(sex)
@@ -120,6 +125,8 @@ export function resolveExerciseGuidePhoto({ name = '', imageUrl = '', sex = '', 
   const vettedGuide = getVettedExerciseGuide(name)
   const normalizedSex = normalizeProfileSex(sex)
   const catalogSrc = getTrustedCatalogExerciseAsset(name, imageUrl)
+  const catalogAssetSex = assetProfileSex(catalogSrc)
+  const profileSafeCatalogSrc = catalogAssetSex && catalogAssetSex !== normalizedSex ? '' : catalogSrc
 
   if (vettedGuide) {
     return {
@@ -135,9 +142,9 @@ export function resolveExerciseGuidePhoto({ name = '', imageUrl = '', sex = '', 
 
   // Before profile sex resolves, a trusted exact catalog image is safer than
   // either a blank guide or guessing which half of a paired composite to crop.
-  if (!normalizedSex && catalogSrc) {
+  if (!normalizedSex && profileSafeCatalogSrc) {
     return {
-      src: catalogSrc,
+      src: profileSafeCatalogSrc,
       cropToSex: false,
       maleSide: 'right',
       cue: '',
@@ -145,11 +152,11 @@ export function resolveExerciseGuidePhoto({ name = '', imageUrl = '', sex = '', 
     }
   }
 
-  const selected = localPhotoDemo || (catalogSrc ? { src: catalogSrc } : null)
+  const selected = localPhotoDemo || (profileSafeCatalogSrc ? { src: profileSafeCatalogSrc } : null)
   return {
     ...photoConfig(selected, normalizedSex),
     cue: '',
-    source: localPhotoDemo ? 'local_exact' : (catalogSrc ? 'catalog_exact' : 'fallback'),
+    source: localPhotoDemo ? 'local_exact' : (profileSafeCatalogSrc ? 'catalog_exact' : 'fallback'),
   }
 }
 

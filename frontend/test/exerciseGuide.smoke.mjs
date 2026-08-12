@@ -98,6 +98,21 @@ check(resolveExerciseGuidePhoto({
   imageUrl: 'https://example.com/pigeon-pose.webp',
   sex: '',
 }).src === '', 'external and arbitrary catalog URLs fail closed')
+check(resolveExerciseGuidePhoto({
+  name: 'Hip Flexor Lunge',
+  imageUrl: '/stretches/hip-flexor-male.png',
+  sex: '',
+}).src === '', 'a male-only catalog image fails closed while profile sex is unknown')
+check(resolveExerciseGuidePhoto({
+  name: 'Hip Flexor Lunge',
+  imageUrl: '/stretches/hip-flexor-male.png',
+  sex: 'female',
+}).src === '', 'a male-only catalog image fails closed for a female profile')
+check(resolveExerciseGuidePhoto({
+  name: 'Hip Flexor Lunge',
+  imageUrl: '/stretches/hip-flexor-male.png',
+  sex: 'male',
+}).src === '/stretches/hip-flexor-male.png', 'a male-only catalog image remains available to a matching profile')
 
 const clientCatalog = [
   ...preRunStretches,
@@ -115,7 +130,11 @@ for (const movementItem of clientCatalog) {
     imageUrl: movementItem.image_url,
     sex: '',
   })
-  check(rendered.src === movementItem.image_url, `${movementItem.name} maps its catalog asset to the rendered src before profile resolution`)
+  const sexSpecificAsset = /(?:^|[-_/])(male|female)(?=\.[a-z0-9]+$|[-_/])/i.test(movementItem.image_url)
+  check(
+    rendered.src === (sexSpecificAsset ? '' : movementItem.image_url),
+    `${movementItem.name} ${sexSpecificAsset ? 'fails closed before profile resolution' : 'maps its catalog asset to the rendered src before profile resolution'}`,
+  )
 }
 for (const movementItem of Object.values(serverStretchCatalog)) {
   check(
@@ -127,8 +146,14 @@ for (const movementItem of Object.values(serverStretchCatalog)) {
     imageUrl: movementItem.image_url,
     sex: '',
   })
-  check(rendered.src === movementItem.image_url, `${movementItem.name} maps its server catalog asset to the rendered src`)
-  check(fs.existsSync(path.join(root, 'public', rendered.src)), `${movementItem.name} rendered src ships in the public bundle`)
+  const sexSpecificAsset = /(?:^|[-_/])(male|female)(?=\.[a-z0-9]+$|[-_/])/i.test(movementItem.image_url)
+  check(
+    rendered.src === (sexSpecificAsset ? '' : movementItem.image_url),
+    `${movementItem.name} ${sexSpecificAsset ? 'fails closed before profile resolution' : 'maps its server catalog asset to the rendered src'}`,
+  )
+  if (rendered.src) {
+    check(fs.existsSync(path.join(root, 'public', rendered.src)), `${movementItem.name} rendered src ships in the public bundle`)
+  }
 }
 for (const fallbackOnlyName of [
   'Dumbbell Romanian Deadlift',
