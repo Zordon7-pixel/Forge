@@ -8,6 +8,7 @@ const {
   workoutsWithinRecoveryWindow,
 } = require('../src/lib/workoutRecommendationHistory');
 const {
+  parseCheckinOverridePatch,
   resolvePlanDayForDate,
   trainingContextFromResolvedDay,
 } = require('../src/lib/dailyExecution');
@@ -110,6 +111,82 @@ assert.doesNotMatch(
   'a model alternative requiring unavailable equipment must be rejected deterministically',
 );
 
+const gymFixtureAlternative = {
+  workoutName: 'Gym Fixture Upper Body',
+  target: 'Upper Body',
+  runCompatible: true,
+  main: [
+    { name: 'Barbell Bench Press' },
+    { name: 'Pull-Up' },
+    { name: 'Box Push-Up' },
+  ],
+};
+assert.strictEqual(
+  selectDistinctRecommendation({
+    recommendation: renamedRepeat,
+    recommendations: [renamedRepeat, gymFixtureAlternative],
+    recentCompletedWorkouts: history,
+    todayRun: { type: 'tempo' },
+    availableEquipment: ['barbell', 'dumbbell'],
+    now,
+  }),
+  gymFixtureAlternative,
+  'a standard barbell and dumbbell gym profile implies common bench, box, and pull-up fixtures',
+);
+
+const specializedUnknownEquipmentAlternative = {
+  workoutName: 'Specialized Tool Alternative',
+  target: 'Upper Body',
+  runCompatible: true,
+  main: [{ name: 'Dumbbell Row' }, { name: 'Cable Pressdown' }],
+};
+const equipmentFreeAlternative = {
+  workoutName: 'Equipment-Free Alternative',
+  target: 'Core and Upper Body Stability',
+  runCompatible: true,
+  main: [{ name: 'Dead Bug' }, { name: 'Bird Dog' }, { name: 'Scapular Push-Up' }],
+};
+assert.strictEqual(
+  selectDistinctRecommendation({
+    recommendation: renamedRepeat,
+    recommendations: [
+      renamedRepeat,
+      specializedUnknownEquipmentAlternative,
+      equipmentFreeAlternative,
+    ],
+    recentCompletedWorkouts: history,
+    todayRun: { type: 'tempo' },
+    availableEquipment: null,
+    now,
+  }),
+  equipmentFreeAlternative,
+  'unknown equipment rejects specialized tools but preserves an equipment-free personalized alternative',
+);
+
+const repeatedModelAlternative = { ...renamedRepeat, workoutName: 'Repeated Model Alternative' };
+const runIncompatibleAlternative = {
+  workoutName: 'Novel Lower Body Alternative',
+  target: 'Lower Body Strength',
+  main: [{ name: 'Reverse Lunge' }, { name: 'Single-Leg Squat' }],
+};
+assert.strictEqual(
+  selectDistinctRecommendation({
+    recommendation: renamedRepeat,
+    recommendations: [
+      renamedRepeat,
+      repeatedModelAlternative,
+      runIncompatibleAlternative,
+      gymFixtureAlternative,
+    ],
+    recentCompletedWorkouts: history,
+    todayRun: { type: 'tempo' },
+    availableEquipment: ['barbell', 'dumbbell'],
+    now,
+  }),
+  gymFixtureAlternative,
+  'fixture inference preserves repeat exclusion and scheduled-run compatibility gates',
+);
+
 const sixWeekOldHistory = [{
   ...history[0],
   startedAt: '2026-07-01T17:00:00.000Z',
@@ -181,9 +258,29 @@ assert.deepEqual(
   'the same today resolver repairs contradictory recovery prescriptions before AI sees them',
 );
 
+const originalConsoleWarn = console.warn;
+const malformedPatchDiagnostics = [];
+console.warn = (...args) => malformedPatchDiagnostics.push(args.join(' '));
+try {
+  assert.equal(
+    parseCheckinOverridePatch('{"private-user-marker":'),
+    null,
+    'malformed check-in override JSON still resolves to null',
+  );
+} finally {
+  console.warn = originalConsoleWarn;
+}
+assert.equal(malformedPatchDiagnostics.length, 1, 'malformed override JSON emits one concise diagnostic');
+assert.match(malformedPatchDiagnostics[0], /dailyExecution.*malformed check-in override JSON/i);
+assert.doesNotMatch(
+  malformedPatchDiagnostics[0],
+  /private-user-marker/,
+  'the malformed payload is never exposed in diagnostics',
+);
+
 const routeSource = readFileSync(path.join(__dirname, '../src/routes/ai.js'), 'utf8');
 assert.match(routeSource, /workout_sessions WHERE user_id=\? AND ended_at IS NOT NULL/);
-assert.match(routeSource, /FROM workout_sets wset[\s\S]*session\.ended_at IS NOT NULL/);
+assert.match(routeSource, /FROM workout_sets wset[\s\S]*JOIN workout_sessions wsess[\s\S]*wsess\.ended_at IS NOT NULL/);
 assert.match(routeSource, /buildCompletedWorkoutHistory\(recentSessions, recentSets\)/);
 assert.match(routeSource, /todayRun: todayTraining\?\.run \|\| null/);
 assert.match(routeSource, /resolvePlanDayForDate/);

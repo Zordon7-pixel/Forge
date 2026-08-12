@@ -4,6 +4,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   deriveCurrentPlanWeekIndex,
+  deriveForwardOnlyPlanWeek,
   derivePlanWeekSyncTarget,
   resolvePlanWeekSelection,
 } from '../src/lib/planCalendar.js'
@@ -77,11 +78,29 @@ assert.equal(
   null,
   'opening an earlier derived week never moves persisted progress backward',
 )
+assert.equal(
+  deriveForwardOnlyPlanWeek(plan, { ...staleProgress, current_week: 4 }, now),
+  4,
+  'completion keeps a manually advanced persisted week when the date-derived week is earlier',
+)
+assert.equal(
+  deriveForwardOnlyPlanWeek(plan, staleProgress, now),
+  3,
+  'completion can still advance stale persisted progress to the date-derived week',
+)
 
 const testDir = path.dirname(fileURLToPath(import.meta.url))
 const planPageSource = readFileSync(path.join(testDir, '../src/pages/Plan.jsx'), 'utf8')
 assert.match(planPageSource, /derivePlanWeekSyncTarget\(myPlan, myUserPlan\)/)
+assert.match(planPageSource, /deriveForwardOnlyPlanWeek\(myPlan, myUserPlan\)/)
 assert.match(planPageSource, /current_week:\s*syncWeek/)
+const toggleSessionSource = planPageSource.match(/const toggleSession = async \(sessionId\) => \{[\s\S]+?\n  \}/)?.[0] || ''
+assert.match(toggleSessionSource, /current_week:\s*completionCurrentWeek/)
+assert.doesNotMatch(
+  toggleSessionSource,
+  /current_week:\s*derivedCurrentWeek/,
+  'completion and uncompletion writes must not send a lower date-derived week directly',
+)
 assert.doesNotMatch(
   planPageSource.match(/const goToWeek =[^}]+}/s)?.[0] || '',
   /api\.put/,

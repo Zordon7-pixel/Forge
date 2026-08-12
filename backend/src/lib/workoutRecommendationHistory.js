@@ -1,20 +1,23 @@
 const LOWER_BODY_MARKER = /(leg|lower|glute|quad|hamstring|calf|hip)/i;
 const REPEAT_EXCLUSION_WINDOW_MS = 72 * 60 * 60 * 1000;
-const EQUIPMENT_MARKERS = Object.freeze([
+const SPECIALIZED_EQUIPMENT_MARKERS = Object.freeze([
   ['dumbbell', /\bdumbbell\b/i],
   ['barbell', /\b(?:barbell|trap bar)\b/i],
   ['kettlebell', /\bkettlebell\b/i],
   ['cable', /\b(?:cable|pulldown|pressdown|pallof)\b/i],
   ['machine', /\bmachine\b/i],
   ['landmine', /\blandmine\b/i],
-  ['bench', /\b(?:bench|chest-supported)\b/i],
-  ['box', /\bbox\b/i],
-  ['band', /\bband\b/i],
-  ['pull-up bar', /\b(?:pull-up|chin-up|hanging)\b/i],
+  ['band', /\b(?:band|bands|banded)\b/i],
   ['sled', /\bsled\b/i],
   ['suspension trainer', /\b(?:trx|suspension)\b/i],
   ['medicine ball', /\b(?:medicine|med) ball\b/i],
 ]);
+const COMMON_GYM_FIXTURE_MARKERS = Object.freeze([
+  ['bench', /\b(?:bench|chest-supported)\b/i],
+  ['box', /\bbox\b/i],
+  ['pull-up bar', /\b(?:pull[ -]?up|chin[ -]?up|hanging)\b/i],
+]);
+const GYM_PROFILE_SIGNALS = Object.freeze(['barbell', 'dumbbell', 'kettlebell', 'cable', 'machine']);
 
 function cleanText(value) {
   return String(value || '').replace(/[\r\n]+/g, ' ').trim();
@@ -200,14 +203,28 @@ function equipmentCompatible(candidate, availableEquipment) {
   const available = (Array.isArray(availableEquipment) ? availableEquipment : [])
     .map((item) => cleanText(item).toLowerCase())
     .filter(Boolean);
-  if (available.some((item) => /^(?:all|full gym|commercial gym)$/.test(item))) return true;
+  if (available.some((item) => /^(?:all|all equipment|full gym|commercial gym)$/.test(item))) return true;
   const exerciseText = [
     ...exerciseItems(candidate).map(exerciseName),
     ...(Array.isArray(candidate?.warmup) ? candidate.warmup.map(cleanText) : []),
   ].join(' ');
-  return EQUIPMENT_MARKERS.every(([equipment, marker]) => (
-    !marker.test(exerciseText)
-    || available.some((item) => item.includes(equipment) || equipment.includes(item))
+  const explicitlyAvailable = ([equipment, marker]) => available.some((item) => (
+    marker.test(item) || item.includes(equipment)
+  ));
+  const supportsSpecializedEquipment = SPECIALIZED_EQUIPMENT_MARKERS.every((equipmentMarker) => (
+    !equipmentMarker[1].test(exerciseText) || explicitlyAvailable(equipmentMarker)
+  ));
+  if (!supportsSpecializedEquipment) return false;
+
+  const gymProfileSignalCount = GYM_PROFILE_SIGNALS
+    .filter((signal) => available.some((item) => item.includes(signal)))
+    .length;
+  const impliesCommonFixtures = available.some((item) => /\bgym\b/.test(item))
+    || gymProfileSignalCount >= 2;
+  return COMMON_GYM_FIXTURE_MARKERS.every((equipmentMarker) => (
+    !equipmentMarker[1].test(exerciseText)
+    || impliesCommonFixtures
+    || explicitlyAvailable(equipmentMarker)
   ));
 }
 

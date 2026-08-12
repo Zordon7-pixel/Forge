@@ -142,6 +142,7 @@ function parseCheckinOverridePatch(raw) {
     const parsed = JSON.parse(raw);
     return parsed && typeof parsed === 'object' ? parsed : null;
   } catch {
+    console.warn('[dailyExecution] malformed check-in override JSON; ignoring patch');
     return null;
   }
 }

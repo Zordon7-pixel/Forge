@@ -12,7 +12,7 @@ import ForgedDayView from '../components/calendar/ForgedDayView'
 import RaceEditSheet from '../components/calendar/RaceEditSheet'
 import {
   buildCalendarModel, calendarDateRange, dayWithRecordedRuns, goalWithRace, indexRecordedRuns, racePlanReview,
-  deriveCurrentPlanWeekIndex, derivePlanWeekSyncTarget, resolvePlanWeekSelection, todayISO,
+  deriveForwardOnlyPlanWeek, derivePlanWeekSyncTarget, resolvePlanWeekSelection, todayISO,
 } from '../lib/planCalendar'
 import { withActiveRunReturnTarget } from '../lib/activeRunControls'
 import { resolveReadiness } from '../lib/truthConsistency'
@@ -258,8 +258,8 @@ export default function Plan() {
     ? resolvePlanWeekSelection(myPlan, myUserPlan, selectedWeekIndex)
     : 0
   const currentWeek = weekIndex + 1
-  const derivedCurrentWeek = myPlan
-    ? deriveCurrentPlanWeekIndex(myPlan, myUserPlan) + 1
+  const completionCurrentWeek = myPlan
+    ? deriveForwardOnlyPlanWeek(myPlan, myUserPlan)
     : 1
 
   useEffect(() => {
@@ -384,8 +384,8 @@ export default function Plan() {
     setUpdating(true)
     try {
       await api.put('/plans/my/progress', isCompleted
-        ? { unset_session_id: sessionId, current_week: derivedCurrentWeek }
-        : { completed_session_id: sessionId, current_week: derivedCurrentWeek })
+        ? { unset_session_id: sessionId, current_week: completionCurrentWeek }
+        : { completed_session_id: sessionId, current_week: completionCurrentWeek })
       await loadAll()
     } finally {
       setUpdating(false)

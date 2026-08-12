@@ -419,9 +419,9 @@ router.get('/workout-recommendation', auth, async (req, res) => {
       dbAll(
         `SELECT wset.session_id, wset.exercise_name, wset.muscle_group, wset.set_number, wset.reps, wset.weight_lbs
          FROM workout_sets wset
-         JOIN workout_sessions session ON session.id=wset.session_id AND session.user_id=wset.user_id
-         WHERE wset.user_id=? AND session.user_id=? AND session.ended_at IS NOT NULL
-         ORDER BY session.started_at DESC, wset.set_number ASC, wset.logged_at ASC
+         JOIN workout_sessions wsess ON wsess.id=wset.session_id AND wsess.user_id=wset.user_id
+         WHERE wset.user_id=? AND wsess.user_id=? AND wsess.ended_at IS NOT NULL
+         ORDER BY wsess.started_at DESC, wset.set_number ASC, wset.logged_at ASC
          LIMIT 160`,
         [userId, userId]
       ),

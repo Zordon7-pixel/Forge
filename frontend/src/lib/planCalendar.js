@@ -353,14 +353,23 @@ export function deriveCurrentPlanWeekIndex(plan, userPlan, now = new Date()) {
   return Math.max(0, Math.min(weeks.length - 1, selectedIndex))
 }
 
+// Progress mutations may advance to the calendar-derived week, but must retain
+// a later persisted week (for example, one advanced by prior manual browsing).
+export function deriveForwardOnlyPlanWeek(plan, userPlan, now = new Date()) {
+  const derivedWeek = deriveCurrentPlanWeekIndex(plan, userPlan, now) + 1
+  const persisted = Number(userPlan?.current_week)
+  const persistedWeek = Number.isInteger(persisted) && persisted >= 1 ? persisted : 1
+  return Math.max(derivedWeek, persistedWeek)
+}
+
 // Persisted current_week is consumed by backend compliance/current/reschedule
 // surfaces. Advance it from the same date-derived contract used by the Plan UI,
 // but never move it backward (or use the screen's manual browsing cursor).
 export function derivePlanWeekSyncTarget(plan, userPlan, now = new Date()) {
-  const derivedWeek = deriveCurrentPlanWeekIndex(plan, userPlan, now) + 1
   const persisted = Number(userPlan?.current_week)
   const persistedWeek = Number.isInteger(persisted) && persisted >= 1 ? persisted : 1
-  return derivedWeek > persistedWeek ? derivedWeek : null
+  const forwardWeek = deriveForwardOnlyPlanWeek(plan, userPlan, now)
+  return forwardWeek > persistedWeek ? forwardWeek : null
 }
 
 // A non-null selection belongs only to the mounted Plan screen. Keeping it
