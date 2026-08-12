@@ -128,7 +128,7 @@ assert(checkedNoPlan.readinessFallback.includes('No recommendation is available 
 console.log('\n== Profile-matched form images ==')
 assert(movement.includes("male: '/stretches/leg-swings-male.png'") && movement.includes("female: '/stretches/leg-swings-female.png'"), 'leg swings use one profile-matched athlete')
 assert(movement.includes("male: '/stretches/trunk-rotation-male.png'") && movement.includes("female: '/stretches/trunk-rotation-female.png'"), 'trunk rotations use one profile-matched athlete')
-assert(movement.includes('const hasProfilePair = Boolean(photoDemo?.male || photoDemo?.female)'), 'profile pairs override legacy generic image URLs')
+assert(movement.includes('if (photoDemo?.[normalizedSex])') && !movement.includes('const providedImage ='), 'profile pairs stay profile-matched and legacy database image URLs cannot override vetted media')
 
 for (const asset of [
   'public/stretches/leg-swings-male.png',
