@@ -1742,19 +1742,51 @@ function buildCandidateTrace(state, built) {
 
 function buildDeterministicCandidate(context, options) {
   if (!context?.target?.hyroxEvent) return buildRacePlanCandidate(context, options);
-  const plan = hyroxPlan.generateHyroxPlan({
-    athlete: { ...context.profile, readiness: context.recovery?.state },
-    currentLoad: {
-      weeklyMiles: context.history?.weeklyMileageBaseline,
-      readiness: context.recovery?.state,
-    },
-    planningLocalDate: options.planningDateLocal,
-    event: context.target.hyroxEvent,
-    equipment: context.target.hyroxEquipment,
-    availableDays: context.target.trainingDays,
-    secondaryRace: context.target.secondaryRace,
-  });
-  return { plan, validation: hyroxPlan.validateHyroxPlan(plan) };
+  try {
+    const plan = hyroxPlan.generateHyroxPlan({
+      athlete: {
+        ...context.profile,
+        runDaysPerWeek: context.target.runDaysPerWeek,
+        readiness: context.recovery?.state,
+      },
+      currentLoad: {
+        weeklyMiles: context.history?.weeklyMileageBaseline,
+        readiness: context.recovery?.state,
+      },
+      planningLocalDate: options.planningDateLocal,
+      event: context.target.hyroxEvent,
+      equipment: context.target.hyroxEquipment,
+      availableDays: context.target.trainingDays,
+      secondaryRace: context.target.secondaryRace,
+    });
+    return { plan, validation: hyroxPlan.validateHyroxPlan(plan) };
+  } catch (err) {
+    const knownErrors = {
+      hyrox_run_days_must_be_3_or_4: ['INVALID_HYROX_RUN_FREQUENCY', 'HYROX plans require three or four run days per week.'],
+      insufficient_available_days: ['INVALID_RUN_SCHEDULE', 'Select at least as many training weekdays as run days.'],
+      no_available_training_days: ['INVALID_RUN_SCHEDULE', 'Select at least one available training weekday.'],
+      invalid_event_timezone: ['INVALID_EVENT_TIMEZONE', 'Choose a valid IANA time zone for the HYROX event.'],
+      invalid_event_local_date: ['INVALID_RACE_DATE', 'Choose a valid HYROX event date.'],
+      invalid_days_to_event: ['RACE_DATE_PASSED', 'HYROX event date must be today or later.'],
+      invalid_secondary_race_date: ['INVALID_RACE_DATE', 'Choose a valid date for the secondary race.'],
+      secondary_race_requires_dated_hyrox: ['SECONDARY_RACE_REQUIRES_DATE', 'Add a HYROX event date before protecting a secondary race.'],
+      secondary_race_spacing: ['RACE_SPACING_CONFLICT', 'The secondary race must be at least 21 days after HYROX.'],
+    };
+    const mapped = knownErrors[err?.message];
+    if (mapped) throw candidateError(400, mapped[0], mapped[1]);
+    if (String(err?.message || '').startsWith('hyrox_standard_')) {
+      throw candidateError(400, 'UNSUPPORTED_HYROX_DIVISION', 'Choose a supported HYROX format, category, and rules version.');
+    }
+    if (String(err?.message || '').startsWith('hyrox_plan_invariant:')) {
+      throw candidateError(
+        422,
+        'PLAN_VALIDATION_FAILED',
+        'The requested plan did not pass safety validation.',
+        err.validation?.errors || null,
+      );
+    }
+    throw err;
+  }
 }
 
 function publicCandidatePayload(candidate) {

@@ -85,6 +85,93 @@ function assertEventNormalization() {
   });
   assert.equal(incomplete.valid, false);
   assert.match(incomplete.error, /event_category/);
+
+  for (const [eventFormat, eventCategory] of [
+    ['individual_open', 'women'],
+    ['individual_pro', 'men'],
+    ['doubles', 'women'],
+    ['doubles', 'men'],
+    ['doubles', 'mixed'],
+    ['relay', 'women'],
+    ['relay', 'men'],
+    ['relay', 'mixed'],
+  ]) {
+    const supported = racesRouter._test.normalizeRaceEvent({
+      race_name: eventFormat === 'doubles' ? 'HYROX Washington, D.C.' : 'Custom worldwide HYROX',
+      event_kind: 'hyrox',
+      event_local_date: '2026-09-06',
+      event_timezone: 'America/New_York',
+      event_format: eventFormat,
+      event_category: eventCategory,
+      rules_version: '2026-2027',
+    });
+    assert.equal(supported.valid, true, `${eventFormat}/${eventCategory}: ${supported.error}`);
+  }
+}
+
+function hyroxContext(overrides = {}) {
+  return {
+    profile: {
+      weekly_miles_current: 20,
+      run_days_per_week: 5,
+      comeback_mode: false,
+    },
+    history: { weeklyMileageBaseline: 20 },
+    recovery: { state: 'normal' },
+    target: {
+      runDaysPerWeek: 3,
+      trainingDays: ['Tue', 'Thu', 'Sat', 'Sun'],
+      hyroxEquipment: standards.EQUIPMENT_KEYS,
+      hyroxEvent: {
+        raceId: 'owned-hyrox',
+        name: 'HYROX Washington, D.C.',
+        eventLocalDate: '2026-09-06',
+        eventTimezone: 'America/New_York',
+        format: 'doubles',
+        category: 'men',
+        rulesVersion: '2026-2027',
+      },
+      ...overrides.target,
+    },
+    ...overrides.context,
+  };
+}
+
+function assertPreviewGenerationContract() {
+  const exactUserScenario = plansRouter._test.buildDeterministicCandidate(
+    hyroxContext(),
+    { planningDateLocal: '2026-08-11', timezoneOffsetMinutes: 240 },
+  );
+  assert.equal(exactUserScenario.validation.valid, true);
+  assert.equal(exactUserScenario.plan.goal.division, 'doubles');
+  assert.equal(exactUserScenario.plan.goal.category, 'men');
+  assert.equal(exactUserScenario.plan.schedulePreferences.runDaysPerWeek, 3);
+  assert.deepEqual(exactUserScenario.plan.schedulePreferences.trainingDays, ['Tue', 'Thu', 'Sat', 'Sun']);
+
+  for (const [format, category, name] of [
+    ['individual_open', 'women', 'HYROX New York'],
+    ['individual_pro', 'men', 'Custom gym HYROX assessment'],
+    ['doubles', 'mixed', 'HYROX Berlin'],
+    ['relay', 'women', 'Custom worldwide relay'],
+  ]) {
+    const built = plansRouter._test.buildDeterministicCandidate(hyroxContext({
+      target: { hyroxEvent: { ...hyroxContext().target.hyroxEvent, format, category, name } },
+    }), { planningDateLocal: '2026-08-11', timezoneOffsetMinutes: 240 });
+    assert.equal(built.validation.valid, true, `${format}/${category}`);
+    assert.equal(built.plan.goal.division, format);
+    assert.equal(built.plan.goal.category, category);
+  }
+
+  assert.throws(
+    () => plansRouter._test.buildDeterministicCandidate(hyroxContext({
+      target: { trainingDays: ['Tue', 'Thu'] },
+    }), { planningDateLocal: '2026-08-11', timezoneOffsetMinutes: 240 }),
+    (error) => (
+      error.status === 400
+      && error.code === 'INVALID_RUN_SCHEDULE'
+      && /at least as many training weekdays/i.test(error.message)
+    ),
+  );
 }
 
 function assertPersistenceAndWiring() {
@@ -133,6 +220,7 @@ function assertPersistenceAndWiring() {
 function run() {
   assertStandards();
   assertEventNormalization();
+  assertPreviewGenerationContract();
   assertPersistenceAndWiring();
   console.log('HYROX EVENT CONTRACT SMOKE OK');
 }
