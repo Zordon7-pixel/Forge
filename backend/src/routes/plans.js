@@ -5,7 +5,6 @@ const { requirePremium } = require('../middleware/premiumGate');
 const { v4: uuidv4 } = require('uuid');
 const crypto = require('crypto');
 const { buildHealthSignals, buildReadinessBand, readinessTrendFromHistory } = require('../lib/healthSignals');
-const { applyOverride } = require('../lib/checkinOverride');
 const planSchema = require('../lib/planSchema');
 const concurrentPlan = require('../lib/concurrentPlan');
 const adaptationEngine = require('../lib/adaptationEngine');
@@ -3473,32 +3472,23 @@ router.get('/today', auth, async (req, res) => {
     const parsed = withDurationEstimatePlanPayload(parsePlan(active.row));
     const anchorPayload = planAnchorPayload(parsed);
 
-    // H5: select the EXACT dated schema-v2 day (legacy plans fall back to a
-    // weekday match among undated days only). Replaces the old first-weekday
-    // scan that could return week 1's Tuesday regardless of the current week.
-    const weekdayShort = dailyExecution.weekdayShortForDate(dateISO);
-    const selection = dailyExecution.selectDayForDate(parsed, dateISO, weekdayShort);
-    const selectedEntry = selection ? selection.entry : null;
-    const selectedWeek = selection ? selection.week : null;
-    const selectedDayIndex = selection ? selection.dayIndex : null;
-
     const override = await dbGet(
       'SELECT patch_json FROM checkin_overrides WHERE user_id=? AND date=?',
       [req.user.id, dateISO]
     );
-    let patch = null;
-    if (override?.patch_json) {
-      try {
-        patch = typeof override.patch_json === 'string' ? JSON.parse(override.patch_json) : override.patch_json;
-      } catch (err) {
-        console.error('[plans] Failed to parse check-in override patch:', err);
-      }
-    }
+    const patch = dailyExecution.parseCheckinOverridePatch(override?.patch_json);
+    const resolvedToday = dailyExecution.resolvePlanDayForDate({ plan: parsed, dateISO, patch });
+    const {
+      weekdayShort,
+      selectedEntry,
+      selectedWeek,
+      selectedDayIndex,
+    } = resolvedToday;
 
     // Legacy `today` shape is preserved for existing consumers.
-    const baseDay = selectedEntry ? planSchema.flattenDayForConsumer(selectedEntry) : null;
-    const legacyToday = baseDay
-      ? withDurationEstimateDayPayload(withPlanAnchorPayload(patch ? applyOverride(baseDay, patch) : baseDay, parsed), parsed)
+    const overriddenDay = selectedEntry ? planSchema.flattenDayForConsumer(selectedEntry) : null;
+    const legacyToday = overriddenDay
+      ? withDurationEstimateDayPayload(withPlanAnchorPayload(overriddenDay, parsed), parsed)
       : null;
 
     // Completion state + calibrated HR profile for the canonical execution object.
@@ -3516,10 +3506,7 @@ router.get('/today', auth, async (req, res) => {
       }
     }
 
-    const overriddenEntry = (patch && selectedEntry)
-      ? planSchema.applyOverrideToDay(selectedEntry, patch)
-      : selectedEntry;
-    const effortEntry = withPlanEffortDayPayload(overriddenEntry, hrProfile);
+    const effortEntry = withPlanEffortDayPayload(selectedEntry, hrProfile);
     const effortToday = withPlanEffortDayPayload(legacyToday, hrProfile);
     const execution = dailyExecution.buildDailyExecution({
       plan: parsed,

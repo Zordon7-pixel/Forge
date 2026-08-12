@@ -6,11 +6,12 @@ const { generateRunBrief, generateLiftPlan, generateWorkoutRecommendation, gener
 const { requestExerciseImageIfMissing, requestImagesForWorkoutItems } = require('../lib/exerciseImageRequests');
 const { isRunActivity, runActivitySql } = require('../lib/runActivity');
 const dailyExecution = require('../lib/dailyExecution');
-const planSchema = require('../lib/planSchema');
 const { resolveActivePlanForDate } = require('../lib/planAssignmentLifecycle');
+const { isPlanningDateAllowed, requestPlanningDate } = require('../lib/requestPlanningDate');
 const {
   buildCompletedWorkoutHistory,
   selectDistinctRecommendation,
+  workoutsWithinRecoveryWindow,
 } = require('../lib/workoutRecommendationHistory');
 
 const FALLBACK_ACCESSORIES = {
@@ -79,6 +80,18 @@ function normalizeStrengthRecommendation(value) {
   };
 }
 
+function normalizeStrengthRecommendationCandidates(value) {
+  const rawCandidates = [value, ...(Array.isArray(value?.alternatives) ? value.alternatives : [])];
+  const seen = new Set();
+  return rawCandidates.map(normalizeStrengthRecommendation).filter((candidate) => {
+    if (!candidate) return false;
+    const fingerprint = candidate.main.map((item) => String(item.name || '').trim().toLowerCase()).sort().join('|');
+    if (!fingerprint || seen.has(fingerprint)) return false;
+    seen.add(fingerprint);
+    return true;
+  }).slice(0, 3);
+}
+
 function fallbackStrengthRecommendation({ bodyPart = 'full', exercise = '' } = {}) {
   const normalizedPart = sanitize(bodyPart, 30).toLowerCase();
   const accessories = FALLBACK_ACCESSORIES[normalizedPart] || FALLBACK_ACCESSORIES.full;
@@ -101,18 +114,6 @@ function fallbackStrengthRecommendation({ bodyPart = 'full', exercise = '' } = {
   };
 }
 
-function localDateISO(date = new Date()) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
-function recommendationDate(value) {
-  const requested = String(value || '').trim();
-  return /^\d{4}-\d{2}-\d{2}$/.test(requested) ? requested : localDateISO();
-}
-
 function parseStoredPlan(row) {
   const raw = row?.plan_data ?? row?.plan_json;
   if (!raw) return null;
@@ -127,24 +128,18 @@ function parseStoredPlan(row) {
 
 async function loadTodayTraining(userId, dateISO) {
   try {
-    const active = await resolveActivePlanForDate(userId, dbGet, { planningDateLocal: dateISO });
+    const [active, override] = await Promise.all([
+      resolveActivePlanForDate(userId, dbGet, { planningDateLocal: dateISO }),
+      dbGet(
+        'SELECT patch_json FROM checkin_overrides WHERE user_id=? AND date=?',
+        [userId, dateISO]
+      ),
+    ]);
     const plan = parseStoredPlan(active?.row);
     if (!plan) return null;
-    const selection = dailyExecution.selectDayForDate(
-      plan,
-      dateISO,
-      dailyExecution.weekdayShortForDate(dateISO),
-    );
-    if (!selection?.entry) return null;
-    const sessions = planSchema.daySessions(selection.entry);
-    return {
-      date: dateISO,
-      week: Number(selection.week?.week || selection.weekIndex + 1),
-      phase: selection.week?.phase || null,
-      orderGuidance: selection.entry.orderGuidance || null,
-      run: sessions.find((session) => session.kind === 'run') || null,
-      lift: sessions.find((session) => session.kind === 'lift') || null,
-    };
+    const patch = dailyExecution.parseCheckinOverridePatch(override?.patch_json);
+    const resolved = dailyExecution.resolvePlanDayForDate({ plan, dateISO, patch });
+    return dailyExecution.trainingContextFromResolvedDay(resolved, dateISO);
   } catch (err) {
     console.error('[ai/workout-recommendation] scheduled training lookup failed:', err.message);
     return null;
@@ -410,7 +405,10 @@ router.post('/lift-plan', auth, async (req, res) => {
 router.get('/workout-recommendation', auth, async (req, res) => {
   try {
     const userId = req.user.id;
-    const dateISO = recommendationDate(req.query?.date);
+    if (req.query?.date !== undefined && !isPlanningDateAllowed(req.query.date)) {
+      return res.status(400).json({ error: 'Invalid date' });
+    }
+    const dateISO = requestPlanningDate(req, { bodyKeys: [], queryKeys: ['date'] });
     const [profile, recentRuns, recentSessions, recentSets, todayTraining] = await Promise.all([
       dbGet('SELECT * FROM users WHERE id=?', [userId]),
       dbAll(`SELECT * FROM runs WHERE user_id=? AND ${runActivitySql()} ORDER BY date DESC, created_at DESC LIMIT 10`, [userId]),
@@ -429,7 +427,9 @@ router.get('/workout-recommendation', auth, async (req, res) => {
       ),
       loadTodayTraining(userId, dateISO),
     ]);
-    const recentCompletedWorkouts = buildCompletedWorkoutHistory(recentSessions, recentSets);
+    const recentCompletedWorkouts = workoutsWithinRecoveryWindow(
+      buildCompletedWorkoutHistory(recentSessions, recentSets)
+    );
 
     const generated = await generateWorkoutRecommendation({
       profile,
@@ -438,12 +438,18 @@ router.get('/workout-recommendation', auth, async (req, res) => {
       todayTraining,
       userId,
     });
-    const normalized = normalizeStrengthRecommendation(generated) || fallbackStrengthRecommendation();
-    const recommendation = selectDistinctRecommendation({
+    const personalizedCandidates = normalizeStrengthRecommendationCandidates(generated);
+    const normalized = personalizedCandidates[0] || fallbackStrengthRecommendation();
+    const selectedRecommendation = selectDistinctRecommendation({
       recommendation: normalized,
+      recommendations: personalizedCandidates,
       recentCompletedWorkouts,
       todayRun: todayTraining?.run || null,
+      availableEquipment: todayTraining?.availableEquipment || null,
     });
+    // Normalize once more after internal repeat selection so helper-only fields
+    // such as muscleGroups/runCompatible never become response API fields.
+    const recommendation = normalizeStrengthRecommendation(selectedRecommendation) || normalized;
     await requestImagesForWorkoutItems({ userId, items: recommendation.main, source: 'ai_workout_recommendation' });
     await requestImagesForWorkoutItems({ userId, items: recommendation.warmup, source: 'ai_workout_recommendation' });
     await requestImagesForWorkoutItems({ userId, items: recommendation.recovery, source: 'ai_workout_recommendation' });

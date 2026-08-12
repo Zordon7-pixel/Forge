@@ -353,6 +353,16 @@ export function deriveCurrentPlanWeekIndex(plan, userPlan, now = new Date()) {
   return Math.max(0, Math.min(weeks.length - 1, selectedIndex))
 }
 
+// Persisted current_week is consumed by backend compliance/current/reschedule
+// surfaces. Advance it from the same date-derived contract used by the Plan UI,
+// but never move it backward (or use the screen's manual browsing cursor).
+export function derivePlanWeekSyncTarget(plan, userPlan, now = new Date()) {
+  const derivedWeek = deriveCurrentPlanWeekIndex(plan, userPlan, now) + 1
+  const persisted = Number(userPlan?.current_week)
+  const persistedWeek = Number.isInteger(persisted) && persisted >= 1 ? persisted : 1
+  return derivedWeek > persistedWeek ? derivedWeek : null
+}
+
 // A non-null selection belongs only to the mounted Plan screen. Keeping it
 // wins during in-session reloads; a remount passes null and re-derives today.
 export function resolvePlanWeekSelection(plan, userPlan, selectedWeekIndex, now = new Date()) {

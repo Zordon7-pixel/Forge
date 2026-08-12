@@ -17,6 +17,7 @@
 
 const { computeZones } = require('./hrZones');
 const planSchema = require('./planSchema');
+const { repairPlanPrescriptions } = require('./prescriptionIntegrity');
 
 const WEEKDAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -134,6 +135,59 @@ function selectDayForDate(plan, dateISO, weekdayShort) {
   return null;
 }
 
+function parseCheckinOverridePatch(raw) {
+  if (!raw) return null;
+  if (typeof raw === 'object') return raw;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+// Shared resolution contract for canonical /plans/today and any internal
+// consumer that needs today's training truth. Repair stored prescriptions
+// first, select the exact dated day, then apply the persisted check-in patch.
+function resolvePlanDayForDate({ plan, dateISO, patch = null } = {}) {
+  const repairedPlan = repairPlanPrescriptions(plan);
+  const weekdayShort = weekdayShortForDate(dateISO);
+  const selection = selectDayForDate(repairedPlan, dateISO, weekdayShort);
+  const baseEntry = selection?.entry || null;
+  const selectedEntry = baseEntry && patch
+    ? planSchema.applyOverrideToDay(baseEntry, patch)
+    : baseEntry;
+  return {
+    plan: repairedPlan,
+    dateISO,
+    weekdayShort,
+    patch,
+    baseEntry,
+    selectedEntry,
+    selectedWeek: selection?.week || null,
+    selectedDayIndex: Number.isInteger(selection?.dayIndex) ? selection.dayIndex : null,
+    weekIndex: Number.isInteger(selection?.weekIndex) ? selection.weekIndex : null,
+  };
+}
+
+function trainingContextFromResolvedDay(resolved, dateISO = null) {
+  if (!resolved?.selectedEntry) return null;
+  const sessions = planSchema.daySessions(resolved.selectedEntry);
+  const plan = resolved.plan || {};
+  const strengthPolicy = plan.strengthPolicy || plan.strength_policy || {};
+  return {
+    date: dateISO || resolved.dateISO || null,
+    week: Number(resolved.selectedWeek?.week || (Number.isInteger(resolved.weekIndex) ? resolved.weekIndex + 1 : 0)) || null,
+    phase: resolved.selectedWeek?.phase || null,
+    orderGuidance: resolved.selectedEntry.orderGuidance || null,
+    isRest: sessions.length === 0,
+    checkinOverride: resolved.patch?.checkin_override || resolved.selectedEntry.checkin_override || null,
+    availableEquipment: Array.isArray(strengthPolicy.equipment) ? strengthPolicy.equipment : null,
+    run: sessions.find((session) => session.kind === 'run') || null,
+    lift: sessions.find((session) => session.kind === 'lift') || null,
+  };
+}
+
 // Build the canonical daily-execution object. Callers supply the already
 // override-merged day entry, its week, the user's completed session ids, and
 // the HR profile row (or null). Everything here is pure.
@@ -211,5 +265,8 @@ module.exports = {
   resolveHrZone,
   collectSessionIds,
   selectDayForDate,
+  parseCheckinOverridePatch,
+  resolvePlanDayForDate,
+  trainingContextFromResolvedDay,
   buildDailyExecution,
 };

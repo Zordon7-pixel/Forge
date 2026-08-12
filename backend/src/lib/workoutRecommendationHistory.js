@@ -1,4 +1,20 @@
 const LOWER_BODY_MARKER = /(leg|lower|glute|quad|hamstring|calf|hip)/i;
+const REPEAT_EXCLUSION_WINDOW_MS = 72 * 60 * 60 * 1000;
+const EQUIPMENT_MARKERS = Object.freeze([
+  ['dumbbell', /\bdumbbell\b/i],
+  ['barbell', /\b(?:barbell|trap bar)\b/i],
+  ['kettlebell', /\bkettlebell\b/i],
+  ['cable', /\b(?:cable|pulldown|pressdown|pallof)\b/i],
+  ['machine', /\bmachine\b/i],
+  ['landmine', /\blandmine\b/i],
+  ['bench', /\b(?:bench|chest-supported)\b/i],
+  ['box', /\bbox\b/i],
+  ['band', /\bband\b/i],
+  ['pull-up bar', /\b(?:pull-up|chin-up|hanging)\b/i],
+  ['sled', /\bsled\b/i],
+  ['suspension trainer', /\b(?:trx|suspension)\b/i],
+  ['medicine ball', /\b(?:medicine|med) ball\b/i],
+]);
 
 function cleanText(value) {
   return String(value || '').replace(/[\r\n]+/g, ' ').trim();
@@ -100,144 +116,128 @@ function movement(name, focus, cue, sets = 3, reps = '8', rest = '75s') {
   return { name, sets, reps, rest, focus, cue };
 }
 
-const ALTERNATIVES = Object.freeze([
+// Last-resort choices are deliberately bodyweight-only and low-fatigue. The
+// route first prefers extra model candidates, which retain profile/injury and
+// equipment personalization; these exist only when every personalized choice
+// is an exact immediate-recovery repeat.
+const SAFE_BODYWEIGHT_ALTERNATIVES = Object.freeze([
   {
-    workoutName: 'Upper Pull and Trunk Strength',
-    target: 'Back, Arms, and Core',
-    muscleGroups: ['back', 'arms', 'core'],
+    workoutName: 'Bodyweight Trunk and Shoulder Control',
+    target: 'Core and Upper Body Stability',
     runCompatible: true,
-    warmup: ['Band pull-apart x 15', 'Half-kneeling thoracic rotation x 6/side', 'Scapular pull-up x 8'],
+    warmup: ['Crocodile breathing x 5 slow breaths', 'Open-book rotation x 6/side', 'Wall slide x 8'],
     main: [
-      movement('Chest-Supported Dumbbell Row', 'Upper-back strength', 'Keep the chest supported and finish with the shoulder blades.'),
-      movement('Neutral-Grip Lat Pulldown', 'Vertical pull', 'Drive the elbows toward the ribs without leaning back.'),
-      movement('Half-Kneeling Single-Arm Cable Row', 'Trunk-controlled pull', 'Stay tall and resist rotation.', 3, '8/side'),
-      movement('Hammer Curl', 'Arm strength', 'Keep the elbows quiet and lower under control.', 3, '10'),
-      movement('Pallof Press', 'Anti-rotation', 'Keep ribs stacked and do not let the cable turn you.', 3, '10/side', '45s'),
-      movement('Dead Bug', 'Trunk stability', 'Keep the low back gently anchored as the limbs move.', 3, '6/side', '45s'),
-    ],
-    recovery: ['Easy walk x 3 min', 'Lat stretch x 45s/side'],
-    explanation: 'This upper-body and trunk session avoids duplicating the recent lift and leaves the legs available for today’s run.',
-    restExplanation: 'Use full rest on rows and pulldowns, then shorter rests for the arm and trunk work.',
-  },
-  {
-    workoutName: 'Upper Push and Trunk Strength',
-    target: 'Chest, Shoulders, and Core',
-    muscleGroups: ['chest', 'shoulders', 'arms', 'core'],
-    runCompatible: true,
-    warmup: ['Wall slide x 10', 'Band external rotation x 10/side', 'Incline push-up x 8'],
-    main: [
-      movement('Incline Dumbbell Press', 'Upper-body strength', 'Keep the shoulder blades set and press without shrugging.'),
-      movement('Half-Kneeling Landmine Press', 'Shoulder strength', 'Stay tall and finish each press without rotating.', 3, '8/side'),
-      movement('Push-Up', 'Horizontal push', 'Move the torso as one unit and stop before the hips sag.', 3, '8-12'),
-      movement('Cable Triceps Pressdown', 'Arm strength', 'Keep the elbows pinned and control the return.', 3, '10'),
-      movement('Side Plank', 'Lateral trunk', 'Stack the ribs and hips in one line.', 3, '30s/side', '45s'),
-      movement('Dead Bug', 'Trunk stability', 'Exhale as the opposite arm and leg extend.', 3, '6/side', '45s'),
-    ],
-    recovery: ['Easy walk x 3 min', 'Doorway chest stretch x 45s/side'],
-    explanation: 'This push-and-trunk session changes the recent training stimulus while preserving the lower body for the scheduled run.',
-    restExplanation: 'Take enough rest to keep pressing mechanics clean, then move steadily through trunk work.',
-  },
-  {
-    workoutName: 'Low-Fatigue Stability Session',
-    target: 'Core and Stability',
-    muscleGroups: ['core'],
-    runCompatible: true,
-    warmup: ['Cat-cow x 6', 'Open-book rotation x 6/side', 'Marching glute bridge x 6/side'],
-    main: [
+      movement('Dead Bug', 'Trunk control', 'Keep the low back gently anchored as opposite limbs extend.', 3, '6/side', '45s'),
       movement('Bird Dog', 'Cross-body stability', 'Reach long without shifting the pelvis.', 3, '6/side', '45s'),
-      movement('Side Plank', 'Lateral trunk', 'Keep the head, ribs, and hips stacked.', 3, '30s/side', '45s'),
-      movement('Tall-Kneeling Pallof Press', 'Anti-rotation', 'Squeeze the glutes and resist cable rotation.', 3, '10/side', '45s'),
-      movement('Bear Plank Shoulder Tap', 'Anterior trunk', 'Minimize hip movement as each hand lifts.', 3, '6/side', '45s'),
-      movement('Suitcase Carry', 'Loaded trunk stability', 'Walk tall without leaning toward the weight.', 3, '30s/side', '60s'),
-      movement('Prone Y Raise', 'Scapular control', 'Lift with the shoulder blades, not the low back.', 3, '8', '45s'),
+      movement('Side Plank', 'Lateral trunk', 'Keep the head, ribs, and hips stacked.', 3, '20-30s/side', '45s'),
+      movement('Scapular Push-Up', 'Shoulder control', 'Keep the elbows straight and move only the shoulder blades.', 3, '8', '45s'),
+      movement('Prone Y Raise', 'Scapular control', 'Lift through the shoulder blades without arching the low back.', 3, '8', '45s'),
+      movement('Bear Plank Shoulder Tap', 'Anti-rotation', 'Keep the hips quiet as each hand lifts.', 3, '6/side', '45s'),
     ],
-    recovery: ['Crocodile breathing x 5 slow breaths', 'Child’s pose x 45s'],
-    explanation: 'This low-fatigue stability session supplies a distinct stimulus without repeating yesterday’s work or competing with today’s run.',
-    restExplanation: 'Keep rests short but never rush the positions; clean control is the training goal.',
+    recovery: ['Easy walk x 3 min', 'Child’s pose breathing x 5 slow breaths'],
+    explanation: 'This minimal-equipment control session avoids an immediate exact repeat without adding lower-body fatigue.',
+    restExplanation: 'Keep the rests easy and prioritize controlled positions over fatigue.',
   },
   {
-    workoutName: 'Posterior Chain Strength',
-    target: 'Back, Legs, and Core',
-    muscleGroups: ['back', 'legs', 'core'],
-    runCompatible: false,
-    warmup: ['Hip hinge drill x 10', 'Glute bridge x 10', 'Bodyweight reverse lunge x 6/side'],
+    workoutName: 'Bodyweight Posture and Trunk Session',
+    target: 'Core and Postural Control',
+    runCompatible: true,
+    warmup: ['Cat-cow x 6', 'Half-kneeling thoracic rotation x 6/side', 'Shoulder circle x 8/side'],
     main: [
-      movement('Romanian Deadlift', 'Posterior-chain strength', 'Push the hips back and keep the load close.', 4, '6', '2 min'),
-      movement('Rear-Foot-Elevated Split Squat', 'Single-leg strength', 'Stay balanced through the whole front foot.', 3, '6/side', '90s'),
-      movement('Chest-Supported Row', 'Upper-back strength', 'Pause briefly with the shoulder blades together.'),
-      movement('Hamstring Slider Curl', 'Hamstring strength', 'Keep the hips lifted as the heels move.', 3, '8', '75s'),
-      movement('Standing Calf Raise', 'Ankle strength', 'Pause at the top and lower slowly.', 3, '10', '60s'),
-      movement('Pallof Press', 'Anti-rotation', 'Keep ribs stacked and resist rotation.', 3, '10/side', '45s'),
+      movement('Hollow Body Hold', 'Anterior trunk', 'Use a bent-knee position if the low back lifts.', 3, '20s', '45s'),
+      movement('Quadruped Shoulder Tap', 'Anti-rotation', 'Press the floor away and keep the pelvis level.', 3, '6/side', '45s'),
+      movement('Forearm Side Plank', 'Lateral trunk', 'Stack the ribs and hips without shrugging.', 3, '20s/side', '45s'),
+      movement('Wall Slide', 'Shoulder mobility', 'Keep the ribs down as the arms travel upward.', 3, '8', '45s'),
+      movement('Prone W Raise', 'Upper-back control', 'Draw the shoulder blades down and back gently.', 3, '8', '45s'),
+      movement('Dead Bug Heel Tap', 'Trunk control', 'Move slowly without letting the low back arch.', 3, '8/side', '45s'),
     ],
-    recovery: ['Easy walk x 3 min', 'Hip flexor stretch x 45s/side'],
-    explanation: 'This posterior-chain session provides a different strength stimulus from the recent completed workout.',
-    restExplanation: 'Use full rest for the hinge and split squat so fatigue does not change technique.',
+    recovery: ['Easy walk x 3 min', 'Open-book rotation x 5/side'],
+    explanation: 'This bodyweight session changes the exercise lineup while preserving recovery for scheduled running.',
+    restExplanation: 'Stop each set while positions remain crisp; this is not a fatigue test.',
   },
-]);
-
-const NOVEL_ACCESSORIES = Object.freeze([
-  'Farmer Carry',
-  'Half-Kneeling Cable Chop',
-  'Reverse Cable Chop',
-  'Front-Rack Carry',
-  'Plank Dumbbell Drag',
-  'Tall-Kneeling Cable Lift',
-  'Hollow Body Hold',
-  'Band Face Pull',
-  'Scapular Push-Up',
-  'Cable External Rotation',
 ]);
 
 function cloneRecommendation(recommendation) {
   return {
     ...recommendation,
-    muscleGroups: [...(recommendation.muscleGroups || [])],
     warmup: [...(recommendation.warmup || [])],
     main: (recommendation.main || []).map((item) => ({ ...item })),
     recovery: [...(recommendation.recovery || [])],
   };
 }
 
-function recentMuscleGroups(history) {
-  return new Set((history[0]?.muscleGroups || []).map((group) => cleanText(group).toLowerCase()));
+function workoutCompletedAt(workout) {
+  const value = workout?.endedAt || workout?.ended_at || workout?.startedAt || workout?.started_at;
+  if (!value) return null;
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) ? timestamp : null;
 }
 
-function overlapsRecentMuscles(candidate, recentGroups) {
-  return (candidate.muscleGroups || []).filter((group) => recentGroups.has(group)).length;
+function workoutsWithinRecoveryWindow(history, now = new Date()) {
+  const nowMs = new Date(now).getTime();
+  if (!Number.isFinite(nowMs)) return [];
+  return (Array.isArray(history) ? history : []).filter((workout) => {
+    const completedAt = workoutCompletedAt(workout);
+    if (completedAt === null) return false;
+    const ageMs = nowMs - completedAt;
+    return ageMs >= 0 && ageMs <= REPEAT_EXCLUSION_WINDOW_MS;
+  });
 }
 
 function distinctFromHistory(candidate, history) {
   return !(history || []).some((workout) => sameSubstantiveWorkout(candidate, workout));
 }
 
-function selectDistinctRecommendation({ recommendation, recentCompletedWorkouts = [], todayRun = null } = {}) {
-  if (!recommendation || !recentCompletedWorkouts.some((workout) => sameSubstantiveWorkout(recommendation, workout))) {
+function runCompatible(candidate) {
+  if (candidate?.runCompatible === true) return true;
+  return !LOWER_BODY_MARKER.test([
+    candidate?.target,
+    ...(Array.isArray(candidate?.muscleGroups) ? candidate.muscleGroups : []),
+  ].filter(Boolean).join(' '));
+}
+
+function equipmentCompatible(candidate, availableEquipment) {
+  const available = (Array.isArray(availableEquipment) ? availableEquipment : [])
+    .map((item) => cleanText(item).toLowerCase())
+    .filter(Boolean);
+  if (available.some((item) => /^(?:all|full gym|commercial gym)$/.test(item))) return true;
+  const exerciseText = [
+    ...exerciseItems(candidate).map(exerciseName),
+    ...(Array.isArray(candidate?.warmup) ? candidate.warmup.map(cleanText) : []),
+  ].join(' ');
+  return EQUIPMENT_MARKERS.every(([equipment, marker]) => (
+    !marker.test(exerciseText)
+    || available.some((item) => item.includes(equipment) || equipment.includes(item))
+  ));
+}
+
+function selectDistinctRecommendation({
+  recommendation,
+  recommendations = null,
+  recentCompletedWorkouts = [],
+  todayRun = null,
+  availableEquipment = null,
+  now = new Date(),
+} = {}) {
+  const history = workoutsWithinRecoveryWindow(recentCompletedWorkouts, now);
+  if (!recommendation || !history.some((workout) => sameSubstantiveWorkout(recommendation, workout))) {
     return recommendation;
   }
 
-  const recentGroups = recentMuscleGroups(recentCompletedWorkouts);
-  const hasScheduledRun = Boolean(todayRun);
-  const ranked = ALTERNATIVES
-    .filter((candidate) => !hasScheduledRun || candidate.runCompatible)
-    .map((candidate, index) => ({
-      candidate,
-      index,
-      score: overlapsRecentMuscles(candidate, recentGroups) * 10
-        + (LOWER_BODY_MARKER.test(candidate.target) && hasScheduledRun ? 100 : 0),
-    }))
-    .sort((left, right) => left.score - right.score || left.index - right.index);
-
-  for (const { candidate } of ranked) {
-    if (distinctFromHistory(candidate, recentCompletedWorkouts)) return cloneRecommendation(candidate);
+  const personalizedCandidates = (Array.isArray(recommendations) ? recommendations : [])
+    .filter((candidate) => candidate && candidate !== recommendation);
+  for (const candidate of personalizedCandidates) {
+    if (
+      (!todayRun || runCompatible(candidate))
+      && equipmentCompatible(candidate, availableEquipment)
+      && distinctFromHistory(candidate, history)
+    ) return candidate;
   }
 
-  const base = cloneRecommendation(ranked[0]?.candidate || ALTERNATIVES[2]);
-  for (const name of NOVEL_ACCESSORIES) {
-    const next = cloneRecommendation(base);
-    next.main[next.main.length - 1] = movement(name, 'Trunk and posture', 'Move with control and keep a stable trunk.', 3, '8/side', '60s');
-    if (distinctFromHistory(next, recentCompletedWorkouts)) return next;
+  for (const fallback of SAFE_BODYWEIGHT_ALTERNATIVES) {
+    if (distinctFromHistory(fallback, history)) return cloneRecommendation(fallback);
   }
-  return base;
+  return cloneRecommendation(SAFE_BODYWEIGHT_ALTERNATIVES[0]);
 }
 
 module.exports = {
@@ -245,5 +245,6 @@ module.exports = {
   normalizeExerciseName,
   sameSubstantiveWorkout,
   selectDistinctRecommendation,
+  workoutsWithinRecoveryWindow,
   workoutFingerprint,
 };

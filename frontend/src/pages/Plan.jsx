@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { ChevronDown, ChevronUp } from 'lucide-react'
 import api from '../lib/api'
@@ -12,7 +12,7 @@ import ForgedDayView from '../components/calendar/ForgedDayView'
 import RaceEditSheet from '../components/calendar/RaceEditSheet'
 import {
   buildCalendarModel, calendarDateRange, dayWithRecordedRuns, goalWithRace, indexRecordedRuns, racePlanReview,
-  resolvePlanWeekSelection, todayISO,
+  deriveCurrentPlanWeekIndex, derivePlanWeekSyncTarget, resolvePlanWeekSelection, todayISO,
 } from '../lib/planCalendar'
 import { withActiveRunReturnTarget } from '../lib/activeRunControls'
 import { resolveReadiness } from '../lib/truthConsistency'
@@ -145,6 +145,7 @@ export default function Plan() {
   const [scheduleSaving, setScheduleSaving] = useState(false)
   const [scheduleError, setScheduleError] = useState('')
   const [scheduleNotice, setScheduleNotice] = useState('')
+  const weekSyncInFlight = useRef(null)
 
   const loadAll = async ({ includeAdaptation = true } = {}) => {
     setLoading(true)
@@ -257,6 +258,31 @@ export default function Plan() {
     ? resolvePlanWeekSelection(myPlan, myUserPlan, selectedWeekIndex)
     : 0
   const currentWeek = weekIndex + 1
+  const derivedCurrentWeek = myPlan
+    ? deriveCurrentPlanWeekIndex(myPlan, myUserPlan) + 1
+    : 1
+
+  useEffect(() => {
+    const syncWeek = derivePlanWeekSyncTarget(myPlan, myUserPlan)
+    if (!syncWeek || weekSyncInFlight.current === syncWeek) return
+    weekSyncInFlight.current = syncWeek
+    api.put('/plans/my/progress', { current_week: syncWeek })
+      .then((response) => {
+        const persistedWeek = Number(response.data?.current_week || syncWeek)
+        const completedSessionIds = response.data?.completedSessionIds
+        setMyUserPlan((current) => current ? {
+          ...current,
+          current_week: persistedWeek,
+          ...(Array.isArray(completedSessionIds) ? {
+            progress: { ...(current.progress || {}), completedSessionIds },
+          } : {}),
+        } : current)
+      })
+      .catch((err) => console.error('[Plan] current week sync failed:', err?.message || err))
+      .finally(() => {
+        if (weekSyncInFlight.current === syncWeek) weekSyncInFlight.current = null
+      })
+  }, [myPlan, myUserPlan])
   const recordedRunsByDate = useMemo(() => indexRecordedRuns(runs), [runs])
   const findRaceForGoal = (goal) => {
     if (!goal) return null
@@ -358,8 +384,8 @@ export default function Plan() {
     setUpdating(true)
     try {
       await api.put('/plans/my/progress', isCompleted
-        ? { unset_session_id: sessionId, current_week: currentWeek }
-        : { completed_session_id: sessionId, current_week: currentWeek })
+        ? { unset_session_id: sessionId, current_week: derivedCurrentWeek }
+        : { completed_session_id: sessionId, current_week: derivedCurrentWeek })
       await loadAll()
     } finally {
       setUpdating(false)

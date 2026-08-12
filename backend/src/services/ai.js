@@ -534,8 +534,8 @@ async function generateWorkoutRecommendation({ profile, recentRuns, recentWorkou
     const cached = getCached(cacheKey);
     if (cached) return cached;
 
-    const prompt = `Return JSON only with keys: workoutName,target,warmup(array),main(array of {name,sets,reps,rest,focus,cue}),recovery(array),explanation,restExplanation.
-Create a complete hybrid-athlete strength and speed session, not a summary of what the athlete should do.
+    const prompt = `Return JSON only with keys: workoutName,target,warmup(array),main(array of {name,sets,reps,rest,focus,cue}),recovery(array),explanation,restExplanation,alternatives(array of up to 2 objects with the same workout keys except alternatives).
+Create a complete hybrid-athlete strength and speed session, not a summary of what the athlete should do. Alternatives must be equally personalized, use different substantive exercise lineups, and obey every rule below.
 - main must contain 4-6 executable exercises with a specific name, numeric sets, reps, rest, short focus label, and one concise form cue.
 - Build strength, force production, running economy, and speed using an appropriate mix of compound strength, unilateral/posterior-chain work, power or plyometrics, calf/ankle work, and trunk stability.
 - If recent running or lifting shows lower-body fatigue, reduce impact and shift emphasis instead of forcing jumps or heavy leg work.
@@ -544,8 +544,8 @@ Create a complete hybrid-athlete strength and speed session, not a summary of wh
 - warmup must contain 3 specific movements. recovery must contain 2 specific actions.
 - explanation is a separate 1-2 sentence coach rationale based on the athlete's data. Do not place rationale inside main.
 - restExplanation briefly explains how to use the listed rest periods.
-Athlete: ${sanitize(profile?.name, 50) || 'athlete'}. Goal: ${sanitize(profile?.goal_type, 30) || 'fitness'}. Today's scheduled training: ${JSON.stringify(sanitizeObj(todayTraining || {}))}. Recent runs: ${JSON.stringify(sanitizeObj((recentRuns || []).slice(0,5)))}. Recent completed workouts with exercise content: ${JSON.stringify(sanitizeObj((recentWorkouts || []).slice(0,5)))}.`;
-    const msg = await getClient().messages.create({ model: 'frequent', max_tokens: 750, messages: [{ role: 'user', content: prompt }] });
+Athlete: ${sanitize(profile?.name, 50) || 'athlete'}. Goal: ${sanitize(profile?.goal_type, 30) || 'fitness'}. Injury context: ${sanitize(profile?.injury_limitations || profile?.injury_description || profile?.injury_notes, 200) || 'none reported'}. Available equipment: ${JSON.stringify(sanitizeObj(todayTraining?.availableEquipment || []))}. Today's scheduled training: ${JSON.stringify(sanitizeObj(todayTraining || {}))}. Recent runs: ${JSON.stringify(sanitizeObj((recentRuns || []).slice(0,5)))}. Recent completed workouts with exercise content: ${JSON.stringify(sanitizeObj((recentWorkouts || []).slice(0,5)))}.`;
+    const msg = await getClient().messages.create({ model: 'frequent', max_tokens: 1600, messages: [{ role: 'user', content: prompt }] });
     const text = msg.content?.[0]?.text || '{}';
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     const result = jsonMatch ? JSON.parse(jsonMatch[0]) : null;

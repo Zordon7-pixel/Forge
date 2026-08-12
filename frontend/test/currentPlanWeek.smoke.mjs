@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
   deriveCurrentPlanWeekIndex,
+  derivePlanWeekSyncTarget,
   resolvePlanWeekSelection,
 } from '../src/lib/planCalendar.js'
 
@@ -48,6 +52,40 @@ assert.equal(
   resolvePlanWeekSelection(plan, { started_at: '2026-08-03' }, null, now),
   2,
   'a reopened screen has no in-session selection and should return to the current week',
+)
+
+const staleProgress = { started_at: '2026-08-03', current_week: 1 }
+const manuallyBrowsedWeek = resolvePlanWeekSelection(plan, staleProgress, 0, now)
+assert.equal(manuallyBrowsedWeek, 0, 'manual navigation still controls only the visible week')
+assert.equal(
+  derivePlanWeekSyncTarget(plan, staleProgress, now),
+  3,
+  'persisted progress advances to the independently date-derived week, not the manually browsed week',
+)
+assert.notEqual(
+  derivePlanWeekSyncTarget(plan, staleProgress, now),
+  manuallyBrowsedWeek + 1,
+  'the manual previous/next cursor is never chosen as the persisted value',
+)
+assert.equal(
+  derivePlanWeekSyncTarget(plan, { ...staleProgress, current_week: 3 }, now),
+  null,
+  'already synchronized progress does not write again',
+)
+assert.equal(
+  derivePlanWeekSyncTarget(plan, { ...staleProgress, current_week: 4 }, now),
+  null,
+  'opening an earlier derived week never moves persisted progress backward',
+)
+
+const testDir = path.dirname(fileURLToPath(import.meta.url))
+const planPageSource = readFileSync(path.join(testDir, '../src/pages/Plan.jsx'), 'utf8')
+assert.match(planPageSource, /derivePlanWeekSyncTarget\(myPlan, myUserPlan\)/)
+assert.match(planPageSource, /current_week:\s*syncWeek/)
+assert.doesNotMatch(
+  planPageSource.match(/const goToWeek =[^}]+}/s)?.[0] || '',
+  /api\.put/,
+  'manual week navigation must remain an in-memory cursor',
 )
 
 console.log('current plan week smoke passed')
