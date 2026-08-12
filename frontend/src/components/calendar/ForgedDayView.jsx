@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Activity, Footprints, Dumbbell, Moon, Timer, Gauge, Route, Flame, Brain,
   Maximize2, Minimize2, Minus, Plus, ChevronLeft, ChevronRight, CheckCircle2, Circle,
+  Trash2,
 } from 'lucide-react'
 import WatchWorkoutSendButton from '../WatchWorkoutSendButton'
 import AiGuidanceNote from '../AiGuidanceNote'
@@ -234,12 +235,17 @@ export default function ForgedDayView({
   planContext = {},
   completedSet,
   onToggleComplete,
+  onRemoveSession,
   onStartRun,
   onStartLift,
   onStartUnplannedRun,
   onOpenRecordedRun,
   onBack,
   updating = false,
+  removingSessionId = null,
+  removalError = '',
+  removalNotice = '',
+  allowSessionRemoval = false,
   isScheduledToday = true,
   routePlanner = null,
 }) {
@@ -298,6 +304,22 @@ export default function ForgedDayView({
   const primarySessionKind = liftFirst
     ? (!liftDone ? 'lift' : !runDone ? 'run' : null)
     : (!runDone && runSession ? 'run' : !liftDone && liftSession ? 'lift' : null)
+
+  const renderRemoveButton = (session, done) => {
+    if (!allowSessionRemoval || done || typeof onRemoveSession !== 'function') return null
+    const removing = String(removingSessionId || '') === String(session.id)
+    return (
+      <button
+        type="button"
+        onClick={() => onRemoveSession(session)}
+        disabled={removing || updating}
+        aria-label={`Remove ${session.title || 'workout'} from this plan`}
+        style={{ flex: '0 0 auto', minHeight: 44, border: '1px solid rgba(185,28,28,0.28)', borderRadius: 8, padding: '10px 12px', background: 'rgba(185,28,28,0.07)', color: '#B91C1C', display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: px(12), fontWeight: 850, cursor: removing ? 'wait' : 'pointer' }}
+      >
+        <Trash2 size={15} /> {removing ? 'Removing…' : 'Remove workout'}
+      </button>
+    )
+  }
 
   const renderRecordedRuns = () => {
     if (!recordedRuns.length) return null
@@ -386,6 +408,7 @@ export default function ForgedDayView({
         <button type="button" onClick={() => onToggleComplete?.(hyroxSession.id)} disabled={updating} style={{ width: '100%', minHeight: 48, marginTop: 12, border: '1px solid rgba(60,55,45,0.2)', borderRadius: 8, padding: '12px 14px', background: 'transparent', fontSize: px(13), fontWeight: 850 }}>
           {done ? <CheckCircle2 size={16} color="#15803D" style={{ display: 'inline', marginRight: 6, verticalAlign: -3 }} /> : <Circle size={16} style={{ display: 'inline', marginRight: 6, verticalAlign: -3 }} />}{done ? 'HYROX session done' : 'Mark HYROX session done'}
         </button>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>{renderRemoveButton(hyroxSession, done)}</div>
       </PaperSection>
     )
   }
@@ -476,6 +499,7 @@ export default function ForgedDayView({
             style={{ flex: '0 0 auto', border: '1px solid rgba(60,55,45,0.2)', borderRadius: 8, padding: '12px 14px', background: 'transparent', display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: px(13), cursor: 'pointer' }}>
             {done ? <CheckCircle2 size={16} color="#15803D" /> : <Circle size={16} />} {done ? 'Done' : 'Mark done'}
           </button>
+          {renderRemoveButton(runSession, done)}
         </div>
         {routePlanner}
         <WatchWorkoutSendButton workout={watchWorkout} className="mt-2" />
@@ -551,6 +575,7 @@ export default function ForgedDayView({
             style={{ flex: '0 0 auto', border: '1px solid rgba(60,55,45,0.2)', borderRadius: 8, padding: '12px 14px', background: 'transparent', display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: px(13), cursor: 'pointer' }}>
             {done ? <CheckCircle2 size={16} color="#15803D" /> : <Circle size={16} />} {done ? 'Done' : 'Mark done'}
           </button>
+          {renderRemoveButton(liftSession, done)}
         </div>
         <WatchWorkoutSendButton workout={watchWorkout} className="mt-2" />
       </PaperSection>
@@ -598,6 +623,9 @@ export default function ForgedDayView({
           <button type="button" onClick={() => setExpanded((v) => !v)} aria-label={expanded ? 'Close full screen' : 'Full screen'} title={expanded ? 'Close full screen' : 'Full screen'}>{expanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
         </div>
       </header>
+
+      {removalError && <p role="alert" style={{ fontSize: px(12), margin: '12px 0 0', padding: '9px 10px', borderRadius: 8, background: 'rgba(185,28,28,0.08)', color: '#B91C1C' }}>{removalError}</p>}
+      {removalNotice && <p role="status" aria-live="polite" style={{ fontSize: px(12), margin: '12px 0 0', padding: '9px 10px', borderRadius: 8, background: 'rgba(22,163,74,0.1)', color: '#166534' }}>{removalNotice}</p>}
 
       {!isScheduledToday && !isRest && (
         <p role="status" style={{ fontSize: px(12), margin: '12px 0 0', padding: '8px 10px', borderRadius: 8, background: 'rgba(60,55,45,0.06)', color: 'var(--ink-soft, #5A554B)' }}>

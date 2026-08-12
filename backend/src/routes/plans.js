@@ -599,8 +599,9 @@ function plannedSessionsBetween(plan, startISO, endISO) {
 
 async function buildCompletionSummaryForAdaptation(userId, plan, active, planningDateISO) {
   const since = adaptationEngine.addDays(planningDateISO, -7);
-  const planned = plannedSessionsBetween(plan, since, adaptationEngine.addDays(planningDateISO, -1));
   const progress = parseJsonValue(active?.row?.progress_json, {});
+  const visiblePlan = planWithoutRemovedSessions(plan, progress);
+  const planned = plannedSessionsBetween(visiblePlan, since, adaptationEngine.addDays(planningDateISO, -1));
   const completedIds = new Set((Array.isArray(progress?.completedSessionIds) ? progress.completedSessionIds : []).map(String));
   const reconciliations = progress?.hybridSessionReconciliations && typeof progress.hybridSessionReconciliations === 'object'
     ? progress.hybridSessionReconciliations
@@ -2020,7 +2021,7 @@ async function deleteOwnedRaceForCandidate(tx, userId, raceId) {
   return true;
 }
 
-async function applyPlanCandidate(userId, candidateId, body = {}) {
+async function applyPlanCandidate(userId, candidateId, body = {}, constraints = {}) {
   const choice = String(body.choice || '').trim();
   const suppliedHash = String(body.candidate_hash || '').trim();
   const acceptedDate = normalizePlanningDate(body.planning_date_local, { defaultToToday: true });
@@ -2038,6 +2039,17 @@ async function applyPlanCandidate(userId, candidateId, body = {}) {
       [candidateId, userId]
     );
     if (!row) return planningInputUnchanged({ status: 404, error: 'Candidate not found', code: 'CANDIDATE_NOT_FOUND' });
+    let constrainedRequest = null;
+    if (constraints.requiredOperation || constraints.requiredRaceId) {
+      const snapshot = parseCandidateJson(row.planning_snapshot_json, {});
+      constrainedRequest = normalizeCandidateRequest(snapshot.request || {});
+      if (constraints.requiredOperation && constrainedRequest.operation !== constraints.requiredOperation) {
+        return planningInputUnchanged({ status: 409, error: 'Candidate does not match this action.', code: 'CANDIDATE_OPERATION_MISMATCH' });
+      }
+      if (constraints.requiredRaceId && String(constrainedRequest.remove_race_id || '') !== String(constraints.requiredRaceId)) {
+        return planningInputUnchanged({ status: 409, error: 'Candidate does not match this race.', code: 'CANDIDATE_RACE_MISMATCH' });
+      }
+    }
     if (row.status === 'applied') {
       if (row.applied_choice !== choice || row.candidate_hash !== suppliedHash) {
         return planningInputUnchanged({ status: 409, error: 'Candidate was already applied with different inputs.', code: 'CANDIDATE_REPLAY_CONFLICT' });
@@ -2078,7 +2090,7 @@ async function applyPlanCandidate(userId, candidateId, body = {}) {
         code: 'CANDIDATE_FEASIBILITY_MISSING',
       });
     }
-    const request = normalizeCandidateRequest(storedSnapshot.request || {});
+    const request = constrainedRequest || normalizeCandidateRequest(storedSnapshot.request || {});
     const clock = {
       planningDateLocal: row.planning_date_local,
       timezoneOffsetMinutes: Number(row.timezone_offset_minutes),
@@ -2520,6 +2532,41 @@ function publicProposal(proposal) {
 
 function completedSessionIdsFromProgress(progress) {
   return Array.isArray(progress?.completedSessionIds) ? progress.completedSessionIds.map(String) : [];
+}
+
+function removedSessionIdsFromProgress(progress) {
+  return Array.isArray(progress?.removedSessionIds) ? progress.removedSessionIds.map(String) : [];
+}
+
+function planWithoutRemovedSessions(plan, progress) {
+  return planSchema.withoutRemovedSessions(plan, removedSessionIdsFromProgress(progress));
+}
+
+function findPlanSession(plan, activeRow, sessionId, planningDateISO) {
+  const wanted = String(sessionId || '');
+  const weeks = Array.isArray(plan?.weeks) ? plan.weeks : [];
+  for (let weekIndex = 0; weekIndex < weeks.length; weekIndex += 1) {
+    const fallback = hybridReconciliation.addDays(planningDateISO, weekIndex * 7);
+    const weekStart = activeWeekStart(plan, activeRow, weekIndex, fallback);
+    const week = withCanonicalWeekDates(weeks[weekIndex], weekStart);
+    const entries = planSchema.getDayEntries(week);
+    for (let dayIndex = 0; dayIndex < entries.length; dayIndex += 1) {
+      const day = entries[dayIndex];
+      const storedSessions = Array.isArray(day?.sessions) ? day.sessions : [day];
+      for (let sessionIndex = 0; sessionIndex < storedSessions.length; sessionIndex += 1) {
+        const stored = storedSessions[sessionIndex];
+        if (planSchema.kindFromSession(stored) === 'rest') continue;
+        const id = planSchema.sessionIdentifier(day, stored, sessionIndex, dayIndex);
+        if (id !== wanted) continue;
+        return {
+          date: String(day?.date || '').slice(0, 10),
+          id,
+          kind: planSchema.kindFromSession(stored),
+        };
+      }
+    }
+  }
+  return null;
 }
 
 async function hybridCompletionEvidence(userId, startISO, endISO, timezone, db = null) {
@@ -3155,7 +3202,7 @@ router.get('/my', auth, async (req, res) => {
       console.error('[plans/my] invalid progress JSON:', err.message);
     }
     const servedPlan = await buildAdaptivePlanView(req.user.id, parsePlan(row) || { weeks: [] }, Number(row.current_week || 1));
-    const parsedPlan = withDurationEstimatePlanPayload(servedPlan);
+    const parsedPlan = withDurationEstimatePlanPayload(planWithoutRemovedSessions(servedPlan, progress));
     const anchorPayload = planAnchorPayload(parsedPlan);
     const lineageRows = row.lineage_id ? await dbAll(
       `SELECT up.id, up.plan_id, up.status, up.started_at, up.effective_from,
@@ -3413,6 +3460,71 @@ router.put('/my/progress', auth, async (req, res) => {
   }
 });
 
+router.delete('/my/sessions/:sessionId', auth, async (req, res) => {
+  try {
+    const planningDateISO = getPlanningDateFromRequest(req);
+    if (!planningDateISO) return res.status(400).json({ error: 'Use the current phone date.', code: 'INVALID_PLANNING_DATE' });
+    const sessionId = String(req.params.sessionId || '').trim();
+    if (!sessionId || sessionId.length > 128) {
+      return res.status(400).json({ error: 'Invalid plan session.', code: 'INVALID_PLAN_SESSION' });
+    }
+
+    const result = await withPlanningInputMutation(req.user.id, async (tx) => {
+      const active = await getAssignedPlanForMutation(req.user.id, tx, { planningDateLocal: planningDateISO });
+      if (!active) return planningInputUnchanged({ status: 404, error: 'No assigned plan.', code: 'PLAN_NOT_FOUND' });
+      const parsed = parsePlan(active.row);
+      if (!parsed) return planningInputUnchanged({ status: 409, error: 'Active plan could not be read.', code: 'PLAN_UNREADABLE' });
+      const session = findPlanSession(parsed, active.row, sessionId, planningDateISO);
+      if (!session) return planningInputUnchanged({ status: 404, error: 'Scheduled workout not found.', code: 'PLAN_SESSION_NOT_FOUND' });
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(session.date)) {
+        return planningInputUnchanged({ status: 409, error: 'This workout has no reliable scheduled date.', code: 'PLAN_SESSION_DATE_UNKNOWN' });
+      }
+      if (session.date < planningDateISO) {
+        return planningInputUnchanged({ status: 409, error: 'Past workouts stay in training history.', code: 'PLAN_SESSION_IN_PAST' });
+      }
+
+      const progress = parseJsonValue(active.row.progress_json, {});
+      const completed = new Set(completedSessionIdsFromProgress(progress));
+      if (completed.has(sessionId)) {
+        return planningInputUnchanged({ status: 409, error: 'Completed workouts stay in training history.', code: 'PLAN_SESSION_COMPLETED' });
+      }
+      const removed = new Set(removedSessionIdsFromProgress(progress));
+      if (removed.has(sessionId)) {
+        return planningInputUnchanged({
+          status: 200,
+          ok: true,
+          idempotent: true,
+          removedSessionIds: Array.from(removed),
+        });
+      }
+      removed.add(sessionId);
+      const nextProgress = { ...progress, removedSessionIds: Array.from(removed) };
+      const update = await tx.run(
+        'UPDATE user_plans SET progress_json=? WHERE id=? AND user_id=?',
+        [JSON.stringify(nextProgress), active.row.user_plan_id, req.user.id]
+      );
+      if (update.changes === 0) throw new Error('Plan session removal update failed');
+      return {
+        status: 200,
+        ok: true,
+        removed: { id: session.id, date: session.date, kind: session.kind },
+        removedSessionIds: Array.from(removed),
+      };
+    });
+
+    if (result.error) return res.status(result.status || 409).json({ error: result.error, code: result.code });
+    return res.status(result.status || 200).json({
+      ok: result.ok,
+      idempotent: Boolean(result.idempotent),
+      removed: result.removed || null,
+      removedSessionIds: result.removedSessionIds || [],
+    });
+  } catch (err) {
+    console.error('[plans/my/sessions/delete] failed:', err.message);
+    return res.status(500).json({ error: 'Could not remove this scheduled workout.', code: 'PLAN_SESSION_REMOVE_FAILED' });
+  }
+});
+
 router.post('/today/bodyweight-alternative', auth, async (req, res) => {
   try {
     const body = req.body || {};
@@ -3430,7 +3542,8 @@ router.post('/today/bodyweight-alternative', auth, async (req, res) => {
 
     const active = await getActivePlanForUser(req.user.id, null, { planningDateLocal: dateISO });
     if (!active) return res.status(404).json({ error: 'Active plan not found' });
-    const parsed = parsePlan(active.row);
+    const progress = active.source === 'assigned' ? parseJsonValue(active.row.progress_json, {}) : {};
+    const parsed = planWithoutRemovedSessions(parsePlan(active.row), progress);
     if (!parsed) return res.status(409).json({ error: 'Active plan could not be read' });
 
     const weekdayShort = dailyExecution.weekdayShortForDate(dateISO);
@@ -3460,7 +3573,6 @@ router.post('/today/bodyweight-alternative', auth, async (req, res) => {
       return res.status(409).json({ error: 'The requested plan session is not a lift' });
     }
 
-    const progress = parseJsonValue(active.row.progress_json, {});
     const completedIds = new Set(completedSessionIdsFromProgress(progress).map(String));
     const storedStatus = String(
       storedSessions.find((stored, index) => (
@@ -3504,7 +3616,8 @@ router.get('/today', auth, async (req, res) => {
 
     const active = await getActivePlanForUser(req.user.id, null, { planningDateLocal: dateISO });
     if (!active) return res.json({ today: null, execution: { hasPlan: false, hasDay: false, date: dateISO } });
-    const parsed = withDurationEstimatePlanPayload(parsePlan(active.row));
+    const progress = active.source === 'assigned' ? parseJsonValue(active.row.progress_json, {}) : {};
+    const parsed = withDurationEstimatePlanPayload(planWithoutRemovedSessions(parsePlan(active.row), progress));
     const anchorPayload = planAnchorPayload(parsed);
 
     const override = await dbGet(
@@ -3527,19 +3640,8 @@ router.get('/today', auth, async (req, res) => {
       : null;
 
     // Completion state + calibrated HR profile for the canonical execution object.
-    const [progressRow, hrProfile] = await Promise.all([
-      Promise.resolve(active.source === 'assigned' ? active.row : null),
-      getHrProfile(req.user.id, dbGet),
-    ]);
-    let completedSessionIds = [];
-    if (progressRow?.progress_json) {
-      try {
-        const p = JSON.parse(progressRow.progress_json);
-        if (Array.isArray(p.completedSessionIds)) completedSessionIds = p.completedSessionIds;
-      } catch (err) {
-        console.error('[plans/today] invalid progress JSON:', err.message);
-      }
-    }
+    const hrProfile = await getHrProfile(req.user.id, dbGet);
+    const completedSessionIds = completedSessionIdsFromProgress(progress);
 
     const effortEntry = withPlanEffortDayPayload(selectedEntry, hrProfile);
     const effortToday = withPlanEffortDayPayload(legacyToday, hrProfile);
@@ -3581,7 +3683,8 @@ router.get('/current', auth, async (req, res) => {
       parsePlan(active.row) || { weeks: [] },
       Number(active.row.current_week || 1)
     );
-    const parsed = withDurationEstimatePlanPayload(servedPlan);
+    const progress = active.source === 'assigned' ? parseJsonValue(active.row.progress_json, {}) : {};
+    const parsed = withDurationEstimatePlanPayload(planWithoutRemovedSessions(servedPlan, progress));
     const anchorPayload = planAnchorPayload(parsed);
     res.json({
       plan: {
@@ -3616,7 +3719,8 @@ router.get('/compliance', auth, async (req, res) => {
     const active = await getActivePlanForUser(req.user.id, null, { planningDateLocal: planningDateISO });
     if (!active) return res.json({ week: weekStart, planned: 0, completed: 0, score: 0, missed: [], streak: { current: 0, best: 0 } });
 
-    const parsed = parsePlan(active.row) || { weeks: [] };
+    const progress = active.source === 'assigned' ? parseJsonValue(active.row.progress_json, {}) : {};
+    const parsed = planWithoutRemovedSessions(parsePlan(active.row) || { weeks: [] }, progress);
     const currentWeek = Number(active.row.current_week || 1);
     const weekIndex = Math.max(0, currentWeek - 1);
     const weekBucket = parsed?.weeks?.[weekIndex] || parsed?.weeks?.[0] || {};
@@ -3646,7 +3750,6 @@ router.get('/compliance', auth, async (req, res) => {
       dbAll('SELECT id, date FROM lifts WHERE user_id=? AND date>=? AND date<?', [req.user.id, weekStart, weekEnd])
     ]);
 
-    const progress = parseJsonValue(active.row.progress_json, {});
     const completedSessionIds = new Set(completedSessionIdsFromProgress(progress));
     const runEvidenceBySession = new Map(allocatePlanSessionRunEvidence(
       plannedSessions.filter((session) => session.type === 'run'),

@@ -504,6 +504,33 @@ router.post('/:id/removal-preview', auth, async (req, res) => {
   }
 });
 
+// Race ownership actions must not be blocked by the premium gate protecting
+// generic plan generation. This endpoint can only apply a stored candidate
+// whose immutable snapshot removes this exact owned race.
+router.post('/:id/removal-apply', auth, async (req, res) => {
+  try {
+    const candidateId = String(req.body?.candidate_id || '').trim();
+    if (!candidateId || candidateId.length > 128) {
+      return res.status(400).json({ error: 'Removal candidate is required.', code: 'INVALID_CANDIDATE_ID' });
+    }
+    const result = await plansRouter._test.applyPlanCandidate(
+      req.user.id,
+      candidateId,
+      plansRouter._test.withRequestPlanningClock(req, req.body || {}),
+      { requiredOperation: 'remove_race', requiredRaceId: String(req.params.id || '') },
+    );
+    if (result.error) return res.status(result.status || 409).json({ error: result.error, code: result.code });
+    return res.status(result.status || 200).json({ ...result.payload, replay: Boolean(result.replay) });
+  } catch (err) {
+    const status = Number(err?.status) || 500;
+    console.error('[races/removal-apply] failed:', err.message);
+    return res.status(status).json({
+      error: status >= 500 ? 'Unable to apply race removal.' : err.message,
+      code: status >= 500 ? 'RACE_REMOVAL_APPLY_FAILED' : (err.code || 'RACE_REMOVAL_APPLY_FAILED'),
+    });
+  }
+});
+
 router.patch('/:id', auth, async (req, res) => {
   try {
     const body = req.body || {};

@@ -574,4 +574,32 @@ check('p5: calendar adapter preserves engine explanations and complete prescript
   assert.deepEqual(session.prescription.steps, ['4 x 5 min threshold', '2 min easy between reps'])
 })
 
+check('assignment-level removal hides only the selected upcoming workout', () => {
+  const plan = {
+    plan_data: {
+      schemaVersion: 2,
+      planMode: 'hybrid_maintain',
+      weeks: [{
+        week: 1,
+        startDate: '2026-07-13',
+        days: [{
+          date: '2026-07-13',
+          day: 'Mon',
+          sessions: [
+            { id: 'run-kept', kind: 'run', title: 'Easy run' },
+            { id: 'lift-removed', kind: 'lift', title: 'Strength build' },
+          ],
+        }],
+      }],
+    },
+  }
+  const model = buildCalendarModel(plan, {
+    started_at: '2026-07-13',
+    progress: { removedSessionIds: ['lift-removed'] },
+  }, { now: WEEK_START })
+  const monday = model.getWeek(0).days[0]
+  assert.deepEqual(monday.sessions.map((session) => session.id), ['run-kept'])
+  assert.equal(monday.isRest, false)
+})
+
 console.log(`\nplanCalendar smoke: ${passed} checks passed`)

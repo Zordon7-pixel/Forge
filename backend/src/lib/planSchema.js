@@ -194,6 +194,52 @@ function daySessions(dayEntry) {
   return [normalizeSession(Object.assign({}, d, { kind }), existingId)];
 }
 
+// Apply assignment-level session removals without mutating the immutable plan
+// artifact.  Session ids are resolved against the original day before any
+// filtering so removing one sibling never changes another sibling's fallback
+// identity.
+function withoutRemovedSessions(plan, removedSessionIds = []) {
+  const source = plan && typeof plan === 'object' ? plan : {};
+  const removed = new Set((Array.isArray(removedSessionIds) ? removedSessionIds : [])
+    .map(String)
+    .filter(Boolean));
+  if (!removed.size || !Array.isArray(source.weeks)) return source;
+
+  let changed = false;
+  const weeks = source.weeks.map((week) => {
+    const entries = getDayEntries(week);
+    let weekChanged = false;
+    const nextEntries = entries.map((entry, dayIndex) => {
+      if (!entry || typeof entry !== 'object') return entry;
+      if (Array.isArray(entry.sessions)) {
+        const sessions = entry.sessions.filter((session, sessionIndex) => (
+          !removed.has(sessionIdentifier(entry, session, sessionIndex, dayIndex))
+        ));
+        if (sessions.length === entry.sessions.length) return entry;
+        weekChanged = true;
+        return { ...entry, sessions };
+      }
+
+      if (kindFromLegacy(entry) === 'rest') return entry;
+      const sessionId = sessionIdentifier(entry, entry, 0, dayIndex);
+      if (!removed.has(sessionId)) return entry;
+      weekChanged = true;
+      return {
+        ...entry,
+        sessions: [],
+        rest: true,
+        status: 'removed',
+        type: 'rest',
+        workout_type: 'rest',
+      };
+    });
+    if (!weekChanged) return week;
+    changed = true;
+    return setDayEntries(week, nextEntries);
+  });
+  return changed ? { ...source, weeks } : source;
+}
+
 function isRestEntry(dayEntry) {
   const d = dayEntry || {};
   if (Array.isArray(d.sessions)) return daySessions(d).length === 0;
@@ -532,6 +578,7 @@ module.exports = {
   kindFromSession,
   isRestEntry,
   daySessions,
+  withoutRemovedSessions,
   normalizeSession,
   sessionIdentifier,
   flattenDayForConsumer,

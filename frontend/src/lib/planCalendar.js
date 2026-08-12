@@ -620,6 +620,9 @@ function isSchemaV2Entry(entry) {
 // never emit lift sessions or lift placeholders.
 export function buildWeekDays(weekData, weekStartDate, options = {}) {
   const runOnly = options.runOnly === true
+  const removedSessionIds = options.removedSessionIds instanceof Set
+    ? options.removedSessionIds
+    : new Set((options.removedSessionIds || []).map(String))
   const entries = weekEntries(weekData)
   const byWeekday = new Map()
 
@@ -672,6 +675,9 @@ export function buildWeekDays(weekData, weekStartDate, options = {}) {
     })
 
     if (runOnly) sessions = sessions.filter((session) => session.kind === 'run')
+    if (removedSessionIds.size) {
+      sessions = sessions.filter((session) => !removedSessionIds.has(String(session.id)))
+    }
 
     const isRest = sessions.length === 0
     days.push({
@@ -756,6 +762,7 @@ export function buildCalendarModel(plan, userPlan, options = {}) {
   const runOnly = mode === 'run_only'
   const weeks = getWeeks(plan)
   const weekCount = Number(plan?.weeks || weeks.length || 0)
+  const removedSessionIds = new Set((userPlan?.progress?.removedSessionIds || []).map(String))
 
   const weekModels = weeks.map((weekData, weekIndex) => {
     const startDate = deriveWeekStart(plan, userPlan, weekIndex, now)
@@ -765,7 +772,7 @@ export function buildCalendarModel(plan, userPlan, options = {}) {
       phase: weekData?.phase || null,
       startDate,
       startISO: toISODate(startDate),
-      days: buildWeekDays(weekData, startDate, { runOnly }),
+      days: buildWeekDays(weekData, startDate, { runOnly, removedSessionIds }),
       purpose: firstDefined(weekData?.purpose, weekData?.weekPurpose, weekData?.week_purpose),
       keyQualitySession: firstDefined(weekData?.keyQualitySession, weekData?.key_quality_session),
       longRunTarget: firstDefined(weekData?.longRunTarget, weekData?.long_run_target),

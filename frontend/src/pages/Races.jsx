@@ -7,6 +7,7 @@ import api from '../lib/api'
 import { phonePlanningClock, previewAndApplyPlan } from '../lib/planCandidates'
 import { isPlanCandidateReviewCancelled } from '../lib/planCandidateReview'
 import { RACE_DISTANCE_OPTIONS, STANDARD_RACE_DISTANCES } from '../lib/raceDistances'
+import { removeOwnedRace } from '../lib/selfServiceRemoval'
 
 function daysTo(date) {
   const ms = new Date(`${date}T12:00:00`).getTime() - Date.now()
@@ -302,23 +303,7 @@ export default function Races() {
     setRemovingRaceId(race.id)
     setMessage('')
     try {
-      const { data } = await api.post(
-        `/races/${encodeURIComponent(race.id)}/removal-preview`,
-        phonePlanningClock(),
-      )
-      if (data.requires_apply) {
-        const candidateId = String(data.candidate_id || '')
-        const candidateHash = String(data.candidate_hash || '')
-        if (!candidateId || !candidateHash) throw new Error('The safe replacement plan is missing its apply token.')
-        const clock = phonePlanningClock()
-        await api.post(`/plans/candidates/${encodeURIComponent(candidateId)}/apply`, {
-          candidate_hash: candidateHash,
-          choice: 'train_for_target',
-          ...clock,
-        })
-      } else {
-        await api.delete(`/races/${encodeURIComponent(race.id)}`)
-      }
+      await removeOwnedRace({ api, raceId: race.id, planningClock: phonePlanningClock() })
       const successMessage = `${race.race_name} was removed. Recorded runs, lifts, health data, check-ins, and training history were preserved.`
       setRaces((current) => current.filter((item) => String(item.id) !== String(race.id)))
       try {

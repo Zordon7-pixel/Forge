@@ -17,6 +17,7 @@ import {
 import { withActiveRunReturnTarget } from '../lib/activeRunControls'
 import { resolveReadiness } from '../lib/truthConsistency'
 import { deriveRacePlanReconciliation } from '../lib/travelTraining'
+import { removeScheduledWorkout } from '../lib/selfServiceRemoval'
 import TravelTrainingPrompt from '../components/TravelTrainingPrompt'
 import {
   buildScheduleRebuildRequest,
@@ -145,6 +146,9 @@ export default function Plan() {
   const [scheduleSaving, setScheduleSaving] = useState(false)
   const [scheduleError, setScheduleError] = useState('')
   const [scheduleNotice, setScheduleNotice] = useState('')
+  const [removingSessionId, setRemovingSessionId] = useState(null)
+  const [sessionRemovalError, setSessionRemovalError] = useState('')
+  const [sessionRemovalNotice, setSessionRemovalNotice] = useState('')
   const weekSyncInFlight = useRef(null)
   const currentPlanCalendarRef = useRef(null)
 
@@ -398,6 +402,29 @@ export default function Plan() {
       await loadAll()
     } finally {
       setUpdating(false)
+    }
+  }
+
+  const removePlanSession = async (session) => {
+    if (!session?.id || removingSessionId) return
+    const label = session.title || 'this workout'
+    if (!window.confirm(`Remove ${label} from this training plan? Recorded workouts and health history will stay intact.`)) return
+    setRemovingSessionId(String(session.id))
+    setSessionRemovalError('')
+    setSessionRemovalNotice('')
+    try {
+      const data = await removeScheduledWorkout({ api, sessionId: session.id })
+      const removedSessionIds = Array.isArray(data?.removedSessionIds) ? data.removedSessionIds.map(String) : []
+      setMyUserPlan((current) => current ? {
+        ...current,
+        progress: { ...(current.progress || {}), removedSessionIds },
+      } : current)
+      setSessionRemovalNotice(`${label} was removed from the plan. Recorded training and health history were preserved.`)
+    } catch (err) {
+      console.error('[Plan] scheduled workout removal failed:', err?.message || err)
+      setSessionRemovalError(err?.response?.data?.error || `Could not remove ${label}. The plan is unchanged.`)
+    } finally {
+      setRemovingSessionId(null)
     }
   }
 
@@ -859,12 +886,17 @@ export default function Plan() {
               }}
               completedSet={completedSet}
               onToggleComplete={toggleSession}
+              onRemoveSession={removePlanSession}
               onStartRun={startRunSession}
               onStartLift={startLiftSession}
               onStartUnplannedRun={startUnplannedRun}
               onOpenRecordedRun={(activity) => navigate(`/history?runId=${encodeURIComponent(activity.id)}`)}
               onBack={() => setSelectedDayISO(null)}
               updating={updating}
+              removingSessionId={removingSessionId}
+              removalError={sessionRemovalError}
+              removalNotice={sessionRemovalNotice}
+              allowSessionRemoval={selectedDay.dateISO >= today}
               isScheduledToday={selectedDay.dateISO === today}
               routePlanner={routePlannerStatus.available && routePlannerWorkout?.distanceMiles > 0 ? (
                 <Suspense fallback={<p style={{ marginTop: 10, fontSize: 12, color: 'var(--ink-soft, #5A554B)' }}>Loading route planner...</p>}>
