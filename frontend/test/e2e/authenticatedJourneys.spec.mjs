@@ -54,7 +54,8 @@ const plannedLift = {
   warmup: ['Bodyweight squat x 10'],
   main: [
     { name: 'Low Box Jump', sets: 3, reps: '5', rest: '90 sec', cue: 'Land softly with control.' },
-    { name: 'Goblet Squat', sets: 3, reps: '8', rest: '90 sec', cue: 'Brace before each rep.' },
+    { name: 'Single-Arm Offset Goblet Squat With Front-Foot Elevation', sets: 3, reps: '8 controlled repetitions on each side', rest: '90 sec between every working set', cue: 'Brace before each rep and keep the full foot planted throughout the complete controlled range.' },
+    { name: 'Romanian Deadlift', sets: 3, reps: '8', rest: '2 min', load: 'Choose a conservative working load that preserves a close bar path and a controlled hinge for every repetition.', cue: 'Stale generic hinge cue.' },
   ],
   completed: false,
 }
@@ -241,9 +242,10 @@ test('scheduled lift logs one set, opens the large rest timer, and completes the
   await expect.poll(() => page.locator('body').evaluate((body) => body.style.overflow)).toBe('')
 
   await guideButtons.nth(1).click()
-  const fallbackGuide = page.getByRole('dialog', { name: 'Goblet Squat' })
+  const fallbackGuide = page.getByRole('dialog', { name: 'Single-Arm Offset Goblet Squat With Front-Foot Elevation' })
   await expect(fallbackGuide.getByText('Visual guide pending review')).toBeVisible()
   await expect(fallbackGuide.getByText('No substitute image is shown.')).toBeVisible()
+  await expect.poll(() => fallbackGuide.evaluate((dialog) => dialog.scrollWidth <= dialog.clientWidth)).toBe(true)
   await page.locator('[data-exercise-guide-dialog="true"]').click({ position: { x: 4, y: 4 } })
   await expect(fallbackGuide).toBeHidden()
   await expect(guideButtons.nth(1)).toBeFocused()
@@ -252,6 +254,36 @@ test('scheduled lift logs one set, opens the large rest timer, and completes the
   await expect(fallbackGuide).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(fallbackGuide).toBeHidden()
+
+  const originalViewport = page.viewportSize()
+  await page.setViewportSize({ width: 320, height: 360 })
+  await page.locator('body').evaluate((body) => {
+    body.style.overflow = 'clip'
+    body.style.overscrollBehavior = 'contain'
+  })
+  await guideButtons.nth(2).click()
+  const vettedGuide = page.getByRole('dialog', { name: 'Romanian Deadlift' })
+  const vettedClose = vettedGuide.getByRole('button', { name: 'Close exercise guide' })
+  await expect(vettedClose).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(vettedClose).toBeFocused()
+  await page.keyboard.press('Shift+Tab')
+  await expect(vettedClose).toBeFocused()
+  await expect(vettedGuide.locator('img[src="/exercises/romanian-deadlift.webp"]')).toBeVisible()
+  await expect(vettedGuide.getByText('Keep a soft knee bend, push the hips back, and keep the bar close without rounding your back.')).toBeVisible()
+  await expect(vettedGuide.getByText('Stale generic hinge cue.')).toHaveCount(0)
+  await expect.poll(() => vettedGuide.evaluate((dialog) => {
+    const styles = getComputedStyle(dialog)
+    return styles.overflowY === 'auto' && dialog.scrollHeight > dialog.clientHeight && dialog.scrollWidth <= dialog.clientWidth
+  })).toBe(true)
+  await vettedClose.click()
+  await expect(guideButtons.nth(2)).toBeFocused()
+  await expect.poll(() => page.locator('body').evaluate((body) => `${body.style.overflow}|${body.style.overscrollBehavior}`)).toBe('clip|contain')
+  await page.locator('body').evaluate((body) => {
+    body.style.overflow = ''
+    body.style.overscrollBehavior = ''
+  })
+  if (originalViewport) await page.setViewportSize(originalViewport)
 
   await page.getByRole('button', { name: 'Start Workout', exact: true }).click()
   await expect(page).toHaveURL(/\/workout\/active\/journey-workout$/)

@@ -47,7 +47,24 @@ for (const exerciseName of SCREENSHOT_PROVEN_GUIDE_CASES) {
 check(!isVettedExerciseAsset('Trap Bar Deadlift', '/exercises/deadlift.png'), 'Trap Bar Deadlift rejects the conventional deadlift asset')
 check(!isVettedExerciseAsset('Rear-Foot-Elevated Split Squat', '/exercises/squat.png'), 'RFESS rejects the bilateral squat asset')
 check(isVettedExerciseAsset('Dumbbell Bulgarian Split Squat', '/exercises/rear-foot-elevated-split-squat.webp'), 'equipment-prefixed RFESS aliases resolve to the exact split-squat guide')
+check(isVettedExerciseAsset('Barbell RDL', '/exercises/romanian-deadlift.webp'), 'the catalog barbell-RDL alias resolves to the exact barbell hinge guide')
+check(isVettedExerciseAsset('Dumbbell Single-Leg RDL', '/exercises/single-leg-romanian-deadlift.webp'), 'the abbreviated unilateral alias retains its exact implement and movement class')
+check(isVettedExerciseAsset('Dumbbell RFESS', '/exercises/rear-foot-elevated-split-squat.webp'), 'the abbreviated RFESS alias retains its exact implement and elevation')
 check(!isVettedExerciseAsset('Single-Leg Romanian Deadlift', '/exercises/deadlift.png'), 'single-leg RDL rejects the bilateral conventional deadlift asset')
+for (const fallbackOnlyName of [
+  'Dumbbell Romanian Deadlift',
+  'Kettlebell Romanian Deadlift',
+  'Sumo Deadlift',
+  'Deficit Trap Bar Deadlift',
+  'Barbell Rear-Foot Elevated Split Squat',
+  'Front-Foot-Elevated Split Squat',
+  'Close-Grip Bench Press',
+  'Reverse-Grip Lat Pulldown',
+  'Seated Dumbbell Shoulder Press',
+  'Single-Arm Dumbbell Shoulder Press',
+]) {
+  check(getVettedExerciseGuide(fallbackOnlyName) === null, `${fallbackOnlyName} remains on truthful written fallback until its exact mechanics are vetted`)
+}
 const seededExerciseNames = [...exerciseSeed.matchAll(/\{ name: '([^']+)'/g)].map((match) => match[1])
 check(seededExerciseNames.length >= 35, 'the full seeded exercise catalog is included in guide coverage')
 check(!exerciseSeed.includes("instructions: ''"), 'every seeded exercise has a written fallback cue')

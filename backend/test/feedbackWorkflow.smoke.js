@@ -60,8 +60,19 @@ assert.equal(images.hasLocalFormImage('Conventional Deadlift'), true);
 assert.equal(images.hasLocalFormImage('Dumbbell Shoulder Press'), true);
 assert.equal(images.hasLocalFormImage('Bench Press'), true, 'unmodified Bench Press is an explicit standard-barbell alias');
 assert.equal(images.hasLocalFormImage('Ankle Circle'), true, 'frontend and backend agree on the ankle-circle alias');
+assert.equal(images.hasLocalFormImage('Romanian Deadlift'), true, 'screenshot-proven Romanian Deadlift media is not re-queued');
+assert.equal(images.hasLocalFormImage('Barbell RDL'), true, 'the catalog barbell-RDL alias is recognized without broadening to other implements');
+assert.equal(images.hasLocalFormImage('Single-Leg Romanian Deadlift'), true, 'screenshot-proven unilateral RDL media is not re-queued');
+assert.equal(images.hasLocalFormImage('Dumbbell Single-Leg RDL'), true, 'the abbreviated unilateral alias preserves its exact implement');
+assert.equal(images.hasLocalFormImage('Dumbbell Bulgarian Split Squat'), true, 'screenshot-proven rear-foot-elevated split-squat media is not re-queued');
+assert.equal(images.hasLocalFormImage('Dumbbell RFESS'), true, 'the abbreviated RFESS alias preserves its exact elevation and implement');
+assert.equal(images.hasLocalFormImage('Trap Bar Deadlift'), true, 'screenshot-proven trap-bar media is not re-queued');
 assert.equal(images.hasLocalFormImage('Leg Press'), false, 'Leg Press must not reuse a squat image');
-assert.equal(images.hasLocalFormImage('Romanian Deadlift'), false, 'Romanian Deadlift must not reuse a conventional deadlift image');
+assert.equal(images.hasLocalFormImage('Dumbbell Romanian Deadlift'), false, 'a dumbbell RDL must not inherit the barbell RDL image');
+assert.equal(images.hasLocalFormImage('Kettlebell Romanian Deadlift'), false, 'a kettlebell RDL must not inherit the barbell RDL image');
+assert.equal(images.hasLocalFormImage('Sumo Deadlift'), false, 'stance variants must not reuse a conventional or trap-bar deadlift image');
+assert.equal(images.hasLocalFormImage('Deficit Trap Bar Deadlift'), false, 'elevation variants must not reuse the standard trap-bar image');
+assert.equal(images.hasLocalFormImage('Barbell Rear-Foot Elevated Split Squat'), false, 'an unproven implement variant must not reuse the dumbbell/bodyweight RFESS image');
 assert.equal(images.hasLocalFormImage('One-arm Dumbbell Row'), false, 'Dumbbell rows must not reuse a barbell-row image');
 assert.equal(images.hasLocalFormImage('Hammer Curl'), false, 'Hammer curls must not reuse a barbell-curl image');
 assert.equal(images.hasLocalFormImage('Skull Crusher'), false, 'Skull crushers must not reuse a pushdown image');
@@ -79,8 +90,11 @@ assert.equal(images.hasLocalFormImage('Incline Barbell Bench Press'), false, 'in
 assert.equal(images.hasLocalFormImage('Paused Barbell Bench Press'), false, 'paused variants must not reuse the standard bench image');
 assert.equal(images.hasLocalFormImage('Walking Lunges'), true, 'the exact walking-lunge movement keeps its vetted image');
 assert.equal(images.hasLocalFormImage('Pallof Press'), true, 'the exact standard Pallof Press keeps its vetted image');
-assert.equal(images.isLocalFormAsset('/exercises/barbell-row.png'), true, 'repository exercise assets are accepted as vetted');
-assert.equal(images.isLocalFormAsset('https://example.com/muscle-diagram.png'), false, 'external catalog diagrams are not accepted as vetted form images');
+assert.equal(images.isVettedLocalFormAsset('Romanian Deadlift', '/exercises/romanian-deadlift.webp'), true, 'the exact screenshot-proven name/asset pair is accepted');
+assert.equal(images.isVettedLocalFormAsset('Romanian Deadlift', '/exercises/deadlift.png'), false, 'a conventional deadlift asset cannot satisfy an RDL request');
+assert.equal(images.isVettedLocalFormAsset('Trap Bar Deadlift', '/exercises/romanian-deadlift.webp'), false, 'a different vetted local asset cannot satisfy a trap-bar request');
+assert.equal(images.isVettedLocalFormAsset('Goblet Squat', '/exercises/squat.png'), false, 'a plausible local path is not vetted without an exact name/asset policy pair');
+assert.equal(images.isVettedLocalFormAsset('Romanian Deadlift', 'https://example.com/romanian-deadlift.webp'), false, 'external catalog diagrams are never accepted as vetted form images');
 assert.equal(images.exerciseNameFromItem({ exercise: 'Goblet Squat' }), 'Goblet Squat', 'plan exercise field is recognized by the review queue');
 
 const newFormAssets = [

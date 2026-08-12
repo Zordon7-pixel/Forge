@@ -1,7 +1,27 @@
 const { dbGet, dbRun } = require('../db');
 const { v4: uuidv4 } = require('uuid');
 
+const SCREENSHOT_PROVEN_FORM_GUIDES = [
+  {
+    match: /^(?:barbell )?(?:romanian deadlift|rdl)$/,
+    src: '/exercises/romanian-deadlift.webp',
+  },
+  {
+    match: /^(?:dumbbell )?single[- ]leg (?:romanian deadlift|rdl)$/,
+    src: '/exercises/single-leg-romanian-deadlift.webp',
+  },
+  {
+    match: /^(?:dumbbell )?(?:(?:rear[- ]foot[- ]elevated|bulgarian) split squat|rfess)$/,
+    src: '/exercises/rear-foot-elevated-split-squat.webp',
+  },
+  {
+    match: /^(?:hex|trap)[- ]bar deadlift$/,
+    src: '/exercises/trap-bar-deadlift.webp',
+  },
+];
+
 const LOCAL_FORM_IMAGE_MATCHERS = [
+  ...SCREENSHOT_PROVEN_FORM_GUIDES.map((guide) => (name) => guide.match.test(name)),
   (name) => /^90\/90 breathing$/.test(name),
   (name) => /^90\/90 hip switch(?:es)?$/.test(name),
   (name) => /^low box jumps?$/.test(name),
@@ -130,9 +150,11 @@ function hasLocalFormImage(name) {
   return LOCAL_FORM_IMAGE_MATCHERS.some((matcher) => matcher(normalized));
 }
 
-function isLocalFormAsset(src = '') {
+function isVettedLocalFormAsset(name = '', src = '') {
+  const normalizedName = normalizeExerciseName(name).toLowerCase();
   const value = String(src || '').trim();
-  return value.startsWith('/exercises/') || value.startsWith('/stretches/');
+  const guide = SCREENSHOT_PROVEN_FORM_GUIDES.find((item) => item.match.test(normalizedName));
+  return Boolean(guide && guide.src === value);
 }
 
 function exerciseNameFromItem(item) {
@@ -153,7 +175,7 @@ async function requestExerciseImageIfMissing({ userId, exerciseName, source = 'w
       'SELECT id, how_to_image_url FROM exercises WHERE LOWER(name)=LOWER(?) AND approved=1 LIMIT 1',
       [name]
     );
-    if (isLocalFormAsset(exercise?.how_to_image_url)) {
+    if (isVettedLocalFormAsset(name, exercise?.how_to_image_url)) {
       return { queued: false, reason: 'catalog_image' };
     }
     const key = canonicalKey(name);
@@ -209,5 +231,5 @@ async function requestImagesForWorkoutItems({ userId, items, source, ensureOnly 
 module.exports = {
   requestExerciseImageIfMissing,
   requestImagesForWorkoutItems,
-  _test: { canonicalizeExerciseName, canonicalKey, exerciseNameFromItem, hasLocalFormImage, isLocalFormAsset, isNonVisualGuidance, normalizeExerciseName },
+  _test: { canonicalizeExerciseName, canonicalKey, exerciseNameFromItem, hasLocalFormImage, isNonVisualGuidance, isVettedLocalFormAsset, normalizeExerciseName },
 };
