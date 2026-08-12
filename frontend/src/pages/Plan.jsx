@@ -146,6 +146,15 @@ export default function Plan() {
   const [scheduleError, setScheduleError] = useState('')
   const [scheduleNotice, setScheduleNotice] = useState('')
   const weekSyncInFlight = useRef(null)
+  const currentPlanCalendarRef = useRef(null)
+
+  const openCurrentPlan = () => {
+    const target = currentPlanCalendarRef.current
+    if (!target) return
+    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    target.focus({ preventScroll: true })
+    target.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' })
+  }
 
   const loadAll = async ({ includeAdaptation = true } = {}) => {
     setLoading(true)
@@ -828,8 +837,11 @@ export default function Plan() {
         {/* Active plan: the Forged Training Calendar is primary */}
         {myPlan && calendarModel && (
           <section
+            ref={currentPlanCalendarRef}
             id="current-plan-calendar"
+            tabIndex={-1}
             aria-label={`Current plan calendar for ${myPlan.name}`}
+            className="space-y-4"
             style={{ scrollMarginTop: 'calc(env(safe-area-inset-top, 0px) + 76px)' }}
           >
             {selectedDay ? (
@@ -934,15 +946,17 @@ export default function Plan() {
                 </button>
                 {manageOpen && (
                   <div className="p-4 pt-0 space-y-3">
-                    <a
-                      href="#current-plan-calendar"
-                      aria-label={`Open current plan ${myPlan.name}`}
-                      className="block rounded-lg p-3"
-                      style={{ background: 'var(--bg-input)', color: 'inherit', textDecoration: 'none', cursor: 'pointer' }}
+                    <button
+                      type="button"
+                      onClick={openCurrentPlan}
+                      aria-labelledby="current-plan-action-name"
+                      aria-describedby="current-plan-action-details"
+                      className="block w-full rounded-lg p-3 text-left"
+                      style={{ background: 'var(--bg-input)', color: 'inherit', border: 'none', cursor: 'pointer' }}
                     >
-                      <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{myPlan.name}</p>
-                      <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>{myPlan.type} · Week {currentWeek} of {myPlan.weeks}</p>
-                    </a>
+                      <span id="current-plan-action-name" className="block text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{myPlan.name}</span>
+                      <span id="current-plan-action-details" className="mt-1 block text-xs" style={{ color: 'var(--text-muted)' }}>{myPlan.type} · Week {currentWeek} of {myPlan.weeks}</span>
+                    </button>
                     <div className="rounded-lg p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">

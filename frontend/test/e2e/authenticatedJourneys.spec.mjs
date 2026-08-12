@@ -324,7 +324,7 @@ test('adaptive plan keeps the original calendar only after an explicit decision'
   assertCleanApiAndRuntime(apiState, runtimeErrors)
 })
 
-test('the current plan item opens its existing calendar without mutating the plan', async ({ page }) => {
+test('the current plan item opens its existing calendar without changing navigation or plan state', async ({ page }) => {
   const runtimeErrors = collectRuntimeErrors(page)
   const plan = {
     id: 'current-plan-navigation',
@@ -343,28 +343,109 @@ test('the current plan item opens its existing calendar without mutating the pla
       }],
     },
   }
+  const proposal = {
+    id: 'current-plan-spacing',
+    status: 'proposal',
+    decisionStatus: 'pending',
+    headline: 'Review this calendar adjustment',
+    reason: 'The current calendar and manage controls keep their standard spacing.',
+    evidence: [],
+    changes: [{
+      date: today,
+      sessionId: plannedRun.id,
+      before: { title: 'Tempo run' },
+      after: { title: 'Easy aerobic run' },
+      summary: 'Intensity reduced for recovery.',
+    }],
+  }
   const apiState = await installAuthenticatedApi(page, {
     responses: new Map([
       ['GET /api/plans/my', { plan, user_plan: { current_week: 1, started_at: today, progress: { completedSessionIds: [] } } }],
+      ['GET /api/plans/adaptation/current', { proposal }],
     ]),
   })
 
-  await page.goto('/plan')
+  await page.goto('/run')
+  await page.locator('a[href="/plan"]').first().click()
+  await expect(page).toHaveURL(/\/plan$/)
   await page.getByRole('button', { name: 'Manage plan', exact: true }).click()
 
-  const currentPlanItem = page.getByRole('link', { name: `Open current plan ${plan.name}` })
+  const section = page.locator('#current-plan-calendar')
+  const heading = section.getByRole('heading', { name: 'Army Ten-Miler', exact: true })
+  const currentPlanItem = page.getByRole('button', { name: plan.name, exact: true })
   await expect(currentPlanItem).toBeVisible()
   await expect(currentPlanItem.locator('a, button')).toHaveCount(0)
-  await currentPlanItem.click()
+  await expect(currentPlanItem).toHaveAttribute('aria-describedby', 'current-plan-action-details')
+  await expect(page.locator('#current-plan-action-details')).toHaveText(`${plan.type} · Week 1 of ${plan.weeks}`)
 
-  await expect(page).toHaveURL(/\/plan#current-plan-calendar$/)
-  await expect(page.locator('#current-plan-calendar')).toBeInViewport()
-  await expect(page.getByRole('heading', { name: 'Army Ten-Miler', exact: true })).toBeVisible()
+  const gaps = await page.evaluate(() => {
+    const calendar = document.querySelector('#current-plan-calendar > .forged-cal')?.getBoundingClientRect()
+    const adaptationButton = [...document.querySelectorAll('#current-plan-calendar > div > button')]
+      .find((button) => button.textContent.includes('Review this calendar adjustment'))
+    const adaptationPanel = adaptationButton?.parentElement?.getBoundingClientRect()
+    const manageButton = [...document.querySelectorAll('#current-plan-calendar > div > button')]
+      .find((button) => button.textContent.includes('Manage plan'))
+    const managePanel = manageButton?.parentElement?.getBoundingClientRect()
+    return {
+      calendarToAdaptation: adaptationPanel && calendar ? adaptationPanel.top - calendar.bottom : null,
+      adaptationToManage: managePanel && adaptationPanel ? managePanel.top - adaptationPanel.bottom : null,
+    }
+  })
+  expect(gaps.calendarToAdaptation, 'Calendar and adaptation retain the base 16px vertical rhythm').toBeCloseTo(16, 1)
+  expect(gaps.adaptationToManage, 'Adaptation and manage retain the base 16px vertical rhythm').toBeCloseTo(16, 1)
+
+  const navigationSnapshot = () => page.evaluate(() => ({
+    url: window.location.href,
+    hash: window.location.hash,
+    length: window.history.length,
+    state: window.history.state,
+  }))
+  const beforeActivation = await navigationSnapshot()
+  expect(beforeActivation.state, 'The in-app /run → /plan entry has router history state').not.toBeNull()
+
+  const activateAndExpectUpwardScroll = async (activation) => {
+    await currentPlanItem.evaluate((item) => item.scrollIntoView({ behavior: 'auto', block: 'center' }))
+    await currentPlanItem.focus()
+    const beforeScrollY = await page.evaluate(() => window.scrollY)
+    expect(beforeScrollY, `${activation} starts below the current-plan heading`).toBeGreaterThan(0)
+
+    if (activation === 'click') await currentPlanItem.click()
+    else await page.keyboard.press('Enter')
+
+    await expect(section).toBeFocused()
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBeLessThan(beforeScrollY)
+    await expect.poll(() => section.evaluate((element) => {
+      const sectionTop = element.getBoundingClientRect().top
+      const scrollMarginTop = Number.parseFloat(getComputedStyle(element).scrollMarginTop) || 0
+      return Math.abs(sectionTop - scrollMarginTop) < 1
+    }), { message: `${activation} settles at the mobile-safe current-plan offset` }).toBe(true)
+    const headingTop = await heading.evaluate((element) => element.getBoundingClientRect().top)
+    expect(headingTop, `${activation} brings the current-plan heading into the upper viewport`).toBeGreaterThanOrEqual(0)
+    expect(headingTop, `${activation} brings the current-plan heading into the upper viewport`).toBeLessThan(page.viewportSize().height / 2)
+  }
+
+  await activateAndExpectUpwardScroll('click')
+  await activateAndExpectUpwardScroll('Enter')
+
+  const afterRepeatedActivation = await navigationSnapshot()
+  expect(afterRepeatedActivation).toEqual(beforeActivation)
 
   await page.goBack()
-  await currentPlanItem.focus()
-  await page.keyboard.press('Enter')
-  await expect(page).toHaveURL(/\/plan#current-plan-calendar$/)
+  await expect(page).toHaveURL(/\/run$/)
+
+  await page.locator('a[href="/plan"]').first().click()
+  await page.getByRole('button', { name: 'Manage plan', exact: true }).click()
+  await currentPlanItem.click()
+  const beforeSwipe = await navigationSnapshot()
+  expect(beforeSwipe.state, 'Activation preserves non-null router state for swipe-back').not.toBeNull()
+  await page.evaluate(() => {
+    const target = document.querySelector('main')
+    const touchAt = (x) => new Touch({ identifier: 1, target, clientX: x, clientY: 240 })
+    window.dispatchEvent(new TouchEvent('touchstart', { touches: [touchAt(4)], bubbles: true }))
+    window.dispatchEvent(new TouchEvent('touchmove', { touches: [touchAt(110)], bubbles: true, cancelable: true }))
+    window.dispatchEvent(new TouchEvent('touchend', { touches: [], changedTouches: [touchAt(110)], bubbles: true }))
+  })
+  await expect(page).toHaveURL(/\/run$/)
 
   const planWrites = apiState.requests.filter((request) => (
     request.pathname.startsWith('/api/plans/') && request.method !== 'GET'
