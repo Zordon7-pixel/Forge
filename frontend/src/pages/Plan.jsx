@@ -117,6 +117,7 @@ export default function Plan() {
   const [adaptationProposal, setAdaptationProposal] = useState(null)
   const [adaptationLoading, setAdaptationLoading] = useState(false)
   const [adaptationError, setAdaptationError] = useState('')
+  const [adaptationNotice, setAdaptationNotice] = useState('')
   const [adaptationDecision, setAdaptationDecision] = useState(null)
   const [decidingAdaptation, setDecidingAdaptation] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -199,13 +200,17 @@ export default function Plan() {
       setTravelActiveInjury((injuryRes.data?.injuries || [])[0] || null)
       setTravelInjurySafetyAvailable(injuryRes.data?.safetyUnavailable !== true)
       setTravelReadinessData(readinessRes.data || null)
+      let loadedAdaptationProposal = null
+      let adaptationLoaded = false
       if (includeAdaptation) setAdaptationProposal(null)
       const isSchemaV2 = Number(nextPlan?.plan_data?.schemaVersion || 0) === 2
       if (isSchemaV2 && includeAdaptation) {
         setAdaptationLoading(true)
         try {
           const adaptationRes = await api.get('/plans/adaptation/current', { params: { date: todayISO() } })
-          setAdaptationProposal(adaptationRes.data?.proposal || null)
+          loadedAdaptationProposal = adaptationRes.data?.proposal || null
+          adaptationLoaded = true
+          setAdaptationProposal(loadedAdaptationProposal)
         } catch (err) {
           setAdaptationProposal(null)
           setAdaptationError(err?.response?.data?.error || 'Transparent adjustment is not available right now.')
@@ -215,8 +220,15 @@ export default function Plan() {
       } else {
         setAdaptationLoading(false)
       }
+      return {
+        plan: nextPlan,
+        userPlan: nextUserPlan,
+        adaptationLoaded,
+        adaptationProposal: loadedAdaptationProposal,
+      }
     } catch (err) {
       console.error('[Plan] failed to load active plan:', err?.message || err)
+      return null
     } finally {
       setLoading(false)
       setAdaptationLoading(false)
@@ -416,14 +428,35 @@ export default function Plan() {
     try {
       const data = await removeScheduledWorkout({ api, sessionId: removalSessionId })
       const removedSessionIds = Array.isArray(data?.removedSessionIds) ? data.removedSessionIds.map(String) : []
-      setMyUserPlan((current) => current ? {
-        ...current,
-        progress: { ...(current.progress || {}), removedSessionIds },
-      } : current)
+      if (!removedSessionIds.includes(removalSessionId)) {
+        throw new Error('Forge did not return confirmation for this workout removal.')
+      }
+      const refreshed = await loadAll({ includeAdaptation: false })
+      if (!refreshed) throw new Error('Forge could not confirm the final plan state.')
+      const confirmedIds = (refreshed?.userPlan?.progress?.removedSessionIds || []).map(String)
+      if (!confirmedIds.includes(removalSessionId)) {
+        throw new Error('Forge did not confirm the workout removal after refreshing the plan.')
+      }
       setSessionRemovalNotice(`${label} was removed from the plan. Recorded training and health history were preserved.`)
     } catch (err) {
       console.error('[Plan] scheduled workout removal failed:', err?.message || err)
-      setSessionRemovalError(err?.response?.data?.error || `Could not remove ${label}. The plan is unchanged.`)
+      const reason = err?.response?.data?.error || err?.message || `Could not remove ${label}.`
+      try {
+        const refreshed = await loadAll({ includeAdaptation: false })
+        if (!refreshed) {
+          setSessionRemovalError(`${reason} Forge could not confirm the final plan state. Refresh before trying again.`)
+          return
+        }
+        const confirmedIds = (refreshed?.userPlan?.progress?.removedSessionIds || []).map(String)
+        if (confirmedIds.includes(removalSessionId)) {
+          setSessionRemovalNotice(`${label} was removed from the plan. Forge confirmed it after refreshing your account.`)
+          return
+        }
+        setSessionRemovalError(`${reason} The workout is still listed, and the removal stopped. Refresh and try again.`)
+      } catch (confirmationError) {
+        console.error('[Plan] scheduled workout removal confirmation failed:', confirmationError?.message || confirmationError)
+        setSessionRemovalError(`${reason} Forge could not confirm the final plan state. Refresh before trying again.`)
+      }
     } finally {
       setRemovingSessionId(null)
     }
@@ -549,6 +582,7 @@ export default function Plan() {
     if (!adaptationProposal?.id) return
     setDecidingAdaptation(decision)
     setAdaptationError('')
+    setAdaptationNotice('')
     try {
       await api.post(`/plans/adaptation/${adaptationProposal.id}/${decision}`)
       setAdaptationProposal(null)
@@ -556,7 +590,22 @@ export default function Plan() {
       setAdaptationDecision(decision === 'accept' ? 'accepted' : 'kept')
       if (decision === 'accept') await loadAll({ includeAdaptation: false })
     } catch (err) {
-      setAdaptationError(err?.response?.data?.error || 'Could not update this adjustment.')
+      const errorData = err?.response?.data || {}
+      if (errorData.code === 'ADAPTATION_STALE' && errorData.refresh_required === true) {
+        setAdaptationProposal(null)
+        const refreshed = await loadAll()
+        if (refreshed?.adaptationLoaded) {
+          setAdaptationOpen(Boolean(refreshed.adaptationProposal))
+          setAdaptationDecision('refreshed')
+          setAdaptationNotice(refreshed.adaptationProposal
+            ? 'Forge refreshed this adjustment because your calendar changed. Review the updated proposal before accepting it.'
+            : 'Forge discarded the outdated adjustment and checked your latest calendar. No adjustment is pending now.')
+        } else {
+          setAdaptationError('Your calendar changed, but Forge could not load a fresh adjustment. Refresh the plan and try again.')
+        }
+      } else {
+        setAdaptationError(errorData.error || 'Could not update this adjustment.')
+      }
     } finally {
       setDecidingAdaptation(null)
     }
@@ -728,6 +777,9 @@ export default function Plan() {
 
       {adaptationError && (
         <p className="text-sm rounded-lg p-3 break-words" style={{ background: 'var(--danger-dim)', color: 'var(--danger)' }}>{adaptationError}</p>
+      )}
+      {adaptationNotice && (
+        <p className="text-sm rounded-lg p-3 break-words" role="status" aria-live="polite" style={{ background: 'var(--accent-dim)', color: 'var(--text-primary)' }}>{adaptationNotice}</p>
       )}
       {adaptationDecision === 'accepted' && (
         <p className="text-sm rounded-lg p-3" style={{ background: 'rgba(22, 163, 74, 0.12)', color: 'var(--success)' }}>Accepted. Calendar updated.</p>

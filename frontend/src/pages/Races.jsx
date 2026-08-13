@@ -182,16 +182,23 @@ export default function Races() {
   const [removingRaceId, setRemovingRaceId] = useState(null)
   const removalInFlightRef = useRef(false)
 
-  const load = async () => {
+  const load = async ({ fresh = false } = {}) => {
+    const freshConfig = fresh ? {
+      headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
+      params: { forge_refresh: Date.now() },
+    } : undefined
     const [raceResponse, planResponse] = await Promise.all([
-      api.get('/races'),
-      api.get('/plans/my').catch((err) => {
+      api.get('/races', freshConfig),
+      api.get('/plans/my', freshConfig).catch((err) => {
         console.error('[Races] active plan load failed:', err?.message || err)
         return null
       }),
     ])
-    setRaces(raceResponse.data.races || [])
-    setActivePlan(planResponse?.data?.plan || null)
+    const nextRaces = raceResponse.data.races || []
+    const nextActivePlan = planResponse?.data?.plan || null
+    setRaces(nextRaces)
+    setActivePlan(nextActivePlan)
+    return { races: nextRaces, activePlan: nextActivePlan }
   }
   useEffect(() => { load() }, [])
 
@@ -302,21 +309,30 @@ export default function Races() {
     removalInFlightRef.current = true
     setRemovingRaceId(race.id)
     setMessage('')
+    const successMessage = `${race.race_name} was removed. Recorded runs, lifts, health data, check-ins, and training history were preserved.`
     try {
       await removeOwnedRace({ api, raceId: race.id, planningClock: phonePlanningClock() })
-      const successMessage = `${race.race_name} was removed. Recorded runs, lifts, health data, check-ins, and training history were preserved.`
-      setRaces((current) => current.filter((item) => String(item.id) !== String(race.id)))
-      try {
-        await load()
-      } catch (reloadError) {
-        console.error('[Races] removed race reload failed:', reloadError?.message || reloadError)
-        setMessage(`${successMessage} The latest plan will refresh when this screen reloads.`)
-        return
+      const refreshed = await load({ fresh: true })
+      if (refreshed.races.some((item) => String(item.id) === String(race.id))) {
+        const persistenceError = new Error('Forge did not confirm the race removal. The race is still listed.')
+        persistenceError.code = 'REMOVAL_NOT_CONFIRMED'
+        throw persistenceError
       }
       setMessage(successMessage)
     } catch (err) {
       const reason = err?.response?.data?.error || err?.message || `Could not remove ${race.race_name}.`
-      setMessage(`${reason} The race and current plan are unchanged.`)
+      try {
+        const refreshed = await load({ fresh: true })
+        const raceStillExists = refreshed.races.some((item) => String(item.id) === String(race.id))
+        if (!raceStillExists) {
+          setMessage(`${successMessage} Forge confirmed it after refreshing your account.`)
+          return
+        }
+        setMessage(`${reason} ${race.race_name} is still listed, and the removal stopped. Refresh and try again.`)
+      } catch (confirmationError) {
+        console.error('[Races] race removal confirmation failed:', confirmationError?.message || confirmationError)
+        setMessage(`${reason} Forge could not confirm the final account state. Refresh before trying again.`)
+      }
     } finally {
       removalInFlightRef.current = false
       setRemovingRaceId(null)

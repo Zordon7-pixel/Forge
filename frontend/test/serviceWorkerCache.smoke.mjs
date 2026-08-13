@@ -159,6 +159,21 @@ async function runServiceWorkerCacheSmoke() {
   await dispatchFetch(unpartitionedApi, '/api/users/settings', { headers: { Authorization: 'Bearer user-a' } })
   assert.equal(unpartitionedApi.puts.length, 0, 'API responses without Authorization variance are never cached')
 
+  for (const pathname of [
+    '/api/races/race-1/removal-preview',
+    '/api/races/race-1/removal-apply',
+    '/api/plans/adaptation/proposal-1/accept',
+    '/api/plans/adaptation/proposal-1/keep',
+  ]) {
+    const replayUnsafeMutation = buildWorkerHarness()
+    replayUnsafeMutation.setFetchError(new Error('offline'))
+    await assert.rejects(
+      () => dispatchFetch(replayUnsafeMutation, pathname, { method: 'POST' }),
+      /offline/,
+      `${pathname} fails immediately offline instead of being replayed later against changed plan state`,
+    )
+  }
+
   const validJs = buildWorkerHarness()
   validJs.setResponse(new Response('export default true', {
     status: 200,
@@ -226,7 +241,7 @@ async function runServiceWorkerCacheSmoke() {
   assert.equal(offlineResponse.status, 503, 'uncached offline JavaScript returns an explicit unavailable response')
   assert.match(offlineResponse.headers.get('content-type') || '', /^text\/plain/i, 'offline JavaScript never receives the HTML shell')
 
-  console.log('SERVICE WORKER CACHE SMOKE OK (15)')
+  console.log('SERVICE WORKER CACHE SMOKE OK (19)')
 }
 
 await runServiceWorkerCacheSmoke()

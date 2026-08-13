@@ -291,6 +291,10 @@ async function assertScheduledWorkoutRoute() {
         proposalRow.status = 'accepted';
         return { changes: 1 };
       }
+      if (/UPDATE plan_adjustment_proposals SET status='superseded'/.test(sql)) {
+        proposalRow.status = 'superseded';
+        return { changes: 1 };
+      }
       if (/UPDATE user_plans SET progress_json/.test(sql)) {
         assert.equal(params[1], 'assignment-owner');
         assert.equal(params[2], 'owner');
@@ -307,6 +311,7 @@ async function assertScheduledWorkoutRoute() {
     loaded: true,
     exports: {
       dbGet: async (sql) => {
+        if (/FROM plan_adjustment_proposals/.test(sql)) return proposalRow;
         if (/FROM user_plans up/.test(sql) && /JOIN training_plans tp/.test(sql)) {
           return {
             ...assignment,
@@ -323,7 +328,29 @@ async function assertScheduledWorkoutRoute() {
         return null;
       },
       dbAll: async () => [],
-      dbRun: async () => ({ changes: 0 }),
+      dbRun: async (sql, params) => {
+        if (/UPDATE plan_adjustment_proposals[\s\S]*status='pending'/.test(sql) && proposalRow) {
+          proposalRow = {
+            ...proposalRow,
+            user_plan_id: params[0],
+            plan_id: params[1],
+            plan_version: params[2],
+            window_start: params[3],
+            window_end: params[4],
+            planning_date: params[5],
+            status: 'pending',
+            safety_exception: params[6],
+            original_json: params[7],
+            proposed_json: params[8],
+            changes_json: params[9],
+            evidence_json: params[10],
+            reason: params[11],
+            decided_at: null,
+          };
+          return { changes: 1 };
+        }
+        return { changes: 0 };
+      },
       withUserMutation: async (_userId, fn) => fn(tx),
       withPlanningInputMutation: async (_userId, fn) => {
         const result = await fn(tx);
@@ -517,6 +544,76 @@ async function assertScheduledWorkoutRoute() {
     assert.equal(response.payload.status, 'accepted');
     assert.doesNotThrow(() => assertPersistablePlan(activePlan));
     assert.equal(activePlan.weeks[0].days[0].sessions[2].title, 'Accepted historical adaptation');
+
+    const currentVersion = plansRouter._test.planVersionFor({
+      source: 'assigned',
+      row: { ...assignment, id: 'plan-owner', user_plan_id: 'assignment-owner' },
+    }, activePlan);
+    assert.equal(plansRouter._test.adaptationEpisodeDisposition(null, currentVersion), 'none');
+    assert.equal(plansRouter._test.adaptationEpisodeDisposition({ status: 'pending', plan_version: currentVersion }, currentVersion), 'reuse');
+    assert.equal(plansRouter._test.adaptationEpisodeDisposition({ status: 'accepted', plan_version: 'older' }, currentVersion), 'decided');
+    assert.equal(plansRouter._test.adaptationEpisodeDisposition({ status: 'superseded', plan_version: 'older' }, currentVersion), 'refresh');
+
+    proposalRow = {
+      id: 'stale-accept-proposal',
+      user_id: 'owner',
+      status: 'pending',
+      planning_date: localDate(0),
+      plan_version: 'older-plan-version',
+      proposed_json: JSON.stringify(activePlan),
+      changes_json: JSON.stringify([{ kind: 'calendar_update' }]),
+      evidence_json: '[]',
+      reason: JSON.stringify({ headline: 'Outdated adjustment', reason: 'Regression' }),
+      plan_id: 'plan-owner',
+      user_plan_id: 'assignment-owner',
+      trigger_run_id: null,
+    };
+    response = await invokeHandler(acceptLayer.route.stack.at(-1).handle, {
+      params: { proposalId: proposalRow.id },
+    });
+    assert.equal(response.statusCode, 409);
+    assert.equal(response.payload.code, 'ADAPTATION_STALE');
+    assert.equal(response.payload.refresh_required, true);
+    assert.equal(proposalRow.status, 'superseded', 'stale proposal cannot remain pending and trap repeated accepts');
+
+    const keepLayer = plansRouter.stack.find((item) => item.route?.path === '/adaptation/:proposalId/keep' && item.route?.methods?.post);
+    proposalRow = { ...proposalRow, id: 'stale-keep-proposal', status: 'pending' };
+    response = await invokeHandler(keepLayer.route.stack.at(-1).handle, {
+      params: { proposalId: proposalRow.id },
+    });
+    assert.equal(response.statusCode, 409);
+    assert.equal(response.payload.code, 'ADAPTATION_STALE');
+    assert.equal(proposalRow.status, 'superseded');
+
+    const refreshedEpisodeProposal = {
+      planningDate: localDate(0),
+      windowStart: localDate(0),
+      windowEnd: localDate(3),
+      safetyException: false,
+      proposedPlan: activePlan,
+      changes: [{ kind: 'calendar_update' }],
+      evidence: [{ signal: 'run_gap', episodeKey: 'run-gap:2026-08-01' }],
+      headline: 'Updated calendar adjustment',
+      reason: 'The current plan needs a newly reviewed proposal.',
+    };
+    proposalRow = {
+      ...proposalRow,
+      id: 'run-gap-episode',
+      episode_key: 'run-gap:2026-08-01',
+      status: 'superseded',
+      plan_version: 'older-plan-version',
+    };
+    const refreshedEpisode = await plansRouter._test.persistAdaptationProposal(
+      'owner',
+      { row: { id: 'plan-owner', user_plan_id: 'assignment-owner' } },
+      currentVersion,
+      activePlan,
+      refreshedEpisodeProposal,
+    );
+    assert.equal(refreshedEpisode.id, 'run-gap-episode');
+    assert.equal(refreshedEpisode.decisionStatus, 'pending');
+    assert.equal(proposalRow.status, 'pending');
+    assert.equal(proposalRow.plan_version, currentVersion, 'a stale run-gap episode is refreshed in place for the current plan');
     proposalRow = null;
 
     const hybridPlan = {

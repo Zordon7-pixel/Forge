@@ -1,9 +1,15 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
-import { removeOwnedRace, removeScheduledWorkout } from '../src/lib/selfServiceRemoval.js'
+import {
+  SELF_SERVICE_REMOVAL_TIMEOUT_MS,
+  removeOwnedRace,
+  removeScheduledWorkout,
+} from '../src/lib/selfServiceRemoval.js'
 
 const planSource = fs.readFileSync(new URL('../src/pages/Plan.jsx', import.meta.url), 'utf8')
 const dayViewSource = fs.readFileSync(new URL('../src/components/calendar/ForgedDayView.jsx', import.meta.url), 'utf8')
+const racesSource = fs.readFileSync(new URL('../src/pages/Races.jsx', import.meta.url), 'utf8')
+const serviceWorkerSource = fs.readFileSync(new URL('../public/sw.js', import.meta.url), 'utf8')
 
 const clock = { planning_date_local: '2026-08-12', timezone_offset_minutes: 240 }
 
@@ -25,6 +31,29 @@ const clock = { planning_date_local: '2026-08-12', timezone_offset_minutes: 240 
     ['post', '/races/race%20%2F%20owned/removal-preview'],
     ['delete', '/races/race%20%2F%20owned'],
   ])
+}
+
+{
+  let directDeleteCalled = false
+  const api = {
+    async post() { return { data: { queued: true, offline: true } } },
+    async delete() { directDeleteCalled = true; return { data: { ok: true } } },
+  }
+  await assert.rejects(
+    () => removeOwnedRace({ api, raceId: 'offline-race', planningClock: clock }),
+    (error) => error?.code === 'REMOVAL_OFFLINE' && /live connection/i.test(error.message),
+  )
+  assert.equal(directDeleteCalled, false, 'an offline preview response cannot fall through to destructive direct removal')
+}
+
+{
+  const api = { post: async () => new Promise(() => {}) }
+  const startedAt = Date.now()
+  await assert.rejects(
+    () => removeOwnedRace({ api, raceId: 'slow-race', planningClock: clock, timeoutMs: 10 }),
+    (error) => error?.code === 'REMOVAL_TIMEOUT' && /stopped waiting/i.test(error.message),
+  )
+  assert.ok(Date.now() - startedAt < 1000, 'a hung race-removal request releases the UI deadline')
 }
 
 {
@@ -50,6 +79,8 @@ const clock = { planning_date_local: '2026-08-12', timezone_offset_minutes: 240 
   })
   assert.equal(calls.some((call) => call.path.includes('/plans/candidates/')), false)
 }
+
+assert.equal(SELF_SERVICE_REMOVAL_TIMEOUT_MS, 45000)
 
 {
   const api = {
@@ -81,8 +112,7 @@ assert.match(planSource, /const removalSessionId = String\(session\?\.removalSes
 assert.match(planSource, /removeScheduledWorkout\(\{ api, sessionId: removalSessionId \}\)/)
 assert.doesNotMatch(planSource, /removeScheduledWorkout\(\{ api, sessionId: session\.id \}\)/)
 assert.match(planSource, /allowSessionRemoval=\{selectedDay\.dateISO >= today\}/)
-assert.match(planSource, /progress: \{ \.\.\.\(current\.progress \|\| \{\}\), removedSessionIds \}/)
-assert.match(planSource, /Could not remove \$\{label\}\. The plan is unchanged\./)
+assert.match(planSource, /confirmedIds\.includes\(removalSessionId\)/)
 assert.match(dayViewSource, /aria-label=\{`Remove \$\{session\.title \|\| 'workout'\} from this plan`\}/)
 assert.match(dayViewSource, /!session\?\.removalSessionId/)
 assert.match(dayViewSource, /const isDone = \(session\) => sessionState\(session, completedSet\) === 'completed'/)
@@ -90,5 +120,15 @@ assert.match(dayViewSource, /if \(!allowSessionRemoval \|\| done \|\|/)
 assert.match(dayViewSource, /minHeight: 44/)
 assert.match(dayViewSource, /role="alert"/)
 assert.match(dayViewSource, /role="status" aria-live="polite"/)
+assert.match(planSource, /Forge did not confirm the workout removal after refreshing the plan/)
+assert.match(planSource, /Forge confirmed it after refreshing your account/)
+assert.match(planSource, /errorData\.code === 'ADAPTATION_STALE'/)
+assert.match(planSource, /Review the updated proposal before accepting it/)
+assert.match(racesSource, /await load\(\{ fresh: true \}\)/)
+assert.match(racesSource, /The race is still listed/)
+assert.match(racesSource, /Forge confirmed it after refreshing your account/)
+assert.match(serviceWorkerSource, /isReplayUnsafeMutation/)
+assert.match(serviceWorkerSource, /removal-\(\?:preview\|apply\)/)
+assert.match(serviceWorkerSource, /adaptation\\\/\[\^\/\]\+\\\/\(\?:accept\|keep\)/)
 
 console.log('SELF-SERVICE REMOVAL FRONTEND SMOKE OK')

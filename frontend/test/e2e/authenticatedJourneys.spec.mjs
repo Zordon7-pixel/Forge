@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { createQaToken, installAuthenticatedApi } from './support/mockApi.mjs'
+import { createQaToken, installAuthenticatedApi, qaResponse } from './support/mockApi.mjs'
 
 test.describe.configure({ timeout: 60_000 })
 
@@ -397,6 +397,111 @@ test('adaptive plan keeps the original calendar only after an explicit decision'
   await expect(page.getByText('One transparent change', { exact: true })).toHaveCount(0)
   expect(requestsFor(apiState, 'POST', '/api/plans/adaptation/journey-adaptation/keep')).toHaveLength(1)
   assertCleanApiAndRuntime(apiState, runtimeErrors)
+})
+
+test('a stale adaptation is discarded and recomputed for review without applying the wrong plan', async ({ page }) => {
+  const runtimeErrors = collectRuntimeErrors(page)
+  const plan = {
+    id: 'stale-adaptation-plan',
+    name: 'Current adaptive plan',
+    type: '10 mile',
+    weeks: 1,
+    plan_data: {
+      schemaVersion: 2,
+      planMode: 'run_only',
+      goal: { name: 'Army Ten-Miler', dateISO: today, distanceMiles: 10 },
+      weeks: [{
+        week: 1,
+        startDate: today,
+        days: [{ date: today, day: todayDay, sessions: [{ id: plannedRun.id, kind: 'run', prescription: plannedRun }] }],
+      }],
+    },
+  }
+  const staleProposal = {
+    id: 'stale-adaptation',
+    status: 'proposal',
+    decisionStatus: 'pending',
+    headline: 'Outdated calendar adjustment',
+    reason: 'This was computed before the calendar changed.',
+    evidence: [],
+    changes: [{ date: today, sessionId: plannedRun.id, before: { title: 'Tempo' }, after: { title: 'Easy' }, summary: 'Old proposal' }],
+  }
+  const freshProposal = {
+    ...staleProposal,
+    id: 'fresh-adaptation',
+    headline: 'Fresh calendar adjustment',
+    reason: 'This was recomputed against the latest calendar.',
+    changes: [{ date: today, sessionId: plannedRun.id, before: { title: 'Easy' }, after: { title: 'Rest' }, summary: 'Fresh proposal' }],
+  }
+  let currentProposalReads = 0
+  const apiState = await installAuthenticatedApi(page, {
+    responses: new Map([
+      ['GET /api/plans/my', { plan, user_plan: { current_week: 1, started_at: today, progress: { completedSessionIds: [] } } }],
+      ['GET /api/plans/adaptation/current', () => {
+        currentProposalReads += 1
+        return { proposal: currentProposalReads === 1 ? staleProposal : freshProposal }
+      }],
+      ['POST /api/plans/adaptation/stale-adaptation/accept', qaResponse({
+        error: 'The active plan changed after this proposal was computed.',
+        code: 'ADAPTATION_STALE',
+        refresh_required: true,
+      }, 409)],
+    ]),
+  })
+
+  await page.goto('/plan')
+  await expect(page.getByText('Outdated calendar adjustment', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Accept', exact: true }).click()
+  await expect(page.getByText('Outdated calendar adjustment', { exact: true })).toHaveCount(0)
+  await expect(page.getByText('Fresh calendar adjustment', { exact: true })).toBeVisible()
+  await expect(page.getByText(/Review the updated proposal before accepting it/)).toBeVisible()
+  expect(requestsFor(apiState, 'POST', '/api/plans/adaptation/stale-adaptation/accept')).toHaveLength(1)
+  expect(requestsFor(apiState, 'GET', '/api/plans/adaptation/current')).toHaveLength(2)
+  expect(requestsFor(apiState, 'POST', '/api/plans/adaptation/fresh-adaptation/accept')).toHaveLength(0)
+  expect([...new Set(apiState.unexpectedRequests)]).toEqual([])
+  expect(runtimeErrors.filter((message) => !/status of 409 \(Conflict\)/.test(message))).toEqual([])
+})
+
+test('ambiguous race-removal response is reconciled from fresh account state and never stays pending', async ({ page }) => {
+  const runtimeErrors = collectRuntimeErrors(page)
+  const race = {
+    id: 'yonkers-race',
+    race_name: 'Yonkers Half Marathon',
+    race_date: '2026-09-20',
+    distance_miles: 13.1,
+    status: 'upcoming',
+  }
+  let racePresent = true
+  const apiState = await installAuthenticatedApi(page, {
+    responses: new Map([
+      ['GET /api/races', () => ({ races: racePresent ? [race] : [] })],
+      ['GET /api/plans/my', {
+        plan: { id: 'race-plan', plan_data: { schemaVersion: 2, goals: [{ raceId: race.id, name: race.race_name, dateISO: race.race_date }] } },
+        user_plan: { current_week: 1, started_at: today, progress: {} },
+      }],
+      ['POST /api/races/yonkers-race/removal-preview', {
+        requires_apply: true,
+        candidate_id: 'remove-yonkers-candidate',
+        candidate_hash: 'sha256:remove-yonkers',
+      }],
+      ['POST /api/races/yonkers-race/removal-apply', () => {
+        racePresent = false
+        return qaResponse({ error: 'The response took too long.' }, 504)
+      }],
+    ]),
+  })
+
+  await page.goto('/races')
+  await expect(page.getByText('Yonkers Half Marathon', { exact: true })).toBeVisible()
+  await page.getByLabel('Manage Yonkers Half Marathon').getByRole('button', { name: 'Remove', exact: true }).click()
+  await expect(page.getByText('Yonkers Half Marathon', { exact: true })).toHaveCount(0)
+  await expect(page.getByText(/Forge confirmed it after refreshing your account/)).toBeVisible()
+  await expect(page.getByRole('button', { name: /Removing/ })).toHaveCount(0)
+  expect(requestsFor(apiState, 'POST', '/api/races/yonkers-race/removal-preview')).toHaveLength(1)
+  expect(requestsFor(apiState, 'POST', '/api/races/yonkers-race/removal-apply')).toHaveLength(1)
+  expect(requestsFor(apiState, 'GET', '/api/races')).toHaveLength(2)
+  expect([...new Set(apiState.unexpectedRequests)]).toEqual([])
+  expect(runtimeErrors.filter((message) => !/status of 504 \(Gateway Timeout\)/.test(message))).toEqual([])
 })
 
 test('the current plan item opens its existing calendar without changing navigation or plan state', async ({ page }) => {

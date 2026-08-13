@@ -176,6 +176,12 @@ function isApiMutation(request, url) {
   return url.pathname.startsWith('/api/') && (method === 'POST' || method === 'PUT' || method === 'PATCH');
 }
 
+function isReplayUnsafeMutation(request, url) {
+  if (!isApiMutation(request, url)) return false;
+  return /^\/api\/races\/[^/]+\/removal-(?:preview|apply)$/.test(url.pathname)
+    || /^\/api\/plans\/adaptation\/[^/]+\/(?:accept|keep)$/.test(url.pathname);
+}
+
 function isCacheableApiGet(request, url) {
   if (request.method.toUpperCase() !== 'GET') return false;
   return API_GET_CACHE_PATHS.some((path) => url.pathname.startsWith(path));
@@ -207,6 +213,11 @@ async function matchStatic(request) {
 
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
+
+  if (isReplayUnsafeMutation(event.request, url)) {
+    event.respondWith(fetch(event.request));
+    return;
+  }
 
   if (isApiMutation(event.request, url)) {
     event.respondWith(

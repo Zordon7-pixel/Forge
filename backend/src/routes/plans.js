@@ -890,12 +890,64 @@ function runGapEpisodeKey(evidence) {
   return item?.episodeKey || null;
 }
 
+function adaptationEpisodeDisposition(row, planVersion) {
+  if (!row) return 'none';
+  if (row.status === 'accepted' || row.status === 'kept') return 'decided';
+  if (row.status === 'pending' && String(row.plan_version || '') === String(planVersion || '')) {
+    return 'reuse';
+  }
+  return 'refresh';
+}
+
 async function persistAdaptationProposal(userId, active, planVersion, originalPlan, proposal) {
   const episodeKey = runGapEpisodeKey(proposal.evidence);
   const existing = episodeKey
     ? await findRunGapEpisode(userId, episodeKey)
     : await findPendingAdaptation(userId, proposal.planningDate, planVersion);
-  if (existing) return proposalFromRow(existing);
+  const existingDisposition = adaptationEpisodeDisposition(existing, planVersion);
+  if (existingDisposition === 'reuse' || existingDisposition === 'decided') {
+    return proposalFromRow(existing);
+  }
+  if (existing && episodeKey) {
+    const updated = await dbRun(
+      `UPDATE plan_adjustment_proposals
+       SET user_plan_id=?, plan_id=?, plan_version=?, window_start=?, window_end=?,
+           planning_date=?, status='pending', safety_exception=?, original_json=?, proposed_json=?,
+           changes_json=?, evidence_json=?, reason=?, decided_at=NULL, created_at=CURRENT_TIMESTAMP
+       WHERE id=? AND user_id=? AND episode_key=? AND trigger_run_id IS NULL
+         AND status NOT IN ('accepted','kept')`,
+      [
+        active?.row?.user_plan_id || null,
+        active?.row?.id || null,
+        planVersion,
+        proposal.windowStart,
+        proposal.windowEnd,
+        proposal.planningDate,
+        proposal.safetyException ? 1 : 0,
+        JSON.stringify(originalPlan || null),
+        JSON.stringify(proposal.proposedPlan || originalPlan || null),
+        JSON.stringify(proposal.changes || []),
+        JSON.stringify(proposal.evidence || []),
+        encodeProposalReason(proposal),
+        existing.id,
+        userId,
+        episodeKey,
+      ]
+    );
+    if (updated.changes === 0) {
+      const concurrent = await findRunGapEpisode(userId, episodeKey);
+      if (!concurrent) throw new Error('Run-gap adaptation refresh conflict could not be resolved');
+      return proposalFromRow(concurrent);
+    }
+    return Object.assign({}, proposal, {
+      id: existing.id,
+      decisionStatus: 'pending',
+      planVersion,
+      planId: active?.row?.id || null,
+      userPlanId: active?.row?.user_plan_id || null,
+      episodeKey,
+    });
+  }
   const id = uuidv4();
   const inserted = await dbRun(
     `INSERT INTO plan_adjustment_proposals (
@@ -2877,13 +2929,14 @@ router.get('/adaptation/current', auth, async (req, res) => {
       hasDecidedCompletionAdaptation(req.user.id, planningDateISO),
       findRunGapEpisode(req.user.id, runGapEpisodeKey),
     ]);
-    if (runGapEpisode?.status === 'pending') {
+    const runGapDisposition = adaptationEpisodeDisposition(runGapEpisode, planVersion);
+    if (runGapDisposition === 'reuse') {
       const pendingProposal = proposalFromRow(runGapEpisode);
       if (pendingProposal.changes.length > 0) {
         return res.json({ proposal: publicProposal(pendingProposal) });
       }
     }
-    if (completionDecisionExists || runGapEpisode) {
+    if (completionDecisionExists || runGapDisposition === 'decided') {
       inputs.completion = {
         ...(inputs.completion || {}),
         adaptationEnabled: false,
@@ -3038,7 +3091,19 @@ router.post('/adaptation/:proposalId/accept', auth, async (req, res) => {
       const parsed = parsePlan(active.row);
       const currentVersion = planVersionFor(active, parsed);
       if (String(currentVersion) !== String(row.plan_version || '')) {
-        return planningInputUnchanged({ conflict: true, reason: 'The active plan changed after this proposal was computed.' });
+        const update = await tx.run(
+          "UPDATE plan_adjustment_proposals SET status='superseded', decided_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=? AND status='pending'",
+          [row.id, req.user.id]
+        );
+        if (update.changes === 0) {
+          return planningInputUnchanged({ conflict: true, code: 'ADAPTATION_NOT_PENDING', reason: 'Proposal is no longer pending.' });
+        }
+        return planningInputUnchanged({
+          conflict: true,
+          code: 'ADAPTATION_STALE',
+          refreshRequired: true,
+          reason: 'The active plan changed after this proposal was computed.',
+        });
       }
 
       const proposedPlan = parseJsonValue(row.proposed_json, null);
@@ -3053,7 +3118,11 @@ router.post('/adaptation/:proposalId/accept', auth, async (req, res) => {
     });
 
     if (result.notFound) return res.status(404).json({ error: 'Proposal not found' });
-    if (result.conflict) return res.status(409).json({ error: result.reason });
+    if (result.conflict) return res.status(409).json({
+      error: result.reason,
+      code: result.code || 'ADAPTATION_CONFLICT',
+      refresh_required: Boolean(result.refreshRequired),
+    });
     res.json({ ok: true, status: 'accepted', proposal: publicProposal(result.proposal), idempotent: Boolean(result.idempotent) });
   } catch (err) {
     console.error('[plans/adaptation/accept] failed:', err.message);
@@ -3083,7 +3152,19 @@ router.post('/adaptation/:proposalId/keep', auth, async (req, res) => {
       const parsed = parsePlan(active.row);
       const currentVersion = planVersionFor(active, parsed);
       if (String(currentVersion) !== String(row.plan_version || '')) {
-        return planningInputUnchanged({ conflict: true, reason: 'The active plan changed after this proposal was computed.' });
+        const update = await tx.run(
+          "UPDATE plan_adjustment_proposals SET status='superseded', decided_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=? AND status='pending'",
+          [row.id, req.user.id]
+        );
+        if (update.changes === 0) {
+          return planningInputUnchanged({ conflict: true, code: 'ADAPTATION_NOT_PENDING', reason: 'Proposal is no longer pending.' });
+        }
+        return planningInputUnchanged({
+          conflict: true,
+          code: 'ADAPTATION_STALE',
+          refreshRequired: true,
+          reason: 'The active plan changed after this proposal was computed.',
+        });
       }
       const update = await tx.run(
         "UPDATE plan_adjustment_proposals SET status='kept', decided_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=? AND status='pending'",
@@ -3094,7 +3175,11 @@ router.post('/adaptation/:proposalId/keep', auth, async (req, res) => {
     });
 
     if (result.notFound) return res.status(404).json({ error: 'Proposal not found' });
-    if (result.conflict) return res.status(409).json({ error: result.reason });
+    if (result.conflict) return res.status(409).json({
+      error: result.reason,
+      code: result.code || 'ADAPTATION_CONFLICT',
+      refresh_required: Boolean(result.refreshRequired),
+    });
     res.json({ ok: true, status: 'kept', proposal: publicProposal(result.proposal), idempotent: Boolean(result.idempotent) });
   } catch (err) {
     console.error('[plans/adaptation/keep] failed:', err.message);
@@ -4272,6 +4357,7 @@ router.post('/generate-for-race/:raceId', auth, requirePremium('Race Programs'),
 });
 
 router._test = {
+  adaptationEpisodeDisposition,
   applyPlanCandidate,
   assertCandidatePlanningDateCurrent,
   buildDeterministicCandidate,
@@ -4280,6 +4366,7 @@ router._test = {
   getActivePlanForMutation,
   getActivePlanForUser,
   normalizeActivePlanIdentitiesForMutation,
+  persistAdaptationProposal,
   planVersionFor,
   updateActivePlanData,
   getTimezoneOffsetFromRequest,
