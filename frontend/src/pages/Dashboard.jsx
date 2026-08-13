@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next'
 import InsightsSheet, { CalendarDayDetailSheet, DailyCoachFlow, ReadinessBreakdownModal, RecentActivityCard, TodayDetailSheet, WatchSyncWidget } from '../components/InsightsSheet'
 import { useUnits } from '../context/UnitsContext'
 import api from '../lib/api'
+import { ensureCommittedAdaptationDecision, isAdaptationDecisionRetryRequired } from '../lib/adaptationDecision'
 import track from '../lib/track'
 import LoadingRunner from '../components/LoadingRunner'
 import Skeleton from '../components/Skeleton'
@@ -733,16 +734,19 @@ export default function Dashboard() {
     setTrainingGapDecision(decision)
     setTrainingGapError('')
     try {
-      await api.post(`/plans/adaptation/${trainingGapProposal.id}/${decision}`, {
+      const response = await api.post(`/plans/adaptation/${trainingGapProposal.id}/${decision}`, {
         proposal_revision: trainingGapProposal.revision,
         proposal_plan_version: trainingGapProposal.planVersion,
       })
+      ensureCommittedAdaptationDecision(response, decision)
       setTrainingGapProposal(null)
       setTrainingGapNotice(decision === 'accept' ? 'Next seven days adjusted for a safer return.' : 'Calendar left as planned.')
       if (decision === 'accept') await fetchDashboardData()
     } catch (error) {
       const errorData = error?.response?.data || {}
-      if (['ADAPTATION_STALE', 'ADAPTATION_PROPOSAL_CHANGED', 'ADAPTATION_DECISION_TOKEN_REQUIRED'].includes(errorData.code)
+      if (isAdaptationDecisionRetryRequired(error)) {
+        setTrainingGapError(error.message)
+      } else if (['ADAPTATION_STALE', 'ADAPTATION_PROPOSAL_CHANGED', 'ADAPTATION_DECISION_TOKEN_REQUIRED'].includes(errorData.code)
         && errorData.refresh_required === true) {
         setTrainingGapProposal(null)
         setTrainingGapNotice('Forge refreshed this adjustment because your calendar changed. Review the updated proposal before choosing.')

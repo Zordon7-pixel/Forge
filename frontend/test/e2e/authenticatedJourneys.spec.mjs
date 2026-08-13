@@ -384,11 +384,17 @@ test('adaptive plan keeps the original calendar only after an explicit decision'
       summary: 'Intensity reduced; the race target remains protected.',
     }],
   }
+  let keepAttempts = 0
   const apiState = await installAuthenticatedApi(page, {
     responses: new Map([
       ['GET /api/plans/my', { plan, user_plan: { current_week: 1, started_at: today, progress: { completedSessionIds: [] } } }],
       ['GET /api/plans/adaptation/current', { proposal }],
-      ['POST /api/plans/adaptation/journey-adaptation/keep', { ok: true }],
+      ['POST /api/plans/adaptation/journey-adaptation/keep', () => {
+        keepAttempts += 1
+        return keepAttempts === 1
+          ? qaResponse({ queued: true, offline: true }, 202)
+          : { ok: true, status: 'kept' }
+      }],
     ]),
   })
 
@@ -396,10 +402,13 @@ test('adaptive plan keeps the original calendar only after an explicit decision'
   await expect(page.getByText('One transparent change', { exact: true })).toBeVisible()
   expect(requestsFor(apiState, 'POST', '/api/plans/adaptation/journey-adaptation/keep')).toHaveLength(0)
   await page.getByRole('button', { name: 'Keep original', exact: true }).click()
+  await expect(page.getByText(/Forge did not save this choice immediately/)).toBeVisible()
+  await expect(page.getByText('One transparent change', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Keep original', exact: true }).click()
   await expect(page.getByText('One transparent change', { exact: true })).toHaveCount(0)
   const keepRequests = requestsFor(apiState, 'POST', '/api/plans/adaptation/journey-adaptation/keep')
-  expect(keepRequests).toHaveLength(1)
-  expect(keepRequests[0].body).toEqual({
+  expect(keepRequests).toHaveLength(2)
+  expect(keepRequests[1].body).toEqual({
     proposal_revision: proposal.revision,
     proposal_plan_version: proposal.planVersion,
   })

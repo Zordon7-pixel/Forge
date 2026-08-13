@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { CalendarCheck2 } from 'lucide-react'
 import api from '../lib/api'
+import { ensureCommittedAdaptationDecision, isAdaptationDecisionRetryRequired } from '../lib/adaptationDecision'
 import { todayISO } from '../lib/planCalendar'
 
 function changeLabel(change) {
@@ -68,6 +69,7 @@ export default function RunPlanImpact({ run }) {
         proposal_plan_version: proposal.planVersion,
       })
       if (requestTokenRef.current !== requestToken || proposalIdRef.current !== proposalId) return
+      ensureCommittedAdaptationDecision(response, nextDecision)
       setDecision(response.data?.status || (nextDecision === 'accept' ? 'accepted' : 'kept'))
       const nextProposal = response.data?.proposal || proposal
       proposalIdRef.current = nextProposal?.id || null
@@ -75,7 +77,9 @@ export default function RunPlanImpact({ run }) {
     } catch (requestError) {
       if (requestTokenRef.current !== requestToken) return
       console.error(`[RunPlanImpact] ${nextDecision} failed:`, requestError?.message || requestError)
-      setError(requestError?.response?.data?.error || 'The plan decision could not be saved.')
+      setError(isAdaptationDecisionRetryRequired(requestError)
+        ? requestError.message
+        : requestError?.response?.data?.error || 'The plan decision could not be saved.')
     } finally {
       if (requestTokenRef.current === requestToken && proposalIdRef.current === proposalId) setDeciding('')
     }

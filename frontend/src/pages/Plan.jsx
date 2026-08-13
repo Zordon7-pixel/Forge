@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { ChevronDown, ChevronUp } from 'lucide-react'
 import api from '../lib/api'
+import { ensureCommittedAdaptationDecision, isAdaptationDecisionRetryRequired } from '../lib/adaptationDecision'
 import { previewAndApplyPlan } from '../lib/planCandidates'
 import { isPlanCandidateReviewCancelled } from '../lib/planCandidateReview'
 import { useProContext } from '../context/ProContext'
@@ -584,17 +585,22 @@ export default function Plan() {
     setAdaptationError('')
     setAdaptationNotice('')
     try {
-      await api.post(`/plans/adaptation/${adaptationProposal.id}/${decision}`, {
+      const response = await api.post(`/plans/adaptation/${adaptationProposal.id}/${decision}`, {
         proposal_revision: adaptationProposal.revision,
         proposal_plan_version: adaptationProposal.planVersion,
       })
+      ensureCommittedAdaptationDecision(response, decision)
       setAdaptationProposal(null)
       setAdaptationOpen(false)
       setAdaptationDecision(decision === 'accept' ? 'accepted' : 'kept')
       if (decision === 'accept') await loadAll({ includeAdaptation: false })
     } catch (err) {
       const errorData = err?.response?.data || {}
-      if (['ADAPTATION_STALE', 'ADAPTATION_PROPOSAL_CHANGED', 'ADAPTATION_DECISION_TOKEN_REQUIRED'].includes(errorData.code)
+      if (isAdaptationDecisionRetryRequired(err)) {
+        setAdaptationDecision('')
+        setAdaptationOpen(true)
+        setAdaptationError(err.message)
+      } else if (['ADAPTATION_STALE', 'ADAPTATION_PROPOSAL_CHANGED', 'ADAPTATION_DECISION_TOKEN_REQUIRED'].includes(errorData.code)
         && errorData.refresh_required === true) {
         setAdaptationProposal(null)
         const refreshed = await loadAll()
