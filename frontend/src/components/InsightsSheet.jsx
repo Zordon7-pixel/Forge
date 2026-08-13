@@ -8,6 +8,7 @@ import ExerciseGuideAction from './ExerciseGuideAction'
 import { activityLabel, isRunningActivity } from '../lib/activityType'
 import { finiteReadinessScore, resolveReadiness } from '../lib/truthConsistency'
 import { resolveTodayPlanAccess, resolveTodayWorkoutLabel } from '../lib/todayPlanAccess'
+import { workoutActivityTitle } from '../lib/recentActivity'
 
 function activityDateLabel(value) {
   if (!value) return '--'
@@ -722,6 +723,21 @@ export function RecentActivityCard({ recentActivity, navigate, fmt, fmtDuration,
                   <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{new Date(item.synced_at || item.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
                 </div>
                 <p className="text-sm font-bold mt-1" style={{ color: 'var(--text-primary)' }}>{item.activity_name || item.activity_type || 'Synced activity'}</p>
+              </div>
+            )
+          }
+
+          if (item._type === 'workout') {
+            return (
+              <div key={`workout-${item.id}`} onClick={() => navigate(`/history?workoutId=${item.id}`)} className="rounded-xl p-3 border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', borderLeft: '4px solid #a78bfa', cursor: 'pointer' }}>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: 'rgba(139,92,246,0.15)', color: '#a78bfa' }}>Workout</span>
+                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                    {activityDateLabel(item.started_at || item.ended_at || item.created_at)}
+                  </span>
+                </div>
+                <p className="text-sm font-bold mt-1" style={{ color: 'var(--text-primary)' }}>{workoutActivityTitle(item)}</p>
+                {Number(item.total_seconds || 0) > 0 && <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>{fmtDuration(item.total_seconds)}</p>}
               </div>
             )
           }

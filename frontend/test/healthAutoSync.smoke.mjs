@@ -38,6 +38,7 @@ const service = read('frontend/src/services/HealthService.js')
 const pullToRefresh = read('frontend/src/components/PullToRefresh.jsx')
 const healthSyncSource = read('frontend/src/lib/healthSync.js')
 const dashboardSource = read('frontend/src/pages/Dashboard.jsx')
+const insightsSheetSource = read('frontend/src/components/InsightsSheet.jsx')
 const healthSourceManager = read('frontend/src/components/HealthSourceManager.jsx')
 
 class MemoryStorage {
@@ -632,7 +633,9 @@ assert.ok(dashboardSource.includes('HealthService.hasNativeSyncInFlight()'), 'Da
 assert.ok(healthSourceManager.includes('shouldRefreshPageForHealthSyncEvent(event)'), 'connected sources suppress duplicate pull-origin fetches')
 assert.ok(healthSourceManager.includes('setNotice(healthSyncNotice(result))'), 'explicit Apple Health sync retains successful diagnostic counts')
 assert.ok(healthSourceManager.includes('setNotice(healthSyncFailureMessage(err))'), 'explicit Apple Health sync retains failure diagnostics')
-assert.ok(dashboardSource.includes("api.get('/runs', { params: { limit: 5 } })") && dashboardSource.includes("api.get('/lifts')"), 'Dashboard refreshes the runs and lifts that feed Recent Activity')
+assert.ok(dashboardSource.includes("api.get('/runs', { params: { limit: 5 } })") && dashboardSource.includes("api.get('/lifts')") && dashboardSource.includes("api.get('/workouts')"), 'Dashboard refreshes runs, legacy lifts, and completed workout sessions that feed Recent Activity')
+assert.ok(dashboardSource.includes("console.error('[Dashboard] completed workout fetch failed:'"), 'completed workout fetch failures remain contextual and fail soft')
+assert.ok(insightsSheetSource.includes("item._type === 'workout'") && insightsSheetSource.includes("/history?workoutId=${item.id}"), 'Recent Activity renders completed workout sessions and links them to History detail')
 assert.ok(dashboardSource.includes('<RecentActivityCard recentActivity={recentActivity}'), 'Recent Activity remains the visible Dashboard result of ordinary and late successful imports')
 assert.ok(layout.includes('<PullToRefresh onRefreshComplete={refreshAppShell}>'), 'the shared app shell owns the refresh completion')
 assert.ok(layout.includes('<main key={appRefreshKey}'), 'the active screen remounts after HealthKit settles')
