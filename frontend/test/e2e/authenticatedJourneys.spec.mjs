@@ -609,6 +609,7 @@ test('an existing HYROX event can correct its division and review a combined can
   expect(hyroxPatch.event_format).toBe('doubles')
   expect(hyroxPatch.event_category).toBe('men')
   expect(hyroxPatch.event_config_json).toMatchObject({ runDaysPerWeek: 3, trainingDays: ['Tue', 'Thu', 'Sat', 'Sun'] })
+  await expect.poll(() => requestsFor(apiState, 'POST', '/api/plans/generate-for-races').length).toBe(1)
   const previews = requestsFor(apiState, 'POST', '/api/plans/generate-for-races')
   expect(previews).toHaveLength(1)
   expect(previews[0].body.race_ids).toEqual([hyrox.id, army.id])
