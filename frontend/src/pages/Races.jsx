@@ -3,7 +3,9 @@ import { useNavigate } from 'react-router'
 import { useProContext } from '../context/ProContext'
 import DurationPicker from '../components/DurationPicker'
 import RaceEditSheet from '../components/calendar/RaceEditSheet'
+import HyroxPlanSetup from '../components/hyrox/HyroxPlanSetup'
 import api from '../lib/api'
+import { hyroxDivisionLabel, isHyroxRace, preferredActiveSecondaryRaceId } from '../lib/hyroxSelfService'
 import { phonePlanningClock, previewAndApplyPlan } from '../lib/planCandidates'
 import { isPlanCandidateReviewCancelled } from '../lib/planCandidateReview'
 import { RACE_DISTANCE_OPTIONS, STANDARD_RACE_DISTANCES } from '../lib/raceDistances'
@@ -177,6 +179,7 @@ export default function Races() {
   const [planPromptRace, setPlanPromptRace] = useState(null)
   const [generatingPlanId, setGeneratingPlanId] = useState(null)
   const [raceEditor, setRaceEditor] = useState(null)
+  const [hyroxEditor, setHyroxEditor] = useState(null)
   const [raceSaving, setRaceSaving] = useState(false)
   const [raceSaveError, setRaceSaveError] = useState('')
   const [removingRaceId, setRemovingRaceId] = useState(null)
@@ -373,7 +376,19 @@ export default function Races() {
     }
   }
 
+  const openHyroxPlanSetup = (race) => {
+    setHyroxEditor({
+      race,
+      secondaryRaceId: preferredActiveSecondaryRaceId({
+        hyroxRace: race,
+        savedRaces: races,
+        activePlanRaceIds,
+      }),
+    })
+  }
+
   const racePlanActionLabel = (race) => {
+    if (isHyroxRace(race)) return activePlanRaceIds.includes(String(race.id)) ? 'Review & rebuild HYROX plan' : 'Review HYROX plan'
     if (generatingPlanId === race.id) return 'Building...'
     if (activePlanRaceIds.includes(String(race.id))) return activePlanRaceIds.length > 1 ? 'Rebuild combined plan' : 'Rebuild plan'
     if (activePlanRaceIds.length === 1) return 'Add as second PR race'
@@ -542,7 +557,7 @@ export default function Races() {
             <p className="font-bold" style={{ overflowWrap: 'anywhere' }}>{r.race_name}</p>
             <p className="text-xs" style={{ color: 'var(--accent)' }}>{d} days to go</p>
             <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-              {r.event_kind === 'hyrox' ? `HYROX · ${String(r.event_format || '').replaceAll('_', ' ')}` : `${r.distance_miles} mi`}
+              {isHyroxRace(r) ? `HYROX · ${hyroxDivisionLabel(r)}` : `${r.distance_miles} mi`}
               {r.location ? ` · ${r.location}` : ''}
             </p>
             <CourseStats race={r} />
@@ -550,7 +565,11 @@ export default function Races() {
             <div aria-label={`Manage ${r.race_name}`} style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8, marginTop: 10 }}>
               <button
                 type="button"
-                onClick={() => { setRaceSaveError(''); setRaceEditor(r) }}
+                onClick={() => {
+                  setRaceSaveError('')
+                  if (isHyroxRace(r)) openHyroxPlanSetup(r)
+                  else setRaceEditor(r)
+                }}
                 disabled={Boolean(removingRaceId)}
                 style={{ minWidth: 0, minHeight: 44, borderRadius: 8, padding: '10px 12px', background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', fontSize: 13, fontWeight: 850 }}
               >Edit</button>
@@ -565,10 +584,16 @@ export default function Races() {
             <button
               className="mt-2 rounded-lg px-3 py-1.5 text-xs font-bold"
               style={{ background: 'var(--accent)', color: '#0f1117' }}
-              onClick={() => generateRacePlan(r, () => {
-                setMessage(`Your training plan has been updated around ${r.race_name}`)
-              })}
-              disabled={generatingPlanId === r.id || (!activePlanRaceIds.includes(String(r.id)) && activePlanRaceIds.length >= 2)}
+              onClick={() => {
+                if (isHyroxRace(r)) {
+                  openHyroxPlanSetup(r)
+                  return
+                }
+                generateRacePlan(r, () => {
+                  setMessage(`Your training plan has been updated around ${r.race_name}`)
+                })
+              }}
+              disabled={generatingPlanId === r.id || (!isHyroxRace(r) && !activePlanRaceIds.includes(String(r.id)) && activePlanRaceIds.length >= 2)}
             >
               {racePlanActionLabel(r)}
             </button>
@@ -588,6 +613,22 @@ export default function Races() {
           onSave={saveRaceEdit}
           saving={raceSaving}
           serverError={raceSaveError}
+        />
+      )}
+
+      {hyroxEditor && (
+        <HyroxPlanSetup
+          savedRaces={races}
+          activePlanRaceIds={activePlanRaceIds}
+          initialRace={hyroxEditor.race}
+          initialSecondaryRaceId={hyroxEditor.secondaryRaceId}
+          onClose={() => setHyroxEditor(null)}
+          onComplete={async () => {
+            const raceName = hyroxEditor.race.race_name
+            setHyroxEditor(null)
+            await load({ fresh: true })
+            setMessage(`${raceName} and the reviewed HYROX calendar are updated.`)
+          }}
         />
       )}
     </div>

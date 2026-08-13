@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Check, ChevronLeft, ShieldCheck, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import api from '../../lib/api'
+import { hyroxCombinedPlanGuidance, hyroxDivisionLabel, hyroxSetupInitialState } from '../../lib/hyroxSelfService'
 import { activateModalDialog } from '../../lib/modalDialog'
 import { phonePlanningClock } from '../../lib/planCandidates'
 import { hyroxCandidateReviewModel } from '../../lib/planCalendar'
@@ -37,24 +38,28 @@ function planFromPreview(preview = {}) {
   return preview?.plan?.plan_data || preview?.candidate?.plan_data || {}
 }
 
-export default function HyroxPlanSetup({ savedRaces = [], onClose, onComplete }) {
+export default function HyroxPlanSetup({ savedRaces = [], activePlanRaceIds = [], initialRace = null, initialSecondaryRaceId = '', onClose, onComplete }) {
   const { t } = useTranslation()
   const dialogRef = useRef(null)
   const tx = (key, defaultValue, values = {}) => t(`hyrox.${key}`, { defaultValue, ...values })
+  const initial = useMemo(
+    () => hyroxSetupInitialState(initialRace, initialSecondaryRaceId, browserTimezone()),
+    [initialRace, initialSecondaryRaceId],
+  )
   const [eventMode, setEventMode] = useState('event_date')
-  const [eventName, setEventName] = useState('')
-  const [eventLocalDate, setEventLocalDate] = useState('')
-  const [eventTimezone, setEventTimezone] = useState(browserTimezone)
-  const [location, setLocation] = useState('')
-  const [eventFormat, setEventFormat] = useState('individual_open')
-  const [eventCategory, setEventCategory] = useState('')
+  const [eventName, setEventName] = useState(initial.eventName)
+  const [eventLocalDate, setEventLocalDate] = useState(initial.eventLocalDate)
+  const [eventTimezone, setEventTimezone] = useState(initial.eventTimezone)
+  const [location, setLocation] = useState(initial.location)
+  const [eventFormat, setEventFormat] = useState(initial.eventFormat)
+  const [eventCategory, setEventCategory] = useState(initial.eventCategory)
   const [rulesVersion] = useState(RULES_VERSION)
-  const [runningPriority, setRunningPriority] = useState('maintain')
-  const [equipment, setEquipment] = useState([])
-  const [runDaysPerWeek, setRunDaysPerWeek] = useState(3)
-  const [trainingDays, setTrainingDays] = useState(['Tue', 'Thu', 'Sat', 'Sun'])
-  const [secondaryRaceId, setSecondaryRaceId] = useState('')
-  const [ownedHyroxRace, setOwnedHyroxRace] = useState(null)
+  const [runningPriority, setRunningPriority] = useState(initial.runningPriority)
+  const [equipment, setEquipment] = useState(initial.equipment)
+  const [runDaysPerWeek, setRunDaysPerWeek] = useState(initial.runDaysPerWeek)
+  const [trainingDays, setTrainingDays] = useState(initial.trainingDays)
+  const [secondaryRaceId, setSecondaryRaceId] = useState(initial.secondaryRaceId)
+  const [ownedHyroxRace, setOwnedHyroxRace] = useState(initial.ownedHyroxRace)
   const [candidate, setCandidate] = useState(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -62,8 +67,18 @@ export default function HyroxPlanSetup({ savedRaces = [], onClose, onComplete })
   const review = useMemo(() => candidate ? hyroxCandidateReviewModel(planFromPreview(candidate)) : null, [candidate])
   const secondaryRaces = useMemo(() => savedRaces.filter((race) => (
     String(race.event_kind || 'run_race') === 'run_race'
+    && String(race.status || '') === 'upcoming'
     && (!eventLocalDate || String(race.race_date) > eventLocalDate)
   )), [eventLocalDate, savedRaces])
+  const combinedGuidance = useMemo(() => hyroxCombinedPlanGuidance({
+    hyroxRace: {
+      event_kind: 'hyrox',
+      race_date: eventLocalDate,
+    },
+    savedRaces,
+    activePlanRaceIds,
+    selectedSecondaryRaceId: secondaryRaceId,
+  }), [activePlanRaceIds, eventLocalDate, savedRaces, secondaryRaceId])
 
   useEffect(() => activateModalDialog({
     dialog: dialogRef.current,
@@ -88,8 +103,15 @@ export default function HyroxPlanSetup({ savedRaces = [], onClose, onComplete })
     if (trainingDays.length < runDaysPerWeek) return tx('error.days', 'Available training days must fit every weekly run exposure.')
     if (secondaryRaceId) {
       const race = secondaryRaces.find((item) => String(item.id) === String(secondaryRaceId))
-      const gap = race ? Math.round((new Date(`${race.race_date}T12:00:00`) - new Date(`${eventLocalDate}T12:00:00`)) / 86400000) : 0
-      if (gap < 21) return tx('error.secondary', 'The secondary running race must be at least 21 days after HYROX.')
+      if (!race) return tx('error.secondary_missing', 'Choose a saved running race that takes place after HYROX.')
+      const gap = Math.round((new Date(`${race.race_date}T12:00:00`) - new Date(`${eventLocalDate}T12:00:00`)) / 86400000)
+      if (gap < 21) {
+        return tx(
+          'error.secondary',
+          '{{race}} is only {{count}} days after HYROX. Choose a running race at least 21 days later, or change either event date.',
+          { race: race.race_name, count: gap },
+        )
+      }
     }
     return ''
   }
@@ -113,7 +135,14 @@ export default function HyroxPlanSetup({ savedRaces = [], onClose, onComplete })
     rules_version: rulesVersion,
     location: location.trim() || null,
     status: 'upcoming',
-    event_config_json: { schemaVersion: 1, canonicalUnits: 'metric', equipment, runningPriority },
+    event_config_json: {
+      schemaVersion: 1,
+      canonicalUnits: 'metric',
+      equipment,
+      runningPriority,
+      runDaysPerWeek: Number(runDaysPerWeek),
+      trainingDays,
+    },
   })
 
   const requestPreview = async () => {
@@ -122,6 +151,7 @@ export default function HyroxPlanSetup({ savedRaces = [], onClose, onComplete })
     setBusy(true)
     setError('')
     let savedRace = ownedHyroxRace
+    let eventWasSaved = false
     try {
       const clock = phonePlanningClock()
       if (eventMode === 'foundation') {
@@ -145,6 +175,7 @@ export default function HyroxPlanSetup({ savedRaces = [], onClose, onComplete })
         ? await api.patch(`/races/${encodeURIComponent(savedRace.id)}`, eventPayload())
         : await api.post('/races', eventPayload())
       savedRace = saved.data?.race
+      eventWasSaved = true
       setOwnedHyroxRace(savedRace)
       if (!savedRace?.id) throw new Error('The HYROX event could not be saved.')
       const raceIds = [savedRace.id, secondaryRaceId].filter(Boolean)
@@ -152,7 +183,7 @@ export default function HyroxPlanSetup({ savedRaces = [], onClose, onComplete })
       const { data } = await api.post(path, { race_ids: raceIds, target: target(), ...clock })
       setCandidate(data)
     } catch (err) {
-      const prefix = savedRace ? 'Your HYROX event was saved, but the plan preview was not created. ' : ''
+      const prefix = eventWasSaved ? 'Your HYROX event was saved, but the plan preview was not created. ' : ''
       setError(prefix + (err?.response?.data?.error || err?.message || 'Could not preview this plan.'))
     } finally {
       setBusy(false)
@@ -188,7 +219,7 @@ export default function HyroxPlanSetup({ savedRaces = [], onClose, onComplete })
         <header style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
           <div style={{ minWidth: 0 }}>
             <p style={{ margin: 0, color: 'var(--accent)', fontSize: 11, fontWeight: 900, textTransform: 'uppercase' }}>{tx('eyebrow', 'Worldwide event plan')}</p>
-            <h2 id="hyrox-setup-title" style={{ margin: '4px 0 0', color: 'var(--text-primary)', fontSize: 24, fontWeight: 950 }}>{candidate ? tx('review.title', 'Review your HYROX plan') : tx('title', 'Build a HYROX plan')}</h2>
+            <h2 id="hyrox-setup-title" style={{ margin: '4px 0 0', color: 'var(--text-primary)', fontSize: 24, fontWeight: 950 }}>{candidate ? tx('review.title', 'Review your HYROX plan') : ownedHyroxRace ? tx('title.edit', 'Update your HYROX plan') : tx('title', 'Build a HYROX plan')}</h2>
           </div>
           <button type="button" onClick={onClose} disabled={busy} aria-label={tx('close', 'Close HYROX setup')} style={{ width: 44, height: 44, flex: '0 0 auto', display: 'grid', placeItems: 'center', borderRadius: 8, background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}><X size={19} /></button>
         </header>
@@ -205,6 +236,14 @@ export default function HyroxPlanSetup({ savedRaces = [], onClose, onComplete })
               <p style={{ margin: '5px 0 0', color: 'var(--text-muted)', fontSize: 13 }}>{review.sessionSummary}</p>
             </div>
             <dl style={{ display: 'grid', gap: 10, margin: 0, minWidth: 0 }}>
+              <div style={{ padding: 12, borderRadius: 8, background: 'var(--bg-input)' }}>
+                <dt style={{ fontSize: 11, fontWeight: 900, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Division reviewed</dt>
+                <dd style={{ margin: '4px 0 0', color: 'var(--text-primary)', fontWeight: 900 }}>{hyroxDivisionLabel({ event_format: eventFormat, event_category: eventCategory })}</dd>
+              </div>
+              <div style={{ padding: 12, borderRadius: 8, background: 'var(--bg-input)' }}>
+                <dt style={{ fontSize: 11, fontWeight: 900, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Event date reviewed</dt>
+                <dd style={{ margin: '4px 0 0', color: 'var(--text-primary)', fontWeight: 900 }}>{eventMode === 'event_date' ? eventLocalDate : 'No dated event'}</dd>
+              </div>
               <div style={{ padding: 12, borderRadius: 8, background: 'var(--bg-input)' }}>
                 <dt style={{ fontSize: 11, fontWeight: 900, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Days remaining</dt>
                 <dd style={{ margin: '4px 0 0', color: 'var(--text-primary)' }}>{review.daysRemaining == null ? 'No dated event' : review.daysRemaining}</dd>
@@ -294,6 +333,7 @@ export default function HyroxPlanSetup({ savedRaces = [], onClose, onComplete })
               <label style={{ display: 'grid', gap: 6 }}>
                 <span style={{ color: 'var(--text-primary)', fontSize: 13, fontWeight: 850 }}>{tx('field.format', 'Format / division')}</span>
                 <select value={eventFormat} onChange={(event) => { setEventFormat(event.target.value); if (event.target.value.startsWith('individual_') && eventCategory === 'mixed') setEventCategory('') }} style={inputStyle}>
+                  <option value="" disabled>Choose format</option>
                   <option value="individual_open">Open</option>
                   <option value="individual_pro">Pro</option>
                   <option value="doubles">Doubles</option>
@@ -343,12 +383,36 @@ export default function HyroxPlanSetup({ savedRaces = [], onClose, onComplete })
                 <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{tx('secondary.help', 'The preview must show post-HYROX recovery before running-race-specific work.')}</span>
               </label>
             )}
+            {eventMode === 'event_date' && activePlanRaceIds.length > 0 && (
+              <div role="note" style={{ display: 'grid', gap: 5, padding: 12, borderRadius: 8, background: 'var(--bg-input)', color: 'var(--text-muted)', fontSize: 12, lineHeight: 1.45 }}>
+                <strong style={{ color: 'var(--text-primary)' }}>
+                  {combinedGuidance.selectedRace
+                    ? `Combined rebuild selected: ${combinedGuidance.selectedRace.race_name}.`
+                    : 'HYROX-only rebuild selected.'}
+                </strong>
+                {combinedGuidance.excludedActiveRaces.map(({ race, explanation }) => <span key={race.id}>{explanation}</span>)}
+              </div>
+            )}
+            <dl aria-label="HYROX selection review" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8, margin: 0, padding: 12, borderRadius: 8, background: 'var(--accent-dim)' }}>
+              <div>
+                <dt style={{ color: 'var(--text-muted)', fontSize: 10, fontWeight: 900, textTransform: 'uppercase' }}>Selected division</dt>
+                <dd style={{ margin: '3px 0 0', color: 'var(--text-primary)', fontSize: 13, fontWeight: 900 }}>{hyroxDivisionLabel({ event_format: eventFormat, event_category: eventCategory })}</dd>
+              </div>
+              <div>
+                <dt style={{ color: 'var(--text-muted)', fontSize: 10, fontWeight: 900, textTransform: 'uppercase' }}>Selected event date</dt>
+                <dd style={{ margin: '3px 0 0', color: 'var(--text-primary)', fontSize: 13, fontWeight: 900 }}>{eventMode === 'event_date' ? eventLocalDate || 'Choose date' : 'No dated event'}</dd>
+              </div>
+            </dl>
             <p style={{ margin: 0, display: 'flex', gap: 8, color: 'var(--text-muted)', fontSize: 12, lineHeight: 1.5 }}>
               <ShieldCheck size={17} style={{ flex: '0 0 auto', color: 'var(--accent)' }} />
               <span>{tx('safety.profile', 'Your existing injury, comeback, readiness, and recovery signals remain authoritative. No duplicate override is collected here.')}</span>
             </p>
             <button type="button" onClick={requestPreview} disabled={busy} style={{ width: '100%', minHeight: 48, padding: '12px 14px', borderRadius: 8, border: 0, background: 'var(--accent)', color: 'var(--on-accent)', fontSize: 15, fontWeight: 950, opacity: busy ? 0.6 : 1 }}>
-              {busy ? tx('preview.loading', 'Building safe preview…') : tx('preview.action', 'Preview HYROX plan')}
+              {busy
+                ? tx('preview.loading', 'Building safe preview…')
+                : secondaryRaceId
+                  ? tx('preview.combined_action', 'Preview combined HYROX plan')
+                  : tx('preview.action', 'Preview HYROX plan')}
             </button>
             <p style={{ margin: 0, display: 'flex', gap: 7, color: 'var(--text-muted)', fontSize: 11 }}><Check size={14} style={{ flex: '0 0 auto', color: 'var(--success)' }} />{tx('preview.consent', 'Nothing replaces the current calendar until you explicitly apply the reviewed candidate.')}</p>
           </div>

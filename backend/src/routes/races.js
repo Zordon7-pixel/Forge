@@ -16,6 +16,7 @@ const gpxUpload = multer({
   limits: { fileSize: raceCourse.GPX_MAX_BYTES, files: 1 },
 });
 const RACE_STATUSES = new Set(['upcoming', 'completed', 'cancelled']);
+const HYROX_TRAINING_DAYS = new Set(['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']);
 const gpxUploadLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
@@ -95,6 +96,25 @@ function normalizeRaceEvent(body = {}) {
   const equipment = hyroxStandards.normalizeEquipment(config.equipment);
   const runningPriority = ['maintain', 'improve', 'race_pr'].includes(config.runningPriority)
     ? config.runningPriority : 'maintain';
+  const eventConfig = { schemaVersion: 1, equipment, runningPriority };
+  if (eventKind === 'hyrox' && (config.runDaysPerWeek !== undefined || config.trainingDays !== undefined)) {
+    const runDaysPerWeek = Number(config.runDaysPerWeek);
+    if (![3, 4].includes(runDaysPerWeek)) {
+      return { valid: false, error: 'HYROX availability requires 3 or 4 run days per week. Choose 3 or 4.' };
+    }
+    if (!Array.isArray(config.trainingDays) || config.trainingDays.some((day) => !HYROX_TRAINING_DAYS.has(day))) {
+      return { valid: false, error: 'HYROX training days must use Mon through Sun. Choose only supported weekdays.' };
+    }
+    const trainingDays = [...new Set(config.trainingDays)];
+    if (trainingDays.length < runDaysPerWeek) {
+      return {
+        valid: false,
+        error: `HYROX with ${runDaysPerWeek} run days needs at least ${runDaysPerWeek} training weekdays. Select at least ${runDaysPerWeek}.`,
+      };
+    }
+    eventConfig.runDaysPerWeek = runDaysPerWeek;
+    eventConfig.trainingDays = trainingDays;
+  }
   return {
     valid: true,
     value: {
@@ -111,7 +131,7 @@ function normalizeRaceEvent(body = {}) {
       event_local_date: localDate,
       event_timezone: timezone,
       rules_version: rulesVersion,
-      event_config_json: JSON.stringify({ schemaVersion: 1, equipment, runningPriority }),
+      event_config_json: JSON.stringify(eventConfig),
     },
   };
 }

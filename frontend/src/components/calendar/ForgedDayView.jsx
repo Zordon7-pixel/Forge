@@ -262,6 +262,12 @@ export default function ForgedDayView({
   const liftSession = sessions.find((s) => s.kind === 'lift') || null
   const hyroxSessions = sessions.filter((s) => s.kind === 'hyrox')
   const isRest = !day || day.isRest
+  const restPrescription = day?.restPrescription || null
+  const restRaw = restPrescription?.raw || restPrescription?.prescription || {}
+  const isRecoveryAlternative = Boolean(restRaw.recovery_alternative)
+  const recoveryOptions = Array.isArray(restRaw.recovery_alternative?.options)
+    ? restRaw.recovery_alternative.options.filter((option) => option && typeof option === 'object' && !Array.isArray(option))
+    : []
   const anchoredBy = planContext.goal?.anchoredBy || day?.anchoredBy || null
   const anchorRunDate = formatAnchorRunDate(anchoredBy?.runDate)
 
@@ -639,10 +645,36 @@ export default function ForgedDayView({
       {isRest ? (
         <section style={{ marginTop: 24, textAlign: 'center' }}>
           <span className="forged-stamp forged-stamp--rest" style={{ margin: '0 auto' }}><Moon size={16} /></span>
-          <h4 className="forged-hand" style={{ fontSize: px(20), fontWeight: 700, marginTop: 10 }}>{day?.hasPlan === false ? 'No planned workout' : 'Planned rest day'}</h4>
-          <p style={{ fontSize: px(13), color: 'var(--ink-soft, #5A554B)', marginTop: 4 }}>{day?.hasPlan === false ? 'This recorded run was outside the active plan.' : 'Recover well and come back ready.'}</p>
+          <h4 className="forged-hand" style={{ fontSize: px(20), fontWeight: 700, marginTop: 10 }}>{day?.hasPlan === false ? 'No planned workout' : restPrescription?.title || 'Planned rest day'}</h4>
+          <p style={{ fontSize: px(13), color: 'var(--ink-soft, #5A554B)', marginTop: 4 }}>{day?.hasPlan === false ? 'This recorded run was outside the active plan.' : firstStr(restRaw.description, 'Recover well and come back ready.')}</p>
+          {recoveryOptions.length > 0 && (
+            <div style={{ display: 'grid', gap: 8, maxWidth: 520, margin: '14px auto 0', textAlign: 'left' }}>
+              {recoveryOptions.map((option) => {
+                const range = list(option.duration_range_minutes)
+                const duration = range.length === 2
+                  ? `${range[0]}–${range[1]} min`
+                  : Number(option.duration_minutes) === 0
+                    ? 'Full rest'
+                    : Number(option.duration_minutes) > 0 ? `${option.duration_minutes} min` : 'Duration not prescribed'
+                return (
+                  <div key={option.type} style={{ padding: 10, borderRadius: 8, background: 'rgba(60,55,45,0.06)', border: '1px solid rgba(60,55,45,0.12)' }}>
+                    <strong style={{ display: 'block', fontSize: px(13), textTransform: 'capitalize' }}>{option.type}</strong>
+                    <p style={{ margin: '3px 0 0', fontSize: px(12), fontWeight: 800 }}><Timer size={13} style={{ display: 'inline', marginRight: 4, verticalAlign: -2 }} />{duration} · {firstStr(option.intensity, 'Very easy')}</p>
+                    {firstStr(option.guidance) && <p style={{ margin: '4px 0 0', fontSize: px(12) }}>{firstStr(option.guidance)}</p>}
+                    {firstStr(option.safety_rationale) && <p style={{ margin: '4px 0 0', fontSize: px(11), color: 'var(--ink-soft, #5A554B)' }}>Safety: {firstStr(option.safety_rationale)}</p>}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+          {recoveryOptions.length === 0 && list(restRaw.steps).length > 0 && (
+            <ol style={{ margin: '12px auto 0', maxWidth: 520, paddingLeft: 22, textAlign: 'left', fontSize: px(12), lineHeight: 1.55 }}>
+              {list(restRaw.steps).map((step, index) => <li key={`rest-step-${index}`}>{step}</li>)}
+            </ol>
+          )}
+          {firstStr(restRaw.progression) && <p style={{ fontSize: px(12), color: 'var(--ink-soft, #5A554B)', marginTop: 10 }}>{firstStr(restRaw.progression)}</p>}
           {isScheduledToday && (
-            <>
+            !isRecoveryAlternative ? <>
               <button
                 type="button"
                 onClick={onStartUnplannedRun}
@@ -653,7 +685,7 @@ export default function ForgedDayView({
                 Start a run
               </button>
               <p style={{ fontSize: px(11), color: 'var(--ink-soft, #5A554B)', marginTop: 6 }}>Choose an extra run or move a missed session onto today.</p>
-            </>
+            </> : null
           )}
         </section>
       ) : (

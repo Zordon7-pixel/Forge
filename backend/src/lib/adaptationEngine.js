@@ -8,6 +8,14 @@ const HARD_RUN_PATTERN = /(long|quality|tempo|threshold|interval|hill|hard|speed
 const HEALTH_STALE = new Set(['stale', 'suspect', 'missing', 'no_data', 'unknown']);
 const MODERATE_INJURY_WINDOW_DAYS = 14;
 const MODERATE_INJURY_VOLUME_MULTIPLIER = 0.75;
+// Product prescription policy, not a health-benefit or medical threshold.
+// FORGE-RACE-TRAVEL-ADAPTATION-SPEC.md already establishes 20 minutes as the
+// repository's conservative executable recovery-run dose. Adaptations may be
+// distance-only, so 1.5 miles is the paired product guard against the known
+// 0.5-0.8 mile token-run leak. We never increase a reduced dose to these floors:
+// an under-floor or unquantified run becomes an explicit lower-strain choice.
+const MIN_EFFECTIVE_RECOVERY_RUN_MINUTES = 20;
+const MIN_EFFECTIVE_RECOVERY_RUN_MILES = 1.5;
 
 function parseISODate(value) {
   const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -569,7 +577,108 @@ function patchRunForHeavyLegs(session) {
   };
 }
 
-function patchRunForRecovery(session, severity, label) {
+function recoveryRunDose(session = {}) {
+  const duration = firstNumericSessionValue(session, ['duration_min', 'duration_minutes', 'minutes', 'time_minutes']);
+  const distance = firstNumericSessionValue(session, ['distance_miles', 'distance', 'miles']);
+  const basis = String(session.prescription_basis || '').toLowerCase();
+  const minutes = duration ? Math.round(duration.value) : null;
+  const miles = distance ? Math.round(distance.value * 10) / 10 : null;
+
+  if (basis === 'time') {
+    return {
+      meaningful: minutes !== null && minutes >= MIN_EFFECTIVE_RECOVERY_RUN_MINUTES,
+      decisionReason: minutes === null ? 'dose_unquantified' : 'below_time_minimum',
+      basis,
+      minutes,
+      miles,
+    };
+  }
+  if (basis === 'distance') {
+    return {
+      meaningful: miles !== null && miles >= MIN_EFFECTIVE_RECOVERY_RUN_MILES,
+      decisionReason: miles === null ? 'dose_unquantified' : 'below_distance_minimum',
+      basis,
+      minutes,
+      miles,
+    };
+  }
+  if (minutes === null && miles === null) {
+    return { meaningful: false, decisionReason: 'dose_unquantified', basis: 'unquantified', minutes, miles };
+  }
+  return {
+    meaningful: (minutes !== null && minutes >= MIN_EFFECTIVE_RECOVERY_RUN_MINUTES)
+      || (miles !== null && miles >= MIN_EFFECTIVE_RECOVERY_RUN_MILES),
+    decisionReason: 'below_time_and_distance_minimums',
+    basis: minutes !== null && miles !== null ? 'time_or_distance' : minutes !== null ? 'time' : 'distance',
+    minutes,
+    miles,
+  };
+}
+
+function recoveryWalkOrRest(session, label, dose) {
+  const safetyRationale = 'The reduced dose would not deliver the intended recovery session, so Forge does not label a token run as productive. Rest or comfortable low-strain movement is the truthful choice.';
+  return {
+    id: session.id,
+    kind: 'rest',
+    type: 'rest',
+    workout_type: 'rest',
+    title: 'Rest, easy walking, or mobility',
+    intensity: 'Rest or very easy',
+    target_zone: null,
+    distance_miles: 0,
+    prescription_basis: 'choice',
+    description: `${label} ${safetyRationale}`,
+    steps: [
+      'Rest completely if you feel unusually tired, sore, unwell, or your movement is not normal',
+      'Otherwise walk for 20-30 min at a very easy, fully conversational effort',
+      'Or use 5-10 min of gentle mobility through comfortable ranges',
+      'Stop the optional walking or mobility if pain increases, soreness changes normal movement, or you feel unwell',
+    ],
+    progression: 'Do not turn the recovery choice into a run workout or add intensity.',
+    recovery_alternative: {
+      policy: 'minimum_effective_recovery_session_v1',
+      decision_reason: dose.decisionReason,
+      evaluated_basis: dose.basis,
+      minimum_run_minutes: MIN_EFFECTIVE_RECOVERY_RUN_MINUTES,
+      minimum_run_miles: MIN_EFFECTIVE_RECOVERY_RUN_MILES,
+      reduced_run_minutes: dose.minutes,
+      reduced_run_miles: dose.miles,
+      safety_rationale: safetyRationale,
+      activity_health_minimum_claimed: false,
+      options: [
+        {
+          type: 'rest',
+          duration_minutes: 0,
+          intensity: 'Rest / no exercise',
+          guidance: 'Take a full rest day.',
+          safety_rationale: 'Choose rest when unusually tired, sore, unwell, or normal movement is altered.',
+        },
+        {
+          type: 'walking',
+          duration_range_minutes: [20, 30],
+          intensity: 'Very easy and fully conversational',
+          guidance: 'Use relaxed walking only; this is not a run substitute to complete at pace.',
+          safety_rationale: 'Continue only while movement feels comfortable; stop if pain or soreness changes normal movement.',
+        },
+        {
+          type: 'mobility',
+          duration_range_minutes: [5, 10],
+          intensity: 'Gentle, comfortable range of motion',
+          guidance: 'Choose familiar low-strain mobility and avoid loaded or forced ranges.',
+          safety_rationale: 'Keep every movement pain-free and stop rather than pushing through discomfort.',
+        },
+      ],
+    },
+  };
+}
+
+function enforceMinimumEffectiveRecoveryRun(session, label, options = {}) {
+  if (options.enforceStructuredRunFloor === false) return session;
+  const dose = recoveryRunDose(session);
+  return dose.meaningful ? session : recoveryWalkOrRest(session, label, dose);
+}
+
+function patchRunForRecovery(session, severity, label, options = {}) {
   const multiplier = severity === 'rest' ? 0.5 : 0.7;
   const next = Object.assign({}, session, {
     type: 'recovery',
@@ -584,10 +693,10 @@ function patchRunForRecovery(session, severity, label) {
     cooldown: ['5 min easy walking', 'Hydrate and refuel'],
     progression: 'Do not add pace, repeats, or distance today.',
   });
-  const miles = Number(session.distance_miles);
-  if (Number.isFinite(miles) && miles > 0) next.distance_miles = Math.max(0.5, Math.round(miles * multiplier * 10) / 10);
-  const duration = Number(session.duration_min);
-  if (Number.isFinite(duration) && duration > 0) next.duration_min = Math.max(10, Math.round(duration * multiplier));
+  const miles = firstNumericSessionValue(session, ['distance_miles', 'distance', 'miles']);
+  if (miles) next[miles.key] = Math.max(0.5, Math.round(miles.value * multiplier * 10) / 10);
+  const duration = firstNumericSessionValue(session, ['duration_min', 'duration_minutes', 'minutes', 'time_minutes']);
+  if (duration) next[duration.key] = Math.max(10, Math.round(duration.value * multiplier));
   if (session.injury_adjustment) {
     next.pace_target = session.pace_target;
     next.description = session.description;
@@ -595,7 +704,7 @@ function patchRunForRecovery(session, severity, label) {
     next.cooldown = clone(session.cooldown);
     next.progression = session.progression;
   }
-  return next;
+  return enforceMinimumEffectiveRecoveryRun(next, label, options);
 }
 
 function patchRunForReentry(session, index, distanceLimit = null, plannedMiles = null) {
@@ -604,7 +713,8 @@ function patchRunForReentry(session, index, distanceLimit = null, plannedMiles =
     'reduce',
     index === 0
       ? 'First easy run after a seven-day running gap.'
-      : 'Easy re-entry running while consistency is rebuilt.'
+      : 'Easy re-entry running while consistency is rebuilt.',
+    { enforceStructuredRunFloor: false },
   );
   next.title = index === 0 ? 'Return-to-running easy run' : 'Easy re-entry run';
   next.prescription_basis = 'time';
@@ -871,7 +981,13 @@ function applyChangesToClone(plan, changes) {
             return;
           }
           const afterKind = planSchema.kindFromSession(change.after);
-          if (afterKind === 'rest' || change.after?.removeSession === true) return;
+          if (change.after?.removeSession === true) return;
+          // A normal rest conversion removes the executable session. The
+          // recovery-floor policy is different: it is a real, reviewable
+          // rest/easy-walk prescription that must survive acceptance so the
+          // calendar can explain the alternative instead of silently showing
+          // an empty day.
+          if (afterKind === 'rest' && !change.after?.recovery_alternative) return;
           rebuilt.push(Object.assign({}, change.after, { id: change.after.id || session.id || id }));
         });
         const framed = planSchema.toCanonicalDay(day, rebuilt, true);
@@ -1093,7 +1209,10 @@ function buildAdaptationProposal(input = {}) {
   } else {
     const todayRun = todaySessions.find((item) => item.kind === 'run');
     if (todayRun && checkin.action !== 'keep' && Object.keys(checkin.patch || {}).length) {
-      const after = planSchema.applyOverrideToDay(todayRun.session, checkin.patch);
+      const patched = planSchema.applyOverrideToDay(todayRun.session, checkin.patch);
+      const after = checkin.action === 'recovery_swap'
+        ? enforceMinimumEffectiveRecoveryRun(patched, 'Recovery choice from today\'s soreness or fatigue check-in.')
+        : patched;
       addChange(
         changes,
         todayRun,
@@ -1177,7 +1296,11 @@ function buildAdaptationProposal(input = {}) {
           const key = `${item.date}:${item.sessionId}`;
           const current = changes.get(key)?.after || item.session;
           if (item.kind === 'run' && rule.modalities.run && String(item.session.type || '').toLowerCase() !== 'race') {
-            const after = patchRunForInjury(current, rule);
+            const adjusted = patchRunForInjury(current, rule);
+            const after = enforceMinimumEffectiveRecoveryRun(
+              adjusted,
+              `Lower-strain choice because ${injuryRuleDetail('the reduced run', rule)}`
+            );
             addChange(
               changes,
               item,

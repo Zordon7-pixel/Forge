@@ -529,6 +529,93 @@ test('ambiguous race-removal response is reconciled from fresh account state and
   expect(runtimeErrors.filter((message) => !/status of 504 \(Gateway Timeout\)/.test(message))).toEqual([])
 })
 
+test('an existing HYROX event can correct its division and review a combined candidate without mutating the current plan', async ({ page }) => {
+  const runtimeErrors = collectRuntimeErrors(page)
+  const hyrox = {
+    id: 'hyrox-dc',
+    race_name: 'HYROX Washington DC',
+    race_date: '2026-09-06',
+    event_local_date: '2026-09-06',
+    event_timezone: 'America/New_York',
+    event_kind: 'hyrox',
+    event_format: 'individual_open',
+    event_category: 'men',
+    status: 'upcoming',
+  }
+  const yonkers = { id: 'yonkers-race', race_name: 'Yonkers Half Marathon', race_date: '2026-09-20', event_kind: 'run_race', status: 'upcoming', distance_miles: 13.1 }
+  const army = { id: 'army-race', race_name: 'Army Ten-Miler', race_date: '2026-10-11', event_kind: 'run_race', status: 'upcoming', distance_miles: 10 }
+  let hyroxPatch = null
+  const apiState = await installAuthenticatedApi(page, {
+    responses: new Map([
+      ['GET /api/races', { races: [hyrox, yonkers, army] }],
+      ['GET /api/plans/my', {
+        plan: { id: 'existing-two-goal-plan', plan_data: { schemaVersion: 2, goals: [
+          { raceId: yonkers.id, name: yonkers.race_name, dateISO: yonkers.race_date },
+          { raceId: army.id, name: army.race_name, dateISO: army.race_date },
+        ] } },
+        user_plan: { current_week: 1, started_at: today, progress: {} },
+      }],
+      ['PATCH /api/races/hyrox-dc', (request) => {
+        hyroxPatch = request.body
+        return { race: { ...hyrox, ...request.body } }
+      }],
+      ['POST /api/plans/generate-for-races', {
+        candidate_id: 'hyrox-doubles-candidate',
+        candidate_hash: 'sha256:hyrox-doubles-candidate',
+        candidate: { plan_data: {
+          schemaVersion: 2,
+          schedulePreferences: { runDaysPerWeek: 3 },
+          hyroxPolicy: {
+            daysToEventAtGeneration: 24,
+            runwayClass: 'race_specific',
+            sessionsPerWeek: 2,
+            maximumHardLowerBodyDaysPerRollingSeven: 2,
+            equipment: [],
+            missingEquipment: ['sled_push'],
+          },
+          goals: [
+            { kind: 'hyrox', raceId: hyrox.id, name: hyrox.race_name },
+            { kind: 'run_race', raceId: army.id, name: army.race_name },
+          ],
+          weeks: [{ week: 1, phase: 'post_hyrox_recovery', days: [] }],
+        } },
+      }],
+    ]),
+  })
+
+  await page.goto('/races')
+  await expect(page.getByText('HYROX · Open Men', { exact: true })).toBeVisible()
+  await page.getByLabel('Manage HYROX Washington DC').getByRole('button', { name: 'Edit', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Update your HYROX plan' })).toBeVisible()
+  await page.getByLabel('Format / division').selectOption('doubles')
+  await expect(page.getByLabel('Optional secondary running race')).toHaveValue(army.id)
+  const selectionReview = page.getByLabel('HYROX selection review')
+  await expect(selectionReview.getByText('Doubles Men', { exact: true })).toBeVisible()
+  await expect(selectionReview.getByText('2026-09-06', { exact: true })).toBeVisible()
+  await expect(page.getByText('Combined rebuild selected: Army Ten-Miler.', { exact: true })).toBeVisible()
+  await expect(page.getByText(/Yonkers Half Marathon is not included because it is 14 days after HYROX; at least 21 days is required\. Change either event date/i)).toBeVisible()
+
+  await page.getByLabel('Optional secondary running race').selectOption(yonkers.id)
+  await page.getByRole('button', { name: 'Preview combined HYROX plan', exact: true }).click()
+  await expect(page.getByRole('alert')).toContainText('Yonkers Half Marathon is only 14 days after HYROX. Choose a running race at least 21 days later, or change either event date.')
+  expect(hyroxPatch).toBeNull()
+  expect(requestsFor(apiState, 'POST', '/api/plans/generate-for-races')).toHaveLength(0)
+
+  await page.getByLabel('Optional secondary running race').selectOption(army.id)
+  await page.getByRole('button', { name: 'Preview combined HYROX plan', exact: true }).click()
+
+  await expect(page.getByText('Doubles Men', { exact: true })).toBeVisible()
+  await expect(page.getByText('2026-09-06', { exact: true })).toBeVisible()
+  expect(hyroxPatch.event_format).toBe('doubles')
+  expect(hyroxPatch.event_category).toBe('men')
+  expect(hyroxPatch.event_config_json).toMatchObject({ runDaysPerWeek: 3, trainingDays: ['Tue', 'Thu', 'Sat', 'Sun'] })
+  const previews = requestsFor(apiState, 'POST', '/api/plans/generate-for-races')
+  expect(previews).toHaveLength(1)
+  expect(previews[0].body.race_ids).toEqual([hyrox.id, army.id])
+  expect(requestsFor(apiState, 'POST', '/api/plans/candidates/hyrox-doubles-candidate/apply')).toHaveLength(0)
+  assertCleanApiAndRuntime(apiState, runtimeErrors)
+})
+
 test('the current plan item opens its existing calendar without changing navigation or plan state', async ({ page }) => {
   const runtimeErrors = collectRuntimeErrors(page)
   const plan = {

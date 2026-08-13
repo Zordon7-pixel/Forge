@@ -659,7 +659,7 @@ export function buildWeekDays(weekData, weekStartDate, options = {}) {
       .find(Boolean) || null
     const date = entryDate || slotDate
 
-    let sessions = mappedEntries.flatMap((item) => {
+    const normalizedSessions = mappedEntries.flatMap((item) => {
       const rawEntry = item.entry
       const anchor = firstDefined(
         rawEntry?.id,
@@ -675,7 +675,6 @@ export function buildWeekDays(weekData, weekStartDate, options = {}) {
             dayCompleted: rawEntry.completed === true,
             dayStatus: rawEntry.status || rawEntry.state,
           }))
-          .filter((session) => session.kind !== 'rest')
       }
 
       // Legacy flat/day entry: the entry itself is one session. Keep the
@@ -687,15 +686,17 @@ export function buildWeekDays(weekData, weekStartDate, options = {}) {
         dayCompleted: rawEntry.completed === true,
         dayStatus: rawEntry.status || rawEntry.state,
       })
-      return normalized.kind === 'rest' ? [] : [normalized]
+      return [normalized]
     })
-
-    if (runOnly) sessions = sessions.filter((session) => session.kind === 'run')
-    if (removedSessionIds.size) {
-      sessions = sessions.filter((session) => (
+    const visibleSessions = removedSessionIds.size
+      ? normalizedSessions.filter((session) => (
         !session.removalSessionId || !removedSessionIds.has(String(session.removalSessionId))
       ))
-    }
+      : normalizedSessions
+    const restPrescription = visibleSessions.find((session) => session.kind === 'rest') || null
+    let sessions = visibleSessions.filter((session) => session.kind !== 'rest')
+
+    if (runOnly) sessions = sessions.filter((session) => session.kind === 'run')
 
     const isRest = sessions.length === 0
     days.push({
@@ -705,6 +706,7 @@ export function buildWeekDays(weekData, weekStartDate, options = {}) {
       date,
       sessions,
       isRest,
+      restPrescription,
       orderGuidance: firstDefined(...mappedEntries.flatMap(({ entry: item }) => [item?.orderGuidance, item?.order_guidance])),
       whyToday: firstDefined(...mappedEntries.flatMap(({ entry: item }) => [item?.whyToday, item?.why_today, item?.explanation])),
       recovery: firstDefined(...mappedEntries.flatMap(({ entry: item }) => [item?.recovery, item?.recoveryNote])),
