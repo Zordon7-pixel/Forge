@@ -160,7 +160,11 @@ function hybridCandidates(plan, startISO, endISO) {
           weekIndex,
           dayIndex,
           runSessionIds: runIds.map(String),
+          storedCompletedRunSessionIds: runs
+            .filter((run) => planSchema.isStoredSessionCompleted(day, run))
+            .map((run) => String(planSchema.sessionIdentifier(day, run, sessions.indexOf(run), dayIndex))),
           liftSessionId: String(liftSessionId),
+          liftStoredCompleted: planSchema.isStoredSessionCompleted(day, lift),
           run: runs[0],
           lift,
         });
@@ -218,8 +222,10 @@ function buildCurrentPrompt({
 
   for (const candidate of candidates) {
     if (candidate.date === planningDateISO && (!Number.isInteger(hour) || hour < PROMPT_HOUR)) continue;
-    const runComplete = candidate.runSessionIds.some((id) => completed.has(id)) || runDateSet.has(candidate.date);
-    const liftComplete = liftAllocation.completedKeys.has(candidate.key);
+    const runComplete = candidate.runSessionIds.some((id) => completed.has(id))
+      || candidate.storedCompletedRunSessionIds.length > 0
+      || runDateSet.has(candidate.date);
+    const liftComplete = candidate.liftStoredCompleted || liftAllocation.completedKeys.has(candidate.key);
     if (!runComplete || liftComplete) continue;
 
     const prior = records[candidate.key];

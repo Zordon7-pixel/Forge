@@ -21,6 +21,7 @@ import {
   dayHasLift,
   dayMarks,
   dayStatus,
+  sessionState,
   monthMark,
   normalizePrescription,
   normalizeLiftExercisePrescription,
@@ -219,6 +220,21 @@ check('e: completed status reflects completedSet', () => {
   const marks = dayMarks(days[0], allDone)
   assert.equal(marks.length, 2)
   assert.equal(marks[0].state, 'completed')
+})
+
+check('e2: stored completion shapes stay completed without progress ids', () => {
+  const week = {
+    days: [
+      { date: '2026-07-13', day: 'Mon', sessions: [{ id: 'flagged', kind: 'lift', completed: true }] },
+      { date: '2026-07-14', day: 'Tue', sessions: [{ id: 'status', kind: 'run', status: 'completed' }] },
+      { date: '2026-07-15', day: 'Wed', status: 'completed', sessions: [{ id: 'day-status', kind: 'lift' }] },
+    ],
+  }
+  const days = buildWeekDays(week, WEEK_START)
+  assert.equal(sessionState(days[0].sessions[0], new Set()), 'completed')
+  assert.equal(sessionState(days[1].sessions[0], new Set()), 'completed')
+  assert.equal(sessionState(days[2].sessions[0], new Set()), 'completed')
+  assert.equal(dayStatus(days[2], new Set()), 'completed')
 })
 
 // ---------------------------------------------------------------------------

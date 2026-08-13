@@ -298,8 +298,9 @@ export default function ForgedDayView({
   const recovery = firstStr(day?.recovery, hyroxSessions[0]?.raw?.transitionRest, runSession?.prescription?.recovery, liftSession?.prescription?.recovery)
   const orderGuidance = firstStr(day?.orderGuidance)
   const plannedSessionIds = new Set(sessions.map((session) => String(session.id)))
-  const runDone = Boolean(runSession && completedSet?.has(String(runSession.id)))
-  const liftDone = Boolean(liftSession && completedSet?.has(String(liftSession.id)))
+  const isDone = (session) => sessionState(session, completedSet) === 'completed'
+  const runDone = Boolean(runSession && isDone(runSession))
+  const liftDone = Boolean(liftSession && isDone(liftSession))
   const liftFirst = Boolean(runSession && liftSession && /lift first/i.test(orderGuidance))
   const primarySessionKind = liftFirst
     ? (!liftDone ? 'lift' : !runDone ? 'run' : null)
@@ -366,7 +367,7 @@ export default function ForgedDayView({
 
   const renderHyrox = (hyroxSession) => {
     const facts = hyroxFacts(hyroxSession)
-    const done = completedSet?.has(String(hyroxSession.id))
+    const done = isDone(hyroxSession)
     return (
       <PaperSection key={hyroxSession.id} title={hyroxSession.title || 'HYROX session'} tone="red" px={px}
         icon={<span className="forged-stamp forged-stamp--hyrox" data-state={sessionState(hyroxSession, completedSet)}><Activity size={16} /></span>}>
@@ -416,7 +417,7 @@ export default function ForgedDayView({
   const renderRun = () => {
     if (!runSession) return null
     const f = runFacts(runSession)
-    const done = completedSet?.has(String(runSession.id))
+    const done = isDone(runSession)
     const watchWorkout = WatchWorkoutService.buildRunWorkout({
       day: dateLabel,
       typeLabel: runSession.title,
@@ -510,7 +511,7 @@ export default function ForgedDayView({
   const renderLift = () => {
     if (!liftSession) return null
     const f = liftFacts(liftSession, planContext)
-    const done = completedSet?.has(String(liftSession.id))
+    const done = isDone(liftSession)
     const watchWorkout = WatchWorkoutService.buildStrengthWorkout({
       workoutName: liftSession.title,
       target: f.focus,

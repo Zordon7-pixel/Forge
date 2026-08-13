@@ -32,6 +32,14 @@ function assertFilteringContract() {
   assert.strictEqual(planSchema.withoutRemovedSessions(source, []), source, 'empty removal set preserves identity');
 }
 
+function assertStoredCompletionContract() {
+  assert.equal(planSchema.isStoredSessionCompleted({}, { kind: 'lift', completed: true }), true);
+  assert.equal(planSchema.isStoredSessionCompleted({}, { kind: 'lift', status: 'completed' }), true);
+  assert.equal(planSchema.isStoredSessionCompleted({ status: 'completed' }, { kind: 'lift' }), true);
+  assert.equal(planSchema.isStoredSessionCompleted({ completed: true }, { kind: 'lift' }), true);
+  assert.equal(planSchema.isStoredSessionCompleted({ status: 'planned' }, { kind: 'lift' }), false);
+}
+
 function assertRemovalIdentityContract() {
   const legacy = {
     startDate: '2026-07-13',
@@ -105,10 +113,16 @@ async function assertScheduledWorkoutRoute() {
         { date: localDate(0), day: 'Wed', sessions: [
           { id: 'today-run', kind: 'run', title: 'Today run' },
           { id: 'today-lift', kind: 'lift', title: 'Today lift' },
+          { id: 'stored-flag-complete', kind: 'lift', title: 'Stored flag', completed: true },
+          { id: 'stored-status-complete', kind: 'lift', title: 'Stored status', status: 'completed' },
+        ] },
+        { date: localDate(1), day: 'Thu', status: 'completed', sessions: [
+          { id: 'completed-day-lift', kind: 'lift', title: 'Completed day lift' },
         ] },
       ],
     }],
   };
+  let activePlan = plan;
   let assignment;
   let updateCount = 0;
   const reset = (progress = {}) => {
@@ -138,7 +152,7 @@ async function assertScheduledWorkoutRoute() {
           name: 'Owner plan',
           type: 'hybrid_maintain',
           weeks: 1,
-          plan_data: plan,
+          plan_data: activePlan,
           plan_json: null,
         };
       }
@@ -160,7 +174,22 @@ async function assertScheduledWorkoutRoute() {
     filename: dbModulePath,
     loaded: true,
     exports: {
-      dbGet: async () => null,
+      dbGet: async (sql) => {
+        if (/FROM user_plans up/.test(sql) && /JOIN training_plans tp/.test(sql)) {
+          return {
+            ...assignment,
+            id: 'plan-owner',
+            user_id: 'owner',
+            name: 'Owner plan',
+            type: 'hybrid_maintain',
+            weeks: activePlan.weeks.length,
+            plan_data: activePlan,
+            plan_json: null,
+          };
+        }
+        if (/FROM training_plans WHERE user_id/.test(sql)) return null;
+        return null;
+      },
       dbAll: async () => [],
       dbRun: async () => ({ changes: 0 }),
       withUserMutation: async (_userId, fn) => fn(tx),
@@ -199,6 +228,9 @@ async function assertScheduledWorkoutRoute() {
     const todayLiftRemovalId = sessionRemovalId('today-lift');
     const todayRunRemovalId = sessionRemovalId('today-run');
     const pastRunRemovalId = sessionRemovalId('past-run');
+    const storedFlagRemovalId = sessionRemovalId('stored-flag-complete');
+    const storedStatusRemovalId = sessionRemovalId('stored-status-complete');
+    const completedDayRemovalId = sessionRemovalId('completed-day-lift');
 
     const raceRequest = plansRouter._test.raceRemovalCandidateRequest('server-race', ['server-remaining'], {
       planning_date_local: localDate(0),
@@ -233,6 +265,14 @@ async function assertScheduledWorkoutRoute() {
     assert.equal(response.payload.code, 'PLAN_SESSION_COMPLETED');
     assert.equal(updateCount, 0);
 
+    for (const storedRemovalId of [storedFlagRemovalId, storedStatusRemovalId, completedDayRemovalId]) {
+      reset();
+      response = await invoke(storedRemovalId);
+      assert.equal(response.statusCode, 409);
+      assert.equal(response.payload.code, 'PLAN_SESSION_COMPLETED');
+      assert.equal(updateCount, 0);
+    }
+
     reset();
     response = await invoke(pastRunRemovalId);
     assert.equal(response.statusCode, 409);
@@ -243,6 +283,69 @@ async function assertScheduledWorkoutRoute() {
     assert.equal(response.statusCode, 404);
     assert.equal(response.payload.code, 'PLAN_SESSION_NOT_FOUND');
     assert.equal(updateCount, 0);
+
+    const hybridPlan = {
+      schemaVersion: 2,
+      planMode: 'hybrid_maintain',
+      weeks: [{
+        week: 1,
+        startDate: localDate(-1),
+        days: [
+          { date: localDate(-1), day: 'Tue', sessions: [
+            { id: 'paired-run', kind: 'run', title: 'Paired run' },
+            { id: 'paired-lift', kind: 'lift', title: 'Paired lift' },
+          ] },
+          { date: localDate(1), day: 'Thu', sessions: [{ id: 'future-rest', kind: 'rest' }] },
+        ],
+      }],
+    };
+    activePlan = hybridPlan;
+    const identifiedHybrid = planSchema.withRemovalSessionIdentities(hybridPlan, { assignmentStart: localDate(-1) });
+    const pairedDay = identifiedHybrid.weeks[0].days[0];
+    const pairedRunId = planSchema.sessionIdentifier(pairedDay, pairedDay.sessions[0], 0, 0);
+    const pairedLiftId = planSchema.sessionIdentifier(pairedDay, pairedDay.sessions[1], 1, 0);
+    const pairedLiftRemovalId = pairedDay.sessions[1].removal_session_id;
+    reset({ completedSessionIds: [pairedRunId], removedSessionIds: [pairedLiftRemovalId] });
+
+    const currentLayer = plansRouter.stack.find((item) => item.route?.path === '/reconciliation/current' && item.route?.methods?.get);
+    const currentHandler = currentLayer?.route?.stack?.at(-1)?.handle;
+    const respondLayer = plansRouter.stack.find((item) => item.route?.path === '/reconciliation/respond' && item.route?.methods?.post);
+    const respondHandler = respondLayer?.route?.stack?.at(-1)?.handle;
+    assert.equal(typeof currentHandler, 'function');
+    assert.equal(typeof respondHandler, 'function');
+
+    const invokeHandler = async (routeHandler, request) => {
+      let statusCode = 200;
+      let payload = null;
+      const routeResponse = {
+        status(code) { statusCode = code; return this; },
+        json(value) { payload = value; return this; },
+      };
+      await routeHandler({ user: { id: 'owner' }, headers: {}, query: {}, body: {}, ...request }, routeResponse);
+      return { statusCode, payload };
+    };
+
+    response = await invokeHandler(currentHandler, {
+      query: { date: localDate(0), hour: 21, timezone: 'UTC' },
+    });
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.payload.reconciliation, null, 'removed lift cannot create a hybrid prompt');
+
+    response = await invokeHandler(respondHandler, {
+      body: {
+        current_date: localDate(0),
+        session_date: localDate(-1),
+        lift_session_id: pairedLiftId,
+        response: 'life_event',
+        timezone: 'UTC',
+      },
+    });
+    assert.equal(response.statusCode, 409);
+    assert.match(response.payload.error, /planned hybrid session changed/i);
+    assert.equal(updateCount, 0, 'crafted response cannot move or update a removed lift');
+    const servedAgain = planSchema.withoutRemovedSessions(identifiedHybrid, [pairedLiftRemovalId]);
+    assert.deepEqual(servedAgain.weeks[0].days[0].sessions.map((session) => session.id), ['paired-run'],
+      'refetch remains filtered after rejected reconciliation');
   } finally {
     delete require.cache[plansRoutePath];
     if (originalPlans) require.cache[plansRoutePath] = originalPlans;
@@ -253,6 +356,7 @@ async function assertScheduledWorkoutRoute() {
 
 async function run() {
   assertFilteringContract();
+  assertStoredCompletionContract();
   assertRemovalIdentityContract();
   assertRaceOwnershipRouteContract();
   await assertScheduledWorkoutRoute();

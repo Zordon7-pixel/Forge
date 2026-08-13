@@ -514,6 +514,12 @@ export function normalizeSession(rawSession, context = {}) {
     prescription.display_name,
     prescription.displayName,
   )
+  const status = String(rawSession.status || rawSession.state || prescription.status || '').toLowerCase() || null
+  const dayStatus = String(context.dayStatus || context.dayState || '').toLowerCase()
+  const storedCompleted = rawSession.completed === true
+    || status === 'completed'
+    || context.dayCompleted === true
+    || dayStatus === 'completed'
   return {
     id: String(id),
     removalSessionId: rawSession.removal_session_id ? String(rawSession.removal_session_id) : null,
@@ -531,7 +537,8 @@ export function normalizeSession(rawSession, context = {}) {
     isBenchmark: Boolean(firstDefined(rawSession.benchmark, prescription.benchmark, false)),
     benchmarkDistanceMiles: Number(firstDefined(rawSession.benchmark_distance_miles, prescription.benchmarkDistanceMiles, prescription.benchmark_distance_miles, 0)) || null,
     anchorState: firstDefined(rawSession.anchorState, prescription.anchorState, rawSession.anchor_state, prescription.anchor_state),
-    status: String(rawSession.status || prescription.status || '').toLowerCase() || null,
+    status,
+    storedCompleted,
     adjusted: Boolean(safeRaw.adjusted || safeRaw.status === 'adjusted' || prescription.adjusted || normalized.adjusted),
     prescription,
     raw: safeRaw,
@@ -596,6 +603,7 @@ export function dayWithRecordedRuns(dayModel, dateISO, recordedRunsByDate) {
 export function sessionState(session, completedSet) {
   if (!session) return 'rest'
   if (session.kind === 'rest') return 'rest'
+  if (session.storedCompleted || session.completed === true || session.status === 'completed') return 'completed'
   if (completedSet && completedSet.has(String(session.id))) return 'completed'
   if (session.status === 'skipped') return 'skipped'
   if (session.adjusted || session.status === 'adjusted') return 'adjusted'
@@ -661,7 +669,12 @@ export function buildWeekDays(weekData, weekStartDate, options = {}) {
       )
       if (isSchemaV2Entry(rawEntry)) {
         return rawEntry.sessions
-          .map((raw, index) => normalizeSession(raw, { anchor, index }))
+          .map((raw, index) => normalizeSession(raw, {
+            anchor,
+            index,
+            dayCompleted: rawEntry.completed === true,
+            dayStatus: rawEntry.status || rawEntry.state,
+          }))
           .filter((session) => session.kind !== 'rest')
       }
 
@@ -671,6 +684,8 @@ export function buildWeekDays(weekData, weekStartDate, options = {}) {
         anchor,
         index: 0,
         fallbackId: String(item.entryIndex),
+        dayCompleted: rawEntry.completed === true,
+        dayStatus: rawEntry.status || rawEntry.state,
       })
       return normalized.kind === 'rest' ? [] : [normalized]
     })

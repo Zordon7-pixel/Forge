@@ -85,6 +85,8 @@ assert.match(planSource, /progress: \{ \.\.\.\(current\.progress \|\| \{\}\), re
 assert.match(planSource, /Could not remove \$\{label\}\. The plan is unchanged\./)
 assert.match(dayViewSource, /aria-label=\{`Remove \$\{session\.title \|\| 'workout'\} from this plan`\}/)
 assert.match(dayViewSource, /!session\?\.removalSessionId/)
+assert.match(dayViewSource, /const isDone = \(session\) => sessionState\(session, completedSet\) === 'completed'/)
+assert.match(dayViewSource, /if \(!allowSessionRemoval \|\| done \|\|/)
 assert.match(dayViewSource, /minHeight: 44/)
 assert.match(dayViewSource, /role="alert"/)
 assert.match(dayViewSource, /role="status" aria-live="polite"/)

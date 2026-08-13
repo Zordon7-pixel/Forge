@@ -100,6 +100,18 @@ function kindFromSession(session) {
   return kindFromLegacy(s);
 }
 
+function hasCompletedStatus(value) {
+  const status = String(value?.status || value?.state || '').trim().toLowerCase();
+  return value?.completed === true || status === 'completed';
+}
+
+// Stored plans have used all of these completion shapes over time. Treat the
+// owning day as completed for every session it contains so destructive actions
+// never become available merely because progress_json lacks the session id.
+function isStoredSessionCompleted(dayEntry, session) {
+  return hasCompletedStatus(session) || hasCompletedStatus(dayEntry);
+}
+
 function dayEntriesKey(week) {
   if (Array.isArray(week && week.days)) return 'days';
   if (Array.isArray(week && week.sessions)) return 'sessions';
@@ -696,6 +708,7 @@ module.exports = {
   dayEntriesKey,
   kindFromLegacy,
   kindFromSession,
+  isStoredSessionCompleted,
   isRestEntry,
   daySessions,
   withRemovalSessionIdentities,

@@ -2581,6 +2581,7 @@ function findPlanSession(plan, activeRow, sessionId) {
           id: removalId,
           kind: planSchema.kindFromSession(stored),
           progressId: planSchema.sessionIdentifier(day, stored, sessionIndex, dayIndex),
+          storedCompleted: planSchema.isStoredSessionCompleted(day, stored),
         };
       }
     }
@@ -2632,8 +2633,9 @@ router.get('/reconciliation/current', auth, async (req, res) => {
     const progress = parseJsonValue(active.row.progress_json, {});
     const startISO = hybridReconciliation.addDays(planningDateISO, -hybridReconciliation.LOOKBACK_DAYS);
     const evidence = await hybridCompletionEvidence(req.user.id, startISO, planningDateISO, timezone);
+    const visiblePlan = planWithoutRemovedSessions(parsed, progress, active.row);
     const reconciliation = hybridReconciliation.buildCurrentPrompt({
-      plan: parsed,
+      plan: visiblePlan,
       planningDateISO,
       localHour,
       completedSessionIds: completedSessionIdsFromProgress(progress),
@@ -2681,6 +2683,12 @@ router.post('/reconciliation/respond', auth, async (req, res) => {
         return planningInputUnchanged({ conflict: 'Hybrid reconciliation requires a dated plan.' });
       }
       const progress = parseJsonValue(row.progress_json, {});
+      const visiblePlan = planWithoutRemovedSessions(parsed, progress, row);
+      const candidates = hybridReconciliation.hybridCandidates(visiblePlan, sessionDate, planningDateISO);
+      const candidate = candidates.find((item) => item.liftSessionId === liftSessionId) || null;
+      if (!candidate) {
+        return planningInputUnchanged({ conflict: 'The planned hybrid session changed. Refresh Today and try again.' });
+      }
       const records = progress.hybridSessionReconciliations && typeof progress.hybridSessionReconciliations === 'object'
         ? { ...progress.hybridSessionReconciliations }
         : {};
@@ -2699,11 +2707,6 @@ router.post('/reconciliation/respond', auth, async (req, res) => {
         return planningInputUnchanged({ conflict: 'That hybrid session has already been reconciled.' });
       }
 
-      const candidates = hybridReconciliation.hybridCandidates(parsed, sessionDate, planningDateISO);
-      const candidate = candidates.find((item) => item.liftSessionId === liftSessionId) || null;
-      if (!candidate) {
-        return planningInputUnchanged({ conflict: 'The planned hybrid session changed. Refresh Today and try again.' });
-      }
       const completed = new Set(completedSessionIdsFromProgress(progress));
       const evidence = await hybridCompletionEvidence(req.user.id, sessionDate, planningDateISO, timezone, tx);
       const liftAllocation = hybridReconciliation.allocateSessionEvidence({
@@ -2718,8 +2721,10 @@ router.post('/reconciliation/respond', auth, async (req, res) => {
         evidence: evidence.liftDates.map((date) => ({ date, kind: 'lift' })),
         allowNextDayForLater: true,
       });
-      const runDetected = candidate.runSessionIds.some((id) => completed.has(id)) || evidence.runDates.includes(sessionDate);
-      const liftDetected = liftAllocation.completedKeys.has(candidate.key);
+      const runDetected = candidate.runSessionIds.some((id) => completed.has(id))
+        || candidate.storedCompletedRunSessionIds.length > 0
+        || evidence.runDates.includes(sessionDate);
+      const liftDetected = candidate.liftStoredCompleted || liftAllocation.completedKeys.has(candidate.key);
       if (!runDetected) {
         return planningInputUnchanged({ conflict: 'The paired run is not recorded yet. Sync again before reconciling this session.' });
       }
@@ -3504,7 +3509,7 @@ router.delete('/my/sessions/:sessionId', auth, async (req, res) => {
 
       const progress = parseJsonValue(active.row.progress_json, {});
       const completed = new Set(completedSessionIdsFromProgress(progress));
-      if (completed.has(session.progressId)) {
+      if (session.storedCompleted || completed.has(session.progressId)) {
         return planningInputUnchanged({ status: 409, error: 'Completed workouts stay in training history.', code: 'PLAN_SESSION_COMPLETED' });
       }
       const removed = new Set(removedSessionIdsFromProgress(progress));
