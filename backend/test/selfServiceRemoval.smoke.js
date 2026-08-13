@@ -24,10 +24,55 @@ function assertFilteringContract() {
       ],
     }] }],
   };
-  const filtered = planSchema.withoutRemovedSessions(source, ['lift-removed']);
+  const identified = planSchema.withRemovalSessionIdentities(source);
+  const removalId = identified.weeks[0].days[0].sessions[1].removal_session_id;
+  const filtered = planSchema.withoutRemovedSessions(identified, [removalId]);
   assert.deepEqual(filtered.weeks[0].days[0].sessions.map((session) => session.id), ['run-kept']);
   assert.equal(source.weeks[0].days[0].sessions.length, 2, 'immutable source plan is preserved');
   assert.strictEqual(planSchema.withoutRemovedSessions(source, []), source, 'empty removal set preserves identity');
+}
+
+function assertRemovalIdentityContract() {
+  const legacy = {
+    startDate: '2026-07-13',
+    weeks: [
+      { sessions: [{ day: 'Mon', type: 'run', title: 'Week one' }] },
+      { sessions: [{ day: 'Mon', type: 'run', title: 'Week two' }] },
+    ],
+  };
+  const identified = planSchema.withRemovalSessionIdentities(legacy);
+  const weekOneId = identified.weeks[0].sessions[0].removal_session_id;
+  const weekTwoId = identified.weeks[1].sessions[0].removal_session_id;
+  assert.match(weekOneId, /^remove:v1:2026-07-13:/);
+  assert.match(weekTwoId, /^remove:v1:2026-07-20:/);
+  assert.notEqual(weekOneId, weekTwoId, 'legacy no-ID sessions in different weeks never collide');
+  const filtered = planSchema.withoutRemovedSessions(identified, [weekTwoId]);
+  assert.equal(filtered.weeks[0].sessions[0].title, 'Week one');
+  assert.equal(filtered.weeks[1].sessions[0].status, 'removed');
+
+  const assignmentAnchored = planSchema.withRemovalSessionIdentities({
+    weeks: [{ days: [{ day: 'Wed', sessions: [{ kind: 'lift', title: 'Anchored lift' }] }] }],
+  }, { assignmentStart: '2026-07-13' });
+  assert.equal(assignmentAnchored.weeks[0].days[0].date, '2026-07-15');
+  assert.match(assignmentAnchored.weeks[0].days[0].sessions[0].removal_session_id, /^remove:v1:2026-07-15:/);
+
+  const duplicate = planSchema.withRemovalSessionIdentities({
+    weeks: [{ days: [{
+      date: '2026-07-13',
+      day: 'Mon',
+      sessions: [
+        { id: 'duplicate', kind: 'run' },
+        { id: 'duplicate', kind: 'run' },
+      ],
+    }] }],
+  });
+  assert.equal(duplicate.weeks[0].days[0].sessions[0].removal_session_id, undefined);
+  assert.equal(duplicate.weeks[0].days[0].sessions[1].removal_session_id, undefined);
+
+  const unanchored = planSchema.withRemovalSessionIdentities({
+    weeks: [{ days: [{ day: 'Wed', sessions: [{ id: 'unanchored', kind: 'lift' }] }] }],
+  });
+  assert.equal(unanchored.weeks[0].days[0].sessions[0].removal_session_id, undefined);
 }
 
 function assertRaceOwnershipRouteContract() {
@@ -35,6 +80,9 @@ function assertRaceOwnershipRouteContract() {
   const plans = fs.readFileSync(path.join(__dirname, '../src/routes/plans.js'), 'utf8');
   assert.match(races, /router\.post\('\/:id\/removal-apply', auth, async/);
   assert.doesNotMatch(races, /router\.post\('\/:id\/removal-apply', auth, requirePremium/);
+  assert.doesNotMatch(races, /withRequestPlanningClock\(req, req\.body \|\| \{\}\)/,
+    'race removal endpoints never forward an open-ended client body');
+  assert.match(races, /planning_date_local: req\.body\?\.planning_date_local,[\s\S]*timezone_offset_minutes: req\.body\?\.timezone_offset_minutes/);
   assert.match(races, /requiredOperation:\s*'remove_race', requiredRaceId:/);
   assert.match(plans, /constraints\.requiredOperation[\s\S]*CANDIDATE_OPERATION_MISMATCH/);
   assert.match(plans, /constraints\.requiredRaceId[\s\S]*CANDIDATE_RACE_MISMATCH/);
@@ -143,30 +191,55 @@ async function assertScheduledWorkoutRoute() {
       return { statusCode, payload };
     };
 
-    let response = await invoke('today-lift');
-    assert.equal(response.statusCode, 200);
-    assert.deepEqual(response.payload.removedSessionIds, ['today-lift']);
-    assert.equal(updateCount, 1);
-    assert.deepEqual(JSON.parse(assignment.progress_json).removedSessionIds, ['today-lift']);
+    const identified = planSchema.withRemovalSessionIdentities(plan, { assignmentStart: localDate(-1) });
+    const sessionRemovalId = (sessionId) => identified.weeks
+      .flatMap((week) => week.days)
+      .flatMap((day) => day.sessions)
+      .find((session) => session.id === sessionId)?.removal_session_id;
+    const todayLiftRemovalId = sessionRemovalId('today-lift');
+    const todayRunRemovalId = sessionRemovalId('today-run');
+    const pastRunRemovalId = sessionRemovalId('past-run');
 
-    response = await invoke('today-lift');
+    const raceRequest = plansRouter._test.raceRemovalCandidateRequest('server-race', ['server-remaining'], {
+      planning_date_local: localDate(0),
+      timezone_offset_minutes: 240,
+      target: { raceDate: '2099-01-01', runDaysPerWeek: 7 },
+      operation: 'plan_preview',
+      remove_race_id: 'attacker-race',
+      race_ids: ['attacker-race'],
+    });
+    assert.deepEqual(raceRequest, {
+      planning_date_local: localDate(0),
+      timezone_offset_minutes: 240,
+      operation: 'remove_race',
+      remove_race_id: 'server-race',
+      race_ids: ['server-remaining'],
+    }, 'race removal preview admits only planning clock and server-derived race inputs');
+
+    let response = await invoke(todayLiftRemovalId);
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.payload.removedSessionIds, [todayLiftRemovalId]);
+    assert.equal(updateCount, 1);
+    assert.deepEqual(JSON.parse(assignment.progress_json).removedSessionIds, [todayLiftRemovalId]);
+
+    response = await invoke(todayLiftRemovalId);
     assert.equal(response.statusCode, 200);
     assert.equal(response.payload.idempotent, true);
     assert.equal(updateCount, 1, 'idempotent replay does not write again');
 
     reset({ completedSessionIds: ['today-run'] });
-    response = await invoke('today-run');
+    response = await invoke(todayRunRemovalId);
     assert.equal(response.statusCode, 409);
     assert.equal(response.payload.code, 'PLAN_SESSION_COMPLETED');
     assert.equal(updateCount, 0);
 
     reset();
-    response = await invoke('past-run');
+    response = await invoke(pastRunRemovalId);
     assert.equal(response.statusCode, 409);
     assert.equal(response.payload.code, 'PLAN_SESSION_IN_PAST');
     assert.equal(updateCount, 0);
 
-    response = await invoke('foreign-session');
+    response = await invoke('remove:v1:2099-01-01:id%3Aforeign-session');
     assert.equal(response.statusCode, 404);
     assert.equal(response.payload.code, 'PLAN_SESSION_NOT_FOUND');
     assert.equal(updateCount, 0);
@@ -180,6 +253,7 @@ async function assertScheduledWorkoutRoute() {
 
 async function run() {
   assertFilteringContract();
+  assertRemovalIdentityContract();
   assertRaceOwnershipRouteContract();
   await assertScheduledWorkoutRoute();
   console.log('SELF-SERVICE REMOVAL BACKEND SMOKE OK');

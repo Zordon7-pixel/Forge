@@ -33,6 +33,8 @@ const STRENGTH_BUILD_TITLE = 'Strength build';
 
 const DAY_ORDER = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const DAY_INDEX = { Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4, Sat: 5, Sun: 6 };
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+const REMOVAL_SESSION_ID_FIELD = 'removal_session_id';
 
 let idCounter = 0;
 function stableId(prefix) {
@@ -115,6 +117,124 @@ function setDayEntries(week, entries) {
   const next = Object.assign({}, week);
   next[key] = entries;
   return next;
+}
+
+function dateOnly(value) {
+  const candidate = String(value || '').slice(0, 10);
+  if (!DATE_ONLY.test(candidate)) return null;
+  const parsed = new Date(`${candidate}T12:00:00.000Z`);
+  return Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== candidate
+    ? null
+    : candidate;
+}
+
+function addDateDays(value, amount) {
+  const iso = dateOnly(value);
+  if (!iso) return null;
+  const parsed = new Date(`${iso}T12:00:00.000Z`);
+  parsed.setUTCDate(parsed.getUTCDate() + Number(amount || 0));
+  return parsed.toISOString().slice(0, 10);
+}
+
+function weekdayIndex(value) {
+  const normalized = String(value || '').trim().slice(0, 3).toLowerCase();
+  const index = DAY_ORDER.findIndex((day) => day.toLowerCase() === normalized);
+  return index >= 0 ? index : null;
+}
+
+function mondayForDate(value, labelledDay = null) {
+  const iso = dateOnly(value);
+  if (!iso) return null;
+  const labelledIndex = weekdayIndex(labelledDay);
+  if (labelledIndex !== null) return addDateDays(iso, -labelledIndex);
+  const parsed = new Date(`${iso}T12:00:00.000Z`);
+  return addDateDays(iso, -((parsed.getUTCDay() + 6) % 7));
+}
+
+function canonicalWeekStart(plan, week, weekIndex, assignmentStart = null) {
+  const direct = dateOnly(week?.startDate || week?.start_date || week?.week_start);
+  if (direct) return mondayForDate(direct);
+
+  const firstDated = getDayEntries(week)
+    .map((entry) => ({ date: dateOnly(entry?.date), day: entry?.day || entry?.dayName }))
+    .filter((entry) => entry.date)
+    .sort((left, right) => left.date.localeCompare(right.date))[0];
+  if (firstDated) return mondayForDate(firstDated.date, firstDated.day);
+
+  const planStart = dateOnly(plan?.startDate || plan?.start_date) || dateOnly(assignmentStart);
+  return planStart ? addDateDays(mondayForDate(planStart), weekIndex * 7) : null;
+}
+
+function removalSessionIdentifier(dayEntry, session) {
+  const direct = session?.[REMOVAL_SESSION_ID_FIELD] || dayEntry?.[REMOVAL_SESSION_ID_FIELD];
+  return direct ? String(direct) : null;
+}
+
+function removalMarker(date, dayEntry, session, sessionIndex) {
+  if (!date) return null;
+  const explicitId = session?.id ?? dayEntry?.id;
+  const base = explicitId !== undefined && explicitId !== null && String(explicitId).trim()
+    ? `id:${String(explicitId).trim()}`
+    : `slot:${kindFromSession(session)}:${sessionIndex}`;
+  return `remove:v1:${date}:${encodeURIComponent(base)}`;
+}
+
+// Add a removal-only identity to a served plan view. The immutable plan's
+// completion/reschedule ids remain unchanged. Removal identities always carry
+// a canonical date and are omitted when no reliable date can be derived or a
+// marker is non-unique, so a crafted request can never remove the wrong workout.
+function withRemovalSessionIdentities(plan, options = {}) {
+  const source = plan && typeof plan === 'object' ? plan : {};
+  if (!Array.isArray(source.weeks)) return source;
+  const markerCounts = new Map();
+  const weeksWithCandidates = source.weeks.map((week, weekIndex) => {
+    const weekStart = canonicalWeekStart(source, week, weekIndex, options.assignmentStart);
+    const entries = getDayEntries(week).map((entry) => {
+      if (!entry || typeof entry !== 'object') return entry;
+      const explicitDate = dateOnly(entry.date);
+      const dayOffset = weekdayIndex(entry.day || entry.dayName);
+      const canonicalDate = explicitDate || (weekStart && dayOffset !== null ? addDateDays(weekStart, dayOffset) : null);
+      const datedEntry = canonicalDate && !explicitDate ? { ...entry, date: canonicalDate } : { ...entry };
+      if (Array.isArray(entry.sessions)) {
+        datedEntry.sessions = entry.sessions.map((session, sessionIndex) => {
+          if (!session || typeof session !== 'object' || kindFromSession(session) === 'rest') return session;
+          const marker = removalMarker(canonicalDate, entry, session, sessionIndex);
+          if (!marker) return { ...session };
+          markerCounts.set(marker, (markerCounts.get(marker) || 0) + 1);
+          return { ...session, [REMOVAL_SESSION_ID_FIELD]: marker };
+        });
+        return datedEntry;
+      }
+      if (kindFromLegacy(entry) === 'rest') return datedEntry;
+      const marker = removalMarker(canonicalDate, entry, entry, 0);
+      if (!marker) return datedEntry;
+      markerCounts.set(marker, (markerCounts.get(marker) || 0) + 1);
+      return { ...datedEntry, [REMOVAL_SESSION_ID_FIELD]: marker };
+    });
+    return setDayEntries(week, entries);
+  });
+
+  const weeks = weeksWithCandidates.map((week) => setDayEntries(week, getDayEntries(week).map((entry) => {
+    if (!entry || typeof entry !== 'object') return entry;
+    if (Array.isArray(entry.sessions)) {
+      return {
+        ...entry,
+        sessions: entry.sessions.map((session) => {
+          const marker = session?.[REMOVAL_SESSION_ID_FIELD];
+          if (!marker || markerCounts.get(marker) === 1) return session;
+          const next = { ...session };
+          delete next[REMOVAL_SESSION_ID_FIELD];
+          return next;
+        }),
+      };
+    }
+    const marker = entry[REMOVAL_SESSION_ID_FIELD];
+    if (!marker || markerCounts.get(marker) === 1) return entry;
+    const next = { ...entry };
+    delete next[REMOVAL_SESSION_ID_FIELD];
+    return next;
+  })));
+  return { ...source, weeks };
 }
 
 function sessionIdentifier(dayEntry, session, sessionIndex = 0, dayIndex = 0) {
@@ -213,7 +333,7 @@ function withoutRemovedSessions(plan, removedSessionIds = []) {
       if (!entry || typeof entry !== 'object') return entry;
       if (Array.isArray(entry.sessions)) {
         const sessions = entry.sessions.filter((session, sessionIndex) => (
-          !removed.has(sessionIdentifier(entry, session, sessionIndex, dayIndex))
+          !removed.has(removalSessionIdentifier(entry, session, sessionIndex, dayIndex))
         ));
         if (sessions.length === entry.sessions.length) return entry;
         weekChanged = true;
@@ -221,7 +341,7 @@ function withoutRemovedSessions(plan, removedSessionIds = []) {
       }
 
       if (kindFromLegacy(entry) === 'rest') return entry;
-      const sessionId = sessionIdentifier(entry, entry, 0, dayIndex);
+      const sessionId = removalSessionIdentifier(entry, entry, 0, dayIndex);
       if (!removed.has(sessionId)) return entry;
       weekChanged = true;
       return {
@@ -578,6 +698,8 @@ module.exports = {
   kindFromSession,
   isRestEntry,
   daySessions,
+  withRemovalSessionIdentities,
+  removalSessionIdentifier,
   withoutRemovedSessions,
   normalizeSession,
   sessionIdentifier,

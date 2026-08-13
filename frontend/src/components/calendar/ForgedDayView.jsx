@@ -306,8 +306,8 @@ export default function ForgedDayView({
     : (!runDone && runSession ? 'run' : !liftDone && liftSession ? 'lift' : null)
 
   const renderRemoveButton = (session, done) => {
-    if (!allowSessionRemoval || done || typeof onRemoveSession !== 'function') return null
-    const removing = String(removingSessionId || '') === String(session.id)
+    if (!allowSessionRemoval || done || !session?.removalSessionId || typeof onRemoveSession !== 'function') return null
+    const removing = String(removingSessionId || '') === String(session.removalSessionId)
     return (
       <button
         type="button"

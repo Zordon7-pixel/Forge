@@ -600,7 +600,7 @@ function plannedSessionsBetween(plan, startISO, endISO) {
 async function buildCompletionSummaryForAdaptation(userId, plan, active, planningDateISO) {
   const since = adaptationEngine.addDays(planningDateISO, -7);
   const progress = parseJsonValue(active?.row?.progress_json, {});
-  const visiblePlan = planWithoutRemovedSessions(plan, progress);
+  const visiblePlan = planWithoutRemovedSessions(plan, progress, active?.row);
   const planned = plannedSessionsBetween(visiblePlan, since, adaptationEngine.addDays(planningDateISO, -1));
   const completedIds = new Set((Array.isArray(progress?.completedSessionIds) ? progress.completedSessionIds : []).map(String));
   const reconciliations = progress?.hybridSessionReconciliations && typeof progress.hybridSessionReconciliations === 'object'
@@ -1979,6 +1979,16 @@ async function raceRemovalImpactForUser(userId, raceId, tx) {
   return active ? raceRemovalImpact(parsePlan(active.row) || {}, raceId) : { linked: false, remainingRaceIds: [] };
 }
 
+function raceRemovalCandidateRequest(raceId, remainingRaceIds, body = {}) {
+  return {
+    planning_date_local: body.planning_date_local,
+    timezone_offset_minutes: body.timezone_offset_minutes,
+    operation: 'remove_race',
+    remove_race_id: String(raceId || ''),
+    race_ids: (Array.isArray(remainingRaceIds) ? remainingRaceIds : []).map(String),
+  };
+}
+
 async function previewRaceRemovalForUser(userId, raceId, body = {}) {
   const state = await withUserMutation(userId, async (tx) => {
     const race = await tx.get('SELECT * FROM race_events WHERE id=? AND user_id=?', [raceId, userId]);
@@ -1994,12 +2004,10 @@ async function previewRaceRemovalForUser(userId, raceId, body = {}) {
       race: { id: state.race.id, name: state.race.race_name },
     };
   }
-  const candidate = await previewPlanForUser(userId, {
-    ...body,
-    operation: 'remove_race',
-    remove_race_id: raceId,
-    race_ids: state.impact.remainingRaceIds,
-  });
+  const candidate = await previewPlanForUser(
+    userId,
+    raceRemovalCandidateRequest(raceId, state.impact.remainingRaceIds, body),
+  );
   return {
     ...publicCandidatePayload(candidate),
     impact: 'active_plan_rebuild',
@@ -2538,17 +2546,27 @@ function removedSessionIdsFromProgress(progress) {
   return Array.isArray(progress?.removedSessionIds) ? progress.removedSessionIds.map(String) : [];
 }
 
-function planWithoutRemovedSessions(plan, progress) {
-  return planSchema.withoutRemovedSessions(plan, removedSessionIdsFromProgress(progress));
+function assignmentStartForRemovalIdentity(activeRow = {}) {
+  return activeRow.week_start || activeRow.effective_from || activeRow.started_at || null;
 }
 
-function findPlanSession(plan, activeRow, sessionId, planningDateISO) {
+function planWithRemovalSessionIdentities(plan, activeRow) {
+  return planSchema.withRemovalSessionIdentities(plan, {
+    assignmentStart: assignmentStartForRemovalIdentity(activeRow),
+  });
+}
+
+function planWithoutRemovedSessions(plan, progress, activeRow) {
+  const identified = planWithRemovalSessionIdentities(plan, activeRow);
+  return planSchema.withoutRemovedSessions(identified, removedSessionIdsFromProgress(progress));
+}
+
+function findPlanSession(plan, activeRow, sessionId) {
   const wanted = String(sessionId || '');
-  const weeks = Array.isArray(plan?.weeks) ? plan.weeks : [];
+  const identified = planWithRemovalSessionIdentities(plan, activeRow);
+  const weeks = Array.isArray(identified?.weeks) ? identified.weeks : [];
   for (let weekIndex = 0; weekIndex < weeks.length; weekIndex += 1) {
-    const fallback = hybridReconciliation.addDays(planningDateISO, weekIndex * 7);
-    const weekStart = activeWeekStart(plan, activeRow, weekIndex, fallback);
-    const week = withCanonicalWeekDates(weeks[weekIndex], weekStart);
+    const week = weeks[weekIndex];
     const entries = planSchema.getDayEntries(week);
     for (let dayIndex = 0; dayIndex < entries.length; dayIndex += 1) {
       const day = entries[dayIndex];
@@ -2556,12 +2574,13 @@ function findPlanSession(plan, activeRow, sessionId, planningDateISO) {
       for (let sessionIndex = 0; sessionIndex < storedSessions.length; sessionIndex += 1) {
         const stored = storedSessions[sessionIndex];
         if (planSchema.kindFromSession(stored) === 'rest') continue;
-        const id = planSchema.sessionIdentifier(day, stored, sessionIndex, dayIndex);
-        if (id !== wanted) continue;
+        const removalId = planSchema.removalSessionIdentifier(day, stored);
+        if (!removalId || removalId !== wanted) continue;
         return {
           date: String(day?.date || '').slice(0, 10),
-          id,
+          id: removalId,
           kind: planSchema.kindFromSession(stored),
+          progressId: planSchema.sessionIdentifier(day, stored, sessionIndex, dayIndex),
         };
       }
     }
@@ -3202,7 +3221,7 @@ router.get('/my', auth, async (req, res) => {
       console.error('[plans/my] invalid progress JSON:', err.message);
     }
     const servedPlan = await buildAdaptivePlanView(req.user.id, parsePlan(row) || { weeks: [] }, Number(row.current_week || 1));
-    const parsedPlan = withDurationEstimatePlanPayload(planWithoutRemovedSessions(servedPlan, progress));
+    const parsedPlan = withDurationEstimatePlanPayload(planWithoutRemovedSessions(servedPlan, progress, row));
     const anchorPayload = planAnchorPayload(parsedPlan);
     const lineageRows = row.lineage_id ? await dbAll(
       `SELECT up.id, up.plan_id, up.status, up.started_at, up.effective_from,
@@ -3465,7 +3484,7 @@ router.delete('/my/sessions/:sessionId', auth, async (req, res) => {
     const planningDateISO = getPlanningDateFromRequest(req);
     if (!planningDateISO) return res.status(400).json({ error: 'Use the current phone date.', code: 'INVALID_PLANNING_DATE' });
     const sessionId = String(req.params.sessionId || '').trim();
-    if (!sessionId || sessionId.length > 128) {
+    if (!sessionId || sessionId.length > 512 || !sessionId.startsWith('remove:v1:')) {
       return res.status(400).json({ error: 'Invalid plan session.', code: 'INVALID_PLAN_SESSION' });
     }
 
@@ -3474,7 +3493,7 @@ router.delete('/my/sessions/:sessionId', auth, async (req, res) => {
       if (!active) return planningInputUnchanged({ status: 404, error: 'No assigned plan.', code: 'PLAN_NOT_FOUND' });
       const parsed = parsePlan(active.row);
       if (!parsed) return planningInputUnchanged({ status: 409, error: 'Active plan could not be read.', code: 'PLAN_UNREADABLE' });
-      const session = findPlanSession(parsed, active.row, sessionId, planningDateISO);
+      const session = findPlanSession(parsed, active.row, sessionId);
       if (!session) return planningInputUnchanged({ status: 404, error: 'Scheduled workout not found.', code: 'PLAN_SESSION_NOT_FOUND' });
       if (!/^\d{4}-\d{2}-\d{2}$/.test(session.date)) {
         return planningInputUnchanged({ status: 409, error: 'This workout has no reliable scheduled date.', code: 'PLAN_SESSION_DATE_UNKNOWN' });
@@ -3485,7 +3504,7 @@ router.delete('/my/sessions/:sessionId', auth, async (req, res) => {
 
       const progress = parseJsonValue(active.row.progress_json, {});
       const completed = new Set(completedSessionIdsFromProgress(progress));
-      if (completed.has(sessionId)) {
+      if (completed.has(session.progressId)) {
         return planningInputUnchanged({ status: 409, error: 'Completed workouts stay in training history.', code: 'PLAN_SESSION_COMPLETED' });
       }
       const removed = new Set(removedSessionIdsFromProgress(progress));
@@ -3543,7 +3562,7 @@ router.post('/today/bodyweight-alternative', auth, async (req, res) => {
     const active = await getActivePlanForUser(req.user.id, null, { planningDateLocal: dateISO });
     if (!active) return res.status(404).json({ error: 'Active plan not found' });
     const progress = active.source === 'assigned' ? parseJsonValue(active.row.progress_json, {}) : {};
-    const parsed = planWithoutRemovedSessions(parsePlan(active.row), progress);
+    const parsed = planWithoutRemovedSessions(parsePlan(active.row), progress, active.row);
     if (!parsed) return res.status(409).json({ error: 'Active plan could not be read' });
 
     const weekdayShort = dailyExecution.weekdayShortForDate(dateISO);
@@ -3617,7 +3636,7 @@ router.get('/today', auth, async (req, res) => {
     const active = await getActivePlanForUser(req.user.id, null, { planningDateLocal: dateISO });
     if (!active) return res.json({ today: null, execution: { hasPlan: false, hasDay: false, date: dateISO } });
     const progress = active.source === 'assigned' ? parseJsonValue(active.row.progress_json, {}) : {};
-    const parsed = withDurationEstimatePlanPayload(planWithoutRemovedSessions(parsePlan(active.row), progress));
+    const parsed = withDurationEstimatePlanPayload(planWithoutRemovedSessions(parsePlan(active.row), progress, active.row));
     const anchorPayload = planAnchorPayload(parsed);
 
     const override = await dbGet(
@@ -3684,7 +3703,7 @@ router.get('/current', auth, async (req, res) => {
       Number(active.row.current_week || 1)
     );
     const progress = active.source === 'assigned' ? parseJsonValue(active.row.progress_json, {}) : {};
-    const parsed = withDurationEstimatePlanPayload(planWithoutRemovedSessions(servedPlan, progress));
+    const parsed = withDurationEstimatePlanPayload(planWithoutRemovedSessions(servedPlan, progress, active.row));
     const anchorPayload = planAnchorPayload(parsed);
     res.json({
       plan: {
@@ -3720,7 +3739,7 @@ router.get('/compliance', auth, async (req, res) => {
     if (!active) return res.json({ week: weekStart, planned: 0, completed: 0, score: 0, missed: [], streak: { current: 0, best: 0 } });
 
     const progress = active.source === 'assigned' ? parseJsonValue(active.row.progress_json, {}) : {};
-    const parsed = planWithoutRemovedSessions(parsePlan(active.row) || { weeks: [] }, progress);
+    const parsed = planWithoutRemovedSessions(parsePlan(active.row) || { weeks: [] }, progress, active.row);
     const currentWeek = Number(active.row.current_week || 1);
     const weekIndex = Math.max(0, currentWeek - 1);
     const weekBucket = parsed?.weeks?.[weekIndex] || parsed?.weeks?.[0] || {};
@@ -4184,6 +4203,7 @@ router._test = {
   pruneExpiredPlanCandidates,
   previewPlanForUser,
   previewRaceRemovalForUser,
+  raceRemovalCandidateRequest,
   raceRemovalImpact,
   raceRemovalImpactForUser,
   replacementLineageForActivePlan,

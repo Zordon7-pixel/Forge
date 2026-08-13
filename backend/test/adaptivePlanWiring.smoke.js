@@ -15,6 +15,14 @@ function mondayFor(dateISO) {
   return addDays(dateISO, -((date.getDay() + 6) % 7));
 }
 
+function withoutRemovalMarkers(value) {
+  if (Array.isArray(value)) return value.map(withoutRemovalMarkers);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value)
+    .filter(([key]) => key !== 'removal_session_id')
+    .map(([key, nested]) => [key, withoutRemovalMarkers(nested)]));
+}
+
 async function run() {
   const dbModulePath = require.resolve('../src/db');
   const plansRoutePath = require.resolve('../src/routes/plans');
@@ -120,7 +128,11 @@ async function run() {
     dataAvailable = false;
     const noProfiles = await invoke();
     assert.equal(noProfiles.statusCode, 200);
-    assert.equal(JSON.stringify(noProfiles.payload.plan.plan_data), JSON.stringify(planData));
+    assert.equal(
+      JSON.stringify(withoutRemovalMarkers(noProfiles.payload.plan.plan_data)),
+      JSON.stringify(planData),
+      'read-only delivery adds only server-issued removal markers',
+    );
   } finally {
     delete require.cache[plansRoutePath];
     if (originalPlansRoute) require.cache[plansRoutePath] = originalPlansRoute;

@@ -64,22 +64,27 @@ const clock = { planning_date_local: '2026-08-12', timezone_offset_minutes: 240 
 
 {
   const calls = []
+  const removalSessionId = 'remove:v1:2026-08-13:id%3Alift-1'
   const api = {
     async delete(path) {
       calls.push(path)
-      return { data: { ok: true, removedSessionIds: ['lift-1'] } }
+      return { data: { ok: true, removedSessionIds: [removalSessionId] } }
     },
   }
-  const result = await removeScheduledWorkout({ api, sessionId: 'lift / 1' })
-  assert.deepEqual(calls, ['/plans/my/sessions/lift%20%2F%201'])
-  assert.deepEqual(result.removedSessionIds, ['lift-1'])
+  const result = await removeScheduledWorkout({ api, sessionId: removalSessionId })
+  assert.deepEqual(calls, ['/plans/my/sessions/remove%3Av1%3A2026-08-13%3Aid%253Alift-1'])
+  assert.deepEqual(result.removedSessionIds, [removalSessionId])
 }
 
 assert.match(planSource, /window\.confirm\(`Remove \$\{label\} from this training plan\? Recorded workouts and health history will stay intact\.`\)/)
+assert.match(planSource, /const removalSessionId = String\(session\?\.removalSessionId \|\| ''\)/)
+assert.match(planSource, /removeScheduledWorkout\(\{ api, sessionId: removalSessionId \}\)/)
+assert.doesNotMatch(planSource, /removeScheduledWorkout\(\{ api, sessionId: session\.id \}\)/)
 assert.match(planSource, /allowSessionRemoval=\{selectedDay\.dateISO >= today\}/)
 assert.match(planSource, /progress: \{ \.\.\.\(current\.progress \|\| \{\}\), removedSessionIds \}/)
 assert.match(planSource, /Could not remove \$\{label\}\. The plan is unchanged\./)
 assert.match(dayViewSource, /aria-label=\{`Remove \$\{session\.title \|\| 'workout'\} from this plan`\}/)
+assert.match(dayViewSource, /!session\?\.removalSessionId/)
 assert.match(dayViewSource, /minHeight: 44/)
 assert.match(dayViewSource, /role="alert"/)
 assert.match(dayViewSource, /role="status" aria-live="polite"/)

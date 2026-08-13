@@ -516,6 +516,7 @@ export function normalizeSession(rawSession, context = {}) {
   )
   return {
     id: String(id),
+    removalSessionId: rawSession.removal_session_id ? String(rawSession.removal_session_id) : null,
     kind,
     type,
     title,
@@ -676,7 +677,9 @@ export function buildWeekDays(weekData, weekStartDate, options = {}) {
 
     if (runOnly) sessions = sessions.filter((session) => session.kind === 'run')
     if (removedSessionIds.size) {
-      sessions = sessions.filter((session) => !removedSessionIds.has(String(session.id)))
+      sessions = sessions.filter((session) => (
+        !session.removalSessionId || !removedSessionIds.has(String(session.removalSessionId))
+      ))
     }
 
     const isRest = sessions.length === 0

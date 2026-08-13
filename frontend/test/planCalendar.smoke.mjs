@@ -586,8 +586,8 @@ check('assignment-level removal hides only the selected upcoming workout', () =>
           date: '2026-07-13',
           day: 'Mon',
           sessions: [
-            { id: 'run-kept', kind: 'run', title: 'Easy run' },
-            { id: 'lift-removed', kind: 'lift', title: 'Strength build' },
+            { id: 'run-kept', removal_session_id: 'remove:v1:2026-07-13:id%3Arun-kept', kind: 'run', title: 'Easy run' },
+            { id: 'lift-removed', removal_session_id: 'remove:v1:2026-07-13:id%3Alift-removed', kind: 'lift', title: 'Strength build' },
           ],
         }],
       }],
@@ -595,10 +595,11 @@ check('assignment-level removal hides only the selected upcoming workout', () =>
   }
   const model = buildCalendarModel(plan, {
     started_at: '2026-07-13',
-    progress: { removedSessionIds: ['lift-removed'] },
+    progress: { removedSessionIds: ['remove:v1:2026-07-13:id%3Alift-removed'] },
   }, { now: WEEK_START })
   const monday = model.getWeek(0).days[0]
   assert.deepEqual(monday.sessions.map((session) => session.id), ['run-kept'])
+  assert.equal(monday.sessions[0].removalSessionId, 'remove:v1:2026-07-13:id%3Arun-kept')
   assert.equal(monday.isRest, false)
 })
 

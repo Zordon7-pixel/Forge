@@ -406,14 +406,15 @@ export default function Plan() {
   }
 
   const removePlanSession = async (session) => {
-    if (!session?.id || removingSessionId) return
+    const removalSessionId = String(session?.removalSessionId || '')
+    if (!removalSessionId || removingSessionId) return
     const label = session.title || 'this workout'
     if (!window.confirm(`Remove ${label} from this training plan? Recorded workouts and health history will stay intact.`)) return
-    setRemovingSessionId(String(session.id))
+    setRemovingSessionId(removalSessionId)
     setSessionRemovalError('')
     setSessionRemovalNotice('')
     try {
-      const data = await removeScheduledWorkout({ api, sessionId: session.id })
+      const data = await removeScheduledWorkout({ api, sessionId: removalSessionId })
       const removedSessionIds = Array.isArray(data?.removedSessionIds) ? data.removedSessionIds.map(String) : []
       setMyUserPlan((current) => current ? {
         ...current,

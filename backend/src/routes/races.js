@@ -489,9 +489,13 @@ router.post('/:id/course/gpx', auth, gpxUploadLimiter, receiveGpx, async (req, r
 
 router.post('/:id/removal-preview', auth, async (req, res) => {
   try {
+    const planningClock = plansRouter._test.withRequestPlanningClock(req, {
+      planning_date_local: req.body?.planning_date_local,
+      timezone_offset_minutes: req.body?.timezone_offset_minutes,
+    });
     const preview = await plansRouter._test.previewRaceRemovalForUser(req.user.id,
       String(req.params.id || ''),
-      plansRouter._test.withRequestPlanningClock(req, req.body || {}),
+      planningClock,
     );
     return res.status(preview.requires_apply ? 201 : 200).json(preview);
   } catch (err) {
@@ -513,10 +517,16 @@ router.post('/:id/removal-apply', auth, async (req, res) => {
     if (!candidateId || candidateId.length > 128) {
       return res.status(400).json({ error: 'Removal candidate is required.', code: 'INVALID_CANDIDATE_ID' });
     }
+    const applyInput = plansRouter._test.withRequestPlanningClock(req, {
+      candidate_hash: req.body?.candidate_hash,
+      choice: req.body?.choice,
+      planning_date_local: req.body?.planning_date_local,
+      timezone_offset_minutes: req.body?.timezone_offset_minutes,
+    });
     const result = await plansRouter._test.applyPlanCandidate(
       req.user.id,
       candidateId,
-      plansRouter._test.withRequestPlanningClock(req, req.body || {}),
+      applyInput,
       { requiredOperation: 'remove_race', requiredRaceId: String(req.params.id || '') },
     );
     if (result.error) return res.status(result.status || 409).json({ error: result.error, code: result.code });
