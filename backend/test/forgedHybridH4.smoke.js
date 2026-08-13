@@ -342,12 +342,50 @@ const normal = adaptation.buildAdaptationProposal({
 });
 const applied = adaptation.applyProposalToPlan(army, normal);
 assert(JSON.stringify(applied) === JSON.stringify(normal.proposedPlan), 'accept applies exactly the stored proposed plan');
+const attributedChange = normal.changes[0];
+const attributedDay = dayByDate(applied, attributedChange.date);
+const attributedSession = schema.daySessions(attributedDay)
+  .find((session) => String(session.id) === String(attributedChange.sessionId));
+assert(attributedSession?.adjusted === true, 'accepted schema-v2 adaptation persists its adjusted marker');
+assert(attributedSession?.adjustment_reason === attributedChange.summary, 'accepted schema-v2 adaptation persists the exact reviewed change summary');
 const floor = Number(army.strengthPolicy.minimumSessionsPerWeek);
 assert(liftCounts(applied).every((count, index) => army.weeks[index].phase === 'race' || count >= floor), 'hybrid strength floor is preserved');
 const kept = adaptation.applyProposalToPlan(army, noData);
 assert(JSON.stringify(kept) === JSON.stringify(army), 'keep proposal applies as byte-equal original');
 const appliedTwice = adaptation.applyProposalToPlan(applied, normal);
 assert(JSON.stringify(appliedTwice) === JSON.stringify(applied), 'applying same proposal twice is idempotent');
+
+const legacyPlan = {
+  weeks: [{ sessions: [{
+    id: 'legacy-tempo',
+    date: '2026-07-13',
+    day: 'Mon',
+    type: 'tempo',
+    workout_type: 'run',
+    title: 'Legacy tempo',
+    distance_miles: 4,
+  }] }],
+};
+const legacySummary = 'Legacy tempo changes to an easy run from the accepted recovery proposal.';
+const legacyApplied = adaptation.applyProposalToPlan(legacyPlan, {
+  changes: [{
+    date: '2026-07-13',
+    sessionId: 'legacy-tempo',
+    summary: legacySummary,
+    after: {
+      id: 'legacy-tempo',
+      date: '2026-07-13',
+      day: 'Mon',
+      type: 'easy',
+      workout_type: 'run',
+      title: 'Easy run',
+      distance_miles: 3,
+    },
+  }],
+});
+const legacyEntry = legacyApplied.weeks[0].sessions[0];
+assert(legacyEntry.adjusted === true, 'accepted legacy adaptation persists its adjusted marker');
+assert(legacyEntry.adjustment_reason === legacySummary, 'accepted legacy adaptation persists the exact reviewed change summary');
 
 section('run-only adaptation');
 const runOnlyContext = context('run_only', {

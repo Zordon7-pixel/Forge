@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
+import { createRequire } from 'node:module'
+import { buildCalendarModel } from '../src/lib/planCalendar.js'
 import { buildWeeklyRunBrief, sessionIntensity } from '../src/lib/weeklyRunBrief.js'
+
+const require = createRequire(import.meta.url)
+const adaptation = require('../../backend/src/lib/adaptationEngine.js')
 
 let passed = 0
 const failures = []
@@ -198,6 +203,66 @@ check('reveals an adaptation explanation only when the session is actually marke
   const brief = buildWeeklyRunBrief({ week: adjustedWeek })
   assert.equal(brief.days[0].adjustmentReason, 'Recovery evidence reduced the original load.')
   assert.equal(brief.days[1].adjustmentReason, '')
+})
+
+check('real accepted adaptation persists its reviewed reason through the calendar into the brief', () => {
+  const sourcePlan = {
+    schemaVersion: 2,
+    planMode: 'run_only',
+    strengthPolicy: { enabled: false },
+    weeks: [{
+      week: 1,
+      phase: 'build',
+      startDate: '2026-08-10',
+      purpose: 'Respond to trusted recovery evidence without hiding why.',
+      days: [{
+        date: '2026-08-13',
+        day: 'Thu',
+        sessions: [{
+          id: 'real-adaptation-run',
+          kind: 'run',
+          type: 'tempo',
+          workout_type: 'run',
+          title: 'Tempo repeats',
+          distance_miles: 5,
+          intensity: 'Hard',
+          target_zone: 'Zone 4',
+          steps: ['4 × 5 min threshold'],
+        }],
+      }],
+    }],
+  }
+  const proposal = adaptation.buildAdaptationProposal({
+    plan: sourcePlan,
+    planningDateISO: '2026-08-13',
+    healthSignals: {
+      metrics: {
+        readinessScore: {
+          value: 40,
+          source: 'apple_health',
+          asOf: '2026-08-13',
+          freshness: 'fresh',
+          suspect: false,
+        },
+      },
+    },
+  })
+  assert.equal(proposal.status, 'proposal')
+  assert.ok(proposal.changes.length > 0)
+
+  // The accept route persists proposed_json, so a JSON round-trip here models
+  // the real proposal -> accepted plan boundary rather than fabricating UI-only
+  // adjustment fields.
+  const persistedPlan = JSON.parse(JSON.stringify(proposal.proposedPlan))
+  const model = buildCalendarModel(persistedPlan, { progress: { completedSessionIds: [] } }, {
+    now: new Date(2026, 7, 13, 12, 0, 0),
+  })
+  const normalizedWeek = model.getWeek(0)
+  const brief = buildWeeklyRunBrief({ week: normalizedWeek, todayISO: '2026-08-13' })
+  const reviewedChange = proposal.changes.find((change) => change.sessionId === 'real-adaptation-run')
+  assert.equal(brief.today?.adjustmentReason, reviewedChange?.summary)
+  assert.equal(brief.today?.rawDay?.sessions?.[0]?.adjusted, true)
+  assert.equal(brief.today?.rawDay?.sessions?.[0]?.raw?.adjustment_reason, reviewedChange?.summary)
 })
 
 check('F2 attributes adjustments only to a saved reason and never to generic or integrity-only context', () => {

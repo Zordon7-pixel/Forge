@@ -949,6 +949,16 @@ function addChange(changeMap, item, after, summary) {
   });
 }
 
+function attributedAfter(change = {}) {
+  const after = clone(change.after || {});
+  const reason = String(change.summary || '').trim();
+  if (!reason) return after;
+  return Object.assign({}, after, {
+    adjusted: true,
+    adjustment_reason: reason,
+  });
+}
+
 function applyChangesToClone(plan, changes) {
   const next = clone(plan);
   const byDate = new Map();
@@ -988,7 +998,8 @@ function applyChangesToClone(plan, changes) {
           // calendar can explain the alternative instead of silently showing
           // an empty day.
           if (afterKind === 'rest' && !change.after?.recovery_alternative) return;
-          rebuilt.push(Object.assign({}, change.after, { id: change.after.id || session.id || id }));
+          const after = attributedAfter(change);
+          rebuilt.push(Object.assign({}, after, { id: after.id || session.id || id }));
         });
         const framed = planSchema.toCanonicalDay(day, rebuilt, true);
         framed.sessions = rebuilt.map((session, sessionIndex) => (
@@ -1000,7 +1011,7 @@ function applyChangesToClone(plan, changes) {
       const legacyId = sessionIdFor(day, day, 0, dayIndex);
       const change = changeBySessionId.get(String(legacyId));
       if (!change) return day;
-      return planSchema.applyOverrideToDay(day, change.after || {});
+      return planSchema.applyOverrideToDay(day, attributedAfter(change));
     });
     if (touched) weeks[weekIndex] = Object.assign({}, week, { [key]: nextEntries });
   }
