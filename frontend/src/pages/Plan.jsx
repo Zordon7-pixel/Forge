@@ -19,6 +19,7 @@ import { withActiveRunReturnTarget } from '../lib/activeRunControls'
 import { resolveReadiness } from '../lib/truthConsistency'
 import { deriveRacePlanReconciliation } from '../lib/travelTraining'
 import { removeScheduledWorkout } from '../lib/selfServiceRemoval'
+import { buildWeeklyRunBrief } from '../lib/weeklyRunBrief'
 import TravelTrainingPrompt from '../components/TravelTrainingPrompt'
 import {
   buildScheduleRebuildRequest,
@@ -143,6 +144,8 @@ export default function Plan() {
   const [travelReadinessData, setTravelReadinessData] = useState(null)
   const [travelActiveInjury, setTravelActiveInjury] = useState(null)
   const [travelInjurySafetyAvailable, setTravelInjurySafetyAvailable] = useState(false)
+  const [weeklyGear, setWeeklyGear] = useState({ available: true, shoes: [] })
+  const [weeklyHrContext, setWeeklyHrContext] = useState({ profile: null, zones: [] })
   const [scheduleEditing, setScheduleEditing] = useState(false)
   const [scheduleDraft, setScheduleDraft] = useState(() => scheduleDraftFromPlan())
   const [scheduleSaving, setScheduleSaving] = useState(false)
@@ -173,7 +176,7 @@ export default function Plan() {
       setMyUserPlan(nextUserPlan)
       const nextCalendar = nextPlan ? buildCalendarModel(nextPlan, nextUserPlan) : null
       const runDateRange = calendarDateRange(nextCalendar, todayISO())
-      const [racesRes, runsRes, checkinRes, injuryRes, readinessRes] = await Promise.all([
+      const [racesRes, runsRes, checkinRes, injuryRes, readinessRes, gearRes, hrRes] = await Promise.all([
         api.get('/races').catch((err) => {
           console.error('[Plan] race list load failed:', err?.message || err)
           return null
@@ -194,6 +197,14 @@ export default function Plan() {
           console.error('[Plan] readiness safety load failed:', err?.message || err)
           return { data: null }
         }),
+        api.get('/gear/shoes').catch((err) => {
+          console.error('[Plan] weekly Gear load failed:', err?.message || err)
+          return { data: { shoes: [], unavailable: true } }
+        }),
+        api.get('/profile/hr-zones').catch((err) => {
+          console.error('[Plan] weekly HR profile load failed:', err?.message || err)
+          return { data: { profile: null, zones: [] } }
+        }),
       ])
       if (racesRes) setRaces(Array.isArray(racesRes.data?.races) ? racesRes.data.races : [])
       if (runsRes) setRuns(Array.isArray(runsRes.data) ? runsRes.data : Array.isArray(runsRes.data?.runs) ? runsRes.data.runs : [])
@@ -201,6 +212,14 @@ export default function Plan() {
       setTravelActiveInjury((injuryRes.data?.injuries || [])[0] || null)
       setTravelInjurySafetyAvailable(injuryRes.data?.safetyUnavailable !== true)
       setTravelReadinessData(readinessRes.data || null)
+      setWeeklyGear({
+        available: gearRes.data?.unavailable !== true,
+        shoes: Array.isArray(gearRes.data?.shoes) ? gearRes.data.shoes : [],
+      })
+      setWeeklyHrContext({
+        profile: hrRes.data?.profile || null,
+        zones: Array.isArray(hrRes.data?.zones) ? hrRes.data.zones : [],
+      })
       let loadedAdaptationProposal = null
       let adaptationLoaded = false
       if (includeAdaptation) setAdaptationProposal(null)
@@ -348,6 +367,13 @@ export default function Plan() {
     } : model
     // eslint-disable-next-line react-hooks/exhaustive-deps
   ), [model, activeRace, races])
+  const weeklyBrief = useMemo(() => buildWeeklyRunBrief({
+    week: calendarModel?.getWeek(weekIndex),
+    completedSet,
+    todayISO: today,
+    gear: weeklyGear,
+    hrContext: weeklyHrContext,
+  }), [calendarModel, weekIndex, completedSet, today, weeklyGear, weeklyHrContext])
   const racePlanReconciliation = useMemo(() => deriveRacePlanReconciliation({
     calendarGoals: model?.goals?.length ? model.goals : model?.goal ? [model.goal] : [],
     savedRaces: races,
@@ -403,6 +429,17 @@ export default function Plan() {
     if (!selectedDay || !calendarModel || !Number.isInteger(selectedDay.weekIndex)) return null
     return calendarModel.getWeek(selectedDay.weekIndex)
   }, [selectedDay, calendarModel])
+  const selectedWeekBrief = useMemo(() => selectedWeek ? buildWeeklyRunBrief({
+    week: selectedWeek,
+    completedSet,
+    todayISO: today,
+    gear: weeklyGear,
+    hrContext: weeklyHrContext,
+  }) : weeklyBrief, [selectedWeek, completedSet, today, weeklyGear, weeklyHrContext, weeklyBrief])
+  const selectedBriefDay = useMemo(
+    () => selectedWeekBrief?.days?.find((day) => day.dateISO === selectedDayISO) || null,
+    [selectedWeekBrief, selectedDayISO],
+  )
 
   const toggleSession = async (sessionId) => {
     if (!sessionId) return
@@ -972,6 +1009,8 @@ export default function Plan() {
                   />
                 </Suspense>
               ) : null}
+              briefDay={selectedBriefDay}
+              weeklyBrief={selectedWeekBrief}
             />
           ) : (
             <>
@@ -982,6 +1021,7 @@ export default function Plan() {
                 completedSet={completedSet}
                 todayISO={today}
                 recordedRunsByDate={recordedRunsByDate}
+                weeklyBrief={weeklyBrief}
                 onPrevWeek={() => goToWeek(Math.max(1, currentWeek - 1))}
                 onNextWeek={() => goToWeek(Math.min(weekCount || currentWeek, currentWeek + 1))}
                 onOpenDay={(day) => setSelectedDayISO(day.dateISO)}

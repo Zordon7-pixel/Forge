@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { Link } from 'react-router'
 import {
   Activity, Footprints, Dumbbell, Moon, Timer, Gauge, Route, Flame, Brain,
   Maximize2, Minimize2, Minus, Plus, ChevronLeft, ChevronRight, CheckCircle2, Circle,
-  Trash2,
+  Trash2, HeartPulse, ShieldCheck,
 } from 'lucide-react'
 import WatchWorkoutSendButton from '../WatchWorkoutSendButton'
 import AiGuidanceNote from '../AiGuidanceNote'
@@ -230,6 +231,70 @@ function PaperSection({ title, tone, icon, children, px }) {
   )
 }
 
+function DayBriefContext({ briefDay, px }) {
+  if (!briefDay) return null
+  const footwear = briefDay.footwear
+  return (
+    <section className="forged-day-brief" aria-labelledby="forged-day-mission-title">
+      <p className="forged-day-brief-kicker">{briefDay.isToday ? "Today's mission" : 'Session mission'}</p>
+      <h4 id="forged-day-mission-title" className="forged-hand" style={{ fontSize: px(20) }}>{briefDay.title}</h4>
+      {briefDay.mission && <p className="forged-day-brief-purpose" style={{ fontSize: px(13) }}>{briefDay.mission}</p>}
+      <div className="forged-day-brief-facts" role="group" aria-label="Session essentials">
+        <span data-intensity={briefDay.intensity.key}>{briefDay.intensity.label}</span>
+        <span>{briefDay.target}</span>
+        {briefDay.effortTarget && <span>{briefDay.effortTarget}</span>}
+        {briefDay.hrTarget && (
+          <span title={briefDay.hrTarget.sourceLabel}><HeartPulse size={13} aria-hidden="true" /> {briefDay.hrTarget.zoneLabel} · {briefDay.hrTarget.bpmLabel}</span>
+        )}
+      </div>
+      {briefDay.adjustmentReason && (
+        <p className="forged-adjusted-because" role="status"><strong>Forge adjusted this because:</strong> {briefDay.adjustmentReason}</p>
+      )}
+      {footwear && (
+        <div className="forged-footwear-card">
+          <div className="forged-footwear-head">
+            <span><Footprints size={15} aria-hidden="true" /> Footwear</span>
+            <Link to="/gear">Update Gear</Link>
+          </div>
+          {footwear.primary ? (
+            <>
+              <p><strong>Primary:</strong> {footwear.primary.name}</p>
+              <p>{footwear.primary.reason}</p>
+              {footwear.alternate && (
+                <details>
+                  <summary>Alternate: {footwear.alternate.name}</summary>
+                  <p>{footwear.alternate.reason}</p>
+                </details>
+              )}
+            </>
+          ) : (
+            <p>{footwear.state === 'unavailable'
+              ? 'Gear is unavailable right now, so no shoe was guessed.'
+              : footwear.state === 'wear-review'
+                ? footwear.warning
+                : 'Add an active pair in Gear to receive a current-inventory recommendation.'}</p>
+          )}
+          {footwear.primary && footwear.warning && <p className="forged-footwear-warning">{footwear.warning}</p>}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function SafetyAdjustmentRules({ rules = [], px }) {
+  if (!rules.length) return null
+  return (
+    <details className="forged-safety-rules">
+      <summary><ShieldCheck size={16} aria-hidden="true" /> If today changes</summary>
+      <ul style={{ fontSize: px(12) }}>
+        {rules.map((rule) => (
+          <li key={`${rule.if}-${rule.then}`}><strong>If</strong> {rule.if}, <strong>then</strong> {rule.then}.</li>
+        ))}
+      </ul>
+    </details>
+  )
+}
+
 export default function ForgedDayView({
   day,
   planContext = {},
@@ -248,6 +313,8 @@ export default function ForgedDayView({
   allowSessionRemoval = false,
   isScheduledToday = true,
   routePlanner = null,
+  briefDay = null,
+  weeklyBrief = null,
 }) {
   const [scaleIndex, setScaleIndex] = useState(1)
   const [expanded, setExpanded] = useState(false)
@@ -301,7 +368,13 @@ export default function ForgedDayView({
   }, [expanded])
 
   const whyToday = firstStr(day?.whyToday, hyroxSessions[0]?.raw?.purpose, runSession?.prescription?.explanation, liftSession?.prescription?.explanation)
-  const recovery = firstStr(day?.recovery, hyroxSessions[0]?.raw?.transitionRest, runSession?.prescription?.recovery, liftSession?.prescription?.recovery)
+  const dayRecovery = firstStr(day?.recovery)
+  const dayRecoveryIsOptional = boolValue(
+    day?.raw?.recoveryOptional,
+    day?.raw?.recovery_optional,
+    day?.raw?.optionalRecovery,
+    day?.raw?.optional_recovery,
+  )
   const orderGuidance = firstStr(day?.orderGuidance)
   const plannedSessionIds = new Set(sessions.map((session) => String(session.id)))
   const isDone = (session) => sessionState(session, completedSet) === 'completed'
@@ -377,6 +450,7 @@ export default function ForgedDayView({
     return (
       <PaperSection key={hyroxSession.id} title={hyroxSession.title || 'HYROX session'} tone="red" px={px}
         icon={<span className="forged-stamp forged-stamp--hyrox" data-state={sessionState(hyroxSession, completedSet)}><Activity size={16} /></span>}>
+        <p className="forged-must-do">Must do</p>
         <p className="forged-hand" style={{ margin: '0 0 8px', fontSize: px(15), fontWeight: 800 }}>HYROX-specific session · canonical metric prescription</p>
         {facts.purpose && <p style={{ margin: '0 0 9px', fontSize: px(13), lineHeight: 1.5 }}>{facts.purpose}</p>}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, padding: '9px 10px', borderRadius: 8, background: 'rgba(194,65,12,0.05)', fontSize: px(12) }}>
@@ -448,13 +522,14 @@ export default function ForgedDayView({
     return (
       <PaperSection title={canonicalTitle} tone="run" px={px}
         icon={<span className="forged-stamp forged-stamp--run" data-state={sessionState(runSession, completedSet)}><Footprints size={16} /></span>}>
+        <p className="forged-must-do">Must do</p>
         {secondaryTitle && <p className="forged-hand" style={{ fontSize: px(15), margin: '0 0 8px', fontWeight: 800 }}>{secondaryTitle}</p>}
         {isBenchmarkRun && (
           <p className="forged-hand forged-sec-red" style={{ fontSize: px(14), margin: '0 0 8px', fontWeight: 800 }}>
             Benchmark run — this calibrates your targets
           </p>
         )}
-        {f.purpose && <p className="forged-hand" style={{ fontSize: px(15), margin: '0 0 8px' }}>{f.purpose}</p>}
+        {f.purpose && f.purpose !== briefDay?.mission && <p className="forged-hand" style={{ fontSize: px(15), margin: '0 0 8px' }}>{f.purpose}</p>}
         <div className="forged-paper-metric" style={{ display: 'flex', flexWrap: 'wrap', gap: 14 }}>
           {f.time && <span style={{ fontSize: px(13) }}><Timer size={13} style={{ verticalAlign: -1 }} /> {f.time}</span>}
           {f.distance && <span style={{ fontSize: px(13) }}><Route size={13} style={{ verticalAlign: -1 }} /> {f.distance}</span>}
@@ -532,6 +607,7 @@ export default function ForgedDayView({
     return (
       <PaperSection title={canonicalTitle} px={px}
         icon={<span className="forged-stamp forged-stamp--lift" data-state={sessionState(liftSession, completedSet)}><Dumbbell size={16} /></span>}>
+        <p className="forged-must-do">Must do</p>
         {secondaryTitle && <p className="forged-hand" style={{ fontSize: px(15), margin: '0 0 8px', fontWeight: 800 }}>{secondaryTitle}</p>}
         {f.focus && <p className="forged-hand" style={{ fontSize: px(15), margin: '0 0 8px' }}>{f.focus}</p>}
         <div style={{ marginBottom: 10, padding: '9px 10px', border: '1px solid rgba(60,55,45,0.14)', borderRadius: 8, background: 'rgba(255,255,255,0.28)' }}>
@@ -572,6 +648,12 @@ export default function ForgedDayView({
           </div>
         ))}
         {f.progression && <p style={{ fontSize: px(12), marginTop: 8 }}><strong>Session progression:</strong> {f.progression}</p>}
+        {f.recovery.length > 0 && (
+          <div style={{ marginTop: 10 }}>
+            <p className="forged-hand forged-sec-green" style={{ fontSize: px(14), margin: 0 }}>Recovery</p>
+            <ul style={{ margin: '4px 0 0', paddingLeft: 18, fontSize: px(13) }}>{f.recovery.map((item, index) => <li key={`lift-recovery-${index}`}>{item}</li>)}</ul>
+          </div>
+        )}
         <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
           <button type="button" onClick={() => onStartLift?.(liftSession)} disabled={typeof onStartLift !== 'function'}
             title="Start this scheduled lift"
@@ -640,6 +722,8 @@ export default function ForgedDayView({
         </p>
       )}
 
+      <DayBriefContext briefDay={briefDay} px={px} />
+
       {renderRecordedRuns()}
 
       {isRest ? (
@@ -696,25 +780,23 @@ export default function ForgedDayView({
           )}
           {renderRun()}
           {renderLift()}
-          {recovery && (
-            <PaperSection title="Recovery" tone="green" px={px}
+          {dayRecovery && (
+            <PaperSection title={dayRecoveryIsOptional ? 'Optional recovery' : 'Recovery'} tone="green" px={px}
               icon={<span className="forged-stamp forged-stamp--sm forged-stamp--rest"><Moon size={12} /></span>}>
-              <p style={{ fontSize: px(13) }}>{recovery}</p>
+              <p style={{ fontSize: px(13) }}>{dayRecovery}</p>
             </PaperSection>
           )}
         </>
       )}
 
       {whyToday && (
-        <section style={{ marginTop: 20, borderTop: '1px solid rgba(60,55,45,0.16)', paddingTop: 14 }}>
-          <div className="flex items-center gap-2">
-            <Brain size={17} color="#C2410C" />
-            <h4 className="forged-hand" style={{ fontSize: px(17), fontWeight: 700 }}>Why today</h4>
-          </div>
-          <p style={{ fontSize: px(13), lineHeight: 1.55, marginTop: 8 }}>{whyToday}</p>
+        <details className="forged-why-workout">
+          <summary><Brain size={17} color="#C2410C" /> Why this workout?</summary>
+          <p style={{ fontSize: px(13), lineHeight: 1.55 }}>{whyToday}</p>
           <AiGuidanceNote />
-        </section>
+        </details>
       )}
+      <SafetyAdjustmentRules rules={weeklyBrief?.safetyRules} px={px} />
     </div>
   )
 }

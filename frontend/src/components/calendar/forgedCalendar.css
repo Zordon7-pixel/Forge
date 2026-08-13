@@ -32,7 +32,7 @@
   letter-spacing: 0.02em;
   padding: 7px 14px;
   border-radius: 6px;
-  min-height: 36px;
+  min-height: 44px;
   cursor: pointer;
 }
 .forged-seg button[aria-pressed="true"] {
@@ -151,6 +151,101 @@
 .forged-day-sub { font-size: 11px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .forged-day-recorded { font-size: 10px; font-weight: 800; color: var(--success); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .forged-day-stamps { display: flex; gap: 6px; flex: 0 0 auto; }
+.forged-day-essentials { display: flex; flex-wrap: wrap; gap: 5px; min-width: 0; }
+.forged-day-essentials > span {
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 850;
+  line-height: 1.25;
+  max-width: 100%;
+  overflow: hidden;
+  padding: 3px 7px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.forged-day-essentials > span[data-intensity="quality"],
+.forged-day-essentials > span[data-intensity="race"] { border-color: color-mix(in srgb, var(--accent) 60%, transparent); color: var(--accent); }
+.forged-day-essentials > span[data-intensity="long"] { border-color: color-mix(in srgb, #7C5CFF 55%, transparent); color: #A695FF; }
+
+/* ---- Weekly Run Brief: compact story + progressive disclosure ---- */
+.forged-weekly-brief {
+  background:
+    radial-gradient(circle at 92% 0%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 44%),
+    var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  margin: 0 0 12px;
+  min-width: 0;
+  overflow: hidden;
+  padding: 14px;
+}
+.forged-weekly-brief-kicker {
+  align-items: center;
+  color: var(--text-muted);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 11px;
+  font-weight: 900;
+  gap: 6px 12px;
+  justify-content: space-between;
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
+}
+.forged-weekly-brief-kicker > span:first-child { align-items: center; color: var(--accent); display: inline-flex; gap: 6px; }
+.forged-weekly-brief h3 { color: var(--text-primary); font-size: 17px; font-weight: 900; line-height: 1.3; margin: 9px 0 0; overflow-wrap: anywhere; }
+.forged-weekly-brief-totals { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.forged-weekly-brief-totals > span {
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.35;
+  max-width: 100%;
+  padding: 5px 8px;
+  overflow-wrap: anywhere;
+}
+.forged-mission-card {
+  align-items: center;
+  background: color-mix(in srgb, var(--accent) 9%, var(--bg-input));
+  border: 1px solid color-mix(in srgb, var(--accent) 58%, var(--border-subtle));
+  border-radius: 10px;
+  color: var(--text-primary);
+  cursor: pointer;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  margin-top: 12px;
+  min-height: 64px;
+  padding: 11px 12px;
+  text-align: left;
+  transition: border-color 140ms ease, background-color 140ms ease;
+  width: 100%;
+}
+.forged-mission-card:hover { background: color-mix(in srgb, var(--accent) 14%, var(--bg-input)); }
+.forged-mission-card:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 58%, transparent); outline-offset: 2px; }
+.forged-mission-copy { display: grid; gap: 2px; min-width: 0; }
+.forged-mission-copy strong { font-size: 14px; overflow-wrap: anywhere; }
+.forged-mission-copy > span:last-child { color: var(--text-muted); font-size: 11px; }
+.forged-mission-label { color: var(--accent); font-size: 10px; font-weight: 950; letter-spacing: 0.07em; text-transform: uppercase; }
+.forged-weekly-unlocked { color: var(--success); font-size: 11px; font-weight: 800; line-height: 1.45; margin: 8px 1px 0; }
+.forged-gear-warning { border-top: 1px solid var(--border-subtle); margin-top: 12px; }
+.forged-gear-warning > summary { align-items: center; color: var(--text-primary); cursor: pointer; display: flex; font-size: 11px; font-weight: 850; gap: 6px; min-height: 44px; }
+.forged-gear-warning > div { color: var(--text-muted); font-size: 11px; line-height: 1.5; padding-bottom: 4px; }
+.forged-gear-warning p { margin: 0 0 6px; }
+.forged-gear-warning a, .forged-gear-unavailable a {
+  align-items: center;
+  color: var(--accent);
+  display: inline-flex;
+  font-weight: 850;
+  max-width: 100%;
+  min-height: 44px;
+  padding-inline: 4px;
+}
+.forged-gear-unavailable { color: var(--text-muted); font-size: 11px; line-height: 1.5; margin: 10px 0 0; }
 
 /* Today primary action pinned under the header */
 .forged-today-cta {
@@ -253,6 +348,50 @@
 .forged-paper .forged-sec-red { color: var(--paper-red); }
 .forged-paper .forged-sec-run { color: var(--paper-run); }
 
+.forged-day-brief {
+  background: rgba(194, 65, 12, 0.055);
+  border: 1px solid rgba(194, 65, 12, 0.22);
+  border-radius: 10px;
+  margin-top: 14px;
+  min-width: 0;
+  padding: 12px;
+}
+.forged-day-brief-kicker { color: var(--paper-run); font-size: 11px; font-weight: 950; letter-spacing: 0.07em; margin: 0 0 4px; text-transform: uppercase; }
+.forged-day-brief-purpose { color: var(--ink-soft); line-height: 1.5; margin: 6px 0 0; overflow-wrap: anywhere; }
+.forged-day-brief-facts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.forged-day-brief-facts > span {
+  align-items: center;
+  background: rgba(255,255,255,0.35);
+  border: 1px solid rgba(60,55,45,0.16);
+  border-radius: 999px;
+  color: var(--ink-soft);
+  display: inline-flex;
+  font-size: 11px;
+  font-weight: 850;
+  gap: 4px;
+  max-width: 100%;
+  min-height: 30px;
+  overflow-wrap: anywhere;
+  padding: 5px 8px;
+}
+.forged-day-brief-facts > span[data-intensity="quality"],
+.forged-day-brief-facts > span[data-intensity="race"] { border-color: rgba(194,65,12,0.42); color: var(--paper-run); }
+.forged-adjusted-because { background: rgba(21,128,61,0.08); border-left: 3px solid var(--paper-green); border-radius: 4px; color: var(--ink); font-size: 11px; line-height: 1.5; margin: 10px 0 0; padding: 8px 9px; }
+.forged-footwear-card { background: rgba(255,255,255,0.32); border: 1px solid rgba(60,55,45,0.14); border-radius: 8px; margin-top: 10px; padding: 10px; }
+.forged-footwear-head { align-items: center; display: flex; font-size: 11px; font-weight: 900; gap: 8px; justify-content: space-between; }
+.forged-footwear-head > span { align-items: center; display: inline-flex; gap: 5px; }
+.forged-footwear-head a { color: var(--paper-run); min-height: 44px; align-items: center; display: inline-flex; }
+.forged-footwear-card p { color: var(--ink-soft); font-size: 11px; line-height: 1.45; margin: 6px 0 0; }
+.forged-footwear-card details { margin-top: 7px; }
+.forged-footwear-card summary { cursor: pointer; font-size: 11px; font-weight: 850; min-height: 44px; padding-block: 8px; }
+.forged-footwear-warning { color: var(--paper-red) !important; font-weight: 800; }
+.forged-must-do { color: var(--paper-run); font-size: 10px; font-weight: 950; letter-spacing: 0.07em; margin: 0 0 6px; text-transform: uppercase; }
+.forged-why-workout, .forged-safety-rules { border-top: 1px solid rgba(60,55,45,0.16); margin-top: 20px; padding-top: 6px; }
+.forged-why-workout > summary, .forged-safety-rules > summary { align-items: center; cursor: pointer; display: flex; font-size: 14px; font-weight: 850; gap: 7px; min-height: 44px; }
+.forged-why-workout > p { margin: 6px 0 0; }
+.forged-safety-rules ul { line-height: 1.55; margin: 4px 0 0; padding-left: 19px; }
+.forged-safety-rules li + li { margin-top: 6px; }
+
 .forged-paper-controls button {
   width: 38px;
   height: 38px;
@@ -262,6 +401,21 @@
   background: rgba(60,55,45,0.06);
   color: var(--ink);
   cursor: pointer;
+}
+
+@media (max-width: 380px) {
+  .forged-weekly-brief { padding: 12px; }
+  .forged-weekly-brief h3 { font-size: 15px; }
+  .forged-day-row { align-items: flex-start; gap: 8px; padding: 10px; }
+  .forged-day-date { flex-basis: 38px; }
+  .forged-day-stamps { gap: 3px; padding-top: 2px; }
+  .forged-day-essentials > span { max-width: 150px; }
+  .forged-mission-card { min-height: 68px; }
+  .forged-day-brief { padding: 10px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .forged-mission-card { transition: none; }
 }
 .forged-paper-controls { border: 1px solid rgba(60,55,45,0.16); border-radius: 8px; overflow: hidden; display: inline-flex; align-items: center; }
 

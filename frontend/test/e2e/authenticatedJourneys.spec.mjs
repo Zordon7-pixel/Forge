@@ -747,6 +747,223 @@ test('the current plan item opens its existing calendar without changing navigat
   assertCleanApiAndRuntime(apiState, runtimeErrors)
 })
 
+test('Weekly Run Brief preserves mobile naming, recorded-run provenance, prescribed recovery, and Gear target size', async ({ page }) => {
+  const runtimeErrors = collectRuntimeErrors(page)
+  const anchor = new Date(`${today}T12:00:00`)
+  const monday = new Date(anchor)
+  monday.setDate(anchor.getDate() - ((anchor.getDay() + 6) % 7))
+  const todayIndex = (anchor.getDay() + 6) % 7
+  const isoAt = (offset) => {
+    const date = new Date(monday)
+    date.setDate(monday.getDate() + offset)
+    return localDateISO(date)
+  }
+  const availableIndexes = [0, 1, 2, 3, 4, 5, 6].filter((index) => index !== todayIndex)
+  const hyroxIndex = availableIndexes[0]
+  const recoveryIndex = availableIndexes[1]
+  const restIndex = availableIndexes[2]
+  const liftIndex = availableIndexes[3]
+  const labels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+  const transitionRest = 'Move deliberately; use 60-120 seconds between station blocks unless a shorter transition is prescribed.'
+  const todayRun = {
+    id: 'brief-threshold',
+    removal_session_id: 'brief-threshold-remove',
+    kind: 'run',
+    type: 'threshold',
+    title: 'Threshold repeats',
+    distance_miles: 5,
+    distance_is_estimate: true,
+    duration_min: 52,
+    prescription: {
+      type: 'threshold',
+      title: 'Threshold repeats',
+      purpose: 'Build sustainable speed without racing the workout.',
+      target_zone: 'Zone 3-4',
+      pace_target: 'Controlled threshold effort',
+      surface: 'trail',
+      warmup: ['10 min easy', '3 × 20 sec relaxed strides'],
+      steps: ['3 × 6 min controlled', '2 min easy jog after each repeat'],
+      recoveries: '2 min easy jog',
+      cooldown: ['10 min easy', 'Walk until breathing settles'],
+    },
+  }
+  const hyroxSession = {
+    id: 'brief-hyrox',
+    kind: 'hyrox',
+    sessionType: 'hyrox_compromised_running',
+    title: 'HYROX compromised running',
+    durationMin: 45,
+    purpose: 'Practice deliberate transitions without turning rest into optional work.',
+    transitionRest,
+    canonicalUnits: 'metric',
+    runSequenceMeters: [1000],
+    stationSequence: [{ id: 'row', name: 'Row', distanceMeters: 1000, exactStation: true, officialStandard: { distanceMeters: 1000 } }],
+  }
+  const recoveryRun = {
+    id: 'brief-recovery',
+    kind: 'run',
+    type: 'recovery',
+    title: 'Recovery run',
+    distance_miles: 3,
+    duration_min: 32,
+    prescription: {
+      type: 'recovery',
+      title: 'Recovery run',
+      target_zone: 'Zone 1-2',
+      pace_target: 'Fully conversational',
+      warmup: ['5 min easy walking'],
+      steps: ['Stay in Zone 1-2 and keep the effort relaxed'],
+      recovery: 'Walk as needed before continuing.',
+      cooldown: ['5 min easy walking'],
+    },
+  }
+  const liftSession = {
+    id: 'brief-lift',
+    removal_session_id: 'brief-lift-remove',
+    kind: 'lift',
+    type: 'strength',
+    title: 'Strength maintenance',
+    duration_min: 40,
+    prescription: {
+      focus: 'full body',
+      warmup: ['Bodyweight squat × 10'],
+      exercises: [{
+        name: 'Rear-Foot-Elevated Split Squat',
+        sets: 3,
+        reps: '6 each side',
+        rpe: '7',
+        rest: '90 sec',
+        load: 'Choose load for RPE 7',
+        cue: 'Keep the front foot planted and torso controlled.',
+        progression: 'Add load only after every rep stays stable.',
+      }],
+      recovery: ['Walk 3 min, then refuel.'],
+      progression: 'Repeat the same dose before adding a set.',
+    },
+  }
+  const sessionsByIndex = new Map([
+    [todayIndex, [todayRun]],
+    [hyroxIndex, [hyroxSession]],
+    [recoveryIndex, [recoveryRun]],
+    [liftIndex, [liftSession]],
+  ])
+  const plan = {
+    id: 'weekly-brief-truth-plan',
+    name: 'Weekly brief truth plan',
+    type: 'hybrid_maintain',
+    weeks: 1,
+    plan_data: {
+      schemaVersion: 2,
+      planMode: 'hybrid_maintain',
+      goal: { name: 'Autumn Half Marathon', dateISO: isoAt(45), distanceMiles: 13.1 },
+      weeks: [{
+        week: 1,
+        phase: 'build',
+        startDate: isoAt(0),
+        purpose: 'Keep every weekly summary tied to the saved prescription.',
+        days: labels.map((day, index) => ({ date: isoAt(index), day, sessions: sessionsByIndex.get(index) || [] })),
+      }],
+    },
+  }
+  const recordedRun = {
+    id: 'brief-unscheduled-run',
+    type: 'easy',
+    date: isoAt(restIndex),
+    distance_miles: 3.2,
+    duration_seconds: 1920,
+    plan_session_id: null,
+  }
+  const apiState = await installAuthenticatedApi(page, {
+    responses: new Map([
+      ['GET /api/plans/my', { plan, user_plan: { current_week: 1, started_at: isoAt(0), progress: { completedSessionIds: [] } } }],
+      ['GET /api/runs', [recordedRun]],
+      ['GET /api/gear/shoes', { shoes: [{
+        id: 'brief-road-racer', brand: 'Forge Test', model: 'Road Racer', category: 'race', surface: 'road', intent_tags: [],
+        total_miles: 20, recommended_miles: 200, is_active: 1, is_retired: 0,
+      }] }],
+      ['GET /api/profile/hr-zones', {
+        profile: { source: 'manual_watch', zoneModel: 'hrr' },
+        zones: [
+          { zone: 1, minBpm: 120, maxBpm: 134 },
+          { zone: 2, minBpm: 134, maxBpm: 148 },
+          { zone: 3, minBpm: 148, maxBpm: 162 },
+          { zone: 4, minBpm: 162, maxBpm: 176 },
+          { zone: 5, minBpm: 176, maxBpm: 190 },
+        ],
+      }],
+    ]),
+  })
+
+  await page.goto('/plan')
+  const brief = page.getByRole('region', { name: 'Weekly Run Brief' })
+  await expect(brief).toBeVisible()
+  await expect.soft(brief.getByText('~8.0 mi', { exact: true }), 'F7 weekly total retains an estimate marker').toBeVisible()
+
+  const missionTitle = await brief.locator('.forged-mission-copy strong').textContent()
+  const todayRowTitle = await page.locator('.forged-day-row[data-today] .forged-day-title').textContent()
+  expect.soft(todayRowTitle, 'F6 week row and mission use the same canonical session name').toBe(missionTitle)
+
+  const restRow = page.locator('.forged-day-row').filter({ hasText: 'Recorded run' })
+  await expect.soft(restRow, 'F5 rest-day recorded mileage remains visible').toContainText('3.20 mi')
+  await expect.soft(restRow, 'F5 unlinked rest-day provenance remains visible').toContainText('Not scheduled')
+
+  await brief.locator('.forged-gear-warning > summary').click()
+  const updateGear = brief.getByRole('link', { name: 'Update Gear' })
+  const gearBox = await updateGear.boundingBox()
+  expect.soft(gearBox?.height || 0, 'F8 standalone Update Gear link is at least 44px high').toBeGreaterThanOrEqual(44)
+  expect.soft(gearBox?.width || 0, 'F8 standalone Update Gear link is at least 44px wide').toBeGreaterThanOrEqual(44)
+  const weekLayout = await page.evaluate(() => ({ viewport: document.documentElement.clientWidth, scroll: document.documentElement.scrollWidth }))
+  expect.soft(weekLayout.scroll, 'F5/F8 weekly mobile view has no horizontal overflow').toBeLessThanOrEqual(weekLayout.viewport)
+
+  await brief.locator('.forged-mission-card').click()
+  await expect(page.getByText(String(missionTitle || '').trim(), { exact: true }).first()).toBeVisible()
+  await expect(page.getByText('Zones 3–4 · 148–176 bpm', { exact: true })).toBeVisible()
+  await expect(page.getByText('Warm-up', { exact: true })).toBeVisible()
+  await expect(page.getByText('Structure', { exact: true })).toBeVisible()
+  await expect(page.getByText('Recoveries: 2 min easy jog', { exact: true })).toBeVisible()
+  await expect(page.getByText('Cool-down', { exact: true })).toBeVisible()
+  await expect(page.getByText('~5.0 mi estimated', { exact: true })).toBeVisible()
+  await expect(page.getByText('Controlled threshold effort', { exact: true }).first()).toBeVisible()
+  await expect(page.getByText('Zone 3-4', { exact: true }).first()).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Start Run', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: /Remove Threshold repeats from this plan/i })).toBeVisible()
+  await expect(page.getByRole('button', { name: /Export watch workout/i })).toBeVisible()
+  await expect(page.getByRole('button', { name: /Copy workout/i })).toBeVisible()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(await page.evaluate(() => document.documentElement.clientWidth))
+
+  await page.getByRole('button', { name: 'Calendar' }).click()
+  await page.locator('.forged-day-row').filter({ hasText: hyroxSession.title }).click()
+  await expect(page.getByText(transitionRest, { exact: false }).first()).toBeVisible()
+  await expect.soft(page.getByRole('heading', { name: 'Optional recovery' }), 'F3 prescribed HYROX transition rest is never optional').toHaveCount(0)
+  await expect.soft(page.getByText(transitionRest, { exact: false }), 'F3 HYROX transition rest is not duplicated under contradictory labels').toHaveCount(1)
+
+  await page.getByRole('button', { name: 'Calendar' }).click()
+  await page.locator('.forged-day-row').filter({ hasText: 'Recovery run' }).click()
+  await expect(page.getByText('Recoveries: Walk as needed before continuing.', { exact: true })).toBeVisible()
+  await expect.soft(page.getByRole('heading', { name: 'Optional recovery' }), 'F3 prescribed run recovery is never optional').toHaveCount(0)
+  expect.soft(await page.evaluate(() => document.documentElement.scrollWidth), 'F3 recovery day has no mobile overflow')
+    .toBeLessThanOrEqual(await page.evaluate(() => document.documentElement.clientWidth))
+
+  await page.getByRole('button', { name: 'Calendar' }).click()
+  await page.locator('.forged-day-row').filter({ hasText: 'Full Body strength' }).click()
+  const strengthRecipe = page.locator('.forged-exercise').filter({ hasText: 'Rear-Foot-Elevated Split Squat' })
+  await expect(strengthRecipe).toContainText('Sets3')
+  await expect(strengthRecipe).toContainText('Reps6 each side')
+  await expect(strengthRecipe).toContainText('Rest90 sec')
+  await expect(strengthRecipe).toContainText('LoadChoose load for RPE 7')
+  await expect(strengthRecipe).toContainText('RPE/RIR7')
+  await expect(strengthRecipe).toContainText('Keep the front foot planted and torso controlled.')
+  await expect(strengthRecipe).toContainText('Add load only after every rep stays stable.')
+  await expect(page.getByText('Session progression: Repeat the same dose before adding a set.', { exact: true })).toBeVisible()
+  await expect(page.getByText('Walk 3 min, then refuel.', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Start Lift', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: /Remove Strength maintenance from this plan/i })).toBeVisible()
+  await expect(page.getByRole('button', { name: /Export watch workout/i })).toBeVisible()
+  await expect(page.getByRole('button', { name: /Copy workout/i })).toBeVisible()
+
+  assertCleanApiAndRuntime(apiState, runtimeErrors)
+})
+
 test('HYROX relay race day shows athlete scope and official team station loads', async ({ page }) => {
   const runtimeErrors = collectRuntimeErrors(page)
   const station = (id, name, officialStandard) => ({

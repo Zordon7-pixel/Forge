@@ -1,6 +1,8 @@
 import { useMemo, useRef, useState } from 'react'
+import { Link } from 'react-router'
 import {
   Activity, Footprints, Dumbbell, Moon, ChevronDown, ChevronLeft, ChevronRight, Pencil,
+  Compass, ShieldCheck,
 } from 'lucide-react'
 import {
   buildMonthGrid, addMonths, dayMarks, dayStatus, countdownDays, WEEKDAYS,
@@ -314,7 +316,51 @@ function recordedRunSummary(activities = []) {
   return totalMiles > 0 ? `${runLabel} · ${totalMiles.toFixed(2)} mi` : runLabel
 }
 
-function WeekRow({ day, isToday, completedSet, recordedRuns = [], onOpen }) {
+function WeeklyBriefHeader({ brief, onOpenDay }) {
+  if (!brief) return null
+  const next = brief.days.find((day) => !day.isRest && day.state !== 'completed' && day.dateISO > (brief.today?.dateISO || ''))
+  return (
+    <section className="forged-weekly-brief" aria-label="Weekly Run Brief">
+      <div className="forged-weekly-brief-kicker">
+        <span><Compass size={14} aria-hidden="true" /> Weekly Run Brief</span>
+        <span>{brief.dateRange}</span>
+      </div>
+      <h3 id="forged-weekly-brief-title">{brief.purpose}</h3>
+      <div className="forged-weekly-brief-totals" role="group" aria-label="Weekly training target">
+        {brief.totalMilesLabel && <span>{brief.totalMilesLabel}</span>}
+        {brief.totalTimeLabel && <span>{brief.totalTimeLabel}</span>}
+        {brief.mixLabel && <span>{brief.mixLabel}</span>}
+      </div>
+      {brief.today && (
+        <button type="button" className="forged-mission-card" onClick={() => onOpenDay(brief.today.rawDay)}>
+          <span className="forged-mission-copy">
+            <span className="forged-mission-label">Today&apos;s mission</span>
+            <strong>{brief.today.title}</strong>
+            <span>{brief.today.target} · {brief.today.readiness}</span>
+          </span>
+          <ChevronRight size={18} aria-hidden="true" />
+        </button>
+      )}
+      {brief.today?.state === 'completed' && next && (
+        <p className="forged-weekly-unlocked" role="status">Complete. Next up: {next.title} on {next.dayLabel}.</p>
+      )}
+      {brief.gearWarnings.length > 0 && (
+        <details className="forged-gear-warning">
+          <summary><ShieldCheck size={14} aria-hidden="true" /> Shoe rotation check</summary>
+          <div>
+            {brief.gearWarnings.map((warning) => <p key={warning}>{warning}</p>)}
+            <Link to="/gear">Update Gear</Link>
+          </div>
+        </details>
+      )}
+      {!brief.gearAvailable && (
+        <p className="forged-gear-unavailable" role="status">Gear could not be loaded, so Forge did not guess a shoe. <Link to="/gear">Review Gear</Link></p>
+      )}
+    </section>
+  )
+}
+
+function WeekRow({ day, briefDay, isToday, completedSet, recordedRuns = [], onOpen }) {
   const marks = dayMarks(day, completedSet)
   const status = dayStatus(day, completedSet)
   const runSession = day.sessions.find((s) => s.kind === 'run')
@@ -342,6 +388,10 @@ function WeekRow({ day, isToday, completedSet, recordedRuns = [], onOpen }) {
         runTarget,
         liftSession ? 'Lift' : '',
       ].filter(Boolean).join(' · ')
+  const displayedTitle = day.isRest && hasRecordedRun ? title : briefDay?.title || title
+  const displayedSub = day.isRest && hasRecordedRun
+    ? sub
+    : briefDay?.target || sub
   return (
     <button
       type="button"
@@ -356,8 +406,15 @@ function WeekRow({ day, isToday, completedSet, recordedRuns = [], onOpen }) {
         <span className="forged-day-num">{day.date ? day.date.getDate() : '–'}</span>
       </span>
       <span className="forged-day-main">
-        <span className="forged-day-title">{title}</span>
-        <span className="forged-day-sub">{sub || (isToday ? 'Today' : 'Planned')}</span>
+        <span className="forged-day-title">{displayedTitle}</span>
+        <span className="forged-day-sub">{displayedSub || (isToday ? 'Today' : 'Planned')}</span>
+        {briefDay && (
+          <span className="forged-day-essentials">
+            <span data-intensity={briefDay.intensity.key}>{briefDay.intensity.label}</span>
+            {briefDay.footwear?.primary?.name && <span>{briefDay.footwear.primary.name}</span>}
+            <span>{briefDay.readiness}</span>
+          </span>
+        )}
         {!day.isRest && hasRecordedRun && (
           <span className="forged-day-recorded">{recordedRunSummary(recordedRuns)}{unlinkedRun ? ' · Not linked to plan' : ''}</span>
         )}
@@ -384,6 +441,7 @@ export default function ForgedCalendar({
   onOpenDay,
   onEditGoal,
   recordedRunsByDate,
+  weeklyBrief,
   canPrev,
   canNext,
 }) {
@@ -494,7 +552,7 @@ export default function ForgedCalendar({
               disabled={!canPrev}
               aria-label="Previous week"
               className="rounded-lg"
-              style={{ width: 40, height: 40, display: 'grid', placeItems: 'center', background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', opacity: canPrev ? 1 : 0.4 }}
+              style={{ width: 44, height: 44, display: 'grid', placeItems: 'center', background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', opacity: canPrev ? 1 : 0.4 }}
             >
               <ChevronLeft size={18} />
             </button>
@@ -526,11 +584,13 @@ export default function ForgedCalendar({
               disabled={!canNext}
               aria-label="Next week"
               className="rounded-lg"
-              style={{ width: 40, height: 40, display: 'grid', placeItems: 'center', background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', opacity: canNext ? 1 : 0.4 }}
+              style={{ width: 44, height: 44, display: 'grid', placeItems: 'center', background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', opacity: canNext ? 1 : 0.4 }}
             >
               <ChevronRight size={18} />
             </button>
           </div>
+
+          <WeeklyBriefHeader brief={weeklyBrief} onOpenDay={onOpenDay} />
 
           <div
             className="forged-week"
@@ -542,6 +602,7 @@ export default function ForgedCalendar({
               <WeekRow
                 key={day.dateISO || `${week?.weekIndex}-${day.slot}`}
                 day={day}
+                briefDay={weeklyBrief?.days?.find((briefDay) => briefDay.dateISO === day.dateISO)}
                 isToday={day.dateISO === todayISO}
                 completedSet={completedSet}
                 recordedRuns={recordedRunsByDate?.get(day.dateISO) || []}
@@ -564,7 +625,7 @@ export default function ForgedCalendar({
               onClick={() => setMonthAnchor((iso) => addMonths(iso, -1))}
               aria-label="Previous month"
               className="rounded-lg"
-              style={{ width: 40, height: 40, display: 'grid', placeItems: 'center', background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}
+              style={{ width: 44, height: 44, display: 'grid', placeItems: 'center', background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}
             >
               <ChevronLeft size={18} />
             </button>
@@ -574,7 +635,7 @@ export default function ForgedCalendar({
               onClick={() => setMonthAnchor((iso) => addMonths(iso, 1))}
               aria-label="Next month"
               className="rounded-lg"
-              style={{ width: 40, height: 40, display: 'grid', placeItems: 'center', background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}
+              style={{ width: 44, height: 44, display: 'grid', placeItems: 'center', background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}
             >
               <ChevronRight size={18} />
             </button>
