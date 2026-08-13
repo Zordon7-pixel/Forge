@@ -1,4 +1,4 @@
-const CACHE = 'forge-v6';
+const CACHE = 'forge-v7';
 const API_CACHE = 'forge-api-v2';
 const API_GET_CACHE_PATHS = ['/api/user', '/api/workouts/recent'];
 const DB_NAME = 'forge-offline-queue';
@@ -39,13 +39,20 @@ async function precacheAppShell() {
 }
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(Promise.all([
-    precacheAppShell().catch((error) => {
-      console.error('[service-worker/install] app shell precache failed:', error?.message || error);
-      throw error;
-    }),
-    self.skipWaiting(),
-  ]));
+  event.waitUntil(precacheAppShell().catch((error) => {
+    console.error('[service-worker/install] app shell precache failed:', error?.message || error);
+    throw error;
+  }));
+});
+
+self.addEventListener('message', (event) => {
+  if (event.data?.type === 'FORGE_GET_VERSION') {
+    event.ports?.[0]?.postMessage({ type: 'FORGE_SW_VERSION', revision: CACHE });
+    return;
+  }
+  if (event.data?.type === 'FORGE_ACTIVATE_UPDATE') {
+    event.waitUntil(self.skipWaiting());
+  }
 });
 
 self.addEventListener('activate', (event) => {

@@ -14,6 +14,7 @@ import { emitAppOpenTelemetry } from './lib/appOpenTelemetry'
 import api, { acceptWaiver } from './lib/api'
 import ConsentWaiver from './components/ConsentWaiver'
 import { markChunkBoundaryError, recoverFromChunkError } from './lib/chunkRecovery'
+import { getServiceWorkerUpdateState, requestServiceWorkerUpdate, SERVICE_WORKER_UPDATE_EVENT } from './lib/serviceWorkerUpdate'
 import PlanCandidateDecisionSheet from './components/PlanCandidateDecisionSheet'
 
 function lazyWithRetry(factory) {
@@ -399,9 +400,55 @@ function WaiverGate({ children }) {
   return children
 }
 
+function ServiceWorkerUpdateNotice() {
+  const [updateState, setUpdateState] = useState(() => getServiceWorkerUpdateState())
+
+  useEffect(() => {
+    const onUpdateState = (event) => setUpdateState(event.detail || getServiceWorkerUpdateState())
+    window.addEventListener(SERVICE_WORKER_UPDATE_EVENT, onUpdateState)
+    setUpdateState(getServiceWorkerUpdateState())
+    return () => window.removeEventListener(SERVICE_WORKER_UPDATE_EVENT, onUpdateState)
+  }, [])
+
+  if (!updateState.actionRequired) return null
+  const activeActivity = ['active-interaction', 'active-run', 'run-handoff', 'post-run-draft'].includes(updateState.reason)
+  const message = activeActivity
+    ? 'Update ready. Finish your current activity, then update.'
+    : 'Update ready. Save or finish what you are doing, then update.'
+
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      data-testid="service-worker-update-notice"
+      className="fixed left-1/2 z-[80] grid -translate-x-1/2 items-center gap-3 rounded-xl p-3 shadow-xl"
+      style={{
+        top: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)',
+        width: 'calc(100vw - 1.5rem)',
+        maxWidth: 456,
+        gridTemplateColumns: 'minmax(0, 1fr) auto',
+        background: 'var(--bg-card)',
+        color: 'var(--text-primary)',
+        border: '1px solid var(--accent)',
+      }}
+    >
+      <span className="min-w-0 text-sm font-semibold leading-snug">{message}</span>
+      <button
+        type="button"
+        onClick={() => requestServiceWorkerUpdate()}
+        className="pressable whitespace-nowrap rounded-lg px-3 py-2 text-xs font-black"
+        style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}
+      >
+        Update now
+      </button>
+    </div>
+  )
+}
+
 export default function App() {
   return (
     <BrowserRouter>
+      <ServiceWorkerUpdateNotice />
       <AppOpenTelemetry />
       <ProProvider>
         <AutoHealthSync />
