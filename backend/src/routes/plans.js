@@ -829,7 +829,28 @@ function proposalFromRow(row) {
     userPlanId: row.user_plan_id || null,
     triggerRunId: row.trigger_run_id || null,
     episodeKey: row.episode_key || null,
+    revision: proposalDecisionRevision(row),
   };
+}
+
+function proposalDecisionRevision(row) {
+  if (!row) return null;
+  return crypto
+    .createHash('sha256')
+    .update(JSON.stringify({
+      id: row.id || null,
+      planVersion: row.plan_version || null,
+      planningDate: row.planning_date || null,
+      windowStart: row.window_start || null,
+      windowEnd: row.window_end || null,
+      safetyException: Number(row.safety_exception || 0) === 1,
+      proposedPlan: parseJsonValue(row.proposed_json, null),
+      changes: parseJsonValue(row.changes_json, []),
+      evidence: parseJsonValue(row.evidence_json, []),
+      reason: decodeProposalReason(row.reason),
+    }))
+    .digest('hex')
+    .slice(0, 32);
 }
 
 async function findPendingAdaptation(userId, planningDateISO, planVersion, tx = null) {
@@ -909,14 +930,16 @@ async function persistAdaptationProposal(userId, active, planVersion, originalPl
     return proposalFromRow(existing);
   }
   if (existing && episodeKey) {
+    const refreshedId = uuidv4();
     const updated = await dbRun(
       `UPDATE plan_adjustment_proposals
-       SET user_plan_id=?, plan_id=?, plan_version=?, window_start=?, window_end=?,
+       SET id=?, user_plan_id=?, plan_id=?, plan_version=?, window_start=?, window_end=?,
            planning_date=?, status='pending', safety_exception=?, original_json=?, proposed_json=?,
            changes_json=?, evidence_json=?, reason=?, decided_at=NULL, created_at=CURRENT_TIMESTAMP
        WHERE id=? AND user_id=? AND episode_key=? AND trigger_run_id IS NULL
          AND status NOT IN ('accepted','kept')`,
       [
+        refreshedId,
         active?.row?.user_plan_id || null,
         active?.row?.id || null,
         planVersion,
@@ -939,14 +962,11 @@ async function persistAdaptationProposal(userId, active, planVersion, originalPl
       if (!concurrent) throw new Error('Run-gap adaptation refresh conflict could not be resolved');
       return proposalFromRow(concurrent);
     }
-    return Object.assign({}, proposal, {
-      id: existing.id,
-      decisionStatus: 'pending',
-      planVersion,
-      planId: active?.row?.id || null,
-      userPlanId: active?.row?.user_plan_id || null,
-      episodeKey,
-    });
+    const refreshed = await findRunGapEpisode(userId, episodeKey);
+    if (!refreshed || String(refreshed.id) !== String(refreshedId)) {
+      throw new Error('Run-gap adaptation refresh identity could not be confirmed');
+    }
+    return proposalFromRow(refreshed);
   }
   const id = uuidv4();
   const inserted = await dbRun(
@@ -983,13 +1003,13 @@ async function persistAdaptationProposal(userId, active, planVersion, originalPl
     if (!concurrent) throw new Error('Pending adaptation proposal conflict could not be resolved');
     return proposalFromRow(concurrent);
   }
-  return Object.assign({}, proposal, {
-    id,
-    decisionStatus: 'pending',
-    planVersion,
-    planId: active?.row?.id || null,
-    userPlanId: active?.row?.user_plan_id || null,
-  });
+  const stored = episodeKey
+    ? await findRunGapEpisode(userId, episodeKey)
+    : await findPendingAdaptation(userId, proposal.planningDate, planVersion);
+  if (!stored || String(stored.id) !== String(id)) {
+    throw new Error('Pending adaptation proposal identity could not be confirmed');
+  }
+  return proposalFromRow(stored);
 }
 
 async function findRunAdaptation(userId, runId, tx = null) {
@@ -2644,6 +2664,26 @@ function publicProposal(proposal) {
   return rest;
 }
 
+function proposalDecisionConflict(row, body = {}) {
+  const suppliedRevision = String(body?.proposal_revision || '').trim();
+  const suppliedPlanVersion = String(body?.proposal_plan_version || '').trim();
+  const expectedRevision = String(proposalDecisionRevision(row) || '');
+  const expectedPlanVersion = String(row?.plan_version || '');
+  if (!suppliedRevision || !suppliedPlanVersion) {
+    return {
+      code: 'ADAPTATION_DECISION_TOKEN_REQUIRED',
+      reason: 'This adjustment needs to be refreshed before Forge can save your choice.',
+    };
+  }
+  if (suppliedRevision !== expectedRevision || suppliedPlanVersion !== expectedPlanVersion) {
+    return {
+      code: 'ADAPTATION_PROPOSAL_CHANGED',
+      reason: 'This adjustment changed after it was displayed. Review the refreshed proposal before choosing.',
+    };
+  }
+  return null;
+}
+
 function completedSessionIdsFromProgress(progress) {
   return Array.isArray(progress?.completedSessionIds) ? progress.completedSessionIds.map(String) : [];
 }
@@ -2667,6 +2707,15 @@ function planWithoutRemovedSessions(plan, progress, activeRow) {
     ...activeRow,
     progress_json: progress,
   });
+}
+
+function canonicalAdaptationPlan(active) {
+  if (!active?.row) return null;
+  return planWithoutRemovedSessions(
+    parsePlan(active.row),
+    parseJsonValue(active.row.progress_json, {}),
+    active.row
+  );
 }
 
 function findPlanSession(plan, activeRow, sessionId) {
@@ -2901,11 +2950,7 @@ router.get('/adaptation/current', auth, async (req, res) => {
     if (!planningDateISO) return res.status(400).json({ error: 'date must be the phone local date in YYYY-MM-DD format' });
     const active = await getActivePlanForUser(req.user.id, null, { planningDateLocal: planningDateISO });
     if (!active) return res.json({ proposal: null, reason: 'No active plan is assigned yet.' });
-    const parsed = planWithoutRemovedSessions(
-      parsePlan(active.row),
-      parseJsonValue(active.row.progress_json, {}),
-      active.row
-    );
+    const parsed = canonicalAdaptationPlan(active);
     if (!parsed || !planSchema.isSchemaV2(parsed)) {
       return res.json({ proposal: null, reason: 'Transparent adaptation is available for schema-v2 dated calendars only.' });
     }
@@ -3002,11 +3047,7 @@ router.get('/adaptation/run/:runId', auth, async (req, res) => {
         },
       });
     }
-    const parsed = planWithoutRemovedSessions(
-      parsePlan(active.row),
-      parseJsonValue(active.row.progress_json, {}),
-      active.row
-    );
+    const parsed = canonicalAdaptationPlan(active);
     if (!parsed || !planSchema.isSchemaV2(parsed)) {
       return res.json({
         impact: {
@@ -3077,6 +3118,10 @@ router.post('/adaptation/:proposalId/accept', auth, async (req, res) => {
         const ownedRun = await tx.get(`SELECT id FROM runs WHERE id=? AND user_id=? AND ${runActivitySql()}`, [row.trigger_run_id, req.user.id]);
         if (!ownedRun) return planningInputUnchanged({ notFound: true });
       }
+      const decisionConflict = proposalDecisionConflict(row, req.body);
+      if (decisionConflict) {
+        return planningInputUnchanged({ conflict: true, refreshRequired: true, ...decisionConflict });
+      }
       if (row.status === 'accepted') {
         return planningInputUnchanged({ ok: true, status: 'accepted', proposal: proposalFromRow(row), idempotent: true });
       }
@@ -3088,7 +3133,7 @@ router.post('/adaptation/:proposalId/accept', auth, async (req, res) => {
         planningDateLocal: normalizePlanningDate(row.planning_date, { defaultToToday: true }),
       });
       if (!active) return planningInputUnchanged({ conflict: true, reason: 'No active plan is assigned.' });
-      const parsed = parsePlan(active.row);
+      const parsed = canonicalAdaptationPlan(active);
       const currentVersion = planVersionFor(active, parsed);
       if (String(currentVersion) !== String(row.plan_version || '')) {
         const update = await tx.run(
@@ -3139,6 +3184,10 @@ router.post('/adaptation/:proposalId/keep', auth, async (req, res) => {
         const ownedRun = await tx.get(`SELECT id FROM runs WHERE id=? AND user_id=? AND ${runActivitySql()}`, [row.trigger_run_id, req.user.id]);
         if (!ownedRun) return planningInputUnchanged({ notFound: true });
       }
+      const decisionConflict = proposalDecisionConflict(row, req.body);
+      if (decisionConflict) {
+        return planningInputUnchanged({ conflict: true, refreshRequired: true, ...decisionConflict });
+      }
       if (row.status === 'kept') {
         return planningInputUnchanged({ ok: true, status: 'kept', proposal: proposalFromRow(row), idempotent: true });
       }
@@ -3149,7 +3198,7 @@ router.post('/adaptation/:proposalId/keep', auth, async (req, res) => {
         planningDateLocal: normalizePlanningDate(row.planning_date, { defaultToToday: true }),
       });
       if (!active) return planningInputUnchanged({ conflict: true, reason: 'No active plan is assigned.' });
-      const parsed = parsePlan(active.row);
+      const parsed = canonicalAdaptationPlan(active);
       const currentVersion = planVersionFor(active, parsed);
       if (String(currentVersion) !== String(row.plan_version || '')) {
         const update = await tx.run(
@@ -4358,6 +4407,7 @@ router.post('/generate-for-race/:raceId', auth, requirePremium('Race Programs'),
 
 router._test = {
   adaptationEpisodeDisposition,
+  canonicalAdaptationPlan,
   applyPlanCandidate,
   assertCandidatePlanningDateCurrent,
   buildDeterministicCandidate,
@@ -4368,6 +4418,8 @@ router._test = {
   normalizeActivePlanIdentitiesForMutation,
   persistAdaptationProposal,
   planVersionFor,
+  proposalDecisionConflict,
+  proposalDecisionRevision,
   updateActivePlanData,
   getTimezoneOffsetFromRequest,
   deleteOwnedRaceForCandidate,

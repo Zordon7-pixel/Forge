@@ -1,4 +1,7 @@
 import { getToken } from './tokenStore'
+import { isReplayUnsafeQueuedRequest } from './offlineReplayPolicy.js'
+
+export { isReplayUnsafeQueuedRequest } from './offlineReplayPolicy.js'
 
 const DB_NAME = 'forge-offline-queue'
 const DB_VERSION = 1
@@ -41,6 +44,9 @@ async function notifyQueueUpdated() {
 
 export async function queueRequest(url, method, body) {
   if (typeof indexedDB === 'undefined') return
+  if (isReplayUnsafeQueuedRequest({ url, method })) {
+    throw new Error('This action needs a live connection and cannot be queued.')
+  }
   const db = await openDb()
   const tx = db.transaction(STORE_NAME, 'readwrite')
   const store = tx.objectStore(STORE_NAME)
@@ -79,9 +85,11 @@ export async function flushQueue() {
   await txPromise(readTx)
 
   list.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
+  const discardedIds = list.filter(isReplayUnsafeQueuedRequest).map((item) => item.id)
+  const replayable = list.filter((item) => !isReplayUnsafeQueuedRequest(item))
   const succeededIds = []
 
-  for (const item of list) {
+  for (const item of replayable) {
     try {
       const itemHeaders = item.headers && typeof item.headers === 'object' ? item.headers : {}
       const response = await fetch(item.url, {
@@ -101,10 +109,11 @@ export async function flushQueue() {
     }
   }
 
-  if (succeededIds.length > 0) {
+  const completedIds = [...discardedIds, ...succeededIds]
+  if (completedIds.length > 0) {
     const deleteTx = db.transaction(STORE_NAME, 'readwrite')
     const deleteStore = deleteTx.objectStore(STORE_NAME)
-    succeededIds.forEach((id) => deleteStore.delete(id))
+    completedIds.forEach((id) => deleteStore.delete(id))
     await txPromise(deleteTx)
   }
   db.close()

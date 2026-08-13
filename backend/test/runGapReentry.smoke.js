@@ -224,7 +224,7 @@ const dashboardSource = fs.readFileSync(path.join(repoRoot, 'frontend/src/pages/
 assert.match(routesSource, /WHERE user_id=\? AND episode_key=\? AND trigger_run_id IS NULL/, 'episode lookup is direct and user scoped');
 assert.match(routesSource, /adaptationEpisodeDisposition\(runGapEpisode, planVersion\)/, 'episode reuse is tied to the current plan version');
 assert.match(routesSource, /runGapDisposition === 'reuse'/, 'only a current pending episode is reused across planning dates');
-assert.match(routesSource, /status='pending'[\s\S]*decided_at=NULL/, 'a superseded episode can be refreshed in place without duplicating its stable key');
+assert.match(routesSource, /SET id=\?, user_plan_id=\?[\s\S]*status='pending'[\s\S]*decided_at=NULL/, 'a superseded episode gets a new review identity without duplicating its stable key');
 assert.match(routesSource, /episodeKey\s*\?\s*await findRunGapEpisode/, 'proposal persistence de-duplicates by the stable episode key');
 assert.match(dashboardSource, /Lifting still counts; this check is only about returning to running safely/, 'prompt is nonpunitive and run-specific');
 assert.match(dashboardSource, /Ease my return/);

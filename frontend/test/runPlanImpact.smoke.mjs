@@ -17,7 +17,7 @@ const { summarizeRecentRunLoad } = require(path.join(repoRoot, 'backend/src/lib/
 
 assert.match(modal, /isRun && <RunPlanImpact run=\{run\} \/>/, 'every running-activity detail mounts plan-impact analysis')
 assert.match(impact, /adaptation\/run\/\$\{encodeURIComponent\(run\.id\)\}/, 'the viewed run id is sent to the deterministic impact endpoint')
-assert.match(impact, /api\.post\(`\/plans\/adaptation\/\$\{proposalId\}\/\$\{nextDecision\}`\)/, 'plan decisions are bound to the captured proposal id')
+assert.match(impact, /api\.post\(`\/plans\/adaptation\/\$\{proposalId\}\/\$\{nextDecision\}`, \{[\s\S]*proposal_revision: proposal\.revision,[\s\S]*proposal_plan_version: proposal\.planVersion/, 'plan decisions are bound to the captured proposal id and displayed revision')
 assert.match(impact, /requestTokenRef\.current !== requestToken/, 'late analysis and decision responses are ignored')
 assert.match(impact, /proposalIdRef\.current !== proposalId/, 'a response cannot mutate a replacement proposal')
 assert.ok(impact.includes("'Apply adjustment'"), 'the user can apply a proposed adjustment')
@@ -31,6 +31,7 @@ assert.match(plans, /WHERE id=\? AND user_id=\? AND trigger_run_id=\? AND status
 assert.match(plans, /source: 'run',[\s\S]*runId: run\.id/, 'stored evidence names the exact viewed run')
 assert.match(plans, /ownedRun = await tx\.get\(`SELECT id FROM runs WHERE id=\? AND user_id=\?/, 'accept and keep re-check trigger-run ownership')
 assert.equal((plans.match(/SELECT \* FROM plan_adjustment_proposals WHERE id=\? AND user_id=\? FOR UPDATE/g) || []).length, 2, 'accept and keep serialize on the proposal row')
+assert.match(plans, /proposalDecisionConflict\(row, req\.body\)/, 'accept and keep require the displayed proposal revision under the row lock')
 assert.ok((plans.match(/const active = await getActivePlanForMutation\(req\.user\.id, tx(?:,|\))/g) || []).length >= 2, 'accept and keep lock and re-read the active plan before version validation')
 assert.match(database, /createPlanningInputMutationRunner\(\(userId, fn\) => \([\s\S]*withUserMutation\(userId, fn, \{ userLock: 'update' \}\)/, 'planning mutations take the centralized exclusive per-user mutation guard')
 assert.match(plans, /trigger_run_id IS NULL/, 'daily adaptation queries exclude run-triggered reviews')

@@ -369,6 +369,8 @@ test('adaptive plan keeps the original calendar only after an explicit decision'
   }
   const proposal = {
     id: 'journey-adaptation',
+    revision: 'journey-adaptation-revision',
+    planVersion: 'journey-plan-version',
     status: 'proposal',
     decisionStatus: 'pending',
     headline: 'One transparent change',
@@ -395,7 +397,12 @@ test('adaptive plan keeps the original calendar only after an explicit decision'
   expect(requestsFor(apiState, 'POST', '/api/plans/adaptation/journey-adaptation/keep')).toHaveLength(0)
   await page.getByRole('button', { name: 'Keep original', exact: true }).click()
   await expect(page.getByText('One transparent change', { exact: true })).toHaveCount(0)
-  expect(requestsFor(apiState, 'POST', '/api/plans/adaptation/journey-adaptation/keep')).toHaveLength(1)
+  const keepRequests = requestsFor(apiState, 'POST', '/api/plans/adaptation/journey-adaptation/keep')
+  expect(keepRequests).toHaveLength(1)
+  expect(keepRequests[0].body).toEqual({
+    proposal_revision: proposal.revision,
+    proposal_plan_version: proposal.planVersion,
+  })
   assertCleanApiAndRuntime(apiState, runtimeErrors)
 })
 
@@ -419,6 +426,8 @@ test('a stale adaptation is discarded and recomputed for review without applying
   }
   const staleProposal = {
     id: 'stale-adaptation',
+    revision: 'stale-adaptation-revision',
+    planVersion: 'stale-plan-version',
     status: 'proposal',
     decisionStatus: 'pending',
     headline: 'Outdated calendar adjustment',
@@ -429,6 +438,8 @@ test('a stale adaptation is discarded and recomputed for review without applying
   const freshProposal = {
     ...staleProposal,
     id: 'fresh-adaptation',
+    revision: 'fresh-adaptation-revision',
+    planVersion: 'fresh-plan-version',
     headline: 'Fresh calendar adjustment',
     reason: 'This was recomputed against the latest calendar.',
     changes: [{ date: today, sessionId: plannedRun.id, before: { title: 'Easy' }, after: { title: 'Rest' }, summary: 'Fresh proposal' }],
@@ -455,7 +466,12 @@ test('a stale adaptation is discarded and recomputed for review without applying
   await expect(page.getByText('Outdated calendar adjustment', { exact: true })).toHaveCount(0)
   await expect(page.getByText('Fresh calendar adjustment', { exact: true })).toBeVisible()
   await expect(page.getByText(/Review the updated proposal before accepting it/)).toBeVisible()
-  expect(requestsFor(apiState, 'POST', '/api/plans/adaptation/stale-adaptation/accept')).toHaveLength(1)
+  const staleAcceptRequests = requestsFor(apiState, 'POST', '/api/plans/adaptation/stale-adaptation/accept')
+  expect(staleAcceptRequests).toHaveLength(1)
+  expect(staleAcceptRequests[0].body).toEqual({
+    proposal_revision: staleProposal.revision,
+    proposal_plan_version: staleProposal.planVersion,
+  })
   expect(requestsFor(apiState, 'GET', '/api/plans/adaptation/current')).toHaveLength(2)
   expect(requestsFor(apiState, 'POST', '/api/plans/adaptation/fresh-adaptation/accept')).toHaveLength(0)
   expect([...new Set(apiState.unexpectedRequests)]).toEqual([])

@@ -63,7 +63,10 @@ export default function RunPlanImpact({ run }) {
     setDeciding(nextDecision)
     setError('')
     try {
-      const response = await api.post(`/plans/adaptation/${proposalId}/${nextDecision}`)
+      const response = await api.post(`/plans/adaptation/${proposalId}/${nextDecision}`, {
+        proposal_revision: proposal.revision,
+        proposal_plan_version: proposal.planVersion,
+      })
       if (requestTokenRef.current !== requestToken || proposalIdRef.current !== proposalId) return
       setDecision(response.data?.status || (nextDecision === 'accept' ? 'accepted' : 'kept'))
       const nextProposal = response.data?.proposal || proposal

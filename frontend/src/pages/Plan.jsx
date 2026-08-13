@@ -584,14 +584,18 @@ export default function Plan() {
     setAdaptationError('')
     setAdaptationNotice('')
     try {
-      await api.post(`/plans/adaptation/${adaptationProposal.id}/${decision}`)
+      await api.post(`/plans/adaptation/${adaptationProposal.id}/${decision}`, {
+        proposal_revision: adaptationProposal.revision,
+        proposal_plan_version: adaptationProposal.planVersion,
+      })
       setAdaptationProposal(null)
       setAdaptationOpen(false)
       setAdaptationDecision(decision === 'accept' ? 'accepted' : 'kept')
       if (decision === 'accept') await loadAll({ includeAdaptation: false })
     } catch (err) {
       const errorData = err?.response?.data || {}
-      if (errorData.code === 'ADAPTATION_STALE' && errorData.refresh_required === true) {
+      if (['ADAPTATION_STALE', 'ADAPTATION_PROPOSAL_CHANGED', 'ADAPTATION_DECISION_TOKEN_REQUIRED'].includes(errorData.code)
+        && errorData.refresh_required === true) {
         setAdaptationProposal(null)
         const refreshed = await loadAll()
         if (refreshed?.adaptationLoaded) {

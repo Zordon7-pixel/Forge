@@ -255,8 +255,10 @@ async function assertScheduledWorkoutRoute() {
   reset();
 
   const tx = {
-    async get(sql) {
-      if (/FROM plan_adjustment_proposals/.test(sql)) return proposalRow;
+    async get(sql, params = []) {
+      if (/FROM plan_adjustment_proposals/.test(sql)) {
+        return proposalRow && String(params[0]) === String(proposalRow.id) ? proposalRow : null;
+      }
       if (/FROM user_plans up/.test(sql)) return assignment;
       if (/FROM training_plans tp/.test(sql)) {
         return {
@@ -289,6 +291,10 @@ async function assertScheduledWorkoutRoute() {
       }
       if (/UPDATE plan_adjustment_proposals SET status='accepted'/.test(sql)) {
         proposalRow.status = 'accepted';
+        return { changes: 1 };
+      }
+      if (/UPDATE plan_adjustment_proposals SET status='kept'/.test(sql)) {
+        proposalRow.status = 'kept';
         return { changes: 1 };
       }
       if (/UPDATE plan_adjustment_proposals SET status='superseded'/.test(sql)) {
@@ -332,19 +338,20 @@ async function assertScheduledWorkoutRoute() {
         if (/UPDATE plan_adjustment_proposals[\s\S]*status='pending'/.test(sql) && proposalRow) {
           proposalRow = {
             ...proposalRow,
-            user_plan_id: params[0],
-            plan_id: params[1],
-            plan_version: params[2],
-            window_start: params[3],
-            window_end: params[4],
-            planning_date: params[5],
+            id: params[0],
+            user_plan_id: params[1],
+            plan_id: params[2],
+            plan_version: params[3],
+            window_start: params[4],
+            window_end: params[5],
+            planning_date: params[6],
             status: 'pending',
-            safety_exception: params[6],
-            original_json: params[7],
-            proposed_json: params[8],
-            changes_json: params[9],
-            evidence_json: params[10],
-            reason: params[11],
+            safety_exception: params[7],
+            original_json: params[8],
+            proposed_json: params[9],
+            changes_json: params[10],
+            evidence_json: params[11],
+            reason: params[12],
             decided_at: null,
           };
           return { changes: 1 };
@@ -364,6 +371,10 @@ async function assertScheduledWorkoutRoute() {
 
   try {
     const plansRouter = require('../src/routes/plans');
+    const decisionBody = (row) => ({
+      proposal_revision: plansRouter._test.proposalDecisionRevision(row),
+      proposal_plan_version: row.plan_version,
+    });
     const layer = plansRouter.stack.find((item) => item.route?.path === '/my/sessions/:sessionId' && item.route?.methods?.delete);
     const handler = layer?.route?.stack?.at(-1)?.handle;
     assert.equal(typeof handler, 'function');
@@ -513,12 +524,17 @@ async function assertScheduledWorkoutRoute() {
 
     activePlan = historicalPlan;
     reset({ completedSessionIds: [oldCompletedId], removedSessionIds: [oldRemovedId] });
-    const historicalProposal = JSON.parse(JSON.stringify(historicalPlan));
-    historicalProposal.weeks[0].days[0].sessions[2].title = 'Accepted historical adaptation';
     const normalizedForProposal = planSchema.normalizePersistedPlanIdentities(historicalPlan, {
       ...assignment,
       week_start: localDate(-1),
     });
+    const visibleForProposal = planSchema.visiblePlanForAssignment(normalizedForProposal.plan, {
+      ...assignment,
+      progress_json: normalizedForProposal.progress,
+      week_start: localDate(-1),
+    });
+    const historicalProposal = JSON.parse(JSON.stringify(visibleForProposal));
+    historicalProposal.weeks[0].days[0].sessions[1].title = 'Accepted historical adaptation';
     proposalRow = {
       id: 'historical-proposal',
       user_id: 'owner',
@@ -527,7 +543,7 @@ async function assertScheduledWorkoutRoute() {
       plan_version: plansRouter._test.planVersionFor({
         source: 'assigned',
         row: { ...assignment, id: 'plan-owner', user_plan_id: 'assignment-owner' },
-      }, normalizedForProposal.plan),
+      }, visibleForProposal),
       proposed_json: JSON.stringify(historicalProposal),
       changes_json: JSON.stringify([{ kind: 'calendar_update' }]),
       evidence_json: '[]',
@@ -539,11 +555,12 @@ async function assertScheduledWorkoutRoute() {
     const acceptLayer = plansRouter.stack.find((item) => item.route?.path === '/adaptation/:proposalId/accept' && item.route?.methods?.post);
     response = await invokeHandler(acceptLayer.route.stack.at(-1).handle, {
       params: { proposalId: proposalRow.id },
+      body: decisionBody(proposalRow),
     });
     assert.equal(response.statusCode, 200, 'adaptation acceptance succeeds after historical identity backfill');
     assert.equal(response.payload.status, 'accepted');
     assert.doesNotThrow(() => assertPersistablePlan(activePlan));
-    assert.equal(activePlan.weeks[0].days[0].sessions[2].title, 'Accepted historical adaptation');
+    assert.equal(activePlan.weeks[0].days[0].sessions[1].title, 'Accepted historical adaptation');
 
     const currentVersion = plansRouter._test.planVersionFor({
       source: 'assigned',
@@ -553,6 +570,112 @@ async function assertScheduledWorkoutRoute() {
     assert.equal(plansRouter._test.adaptationEpisodeDisposition({ status: 'pending', plan_version: currentVersion }, currentVersion), 'reuse');
     assert.equal(plansRouter._test.adaptationEpisodeDisposition({ status: 'accepted', plan_version: 'older' }, currentVersion), 'decided');
     assert.equal(plansRouter._test.adaptationEpisodeDisposition({ status: 'superseded', plan_version: 'older' }, currentVersion), 'refresh');
+
+    const adaptationCurrentLayer = plansRouter.stack.find((item) => item.route?.path === '/adaptation/current' && item.route?.methods?.get);
+    const adaptationCurrentHandler = adaptationCurrentLayer.route.stack.at(-1).handle;
+    const keepLayer = plansRouter.stack.find((item) => item.route?.path === '/adaptation/:proposalId/keep' && item.route?.methods?.post);
+
+    const setupVisibleAdaptation = (id, title) => {
+      activePlan = JSON.parse(JSON.stringify(plan));
+      reset({ removedSessionIds: [todayLiftRemovalId] });
+      const active = {
+        source: 'assigned',
+        row: { ...assignment, id: 'plan-owner', user_plan_id: 'assignment-owner', plan_data: activePlan },
+      };
+      const visible = plansRouter._test.canonicalAdaptationPlan(active);
+      assert.equal(
+        visible.weeks[0].days[1].sessions.some((session) => session.id === 'today-lift'),
+        false,
+        'adaptation projection excludes assignment-removed workouts',
+      );
+      const version = plansRouter._test.planVersionFor(active, visible);
+      const proposed = JSON.parse(JSON.stringify(visible));
+      proposed.weeks[0].days[1].sessions[0].title = title;
+      proposalRow = {
+        id,
+        user_id: 'owner',
+        status: 'pending',
+        planning_date: localDate(0),
+        plan_version: version,
+        original_json: JSON.stringify(visible),
+        proposed_json: JSON.stringify(proposed),
+        changes_json: JSON.stringify([{ kind: 'calendar_update' }]),
+        evidence_json: '[]',
+        reason: JSON.stringify({ headline: 'Visible plan adjustment', reason: 'Regression' }),
+        plan_id: 'plan-owner',
+        user_plan_id: 'assignment-owner',
+        trigger_run_id: null,
+      };
+      return { version, proposed };
+    };
+
+    let shared = setupVisibleAdaptation('shared-db-accept', 'Accepted through shared projection');
+    response = await invokeHandler(adaptationCurrentHandler, { query: { date: localDate(0) } });
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.payload.proposal.id, 'shared-db-accept');
+    assert.equal(response.payload.proposal.planVersion, shared.version);
+    assert.ok(response.payload.proposal.revision, 'GET returns a decision-bound proposal revision');
+    response = await invokeHandler(acceptLayer.route.stack.at(-1).handle, {
+      params: { proposalId: response.payload.proposal.id },
+      body: {
+        proposal_revision: response.payload.proposal.revision,
+        proposal_plan_version: response.payload.proposal.planVersion,
+      },
+    });
+    assert.equal(response.statusCode, 200, 'GET proposal accepts against the identical visible-plan projection');
+    assert.equal(activePlan.weeks[0].days[1].sessions[0].title, 'Accepted through shared projection');
+
+    shared = setupVisibleAdaptation('shared-db-keep', 'Never apply this proposal');
+    response = await invokeHandler(adaptationCurrentHandler, { query: { date: localDate(0) } });
+    const keptGetProposal = response.payload.proposal;
+    response = await invokeHandler(keepLayer.route.stack.at(-1).handle, {
+      params: { proposalId: keptGetProposal.id },
+      body: {
+        proposal_revision: keptGetProposal.revision,
+        proposal_plan_version: keptGetProposal.planVersion,
+      },
+    });
+    assert.equal(response.statusCode, 200, 'GET proposal keeps against the identical visible-plan projection');
+    assert.equal(proposalRow.status, 'kept');
+    assert.equal(planWriteCount, 0, 'keeping never writes the proposed plan');
+
+    shared = setupVisibleAdaptation('shared-db-stale', 'Stale proposal must not apply');
+    response = await invokeHandler(adaptationCurrentHandler, { query: { date: localDate(0) } });
+    const staleGetProposal = response.payload.proposal;
+    activePlan.weeks[0].days[1].sessions[0].title = 'A genuine later plan mutation';
+    response = await invokeHandler(acceptLayer.route.stack.at(-1).handle, {
+      params: { proposalId: staleGetProposal.id },
+      body: {
+        proposal_revision: staleGetProposal.revision,
+        proposal_plan_version: staleGetProposal.planVersion,
+      },
+    });
+    assert.equal(response.statusCode, 409, 'a genuine active-plan mutation makes the reviewed proposal stale');
+    assert.equal(response.payload.code, 'ADAPTATION_STALE');
+    assert.equal(proposalRow.status, 'superseded');
+
+    shared = setupVisibleAdaptation('shared-db-rewritten', 'Displayed content');
+    response = await invokeHandler(adaptationCurrentHandler, { query: { date: localDate(0) } });
+    const displayedBeforeRewrite = response.payload.proposal;
+    proposalRow.proposed_json = JSON.stringify({ ...shared.proposed, headline: 'Unseen replacement content' });
+    proposalRow.reason = JSON.stringify({ headline: 'Unseen replacement content', reason: 'Must be reviewed first' });
+    response = await invokeHandler(acceptLayer.route.stack.at(-1).handle, {
+      params: { proposalId: displayedBeforeRewrite.id },
+      body: {
+        proposal_revision: displayedBeforeRewrite.revision,
+        proposal_plan_version: displayedBeforeRewrite.planVersion,
+      },
+    });
+    assert.equal(response.statusCode, 409, 'rewritten proposal content cannot be accepted through an older displayed decision');
+    assert.equal(response.payload.code, 'ADAPTATION_PROPOSAL_CHANGED');
+    assert.equal(planWriteCount, 0);
+
+    response = await invokeHandler(acceptLayer.route.stack.at(-1).handle, {
+      params: { proposalId: proposalRow.id },
+      body: {},
+    });
+    assert.equal(response.statusCode, 409, 'legacy queued decisions without a review token fail closed');
+    assert.equal(response.payload.code, 'ADAPTATION_DECISION_TOKEN_REQUIRED');
 
     proposalRow = {
       id: 'stale-accept-proposal',
@@ -570,16 +693,17 @@ async function assertScheduledWorkoutRoute() {
     };
     response = await invokeHandler(acceptLayer.route.stack.at(-1).handle, {
       params: { proposalId: proposalRow.id },
+      body: decisionBody(proposalRow),
     });
     assert.equal(response.statusCode, 409);
     assert.equal(response.payload.code, 'ADAPTATION_STALE');
     assert.equal(response.payload.refresh_required, true);
     assert.equal(proposalRow.status, 'superseded', 'stale proposal cannot remain pending and trap repeated accepts');
 
-    const keepLayer = plansRouter.stack.find((item) => item.route?.path === '/adaptation/:proposalId/keep' && item.route?.methods?.post);
     proposalRow = { ...proposalRow, id: 'stale-keep-proposal', status: 'pending' };
     response = await invokeHandler(keepLayer.route.stack.at(-1).handle, {
       params: { proposalId: proposalRow.id },
+      body: decisionBody(proposalRow),
     });
     assert.equal(response.statusCode, 409);
     assert.equal(response.payload.code, 'ADAPTATION_STALE');
@@ -603,6 +727,7 @@ async function assertScheduledWorkoutRoute() {
       status: 'superseded',
       plan_version: 'older-plan-version',
     };
+    const supersededEpisodeId = proposalRow.id;
     const refreshedEpisode = await plansRouter._test.persistAdaptationProposal(
       'owner',
       { row: { id: 'plan-owner', user_plan_id: 'assignment-owner' } },
@@ -610,10 +735,16 @@ async function assertScheduledWorkoutRoute() {
       activePlan,
       refreshedEpisodeProposal,
     );
-    assert.equal(refreshedEpisode.id, 'run-gap-episode');
+    assert.notEqual(refreshedEpisode.id, 'run-gap-episode', 'refreshed content receives a new decision identity');
     assert.equal(refreshedEpisode.decisionStatus, 'pending');
     assert.equal(proposalRow.status, 'pending');
+    assert.equal(proposalRow.id, refreshedEpisode.id);
     assert.equal(proposalRow.plan_version, currentVersion, 'a stale run-gap episode is refreshed in place for the current plan');
+    response = await invokeHandler(acceptLayer.route.stack.at(-1).handle, {
+      params: { proposalId: supersededEpisodeId },
+      body: decisionBody(proposalRow),
+    });
+    assert.equal(response.statusCode, 404, 'a late decision for the superseded proposal identity cannot target refreshed content');
     proposalRow = null;
 
     const hybridPlan = {
