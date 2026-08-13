@@ -17,6 +17,7 @@ import { formatGroupRunDate, upcomingGroupRun } from '../lib/groupRuns'
 import { resolveReadiness } from '../lib/truthConsistency'
 import { HEALTH_SYNC_RESULT_EVENT, shouldRefreshPageForHealthSyncEvent } from '../lib/healthSync'
 import { isRunningActivity } from '../lib/activityType'
+import { combineRecentActivity } from '../lib/recentActivity'
 import TravelTrainingPrompt from '../components/TravelTrainingPrompt'
 
 function fmtPace(durationSeconds, distance) {
@@ -255,7 +256,7 @@ export default function Dashboard() {
   const location = useLocation()
   const { fmt } = useUnits()
   const { t } = useTranslation()
-  const [stats, setStats] = useState(null), [runs, setRuns] = useState([]), [lifts, setLifts] = useState([])
+  const [stats, setStats] = useState(null), [runs, setRuns] = useState([]), [lifts, setLifts] = useState([]), [workoutSessions, setWorkoutSessions] = useState([])
   const [warning, setWarning] = useState(false), [loading, setLoading] = useState(true), [period, setPeriod] = useState('week')
   const [checkedInToday, setCheckedInToday] = useState(false), [hasWatchData, setHasWatchData] = useState(false)
   const [goalMode, setGoalMode] = useState('auto'), [manualGoalMiles, setManualGoalMiles] = useState(null), [editingGoal, setEditingGoal] = useState(false), [goalInput, setGoalInput] = useState('')
@@ -318,10 +319,14 @@ export default function Dashboard() {
 
   const fetchDashboardData = useCallback(async () => {
     try {
-        const [statsRes, runsRes, liftsRes, warningRes, checkinRes, goalRes, complianceRes, loadRes, nextRaceRes, gearRes, injuryRes, recapRes, recommendationRes, ageGradedRes, executionRes, groupRunsRes, adaptationRes, reconciliationRes, hybridStreakRes] = await Promise.all([
+        const [statsRes, runsRes, liftsRes, workoutsRes, warningRes, checkinRes, goalRes, complianceRes, loadRes, nextRaceRes, gearRes, injuryRes, recapRes, recommendationRes, ageGradedRes, executionRes, groupRunsRes, adaptationRes, reconciliationRes, hybridStreakRes] = await Promise.all([
           api.get('/auth/me/stats'),
           api.get('/runs', { params: { limit: 5 } }),
           api.get('/lifts'),
+          api.get('/workouts').catch((error) => {
+            console.error('[Dashboard] completed workout fetch failed:', error?.message || error)
+            return { data: { sessions: [] } }
+          }),
           api.get('/coach/warning'),
           api.get('/checkin/today', { params: { date: localDateISO() } }).catch(() => ({ data: null })),
           api.get('/users/goal').catch(() => ({ data: null })),
@@ -361,6 +366,7 @@ export default function Dashboard() {
         setRuns(runsList)
         setHasWatchData(runsList.some((r) => r.avg_heart_rate || r.watch_mode || r.route_coords))
         setLifts(Array.isArray(liftsRes.data) ? liftsRes.data : liftsRes.data?.lifts || [])
+        setWorkoutSessions(Array.isArray(workoutsRes.data?.sessions) ? workoutsRes.data.sessions : [])
         setWarning(warningRes.data?.warning === true)
         const checkinSteps = checkinRes.data?.step_count ?? checkinRes.data?.steps
         if (Number.isFinite(Number(checkinSteps))) {
@@ -638,17 +644,8 @@ export default function Dashboard() {
 
   // Combined recent activity
   const recentActivity = useMemo(() => {
-    const runItems = runs.slice(0, 3).map(r => ({ ...r, _type: 'run' }))
-    const liftItems = (lifts || []).slice(0, 3).map(l => ({ ...l, _type: 'lift' }))
-    const otherItems = (otherActivities || []).slice(0, 3).map(o => ({ ...o, _type: 'other' }))
-    const combined = [...runItems, ...liftItems, ...otherItems]
-      .sort((a, b) => {
-        const da = a.date || a.started_at || a.created_at || ''
-        const db2 = b.date || b.started_at || b.created_at || ''
-        return db2.localeCompare(da)
-      })
-    return combined.slice(0, 4)
-  }, [runs, lifts, otherActivities])
+    return combineRecentActivity({ runs, lifts, workouts: workoutSessions, otherActivities, limit: 4 })
+  }, [runs, lifts, workoutSessions, otherActivities])
 
   // H5: prefer today's calendar session over the legacy next-recommendation.
   // Active-plan rest days stay explicit; only a missing calendar day falls
