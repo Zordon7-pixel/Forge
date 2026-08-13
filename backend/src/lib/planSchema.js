@@ -424,6 +424,7 @@ function normalizePersistedPlanIdentities(plan, assignmentRow = {}) {
       });
     });
   });
+  const preexistingExplicitIds = new Set(usedIds);
   if (!missingRecords.length) {
     return { plan: source, progress, planChanged: false, progressChanged: false, changed: false };
   }
@@ -459,7 +460,12 @@ function normalizePersistedPlanIdentities(plan, assignmentRow = {}) {
           suffix += 1;
         }
         usedIds.add(generated);
-        recordCompletionMapping(record.fallback, generated);
+        // A rescheduled historical session may already own the computed
+        // fallback as its explicit id. In that case completion evidence belongs
+        // to that true owner and must never be reassigned to this id-less sibling.
+        if (!preexistingExplicitIds.has(record.fallback)) {
+          recordCompletionMapping(record.fallback, generated);
+        }
         return { ...session, id: generated };
       };
       if (Array.isArray(entry.sessions)) {

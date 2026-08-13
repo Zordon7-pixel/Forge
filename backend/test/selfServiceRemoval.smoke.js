@@ -131,6 +131,63 @@ function assertRemovalIdentityContract() {
   assert.equal(new Set(ambiguousIds).size, 2, 'cross-week id-less fallbacks receive unique deterministic ids');
   assert.deepEqual(ambiguousNormalized.progress.completedSessionIds, ['Tue-run-0'],
     'ambiguous historical completion evidence is preserved but never guessed onto multiple workouts');
+
+  const preBackfillWeek = {
+    week: 1,
+    startDate: '2026-07-13',
+    days: [
+      { day: 'Mon', sessions: [{ kind: 'run', title: 'Missed run' }] },
+      { date: '2026-07-14', day: 'Tue', sessions: [{ kind: 'rest', title: 'Recovery' }] },
+    ],
+  };
+  const rescheduled = planSchema.rescheduleSessionInWeek(preBackfillWeek, 'Mon-run-0', {
+    targetDate: '2026-07-14',
+  });
+  assert.equal(rescheduled.error, undefined, 'historical reschedule succeeds before identity backfill');
+  assert.equal(rescheduled.week.days[1].sessions[0].id, 'Mon-run-0',
+    'reschedule stamps the historical fallback as the moved session explicit id');
+  const postRescheduleHistorical = {
+    schemaVersion: 2,
+    startDate: '2026-07-13',
+    weeks: [
+      rescheduled.week,
+      {
+        week: 2,
+        startDate: '2026-07-20',
+        days: [{
+          day: 'Mon',
+          sessions: [{ kind: 'run', title: 'Untouched id-less sibling' }],
+        }],
+      },
+    ],
+  };
+  const beforeCollisionBackfill = planSchema.withRemovalSessionIdentities(postRescheduleHistorical, {
+    assignmentStart: '2026-07-13',
+  });
+  const siblingOldRemovalId = beforeCollisionBackfill.weeks[1].days[0].sessions[0].removal_session_id;
+  const collisionNormalized = planSchema.normalizePersistedPlanIdentities(postRescheduleHistorical, {
+    week_start: '2026-07-13',
+    progress_json: {
+      completedSessionIds: ['Mon-run-0'],
+      removedSessionIds: [siblingOldRemovalId],
+    },
+  });
+  const movedOwner = collisionNormalized.plan.weeks[0].days[1].sessions[0];
+  const normalizedSibling = collisionNormalized.plan.weeks[1].days[0].sessions[0];
+  assert.equal(movedOwner.id, 'Mon-run-0');
+  assert.notEqual(normalizedSibling.id, movedOwner.id, 'id-less sibling receives its own stable identity');
+  assert.deepEqual(collisionNormalized.progress.completedSessionIds, ['Mon-run-0'],
+    'completed rescheduled session retains ownership when a sibling fallback collides');
+  assert.match(collisionNormalized.progress.removedSessionIds[0], new RegExp(`id%3A${normalizedSibling.id}$`),
+    'the sibling slot removal marker remaps independently without touching the explicit owner');
+  const collisionVisible = planSchema.visiblePlanForAssignment(collisionNormalized.plan, {
+    week_start: '2026-07-13',
+    progress_json: collisionNormalized.progress,
+  });
+  assert.equal(collisionVisible.weeks[0].days[1].sessions[0].id, 'Mon-run-0');
+  assert.deepEqual(collisionVisible.weeks[1].days[0].sessions, [],
+    'removed id-less sibling stays filtered after backfill while completed owner remains visible');
+  assert.doesNotThrow(() => assertPersistablePlan(collisionNormalized.plan));
 }
 
 function assertRaceOwnershipRouteContract() {
