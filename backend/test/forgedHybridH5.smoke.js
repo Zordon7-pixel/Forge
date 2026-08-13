@@ -189,7 +189,7 @@ assert(/target_zone:\s*workoutTarget\?\.zone/.test(activeRun), 'ActiveRun stores
 assert(/execution\?\.hasPlan && execution\?\.hasDay/.test(logRun), 'LogRun does not reinterpret a calendar rest/lift day as a run');
 const plansRoute = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'plans.js'), 'utf8');
 assert(/withPlanningInputMutation\(req\.user\.id, async \(tx\)/.test(plansRoute) && /FOR UPDATE OF up/.test(plansRoute), 'plan progress read-modify-write is revisioned and transactionally locked');
-assert(/collectSessionIds\(parsed\)/.test(plansRoute), 'plan progress rejects session ids outside the active plan');
+assert(/collectSessionIds\(visiblePlan\)/.test(plansRoute), 'plan progress rejects session ids outside the visible active plan');
 assert(/requestedWeek < 1/.test(plansRoute), 'plan progress rejects week zero at the API boundary');
 
 section('completion is called ONLY on the success path (static)');

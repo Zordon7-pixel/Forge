@@ -81,6 +81,21 @@ async function run() {
   const selectedDay = checkinRouter._test.normalizeTodayEntry(parsedOldPlan, '2026-08-08');
   assert.equal(selectedDay.distance, 7, 'check-in targets the exact dated workout, not the first matching weekday');
 
+  const removalIdentified = require('../src/lib/planSchema').withRemovalSessionIdentities(parsedOldPlan, {
+    assignmentStart: oldPlan.effective_from,
+  });
+  const removalId = removalIdentified.weeks[0].days[0].removal_session_id;
+  const removedActive = {
+    source: 'assigned',
+    row: { ...oldPlan, progress_json: JSON.stringify({ removedSessionIds: [removalId] }) },
+  };
+  const removedVisiblePlan = checkinRouter._test.visibleActivePlan(removedActive);
+  assert.equal(
+    checkinRouter._test.normalizeTodayEntry(removedVisiblePlan, '2026-08-08'),
+    null,
+    'check-in does not adapt a removed workout'
+  );
+
   const request = {
     body: {},
     get(name) {

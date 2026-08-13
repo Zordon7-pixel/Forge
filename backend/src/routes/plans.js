@@ -2557,8 +2557,10 @@ function planWithRemovalSessionIdentities(plan, activeRow) {
 }
 
 function planWithoutRemovedSessions(plan, progress, activeRow) {
-  const identified = planWithRemovalSessionIdentities(plan, activeRow);
-  return planSchema.withoutRemovedSessions(identified, removedSessionIdsFromProgress(progress));
+  return planSchema.visiblePlanForAssignment(plan, {
+    ...activeRow,
+    progress_json: progress,
+  });
 }
 
 function findPlanSession(plan, activeRow, sessionId) {
@@ -2793,7 +2795,11 @@ router.get('/adaptation/current', auth, async (req, res) => {
     if (!planningDateISO) return res.status(400).json({ error: 'date must be the phone local date in YYYY-MM-DD format' });
     const active = await getActivePlanForUser(req.user.id, null, { planningDateLocal: planningDateISO });
     if (!active) return res.json({ proposal: null, reason: 'No active plan is assigned yet.' });
-    const parsed = parsePlan(active.row);
+    const parsed = planWithoutRemovedSessions(
+      parsePlan(active.row),
+      parseJsonValue(active.row.progress_json, {}),
+      active.row
+    );
     if (!parsed || !planSchema.isSchemaV2(parsed)) {
       return res.json({ proposal: null, reason: 'Transparent adaptation is available for schema-v2 dated calendars only.' });
     }
@@ -2889,7 +2895,11 @@ router.get('/adaptation/run/:runId', auth, async (req, res) => {
         },
       });
     }
-    const parsed = parsePlan(active.row);
+    const parsed = planWithoutRemovedSessions(
+      parsePlan(active.row),
+      parseJsonValue(active.row.progress_json, {}),
+      active.row
+    );
     if (!parsed || !planSchema.isSchemaV2(parsed)) {
       return res.json({
         impact: {
@@ -3400,7 +3410,8 @@ router.put('/my/progress', auth, async (req, res) => {
       }
 
       const parsed = parsePlan(row);
-      const sessionIds = dailyExecution.collectSessionIds(parsed);
+      const visiblePlan = planWithoutRemovedSessions(parsed, parseJsonValue(row.progress_json, {}), row);
+      const sessionIds = dailyExecution.collectSessionIds(visiblePlan);
       const requestedId = completedId || unsetId;
       if (requestedId && !sessionIds.has(requestedId)) return planningInputUnchanged({ invalidSession: true });
 
@@ -3853,15 +3864,19 @@ router.post('/reschedule-missed', auth, async (req, res) => {
       if (!active) return planningInputUnchanged({ status: 404, error: 'No plan found' });
 
       const parsed = parsePlan(active.row);
+      const progress = parseJsonValue(active.row.progress_json, {});
+      const visiblePlan = planWithoutRemovedSessions(parsed, progress, active.row);
       const weekIndex = Math.max(0, Number(active.row.current_week || 1) - 1);
       const rawWeek = parsed?.weeks?.[weekIndex];
+      const visibleRawWeek = visiblePlan?.weeks?.[weekIndex];
       if (!planSchema.getDayEntries(rawWeek).length) {
         return planningInputUnchanged({ status: 400, error: 'Invalid plan format' });
       }
       const fallbackWeekStart = getMonday(new Date(`${planningDateISO}T12:00:00`));
       const selectedWeekStart = activeWeekStart(parsed, active.row, weekIndex, fallbackWeekStart);
       const week = withCanonicalWeekDates(rawWeek, selectedWeekStart);
-      const requestedSession = planSchema.getDayEntries(week)
+      const visibleWeek = withCanonicalWeekDates(visibleRawWeek, selectedWeekStart);
+      const requestedSession = planSchema.getDayEntries(visibleWeek)
         .flatMap((day, index) => planSchema.plannedSessionsForDay(day, index, day.date))
         .find((session) => String(session.sessionId) === String(sessionId));
 
@@ -3873,7 +3888,6 @@ router.post('/reschedule-missed', auth, async (req, res) => {
         return planningInputUnchanged({ status: 409, error: 'Only a run missed before today can be moved.' });
       }
 
-      const progress = parseJsonValue(active.row.progress_json, {});
       const completedIds = new Set(completedSessionIdsFromProgress(progress));
       if (completedIds.has(String(requestedSession.sessionId))) {
         return planningInputUnchanged({ status: 409, error: 'That run is already complete. Refresh your calendar.' });
@@ -3906,7 +3920,7 @@ router.post('/reschedule-missed', auth, async (req, res) => {
         movedTo: result.movedTo,
         movedFromDate: result.movedFromDate,
         movedToDate: result.movedToDate,
-        plan: parsed,
+        plan: planWithoutRemovedSessions(parsed, progress, active.row),
         aiSuggestion: 'Week rebalanced after missed session. Keep next run easy and preserve long run.',
       };
     });

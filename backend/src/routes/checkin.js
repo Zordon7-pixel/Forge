@@ -38,7 +38,13 @@ function parsePlan(plan) {
 
 function normalizeTodayEntry(planJson, planningDateLocal) {
   const selected = dailyExecution.selectDayForDate(planJson, planningDateLocal);
-  return selected ? planSchema.flattenDayForConsumer(selected.entry) : null;
+  if (!selected || planSchema.daySessions(selected.entry).length === 0) return null;
+  return planSchema.flattenDayForConsumer(selected.entry);
+}
+
+function visibleActivePlan(activePlan) {
+  const parsed = parsePlan(activePlan?.row);
+  return parsed ? planSchema.visiblePlanForAssignment(parsed, activePlan.row) : null;
 }
 
 async function getActivePlanForUser(userId, database = { get: dbGet }, options = {}) {
@@ -129,7 +135,7 @@ async function computeCheckinDirective(userId, checkinInput, database, options =
   let action = deriveAction(checkin);
   const planningDateLocal = options.planningDateLocal || requestPlanningDate({});
   const activePlan = await getActivePlanForUser(userId, database, { planningDateLocal });
-  const todayDay = activePlan ? normalizeTodayEntry(parsePlan(activePlan.row), planningDateLocal) : null;
+  const todayDay = activePlan ? normalizeTodayEntry(visibleActivePlan(activePlan), planningDateLocal) : null;
   const plannedMinutes = estimateWorkoutMinutes(todayDay || {});
   if (action === 'keep' && plannedMinutes && checkin.time_available < plannedMinutes) {
     action = 'shorten';
@@ -138,16 +144,21 @@ async function computeCheckinDirective(userId, checkinInput, database, options =
   const readiness_delta = 0;
   const directive = buildDirective(checkin, action, patch, Boolean(todayDay), readiness_delta);
   const feelingLabels = ['', 'Exhausted', 'Tired', 'Okay', 'Good', 'Great'];
-  const adjustment = directive.headline || describeAdjustment(action, patch, Boolean(todayDay));
+  const hasWorkoutToday = Boolean(todayDay);
+  const adjustment = hasWorkoutToday
+    ? (directive.headline || describeAdjustment(action, patch, true))
+    : describeAdjustment(action, patch, false);
+  const headline = hasWorkoutToday ? directive.headline : 'No active workout to adjust';
 
   return {
     adjustment,
-    headline: directive.headline,
+    headline,
     drivers: directive.drivers,
     action,
     patch,
     feeling: feelingLabels[checkin.feeling] || 'Noted',
     readiness_delta,
+    hasWorkoutToday,
   };
 }
 
@@ -193,14 +204,18 @@ router.post('/', auth, async (req, res) => {
       }, tx, { planningDateLocal: today });
       const overrideId = require('crypto').randomBytes(8).toString('hex');
 
-      await tx.run(
-        `INSERT INTO checkin_overrides (id, user_id, date, action, patch_json)
-         VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT (user_id, date) DO UPDATE SET
-           action = excluded.action,
-           patch_json = excluded.patch_json`,
-        [overrideId, req.user.id, today, nextDirective.action, JSON.stringify(nextDirective.patch)]
-      );
+      if (nextDirective.hasWorkoutToday) {
+        await tx.run(
+          `INSERT INTO checkin_overrides (id, user_id, date, action, patch_json)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT (user_id, date) DO UPDATE SET
+             action = excluded.action,
+             patch_json = excluded.patch_json`,
+          [overrideId, req.user.id, today, nextDirective.action, JSON.stringify(nextDirective.patch)]
+        );
+      } else {
+        await tx.run('DELETE FROM checkin_overrides WHERE user_id=? AND date=?', [req.user.id, today]);
+      }
       return nextDirective;
     });
 
@@ -269,6 +284,7 @@ router._test = {
   computeCheckinDirective,
   getActivePlanForUser,
   normalizeTodayEntry,
+  visibleActivePlan,
 };
 
 module.exports = router;

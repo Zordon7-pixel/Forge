@@ -346,6 +346,33 @@ async function assertScheduledWorkoutRoute() {
     const servedAgain = planSchema.withoutRemovedSessions(identifiedHybrid, [pairedLiftRemovalId]);
     assert.deepEqual(servedAgain.weeks[0].days[0].sessions.map((session) => session.id), ['paired-run'],
       'refetch remains filtered after rejected reconciliation');
+
+    const reschedulePlan = {
+      schemaVersion: 2,
+      planMode: 'run_only',
+      weeks: [{
+        week: 1,
+        startDate: localDate(-1),
+        days: [
+          { date: localDate(-1), day: 'Tue', sessions: [{ id: 'removed-missed-run', kind: 'run' }] },
+          { date: localDate(0), day: 'Wed', sessions: [{ kind: 'rest' }] },
+        ],
+      }],
+    };
+    activePlan = reschedulePlan;
+    const identifiedReschedule = planSchema.withRemovalSessionIdentities(reschedulePlan, { assignmentStart: localDate(-1) });
+    const removedMissed = identifiedReschedule.weeks[0].days[0].sessions[0];
+    reset({ removedSessionIds: [removedMissed.removal_session_id] });
+    const rescheduleLayer = plansRouter.stack.find((item) => item.route?.path === '/reschedule-missed' && item.route?.methods?.post);
+    const rescheduleHandler = rescheduleLayer?.route?.stack?.at(-1)?.handle;
+    assert.equal(typeof rescheduleHandler, 'function');
+    response = await invokeHandler(rescheduleHandler, {
+      body: { sessionId: 'removed-missed-run', targetDate: localDate(0) },
+    });
+    assert.equal(response.statusCode, 404);
+    assert.match(response.payload.error, /session not found/i);
+    assert.equal(updateCount, 0, 'stale client cannot move a removed missed run');
+    assert.equal(activePlan.weeks[0].days[0].sessions[0].id, 'removed-missed-run', 'immutable source plan is unchanged');
   } finally {
     delete require.cache[plansRoutePath];
     if (originalPlans) require.cache[plansRoutePath] = originalPlans;

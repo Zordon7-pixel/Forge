@@ -372,6 +372,24 @@ function withoutRemovedSessions(plan, removedSessionIds = []) {
   return changed ? { ...source, weeks } : source;
 }
 
+function visiblePlanForAssignment(plan, assignmentRow = {}) {
+  let progress = assignmentRow?.progress_json || {};
+  if (typeof progress === 'string') {
+    try {
+      progress = JSON.parse(progress || '{}');
+    } catch {
+      progress = {};
+    }
+  }
+  const removedSessionIds = Array.isArray(progress?.removedSessionIds)
+    ? progress.removedSessionIds
+    : [];
+  const identified = withRemovalSessionIdentities(plan, {
+    assignmentStart: assignmentRow?.week_start || assignmentRow?.effective_from || assignmentRow?.started_at || null,
+  });
+  return withoutRemovedSessions(identified, removedSessionIds);
+}
+
 function isRestEntry(dayEntry) {
   const d = dayEntry || {};
   if (Array.isArray(d.sessions)) return daySessions(d).length === 0;
@@ -714,6 +732,7 @@ module.exports = {
   withRemovalSessionIdentities,
   removalSessionIdentifier,
   withoutRemovedSessions,
+  visiblePlanForAssignment,
   normalizeSession,
   sessionIdentifier,
   flattenDayForConsumer,

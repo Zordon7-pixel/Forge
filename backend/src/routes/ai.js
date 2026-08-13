@@ -6,6 +6,7 @@ const { generateRunBrief, generateLiftPlan, generateWorkoutRecommendation, gener
 const { requestExerciseImageIfMissing, requestImagesForWorkoutItems } = require('../lib/exerciseImageRequests');
 const { isRunActivity, runActivitySql } = require('../lib/runActivity');
 const dailyExecution = require('../lib/dailyExecution');
+const planSchema = require('../lib/planSchema');
 const { resolveActivePlanForDate } = require('../lib/planAssignmentLifecycle');
 const { isPlanningDateAllowed, requestPlanningDate } = require('../lib/requestPlanningDate');
 const {
@@ -135,7 +136,8 @@ async function loadTodayTraining(userId, dateISO) {
         [userId, dateISO]
       ),
     ]);
-    const plan = parseStoredPlan(active?.row);
+    const storedPlan = parseStoredPlan(active?.row);
+    const plan = storedPlan ? planSchema.visiblePlanForAssignment(storedPlan, active.row) : null;
     if (!plan) return null;
     const patch = dailyExecution.parseCheckinOverridePatch(override?.patch_json);
     const resolved = dailyExecution.resolvePlanDayForDate({ plan, dateISO, patch });

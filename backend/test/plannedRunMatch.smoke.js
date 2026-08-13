@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const planSchema = require('../src/lib/planSchema');
 const {
   allocatePlanSessionRunEvidence,
   explicitNoPlanMatchSnapshot,
@@ -80,6 +81,19 @@ findPlannedRunForDate('user-1', '2026-07-14', {
 }).then(async (found) => {
   check(found?.sessionId === 'run-1', 'active assigned plan resolves through injected DB lookup')
   check(/up\.user_id\s*=\s*\?/.test(queries[0].sql) && queries[0].params[0] === 'user-1', 'active-plan lookup is owner scoped')
+
+  const identifiedPlan = planSchema.withRemovalSessionIdentities(plan, { assignmentStart: '2026-07-14' });
+  const removedRunId = identifiedPlan.weeks[0].days[0].sessions[0].removal_session_id;
+  const removedRun = await findPlannedRunForDate('user-1', '2026-07-14', {
+    get: async () => ({
+      id: 'plan-1',
+      user_plan_id: 'up-1',
+      effective_from: '2026-07-14',
+      progress_json: JSON.stringify({ removedSessionIds: [removedRunId] }),
+      plan_data: plan,
+    }),
+  });
+  check(removedRun === null, 'a recorded run cannot be linked to a removed planned session')
 
   const predecessorPlan = JSON.parse(JSON.stringify(plan));
   predecessorPlan.weeks[0].days[0].sessions[0].title = 'Protected predecessor run';

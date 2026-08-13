@@ -45,7 +45,8 @@ function dayToDate(weekStart, dayLabel) {
 }
 
 function plannedSessionsBetween(active, startISO, endISO) {
-  const plan = parsePlan(active?.row);
+  const storedPlan = parsePlan(active?.row);
+  const plan = storedPlan ? planSchema.visiblePlanForAssignment(storedPlan, active.row) : null;
   if (!plan || !Array.isArray(plan.weeks)) return [];
   const rows = [];
   const planStart = active?.row?.week_start || active?.row?.started_at || plan.weeks[0]?.startDate || startISO;
@@ -114,7 +115,15 @@ function buildPlanCompletion(active, runs, lifts, startISO, endISO) {
 }
 
 async function getActivePlanForUser(userId, planningDateLocal, database = { get: dbGet }) {
-  return resolveActivePlanForDate(userId, database.get, { planningDateLocal });
+  const active = await resolveActivePlanForDate(userId, database.get, { planningDateLocal });
+  if (!active?.row) return active;
+  const storedPlan = parsePlan(active.row);
+  if (!storedPlan) return active;
+  const visiblePlan = planSchema.visiblePlanForAssignment(storedPlan, active.row);
+  return {
+    ...active,
+    row: { ...active.row, plan_data: visiblePlan, plan_json: visiblePlan },
+  };
 }
 
 async function persistNewMilestones(userId, candidates) {

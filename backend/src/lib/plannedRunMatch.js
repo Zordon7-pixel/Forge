@@ -174,8 +174,11 @@ function allocatePlanSessionRunEvidence(sessions, runs, {
 async function findPlannedRunForDate(userId, date, { get = dbGet } = {}) {
   if (!userId || !ISO_DATE.test(String(date || ''))) return null;
   const active = await resolveActivePlanForDate(userId, get, { planningDateLocal: date });
-  return active
-    ? matchPlannedRunInPlan(parsePlanRow(active.row), date, active.row.id || active.row.plan_id)
+  if (!active) return null;
+  const storedPlan = parsePlanRow(active.row);
+  const visiblePlan = storedPlan ? planSchema.visiblePlanForAssignment(storedPlan, active.row) : null;
+  return visiblePlan
+    ? matchPlannedRunInPlan(visiblePlan, date, active.row.id || active.row.plan_id)
     : null;
 }
 
