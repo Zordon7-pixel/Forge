@@ -372,7 +372,7 @@ function withoutRemovedSessions(plan, removedSessionIds = []) {
   return changed ? { ...source, weeks } : source;
 }
 
-function visiblePlanForAssignment(plan, assignmentRow = {}) {
+function assignmentProgress(assignmentRow = {}) {
   let progress = assignmentRow?.progress_json || {};
   if (typeof progress === 'string') {
     try {
@@ -381,10 +381,141 @@ function visiblePlanForAssignment(plan, assignmentRow = {}) {
       progress = {};
     }
   }
+  return progress && typeof progress === 'object' && !Array.isArray(progress) ? progress : {};
+}
+
+function remapProgressIds(values, identityMap) {
+  const result = [];
+  for (const value of (Array.isArray(values) ? values : [])) {
+    const current = String(value);
+    const matches = identityMap.get(current);
+    const next = matches?.size === 1 ? Array.from(matches)[0] : current;
+    if (!result.includes(next)) result.push(next);
+  }
+  return result;
+}
+
+// Early schema-v2 generators could persist nested sessions without ids.
+// Backfill them deterministically before a later mutation. Prefer the old
+// fallback id when unique so existing completion evidence retains its meaning;
+// ambiguous fallbacks get a date/position-qualified id and are not guessed.
+function normalizePersistedPlanIdentities(plan, assignmentRow = {}) {
+  const source = plan && typeof plan === 'object' ? plan : {};
+  const progress = assignmentProgress(assignmentRow);
+  if (!isSchemaV2(source) || !Array.isArray(source.weeks)) {
+    return { plan: source, progress, planChanged: false, progressChanged: false, changed: false };
+  }
+
+  const usedIds = new Set();
+  const fallbackCounts = new Map();
+  const missingRecords = [];
+  source.weeks.forEach((week, weekIndex) => {
+    getDayEntries(week).forEach((entry, dayIndex) => {
+      const sessions = Array.isArray(entry?.sessions) ? entry.sessions : [entry].filter(Boolean);
+      sessions.forEach((session, sessionIndex) => {
+        const explicit = session?.id == null ? '' : String(session.id).trim();
+        if (explicit) {
+          usedIds.add(explicit);
+          return;
+        }
+        const fallback = sessionIdentifier(entry, session, sessionIndex, dayIndex);
+        fallbackCounts.set(fallback, (fallbackCounts.get(fallback) || 0) + 1);
+        missingRecords.push({ weekIndex, dayIndex, sessionIndex, fallback });
+      });
+    });
+  });
+  if (!missingRecords.length) {
+    return { plan: source, progress, planChanged: false, progressChanged: false, changed: false };
+  }
+
+  const missingByPosition = new Map(missingRecords.map((record) => [
+    `${record.weekIndex}:${record.dayIndex}:${record.sessionIndex}`,
+    record,
+  ]));
+  const completionMap = new Map();
+  const recordCompletionMapping = (from, to) => {
+    if (!completionMap.has(from)) completionMap.set(from, new Set());
+    completionMap.get(from).add(to);
+  };
+  const assignmentStart = assignmentRow?.week_start || assignmentRow?.effective_from
+    || assignmentRow?.started_at || null;
+  const weeks = source.weeks.map((week, weekIndex) => {
+    const weekStart = canonicalWeekStart(source, week, weekIndex, assignmentStart);
+    const entries = getDayEntries(week).map((entry, dayIndex) => {
+      if (!entry || typeof entry !== 'object') return entry;
+      const dayOffset = weekdayIndex(entry.day || entry.dayName);
+      const canonicalDate = dateOnly(entry.date)
+        || (weekStart && dayOffset !== null ? addDateDays(weekStart, dayOffset) : null);
+      const addIdentity = (session, sessionIndex) => {
+        const record = missingByPosition.get(`${weekIndex}:${dayIndex}:${sessionIndex}`);
+        if (!record) return session;
+        let generated = fallbackCounts.get(record.fallback) === 1 && !usedIds.has(record.fallback)
+          ? record.fallback
+          : `legacy-v2-${canonicalDate || `w${weekIndex + 1}-d${dayIndex + 1}`}-${kindFromSession(session)}-${sessionIndex + 1}`;
+        const base = generated;
+        let suffix = 2;
+        while (usedIds.has(generated)) {
+          generated = `${base}-${suffix}`;
+          suffix += 1;
+        }
+        usedIds.add(generated);
+        recordCompletionMapping(record.fallback, generated);
+        return { ...session, id: generated };
+      };
+      if (Array.isArray(entry.sessions)) {
+        return { ...entry, sessions: entry.sessions.map(addIdentity) };
+      }
+      return addIdentity(entry, 0);
+    });
+    return setDayEntries(week, entries);
+  });
+  const normalizedPlan = { ...source, weeks };
+
+  const originalIdentified = withRemovalSessionIdentities(source, { assignmentStart });
+  const normalizedIdentified = withRemovalSessionIdentities(normalizedPlan, { assignmentStart });
+  const removalMap = new Map();
+  source.weeks.forEach((week, weekIndex) => {
+    const originalEntries = getDayEntries(originalIdentified.weeks?.[weekIndex]);
+    const normalizedEntries = getDayEntries(normalizedIdentified.weeks?.[weekIndex]);
+    getDayEntries(week).forEach((entry, dayIndex) => {
+      const originalEntry = originalEntries[dayIndex];
+      const normalizedEntry = normalizedEntries[dayIndex];
+      const originalSessions = Array.isArray(entry?.sessions) ? originalEntry?.sessions || [] : [originalEntry];
+      const normalizedSessions = Array.isArray(entry?.sessions) ? normalizedEntry?.sessions || [] : [normalizedEntry];
+      originalSessions.forEach((session, sessionIndex) => {
+        const oldMarker = removalSessionIdentifier(originalEntry, session);
+        const newMarker = removalSessionIdentifier(normalizedEntry, normalizedSessions[sessionIndex]);
+        if (!oldMarker || !newMarker) return;
+        if (!removalMap.has(oldMarker)) removalMap.set(oldMarker, new Set());
+        removalMap.get(oldMarker).add(newMarker);
+      });
+    });
+  });
+
+  const completedSessionIds = remapProgressIds(progress.completedSessionIds, completionMap);
+  const removedSessionIds = remapProgressIds(progress.removedSessionIds, removalMap);
+  const nextProgress = {
+    ...progress,
+    ...(Array.isArray(progress.completedSessionIds) ? { completedSessionIds } : {}),
+    ...(Array.isArray(progress.removedSessionIds) ? { removedSessionIds } : {}),
+  };
+  const progressChanged = JSON.stringify(nextProgress) !== JSON.stringify(progress);
+  return {
+    plan: normalizedPlan,
+    progress: nextProgress,
+    planChanged: true,
+    progressChanged,
+    changed: true,
+  };
+}
+
+function visiblePlanForAssignment(plan, assignmentRow = {}) {
+  const normalized = normalizePersistedPlanIdentities(plan, assignmentRow);
+  const progress = normalized.progress;
   const removedSessionIds = Array.isArray(progress?.removedSessionIds)
     ? progress.removedSessionIds
     : [];
-  const identified = withRemovalSessionIdentities(plan, {
+  const identified = withRemovalSessionIdentities(normalized.plan, {
     assignmentStart: assignmentRow?.week_start || assignmentRow?.effective_from || assignmentRow?.started_at || null,
   });
   return withoutRemovedSessions(identified, removedSessionIds);
@@ -732,6 +863,7 @@ module.exports = {
   withRemovalSessionIdentities,
   removalSessionIdentifier,
   withoutRemovedSessions,
+  normalizePersistedPlanIdentities,
   visiblePlanForAssignment,
   normalizeSession,
   sessionIdentifier,

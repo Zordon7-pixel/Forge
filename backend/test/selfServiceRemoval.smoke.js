@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const planSchema = require('../src/lib/planSchema');
+const { assertPersistablePlan } = require('../src/lib/planCandidateLifecycle');
 
 function localDate(offsetDays = 0) {
   const date = new Date();
@@ -81,6 +82,55 @@ function assertRemovalIdentityContract() {
     weeks: [{ days: [{ day: 'Wed', sessions: [{ id: 'unanchored', kind: 'lift' }] }] }],
   });
   assert.equal(unanchored.weeks[0].days[0].sessions[0].removal_session_id, undefined);
+
+  const historical = {
+    schemaVersion: 2,
+    startDate: '2026-07-13',
+    weeks: [{ days: [{
+      date: '2026-07-14',
+      day: 'Tue',
+      sessions: [{ kind: 'run', title: 'Historical run' }, { kind: 'lift', title: 'Historical lift' }],
+    }] }],
+  };
+  const oldHistorical = planSchema.withRemovalSessionIdentities(historical, { assignmentStart: '2026-07-13' });
+  const oldCompletedId = planSchema.sessionIdentifier(historical.weeks[0].days[0], historical.weeks[0].days[0].sessions[0], 0, 0);
+  const oldRemovedId = oldHistorical.weeks[0].days[0].sessions[1].removal_session_id;
+  const normalized = planSchema.normalizePersistedPlanIdentities(historical, {
+    week_start: '2026-07-13',
+    progress_json: JSON.stringify({ completedSessionIds: [oldCompletedId], removedSessionIds: [oldRemovedId] }),
+  });
+  assert.doesNotThrow(() => assertPersistablePlan(normalized.plan), 'historical schema-v2 plan becomes persistable');
+  assert.deepEqual(normalized.plan.weeks[0].days[0].sessions.map((session) => session.id), [
+    '2026-07-14-run-0',
+    '2026-07-14-lift-1',
+  ]);
+  assert.deepEqual(normalized.progress.completedSessionIds, ['2026-07-14-run-0'], 'unique completion fallback is preserved');
+  assert.match(normalized.progress.removedSessionIds[0], /id%3A2026-07-14-lift-1$/, 'slot removal marker is remapped to the stable id');
+  const historicalVisible = planSchema.visiblePlanForAssignment(normalized.plan, {
+    week_start: '2026-07-13',
+    progress_json: normalized.progress,
+  });
+  assert.deepEqual(historicalVisible.weeks[0].days[0].sessions.map((session) => session.id), ['2026-07-14-run-0']);
+  assert.equal(planSchema.normalizePersistedPlanIdentities(normalized.plan, {
+    week_start: '2026-07-13',
+    progress_json: normalized.progress,
+  }).changed, false, 'identity backfill is replay-safe');
+
+  const ambiguousHistorical = {
+    schemaVersion: 2,
+    startDate: '2026-07-13',
+    weeks: [
+      { days: [{ day: 'Tue', sessions: [{ kind: 'run' }] }] },
+      { days: [{ day: 'Tue', sessions: [{ kind: 'run' }] }] },
+    ],
+  };
+  const ambiguousNormalized = planSchema.normalizePersistedPlanIdentities(ambiguousHistorical, {
+    progress_json: { completedSessionIds: ['Tue-run-0'] },
+  });
+  const ambiguousIds = ambiguousNormalized.plan.weeks.map((week) => week.days[0].sessions[0].id);
+  assert.equal(new Set(ambiguousIds).size, 2, 'cross-week id-less fallbacks receive unique deterministic ids');
+  assert.deepEqual(ambiguousNormalized.progress.completedSessionIds, ['Tue-run-0'],
+    'ambiguous historical completion evidence is preserved but never guessed onto multiple workouts');
 }
 
 function assertRaceOwnershipRouteContract() {
@@ -125,6 +175,9 @@ async function assertScheduledWorkoutRoute() {
   let activePlan = plan;
   let assignment;
   let updateCount = 0;
+  let planWriteCount = 0;
+  let identityBackfillCount = 0;
+  let proposalRow = null;
   const reset = (progress = {}) => {
     assignment = {
       user_plan_id: 'assignment-owner',
@@ -139,11 +192,14 @@ async function assertScheduledWorkoutRoute() {
       effective_from: localDate(-1),
     };
     updateCount = 0;
+    planWriteCount = 0;
+    identityBackfillCount = 0;
   };
   reset();
 
   const tx = {
     async get(sql) {
+      if (/FROM plan_adjustment_proposals/.test(sql)) return proposalRow;
       if (/FROM user_plans up/.test(sql)) return assignment;
       if (/FROM training_plans tp/.test(sql)) {
         return {
@@ -159,6 +215,25 @@ async function assertScheduledWorkoutRoute() {
       throw new Error(`unexpected get: ${sql}`);
     },
     async run(sql, params) {
+      if (/UPDATE training_plans SET plan_data/.test(sql)) {
+        activePlan = JSON.parse(params[0]);
+        planWriteCount += 1;
+        return { changes: 1 };
+      }
+      if (/UPDATE user_plans SET progress_json=\?, plan_version=plan_version\+1/.test(sql)) {
+        assignment.progress_json = params[0];
+        assignment.plan_version += 1;
+        identityBackfillCount += 1;
+        return { changes: 1 };
+      }
+      if (/UPDATE user_plans SET plan_version=plan_version\+1/.test(sql)) {
+        assignment.plan_version += 1;
+        return { changes: 1 };
+      }
+      if (/UPDATE plan_adjustment_proposals SET status='accepted'/.test(sql)) {
+        proposalRow.status = 'accepted';
+        return { changes: 1 };
+      }
       if (/UPDATE user_plans SET progress_json/.test(sql)) {
         assert.equal(params[1], 'assignment-owner');
         assert.equal(params[2], 'owner');
@@ -217,6 +292,16 @@ async function assertScheduledWorkoutRoute() {
         json(value) { payload = value; return this; },
       };
       await handler({ params: { sessionId }, user: { id: 'owner' }, body: {}, headers: { 'x-forged-local-date': localDate(0) } }, response);
+      return { statusCode, payload };
+    };
+    const invokeHandler = async (routeHandler, request) => {
+      let statusCode = 200;
+      let payload = null;
+      const routeResponse = {
+        status(code) { statusCode = code; return this; },
+        json(value) { payload = value; return this; },
+      };
+      await routeHandler({ user: { id: 'owner' }, headers: {}, query: {}, body: {}, ...request }, routeResponse);
       return { statusCode, payload };
     };
 
@@ -284,6 +369,99 @@ async function assertScheduledWorkoutRoute() {
     assert.equal(response.payload.code, 'PLAN_SESSION_NOT_FOUND');
     assert.equal(updateCount, 0);
 
+    const historicalPlan = {
+      schemaVersion: 2,
+      planMode: 'hybrid_maintain',
+      weeks: [{
+        week: 1,
+        startDate: localDate(-1),
+        days: [{
+          date: localDate(0),
+          day: 'Wed',
+          sessions: [
+            { kind: 'run', title: 'Historical completed run' },
+            { kind: 'lift', title: 'Historical already removed lift' },
+            { kind: 'lift', title: 'Historical removable lift' },
+          ],
+        }],
+      }],
+    };
+    activePlan = historicalPlan;
+    const historicalIdentified = planSchema.withRemovalSessionIdentities(historicalPlan, { assignmentStart: localDate(-1) });
+    const historicalDay = historicalPlan.weeks[0].days[0];
+    const oldCompletedId = planSchema.sessionIdentifier(historicalDay, historicalDay.sessions[0], 0, 0);
+    const oldRemovedId = historicalIdentified.weeks[0].days[0].sessions[1].removal_session_id;
+    reset({ completedSessionIds: [oldCompletedId], removedSessionIds: [oldRemovedId] });
+    const preBackfillVisible = planSchema.visiblePlanForAssignment(historicalPlan, {
+      ...assignment,
+      week_start: localDate(-1),
+    });
+    const preBackfillSessions = preBackfillVisible.weeks[0].days[0].sessions;
+    assert.deepEqual(preBackfillSessions.map((session) => session.title), [
+      'Historical completed run',
+      'Historical removable lift',
+    ], 'refetch filters the old slot marker while serving deterministic ids before persistence');
+    const completedHistoricalMarker = preBackfillSessions[0].removal_session_id;
+    const targetHistoricalMarker = preBackfillSessions[1].removal_session_id;
+
+    response = await invoke(targetHistoricalMarker);
+    assert.equal(response.statusCode, 200, 'historical id-less schema-v2 workout can be removed');
+    assert.equal(planWriteCount, 1, 'historical session ids are persisted before removal');
+    assert.equal(identityBackfillCount, 1, 'historical progress markers are remapped atomically');
+    assert.doesNotThrow(() => assertPersistablePlan(activePlan));
+    const historicalProgress = JSON.parse(assignment.progress_json);
+    assert.ok(historicalProgress.removedSessionIds.includes(targetHistoricalMarker));
+    assert.ok(historicalProgress.removedSessionIds.every((id) => id.includes('id%3A')),
+      'slot removal markers are remapped to stable persisted ids');
+    const afterHistoricalRemoval = planSchema.visiblePlanForAssignment(activePlan, assignment);
+    assert.deepEqual(afterHistoricalRemoval.weeks[0].days[0].sessions.map((session) => session.title), [
+      'Historical completed run',
+    ], 'refetch cannot resurrect either removed historical sibling');
+
+    response = await invoke(targetHistoricalMarker);
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.payload.idempotent, true, 'historical removal replay stays idempotent');
+    assert.equal(planWriteCount, 1, 'replay does not repeat structural backfill');
+
+    response = await invoke(completedHistoricalMarker);
+    assert.equal(response.statusCode, 409);
+    assert.equal(response.payload.code, 'PLAN_SESSION_COMPLETED', 'remapped historical completion remains immutable');
+
+    activePlan = historicalPlan;
+    reset({ completedSessionIds: [oldCompletedId], removedSessionIds: [oldRemovedId] });
+    const historicalProposal = JSON.parse(JSON.stringify(historicalPlan));
+    historicalProposal.weeks[0].days[0].sessions[2].title = 'Accepted historical adaptation';
+    const normalizedForProposal = planSchema.normalizePersistedPlanIdentities(historicalPlan, {
+      ...assignment,
+      week_start: localDate(-1),
+    });
+    proposalRow = {
+      id: 'historical-proposal',
+      user_id: 'owner',
+      status: 'pending',
+      planning_date: localDate(0),
+      plan_version: plansRouter._test.planVersionFor({
+        source: 'assigned',
+        row: { ...assignment, id: 'plan-owner', user_plan_id: 'assignment-owner' },
+      }, normalizedForProposal.plan),
+      proposed_json: JSON.stringify(historicalProposal),
+      changes_json: JSON.stringify([{ kind: 'calendar_update' }]),
+      evidence_json: '[]',
+      reason: JSON.stringify({ headline: 'Historical adaptation', reason: 'Regression' }),
+      plan_id: 'plan-owner',
+      user_plan_id: 'assignment-owner',
+      trigger_run_id: null,
+    };
+    const acceptLayer = plansRouter.stack.find((item) => item.route?.path === '/adaptation/:proposalId/accept' && item.route?.methods?.post);
+    response = await invokeHandler(acceptLayer.route.stack.at(-1).handle, {
+      params: { proposalId: proposalRow.id },
+    });
+    assert.equal(response.statusCode, 200, 'adaptation acceptance succeeds after historical identity backfill');
+    assert.equal(response.payload.status, 'accepted');
+    assert.doesNotThrow(() => assertPersistablePlan(activePlan));
+    assert.equal(activePlan.weeks[0].days[0].sessions[2].title, 'Accepted historical adaptation');
+    proposalRow = null;
+
     const hybridPlan = {
       schemaVersion: 2,
       planMode: 'hybrid_maintain',
@@ -292,15 +470,18 @@ async function assertScheduledWorkoutRoute() {
         startDate: localDate(-1),
         days: [
           { date: localDate(-1), day: 'Tue', sessions: [
-            { id: 'paired-run', kind: 'run', title: 'Paired run' },
-            { id: 'paired-lift', kind: 'lift', title: 'Paired lift' },
+            { kind: 'run', title: 'Paired run' },
+            { kind: 'lift', title: 'Paired lift' },
           ] },
-          { date: localDate(1), day: 'Thu', sessions: [{ id: 'future-rest', kind: 'rest' }] },
+          { date: localDate(1), day: 'Thu', sessions: [{ kind: 'rest' }] },
         ],
       }],
     };
     activePlan = hybridPlan;
-    const identifiedHybrid = planSchema.withRemovalSessionIdentities(hybridPlan, { assignmentStart: localDate(-1) });
+    const identifiedHybrid = planSchema.visiblePlanForAssignment(hybridPlan, {
+      week_start: localDate(-1),
+      progress_json: {},
+    });
     const pairedDay = identifiedHybrid.weeks[0].days[0];
     const pairedRunId = planSchema.sessionIdentifier(pairedDay, pairedDay.sessions[0], 0, 0);
     const pairedLiftId = planSchema.sessionIdentifier(pairedDay, pairedDay.sessions[1], 1, 0);
@@ -313,17 +494,6 @@ async function assertScheduledWorkoutRoute() {
     const respondHandler = respondLayer?.route?.stack?.at(-1)?.handle;
     assert.equal(typeof currentHandler, 'function');
     assert.equal(typeof respondHandler, 'function');
-
-    const invokeHandler = async (routeHandler, request) => {
-      let statusCode = 200;
-      let payload = null;
-      const routeResponse = {
-        status(code) { statusCode = code; return this; },
-        json(value) { payload = value; return this; },
-      };
-      await routeHandler({ user: { id: 'owner' }, headers: {}, query: {}, body: {}, ...request }, routeResponse);
-      return { statusCode, payload };
-    };
 
     response = await invokeHandler(currentHandler, {
       query: { date: localDate(0), hour: 21, timezone: 'UTC' },
@@ -344,7 +514,7 @@ async function assertScheduledWorkoutRoute() {
     assert.match(response.payload.error, /planned hybrid session changed/i);
     assert.equal(updateCount, 0, 'crafted response cannot move or update a removed lift');
     const servedAgain = planSchema.withoutRemovedSessions(identifiedHybrid, [pairedLiftRemovalId]);
-    assert.deepEqual(servedAgain.weeks[0].days[0].sessions.map((session) => session.id), ['paired-run'],
+    assert.deepEqual(servedAgain.weeks[0].days[0].sessions.map((session) => session.id), [pairedRunId],
       'refetch remains filtered after rejected reconciliation');
 
     const reschedulePlan = {
@@ -354,25 +524,29 @@ async function assertScheduledWorkoutRoute() {
         week: 1,
         startDate: localDate(-1),
         days: [
-          { date: localDate(-1), day: 'Tue', sessions: [{ id: 'removed-missed-run', kind: 'run' }] },
+          { date: localDate(-1), day: 'Tue', sessions: [{ kind: 'run' }] },
           { date: localDate(0), day: 'Wed', sessions: [{ kind: 'rest' }] },
         ],
       }],
     };
     activePlan = reschedulePlan;
-    const identifiedReschedule = planSchema.withRemovalSessionIdentities(reschedulePlan, { assignmentStart: localDate(-1) });
+    const identifiedReschedule = planSchema.visiblePlanForAssignment(reschedulePlan, {
+      week_start: localDate(-1),
+      progress_json: {},
+    });
     const removedMissed = identifiedReschedule.weeks[0].days[0].sessions[0];
     reset({ removedSessionIds: [removedMissed.removal_session_id] });
     const rescheduleLayer = plansRouter.stack.find((item) => item.route?.path === '/reschedule-missed' && item.route?.methods?.post);
     const rescheduleHandler = rescheduleLayer?.route?.stack?.at(-1)?.handle;
     assert.equal(typeof rescheduleHandler, 'function');
     response = await invokeHandler(rescheduleHandler, {
-      body: { sessionId: 'removed-missed-run', targetDate: localDate(0) },
+      body: { sessionId: removedMissed.id, targetDate: localDate(0) },
     });
     assert.equal(response.statusCode, 404);
     assert.match(response.payload.error, /session not found/i);
     assert.equal(updateCount, 0, 'stale client cannot move a removed missed run');
-    assert.equal(activePlan.weeks[0].days[0].sessions[0].id, 'removed-missed-run', 'immutable source plan is unchanged');
+    assert.equal(activePlan.weeks[0].days[0].sessions[0].id, removedMissed.id,
+      'historical source was normalized but the removed missed run was not moved');
   } finally {
     delete require.cache[plansRoutePath];
     if (originalPlans) require.cache[plansRoutePath] = originalPlans;

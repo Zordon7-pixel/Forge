@@ -1190,7 +1190,10 @@ async function getAssignedPlanForMutation(userId, tx, options = {}) {
       FOR UPDATE OF tp
     `, [assignment.plan_id, assignment.user_plan_id, userId]);
     if (!plan) return null;
-    return { source: 'assigned', row: { ...plan, ...assignment, id: plan.id } };
+    const active = { source: 'assigned', row: { ...plan, ...assignment, id: plan.id } };
+    return options.normalizePersistedIdentities === false
+      ? active
+      : normalizeActivePlanIdentitiesForMutation(active, userId, tx);
   }
 
   return null;
@@ -1207,7 +1210,11 @@ async function getActivePlanForMutation(userId, tx, options = {}) {
     LIMIT 1
     FOR UPDATE
   `, [userId]);
-  return legacy ? { source: 'legacy', row: legacy } : null;
+  if (!legacy) return null;
+  const active = { source: 'legacy', row: legacy };
+  return options.normalizePersistedIdentities === false
+    ? active
+    : normalizeActivePlanIdentitiesForMutation(active, userId, tx);
 }
 
 async function ensureWritablePlan(active, userId, tx) {
@@ -1228,20 +1235,61 @@ async function ensureWritablePlan(active, userId, tx) {
     );
     if (repointResult.changes === 0) throw new Error('Active plan repoint failed');
     active.row.id = cloneId;
+    active.row.plan_id = cloneId;
     active.row.user_id = userId;
   }
   return active.row.id;
 }
 
-async function updateActivePlanData(active, userId, planJson, tx) {
-  const validatedPlan = assertPersistablePlan(planJson);
+async function normalizeActivePlanIdentitiesForMutation(active, userId, tx) {
+  const parsed = parsePlan(active?.row);
+  if (!parsed) return active;
+  const normalized = planSchema.normalizePersistedPlanIdentities(parsed, active.row);
+  if (!normalized.changed) return active;
+
+  const validatedPlan = assertPersistablePlan(normalized.plan);
   const planId = await ensureWritablePlan(active, userId, tx);
   const serialized = JSON.stringify(validatedPlan);
-  const result = active.source === 'assigned'
+  const writesPlanData = active.source === 'assigned' || active.row.plan_data != null;
+  const planResult = writesPlanData
+    ? await tx.run('UPDATE training_plans SET plan_data=? WHERE id=? AND user_id=?', [serialized, planId, userId])
+    : await tx.run('UPDATE training_plans SET plan_json=? WHERE id=? AND user_id=?', [serialized, planId, userId]);
+  if (planResult.changes === 0) throw new Error('Historical plan identity backfill failed');
+
+  if (active.source === 'assigned') {
+    const progressJson = JSON.stringify(normalized.progress);
+    const assignmentResult = await tx.run(
+      'UPDATE user_plans SET progress_json=?, plan_version=plan_version+1 WHERE id=? AND user_id=?',
+      [progressJson, active.row.user_plan_id, userId]
+    );
+    if (assignmentResult.changes === 0) throw new Error('Historical plan assignment backfill failed');
+    active.row.progress_json = progressJson;
+    active.row.plan_version = Number(active.row.plan_version || 1) + 1;
+  }
+  if (writesPlanData) active.row.plan_data = validatedPlan;
+  else active.row.plan_json = validatedPlan;
+  return active;
+}
+
+async function updateActivePlanData(active, userId, planJson, tx) {
+  const normalized = planSchema.normalizePersistedPlanIdentities(planJson, active.row);
+  const validatedPlan = assertPersistablePlan(normalized.plan);
+  const planId = await ensureWritablePlan(active, userId, tx);
+  const serialized = JSON.stringify(validatedPlan);
+  const writesPlanData = active.source === 'assigned' || active.row.plan_data != null;
+  const result = writesPlanData
     ? await tx.run('UPDATE training_plans SET plan_data=? WHERE id=? AND user_id=?', [serialized, planId, userId])
     : await tx.run('UPDATE training_plans SET plan_json=? WHERE id=? AND user_id=?', [serialized, planId, userId]);
   if (result.changes === 0) throw new Error('Active plan update failed');
   if (active.source === 'assigned') {
+    if (normalized.progressChanged) {
+      const progressResult = await tx.run(
+        'UPDATE user_plans SET progress_json=? WHERE id=? AND user_id=?',
+        [JSON.stringify(normalized.progress), active.row.user_plan_id, userId]
+      );
+      if (progressResult.changes === 0) throw new Error('Active plan progress remap failed');
+      active.row.progress_json = JSON.stringify(normalized.progress);
+    }
     const versionResult = await tx.run(
       'UPDATE user_plans SET plan_version=plan_version+1 WHERE id=? AND user_id=?',
       [active.row.user_plan_id, userId]
@@ -1249,6 +1297,8 @@ async function updateActivePlanData(active, userId, planJson, tx) {
     if (versionResult.changes === 0) throw new Error('Active plan version update failed');
     active.row.plan_version = Number(active.row.plan_version || 1) + 1;
   }
+  if (writesPlanData) active.row.plan_data = validatedPlan;
+  else active.row.plan_json = validatedPlan;
   return planId;
 }
 
@@ -1975,7 +2025,10 @@ function raceRemovalImpact(plan = {}, raceId) {
 }
 
 async function raceRemovalImpactForUser(userId, raceId, tx) {
-  const active = await getActivePlanForMutation(userId, tx, { includeFuture: true });
+  const active = await getActivePlanForMutation(userId, tx, {
+    includeFuture: true,
+    normalizePersistedIdentities: false,
+  });
   return active ? raceRemovalImpact(parsePlan(active.row) || {}, raceId) : { linked: false, remainingRaceIds: [] };
 }
 
@@ -2128,6 +2181,7 @@ async function applyPlanCandidate(userId, candidateId, body = {}, constraints = 
     const active = current.active ? await getActivePlanForMutation(userId, tx, {
       includeFuture: true,
       planningDateLocal: clock.planningDateLocal,
+      normalizePersistedIdentities: false,
     }) : null;
     if (!sameCapturedActivePlan(row, active)) {
       return planningInputUnchanged({ status: 409, error: 'Active plan changed. Preview again.', code: 'CANDIDATE_STALE' });
@@ -3409,6 +3463,14 @@ router.put('/my/progress', auth, async (req, res) => {
         }
       }
 
+      if (legacyPlanId) {
+        const legacyActive = await normalizeActivePlanIdentitiesForMutation({
+          source: 'legacy',
+          row: { ...row, id: legacyPlanId, user_id: req.user.id },
+        }, req.user.id, tx);
+        row.plan_data = legacyActive.row.plan_data;
+        row.plan_json = legacyActive.row.plan_json;
+      }
       const parsed = parsePlan(row);
       const visiblePlan = planWithoutRemovedSessions(parsed, parseJsonValue(row.progress_json, {}), row);
       const sessionIds = dailyExecution.collectSessionIds(visiblePlan);
@@ -4217,6 +4279,9 @@ router._test = {
   candidateEffectiveFrom,
   getActivePlanForMutation,
   getActivePlanForUser,
+  normalizeActivePlanIdentitiesForMutation,
+  planVersionFor,
+  updateActivePlanData,
   getTimezoneOffsetFromRequest,
   deleteOwnedRaceForCandidate,
   pruneExpiredPlanCandidates,
