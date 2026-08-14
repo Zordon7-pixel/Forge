@@ -12,7 +12,9 @@ const {
   normalizeReasonCode,
 } = require('./goalBackwardContracts');
 const { resolveStressVector } = require('./goalBackwardLoad');
+const { buildCanonicalMaterialTarget } = require('./goalBackwardTargets');
 const { canonicalStringify, canonicalHash } = require('./racePlanPolicy');
+const planSchema = require('./planSchema');
 
 const SESSION_ROLE_SET = new Set(CANONICAL_SESSION_ROLES);
 const WORKOUT_FAMILY_SET = new Set(CANONICAL_WORKOUT_FAMILIES);
@@ -86,6 +88,9 @@ const HASH_OMITTED_FIELDS = new Set([
 const TOP_LEVEL_ADAPTER_FIELDS = new Set([
   'id', 'kind', 'type', 'workout_type', 'distance_miles', 'duration_min', 'pace_target',
   'target_zone', 'intensity', 'description', 'prescriptionIntegrityAdjusted',
+  'workout_id', 'prescription_basis', 'durationIsEstimated', 'duration_is_estimate',
+  'distance_is_estimate', 'warmup', 'main', 'exercises', 'recovery', 'cooldown',
+  'progression', 'structure', 'focus', 'purpose', 'evidence_refs',
 ]);
 
 function isPlainObject(value) {
@@ -600,10 +605,449 @@ function buildCanonicalSession(input = {}) {
   return deepFreeze(session);
 }
 
+const ROAD_GENERAL_FAMILIES = new Set([
+  'rest', 'mobility', 'manual_recovery', 'recovery_run', 'easy_run', 'long_aerobic',
+  'steady_run', 'threshold_run', 'interval_run', 'race_rhythm_run', 'race', 'assessment',
+]);
+const QUALITY_RUN_FAMILIES = new Set(['threshold_run', 'interval_run', 'race_rhythm_run']);
+const PHASE_REASON_CODES = Object.freeze({
+  FOUNDATION: 'FOUNDATION_ENTRY',
+  DEVELOPMENT: 'DEVELOPMENT_ENTRY',
+  EVENT_SPECIFIC_DEVELOPMENT: 'EVENT_SPECIFIC_ENTRY',
+  SHARPENING: 'SHARPENING_ENTRY',
+  TAPER_RACE_WEEK: 'TAPER_ENTRY',
+  POST_RACE_TRANSITION: 'POST_RACE_TRANSITION',
+});
+const FAMILY_TITLES = Object.freeze({
+  rest: 'Rest',
+  mobility: 'Mobility',
+  manual_recovery: 'Recovery',
+  recovery_run: 'Recovery run',
+  easy_run: 'Easy aerobic run',
+  long_aerobic: 'Long aerobic run',
+  steady_run: 'Steady run',
+  threshold_run: 'Threshold intervals',
+  interval_run: 'Intervals',
+  race_rhythm_run: 'Race-rhythm intervals',
+  race: 'Race',
+  assessment: 'Assessment',
+});
+
+function boundedInteger(value, minimum = 0) {
+  if (value === null || value === undefined || (typeof value === 'string' && value.trim() === '')) return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric >= minimum ? Math.round(numeric) : null;
+}
+
+function parseDurationSeconds(value) {
+  if (value === null || value === undefined || (typeof value === 'string' && value.trim() === '')) return null;
+  if (Number.isFinite(Number(value))) return Math.max(0, Math.round(Number(value)));
+  const raw = String(value || '').toLowerCase();
+  const match = raw.match(/(\d+(?:\.\d+)?)\s*(seconds?|secs?|sec|s|minutes?|mins?|min|m)(?:\b|\s)/);
+  if (!match) return null;
+  const amount = Number(match[1]);
+  const seconds = match[2].startsWith('m') ? amount * 60 : amount;
+  const multiplier = raw.match(/(\d+)\s*[x×]\s*\d/)?.[1];
+  return Math.round(seconds * (multiplier ? Number(multiplier) : 1));
+}
+
+function durationMinutesToSeconds(value) {
+  if (value === null || value === undefined || (typeof value === 'string' && value.trim() === '')) return null;
+  const minutes = Number(value);
+  return Number.isFinite(minutes) && minutes >= 0 ? Math.round(minutes * 60) : null;
+}
+
+function prescribedDurationSeconds(source = {}) {
+  const direct = boundedInteger(source.duration_s);
+  return direct !== null ? direct : durationMinutesToSeconds(source.duration_min);
+}
+
+function sumDurationSeconds(values) {
+  return (Array.isArray(values) ? values : [values]).reduce((sum, value) => (
+    sum + (parseDurationSeconds(value) || 0)
+  ), 0);
+}
+
+function evidenceIdsForMaterial(source, decision) {
+  const entries = [source?.evidence_refs, source?.evidence_ids, decision?.evidence_used]
+    .flatMap((value) => Array.isArray(value) ? value : [])
+    .map((entry) => typeof entry === 'string' ? entry : entry?.evidence_id ?? entry?.id)
+    .map((value) => String(value || '').trim())
+    .filter(Boolean);
+  return [...new Set(entries)].sort();
+}
+
+function targetForStep({ family, durationS = null, distanceM = null, repetitions = null, input, source }) {
+  const targetFamily = family === 'assessment' ? 'interval_run' : family;
+  const sourceEvidenceIds = evidenceIdsForMaterial(source, input.decision);
+  const result = buildCanonicalMaterialTarget({
+    ...(input.target_context || {}),
+    workout_family: targetFamily,
+    duration_s: boundedInteger(durationS),
+    distance_m: boundedInteger(distanceM),
+    repetitions: boundedInteger(repetitions),
+    decision_id: input.decision.decision_id,
+    planning_instant: input.planning_instant,
+    source_evidence_ids: sourceEvidenceIds,
+    derived_athlete_state_field: sourceEvidenceIds.length
+      ? 'candidate_material.prescribed_dosage'
+      : 'UNKNOWN_LEGACY_CANDIDATE_DOSAGE',
+  });
+  if (!result.valid) {
+    const error = new Error(`Canonical target failed for ${family}`);
+    error.code = 'CANONICAL_TARGET_UNAVAILABLE';
+    error.details = result.violations || result.reason_codes;
+    throw error;
+  }
+  return { target: result.target, provenance: result.provenance };
+}
+
+function step(id, type, order, targetResult, extra = {}) {
+  return {
+    step_id: id,
+    type,
+    order,
+    target: targetResult?.target || {},
+    provenance: targetResult?.provenance || [],
+    ...extra,
+  };
+}
+
+function minimumRunDurationSeconds(family, input) {
+  const age = String(input.training_age_class || '').toUpperCase();
+  if (family === 'recovery_run') {
+    return age === 'BEGINNER' || Number(input.recent_normal_running_minutes_per_week) < 60 ? 15 * 60 : 20 * 60;
+  }
+  if (family === 'easy_run') return ['BEGINNER', 'RETURNING'].includes(age) ? 20 * 60 : 25 * 60;
+  if (family === 'long_aerobic') {
+    return Math.max(30 * 60, Math.round(Number(input.median_ordinary_easy_duration_min || 30) * 1.5 * 60));
+  }
+  return 20 * 60;
+}
+
+function prescribedDistanceMeters(source = {}) {
+  const direct = boundedInteger(source.distance_m);
+  if (direct !== null && source.distance_is_estimate !== true) return direct;
+  if (source.distance_miles === null || source.distance_miles === undefined
+    || (typeof source.distance_miles === 'string' && source.distance_miles.trim() === '')) return null;
+  const miles = Number(source.distance_miles);
+  if (Number.isFinite(miles) && miles >= 0 && source.distance_is_estimate !== true) return Math.round(miles * 1609.344);
+  return null;
+}
+
+function materializeQualityRunSteps(family, source, input) {
+  const quality = source.quality_prescription || {};
+  const repetitions = Math.max(1, boundedInteger(quality.repetitions ?? source.repetitions, 1) || 1);
+  const qualityWorkDuration = durationMinutesToSeconds(source.quality_work_duration_min);
+  const workSeconds = parseDurationSeconds(quality.work)
+    || boundedInteger(qualityWorkDuration !== null ? qualityWorkDuration / repetitions : null)
+    || (8 * 60);
+  const recoverySeconds = parseDurationSeconds(quality.recovery?.duration ?? quality.recovery) || 0;
+  const warmupSeconds = sumDurationSeconds(source.warmup) || (10 * 60);
+  const parsedCooldown = sumDurationSeconds(source.cooldown) || (10 * 60);
+  const totalDuration = prescribedDurationSeconds(source);
+  const repeatBodySeconds = repetitions > 1 ? ((repetitions - 1) * (workSeconds + recoverySeconds)) : 0;
+  const beforeCooldown = warmupSeconds + repeatBodySeconds + workSeconds;
+  const cooldownSeconds = totalDuration !== null && totalDuration >= beforeCooldown
+    ? totalDuration - beforeCooldown
+    : parsedCooldown;
+  const steps = [];
+  steps.push(step(
+    `${input.session_id}-warmup`,
+    'warmup',
+    steps.length + 1,
+    targetForStep({ family: 'easy_run', durationS: warmupSeconds, input, source }),
+  ));
+  if (repetitions > 1) {
+    const children = [step(
+      `${input.session_id}-work-repeat`,
+      'interval',
+      1,
+      targetForStep({ family, durationS: workSeconds, input, source }),
+      { workout_family: family, step_role: 'WORK' },
+    )];
+    if (recoverySeconds > 0) children.push(step(
+      `${input.session_id}-recovery-repeat`,
+      'recovery',
+      2,
+      targetForStep({ family: 'recovery_run', durationS: recoverySeconds, input, source }),
+    ));
+    steps.push(step(`${input.session_id}-repeat`, 'repeat', steps.length + 1, null, {
+      repeat_count: repetitions - 1,
+      children,
+    }));
+  }
+  steps.push(step(
+    `${input.session_id}-work-final`,
+    'interval',
+    steps.length + 1,
+    targetForStep({ family, durationS: workSeconds, input, source }),
+    { workout_family: family, step_role: 'WORK' },
+  ));
+  if (cooldownSeconds > 0) steps.push(step(
+    `${input.session_id}-cooldown`,
+    'cooldown',
+    steps.length + 1,
+    targetForStep({ family: 'easy_run', durationS: cooldownSeconds, input, source }),
+  ));
+  return steps;
+}
+
+function materializeRoadGeneralSteps(family, source, input) {
+  if (!ROAD_GENERAL_FAMILIES.has(family)) {
+    const error = new Error(`Workout family ${family} is not materialized in Phase 2B-2`);
+    error.code = 'WORKOUT_FAMILY_UNRESOLVED';
+    throw error;
+  }
+  if (family === 'rest') return [];
+  const duration = prescribedDurationSeconds(source);
+  if (family === 'mobility') {
+    return [step(`${input.session_id}-mobility`, 'mobility', 1, targetForStep({
+      family: 'easy_run', durationS: duration ?? 20 * 60, input, source,
+    }))];
+  }
+  if (family === 'manual_recovery') {
+    return [step(`${input.session_id}-manual-recovery`, 'manual_instruction', 1, targetForStep({
+      family: 'recovery_run', durationS: duration ?? 20 * 60, input, source,
+    }))];
+  }
+  if (QUALITY_RUN_FAMILIES.has(family)) return materializeQualityRunSteps(family, source, input);
+  const contributorFamily = family === 'assessment' ? 'interval_run' : family;
+  const distance = prescribedDistanceMeters(source);
+  const effectiveDuration = duration ?? (distance === null ? minimumRunDurationSeconds(family, input) : null);
+  const target = targetForStep({
+    family: contributorFamily,
+    durationS: effectiveDuration,
+    distanceM: distance,
+    input,
+    source,
+  });
+  return [step(`${input.session_id}-work`, 'run', 1, target, {
+    workout_family: contributorFamily,
+    step_role: 'WORK',
+  })];
+}
+
+function sourceMaterialFor(candidate, skeleton) {
+  const materials = Array.isArray(candidate.candidate_material) ? candidate.candidate_material : [];
+  const material = materials.find((entry) => String(entry.material_id) === String(skeleton.candidate_material_id));
+  return clone(material?.source_session || material || skeleton) || {};
+}
+
+function nextSessionRevision(input, skeleton) {
+  if (typeof input.session_revision === 'function') return input.session_revision(skeleton);
+  if (positiveRevision(input.session_revision)) return input.session_revision;
+  const activeSessions = Array.isArray(input.active_applied_plan?.sessions)
+    ? input.active_applied_plan.sessions
+    : (input.active_applied_plan?.weeks || []).flatMap((week) => (
+      (week.days || week.sessions || []).flatMap((day) => Array.isArray(day.sessions) ? day.sessions : [day])
+    ));
+  const active = activeSessions.find((session) => String(session.session_id ?? session.id) === String(skeleton.session_id));
+  return active && positiveRevision(active.session_revision) ? active.session_revision + 1 : 1;
+}
+
+function materializeCanonicalSession(input = {}) {
+  const decision = input.decision || {};
+  const skeleton = input.skeleton || {};
+  const source = input.source || sourceMaterialFor(input.candidate || {}, skeleton);
+  const family = String(skeleton.workout_family || '');
+  const planRevision = positiveRevision(input.plan_revision)
+    ? input.plan_revision
+    : Math.max(1, Number(decision.plan_revision || 0) + 1);
+  const planId = String(input.plan_id || `candidate-plan-${String(decision.decision_hash || canonicalHash(decision)).slice(0, 24)}`);
+  const sessionId = String(skeleton.session_id || skeleton.skeleton_session_id || source.session_id || source.id || '');
+  const materializationInput = { ...input, decision, session_id: sessionId };
+  const steps = materializeRoadGeneralSteps(family, source, materializationInput);
+  const phaseReason = PHASE_REASON_CODES[decision.phase];
+  const sourceReasons = Array.isArray(source.reason_codes) ? source.reason_codes : [];
+  const purposeReasonCodes = [...new Set([phaseReason, ...sourceReasons]
+    .map((code) => normalizeReasonCode(code)).filter(Boolean))];
+  const canonical = buildCanonicalSession({
+    session_id: sessionId,
+    session_revision: nextSessionRevision(input, skeleton),
+    plan_id: planId,
+    plan_revision: planRevision,
+    decision_id: String(decision.decision_id || ''),
+    goal_ids: [...new Set((decision.active_goals || []).map((goal) => String(goal.goal_id)).filter(Boolean))],
+    phase: decision.phase,
+    role: String(skeleton.role || '').toUpperCase(),
+    workout_family: family,
+    title: String(source.title || FAMILY_TITLES[family] || family),
+    purpose_reason_codes: purposeReasonCodes,
+    scheduled_local_date: skeleton.scheduled_local_date,
+    timezone: String(input.timezone || decision.timezone || 'UTC'),
+    steps,
+    success_criteria: ['Complete the canonical work as prescribed.'],
+    adjustment_criteria: ['Use the recorded adjustment and safety criteria when needed.'],
+    stop_criteria: ['Stop when a recorded safety ceiling is reached.'],
+    requirement_id: skeleton.requirement_id,
+    supports_requirement_id: skeleton.supports_requirement_id || undefined,
+    supports_session_id: skeleton.supports_session_id || undefined,
+    limiter_id: skeleton.limiter_id || undefined,
+    safety_scope: clone(decision.safety_state?.scope || []),
+    executability: ['NORMAL', 'MONITOR'].includes(String(decision.safety_state?.action || 'NORMAL').toUpperCase())
+      ? 'EXECUTABLE' : 'RESTRICTED',
+    event_kind: decision.active_goals?.[0]?.event_kind,
+  });
+  const adapted = planSchema.normalizeSession({
+    ...canonical,
+    workout_id: source.workout_id,
+    prescription_basis: source.prescription_basis,
+    distance_miles: source.distance_miles === null || source.distance_miles === undefined
+      || (typeof source.distance_miles === 'string' && source.distance_miles.trim() === '')
+      ? undefined
+      : (Number.isFinite(Number(source.distance_miles)) && Number(source.distance_miles) >= 0
+        ? Number(source.distance_miles)
+        : undefined),
+    distance_is_estimate: source.distance_is_estimate,
+    durationIsEstimated: source.durationIsEstimated,
+    target_zone: source.target_zone,
+    pace_target: source.pace_target,
+    intensity: source.intensity,
+    description: source.description,
+  }, sessionId);
+  assertCanonicalSession(adapted);
+  return deepFreeze(adapted);
+}
+
+function aggregateSessionTotals(sessions = []) {
+  return sessions.reduce((totals, session) => {
+    addTotals(totals, session.derived_totals || emptyTotals());
+    return totals;
+  }, emptyTotals());
+}
+
+function canonicalSessionSetHash(sessionSet = {}) {
+  const content = { ...clone(sessionSet) };
+  delete content.content_hash;
+  // Candidate identity includes this session-set hash. Excluding the reciprocal
+  // candidate hash avoids a circular digest while the persisted artifact binds both.
+  delete content.candidate_hash;
+  return canonicalHash(content);
+}
+
+function validateCanonicalSessionSet(sessionSet = {}) {
+  const violations = [];
+  if (!isPlainObject(sessionSet)) {
+    return deepFreeze({ valid: false, violations: [{ code: 'CANONICAL_SESSION_SET_INVALID', reason: 'SET_NOT_OBJECT' }], reason_codes: ['CANONICAL_SESSION_SET_INVALID'] });
+  }
+  if (sessionSet.canonical_workout_schema_version !== CANONICAL_WORKOUT_SCHEMA_VERSION) {
+    violations.push({ code: 'CANONICAL_SESSION_SET_INVALID', reason: 'SCHEMA_VERSION_MISMATCH' });
+  }
+  for (const field of ['plan_id', 'decision_id', 'candidate_id']) {
+    if (!nonEmptyString(sessionSet[field])) violations.push({ code: 'CANONICAL_SESSION_SET_INVALID', reason: `${field.toUpperCase()}_INVALID` });
+  }
+  if (!positiveRevision(sessionSet.plan_revision)) violations.push({ code: 'CANONICAL_SESSION_SET_INVALID', reason: 'PLAN_REVISION_INVALID' });
+  for (const field of ['decision_hash', 'candidate_hash']) {
+    if (!/^[a-f0-9]{64}$/.test(String(sessionSet[field] || ''))) {
+      violations.push({ code: 'CANONICAL_SESSION_SET_INVALID', reason: `${field.toUpperCase()}_INVALID` });
+    }
+  }
+  if (!/^[a-f0-9]{64}$/.test(String(sessionSet.candidate_skeleton_hash || ''))) {
+    violations.push({ code: 'CANONICAL_SESSION_SET_INVALID', reason: 'CANDIDATE_SKELETON_HASH_INVALID' });
+  }
+  if (!/^[a-f0-9]{64}$/.test(String(sessionSet.material_change_baseline_binding_hash || ''))) {
+    violations.push({ code: 'CANONICAL_SESSION_SET_INVALID', reason: 'MATERIAL_BASELINE_BINDING_HASH_INVALID' });
+  }
+  const sessions = Array.isArray(sessionSet.sessions) ? sessionSet.sessions : [];
+  if (!Array.isArray(sessionSet.sessions) || !sessions.length) {
+    violations.push({ code: 'CANONICAL_SESSION_SET_INVALID', reason: 'SESSIONS_REQUIRED' });
+  }
+  const seenIds = new Set();
+  sessions.forEach((session, index) => {
+    const id = String(session?.session_id || '');
+    if (seenIds.has(id)) violations.push({ code: 'CANONICAL_SESSION_SET_INVALID', reason: 'DUPLICATE_SESSION_ID', session_id: id });
+    seenIds.add(id);
+    const result = validateCanonicalSession(session);
+    if (!result.valid) violations.push({ code: 'CANONICAL_SESSION_SET_INVALID', reason: 'SESSION_INVALID', session_index: index, details: result.violations });
+    if (session?.plan_id !== sessionSet.plan_id) violations.push({ code: 'CANONICAL_SESSION_SET_INVALID', reason: 'PLAN_ID_MISMATCH', session_id: id });
+    if (session?.plan_revision !== sessionSet.plan_revision) violations.push({ code: 'CANONICAL_SESSION_SET_INVALID', reason: 'PLAN_REVISION_MISMATCH', session_id: id });
+    if (session?.decision_id !== sessionSet.decision_id) violations.push({ code: 'CANONICAL_SESSION_SET_INVALID', reason: 'DECISION_ID_MISMATCH', session_id: id });
+  });
+  const totals = aggregateSessionTotals(sessions);
+  if (canonicalStringify(sessionSet.derived_totals) !== canonicalStringify(totals)) {
+    violations.push({ code: 'CANONICAL_SESSION_SET_INVALID', reason: 'SESSION_SET_TOTAL_MISMATCH', derived_totals: totals });
+  }
+  const hashes = sessions.map((session) => ({ session_id: session.session_id, content_hash: session.content_hash }));
+  if (canonicalStringify(sessionSet.session_content_hashes) !== canonicalStringify(hashes)) {
+    violations.push({ code: 'CANONICAL_SESSION_SET_INVALID', reason: 'SESSION_HASH_BINDING_MISMATCH' });
+  }
+  if (!/^[a-f0-9]{64}$/.test(String(sessionSet.content_hash || ''))
+    || sessionSet.content_hash !== canonicalSessionSetHash(sessionSet)) {
+    violations.push({ code: 'CANONICAL_SESSION_SET_INVALID', reason: 'CONTENT_HASH_MISMATCH' });
+  }
+  const expectedCandidateHash = canonicalHash({
+    candidate_skeleton_hash: sessionSet.candidate_skeleton_hash,
+    canonical_session_set_hash: sessionSet.content_hash,
+  });
+  if (sessionSet.candidate_hash !== expectedCandidateHash) {
+    violations.push({ code: 'CANONICAL_SESSION_SET_INVALID', reason: 'CANDIDATE_HASH_BINDING_MISMATCH' });
+  }
+  return deepFreeze({
+    valid: violations.length === 0,
+    violations,
+    reason_codes: violations.length ? ['CANONICAL_SESSION_SET_INVALID'] : [],
+    derived_totals: totals,
+  });
+}
+
+function materializeCanonicalSessionSet(input = {}) {
+  const decision = input.decision || {};
+  const candidate = input.candidate || {};
+  const planRevision = positiveRevision(input.plan_revision)
+    ? input.plan_revision
+    : Math.max(1, Number(decision.plan_revision || 0) + 1);
+  const planId = String(input.plan_id || `candidate-plan-${String(decision.decision_hash || canonicalHash(decision)).slice(0, 24)}`);
+  const sessions = (candidate.sessions || []).map((skeleton) => materializeCanonicalSession({
+    ...input,
+    decision,
+    candidate,
+    skeleton,
+    source: sourceMaterialFor(candidate, skeleton),
+    plan_id: planId,
+    plan_revision: planRevision,
+  }));
+  const set = {
+    canonical_workout_schema_version: CANONICAL_WORKOUT_SCHEMA_VERSION,
+    canonical_sessions_materialized: true,
+    plan_id: planId,
+    plan_revision: planRevision,
+    decision_id: String(decision.decision_id || ''),
+    decision_hash: String(decision.decision_hash || ''),
+    candidate_id: String(candidate.candidate_skeleton_id || candidate.candidate_id || ''),
+    candidate_skeleton_hash: String(candidate.candidate_skeleton_hash || candidate.candidate_hash || canonicalHash(candidate)),
+    candidate_hash: '',
+    material_change_baseline_binding_hash: canonicalHash({
+      material_change_baseline: candidate.material_change?.material_change_baseline ?? null,
+      baseline_plan_revision: candidate.material_change?.baseline_plan_revision ?? null,
+      active_prescription_hash: candidate.material_change?.active_prescription_hash ?? null,
+      baseline_session_bindings: candidate.material_change?.baseline_session_bindings ?? [],
+    }),
+    sessions,
+    session_content_hashes: sessions.map((session) => ({ session_id: session.session_id, content_hash: session.content_hash })),
+    derived_totals: aggregateSessionTotals(sessions),
+  };
+  set.content_hash = canonicalSessionSetHash(set);
+  set.candidate_hash = canonicalHash({
+    candidate_skeleton_hash: set.candidate_skeleton_hash,
+    canonical_session_set_hash: set.content_hash,
+  });
+  const validation = validateCanonicalSessionSet(set);
+  if (!validation.valid) {
+    const error = new Error(`Canonical session set failed validation: ${validation.violations[0].reason}`);
+    error.code = 'INVALID_CANONICAL_SESSION_SET';
+    error.status = 422;
+    error.details = validation.violations;
+    throw error;
+  }
+  return deepFreeze(set);
+}
+
 module.exports = {
   TARGET_FIELD_UNITS,
   assertCanonicalSession,
   buildCanonicalSession,
+  canonicalSessionSetHash,
   canonicalWorkoutHash,
   deriveAssessmentStressVector: (steps) => resolveStressVector('assessment', {
     contributing_work_families: contributingFamilies(steps),
@@ -613,8 +1057,11 @@ module.exports = {
   deriveStressVector,
   deriveWorkoutFamily,
   flattenSteps,
+  materializeCanonicalSession,
+  materializeCanonicalSessionSet,
   targetProvenanceFromSteps,
   validateCanonicalSession,
+  validateCanonicalSessionSet,
   validateCanonicalWorkoutSession: validateCanonicalSession,
   validateCanonicalWorkout: validateCanonicalSession,
   validateDerivedTotals,

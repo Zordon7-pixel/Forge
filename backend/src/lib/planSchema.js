@@ -268,6 +268,13 @@ function sessionIdentifier(dayEntry, session, sessionIndex = 0, dayIndex = 0) {
   return `${anchor}-${kindFromSession(s)}-${sessionIndex}`;
 }
 
+function canonicalTargetHasField(steps, field) {
+  return (Array.isArray(steps) ? steps : []).some((entry) => (
+    Boolean(entry?.target && Object.hasOwn(entry.target, field))
+    || canonicalTargetHasField(entry?.children, field)
+  ));
+}
+
 function normalizeSession(session, fallbackId) {
   const s = session || {};
   const kind = kindFromSession(s);
@@ -282,6 +289,8 @@ function normalizeSession(session, fallbackId) {
   const totals = canonical && s.derived_totals && typeof s.derived_totals === 'object'
     ? s.derived_totals
     : {};
+  const hasCanonicalDistance = canonical && canonicalTargetHasField(s.steps, 'distance_m');
+  const hasCanonicalDuration = canonical && canonicalTargetHasField(s.steps, 'duration_s');
   const legacyType = canonical ? legacyTypeForCanonicalFamily(s.workout_family) : undefined;
   const legacyWorkoutType = canonical ? legacyWorkoutTypeForKind(kind) : undefined;
   return Object.assign(
@@ -296,8 +305,16 @@ function normalizeSession(session, fallbackId) {
       workout_type: s.workout_type ?? legacyWorkoutType,
       title: s.title,
       display_name: s.display_name ?? s.displayName,
-      distance_miles: s.distance_miles ?? (Number.isFinite(totals.distance_m) ? totals.distance_m / 1609.344 : undefined),
-      duration_min: s.duration_min ?? (Number.isFinite(totals.duration_s) ? totals.duration_s / 60 : undefined),
+      distance_miles: canonical
+        ? (hasCanonicalDistance
+          ? (s.distance_miles ?? (Number.isFinite(totals.distance_m) ? totals.distance_m / 1609.344 : undefined))
+          : undefined)
+        : s.distance_miles,
+      duration_min: canonical
+        ? (hasCanonicalDuration
+          ? (s.duration_min ?? (Number.isFinite(totals.duration_s) ? totals.duration_s / 60 : undefined))
+          : undefined)
+        : s.duration_min,
       description: s.description,
       pace_target: s.pace_target,
       target_zone: s.target_zone,
@@ -897,6 +914,46 @@ function toCanonicalDay(entry, sessions, sameDayRunLift) {
   return next;
 }
 
+function buildCanonicalPlanFromSessionSet(sessionSet, { currentPlan = null } = {}) {
+  if (!sessionSet || !Array.isArray(sessionSet.sessions)) return currentPlan;
+  const groupedByWeek = new Map();
+  for (const session of sessionSet.sessions) {
+    const date = dateOnly(session?.scheduled_local_date);
+    if (!date) continue;
+    const weekStart = mondayForDate(date);
+    if (!groupedByWeek.has(weekStart)) groupedByWeek.set(weekStart, new Map());
+    const days = groupedByWeek.get(weekStart);
+    if (!days.has(date)) days.set(date, []);
+    days.get(date).push(session);
+  }
+  const weeks = [...groupedByWeek.entries()].sort(([left], [right]) => left.localeCompare(right))
+    .map(([startDate, days], weekIndex) => ({
+      week: weekIndex + 1,
+      startDate,
+      days: [...days.entries()].sort(([left], [right]) => left.localeCompare(right))
+        .map(([date, sessions]) => toCanonicalDay(
+          { date, day: weekdayFromDate(date) },
+          sessions.slice().sort((left, right) => (
+            String(left.role || '').localeCompare(String(right.role || ''))
+            || String(left.session_id || '').localeCompare(String(right.session_id || ''))
+          )),
+        )),
+    }));
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    canonical_workout_schema_version: sessionSet.canonical_workout_schema_version,
+    plan_id: sessionSet.plan_id,
+    plan_revision: sessionSet.plan_revision,
+    decision_id: sessionSet.decision_id,
+    decision_hash: sessionSet.decision_hash,
+    selected_candidate_id: sessionSet.candidate_id,
+    selected_candidate_hash: sessionSet.candidate_hash,
+    canonical_session_set_hash: sessionSet.content_hash,
+    planMode: currentPlan?.planMode || PLAN_MODES.RUN_ONLY,
+    weeks,
+  };
+}
+
 module.exports = {
   SCHEMA_VERSION,
   PLAN_MODES,
@@ -935,6 +992,7 @@ module.exports = {
   isRestOverridePatch,
   isHardOrLongRun,
   buildLiftSession,
+  buildCanonicalPlanFromSessionSet,
   switchPlanMode,
   toCanonicalDay,
   weekdayFromDate,

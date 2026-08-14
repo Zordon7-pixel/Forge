@@ -627,6 +627,15 @@ function finalizeGoalBackwardCandidateDecision(decision, {
     selected_candidate_id: selectedCandidate?.candidate_skeleton_id || null,
     selected_candidate_hash: selectedCandidate?.candidate_hash || null,
     selected_candidate_ranking_tuple: clone(selectedCandidate?.ranking_tuple || null),
+    selected_plan_id: selectedCandidate?.canonical_session_set?.plan_id || null,
+    selected_plan_revision: selectedCandidate?.canonical_session_set?.plan_revision || null,
+    selected_canonical_session_set_hash: selectedCandidate?.canonical_session_set?.content_hash || null,
+    selected_session_bindings: (selectedCandidate?.canonical_sessions || []).map((session) => ({
+      session_id: session.session_id,
+      session_revision: session.session_revision,
+      content_hash: session.content_hash,
+    })),
+    selected_material_change: clone(selectedCandidate?.material_change || null),
     rejected_candidates: rejected,
     validator_results: validatorResults,
     candidate_enumeration: {

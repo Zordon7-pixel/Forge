@@ -13,7 +13,9 @@ const {
   buildCanonicalSession,
   canonicalWorkoutHash,
   deriveCanonicalTotals,
+  materializeCanonicalSessionSet,
   validateCanonicalSession,
+  validateCanonicalSessionSet,
 } = require('../src/lib/canonicalWorkout');
 const {
   attachValidatedExplanation,
@@ -248,6 +250,215 @@ test('FLOOR-02', 'easy, long, quality, HYROX, and strength floors use their exac
     session_id: 'strength-token', workout_family: 'strength_lower',
     steps: [{ type: 'strength_exercise', target: { sets: 2 } }],
   }).valid, false);
+});
+
+test('CANON-MATERIALIZE-01', 'every selected road/general role becomes a revision-bound canonical and legacy-compatible session', () => {
+  const set = materializeCanonicalSessionSet({
+    decision: {
+      decision_id: 'decision-materialized-1',
+      decision_hash: 'd'.repeat(64),
+      phase: 'DEVELOPMENT',
+      timezone: 'America/New_York',
+      plan_revision: 4,
+      active_goals: [{ goal_id: 'goal-materialized-1' }],
+      evidence_used: ['evidence-materialized-1'],
+    },
+    candidate: {
+      candidate_skeleton_id: 'candidate-materialized-1',
+      candidate_hash: 'c'.repeat(64),
+      sessions: [
+        {
+          session_id: 'quality-materialized-1', requirement_id: 'quality', role: 'PRIMARY_KEY',
+          workout_family: 'threshold_run', scheduled_local_date: '2026-08-18',
+          candidate_material_id: 'quality-material-1',
+        },
+        {
+          session_id: 'easy-materialized-1', requirement_id: 'easy', role: 'SUPPORTING',
+          supports_requirement_id: 'quality', workout_family: 'easy_run', scheduled_local_date: '2026-08-20',
+          candidate_material_id: 'easy-material-1',
+        },
+      ],
+      candidate_material: [
+        {
+          material_id: 'quality-material-1',
+          source_session: {
+            id: 'quality-materialized-1', kind: 'run', workout_id: 'tempo_threshold',
+            title: 'Threshold intervals', prescription_basis: 'time', duration_min: 50,
+            distance_miles: 6, distance_is_estimate: true,
+            quality_prescription: {
+              repetitions: 4, work: '5 min threshold',
+              recovery: { type: 'easy jog', duration: '2 min' },
+            },
+            warmup: ['15 min easy running'], cooldown: ['10 min easy running'],
+          },
+        },
+        {
+          material_id: 'easy-material-1',
+          source_session: {
+            id: 'easy-materialized-1', kind: 'run', workout_id: 'easy_aerobic',
+            title: 'Easy aerobic run', prescription_basis: 'time', duration_min: 30,
+            distance_miles: 3, distance_is_estimate: true,
+          },
+        },
+      ],
+    },
+    plan_id: 'plan-materialized-1',
+    plan_revision: 5,
+    session_revision: 2,
+    planning_instant: '2026-08-14T12:00:00.000Z',
+    training_age_class: 'ESTABLISHED',
+  });
+  assert.equal(set.canonical_sessions_materialized, true);
+  assert.equal(set.sessions.length, 2);
+  assert.deepEqual(set.sessions.map((session) => session.role), ['PRIMARY_KEY', 'SUPPORTING']);
+  assert.equal(set.sessions.every((session) => session.plan_id === 'plan-materialized-1'), true);
+  assert.equal(set.sessions.every((session) => session.plan_revision === 5), true);
+  assert.equal(set.sessions.every((session) => session.session_revision === 2), true);
+  assert.equal(set.sessions.every((session) => session.decision_id === 'decision-materialized-1'), true);
+  assert.equal(set.sessions.every((session) => validateCanonicalSession(session).valid), true);
+  assert.equal(set.sessions.every((session) => session.id === session.session_id), true);
+  assert.equal(set.sessions.every((session) => Number.isFinite(session.duration_min)), true);
+  assert.equal(set.sessions[0].steps.some((step) => step.type === 'repeat'), true);
+  assert.equal(set.sessions[0].target_provenance.every((entry) => entry.decision_id === 'decision-materialized-1'), true);
+  assert.match(set.content_hash, /^[a-f0-9]{64}$/);
+  assert.match(set.candidate_skeleton_hash, /^[a-f0-9]{64}$/);
+  assert.equal(validateCanonicalSessionSet(set).valid, true);
+  const transplantedCandidate = validateCanonicalSessionSet({ ...set, candidate_hash: '0'.repeat(64) });
+  assert.equal(transplantedCandidate.valid, false);
+  assert.ok(transplantedCandidate.violations.some((entry) => entry.reason === 'CANDIDATE_HASH_BINDING_MISMATCH'));
+});
+
+test('CANON-RACE-01', 'unknown legacy dosage stays unknown while an explicit valid zero remains prescription truth', () => {
+  function materializeTruthCase(id, family, sourceSession) {
+    return materializeCanonicalSessionSet({
+    decision: {
+      decision_id: `decision-${id}`, decision_hash: '1'.repeat(64), phase: 'EVENT_SPECIFIC_DEVELOPMENT',
+      timezone: 'America/New_York', plan_revision: 1,
+      active_goals: [{ goal_id: `goal-${id}`, event_kind: family === 'race' ? 'MARATHON' : 'ROAD_5K' }],
+      evidence_used: ['evidence-race-distance'],
+    },
+    candidate: {
+      candidate_skeleton_id: `candidate-${id}`, candidate_hash: '2'.repeat(64),
+      sessions: [{
+        session_id: `session-${id}`, requirement_id: family, role: 'PRIMARY_KEY', workout_family: family,
+        scheduled_local_date: '2026-10-11', candidate_material_id: `material-${id}`,
+      }],
+      candidate_material: [{
+        material_id: `material-${id}`,
+        source_session: {
+          id: `session-${id}`, kind: 'run', workout_id: family,
+          title: family === 'race' ? 'Race' : 'Assessment',
+          evidence_refs: ['evidence-race-distance'],
+          ...sourceSession,
+        },
+      }],
+    },
+    planning_instant: '2026-08-14T12:00:00.000Z',
+    }).sessions[0];
+  }
+
+  const set = materializeCanonicalSessionSet({
+    decision: {
+      decision_id: 'decision-distance-race', decision_hash: '1'.repeat(64), phase: 'EVENT_SPECIFIC_DEVELOPMENT',
+      timezone: 'America/New_York', plan_revision: 1,
+      active_goals: [{ goal_id: 'goal-distance-race', event_kind: 'MARATHON' }],
+      evidence_used: ['evidence-race-distance'],
+    },
+    candidate: {
+      candidate_skeleton_id: 'candidate-distance-race', candidate_hash: '2'.repeat(64),
+      sessions: [{
+        session_id: 'race-distance-only', requirement_id: 'race', role: 'PRIMARY_KEY', workout_family: 'race',
+        scheduled_local_date: '2026-10-11', candidate_material_id: 'material-distance-race',
+      }],
+      candidate_material: [{
+        material_id: 'material-distance-race',
+        source_session: {
+          id: 'race-distance-only', kind: 'run', workout_id: 'race', prescription_basis: 'distance',
+          title: 'Marathon', distance_miles: 26.2, distance_is_estimate: false,
+          evidence_refs: ['evidence-race-distance'],
+        },
+      }],
+    },
+    planning_instant: '2026-08-14T12:00:00.000Z',
+  });
+  const race = set.sessions[0];
+  assert.equal(race.derived_totals.distance_m, Math.round(26.2 * 1609.344));
+  assert.equal(race.derived_totals.duration_s, 0);
+  assert.equal(race.steps[0].target.duration_s, undefined);
+  assert.equal(race.steps[0].target.distance_m, Math.round(26.2 * 1609.344));
+  assert.equal(race.duration_min, undefined);
+
+  for (const family of ['race', 'assessment']) {
+    for (const [label, duration] of [['omitted', undefined], ['null', null], ['empty', '']]) {
+      const source = { prescription_basis: 'distance', distance_miles: family === 'race' ? 26.2 : 1, distance_is_estimate: false };
+      if (label !== 'omitted') source.duration_min = duration;
+      const session = materializeTruthCase(`${family}-duration-${label}`, family, source);
+      assert.equal(Object.hasOwn(session.steps[0].target, 'duration_s'), false);
+      assert.equal(Object.hasOwn(session, 'duration_min'), false);
+    }
+  }
+
+  for (const [label, distance] of [['omitted', undefined], ['null', null], ['empty', '']]) {
+    const source = { prescription_basis: 'time', duration_min: 30, distance_is_estimate: false };
+    if (label !== 'omitted') source.distance_miles = distance;
+    const session = materializeTruthCase(`easy-distance-${label}`, 'easy_run', source);
+    assert.equal(Object.hasOwn(session.steps[0].target, 'distance_m'), false);
+    assert.equal(Object.hasOwn(session, 'distance_miles'), false);
+  }
+
+  const zeroDistance = materializeTruthCase('easy-distance-zero', 'easy_run', {
+    prescription_basis: 'time', duration_min: 30, distance_miles: 0, distance_is_estimate: false,
+  });
+  assert.equal(zeroDistance.steps[0].target.distance_m, 0);
+  assert.equal(zeroDistance.distance_miles, 0);
+
+  const zeroDuration = materializeTruthCase('race-duration-zero', 'race', {
+    prescription_basis: 'distance', distance_miles: 1, distance_is_estimate: false, duration_min: 0,
+  });
+  assert.equal(zeroDuration.steps[0].target.duration_s, 0);
+  assert.equal(zeroDuration.duration_min, 0);
+});
+
+test('CANON-WEEK-01', 'session-set validation rejects divergent totals, duplicate identities, and revision bindings', () => {
+  const first = buildCanonicalSession(intervalSession());
+  const invalid = validateCanonicalSessionSet({
+    canonical_workout_schema_version: 1,
+    plan_id: first.plan_id,
+    plan_revision: first.plan_revision,
+    decision_id: first.decision_id,
+    decision_hash: 'e'.repeat(64),
+    candidate_id: 'candidate-invalid-set',
+    candidate_hash: 'f'.repeat(64),
+    sessions: [first, { ...first, plan_revision: first.plan_revision + 1 }],
+    derived_totals: { ...first.derived_totals },
+    content_hash: '0'.repeat(64),
+  });
+  assert.equal(invalid.valid, false);
+  assert.ok(invalid.reason_codes.includes('CANONICAL_SESSION_SET_INVALID'));
+  assert.ok(invalid.violations.some((entry) => entry.reason === 'DUPLICATE_SESSION_ID'));
+  assert.ok(invalid.violations.some((entry) => entry.reason === 'PLAN_REVISION_MISMATCH'));
+  assert.ok(invalid.violations.some((entry) => entry.reason === 'SESSION_SET_TOTAL_MISMATCH'));
+});
+
+test('CANON-LEGACY-01', 'a canonical session-set plan remains readable through current schema-v2 adapters', () => {
+  const canonical = buildCanonicalSession(intervalSession());
+  const plan = planSchema.buildCanonicalPlanFromSessionSet({
+    canonical_workout_schema_version: 1,
+    plan_id: canonical.plan_id,
+    plan_revision: canonical.plan_revision,
+    decision_id: canonical.decision_id,
+    decision_hash: 'a'.repeat(64),
+    candidate_id: 'candidate-canonical-plan',
+    candidate_hash: 'b'.repeat(64),
+    sessions: [canonical],
+    derived_totals: canonical.derived_totals,
+    content_hash: 'c'.repeat(64),
+  });
+  assert.equal(plan.schemaVersion, 2);
+  assert.equal(plan.weeks[0].days[0].sessions[0].session_id, canonical.session_id);
+  assert.equal(planSchema.daySessions(plan.weeks[0].days[0])[0].distance_miles, 6200 / 1609.344);
+  const legacy = { weeks: [{ days: [{ id: 'legacy-run', date: '2026-08-18', type: 'easy', distance_miles: 3 }] }] };
+  assert.strictEqual(planSchema.buildCanonicalPlanFromSessionSet(null, { currentPlan: legacy }), legacy);
 });
 
 assert.equal(new Set(results).size, results.length, 'fixture IDs must remain unique');

@@ -5,6 +5,7 @@ const {
   daysBetween,
 } = require('./racePlanPolicy');
 const { aggregateWeeklyStress, resolveSessionStress, resolveStressVector } = require('./goalBackwardLoad');
+const { validateCanonicalSession, validateCanonicalSessionSet } = require('./canonicalWorkout');
 
 const DIMENSIONS = [
   'aerobic',
@@ -35,10 +36,13 @@ const COSMETIC_FIELDS = new Set([
 ]);
 const PRESCRIPTION_IDENTITY_FIELDS = new Set([
   'session_id', 'sessionId', 'id', 'scheduled_local_date', 'scheduledLocalDate', 'scheduled_start_at',
-  'scheduledStartAt', 'date', 'local_date',
+  'scheduledStartAt', 'date', 'local_date', 'session_revision', 'plan_id', 'plan_revision',
+  'decision_id', 'content_hash',
 ]);
 const HARD_VALIDATOR_NAMES = Object.freeze([
   'schema',
+  'canonical_session_set',
+  'material_review',
   'scope',
   'availability',
   'constraints',
@@ -380,6 +384,139 @@ function validateCandidateSchema(sessions) {
   };
 }
 
+function validateCanonicalMaterialization(candidate, sessions) {
+  const canonical = sessions.filter((session) => Number(session?.canonical_workout_schema_version) === 1);
+  const violations = [];
+  if (canonical.length && canonical.length !== sessions.length) {
+    violations.push({ code: 'CANONICAL_SESSION_SET_INVALID', reason: 'PARTIAL_CANONICAL_MATERIALIZATION' });
+  }
+  canonical.forEach((session, index) => {
+    const result = validateCanonicalSession(session);
+    if (!result.valid) violations.push({
+      code: 'CANONICAL_SESSION_SET_INVALID',
+      reason: 'SESSION_INVALID',
+      session_index: index,
+      details: result.violations,
+    });
+  });
+  if (canonical.length) {
+    if (!candidate.canonical_session_set) {
+      violations.push({ code: 'CANONICAL_SESSION_SET_INVALID', reason: 'SESSION_SET_REQUIRED' });
+    } else {
+      const result = validateCanonicalSessionSet(candidate.canonical_session_set);
+      if (!result.valid) violations.push(...result.violations);
+    }
+  }
+  return {
+    validator: 'canonical_session_set',
+    valid: violations.length === 0,
+    violations,
+    reason_codes: violations.length ? ['CANONICAL_SESSION_SET_INVALID'] : [],
+  };
+}
+
+function validateMaterialReview(candidate, sessions) {
+  const summary = candidate.material_change;
+  const violations = [];
+  if (!summary) {
+    return { validator: 'material_review', valid: true, violations, reason_codes: [] };
+  }
+  if (summary.auto_apply_allowed !== false) {
+    violations.push({ code: 'MATERIAL_CHANGE_REVIEW_REQUIRED', reason: 'AUTO_APPLY_NOT_DISABLED' });
+  }
+  if (summary.material_change === true) {
+    const items = Array.isArray(summary.changes) ? summary.changes : [];
+    const canonicalSet = candidate.canonical_session_set;
+    const canonicalSessions = Array.isArray(canonicalSet?.sessions) ? canonicalSet.sessions : [];
+    const baselineBindings = new Map((summary.baseline_session_bindings || []).map((binding) => [
+      String(binding.session_id || ''), binding,
+    ]));
+    if (summary.preview_required !== true || summary.review_required !== true
+      || summary.review_contract_complete !== true || !items.length) {
+      violations.push({ code: 'MATERIAL_CHANGE_REVIEW_REQUIRED', reason: 'REVIEW_CONTRACT_INCOMPLETE' });
+    }
+    for (const item of items) {
+      const baselineBindingHash = canonicalHash({
+        material_change_baseline: summary.material_change_baseline ?? null,
+        baseline_plan_revision: summary.baseline_plan_revision ?? null,
+        active_prescription_hash: summary.active_prescription_hash ?? null,
+        baseline_session_bindings: summary.baseline_session_bindings ?? [],
+      });
+      const canonicalBindingInvalid = candidate.canonical_sessions_materialized === true && (
+        item.decision_id !== candidate.canonical_session_set?.decision_id
+        || item.candidate_hash !== candidate.candidate_hash
+        || item.canonical_session_set_hash !== candidate.canonical_session_set?.content_hash
+        || item.candidate_plan_revision !== candidate.canonical_session_set?.plan_revision
+        || baselineBindingHash !== candidate.canonical_session_set?.material_change_baseline_binding_hash
+      );
+      let sessionBindingInvalid = false;
+      if (candidate.canonical_sessions_materialized === true) {
+        if (item.session_id) {
+          const matched = canonicalSessions.find((session) => String(session.session_id) === String(item.session_id));
+          if (matched) {
+            sessionBindingInvalid = item.candidate_binding_state !== 'CANONICAL'
+              || item.candidate_session_revision !== matched.session_revision
+              || item.candidate_session_content_hash !== matched.content_hash;
+          } else {
+            sessionBindingInvalid = item.candidate_binding_state !== 'REMOVED'
+              || item.candidate_session_revision !== null
+              || item.candidate_session_content_hash !== null;
+          }
+          const baselineBinding = baselineBindings.get(String(item.session_id));
+          if (!matched && !baselineBinding) sessionBindingInvalid = true;
+          if (baselineBinding) {
+            sessionBindingInvalid = sessionBindingInvalid
+              || item.baseline_binding_state !== baselineBinding.binding_state
+              || item.baseline_session_revision !== baselineBinding.session_revision
+              || item.baseline_session_content_hash !== baselineBinding.session_content_hash
+              || (baselineBinding.binding_state === 'CANONICAL' && (
+                !Number.isSafeInteger(baselineBinding.session_revision) || baselineBinding.session_revision < 1
+                || !/^[a-f0-9]{64}$/.test(String(baselineBinding.session_content_hash || ''))
+              ))
+              || (baselineBinding.binding_state === 'LEGACY_PLAN_REVISION' && (
+                baselineBinding.session_revision !== null || baselineBinding.session_content_hash !== null
+              ));
+          } else {
+            sessionBindingInvalid = sessionBindingInvalid
+              || item.baseline_binding_state !== 'NOT_APPLICABLE'
+              || item.baseline_session_revision !== null
+              || item.baseline_session_content_hash !== null;
+          }
+        } else {
+          sessionBindingInvalid = item.baseline_binding_state !== 'PLAN_LEVEL'
+            || item.candidate_binding_state !== 'PLAN_LEVEL'
+            || item.baseline_session_revision !== null
+            || item.candidate_session_revision !== null
+            || item.baseline_session_content_hash !== null
+            || item.candidate_session_content_hash !== null;
+        }
+      }
+      if (item.review_required !== true || item.reason_code !== 'MATERIAL_CHANGE_REVIEW_REQUIRED'
+        || !Array.isArray(item.decisive_evidence_ids) || !item.decisive_evidence_ids.length
+        || !Number.isSafeInteger(item.baseline_plan_revision) || item.baseline_plan_revision < 1
+        || !Number.isSafeInteger(item.candidate_plan_revision) || item.candidate_plan_revision < 1
+        || canonicalBindingInvalid || sessionBindingInvalid) {
+        violations.push({
+          code: 'MATERIAL_CHANGE_REVIEW_REQUIRED',
+          reason: 'MATERIAL_ITEM_BINDING_INCOMPLETE',
+          change_code: item.code || null,
+        });
+      }
+    }
+  } else if (summary.initial_plan_review === true) {
+    const items = Array.isArray(summary.initial_review_items) ? summary.initial_review_items : [];
+    if (summary.review_required !== true || items.length !== sessions.length) {
+      violations.push({ code: 'MATERIAL_CHANGE_REVIEW_REQUIRED', reason: 'INITIAL_REVIEW_INCOMPLETE' });
+    }
+  }
+  return {
+    validator: 'material_review',
+    valid: violations.length === 0,
+    violations,
+    reason_codes: violations.length ? ['MATERIAL_CHANGE_REVIEW_REQUIRED'] : [],
+  };
+}
+
 function dueRoleRequirements(options = {}) {
   const source = options.required_exposure_ledger?.due_roles
     ?? options.required_exposure_ledger
@@ -542,6 +679,8 @@ function validateRequiredExposures(sessions, options) {
 function qualityWorkMinutes(session) {
   const direct = Number(session.quality_work_duration_min ?? session.qualityWorkDurationMinutes);
   if (Number.isFinite(direct)) return direct;
+  const canonical = Number(session.derived_totals?.work_duration_s);
+  if (Number.isFinite(canonical)) return canonical / 60;
   const seconds = (session.steps || []).filter((step) => String(step.step_role ?? step.role ?? '').toUpperCase() === 'WORK')
     .reduce((sum, step) => sum + Number(step.duration_s || step.duration_seconds || 0) * Number(step.repetitions || 1), 0);
   return seconds / 60;
@@ -556,7 +695,8 @@ function validatePresentationFloor(sessions, options) {
   const ordinaryEasy = Number(options.median_ordinary_easy_duration_min);
   sessions.forEach((session, index) => {
     const family = sessionFamily(session);
-    const duration = Number(session.duration_min ?? session.duration_minutes ?? (Number(session.duration_s || 0) / 60));
+    const durationSeconds = session.derived_totals?.duration_s ?? session.duration_s ?? 0;
+    const duration = Number(session.duration_min ?? session.duration_minutes ?? (Number(durationSeconds) / 60));
     let below = false;
     if (family === 'recovery_run') below = duration < (beginner || (Number.isFinite(weeklyMinutes) && weeklyMinutes < 60) ? 15 : 20);
     else if (family === 'easy_run') below = duration < (beginner || returning ? 20 : 25);
@@ -611,6 +751,8 @@ function validateGoalBackwardCandidate(candidate = {}, options = {}) {
   const sessions = sessionsFrom(candidate);
   const results = [
     validateCandidateSchema(sessions),
+    validateCanonicalMaterialization(candidate, sessions),
+    validateMaterialReview(candidate, sessions),
     validateCandidateScope(sessions, options),
     validateAvailability(sessions, options),
     validateConstraints(sessions, options),
@@ -647,14 +789,31 @@ function canonicalPrescriptionHash(plan = {}) {
 }
 
 function distanceMeters(session) {
-  const direct = Number(session.running_distance_m ?? session.distance_m ?? session.distanceMeters);
+  const directRaw = session.running_distance_m ?? session.distance_m ?? session.distanceMeters;
+  const direct = directRaw === null || directRaw === undefined || directRaw === '' ? NaN : Number(directRaw);
   if (Number.isFinite(direct) && direct >= 0) return direct;
-  const miles = Number(session.distance_miles ?? session.distanceMiles);
-  return Number.isFinite(miles) && miles >= 0 ? miles * 1609.344 : 0;
+  const canonicalDistances = flattenedCanonicalSteps(session.steps)
+    .filter(({ step }) => step.target?.distance_m !== null && step.target?.distance_m !== undefined
+      && step.target?.distance_m !== '' && Number.isFinite(Number(step.target.distance_m)))
+    .map(({ step, multiplier }) => Number(step.target.distance_m) * multiplier);
+  if (canonicalDistances.length) return canonicalDistances.reduce((sum, value) => sum + value, 0);
+  if (Number(session.canonical_workout_schema_version) === 1 || session.distance_is_estimate === true) return null;
+  const derivedRaw = session.derived_totals?.distance_m;
+  const derived = derivedRaw === null || derivedRaw === undefined || derivedRaw === '' ? NaN : Number(derivedRaw);
+  if (Number.isFinite(derived) && derived >= 0) return derived;
+  const milesRaw = session.distance_miles ?? session.distanceMiles;
+  const miles = milesRaw === null || milesRaw === undefined || milesRaw === '' ? NaN : Number(milesRaw);
+  return Number.isFinite(miles) && miles >= 0 ? miles * 1609.344 : null;
 }
 
 function runningDistanceMeters(session) {
   return RUNNING_FAMILIES.has(sessionFamily(session)) ? distanceMeters(session) : 0;
+}
+
+function aggregateKnownRunningDistance(sessions) {
+  const values = sessions.filter((session) => RUNNING_FAMILIES.has(sessionFamily(session))).map(runningDistanceMeters);
+  if (values.some((value) => value === null)) return null;
+  return values.reduce((sum, value) => sum + value, 0);
 }
 
 function sessionMatchKey(session, index) {
@@ -669,14 +828,118 @@ function relativeDelta(baseline, candidate) {
 
 function numericField(session, names) {
   for (const name of names) {
-    const value = Number(session[name]);
+    const raw = session[name];
+    if (raw === null || raw === undefined || raw === '') continue;
+    const value = Number(raw);
     if (Number.isFinite(value)) return value;
   }
   return null;
 }
 
+function flattenedCanonicalSteps(steps = [], multiplier = 1, output = []) {
+  for (const step of Array.isArray(steps) ? steps : []) {
+    if (!step || typeof step !== 'object') continue;
+    if (step.type === 'repeat') {
+      const count = Number.isSafeInteger(step.repeat_count) && step.repeat_count > 0 ? step.repeat_count : 0;
+      flattenedCanonicalSteps(step.children, multiplier * count, output);
+    } else {
+      output.push({ step, multiplier });
+    }
+  }
+  return output;
+}
+
+function sortedCanonicalTargetValues(session, field) {
+  const values = [];
+  for (const { step, multiplier } of flattenedCanonicalSteps(session.steps)) {
+    const value = step.target?.[field];
+    if (value && typeof value === 'object' && value.minimum !== null && value.minimum !== undefined
+      && value.maximum !== null && value.maximum !== undefined
+      && Number.isFinite(Number(value.minimum)) && Number.isFinite(Number(value.maximum))) {
+      values.push(Number(value.minimum), Number(value.maximum));
+    } else if (value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value))) {
+      values.push(Number(value) * (['repetitions', 'sets'].includes(field) ? multiplier : 1));
+    }
+  }
+  return values.sort((left, right) => left - right);
+}
+
+function canonicalPaceValues(session) {
+  const nested = sortedCanonicalTargetValues(session, 'pace_range_s_per_km');
+  if (nested.length) return nested;
+  const perKm = numericField(session, ['target_pace_s_per_km', 'target_pace_seconds_per_km']);
+  if (perKm !== null) return [perKm];
+  const perMile = numericField(session, ['goal_pace_seconds_per_mile']);
+  return perMile === null ? [] : [perMile / 1.609344];
+}
+
+function canonicalHeartRateValues(session) {
+  return sortedCanonicalTargetValues(session, 'heart_rate_range_bpm');
+}
+
+function zoneNumbers(session) {
+  const direct = numericField(session, ['target_zone_number', 'hr_zone']);
+  if (direct !== null) return [direct];
+  const raw = String(session.target_zone || '');
+  return [...raw.matchAll(/\b(?:zone\s*)?(\d+(?:\.\d+)?)\b/gi)].map((match) => Number(match[1]));
+}
+
+function targetArrayMateriallyChanged(before, after, threshold, { additionIsMaterial = true } = {}) {
+  if (!before.length && !after.length) return false;
+  if (!before.length || !after.length || before.length !== after.length) return additionIsMaterial;
+  return before.some((value, index) => (
+    value !== after[index] && (value === 0 || relativeDelta(value, after[index]) > threshold + 1e-12)
+  ));
+}
+
+function canonicalDosageMetric(session, field) {
+  if (field === 'work_duration_s') {
+    const raw = session.derived_totals?.work_duration_s;
+    const canonical = raw === null || raw === undefined || raw === '' ? NaN : Number(raw);
+    if (Number.isFinite(canonical)) return canonical;
+    return numericField(session, ['work_duration_s', 'work_duration_seconds']);
+  }
+  if (field === 'repetitions') {
+    const raw = session.derived_totals?.repetitions;
+    const canonical = raw === null || raw === undefined || raw === '' ? NaN : Number(raw);
+    if (Number.isFinite(canonical)) return canonical;
+    return numericField(session, ['repetitions', 'reps']);
+  }
+  if (field === 'station_distance_m') {
+    const raw = session.derived_totals?.station_distance_m;
+    const canonical = raw === null || raw === undefined || raw === '' ? NaN : Number(raw);
+    if (Number.isFinite(canonical)) return canonical;
+    return numericField(session, ['station_distance_m']);
+  }
+  if (field === 'station_repetitions') {
+    const values = flattenedCanonicalSteps(session.steps)
+      .filter(({ step }) => step.type === 'station')
+      .filter(({ step }) => step.target?.repetitions !== null && step.target?.repetitions !== undefined
+        && step.target?.repetitions !== '' && Number.isFinite(Number(step.target.repetitions)))
+      .map(({ step, multiplier }) => Number(step.target.repetitions) * multiplier);
+    return values.length ? values.reduce((sum, value) => sum + value, 0) : numericField(session, ['station_repetitions']);
+  }
+  if (field === 'load_kg') {
+    const values = sortedCanonicalTargetValues(session, 'load_kg');
+    return values.length ? Math.max(...values) : numericField(session, ['load_kg']);
+  }
+  return null;
+}
+
+function canonicalStrengthHardSets(session) {
+  const values = flattenedCanonicalSteps(session.steps)
+    .filter(({ step }) => step.type === 'strength_exercise')
+    .filter(({ step }) => step.target?.sets !== null && step.target?.sets !== undefined
+      && step.target?.sets !== '' && Number.isFinite(Number(step.target.sets)))
+    .map(({ step, multiplier }) => Number(step.target.sets) * multiplier);
+  return values.length ? values.reduce((sum, value) => sum + value, 0)
+    : numericField(session, ['strength_hard_sets', 'hard_sets']);
+}
+
 function stressVectorForMaterial(session) {
-  if (Array.isArray(session.stress_vector) && session.stress_vector.length === DIMENSIONS.length) return session.stress_vector.map(Number);
+  if (Array.isArray(session.stress_vector) && session.stress_vector.length === DIMENSIONS.length
+    && session.stress_vector.every((value) => value !== null && value !== undefined && value !== ''
+      && Number.isFinite(Number(value)))) return session.stress_vector.map(Number);
   return resolveStressVector(sessionFamily(session), {
     event_kind: session.event_kind,
     contributing_work_families: session.contributing_work_families,
@@ -690,35 +953,45 @@ function compareMatchedSession(baseline, candidate, changes) {
   if (keySession && baselineFamily !== candidateFamily) {
     changes.push({ code: 'KEY_SESSION_FAMILY_CHANGED', session_id: sessionId(candidate) });
   }
-  const paceFields = ['target_pace_s_per_km', 'target_pace_seconds_per_km', 'goal_pace_seconds_per_mile'];
-  const baselinePace = numericField(baseline, paceFields);
-  const candidatePace = numericField(candidate, paceFields);
-  if (baselinePace !== null && candidatePace !== null
-    && relativeDelta(baselinePace, candidatePace) > GOAL_BACKWARD_PLANNING_POLICY_V1.material_change.pace_percentage_strictly_greater_than) {
+  if (targetArrayMateriallyChanged(
+    canonicalPaceValues(baseline),
+    canonicalPaceValues(candidate),
+    GOAL_BACKWARD_PLANNING_POLICY_V1.material_change.pace_percentage_strictly_greater_than,
+  )) {
     changes.push({ code: 'TARGET_PACE_CHANGED', session_id: sessionId(candidate) });
   }
-  const baselineZone = numericField(baseline, ['target_zone_number', 'hr_zone']);
-  const candidateZone = numericField(candidate, ['target_zone_number', 'hr_zone']);
-  if (baselineZone !== null && candidateZone !== null && Math.abs(candidateZone - baselineZone) >= 1) {
+  const baselineZone = zoneNumbers(baseline);
+  const candidateZone = zoneNumbers(candidate);
+  if ((baselineZone.length || candidateZone.length) && (
+    baselineZone.length !== candidateZone.length
+    || baselineZone.some((value, index) => Math.abs(candidateZone[index] - value) >= 1)
+  )) {
     changes.push({ code: 'TARGET_ZONE_CHANGED', session_id: sessionId(candidate) });
   }
-  const structuralFields = [
-    ['work_duration_s', 'work_duration_seconds'], ['repetitions', 'reps'], ['station_distance_m'],
-    ['station_repetitions'], ['load_kg'],
-  ];
-  for (const names of structuralFields) {
-    const before = numericField(baseline, names);
-    const after = numericField(candidate, names);
-    if (before === null || after === null || before === after) continue;
-    if (before === 0 || relativeDelta(before, after) >= GOAL_BACKWARD_PLANNING_POLICY_V1.material_change.interval_station_load_percentage) {
-      changes.push({ code: 'SESSION_DOSAGE_CHANGED', session_id: sessionId(candidate), field: names[0] });
+  if (targetArrayMateriallyChanged(
+    canonicalHeartRateValues(baseline),
+    canonicalHeartRateValues(candidate),
+    GOAL_BACKWARD_PLANNING_POLICY_V1.material_change.pace_percentage_strictly_greater_than,
+  )) {
+    changes.push({ code: 'TARGET_HEART_RATE_CHANGED', session_id: sessionId(candidate) });
+  }
+  const structuralFields = ['work_duration_s', 'repetitions', 'station_distance_m', 'station_repetitions', 'load_kg'];
+  for (const field of structuralFields) {
+    const before = canonicalDosageMetric(baseline, field);
+    const after = canonicalDosageMetric(candidate, field);
+    if (before === after) continue;
+    if (before === null || after === null || before === 0
+      || relativeDelta(before, after) >= GOAL_BACKWARD_PLANNING_POLICY_V1.material_change.interval_station_load_percentage) {
+      changes.push({ code: 'SESSION_DOSAGE_CHANGED', session_id: sessionId(candidate), field });
     }
   }
-  const baselineSets = numericField(baseline, ['strength_hard_sets', 'hard_sets']);
-  const candidateSets = numericField(candidate, ['strength_hard_sets', 'hard_sets']);
-  if (baselineSets !== null && candidateSets !== null && baselineSets !== candidateSets
-    && (relativeDelta(baselineSets, candidateSets) >= GOAL_BACKWARD_PLANNING_POLICY_V1.material_change.strength_hard_sets.percentage
-      || Math.abs(candidateSets - baselineSets) >= GOAL_BACKWARD_PLANNING_POLICY_V1.material_change.strength_hard_sets.absolute)) {
+  const baselineSets = canonicalStrengthHardSets(baseline);
+  const candidateSets = canonicalStrengthHardSets(candidate);
+  if (baselineSets !== candidateSets && (
+    baselineSets === null || candidateSets === null
+    || relativeDelta(baselineSets, candidateSets) >= GOAL_BACKWARD_PLANNING_POLICY_V1.material_change.strength_hard_sets.percentage
+    || Math.abs(candidateSets - baselineSets) >= GOAL_BACKWARD_PLANNING_POLICY_V1.material_change.strength_hard_sets.absolute
+  )) {
     changes.push({ code: 'STRENGTH_HARD_SETS_CHANGED', session_id: sessionId(candidate) });
   }
   const beforeVector = stressVectorForMaterial(baseline);
@@ -760,6 +1033,7 @@ function compareMaterialChange(input = {}) {
   const candidate = input.candidate || {};
   const candidateHash = canonicalPrescriptionHash(candidate);
   if (!baseline) {
+    const initialSessions = sessionsFrom(candidate);
     return deepFreeze({
       material_change_baseline: null,
       baseline_source: null,
@@ -774,21 +1048,41 @@ function compareMaterialChange(input = {}) {
       candidate_prescription_hash: candidateHash,
       changes: [],
       reason_codes: [],
+      auto_apply_allowed: false,
+      initial_review_items: initialSessions.map((session, index) => ({
+        review_kind: 'INITIAL_PLAN_SESSION',
+        material_change: false,
+        session_id: sessionId(session, index),
+        scheduled_local_date: sessionLocalDate(session),
+        role: sessionRole(session),
+        workout_family: sessionFamily(session),
+      })),
     });
   }
   const baselineSessions = sessionsFrom(baseline);
   const candidateSessions = sessionsFrom(candidate);
   const changes = [];
-  const baselineRunning = baselineSessions.reduce((sum, session) => sum + runningDistanceMeters(session), 0);
-  const candidateRunning = candidateSessions.reduce((sum, session) => sum + runningDistanceMeters(session), 0);
+  const baselineRunning = aggregateKnownRunningDistance(baselineSessions);
+  const candidateRunning = aggregateKnownRunningDistance(candidateSessions);
   const weeklyDelta = relativeDelta(baselineRunning, candidateRunning);
-  const weeklyAbsolute = Math.abs(candidateRunning - baselineRunning);
+  const weeklyAbsolute = baselineRunning === null || candidateRunning === null
+    ? null : Math.abs(candidateRunning - baselineRunning);
   if (weeklyDelta !== null
     && weeklyDelta >= GOAL_BACKWARD_PLANNING_POLICY_V1.material_change.weekly_running.percentage
     && weeklyAbsolute >= GOAL_BACKWARD_PLANNING_POLICY_V1.material_change.weekly_running.absolute_m) {
     changes.push({ code: 'WEEKLY_RUNNING_VOLUME', baseline_m: baselineRunning, candidate_m: candidateRunning });
+  } else if (baselineRunning !== null && candidateRunning !== null && weeklyDelta === null
+    && weeklyAbsolute >= GOAL_BACKWARD_PLANNING_POLICY_V1.material_change.weekly_running.absolute_m) {
+    changes.push({ code: 'WEEKLY_RUNNING_VOLUME', baseline_m: baselineRunning, candidate_m: candidateRunning });
+  } else if ((baselineRunning === null) !== (candidateRunning === null)) {
+    changes.push({ code: 'WEEKLY_RUNNING_VOLUME_STATE_CHANGED', baseline_m: baselineRunning, candidate_m: candidateRunning });
   }
-  const longest = (sessions) => Math.max(0, ...sessions.filter((session) => sessionFamily(session) === 'long_aerobic').map(distanceMeters));
+  const longest = (sessions) => {
+    const values = sessions.filter((session) => sessionFamily(session) === 'long_aerobic').map(distanceMeters);
+    if (!values.length) return 0;
+    if (values.some((value) => value === null)) return null;
+    return Math.max(...values);
+  };
   const baselineLong = longest(baselineSessions);
   const candidateLong = longest(candidateSessions);
   const longDelta = relativeDelta(baselineLong, candidateLong);
@@ -796,6 +1090,11 @@ function compareMaterialChange(input = {}) {
     && longDelta >= GOAL_BACKWARD_PLANNING_POLICY_V1.material_change.long_run.percentage
     && Math.abs(candidateLong - baselineLong) >= GOAL_BACKWARD_PLANNING_POLICY_V1.material_change.long_run.absolute_m) {
     changes.push({ code: 'LONG_RUN_VOLUME', baseline_m: baselineLong, candidate_m: candidateLong });
+  } else if (baselineLong !== null && candidateLong !== null && longDelta === null
+    && Math.abs(candidateLong - baselineLong) >= GOAL_BACKWARD_PLANNING_POLICY_V1.material_change.long_run.absolute_m) {
+    changes.push({ code: 'LONG_RUN_VOLUME', baseline_m: baselineLong, candidate_m: candidateLong });
+  } else if ((baselineLong === null) !== (candidateLong === null)) {
+    changes.push({ code: 'LONG_RUN_VOLUME_STATE_CHANGED', baseline_m: baselineLong, candidate_m: candidateLong });
   }
   const runningDates = (sessions) => new Set(sessions.filter((session) => RUNNING_FAMILIES.has(sessionFamily(session)))
     .map(sessionLocalDate).filter(Boolean));
@@ -846,23 +1145,88 @@ function compareMaterialChange(input = {}) {
   if (baselinePriority !== candidatePriority && (baselinePriority || candidatePriority)) {
     changes.push({ code: 'GOAL_PRIORITY_CHANGED', baseline: baselinePriority ?? null, candidate: candidatePriority ?? null });
   }
-  const baselineSafety = JSON.stringify(baseline.safety_scope ?? null);
-  const candidateSafety = JSON.stringify(candidate.safety_scope ?? null);
-  if (baselineSafety !== candidateSafety && (baseline.safety_scope || candidate.safety_scope)) {
+  const safetyExecutability = (plan) => {
+    const scope = plan?.safety_scope;
+    if (scope && typeof scope === 'object' && !Array.isArray(scope) && typeof scope.executable === 'boolean') {
+      return scope.executable;
+    }
+    const value = plan?.executability ?? scope?.executability ?? plan?.safety_action;
+    return value === undefined || value === null ? null : String(value);
+  };
+  const baselineSafety = safetyExecutability(baseline);
+  const candidateSafety = safetyExecutability(candidate);
+  if (baselineSafety !== candidateSafety && baselineSafety !== null && candidateSafety !== null) {
     changes.push({ code: 'SAFETY_SCOPE_CHANGED' });
   }
   const uniqueChanges = [...new Map(changes.map((change) => [
     [change.code, change.session_id, change.field].join(':'), change,
   ])).values()];
+  const decisiveEvidenceIds = [...new Set((input.decisive_evidence_ids
+    ?? candidate.decisive_evidence_ids
+    ?? candidate.evidence_used
+    ?? []).map(String).filter(Boolean))].sort();
+  const baselineRevision = baseline.plan_revision ?? baseline.planRevision ?? null;
+  const candidateRevision = candidate.plan_revision ?? candidate.planRevision ?? null;
+  const sessionBinding = (session, { absentState }) => {
+    if (!session) return {
+      binding_state: absentState,
+      session_revision: null,
+      session_content_hash: null,
+    };
+    const canonical = Number(session.canonical_workout_schema_version) === 1
+      && Number.isSafeInteger(session.session_revision) && session.session_revision >= 1
+      && /^[a-f0-9]{64}$/.test(String(session.content_hash || ''));
+    return {
+      binding_state: canonical ? 'CANONICAL' : 'LEGACY_PLAN_REVISION',
+      session_revision: canonical ? session.session_revision : null,
+      session_content_hash: canonical ? session.content_hash : null,
+    };
+  };
+  const baselineSessionBindings = baselineSessions.map((session, index) => ({
+    session_id: sessionId(session, index),
+    ...sessionBinding(session, { absentState: 'NOT_APPLICABLE' }),
+  }));
+  const reviewItems = uniqueChanges.map((change) => {
+    const baselineSession = change.session_id
+      ? baselineSessions.find((session, index) => sessionId(session, index) === String(change.session_id))
+      : null;
+    const candidateSession = change.session_id
+      ? candidateSessions.find((session, index) => sessionId(session, index) === String(change.session_id))
+      : null;
+    const baselineBinding = change.session_id
+      ? sessionBinding(baselineSession, { absentState: 'NOT_APPLICABLE' })
+      : { binding_state: 'PLAN_LEVEL', session_revision: null, session_content_hash: null };
+    const candidateBinding = change.session_id
+      ? sessionBinding(candidateSession, { absentState: 'REMOVED' })
+      : { binding_state: 'PLAN_LEVEL', session_revision: null, session_content_hash: null };
+    return {
+      ...change,
+      review_required: true,
+      reason_code: input.material_reason_code || 'MATERIAL_CHANGE_REVIEW_REQUIRED',
+      decisive_evidence_ids: decisiveEvidenceIds,
+      baseline_plan_revision: baselineRevision,
+      candidate_plan_revision: candidateRevision,
+      baseline_binding_state: baselineBinding.binding_state,
+      candidate_binding_state: candidateBinding.binding_state,
+      baseline_session_revision: baselineBinding.session_revision,
+      candidate_session_revision: candidateBinding.session_revision,
+      baseline_session_content_hash: baselineBinding.session_content_hash,
+      candidate_session_content_hash: candidateBinding.session_content_hash,
+      decision_id: input.decision_id ?? candidateSession?.decision_id ?? null,
+      candidate_hash: input.candidate_hash ?? null,
+      canonical_session_set_hash: input.canonical_session_set_hash ?? null,
+    };
+  });
   const activeHash = canonicalPrescriptionHash(baseline);
-  const material = uniqueChanges.length > 0;
+  const material = reviewItems.length > 0;
   return deepFreeze({
     material_change_baseline: {
-      plan_revision: baseline.plan_revision ?? baseline.planRevision ?? null,
+      plan_revision: baselineRevision,
       source: 'ACTIVE_APPLIED_PLAN',
     },
     baseline_source: 'ACTIVE_APPLIED_PLAN',
-    baseline_plan_revision: baseline.plan_revision ?? baseline.planRevision ?? null,
+    baseline_plan_revision: baselineRevision,
+    candidate_plan_revision: candidateRevision,
     material_change: material,
     preview_required: material,
     review_required: material,
@@ -871,7 +1235,18 @@ function compareMaterialChange(input = {}) {
     prescription_hash_changed: activeHash !== candidateHash,
     active_prescription_hash: activeHash,
     candidate_prescription_hash: candidateHash,
-    changes: uniqueChanges,
+    baseline_session_bindings: baselineSessionBindings,
+    changes: reviewItems,
+    material_review_items: reviewItems,
+    review_contract_complete: !material || (
+      decisiveEvidenceIds.length > 0 && baselineRevision !== null && candidateRevision !== null
+      && (input.require_canonical_bindings !== true || (
+        typeof input.decision_id === 'string' && input.decision_id.length > 0
+        && /^[a-f0-9]{64}$/.test(String(input.candidate_hash || ''))
+        && /^[a-f0-9]{64}$/.test(String(input.canonical_session_set_hash || ''))
+      ))
+    ),
+    auto_apply_allowed: false,
     reason_codes: material ? ['MATERIAL_CHANGE_REVIEW_REQUIRED'] : [],
   });
 }

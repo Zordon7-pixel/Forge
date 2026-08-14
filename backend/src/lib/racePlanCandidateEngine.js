@@ -37,6 +37,8 @@ const {
   validateGoalBackwardCandidate,
   validateInterference,
 } = require('./goalBackwardValidators');
+const { materializeCanonicalSessionSet } = require('./canonicalWorkout');
+const { buildCanonicalPlanFromSessionSet } = require('./planSchema');
 
 const MAX_GOAL_BACKWARD_CANDIDATES = 64;
 const ROLE_RANK = Object.freeze({ PRIMARY_KEY: 0, ASSESSMENT: 1, SUPPORTING: 2, RECOVERY: 3, REST: 4 });
@@ -911,6 +913,7 @@ function roadCandidateMaterial(source) {
     run_station_pair_count: Number.isFinite(Number(session.run_station_pair_count))
       ? Number(session.run_station_pair_count)
       : null,
+    source_session: clone(session),
   }));
 }
 
@@ -960,7 +963,16 @@ function goalBackwardSkeletonIdentity(input = {}) {
   });
   const materialChange = compareMaterialChange({
     active_applied_plan: input.active_applied_plan ?? null,
-    candidate: { phase: decision.phase, sessions },
+    candidate: {
+      phase: decision.phase,
+      goal_priority: decision.active_goals?.find((goal) => goal.goal_id === decision.primary_goal_id)?.priority ?? null,
+      safety_scope: decision.safety_state?.scope ?? null,
+      plan_revision: Math.max(1, Number(decision.plan_revision || 0) + 1),
+      sessions,
+    },
+    decisive_evidence_ids: (decision.evidence_used || []).map((entry) => (
+      typeof entry === 'string' ? entry : entry?.evidence_id ?? entry?.id
+    )).filter(Boolean),
   });
   return {
     decision_id: decision.decision_id,
@@ -1149,6 +1161,56 @@ function compareGoalBackwardCandidateRankings(left, right) {
     || left.candidate_hash.localeCompare(right.candidate_hash);
 }
 
+function materializeGoalBackwardCandidate(candidate, input = {}) {
+  const sessionSet = materializeCanonicalSessionSet({
+    candidate,
+    decision: input.decision,
+    active_applied_plan: input.active_applied_plan,
+    plan_id: input.candidate_plan_id,
+    plan_revision: input.candidate_plan_revision,
+    session_revision: input.session_revision,
+    timezone: input.timezone,
+    planning_instant: input.planning_instant,
+    target_context: input.target_context,
+    training_age_class: input.validation_options?.training_age_class ?? input.decision?.training_age_class,
+    recent_normal_running_minutes_per_week: input.validation_options?.recent_normal_running_minutes_per_week,
+    median_ordinary_easy_duration_min: input.validation_options?.median_ordinary_easy_duration_min,
+  });
+  const decisiveEvidenceIds = (input.decision?.evidence_used || []).map((entry) => (
+    typeof entry === 'string' ? entry : entry?.evidence_id ?? entry?.id
+  )).filter(Boolean);
+  const materialChange = compareMaterialChange({
+    active_applied_plan: input.active_applied_plan ?? null,
+    candidate: {
+      phase: input.decision?.phase,
+      goal_priority: input.decision?.active_goals?.find((goal) => (
+        goal.goal_id === input.decision?.primary_goal_id
+      ))?.priority ?? null,
+      safety_scope: input.decision?.safety_state?.scope ?? null,
+      executability: sessionSet.sessions.some((session) => session.executability !== 'EXECUTABLE')
+        ? 'RESTRICTED' : 'EXECUTABLE',
+      plan_revision: sessionSet.plan_revision,
+      sessions: sessionSet.sessions,
+    },
+    decisive_evidence_ids: decisiveEvidenceIds,
+    decision_id: sessionSet.decision_id,
+    candidate_hash: sessionSet.candidate_hash,
+    canonical_session_set_hash: sessionSet.content_hash,
+    require_canonical_bindings: true,
+  });
+  return {
+    ...candidate,
+    skeleton_sessions: candidate.sessions,
+    sessions: sessionSet.sessions,
+    canonical_sessions: sessionSet.sessions,
+    canonical_session_set: sessionSet,
+    canonical_plan: buildCanonicalPlanFromSessionSet(sessionSet),
+    canonical_sessions_materialized: true,
+    candidate_hash: sessionSet.candidate_hash,
+    material_change: materialChange,
+  };
+}
+
 function enumerateGoalBackwardCandidates(input = {}) {
   const decision = input.decision;
   if (!decision?.decision_id || !decision?.decision_hash || !Array.isArray(decision.role_multiset)) {
@@ -1196,9 +1258,23 @@ function enumerateGoalBackwardCandidates(input = {}) {
     const candidateHash = canonicalHash(Object.fromEntries(Object.entries(candidate).filter(([key]) => ![
       'canonical_placement', 'preliminary_spacing_violation_count', 'preliminary_ordering_tuple',
     ].includes(key))));
-    const validation = validateGoalBackwardCandidate({ sessions: candidate.sessions }, {
+    let withCanonical = {
+      ...candidate,
+      candidate_skeleton_id: `candidate-skeleton-${candidateHash.slice(0, 24)}`,
+      candidate_hash: candidateHash,
+      persisted: false,
+    };
+    let materializationError = null;
+    if (input.materialize_canonical !== false) {
+      try {
+        withCanonical = materializeGoalBackwardCandidate(withCanonical, input);
+      } catch (error) {
+        materializationError = error;
+      }
+    }
+    const validation = validateGoalBackwardCandidate(withCanonical, {
       ...input.validation_options,
-      workload_evidence: candidateWorkloadEvidence(candidate.sessions, input),
+      workload_evidence: candidateWorkloadEvidence(withCanonical.sessions, input),
       allowed_requirement_ids: roles.map((role) => String(role.requirement_id)),
       enforce_due_role_scope: true,
       maximum_session_count: maximumSessionCount,
@@ -1207,12 +1283,31 @@ function enumerateGoalBackwardCandidates(input = {}) {
       required_exposure_ledger: decision.due_exposure_ledger,
       unplaceable_requirement_ids: decision.due_exposure_ledger?.unplaceable_requirement_ids,
     });
+    const finalValidation = materializationError ? immutable({
+      ...validation,
+      valid: false,
+      validator_results: validation.validator_results.map((result) => (
+        result.validator === 'canonical_session_set' ? {
+          validator: 'canonical_session_set',
+          valid: false,
+          violations: [{
+            code: materializationError.code || 'CANONICAL_SESSION_SET_INVALID',
+            reason: materializationError.message,
+            details: materializationError.details || null,
+          }],
+          reason_codes: ['CANONICAL_SESSION_SET_INVALID'],
+        } : result
+      )),
+      violations: [...validation.violations, {
+        code: materializationError.code || 'CANONICAL_SESSION_SET_INVALID',
+        reason: materializationError.message,
+        details: materializationError.details || null,
+      }],
+      reason_codes: [...new Set([...validation.reason_codes, 'CANONICAL_SESSION_SET_INVALID'])],
+    }) : validation;
     const withValidation = {
-      ...candidate,
-      candidate_skeleton_id: `candidate-skeleton-${candidateHash.slice(0, 24)}`,
-      candidate_hash: candidateHash,
-      validation,
-      persisted: false,
+      ...withCanonical,
+      validation: finalValidation,
     };
     delete withValidation.canonical_placement;
     return immutable({ ...withValidation, ranking_tuple: candidateRankingTuple(withValidation, input) });
@@ -1242,6 +1337,7 @@ module.exports = {
   MAX_GOAL_BACKWARD_CANDIDATES,
   applyPlanningCurve,
   buildGoalBackwardCandidateSkeleton,
+  materializeGoalBackwardCandidate,
   buildRacePlanCandidate,
   candidateRankingTuple,
   compareGoalBackwardCandidateRankings,

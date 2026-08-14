@@ -30,6 +30,7 @@ const {
   semanticCandidateErrors,
 } = require('../lib/racePlanCandidateEngine');
 const { buildGoalBackwardPlanningDecision } = require('../lib/goalBackwardDecisionEngine');
+const { assertPipelineLinks } = require('../lib/goalBackwardContracts');
 const { resolveOperationalGoalBackwardV24Mode } = require('../lib/betaPlanRollout');
 const { requestImagesForWorkoutItems } = require('../lib/exerciseImageRequests');
 const hyroxPlan = require('../lib/hyroxPlan');
@@ -40,6 +41,7 @@ const {
 } = require('../lib/racePlanPolicy');
 const {
   assertPersistablePlan,
+  buildPipelineArtifact,
   buildGoalBackwardDecisionArtifacts,
   buildGoalBackwardShadowBindings,
   buildPlanningSnapshot,
@@ -2149,6 +2151,7 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
   const recentRunCount = Number(state.context?.history?.recentRunCount || 0);
   const weeklyMiles = Number(state.context?.history?.weeklyMileageBaseline || 0);
   const goals = goalBackwardGoalsForState(userId, state);
+  const evidenceSnapshotId = `snapshot-${state.inputHash.slice(-24)}`;
   const buildDecision = dependencies.buildDecision || buildGoalBackwardPlanningDecision;
   const enumerateCandidates = dependencies.enumerateCandidates || enumerateGoalBackwardCandidates;
   const decision = buildDecision({
@@ -2160,7 +2163,7 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
     plan_revision: Number(state.activePlan?.planVersion || 0),
     athlete_state: {
       athlete_state_revision: Math.max(1, Number(state.planningInputRevision || 1)),
-      evidence_snapshot_id: `snapshot-${state.inputHash.slice(-24)}`,
+      evidence_snapshot_id: evidenceSnapshotId,
       training_age_class: trainingAgeClass,
       consistency_state: recentRunCount >= 4 ? 'CONSISTENT' : 'SPARSE_DATA',
       consistent_weeks: recentRunCount >= 4 ? 4 : 0,
@@ -2176,15 +2179,23 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
     },
     goals,
     races: state.races.map((race) => ({ race_id: String(race.id), athlete_id: userId })),
+    evidence_used: [{ evidence_id: evidenceSnapshotId, purpose: 'CURRENT_PLANNING_SNAPSHOT' }],
   });
+  const activeAppliedPlan = state.active ? {
+    ...parsePlan(state.active.row),
+    plan_revision: Math.max(1, Number(state.activePlan?.planVersion || state.active.row?.plan_version || 1)),
+  } : null;
   const result = enumerateCandidates({
     decision,
     available_local_dates: availableLocalDates,
     maximum_session_count: decision.role_multiset.length,
     legacy_road_candidate_material: built.plan,
-    active_applied_plan: state.active ? parsePlan(state.active.row) : null,
+    active_applied_plan: activeAppliedPlan,
     preferred_weekdays: state.target?.trainingDays || [],
     selected_running_volume_m: Number(decision.proposed_running_volume_m || 0),
+    materialize_canonical: true,
+    planning_instant: `${planningDateLocal}T00:00:00.000Z`,
+    timezone: state.context?.profile?.timezone || decision.timezone || 'UTC',
     validation_options: {
       available_local_dates: availableLocalDates,
       available_days_count: availableLocalDates.length,
@@ -2196,6 +2207,54 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
   });
   if (typeof dependencies.inspectDecision === 'function') dependencies.inspectDecision(result);
   return result;
+}
+
+function buildGoalBackwardArtifacts(input = {}) {
+  const artifacts = buildGoalBackwardDecisionArtifacts(input);
+  const selected = (input.candidates || []).find((candidate) => (
+    candidate.candidate_skeleton_id === input.decision?.selected_candidate_id
+  ));
+  const sessionSet = selected?.canonical_session_set;
+  if (!selected?.canonical_sessions_materialized || !sessionSet) return artifacts;
+  const canonicalIndex = artifacts.findIndex((artifact) => artifact.artifact_kind === 'canonical_session_set');
+  const surfaceIndex = artifacts.findIndex((artifact) => artifact.artifact_kind === 'surface_manifest');
+  if (canonicalIndex < 1 || surfaceIndex !== canonicalIndex + 1) return artifacts;
+  const prior = artifacts[canonicalIndex];
+  const canonicalArtifact = buildPipelineArtifact({
+    userId: prior.user_id,
+    kind: prior.artifact_kind,
+    decisionId: prior.decision_id,
+    parentArtifactId: artifacts[canonicalIndex - 1].id,
+    planGenerationCandidateId: prior.plan_generation_candidate_id,
+    schemaVersion: prior.schema_version,
+    policyVersion: prior.policy_version,
+    revision: prior.revision,
+    createdAt: prior.created_at,
+    payload: {
+      plan_generation_candidate_ref: prior.payload_json.plan_generation_candidate_ref,
+      ...sessionSet,
+      selected_candidate_id: selected.candidate_skeleton_id,
+      selected_candidate_hash: selected.candidate_hash,
+    },
+  });
+  const priorSurface = artifacts[surfaceIndex];
+  const surfaceArtifact = buildPipelineArtifact({
+    userId: priorSurface.user_id,
+    kind: priorSurface.artifact_kind,
+    decisionId: priorSurface.decision_id,
+    parentArtifactId: canonicalArtifact.id,
+    planGenerationCandidateId: priorSurface.plan_generation_candidate_id,
+    schemaVersion: priorSurface.schema_version,
+    policyVersion: priorSurface.policy_version,
+    revision: priorSurface.revision,
+    createdAt: priorSurface.created_at,
+    payload: priorSurface.payload_json,
+  });
+  return assertPipelineLinks([
+    ...artifacts.slice(0, canonicalIndex),
+    canonicalArtifact,
+    surfaceArtifact,
+  ]);
 }
 
 async function maybeComputeGoalBackwardShadowDiagnostics({ mode, response, compute }) {
@@ -2331,7 +2390,7 @@ async function previewPlanForUser(userId, body = {}, { store = true, goalBackwar
             JSON.stringify(bindings.material_change_json),
           ]
         );
-        const artifacts = buildGoalBackwardDecisionArtifacts({
+        const artifacts = buildGoalBackwardArtifacts({
           userId,
           planGenerationCandidateId: candidateId,
           currentCandidateHash: candidateHash,
@@ -4748,6 +4807,7 @@ router._test = {
   applyPlanCandidate,
   assertCandidatePlanningDateCurrent,
   buildDeterministicCandidate,
+  buildGoalBackwardArtifacts,
   candidateFeasibilityCanApply,
   candidateEffectiveFrom,
   computeGoalBackwardShadowDiagnostics,

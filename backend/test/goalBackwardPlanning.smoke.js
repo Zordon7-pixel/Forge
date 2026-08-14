@@ -35,6 +35,7 @@ const {
   compareGoalBackwardCandidateRankings,
   enumerateGoalBackwardCandidates,
 } = require('../src/lib/racePlanCandidateEngine');
+const { buildCanonicalSession } = require('../src/lib/canonicalWorkout');
 
 const results = [];
 
@@ -360,6 +361,212 @@ test('MAT-05', 'a first-ever plan uses initial activation review without fabrica
   assert.equal(result.initial_plan_review, true);
   assert.equal(result.review_required, true);
   assert.equal(result.change_label, null);
+});
+
+test('MAT-THRESHOLDS-01', 'every approved structural, dosage, movement, priority, and safety threshold creates an exact review item', () => {
+  const base = {
+    session_id: 'material-key', scheduled_local_date: '2026-08-03', workout_family: 'threshold_run',
+    role: 'PRIMARY_KEY', distance_m: 10000, target_pace_s_per_km: 300, target_zone_number: 3,
+    work_duration_s: 1200, repetitions: 4, station_distance_m: 100, station_repetitions: 20,
+    load_kg: 40, strength_hard_sets: 10, stress_vector: [4, 4, 4, 2, 3, 3, 4, 4],
+  };
+  const cases = [
+    ['TARGET_PACE_CHANGED', { target_pace_s_per_km: 309.01 }],
+    ['TARGET_ZONE_CHANGED', { target_zone_number: 4 }],
+    ['SESSION_DOSAGE_CHANGED', { work_duration_s: 1380 }],
+    ['SESSION_DOSAGE_CHANGED', { station_distance_m: 115 }],
+    ['SESSION_DOSAGE_CHANGED', { load_kg: 46 }],
+    ['STRENGTH_HARD_SETS_CHANGED', { strength_hard_sets: 12 }],
+    ['HYBRID_STRESS_DIMENSION_CHANGED', { stress_vector: [4, 4, 3, 2, 3, 3, 4, 4] }],
+    ['HARD_SESSION_MOVED', { scheduled_local_date: '2026-08-05' }],
+  ];
+  for (const [expected, override] of cases) {
+    const result = compareMaterialChange({
+      active_applied_plan: { plan_revision: 11, sessions: [base] },
+      candidate: { plan_revision: 12, sessions: [{ ...base, ...override }] },
+      decisive_evidence_ids: ['evidence-material-thresholds'],
+      material_reason_code: 'MATERIAL_CHANGE_REVIEW_REQUIRED',
+    });
+    const item = result.changes.find((change) => change.code === expected);
+    assert.ok(item, `${expected} must be material`);
+    assert.equal(item.review_required, true);
+    assert.equal(item.reason_code, 'MATERIAL_CHANGE_REVIEW_REQUIRED');
+    assert.deepEqual(item.decisive_evidence_ids, ['evidence-material-thresholds']);
+    assert.equal(item.baseline_plan_revision, 11);
+    assert.equal(item.candidate_plan_revision, 12);
+    assert.equal(result.auto_apply_allowed, false);
+  }
+
+  const planLevel = compareMaterialChange({
+    active_applied_plan: { plan_revision: 11, phase: 'DEVELOPMENT', goal_priority: 'A', safety_scope: { executable: true }, sessions: [base] },
+    candidate: { plan_revision: 12, phase: 'SHARPENING', goal_priority: 'B', safety_scope: { executable: false }, sessions: [base] },
+    decisive_evidence_ids: ['evidence-plan-level'],
+  });
+  for (const code of ['PHASE_CHANGED', 'GOAL_PRIORITY_CHANGED', 'SAFETY_SCOPE_CHANGED']) {
+    assert.ok(planLevel.changes.some((change) => change.code === code));
+  }
+});
+
+test('MAT-BOUNDARY-01', 'zero baselines use absolute or structural rules and minor changes never gain an auto-apply path', () => {
+  const baseline = {
+    session_id: 'support-zero', scheduled_local_date: '2026-08-03', workout_family: 'easy_run',
+    role: 'SUPPORTING', distance_m: 0, work_duration_s: 0,
+  };
+  const minor = compareMaterialChange({
+    active_applied_plan: { plan_revision: 2, sessions: [baseline] },
+    candidate: { plan_revision: 3, sessions: [{ ...baseline, title: 'Cosmetic rename' }] },
+  });
+  assert.equal(minor.material_change, false);
+  assert.equal(minor.auto_apply_allowed, false);
+  const structural = compareMaterialChange({
+    active_applied_plan: { plan_revision: 2, sessions: [baseline] },
+    candidate: { plan_revision: 3, sessions: [{ ...baseline, work_duration_s: 60 }] },
+  });
+  assert.ok(structural.changes.some((change) => change.code === 'SESSION_DOSAGE_CHANGED'));
+  const zeroVolume = compareMaterialChange({
+    active_applied_plan: { plan_revision: 2, sessions: [baseline] },
+    candidate: {
+      plan_revision: 3,
+      sessions: [{ ...baseline, scheduled_local_date: '2026-08-03', distance_m: 3219 }],
+    },
+  });
+  assert.ok(zeroVolume.changes.some((change) => change.code === 'WEEKLY_RUNNING_VOLUME'));
+
+  const unknown = {
+    session_id: 'unknown-dosage', scheduled_local_date: '2026-08-03', workout_family: 'easy_run', role: 'SUPPORTING',
+    target_pace_s_per_km: null, target_zone_number: null, work_duration_s: null, repetitions: null,
+    station_distance_m: null, station_repetitions: null, load_kg: null, strength_hard_sets: null,
+    derived_totals: { distance_m: null, work_duration_s: null, repetitions: null, station_distance_m: null },
+    steps: [{ type: 'run', target: { pace_range_s_per_km: null, heart_rate_range_bpm: null } }],
+  };
+  const missing = {
+    session_id: 'unknown-dosage', scheduled_local_date: '2026-08-03', workout_family: 'easy_run', role: 'SUPPORTING',
+    derived_totals: {}, steps: [{ type: 'run', target: {} }],
+  };
+  const unknownToMissing = compareMaterialChange({
+    active_applied_plan: { plan_revision: 2, sessions: [unknown] },
+    candidate: { plan_revision: 3, sessions: [missing] },
+  });
+  assert.equal(unknownToMissing.material_change, false, 'unknown/null must not coerce to valid zero');
+  const unknownToValidZero = compareMaterialChange({
+    active_applied_plan: { plan_revision: 2, sessions: [unknown] },
+    candidate: { plan_revision: 3, sessions: [{ ...missing, work_duration_s: 0 }] },
+  });
+  assert.ok(unknownToValidZero.changes.some((change) => (
+    change.code === 'SESSION_DOSAGE_CHANGED' && change.field === 'work_duration_s'
+  )), 'unknown-to-valid-zero is an explicit prescription value-state transition');
+
+  const unknownDistance = { ...missing, distance_m: null, distance_miles: '' };
+  const distanceMissing = compareMaterialChange({
+    active_applied_plan: { plan_revision: 2, sessions: [unknownDistance] },
+    candidate: { plan_revision: 3, sessions: [missing] },
+  });
+  assert.equal(distanceMissing.material_change, false);
+  const distanceZero = compareMaterialChange({
+    active_applied_plan: { plan_revision: 2, sessions: [unknownDistance] },
+    candidate: { plan_revision: 3, sessions: [{ ...missing, distance_m: 0 }] },
+  });
+  assert.ok(distanceZero.changes.some((change) => change.code === 'WEEKLY_RUNNING_VOLUME_STATE_CHANGED'));
+  const distancePositive = compareMaterialChange({
+    active_applied_plan: { plan_revision: 2, sessions: [{ ...missing, distance_m: 0 }] },
+    candidate: { plan_revision: 3, sessions: [{ ...missing, distance_m: 3219 }] },
+  });
+  assert.ok(distancePositive.changes.some((change) => change.code === 'WEEKLY_RUNNING_VOLUME'));
+
+  const unknownStrength = {
+    session_id: 'unknown-strength', scheduled_local_date: '2026-08-04', workout_family: 'strength_lower',
+    role: 'SUPPORTING', strength_hard_sets: null,
+  };
+  const missingStrength = {
+    session_id: 'unknown-strength', scheduled_local_date: '2026-08-04', workout_family: 'strength_lower', role: 'SUPPORTING',
+  };
+  assert.equal(compareMaterialChange({
+    active_applied_plan: { plan_revision: 2, sessions: [unknownStrength] },
+    candidate: { plan_revision: 3, sessions: [missingStrength] },
+  }).material_change, false);
+  assert.ok(compareMaterialChange({
+    active_applied_plan: { plan_revision: 2, sessions: [unknownStrength] },
+    candidate: { plan_revision: 3, sessions: [{ ...missingStrength, strength_hard_sets: 0 }] },
+  }).changes.some((change) => change.code === 'STRENGTH_HARD_SETS_CHANGED'));
+  assert.ok(compareMaterialChange({
+    active_applied_plan: { plan_revision: 2, sessions: [{ ...missingStrength, strength_hard_sets: 0 }] },
+    candidate: { plan_revision: 3, sessions: [{ ...missingStrength, strength_hard_sets: 2 }] },
+  }).changes.some((change) => change.code === 'STRENGTH_HARD_SETS_CHANGED'));
+});
+
+test('MAT-CANONICAL-01', 'nested canonical target and repeat changes are compared after materialization', () => {
+  const materialized = enumerateGoalBackwardCandidates(roadMaterializationInput({
+    target_context: {
+      level_1_evidence: [{
+        evidence_id: 'evidence-canonical-pace', quality_state: 'COMPLETE', freshness_class: 'FRESH',
+        successful: true, target_type: 'threshold', workout_family: 'threshold_run',
+        benchmark_protocol_id: 'threshold-protocol', benchmark_success_criteria_id: 'threshold-success',
+        pace_s_per_km: 300, observed_at: '2026-08-10T12:00:00.000Z', confidence: 'HIGH',
+      }],
+      benchmark_protocol_id: 'threshold-protocol',
+      benchmark_success_criteria_id: 'threshold-success',
+    },
+  }));
+  const baseline = materialized.selected_candidate.canonical_sessions.find((session) => session.workout_family === 'threshold_run');
+  const changedSteps = JSON.parse(JSON.stringify(baseline.steps));
+  const finalWork = changedSteps.find((step) => step.step_id.endsWith('work-final'));
+  finalWork.target.pace_range_s_per_km = { minimum: 270, maximum: 280 };
+  const changed = buildCanonicalSession({
+    ...baseline,
+    plan_revision: baseline.plan_revision + 1,
+    session_revision: baseline.session_revision + 1,
+    steps: changedSteps,
+  });
+  const result = compareMaterialChange({
+    active_applied_plan: { plan_revision: baseline.plan_revision, sessions: [baseline] },
+    candidate: { plan_revision: changed.plan_revision, sessions: [changed] },
+    decisive_evidence_ids: ['evidence-canonical-pace'],
+  });
+  assert.equal(result.material_change, true);
+  assert.ok(result.changes.some((change) => change.code === 'TARGET_PACE_CHANGED'));
+  assert.equal(result.preview_required, true);
+  assert.equal(result.review_contract_complete, true);
+
+  const repeatSteps = JSON.parse(JSON.stringify(baseline.steps));
+  repeatSteps.find((step) => step.type === 'repeat').repeat_count -= 1;
+  const repeatChanged = buildCanonicalSession({
+    ...baseline,
+    plan_revision: baseline.plan_revision + 1,
+    session_revision: baseline.session_revision + 1,
+    steps: repeatSteps,
+  });
+  const repeatResult = compareMaterialChange({
+    active_applied_plan: { plan_revision: baseline.plan_revision, sessions: [baseline] },
+    candidate: { plan_revision: repeatChanged.plan_revision, sessions: [repeatChanged] },
+    decisive_evidence_ids: ['evidence-canonical-pace'],
+  });
+  assert.ok(repeatResult.changes.some((change) => (
+    change.code === 'SESSION_DOSAGE_CHANGED' && ['work_duration_s', 'repetitions'].includes(change.field)
+  )));
+});
+
+test('MAT-REVIEW-01', 'an incomplete material-review contract is a hard validation failure', () => {
+  const result = validateGoalBackwardCandidate({
+    sessions: [{
+      session_id: 'material-review-key', scheduled_local_date: '2026-08-17', workout_family: 'threshold_run',
+      role: 'PRIMARY_KEY', duration_min: 40, quality_work_duration_min: 10,
+    }],
+    material_change: {
+      material_change: true, preview_required: true, review_required: true,
+      review_contract_complete: false, baseline_plan_revision: 3, candidate_plan_revision: 4,
+      changes: [{
+        code: 'TARGET_PACE_CHANGED', review_required: true,
+        reason_code: 'MATERIAL_CHANGE_REVIEW_REQUIRED', decisive_evidence_ids: [],
+        baseline_plan_revision: 3, candidate_plan_revision: 4,
+      }],
+    },
+  }, {
+    available_local_dates: ['2026-08-17'], available_days_count: 5,
+    training_age_class: 'ESTABLISHED', recovery_state: 'NORMAL', safety_action: 'NORMAL',
+  });
+  assert.equal(result.valid, false);
+  assert.ok(result.reason_codes.includes('MATERIAL_CHANGE_REVIEW_REQUIRED'));
+  assert.ok(result.violations.some((violation) => violation.reason === 'REVIEW_CONTRACT_INCOMPLETE'));
 });
 
 test('PHASE-01', 'a safe useful peak exposure is retained before taper', () => {
@@ -749,6 +956,145 @@ test('CAND-01', 'one hundred repeated bounded generations select the identical c
   ));
   assert.equal(selectedHashes.every((hash) => hash === selectedHashes[0]), true);
   assert.match(selectedHashes[0], /^[a-f0-9]{64}$/);
+});
+
+function roadMaterializationInput(overrides = {}) {
+  const dates = ['2026-08-17', '2026-08-19', '2026-08-22'];
+  return {
+    decision: {
+      decision_id: 'decision-road-materialized',
+      decision_hash: canonicalHash({ fixture: 'road-materialized' }),
+      plan_id: 'active-plan-road',
+      plan_revision: 3,
+      phase: 'DEVELOPMENT',
+      timezone: 'America/New_York',
+      primary_goal_id: 'goal-road-materialized',
+      active_goals: [{ goal_id: 'goal-road-materialized', source_revision: 2 }],
+      training_age_class: 'ESTABLISHED',
+      consistency_state: 'CONSISTENT',
+      recovery_state: 'NORMAL',
+      safety_state: { action: 'NORMAL', scope: [] },
+      evidence_used: ['evidence-road-materialized'],
+      athlete_locks: [],
+      manual_edits: [],
+      role_multiset: [
+        { requirement_id: 'quality', any_of: ['threshold_run'], role: 'PRIMARY_KEY', scheduled_local_date: null },
+        { requirement_id: 'easy', any_of: ['easy_run'], role: 'SUPPORTING', supports_requirement_id: 'quality', scheduled_local_date: null },
+      ],
+      due_exposure_ledger: {
+        due_roles: [
+          { requirement_id: 'quality', any_of: ['threshold_run'], role: 'PRIMARY_KEY' },
+          { requirement_id: 'easy', any_of: ['easy_run'], role: 'SUPPORTING' },
+        ],
+        unplaceable_requirement_ids: [],
+      },
+    },
+    available_local_dates: dates,
+    maximum_session_count: 2,
+    legacy_road_candidate_material: [
+      {
+        id: 'road-quality', workout_id: 'tempo_threshold', kind: 'run', title: 'Threshold intervals',
+        prescription_basis: 'time', duration_min: 50, distance_miles: 6, distance_is_estimate: true,
+        quality_prescription: { repetitions: 4, work: '5 min threshold', recovery: { duration: '2 min', type: 'easy jog' } },
+        warmup: ['15 min easy running'], cooldown: ['10 min easy running'],
+      },
+      {
+        id: 'road-easy', workout_id: 'easy_aerobic', kind: 'run', title: 'Easy aerobic run',
+        prescription_basis: 'time', duration_min: 30, distance_miles: 3, distance_is_estimate: true,
+      },
+    ],
+    validation_options: {
+      available_local_dates: dates,
+      available_days_count: dates.length,
+      training_age_class: 'ESTABLISHED',
+      consistency_state: 'CONSISTENT',
+      recovery_state: 'NORMAL',
+      safety_action: 'NORMAL',
+    },
+    materialize_canonical: true,
+    planning_instant: '2026-08-14T12:00:00.000Z',
+    ...overrides,
+  };
+}
+
+test('CAND-MATERIALIZE-01', 'accepted road candidates validate executable canonical sessions before selection', () => {
+  const result = enumerateGoalBackwardCandidates(roadMaterializationInput());
+  assert.ok(result.selected_candidate);
+  assert.equal(result.selected_candidate.canonical_sessions_materialized, true);
+  assert.equal(result.selected_candidate.canonical_sessions.length, 2);
+  assert.equal(result.selected_candidate.canonical_session_set.plan_revision, 4);
+  assert.equal(result.selected_candidate.canonical_plan.schemaVersion, 2);
+  assert.equal(result.selected_candidate.validation.valid, true);
+  assert.ok(result.selected_candidate.validation.validator_results.some((entry) => entry.validator === 'canonical_session_set'));
+  assert.equal(result.selected_candidate.canonical_sessions.every((session) => session.decision_id === result.decision.decision_id), true);
+  assert.equal(result.selected_candidate.canonical_sessions.every((session) => session.content_hash.length === 64), true);
+});
+
+test('CAND-WEEK-01', 'a below-floor canonical session is rejected before any internal preview can be selected', () => {
+  const input = roadMaterializationInput();
+  const result = enumerateGoalBackwardCandidates({
+    ...input,
+    decision: {
+      ...input.decision,
+      role_multiset: [{ requirement_id: 'recovery', any_of: ['recovery_run'], role: 'RECOVERY', scheduled_local_date: null }],
+      due_exposure_ledger: {
+        due_roles: [{ requirement_id: 'recovery', any_of: ['recovery_run'], role: 'RECOVERY' }],
+        unplaceable_requirement_ids: [],
+      },
+    },
+    maximum_session_count: 1,
+    legacy_road_candidate_material: [{
+      id: 'token-recovery', workout_id: 'recovery_run', kind: 'run', title: 'Recovery run',
+      prescription_basis: 'time', duration_min: 11, distance_miles: 1, distance_is_estimate: true,
+    }],
+  });
+  assert.equal(result.selected_candidate, null);
+  assert.equal(result.candidates.every((candidate) => candidate.canonical_sessions_materialized), true);
+  assert.equal(result.candidates.every((candidate) => candidate.validation.reason_codes.includes('BELOW_PRESENTATION_FLOOR_EXCEPTION')), true);
+});
+
+test('MAT-SESSION-BINDING-01', 'material review items must identify the actual canonical session revision and hash', () => {
+  const input = roadMaterializationInput({
+    active_applied_plan: {
+      plan_revision: 3,
+      sessions: [{
+        session_id: 'road-quality', scheduled_local_date: '2026-08-17', workout_family: 'interval_run',
+        role: 'PRIMARY_KEY', duration_min: 50, distance_miles: 6,
+      }],
+    },
+  });
+  const result = enumerateGoalBackwardCandidates(input);
+  assert.ok(result.selected_candidate?.material_change?.material_change);
+  const tampered = JSON.parse(JSON.stringify(result.selected_candidate));
+  const sessionItem = tampered.material_change.changes.find((item) => item.session_id && item.candidate_binding_state === 'CANONICAL');
+  assert.ok(sessionItem);
+  sessionItem.candidate_session_revision = null;
+  sessionItem.candidate_session_content_hash = null;
+  const validation = validateGoalBackwardCandidate(tampered, {
+    ...input.validation_options,
+    required_exposure_ledger: input.decision.due_exposure_ledger,
+    available_local_dates: input.available_local_dates,
+  });
+  const materialReview = validation.validator_results.find((entry) => entry.validator === 'material_review');
+  assert.equal(materialReview.valid, false);
+  assert.ok(materialReview.violations.some((violation) => violation.reason === 'MATERIAL_ITEM_BINDING_INCOMPLETE'));
+
+  const fabricated = JSON.parse(JSON.stringify(result.selected_candidate));
+  const fabricatedItem = fabricated.material_change.changes.find((item) => item.session_id);
+  fabricatedItem.session_id = 'never-existed';
+  fabricatedItem.baseline_binding_state = 'NOT_APPLICABLE';
+  fabricatedItem.baseline_session_revision = null;
+  fabricatedItem.baseline_session_content_hash = null;
+  fabricatedItem.candidate_binding_state = 'REMOVED';
+  fabricatedItem.candidate_session_revision = null;
+  fabricatedItem.candidate_session_content_hash = null;
+  const fabricatedValidation = validateGoalBackwardCandidate(fabricated, {
+    ...input.validation_options,
+    required_exposure_ledger: input.decision.due_exposure_ledger,
+    available_local_dates: input.available_local_dates,
+  });
+  const fabricatedReview = fabricatedValidation.validator_results.find((entry) => entry.validator === 'material_review');
+  assert.equal(fabricatedReview.valid, false);
 });
 
 assert.equal(new Set(results).size, results.length, 'fixture IDs must remain unique');

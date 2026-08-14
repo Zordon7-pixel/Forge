@@ -13,6 +13,17 @@ const HARD_WORK_TARGETS = new Set(['threshold', 'interval', 'compromised']);
 const EASY_STEADY_LONG_TARGETS = new Set(['easy', 'recovery', 'steady', 'long_run']);
 const VALID_TARGET_TYPES = new Set(Object.keys(TARGET_POLICY_V1.fallback_rpe_ranges));
 const FRESHNESS_REJECTIONS = new Set(['STALE', 'EXPIRED']);
+const TARGET_TYPE_BY_WORKOUT_FAMILY = Object.freeze({
+  recovery_run: 'recovery',
+  easy_run: 'easy',
+  long_aerobic: 'long_run',
+  steady_run: 'steady',
+  threshold_run: 'threshold',
+  interval_run: 'interval',
+  race_rhythm_run: 'race_rhythm',
+  assessment: 'interval',
+  race: 'race_rhythm',
+});
 
 function deepFreeze(value) {
   if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
@@ -542,9 +553,57 @@ function resolveGoalBackwardTarget(input = {}) {
   return deepFreeze(result);
 }
 
+function targetTypeForWorkoutFamily(workoutFamily) {
+  return TARGET_TYPE_BY_WORKOUT_FAMILY[String(workoutFamily || '')] || null;
+}
+
+function compactCanonicalTarget(target = {}) {
+  return Object.fromEntries(Object.entries(target).filter(([, value]) => value !== null && value !== undefined));
+}
+
+function buildCanonicalMaterialTarget(input = {}) {
+  const targetType = input.target_type || targetTypeForWorkoutFamily(input.workout_family);
+  const authority = resolveGoalBackwardTarget({
+    ...input,
+    target_type: targetType,
+    workout_family: input.workout_family,
+  });
+  if (!authority.valid) return authority;
+  const dosage = {};
+  if (Number.isSafeInteger(input.duration_s) && input.duration_s >= 0) dosage.duration_s = input.duration_s;
+  if (Number.isSafeInteger(input.distance_m) && input.distance_m >= 0) dosage.distance_m = input.distance_m;
+  if (Number.isSafeInteger(input.repetitions) && input.repetitions >= 0) dosage.repetitions = input.repetitions;
+  const target = compactCanonicalTarget({ ...authority.target, ...dosage });
+  const dosageUnits = [
+    Object.hasOwn(dosage, 'distance_m') ? 'm' : null,
+    Object.hasOwn(dosage, 'duration_s') ? 's' : null,
+    Object.hasOwn(dosage, 'repetitions') ? 'count' : null,
+  ].filter(Boolean);
+  const covered = new Set((authority.provenance || []).flatMap((entry) => entry.canonical_units || []));
+  const uncovered = dosageUnits.filter((unit) => !covered.has(unit));
+  const dosageProvenance = uncovered.length ? [provenance(
+    input,
+    (input.source_evidence_ids || []).map(String).filter(Boolean),
+    uncovered,
+    {
+      confidence: input.dosage_confidence || (input.source_evidence_ids?.length ? 'MEDIUM' : 'INSUFFICIENT'),
+      derived_athlete_state_field: input.derived_athlete_state_field || 'UNKNOWN_LEGACY_CANDIDATE_DOSAGE',
+      derivation: 'canonical-materialization-v1',
+    },
+  )] : [];
+  const targetProvenance = [...(authority.provenance || []), ...dosageProvenance];
+  return deepFreeze({
+    ...authority,
+    target,
+    provenance: targetProvenance,
+    target_provenance: targetProvenance,
+  });
+}
+
 module.exports = {
   TARGET_POLICY_V1,
   benchmarkPaceRange,
+  buildCanonicalMaterialTarget,
   convertNearbyRoadRace,
   environmentRequiresEffortOverride,
   evidenceGate,
@@ -555,5 +614,6 @@ module.exports = {
   resolveTarget: resolveGoalBackwardTarget,
   roadRaceConversionV1: convertNearbyRoadRace,
   selectTargetAuthority: resolveGoalBackwardTarget,
+  targetTypeForWorkoutFamily,
   workSegmentPaces,
 };

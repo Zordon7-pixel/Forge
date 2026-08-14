@@ -484,8 +484,37 @@ async function run() {
   assert.ok(computedShadow.candidates.length > 0 && computedShadow.candidates.length <= 64);
   assert.equal(computedShadow.decision.candidate_ids.length, computedShadow.candidates.length);
   assert.match(computedShadow.selected_candidate.candidate_hash, /^[a-f0-9]{64}$/);
+  assert.equal(computedShadow.selected_candidate.canonical_sessions_materialized, true);
+  assert.equal(computedShadow.selected_candidate.canonical_plan.schemaVersion, 2);
+  assert.equal(
+    computedShadow.selected_candidate.canonical_sessions.every((session) => (
+      session.plan_revision === computedShadow.selected_candidate.canonical_session_set.plan_revision
+      && session.decision_id === computedShadow.decision.decision_id
+    )),
+    true,
+  );
 
-  console.log('PLAN CANDIDATE LIFECYCLE SMOKE OK (63)');
+  const canonicalArtifacts = plansRouter._test.buildGoalBackwardArtifacts({
+    userId: ownerId,
+    planGenerationCandidateId: 'candidate-materialized-shadow',
+    currentCandidateHash: `sha256:${'e'.repeat(64)}`,
+    decision: computedShadow.decision,
+    candidates: computedShadow.candidates,
+    createdAt: '2026-08-08T12:00:00.000Z',
+  });
+  assert.equal(canonicalArtifacts.length, 7);
+  const canonicalArtifact = canonicalArtifacts.find((artifact) => artifact.artifact_kind === 'canonical_session_set');
+  assert.equal(canonicalArtifact.payload_json.canonical_sessions_materialized, true);
+  assert.equal(canonicalArtifact.payload_json.sessions.length, computedShadow.selected_candidate.canonical_sessions.length);
+  assert.equal(canonicalArtifact.payload_json.plan_revision, computedShadow.selected_candidate.canonical_session_set.plan_revision);
+  assert.equal(canonicalArtifact.payload_json.decision_hash, computedShadow.decision.decision_hash);
+  assert.equal(canonicalArtifact.payload_json.selected_candidate_hash, computedShadow.selected_candidate.candidate_hash);
+  assert.equal(
+    canonicalArtifact.payload_json.session_content_hashes.every((entry) => /^[a-f0-9]{64}$/.test(entry.content_hash)),
+    true,
+  );
+
+  console.log('PLAN CANDIDATE LIFECYCLE SMOKE OK (69)');
 }
 
 run().catch((error) => {
