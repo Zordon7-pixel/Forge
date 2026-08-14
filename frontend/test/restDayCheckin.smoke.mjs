@@ -4,7 +4,14 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
 import { resolveTodayPlanAccess } from '../src/lib/todayPlanAccess.js'
-import { normalizeExecution, recommendationFromExecution } from '../src/lib/dailyExecutionCore.js'
+import {
+  hasExecutableSession,
+  normalizeExecution,
+  recommendationFromExecution,
+  runRouteState,
+  scheduledLiftFromExecution,
+  scheduledRunFromExecution,
+} from '../src/lib/dailyExecutionCore.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const frontend = path.resolve(here, '..')
@@ -54,20 +61,39 @@ const scheduledRunPlan = {
     sessions: [{ id: 'scheduled-run', kind: 'run', type: 'easy_run', duration_minutes: 35 }],
   }] }],
 }
-const sickCheckin = { feeling: 1, legs: 1, drive: 1, time_available: 60, life_flags: ['sick'] }
-const sickAction = checkinOverride.deriveAction(sickCheckin)
 const sickBaseDay = scheduledRunPlan.weeks[0].days[0]
-const sickPatch = checkinOverride.buildPatch(sickAction, sickBaseDay.sessions[0], sickCheckin)
-const sickResolved = backendExecution.resolvePlanDayForDate({ plan: scheduledRunPlan, dateISO: '2026-08-14', patch: sickPatch })
-const sickExecution = normalizeExecution({ execution: backendExecution.buildDailyExecution({
-  plan: scheduledRunPlan,
-  dateISO: '2026-08-14',
-  selectedEntry: sickResolved.selectedEntry,
-  selectedWeek: sickResolved.selectedWeek,
-  selectedDayIndex: sickResolved.selectedDayIndex,
-  completedSessionIds: [],
-  restSource: null,
-}) })
+function safetyExecution(checkin) {
+  const action = checkinOverride.deriveAction(checkin)
+  const patch = checkinOverride.buildPatch(action, sickBaseDay.sessions[0], checkin)
+  const resolved = backendExecution.resolvePlanDayForDate({ plan: scheduledRunPlan, dateISO: '2026-08-14', patch })
+  const execution = normalizeExecution({ execution: backendExecution.buildDailyExecution({
+    plan: scheduledRunPlan,
+    dateISO: '2026-08-14',
+    selectedEntry: resolved.selectedEntry,
+    selectedWeek: resolved.selectedWeek,
+    selectedDayIndex: resolved.selectedDayIndex,
+    completedSessionIds: [],
+    restSource: null,
+  }) })
+  return { action, execution }
+}
+
+const safetyCases = [
+  ['sick', { feeling: 3, legs: 3, drive: 3, time_available: 60, life_flags: ['sick'] }],
+  ['injured', { feeling: 3, legs: 3, drive: 3, time_available: 60, life_flags: ['injured'] }],
+  ['low sleep', { feeling: 3, legs: 3, drive: 3, time_available: 60, sleep_hours: 3.5, life_flags: [] }],
+]
+for (const [label, checkin] of safetyCases) {
+  const safety = safetyExecution(checkin)
+  assert.equal(safety.action, 'rest', `${label} follows the real safety override path`)
+  assert.equal(hasExecutableSession(safety.execution), false, `${label} recovery is not executable`)
+  assert.equal(scheduledRunFromExecution(safety.execution), null, `${label} cannot schedule a run`)
+  assert.equal(scheduledLiftFromExecution(safety.execution), null, `${label} cannot schedule a lift`)
+  assert.equal(runRouteState(safety.execution), null, `${label} cannot create a warm-up or active-run route`)
+  assert.equal(recommendationFromExecution(safety.execution)?.type, 'rest', `${label} remains recovery guidance`)
+}
+
+const { action: sickAction, execution: sickExecution } = safetyExecution(safetyCases[0][1])
 const sickRecommendation = recommendationFromExecution(sickExecution)
 const sickAccess = resolveTodayPlanAccess({
   ...actions,
@@ -103,6 +129,7 @@ assert(detailsSource.includes("{isRestDay ? 'Recovery tools' : 'Check-in and rec
 assert(detailsSource.includes('{planAccess.showCheckIn && ('), 'rest details suppress the check-in control through the tested resolver')
 assert(insights.includes('Rest and recovery are scheduled today. No check-in is needed unless you choose to train.'), 'Today explains the rest-day behavior and intentional-training exception directly')
 assert(dailyCheckIn.includes('headline && adjustment !== headline'), 'a manually opened rest-day check-in explains why the rest plan stays in place')
+assert(dailyCheckIn.includes("calendarRecommendation?.type === 'rest'"), 'post-submit routing honors recovery guidance before any retained run slot')
 assert(logRun.includes('execution?.hasDay && execution?.isPlannedRest'), 'run-intent choices use authored-rest provenance instead of treating removed-empty days as scheduled rest')
 
-console.log('REST-DAY CHECK-IN FRONTEND SMOKE OK (33)')
+console.log('REST-DAY CHECK-IN FRONTEND SMOKE OK (52)')

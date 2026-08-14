@@ -67,10 +67,34 @@ function isPendingSession(session) {
   return Boolean(session) && session.completed !== true;
 }
 
+// A check-in safety override keeps the original calendar slot/id so the plan
+// remains auditable, but changes the session prescription to `rest`. That
+// recovery guidance must never remain executable just because the retained
+// slot still has kind="run" (or kind="lift").
+export function isRestSession(session) {
+  if (!session || typeof session !== 'object') return false;
+  return [
+    session.type,
+    session.workout_type,
+    session.prescription?.type,
+    session.prescription?.workout_type,
+  ].some((value) => String(value || '').trim().toLowerCase() === 'rest');
+}
+
+function recoveryGuidanceSession(execution) {
+  if (!execution || typeof execution !== 'object') return null;
+  const candidates = [
+    execution.run,
+    execution.lift,
+    ...(Array.isArray(execution.sessions) ? execution.sessions : []),
+  ];
+  return candidates.find(isRestSession) || null;
+}
+
 // True when there is an unfinished scheduled session today. Completed sessions
 // remain reviewable, but they must never reopen from Today's primary action.
 export function hasExecutableSession(execution) {
-  if (!execution || !execution.hasDay || execution.isRest) return false;
+  if (!execution || !execution.hasDay || execution.isRest || recoveryGuidanceSession(execution)) return false;
   return isPendingSession(execution.run) || isPendingSession(execution.lift);
 }
 
@@ -130,6 +154,17 @@ export function recommendationFromExecution(execution) {
     };
   }
   if (execution.isRest) return null;
+  const recovery = recoveryGuidanceSession(execution);
+  if (recovery) {
+    return {
+      recommendationType: 'rest',
+      type: 'rest',
+      reason: recovery.description || recovery.notes || "Recovery is today's guidance.",
+      structure: [],
+      planSessionId: recovery.id || null,
+      source: 'calendar',
+    };
+  }
   if (!hasExecutableSession(execution)) return null;
   const run = scheduledRunFromExecution(execution);
   if (run) {

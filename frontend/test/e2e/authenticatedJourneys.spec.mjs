@@ -230,6 +230,59 @@ test('check-in recovery remains guidance and never offers the rest-labelled run'
   assertCleanApiAndRuntime(apiState, runtimeErrors)
 })
 
+test('submitting a safety check-in cannot turn its rest-labelled run slot into Prepare to Run', async ({ page }) => {
+  const runtimeErrors = collectRuntimeErrors(page)
+  let checkinSaved = false
+  const apiState = await installAuthenticatedApi(page, {
+    responses: new Map([
+      ['GET /api/checkin/today', () => checkinSaved ? {
+        feeling: 3,
+        legs: 3,
+        drive: 3,
+        sleep_hours: null,
+        life_flags: ['sick'],
+      } : null],
+      ['POST /api/checkin/preview', {
+        headline: 'Recovery is the safer call today.',
+        drivers: [{ label: 'Not well', detail: 'Training is paused while you are not feeling well.' }],
+      }],
+      ['POST /api/checkin', (request) => {
+        checkinSaved = true
+        expect(request.body).toMatchObject({ legs: 3, drive: 3, time_available: 45, life_flags: ['sick'] })
+        return {
+          headline: 'Recovery is the safer call today.',
+          adjustment: 'Rest day from today\'s check-in.',
+          drivers: [{ label: 'Not well', detail: 'Training is paused while you are not feeling well.' }],
+        }
+      }],
+      ['GET /api/plans/today', checkinRecoveryExecution()],
+    ]),
+  })
+
+  await page.goto('/checkin')
+  await page.getByRole('button', { name: 'Fresh', exact: true }).click()
+  await page.getByRole('button', { name: 'Fired up', exact: true }).click()
+  await page.getByRole('button', { name: '45 min', exact: true }).click()
+  await page.getByRole('button', { name: 'Not well', exact: true }).click()
+  await page.getByRole('button', { name: 'Done', exact: true }).click()
+
+  await expect(page.getByRole('button', { name: 'View Today', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Prepare to Run', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Start Warm-Up', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Skip, start the run', exact: true })).toHaveCount(0)
+
+  await page.getByRole('button', { name: 'View Today', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'View recovery', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'View recovery', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Edit check-in', exact: true }).last()).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Start run', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Start lift', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Map route', exact: true })).toHaveCount(0)
+
+  expect(requestsFor(apiState, 'POST', '/api/checkin')).toHaveLength(1)
+  assertCleanApiAndRuntime(apiState, runtimeErrors)
+})
+
 test('onboarding persists the athlete profile and generates one plan', async ({ page }) => {
   const runtimeErrors = collectRuntimeErrors(page)
   const onboardedToken = createQaToken({ onboarded: true })

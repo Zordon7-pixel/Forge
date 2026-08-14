@@ -5,6 +5,7 @@
 import {
   localDateISO,
   normalizeExecution,
+  isRestSession,
   hasExecutableSession,
   formatHrZone,
   completionBody,
@@ -52,6 +53,36 @@ const hybridBody = {
 const restBody = { today: { day: 'Wed', date: '2026-07-15', type: 'rest', rest: true }, execution: { hasPlan: true, hasDay: true, isRest: true, isPlannedRest: true, restSource: 'planned', mode: 'hybrid_maintain', sessions: [], run: null, lift: null, date: '2026-07-15' } };
 const removedBody = { today: { day: 'Wed', date: '2026-07-15', sessions: [] }, execution: { hasPlan: true, hasDay: true, isRest: true, isPlannedRest: false, restSource: 'removed', mode: 'hybrid_maintain', sessions: [], run: null, lift: null, date: '2026-07-15' } };
 const noPlanBody = { today: null, execution: { hasPlan: false, hasDay: false, date: '2026-07-13' } };
+const checkinRecoveryBody = {
+  today: { day: 'Thu', date: '2026-08-14', type: 'rest' },
+  execution: {
+    hasPlan: true,
+    hasDay: true,
+    isRest: false,
+    isPlannedRest: false,
+    restSource: null,
+    week: 1,
+    sessions: [{
+      id: 'run-rest-override',
+      kind: 'run',
+      type: 'rest',
+      workout_type: 'rest',
+      title: 'Rest day',
+      description: "Rest day from today's check-in.",
+      completed: false,
+    }],
+    run: {
+      id: 'run-rest-override',
+      kind: 'run',
+      type: 'rest',
+      workout_type: 'rest',
+      title: 'Rest day',
+      description: "Rest day from today's check-in.",
+      completed: false,
+    },
+    lift: null,
+  },
+};
 
 console.log('\n== normalizeExecution (hybrid) ==');
 const h = normalizeExecution(hybridBody);
@@ -71,6 +102,9 @@ const n = normalizeExecution(noPlanBody);
 assert(!n.hasPlan && !n.hasDay && n.sessions.length === 0, 'no-plan normalizes safely');
 assert(hasExecutableSession(n) === false, 'no-plan not executable → recommendation fallback');
 assert(normalizeExecution(null).hasPlan === false, 'null body normalizes without throwing');
+const recovery = normalizeExecution(checkinRecoveryBody);
+assert(isRestSession(recovery.run) === true, 'rest prescription overrides retained run-slot kind');
+assert(hasExecutableSession(recovery) === false, 'check-in recovery guidance is never executable');
 
 console.log('\n== formatHrZone ==');
 assert(formatHrZone(h.run) === 'Zone 2 · 134-148 bpm', 'calibrated bpm band rendered');
@@ -95,6 +129,8 @@ assert(scheduledLiftFromExecution(h) === null, 'scheduledLiftFromExecution exclu
 assert(scheduledRunFromExecution(r) === null, 'rest day yields no scheduled run');
 assert(scheduledLiftFromExecution(r) === null, 'rest day yields no scheduled lift');
 assert(scheduledRunFromExecution(n) === null, 'no-plan yields no scheduled run');
+assert(scheduledRunFromExecution(recovery) === null, 'rest-labelled run slot never becomes a scheduled run');
+assert(scheduledLiftFromExecution(recovery) === null, 'recovery guidance never exposes a lift handoff');
 
 console.log('\n== recommendationFromExecution (calendar vs fallback) ==');
 const calRec = recommendationFromExecution(h);
@@ -107,6 +143,9 @@ const removed = normalizeExecution(removedBody);
 assert(removed.isRest && !removed.isPlannedRest && removed.restSource === 'removed', 'removed-empty day retains distinct provenance');
 assert(recommendationFromExecution(removed) === null, 'removed-empty day cannot masquerade as planned rest');
 assert(recommendationFromExecution(n) === null, 'no-plan → null so callers fall back to next-recommendation');
+const recoveryRec = recommendationFromExecution(recovery);
+assert(recoveryRec?.type === 'rest' && recoveryRec?.recommendationType === 'rest', 'rest-labelled slot remains explicit recovery guidance');
+assert(recoveryRec?.reason === "Rest day from today's check-in.", 'recovery guidance preserves the safety explanation');
 const stepsRec = recommendationFromExecution(normalizeExecution({ execution: { hasPlan: true, hasDay: true, isRest: false, sessions: [], run: { id: 'run-steps', kind: 'run', steps: ['Warm up', '3 x 5 min', 'Cool down'] } } }));
 assert(stepsRec && stepsRec.structure.length === 3, 'run steps remain visible when structure is absent');
 const liftOnly = normalizeExecution({ execution: { hasPlan: true, hasDay: true, isRest: false, week: 3, sessions: [{ id: 'lift-9', kind: 'lift', title: 'Upper' }], run: null, lift: { id: 'lift-9', kind: 'lift', title: 'Upper' } } });
@@ -142,6 +181,7 @@ assert(rs && rs.planSessionId === 'run-1' && rs.currentWeek === 1, 'runRouteStat
 assert(rs.scheduledRun && rs.scheduledRun.id === 'run-1', 'runRouteState embeds the scheduled run');
 assert(rs.prescription && rs.prescription.zone === 'Z2', 'runRouteState prescription carries the plan zone');
 assert(runRouteState(r) === null && runRouteState(n) === null, 'no executable run → null route state');
+assert(runRouteState(recovery) === null, 'rest-labelled run cannot create a warm-up or active-run route');
 const unplanned = unplannedRunRouteState({ countdown: 5, runType: 'tempo', surface: 'track' });
 assert(unplanned.source === 'unplanned' && unplanned.planSessionId === null && unplanned.currentWeek === null, 'unplanned run has no plan linkage');
 assert(unplanned.startAfterWarmup && unplanned.mapMyRun && unplanned.trackMode, 'unplanned outdoor run preserves warm-up and route capture');

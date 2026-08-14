@@ -4,7 +4,7 @@ import api from '../lib/api'
 import { withActiveRunReturnTarget } from '../lib/activeRunControls'
 import track from '../lib/track'
 import { scrollToFirstError } from '../utils/validation'
-import { normalizeExecution, runRouteState, scheduledLiftFromExecution } from '../lib/dailyExecution'
+import { normalizeExecution, recommendationFromExecution, runRouteState, scheduledLiftFromExecution } from '../lib/dailyExecution'
 
 const LEG_OPTIONS = [
   { value: 3, label: 'Fresh' },
@@ -233,10 +233,14 @@ export default function DailyCheckIn({ onComplete }) {
           }),
         ])
         const execution = normalizeExecution(planRes.data)
+        const calendarRecommendation = recommendationFromExecution(execution)
         const runState = runRouteState(execution)
         const scheduledLift = scheduledLiftFromExecution(execution)
 
-        if (runState && execution.run) {
+        if (calendarRecommendation?.type === 'rest') {
+          setTodayPlan(calendarRecommendation)
+          setWorkoutHandoff({ kind: 'rest', route: '/', state: null })
+        } else if (runState && execution.run) {
           const run = execution.run
           const distanceMiles = Number(run.distance_miles || run.distance || 0) || null
           const pace = run.pace_target || run.pace || run.target_pace || null
