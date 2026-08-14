@@ -3,6 +3,7 @@
 
 const assert = require('node:assert/strict');
 const { buildBodyweightAlternative } = require('../src/lib/travelTraining');
+const dailyExecution = require('../src/lib/dailyExecution');
 
 function routeHandler(router, routePath, method) {
   const layer = router.stack.find((item) => item.route?.path === routePath && item.route?.methods?.[method]);
@@ -138,6 +139,46 @@ async function routeBoundarySmoke() {
     assert.equal(response.payload.alternative.title, 'Runner strength — no equipment');
     assert.deepEqual(response.payload.alternative.equipment, ['bodyweight']);
     assert.ok(!response.payload.alternative.main.some((exercise) => /jump|hop|plyo|depth|bound/i.test(exercise.name)));
+
+    const legacyPlan = {
+      weeks: [{
+        week: 1,
+        phase: 'base',
+        days: [
+          { date: '2026-08-01', day: 'Sat', type: 'rest' },
+          { date: '2026-08-02', day: 'Sun', type: 'rest' },
+          { date: '2026-08-03', day: 'Mon', type: 'strength', title: sourceLift.title, main: sourceLift.main },
+        ],
+      }],
+    };
+    const legacySelection = dailyExecution.resolvePlanDayForDate({
+      plan: legacyPlan,
+      dateISO: '2026-08-03',
+      patch: null,
+    });
+    const legacyExecution = dailyExecution.buildDailyExecution({
+      plan: legacyPlan,
+      dateISO: '2026-08-03',
+      selectedEntry: legacySelection.selectedEntry,
+      selectedWeek: legacySelection.selectedWeek,
+      selectedDayIndex: legacySelection.selectedDayIndex,
+      completedSessionIds: [],
+      hrProfile: null,
+    });
+    assert.equal(legacyExecution.lift?.id, '2', 'canonical daily execution publishes the nonzero legacy day index');
+    activeRow.plan_data = JSON.stringify(legacyPlan);
+    response = await invoke(handler, request({ date: '2026-08-03', session_id: legacyExecution.lift.id }));
+    assert.equal(response.statusCode, 200, 'the direct route accepts the canonical legacy session ID it publishes');
+    assert.equal(response.payload.alternative.id, legacyExecution.lift.id);
+    response = await invoke(handler, request({ date: '2026-08-03', session_id: '0' }));
+    assert.equal(response.statusCode, 404, 'a defaulted zero index cannot select a nonzero legacy day');
+    activeRow.progress_json = JSON.stringify({ completedSessionIds: [legacyExecution.lift.id] });
+    response = await invoke(handler, request({ date: '2026-08-03', session_id: legacyExecution.lift.id }));
+    assert.equal(response.statusCode, 409, 'canonical completion blocks the matching legacy lift');
+    response = await invoke(handler, request({ date: '2026-08-03', session_id: '0' }));
+    assert.equal(response.statusCode, 404, 'completion cannot be bypassed with the old defaulted index');
+    activeRow.progress_json = JSON.stringify({ completedSessionIds: [] });
+    activeRow.plan_data = JSON.stringify(plan);
 
     checkinOverrides.set('owner|2026-08-03', JSON.stringify({
       type: 'rest',

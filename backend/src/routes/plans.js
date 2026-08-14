@@ -3888,7 +3888,7 @@ router.post('/today/bodyweight-alternative', auth, async (req, res) => {
     let exactKind = null;
     for (let index = 0; index < storedSessions.length; index += 1) {
       const stored = storedSessions[index];
-      const stableId = planSchema.sessionIdentifier(entry, stored, index, selection.dayIndex);
+      const stableId = planSchema.sessionIdentifier(entry, stored, index, selection.selectedDayIndex);
       if (stableId !== sessionId) continue;
       exactKind = planSchema.kindFromSession(stored);
       exactSession = { ...planSchema.normalizeSession(stored, stableId), id: stableId };
@@ -3910,13 +3910,13 @@ router.post('/today/bodyweight-alternative', auth, async (req, res) => {
     const completedIds = new Set(completedSessionIdsFromProgress(progress).map(String));
     const storedStatus = String(
       storedSessions.find((stored, index) => (
-        planSchema.sessionIdentifier(entry, stored, index, selection.dayIndex) === sessionId
+        planSchema.sessionIdentifier(entry, stored, index, selection.selectedDayIndex) === sessionId
       ))?.status || ''
     ).toLowerCase();
     if (
       completedIds.has(sessionId)
       || storedSessions.some((stored, index) => (
-        planSchema.sessionIdentifier(entry, stored, index, selection.dayIndex) === sessionId
+        planSchema.sessionIdentifier(entry, stored, index, selection.selectedDayIndex) === sessionId
         && stored?.completed === true
       ))
       || storedStatus === 'completed'
