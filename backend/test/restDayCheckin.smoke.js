@@ -97,6 +97,16 @@ async function run() {
   assert.equal(runDirective.hasWorkoutToday, true);
   assert.doesNotMatch(runDirective.headline, /rest/i, 'feel-great does not manufacture a rest result');
 
+  const sickDirective = await checkinRouter._test.computeCheckinDirective(
+    ownerId,
+    { ...feelGreat, feeling: 1, legs: 1, drive: 1, life_flags: ['sick'] },
+    databaseFor(runDay),
+    { planningDateLocal: planningDate }
+  );
+  assert.equal(sickDirective.action, 'rest', 'a sick check-in takes the real recovery override path');
+  assert.equal(sickDirective.patch.type, 'rest');
+  assert.equal(sickDirective.hasWorkoutToday, true, 'the override remains bound to the scheduled session instead of fabricating a new day');
+
   const removablePlan = {
     schemaVersion: 2,
     startDate: planningDate,
@@ -151,7 +161,7 @@ async function run() {
   assert.equal(laterWeekDirective.plannedRestDay, true, 'check-in selects the canonical later-week rest day, not the first matching weekday');
   assert.equal(laterWeekDirective.hasWorkoutToday, false);
 
-  console.log('REST-DAY CHECK-IN SMOKE OK (24)');
+  console.log('REST-DAY CHECK-IN SMOKE OK (27)');
 }
 
 run().catch((error) => {

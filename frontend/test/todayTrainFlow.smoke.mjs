@@ -57,6 +57,19 @@ assert.match(rest.uncheckedSignal, /No check-in is needed/i)
 assert.match(rest.uncheckedSignal, /unless you choose to train/i)
 assert.equal(rest.showStartLog, false)
 
+const checkedRecovery = resolveTodayPlanAccess({
+  ...actions,
+  checkedInToday: true,
+  recommendation: { type: 'rest', recommendationType: 'rest' },
+  calendarSessions: [{ id: 'run-1', type: 'rest' }],
+  isRestDay: true,
+  isPlannedRestDay: false,
+})
+assert.equal(checkedRecovery.primaryLabel, 'View recovery')
+assert.equal(checkedRecovery.primaryAction(), 'details')
+assert.equal(checkedRecovery.secondaryLabel, 'Edit check-in')
+assert.equal(checkedRecovery.showStartLog, false)
+
 const restAfterRun = resolveTodayPlanAccess({ ...actions, isRestDay: true, hasRunRecordedToday: true })
 assert.equal(restAfterRun.primaryLabel, 'View rest day')
 assert.equal(restAfterRun.secondaryAction, null)
@@ -76,7 +89,7 @@ assert(dashboard.includes('hasRunRecordedToday={hasRunRecordedToday}'), 'Today s
 assert(dashboard.includes('isRunningActivity(run) && runOccurredOnDate(run, todayISO)'), 'Today run detection excludes walks and other non-running activities')
 assert.equal((dashboard.match(/hasRunRecordedToday=\{hasRunRecordedToday\}/g) || []).length, 2, 'recorded-run state reaches both the Today card and detail sheet')
 assert(insights.includes('hasRunRecordedToday = false'), 'Today detail accepts recorded-run state')
-assert(insights.includes('isRestDay && planAccess.secondaryAction'), 'Today detail uses the same guarded extra-run action as the main card')
+assert(insights.includes('isPlannedRestDay && planAccess.secondaryAction'), 'Today detail uses the guarded extra-run action only for authored rest days')
 assert(insights.includes('{planAccess.secondaryLabel}'), 'Today detail preserves the explicit Start extra run label')
 
 const logRun = readFrontend('pages/LogRun.jsx')

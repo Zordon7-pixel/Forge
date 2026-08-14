@@ -3,6 +3,7 @@ export function resolveTodayPlanAccess({
   recommendation = null,
   calendarSessions = [],
   isRestDay = false,
+  isPlannedRestDay = isRestDay,
   hasRunRecordedToday = false,
   onCheckIn,
   onStartWorkout,
@@ -14,8 +15,7 @@ export function resolveTodayPlanAccess({
   const pendingSessionCount = sessions.filter((session) => session?.completed !== true).length
   const allScheduledComplete = sessionCount > 0 && pendingSessionCount === 0
   const hasRecommendation = Boolean(recommendation)
-  const isUnscheduledRestRecommendation = !isRestDay && sessionCount === 0
-    && (recommendation?.recommendationType === 'rest' || recommendation?.type === 'rest')
+  const isRestRecommendation = recommendation?.recommendationType === 'rest' || recommendation?.type === 'rest'
   const hasViewablePlan = hasRecommendation || sessionCount > 0 || isRestDay
 
   if (!hasViewablePlan) {
@@ -35,16 +35,20 @@ export function resolveTodayPlanAccess({
     }
   }
 
-  if (isUnscheduledRestRecommendation) {
+  if (isRestRecommendation && !isPlannedRestDay) {
     return {
       hasViewablePlan: true,
-      primaryAction: onCheckIn,
-      primaryLabel: checkedInToday ? 'Edit check-in' : 'Check in',
-      secondaryAction: onDetails,
-      secondaryLabel: onDetails ? 'Details' : null,
-      trainAction: onCheckIn,
-      uncheckedSignal: 'Rest is a current recommendation, not a scheduled plan rest day. Check in so today\'s guidance uses how you feel now.',
-      readinessFallback: 'Check in so the recommendation can use how you feel now; a strong check-in does not automatically create a rest day.',
+      primaryAction: checkedInToday ? (onDetails || onCheckIn) : onCheckIn,
+      primaryLabel: checkedInToday ? 'View recovery' : 'Check in',
+      secondaryAction: checkedInToday ? onCheckIn : onDetails,
+      secondaryLabel: checkedInToday ? 'Edit check-in' : (onDetails ? 'Details' : null),
+      trainAction: checkedInToday ? (onDetails || onCheckIn) : onCheckIn,
+      uncheckedSignal: checkedInToday
+        ? 'Your check-in changed today to recovery. Review it before choosing any training.'
+        : 'Rest is a current recommendation, not a scheduled plan rest day. Check in so today\'s guidance uses how you feel now.',
+      readinessFallback: checkedInToday
+        ? 'Your check-in changed today to recovery. Edit the check-in if your condition changes.'
+        : 'Check in so the recommendation can use how you feel now; a strong check-in does not automatically create a rest day.',
       showCheckIn: true,
       showStartLog: false,
     }

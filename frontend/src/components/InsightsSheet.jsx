@@ -258,7 +258,8 @@ export function ReadinessGauge({ score, onClick }) {
 
 export function DailyCoachFlow({ checkedInToday, readinessData, recommendation, execution, hasRunRecordedToday = false, onCheckIn, onStartWorkout, onStartUnplannedRun, onDetails }) {
   const readiness = resolveReadiness(readinessData)
-  const isRestDay = execution?.isPlannedRest === true || execution?.restSource === 'planned'
+  const isPlannedRestDay = execution?.isPlannedRest === true || execution?.restSource === 'planned'
+  const isRestDay = isPlannedRestDay || recommendation?.recommendationType === 'rest' || recommendation?.type === 'rest'
   const recommendationLabel = recommendation
     ? getRecommendationLabel(recommendation)
     : "today's plan"
@@ -270,6 +271,7 @@ export function DailyCoachFlow({ checkedInToday, readinessData, recommendation, 
     recommendation,
     calendarSessions,
     isRestDay,
+    isPlannedRestDay,
     hasRunRecordedToday,
     onCheckIn,
     onStartWorkout,
@@ -488,12 +490,14 @@ export function TodayDetailSheet({
   const readiness = resolveReadiness(readinessData)
   const calendarSessions = execution?.hasDay && Array.isArray(execution.sessions) ? execution.sessions : []
   const calendarKinds = [...new Set(calendarSessions.map(calendarSessionKind))]
-  const isRestDay = execution?.isPlannedRest === true || execution?.restSource === 'planned'
+  const isPlannedRestDay = execution?.isPlannedRest === true || execution?.restSource === 'planned'
+  const isRestDay = isPlannedRestDay || recommendation?.recommendationType === 'rest' || recommendation?.type === 'rest'
   const planAccess = resolveTodayPlanAccess({
     checkedInToday,
     recommendation,
     calendarSessions,
     isRestDay,
+    isPlannedRestDay,
     hasRunRecordedToday,
     onStartUnplannedRun,
   })
@@ -656,7 +660,7 @@ export function TodayDetailSheet({
                 {isRestDay ? 'View calendar' : 'Start/log'}
               </button>
             )}
-            {isRestDay && planAccess.secondaryAction && (
+            {isPlannedRestDay && planAccess.secondaryAction && (
               <button onClick={planAccess.secondaryAction} className="rounded-xl px-3 py-3 text-sm font-bold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>
                 {planAccess.secondaryLabel}
               </button>

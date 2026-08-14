@@ -487,7 +487,7 @@ export default function LogRun() {
         if (!active) return
         const missed = Array.isArray(complianceRes.data?.missed) ? complianceRes.data.missed : []
         setMissedRunOptions(missed.filter((item) => item?.type === 'run').sort((a, b) => String(b.date || '').localeCompare(String(a.date || ''))))
-        setTodayIsPlanRestDay(Boolean(execution?.hasPlan && execution?.hasDay && execution?.isRest))
+        setTodayIsPlanRestDay(Boolean(execution?.hasPlan && execution?.hasDay && execution?.isPlannedRest))
       })
       .catch((err) => {
         if (!active) return
