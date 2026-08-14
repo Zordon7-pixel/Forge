@@ -292,7 +292,11 @@ export function DailyCoachFlow({ checkedInToday, readinessData, recommendation, 
   const coachWhy = interferenceReason || (typeof recommendation?.brief?.why === 'string' ? recommendation.brief.why.trim() : '')
   const buildTodaySubtitle = () => {
     if (allScheduledComplete) return 'All scheduled sessions are complete. Review the work or recover for the next session.'
-    if (isRestDay && hasRunRecordedToday) return 'An extra run is already logged today. Recovery remains the scheduled plan.'
+    if (isRestDay && hasRunRecordedToday) {
+      return isPlannedRestDay
+        ? 'An extra run is already logged today. Recovery remains the scheduled plan.'
+        : 'An extra run is already logged today. Recovery is still the guidance for today.'
+    }
     if (!recommendation && isRestDay) return 'Rest and recovery are scheduled today. No check-in is needed unless you choose to train.'
     if (!recommendation && calendarSessions.length > 0) {
       const summaryLabel = calendarLabel || 'training'

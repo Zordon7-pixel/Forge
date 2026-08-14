@@ -141,12 +141,19 @@ test('unscheduled rest guidance asks for a current check-in without claiming sch
         type: 'rest',
         reason: 'Rest is recommended from recent training.',
       }],
+      ['GET /api/runs', [{
+        id: 'unscheduled-rest-run',
+        type: 'easy',
+        date: today,
+        distance_miles: 3,
+        duration_seconds: 1800,
+      }]],
     ]),
   })
 
   await page.goto('/')
   await expect(page.getByRole('button', { name: 'Check in', exact: true })).toBeVisible()
-  await expect(page.getByText("Rest is a current recommendation, not a scheduled plan rest day. Check in so today's guidance uses how you feel now.", { exact: true })).toBeVisible()
+  await expect(page.getByText('An extra run is already logged today. Recovery is still the guidance for today.', { exact: true })).toBeVisible()
   await expect(page.getByText(/Rest and recovery are scheduled today/)).toHaveCount(0)
 
   assertCleanApiAndRuntime(apiState, runtimeErrors)
