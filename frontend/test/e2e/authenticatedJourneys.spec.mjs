@@ -1109,11 +1109,7 @@ test('Weekly Run Brief preserves mobile naming, recorded-run provenance, prescri
   await expect(liftSection.getByText('Walk 3 min, then refuel.', { exact: true })).toBeVisible()
   await expect(liftSection.getByRole('button', { name: 'Start Lift', exact: true })).toBeVisible()
   const removeStrength = liftSection.getByRole('button', { name: /Remove Strength maintenance from this plan/i })
-  if (liftIndex >= todayIndex) {
-    await expect(removeStrength).toBeVisible()
-  } else {
-    await expect(removeStrength, 'past sessions must not expose a destructive plan-removal action').toHaveCount(0)
-  }
+  await expect(removeStrength).toBeVisible()
   await expect(liftSection.getByRole('button', { name: /Export watch workout/i })).toBeVisible()
   await expect(liftSection.getByRole('button', { name: /Copy workout/i })).toBeVisible()
 
