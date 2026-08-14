@@ -158,7 +158,8 @@ async function resolveCheckinSleepHours(userId, explicitSleepHours, database = {
     );
     if (!row) return null;
     const sleep = buildHealthSignals(row).metrics?.sleepHoursLastNight;
-    return Number.isFinite(Number(sleep)) ? Number(sleep) : null;
+    const parsedSleep = Number(sleep);
+    return sleep !== null && sleep !== undefined && Number.isFinite(parsedSleep) ? parsedSleep : null;
   } catch (error) {
     console.warn('[checkin] fresh sleep lookup failed:', error?.message || error);
     return null;
