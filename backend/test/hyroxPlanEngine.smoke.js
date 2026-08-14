@@ -762,6 +762,77 @@ function assertGoalBackwardModeCompatibility() {
     assert.equal(shadow.hyroxPerformanceBudget.projected_run_time_s, null);
     assert.equal(shadow.hyroxPerformanceBudget.supported, false);
     assert.equal(shadow.standardsProvenance.rulesetId, 'hyrox-global');
+    const shadowPeak = shadow.weeks.flatMap((week) => week.days)
+      .flatMap((day) => day.sessions)
+      .find((session) => session.workout_family === 'hyrox_partial_simulation');
+    assert.ok(shadowPeak, 'v2.4 replaces only the flagged peak exposure with the closed cluster');
+    assert.ok(shadowPeak.run_station_pair_count >= 2 && shadowPeak.run_station_pair_count <= 4);
+    assert.equal(hyrox.validatePartialRaceOrderCluster(shadowPeak, {
+      training_age_class: 'ESTABLISHED',
+    }).valid, true);
+    assert.equal(
+      allSessions(shadow).filter((session) => session.sessionType === 'hyrox_compromised')
+        .some((session) => session.runSequenceMeters?.length === 6),
+      false,
+      'the old six-pair compromised workout is not relabeled as compliant in v2.4',
+    );
+    assert.equal(
+      allSessions(missingMode).some((session) => (
+        session.sessionType === 'hyrox_compromised' && session.runSequenceMeters?.length === 6
+      )),
+      true,
+      'flag-off retains the existing six-pair compromised workout byte-for-byte',
+    );
+  } finally {
+    if (previousMode === undefined) delete process.env.FORGE_GOAL_BACKWARD_V24_MODE;
+    else process.env.FORGE_GOAL_BACKWARD_V24_MODE = previousMode;
+  }
+}
+
+function combinations(values, size, start = 0, prefix = [], output = []) {
+  if (prefix.length === size) {
+    output.push(prefix);
+    return output;
+  }
+  for (let index = start; index <= values.length - (size - prefix.length); index += 1) {
+    combinations(values, size, index + 1, [...prefix, values[index]], output);
+  }
+  return output;
+}
+
+function assertClusterPlacementMatrixDoesNotCrash() {
+  const previousMode = process.env.FORGE_GOAL_BACKWARD_V24_MODE;
+  process.env.FORGE_GOAL_BACKWARD_V24_MODE = 'shadow';
+  try {
+    const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    const schedules = [
+      ...combinations(weekdays, 4),
+      ...combinations(weekdays, 5),
+      ...combinations(weekdays, 6),
+    ];
+    const planningDates = weekdays.map((_, offset) => hyrox.addLocalDays('2026-08-03', offset));
+    for (const runwayDays of [28, 42, 84]) {
+      for (const planningLocalDate of planningDates) {
+        for (const availableDays of schedules) {
+          const eventLocalDate = hyrox.addLocalDays(planningLocalDate, runwayDays);
+          const label = `${planningLocalDate} +${runwayDays}d ${availableDays.join('/')}`;
+          let plan;
+          assert.doesNotThrow(() => {
+            plan = hyrox.generateHyroxPlan(fixture(null, {
+              planningLocalDate,
+              availableDays,
+              event: { raceId: 'matrix-hyrox', eventLocalDate },
+            }));
+          }, `cluster placement must not crash for ${label}`);
+          assert.equal(hyrox.validateHyroxPlan(plan).valid, true, label);
+          if (plan.hyroxPolicy.partialRaceOrderCluster.required
+            && plan.hyroxPolicy.partialRaceOrderCluster.unplaceable) {
+            assert.equal(plan.overall_feasibility, 'at_risk', label);
+            assert.ok(plan.reasons.includes('REQUIRED_EXPOSURE_UNPLACEABLE'), label);
+          }
+        }
+      }
+    }
   } finally {
     if (previousMode === undefined) delete process.env.FORGE_GOAL_BACKWARD_V24_MODE;
     else process.env.FORGE_GOAL_BACKWARD_V24_MODE = previousMode;
@@ -873,6 +944,7 @@ function run() {
   assertMidweekFoundationAnchoring();
   assertRaceDayTruthByFormat();
   assertGoalBackwardModeCompatibility();
+  assertClusterPlacementMatrixDoesNotCrash();
   assertSecondaryTransition();
   console.log('HYROX PLAN ENGINE SMOKE OK');
 }

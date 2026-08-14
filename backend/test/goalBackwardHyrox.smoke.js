@@ -6,6 +6,13 @@ const hyroxPlan = require('../src/lib/hyroxPlan');
 const standards = require('../src/lib/hyroxStandards');
 const targets = require('../src/lib/goalBackwardTargets');
 const policy = require('../src/lib/racePlanPolicy');
+const {
+  buildHyroxClusterCompletionLedger,
+  buildGoalBackwardPlanningDecision,
+} = require('../src/lib/goalBackwardDecisionEngine');
+const {
+  validatePartialRaceOrderClusterExposure,
+} = require('../src/lib/goalBackwardValidators');
 
 const RULESET = {
   ruleset_id: 'hyrox-global',
@@ -54,6 +61,48 @@ function doublesInput(overrides = {}) {
     athlete_specific_fatigue_evidence: [{ evidence_id: 'doubles-athlete-fatigue' }],
     ...overrides,
   };
+}
+
+function completeDoublesSplit() {
+  return {
+    ski_erg: { athlete: { distance_m: 600 }, partner: { distance_m: 400 } },
+    sled_push: { athlete: { distance_m: 30 }, partner: { distance_m: 20 } },
+    sled_pull: { athlete: { distance_m: 30 }, partner: { distance_m: 20 } },
+    burpee_broad_jump: { athlete: { distance_m: 48 }, partner: { distance_m: 32 } },
+    row: { athlete: { distance_m: 600 }, partner: { distance_m: 400 } },
+    farmers_carry: { athlete: { distance_m: 120 }, partner: { distance_m: 80 } },
+    sandbag_lunge: { athlete: { distance_m: 60 }, partner: { distance_m: 40 } },
+    wall_ball: { athlete: { repetitions: 60 }, partner: { repetitions: 40 } },
+  };
+}
+
+function partialCluster(overrides = {}) {
+  const eventState = hyroxPlan.buildHyroxEventState(doublesInput({
+    planned_station_split: completeDoublesSplit(),
+    actual_station_split: {},
+    athlete_station_contribution: {},
+    partner_station_contribution: {},
+  }));
+  return hyroxPlan.buildPartialRaceOrderCluster({
+    session_id: 'cluster-fixture',
+    scheduled_local_date: '2026-08-18',
+    event_local_date: '2026-09-06',
+    timezone: 'America/New_York',
+    plan_id: 'cluster-plan',
+    decision_id: 'cluster-decision',
+    goal_ids: ['hyrox-goal'],
+    hyrox_event_state: eventState,
+    station_start_index: 0,
+    pair_count: 3,
+    run_distance_m: 750,
+    station_dose_fraction: 0.5,
+    main_work_duration_s: 36 * 60,
+    main_set_rpe_range: { minimum: 6, maximum: 8 },
+    warmup_running_m: 2094,
+    cooldown_running_m: 2093,
+    training_age_class: 'ESTABLISHED',
+    ...overrides,
+  });
 }
 
 function assertRegistryPolicy() {
@@ -286,14 +335,273 @@ function assertEquipmentSubstitutionTruth() {
   assert.equal(unsupportedRules.officialStandard, undefined);
 }
 
+function assertPartialRaceOrderClusterContract() {
+  const cluster = partialCluster();
+  const schema = canonicalWorkout.validatePartialRaceOrderCluster(cluster, {
+    training_age_class: 'ESTABLISHED',
+  });
+  assert.equal(schema.valid, true, JSON.stringify(schema.violations));
+  assert.equal(cluster.workout_family, 'hyrox_partial_simulation');
+  assert.equal(cluster.run_station_pair_count, 3);
+  assert.deepEqual(cluster.partial_race_order_cluster.station_ids, [
+    'ski_erg', 'sled_push', 'sled_pull',
+  ]);
+  assert.deepEqual(cluster.partial_race_order_cluster.run_distances_m, [750, 750, 750]);
+  assert.equal(cluster.partial_race_order_cluster.main_work_duration_s, 2160);
+  assert.deepEqual(cluster.partial_race_order_cluster.main_set_rpe_range, { minimum: 6, maximum: 8 });
+  assert.equal(cluster.partial_race_order_cluster.station_contributions.every((entry) => (
+    entry.dose_fraction === 0.5 && entry.contribution_basis === 'EXPLICIT_DOUBLES_PLANNED_CONTRIBUTION'
+  )), true);
+  assert.equal(cluster.running_distance_m, 6437);
+  assert.equal(cluster.warmup_cooldown_running_m, 4187);
+  assert.equal(cluster.distance_miles, 4);
+
+  const exposure = validatePartialRaceOrderClusterExposure([cluster], {
+    event_local_date: '2026-09-06',
+    mandatory_hyrox_cluster: true,
+    training_age_class: 'ESTABLISHED',
+  });
+  assert.equal(exposure.valid, true, JSON.stringify(exposure.violations));
+  assert.deepEqual(exposure.qualifying_cluster_dates, ['2026-08-18']);
+  assert.deepEqual(exposure.window, { earliest_local_date: '2026-08-09', latest_local_date: '2026-08-23' });
+
+  const beginnerCluster = partialCluster({
+    session_id: 'beginner-two-pair-cluster', pair_count: 2, main_work_duration_s: 20 * 60,
+    training_age_class: 'BEGINNER', warmup_running_m: 1000, cooldown_running_m: 1000,
+  });
+  assert.equal(canonicalWorkout.validatePartialRaceOrderCluster(beginnerCluster, {
+    training_age_class: 'BEGINNER',
+  }).valid, true);
+  const establishedFourPair = partialCluster({
+    session_id: 'established-four-pair-cluster', pair_count: 4, main_work_duration_s: 40 * 60,
+  });
+  assert.equal(canonicalWorkout.validatePartialRaceOrderCluster(establishedFourPair, {
+    training_age_class: 'ESTABLISHED',
+  }).valid, true);
+
+  const outsideWindow = validatePartialRaceOrderClusterExposure([
+    partialCluster({ scheduled_local_date: '2026-08-24', session_id: 'late-cluster' }),
+  ], {
+    event_local_date: '2026-09-06', mandatory_hyrox_cluster: true, training_age_class: 'ESTABLISHED',
+  });
+  assert.equal(outsideWindow.valid, false);
+  assert.ok(outsideWindow.violations.some((violation) => violation.reason === 'CLUSTER_OUTSIDE_REQUIRED_WINDOW'));
+
+  const crowded = validatePartialRaceOrderClusterExposure([
+    partialCluster({ scheduled_local_date: '2026-08-18', session_id: 'crowded-a' }),
+    partialCluster({ scheduled_local_date: '2026-08-29', session_id: 'crowded-b' }),
+  ], {
+    event_local_date: '2026-09-15', mandatory_hyrox_cluster: true, training_age_class: 'ESTABLISHED',
+  });
+  assert.equal(crowded.valid, false);
+  assert.ok(crowded.violations.some((violation) => violation.reason === 'CLUSTER_FREQUENCY_EXCEEDED'));
+
+  const incomplete = buildHyroxClusterCompletionLedger({
+    sessions: [cluster], event_local_date: '2026-09-06', training_age_class: 'ESTABLISHED',
+  });
+  assert.equal(incomplete.complete, false);
+  assert.equal(incomplete.status, 'INCOMPLETE');
+  const completedCluster = partialCluster({
+    completion: {
+      status: 'COMPLETED',
+      completed_station_ids: ['ski_erg', 'sled_push', 'sled_pull'],
+      stop_criteria_breach: false,
+    },
+  });
+  const stationOnly = buildHyroxClusterCompletionLedger({
+    sessions: [completedCluster], event_local_date: '2026-09-06', training_age_class: 'ESTABLISHED',
+  });
+  assert.equal(stationOnly.complete, false, 'station-only evidence cannot complete run/station pairs');
+  const completedStepIds = cluster.steps
+    .filter((step) => step.step_role === 'WORK')
+    .map((step) => step.step_id);
+  const pairedCompletion = partialCluster({
+    completion: {
+      status: 'COMPLETED',
+      completed_step_ids: completedStepIds,
+      stop_criteria_breach: false,
+    },
+  });
+  const complete = buildHyroxClusterCompletionLedger({
+    sessions: [pairedCompletion], event_local_date: '2026-09-06', training_age_class: 'ESTABLISHED',
+  });
+  assert.equal(complete.complete, true);
+  assert.equal(complete.status, 'COMPLETE');
+}
+
+function assertNonClusterRejection() {
+  const reordered = partialCluster({ station_ids: ['ski_erg', 'sled_pull', 'sled_push'] });
+  const reorderedResult = canonicalWorkout.validatePartialRaceOrderCluster(reordered, {
+    training_age_class: 'ESTABLISHED',
+  });
+  assert.equal(reorderedResult.valid, false);
+  assert.ok(reorderedResult.violations.some((violation) => violation.reason === 'OFFICIAL_ORDER_NOT_CONTIGUOUS'));
+
+  assert.throws(
+    () => partialCluster({ pair_count: 2, main_work_duration_s: 19 * 60, training_age_class: 'BEGINNER' }),
+    /invalid_partial_cluster_input:main_work_duration_s/,
+  );
+
+  const currentCompromised = {
+    workout_family: 'hyrox_compromised',
+    sessionType: 'hyrox_compromised',
+    runSequenceMeters: Array(6).fill(1000),
+    stationSequence: standards.STATION_ORDER.slice(0, 6).map((id) => ({ id })),
+    main_work_duration_min: 40,
+  };
+  assert.equal(canonicalWorkout.validatePartialRaceOrderCluster(currentCompromised).valid, false);
+
+  const unknownSplit = hyroxPlan.buildPartialRaceOrderCluster({
+    session_id: 'unknown-split-cluster', scheduled_local_date: '2026-08-18',
+    event_local_date: '2026-09-06', timezone: 'America/New_York', plan_id: 'cluster-plan',
+    decision_id: 'cluster-decision', goal_ids: ['hyrox-goal'],
+    hyrox_event_state: hyroxPlan.buildHyroxEventState(doublesInput({ planned_station_split: {} })),
+    station_start_index: 0, pair_count: 3, run_distance_m: 750,
+    main_work_duration_s: 36 * 60, training_age_class: 'ESTABLISHED',
+  });
+  const unknownResult = canonicalWorkout.validatePartialRaceOrderCluster(unknownSplit, {
+    training_age_class: 'ESTABLISHED',
+  });
+  assert.equal(unknownResult.valid, false);
+  assert.ok(unknownResult.violations.some((violation) => violation.reason === 'DOUBLES_CONTRIBUTION_UNKNOWN'));
+  assert.equal(unknownSplit.partial_race_order_cluster.station_contributions[0].prescribed_amount, null);
+
+  for (const [field, value] of [
+    ['pair_count', 'not-a-count'],
+    ['run_distance_m', 'unknown'],
+    ['main_work_duration_s', null],
+    ['main_set_rpe_range', { minimum: 5, maximum: 9 }],
+    ['station_dose_fraction', 'unknown'],
+  ]) {
+    assert.throws(
+      () => partialCluster({ session_id: `malformed-${field}`, [field]: value }),
+      /invalid_partial_cluster_input/,
+      `${field} must fail closed rather than becoming a valid default`,
+    );
+  }
+}
+
+function assertBryanWitnessRunningFloor() {
+  const witness = hyroxPlan.buildBryanPeakWeekWitness({
+    hyrox_event_state: hyroxPlan.buildHyroxEventState(doublesInput({
+      planned_station_split: completeDoublesSplit(), actual_station_split: {},
+      athlete_station_contribution: {}, partner_station_contribution: {},
+    })),
+  });
+  assert.equal(witness.recent_normal_median_distance_m, 33796.224);
+  assert.equal(witness.minimum_weekly_running_m, 30416);
+  assert.equal(witness.weekly_running_m, 30578);
+  assert.equal(witness.weekly_running_m >= witness.minimum_weekly_running_m, true);
+  assert.equal(witness.weekly_running_miles, 19);
+  assert.equal(witness.sessions.filter((session) => session.workout_family === 'rest').length, 0);
+}
+
+function assertBryanGoalsRemainUnvalidated() {
+  const decision = buildGoalBackwardPlanningDecision({
+    athlete_id: 'bryan-fixture', planning_date_local: '2026-08-03', timezone: 'America/New_York',
+    athlete_state: {
+      athlete_state_revision: 1, evidence_snapshot_id: 'bryan-snapshot', training_age_class: 'ESTABLISHED',
+      consistency_state: 'CONSISTENT', consistent_weeks: 8, recovery_state: 'NORMAL', safety_action: 'NORMAL',
+      recent_normal_running: { status: 'ESTABLISHED', median_distance_m: 33796.224 },
+      available_days: ['Mon', 'Tue', 'Thu', 'Fri', 'Sun'],
+    },
+    goals: [
+      { goal_id: 'hyrox-goal', race_id: 'hyrox-race', athlete_id: 'bryan-fixture', priority: 'A', goal_type: 'performance', event_kind: 'HYROX_DOUBLES', event_local_date: '2026-09-06', event_state: 'SCHEDULED', target_time_s: 3600 },
+      { goal_id: 'ten-mile-goal', race_id: 'ten-mile-race', athlete_id: 'bryan-fixture', priority: 'B', goal_type: 'performance', event_kind: 'ROAD_ENDURANCE', event_local_date: '2026-10-11', event_state: 'SCHEDULED', target_time_s: 5400 },
+    ],
+    races: [
+      { race_id: 'hyrox-race', athlete_id: 'bryan-fixture' },
+      { race_id: 'ten-mile-race', athlete_id: 'bryan-fixture' },
+    ],
+    development_gate_complete: true,
+  });
+  assert.deepEqual(decision.active_goals.map((goal) => goal.feasibility_status), ['unvalidated', 'unvalidated']);
+  assert.deepEqual(decision.active_goals.map((goal) => goal.target_time_s), [3600, 5400]);
+}
+
+function assertBryanOrderedGoals() {
+  const previousMode = process.env.FORGE_GOAL_BACKWARD_V24_MODE;
+  process.env.FORGE_GOAL_BACKWARD_V24_MODE = 'shadow';
+  try {
+    const plan = hyroxPlan.generateHyroxPlan({
+      athlete: { weeklyMilesCurrent: 21, runDaysPerWeek: 4, training_age_class: 'ESTABLISHED' },
+      planningLocalDate: '2026-08-03',
+      event: {
+        raceId: 'hyrox-race', name: 'HYROX', eventLocalDate: '2026-09-06',
+        eventTimezone: 'America/New_York', format: 'doubles', category: 'men', rulesVersion: '2026-2027',
+        hyroxEventState: { planned_station_split: completeDoublesSplit() },
+      },
+      equipment: ['ski_erg', 'row_erg', 'sled_push', 'sled_pull', 'wall_ball_target', 'sandbag', 'farmers_carry', 'treadmill'],
+      availableDays: ['Mon', 'Tue', 'Thu', 'Fri', 'Sun'],
+      secondaryRace: {
+        raceId: 'ten-mile-race', name: '10-mile', eventLocalDate: '2026-10-11',
+        eventTimezone: 'America/New_York', distanceMiles: 10, goalTimeSeconds: 5400,
+      },
+    });
+    assert.deepEqual(plan.goals.map((goal) => goal.priority), ['A', 'B']);
+    assert.deepEqual(plan.goals.map((goal) => goal.feasibility_status), ['unvalidated', 'unvalidated']);
+    const raceWeek = plan.weeks.findIndex((week) => week.days.some((day) => (
+      day.sessions.some((session) => session.sessionType === 'hyrox_race')
+    )));
+    assert.equal(plan.weeks[raceWeek + 1].phase, 'post_hyrox_recovery');
+    assert.ok(plan.weeks.slice(raceWeek + 2).some((week) => week.phase === 'running_specific'));
+  } finally {
+    if (previousMode === undefined) delete process.env.FORGE_GOAL_BACKWARD_V24_MODE;
+    else process.env.FORGE_GOAL_BACKWARD_V24_MODE = previousMode;
+  }
+}
+
+function assertBryanExactWitness() {
+  const witness = hyroxPlan.buildBryanPeakWeekWitness({
+    hyrox_event_state: hyroxPlan.buildHyroxEventState(doublesInput({
+      planned_station_split: completeDoublesSplit(), actual_station_split: {},
+      athlete_station_contribution: {}, partner_station_contribution: {},
+    })),
+  });
+  const cluster = witness.sessions.find((session) => session.workout_family === 'hyrox_partial_simulation');
+  assert.equal(cluster.run_station_pair_count, 3);
+  assert.equal(cluster.main_work_duration_s, 2160);
+  assert.equal(cluster.main_set_running_m, 2250);
+  assert.equal(cluster.warmup_cooldown_running_m, 4187);
+  assert.equal(cluster.running_distance_m, 6437);
+  assert.deepEqual(witness.weekly_stress_vector, [13, 12, 10, 5, 5, 9, 10, 7]);
+  assert.deepEqual(witness.normal_ceiling_vector, [14, 12, 9, 4, 4, 8, 9, 5]);
+  assert.deepEqual(witness.authorized_ceiling_vector, [16, 14, 12, 6, 6, 10, 12, 10]);
+  assert.deepEqual(witness.roles, {
+    hyrox_partial_simulation: 'PRIMARY_KEY', long_aerobic: 'PRIMARY_KEY', hyrox_station_skill: 'SUPPORTING',
+  });
+  assert.equal(witness.hard_day_count, 2);
+  assert.equal(witness.validation.valid, true, JSON.stringify(witness.validation.violations));
+  assert.deepEqual(witness.validation.reason_codes, ['PHASE_SPECIFIC_OVERLOAD']);
+  assert.deepEqual(witness.overload.reason_codes, ['PHASE_SPECIFIC_OVERLOAD']);
+}
+
 function run() {
+  const results = [];
+  const test = (id, description, assertion) => {
+    assertion();
+    results.push(id);
+    console.log(`ok - ${id} - ${description}`);
+  };
   assertRegistryPolicy();
-  assertSinglesOwnership();
-  assertDoublesBurdenAndUnknownSplit();
-  assertUnknownRulesAndDivision();
-  assertNullPreservingBudget();
-  assertEquipmentSubstitutionTruth();
-  console.log('GOAL BACKWARD HYROX SMOKE OK');
+  test('HYROX-01', 'Singles owns the complete official run and station workload', assertSinglesOwnership);
+  test('HYROX-02', 'Doubles preserves team truth and unknown individual contribution', assertDoublesBurdenAndUnknownSplit);
+  test('HYROX-03', 'unknown rules/division never invent exact load', () => {
+    assertUnknownRulesAndDivision();
+    assertEquipmentSubstitutionTruth();
+  });
+  test('HYROX-04', 'missing station and transition components remain null', assertNullPreservingBudget);
+  test('HYROX-05', 'partial race-order cluster schema, window, count, and success ledger are exact', assertPartialRaceOrderClusterContract);
+  test('HYROX-06', 'noncontiguous, short, compromised, and unknown-split work cannot count as the peak cluster', assertNonClusterRejection);
+  test('BRYAN-01', 'healthy final substantial week preserves the recent-normal running floor', assertBryanWitnessRunningFloor);
+  test('BRYAN-02', 'both unsupported performance targets remain visible and unvalidated', assertBryanGoalsRemainUnvalidated);
+  test('BRYAN-03', 'HYROX specificity, transition, and 10-mile specificity remain ordered', assertBryanOrderedGoals);
+  test('BRYAN-04', 'the exact 19-mile cluster-week witness passes every gate', assertBryanExactWitness);
+  assert.deepEqual(results, [
+    'HYROX-01', 'HYROX-02', 'HYROX-03', 'HYROX-04', 'HYROX-05', 'HYROX-06',
+    'BRYAN-01', 'BRYAN-02', 'BRYAN-03', 'BRYAN-04',
+  ]);
+  console.log(`GOAL BACKWARD HYROX SMOKE OK (${results.length} checks)`);
 }
 
 if (require.main === module) run();

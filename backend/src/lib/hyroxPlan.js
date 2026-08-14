@@ -5,9 +5,25 @@ const {
   normalizeEquipment,
   resolveHyroxStandard,
 } = require('./hyroxStandards');
-const { buildCanonicalHyroxEventState } = require('./canonicalWorkout');
+const {
+  buildCanonicalHyroxEventState,
+  buildPartialRaceOrderCluster: buildCanonicalPartialRaceOrderCluster,
+  validatePartialRaceOrderCluster,
+} = require('./canonicalWorkout');
 const { buildHyroxPerformanceBudget } = require('./goalBackwardTargets');
 const { getGoalBackwardV24Mode } = require('./betaPlanRollout');
+const {
+  aggregateWeeklyStress,
+  calculateFatigueCeilings,
+  evaluateStressBudget,
+  validateRollingHardDays,
+} = require('./goalBackwardLoad');
+const {
+  validateGoalBackwardCandidate,
+  validateInterference,
+  validatePartialRaceOrderClusterExposure,
+} = require('./goalBackwardValidators');
+const { eventPolicyFor } = require('./racePlanPolicy');
 
 const DAY_MS = 86400000;
 const WEEKDAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -349,6 +365,121 @@ function buildCompromisedSession({ phase, weekIndex, standards, equipment, safet
   };
 }
 
+function buildPartialRaceOrderCluster(input = {}) {
+  return buildCanonicalPartialRaceOrderCluster({
+    phase: 'EVENT_SPECIFIC_DEVELOPMENT',
+    role: 'PRIMARY_KEY',
+    purpose_reason_codes: ['EVENT_SPECIFIC_ENTRY'],
+    station_start_index: 0,
+    pair_count: 3,
+    run_distance_m: 750,
+    station_dose_fraction: 0.5,
+    main_work_duration_s: 36 * 60,
+    main_set_rpe_range: { minimum: 6, maximum: 8 },
+    warmup_running_m: 0,
+    cooldown_running_m: 0,
+    ...input,
+  });
+}
+
+function explicitClusterContributionAvailable(eventState = {}, stationIds = STATION_ORDER.slice(0, 3)) {
+  if (eventState.format !== 'doubles') return eventState.ruleset_status === 'exact';
+  return eventState.ruleset_status === 'exact' && stationIds.every((stationId) => {
+    const contribution = eventState.planned_athlete_station_contribution?.[stationId];
+    if (!contribution || typeof contribution !== 'object') return false;
+    const raw = contribution.distance_m ?? contribution.distanceMeters ?? contribution.repetitions ?? contribution.reps;
+    return raw !== null && raw !== undefined && raw !== '' && Number.isFinite(Number(raw)) && Number(raw) > 0;
+  });
+}
+
+function completeFullPreTaperWeeks(planningDate, eventDate, taperDays = 7) {
+  if (parseLocalDate(planningDate) == null || parseLocalDate(eventDate) == null) return 0;
+  const finalPreTaperDate = addLocalDays(eventDate, -(Math.max(0, Number(taperDays)) + 1));
+  let weekStart = mondayForLocalDate(planningDate);
+  if (weekStart < planningDate) weekStart = addLocalDays(weekStart, 7);
+  let count = 0;
+  while (addLocalDays(weekStart, 6) <= finalPreTaperDate) {
+    count += 1;
+    weekStart = addLocalDays(weekStart, 7);
+  }
+  return count;
+}
+
+function clusterWeekSelection({ phases, startDate, planningDate, eventDate, availableDays, required }) {
+  if (!eventDate) return phases.indexOf('peak_partial_simulation');
+  const earliest = addLocalDays(eventDate, -28);
+  const latest = addLocalDays(eventDate, -14);
+  const candidates = phases.map((phase, index) => {
+    const weekStart = addLocalDays(startDate, index * 7);
+    const eligibleDates = Array.from({ length: 7 }, (_, offset) => addLocalDays(weekStart, offset))
+      .filter((date) => date >= planningDate && date >= earliest && date <= latest && availableDays.includes(weekday(date)));
+    return { index, phase, eligibleDates };
+  }).filter((entry) => entry.eligibleDates.length);
+  if (!candidates.length) return required ? -1 : phases.indexOf('peak_partial_simulation');
+  const peakIndex = phases.indexOf('peak_partial_simulation');
+  return candidates.slice().sort((left, right) => (
+    (left.phase === 'peak_partial_simulation' ? 0 : left.phase === 'specific' ? 1 : 2)
+      - (right.phase === 'peak_partial_simulation' ? 0 : right.phase === 'specific' ? 1 : 2)
+    || Math.abs(left.index - peakIndex) - Math.abs(right.index - peakIndex)
+    || right.index - left.index
+  ))[0].index;
+}
+
+function legacyWorkoutFamily(session = {}) {
+  if (session.workout_family) return session.workout_family;
+  if (session.sessionType === 'hyrox_compromised') return 'hyrox_compromised';
+  if (session.sessionType === 'hyrox_race') return 'race';
+  if (session.sessionType === 'hyrox_skill') return 'hyrox_station_skill';
+  if (session.sessionType === 'hyrox_strength') return 'hyrox_station_strength';
+  if (session.sessionType === 'long_run') return 'long_aerobic';
+  if (session.sessionType === 'easy_run') return 'easy_run';
+  if (session.sessionType === 'recovery_run') return 'recovery_run';
+  return null;
+}
+
+function annotateGoalBackwardWeek(week, { clusterWeek = false, eventFormat, constrained = false } = {}) {
+  const partialRequirement = eventFormat === 'doubles'
+    ? 'hyrox_team_partial_simulation' : 'hyrox_partial_simulation';
+  const hasCluster = clusterWeek && week.days.some((day) => day.sessions.some((session) => (
+    legacyWorkoutFamily(session) === 'hyrox_partial_simulation'
+  )));
+  return {
+    ...week,
+    days: week.days.map((day) => ({
+      ...day,
+      sessions: day.sessions.map((session) => {
+        const family = legacyWorkoutFamily(session);
+        let role = session.role;
+        let requirementId = session.requirement_id;
+        let supportsRequirementId = session.supports_requirement_id;
+        if (hasCluster && family === 'hyrox_partial_simulation') {
+          role = 'PRIMARY_KEY';
+          requirementId = partialRequirement;
+        } else if (hasCluster && family === 'long_aerobic') {
+          role = constrained ? 'SUPPORTING' : 'PRIMARY_KEY';
+          requirementId = 'long_aerobic';
+          supportsRequirementId = constrained ? partialRequirement : undefined;
+        } else if (hasCluster && family === 'hyrox_station_skill') {
+          role = 'SUPPORTING';
+          requirementId = 'hyrox_station_skill';
+          supportsRequirementId = partialRequirement;
+        } else if (!role) {
+          role = ['long_aerobic', 'hyrox_compromised', 'race'].includes(family) ? 'PRIMARY_KEY' : 'SUPPORTING';
+          supportsRequirementId = role === 'SUPPORTING' ? (requirementId || 'aerobic_absorption') : undefined;
+        }
+        return {
+          ...session,
+          workout_family: family,
+          role,
+          ...(requirementId ? { requirement_id: requirementId } : {}),
+          ...(supportsRequirementId ? { supports_requirement_id: supportsRequirementId } : {}),
+          ...(hasCluster && family === 'long_aerobic' ? { hardLowerBody: true } : {}),
+        };
+      }),
+    })),
+  };
+}
+
 function buildRunSession(id, type, distanceMiles, loadFactor) {
   const long = type === 'long';
   const recovery = type === 'recovery';
@@ -367,6 +498,151 @@ function buildRunSession(id, type, distanceMiles, loadFactor) {
     canonicalUnits: 'metric',
     distanceIsRunAnalyticsMiles: true,
   };
+}
+
+function buildBryanPeakWeekWitness(input = {}) {
+  const eventState = input.hyrox_event_state;
+  if (!eventState || eventState.format !== 'doubles'
+    || !explicitClusterContributionAvailable(eventState, STATION_ORDER.slice(0, 3))) {
+    throw new Error('bryan_witness_requires_explicit_doubles_contribution');
+  }
+  const eventDate = input.event_local_date || '2026-09-06';
+  const weekStart = input.week_start || '2026-08-17';
+  const dates = {
+    monday: weekStart,
+    tuesday: addLocalDays(weekStart, 1),
+    thursday: addLocalDays(weekStart, 3),
+    friday: addLocalDays(weekStart, 4),
+    sunday: addLocalDays(weekStart, 6),
+  };
+  const partial = buildPartialRaceOrderCluster({
+    session_id: 'bryan-witness-partial-cluster',
+    session_revision: 1,
+    plan_id: 'bryan-synthetic-witness',
+    plan_revision: 1,
+    decision_id: 'bryan-synthetic-witness-decision',
+    goal_ids: ['bryan-hyrox-goal'],
+    scheduled_local_date: dates.tuesday,
+    event_local_date: eventDate,
+    timezone: 'America/New_York',
+    hyrox_event_state: eventState,
+    station_start_index: 0,
+    pair_count: 3,
+    run_distance_m: 750,
+    station_dose_fraction: 0.5,
+    main_work_duration_s: 36 * 60,
+    main_set_rpe_range: { minimum: 6, maximum: 8 },
+    warmup_running_m: 2094,
+    cooldown_running_m: 2093,
+    training_age_class: 'ESTABLISHED',
+    role: 'PRIMARY_KEY',
+    requirement_id: 'hyrox_team_partial_simulation',
+  });
+  const sessions = [
+    {
+      session_id: 'bryan-witness-easy-monday', scheduled_local_date: dates.monday,
+      workout_family: 'easy_run', role: 'SUPPORTING', supports_requirement_id: 'hyrox_team_partial_simulation',
+      distance_m: 5633, distance_miles: 3.5, duration_min: 35,
+    },
+    partial,
+    {
+      session_id: 'bryan-witness-station-skill', scheduled_local_date: dates.thursday,
+      workout_family: 'hyrox_station_skill', role: 'SUPPORTING',
+      requirement_id: 'hyrox_station_skill', supports_requirement_id: 'hyrox_team_partial_simulation', duration_min: 35,
+    },
+    {
+      session_id: 'bryan-witness-easy-friday', scheduled_local_date: dates.friday,
+      workout_family: 'easy_run', role: 'SUPPORTING', supports_requirement_id: 'long_aerobic',
+      distance_m: 5633, distance_miles: 3.5, duration_min: 35,
+    },
+    {
+      session_id: 'bryan-witness-long-sunday', scheduled_local_date: dates.sunday,
+      workout_family: 'long_aerobic', role: 'PRIMARY_KEY', requirement_id: 'long_aerobic',
+      distance_m: 12875, distance_miles: 8, duration_min: 90,
+    },
+  ];
+  const validationSessions = sessions.map((session) => {
+    if (session !== partial) return session;
+    const legacy = JSON.parse(JSON.stringify(session));
+    delete legacy.canonical_workout_schema_version;
+    delete legacy.canonical_session_set;
+    return legacy;
+  });
+  const historyMedian = [11, 10, 7, 2, 2, 6, 7, 3];
+  const dimensions = [
+    'aerobic', 'running_impact', 'lower_body_muscular', 'upper_body_muscular',
+    'grip', 'neuromuscular', 'metabolic', 'event_specific_fatigue',
+  ];
+  const modalityHistory = Object.fromEntries(dimensions.map((dimension, index) => (
+    [dimension, Array(6).fill(historyMedian[index])]
+  )));
+  const weekly = aggregateWeeklyStress(validationSessions);
+  const ceilings = calculateFatigueCeilings(modalityHistory, {
+    training_age_class: 'ESTABLISHED',
+    event_policy: eventPolicyFor('hyrox_doubles_v1'),
+    phase: 'EVENT_SPECIFIC_DEVELOPMENT',
+    mandatory_hyrox_cluster: true,
+    recovery_state: 'NORMAL',
+    safety_restriction: false,
+    previous_two_weeks_passed: true,
+  });
+  const overload = evaluateStressBudget(weekly, ceilings);
+  const interference = validateInterference(validationSessions, { training_age_class: 'ESTABLISHED' });
+  const rolling = validateRollingHardDays(validationSessions, {
+    training_age_class: 'ESTABLISHED', spacing_valid: interference.valid,
+  });
+  const workloadEvidence = {
+    valid: weekly.valid && overload.valid && rolling.valid,
+    violations: [...weekly.violations, ...overload.violations, ...rolling.violations],
+    reason_codes: [...new Set([...weekly.reason_codes, ...overload.reason_codes, ...rolling.reason_codes])],
+  };
+  const minimumRunning = Math.floor(33796.224 * 0.9);
+  const validation = validateGoalBackwardCandidate({ sessions: validationSessions }, {
+    available_local_dates: Object.values(dates),
+    available_days_count: 5,
+    training_age_class: 'ESTABLISHED',
+    consistency_state: 'CONSISTENT',
+    recovery_state: 'NORMAL',
+    safety_action: 'NORMAL',
+    event_local_date: eventDate,
+    mandatory_hyrox_cluster: true,
+    minimum_weekly_demand: { running_m: minimumRunning, required_exposure_count: 2 },
+    required_exposure_ledger: {
+      due_roles: [
+        { requirement_id: 'hyrox_team_partial_simulation', any_of: ['hyrox_partial_simulation'], role: 'PRIMARY_KEY' },
+        { requirement_id: 'long_aerobic', any_of: ['long_aerobic'], role: 'PRIMARY_KEY' },
+        { requirement_id: 'hyrox_station_skill', any_of: ['hyrox_station_skill'], role: 'SUPPORTING' },
+      ],
+      unplaceable_requirement_ids: [],
+    },
+    workload_evidence: workloadEvidence,
+    median_ordinary_easy_duration_min: 35,
+  });
+  const weeklyRunning = Math.round(sessions.reduce((sum, session) => (
+    sum + Number(session.running_distance_m ?? session.distance_m ?? 0)
+  ), 0));
+  return Object.freeze({
+    synthetic_fixture: 'BRYAN_17_10',
+    event_local_date: eventDate,
+    recent_normal_median_distance_m: 33796.224,
+    minimum_weekly_running_m: minimumRunning,
+    weekly_running_m: weeklyRunning,
+    weekly_running_miles: 19,
+    sessions: Object.freeze(sessions),
+    roles: Object.freeze({
+      hyrox_partial_simulation: 'PRIMARY_KEY',
+      long_aerobic: 'PRIMARY_KEY',
+      hyrox_station_skill: 'SUPPORTING',
+    }),
+    weekly_stress_vector: weekly.weekly_dimension_sum,
+    normal_ceiling_vector: ceilings.normal_ceiling_vector,
+    authorized_ceiling_vector: ceilings.authorized_ceiling_vector,
+    hard_day_count: weekly.days.filter((day) => day.hard_day).length,
+    overload,
+    interference,
+    rolling_hard_days: rolling,
+    validation,
+  });
 }
 
 function formatPaceLabel(secondsPerMile) {
@@ -655,6 +931,12 @@ function buildCurrentWeek({
   eventFormat,
   currentWeekActivity,
   runningLoadCap,
+  usePartialRaceOrderCluster = false,
+  hyroxEventState = null,
+  trainingAgeClass = 'ESTABLISHED',
+  clusterPairCount = 3,
+  eventTimezone = 'UTC',
+  partialClusterWindow = null,
 }) {
   const days = Array.from({ length: 7 }, (_, offset) => {
     const date = addLocalDays(startDate, offset);
@@ -700,13 +982,38 @@ function buildCurrentWeek({
       !isRaceWeek
       && !isRaceSafetyDate(days[slot].date, eventDate)
       && (!hardRunsThrough || days[slot].date > hardRunsThrough)
+      && (!usePartialRaceOrderCluster || !partialClusterWindow
+        || (days[slot].date >= partialClusterWindow.earliest_local_date
+          && days[slot].date <= partialClusterWindow.latest_local_date))
     ));
-  const compromised = buildCompromisedSession({ phase, weekIndex, standards, equipment, safetyHold });
+  const partialSlot = compromisedCandidates.length ? nearestSlot(3, compromisedCandidates) : null;
+  const compromised = usePartialRaceOrderCluster && Number.isInteger(partialSlot)
+    ? buildPartialRaceOrderCluster({
+      session_id: `hyrox-${weekIndex + 1}-partial-cluster`,
+      plan_id: 'hyrox-plan-preview',
+      decision_id: 'hyrox-plan-preview-decision',
+      goal_ids: goalRaceId ? [String(goalRaceId)] : [],
+      scheduled_local_date: days[partialSlot].date,
+      event_local_date: eventDate,
+      timezone: eventTimezone,
+      hyrox_event_state: hyroxEventState,
+      requirement_id: hyroxEventState?.format === 'doubles'
+        ? 'hyrox_team_partial_simulation' : 'hyrox_partial_simulation',
+      pair_count: clusterPairCount,
+      run_distance_m: 1000,
+      warmup_running_m: 1500,
+      cooldown_running_m: 1500,
+      training_age_class: trainingAgeClass,
+    })
+    : buildCompromisedSession({
+      phase: phase === 'peak_partial_simulation' && usePartialRaceOrderCluster ? 'specific' : phase,
+      weekIndex, standards, equipment, safetyHold,
+    });
   if (remainingHyroxQuota > 0
     && remainingRunQuota > 0
     && remainingMileageBudget + 0.001 >= Number(compromised.distance_miles || 0)
     && compromisedCandidates.length) {
-    const slot = nearestSlot(3, compromisedCandidates);
+    const slot = partialSlot;
     days[slot].sessions.push(compromised);
     remainingMileageBudget = Math.max(0, remainingMileageBudget - Number(compromised.distance_miles || 0));
     remainingHyroxQuota -= 1;
@@ -833,6 +1140,12 @@ function buildWeek({
   precedingHardOrLongRunDates = [],
   precedingHardLowerBodyDates = [],
   currentWeekRunningLoadCap = null,
+  usePartialRaceOrderCluster = false,
+  hyroxEventState = null,
+  trainingAgeClass = 'ESTABLISHED',
+  clusterPairCount = 3,
+  eventTimezone = 'UTC',
+  partialClusterWindow = null,
 }) {
   if (currentWeekActivity) {
     return buildCurrentWeek({
@@ -852,6 +1165,12 @@ function buildWeek({
       eventFormat,
       currentWeekActivity,
       runningLoadCap: currentWeekRunningLoadCap,
+      usePartialRaceOrderCluster,
+      hyroxEventState,
+      trainingAgeClass,
+      clusterPairCount,
+      eventTimezone,
+      partialClusterWindow,
     });
   }
   const days = Array.from({ length: 7 }, (_, offset) => {
@@ -866,21 +1185,55 @@ function buildWeek({
     ? []
     : allowed.filter((slot) => !isRaceSafetyDate(days[slot].date, eventDate));
   const used = new Set();
-  const longSlot = hardRunSlots.length ? nearestSlot(6, hardRunSlots, used) : null;
+  let longSlot = hardRunSlots.length ? nearestSlot(6, hardRunSlots, used) : null;
+  let compromisedCandidates;
+  let compromisedSlot;
+  if (usePartialRaceOrderCluster) {
+    compromisedCandidates = hardRunSlots.filter((slot) => (
+      (!partialClusterWindow
+        || (days[slot].date >= partialClusterWindow.earliest_local_date
+          && days[slot].date <= partialClusterWindow.latest_local_date))
+    ));
+    const jointPlacements = compromisedCandidates.flatMap((clusterSlot) => (
+      hardRunSlots.filter((candidateLongSlot) => (
+        candidateLongSlot !== clusterSlot
+        && Math.abs(candidateLongSlot - clusterSlot) >= 2
+        && respectsRollingHardLowerBodyCap([
+          ...precedingHardLowerBodyDates,
+          days[clusterSlot].date,
+          days[candidateLongSlot].date,
+        ])
+      )).map((candidateLongSlot) => ({ clusterSlot, longSlot: candidateLongSlot }))
+    )).sort((left, right) => (
+      Math.abs(left.clusterSlot - 3) + Math.abs(left.longSlot - 6)
+      - Math.abs(right.clusterSlot - 3) - Math.abs(right.longSlot - 6)
+      || left.clusterSlot - right.clusterSlot
+      || right.longSlot - left.longSlot
+    ));
+    if (jointPlacements.length) {
+      compromisedSlot = jointPlacements[0].clusterSlot;
+      longSlot = jointPlacements[0].longSlot;
+    } else {
+      compromisedSlot = null;
+    }
+  } else {
+    if (Number.isInteger(longSlot)) used.add(longSlot);
+    compromisedCandidates = hardRunSlots.filter((slot) => (
+      !used.has(slot)
+      && respectsRollingHardLowerBodyCap([
+        ...precedingHardLowerBodyDates,
+        days[slot].date,
+      ])
+    ));
+    compromisedSlot = compromisedCandidates.length
+      ? nearestSlot(3, compromisedCandidates, used)
+      : null;
+  }
   if (Number.isInteger(longSlot)) used.add(longSlot);
-  const compromisedCandidates = hardRunSlots.filter((slot) => (
-    !used.has(slot)
-    && respectsRollingHardLowerBodyCap([
-      ...precedingHardLowerBodyDates,
-      days[slot].date,
-    ])
-  ));
-  const compromisedSlot = compromisedCandidates.length
-    ? nearestSlot(3, compromisedCandidates, used)
-    : null;
   if (Number.isInteger(compromisedSlot)) used.add(compromisedSlot);
   const stationAvailable = isRaceWeek ? allowed.filter((slot) => slot !== eventSlot) : allowed;
-  const hardStationPhase = ['build', 'peak_partial_simulation', 'specific'].includes(phase);
+  const hardStationPhase = ['build', 'peak_partial_simulation', 'specific'].includes(phase)
+    && !usePartialRaceOrderCluster;
   const stationPool = stationAvailable.length ? stationAvailable : allowed;
   const unoccupiedStationSlots = stationPool.filter((slot) => !used.has(slot));
   const stationCandidates = (unoccupiedStationSlots.length ? unoccupiedStationSlots : stationPool)
@@ -916,10 +1269,51 @@ function buildWeek({
   if (!isRaceWeek) {
     days[stationSlot].sessions.push(buildStationSession({ phase, weekIndex, standards, equipment, heavy: heavyStation }));
     if (Number.isInteger(compromisedSlot)) {
-      days[compromisedSlot].sessions.push(buildCompromisedSession({ phase, weekIndex, standards, equipment, safetyHold }));
+      days[compromisedSlot].sessions.push(usePartialRaceOrderCluster
+        ? buildPartialRaceOrderCluster({
+          session_id: `hyrox-${weekIndex + 1}-partial-cluster`,
+          plan_id: 'hyrox-plan-preview',
+          decision_id: 'hyrox-plan-preview-decision',
+          goal_ids: goalRaceId ? [String(goalRaceId)] : [],
+          scheduled_local_date: days[compromisedSlot].date,
+          event_local_date: eventDate,
+          timezone: eventTimezone,
+          hyrox_event_state: hyroxEventState,
+          requirement_id: hyroxEventState?.format === 'doubles'
+            ? 'hyrox_team_partial_simulation' : 'hyrox_partial_simulation',
+          pair_count: clusterPairCount,
+          run_distance_m: 1000,
+          warmup_running_m: 1500,
+          cooldown_running_m: 1500,
+          training_age_class: trainingAgeClass,
+        })
+        : buildCompromisedSession({
+          phase: phase === 'peak_partial_simulation' && hyroxEventState ? 'specific' : phase,
+          weekIndex, standards, equipment, safetyHold,
+        }));
     }
     if (Number.isInteger(longSlot)) {
-      days[longSlot].sessions.push(buildRunSession(`run-${weekIndex + 1}-long`, 'long', Math.max(4, weeklyMiles * 0.34), loadFactor));
+      const ordinaryLongBase = Math.max(4, weeklyMiles * 0.34);
+      let longBase = ordinaryLongBase;
+      if (usePartialRaceOrderCluster) {
+        const clusterMiles = days.flatMap((day) => day.sessions)
+          .find((session) => session.workout_family === 'hyrox_partial_simulation')?.distance_miles || 0;
+        const projectedEasy = buildRunSession(
+          'cluster-week-easy-projection',
+          'easy',
+          Math.max(2.5, weeklyMiles / Math.max(3, runDays) * 0.75),
+          loadFactor,
+        ).distance_miles;
+        const floorMiles = Math.floor(weeklyMiles * 1609.344 * 0.9) / 1609.344;
+        const neededLongMiles = Math.max(
+          ordinaryLongBase * loadFactor,
+          floorMiles - Number(clusterMiles) - Math.max(0, runDays - 2) * projectedEasy,
+        );
+        longBase = neededLongMiles / loadFactor;
+      }
+      days[longSlot].sessions.push(buildRunSession(
+        `run-${weekIndex + 1}-long`, 'long', longBase, loadFactor,
+      ));
     }
   } else {
     days[Math.max(0, eventSlot)].sessions.push(buildRaceSession(standards, goalRaceId, eventFormat));
@@ -1082,6 +1476,34 @@ function generateHyroxPlan(input = {}) {
   const availableDays = normalizeAvailableDays(input.availableDays);
   if (availableDays.length < requestedRunDays) throw new Error('insufficient_available_days');
   const equipment = normalizeEquipment(input.equipment);
+  let hyroxEventState = null;
+  let hyroxPerformanceBudget = null;
+  if (includeGoalBackwardV24) {
+    hyroxEventState = buildCanonicalHyroxEventState({
+      ...(event.hyroxEventState || {}),
+      ...(input.hyroxEventState || {}),
+      athlete_id: input.hyroxEventState?.athlete_id
+        ?? event.hyroxEventState?.athlete_id
+        ?? athlete.id
+        ?? athlete.athleteId
+        ?? null,
+      format: resolved.format === 'doubles' ? 'doubles' : 'singles',
+      event_format: resolved.format,
+      registered_division: resolved.category,
+      ruleset_id: resolved.rulesetId,
+      ruleset_version: resolved.rulesetVersion,
+      partner_id: input.hyroxEventState?.partner_id
+        ?? event.hyroxEventState?.partner_id
+        ?? event.partnerId
+        ?? event.partner_id
+        ?? null,
+      partner_placeholder: input.hyroxEventState?.partner_placeholder
+        ?? event.hyroxEventState?.partner_placeholder
+        ?? event.partnerPlaceholder
+        ?? event.partner_placeholder
+        ?? null,
+    });
+  }
   const window = planWeekWindow(planningDate, event.eventLocalDate || null);
   const totalWeeks = runway === 'foundation_only' ? 8 : window.weeks;
   const startDate = window.startDate;
@@ -1096,6 +1518,34 @@ function generateHyroxPlan(input = {}) {
     || currentWeekActivity.completedRunMiles > 0
     || currentWeekActivity.completedStrengthSessions > 0;
   const phases = allocatePhases(runway, totalWeeks);
+  const fullPreTaperWeeks = event.eventLocalDate
+    ? completeFullPreTaperWeeks(planningDate, event.eventLocalDate, 7) : 0;
+  const mandatoryCluster = Boolean(
+    includeGoalBackwardV24
+    && daysToEvent >= 28
+    && fullPreTaperWeeks >= 4
+  );
+  const trainingAgeClass = String(athlete.training_age_class ?? athlete.trainingAgeClass
+    ?? (safetyHold ? 'RETURNING' : 'ESTABLISHED')).toUpperCase();
+  const clusterPairCount = ['BEGINNER', 'RETURNING'].includes(trainingAgeClass) ? 2 : 3;
+  const clusterStations = STATION_ORDER.slice(0, clusterPairCount);
+  const clusterBlockedReason = !includeGoalBackwardV24 ? null
+    : safetyHold ? 'SAFETY_RECOVERY_HOLD'
+      : !explicitClusterContributionAvailable(hyroxEventState, clusterStations)
+        ? 'DOUBLES_CONTRIBUTION_UNKNOWN' : null;
+  const clusterWeekIndex = includeGoalBackwardV24 && !clusterBlockedReason
+    ? clusterWeekSelection({
+      phases,
+      startDate,
+      planningDate,
+      eventDate: event.eventLocalDate,
+      availableDays,
+      required: mandatoryCluster,
+    }) : -1;
+  const partialClusterWindow = event.eventLocalDate ? {
+    earliest_local_date: addLocalDays(event.eventLocalDate, -28),
+    latest_local_date: addLocalDays(event.eventLocalDate, -14),
+  } : null;
   const currentWeekRace = Boolean(
     event.eventLocalDate
     && event.eventLocalDate >= startDate
@@ -1145,7 +1595,7 @@ function generateHyroxPlan(input = {}) {
         && (session.kind === 'run' || session.includesRun)
       ))
       .map(({ date }) => date);
-    weeks.push(buildWeek({
+    const builtWeek = buildWeek({
       startDate: addLocalDays(startDate, weekIndex * 7),
       phase,
       weekIndex,
@@ -1166,7 +1616,20 @@ function generateHyroxPlan(input = {}) {
       precedingHardOrLongRunDates,
       precedingHardLowerBodyDates,
       currentWeekRunningLoadCap: weekIndex === 0 ? currentWeekRunningLoadCap : null,
-    }));
+      usePartialRaceOrderCluster: weekIndex === clusterWeekIndex,
+      hyroxEventState,
+      trainingAgeClass,
+      clusterPairCount,
+      eventTimezone: event.eventTimezone,
+      partialClusterWindow: weekIndex === clusterWeekIndex ? partialClusterWindow : null,
+    });
+    weeks.push(includeGoalBackwardV24
+      ? annotateGoalBackwardWeek(builtWeek, {
+        clusterWeek: weekIndex === clusterWeekIndex,
+        eventFormat: resolved.format,
+        constrained: availableDays.length <= 4 || ['caution', 'recovery', 'low'].includes(readiness),
+      })
+      : builtWeek);
   }
 
   const hyroxGoal = {
@@ -1183,6 +1646,8 @@ function generateHyroxPlan(input = {}) {
     ...(includeGoalBackwardV24 ? {
       rulesetId: resolved.rulesetId,
       rulesetVersion: resolved.rulesetVersion,
+      priority: 'A',
+      feasibility_status: 'unvalidated',
     } : {}),
     runningPriority: event.runningPriority || 'maintain',
   };
@@ -1241,6 +1706,7 @@ function generateHyroxPlan(input = {}) {
       goalTimeSeconds: normalizedSecondary.goalTimeSeconds,
       goalPaceSecondsPerMile: normalizedSecondary.goalPaceSecondsPerMile,
       goalPaceLabel: normalizedSecondary.goalPaceLabel,
+      ...(includeGoalBackwardV24 ? { priority: 'B', feasibility_status: 'unvalidated' } : {}),
     });
     for (let index = 0; index < secondaryWeeks; index += 1) {
       const phase = index === 0
@@ -1261,33 +1727,7 @@ function generateHyroxPlan(input = {}) {
   }
 
   const requiredEquipment = [...new Set(resolved.stations.map((station) => station.equipmentKey).filter(Boolean))];
-  let hyroxEventState = null;
-  let hyroxPerformanceBudget = null;
   if (includeGoalBackwardV24) {
-    hyroxEventState = buildCanonicalHyroxEventState({
-      ...(event.hyroxEventState || {}),
-      ...(input.hyroxEventState || {}),
-      athlete_id: input.hyroxEventState?.athlete_id
-        ?? event.hyroxEventState?.athlete_id
-        ?? athlete.id
-        ?? athlete.athleteId
-        ?? null,
-      format: resolved.format === 'doubles' ? 'doubles' : 'singles',
-      event_format: resolved.format,
-      registered_division: resolved.category,
-      ruleset_id: resolved.rulesetId,
-      ruleset_version: resolved.rulesetVersion,
-      partner_id: input.hyroxEventState?.partner_id
-        ?? event.hyroxEventState?.partner_id
-        ?? event.partnerId
-        ?? event.partner_id
-        ?? null,
-      partner_placeholder: input.hyroxEventState?.partner_placeholder
-        ?? event.hyroxEventState?.partner_placeholder
-        ?? event.partnerPlaceholder
-        ?? event.partner_placeholder
-        ?? null,
-    });
     const suppliedPerformanceBudget = input.hyroxPerformanceBudget
       || event.hyroxPerformanceBudget
       || {};
@@ -1298,6 +1738,23 @@ function generateHyroxPlan(input = {}) {
         ?? hyroxEventState.individual_training_burden,
     });
   }
+  const clusterExposure = includeGoalBackwardV24 ? validatePartialRaceOrderClusterExposure(
+    { weeks },
+    {
+      event_local_date: event.eventLocalDate,
+      mandatory_hyrox_cluster: mandatoryCluster && !clusterBlockedReason,
+      training_age_class: trainingAgeClass,
+    },
+  ) : null;
+  const clusterUnplaceable = Boolean(includeGoalBackwardV24 && mandatoryCluster && (
+    clusterBlockedReason || clusterWeekIndex < 0 || clusterExposure?.valid !== true
+  ));
+  const constrainedClusterWeek = availableDays.length <= 4
+    || ['caution', 'recovery', 'low'].includes(readiness);
+  const mandatoryLongUnplaceable = Boolean(
+    includeGoalBackwardV24 && mandatoryCluster && clusterWeekIndex >= 0 && constrainedClusterWeek
+  );
+  const goalBackwardAtRisk = clusterUnplaceable || mandatoryLongUnplaceable;
   const plan = {
     schemaVersion: 2,
     planMode: 'hyrox_build',
@@ -1363,10 +1820,36 @@ function generateHyroxPlan(input = {}) {
       runningFoundation: true,
       maximumHardLowerBodyDaysPerRollingSeven: 2,
       safetyHold,
+      ...(includeGoalBackwardV24 ? {
+        partialRaceOrderCluster: {
+          required: mandatoryCluster,
+          fullPreTaperWeeks,
+          window: partialClusterWindow,
+          selectedWeekIndex: clusterWeekIndex >= 0 ? clusterWeekIndex : null,
+          scheduledDates: clusterExposure?.qualifying_cluster_dates || [],
+          valid: clusterExposure?.valid === true,
+          completionStatus: 'PLANNED',
+          unplaceable: clusterUnplaceable,
+          unplaceableReason: clusterUnplaceable
+            ? (clusterBlockedReason || clusterExposure?.violations?.[0]?.reason || 'SCHEDULE_CONSTRAINT') : null,
+          reasonCodes: clusterUnplaceable ? ['REQUIRED_EXPOSURE_UNPLACEABLE'] : [],
+          roleVariant: constrainedClusterWeek ? 'CONSTRAINED' : 'ELIGIBLE',
+          requiredPrimaryCount: constrainedClusterWeek ? 1 : 2,
+          stationSkillRole: 'SUPPORTING',
+          unplaceableRequirementIds: mandatoryLongUnplaceable ? ['long_aerobic'] : [],
+        },
+      } : {}),
     },
-    overall_feasibility: 'supported',
-    goal_feasibilities: goals.map((goal) => ({ race_id: goal.raceId, feasibility: 'supported', goal: { date: goal.date } })),
-    reasons: runway === 'short_runway' ? ['SHORT_RUNWAY_PRESERVE_BASE'] : [],
+    overall_feasibility: includeGoalBackwardV24 ? (goalBackwardAtRisk ? 'at_risk' : 'unvalidated') : 'supported',
+    goal_feasibilities: goals.map((goal) => ({
+      race_id: goal.raceId,
+      feasibility: includeGoalBackwardV24 ? (goalBackwardAtRisk && goal === hyroxGoal ? 'at_risk' : 'unvalidated') : 'supported',
+      goal: { date: goal.date },
+    })),
+    reasons: [
+      ...(runway === 'short_runway' ? ['SHORT_RUNWAY_PRESERVE_BASE'] : []),
+      ...(goalBackwardAtRisk ? ['REQUIRED_EXPOSURE_UNPLACEABLE'] : []),
+    ],
     choices: ['train_for_target', 'adjust_goal'],
     weeks,
   };
@@ -1499,6 +1982,74 @@ function validateHyroxPlan(plan = {}) {
       }
     }
   }
+  const clusterPolicy = plan.hyroxPolicy?.partialRaceOrderCluster;
+  if (clusterPolicy) {
+    const partialEntries = entries.filter((entry) => (
+      entry.session.workout_family === 'hyrox_partial_simulation'
+    ));
+    for (const entry of partialEntries) {
+      const schema = validatePartialRaceOrderCluster(entry.session, {
+        training_age_class: plan.hyroxEventState?.training_age_class
+          ?? entry.session.training_age_class
+          ?? 'ESTABLISHED',
+      });
+      if (!schema.valid) errors.push({
+        code: 'INVALID_PARTIAL_RACE_ORDER_CLUSTER',
+        path: entry.path,
+        details: schema.violations,
+      });
+      if (entry.session.role !== 'PRIMARY_KEY') {
+        errors.push({ code: 'INVALID_CLUSTER_ROLE', path: entry.path });
+      }
+    }
+    const recordedUnplaceable = clusterPolicy.unplaceable === true;
+    const exposure = validatePartialRaceOrderClusterExposure(plan, {
+      event_local_date: eventDate,
+      mandatory_hyrox_cluster: clusterPolicy.required === true && !recordedUnplaceable,
+      training_age_class: partialEntries[0]?.session?.training_age_class ?? 'ESTABLISHED',
+    });
+    if (!exposure.valid) {
+      for (const violation of exposure.violations) {
+        if (recordedUnplaceable && violation.reason === 'MANDATORY_CLUSTER_MISSING' && partialEntries.length === 0) continue;
+        errors.push({ code: 'PARTIAL_CLUSTER_EXPOSURE', path: 'hyroxPolicy.partialRaceOrderCluster', details: violation });
+      }
+    }
+    if (clusterPolicy.required === true && !recordedUnplaceable && !partialEntries.length) {
+      errors.push({ code: 'MANDATORY_PARTIAL_CLUSTER_MISSING', path: 'weeks' });
+    }
+    if (!recordedUnplaceable && (clusterPolicy.valid === true) !== (exposure.valid === true)) {
+      errors.push({ code: 'PARTIAL_CLUSTER_POLICY_MISMATCH', path: 'hyroxPolicy.partialRaceOrderCluster.valid' });
+    }
+    for (const weekIndex of [...new Set(partialEntries.map((entry) => entry.weekIndex))]) {
+      const clusterWeekEntries = entries.filter((entry) => entry.weekIndex === weekIndex);
+      const stationSkills = clusterWeekEntries.filter((entry) => (
+        entry.session.workout_family === 'hyrox_station_skill'
+      ));
+      if (!stationSkills.length || stationSkills.some((entry) => (
+        entry.session.role !== 'SUPPORTING' || entry.session.hardLowerBody === true
+      ))) {
+        errors.push({ code: 'MANDATORY_CLUSTER_STATION_SKILL_ROLE', path: `weeks[${weekIndex}]` });
+      }
+      const longRuns = clusterWeekEntries.filter((entry) => entry.session.workout_family === 'long_aerobic');
+      const constrained = clusterPolicy.roleVariant === 'CONSTRAINED';
+      if (longRuns.some((entry) => entry.session.role !== (constrained ? 'SUPPORTING' : 'PRIMARY_KEY'))) {
+        errors.push({ code: 'MANDATORY_CLUSTER_LONG_ROLE', path: `weeks[${weekIndex}]` });
+      }
+      if (!constrained && !longRuns.length) {
+        errors.push({ code: 'MANDATORY_CLUSTER_LONG_MISSING', path: `weeks[${weekIndex}]` });
+      }
+      const interference = validateInterference(clusterWeekEntries.map((entry) => ({
+        ...entry.session,
+        scheduled_local_date: entry.date,
+      })), {
+        training_age_class: partialEntries.find((entry) => entry.weekIndex === weekIndex)
+          ?.session?.training_age_class ?? 'ESTABLISHED',
+      });
+      if (!interference.valid) errors.push({
+        code: 'PARTIAL_CLUSTER_SPACING', path: `weeks[${weekIndex}]`, details: interference.violations,
+      });
+    }
+  }
   if (plan.hyroxPolicy?.runwayClass === 'foundation_only'
     && entries.some((entry) => entry.session.sessionType === 'hyrox_race')) {
     errors.push({ code: 'FOUNDATION_HAS_RACE_DAY', path: 'weeks' });
@@ -1509,8 +2060,10 @@ function validateHyroxPlan(plan = {}) {
 module.exports = {
   addLocalDays,
   allocatePhases,
+  buildBryanPeakWeekWitness,
   buildHyroxEventState: buildCanonicalHyroxEventState,
   buildHyroxPerformanceBudget,
+  buildPartialRaceOrderCluster,
   buildHyroxStationPrescription,
   classifyHyroxRunway,
   daysBetweenLocalDates,
@@ -1520,5 +2073,6 @@ module.exports = {
   localDateInTimeZone,
   mondayForLocalDate,
   planWeekWindow,
+  validatePartialRaceOrderCluster,
   validateHyroxPlan,
 };

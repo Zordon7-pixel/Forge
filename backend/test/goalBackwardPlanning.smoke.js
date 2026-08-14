@@ -181,7 +181,7 @@ test('XLOAD-04', 'eligibility is modality-specific when strength coverage failed
 
 test('XLOAD-05', 'HYROX cluster overload is phase-bound, gated, dimension-exact, and recorded only when used', () => {
   const history = Object.fromEntries(STRESS_TAXONOMY_V1.dimensions.map((dimension, index) => (
-    [dimension, Array(6).fill([11, 10, 7, 3, 3, 7, 7, 2][index])]
+    [dimension, Array(6).fill([11, 10, 7, 2, 2, 6, 7, 3][index])]
   )));
   const eventPolicy = eventPolicyFor('hyrox_doubles_v1');
   const authorized = calculateFatigueCeilings(history, {
@@ -193,12 +193,15 @@ test('XLOAD-05', 'HYROX cluster overload is phase-bound, gated, dimension-exact,
     safety_restriction: false,
     previous_two_weeks_passed: true,
   });
-  assert.deepEqual(authorized.normal_ceiling_vector, [14, 12, 9, 5, 5, 9, 9, 4]);
-  assert.deepEqual(authorized.authorized_ceiling_vector, [16, 14, 12, 7, 7, 11, 12, 9]);
+  assert.deepEqual(authorized.normal_ceiling_vector, [14, 12, 9, 4, 4, 8, 9, 5]);
+  assert.deepEqual(authorized.authorized_ceiling_vector, [16, 14, 12, 6, 6, 10, 12, 10]);
   const budget = evaluateStressBudget([13, 12, 10, 5, 5, 9, 10, 7], authorized);
   assert.equal(budget.valid, true);
   assert.deepEqual(budget.overload_dimensions_used, [
     'lower_body_muscular',
+    'upper_body_muscular',
+    'grip',
+    'neuromuscular',
     'metabolic',
     'event_specific_fatigue',
   ]);
@@ -700,6 +703,16 @@ test('ROLE-03', 'mandatory HYROX role counts keep station skill supporting and r
   ]);
   assert.ok(constrained.reason_codes.includes('REQUIRED_EXPOSURE_UNPLACEABLE'));
   assert.ok(constrained.unplaceable_requirement_ids.includes('long_aerobic'));
+  assert.deepEqual(buildRoleMultiset({
+    exposure_ledger: eligible, training_age_class: 'DEVELOPING', available_days_count: 5, recovery_state: 'READY',
+  }).map((entry) => [entry.requirement_id, entry.role]), [
+    ['hyrox_team_partial_simulation', 'PRIMARY_KEY'], ['long_aerobic', 'PRIMARY_KEY'], ['hyrox_station_skill', 'SUPPORTING'],
+  ]);
+  assert.deepEqual(buildRoleMultiset({
+    exposure_ledger: constrained, training_age_class: 'DEVELOPING', available_days_count: 4, recovery_state: 'CAUTION',
+  }).map((entry) => [entry.requirement_id, entry.role]), [
+    ['hyrox_team_partial_simulation', 'PRIMARY_KEY'], ['hyrox_station_skill', 'SUPPORTING'],
+  ]);
 });
 
 test('INT-01', 'threshold and heavy lower-body work inside the separation window fail', () => {

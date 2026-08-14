@@ -5,7 +5,11 @@ const {
   daysBetween,
 } = require('./racePlanPolicy');
 const { aggregateWeeklyStress, resolveSessionStress, resolveStressVector } = require('./goalBackwardLoad');
-const { validateCanonicalSession, validateCanonicalSessionSet } = require('./canonicalWorkout');
+const {
+  validateCanonicalSession,
+  validateCanonicalSessionSet,
+  validatePartialRaceOrderCluster,
+} = require('./canonicalWorkout');
 
 const DIMENSIONS = [
   'aerobic',
@@ -101,6 +105,79 @@ function sessionsFrom(container = {}) {
         : [{ ...day, scheduled_local_date: sessionLocalDate(day) }]
     ))
   ));
+}
+
+function validatePartialRaceOrderClusterExposure(container = {}, options = {}) {
+  const sessions = sessionsFrom(container);
+  const eventDate = dateOnly(options.event_local_date ?? options.eventLocalDate);
+  const earliest = eventDate ? addDays(eventDate, -28) : null;
+  const latest = eventDate ? addDays(eventDate, -14) : null;
+  const mandatory = options.mandatory_hyrox_cluster === true;
+  const violations = [];
+  const candidates = sessions.filter((session) => sessionFamily(session) === 'hyrox_partial_simulation');
+  const validClusters = [];
+  for (const [index, session] of candidates.entries()) {
+    const schema = validatePartialRaceOrderCluster(session, options);
+    if (!schema.valid) {
+      violations.push(...schema.violations.map((violation) => ({
+        code: 'REQUIRED_EXPOSURE_UNPLACEABLE',
+        reason: violation.reason || violation.code,
+        session_id: sessionId(session, index),
+      })));
+      continue;
+    }
+    const date = sessionLocalDate(session);
+    if (!date) {
+      violations.push({ code: 'REQUIRED_EXPOSURE_UNPLACEABLE', reason: 'CLUSTER_DATE_INVALID', session_id: sessionId(session, index) });
+      continue;
+    }
+    validClusters.push({ session, date, schema, session_id: sessionId(session, index) });
+  }
+  const sorted = validClusters.slice().sort((left, right) => left.date.localeCompare(right.date));
+  for (let index = 1; index < sorted.length; index += 1) {
+    const separationDays = daysBetween(sorted[index - 1].date, sorted[index].date);
+    if (separationDays < 14) violations.push({
+      code: 'REQUIRED_EXPOSURE_UNPLACEABLE',
+      reason: 'CLUSTER_FREQUENCY_EXCEEDED',
+      session_ids: [sorted[index - 1].session_id, sorted[index].session_id],
+      separation_local_days: separationDays,
+      minimum_separation_local_days: 14,
+    });
+  }
+  const qualifying = eventDate
+    ? sorted.filter((entry) => entry.date >= earliest && entry.date <= latest)
+    : [];
+  if (eventDate) {
+    sorted.filter((entry) => entry.date < earliest || entry.date > latest).forEach((entry) => {
+      violations.push({
+        code: 'REQUIRED_EXPOSURE_UNPLACEABLE',
+        reason: 'CLUSTER_OUTSIDE_REQUIRED_WINDOW',
+        session_id: entry.session_id,
+        scheduled_local_date: entry.date,
+        earliest_local_date: earliest,
+        latest_local_date: latest,
+      });
+    });
+  }
+  if (mandatory && (!eventDate || qualifying.length === 0)) {
+    violations.push({
+      code: 'REQUIRED_EXPOSURE_UNPLACEABLE',
+      reason: eventDate ? 'MANDATORY_CLUSTER_MISSING' : 'EVENT_DATE_REQUIRED_FOR_CLUSTER_WINDOW',
+    });
+  }
+  if (options.require_completed_exposure === true && !qualifying.some((entry) => entry.schema.completed_successfully)) {
+    violations.push({ code: 'REQUIRED_EXPOSURE_UNPLACEABLE', reason: 'CLUSTER_COMPLETION_INCOMPLETE' });
+  }
+  return deepFreeze({
+    valid: violations.length === 0,
+    mandatory,
+    window: { earliest_local_date: earliest, latest_local_date: latest },
+    cluster_dates: sorted.map((entry) => entry.date),
+    qualifying_cluster_dates: qualifying.map((entry) => entry.date),
+    completed_qualifying_cluster_dates: qualifying.filter((entry) => entry.schema.completed_successfully).map((entry) => entry.date),
+    violations,
+    reason_codes: violations.length ? ['REQUIRED_EXPOSURE_UNPLACEABLE'] : [],
+  });
 }
 
 function resolvedSession(session = {}, index = 0) {
@@ -582,7 +659,8 @@ function validateCrossModalCeiling(options = {}) {
     validator: 'cross_modal_ceiling',
     valid: violations.length === 0,
     violations,
-    reason_codes: violations.length ? ['CROSS_MODAL_FATIGUE_LIMIT'] : [],
+    reason_codes: violations.length
+      ? ['CROSS_MODAL_FATIGUE_LIMIT'] : [...new Set(evidence?.reason_codes || [])],
   };
 }
 
@@ -657,6 +735,20 @@ function validateRoles(sessions, options) {
     });
     if (!thirdEligible) violations.push({ code: 'SESSION_ROLE_UNJUSTIFIED', reason: 'THIRD_KEY_NOT_UPPER_TECHNIQUE' });
   }
+  const mandatoryClusterWeek = dueRoleRequirements(options).some((requirement) => (
+    (requirement.any_of || []).includes('hyrox_partial_simulation')
+  ));
+  if (mandatoryClusterWeek) {
+    const aggregate = aggregateWeeklyStress(sessions);
+    for (const stationSkill of sessions.filter((session) => sessionFamily(session) === 'hyrox_station_skill')) {
+      const day = aggregate.days.find((entry) => entry.scheduled_local_date === sessionLocalDate(stationSkill));
+      if (day?.hard_day) violations.push({
+        code: 'SESSION_ROLE_UNJUSTIFIED',
+        reason: 'MANDATORY_STATION_SKILL_MUST_REMAIN_NON_HARD',
+        session_id: sessionId(stationSkill),
+      });
+    }
+  }
   return { validator: 'roles', valid: violations.length === 0, violations, reason_codes: violations.map((violation) => violation.code) };
 }
 
@@ -665,13 +757,42 @@ function validateRequiredExposures(sessions, options) {
     ?? options.required_exposure_ledger
     ?? [];
   const violations = [];
+  const partialRequirement = ledger.some((requirement) => (
+    (requirement.any_of || []).includes('hyrox_partial_simulation')
+  ));
+  const recordedUnplaceable = new Set([
+    ...(options.unplaceable_requirement_ids || []),
+    ...(options.required_exposure_ledger?.unplaceable_requirement_ids || []),
+  ].map(String));
+  const clusterExposure = partialRequirement ? validatePartialRaceOrderClusterExposure(sessions, {
+    ...options,
+    mandatory_hyrox_cluster: true,
+  }) : null;
   for (const requirement of ledger) {
-    if ((options.unplaceable_requirement_ids || []).includes(requirement.requirement_id)) continue;
-    const satisfied = sessions.some((session) => (
-      (requirement.any_of || []).includes(sessionFamily(session))
-      && (!requirement.role || sessionRole(session) === String(requirement.role).toUpperCase())
-    ));
+    if (recordedUnplaceable.has(String(requirement.requirement_id))) continue;
+    const requiresPartial = (requirement.any_of || []).includes('hyrox_partial_simulation');
+    const satisfied = requiresPartial
+      ? clusterExposure?.valid === true && sessions.some((session) => (
+        sessionFamily(session) === 'hyrox_partial_simulation'
+        && (!requirement.role || sessionRole(session) === String(requirement.role).toUpperCase())
+      ))
+      : sessions.some((session) => (
+        (requirement.any_of || []).includes(sessionFamily(session))
+        && (!requirement.role || sessionRole(session) === String(requirement.role).toUpperCase())
+      ));
     if (!satisfied) violations.push({ code: 'REQUIRED_EXPOSURE_UNPLACEABLE', requirement_id: requirement.requirement_id });
+  }
+  if (clusterExposure && !clusterExposure.valid) violations.push(...clusterExposure.violations);
+  const minimumRunning = Number(options.minimum_weekly_demand?.running_m);
+  if (Number.isSafeInteger(minimumRunning) && minimumRunning >= 0) {
+    const actualRunning = aggregateKnownRunningDistance(sessions);
+    if (actualRunning === null) violations.push({
+      code: 'REQUIRED_EXPOSURE_UNPLACEABLE', reason: 'WEEKLY_RUNNING_DISTANCE_UNKNOWN', required_running_m: minimumRunning,
+    });
+    else if (Math.round(actualRunning) < minimumRunning) violations.push({
+      code: 'REQUIRED_EXPOSURE_UNPLACEABLE', reason: 'WEEKLY_RUNNING_FLOOR',
+      required_running_m: minimumRunning, proposed_running_m: Math.round(actualRunning),
+    });
   }
   return { validator: 'required_exposures', valid: violations.length === 0, violations, reason_codes: violations.map((violation) => violation.code) };
 }
@@ -1258,4 +1379,5 @@ module.exports = {
   compareMaterialChange,
   validateGoalBackwardCandidate,
   validateInterference,
+  validatePartialRaceOrderClusterExposure,
 };

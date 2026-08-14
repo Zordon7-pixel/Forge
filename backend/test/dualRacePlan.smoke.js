@@ -6,11 +6,134 @@ const fs = require('node:fs');
 const path = require('node:path');
 const concurrent = require('../src/lib/concurrentPlan');
 const hyrox = require('../src/lib/hyroxPlan');
+const { aggregateWeeklyStress } = require('../src/lib/goalBackwardLoad');
 const adaptation = require('../src/lib/adaptationEngine');
 const planSchema = require('../src/lib/planSchema');
 const { motivationalRunName } = require('../../shared/runDisplayName.mjs');
 
 const HYROX_EQUIPMENT = ['ski_erg', 'row_erg', 'sled_push', 'sled_pull', 'wall_ball_target', 'sandbag', 'farmers_carry', 'treadmill'];
+
+function bryanPlannedSplit() {
+  return {
+    ski_erg: { athlete: { distance_m: 600 }, partner: { distance_m: 400 } },
+    sled_push: { athlete: { distance_m: 30 }, partner: { distance_m: 20 } },
+    sled_pull: { athlete: { distance_m: 30 }, partner: { distance_m: 20 } },
+    burpee_broad_jump: { athlete: { distance_m: 48 }, partner: { distance_m: 32 } },
+    row: { athlete: { distance_m: 600 }, partner: { distance_m: 400 } },
+    farmers_carry: { athlete: { distance_m: 120 }, partner: { distance_m: 80 } },
+    sandbag_lunge: { athlete: { distance_m: 60 }, partner: { distance_m: 40 } },
+    wall_ball: { athlete: { repetitions: 60 }, partner: { repetitions: 40 } },
+  };
+}
+
+function checkBryanGoalBackwardWitnessIntegration() {
+  const state = hyrox.buildHyroxEventState({
+    athlete_id: 'bryan-synthetic', format: 'doubles', registered_division: 'men',
+    ruleset_id: 'hyrox-global', ruleset_version: '2026-2027',
+    planned_station_split: bryanPlannedSplit(),
+  });
+  const witness = hyrox.buildBryanPeakWeekWitness({ hyrox_event_state: state });
+  assert.equal(witness.weekly_running_miles, 19);
+  assert.equal(witness.weekly_running_m, 30578);
+  assert.equal(witness.minimum_weekly_running_m, 30416);
+  assert.deepEqual(witness.weekly_stress_vector, [13, 12, 10, 5, 5, 9, 10, 7]);
+  assert.equal(witness.validation.valid, true, JSON.stringify(witness.validation.violations));
+}
+
+function checkPartialClusterShadowIntegration(plansRouter) {
+  const previousMode = process.env.FORGE_GOAL_BACKWARD_V24_MODE;
+  process.env.FORGE_GOAL_BACKWARD_V24_MODE = 'shadow';
+  try {
+    const planningDate = '2026-08-03';
+    const eventDate = '2026-09-14';
+    const trainingDays = ['Mon', 'Tue', 'Thu', 'Fri', 'Sun'];
+    const medianVector = [11, 10, 7, 2, 2, 6, 7, 3];
+    const modalityHistory = Object.fromEntries([
+      'aerobic', 'running_impact', 'lower_body_muscular', 'upper_body_muscular',
+      'grip', 'neuromuscular', 'metabolic', 'event_specific_fatigue',
+    ].map((dimension, index) => [dimension, Array(6).fill(medianVector[index])]));
+    const built = { plan: hyrox.generateHyroxPlan({
+      planningLocalDate: planningDate,
+      athlete: {
+        id: 'cluster-route-athlete', weeklyMilesCurrent: 21, runDaysPerWeek: 4,
+        training_age_class: 'ESTABLISHED',
+      },
+      currentLoad: { weeklyMiles: 21 },
+      event: {
+        raceId: 'cluster-route-race', eventLocalDate: eventDate,
+        eventTimezone: 'America/New_York', format: 'individual_open', category: 'men', rulesVersion: '2026-2027',
+      },
+      equipment: HYROX_EQUIPMENT,
+      availableDays: trainingDays,
+    }) };
+    const state = {
+      inputHash: `sha256:${'1'.repeat(64)}`,
+      planningInputRevision: 1,
+      active: null,
+      activePlan: null,
+      races: [{
+        id: 'cluster-route-race', user_id: 'cluster-route-athlete', race_date: eventDate,
+        event_local_date: eventDate, event_kind: 'hyrox', event_format: 'individual_open',
+        distance_miles: 4.97, goal_time_seconds: 3600,
+      }],
+      target: { trainingDays, hyroxEvent: { format: 'individual_open' } },
+      context: {
+        profile: { training_age_class: 'ESTABLISHED', timezone: 'America/New_York' },
+        history: {
+          recentRunCount: 24, weeklyMileageBaseline: 21,
+          modalityHistory, previousTwoWeeksPassed: true,
+        },
+        recovery: { state: 'normal' },
+        safety: {},
+      },
+    };
+    const result = plansRouter._test.computeGoalBackwardShadowDiagnostics({
+      userId: 'cluster-route-athlete',
+      planningDateLocal: planningDate,
+      built,
+      state,
+    });
+    assert.equal(built.plan.hyroxPolicy.partialRaceOrderCluster.valid, true);
+    assert.equal(result.decision.mandatory_hyrox_cluster, true);
+    assert.ok(result.selected_candidate, 'the route materializes and selects a valid mandatory cluster-week candidate');
+    assert.equal(result.selected_candidate.validation.valid, true);
+    const selectedStress = aggregateWeeklyStress(result.selected_candidate.sessions).weekly_dimension_sum;
+    assert.equal(selectedStress.every((value, index) => (
+      value <= [16, 14, 12, 6, 6, 10, 12, 10][index]
+    )), true);
+    assert.ok(result.selected_candidate.validation.reason_codes.includes('PHASE_SPECIFIC_OVERLOAD'));
+    const partial = result.selected_candidate.sessions.find((session) => (
+      session.workout_family === 'hyrox_partial_simulation'
+    ));
+    assert.equal(hyrox.validatePartialRaceOrderCluster(partial, {
+      training_age_class: 'ESTABLISHED',
+    }).valid, true);
+    const runningMeters = result.selected_candidate.sessions.reduce((sum, session) => {
+      if (session.workout_family === 'hyrox_partial_simulation') return sum + session.running_distance_m;
+      return ['easy_run', 'long_aerobic'].includes(session.workout_family)
+        ? sum + Number(session.derived_totals?.distance_m || 0) : sum;
+    }, 0);
+    assert.ok(runningMeters >= result.decision.minimum_weekly_demand.running_m);
+
+    const unauthorized = plansRouter._test.computeGoalBackwardShadowDiagnostics({
+      userId: 'cluster-route-athlete', planningDateLocal: planningDate, built,
+      state: {
+        ...state,
+        context: {
+          ...state.context,
+          history: { ...state.context.history, previousTwoWeeksPassed: false },
+        },
+      },
+    });
+    assert.equal(unauthorized.selected_candidate, null, 'normal ceilings reject unauthorized cluster overload');
+    assert.ok(unauthorized.candidates.some((candidate) => (
+      candidate.validation.violations.some((violation) => violation.code === 'CROSS_MODAL_FATIGUE_LIMIT')
+    )));
+  } finally {
+    if (previousMode === undefined) delete process.env.FORGE_GOAL_BACKWARD_V24_MODE;
+    else process.env.FORGE_GOAL_BACKWARD_V24_MODE = previousMode;
+  }
+}
 
 function routeHandler(router, routePath, method) {
   const layer = router.stack.find((item) => item.route?.path === routePath && item.route?.methods?.[method]);
@@ -538,6 +661,7 @@ async function checkDedicatedRouteBoundary() {
 
   try {
     const plansRouter = require('../src/routes/plans');
+    checkPartialClusterShadowIntegration(plansRouter);
     const generateForRaces = routeHandler(plansRouter, '/generate-for-races', 'post');
     const generateForRace = routeHandler(plansRouter, '/generate-for-race/:raceId', 'post');
     const generate = routeHandler(plansRouter, '/generate', 'post');
@@ -1067,6 +1191,8 @@ async function checkHyroxCandidateImmediateAdoption() {
     else delete require.cache[dbModulePath];
   }
 }
+
+checkBryanGoalBackwardWitnessIntegration();
 
 checkDedicatedRouteBoundary()
   .then(checkHyroxCandidateImmediateAdoption)

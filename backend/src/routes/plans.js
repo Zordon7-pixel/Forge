@@ -1776,6 +1776,14 @@ function targetFromOwnedRaces(profile, races, requested, planningDateLocal) {
       throw candidateError(400, 'RACE_DATE_PASSED', 'HYROX event date must be today or later.');
     }
     const config = storedEventConfig(hyroxRace);
+    const storedHyroxEventState = {
+      ...((config.hyroxEventState && typeof config.hyroxEventState === 'object') ? config.hyroxEventState : {}),
+      ...((config.hyrox_event_state && typeof config.hyrox_event_state === 'object') ? config.hyrox_event_state : {}),
+      ...(config.planned_station_split ? { planned_station_split: config.planned_station_split } : {}),
+      ...(config.actual_station_split ? { actual_station_split: config.actual_station_split } : {}),
+      ...(config.partner_id !== undefined ? { partner_id: config.partner_id } : {}),
+      ...(config.partner_placeholder !== undefined ? { partner_placeholder: config.partner_placeholder } : {}),
+    };
     const planWindow = hyroxPlan.planWeekWindow(planningDateLocal, localDate);
     const secondaryRace = races[1] || null;
     const secondaryDistanceMiles = secondaryRace
@@ -1827,6 +1835,9 @@ function targetFromOwnedRaces(profile, races, requested, planningDateLocal) {
         category: hyroxRace.event_category,
         rulesVersion: hyroxRace.rules_version,
         runningPriority: config.runningPriority || 'maintain',
+        ...(Object.keys(storedHyroxEventState).length ? { hyroxEventState: storedHyroxEventState } : {}),
+        ...(config.hyroxPerformanceBudget && typeof config.hyroxPerformanceBudget === 'object'
+          ? { hyroxPerformanceBudget: config.hyroxPerformanceBudget } : {}),
       },
       hyroxEquipment: Array.isArray(config.equipment) ? config.equipment : [],
       secondaryRace: secondary,
@@ -2140,17 +2151,28 @@ function goalBackwardGoalsForState(userId, state) {
     event_state: 'SCHEDULED',
     source_revision: Math.max(1, Number(race.revision || 1)),
     distance_miles: Number(race.distance_miles || 0) || null,
+    target_time_s: Number(race.goal_time_seconds || 0) > 0 ? Number(race.goal_time_seconds) : null,
   }));
 }
 
 function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDateLocal }, dependencies = {}) {
-  const availableLocalDates = goalBackwardAvailableLocalDates(state, planningDateLocal);
+  const clusterPolicy = built.plan?.hyroxPolicy?.partialRaceOrderCluster || null;
+  const selectedClusterWeek = Number.isInteger(clusterPolicy?.selectedWeekIndex)
+    ? built.plan?.weeks?.[clusterPolicy.selectedWeekIndex] : null;
+  const preferredWeekdays = new Set((state.target?.trainingDays || []).map((value) => String(value).slice(0, 3)));
+  const clusterWeekDates = (selectedClusterWeek?.days || [])
+    .filter((day) => day.date >= planningDateLocal && (!preferredWeekdays.size || preferredWeekdays.has(day.day)))
+    .map((day) => day.date);
+  const availableLocalDates = clusterPolicy?.required === true && clusterWeekDates.length
+    ? clusterWeekDates
+    : goalBackwardAvailableLocalDates(state, planningDateLocal);
   const trainingAgeClass = goalBackwardTrainingAge(state.context);
   const recoveryState = goalBackwardRecoveryState(state.context);
   const safetyAction = state.context?.safety?.activeInjury ? 'MODIFY_IMPACT' : 'NORMAL';
   const recentRunCount = Number(state.context?.history?.recentRunCount || 0);
   const weeklyMiles = Number(state.context?.history?.weeklyMileageBaseline || 0);
   const goals = goalBackwardGoalsForState(userId, state);
+  const primaryEventDate = goals[0]?.event_local_date || null;
   const evidenceSnapshotId = `snapshot-${state.inputHash.slice(-24)}`;
   const buildDecision = dependencies.buildDecision || buildGoalBackwardPlanningDecision;
   const enumerateCandidates = dependencies.enumerateCandidates || enumerateGoalBackwardCandidates;
@@ -2180,6 +2202,25 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
     goals,
     races: state.races.map((race) => ({ race_id: String(race.id), athlete_id: userId })),
     evidence_used: [{ evidence_id: evidenceSnapshotId, purpose: 'CURRENT_PLANNING_SNAPSHOT' }],
+    development_gate_complete: recentRunCount >= 4,
+    full_pre_taper_weeks: clusterPolicy?.fullPreTaperWeeks,
+    mandatory_hyrox_cluster: clusterPolicy?.required === true,
+    safety_or_recovery_hold: clusterPolicy?.unplaceableReason === 'SAFETY_RECOVERY_HOLD',
+    supporting_stimuli: clusterPolicy?.required === true && clusterWeekDates.length >= 5 ? [
+      {
+        requirement_id: 'hyrox_cluster_easy_aerobic_1',
+        any_of: ['easy_run'],
+        role: 'SUPPORTING',
+        supports_requirement_id: goals[0]?.event_kind === 'HYROX_DOUBLES'
+          ? 'hyrox_team_partial_simulation' : 'hyrox_partial_simulation',
+      },
+      {
+        requirement_id: 'hyrox_cluster_easy_aerobic_2',
+        any_of: ['easy_run'],
+        role: 'SUPPORTING',
+        supports_requirement_id: 'long_aerobic',
+      },
+    ] : [],
   });
   const activeAppliedPlan = state.active ? {
     ...parsePlan(state.active.row),
@@ -2189,10 +2230,18 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
     decision,
     available_local_dates: availableLocalDates,
     maximum_session_count: decision.role_multiset.length,
-    legacy_road_candidate_material: built.plan,
+    legacy_road_candidate_material: clusterPolicy?.required === true && selectedClusterWeek
+      ? { weeks: [selectedClusterWeek] } : built.plan,
     active_applied_plan: activeAppliedPlan,
     preferred_weekdays: state.target?.trainingDays || [],
-    selected_running_volume_m: Number(decision.proposed_running_volume_m || 0),
+    selected_running_volume_m: decision.proposed_running_volume_m,
+    mandatory_hyrox_cluster: decision.mandatory_hyrox_cluster === true,
+    previous_two_weeks_passed: state.context?.history?.previousTwoWeeksPassed === true,
+    modality_history: state.context?.history?.modalityHistory
+      ?? state.context?.history?.modality_history
+      ?? state.context?.history?.crossModalRecentNormal
+      ?? state.context?.history?.cross_modal_recent_normal
+      ?? {},
     materialize_canonical: true,
     planning_instant: `${planningDateLocal}T00:00:00.000Z`,
     timezone: state.context?.profile?.timezone || decision.timezone || 'UTC',
@@ -2203,6 +2252,9 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
       consistency_state: decision.consistency_state,
       recovery_state: recoveryState,
       safety_action: safetyAction,
+      event_local_date: primaryEventDate,
+      mandatory_hyrox_cluster: decision.mandatory_hyrox_cluster === true,
+      minimum_weekly_demand: decision.minimum_weekly_demand,
     },
   });
   if (typeof dependencies.inspectDecision === 'function') dependencies.inspectDecision(result);

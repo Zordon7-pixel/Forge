@@ -612,6 +612,423 @@ function buildCanonicalSession(input = {}) {
   return deepFreeze(session);
 }
 
+function canonicalClusterNumber(value, minimum = 0) {
+  if (value === null || value === undefined || (typeof value === 'string' && value.trim() === '')) return null;
+  const numeric = Number(value);
+  return Number.isSafeInteger(numeric) && numeric >= minimum ? numeric : null;
+}
+
+function canonicalClusterRange(value, fallback = null) {
+  if (!isPlainObject(value)) return fallback;
+  const minimum = Number(value.minimum);
+  const maximum = Number(value.maximum);
+  return Number.isFinite(minimum) && Number.isFinite(maximum) && minimum >= 1 && maximum >= minimum
+    ? { minimum, maximum } : fallback;
+}
+
+function clusterDerivedAt(input = {}) {
+  const supplied = input.planning_instant ?? input.derived_at;
+  if (validTimestamp(supplied)) return new Date(supplied).toISOString();
+  const date = input.scheduled_local_date;
+  return validDate(date) ? `${date}T12:00:00.000Z` : '1970-01-01T00:00:00.000Z';
+}
+
+function clusterProvenance(input, units, field, { ruleset = false, confidence = 'HIGH', sourceId = null } = {}) {
+  const rulesetId = input.hyrox_event_state?.ruleset_id ?? input.ruleset_id;
+  const rulesetVersion = input.hyrox_event_state?.ruleset_version ?? input.ruleset_version;
+  const provenance = {
+    source_evidence_ids: [String(sourceId || (ruleset
+      ? `ruleset:${rulesetId || 'unknown'}:${rulesetVersion || 'unknown'}`
+      : `prescription:${input.session_id || 'hyrox-cluster'}`))],
+    derived_athlete_state_field: field,
+    confidence,
+    derived_at: clusterDerivedAt(input),
+    decision_id: String(input.decision_id || 'hyrox-cluster-decision'),
+    canonical_units: [...new Set(units)],
+  };
+  if (ruleset && nonEmptyString(rulesetId) && nonEmptyString(rulesetVersion)) {
+    provenance.ruleset_id = rulesetId;
+    provenance.ruleset_version = rulesetVersion;
+  } else {
+    provenance.policy_id = GOAL_BACKWARD_PLANNING_POLICY_ID;
+    provenance.policy_version = 1;
+  }
+  return provenance;
+}
+
+const GOAL_BACKWARD_PLANNING_POLICY_ID = 'goal-backward-planning-policy-v1';
+
+function stationLoadKg(standard = {}) {
+  const raw = standard.loadKgIncludingSled ?? standard.loadKg ?? standard.loadKgPerImplement ?? standard.ballKg;
+  const numeric = Number(raw);
+  return raw !== null && raw !== undefined && Number.isFinite(numeric) && numeric >= 0
+    ? Math.round(numeric * 10) / 10 : null;
+}
+
+function stationContributionAmount(value = {}) {
+  if (!isPlainObject(value)) return { unit: null, amount: null };
+  const distance = canonicalClusterNumber(value.distance_m ?? value.distanceMeters);
+  if (distance !== null) return { unit: 'm', amount: distance };
+  const repetitions = canonicalClusterNumber(value.repetitions ?? value.reps);
+  if (repetitions !== null) return { unit: 'count', amount: repetitions };
+  return { unit: null, amount: null };
+}
+
+function officialStationContribution(standard = {}) {
+  const distance = canonicalClusterNumber(standard.distanceMeters);
+  if (distance !== null) return { unit: 'm', amount: distance };
+  const repetitions = canonicalClusterNumber(standard.repetitions);
+  if (repetitions !== null) return { unit: 'count', amount: repetitions };
+  return { unit: null, amount: null };
+}
+
+function resolvedClusterRuleset(input = {}) {
+  const state = input.hyrox_event_state || {};
+  const rulesetId = state.ruleset_id ?? input.ruleset_id;
+  const rulesetVersion = state.ruleset_version ?? input.ruleset_version;
+  const eventFormat = state.event_format ?? (state.format === 'doubles' ? 'doubles' : input.event_format);
+  const division = state.registered_division ?? input.registered_division;
+  if (!nonEmptyString(rulesetId) || !nonEmptyString(rulesetVersion)) return null;
+  const resolved = resolveHyroxStandard({
+    rulesetId,
+    rulesetVersion,
+    format: eventFormat,
+    category: division,
+  });
+  return resolved.status === 'exact' ? resolved : null;
+}
+
+function clusterStationIds(input = {}, pairCount = 0) {
+  if (Array.isArray(input.station_ids)) return input.station_ids.slice(0, pairCount).map(String);
+  const start = canonicalClusterNumber(input.station_start_index) ?? 0;
+  return HYROX_STATION_ORDER.slice(start, start + pairCount);
+}
+
+function clusterStationContributions(input, stationIds, resolved) {
+  const state = input.hyrox_event_state || {};
+  const doubles = String(state.format ?? input.format ?? '').toLowerCase() === 'doubles';
+  const dose = Number(input.station_dose_fraction ?? 0.5);
+  const doseFraction = Number.isFinite(dose) ? dose : 0.5;
+  const standards = new Map((resolved?.stations || []).map((standard) => [standard.id, standard]));
+  return stationIds.map((stationId) => {
+    const standard = standards.get(stationId) || {};
+    const explicit = stationContributionAmount(state.planned_athlete_station_contribution?.[stationId]);
+    const official = officialStationContribution(standard);
+    const basis = doubles ? explicit : official;
+    const prescribed = basis.amount === null ? null : Math.ceil(basis.amount * doseFraction);
+    return {
+      station_id: stationId,
+      contribution_basis: doubles
+        ? 'EXPLICIT_DOUBLES_PLANNED_CONTRIBUTION' : 'OFFICIAL_SINGLES_VOLUME',
+      explicit_doubles_contribution: doubles ? explicit.amount !== null : null,
+      basis_unit: basis.unit,
+      basis_amount: basis.amount,
+      prescribed_amount: prescribed,
+      dose_fraction: basis.amount === null || prescribed === null ? null : prescribed / basis.amount,
+      official_load_kg: resolved ? stationLoadKg(standard) : null,
+      load_basis: standard.loadKgPerImplement !== undefined ? 'PER_IMPLEMENT'
+        : standard.ballKg !== undefined ? 'BALL' : stationLoadKg(standard) !== null ? 'REGISTERED_TOTAL' : null,
+    };
+  });
+}
+
+function distributedDurations(total, count) {
+  const safeTotal = canonicalClusterNumber(total) ?? 0;
+  if (!count) return [];
+  const base = Math.floor(safeTotal / count);
+  let remainder = safeTotal - base * count;
+  return Array.from({ length: count }, () => {
+    const value = base + (remainder > 0 ? 1 : 0);
+    remainder = Math.max(0, remainder - 1);
+    return value;
+  });
+}
+
+function compactTarget(value = {}) {
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== null && entry !== undefined));
+}
+
+function partialClusterInput(input, key, fallback, parse, valid) {
+  if (!Object.prototype.hasOwnProperty.call(input, key)) return fallback;
+  const parsed = parse(input[key]);
+  if (!valid(parsed)) throw new Error(`invalid_partial_cluster_input:${key}`);
+  return parsed;
+}
+
+function buildPartialRaceOrderCluster(input = {}) {
+  const pairCount = partialClusterInput(
+    input, 'pair_count', 3, (value) => canonicalClusterNumber(value, 1),
+    (value) => value !== null && value >= 2 && value <= 4,
+  );
+  const runDistance = partialClusterInput(
+    input, 'run_distance_m', 750, (value) => canonicalClusterNumber(value, 1),
+    (value) => value !== null && value >= 750 && value <= 1000,
+  );
+  const mainWorkDuration = partialClusterInput(
+    input, 'main_work_duration_s', 36 * 60, (value) => canonicalClusterNumber(value, 1),
+    (value) => value !== null && value >= 20 * 60 && value <= 40 * 60,
+  );
+  const rpe = partialClusterInput(
+    input, 'main_set_rpe_range', { minimum: 6, maximum: 8 },
+    (value) => canonicalClusterRange(value),
+    (value) => Boolean(value && value.minimum >= 6 && value.maximum <= 8),
+  );
+  const stationDoseFraction = partialClusterInput(
+    input, 'station_dose_fraction', 0.5,
+    (value) => (value === null || value === undefined || (typeof value === 'string' && !value.trim())
+      ? null : Number(value)),
+    (value) => Number.isFinite(value) && value >= 0.5 && value <= 1,
+  );
+  const warmupDistance = partialClusterInput(
+    input, 'warmup_running_m', 0, (value) => canonicalClusterNumber(value), (value) => value !== null,
+  );
+  const cooldownDistance = partialClusterInput(
+    input, 'cooldown_running_m', 0, (value) => canonicalClusterNumber(value), (value) => value !== null,
+  );
+  const stationStartIndex = partialClusterInput(
+    input, 'station_start_index', 0, (value) => canonicalClusterNumber(value),
+    (value) => value !== null && value + pairCount <= HYROX_STATION_ORDER.length,
+  );
+  const normalizedInput = {
+    ...input,
+    pair_count: pairCount,
+    run_distance_m: runDistance,
+    main_work_duration_s: mainWorkDuration,
+    main_set_rpe_range: rpe,
+    station_dose_fraction: stationDoseFraction,
+    warmup_running_m: warmupDistance,
+    cooldown_running_m: cooldownDistance,
+    station_start_index: stationStartIndex,
+  };
+  const stationIds = clusterStationIds(normalizedInput, pairCount);
+  const resolved = resolvedClusterRuleset(normalizedInput);
+  const contributions = clusterStationContributions(normalizedInput, stationIds, resolved);
+  const workDurations = distributedDurations(mainWorkDuration, pairCount * 2);
+  const steps = [];
+  if (warmupDistance > 0) {
+    steps.push(step(`${input.session_id}-warmup`, 'warmup', steps.length + 1, {
+      target: { distance_m: warmupDistance, rpe_range: { minimum: 2, maximum: 4 } },
+      provenance: [clusterProvenance(normalizedInput, ['m', 'rpe'], 'hyrox_cluster.warmup')],
+    }));
+  }
+  stationIds.forEach((stationId, index) => {
+    steps.push(step(`${input.session_id}-pair-${index + 1}-run`, 'run', steps.length + 1, {
+      target: { distance_m: runDistance, duration_s: workDurations[index * 2], rpe_range: rpe },
+      provenance: [clusterProvenance(normalizedInput, ['m', 's', 'rpe'], 'hyrox_cluster.run_prescription')],
+    }, { workout_family: 'hyrox_partial_simulation', step_role: 'WORK' }));
+    const contribution = contributions[index];
+    const target = compactTarget({
+      distance_m: contribution.basis_unit === 'm' ? contribution.prescribed_amount : null,
+      repetitions: contribution.basis_unit === 'count' ? contribution.prescribed_amount : null,
+      duration_s: workDurations[index * 2 + 1],
+      load_kg: contribution.official_load_kg,
+      rpe_range: rpe,
+    });
+    const units = [contribution.basis_unit, 's', contribution.official_load_kg === null ? null : 'kg', 'rpe'].filter(Boolean);
+    steps.push(step(`${input.session_id}-pair-${index + 1}-station`, 'station', steps.length + 1, {
+      target,
+      provenance: [clusterProvenance(normalizedInput, units, contribution.contribution_basis === 'OFFICIAL_SINGLES_VOLUME'
+        ? 'hyrox_ruleset.official_station_requirements'
+        : 'hyrox_event_state.planned_station_split', {
+        ruleset: true,
+        confidence: contribution.prescribed_amount === null ? 'INSUFFICIENT' : 'HIGH',
+        sourceId: contribution.contribution_basis === 'OFFICIAL_SINGLES_VOLUME'
+          ? null : `planned-split:${stationId}`,
+      })],
+    }, { workout_family: 'hyrox_partial_simulation', step_role: 'WORK', station_id: stationId }));
+  });
+  if (cooldownDistance > 0) {
+    steps.push(step(`${input.session_id}-cooldown`, 'cooldown', steps.length + 1, {
+      target: { distance_m: cooldownDistance, rpe_range: { minimum: 2, maximum: 4 } },
+      provenance: [clusterProvenance(normalizedInput, ['m', 'rpe'], 'hyrox_cluster.cooldown')],
+    }));
+  }
+  const mainSetRunning = pairCount * runDistance;
+  const runningDistance = mainSetRunning + warmupDistance + cooldownDistance;
+  const cluster = {
+    subtype: 'PartialRaceOrderCluster',
+    station_ids: stationIds,
+    official_pair_orders: stationIds.map((stationId) => HYROX_STATION_ORDER.indexOf(stationId) + 1),
+    run_distances_m: Array(pairCount).fill(runDistance),
+    station_contributions: contributions,
+    main_work_duration_s: mainWorkDuration,
+    main_set_rpe_range: rpe,
+    warmup_running_m: warmupDistance,
+    cooldown_running_m: cooldownDistance,
+    completion: clone(input.completion ?? {
+      status: 'PLANNED', completed_step_ids: [], stop_criteria_breach: false,
+    }),
+  };
+  return buildCanonicalSession({
+    ...clone(normalizedInput),
+    id: String(input.id || input.session_id || 'hyrox-partial-cluster'),
+    session_id: String(input.session_id || 'hyrox-partial-cluster'),
+    session_revision: positiveRevision(input.session_revision) ? input.session_revision : 1,
+    plan_id: String(input.plan_id || 'hyrox-plan-preview'),
+    plan_revision: positiveRevision(input.plan_revision) ? input.plan_revision : 1,
+    decision_id: String(input.decision_id || 'hyrox-cluster-decision'),
+    goal_ids: Array.isArray(input.goal_ids) ? input.goal_ids.map(String) : [],
+    phase: PHASE_SET.has(input.phase) ? input.phase : 'EVENT_SPECIFIC_DEVELOPMENT',
+    role: SESSION_ROLE_SET.has(input.role) ? input.role : 'PRIMARY_KEY',
+    workout_family: 'hyrox_partial_simulation',
+    title: String(input.title || 'HYROX partial race-order cluster'),
+    purpose_reason_codes: Array.isArray(input.purpose_reason_codes) ? input.purpose_reason_codes : ['EVENT_SPECIFIC_ENTRY'],
+    scheduled_local_date: input.scheduled_local_date,
+    timezone: String(input.timezone || 'UTC'),
+    steps,
+    success_criteria: clone(input.success_criteria || [{
+      code: 'PAIRS_COMPLETED_IN_ORDER', station_ids: stationIds, stop_criteria_breach: false,
+    }]),
+    adjustment_criteria: clone(input.adjustment_criteria || ['Reduce station volume within the prescribed contribution gate when control is lost.']),
+    stop_criteria: clone(input.stop_criteria || ['Stop for sharp pain, dizziness, or altered running mechanics.']),
+    partial_race_order_cluster: cluster,
+    run_station_pair_count: pairCount,
+    main_work_duration_s: mainWorkDuration,
+    main_work_duration_min: mainWorkDuration / 60,
+    main_set_rpe_range: rpe,
+    main_set_running_m: mainSetRunning,
+    warmup_cooldown_running_m: warmupDistance + cooldownDistance,
+    running_distance_m: runningDistance,
+    distance_miles: Math.round((runningDistance / 1609.344) * 100) / 100,
+    sessionType: 'hyrox_partial_simulation',
+    kind: 'hyrox',
+    includesRun: true,
+    runningStress: 'hard',
+    hardLowerBody: true,
+    heavyStationWork: false,
+    replacesQualityRun: true,
+    runSequenceMeters: Array(pairCount).fill(runDistance),
+    stationSequence: contributions.map((entry) => ({
+      id: entry.station_id,
+      prescribedAmount: entry.prescribed_amount,
+      basisAmount: entry.basis_amount,
+      unit: entry.basis_unit,
+      doseFraction: entry.dose_fraction,
+      prescribedLoadKg: entry.official_load_kg,
+    })),
+  });
+}
+
+function validatePartialRaceOrderCluster(session = {}, options = {}) {
+  const violations = [];
+  const cluster = session.partial_race_order_cluster;
+  if (session.workout_family !== 'hyrox_partial_simulation' || !isPlainObject(cluster)
+    || cluster.subtype !== 'PartialRaceOrderCluster') {
+    violations.push({ code: 'HYROX_PARTIAL_CLUSTER_INVALID', reason: 'CLOSED_SUBTYPE_REQUIRED' });
+    return deepFreeze({ valid: false, completed_successfully: false, violations, reason_codes: ['REQUIRED_EXPOSURE_UNPLACEABLE'] });
+  }
+  if (session.canonical_workout_schema_version === CANONICAL_WORKOUT_SCHEMA_VERSION) {
+    const canonical = validateCanonicalSession(session);
+    violations.push(...canonical.violations.map((violation) => ({ ...clone(violation), cluster_reason: 'CANONICAL_SESSION_INVALID' })));
+  }
+  const stationIds = Array.isArray(cluster.station_ids) ? cluster.station_ids.map(String) : [];
+  const pairCount = canonicalClusterNumber(session.run_station_pair_count);
+  if (pairCount === null || pairCount < 2 || pairCount > 4 || stationIds.length !== pairCount) {
+    violations.push({ code: 'HYROX_PARTIAL_CLUSTER_INVALID', reason: 'PAIR_COUNT_OUT_OF_RANGE' });
+  }
+  const officialIndexes = stationIds.map((stationId) => HYROX_STATION_ORDER.indexOf(stationId));
+  if (officialIndexes.some((index) => index < 0)
+    || officialIndexes.some((index, position) => position > 0 && index !== officialIndexes[position - 1] + 1)) {
+    violations.push({ code: 'HYROX_PARTIAL_CLUSTER_INVALID', reason: 'OFFICIAL_ORDER_NOT_CONTIGUOUS' });
+  }
+  if (canonicalStringify(cluster.official_pair_orders) !== canonicalStringify(
+    officialIndexes.map((index) => index + 1),
+  )) violations.push({ code: 'HYROX_PARTIAL_CLUSTER_INVALID', reason: 'OFFICIAL_PAIR_ORDER_MISMATCH' });
+  const runDistances = Array.isArray(cluster.run_distances_m) ? cluster.run_distances_m.map(Number) : [];
+  if (runDistances.length !== pairCount || runDistances.some((distance) => (
+    !Number.isSafeInteger(distance) || distance < 750 || distance > 1000 || distance !== runDistances[0]
+  ))) violations.push({ code: 'HYROX_PARTIAL_CLUSTER_INVALID', reason: 'RUN_DISTANCE_GATE' });
+  const workSteps = flattenSteps(session.steps, []).filter((entry) => entry.step_role === 'WORK');
+  const runSteps = workSteps.filter((entry) => entry.type === 'run');
+  const stationSteps = workSteps.filter((entry) => entry.type === 'station');
+  const alternatingKinds = Array.from({ length: Number(pairCount || 0) * 2 }, (_, index) => (
+    index % 2 === 0 ? 'run' : 'station'
+  ));
+  if (runSteps.length !== pairCount || stationSteps.length !== pairCount
+    || canonicalStringify(workSteps.map((entry) => entry.type)) !== canonicalStringify(alternatingKinds)
+    || runSteps.some((entry, index) => entry.target?.distance_m !== runDistances[index])
+    || stationSteps.some((entry, index) => entry.station_id !== stationIds[index])) {
+    violations.push({ code: 'HYROX_PARTIAL_CLUSTER_INVALID', reason: 'PAIR_STEP_GRAPH_MISMATCH' });
+  }
+  const mainDuration = canonicalClusterNumber(cluster.main_work_duration_s);
+  const stepDuration = workSteps.reduce((sum, entry) => sum + Number(entry.target?.duration_s || 0), 0);
+  if (mainDuration === null || mainDuration < 20 * 60 || mainDuration > 40 * 60 || stepDuration !== mainDuration) {
+    violations.push({ code: 'HYROX_PARTIAL_CLUSTER_INVALID', reason: 'MAIN_SET_DURATION_GATE' });
+  }
+  const rpe = canonicalClusterRange(cluster.main_set_rpe_range);
+  if (!rpe || rpe.minimum < 6 || rpe.maximum > 8 || workSteps.some((entry) => (
+    canonicalStringify(entry.target?.rpe_range) !== canonicalStringify(rpe)
+  ))) violations.push({ code: 'HYROX_PARTIAL_CLUSTER_INVALID', reason: 'CONTROLLED_RPE_GATE' });
+  const age = String(options.training_age_class ?? options.trainingAgeClass ?? inputTrainingAge(session) ?? '').toUpperCase();
+  const safetyModified = options.safety_modified === true || session.safety_modified === true;
+  if ((['BEGINNER', 'RETURNING'].includes(age) || safetyModified) && pairCount !== 2) {
+    violations.push({ code: 'HYROX_PARTIAL_CLUSTER_INVALID', reason: 'MODIFIED_ATHLETE_PAIR_COUNT' });
+  } else if (['DEVELOPING', 'ESTABLISHED', 'ADVANCED'].includes(age) && !safetyModified && (pairCount < 3 || pairCount > 4)) {
+    violations.push({ code: 'HYROX_PARTIAL_CLUSTER_INVALID', reason: 'ESTABLISHED_PEAK_PAIR_COUNT' });
+  }
+  const resolved = resolvedClusterRuleset(session);
+  if (!resolved) violations.push({ code: 'HYROX_PARTIAL_CLUSTER_INVALID', reason: 'RULESET_OR_DIVISION_UNSUPPORTED' });
+  const state = session.hyrox_event_state || {};
+  const doubles = String(state.format ?? session.format ?? '').toLowerCase() === 'doubles';
+  const contributions = Array.isArray(cluster.station_contributions) ? cluster.station_contributions : [];
+  if (contributions.length !== pairCount) {
+    violations.push({ code: 'HYROX_PARTIAL_CLUSTER_INVALID', reason: 'STATION_CONTRIBUTION_COUNT' });
+  } else contributions.forEach((contribution, index) => {
+    if (contribution.station_id !== stationIds[index]) {
+      violations.push({ code: 'HYROX_PARTIAL_CLUSTER_INVALID', reason: 'STATION_CONTRIBUTION_ORDER', station_id: stationIds[index] });
+      return;
+    }
+    if (doubles && (contribution.contribution_basis !== 'EXPLICIT_DOUBLES_PLANNED_CONTRIBUTION'
+      || contribution.explicit_doubles_contribution !== true || contribution.basis_amount === null
+      || contribution.prescribed_amount === null)) {
+      violations.push({ code: 'HYROX_PARTIAL_CLUSTER_INVALID', reason: 'DOUBLES_CONTRIBUTION_UNKNOWN', station_id: contribution.station_id });
+    }
+    const standard = resolved?.stations?.find((entry) => entry.id === contribution.station_id);
+    const expectedBasis = doubles
+      ? stationContributionAmount(state.planned_athlete_station_contribution?.[contribution.station_id])
+      : officialStationContribution(standard);
+    const stationStepAmount = contribution.basis_unit === 'm'
+      ? stationSteps[index]?.target?.distance_m
+      : contribution.basis_unit === 'count' ? stationSteps[index]?.target?.repetitions : null;
+    if (expectedBasis.amount === null
+      || contribution.basis_unit !== expectedBasis.unit
+      || contribution.basis_amount !== expectedBasis.amount
+      || stationStepAmount !== contribution.prescribed_amount) {
+      violations.push({ code: 'HYROX_PARTIAL_CLUSTER_INVALID', reason: 'STATION_VOLUME_BASIS_MISMATCH', station_id: contribution.station_id });
+    }
+    const ratio = Number(contribution.dose_fraction);
+    const derivedRatio = Number(contribution.prescribed_amount) / Number(contribution.basis_amount);
+    if (!Number.isFinite(ratio) || ratio < 0.5 || ratio > 1
+      || !Number.isFinite(derivedRatio) || Math.abs(derivedRatio - ratio) > 1e-9) {
+      violations.push({ code: 'HYROX_PARTIAL_CLUSTER_INVALID', reason: 'STATION_VOLUME_GATE', station_id: contribution.station_id });
+    }
+    const expectedLoad = resolved ? stationLoadKg(standard) : null;
+    const prescribedLoad = stationSteps[index]?.target?.load_kg ?? null;
+    if (expectedLoad !== prescribedLoad || expectedLoad !== contribution.official_load_kg) {
+      violations.push({ code: 'HYROX_PARTIAL_CLUSTER_INVALID', reason: 'REGISTERED_LOAD_GATE', station_id: contribution.station_id });
+    }
+  });
+  const completion = isPlainObject(cluster.completion) ? cluster.completion : {};
+  const completedStepIds = Array.isArray(completion.completed_step_ids)
+    ? completion.completed_step_ids.map(String) : [];
+  const expectedStepIds = workSteps.map((entry) => String(entry.step_id));
+  const completedSuccessfully = String(completion.status || '').toUpperCase() === 'COMPLETED'
+    && completion.stop_criteria_breach === false
+    && canonicalStringify(completedStepIds) === canonicalStringify(expectedStepIds);
+  return deepFreeze({
+    valid: violations.length === 0,
+    completed_successfully: violations.length === 0 && completedSuccessfully,
+    pair_count: pairCount,
+    station_ids: stationIds,
+    violations,
+    reason_codes: violations.length ? ['REQUIRED_EXPOSURE_UNPLACEABLE'] : [],
+  });
+}
+
+function inputTrainingAge(session = {}) {
+  return session.training_age_class ?? session.trainingAgeClass;
+}
+
 const ROAD_GENERAL_FAMILIES = new Set([
   'rest', 'mobility', 'manual_recovery', 'recovery_run', 'easy_run', 'long_aerobic',
   'steady_run', 'threshold_run', 'interval_run', 'race_rhythm_run', 'race', 'assessment',
@@ -638,6 +1055,11 @@ const FAMILY_TITLES = Object.freeze({
   race_rhythm_run: 'Race-rhythm intervals',
   race: 'Race',
   assessment: 'Assessment',
+  hyrox_station_skill: 'HYROX station skill',
+  hyrox_station_strength: 'HYROX station strength',
+  hyrox_compromised: 'Controlled compromised running',
+  hyrox_partial_simulation: 'HYROX partial race-order cluster',
+  hyrox_full_simulation: 'HYROX full simulation',
 });
 
 function boundedInteger(value, minimum = 0) {
@@ -835,6 +1257,39 @@ function materializeRoadGeneralSteps(family, source, input) {
   })];
 }
 
+function materializeHyroxStationSteps(family, source, input) {
+  const sequence = Array.isArray(source.stationSequence) ? source.stationSequence
+    : Array.isArray(source.station_sequence) ? source.station_sequence : [];
+  const stations = sequence.length ? sequence : [{ id: 'manual_station_skill' }];
+  const totalDuration = prescribedDurationSeconds(source) ?? 35 * 60;
+  const durations = distributedDurations(totalDuration, stations.length);
+  return stations.map((station, index) => {
+    const distance = canonicalClusterNumber(station.distance_m ?? station.distanceMeters ?? station.prescribedAmount);
+    const repetitions = canonicalClusterNumber(station.repetitions ?? station.reps);
+    const load = Number(station.prescribedLoadKg ?? station.load_kg);
+    const loadKg = Number.isFinite(load) && load >= 0 ? Math.round(load * 10) / 10 : null;
+    const rpe = family === 'hyrox_station_strength'
+      ? { minimum: 7, maximum: 8 } : { minimum: 5, maximum: 6 };
+    const target = compactTarget({
+      distance_m: distance,
+      duration_s: durations[index],
+      repetitions,
+      load_kg: loadKg,
+      rpe_range: rpe,
+    });
+    const units = [distance === null ? null : 'm', 's', repetitions === null ? null : 'count', loadKg === null ? null : 'kg', 'rpe']
+      .filter(Boolean);
+    return step(`${input.session_id}-station-${index + 1}`, 'station', index + 1, {
+      target,
+      provenance: [clusterProvenance({ ...source, ...input }, units, 'hyrox_station_prescription')],
+    }, {
+      workout_family: family,
+      step_role: 'WORK',
+      station_id: String(station.id ?? station.station_id ?? `manual-station-${index + 1}`),
+    });
+  });
+}
+
 function sourceMaterialFor(candidate, skeleton) {
   const materials = Array.isArray(candidate.candidate_material) ? candidate.candidate_material : [];
   const material = materials.find((entry) => String(entry.material_id) === String(skeleton.candidate_material_id));
@@ -863,13 +1318,21 @@ function materializeCanonicalSession(input = {}) {
     : Math.max(1, Number(decision.plan_revision || 0) + 1);
   const planId = String(input.plan_id || `candidate-plan-${String(decision.decision_hash || canonicalHash(decision)).slice(0, 24)}`);
   const sessionId = String(skeleton.session_id || skeleton.skeleton_session_id || source.session_id || source.id || '');
-  const materializationInput = { ...input, decision, session_id: sessionId };
-  const steps = materializeRoadGeneralSteps(family, source, materializationInput);
+  const materializationInput = {
+    ...input,
+    decision,
+    decision_id: String(decision.decision_id || ''),
+    session_id: sessionId,
+  };
+  const steps = HYROX_STATION_FAMILIES.has(family)
+    ? materializeHyroxStationSteps(family, source, materializationInput)
+    : family === 'hyrox_partial_simulation' ? null
+      : materializeRoadGeneralSteps(family, source, materializationInput);
   const phaseReason = PHASE_REASON_CODES[decision.phase];
   const sourceReasons = Array.isArray(source.reason_codes) ? source.reason_codes : [];
   const purposeReasonCodes = [...new Set([phaseReason, ...sourceReasons]
     .map((code) => normalizeReasonCode(code)).filter(Boolean))];
-  const canonical = buildCanonicalSession({
+  const canonicalInput = {
     session_id: sessionId,
     session_revision: nextSessionRevision(input, skeleton),
     plan_id: planId,
@@ -895,7 +1358,18 @@ function materializeCanonicalSession(input = {}) {
     executability: ['NORMAL', 'MONITOR'].includes(String(decision.safety_state?.action || 'NORMAL').toUpperCase())
       ? 'EXECUTABLE' : 'RESTRICTED',
     event_kind: decision.active_goals?.[0]?.event_kind,
-  });
+  };
+  const canonical = family === 'hyrox_partial_simulation'
+    ? buildPartialRaceOrderCluster({
+      ...clone(source),
+      ...canonicalInput,
+      session_id: sessionId,
+      scheduled_local_date: skeleton.scheduled_local_date,
+      timezone: String(input.timezone || decision.timezone || 'UTC'),
+      training_age_class: input.training_age_class ?? decision.training_age_class,
+      planning_instant: input.planning_instant,
+    })
+    : buildCanonicalSession(canonicalInput);
   const adapted = planSchema.normalizeSession({
     ...canonical,
     workout_id: source.workout_id,
@@ -1280,6 +1754,7 @@ module.exports = {
   assertCanonicalSession,
   buildCanonicalSession,
   buildCanonicalHyroxEventState,
+  buildPartialRaceOrderCluster,
   canonicalSessionSetHash,
   canonicalWorkoutHash,
   deriveAssessmentStressVector: (steps) => resolveStressVector('assessment', {
@@ -1297,6 +1772,7 @@ module.exports = {
   validateCanonicalSessionSet,
   validateCanonicalWorkoutSession: validateCanonicalSession,
   validateCanonicalWorkout: validateCanonicalSession,
+  validatePartialRaceOrderCluster,
   validateDerivedTotals,
   deriveStepTotals: deriveCanonicalTotals,
   hashCanonicalWorkout: canonicalWorkoutHash,

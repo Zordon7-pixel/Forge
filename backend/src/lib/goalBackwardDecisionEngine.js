@@ -8,6 +8,7 @@ const {
   minimumWeeklyDemandFor,
 } = require('./racePlanPolicy');
 const { evaluateGoalBackwardFeasibility } = require('./planFeasibility');
+const { validatePartialRaceOrderCluster } = require('./canonicalWorkout');
 
 const PRIORITY_ORDER = Object.freeze({ A: 0, B: 1, C: 2, UNSPECIFIED: 3 });
 const CONFIDENCE_WEIGHT = Object.freeze({ INSUFFICIENT: 0, LOW: 1, MEDIUM: 2, HIGH: 3 });
@@ -330,12 +331,73 @@ function constrainedPrimary(input = {}) {
     || days <= 4;
 }
 
+function hyroxClusterRequirement(input = {}) {
+  const policy = eventPolicyFor(input.event_policy ?? input.eventPolicy) || input.event_policy || input.eventPolicy;
+  const planningDate = dateOnly(input.planning_date_local ?? input.planningDateLocal);
+  const eventDate = dateOnly(input.event_local_date ?? input.eventLocalDate);
+  const hyrox = ['HYROX_SINGLES', 'HYROX_DOUBLES'].includes(policy?.event_kind);
+  const daysToEvent = planningDate && eventDate ? daysBetween(planningDate, eventDate) : null;
+  const suppliedFullWeeks = Number(input.full_pre_taper_weeks ?? input.fullPreTaperWeeks);
+  const fullPreTaperWeeks = Number.isSafeInteger(suppliedFullWeeks) && suppliedFullWeeks >= 0
+    ? suppliedFullWeeks
+    : daysToEvent === null ? null : Math.max(0, Math.floor((daysToEvent - Number(policy?.taper_days || 0)) / 7));
+  const required = hyrox && daysToEvent !== null && daysToEvent >= 28 && fullPreTaperWeeks >= 4;
+  return deepFreeze({
+    required,
+    days_to_event: daysToEvent,
+    full_pre_taper_weeks: fullPreTaperWeeks,
+    earliest_local_date: eventDate ? addDays(eventDate, -28) : null,
+    latest_local_date: eventDate ? addDays(eventDate, -14) : null,
+  });
+}
+
+function sessionDate(session = {}) {
+  return dateOnly(session.scheduled_local_date ?? session.scheduledLocalDate ?? session.date);
+}
+
+function buildHyroxClusterCompletionLedger(input = {}) {
+  const eventDate = dateOnly(input.event_local_date ?? input.eventLocalDate);
+  const earliest = eventDate ? addDays(eventDate, -28) : null;
+  const latest = eventDate ? addDays(eventDate, -14) : null;
+  const entries = (Array.isArray(input.sessions) ? input.sessions : []).filter((session) => (
+    session?.workout_family === 'hyrox_partial_simulation'
+  )).map((session, index) => {
+    const validation = validatePartialRaceOrderCluster(session, input);
+    const date = sessionDate(session);
+    const insideWindow = Boolean(date && earliest && latest && date >= earliest && date <= latest);
+    return {
+      session_id: String(session.session_id ?? session.id ?? `cluster-${index + 1}`),
+      scheduled_local_date: date,
+      schema_valid: validation.valid,
+      inside_required_window: insideWindow,
+      completed_successfully: validation.completed_successfully,
+      violation_reasons: validation.violations.map((violation) => violation.reason || violation.code),
+    };
+  });
+  const qualifying = entries.filter((entry) => entry.schema_valid && entry.inside_required_window);
+  const crowded = qualifying.slice().sort((left, right) => left.scheduled_local_date.localeCompare(right.scheduled_local_date))
+    .some((entry, index, sorted) => index > 0
+      && daysBetween(sorted[index - 1].scheduled_local_date, entry.scheduled_local_date) < 14);
+  const complete = !crowded && qualifying.some((entry) => entry.completed_successfully);
+  return deepFreeze({
+    status: complete ? 'COMPLETE' : qualifying.length ? 'INCOMPLETE' : 'UNPLACEABLE',
+    complete,
+    window: { earliest_local_date: earliest, latest_local_date: latest },
+    entries,
+    qualifying_session_ids: qualifying.map((entry) => entry.session_id),
+    reason_codes: complete ? [] : qualifying.length
+      ? ['HYROX_CLUSTER_INCOMPLETE'] : ['REQUIRED_EXPOSURE_UNPLACEABLE'],
+  });
+}
+
 function copiedExposure(exposure, overrides = {}) {
   return {
     requirement_id: String(exposure.requirement_id),
     any_of: [...(exposure.any_of || [])],
     role: exposure.role || 'PRIMARY_KEY',
     scheduled_local_date: null,
+    ...(exposure.supports_requirement_id
+      ? { supports_requirement_id: String(exposure.supports_requirement_id) } : {}),
     ...overrides,
   };
 }
@@ -372,7 +434,8 @@ function buildDueExposureLedger(input = {}) {
   const primary = source.filter((entry) => !['SUPPORTING', 'OPTIONAL_KEY'].includes(entry.role || 'PRIMARY_KEY'));
   const supporting = source.filter((entry) => entry.role === 'SUPPORTING');
   const optional = source.filter((entry) => entry.role === 'OPTIONAL_KEY');
-  const isMandatoryHyroxCluster = input.mandatory_hyrox_cluster === true
+  const clusterRequirement = hyroxClusterRequirement({ ...input, event_policy: policy });
+  const isMandatoryHyroxCluster = (input.mandatory_hyrox_cluster === true || clusterRequirement.required)
     && ['HYROX_SINGLES', 'HYROX_DOUBLES'].includes(policy.event_kind)
     && phase === 'EVENT_SPECIFIC_DEVELOPMENT';
   const constrained = constrainedPrimary(input);
@@ -380,10 +443,23 @@ function buildDueExposureLedger(input = {}) {
   let selectedSupporting = supporting;
   const unplaceable = [];
   const reasons = [];
+  const safetyAction = String(input.safety_action || 'NORMAL').toUpperCase();
+  const clusterBlocked = isMandatoryHyroxCluster && (
+    input.safety_or_recovery_hold === true
+    || ['FULL_REST', 'NO_RUNNING', 'NO_LOWER_BODY', 'NO_HIGH_INTENSITY'].includes(safetyAction)
+    || String(input.recovery_state || '').toUpperCase() === 'RECOVERY'
+  );
   if (isMandatoryHyroxCluster) {
     const partial = primary.find((entry) => entry.any_of.includes('hyrox_partial_simulation'));
     const long = primary.find((entry) => entry.any_of.includes('long_aerobic'));
-    selectedPrimary = [partial, ...(!constrained && long ? [long] : [])].filter(Boolean);
+    selectedPrimary = [
+      ...(!clusterBlocked && partial ? [partial] : []),
+      ...(!clusterBlocked && !constrained && long ? [long] : []),
+    ];
+    if (clusterBlocked && partial) {
+      unplaceable.push(String(partial.requirement_id));
+      reasons.push('REQUIRED_EXPOSURE_UNPLACEABLE');
+    }
     if (constrained && long) {
       unplaceable.push(String(long.requirement_id));
       reasons.push('REQUIRED_EXPOSURE_UNPLACEABLE');
@@ -415,6 +491,11 @@ function buildDueExposureLedger(input = {}) {
       supports_requirement_id: selectedPrimary[0]?.requirement_id || null,
     })),
   ];
+  const completionLedger = buildHyroxClusterCompletionLedger({
+    ...input,
+    event_local_date: eventDate,
+    sessions: input.completed_hyrox_cluster_sessions ?? input.hyrox_cluster_sessions ?? [],
+  });
   return deepFreeze({
     event_policy_id: policy.event_policy_id,
     phase,
@@ -423,6 +504,9 @@ function buildDueExposureLedger(input = {}) {
     satisfied_requirement_ids: [...completed].sort(),
     unplaceable_requirement_ids: [...new Set(unplaceable)],
     runway_conflict: runwayConflict,
+    mandatory_hyrox_cluster: isMandatoryHyroxCluster,
+    mandatory_hyrox_cluster_requirement: clusterRequirement,
+    hyrox_cluster_completion_ledger: isMandatoryHyroxCluster ? completionLedger : null,
     complete: dueRoles.length === 0 && unplaceable.length === 0,
     reason_codes: [...new Set(reasons)],
   });
@@ -495,6 +579,7 @@ function buildGoalBackwardPlanningDecision(input = {}) {
     training_age_class: athleteState.training_age_class,
     consistency_state: athleteState.consistency_state,
     recovery_state: athleteState.recovery_state,
+    safety_action: athleteState.safety_action,
     available_days_count: availableDays.length,
   });
   const roleMultiset = buildRoleMultiset({
@@ -549,6 +634,9 @@ function buildGoalBackwardPlanningDecision(input = {}) {
       goal.event_local_date ? daysBetween(planningDate, goal.event_local_date) : null,
     ])),
     event_policy_id: eventPolicy?.event_policy_id || null,
+    event_policy_overload_dimensions: clone(eventPolicy?.overload_dimensions || []),
+    event_policy_overload_allowance_points: clone(eventPolicy?.overload_allowance_points || {}),
+    mandatory_hyrox_cluster: exposureLedger.mandatory_hyrox_cluster === true,
     minimum_weekly_demand: demand,
     training_age_class: athleteState.training_age_class || 'UNKNOWN',
     consistency_state: athleteState.consistency_state || 'UNKNOWN',
@@ -559,7 +647,8 @@ function buildGoalBackwardPlanningDecision(input = {}) {
       median: athleteState.recent_normal_running?.median_distance_m ?? null,
       high: athleteState.recent_normal_running?.upper_bound_m ?? null,
     },
-    proposed_running_volume_m: Number(input.proposed_running_volume_m || 0),
+    proposed_running_volume_m: input.proposed_running_volume_m === null || input.proposed_running_volume_m === undefined
+      ? null : Number(input.proposed_running_volume_m),
     proposed_total_training_stress: clone(input.proposed_total_training_stress || {}),
     volume_delta_m: Number(input.volume_delta_m || 0),
     volume_delta_percentage: input.volume_delta_percentage ?? null,
@@ -621,8 +710,11 @@ function finalizeGoalBackwardCandidateDecision(decision, {
     validators_executed: (candidate.validation?.validator_results || []).map((result) => result.validator),
     reason_codes: [...new Set(candidate.validation?.reason_codes || [])],
   }));
+  const selectedReasonCodes = selectedCandidate?.validation?.valid === true
+    ? selectedCandidate.validation.reason_codes || [] : [];
   return deepFreeze({
     ...clone(decision),
+    reason_codes: [...new Set([...(decision.reason_codes || []), ...selectedReasonCodes])],
     candidate_ids: retained.map((candidate) => candidate.candidate_skeleton_id),
     selected_candidate_id: selectedCandidate?.candidate_skeleton_id || null,
     selected_candidate_hash: selectedCandidate?.candidate_hash || null,
@@ -647,11 +739,13 @@ function finalizeGoalBackwardCandidateDecision(decision, {
 }
 
 module.exports = {
+  buildHyroxClusterCompletionLedger,
   buildDueExposureLedger,
   buildGoalBackwardPlanningDecision,
   buildRoleMultiset,
   deriveGoalConfidence,
   finalizeGoalBackwardCandidateDecision,
   resolveOwnedGoals,
+  hyroxClusterRequirement,
   selectGoalBackwardPhase,
 };
