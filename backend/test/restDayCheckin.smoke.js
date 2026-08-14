@@ -1,0 +1,105 @@
+#!/usr/bin/env node
+
+const assert = require('node:assert/strict');
+const checkinRouter = require('../src/routes/checkin');
+
+const ownerId = 'rest-day-checkin-owner';
+const planningDate = '2026-08-14';
+
+function assignedPlan(day) {
+  return {
+    user_plan_id: 'up-rest-checkin',
+    plan_id: 'tp-rest-checkin',
+    id: 'tp-rest-checkin',
+    status: 'active',
+    started_at: planningDate,
+    effective_from: planningDate,
+    progress_json: '{}',
+    plan_data: JSON.stringify({
+      schema_version: 2,
+      weeks: [{
+        week: 1,
+        days: [day],
+      }],
+    }),
+  };
+}
+
+function databaseFor(day) {
+  const row = assignedPlan(day);
+  return {
+    get: async (sql, params = []) => {
+      assert.equal(params.includes(ownerId), true, 'check-in plan reads stay owner-scoped');
+      if (/up\.status\s*=\s*'active'/.test(sql)) return { ...row };
+      return null;
+    },
+  };
+}
+
+const feelGreat = {
+  feeling: 5,
+  legs: 3,
+  drive: 3,
+  time_available: 60,
+  life_flags: ['all_good'],
+};
+
+async function run() {
+  const restDay = {
+    id: 'rest-2026-08-14',
+    date: planningDate,
+    day: 'Fri',
+    type: 'rest',
+    rest: true,
+    sessions: [],
+  };
+  assert.deepEqual(
+    checkinRouter._test.resolveTodayPlanState(JSON.parse(assignedPlan(restDay).plan_data), planningDate),
+    { hasPlannedDay: true, isRestDay: true, day: null },
+    'check-in distinguishes a scheduled rest day from a missing plan day'
+  );
+
+  const restDirective = await checkinRouter._test.computeCheckinDirective(
+    ownerId,
+    feelGreat,
+    databaseFor(restDay),
+    { planningDateLocal: planningDate }
+  );
+  assert.equal(restDirective.action, 'keep', 'fresh legs and high drive never derive a rest action');
+  assert.equal(restDirective.plannedRestDay, true, 'the directive preserves the scheduled-rest provenance');
+  assert.equal(restDirective.hasWorkoutToday, false, 'a rest day never creates a phantom workout override');
+  assert.equal(restDirective.headline, 'Rest day stays scheduled');
+  assert.match(restDirective.adjustment, /did not add an unplanned workout/i);
+  assert.match(restDirective.adjustment, /move a missed session/i);
+
+  const runDay = {
+    id: 'run-day-2026-08-14',
+    date: planningDate,
+    day: 'Fri',
+    sessions: [{
+      id: 'easy-run-2026-08-14',
+      type: 'easy_run',
+      title: 'Easy run',
+      duration_minutes: 40,
+      distance_miles: 4,
+      target_zone: 'Zone 2',
+    }],
+  };
+  const runDirective = await checkinRouter._test.computeCheckinDirective(
+    ownerId,
+    feelGreat,
+    databaseFor(runDay),
+    { planningDateLocal: planningDate }
+  );
+  assert.equal(runDirective.action, 'keep', 'feel-great check-in keeps a scheduled workout');
+  assert.equal(runDirective.plannedRestDay, false);
+  assert.equal(runDirective.hasWorkoutToday, true);
+  assert.doesNotMatch(runDirective.headline, /rest/i, 'feel-great does not manufacture a rest result');
+
+  console.log('REST-DAY CHECK-IN SMOKE OK (13)');
+}
+
+run().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});

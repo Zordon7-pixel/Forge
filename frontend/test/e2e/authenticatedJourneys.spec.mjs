@@ -80,6 +80,49 @@ function executionWith({ run = plannedRun, lift = null } = {}) {
   }
 }
 
+function restExecution() {
+  return {
+    today: { date: today, day: todayDay, type: 'rest', rest: true, sessions: [] },
+    execution: {
+      hasPlan: true,
+      hasDay: true,
+      isRest: true,
+      mode: 'run_only',
+      phase: 'base',
+      week: 1,
+      date: today,
+      day: todayDay,
+      sessions: [],
+      run: null,
+      lift: null,
+    },
+  }
+}
+
+test('planned rest day does not prompt for a readiness check-in', async ({ page }) => {
+  const runtimeErrors = collectRuntimeErrors(page)
+  const apiState = await installAuthenticatedApi(page, {
+    responses: new Map([
+      ['GET /api/plans/today', restExecution()],
+    ]),
+  })
+
+  await page.goto('/')
+  await expect(page.getByRole('heading', { name: "Review today's plan" })).toBeVisible()
+  await expect(page.getByText('Rest and recovery are scheduled today. No check-in is needed.', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Check in', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'View rest day', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Start extra run', exact: true })).toBeVisible()
+
+  await page.getByRole('button', { name: 'View rest day', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Recovery is the plan today' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Check in', exact: true })).toHaveCount(0)
+  await page.getByText('Recovery tools', { exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Start extra run', exact: true }).last()).toBeVisible()
+
+  assertCleanApiAndRuntime(apiState, runtimeErrors)
+})
+
 test('onboarding persists the athlete profile and generates one plan', async ({ page }) => {
   const runtimeErrors = collectRuntimeErrors(page)
   const onboardedToken = createQaToken({ onboarded: true })
@@ -957,7 +1000,12 @@ test('Weekly Run Brief preserves mobile naming, recorded-run provenance, prescri
   await expect(page.getByText('Session progression: Repeat the same dose before adding a set.', { exact: true })).toBeVisible()
   await expect(page.getByText('Walk 3 min, then refuel.', { exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Start Lift', exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: /Remove Strength maintenance from this plan/i })).toBeVisible()
+  const removeStrength = page.getByRole('button', { name: /Remove Strength maintenance from this plan/i })
+  if (liftIndex >= todayIndex) {
+    await expect(removeStrength).toBeVisible()
+  } else {
+    await expect(removeStrength, 'past sessions must not expose a destructive plan-removal action').toHaveCount(0)
+  }
   await expect(page.getByRole('button', { name: /Export watch workout/i })).toBeVisible()
   await expect(page.getByRole('button', { name: /Copy workout/i })).toBeVisible()
 

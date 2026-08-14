@@ -389,6 +389,11 @@ export default function DailyCheckIn({ onComplete }) {
     return (
       <div className="forged-branded-screen" style={{ minHeight: '100vh', background: 'var(--bg-base)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24, gap: 20, textAlign: 'center', maxWidth: 480, margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
         <p style={{ fontSize: 28, lineHeight: 1.15, fontWeight: 900, color: 'var(--text-primary)', maxWidth: 360, margin: 0 }}>{headline || adjustment}</p>
+        {headline && adjustment !== headline && (
+          <p style={{ fontSize: 14, color: 'var(--text-muted)', lineHeight: 1.55, maxWidth: 360, margin: 0 }}>
+            {adjustment}
+          </p>
+        )}
         {hasDrivers ? (
           <div style={{ width: '100%', maxWidth: 360 }}>
             <button

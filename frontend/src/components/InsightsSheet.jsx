@@ -291,7 +291,7 @@ export function DailyCoachFlow({ checkedInToday, readinessData, recommendation, 
   const buildTodaySubtitle = () => {
     if (allScheduledComplete) return 'All scheduled sessions are complete. Review the work or recover for the next session.'
     if (isRestDay && hasRunRecordedToday) return 'An extra run is already logged today. Recovery remains the scheduled plan.'
-    if (!recommendation && isRestDay) return 'Rest and recovery are scheduled today.'
+    if (!recommendation && isRestDay) return 'Rest and recovery are scheduled today. No check-in is needed.'
     if (!recommendation && calendarSessions.length > 0) {
       const summaryLabel = calendarLabel || 'training'
       return `${summaryLabel.charAt(0).toUpperCase() + summaryLabel.slice(1)} is scheduled today. Check in only if you want the effort adjusted.`
@@ -302,7 +302,7 @@ export function DailyCoachFlow({ checkedInToday, readinessData, recommendation, 
         : "No workout is scheduled yet. Check in to build today's recommendation."
     }
     if (isRestDay) {
-      return `${readiness.sentencePrefix}Rest and recovery are scheduled today.`
+      return `${readiness.sentencePrefix}Rest and recovery are scheduled today. No check-in is needed.`
     }
 
     const summaryLabel = calendarLabel || recommendationLabel
@@ -644,11 +644,13 @@ export function TodayDetailSheet({
         )}
 
         <details className="mt-5 rounded-xl p-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
-          <summary className="cursor-pointer text-sm font-bold" style={{ color: 'var(--text-primary)' }}>Check-in and recovery tools</summary>
+          <summary className="cursor-pointer text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{isRestDay ? 'Recovery tools' : 'Check-in and recovery tools'}</summary>
           <div className="mt-2 grid grid-cols-2 gap-2">
-            <button onClick={onCheckIn} className="rounded-xl px-3 py-3 text-sm font-bold" style={{ background: checkedInToday ? 'var(--bg-input)' : 'var(--accent)', color: checkedInToday ? 'var(--text-primary)' : '#000' }}>
-              {checkedInToday ? 'Edit check-in' : 'Check in'}
-            </button>
+            {planAccess.showCheckIn && (
+              <button onClick={onCheckIn} className="rounded-xl px-3 py-3 text-sm font-bold" style={{ background: checkedInToday ? 'var(--bg-input)' : 'var(--accent)', color: checkedInToday ? 'var(--text-primary)' : '#000' }}>
+                {checkedInToday ? 'Edit check-in' : 'Check in'}
+              </button>
+            )}
             {planAccess.showStartLog && calendarSessions.length === 0 && (
               <button onClick={onStartWorkout} className="rounded-xl px-3 py-3 text-sm font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>
                 {isRestDay ? 'View calendar' : 'Start/log'}

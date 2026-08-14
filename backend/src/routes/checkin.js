@@ -36,10 +36,20 @@ function parsePlan(plan) {
   }
 }
 
-function normalizeTodayEntry(planJson, planningDateLocal) {
+function resolveTodayPlanState(planJson, planningDateLocal) {
   const selected = dailyExecution.selectDayForDate(planJson, planningDateLocal);
-  if (!selected || planSchema.daySessions(selected.entry).length === 0) return null;
-  return planSchema.flattenDayForConsumer(selected.entry);
+  if (!selected) return { hasPlannedDay: false, isRestDay: false, day: null };
+  const sessions = planSchema.daySessions(selected.entry);
+  if (sessions.length === 0) return { hasPlannedDay: true, isRestDay: true, day: null };
+  return {
+    hasPlannedDay: true,
+    isRestDay: false,
+    day: planSchema.flattenDayForConsumer(selected.entry),
+  };
+}
+
+function normalizeTodayEntry(planJson, planningDateLocal) {
+  return resolveTodayPlanState(planJson, planningDateLocal).day;
 }
 
 function visibleActivePlan(activePlan) {
@@ -135,7 +145,18 @@ async function computeCheckinDirective(userId, checkinInput, database, options =
   let action = deriveAction(checkin);
   const planningDateLocal = options.planningDateLocal || requestPlanningDate({});
   const activePlan = await getActivePlanForUser(userId, database, { planningDateLocal });
-  const todayDay = activePlan ? normalizeTodayEntry(visibleActivePlan(activePlan), planningDateLocal) : null;
+  const missingPlanState = { hasPlannedDay: false, isRestDay: false, day: null };
+  const storedPlanState = activePlan
+    ? resolveTodayPlanState(parsePlan(activePlan.row), planningDateLocal)
+    : missingPlanState;
+  const todayPlanState = activePlan
+    ? resolveTodayPlanState(visibleActivePlan(activePlan), planningDateLocal)
+    : missingPlanState;
+  // A removed session also leaves the served day empty. Only call it a planned
+  // rest day when the immutable assigned plan was already empty/rest; otherwise
+  // preserve the existing "no active workout" removal truth.
+  const plannedRestDay = todayPlanState.isRestDay && storedPlanState.isRestDay;
+  const todayDay = todayPlanState.day;
   const plannedMinutes = estimateWorkoutMinutes(todayDay || {});
   if (action === 'keep' && plannedMinutes && checkin.time_available < plannedMinutes) {
     action = 'shorten';
@@ -145,10 +166,16 @@ async function computeCheckinDirective(userId, checkinInput, database, options =
   const directive = buildDirective(checkin, action, patch, Boolean(todayDay), readiness_delta);
   const feelingLabels = ['', 'Exhausted', 'Tired', 'Okay', 'Good', 'Great'];
   const hasWorkoutToday = Boolean(todayDay);
-  const adjustment = hasWorkoutToday
-    ? (directive.headline || describeAdjustment(action, patch, true))
-    : describeAdjustment(action, patch, false);
-  const headline = hasWorkoutToday ? directive.headline : 'No active workout to adjust';
+  const adjustment = plannedRestDay
+    ? 'Check-in saved. Rest was already scheduled, so Forged Hybrid did not add an unplanned workout. Use the rest-day run options to move a missed session or intentionally start an extra run.'
+    : hasWorkoutToday
+      ? (directive.headline || describeAdjustment(action, patch, true))
+      : describeAdjustment(action, patch, false);
+  const headline = plannedRestDay
+    ? 'Rest day stays scheduled'
+    : hasWorkoutToday
+      ? directive.headline
+      : 'No active workout to adjust';
 
   return {
     adjustment,
@@ -159,6 +186,7 @@ async function computeCheckinDirective(userId, checkinInput, database, options =
     feeling: feelingLabels[checkin.feeling] || 'Noted',
     readiness_delta,
     hasWorkoutToday,
+    plannedRestDay,
   };
 }
 
@@ -284,6 +312,7 @@ router._test = {
   computeCheckinDirective,
   getActivePlanForUser,
   normalizeTodayEntry,
+  resolveTodayPlanState,
   visibleActivePlan,
 };
 

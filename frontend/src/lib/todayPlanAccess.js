@@ -28,6 +28,7 @@ export function resolveTodayPlanAccess({
       readinessFallback: checkedInToday
         ? 'No recommendation is available yet. Review your check-in or open the calendar.'
         : "Check in to build today's recommendation. Sync a watch to add readiness context.",
+      showCheckIn: true,
       showStartLog: false,
     }
   }
@@ -40,8 +41,9 @@ export function resolveTodayPlanAccess({
       secondaryAction: hasRunRecordedToday ? null : onStartUnplannedRun,
       secondaryLabel: hasRunRecordedToday ? null : 'Start extra run',
       trainAction: onDetails || onStartWorkout,
-      uncheckedSignal: 'Rest is scheduled today. Check in only if you want recovery guidance adjusted.',
-      readinessFallback: 'Rest is scheduled today. A check-in can add recovery context without hiding the calendar.',
+      uncheckedSignal: 'Rest is scheduled today. No check-in is needed.',
+      readinessFallback: 'Rest is scheduled from your plan. Feeling fresh keeps the rest day in place; use the rest-day run options only when you intentionally want to train or make up a missed run.',
+      showCheckIn: false,
       showStartLog: false,
     }
   }
@@ -56,6 +58,7 @@ export function resolveTodayPlanAccess({
       trainAction: onDetails,
       uncheckedSignal: "Today's scheduled workout is complete.",
       readinessFallback: "Today's scheduled workout is complete.",
+      showCheckIn: true,
       showStartLog: false,
     }
   }
@@ -77,6 +80,7 @@ export function resolveTodayPlanAccess({
       : onDetails,
     uncheckedSignal: "You can review the full schedule now. Complete a check-in if you want today's effort adjusted before training.",
     readinessFallback: 'Check in and sync a watch to add a readiness explanation. Your scheduled plan remains visible.',
+    showCheckIn: true,
     showStartLog: isRestDay || (hasRecommendation && sessionCount === 0),
   }
 }
