@@ -1,4 +1,6 @@
 const runWorkoutTaxonomy = require('./runWorkoutTaxonomy');
+const { getGoalBackwardV24Mode } = require('./betaPlanRollout');
+const { buildGoalBackwardWorkloadEvidence } = require('./goalBackwardLoad');
 const {
   RACE_PLAN_POLICY_V1,
   addDays,
@@ -458,13 +460,24 @@ function evaluatePlanFeasibility(plan, context = {}, planningModel = null) {
       reasons: [...new Set(reasons)],
     };
   });
-  return {
+  const legacyResult = {
     policyVersion: RACE_PLAN_POLICY_V1.version,
     baseline: model.baseline,
     endurance: model.endurance,
     status: goalFeasibilities.reduce((status, goal) => worstStatus(status, goal.status), 'not_applicable'),
     goals: goalFeasibilities,
     weekTargets: model.weekTargets,
+  };
+  const goalBackwardMode = getGoalBackwardV24Mode();
+  if (goalBackwardMode === 'off'
+    || !context.goalBackwardWorkloadInput
+    || typeof context.goalBackwardWorkloadInput !== 'object'
+    || Array.isArray(context.goalBackwardWorkloadInput)) {
+    return legacyResult;
+  }
+  return {
+    ...legacyResult,
+    goalBackwardWorkload: buildGoalBackwardWorkloadEvidence(context.goalBackwardWorkloadInput),
   };
 }
 

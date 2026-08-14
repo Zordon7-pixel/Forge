@@ -63,3 +63,25 @@ node backend/test/goalBackwardContracts.smoke.js
 node backend/test/planPersistenceMigration.smoke.js
 node backend/test/planCandidateLifecycle.smoke.js
 ```
+
+## Goal-Backward Coaching v2.4 — Phase 2A-1
+
+- [ ] Only the approved seven-file Batch 3 allowlist changed; no route, package/lock, migration, native, or unrelated tracked file changed
+- [ ] Registry anchors match the independent Phase 1 versions; event policies contain closed phase exposure families, running floors, taper windows, and zero/default or HYROX-cluster overload vectors
+- [ ] Workout families resolve only from canonical machine-readable family fields; road/HYROX race vectors and assessment element-wise maxima match §8.1 exactly
+- [ ] Daily classification adds at most one per-dimension stack surcharge and weekly dimension sums remain uncapped integers
+- [ ] Four-plus eligible weeks use the upward-rounded ordinal median ceiling, exactly three are provisional without overload, and fewer than three use the exact class fallback per modality
+- [ ] HYROX cluster allowance is dimension-exact and requires event-specific phase, mandatory cluster, established history, passing recovery/safety gates, and two prior passing weeks
+- [ ] Rolling seven-local-day lower-body/running hard-day, total hard-day, very-high event, race-minus-six, and mandatory station-skill placement caps fail closed
+- [ ] Running volume chooses the highest integer meters in the complete safe intersection and records `CROSS_MODAL_FATIGUE_LIMIT` when no intersection exists
+- [ ] Missing, invalid, and explicit `off` v2.4 modes retain the legacy `evaluatePlanFeasibility()` shape; valid non-off modes expose additive evidence only for an explicit workload input
+
+Run the Phase 2A-1 gate:
+
+```sh
+node backend/test/goalBackwardPlanning.smoke.js
+node backend/test/planFeasibility.smoke.js
+node backend/test/racePlanQuality.smoke.js
+```
+
+Batch 3 status (2026-08-14): `patched`; the three-command gate passes locally. Independent QA and Hermes verification remain pending.

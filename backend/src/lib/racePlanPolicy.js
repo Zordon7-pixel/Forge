@@ -8,6 +8,264 @@ function deepFreeze(value) {
   return Object.freeze(value);
 }
 
+const STRESS_DIMENSIONS = Object.freeze([
+  'aerobic',
+  'running_impact',
+  'lower_body_muscular',
+  'upper_body_muscular',
+  'grip',
+  'neuromuscular',
+  'metabolic',
+  'event_specific_fatigue',
+]);
+
+const PHASE_RUNNING_FLOOR_FACTOR = deepFreeze({
+  FOUNDATION: 0.7,
+  DEVELOPMENT: 0.85,
+  EVENT_SPECIFIC_DEVELOPMENT: 0.9,
+  SHARPENING: 0.7,
+  TAPER_RACE_WEEK: 0.4,
+  POST_RACE_TRANSITION: 0,
+});
+
+const ZERO_OVERLOAD_ALLOWANCE = deepFreeze(Object.fromEntries(
+  STRESS_DIMENSIONS.map((dimension) => [dimension, 0])
+));
+const HYROX_CLUSTER_OVERLOAD_ALLOWANCE = deepFreeze(Object.fromEntries(
+  STRESS_DIMENSIONS.map((dimension, index) => [dimension, [2, 2, 3, 2, 2, 2, 3, 5][index]])
+));
+
+function exposure(requirementId, anyOf, role = 'PRIMARY_KEY') {
+  return { requirement_id: requirementId, any_of: anyOf, role };
+}
+
+const EVENT_EXPOSURES = deepFreeze({
+  ROAD_SHORT: {
+    DEVELOPMENT: [
+      exposure('road_short_quality', ['threshold_run', 'hill_run']),
+      exposure('long_aerobic', ['long_aerobic']),
+    ],
+    EVENT_SPECIFIC_DEVELOPMENT: [
+      exposure('road_short_specific', ['interval_run', 'race_rhythm_run']),
+      exposure('long_aerobic', ['long_aerobic']),
+    ],
+    SHARPENING: [exposure('road_short_sharpening', ['race_rhythm_run', 'strides_run'])],
+  },
+  ROAD_ENDURANCE: {
+    DEVELOPMENT: [
+      exposure('road_endurance_threshold', ['threshold_run']),
+      exposure('long_aerobic', ['long_aerobic']),
+    ],
+    EVENT_SPECIFIC_DEVELOPMENT: [
+      exposure('road_endurance_specific', ['race_rhythm_run', 'threshold_run']),
+      exposure('long_aerobic', ['long_aerobic']),
+    ],
+    SHARPENING: [exposure('road_endurance_sharpening', ['race_rhythm_run', 'strides_run'])],
+  },
+  MARATHON: {
+    DEVELOPMENT: [
+      exposure('marathon_development_quality', ['threshold_run', 'steady_run']),
+      exposure('long_aerobic', ['long_aerobic']),
+    ],
+    EVENT_SPECIFIC_DEVELOPMENT: [
+      exposure('marathon_rhythm', ['race_rhythm_run']),
+      exposure('long_aerobic', ['long_aerobic']),
+      exposure('optional_threshold', ['threshold_run'], 'OPTIONAL_KEY'),
+    ],
+    SHARPENING: [exposure('marathon_sharpening', ['race_rhythm_run'])],
+  },
+  HYROX_SINGLES: {
+    DEVELOPMENT: [
+      exposure('hyrox_station_development', ['hyrox_station_strength', 'hyrox_station_skill']),
+      exposure('hyrox_running_support', ['threshold_run', 'interval_run', 'long_aerobic']),
+    ],
+    EVENT_SPECIFIC_DEVELOPMENT: [
+      exposure('hyrox_partial_simulation', ['hyrox_partial_simulation']),
+      exposure('hyrox_station_skill', ['hyrox_station_skill'], 'SUPPORTING'),
+      exposure('long_aerobic', ['long_aerobic']),
+    ],
+    SHARPENING: [exposure('hyrox_compromised_sharpening', ['hyrox_compromised', 'hyrox_station_skill'])],
+  },
+  HYROX_DOUBLES: {
+    DEVELOPMENT: [
+      exposure('hyrox_individual_limiter', ['hyrox_station_strength', 'hyrox_station_skill']),
+      exposure('hyrox_running_support', ['threshold_run', 'interval_run', 'long_aerobic']),
+    ],
+    EVENT_SPECIFIC_DEVELOPMENT: [
+      exposure('hyrox_team_partial_simulation', ['hyrox_partial_simulation']),
+      exposure('hyrox_station_skill', ['hyrox_station_skill'], 'SUPPORTING'),
+      exposure('long_aerobic', ['long_aerobic']),
+    ],
+    SHARPENING: [exposure('hyrox_split_transition_sharpening', ['hyrox_compromised', 'hyrox_station_skill'])],
+  },
+});
+
+function eventPolicyRecord(eventPolicyId, eventKind, taperDays) {
+  const isHyrox = eventKind === 'HYROX_SINGLES' || eventKind === 'HYROX_DOUBLES';
+  return {
+    event_policy_id: eventPolicyId,
+    registry_version: 1,
+    event_kind: eventKind,
+    taper_days: taperDays,
+    required_exposure_ledger: EVENT_EXPOSURES[eventKind],
+    phase_running_floor_factor: PHASE_RUNNING_FLOOR_FACTOR,
+    minimum_weekly_demand: { running_m: null, required_exposure_count: 0 },
+    overload_dimensions: isHyrox ? [...STRESS_DIMENSIONS] : [],
+    overload_allowance_points: isHyrox
+      ? HYROX_CLUSTER_OVERLOAD_ALLOWANCE
+      : ZERO_OVERLOAD_ALLOWANCE,
+    stimulus_priority: EVENT_EXPOSURES[eventKind],
+    recovery_buffer_days: 2,
+  };
+}
+
+const EVENT_POLICY_RECORDS_V1 = deepFreeze({
+  road_5k_v1: eventPolicyRecord('road_5k_v1', 'ROAD_SHORT', 7),
+  road_10k_v1: eventPolicyRecord('road_10k_v1', 'ROAD_SHORT', 7),
+  road_10mile_v1: eventPolicyRecord('road_10mile_v1', 'ROAD_ENDURANCE', 10),
+  road_half_marathon_v1: eventPolicyRecord('road_half_marathon_v1', 'ROAD_ENDURANCE', 10),
+  road_marathon_v1: eventPolicyRecord('road_marathon_v1', 'MARATHON', 14),
+  hyrox_singles_v1: eventPolicyRecord('hyrox_singles_v1', 'HYROX_SINGLES', 7),
+  hyrox_doubles_v1: eventPolicyRecord('hyrox_doubles_v1', 'HYROX_DOUBLES', 7),
+});
+
+const EVENT_POLICY_REGISTRY_V1 = deepFreeze({
+  registry_version: 1,
+  event_policy_registry_version: 1,
+  policies: EVENT_POLICY_RECORDS_V1,
+  event_policies: EVENT_POLICY_RECORDS_V1,
+});
+
+const EVENT_POLICY_ALIASES = Object.freeze({
+  road_half_v1: 'road_half_marathon_v1',
+  half_marathon_v1: 'road_half_marathon_v1',
+  marathon_v1: 'road_marathon_v1',
+});
+
+const STRESS_TAXONOMY_V1 = deepFreeze({
+  stress_taxonomy_version: 1,
+  dimensions: STRESS_DIMENSIONS,
+  ordinal_levels: { NONE: 0, LOW: 1, MODERATE: 2, HIGH: 3, VERY_HIGH: 4 },
+  family_vectors: {
+    rest: [0, 0, 0, 0, 0, 0, 0, 0],
+    mobility: [0, 0, 1, 0, 0, 0, 0, 0],
+    manual_recovery: [0, 0, 1, 0, 0, 0, 0, 0],
+    recovery_run: [1, 1, 1, 0, 0, 0, 0, 0],
+    easy_run: [2, 2, 1, 0, 0, 1, 1, 0],
+    long_aerobic: [3, 3, 2, 0, 0, 1, 2, 1],
+    steady_run: [3, 3, 2, 0, 0, 2, 2, 1],
+    threshold_run: [3, 3, 2, 0, 0, 3, 3, 1],
+    interval_run: [3, 4, 2, 0, 0, 4, 4, 1],
+    race_rhythm_run: [3, 3, 2, 0, 0, 3, 3, 2],
+    strength_lower: [1, 1, 4, 1, 1, 3, 2, 1],
+    strength_upper: [1, 0, 0, 3, 2, 2, 1, 0],
+    strength_full_body: [1, 1, 3, 3, 2, 3, 2, 1],
+    hyrox_station_skill: [2, 1, 2, 2, 2, 2, 2, 2],
+    hyrox_station_strength: [2, 1, 4, 3, 3, 3, 3, 3],
+    hyrox_compromised: [4, 4, 4, 2, 3, 3, 4, 4],
+    hyrox_partial_simulation: [4, 4, 4, 3, 3, 4, 4, 4],
+    hyrox_full_simulation: [4, 4, 4, 4, 4, 4, 4, 4],
+  },
+  race_vectors: {
+    road: [4, 4, 3, 1, 1, 4, 4, 4],
+    hyrox: [4, 4, 4, 4, 4, 4, 4, 4],
+  },
+  assessment: {
+    resolution: 'ELEMENT_WISE_MAX_CONTRIBUTING_WORK_FAMILIES',
+    event_specific_fatigue_floor: 2,
+    excluded_step_roles: ['WARMUP', 'RECOVERY', 'COOLDOWN', 'MOBILITY', 'MANUAL_INSTRUCTION'],
+  },
+});
+
+const TARGET_CONVERSION_REGISTRY_V1 = deepFreeze({
+  target_conversion_registry_version: 1,
+  conversion_id: 'nearby-road-race-riegel-v1',
+  permitted_target: 'race_rhythm',
+  distance_ratio: { minimum: 0.5, maximum: 2 },
+  source_duration_seconds: { minimum: 1200, maximum: 10800 },
+  exponent: 1.06,
+  requires_comparable_course_surface: true,
+  target_pace_rounding: 'WHOLE_SECONDS_PER_KM',
+  label: 'conversion',
+  forbidden_targets: ['threshold', 'interval', 'easy', 'long_run', 'compromised'],
+});
+
+const GOAL_BACKWARD_PLANNING_POLICY_V1 = deepFreeze({
+  planning_policy_version: 'goal-backward-planning-policy-v1',
+  event_policy_registry_version: EVENT_POLICY_REGISTRY_V1.registry_version,
+  stress_taxonomy_version: STRESS_TAXONOMY_V1.stress_taxonomy_version,
+  target_conversion_registry_version: TARGET_CONVERSION_REGISTRY_V1.target_conversion_registry_version,
+  phase_running_floor_factor: PHASE_RUNNING_FLOOR_FACTOR,
+  required_primary_exposure_count: {
+    FOUNDATION: 1,
+    DEVELOPMENT: { constrained: 1, developing_plus: 2 },
+    EVENT_SPECIFIC_DEVELOPMENT: { constrained: 1, developing_plus: 2 },
+    SHARPENING: 1,
+    TAPER_RACE_WEEK: 1,
+    POST_RACE_TRANSITION: 0,
+  },
+  fatigue_budget: {
+    lookback_weeks: 8,
+    established_minimum_weeks: 4,
+    provisional_weeks: 3,
+    ceiling_growth_fraction: 0.2,
+    minimum_ceiling_increment: 2,
+    training_class_fallback: {
+      beginner_returning_sparse: [6, 6, 5, 4, 4, 4, 5, 4],
+      developing: [10, 9, 8, 7, 6, 8, 9, 7],
+      established_advanced: [14, 14, 12, 10, 10, 12, 13, 10],
+    },
+  },
+  rolling_seven_days: {
+    maximum_lower_body_running_hard_days: 2,
+    maximum_total_hard_days: { default: 2, established_advanced: 3 },
+    maximum_very_high_event_specific_sessions: 1,
+    very_high_race_exclusion_days: 6,
+  },
+});
+
+function eventPolicyFor(eventPolicyId) {
+  const requested = typeof eventPolicyId === 'object'
+    ? eventPolicyId?.event_policy_id
+    : eventPolicyId;
+  const canonicalId = EVENT_POLICY_ALIASES[requested] || requested;
+  return EVENT_POLICY_RECORDS_V1[canonicalId] || null;
+}
+
+function requiredPrimaryExposureCount(phase, options = {}) {
+  const normalizedPhase = String(phase || '').toUpperCase();
+  if (normalizedPhase === 'POST_RACE_TRANSITION') return 0;
+  if (!Object.hasOwn(PHASE_RUNNING_FLOOR_FACTOR, normalizedPhase)) return null;
+  if (!['DEVELOPMENT', 'EVENT_SPECIFIC_DEVELOPMENT'].includes(normalizedPhase)) return 1;
+  const trainingAge = String(options.training_age_class || '').toUpperCase();
+  const consistency = String(options.consistency_state || '').toUpperCase();
+  const recovery = String(options.recovery_state || '').toUpperCase();
+  const availableDays = Number(options.available_days_count ?? options.available_days?.length ?? 0);
+  const constrained = ['BEGINNER', 'RETURNING'].includes(trainingAge)
+    || ['RETURNING', 'SPARSE_DATA'].includes(consistency)
+    || recovery === 'CAUTION'
+    || (normalizedPhase === 'EVENT_SPECIFIC_DEVELOPMENT' && !['READY', 'NORMAL'].includes(recovery))
+    || availableDays <= 4;
+  return constrained ? 1 : 2;
+}
+
+function minimumWeeklyDemandFor(eventPolicyId, options = {}) {
+  const policy = eventPolicyFor(eventPolicyId);
+  const phase = String(options.phase || '').toUpperCase();
+  if (!policy || !Object.hasOwn(policy.phase_running_floor_factor, phase)) return null;
+  const status = String(options.recent_normal_status || '').toUpperCase();
+  const rawMedianDistance = options.recent_normal_median_distance_m;
+  const medianDistance = typeof rawMedianDistance === 'number' ? rawMedianDistance : NaN;
+  const runningM = ['ESTABLISHED', 'PROVISIONAL'].includes(status)
+    && Number.isFinite(medianDistance) && medianDistance >= 0
+    ? Math.floor(medianDistance * policy.phase_running_floor_factor[phase])
+    : null;
+  return {
+    running_m: runningM,
+    required_exposure_count: requiredPrimaryExposureCount(phase, options),
+  };
+}
+
 const RACE_PLAN_POLICY_V1 = deepFreeze({
   version: 'race-plan-policy-v1',
   engineVersion: 'race-plan-candidate-v1',
@@ -247,18 +505,25 @@ function canonicalHash(value) {
 }
 
 module.exports = {
+  EVENT_POLICY_REGISTRY_V1,
+  GOAL_BACKWARD_PLANNING_POLICY_V1,
   RACE_PLAN_POLICY_V1,
+  STRESS_TAXONOMY_V1,
+  TARGET_CONVERSION_REGISTRY_V1,
   acceptPlanningClock,
   addDays,
   canonicalHash,
   canonicalStringify,
   daysBetween,
+  eventPolicyFor,
   firstFullMonday,
   longRunIdentityFloor,
+  minimumWeeklyDemandFor,
   mondayFor,
   peakLongRunDemand,
   parseStrictInteger,
   raceCategory,
+  requiredPrimaryExposureCount,
   requiredPeakWeeklyMiles,
   taperWeeksForDistance,
 };

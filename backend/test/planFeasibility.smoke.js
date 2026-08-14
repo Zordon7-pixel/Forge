@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const { buildRacePlanCandidate, semanticCandidateErrors } = require('../src/lib/racePlanCandidateEngine');
 const { validateConcurrentPlan } = require('../src/lib/concurrentPlan');
 const { addDays, daysBetween } = require('../src/lib/racePlanPolicy');
+const { evaluatePlanFeasibility } = require('../src/lib/planFeasibility');
 const runWorkoutTaxonomy = require('../src/lib/runWorkoutTaxonomy');
 
 const PLANNING_DATE = '2026-08-03';
@@ -142,5 +143,31 @@ const noAnchorCandidate = buildRacePlanCandidate(noAnchor, { planningDateLocal: 
 assert.notEqual(noAnchorCandidate.plan.overall_feasibility, 'supported', 'a timed PR goal without a performance anchor cannot be presented as supported');
 assert.ok(noAnchorCandidate.plan.reasons.includes('NO_PERFORMANCE_ANCHOR'));
 assertions += 2;
+
+const originalGoalBackwardMode = process.env.FORGE_GOAL_BACKWARD_V24_MODE;
+try {
+  const flagOffContext = {
+    ...contextFor(RACES[0], 'established', 'run_only'),
+    goalBackwardWorkloadInput: {
+      sessions: [{ scheduled_local_date: PLANNING_DATE, workout_family: 'easy_run' }],
+    },
+  };
+  const candidate = buildRacePlanCandidate(flagOffContext, { planningDateLocal: PLANNING_DATE });
+  delete process.env.FORGE_GOAL_BACKWARD_V24_MODE;
+  const missingFlag = evaluatePlanFeasibility(candidate.plan, flagOffContext);
+  process.env.FORGE_GOAL_BACKWARD_V24_MODE = 'off';
+  const explicitOff = evaluatePlanFeasibility(candidate.plan, flagOffContext);
+  assert.deepEqual(explicitOff, missingFlag, 'missing and explicit off modes must remain byte-compatible');
+  assert.equal(Object.hasOwn(explicitOff, 'goalBackwardWorkload'), false, 'flag-off result must retain the legacy shape');
+  process.env.FORGE_GOAL_BACKWARD_V24_MODE = 'shadow';
+  const shadow = evaluatePlanFeasibility(candidate.plan, flagOffContext);
+  assert.equal(Object.hasOwn(shadow, 'goalBackwardWorkload'), true, 'active v2.4 modes expose workload evidence');
+  assert.deepEqual(shadow.goalBackwardWorkload.weekly_stress.weekly_dimension_sum, [2, 2, 1, 0, 0, 1, 1, 0]);
+  assert.equal(shadow.goalBackwardWorkload.valid, true);
+  assertions += 5;
+} finally {
+  if (originalGoalBackwardMode === undefined) delete process.env.FORGE_GOAL_BACKWARD_V24_MODE;
+  else process.env.FORGE_GOAL_BACKWARD_V24_MODE = originalGoalBackwardMode;
+}
 
 console.log(`PLAN FEASIBILITY SMOKE OK (${assertions} matrices/checks)`);

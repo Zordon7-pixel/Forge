@@ -157,6 +157,28 @@ node backend/test/planCandidateLifecycle.smoke.js
 
 Batch 1 status (2026-08-14): `patched`; the three-command Phase 1A gate passes locally. No commit, deploy, migration execution, feature activation, independent QA, or Hermes verification is claimed by this source patch.
 
+## Goal-Backward Coaching v2.4 — Phase 2A-1 Workload Contract
+
+Batch 3 adds policy and workload evidence without replacing the current planner. `backend/src/lib/racePlanPolicy.js` owns the event-policy, stress-taxonomy, target-conversion, exposure-floor, and planning-policy registries. `backend/src/lib/goalBackwardLoad.js` owns closed family/vector resolution, assessment maxima, daily stack classification, uncapped weekly stress, modality-specific ceilings, gated HYROX cluster overload, rolling hard-day caps, and running-volume intersection.
+
+Compatibility and safety anchors:
+
+- Session titles and model prose never assign a workout family or stress vector; unresolved canonical families fail closed.
+- Three eligible weeks are provisional and cannot authorize overload. Fewer than three use the exact conservative training-class fallback for that dimension.
+- HYROX overload is available only for the mandatory event-specific cluster with established per-dimension history, `READY|NORMAL` recovery, no safety restriction, and two prior passing weeks.
+- Overload never waives rolling hard-day, very-high, race-minus-six, station-skill placement, or running-volume constraints.
+- `evaluatePlanFeasibility()` retains its legacy object shape when `FORGE_GOAL_BACKWARD_V24_MODE` is missing, invalid, or `off`. A valid non-off mode exposes additive `goalBackwardWorkload` evidence only when the later engine supplies `goalBackwardWorkloadInput`.
+
+Phase 2A-1 gate:
+
+```sh
+node backend/test/goalBackwardPlanning.smoke.js
+node backend/test/planFeasibility.smoke.js
+node backend/test/racePlanQuality.smoke.js
+```
+
+Batch 3 status (2026-08-14): `patched`; the three-command Phase 2A-1 gate passes locally. No commit, deploy, feature activation, independent QA, or Hermes verification is claimed by this source patch.
+
 ---
 
 ## Deploy Process
