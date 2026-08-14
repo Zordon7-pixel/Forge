@@ -126,15 +126,6 @@ function getMonday(date = new Date()) {
   return d.toISOString().split('T')[0];
 }
 
-function getPlanStartMonday(date = new Date()) {
-  const d = new Date(date);
-  d.setHours(12, 0, 0, 0);
-  const day = d.getDay();
-  const daysUntilMonday = day === 1 ? 0 : (8 - day) % 7;
-  d.setDate(d.getDate() + daysUntilMonday);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
 function getTodayISO(date = new Date()) {
   const d = new Date(date);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -1386,11 +1377,8 @@ async function buildConcurrentContext(userId, profile, target, tx = null) {
   const all = tx?.all || dbAll;
   const get = tx?.get || dbGet;
   const planningDateISO = /^\d{4}-\d{2}-\d{2}$/.test(String(target.todayISO || '')) ? target.todayISO : getTodayISO();
-  const start = new Date();
-  start.setHours(12, 0, 0, 0);
-  start.setDate(start.getDate() - 55);
-  const sinceDate = start.toISOString().slice(0, 10);
-  const [runs, performanceRuns, lifts, recentExercises, healthRow, activeInjury, dailyCheckin] = await Promise.all([
+  const sinceDate = addPolicyDays(planningDateISO, -55);
+  const [runs, performanceRuns, workouts, legacyLifts, recentExercises, healthRow, activeInjury, dailyCheckin] = await Promise.all([
     all(
       `SELECT date, distance_miles, duration_seconds, perceived_effort, avg_heart_rate,
               pain_level, post_energy, pace_avg, health_source, created_at,
@@ -1410,7 +1398,20 @@ async function buildConcurrentContext(userId, profile, target, tx = null) {
        LIMIT 5000`,
       [userId, planningDateISO]
     ),
-    all('SELECT started_at FROM workout_sessions WHERE user_id=? AND started_at>=? AND ended_at IS NOT NULL ORDER BY started_at ASC', [userId, `${sinceDate}T00:00:00`]),
+    all(
+      `SELECT id, started_at, ended_at, total_seconds
+       FROM workout_sessions
+       WHERE user_id=? AND started_at>=? AND started_at<=? AND ended_at IS NOT NULL
+       ORDER BY started_at ASC`,
+      [userId, `${sinceDate}T00:00:00`, `${planningDateISO}T23:59:59`]
+    ),
+    all(
+      `SELECT id, date, workout_duration_seconds
+       FROM lifts
+       WHERE user_id=? AND date>=? AND date<=?
+       ORDER BY date ASC, created_at ASC`,
+      [userId, sinceDate, planningDateISO]
+    ),
     all(
       `SELECT exercise_name, session_id, reps, weight_lbs, logged_at
        FROM workout_sets
@@ -1440,10 +1441,11 @@ async function buildConcurrentContext(userId, profile, target, tx = null) {
   ]);
   const activityDates = [
     ...(runs || []).map((run) => String(run.date || '').slice(0, 10)),
-    ...(lifts || []).map((lift) => String(lift.started_at || '').slice(0, 10)),
+    ...(workouts || []).map((workout) => String(workout.started_at || '').slice(0, 10)),
+    ...(legacyLifts || []).map((lift) => String(lift.date || '').slice(0, 10)),
   ].filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date)).sort();
   const weeksObserved = activityDates.length
-    ? clamp(Math.ceil((Date.now() - new Date(`${activityDates[0]}T12:00:00`).getTime()) / (7 * 86400000)) || 1, 1, 8)
+    ? clamp(Math.ceil(((daysBetween(planningDateISO, activityDates[0]) || 0) + 1) / 7) || 1, 1, 8)
     : 0;
   const expectedPerWeek = clampInt(
     target.runDaysPerWeek,
@@ -1457,7 +1459,32 @@ async function buildConcurrentContext(userId, profile, target, tx = null) {
     clampInt(profile.lift_days_per_week, 0, 4, 0)
   );
   const expectedSessions = weeksObserved * expectedPerWeek;
-  const completedSessions = (runs || []).length + (lifts || []).length;
+  const currentWeekStart = concurrentPlan.racePlanWindow(planningDateISO, planningDateISO)?.startDate;
+  const completedStrengthRows = [
+    ...(workouts || []).map((workout) => ({
+      date: String(workout.started_at || '').slice(0, 10),
+      id: `workout:${workout.id || workout.started_at}`,
+      minutes: Number(workout.total_seconds || 0) / 60,
+    })),
+    ...(legacyLifts || []).map((lift) => ({
+      date: String(lift.date || '').slice(0, 10),
+      id: `lift:${lift.id || lift.date}`,
+      minutes: Number(lift.workout_duration_seconds || 0) / 60,
+    })),
+  ].filter((entry) => (
+    /^\d{4}-\d{2}-\d{2}$/.test(entry.date)
+    && entry.date >= currentWeekStart
+    && entry.date <= planningDateISO
+  ));
+  const currentWeekStrength = {
+    startDate: currentWeekStart,
+    count: new Set(completedStrengthRows.map((entry) => entry.id)).size,
+    dates: [...new Set(completedStrengthRows.map((entry) => entry.date))].sort(),
+    loadPoints: Math.round(completedStrengthRows.reduce((sum, entry) => (
+      sum + clamp(Number.isFinite(entry.minutes) && entry.minutes > 0 ? entry.minutes : 35, 10, 180)
+    ), 0)),
+  };
+  const completedSessions = (runs || []).length + (workouts || []).length + (legacyLifts || []).length;
   const healthSignals = buildHealthSignals(healthRow || {});
   const healthMetrics = healthSignals.metrics || {};
   const healthFreshness = healthMetrics.freshness || {};
@@ -1513,8 +1540,9 @@ async function buildConcurrentContext(userId, profile, target, tx = null) {
       weeklyMileageBaseline,
       mileageBaseline,
       recentRunCount: (runs || []).length,
-      recentLiftCount: (lifts || []).length,
+      recentLiftCount: (workouts || []).length + (legacyLifts || []).length,
       acuteRunLoad,
+      currentWeekStrength,
       performanceProfile,
       recentExercises: summarizeRecentExercises(recentExercises || []),
       adherenceRate: expectedSessions ? clamp(completedSessions / expectedSessions, 0, 1) : null,
@@ -1680,6 +1708,7 @@ function targetFromOwnedRaces(profile, races, requested, planningDateLocal) {
       throw candidateError(400, 'RACE_DATE_PASSED', 'HYROX event date must be today or later.');
     }
     const config = storedEventConfig(hyroxRace);
+    const planWindow = hyroxPlan.planWeekWindow(planningDateLocal, localDate);
     const secondary = races[1] ? {
       kind: 'run_race',
       raceId: races[1].id,
@@ -1699,8 +1728,8 @@ function targetFromOwnedRaces(profile, races, requested, planningDateLocal) {
       trainingDays: runSchedule.trainingDays,
       runDaysSource: runSchedule.runDaysSource,
       trainingDaysSource: runSchedule.trainingDaysSource,
-      weeks: Math.max(1, Math.ceil(daysToEvent / 7)),
-      startDate: planningDateLocal,
+      weeks: planWindow.weeks,
+      startDate: planWindow.startDate,
       todayISO: planningDateLocal,
       nowISO: `${planningDateLocal}T12:00:00.000Z`,
       hyroxEvent: {
@@ -1783,7 +1812,7 @@ function targetWithoutOwnedRace(profile, requested, planningDateLocal) {
     distanceMiles,
     raceDate: requestedRaceDate,
     weeks: raceWindow?.weeks || clampInt(requested.weeks, 4, 20, defaultWeeksForDistance(distanceMiles)),
-    startDate: raceWindow?.startDate || getPlanStartMonday(new Date(`${planningDateLocal}T12:00:00`)),
+    startDate: raceWindow?.startDate || planningDateLocal,
     planMode: requested.hyroxEvent ? 'hyrox_build' : concurrentPlan.resolvePlanMode(profile, requested),
     todayISO: planningDateLocal,
     nowISO: `${planningDateLocal}T12:00:00.000Z`,
@@ -1875,6 +1904,8 @@ function buildDeterministicCandidate(context, options) {
       currentLoad: {
         weeklyMiles: context.history?.weeklyMileageBaseline,
         readiness: context.recovery?.state,
+        recentRunLoad: context.history?.acuteRunLoad,
+        currentWeekStrength: context.history?.currentWeekStrength,
       },
       planningLocalDate: options.planningDateLocal,
       event: context.target.hyroxEvent,

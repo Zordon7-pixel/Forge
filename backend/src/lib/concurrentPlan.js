@@ -1318,6 +1318,7 @@ function summarizeInputs(profile = {}, history = {}, recovery = {}, checkin = nu
     recentRun: acute?.latestRun || null,
     recentLoadAnchor: acute?.protectiveRun || null,
     currentWeekRunLoad: acute?.currentWeek || null,
+    currentWeekStrengthLoad: history.currentWeekStrength || null,
     sevenDayRunMiles: acute?.sevenDayMiles ?? 0,
     recentRunLoadRatio: acute?.loadRatio ?? null,
   };
@@ -1588,9 +1589,26 @@ function buildConcurrentPlan(context = {}) {
       runByDay.set(day, runSession);
     });
 
-    const effectiveLiftCount = mode === planSchema.PLAN_MODES.RUN_ONLY ? 0 : phase === 'race' ? Math.min(1, liftDaysPerWeek) : liftDaysPerWeek;
+    const currentWeekStrength = isCurrentWeek
+      && history.currentWeekStrength?.startDate === weekStart
+      ? history.currentWeekStrength
+      : null;
+    const completedStrengthSessions = Math.max(0, Math.floor(Number(currentWeekStrength?.count) || 0));
+    const fullWeekLiftCount = mode === planSchema.PLAN_MODES.RUN_ONLY
+      ? 0
+      : phase === 'race' ? Math.min(1, liftDaysPerWeek) : liftDaysPerWeek;
+    const effectiveLiftCount = isCurrentWeek
+      ? Math.max(0, fullWeekLiftCount - completedStrengthSessions)
+      : fullWeekLiftCount;
+    const completedStrengthDates = new Set(
+      (Array.isArray(currentWeekStrength?.dates) ? currentWeekStrength.dates : [])
+        .map((date) => String(date || '').slice(0, 10))
+    );
     const liftAvailableDays = isCurrentWeek
-      ? availableDays.filter((day) => addDays(weekStart, DAY_ORDER.indexOf(day)) >= context.todayISO)
+      ? availableDays.filter((day) => {
+        const date = addDays(weekStart, DAY_ORDER.indexOf(day));
+        return date >= context.todayISO && !completedStrengthDates.has(date);
+      })
       : availableDays;
     const liftAssignments = chooseLiftDays(liftAvailableDays, runByDay, Math.min(effectiveLiftCount, liftAvailableDays.length));
     const liftByDay = new Map(liftAssignments.map(({ day, focus }) => [day, buildLiftSession({ weekNumber, day, focus, mode, phase, context })]));
@@ -1620,6 +1638,8 @@ function buildConcurrentPlan(context = {}) {
       totalMiles,
       completedRunsAtGeneration: currentWeekQuota?.completedMeaningfulRuns || 0,
       completedMilesAtGeneration: isCurrentWeek ? round(Number(currentWeekLoad.miles || 0)) : 0,
+      completedStrengthSessionsAtGeneration: completedStrengthSessions,
+      completedStrengthLoadAtGeneration: isCurrentWeek ? round(Number(currentWeekStrength?.loadPoints || 0)) : 0,
       ...(currentWeekConstraint ? { currentWeekConstraint } : {}),
       days,
     });
@@ -1781,6 +1801,12 @@ function validateConcurrentPlan(candidate, context = {}) {
   const expectedStartDate = mondayFor(target.startDate || context.todayISO);
   const expectedWeekPhases = phasesForRaceTargets(expectedStartDate, expectedWeeks, raceTargets);
   const currentWeekLoad = context.history?.acuteRunLoad?.currentWeek;
+  const completedStrengthDates = new Set(
+    (Array.isArray(context.history?.currentWeekStrength?.dates)
+      ? context.history.currentWeekStrength.dates
+      : [])
+      .map((date) => String(date || '').slice(0, 10))
+  );
   const acuteLoad = context.history?.acuteRunLoad;
   const acuteProtection = acuteLoad?.protection?.active ? acuteLoad.protection : null;
   const planWideQualityProtection = hasPlanWideQualityProtection(context);
@@ -1950,6 +1976,9 @@ function validateConcurrentPlan(candidate, context = {}) {
         } else if (kind === 'lift') {
           lifts += 1;
           validateLift(session, sessionPath, errors);
+          if (currentWeekQuota && completedStrengthDates.has(day.date)) {
+            errors.push(`${sessionPath} duplicates strength work already completed on ${day.date}`);
+          }
           if (/lower/i.test(String(session.focus || ''))) lowerLiftIndexes.add(dayIndex);
           if (acuteProtection && /lower/i.test(String(session.focus || '')) && dateInRange(day.date, latestRunDate, acuteProtection.lowerBodyThrough)) {
             errors.push(`${sessionPath} conflicts with recent-run lower-body protection through ${acuteProtection.lowerBodyThrough}`);
@@ -1991,12 +2020,15 @@ function validateConcurrentPlan(candidate, context = {}) {
     if (expectedMode === planSchema.PLAN_MODES.RUN_ONLY && lifts > 0) errors.push(`${path} run_only plans cannot contain lifts`);
     if (expectedMode !== planSchema.PLAN_MODES.RUN_ONLY && week.phase !== 'race') {
       const configuredFloor = Number(candidate.strengthPolicy?.minimumSessionsPerWeek || 0);
+      const completedStrengthSessions = currentWeekQuota
+        ? Math.max(0, Math.floor(Number(week.completedStrengthSessionsAtGeneration) || 0))
+        : 0;
       const remainingLiftCapacity = currentWeekQuota
         ? runSchedule.trainingDays.filter((day) => (
           addDays(week.startDate, DAY_ORDER.indexOf(day)) >= context.todayISO
         )).length
         : configuredFloor;
-      const floor = Math.min(configuredFloor, remainingLiftCapacity);
+      const floor = Math.min(Math.max(0, configuredFloor - completedStrengthSessions), remainingLiftCapacity);
       if (lifts < floor) errors.push(`${path} has ${lifts} lifts below strength floor ${floor}`);
     }
     for (const lowerIndex of lowerLiftIndexes) {

@@ -16,7 +16,7 @@ function fixture(days, overrides = {}) {
       comebackMode: false,
       ...overrides.athlete,
     },
-    planningLocalDate: TODAY,
+    planningLocalDate: overrides.planningLocalDate || TODAY,
     event: {
       name: 'Worldwide HYROX',
       eventLocalDate: days == null ? null : hyrox.addLocalDays(TODAY, days),
@@ -28,6 +28,7 @@ function fixture(days, overrides = {}) {
     },
     equipment: overrides.equipment || EQUIPMENT,
     availableDays: overrides.availableDays || ['Tue', 'Thu', 'Sat', 'Sun'],
+    currentLoad: overrides.currentLoad || null,
     secondaryRace: overrides.secondaryRace || null,
   };
 }
@@ -57,8 +58,8 @@ function assertRunways() {
 }
 
 function assertFiveWeekPlanIsGeneric() {
-  const named = hyrox.generateHyroxPlan(fixture(35, { athlete: { name: 'Bryan', accountId: 'one' }, event: { id: 'one' } }));
-  const anonymous = hyrox.generateHyroxPlan(fixture(35, { athlete: { name: 'Someone else', accountId: 'two' }, event: { id: 'two' } }));
+  const named = hyrox.generateHyroxPlan(fixture(34, { athlete: { name: 'Bryan', accountId: 'one' }, event: { id: 'one' } }));
+  const anonymous = hyrox.generateHyroxPlan(fixture(34, { athlete: { name: 'Someone else', accountId: 'two' }, event: { id: 'two' } }));
   assert.deepEqual(named, anonymous, 'identity must not affect deterministic output');
   assert.equal(named.hyroxPolicy.runwayClass, 'short_runway');
   assert.deepEqual(named.weeks.map((week) => week.phase), ['orientation_assessment', 'build', 'peak_partial_simulation', 'sharpen_reduce', 'taper_race']);
@@ -169,6 +170,118 @@ function assertSaturdayEventCrossWeekSafety() {
   ))), 'heavy stations must remain separated from adjacent hard or long running across week boundaries');
 }
 
+function assertPartialCurrentWeekAnchoringAndLoad() {
+  const planningLocalDate = '2026-08-13';
+  const eventLocalDate = '2026-10-18';
+  const plan = hyrox.generateHyroxPlan(fixture(null, {
+    planningLocalDate,
+    athlete: { weeklyMilesCurrent: 22, runDaysPerWeek: 4 },
+    event: {
+      eventLocalDate,
+      eventTimezone: 'Pacific/Kiritimati',
+    },
+    availableDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+    currentLoad: {
+      weeklyMiles: 22,
+      recentRunLoad: {
+        currentWeek: {
+          startDate: '2026-08-10',
+          miles: 7,
+          runCount: 1,
+          runDates: ['2026-08-11'],
+          longRunCompleted: true,
+        },
+        protection: {
+          active: true,
+          anchorDate: '2026-08-11',
+          hardRunsThrough: '2026-08-13',
+          lowerBodyThrough: '2026-08-13',
+        },
+      },
+      currentWeekStrength: {
+        startDate: '2026-08-10',
+        count: 1,
+        dates: ['2026-08-12'],
+        loadPoints: 45,
+      },
+    },
+  }));
+
+  assert.equal(plan.weeks[0].startDate, '2026-08-10');
+  assert.equal(plan.weeks[1].startDate, '2026-08-17');
+  assert.equal(
+    plan.weeks[0].days.filter((day) => day.date < planningLocalDate)
+      .every((day) => day.sessions.length === 0),
+    true,
+    'a Thursday plan never generates sessions on Monday through Wednesday',
+  );
+  assert.equal(plan.weeks[0].currentWeekConstraint.completedRunCount, 1);
+  assert.equal(plan.weeks[0].currentWeekConstraint.completedStrengthSessions, 1);
+  assert.ok(
+    runExposures(plan.weeks[0]) <= 3,
+    'the completed run reduces the remaining current-week run quota',
+  );
+  assert.ok(
+    plan.weeks[0].days.flatMap((day) => day.sessions)
+      .filter((session) => session.kind === 'hyrox').length <= 1,
+    'the completed lift/workout reduces the remaining HYROX-session quota',
+  );
+  assert.ok(
+    plan.weeks[0].plannedLoadPoints < plan.weeks[1].plannedLoadPoints,
+    'completed current-week load reshapes the bounded remaining load instead of restarting a full week',
+  );
+  const raceEntry = plan.weeks.flatMap((week) => week.days)
+    .find((day) => day.sessions.some((session) => session.sessionType === 'hyrox_race'));
+  assert.equal(plan.goal.eventLocalDate, eventLocalDate);
+  assert.equal(plan.goal.eventTimezone, 'Pacific/Kiritimati');
+  assert.equal(raceEntry?.date, eventLocalDate, 'event-local race date remains exact');
+}
+
+function assertSundayPartialWeekEdge() {
+  const planningLocalDate = '2026-08-16';
+  const plan = hyrox.generateHyroxPlan(fixture(null, {
+    planningLocalDate,
+    event: { eventLocalDate: '2026-10-18', eventTimezone: 'Etc/GMT+12' },
+    availableDays: ['Tue', 'Thu', 'Sat', 'Sun'],
+    currentLoad: {
+      weeklyMiles: 22,
+      recentRunLoad: {
+        currentWeek: {
+          startDate: '2026-08-10', miles: 8, runCount: 2,
+          runDates: ['2026-08-11', '2026-08-15'], longRunCompleted: true,
+        },
+        protection: { active: false },
+      },
+      currentWeekStrength: {
+        startDate: '2026-08-10', count: 1, dates: ['2026-08-13'], loadPoints: 40,
+      },
+    },
+  }));
+  assert.equal(plan.weeks[0].startDate, '2026-08-10');
+  assert.equal(plan.weeks[1].startDate, '2026-08-17');
+  assert.equal(
+    plan.weeks[0].days.filter((day) => day.sessions.length > 0)
+      .every((day) => day.date === planningLocalDate),
+    true,
+    'Sunday creation may use Sunday only',
+  );
+}
+
+function assertMidweekFoundationAnchoring() {
+  const plan = hyrox.generateHyroxPlan(fixture(null, {
+    planningLocalDate: '2026-08-13',
+    event: { eventLocalDate: null },
+  }));
+  assert.equal(plan.weeks[0].startDate, '2026-08-10');
+  assert.equal(plan.weeks[1].startDate, '2026-08-17');
+  assert.equal(
+    plan.weeks[0].days.filter((day) => day.date < '2026-08-13')
+      .every((day) => day.sessions.length === 0),
+    true,
+    'an undated HYROX foundation preview also starts in the current partial week',
+  );
+}
+
 function raceSessionFor(format, category = 'men') {
   const plan = hyrox.generateHyroxPlan(fixture(35, {
     event: { format, category },
@@ -256,6 +369,9 @@ function run() {
   assertFrequencyAndEquipment();
   assertSafetyAndOrder();
   assertSaturdayEventCrossWeekSafety();
+  assertPartialCurrentWeekAnchoringAndLoad();
+  assertSundayPartialWeekEdge();
+  assertMidweekFoundationAnchoring();
   assertRaceDayTruthByFormat();
   assertSecondaryTransition();
   console.log('HYROX PLAN ENGINE SMOKE OK');
