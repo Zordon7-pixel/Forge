@@ -1440,7 +1440,7 @@ function buildRunningWeek({
 }
 
 function generateHyroxPlan(input = {}) {
-  const includeGoalBackwardV24 = getGoalBackwardV24Mode() !== 'off';
+  const includeGoalBackwardV24 = ['preview', 'on'].includes(getGoalBackwardV24Mode());
   const event = input.event || {};
   const planningDate = String(input.planningLocalDate || '');
   if (parseLocalDate(planningDate) == null) throw new Error('invalid_planning_local_date');

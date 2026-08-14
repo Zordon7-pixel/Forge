@@ -521,7 +521,7 @@ function assertBryanGoalsRemainUnvalidated() {
 
 function assertBryanOrderedGoals() {
   const previousMode = process.env.FORGE_GOAL_BACKWARD_V24_MODE;
-  process.env.FORGE_GOAL_BACKWARD_V24_MODE = 'shadow';
+  process.env.FORGE_GOAL_BACKWARD_V24_MODE = 'on';
   try {
     const plan = hyroxPlan.generateHyroxPlan({
       athlete: { weeklyMilesCurrent: 21, runDaysPerWeek: 4, training_age_class: 'ESTABLISHED' },

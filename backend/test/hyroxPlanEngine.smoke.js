@@ -756,22 +756,29 @@ function assertGoalBackwardModeCompatibility() {
     );
 
     process.env.FORGE_GOAL_BACKWARD_V24_MODE = 'shadow';
-    const shadow = hyrox.generateHyroxPlan(fixture(35));
-    assert.equal(shadow.hyroxEventState.format, 'singles');
-    assert.equal(shadow.hyroxEventState.ruleset_status, 'exact');
-    assert.equal(shadow.hyroxPerformanceBudget.projected_run_time_s, null);
-    assert.equal(shadow.hyroxPerformanceBudget.supported, false);
-    assert.equal(shadow.standardsProvenance.rulesetId, 'hyrox-global');
-    const shadowPeak = shadow.weeks.flatMap((week) => week.days)
+    assert.deepEqual(
+      hyrox.generateHyroxPlan(fixture(35)),
+      missingMode,
+      'shadow returns the current candidate byte-for-byte',
+    );
+
+    process.env.FORGE_GOAL_BACKWARD_V24_MODE = 'on';
+    const enabled = hyrox.generateHyroxPlan(fixture(35));
+    assert.equal(enabled.hyroxEventState.format, 'singles');
+    assert.equal(enabled.hyroxEventState.ruleset_status, 'exact');
+    assert.equal(enabled.hyroxPerformanceBudget.projected_run_time_s, null);
+    assert.equal(enabled.hyroxPerformanceBudget.supported, false);
+    assert.equal(enabled.standardsProvenance.rulesetId, 'hyrox-global');
+    const enabledPeak = enabled.weeks.flatMap((week) => week.days)
       .flatMap((day) => day.sessions)
       .find((session) => session.workout_family === 'hyrox_partial_simulation');
-    assert.ok(shadowPeak, 'v2.4 replaces only the flagged peak exposure with the closed cluster');
-    assert.ok(shadowPeak.run_station_pair_count >= 2 && shadowPeak.run_station_pair_count <= 4);
-    assert.equal(hyrox.validatePartialRaceOrderCluster(shadowPeak, {
+    assert.ok(enabledPeak, 'v2.4 replaces only the flagged peak exposure with the closed cluster');
+    assert.ok(enabledPeak.run_station_pair_count >= 2 && enabledPeak.run_station_pair_count <= 4);
+    assert.equal(hyrox.validatePartialRaceOrderCluster(enabledPeak, {
       training_age_class: 'ESTABLISHED',
     }).valid, true);
     assert.equal(
-      allSessions(shadow).filter((session) => session.sessionType === 'hyrox_compromised')
+      allSessions(enabled).filter((session) => session.sessionType === 'hyrox_compromised')
         .some((session) => session.runSequenceMeters?.length === 6),
       false,
       'the old six-pair compromised workout is not relabeled as compliant in v2.4',
@@ -802,7 +809,7 @@ function combinations(values, size, start = 0, prefix = [], output = []) {
 
 function assertClusterPlacementMatrixDoesNotCrash() {
   const previousMode = process.env.FORGE_GOAL_BACKWARD_V24_MODE;
-  process.env.FORGE_GOAL_BACKWARD_V24_MODE = 'shadow';
+  process.env.FORGE_GOAL_BACKWARD_V24_MODE = 'on';
   try {
     const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
     const schedules = [

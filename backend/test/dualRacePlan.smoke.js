@@ -42,7 +42,7 @@ function checkBryanGoalBackwardWitnessIntegration() {
 
 function checkPartialClusterShadowIntegration(plansRouter) {
   const previousMode = process.env.FORGE_GOAL_BACKWARD_V24_MODE;
-  process.env.FORGE_GOAL_BACKWARD_V24_MODE = 'shadow';
+  process.env.FORGE_GOAL_BACKWARD_V24_MODE = 'on';
   try {
     const planningDate = '2026-08-03';
     const eventDate = '2026-09-14';
