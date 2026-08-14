@@ -669,15 +669,27 @@ function rescheduleSessionInWeek(week, sessionId, { targetDate = null } = {}) {
   };
 }
 
+function isRestOverridePatch(patch) {
+  const p = patch || {};
+  const normalized = (value) => String(value || '').trim().toLowerCase();
+  return normalized(p.checkin_override?.action) === 'rest'
+    || normalized(p.type) === 'rest'
+    || normalized(p.workout_type) === 'rest';
+}
+
 // Session-aware override merge. Identical to { ...day, ...patch } for legacy /
-// single-session days; for a v2 day it also merges the patch into the run
-// session and leaves lift sessions untouched.
+// single-session days. Run-specific adjustments continue to touch only the run
+// session, while a safety rest directive makes every retained session kind
+// non-executable (including lift-only and hybrid days).
 function applyOverrideToDay(day, patch) {
   const p = patch || {};
   if (!day || typeof p !== 'object') return day || null;
   const merged = Object.assign({}, day, p);
   if (Array.isArray(day.sessions) && day.sessions.length) {
-    merged.sessions = day.sessions.map((s) => (kindFromSession(s) === 'run' ? Object.assign({}, s, p) : s));
+    const restOverride = isRestOverridePatch(p);
+    merged.sessions = day.sessions.map((s) => (
+      restOverride || kindFromSession(s) === 'run' ? Object.assign({}, s, p) : s
+    ));
   }
   return merged;
 }

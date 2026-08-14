@@ -151,6 +151,27 @@ assert(stepsRec && stepsRec.structure.length === 3, 'run steps remain visible wh
 const liftOnly = normalizeExecution({ execution: { hasPlan: true, hasDay: true, isRest: false, week: 3, sessions: [{ id: 'lift-9', kind: 'lift', title: 'Upper' }], run: null, lift: { id: 'lift-9', kind: 'lift', title: 'Upper' } } });
 const liftRec = recommendationFromExecution(liftOnly);
 assert(liftRec && liftRec.recommendationType === 'strength' && liftRec.planSessionId === 'lift-9', 'lift-only day → strength recommendation with lift session id');
+const staleLiftAfterRestDirective = normalizeExecution({
+  today: {
+    type: 'rest',
+    workout_type: 'rest',
+    checkin_override: { action: 'rest', label: 'Changed to rest from daily check-in' },
+  },
+  execution: {
+    hasPlan: true,
+    hasDay: true,
+    isRest: false,
+    type: 'rest',
+    workout_type: 'rest',
+    checkinOverride: { action: 'rest', label: 'Changed to rest from daily check-in' },
+    sessions: [{ id: 'lift-stale', kind: 'lift', type: 'strength', title: 'Strength maintenance', completed: false }],
+    run: null,
+    lift: { id: 'lift-stale', kind: 'lift', type: 'strength', title: 'Strength maintenance', completed: false },
+  },
+});
+assert(hasExecutableSession(staleLiftAfterRestDirective) === false, 'day-level safety rest fails closed even if a stale lift session is still strength');
+assert(scheduledLiftFromExecution(staleLiftAfterRestDirective) === null, 'day-level safety rest never exposes a stale lift handoff');
+assert(recommendationFromExecution(staleLiftAfterRestDirective)?.type === 'rest', 'day-level safety rest remains recovery guidance with stale session data');
 const liftPendingAfterRun = normalizeExecution({ execution: {
   hasPlan: true,
   hasDay: true,

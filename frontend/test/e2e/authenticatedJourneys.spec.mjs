@@ -133,6 +133,47 @@ function checkinRecoveryExecution() {
   }
 }
 
+function liftOnlyCheckinRecoveryExecution({ patchSession = true } = {}) {
+  const recoveryLift = patchSession
+    ? {
+        ...plannedLift,
+        type: 'rest',
+        workout_type: 'rest',
+        title: 'Rest day',
+        description: "Rest day from today's check-in.",
+        checkin_override: { action: 'rest', label: 'Changed to rest from daily check-in' },
+      }
+    : { ...plannedLift }
+  return {
+    today: {
+      date: today,
+      day: todayDay,
+      type: 'rest',
+      workout_type: 'rest',
+      checkin_override: { action: 'rest', label: 'Changed to rest from daily check-in' },
+      sessions: [recoveryLift],
+    },
+    execution: {
+      hasPlan: true,
+      hasDay: true,
+      isRest: false,
+      isPlannedRest: false,
+      restSource: null,
+      mode: 'hybrid_maintain',
+      phase: 'base',
+      week: 1,
+      date: today,
+      day: todayDay,
+      type: 'rest',
+      workout_type: 'rest',
+      checkinOverride: { action: 'rest', label: 'Changed to rest from daily check-in' },
+      sessions: [recoveryLift],
+      run: null,
+      lift: recoveryLift,
+    },
+  }
+}
+
 test('planned rest day does not prompt for a readiness check-in', async ({ page }) => {
   const runtimeErrors = collectRuntimeErrors(page)
   const apiState = await installAuthenticatedApi(page, {
@@ -278,6 +319,60 @@ test('submitting a safety check-in cannot turn its rest-labelled run slot into P
   await expect(page.getByRole('button', { name: 'Start run', exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Start lift', exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Map route', exact: true })).toHaveCount(0)
+
+  expect(requestsFor(apiState, 'POST', '/api/checkin')).toHaveLength(1)
+  assertCleanApiAndRuntime(apiState, runtimeErrors)
+})
+
+test('lift-only safety rest cannot expose strength or workout starts even with a stale lift payload', async ({ page }) => {
+  const runtimeErrors = collectRuntimeErrors(page)
+  let checkinSaved = false
+  const apiState = await installAuthenticatedApi(page, {
+    responses: new Map([
+      ['GET /api/checkin/today', () => checkinSaved ? {
+        feeling: 3,
+        legs: 3,
+        drive: 3,
+        sleep_hours: null,
+        life_flags: ['sick'],
+      } : null],
+      ['POST /api/checkin/preview', {
+        headline: 'Recovery is the safer call today.',
+        drivers: [{ label: 'Not well', detail: 'Training is paused while you are not feeling well.' }],
+      }],
+      ['POST /api/checkin', () => {
+        checkinSaved = true
+        return {
+          action: 'rest',
+          headline: 'Recovery is the safer call today.',
+          adjustment: "Rest day from today's check-in.",
+          drivers: [{ label: 'Not well', detail: 'Training is paused while you are not feeling well.' }],
+        }
+      }],
+      // Deliberately retain a stale strength session while the canonical day
+      // directive says rest. The phone must fail closed independently.
+      ['GET /api/plans/today', liftOnlyCheckinRecoveryExecution({ patchSession: false })],
+    ]),
+  })
+
+  await page.goto('/checkin')
+  await page.getByRole('button', { name: 'Fresh', exact: true }).click()
+  await page.getByRole('button', { name: 'Fired up', exact: true }).click()
+  await page.getByRole('button', { name: '45 min', exact: true }).click()
+  await page.getByRole('button', { name: 'Not well', exact: true }).click()
+  await page.getByRole('button', { name: 'Done', exact: true }).click()
+
+  await expect(page.getByRole('button', { name: 'View Today', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Review Strength Workout', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Start workout', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Start lift', exact: true })).toHaveCount(0)
+
+  await page.getByRole('button', { name: 'View Today', exact: true }).click()
+  await expect(page).not.toHaveURL(/\/log-lift/)
+  await expect(page.getByRole('button', { name: 'View recovery', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'View recovery', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Start workout', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Start lift', exact: true })).toHaveCount(0)
 
   expect(requestsFor(apiState, 'POST', '/api/checkin')).toHaveLength(1)
   assertCleanApiAndRuntime(apiState, runtimeErrors)

@@ -110,6 +110,32 @@ assert.equal(sickAccess.primaryAction(), 'details')
 assert.equal(sickAccess.secondaryLabel, 'Edit check-in')
 assert.equal(sickAccess.showStartLog, false)
 
+const liftOnlyPlan = {
+  schemaVersion: 2,
+  weeks: [{ week: 1, days: [{
+    date: '2026-08-14',
+    day: 'Fri',
+    sessions: [{ id: 'scheduled-lift', kind: 'lift', type: 'strength', title: 'Strength maintenance' }],
+  }] }],
+}
+const liftOnlyDay = liftOnlyPlan.weeks[0].days[0]
+const liftRestPatch = checkinOverride.buildPatch('rest', liftOnlyDay.sessions[0], safetyCases[0][1])
+const liftResolved = backendExecution.resolvePlanDayForDate({ plan: liftOnlyPlan, dateISO: '2026-08-14', patch: liftRestPatch })
+const liftRestExecution = normalizeExecution({ execution: backendExecution.buildDailyExecution({
+  plan: liftOnlyPlan,
+  dateISO: '2026-08-14',
+  selectedEntry: liftResolved.selectedEntry,
+  selectedWeek: liftResolved.selectedWeek,
+  selectedDayIndex: liftResolved.selectedDayIndex,
+  completedSessionIds: [],
+  restSource: null,
+}) })
+assert.equal(liftRestExecution.lift?.type, 'rest', 'backend safety rest neutralizes a retained lift session')
+assert.equal(liftRestExecution.checkinOverride?.action, 'rest', 'day-level safety directive survives canonical execution')
+assert.equal(hasExecutableSession(liftRestExecution), false, 'lift-only safety rest is non-executable across the shared frontend contract')
+assert.equal(scheduledLiftFromExecution(liftRestExecution), null, 'lift-only safety rest cannot hand off to /log-lift')
+assert.equal(recommendationFromExecution(liftRestExecution)?.type, 'rest', 'lift-only safety rest renders as recovery guidance')
+
 const removedExecution = normalizeExecution({ execution: {
   hasPlan: true,
   hasDay: true,
@@ -132,4 +158,4 @@ assert(dailyCheckIn.includes('headline && adjustment !== headline'), 'a manually
 assert(dailyCheckIn.includes("calendarRecommendation?.type === 'rest'"), 'post-submit routing honors recovery guidance before any retained run slot')
 assert(logRun.includes('execution?.hasDay && execution?.isPlannedRest'), 'run-intent choices use authored-rest provenance instead of treating removed-empty days as scheduled rest')
 
-console.log('REST-DAY CHECK-IN FRONTEND SMOKE OK (52)')
+console.log('REST-DAY CHECK-IN FRONTEND SMOKE OK (57)')

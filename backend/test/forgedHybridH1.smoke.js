@@ -229,6 +229,32 @@ const legacyMerged = checkin.applyOverride(sampleLegacy, overridePatch);
 const plainMerged = Object.assign({}, sampleLegacy, overridePatch);
 assert(JSON.stringify(legacyMerged) === JSON.stringify(plainMerged), 'checkinOverride.applyOverride unchanged for legacy (single-session) days');
 
+const hybridOverrideDay = {
+  date: '2026-08-14',
+  day: 'Fri',
+  sessions: [
+    { id: 'hybrid-run', kind: 'run', type: 'easy', distance_miles: 3 },
+    { id: 'hybrid-lift', kind: 'lift', type: 'strength', title: 'Strength maintenance' },
+  ],
+};
+const runSpecificOverride = schema.applyOverrideToDay(hybridOverrideDay, overridePatch);
+assert(runSpecificOverride.sessions[0].type === 'recovery' && runSpecificOverride.sessions[1].type === 'strength', 'run-specific override still leaves the sibling lift unchanged');
+const restOverridePatch = checkin.buildPatch('rest', hybridOverrideDay.sessions[0], {
+  feeling: 1,
+  legs: 1,
+  drive: 1,
+  time_available: 60,
+  life_flags: ['sick'],
+});
+const fullyRestedHybridDay = schema.applyOverrideToDay(hybridOverrideDay, restOverridePatch);
+assert(fullyRestedHybridDay.sessions.every((session) => session.type === 'rest' && session.workout_type === 'rest'), 'safety rest neutralizes every retained session kind on a hybrid day');
+const liftOnlyRestDay = schema.applyOverrideToDay({
+  date: '2026-08-14',
+  day: 'Fri',
+  sessions: [{ id: 'only-lift', kind: 'lift', type: 'strength' }],
+}, restOverridePatch);
+assert(liftOnlyRestDay.sessions[0].kind === 'lift' && liftOnlyRestDay.sessions[0].type === 'rest', 'safety rest makes a lift-only day non-executable without losing its audit identity');
+
 // reschedule parity: run-only planned sessions match, and mapType-equivalent per-day type matches
 let reschedTypesOk = true;
 for (let wi = 0; wi < 13; wi += 1) {

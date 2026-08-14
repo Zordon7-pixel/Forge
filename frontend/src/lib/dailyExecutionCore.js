@@ -31,6 +31,9 @@ export function normalizeExecution(body) {
       goal: null,
       orderGuidance: null,
       status: null,
+      type: null,
+      workoutType: null,
+      checkinOverride: null,
       date: (exec && exec.date) || null,
       day: null,
       sessions: [],
@@ -54,6 +57,9 @@ export function normalizeExecution(body) {
     goal: exec.goal || null,
     orderGuidance: exec.orderGuidance || null,
     status: exec.status || null,
+    type: exec.type || (body && body.today && body.today.type) || null,
+    workoutType: exec.workoutType || exec.workout_type || (body && body.today && body.today.workout_type) || null,
+    checkinOverride: exec.checkinOverride || exec.checkin_override || (body && body.today && body.today.checkin_override) || null,
     date: exec.date || null,
     day: exec.day || null,
     sessions,
@@ -88,7 +94,22 @@ function recoveryGuidanceSession(execution) {
     execution.lift,
     ...(Array.isArray(execution.sessions) ? execution.sessions : []),
   ];
-  return candidates.find(isRestSession) || null;
+  const session = candidates.find(isRestSession);
+  if (session) return session;
+
+  const normalized = (value) => String(value || '').trim().toLowerCase();
+  const checkinOverride = execution.checkinOverride || execution.checkin_override || null;
+  const hasDayLevelRest = normalized(checkinOverride?.action) === 'rest'
+    || normalized(execution.type) === 'rest'
+    || normalized(execution.workoutType || execution.workout_type) === 'rest';
+  if (!hasDayLevelRest) return null;
+  return {
+    type: 'rest',
+    workout_type: 'rest',
+    description: checkinOverride?.label
+      || execution.legacyToday?.description
+      || "Recovery is today's guidance.",
+  };
 }
 
 // True when there is an unfinished scheduled session today. Completed sessions

@@ -6,7 +6,7 @@ async function run() {
   const now = new Date();
   const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   const ownerId = 'low-sleep-route-owner';
-  const planRow = {
+  let planRow = {
     user_plan_id: 'up-low-sleep',
     plan_id: 'tp-low-sleep',
     id: 'tp-low-sleep',
@@ -67,7 +67,7 @@ async function run() {
       status(code) { statusCode = code; return this; },
       json(value) { payload = value; return this; },
     };
-    async function postCheckin(row) {
+    async function postCheckin(row, bodyOverrides = {}) {
       healthRow = row;
       writes = [];
       statusCode = 200;
@@ -81,6 +81,7 @@ async function run() {
           time_available: 60,
           life_flags: [],
           date,
+          ...bodyOverrides,
         },
         query: {},
         headers: { 'x-forged-local-date': date },
@@ -141,6 +142,48 @@ async function run() {
       assert.equal(result.savedCheckin.params[7], null, `${testCase.label} persists unknown sleep as null, not zero`);
       assert(result.savedOverride, `${testCase.label} retains a bound keep decision for the scheduled workout`);
       assert.equal(result.savedOverride.params[3], 'keep', `${testCase.label} persists keep rather than rest`);
+    }
+
+    const liftOnlyDay = {
+      date,
+      day: 'Thu',
+      sessions: [{ id: 'low-sleep-lift', kind: 'lift', type: 'strength', title: 'Strength maintenance' }],
+    };
+    planRow = {
+      ...planRow,
+      plan_data: JSON.stringify({ schemaVersion: 2, weeks: [{ week: 1, days: [liftOnlyDay] }] }),
+    };
+    const liftSafetyCases = [
+      { label: 'sick', row: null, body: { life_flags: ['sick'] } },
+      { label: 'injured', row: null, body: { life_flags: ['injured'] } },
+      {
+        label: 'fresh 3.5-hour sleep',
+        row: { sleep_hours_last_night: 3.5, synced_at: new Date().toISOString(), training_metrics_json: '{}' },
+        body: {},
+      },
+    ];
+    const planSchema = require('../src/lib/planSchema');
+    const dailyExecution = require('../src/lib/dailyExecution');
+    for (const testCase of liftSafetyCases) {
+      const result = await postCheckin(testCase.row, testCase.body);
+      assert.equal(result.payload.action, 'rest', `actual POST /checkin turns lift-only ${testCase.label} safety evidence into rest`);
+      const patch = JSON.parse(result.savedOverride.params[4]);
+      const resolved = dailyExecution.resolvePlanDayForDate({
+        plan: JSON.parse(planRow.plan_data),
+        dateISO: date,
+        patch,
+      });
+      assert.equal(planSchema.daySessions(resolved.selectedEntry)[0].type, 'rest', `lift-only ${testCase.label} persists a non-executable lift prescription`);
+      const execution = dailyExecution.buildDailyExecution({
+        plan: JSON.parse(planRow.plan_data),
+        dateISO: date,
+        selectedEntry: resolved.selectedEntry,
+        selectedWeek: resolved.selectedWeek,
+        selectedDayIndex: resolved.selectedDayIndex,
+        completedSessionIds: [],
+      });
+      assert.equal(execution.checkinOverride?.action, 'rest', `lift-only ${testCase.label} carries the day-level fail-closed directive`);
+      assert.equal(execution.lift?.type, 'rest', `lift-only ${testCase.label} cannot remain an executable strength session`);
     }
     console.log('CHECK-IN LOW-SLEEP ROUTE SMOKE OK');
   } finally {
