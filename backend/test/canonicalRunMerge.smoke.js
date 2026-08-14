@@ -11,6 +11,11 @@ const {
   sensorSummarySourcePriority,
 } = require('../src/lib/canonicalRunMatch');
 const { _test: importTest } = require('../src/routes/import');
+const runsRouter = require('../src/routes/runs');
+const {
+  buildAttributedCorrection,
+  temporalRouteFingerprintMatch,
+} = require('../src/lib/goalBackwardEvidence');
 
 const PRODUCTION_PAIR = Object.freeze({
   forgedCreatedAt: '2026-07-24T14:45:13.089Z',
@@ -46,6 +51,44 @@ function incomingRun(overrides = {}) {
 }
 
 async function runCanonicalRunMergeSmoke() {
+  assert.equal(temporalRouteFingerprintMatch({
+    athlete_id: 'athlete-1',
+    activity_kind: 'run',
+    observed_at: '2026-08-10T11:00:00.000Z',
+    duration_s: 2400,
+    route_points: [[40.7, -74], [40.701, -74.001], [40.702, -74.002], [40.703, -74.003], [40.704, -74.004]],
+  }, {
+    athlete_id: 'athlete-1',
+    activity_kind: 'run',
+    observed_at: '2026-08-10T11:02:59.000Z',
+    duration_s: 2402,
+    route_points: [[40.7, -74], [40.701, -74.001], [40.702, -74.002], [40.703, -74.003], [40.704, -74.004]],
+  }), true, 'v2.4 fallback requires the exact temporal fingerprint and matching route');
+  assert.equal(temporalRouteFingerprintMatch({
+    athlete_id: 'athlete-1', activity_kind: 'run', observed_at: '2026-08-10T11:00:00.000Z', duration_s: 2400,
+    route_points: [[40.7, -74], [40.701, -74.001], [40.702, -74.002], [40.703, -74.003], [40.704, -74.004]],
+  }, {
+    athlete_id: 'athlete-1', activity_kind: 'run', observed_at: '2026-08-10T11:03:01.000Z', duration_s: 2402,
+    route_points: [[41.7, -75], [41.701, -75.001], [41.702, -75.002], [41.703, -75.003], [41.704, -75.004]],
+  }), false, 'time beyond 180 seconds and a dissimilar route remain distinct');
+
+  const correction = buildAttributedCorrection({
+    id: 'correction-1',
+    athleteId: 'athlete-1',
+    rawEvidenceKind: 'run',
+    rawEvidenceRef: 'forged-run',
+    revision: 2,
+    correctedValue: { field: 'distance_m', value: 5100 },
+    canonicalUnit: 'm',
+    reason: 'Course measurement was verified.',
+    attributedByUserId: 'athlete-1',
+    supersedesCorrectionId: 'correction-0',
+    createdAt: '2026-08-14T12:00:00.000Z',
+  });
+  assert.equal(correction.revision, 2);
+  assert.equal(correction.supersedes_correction_id, 'correction-0');
+  assert.match(correction.content_hash, /^sha256:[a-f0-9]{64}$/);
+
   const productionMatch = chooseForgedRunMatch([forgedCandidate()], incomingRun());
   assert.equal(productionMatch?.id, 'forged-run', 'the exact production 3.191156/3.109 mile pair resolves to the Forged recording');
   assert.equal(FORGED_TRUSTED_SENSOR_ACTIVITY_WINDOW_MS, 5 * 60 * 1000, 'reliable activity starts use the tight five-minute window');
@@ -768,6 +811,37 @@ async function runCanonicalRunMergeSmoke() {
   assert.equal(unproposedPlanLookup, 2, 'both run proposal slots are checked before considering the plan-link exception');
   assert.equal(unproposedPlanResult, null, 'a plan-link conflict still blocks when no equivalent proposal pair exists');
   assert.equal(unproposedPlanStatements.length, 0, 'a blocked plan-link conflict leaves both runs untouched');
+
+  const runsSource = fs.readFileSync(path.join(__dirname, '../src/routes/runs.js'), 'utf8');
+  const correctionStart = runsSource.indexOf("router.post('/:id/evidence-corrections'");
+  const correctionEnd = runsSource.indexOf("router.patch('/:id/check-in'", correctionStart);
+  const correctionRoute = runsSource.slice(correctionStart, correctionEnd);
+  assert.ok(correctionStart > 0 && correctionEnd > correctionStart, 'the attributed correction route is registered before generic run mutation');
+  assert.match(correctionRoute, /getGoalBackwardV24Mode/);
+  assert.match(correctionRoute, /INSERT INTO planning_evidence_corrections/);
+  assert.doesNotMatch(correctionRoute, /UPDATE runs SET/, 'v2.4 correction must not rewrite observed run values');
+  const previousMode = process.env.FORGE_GOAL_BACKWARD_V24_MODE;
+  try {
+    for (const mode of ['shadow', 'preview', 'on']) {
+      process.env.FORGE_GOAL_BACKWARD_V24_MODE = mode;
+      const response = {
+        statusCode: 200,
+        payload: null,
+        status(code) { this.statusCode = code; return this; },
+        json(payload) { this.payload = payload; return this; },
+      };
+      await runsRouter._test.updateRunHandler({
+        params: { id: 'forged-run' },
+        user: { id: 'athlete-1' },
+        body: { distance_miles: 9 },
+      }, response);
+      assert.equal(response.statusCode, 409, `legacy raw update is blocked in ${mode} mode`);
+      assert.equal(response.payload.code, 'EVIDENCE_IMMUTABLE');
+    }
+  } finally {
+    if (previousMode === undefined) delete process.env.FORGE_GOAL_BACKWARD_V24_MODE;
+    else process.env.FORGE_GOAL_BACKWARD_V24_MODE = previousMode;
+  }
 
   console.log('CANONICAL RUN MERGE SMOKE OK');
 }

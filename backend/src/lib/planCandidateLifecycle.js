@@ -1,6 +1,8 @@
 const { RACE_PLAN_POLICY_V1, canonicalHash, canonicalStringify } = require('./racePlanPolicy');
 const {
   FEATURE_MODES,
+  PLANNING_POLICY_VERSION,
+  assertPipelineArtifact,
   assertPipelineLinks,
   findNonJsonValues,
   findRedactionViolations,
@@ -37,9 +39,80 @@ const ALLOWED_LIFE_FLAGS = new Set([
 const GOAL_BACKWARD_FEATURE_MODES = new Set(FEATURE_MODES);
 const HASH_PATTERN = /^(?:sha256:)?[a-f0-9]{64}$/;
 const MAX_BINDING_JSON_BYTES = 16 * 1024;
+const ADDITIONAL_PII_KEYS = new Set([
+  'account_number',
+  'bank_account',
+  'bank_account_number',
+  'billing_address',
+  'card_number',
+  'credit_card',
+  'credit_card_number',
+  'driver_license',
+  'drivers_license',
+  'emergency_contact',
+  'financial_account',
+  'government_id',
+  'home_address',
+  'iban',
+  'insurance_id',
+  'mailing_address',
+  'medical_record_number',
+  'national_id',
+  'passport',
+  'passport_number',
+  'residential_address',
+  'routing_number',
+  'social_security',
+  'social_security_number',
+  'ssn',
+  'street_address',
+  'swift',
+  'tax_id',
+]);
 
 function cloneJson(value) {
   return JSON.parse(JSON.stringify(value));
+}
+
+function normalizedArtifactKey(value) {
+  return String(value || '')
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .replace(/[^a-zA-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .toLowerCase();
+}
+
+function findAdditionalPiiViolations(value, path = 'payload_json', found = []) {
+  if (Array.isArray(value)) {
+    value.forEach((entry, index) => findAdditionalPiiViolations(entry, `${path}[${index}]`, found));
+    return found;
+  }
+  if (!value || typeof value !== 'object') return found;
+  for (const [key, nested] of Object.entries(value)) {
+    const childPath = `${path}.${key}`;
+    if (ADDITIONAL_PII_KEYS.has(normalizedArtifactKey(key))) found.push(childPath);
+    findAdditionalPiiViolations(nested, childPath, found);
+  }
+  return found;
+}
+
+function findArtifactRedactionViolations(value, path = 'payload_json') {
+  return [...new Set([
+    ...findRedactionViolations(value, path),
+    ...findAdditionalPiiViolations(value, path),
+  ])].sort();
+}
+
+function assertArtifactPayloadRedacted(payload, path = 'payload_json') {
+  const violations = findArtifactRedactionViolations(payload, path);
+  if (violations.length) {
+    const error = new Error('Pipeline artifact contains a prohibited secret or PII key');
+    error.code = 'INVALID_PIPELINE_ARTIFACT';
+    error.status = 422;
+    error.details = [{ code: 'ARTIFACT_REDACTION_REQUIRED', path: violations[0], paths: violations }];
+    throw error;
+  }
+  return payload;
 }
 
 function redactSnapshotValue(value, key = '') {
@@ -126,6 +199,85 @@ function buildPlanningSnapshot({
 
 function prefixedHash(value) {
   return `${HASH_PREFIX}${canonicalHash(value)}`;
+}
+
+function buildPipelineArtifact({
+  id = null,
+  userId,
+  kind,
+  decisionId = null,
+  parentArtifactId = null,
+  planGenerationCandidateId = null,
+  schemaVersion = 1,
+  policyVersion = PLANNING_POLICY_VERSION,
+  revision = 1,
+  payload,
+  createdAt = new Date().toISOString(),
+} = {}) {
+  const payloadJson = cloneJson(payload || {});
+  assertArtifactPayloadRedacted(payloadJson);
+  const contentHash = prefixedHash(payloadJson);
+  const artifactIdentityHash = canonicalHash({
+    user_id: userId,
+    artifact_kind: kind,
+    decision_id: decisionId,
+    revision,
+    content_hash: contentHash,
+  });
+  const artifact = {
+    id: id || `artifact-${String(kind || 'unknown')}-${artifactIdentityHash.slice(0, 24)}`,
+    user_id: String(userId || ''),
+    artifact_kind: kind,
+    decision_id: decisionId,
+    parent_artifact_id: parentArtifactId,
+    plan_generation_candidate_id: planGenerationCandidateId,
+    schema_version: schemaVersion,
+    policy_version: policyVersion,
+    revision,
+    content_hash: contentHash,
+    payload_json: payloadJson,
+    created_at: new Date(createdAt).toISOString(),
+  };
+  return assertPipelineArtifact(artifact);
+}
+
+async function persistPipelineArtifacts({ tx, artifacts, requireCompleteLinks = false } = {}) {
+  if (!tx || typeof tx.run !== 'function') throw new Error('persistPipelineArtifacts requires a transaction');
+  const rows = Array.isArray(artifacts) ? artifacts : Object.values(artifacts || {});
+  if (!rows.length) return { inserted: 0, artifact_ids: [] };
+  if (requireCompleteLinks) assertPipelineLinks(rows);
+  else rows.forEach((artifact) => {
+    assertArtifactPayloadRedacted(artifact.payload_json);
+    assertPipelineArtifact(artifact);
+  });
+  if (requireCompleteLinks) rows.forEach((artifact) => assertArtifactPayloadRedacted(artifact.payload_json));
+  let inserted = 0;
+  for (const artifact of rows) {
+    const result = await tx.run(
+      `INSERT INTO planning_pipeline_artifacts (
+         id, user_id, artifact_kind, decision_id, parent_artifact_id,
+         plan_generation_candidate_id, schema_version, policy_version,
+         revision, content_hash, payload_json, created_at
+       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+       ON CONFLICT DO NOTHING`,
+      [
+        artifact.id,
+        artifact.user_id,
+        artifact.artifact_kind,
+        artifact.decision_id,
+        artifact.parent_artifact_id,
+        artifact.plan_generation_candidate_id,
+        String(artifact.schema_version),
+        String(artifact.policy_version),
+        artifact.revision,
+        artifact.content_hash,
+        JSON.stringify(artifact.payload_json),
+        artifact.created_at,
+      ]
+    );
+    inserted += Number(result?.changes || 0);
+  }
+  return { inserted, artifact_ids: rows.map((artifact) => artifact.id) };
 }
 
 function jsonBytes(value) {
@@ -335,7 +487,11 @@ function validateGoalBackwardCandidateBundle({ artifacts = null, bindings, ...ca
     ...validateCandidateBundle(candidateBundle),
     bindings: buildGoalBackwardCandidateBindings(bindings),
   };
-  if (artifacts !== null) normalized.artifacts = assertPipelineLinks(artifacts);
+  if (artifacts !== null) {
+    const rows = Array.isArray(artifacts) ? artifacts : Object.values(artifacts || {});
+    rows.forEach((artifact) => assertArtifactPayloadRedacted(artifact.payload_json));
+    normalized.artifacts = assertPipelineLinks(artifacts);
+  }
   return normalized;
 }
 
@@ -361,14 +517,17 @@ module.exports = {
   HASH_PREFIX,
   assertBoundedJson,
   assertPersistablePlan,
+  buildPipelineArtifact,
   buildPlanningSnapshot,
   buildGoalBackwardCandidateBundle,
   buildGoalBackwardCandidateBindings,
+  findArtifactRedactionViolations,
   jsonBytes,
   normalizeContext,
   normalizeCheckin,
   parseJson,
   prefixedHash,
+  persistPipelineArtifacts,
   redactSnapshotValue,
   validateCandidateBundle,
   validateGoalBackwardCandidateBundle,

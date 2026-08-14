@@ -4,7 +4,10 @@ const { randomUUID } = require('node:crypto');
 const { pool, dbGet, dbAll, withTransaction } = require('../db');
 const plansRouter = require('./plans');
 const { RACE_PLAN_POLICY_V1 } = require('../lib/racePlanPolicy');
-const { buildPlanDiagnosticBundle } = require('../lib/racePlanDiagnostics');
+const {
+  buildDecisionArtifactDiagnosticBundle,
+  buildPlanDiagnosticBundle,
+} = require('../lib/racePlanDiagnostics');
 
 function diagnosticsAdmins() {
   return String(process.env.DIAGNOSTICS_ADMIN_EMAILS || process.env.ADMIN_EMAILS || '')
@@ -158,6 +161,64 @@ router.post('/plan-audit', auth, requireDiagnosticsAdmin, async (req, res) => {
       error: Number(err.status) && Number(err.status) < 500
         ? err.message
         : 'Unable to build the plan diagnostic.',
+      ...(err.code ? { code: err.code } : {}),
+    });
+  }
+});
+
+// GET /api/diagnostics/plan-audit/:decisionId/artifacts — bounded, owner-scoped
+// v2.4 pipeline artifacts. Payload validation fails closed on secret/PII keys.
+router.get('/plan-audit/:decisionId/artifacts', auth, requireDiagnosticsAdmin, async (req, res) => {
+  const targetUserId = typeof req.query?.user_id === 'string' ? req.query.user_id.trim() : '';
+  const decisionId = typeof req.params?.decisionId === 'string' ? req.params.decisionId.trim() : '';
+  if (!targetUserId || targetUserId.length > 128 || !decisionId || decisionId.length > 200) {
+    return res.status(400).json({ error: 'A valid user_id target and decision ID are required.' });
+  }
+
+  try {
+    const artifacts = await dbAll(
+      `SELECT id, user_id, artifact_kind, decision_id, parent_artifact_id,
+              plan_generation_candidate_id, schema_version, policy_version,
+              revision, content_hash, payload_json, created_at
+       FROM planning_pipeline_artifacts
+       WHERE user_id=? AND decision_id=?
+       ORDER BY created_at ASC, id ASC
+       LIMIT 32`,
+      [targetUserId, decisionId]
+    );
+    if (!artifacts.length) return res.status(404).json({ error: 'No linked artifacts were found for that decision.' });
+
+    const bundle = buildDecisionArtifactDiagnosticBundle({
+      targetUserId,
+      decisionId,
+      artifactRows: artifacts,
+    });
+    await withTransaction(async (tx) => {
+      await tx.run(
+        `INSERT INTO diagnostic_access_audit (
+           id, actor_user_id, target_user_id, training_plan_id, user_plan_id, candidate_id, action
+         ) VALUES (?,?,?,?,?,?,?)`,
+        [
+          randomUUID(),
+          req.user.id,
+          targetUserId,
+          null,
+          null,
+          artifacts.find((artifact) => artifact.plan_generation_candidate_id)?.plan_generation_candidate_id || null,
+          'planning_artifacts_read',
+        ]
+      );
+    }, {
+      userIds: [req.user.id, targetUserId],
+      requireUserIds: [req.user.id, targetUserId],
+    });
+    return res.json({ ok: true, diagnostic: bundle });
+  } catch (err) {
+    console.error('[diagnostics/plan-artifacts] failed:', err.message);
+    return res.status(Number(err.status) || 500).json({
+      error: Number(err.status) && Number(err.status) < 500
+        ? err.message
+        : 'Unable to retrieve the linked plan artifacts.',
       ...(err.code ? { code: err.code } : {}),
     });
   }

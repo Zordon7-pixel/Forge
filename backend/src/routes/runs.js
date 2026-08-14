@@ -39,6 +39,8 @@ const {
   shouldInvalidateRunFeedback,
 } = require('../lib/runPostRun');
 const { planningInputUnchanged } = require('../lib/planningRevision');
+const { getGoalBackwardV24Mode } = require('../lib/betaPlanRollout');
+const { buildAttributedCorrection } = require('../lib/goalBackwardEvidence');
 
 function startOfDay(d) {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
@@ -970,6 +972,12 @@ router.post('/', auth, async (req, res) => {
 });
 
 async function updateRunHandler(req, res) {
+  if (getGoalBackwardV24Mode() !== 'off') {
+    return res.status(409).json({
+      error: 'Observed run evidence is immutable while Goal-Backward v2.4 is enabled.',
+      code: 'EVIDENCE_IMMUTABLE',
+    });
+  }
   try {
     const { date, distance_miles, duration_seconds, notes, perceived_effort, type, run_surface, incline_pct, treadmill_speed, pain_level, post_energy } = req.body;
     const validPainLevels = ['none', 'mild', 'moderate', 'severe'];
@@ -1047,6 +1055,104 @@ async function updateRunHandler(req, res) {
     res.status(500).json({ error: 'Update failed' });
   }
 }
+
+router.post('/:id/evidence-corrections', auth, async (req, res) => {
+  const mode = getGoalBackwardV24Mode();
+  if (mode !== 'preview' && mode !== 'on') {
+    return res.status(404).json({ error: 'Not found' });
+  }
+  const correctedDistanceM = Number(
+    req.body?.corrected_distance_m
+      ?? req.body?.corrected_canonical_value?.value
+      ?? req.body?.corrected_canonical_value_json?.value
+  );
+  const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim() : '';
+  if (!Number.isFinite(correctedDistanceM) || correctedDistanceM <= 0 || correctedDistanceM > 1000000) {
+    return res.status(400).json({ error: 'corrected_distance_m must be greater than 0 and at most 1000000.' });
+  }
+  if (reason.length < 1 || reason.length > 500) {
+    return res.status(400).json({ error: 'A correction reason between 1 and 500 characters is required.' });
+  }
+
+  try {
+    const result = await withPlanningInputMutation(req.user.id, async (tx) => {
+      const run = await tx.get(
+        `SELECT id, type, watch_activity_type, watch_normalized_type, distance_miles, duration_seconds
+         FROM runs WHERE id=? AND user_id=? FOR UPDATE`,
+        [req.params.id, req.user.id]
+      );
+      if (!run) {
+        const notFound = new Error('Run not found');
+        notFound.status = 404;
+        throw notFound;
+      }
+      if (!isRunActivity(run)) {
+        const wrongType = new Error('Distance correction is only available for running activities');
+        wrongType.status = 400;
+        throw wrongType;
+      }
+      const previous = await tx.get(
+        `SELECT id, revision
+         FROM planning_evidence_corrections
+         WHERE user_id=? AND raw_evidence_kind='run' AND raw_evidence_ref=?
+         ORDER BY revision DESC
+         LIMIT 1`,
+        [req.user.id, req.params.id]
+      );
+      const correction = buildAttributedCorrection({
+        id: uuidv4(),
+        athleteId: req.user.id,
+        rawEvidenceKind: 'run',
+        rawEvidenceRef: req.params.id,
+        revision: Number(previous?.revision || 0) + 1,
+        correctedValue: { field: 'distance_m', value: Math.round(correctedDistanceM) },
+        canonicalUnit: 'm',
+        reason,
+        attributedByUserId: req.user.id,
+        supersedesCorrectionId: previous?.id || null,
+        attribution: { source: 'run_evidence_correction' },
+      });
+      await tx.run(
+        `INSERT INTO planning_evidence_corrections (
+           id, user_id, raw_evidence_kind, raw_evidence_ref, revision,
+           corrected_canonical_value_json, canonical_unit, reason_code, reason,
+           attributed_by_user_id, attribution_json, supersedes_correction_id,
+           content_hash, created_at
+         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        [
+          correction.id,
+          correction.user_id,
+          correction.raw_evidence_kind,
+          correction.raw_evidence_ref,
+          correction.revision,
+          JSON.stringify(correction.corrected_canonical_value_json),
+          correction.canonical_unit,
+          correction.reason_code,
+          correction.reason,
+          correction.attributed_by_user_id,
+          JSON.stringify(correction.attribution_json),
+          correction.supersedes_correction_id,
+          correction.content_hash,
+          correction.created_at,
+        ]
+      );
+      return {
+        correction,
+        observed: {
+          run_id: run.id,
+          distance_miles: Number(run.distance_miles),
+          duration_seconds: Number(run.duration_seconds),
+        },
+      };
+    });
+    return res.status(201).json({ ok: true, ...result });
+  } catch (err) {
+    if (err.status === 404) return res.status(404).json({ error: 'Run not found' });
+    if (err.status === 400) return res.status(400).json({ error: err.message });
+    console.error('[runs/evidence-corrections] failed:', err.message);
+    return res.status(500).json({ error: 'Correction failed' });
+  }
+});
 
 router.patch('/:id/check-in', auth, async (req, res) => {
   const normalized = normalizePostRunCheckIn(req.body || {});
@@ -1187,5 +1293,9 @@ router.post('/missed', auth, async (req, res) => {
   };
   res.json({ ok: true, message: adjustments[reason] || "Got it — adjusted your plan. Keep moving forward.", reason });
 });
+
+router._test = {
+  updateRunHandler,
+};
 
 module.exports = router;

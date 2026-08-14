@@ -1,7 +1,14 @@
 const planSchema = require('./planSchema');
 const runWorkoutTaxonomy = require('./runWorkoutTaxonomy');
 const { RACE_PLAN_POLICY_V1, canonicalHash } = require('./racePlanPolicy');
-const { assertBoundedJson, redactSnapshotValue } = require('./planCandidateLifecycle');
+const {
+  assertBoundedJson,
+  findArtifactRedactionViolations,
+  redactSnapshotValue,
+} = require('./planCandidateLifecycle');
+const {
+  validatePipelineArtifact,
+} = require('./goalBackwardContracts');
 
 const MAX_TEXT_LENGTH = 80;
 
@@ -213,7 +220,127 @@ function buildPlanDiagnosticBundle({ targetUserId, candidate }) {
   return redacted;
 }
 
+function parseArtifactPayload(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+  if (typeof value !== 'string') return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+  } catch (_error) {
+    return null;
+  }
+}
+
+function pseudonymizeArtifactPayload(value, targetUserId, targetRef) {
+  if (Array.isArray(value)) {
+    return value.map((entry) => pseudonymizeArtifactPayload(entry, targetUserId, targetRef));
+  }
+  if (!value || typeof value !== 'object') return value === targetUserId ? targetRef : value;
+  return Object.keys(value).sort().reduce((result, key) => {
+    const normalized = String(key).replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
+    const nested = value[key];
+    if (['athlete_id', 'user_id', 'owner_id', 'attributed_by_user_id'].includes(normalized)) {
+      result[key] = nested == null ? null : targetRef;
+    } else {
+      result[key] = pseudonymizeArtifactPayload(nested, targetUserId, targetRef);
+    }
+    return result;
+  }, {});
+}
+
+function diagnosticArtifactError(message, code, details = null) {
+  const error = new Error(message);
+  error.code = code;
+  error.status = 422;
+  if (details) error.details = details;
+  return error;
+}
+
+function buildDecisionArtifactDiagnosticBundle({ targetUserId, decisionId, artifactRows = [] }) {
+  const scopedTargetId = String(targetUserId || '').trim();
+  const scopedDecisionId = String(decisionId || '').trim();
+  if (!scopedTargetId || !scopedDecisionId || scopedDecisionId.length > 200) {
+    throw diagnosticArtifactError('A bounded owner and decision ID are required.', 'DIAGNOSTIC_ARTIFACT_SCOPE_INVALID');
+  }
+  if (!Array.isArray(artifactRows) || artifactRows.length > 32) {
+    throw diagnosticArtifactError('Diagnostic artifact results must be bounded to 32 rows.', 'DIAGNOSTIC_ARTIFACT_LIMIT_EXCEEDED');
+  }
+  const targetRef = `sha256:${canonicalHash(scopedTargetId)}`;
+  const artifacts = artifactRows.map((row, index) => {
+    const payload = parseArtifactPayload(row?.payload_json);
+    if (!payload) {
+      throw diagnosticArtifactError('Stored artifact payload is invalid.', 'DIAGNOSTIC_ARTIFACT_INVALID', { index });
+    }
+    const violations = findArtifactRedactionViolations(payload, `artifacts[${index}].payload_json`);
+    if (violations.length) {
+      throw diagnosticArtifactError(
+        'Stored artifact contains a prohibited secret or PII key.',
+        'DIAGNOSTIC_ARTIFACT_REDACTION_REQUIRED',
+        { paths: violations }
+      );
+    }
+    const normalized = {
+      id: row.id,
+      user_id: row.user_id,
+      artifact_kind: row.artifact_kind,
+      decision_id: row.decision_id,
+      parent_artifact_id: row.parent_artifact_id ?? null,
+      plan_generation_candidate_id: row.plan_generation_candidate_id ?? null,
+      schema_version: row.schema_version,
+      policy_version: row.policy_version,
+      revision: Number(row.revision),
+      content_hash: row.content_hash,
+      payload_json: payload,
+      created_at: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+    };
+    const validation = validatePipelineArtifact(normalized);
+    if (!validation.valid || normalized.user_id !== scopedTargetId || normalized.decision_id !== scopedDecisionId) {
+      throw diagnosticArtifactError(
+        'Stored artifact failed scope or contract validation.',
+        'DIAGNOSTIC_ARTIFACT_INVALID',
+        { index, validation: validation.errors }
+      );
+    }
+    const expectedContentHash = `sha256:${canonicalHash(payload)}`;
+    const normalizedContentHash = String(normalized.content_hash || '').startsWith('sha256:')
+      ? String(normalized.content_hash)
+      : `sha256:${normalized.content_hash}`;
+    if (normalizedContentHash !== expectedContentHash) {
+      throw diagnosticArtifactError(
+        'Stored artifact payload does not match its content hash.',
+        'DIAGNOSTIC_ARTIFACT_HASH_MISMATCH',
+        { index, artifact_id: normalized.id }
+      );
+    }
+    const diagnosticPayload = pseudonymizeArtifactPayload(payload, scopedTargetId, targetRef);
+    return {
+      id: normalized.id,
+      artifact_kind: normalized.artifact_kind,
+      decision_id: normalized.decision_id,
+      parent_artifact_id: normalized.parent_artifact_id,
+      plan_generation_candidate_id: normalized.plan_generation_candidate_id,
+      schema_version: normalized.schema_version,
+      policy_version: normalized.policy_version,
+      revision: normalized.revision,
+      content_hash: normalized.content_hash,
+      diagnostic_payload_hash: `sha256:${canonicalHash(diagnosticPayload)}`,
+      payload_json: diagnosticPayload,
+      created_at: normalized.created_at,
+    };
+  });
+  const bundle = {
+    schema_version: 1,
+    target_ref: targetRef,
+    decision_id: scopedDecisionId,
+    artifact_count: artifacts.length,
+    artifacts,
+  };
+  assertBoundedJson(bundle, RACE_PLAN_POLICY_V1.diagnostics.maximumResponseBytes, 'decision artifact diagnostic response');
+  return bundle;
+}
+
 module.exports = {
+  buildDecisionArtifactDiagnosticBundle,
   buildPlanDiagnosticBundle,
   dosageTrace,
   inputSources,

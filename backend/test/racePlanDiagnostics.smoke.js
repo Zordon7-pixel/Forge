@@ -2,7 +2,15 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const diagnosticsRouter = require('../src/routes/diagnostics');
-const { buildPlanDiagnosticBundle } = require('../src/lib/racePlanDiagnostics');
+const {
+  buildDecisionArtifactDiagnosticBundle,
+  buildPlanDiagnosticBundle,
+} = require('../src/lib/racePlanDiagnostics');
+const {
+  buildPipelineArtifact,
+  persistPipelineArtifacts,
+} = require('../src/lib/planCandidateLifecycle');
+const { assertPipelineLinks } = require('../src/lib/goalBackwardContracts');
 
 function plan({ miles = 3, workoutId = 'easy_aerobic', title = 'Easy run' } = {}) {
   return {
@@ -108,7 +116,7 @@ function verifyAdminGate() {
   }
 }
 
-function run() {
+async function run() {
   const targetUserId = 'private-user-id-123';
   const activePlan = plan({ miles: 3 });
   const nextPlan = plan({ miles: 5, workoutId: 'long_aerobic', title: 'Long aerobic run' });
@@ -148,6 +156,99 @@ function run() {
     (error) => error.code === 'PLAN_CANDIDATE_TOO_LARGE' && error.status === 422,
   );
 
+  const evidenceArtifact = buildPipelineArtifact({
+    id: 'artifact-evidence',
+    userId: targetUserId,
+    kind: 'evidence_snapshot',
+    decisionId: 'decision-1',
+    payload: { evidence_ids: ['evidence-1'], source_refs: ['provider-ref-1'] },
+    createdAt: '2026-08-14T12:00:00.000Z',
+  });
+  const athleteStateArtifact = buildPipelineArtifact({
+    id: 'artifact-state',
+    userId: targetUserId,
+    kind: 'athlete_state',
+    decisionId: 'decision-1',
+    parentArtifactId: evidenceArtifact.id,
+    payload: { athlete_state_revision: 2, reason_codes: ['TRAINING_GAP_REBUILD'] },
+    createdAt: '2026-08-14T12:00:01.000Z',
+    revision: 2,
+  });
+  const pipeline = [evidenceArtifact, athleteStateArtifact];
+  for (const kind of ['planning_decision', 'candidate_week', 'validator_result', 'canonical_session_set', 'surface_manifest']) {
+    const prior = pipeline[pipeline.length - 1];
+    pipeline.push(buildPipelineArtifact({
+      id: `artifact-${kind}`,
+      userId: targetUserId,
+      kind,
+      decisionId: 'decision-1',
+      parentArtifactId: prior.id,
+      planGenerationCandidateId: pipeline.length >= 3 ? 'candidate-1' : null,
+      payload: { stage: kind, reason_codes: [] },
+      createdAt: `2026-08-14T12:00:0${pipeline.length}.000Z`,
+    }));
+  }
+  assert.equal(assertPipelineLinks(pipeline), pipeline);
+  const artifactBundle = buildDecisionArtifactDiagnosticBundle({
+    targetUserId,
+    decisionId: 'decision-1',
+    artifactRows: pipeline,
+  });
+  assert.equal(artifactBundle.decision_id, 'decision-1');
+  assert.equal(artifactBundle.artifact_count, 7);
+  assert.equal(artifactBundle.artifacts[0].artifact_kind, 'evidence_snapshot');
+  assert.equal(artifactBundle.artifacts[1].parent_artifact_id, 'artifact-evidence');
+  assert.equal(JSON.stringify(artifactBundle).includes(targetUserId), false);
+  const artifactWrites = [];
+  const persisted = await persistPipelineArtifacts({
+    tx: {
+      async run(sql, params) {
+        artifactWrites.push({ sql, params });
+        return { changes: 1 };
+      },
+    },
+    artifacts: pipeline,
+    requireCompleteLinks: true,
+  });
+  assert.equal(persisted.inserted, 7);
+  assert.deepEqual(persisted.artifact_ids, pipeline.map((artifact) => artifact.id));
+  assert.equal(artifactWrites.length, 7);
+  assert.equal(artifactWrites.every((write) => write.sql.includes('INSERT INTO planning_pipeline_artifacts')), true);
+  assert.equal(artifactWrites.every((write) => !write.sql.includes('UPDATE planning_pipeline_artifacts')), true);
+  assert.throws(
+    () => buildDecisionArtifactDiagnosticBundle({
+      targetUserId,
+      decisionId: 'decision-1',
+      artifactRows: [{
+        ...evidenceArtifact,
+        payload_json: { nested: [{ privateProfile: { phoneNumber: '+1-555-0100' } }] },
+      }],
+    }),
+    (error) => error.code === 'DIAGNOSTIC_ARTIFACT_REDACTION_REQUIRED' && error.status === 422,
+  );
+  for (const forbiddenKey of ['ssn', 'socialSecurityNumber', 'homeAddress', 'creditCardNumber']) {
+    assert.throws(
+      () => buildPipelineArtifact({
+        id: `artifact-pii-${forbiddenKey}`,
+        userId: targetUserId,
+        kind: 'evidence_snapshot',
+        decisionId: 'decision-1',
+        payload: { nested: [{ [forbiddenKey]: 'must-not-persist' }] },
+        createdAt: '2026-08-14T12:00:00.000Z',
+      }),
+      (error) => error.code === 'INVALID_PIPELINE_ARTIFACT'
+        && error.details.some((detail) => detail.code === 'ARTIFACT_REDACTION_REQUIRED'),
+    );
+  }
+  assert.throws(
+    () => buildDecisionArtifactDiagnosticBundle({
+      targetUserId,
+      decisionId: 'decision-1',
+      artifactRows: [{ ...evidenceArtifact, payload_json: { evidence_ids: ['tampered'] } }],
+    }),
+    (error) => error.code === 'DIAGNOSTIC_ARTIFACT_HASH_MISMATCH' && error.status === 422,
+  );
+
   verifyAdminGate();
 
   const routeSource = fs.readFileSync(path.join(__dirname, '../src/routes/diagnostics.js'), 'utf8');
@@ -157,8 +258,14 @@ function run() {
   assert.match(routeSource, /INSERT INTO diagnostic_access_audit/);
   assert.match(routeSource, /userIds: \[req\.user\.id, targetUserId\]/);
   assert.doesNotMatch(routeSource, /INSERT INTO plan_generation_candidates[\s\S]*plan-audit/);
+  assert.match(routeSource, /router\.get\('\/plan-audit\/:decisionId\/artifacts', auth, requireDiagnosticsAdmin/);
+  assert.match(routeSource, /FROM planning_pipeline_artifacts[\s\S]*WHERE user_id=\? AND decision_id=\?/);
+  assert.match(routeSource, /LIMIT 32/);
 
-  console.log('RACE PLAN DIAGNOSTICS SMOKE OK (25)');
+  console.log('RACE PLAN DIAGNOSTICS SMOKE OK (56)');
 }
 
-run();
+run().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
