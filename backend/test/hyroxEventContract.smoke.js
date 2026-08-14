@@ -12,7 +12,11 @@ const ROOT = path.join(__dirname, '..');
 
 function assertStandards() {
   assert.equal(standards.REGISTRY.schemaVersion, 1);
+  assert.equal(standards.REGISTRY.rulesetId, 'hyrox-global');
+  assert.equal(standards.REGISTRY.rulesetVersion, '2026-2027');
   assert.equal(standards.REGISTRY.rulesVersion, '2026-2027');
+  assert.match(standards.REGISTRY.effectiveFrom, /^\d{4}-\d{2}-\d{2}$/);
+  assert.match(standards.REGISTRY.effectiveThrough, /^\d{4}-\d{2}-\d{2}$/);
   assert.match(standards.REGISTRY.sourceUrl, /^https:\/\/hyrox\.com\//);
   assert.match(standards.REGISTRY.reviewedAt, /^\d{4}-\d{2}-\d{2}$/);
   assert.equal(standards.REGISTRY.canonicalUnits, 'metric');
@@ -28,6 +32,8 @@ function assertStandards() {
     format: 'individual_open', category: 'men', rulesVersion: '2026-2027',
   });
   assert.equal(resolved.status, 'exact');
+  assert.equal(resolved.rulesetId, 'hyrox-global');
+  assert.equal(resolved.rulesetVersion, '2026-2027');
   assert.equal(resolved.stations.length, 8);
   assert.equal(resolved.stations.find((station) => station.id === 'sled_push').distanceMeters, 50);
   assert.equal(resolved.stations.find((station) => station.id === 'wall_ball').repetitions, 100);
@@ -62,6 +68,24 @@ function assertStandards() {
   assert.equal(standards.resolveHyroxStandard({
     format: 'individual_open', category: 'men', rulesVersion: 'invented-season',
   }).status, 'unsupported_rules_version');
+  const unsupportedRuleset = standards.resolveHyroxStandard({
+    rulesetId: 'invented-ruleset',
+    rulesetVersion: '2026-2027',
+    format: 'individual_open',
+    category: 'men',
+  });
+  assert.equal(unsupportedRuleset.status, 'unsupported_ruleset');
+  assert.equal(unsupportedRuleset.stations, null);
+  assert.equal(unsupportedRuleset.exactLoads, false);
+  const unsupportedDivision = standards.resolveHyroxStandard({
+    rulesetId: 'hyrox-global',
+    rulesetVersion: '2026-2027',
+    format: 'doubles',
+    category: 'unknown',
+  });
+  assert.equal(unsupportedDivision.status, 'unsupported_division_category');
+  assert.equal(unsupportedDivision.stations, null);
+  assert.equal(unsupportedDivision.exactLoads, false);
 }
 
 function assertEventNormalization() {

@@ -113,3 +113,27 @@ node backend/test/racePlanQuality.smoke.js
 ```
 
 Batch 6 status (2026-08-14): `patched`; the four-command gate passes locally. Independent QA and Hermes verification remain pending.
+
+## Goal-Backward Coaching v2.4 — Phase 3A
+
+- [ ] Only the approved 10-file Batch 8 allowlist changed; no route, package/lock, migration, native, surface, or unrelated tracked file changed
+- [ ] The official HYROX registry retains exact current station order, metric standards, division/category loads, sources, and legacy `rulesVersion` while adding explicit ruleset ID/version and reviewed/effective metadata
+- [ ] Missing, unknown, or unsupported ruleset ID/version or division returns no exact station loads and preserves registered-load/relative-technique language
+- [ ] Singles owns all eight official runs, all eight stations, transition/Roxzone behavior, compromised-running evidence, and individual fatigue/recovery burden
+- [ ] Doubles retains partner ID/placeholder, planned and actual split, athlete and partner contribution, team evidence, and athlete-specific fatigue evidence independently
+- [ ] Doubles team station time remains visible while individual station time/contribution stays null when the actual split is unknown; no 50/50 inference occurs
+- [ ] Team performance burden and individual training burden are separately queryable and both athletes retain the full official Doubles run requirement
+- [ ] Missing run, station, and transition projections remain null; known-component sum and unknown-unallocated arithmetic never turn missing evidence into zero or support
+- [ ] Sub-60 support requires every mandatory component at `MEDIUM+` confidence and coherent team/individual burden
+- [ ] Equipment substitutions remain `pattern_only`, keep prescribed load null, omit the official standard, and cannot satisfy exact station readiness
+- [ ] Missing, invalid, and explicit `off` v2.4 modes retain the legacy HYROX plan payload; canonical HYROX artifacts are additive only for a valid non-off mode
+
+Run the Phase 3A gate:
+
+```sh
+node backend/test/goalBackwardHyrox.smoke.js
+node backend/test/hyroxPlanEngine.smoke.js
+node backend/test/hyroxEventContract.smoke.js
+```
+
+Batch 8 status (2026-08-14): `patched`; the three-command gate passes locally. Independent QA and Hermes verification remain pending.

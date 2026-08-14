@@ -14,6 +14,13 @@ const {
 const { resolveStressVector } = require('./goalBackwardLoad');
 const { buildCanonicalMaterialTarget } = require('./goalBackwardTargets');
 const { canonicalStringify, canonicalHash } = require('./racePlanPolicy');
+const {
+  REGISTRY: HYROX_REGISTRY,
+  STATION_ORDER: HYROX_STATION_ORDER,
+  normalizeHyroxCategory,
+  normalizeHyroxFormat,
+  resolveHyroxStandard,
+} = require('./hyroxStandards');
 const planSchema = require('./planSchema');
 
 const SESSION_ROLE_SET = new Set(CANONICAL_SESSION_ROLES);
@@ -1043,10 +1050,236 @@ function materializeCanonicalSessionSet(input = {}) {
   return deepFreeze(set);
 }
 
+function canonicalHyroxFormat(input = {}) {
+  const raw = String(input.format ?? input.event_format ?? input.eventFormat ?? '').toLowerCase();
+  if (raw === 'doubles') return 'doubles';
+  if (['singles', 'open', 'pro', 'individual', 'individual_open', 'individual_pro'].includes(raw)) {
+    return 'singles';
+  }
+  const eventFormat = normalizeHyroxFormat(input.event_format ?? input.eventFormat ?? raw);
+  if (eventFormat === 'doubles') return 'doubles';
+  if (['individual_open', 'individual_pro'].includes(eventFormat)) return 'singles';
+  return null;
+}
+
+function canonicalHyroxEventFormat(input, format) {
+  if (format === 'doubles') return 'doubles';
+  const explicit = normalizeHyroxFormat(input.event_format ?? input.eventFormat);
+  if (['individual_open', 'individual_pro'].includes(explicit)) return explicit;
+  const legacy = normalizeHyroxFormat(input.format);
+  if (['individual_open', 'individual_pro'].includes(legacy)) return legacy;
+  return 'individual_open';
+}
+
+function stationMap(value, mapper = (entry) => clone(entry)) {
+  const source = isPlainObject(value) ? value : {};
+  return Object.fromEntries(HYROX_STATION_ORDER.map((stationId) => [
+    stationId,
+    Object.hasOwn(source, stationId) && source[stationId] !== undefined
+      ? mapper(source[stationId], stationId)
+      : null,
+  ]));
+}
+
+function splitContribution(splitMap, owner) {
+  return stationMap(splitMap, (entry) => {
+    if (!isPlainObject(entry)) return null;
+    if (Object.hasOwn(entry, owner) && entry[owner] !== undefined && entry[owner] !== null) {
+      return clone(entry[owner]);
+    }
+    const fraction = entry[`${owner}_fraction`] ?? entry[`${owner}_percentage`];
+    return fraction === undefined || fraction === null ? null : { fraction: clone(fraction) };
+  });
+}
+
+function secondsFrom(value) {
+  if (Number.isSafeInteger(value) && value >= 0) return value;
+  if (!isPlainObject(value)) return null;
+  const seconds = value.time_s ?? value.projected_time_s ?? value.duration_s;
+  return Number.isSafeInteger(seconds) && seconds >= 0 ? seconds : null;
+}
+
+function exactHyroxLoad(standard = {}) {
+  const load = Object.keys(standard).reduce((result, key) => {
+    if (/Kg|implements|targetHeightMeters|loadsByAthleteCategory/.test(key)) result[key] = clone(standard[key]);
+    return result;
+  }, {});
+  return load;
+}
+
+function officialContribution(standard = {}) {
+  const contribution = {};
+  if (Number.isSafeInteger(standard.distanceMeters)) contribution.distance_m = standard.distanceMeters;
+  if (Number.isSafeInteger(standard.repetitions)) contribution.repetitions = standard.repetitions;
+  contribution.ownership = 'athlete_full';
+  return contribution;
+}
+
+function buildCanonicalHyroxEventState(input = {}) {
+  const format = canonicalHyroxFormat(input);
+  const eventFormat = canonicalHyroxEventFormat(input, format);
+  const rawDivision = input.registered_division ?? input.registeredDivision ?? input.category;
+  const registeredDivision = normalizeHyroxCategory(rawDivision) || 'unknown';
+  const rulesetId = input.ruleset_id ?? input.rulesetId ?? null;
+  const rulesetVersion = input.ruleset_version
+    ?? input.rulesetVersion
+    ?? input.rulesVersion
+    ?? null;
+  const resolved = nonEmptyString(rulesetId) && nonEmptyString(rulesetVersion)
+    ? resolveHyroxStandard({
+      rulesetId,
+      rulesetVersion,
+      format: eventFormat,
+      category: registeredDivision,
+    })
+    : {
+      status: 'incomplete',
+      rulesetId,
+      rulesetVersion,
+      format: eventFormat,
+      category: registeredDivision,
+      exactLoads: false,
+      stations: null,
+    };
+  const exact = resolved.status === 'exact';
+  const standards = exact ? resolved.stations : HYROX_REGISTRY.stations.map((station) => ({
+    id: station.id,
+    name: station.name,
+    equipmentKey: station.equipmentKey,
+  }));
+  const stationOwnership = format === 'doubles' ? 'team_shared' : 'athlete';
+  const runOwnership = format === 'doubles' ? 'athlete_required_with_partner' : 'athlete';
+  const officialRunRequirements = HYROX_STATION_ORDER.map((stationId, index) => ({
+    order: index + 1,
+    station_id_after_run: stationId,
+    distance_m: exact ? resolved.stations[index].runBeforeMeters : null,
+    ownership: runOwnership,
+  }));
+  const officialStationRequirements = standards.map((standard, index) => ({
+    station_id: standard.id,
+    order: index + 1,
+    ownership: stationOwnership,
+    distance_m: exact && Number.isSafeInteger(standard.distanceMeters) ? standard.distanceMeters : null,
+    repetitions: exact && Number.isSafeInteger(standard.repetitions) ? standard.repetitions : null,
+    official_standard: exact ? clone(standard) : null,
+    exact_load: exact ? exactHyroxLoad(standard) : null,
+    load_instruction: exact ? 'official_registered_load' : 'registered_load_or_relative_technique',
+  }));
+  const plannedStationSplit = stationMap(input.planned_station_split ?? input.plannedStationSplit);
+  const actualStationSplit = stationMap(input.actual_station_split ?? input.actualStationSplit);
+  const plannedAthleteContribution = splitContribution(plannedStationSplit, 'athlete');
+  const plannedPartnerContribution = splitContribution(plannedStationSplit, 'partner');
+  const actualAthleteContribution = splitContribution(actualStationSplit, 'athlete');
+  const actualPartnerContribution = splitContribution(actualStationSplit, 'partner');
+  const explicitAthleteContribution = stationMap(
+    input.athlete_station_contribution ?? input.athleteStationContribution,
+  );
+  const explicitPartnerContribution = stationMap(
+    input.partner_station_contribution ?? input.partnerStationContribution,
+  );
+  const athleteStationContribution = format === 'singles'
+    ? Object.fromEntries(resolved.status === 'exact'
+      ? resolved.stations.map((standard) => [standard.id, officialContribution(standard)])
+      : HYROX_STATION_ORDER.map((stationId) => [stationId, null]))
+    : Object.fromEntries(HYROX_STATION_ORDER.map((stationId) => [
+      stationId,
+      explicitAthleteContribution[stationId] ?? actualAthleteContribution[stationId] ?? null,
+    ]));
+  const partnerStationContribution = format === 'doubles'
+    ? Object.fromEntries(HYROX_STATION_ORDER.map((stationId) => [
+      stationId,
+      explicitPartnerContribution[stationId] ?? actualPartnerContribution[stationId] ?? null,
+    ]))
+    : Object.fromEntries(HYROX_STATION_ORDER.map((stationId) => [stationId, null]));
+  const teamStationTime = stationMap(
+    input.team_station_time ?? input.teamStationTime,
+    (entry) => secondsFrom(entry),
+  );
+  const individualStationTime = Object.fromEntries(HYROX_STATION_ORDER.map((stationId) => [
+    stationId,
+    format === 'singles'
+      ? secondsFrom((input.athlete_station_time ?? input.athleteStationTime)?.[stationId])
+      : secondsFrom(athleteStationContribution[stationId]),
+  ]));
+  const contributionCoherent = format === 'singles' || HYROX_STATION_ORDER.every((stationId) => (
+    (athleteStationContribution[stationId] !== null || plannedAthleteContribution[stationId] !== null)
+    && (partnerStationContribution[stationId] !== null || plannedPartnerContribution[stationId] !== null)
+  ));
+  const transitionBehavior = clone(input.transition_behavior ?? input.transitionBehavior ?? {});
+  const roxzone = clone(input.roxzone ?? {});
+  const teamTransitionTime = secondsFrom(
+    transitionBehavior.team_time_s ?? roxzone.team_time_s ?? input.team_transition_roxzone_time_s,
+  );
+  const athleteTransitionTime = secondsFrom(
+    transitionBehavior.athlete_time_s
+      ?? transitionBehavior.time_s
+      ?? roxzone.athlete_time_s
+      ?? input.athlete_transition_roxzone_time_s,
+  );
+  const runDistance = exact
+    ? officialRunRequirements.reduce((sum, run) => sum + run.distance_m, 0)
+    : null;
+  const partnerId = format === 'doubles'
+    ? (input.partner_id ?? input.partnerId ?? null)
+    : null;
+  const placeholder = format === 'doubles' && partnerId === null
+    ? (input.partner_placeholder ?? input.partnerPlaceholder ?? 'Partner TBD')
+    : null;
+  return deepFreeze({
+    format,
+    athlete_id: input.athlete_id ?? input.athleteId ?? null,
+    partner_id: partnerId,
+    partner_placeholder: placeholder,
+    registered_division: registeredDivision,
+    event_format: eventFormat,
+    ruleset_id: rulesetId,
+    ruleset_version: rulesetVersion,
+    ruleset_status: resolved.status,
+    exact_loads_available: exact,
+    official_run_requirements: officialRunRequirements,
+    official_station_requirements: officialStationRequirements,
+    team_station_time: teamStationTime,
+    athlete_station_contribution: athleteStationContribution,
+    partner_station_contribution: partnerStationContribution,
+    planned_station_split: plannedStationSplit,
+    actual_station_split: actualStationSplit,
+    planned_athlete_station_contribution: plannedAthleteContribution,
+    planned_partner_station_contribution: plannedPartnerContribution,
+    transition_behavior: transitionBehavior,
+    roxzone,
+    compromised_running_evidence: clone(input.compromised_running_evidence ?? []),
+    station_performance_evidence: clone(input.station_performance_evidence ?? []),
+    transition_evidence: clone(input.transition_evidence ?? []),
+    team_performance_evidence: clone(input.team_performance_evidence ?? []),
+    athlete_specific_fatigue_evidence: clone(input.athlete_specific_fatigue_evidence ?? []),
+    team_performance_burden: format === 'doubles' ? {
+      run_requirement: 'both_athletes_complete_all_official_runs',
+      athlete_run_distance_m: runDistance,
+      station_ownership: 'team_shared',
+      station_time_s: teamStationTime,
+      transition_roxzone_time_s: teamTransitionTime,
+    } : null,
+    individual_training_burden: {
+      run_distance_m: runDistance,
+      run_ownership: format === 'doubles' ? 'athlete_required_with_partner' : 'athlete',
+      station_ownership: format === 'doubles' ? 'explicit_contribution_only' : 'athlete_full',
+      transition_ownership: format === 'doubles' ? 'athlete_specific_only' : 'athlete',
+      planned_station_contribution: format === 'doubles'
+        ? plannedAthleteContribution
+        : athleteStationContribution,
+      actual_station_contribution: athleteStationContribution,
+      station_time_s: individualStationTime,
+      transition_roxzone_time_s: athleteTransitionTime,
+      contribution_coherent: contributionCoherent,
+    },
+  });
+}
+
 module.exports = {
   TARGET_FIELD_UNITS,
   assertCanonicalSession,
   buildCanonicalSession,
+  buildCanonicalHyroxEventState,
   canonicalSessionSetHash,
   canonicalWorkoutHash,
   deriveAssessmentStressVector: (steps) => resolveStressVector('assessment', {
@@ -1068,4 +1301,5 @@ module.exports = {
   deriveStepTotals: deriveCanonicalTotals,
   hashCanonicalWorkout: canonicalWorkoutHash,
   materializeCanonicalWorkout: buildCanonicalSession,
+  canonicalizeHyroxEventState: buildCanonicalHyroxEventState,
 };

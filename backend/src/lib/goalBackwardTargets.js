@@ -7,6 +7,7 @@ const {
   TARGET_CONVERSION_REGISTRY_V1,
   TARGET_POLICY_V1,
 } = require('./racePlanPolicy');
+const { STATION_ORDER } = require('./hyroxStandards');
 
 const CONFIDENCE_SET = new Set(CONFIDENCE_CLASSES);
 const HARD_WORK_TARGETS = new Set(['threshold', 'interval', 'compromised']);
@@ -600,10 +601,125 @@ function buildCanonicalMaterialTarget(input = {}) {
   });
 }
 
+const HYROX_CONFIDENCE_RANK = Object.freeze({
+  INSUFFICIENT: 0,
+  LOW: 1,
+  MEDIUM: 2,
+  HIGH: 3,
+});
+
+function wholeNonNegativeSeconds(value) {
+  return Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+
+function normalizedConfidence(value, hasValue) {
+  const normalized = String(value || '').toUpperCase();
+  if (!hasValue) return 'INSUFFICIENT';
+  return Object.hasOwn(HYROX_CONFIDENCE_RANK, normalized) ? normalized : 'INSUFFICIENT';
+}
+
+function cloneJson(value, fallback) {
+  if (value === undefined || value === null) return fallback;
+  return JSON.parse(JSON.stringify(value));
+}
+
+function hyroxStationBudgetEntries(value) {
+  const rawEntries = Array.isArray(value)
+    ? value
+    : Object.entries(value && typeof value === 'object' ? value : {}).map(([stationId, station]) => ({
+      station_id: stationId,
+      ...(station && typeof station === 'object' ? station : { projected_time_s: station }),
+    }));
+  const byId = new Map(rawEntries.map((entry) => [String(entry?.station_id || ''), entry]));
+  return STATION_ORDER.map((stationId) => {
+    const raw = byId.get(stationId) || {};
+    const projectedTime = wholeNonNegativeSeconds(raw.projected_time_s);
+    return {
+      station_id: stationId,
+      projected_time_s: projectedTime,
+      evidence_ids: Array.isArray(raw.evidence_ids) ? raw.evidence_ids.map(String).filter(Boolean) : [],
+      confidence: normalizedConfidence(raw.confidence, projectedTime !== null),
+    };
+  });
+}
+
+function minimumHyroxConfidence(values) {
+  const normalized = values.map((value) => normalizedConfidence(value, true));
+  return normalized.reduce((minimum, value) => (
+    HYROX_CONFIDENCE_RANK[value] < HYROX_CONFIDENCE_RANK[minimum] ? value : minimum
+  ), 'HIGH');
+}
+
+function buildHyroxPerformanceBudget(input = {}) {
+  const targetTotal = wholeNonNegativeSeconds(input.target_total_time_s ?? input.targetTotalTimeSeconds);
+  const projectedRun = wholeNonNegativeSeconds(input.projected_run_time_s ?? input.projectedRunTimeSeconds);
+  const transition = wholeNonNegativeSeconds(
+    input.transition_roxzone_time_s ?? input.transitionRoxzoneTimeSeconds,
+  );
+  const stations = hyroxStationBudgetEntries(input.stations);
+  const knownValues = [projectedRun, transition, ...stations.map((station) => station.projected_time_s)]
+    .filter((value) => value !== null);
+  const knownComponentSum = knownValues.reduce((sum, value) => sum + value, 0);
+  const allStationsKnown = stations.every((station) => station.projected_time_s !== null);
+  const mandatoryComponentsKnown = projectedRun !== null && transition !== null && allStationsKnown;
+  const componentConfidences = [
+    normalizedConfidence(input.run_confidence, projectedRun !== null),
+    normalizedConfidence(input.transition_confidence, transition !== null),
+    ...stations.map((station) => station.confidence),
+  ];
+  const confidence = mandatoryComponentsKnown
+    ? minimumHyroxConfidence(componentConfidences)
+    : 'INSUFFICIENT';
+  const hasIndividualTrainingBurden = input.individual_training_burden !== null
+    && typeof input.individual_training_burden === 'object'
+    && !Array.isArray(input.individual_training_burden)
+    && Object.keys(input.individual_training_burden).length > 0;
+  const individualTrainingBurden = cloneJson(input.individual_training_burden, {});
+  const burdenCoherent = input.burden_coherent === true || (
+    hasIndividualTrainingBurden
+    && input.burden_coherent !== false
+    && individualTrainingBurden.contribution_coherent !== false
+  );
+  const supported = mandatoryComponentsKnown
+    && HYROX_CONFIDENCE_RANK[confidence] >= HYROX_CONFIDENCE_RANK.MEDIUM
+    && burdenCoherent;
+  const limiterCategories = Array.isArray(input.limiter_categories)
+    ? input.limiter_categories.map(String).filter(Boolean)
+    : [];
+  if (projectedRun === null) limiterCategories.push('RUN_BUDGET_UNKNOWN');
+  if (!allStationsKnown) limiterCategories.push('STATION_BUDGET_UNKNOWN');
+  if (transition === null) limiterCategories.push('TRANSITION_BUDGET_UNKNOWN');
+  if (!burdenCoherent) limiterCategories.push('INDIVIDUAL_BURDEN_UNKNOWN');
+  if (targetTotal !== null && knownComponentSum > targetTotal) {
+    limiterCategories.push('TARGET_COMPONENT_SUM_EXCEEDS_TOTAL');
+  }
+  const unknownUnallocated = targetTotal !== null
+    && knownValues.length > 0
+    && knownComponentSum <= targetTotal
+    ? targetTotal - knownComponentSum
+    : null;
+  return deepFreeze({
+    target_total_time_s: targetTotal,
+    projected_run_time_s: projectedRun,
+    stations,
+    transition_roxzone_time_s: transition,
+    unknown_unallocated_time_s: unknownUnallocated,
+    known_component_sum_s: knownComponentSum,
+    team_budget: cloneJson(input.team_budget, {}),
+    individual_training_burden: individualTrainingBurden,
+    limiter_categories: [...new Set(limiterCategories)],
+    mandatory_components_known: mandatoryComponentsKnown,
+    burden_coherent: burdenCoherent,
+    supported,
+    confidence,
+  });
+}
+
 module.exports = {
   TARGET_POLICY_V1,
   benchmarkPaceRange,
   buildCanonicalMaterialTarget,
+  buildHyroxPerformanceBudget,
   convertNearbyRoadRace,
   environmentRequiresEffortOverride,
   evidenceGate,
@@ -614,6 +730,7 @@ module.exports = {
   resolveTarget: resolveGoalBackwardTarget,
   roadRaceConversionV1: convertNearbyRoadRace,
   selectTargetAuthority: resolveGoalBackwardTarget,
+  resolveHyroxPerformanceBudget: buildHyroxPerformanceBudget,
   targetTypeForWorkoutFamily,
   workSegmentPaces,
 };

@@ -1,3 +1,8 @@
+const {
+  HYROX_RULESET_ID,
+  HYROX_RULESET_VERSION,
+} = require('./goalBackwardContracts');
+
 const HYROX_RUN_DISTANCE_MILES = 8 / 1.609344;
 const HYROX_RELAY_ATHLETE_RUN_DISTANCE_MILES = 2 / 1.609344;
 
@@ -51,8 +56,13 @@ const MIXED_RELAY = Object.fromEntries(STATION_ORDER.map((stationId) => {
 
 const REGISTRY = {
   schemaVersion: 1,
-  rulesVersion: '2026-2027',
+  rulesetId: HYROX_RULESET_ID,
+  rulesetVersion: HYROX_RULESET_VERSION,
+  // Retained for compatibility with the shipped event and plan envelopes.
+  rulesVersion: HYROX_RULESET_VERSION,
   reviewedAt: '2026-08-10',
+  effectiveFrom: '2026-08-10',
+  effectiveThrough: '2027-08-09',
   sourceUrl: 'https://hyrox.com/rulebook/',
   rulebookUrls: {
     singles: 'https://hyrox.com/wp-content/uploads/2025/06/25_26-Singles-Rulebook_en_R1.pdf',
@@ -122,24 +132,87 @@ function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-function resolveHyroxStandard({ format, category, rulesVersion } = {}) {
-  if (!format || !category) return { status: 'incomplete', stations: null };
-  if (rulesVersion !== REGISTRY.rulesVersion) {
-    return { status: 'unsupported_rules_version', stations: null };
+function unresolvedStandard(status, input = {}) {
+  return {
+    status,
+    rulesetId: input.rulesetId ?? null,
+    rulesetVersion: input.rulesetVersion ?? null,
+    rulesVersion: input.rulesetVersion ?? null,
+    format: input.format ?? null,
+    category: input.category ?? null,
+    exactLoads: false,
+    stations: null,
+  };
+}
+
+function resolveHyroxStandard({
+  format,
+  category,
+  rulesetId,
+  rulesetVersion,
+  rulesVersion,
+} = {}) {
+  const requestedRulesetId = rulesetId === undefined || rulesetId === null || rulesetId === ''
+    ? REGISTRY.rulesetId
+    : rulesetId;
+  const requestedRulesetVersion = rulesetVersion ?? rulesVersion;
+  if (!format || !category || !requestedRulesetVersion) {
+    return unresolvedStandard('incomplete', {
+      rulesetId: requestedRulesetId,
+      rulesetVersion: requestedRulesetVersion,
+      format: format || null,
+      category: category || null,
+    });
+  }
+  if (requestedRulesetId !== REGISTRY.rulesetId) {
+    return unresolvedStandard('unsupported_ruleset', {
+      rulesetId: requestedRulesetId,
+      rulesetVersion: requestedRulesetVersion,
+      format,
+      category,
+    });
+  }
+  if (requestedRulesetVersion !== REGISTRY.rulesetVersion) {
+    return unresolvedStandard('unsupported_rules_version', {
+      rulesetId: requestedRulesetId,
+      rulesetVersion: requestedRulesetVersion,
+      format,
+      category,
+    });
   }
   const normalizedFormat = normalizeHyroxFormat(format);
   const normalizedCategory = normalizeHyroxCategory(category);
-  if (!normalizedFormat || !normalizedCategory) return { status: 'incomplete', stations: null };
+  if (!normalizedFormat || !normalizedCategory) {
+    return unresolvedStandard('unsupported_division_category', {
+      rulesetId: requestedRulesetId,
+      rulesetVersion: requestedRulesetVersion,
+      format: normalizedFormat || String(format),
+      category: normalizedCategory || String(category),
+    });
+  }
   const division = REGISTRY.divisions[normalizedFormat]?.[normalizedCategory];
-  if (!division) return { status: 'unsupported_division_category', stations: null };
+  if (!division) {
+    return unresolvedStandard('unsupported_division_category', {
+      rulesetId: requestedRulesetId,
+      rulesetVersion: requestedRulesetVersion,
+      format: normalizedFormat,
+      category: normalizedCategory,
+    });
+  }
   return {
     status: 'exact',
+    rulesetId: REGISTRY.rulesetId,
+    rulesetVersion: REGISTRY.rulesetVersion,
     rulesVersion: REGISTRY.rulesVersion,
     format: normalizedFormat,
     category: normalizedCategory,
     sourceUrl: REGISTRY.sourceUrl,
+    rulebookUrls: clone(REGISTRY.rulebookUrls),
     reviewedAt: REGISTRY.reviewedAt,
+    effectiveFrom: REGISTRY.effectiveFrom,
+    effectiveThrough: REGISTRY.effectiveThrough,
     canonicalUnits: REGISTRY.canonicalUnits,
+    exactLoads: true,
     stations: REGISTRY.stations.map((station) => ({
       ...clone(station),
       ...clone(division[station.id] || {}),
@@ -159,6 +232,8 @@ module.exports = {
   EQUIPMENT_KEYS,
   HYROX_RUN_DISTANCE_MILES,
   HYROX_RELAY_ATHLETE_RUN_DISTANCE_MILES,
+  HYROX_RULESET_ID,
+  HYROX_RULESET_VERSION,
   REGISTRY,
   STATION_ORDER,
   hyroxAthleteRunDistanceMiles,

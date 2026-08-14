@@ -208,6 +208,16 @@ function assertFrequencyAndEquipment() {
     && station.prescribedLoadKg == null
   )));
   assert.ok(limited.hyroxPolicy.missingEquipment.includes('sled_push'));
+  const substitutions = allSessions(limited).flatMap((session) => session.stationSequence || [])
+    .filter((station) => station.substitute);
+  assert.ok(substitutions.length > 0);
+  assert.equal(substitutions.every((station) => (
+    station.readinessClaim === 'pattern_only'
+    && station.exactStation === false
+    && station.exactStationReadiness !== true
+    && station.prescribedLoadKg === null
+    && station.officialStandard === undefined
+  )), true, 'equipment substitutions remain pattern-only and never satisfy exact station readiness');
 
   const comeback = hyrox.generateHyroxPlan(fixture(35, {
     athlete: { comebackMode: true, readiness: 'low' },
@@ -665,7 +675,7 @@ function raceSessionFor(format, category = 'men') {
 
 function assertRaceDayTruthByFormat() {
   for (const format of ['individual_open', 'doubles']) {
-    const { race } = raceSessionFor(format);
+    const { plan, race } = raceSessionFor(format);
     assert.deepEqual(race.runSequenceMeters, Array(8).fill(1000), `${format} athlete runs all 8 legs`);
     assert.equal(race.distanceMeters, 8000);
     assert.equal(race.distance_miles, 4.97);
@@ -674,6 +684,21 @@ function assertRaceDayTruthByFormat() {
     assert.deepEqual(race.officialTeamRaceSequence.map((item) => item.kind), Array.from({ length: 16 }, (_, index) => (
       index % 2 === 0 ? 'run' : 'station'
     )));
+    const state = hyrox.buildHyroxEventState({
+      athlete_id: 'race-truth-fixture',
+      format: format === 'doubles' ? 'doubles' : 'singles',
+      event_format: format,
+      registered_division: 'men',
+      ruleset_id: 'hyrox-global',
+      ruleset_version: plan.standardsProvenance.rulesVersion,
+    });
+    assert.equal(state.official_run_requirements.length, 8);
+    assert.equal(
+      state.official_station_requirements.every((station) => (
+        station.ownership === (format === 'doubles' ? 'team_shared' : 'athlete')
+      )),
+      true,
+    );
   }
 
   const { plan: relayPlan, race: relay } = raceSessionFor('relay', 'women');
@@ -706,6 +731,41 @@ function assertRaceDayTruthByFormat() {
     )),
     'validator rejects the old full-individual relay-athlete volume',
   );
+}
+
+function assertGoalBackwardModeCompatibility() {
+  const previousMode = process.env.FORGE_GOAL_BACKWARD_V24_MODE;
+  try {
+    delete process.env.FORGE_GOAL_BACKWARD_V24_MODE;
+    const missingMode = hyrox.generateHyroxPlan(fixture(35));
+    process.env.FORGE_GOAL_BACKWARD_V24_MODE = 'off';
+    const explicitOff = hyrox.generateHyroxPlan(fixture(35));
+    assert.deepEqual(explicitOff, missingMode, 'missing and explicit off retain byte-compatible plan data');
+    process.env.FORGE_GOAL_BACKWARD_V24_MODE = 'invalid-mode';
+    const invalidMode = hyrox.generateHyroxPlan(fixture(35));
+    assert.deepEqual(invalidMode, missingMode, 'invalid mode also fails closed to byte-compatible plan data');
+    assert.equal(Object.hasOwn(missingMode, 'hyroxEventState'), false);
+    assert.equal(Object.hasOwn(missingMode, 'hyroxPerformanceBudget'), false);
+    assert.equal(Object.hasOwn(missingMode.goal, 'rulesetId'), false);
+    assert.equal(Object.hasOwn(missingMode.standardsProvenance, 'rulesetId'), false);
+    assert.equal(allSessions(missingMode).every((session) => !Object.hasOwn(session, 'rulesetId')), true);
+    assert.equal(
+      allSessions(missingMode).flatMap((session) => session.stationSequence || [])
+        .every((station) => !Object.hasOwn(station, 'exactStationReadiness')),
+      true,
+    );
+
+    process.env.FORGE_GOAL_BACKWARD_V24_MODE = 'shadow';
+    const shadow = hyrox.generateHyroxPlan(fixture(35));
+    assert.equal(shadow.hyroxEventState.format, 'singles');
+    assert.equal(shadow.hyroxEventState.ruleset_status, 'exact');
+    assert.equal(shadow.hyroxPerformanceBudget.projected_run_time_s, null);
+    assert.equal(shadow.hyroxPerformanceBudget.supported, false);
+    assert.equal(shadow.standardsProvenance.rulesetId, 'hyrox-global');
+  } finally {
+    if (previousMode === undefined) delete process.env.FORGE_GOAL_BACKWARD_V24_MODE;
+    else process.env.FORGE_GOAL_BACKWARD_V24_MODE = previousMode;
+  }
 }
 
 function assertSecondaryTransition() {
@@ -812,6 +872,7 @@ function run() {
   assertSundayPartialWeekEdge();
   assertMidweekFoundationAnchoring();
   assertRaceDayTruthByFormat();
+  assertGoalBackwardModeCompatibility();
   assertSecondaryTransition();
   console.log('HYROX PLAN ENGINE SMOKE OK');
 }

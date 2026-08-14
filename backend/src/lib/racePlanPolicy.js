@@ -1,4 +1,8 @@
 const crypto = require('node:crypto');
+const {
+  HYROX_RULESET_ID,
+  HYROX_RULESET_VERSION,
+} = require('./goalBackwardContracts');
 
 const MS_PER_DAY = 86400000;
 
@@ -34,6 +38,46 @@ const ZERO_OVERLOAD_ALLOWANCE = deepFreeze(Object.fromEntries(
 const HYROX_CLUSTER_OVERLOAD_ALLOWANCE = deepFreeze(Object.fromEntries(
   STRESS_DIMENSIONS.map((dimension, index) => [dimension, [2, 2, 3, 2, 2, 2, 3, 5][index]])
 ));
+
+const HYROX_EVENT_MODEL_POLICY_V1 = deepFreeze({
+  policy_id: 'hyrox-event-model-policy-v1',
+  policy_version: 1,
+  ruleset_id: HYROX_RULESET_ID,
+  ruleset_version: HYROX_RULESET_VERSION,
+  unknown_is_zero: false,
+  exact_load_requirements: [
+    'SUPPORTED_RULESET_ID',
+    'SUPPORTED_RULESET_VERSION',
+    'SUPPORTED_EVENT_FORMAT',
+    'SUPPORTED_REGISTERED_DIVISION',
+  ],
+  substitution_readiness: 'PATTERN_ONLY',
+  formats: {
+    singles: {
+      ownership: [
+        'official_runs',
+        'official_stations',
+        'transitions_roxzone',
+        'compromised_running',
+        'fatigue_recovery',
+      ],
+      team_time_is_individual_burden: true,
+    },
+    doubles: {
+      run_requirement: 'BOTH_ATHLETES_COMPLETE_ALL_OFFICIAL_RUNS',
+      station_ownership: 'TEAM_SHARED',
+      unknown_station_contribution: null,
+      infer_equal_split: false,
+      team_time_is_individual_burden: false,
+    },
+  },
+  performance_budget: {
+    mandatory_components: ['projected_run_time_s', 'stations', 'transition_roxzone_time_s'],
+    minimum_supported_confidence: 'MEDIUM',
+    missing_component_value: null,
+    unallocated_requires_known_component: true,
+  },
+});
 
 function exposure(requirementId, anyOf, role = 'PRIMARY_KEY') {
   return { requirement_id: requirementId, any_of: anyOf, role };
@@ -623,6 +667,7 @@ function canonicalHash(value) {
 module.exports = {
   EVENT_POLICY_REGISTRY_V1,
   GOAL_BACKWARD_PLANNING_POLICY_V1,
+  HYROX_EVENT_MODEL_POLICY_V1,
   RACE_PLAN_POLICY_V1,
   STRESS_TAXONOMY_V1,
   TARGET_CONVERSION_REGISTRY_V1,

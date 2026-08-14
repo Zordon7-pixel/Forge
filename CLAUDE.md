@@ -203,6 +203,30 @@ node backend/test/racePlanQuality.smoke.js
 
 Batch 6 status (2026-08-14): `patched`; the four-command gate passes locally. No commit, deploy, runtime activation, independent QA, or Hermes verification is claimed by this source patch.
 
+## Goal-Backward Coaching v2.4 — Phase 3A HYROX Contract
+
+Batch 8 extends the shipped HYROX anchors without creating a second station or load table. `backend/src/lib/hyroxStandards.js` remains the frozen official registry and now exposes the explicit `hyrox-global` ruleset ID, `2026-2027` ruleset version, effective window, reviewed date, source URLs, and exact-load resolution status. `backend/src/lib/racePlanPolicy.js` owns the Singles/Doubles ownership and performance-budget policy; `backend/src/lib/canonicalWorkout.js` builds the canonical event state; `backend/src/lib/goalBackwardTargets.js` builds the null-preserving performance budget; and `backend/src/lib/hyroxPlan.js` reuses those contracts in the current deterministic planner.
+
+Compatibility and truth anchors:
+
+- The current station order, metric volumes, division/category loads, source URLs, legacy `rulesVersion`, race sequence, and Relay behavior remain intact.
+- Singles assigns every official run, station, transition/Roxzone component, compromised-running observation, and fatigue/recovery burden to the athlete.
+- Doubles keeps team performance separate from athlete burden. Planned and actual splits are independent, a missing partner may retain `Partner TBD`, and team station time never manufactures an individual 50/50 contribution.
+- Unknown or unsupported ruleset ID/version or division returns no official standard or exact load. The prescription stays at registered-load or relative-technique language.
+- Missing run, station, or transition projections stay `null`. A known-component sum is arithmetic only; unallocated time is not computed from an entirely empty budget and never proves achievability.
+- Equipment substitutions are explicitly `pattern_only`, retain a null prescribed load, omit the official standard, and cannot satisfy exact station readiness.
+- Missing, invalid, or explicit `off` v2.4 mode retains the legacy HYROX plan payload; canonical event state, ruleset provenance, and performance budget are additive only in a valid non-off mode.
+
+Phase 3A gate:
+
+```sh
+node backend/test/goalBackwardHyrox.smoke.js
+node backend/test/hyroxPlanEngine.smoke.js
+node backend/test/hyroxEventContract.smoke.js
+```
+
+Batch 8 status (2026-08-14): `patched`; the three-command gate passes locally. No commit, deploy, feature activation, independent QA, or Hermes verification is claimed by this source patch.
+
 ---
 
 ## Deploy Process

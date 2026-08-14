@@ -5,6 +5,9 @@ const {
   normalizeEquipment,
   resolveHyroxStandard,
 } = require('./hyroxStandards');
+const { buildCanonicalHyroxEventState } = require('./canonicalWorkout');
+const { buildHyroxPerformanceBudget } = require('./goalBackwardTargets');
+const { getGoalBackwardV24Mode } = require('./betaPlanRollout');
 
 const DAY_MS = 86400000;
 const WEEKDAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -221,7 +224,14 @@ const SUBSTITUTIONS = Object.freeze({
   wall_ball: 'Light thrusters to a safe visual target; accuracy is not verified',
 });
 
-function stationForTraining(standard, equipment, intensity = 'RPE 6-7', doseFraction = 0.4) {
+function stationForTraining(
+  standard,
+  equipment,
+  intensity = 'RPE 6-7',
+  doseFraction = 0.4,
+  rulesetExact = true,
+  includeReadinessContract = false,
+) {
   const hasEquipment = !standard.equipmentKey || equipment.includes(standard.equipmentKey);
   const base = {
     id: standard.id,
@@ -233,16 +243,34 @@ function stationForTraining(standard, equipment, intensity = 'RPE 6-7', doseFrac
       ? Math.max(10, Math.round(standard.repetitions * doseFraction / 5) * 5)
       : undefined,
     exactStation: hasEquipment,
-    readinessClaim: hasEquipment ? 'station_specific' : 'pattern_only',
+    readinessClaim: !hasEquipment ? 'pattern_only' : rulesetExact ? 'station_specific' : 'relative_technique',
+    ...(includeReadinessContract ? { exactStationReadiness: hasEquipment && rulesetExact } : {}),
     loadGuidance: hasEquipment ? `${intensity}; do not chase failure` : null,
     prescribedLoadKg: null,
     provenance: `${REGISTRY.rulesVersion}:${standard.id}`,
   };
   if (!hasEquipment) return { ...base, substitute: SUBSTITUTIONS[standard.id] };
+  if (!rulesetExact) return base;
   return {
     ...base,
     officialStandard: officialStandardForStation(standard),
   };
+}
+
+function buildHyroxStationPrescription(input = {}) {
+  const standard = input.standard || {};
+  const rulesetStatus = input.ruleset_status ?? standard.rulesetStatus;
+  const exactLoadsAvailable = input.exact_loads_available ?? standard.exactLoads;
+  const rulesetExact = rulesetStatus === 'exact' && exactLoadsAvailable === true;
+  return stationForTraining(
+    standard,
+    normalizeEquipment(input.equipment),
+    input.intensity || 'RPE 6-7',
+    Number.isFinite(input.dose_fraction) ? input.dose_fraction
+      : Number.isFinite(input.doseFraction) ? input.doseFraction : 0.4,
+    rulesetExact,
+    true,
+  );
 }
 
 function officialStandardForStation(standard = {}) {
@@ -1018,6 +1046,7 @@ function buildRunningWeek({
 }
 
 function generateHyroxPlan(input = {}) {
+  const includeGoalBackwardV24 = getGoalBackwardV24Mode() !== 'off';
   const event = input.event || {};
   const planningDate = String(input.planningLocalDate || '');
   if (parseLocalDate(planningDate) == null) throw new Error('invalid_planning_local_date');
@@ -1151,6 +1180,10 @@ function generateHyroxPlan(input = {}) {
     division: resolved.format,
     category: resolved.category,
     rulesVersion: resolved.rulesVersion,
+    ...(includeGoalBackwardV24 ? {
+      rulesetId: resolved.rulesetId,
+      rulesetVersion: resolved.rulesetVersion,
+    } : {}),
     runningPriority: event.runningPriority || 'maintain',
   };
   const goals = [hyroxGoal];
@@ -1228,6 +1261,43 @@ function generateHyroxPlan(input = {}) {
   }
 
   const requiredEquipment = [...new Set(resolved.stations.map((station) => station.equipmentKey).filter(Boolean))];
+  let hyroxEventState = null;
+  let hyroxPerformanceBudget = null;
+  if (includeGoalBackwardV24) {
+    hyroxEventState = buildCanonicalHyroxEventState({
+      ...(event.hyroxEventState || {}),
+      ...(input.hyroxEventState || {}),
+      athlete_id: input.hyroxEventState?.athlete_id
+        ?? event.hyroxEventState?.athlete_id
+        ?? athlete.id
+        ?? athlete.athleteId
+        ?? null,
+      format: resolved.format === 'doubles' ? 'doubles' : 'singles',
+      event_format: resolved.format,
+      registered_division: resolved.category,
+      ruleset_id: resolved.rulesetId,
+      ruleset_version: resolved.rulesetVersion,
+      partner_id: input.hyroxEventState?.partner_id
+        ?? event.hyroxEventState?.partner_id
+        ?? event.partnerId
+        ?? event.partner_id
+        ?? null,
+      partner_placeholder: input.hyroxEventState?.partner_placeholder
+        ?? event.hyroxEventState?.partner_placeholder
+        ?? event.partnerPlaceholder
+        ?? event.partner_placeholder
+        ?? null,
+    });
+    const suppliedPerformanceBudget = input.hyroxPerformanceBudget
+      || event.hyroxPerformanceBudget
+      || {};
+    hyroxPerformanceBudget = buildHyroxPerformanceBudget({
+      ...suppliedPerformanceBudget,
+      team_budget: suppliedPerformanceBudget.team_budget ?? hyroxEventState.team_performance_burden ?? {},
+      individual_training_burden: suppliedPerformanceBudget.individual_training_burden
+        ?? hyroxEventState.individual_training_burden,
+    });
+  }
   const plan = {
     schemaVersion: 2,
     planMode: 'hyrox_build',
@@ -1263,7 +1333,15 @@ function generateHyroxPlan(input = {}) {
       reviewedAt: resolved.reviewedAt,
       sourceUrl: resolved.sourceUrl,
       canonicalUnits: resolved.canonicalUnits,
+      ...(includeGoalBackwardV24 ? {
+        rulesetId: resolved.rulesetId,
+        rulesetVersion: resolved.rulesetVersion,
+        effectiveFrom: resolved.effectiveFrom,
+        effectiveThrough: resolved.effectiveThrough,
+        rulebookUrls: resolved.rulebookUrls,
+      } : {}),
     },
+    ...(includeGoalBackwardV24 ? { hyroxEventState, hyroxPerformanceBudget } : {}),
     schedulePreferences: {
       runDaysPerWeek: requestedRunDays,
       trainingDays: availableDays,
@@ -1431,6 +1509,9 @@ function validateHyroxPlan(plan = {}) {
 module.exports = {
   addLocalDays,
   allocatePhases,
+  buildHyroxEventState: buildCanonicalHyroxEventState,
+  buildHyroxPerformanceBudget,
+  buildHyroxStationPrescription,
   classifyHyroxRunway,
   daysBetweenLocalDates,
   daysToEventForEvent,
