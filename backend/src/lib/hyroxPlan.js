@@ -388,12 +388,21 @@ function prescribedLoadPoints(days) {
   }, 0));
 }
 
-function normalizedCurrentWeekActivity(currentLoad, startDate, planningDate, runDays, weeklyMiles) {
+function normalizedCurrentWeekActivity(currentLoad, startDate, planningDate, runDays) {
   const recentRunLoad = currentLoad?.recentRunLoad || {};
-  const runWeek = recentRunLoad.currentWeek?.startDate === startDate ? recentRunLoad.currentWeek : {};
-  const strengthWeek = currentLoad?.currentWeekStrength?.startDate === startDate
-    ? currentLoad.currentWeekStrength
-    : {};
+  const suppliedRunWeek = recentRunLoad.currentWeek || null;
+  const suppliedStrengthWeek = currentLoad?.currentWeekStrength || null;
+  const runSourceStartDate = String(suppliedRunWeek?.startDate || '').slice(0, 10) || null;
+  const strengthSourceStartDate = String(suppliedStrengthWeek?.startDate || '').slice(0, 10) || null;
+  const mismatchReasons = [];
+  if (runSourceStartDate && runSourceStartDate !== startDate) {
+    mismatchReasons.push('RUN_ACTIVITY_WEEK_START_MISMATCH');
+  }
+  if (strengthSourceStartDate && strengthSourceStartDate !== startDate) {
+    mismatchReasons.push('STRENGTH_ACTIVITY_WEEK_START_MISMATCH');
+  }
+  const runWeek = runSourceStartDate === startDate ? suppliedRunWeek : {};
+  const strengthWeek = strengthSourceStartDate === startDate ? suppliedStrengthWeek : {};
   const runDates = [...new Set((Array.isArray(runWeek.runDates) ? runWeek.runDates : [])
     .map((date) => String(date || '').slice(0, 10))
     .filter((date) => parseLocalDate(date) != null && date >= startDate && date <= planningDate))].sort();
@@ -417,26 +426,89 @@ function normalizedCurrentWeekActivity(currentLoad, startDate, planningDate, run
     longRunCompleted: Boolean(runWeek.longRunCompleted),
     remainingRunQuota: Math.max(0, runDays - Math.min(runDays, completedRunCount)),
     remainingHyroxQuota: Math.max(0, 2 - Math.min(2, completedStrengthSessions)),
-    remainingMileageBudget: Math.max(0, weeklyMiles - finiteNonNegative(runWeek.miles, 0, 500)),
     runDates,
     strengthDates,
     protection,
+    strengthProvenance: strengthWeek?.provenance || null,
+    activityReconciliation: {
+      expectedStartDate: startDate,
+      runSourceStartDate,
+      strengthSourceStartDate,
+      mismatch: mismatchReasons.length > 0,
+      reasons: mismatchReasons,
+    },
   };
 }
 
-function allocatePartialRunMiles(budget, count, longIndex = -1) {
-  if (count <= 0) return [];
-  const minimum = 1.5;
-  const boundedBudget = Math.max(minimum * count, finiteNonNegative(budget, minimum * count, 500));
-  if (longIndex < 0) {
-    const even = Number((boundedBudget / count).toFixed(1));
-    return Array.from({ length: count }, () => even);
+function fullWeekRunningLoad({
+  phase,
+  runDays,
+  weeklyMiles,
+  standards,
+  equipment,
+  safetyHold,
+  eventFormat,
+  raceWeek,
+}) {
+  const loadFactor = PHASE_LOAD[phase] || 0.75;
+  const easyMiles = buildRunSession(
+    'run-load-reference-easy',
+    'easy',
+    Math.max(2.5, weeklyMiles / Math.max(3, runDays) * 0.75),
+    loadFactor,
+  ).distance_miles;
+  if (raceWeek) {
+    const raceMiles = buildRaceSession(standards, null, eventFormat).distance_miles;
+    return Number((raceMiles + Math.max(0, runDays - 1) * easyMiles).toFixed(1));
   }
-  const longMiles = Number(Math.max(minimum, boundedBudget * 0.45).toFixed(1));
-  const otherMiles = count > 1
-    ? Number(Math.max(minimum, (boundedBudget - longMiles) / (count - 1)).toFixed(1))
-    : longMiles;
-  return Array.from({ length: count }, (_, index) => index === longIndex ? longMiles : otherMiles);
+  const compromisedMiles = buildCompromisedSession({
+    phase,
+    weekIndex: 0,
+    standards,
+    equipment,
+    safetyHold,
+  }).distance_miles;
+  const longMiles = buildRunSession(
+    'run-load-reference-long',
+    'long',
+    Math.max(4, weeklyMiles * 0.34),
+    loadFactor,
+  ).distance_miles;
+  return Number((
+    compromisedMiles
+    + longMiles
+    + Math.max(0, runDays - 2) * easyMiles
+  ).toFixed(1));
+}
+
+function allocatePartialRunMiles(budget, count, longIndex, easyMiles, longMiles) {
+  if (count <= 0) return [];
+  const minimumTenths = 15;
+  const budgetTenths = Math.floor(finiteNonNegative(budget, 0, 500) * 10 + 0.001);
+  if (budgetTenths < minimumTenths * count) return [];
+  const targets = Array.from({ length: count }, (_, index) => Math.max(
+    minimumTenths,
+    Math.round((index === longIndex ? longMiles : easyMiles) * 10),
+  ));
+  const allocations = Array(count).fill(minimumTenths);
+  let remaining = Math.min(budgetTenths, targets.reduce((sum, value) => sum + value, 0))
+    - minimumTenths * count;
+  const priority = [
+    ...(longIndex >= 0 ? [longIndex] : []),
+    ...Array.from({ length: count }, (_, index) => index).filter((index) => index !== longIndex),
+  ];
+  while (remaining > 0) {
+    let changed = false;
+    for (const index of priority) {
+      if (remaining <= 0) break;
+      if (allocations[index] >= targets[index]) continue;
+      allocations[index] += 1;
+      remaining -= 1;
+      changed = true;
+    }
+    if (!changed) break;
+  }
+  return allocations.map((value) => value / 10);
 }
 
 function buildCurrentWeek({
@@ -455,6 +527,7 @@ function buildCurrentWeek({
   safetyHold,
   eventFormat,
   currentWeekActivity,
+  runningLoadCap,
 }) {
   const days = Array.from({ length: 7 }, (_, offset) => {
     const date = addLocalDays(startDate, offset);
@@ -467,13 +540,25 @@ function buildCurrentWeek({
   const runCompletedDates = new Set(currentWeekActivity.runDates);
   const strengthCompletedDates = new Set(currentWeekActivity.strengthDates);
   const isRaceWeek = Boolean(eventDate && eventDate >= startDate && eventDate <= addLocalDays(startDate, 6));
+  const raceSafetyWindow = Boolean(
+    eventDate
+    && eventDate >= planningDate
+    && eventDate <= addLocalDays(startDate, 7)
+  );
   const eventSlot = isRaceWeek ? days.findIndex((day) => day.date === eventDate) : -1;
   let scheduledRunExposures = 0;
   let scheduledHyroxSessions = 0;
-  let remainingMileageBudget = currentWeekActivity.remainingMileageBudget;
+  const boundedWeeklyRunningLoad = finiteNonNegative(runningLoadCap, 0, 500);
+  const boundedRemainingMileage = Math.max(
+    0,
+    boundedWeeklyRunningLoad - currentWeekActivity.completedRunMiles,
+  );
+  let remainingMileageBudget = boundedRemainingMileage;
 
   if (eventSlot >= 0 && days[eventSlot].date >= planningDate) {
-    days[eventSlot].sessions.push(buildRaceSession(standards, goalRaceId, eventFormat));
+    const race = buildRaceSession(standards, goalRaceId, eventFormat);
+    days[eventSlot].sessions.push(race);
+    remainingMileageBudget = Math.max(0, remainingMileageBudget - Number(race.distance_miles || 0));
     scheduledRunExposures += 1;
   }
 
@@ -487,9 +572,13 @@ function buildCurrentWeek({
 
   const compromisedCandidates = sessionFreeSlots(new Set([...runCompletedDates, ...strengthCompletedDates]))
     .filter((slot) => !hardRunsThrough || days[slot].date > hardRunsThrough);
-  if (remainingHyroxQuota > 0 && remainingRunQuota > 0 && remainingMileageBudget >= 1.24 && compromisedCandidates.length) {
+  const compromised = buildCompromisedSession({ phase, weekIndex, standards, equipment, safetyHold });
+  if (!raceSafetyWindow
+    && remainingHyroxQuota > 0
+    && remainingRunQuota > 0
+    && remainingMileageBudget + 0.001 >= Number(compromised.distance_miles || 0)
+    && compromisedCandidates.length) {
     const slot = nearestSlot(3, compromisedCandidates);
-    const compromised = buildCompromisedSession({ phase, weekIndex, standards, equipment, safetyHold });
     days[slot].sessions.push(compromised);
     remainingMileageBudget = Math.max(0, remainingMileageBudget - Number(compromised.distance_miles || 0));
     remainingHyroxQuota -= 1;
@@ -500,7 +589,9 @@ function buildCurrentWeek({
 
   const stationSlots = sessionFreeSlots(strengthCompletedDates);
   const usedStationSlots = new Set();
-  while (remainingHyroxQuota > 0 && stationSlots.length) {
+  const stationLimit = raceSafetyWindow ? Math.min(1, remainingHyroxQuota) : remainingHyroxQuota;
+  let remainingStationQuota = stationLimit;
+  while (remainingStationQuota > 0 && stationSlots.length) {
     const candidates = stationSlots.filter((slot) => !usedStationSlots.has(slot));
     if (!candidates.length) break;
     const slot = nearestSlot(1 + scheduledHyroxSessions * 3, candidates);
@@ -509,6 +600,7 @@ function buildCurrentWeek({
     if (scheduledHyroxSessions > 0) station.id = `${station.id}-${scheduledHyroxSessions + 1}`;
     days[slot].sessions.push(station);
     remainingHyroxQuota -= 1;
+    remainingStationQuota -= 1;
     scheduledHyroxSessions += 1;
   }
 
@@ -523,16 +615,35 @@ function buildCurrentWeek({
   let longIndex = currentWeekActivity.longRunCompleted || !selectedRunSlots.length
     ? -1
     : selectedRunSlots.length - 1;
+  if (raceSafetyWindow) longIndex = -1;
   if (longIndex >= 0 && hardRunsThrough && days[selectedRunSlots[longIndex]].date <= hardRunsThrough) longIndex = -1;
-  const distances = allocatePartialRunMiles(remainingMileageBudget, selectedRunSlots.length, longIndex);
+  const easyMiles = buildRunSession(
+    'run-partial-reference-easy',
+    'easy',
+    Math.max(2.5, weeklyMiles / Math.max(3, runDays) * 0.75),
+    loadFactor,
+  ).distance_miles;
+  const longMiles = buildRunSession(
+    'run-partial-reference-long',
+    'long',
+    Math.max(4, weeklyMiles * 0.34),
+    loadFactor,
+  ).distance_miles;
+  const distances = allocatePartialRunMiles(
+    remainingMileageBudget,
+    selectedRunSlots.length,
+    longIndex,
+    easyMiles,
+    longMiles,
+  );
   selectedRunSlots.forEach((slot, index) => {
     const type = index === longIndex ? 'long' : (protection ? 'recovery' : 'easy');
     const desiredMiles = distances[index];
     days[slot].sessions.push(buildRunSession(
       `run-${weekIndex + 1}-partial-${index + 1}`,
       type,
-      desiredMiles / loadFactor,
-      loadFactor,
+      desiredMiles,
+      1,
     ));
     scheduledRunExposures += 1;
   });
@@ -558,8 +669,14 @@ function buildCurrentWeek({
       completedStrengthLoadPoints: currentWeekActivity.completedStrengthLoadPoints,
       scheduledHyroxSessions,
       remainingHyroxQuota: currentWeekActivity.remainingHyroxQuota,
-      remainingMileageBudget: Number(currentWeekActivity.remainingMileageBudget.toFixed(1)),
+      boundedWeeklyRunningLoad: Number(boundedWeeklyRunningLoad.toFixed(1)),
+      remainingMileageBudget: Number(boundedRemainingMileage.toFixed(1)),
+      scheduledRunningMiles: Number(days.flatMap((day) => day.sessions).reduce((sum, session) => (
+        sum + Number((session.kind === 'run' || session.includesRun) ? session.distance_miles || 0 : 0)
+      ), 0).toFixed(1)),
       recentRunProtectionApplied: Boolean(protection),
+      raceSafetyWindow,
+      activityReconciliation: currentWeekActivity.activityReconciliation,
     },
     days,
     totalWeeks,
@@ -583,7 +700,7 @@ function buildWeek({
   eventFormat,
   currentWeekActivity = null,
   precedingHardOrLongRunDates = [],
-  precedingHardLowerBodyDates = [],
+  currentWeekRunningLoadCap = null,
 }) {
   if (currentWeekActivity) {
     return buildCurrentWeek({
@@ -602,6 +719,7 @@ function buildWeek({
       safetyHold,
       eventFormat,
       currentWeekActivity,
+      runningLoadCap: currentWeekRunningLoadCap,
     });
   }
   const days = Array.from({ length: 7 }, (_, offset) => {
@@ -630,14 +748,17 @@ function buildWeek({
     && precedingHardOrLongRunDates.every((runDate) => (
       Math.abs(daysBetweenLocalDates(days[slot].date, runDate)) > 1
     ))
-    && [days[compromisedSlot].date, ...precedingHardLowerBodyDates]
-      .filter((date) => Math.abs(daysBetweenLocalDates(days[slot].date, date)) <= 6).length <= 1
   );
   const safeStationSlot = stationCandidates.find(isSafeStationSlot);
-  const combinedHardSlot = hardStationPhase && !isRaceWeek ? compromisedSlot : null;
-  const stationSlot = safeStationSlot ?? combinedHardSlot ?? stationCandidates[0];
-  const safeStationGap = safeStationSlot != null || stationSlot === compromisedSlot;
-  const heavyStation = hardStationPhase && safeStationGap && !isRaceWeek && !safetyHold;
+  const stationSlot = safeStationSlot ?? stationCandidates[0];
+  const safeStationGap = safeStationSlot != null;
+  const outsideRaceRecoveryWindow = !eventDate
+    || Math.abs(daysBetweenLocalDates(eventDate, days[stationSlot].date)) > 6;
+  const heavyStation = hardStationPhase
+    && safeStationGap
+    && outsideRaceRecoveryWindow
+    && !isRaceWeek
+    && !safetyHold;
 
   if (!isRaceWeek) {
     days[stationSlot].sessions.push(buildStationSession({ phase, weekIndex, standards, equipment, heavy: heavyStation }));
@@ -781,12 +902,46 @@ function generateHyroxPlan(input = {}) {
     startDate,
     planningDate,
     requestedRunDays,
-    effectiveWeeklyMiles,
   );
   const hasCompletedCurrentWeekActivity = currentWeekActivity.completedRunCount > 0
     || currentWeekActivity.completedRunMiles > 0
     || currentWeekActivity.completedStrengthSessions > 0;
   const phases = allocatePhases(runway, totalWeeks);
+  const currentWeekRace = Boolean(
+    event.eventLocalDate
+    && event.eventLocalDate >= startDate
+    && event.eventLocalDate <= addLocalDays(startDate, 6)
+  );
+  const currentFullWeekRunningLoad = fullWeekRunningLoad({
+    phase: phases[0],
+    runDays: requestedRunDays,
+    weeklyMiles: effectiveWeeklyMiles,
+    standards: resolved.stations,
+    equipment,
+    safetyHold,
+    eventFormat: resolved.format,
+    raceWeek: currentWeekRace,
+  });
+  const nextWeekStart = addLocalDays(startDate, 7);
+  const nextWeekRace = Boolean(
+    event.eventLocalDate
+    && event.eventLocalDate >= nextWeekStart
+    && event.eventLocalDate <= addLocalDays(nextWeekStart, 6)
+  );
+  const nextFullWeekRunningLoad = phases[1] ? fullWeekRunningLoad({
+    phase: phases[1],
+    runDays: requestedRunDays,
+    weeklyMiles: effectiveWeeklyMiles,
+    standards: resolved.stations,
+    equipment,
+    safetyHold,
+    eventFormat: resolved.format,
+    raceWeek: nextWeekRace,
+  }) : currentFullWeekRunningLoad;
+  const currentWeekRunningLoadCap = Math.min(
+    currentFullWeekRunningLoad,
+    nextFullWeekRunningLoad,
+  );
   const weeks = [];
   for (const [weekIndex, phase] of phases.entries()) {
     const precedingHardOrLongRunDates = (weeks.at(-1)?.days || [])
@@ -795,10 +950,6 @@ function generateHyroxPlan(input = {}) {
         ['hard', 'long', 'race'].includes(session.runningStress)
         && (session.kind === 'run' || session.includesRun)
       ))
-      .map(({ date }) => date);
-    const precedingHardLowerBodyDates = (weeks.at(-1)?.days || [])
-      .flatMap((day) => day.sessions.map((session) => ({ date: day.date, session })))
-      .filter(({ session }) => session.hardLowerBody)
       .map(({ date }) => date);
     weeks.push(buildWeek({
       startDate: addLocalDays(startDate, weekIndex * 7),
@@ -819,7 +970,7 @@ function generateHyroxPlan(input = {}) {
         ? currentWeekActivity
         : null,
       precedingHardOrLongRunDates,
-      precedingHardLowerBodyDates,
+      currentWeekRunningLoadCap: weekIndex === 0 ? currentWeekRunningLoadCap : null,
     }));
   }
 
@@ -895,6 +1046,7 @@ function generateHyroxPlan(input = {}) {
       effectiveWeeklyMiles: Number(effectiveWeeklyMiles.toFixed(1)),
       currentWeekRunLoad: {
         startDate,
+        sourceStartDate: currentWeekActivity.activityReconciliation.runSourceStartDate,
         runCount: currentWeekActivity.completedRunCount,
         miles: Number(currentWeekActivity.completedRunMiles.toFixed(1)),
         runDates: currentWeekActivity.runDates,
@@ -902,10 +1054,13 @@ function generateHyroxPlan(input = {}) {
       },
       currentWeekStrengthLoad: {
         startDate,
+        sourceStartDate: currentWeekActivity.activityReconciliation.strengthSourceStartDate,
         count: currentWeekActivity.completedStrengthSessions,
         dates: currentWeekActivity.strengthDates,
         loadPoints: currentWeekActivity.completedStrengthLoadPoints,
+        provenance: currentWeekActivity.strengthProvenance,
       },
+      currentWeekActivityReconciliation: currentWeekActivity.activityReconciliation,
     },
     goal: hyroxGoal,
     goals,

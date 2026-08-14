@@ -1373,6 +1373,81 @@ function defaultWeeksForDistance(distanceMiles) {
   return 8;
 }
 
+function completedStrengthExposures(workouts = [], legacyLifts = []) {
+  const exposures = (Array.isArray(workouts) ? workouts : []).map((workout) => {
+    const date = String(workout?.started_at || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+    const minutes = Number(workout?.total_seconds || 0) / 60;
+    return {
+      date,
+      identity: `workout:${workout.id || workout.started_at}`,
+      loadPoints: clamp(Number.isFinite(minutes) && minutes > 0 ? minutes : 35, 10, 180),
+      sourceKinds: ['workout_sessions'],
+      workoutSessionRows: 1,
+      legacyLiftRows: 0,
+    };
+  }).filter(Boolean);
+  const exposuresByDate = new Map();
+  for (const exposure of exposures) {
+    if (!exposuresByDate.has(exposure.date)) exposuresByDate.set(exposure.date, []);
+    exposuresByDate.get(exposure.date).push(exposure);
+  }
+  const liftRowsByDate = new Map();
+  for (const lift of Array.isArray(legacyLifts) ? legacyLifts : []) {
+    const date = String(lift?.date || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+    const minutes = Number(lift?.workout_duration_seconds || 0) / 60;
+    const rows = liftRowsByDate.get(date) || [];
+    rows.push({
+      loadPoints: clamp(Number.isFinite(minutes) && minutes > 0 ? minutes : 35, 10, 180),
+    });
+    liftRowsByDate.set(date, rows);
+  }
+  for (const [date, rows] of liftRowsByDate.entries()) {
+    const sameDateWorkouts = exposuresByDate.get(date) || [];
+    const groupedLoad = Math.max(...rows.map((row) => row.loadPoints));
+    if (sameDateWorkouts.length) {
+      const exposure = sameDateWorkouts[0];
+      exposure.loadPoints = Math.max(exposure.loadPoints, groupedLoad);
+      exposure.sourceKinds.push('lifts');
+      exposure.legacyLiftRows += rows.length;
+      continue;
+    }
+    const exposure = {
+      date,
+      identity: `lift-date:${date}`,
+      loadPoints: groupedLoad,
+      sourceKinds: ['lifts'],
+      workoutSessionRows: 0,
+      legacyLiftRows: rows.length,
+    };
+    exposures.push(exposure);
+    exposuresByDate.set(date, [exposure]);
+  }
+  return exposures.sort((left, right) => (
+    left.date.localeCompare(right.date) || left.identity.localeCompare(right.identity)
+  ));
+}
+
+function summarizeStrengthExposures(exposures, startDate, endDate) {
+  const selected = (Array.isArray(exposures) ? exposures : []).filter((exposure) => (
+    exposure.date >= startDate && exposure.date <= endDate
+  ));
+  return {
+    startDate,
+    count: selected.length,
+    dates: [...new Set(selected.map((exposure) => exposure.date))].sort(),
+    loadPoints: Math.round(selected.reduce((sum, exposure) => sum + exposure.loadPoints, 0)),
+    provenance: {
+      dedupePolicy: 'workout_session_else_calendar_date',
+      workoutSessionRows: selected.reduce((sum, exposure) => sum + exposure.workoutSessionRows, 0),
+      legacyLiftRows: selected.reduce((sum, exposure) => sum + exposure.legacyLiftRows, 0),
+      completedStrengthExposures: selected.length,
+      sources: [...new Set(selected.flatMap((exposure) => exposure.sourceKinds))].sort(),
+    },
+  };
+}
+
 async function buildConcurrentContext(userId, profile, target, tx = null) {
   const all = tx?.all || dbAll;
   const get = tx?.get || dbGet;
@@ -1439,10 +1514,10 @@ async function buildConcurrentContext(userId, profile, target, tx = null) {
       return null;
     }),
   ]);
+  const strengthExposures = completedStrengthExposures(workouts, legacyLifts);
   const activityDates = [
     ...(runs || []).map((run) => String(run.date || '').slice(0, 10)),
-    ...(workouts || []).map((workout) => String(workout.started_at || '').slice(0, 10)),
-    ...(legacyLifts || []).map((lift) => String(lift.date || '').slice(0, 10)),
+    ...strengthExposures.map((exposure) => exposure.date),
   ].filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date)).sort();
   const weeksObserved = activityDates.length
     ? clamp(Math.ceil(((daysBetween(planningDateISO, activityDates[0]) || 0) + 1) / 7) || 1, 1, 8)
@@ -1460,31 +1535,12 @@ async function buildConcurrentContext(userId, profile, target, tx = null) {
   );
   const expectedSessions = weeksObserved * expectedPerWeek;
   const currentWeekStart = concurrentPlan.racePlanWindow(planningDateISO, planningDateISO)?.startDate;
-  const completedStrengthRows = [
-    ...(workouts || []).map((workout) => ({
-      date: String(workout.started_at || '').slice(0, 10),
-      id: `workout:${workout.id || workout.started_at}`,
-      minutes: Number(workout.total_seconds || 0) / 60,
-    })),
-    ...(legacyLifts || []).map((lift) => ({
-      date: String(lift.date || '').slice(0, 10),
-      id: `lift:${lift.id || lift.date}`,
-      minutes: Number(lift.workout_duration_seconds || 0) / 60,
-    })),
-  ].filter((entry) => (
-    /^\d{4}-\d{2}-\d{2}$/.test(entry.date)
-    && entry.date >= currentWeekStart
-    && entry.date <= planningDateISO
-  ));
-  const currentWeekStrength = {
-    startDate: currentWeekStart,
-    count: new Set(completedStrengthRows.map((entry) => entry.id)).size,
-    dates: [...new Set(completedStrengthRows.map((entry) => entry.date))].sort(),
-    loadPoints: Math.round(completedStrengthRows.reduce((sum, entry) => (
-      sum + clamp(Number.isFinite(entry.minutes) && entry.minutes > 0 ? entry.minutes : 35, 10, 180)
-    ), 0)),
-  };
-  const completedSessions = (runs || []).length + (workouts || []).length + (legacyLifts || []).length;
+  const currentWeekStrength = summarizeStrengthExposures(
+    strengthExposures,
+    currentWeekStart,
+    planningDateISO,
+  );
+  const completedSessions = (runs || []).length + strengthExposures.length;
   const healthSignals = buildHealthSignals(healthRow || {});
   const healthMetrics = healthSignals.metrics || {};
   const healthFreshness = healthMetrics.freshness || {};
@@ -1540,7 +1596,7 @@ async function buildConcurrentContext(userId, profile, target, tx = null) {
       weeklyMileageBaseline,
       mileageBaseline,
       recentRunCount: (runs || []).length,
-      recentLiftCount: (workouts || []).length + (legacyLifts || []).length,
+      recentLiftCount: strengthExposures.length,
       acuteRunLoad,
       currentWeekStrength,
       performanceProfile,

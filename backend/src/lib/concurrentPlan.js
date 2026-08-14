@@ -1801,9 +1801,16 @@ function validateConcurrentPlan(candidate, context = {}) {
   const expectedStartDate = mondayFor(target.startDate || context.todayISO);
   const expectedWeekPhases = phasesForRaceTargets(expectedStartDate, expectedWeeks, raceTargets);
   const currentWeekLoad = context.history?.acuteRunLoad?.currentWeek;
+  const authoritativeCurrentWeekStrength = context.history?.currentWeekStrength?.startDate === expectedStartDate
+    ? context.history.currentWeekStrength
+    : null;
+  const authoritativeCompletedStrengthSessions = Math.max(
+    0,
+    Math.floor(Number(authoritativeCurrentWeekStrength?.count) || 0),
+  );
   const completedStrengthDates = new Set(
-    (Array.isArray(context.history?.currentWeekStrength?.dates)
-      ? context.history.currentWeekStrength.dates
+    (Array.isArray(authoritativeCurrentWeekStrength?.dates)
+      ? authoritativeCurrentWeekStrength.dates
       : [])
       .map((date) => String(date || '').slice(0, 10))
   );
@@ -2021,7 +2028,7 @@ function validateConcurrentPlan(candidate, context = {}) {
     if (expectedMode !== planSchema.PLAN_MODES.RUN_ONLY && week.phase !== 'race') {
       const configuredFloor = Number(candidate.strengthPolicy?.minimumSessionsPerWeek || 0);
       const completedStrengthSessions = currentWeekQuota
-        ? Math.max(0, Math.floor(Number(week.completedStrengthSessionsAtGeneration) || 0))
+        ? authoritativeCompletedStrengthSessions
         : 0;
       const remainingLiftCapacity = currentWeekQuota
         ? runSchedule.trainingDays.filter((day) => (

@@ -52,6 +52,13 @@ function runSessions(week) {
     .filter(({ session }) => session.kind === 'run');
 }
 
+function runningMiles(week) {
+  return Number(week.days.flatMap((day) => day.sessions)
+    .filter((session) => session.kind === 'run' || session.includesRun === true)
+    .reduce((sum, session) => sum + Number(session.distance_miles || 0), 0)
+    .toFixed(1));
+}
+
 function routeHandler(router, path, method) {
   const layer = router.stack.find((item) => item.route?.path === path && item.route?.methods?.[method]);
   return layer?.route?.stack?.at(-1)?.handle;
@@ -180,6 +187,67 @@ futureSaturday.sessions = futureSaturday.sessions.filter((session) => session.ki
 const pastDayValidation = engine.validateConcurrentPlan(pastDayCandidate, lateWeekContext);
 assert.equal(pastDayValidation.valid, false);
 assert.equal(pastDayValidation.errors.some((error) => error.includes('past or on an already completed date')), true);
+
+function hybridPartialWeekContext(completedStrengthSessions) {
+  const planContext = partialWeekContext({
+    todayISO: '2026-07-23',
+    frequency: 4,
+    trainingDays: ['Mon', 'Tue', 'Thu', 'Sat'],
+  });
+  return {
+    ...planContext,
+    profile: {
+      ...planContext.profile,
+      lift_days_per_week: 2,
+    },
+    history: {
+      ...planContext.history,
+      currentWeekStrength: {
+        startDate: '2026-07-20',
+        count: completedStrengthSessions,
+        dates: completedStrengthSessions ? ['2026-07-21'] : [],
+        loadPoints: completedStrengthSessions ? 45 : 0,
+      },
+    },
+    target: {
+      ...planContext.target,
+      planMode: 'hybrid_maintain',
+      liftingEnabled: true,
+      liftDaysPerWeek: 2,
+    },
+  };
+}
+
+const authoritativeStrengthContext = hybridPartialWeekContext(1);
+const authoritativeStrengthPlan = engine.buildConcurrentPlan(authoritativeStrengthContext);
+delete authoritativeStrengthPlan.weeks[0].completedStrengthSessionsAtGeneration;
+const authoritativeStrengthValidation = engine.validateConcurrentPlan(
+  authoritativeStrengthPlan,
+  authoritativeStrengthContext,
+);
+assert.equal(
+  authoritativeStrengthValidation.valid,
+  true,
+  `authoritative current-week strength relaxes the floor without a candidate field: ${authoritativeStrengthValidation.errors.join('; ')}`,
+);
+
+const selfRelaxingStrengthContext = hybridPartialWeekContext(0);
+const selfRelaxingStrengthPlan = engine.buildConcurrentPlan(selfRelaxingStrengthContext);
+selfRelaxingStrengthPlan.weeks[0].completedStrengthSessionsAtGeneration = 99;
+for (const day of selfRelaxingStrengthPlan.weeks[0].days) {
+  day.sessions = day.sessions.filter((session) => session.kind !== 'lift');
+  delete day.orderGuidance;
+}
+const selfRelaxingStrengthValidation = engine.validateConcurrentPlan(
+  selfRelaxingStrengthPlan,
+  selfRelaxingStrengthContext,
+);
+assert.equal(selfRelaxingStrengthValidation.valid, false);
+assert.equal(
+  selfRelaxingStrengthValidation.errors.some((error) => error.includes('below strength floor')),
+  true,
+  'candidate-supplied completion fields cannot lower the authoritative strength floor',
+);
 
 const fiveDayContext = context(5, ['Mon', 'Tue', 'Wed', 'Thu', 'Sat']);
 const invalidCountPlan = engine.buildConcurrentPlan(fiveDayContext);
@@ -522,26 +590,167 @@ async function checkPartialWeekRoutesDoNotReject() {
     assert.equal(runSessions(response.payload.plan.plan_data.weeks[0]).length, 3);
 
     scenario.todayISO = '2026-08-13';
-    scenario.runs = [runRow('completed-current-week-run', '2026-08-11')];
-    scenario.runs[0].distance_miles = 6;
-    scenario.workouts = [{
-      id: 'completed-current-week-workout',
-      started_at: '2026-08-12T17:00:00.000Z',
-      ended_at: '2026-08-12T17:45:00.000Z',
-      total_seconds: 2700,
-    }];
+    profile.weekly_miles_current = 40;
+    scenario.runs = [];
+    scenario.workouts = [];
+    scenario.lifts = [];
+    const allTrainingDays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
     response = await invoke(generate, {
       body: {
         planning_date_local: scenario.todayISO,
         timezone_offset_minutes: 0,
         target: {
           weeks: 4,
-          trainingDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
-          runDaysPerWeek: 3,
-          liftDaysPerWeek: 2,
-          planMode: 'hybrid_maintain',
+          trainingDays: allTrainingDays,
+          runDaysPerWeek: 4,
+          planMode: 'run_only',
+          liftingEnabled: false,
+        },
+      },
+      query: {},
+      user: { id: profile.id },
+    });
+    assert.equal(response.statusCode, 201, `zero-activity Thursday plan must not return HTTP ${response.statusCode}: ${response.payload?.error || ''}`);
+    const zeroActivityPlan = response.payload.plan.plan_data;
+    assert.equal(zeroActivityPlan.weeks[0].startDate, '2026-08-10');
+    assert.equal(zeroActivityPlan.weeks[1].startDate, '2026-08-17');
+    assert.equal(
+      zeroActivityPlan.weeks[0].days.filter((day) => day.date < scenario.todayISO)
+        .every((day) => day.sessions.length === 0),
+      true,
+      'zero-activity Thursday creation never schedules Monday-Wednesday',
+    );
+    assert.ok(
+      zeroActivityPlan.weeks[0].totalMiles <= zeroActivityPlan.weeks[1].totalMiles,
+      'zero-activity partial current week does not exceed the next full week',
+    );
+
+    const hyroxRace = {
+      id: 'current-week-hyrox',
+      user_id: profile.id,
+      race_name: 'HYROX New York',
+      race_date: '2026-10-18',
+      distance_miles: 4.97,
+      goal_time_seconds: null,
+      event_kind: 'hyrox',
+      event_local_date: '2026-10-18',
+      event_timezone: 'America/New_York',
+      event_format: 'individual_open',
+      event_category: 'men',
+      rules_version: '2026-2027',
+      event_config_json: JSON.stringify({ equipment: [] }),
+    };
+    scenario.race = hyroxRace;
+    response = await invoke(generateForRace, {
+      params: { raceId: scenario.race.id },
+      body: {
+        planning_date_local: scenario.todayISO,
+        timezone_offset_minutes: 0,
+        target: {
+          trainingDays: allTrainingDays,
+          runDaysPerWeek: 4,
+          planMode: 'hyrox_build',
           liftingEnabled: true,
         },
+      },
+      query: {},
+      user: { id: profile.id },
+    });
+    assert.equal(response.statusCode, 201, `zero-activity HYROX preview must not return HTTP ${response.statusCode}: ${response.payload?.error || ''} ${JSON.stringify(response.payload?.details || [])}`);
+    const zeroActivityHyroxPlan = response.payload.plan.plan_data;
+    assert.equal(zeroActivityHyroxPlan.weeks[0].startDate, '2026-08-10');
+    assert.equal(zeroActivityHyroxPlan.weeks[1].startDate, '2026-08-17');
+    assert.equal(zeroActivityHyroxPlan.weeks[0].currentWeekConstraint.completedRunCount, 0);
+    assert.equal(zeroActivityHyroxPlan.weeks[0].currentWeekConstraint.completedStrengthSessions, 0);
+    assert.ok(
+      runningMiles(zeroActivityHyroxPlan.weeks[0]) <= runningMiles(zeroActivityHyroxPlan.weeks[1]),
+      'zero-activity HYROX partial load does not exceed the next full week',
+    );
+    assert.equal(
+      zeroActivityHyroxPlan.weeks[0].days.filter((day) => day.date < scenario.todayISO)
+        .every((day) => day.sessions.length === 0),
+      true,
+    );
+    const zeroPreviewDates = zeroActivityHyroxPlan.weeks.map((week) => (
+      week.days.map((day) => ({ date: day.date, sessionIds: day.sessions.map((session) => session.id) }))
+    ));
+    const zeroApplyResponse = await invoke(applyCandidate, {
+      params: { candidateId: response.payload.candidate_id },
+      body: {
+        candidate_hash: response.payload.candidate_hash,
+        choice: 'train_for_target',
+        planning_date_local: scenario.todayISO,
+        timezone_offset_minutes: 0,
+      },
+      query: {},
+      user: { id: profile.id },
+    });
+    assert.equal(zeroApplyResponse.statusCode, 200, `zero-activity HYROX apply must not return HTTP ${zeroApplyResponse.statusCode}: ${zeroApplyResponse.payload?.error || ''}`);
+    assert.equal(persistedTrainingPlan.week_start, '2026-08-10');
+    assert.deepEqual(
+      JSON.parse(persistedTrainingPlan.plan_data).weeks.map((week) => (
+        week.days.map((day) => ({ date: day.date, sessionIds: day.sessions.map((session) => session.id) }))
+      )),
+      zeroPreviewDates,
+      'zero-activity HYROX apply preserves preview dates and session identities',
+    );
+
+    scenario.race = null;
+    scenario.runs = [runRow('completed-current-week-run', '2026-08-11')];
+    scenario.runs[0].distance_miles = 6;
+    scenario.workouts = [];
+    scenario.lifts = Array.from({ length: 6 }, (_, index) => ({
+      id: `legacy-exercise-${index + 1}`,
+      date: '2026-08-12',
+      workout_duration_seconds: null,
+    }));
+    const completedActivityTarget = {
+      weeks: 4,
+      trainingDays: allTrainingDays,
+      runDaysPerWeek: 3,
+      liftDaysPerWeek: 2,
+      planMode: 'hybrid_maintain',
+      liftingEnabled: true,
+    };
+    response = await invoke(generate, {
+      body: {
+        planning_date_local: scenario.todayISO,
+        timezone_offset_minutes: 0,
+        target: completedActivityTarget,
+      },
+      query: {},
+      user: { id: profile.id },
+    });
+    assert.equal(response.statusCode, 201, `legacy strength dedupe route must not return HTTP ${response.statusCode}: ${response.payload?.error || ''}`);
+    assert.equal(response.payload.plan.plan_data.weeks[0].completedStrengthSessionsAtGeneration, 1);
+    assert.deepEqual(
+      response.payload.plan.plan_data.inputSummary.currentWeekStrengthLoad.provenance,
+      {
+        dedupePolicy: 'workout_session_else_calendar_date',
+        workoutSessionRows: 0,
+        legacyLiftRows: 6,
+        completedStrengthExposures: 1,
+        sources: ['lifts'],
+      },
+      'six legacy exercise rows on one date are one completed strength exposure',
+    );
+
+    scenario.workouts = [{
+      id: 'completed-current-week-workout',
+      started_at: '2026-08-12T17:00:00.000Z',
+      ended_at: '2026-08-12T17:45:00.000Z',
+      total_seconds: 2700,
+    }];
+    scenario.lifts = [{
+      id: 'same-date-imported-lift',
+      date: '2026-08-12',
+      workout_duration_seconds: 2700,
+    }];
+    response = await invoke(generate, {
+      body: {
+        planning_date_local: scenario.todayISO,
+        timezone_offset_minutes: 0,
+        target: completedActivityTarget,
       },
       query: {},
       user: { id: profile.id },
@@ -558,6 +767,17 @@ async function checkPartialWeekRoutesDoNotReject() {
     );
     assert.equal(currentWeekPlan.weeks[0].completedRunsAtGeneration, 1);
     assert.equal(currentWeekPlan.weeks[0].completedStrengthSessionsAtGeneration, 1);
+    assert.deepEqual(
+      currentWeekPlan.inputSummary.currentWeekStrengthLoad.provenance,
+      {
+        dedupePolicy: 'workout_session_else_calendar_date',
+        workoutSessionRows: 1,
+        legacyLiftRows: 1,
+        completedStrengthExposures: 1,
+        sources: ['lifts', 'workout_sessions'],
+      },
+      'same-date workout and imported lift remain one completed strength exposure',
+    );
     assert.ok(
       currentWeekPlan.weeks[0].days.flatMap((day) => day.sessions)
         .filter((session) => session.kind === 'run').length <= 2,
@@ -573,21 +793,7 @@ async function checkPartialWeekRoutesDoNotReject() {
       'current-week completed mileage bounds the remaining scheduled mileage',
     );
 
-    scenario.race = {
-      id: 'current-week-hyrox',
-      user_id: profile.id,
-      race_name: 'HYROX New York',
-      race_date: '2026-10-18',
-      distance_miles: 4.97,
-      goal_time_seconds: null,
-      event_kind: 'hyrox',
-      event_local_date: '2026-10-18',
-      event_timezone: 'America/New_York',
-      event_format: 'individual_open',
-      event_category: 'men',
-      rules_version: '2026-2027',
-      event_config_json: JSON.stringify({ equipment: [] }),
-    };
+    scenario.race = hyroxRace;
     response = await invoke(generateForRace, {
       params: { raceId: scenario.race.id },
       body: {
@@ -609,6 +815,7 @@ async function checkPartialWeekRoutesDoNotReject() {
     assert.equal(hyroxPlan.weeks[1].startDate, '2026-08-17');
     assert.equal(hyroxPlan.weeks[0].currentWeekConstraint.completedRunCount, 1);
     assert.equal(hyroxPlan.weeks[0].currentWeekConstraint.completedStrengthSessions, 1);
+    assert.equal(hyroxPlan.inputSummary.currentWeekStrengthLoad.provenance.completedStrengthExposures, 1);
     assert.equal(
       hyroxPlan.weeks[0].days.filter((day) => day.date < scenario.todayISO)
         .every((day) => day.sessions.length === 0),
@@ -640,8 +847,49 @@ async function checkPartialWeekRoutesDoNotReject() {
       'HYROX apply persists the exact preview dates and sessions',
     );
 
+    scenario.runs = [];
+    scenario.workouts = [];
+    scenario.lifts = [];
+    const consecutiveSchedules = [
+      ['Mon', 'Tue', 'Wed'],
+      ['Tue', 'Wed', 'Thu'],
+      ['Wed', 'Thu', 'Fri'],
+      ['Sat', 'Sun', 'Mon'],
+    ];
+    const representativeEventDates = ['2026-08-31', '2026-09-20', '2026-10-10'];
+    for (const trainingDays of consecutiveSchedules) {
+      for (const eventLocalDate of representativeEventDates) {
+        scenario.race = {
+          ...hyroxRace,
+          race_date: eventLocalDate,
+          event_local_date: eventLocalDate,
+        };
+        response = await invoke(generateForRace, {
+          params: { raceId: scenario.race.id },
+          body: {
+            planning_date_local: scenario.todayISO,
+            timezone_offset_minutes: 0,
+            target: {
+              trainingDays,
+              runDaysPerWeek: 3,
+              planMode: 'hyrox_build',
+              liftingEnabled: true,
+            },
+          },
+          query: {},
+          user: { id: profile.id },
+        });
+        assert.equal(
+          response.statusCode,
+          201,
+          `${trainingDays.join('/')}/${eventLocalDate} must not return HTTP ${response.statusCode}: ${response.payload?.error || ''} ${JSON.stringify(response.payload?.details || [])}`,
+        );
+      }
+    }
+
     scenario.runs = [0, 1, 2, 3, 4].map((index) => runRow(`quota-met-${index}`, scenario.todayISO));
     scenario.workouts = [];
+    scenario.lifts = [];
     scenario.race = null;
     response = await invoke(generate, {
       body: { planning_date_local: scenario.todayISO, timezone_offset_minutes: 0, target: { weeks: 4, trainingDays: ['Mon', 'Tue', 'Thu', 'Sat'], runDaysPerWeek: 4, planMode: 'run_only', liftingEnabled: false } },
