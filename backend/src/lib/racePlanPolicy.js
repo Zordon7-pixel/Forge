@@ -190,10 +190,60 @@ const TARGET_CONVERSION_REGISTRY_V1 = deepFreeze({
   forbidden_targets: ['threshold', 'interval', 'easy', 'long_run', 'compromised'],
 });
 
+const TARGET_POLICY_V1 = deepFreeze({
+  target_policy_id: 'target-policy-v1',
+  target_policy_version: 1,
+  authority_levels: [
+    'SAME_PURPOSE_ASSESSMENT_BENCHMARK',
+    'COMPARABLE_COMPLETED_TRAINING_RANGE',
+    'SUPPORTED_THRESHOLD_OR_NEARBY_RACE_CONVERSION',
+    'ATHLETE_ZONE_HR_RPE',
+    'ASSESSMENT_DURATION_REPETITIONS_RPE',
+  ],
+  benchmark_range_fraction: {
+    threshold: 0.02,
+    interval: 0.02,
+    compromised: 0.03,
+  },
+  comparable: {
+    minimum_sessions: 3,
+    minimum_dates: 2,
+    hard_work_fresh_days: 42,
+    easy_steady_long_fresh_days: 56,
+    percentile_lower: 0.25,
+    percentile_upper: 0.75,
+    estimator: 'R_TYPE_7',
+    required_quality_state: 'COMPLETE',
+    requires_matching_surface_class: true,
+    environmental_override_allowed: false,
+  },
+  nearby_road_race_fresh_days: 120,
+  environment_effort_override: {
+    temperature_f_minimum: 75,
+    temperature_c_minimum: 24,
+    dew_point_f_minimum: 65,
+    dew_point_c_minimum: 18,
+    altitude_difference_m_minimum: 500,
+    terrain_mismatch: true,
+    treadmill_outdoor_mismatch: true,
+  },
+  fallback_rpe_ranges: {
+    easy: [2, 4],
+    recovery: [1, 3],
+    steady: [5, 6],
+    threshold: [7, 8],
+    interval: [8, 8],
+    race_rhythm: [6, 8],
+    long_run: [2, 4],
+    compromised: [6, 8],
+  },
+});
+
 const GOAL_BACKWARD_PLANNING_POLICY_V1 = deepFreeze({
   planning_policy_version: 'goal-backward-planning-policy-v1',
   event_policy_registry_version: EVENT_POLICY_REGISTRY_V1.registry_version,
   stress_taxonomy_version: STRESS_TAXONOMY_V1.stress_taxonomy_version,
+  target_policy_version: TARGET_POLICY_V1.target_policy_version,
   target_conversion_registry_version: TARGET_CONVERSION_REGISTRY_V1.target_conversion_registry_version,
   phase_running_floor_factor: PHASE_RUNNING_FLOOR_FACTOR,
   required_primary_exposure_count: {
@@ -576,6 +626,7 @@ module.exports = {
   RACE_PLAN_POLICY_V1,
   STRESS_TAXONOMY_V1,
   TARGET_CONVERSION_REGISTRY_V1,
+  TARGET_POLICY_V1,
   acceptPlanningClock,
   addDays,
   canonicalHash,

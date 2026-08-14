@@ -71,6 +71,66 @@ const ARTIFACT_KINDS = closed([
 ]);
 const FEATURE_MODES = closed(['off', 'shadow', 'preview', 'on']);
 const CONSTRAINT_KINDS = closed(['day_lock', 'session_lock', 'manual_edit']);
+const CANONICAL_SESSION_ROLES = closed(['PRIMARY_KEY', 'SUPPORTING', 'RECOVERY', 'REST', 'ASSESSMENT']);
+const CANONICAL_WORKOUT_FAMILIES = closed([
+  'rest',
+  'mobility',
+  'manual_recovery',
+  'recovery_run',
+  'easy_run',
+  'long_aerobic',
+  'steady_run',
+  'threshold_run',
+  'interval_run',
+  'race_rhythm_run',
+  'strength_lower',
+  'strength_upper',
+  'strength_full_body',
+  'hyrox_station_skill',
+  'hyrox_station_strength',
+  'hyrox_compromised',
+  'hyrox_partial_simulation',
+  'hyrox_full_simulation',
+  'race',
+  'assessment',
+]);
+const CANONICAL_STEP_TYPES = closed([
+  'warmup',
+  'run',
+  'interval',
+  'repeat',
+  'recovery',
+  'station',
+  'strength_exercise',
+  'transition',
+  'cooldown',
+  'mobility',
+  'manual_instruction',
+]);
+const CANONICAL_WORKOUT_UNITS = closed([
+  'm', 's', 's/km', 'bpm', 'rpe', 'spm', 'kg', 'count', 'rir', 'ordinal',
+]);
+const CANONICAL_TARGET_FIELDS = closed([
+  'distance_m',
+  'duration_s',
+  'pace_range_s_per_km',
+  'reference_pace_range_s_per_km',
+  'heart_rate_range_bpm',
+  'rpe_range',
+  'cadence_range_spm',
+  'load_kg',
+  'repetitions',
+  'sets',
+  'rest_s',
+  'rir',
+  'stop_ceiling',
+]);
+const CANONICAL_EXPORT_CAPABILITIES = closed([
+  'FULLY_STRUCTURED',
+  'PARTIALLY_STRUCTURED',
+  'MANUAL_COMPONENTS_REQUIRED',
+  'NOT_EXPORTABLE',
+]);
 
 const CLOSED_UNIONS = Object.freeze({
   truth_classes: TRUTH_CLASSES,
@@ -93,6 +153,12 @@ const CLOSED_UNIONS = Object.freeze({
   artifact_kinds: ARTIFACT_KINDS,
   feature_modes: FEATURE_MODES,
   constraint_kinds: CONSTRAINT_KINDS,
+  canonical_session_roles: CANONICAL_SESSION_ROLES,
+  canonical_workout_families: CANONICAL_WORKOUT_FAMILIES,
+  canonical_step_types: CANONICAL_STEP_TYPES,
+  canonical_workout_units: CANONICAL_WORKOUT_UNITS,
+  canonical_target_fields: CANONICAL_TARGET_FIELDS,
+  canonical_export_capabilities: CANONICAL_EXPORT_CAPABILITIES,
 });
 
 const REQUIRED_REASON_CODES = closed([
@@ -483,6 +549,12 @@ module.exports = {
   ARTIFACT_KINDS,
   ATHLETE_STATE_SCHEMA_VERSION,
   CANONICAL_UNITS,
+  CANONICAL_EXPORT_CAPABILITIES,
+  CANONICAL_SESSION_ROLES,
+  CANONICAL_STEP_TYPES,
+  CANONICAL_TARGET_FIELDS,
+  CANONICAL_WORKOUT_FAMILIES,
+  CANONICAL_WORKOUT_UNITS,
   CANONICAL_WORKOUT_SCHEMA_VERSION,
   CLOSED_UNIONS,
   CONFIDENCE_CLASSES,

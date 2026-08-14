@@ -85,3 +85,31 @@ node backend/test/racePlanQuality.smoke.js
 ```
 
 Batch 3 status (2026-08-14): `patched`; the three-command gate passes locally. Independent QA and Hermes verification remain pending.
+
+## Goal-Backward Coaching v2.4 — Phase 2B-1
+
+- [ ] Only the approved 10-file Batch 6 allowlist changed; no route, package/lock, migration, native, surface, or unrelated tracked file changed
+- [ ] Canonical session roles, workout families, step types, target fields, metric units, and export capabilities are closed and frozen for schema v1
+- [ ] Schema v1 remains embedded in the schema-v2 plan envelope; current adapters preserve stable canonical IDs and dual-write legacy kind/type/distance/duration fields
+- [ ] Repeat totals recurse deterministically; stored totals beyond the metric tolerance fail `DERIVED_TOTAL_MISMATCH`
+- [ ] Every numerical step target has evidence/athlete-state/policy/confidence/time/decision/unit provenance and the session provenance cache matches it
+- [ ] Family derives from machine-readable work steps, assessment uses the exact element-wise maximum plus event floor, and unresolved/mismatched families fail hard
+- [ ] Session revisions, plan revisions, criteria, stress vector, capability, and deterministic content hash validate before canonical acceptance
+- [ ] Target levels apply freshness, `COMPLETE` quality, conflict, purpose, family, surface, and policy gates before using pace
+- [ ] Level 1 uses outward ±2% threshold/interval or ±3% compromised bounds; level 2 uses R type-7 25th–75th work-segment pace rounded outward
+- [ ] Nearby-road conversion v1 enforces ratio, duration, freshness, and comparable course/surface gates and can prescribe only race rhythm
+- [ ] Unsupported pace falls through valid HR/RPE zones or a duration/repetition/RPE assessment; pace remains null
+- [ ] Heat/dew point/altitude/terrain/surface triggers switch authority to effort and retain fresh complete environment provenance
+- [ ] Explanation numbers are restricted to canonical facts and attaching explanation copy leaves the prescription hash unchanged
+- [ ] Recovery, easy, long, quality, HYROX compromised, and strength floors reject token work without a named beginner/rehab exception
+
+Run the Phase 2B-1 gate:
+
+```sh
+node backend/test/goalBackwardCanonical.smoke.js
+node backend/test/goalBackwardTargets.smoke.js
+node backend/test/forgedHybridH1.smoke.js
+node backend/test/racePlanQuality.smoke.js
+```
+
+Batch 6 status (2026-08-14): `patched`; the four-command gate passes locally. Independent QA and Hermes verification remain pending.

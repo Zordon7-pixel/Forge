@@ -179,6 +179,30 @@ node backend/test/racePlanQuality.smoke.js
 
 Batch 3 status (2026-08-14): `patched`; the three-command Phase 2A-1 gate passes locally. No commit, deploy, feature activation, independent QA, or Hermes verification is claimed by this source patch.
 
+## Goal-Backward Coaching v2.4 — Phase 2B-1 Canonical Prescription Contract
+
+Batch 6 adds canonical-workout schema v1 inside the existing schema-v2 plan envelope. `backend/src/lib/canonicalWorkout.js` owns the closed session graph, recursive metric totals, target provenance, deterministic prescription hash, machine-readable family/stress derivation, criteria, and truthful export capability. `backend/src/lib/goalBackwardTargets.js` owns the five-level target hierarchy and target-policy gates.
+
+Compatibility and authority anchors:
+
+- Canonical sessions retain stable `session_id`/revision/hash identity and are adapted to current `id`, `kind`, `type`, `workout_type`, miles, and minutes fields without replacing schema v2.
+- Only metric canonical target fields are accepted. Unknown step/family/target fields, unresolved family signatures, missing numerical provenance, divergent stored totals, false capability claims, and hash mismatch fail hard.
+- Pace authority requires complete, fresh, conflict-free evidence. Level 1 uses exact benchmark-specific outward ranges; level 2 uses R type-7 work-segment quartiles; road conversion v1 is race-rhythm-only; unsupported pace falls through HR/RPE or assessment.
+- Material environment differences make effort authoritative. Pace may remain only as a non-binding reference, and the condition evidence/reason is retained.
+- Athlete explanations are downstream copy. A number absent from the canonical explanation facts is rejected, and attaching explanation copy cannot change the prescription hash.
+- Training-class presentation floors reject token sessions unless `BELOW_PRESENTATION_FLOOR_EXCEPTION` names a beginner or rehab protocol.
+
+Phase 2B-1 gate:
+
+```sh
+node backend/test/goalBackwardCanonical.smoke.js
+node backend/test/goalBackwardTargets.smoke.js
+node backend/test/forgedHybridH1.smoke.js
+node backend/test/racePlanQuality.smoke.js
+```
+
+Batch 6 status (2026-08-14): `patched`; the four-command gate passes locally. No commit, deploy, runtime activation, independent QA, or Hermes verification is claimed by this source patch.
+
 ---
 
 ## Deploy Process

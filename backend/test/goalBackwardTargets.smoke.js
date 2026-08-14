@@ -6,6 +6,13 @@ const {
   resolveOwnedGoals,
 } = require('../src/lib/goalBackwardDecisionEngine');
 const { evaluateGoalBackwardFeasibility } = require('../src/lib/planFeasibility');
+const {
+  benchmarkPaceRange,
+  convertNearbyRoadRace,
+  environmentRequiresEffortOverride,
+  rType7Quantile,
+  resolveGoalBackwardTarget,
+} = require('../src/lib/goalBackwardTargets');
 
 const results = [];
 
@@ -176,6 +183,162 @@ test('DECISION-01', 'planning decisions retain aspiration and categorical feasib
   assert.equal(decision.goal_feasibilities[0].status, 'unvalidated');
   assert.equal(decision.active_goals[0].target_time_s, 4200);
   assert.equal(decision.goal_feasibilities[0].confidence, 'INSUFFICIENT');
+});
+
+function targetEvidence(overrides = {}) {
+  return {
+    evidence_id: 'target-evidence-1',
+    observed_at: '2026-08-01T12:00:00.000Z',
+    quality_state: 'COMPLETE',
+    freshness_class: 'FRESH',
+    conflict_state: 'RESOLVED',
+    successful: true,
+    benchmark_protocol_id: 'threshold-20m-v1',
+    target_type: 'threshold',
+    workout_family: 'threshold_run',
+    surface_class: 'outdoor',
+    pace_s_per_km: 300,
+    ...overrides,
+  };
+}
+
+test('TGT-RANGE-01', 'level-1 benchmark ranges use exact outward two/three-percent bounds', () => {
+  assert.deepEqual(benchmarkPaceRange(301, 'threshold'), { minimum: 294, maximum: 308 });
+  assert.deepEqual(benchmarkPaceRange(301, 'compromised'), { minimum: 291, maximum: 311 });
+});
+
+test('TGT-01', 'fresh same-purpose evidence wins level 1 with complete provenance', () => {
+  const result = resolveGoalBackwardTarget({
+    target_type: 'threshold', workout_family: 'threshold_run', planning_instant: '2026-08-14T12:00:00.000Z',
+    benchmark_protocol_id: 'threshold-20m-v1', level_1_evidence: [targetEvidence()], decision_id: 'decision-target-1',
+  });
+  assert.equal(result.authority_level, 1);
+  assert.deepEqual(result.target.pace_range_s_per_km, { minimum: 294, maximum: 306 });
+  assert.deepEqual(result.provenance[0].source_evidence_ids, ['target-evidence-1']);
+  assert.deepEqual(result.provenance[0].canonical_units, ['s/km']);
+});
+
+test('TGT-LEVEL2-01', 'three comparable sessions across two dates use R type-7 quartiles', () => {
+  assert.equal(rType7Quantile([300, 310, 320, 340], 0.25), 307.5);
+  const comparable = [
+    targetEvidence({ evidence_id: 's1', observed_local_date: '2026-07-15', work_segment_paces_s_per_km: [300, 310] }),
+    targetEvidence({ evidence_id: 's2', observed_local_date: '2026-07-22', work_segment_paces_s_per_km: [320] }),
+    targetEvidence({ evidence_id: 's3', observed_local_date: '2026-08-01', work_segment_paces_s_per_km: [340] }),
+  ];
+  const result = resolveGoalBackwardTarget({
+    target_type: 'threshold', workout_family: 'threshold_run', planning_instant: '2026-08-14T12:00:00.000Z',
+    surface_class: 'outdoor', comparable_sessions: comparable, decision_id: 'decision-target-2',
+  });
+  assert.equal(result.authority_level, 2);
+  assert.deepEqual(result.target.pace_range_s_per_km, { minimum: 307, maximum: 325 });
+  assert.equal(result.provenance[0].source_evidence_ids.length, 3);
+});
+
+test('TGT-04', 'stale, partial, conflicted, or environmentally overridden sessions cannot support level 2', () => {
+  const bad = [
+    targetEvidence({ evidence_id: 'stale', observed_at: '2026-05-01T12:00:00.000Z', observed_local_date: '2026-05-01', work_segment_paces_s_per_km: [300] }),
+    targetEvidence({ evidence_id: 'partial', observed_local_date: '2026-08-01', quality_state: 'PARTIAL', work_segment_paces_s_per_km: [310] }),
+    targetEvidence({ evidence_id: 'conflict', observed_local_date: '2026-08-02', conflict_state: 'CONFLICT', work_segment_paces_s_per_km: [320] }),
+  ];
+  const result = resolveGoalBackwardTarget({
+    target_type: 'threshold', workout_family: 'threshold_run', planning_instant: '2026-08-14T12:00:00.000Z',
+    surface_class: 'outdoor', comparable_sessions: bad, assessment: { duration_s: 1200 }, decision_id: 'decision-target-3',
+  });
+  assert.equal(result.authority_level, 5);
+  assert.equal(result.target.pace_range_s_per_km, null);
+  assert.ok(result.reason_codes.includes('PACE_EVIDENCE_STALE'));
+  assert.ok(result.reason_codes.includes('ASSESSMENT_REQUIRED'));
+});
+
+test('TGT-05', 'road conversion v1 is exact and race-rhythm-only', () => {
+  const conversion = convertNearbyRoadRace({
+    source_distance_m: 10000, source_duration_s: 3000, target_distance_m: 16093.44,
+    comparable_course_surface: true,
+  });
+  const expectedTime = 3000 * ((16093.44 / 10000) ** 1.06);
+  assert.equal(conversion.target_duration_s, Math.round(expectedTime));
+  assert.equal(conversion.target_pace_s_per_km, Math.round(expectedTime / 16.09344));
+
+  const raceRhythm = resolveGoalBackwardTarget({
+    target_type: 'race_rhythm', workout_family: 'race_rhythm_run', planning_instant: '2026-08-14T12:00:00.000Z',
+    target_distance_m: 16093.44,
+    conversion_evidence: [targetEvidence({
+      evidence_id: 'race-10k', target_type: 'race_rhythm', workout_family: 'race', source_distance_m: 10000,
+      source_duration_s: 3000, comparable_course_surface: true, observed_at: '2026-07-01T12:00:00.000Z',
+    })],
+    decision_id: 'decision-target-4',
+  });
+  assert.equal(raceRhythm.authority_level, 3);
+  assert.equal(raceRhythm.target.pace_range_s_per_km.minimum, conversion.target_pace_s_per_km);
+  assert.equal(raceRhythm.provenance[0].derivation, 'nearby-road-race-riegel-v1');
+
+  const forbidden = resolveGoalBackwardTarget({
+    target_type: 'interval', workout_family: 'interval_run', planning_instant: '2026-08-14T12:00:00.000Z',
+    target_distance_m: 5000, conversion_evidence: raceRhythm.provenance, assessment: { duration_s: 480 },
+  });
+  assert.equal(forbidden.authority_level, 5);
+  assert.equal(forbidden.target.pace_range_s_per_km, null);
+});
+
+test('TGT-LEVEL3-01', 'fresh canonical threshold evidence can supply level 3 without a new conversion', () => {
+  const result = resolveGoalBackwardTarget({
+    target_type: 'threshold', workout_family: 'threshold_run', planning_instant: '2026-08-14T12:00:00.000Z',
+    threshold_evidence: [targetEvidence({
+      evidence_id: 'threshold-range-1', pace_range_s_per_km: { minimum: 296, maximum: 304 },
+    })],
+    decision_id: 'decision-target-level3',
+  });
+  assert.equal(result.authority_level, 3);
+  assert.deepEqual(result.target.pace_range_s_per_km, { minimum: 296, maximum: 304 });
+  assert.equal(result.provenance[0].derivation, 'fresh-threshold-direct-v1');
+});
+
+test('TGT-02', 'valid athlete zones produce level 4 while missing pace/zones produce an assessment', () => {
+  const zone = resolveGoalBackwardTarget({
+    target_type: 'easy', workout_family: 'easy_run', planning_instant: '2026-08-14T12:00:00.000Z',
+    athlete_zones: { valid: true, quality_state: 'COMPLETE', conflict_state: 'RESOLVED', evidence_ids: ['zones-1'], hr_ranges_bpm: { easy: { minimum: 125, maximum: 145 } } },
+    decision_id: 'decision-target-5',
+  });
+  assert.equal(zone.authority_level, 4);
+  assert.deepEqual(zone.target.heart_rate_range_bpm, { minimum: 125, maximum: 145 });
+  assert.deepEqual(zone.target.rpe_range, { minimum: 2, maximum: 4 });
+  assert.ok(zone.reason_codes.includes('HR_RPE_FALLBACK'));
+
+  const rpeOnly = resolveGoalBackwardTarget({
+    target_type: 'easy', workout_family: 'easy_run', planning_instant: '2026-08-14T12:00:00.000Z',
+    assessment: { duration_s: 1800 }, decision_id: 'decision-target-rpe',
+  });
+  assert.equal(rpeOnly.authority_level, 4);
+  assert.equal(rpeOnly.target.pace_range_s_per_km, null);
+  assert.deepEqual(rpeOnly.target.rpe_range, { minimum: 2, maximum: 4 });
+
+  const assessment = resolveGoalBackwardTarget({
+    target_type: 'interval', workout_family: 'interval_run', planning_instant: '2026-08-14T12:00:00.000Z',
+    assessment: { duration_s: 480, repetitions: 4 }, decision_id: 'decision-target-6',
+  });
+  assert.equal(assessment.authority_level, 5);
+  assert.equal(assessment.target.pace_range_s_per_km, null);
+  assert.deepEqual(assessment.target.rpe_range, { minimum: 8, maximum: 8 });
+  assert.equal(assessment.target.duration_s, 480);
+});
+
+test('TGT-03', 'material heat, dew point, altitude, terrain, and surface differences switch authority to effort', () => {
+  assert.equal(environmentRequiresEffortOverride({ temperature_f: 75 }).required, true);
+  assert.equal(environmentRequiresEffortOverride({ dew_point_c: 18 }).required, true);
+  assert.equal(environmentRequiresEffortOverride({ altitude_difference_m: 500 }).required, true);
+  assert.equal(environmentRequiresEffortOverride({ terrain_mismatch: true }).required, true);
+  assert.equal(environmentRequiresEffortOverride({ treadmill_outdoor_mismatch: true }).required, true);
+  const result = resolveGoalBackwardTarget({
+    target_type: 'threshold', workout_family: 'threshold_run', planning_instant: '2026-08-14T12:00:00.000Z',
+    benchmark_protocol_id: 'threshold-20m-v1', level_1_evidence: [targetEvidence()],
+    environment: { temperature_f: 82, evidence_id: 'weather-1', quality_state: 'COMPLETE', freshness_class: 'FRESH' },
+    decision_id: 'decision-target-7',
+  });
+  assert.equal(result.authority, 'EFFORT');
+  assert.equal(result.target.pace_range_s_per_km, null);
+  assert.deepEqual(result.target.reference_pace_range_s_per_km, { minimum: 294, maximum: 306 });
+  assert.ok(result.reason_codes.includes('ENVIRONMENT_EFFORT_OVERRIDE'));
+  assert.ok(result.provenance.some((entry) => entry.source_evidence_ids.includes('weather-1')));
 });
 
 assert.equal(new Set(results).size, results.length, 'fixture IDs must remain unique');

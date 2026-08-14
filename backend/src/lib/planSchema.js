@@ -97,6 +97,11 @@ function kindFromSession(session) {
   const s = session || {};
   const k = String(s.kind || '').toLowerCase();
   if (k === 'run' || k === 'lift' || k === 'rest' || k === 'hyrox') return k;
+  const family = String(s.workout_family || '').toLowerCase();
+  if (family === 'rest' || family === 'mobility' || family === 'manual_recovery') return 'rest';
+  if (family.startsWith('strength_')) return 'lift';
+  if (family.startsWith('hyrox_')) return 'hyrox';
+  if (family) return 'run';
   return kindFromLegacy(s);
 }
 
@@ -252,6 +257,7 @@ function withRemovalSessionIdentities(plan, options = {}) {
 function sessionIdentifier(dayEntry, session, sessionIndex = 0, dayIndex = 0) {
   const d = dayEntry || {};
   const s = session || {};
+  if (s.session_id !== undefined && s.session_id !== null && String(s.session_id).length) return String(s.session_id);
   if (s.id !== undefined && s.id !== null && String(s.id).length) return String(s.id);
   if (!Array.isArray(d.sessions)) {
     return d.id !== undefined && d.id !== null && String(d.id).length
@@ -268,22 +274,30 @@ function normalizeSession(session, fallbackId) {
   const prescription = s.prescription && typeof s.prescription === 'object' ? s.prescription : null;
   const preserved = cloneCanonicalValue(s);
   const flat = prescription ? cloneCanonicalValue(prescription) : {};
-  const id = s.id !== undefined && s.id !== null && String(s.id).length
-    ? String(s.id)
+  const stableSessionId = s.session_id ?? s.id;
+  const id = stableSessionId !== undefined && stableSessionId !== null && String(stableSessionId).length
+    ? String(stableSessionId)
     : fallbackId;
+  const canonical = Number(s.canonical_workout_schema_version) === 1;
+  const totals = canonical && s.derived_totals && typeof s.derived_totals === 'object'
+    ? s.derived_totals
+    : {};
+  const legacyType = canonical ? legacyTypeForCanonicalFamily(s.workout_family) : undefined;
+  const legacyWorkoutType = canonical ? legacyWorkoutTypeForKind(kind) : undefined;
   return Object.assign(
     {},
     flat,
     preserved,
     { kind },
     id ? { id } : {},
+    canonical && id ? { session_id: id } : {},
     stripUndefined({
-      type: s.type,
-      workout_type: s.workout_type,
+      type: s.type ?? legacyType,
+      workout_type: s.workout_type ?? legacyWorkoutType,
       title: s.title,
       display_name: s.display_name ?? s.displayName,
-      distance_miles: s.distance_miles,
-      duration_min: s.duration_min,
+      distance_miles: s.distance_miles ?? (Number.isFinite(totals.distance_m) ? totals.distance_m / 1609.344 : undefined),
+      duration_min: s.duration_min ?? (Number.isFinite(totals.duration_s) ? totals.duration_s / 60 : undefined),
       description: s.description,
       pace_target: s.pace_target,
       target_zone: s.target_zone,
@@ -308,6 +322,25 @@ function normalizeSession(session, fallbackId) {
       benchmark: s.benchmark,
     })
   );
+}
+
+function legacyWorkoutTypeForKind(kind) {
+  if (kind === 'lift') return 'strength';
+  if (kind === 'hyrox') return 'hyrox';
+  if (kind === 'rest') return 'rest';
+  return 'run';
+}
+
+function legacyTypeForCanonicalFamily(family) {
+  if (family === 'rest' || family === 'mobility' || family === 'manual_recovery') return 'rest';
+  if (family === 'recovery_run') return 'recovery';
+  if (family === 'easy_run') return 'easy';
+  if (family === 'long_aerobic') return 'long';
+  if (String(family || '').startsWith('strength_')) return 'strength';
+  if (String(family || '').startsWith('hyrox_')) return 'hyrox';
+  if (family === 'assessment') return 'assessment';
+  if (family === 'race') return 'race';
+  return family ? 'quality' : undefined;
 }
 
 // Return the canonical session list for a day entry.
@@ -893,6 +926,7 @@ module.exports = {
   planViewsForAssignment,
   visiblePlanForAssignment,
   normalizeSession,
+  adaptCanonicalSessionForLegacy: normalizeSession,
   sessionIdentifier,
   flattenDayForConsumer,
   plannedSessionsForDay,
