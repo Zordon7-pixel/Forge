@@ -125,21 +125,39 @@ export function isRestExecutionAuthority(execution) {
   );
 }
 
-// Fail closed for current-day actions unless the exact unfinished session is
-// still present in canonical GET /plans/today output. Future-day previews are
-// handled by the caller and intentionally do not use this today-only gate.
-export function executionAllowsSession(execution, session, expectedKind = null) {
+function executionCandidates(execution) {
+  return [
+    execution?.run,
+    execution?.lift,
+    ...(Array.isArray(execution?.sessions) ? execution.sessions : []),
+  ];
+}
+
+// Recognition and execution are deliberately separate. Completed sessions
+// remain canonical and reviewable (including reversible completion), while
+// only unfinished sessions may expose start/export actions.
+export function executionHasSession(execution, session, expectedKind = null) {
   if (!execution || execution.hasPlan !== true || execution.hasDay !== true) return false;
   if (isRestExecutionAuthority(execution) || !session || typeof session !== 'object') return false;
   const id = String(session.id ?? '').trim();
   const kind = String(expectedKind || session.kind || '').trim().toLowerCase();
   if (!id || !kind) return false;
-  const candidates = [
-    execution.run,
-    execution.lift,
-    ...(Array.isArray(execution.sessions) ? execution.sessions : []),
-  ];
-  return candidates.some((candidate) => (
+  return executionCandidates(execution).some((candidate) => (
+    candidate
+    && String(candidate.id ?? '').trim() === id
+    && String(candidate.kind || '').trim().toLowerCase() === kind
+    && !isRestSession(candidate)
+  ));
+}
+
+// Fail closed for current-day actions unless the exact unfinished session is
+// still present in canonical GET /plans/today output. Future-day previews are
+// handled by the caller and intentionally do not use this today-only gate.
+export function executionAllowsSession(execution, session, expectedKind = null) {
+  if (!executionHasSession(execution, session, expectedKind)) return false;
+  const id = String(session.id ?? '').trim();
+  const kind = String(expectedKind || session.kind || '').trim().toLowerCase();
+  return executionCandidates(execution).some((candidate) => (
     candidate
     && String(candidate.id ?? '').trim() === id
     && String(candidate.kind || '').trim().toLowerCase() === kind

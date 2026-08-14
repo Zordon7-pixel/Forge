@@ -32,6 +32,13 @@ function assertCleanApiAndRuntime(state, errors) {
 
 const today = localDateISO()
 const todayDay = dayLabel()
+const tomorrowDate = (() => {
+  const date = new Date()
+  date.setDate(date.getDate() + 1)
+  return date
+})()
+const tomorrow = localDateISO(tomorrowDate)
+const tomorrowDay = dayLabel(tomorrowDate)
 
 const plannedRun = {
   id: 'journey-run-session',
@@ -174,7 +181,7 @@ function liftOnlyCheckinRecoveryExecution({ patchSession = true } = {}) {
   }
 }
 
-function activePlanWithTodaySessions(sessions) {
+function activePlanWithTodaySessions(sessions, { completedSessionIds = [], additionalDays = [] } = {}) {
   return {
     plan: {
       id: 'journey-current-day-plan',
@@ -188,14 +195,14 @@ function activePlanWithTodaySessions(sessions) {
           week: 1,
           phase: 'base',
           startDate: today,
-          days: [{ date: today, day: todayDay, sessions }],
+          days: [{ date: today, day: todayDay, sessions }, ...additionalDays],
         }],
       },
     },
     user_plan: {
       current_week: 1,
       started_at: today,
-      progress: { completedSessionIds: [] },
+      progress: { completedSessionIds },
     },
   }
 }
@@ -419,6 +426,97 @@ test('lift-only safety rest cannot expose strength or workout starts even with a
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(await page.evaluate(() => document.documentElement.clientWidth))
 
   expect(requestsFor(apiState, 'POST', '/api/checkin')).toHaveLength(1)
+  assertCleanApiAndRuntime(apiState, runtimeErrors)
+})
+
+test('completed current-day session stays recognized and reversible without reopening start or export actions', async ({ page }) => {
+  const runtimeErrors = collectRuntimeErrors(page)
+  const completedRun = { ...plannedRun, completed: true }
+  const apiState = await installAuthenticatedApi(page, {
+    responses: new Map([
+      ['GET /api/plans/my', activePlanWithTodaySessions([plannedRun], { completedSessionIds: [plannedRun.id] })],
+      ['GET /api/plans/today', executionWith({ run: completedRun })],
+      ['PUT /api/plans/my/progress', { ok: true }],
+    ]),
+  })
+
+  await page.goto('/plan')
+  await page.locator('.forged-mission-card').click()
+  await expect(page.getByText("Today's plan changed.", { exact: false })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Done', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Start Run', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: /Export watch workout/i })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: /Copy workout/i })).toHaveCount(0)
+  await page.getByRole('button', { name: 'Done', exact: true }).click()
+  await expect.poll(() => requestsFor(apiState, 'PUT', '/api/plans/my/progress').length).toBe(1)
+  expect(requestsFor(apiState, 'PUT', '/api/plans/my/progress')[0].body).toMatchObject({ unset_session_id: plannedRun.id })
+  expect([320, 393]).toContain(page.viewportSize()?.width)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(await page.evaluate(() => document.documentElement.clientWidth))
+  assertCleanApiAndRuntime(apiState, runtimeErrors)
+})
+
+test('partially completed hybrid day keeps the completed run reversible and the pending lift actionable', async ({ page }) => {
+  const runtimeErrors = collectRuntimeErrors(page)
+  const completedRun = { ...plannedRun, completed: true }
+  const apiState = await installAuthenticatedApi(page, {
+    responses: new Map([
+      ['GET /api/plans/my', activePlanWithTodaySessions([plannedRun, plannedLift], { completedSessionIds: [plannedRun.id] })],
+      ['GET /api/plans/today', executionWith({ run: completedRun, lift: plannedLift })],
+    ]),
+  })
+
+  await page.goto('/plan')
+  await page.locator('.forged-mission-card').click()
+  await expect(page.getByText("Today's plan changed.", { exact: false })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Done', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Start Run', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Start Lift', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Mark done', exact: true })).toBeVisible()
+  expect([320, 393]).toContain(page.viewportSize()?.width)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(await page.evaluate(() => document.documentElement.clientWidth))
+  assertCleanApiAndRuntime(apiState, runtimeErrors)
+})
+
+test('future plan actions stay available while the phone-local current day is canonical rest', async ({ page }) => {
+  const runtimeErrors = collectRuntimeErrors(page)
+  const futureRun = { ...plannedRun, id: 'journey-future-run', title: 'Future easy run' }
+  const apiState = await installAuthenticatedApi(page, {
+    responses: new Map([
+      ['GET /api/plans/my', activePlanWithTodaySessions([], {
+        additionalDays: [{ date: tomorrow, day: tomorrowDay, sessions: [futureRun] }],
+      })],
+      ['GET /api/plans/today', restExecution()],
+    ]),
+  })
+
+  await page.goto('/plan')
+  await page.getByRole('button', { name: new RegExp(`^${tomorrowDay} ${tomorrowDate.getDate()} `) }).click()
+  await expect(page.getByRole('button', { name: 'Start Run', exact: true })).toBeVisible()
+  await expect(page.getByText("Today's plan changed.", { exact: false })).toHaveCount(0)
+  await expect(page.getByText("Today's safety status could not be verified.", { exact: false })).toHaveCount(0)
+  expect([320, 393]).toContain(page.viewportSize()?.width)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(await page.evaluate(() => document.documentElement.clientWidth))
+  assertCleanApiAndRuntime(apiState, runtimeErrors)
+})
+
+test('mismatched-date execution authority fails closed after phone-local midnight', async ({ page }) => {
+  const runtimeErrors = collectRuntimeErrors(page)
+  const staleExecution = executionWith()
+  staleExecution.execution.date = tomorrow
+  const apiState = await installAuthenticatedApi(page, {
+    responses: new Map([
+      ['GET /api/plans/my', activePlanWithTodaySessions([plannedRun])],
+      ['GET /api/plans/today', staleExecution],
+    ]),
+  })
+
+  await page.goto('/plan')
+  await page.locator('.forged-mission-card').click()
+  await expect(page.getByText("Today's safety status could not be verified.", { exact: false })).toBeVisible()
+  await expect(page.getByText("Today's plan changed.", { exact: false })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Start Run', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Mark done', exact: true })).toHaveCount(0)
+  expect([320, 393]).toContain(page.viewportSize()?.width)
   assertCleanApiAndRuntime(apiState, runtimeErrors)
 })
 

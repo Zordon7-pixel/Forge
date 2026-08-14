@@ -7,6 +7,7 @@ import {
   normalizeExecution,
   isRestSession,
   isRestExecutionAuthority,
+  executionHasSession,
   executionAllowsSession,
   hasExecutableSession,
   formatHrZone,
@@ -174,6 +175,7 @@ const staleLiftAfterRestDirective = normalizeExecution({
 });
 assert(hasExecutableSession(staleLiftAfterRestDirective) === false, 'day-level safety rest fails closed even if a stale lift session is still strength');
 assert(isRestExecutionAuthority(staleLiftAfterRestDirective) === true, 'day-level check-in rest is canonical even when its retained lift payload says strength');
+assert(executionHasSession(staleLiftAfterRestDirective, { id: 'lift-stale', kind: 'lift' }, 'lift') === false, 'safety-rest authority never recognizes its stale retained lift as actionable plan truth');
 assert(executionAllowsSession(staleLiftAfterRestDirective, { id: 'lift-stale', kind: 'lift' }, 'lift') === false, 'stale retained lift cannot pass the current-day execution gate');
 assert(scheduledLiftFromExecution(staleLiftAfterRestDirective) === null, 'day-level safety rest never exposes a stale lift handoff');
 assert(recommendationFromExecution(staleLiftAfterRestDirective)?.type === 'rest', 'day-level safety rest remains recovery guidance with stale session data');
@@ -190,6 +192,8 @@ assert(hasExecutableSession(liftPendingAfterRun) === true, 'hybrid day stays exe
 assert(scheduledRunFromExecution(liftPendingAfterRun) === null, 'completed run cannot reopen from Today');
 assert(scheduledLiftFromExecution(liftPendingAfterRun)?.id === 'lift-next', 'unfinished lift becomes the next executable session');
 assert(recommendationFromExecution(liftPendingAfterRun)?.recommendationType === 'strength', 'Today recommends the pending lift after the run is complete');
+assert(executionHasSession(liftPendingAfterRun, { id: 'run-done', kind: 'run' }, 'run') === true, 'completed canonical run remains recognized for reversible review');
+assert(executionAllowsSession(liftPendingAfterRun, { id: 'run-done', kind: 'run' }, 'run') === false, 'completed canonical run cannot reopen start or export actions');
 assert(executionAllowsSession(liftPendingAfterRun, { id: 'lift-next', kind: 'lift' }, 'lift') === true, 'exact unfinished canonical lift remains executable');
 assert(executionAllowsSession(liftPendingAfterRun, { id: 'lift-stale', kind: 'lift' }, 'lift') === false, 'noncanonical stale lift id fails closed');
 assert(executionAllowsSession(liftPendingAfterRun, { id: 'lift-next', kind: 'run' }, 'run') === false, 'session kind must match the canonical execution');

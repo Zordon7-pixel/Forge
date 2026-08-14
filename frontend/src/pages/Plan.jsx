@@ -307,6 +307,8 @@ export default function Plan() {
   }, [])
 
   const today = todayISO()
+  const todayExecutionReady = todayExecutionStatus === 'ready'
+    && todayExecution?.date === today
   const completedSet = useMemo(
     () => new Set((myUserPlan?.progress?.completedSessionIds || []).map(String)),
     [myUserPlan],
@@ -397,10 +399,10 @@ export default function Plan() {
     todayISO: today,
   }), [model, races, today])
   const travelExecution = useMemo(
-    () => (todayExecutionStatus === 'ready'
+    () => (todayExecutionReady
       ? todayExecution
       : executionFromCalendar(calendarModel, today, completedSet)),
-    [calendarModel, today, completedSet, todayExecution, todayExecutionStatus],
+    [calendarModel, today, completedSet, todayExecution, todayExecutionReady],
   )
   const hasRunRecordedToday = useMemo(
     () => Boolean(recordedRunsByDate.get(today)?.length),
@@ -705,7 +707,7 @@ export default function Plan() {
 
   const currentExecutionAllows = (session, kind) => {
     if (!selectedDay || selectedDay.dateISO !== today) return true
-    return todayExecutionStatus === 'ready'
+    return todayExecutionReady
       && executionAllowsSession(todayExecution, session, kind)
   }
 
@@ -1024,7 +1026,7 @@ export default function Plan() {
               allowSessionRemoval={selectedDay.dateISO >= today}
               isScheduledToday={selectedDay.dateISO === today}
               executionAuthority={todayExecution}
-              executionAuthorityReady={todayExecutionStatus === 'ready'}
+              executionAuthorityReady={todayExecutionReady}
               routePlanner={routePlannerStatus.available && routePlannerWorkout?.distanceMiles > 0 && currentExecutionAllows(selectedRunSession, 'run') ? (
                 <Suspense fallback={<p style={{ marginTop: 10, fontSize: 12, color: 'var(--ink-soft, #5A554B)' }}>Loading route planner...</p>}>
                   <RoutePlanner
