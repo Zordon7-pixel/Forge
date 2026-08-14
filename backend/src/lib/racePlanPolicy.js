@@ -222,6 +222,46 @@ const GOAL_BACKWARD_PLANNING_POLICY_V1 = deepFreeze({
     maximum_very_high_event_specific_sessions: 1,
     very_high_race_exclusion_days: 6,
   },
+  goal_priority: {
+    explicit_order: ['A', 'B', 'C'],
+    unspecified_tie_break: [
+      'REGISTERED_DATED_RACE',
+      'ATHLETE_SELECTED_PERFORMANCE_PRIMARY',
+      'EARLIEST_EVENT_DATE',
+      'OLDEST_GOAL_CREATION_TIME',
+    ],
+  },
+  event_lifecycle_states: ['SCHEDULED', 'COMPLETED', 'DNS', 'CANCELLED', 'POSTPONED', 'UNKNOWN'],
+  phases: [
+    'FOUNDATION',
+    'DEVELOPMENT',
+    'EVENT_SPECIFIC_DEVELOPMENT',
+    'SHARPENING',
+    'TAPER_RACE_WEEK',
+    'POST_RACE_TRANSITION',
+  ],
+  feasibility_states: ['supported', 'unvalidated', 'at_risk', 'not_currently_supported'],
+  confidence_categories: ['HIGH', 'MEDIUM', 'LOW', 'INSUFFICIENT'],
+  material_change: {
+    weekly_running: { percentage: 0.10, absolute_m: 3218.688 },
+    long_run: { percentage: 0.15, absolute_m: 1609.344 },
+    running_days_absolute: 1,
+    pace_percentage_strictly_greater_than: 0.03,
+    interval_station_load_percentage: 0.15,
+    strength_hard_sets: { percentage: 0.20, absolute: 2 },
+    hybrid_dimension_percentage: 0.20,
+    hard_session_move_days: 2,
+  },
+  interference: {
+    threshold_heavy_lower_hours: 24,
+    threshold_heavy_lower_beginner_returning_hours: 36,
+    heavy_lower_long_hours: 36,
+    compromised_threshold_hours: 48,
+    sled_lunge_quality_hours: 48,
+    peak_simulation_hard_lower_hours: 48,
+    peak_simulation_long_hours: 48,
+    full_simulation_race_hours: 14 * 24,
+  },
 });
 
 function eventPolicyFor(eventPolicyId) {
@@ -230,6 +270,32 @@ function eventPolicyFor(eventPolicyId) {
     : eventPolicyId;
   const canonicalId = EVENT_POLICY_ALIASES[requested] || requested;
   return EVENT_POLICY_RECORDS_V1[canonicalId] || null;
+}
+
+function eventPolicyIdForGoal(goal = {}) {
+  const explicit = goal.event_policy_id ?? goal.eventPolicyId;
+  if (explicit && eventPolicyFor(explicit)) return eventPolicyFor(explicit).event_policy_id;
+  const eventKind = String(goal.event_kind ?? goal.eventKind ?? '').toUpperCase();
+  if (eventKind === 'HYROX_SINGLES') return 'hyrox_singles_v1';
+  if (eventKind === 'HYROX_DOUBLES') return 'hyrox_doubles_v1';
+  if (eventKind === 'MARATHON') return 'road_marathon_v1';
+  const miles = Number(goal.distance_miles ?? goal.distanceMiles ?? goal.distance ?? 0);
+  if (eventKind === 'ROAD_SHORT') {
+    return miles > 3.2 ? 'road_10k_v1' : 'road_5k_v1';
+  }
+  if (eventKind === 'ROAD_ENDURANCE') {
+    return miles > 10.1 ? 'road_half_marathon_v1' : 'road_10mile_v1';
+  }
+  if (miles > 20) return 'road_marathon_v1';
+  if (miles > 10.1) return 'road_half_marathon_v1';
+  if (miles > 6.3) return 'road_10mile_v1';
+  if (miles > 3.2) return 'road_10k_v1';
+  if (miles > 0) return 'road_5k_v1';
+  return null;
+}
+
+function eventPolicyForGoal(goal = {}) {
+  return eventPolicyFor(eventPolicyIdForGoal(goal));
 }
 
 function requiredPrimaryExposureCount(phase, options = {}) {
@@ -516,6 +582,8 @@ module.exports = {
   canonicalStringify,
   daysBetween,
   eventPolicyFor,
+  eventPolicyForGoal,
+  eventPolicyIdForGoal,
   firstFullMonday,
   longRunIdentityFloor,
   minimumWeeklyDemandFor,

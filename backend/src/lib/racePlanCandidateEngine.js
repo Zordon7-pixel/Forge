@@ -8,6 +8,7 @@ const {
 const {
   RACE_PLAN_POLICY_V1,
   addDays,
+  canonicalHash,
   daysBetween,
   firstFullMonday,
   longRunIdentityFloor,
@@ -15,12 +16,17 @@ const {
   raceCategory,
 } = require('./racePlanPolicy');
 const runWorkoutTaxonomy = require('./runWorkoutTaxonomy');
+const { resolveStressVector } = require('./goalBackwardLoad');
 const {
   buildPlanningModel,
   evaluatePlanFeasibility,
   ordinaryEasyMedians,
   paceFeasibility,
 } = require('./planFeasibility');
+const {
+  compareMaterialChange,
+  validateGoalBackwardCandidate,
+} = require('./goalBackwardValidators');
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -829,8 +835,133 @@ function buildRacePlanCandidate(context = {}, options = {}) {
   };
 }
 
+const LEGACY_TO_GOAL_BACKWARD_FAMILY = Object.freeze({
+  easy: 'easy_run',
+  recovery: 'recovery_run',
+  long: 'long_aerobic',
+  threshold: 'threshold_run',
+  intervals: 'interval_run',
+  race_pace: 'race_rhythm_run',
+  progression: 'steady_run',
+  benchmark: 'assessment',
+  race: 'race',
+  speed: 'interval_run',
+  hills: 'threshold_run',
+  sharpening: 'race_rhythm_run',
+});
+
+function immutable(value) {
+  if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
+  Object.values(value).forEach(immutable);
+  return Object.freeze(value);
+}
+
+function legacyCandidateMaterialEntries(source) {
+  if (Array.isArray(source)) return source;
+  if (source?.plan) return legacyCandidateMaterialEntries(source.plan);
+  if (Array.isArray(source?.sessions)) return source.sessions;
+  return (source?.weeks || []).flatMap((week) => (week.days || []).flatMap((day) => (
+    (day.sessions || []).map((session) => ({ ...session, date: session.date || day.date }))
+  )));
+}
+
+function legacyGoalBackwardFamily(session = {}) {
+  if (session.workout_family && resolveStressVector(session.workout_family)) return session.workout_family;
+  const taxonomy = runWorkoutTaxonomy.workoutForId(session.workout_id);
+  return LEGACY_TO_GOAL_BACKWARD_FAMILY[taxonomy?.family] || null;
+}
+
+function roadCandidateMaterial(source) {
+  return legacyCandidateMaterialEntries(source).map((session, index) => ({
+    material_id: String(session.session_id ?? session.id ?? `road-material-${index + 1}`),
+    source_workout_id: session.workout_id ?? null,
+    workout_family: legacyGoalBackwardFamily(session),
+    legacy_scheduled_local_date: String(
+      session.scheduled_local_date ?? session.date ?? ''
+    ).slice(0, 10) || null,
+    source_kind: session.kind ?? 'run',
+    source_title: session.title ?? null,
+  }));
+}
+
+function placementFor(placements, requirementId) {
+  const placement = placements?.[requirementId];
+  if (typeof placement === 'string') return { scheduled_local_date: placement.slice(0, 10), scheduled_start_at: null };
+  if (!placement || typeof placement !== 'object') return { scheduled_local_date: null, scheduled_start_at: null };
+  return {
+    scheduled_local_date: String(placement.scheduled_local_date ?? placement.date ?? '').slice(0, 10) || null,
+    scheduled_start_at: placement.scheduled_start_at ?? null,
+  };
+}
+
+function buildGoalBackwardCandidateSkeleton(input = {}) {
+  const decision = input.decision;
+  if (!decision || !decision.decision_id || !Array.isArray(decision.role_multiset)) {
+    throw new Error('an immutable PlanningDecision with a role multiset is required');
+  }
+  const materials = roadCandidateMaterial(input.legacy_road_candidate_material || []);
+  const usedMaterialIds = new Set();
+  const sessions = decision.role_multiset.map((role, index) => {
+    const material = materials.find((entry) => (
+      !usedMaterialIds.has(entry.material_id) && (role.any_of || []).includes(entry.workout_family)
+    ));
+    if (material) usedMaterialIds.add(material.material_id);
+    const placement = placementFor(input.placements, role.requirement_id);
+    return {
+      skeleton_session_id: String(material?.material_id || `skeleton-${role.requirement_id}-${index + 1}`),
+      session_id: String(material?.material_id || `skeleton-${role.requirement_id}-${index + 1}`),
+      requirement_id: role.requirement_id,
+      role: role.role,
+      workout_family: material?.workout_family || role.any_of?.[0] || null,
+      candidate_families: [...(role.any_of || [])],
+      scheduled_local_date: placement.scheduled_local_date,
+      scheduled_start_at: placement.scheduled_start_at,
+      supports_requirement_id: role.supports_requirement_id || null,
+      candidate_material_id: material?.material_id || null,
+      material_source: material ? 'CURRENT_ROAD_SESSION_CONSTRUCTOR_OUTPUT' : 'EVENT_POLICY_ROLE',
+    };
+  });
+  const materialChange = compareMaterialChange({
+    active_applied_plan: input.active_applied_plan ?? null,
+    candidate: { phase: decision.phase, sessions },
+  });
+  const validation = input.validate === true || sessions.some((session) => session.scheduled_local_date)
+    ? validateGoalBackwardCandidate({ sessions }, {
+      ...input.validation_options,
+      training_age_class: input.validation_options?.training_age_class ?? input.training_age_class ?? decision.training_age_class,
+      consistency_state: input.validation_options?.consistency_state ?? decision.consistency_state,
+      recovery_state: input.validation_options?.recovery_state ?? decision.recovery_state,
+      safety_action: input.validation_options?.safety_action ?? decision.safety_state?.action,
+      locks: input.validation_options?.locks ?? decision.athlete_locks,
+      manual_edits: input.validation_options?.manual_edits ?? decision.manual_edits,
+      required_exposure_ledger: decision.due_exposure_ledger,
+      unplaceable_requirement_ids: decision.due_exposure_ledger?.unplaceable_requirement_ids,
+    })
+    : null;
+  const content = {
+    decision_id: decision.decision_id,
+    decision_hash: decision.decision_hash,
+    phase: decision.phase,
+    primary_goal_id: decision.primary_goal_id,
+    role_multiset: clone(decision.role_multiset),
+    candidate_material: materials,
+    sessions,
+    material_change: materialChange,
+    validation,
+    canonical_sessions_materialized: false,
+    persisted: false,
+  };
+  const candidateHash = canonicalHash(content);
+  return immutable({
+    candidate_skeleton_id: input.candidate_skeleton_id || `candidate-skeleton-${candidateHash.slice(0, 24)}`,
+    ...content,
+    candidate_hash: candidateHash,
+  });
+}
+
 module.exports = {
   applyPlanningCurve,
+  buildGoalBackwardCandidateSkeleton,
   buildRacePlanCandidate,
   enforceDemandingSpacing,
   ordinaryEasyMedians,

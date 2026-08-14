@@ -423,6 +423,156 @@ function checkpointFor(plan, calendar, needsPace, needsWorkload) {
   } : null;
 }
 
+function normalizedGoalBackwardStatus(value) {
+  const status = String(value || 'unvalidated').toLowerCase();
+  return ['supported', 'unvalidated', 'at_risk', 'not_currently_supported'].includes(status)
+    ? status : 'unvalidated';
+}
+
+function goalBackwardTarget(goal = {}) {
+  const targetSeconds = Number(
+    goal.target_time_s ?? goal.targetTimeSeconds ?? goal.goal_time_seconds ?? goal.goalTimeSeconds
+  );
+  return {
+    target_time_s: Number.isFinite(targetSeconds) && targetSeconds > 0 ? targetSeconds : null,
+    target_pace: goal.target_pace ?? goal.targetPace ?? goal.goal_pace ?? null,
+  };
+}
+
+function hasTwoConsecutiveSubDemandWeeks(weeks = []) {
+  let consecutive = 0;
+  for (const week of Array.isArray(weeks) ? weeks : []) {
+    const completed = Number(week.completed_running_m);
+    const demand = Number(week.demand_running_m);
+    const eligible = week.dimension_eligible === true
+      && Number.isInteger(completed) && completed >= 0
+      && Number.isInteger(demand) && demand >= 0;
+    const below = eligible && completed * 100 < demand * 85;
+    consecutive = below ? consecutive + 1 : 0;
+    if (consecutive >= 2) return true;
+  }
+  return false;
+}
+
+function evaluateGoalBackwardFeasibility(input = {}) {
+  const goal = input.goal || {};
+  const currentStatus = normalizedGoalBackwardStatus(
+    input.current_status ?? input.currentStatus ?? goal.feasibility_status
+  );
+  const observations = Array.isArray(input.target_observations) ? input.target_observations : [];
+  // Kept lazy to avoid making the legacy feasibility module depend on the
+  // decision engine during flag-off module initialization.
+  const suppliedConfidence = String(input.confidence || '').toUpperCase();
+  const confidenceEvidence = ['HIGH', 'MEDIUM', 'LOW', 'INSUFFICIENT'].includes(suppliedConfidence)
+    ? { confidence: suppliedConfidence }
+    : require('./goalBackwardDecisionEngine').deriveGoalConfidence(observations, {
+      unresolved_material_conflict: input.unresolved_material_conflict === true,
+    });
+  const confidence = confidenceEvidence.confidence;
+  const reasons = [];
+  const unsupportedReasons = [];
+  if (input.safe_forward_reaches_minimum_demand === false) {
+    unsupportedReasons.push('SAFE_WORKLOAD_DEMAND_UNREACHABLE');
+  }
+  if (input.mandatory_exposure_placeable === false) unsupportedReasons.push('REQUIRED_EXPOSURE_UNPLACEABLE');
+  if (input.safety_compatible_through_runway === false) unsupportedReasons.push('INJURY_SCOPE');
+  if (input.target_improvement_within_policy === false && input.checkpoint_path_exists !== true) {
+    unsupportedReasons.push('ASSESSMENT_REQUIRED');
+  }
+  if (input.hyrox_mandatory_budget_known === false) unsupportedReasons.push('TEAM_INDIVIDUAL_BURDEN_UNKNOWN');
+  let status = currentStatus;
+  if (unsupportedReasons.length) {
+    status = 'not_currently_supported';
+    reasons.push(...unsupportedReasons);
+  } else {
+    const atRiskReasons = [];
+    const freshObservationExists = observations.some((entry) => (
+      String(entry.freshness_state || 'FRESH').toUpperCase() === 'FRESH'
+    ));
+    const observedTargetEvidenceStale = observations.length > 0 && !freshObservationExists
+      && observations.some((entry) => ['STALE', 'EXPIRED', 'STALE_WITHIN_GRACE']
+        .includes(String(entry.freshness_state || '').toUpperCase()));
+    if (input.target_evidence_stale === true || observedTargetEvidenceStale) atRiskReasons.push('PACE_EVIDENCE_STALE');
+    if (input.safety_or_recovery_removed_required_exposure === true) atRiskReasons.push('REQUIRED_EXPOSURE_UNPLACEABLE');
+    if (Number(input.missed_required_key_exposures || 0) >= 2) atRiskReasons.push('REQUIRED_KEY_EXPOSURES_MISSED');
+    if (input.exposure_ledger_feasible === false) atRiskReasons.push('REQUIRED_EXPOSURE_UNPLACEABLE');
+    if (hasTwoConsecutiveSubDemandWeeks(input.weekly_running_demand)) {
+      atRiskReasons.push('MINIMUM_WEEKLY_RUNNING_DEMAND_MISSED');
+    }
+    if (input.repeated_cross_modal_reductions === true) atRiskReasons.push('CROSS_MODAL_FATIGUE_LIMIT');
+    if (input.event_or_ruleset_conflicting === true) atRiskReasons.push('EVIDENCE_CONFLICT_UNRESOLVED');
+    if (currentStatus === 'supported' && atRiskReasons.length) {
+      status = 'at_risk';
+      reasons.push(...atRiskReasons);
+    } else if (currentStatus === 'at_risk') {
+      const recoveredWithTwo = Number(input.successful_relevant_key_exposures || 0) >= 2
+        && Number(input.successful_relevant_key_exposure_dates || input.successful_relevant_key_exposures || 0) >= 2;
+      const recoveredWithAssessment = input.verified_same_distance_or_event_assessment === true
+        && input.workload_path_passes === true;
+      const blockerResolved = input.triggering_blocker_resolved === true;
+      if (blockerResolved && (recoveredWithTwo || recoveredWithAssessment)
+        && ['MEDIUM', 'HIGH'].includes(confidence)
+        && input.target_evidence_fresh !== false) {
+        status = 'supported';
+      } else if (atRiskReasons.length) {
+        reasons.push(...atRiskReasons);
+      }
+    } else if (currentStatus === 'unvalidated') {
+      const sameDistance = observations.some((entry) => (
+        ['SAME_EVENT', 'SAME_DISTANCE'].includes(String(entry.specificity || '').toUpperCase())
+        && entry.verified !== false
+        && String(entry.freshness_state || 'FRESH').toUpperCase() === 'FRESH'
+      ));
+      const sameDistanceRace = observations.some((entry) => (
+        ['SAME_EVENT', 'SAME_DISTANCE'].includes(String(entry.specificity || '').toUpperCase())
+        && String(entry.observation_kind ?? entry.evidence_type ?? '').toUpperCase() === 'RACE'
+        && entry.verified !== false
+        && String(entry.freshness_state || 'FRESH').toUpperCase() === 'FRESH'
+      ));
+      const dates = new Set(observations.filter((entry) => (
+        entry.target_relevant !== false
+        && String(entry.freshness_state || 'FRESH').toUpperCase() === 'FRESH'
+      )).map((entry) => String(entry.observed_local_date ?? entry.observed_at ?? entry.date ?? '').slice(0, 10))
+        .filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date)));
+      const eventSpecificOrNearby = observations.some((entry) => (
+        ['EVENT_SPECIFIC', 'NEARBY_STANDARD', 'SAME_EVENT', 'SAME_DISTANCE']
+          .includes(String(entry.specificity || '').toUpperCase())
+      ));
+      const evidenceGate = sameDistance || (dates.size >= 2 && eventSpecificOrNearby);
+      const sameAssessmentCorroborated = !sameDistance || sameDistanceRace
+        || (input.established_recent_normal === true && input.mandatory_exposures_complete === true);
+      const supported = input.workload_path_passes === true
+        && input.mandatory_exposures_complete === true
+        && input.safety_permits_goal_training === true
+        && input.target_evidence_fresh !== false
+        && evidenceGate
+        && sameAssessmentCorroborated
+        && ['MEDIUM', 'HIGH'].includes(confidence)
+        && input.unresolved_material_conflict !== true;
+      if (supported) status = 'supported';
+      else {
+        if (!evidenceGate) reasons.push('ASSESSMENT_REQUIRED');
+        if (input.workload_path_passes === false || input.mandatory_exposures_complete === false) {
+          reasons.push('REQUIRED_EXPOSURE_UNPLACEABLE');
+        }
+        if (input.safety_permits_goal_training === false) reasons.push('INJURY_SCOPE');
+        if (input.unresolved_material_conflict === true) reasons.push('EVIDENCE_CONFLICT_UNRESOLVED');
+      }
+    }
+  }
+  return Object.freeze({
+    goal_id: String(goal.goal_id ?? goal.goalId ?? goal.id ?? ''),
+    race_id: goal.race_id ?? goal.raceId ?? null,
+    status,
+    prior_status: currentStatus,
+    target: goalBackwardTarget(goal),
+    confidence,
+    confidence_factors: confidenceEvidence.factors || null,
+    next_required_assessment: status === 'unvalidated' ? 'TARGET_RELEVANT_ASSESSMENT' : null,
+    reason_codes: [...new Set(reasons)],
+  });
+}
+
 function evaluatePlanFeasibility(plan, context = {}, planningModel = null) {
   const model = planningModel || buildPlanningModel(plan, context);
   const conflict = spacingConflict(model.goals);
@@ -486,6 +636,7 @@ module.exports = {
   buildPlanningModel,
   calendarForGoal,
   enduranceEvidence,
+  evaluateGoalBackwardFeasibility,
   evaluatePlanFeasibility,
   goalsFrom,
   ordinaryEasyMedians,

@@ -101,6 +101,31 @@ function resolveStressVector(workoutFamily, options = {}) {
   return vector;
 }
 
+function resolveSessionStress(session = {}, index = 0) {
+  const source = session && typeof session === 'object' && !Array.isArray(session) ? session : {};
+  const family = sessionFamily(source);
+  const vector = resolveStressVector(family, {
+    event_kind: source.event_kind ?? source.eventKind,
+    contributing_work_families: source.contributing_work_families ?? source.contributingWorkFamilies,
+  });
+  const resolved = {
+    session_id: String(source.session_id ?? source.sessionId ?? source.id ?? `session-${index + 1}`),
+    workout_family: family ?? null,
+    vector,
+  };
+  return vector
+    ? { valid: true, ...resolved }
+    : {
+      valid: false,
+      ...resolved,
+      violation: {
+        code: 'WORKOUT_FAMILY_UNRESOLVED',
+        session_id: resolved.session_id,
+        workout_family: resolved.workout_family,
+      },
+    };
+}
+
 function sessionFamily(session = {}) {
   return session.workout_family ?? session.workoutFamily ?? session.family;
 }
@@ -577,6 +602,7 @@ module.exports = {
   calculateFatigueCeilings,
   evaluateStressBudget,
   integerMedian,
+  resolveSessionStress,
   resolveStressVector,
   selectRunningVolumeIntersection,
   validateRollingHardDays,

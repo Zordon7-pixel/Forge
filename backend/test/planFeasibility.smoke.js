@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const { buildRacePlanCandidate, semanticCandidateErrors } = require('../src/lib/racePlanCandidateEngine');
 const { validateConcurrentPlan } = require('../src/lib/concurrentPlan');
 const { addDays, daysBetween } = require('../src/lib/racePlanPolicy');
-const { evaluatePlanFeasibility } = require('../src/lib/planFeasibility');
+const { evaluateGoalBackwardFeasibility, evaluatePlanFeasibility } = require('../src/lib/planFeasibility');
 const runWorkoutTaxonomy = require('../src/lib/runWorkoutTaxonomy');
 
 const PLANNING_DATE = '2026-08-03';
@@ -151,6 +151,11 @@ try {
     goalBackwardWorkloadInput: {
       sessions: [{ scheduled_local_date: PLANNING_DATE, workout_family: 'easy_run' }],
     },
+    goalBackwardDecisionInput: {
+      goal: { goal_id: 'v24-only', feasibility_status: 'not_currently_supported' },
+      phase: 'EVENT_SPECIFIC_DEVELOPMENT',
+      role_multiset: [{ role: 'PRIMARY_KEY', workout_family: 'interval_run' }],
+    },
   };
   const candidate = buildRacePlanCandidate(flagOffContext, { planningDateLocal: PLANNING_DATE });
   delete process.env.FORGE_GOAL_BACKWARD_V24_MODE;
@@ -159,15 +164,27 @@ try {
   const explicitOff = evaluatePlanFeasibility(candidate.plan, flagOffContext);
   assert.deepEqual(explicitOff, missingFlag, 'missing and explicit off modes must remain byte-compatible');
   assert.equal(Object.hasOwn(explicitOff, 'goalBackwardWorkload'), false, 'flag-off result must retain the legacy shape');
+  assert.equal(JSON.stringify(explicitOff).includes('not_currently_supported'), false, 'v2.4 feasibility states must not leak flag-off');
+  assert.equal(JSON.stringify(explicitOff).includes('EVENT_SPECIFIC_DEVELOPMENT'), false, 'v2.4 phase states must not leak flag-off');
   process.env.FORGE_GOAL_BACKWARD_V24_MODE = 'shadow';
   const shadow = evaluatePlanFeasibility(candidate.plan, flagOffContext);
   assert.equal(Object.hasOwn(shadow, 'goalBackwardWorkload'), true, 'active v2.4 modes expose workload evidence');
   assert.deepEqual(shadow.goalBackwardWorkload.weekly_stress.weekly_dimension_sum, [2, 2, 1, 0, 0, 1, 1, 0]);
   assert.equal(shadow.goalBackwardWorkload.valid, true);
-  assertions += 5;
+  assertions += 7;
 } finally {
   if (originalGoalBackwardMode === undefined) delete process.env.FORGE_GOAL_BACKWARD_V24_MODE;
   else process.env.FORGE_GOAL_BACKWARD_V24_MODE = originalGoalBackwardMode;
 }
+
+const directV24 = evaluateGoalBackwardFeasibility({
+  goal: { goal_id: 'direct-v24', target_time_s: 1500 },
+  current_status: 'unvalidated',
+  target_observations: [],
+  safe_forward_reaches_minimum_demand: false,
+});
+assert.equal(directV24.status, 'not_currently_supported');
+assert.equal(directV24.target.target_time_s, 1500);
+assertions += 2;
 
 console.log(`PLAN FEASIBILITY SMOKE OK (${assertions} matrices/checks)`);
