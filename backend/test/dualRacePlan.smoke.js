@@ -5,9 +5,12 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const concurrent = require('../src/lib/concurrentPlan');
+const hyrox = require('../src/lib/hyroxPlan');
 const adaptation = require('../src/lib/adaptationEngine');
 const planSchema = require('../src/lib/planSchema');
 const { motivationalRunName } = require('../../shared/runDisplayName.mjs');
+
+const HYROX_EQUIPMENT = ['ski_erg', 'row_erg', 'sled_push', 'sled_pull', 'wall_ball_target', 'sandbag', 'farmers_carry', 'treadmill'];
 
 function routeHandler(router, routePath, method) {
   const layer = router.stack.find((item) => item.route?.path === routePath && item.route?.methods?.[method]);
@@ -712,7 +715,361 @@ async function checkDedicatedRouteBoundary() {
   }
 }
 
+async function checkHyroxCandidateImmediateAdoption() {
+  const dbModulePath = require.resolve('../src/db');
+  const plansRoutePath = require.resolve('../src/routes/plans');
+  const originalDb = require.cache[dbModulePath];
+  const originalPlansRoute = require.cache[plansRoutePath];
+  const RealDate = global.Date;
+  const ownerId = 'hyrox-army-owner';
+  const planningDate = '2026-08-14';
+  const profile = {
+    id: ownerId,
+    weekly_miles_current: 16,
+    run_days_per_week: 4,
+    lift_days_per_week: 0,
+    preferred_workout_days: JSON.stringify(['Tue', 'Thu', 'Sat', 'Sun']),
+    goal_type: 'race',
+    comeback_mode: 0,
+    injury_notes: '',
+    planning_input_revision: 0,
+  };
+  const raceRows = new Map([
+    ['hyrox', {
+      id: 'hyrox',
+      user_id: ownerId,
+      race_name: 'HYROX New York',
+      race_date: '2026-09-06',
+      event_local_date: '2026-09-06',
+      event_timezone: 'America/New_York',
+      event_kind: 'hyrox',
+      event_format: 'individual_open',
+      event_category: 'men',
+      rules_version: '2026-2027',
+      event_config_json: JSON.stringify({ equipment: HYROX_EQUIPMENT }),
+      distance_miles: 4.97,
+      goal_time_seconds: null,
+    }],
+    ['army', {
+      id: 'army',
+      user_id: ownerId,
+      race_name: 'Army Ten-Miler',
+      race_date: '2026-10-11',
+      event_local_date: '2026-10-11',
+      event_timezone: 'America/New_York',
+      event_kind: 'run_race',
+      distance_miles: 10,
+      goal_time_seconds: 5220,
+    }],
+  ]);
+  const recentRuns = [
+    { id: 'run-1', date: '2026-07-27', distance_miles: 4, duration_seconds: 2200, type: 'easy', created_at: '2026-07-27T12:00:00Z' },
+    { id: 'run-2', date: '2026-07-30', distance_miles: 5, duration_seconds: 2700, type: 'easy', created_at: '2026-07-30T12:00:00Z' },
+    { id: 'run-3', date: '2026-08-04', distance_miles: 4, duration_seconds: 2200, type: 'easy', created_at: '2026-08-04T12:00:00Z' },
+    { id: 'run-4', date: '2026-08-08', distance_miles: 6, duration_seconds: 3300, type: 'long', created_at: '2026-08-08T12:00:00Z' },
+    { id: 'completed-today', date: planningDate, distance_miles: 3, duration_seconds: 1650, type: 'easy', created_at: '2026-08-14T11:00:00Z' },
+  ];
+  const initialPlan = hyrox.generateHyroxPlan({
+    planningLocalDate: planningDate,
+    athlete: { weeklyMilesCurrent: 16, runDaysPerWeek: 4, readiness: 'normal' },
+    currentLoad: {
+      weeklyMiles: 16,
+      recentRunLoad: {
+        currentWeek: {
+          startDate: '2026-08-10',
+          miles: 3,
+          runCount: 1,
+          runDates: [planningDate],
+          longRunCompleted: false,
+        },
+      },
+    },
+    event: {
+      raceId: 'hyrox',
+      name: 'HYROX New York',
+      eventLocalDate: '2026-09-06',
+      eventTimezone: 'America/New_York',
+      format: 'individual_open',
+      category: 'men',
+      rulesVersion: '2026-2027',
+    },
+    equipment: HYROX_EQUIPMENT,
+    availableDays: ['Tue', 'Thu', 'Sat', 'Sun'],
+  });
+  const trainingPlans = new Map([['training-hyrox', {
+    id: 'training-hyrox',
+    user_id: ownerId,
+    week_start: initialPlan.weeks[0].startDate,
+    plan_json: JSON.stringify(initialPlan),
+    plan_data: JSON.stringify(initialPlan),
+    name: 'HYROX New York',
+    type: 'hyrox_build',
+    weeks: initialPlan.weeks.length,
+    description: 'Initial HYROX plan',
+  }]]);
+  const userPlans = new Map([['assignment-hyrox', {
+    id: 'assignment-hyrox',
+    user_id: ownerId,
+    plan_id: 'training-hyrox',
+    started_at: '2026-08-10',
+    current_week: 1,
+    status: 'active',
+    progress_json: JSON.stringify({ completedSessionIds: ['completed-today'] }),
+    plan_version: 1,
+    lineage_id: 'lineage-hyrox-army',
+    supersedes_user_plan_id: null,
+    effective_from: '2026-08-10',
+    created_at: '2026-08-10T00:00:00Z',
+  }]]);
+  const candidates = new Map();
+
+  class FixedDate extends RealDate {
+    constructor(...args) {
+      super(...(args.length ? args : ['2026-08-14T16:00:00.000Z']));
+    }
+    static now() { return new RealDate('2026-08-14T16:00:00.000Z').getTime(); }
+  }
+
+  function joinedAssignment(assignment) {
+    if (!assignment) return null;
+    const planRow = trainingPlans.get(assignment.plan_id);
+    return planRow ? {
+      ...assignment,
+      ...planRow,
+      user_plan_id: assignment.id,
+      plan_id: assignment.plan_id,
+      current_week: assignment.current_week,
+      started_at: assignment.started_at,
+      status: assignment.status,
+      progress_json: assignment.progress_json,
+      plan_version: assignment.plan_version,
+      lineage_id: assignment.lineage_id,
+      supersedes_user_plan_id: assignment.supersedes_user_plan_id,
+      effective_from: assignment.effective_from,
+    } : null;
+  }
+
+  function currentAssignment() {
+    return [...userPlans.values()]
+      .filter((row) => row.user_id === ownerId && row.status === 'active')
+      .sort((left, right) => String(right.created_at).localeCompare(String(left.created_at)))[0] || null;
+  }
+
+  async function get(sql, params = []) {
+    if (sql.includes('FROM users WHERE id=?') || sql.includes('FROM users WHERE id = ?')) {
+      return params[0] === ownerId ? { ...profile } : null;
+    }
+    if (sql.includes('FROM race_events WHERE id=? AND user_id=?') || sql.includes('FROM race_events WHERE id = ? AND user_id = ?')) {
+      const race = raceRows.get(params[0]);
+      return race && race.user_id === params[1] ? { ...race } : null;
+    }
+    if (sql.includes('FROM plan_generation_candidates WHERE id=? AND user_id=?')) {
+      const row = candidates.get(params[0]);
+      return row && row.user_id === params[1] ? { ...row } : null;
+    }
+    if (sql.includes("up.status='active'") || sql.includes("up.status = 'active'")) {
+      const assignment = currentAssignment();
+      if (!assignment) return null;
+      return sql.includes('JOIN training_plans')
+        ? joinedAssignment(assignment)
+        : { ...assignment, user_plan_id: assignment.id };
+    }
+    if (sql.includes('FROM user_plans up') && sql.includes('WHERE up.id=? AND up.user_id=?')) {
+      const assignment = userPlans.get(params[0]);
+      if (!assignment || assignment.user_id !== params[1]) return null;
+      return sql.includes('JOIN training_plans')
+        ? joinedAssignment(assignment)
+        : { ...assignment, user_plan_id: assignment.id };
+    }
+    if (sql.includes('FROM training_plans tp') && sql.includes('owner_up.id=?')) {
+      const planRow = trainingPlans.get(params[0]);
+      const assignment = userPlans.get(params[1]);
+      return planRow && assignment?.user_id === params[2] && assignment.plan_id === planRow.id
+        ? { ...planRow }
+        : null;
+    }
+    if (sql.includes('SELECT * FROM health_sync') || sql.includes('FROM injury_logs') || sql.includes('FROM daily_checkins')) return null;
+    if (sql.includes('SELECT MAX(date) AS last_date FROM runs')) {
+      return { last_date: recentRuns.map((run) => run.date).sort().at(-1) || null };
+    }
+    if (sql.includes('SELECT MAX(date) AS last_date FROM lifts') || sql.includes('MAX(substr(started_at')) return { last_date: null };
+    if (sql.includes('SELECT max_hr') || sql.includes('SELECT max_heart_rate')) return { ...profile };
+    if (sql.includes('SELECT * FROM training_plans WHERE user_id')) return null;
+    return null;
+  }
+
+  async function all(sql) {
+    if (sql.includes('FROM runs')) return recentRuns.map((run) => ({ ...run }));
+    if (sql.includes('FROM user_plans up') && sql.includes('up.lineage_id=?')) {
+      return [...userPlans.values()]
+        .filter((row) => row.lineage_id === 'lineage-hyrox-army' && row.id !== currentAssignment()?.id)
+        .map((row) => ({ ...row, ...trainingPlans.get(row.plan_id) }));
+    }
+    return [];
+  }
+
+  async function runStatement(sql, params = []) {
+    if (sql.includes('INSERT INTO plan_generation_candidates')) {
+      candidates.set(params[0], {
+        id: params[0], user_id: params[1], status: params[2], training_plan_id: params[3],
+        user_plan_id: params[4], active_plan_version: params[5], planning_input_revision: params[6],
+        planning_date_local: params[7], timezone_offset_minutes: params[8], input_hash: params[9],
+        candidate_hash: params[10], engine_version: params[11], policy_version: params[12],
+        invariant_version: params[13], planning_snapshot_json: params[14], candidate_plan_json: params[15],
+        generation_trace_json: params[16], expires_at: params[17],
+      });
+      return { changes: 1 };
+    }
+    if (sql.includes("UPDATE user_plans SET status='superseded'")) {
+      const assignment = userPlans.get(params[0]);
+      if (!assignment || assignment.user_id !== params[1] || assignment.status !== 'active') return { changes: 0 };
+      assignment.status = 'superseded';
+      return { changes: 1 };
+    }
+    if (sql.includes('INSERT INTO training_plans')) {
+      trainingPlans.set(params[0], {
+        id: params[0], user_id: params[1], week_start: params[2], plan_json: params[3],
+        name: params[4], type: params[5], weeks: params[6], description: params[7], plan_data: params[8],
+      });
+      return { changes: 1 };
+    }
+    if (sql.includes('INSERT INTO user_plans')) {
+      userPlans.set(params[0], {
+        id: params[0], user_id: params[1], plan_id: params[2], started_at: params[3],
+        current_week: params[4], status: params[5], progress_json: params[6], plan_version: params[7],
+        lineage_id: params[8], supersedes_user_plan_id: params[9], effective_from: params[10],
+        created_at: '2026-08-14T16:00:01.000Z',
+      });
+      return { changes: 1 };
+    }
+    if (sql.includes('UPDATE plan_generation_candidates')) {
+      const row = candidates.get(params[4]);
+      if (!row || row.user_id !== params[5] || row.status !== 'preview') return { changes: 0 };
+      Object.assign(row, {
+        status: 'applied', applied_choice: params[0], applied_training_plan_id: params[1],
+        applied_user_plan_id: params[2], replay_result_json: params[3], applied_at: '2026-08-14T16:00:02.000Z',
+      });
+      return { changes: 1 };
+    }
+    if (sql.includes('UPDATE users SET run_days_per_week=')) {
+      profile.run_days_per_week = params[0];
+      profile.preferred_workout_days = params[1];
+      return { changes: 1 };
+    }
+    return { changes: 1 };
+  }
+
+  const tx = { get, all, run: runStatement };
+  const mockDb = {
+    dbGet: get,
+    dbAll: all,
+    dbRun: runStatement,
+    withUserMutation: async (_userId, fn) => fn(tx),
+    withPlanningInputMutation: async (_userId, fn) => {
+      const result = await fn(tx);
+      return result && Object.prototype.hasOwnProperty.call(result, 'marker')
+        && Object.prototype.hasOwnProperty.call(result, 'value')
+        ? result.value
+        : result;
+    },
+  };
+
+  require.cache[dbModulePath] = {
+    id: dbModulePath, filename: dbModulePath, loaded: true, exports: mockDb, children: [], paths: [],
+  };
+  global.Date = FixedDate;
+  delete require.cache[plansRoutePath];
+
+  try {
+    const plansRouter = require('../src/routes/plans');
+    const preview = routeHandler(plansRouter, '/generate-for-races', 'post');
+    const apply = routeHandler(plansRouter, '/candidates/:candidateId/apply', 'post');
+    const readMyPlan = routeHandler(plansRouter, '/my', 'get');
+    const requestClock = {
+      planning_date_local: planningDate,
+      timezone_offset_minutes: 240,
+    };
+    const requestBase = {
+      user: { id: ownerId },
+      query: { date: planningDate },
+      headers: { 'x-forged-local-date': planningDate, 'x-forged-timezone-offset-minutes': '240' },
+      get(name) { return this.headers[String(name).toLowerCase()]; },
+    };
+    const previewResponse = await invoke(preview, {
+      ...requestBase,
+      body: {
+        ...requestClock,
+        race_ids: ['hyrox', 'army'],
+        target: { trainingDays: ['Tue', 'Thu', 'Sat', 'Sun'], runDaysPerWeek: 4, liftingEnabled: false },
+      },
+    });
+    assert.equal(previewResponse.statusCode, 201, JSON.stringify(previewResponse.payload));
+    assert.equal(previewResponse.payload.effective_from, planningDate);
+    assert.deepEqual(previewResponse.payload.plan.plan_data.goals.map((goal) => goal.raceId), ['hyrox', 'army']);
+    const retainedArmyGoal = previewResponse.payload.plan.plan_data.goals[1];
+    assert.equal(retainedArmyGoal.goalType, 'pr');
+    assert.equal(retainedArmyGoal.goalTimeSeconds, 5220);
+    assert.equal(retainedArmyGoal.goalPaceSecondsPerMile, 522);
+    assert.equal(retainedArmyGoal.goalPaceLabel, '8:42/mi');
+
+    const applyBody = {
+      ...requestClock,
+      choice: 'train_for_target',
+      candidate_hash: previewResponse.payload.candidate_hash,
+    };
+    const applyResponse = await invoke(apply, {
+      ...requestBase,
+      params: { candidateId: previewResponse.payload.candidate_id },
+      body: applyBody,
+    });
+    assert.equal(applyResponse.statusCode, 200, JSON.stringify(applyResponse.payload));
+    assert.equal(applyResponse.payload.effective_from, planningDate);
+
+    const immediate = await invoke(readMyPlan, { ...requestBase, body: {} });
+    assert.equal(immediate.statusCode, 200, JSON.stringify(immediate.payload));
+    assert.equal(immediate.payload.user_plan.id, applyResponse.payload.user_plan_id);
+    assert.equal(immediate.payload.user_plan.effective_from, planningDate);
+    assert.deepEqual(immediate.payload.plan.plan_data.goals.map((goal) => goal.raceId), ['hyrox', 'army']);
+    assert.notEqual(immediate.payload.user_plan.id, 'assignment-hyrox', 'the predecessor is not returned on the accepted local date');
+
+    const combinedPlan = immediate.payload.plan.plan_data;
+    assert.equal(combinedPlan.inputSummary.currentWeekRunLoad.runCount, 1);
+    assert.deepEqual(combinedPlan.inputSummary.currentWeekRunLoad.runDates, [planningDate]);
+    assert.equal(
+      combinedPlan.weeks[0].days
+        .flatMap((day) => day.sessions.map((session) => ({ date: day.date, session })))
+        .filter(({ date, session }) => date === planningDate && (session.kind === 'run' || session.includesRun)).length,
+      0,
+      'the completed current-week run is represented once as history and never duplicated in the replacement',
+    );
+    assert.deepEqual(
+      JSON.parse(userPlans.get('assignment-hyrox').progress_json).completedSessionIds,
+      ['completed-today'],
+      'predecessor completion history remains intact',
+    );
+
+    const assignmentCount = userPlans.size;
+    const replay = await invoke(apply, {
+      ...requestBase,
+      params: { candidateId: previewResponse.payload.candidate_id },
+      body: applyBody,
+    });
+    assert.equal(replay.statusCode, 200);
+    assert.equal(replay.payload.replay, true, JSON.stringify(replay.payload));
+    assert.equal(replay.payload.user_plan_id, applyResponse.payload.user_plan_id);
+    assert.equal(replay.payload.effective_from, planningDate);
+    assert.equal(userPlans.size, assignmentCount, 'candidate replay cannot create a duplicate assignment');
+  } finally {
+    global.Date = RealDate;
+    delete require.cache[plansRoutePath];
+    if (originalPlansRoute) require.cache[plansRoutePath] = originalPlansRoute;
+    if (originalDb) require.cache[dbModulePath] = originalDb;
+    else delete require.cache[dbModulePath];
+  }
+}
+
 checkDedicatedRouteBoundary()
+  .then(checkHyroxCandidateImmediateAdoption)
   .then(() => console.log('DUAL RACE PLAN SMOKE OK'))
   .catch((error) => {
     console.error(error);

@@ -110,10 +110,10 @@ function classifyHyroxRunway(daysToEvent) {
 function phaseForShort(index, count) {
   if (index === 0) return 'orientation_assessment';
   if (index === count - 1) return 'taper_race';
-  const progress = index / Math.max(1, count - 1);
-  if (progress <= 0.35) return 'build';
-  if (progress <= 0.65) return 'peak_partial_simulation';
-  return 'sharpen_reduce';
+  if (count === 3 && index === 1) return 'peak_partial_simulation';
+  if (index === count - 3) return 'peak_partial_simulation';
+  if (index === count - 2) return 'sharpen_reduce';
+  return 'build';
 }
 
 function proportionalPhase(index, count, bands) {
@@ -338,6 +338,91 @@ function buildRunSession(id, type, distanceMiles, loadFactor) {
     hardLowerBody: false,
     canonicalUnits: 'metric',
     distanceIsRunAnalyticsMiles: true,
+  };
+}
+
+function formatPaceLabel(secondsPerMile) {
+  const total = Math.round(Number(secondsPerMile));
+  if (!Number.isFinite(total) || total <= 0) return null;
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  return `${minutes}:${String(seconds).padStart(2, '0')}/mi`;
+}
+
+function runningSpecificDistances({ weeklyMiles, runDays, raceDistance, specificityIndex }) {
+  const minimumRunMiles = 1.5;
+  const easyCount = Math.max(0, runDays - 2);
+  const weeklyCap = Math.max(runDays * minimumRunMiles, weeklyMiles);
+  const progressionStep = Math.min(1, Math.max(0.4, weeklyMiles * 0.04));
+  let easyMiles = Math.max(minimumRunMiles, weeklyMiles / runDays * 0.55);
+  let qualityMiles = Math.max(2.5, weeklyMiles * 0.18)
+    + specificityIndex * Math.min(0.4, weeklyMiles * 0.02);
+  let longMiles = Math.min(
+    raceDistance * 0.8,
+    Math.max(3, weeklyMiles * 0.3) + specificityIndex * progressionStep,
+  );
+  let excess = easyMiles * easyCount + qualityMiles + longMiles - weeklyCap;
+  const reduce = (value) => {
+    const available = Math.max(0, value - minimumRunMiles);
+    const reduction = Math.min(available, Math.max(0, excess));
+    excess -= reduction;
+    return value - reduction;
+  };
+  if (excess > 0) easyMiles = reduce(easyMiles);
+  if (excess > 0) qualityMiles = reduce(qualityMiles);
+  if (excess > 0) longMiles = reduce(longMiles);
+  return {
+    easyMiles: Number(easyMiles.toFixed(1)),
+    qualityMiles: Number(qualityMiles.toFixed(1)),
+    longMiles: Number(longMiles.toFixed(1)),
+    weeklyCap: Number(weeklyCap.toFixed(1)),
+  };
+}
+
+function buildRunningSpecificSession({ id, distanceMiles, race, specificityIndex, safetyHold }) {
+  const goalPace = Number(race.goalPaceSecondsPerMile || 0) || null;
+  const goalPaceLabel = goalPace ? (race.goalPaceLabel || formatPaceLabel(goalPace)) : null;
+  const raceDistanceLabel = Math.abs(Number(race.distanceMiles) - 10) < 0.05
+    ? '10-mile'
+    : `${Number(race.distanceMiles.toFixed(1))}-mile`;
+  const repeats = safetyHold || distanceMiles < 2.5 ? 2 : 3;
+  const recoveryMinutes = Math.max(0, repeats - 1) * 2;
+  const availableWorkMinutes = Math.floor((distanceMiles * 11 - 18 - recoveryMinutes) / repeats);
+  const workMinutes = Math.max(4, Math.min(8, 6 + specificityIndex, availableWorkMinutes));
+  const paceInstruction = goalPaceLabel
+    ? `${repeats} x ${workMinutes} min at ${goalPaceLabel}`
+    : `${repeats} x ${workMinutes} min at controlled ${raceDistanceLabel} effort (RPE 7/10)`;
+  return {
+    id,
+    kind: 'run',
+    sessionType: 'running_specific',
+    type: 'quality',
+    workout_type: 'run',
+    workout_id: goalPace ? 'race_pace_intervals' : 'tempo_threshold',
+    workout_family: goalPace ? 'race_pace' : 'threshold',
+    prescription_basis: 'time',
+    title: goalPace
+      ? `Controlled ${raceDistanceLabel} target-pace intervals`
+      : `Controlled ${raceDistanceLabel} rhythm intervals`,
+    purpose: 'Build retained running-race specificity after HYROX recovery without an all-out test.',
+    description: 'Practice repeatable 10-mile rhythm with recoveries that keep the session controlled.',
+    distance_miles: Number(distanceMiles.toFixed(1)),
+    duration_min: Math.max(25, Math.round(distanceMiles * 11)),
+    target_zone: goalPace ? 'Controlled race effort' : 'Upper aerobic to threshold (RPE 7/10)',
+    pace_target: goalPaceLabel || `Controlled ${raceDistanceLabel} effort (RPE 7/10)`,
+    intensity: safetyHold ? 'Moderate' : 'Controlled hard',
+    runningStress: safetyHold ? 'moderate' : 'hard',
+    hardLowerBody: !safetyHold,
+    warmup: ['8-10 min easy running', '3 x 20 sec relaxed strides'],
+    steps: [paceInstruction, 'Jog 2 min easy between repetitions; stop before form or pace fades'],
+    cooldown: ['8-10 min easy running'],
+    progression: 'Extend controlled work time only when every repetition stays even and recoverable.',
+    canonicalUnits: 'metric',
+    distanceIsRunAnalyticsMiles: true,
+    ...(goalPace ? {
+      goal_pace_seconds_per_mile: goalPace,
+      goal_pace_label: goalPaceLabel,
+    } : {}),
   };
 }
 
@@ -840,7 +925,17 @@ function buildWeek({
   };
 }
 
-function buildRunningWeek({ startDate, phase, weekIndex, runDays, availableDays, weeklyMiles, race }) {
+function buildRunningWeek({
+  startDate,
+  phase,
+  weekIndex,
+  runDays,
+  availableDays,
+  weeklyMiles,
+  race,
+  specificityIndex = 0,
+  safetyHold = false,
+}) {
   const days = Array.from({ length: 7 }, (_, offset) => {
     const date = addLocalDays(startDate, offset);
     return { date, day: weekday(date), sessions: [] };
@@ -849,6 +944,12 @@ function buildRunningWeek({ startDate, phase, weekIndex, runDays, availableDays,
   const raceWeek = race.eventLocalDate >= startDate && race.eventLocalDate <= addLocalDays(startDate, 6);
   const loadFactor = PHASE_LOAD[phase];
   const longSlot = nearestSlot(6, allowed);
+  const specificDistances = runningSpecificDistances({
+    weeklyMiles,
+    runDays,
+    raceDistance: race.distanceMiles,
+    specificityIndex,
+  });
   if (raceWeek) {
     const slot = days.findIndex((day) => day.date === race.eventLocalDate);
     days[slot].sessions.push({
@@ -861,19 +962,30 @@ function buildRunningWeek({ startDate, phase, weekIndex, runDays, availableDays,
       goalRaceId: race.raceId || null,
       distance_miles: race.distanceMiles,
       runningStress: 'race',
-      hardLowerBody: false,
+      hardLowerBody: true,
+      target_zone: 'Race effort',
+      pace_target: race.goalPaceLabel || 'Goal race effort',
+      ...(race.goalPaceSecondsPerMile ? {
+        goal_pace_seconds_per_mile: race.goalPaceSecondsPerMile,
+        goal_pace_label: race.goalPaceLabel,
+      } : {}),
     });
   } else if (phase !== 'post_hyrox_recovery') {
-    const qualitySlot = nearestSlot(3, allowed, new Set([longSlot]));
-    days[qualitySlot].sessions.push({
-      ...buildRunSession(`secondary-${weekIndex + 1}-quality`, 'easy', Math.max(3, weeklyMiles * 0.22), loadFactor),
-      sessionType: 'running_specific',
-      type: 'quality',
-      title: 'Controlled running-race rhythm',
-      runningStress: 'hard',
-      hardLowerBody: false,
-    });
-    days[longSlot].sessions.push(buildRunSession(`secondary-${weekIndex + 1}-long`, 'long', Math.max(5, weeklyMiles * 0.36), loadFactor));
+    const qualityCandidates = allowed.filter((slot) => slot !== longSlot && Math.abs(slot - longSlot) > 1);
+    const qualitySlot = nearestSlot(3, qualityCandidates.length ? qualityCandidates : allowed, new Set([longSlot]));
+    days[qualitySlot].sessions.push(buildRunningSpecificSession({
+      id: `secondary-${weekIndex + 1}-quality`,
+      distanceMiles: specificDistances.qualityMiles,
+      race,
+      specificityIndex,
+      safetyHold,
+    }));
+    days[longSlot].sessions.push(buildRunSession(
+      `secondary-${weekIndex + 1}-long`,
+      'long',
+      specificDistances.longMiles,
+      1,
+    ));
   }
   const exposures = () => days.flatMap((day) => day.sessions).filter((session) => session.kind === 'run').length;
   const targets = [0, 2, 4, 5, 1, 3, 6];
@@ -883,8 +995,8 @@ function buildRunningWeek({ startDate, phase, weekIndex, runDays, availableDays,
     days[slot].sessions.push(buildRunSession(
       `secondary-${weekIndex + 1}-easy-${exposures() + 1}`,
       phase === 'post_hyrox_recovery' ? 'recovery' : 'easy',
-      Math.max(2, weeklyMiles / runDays * 0.65),
-      loadFactor,
+      phase === 'running_specific' ? specificDistances.easyMiles : Math.max(2, weeklyMiles / runDays * 0.65),
+      phase === 'running_specific' ? 1 : loadFactor,
     ));
   }
   if (raceWeek) {
@@ -900,6 +1012,7 @@ function buildRunningWeek({ startDate, phase, weekIndex, runDays, availableDays,
     purpose: phase.replaceAll('_', ' '),
     loadFactor,
     plannedLoadPoints: prescribedLoadPoints(days),
+    ...(phase === 'running_specific' ? { runningLoadCapMiles: specificDistances.weeklyCap } : {}),
     days,
   };
 }
@@ -1052,13 +1165,35 @@ function generateHyroxPlan(input = {}) {
       mondayForLocalDate(secondary.eventLocalDate),
       secondaryStart,
     ) / 7) + 1;
+    const requestedSecondaryDistanceMiles = Number(secondary.distanceMiles);
+    const normalizedDistanceMiles = Number.isFinite(requestedSecondaryDistanceMiles)
+      && requestedSecondaryDistanceMiles >= 1
+      && requestedSecondaryDistanceMiles <= 100
+      ? requestedSecondaryDistanceMiles
+      : 10;
+    const normalizedGoalTimeSeconds = Number.isFinite(Number(secondary.goalTimeSeconds))
+      && Number(secondary.goalTimeSeconds) > 0
+      ? Math.round(Number(secondary.goalTimeSeconds))
+      : null;
+    const derivedGoalPace = normalizedGoalTimeSeconds
+      ? normalizedGoalTimeSeconds / normalizedDistanceMiles
+      : null;
+    const normalizedGoalPaceSecondsPerMile = derivedGoalPace >= 180 && derivedGoalPace <= 1800
+      ? Math.round(derivedGoalPace)
+      : null;
     const normalizedSecondary = {
       kind: 'run_race',
       raceId: secondary.raceId || null,
       name: secondary.name || 'Running race',
       eventLocalDate: secondary.eventLocalDate,
       eventTimezone: secondary.eventTimezone || event.eventTimezone,
-      distanceMiles: Math.max(1, Number(secondary.distanceMiles || 10)),
+      distanceMiles: normalizedDistanceMiles,
+      goalType: normalizedGoalTimeSeconds ? 'pr' : (secondary.goalType || 'completion'),
+      goalTimeSeconds: normalizedGoalTimeSeconds,
+      goalPaceSecondsPerMile: normalizedGoalPaceSecondsPerMile,
+      goalPaceLabel: normalizedGoalPaceSecondsPerMile
+        ? formatPaceLabel(normalizedGoalPaceSecondsPerMile)
+        : null,
     };
     goals.push({
       kind: 'run_race',
@@ -1069,6 +1204,10 @@ function generateHyroxPlan(input = {}) {
       eventLocalDate: normalizedSecondary.eventLocalDate,
       eventTimezone: normalizedSecondary.eventTimezone,
       distanceMiles: normalizedSecondary.distanceMiles,
+      goalType: normalizedSecondary.goalType,
+      goalTimeSeconds: normalizedSecondary.goalTimeSeconds,
+      goalPaceSecondsPerMile: normalizedSecondary.goalPaceSecondsPerMile,
+      goalPaceLabel: normalizedSecondary.goalPaceLabel,
     });
     for (let index = 0; index < secondaryWeeks; index += 1) {
       const phase = index === 0
@@ -1082,6 +1221,8 @@ function generateHyroxPlan(input = {}) {
         availableDays,
         weeklyMiles: effectiveWeeklyMiles,
         race: normalizedSecondary,
+        specificityIndex: Math.max(0, index - 1),
+        safetyHold,
       }));
     }
   }
