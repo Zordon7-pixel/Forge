@@ -260,6 +260,7 @@ export function ReadinessGauge({ score, onClick }) {
 export function DailyCoachFlow({ checkedInToday, readinessData, recommendation, execution, hasRunRecordedToday = false, onCheckIn, onStartWorkout, onStartUnplannedRun, onDetails }) {
   const readiness = resolveReadiness(readinessData)
   const isPlannedRestDay = execution?.isPlannedRest === true || execution?.restSource === 'planned'
+  const isRemovedDay = execution?.restSource === 'removed'
   const isRestDay = isPlannedRestDay || isRestExecutionAuthority(execution) || recommendation?.recommendationType === 'rest' || recommendation?.type === 'rest'
   const recommendationLabel = recommendation
     ? getRecommendationLabel(recommendation)
@@ -292,6 +293,7 @@ export function DailyCoachFlow({ checkedInToday, readinessData, recommendation, 
     : ''
   const coachWhy = interferenceReason || (typeof recommendation?.brief?.why === 'string' ? recommendation.brief.why.trim() : '')
   const buildTodaySubtitle = () => {
+    if (isRemovedDay) return 'The scheduled workout was removed from today\'s plan.'
     if (allScheduledComplete) return 'All scheduled sessions are complete. Review the work or recover for the next session.'
     if (isRestDay && hasRunRecordedToday) {
       return isPlannedRestDay
@@ -358,7 +360,7 @@ export function DailyCoachFlow({ checkedInToday, readinessData, recommendation, 
                     : 'Train from the plan')
                 : 'Review today\'s plan'
               : checkedInToday
-                ? 'Today\'s plan is not ready'
+                ? (isRemovedDay ? 'No workout remains today' : 'Today\'s plan is not ready')
                 : 'Check in for today\'s recommendation'}
           </h2>
           <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>

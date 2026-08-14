@@ -54,7 +54,7 @@ const hybridBody = {
 };
 
 const restBody = { today: { day: 'Wed', date: '2026-07-15', type: 'rest', rest: true }, execution: { hasPlan: true, hasDay: true, isRest: true, isPlannedRest: true, restSource: 'planned', mode: 'hybrid_maintain', sessions: [], run: null, lift: null, date: '2026-07-15' } };
-const removedBody = { today: { day: 'Wed', date: '2026-07-15', sessions: [] }, execution: { hasPlan: true, hasDay: true, isRest: true, isPlannedRest: false, restSource: 'removed', mode: 'hybrid_maintain', sessions: [], run: null, lift: null, date: '2026-07-15' } };
+const removedBody = { today: { day: 'Wed', date: '2026-07-15', type: 'rest', workout_type: 'rest', status: 'removed', sessions: [] }, execution: { hasPlan: true, hasDay: true, isRest: true, isPlannedRest: false, restSource: 'removed', mode: 'hybrid_maintain', type: 'rest', workout_type: 'rest', status: 'removed', checkinOverride: null, sessions: [], run: null, lift: null, date: '2026-07-15' } };
 const noPlanBody = { today: null, execution: { hasPlan: false, hasDay: false, date: '2026-07-13' } };
 const checkinRecoveryBody = {
   today: { day: 'Thu', date: '2026-08-14', type: 'rest' },
@@ -170,6 +170,7 @@ assert(restRec && restRec.source === 'calendar' && restRec.recommendationType ==
 const removed = normalizeExecution(removedBody);
 assert(removed.isRest && !removed.isPlannedRest && removed.restSource === 'removed', 'removed-empty day retains distinct provenance');
 assert(recommendationFromExecution(removed) === null, 'removed-empty day cannot masquerade as planned rest');
+assert(isRestExecutionAuthority(removed) === false, 'removed-empty day cannot masquerade as check-in recovery authority');
 assert(recommendationFromExecution(n) === null, 'no-plan → null so callers fall back to next-recommendation');
 const recoveryRec = recommendationFromExecution(recovery);
 assert(recoveryRec?.type === 'rest' && recoveryRec?.recommendationType === 'rest', 'rest-labelled slot remains explicit recovery guidance');

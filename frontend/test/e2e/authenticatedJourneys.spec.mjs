@@ -171,6 +171,38 @@ function legacyCheckinRecoveryExecution() {
   }
 }
 
+function legacyRemovedExecution() {
+  return {
+    today: {
+      date: today,
+      day: todayDay,
+      type: 'rest',
+      workout_type: 'rest',
+      status: 'removed',
+      sessions: [],
+    },
+    execution: {
+      hasPlan: true,
+      hasDay: true,
+      isRest: true,
+      isPlannedRest: false,
+      restSource: 'removed',
+      mode: 'hybrid_maintain',
+      phase: 'base',
+      week: 1,
+      date: today,
+      day: todayDay,
+      type: 'rest',
+      workout_type: 'rest',
+      status: 'removed',
+      checkinOverride: null,
+      sessions: [],
+      run: null,
+      lift: null,
+    },
+  }
+}
+
 function liftOnlyCheckinRecoveryExecution({ patchSession = true } = {}) {
   const recoveryLift = patchSession
     ? {
@@ -389,6 +421,58 @@ test('legacy empty check-in rest stays truthful and closes every workout handoff
   await page.locator('.forged-mission-card').click()
   await expect(page.getByRole('heading', { name: "Rest day from today's check-in", exact: true })).toBeVisible()
   await expect(page.getByText('Changed to rest from daily check-in', { exact: true })).toBeVisible()
+  for (const name of forbiddenButtons) {
+    await expect(page.getByRole('button', { name })).toHaveCount(0)
+  }
+  await expect(page).not.toHaveURL(/\/log-lift(?:\?|$)/)
+  expect([320, 393]).toContain(page.viewportSize()?.width)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(await page.evaluate(() => document.documentElement.clientWidth))
+  assertCleanApiAndRuntime(apiState, runtimeErrors)
+})
+
+test('legacy flat all-removed day stays removed without check-in recovery attribution', async ({ page }) => {
+  const runtimeErrors = collectRuntimeErrors(page)
+  const apiState = await installAuthenticatedApi(page, {
+    responses: new Map([
+      ['GET /api/plans/my', activePlanWithTodaySessions([])],
+      ['GET /api/plans/today', legacyRemovedExecution()],
+      ['GET /api/checkin/today', { feeling: 3, legs: 3, drive: 3 }],
+      ['GET /api/recovery/readiness', { available: true, score: 70, band: 'GREEN' }],
+      ['GET /api/injury/active', { injuries: [], safetyUnavailable: false }],
+    ]),
+  })
+
+  await page.goto('/')
+  await expect(page.getByRole('heading', { name: 'No workout remains today', exact: true })).toBeVisible()
+  await expect(page.getByText("The scheduled workout was removed from today's plan.", { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Edit check-in', exact: true })).toBeVisible()
+  await expect(page.getByText("Recovery is today's guidance", { exact: false })).toHaveCount(0)
+  await expect(page.getByText('Your check-in changed today to recovery', { exact: false })).toHaveCount(0)
+  await expect(page.getByText('Changed to rest from daily check-in', { exact: false })).toHaveCount(0)
+
+  const forbiddenButtons = [
+    /^Start run$/i,
+    /^Start lift$/i,
+    /^Start workout$/i,
+    /^Start HYROX/i,
+    /^Warm-up$/i,
+    /^Map route$/i,
+    /Export watch workout/i,
+    /Send to Watch/i,
+    /Copy workout/i,
+    /^Mark done$/i,
+    /^Done$/i,
+    /Remove workout/i,
+    /Runner strength — no equipment/i,
+  ]
+  for (const name of forbiddenButtons) {
+    await expect(page.getByRole('button', { name })).toHaveCount(0)
+  }
+  await expect(page).not.toHaveURL(/\/log-lift(?:\?|$)/)
+
+  await page.goto('/plan')
+  await page.locator('.forged-mission-card').click()
+  await expect(page.getByText('Changed to rest from daily check-in', { exact: false })).toHaveCount(0)
   for (const name of forbiddenButtons) {
     await expect(page.getByRole('button', { name })).toHaveCount(0)
   }

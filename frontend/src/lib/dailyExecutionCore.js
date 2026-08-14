@@ -89,6 +89,7 @@ export function isRestSession(session) {
 
 function recoveryGuidanceSession(execution) {
   if (!execution || typeof execution !== 'object') return null;
+  if (execution.restSource === 'removed') return null;
   const candidates = [
     execution.run,
     execution.lift,
@@ -99,10 +100,7 @@ function recoveryGuidanceSession(execution) {
 
   const normalized = (value) => String(value || '').trim().toLowerCase();
   const checkinOverride = execution.checkinOverride || execution.checkin_override || null;
-  const hasDayLevelRest = normalized(checkinOverride?.action) === 'rest'
-    || normalized(execution.type) === 'rest'
-    || normalized(execution.workoutType || execution.workout_type) === 'rest';
-  if (!hasDayLevelRest) return null;
+  if (normalized(checkinOverride?.action) !== 'rest') return null;
   return {
     type: 'rest',
     workout_type: 'rest',
@@ -121,7 +119,11 @@ export function isRestExecutionAuthority(execution) {
     execution
     && execution.hasPlan === true
     && execution.hasDay === true
-    && (execution.isRest === true || recoveryGuidanceSession(execution)),
+    && (
+      execution.isPlannedRest === true
+      || execution.restSource === 'planned'
+      || recoveryGuidanceSession(execution)
+    ),
   );
 }
 
