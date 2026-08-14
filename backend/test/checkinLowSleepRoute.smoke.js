@@ -1,32 +1,38 @@
 #!/usr/bin/env node
 
 const assert = require('node:assert/strict');
-const planSchema = require('../src/lib/planSchema');
 
 async function run() {
-  const today = new Date();
-  const date = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-  const sourcePlan = {
-    schemaVersion: 2,
-    weeks: [{ days: [{ date, day: 'Wed', sessions: [{ id: 'removed-today-run', kind: 'run', duration_min: 45 }] }] }],
-  };
-  const identified = planSchema.withRemovalSessionIdentities(sourcePlan, { assignmentStart: date });
-  const removalId = identified.weeks[0].days[0].sessions[0].removal_session_id;
-  const row = {
-    user_plan_id: 'assignment-owner',
-    plan_id: 'plan-owner',
+  const now = new Date();
+  const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const ownerId = 'low-sleep-route-owner';
+  const planRow = {
+    user_plan_id: 'up-low-sleep',
+    plan_id: 'tp-low-sleep',
+    id: 'tp-low-sleep',
     status: 'active',
     started_at: date,
     effective_from: date,
-    progress_json: JSON.stringify({ removedSessionIds: [removalId] }),
-    plan_data: sourcePlan,
+    progress_json: '{}',
+    plan_data: JSON.stringify({
+      schemaVersion: 2,
+      weeks: [{ week: 1, days: [{
+        date,
+        day: 'Thu',
+        sessions: [{ id: 'low-sleep-run', kind: 'run', type: 'easy_run', duration_minutes: 40 }],
+      }] }],
+    }),
   };
   const writes = [];
   const tx = {
     async get(sql) {
       if (/SELECT id FROM daily_checkins/.test(sql)) return null;
-      if (/FROM health_sync/.test(sql)) return null;
-      if (/FROM user_plans up/.test(sql) && /JOIN training_plans tp/.test(sql)) return row;
+      if (/FROM health_sync/.test(sql)) return {
+        sleep_hours_last_night: 3.5,
+        synced_at: new Date().toISOString(),
+        training_metrics_json: '{}',
+      };
+      if (/FROM user_plans up/.test(sql) && /JOIN training_plans tp/.test(sql)) return planRow;
       if (/FROM training_plans WHERE user_id/.test(sql)) return null;
       throw new Error(`unexpected get: ${sql}`);
     },
@@ -35,6 +41,7 @@ async function run() {
       return { changes: 1 };
     },
   };
+
   const dbPath = require.resolve('../src/db');
   const routePath = require.resolve('../src/routes/checkin');
   const originalDb = require.cache[dbPath];
@@ -64,20 +71,30 @@ async function run() {
       json(value) { payload = value; return this; },
     };
     await handler({
-      user: { id: 'owner' },
-      body: { feeling: 3, time_available: 30, life_flags: [], date },
+      user: { id: ownerId },
+      body: {
+        legs: 3,
+        drive: 3,
+        time_available: 60,
+        life_flags: [],
+        date,
+      },
       query: {},
       headers: { 'x-forged-local-date': date },
     }, response);
+
     assert.equal(statusCode, 200);
-    assert.match(payload.adjustment, /no active workout was found/i);
-    assert.equal(writes.some(({ sql }) => /INSERT INTO checkin_overrides/.test(sql)), false,
-      'removed workout never creates an override');
-    assert.equal(writes.some(({ sql }) => /DELETE FROM checkin_overrides/.test(sql)), true,
-      'stale same-day override is cleared when no visible workout remains');
-    assert.equal(writes.some(({ sql }) => /INSERT INTO daily_checkins/.test(sql)), true,
-      'the truthful check-in itself is still saved');
-    console.log('CHECK-IN REMOVAL VISIBILITY SMOKE OK');
+    assert.equal(payload.action, 'rest', 'actual mobile POST handler turns fresh synced 3.5-hour sleep into recovery');
+    const savedCheckin = writes.find(({ sql }) => /INSERT INTO daily_checkins/.test(sql));
+    assert(savedCheckin, 'actual POST handler persists the check-in');
+    assert.equal(savedCheckin.params[7], 3.5, 'actual mobile POST handler persists the fresh synced sleep value');
+    const savedOverride = writes.find(({ sql }) => /INSERT INTO checkin_overrides/.test(sql));
+    assert(savedOverride, 'actual POST handler persists a bound safety override');
+    const patch = JSON.parse(savedOverride.params[4]);
+    assert.equal(patch.type, 'rest');
+    assert.equal(patch.workout_type, 'rest');
+    assert.equal(patch.distance_miles, 0);
+    console.log('CHECK-IN LOW-SLEEP ROUTE SMOKE OK');
   } finally {
     delete require.cache[routePath];
     if (originalRoute) require.cache[routePath] = originalRoute;

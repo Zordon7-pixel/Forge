@@ -107,6 +107,21 @@ async function run() {
   assert.equal(sickDirective.patch.type, 'rest');
   assert.equal(sickDirective.hasWorkoutToday, true, 'the override remains bound to the scheduled session instead of fabricating a new day');
 
+  const lowSleepDirective = await checkinRouter._test.computeCheckinDirective(
+    ownerId,
+    { ...feelGreat, sleep_hours: 3.5, life_flags: [] },
+    databaseFor(runDay),
+    { planningDateLocal: planningDate }
+  );
+  assert.equal(lowSleepDirective.action, 'rest', '3.5-hour sleep reaches the real directive as a safety recovery signal');
+  assert.equal(lowSleepDirective.patch.type, 'rest');
+  assert.equal(lowSleepDirective.patch.workout_type, 'rest');
+
+  assert.equal(checkinRouter._test.validateCheckinPayload({ ...feelGreat, sleep_hours: 3.5 }).value.sleep_hours, 3.5,
+    'check-in validation preserves an explicit sleep value');
+  assert.match(checkinRouter._test.validateCheckinPayload({ ...feelGreat, sleep_hours: 20 }).error, /0 to 16/,
+    'implausible sleep cannot enter readiness decisions');
+
   const removablePlan = {
     schemaVersion: 2,
     startDate: planningDate,
@@ -161,7 +176,7 @@ async function run() {
   assert.equal(laterWeekDirective.plannedRestDay, true, 'check-in selects the canonical later-week rest day, not the first matching weekday');
   assert.equal(laterWeekDirective.hasWorkoutToday, false);
 
-  console.log('REST-DAY CHECK-IN SMOKE OK (27)');
+  console.log('REST-DAY CHECK-IN SMOKE OK (32)');
 }
 
 run().catch((error) => {

@@ -3,6 +3,7 @@ const { dbGet, withPlanningInputMutation } = require('../db');
 const auth = require('../middleware/auth');
 const { deriveAction, buildPatch, buildDirective, estimateWorkoutMinutes } = require('../lib/checkinOverride');
 const dailyExecution = require('../lib/dailyExecution');
+const { buildHealthSignals } = require('../lib/healthSignals');
 const planSchema = require('../lib/planSchema');
 const { resolveActivePlanForDate } = require('../lib/planAssignmentLifecycle');
 const { isPlanningDateAllowed, requestPlanningDate } = require('../lib/requestPlanningDate');
@@ -126,6 +127,12 @@ function validateCheckinPayload(body = {}, options = {}) {
     return { error: 'Time available must be a positive whole number of minutes.' };
   }
 
+  const hasSleepHours = body.sleep_hours !== null && body.sleep_hours !== undefined && body.sleep_hours !== '';
+  const sleepHours = hasSleepHours ? Number(body.sleep_hours) : null;
+  if (hasSleepHours && (!Number.isFinite(sleepHours) || sleepHours < 0 || sleepHours > 16)) {
+    return { error: 'Sleep hours must be a number from 0 to 16.' };
+  }
+
   if (incomplete) return { incomplete: true };
 
   return {
@@ -134,10 +141,28 @@ function validateCheckinPayload(body = {}, options = {}) {
       legs: hasLegs ? legs : null,
       drive: hasDrive ? drive : null,
       time_available: timeAvailable,
-      sleep_hours: null,
+      sleep_hours: sleepHours,
       life_flags: Array.isArray(body.life_flags) ? body.life_flags.filter(flag => ALLOWED_LIFE_FLAGS.has(flag)) : [],
     },
   };
+}
+
+async function resolveCheckinSleepHours(userId, explicitSleepHours, database = { get: dbGet }) {
+  if (explicitSleepHours !== null && explicitSleepHours !== undefined) return explicitSleepHours;
+  try {
+    const row = await database.get(
+      `SELECT sleep_hours_last_night, sleep_end_at, synced_at, training_metrics_json
+       FROM health_sync
+       WHERE user_id=?`,
+      [userId]
+    );
+    if (!row) return null;
+    const sleep = buildHealthSignals(row).metrics?.sleepHoursLastNight;
+    return Number.isFinite(Number(sleep)) ? Number(sleep) : null;
+  } catch (error) {
+    console.warn('[checkin] fresh sleep lookup failed:', error?.message || error);
+    return null;
+  }
 }
 
 async function computeCheckinDirective(userId, checkinInput, database, options = {}) {
@@ -146,6 +171,7 @@ async function computeCheckinDirective(userId, checkinInput, database, options =
     legs: checkinInput.legs,
     drive: checkinInput.drive,
     time_available: checkinInput.time_available,
+    sleep_hours: checkinInput.sleep_hours,
     life_flags: checkinInput.life_flags,
   };
   let action = deriveAction(checkin);
@@ -205,14 +231,14 @@ router.post('/', auth, async (req, res) => {
       return res.status(400).json({ error: validation.error });
     }
 
-    const { feeling, legs, drive, time_available, life_flags } = validation.value;
-    const parsedSleep = null;
+    const { feeling, legs, drive, time_available, sleep_hours, life_flags } = validation.value;
     if (req.body?.date !== undefined && req.body?.date !== null && !isPlanningDateAllowed(req.body.date)) {
       return res.status(400).json({ error: 'date must be the current phone date' });
     }
     const today = requestPlanningDate(req, { bodyKeys: ['date'], queryKeys: [] });
 
     const directive = await withPlanningInputMutation(req.user.id, async (tx) => {
+      const resolvedSleepHours = await resolveCheckinSleepHours(req.user.id, sleep_hours, tx);
       const existing = await tx.get(
         'SELECT id FROM daily_checkins WHERE user_id=? AND checkin_date=? FOR UPDATE',
         [req.user.id, today]
@@ -220,13 +246,13 @@ router.post('/', auth, async (req, res) => {
       if (existing) {
         await tx.run(
           'UPDATE daily_checkins SET feeling=?, legs=?, drive=?, time_available=?, sleep_hours=?, life_flags=? WHERE id=? AND user_id=?',
-          [feeling, legs, drive, time_available, parsedSleep, JSON.stringify(life_flags), existing.id, req.user.id]
+          [feeling, legs, drive, time_available, resolvedSleepHours, JSON.stringify(life_flags), existing.id, req.user.id]
         );
       } else {
         const id = require('crypto').randomBytes(8).toString('hex');
         await tx.run(
           'INSERT INTO daily_checkins (id, user_id, checkin_date, feeling, legs, drive, time_available, sleep_hours, life_flags) VALUES (?,?,?,?,?,?,?,?,?)',
-          [id, req.user.id, today, feeling, legs, drive, time_available, parsedSleep, JSON.stringify(life_flags)]
+          [id, req.user.id, today, feeling, legs, drive, time_available, resolvedSleepHours, JSON.stringify(life_flags)]
         );
       }
 
@@ -235,6 +261,7 @@ router.post('/', auth, async (req, res) => {
         legs,
         drive,
         time_available,
+        sleep_hours: resolvedSleepHours,
         life_flags,
       }, tx, { planningDateLocal: today });
       const overrideId = require('crypto').randomBytes(8).toString('hex');
@@ -283,9 +310,10 @@ router.post('/preview', auth, async (req, res) => {
       return res.status(400).json({ error: 'date must be the current phone date' });
     }
     const planningDateLocal = requestPlanningDate(req, { bodyKeys: ['date'], queryKeys: [] });
+    const resolvedSleepHours = await resolveCheckinSleepHours(req.user.id, validation.value.sleep_hours);
     const directive = await computeCheckinDirective(
       req.user.id,
-      validation.value,
+      { ...validation.value, sleep_hours: resolvedSleepHours },
       undefined,
       { planningDateLocal }
     );
@@ -317,6 +345,8 @@ router.get('/today', auth, async (req, res) => {
 
 router._test = {
   computeCheckinDirective,
+  resolveCheckinSleepHours,
+  validateCheckinPayload,
   getActivePlanForUser,
   normalizeTodayEntry,
   resolveTodayPlanState,
