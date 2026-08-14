@@ -2,11 +2,18 @@ const planSchema = require('./planSchema');
 const { DAY_ORDER, normalizeTrainingDays } = require('./runSchedule');
 const { RACE_PLAN_POLICY_V1, addDays, canonicalHash } = require('./racePlanPolicy');
 const { localDateForOffset } = require('./requestPlanningDate');
+const { FEATURE_MODES } = require('./goalBackwardContracts');
 
 const MAX_PROTECTED_RACES = 2;
 const MIN_RACE_GAP_DAYS = 21;
 const MAX_PLAN_WINDOW_DAYS = 139;
 const FORBIDDEN_BACKUP_KEYS = /(email|phone|password|token|secret|health|heart.?rate|gps|route|coordinate|latitude|longitude)/i;
+const GOAL_BACKWARD_V24_MODE_SET = new Set(FEATURE_MODES);
+
+function getGoalBackwardV24Mode(value = process.env.FORGE_GOAL_BACKWARD_V24_MODE) {
+  const configured = typeof value === 'string' ? value : '';
+  return GOAL_BACKWARD_V24_MODE_SET.has(configured) ? configured : 'off';
+}
 
 function parseJson(value, fallback = null) {
   if (value === null || value === undefined || value === '') return fallback;
@@ -190,11 +197,14 @@ function buildBackupManifest({ entries, createdAt = new Date().toISOString(), mo
 }
 
 module.exports = {
+  GOAL_BACKWARD_V24_MODES: FEATURE_MODES,
   MAX_PROTECTED_RACES,
   authoritativePlanTarget,
   assertApplyAuthorized,
   assertRedactedBackup,
   buildBackupManifest,
+  getGoalBackwardV24Mode,
+  resolveGoalBackwardV24Mode: getGoalBackwardV24Mode,
   localDateForOffset,
   isCurrentRolloutPlan,
   normalizeRolloutTrainingDays,

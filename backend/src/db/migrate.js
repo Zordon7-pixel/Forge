@@ -45,6 +45,101 @@ async function runAlwaysMigrations() {
     )
   `);
   await pg.query('CREATE INDEX IF NOT EXISTS idx_plan_candidates_user_status_expiry ON plan_generation_candidates(user_id, status, expires_at)');
+  // M24-02: nullable/default-safe bindings preserve every legacy candidate row.
+  await pg.query('ALTER TABLE plan_generation_candidates ADD COLUMN IF NOT EXISTS decision_id TEXT');
+  await pg.query('ALTER TABLE plan_generation_candidates ADD COLUMN IF NOT EXISTS candidate_revision BIGINT CHECK (candidate_revision IS NULL OR candidate_revision >= 1)');
+  await pg.query('ALTER TABLE plan_generation_candidates ADD COLUMN IF NOT EXISTS athlete_state_revision BIGINT CHECK (athlete_state_revision IS NULL OR athlete_state_revision >= 1)');
+  await pg.query('ALTER TABLE plan_generation_candidates ADD COLUMN IF NOT EXISTS safety_state_hash TEXT');
+  await pg.query('ALTER TABLE plan_generation_candidates ADD COLUMN IF NOT EXISTS goal_revisions_json JSONB CHECK (goal_revisions_json IS NULL OR pg_column_size(goal_revisions_json) <= 16384)');
+  await pg.query('ALTER TABLE plan_generation_candidates ADD COLUMN IF NOT EXISTS lock_revision BIGINT CHECK (lock_revision IS NULL OR lock_revision >= 0)');
+  await pg.query('ALTER TABLE plan_generation_candidates ADD COLUMN IF NOT EXISTS edit_revision BIGINT CHECK (edit_revision IS NULL OR edit_revision >= 0)');
+  await pg.query('ALTER TABLE plan_generation_candidates ADD COLUMN IF NOT EXISTS surface_revision BIGINT CHECK (surface_revision IS NULL OR surface_revision >= 1)');
+  await pg.query('ALTER TABLE plan_generation_candidates ADD COLUMN IF NOT EXISTS export_revision BIGINT CHECK (export_revision IS NULL OR export_revision >= 1)');
+  await pg.query("ALTER TABLE plan_generation_candidates ADD COLUMN IF NOT EXISTS feature_mode TEXT CHECK (feature_mode IS NULL OR feature_mode IN ('off', 'shadow', 'preview', 'on'))");
+  await pg.query('ALTER TABLE plan_generation_candidates ADD COLUMN IF NOT EXISTS selected_candidate_hash TEXT');
+  await pg.query('ALTER TABLE plan_generation_candidates ADD COLUMN IF NOT EXISTS material_change_json JSONB CHECK (material_change_json IS NULL OR pg_column_size(material_change_json) <= 16384)');
+  // M24-01: immutable, bounded artifacts for the seven linked pipeline stages.
+  await pg.query(`
+    CREATE TABLE IF NOT EXISTS planning_pipeline_artifacts (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      artifact_kind TEXT NOT NULL CHECK (artifact_kind IN ('evidence_snapshot', 'athlete_state', 'planning_decision', 'candidate_week', 'validator_result', 'canonical_session_set', 'surface_manifest')),
+      decision_id TEXT,
+      parent_artifact_id TEXT REFERENCES planning_pipeline_artifacts(id) ON DELETE SET NULL,
+      plan_generation_candidate_id TEXT REFERENCES plan_generation_candidates(id) ON DELETE SET NULL,
+      schema_version TEXT NOT NULL,
+      policy_version TEXT NOT NULL,
+      revision BIGINT NOT NULL CHECK (revision >= 1),
+      content_hash TEXT NOT NULL,
+      payload_json JSONB NOT NULL CHECK (pg_column_size(payload_json) <= 262144),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE (user_id, artifact_kind, content_hash, revision)
+    )
+  `);
+  await pg.query('CREATE INDEX IF NOT EXISTS idx_pipeline_artifacts_user_decision_kind ON planning_pipeline_artifacts(user_id, decision_id, artifact_kind)');
+  await pg.query('CREATE INDEX IF NOT EXISTS idx_pipeline_artifacts_candidate_kind ON planning_pipeline_artifacts(plan_generation_candidate_id, artifact_kind)');
+  await pg.query('CREATE INDEX IF NOT EXISTS idx_pipeline_artifacts_user_kind_created ON planning_pipeline_artifacts(user_id, artifact_kind, created_at DESC)');
+  // M24-03: corrections append attributed canonical values without changing raw evidence.
+  await pg.query(`
+    CREATE TABLE IF NOT EXISTS planning_evidence_corrections (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      raw_evidence_kind TEXT NOT NULL,
+      raw_evidence_ref TEXT NOT NULL,
+      revision BIGINT NOT NULL CHECK (revision >= 1),
+      corrected_canonical_value_json JSONB NOT NULL CHECK (pg_column_size(corrected_canonical_value_json) <= 16384),
+      canonical_unit TEXT CHECK (canonical_unit IS NULL OR canonical_unit IN ('m', 's', 'bpm', 'kg', 'count', 'ordinal')),
+      reason_code TEXT NOT NULL CHECK (char_length(reason_code) BETWEEN 1 AND 128),
+      reason TEXT NOT NULL CHECK (char_length(reason) BETWEEN 1 AND 500),
+      attributed_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      attribution_json JSONB NOT NULL CHECK (pg_column_size(attribution_json) <= 16384),
+      supersedes_correction_id TEXT REFERENCES planning_evidence_corrections(id) ON DELETE SET NULL,
+      content_hash TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE (user_id, raw_evidence_kind, raw_evidence_ref, revision)
+    )
+  `);
+  await pg.query('CREATE INDEX IF NOT EXISTS idx_evidence_corrections_user_evidence_revision ON planning_evidence_corrections(user_id, raw_evidence_kind, raw_evidence_ref, revision DESC)');
+  // M24-04: locks and manual edits advance by successor revision rather than overwrite.
+  await pg.query(`
+    CREATE TABLE IF NOT EXISTS planning_constraints (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      constraint_kind TEXT NOT NULL CHECK (constraint_kind IN ('day_lock', 'session_lock', 'manual_edit')),
+      plan_id TEXT,
+      session_id TEXT,
+      date_local TEXT,
+      revision BIGINT NOT NULL CHECK (revision >= 1),
+      active BOOLEAN NOT NULL DEFAULT TRUE,
+      supersedes_constraint_id TEXT REFERENCES planning_constraints(id) ON DELETE SET NULL,
+      attributed_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      attributed_payload_json JSONB NOT NULL CHECK (pg_column_size(attributed_payload_json) <= 16384),
+      effective_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CHECK (plan_id IS NOT NULL OR session_id IS NOT NULL OR date_local IS NOT NULL)
+    )
+  `);
+  await pg.query('CREATE INDEX IF NOT EXISTS idx_planning_constraints_user_active_kind ON planning_constraints(user_id, active, constraint_kind)');
+  await pg.query('CREATE INDEX IF NOT EXISTS idx_planning_constraints_user_plan_revision ON planning_constraints(user_id, plan_id, revision DESC)');
+  await pg.query("CREATE UNIQUE INDEX IF NOT EXISTS idx_planning_constraints_scope_revision ON planning_constraints(user_id, constraint_kind, COALESCE(plan_id, ''), COALESCE(session_id, ''), COALESCE(date_local, ''), revision)");
+  // M24-05: bounded reason codes plus current fingerprints suppress identical proposals.
+  await pg.query(`
+    CREATE TABLE IF NOT EXISTS plan_candidate_rejections (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      candidate_hash TEXT NOT NULL,
+      decision_id TEXT NOT NULL,
+      decision_hash TEXT NOT NULL,
+      reason_code TEXT CHECK (reason_code IS NULL OR char_length(reason_code) BETWEEN 1 AND 128),
+      evidence_fingerprint TEXT NOT NULL,
+      constraint_fingerprint TEXT NOT NULL,
+      policy_fingerprint TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE (user_id, candidate_hash, evidence_fingerprint, constraint_fingerprint, policy_fingerprint)
+    )
+  `);
+  await pg.query('CREATE INDEX IF NOT EXISTS idx_candidate_rejections_user_created ON plan_candidate_rejections(user_id, created_at DESC)');
+  await pg.query('CREATE INDEX IF NOT EXISTS idx_candidate_rejections_user_decision ON plan_candidate_rejections(user_id, decision_id)');
   await pg.query(`
     CREATE TABLE IF NOT EXISTS diagnostic_access_audit (
       id TEXT PRIMARY KEY,

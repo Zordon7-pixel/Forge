@@ -1,7 +1,15 @@
 const { RACE_PLAN_POLICY_V1, canonicalHash, canonicalStringify } = require('./racePlanPolicy');
+const {
+  FEATURE_MODES,
+  assertPipelineLinks,
+  findNonJsonValues,
+  findRedactionViolations,
+} = require('./goalBackwardContracts');
 
 const HASH_PREFIX = 'sha256:';
 
+// Keep this legacy snapshot allowlist stable: v2.4 artifacts use the stricter
+// contract redaction validator without changing mode-off candidate bytes.
 const REDACTED_KEYS = new Set([
   'access_token',
   'api_key',
@@ -26,6 +34,9 @@ const ALLOWED_LIFE_FLAGS = new Set([
   'stressed',
   'traveling',
 ]);
+const GOAL_BACKWARD_FEATURE_MODES = new Set(FEATURE_MODES);
+const HASH_PATTERN = /^(?:sha256:)?[a-f0-9]{64}$/;
+const MAX_BINDING_JSON_BYTES = 16 * 1024;
 
 function cloneJson(value) {
   return JSON.parse(JSON.stringify(value));
@@ -220,6 +231,118 @@ function validateCandidateBundle({ plan, snapshot, trace, replay = null }) {
   return { plan: normalizedPlan, snapshot: normalizedSnapshot, trace: normalizedTrace };
 }
 
+function bindingValue(input, camelKey, snakeKey) {
+  return input[camelKey] ?? input[snakeKey];
+}
+
+function positiveRevision(value) {
+  return Number.isSafeInteger(value) && value >= 1 ? value : null;
+}
+
+function nonNegativeRevision(value) {
+  return Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+
+function boundedIdentifier(value) {
+  if (typeof value !== 'string' || value.trim() !== value) return null;
+  return value.length >= 1 && value.length <= 200 ? value : null;
+}
+
+function normalizeGoalRevisions(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const normalized = {};
+  for (const key of Object.keys(value).sort()) {
+    if (['__proto__', 'constructor', 'prototype'].includes(key)) return null;
+    const goalId = boundedIdentifier(key);
+    const revision = positiveRevision(value[key]);
+    if (!goalId || revision === null) return null;
+    normalized[goalId] = revision;
+  }
+  if (jsonBytes(normalized) > MAX_BINDING_JSON_BYTES) return null;
+  return normalized;
+}
+
+function normalizeMaterialChange(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  if (findNonJsonValues(value, 'material_change_json').length) return null;
+  if (findRedactionViolations(value, 'material_change_json').length) return null;
+  try {
+    if (jsonBytes(value) > MAX_BINDING_JSON_BYTES) return null;
+    return cloneJson(value);
+  } catch (_error) {
+    return null;
+  }
+}
+
+function buildGoalBackwardCandidateBindings(input = {}) {
+  const errors = [];
+  const decisionId = boundedIdentifier(bindingValue(input, 'decisionId', 'decision_id'));
+  if (!decisionId) errors.push({ code: 'DECISION_ID_INVALID', path: 'decision_id' });
+
+  const revisions = {};
+  for (const [camelKey, snakeKey, minimum] of [
+    ['candidateRevision', 'candidate_revision', 1],
+    ['athleteStateRevision', 'athlete_state_revision', 1],
+    ['lockRevision', 'lock_revision', 0],
+    ['editRevision', 'edit_revision', 0],
+    ['surfaceRevision', 'surface_revision', 1],
+    ['exportRevision', 'export_revision', 1],
+  ]) {
+    const value = bindingValue(input, camelKey, snakeKey);
+    revisions[snakeKey] = minimum === 0 ? nonNegativeRevision(value) : positiveRevision(value);
+    if (revisions[snakeKey] === null) errors.push({ code: 'REVISION_INVALID', path: snakeKey });
+  }
+
+  const safetyStateHash = String(bindingValue(input, 'safetyStateHash', 'safety_state_hash') || '');
+  if (!HASH_PATTERN.test(safetyStateHash)) errors.push({ code: 'HASH_INVALID', path: 'safety_state_hash' });
+  const selectedCandidateHash = String(bindingValue(input, 'selectedCandidateHash', 'selected_candidate_hash') || '');
+  if (!HASH_PATTERN.test(selectedCandidateHash)) errors.push({ code: 'HASH_INVALID', path: 'selected_candidate_hash' });
+
+  const goalRevisions = normalizeGoalRevisions(bindingValue(input, 'goalRevisions', 'goal_revisions_json'));
+  if (!goalRevisions) errors.push({ code: 'GOAL_REVISIONS_INVALID', path: 'goal_revisions_json' });
+  const materialChange = normalizeMaterialChange(bindingValue(input, 'materialChange', 'material_change_json'));
+  if (!materialChange) errors.push({ code: 'MATERIAL_CHANGE_INVALID', path: 'material_change_json' });
+
+  const featureMode = bindingValue(input, 'featureMode', 'feature_mode');
+  if (!GOAL_BACKWARD_FEATURE_MODES.has(featureMode)) errors.push({ code: 'FEATURE_MODE_INVALID', path: 'feature_mode' });
+
+  if (errors.length) {
+    const error = new Error(`Goal-backward candidate bindings failed validation: ${errors[0].code}`);
+    error.code = 'GOAL_BACKWARD_CANDIDATE_BINDINGS_INVALID';
+    error.status = 422;
+    error.details = errors;
+    throw error;
+  }
+
+  return {
+    decision_id: decisionId,
+    candidate_revision: revisions.candidate_revision,
+    athlete_state_revision: revisions.athlete_state_revision,
+    safety_state_hash: safetyStateHash,
+    goal_revisions_json: goalRevisions,
+    lock_revision: revisions.lock_revision,
+    edit_revision: revisions.edit_revision,
+    surface_revision: revisions.surface_revision,
+    export_revision: revisions.export_revision,
+    feature_mode: featureMode,
+    selected_candidate_hash: selectedCandidateHash,
+    material_change_json: materialChange,
+  };
+}
+
+function validateGoalBackwardCandidateBundle({ artifacts = null, bindings, ...candidateBundle }) {
+  const normalized = {
+    ...validateCandidateBundle(candidateBundle),
+    bindings: buildGoalBackwardCandidateBindings(bindings),
+  };
+  if (artifacts !== null) normalized.artifacts = assertPipelineLinks(artifacts);
+  return normalized;
+}
+
+function buildGoalBackwardCandidateBundle(input) {
+  return validateGoalBackwardCandidateBundle(input);
+}
+
 function parseJson(value, fallback = null) {
   if (value == null || value === '') return fallback;
   if (typeof value !== 'string') return value;
@@ -239,6 +362,8 @@ module.exports = {
   assertBoundedJson,
   assertPersistablePlan,
   buildPlanningSnapshot,
+  buildGoalBackwardCandidateBundle,
+  buildGoalBackwardCandidateBindings,
   jsonBytes,
   normalizeContext,
   normalizeCheckin,
@@ -246,5 +371,6 @@ module.exports = {
   prefixedHash,
   redactSnapshotValue,
   validateCandidateBundle,
+  validateGoalBackwardCandidateBundle,
   validatePlanStructure,
 };

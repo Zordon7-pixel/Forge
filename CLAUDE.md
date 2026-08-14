@@ -130,8 +130,32 @@ function sanitize(val, maxLen = 200) {
 | `PORT` | No | Defaults to 4002 |
 | `HOST` | No | Defaults to `0.0.0.0` on Railway, `127.0.0.1` locally |
 | `FORGE_BETA_ACCESS` | No | Set to `true` to unlock premium routes and AI limits for beta testers without changing subscription records; set to `false` before paid launch |
+| `FORGE_GOAL_BACKWARD_V24_MODE` | No | Goal-backward v2.4 runtime mode: `off\|shadow\|preview\|on`. Missing, malformed, whitespace-padded, or otherwise invalid values resolve to `off`. This flag is independent of `FORGE_BETA_ACCESS`. |
 
 Resend HTTP API is used when `SMTP_HOST=smtp.resend.com` and `SMTP_USER=resend`; in that mode `SMTP_PASS` is the Resend bearer token, while `SMTP_PORT` and `SMTP_SECURE` are unused but still required by `isMailConfigured()`.
+
+## Goal-Backward Coaching v2.4 — Phase 1A Contract
+
+Phase 1A is an additive contract/persistence foundation only. `backend/src/lib/goalBackwardContracts.js` owns the independent schema/policy/ruleset versions, closed truth/state unions, stable reason-code registry, sensitive artifact keys, bounded pipeline-artifact validation, and seven-stage Evidence→surface link validation.
+
+The shipped compatibility anchors remain authoritative:
+
+- `planSchema.js` remains the schema-v2 plan envelope and stable-session adapter.
+- `planCandidateLifecycle.js`, `plan_generation_candidates`, and the existing owner-scoped candidate apply route remain the only preview/apply lineage.
+- `racePlanPolicy.js`, `hyroxStandards.js`, and `racePlanDiagnostics.js` remain the current policy, official HYROX registry, and diagnostics anchors.
+- M24-01 through M24-05 add nullable candidate bindings and append-only artifact/correction/constraint/rejection tables. They do not replace or backfill current plans.
+
+No-runtime-switch guarantee: Phase 1A does not wire the v2.4 planner into any route. `FORGE_GOAL_BACKWARD_V24_MODE` defaults/fails to `off`, and mode `off` continues through the existing candidate generation, preview, apply, assignment, and surface path. `FORGE_BETA_ACCESS` entitlement behavior is unchanged.
+
+Phase 1A gate:
+
+```sh
+node backend/test/goalBackwardContracts.smoke.js
+node backend/test/planPersistenceMigration.smoke.js
+node backend/test/planCandidateLifecycle.smoke.js
+```
+
+Batch 1 status (2026-08-14): `patched`; the three-command Phase 1A gate passes locally. No commit, deploy, migration execution, feature activation, independent QA, or Hermes verification is claimed by this source patch.
 
 ---
 

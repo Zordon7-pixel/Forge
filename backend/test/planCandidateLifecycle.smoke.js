@@ -4,6 +4,9 @@ const path = require('node:path');
 const assignmentLifecycle = require('../src/lib/planAssignmentLifecycle');
 const candidateLifecycle = require('../src/lib/planCandidateLifecycle');
 const plansRouter = require('../src/routes/plans');
+const {
+  getGoalBackwardV24Mode,
+} = require('../src/lib/betaPlanRollout');
 
 const ownerId = 'candidate-owner';
 const oldAssignment = {
@@ -77,6 +80,23 @@ function createTx() {
 }
 
 async function run() {
+  const originalMode = process.env.FORGE_GOAL_BACKWARD_V24_MODE;
+  try {
+    delete process.env.FORGE_GOAL_BACKWARD_V24_MODE;
+    assert.equal(getGoalBackwardV24Mode(), 'off', 'missing v2.4 mode defaults off');
+    for (const invalid of ['', 'true', 'PREVIEW ', 'enabled', 'garbage']) {
+      process.env.FORGE_GOAL_BACKWARD_V24_MODE = invalid;
+      assert.equal(getGoalBackwardV24Mode(), 'off', `invalid v2.4 mode ${JSON.stringify(invalid)} fails off`);
+    }
+    for (const mode of ['off', 'shadow', 'preview', 'on']) {
+      process.env.FORGE_GOAL_BACKWARD_V24_MODE = mode;
+      assert.equal(getGoalBackwardV24Mode(), mode);
+    }
+  } finally {
+    if (originalMode === undefined) delete process.env.FORGE_GOAL_BACKWARD_V24_MODE;
+    else process.env.FORGE_GOAL_BACKWARD_V24_MODE = originalMode;
+  }
+
   assert.equal(assignmentLifecycle.assignmentEffectiveFrom(newAssignment), '2026-08-09');
   assert.equal(assignmentLifecycle.isAssignmentEffective(newAssignment, '2026-08-08'), false);
   assert.equal(assignmentLifecycle.isAssignmentEffective(newAssignment, '2026-08-09'), true);
@@ -156,6 +176,56 @@ async function run() {
   duplicate.weeks[0].days.push({ date: '2026-08-10', sessions: [{ ...duplicate.weeks[0].days[0].sessions[0] }] });
   assert.equal(candidateLifecycle.validatePlanStructure(duplicate).valid, false);
 
+  const bindings = candidateLifecycle.buildGoalBackwardCandidateBindings({
+    decisionId: 'decision-synthetic',
+    candidateRevision: 1,
+    athleteStateRevision: 3,
+    safetyStateHash: `sha256:${'a'.repeat(64)}`,
+    goalRevisions: { 'goal-synthetic': 2 },
+    lockRevision: 0,
+    editRevision: 0,
+    surfaceRevision: 1,
+    exportRevision: 1,
+    featureMode: 'shadow',
+    selectedCandidateHash: `sha256:${'b'.repeat(64)}`,
+    materialChange: { required: false, reason_codes: [] },
+  });
+  assert.deepEqual(bindings, {
+    decision_id: 'decision-synthetic',
+    candidate_revision: 1,
+    athlete_state_revision: 3,
+    safety_state_hash: `sha256:${'a'.repeat(64)}`,
+    goal_revisions_json: { 'goal-synthetic': 2 },
+    lock_revision: 0,
+    edit_revision: 0,
+    surface_revision: 1,
+    export_revision: 1,
+    feature_mode: 'shadow',
+    selected_candidate_hash: `sha256:${'b'.repeat(64)}`,
+    material_change_json: { required: false, reason_codes: [] },
+  });
+  assert.throws(
+    () => candidateLifecycle.buildGoalBackwardCandidateBindings({
+      ...bindings,
+      feature_mode: 'invalid',
+    }),
+    (error) => error?.code === 'GOAL_BACKWARD_CANDIDATE_BINDINGS_INVALID' && error?.status === 422,
+  );
+  const v24Bundle = candidateLifecycle.validateGoalBackwardCandidateBundle({
+    plan,
+    snapshot,
+    trace: { reason_codes: ['RECENT_LOAD_MAINTAIN'] },
+    bindings,
+  });
+  assert.deepEqual(v24Bundle.bindings, bindings);
+  assert.deepEqual(v24Bundle.plan, plan);
+  assert.deepEqual(candidateLifecycle.buildGoalBackwardCandidateBundle({
+    plan,
+    snapshot,
+    trace: { reason_codes: ['RECENT_LOAD_MAINTAIN'] },
+    bindings,
+  }), v24Bundle);
+
   const assignedLineage = plansRouter._test.replacementLineageForActivePlan({
     source: 'assigned',
     row: { user_plan_id: 'up-current', lineage_id: 'lineage-current', plan_version: 4 },
@@ -224,6 +294,11 @@ async function run() {
   assert.deepEqual(pruneCalls[0].params, [ownerId, '2026-08-07T12:00:00.000Z', 'candidate-current']);
 
   const source = fs.readFileSync(path.join(__dirname, '../src/routes/plans.js'), 'utf8');
+  assert.doesNotMatch(
+    source,
+    /FORGE_GOAL_BACKWARD_V24_MODE|getGoalBackwardV24Mode|validateGoalBackwardCandidateBundle/,
+    'Phase 1A does not switch or wrap the current runtime candidate path',
+  );
   assert.match(source, /SELECT \* FROM plan_generation_candidates WHERE id=\? AND user_id=\? FOR UPDATE/);
   assert.match(source, /WHERE id=\? AND user_id=\? AND status='preview'/);
   assert.match(source, /WHERE id=\? AND user_id=\? AND status='active'/);
@@ -249,7 +324,7 @@ async function run() {
   const firstPlanWrite = source.indexOf("'UPDATE users SET run_days_per_week=?", writeBoundaryGuard);
   assert.ok(writeBoundaryGuard > 0 && firstPlanWrite > writeBoundaryGuard, 'the local-date guard runs inside apply immediately before plan writes');
 
-  console.log('PLAN CANDIDATE LIFECYCLE SMOKE OK (47)');
+  console.log('PLAN CANDIDATE LIFECYCLE SMOKE OK (63)');
 }
 
 run().catch((error) => {
