@@ -131,6 +131,27 @@ test('planned rest day does not prompt for a readiness check-in', async ({ page 
   assertCleanApiAndRuntime(apiState, runtimeErrors)
 })
 
+test('unscheduled rest guidance asks for a current check-in without claiming scheduled rest', async ({ page }) => {
+  const runtimeErrors = collectRuntimeErrors(page)
+  const apiState = await installAuthenticatedApi(page, {
+    responses: new Map([
+      ['GET /api/plans/today', { today: null, execution: { hasPlan: false, hasDay: false, date: today } }],
+      ['GET /api/runs/next-recommendation', {
+        recommendationType: 'rest',
+        type: 'rest',
+        reason: 'Rest is recommended from recent training.',
+      }],
+    ]),
+  })
+
+  await page.goto('/')
+  await expect(page.getByRole('button', { name: 'Check in', exact: true })).toBeVisible()
+  await expect(page.getByText("Rest is a current recommendation, not a scheduled plan rest day. Check in so today's guidance uses how you feel now.", { exact: true })).toBeVisible()
+  await expect(page.getByText(/Rest and recovery are scheduled today/)).toHaveCount(0)
+
+  assertCleanApiAndRuntime(apiState, runtimeErrors)
+})
+
 test('onboarding persists the athlete profile and generates one plan', async ({ page }) => {
   const runtimeErrors = collectRuntimeErrors(page)
   const onboardedToken = createQaToken({ onboarded: true })

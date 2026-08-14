@@ -304,7 +304,10 @@ export function DailyCoachFlow({ checkedInToday, readinessData, recommendation, 
         : "No workout is scheduled yet. Check in for today's guidance."
     }
     if (isRestDay) {
-      return `${readiness.sentencePrefix}Rest and recovery are scheduled today. No check-in is needed unless you choose to train.`
+      if (isPlannedRestDay) {
+        return `${readiness.sentencePrefix}Rest and recovery are scheduled today. No check-in is needed unless you choose to train.`
+      }
+      return planAccess.uncheckedSignal
     }
 
     const summaryLabel = calendarLabel || recommendationLabel
