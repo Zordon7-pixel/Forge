@@ -429,6 +429,65 @@ test('lift-only safety rest cannot expose strength or workout starts even with a
   assertCleanApiAndRuntime(apiState, runtimeErrors)
 })
 
+test('lift-only safety rest cannot offer a travel bodyweight handoff', async ({ page }) => {
+  const runtimeErrors = collectRuntimeErrors(page)
+  await page.context().grantPermissions(['geolocation'])
+  await page.context().setGeolocation({ latitude: 41.8781, longitude: -87.6298 })
+  const apiState = await installAuthenticatedApi(page, {
+    responses: new Map([
+      ['GET /api/plans/my', activePlanWithTodaySessions([plannedLift])],
+      ['GET /api/plans/today', liftOnlyCheckinRecoveryExecution()],
+      ['GET /api/checkin/today', { life_flags: ['traveling'], sleep_hours: 7 }],
+      ['GET /api/recovery/readiness', { available: true, score: 72, band: 'GREEN' }],
+      ['GET /api/injury/active', { injuries: [], safetyUnavailable: false }],
+      ['POST /api/travel-context', { status: 'away', confidence: 'high', distanceBand: 'over_150_miles' }],
+      ['POST /api/plans/today/bodyweight-alternative', { alternative: plannedLift }],
+    ]),
+  })
+
+  await page.goto('/plan')
+  await page.waitForLoadState('networkidle')
+  await expect(page.getByRole('button', { name: /Runner strength — no equipment/i })).toHaveCount(0)
+  expect(requestsFor(apiState, 'POST', '/api/travel-context')).toHaveLength(0)
+  expect(requestsFor(apiState, 'POST', '/api/plans/today/bodyweight-alternative')).toHaveLength(0)
+  expect(new URL(page.url()).pathname).not.toBe('/log-lift')
+  expect([320, 393]).toContain(page.viewportSize()?.width)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(await page.evaluate(() => document.documentElement.clientWidth))
+  assertCleanApiAndRuntime(apiState, runtimeErrors)
+})
+
+test('ordinary traveling lift keeps its owner-bound bodyweight handoff', async ({ page }) => {
+  const runtimeErrors = collectRuntimeErrors(page)
+  await page.context().grantPermissions(['geolocation'])
+  await page.context().setGeolocation({ latitude: 41.8781, longitude: -87.6298 })
+  const apiState = await installAuthenticatedApi(page, {
+    responses: new Map([
+      ['GET /api/plans/my', activePlanWithTodaySessions([plannedLift])],
+      ['GET /api/plans/today', executionWith({ run: null, lift: plannedLift })],
+      ['GET /api/checkin/today', { life_flags: ['traveling'], sleep_hours: 7 }],
+      ['GET /api/recovery/readiness', { available: true, score: 72, band: 'GREEN' }],
+      ['GET /api/injury/active', { injuries: [], safetyUnavailable: false }],
+      ['POST /api/travel-context', { status: 'away', confidence: 'high', distanceBand: 'over_150_miles' }],
+      ['POST /api/plans/today/bodyweight-alternative', {
+        alternative: { ...plannedLift, adjustedForTravel: true, equipment: ['bodyweight'] },
+      }],
+    ]),
+  })
+
+  await page.goto('/plan')
+  const bodyweight = page.getByRole('button', { name: /Runner strength — no equipment/i })
+  await expect(bodyweight).toBeVisible()
+  await bodyweight.click()
+  await expect.poll(() => requestsFor(apiState, 'POST', '/api/plans/today/bodyweight-alternative').length).toBe(1)
+  expect(requestsFor(apiState, 'POST', '/api/plans/today/bodyweight-alternative')[0].body).toEqual({
+    date: today,
+    session_id: plannedLift.id,
+  })
+  await expect(page).toHaveURL(/\/log-lift$/)
+  expect([320, 393]).toContain(page.viewportSize()?.width)
+  assertCleanApiAndRuntime(apiState, runtimeErrors)
+})
+
 test('completed current-day session stays recognized and reversible without reopening start or export actions', async ({ page }) => {
   const runtimeErrors = collectRuntimeErrors(page)
   const completedRun = { ...plannedRun, completed: true }

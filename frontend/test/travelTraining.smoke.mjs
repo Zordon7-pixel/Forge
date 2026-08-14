@@ -215,6 +215,44 @@ const completedLift = deriveTravelTrainingChoices({
 assert.equal(completedLift.shouldPrompt, false, 'a completed lift suppresses its no-equipment choice')
 assert.equal(completedLift.choices.some((choice) => choice.kind === 'bodyweight_strength'), false)
 
+const retainedRestLift = {
+  ...liftExecution.lift,
+  type: 'rest',
+  workout_type: 'rest',
+  checkin_override: { action: 'rest', label: 'Changed to rest from daily check-in' },
+}
+const safetyRestLift = deriveTravelTrainingChoices({
+  execution: {
+    ...liftExecution,
+    type: 'rest',
+    workout_type: 'rest',
+    checkinOverride: { action: 'rest', label: 'Changed to rest from daily check-in' },
+    sessions: [retainedRestLift],
+    lift: retainedRestLift,
+  },
+  checkinData: { life_flags: ['traveling'] },
+  readiness: green,
+  activeInjury: null,
+  travelContext: awayContext,
+})
+assert.equal(safetyRestLift.shouldPrompt, false, 'day-level safety rest suppresses a retained lift travel prompt')
+assert.equal(safetyRestLift.needsLocation, false, 'safety rest never requests location for a strength handoff')
+assert.equal(safetyRestLift.choices.some((choice) => choice.kind === 'bodyweight_strength'), false)
+
+const sessionRestLift = deriveTravelTrainingChoices({
+  execution: {
+    ...liftExecution,
+    sessions: [retainedRestLift],
+    lift: retainedRestLift,
+  },
+  checkinData: { life_flags: ['traveling'] },
+  readiness: green,
+  activeInjury: null,
+  travelContext: awayContext,
+})
+assert.equal(sessionRestLift.shouldPrompt, false, 'a rest-labelled retained lift cannot become bodyweight strength')
+assert.equal(sessionRestLift.choices.some((choice) => choice.kind === 'bodyweight_strength'), false)
+
 const staleTravelFlagAtHome = deriveTravelTrainingChoices({
   execution: liftExecution,
   checkinData: { life_flags: ['traveling'] },

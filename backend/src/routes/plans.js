@@ -3864,13 +3864,23 @@ router.post('/today/bodyweight-alternative', auth, async (req, res) => {
     const parsed = planWithoutRemovedSessions(parsePlan(active.row), progress, active.row);
     if (!parsed) return res.status(409).json({ error: 'Active plan could not be read' });
 
-    const weekdayShort = dailyExecution.weekdayShortForDate(dateISO);
-    const selection = dailyExecution.selectDayForDate(parsed, dateISO, weekdayShort);
-    if (!selection || String(selection.entry?.date || '') !== dateISO) {
+    const override = await dbGet(
+      'SELECT patch_json FROM checkin_overrides WHERE user_id=? AND date=?',
+      [req.user.id, dateISO]
+    );
+    const patch = dailyExecution.parseCheckinOverridePatch(override?.patch_json);
+    const selection = dailyExecution.resolvePlanDayForDate({ plan: parsed, dateISO, patch });
+    if (!selection.selectedEntry || String(selection.selectedEntry.date || '') !== dateISO) {
       return res.status(404).json({ error: 'Scheduled lift session not found for this date' });
     }
+    if (planSchema.isRestOverridePatch(patch)) {
+      return res.status(409).json({
+        error: 'Today was changed to recovery by your check-in. Keep the rest day or update your check-in first.',
+        code: 'CHECKIN_REST_OVERRIDE',
+      });
+    }
 
-    const entry = selection.entry;
+    const entry = selection.selectedEntry;
     const storedSessions = Array.isArray(entry.sessions)
       ? entry.sessions
       : planSchema.isRestEntry(entry) ? [] : [entry];
@@ -3889,6 +3899,12 @@ router.post('/today/bodyweight-alternative', auth, async (req, res) => {
     }
     if (exactKind !== 'lift') {
       return res.status(409).json({ error: 'The requested plan session is not a lift' });
+    }
+    if (planSchema.kindFromLegacy(exactSession) === 'rest') {
+      return res.status(409).json({
+        error: 'Recovery guidance cannot be translated into a strength workout.',
+        code: 'PLAN_SESSION_IS_REST',
+      });
     }
 
     const completedIds = new Set(completedSessionIdsFromProgress(progress).map(String));
@@ -3913,8 +3929,8 @@ router.post('/today/bodyweight-alternative', auth, async (req, res) => {
       session: exactSession,
       sessionId,
       date: dateISO,
-      week: selection.week?.week ?? selection.weekIndex + 1,
-      phase: selection.week?.phase || null,
+      week: selection.selectedWeek?.week ?? selection.weekIndex + 1,
+      phase: selection.selectedWeek?.phase || null,
     });
     if (!alternative) {
       return res.status(409).json({ error: 'This lift could not be translated safely for no-equipment training' });

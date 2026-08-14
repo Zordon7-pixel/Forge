@@ -2,7 +2,7 @@
 // choices. This module intentionally has no API, storage, geolocation, or AI
 // dependency so its safety decisions can run under plain Node smoke tests.
 
-import { runRouteState } from './dailyExecutionCore.js'
+import { isRestExecutionAuthority, isRestSession, runRouteState } from './dailyExecutionCore.js'
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/
 
@@ -201,7 +201,10 @@ export function deriveTravelTrainingChoices({
   const gapEvidence = trainingGapEvidence(adaptationProposal)
   const gapDecision = String(adaptationProposal?.decisionStatus || '').toLowerCase()
   const activeGap = Boolean(gapEvidence) && !['accepted', 'kept'].includes(gapDecision)
-  const scheduledLift = execution?.lift && execution.lift.completed !== true ? execution.lift : null
+  const restBlocked = isRestExecutionAuthority(execution) || isRestSession(execution?.lift)
+  const scheduledLift = !restBlocked && execution?.lift && execution.lift.completed !== true
+    ? execution.lift
+    : null
   const injuryBlocked = hasActiveInjury(activeInjury) || lifeFlags.includes('injured')
   const readinessTruth = readinessState(readiness)
   const choices = []

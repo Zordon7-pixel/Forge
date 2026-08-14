@@ -58,6 +58,7 @@ async function routeBoundarySmoke() {
   const RealDate = global.Date;
   let writeQueries = 0;
   let aiCalls = 0;
+  const checkinOverrides = new Map();
 
   const plan = {
     schemaVersion: 2,
@@ -96,6 +97,10 @@ async function routeBoundarySmoke() {
         return params[0] === 'owner' ? activeRow : null;
       }
       if (sql.includes('FROM training_plans WHERE user_id')) return null;
+      if (sql.includes('FROM checkin_overrides')) {
+        const patchJson = checkinOverrides.get(`${params[0]}|${params[1]}`);
+        return patchJson ? { patch_json: patchJson } : null;
+      }
       return null;
     },
     dbAll: async () => [],
@@ -133,6 +138,29 @@ async function routeBoundarySmoke() {
     assert.equal(response.payload.alternative.title, 'Runner strength — no equipment');
     assert.deepEqual(response.payload.alternative.equipment, ['bodyweight']);
     assert.ok(!response.payload.alternative.main.some((exercise) => /jump|hop|plyo|depth|bound/i.test(exercise.name)));
+
+    checkinOverrides.set('owner|2026-08-03', JSON.stringify({
+      type: 'rest',
+      workout_type: 'rest',
+      checkin_override: { action: 'rest', label: 'Changed to rest from daily check-in' },
+    }));
+    response = await invoke(handler, request({ date: '2026-08-03', session_id: 'lift-owner' }));
+    assert.equal(response.statusCode, 409, 'the owner/date-bound check-in rest override blocks direct endpoint use');
+    assert.equal(response.payload.code, 'CHECKIN_REST_OVERRIDE');
+    response = await invoke(handler, request({ date: '2026-08-04', session_id: 'lift-tomorrow' }));
+    assert.equal(response.statusCode, 200, 'a current-date override cannot suppress a different date lift');
+    assert.equal(response.payload.alternative.id, 'lift-tomorrow');
+    checkinOverrides.clear();
+
+    plan.weeks[0].days[1].sessions[0].type = 'rest';
+    plan.weeks[0].days[1].sessions[0].workout_type = 'rest';
+    activeRow.plan_data = JSON.stringify(plan);
+    response = await invoke(handler, request({ date: '2026-08-03', session_id: 'lift-owner' }));
+    assert.equal(response.statusCode, 409, 'a retained rest-labelled lift cannot bypass the direct endpoint');
+    assert.equal(response.payload.code, 'PLAN_SESSION_IS_REST');
+    delete plan.weeks[0].days[1].sessions[0].type;
+    delete plan.weeks[0].days[1].sessions[0].workout_type;
+    activeRow.plan_data = JSON.stringify(plan);
 
     for (const sessionId of ['', 'x'.repeat(129)]) {
       response = await invoke(handler, request({ date: '2026-08-03', session_id: sessionId }));

@@ -898,6 +898,7 @@ module.exports = {
   plannedSessionsForDay,
   rescheduleSessionInWeek,
   applyOverrideToDay,
+  isRestOverridePatch,
   isHardOrLongRun,
   buildLiftSession,
   switchPlanMode,
