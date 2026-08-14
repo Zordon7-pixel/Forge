@@ -907,7 +907,6 @@ test('Weekly Run Brief preserves mobile naming, recorded-run provenance, prescri
   const hyroxIndex = availableIndexes[0]
   const recoveryIndex = availableIndexes[1]
   const restIndex = availableIndexes[2]
-  const liftIndex = availableIndexes[3]
   const labels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
   const transitionRest = 'Move deliberately; use 60-120 seconds between station blocks unless a shorter transition is prescribed.'
   const todayRun = {
@@ -987,10 +986,9 @@ test('Weekly Run Brief preserves mobile naming, recorded-run provenance, prescri
     },
   }
   const sessionsByIndex = new Map([
-    [todayIndex, [todayRun]],
+    [todayIndex, [todayRun, liftSession]],
     [hyroxIndex, [hyroxSession]],
     [recoveryIndex, [recoveryRun]],
-    [liftIndex, [liftSession]],
   ])
   const plan = {
     id: 'weekly-brief-truth-plan',
@@ -1061,19 +1059,21 @@ test('Weekly Run Brief preserves mobile naming, recorded-run provenance, prescri
   expect.soft(weekLayout.scroll, 'F5/F8 weekly mobile view has no horizontal overflow').toBeLessThanOrEqual(weekLayout.viewport)
 
   await brief.locator('.forged-mission-card').click()
-  await expect(page.getByText(String(missionTitle || '').trim(), { exact: true }).first()).toBeVisible()
-  await expect(page.getByText('Zones 3–4 · 148–176 bpm', { exact: true })).toBeVisible()
-  await expect(page.getByText('Warm-up', { exact: true })).toBeVisible()
-  await expect(page.getByText('Structure', { exact: true })).toBeVisible()
-  await expect(page.getByText('Recoveries: 2 min easy jog', { exact: true })).toBeVisible()
-  await expect(page.getByText('Cool-down', { exact: true })).toBeVisible()
-  await expect(page.getByText('~5.0 mi estimated', { exact: true })).toBeVisible()
-  await expect(page.getByText('Controlled threshold effort', { exact: true }).first()).toBeVisible()
-  await expect(page.getByText('Zone 3-4', { exact: true }).first()).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Start Run', exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: /Remove Threshold repeats from this plan/i })).toBeVisible()
-  await expect(page.getByRole('button', { name: /Export watch workout/i })).toBeVisible()
-  await expect(page.getByRole('button', { name: /Copy workout/i })).toBeVisible()
+  const dayBrief = page.getByRole('region', { name: String(missionTitle || '').trim(), exact: true })
+  const runSection = page.getByRole('button', { name: 'Start Run', exact: true }).locator('xpath=ancestor::section[1]')
+  await expect(dayBrief.getByText(String(missionTitle || '').trim(), { exact: true })).toBeVisible()
+  await expect(dayBrief.getByText('Zones 3–4 · 148–176 bpm', { exact: true })).toBeVisible()
+  await expect(runSection.getByText('Warm-up', { exact: true })).toBeVisible()
+  await expect(runSection.getByText('Structure', { exact: true })).toBeVisible()
+  await expect(runSection.getByText('Recoveries: 2 min easy jog', { exact: true })).toBeVisible()
+  await expect(runSection.getByText('Cool-down', { exact: true })).toBeVisible()
+  await expect(runSection.getByText('~5.0 mi estimated', { exact: true })).toBeVisible()
+  await expect(runSection.getByText('Controlled threshold effort', { exact: true })).toBeVisible()
+  await expect(runSection.getByText('Zone 3-4', { exact: true })).toBeVisible()
+  await expect(runSection.getByRole('button', { name: 'Start Run', exact: true })).toBeVisible()
+  await expect(runSection.getByRole('button', { name: /Remove Threshold repeats from this plan/i })).toBeVisible()
+  await expect(runSection.getByRole('button', { name: /Export watch workout/i })).toBeVisible()
+  await expect(runSection.getByRole('button', { name: /Copy workout/i })).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(await page.evaluate(() => document.documentElement.clientWidth))
 
   await page.getByRole('button', { name: 'Calendar' }).click()
@@ -1091,7 +1091,8 @@ test('Weekly Run Brief preserves mobile naming, recorded-run provenance, prescri
 
   await page.getByRole('button', { name: 'Calendar' }).click()
   await page.locator('.forged-day-row').filter({ hasText: 'Full Body strength' }).click()
-  const strengthRecipe = page.locator('.forged-exercise').filter({ hasText: 'Rear-Foot-Elevated Split Squat' })
+  const liftSection = page.getByRole('button', { name: 'Start Lift', exact: true }).locator('xpath=ancestor::section[1]')
+  const strengthRecipe = liftSection.locator('.forged-exercise').filter({ hasText: 'Rear-Foot-Elevated Split Squat' })
   await expect(strengthRecipe).toContainText('Sets3')
   await expect(strengthRecipe).toContainText('Reps6 each side')
   await expect(strengthRecipe).toContainText('Rest90 sec')
@@ -1099,17 +1100,17 @@ test('Weekly Run Brief preserves mobile naming, recorded-run provenance, prescri
   await expect(strengthRecipe).toContainText('RPE/RIR7')
   await expect(strengthRecipe).toContainText('Keep the front foot planted and torso controlled.')
   await expect(strengthRecipe).toContainText('Add load only after every rep stays stable.')
-  await expect(page.getByText('Session progression: Repeat the same dose before adding a set.', { exact: true })).toBeVisible()
-  await expect(page.getByText('Walk 3 min, then refuel.', { exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Start Lift', exact: true })).toBeVisible()
-  const removeStrength = page.getByRole('button', { name: /Remove Strength maintenance from this plan/i })
+  await expect(liftSection.getByText('Session progression: Repeat the same dose before adding a set.', { exact: true })).toBeVisible()
+  await expect(liftSection.getByText('Walk 3 min, then refuel.', { exact: true })).toBeVisible()
+  await expect(liftSection.getByRole('button', { name: 'Start Lift', exact: true })).toBeVisible()
+  const removeStrength = liftSection.getByRole('button', { name: /Remove Strength maintenance from this plan/i })
   if (liftIndex >= todayIndex) {
     await expect(removeStrength).toBeVisible()
   } else {
     await expect(removeStrength, 'past sessions must not expose a destructive plan-removal action').toHaveCount(0)
   }
-  await expect(page.getByRole('button', { name: /Export watch workout/i })).toBeVisible()
-  await expect(page.getByRole('button', { name: /Copy workout/i })).toBeVisible()
+  await expect(liftSection.getByRole('button', { name: /Export watch workout/i })).toBeVisible()
+  await expect(liftSection.getByRole('button', { name: /Copy workout/i })).toBeVisible()
 
   assertCleanApiAndRuntime(apiState, runtimeErrors)
 })

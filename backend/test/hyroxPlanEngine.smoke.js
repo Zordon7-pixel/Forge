@@ -16,7 +16,7 @@ function fixture(days, overrides = {}) {
       comebackMode: false,
       ...overrides.athlete,
     },
-    planningLocalDate: TODAY,
+    planningLocalDate: overrides.planningLocalDate || TODAY,
     event: {
       name: 'Worldwide HYROX',
       eventLocalDate: days == null ? null : hyrox.addLocalDays(TODAY, days),
@@ -28,6 +28,7 @@ function fixture(days, overrides = {}) {
     },
     equipment: overrides.equipment || EQUIPMENT,
     availableDays: overrides.availableDays || ['Tue', 'Thu', 'Sat', 'Sun'],
+    currentLoad: overrides.currentLoad || null,
     secondaryRace: overrides.secondaryRace || null,
   };
 }
@@ -41,6 +42,47 @@ function allSessions(plan) {
 function runExposures(week) {
   return week.days.flatMap((day) => day.sessions)
     .filter((session) => session.kind === 'run' || session.includesRun === true).length;
+}
+
+function runningMiles(week) {
+  return Number(week.days.flatMap((day) => day.sessions)
+    .filter((session) => session.kind === 'run' || session.includesRun === true)
+    .reduce((sum, session) => sum + Number(session.distance_miles || 0), 0)
+    .toFixed(1));
+}
+
+function weekEntries(week) {
+  return week.days.flatMap((day) => (
+    day.sessions.map((session) => ({ date: day.date, session }))
+  ));
+}
+
+function assertRollingHardLowerBodyCap(plan, label) {
+  const hardDates = [...new Set(plan.weeks.flatMap((week) => week.days.flatMap((day) => (
+    day.sessions.filter((session) => session.hardLowerBody).map(() => day.date)
+  ))))].sort();
+  for (const start of hardDates) {
+    const count = hardDates.filter((date) => {
+      const delta = hyrox.daysBetweenLocalDates(date, start);
+      return delta >= 0 && delta <= 6;
+    }).length;
+    assert.ok(count <= 2, `${label}: ${start} begins a rolling seven-day window with ${count} hard-lower-body days`);
+  }
+}
+
+function assertRaceSafetyWindow(plan, eventLocalDate, label) {
+  const raceEntries = plan.weeks.flatMap(weekEntries)
+    .filter(({ session }) => session.sessionType === 'hyrox_race');
+  assert.equal(raceEntries.length, 1, `${label}: exactly one HYROX race session`);
+  assert.equal(raceEntries[0].date, eventLocalDate, `${label}: race remains on the exact event-local date`);
+  for (const { date, session } of plan.weeks.flatMap(weekEntries)) {
+    const daysBeforeRace = hyrox.daysBetweenLocalDates(eventLocalDate, date);
+    if (daysBeforeRace < 0 || daysBeforeRace > 6 || session.sessionType === 'hyrox_race') continue;
+    assert.equal(session.sessionType === 'hyrox_compromised', false, `${label}: no compromised session at race -${daysBeforeRace}`);
+    assert.equal(Boolean(session.heavyStationWork), false, `${label}: no heavy station at race -${daysBeforeRace}`);
+    assert.equal(session.runningStress === 'long', false, `${label}: no long run at race -${daysBeforeRace}`);
+    assert.equal(session.runningStress === 'hard', false, `${label}: no hard run at race -${daysBeforeRace}`);
+  }
 }
 
 function assertRunways() {
@@ -57,8 +99,8 @@ function assertRunways() {
 }
 
 function assertFiveWeekPlanIsGeneric() {
-  const named = hyrox.generateHyroxPlan(fixture(35, { athlete: { name: 'Bryan', accountId: 'one' }, event: { id: 'one' } }));
-  const anonymous = hyrox.generateHyroxPlan(fixture(35, { athlete: { name: 'Someone else', accountId: 'two' }, event: { id: 'two' } }));
+  const named = hyrox.generateHyroxPlan(fixture(34, { athlete: { name: 'Bryan', accountId: 'one' }, event: { id: 'one' } }));
+  const anonymous = hyrox.generateHyroxPlan(fixture(34, { athlete: { name: 'Someone else', accountId: 'two' }, event: { id: 'two' } }));
   assert.deepEqual(named, anonymous, 'identity must not affect deterministic output');
   assert.equal(named.hyroxPolicy.runwayClass, 'short_runway');
   assert.deepEqual(named.weeks.map((week) => week.phase), ['orientation_assessment', 'build', 'peak_partial_simulation', 'sharpen_reduce', 'taper_race']);
@@ -117,6 +159,32 @@ function assertFrequencyAndEquipment() {
     .every((session) => session.runSequenceMeters.length <= 2));
 }
 
+function assertConsecutiveDayScheduleRegression() {
+  const schedules = [
+    ['Mon', 'Tue', 'Wed'],
+    ['Tue', 'Wed', 'Thu'],
+    ['Wed', 'Thu', 'Fri'],
+    ['Sat', 'Sun', 'Mon'],
+  ];
+  const eventDates = ['2026-08-31', '2026-09-20', '2026-10-10'];
+  for (const availableDays of schedules) {
+    for (const eventLocalDate of eventDates) {
+      const plan = hyrox.generateHyroxPlan(fixture(null, {
+        athlete: { weeklyMilesCurrent: 22, runDaysPerWeek: 3 },
+        event: { eventLocalDate },
+        availableDays,
+      }));
+      const validation = hyrox.validateHyroxPlan(plan);
+      assert.equal(
+        validation.valid,
+        true,
+        `${availableDays.join('/')}/${eventLocalDate} must not fail formerly valid station placement: ${JSON.stringify(validation.errors)}`,
+      );
+      assert.equal(plan.schedulePreferences.runDaysPerWeek, 3);
+    }
+  }
+}
+
 function assertSafetyAndOrder() {
   const plan = hyrox.generateHyroxPlan(fixture(35));
   const validation = hyrox.validateHyroxPlan(plan);
@@ -167,6 +235,358 @@ function assertSaturdayEventCrossWeekSafety() {
     run.date === heavy.date
     || Math.abs(hyrox.daysBetweenLocalDates(run.date, heavy.date)) > 1
   ))), 'heavy stations must remain separated from adjacent hard or long running across week boundaries');
+}
+
+function assertFridayCurrentWeekBoundaryRegression() {
+  const planningDates = ['2026-08-14', '2026-08-15', '2026-08-16'];
+  const schedules = [
+    ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+    ['Tue', 'Thu', 'Sat', 'Sun'],
+  ];
+  for (const planningLocalDate of planningDates) {
+    for (const availableDays of schedules) {
+      const plan = hyrox.generateHyroxPlan(fixture(null, {
+        planningLocalDate,
+        athlete: { weeklyMilesCurrent: 40, runDaysPerWeek: 4 },
+        currentLoad: { weeklyMiles: 40 },
+        event: { eventLocalDate: '2026-09-04' },
+        availableDays,
+      }));
+      const label = `${planningLocalDate}/${availableDays.join('/')}`;
+      assert.equal(hyrox.validateHyroxPlan(plan).valid, true, label);
+      assertRollingHardLowerBodyCap(plan, label);
+      assert.equal(
+        plan.weeks[1].days.flatMap((day) => day.sessions)
+          .some((session) => session.sessionType === 'hyrox_skill'),
+        true,
+        `${label}: the unsafe next heavy station is retained as non-heavy skill work`,
+      );
+    }
+  }
+}
+
+function assertPlanningAndRaceWeekdayMatrix() {
+  const planningDates = Array.from({ length: 7 }, (_, index) => hyrox.addLocalDays('2026-08-10', index));
+  const eventDates = Array.from({ length: 7 }, (_, index) => hyrox.addLocalDays('2026-10-19', index));
+  const scheduleCases = [
+    { availableDays: ['Mon', 'Tue', 'Wed'], runDaysPerWeek: 3 },
+    { availableDays: ['Tue', 'Wed', 'Thu'], runDaysPerWeek: 3 },
+    { availableDays: ['Wed', 'Thu', 'Fri'], runDaysPerWeek: 3 },
+    { availableDays: ['Fri', 'Sat', 'Sun'], runDaysPerWeek: 3 },
+    { availableDays: ['Sat', 'Sun', 'Mon'], runDaysPerWeek: 3 },
+    { availableDays: ['Tue', 'Thu', 'Sat', 'Sun'], runDaysPerWeek: 4 },
+    { availableDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'], runDaysPerWeek: 4 },
+  ];
+  for (const planningLocalDate of planningDates) {
+    for (const eventLocalDate of eventDates) {
+      for (const { availableDays, runDaysPerWeek } of scheduleCases) {
+        for (const weeklyMilesCurrent of [20, 40, 45]) {
+          const label = `${planningLocalDate}/${eventLocalDate}/${runDaysPerWeek}/${availableDays.join('/')}/${weeklyMilesCurrent}`;
+          const plan = hyrox.generateHyroxPlan(fixture(null, {
+            planningLocalDate,
+            athlete: { weeklyMilesCurrent, runDaysPerWeek },
+            currentLoad: { weeklyMiles: weeklyMilesCurrent },
+            event: { eventLocalDate },
+            availableDays,
+          }));
+          const validation = hyrox.validateHyroxPlan(plan);
+          assert.equal(validation.valid, true, `${label}: ${JSON.stringify(validation.errors)}`);
+          assert.equal(plan.weeks[0].startDate, '2026-08-10', `${label}: current-week Monday anchor`);
+          assert.equal(plan.weeks[1].startDate, '2026-08-17', `${label}: Week 2 starts next Monday`);
+          assert.equal(plan.weeks.flatMap(weekEntries).every(({ date }) => date >= planningLocalDate), true, `${label}: no past sessions`);
+          assertRollingHardLowerBodyCap(plan, label);
+          assertRaceSafetyWindow(plan, eventLocalDate, label);
+          for (const { session } of plan.weeks.flatMap(weekEntries)) {
+            for (const field of ['distance_miles', 'distanceMeters', 'duration_min', 'durationMin']) {
+              if (session[field] === null || session[field] === undefined) continue;
+              assert.equal(Number.isFinite(Number(session[field])) && Number(session[field]) >= 0, true, `${label}: ${field} is finite and nonnegative`);
+            }
+          }
+          if (planningLocalDate > '2026-08-10') {
+            assert.ok(runningMiles(plan.weeks[0]) <= runningMiles(plan.weeks[1]), `${label}: partial running load remains bounded`);
+            const firstWeekRuns = weekEntries(plan.weeks[0]).map(({ session }) => session)
+              .filter((session) => session.kind === 'run');
+            const long = firstWeekRuns.find((session) => session.runningStress === 'long');
+            if (long) {
+              assert.equal(
+                firstWeekRuns.filter((session) => session.runningStress === 'easy')
+                  .every((session) => session.distance_miles <= long.distance_miles),
+                true,
+                `${label}: easy runs do not exceed the long run`,
+              );
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+function assertPreparedMileageBaselineAuthority() {
+  const plan = hyrox.generateHyroxPlan(fixture(null, {
+    athlete: { weeklyMilesCurrent: 40, runDaysPerWeek: 4 },
+    currentLoad: { weeklyMiles: 12.5 },
+    event: { eventLocalDate: '2026-10-19' },
+    availableDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+  }));
+  assert.equal(plan.inputSummary.weeklyMileageBaseline, 12.5);
+  assert.equal(plan.inputSummary.effectiveWeeklyMiles, 12.5);
+  assert.ok(runningMiles(plan.weeks[1]) < 15, 'prepared currentLoad remains authoritative over a contradictory profile value');
+}
+
+function assertDateBasedRaceSafetyValidator() {
+  const plan = hyrox.generateHyroxPlan(fixture(null, {
+    planningLocalDate: '2026-08-13',
+    athlete: { weeklyMilesCurrent: 40, runDaysPerWeek: 4 },
+    currentLoad: { weeklyMiles: 40 },
+    event: { eventLocalDate: '2026-10-19' },
+    availableDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+  }));
+  const unsafe = JSON.parse(JSON.stringify(plan));
+  const dayBeforeRace = unsafe.weeks.flatMap((week) => week.days)
+    .find((day) => day.date === '2026-10-18');
+  dayBeforeRace.sessions.push({
+    id: 'unsafe-day-before-race-long',
+    kind: 'run',
+    sessionType: 'long_run',
+    runningStress: 'long',
+    hardLowerBody: false,
+  });
+  assert.equal(
+    hyrox.validateHyroxPlan(unsafe).errors.some((error) => error.code === 'RACE_SAFETY_WINDOW'),
+    true,
+    'the date-based validator rejects a long run on race day minus one regardless of calendar week',
+  );
+}
+
+function assertPartialCurrentWeekAnchoringAndLoad() {
+  const planningLocalDate = '2026-08-13';
+  const eventLocalDate = '2026-10-18';
+  const plan = hyrox.generateHyroxPlan(fixture(null, {
+    planningLocalDate,
+    athlete: { weeklyMilesCurrent: 22, runDaysPerWeek: 4 },
+    event: {
+      eventLocalDate,
+      eventTimezone: 'Pacific/Kiritimati',
+    },
+    availableDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+    currentLoad: {
+      weeklyMiles: 22,
+      recentRunLoad: {
+        currentWeek: {
+          startDate: '2026-08-10',
+          miles: 7,
+          runCount: 1,
+          runDates: ['2026-08-11'],
+          longRunCompleted: true,
+        },
+        protection: {
+          active: true,
+          anchorDate: '2026-08-11',
+          hardRunsThrough: '2026-08-13',
+          lowerBodyThrough: '2026-08-13',
+        },
+      },
+      currentWeekStrength: {
+        startDate: '2026-08-10',
+        count: 1,
+        dates: ['2026-08-12'],
+        loadPoints: 45,
+      },
+    },
+  }));
+
+  assert.equal(plan.weeks[0].startDate, '2026-08-10');
+  assert.equal(plan.weeks[1].startDate, '2026-08-17');
+  assert.equal(
+    plan.weeks[0].days.filter((day) => day.date < planningLocalDate)
+      .every((day) => day.sessions.length === 0),
+    true,
+    'a Thursday plan never generates sessions on Monday through Wednesday',
+  );
+  assert.equal(plan.weeks[0].currentWeekConstraint.completedRunCount, 1);
+  assert.equal(plan.weeks[0].currentWeekConstraint.completedStrengthSessions, 1);
+  assert.ok(
+    runExposures(plan.weeks[0]) <= 3,
+    'the completed run reduces the remaining current-week run quota',
+  );
+  assert.ok(
+    plan.weeks[0].days.flatMap((day) => day.sessions)
+      .filter((session) => session.kind === 'hyrox').length <= 1,
+    'the completed lift/workout reduces the remaining HYROX-session quota',
+  );
+  assert.ok(
+    plan.weeks[0].plannedLoadPoints < plan.weeks[1].plannedLoadPoints,
+    'completed current-week load reshapes the bounded remaining load instead of restarting a full week',
+  );
+  const raceEntry = plan.weeks.flatMap((week) => week.days)
+    .find((day) => day.sessions.some((session) => session.sessionType === 'hyrox_race'));
+  assert.equal(plan.goal.eventLocalDate, eventLocalDate);
+  assert.equal(plan.goal.eventTimezone, 'Pacific/Kiritimati');
+  assert.equal(raceEntry?.date, eventLocalDate, 'event-local race date remains exact');
+}
+
+function assertPartialWeekNoActivityLoadBounds() {
+  const planningLocalDate = '2026-08-13';
+  for (const weeklyMilesCurrent of [20, 40, 45]) {
+    const plan = hyrox.generateHyroxPlan(fixture(null, {
+      planningLocalDate,
+      athlete: { weeklyMilesCurrent, runDaysPerWeek: 4 },
+      event: { eventLocalDate: '2026-10-18' },
+      availableDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+      currentLoad: { weeklyMiles: weeklyMilesCurrent },
+    }));
+    const partialWeek = plan.weeks[0];
+    const nextFullWeek = plan.weeks[1];
+    const partialRunningMiles = runningMiles(partialWeek);
+    const nextFullWeekRunningMiles = runningMiles(nextFullWeek);
+    const partialRuns = weekEntries(partialWeek)
+      .map(({ session }) => session)
+      .filter((session) => session.kind === 'run');
+    const longRun = partialRuns.find((session) => session.sessionType === 'long_run');
+    const easyRuns = partialRuns.filter((session) => session.sessionType === 'easy_run');
+
+    assert.equal(partialWeek.startDate, '2026-08-10');
+    assert.equal(nextFullWeek.startDate, '2026-08-17');
+    assert.equal(partialWeek.currentWeekConstraint.completedRunCount, 0);
+    assert.equal(partialWeek.currentWeekConstraint.completedStrengthSessions, 0);
+    assert.equal(
+      partialWeek.days.filter((day) => day.date < planningLocalDate)
+        .every((day) => day.sessions.length === 0),
+      true,
+    );
+    assert.ok(
+      partialRunningMiles <= nextFullWeekRunningMiles,
+      `${weeklyMilesCurrent} mi/week partial load ${partialRunningMiles} must not exceed next full week ${nextFullWeekRunningMiles}`,
+    );
+    assert.ok(
+      partialRunningMiles <= partialWeek.currentWeekConstraint.boundedWeeklyRunningLoad,
+      `${weeklyMilesCurrent} mi/week partial load stays within its deterministic bounded load`,
+    );
+    assert.ok(longRun, `${weeklyMilesCurrent} mi/week partial week retains a bounded long run`);
+    assert.ok(
+      easyRuns.every((session) => session.distance_miles <= longRun.distance_miles),
+      `${weeklyMilesCurrent} mi/week easy runs must not exceed the long run`,
+    );
+  }
+}
+
+function assertPartialRaceWeekSafety() {
+  const planningLocalDate = '2026-08-13';
+  for (const eventLocalDate of ['2026-08-16', '2026-08-13', '2026-08-17']) {
+    const plan = hyrox.generateHyroxPlan(fixture(null, {
+      planningLocalDate,
+      athlete: { weeklyMilesCurrent: 22, runDaysPerWeek: 4 },
+      event: { eventLocalDate },
+      availableDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+      currentLoad: { weeklyMiles: 22 },
+    }));
+    const partialEntries = weekEntries(plan.weeks[0]);
+    const raceEntries = plan.weeks.flatMap(weekEntries)
+      .filter(({ session }) => session.sessionType === 'hyrox_race');
+    assert.equal(raceEntries.length, 1, `${eventLocalDate} has exactly one race session`);
+    assert.equal(raceEntries[0].date, eventLocalDate, `${eventLocalDate} race remains exact`);
+    assert.equal(
+      partialEntries.some(({ session }) => session.sessionType === 'hyrox_compromised'),
+      false,
+      `${eventLocalDate} partial race-safety window has no compromised session`,
+    );
+    assert.equal(
+      partialEntries.some(({ session }) => session.heavyStationWork),
+      false,
+      `${eventLocalDate} partial race-safety window has no heavy station`,
+    );
+    assert.equal(
+      partialEntries.some(({ session }) => session.sessionType === 'long_run'),
+      false,
+      `${eventLocalDate} partial race-safety window has no long run`,
+    );
+    assert.equal(plan.weeks[0].currentWeekConstraint.raceSafetyWindow, true);
+    assert.equal(hyrox.validateHyroxPlan(plan).valid, true);
+  }
+}
+
+function assertCurrentWeekActivityMismatchMarker() {
+  const plan = hyrox.generateHyroxPlan(fixture(null, {
+    planningLocalDate: '2026-08-13',
+    athlete: { weeklyMilesCurrent: 20, runDaysPerWeek: 4 },
+    event: { eventLocalDate: '2026-10-18' },
+    availableDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+    currentLoad: {
+      weeklyMiles: 20,
+      recentRunLoad: {
+        currentWeek: {
+          startDate: '2026-08-03',
+          miles: 12,
+          runCount: 2,
+          runDates: ['2026-08-11'],
+          longRunCompleted: true,
+        },
+        protection: { active: false },
+      },
+      currentWeekStrength: {
+        startDate: '2026-08-03',
+        count: 3,
+        dates: ['2026-08-12'],
+        loadPoints: 120,
+      },
+    },
+  }));
+  const reconciliation = plan.inputSummary.currentWeekActivityReconciliation;
+  assert.equal(reconciliation.mismatch, true);
+  assert.deepEqual(reconciliation.reasons, [
+    'RUN_ACTIVITY_WEEK_START_MISMATCH',
+    'STRENGTH_ACTIVITY_WEEK_START_MISMATCH',
+  ]);
+  assert.equal(plan.weeks[0].currentWeekConstraint.completedRunCount, 0);
+  assert.equal(plan.weeks[0].currentWeekConstraint.completedRunMiles, 0);
+  assert.equal(plan.weeks[0].currentWeekConstraint.completedStrengthSessions, 0);
+  assert.deepEqual(plan.weeks[0].currentWeekConstraint.activityReconciliation, reconciliation);
+}
+
+function assertSundayPartialWeekEdge() {
+  const planningLocalDate = '2026-08-16';
+  const plan = hyrox.generateHyroxPlan(fixture(null, {
+    planningLocalDate,
+    event: { eventLocalDate: '2026-10-18', eventTimezone: 'Etc/GMT+12' },
+    availableDays: ['Tue', 'Thu', 'Sat', 'Sun'],
+    currentLoad: {
+      weeklyMiles: 22,
+      recentRunLoad: {
+        currentWeek: {
+          startDate: '2026-08-10', miles: 8, runCount: 2,
+          runDates: ['2026-08-11', '2026-08-15'], longRunCompleted: true,
+        },
+        protection: { active: false },
+      },
+      currentWeekStrength: {
+        startDate: '2026-08-10', count: 1, dates: ['2026-08-13'], loadPoints: 40,
+      },
+    },
+  }));
+  assert.equal(plan.weeks[0].startDate, '2026-08-10');
+  assert.equal(plan.weeks[1].startDate, '2026-08-17');
+  assert.equal(
+    plan.weeks[0].days.filter((day) => day.sessions.length > 0)
+      .every((day) => day.date === planningLocalDate),
+    true,
+    'Sunday creation may use Sunday only',
+  );
+}
+
+function assertMidweekFoundationAnchoring() {
+  const plan = hyrox.generateHyroxPlan(fixture(null, {
+    planningLocalDate: '2026-08-13',
+    event: { eventLocalDate: null },
+  }));
+  assert.equal(plan.weeks[0].startDate, '2026-08-10');
+  assert.equal(plan.weeks[1].startDate, '2026-08-17');
+  assert.equal(
+    plan.weeks[0].days.filter((day) => day.date < '2026-08-13')
+      .every((day) => day.sessions.length === 0),
+    true,
+    'an undated HYROX foundation preview also starts in the current partial week',
+  );
 }
 
 function raceSessionFor(format, category = 'men') {
@@ -254,8 +674,19 @@ function run() {
   assertFiveWeekPlanIsGeneric();
   assertTimezoneStability();
   assertFrequencyAndEquipment();
+  assertConsecutiveDayScheduleRegression();
   assertSafetyAndOrder();
   assertSaturdayEventCrossWeekSafety();
+  assertFridayCurrentWeekBoundaryRegression();
+  assertPlanningAndRaceWeekdayMatrix();
+  assertPreparedMileageBaselineAuthority();
+  assertDateBasedRaceSafetyValidator();
+  assertPartialCurrentWeekAnchoringAndLoad();
+  assertPartialWeekNoActivityLoadBounds();
+  assertPartialRaceWeekSafety();
+  assertCurrentWeekActivityMismatchMarker();
+  assertSundayPartialWeekEdge();
+  assertMidweekFoundationAnchoring();
   assertRaceDayTruthByFormat();
   assertSecondaryTransition();
   console.log('HYROX PLAN ENGINE SMOKE OK');

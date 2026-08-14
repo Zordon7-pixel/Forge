@@ -526,22 +526,59 @@ function selectRunDays(availableDays, count) {
   return DAY_ORDER.filter((day) => ordered.slice(0, Math.min(wanted, availableDays.length)).includes(day));
 }
 
-function currentWeekRunSchedule({ weekStart, todayISO, currentWeekLoad, runSchedule, raceDay = null }) {
+function reconcileCurrentWeekActivity(history = {}, expectedStartDate) {
+  const suppliedRunWeek = history.acuteRunLoad?.currentWeek || null;
+  const suppliedStrengthWeek = history.currentWeekStrength || null;
+  const runSourceStartDate = String(suppliedRunWeek?.startDate || '').slice(0, 10) || null;
+  const strengthSourceStartDate = String(suppliedStrengthWeek?.startDate || '').slice(0, 10) || null;
+  const reasons = [];
+  if (suppliedRunWeek && runSourceStartDate !== expectedStartDate) {
+    reasons.push(runSourceStartDate ? 'RUN_ACTIVITY_WEEK_START_MISMATCH' : 'RUN_ACTIVITY_WEEK_START_MISSING');
+  }
+  if (suppliedStrengthWeek && strengthSourceStartDate !== expectedStartDate) {
+    reasons.push(strengthSourceStartDate ? 'STRENGTH_ACTIVITY_WEEK_START_MISMATCH' : 'STRENGTH_ACTIVITY_WEEK_START_MISSING');
+  }
+  const hasSource = Boolean(suppliedRunWeek || suppliedStrengthWeek);
+  return {
+    expectedStartDate,
+    runSourceStartDate,
+    strengthSourceStartDate,
+    runMatch: Boolean(suppliedRunWeek && runSourceStartDate === expectedStartDate),
+    strengthMatch: Boolean(suppliedStrengthWeek && strengthSourceStartDate === expectedStartDate),
+    match: hasSource && reasons.length === 0,
+    mismatch: reasons.length > 0,
+    reason: reasons.length
+      ? reasons.join(',')
+      : hasSource ? 'CURRENT_WEEK_ACTIVITY_WEEK_START_MATCH' : 'NO_CURRENT_WEEK_ACTIVITY_SOURCE',
+    reasons,
+  };
+}
+
+function currentWeekRunSchedule({
+  weekStart,
+  todayISO,
+  currentWeekLoad,
+  runSchedule,
+  raceDay = null,
+  activityReconciliation = null,
+}) {
   const weekEnd = addDays(weekStart, 6);
-  if (!currentWeekLoad
-    || currentWeekLoad.startDate !== weekStart
+  if ((!currentWeekLoad && !activityReconciliation?.match && !activityReconciliation?.mismatch)
     || !parseISODate(todayISO)
     || todayISO < weekStart
     || todayISO > weekEnd) {
     return null;
   }
 
+  const creditedCurrentWeekLoad = activityReconciliation?.runMatch === false
+    ? {}
+    : currentWeekLoad || {};
   const completedRunDates = new Set(
-    (Array.isArray(currentWeekLoad.runDates) ? currentWeekLoad.runDates : [])
+    (Array.isArray(creditedCurrentWeekLoad.runDates) ? creditedCurrentWeekLoad.runDates : [])
       .map((date) => String(date || '').slice(0, 10))
       .filter((date) => parseISODate(date) && date >= weekStart && date <= todayISO)
   );
-  const reportedCompletedRuns = Math.max(0, Math.floor(Number(currentWeekLoad.runCount) || 0));
+  const reportedCompletedRuns = Math.max(0, Math.floor(Number(creditedCurrentWeekLoad.runCount) || 0));
   const completedMeaningfulRuns = Math.max(reportedCompletedRuns, completedRunDates.size);
   const completedRunsAppliedToQuota = Math.min(completedMeaningfulRuns, runSchedule.runDaysPerWeek);
   const remainingRunQuota = Math.max(0, runSchedule.runDaysPerWeek - completedRunsAppliedToQuota);
@@ -567,13 +604,16 @@ function currentWeekRunSchedule({ weekStart, todayISO, currentWeekLoad, runSched
     completedMeaningfulRuns,
     completedRunsAppliedToQuota,
     remainingRunQuota,
+    completedMiles: finiteNonNegative(creditedCurrentWeekLoad.miles, 0, 500),
+    longRunCompleted: Boolean(creditedCurrentWeekLoad.longRunCompleted),
     eligibleSelectedDays,
     runDays,
+    activityReconciliation,
   };
 }
 
 function partialCurrentWeekConstraint(quota, requestedRunDaysPerWeek, scheduledRunCount = quota?.runDays?.length || 0) {
-  if (!quota || scheduledRunCount >= requestedRunDaysPerWeek) return null;
+  if (!quota || (scheduledRunCount >= requestedRunDaysPerWeek && !quota.activityReconciliation?.mismatch)) return null;
   return {
     status: 'partial_current_week',
     requestedRunDaysPerWeek,
@@ -583,6 +623,7 @@ function partialCurrentWeekConstraint(quota, requestedRunDaysPerWeek, scheduledR
     scheduledRunCount,
     totalRunsTowardTarget: quota.completedRunsAppliedToQuota + scheduledRunCount,
     protectedRaceBeyondQuota: quota.remainingRunQuota === 0 && scheduledRunCount > 0,
+    activityReconciliation: quota.activityReconciliation || null,
     explanation: quota.remainingRunQuota === 0 && scheduledRunCount > 0
       ? `The normal weekly run quota is complete, but the protected race remains on its exact date. The full ${requestedRunDaysPerWeek}-day selected frequency starts next week.`
       : `This current week is partial: completed runs and remaining selected weekdays set the sessions shown. The full ${requestedRunDaysPerWeek}-day selected frequency starts next week.`,
@@ -1268,9 +1309,12 @@ function chooseLiftDays(availableDays, runByDay, count) {
   return selected.map((day, index) => ({ day, focus: day === lowerDay || (!lowerDay && index === 0 && hardIndexes.size === 0) ? 'Lower body' : 'Upper body' }));
 }
 
-function summarizeInputs(profile = {}, history = {}, recovery = {}, checkin = null) {
+function summarizeInputs(profile = {}, history = {}, recovery = {}, checkin = null, expectedStartDate = null) {
   const adherence = Number(history.adherenceRate);
   const acute = acuteLoadMetadata(history);
+  const reconciliation = expectedStartDate
+    ? reconcileCurrentWeekActivity(history, expectedStartDate)
+    : null;
   const healthMetrics = recovery.metrics || {};
   const healthFreshness = healthMetrics.freshness || {};
   const metric = (value) => value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value))
@@ -1317,7 +1361,9 @@ function summarizeInputs(profile = {}, history = {}, recovery = {}, checkin = nu
     } : null,
     recentRun: acute?.latestRun || null,
     recentLoadAnchor: acute?.protectiveRun || null,
-    currentWeekRunLoad: acute?.currentWeek || null,
+    currentWeekRunLoad: reconciliation?.runMatch === false ? null : acute?.currentWeek || null,
+    currentWeekStrengthLoad: reconciliation?.strengthMatch === false ? null : history.currentWeekStrength || null,
+    ...(reconciliation ? { currentWeekActivityReconciliation: reconciliation } : {}),
     sevenDayRunMiles: acute?.sevenDayMiles ?? 0,
     recentRunLoadRatio: acute?.loadRatio ?? null,
   };
@@ -1489,6 +1535,7 @@ function buildConcurrentPlan(context = {}) {
   const weekPhases = phasesForRaceTargets(startDate, weekCount, raceTargets);
   const mileageTargets = buildMileageTargets(weekCount, baseline, Boolean(raceDate), recovery, history, { ...target, weekPhases });
   const anchorMetadata = planAnchorMetadata(history);
+  const currentWeekActivityReconciliation = reconcileCurrentWeekActivity(history, startDate);
   let benchmarkPrescribed = false;
 
   const weeks = [];
@@ -1512,12 +1559,13 @@ function buildConcurrentPlan(context = {}) {
       currentWeekLoad,
       runSchedule,
       raceDay,
+      activityReconciliation: currentWeekActivityReconciliation,
     }) : null;
     const isCurrentWeek = Boolean(currentWeekQuota);
     const qualitySafety = qualitySafetyForWeek(context, { weekNumber, weekStart });
     if (currentWeekQuota) weekRunDays = currentWeekQuota.runDays;
     let scheduledMileageTarget = mileageTargets[weekNumber - 1];
-    if (isCurrentWeek) scheduledMileageTarget = Math.max(0, scheduledMileageTarget - Number(currentWeekLoad.miles || 0));
+    if (isCurrentWeek) scheduledMileageTarget = Math.max(0, scheduledMileageTarget - currentWeekQuota.completedMiles);
     const priorScheduledMiles = Number(weeks[weeks.length - 1]?.totalMiles || 0);
     if (phase === 'deload' && priorScheduledMiles > 0) scheduledMileageTarget = Math.min(scheduledMileageTarget, priorScheduledMiles * 0.8);
     if (phase === 'taper' && priorScheduledMiles > 0) scheduledMileageTarget = Math.min(scheduledMileageTarget, priorScheduledMiles * 0.65);
@@ -1537,7 +1585,7 @@ function buildConcurrentPlan(context = {}) {
       recentLongMiles: (history.acuteRunLoad?.protectiveRun || history.acuteRunLoad?.latestRun)?.isLong
         ? (history.acuteRunLoad.protectiveRun || history.acuteRunLoad.latestRun).distanceMiles
         : 0,
-      longRunCompleted: Boolean(isCurrentWeek && currentWeekLoad.longRunCompleted),
+      longRunCompleted: Boolean(isCurrentWeek && currentWeekQuota.longRunCompleted),
       preserveTimedTaperSharpening: Boolean(goalPaceContext),
       minimumDistances,
     });
@@ -1548,7 +1596,7 @@ function buildConcurrentPlan(context = {}) {
         weekCount,
         hasTimedGoal: Boolean(goalPaceContext),
       });
-      const longAlreadyCompleted = isCurrentWeek && currentWeekLoad.longRunCompleted && scheduledType === 'long';
+      const longAlreadyCompleted = isCurrentWeek && currentWeekQuota.longRunCompleted && scheduledType === 'long';
       const type = day === raceDay ? 'race' : (longAlreadyCompleted ? 'easy' : scheduledType);
       const qualityCandidate = ['quality', 'hills', 'race_pace', 'sharpen', 'steady'].includes(type);
       const protectQualityThisWeek = qualitySafety.active;
@@ -1588,9 +1636,26 @@ function buildConcurrentPlan(context = {}) {
       runByDay.set(day, runSession);
     });
 
-    const effectiveLiftCount = mode === planSchema.PLAN_MODES.RUN_ONLY ? 0 : phase === 'race' ? Math.min(1, liftDaysPerWeek) : liftDaysPerWeek;
+    const currentWeekStrength = isCurrentWeek
+      && currentWeekActivityReconciliation.strengthMatch
+      ? history.currentWeekStrength
+      : null;
+    const completedStrengthSessions = Math.max(0, Math.floor(Number(currentWeekStrength?.count) || 0));
+    const fullWeekLiftCount = mode === planSchema.PLAN_MODES.RUN_ONLY
+      ? 0
+      : phase === 'race' ? Math.min(1, liftDaysPerWeek) : liftDaysPerWeek;
+    const effectiveLiftCount = isCurrentWeek
+      ? Math.max(0, fullWeekLiftCount - completedStrengthSessions)
+      : fullWeekLiftCount;
+    const completedStrengthDates = new Set(
+      (Array.isArray(currentWeekStrength?.dates) ? currentWeekStrength.dates : [])
+        .map((date) => String(date || '').slice(0, 10))
+    );
     const liftAvailableDays = isCurrentWeek
-      ? availableDays.filter((day) => addDays(weekStart, DAY_ORDER.indexOf(day)) >= context.todayISO)
+      ? availableDays.filter((day) => {
+        const date = addDays(weekStart, DAY_ORDER.indexOf(day));
+        return date >= context.todayISO && !completedStrengthDates.has(date);
+      })
       : availableDays;
     const liftAssignments = chooseLiftDays(liftAvailableDays, runByDay, Math.min(effectiveLiftCount, liftAvailableDays.length));
     const liftByDay = new Map(liftAssignments.map(({ day, focus }) => [day, buildLiftSession({ weekNumber, day, focus, mode, phase, context })]));
@@ -1619,7 +1684,9 @@ function buildConcurrentPlan(context = {}) {
       startDate: weekStart,
       totalMiles,
       completedRunsAtGeneration: currentWeekQuota?.completedMeaningfulRuns || 0,
-      completedMilesAtGeneration: isCurrentWeek ? round(Number(currentWeekLoad.miles || 0)) : 0,
+      completedMilesAtGeneration: isCurrentWeek ? round(currentWeekQuota.completedMiles) : 0,
+      completedStrengthSessionsAtGeneration: completedStrengthSessions,
+      completedStrengthLoadAtGeneration: isCurrentWeek ? round(Number(currentWeekStrength?.loadPoints || 0)) : 0,
       ...(currentWeekConstraint ? { currentWeekConstraint } : {}),
       days,
     });
@@ -1640,7 +1707,7 @@ function buildConcurrentPlan(context = {}) {
     generationValidationErrors: [],
     trainingEvidence: trainingEvidence.planEvidence(mode),
     methodologyNote: 'Research and athlete practice set the training principles; your history, recovery, availability, and race set the dosage. Elite volume is never copied.',
-    inputSummary: summarizeInputs(profile, history, recovery, context.checkin),
+    inputSummary: summarizeInputs(profile, history, recovery, context.checkin, startDate),
     schedulePreferences: {
       runDaysPerWeek: runSchedule.runDaysPerWeek,
       trainingDays: runSchedule.trainingDays,
@@ -1755,6 +1822,7 @@ function hasFeasibleTargetPaceOpportunity(candidate, race, context = {}) {
       currentWeekLoad,
       runSchedule,
       raceDay,
+      activityReconciliation: reconcileCurrentWeekActivity(context.history || {}, week.startDate),
     }) : null;
     const eligibleRunDays = new Set(currentWeekQuota?.runDays || selectRunDays(runSchedule.trainingDays, runSchedule.runDaysPerWeek));
     return (week.days || []).some((day) => {
@@ -1781,6 +1849,19 @@ function validateConcurrentPlan(candidate, context = {}) {
   const expectedStartDate = mondayFor(target.startDate || context.todayISO);
   const expectedWeekPhases = phasesForRaceTargets(expectedStartDate, expectedWeeks, raceTargets);
   const currentWeekLoad = context.history?.acuteRunLoad?.currentWeek;
+  const authoritativeCurrentWeekStrength = context.history?.currentWeekStrength?.startDate === expectedStartDate
+    ? context.history.currentWeekStrength
+    : null;
+  const authoritativeCompletedStrengthSessions = Math.max(
+    0,
+    Math.floor(Number(authoritativeCurrentWeekStrength?.count) || 0),
+  );
+  const completedStrengthDates = new Set(
+    (Array.isArray(authoritativeCurrentWeekStrength?.dates)
+      ? authoritativeCurrentWeekStrength.dates
+      : [])
+      .map((date) => String(date || '').slice(0, 10))
+  );
   const acuteLoad = context.history?.acuteRunLoad;
   const acuteProtection = acuteLoad?.protection?.active ? acuteLoad.protection : null;
   const planWideQualityProtection = hasPlanWideQualityProtection(context);
@@ -1863,6 +1944,7 @@ function validateConcurrentPlan(candidate, context = {}) {
       currentWeekLoad,
       runSchedule,
       raceDay,
+      activityReconciliation: reconcileCurrentWeekActivity(context.history || {}, week.startDate),
     }) : null;
     let restDays = 0;
     let lifts = 0;
@@ -1950,6 +2032,9 @@ function validateConcurrentPlan(candidate, context = {}) {
         } else if (kind === 'lift') {
           lifts += 1;
           validateLift(session, sessionPath, errors);
+          if (currentWeekQuota && completedStrengthDates.has(day.date)) {
+            errors.push(`${sessionPath} duplicates strength work already completed on ${day.date}`);
+          }
           if (/lower/i.test(String(session.focus || ''))) lowerLiftIndexes.add(dayIndex);
           if (acuteProtection && /lower/i.test(String(session.focus || '')) && dateInRange(day.date, latestRunDate, acuteProtection.lowerBodyThrough)) {
             errors.push(`${sessionPath} conflicts with recent-run lower-body protection through ${acuteProtection.lowerBodyThrough}`);
@@ -1991,12 +2076,15 @@ function validateConcurrentPlan(candidate, context = {}) {
     if (expectedMode === planSchema.PLAN_MODES.RUN_ONLY && lifts > 0) errors.push(`${path} run_only plans cannot contain lifts`);
     if (expectedMode !== planSchema.PLAN_MODES.RUN_ONLY && week.phase !== 'race') {
       const configuredFloor = Number(candidate.strengthPolicy?.minimumSessionsPerWeek || 0);
+      const completedStrengthSessions = currentWeekQuota
+        ? authoritativeCompletedStrengthSessions
+        : 0;
       const remainingLiftCapacity = currentWeekQuota
         ? runSchedule.trainingDays.filter((day) => (
           addDays(week.startDate, DAY_ORDER.indexOf(day)) >= context.todayISO
         )).length
         : configuredFloor;
-      const floor = Math.min(configuredFloor, remainingLiftCapacity);
+      const floor = Math.min(Math.max(0, configuredFloor - completedStrengthSessions), remainingLiftCapacity);
       if (lifts < floor) errors.push(`${path} has ${lifts} lifts below strength floor ${floor}`);
     }
     for (const lowerIndex of lowerLiftIndexes) {
@@ -2142,7 +2230,13 @@ function selectPlanCandidate(candidate, context = {}) {
         ...(normalizedGoals.length ? { goals: normalizedGoals } : {}),
         generationSource: 'ai_validated',
         generationValidationErrors: [],
-        inputSummary: summarizeInputs(context.profile || {}, context.history || {}, context.recovery || {}, context.checkin || null),
+        inputSummary: summarizeInputs(
+          context.profile || {},
+          context.history || {},
+          context.recovery || {},
+          context.checkin || null,
+          mondayFor(context.target?.startDate || context.todayISO),
+        ),
         ...(context.history?.acuteRunLoad?.protection?.active ? { acuteLoadAdjustment: acuteLoadMetadata(context.history) } : {}),
       }),
       source: 'ai_validated',
