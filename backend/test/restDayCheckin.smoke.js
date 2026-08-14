@@ -2,6 +2,7 @@
 
 const assert = require('node:assert/strict');
 const checkinRouter = require('../src/routes/checkin');
+const checkinSource = require('node:fs').readFileSync(require.resolve('../src/routes/checkin'), 'utf8');
 
 const ownerId = 'rest-day-checkin-owner';
 const planningDate = '2026-08-14';
@@ -46,6 +47,11 @@ const feelGreat = {
 };
 
 async function run() {
+  assert.doesNotMatch(
+    checkinSource,
+    /SELECT sleep_hours_last_night,\s*sleep_end_at/,
+    'check-in never queries the non-schema sleep_end_at column inside its planning transaction'
+  );
   const restDay = {
     id: 'rest-2026-08-14',
     date: planningDate,
@@ -152,6 +158,25 @@ async function run() {
     require('../src/lib/dailyExecution').restSourceForPlanEntries(restDay, restDay),
     'planned',
     'canonical /plans/today provenance identifies an authored rest day'
+  );
+  const staleGeneratedRestLabel = {
+    id: 'generated-friday',
+    date: planningDate,
+    type: 'rest',
+    workout_type: 'rest',
+    rest: true,
+    sessions: [
+      { id: 'generated-run', kind: 'run', duration_minutes: 30 },
+      { id: 'generated-lift', kind: 'lift', exercises: [{ name: 'Split squat' }] },
+    ],
+  };
+  assert.equal(
+    require('../src/lib/dailyExecution').restSourceForPlanEntries(
+      staleGeneratedRestLabel,
+      { ...staleGeneratedRestLabel, sessions: [] }
+    ),
+    'removed',
+    'generated days with real stored sessions remain removal-derived despite a stale top-level rest label'
   );
 
   const undatedMultiweekPlan = {

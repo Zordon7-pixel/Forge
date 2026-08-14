@@ -151,7 +151,7 @@ async function resolveCheckinSleepHours(userId, explicitSleepHours, database = {
   if (explicitSleepHours !== null && explicitSleepHours !== undefined) return explicitSleepHours;
   try {
     const row = await database.get(
-      `SELECT sleep_hours_last_night, sleep_end_at, synced_at, training_metrics_json
+      `SELECT sleep_hours_last_night, synced_at, training_metrics_json
        FROM health_sync
        WHERE user_id=?`,
       [userId]
