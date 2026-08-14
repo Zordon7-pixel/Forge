@@ -137,3 +137,29 @@ node backend/test/hyroxEventContract.smoke.js
 ```
 
 Batch 8 status (2026-08-14): `patched`; the three-command gate passes locally. Independent QA and Hermes verification remain pending.
+
+## Goal-Backward Coaching v2.4 — Phase 4A
+
+- [ ] Only the approved 10-file Batch 10 allowlist changed; no route, migration, package/lock, native, surface, or unrelated tracked file changed
+- [ ] Completion analysis emits only `UNDER_TARGET|ON_TARGET|ABOVE_TARGET|EXCESSIVE_STRAIN|INCOMPLETE|PAIN_LIMITED|UNSCORABLE_PARTIAL_SYNC`
+- [ ] Partial/failed sync is unscorable and never derives observed zero, recovery, or a numeric completion ratio from incomplete coverage
+- [ ] Derived outcome evidence cites immutable observed evidence IDs; EvidenceSnapshot and AthleteState successors increment and link without rewriting the prior observation envelope
+- [ ] One ordinary result cannot drive material progression; a designated assessment may update evidence but never bypasses workload or safety validation
+- [ ] Every flagged proposal runs cross-modal workload/rolling-hard-day, safety, interference-spacing, athlete-constraint, and presentation-floor validators
+- [ ] Revisioned M24-04 constraints select only the latest active owner-scoped row; day/session locks fail `ATHLETE_LOCK_CONFLICT` when violated
+- [ ] Athlete manual edits retain `owner=athlete`, attribution, revision, family/date/prescription identity, and require review before a material overwrite
+- [ ] `NO_RUNNING` preserves eligible upper-body work; `FULL_REST` blocks UI, workout start, Watch, FIT, calendar start, map, and warm-up on the same safety revision
+- [ ] Recovery/easy/long/quality/HYROX/strength reductions below their class floor become an explicit rest/walk/mobility choice unless a named beginner/rehab exception is valid
+- [ ] Missed work is skipped/rescheduled/shortened/replaced by policy, carried debt sessions are omitted, and excess records `NO_WORKOUT_DEBT` without breaching ceilings or spacing
+- [ ] Missing and explicit flag-off legacy adaptation responses remain byte-compatible; no v2.4 runtime activation is introduced
+
+Run the Phase 4A gate:
+
+```sh
+node backend/test/goalBackwardAdaptation.smoke.js
+node backend/test/adaptationRecoveryMinimum.smoke.js
+node backend/test/runGapReentry.smoke.js
+node backend/test/planningRevisionConcurrency.smoke.js
+```
+
+Batch 10 status (2026-08-14): `patched`; the four-command gate passes locally. Independent QA and Hermes verification remain pending.

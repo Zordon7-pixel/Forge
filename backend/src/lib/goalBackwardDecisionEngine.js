@@ -9,6 +9,7 @@ const {
 } = require('./racePlanPolicy');
 const { evaluateGoalBackwardFeasibility } = require('./planFeasibility');
 const { validatePartialRaceOrderCluster } = require('./canonicalWorkout');
+const { normalizePlanningConstraints } = require('./planCandidateLifecycle');
 
 const PRIORITY_ORDER = Object.freeze({ A: 0, B: 1, C: 2, UNSPECIFIED: 3 });
 const CONFIDENCE_WEIGHT = Object.freeze({ INSUFFICIENT: 0, LOW: 1, MEDIUM: 2, HIGH: 3 });
@@ -553,11 +554,49 @@ function decisionCreatedAt(input, planningDate) {
   return `${planningDate}T00:00:00.000Z`;
 }
 
+function constraintsForDecision(input, athleteState, athleteId) {
+  const supplied = input.planning_constraints ?? input.planningConstraints;
+  if (supplied && !Array.isArray(supplied)
+    && Array.isArray(supplied.locks) && Array.isArray(supplied.manual_edits)) {
+    if (supplied.athlete_id && String(supplied.athlete_id) !== athleteId) {
+      throw new Error('planning constraint owner does not match the decision athlete');
+    }
+    return {
+      locks: clone(supplied.locks),
+      manual_edits: clone(supplied.manual_edits),
+      lock_revision: Math.max(0, Number(supplied.lock_revision || 0)),
+      edit_revision: Math.max(0, Number(supplied.edit_revision || 0)),
+      constraint_fingerprint: supplied.constraint_fingerprint || null,
+    };
+  }
+  if (Array.isArray(supplied)) {
+    const normalized = normalizePlanningConstraints(supplied, {
+      athleteId,
+      planId: input.plan_id ?? input.planId ?? null,
+    });
+    return {
+      locks: clone(normalized.locks),
+      manual_edits: clone(normalized.manual_edits),
+      lock_revision: normalized.lock_revision,
+      edit_revision: normalized.edit_revision,
+      constraint_fingerprint: normalized.constraint_fingerprint,
+    };
+  }
+  return {
+    locks: clone(athleteState.locks || []),
+    manual_edits: clone(athleteState.manual_edits || []),
+    lock_revision: Math.max(0, Number(athleteState.lock_revision || 0)),
+    edit_revision: Math.max(0, Number(athleteState.edit_revision || 0)),
+    constraint_fingerprint: athleteState.constraint_fingerprint || null,
+  };
+}
+
 function buildGoalBackwardPlanningDecision(input = {}) {
   const athleteId = String(input.athlete_id ?? input.athleteId ?? '');
   const planningDate = dateOnly(input.planning_date_local ?? input.planningDateLocal);
   if (!athleteId || !planningDate) throw new Error('athlete_id and a valid planning_date_local are required');
   const athleteState = clone(input.athlete_state || input.athleteState || {});
+  const planningConstraints = constraintsForDecision(input, athleteState, athleteId);
   const ownedGoals = resolveOwnedGoals({ athlete_id: athleteId, goals: input.goals, races: input.races });
   const primaryGoal = primaryGoalForDecision(ownedGoals, input.transition_exit_met);
   const eventPolicy = primaryGoal ? eventPolicyForGoal(primaryGoal) : null;
@@ -655,8 +694,12 @@ function buildGoalBackwardPlanningDecision(input = {}) {
     key_stimuli: roleMultiset.filter((role) => role.role === 'PRIMARY_KEY'),
     supporting_stimuli: roleMultiset.filter((role) => role.role !== 'PRIMARY_KEY'),
     athlete_availability_constraints: clone(input.athlete_availability_constraints || athleteState.time_constraints || []),
-    athlete_locks: clone(athleteState.locks || []),
-    manual_edits: clone(athleteState.manual_edits || []),
+    athlete_locks: planningConstraints.locks,
+    manual_edits: planningConstraints.manual_edits,
+    lock_revision: planningConstraints.lock_revision,
+    edit_revision: planningConstraints.edit_revision,
+    constraint_fingerprint: planningConstraints.constraint_fingerprint,
+    completion_outcomes: clone(input.completion_outcomes || athleteState.completion_outcomes || []),
     safety_state: { action: athleteState.safety_action || 'NORMAL', scope: clone(athleteState.safety_scope || []) },
     recovery_state: athleteState.recovery_state || 'UNKNOWN',
     evidence_used: clone(input.evidence_used || []),

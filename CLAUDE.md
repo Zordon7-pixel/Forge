@@ -227,6 +227,31 @@ node backend/test/hyroxEventContract.smoke.js
 
 Batch 8 status (2026-08-14): `patched`; the three-command gate passes locally. No commit, deploy, feature activation, independent QA, or Hermes verification is claimed by this source patch.
 
+## Goal-Backward Coaching v2.4 — Phase 4A Adaptation Contract
+
+Batch 10 adds the flagged completion/adaptation layer without wiring a new runtime route or replacing the current adaptation engine. `backend/src/lib/adaptationEngine.js` maps completion evidence to the closed v2.4 outcome enum, keeps ordinary one-off results from driving material progression, applies the training-class presentation floor, records missed-session policy, and reuses the shipped proposal builder. `backend/src/lib/planningRevision.js` creates append-only derived outcome/evidence/state successors while retaining observed envelopes byte-equivalently.
+
+Authority and safety anchors:
+
+- `UNSCORABLE_PARTIAL_SYNC` is an outcome, not a zero result. Partial or failed coverage never produces an observed-to-prescribed zero ratio.
+- A single ordinary outcome does not authorize material progression. A designated assessment may update evidence, but its proposal still passes the same workload, safety, spacing, constraint, and presentation-floor validators.
+- M24-04 rows are owner-scoped and revisioned. Only the latest active day lock, session lock, or manual edit per scope is authoritative; deactivation still advances the lock/edit binding revision.
+- Athlete-authored edits retain `owner=athlete`, attribution, revision, and prescription identity. A violating candidate fails with `ATHLETE_EDIT_PRESERVED`; a lock violation fails with `ATHLETE_LOCK_CONFLICT`.
+- Safety action determines per-session and per-surface executability from one state revision. `NO_RUNNING` leaves safe upper-body work eligible, while `FULL_REST` blocks UI/workout/Watch/FIT/calendar/map/warm-up execution.
+- Missed work is skipped or explicitly policy-handled. Carried debt sessions are omitted, excess missed work records `NO_WORKOUT_DEBT`, and the remaining candidate must pass cross-modal ceilings, rolling hard-day caps, interference spacing, safety, and presentation floors.
+- Missing or explicit flag-off use of `buildAdaptationProposal()` retains the legacy response path. The additive `buildGoalBackwardAdaptationProposal()` is the v2.4 validated path and is not activated by this batch.
+
+Phase 4A gate:
+
+```sh
+node backend/test/goalBackwardAdaptation.smoke.js
+node backend/test/adaptationRecoveryMinimum.smoke.js
+node backend/test/runGapReentry.smoke.js
+node backend/test/planningRevisionConcurrency.smoke.js
+```
+
+Batch 10 status (2026-08-14): `patched`; the four-command Phase 4A gate passes locally. No commit, deploy, feature activation, independent QA, or Hermes verification is claimed by this source patch.
+
 ---
 
 ## Deploy Process

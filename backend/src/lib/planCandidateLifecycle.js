@@ -678,6 +678,163 @@ function parseJson(value, fallback = null) {
   }
 }
 
+function planningConstraintPayload(row = {}) {
+  const raw = row.attributed_payload_json ?? row.attributedPayload ?? row.payload ?? {};
+  const payload = typeof raw === 'string' ? parseJson(raw, null) : raw;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)
+    || findNonJsonValues(payload, 'attributed_payload_json').length
+    || findRedactionViolations(payload, 'attributed_payload_json').length
+    || jsonBytes(payload) > MAX_BINDING_JSON_BYTES) {
+    const error = new Error('Planning constraint payload is invalid');
+    error.code = 'PLANNING_CONSTRAINT_INVALID';
+    error.status = 422;
+    throw error;
+  }
+  return cloneJson(payload);
+}
+
+function normalizedConstraintDate(row = {}, payload = {}) {
+  const value = row.date_local ?? row.local_date ?? row.scheduled_local_date
+    ?? payload.date_local ?? payload.local_date ?? payload.scheduled_local_date ?? payload.date;
+  if (value === null || value === undefined || value === '') return null;
+  const normalized = String(value).slice(0, 10);
+  if (!isIsoDate(normalized)) {
+    const error = new Error('Planning constraint local date is invalid');
+    error.code = 'PLANNING_CONSTRAINT_INVALID';
+    error.status = 422;
+    throw error;
+  }
+  return normalized;
+}
+
+function normalizePlanningConstraints(rows = [], { athleteId, planId = null } = {}) {
+  const ownerId = String(athleteId || '').trim();
+  if (!ownerId) {
+    const error = new Error('Planning constraints require an athlete owner');
+    error.code = 'PLANNING_CONSTRAINT_OWNER_REQUIRED';
+    error.status = 422;
+    throw error;
+  }
+  const normalizedPlanId = planId === null || planId === undefined ? null : String(planId);
+  const latestByScope = new Map();
+  let lockRevision = 0;
+  let editRevision = 0;
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const userId = String(row?.user_id ?? row?.athlete_id ?? row?.userId ?? '').trim();
+    if (userId !== ownerId) {
+      const error = new Error('Planning constraint is not athlete-owned');
+      error.code = 'PLANNING_CONSTRAINT_OWNER_MISMATCH';
+      error.status = 403;
+      throw error;
+    }
+    const kind = String(row.constraint_kind ?? row.constraintKind ?? row.kind ?? '').toLowerCase();
+    if (!['day_lock', 'session_lock', 'manual_edit'].includes(kind)) {
+      const error = new Error('Planning constraint kind is invalid');
+      error.code = 'PLANNING_CONSTRAINT_INVALID';
+      error.status = 422;
+      throw error;
+    }
+    const rowPlanId = row.plan_id ?? row.planId ?? null;
+    if (normalizedPlanId && rowPlanId && String(rowPlanId) !== normalizedPlanId) continue;
+    const revision = Number(row.revision);
+    if (!Number.isSafeInteger(revision) || revision < 1) {
+      const error = new Error('Planning constraint revision is invalid');
+      error.code = 'PLANNING_CONSTRAINT_INVALID';
+      error.status = 422;
+      throw error;
+    }
+    const attributedBy = String(row.attributed_by_user_id ?? row.attributedByUserId ?? '').trim();
+    if (attributedBy !== ownerId) {
+      const error = new Error('Planning constraint attribution is not athlete-owned');
+      error.code = 'PLANNING_CONSTRAINT_ATTRIBUTION_MISMATCH';
+      error.status = 403;
+      throw error;
+    }
+    const payload = planningConstraintPayload(row);
+    const sessionId = String(row.session_id ?? row.sessionId ?? payload.session_id ?? payload.sessionId ?? '').trim() || null;
+    const dateLocal = normalizedConstraintDate(row, payload);
+    if (!rowPlanId && !sessionId && !dateLocal) {
+      const error = new Error('Planning constraint scope is required');
+      error.code = 'PLANNING_CONSTRAINT_INVALID';
+      error.status = 422;
+      throw error;
+    }
+    if (kind === 'day_lock' && !dateLocal) {
+      const error = new Error('Day lock requires a local date');
+      error.code = 'PLANNING_CONSTRAINT_INVALID';
+      error.status = 422;
+      throw error;
+    }
+    if (['session_lock', 'manual_edit'].includes(kind) && !sessionId) {
+      const error = new Error('Session constraint requires a session identity');
+      error.code = 'PLANNING_CONSTRAINT_INVALID';
+      error.status = 422;
+      throw error;
+    }
+    if (kind === 'manual_edit') editRevision = Math.max(editRevision, revision);
+    else lockRevision = Math.max(lockRevision, revision);
+    const scopeKey = [kind, rowPlanId || '', sessionId || '', dateLocal || ''].join(':');
+    const previous = latestByScope.get(scopeKey);
+    if (previous && previous.revision === revision && String(previous.id) !== String(row.id)) {
+      const error = new Error('Planning constraint revision is ambiguous');
+      error.code = 'PLANNING_CONSTRAINT_REVISION_CONFLICT';
+      error.status = 409;
+      throw error;
+    }
+    if (!previous || revision > previous.revision) {
+      latestByScope.set(scopeKey, {
+        ...payload,
+        id: String(row.id || '').trim() || null,
+        constraint_id: String(row.id || '').trim() || null,
+        constraint_kind: kind,
+        user_id: ownerId,
+        owner: 'athlete',
+        plan_id: rowPlanId === null || rowPlanId === undefined ? null : String(rowPlanId),
+        session_id: sessionId,
+        date_local: dateLocal,
+        scheduled_local_date: dateLocal,
+        revision,
+        active: row.active !== false && row.active !== 0 && row.active !== 'false',
+        supersedes_constraint_id: row.supersedes_constraint_id ?? row.supersedesConstraintId ?? null,
+        attributed_by_user_id: ownerId,
+        effective_at: row.effective_at ?? row.effectiveAt ?? null,
+        created_at: row.created_at ?? row.createdAt ?? null,
+        attribution: {
+          actor_type: 'athlete',
+          owner: 'athlete',
+          attributed_by_user_id: ownerId,
+        },
+      });
+    }
+  }
+  const authoritative = [...latestByScope.values()]
+    .filter((constraint) => constraint.active)
+    .sort((left, right) => (
+      left.constraint_kind.localeCompare(right.constraint_kind)
+      || String(left.date_local || '').localeCompare(String(right.date_local || ''))
+      || String(left.session_id || '').localeCompare(String(right.session_id || ''))
+      || left.revision - right.revision
+    ));
+  const locks = authoritative.filter((constraint) => constraint.constraint_kind !== 'manual_edit');
+  const manualEdits = authoritative.filter((constraint) => constraint.constraint_kind === 'manual_edit');
+  const fingerprint = prefixedHash({
+    athlete_id: ownerId,
+    plan_id: normalizedPlanId,
+    lock_revision: lockRevision,
+    edit_revision: editRevision,
+    constraints: authoritative,
+  });
+  return Object.freeze({
+    athlete_id: ownerId,
+    plan_id: normalizedPlanId,
+    locks: Object.freeze(locks.map(Object.freeze)),
+    manual_edits: Object.freeze(manualEdits.map(Object.freeze)),
+    lock_revision: lockRevision,
+    edit_revision: editRevision,
+    constraint_fingerprint: fingerprint,
+  });
+}
+
 module.exports = {
   ALLOWED_LIFE_FLAGS,
   HASH_PREFIX,
@@ -693,6 +850,7 @@ module.exports = {
   jsonBytes,
   normalizeContext,
   normalizeCheckin,
+  normalizePlanningConstraints,
   parseJson,
   prefixedHash,
   persistPipelineArtifacts,

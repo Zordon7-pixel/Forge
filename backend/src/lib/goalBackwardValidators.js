@@ -4,7 +4,13 @@ const {
   canonicalHash,
   daysBetween,
 } = require('./racePlanPolicy');
-const { aggregateWeeklyStress, resolveSessionStress, resolveStressVector } = require('./goalBackwardLoad');
+const {
+  aggregateWeeklyStress,
+  buildGoalBackwardWorkloadEvidence,
+  resolveSessionStress,
+  resolveStressVector,
+} = require('./goalBackwardLoad');
+const { normalizePlanningConstraints } = require('./planCandidateLifecycle');
 const {
   validateCanonicalSession,
   validateCanonicalSessionSet,
@@ -56,6 +62,26 @@ const HARD_VALIDATOR_NAMES = Object.freeze([
   'presentation_floor',
   'safety',
   'interference',
+]);
+const SAFETY_ACTIONS = new Set([
+  'NORMAL',
+  'MONITOR',
+  'MODIFY_IMPACT',
+  'NO_RUNNING',
+  'NO_LOWER_BODY',
+  'NO_HIGH_INTENSITY',
+  'MODIFIED_SESSION_ONLY',
+  'FULL_REST',
+  'PROFESSIONAL_ASSESSMENT_RECOMMENDED',
+]);
+const EXECUTABLE_SURFACES = Object.freeze([
+  'ui_start',
+  'workout_start',
+  'watch',
+  'fit',
+  'calendar_start',
+  'map',
+  'warm_up',
 ]);
 
 function clone(value) {
@@ -670,29 +696,79 @@ function matchesRoleFamily(session, constraint) {
   return role && family;
 }
 
+function constraintsFromOptions(options = {}) {
+  const supplied = options.planning_constraints ?? options.planningConstraints;
+  if (supplied && !Array.isArray(supplied)
+    && Array.isArray(supplied.locks) && Array.isArray(supplied.manual_edits)) {
+    return supplied;
+  }
+  if (Array.isArray(supplied)) {
+    return normalizePlanningConstraints(supplied, {
+      athleteId: options.athlete_id ?? options.athleteId,
+      planId: options.plan_id ?? options.planId ?? null,
+    });
+  }
+  return { locks: options.locks || [], manual_edits: options.manual_edits || [] };
+}
+
+function constraintDate(constraint = {}) {
+  return dateOnly(constraint.date_local ?? constraint.local_date
+    ?? constraint.scheduled_local_date ?? constraint.date);
+}
+
+function constraintPrescriptionMatches(session, constraint, { manualEdit = false } = {}) {
+  if (!session) return false;
+  if (constraint.workout_family && sessionFamily(session) !== constraint.workout_family) return false;
+  if (constraint.role && sessionRole(session) !== String(constraint.role).toUpperCase()) return false;
+  const date = constraintDate(constraint);
+  if (date && sessionLocalDate(session) !== date) return false;
+  const expectedRevision = constraint.session_revision ?? constraint.sessionRevision;
+  if (expectedRevision !== null && expectedRevision !== undefined
+    && Number(session.session_revision ?? session.sessionRevision) !== Number(expectedRevision)) return false;
+  const expectedHash = constraint.content_hash ?? constraint.session_content_hash ?? constraint.prescription_hash;
+  if (expectedHash && String(
+    session.content_hash ?? session.session_content_hash ?? session.prescription_hash ?? ''
+  ) !== String(expectedHash)) {
+    return false;
+  }
+  if ((constraint.pins_dosage === true || constraint.lock_scope === 'full_prescription') && !expectedHash) {
+    const expectedPrescription = constraint.prescription ?? constraint.session ?? null;
+    if (!expectedPrescription) return false;
+    if (JSON.stringify(canonicalPrescriptionValue(session))
+      !== JSON.stringify(canonicalPrescriptionValue(expectedPrescription))) return false;
+  }
+  if (Array.isArray(constraint.steps)
+    && JSON.stringify(session.steps || []) !== JSON.stringify(constraint.steps)) return false;
+  if (manualEdit && String(constraint.owner || '').toLowerCase() !== 'athlete') return false;
+  return true;
+}
+
 function validateConstraints(sessions, options) {
   const violations = [];
-  for (const lock of options.locks || []) {
+  const constraints = constraintsFromOptions(options);
+  for (const lock of constraints.locks || []) {
+    if (lock.active === false) continue;
     const kind = String(lock.constraint_kind ?? lock.kind ?? lock.type ?? '').toLowerCase();
     if (kind === 'day_lock') {
-      const date = dateOnly(lock.local_date ?? lock.scheduled_local_date ?? lock.date);
-      if (!sessions.some((session) => sessionLocalDate(session) === date && matchesRoleFamily(session, lock))) {
+      const date = constraintDate(lock);
+      if (!sessions.some((session) => sessionLocalDate(session) === date
+        && matchesRoleFamily(session, lock)
+        && constraintPrescriptionMatches(session, lock))) {
         violations.push({ code: 'ATHLETE_LOCK_CONFLICT', constraint_kind: 'day_lock', local_date: date });
       }
     } else if (kind === 'session_lock') {
       const lockedId = String(lock.session_id ?? lock.sessionId ?? '');
       const session = sessions.find((entry, index) => sessionId(entry, index) === lockedId);
-      const date = dateOnly(lock.local_date ?? lock.scheduled_local_date ?? lock.date);
-      if (!session || (date && sessionLocalDate(session) !== date) || !matchesRoleFamily(session || {}, lock)) {
+      if (!constraintPrescriptionMatches(session, lock)) {
         violations.push({ code: 'ATHLETE_LOCK_CONFLICT', constraint_kind: 'session_lock', session_id: lockedId });
       }
     }
   }
-  for (const edit of options.manual_edits || []) {
+  for (const edit of constraints.manual_edits || []) {
+    if (edit.active === false) continue;
     const editId = String(edit.session_id ?? edit.sessionId ?? '');
     const session = sessions.find((entry, index) => sessionId(entry, index) === editId);
-    if (!session || (edit.workout_family && sessionFamily(session) !== edit.workout_family)
-      || (edit.scheduled_local_date && sessionLocalDate(session) !== dateOnly(edit.scheduled_local_date))) {
+    if (!constraintPrescriptionMatches(session, edit, { manualEdit: true })) {
       violations.push({ code: 'ATHLETE_EDIT_PRESERVED', session_id: editId });
     }
   }
@@ -850,6 +926,7 @@ function safetyBlocksSession(action, session) {
     contributing_work_families: session.contributing_work_families,
   });
   if (action === 'FULL_REST') return true;
+  if (!vector && !['NORMAL', 'MONITOR'].includes(action)) return true;
   if (action === 'NO_RUNNING') return RUNNING_FAMILIES.has(family) || vector?.[1] > 0;
   if (action === 'NO_LOWER_BODY') return vector?.[1] > 0 || vector?.[2] > 0;
   if (action === 'NO_HIGH_INTENSITY') return vector?.some((value) => value >= 3);
@@ -858,14 +935,89 @@ function safetyBlocksSession(action, session) {
   return false;
 }
 
+function buildSafetyExecutability(container = {}, options = {}) {
+  const sessions = sessionsFrom(container);
+  const requestedAction = String(options.safety_action ?? options.safetyAction ?? 'NORMAL').toUpperCase();
+  const action = SAFETY_ACTIONS.has(requestedAction) ? requestedAction : 'FULL_REST';
+  const scopedActionRaw = options.scoped_safety_action ?? options.scopedSafetyAction
+    ?? options.safety_scope?.action ?? options.safetyScope?.action;
+  const scopedAction = String(scopedActionRaw || '').toUpperCase();
+  const enforcementAction = action === 'PROFESSIONAL_ASSESSMENT_RECOMMENDED'
+    ? (SAFETY_ACTIONS.has(scopedAction) && scopedAction !== 'PROFESSIONAL_ASSESSMENT_RECOMMENDED'
+      ? scopedAction : 'FULL_REST')
+    : action;
+  const safetyStateRevision = Number(options.safety_state_revision ?? options.safetyStateRevision
+    ?? options.athlete_state_revision ?? options.athleteStateRevision ?? 0);
+  const evaluatedSessions = sessions.map((session, index) => {
+    const blocked = safetyBlocksSession(enforcementAction, session);
+    const surfaceExecutability = Object.fromEntries(EXECUTABLE_SURFACES.map((surface) => [surface, !blocked]));
+    return {
+      session_id: sessionId(session, index),
+      workout_family: sessionFamily(session),
+      executable: !blocked,
+      reason_code: blocked ? enforcementAction : null,
+      safety_action: action,
+      enforcement_action: enforcementAction,
+      safety_state_revision: safetyStateRevision,
+      surface_executability: surfaceExecutability,
+    };
+  });
+  const allBlocked = enforcementAction === 'FULL_REST'
+    || (evaluatedSessions.length > 0 && !evaluatedSessions.some((session) => session.executable));
+  return deepFreeze({
+    safety_action: action,
+    enforcement_action: enforcementAction,
+    safety_state_revision: safetyStateRevision,
+    supersedes_safety_state_revision: options.supersedes_safety_state_revision
+      ?? options.supersedesSafetyStateRevision ?? null,
+    resolution_evidence_ids: clone(options.resolution_evidence_ids || options.resolutionEvidenceIds || []),
+    advisory_flags: action === 'PROFESSIONAL_ASSESSMENT_RECOMMENDED'
+      ? ['PROFESSIONAL_ASSESSMENT_RECOMMENDED'] : [],
+    surface_executability: Object.fromEntries(EXECUTABLE_SURFACES.map((surface) => [surface, !allBlocked])),
+    sessions: evaluatedSessions,
+  });
+}
+
 function validateSafety(sessions, options) {
-  const action = String(options.safety_action || 'NORMAL').toUpperCase();
-  const violations = sessions.map((session, index) => (
-    safetyBlocksSession(action, session)
-      ? { code: action, session_id: sessionId(session, index), workout_family: sessionFamily(session) }
-      : null
-  )).filter(Boolean);
-  return { validator: 'safety', valid: violations.length === 0, violations, reason_codes: violations.map((violation) => violation.code) };
+  const executability = buildSafetyExecutability(sessions, options);
+  const violations = executability.sessions.filter((session) => !session.executable).map((session) => ({
+    code: session.reason_code,
+    session_id: session.session_id,
+    workout_family: session.workout_family,
+    safety_state_revision: session.safety_state_revision,
+  }));
+  return {
+    validator: 'safety',
+    valid: violations.length === 0,
+    violations,
+    reason_codes: [...new Set(violations.map((violation) => violation.code))],
+    executability,
+  };
+}
+
+function validateGoalBackwardAdaptationCandidate(candidate = {}, options = {}) {
+  const sessions = sessionsFrom(candidate);
+  const interference = validateInterference(sessions, options);
+  const workloadEvidence = buildGoalBackwardWorkloadEvidence({
+    ...options,
+    sessions,
+    spacing_valid: interference.valid,
+  });
+  const results = [
+    validateConstraints(sessions, options),
+    validateCrossModalCeiling({ ...options, workload_evidence: workloadEvidence }),
+    validatePresentationFloor(sessions, options),
+    validateSafety(sessions, options),
+    interference,
+  ];
+  return deepFreeze({
+    valid: results.every((result) => result.valid),
+    validator_results: results,
+    workload_evidence: workloadEvidence,
+    safety_executability: results.find((result) => result.validator === 'safety')?.executability || null,
+    violations: results.flatMap((result) => result.violations || []),
+    reason_codes: [...new Set(results.flatMap((result) => result.reason_codes || []))],
+  });
 }
 
 function validateGoalBackwardCandidate(candidate = {}, options = {}) {
@@ -1374,10 +1526,12 @@ function compareMaterialChange(input = {}) {
 
 module.exports = {
   HARD_VALIDATOR_NAMES,
+  buildSafetyExecutability,
   canonicalPrescriptionHash,
   classifyInterferencePredicates,
   compareMaterialChange,
   validateGoalBackwardCandidate,
+  validateGoalBackwardAdaptationCandidate,
   validateInterference,
   validatePartialRaceOrderClusterExposure,
 };

@@ -218,6 +218,25 @@ const keepDecision = proposalFor({}, original);
 assert.equal(JSON.stringify(original), originalBytes, 'building or keeping a proposal never mutates the source calendar');
 assert.deepEqual(keepDecision.choices, ['accept', 'keep_original']);
 
+const v24Gap = adaptation.buildGoalBackwardAdaptationProposal({
+  plan: plan({ includeRace: false, runCount: 3 }),
+  planningDateISO,
+  planVersion: 'gap-v24',
+  completion: {
+    lastRunDate: '2026-07-27',
+    daysSinceRun: 7,
+    weeklyMileageBaseline: 20,
+    gapPromptEnabled: true,
+    runGapEpisodeKey: 'run-gap:2026-07-27',
+  },
+  athleteState: { athlete_state_revision: 2, safety_action: 'NORMAL', recovery_state: 'NORMAL' },
+  validationOptions: { training_age_class: 'RETURNING' },
+});
+assert.equal(v24Gap.status, 'proposal');
+assert.equal(v24Gap.reason_codes.includes('TRAINING_GAP_REBUILD'), true);
+assert.equal(v24Gap.reason_codes.includes('NO_WORKOUT_DEBT'), false, 'a running gap is rebuilt, never relabeled as debt');
+assert.equal(v24Gap.v24_validation.valid, true, 'the flagged re-entry proposal passes workload, spacing, floor, and safety gates');
+
 const repoRoot = path.resolve(__dirname, '../..');
 const routesSource = fs.readFileSync(path.join(repoRoot, 'backend/src/routes/plans.js'), 'utf8');
 const dashboardSource = fs.readFileSync(path.join(repoRoot, 'frontend/src/pages/Dashboard.jsx'), 'utf8');

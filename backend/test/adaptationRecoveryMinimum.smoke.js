@@ -63,13 +63,14 @@ function sourcePlan({ duration = 16, miles = 1.1, prescriptionBasis } = {}) {
   };
 }
 
-function proposal({ plan = sourcePlan(), completion, checkin } = {}) {
+function proposal({ plan = sourcePlan(), completion, checkin, goalBackwardV24 } = {}) {
   return adaptation.buildAdaptationProposal({
     plan,
     planningDateISO: '2026-08-13',
     planVersion: 'recovery-minimum-v1',
     completion,
     checkin,
+    goalBackwardV24,
   });
 }
 
@@ -184,6 +185,22 @@ const unquantified = firstChange(proposal({
 }));
 assertExplicitAlternative(unquantified, /missed-session history/i);
 assert.equal(unquantified.recovery_alternative.decision_reason, 'dose_unquantified');
+
+const v24Beginner = firstChange(proposal({
+  plan: sourcePlan({ duration: 22, miles: null, prescriptionBasis: 'time' }),
+  completion: { missedWorkouts: 2 },
+  goalBackwardV24: { training_age_class: 'BEGINNER', recent_normal_running_minutes_per_week: 45 },
+}));
+assert.equal(v24Beginner.kind, 'run');
+assert.equal(v24Beginner.duration_min, 15, 'the v2.4 beginner/recent-normal-below-60 floor is 15 minutes');
+
+const v24Established = firstChange(proposal({
+  plan: sourcePlan({ duration: 22, miles: null, prescriptionBasis: 'time' }),
+  completion: { missedWorkouts: 2 },
+  goalBackwardV24: { training_age_class: 'ESTABLISHED', recent_normal_running_minutes_per_week: 120 },
+}));
+assertExplicitAlternative(v24Established, /missed-session history/i);
+assert.equal(v24Established.recovery_alternative.minimum_run_minutes, 20);
 
 for (const result of [photographed, proposal({ completion: { adherenceRate: 0.64 } })]) {
   for (const change of result.changes) {
