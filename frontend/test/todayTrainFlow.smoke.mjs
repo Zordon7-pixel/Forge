@@ -54,6 +54,7 @@ assert.equal(rest.secondaryLabel, 'Start extra run')
 assert.equal(rest.secondaryAction(), 'extra')
 assert.equal(rest.showCheckIn, false)
 assert.match(rest.uncheckedSignal, /No check-in is needed/i)
+assert.match(rest.uncheckedSignal, /unless you choose to train/i)
 assert.equal(rest.showStartLog, false)
 
 const restAfterRun = resolveTodayPlanAccess({ ...actions, isRestDay: true, hasRunRecordedToday: true })

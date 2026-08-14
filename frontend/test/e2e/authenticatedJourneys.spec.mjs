@@ -87,6 +87,8 @@ function restExecution() {
       hasPlan: true,
       hasDay: true,
       isRest: true,
+      isPlannedRest: true,
+      restSource: 'planned',
       mode: 'run_only',
       phase: 'base',
       week: 1,
@@ -109,7 +111,7 @@ test('planned rest day does not prompt for a readiness check-in', async ({ page 
 
   await page.goto('/')
   await expect(page.getByRole('heading', { name: "Review today's plan" })).toBeVisible()
-  await expect(page.getByText('Rest and recovery are scheduled today. No check-in is needed.', { exact: true })).toBeVisible()
+  await expect(page.getByText('Rest and recovery are scheduled today. No check-in is needed unless you choose to train.', { exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Check in', exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'View rest day', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Start extra run', exact: true })).toBeVisible()
@@ -119,6 +121,12 @@ test('planned rest day does not prompt for a readiness check-in', async ({ page 
   await expect(page.getByRole('button', { name: 'Check in', exact: true })).toHaveCount(0)
   await page.getByText('Recovery tools', { exact: true }).click()
   await expect(page.getByRole('button', { name: 'Start extra run', exact: true }).last()).toBeVisible()
+  await page.getByRole('button', { name: 'Close', exact: true }).click()
+
+  await page.getByRole('button', { name: 'Start extra run', exact: true }).click()
+  await expect(page).toHaveURL(/\/log-run\?tab=manual&intent=rest-day/)
+  await expect(page.getByRole('heading', { name: 'Morning Check-In Required' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Go to Check-In' })).toBeVisible()
 
   assertCleanApiAndRuntime(apiState, runtimeErrors)
 })

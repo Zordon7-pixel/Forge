@@ -14,6 +14,8 @@ export function resolveTodayPlanAccess({
   const pendingSessionCount = sessions.filter((session) => session?.completed !== true).length
   const allScheduledComplete = sessionCount > 0 && pendingSessionCount === 0
   const hasRecommendation = Boolean(recommendation)
+  const isUnscheduledRestRecommendation = !isRestDay && sessionCount === 0
+    && (recommendation?.recommendationType === 'rest' || recommendation?.type === 'rest')
   const hasViewablePlan = hasRecommendation || sessionCount > 0 || isRestDay
 
   if (!hasViewablePlan) {
@@ -24,10 +26,25 @@ export function resolveTodayPlanAccess({
       secondaryAction: null,
       secondaryLabel: null,
       trainAction: onCheckIn,
-      uncheckedSignal: "Check in to build today's recommendation.",
+      uncheckedSignal: 'Check in for today\'s guidance.',
       readinessFallback: checkedInToday
         ? 'No recommendation is available yet. Review your check-in or open the calendar.'
-        : "Check in to build today's recommendation. Sync a watch to add readiness context.",
+        : 'Check in for today\'s guidance. Sync a watch to add readiness context.',
+      showCheckIn: true,
+      showStartLog: false,
+    }
+  }
+
+  if (isUnscheduledRestRecommendation) {
+    return {
+      hasViewablePlan: true,
+      primaryAction: onCheckIn,
+      primaryLabel: checkedInToday ? 'Edit check-in' : 'Check in',
+      secondaryAction: onDetails,
+      secondaryLabel: onDetails ? 'Details' : null,
+      trainAction: onCheckIn,
+      uncheckedSignal: 'Rest is a current recommendation, not a scheduled plan rest day. Check in so today\'s guidance uses how you feel now.',
+      readinessFallback: 'Check in so the recommendation can use how you feel now; a strong check-in does not automatically create a rest day.',
       showCheckIn: true,
       showStartLog: false,
     }
@@ -41,8 +58,8 @@ export function resolveTodayPlanAccess({
       secondaryAction: hasRunRecordedToday ? null : onStartUnplannedRun,
       secondaryLabel: hasRunRecordedToday ? null : 'Start extra run',
       trainAction: onDetails || onStartWorkout,
-      uncheckedSignal: 'Rest is scheduled today. No check-in is needed.',
-      readinessFallback: 'Rest is scheduled from your plan. Feeling fresh keeps the rest day in place; use the rest-day run options only when you intentionally want to train or make up a missed run.',
+      uncheckedSignal: 'Rest is scheduled today. No check-in is needed unless you choose to train.',
+      readinessFallback: 'Rest is scheduled from your plan. Feeling fresh keeps the rest day in place. If you intentionally train or make up a missed run, Forged asks for a quick safety check-in before starting.',
       showCheckIn: false,
       showStartLog: false,
     }

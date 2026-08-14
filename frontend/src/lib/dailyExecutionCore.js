@@ -23,6 +23,8 @@ export function normalizeExecution(body) {
       hasPlan: false,
       hasDay: false,
       isRest: false,
+      isPlannedRest: false,
+      restSource: null,
       mode: null,
       phase: null,
       week: null,
@@ -44,6 +46,8 @@ export function normalizeExecution(body) {
     hasPlan: exec.hasPlan === true,
     hasDay: exec.hasDay === true,
     isRest: exec.isRest === true,
+    isPlannedRest: exec.isPlannedRest === true || exec.restSource === 'planned',
+    restSource: exec.restSource === 'planned' || exec.restSource === 'removed' ? exec.restSource : null,
     mode: exec.mode || null,
     phase: exec.phase !== undefined ? exec.phase : null,
     week: exec.week !== undefined ? exec.week : null,
@@ -116,7 +120,7 @@ export function scheduledLiftFromExecution(execution) {
 // A run is preferred over a lift for the run-centric coach card.
 export function recommendationFromExecution(execution) {
   if (!execution || !execution.hasPlan || !execution.hasDay) return null;
-  if (execution.isRest) {
+  if (execution.isRest && execution.isPlannedRest) {
     return {
       recommendationType: 'rest',
       type: 'rest',
@@ -125,6 +129,7 @@ export function recommendationFromExecution(execution) {
       source: 'calendar',
     };
   }
+  if (execution.isRest) return null;
   if (!hasExecutableSession(execution)) return null;
   const run = scheduledRunFromExecution(execution);
   if (run) {

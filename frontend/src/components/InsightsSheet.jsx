@@ -258,7 +258,7 @@ export function ReadinessGauge({ score, onClick }) {
 
 export function DailyCoachFlow({ checkedInToday, readinessData, recommendation, execution, hasRunRecordedToday = false, onCheckIn, onStartWorkout, onStartUnplannedRun, onDetails }) {
   const readiness = resolveReadiness(readinessData)
-  const isRestDay = execution?.isRest === true || recommendation?.recommendationType === 'rest' || recommendation?.type === 'rest'
+  const isRestDay = execution?.isPlannedRest === true || execution?.restSource === 'planned'
   const recommendationLabel = recommendation
     ? getRecommendationLabel(recommendation)
     : "today's plan"
@@ -291,7 +291,7 @@ export function DailyCoachFlow({ checkedInToday, readinessData, recommendation, 
   const buildTodaySubtitle = () => {
     if (allScheduledComplete) return 'All scheduled sessions are complete. Review the work or recover for the next session.'
     if (isRestDay && hasRunRecordedToday) return 'An extra run is already logged today. Recovery remains the scheduled plan.'
-    if (!recommendation && isRestDay) return 'Rest and recovery are scheduled today. No check-in is needed.'
+    if (!recommendation && isRestDay) return 'Rest and recovery are scheduled today. No check-in is needed unless you choose to train.'
     if (!recommendation && calendarSessions.length > 0) {
       const summaryLabel = calendarLabel || 'training'
       return `${summaryLabel.charAt(0).toUpperCase() + summaryLabel.slice(1)} is scheduled today. Check in only if you want the effort adjusted.`
@@ -299,10 +299,10 @@ export function DailyCoachFlow({ checkedInToday, readinessData, recommendation, 
     if (!recommendation) {
       return checkedInToday
         ? 'No workout is available yet. Review your check-in or open the calendar.'
-        : "No workout is scheduled yet. Check in to build today's recommendation."
+        : "No workout is scheduled yet. Check in for today's guidance."
     }
     if (isRestDay) {
-      return `${readiness.sentencePrefix}Rest and recovery are scheduled today. No check-in is needed.`
+      return `${readiness.sentencePrefix}Rest and recovery are scheduled today. No check-in is needed unless you choose to train.`
     }
 
     const summaryLabel = calendarLabel || recommendationLabel
@@ -488,7 +488,7 @@ export function TodayDetailSheet({
   const readiness = resolveReadiness(readinessData)
   const calendarSessions = execution?.hasDay && Array.isArray(execution.sessions) ? execution.sessions : []
   const calendarKinds = [...new Set(calendarSessions.map(calendarSessionKind))]
-  const isRestDay = execution?.isRest === true || recommendation?.recommendationType === 'rest' || recommendation?.type === 'rest'
+  const isRestDay = execution?.isPlannedRest === true || execution?.restSource === 'planned'
   const planAccess = resolveTodayPlanAccess({
     checkedInToday,
     recommendation,

@@ -189,6 +189,12 @@ function trainingContextFromResolvedDay(resolved, dateISO = null) {
   };
 }
 
+function restSourceForPlanEntries(storedEntry, visibleEntry) {
+  if (!visibleEntry || planSchema.daySessions(visibleEntry).length > 0) return null;
+  if (!storedEntry) return null;
+  return planSchema.daySessions(storedEntry).length === 0 ? 'planned' : 'removed';
+}
+
 // Build the canonical daily-execution object. Callers supply the already
 // override-merged day entry, its week, the user's completed session ids, and
 // the HR profile row (or null). Everything here is pure.
@@ -202,20 +208,21 @@ function buildDailyExecution(opts) {
     selectedDayIndex,
     completedSessionIds,
     hrProfile,
+    restSource = null,
   } = opts || {};
 
   const dow = weekdayShort || weekdayShortForDate(dateISO);
   const completed = new Set((Array.isArray(completedSessionIds) ? completedSessionIds : []).map(String));
 
   if (!plan || !Array.isArray(plan.weeks)) {
-    return { hasPlan: false, hasDay: false, date: dateISO || null, isRest: false, sessions: [], run: null, lift: null };
+    return { hasPlan: false, hasDay: false, date: dateISO || null, isRest: false, isPlannedRest: false, restSource: null, sessions: [], run: null, lift: null };
   }
 
   const mode = planSchema.getPlanMode(plan);
   const goal = plan.goal && typeof plan.goal === 'object' ? plan.goal : null;
 
   if (!selectedEntry) {
-    return { hasPlan: true, hasDay: false, date: dateISO || null, day: dow, mode, goal, isRest: false, sessions: [], run: null, lift: null };
+    return { hasPlan: true, hasDay: false, date: dateISO || null, day: dow, mode, goal, isRest: false, isPlannedRest: false, restSource: null, sessions: [], run: null, lift: null };
   }
 
   const sourceSessions = Array.isArray(selectedEntry.sessions)
@@ -253,6 +260,8 @@ function buildDailyExecution(opts) {
     orderGuidance: selectedEntry.orderGuidance,
     status: selectedEntry.status,
     isRest: sessions.length === 0,
+    isPlannedRest: sessions.length === 0 && restSource === 'planned',
+    restSource: sessions.length === 0 && (restSource === 'planned' || restSource === 'removed') ? restSource : null,
     sessions,
     run,
     lift,
@@ -269,5 +278,6 @@ module.exports = {
   parseCheckinOverridePatch,
   resolvePlanDayForDate,
   trainingContextFromResolvedDay,
+  restSourceForPlanEntries,
   buildDailyExecution,
 };

@@ -49,7 +49,8 @@ const hybridBody = {
   },
 };
 
-const restBody = { today: { day: 'Wed', date: '2026-07-15', type: 'rest', rest: true }, execution: { hasPlan: true, hasDay: true, isRest: true, mode: 'hybrid_maintain', sessions: [], run: null, lift: null, date: '2026-07-15' } };
+const restBody = { today: { day: 'Wed', date: '2026-07-15', type: 'rest', rest: true }, execution: { hasPlan: true, hasDay: true, isRest: true, isPlannedRest: true, restSource: 'planned', mode: 'hybrid_maintain', sessions: [], run: null, lift: null, date: '2026-07-15' } };
+const removedBody = { today: { day: 'Wed', date: '2026-07-15', sessions: [] }, execution: { hasPlan: true, hasDay: true, isRest: true, isPlannedRest: false, restSource: 'removed', mode: 'hybrid_maintain', sessions: [], run: null, lift: null, date: '2026-07-15' } };
 const noPlanBody = { today: null, execution: { hasPlan: false, hasDay: false, date: '2026-07-13' } };
 
 console.log('\n== normalizeExecution (hybrid) ==');
@@ -64,6 +65,7 @@ assert(hasExecutableSession(h) === true, 'hasExecutableSession true for hybrid d
 console.log('\n== rest + no-plan ==');
 const r = normalizeExecution(restBody);
 assert(r.hasDay && r.isRest && r.sessions.length === 0 && !r.run && !r.lift, 'rest day yields no run/lift');
+assert(r.isPlannedRest && r.restSource === 'planned', 'scheduled rest provenance survives normalization');
 assert(hasExecutableSession(r) === false, 'rest day is not executable');
 const n = normalizeExecution(noPlanBody);
 assert(!n.hasPlan && !n.hasDay && n.sessions.length === 0, 'no-plan normalizes safely');
@@ -101,6 +103,9 @@ assert(calRec.recommendationType === 'run' && calRec.planSessionId === 'run-1', 
 assert(calRec.targetZone === 'Z2', 'targetZone taken from the scheduled run');
 const restRec = recommendationFromExecution(r);
 assert(restRec && restRec.source === 'calendar' && restRec.recommendationType === 'rest', 'calendar rest stays explicit instead of falling back to an unrelated workout');
+const removed = normalizeExecution(removedBody);
+assert(removed.isRest && !removed.isPlannedRest && removed.restSource === 'removed', 'removed-empty day retains distinct provenance');
+assert(recommendationFromExecution(removed) === null, 'removed-empty day cannot masquerade as planned rest');
 assert(recommendationFromExecution(n) === null, 'no-plan → null so callers fall back to next-recommendation');
 const stepsRec = recommendationFromExecution(normalizeExecution({ execution: { hasPlan: true, hasDay: true, isRest: false, sessions: [], run: { id: 'run-steps', kind: 'run', steps: ['Warm up', '3 x 5 min', 'Cool down'] } } }));
 assert(stepsRec && stepsRec.structure.length === 3, 'run steps remain visible when structure is absent');

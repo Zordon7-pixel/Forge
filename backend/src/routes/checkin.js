@@ -57,6 +57,12 @@ function visibleActivePlan(activePlan) {
   return parsed ? planSchema.visiblePlanForAssignment(parsed, activePlan.row) : null;
 }
 
+function activePlanViews(activePlan) {
+  const parsed = parsePlan(activePlan?.row);
+  if (!parsed) return { storedPlan: null, visiblePlan: null, progress: {} };
+  return planSchema.planViewsForAssignment(parsed, activePlan.row);
+}
+
 async function getActivePlanForUser(userId, database = { get: dbGet }, options = {}) {
   return resolveActivePlanForDate(userId, database.get, options);
 }
@@ -146,11 +152,12 @@ async function computeCheckinDirective(userId, checkinInput, database, options =
   const planningDateLocal = options.planningDateLocal || requestPlanningDate({});
   const activePlan = await getActivePlanForUser(userId, database, { planningDateLocal });
   const missingPlanState = { hasPlannedDay: false, isRestDay: false, day: null };
-  const storedPlanState = activePlan
-    ? resolveTodayPlanState(parsePlan(activePlan.row), planningDateLocal)
+  const planViews = activePlan ? activePlanViews(activePlan) : null;
+  const storedPlanState = planViews
+    ? resolveTodayPlanState(planViews.storedPlan, planningDateLocal)
     : missingPlanState;
-  const todayPlanState = activePlan
-    ? resolveTodayPlanState(visibleActivePlan(activePlan), planningDateLocal)
+  const todayPlanState = planViews
+    ? resolveTodayPlanState(planViews.visiblePlan, planningDateLocal)
     : missingPlanState;
   // A removed session also leaves the served day empty. Only call it a planned
   // rest day when the immutable assigned plan was already empty/rest; otherwise
@@ -313,6 +320,7 @@ router._test = {
   getActivePlanForUser,
   normalizeTodayEntry,
   resolveTodayPlanState,
+  activePlanViews,
   visibleActivePlan,
 };
 

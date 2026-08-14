@@ -3847,8 +3847,9 @@ router.get('/today', auth, async (req, res) => {
 
     const active = await getActivePlanForUser(req.user.id, null, { planningDateLocal: dateISO });
     if (!active) return res.json({ today: null, execution: { hasPlan: false, hasDay: false, date: dateISO } });
-    const progress = active.source === 'assigned' ? parseJsonValue(active.row.progress_json, {}) : {};
-    const parsed = withDurationEstimatePlanPayload(planWithoutRemovedSessions(parsePlan(active.row), progress, active.row));
+    const planViews = planSchema.planViewsForAssignment(parsePlan(active.row), active.row);
+    const progress = active.source === 'assigned' ? planViews.progress : {};
+    const parsed = withDurationEstimatePlanPayload(planViews.visiblePlan);
     const anchorPayload = planAnchorPayload(parsed);
 
     const override = await dbGet(
@@ -3857,6 +3858,7 @@ router.get('/today', auth, async (req, res) => {
     );
     const patch = dailyExecution.parseCheckinOverridePatch(override?.patch_json);
     const resolvedToday = dailyExecution.resolvePlanDayForDate({ plan: parsed, dateISO, patch });
+    const storedToday = dailyExecution.resolvePlanDayForDate({ plan: planViews.storedPlan, dateISO });
     const {
       weekdayShort,
       selectedEntry,
@@ -3876,6 +3878,7 @@ router.get('/today', auth, async (req, res) => {
 
     const effortEntry = withPlanEffortDayPayload(selectedEntry, hrProfile);
     const effortToday = withPlanEffortDayPayload(legacyToday, hrProfile);
+    const restSource = dailyExecution.restSourceForPlanEntries(storedToday.selectedEntry, resolvedToday.baseEntry);
     const execution = dailyExecution.buildDailyExecution({
       plan: parsed,
       dateISO,
@@ -3885,6 +3888,7 @@ router.get('/today', auth, async (req, res) => {
       selectedDayIndex,
       completedSessionIds,
       hrProfile,
+      restSource,
     });
 
     res.json({

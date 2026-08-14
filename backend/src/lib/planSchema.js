@@ -515,7 +515,7 @@ function normalizePersistedPlanIdentities(plan, assignmentRow = {}) {
   };
 }
 
-function visiblePlanForAssignment(plan, assignmentRow = {}) {
+function planViewsForAssignment(plan, assignmentRow = {}) {
   const normalized = normalizePersistedPlanIdentities(plan, assignmentRow);
   const progress = normalized.progress;
   const removedSessionIds = Array.isArray(progress?.removedSessionIds)
@@ -524,7 +524,15 @@ function visiblePlanForAssignment(plan, assignmentRow = {}) {
   const identified = withRemovalSessionIdentities(normalized.plan, {
     assignmentStart: assignmentRow?.week_start || assignmentRow?.effective_from || assignmentRow?.started_at || null,
   });
-  return withoutRemovedSessions(identified, removedSessionIds);
+  return {
+    storedPlan: identified,
+    visiblePlan: withoutRemovedSessions(identified, removedSessionIds),
+    progress,
+  };
+}
+
+function visiblePlanForAssignment(plan, assignmentRow = {}) {
+  return planViewsForAssignment(plan, assignmentRow).visiblePlan;
 }
 
 function isRestEntry(dayEntry) {
@@ -870,6 +878,7 @@ module.exports = {
   removalSessionIdentifier,
   withoutRemovedSessions,
   normalizePersistedPlanIdentities,
+  planViewsForAssignment,
   visiblePlanForAssignment,
   normalizeSession,
   sessionIdentifier,
