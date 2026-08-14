@@ -101,6 +101,38 @@ function restExecution() {
   }
 }
 
+function checkinRecoveryExecution() {
+  const recoveryRun = {
+    ...plannedRun,
+    type: 'rest',
+    workout_type: 'rest',
+    title: 'Rest day',
+    distance_miles: 0,
+    target_zone: null,
+    description: "Rest day from today's check-in.",
+    steps: [],
+    checkin_override: { action: 'rest', label: 'Changed to rest from daily check-in' },
+  }
+  return {
+    today: { date: today, day: todayDay, type: 'rest', sessions: [recoveryRun] },
+    execution: {
+      hasPlan: true,
+      hasDay: true,
+      isRest: false,
+      isPlannedRest: false,
+      restSource: null,
+      mode: 'run_only',
+      phase: 'base',
+      week: 1,
+      date: today,
+      day: todayDay,
+      sessions: [recoveryRun],
+      run: recoveryRun,
+      lift: null,
+    },
+  }
+}
+
 test('planned rest day does not prompt for a readiness check-in', async ({ page }) => {
   const runtimeErrors = collectRuntimeErrors(page)
   const apiState = await installAuthenticatedApi(page, {
@@ -155,6 +187,40 @@ test('unscheduled rest guidance asks for a current check-in without claiming sch
   await expect(page.getByRole('button', { name: 'Check in', exact: true })).toBeVisible()
   await expect(page.getByText('An extra run is already logged today. Recovery is still the guidance for today.', { exact: true })).toBeVisible()
   await expect(page.getByText(/Rest and recovery are scheduled today/)).toHaveCount(0)
+
+  assertCleanApiAndRuntime(apiState, runtimeErrors)
+})
+
+test('check-in recovery remains guidance and never offers the rest-labelled run', async ({ page }) => {
+  const runtimeErrors = collectRuntimeErrors(page)
+  const apiState = await installAuthenticatedApi(page, {
+    responses: new Map([
+      ['GET /api/plans/today', checkinRecoveryExecution()],
+      ['GET /api/checkin/today', {
+        feeling: 1,
+        sleep_hours: 3,
+        life_flags: ['sick'],
+      }],
+      ['GET /api/runs', [{
+        id: 'checkin-recovery-recorded-run',
+        type: 'easy',
+        date: today,
+        distance_miles: 3,
+        duration_seconds: 1800,
+      }]],
+    ]),
+  })
+
+  await page.goto('/')
+  await expect(page.getByRole('heading', { name: "Recovery is today's guidance" })).toBeVisible()
+  await expect(page.getByText('An extra run is already logged today. Recovery is still the guidance for today.', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'View recovery', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'View recovery', exact: true }).click()
+  await expect(page.getByRole('heading', { name: "Recovery is today's guidance" }).last()).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Start run', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Map route', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Edit check-in', exact: true }).last()).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Recovery is the plan today' })).toHaveCount(0)
 
   assertCleanApiAndRuntime(apiState, runtimeErrors)
 })

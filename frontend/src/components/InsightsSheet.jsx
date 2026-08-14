@@ -348,7 +348,9 @@ export function DailyCoachFlow({ checkedInToday, readinessData, recommendation, 
               ? allScheduledComplete
                 ? 'Today\'s plan is complete'
                 : checkedInToday
-                ? (isRestDay ? 'Recovery is the plan today' : 'Train from the plan')
+                ? (isRestDay
+                    ? (isPlannedRestDay ? 'Recovery is the plan today' : 'Recovery is today\'s guidance')
+                    : 'Train from the plan')
                 : 'Review today\'s plan'
               : checkedInToday
                 ? 'Today\'s plan is not ready'
@@ -550,7 +552,9 @@ export function TodayDetailSheet({
           <div>
             <p className="text-xs font-bold uppercase" style={{ color: 'var(--accent)', letterSpacing: 0.8 }}>Today</p>
             <h2 className="mt-1 text-2xl font-black" style={{ color: 'var(--text-primary)' }}>
-              {isRestDay ? 'Recovery is the plan today' : (hasViewablePlan ? 'Today\'s training plan' : 'No workout scheduled')}
+              {isRestDay
+                ? (isPlannedRestDay ? 'Recovery is the plan today' : 'Recovery is today\'s guidance')
+                : (hasViewablePlan ? 'Today\'s training plan' : 'No workout scheduled')}
             </h2>
           </div>
           <button onClick={onClose} className="rounded-lg px-3 py-2 text-xs" style={{ background: 'var(--bg-input)', color: 'var(--text-muted)' }}>
@@ -612,9 +616,9 @@ export function TodayDetailSheet({
                 <TodayCalendarSession
                   key={session?.id || `${calendarSessionKind(session)}-${index}`}
                   session={session}
-                  onStartRun={onStartRun}
-                  onStartLift={onStartLift}
-                  onPlanRoute={onPlanRoute}
+                  onStartRun={isRestDay ? undefined : onStartRun}
+                  onStartLift={isRestDay ? undefined : onStartLift}
+                  onPlanRoute={isRestDay ? undefined : onPlanRoute}
                   t={t}
                 />
               ))}
