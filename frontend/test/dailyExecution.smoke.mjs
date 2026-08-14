@@ -6,6 +6,8 @@ import {
   localDateISO,
   normalizeExecution,
   isRestSession,
+  isRestExecutionAuthority,
+  executionAllowsSession,
   hasExecutableSession,
   formatHrZone,
   completionBody,
@@ -105,6 +107,7 @@ assert(normalizeExecution(null).hasPlan === false, 'null body normalizes without
 const recovery = normalizeExecution(checkinRecoveryBody);
 assert(isRestSession(recovery.run) === true, 'rest prescription overrides retained run-slot kind');
 assert(hasExecutableSession(recovery) === false, 'check-in recovery guidance is never executable');
+assert(isRestExecutionAuthority(recovery) === true, 'rest-labelled session is a current-day safety-rest authority');
 
 console.log('\n== formatHrZone ==');
 assert(formatHrZone(h.run) === 'Zone 2 · 134-148 bpm', 'calibrated bpm band rendered');
@@ -170,6 +173,8 @@ const staleLiftAfterRestDirective = normalizeExecution({
   },
 });
 assert(hasExecutableSession(staleLiftAfterRestDirective) === false, 'day-level safety rest fails closed even if a stale lift session is still strength');
+assert(isRestExecutionAuthority(staleLiftAfterRestDirective) === true, 'day-level check-in rest is canonical even when its retained lift payload says strength');
+assert(executionAllowsSession(staleLiftAfterRestDirective, { id: 'lift-stale', kind: 'lift' }, 'lift') === false, 'stale retained lift cannot pass the current-day execution gate');
 assert(scheduledLiftFromExecution(staleLiftAfterRestDirective) === null, 'day-level safety rest never exposes a stale lift handoff');
 assert(recommendationFromExecution(staleLiftAfterRestDirective)?.type === 'rest', 'day-level safety rest remains recovery guidance with stale session data');
 const liftPendingAfterRun = normalizeExecution({ execution: {
@@ -185,6 +190,9 @@ assert(hasExecutableSession(liftPendingAfterRun) === true, 'hybrid day stays exe
 assert(scheduledRunFromExecution(liftPendingAfterRun) === null, 'completed run cannot reopen from Today');
 assert(scheduledLiftFromExecution(liftPendingAfterRun)?.id === 'lift-next', 'unfinished lift becomes the next executable session');
 assert(recommendationFromExecution(liftPendingAfterRun)?.recommendationType === 'strength', 'Today recommends the pending lift after the run is complete');
+assert(executionAllowsSession(liftPendingAfterRun, { id: 'lift-next', kind: 'lift' }, 'lift') === true, 'exact unfinished canonical lift remains executable');
+assert(executionAllowsSession(liftPendingAfterRun, { id: 'lift-stale', kind: 'lift' }, 'lift') === false, 'noncanonical stale lift id fails closed');
+assert(executionAllowsSession(liftPendingAfterRun, { id: 'lift-next', kind: 'run' }, 'run') === false, 'session kind must match the canonical execution');
 const allComplete = normalizeExecution({ execution: {
   hasPlan: true,
   hasDay: true,

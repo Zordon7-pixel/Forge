@@ -174,6 +174,32 @@ function liftOnlyCheckinRecoveryExecution({ patchSession = true } = {}) {
   }
 }
 
+function activePlanWithTodaySessions(sessions) {
+  return {
+    plan: {
+      id: 'journey-current-day-plan',
+      name: 'Current day safety plan',
+      type: 'hybrid_maintain',
+      weeks: 1,
+      plan_data: {
+        schemaVersion: 2,
+        planMode: 'hybrid_maintain',
+        weeks: [{
+          week: 1,
+          phase: 'base',
+          startDate: today,
+          days: [{ date: today, day: todayDay, sessions }],
+        }],
+      },
+    },
+    user_plan: {
+      current_week: 1,
+      started_at: today,
+      progress: { completedSessionIds: [] },
+    },
+  }
+}
+
 test('planned rest day does not prompt for a readiness check-in', async ({ page }) => {
   const runtimeErrors = collectRuntimeErrors(page)
   const apiState = await installAuthenticatedApi(page, {
@@ -352,6 +378,7 @@ test('lift-only safety rest cannot expose strength or workout starts even with a
       // Deliberately retain a stale strength session while the canonical day
       // directive says rest. The phone must fail closed independently.
       ['GET /api/plans/today', liftOnlyCheckinRecoveryExecution({ patchSession: false })],
+      ['GET /api/plans/my', activePlanWithTodaySessions([plannedLift])],
     ]),
   })
 
@@ -373,6 +400,23 @@ test('lift-only safety rest cannot expose strength or workout starts even with a
   await page.getByRole('button', { name: 'View recovery', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Start workout', exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Start lift', exact: true })).toHaveCount(0)
+
+  // The Train surface routes rest to Plan for explanation. Plan must consume
+  // the same canonical /plans/today safety authority instead of resurrecting
+  // the retained lift from /plans/my.
+  await page.goto('/plan')
+  await page.locator('.forged-mission-card').click()
+  await expect(page.getByRole('heading', { name: "Rest day from today's check-in", exact: true })).toBeVisible()
+  await expect(page.getByText('Changed to rest from daily check-in', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Start Lift', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Start Run', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Start a run', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: /Export watch workout/i })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: /Copy workout/i })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: /Send to Watch/i })).toHaveCount(0)
+  await expect(page).not.toHaveURL(/\/log-lift(?:\?|$)/)
+  expect([320, 393]).toContain(page.viewportSize()?.width)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(await page.evaluate(() => document.documentElement.clientWidth))
 
   expect(requestsFor(apiState, 'POST', '/api/checkin')).toHaveLength(1)
   assertCleanApiAndRuntime(apiState, runtimeErrors)
@@ -1172,6 +1216,7 @@ test('Weekly Run Brief preserves mobile naming, recorded-run provenance, prescri
   const apiState = await installAuthenticatedApi(page, {
     responses: new Map([
       ['GET /api/plans/my', { plan, user_plan: { current_week: 1, started_at: isoAt(0), progress: { completedSessionIds: [] } } }],
+      ['GET /api/plans/today', executionWith({ run: todayRun, lift: liftSession })],
       ['GET /api/runs', [recordedRun]],
       ['GET /api/gear/shoes', { shoes: [{
         id: 'brief-road-racer', brand: 'Forge Test', model: 'Road Racer', category: 'race', surface: 'road', intent_tags: [],

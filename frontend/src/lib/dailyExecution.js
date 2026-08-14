@@ -17,6 +17,8 @@ import { queueRequest } from './offlineQueue';
 import {
   localDateISO,
   normalizeExecution,
+  isRestExecutionAuthority,
+  executionAllowsSession,
   hasExecutableSession,
   formatHrZone,
   completionBody,
@@ -34,6 +36,8 @@ import {
 export {
   localDateISO,
   normalizeExecution,
+  isRestExecutionAuthority,
+  executionAllowsSession,
   hasExecutableSession,
   formatHrZone,
   completionBody,
@@ -73,6 +77,8 @@ export async function queueSessionComplete(sessionId, currentWeek) {
 export default {
   localDateISO,
   normalizeExecution,
+  isRestExecutionAuthority,
+  executionAllowsSession,
   hasExecutableSession,
   formatHrZone,
   completionBody,

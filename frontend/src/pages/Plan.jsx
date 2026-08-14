@@ -20,6 +20,7 @@ import { resolveReadiness } from '../lib/truthConsistency'
 import { deriveRacePlanReconciliation } from '../lib/travelTraining'
 import { removeScheduledWorkout } from '../lib/selfServiceRemoval'
 import { buildWeeklyRunBrief } from '../lib/weeklyRunBrief'
+import { executionAllowsSession, fetchDailyExecution } from '../lib/dailyExecution'
 import TravelTrainingPrompt from '../components/TravelTrainingPrompt'
 import {
   buildScheduleRebuildRequest,
@@ -154,6 +155,8 @@ export default function Plan() {
   const [removingSessionId, setRemovingSessionId] = useState(null)
   const [sessionRemovalError, setSessionRemovalError] = useState('')
   const [sessionRemovalNotice, setSessionRemovalNotice] = useState('')
+  const [todayExecution, setTodayExecution] = useState(null)
+  const [todayExecutionStatus, setTodayExecutionStatus] = useState('loading')
   const weekSyncInFlight = useRef(null)
   const currentPlanCalendarRef = useRef(null)
 
@@ -168,6 +171,7 @@ export default function Plan() {
   const loadAll = async ({ includeAdaptation = true } = {}) => {
     setLoading(true)
     setAdaptationError('')
+    setTodayExecutionStatus('loading')
     try {
       const myRes = await api.get('/plans/my')
       const nextPlan = myRes.data?.plan || null
@@ -176,7 +180,10 @@ export default function Plan() {
       setMyUserPlan(nextUserPlan)
       const nextCalendar = nextPlan ? buildCalendarModel(nextPlan, nextUserPlan) : null
       const runDateRange = calendarDateRange(nextCalendar, todayISO())
-      const [racesRes, runsRes, checkinRes, injuryRes, readinessRes, gearRes, hrRes] = await Promise.all([
+      const [executionRes, racesRes, runsRes, checkinRes, injuryRes, readinessRes, gearRes, hrRes] = await Promise.all([
+        fetchDailyExecution(todayISO())
+          .then((execution) => ({ execution, error: null }))
+          .catch((error) => ({ execution: null, error })),
         api.get('/races').catch((err) => {
           console.error('[Plan] race list load failed:', err?.message || err)
           return null
@@ -206,6 +213,14 @@ export default function Plan() {
           return { data: { profile: null, zones: [] } }
         }),
       ])
+      if (executionRes.error) {
+        console.error('[Plan] daily execution authority load failed:', executionRes.error?.message || executionRes.error)
+        setTodayExecution(null)
+        setTodayExecutionStatus('error')
+      } else {
+        setTodayExecution(executionRes.execution)
+        setTodayExecutionStatus('ready')
+      }
       if (racesRes) setRaces(Array.isArray(racesRes.data?.races) ? racesRes.data.races : [])
       if (runsRes) setRuns(Array.isArray(runsRes.data) ? runsRes.data : Array.isArray(runsRes.data?.runs) ? runsRes.data.runs : [])
       setTravelCheckin(checkinRes.data || null)
@@ -248,6 +263,8 @@ export default function Plan() {
       }
     } catch (err) {
       console.error('[Plan] failed to load active plan:', err?.message || err)
+      setTodayExecution(null)
+      setTodayExecutionStatus('error')
       return null
     } finally {
       setLoading(false)
@@ -380,8 +397,10 @@ export default function Plan() {
     todayISO: today,
   }), [model, races, today])
   const travelExecution = useMemo(
-    () => executionFromCalendar(calendarModel, today, completedSet),
-    [calendarModel, today, completedSet],
+    () => (todayExecutionStatus === 'ready'
+      ? todayExecution
+      : executionFromCalendar(calendarModel, today, completedSet)),
+    [calendarModel, today, completedSet, todayExecution, todayExecutionStatus],
   )
   const hasRunRecordedToday = useMemo(
     () => Boolean(recordedRunsByDate.get(today)?.length),
@@ -684,8 +703,14 @@ export default function Plan() {
     return window.confirm(`${sessionLabel} is scheduled for ${scheduledDate}. Start it now and keep it linked to that plan day?`)
   }
 
+  const currentExecutionAllows = (session, kind) => {
+    if (!selectedDay || selectedDay.dateISO !== today) return true
+    return todayExecutionStatus === 'ready'
+      && executionAllowsSession(todayExecution, session, kind)
+  }
+
   const startRunSession = (runSession, { plannedRoute = null, surface = 'road' } = {}) => {
-    if (!runSession || !confirmOffScheduleStart('This run')) return
+    if (!runSession || !currentExecutionAllows(runSession, 'run') || !confirmOffScheduleStart('This run')) return
     navigate('/warmup', { state: withActiveRunReturnTarget({
       planSessionId: runSession.id != null ? String(runSession.id) : null,
       currentWeek: Number.isFinite(selectedDay?.weekIndex) ? selectedDay.weekIndex + 1 : currentWeek,
@@ -707,7 +732,7 @@ export default function Plan() {
   }
 
   const startLiftSession = (liftSession) => {
-    if (!liftSession || !confirmOffScheduleStart('This lift')) return
+    if (!liftSession || !currentExecutionAllows(liftSession, 'lift') || !confirmOffScheduleStart('This lift')) return
     navigate('/log-lift', { state: {
       planSessionId: liftSession.id != null ? String(liftSession.id) : null,
       currentWeek: Number.isFinite(selectedDay?.weekIndex) ? selectedDay.weekIndex + 1 : currentWeek,
@@ -998,7 +1023,9 @@ export default function Plan() {
               removalNotice={sessionRemovalNotice}
               allowSessionRemoval={selectedDay.dateISO >= today}
               isScheduledToday={selectedDay.dateISO === today}
-              routePlanner={routePlannerStatus.available && routePlannerWorkout?.distanceMiles > 0 ? (
+              executionAuthority={todayExecution}
+              executionAuthorityReady={todayExecutionStatus === 'ready'}
+              routePlanner={routePlannerStatus.available && routePlannerWorkout?.distanceMiles > 0 && currentExecutionAllows(selectedRunSession, 'run') ? (
                 <Suspense fallback={<p style={{ marginTop: 10, fontSize: 12, color: 'var(--ink-soft, #5A554B)' }}>Loading route planner...</p>}>
                   <RoutePlanner
                     workout={routePlannerWorkout}

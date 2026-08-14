@@ -112,10 +112,46 @@ function recoveryGuidanceSession(execution) {
   };
 }
 
+// A current-day execution response is the safety authority for workout entry
+// points. A check-in rest override may deliberately retain the original
+// session id/kind for auditability, so consumers must inspect both session and
+// day-level guidance before exposing any start/export action.
+export function isRestExecutionAuthority(execution) {
+  return Boolean(
+    execution
+    && execution.hasPlan === true
+    && execution.hasDay === true
+    && (execution.isRest === true || recoveryGuidanceSession(execution)),
+  );
+}
+
+// Fail closed for current-day actions unless the exact unfinished session is
+// still present in canonical GET /plans/today output. Future-day previews are
+// handled by the caller and intentionally do not use this today-only gate.
+export function executionAllowsSession(execution, session, expectedKind = null) {
+  if (!execution || execution.hasPlan !== true || execution.hasDay !== true) return false;
+  if (isRestExecutionAuthority(execution) || !session || typeof session !== 'object') return false;
+  const id = String(session.id ?? '').trim();
+  const kind = String(expectedKind || session.kind || '').trim().toLowerCase();
+  if (!id || !kind) return false;
+  const candidates = [
+    execution.run,
+    execution.lift,
+    ...(Array.isArray(execution.sessions) ? execution.sessions : []),
+  ];
+  return candidates.some((candidate) => (
+    candidate
+    && String(candidate.id ?? '').trim() === id
+    && String(candidate.kind || '').trim().toLowerCase() === kind
+    && isPendingSession(candidate)
+    && !isRestSession(candidate)
+  ));
+}
+
 // True when there is an unfinished scheduled session today. Completed sessions
 // remain reviewable, but they must never reopen from Today's primary action.
 export function hasExecutableSession(execution) {
-  if (!execution || !execution.hasDay || execution.isRest || recoveryGuidanceSession(execution)) return false;
+  if (!execution || !execution.hasDay || isRestExecutionAuthority(execution)) return false;
   return isPendingSession(execution.run) || isPendingSession(execution.lift);
 }
 

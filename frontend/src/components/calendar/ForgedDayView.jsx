@@ -10,6 +10,7 @@ import AiGuidanceNote from '../AiGuidanceNote'
 import WatchWorkoutService from '../../services/WatchWorkoutService'
 import ExerciseGuideAction from '../ExerciseGuideAction'
 import { canonicalWorkoutLabel, normalizeLiftExercisePrescription, sessionState } from '../../lib/planCalendar'
+import { executionAllowsSession, isRestExecutionAuthority } from '../../lib/dailyExecutionCore'
 import { trainingEvidenceKindLabel } from '../../lib/trainingEvidence'
 import './forgedCalendar.css'
 
@@ -312,6 +313,8 @@ export default function ForgedDayView({
   removalNotice = '',
   allowSessionRemoval = false,
   isScheduledToday = true,
+  executionAuthority = null,
+  executionAuthorityReady = false,
   routePlanner = null,
   briefDay = null,
   weeklyBrief = null,
@@ -328,8 +331,42 @@ export default function ForgedDayView({
   const runSession = sessions.find((s) => s.kind === 'run') || null
   const liftSession = sessions.find((s) => s.kind === 'lift') || null
   const hyroxSessions = sessions.filter((s) => s.kind === 'hyrox')
-  const isRest = !day || day.isRest
-  const restPrescription = day?.restPrescription || null
+  const canonicalRestToday = Boolean(
+    isScheduledToday
+    && executionAuthorityReady
+    && isRestExecutionAuthority(executionAuthority),
+  )
+  const canonicalRestReplacesWorkout = canonicalRestToday && Boolean(day && !day.isRest)
+  const canonicalCheckinRest = canonicalRestToday && (
+    String(executionAuthority?.checkinOverride?.action || '').trim().toLowerCase() === 'rest'
+    || executionAuthority?.sessions?.some((session) => (
+      String(session?.checkin_override?.action || session?.checkinOverride?.action || '').trim().toLowerCase() === 'rest'
+    ))
+  )
+  const canExecuteSession = (session, kind) => (
+    !isScheduledToday
+    || (executionAuthorityReady && executionAllowsSession(executionAuthority, session, kind))
+  )
+  const blockedCurrentSessions = isScheduledToday && !canonicalRestToday && sessions.some((session) => (
+    !canExecuteSession(session, session.kind)
+  ))
+  const isRest = !day || day.isRest || canonicalRestToday
+  const canonicalRestDescription = firstStr(
+    executionAuthority?.checkinOverride?.label,
+    executionAuthority?.legacyToday?.description,
+    executionAuthority?.sessions?.find((session) => session && session.type === 'rest')?.description,
+    "Recovery is today's guidance.",
+  )
+  const restPrescription = canonicalRestReplacesWorkout
+    ? {
+        title: canonicalCheckinRest ? "Rest day from today's check-in" : 'No planned workout today',
+        raw: {
+          description: canonicalCheckinRest
+            ? canonicalRestDescription
+            : firstStr(executionAuthority?.legacyToday?.description, 'The current daily plan no longer includes this workout.'),
+        },
+      }
+    : day?.restPrescription || null
   const restRaw = restPrescription?.raw || restPrescription?.prescription || {}
   const isRecoveryAlternative = Boolean(restRaw.recovery_alternative)
   const recoveryOptions = Array.isArray(restRaw.recovery_alternative?.options)
@@ -386,7 +423,7 @@ export default function ForgedDayView({
     : (!runDone && runSession ? 'run' : !liftDone && liftSession ? 'lift' : null)
 
   const renderRemoveButton = (session, done) => {
-    if (!allowSessionRemoval || done || !session?.removalSessionId || typeof onRemoveSession !== 'function') return null
+    if (!allowSessionRemoval || done || !session?.removalSessionId || typeof onRemoveSession !== 'function' || !canExecuteSession(session, session?.kind)) return null
     const removing = String(removingSessionId || '') === String(session.removalSessionId)
     return (
       <button
@@ -447,6 +484,7 @@ export default function ForgedDayView({
   const renderHyrox = (hyroxSession) => {
     const facts = hyroxFacts(hyroxSession)
     const done = isDone(hyroxSession)
+    const canExecute = canExecuteSession(hyroxSession, 'hyrox')
     return (
       <PaperSection key={hyroxSession.id} title={hyroxSession.title || 'HYROX session'} tone="red" px={px}
         icon={<span className="forged-stamp forged-stamp--hyrox" data-state={sessionState(hyroxSession, completedSet)}><Activity size={16} /></span>}>
@@ -486,10 +524,12 @@ export default function ForgedDayView({
         {facts.stopScaleCriteria.length > 0 && (
           <div style={{ marginTop: 10 }}><strong style={{ fontSize: px(13) }}>Stop or scale when</strong><ul style={{ margin: '4px 0 0', paddingLeft: 18, fontSize: px(12) }}>{facts.stopScaleCriteria.map((item, index) => <li key={`hyrox-stop-${index}`}>{item}</li>)}</ul></div>
         )}
-        <button type="button" onClick={() => onToggleComplete?.(hyroxSession.id)} disabled={updating} style={{ width: '100%', minHeight: 48, marginTop: 12, border: '1px solid rgba(60,55,45,0.2)', borderRadius: 8, padding: '12px 14px', background: 'transparent', fontSize: px(13), fontWeight: 850 }}>
-          {done ? <CheckCircle2 size={16} color="#15803D" style={{ display: 'inline', marginRight: 6, verticalAlign: -3 }} /> : <Circle size={16} style={{ display: 'inline', marginRight: 6, verticalAlign: -3 }} />}{done ? 'HYROX session done' : 'Mark HYROX session done'}
-        </button>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>{renderRemoveButton(hyroxSession, done)}</div>
+        {canExecute && <>
+          <button type="button" onClick={() => onToggleComplete?.(hyroxSession.id)} disabled={updating} style={{ width: '100%', minHeight: 48, marginTop: 12, border: '1px solid rgba(60,55,45,0.2)', borderRadius: 8, padding: '12px 14px', background: 'transparent', fontSize: px(13), fontWeight: 850 }}>
+            {done ? <CheckCircle2 size={16} color="#15803D" style={{ display: 'inline', marginRight: 6, verticalAlign: -3 }} /> : <Circle size={16} style={{ display: 'inline', marginRight: 6, verticalAlign: -3 }} />}{done ? 'HYROX session done' : 'Mark HYROX session done'}
+          </button>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>{renderRemoveButton(hyroxSession, done)}</div>
+        </>}
       </PaperSection>
     )
   }
@@ -519,6 +559,7 @@ export default function ForgedDayView({
     const canonicalTitle = canonicalWorkoutLabel(runSession)
     const secondaryTitle = secondaryWorkoutTitle(runSession, canonicalTitle)
     const isPrimary = primarySessionKind === 'run'
+    const canExecute = canExecuteSession(runSession, 'run')
     return (
       <PaperSection title={canonicalTitle} tone="run" px={px}
         icon={<span className="forged-stamp forged-stamp--run" data-state={sessionState(runSession, completedSet)}><Footprints size={16} /></span>}>
@@ -571,20 +612,22 @@ export default function ForgedDayView({
             <ul style={{ margin: '4px 0 0', paddingLeft: 18, fontSize: px(13) }}>{f.cooldown.map((it, i) => <li key={`cd-${i}`}>{it}</li>)}</ul>
           </div>
         )}
-        <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
-          <button type="button" onClick={() => onStartRun?.(runSession)} disabled={typeof onStartRun !== 'function'}
-            title="Start this scheduled run"
-            className={isPrimary ? 'forged-start-run' : undefined} style={{ flex: '1 1 140px', minHeight: 48, border: isPrimary ? 'none' : '1px solid rgba(60,55,45,0.24)', borderRadius: 8, padding: '12px', background: isPrimary ? undefined : 'transparent', color: isPrimary ? undefined : 'var(--ink, #241F18)', fontWeight: 900, fontSize: px(14), cursor: typeof onStartRun === 'function' ? 'pointer' : 'not-allowed', opacity: typeof onStartRun === 'function' ? 1 : 0.5 }}>
-            Start Run
-          </button>
-          <button type="button" onClick={() => onToggleComplete?.(runSession.id)} disabled={updating}
-            style={{ flex: '0 0 auto', border: '1px solid rgba(60,55,45,0.2)', borderRadius: 8, padding: '12px 14px', background: 'transparent', display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: px(13), cursor: 'pointer' }}>
-            {done ? <CheckCircle2 size={16} color="#15803D" /> : <Circle size={16} />} {done ? 'Done' : 'Mark done'}
-          </button>
-          {renderRemoveButton(runSession, done)}
-        </div>
-        {routePlanner}
-        <WatchWorkoutSendButton workout={watchWorkout} className="mt-2" />
+        {canExecute && <>
+          <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+            <button type="button" onClick={() => onStartRun?.(runSession)} disabled={typeof onStartRun !== 'function'}
+              title="Start this scheduled run"
+              className={isPrimary ? 'forged-start-run' : undefined} style={{ flex: '1 1 140px', minHeight: 48, border: isPrimary ? 'none' : '1px solid rgba(60,55,45,0.24)', borderRadius: 8, padding: '12px', background: isPrimary ? undefined : 'transparent', color: isPrimary ? undefined : 'var(--ink, #241F18)', fontWeight: 900, fontSize: px(14), cursor: typeof onStartRun === 'function' ? 'pointer' : 'not-allowed', opacity: typeof onStartRun === 'function' ? 1 : 0.5 }}>
+              Start Run
+            </button>
+            <button type="button" onClick={() => onToggleComplete?.(runSession.id)} disabled={updating}
+              style={{ flex: '0 0 auto', border: '1px solid rgba(60,55,45,0.2)', borderRadius: 8, padding: '12px 14px', background: 'transparent', display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: px(13), cursor: 'pointer' }}>
+              {done ? <CheckCircle2 size={16} color="#15803D" /> : <Circle size={16} />} {done ? 'Done' : 'Mark done'}
+            </button>
+            {renderRemoveButton(runSession, done)}
+          </div>
+          {routePlanner}
+          <WatchWorkoutSendButton workout={watchWorkout} className="mt-2" />
+        </>}
       </PaperSection>
     )
   }
@@ -604,6 +647,7 @@ export default function ForgedDayView({
     const canonicalTitle = canonicalWorkoutLabel(liftSession)
     const secondaryTitle = secondaryWorkoutTitle(liftSession, canonicalTitle)
     const isPrimary = primarySessionKind === 'lift'
+    const canExecute = canExecuteSession(liftSession, 'lift')
     return (
       <PaperSection title={canonicalTitle} px={px}
         icon={<span className="forged-stamp forged-stamp--lift" data-state={sessionState(liftSession, completedSet)}><Dumbbell size={16} /></span>}>
@@ -654,19 +698,21 @@ export default function ForgedDayView({
             <ul style={{ margin: '4px 0 0', paddingLeft: 18, fontSize: px(13) }}>{f.recovery.map((item, index) => <li key={`lift-recovery-${index}`}>{item}</li>)}</ul>
           </div>
         )}
-        <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
-          <button type="button" onClick={() => onStartLift?.(liftSession)} disabled={typeof onStartLift !== 'function'}
-            title="Start this scheduled lift"
-            className={isPrimary ? 'forged-start-lift' : undefined} style={{ flex: '1 1 140px', minHeight: 48, border: isPrimary ? 'none' : '1px solid rgba(60,55,45,0.24)', borderRadius: 8, padding: '12px', background: isPrimary ? undefined : 'transparent', color: isPrimary ? undefined : 'var(--ink, #241F18)', fontWeight: 900, fontSize: px(14), cursor: typeof onStartLift === 'function' ? 'pointer' : 'not-allowed', opacity: typeof onStartLift === 'function' ? 1 : 0.5 }}>
-            Start Lift
-          </button>
-          <button type="button" onClick={() => onToggleComplete?.(liftSession.id)} disabled={updating}
-            style={{ flex: '0 0 auto', border: '1px solid rgba(60,55,45,0.2)', borderRadius: 8, padding: '12px 14px', background: 'transparent', display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: px(13), cursor: 'pointer' }}>
-            {done ? <CheckCircle2 size={16} color="#15803D" /> : <Circle size={16} />} {done ? 'Done' : 'Mark done'}
-          </button>
-          {renderRemoveButton(liftSession, done)}
-        </div>
-        <WatchWorkoutSendButton workout={watchWorkout} className="mt-2" />
+        {canExecute && <>
+          <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+            <button type="button" onClick={() => onStartLift?.(liftSession)} disabled={typeof onStartLift !== 'function'}
+              title="Start this scheduled lift"
+              className={isPrimary ? 'forged-start-lift' : undefined} style={{ flex: '1 1 140px', minHeight: 48, border: isPrimary ? 'none' : '1px solid rgba(60,55,45,0.24)', borderRadius: 8, padding: '12px', background: isPrimary ? undefined : 'transparent', color: isPrimary ? undefined : 'var(--ink, #241F18)', fontWeight: 900, fontSize: px(14), cursor: typeof onStartLift === 'function' ? 'pointer' : 'not-allowed', opacity: typeof onStartLift === 'function' ? 1 : 0.5 }}>
+              Start Lift
+            </button>
+            <button type="button" onClick={() => onToggleComplete?.(liftSession.id)} disabled={updating}
+              style={{ flex: '0 0 auto', border: '1px solid rgba(60,55,45,0.2)', borderRadius: 8, padding: '12px 14px', background: 'transparent', display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: px(13), cursor: 'pointer' }}>
+              {done ? <CheckCircle2 size={16} color="#15803D" /> : <Circle size={16} />} {done ? 'Done' : 'Mark done'}
+            </button>
+            {renderRemoveButton(liftSession, done)}
+          </div>
+          <WatchWorkoutSendButton workout={watchWorkout} className="mt-2" />
+        </>}
       </PaperSection>
     )
   }
@@ -715,6 +761,16 @@ export default function ForgedDayView({
 
       {removalError && <p role="alert" style={{ fontSize: px(12), margin: '12px 0 0', padding: '9px 10px', borderRadius: 8, background: 'rgba(185,28,28,0.08)', color: '#B91C1C' }}>{removalError}</p>}
       {removalNotice && <p role="status" aria-live="polite" style={{ fontSize: px(12), margin: '12px 0 0', padding: '9px 10px', borderRadius: 8, background: 'rgba(22,163,74,0.1)', color: '#166534' }}>{removalNotice}</p>}
+      {isScheduledToday && !executionAuthorityReady && (
+        <p role="alert" style={{ fontSize: px(12), margin: '12px 0 0', padding: '9px 10px', borderRadius: 8, background: 'rgba(185,28,28,0.08)', color: '#B91C1C' }}>
+          Today&apos;s safety status could not be verified. Refresh before starting, exporting, or changing this workout.
+        </p>
+      )}
+      {blockedCurrentSessions && executionAuthorityReady && (
+        <p role="status" aria-live="polite" style={{ fontSize: px(12), margin: '12px 0 0', padding: '9px 10px', borderRadius: 8, background: 'rgba(194,65,12,0.08)', color: '#9A3412' }}>
+          Today&apos;s plan changed. Refresh this day before starting, exporting, or changing the retained workout.
+        </p>
+      )}
 
       {!isScheduledToday && !isRest && (
         <p role="status" style={{ fontSize: px(12), margin: '12px 0 0', padding: '8px 10px', borderRadius: 8, background: 'rgba(60,55,45,0.06)', color: 'var(--ink-soft, #5A554B)' }}>
@@ -757,7 +813,7 @@ export default function ForgedDayView({
             </ol>
           )}
           {firstStr(restRaw.progression) && <p style={{ fontSize: px(12), color: 'var(--ink-soft, #5A554B)', marginTop: 10 }}>{firstStr(restRaw.progression)}</p>}
-          {isScheduledToday && (
+          {isScheduledToday && !canonicalRestReplacesWorkout && (
             !isRecoveryAlternative ? <>
               <button
                 type="button"

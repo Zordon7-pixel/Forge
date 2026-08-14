@@ -38,7 +38,7 @@ assert(insights.includes('Recovery is the plan today'), 'rest-day heading is exp
 assert(!insights.includes("disabled={step.key === 'train' && isRestDay}"), 'Today no longer renders a redundant disabled workflow step on rest days')
 assert(insights.includes('isPlannedRestDay && planAccess.secondaryAction') && insights.includes('onStartUnplannedRun'), 'Today authored-rest details expose the guarded extra-run action')
 assert(dayView.includes('Choose an extra run or move a missed session onto today.'), 'calendar rest detail explains both rest-day intents')
-assert(dayView.includes('{isScheduledToday && ('), 'future calendar rest days cannot start a run today')
+assert(dayView.includes('{isScheduledToday && !canonicalRestReplacesWorkout && ('), 'future calendar rest days and current safety-rest overrides cannot start an extra run')
 assert(plan.includes("navigate('/log-run?tab=manual&intent=rest-day')"), 'Plan wires today rest runs to the intent chooser')
 assert(dashboard.includes('onStartUnplannedRun={handleStartUnplannedRun}'), 'Dashboard wires the Today rest action')
 assert(dashboard.includes("navigate('/log-run?tab=manual&intent=rest-day')"), 'Dashboard opens the rest-day intent chooser')
