@@ -32,7 +32,7 @@ assert(evidenceDeclaration >= 0 && evidenceDeclaration < evidenceUse, 'training 
 
 console.log('\n== Rest-day actions ==')
 assert(insights.includes("const isPlannedRestDay = execution?.isPlannedRest === true || execution?.restSource === 'planned'"), 'Today suppresses check-in only for an explicitly scheduled plan rest day')
-assert(insights.includes("const isRestDay = isPlannedRestDay || recommendation?.recommendationType === 'rest' || recommendation?.type === 'rest'"), 'check-in-derived recovery keeps recovery presentation without becoming scheduled rest')
+assert(insights.includes("const isRestDay = isPlannedRestDay || isRestExecutionAuthority(execution) || recommendation?.recommendationType === 'rest' || recommendation?.type === 'rest'"), 'check-in-derived recovery keeps canonical recovery presentation without becoming scheduled rest')
 assert(insights.includes("isRestDay ? 'View calendar' : 'Start/log'"), 'Today details route rest days to the calendar')
 assert(insights.includes('Recovery is the plan today'), 'rest-day heading is explicit')
 assert(!insights.includes("disabled={step.key === 'train' && isRestDay}"), 'Today no longer renders a redundant disabled workflow step on rest days')

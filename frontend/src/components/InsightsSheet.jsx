@@ -8,6 +8,7 @@ import ExerciseGuideAction from './ExerciseGuideAction'
 import { activityLabel, isRunningActivity } from '../lib/activityType'
 import { finiteReadinessScore, resolveReadiness } from '../lib/truthConsistency'
 import { resolveTodayPlanAccess, resolveTodayWorkoutLabel } from '../lib/todayPlanAccess'
+import { isRestExecutionAuthority } from '../lib/dailyExecutionCore'
 import { workoutActivityTitle } from '../lib/recentActivity'
 
 function activityDateLabel(value) {
@@ -259,7 +260,7 @@ export function ReadinessGauge({ score, onClick }) {
 export function DailyCoachFlow({ checkedInToday, readinessData, recommendation, execution, hasRunRecordedToday = false, onCheckIn, onStartWorkout, onStartUnplannedRun, onDetails }) {
   const readiness = resolveReadiness(readinessData)
   const isPlannedRestDay = execution?.isPlannedRest === true || execution?.restSource === 'planned'
-  const isRestDay = isPlannedRestDay || recommendation?.recommendationType === 'rest' || recommendation?.type === 'rest'
+  const isRestDay = isPlannedRestDay || isRestExecutionAuthority(execution) || recommendation?.recommendationType === 'rest' || recommendation?.type === 'rest'
   const recommendationLabel = recommendation
     ? getRecommendationLabel(recommendation)
     : "today's plan"
@@ -297,7 +298,11 @@ export function DailyCoachFlow({ checkedInToday, readinessData, recommendation, 
         ? 'An extra run is already logged today. Recovery remains the scheduled plan.'
         : 'An extra run is already logged today. Recovery is still the guidance for today.'
     }
-    if (!recommendation && isRestDay) return 'Rest and recovery are scheduled today. No check-in is needed unless you choose to train.'
+    if (!recommendation && isRestDay) {
+      return isPlannedRestDay
+        ? 'Rest and recovery are scheduled today. No check-in is needed unless you choose to train.'
+        : planAccess.uncheckedSignal
+    }
     if (!recommendation && calendarSessions.length > 0) {
       const summaryLabel = calendarLabel || 'training'
       return `${summaryLabel.charAt(0).toUpperCase() + summaryLabel.slice(1)} is scheduled today. Check in only if you want the effort adjusted.`
@@ -500,7 +505,7 @@ export function TodayDetailSheet({
   const calendarSessions = execution?.hasDay && Array.isArray(execution.sessions) ? execution.sessions : []
   const calendarKinds = [...new Set(calendarSessions.map(calendarSessionKind))]
   const isPlannedRestDay = execution?.isPlannedRest === true || execution?.restSource === 'planned'
-  const isRestDay = isPlannedRestDay || recommendation?.recommendationType === 'rest' || recommendation?.type === 'rest'
+  const isRestDay = isPlannedRestDay || isRestExecutionAuthority(execution) || recommendation?.recommendationType === 'rest' || recommendation?.type === 'rest'
   const planAccess = resolveTodayPlanAccess({
     checkedInToday,
     recommendation,

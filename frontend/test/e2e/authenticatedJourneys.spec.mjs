@@ -140,6 +140,37 @@ function checkinRecoveryExecution() {
   }
 }
 
+function legacyCheckinRecoveryExecution() {
+  return {
+    today: {
+      date: today,
+      day: todayDay,
+      type: 'rest',
+      workout_type: 'rest',
+      description: "Recovery is today's guidance.",
+      checkin_override: { action: 'rest', label: 'Changed to rest from daily check-in' },
+    },
+    execution: {
+      hasPlan: true,
+      hasDay: true,
+      isRest: true,
+      isPlannedRest: false,
+      restSource: null,
+      mode: 'hybrid_maintain',
+      phase: 'base',
+      week: 1,
+      date: today,
+      day: todayDay,
+      type: 'rest',
+      workout_type: 'rest',
+      checkinOverride: { action: 'rest', label: 'Changed to rest from daily check-in' },
+      sessions: [],
+      run: null,
+      lift: null,
+    },
+  }
+}
+
 function liftOnlyCheckinRecoveryExecution({ patchSession = true } = {}) {
   const recoveryLift = patchSession
     ? {
@@ -301,6 +332,69 @@ test('check-in recovery remains guidance and never offers the rest-labelled run'
   await expect(page.getByRole('button', { name: 'Edit check-in', exact: true }).last()).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Recovery is the plan today' })).toHaveCount(0)
 
+  assertCleanApiAndRuntime(apiState, runtimeErrors)
+})
+
+test('legacy empty check-in rest stays truthful and closes every workout handoff', async ({ page }) => {
+  const runtimeErrors = collectRuntimeErrors(page)
+  const apiState = await installAuthenticatedApi(page, {
+    responses: new Map([
+      ['GET /api/plans/my', activePlanWithTodaySessions([plannedRun, plannedLift])],
+      ['GET /api/plans/today', legacyCheckinRecoveryExecution()],
+      ['GET /api/checkin/today', {
+        feeling: 2,
+        legs: 2,
+        drive: 2,
+        life_flags: ['traveling'],
+      }],
+      ['GET /api/recovery/readiness', { available: true, score: 42, band: 'RED' }],
+      ['GET /api/injury/active', { injuries: [], safetyUnavailable: false }],
+      ['POST /api/travel-context', { status: 'away', confidence: 'high', distanceBand: 'over_150_miles' }],
+      ['POST /api/plans/today/bodyweight-alternative', { alternative: plannedLift }],
+    ]),
+  })
+
+  await page.goto('/')
+  await expect(page.getByRole('heading', { name: "Recovery is today's guidance", exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'View recovery', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Edit check-in', exact: true })).toBeVisible()
+  await expect(page.getByText("Today's plan is not ready", { exact: true })).toHaveCount(0)
+  await expect(page.getByText('No workout is available yet. Review your check-in or open the calendar.', { exact: true })).toHaveCount(0)
+  await page.getByRole('button', { name: 'View recovery', exact: true }).click()
+  await expect(page.getByRole('heading', { name: "Recovery is today's guidance", exact: true }).last()).toBeVisible()
+
+  const forbiddenButtons = [
+    /^Start run$/i,
+    /^Start lift$/i,
+    /^Start workout$/i,
+    /^Start HYROX/i,
+    /^Warm-up$/i,
+    /^Map route$/i,
+    /Export watch workout/i,
+    /Send to Watch/i,
+    /Copy workout/i,
+    /^Mark done$/i,
+    /^Done$/i,
+    /Remove workout/i,
+    /Runner strength — no equipment/i,
+  ]
+  for (const name of forbiddenButtons) {
+    await expect(page.getByRole('button', { name })).toHaveCount(0)
+  }
+  expect(requestsFor(apiState, 'POST', '/api/travel-context')).toHaveLength(0)
+  expect(requestsFor(apiState, 'POST', '/api/plans/today/bodyweight-alternative')).toHaveLength(0)
+  await expect(page).not.toHaveURL(/\/log-lift(?:\?|$)/)
+
+  await page.goto('/plan')
+  await page.locator('.forged-mission-card').click()
+  await expect(page.getByRole('heading', { name: "Rest day from today's check-in", exact: true })).toBeVisible()
+  await expect(page.getByText('Changed to rest from daily check-in', { exact: true })).toBeVisible()
+  for (const name of forbiddenButtons) {
+    await expect(page.getByRole('button', { name })).toHaveCount(0)
+  }
+  await expect(page).not.toHaveURL(/\/log-lift(?:\?|$)/)
+  expect([320, 393]).toContain(page.viewportSize()?.width)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(await page.evaluate(() => document.documentElement.clientWidth))
   assertCleanApiAndRuntime(apiState, runtimeErrors)
 })
 

@@ -228,7 +228,6 @@ export function recommendationFromExecution(execution) {
       source: 'calendar',
     };
   }
-  if (execution.isRest) return null;
   const recovery = recoveryGuidanceSession(execution);
   if (recovery) {
     return {
@@ -240,6 +239,7 @@ export function recommendationFromExecution(execution) {
       source: 'calendar',
     };
   }
+  if (execution.isRest) return null;
   if (!hasExecutableSession(execution)) return null;
   const run = scheduledRunFromExecution(execution);
   if (run) {

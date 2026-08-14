@@ -86,6 +86,30 @@ const checkinRecoveryBody = {
     lift: null,
   },
 };
+const legacyCheckinRecoveryBody = {
+  today: {
+    day: 'Thu',
+    date: '2026-08-14',
+    type: 'rest',
+    workout_type: 'rest',
+    description: "Recovery is today's guidance.",
+    checkin_override: { action: 'rest', label: 'Changed to rest from daily check-in' },
+  },
+  execution: {
+    hasPlan: true,
+    hasDay: true,
+    isRest: true,
+    isPlannedRest: false,
+    restSource: null,
+    week: 1,
+    type: 'rest',
+    workout_type: 'rest',
+    checkinOverride: { action: 'rest', label: 'Changed to rest from daily check-in' },
+    sessions: [],
+    run: null,
+    lift: null,
+  },
+};
 
 console.log('\n== normalizeExecution (hybrid) ==');
 const h = normalizeExecution(hybridBody);
@@ -150,6 +174,11 @@ assert(recommendationFromExecution(n) === null, 'no-plan → null so callers fal
 const recoveryRec = recommendationFromExecution(recovery);
 assert(recoveryRec?.type === 'rest' && recoveryRec?.recommendationType === 'rest', 'rest-labelled slot remains explicit recovery guidance');
 assert(recoveryRec?.reason === "Rest day from today's check-in.", 'recovery guidance preserves the safety explanation');
+const legacyRecovery = normalizeExecution(legacyCheckinRecoveryBody);
+const legacyRecoveryRec = recommendationFromExecution(legacyRecovery);
+assert(isRestExecutionAuthority(legacyRecovery) === true, 'legacy empty check-in rest remains canonical rest authority');
+assert(legacyRecoveryRec?.type === 'rest' && legacyRecoveryRec?.recommendationType === 'rest', 'legacy empty check-in rest remains truthful recovery guidance');
+assert(legacyRecoveryRec?.reason === 'Changed to rest from daily check-in', 'legacy empty check-in rest preserves its check-in reason');
 const stepsRec = recommendationFromExecution(normalizeExecution({ execution: { hasPlan: true, hasDay: true, isRest: false, sessions: [], run: { id: 'run-steps', kind: 'run', steps: ['Warm up', '3 x 5 min', 'Cool down'] } } }));
 assert(stepsRec && stepsRec.structure.length === 3, 'run steps remain visible when structure is absent');
 const liftOnly = normalizeExecution({ execution: { hasPlan: true, hasDay: true, isRest: false, week: 3, sessions: [{ id: 'lift-9', kind: 'lift', title: 'Upper' }], run: null, lift: { id: 'lift-9', kind: 'lift', title: 'Upper' } } });
