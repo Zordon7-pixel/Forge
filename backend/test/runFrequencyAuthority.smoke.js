@@ -59,6 +59,62 @@ function runningMiles(week) {
     .toFixed(1));
 }
 
+function assertHyroxRouteSafety(plan, planningDate, eventDate, label) {
+  const entries = plan.weeks.flatMap((week) => week.days.flatMap((day) => (
+    day.sessions.map((session) => ({ date: day.date, session }))
+  )));
+  assert.equal(entries.every(({ date }) => date >= planningDate), true, `${label}: no past sessions`);
+  const races = entries.filter(({ session }) => session.sessionType === 'hyrox_race');
+  assert.equal(races.length, 1, `${label}: exactly one race session`);
+  assert.equal(races[0].date, eventDate, `${label}: exact race date`);
+  const hardDates = [...new Set(entries.filter(({ session }) => session.hardLowerBody).map(({ date }) => date))].sort();
+  for (const start of hardDates) {
+    const rollingWindow = new Set(Array.from({ length: 7 }, (_, index) => engine.addDays(start, index)));
+    assert.ok(hardDates.filter((date) => rollingWindow.has(date)).length <= 2, `${label}: rolling hard-lower-body cap`);
+  }
+  const protectedDates = new Set(Array.from({ length: 7 }, (_, index) => engine.addDays(eventDate, -index)));
+  for (const { date, session } of entries) {
+    if (!protectedDates.has(date) || session.sessionType === 'hyrox_race') continue;
+    assert.equal(session.sessionType === 'hyrox_compromised', false, `${label}: no protected-window compromised session`);
+    assert.equal(Boolean(session.heavyStationWork), false, `${label}: no protected-window heavy station`);
+    assert.equal(['hard', 'long'].includes(session.runningStress), false, `${label}: no protected-window hard/long run`);
+  }
+}
+
+function boundedMileageRows(weeklyMiles, recentMultiplier = 1) {
+  const rows = [];
+  for (let week = 0; week < 8; week += 1) {
+    for (const offset of [1, 3, 6]) {
+      rows.push({
+        date: engine.addDays('2026-08-13', -(week * 7 + offset)),
+        distance_miles: weeklyMiles / 3 * (week < 2 ? recentMultiplier : 1),
+        duration_seconds: 3600,
+      });
+    }
+  }
+  return rows;
+}
+
+for (const scenario of [
+  { profileWeeklyMiles: 40, historyWeeklyMiles: 32, recentMultiplier: 1 },
+  { profileWeeklyMiles: 20, historyWeeklyMiles: 28, recentMultiplier: 1 },
+  { profileWeeklyMiles: 45, historyWeeklyMiles: 36, recentMultiplier: 1.8 },
+]) {
+  const baseline = engine.estimateWeeklyMileageBaseline(
+    boundedMileageRows(scenario.historyWeeklyMiles, scenario.recentMultiplier),
+    { planningDateISO: '2026-08-13', profileWeeklyMiles: scenario.profileWeeklyMiles },
+  );
+  const boundedProfile = Math.min(
+    Math.max(scenario.profileWeeklyMiles, baseline.longTermWeeklyMiles * 0.75),
+    baseline.longTermWeeklyMiles * 1.25,
+  );
+  const preparedAnchor = Math.max(baseline.longTermWeeklyMiles, boundedProfile);
+  const preparedUpperBound = Math.max(preparedAnchor * 1.25, preparedAnchor + 2);
+  assert.equal(baseline.method, 'bounded_recent_history');
+  assert.ok(baseline.weeklyMiles >= preparedAnchor - 0.1, 'recent history cannot accidentally collapse below its prepared anchor');
+  assert.ok(baseline.weeklyMiles <= preparedUpperBound + 0.1, 'recent history cannot create an unbounded increase');
+}
+
 function routeHandler(router, path, method) {
   const layer = router.stack.find((item) => item.route?.path === path && item.route?.methods?.[method]);
   return layer?.route?.stack?.at(-1)?.handle;
@@ -247,6 +303,58 @@ assert.equal(
   selfRelaxingStrengthValidation.errors.some((error) => error.includes('below strength floor')),
   true,
   'candidate-supplied completion fields cannot lower the authoritative strength floor',
+);
+
+const mismatchedActivityContext = hybridPartialWeekContext(0);
+mismatchedActivityContext.history.acuteRunLoad.currentWeek = {
+  startDate: '2026-07-13',
+  miles: 12,
+  runCount: 3,
+  runDates: ['2026-07-20', '2026-07-21'],
+  longRunCompleted: true,
+};
+mismatchedActivityContext.history.currentWeekStrength = {
+  startDate: '2026-07-13',
+  count: 2,
+  dates: ['2026-07-21'],
+  loadPoints: 90,
+};
+const mismatchedActivityPlan = engine.buildConcurrentPlan(mismatchedActivityContext);
+const mismatchedReconciliation = mismatchedActivityPlan.inputSummary.currentWeekActivityReconciliation;
+assert.deepEqual(mismatchedReconciliation, {
+  expectedStartDate: '2026-07-20',
+  runSourceStartDate: '2026-07-13',
+  strengthSourceStartDate: '2026-07-13',
+  runMatch: false,
+  strengthMatch: false,
+  match: false,
+  mismatch: true,
+  reason: 'RUN_ACTIVITY_WEEK_START_MISMATCH,STRENGTH_ACTIVITY_WEEK_START_MISMATCH',
+  reasons: ['RUN_ACTIVITY_WEEK_START_MISMATCH', 'STRENGTH_ACTIVITY_WEEK_START_MISMATCH'],
+});
+assert.equal(mismatchedActivityPlan.inputSummary.currentWeekRunLoad, null);
+assert.equal(mismatchedActivityPlan.inputSummary.currentWeekStrengthLoad, null);
+assert.equal(mismatchedActivityPlan.weeks[0].completedRunsAtGeneration, 0);
+assert.equal(mismatchedActivityPlan.weeks[0].completedMilesAtGeneration, 0);
+assert.equal(mismatchedActivityPlan.weeks[0].completedStrengthSessionsAtGeneration, 0);
+assert.deepEqual(
+  mismatchedActivityPlan.weeks[0].currentWeekConstraint.activityReconciliation,
+  mismatchedReconciliation,
+);
+assert.equal(
+  mismatchedActivityPlan.weeks[0].days.filter((day) => day.date < mismatchedActivityContext.todayISO)
+    .every((day) => day.sessions.length === 0),
+  true,
+  'mismatched current-week sources fail safe without credit or past sessions',
+);
+const mismatchedActivityValidation = engine.validateConcurrentPlan(
+  mismatchedActivityPlan,
+  mismatchedActivityContext,
+);
+assert.equal(
+  mismatchedActivityValidation.valid,
+  true,
+  `mismatched current-week activity remains a safe valid partial plan: ${mismatchedActivityValidation.errors.join('; ')}`,
 );
 
 const fiveDayContext = context(5, ['Mon', 'Tue', 'Wed', 'Thu', 'Sat']);
@@ -817,6 +925,16 @@ async function checkPartialWeekRoutesDoNotReject() {
     assert.equal(hyroxPlan.weeks[0].currentWeekConstraint.completedStrengthSessions, 1);
     assert.equal(hyroxPlan.inputSummary.currentWeekStrengthLoad.provenance.completedStrengthExposures, 1);
     assert.equal(
+      hyroxPlan.inputSummary.weeklyMileageBaseline,
+      currentWeekPlan.inputSummary.weeklyMileageBaseline,
+      'the HYROX route consumes the same prepared recent-history baseline as the non-HYROX planner',
+    );
+    assert.notEqual(
+      hyroxPlan.inputSummary.weeklyMileageBaseline,
+      profile.weekly_miles_current,
+      'route-prepared recent history remains authoritative over contradictory profile mileage',
+    );
+    assert.equal(
       hyroxPlan.weeks[0].days.filter((day) => day.date < scenario.todayISO)
         .every((day) => day.sessions.length === 0),
       true,
@@ -854,6 +972,7 @@ async function checkPartialWeekRoutesDoNotReject() {
       ['Mon', 'Tue', 'Wed'],
       ['Tue', 'Wed', 'Thu'],
       ['Wed', 'Thu', 'Fri'],
+      ['Fri', 'Sat', 'Sun'],
       ['Sat', 'Sun', 'Mon'],
     ];
     const representativeEventDates = ['2026-08-31', '2026-09-20', '2026-10-10'];
@@ -886,6 +1005,59 @@ async function checkPartialWeekRoutesDoNotReject() {
         );
       }
     }
+
+    const routePlanningDates = Array.from({ length: 7 }, (_, index) => engine.addDays('2026-08-10', index));
+    const routeEventDates = [
+      '2026-09-04',
+      ...Array.from({ length: 7 }, (_, index) => engine.addDays('2026-10-19', index)),
+    ];
+    const routeSchedules = [
+      { trainingDays: allTrainingDays, runDaysPerWeek: 4 },
+      { trainingDays: ['Tue', 'Thu', 'Sat', 'Sun'], runDaysPerWeek: 4 },
+      { trainingDays: ['Fri', 'Sat', 'Sun'], runDaysPerWeek: 3 },
+    ];
+    for (const planningDate of routePlanningDates) {
+      scenario.todayISO = planningDate;
+      for (const eventLocalDate of routeEventDates) {
+        scenario.race = {
+          ...hyroxRace,
+          race_date: eventLocalDate,
+          event_local_date: eventLocalDate,
+        };
+        for (const weeklyMilesCurrent of [20, 40, 45]) {
+          profile.weekly_miles_current = weeklyMilesCurrent;
+          for (const { trainingDays, runDaysPerWeek } of routeSchedules) {
+            response = await invoke(generateForRace, {
+              params: { raceId: scenario.race.id },
+              body: {
+                planning_date_local: planningDate,
+                timezone_offset_minutes: 0,
+                target: {
+                  trainingDays,
+                  runDaysPerWeek,
+                  planMode: 'hyrox_build',
+                  liftingEnabled: true,
+                },
+              },
+              query: {},
+              user: { id: profile.id },
+            });
+            const label = `${planningDate}/${eventLocalDate}/${weeklyMilesCurrent}/${trainingDays.join('/')}`;
+            assert.equal(
+              response.statusCode,
+              201,
+              `${label} must not return HTTP ${response.statusCode}: ${response.payload?.error || ''} ${JSON.stringify(response.payload?.details || [])}`,
+            );
+            const routePlan = response.payload.plan.plan_data;
+            assert.equal(routePlan.weeks[0].startDate, '2026-08-10', `${label}: Monday anchor`);
+            assert.equal(routePlan.weeks[1].startDate, '2026-08-17', `${label}: Week 2 next Monday`);
+            assertHyroxRouteSafety(routePlan, planningDate, eventLocalDate, label);
+          }
+        }
+      }
+    }
+    scenario.todayISO = '2026-08-13';
+    profile.weekly_miles_current = 40;
 
     scenario.runs = [0, 1, 2, 3, 4].map((index) => runRow(`quota-met-${index}`, scenario.todayISO));
     scenario.workouts = [];

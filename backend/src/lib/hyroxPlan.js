@@ -30,6 +30,20 @@ function daysBetweenLocalDates(later, earlier) {
   return Math.round((end - start) / DAY_MS);
 }
 
+function isRaceSafetyDate(date, eventDate) {
+  if (parseLocalDate(date) == null || parseLocalDate(eventDate) == null) return false;
+  const daysBeforeRace = daysBetweenLocalDates(eventDate, date);
+  return daysBeforeRace >= 0 && daysBeforeRace <= 6;
+}
+
+function respectsRollingHardLowerBodyCap(dates, maximum = 2) {
+  const uniqueDates = [...new Set(dates.filter((date) => parseLocalDate(date) != null))].sort();
+  return uniqueDates.every((start) => uniqueDates.filter((date) => {
+    const delta = daysBetweenLocalDates(date, start);
+    return delta >= 0 && delta <= 6;
+  }).length <= maximum);
+}
+
 function mondayForLocalDate(date) {
   const time = parseLocalDate(date);
   if (time == null) throw new Error('invalid_local_date');
@@ -540,11 +554,9 @@ function buildCurrentWeek({
   const runCompletedDates = new Set(currentWeekActivity.runDates);
   const strengthCompletedDates = new Set(currentWeekActivity.strengthDates);
   const isRaceWeek = Boolean(eventDate && eventDate >= startDate && eventDate <= addLocalDays(startDate, 6));
-  const raceSafetyWindow = Boolean(
-    eventDate
-    && eventDate >= planningDate
-    && eventDate <= addLocalDays(startDate, 7)
-  );
+  const raceSafetyWindow = Boolean(eventDate && days.some((day) => (
+    day.date >= planningDate && isRaceSafetyDate(day.date, eventDate)
+  )));
   const eventSlot = isRaceWeek ? days.findIndex((day) => day.date === eventDate) : -1;
   let scheduledRunExposures = 0;
   let scheduledHyroxSessions = 0;
@@ -571,10 +583,13 @@ function buildCurrentWeek({
   ));
 
   const compromisedCandidates = sessionFreeSlots(new Set([...runCompletedDates, ...strengthCompletedDates]))
-    .filter((slot) => !hardRunsThrough || days[slot].date > hardRunsThrough);
+    .filter((slot) => (
+      !isRaceWeek
+      && !isRaceSafetyDate(days[slot].date, eventDate)
+      && (!hardRunsThrough || days[slot].date > hardRunsThrough)
+    ));
   const compromised = buildCompromisedSession({ phase, weekIndex, standards, equipment, safetyHold });
-  if (!raceSafetyWindow
-    && remainingHyroxQuota > 0
+  if (remainingHyroxQuota > 0
     && remainingRunQuota > 0
     && remainingMileageBudget + 0.001 >= Number(compromised.distance_miles || 0)
     && compromisedCandidates.length) {
@@ -612,11 +627,14 @@ function buildCurrentWeek({
   const runCount = Math.min(remainingRunQuota, runSlots.length, affordableRuns);
   const selectedRunSlots = runSlots.slice().sort((left, right) => right - left)
     .slice(0, runCount).sort((left, right) => left - right);
-  let longIndex = currentWeekActivity.longRunCompleted || !selectedRunSlots.length
+  const longIndex = currentWeekActivity.longRunCompleted || isRaceWeek
     ? -1
-    : selectedRunSlots.length - 1;
-  if (raceSafetyWindow) longIndex = -1;
-  if (longIndex >= 0 && hardRunsThrough && days[selectedRunSlots[longIndex]].date <= hardRunsThrough) longIndex = -1;
+    : selectedRunSlots.map((slot, index) => ({ slot, index }))
+      .filter(({ slot }) => (
+        !isRaceSafetyDate(days[slot].date, eventDate)
+        && (!hardRunsThrough || days[slot].date > hardRunsThrough)
+      ))
+      .at(-1)?.index ?? -1;
   const easyMiles = buildRunSession(
     'run-partial-reference-easy',
     'easy',
@@ -700,6 +718,7 @@ function buildWeek({
   eventFormat,
   currentWeekActivity = null,
   precedingHardOrLongRunDates = [],
+  precedingHardLowerBodyDates = [],
   currentWeekRunningLoadCap = null,
 }) {
   if (currentWeekActivity) {
@@ -729,12 +748,24 @@ function buildWeek({
   const allowed = days.map((day, index) => availableDays.includes(day.day) ? index : null).filter(Number.isInteger);
   const isRaceWeek = Boolean(eventDate && eventDate >= startDate && eventDate <= addLocalDays(startDate, 6));
   const loadFactor = PHASE_LOAD[phase] || 0.75;
-  const used = new Set();
-  const longSlot = nearestSlot(6, allowed, used);
-  used.add(longSlot);
-  const compromisedSlot = nearestSlot(3, allowed, used);
-  used.add(compromisedSlot);
   const eventSlot = isRaceWeek ? days.findIndex((day) => day.date === eventDate) : -1;
+  const hardRunSlots = isRaceWeek
+    ? []
+    : allowed.filter((slot) => !isRaceSafetyDate(days[slot].date, eventDate));
+  const used = new Set();
+  const longSlot = hardRunSlots.length ? nearestSlot(6, hardRunSlots, used) : null;
+  if (Number.isInteger(longSlot)) used.add(longSlot);
+  const compromisedCandidates = hardRunSlots.filter((slot) => (
+    !used.has(slot)
+    && respectsRollingHardLowerBodyCap([
+      ...precedingHardLowerBodyDates,
+      days[slot].date,
+    ])
+  ));
+  const compromisedSlot = compromisedCandidates.length
+    ? nearestSlot(3, compromisedCandidates, used)
+    : null;
+  if (Number.isInteger(compromisedSlot)) used.add(compromisedSlot);
   const stationAvailable = isRaceWeek ? allowed.filter((slot) => slot !== eventSlot) : allowed;
   const hardStationPhase = ['build', 'peak_partial_simulation', 'specific'].includes(phase);
   const stationPool = stationAvailable.length ? stationAvailable : allowed;
@@ -743,27 +774,40 @@ function buildWeek({
     .slice()
     .sort((left, right) => Math.abs(left - 1) - Math.abs(right - 1) || left - right);
   const isSafeStationSlot = (slot) => (
-    Math.abs(slot - compromisedSlot) > 1
-    && Math.abs(slot - longSlot) > 1
+    (!Number.isInteger(compromisedSlot) || Math.abs(slot - compromisedSlot) > 1)
+    && (!Number.isInteger(longSlot) || Math.abs(slot - longSlot) > 1)
     && precedingHardOrLongRunDates.every((runDate) => (
       Math.abs(daysBetweenLocalDates(days[slot].date, runDate)) > 1
     ))
   );
+  const currentWeekHardLowerBodyDates = [
+    ...(Number.isInteger(compromisedSlot) ? [days[compromisedSlot].date] : []),
+    ...(eventSlot >= 0 ? [days[eventSlot].date] : []),
+  ];
   const safeStationSlot = stationCandidates.find(isSafeStationSlot);
-  const stationSlot = safeStationSlot ?? stationCandidates[0];
-  const safeStationGap = safeStationSlot != null;
-  const outsideRaceRecoveryWindow = !eventDate
-    || Math.abs(daysBetweenLocalDates(eventDate, days[stationSlot].date)) > 6;
+  const safeHeavyStationSlot = stationCandidates.find((slot) => (
+    isSafeStationSlot(slot)
+    && !isRaceSafetyDate(days[slot].date, eventDate)
+    && respectsRollingHardLowerBodyCap([
+      ...precedingHardLowerBodyDates,
+      ...currentWeekHardLowerBodyDates,
+      days[slot].date,
+    ])
+  ));
+  const stationSlot = safeHeavyStationSlot ?? safeStationSlot ?? stationCandidates[0];
   const heavyStation = hardStationPhase
-    && safeStationGap
-    && outsideRaceRecoveryWindow
+    && safeHeavyStationSlot != null
     && !isRaceWeek
     && !safetyHold;
 
   if (!isRaceWeek) {
     days[stationSlot].sessions.push(buildStationSession({ phase, weekIndex, standards, equipment, heavy: heavyStation }));
-    days[compromisedSlot].sessions.push(buildCompromisedSession({ phase, weekIndex, standards, equipment, safetyHold }));
-    days[longSlot].sessions.push(buildRunSession(`run-${weekIndex + 1}-long`, 'long', Math.max(4, weeklyMiles * 0.34), loadFactor));
+    if (Number.isInteger(compromisedSlot)) {
+      days[compromisedSlot].sessions.push(buildCompromisedSession({ phase, weekIndex, standards, equipment, safetyHold }));
+    }
+    if (Number.isInteger(longSlot)) {
+      days[longSlot].sessions.push(buildRunSession(`run-${weekIndex + 1}-long`, 'long', Math.max(4, weeklyMiles * 0.34), loadFactor));
+    }
   } else {
     days[Math.max(0, eventSlot)].sessions.push(buildRaceSession(standards, goalRaceId, eventFormat));
     days[stationSlot].sessions.push(buildStationSession({ phase, weekIndex, standards, equipment, heavy: false }));
@@ -877,6 +921,9 @@ function generateHyroxPlan(input = {}) {
   const requestedRunDays = Number(athlete.runDaysPerWeek ?? athlete.run_days_per_week ?? 3);
   if (![3, 4].includes(requestedRunDays)) throw new Error('hyrox_run_days_must_be_3_or_4');
   const weeklyMiles = Math.max(6, finiteNonNegative(
+    // Routes prepare this value from bounded recent history. It is authoritative
+    // for direct engine callers too; profile mileage is only the fallback when
+    // no prepared current-load baseline is supplied.
     input.currentLoad?.weeklyMiles
       ?? athlete.weeklyMilesCurrent
       ?? athlete.weekly_miles_current,
@@ -944,6 +991,11 @@ function generateHyroxPlan(input = {}) {
   );
   const weeks = [];
   for (const [weekIndex, phase] of phases.entries()) {
+    const precedingHardLowerBodyDates = weeks
+      .flatMap((week) => week.days)
+      .flatMap((day) => day.sessions
+        .filter((session) => session.hardLowerBody)
+        .map(() => day.date));
     const precedingHardOrLongRunDates = (weeks.at(-1)?.days || [])
       .flatMap((day) => day.sessions.map((session) => ({ date: day.date, session })))
       .filter(({ session }) => (
@@ -970,6 +1022,7 @@ function generateHyroxPlan(input = {}) {
         ? currentWeekActivity
         : null,
       precedingHardOrLongRunDates,
+      precedingHardLowerBodyDates,
       currentWeekRunningLoadCap: weekIndex === 0 ? currentWeekRunningLoadCap : null,
     }));
   }
@@ -1153,6 +1206,17 @@ function validateHyroxPlan(plan = {}) {
     ['hard', 'long', 'race'].includes(entry.session.runningStress)
     && (entry.session.kind === 'run' || entry.session.includesRun)
   ));
+  const eventDate = plan.goal?.eventLocalDate || plan.goal?.date || null;
+  if (parseLocalDate(eventDate) != null) {
+    for (const entry of entries.filter((item) => isRaceSafetyDate(item.date, eventDate))) {
+      const forbidden = entry.session.sessionType === 'hyrox_compromised'
+        || entry.session.heavyStationWork
+        || entry.session.sessionType === 'long_run'
+        || entry.session.runningStress === 'long'
+        || entry.session.runningStress === 'hard';
+      if (forbidden) errors.push({ code: 'RACE_SAFETY_WINDOW', path: entry.path });
+    }
+  }
   for (const heavy of entries.filter((entry) => entry.session.heavyStationWork)) {
     for (const run of hardOrLongRuns) {
       if (run.date === heavy.date) continue;
