@@ -24,7 +24,13 @@ const { resolveRunSchedule } = require('../lib/runSchedule');
 const { buildBodyweightAlternative } = require('../lib/travelTraining');
 const { planningInputUnchanged } = require('../lib/planningRevision');
 const { localDateForOffset } = require('../lib/requestPlanningDate');
-const { buildRacePlanCandidate, semanticCandidateErrors } = require('../lib/racePlanCandidateEngine');
+const {
+  buildRacePlanCandidate,
+  enumerateGoalBackwardCandidates,
+  semanticCandidateErrors,
+} = require('../lib/racePlanCandidateEngine');
+const { buildGoalBackwardPlanningDecision } = require('../lib/goalBackwardDecisionEngine');
+const { resolveOperationalGoalBackwardV24Mode } = require('../lib/betaPlanRollout');
 const { requestImagesForWorkoutItems } = require('../lib/exerciseImageRequests');
 const hyroxPlan = require('../lib/hyroxPlan');
 const {
@@ -34,10 +40,14 @@ const {
 } = require('../lib/racePlanPolicy');
 const {
   assertPersistablePlan,
+  buildGoalBackwardDecisionArtifacts,
+  buildGoalBackwardShadowBindings,
   buildPlanningSnapshot,
   parseJson: parseCandidateJson,
+  persistGoalBackwardDecisionArtifacts,
   prefixedHash,
   validateCandidateBundle,
+  validateStoredGoalBackwardCandidateBindings,
 } = require('../lib/planCandidateLifecycle');
 const {
   resolveActivePlanForDate,
@@ -2070,7 +2080,130 @@ async function pruneExpiredPlanCandidates(tx, userId, {
   );
 }
 
-async function previewPlanForUser(userId, body = {}, { store = true } = {}) {
+function goalBackwardAvailableLocalDates(state, planningDateLocal) {
+  const preferred = new Set((state?.target?.trainingDays || [])
+    .map((day) => String(day || '').slice(0, 3).toLowerCase()));
+  const weekdays = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+  const dates = [];
+  for (let index = 0; index < 7; index += 1) {
+    const date = addPolicyDays(planningDateLocal, index);
+    const weekday = weekdays[new Date(`${date}T12:00:00.000Z`).getUTCDay()];
+    if (!preferred.size || preferred.has(weekday)) dates.push(date);
+  }
+  return dates;
+}
+
+function goalBackwardTrainingAge(context = {}) {
+  const explicit = String(context.profile?.training_age_class || '').toUpperCase();
+  if (['BEGINNER', 'DEVELOPING', 'ESTABLISHED', 'ADVANCED'].includes(explicit)) return explicit;
+  const count = Number(context.history?.recentRunCount || 0);
+  return count >= 24 ? 'ESTABLISHED' : count >= 8 ? 'DEVELOPING' : 'BEGINNER';
+}
+
+function goalBackwardRecoveryState(context = {}) {
+  const state = String(context.recovery?.state || '').toUpperCase();
+  if (['READY', 'NORMAL', 'CAUTION', 'RECOVERY'].includes(state)) return state;
+  if (state === 'LOW') return 'RECOVERY';
+  return 'NORMAL';
+}
+
+function goalBackwardEventKind(race, state) {
+  if (String(race?.event_kind || '').toLowerCase() === 'hyrox' || state?.target?.hyroxEvent) {
+    const format = String(race?.event_format || state?.target?.hyroxEvent?.format || '').toLowerCase();
+    return format.includes('double') ? 'HYROX_DOUBLES' : 'HYROX_SINGLES';
+  }
+  const distanceMiles = Number(race?.distance_miles || state?.target?.distanceMiles || 0);
+  if (distanceMiles > 20) return 'MARATHON';
+  return distanceMiles > 6.3 ? 'ROAD_ENDURANCE' : 'ROAD_SHORT';
+}
+
+function goalBackwardGoalsForState(userId, state) {
+  if (!state.races?.length) {
+    return [{
+      goal_id: `foundation-${prefixedHash(userId).slice(-24)}`,
+      athlete_id: userId,
+      priority: 'A',
+      goal_type: 'completion',
+      event_state: 'UNKNOWN',
+    }];
+  }
+  return state.races.map((race, index) => ({
+    goal_id: `goal-${String(race.id)}`,
+    race_id: String(race.id),
+    athlete_id: userId,
+    priority: ['A', 'B', 'C'][Math.min(index, 2)],
+    goal_type: Number(race.goal_time_seconds || 0) > 0 ? 'performance' : 'completion',
+    event_kind: goalBackwardEventKind(race, state),
+    event_local_date: race.event_local_date || race.race_date,
+    event_state: 'SCHEDULED',
+    source_revision: Math.max(1, Number(race.revision || 1)),
+    distance_miles: Number(race.distance_miles || 0) || null,
+  }));
+}
+
+function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDateLocal }, dependencies = {}) {
+  const availableLocalDates = goalBackwardAvailableLocalDates(state, planningDateLocal);
+  const trainingAgeClass = goalBackwardTrainingAge(state.context);
+  const recoveryState = goalBackwardRecoveryState(state.context);
+  const safetyAction = state.context?.safety?.activeInjury ? 'MODIFY_IMPACT' : 'NORMAL';
+  const recentRunCount = Number(state.context?.history?.recentRunCount || 0);
+  const weeklyMiles = Number(state.context?.history?.weeklyMileageBaseline || 0);
+  const goals = goalBackwardGoalsForState(userId, state);
+  const buildDecision = dependencies.buildDecision || buildGoalBackwardPlanningDecision;
+  const enumerateCandidates = dependencies.enumerateCandidates || enumerateGoalBackwardCandidates;
+  const decision = buildDecision({
+    athlete_id: userId,
+    planning_date_local: planningDateLocal,
+    created_at: `${planningDateLocal}T00:00:00.000Z`,
+    timezone: 'UTC',
+    plan_id: state.activePlan?.trainingPlanId || null,
+    plan_revision: Number(state.activePlan?.planVersion || 0),
+    athlete_state: {
+      athlete_state_revision: Math.max(1, Number(state.planningInputRevision || 1)),
+      evidence_snapshot_id: `snapshot-${state.inputHash.slice(-24)}`,
+      training_age_class: trainingAgeClass,
+      consistency_state: recentRunCount >= 4 ? 'CONSISTENT' : 'SPARSE_DATA',
+      consistent_weeks: recentRunCount >= 4 ? 4 : 0,
+      recovery_state: recoveryState,
+      safety_action: safetyAction,
+      recent_normal_running: {
+        status: weeklyMiles > 0 ? (recentRunCount >= 8 ? 'ESTABLISHED' : 'PROVISIONAL') : 'INSUFFICIENT',
+        median_distance_m: weeklyMiles > 0 ? Math.round(weeklyMiles * 1609.344) : null,
+      },
+      available_days: availableLocalDates,
+      locks: [],
+      manual_edits: [],
+    },
+    goals,
+    races: state.races.map((race) => ({ race_id: String(race.id), athlete_id: userId })),
+  });
+  const result = enumerateCandidates({
+    decision,
+    available_local_dates: availableLocalDates,
+    maximum_session_count: decision.role_multiset.length,
+    legacy_road_candidate_material: built.plan,
+    active_applied_plan: state.active ? parsePlan(state.active.row) : null,
+    preferred_weekdays: state.target?.trainingDays || [],
+    selected_running_volume_m: Number(decision.proposed_running_volume_m || 0),
+    validation_options: {
+      available_local_dates: availableLocalDates,
+      available_days_count: availableLocalDates.length,
+      training_age_class: trainingAgeClass,
+      consistency_state: decision.consistency_state,
+      recovery_state: recoveryState,
+      safety_action: safetyAction,
+    },
+  });
+  if (typeof dependencies.inspectDecision === 'function') dependencies.inspectDecision(result);
+  return result;
+}
+
+async function maybeComputeGoalBackwardShadowDiagnostics({ mode, response, compute }) {
+  if (mode === 'shadow') await compute();
+  return response;
+}
+
+async function previewPlanForUser(userId, body = {}, { store = true, goalBackwardDependencies = {} } = {}) {
   const clock = acceptedPlanningClock(body);
   const request = normalizeCandidateRequest(body);
   const initial = await withUserMutation(userId, (tx) => loadCandidateInputState(userId, request, clock, tx));
@@ -2097,6 +2230,25 @@ async function previewPlanForUser(userId, body = {}, { store = true } = {}) {
     races: initial.races,
     replacesActivePlan: Boolean(initial.active),
   };
+  const goalBackwardMode = resolveOperationalGoalBackwardV24Mode(goalBackwardDependencies.mode);
+  let goalBackwardShadow = null;
+  await maybeComputeGoalBackwardShadowDiagnostics({
+    mode: goalBackwardMode,
+    response,
+    compute: async () => {
+      try {
+        goalBackwardShadow = computeGoalBackwardShadowDiagnostics({
+          userId,
+          state: initial,
+          built,
+          planningDateLocal: clock.planningDateLocal,
+        }, goalBackwardDependencies);
+      } catch (error) {
+        goalBackwardShadow = null;
+        if (typeof goalBackwardDependencies.inspectFailure === 'function') goalBackwardDependencies.inspectFailure(error);
+      }
+    },
+  });
   if (!store) {
     return {
       ...response,
@@ -2115,34 +2267,89 @@ async function previewPlanForUser(userId, body = {}, { store = true } = {}) {
       throw candidateError(409, 'CANDIDATE_STALE', 'Training data changed while the preview was being built. Preview again.');
     }
     await pruneExpiredPlanCandidates(tx, userId);
-    await tx.run(
+    const baseValues = [
+      candidateId,
+      userId,
+      'preview',
+      initial.activePlan?.trainingPlanId || null,
+      initial.activePlan?.userPlanId || null,
+      initial.activePlan?.planVersion ?? null,
+      initial.planningInputRevision,
+      clock.planningDateLocal,
+      clock.timezoneOffsetMinutes,
+      initial.inputHash,
+      candidateHash,
+      normalized.plan.engineVersion || RACE_PLAN_POLICY_V1.engineVersion,
+      normalized.plan.policyVersion || RACE_PLAN_POLICY_V1.version,
+      normalized.plan.invariantVersion || RACE_PLAN_POLICY_V1.invariantVersion,
+      JSON.stringify(normalized.snapshot),
+      JSON.stringify(normalized.plan),
+      JSON.stringify(normalized.trace),
+      expiresAt,
+    ];
+    const insertCurrentCandidate = () => tx.run(
       `INSERT INTO plan_generation_candidates (
          id, user_id, status, training_plan_id, user_plan_id, active_plan_version,
          planning_input_revision, planning_date_local, timezone_offset_minutes,
          input_hash, candidate_hash, engine_version, policy_version, invariant_version,
          planning_snapshot_json, candidate_plan_json, generation_trace_json, expires_at
        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      [
-        candidateId,
-        userId,
-        'preview',
-        initial.activePlan?.trainingPlanId || null,
-        initial.activePlan?.userPlanId || null,
-        initial.activePlan?.planVersion ?? null,
-        initial.planningInputRevision,
-        clock.planningDateLocal,
-        clock.timezoneOffsetMinutes,
-        initial.inputHash,
-        candidateHash,
-        normalized.plan.engineVersion || RACE_PLAN_POLICY_V1.engineVersion,
-        normalized.plan.policyVersion || RACE_PLAN_POLICY_V1.version,
-        normalized.plan.invariantVersion || RACE_PLAN_POLICY_V1.invariantVersion,
-        JSON.stringify(normalized.snapshot),
-        JSON.stringify(normalized.plan),
-        JSON.stringify(normalized.trace),
-        expiresAt,
-      ]
+      baseValues
     );
+    let shadowPersisted = false;
+    if (goalBackwardMode === 'shadow' && goalBackwardShadow) {
+      await tx.run('SAVEPOINT goal_backward_shadow');
+      try {
+        const bindings = buildGoalBackwardShadowBindings({
+          decision: goalBackwardShadow.decision,
+          selectedCandidate: goalBackwardShadow.selected_candidate,
+          currentCandidateHash: candidateHash,
+        });
+        await tx.run(
+          `INSERT INTO plan_generation_candidates (
+             id, user_id, status, training_plan_id, user_plan_id, active_plan_version,
+             planning_input_revision, planning_date_local, timezone_offset_minutes,
+             input_hash, candidate_hash, engine_version, policy_version, invariant_version,
+             planning_snapshot_json, candidate_plan_json, generation_trace_json, expires_at,
+             decision_id, candidate_revision, athlete_state_revision, safety_state_hash,
+             goal_revisions_json, lock_revision, edit_revision, surface_revision, export_revision,
+             feature_mode, selected_candidate_hash, material_change_json
+           ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          [
+            ...baseValues,
+            bindings.decision_id,
+            bindings.candidate_revision,
+            bindings.athlete_state_revision,
+            bindings.safety_state_hash,
+            JSON.stringify(bindings.goal_revisions_json),
+            bindings.lock_revision,
+            bindings.edit_revision,
+            bindings.surface_revision,
+            bindings.export_revision,
+            bindings.feature_mode,
+            bindings.selected_candidate_hash,
+            JSON.stringify(bindings.material_change_json),
+          ]
+        );
+        const artifacts = buildGoalBackwardDecisionArtifacts({
+          userId,
+          planGenerationCandidateId: candidateId,
+          currentCandidateHash: candidateHash,
+          decision: goalBackwardShadow.decision,
+          candidates: goalBackwardShadow.candidates,
+        });
+        await persistGoalBackwardDecisionArtifacts({ tx, artifacts });
+        await tx.run('RELEASE SAVEPOINT goal_backward_shadow');
+        shadowPersisted = true;
+      } catch (error) {
+        await tx.run('ROLLBACK TO SAVEPOINT goal_backward_shadow');
+        await tx.run('RELEASE SAVEPOINT goal_backward_shadow');
+        if (typeof goalBackwardDependencies.inspectFailure === 'function') goalBackwardDependencies.inspectFailure(error);
+      }
+    }
+    if (!shadowPersisted) {
+      await insertCurrentCandidate();
+    }
   });
   return response;
 }
@@ -2296,6 +2503,15 @@ async function applyPlanCandidate(userId, candidateId, body = {}, constraints = 
     }
     if (row.status !== 'preview') {
       return planningInputUnchanged({ status: 409, error: 'Candidate is no longer available.', code: 'CANDIDATE_UNAVAILABLE' });
+    }
+    try {
+      validateStoredGoalBackwardCandidateBindings(row);
+    } catch (error) {
+      return planningInputUnchanged({
+        status: Number(error.status) || 409,
+        error: error.message,
+        code: error.code || 'GOAL_BACKWARD_CANDIDATE_BINDINGS_INCOMPLETE',
+      });
     }
     assertCandidatePlanningDateCurrent(row);
     await pruneExpiredPlanCandidates(tx, userId, { excludeCandidateId: row.id });
@@ -4534,9 +4750,11 @@ router._test = {
   buildDeterministicCandidate,
   candidateFeasibilityCanApply,
   candidateEffectiveFrom,
+  computeGoalBackwardShadowDiagnostics,
   getActivePlanForMutation,
   getActivePlanForUser,
   normalizeActivePlanIdentitiesForMutation,
+  maybeComputeGoalBackwardShadowDiagnostics,
   persistAdaptationProposal,
   planVersionFor,
   proposalDecisionConflict,

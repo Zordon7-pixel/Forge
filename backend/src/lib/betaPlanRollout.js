@@ -15,6 +15,11 @@ function getGoalBackwardV24Mode(value = process.env.FORGE_GOAL_BACKWARD_V24_MODE
   return GOAL_BACKWARD_V24_MODE_SET.has(configured) ? configured : 'off';
 }
 
+function resolveOperationalGoalBackwardV24Mode(value = process.env.FORGE_GOAL_BACKWARD_V24_MODE) {
+  const configured = getGoalBackwardV24Mode(value);
+  return configured === 'shadow' ? 'shadow' : 'off';
+}
+
 function parseJson(value, fallback = null) {
   if (value === null || value === undefined || value === '') return fallback;
   if (typeof value !== 'string') return value;
@@ -212,6 +217,7 @@ module.exports = {
   planGoalRaceIds,
   preservedPlanTarget,
   redactedBackupEntry,
+  resolveOperationalGoalBackwardV24Mode,
   selectProtectedRaces,
   targetRef,
 };

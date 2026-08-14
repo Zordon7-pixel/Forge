@@ -5,6 +5,7 @@ const {
   GOAL_BACKWARD_PLANNING_POLICY_V1,
   STRESS_TAXONOMY_V1,
   TARGET_CONVERSION_REGISTRY_V1,
+  canonicalHash,
   eventPolicyFor,
   minimumWeeklyDemandFor,
 } = require('../src/lib/racePlanPolicy');
@@ -25,10 +26,15 @@ const {
 } = require('../src/lib/goalBackwardDecisionEngine');
 const {
   compareMaterialChange,
+  HARD_VALIDATOR_NAMES,
   validateGoalBackwardCandidate,
   validateInterference,
 } = require('../src/lib/goalBackwardValidators');
-const { buildGoalBackwardCandidateSkeleton } = require('../src/lib/racePlanCandidateEngine');
+const {
+  buildGoalBackwardCandidateSkeleton,
+  compareGoalBackwardCandidateRankings,
+  enumerateGoalBackwardCandidates,
+} = require('../src/lib/racePlanCandidateEngine');
 
 const results = [];
 
@@ -620,6 +626,129 @@ test('CANDIDATE-SKELETON-01', 'candidate construction preserves role-first order
   assert.ok(skeleton.role_multiset.length > 0);
   assert.ok(skeleton.sessions.every((session) => session.scheduled_local_date === null));
   assert.equal(skeleton.candidate_material[0].legacy_scheduled_local_date, '2026-08-09');
+});
+
+function boundedEnumerationInput(overrides = {}) {
+  const availableLocalDates = Array.from({ length: 9 }, (_, index) => `2026-08-${String(index + 3).padStart(2, '0')}`);
+  return {
+    decision: {
+      decision_id: 'decision-enumeration',
+      decision_hash: canonicalHash({ fixture: 'bounded-enumeration' }),
+      phase: 'DEVELOPMENT',
+      primary_goal_id: 'goal-enumeration',
+      training_age_class: 'ESTABLISHED',
+      consistency_state: 'CONSISTENT',
+      recovery_state: 'NORMAL',
+      athlete_locks: [],
+      manual_edits: [],
+      role_multiset: [
+        { requirement_id: 'primary-aerobic', any_of: ['mobility'], role: 'PRIMARY_KEY', scheduled_local_date: null },
+        { requirement_id: 'primary-recovery', any_of: ['manual_recovery'], role: 'PRIMARY_KEY', scheduled_local_date: null },
+      ],
+      due_exposure_ledger: {
+        due_roles: [
+          { requirement_id: 'primary-aerobic', any_of: ['mobility'], role: 'PRIMARY_KEY' },
+          { requirement_id: 'primary-recovery', any_of: ['manual_recovery'], role: 'PRIMARY_KEY' },
+        ],
+        unplaceable_requirement_ids: [],
+      },
+    },
+    available_local_dates: availableLocalDates,
+    maximum_session_count: 2,
+    validation_options: {
+      available_local_dates: availableLocalDates,
+      available_days_count: availableLocalDates.length,
+      training_age_class: 'ESTABLISHED',
+      consistency_state: 'CONSISTENT',
+      recovery_state: 'NORMAL',
+      safety_action: 'NORMAL',
+    },
+    selected_weekly_stress_targets: [4, 4, 2, 0, 0, 2, 2, 1],
+    selected_running_volume_m: 0,
+    ...overrides,
+  };
+}
+
+test('CAND-BOUND-01', 'candidate enumeration retains at most 64 unique canonical hashes and records truncation', () => {
+  const result = enumerateGoalBackwardCandidates(boundedEnumerationInput());
+  assert.equal(result.candidates.length, 64);
+  assert.equal(new Set(result.candidates.map((candidate) => candidate.candidate_hash)).size, 64);
+  assert.equal(result.total_unique_candidate_count, 81);
+  assert.equal(result.truncation_reason, 'CANDIDATE_ENUMERATION_TRUNCATED_64');
+  assert.equal(result.decision.candidate_ids.length, 64);
+});
+
+test('CAND-VALIDATORS-01', 'every hard validator executes and rejected candidates retain all reason codes', () => {
+  const invalid = validateGoalBackwardCandidate({
+    sessions: [{
+      session_id: 'not-due',
+      scheduled_local_date: '2026-08-04',
+      workout_family: 'easy_run',
+      role: 'PRIMARY_KEY',
+    }],
+  }, {
+    allowed_requirement_ids: ['due-only'],
+    maximum_session_count: 1,
+    required_exposure_ledger: [{ requirement_id: 'due-only', any_of: ['threshold_run'], role: 'PRIMARY_KEY' }],
+    available_local_dates: ['2026-08-03'],
+    workload_evidence: { valid: false, violations: [{ code: 'WEEKLY_DIMENSION_CEILING' }] },
+    safety_action: 'FULL_REST',
+  });
+  assert.deepEqual(invalid.validator_results.map((result) => result.validator), HARD_VALIDATOR_NAMES);
+  assert.equal(invalid.validator_results.every((result) => typeof result.valid === 'boolean'), true);
+  assert.ok(invalid.reason_codes.includes('SESSION_ROLE_UNJUSTIFIED'));
+  assert.ok(invalid.reason_codes.includes('REQUIRED_EXPOSURE_UNPLACEABLE'));
+  assert.ok(invalid.reason_codes.includes('SCHEDULE_CONSTRAINT'));
+  assert.ok(invalid.reason_codes.includes('CROSS_MODAL_FATIGUE_LIMIT'));
+  assert.ok(invalid.reason_codes.includes('FULL_REST'));
+
+  const rejected = enumerateGoalBackwardCandidates(boundedEnumerationInput({
+    validation_options: {
+      ...boundedEnumerationInput().validation_options,
+      safety_action: 'FULL_REST',
+    },
+  }));
+  assert.equal(rejected.selected_candidate, null);
+  assert.equal(rejected.decision.rejected_candidates.length, 64);
+  assert.equal(rejected.decision.rejected_candidates.every((candidate) => candidate.reason_codes.includes('FULL_REST')), true);
+});
+
+test('CAND-RANK-01', 'zero-failure candidates rank by the approved lexicographic tuple', () => {
+  const strongestExposure = {
+    candidate_hash: 'b'.repeat(64),
+    ranking_tuple: {
+      due_primary_exposures_satisfied: 2,
+      material_change_count: 5,
+      stress_target_absolute_deviation: 8,
+      running_volume_absolute_deviation_m: 5000,
+      preferred_day_matches: 0,
+      ordered_session_tuple: [['2026-08-08', 0, 'easy_run', 'b']],
+    },
+  };
+  const fewerChanges = {
+    candidate_hash: 'a'.repeat(64),
+    ranking_tuple: {
+      ...strongestExposure.ranking_tuple,
+      due_primary_exposures_satisfied: 1,
+      material_change_count: 0,
+      ordered_session_tuple: [['2026-08-03', 0, 'easy_run', 'a']],
+    },
+  };
+  assert.ok(compareGoalBackwardCandidateRankings(strongestExposure, fewerChanges) < 0);
+
+  const tiedExposure = {
+    ...fewerChanges,
+    ranking_tuple: { ...fewerChanges.ranking_tuple, due_primary_exposures_satisfied: 2 },
+  };
+  assert.ok(compareGoalBackwardCandidateRankings(tiedExposure, strongestExposure) < 0);
+});
+
+test('CAND-01', 'one hundred repeated bounded generations select the identical canonical hash', () => {
+  const selectedHashes = Array.from({ length: 100 }, () => (
+    enumerateGoalBackwardCandidates(boundedEnumerationInput()).selected_candidate?.candidate_hash
+  ));
+  assert.equal(selectedHashes.every((hash) => hash === selectedHashes[0]), true);
+  assert.match(selectedHashes[0], /^[a-f0-9]{64}$/);
 });
 
 assert.equal(new Set(results).size, results.length, 'fixture IDs must remain unique');

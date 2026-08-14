@@ -11,6 +11,7 @@ const {
   localDateForOffset,
   preservedPlanTarget,
   redactedBackupEntry,
+  resolveOperationalGoalBackwardV24Mode,
   selectProtectedRaces,
   targetRef,
 } = require('../src/lib/betaPlanRollout');
@@ -19,6 +20,13 @@ const { resolveRunSchedule } = require('../src/lib/runSchedule');
 const rolloutScript = require('../scripts/upgrade-beta-race-plans');
 
 async function run() {
+  assert.equal(resolveOperationalGoalBackwardV24Mode(), 'off');
+  assert.equal(resolveOperationalGoalBackwardV24Mode('off'), 'off');
+  assert.equal(resolveOperationalGoalBackwardV24Mode('shadow'), 'shadow');
+  assert.equal(resolveOperationalGoalBackwardV24Mode('preview'), 'off', 'preview stays gated until canonical contracts ship');
+  assert.equal(resolveOperationalGoalBackwardV24Mode('on'), 'off', 'on stays gated until mutation contracts ship');
+  assert.equal(resolveOperationalGoalBackwardV24Mode('garbage'), 'off');
+
   const races = [
     { id: 'race-early', race_date: '2026-09-01', status: 'upcoming' },
     { id: 'race-a1', race_date: '2026-09-20', status: 'upcoming' },

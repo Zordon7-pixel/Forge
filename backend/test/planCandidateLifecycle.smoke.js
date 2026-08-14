@@ -226,6 +226,124 @@ async function run() {
     bindings,
   }), v24Bundle);
 
+  assert.deepEqual(candidateLifecycle.validateStoredGoalBackwardCandidateBindings({}), { present: false, bindings: null });
+  assert.throws(
+    () => candidateLifecycle.validateStoredGoalBackwardCandidateBindings({
+      decision_id: 'decision-incomplete',
+      feature_mode: 'shadow',
+    }),
+    (error) => error?.code === 'GOAL_BACKWARD_CANDIDATE_BINDINGS_INCOMPLETE' && error?.status === 409,
+    'a row with any v2.4 lineage must contain every required binding before apply',
+  );
+  assert.deepEqual(
+    candidateLifecycle.validateStoredGoalBackwardCandidateBindings({
+      ...bindings,
+      candidate_hash: bindings.selected_candidate_hash,
+    }),
+    { present: true, bindings },
+  );
+  assert.throws(
+    () => candidateLifecycle.validateStoredGoalBackwardCandidateBindings({
+      ...bindings,
+      feature_mode: 'preview',
+      candidate_hash: bindings.selected_candidate_hash,
+    }),
+    (error) => error?.code === 'GOAL_BACKWARD_MODE_UNAVAILABLE' && error?.status === 409,
+    'preview/on v2.4 bindings stay operationally unavailable before later gates',
+  );
+
+  const decisionArtifacts = candidateLifecycle.buildGoalBackwardDecisionArtifacts({
+    userId: ownerId,
+    planGenerationCandidateId: 'candidate-current',
+    currentCandidateHash: `sha256:${'b'.repeat(64)}`,
+    createdAt: '2026-08-08T12:00:00.000Z',
+    decision: {
+      decision_id: 'decision-synthetic',
+      decision_hash: 'c'.repeat(64),
+      planning_date_local: '2026-08-08',
+      athlete_state_revision: 3,
+      evidence_snapshot_id: 'snapshot-synthetic',
+      phase: 'DEVELOPMENT',
+      recovery_state: 'NORMAL',
+      candidate_ids: ['candidate-a', 'candidate-b'],
+      selected_candidate_id: 'candidate-a',
+      selected_candidate_ranking_tuple: { due_primary_exposures_satisfied: 1 },
+      rejected_candidates: [{ candidate_id: 'candidate-b', reason_codes: ['FULL_REST'] }],
+      validator_results: [{ candidate_id: 'candidate-b', valid: false, reason_codes: ['FULL_REST'] }],
+      candidate_enumeration: { retained_count: 2, truncation_reason: null },
+    },
+    athleteState: { athlete_state_revision: 3, safety_action: 'NORMAL' },
+    candidates: [
+      { candidate_skeleton_id: 'candidate-a', candidate_hash: 'a'.repeat(64), validation: { valid: true, validator_results: [], reason_codes: [] }, ranking_tuple: { due_primary_exposures_satisfied: 1 } },
+      { candidate_skeleton_id: 'candidate-b', candidate_hash: 'b'.repeat(64), validation: { valid: false, validator_results: [], reason_codes: ['FULL_REST'] }, ranking_tuple: { due_primary_exposures_satisfied: 0 } },
+    ],
+  });
+  assert.equal(decisionArtifacts.length, 7);
+  assert.equal(decisionArtifacts[0].parent_artifact_id, null);
+  assert.equal(decisionArtifacts.slice(1).every((artifact, index) => artifact.parent_artifact_id === decisionArtifacts[index].id), true);
+  assert.equal(decisionArtifacts.slice(3).every((artifact) => artifact.plan_generation_candidate_id === 'candidate-current'), true);
+  const secondCandidateArtifacts = candidateLifecycle.buildGoalBackwardDecisionArtifacts({
+    userId: ownerId,
+    planGenerationCandidateId: 'candidate-second',
+    currentCandidateHash: `sha256:${'b'.repeat(64)}`,
+    createdAt: '2026-08-08T12:00:00.000Z',
+    decision: {
+      decision_id: 'decision-synthetic',
+      decision_hash: 'c'.repeat(64),
+      planning_date_local: '2026-08-08',
+      athlete_state_revision: 3,
+      evidence_snapshot_id: 'snapshot-synthetic',
+      phase: 'DEVELOPMENT',
+      recovery_state: 'NORMAL',
+      candidate_ids: ['candidate-a', 'candidate-b'],
+      selected_candidate_id: 'candidate-a',
+      selected_candidate_ranking_tuple: { due_primary_exposures_satisfied: 1 },
+      rejected_candidates: [{ candidate_id: 'candidate-b', reason_codes: ['FULL_REST'] }],
+      validator_results: [{ candidate_id: 'candidate-b', valid: false, reason_codes: ['FULL_REST'] }],
+      candidate_enumeration: { retained_count: 2, truncation_reason: null },
+    },
+    candidates: decisionArtifacts.length ? [{
+      candidate_skeleton_id: 'candidate-a',
+      candidate_hash: 'a'.repeat(64),
+      validation: { valid: true, reason_codes: [] },
+      ranking_tuple: { due_primary_exposures_satisfied: 1 },
+    }] : [],
+  });
+  assert.deepEqual(
+    secondCandidateArtifacts.slice(0, 3).map((artifact) => artifact.id),
+    decisionArtifacts.slice(0, 3).map((artifact) => artifact.id),
+    'decision-stage artifacts are safely reusable for the same immutable decision',
+  );
+  assert.equal(
+    secondCandidateArtifacts.slice(3).every((artifact, index) => artifact.id !== decisionArtifacts[index + 3].id),
+    true,
+    'candidate-stage artifacts remain linked uniquely to each current preview row',
+  );
+  const linkedBundle = candidateLifecycle.validateGoalBackwardCandidateBundle({
+    plan,
+    snapshot,
+    trace: { reason_codes: [] },
+    bindings,
+    artifacts: decisionArtifacts,
+  });
+  assert.deepEqual(linkedBundle.artifacts, decisionArtifacts);
+  const artifactWrites = [];
+  const persistedArtifacts = await candidateLifecycle.persistGoalBackwardDecisionArtifacts({
+    tx: {
+      run: async (sql, params) => {
+        artifactWrites.push({ sql, params });
+        return { changes: 1 };
+      },
+    },
+    artifacts: decisionArtifacts,
+  });
+  assert.deepEqual(persistedArtifacts, {
+    inserted: 7,
+    artifact_ids: decisionArtifacts.map((artifact) => artifact.id),
+  });
+  assert.equal(artifactWrites.length, 7);
+  assert.equal(artifactWrites.every((write) => write.sql.includes('INSERT INTO planning_pipeline_artifacts')), true);
+
   const assignedLineage = plansRouter._test.replacementLineageForActivePlan({
     source: 'assigned',
     row: { user_plan_id: 'up-current', lineage_id: 'lineage-current', plan_version: 4 },
@@ -294,11 +412,7 @@ async function run() {
   assert.deepEqual(pruneCalls[0].params, [ownerId, '2026-08-07T12:00:00.000Z', 'candidate-current']);
 
   const source = fs.readFileSync(path.join(__dirname, '../src/routes/plans.js'), 'utf8');
-  assert.doesNotMatch(
-    source,
-    /FORGE_GOAL_BACKWARD_V24_MODE|getGoalBackwardV24Mode|validateGoalBackwardCandidateBundle/,
-    'Phase 1A does not switch or wrap the current runtime candidate path',
-  );
+  assert.match(source, /validateStoredGoalBackwardCandidateBindings\(row\)/);
   assert.match(source, /SELECT \* FROM plan_generation_candidates WHERE id=\? AND user_id=\? FOR UPDATE/);
   assert.match(source, /WHERE id=\? AND user_id=\? AND status='preview'/);
   assert.match(source, /WHERE id=\? AND user_id=\? AND status='active'/);
@@ -323,6 +437,53 @@ async function run() {
   const writeBoundaryGuard = source.lastIndexOf('assertCandidatePlanningDateCurrent(row);');
   const firstPlanWrite = source.indexOf("'UPDATE users SET run_days_per_week=?", writeBoundaryGuard);
   assert.ok(writeBoundaryGuard > 0 && firstPlanWrite > writeBoundaryGuard, 'the local-date guard runs inside apply immediately before plan writes');
+
+  const currentResponse = { candidate_id: 'current-candidate', plan: { byte_compatible: true } };
+  let shadowComputations = 0;
+  const offResponse = await plansRouter._test.maybeComputeGoalBackwardShadowDiagnostics({
+    mode: 'off',
+    response: currentResponse,
+    compute: async () => { shadowComputations += 1; },
+  });
+  const shadowResponse = await plansRouter._test.maybeComputeGoalBackwardShadowDiagnostics({
+    mode: 'shadow',
+    response: currentResponse,
+    compute: async () => { shadowComputations += 1; },
+  });
+  assert.strictEqual(offResponse, currentResponse);
+  assert.strictEqual(shadowResponse, currentResponse);
+  assert.equal(JSON.stringify(shadowResponse), JSON.stringify(offResponse), 'shadow returns current candidate bytes unchanged');
+  assert.equal(shadowComputations, 1, 'only shadow computes bounded v2.4 diagnostics');
+
+  const computedShadow = plansRouter._test.computeGoalBackwardShadowDiagnostics({
+    userId: ownerId,
+    planningDateLocal: '2026-08-08',
+    state: {
+      active: null,
+      activePlan: null,
+      context: {
+        profile: {},
+        history: { recentRunCount: 0, weeklyMileageBaseline: 0 },
+        recovery: { state: 'normal' },
+        safety: {},
+      },
+      inputHash: `sha256:${'d'.repeat(64)}`,
+      planningInputRevision: 1,
+      races: [],
+      target: { trainingDays: ['Fri', 'Sun'] },
+    },
+    built: {
+      plan: {
+        weeks: [{ days: [{
+          date: '2026-08-08',
+          sessions: [{ id: 'current-easy', kind: 'run', workout_id: 'easy_aerobic', duration_min: 30, distance_miles: 3 }],
+        }] }],
+      },
+    },
+  });
+  assert.ok(computedShadow.candidates.length > 0 && computedShadow.candidates.length <= 64);
+  assert.equal(computedShadow.decision.candidate_ids.length, computedShadow.candidates.length);
+  assert.match(computedShadow.selected_candidate.candidate_hash, /^[a-f0-9]{64}$/);
 
   console.log('PLAN CANDIDATE LIFECYCLE SMOKE OK (63)');
 }

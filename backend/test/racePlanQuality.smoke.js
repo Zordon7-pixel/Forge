@@ -137,6 +137,27 @@ if (process.argv.includes('--semantic-acceptance')) {
   ]);
   assert.deepEqual(validation, { valid: true, errors: [] });
 
+  const originalGoalBackwardMode = process.env.FORGE_GOAL_BACKWARD_V24_MODE;
+  let currentOff;
+  let currentShadow;
+  try {
+    process.env.FORGE_GOAL_BACKWARD_V24_MODE = 'off';
+    currentOff = buildRacePlanCandidate(clone(fixture), {
+      planningDateLocal: fixture.todayISO,
+      timezoneOffsetMinutes: 240,
+    });
+    process.env.FORGE_GOAL_BACKWARD_V24_MODE = 'shadow';
+    currentShadow = buildRacePlanCandidate(clone(fixture), {
+      planningDateLocal: fixture.todayISO,
+      timezoneOffsetMinutes: 240,
+    });
+  } finally {
+    if (originalGoalBackwardMode === undefined) delete process.env.FORGE_GOAL_BACKWARD_V24_MODE;
+    else process.env.FORGE_GOAL_BACKWARD_V24_MODE = originalGoalBackwardMode;
+  }
+  assert.equal(canonicalHash(currentShadow), canonicalHash(currentOff), 'shadow cannot alter current candidate bytes');
+  assert.deepEqual(currentShadow, currentOff);
+
   const variants = [
     ['low-data', { history: { ...fixture.history, weeklyMileageBaseline: 4, recentRunCount: 2 } }],
     ['no-data', { history: {} }],

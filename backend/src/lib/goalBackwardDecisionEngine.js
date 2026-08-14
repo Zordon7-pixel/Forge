@@ -133,11 +133,14 @@ function resolveOwnedGoals(input = {}) {
     );
     const priority = normalizedPriority(source.priority);
     const target = targetForGoal(source);
+    const distanceMiles = Number(source.distance_miles ?? source.distanceMiles ?? source.distance);
     const goal = {
       goal_id: goalIdentifier(source, index),
       race_id: raceId,
       athlete_id: athleteId,
       event_kind: String(source.event_kind ?? source.eventKind ?? '').toUpperCase() || null,
+      event_policy_id: source.event_policy_id ?? source.eventPolicyId ?? null,
+      distance_miles: Number.isFinite(distanceMiles) && distanceMiles > 0 ? distanceMiles : null,
       event_local_date: eventLocalDate,
       event_timezone: source.event_timezone ?? source.eventTimezone ?? source.timezone ?? null,
       location: source.location ?? null,
@@ -596,11 +599,50 @@ function buildGoalBackwardPlanningDecision(input = {}) {
   });
 }
 
+function finalizeGoalBackwardCandidateDecision(decision, {
+  candidates = [],
+  selectedCandidate = null,
+  totalUniqueCandidateCount = candidates.length,
+  truncationReason = null,
+} = {}) {
+  if (!decision?.decision_id || !decision?.decision_hash) {
+    throw new Error('an immutable PlanningDecision is required before candidate selection');
+  }
+  const retained = Array.isArray(candidates) ? candidates : [];
+  const rejected = retained.filter((candidate) => candidate?.validation?.valid !== true).map((candidate) => ({
+    candidate_id: candidate.candidate_skeleton_id,
+    candidate_hash: candidate.candidate_hash,
+    reason_codes: [...new Set(candidate.validation?.reason_codes || [])],
+  }));
+  const validatorResults = retained.map((candidate) => ({
+    candidate_id: candidate.candidate_skeleton_id,
+    candidate_hash: candidate.candidate_hash,
+    valid: candidate.validation?.valid === true,
+    validators_executed: (candidate.validation?.validator_results || []).map((result) => result.validator),
+    reason_codes: [...new Set(candidate.validation?.reason_codes || [])],
+  }));
+  return deepFreeze({
+    ...clone(decision),
+    candidate_ids: retained.map((candidate) => candidate.candidate_skeleton_id),
+    selected_candidate_id: selectedCandidate?.candidate_skeleton_id || null,
+    selected_candidate_hash: selectedCandidate?.candidate_hash || null,
+    selected_candidate_ranking_tuple: clone(selectedCandidate?.ranking_tuple || null),
+    rejected_candidates: rejected,
+    validator_results: validatorResults,
+    candidate_enumeration: {
+      retained_count: retained.length,
+      total_unique_candidate_count: Number(totalUniqueCandidateCount || 0),
+      truncation_reason: truncationReason,
+    },
+  });
+}
+
 module.exports = {
   buildDueExposureLedger,
   buildGoalBackwardPlanningDecision,
   buildRoleMultiset,
   deriveGoalConfidence,
+  finalizeGoalBackwardCandidateDecision,
   resolveOwnedGoals,
   selectGoalBackwardPhase,
 };

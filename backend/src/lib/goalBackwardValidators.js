@@ -37,6 +37,18 @@ const PRESCRIPTION_IDENTITY_FIELDS = new Set([
   'session_id', 'sessionId', 'id', 'scheduled_local_date', 'scheduledLocalDate', 'scheduled_start_at',
   'scheduledStartAt', 'date', 'local_date',
 ]);
+const HARD_VALIDATOR_NAMES = Object.freeze([
+  'schema',
+  'scope',
+  'availability',
+  'constraints',
+  'roles',
+  'required_exposures',
+  'cross_modal_ceiling',
+  'presentation_floor',
+  'safety',
+  'interference',
+]);
 
 function clone(value) {
   if (value === undefined) return undefined;
@@ -331,6 +343,112 @@ function validateAvailability(sessions, options) {
   return { validator: 'availability', valid: violations.length === 0, violations, reason_codes: violations.map((violation) => violation.code) };
 }
 
+function validateCandidateSchema(sessions) {
+  const violations = [];
+  const ids = new Set();
+  sessions.forEach((session, index) => {
+    if (!session || typeof session !== 'object' || Array.isArray(session)) {
+      violations.push({ code: 'SESSION_ROLE_UNJUSTIFIED', reason: 'SESSION_NOT_OBJECT', session_index: index });
+      return;
+    }
+    const suppliedId = session.session_id ?? session.sessionId ?? session.id;
+    const id = sessionId(session, index);
+    if (suppliedId === undefined || suppliedId === null || !String(suppliedId).trim()) {
+      violations.push({ code: 'SESSION_ROLE_UNJUSTIFIED', reason: 'SESSION_ID_REQUIRED', session_index: index });
+    } else if (ids.has(id)) {
+      violations.push({ code: 'SESSION_ROLE_UNJUSTIFIED', reason: 'DUPLICATE_SESSION_ID', session_id: id });
+    }
+    ids.add(id);
+    if (!sessionLocalDate(session)) {
+      violations.push({ code: 'SESSION_ROLE_UNJUSTIFIED', reason: 'SESSION_DATE_INVALID', session_id: id });
+    }
+    if (!sessionFamily(session) || !resolveStressVector(sessionFamily(session), {
+      event_kind: session.event_kind,
+      contributing_work_families: session.contributing_work_families,
+    })) {
+      violations.push({ code: 'WORKOUT_FAMILY_UNRESOLVED', session_id: id });
+    }
+    if (!CLOSED_ROLES.has(sessionRole(session))) {
+      violations.push({ code: 'SESSION_ROLE_UNJUSTIFIED', reason: 'ROLE_UNRESOLVED', session_id: id });
+    }
+  });
+  return {
+    validator: 'schema',
+    valid: violations.length === 0,
+    violations,
+    reason_codes: [...new Set(violations.map((violation) => violation.code))],
+  };
+}
+
+function dueRoleRequirements(options = {}) {
+  const source = options.required_exposure_ledger?.due_roles
+    ?? options.required_exposure_ledger
+    ?? [];
+  return Array.isArray(source) ? source : [];
+}
+
+function validateCandidateScope(sessions, options = {}) {
+  const violations = [];
+  const requirements = dueRoleRequirements(options);
+  const byId = new Map(requirements.map((requirement) => [String(requirement.requirement_id), requirement]));
+  const explicitlyAllowed = Array.isArray(options.allowed_requirement_ids)
+    ? options.allowed_requirement_ids.map(String)
+    : options.enforce_due_role_scope === true
+      ? requirements.map((requirement) => String(requirement.requirement_id))
+      : [];
+  const allowed = new Set(explicitlyAllowed);
+  const enforceScope = Array.isArray(options.allowed_requirement_ids) || options.enforce_due_role_scope === true;
+  const maximum = Number(options.maximum_session_count);
+  if (Number.isSafeInteger(maximum) && maximum >= 0 && sessions.length > maximum) {
+    violations.push({
+      code: 'SESSION_ROLE_UNJUSTIFIED',
+      reason: 'MAXIMUM_SESSION_COUNT',
+      actual: sessions.length,
+      maximum,
+    });
+  }
+  sessions.forEach((session, index) => {
+    const requirementId = String(session.requirement_id ?? session.requirementId ?? '');
+    if (enforceScope && (!requirementId || !allowed.has(requirementId))) {
+      violations.push({
+        code: 'SESSION_ROLE_UNJUSTIFIED',
+        reason: 'OUTSIDE_DUE_ROLE_MULTISET',
+        session_id: sessionId(session, index),
+      });
+      return;
+    }
+    const requirement = byId.get(requirementId);
+    if (requirement && (!(requirement.any_of || []).includes(sessionFamily(session))
+      || (requirement.role && String(requirement.role).toUpperCase() !== sessionRole(session)))) {
+      violations.push({
+        code: 'SESSION_ROLE_UNJUSTIFIED',
+        reason: 'DUE_ROLE_MISMATCH',
+        requirement_id: requirementId,
+        session_id: sessionId(session, index),
+      });
+    }
+  });
+  return {
+    validator: 'scope',
+    valid: violations.length === 0,
+    violations,
+    reason_codes: violations.length ? ['SESSION_ROLE_UNJUSTIFIED'] : [],
+  };
+}
+
+function validateCrossModalCeiling(options = {}) {
+  const evidence = options.workload_evidence;
+  const violations = evidence?.valid === false
+    ? clone((evidence.violations || []).length ? evidence.violations : [{ code: 'CROSS_MODAL_FATIGUE_LIMIT' }])
+    : [];
+  return {
+    validator: 'cross_modal_ceiling',
+    valid: violations.length === 0,
+    violations,
+    reason_codes: violations.length ? ['CROSS_MODAL_FATIGUE_LIMIT'] : [],
+  };
+}
+
 function matchesRoleFamily(session, constraint) {
   const role = constraint.role ? sessionRole(session) === String(constraint.role).toUpperCase() : true;
   const family = constraint.workout_family ? sessionFamily(session) === constraint.workout_family : true;
@@ -492,22 +610,17 @@ function validateSafety(sessions, options) {
 function validateGoalBackwardCandidate(candidate = {}, options = {}) {
   const sessions = sessionsFrom(candidate);
   const results = [
+    validateCandidateSchema(sessions),
+    validateCandidateScope(sessions, options),
     validateAvailability(sessions, options),
     validateConstraints(sessions, options),
     validateRoles(sessions, options),
     validateRequiredExposures(sessions, options),
+    validateCrossModalCeiling(options),
     validatePresentationFloor(sessions, options),
     validateSafety(sessions, options),
     validateInterference(sessions, options),
   ];
-  if (options.workload_evidence && options.workload_evidence.valid === false) {
-    results.push({
-      validator: 'cross_modal_ceiling',
-      valid: false,
-      violations: clone(options.workload_evidence.violations || []),
-      reason_codes: ['CROSS_MODAL_FATIGUE_LIMIT'],
-    });
-  }
   return deepFreeze({
     valid: results.every((result) => result.valid),
     validator_results: results,
@@ -764,6 +877,7 @@ function compareMaterialChange(input = {}) {
 }
 
 module.exports = {
+  HARD_VALIDATOR_NAMES,
   canonicalPrescriptionHash,
   classifyInterferencePredicates,
   compareMaterialChange,

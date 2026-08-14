@@ -9,14 +9,23 @@ const {
   RACE_PLAN_POLICY_V1,
   addDays,
   canonicalHash,
+  canonicalStringify,
   daysBetween,
+  eventPolicyFor,
   firstFullMonday,
   longRunIdentityFloor,
   mondayFor,
   raceCategory,
 } = require('./racePlanPolicy');
 const runWorkoutTaxonomy = require('./runWorkoutTaxonomy');
-const { resolveStressVector } = require('./goalBackwardLoad');
+const {
+  aggregateWeeklyStress,
+  calculateFatigueCeilings,
+  evaluateStressBudget,
+  resolveStressVector,
+  validateRollingHardDays,
+} = require('./goalBackwardLoad');
+const { finalizeGoalBackwardCandidateDecision } = require('./goalBackwardDecisionEngine');
 const {
   buildPlanningModel,
   evaluatePlanFeasibility,
@@ -26,7 +35,16 @@ const {
 const {
   compareMaterialChange,
   validateGoalBackwardCandidate,
+  validateInterference,
 } = require('./goalBackwardValidators');
+
+const MAX_GOAL_BACKWARD_CANDIDATES = 64;
+const ROLE_RANK = Object.freeze({ PRIMARY_KEY: 0, ASSESSMENT: 1, SUPPORTING: 2, RECOVERY: 3, REST: 4 });
+const RUNNING_GOAL_BACKWARD_FAMILIES = new Set([
+  'recovery_run', 'easy_run', 'long_aerobic', 'steady_run', 'threshold_run', 'interval_run',
+  'race_rhythm_run', 'hyrox_compromised', 'hyrox_partial_simulation', 'hyrox_full_simulation',
+  'assessment', 'race',
+]);
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -881,20 +899,33 @@ function roadCandidateMaterial(source) {
     ).slice(0, 10) || null,
     source_kind: session.kind ?? 'run',
     source_title: session.title ?? null,
+    duration_min: Number.isFinite(Number(session.duration_min)) ? Number(session.duration_min) : null,
+    distance_m: Number.isFinite(Number(session.distance_m)) ? Number(session.distance_m) : null,
+    distance_miles: Number.isFinite(Number(session.distance_miles)) ? Number(session.distance_miles) : null,
+    quality_work_duration_min: Number.isFinite(Number(session.quality_work_duration_min))
+      ? Number(session.quality_work_duration_min)
+      : null,
+    main_work_duration_min: Number.isFinite(Number(session.main_work_duration_min))
+      ? Number(session.main_work_duration_min)
+      : null,
+    run_station_pair_count: Number.isFinite(Number(session.run_station_pair_count))
+      ? Number(session.run_station_pair_count)
+      : null,
   }));
 }
 
 function placementFor(placements, requirementId) {
   const placement = placements?.[requirementId];
-  if (typeof placement === 'string') return { scheduled_local_date: placement.slice(0, 10), scheduled_start_at: null };
-  if (!placement || typeof placement !== 'object') return { scheduled_local_date: null, scheduled_start_at: null };
+  if (typeof placement === 'string') return { scheduled_local_date: placement.slice(0, 10), scheduled_start_at: null, workout_family: null };
+  if (!placement || typeof placement !== 'object') return { scheduled_local_date: null, scheduled_start_at: null, workout_family: null };
   return {
     scheduled_local_date: String(placement.scheduled_local_date ?? placement.date ?? '').slice(0, 10) || null,
     scheduled_start_at: placement.scheduled_start_at ?? null,
+    workout_family: placement.workout_family ?? placement.workoutFamily ?? null,
   };
 }
 
-function buildGoalBackwardCandidateSkeleton(input = {}) {
+function goalBackwardSkeletonIdentity(input = {}) {
   const decision = input.decision;
   if (!decision || !decision.decision_id || !Array.isArray(decision.role_multiset)) {
     throw new Error('an immutable PlanningDecision with a role multiset is required');
@@ -912,20 +943,43 @@ function buildGoalBackwardCandidateSkeleton(input = {}) {
       session_id: String(material?.material_id || `skeleton-${role.requirement_id}-${index + 1}`),
       requirement_id: role.requirement_id,
       role: role.role,
-      workout_family: material?.workout_family || role.any_of?.[0] || null,
+      workout_family: placement.workout_family || material?.workout_family || role.any_of?.[0] || null,
       candidate_families: [...(role.any_of || [])],
       scheduled_local_date: placement.scheduled_local_date,
       scheduled_start_at: placement.scheduled_start_at,
       supports_requirement_id: role.supports_requirement_id || null,
       candidate_material_id: material?.material_id || null,
       material_source: material ? 'CURRENT_ROAD_SESSION_CONSTRUCTOR_OUTPUT' : 'EVENT_POLICY_ROLE',
+      duration_min: material?.duration_min ?? null,
+      distance_m: material?.distance_m ?? null,
+      distance_miles: material?.distance_miles ?? null,
+      quality_work_duration_min: material?.quality_work_duration_min ?? null,
+      main_work_duration_min: material?.main_work_duration_min ?? null,
+      run_station_pair_count: material?.run_station_pair_count ?? null,
     };
   });
   const materialChange = compareMaterialChange({
     active_applied_plan: input.active_applied_plan ?? null,
     candidate: { phase: decision.phase, sessions },
   });
-  const validation = input.validate === true || sessions.some((session) => session.scheduled_local_date)
+  return {
+    decision_id: decision.decision_id,
+    decision_hash: decision.decision_hash,
+    phase: decision.phase,
+    primary_goal_id: decision.primary_goal_id,
+    role_multiset: clone(decision.role_multiset),
+    candidate_material: materials,
+    sessions,
+    material_change: materialChange,
+    canonical_sessions_materialized: false,
+  };
+}
+
+function buildGoalBackwardCandidateSkeleton(input = {}) {
+  const decision = input.decision;
+  const identityContent = goalBackwardSkeletonIdentity(input);
+  const sessions = identityContent.sessions;
+  const validation = input.validate !== false && (input.validate === true || sessions.some((session) => session.scheduled_local_date))
     ? validateGoalBackwardCandidate({ sessions }, {
       ...input.validation_options,
       training_age_class: input.validation_options?.training_age_class ?? input.training_age_class ?? decision.training_age_class,
@@ -938,31 +992,260 @@ function buildGoalBackwardCandidateSkeleton(input = {}) {
       unplaceable_requirement_ids: decision.due_exposure_ledger?.unplaceable_requirement_ids,
     })
     : null;
-  const content = {
-    decision_id: decision.decision_id,
-    decision_hash: decision.decision_hash,
-    phase: decision.phase,
-    primary_goal_id: decision.primary_goal_id,
-    role_multiset: clone(decision.role_multiset),
-    candidate_material: materials,
-    sessions,
-    material_change: materialChange,
-    validation,
-    canonical_sessions_materialized: false,
-    persisted: false,
-  };
-  const candidateHash = canonicalHash(content);
+  const candidateHash = canonicalHash(identityContent);
   return immutable({
     candidate_skeleton_id: input.candidate_skeleton_id || `candidate-skeleton-${candidateHash.slice(0, 24)}`,
-    ...content,
+    ...identityContent,
+    validation,
+    persisted: false,
     candidate_hash: candidateHash,
   });
 }
 
+function validLocalDate(value) {
+  const date = String(value || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  const parsed = new Date(`${date}T12:00:00.000Z`);
+  return Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date ? null : date;
+}
+
+function fixedPlacementForRole(role, input = {}) {
+  const constraints = [...(input.locks || input.decision?.athlete_locks || []), ...(input.manual_edits || input.decision?.manual_edits || [])];
+  const matched = constraints.filter((constraint) => {
+    const requirementId = constraint.requirement_id ?? constraint.requirementId;
+    if (requirementId != null) return String(requirementId) === String(role.requirement_id);
+    const constraintRole = String(constraint.role || '').toUpperCase();
+    const family = constraint.workout_family ?? constraint.workoutFamily;
+    if (!constraintRole && !family) return false;
+    if (constraintRole && constraintRole !== String(role.role || '').toUpperCase()) return false;
+    return !family || (role.any_of || []).includes(family);
+  });
+  return {
+    dates: [...new Set(matched.map((constraint) => validLocalDate(
+      constraint.scheduled_local_date ?? constraint.local_date ?? constraint.date
+    )).filter(Boolean))].sort(),
+    families: [...new Set(matched.map((constraint) => constraint.workout_family ?? constraint.workoutFamily).filter(Boolean))].sort(),
+  };
+}
+
+function rolePlacementChoices(role, input, availableDates) {
+  const fixed = fixedPlacementForRole(role, input);
+  const dates = fixed.dates.length ? fixed.dates.filter((date) => availableDates.includes(date)) : availableDates;
+  const allowedFamilies = [...new Set((role.any_of || []).map(String).filter(Boolean))].sort();
+  const families = fixed.families.length
+    ? allowedFamilies.filter((family) => fixed.families.includes(family))
+    : allowedFamilies;
+  return dates.flatMap((date) => families.map((family) => ({ scheduled_local_date: date, workout_family: family })));
+}
+
+function orderedSessionTuple(candidate) {
+  return (candidate.sessions || []).map((session) => ([
+    session.scheduled_local_date,
+    ROLE_RANK[String(session.role || '').toUpperCase()] ?? 99,
+    session.workout_family,
+    session.session_id,
+  ])).sort((left, right) => canonicalStringify(left).localeCompare(canonicalStringify(right)));
+}
+
+function preliminaryCandidateComparator(left, right) {
+  return left.preliminary_spacing_violation_count - right.preliminary_spacing_violation_count
+    || canonicalStringify(left.preliminary_ordering_tuple).localeCompare(canonicalStringify(right.preliminary_ordering_tuple))
+    || left.canonical_placement.localeCompare(right.canonical_placement);
+}
+
+function stressTargetVector(input = {}) {
+  if (Array.isArray(input.selected_weekly_stress_targets)) return input.selected_weekly_stress_targets.map(Number);
+  const source = input.selected_weekly_stress_targets || {};
+  const dimensions = ['aerobic', 'running_impact', 'lower_body_muscular', 'upper_body_muscular', 'grip', 'neuromuscular', 'metabolic', 'event_specific_fatigue'];
+  return dimensions.map((dimension) => Number(source[dimension] || 0));
+}
+
+function runningDistanceMeters(session = {}) {
+  if (!RUNNING_GOAL_BACKWARD_FAMILIES.has(session.workout_family)) return 0;
+  const direct = Number(session.running_distance_m ?? session.distance_m ?? session.distanceMeters);
+  if (Number.isFinite(direct) && direct >= 0) return direct;
+  const miles = Number(session.distance_miles ?? session.distanceMiles);
+  return Number.isFinite(miles) && miles >= 0 ? miles * 1609.344 : 0;
+}
+
+function preferredDayMatchCount(sessions, input = {}) {
+  const preferredDates = new Set((input.preferred_local_dates || []).map(validLocalDate).filter(Boolean));
+  const preferredWeekdays = new Set((input.preferred_weekdays || []).map((value) => String(value).slice(0, 3).toLowerCase()));
+  return sessions.filter((session) => {
+    const date = validLocalDate(session.scheduled_local_date);
+    if (preferredDates.has(date)) return true;
+    if (!date || !preferredWeekdays.size) return false;
+    const weekday = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'][new Date(`${date}T12:00:00.000Z`).getUTCDay()];
+    return preferredWeekdays.has(weekday);
+  }).length;
+}
+
+function candidateRankingTuple(candidate, input = {}) {
+  const duePrimary = new Set((input.decision?.role_multiset || [])
+    .filter((role) => String(role.role).toUpperCase() === 'PRIMARY_KEY')
+    .map((role) => String(role.requirement_id)));
+  const satisfied = new Set((candidate.sessions || [])
+    .filter((session) => duePrimary.has(String(session.requirement_id)))
+    .map((session) => String(session.requirement_id)));
+  const weekly = aggregateWeeklyStress(candidate.sessions || []);
+  const target = stressTargetVector(input);
+  const actual = weekly.valid ? weekly.weekly_dimension_sum : Array(8).fill(0);
+  const runningVolume = (candidate.sessions || []).reduce((sum, session) => sum + runningDistanceMeters(session), 0);
+  const selectedRunningVolume = Number(input.selected_running_volume_m || 0);
+  return {
+    due_primary_exposures_satisfied: satisfied.size,
+    material_change_count: candidate.material_change?.changes?.length || 0,
+    stress_target_absolute_deviation: actual.reduce((sum, value, index) => sum + Math.abs(value - (target[index] || 0)), 0),
+    running_volume_absolute_deviation_m: Math.abs(runningVolume - selectedRunningVolume),
+    preferred_day_matches: preferredDayMatchCount(candidate.sessions || [], input),
+    ordered_session_tuple: orderedSessionTuple(candidate),
+  };
+}
+
+function candidateWorkloadEvidence(sessions, input = {}) {
+  if (input.validation_options?.workload_evidence) return input.validation_options.workload_evidence;
+  const aggregate = aggregateWeeklyStress(sessions);
+  const eventPolicy = eventPolicyFor(input.decision?.event_policy_id);
+  const ceilings = input.fatigue_ceilings || calculateFatigueCeilings(input.modality_history || {}, {
+    training_age_class: input.validation_options?.training_age_class ?? input.decision?.training_age_class,
+    event_policy: eventPolicy,
+    phase: input.decision?.phase,
+    mandatory_hyrox_cluster: input.mandatory_hyrox_cluster === true,
+    recovery_state: input.validation_options?.recovery_state ?? input.decision?.recovery_state,
+    safety_restriction: !['NORMAL', 'MONITOR'].includes(String(
+      input.validation_options?.safety_action ?? input.decision?.safety_state?.action ?? 'NORMAL'
+    ).toUpperCase()),
+    previous_two_weeks_passed: input.previous_two_weeks_passed === true,
+  });
+  const budget = evaluateStressBudget(aggregate, ceilings);
+  const rolling = validateRollingHardDays(sessions, {
+    ...input.validation_options,
+    spacing_valid: validateInterference(sessions, input.validation_options).valid,
+  });
+  return {
+    valid: aggregate.valid && budget.valid && rolling.valid,
+    violations: [
+      ...(aggregate.violations || []),
+      ...(budget.violations || []),
+      ...(rolling.violations || []),
+    ],
+    reason_codes: [...new Set([
+      ...(aggregate.reason_codes || []),
+      ...(budget.reason_codes || []),
+      ...(rolling.reason_codes || []),
+    ])],
+  };
+}
+
+function compareGoalBackwardCandidateRankings(left, right) {
+  const a = left.ranking_tuple;
+  const b = right.ranking_tuple;
+  return b.due_primary_exposures_satisfied - a.due_primary_exposures_satisfied
+    || a.material_change_count - b.material_change_count
+    || a.stress_target_absolute_deviation - b.stress_target_absolute_deviation
+    || a.running_volume_absolute_deviation_m - b.running_volume_absolute_deviation_m
+    || b.preferred_day_matches - a.preferred_day_matches
+    || canonicalStringify(a.ordered_session_tuple).localeCompare(canonicalStringify(b.ordered_session_tuple))
+    || left.candidate_hash.localeCompare(right.candidate_hash);
+}
+
+function enumerateGoalBackwardCandidates(input = {}) {
+  const decision = input.decision;
+  if (!decision?.decision_id || !decision?.decision_hash || !Array.isArray(decision.role_multiset)) {
+    throw new Error('an immutable PlanningDecision with a role multiset is required');
+  }
+  const availableDates = [...new Set((input.available_local_dates || []).map(validLocalDate).filter(Boolean))].sort();
+  const maximumSessionCount = Number.isSafeInteger(input.maximum_session_count)
+    ? Math.max(0, input.maximum_session_count)
+    : decision.role_multiset.length;
+  const roles = decision.role_multiset.slice(0, maximumSessionCount);
+  const placementSets = roles.map((role) => rolePlacementChoices(role, input, availableDates));
+  const preliminary = [];
+  const seen = new Set();
+
+  function visit(index, placements) {
+    if (index === roles.length) {
+      const placementMap = Object.fromEntries(placements.map((placement) => [placement.requirement_id, placement]));
+      const identity = goalBackwardSkeletonIdentity({
+        decision,
+        placements: placementMap,
+        legacy_road_candidate_material: input.legacy_road_candidate_material,
+        active_applied_plan: input.active_applied_plan,
+      });
+      const sessions = identity.sessions;
+      const canonicalPlacement = canonicalStringify(identity);
+      if (seen.has(canonicalPlacement)) return;
+      seen.add(canonicalPlacement);
+      const interference = validateInterference(sessions, input.validation_options);
+      preliminary.push({
+        ...identity,
+        canonical_placement: canonicalPlacement,
+        preliminary_spacing_violation_count: interference?.violations?.length || 0,
+        preliminary_ordering_tuple: orderedSessionTuple({ sessions }),
+      });
+      return;
+    }
+    const role = roles[index];
+    for (const choice of placementSets[index] || []) {
+      visit(index + 1, [...placements, { requirement_id: role.requirement_id, ...choice }]);
+    }
+  }
+
+  if (roles.length && placementSets.every((choices) => choices.length)) visit(0, []);
+  const retained = preliminary.sort(preliminaryCandidateComparator).slice(0, MAX_GOAL_BACKWARD_CANDIDATES).map((candidate) => {
+    const candidateHash = canonicalHash(Object.fromEntries(Object.entries(candidate).filter(([key]) => ![
+      'canonical_placement', 'preliminary_spacing_violation_count', 'preliminary_ordering_tuple',
+    ].includes(key))));
+    const validation = validateGoalBackwardCandidate({ sessions: candidate.sessions }, {
+      ...input.validation_options,
+      workload_evidence: candidateWorkloadEvidence(candidate.sessions, input),
+      allowed_requirement_ids: roles.map((role) => String(role.requirement_id)),
+      enforce_due_role_scope: true,
+      maximum_session_count: maximumSessionCount,
+      locks: input.validation_options?.locks ?? input.locks ?? decision.athlete_locks,
+      manual_edits: input.validation_options?.manual_edits ?? input.manual_edits ?? decision.manual_edits,
+      required_exposure_ledger: decision.due_exposure_ledger,
+      unplaceable_requirement_ids: decision.due_exposure_ledger?.unplaceable_requirement_ids,
+    });
+    const withValidation = {
+      ...candidate,
+      candidate_skeleton_id: `candidate-skeleton-${candidateHash.slice(0, 24)}`,
+      candidate_hash: candidateHash,
+      validation,
+      persisted: false,
+    };
+    delete withValidation.canonical_placement;
+    return immutable({ ...withValidation, ranking_tuple: candidateRankingTuple(withValidation, input) });
+  });
+  const accepted = retained.filter((candidate) => candidate.validation.valid).sort(compareGoalBackwardCandidateRankings);
+  const selectedCandidate = accepted[0] || null;
+  const truncationReason = preliminary.length > MAX_GOAL_BACKWARD_CANDIDATES
+    ? 'CANDIDATE_ENUMERATION_TRUNCATED_64'
+    : null;
+  const finalizedDecision = finalizeGoalBackwardCandidateDecision(decision, {
+    candidates: retained,
+    selectedCandidate,
+    totalUniqueCandidateCount: preliminary.length,
+    truncationReason,
+  });
+  return immutable({
+    decision: finalizedDecision,
+    candidates: retained,
+    selected_candidate: selectedCandidate,
+    rejected_candidates: finalizedDecision.rejected_candidates,
+    total_unique_candidate_count: preliminary.length,
+    truncation_reason: truncationReason,
+  });
+}
+
 module.exports = {
+  MAX_GOAL_BACKWARD_CANDIDATES,
   applyPlanningCurve,
   buildGoalBackwardCandidateSkeleton,
   buildRacePlanCandidate,
+  candidateRankingTuple,
+  compareGoalBackwardCandidateRankings,
+  enumerateGoalBackwardCandidates,
   enforceDemandingSpacing,
   ordinaryEasyMedians,
   semanticCandidateErrors,

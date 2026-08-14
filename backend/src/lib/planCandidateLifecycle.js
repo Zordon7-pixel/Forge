@@ -1,5 +1,6 @@
 const { RACE_PLAN_POLICY_V1, canonicalHash, canonicalStringify } = require('./racePlanPolicy');
 const {
+  ARTIFACT_KINDS,
   FEATURE_MODES,
   PLANNING_POLICY_VERSION,
   assertPipelineArtifact,
@@ -482,6 +483,171 @@ function buildGoalBackwardCandidateBindings(input = {}) {
   };
 }
 
+const GOAL_BACKWARD_BINDING_COLUMNS = Object.freeze([
+  'decision_id',
+  'candidate_revision',
+  'athlete_state_revision',
+  'safety_state_hash',
+  'goal_revisions_json',
+  'lock_revision',
+  'edit_revision',
+  'surface_revision',
+  'export_revision',
+  'feature_mode',
+  'selected_candidate_hash',
+  'material_change_json',
+]);
+
+function goalBackwardBindingSignalPresent(row = {}) {
+  return GOAL_BACKWARD_BINDING_COLUMNS.some((column) => row[column] !== null && row[column] !== undefined);
+}
+
+function storedBindingJson(value) {
+  if (typeof value !== 'string') return value;
+  try {
+    return JSON.parse(value);
+  } catch (_error) {
+    return value;
+  }
+}
+
+function validateStoredGoalBackwardCandidateBindings(row = {}, { allowedModes = ['shadow'] } = {}) {
+  if (!goalBackwardBindingSignalPresent(row)) return { present: false, bindings: null };
+  let bindings;
+  try {
+    bindings = buildGoalBackwardCandidateBindings({
+      ...row,
+      goal_revisions_json: storedBindingJson(row.goal_revisions_json),
+      material_change_json: storedBindingJson(row.material_change_json),
+    });
+  } catch (cause) {
+    const error = new Error('Stored v2.4 candidate bindings are incomplete');
+    error.code = 'GOAL_BACKWARD_CANDIDATE_BINDINGS_INCOMPLETE';
+    error.status = 409;
+    error.details = cause?.details || null;
+    throw error;
+  }
+  if (!allowedModes.includes(bindings.feature_mode)) {
+    const error = new Error('This v2.4 mode is not operationally available');
+    error.code = 'GOAL_BACKWARD_MODE_UNAVAILABLE';
+    error.status = 409;
+    error.details = { feature_mode: bindings.feature_mode };
+    throw error;
+  }
+  return { present: true, bindings };
+}
+
+function buildGoalBackwardShadowBindings({ decision, selectedCandidate = null, currentCandidateHash } = {}) {
+  const goalRevisions = Object.fromEntries((decision?.active_goals || []).map((goal) => [
+    String(goal.goal_id),
+    Math.max(1, Number(goal.source_revision || 1)),
+  ]));
+  return buildGoalBackwardCandidateBindings({
+    decisionId: decision?.decision_id,
+    candidateRevision: 1,
+    athleteStateRevision: Math.max(1, Number(decision?.athlete_state_revision || 1)),
+    safetyStateHash: prefixedHash(decision?.safety_state || {}),
+    goalRevisions,
+    lockRevision: Math.max(0, Number(decision?.lock_revision || 0)),
+    editRevision: Math.max(0, Number(decision?.edit_revision || 0)),
+    surfaceRevision: 1,
+    exportRevision: 1,
+    featureMode: 'shadow',
+    selectedCandidateHash: selectedCandidate?.candidate_hash || currentCandidateHash,
+    materialChange: selectedCandidate?.material_change || { required: false, reason_codes: [] },
+  });
+}
+
+function buildGoalBackwardDecisionArtifacts({
+  userId,
+  planGenerationCandidateId,
+  currentCandidateHash,
+  decision,
+  athleteState = {},
+  candidates = [],
+  createdAt = new Date().toISOString(),
+} = {}) {
+  if (!decision?.decision_id || !planGenerationCandidateId) {
+    throw new Error('decision and plan-generation candidate links are required');
+  }
+  const selected = candidates.find((candidate) => candidate.candidate_skeleton_id === decision.selected_candidate_id) || null;
+  const planGenerationCandidateRef = prefixedHash(planGenerationCandidateId);
+  const candidateSummaries = candidates.map((candidate) => ({
+    candidate_id: candidate.candidate_skeleton_id,
+    candidate_hash: candidate.candidate_hash,
+    valid: candidate.validation?.valid === true,
+    reason_codes: candidate.validation?.reason_codes || [],
+    ranking_tuple: candidate.ranking_tuple || null,
+  }));
+  const payloads = {
+    evidence_snapshot: {
+      evidence_snapshot_id: decision.evidence_snapshot_id || null,
+      planning_date_local: decision.planning_date_local,
+      source: 'REDACTED_SHADOW_INPUT',
+    },
+    athlete_state: {
+      athlete_state_revision: Math.max(1, Number(decision.athlete_state_revision || athleteState.athlete_state_revision || 1)),
+      recovery_state: decision.recovery_state || athleteState.recovery_state || 'UNKNOWN',
+      safety_state_hash: prefixedHash(decision.safety_state || { action: athleteState.safety_action || 'NORMAL' }),
+    },
+    planning_decision: {
+      decision_id: decision.decision_id,
+      decision_hash: decision.decision_hash,
+      planning_date_local: decision.planning_date_local,
+      phase: decision.phase,
+      candidate_ids: decision.candidate_ids || [],
+      selected_candidate_id: decision.selected_candidate_id || null,
+      selected_candidate_hash: decision.selected_candidate_hash || null,
+      selected_candidate_ranking_tuple: decision.selected_candidate_ranking_tuple || null,
+      rejected_candidates: decision.rejected_candidates || [],
+      candidate_enumeration: decision.candidate_enumeration || {},
+    },
+    candidate_week: {
+      plan_generation_candidate_ref: planGenerationCandidateRef,
+      current_candidate_hash: currentCandidateHash,
+      authoritative_engine: 'current',
+      candidates: candidateSummaries,
+    },
+    validator_result: {
+      plan_generation_candidate_ref: planGenerationCandidateRef,
+      results: decision.validator_results || [],
+    },
+    canonical_session_set: {
+      plan_generation_candidate_ref: planGenerationCandidateRef,
+      canonical_sessions_materialized: false,
+      selected_candidate_id: selected?.candidate_skeleton_id || null,
+      selected_candidate_hash: selected?.candidate_hash || null,
+    },
+    surface_manifest: {
+      plan_generation_candidate_ref: planGenerationCandidateRef,
+      feature_mode: 'shadow',
+      authoritative_engine: 'current',
+      current_candidate_hash: currentCandidateHash,
+      v24_surface_enabled: false,
+    },
+  };
+  let parentArtifactId = null;
+  const artifacts = ARTIFACT_KINDS.map((kind, index) => {
+    const artifact = buildPipelineArtifact({
+      userId,
+      kind,
+      decisionId: decision.decision_id,
+      parentArtifactId,
+      planGenerationCandidateId: index >= 3 ? planGenerationCandidateId : null,
+      payload: payloads[kind],
+      createdAt,
+    });
+    parentArtifactId = artifact.id;
+    return artifact;
+  });
+  return assertPipelineLinks(artifacts);
+}
+
+async function persistGoalBackwardDecisionArtifacts(input = {}) {
+  const artifacts = input.artifacts || buildGoalBackwardDecisionArtifacts(input);
+  return persistPipelineArtifacts({ tx: input.tx, artifacts, requireCompleteLinks: true });
+}
+
 function validateGoalBackwardCandidateBundle({ artifacts = null, bindings, ...candidateBundle }) {
   const normalized = {
     ...validateCandidateBundle(candidateBundle),
@@ -518,6 +684,8 @@ module.exports = {
   assertBoundedJson,
   assertPersistablePlan,
   buildPipelineArtifact,
+  buildGoalBackwardDecisionArtifacts,
+  buildGoalBackwardShadowBindings,
   buildPlanningSnapshot,
   buildGoalBackwardCandidateBundle,
   buildGoalBackwardCandidateBindings,
@@ -528,8 +696,10 @@ module.exports = {
   parseJson,
   prefixedHash,
   persistPipelineArtifacts,
+  persistGoalBackwardDecisionArtifacts,
   redactSnapshotValue,
   validateCandidateBundle,
   validateGoalBackwardCandidateBundle,
+  validateStoredGoalBackwardCandidateBindings,
   validatePlanStructure,
 };
