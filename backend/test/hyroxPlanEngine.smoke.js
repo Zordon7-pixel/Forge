@@ -111,6 +111,66 @@ function assertFiveWeekPlanIsGeneric() {
   assert.equal(allSessions(named).some((session) => session.sessionType === 'hyrox_simulation'), false);
 }
 
+function assertFourWeekShortRunwayPeakSpecificity() {
+  assert.deepEqual(
+    hyrox.allocatePhases('short_runway', 4),
+    ['orientation_assessment', 'peak_partial_simulation', 'sharpen_reduce', 'taper_race'],
+  );
+  assert.deepEqual(
+    hyrox.allocatePhases('short_runway', 5),
+    ['orientation_assessment', 'build', 'peak_partial_simulation', 'sharpen_reduce', 'taper_race'],
+  );
+
+  const bryan = hyrox.generateHyroxPlan(fixture(null, {
+    planningLocalDate: '2026-08-14',
+    athlete: { weeklyMilesCurrent: 22, runDaysPerWeek: 4 },
+    currentLoad: { weeklyMiles: 22 },
+    event: { raceId: 'hyrox-nyc', eventLocalDate: '2026-09-06' },
+  }));
+  assert.deepEqual(
+    bryan.weeks.map((week) => week.phase),
+    ['orientation_assessment', 'peak_partial_simulation', 'sharpen_reduce', 'taper_race'],
+  );
+  const peakWeek = bryan.weeks.find((week) => week.startDate === '2026-08-17');
+  assert.equal(peakWeek?.phase, 'peak_partial_simulation');
+  const peakSessions = peakWeek.days.flatMap((day) => day.sessions);
+  const peakCompromised = peakSessions.filter((session) => session.sessionType === 'hyrox_compromised');
+  assert.equal(peakSessions.some((session) => ['hyrox_strength', 'hyrox_skill'].includes(session.sessionType)), true);
+  assert.equal(peakCompromised.length, 1, 'the peak week has one controlled compromised exposure');
+  assert.equal(peakCompromised[0].runSequenceMeters.length, 6, 'the peak week owns the largest bounded partial cluster');
+  const preReductionPairings = bryan.weeks
+    .slice(0, bryan.weeks.findIndex((week) => week.phase === 'sharpen_reduce'))
+    .map((week) => week.days.flatMap((day) => day.sessions)
+      .find((session) => session.sessionType === 'hyrox_compromised')?.runSequenceMeters.length || 0);
+  assert.equal(peakCompromised[0].runSequenceMeters.length, Math.max(...preReductionPairings));
+  assert.equal(peakSessions.some((session) => session.sessionType === 'hyrox_simulation'), false);
+  assert.equal(
+    peakSessions.filter((session) => session.kind === 'hyrox' && !session.includesRun)
+      .every((session) => session.distance_miles === undefined),
+    true,
+    'station meters never become running mileage',
+  );
+  assert.ok(runningMiles(peakWeek) <= bryan.inputSummary.effectiveWeeklyMiles);
+  assert.equal(hyrox.validateHyroxPlan(bryan).valid, true);
+  assertRollingHardLowerBodyCap(bryan, 'Bryan four-week fixture');
+  assertRaceSafetyWindow(bryan, '2026-09-06', 'Bryan four-week fixture');
+
+  const safetyHold = hyrox.generateHyroxPlan(fixture(null, {
+    planningLocalDate: '2026-08-14',
+    athlete: { weeklyMilesCurrent: 22, runDaysPerWeek: 4, comebackMode: true, readiness: 'low' },
+    currentLoad: { weeklyMiles: 22, readiness: 'low' },
+    event: { raceId: 'hyrox-nyc', eventLocalDate: '2026-09-06' },
+  }));
+  const heldPeakSessions = safetyHold.weeks[1].days.flatMap((day) => day.sessions);
+  assert.equal(safetyHold.weeks[1].phase, 'peak_partial_simulation');
+  assert.equal(heldPeakSessions.some((session) => session.heavyStationWork), false);
+  assert.ok(heldPeakSessions
+    .filter((session) => session.sessionType === 'hyrox_compromised')
+    .every((session) => session.runSequenceMeters.length <= 2));
+  assert.equal(hyrox.validateHyroxPlan(safetyHold).valid, true);
+  assertRollingHardLowerBodyCap(safetyHold, 'Bryan safety-hold fixture');
+}
+
 function assertTimezoneStability() {
   const instant = '2026-08-10T10:30:00.000Z';
   assert.equal(hyrox.localDateInTimeZone(instant, 'Pacific/Kiritimati'), '2026-08-11');
@@ -649,29 +709,93 @@ function assertRaceDayTruthByFormat() {
 }
 
 function assertSecondaryTransition() {
-  const eventDate = hyrox.addLocalDays(TODAY, 35);
+  const planningLocalDate = '2026-08-14';
+  const eventDate = '2026-09-06';
   const secondaryRace = {
     kind: 'run_race',
-    name: 'Ten Mile Running Race',
-    eventLocalDate: hyrox.addLocalDays(eventDate, 42),
+    raceId: 'army-ten-miler-2026',
+    name: 'Army Ten-Miler',
+    eventLocalDate: '2026-10-11',
     eventTimezone: 'America/New_York',
     distanceMiles: 10,
+    goalType: 'pr',
+    goalTimeSeconds: 5220,
   };
-  const plan = hyrox.generateHyroxPlan(fixture(35, { secondaryRace }));
+  const plan = hyrox.generateHyroxPlan(fixture(null, {
+    planningLocalDate,
+    athlete: { weeklyMilesCurrent: 22, runDaysPerWeek: 4 },
+    currentLoad: { weeklyMiles: 22 },
+    event: { raceId: 'hyrox-nyc', eventLocalDate: eventDate },
+    secondaryRace,
+  }));
   assert.deepEqual(plan.goals.map((goal) => goal.kind), ['hyrox', 'run_race']);
+  assert.deepEqual(plan.goals.map((goal) => goal.raceId), ['hyrox-nyc', 'army-ten-miler-2026']);
+  assert.equal(plan.goals[1].goalType, 'pr');
+  assert.equal(plan.goals[1].goalTimeSeconds, 5220);
+  assert.equal(plan.goals[1].goalPaceSecondsPerMile, 522);
+  assert.equal(plan.goals[1].goalPaceLabel, '8:42/mi');
   const raceWeek = plan.weeks.findIndex((week) => week.days.some((day) => (
     day.sessions.some((session) => session.sessionType === 'hyrox_race')
   )));
   assert.equal(plan.weeks[raceWeek + 1].phase, 'post_hyrox_recovery');
-  assert.ok(plan.weeks.slice(raceWeek + 2).some((week) => week.phase === 'running_specific'));
+  const recoverySessions = plan.weeks[raceWeek + 1].days.flatMap((day) => day.sessions);
+  assert.equal(recoverySessions.every((session) => session.runningStress === 'easy'), true);
+  const specificWeeks = plan.weeks.filter((week) => week.phase === 'running_specific');
+  assert.ok(specificWeeks.length >= 2);
+  const specificSessions = specificWeeks.map((week) => (
+    week.days.flatMap((day) => day.sessions)
+      .find((session) => session.sessionType === 'running_specific')
+  ));
+  assert.equal(specificSessions.every(Boolean), true);
+  for (const session of specificSessions) {
+    assert.equal(session.goal_pace_seconds_per_mile, 522);
+    assert.equal(session.goal_pace_label, '8:42/mi');
+    assert.equal(session.pace_target, '8:42/mi');
+    assert.notEqual(session.target_zone, 'Zone 2');
+    assert.ok(Array.isArray(session.warmup) && session.warmup.length > 0);
+    assert.ok(Array.isArray(session.steps) && session.steps.length > 0);
+    assert.ok(Array.isArray(session.cooldown) && session.cooldown.length > 0);
+    assert.doesNotMatch(`${session.title} ${session.description || ''}`, /easy aerobic|time trial/i);
+  }
+  const longRuns = specificWeeks.map((week) => (
+    week.days.flatMap((day) => day.sessions).find((session) => session.sessionType === 'long_run')
+  ));
+  assert.equal(longRuns.every(Boolean), true);
+  assert.equal(longRuns.every((session) => session.distance_miles < 10), true, 'training never jumps to race distance');
+  assert.equal(
+    longRuns.every((session, index) => index === 0 || session.distance_miles > longRuns[index - 1].distance_miles),
+    true,
+    'the long run rises across the bounded running-specific block',
+  );
   assert.equal(plan.weeks.at(-1).phase, 'running_taper_race');
+  assert.equal(
+    plan.weeks.at(-1).days.flatMap((day) => day.sessions)
+      .some((session) => session.sessionType === 'long_run'),
+    false,
+    'long-run loading is removed before the retained race',
+  );
+  for (const week of plan.weeks.slice(raceWeek + 1)) {
+    assert.ok(runningMiles(week) <= plan.inputSummary.effectiveWeeklyMiles);
+  }
   assert.equal(plan.weeks.some((week, index) => index > raceWeek && week.phase === 'base_development'), false);
   assert.equal(hyrox.validateHyroxPlan(plan).valid, true);
+  assertRollingHardLowerBodyCap(plan, 'HYROX plus Army fixture');
+
+  const effortBased = hyrox.generateHyroxPlan(fixture(null, {
+    planningLocalDate,
+    event: { raceId: 'hyrox-nyc', eventLocalDate: eventDate },
+    secondaryRace: { ...secondaryRace, goalType: 'completion', goalTimeSeconds: null },
+  }));
+  const effortSession = allSessions(effortBased).find((session) => session.sessionType === 'running_specific');
+  assert.equal(effortSession.goal_pace_seconds_per_mile, undefined);
+  assert.match(effortSession.pace_target, /10-mile effort|RPE/i);
+  assert.notEqual(effortSession.target_zone, 'Zone 2');
 }
 
 function run() {
   assertRunways();
   assertFiveWeekPlanIsGeneric();
+  assertFourWeekShortRunwayPeakSpecificity();
   assertTimezoneStability();
   assertFrequencyAndEquipment();
   assertConsecutiveDayScheduleRegression();

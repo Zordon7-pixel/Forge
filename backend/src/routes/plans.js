@@ -1765,13 +1765,31 @@ function targetFromOwnedRaces(profile, races, requested, planningDateLocal) {
     }
     const config = storedEventConfig(hyroxRace);
     const planWindow = hyroxPlan.planWeekWindow(planningDateLocal, localDate);
-    const secondary = races[1] ? {
+    const secondaryRace = races[1] || null;
+    const secondaryDistanceMiles = secondaryRace
+      ? clamp(Number(secondaryRace.distance_miles) || 10, 1, 100)
+      : null;
+    const secondaryGoalTimeSeconds = secondaryRace && parsePositiveNumber(secondaryRace.goal_time_seconds)
+      ? Math.round(Number(secondaryRace.goal_time_seconds))
+      : null;
+    const secondaryGoalPaceSecondsPerMile = secondaryRace
+      ? concurrentPlan.goalPaceSecondsPerMile({
+        distanceMiles: secondaryDistanceMiles,
+        goalTimeSeconds: secondaryGoalTimeSeconds,
+        goalType: secondaryGoalTimeSeconds ? 'pr' : 'completion',
+      })
+      : null;
+    const secondary = secondaryRace ? {
       kind: 'run_race',
-      raceId: races[1].id,
-      name: races[1].race_name,
-      eventLocalDate: races[1].event_local_date || races[1].race_date,
-      eventTimezone: races[1].event_timezone || hyroxRace.event_timezone,
-      distanceMiles: Number(races[1].distance_miles),
+      raceId: secondaryRace.id,
+      name: secondaryRace.race_name,
+      eventLocalDate: secondaryRace.event_local_date || secondaryRace.race_date,
+      eventTimezone: secondaryRace.event_timezone || hyroxRace.event_timezone,
+      distanceMiles: secondaryDistanceMiles,
+      goalTimeSeconds: secondaryGoalTimeSeconds,
+      goalType: secondaryGoalTimeSeconds ? 'pr' : 'completion',
+      goalPaceSecondsPerMile: secondaryGoalPaceSecondsPerMile,
+      goalPaceLabel: concurrentPlan.formatPaceLabel(secondaryGoalPaceSecondsPerMile),
     } : null;
     const target = {
       ...requested,
@@ -2070,9 +2088,7 @@ async function previewPlanForUser(userId, body = {}, { store = true } = {}) {
   const expiresAt = new Date(Date.now() + (RACE_PLAN_POLICY_V1.candidate.ttlHours * 60 * 60 * 1000)).toISOString();
   const response = {
     candidateHash,
-    effectiveFrom: candidateEffectiveFrom(initial.active, clock.planningDateLocal, {
-      immediate: request.operation === 'remove_race',
-    }),
+    effectiveFrom: candidateEffectiveFrom(initial.active, clock.planningDateLocal, { immediate: true }),
     expiresAt,
     id: candidateId,
     meta: initial.meta,
@@ -2357,9 +2373,7 @@ async function applyPlanCandidate(userId, candidateId, body = {}, constraints = 
       if (preferenceResult.changes === 0) throw new Error('Plan preferences update failed');
     }
 
-    const effectiveFrom = request.operation === 'remove_race'
-      ? row.planning_date_local
-      : candidateEffectiveFrom(active, row.planning_date_local);
+    const effectiveFrom = candidateEffectiveFrom(active, row.planning_date_local, { immediate: true });
     const planId = uuidv4();
     const userPlanId = uuidv4();
     const replacementLineage = replacementLineageForActivePlan(active, userPlanId);

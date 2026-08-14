@@ -227,9 +227,18 @@ async function run() {
   assert.match(source, /SELECT \* FROM plan_generation_candidates WHERE id=\? AND user_id=\? FOR UPDATE/);
   assert.match(source, /WHERE id=\? AND user_id=\? AND status='preview'/);
   assert.match(source, /WHERE id=\? AND user_id=\? AND status='active'/);
-  assert.equal(plansRouter._test.candidateEffectiveFrom({ source: 'assigned' }, '2026-08-08'), '2026-08-09');
+  assert.equal(
+    plansRouter._test.candidateEffectiveFrom({ source: 'assigned' }, '2026-08-08'),
+    '2026-08-09',
+    'a generic assigned-plan cutover still protects the current calendar day',
+  );
+  assert.equal(
+    plansRouter._test.candidateEffectiveFrom({ source: 'assigned' }, '2026-08-08', { immediate: true }),
+    '2026-08-08',
+    'an explicitly accepted candidate starts on its reviewed planning date',
+  );
   assert.equal(plansRouter._test.candidateEffectiveFrom({ source: 'legacy' }, '2026-08-08'), '2026-08-08');
-  assert.match(source, /candidateEffectiveFrom\(active, row\.planning_date_local\)/);
+  assert.match(source, /candidateEffectiveFrom\(active, row\.planning_date_local, \{ immediate: true \}\)/);
   assert.match(source, /row\.status === 'applied'/);
   assert.match(source, /CANDIDATE_DETERMINISM_MISMATCH/);
   assert.match(source, /storedFeasibility === 'unsafe'[\s\S]*CANDIDATE_UNSAFE/);
@@ -240,7 +249,7 @@ async function run() {
   const firstPlanWrite = source.indexOf("'UPDATE users SET run_days_per_week=?", writeBoundaryGuard);
   assert.ok(writeBoundaryGuard > 0 && firstPlanWrite > writeBoundaryGuard, 'the local-date guard runs inside apply immediately before plan writes');
 
-  console.log('PLAN CANDIDATE LIFECYCLE SMOKE OK (46)');
+  console.log('PLAN CANDIDATE LIFECYCLE SMOKE OK (47)');
 }
 
 run().catch((error) => {
