@@ -676,9 +676,11 @@ export function TodayDetailSheet({
                 {planAccess.secondaryLabel}
               </button>
             )}
-            <button onClick={onWarmup} className="rounded-xl px-3 py-3 text-sm font-bold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>
-              Warm-up
-            </button>
+            {(!isRestDay || isPlannedRestDay) && (
+              <button onClick={onWarmup} className="rounded-xl px-3 py-3 text-sm font-bold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>
+                Warm-up
+              </button>
+            )}
             <button onClick={onReflect} className="rounded-xl px-3 py-3 text-sm font-bold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>
               Reflect
             </button>

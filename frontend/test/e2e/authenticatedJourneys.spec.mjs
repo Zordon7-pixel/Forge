@@ -152,6 +152,7 @@ test('planned rest day does not prompt for a readiness check-in', async ({ page 
   await expect(page.getByRole('heading', { name: 'Recovery is the plan today' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Check in', exact: true })).toHaveCount(0)
   await page.getByText('Recovery tools', { exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Warm-up', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Start extra run', exact: true }).last()).toBeVisible()
   await page.getByRole('button', { name: 'Close', exact: true }).click()
 
@@ -218,7 +219,11 @@ test('check-in recovery remains guidance and never offers the rest-labelled run'
   await page.getByRole('button', { name: 'View recovery', exact: true }).click()
   await expect(page.getByRole('heading', { name: "Recovery is today's guidance" }).last()).toBeVisible()
   await expect(page.getByRole('button', { name: 'Start run', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Start lift', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Start workout', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Start/log', exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Map route', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Warm-up', exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Edit check-in', exact: true }).last()).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Recovery is the plan today' })).toHaveCount(0)
 
