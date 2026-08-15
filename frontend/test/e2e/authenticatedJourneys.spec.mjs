@@ -1961,6 +1961,7 @@ test('v2.4 full-rest safety and manual capability stay fail-closed on both mobil
   await expect(page.getByText(/Full rest · All training · Full rest/)).toBeVisible()
 
   await page.getByRole('button', { name: /Today's mission Canonical station skill/ }).click()
+  await expect(page.locator('.forged-day-brief-purpose')).toHaveText('This key training stimulus is required')
   const canonicalDetails = page.locator('summary').filter({ hasText: 'Workout details and export readiness' }).last()
   await expect(canonicalDetails).toBeVisible()
   await canonicalDetails.click()

@@ -73,6 +73,10 @@ function firstStr(...values) {
   }
   return ''
 }
+function purposeMissionText(value) {
+  if (typeof value !== 'string') return value
+  return /^[A-Za-z0-9]+(?:_[A-Za-z0-9]+)+$/.test(value) ? reasonCodeLabel(value) : value
+}
 function boolValue(...values) {
   for (const value of values) {
     if (value === true || value === 'true') return true
@@ -252,7 +256,7 @@ function DayBriefContext({ briefDay, px }) {
     <section className="forged-day-brief" aria-labelledby="forged-day-mission-title">
       <p className="forged-day-brief-kicker">{briefDay.isToday ? "Today's mission" : 'Session mission'}</p>
       <h4 id="forged-day-mission-title" className="forged-hand" style={{ fontSize: px(20) }}>{briefDay.title}</h4>
-      {briefDay.mission && <p className="forged-day-brief-purpose" style={{ fontSize: px(13) }}>{briefDay.mission}</p>}
+      {briefDay.mission && <p className="forged-day-brief-purpose" style={{ fontSize: px(13) }}>{purposeMissionText(briefDay.mission)}</p>}
       <div className="forged-day-brief-facts" role="group" aria-label="Session essentials">
         <span data-intensity={briefDay.intensity.key}>{briefDay.intensity.label}</span>
         <span>{briefDay.target}</span>
@@ -594,7 +598,7 @@ export default function ForgedDayView({
         <p className="forged-must-do">Must do</p>
         <CanonicalSessionTruth session={hyroxSession} px={px} />
         <p className="forged-hand" style={{ margin: '0 0 8px', fontSize: px(15), fontWeight: 800 }}>HYROX-specific session · canonical metric prescription</p>
-        {facts.purpose && <p style={{ margin: '0 0 9px', fontSize: px(13), lineHeight: 1.5 }}>{facts.purpose}</p>}
+        {facts.purpose && <p style={{ margin: '0 0 9px', fontSize: px(13), lineHeight: 1.5 }}>{purposeMissionText(facts.purpose)}</p>}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, padding: '9px 10px', borderRadius: 8, background: 'rgba(194,65,12,0.05)', fontSize: px(12) }}>
           {facts.duration > 0 && <span><Timer size={13} style={{ verticalAlign: -2 }} /> {facts.duration} min</span>}
           {facts.runs.length > 0 && <span><Route size={13} style={{ verticalAlign: -2 }} /> {facts.runs.length} × 1,000 m run</span>}
@@ -677,7 +681,7 @@ export default function ForgedDayView({
             Benchmark run — this calibrates your targets
           </p>
         )}
-        {f.purpose && f.purpose !== briefDay?.mission && <p className="forged-hand" style={{ fontSize: px(15), margin: '0 0 8px' }}>{f.purpose}</p>}
+        {f.purpose && f.purpose !== briefDay?.mission && <p className="forged-hand" style={{ fontSize: px(15), margin: '0 0 8px' }}>{purposeMissionText(f.purpose)}</p>}
         <div className="forged-paper-metric" style={{ display: 'flex', flexWrap: 'wrap', gap: 14 }}>
           {f.time && <span style={{ fontSize: px(13) }}><Timer size={13} style={{ verticalAlign: -1 }} /> {f.time}</span>}
           {f.distance && <span style={{ fontSize: px(13) }}><Route size={13} style={{ verticalAlign: -1 }} /> {f.distance}</span>}
@@ -973,7 +977,7 @@ export default function ForgedDayView({
       {whyToday && (
         <details className="forged-why-workout">
           <summary><Brain size={17} color="#C2410C" /> Why this workout?</summary>
-          <p style={{ fontSize: px(13), lineHeight: 1.55 }}>{whyToday}</p>
+          <p style={{ fontSize: px(13), lineHeight: 1.55 }}>{purposeMissionText(whyToday)}</p>
           <AiGuidanceNote />
         </details>
       )}
