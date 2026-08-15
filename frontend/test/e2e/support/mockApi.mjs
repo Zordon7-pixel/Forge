@@ -25,6 +25,55 @@ export function qaResponse(body, status = 200) {
   return { __qaResponse: true, status, body }
 }
 
+export function signatureUiDashboardFixture({ dateISO, day }) {
+  const run = {
+    id: 'signature-mission-run',
+    kind: 'run',
+    type: 'progression_run',
+    workout_type: 'progression_run',
+    title: 'Controlled progression run',
+    distance_miles: 4.25,
+    duration_min: 38,
+    pace_target: '9:15-9:45 /mi',
+    target_zone: 'Zone 2',
+    hrZone: { zone: 2, zoneLabel: 'Zone 2', minBpm: 132, maxBpm: 146, openEnded: false },
+    intensity: 'Controlled aerobic',
+    description: 'Build aerobic control before the next quality session.',
+    completed: false,
+  }
+  return {
+    readiness: {
+      available: true,
+      score: 83,
+      band: 'AMBER',
+      verdict: 'Ready with one limiter.',
+      drivers: ['Sleep duration supports today.', 'Recent training load calls for control.'],
+    },
+    recommendation: {
+      recommendationType: 'easy_run',
+      suggestedDistance: 9.9,
+      suggestedPace: '8:00 /mi',
+      reason: 'Legacy recommendation should not replace the calendar mission.',
+    },
+    today: {
+      today: { date: dateISO, day, type: run.type },
+      execution: {
+        hasPlan: true,
+        hasDay: true,
+        isRest: false,
+        mode: 'run_only',
+        phase: 'base',
+        week: 1,
+        date: dateISO,
+        day,
+        sessions: [run],
+        run,
+        lift: null,
+      },
+    },
+  }
+}
+
 function fixtureHash(character) {
   return character.repeat(64)
 }

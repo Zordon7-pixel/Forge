@@ -20,6 +20,8 @@ import { HEALTH_SYNC_RESULT_EVENT, shouldRefreshPageForHealthSyncEvent } from '.
 import { isRunningActivity } from '../lib/activityType'
 import { combineRecentActivity } from '../lib/recentActivity'
 import TravelTrainingPrompt from '../components/TravelTrainingPrompt'
+import ReadinessArcCard from '../components/ReadinessArcCard'
+import CoachsLogCard from '../components/CoachsLogCard'
 
 function fmtPace(durationSeconds, distance) {
   if (!durationSeconds || !distance) return '--'
@@ -285,6 +287,8 @@ export default function Dashboard() {
   const [showSyncedFlash, setShowSyncedFlash] = useState(false)
   const [showTodayDetail, setShowTodayDetail] = useState(false)
   const [showMoreInsights, setShowMoreInsights] = useState(false)
+  const [readinessArcExpanded, setReadinessArcExpanded] = useState(false)
+  const [coachsLogExpanded, setCoachsLogExpanded] = useState(false)
   const [nextRecommendation, setNextRecommendation] = useState(null)
   const [execution, setExecution] = useState(null)
   const [workoutStartError, setWorkoutStartError] = useState('')
@@ -899,6 +903,22 @@ export default function Dashboard() {
           100% { opacity: 0; stroke-dasharray: 157 0; }
         }
       `}</style>
+
+      <div className="signature-dashboard-stack">
+        <ReadinessArcCard
+          readinessState={readinessState}
+          readiness={travelReadiness}
+          expanded={readinessArcExpanded}
+          onExpandedChange={setReadinessArcExpanded}
+          onOpenDetail={() => setShowReadinessModal(true)}
+        />
+        <CoachsLogCard
+          recommendation={effectiveRecommendation}
+          execution={execution}
+          expanded={coachsLogExpanded}
+          onExpandedChange={setCoachsLogExpanded}
+        />
+      </div>
 
       {!injuryDismissed && activeInjury && activeInjury.id && (
         <div className="rounded-xl p-4" style={{ background: 'var(--accent-dim)', border: '1px solid var(--accent)' }}>

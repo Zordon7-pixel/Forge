@@ -415,3 +415,366 @@ body {
     animation: none;
   }
 }
+
+/* FORGE Signature UI: Readiness Arc + Coach's Log */
+.signature-dashboard-stack {
+  display: grid;
+  min-width: 0;
+  gap: 12px;
+}
+
+.signature-readiness-card,
+.signature-coachs-log {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.signature-readiness-card {
+  padding: 18px;
+  border: 1px solid rgba(249, 115, 22, 0.42);
+  border-radius: 18px;
+  background: #16130d;
+  color: #fffaf0;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.28);
+}
+
+.signature-readiness-primary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 132px;
+  align-items: center;
+  gap: 8px;
+}
+
+.signature-readiness-copy {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+}
+
+.signature-kicker,
+.signature-log-kicker {
+  margin: 0;
+  font-size: 10px;
+  line-height: 1.2;
+  font-weight: 900;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.signature-kicker {
+  color: #fb923c;
+}
+
+.signature-score {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 6px;
+  margin: 6px 0 0;
+  color: #fffaf0;
+  font-size: clamp(42px, 13vw, 58px);
+  font-variant-numeric: tabular-nums;
+  font-weight: 950;
+  letter-spacing: -0.055em;
+  line-height: 0.95;
+}
+
+.signature-score-scale {
+  color: #b9ad9b;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.signature-readiness-band {
+  margin: 8px 0 0;
+  color: #fb923c;
+  font-size: 18px;
+  font-weight: 900;
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+}
+
+.signature-readiness-verdict,
+.signature-readiness-driver,
+.signature-state-copy,
+.signature-expanded-copy {
+  color: #d6cbb8;
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.signature-readiness-verdict {
+  margin: 5px 0 0;
+}
+
+.signature-readiness-driver {
+  margin: 10px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.signature-arc {
+  width: 132px;
+  height: 132px;
+  margin-left: auto;
+}
+
+.signature-arc svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.signature-arc circle {
+  fill: none;
+  stroke-linecap: round;
+  stroke-width: 10;
+}
+
+.signature-arc-track {
+  stroke: rgba(255, 255, 255, 0.11);
+}
+
+.signature-arc-progress {
+  stroke: #f97316;
+  animation: signatureArcReveal 700ms var(--ease-out) both;
+}
+
+@keyframes signatureArcReveal {
+  from { stroke-dasharray: 0 100; }
+  to { stroke-dasharray: var(--signature-arc-fill); }
+}
+
+.signature-disclosure-button,
+.signature-detail-button,
+.signature-log-disclosure {
+  min-width: 44px;
+  min-height: 44px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.signature-disclosure-button,
+.signature-log-disclosure {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+  padding: 8px 0 0;
+  border: 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  background: transparent;
+  color: #fffaf0;
+  font-size: 12px;
+  font-weight: 850;
+  text-align: left;
+}
+
+.signature-disclosure-button > span,
+.signature-log-disclosure > span {
+  color: #fb923c;
+  font-size: 20px;
+  line-height: 1;
+}
+
+.signature-expanded-copy {
+  display: grid;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.signature-expanded-copy[hidden],
+.signature-log-rationale[hidden] {
+  display: none;
+}
+
+.signature-expanded-copy p,
+.signature-log-rationale p {
+  margin: 0;
+}
+
+.signature-detail-button {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid rgba(249, 115, 22, 0.5);
+  border-radius: 10px;
+  background: #211c14;
+  color: #fffaf0;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.signature-readiness-state {
+  min-height: 152px;
+}
+
+.signature-state-title {
+  margin: 7px 0 0;
+  color: #fffaf0;
+  font-size: 24px;
+  font-weight: 900;
+  line-height: 1.1;
+}
+
+.signature-state-copy {
+  max-width: 29rem;
+  margin: 8px 0 0;
+}
+
+.signature-loading-line {
+  display: block;
+  width: min(72%, 260px);
+  height: 8px;
+  margin-top: 18px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.signature-coachs-log {
+  position: relative;
+  padding: 17px 17px 15px 20px;
+  border: 1px solid #dfcfb4;
+  border-radius: 16px;
+  background: #f5ead7;
+  color: #1b160f;
+  box-shadow: 0 9px 24px rgba(0, 0, 0, 0.2);
+}
+
+.signature-coachs-log::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: #f97316;
+}
+
+.signature-log-kicker {
+  color: #c2410c;
+}
+
+.signature-log-title {
+  margin: 6px 0 0;
+  color: #1b160f;
+  font-size: 22px;
+  font-weight: 950;
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+}
+
+.signature-mission-facts {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin: 13px 0 0;
+}
+
+.signature-mission-facts > div {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.signature-mission-facts dt {
+  color: #7c5d42;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.signature-mission-facts dd {
+  margin: 2px 0 0;
+  color: #1b160f;
+  font-size: 13px;
+  font-weight: 850;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.signature-log-disclosure {
+  border-top-color: rgba(27, 22, 15, 0.15);
+  color: #1b160f;
+}
+
+.signature-log-disclosure > span {
+  color: #c2410c;
+}
+
+.signature-log-rationale {
+  padding-top: 3px;
+  color: #584431;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.signature-readiness-card :is(button):focus-visible,
+.signature-coachs-log :is(button):focus-visible {
+  outline: 3px solid #f97316;
+  outline-offset: 3px;
+}
+
+@media (max-width: 340px) {
+  .signature-dashboard-stack {
+    gap: 10px;
+  }
+
+  .signature-readiness-card {
+    padding: 14px;
+  }
+
+  .signature-readiness-primary {
+    grid-template-columns: minmax(0, 1fr) 98px;
+    gap: 2px;
+  }
+
+  .signature-score {
+    font-size: 42px;
+  }
+
+  .signature-readiness-band {
+    font-size: 16px;
+  }
+
+  .signature-arc {
+    width: 98px;
+    height: 98px;
+  }
+
+  .signature-readiness-verdict,
+  .signature-readiness-driver,
+  .signature-state-copy,
+  .signature-expanded-copy,
+  .signature-log-rationale {
+    font-size: 12px;
+  }
+
+  .signature-coachs-log {
+    padding: 14px 13px 13px 17px;
+  }
+
+  .signature-log-title {
+    font-size: 19px;
+  }
+
+  .signature-mission-facts {
+    gap: 7px 12px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .signature-arc-progress {
+    animation: none;
+    transition: none;
+  }
+
+  .signature-readiness-card *,
+  .signature-coachs-log * {
+    scroll-behavior: auto;
+    transition: none;
+  }
+}

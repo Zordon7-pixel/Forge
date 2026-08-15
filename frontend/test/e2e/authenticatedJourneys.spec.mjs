@@ -4,6 +4,7 @@ import {
   goalBackwardV24PlanFixture,
   installAuthenticatedApi,
   qaResponse,
+  signatureUiDashboardFixture,
 } from './support/mockApi.mjs'
 
 test.describe.configure({ timeout: 60_000 })
@@ -285,6 +286,170 @@ function activePlanWithTodaySessions(sessions, { completedSessionIds = [], addit
     },
   }
 }
+
+async function assertSignatureResponsive(page, expectedViewport) {
+  expect(page.viewportSize()).toEqual(expectedViewport)
+  const layout = await page.evaluate(() => ({
+    viewport: window.innerWidth,
+    documentWidth: document.documentElement.scrollWidth,
+    bodyWidth: document.body.scrollWidth,
+  }))
+  expect(layout.viewport).toBe(expectedViewport.width)
+  expect(layout.documentWidth).toBeLessThanOrEqual(layout.viewport)
+  expect(layout.bodyWidth).toBeLessThanOrEqual(layout.viewport)
+
+  const nav = page.locator('nav.fixed')
+  const navBox = await nav.boundingBox()
+  expect(navBox).not.toBeNull()
+  expect(navBox.y).toBeGreaterThanOrEqual(0)
+  expect(navBox.y + navBox.height).toBeLessThanOrEqual(expectedViewport.height)
+
+  const signatureControls = page.locator('.signature-dashboard-stack button:visible')
+  const controlCount = await signatureControls.count()
+  for (let index = 0; index < controlCount; index += 1) {
+    const control = signatureControls.nth(index)
+    await control.evaluate((node) => node.scrollIntoView({ block: 'center' }))
+    const [controlBox, currentNavBox] = await Promise.all([control.boundingBox(), nav.boundingBox()])
+    expect(controlBox?.width || 0).toBeGreaterThanOrEqual(44)
+    expect(controlBox?.height || 0).toBeGreaterThanOrEqual(44)
+    expect(controlBox.y + controlBox.height).toBeLessThanOrEqual(currentNavBox.y)
+  }
+}
+
+test('Signature UI reuses exact readiness and canonical mission facts on both mobile projects', async ({ page }, testInfo) => {
+  const runtimeErrors = collectRuntimeErrors(page)
+  const fixture = signatureUiDashboardFixture({ dateISO: today, day: todayDay })
+  const fixtureBeforePresentation = structuredClone(fixture)
+  const apiState = await installAuthenticatedApi(page, {
+    responses: new Map([
+      ['GET /api/recovery/readiness', fixture.readiness],
+      ['GET /api/plans/today', fixture.today],
+      ['GET /api/runs/next-recommendation', fixture.recommendation],
+    ]),
+  })
+
+  await page.goto('/')
+  const readiness = page.getByRole('region', { name: 'Recovery readiness' })
+  const coachsLog = page.locator('[data-signature-coachs-log]')
+  await expect(readiness).toHaveAttribute('data-signature-readiness', 'loaded')
+  await expect(readiness.locator('[data-readiness-score]')).toHaveText(String(fixture.readiness.score))
+  await expect(readiness.locator('[data-readiness-band]')).toHaveText('Amber')
+  await expect(readiness.getByText(fixture.readiness.verdict, { exact: true })).toBeVisible()
+  await expect(readiness.getByText(fixture.readiness.drivers[0], { exact: true })).toBeVisible()
+  await expect(readiness.locator('.signature-arc')).toHaveAttribute('aria-hidden', 'true')
+
+  await expect(coachsLog).toBeVisible()
+  await expect(coachsLog.getByRole('heading', { name: 'Controlled progression run' })).toBeVisible()
+  await expect(coachsLog.locator('[data-mission-fact="duration"] dd')).toHaveText('38 min')
+  await expect(coachsLog.locator('[data-mission-fact="distance"] dd')).toHaveText('4.25 mi')
+  await expect(coachsLog.locator('[data-mission-fact="effort"] dd')).toHaveText('Controlled aerobic')
+  await expect(coachsLog.locator('[data-mission-fact="pace"] dd')).toHaveText('9:15-9:45 /mi')
+  await expect(coachsLog.locator('[data-mission-fact="zone"] dd')).toHaveText('Zone 2 · 132-146 bpm')
+  await expect(coachsLog.getByText('9.9 mi', { exact: true })).toHaveCount(0)
+
+  const readinessRequestsBeforeExpansion = requestsFor(apiState, 'GET', '/api/recovery/readiness').length
+  expect(readinessRequestsBeforeExpansion, 'Header chip plus Dashboard retain their two existing readiness requests').toBe(2)
+  const readinessToggle = readiness.getByRole('button', { name: 'Show readiness details' })
+  const rationaleToggle = coachsLog.getByRole('button', { name: 'Why today matters' })
+  await expect(readinessToggle).toHaveAttribute('aria-expanded', 'false')
+  await expect(rationaleToggle).toHaveAttribute('aria-expanded', 'false')
+
+  await readinessToggle.focus()
+  await expect(readinessToggle).toBeFocused()
+  const focusStyle = await readinessToggle.evaluate((node) => {
+    const style = getComputedStyle(node)
+    return { style: style.outlineStyle, width: style.outlineWidth }
+  })
+  expect(focusStyle.style).not.toBe('none')
+  expect(Number.parseFloat(focusStyle.width)).toBeGreaterThanOrEqual(3)
+
+  await page.evaluate(() => window.scrollTo(0, 0))
+  if (testInfo.project.name === 'iphone-17') {
+    await testInfo.attach('signature-iphone-17-baseline', {
+      body: await page.screenshot({ fullPage: false }),
+      contentType: 'image/png',
+    })
+  }
+
+  await readinessToggle.click()
+  await rationaleToggle.click()
+  await expect(readinessToggle).toHaveAttribute('aria-expanded', 'true')
+  await expect(rationaleToggle).toHaveAttribute('aria-expanded', 'true')
+  await expect(readiness.getByText(fixture.readiness.drivers[1], { exact: true })).toBeVisible()
+  await expect(coachsLog.getByText('Build aerobic control before the next quality session.', { exact: true })).toBeVisible()
+  expect(requestsFor(apiState, 'GET', '/api/recovery/readiness')).toHaveLength(readinessRequestsBeforeExpansion)
+  expect(requestsFor(apiState, 'GET', '/api/plans/today')).toHaveLength(1)
+
+  const expandedBody = await page.locator('body').innerText()
+  expect(expandedBody, 'Expanded Signature UI copy contains no underscore symbol').not.toContain('_')
+  expect(expandedBody, 'Expanded Signature UI copy contains no raw closed enum token').not.toMatch(/\b[A-Z][A-Z0-9]*_[A-Z0-9_]+\b/)
+
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  const arcMotion = await readiness.locator('.signature-arc-progress').evaluate((node) => {
+    const style = getComputedStyle(node)
+    return { animation: style.animationName, transition: style.transitionDuration }
+  })
+  expect(arcMotion).toEqual({ animation: 'none', transition: '0s' })
+
+  await assertSignatureResponsive(page, testInfo.project.use.viewport)
+  await page.evaluate(() => window.scrollTo(0, 0))
+  if (testInfo.project.name === 'iphone-17') {
+    await testInfo.attach('signature-iphone-17-expanded', {
+      body: await page.screenshot({ fullPage: false }),
+      contentType: 'image/png',
+    })
+  } else {
+    await testInfo.attach('signature-compact-mobile-320-stress', {
+      body: await page.screenshot({ fullPage: false }),
+      contentType: 'image/png',
+    })
+  }
+
+  expect(fixture).toEqual(fixtureBeforePresentation)
+  assertCleanApiAndRuntime(apiState, runtimeErrors)
+})
+
+test('Signature UI truthfully covers loading, locked, and unavailable states', async ({ page }) => {
+  const runtimeErrors = collectRuntimeErrors(page)
+  let readinessMode = 'locked'
+  let releaseReadiness
+  let gatePending = true
+  const readinessGate = new Promise((resolve) => { releaseReadiness = resolve })
+  const apiState = await installAuthenticatedApi(page, {
+    responses: new Map([
+      ['GET /api/recovery/readiness', async () => {
+        if (gatePending) await readinessGate
+        return readinessMode === 'locked'
+          ? qaResponse({ error: 'Upgrade required' }, 402)
+          : { available: false }
+      }],
+    ]),
+  })
+
+  await page.goto('/')
+  const readiness = page.getByRole('region', { name: 'Recovery readiness' })
+  await expect(readiness).toHaveAttribute('data-signature-readiness', 'loading')
+  await expect(readiness).toHaveAttribute('aria-busy', 'true')
+
+  gatePending = false
+  releaseReadiness()
+  await expect(readiness).toHaveAttribute('data-signature-readiness', 'locked')
+  await expect(readiness.getByText('Upgrade to Forged Hybrid Pro to unlock today\'s readiness score.', { exact: true })).toBeVisible()
+  await expect(readiness.locator('.signature-arc')).toHaveCount(0)
+  await expect(readiness.locator('[data-readiness-score]')).toHaveCount(0)
+  await expect(page.locator('[data-signature-coachs-log]')).toHaveCount(0)
+
+  readinessMode = 'unavailable'
+  await page.reload()
+  await expect(readiness).toHaveAttribute('data-signature-readiness', 'unavailable')
+  await expect(readiness.getByText('Sync Health data to unlock today\'s readiness score.', { exact: true })).toBeVisible()
+  await expect(readiness.locator('.signature-arc')).toHaveCount(0)
+  await expect(readiness.locator('[data-readiness-score]')).toHaveCount(0)
+  await expect(page.locator('[data-signature-coachs-log]')).toHaveCount(0)
+
+  expect(requestsFor(apiState, 'GET', '/api/recovery/readiness')).toHaveLength(4)
+  assertCleanApiAndRuntime(apiState, runtimeErrors)
+})
 
 test('planned rest day does not prompt for a readiness check-in', async ({ page }) => {
   const runtimeErrors = collectRuntimeErrors(page)
