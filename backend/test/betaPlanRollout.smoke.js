@@ -20,11 +20,48 @@ const { resolveRunSchedule } = require('../src/lib/runSchedule');
 const rolloutScript = require('../scripts/upgrade-beta-race-plans');
 
 async function run() {
+  const disposableId = '00000000-0000-4000-8000-000000000024';
+  const disposableRef = targetRef(disposableId);
+  const cohort = { userId: disposableId, cohortRefs: [disposableRef], alertEntries: [] };
   assert.equal(resolveOperationalGoalBackwardV24Mode(), 'off');
   assert.equal(resolveOperationalGoalBackwardV24Mode('off'), 'off');
-  assert.equal(resolveOperationalGoalBackwardV24Mode('shadow'), 'shadow');
-  assert.equal(resolveOperationalGoalBackwardV24Mode('preview'), 'off', 'preview stays gated until canonical contracts ship');
-  assert.equal(resolveOperationalGoalBackwardV24Mode('on'), 'off', 'on stays gated until mutation contracts ship');
+  assert.equal(resolveOperationalGoalBackwardV24Mode('shadow'), 'off', 'non-off modes require cohort authority');
+  assert.equal(resolveOperationalGoalBackwardV24Mode('shadow', cohort), 'shadow');
+  assert.equal(resolveOperationalGoalBackwardV24Mode('preview', cohort), 'preview');
+  assert.equal(resolveOperationalGoalBackwardV24Mode('on', cohort), 'on');
+  assert.equal(
+    resolveOperationalGoalBackwardV24Mode('shadow', {
+      userId: 'hyrox-army-owner',
+      cohortRefs: [],
+      allowSyntheticShadow: true,
+    }),
+    'shadow',
+    'the explicit test-only compatibility path retains shipped shadow diagnostics for synthetic IDs',
+  );
+  assert.equal(
+    resolveOperationalGoalBackwardV24Mode('shadow', {
+      userId: disposableId,
+      cohortRefs: [],
+      allowSyntheticShadow: true,
+    }),
+    'off',
+    'the compatibility path cannot bypass cohort isolation for production-shaped IDs',
+  );
+  const smokeEntryPoint = process.argv[1];
+  try {
+    process.argv[1] = path.resolve(__dirname, '../src/app.js');
+    assert.equal(
+      resolveOperationalGoalBackwardV24Mode('shadow', {
+        userId: 'hyrox-army-owner',
+        cohortRefs: [],
+        allowSyntheticShadow: true,
+      }),
+      'off',
+      'a normal application process cannot enter the synthetic smoke compatibility path',
+    );
+  } finally {
+    process.argv[1] = smokeEntryPoint;
+  }
   assert.equal(resolveOperationalGoalBackwardV24Mode('garbage'), 'off');
 
   const races = [
@@ -137,21 +174,21 @@ async function run() {
 
   assert.equal(rolloutScript.parseArgs([]).apply, false, 'rollout defaults to a no-write dry run');
   assert.throws(() => rolloutScript.parseArgs(['--apply']), /explicit --user-id/);
-  assert.throws(() => rolloutScript.parseArgs(['--apply', '--user-id=user-1']), /--backup-dir is required/);
+  assert.throws(() => rolloutScript.parseArgs(['--apply', `--user-id=${disposableId}`]), /--backup-dir is required/);
   assert.throws(() => rolloutScript.parseArgs([
     '--apply',
-    '--user-id=user-1',
+    `--user-id=${disposableId}`,
     `--backup-dir=${path.resolve(__dirname, '../rollout-backup')}`,
   ]), /outside the repository checkout/);
   const parsed = rolloutScript.parseArgs([
     '--apply',
     '--backup-dir=/tmp/forged-rollout-test',
-    `--confirm=${RACE_PLAN_POLICY_V1.rollout.betaApplyConfirmation}`,
-    '--user-id=user-1',
-    '--user-id=user-1',
+    '--confirm=APPLY_GOAL_BACKWARD_V24',
+    `--user-id=${disposableId}`,
+    `--user-id=${disposableId}`,
   ]);
   assert.equal(parsed.apply, true);
-  assert.deepEqual(parsed.userIds, ['user-1']);
+  assert.deepEqual(parsed.userIds, [disposableId]);
   assert.throws(
     () => rolloutScript.parseArgs(['--planning-date=2026-08-08']),
     /Operator-supplied planning clocks are not accepted/,
@@ -236,7 +273,7 @@ async function run() {
   const missingClock = await rolloutScript.planningClockForUser('user-1', {}, now, { dbAll: async () => [] });
   assert.equal(missingClock.authoritative, false);
 
-  const rawUserId = 'private-beta-user-id';
+  const rawUserId = disposableId;
   const entry = redactedBackupEntry({
     userId: rawUserId,
     active: { row: { user_plan_id: 'up-old', id: 'tp-old', plan_version: 3, lineage_id: 'lineage-1', effective_from: '2026-07-01' } },
@@ -249,6 +286,7 @@ async function run() {
   const serialized = JSON.stringify(manifest);
   assert.equal(serialized.includes(rawUserId), false);
   assert.equal(serialized.includes('forbidden'), false);
+  assert.equal(manifest.schema_version, 2);
   assert.match(entry.target_ref, /^sha256:/);
   assert.equal(entry.candidate.expected_effective_from, '2026-08-09');
   assert.throws(() => assertRedactedBackup({ phone_number: '555-0100' }), /Forbidden backup field/);
@@ -293,10 +331,15 @@ async function run() {
   assert.match(scriptSource, /event_name='app_open'/);
   assert.match(scriptSource, /status='preview' AND expires_at>\?/);
   assert.doesNotMatch(scriptSource, /operator_default_offset|operator_explicit_offset/);
-  assert.match(scriptSource, /previewPlanForUser\(row\.id, request, \{ store: false \}\)/);
+  assert.match(scriptSource, /previewPlanForUser\(row\.id, request, \{[\s\S]*store: false,[\s\S]*goalBackwardDependencies:/);
   assert.match(scriptSource, /writePrivateJson\(options\.backupDir, 'pre-apply'/);
   assert.match(scriptSource, /previewPlanForUser\(context\.userId, context\.request, \{ store: true \}\)/);
   assert.match(scriptSource, /applyPlanCandidate\(context\.userId, stored\.id/);
+  assert.match(scriptSource, /assertDisposableUserIds\(options\.userIds/);
+  assert.match(scriptSource, /assertDeployedArtifactIdentity/);
+  assert.match(scriptSource, /verifyGoalBackwardArtifacts/);
+  assert.match(scriptSource, /restorePreviousAssignment/);
+  assert.match(scriptSource, /buildCleanupEvidence/);
   assert.match(scriptSource, /stored\.candidateHash !== context\.candidate\.candidateHash/);
   assert.match(scriptSource, /throw rolloutError\('CANDIDATE_HASH_DRIFT'\)/);
   assert.match(scriptSource, /assertSupportedCandidate\(stored\)/);
@@ -313,7 +356,9 @@ async function run() {
     'the durable result journal exists before the first account write',
   );
   assert.match(scriptSource, /finally \{[\s\S]*replacePrivateJson\(resultFile, resultJournal\)/);
-  assert.doesNotMatch(scriptSource, /(?:UPDATE|DELETE)\s+(?:users|user_plans|training_plans|race_events)/i);
+  assert.doesNotMatch(scriptSource, /(?:UPDATE|DELETE)\s+(?:users|training_plans|race_events)/i);
+  assert.match(scriptSource, /UPDATE user_plans SET status='superseded'[\s\S]*WHERE user_id=\?/);
+  assert.match(scriptSource, /UPDATE user_plans SET status='active'[\s\S]*WHERE user_id=\?/);
   assert.doesNotMatch(
     String(rolloutScript.verifyApply),
     /assertPlanningDateStable/,

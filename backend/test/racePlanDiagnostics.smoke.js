@@ -4,8 +4,12 @@ const path = require('node:path');
 const diagnosticsRouter = require('../src/routes/diagnostics');
 const {
   buildDecisionArtifactDiagnosticBundle,
+  buildGoalBackwardReleaseDiagnosticBundle,
   buildPlanDiagnosticBundle,
 } = require('../src/lib/racePlanDiagnostics');
+const {
+  buildGoalBackwardReleaseTelemetry,
+} = require('../src/lib/betaPlanRollout');
 const {
   buildPipelineArtifact,
   persistPipelineArtifacts,
@@ -249,6 +253,50 @@ async function run() {
     (error) => error.code === 'DIAGNOSTIC_ARTIFACT_HASH_MISMATCH' && error.status === 422,
   );
 
+  const releaseDiagnostic = buildGoalBackwardReleaseDiagnosticBundle({
+    telemetry: [
+      buildGoalBackwardReleaseTelemetry({
+        targetRef: bundle.target_ref,
+        eventType: 'candidate_comparison',
+        mode: 'shadow',
+        outcome: 'control_selected',
+        candidateSelected: true,
+        passReasonCodes: ['DEVELOPMENT_ENTRY'],
+        failReasonCodes: ['SCHEDULE_CONSTRAINT'],
+        surfaceCapability: 'NOT_EXPOSED',
+      }),
+      buildGoalBackwardReleaseTelemetry({
+        targetRef: bundle.target_ref,
+        eventType: 'candidate_outcome',
+        mode: 'on',
+        outcome: 'applied',
+        candidateSelected: true,
+        passReasonCodes: ['CANDIDATE_APPLIED'],
+        surfaceCapability: 'EXECUTABLE',
+      }),
+    ],
+  });
+  assert.equal(releaseDiagnostic.schema_version, 'goal_backward_release_diagnostic_v1');
+  assert.deepEqual(releaseDiagnostic.mode_counts, { on: 1, shadow: 1 });
+  assert.deepEqual(releaseDiagnostic.outcome_counts, { applied: 1, control_selected: 1 });
+  assert.deepEqual(releaseDiagnostic.reason_counts.SCHEDULE_CONSTRAINT, { pass: 0, fail: 1 });
+  assert.equal(releaseDiagnostic.alerts.rollback_required, false);
+  const releaseSerialized = JSON.stringify(releaseDiagnostic);
+  for (const forbidden of [targetUserId, 'private@example.com', 'route', 'healthSample', 'access_token']) {
+    assert.equal(releaseSerialized.includes(forbidden), false, `release diagnostic must omit ${forbidden}`);
+  }
+  assert.throws(
+    () => buildGoalBackwardReleaseDiagnosticBundle({ telemetry: [{
+      schema_version: 'goal_backward_release_telemetry_v1',
+      target_ref: bundle.target_ref,
+      event_type: 'candidate_outcome',
+      mode: 'on',
+      outcome: 'applied',
+      payload: { email: 'private@example.com' },
+    }] }),
+    /release telemetry record/i,
+  );
+
   verifyAdminGate();
 
   const routeSource = fs.readFileSync(path.join(__dirname, '../src/routes/diagnostics.js'), 'utf8');
@@ -261,8 +309,10 @@ async function run() {
   assert.match(routeSource, /router\.get\('\/plan-audit\/:decisionId\/artifacts', auth, requireDiagnosticsAdmin/);
   assert.match(routeSource, /FROM planning_pipeline_artifacts[\s\S]*WHERE user_id=\? AND decision_id=\?/);
   assert.match(routeSource, /LIMIT 32/);
+  assert.match(routeSource, /router\.get\('\/goal-backward-release', auth, requireDiagnosticsAdmin/);
+  assert.match(routeSource, /goalBackwardReleaseTelemetrySnapshot\(\)/);
 
-  console.log('RACE PLAN DIAGNOSTICS SMOKE OK (56)');
+  console.log('RACE PLAN DIAGNOSTICS SMOKE OK (68)');
 }
 
 run().catch((error) => {

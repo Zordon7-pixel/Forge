@@ -9,6 +9,10 @@ const {
 const {
   validatePipelineArtifact,
 } = require('./goalBackwardContracts');
+const {
+  assertGoalBackwardReleaseTelemetry,
+  evaluateGoalBackwardReleaseAlerts,
+} = require('./betaPlanRollout');
 
 const MAX_TEXT_LENGTH = 80;
 
@@ -339,8 +343,67 @@ function buildDecisionArtifactDiagnosticBundle({ targetUserId, decisionId, artif
   return bundle;
 }
 
+function incrementCount(counts, key, amount = 1) {
+  counts[key] = (counts[key] || 0) + amount;
+}
+
+function sortedCounts(counts) {
+  return Object.fromEntries(Object.entries(counts).sort(([left], [right]) => left.localeCompare(right)));
+}
+
+function buildGoalBackwardReleaseDiagnosticBundle({ telemetry = [] } = {}) {
+  if (!Array.isArray(telemetry) || telemetry.length > 256) {
+    throw diagnosticArtifactError(
+      'Goal-backward release telemetry must be bounded to 256 records.',
+      'DIAGNOSTIC_RELEASE_TELEMETRY_LIMIT_EXCEEDED',
+    );
+  }
+  let records;
+  try {
+    records = telemetry.map((record) => assertGoalBackwardReleaseTelemetry(record));
+  } catch (_error) {
+    throw diagnosticArtifactError(
+      'A goal-backward release telemetry record failed validation.',
+      'DIAGNOSTIC_RELEASE_TELEMETRY_INVALID',
+    );
+  }
+  const modeCounts = {};
+  const outcomeCounts = {};
+  const surfaceCapabilityCounts = {};
+  const reasonCounts = {};
+  for (const record of records) {
+    incrementCount(modeCounts, record.mode);
+    incrementCount(outcomeCounts, record.outcome);
+    incrementCount(surfaceCapabilityCounts, record.surface_capability);
+    for (const [code, counts] of Object.entries(record.reason_counts)) {
+      if (!reasonCounts[code]) reasonCounts[code] = { pass: 0, fail: 0 };
+      reasonCounts[code].pass += counts.pass;
+      reasonCounts[code].fail += counts.fail;
+    }
+  }
+  const bundle = {
+    schema_version: 'goal_backward_release_diagnostic_v1',
+    telemetry_schema_version: 'goal_backward_release_telemetry_v1',
+    record_count: records.length,
+    policy_versions: records[0]?.policy_versions || {},
+    mode_counts: sortedCounts(modeCounts),
+    outcome_counts: sortedCounts(outcomeCounts),
+    reason_counts: sortedCounts(reasonCounts),
+    candidate_selection: {
+      selected: records.filter((record) => record.candidate_selected).length,
+      not_selected: records.filter((record) => !record.candidate_selected).length,
+    },
+    surface_capability_counts: sortedCounts(surfaceCapabilityCounts),
+    revision_mismatch_count: records.filter((record) => record.revision_mismatch).length,
+    alerts: evaluateGoalBackwardReleaseAlerts(records),
+  };
+  assertBoundedJson(bundle, 64 * 1024, 'goal-backward release diagnostic response');
+  return bundle;
+}
+
 module.exports = {
   buildDecisionArtifactDiagnosticBundle,
+  buildGoalBackwardReleaseDiagnosticBundle,
   buildPlanDiagnosticBundle,
   dosageTrace,
   inputSources,

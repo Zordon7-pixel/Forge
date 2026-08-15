@@ -4,15 +4,27 @@ const fs = require('node:fs');
 const path = require('node:path');
 require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
 
-const { dbAll, pool } = require('../src/db');
+const { dbAll, pool, withUserMutation } = require('../src/db');
 const plansRouter = require('../src/routes/plans');
-const { buildPlanDiagnosticBundle } = require('../src/lib/racePlanDiagnostics');
+const {
+  buildDecisionArtifactDiagnosticBundle,
+  buildPlanDiagnosticBundle,
+} = require('../src/lib/racePlanDiagnostics');
+const {
+  ARTIFACT_KINDS,
+  PLANNING_POLICY_VERSION,
+} = require('../src/lib/goalBackwardContracts');
+const {
+  buildGoalBackwardApplyEnvelope,
+  validateStoredGoalBackwardCandidateBindings,
+} = require('../src/lib/planCandidateLifecycle');
 const { RACE_PLAN_POLICY_V1, addDays, parseStrictInteger } = require('../src/lib/racePlanPolicy');
 const {
-  assertApplyAuthorized,
   buildBackupManifest,
+  getGoalBackwardV24Mode,
   isCurrentRolloutPlan,
   localDateForOffset,
+  parseGoalBackwardCohortRefs,
   parseStoredPlan,
   preservedPlanTarget,
   redactedBackupEntry,
@@ -24,18 +36,28 @@ const REPO_ROOT = path.resolve(__dirname, '../..');
 const FORGED_IOS_APP_ID = 'com.zordontech.forge';
 const NATIVE_CLOCK_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const CLOCK_FUTURE_SKEW_MS = 5 * 60 * 1000;
+const APPLY_CONFIRMATION = 'APPLY_GOAL_BACKWARD_V24';
+const ROLLBACK_CONFIRMATION = 'ROLLBACK_GOAL_BACKWARD_V24';
 const SAFE_FAILURE_CODES = new Set([
   'ACTIVE_PLAN_MISSING',
   'APPLY_RESPONSE_INVALID',
   'CANDIDATE_FEASIBILITY_REVIEW_REQUIRED',
   'CANDIDATE_HASH_DRIFT',
+  'DEPLOYED_ARTIFACT_MISMATCH',
+  'DEPLOYED_ARTIFACT_IDENTITY_MISSING',
+  'DEPLOYED_REVISION_MISMATCH',
+  'DISPOSABLE_TARGET_NOT_ALLOWLISTED',
   'CUTOVER_INVALID',
   'EXPLICIT_TARGET_NOT_ELIGIBLE',
   'LINEAGE_VERIFICATION_FAILED',
   'MISSING_RACE_AUTHORITY',
   'MISSING_SCHEDULE_AUTHORITY',
+  'MISSING_TIMEZONE_AUTHORITY',
   'PLANNING_DATE_CHANGED',
   'POST_APPLY_HASH_MISMATCH',
+  'RELEASE_ARTIFACT_VERIFICATION_FAILED',
+  'ROLLBACK_LINEAGE_INVALID',
+  'ROLLBACK_RESTORE_FAILED',
   'ROLLOUT_APPLY_FAILED',
   'ROLLOUT_FATAL',
   'ROLLOUT_PREFLIGHT_FAILED',
@@ -75,17 +97,91 @@ function assertExternalBackupDirectory(directory) {
   return resolved;
 }
 
+function isPlaceholderUserId(value) {
+  const id = String(value || '').trim();
+  return !id
+    || /^(?:DISPOSABLE_ACCOUNT_ID|USER_ID|PLACEHOLDER|EXAMPLE|user-?\d+)$/i.test(id)
+    || /(?:placeholder|replace[_-]?me|example[_-]?id)/i.test(id)
+    || id.length > 128;
+}
+
+function assertDisposableUserIds(userIds, cohortRefs = parseGoalBackwardCohortRefs()) {
+  const refs = new Set(parseGoalBackwardCohortRefs(cohortRefs));
+  for (const userId of userIds || []) {
+    if (isPlaceholderUserId(userId)) throw rolloutError('DISPOSABLE_TARGET_NOT_ALLOWLISTED');
+    if (!refs.has(targetRef(userId))) throw rolloutError('DISPOSABLE_TARGET_NOT_ALLOWLISTED');
+  }
+  return true;
+}
+
+function assertGoalBackwardApplyAuthorized({ apply = false, rollback = false, confirmation, mode } = {}) {
+  if (apply) {
+    if (mode !== 'on') throw new Error('Apply requires FORGE_GOAL_BACKWARD_V24_MODE=on');
+    if (confirmation !== APPLY_CONFIRMATION) throw new Error(`Apply requires --confirm=${APPLY_CONFIRMATION}`);
+  }
+  if (rollback) {
+    if (mode !== 'off') throw new Error('Rollback restoration requires FORGE_GOAL_BACKWARD_V24_MODE=off');
+    if (confirmation !== ROLLBACK_CONFIRMATION) throw new Error(`Rollback requires --confirm=${ROLLBACK_CONFIRMATION}`);
+  }
+  return true;
+}
+
+function releaseRevision(value) {
+  const revision = String(value || '').trim().toLowerCase();
+  return /^[a-f0-9]{7,64}$/.test(revision) ? revision : null;
+}
+
+function releaseArtifactHash(value) {
+  const hash = String(value || '').trim().toLowerCase();
+  return /^sha256:[a-f0-9]{64}$/.test(hash) ? hash : null;
+}
+
+function assertDeployedArtifactIdentity({
+  expectedRevision,
+  deployedRevision,
+  expectedArtifactHash,
+  deployedArtifactHash,
+} = {}) {
+  const expectedRevisionValue = releaseRevision(expectedRevision);
+  const deployedRevisionValue = releaseRevision(deployedRevision);
+  const expectedArtifactValue = releaseArtifactHash(expectedArtifactHash);
+  const deployedArtifactValue = releaseArtifactHash(deployedArtifactHash);
+  if (!expectedRevisionValue || !deployedRevisionValue || !expectedArtifactValue || !deployedArtifactValue) {
+    throw rolloutError('DEPLOYED_ARTIFACT_IDENTITY_MISSING');
+  }
+  if (expectedRevisionValue !== deployedRevisionValue) throw rolloutError('DEPLOYED_REVISION_MISMATCH');
+  if (expectedArtifactValue !== deployedArtifactValue) throw rolloutError('DEPLOYED_ARTIFACT_MISMATCH');
+  return {
+    verified: true,
+    source_revision: deployedRevisionValue,
+    artifact_hash: deployedArtifactValue,
+  };
+}
+
+function deployedArtifactIdentityFromEnvironment(env = process.env) {
+  return assertDeployedArtifactIdentity({
+    expectedRevision: env.FORGE_GOAL_BACKWARD_V24_EXPECTED_REVISION,
+    deployedRevision: env.RAILWAY_GIT_COMMIT_SHA || env.FORGE_GOAL_BACKWARD_V24_DEPLOYED_REVISION,
+    expectedArtifactHash: env.FORGE_GOAL_BACKWARD_V24_EXPECTED_ARTIFACT_SHA256,
+    deployedArtifactHash: env.FORGE_GOAL_BACKWARD_V24_DEPLOYED_ARTIFACT_SHA256,
+  });
+}
+
 function parseArgs(argv) {
   const options = {
     apply: false,
     backupDir: '',
     confirmation: '',
+    rollback: false,
+    rollbackManifest: '',
     userIds: [],
   };
   for (const arg of argv) {
     if (arg === '--apply') options.apply = true;
+    else if (arg === '--rollback') options.rollback = true;
     else if (arg.startsWith('--confirm=')) options.confirmation = arg.slice('--confirm='.length);
     else if (arg.startsWith('--backup-dir=')) options.backupDir = path.resolve(arg.slice('--backup-dir='.length));
+    else if (arg.startsWith('--rollback-manifest=')) options.rollbackManifest = path.resolve(arg.slice('--rollback-manifest='.length));
     else if (arg.startsWith('--planning-date=') || arg.startsWith('--timezone-offset-minutes=')) {
       throw new Error('Operator-supplied planning clocks are not accepted; use fresh authenticated iOS telemetry');
     }
@@ -93,6 +189,8 @@ function parseArgs(argv) {
     else throw new Error(`Unknown argument: ${arg}`);
   }
   options.userIds = [...new Set(options.userIds.filter(Boolean))];
+  if (options.userIds.some(isPlaceholderUserId)) throw new Error('placeholder user IDs are forbidden');
+  if (options.apply && options.rollback) throw new Error('--apply and --rollback are mutually exclusive');
   if (options.apply && options.userIds.length === 0) {
     throw new Error('At least one explicit --user-id is required with --apply');
   }
@@ -100,6 +198,16 @@ function parseArgs(argv) {
     throw new Error('--backup-dir is required with --apply so the redacted rollback manifest is stored outside the checkout');
   }
   if (options.apply) options.backupDir = assertExternalBackupDirectory(options.backupDir);
+  if (options.rollback && options.userIds.length === 0) {
+    throw new Error('At least one explicit --user-id is required with --rollback');
+  }
+  if (options.rollback && !options.rollbackManifest) {
+    throw new Error('--rollback-manifest is required with --rollback');
+  }
+  if (options.rollback) {
+    const manifestDirectory = assertExternalBackupDirectory(path.dirname(options.rollbackManifest));
+    options.rollbackManifest = path.join(manifestDirectory, path.basename(options.rollbackManifest));
+  }
   return options;
 }
 
@@ -288,7 +396,14 @@ async function preflightUser(row, options, now) {
     planning_date_local: clock.planningDateLocal,
     timezone_offset_minutes: clock.timezoneOffsetMinutes,
   };
-  const candidate = await plansRouter._test.previewPlanForUser(row.id, request, { store: false });
+  const candidate = await plansRouter._test.previewPlanForUser(row.id, request, {
+    store: false,
+    goalBackwardDependencies: {
+      mode: options.mode,
+      cohortRefs: options.cohortRefs,
+      telemetrySink: () => {},
+    },
+  });
   const diagnostic = buildPlanDiagnosticBundle({ targetUserId: row.id, candidate });
   const feasibility = String(candidate.plan?.overall_feasibility || '').toLowerCase();
   if (feasibility !== 'supported') {
@@ -368,9 +483,174 @@ function assertSupportedCandidate(candidate) {
   }
 }
 
+async function verifyGoalBackwardArtifacts(userId, candidateId, expectedCandidateHash, dependencies = {}) {
+  const queryAll = dependencies.dbAll || dbAll;
+  const candidateRows = await queryAll(
+    `SELECT * FROM plan_generation_candidates
+     WHERE user_id=? AND id=?
+     LIMIT 1`,
+    [userId, candidateId],
+  );
+  const row = candidateRows[0];
+  if (!row || row.status !== 'preview' || row.feature_mode !== 'on'
+    || String(row.candidate_hash || '') !== String(expectedCandidateHash || '')) {
+    throw rolloutError('RELEASE_ARTIFACT_VERIFICATION_FAILED');
+  }
+  let stored;
+  try {
+    stored = validateStoredGoalBackwardCandidateBindings(row, { allowedModes: ['on'] });
+  } catch (_error) {
+    throw rolloutError('RELEASE_ARTIFACT_VERIFICATION_FAILED');
+  }
+  if (!stored.present || stored.bindings.feature_mode !== 'on') {
+    throw rolloutError('RELEASE_ARTIFACT_VERIFICATION_FAILED');
+  }
+  const artifactRows = await queryAll(
+    `SELECT id, user_id, artifact_kind, decision_id, parent_artifact_id,
+            plan_generation_candidate_id, schema_version, policy_version,
+            revision, content_hash, payload_json, created_at
+     FROM planning_pipeline_artifacts
+     WHERE user_id=? AND decision_id=?
+       AND (plan_generation_candidate_id IS NULL OR plan_generation_candidate_id=?)
+     ORDER BY created_at ASC, id ASC
+     LIMIT 32`,
+    [userId, row.decision_id, candidateId],
+  );
+  let diagnostic;
+  try {
+    diagnostic = buildDecisionArtifactDiagnosticBundle({
+      targetUserId: userId,
+      decisionId: row.decision_id,
+      artifactRows,
+    });
+  } catch (_error) {
+    throw rolloutError('RELEASE_ARTIFACT_VERIFICATION_FAILED');
+  }
+  if (diagnostic.artifact_count !== ARTIFACT_KINDS.length
+    || diagnostic.artifacts.map((artifact) => artifact.artifact_kind).join('|') !== ARTIFACT_KINDS.join('|')
+    || diagnostic.artifacts.some((artifact) => String(artifact.schema_version) !== '1'
+      || artifact.policy_version !== PLANNING_POLICY_VERSION
+      || !Number.isSafeInteger(artifact.revision) || artifact.revision < 1)) {
+    throw rolloutError('RELEASE_ARTIFACT_VERIFICATION_FAILED');
+  }
+  let applyEnvelope;
+  try {
+    applyEnvelope = buildGoalBackwardApplyEnvelope(row);
+  } catch (_error) {
+    throw rolloutError('RELEASE_ARTIFACT_VERIFICATION_FAILED');
+  }
+  return {
+    applyEnvelope,
+    evidence: {
+      target_ref: targetRef(userId),
+      artifact_count: diagnostic.artifact_count,
+      candidate_revision: stored.bindings.candidate_revision,
+      athlete_state_revision: stored.bindings.athlete_state_revision,
+      surface_revision: stored.bindings.surface_revision,
+      policy_version: PLANNING_POLICY_VERSION,
+      verified: true,
+    },
+  };
+}
+
+async function restorePreviousAssignment({ userId, priorUserPlanId, appliedUserPlanId }, dependencies = {}) {
+  const mutate = dependencies.withUserMutation || withUserMutation;
+  const restored = await mutate(userId, async (tx) => {
+    const lineage = await tx.get(
+      `SELECT prior.status AS prior_status, applied.status AS applied_status,
+              applied.supersedes_user_plan_id
+       FROM user_plans prior
+       JOIN user_plans applied ON applied.user_id=prior.user_id
+       WHERE prior.user_id=? AND prior.id=? AND applied.id=?
+       FOR UPDATE`,
+      [userId, priorUserPlanId, appliedUserPlanId],
+    );
+    if (lineage?.prior_status !== 'superseded' || lineage?.applied_status !== 'active'
+      || String(lineage.supersedes_user_plan_id || '') !== String(priorUserPlanId || '')) {
+      throw rolloutError('ROLLBACK_LINEAGE_INVALID');
+    }
+    const superseded = await tx.run(
+      `UPDATE user_plans SET status='superseded'
+       WHERE user_id=? AND id=? AND status='active'`,
+      [userId, appliedUserPlanId],
+    );
+    const activated = await tx.run(
+      `UPDATE user_plans SET status='active'
+       WHERE user_id=? AND id=? AND status='superseded'`,
+      [userId, priorUserPlanId],
+    );
+    await tx.run(
+      `UPDATE plan_generation_candidates SET status='superseded'
+       WHERE user_id=? AND status='preview' AND feature_mode IN ('shadow','preview','on')`,
+      [userId],
+    );
+    if (Number(superseded?.changes || 0) !== 1 || Number(activated?.changes || 0) !== 1) {
+      throw rolloutError('ROLLBACK_RESTORE_FAILED');
+    }
+    const active = await tx.get(
+      `SELECT COUNT(*) AS active_count, MAX(id) AS active_id
+       FROM user_plans WHERE user_id=? AND status='active'`,
+      [userId],
+    );
+    if (Number(active?.active_count) !== 1 || String(active?.active_id || '') !== String(priorUserPlanId || '')) {
+      throw rolloutError('ROLLBACK_RESTORE_FAILED');
+    }
+    return true;
+  });
+  return {
+    schema_version: 1,
+    target_ref: targetRef(userId),
+    restored: restored === true,
+    active_assignment: 'previous',
+    orphan_active_assignments: 0,
+  };
+}
+
+function buildCleanupEvidence({
+  userId,
+  accountPresent,
+  activeAssignmentCount,
+  openV24CandidateCount,
+  orphanAssignmentCount,
+} = {}) {
+  const evidence = {
+    schema_version: 1,
+    target_ref: targetRef(userId),
+    account_removed: accountPresent === false,
+    active_assignment_count: Math.max(0, Number(activeAssignmentCount || 0)),
+    open_v24_candidate_count: Math.max(0, Number(openV24CandidateCount || 0)),
+    orphan_assignment_count: Math.max(0, Number(orphanAssignmentCount || 0)),
+  };
+  evidence.cleanup_complete = evidence.account_removed
+    && evidence.active_assignment_count === 0
+    && evidence.open_v24_candidate_count === 0
+    && evidence.orphan_assignment_count === 0;
+  return evidence;
+}
+
+async function cleanupEvidenceForUser(userId, dependencies = {}) {
+  const queryAll = dependencies.dbAll || dbAll;
+  const [accountRows, activeRows, candidateRows, orphanRows] = await Promise.all([
+    queryAll('SELECT COUNT(*) AS count FROM users WHERE id=?', [userId]),
+    queryAll("SELECT COUNT(*) AS count FROM user_plans WHERE user_id=? AND status='active'", [userId]),
+    queryAll("SELECT COUNT(*) AS count FROM plan_generation_candidates WHERE user_id=? AND status='preview' AND feature_mode IN ('shadow','preview','on')", [userId]),
+    queryAll(`SELECT COUNT(*) AS count FROM user_plans child
+      WHERE child.user_id=? AND child.status='active'
+        AND child.supersedes_user_plan_id IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM user_plans prior WHERE prior.user_id=child.user_id AND prior.id=child.supersedes_user_plan_id)`, [userId]),
+  ]);
+  return buildCleanupEvidence({
+    userId,
+    accountPresent: Number(accountRows[0]?.count || 0) > 0,
+    activeAssignmentCount: Number(activeRows[0]?.count || 0),
+    openV24CandidateCount: Number(candidateRows[0]?.count || 0),
+    orphanAssignmentCount: Number(orphanRows[0]?.count || 0),
+  });
+}
+
 async function verifyApply(context, result, expectedCandidateHash) {
   const payload = result?.payload || {};
-  const expectedEffectiveFrom = addDays(context.clock.planningDateLocal, 1);
+  const expectedEffectiveFrom = context.candidate.effectiveFrom || addDays(context.clock.planningDateLocal, 1);
   if (result?.status !== 200) throw rolloutError('APPLY_RESPONSE_INVALID');
   if (payload.candidate_hash !== expectedCandidateHash) throw rolloutError('POST_APPLY_HASH_MISMATCH');
   if (payload.effective_from !== expectedEffectiveFrom) throw rolloutError('CUTOVER_INVALID');
@@ -390,20 +670,96 @@ async function verifyApply(context, result, expectedCandidateHash) {
     throw rolloutError('LINEAGE_VERIFICATION_FAILED');
   }
   return {
-    effective_from: expectedEffectiveFrom,
-    plan_version: Number(next.plan_version),
-    target_ref: context.targetRef,
+    evidence: {
+      effective_from: expectedEffectiveFrom,
+      plan_version: Number(next.plan_version),
+      target_ref: context.targetRef,
+    },
+    privateAssignment: {
+      user_plan_id: payload.user_plan_id,
+      training_plan_id: payload.plan_id,
+    },
   };
+}
+
+function readPrivateRollbackManifest(filename) {
+  const stats = fs.statSync(filename);
+  if (!stats.isFile() || (stats.mode & 0o077) !== 0) throw rolloutError('ROLLBACK_LINEAGE_INVALID');
+  const parsed = JSON.parse(fs.readFileSync(filename, 'utf8'));
+  if (parsed?.schema_version !== 2 || !Array.isArray(parsed.entries)) {
+    throw rolloutError('ROLLBACK_LINEAGE_INVALID');
+  }
+  return parsed;
+}
+
+async function rollbackFromManifest(options) {
+  const manifest = readPrivateRollbackManifest(options.rollbackManifest);
+  const evidence = [];
+  for (const userId of options.userIds) {
+    const entry = manifest.entries.find((candidate) => candidate.target_ref === targetRef(userId));
+    if (!entry?.prior_assignment?.user_plan_id || !entry?.applied_assignment?.user_plan_id) {
+      throw rolloutError('ROLLBACK_LINEAGE_INVALID');
+    }
+    evidence.push(await restorePreviousAssignment({
+      userId,
+      priorUserPlanId: entry.prior_assignment.user_plan_id,
+      appliedUserPlanId: entry.applied_assignment.user_plan_id,
+    }));
+  }
+  const rollbackJournal = {
+    schema_version: 1,
+    source_manifest_hash: `sha256:${require('node:crypto').createHash('sha256').update(JSON.stringify(manifest)).digest('hex')}`,
+    restored: evidence,
+  };
+  const directory = path.dirname(options.rollbackManifest);
+  const resultFile = writePrivateJson(directory, 'rollback-result', rollbackJournal);
+  return { evidence, resultFile };
 }
 
 async function run() {
   const options = parseArgs(process.argv.slice(2));
-  const betaAccessEnabled = String(process.env.FORGE_BETA_ACCESS || '').toLowerCase() === 'true';
-  assertApplyAuthorized({
+  options.mode = getGoalBackwardV24Mode();
+  options.cohortRefs = options.mode === 'off' && !options.rollback
+    ? []
+    : parseGoalBackwardCohortRefs();
+  assertGoalBackwardApplyAuthorized({
     apply: options.apply,
+    rollback: options.rollback,
     confirmation: options.confirmation,
-    betaAccessEnabled,
+    mode: options.mode,
   });
+  if (!options.apply && !options.rollback && options.mode === 'off') {
+    console.log(JSON.stringify({
+      apply_requested: false,
+      cohort_count: 0,
+      failures: 0,
+      mode: 'dry_run',
+      previewed: 0,
+      skipped: 0,
+      writes: 0,
+    }));
+    return;
+  }
+  if (options.userIds.length === 0) {
+    throw new Error('A non-off release rehearsal requires at least one explicit --user-id');
+  }
+  assertDisposableUserIds(options.userIds, options.cohortRefs);
+  if (options.rollback) {
+    const rollback = await rollbackFromManifest(options);
+    const cleanup = await Promise.all(options.userIds.map((userId) => cleanupEvidenceForUser(userId)));
+    const cleanupFile = writePrivateJson(path.dirname(options.rollbackManifest), 'cleanup-evidence', {
+      schema_version: 1,
+      records: cleanup,
+    });
+    console.log(JSON.stringify({
+      cleanup_file: cleanupFile,
+      mode: 'rollback_restored',
+      records: rollback.evidence.length,
+      result_file: rollback.resultFile,
+    }));
+    return;
+  }
+  const releaseIdentity = options.apply ? deployedArtifactIdentityFromEnvironment() : null;
   const rows = await eligibleTesterRows(options);
   const eligibleIds = new Set(rows.map((row) => String(row.id)));
   const unmatchedUserIds = options.userIds.filter((userId) => !eligibleIds.has(String(userId)));
@@ -427,6 +783,17 @@ async function run() {
     try {
       const context = await preflightUser(row, options, now);
       if (context.skipReason) {
+        if (options.apply && context.skipReason !== 'already_current') {
+          const applySkipCodes = {
+            missing_timezone_authority: 'MISSING_TIMEZONE_AUTHORITY',
+            missing_race_authority: 'MISSING_RACE_AUTHORITY',
+            missing_schedule_authority: 'MISSING_SCHEDULE_AUTHORITY',
+            feasibility_stretch: 'CANDIDATE_FEASIBILITY_REVIEW_REQUIRED',
+            feasibility_unsafe: 'CANDIDATE_FEASIBILITY_REVIEW_REQUIRED',
+            feasibility_unavailable: 'CANDIDATE_FEASIBILITY_REVIEW_REQUIRED',
+          };
+          throw rolloutError(applySkipCodes[context.skipReason] || 'ROLLOUT_PREFLIGHT_FAILED');
+        }
         skipped.push({ target_ref: context.targetRef, reason: context.skipReason });
         console.log(JSON.stringify({ mode: 'skipped', target_ref: context.targetRef, reason: context.skipReason }));
         continue;
@@ -471,6 +838,7 @@ async function run() {
   }
 
   const manifest = buildBackupManifest({
+    releaseIdentity,
     entries: contexts.map((context) => redactedBackupEntry({
       userId: context.userId,
       active: context.active,
@@ -502,15 +870,31 @@ async function run() {
       if (stored.candidateHash !== context.candidate.candidateHash) {
         throw rolloutError('CANDIDATE_HASH_DRIFT');
       }
+      const artifactVerification = await verifyGoalBackwardArtifacts(
+        context.userId,
+        stored.id,
+        stored.candidateHash,
+      );
       assertPlanningDateStable(context, new Date());
       const result = await plansRouter._test.applyPlanCandidate(context.userId, stored.id, {
+        ...artifactVerification.applyEnvelope,
         candidate_hash: stored.candidateHash,
         choice: 'train_for_target',
         planning_date_local: context.clock.planningDateLocal,
+      }, {
+        goalBackwardDependencies: {
+          mode: options.mode,
+          cohortRefs: options.cohortRefs,
+        },
       });
       const verified = await verifyApply(context, result, stored.candidateHash);
-      applied.push(verified);
-      console.log(JSON.stringify({ mode: 'applied', ...verified }));
+      applied.push({ ...verified.evidence, artifact_verification: artifactVerification.evidence });
+      const manifestEntry = manifest.entries.find((entry) => entry.target_ref === context.targetRef);
+      manifestEntry.applied_assignment = verified.privateAssignment;
+      manifestEntry.apply_evidence = verified.evidence;
+      manifestEntry.artifact_verification = artifactVerification.evidence;
+      replacePrivateJson(backupFile, manifest);
+      console.log(JSON.stringify({ mode: 'applied', ...verified.evidence }));
     } catch (err) {
       const failure = safeFailure(context.targetRef, err, 'ROLLOUT_APPLY_FAILED');
       applyFailures.push(failure);
@@ -521,10 +905,16 @@ async function run() {
   }
   resultJournal.completed_at = new Date().toISOString();
   replacePrivateJson(resultFile, resultJournal);
+  const cleanup = await Promise.all(contexts.map((context) => cleanupEvidenceForUser(context.userId)));
+  const cleanupFile = writePrivateJson(options.backupDir, 'cleanup-evidence', {
+    schema_version: 1,
+    records: cleanup,
+  });
   console.log(JSON.stringify({
     ...summary,
     applied: applied.length,
     apply_failures: applyFailures.length,
+    cleanup_file: cleanupFile,
     result_file: resultFile,
   }));
   if (applyFailures.length) process.exitCode = 1;
@@ -545,9 +935,14 @@ if (require.main === module) {
 }
 
 module.exports = {
+  assertDeployedArtifactIdentity,
+  assertDisposableUserIds,
   assertExternalBackupDirectory,
+  assertGoalBackwardApplyAuthorized,
   assertPlanningDateStable,
   assertSupportedCandidate,
+  buildCleanupEvidence,
+  cleanupEvidenceForUser,
   clockFromNativeAppOpen,
   clockFromUnexpiredCandidate,
   eligibleTesterRows,
@@ -555,8 +950,11 @@ module.exports = {
   planningClockForUser,
   preflightUser,
   replacePrivateJson,
+  restorePreviousAssignment,
+  rollbackFromManifest,
   run,
   safeFailure,
   verifyApply,
+  verifyGoalBackwardArtifacts,
   writePrivateJson,
 };

@@ -6,8 +6,12 @@ const plansRouter = require('./plans');
 const { RACE_PLAN_POLICY_V1 } = require('../lib/racePlanPolicy');
 const {
   buildDecisionArtifactDiagnosticBundle,
+  buildGoalBackwardReleaseDiagnosticBundle,
   buildPlanDiagnosticBundle,
 } = require('../lib/racePlanDiagnostics');
+const {
+  goalBackwardReleaseTelemetrySnapshot,
+} = require('../lib/betaPlanRollout');
 
 function diagnosticsAdmins() {
   return String(process.env.DIAGNOSTICS_ADMIN_EMAILS || process.env.ADMIN_EMAILS || '')
@@ -219,6 +223,23 @@ router.get('/plan-audit/:decisionId/artifacts', auth, requireDiagnosticsAdmin, a
       error: Number(err.status) && Number(err.status) < 500
         ? err.message
         : 'Unable to retrieve the linked plan artifacts.',
+      ...(err.code ? { code: err.code } : {}),
+    });
+  }
+});
+
+// GET /api/diagnostics/goal-backward-release — process-local, bounded release
+// counters. Records contain pseudonymous refs internally; this projection omits
+// even those refs and exposes only closed dimensions and integer counts.
+router.get('/goal-backward-release', auth, requireDiagnosticsAdmin, (_req, res) => {
+  try {
+    const diagnostic = buildGoalBackwardReleaseDiagnosticBundle({
+      telemetry: goalBackwardReleaseTelemetrySnapshot(),
+    });
+    return res.json({ ok: true, diagnostic });
+  } catch (err) {
+    return res.status(Number(err.status) || 500).json({
+      error: 'Unable to retrieve goal-backward release diagnostics.',
       ...(err.code ? { code: err.code } : {}),
     });
   }
