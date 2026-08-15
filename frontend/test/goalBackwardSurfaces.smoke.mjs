@@ -457,6 +457,9 @@ for (const project of [
     assert.match(daySource, /Workout details and export readiness/)
     assert.match(calendarSource, /Technical verification/)
     assert.match(daySource, /Technical verification/)
+    assert.doesNotMatch(calendarSource, /\{identity\.(?:decision_id|candidate_id|plan_id)\}/)
+    assert.doesNotMatch(daySource, />Decision: \{entry\.decision_id/)
+    assert.doesNotMatch(daySource, /\(entry\.evidence_ids \|\| \[\]\)\.join/)
     assert.deepEqual(project.viewport, project.name === 'compact-mobile-320'
       ? { width: 320, height: 568 }
       : { width: 402, height: 874 })

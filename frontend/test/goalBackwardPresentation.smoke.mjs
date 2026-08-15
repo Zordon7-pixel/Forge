@@ -14,6 +14,7 @@ import {
   safetyScopeLabel,
   safetyScopeList,
   sessionRoleLabel,
+  technicalFactLabel,
 } from '../src/lib/goalBackwardPresentation.js'
 
 const require = createRequire(import.meta.url)
@@ -141,6 +142,16 @@ for (const formatter of [
   assert.doesNotMatch(label, /_/)
 }
 assert.equal(humanizeMachineValue('unknown_title_value', { casing: 'title' }), 'Unknown Title Value')
+
+const sourceIdentifiers = {
+  decision_id: 'decision_with_underscores',
+  session_id: 'session_with_underscores',
+  evidence_ids: ['evidence_with_underscores'],
+}
+const sourceIdentifierBytes = Buffer.from(JSON.stringify(sourceIdentifiers))
+assert.equal(technicalFactLabel(sourceIdentifiers.decision_id), 'Unavailable')
+assert.equal(technicalFactLabel('sha256:abcdef0123456789'), 'sha256:abcdef0123456789')
+assert.deepEqual(Buffer.from(JSON.stringify(sourceIdentifiers)), sourceIdentifierBytes, 'presentation leaves source identifier bytes unchanged')
 
 const apiValues = {
   phase: 'EVENT_SPECIFIC_DEVELOPMENT',

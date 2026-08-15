@@ -239,6 +239,11 @@ export function humanizeMachineValue(value, { casing = 'sentence', fallback = 'U
   return capitalize(humanWords.join(' '))
 }
 
+export function technicalFactLabel(value, { fallback = 'Unavailable' } = {}) {
+  const raw = String(value ?? '').trim()
+  return raw && !raw.includes('_') ? raw : fallback
+}
+
 export function phaseLabel(value) {
   return lookupLabel(PHASE_LABELS, value)
     || humanizeMachineValue(value, { fallback: 'Training phase unavailable' })

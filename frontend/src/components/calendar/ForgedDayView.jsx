@@ -22,6 +22,7 @@ import {
   reasonCodeLabel,
   safetyScopeList,
   sessionRoleLabel,
+  technicalFactLabel,
 } from '../../lib/goalBackwardPresentation'
 import { trainingEvidenceKindLabel } from '../../lib/trainingEvidence'
 import './forgedCalendar.css'
@@ -361,12 +362,12 @@ function CanonicalSessionTruth({ canonical, session = null, px }) {
         <details style={{ minWidth: 0, marginTop: 8 }}>
           <summary style={{ minHeight: 44, display: 'flex', alignItems: 'center', cursor: 'pointer', fontWeight: 900 }}>Technical verification</summary>
           <div style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
-            <p><strong>Identity:</strong> {truth.sessionId} · session r{truth.sessionRevision} · plan r{truth.planRevision}</p>
-            <p><strong>Content hash:</strong> {truth.contentHash}</p>
+            <p><strong>Revisions:</strong> Session {technicalFactLabel(truth.sessionRevision)} · plan {technicalFactLabel(truth.planRevision)}</p>
+            <p><strong>Content hash:</strong> {technicalFactLabel(truth.contentHash)}</p>
             {targetProvenance.length > 0 && (
-              <div><strong>Prescription source identifiers</strong><ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>
+              <div><strong>Prescription source verification</strong><ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>
                 {targetProvenance.map((entry, index) => (
-                  <li key={`${entry.decision_id || 'decision'}-technical-${index}`}>Policy: {entry.policy_id || 'unavailable'} {entry.policy_version || ''} · Decision: {entry.decision_id || 'unavailable'} · Evidence: {(entry.evidence_ids || []).join(', ') || 'unavailable'}</li>
+                  <li key={`${entry.decision_id || 'decision'}-technical-${index}`}>Policy: {policyLabel(entry.policy_id)} · version {technicalFactLabel(entry.policy_version)} · {Array.isArray(entry.evidence_ids) && entry.evidence_ids.length ? `${entry.evidence_ids.length} accepted evidence source${entry.evidence_ids.length === 1 ? '' : 's'}` : 'No accepted evidence source listed'}</li>
                 ))}
               </ul></div>
             )}

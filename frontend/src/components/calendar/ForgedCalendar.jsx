@@ -17,6 +17,7 @@ import {
   safetyActionLabel,
   safetyScopeList,
   sessionRoleLabel,
+  technicalFactLabel,
 } from '../../lib/goalBackwardPresentation'
 import './forgedCalendar.css'
 
@@ -318,6 +319,7 @@ function SurfaceManifestSummary({ surface }) {
   const availability = [...new Set(sessions.map((session) => executabilityLabel(session?.executability)))]
   const exportSupport = [...new Set(sessions.map((session) => capabilityLabel(session?.capability?.classification)))]
   const safetyReasons = Array.isArray(manifest.safety?.reason_codes) ? manifest.safety.reason_codes : []
+  const goalRevisions = Object.values(identity.goal_revisions || {})
   return (
     <details style={{ minWidth: 0, marginBottom: 12, border: '1px solid var(--border-subtle)', borderRadius: 8, background: 'var(--bg-card)', overflow: 'hidden' }}>
       <summary style={{ minHeight: 44, display: 'flex', alignItems: 'center', padding: '10px 12px', cursor: 'pointer', fontSize: 12, fontWeight: 900 }}>
@@ -332,12 +334,12 @@ function SurfaceManifestSummary({ surface }) {
         <details style={{ minWidth: 0, marginTop: 10 }}>
           <summary style={{ minHeight: 44, display: 'flex', alignItems: 'center', cursor: 'pointer', fontWeight: 900 }}>Technical verification</summary>
           <dl style={{ minWidth: 0, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 7, margin: 0, overflowWrap: 'anywhere' }}>
-            <div><dt style={{ fontWeight: 900 }}>Revisions</dt><dd style={{ margin: 0 }}>Plan r{identity.plan_revision} · surface r{manifest.surface_revision}</dd></div>
-            <div><dt style={{ fontWeight: 900 }}>Decision</dt><dd style={{ margin: 0 }}>{identity.decision_id} · {identity.decision_hash}</dd></div>
-            <div><dt style={{ fontWeight: 900 }}>Candidate</dt><dd style={{ margin: 0 }}>{identity.candidate_id} · r{identity.candidate_revision} · {identity.candidate_hash}</dd></div>
-            <div><dt style={{ fontWeight: 900 }}>Plan/session set</dt><dd style={{ margin: 0 }}>{identity.plan_id} · {identity.canonical_session_set_hash}</dd></div>
-            <div><dt style={{ fontWeight: 900 }}>State and safety</dt><dd style={{ margin: 0 }}>Athlete state r{identity.athlete_state_revision} · {identity.safety_state_hash}</dd></div>
-            <div><dt style={{ fontWeight: 900 }}>Goal revisions</dt><dd style={{ margin: 0 }}>{Object.entries(identity.goal_revisions || {}).map(([id, revision]) => `${id}: r${revision}`).join(' · ') || 'None'}</dd></div>
+            <div><dt style={{ fontWeight: 900 }}>Revisions</dt><dd style={{ margin: 0 }}>Plan {technicalFactLabel(identity.plan_revision)} · surface {technicalFactLabel(manifest.surface_revision)}</dd></div>
+            <div><dt style={{ fontWeight: 900 }}>Decision hash</dt><dd style={{ margin: 0 }}>{technicalFactLabel(identity.decision_hash)}</dd></div>
+            <div><dt style={{ fontWeight: 900 }}>Candidate verification</dt><dd style={{ margin: 0 }}>Revision {technicalFactLabel(identity.candidate_revision)} · hash {technicalFactLabel(identity.candidate_hash)}</dd></div>
+            <div><dt style={{ fontWeight: 900 }}>Session set hash</dt><dd style={{ margin: 0 }}>{technicalFactLabel(identity.canonical_session_set_hash)}</dd></div>
+            <div><dt style={{ fontWeight: 900 }}>State and safety</dt><dd style={{ margin: 0 }}>Athlete state revision {technicalFactLabel(identity.athlete_state_revision)} · safety hash {technicalFactLabel(identity.safety_state_hash)}</dd></div>
+            <div><dt style={{ fontWeight: 900 }}>Goal revisions</dt><dd style={{ margin: 0 }}>{goalRevisions.length ? `${goalRevisions.length} tracked goal${goalRevisions.length === 1 ? '' : 's'} · ${goalRevisions.map((revision) => `revision ${technicalFactLabel(revision)}`).join(' · ')}` : 'None'}</dd></div>
           </dl>
         </details>
       </div>

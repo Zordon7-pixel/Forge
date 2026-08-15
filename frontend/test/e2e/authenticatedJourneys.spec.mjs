@@ -35,15 +35,15 @@ function assertCleanApiAndRuntime(state, errors) {
   expect(errors, 'Authenticated journeys must not emit page or console errors').toEqual([])
 }
 
-async function customerFacingTextWithoutTechnicalVerification(page) {
-  return page.locator('body').evaluate((body) => {
-    const customerCopy = body.cloneNode(true)
-    customerCopy.querySelectorAll('details').forEach((details) => {
-      const summary = details.querySelector(':scope > summary')
-      if (summary?.textContent?.trim() === 'Technical verification') details.remove()
-    })
-    return customerCopy.textContent || ''
-  })
+async function openAllTechnicalVerificationAndReadBody(page) {
+  const summaries = page.locator('summary').filter({ hasText: 'Technical verification' })
+  const count = await summaries.count()
+  expect(count, 'The journey should expose at least one Technical verification disclosure').toBeGreaterThan(0)
+  await summaries.evaluateAll((nodes) => nodes.forEach((summary) => {
+    if (summary.parentElement instanceof HTMLDetailsElement) summary.parentElement.open = true
+  }))
+  expect(await summaries.evaluateAll((nodes) => nodes.every((summary) => summary.parentElement?.open)), 'Every Technical verification disclosure should be open').toBe(true)
+  return { count, text: await page.locator('body').innerText() }
 }
 
 const today = localDateISO()
@@ -1918,13 +1918,11 @@ test('v2.4 preview stays review-only and exposes canonical truth on both mobile 
   await expect(page.getByText(/Main workout · Fully supported/).first()).toBeVisible()
   await expect(page.getByText(/Prescription sources: 1 accepted source · Restricted by safety guidance/).first()).toBeVisible()
   await expect(page.getByText(/Event-specific development phase/).first()).toBeVisible()
-  const planTechnicalVerification = page.locator('summary').filter({ hasText: 'Technical verification' }).first()
-  await expect(planTechnicalVerification).toBeVisible()
-  await planTechnicalVerification.click()
-  await expect(page.getByText(/Plan r7 · surface r3/)).toBeVisible()
-  await planTechnicalVerification.click()
-  const previewCustomerCopy = await customerFacingTextWithoutTechnicalVerification(page)
-  expect(previewCustomerCopy).not.toMatch(/\b[A-Z][A-Z0-9]*_[A-Z0-9_]+\b/)
+  const previewCustomerCopy = await openAllTechnicalVerificationAndReadBody(page)
+  await expect(page.getByText(/Plan 7 · surface 3/)).toBeVisible()
+  expect(previewCustomerCopy.count).toBeGreaterThanOrEqual(1)
+  expect(previewCustomerCopy.text, 'Rendered preview copy, including open technical details, contains no underscore symbol').not.toContain('_')
+  expect(previewCustomerCopy.text, 'Rendered preview copy contains no raw closed enum token').not.toMatch(/\b[A-Z][A-Z0-9]*_[A-Z0-9_]+\b/)
   await expect.poll(() => page.evaluate(() => ({
     scroll: document.documentElement.scrollWidth,
     viewport: document.documentElement.clientWidth,
@@ -1971,14 +1969,12 @@ test('v2.4 full-rest safety and manual capability stay fail-closed on both mobil
   await expect(page.getByText(/Safety: All training · Cannot be started or exported/).last()).toBeVisible()
   await expect(page.getByText(/Goal-based target selection · Medium confidence · Count · 1 accepted evidence source/).last()).toBeVisible()
   await expect(page.getByText(/Event-specific development · HYROX build/)).toBeVisible()
-  const workoutTechnicalVerification = canonicalDetails.locator('..').locator('summary').filter({ hasText: 'Technical verification' })
-  await expect(workoutTechnicalVerification).toBeVisible()
-  await workoutTechnicalVerification.click()
-  await expect(page.getByText(/v24-mobile-hybrid-session · session r4 · plan r7/).last()).toBeVisible()
-  await expect(page.getByText(/goal_backward_target_hierarchy_v1/).last()).toBeVisible()
-  await workoutTechnicalVerification.click()
-  const fullRestCustomerCopy = await customerFacingTextWithoutTechnicalVerification(page)
-  expect(fullRestCustomerCopy).not.toMatch(/\b[A-Z][A-Z0-9]*_[A-Z0-9_]+\b/)
+  const fullRestCustomerCopy = await openAllTechnicalVerificationAndReadBody(page)
+  await expect(page.getByText(/Revisions: Session 4 · plan 7/).last()).toBeVisible()
+  await expect(page.getByText(/Policy: Goal-based target selection · version 1\.0\.0 · 1 accepted evidence source/).last()).toBeVisible()
+  expect(fullRestCustomerCopy.count).toBeGreaterThanOrEqual(2)
+  expect(fullRestCustomerCopy.text, 'Rendered full-rest copy, including open technical details, contains no underscore symbol').not.toContain('_')
+  expect(fullRestCustomerCopy.text, 'Rendered full-rest copy contains no raw closed enum token').not.toMatch(/\b[A-Z][A-Z0-9]*_[A-Z0-9_]+\b/)
   await expect(page.getByRole('button', { name: /Start (Run|Lift)/ })).toHaveCount(0)
   await expect.poll(() => page.evaluate(() => ({
     scroll: document.documentElement.scrollWidth,
