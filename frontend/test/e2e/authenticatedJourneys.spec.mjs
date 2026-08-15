@@ -365,6 +365,28 @@ test('Signature UI reuses exact readiness and canonical mission facts on both mo
   expect(Number.parseFloat(focusStyle.width)).toBeGreaterThanOrEqual(3)
 
   await page.evaluate(() => window.scrollTo(0, 0))
+  if (testInfo.project.name === 'compact-mobile-320') {
+    expect(page.viewportSize()).toEqual(testInfo.project.use.viewport)
+    const collapsedLayout = await page.evaluate(() => ({
+      viewport: window.innerWidth,
+      documentWidth: document.documentElement.scrollWidth,
+      bodyWidth: document.body.scrollWidth,
+    }))
+    expect(collapsedLayout.viewport).toBe(testInfo.project.use.viewport.width)
+    expect(collapsedLayout.documentWidth).toBeLessThanOrEqual(collapsedLayout.viewport)
+    expect(collapsedLayout.bodyWidth).toBeLessThanOrEqual(collapsedLayout.viewport)
+
+    const [collapsedRationaleBox, collapsedNavBox] = await Promise.all([
+      rationaleToggle.boundingBox(),
+      page.locator('nav.fixed').boundingBox(),
+    ])
+    expect(collapsedRationaleBox).not.toBeNull()
+    expect(collapsedNavBox).not.toBeNull()
+    expect(
+      collapsedRationaleBox.y + collapsedRationaleBox.height,
+      'Collapsed Why today matters control stays above the fixed nav at initial scroll position',
+    ).toBeLessThanOrEqual(collapsedNavBox.y)
+  }
   if (testInfo.project.name === 'iphone-17') {
     await testInfo.attach('signature-iphone-17-baseline', {
       body: await page.screenshot({ fullPage: false }),

@@ -720,20 +720,20 @@ body {
 
 @media (max-width: 340px) {
   .signature-dashboard-stack {
-    gap: 10px;
+    gap: 8px;
   }
 
   .signature-readiness-card {
-    padding: 14px;
+    padding: 12px;
   }
 
   .signature-readiness-primary {
-    grid-template-columns: minmax(0, 1fr) 98px;
+    grid-template-columns: minmax(0, 1fr) 92px;
     gap: 2px;
   }
 
   .signature-score {
-    font-size: 42px;
+    font-size: 38px;
   }
 
   .signature-readiness-band {
@@ -741,8 +741,8 @@ body {
   }
 
   .signature-arc {
-    width: 98px;
-    height: 98px;
+    width: 92px;
+    height: 92px;
   }
 
   .signature-readiness-verdict,
@@ -753,8 +753,19 @@ body {
     font-size: 12px;
   }
 
+  .signature-readiness-driver {
+    margin-top: 7px;
+    padding-top: 7px;
+  }
+
+  .signature-disclosure-button,
+  .signature-log-disclosure {
+    margin-top: 4px;
+    padding-top: 4px;
+  }
+
   .signature-coachs-log {
-    padding: 14px 13px 13px 17px;
+    padding: 12px 12px 11px 16px;
   }
 
   .signature-log-title {
@@ -762,7 +773,8 @@ body {
   }
 
   .signature-mission-facts {
-    gap: 7px 12px;
+    gap: 5px 10px;
+    margin-top: 10px;
   }
 }
 
