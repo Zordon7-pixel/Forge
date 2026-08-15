@@ -3,6 +3,8 @@
 
 const planSchema = require('./planSchema');
 const checkinOverride = require('./checkinOverride');
+const { canonicalHash } = require('./racePlanPolicy');
+const { candidateRejectionMatches } = require('./planCandidateLifecycle');
 
 const HARD_RUN_PATTERN = /(long|quality|tempo|threshold|interval|hill|hard|speed|vo2|race|zone 3|zone 4|zone 5|z3|z4|z5)/i;
 const HEALTH_STALE = new Set(['stale', 'suspect', 'missing', 'no_data', 'unknown']);
@@ -1924,7 +1926,7 @@ function buildGoalBackwardAdaptationProposal(input = {}) {
       v24_validation: validation,
     };
   }
-  return {
+  const proposal = {
     ...base,
     status: proposed ? 'proposal' : base.status,
     changes,
@@ -1934,6 +1936,43 @@ function buildGoalBackwardAdaptationProposal(input = {}) {
     completion_outcome_summary: outcomeSummary,
     missed_session_policy: missedSessionPolicy,
     v24_validation: validation,
+  };
+  return suppressRejectedAdaptationCandidate({
+    proposal,
+    activePlan: input.plan,
+    candidateHash: input.candidateHash ?? input.candidate_hash
+      ?? `sha256:${canonicalHash(proposal.proposedPlan)}`,
+    rejectionRecords: input.candidateRejections ?? input.candidate_rejections,
+    fingerprint: input.rejectionFingerprint ?? input.rejection_fingerprint,
+  });
+}
+
+function suppressRejectedAdaptationCandidate({
+  proposal,
+  activePlan,
+  candidateHash,
+  rejectionRecords = [],
+  fingerprint = {},
+} = {}) {
+  if (!proposal || proposal.status !== 'proposal' || !candidateHash) return clone(proposal);
+  const current = { candidate_hash: candidateHash, ...fingerprint };
+  const suppressed = (Array.isArray(rejectionRecords) ? rejectionRecords : [])
+    .some((rejection) => candidateRejectionMatches(rejection, current));
+  if (!suppressed) return clone(proposal);
+  return {
+    ...clone(proposal),
+    status: 'keep',
+    changes: [],
+    proposedPlan: clone(activePlan),
+    headline: 'Keep the calendar as planned',
+    reason: 'This identical adaptation was already rejected. New evidence, constraints, goals, or policy are required before it can be proposed again.',
+    reason_codes: [...new Set([
+      ...(proposal.reason_codes || []),
+      'ADAPTATION_REJECTED',
+      'IDENTICAL_REJECTED_CANDIDATE_SUPPRESSED',
+    ])],
+    rejected_candidate_hash: candidateHash,
+    active_plan_unchanged: true,
   };
 }
 
@@ -1959,6 +1998,7 @@ module.exports = {
   applyProposalToPlan,
   proposalMatchesPlanVersion,
   summarizeCompletionOutcomes,
+  suppressRejectedAdaptationCandidate,
   translateCompletionEvidence,
   isHardRun,
 };

@@ -7,6 +7,7 @@ const {
   buildAdaptationProposal,
   buildGoalBackwardAdaptationProposal,
   classifyCompletionOutcome,
+  suppressRejectedAdaptationCandidate,
   summarizeCompletionOutcomes,
   translateCompletionEvidence,
 } = require('../src/lib/adaptationEngine');
@@ -16,7 +17,12 @@ const {
   compareMaterialChange,
   validateGoalBackwardAdaptationCandidate,
 } = require('../src/lib/goalBackwardValidators');
-const { normalizePlanningConstraints } = require('../src/lib/planCandidateLifecycle');
+const {
+  buildCandidateRejectionRecord,
+  buildGoalBackwardFingerprintBindings,
+  candidateRejectionMatches,
+  normalizePlanningConstraints,
+} = require('../src/lib/planCandidateLifecycle');
 const { buildCompletionOutcomeRevisions } = require('../src/lib/planningRevision');
 
 const results = [];
@@ -331,6 +337,94 @@ test('EDIT-01', 'athlete-authored manual edits retain attribution and require re
   assert.equal(decision.edit_revision, 3);
 });
 
+test('REJECT-01', 'athlete rejection keeps the active plan and suppresses only the identical current fingerprint', () => {
+  const activePlan = plan([session('retained-session', '2026-08-17', 'easy_run')]);
+  const candidatePlan = plan([session('changed-session', '2026-08-17', 'threshold_run', {
+    role: 'PRIMARY_KEY', quality_work_duration_min: 12,
+  })]);
+  const candidateHash = `sha256:${'b'.repeat(64)}`;
+  const fingerprintDecision = {
+    athlete_id: 'athlete-synthetic',
+    plan_id: 'plan-active',
+    athlete_state_revision: 2,
+    evidence_snapshot_id: 'snapshot-current',
+    evidence_used: [{ evidence_id: 'evidence-current', purpose: 'CURRENT_PLANNING_SNAPSHOT' }],
+    active_goals: [{
+      goal_id: 'goal-a', race_id: 'race-a', source_revision: 1,
+      event_local_date: '2026-10-11', event_state: 'SCHEDULED', priority: 'A',
+    }],
+    lock_revision: 0,
+    edit_revision: 0,
+    safety_state: { action: 'NORMAL', scope: [] },
+    policy_versions: {
+      planning_policy_version: 'goal-backward-planning-policy-v1',
+      event_policy_registry_version: 1,
+      stress_taxonomy_version: 1,
+    },
+    event_policy_id: 'road_10mile_v1',
+  };
+  const originalBindings = buildGoalBackwardFingerprintBindings(fingerprintDecision);
+  const changedGoalBindings = buildGoalBackwardFingerprintBindings({
+    ...fingerprintDecision,
+    active_goals: [{ ...fingerprintDecision.active_goals[0], source_revision: 2 }],
+  });
+  assert.notEqual(changedGoalBindings.goal_fingerprint, originalBindings.goal_fingerprint);
+  assert.notEqual(
+    changedGoalBindings.policy_fingerprint,
+    originalBindings.policy_fingerprint,
+    'the persisted policy fingerprint intentionally includes the goal fingerprint, so a goal change releases suppression',
+  );
+  assert.equal(changedGoalBindings.evidence_fingerprint, originalBindings.evidence_fingerprint);
+  assert.equal(changedGoalBindings.constraint_fingerprint, originalBindings.constraint_fingerprint);
+  const rejection = buildCandidateRejectionRecord({
+    userId: 'athlete-synthetic',
+    candidateHash,
+    decisionId: 'decision-rejected',
+    decisionHash: 'c'.repeat(64),
+    reasonCode: 'ADAPTATION_REJECTED',
+    evidenceFingerprint: originalBindings.evidence_fingerprint,
+    constraintFingerprint: originalBindings.constraint_fingerprint,
+    policyFingerprint: originalBindings.policy_fingerprint,
+    createdAt: '2026-08-14T12:00:00.000Z',
+  });
+  const fingerprint = {
+    evidence_fingerprint: rejection.evidence_fingerprint,
+    constraint_fingerprint: rejection.constraint_fingerprint,
+    policy_fingerprint: rejection.policy_fingerprint,
+  };
+  assert.equal(candidateRejectionMatches(rejection, { candidate_hash: candidateHash, ...fingerprint }), true);
+  assert.equal(candidateRejectionMatches(rejection, {
+    candidate_hash: candidateHash,
+    ...fingerprint,
+    evidence_fingerprint: `sha256:${'0'.repeat(64)}`,
+  }), false, 'new evidence releases suppression');
+
+  const suppressed = suppressRejectedAdaptationCandidate({
+    proposal: {
+      status: 'proposal', changes: [{ sessionId: 'retained-session' }], proposedPlan: candidatePlan,
+      reason_codes: [],
+    },
+    activePlan,
+    candidateHash,
+    rejectionRecords: [rejection],
+    fingerprint,
+  });
+  assert.equal(suppressed.status, 'keep');
+  assert.deepEqual(suppressed.changes, []);
+  assert.deepEqual(suppressed.proposedPlan, activePlan, 'rejection never mutates or replaces the active plan');
+  assert.equal(suppressed.reason_codes.includes('ADAPTATION_REJECTED'), true);
+  assert.equal(suppressed.reason_codes.includes('IDENTICAL_REJECTED_CANDIDATE_SUPPRESSED'), true);
+
+  const released = suppressRejectedAdaptationCandidate({
+    proposal: { status: 'proposal', changes: [{ sessionId: 'retained-session' }], proposedPlan: candidatePlan },
+    activePlan,
+    candidateHash,
+    rejectionRecords: [rejection],
+    fingerprint: { ...fingerprint, policy_fingerprint: changedGoalBindings.policy_fingerprint },
+  });
+  assert.equal(released.status, 'proposal', 'goal or policy changes permit a fresh proposal');
+});
+
 test('MISS-01', 'missed work follows an explicit skip/replace policy and never creates an excess hard day', () => {
   const sourcePlan = plan([
     session('next-key', '2026-08-17', 'threshold_run', {
@@ -399,7 +493,7 @@ test('MISS-02', 'multiple missed key sessions omit excess debt with NO_WORKOUT_D
 
 const expectedBatch10Ids = [
   'SAFE-01', 'SAFE-02', 'SAFE-03', 'SAFE-04',
-  'LOCK-01', 'EDIT-01', 'MISS-01', 'MISS-02',
+  'LOCK-01', 'EDIT-01', 'REJECT-01', 'MISS-01', 'MISS-02',
 ];
 assert.deepEqual(results, expectedBatch10Ids);
 console.log(`GOAL BACKWARD ADAPTATION SMOKE OK (${results.length})`);

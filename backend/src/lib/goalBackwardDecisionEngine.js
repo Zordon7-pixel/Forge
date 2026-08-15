@@ -9,7 +9,11 @@ const {
 } = require('./racePlanPolicy');
 const { evaluateGoalBackwardFeasibility } = require('./planFeasibility');
 const { validatePartialRaceOrderCluster } = require('./canonicalWorkout');
-const { normalizePlanningConstraints } = require('./planCandidateLifecycle');
+const {
+  buildGoalBackwardFingerprintBindings,
+  candidateRejectionMatches,
+  normalizePlanningConstraints,
+} = require('./planCandidateLifecycle');
 
 const PRIORITY_ORDER = Object.freeze({ A: 0, B: 1, C: 2, UNSPECIFIED: 3 });
 const CONFIDENCE_WEIGHT = Object.freeze({ INSUFFICIENT: 0, LOW: 1, MEDIUM: 2, HIGH: 3 });
@@ -109,6 +113,25 @@ function goalComparator(left, right) {
   return unspecifiedComparator(left, right);
 }
 
+function raceLifecycleFields(race = {}) {
+  let config = race.event_config_json ?? race.eventConfig ?? {};
+  if (typeof config === 'string') {
+    try { config = JSON.parse(config); } catch (_error) { config = {}; }
+  }
+  const lifecycle = config?.goal_backward_lifecycle && typeof config.goal_backward_lifecycle === 'object'
+    ? config.goal_backward_lifecycle : {};
+  const legacyState = String(race.status || '').toLowerCase();
+  const mappedLegacyState = legacyState === 'completed' ? 'COMPLETED'
+    : legacyState === 'cancelled' ? 'CANCELLED'
+      : legacyState === 'upcoming' ? 'SCHEDULED' : 'UNKNOWN';
+  return {
+    event_state: normalizedLifecycle(race.event_state ?? lifecycle.event_state ?? mappedLegacyState),
+    event_revision: race.event_revision ?? lifecycle.event_revision ?? 1,
+    goal_revision: race.goal_revision ?? lifecycle.goal_revision ?? race.revision ?? 1,
+    transition_exit_met: race.transition_exit_met ?? lifecycle.transition_exit_met ?? false,
+  };
+}
+
 function resolveOwnedGoals(input = {}) {
   const athleteId = String(input.athlete_id ?? input.athleteId ?? '');
   if (!athleteId) return deepFreeze([]);
@@ -123,7 +146,8 @@ function resolveOwnedGoals(input = {}) {
     const raceId = goalRaceIdentifier(source);
     const race = raceId ? races.get(raceId) : null;
     if (raceRegistryProvided && raceId && (!race || raceOwnerId(race) !== athleteId)) return;
-    const eventState = normalizedLifecycle(source.event_state ?? source.eventState);
+    const raceLifecycle = raceLifecycleFields(race || {});
+    const eventState = normalizedLifecycle(source.event_state ?? source.eventState ?? raceLifecycle.event_state);
     const eventLocalDate = dateOnly(
       source.postponed_event_local_date
       ?? source.postponedEventLocalDate
@@ -147,6 +171,10 @@ function resolveOwnedGoals(input = {}) {
       event_timezone: source.event_timezone ?? source.eventTimezone ?? source.timezone ?? null,
       location: source.location ?? null,
       event_state: eventState,
+      event_revision: Number((source.event_revision ?? source.eventRevision ?? raceLifecycle.event_revision) || 1),
+      transition_exit_met: source.transition_exit_met === true
+        || source.transitionExitMet === true
+        || raceLifecycle.transition_exit_met === true,
       priority,
       effective_priority: priority,
       effective_priority_order: null,
@@ -159,7 +187,8 @@ function resolveOwnedGoals(input = {}) {
       registered_race: Boolean(raceId && (!raceRegistryProvided || race)),
       planning_eligible: PLANNING_LIFECYCLE.has(eventState),
       specificity_active: !['CANCELLED', 'DNS'].includes(eventState),
-      source_revision: source.revision ?? source.goal_revision ?? null,
+      source_revision: source.source_revision ?? source.revision ?? source.goal_revision
+        ?? raceLifecycle.goal_revision ?? null,
     };
     goal.tie_break_reason = normalizationTieReason(goal);
     owned.push(goal);
@@ -598,7 +627,11 @@ function buildGoalBackwardPlanningDecision(input = {}) {
   const athleteState = clone(input.athlete_state || input.athleteState || {});
   const planningConstraints = constraintsForDecision(input, athleteState, athleteId);
   const ownedGoals = resolveOwnedGoals({ athlete_id: athleteId, goals: input.goals, races: input.races });
-  const primaryGoal = primaryGoalForDecision(ownedGoals, input.transition_exit_met);
+  const firstGoal = ownedGoals[0] || null;
+  const transitionExitMet = input.transition_exit_met === true
+    || input.transitionExitMet === true
+    || firstGoal?.transition_exit_met === true;
+  const primaryGoal = primaryGoalForDecision(ownedGoals, transitionExitMet);
   const eventPolicy = primaryGoal ? eventPolicyForGoal(primaryGoal) : null;
   const initialDueCount = eventPolicy?.required_exposure_ledger?.EVENT_SPECIFIC_DEVELOPMENT
     ?.filter((entry) => (entry.role || 'PRIMARY_KEY') === 'PRIMARY_KEY').length || 0;
@@ -664,10 +697,18 @@ function buildGoalBackwardPlanningDecision(input = {}) {
     timezone: String(input.timezone || athleteState.timezone || 'UTC'),
     active_goals: activeGoals,
     primary_goal_id: primaryGoal?.goal_id || null,
+    ordered_goal_ids: activeGoals.map((goal) => goal.goal_id),
     secondary_goal_ids: activeGoals.filter((goal) => goal.goal_id !== primaryGoal?.goal_id && goal.planning_eligible)
       .map((goal) => goal.goal_id),
     phase: phaseDecision.phase,
     phase_reason_codes: phaseDecision.reason_codes,
+    promotion: {
+      transition_exit_met: transitionExitMet,
+      promoted_from_goal_id: firstGoal?.event_state === 'COMPLETED' && transitionExitMet
+        && primaryGoal?.goal_id !== firstGoal.goal_id ? firstGoal.goal_id : null,
+      promoted_to_goal_id: firstGoal?.event_state === 'COMPLETED' && transitionExitMet
+        && primaryGoal?.goal_id !== firstGoal.goal_id ? primaryGoal?.goal_id || null : null,
+    },
     days_to_events: Object.fromEntries(activeGoals.map((goal) => [
       goal.goal_id,
       goal.event_local_date ? daysBetween(planningDate, goal.event_local_date) : null,
@@ -781,6 +822,51 @@ function finalizeGoalBackwardCandidateDecision(decision, {
   });
 }
 
+function suppressRejectedGoalBackwardCandidates(result = {}, rejectionRows = []) {
+  const decision = result.decision || {};
+  const candidates = Array.isArray(result.candidates) ? result.candidates : [];
+  if (!candidates.length || !Array.isArray(rejectionRows) || !rejectionRows.length) return result;
+  const fingerprint = buildGoalBackwardFingerprintBindings(decision);
+  const suppressedHashes = new Set(candidates.filter((candidate) => rejectionRows.some((rejection) => (
+    candidateRejectionMatches(rejection, {
+      candidate_hash: candidate.candidate_hash,
+      ...fingerprint,
+    })
+  ))).map((candidate) => candidate.candidate_hash));
+  if (!suppressedHashes.size) return result;
+  const selected = result.selected_candidate;
+  const replacement = selected && !suppressedHashes.has(selected.candidate_hash)
+    ? selected
+    : candidates.find((candidate) => candidate.validation?.valid === true
+      && !suppressedHashes.has(candidate.candidate_hash)) || null;
+  const finalized = finalizeGoalBackwardCandidateDecision(decision, {
+    candidates,
+    selectedCandidate: replacement,
+    totalUniqueCandidateCount: decision.candidate_enumeration?.total_unique_candidate_count ?? candidates.length,
+    truncationReason: decision.candidate_enumeration?.truncation_reason ?? null,
+  });
+  const suppressionRows = candidates.filter((candidate) => suppressedHashes.has(candidate.candidate_hash)).map((candidate) => ({
+    candidate_id: candidate.candidate_skeleton_id,
+    candidate_hash: candidate.candidate_hash,
+    reason_codes: ['ADAPTATION_REJECTED', 'IDENTICAL_REJECTED_CANDIDATE_SUPPRESSED'],
+  }));
+  return deepFreeze({
+    ...clone(result),
+    selected_candidate: replacement,
+    decision: {
+      ...clone(finalized),
+      reason_codes: [...new Set([
+        ...(finalized.reason_codes || []),
+        'IDENTICAL_REJECTED_CANDIDATE_SUPPRESSED',
+      ])],
+      rejected_candidates: [
+        ...(finalized.rejected_candidates || []).filter((entry) => !suppressedHashes.has(entry.candidate_hash)),
+        ...suppressionRows,
+      ],
+    },
+  });
+}
+
 module.exports = {
   buildHyroxClusterCompletionLedger,
   buildDueExposureLedger,
@@ -791,4 +877,5 @@ module.exports = {
   resolveOwnedGoals,
   hyroxClusterRequirement,
   selectGoalBackwardPhase,
+  suppressRejectedGoalBackwardCandidates,
 };

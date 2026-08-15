@@ -29,26 +29,40 @@ const {
   enumerateGoalBackwardCandidates,
   semanticCandidateErrors,
 } = require('../lib/racePlanCandidateEngine');
-const { buildGoalBackwardPlanningDecision } = require('../lib/goalBackwardDecisionEngine');
+const {
+  buildGoalBackwardPlanningDecision,
+  suppressRejectedGoalBackwardCandidates,
+} = require('../lib/goalBackwardDecisionEngine');
 const { assertPipelineLinks } = require('../lib/goalBackwardContracts');
 const { resolveOperationalGoalBackwardV24Mode } = require('../lib/betaPlanRollout');
 const { requestImagesForWorkoutItems } = require('../lib/exerciseImageRequests');
 const hyroxPlan = require('../lib/hyroxPlan');
 const {
+  GOAL_BACKWARD_PLANNING_POLICY_V1,
   RACE_PLAN_POLICY_V1,
   acceptPlanningClock,
   addDays: addPolicyDays,
+  eventPolicyForGoal,
 } = require('../lib/racePlanPolicy');
 const {
   assertPersistablePlan,
+  buildCandidateRejectionRecord,
+  buildGoalBackwardApplyEnvelope,
   buildPipelineArtifact,
   buildGoalBackwardDecisionArtifacts,
+  buildGoalBackwardFingerprintBindings,
   buildGoalBackwardShadowBindings,
   buildPlanningSnapshot,
+  candidateRejectionMatches,
+  goalBackwardApplyEnvelopeFromRequest,
+  loadCandidateRejectionsForFingerprint,
+  normalizePlanningConstraints,
   parseJson: parseCandidateJson,
+  persistCandidateRejection,
   persistGoalBackwardDecisionArtifacts,
   prefixedHash,
   validateCandidateBundle,
+  validateGoalBackwardApplyEnvelope,
   validateStoredGoalBackwardCandidateBindings,
 } = require('../lib/planCandidateLifecycle');
 const {
@@ -1917,6 +1931,19 @@ function targetWithoutOwnedRace(profile, requested, planningDateLocal) {
   return { target, raceWindow };
 }
 
+async function loadGoalBackwardPlanningConstraints(tx, userId, planId = null) {
+  if (!tx || typeof tx.all !== 'function') {
+    return normalizePlanningConstraints([], { athleteId: userId, planId });
+  }
+  const rows = await tx.all(
+    `SELECT * FROM planning_constraints
+     WHERE user_id=? AND (plan_id IS NULL OR plan_id=?)
+     ORDER BY revision ASC, created_at ASC, id ASC`,
+    [userId, planId],
+  );
+  return normalizePlanningConstraints(rows || [], { athleteId: userId, planId });
+}
+
 async function loadCandidateInputState(userId, request, clock, tx) {
   const profile = await tx.get('SELECT * FROM users WHERE id=?', [userId]);
   if (!profile) throw candidateError(404, 'USER_NOT_FOUND', 'User not found.');
@@ -1946,6 +1973,11 @@ async function loadCandidateInputState(userId, request, clock, tx) {
     }
   }
   const activePlan = activeCandidateMetadata(active);
+  const planningConstraints = await loadGoalBackwardPlanningConstraints(
+    tx,
+    userId,
+    activePlan?.trainingPlanId || null,
+  );
   const snapshot = buildPlanningSnapshot({
     activePlan,
     context,
@@ -1968,6 +2000,7 @@ async function loadCandidateInputState(userId, request, clock, tx) {
       type: resolved.target.planMode,
     },
     planningInputRevision: Number(profile.planning_input_revision || 0),
+    planningConstraints,
     races,
     removalRace,
     request,
@@ -2120,6 +2153,29 @@ function goalBackwardRecoveryState(context = {}) {
   return 'NORMAL';
 }
 
+function goalBackwardSafetyState(context = {}) {
+  return {
+    action: context.safety?.activeInjury ? 'MODIFY_IMPACT' : 'NORMAL',
+    scope: [],
+  };
+}
+
+function raceLifecycleForPlanning(race = {}) {
+  const config = storedEventConfig(race);
+  const lifecycle = config.goal_backward_lifecycle && typeof config.goal_backward_lifecycle === 'object'
+    ? config.goal_backward_lifecycle : {};
+  const legacyStatus = String(race.status || '').toLowerCase();
+  const eventState = String(race.event_state ?? lifecycle.event_state
+    ?? (legacyStatus === 'completed' ? 'COMPLETED' : legacyStatus === 'cancelled' ? 'CANCELLED' : 'SCHEDULED'))
+    .toUpperCase();
+  return {
+    event_state: eventState,
+    event_revision: Math.max(1, Number(race.event_revision ?? lifecycle.event_revision ?? 1)),
+    goal_revision: Math.max(1, Number(race.goal_revision ?? lifecycle.goal_revision ?? race.revision ?? 1)),
+    transition_exit_met: race.transition_exit_met === true || lifecycle.transition_exit_met === true,
+  };
+}
+
 function goalBackwardEventKind(race, state) {
   if (String(race?.event_kind || '').toLowerCase() === 'hyrox' || state?.target?.hyroxEvent) {
     const format = String(race?.event_format || state?.target?.hyroxEvent?.format || '').toLowerCase();
@@ -2140,19 +2196,24 @@ function goalBackwardGoalsForState(userId, state) {
       event_state: 'UNKNOWN',
     }];
   }
-  return state.races.map((race, index) => ({
-    goal_id: `goal-${String(race.id)}`,
-    race_id: String(race.id),
-    athlete_id: userId,
-    priority: ['A', 'B', 'C'][Math.min(index, 2)],
-    goal_type: Number(race.goal_time_seconds || 0) > 0 ? 'performance' : 'completion',
-    event_kind: goalBackwardEventKind(race, state),
-    event_local_date: race.event_local_date || race.race_date,
-    event_state: 'SCHEDULED',
-    source_revision: Math.max(1, Number(race.revision || 1)),
-    distance_miles: Number(race.distance_miles || 0) || null,
-    target_time_s: Number(race.goal_time_seconds || 0) > 0 ? Number(race.goal_time_seconds) : null,
-  }));
+  return state.races.map((race, index) => {
+    const lifecycle = raceLifecycleForPlanning(race);
+    return {
+      goal_id: `goal-${String(race.id)}`,
+      race_id: String(race.id),
+      athlete_id: userId,
+      priority: ['A', 'B', 'C'][Math.min(index, 2)],
+      goal_type: Number(race.goal_time_seconds || 0) > 0 ? 'performance' : 'completion',
+      event_kind: goalBackwardEventKind(race, state),
+      event_local_date: race.event_local_date || race.race_date,
+      event_state: lifecycle.event_state,
+      event_revision: lifecycle.event_revision,
+      transition_exit_met: lifecycle.transition_exit_met,
+      source_revision: lifecycle.goal_revision,
+      distance_miles: Number(race.distance_miles || 0) || null,
+      target_time_s: Number(race.goal_time_seconds || 0) > 0 ? Number(race.goal_time_seconds) : null,
+    };
+  });
 }
 
 function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDateLocal }, dependencies = {}) {
@@ -2168,7 +2229,8 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
     : goalBackwardAvailableLocalDates(state, planningDateLocal);
   const trainingAgeClass = goalBackwardTrainingAge(state.context);
   const recoveryState = goalBackwardRecoveryState(state.context);
-  const safetyAction = state.context?.safety?.activeInjury ? 'MODIFY_IMPACT' : 'NORMAL';
+  const safetyState = goalBackwardSafetyState(state.context);
+  const safetyAction = safetyState.action;
   const recentRunCount = Number(state.context?.history?.recentRunCount || 0);
   const weeklyMiles = Number(state.context?.history?.weeklyMileageBaseline || 0);
   const goals = goalBackwardGoalsForState(userId, state);
@@ -2180,7 +2242,7 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
     athlete_id: userId,
     planning_date_local: planningDateLocal,
     created_at: `${planningDateLocal}T00:00:00.000Z`,
-    timezone: 'UTC',
+    timezone: state.context?.profile?.timezone || 'UTC',
     plan_id: state.activePlan?.trainingPlanId || null,
     plan_revision: Number(state.activePlan?.planVersion || 0),
     athlete_state: {
@@ -2196,8 +2258,11 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
         median_distance_m: weeklyMiles > 0 ? Math.round(weeklyMiles * 1609.344) : null,
       },
       available_days: availableLocalDates,
-      locks: [],
-      manual_edits: [],
+      locks: state.planningConstraints?.locks || [],
+      manual_edits: state.planningConstraints?.manual_edits || [],
+      lock_revision: state.planningConstraints?.lock_revision || 0,
+      edit_revision: state.planningConstraints?.edit_revision || 0,
+      constraint_fingerprint: state.planningConstraints?.constraint_fingerprint || null,
     },
     goals,
     races: state.races.map((race) => ({ race_id: String(race.id), athlete_id: userId })),
@@ -2205,6 +2270,8 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
     development_gate_complete: recentRunCount >= 4,
     full_pre_taper_weeks: clusterPolicy?.fullPreTaperWeeks,
     mandatory_hyrox_cluster: clusterPolicy?.required === true,
+    transition_exit_met: goals[0]?.transition_exit_met === true,
+    planning_constraints: state.planningConstraints,
     safety_or_recovery_hold: clusterPolicy?.unplaceableReason === 'SAFETY_RECOVERY_HOLD',
     supporting_stimuli: clusterPolicy?.required === true && clusterWeekDates.length >= 5 ? [
       {
@@ -2416,6 +2483,36 @@ async function previewPlanForUser(userId, body = {}, { store = true, goalBackwar
           selectedCandidate: goalBackwardShadow.selected_candidate,
           currentCandidateHash: candidateHash,
         });
+        const priorRejections = await loadCandidateRejectionsForFingerprint({
+          tx,
+          userId,
+          fingerprint: bindings.material_change_json.apply_bindings,
+        });
+        if (priorRejections.some((rejection) => candidateRejectionMatches(rejection, {
+          candidate_hash: candidateHash,
+          ...bindings.material_change_json.apply_bindings,
+        }))) {
+          throw candidateError(
+            409,
+            'IDENTICAL_REJECTED_CANDIDATE_SUPPRESSED',
+            'This unchanged plan candidate was already rejected. Change the goal, evidence, constraints, or policy before previewing again.',
+          );
+        }
+        goalBackwardShadow = suppressRejectedGoalBackwardCandidates(goalBackwardShadow, priorRejections);
+        const artifacts = buildGoalBackwardArtifacts({
+          userId,
+          planGenerationCandidateId: candidateId,
+          currentCandidateHash: candidateHash,
+          decision: goalBackwardShadow.decision,
+          candidates: goalBackwardShadow.candidates,
+        });
+        const decisionArtifact = artifacts.find((artifact) => artifact.artifact_kind === 'planning_decision');
+        const currentBindings = buildGoalBackwardShadowBindings({
+          decision: goalBackwardShadow.decision,
+          decisionArtifact,
+          selectedCandidate: goalBackwardShadow.selected_candidate,
+          currentCandidateHash: candidateHash,
+        });
         await tx.run(
           `INSERT INTO plan_generation_candidates (
              id, user_id, status, training_plan_id, user_plan_id, active_plan_version,
@@ -2428,33 +2525,27 @@ async function previewPlanForUser(userId, body = {}, { store = true, goalBackwar
            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
           [
             ...baseValues,
-            bindings.decision_id,
-            bindings.candidate_revision,
-            bindings.athlete_state_revision,
-            bindings.safety_state_hash,
-            JSON.stringify(bindings.goal_revisions_json),
-            bindings.lock_revision,
-            bindings.edit_revision,
-            bindings.surface_revision,
-            bindings.export_revision,
-            bindings.feature_mode,
-            bindings.selected_candidate_hash,
-            JSON.stringify(bindings.material_change_json),
+            currentBindings.decision_id,
+            currentBindings.candidate_revision,
+            currentBindings.athlete_state_revision,
+            currentBindings.safety_state_hash,
+            JSON.stringify(currentBindings.goal_revisions_json),
+            currentBindings.lock_revision,
+            currentBindings.edit_revision,
+            currentBindings.surface_revision,
+            currentBindings.export_revision,
+            currentBindings.feature_mode,
+            currentBindings.selected_candidate_hash,
+            JSON.stringify(currentBindings.material_change_json),
           ]
         );
-        const artifacts = buildGoalBackwardArtifacts({
-          userId,
-          planGenerationCandidateId: candidateId,
-          currentCandidateHash: candidateHash,
-          decision: goalBackwardShadow.decision,
-          candidates: goalBackwardShadow.candidates,
-        });
         await persistGoalBackwardDecisionArtifacts({ tx, artifacts });
         await tx.run('RELEASE SAVEPOINT goal_backward_shadow');
         shadowPersisted = true;
       } catch (error) {
         await tx.run('ROLLBACK TO SAVEPOINT goal_backward_shadow');
         await tx.run('RELEASE SAVEPOINT goal_backward_shadow');
+        if (error?.code === 'IDENTICAL_REJECTED_CANDIDATE_SUPPRESSED') throw error;
         if (typeof goalBackwardDependencies.inspectFailure === 'function') goalBackwardDependencies.inspectFailure(error);
       }
     }
@@ -2470,6 +2561,96 @@ function sameCapturedActivePlan(row, active) {
   return String(row.training_plan_id || '') === String(meta?.trainingPlanId || '')
     && String(row.user_plan_id || '') === String(meta?.userPlanId || '')
     && String(row.active_plan_version ?? '') === String(meta?.planVersion ?? '');
+}
+
+function currentGoalBackwardApplyEnvelope(expected, userId, current) {
+  const goals = goalBackwardGoalsForState(userId, current);
+  const firstGoal = goals[0] || null;
+  const transitionExitMet = firstGoal?.transition_exit_met === true;
+  const primaryGoal = firstGoal?.event_state === 'COMPLETED' && !transitionExitMet
+    ? firstGoal
+    : goals.find((goal) => ['SCHEDULED', 'POSTPONED', 'UNKNOWN'].includes(goal.event_state)) || null;
+  const currentEventPolicy = primaryGoal ? eventPolicyForGoal(primaryGoal) : null;
+  const safetyState = goalBackwardSafetyState(current.context);
+  const athleteStateRevision = Math.max(1, Number(current.planningInputRevision || 1));
+  const evidenceSnapshotId = `snapshot-${current.inputHash.slice(-24)}`;
+  const fingerprints = buildGoalBackwardFingerprintBindings({
+    athlete_id: userId,
+    plan_id: current.activePlan?.trainingPlanId || null,
+    athlete_state_revision: athleteStateRevision,
+    evidence_snapshot_id: evidenceSnapshotId,
+    evidence_used: [{ evidence_id: evidenceSnapshotId, purpose: 'CURRENT_PLANNING_SNAPSHOT' }],
+    safety_state: safetyState,
+    active_goals: goals,
+    lock_revision: current.planningConstraints?.lock_revision || 0,
+    edit_revision: current.planningConstraints?.edit_revision || 0,
+    constraint_fingerprint: current.planningConstraints?.constraint_fingerprint || null,
+    athlete_locks: current.planningConstraints?.locks || [],
+    manual_edits: current.planningConstraints?.manual_edits || [],
+    timezone: current.context?.profile?.timezone || 'UTC',
+    policy_versions: {
+      planning_policy_version: GOAL_BACKWARD_PLANNING_POLICY_V1.planning_policy_version,
+      event_policy_registry_version: GOAL_BACKWARD_PLANNING_POLICY_V1.event_policy_registry_version,
+      stress_taxonomy_version: GOAL_BACKWARD_PLANNING_POLICY_V1.stress_taxonomy_version,
+    },
+    event_policy_id: currentEventPolicy?.event_policy_id || null,
+  });
+  return {
+    ...expected,
+    active_plan: {
+      training_plan_id: current.activePlan?.trainingPlanId || null,
+      user_plan_id: current.activePlan?.userPlanId || null,
+      plan_revision: current.activePlan?.planVersion ?? null,
+    },
+    planning_input_revision: Number(current.planningInputRevision),
+    planning_timezone: current.context?.profile?.timezone || 'UTC',
+    goal_revisions: Object.fromEntries(goals.map((goal) => [
+      String(goal.goal_id), Math.max(1, Number(goal.source_revision || 1)),
+    ])),
+    goal_fingerprint: fingerprints.goal_fingerprint,
+    athlete_state_revision: athleteStateRevision,
+    safety_state_hash: prefixedHash(safetyState),
+    evidence_fingerprint: fingerprints.evidence_fingerprint,
+    constraint_fingerprint: fingerprints.constraint_fingerprint,
+    policy_fingerprint: fingerprints.policy_fingerprint,
+    lock_revision: current.planningConstraints?.lock_revision || 0,
+    edit_revision: current.planningConstraints?.edit_revision || 0,
+  };
+}
+
+function staleApplyResult(code) {
+  const messages = {
+    RACE_REVISION_CHANGED: 'The goal or race changed after preview. Preview again.',
+    SAFETY_STATE_CHANGED: 'Safety guidance changed after preview. Preview again.',
+    ATHLETE_STATE_REVISION_CHANGED: 'Athlete state changed after preview. Preview again.',
+    ACTIVE_PLAN_REVISION_CHANGED: 'The active plan changed after preview. Preview again.',
+    PLANNING_CLOCK_CHANGED: 'The athlete-local planning clock changed. Preview again.',
+  };
+  return planningInputUnchanged({
+    status: 409,
+    error: messages[code] || 'Candidate bindings changed after preview. Preview again.',
+    code,
+  });
+}
+
+async function verifyStoredGoalBackwardDecisionHash(tx, userId, row, expected) {
+  const artifact = await tx.get(
+    `SELECT id, revision, content_hash, payload_json FROM planning_pipeline_artifacts
+     WHERE id=? AND user_id=? AND decision_id=? AND artifact_kind='planning_decision'
+     LIMIT 1`,
+    [expected.decision_artifact.artifact_id, userId, row.decision_id],
+  );
+  const payload = parseCandidateJson(artifact?.payload_json, null);
+  if (!artifact
+    || String(artifact.id || '') !== String(expected.decision_artifact.artifact_id)
+    || Number(artifact.revision) !== Number(expected.decision_artifact.revision)
+    || String(artifact.content_hash || '') !== String(expected.decision_artifact.content_hash)
+    || !payload || String(payload.decision_id || '') !== String(expected.decision_id)
+    || String(payload.decision_hash || '').replace(/^sha256:/, '')
+      !== String(expected.decision_hash || '').replace(/^sha256:/, '')) {
+    throw candidateError(409, 'DECISION_ARTIFACT_CHANGED', 'The exact planning decision artifact is missing or changed. Preview again.');
+  }
+  return true;
 }
 
 function replacementLineageForActivePlan(active, fallbackUserPlanId) {
@@ -2593,6 +2774,26 @@ async function applyPlanCandidate(userId, candidateId, body = {}, constraints = 
       [candidateId, userId]
     );
     if (!row) return planningInputUnchanged({ status: 404, error: 'Candidate not found', code: 'CANDIDATE_NOT_FOUND' });
+    let storedGoalBackward = { present: false, bindings: null };
+    let expectedApplyEnvelope = null;
+    let enforceV24Bindings = false;
+    try {
+      storedGoalBackward = validateStoredGoalBackwardCandidateBindings(row, { allowedModes: ['shadow', 'preview', 'on'] });
+      enforceV24Bindings = storedGoalBackward.present && storedGoalBackward.bindings.feature_mode !== 'shadow';
+      if (enforceV24Bindings) {
+        expectedApplyEnvelope = buildGoalBackwardApplyEnvelope(row);
+        await verifyStoredGoalBackwardDecisionHash(tx, userId, row, expectedApplyEnvelope);
+        const requestEnvelope = goalBackwardApplyEnvelopeFromRequest(body, candidateId);
+        const bindingValidation = validateGoalBackwardApplyEnvelope(expectedApplyEnvelope, requestEnvelope);
+        if (!bindingValidation.valid) return staleApplyResult(bindingValidation.code);
+      }
+    } catch (error) {
+      return planningInputUnchanged({
+        status: Number(error.status) || 409,
+        error: error.message,
+        code: error.code || 'GOAL_BACKWARD_CANDIDATE_BINDINGS_INCOMPLETE',
+      });
+    }
     let constrainedRequest = null;
     if (constraints.requiredOperation || constraints.requiredRaceId) {
       const snapshot = parseCandidateJson(row.planning_snapshot_json, {});
@@ -2615,17 +2816,7 @@ async function applyPlanCandidate(userId, candidateId, body = {}, constraints = 
     if (row.status !== 'preview') {
       return planningInputUnchanged({ status: 409, error: 'Candidate is no longer available.', code: 'CANDIDATE_UNAVAILABLE' });
     }
-    try {
-      validateStoredGoalBackwardCandidateBindings(row);
-    } catch (error) {
-      return planningInputUnchanged({
-        status: Number(error.status) || 409,
-        error: error.message,
-        code: error.code || 'GOAL_BACKWARD_CANDIDATE_BINDINGS_INCOMPLETE',
-      });
-    }
     assertCandidatePlanningDateCurrent(row);
-    await pruneExpiredPlanCandidates(tx, userId, { excludeCandidateId: row.id });
     if (new Date(row.expires_at).getTime() <= Date.now()) {
       return planningInputUnchanged({ status: 409, error: 'Candidate expired. Preview again.', code: 'CANDIDATE_EXPIRED' });
     }
@@ -2659,6 +2850,11 @@ async function applyPlanCandidate(userId, candidateId, body = {}, constraints = 
       timezoneOffsetMinutes: Number(row.timezone_offset_minutes),
     };
     const current = await loadCandidateInputState(userId, request, clock, tx);
+    if (enforceV24Bindings) {
+      const currentEnvelope = currentGoalBackwardApplyEnvelope(expectedApplyEnvelope, userId, current);
+      const freshness = validateGoalBackwardApplyEnvelope(expectedApplyEnvelope, currentEnvelope);
+      if (!freshness.valid) return staleApplyResult(freshness.code);
+    }
     if (current.planningInputRevision !== Number(row.planning_input_revision)
       || current.inputHash !== row.input_hash
       || !sameCapturedActivePlan(row, current.active)) {
@@ -2691,6 +2887,7 @@ async function applyPlanCandidate(userId, candidateId, body = {}, constraints = 
 
     // Recheck at the write boundary so a midnight cutover rolls back this transaction.
     assertCandidatePlanningDateCurrent(row);
+    await pruneExpiredPlanCandidates(tx, userId, { excludeCandidateId: row.id });
     const schedule = validatedPlan.schedulePreferences || {};
     if (schedule.runDaysSource === 'target' && schedule.trainingDaysSource === 'target') {
       const preferenceResult = await tx.run(
@@ -2763,6 +2960,81 @@ async function applyPlanCandidate(userId, candidateId, body = {}, constraints = 
     );
     if (candidateUpdate.changes === 0) throw new Error('Candidate apply status update failed');
     return { status: 200, payload };
+  });
+}
+
+async function rejectPlanCandidate(userId, candidateId, body = {}) {
+  return withUserMutation(userId, async (tx) => {
+    const row = await tx.get(
+      'SELECT * FROM plan_generation_candidates WHERE id=? AND user_id=? FOR UPDATE',
+      [candidateId, userId],
+    );
+    if (!row) return { status: 404, error: 'Candidate not found', code: 'CANDIDATE_NOT_FOUND' };
+    let expected;
+    let storedGoalBackward;
+    try {
+      storedGoalBackward = validateStoredGoalBackwardCandidateBindings(row, { allowedModes: ['shadow', 'preview', 'on'] });
+      expected = buildGoalBackwardApplyEnvelope(row);
+      await verifyStoredGoalBackwardDecisionHash(tx, userId, row, expected);
+    } catch (error) {
+      return {
+        status: Number(error.status) || 409,
+        error: error.message,
+        code: error.code || 'GOAL_BACKWARD_CANDIDATE_BINDINGS_INCOMPLETE',
+      };
+    }
+    if (storedGoalBackward.bindings.feature_mode === 'shadow') {
+      if (String(body.candidate_hash || '') !== String(expected.candidate_hash || '')) {
+        return staleApplyResult('CANDIDATE_HASH_MISMATCH').value;
+      }
+    } else {
+      const requestEnvelope = goalBackwardApplyEnvelopeFromRequest(body, candidateId);
+      const bindingValidation = validateGoalBackwardApplyEnvelope(expected, requestEnvelope);
+      if (!bindingValidation.valid) {
+        const stale = staleApplyResult(bindingValidation.code);
+        return stale.value;
+      }
+    }
+    if (row.status === 'applied') {
+      return { status: 409, error: 'An applied candidate cannot be rejected.', code: 'CANDIDATE_ALREADY_APPLIED' };
+    }
+    if (!['preview', 'superseded'].includes(row.status)) {
+      return { status: 409, error: 'Candidate is no longer available.', code: 'CANDIDATE_UNAVAILABLE' };
+    }
+    const rejection = buildCandidateRejectionRecord({
+      userId,
+      candidateHash: expected.candidate_hash,
+      decisionId: expected.decision_id,
+      decisionHash: expected.decision_hash,
+      reasonCode: body.reason_code || 'ADAPTATION_REJECTED',
+      evidenceFingerprint: expected.evidence_fingerprint,
+      constraintFingerprint: expected.constraint_fingerprint,
+      policyFingerprint: expected.policy_fingerprint,
+    });
+    const persisted = await persistCandidateRejection({ tx, rejection });
+    if (row.status === 'preview') {
+      const update = await tx.run(
+        `UPDATE plan_generation_candidates
+         SET status='superseded'
+         WHERE id=? AND user_id=? AND status='preview'`,
+        [row.id, userId],
+      );
+      if (Number(update?.changes || 0) === 0) {
+        throw new Error('Candidate rejection status update failed');
+      }
+    }
+    return {
+      status: 200,
+      replay: !persisted.inserted,
+      payload: {
+        candidate_id: row.id,
+        candidate_hash: row.candidate_hash,
+        status: 'rejected',
+        applied: false,
+        active_plan_unchanged: true,
+        reason_code: rejection.reason_code,
+      },
+    };
   });
 }
 
@@ -3717,6 +3989,20 @@ router.post('/candidates/:candidateId/apply', auth, requirePremium('Race Program
     return res.status(result.status || 200).json({ ...result.payload, replay: Boolean(result.replay) });
   } catch (err) {
     return sendCandidateError(res, err, 'candidate-apply');
+  }
+});
+
+router.post('/candidates/:candidateId/reject', auth, requirePremium('Race Programs'), async (req, res) => {
+  try {
+    const candidateId = String(req.params.candidateId || '').trim();
+    if (!candidateId || candidateId.length > 128) {
+      throw candidateError(400, 'INVALID_CANDIDATE_ID', 'Candidate ID is required.');
+    }
+    const result = await rejectPlanCandidate(req.user.id, candidateId, req.body || {});
+    if (result.error) return res.status(result.status || 409).json({ error: result.error, code: result.code });
+    return res.status(result.status || 200).json({ ...result.payload, replay: Boolean(result.replay) });
+  } catch (err) {
+    return sendCandidateError(res, err, 'candidate-reject');
   }
 });
 
@@ -4863,6 +5149,7 @@ router._test = {
   candidateFeasibilityCanApply,
   candidateEffectiveFrom,
   computeGoalBackwardShadowDiagnostics,
+  currentGoalBackwardApplyEnvelope,
   getActivePlanForMutation,
   getActivePlanForUser,
   normalizeActivePlanIdentitiesForMutation,
@@ -4876,12 +5163,14 @@ router._test = {
   deleteOwnedRaceForCandidate,
   pruneExpiredPlanCandidates,
   previewPlanForUser,
+  rejectPlanCandidate,
   previewRaceRemovalForUser,
   raceRemovalCandidateRequest,
   raceRemovalImpact,
   raceRemovalImpactForUser,
   replacementLineageForActivePlan,
   sendCandidateError,
+  verifyStoredGoalBackwardDecisionHash,
   withRequestPlanningClock,
 };
 

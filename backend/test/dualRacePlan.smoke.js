@@ -7,11 +7,156 @@ const path = require('node:path');
 const concurrent = require('../src/lib/concurrentPlan');
 const hyrox = require('../src/lib/hyroxPlan');
 const { aggregateWeeklyStress } = require('../src/lib/goalBackwardLoad');
+const { buildGoalBackwardPlanningDecision } = require('../src/lib/goalBackwardDecisionEngine');
 const adaptation = require('../src/lib/adaptationEngine');
 const planSchema = require('../src/lib/planSchema');
 const { motivationalRunName } = require('../../shared/runDisplayName.mjs');
 
 const HYROX_EQUIPMENT = ['ski_erg', 'row_erg', 'sled_push', 'sled_pull', 'wall_ball_target', 'sandbag', 'farmers_carry', 'treadmill'];
+
+function checkExplicitEventLifecycleAndOrderedPromotion() {
+  const racesRouter = require('../src/routes/races');
+  const transition = racesRouter._test.transitionRaceEventLifecycle;
+  const normalizeRaceEvent = racesRouter._test.normalizeRaceEvent;
+  const athleteId = 'ordered-transition-athlete';
+  const raceA = {
+    id: 'race-a', user_id: athleteId, race_name: 'A race', race_date: '2026-08-02',
+    event_local_date: '2026-08-02', status: 'upcoming', event_config_json: '{}',
+  };
+  const malformedLegacy = normalizeRaceEvent({
+    race_name: 'Invalid legacy status', race_date: '2026-10-11', distance_miles: 10,
+    status: 'garbage', event_kind: 'run_race', event_config_json: {},
+  });
+  assert.equal(malformedLegacy.valid, false, 'an explicit malformed legacy status remains rejected');
+  assert.throws(
+    () => transition(raceA, { status: 'garbage' }),
+    (error) => error?.code === 'EVENT_STATE_INVALID',
+    'a malformed legacy status cannot be converted into UNKNOWN/upcoming during PATCH',
+  );
+  const semanticNoOp = transition(raceA, {
+    status: 'upcoming', event_local_date: raceA.event_local_date,
+  });
+  assert.equal(semanticNoOp.changed, false);
+  assert.equal(semanticNoOp.event_revision, 1);
+  assert.equal(semanticNoOp.goal_revision, 1);
+  const postponed = transition(raceA, { event_state: 'POSTPONED', event_local_date: '2026-09-06' });
+  assert.equal(postponed.event_state, 'POSTPONED');
+  assert.equal(postponed.event_local_date, '2026-09-06');
+  assert.equal(postponed.goal_revision, 2);
+  assert.equal(postponed.event_revision, 2);
+
+  const completed = transition({ ...raceA, ...postponed }, {
+    event_state: 'COMPLETED', race_result: { finish_time_s: 3600 },
+  });
+  assert.equal(completed.event_state, 'COMPLETED');
+  assert.equal(completed.transition_exit_met, false);
+  const exited = transition({ ...raceA, ...completed }, { transition_exit_met: true });
+  assert.equal(exited.event_state, 'COMPLETED');
+  assert.equal(exited.transition_exit_met, true);
+  assert.equal(exited.goal_revision, completed.goal_revision + 1);
+
+  const base = {
+    athlete_id: athleteId,
+    planning_date_local: '2026-08-03',
+    timezone: 'America/New_York',
+    athlete_state: {
+      athlete_state_revision: 1, evidence_snapshot_id: 'snapshot-ordered', training_age_class: 'ESTABLISHED',
+      consistency_state: 'CONSISTENT', consistent_weeks: 8, recovery_state: 'NORMAL', safety_action: 'NORMAL',
+      recent_normal_running: { status: 'ESTABLISHED', median_distance_m: 30000 },
+      available_days: ['Mon', 'Tue', 'Wed', 'Thu', 'Sat'],
+    },
+    goals: [
+      {
+        goal_id: 'goal-a', race_id: 'race-a', athlete_id: athleteId, priority: 'A',
+        event_kind: 'ROAD_SHORT', event_local_date: completed.event_local_date,
+        event_state: completed.event_state, transition_exit_met: false, source_revision: completed.goal_revision,
+      },
+      {
+        goal_id: 'goal-b', race_id: 'race-b', athlete_id: athleteId, priority: 'B',
+        event_kind: 'ROAD_ENDURANCE', event_local_date: '2026-10-11', event_state: 'SCHEDULED', source_revision: 1,
+      },
+    ],
+    races: [{ race_id: 'race-a', athlete_id: athleteId }, { race_id: 'race-b', athlete_id: athleteId }],
+  };
+  const postRace = buildGoalBackwardPlanningDecision(base);
+  assert.equal(postRace.phase, 'POST_RACE_TRANSITION');
+  assert.equal(postRace.primary_goal_id, 'goal-a');
+  assert.deepEqual(postRace.active_goals.map((goal) => goal.goal_id), ['goal-a', 'goal-b']);
+
+  const promoted = buildGoalBackwardPlanningDecision({
+    ...base,
+    goals: [{ ...base.goals[0], transition_exit_met: true, source_revision: exited.goal_revision }, base.goals[1]],
+  });
+  assert.equal(promoted.primary_goal_id, 'goal-b');
+  assert.equal(promoted.promotion.promoted_from_goal_id, 'goal-a');
+  assert.equal(promoted.promotion.promoted_to_goal_id, 'goal-b');
+  assert.deepEqual(promoted.active_goals.map((goal) => goal.goal_id), ['goal-a', 'goal-b'], 'promotion preserves the full ordered race list');
+}
+
+async function checkRacePatchNoOpBoundary() {
+  const dbModulePath = require.resolve('../src/db');
+  const racesRoutePath = require.resolve('../src/routes/races');
+  const originalDb = require.cache[dbModulePath];
+  const originalRacesRoute = require.cache[racesRoutePath];
+  const ownerId = 'race-noop-owner';
+  const race = {
+    id: 'race-noop', user_id: ownerId, race_name: 'No-op Race', race_date: '2026-10-11',
+    event_local_date: '2026-10-11', distance_miles: 10, status: 'upcoming',
+    event_kind: 'run_race', event_config_json: '{}',
+  };
+  let raceWrites = 0;
+  let revisionIncrements = 0;
+  const tx = {
+    get: async (sql, params) => (
+      sql.includes('FROM race_events WHERE id=? AND user_id=?')
+        && params[0] === race.id && params[1] === ownerId ? { ...race } : null
+    ),
+    run: async () => { raceWrites += 1; return { changes: 1 }; },
+  };
+  require.cache[dbModulePath] = {
+    id: dbModulePath,
+    filename: dbModulePath,
+    loaded: true,
+    exports: {
+      dbGet: async () => null,
+      dbAll: async () => [],
+      withPlanningInputMutation: async (_userId, callback) => {
+        const result = await callback(tx);
+        if (result && Object.prototype.hasOwnProperty.call(result, 'marker')) return result.value;
+        revisionIncrements += 1;
+        return result;
+      },
+    },
+    children: [],
+    paths: [],
+  };
+  delete require.cache[racesRoutePath];
+  try {
+    const racesRouter = require('../src/routes/races');
+    const patchRace = routeHandler(racesRouter, '/:id', 'patch');
+    const requestBase = { user: { id: ownerId }, params: { id: race.id }, query: {}, headers: {} };
+    const noOp = await invoke(patchRace, {
+      ...requestBase,
+      body: {
+        status: 'upcoming', event_local_date: race.event_local_date,
+        event_config_json: {},
+      },
+    });
+    assert.equal(noOp.statusCode, 200, JSON.stringify(noOp.payload));
+    assert.equal(raceWrites, 0, 'a non-empty semantic no-op performs no race writes');
+    assert.equal(revisionIncrements, 0, 'a non-empty semantic no-op does not advance planning input revision');
+
+    const invalid = await invoke(patchRace, { ...requestBase, body: { status: 'garbage' } });
+    assert.equal(invalid.statusCode, 400, JSON.stringify(invalid.payload));
+    assert.equal(raceWrites, 0, 'an invalid legacy status performs no race writes');
+    assert.equal(revisionIncrements, 0, 'an invalid legacy status does not advance planning input revision');
+  } finally {
+    delete require.cache[racesRoutePath];
+    if (originalRacesRoute) require.cache[racesRoutePath] = originalRacesRoute;
+    if (originalDb) require.cache[dbModulePath] = originalDb;
+    else delete require.cache[dbModulePath];
+  }
+}
 
 function bryanPlannedSplit() {
   return {
@@ -845,6 +990,8 @@ async function checkHyroxCandidateImmediateAdoption() {
   const originalDb = require.cache[dbModulePath];
   const originalPlansRoute = require.cache[plansRoutePath];
   const RealDate = global.Date;
+  const previousMode = process.env.FORGE_GOAL_BACKWARD_V24_MODE;
+  process.env.FORGE_GOAL_BACKWARD_V24_MODE = 'shadow';
   const ownerId = 'hyrox-army-owner';
   const planningDate = '2026-08-14';
   const profile = {
@@ -946,6 +1093,8 @@ async function checkHyroxCandidateImmediateAdoption() {
     created_at: '2026-08-10T00:00:00Z',
   }]]);
   const candidates = new Map();
+  const planningArtifacts = new Map();
+  const rejectionRows = [];
 
   class FixedDate extends RealDate {
     constructor(...args) {
@@ -991,6 +1140,11 @@ async function checkHyroxCandidateImmediateAdoption() {
       const row = candidates.get(params[0]);
       return row && row.user_id === params[1] ? { ...row } : null;
     }
+    if (sql.includes('FROM planning_pipeline_artifacts') && sql.includes("artifact_kind='planning_decision'")) {
+      const artifact = planningArtifacts.get(params[0]);
+      return artifact && artifact.user_id === params[1] && artifact.decision_id === params[2]
+        ? { ...artifact } : null;
+    }
     if (sql.includes("up.status='active'") || sql.includes("up.status = 'active'")) {
       const assignment = currentAssignment();
       if (!assignment) return null;
@@ -1022,8 +1176,14 @@ async function checkHyroxCandidateImmediateAdoption() {
     return null;
   }
 
-  async function all(sql) {
+  async function all(sql, params = []) {
     if (sql.includes('FROM runs')) return recentRuns.map((run) => ({ ...run }));
+    if (sql.includes('FROM plan_candidate_rejections')) {
+      return rejectionRows.filter((row) => row.user_id === params[0]
+        && row.evidence_fingerprint === params[1]
+        && row.constraint_fingerprint === params[2]
+        && row.policy_fingerprint === params[3]).map((row) => ({ ...row }));
+    }
     if (sql.includes('FROM user_plans up') && sql.includes('up.lineage_id=?')) {
       return [...userPlans.values()]
         .filter((row) => row.lineage_id === 'lineage-hyrox-army' && row.id !== currentAssignment()?.id)
@@ -1041,6 +1201,35 @@ async function checkHyroxCandidateImmediateAdoption() {
         candidate_hash: params[10], engine_version: params[11], policy_version: params[12],
         invariant_version: params[13], planning_snapshot_json: params[14], candidate_plan_json: params[15],
         generation_trace_json: params[16], expires_at: params[17],
+        ...(params.length > 18 ? {
+          decision_id: params[18], candidate_revision: params[19], athlete_state_revision: params[20],
+          safety_state_hash: params[21], goal_revisions_json: params[22], lock_revision: params[23],
+          edit_revision: params[24], surface_revision: params[25], export_revision: params[26],
+          feature_mode: params[27], selected_candidate_hash: params[28], material_change_json: params[29],
+        } : {}),
+      });
+      return { changes: 1 };
+    }
+    if (sql.includes('INSERT INTO planning_pipeline_artifacts')) {
+      planningArtifacts.set(params[0], {
+        id: params[0], user_id: params[1], artifact_kind: params[2], decision_id: params[3],
+        parent_artifact_id: params[4], plan_generation_candidate_id: params[5],
+        schema_version: params[6], policy_version: params[7], revision: params[8],
+        content_hash: params[9], payload_json: params[10], created_at: params[11],
+      });
+      return { changes: 1 };
+    }
+    if (sql.includes('INSERT INTO plan_candidate_rejections')) {
+      const duplicate = rejectionRows.some((row) => row.user_id === params[1]
+        && row.candidate_hash === params[2]
+        && row.evidence_fingerprint === params[6]
+        && row.constraint_fingerprint === params[7]
+        && row.policy_fingerprint === params[8]);
+      if (duplicate) return { changes: 0 };
+      rejectionRows.push({
+        id: params[0], user_id: params[1], candidate_hash: params[2], decision_id: params[3],
+        decision_hash: params[4], reason_code: params[5], evidence_fingerprint: params[6],
+        constraint_fingerprint: params[7], policy_fingerprint: params[8], created_at: params[9],
       });
       return { changes: 1 };
     }
@@ -1066,13 +1255,19 @@ async function checkHyroxCandidateImmediateAdoption() {
       });
       return { changes: 1 };
     }
-    if (sql.includes('UPDATE plan_generation_candidates')) {
+    if (sql.includes("SET status='applied'")) {
       const row = candidates.get(params[4]);
       if (!row || row.user_id !== params[5] || row.status !== 'preview') return { changes: 0 };
       Object.assign(row, {
         status: 'applied', applied_choice: params[0], applied_training_plan_id: params[1],
         applied_user_plan_id: params[2], replay_result_json: params[3], applied_at: '2026-08-14T16:00:02.000Z',
       });
+      return { changes: 1 };
+    }
+    if (sql.includes("SET status='superseded'")) {
+      const row = candidates.get(params[0]);
+      if (!row || row.user_id !== params[1] || row.status !== 'preview') return { changes: 0 };
+      row.status = 'superseded';
       return { changes: 1 };
     }
     if (sql.includes('UPDATE users SET run_days_per_week=')) {
@@ -1108,6 +1303,7 @@ async function checkHyroxCandidateImmediateAdoption() {
     const plansRouter = require('../src/routes/plans');
     const preview = routeHandler(plansRouter, '/generate-for-races', 'post');
     const apply = routeHandler(plansRouter, '/candidates/:candidateId/apply', 'post');
+    const reject = routeHandler(plansRouter, '/candidates/:candidateId/reject', 'post');
     const readMyPlan = routeHandler(plansRouter, '/my', 'get');
     const requestClock = {
       planning_date_local: planningDate,
@@ -1128,6 +1324,8 @@ async function checkHyroxCandidateImmediateAdoption() {
       },
     });
     assert.equal(previewResponse.statusCode, 201, JSON.stringify(previewResponse.payload));
+    assert.equal(candidates.get(previewResponse.payload.candidate_id).feature_mode, 'shadow',
+      'the route regression applies a legacy/current-engine candidate with attached shadow diagnostics');
     assert.equal(previewResponse.payload.effective_from, planningDate);
     assert.deepEqual(previewResponse.payload.plan.plan_data.goals.map((goal) => goal.raceId), ['hyrox', 'army']);
     const retainedArmyGoal = previewResponse.payload.plan.plan_data.goals[1];
@@ -1183,8 +1381,42 @@ async function checkHyroxCandidateImmediateAdoption() {
     assert.equal(replay.payload.user_plan_id, applyResponse.payload.user_plan_id);
     assert.equal(replay.payload.effective_from, planningDate);
     assert.equal(userPlans.size, assignmentCount, 'candidate replay cannot create a duplicate assignment');
+
+    const rejectedPreview = await invoke(preview, {
+      ...requestBase,
+      body: {
+        ...requestClock,
+        race_ids: ['hyrox', 'army'],
+        target: { trainingDays: ['Tue', 'Thu', 'Sat', 'Sun'], runDaysPerWeek: 4, liftingEnabled: false },
+      },
+    });
+    assert.equal(rejectedPreview.statusCode, 201, JSON.stringify(rejectedPreview.payload));
+    const activeBeforeReject = currentAssignment().id;
+    const rejectionResponse = await invoke(reject, {
+      ...requestBase,
+      params: { candidateId: rejectedPreview.payload.candidate_id },
+      body: { candidate_hash: rejectedPreview.payload.candidate_hash, reason_code: 'ADAPTATION_REJECTED' },
+    });
+    assert.equal(rejectionResponse.statusCode, 200, JSON.stringify(rejectionResponse.payload));
+    assert.equal(rejectionResponse.payload.active_plan_unchanged, true);
+    assert.equal(currentAssignment().id, activeBeforeReject, 'rejection performs zero plan writes');
+    assert.equal(rejectionRows.length, 1);
+
+    const suppressedPreview = await invoke(preview, {
+      ...requestBase,
+      body: {
+        ...requestClock,
+        race_ids: ['hyrox', 'army'],
+        target: { trainingDays: ['Tue', 'Thu', 'Sat', 'Sun'], runDaysPerWeek: 4, liftingEnabled: false },
+      },
+    });
+    assert.equal(suppressedPreview.statusCode, 409, JSON.stringify(suppressedPreview.payload));
+    assert.equal(suppressedPreview.payload.code, 'IDENTICAL_REJECTED_CANDIDATE_SUPPRESSED');
+    assert.equal(currentAssignment().id, activeBeforeReject, 'suppression performs zero plan writes');
   } finally {
     global.Date = RealDate;
+    if (previousMode === undefined) delete process.env.FORGE_GOAL_BACKWARD_V24_MODE;
+    else process.env.FORGE_GOAL_BACKWARD_V24_MODE = previousMode;
     delete require.cache[plansRoutePath];
     if (originalPlansRoute) require.cache[plansRoutePath] = originalPlansRoute;
     if (originalDb) require.cache[dbModulePath] = originalDb;
@@ -1193,8 +1425,10 @@ async function checkHyroxCandidateImmediateAdoption() {
 }
 
 checkBryanGoalBackwardWitnessIntegration();
+checkExplicitEventLifecycleAndOrderedPromotion();
 
-checkDedicatedRouteBoundary()
+checkRacePatchNoOpBoundary()
+  .then(checkDedicatedRouteBoundary)
   .then(checkHyroxCandidateImmediateAdoption)
   .then(() => console.log('DUAL RACE PLAN SMOKE OK'))
   .catch((error) => {

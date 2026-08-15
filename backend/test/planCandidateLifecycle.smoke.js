@@ -252,6 +252,196 @@ async function run() {
     'preview/on v2.4 bindings stay operationally unavailable before later gates',
   );
 
+  const decisionArtifactBinding = {
+    id: 'artifact-planning-decision-apply',
+    revision: 1,
+    content_hash: `sha256:${'a'.repeat(64)}`,
+  };
+  const applyBindings = candidateLifecycle.buildGoalBackwardShadowBindings({
+    decision: {
+      decision_id: 'decision-apply',
+      decision_hash: 'c'.repeat(64),
+      planning_date_local: '2026-08-08',
+      timezone: 'America/New_York',
+      athlete_state_revision: 3,
+      evidence_snapshot_id: 'snapshot-apply',
+      evidence_used: [{ evidence_id: 'evidence-apply', purpose: 'CURRENT_PLANNING_SNAPSHOT' }],
+      active_goals: [{
+        goal_id: 'goal-synthetic', race_id: 'race-synthetic', source_revision: 2,
+        event_local_date: '2026-10-11', event_state: 'SCHEDULED', priority: 'A',
+      }],
+      lock_revision: 4,
+      edit_revision: 5,
+      constraint_fingerprint: `sha256:${'d'.repeat(64)}`,
+      safety_state: { action: 'NORMAL', scope: [] },
+      policy_versions: {
+        planning_policy_version: 'goal-backward-planning-policy-v1',
+        event_policy_registry_version: 1,
+        stress_taxonomy_version: 1,
+      },
+      event_policy_id: 'road_10mile_v1',
+    },
+    decisionArtifact: decisionArtifactBinding,
+    selectedCandidate: {
+      candidate_hash: `sha256:${'b'.repeat(64)}`,
+      material_change: { required: true, reason_codes: ['MATERIAL_CHANGE_REVIEW_REQUIRED'] },
+    },
+    currentCandidateHash: `sha256:${'b'.repeat(64)}`,
+  });
+  assert.equal(applyBindings.material_change_json.apply_bindings.decision_hash, 'c'.repeat(64));
+  assert.deepEqual(applyBindings.material_change_json.apply_bindings.decision_artifact, {
+    artifact_id: decisionArtifactBinding.id,
+    revision: decisionArtifactBinding.revision,
+    content_hash: decisionArtifactBinding.content_hash,
+  });
+  assert.equal(applyBindings.material_change_json.apply_bindings.planning_timezone, 'America/New_York');
+  assert.match(applyBindings.material_change_json.apply_bindings.evidence_fingerprint, /^sha256:[a-f0-9]{64}$/);
+  assert.match(applyBindings.material_change_json.apply_bindings.goal_fingerprint, /^sha256:[a-f0-9]{64}$/);
+  assert.match(applyBindings.material_change_json.apply_bindings.policy_fingerprint, /^sha256:[a-f0-9]{64}$/);
+
+  const boundRow = {
+    id: 'candidate-apply',
+    user_id: ownerId,
+    candidate_hash: `sha256:${'b'.repeat(64)}`,
+    training_plan_id: 'tp-old',
+    user_plan_id: 'up-old',
+    active_plan_version: 3,
+    planning_input_revision: 12,
+    planning_date_local: '2026-08-08',
+    timezone_offset_minutes: 240,
+    ...applyBindings,
+  };
+  const expectedApply = candidateLifecycle.buildGoalBackwardApplyEnvelope(boundRow);
+  assert.equal(expectedApply.decision_hash, 'c'.repeat(64));
+  assert.deepEqual(expectedApply.decision_artifact, {
+    artifact_id: decisionArtifactBinding.id,
+    revision: decisionArtifactBinding.revision,
+    content_hash: decisionArtifactBinding.content_hash,
+  });
+  assert.deepEqual(expectedApply.active_plan, {
+    training_plan_id: 'tp-old', user_plan_id: 'up-old', plan_revision: 3,
+  });
+  let exactArtifactLookup = null;
+  await plansRouter._test.verifyStoredGoalBackwardDecisionHash({
+    get: async (sql, params) => {
+      exactArtifactLookup = { sql, params };
+      return {
+        id: expectedApply.decision_artifact.artifact_id,
+        revision: expectedApply.decision_artifact.revision,
+        content_hash: expectedApply.decision_artifact.content_hash,
+        payload_json: JSON.stringify({
+          decision_id: expectedApply.decision_id,
+          decision_hash: expectedApply.decision_hash,
+        }),
+      };
+    },
+  }, ownerId, boundRow, expectedApply);
+  assert.match(exactArtifactLookup.sql, /WHERE id=\? AND user_id=\? AND decision_id=\?/);
+  assert.deepEqual(exactArtifactLookup.params, [
+    expectedApply.decision_artifact.artifact_id, ownerId, expectedApply.decision_id,
+  ]);
+  await assert.rejects(
+    plansRouter._test.verifyStoredGoalBackwardDecisionHash({
+      get: async () => ({
+        id: expectedApply.decision_artifact.artifact_id,
+        revision: 2,
+        content_hash: expectedApply.decision_artifact.content_hash,
+        payload_json: JSON.stringify({
+          decision_id: expectedApply.decision_id,
+          decision_hash: expectedApply.decision_hash,
+        }),
+      }),
+    }, ownerId, boundRow, expectedApply),
+    (error) => error?.code === 'DECISION_ARTIFACT_CHANGED' && error?.status === 409,
+    'the exact immutable artifact revision participates in apply freshness',
+  );
+  const recomputedPolicyEnvelope = plansRouter._test.currentGoalBackwardApplyEnvelope({
+    ...expectedApply,
+    policy_fingerprint: `sha256:${'9'.repeat(64)}`,
+  }, ownerId, {
+    races: [{
+      id: 'race-synthetic', status: 'upcoming', race_date: '2026-10-11',
+      event_local_date: '2026-10-11', distance_miles: 10, goal_time_seconds: 3600,
+      event_config_json: JSON.stringify({ goal_backward_lifecycle: {
+        event_state: 'SCHEDULED', event_revision: 1, goal_revision: 2,
+      } }),
+    }],
+    target: { trainingDays: [] },
+    context: { profile: { timezone: 'America/New_York' }, safety: {} },
+    planningInputRevision: 12,
+    inputHash: `sha256:${'8'.repeat(64)}`,
+    planningConstraints: { locks: [], manual_edits: [], lock_revision: 0, edit_revision: 0 },
+    activePlan: { trainingPlanId: 'tp-old', userPlanId: 'up-old', planVersion: 3 },
+  });
+  assert.notEqual(
+    recomputedPolicyEnvelope.policy_fingerprint,
+    `sha256:${'9'.repeat(64)}`,
+    'freshness recomputes current policy plus goal bindings instead of copying the stored fingerprint',
+  );
+  assert.equal(candidateLifecycle.validateGoalBackwardApplyEnvelope(expectedApply, expectedApply).valid, true);
+  const raceStale = candidateLifecycle.validateGoalBackwardApplyEnvelope(expectedApply, {
+    ...expectedApply,
+    goal_revisions: { 'goal-synthetic': 3 },
+  });
+  assert.deepEqual(raceStale, { valid: false, code: 'RACE_REVISION_CHANGED' });
+  const safetyStale = candidateLifecycle.validateGoalBackwardApplyEnvelope(expectedApply, {
+    ...expectedApply,
+    safety_state_hash: `sha256:${'0'.repeat(64)}`,
+  });
+  assert.deepEqual(safetyStale, { valid: false, code: 'SAFETY_STATE_CHANGED' });
+  const staleBindingCases = [
+    ['candidate_hash', `sha256:${'1'.repeat(64)}`, 'CANDIDATE_HASH_MISMATCH'],
+    ['candidate_revision', 2, 'CANDIDATE_REVISION_CHANGED'],
+    ['decision_id', 'decision-other', 'DECISION_BINDING_CHANGED'],
+    ['decision_hash', '2'.repeat(64), 'DECISION_BINDING_CHANGED'],
+    ['decision_artifact', { ...expectedApply.decision_artifact, revision: 2 }, 'DECISION_ARTIFACT_CHANGED'],
+    ['active_plan', { ...expectedApply.active_plan, plan_revision: 4 }, 'ACTIVE_PLAN_REVISION_CHANGED'],
+    ['planning_input_revision', 13, 'PLANNING_INPUT_REVISION_CHANGED'],
+    ['planning_date_local', '2026-08-09', 'PLANNING_CLOCK_CHANGED'],
+    ['planning_timezone', 'America/Chicago', 'PLANNING_CLOCK_CHANGED'],
+    ['timezone_offset_minutes', 300, 'PLANNING_CLOCK_CHANGED'],
+    ['goal_fingerprint', `sha256:${'3'.repeat(64)}`, 'RACE_REVISION_CHANGED'],
+    ['athlete_state_revision', 4, 'ATHLETE_STATE_REVISION_CHANGED'],
+    ['evidence_fingerprint', `sha256:${'4'.repeat(64)}`, 'EVIDENCE_REVISION_CHANGED'],
+    ['constraint_fingerprint', `sha256:${'5'.repeat(64)}`, 'CONSTRAINT_REVISION_CHANGED'],
+    ['policy_fingerprint', `sha256:${'6'.repeat(64)}`, 'POLICY_VERSION_CHANGED'],
+    ['lock_revision', 6, 'LOCK_REVISION_CHANGED'],
+    ['edit_revision', 7, 'EDIT_REVISION_CHANGED'],
+    ['surface_revision', 2, 'SURFACE_REVISION_CHANGED'],
+    ['export_revision', 2, 'EXPORT_REVISION_CHANGED'],
+  ];
+  for (const [field, changed, code] of staleBindingCases) {
+    assert.deepEqual(
+      candidateLifecycle.validateGoalBackwardApplyEnvelope(expectedApply, { ...expectedApply, [field]: changed }),
+      { valid: false, code },
+      `${field} must fail visibly before apply`,
+    );
+  }
+
+  const rejection = candidateLifecycle.buildCandidateRejectionRecord({
+    userId: ownerId,
+    candidateHash: boundRow.candidate_hash,
+    decisionId: boundRow.decision_id,
+    decisionHash: expectedApply.decision_hash,
+    reasonCode: 'ADAPTATION_REJECTED',
+    ...applyBindings.material_change_json.apply_bindings,
+    createdAt: '2026-08-08T12:00:00.000Z',
+  });
+  const rejectionWrites = [];
+  const persistedRejection = await candidateLifecycle.persistCandidateRejection({
+    tx: {
+      run: async (sql, params) => {
+        rejectionWrites.push({ sql, params });
+        return { changes: 1 };
+      },
+    },
+    rejection,
+  });
+  assert.equal(persistedRejection.inserted, true);
+  assert.equal(rejectionWrites.length, 1);
+  assert.match(rejectionWrites[0].sql, /INSERT INTO plan_candidate_rejections/);
+  assert.equal(rejectionWrites[0].params.includes(ownerId), true);
+
   const decisionArtifacts = candidateLifecycle.buildGoalBackwardDecisionArtifacts({
     userId: ownerId,
     planGenerationCandidateId: 'candidate-current',
@@ -412,7 +602,11 @@ async function run() {
   assert.deepEqual(pruneCalls[0].params, [ownerId, '2026-08-07T12:00:00.000Z', 'candidate-current']);
 
   const source = fs.readFileSync(path.join(__dirname, '../src/routes/plans.js'), 'utf8');
-  assert.match(source, /validateStoredGoalBackwardCandidateBindings\(row\)/);
+  assert.match(source, /validateStoredGoalBackwardCandidateBindings\(row,/);
+  assert.match(source, /validateGoalBackwardApplyEnvelope/);
+  assert.match(source, /SELECT id, revision, content_hash, payload_json FROM planning_pipeline_artifacts/);
+  assert.match(source, /WHERE id=\? AND user_id=\? AND decision_id=\?/);
+  assert.match(source, /RACE_REVISION_CHANGED/);
   assert.match(source, /SELECT \* FROM plan_generation_candidates WHERE id=\? AND user_id=\? FOR UPDATE/);
   assert.match(source, /WHERE id=\? AND user_id=\? AND status='preview'/);
   assert.match(source, /WHERE id=\? AND user_id=\? AND status='active'/);
@@ -437,6 +631,21 @@ async function run() {
   const writeBoundaryGuard = source.lastIndexOf('assertCandidatePlanningDateCurrent(row);');
   const firstPlanWrite = source.indexOf("'UPDATE users SET run_days_per_week=?", writeBoundaryGuard);
   assert.ok(writeBoundaryGuard > 0 && firstPlanWrite > writeBoundaryGuard, 'the local-date guard runs inside apply immediately before plan writes');
+  const applyStart = source.indexOf('async function applyPlanCandidate');
+  const bindingGuard = source.indexOf('validateGoalBackwardApplyEnvelope(expectedApplyEnvelope', applyStart);
+  const replayBranch = source.indexOf("row.status === 'applied'", applyStart);
+  const freshnessGuard = source.indexOf('currentGoalBackwardApplyEnvelope(expectedApplyEnvelope', applyStart);
+  const applyPrune = source.indexOf('await pruneExpiredPlanCandidates(tx, userId', freshnessGuard);
+  assert.ok(bindingGuard > applyStart && replayBranch > bindingGuard, 'exact replay validates every original binding before returning the stored result');
+  assert.ok(freshnessGuard > replayBranch && applyPrune > freshnessGuard, 'stale failures occur before even candidate-retention writes');
+  assert.match(source.slice(applyStart, freshnessGuard), /allowedModes: \['shadow', 'preview', 'on'\]/);
+  assert.match(source.slice(applyStart, freshnessGuard), /feature_mode !== 'shadow'/,
+    'legacy current-engine apply remains available while shadow diagnostics are attached');
+  const rejectStart = source.indexOf('async function rejectPlanCandidate');
+  assert.match(source.slice(rejectStart), /bindings\.feature_mode === 'shadow'/,
+    'shadow rejection uses the public current-engine candidate hash without changing preview bytes');
+  assert.match(source, /IDENTICAL_REJECTED_CANDIDATE_SUPPRESSED[\s\S]*throw error/,
+    'an identical rejected shadow candidate exits visibly instead of being silently reinserted');
 
   const currentResponse = { candidate_id: 'current-candidate', plan: { byte_compatible: true } };
   let shadowComputations = 0;
@@ -514,7 +723,7 @@ async function run() {
     true,
   );
 
-  console.log('PLAN CANDIDATE LIFECYCLE SMOKE OK (69)');
+  console.log('PLAN CANDIDATE LIFECYCLE SMOKE OK (Batch 11)');
 }
 
 run().catch((error) => {

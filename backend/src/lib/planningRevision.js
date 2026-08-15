@@ -211,6 +211,27 @@ function planningInputUnchanged(value) {
   return { marker: PLANNING_INPUT_UNCHANGED, value };
 }
 
+function nonNegativeRevision(value, fallback = 0) {
+  const revision = Number(value);
+  return Number.isSafeInteger(revision) && revision >= 0 ? revision : fallback;
+}
+
+function advancePlanningMutationRevisions(current = {}, mutation = {}) {
+  const eventChanged = mutation.event === true;
+  const safetyChanged = mutation.safety === true;
+  const constraintKind = mutation.constraint === 'lock' || mutation.constraint === 'edit'
+    ? mutation.constraint : null;
+  const planningChanged = eventChanged || safetyChanged || constraintKind !== null;
+  return Object.freeze({
+    planning_input_revision: nonNegativeRevision(current.planning_input_revision) + (planningChanged ? 1 : 0),
+    goal_revision: positiveRevision(current.goal_revision, 1) + (eventChanged ? 1 : 0),
+    athlete_state_revision: positiveRevision(current.athlete_state_revision, 1)
+      + (safetyChanged || constraintKind !== null ? 1 : 0),
+    lock_revision: nonNegativeRevision(current.lock_revision) + (constraintKind === 'lock' ? 1 : 0),
+    edit_revision: nonNegativeRevision(current.edit_revision) + (constraintKind === 'edit' ? 1 : 0),
+  });
+}
+
 async function incrementPlanningInputRevision(tx, userId) {
   if (!tx || typeof tx.get !== 'function') {
     throw new TypeError('Planning revision increment requires a transaction');
@@ -249,6 +270,7 @@ function createPlanningInputMutationRunner(withUserMutation) {
 }
 
 module.exports = {
+  advancePlanningMutationRevisions,
   buildCompletionOutcomeEvidence,
   buildCompletionOutcomeRevisions,
   createPlanningInputMutationRunner,

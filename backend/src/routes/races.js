@@ -5,7 +5,8 @@ const { dbGet, dbAll, withPlanningInputMutation } = require('../db');
 const auth = require('../middleware/auth');
 const { v4: uuidv4 } = require('uuid');
 const raceCourse = require('../lib/raceCourse');
-const { planningInputUnchanged } = require('../lib/planningRevision');
+const { advancePlanningMutationRevisions, planningInputUnchanged } = require('../lib/planningRevision');
+const { canonicalStringify } = require('../lib/racePlanPolicy');
 const hyroxStandards = require('../lib/hyroxStandards');
 const { isIanaTimezone } = require('../lib/hyroxPlan');
 const plansRouter = require('./plans');
@@ -16,6 +17,7 @@ const gpxUpload = multer({
   limits: { fileSize: raceCourse.GPX_MAX_BYTES, files: 1 },
 });
 const RACE_STATUSES = new Set(['upcoming', 'completed', 'cancelled']);
+const EVENT_STATES = new Set(['SCHEDULED', 'COMPLETED', 'DNS', 'CANCELLED', 'POSTPONED', 'UNKNOWN']);
 const HYROX_TRAINING_DAYS = new Set(['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']);
 const gpxUploadLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -58,18 +60,195 @@ function parseEventConfig(value) {
   return typeof value === 'object' && !Array.isArray(value) ? value : null;
 }
 
+function lifecycleError(code, message) {
+  const error = new Error(message);
+  error.code = code;
+  error.status = 400;
+  return error;
+}
+
+function legacyStatusForEventState(eventState) {
+  if (eventState === 'COMPLETED' || eventState === 'DNS') return 'completed';
+  if (eventState === 'CANCELLED') return 'cancelled';
+  return 'upcoming';
+}
+
+function eventStateForLegacyStatus(status) {
+  const normalized = String(status || '').trim().toLowerCase();
+  if (normalized === 'completed') return 'COMPLETED';
+  if (normalized === 'cancelled') return 'CANCELLED';
+  if (normalized === 'upcoming') return 'SCHEDULED';
+  return 'UNKNOWN';
+}
+
+function normalizeEventState(value, fallback = 'UNKNOWN') {
+  const normalized = String(value || fallback).trim().toUpperCase();
+  return EVENT_STATES.has(normalized) ? normalized : null;
+}
+
+function readRaceEventLifecycle(race = {}) {
+  const config = parseEventConfig(race.event_config_json) || {};
+  const lifecycle = config.goal_backward_lifecycle && typeof config.goal_backward_lifecycle === 'object'
+    && !Array.isArray(config.goal_backward_lifecycle) ? config.goal_backward_lifecycle : {};
+  const eventState = normalizeEventState(
+    race.event_state ?? lifecycle.event_state,
+    eventStateForLegacyStatus(race.status),
+  ) || 'UNKNOWN';
+  return Object.freeze({
+    event_state: eventState,
+    event_revision: Math.max(1, Number(race.event_revision ?? lifecycle.event_revision ?? 1)),
+    goal_revision: Math.max(1, Number(race.goal_revision ?? lifecycle.goal_revision ?? race.revision ?? 1)),
+    transition_exit_met: race.transition_exit_met === true || lifecycle.transition_exit_met === true,
+    race_result: lifecycle.race_result && typeof lifecycle.race_result === 'object'
+      ? lifecycle.race_result : null,
+  });
+}
+
+function normalizedRaceResult(value) {
+  if (value === null || value === undefined) return null;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw lifecycleError('RACE_RESULT_INVALID', 'race_result must be a structured object');
+  }
+  const finishTime = value.finish_time_s ?? value.finishTimeSeconds;
+  const placement = value.placement;
+  const result = {
+    finish_time_s: finishTime === null || finishTime === undefined ? null : Number(finishTime),
+    placement: placement === null || placement === undefined ? null : Number(placement),
+    result_code: cleanString(value.result_code ?? value.resultCode, 40).toUpperCase() || null,
+  };
+  if (result.finish_time_s !== null && (!Number.isInteger(result.finish_time_s) || result.finish_time_s < 0
+    || result.finish_time_s > 30 * 24 * 60 * 60)) {
+    throw lifecycleError('RACE_RESULT_INVALID', 'race_result finish_time_s is invalid');
+  }
+  if (result.placement !== null && (!Number.isInteger(result.placement) || result.placement < 1)) {
+    throw lifecycleError('RACE_RESULT_INVALID', 'race_result placement is invalid');
+  }
+  return result;
+}
+
+function scalarRacePatchChanged(race, patch) {
+  const comparisons = [
+    ['race_name', (value) => cleanString(value, 200)],
+    ['distance_miles', (value) => Number(value)],
+    ['location', (value) => cleanString(value, 200) || null],
+    ['goal_time_seconds', (value) => parseGoalTime(value)],
+    ['notes', (value) => cleanString(value, 2000) || null],
+    ['event_kind', (value) => cleanString(value, 20).toLowerCase()],
+    ['event_format', (value) => cleanString(value, 30).toLowerCase() || null],
+    ['event_category', (value) => cleanString(value, 30).toLowerCase() || null],
+    ['event_timezone', (value) => cleanString(value, 100) || null],
+    ['rules_version', (value) => cleanString(value, 30) || null],
+  ];
+  return comparisons.some(([key, normalize]) => (
+    Object.prototype.hasOwnProperty.call(patch, key)
+    && JSON.stringify(normalize(patch[key])) !== JSON.stringify(normalize(race[key]))
+  ));
+}
+
+function transitionRaceEventLifecycle(race = {}, patch = {}) {
+  const current = readRaceEventLifecycle(race);
+  const currentConfig = parseEventConfig(race.event_config_json) || {};
+  let config = currentConfig;
+  let eventConfigChanged = false;
+  if (Object.prototype.hasOwnProperty.call(patch, 'event_config_json')) {
+    config = parseEventConfig(patch.event_config_json);
+    if (!config) throw lifecycleError('EVENT_CONFIG_INVALID', 'event_config_json is invalid');
+    eventConfigChanged = canonicalStringify(config) !== canonicalStringify(currentConfig);
+  }
+  const hasExplicitState = patch.event_state !== undefined || patch.eventState !== undefined;
+  const hasLegacyStatus = Boolean(patch.status);
+  const legacyStatus = cleanString(patch.status, 20).toLowerCase();
+  if (hasLegacyStatus && !RACE_STATUSES.has(legacyStatus)) {
+    throw lifecycleError('EVENT_STATE_INVALID', 'status is invalid');
+  }
+  const desiredFromStatus = hasLegacyStatus ? eventStateForLegacyStatus(patch.status) : current.event_state;
+  const eventState = normalizeEventState(
+    patch.event_state ?? patch.eventState,
+    hasExplicitState ? null : desiredFromStatus,
+  );
+  if (!eventState) throw lifecycleError('EVENT_STATE_INVALID', 'event_state is invalid');
+  if (current.event_state === 'COMPLETED' && eventState !== 'COMPLETED') {
+    throw lifecycleError('EVENT_STATE_TRANSITION_INVALID', 'A completed event cannot be returned to a future state');
+  }
+  if (current.event_state === 'DNS' && eventState !== 'DNS') {
+    throw lifecycleError('EVENT_STATE_TRANSITION_INVALID', 'A DNS event cannot be returned to a future state');
+  }
+
+  const currentDate = String(race.event_local_date || race.race_date || '').slice(0, 10);
+  const requestedDate = String(patch.event_local_date ?? patch.race_date ?? currentDate).slice(0, 10);
+  if (!isValidISODate(requestedDate)) {
+    throw lifecycleError('INVALID_RACE_DATE', 'event_local_date must be YYYY-MM-DD');
+  }
+  if (eventState === 'POSTPONED' && requestedDate === currentDate && current.event_state !== 'POSTPONED') {
+    throw lifecycleError('POSTPONED_DATE_REQUIRED', 'A postponed event requires a new local date');
+  }
+  const requestedExit = patch.transition_exit_met === undefined && patch.transitionExitMet === undefined
+    ? current.transition_exit_met
+    : patch.transition_exit_met === true || patch.transitionExitMet === true;
+  if (requestedExit && eventState !== 'COMPLETED') {
+    throw lifecycleError('POST_RACE_EXIT_INVALID', 'Post-race transition can exit only after completion');
+  }
+  const raceResult = patch.race_result === undefined && patch.raceResult === undefined
+    ? current.race_result : normalizedRaceResult(patch.race_result ?? patch.raceResult);
+  const resultChanged = JSON.stringify(raceResult) !== JSON.stringify(current.race_result);
+  const changed = eventState !== current.event_state
+    || requestedDate !== currentDate
+    || requestedExit !== current.transition_exit_met
+    || resultChanged
+    || eventConfigChanged
+    || scalarRacePatchChanged(race, patch);
+  const eventRevision = current.event_revision + (changed ? 1 : 0);
+  const revisionState = advancePlanningMutationRevisions({
+    planning_input_revision: 0,
+    goal_revision: current.goal_revision,
+    athlete_state_revision: 1,
+    lock_revision: 0,
+    edit_revision: 0,
+  }, { event: changed });
+  const goalRevision = revisionState.goal_revision;
+  const eventConfig = {
+    ...config,
+    goal_backward_lifecycle: {
+      event_state: eventState,
+      event_revision: eventRevision,
+      goal_revision: goalRevision,
+      transition_exit_met: requestedExit,
+      race_result: raceResult,
+    },
+  };
+  return Object.freeze({
+    event_state: eventState,
+    event_revision: eventRevision,
+    goal_revision: goalRevision,
+    transition_exit_met: requestedExit,
+    race_result: raceResult,
+    event_local_date: requestedDate,
+    race_date: requestedDate,
+    status: legacyStatusForEventState(eventState),
+    event_config_json: JSON.stringify(eventConfig),
+    changed,
+  });
+}
+
 function normalizeRaceEvent(body = {}) {
   const raceName = cleanString(body.race_name, 200);
   const eventKind = cleanString(body.event_kind || 'run_race', 20).toLowerCase();
   const localDate = cleanString(body.event_local_date || body.race_date, 10);
   const timezone = cleanString(body.event_timezone, 100) || null;
-  const status = cleanString(body.status || 'upcoming', 20).toLowerCase();
+  const hasLegacyStatus = Boolean(body.status);
+  const legacyStatus = cleanString(body.status, 20).toLowerCase();
+  if (hasLegacyStatus && !RACE_STATUSES.has(legacyStatus)) {
+    return { valid: false, error: 'status is invalid' };
+  }
+  const explicitEventState = normalizeEventState(body.event_state ?? body.eventState,
+    eventStateForLegacyStatus(body.status || 'upcoming'));
+  const status = legacyStatusForEventState(explicitEventState || 'UNKNOWN');
   const goalTimeSeconds = parseGoalTime(body.goal_time_seconds);
   if (!raceName) return { valid: false, error: 'race_name is required' };
   if (!['run_race', 'hyrox'].includes(eventKind)) return { valid: false, error: 'event_kind is invalid' };
   if (!isValidISODate(localDate)) return { valid: false, error: 'event_local_date must be YYYY-MM-DD' };
   if (timezone && !isIanaTimezone(timezone)) return { valid: false, error: 'event_timezone must be a valid IANA timezone' };
-  if (!RACE_STATUSES.has(status)) return { valid: false, error: 'status is invalid' };
+  if (!explicitEventState || !RACE_STATUSES.has(status)) return { valid: false, error: 'event_state or status is invalid' };
   if (Number.isNaN(goalTimeSeconds)) return { valid: false, error: 'goal_time_seconds is invalid' };
   const config = parseEventConfig(body.event_config_json);
   if (!config) return { valid: false, error: 'event_config_json is invalid' };
@@ -96,7 +275,30 @@ function normalizeRaceEvent(body = {}) {
   const equipment = hyroxStandards.normalizeEquipment(config.equipment);
   const runningPriority = ['maintain', 'improve', 'race_pr'].includes(config.runningPriority)
     ? config.runningPriority : 'maintain';
-  const eventConfig = { schemaVersion: 1, equipment, runningPriority };
+  const lifecycle = readRaceEventLifecycle({ ...body, status, event_state: explicitEventState, event_config_json: config });
+  const persistLifecycle = Boolean(config.goal_backward_lifecycle)
+    || Object.prototype.hasOwnProperty.call(body, 'event_state')
+    || Object.prototype.hasOwnProperty.call(body, 'eventState')
+    || Object.prototype.hasOwnProperty.call(body, 'event_revision')
+    || Object.prototype.hasOwnProperty.call(body, 'goal_revision')
+    || Object.prototype.hasOwnProperty.call(body, 'transition_exit_met');
+  const eventConfig = {
+    schemaVersion: 1,
+    equipment,
+    runningPriority,
+    ...(config.hyroxEventState ? { hyroxEventState: config.hyroxEventState } : {}),
+    ...(config.hyrox_event_state ? { hyrox_event_state: config.hyrox_event_state } : {}),
+    ...(config.hyroxPerformanceBudget ? { hyroxPerformanceBudget: config.hyroxPerformanceBudget } : {}),
+    ...(config.goal_backward_lifecycle ? { goal_backward_lifecycle: config.goal_backward_lifecycle } : persistLifecycle ? {
+      goal_backward_lifecycle: {
+        event_state: explicitEventState,
+        event_revision: lifecycle.event_revision,
+        goal_revision: lifecycle.goal_revision,
+        transition_exit_met: lifecycle.transition_exit_met,
+        race_result: lifecycle.race_result,
+      },
+    } : {}),
+  };
   if (eventKind === 'hyrox' && (config.runDaysPerWeek !== undefined || config.trainingDays !== undefined)) {
     const runDaysPerWeek = Number(config.runDaysPerWeek);
     if (![3, 4].includes(runDaysPerWeek)) {
@@ -187,7 +389,8 @@ function receiveGpx(req, res, next) {
 function withCourseIntelligence(race) {
   if (!race) return race;
   const intelligence = raceCourse.courseIntelligenceForRace(race);
-  return Object.assign({}, race, { course_intelligence: intelligence });
+  const lifecycle = readRaceEventLifecycle(race);
+  return Object.assign({}, race, lifecycle, { course_intelligence: intelligence });
 }
 
 router.get('/', auth, async (req, res) => {
@@ -570,12 +773,22 @@ router.patch('/:id', auth, async (req, res) => {
         [req.params.id, req.user.id]
       );
       if (!race) return planningInputUnchanged({ notFound: true });
+      if (!Object.keys(body).length) return planningInputUnchanged({ updated: race, unchanged: true });
 
+      let lifecycle;
+      try {
+        lifecycle = transitionRaceEventLifecycle(race, body);
+      } catch (error) {
+        return planningInputUnchanged({ validationError: error.message, validationCode: error.code });
+      }
+      if (!lifecycle.changed) return planningInputUnchanged({ updated: race, unchanged: true });
       const normalized = normalizeRaceEvent({
         ...race,
         ...body,
+        ...lifecycle,
         event_kind: body.event_kind ?? race.event_kind ?? 'run_race',
-        event_local_date: body.event_local_date ?? body.race_date ?? race.event_local_date ?? race.race_date,
+        event_local_date: lifecycle.event_local_date,
+        event_config_json: lifecycle.event_config_json,
       });
       if (!normalized.valid) return planningInputUnchanged({ validationError: normalized.error });
       const next = normalized.value;
@@ -647,6 +860,10 @@ router.delete('/:id', auth, async (req, res) => {
   }
 });
 
-router._test = { normalizeRaceEvent };
+router._test = {
+  normalizeRaceEvent,
+  readRaceEventLifecycle,
+  transitionRaceEventLifecycle,
+};
 
 module.exports = router;
