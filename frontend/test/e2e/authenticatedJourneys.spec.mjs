@@ -852,7 +852,6 @@ test('check-in hands off through warm-up, run save, recovery check-in, and recap
   await page.getByRole('button', { name: 'Finish Warm-Up', exact: true }).click()
   await page.getByRole('button', { name: 'Start Run', exact: true }).click()
   await expect(page).toHaveURL(/\/run\/active$/)
-  await page.getByRole('button', { name: 'Start Run', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Continue without route' })).toBeVisible()
   await page.getByRole('button', { name: 'Continue without route' }).click()
   await expect(page.getByTestId('pause-run')).toBeVisible({ timeout: 7_000 })
