@@ -12,6 +12,15 @@ import {
 } from '../src/lib/dailyExecutionCore.js'
 import { workoutStartDecision } from '../src/lib/todayPlanAccess.js'
 import {
+  capabilityLabel,
+  executabilityLabel,
+  phaseLabel,
+  reasonCodeLabel,
+  safetyActionLabel,
+  safetyScopeList,
+  sessionRoleLabel,
+} from '../src/lib/goalBackwardPresentation.js'
+import {
   buildAcceptedCanonicalWorkout,
   buildFitWorkoutRepresentation,
 } from '../src/services/fit/encodeWorkoutFit.js'
@@ -429,8 +438,11 @@ const dashboardSource = fs.readFileSync(new URL('../src/pages/Dashboard.jsx', im
 const logRunSource = fs.readFileSync(new URL('../src/pages/LogRun.jsx', import.meta.url), 'utf8')
 const activeWorkoutSource = fs.readFileSync(new URL('../src/pages/ActiveWorkout.jsx', import.meta.url), 'utf8')
 
-for (const viewport of [320, 393]) {
-  check(`${viewport} px fixture exposes the same canonical fields without horizontal overflow`, () => {
+for (const project of [
+  { name: 'compact-mobile-320', viewport: { width: 320, height: 568 } },
+  { name: 'iphone-17', viewport: { width: 402, height: 874 } },
+]) {
+  check(`${project.name} fixture exposes human copy while preserving canonical fields and overflow guards`, () => {
     assert.match(planSource, /surface_manifest/)
     assert.match(planSource, /SURFACE_REVISION_MISMATCH/)
     assert.match(calendarSource, /purposeReasonCodes/)
@@ -441,6 +453,13 @@ for (const viewport of [320, 393]) {
     assert.match(daySource, /executability/)
     assert.match(calendarSource, /minWidth:\s*0/)
     assert.match(daySource, /overflowWrap:\s*'anywhere'/)
+    assert.match(calendarSource, /Plan details and export readiness/)
+    assert.match(daySource, /Workout details and export readiness/)
+    assert.match(calendarSource, /Technical verification/)
+    assert.match(daySource, /Technical verification/)
+    assert.deepEqual(project.viewport, project.name === 'compact-mobile-320'
+      ? { width: 320, height: 568 }
+      : { width: 402, height: 874 })
 
     const preview = goalBackwardV24PlanFixture({
       dateISO: '2026-08-14',
@@ -452,6 +471,7 @@ for (const viewport of [320, 393]) {
       executability: 'RESTRICTED',
       capability: 'FULLY_STRUCTURED',
     })
+    const previewBeforePresentation = structuredClone(preview)
     const previewModel = buildCalendarModel(preview.plan, preview.user_plan, {
       surfaceManifest: preview.surface_manifest,
       now: new Date('2026-08-14T12:00:00.000Z'),
@@ -459,7 +479,22 @@ for (const viewport of [320, 393]) {
     assert.equal(previewModel.surface.status, 'accepted')
     assert.equal(previewModel.surface.manifest.feature_mode, 'preview')
     assert.equal(previewModel.surface.manifest.safety.action, 'NO_RUNNING')
-    assert.equal(previewModel.getWeek(0).days.flatMap((day) => day.sessions)[0].executability, 'RESTRICTED')
+    const previewSession = previewModel.getWeek(0).days.flatMap((day) => day.sessions)[0]
+    assert.equal(previewSession.executability, 'RESTRICTED')
+    const previewCustomerCopy = [
+      phaseLabel(previewModel.phaseForWeek(0)),
+      sessionRoleLabel(previewSession.role),
+      capabilityLabel(previewSession.capability.classification),
+      executabilityLabel(previewSession.executability),
+      safetyActionLabel(previewModel.surface.manifest.safety.action),
+      safetyScopeList(previewModel.surface.manifest.safety.scope),
+      ...previewModel.surface.manifest.safety.reason_codes.map((reason) => reasonCodeLabel(reason)),
+    ].join(' · ')
+    assert.match(previewCustomerCopy, /Event-specific development · Main workout · Fully supported · Restricted by safety guidance/)
+    assert.match(previewCustomerCopy, /No running · Running, Impact activity/)
+    assert.match(previewCustomerCopy, /Review required because the plan changed materially/)
+    assert.doesNotMatch(previewCustomerCopy, /\b[A-Z][A-Z0-9]*_[A-Z0-9_]+\b/)
+    assert.deepEqual(preview, previewBeforePresentation, 'preview source/API values are not changed for presentation')
 
     const fullRest = goalBackwardV24PlanFixture({
       dateISO: '2026-08-14',
@@ -472,6 +507,7 @@ for (const viewport of [320, 393]) {
       workoutFamily: 'hyrox_station_skill',
       capability: 'MANUAL_COMPONENTS_REQUIRED',
     })
+    const fullRestBeforePresentation = structuredClone(fullRest)
     const fullRestModel = buildCalendarModel(fullRest.plan, fullRest.user_plan, {
       surfaceManifest: fullRest.surface_manifest,
       now: new Date('2026-08-14T12:00:00.000Z'),
@@ -481,6 +517,19 @@ for (const viewport of [320, 393]) {
     assert.equal(fullRestModel.surface.manifest.safety.action, 'FULL_REST')
     assert.equal(fullRestSession.executability, 'NOT_EXECUTABLE')
     assert.equal(fullRestSession.capability.classification, 'MANUAL_COMPONENTS_REQUIRED')
+    const fullRestCustomerCopy = [
+      phaseLabel(fullRestModel.phaseForWeek(0)),
+      sessionRoleLabel(fullRestSession.role),
+      capabilityLabel(fullRestSession.capability.classification),
+      executabilityLabel(fullRestSession.executability),
+      safetyActionLabel(fullRestModel.surface.manifest.safety.action),
+      safetyScopeList(fullRestModel.surface.manifest.safety.scope),
+      ...fullRestModel.surface.manifest.safety.reason_codes.map((reason) => reasonCodeLabel(reason)),
+    ].join(' · ')
+    assert.match(fullRestCustomerCopy, /Supporting session · Manual setup required · Cannot be started or exported/)
+    assert.match(fullRestCustomerCopy, /Full rest · All training/)
+    assert.doesNotMatch(fullRestCustomerCopy, /\b[A-Z][A-Z0-9]*_[A-Z0-9_]+\b/)
+    assert.deepEqual(fullRest, fullRestBeforePresentation, 'full-rest source/API values are not changed for presentation')
   })
 }
 

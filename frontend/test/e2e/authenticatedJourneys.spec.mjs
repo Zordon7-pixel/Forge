@@ -35,6 +35,17 @@ function assertCleanApiAndRuntime(state, errors) {
   expect(errors, 'Authenticated journeys must not emit page or console errors').toEqual([])
 }
 
+async function customerFacingTextWithoutTechnicalVerification(page) {
+  return page.locator('body').evaluate((body) => {
+    const customerCopy = body.cloneNode(true)
+    customerCopy.querySelectorAll('details').forEach((details) => {
+      const summary = details.querySelector(':scope > summary')
+      if (summary?.textContent?.trim() === 'Technical verification') details.remove()
+    })
+    return customerCopy.textContent || ''
+  })
+}
+
 const today = localDateISO()
 const todayDay = dayLabel()
 const tomorrowDate = (() => {
@@ -1894,17 +1905,26 @@ test('v2.4 preview stays review-only and exposes canonical truth on both mobile 
   })
 
   await page.goto('/plan')
-  expect([320, 402]).toContain(testInfo.project.use.viewport.width)
+  expect(page.viewportSize()).toEqual(testInfo.project.use.viewport)
   await expect(page.getByRole('heading', { name: 'Review your v2.4 preview' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Accept', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Keep original', exact: true })).toBeVisible()
   await expect(page.getByText('The active calendar remains unchanged until this preview is reviewed.')).toBeVisible()
 
-  const manifestSummary = page.locator('summary').filter({ hasText: 'Canonical plan · plan r7 · surface r3' })
+  const manifestSummary = page.locator('summary').filter({ hasText: 'Plan details and export readiness' })
   await expect(manifestSummary).toBeVisible()
   await manifestSummary.click()
-  await expect(page.getByText(/NO_RUNNING · RUN, IMPACT/)).toBeVisible()
-  await expect(page.getByText(/PRIMARY_KEY · FULLY STRUCTURED/).first()).toBeVisible()
+  await expect(page.getByText(/No running · Running, Impact activity · No running · Review required because the plan changed materially/)).toBeVisible()
+  await expect(page.getByText(/Main workout · Fully supported/).first()).toBeVisible()
+  await expect(page.getByText(/Prescription sources: 1 accepted source · Restricted by safety guidance/).first()).toBeVisible()
+  await expect(page.getByText(/Event-specific development phase/).first()).toBeVisible()
+  const planTechnicalVerification = page.locator('summary').filter({ hasText: 'Technical verification' }).first()
+  await expect(planTechnicalVerification).toBeVisible()
+  await planTechnicalVerification.click()
+  await expect(page.getByText(/Plan r7 · surface r3/)).toBeVisible()
+  await planTechnicalVerification.click()
+  const previewCustomerCopy = await customerFacingTextWithoutTechnicalVerification(page)
+  expect(previewCustomerCopy).not.toMatch(/\b[A-Z][A-Z0-9]*_[A-Z0-9_]+\b/)
   await expect.poll(() => page.evaluate(() => ({
     scroll: document.documentElement.scrollWidth,
     viewport: document.documentElement.clientWidth,
@@ -1936,19 +1956,34 @@ test('v2.4 full-rest safety and manual capability stay fail-closed on both mobil
   })
 
   await page.goto('/plan')
-  expect([320, 402]).toContain(testInfo.project.use.viewport.width)
-  const manifestSummary = page.locator('summary').filter({ hasText: 'Canonical plan · plan r7 · surface r3' })
+  expect(page.viewportSize()).toEqual(testInfo.project.use.viewport)
+  const manifestSummary = page.locator('summary').filter({ hasText: 'Plan details and export readiness' })
   await expect(manifestSummary).toBeVisible()
   await manifestSummary.click()
-  await expect(page.getByText(/FULL_REST · ALL/)).toBeVisible()
+  await expect(page.getByText(/Full rest · All training · Full rest/)).toBeVisible()
 
   await page.getByRole('button', { name: /Today's mission Canonical station skill/ }).click()
-  const canonicalDetails = page.locator('summary').filter({ hasText: 'Canonical session details' }).last()
+  const canonicalDetails = page.locator('summary').filter({ hasText: 'Workout details and export readiness' }).last()
   await expect(canonicalDetails).toBeVisible()
   await canonicalDetails.click()
-  await expect(page.getByText(/Capability: MANUAL COMPONENTS REQUIRED/).last()).toBeVisible()
-  await expect(page.getByText(/Safety: ALL · NOT_EXECUTABLE/).last()).toBeVisible()
+  await expect(page.getByText(/Role: Supporting session · Capability: Manual setup required/).last()).toBeVisible()
+  await expect(page.getByText(/Availability: Cannot be started or exported/).last()).toBeVisible()
+  await expect(page.getByText(/Safety: All training · Cannot be started or exported/).last()).toBeVisible()
+  await expect(page.getByText(/Goal-based target selection · Medium confidence · Count · 1 accepted evidence source/).last()).toBeVisible()
+  await expect(page.getByText(/Event-specific development · HYROX build/)).toBeVisible()
+  const workoutTechnicalVerification = canonicalDetails.locator('..').locator('summary').filter({ hasText: 'Technical verification' })
+  await expect(workoutTechnicalVerification).toBeVisible()
+  await workoutTechnicalVerification.click()
+  await expect(page.getByText(/v24-mobile-hybrid-session · session r4 · plan r7/).last()).toBeVisible()
+  await expect(page.getByText(/goal_backward_target_hierarchy_v1/).last()).toBeVisible()
+  await workoutTechnicalVerification.click()
+  const fullRestCustomerCopy = await customerFacingTextWithoutTechnicalVerification(page)
+  expect(fullRestCustomerCopy).not.toMatch(/\b[A-Z][A-Z0-9]*_[A-Z0-9_]+\b/)
   await expect(page.getByRole('button', { name: /Start (Run|Lift)/ })).toHaveCount(0)
+  await expect.poll(() => page.evaluate(() => ({
+    scroll: document.documentElement.scrollWidth,
+    viewport: document.documentElement.clientWidth,
+  }))).toMatchObject({ viewport: testInfo.project.use.viewport.width })
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true)
   assertCleanApiAndRuntime(apiState, runtimeErrors)
 })

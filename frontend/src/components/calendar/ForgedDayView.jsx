@@ -11,6 +11,18 @@ import WatchWorkoutService from '../../services/WatchWorkoutService'
 import ExerciseGuideAction from '../ExerciseGuideAction'
 import { canonicalWorkoutLabel, normalizeLiftExercisePrescription, sessionState } from '../../lib/planCalendar'
 import { executionAllowsSession, executionHasSession, isRestExecutionAuthority } from '../../lib/dailyExecutionCore'
+import {
+  canonicalUnitLabel,
+  capabilityLabel,
+  confidenceLabel,
+  executabilityLabel,
+  humanizeMachineValue,
+  phaseLabel,
+  policyLabel,
+  reasonCodeLabel,
+  safetyScopeList,
+  sessionRoleLabel,
+} from '../../lib/goalBackwardPresentation'
 import { trainingEvidenceKindLabel } from '../../lib/trainingEvidence'
 import './forgedCalendar.css'
 
@@ -24,7 +36,7 @@ function str(value) {
   return ''
 }
 function labelText(value) {
-  return String(value).replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())
+  return humanizeMachineValue(value, { casing: 'title', fallback: '' })
 }
 function displayValue(value) {
   const scalar = str(value)
@@ -147,7 +159,7 @@ function liftFacts(session, planContext = {}) {
         Number(input.recentRunCount || 0) > 0 ? `${Number(input.recentRunCount)} recent runs established the running-load baseline` : '',
         Number(input.recentLiftCount || 0) > 0 ? 'Recent lift history is available; matching logged sets calibrate exact loads' : 'RPE/RIR calibrates load until lift history is available',
         input.appleHealth ? 'Apple Health recovery informed workload and scheduling' : input.checkin ? 'Daily check-in informed workload and scheduling' : '',
-        planContext.phase ? `${labelText(planContext.phase)} phase and ${planContext.modeLabel || 'strength goal'}` : '',
+        planContext.phase ? `${phaseLabel(planContext.phase)} phase and ${planContext.modeLabel || 'strength goal'}` : '',
         'Evidence-informed sets, reps, and rest intervals',
         'Watch data adjusts workload and recovery; it does not estimate lifting loads',
       ].filter(Boolean)
@@ -283,15 +295,17 @@ function DayBriefContext({ briefDay, px }) {
   )
 }
 
-function canonicalLabel(value) {
-  return String(value || '').replaceAll('_', ' ').toLowerCase().replace(/^./, (letter) => letter.toUpperCase())
+function customerValue(value) {
+  return displayValue(value)
+    .replace(/\b[A-Z][A-Z0-9]*_[A-Z0-9_]+\b/g, (token) => humanizeMachineValue(token))
+    .replace(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g, (token) => humanizeMachineValue(token))
 }
 
 function canonicalTargetText(target = {}) {
   if (!target || typeof target !== 'object') return ''
   return Object.entries(target).map(([key, value]) => {
     if (value === null || value === undefined || value === '') return ''
-    return `${canonicalLabel(key)}: ${Array.isArray(value) ? value.join('–') : displayValue(value)}`
+    return `${humanizeMachineValue(key)}: ${Array.isArray(value) ? value.map(customerValue).join('–') : customerValue(value)}`
   }).filter(Boolean).join(' · ')
 }
 
@@ -324,27 +338,40 @@ function CanonicalSessionTruth({ canonical, session = null, px }) {
   const capability = truth.capability?.classification || 'NOT_EXPORTABLE'
   return (
     <details style={{ minWidth: 0, marginTop: 10, padding: '9px 10px', border: '1px solid rgba(60,55,45,0.15)', borderRadius: 8, overflowWrap: 'anywhere' }}>
-      <summary style={{ minHeight: 44, display: 'flex', alignItems: 'center', cursor: 'pointer', fontSize: px(13), fontWeight: 900 }}>Canonical session details</summary>
+      <summary style={{ minHeight: 44, display: 'flex', alignItems: 'center', cursor: 'pointer', fontSize: px(13), fontWeight: 900 }}>Workout details and export readiness</summary>
       <div style={{ minWidth: 0, fontSize: px(11), lineHeight: 1.5, overflowWrap: 'anywhere' }}>
-        <p><strong>Identity:</strong> {truth.sessionId} · session r{truth.sessionRevision} · plan r{truth.planRevision}</p>
-        <p><strong>Content hash:</strong> {truth.contentHash}</p>
-        <p><strong>Role:</strong> {truth.role} · <strong>Capability:</strong> {capability.replaceAll('_', ' ')}</p>
-        {purposeReasonCodes.length > 0 && <p><strong>Why:</strong> {purposeReasonCodes.map(canonicalLabel).join(' · ')}</p>}
+        <p><strong>Role:</strong> {sessionRoleLabel(truth.role)} · <strong>Capability:</strong> {capabilityLabel(capability)}</p>
+        <p><strong>Availability:</strong> {executabilityLabel(truth.executability)}</p>
+        {purposeReasonCodes.length > 0 && <p><strong>Why:</strong> {purposeReasonCodes.map((reason) => reasonCodeLabel(reason)).join(' · ')}</p>}
         {steps.length > 0 && (
           <div><strong>Accepted steps and targets</strong><ol style={{ margin: '4px 0 0', paddingLeft: 18 }}>
-            {steps.map(({ step, depth }, index) => <li key={step.step_id || index} style={{ marginLeft: depth * 8 }}>{canonicalLabel(step.type)}{canonicalTargetText(step.target) ? ` · ${canonicalTargetText(step.target)}` : ''}</li>)}
+            {steps.map(({ step, depth }, index) => <li key={step.step_id || index} style={{ marginLeft: depth * 8 }}>{humanizeMachineValue(step.type)}{canonicalTargetText(step.target) ? ` · ${canonicalTargetText(step.target)}` : ''}</li>)}
           </ol></div>
         )}
         {targetProvenance.length > 0 && (
-          <div style={{ marginTop: 8 }}><strong>Target provenance</strong><ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>
+          <div style={{ marginTop: 8 }}><strong>Prescription sources</strong><ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>
             {targetProvenance.map((entry, index) => (
-              <li key={`${entry.decision_id || 'decision'}-${index}`}>{entry.policy_id || 'Policy unavailable'} {entry.policy_version || ''} · {entry.confidence || 'UNKNOWN'} · {entry.canonical_unit || 'unit unavailable'} · {(entry.evidence_ids || []).join(', ') || 'No evidence ID'}</li>
+              <li key={`${entry.decision_id || 'decision'}-${index}`}>{policyLabel(entry.policy_id)} · {confidenceLabel(entry.confidence)} · {canonicalUnitLabel(entry.canonical_unit)} · {Array.isArray(entry.evidence_ids) && entry.evidence_ids.length ? `${entry.evidence_ids.length} accepted evidence source${entry.evidence_ids.length === 1 ? '' : 's'}` : 'No accepted evidence source listed'}</li>
             ))}
           </ul></div>
         )}
-        <p><strong>Safety:</strong> {(truth.safetyScope || []).join(', ') || 'No scoped restriction'} · {truth.executability}</p>
-        {adjustmentCriteria.length > 0 && <div><strong>Adjust when</strong><ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>{adjustmentCriteria.map((item) => <li key={item}>{displayValue(item)}</li>)}</ul></div>}
-        {stopCriteria.length > 0 && <div><strong>Stop when</strong><ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>{stopCriteria.map((item) => <li key={item}>{displayValue(item)}</li>)}</ul></div>}
+        <p><strong>Safety:</strong> {safetyScopeList(truth.safetyScope)} · {executabilityLabel(truth.executability)}</p>
+        {adjustmentCriteria.length > 0 && <div><strong>Adjust when</strong><ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>{adjustmentCriteria.map((item) => <li key={item}>{customerValue(item)}</li>)}</ul></div>}
+        {stopCriteria.length > 0 && <div><strong>Stop when</strong><ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>{stopCriteria.map((item) => <li key={item}>{customerValue(item)}</li>)}</ul></div>}
+        <details style={{ minWidth: 0, marginTop: 8 }}>
+          <summary style={{ minHeight: 44, display: 'flex', alignItems: 'center', cursor: 'pointer', fontWeight: 900 }}>Technical verification</summary>
+          <div style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
+            <p><strong>Identity:</strong> {truth.sessionId} · session r{truth.sessionRevision} · plan r{truth.planRevision}</p>
+            <p><strong>Content hash:</strong> {truth.contentHash}</p>
+            {targetProvenance.length > 0 && (
+              <div><strong>Prescription source identifiers</strong><ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>
+                {targetProvenance.map((entry, index) => (
+                  <li key={`${entry.decision_id || 'decision'}-technical-${index}`}>Policy: {entry.policy_id || 'unavailable'} {entry.policy_version || ''} · Decision: {entry.decision_id || 'unavailable'} · Evidence: {(entry.evidence_ids || []).join(', ') || 'unavailable'}</li>
+                ))}
+              </ul></div>
+            )}
+          </div>
+        </details>
       </div>
     </details>
   )
@@ -571,7 +598,7 @@ export default function ForgedDayView({
           {facts.duration > 0 && <span><Timer size={13} style={{ verticalAlign: -2 }} /> {facts.duration} min</span>}
           {facts.runs.length > 0 && <span><Route size={13} style={{ verticalAlign: -2 }} /> {facts.runs.length} × 1,000 m run</span>}
           <span>{facts.isRelay ? `${facts.athleteStationCount} team-assigned stations` : `${facts.stationSequence.length} ordered stations`}</span>
-          <span>{facts.canonicalUnits} canonical</span>
+          <span>{canonicalUnitLabel(facts.canonicalUnits)}</span>
         </div>
         {facts.isRelay && <p role="note" style={{ margin: '8px 0 0', fontSize: px(12), fontWeight: 800 }}>Athlete scope: 2 × 1,000 m run + 2 team-assigned stations. {facts.athleteStationInstruction}</p>}
         {facts.runningTarget && <p style={{ margin: '8px 0 0', fontSize: px(12) }}><strong>Running target:</strong> {facts.runningTarget}</p>}
@@ -845,7 +872,7 @@ export default function ForgedDayView({
             <ChevronLeft size={15} /> Calendar
           </button>
           <h3 className="forged-hand" style={{ fontSize: px(24), fontWeight: 700, margin: '6px 0 0' }}>{dateLabel}</h3>
-          {planContext.phase && <p style={{ fontSize: px(12), margin: '2px 0 0', color: 'var(--ink-soft, #5A554B)' }}>{planContext.phase} · {planContext.modeLabel}</p>}
+          {planContext.phase && <p style={{ fontSize: px(12), margin: '2px 0 0', color: 'var(--ink-soft, #5A554B)' }}>{phaseLabel(planContext.phase)} · {planContext.modeLabel}</p>}
           {anchorRunDate && <p style={{ fontSize: px(12), margin: '2px 0 0', color: 'var(--ink-soft, #5A554B)' }}>Target set from your {anchorRunDate} run</p>}
         </div>
         <div className="forged-paper-controls" style={{ maxWidth: '100%', marginLeft: 'auto' }}>

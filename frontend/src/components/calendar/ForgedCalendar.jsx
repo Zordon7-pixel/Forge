@@ -7,6 +7,17 @@ import {
 import {
   buildMonthGrid, addMonths, dayMarks, dayStatus, countdownDays, WEEKDAYS,
 } from '../../lib/planCalendar'
+import {
+  capabilityLabel,
+  executabilityLabel,
+  feasibilityLabel,
+  humanizeMachineValue,
+  phaseLabel,
+  reasonCodeLabel,
+  safetyActionLabel,
+  safetyScopeList,
+  sessionRoleLabel,
+} from '../../lib/goalBackwardPresentation'
 import './forgedCalendar.css'
 
 const MONTH_DOW = ['M', 'T', 'W', 'T', 'F', 'S', 'S']
@@ -54,7 +65,7 @@ function sessionTarget(session) {
       relayStations ? `${relayStations} team-assigned stations` : stations ? `${stations} station${stations === 1 ? '' : 's'}` : null,
     ].filter(Boolean).join(' · ') || 'HYROX'
   }
-  if (session.kind === 'lift') return String(session.prescription?.focus || 'Strength').replaceAll('_', ' ')
+  if (session.kind === 'lift') return humanizeMachineValue(session.prescription?.focus || 'Strength')
   if (session.prescriptionBasis === 'time' && session.durationMinutes > 0) return `${Math.round(session.durationMinutes)} min`
   if (session.distanceMiles > 0) return `${session.distanceIsEstimate ? '~' : ''}${session.distanceMiles.toFixed(1)} mi`
   return 'Run'
@@ -68,23 +79,6 @@ function sessionPurpose(session) {
     || (session.kind === 'lift'
       ? 'Preserve strength and movement quality alongside the running block.'
       : 'Develop the fitness required for the plan goal at a controlled dose.')
-}
-
-const FEASIBILITY_REASON_LABELS = Object.freeze({
-  NO_PERFORMANCE_ANCHOR: 'No recent performance anchor is available yet.',
-  ANCHOR_EXPIRED: 'The performance anchor is too old to support the target.',
-  BROAD_EQUIVALENCY_ONLY: 'Current performance evidence gives only a broad pace estimate.',
-  PACE_EQUIVALENCY_USED: 'Goal pace uses an equivalent recorded performance.',
-  QUALITY_EXPOSURE_MISSING: 'The block needs another race-specific quality exposure.',
-  PEAK_DEMAND_UNREACHABLE: 'The available weeks cannot safely reach the required peak load.',
-  CHECKPOINT_UNPLACEABLE: 'There is not enough calendar space for a safe checkpoint.',
-  RACE_SPACING_CONFLICT: 'The protected races are close enough to constrain recovery and sharpening.',
-})
-
-function readableReason(reason) {
-  if (!reason) return ''
-  return FEASIBILITY_REASON_LABELS[reason]
-    || String(reason).replaceAll('_', ' ').toLowerCase().replace(/^./, (letter) => letter.toUpperCase())
 }
 
 function formatMinutes(totalMinutes) {
@@ -134,7 +128,7 @@ function weekOverview(week, strengthEnabled) {
   const fallbackQuality = qualityFallback(runs)
   const keyQuality = explicitQuality
     ? {
-        title: explicitQuality.title || String(explicitQuality.workout_id || '').replaceAll('_', ' '),
+        title: explicitQuality.title || humanizeMachineValue(explicitQuality.workout_id, { fallback: 'Quality session' }),
         purpose: explicitQuality.purpose || '',
       }
     : fallbackQuality
@@ -198,10 +192,10 @@ function EvidenceSummary({ model }) {
   const performance = model?.feasibility?.goals?.find((goal) => goal?.pace)?.pace
   const evidence = model?.trainingEvidence || []
   const baselineText = Number(baseline?.value) > 0
-    ? `${Number(baseline.value).toFixed(1)} mi weekly baseline · ${String(baseline.confidence || 'recorded').replaceAll('_', ' ')}`
+    ? `${Number(baseline.value).toFixed(1)} mi weekly baseline · ${humanizeMachineValue(baseline.confidence || 'recorded')}`
     : 'Weekly mileage baseline is not established yet.'
   const enduranceText = Number(endurance?.value) > 0
-    ? `${Number(endurance.value).toFixed(1)} mi recent endurance anchor · ${String(endurance.confidence || 'recorded').replaceAll('_', ' ')}`
+    ? `${Number(endurance.value).toFixed(1)} mi recent endurance anchor · ${humanizeMachineValue(endurance.confidence || 'recorded')}`
     : 'No recent endurance anchor is available.'
   return (
     <details style={{ marginTop: 12, minWidth: 0, border: '1px solid var(--border-subtle)', borderRadius: 8, background: 'var(--bg-card)', overflow: 'hidden' }}>
@@ -213,8 +207,8 @@ function EvidenceSummary({ model }) {
           <li>{enduranceText}</li>
           {Number(input.recentRunCount || 0) > 0 && <li>{Number(input.recentRunCount)} recent run{Number(input.recentRunCount) === 1 ? '' : 's'} reviewed.</li>}
           {Number(input.mileageBaseline?.meaningfulRunCount || 0) > 0 && <li>{Number(input.mileageBaseline.meaningfulRunCount)} meaningful run{Number(input.mileageBaseline.meaningfulRunCount) === 1 ? '' : 's'} informed the baseline.</li>}
-          {performance?.anchorClass && <li>Performance anchor: {String(performance.anchorClass).replaceAll('_', ' ')}{Number.isFinite(Number(performance.anchorAgeDays)) ? ` · ${Number(performance.anchorAgeDays)} days old` : ''}.</li>}
-          {reasonCodes.map((reason) => <li key={reason}>{readableReason(reason)}</li>)}
+          {performance?.anchorClass && <li>Performance anchor: {humanizeMachineValue(performance.anchorClass)}{Number.isFinite(Number(performance.anchorAgeDays)) ? ` · ${Number(performance.anchorAgeDays)} days old` : ''}.</li>}
+          {reasonCodes.map((reason) => <li key={reason}>{reasonCodeLabel(reason, { sentence: true })}</li>)}
           {evidence.length > 0 && <li>{evidence.length} reviewed evidence reference{evidence.length === 1 ? '' : 's'} support the programming rules.</li>}
         </ul>
       </div>
@@ -235,11 +229,11 @@ function PlanOverview({ model, currentWeekIndex }) {
           <p style={{ margin: '4px 0 0', color: 'var(--text-primary)', fontSize: 18, fontWeight: 900 }}>{model.feasibility.label}</p>
           {model.feasibility.goals.length > 1 && model.feasibility.goals.map((goal, index) => (
             <p key={goal.raceId || goal.raceName || index} style={{ margin: '6px 0 0', color: 'var(--text-muted)', fontSize: 12 }}>
-              A{index + 1} · {goal.raceName || `Race ${index + 1}`}: <strong style={{ color: 'var(--text-primary)' }}>{goal.label || goal.status}</strong>
+              A{index + 1} · {goal.raceName || `Race ${index + 1}`}: <strong style={{ color: 'var(--text-primary)' }}>{goal.label || feasibilityLabel(goal.status)}</strong>
             </p>
           ))}
           {(model.feasibility.reasons || []).slice(0, 3).map((reason) => (
-            <p key={reason} style={{ margin: '5px 0 0', color: 'var(--text-muted)', fontSize: 12 }}>{readableReason(reason)}</p>
+            <p key={reason} style={{ margin: '5px 0 0', color: 'var(--text-muted)', fontSize: 12 }}>{reasonCodeLabel(reason, { sentence: true })}</p>
           ))}
         </div>
       )}
@@ -256,7 +250,7 @@ function PlanOverview({ model, currentWeekIndex }) {
                   <span className="forged-overview-kicker">
                     Week {week.weekNumber} of {model.weekCount}{isCurrent ? ' · Current' : ''}
                   </span>
-                  <strong>{week.bridgeWeek ? 'Bridge Week' : `${String(week.phase || 'training').replace(/^./, (letter) => letter.toUpperCase())} focus`}</strong>
+                  <strong>{week.bridgeWeek ? 'Bridge Week' : `${week.phase ? phaseLabel(week.phase) : 'Training'} focus`}</strong>
                   <span>{weeksToGoals(model, week)}</span>
                   <span>{overview.summary}</span>
                 </span>
@@ -316,27 +310,37 @@ function recordedRunSummary(activities = []) {
   return totalMiles > 0 ? `${runLabel} · ${totalMiles.toFixed(2)} mi` : runLabel
 }
 
-function canonicalReasonLabel(value) {
-  return String(value || '').replaceAll('_', ' ').toLowerCase().replace(/^./, (letter) => letter.toUpperCase())
-}
-
 function SurfaceManifestSummary({ surface }) {
   if (surface?.status !== 'accepted') return null
   const identity = surface.identity || {}
   const manifest = surface.manifest || {}
+  const sessions = Array.isArray(manifest.sessions) ? manifest.sessions : []
+  const availability = [...new Set(sessions.map((session) => executabilityLabel(session?.executability)))]
+  const exportSupport = [...new Set(sessions.map((session) => capabilityLabel(session?.capability?.classification)))]
+  const safetyReasons = Array.isArray(manifest.safety?.reason_codes) ? manifest.safety.reason_codes : []
   return (
     <details style={{ minWidth: 0, marginBottom: 12, border: '1px solid var(--border-subtle)', borderRadius: 8, background: 'var(--bg-card)', overflow: 'hidden' }}>
       <summary style={{ minHeight: 44, display: 'flex', alignItems: 'center', padding: '10px 12px', cursor: 'pointer', fontSize: 12, fontWeight: 900 }}>
-        Canonical plan · plan r{identity.plan_revision} · surface r{manifest.surface_revision}
+        Plan details and export readiness
       </summary>
-      <dl style={{ minWidth: 0, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 7, margin: 0, padding: '0 12px 12px', overflowWrap: 'anywhere', fontSize: 11 }}>
-        <div><dt style={{ fontWeight: 900 }}>Decision</dt><dd style={{ margin: 0 }}>{identity.decision_id} · {identity.decision_hash}</dd></div>
-        <div><dt style={{ fontWeight: 900 }}>Candidate</dt><dd style={{ margin: 0 }}>{identity.candidate_id} · r{identity.candidate_revision} · {identity.candidate_hash}</dd></div>
-        <div><dt style={{ fontWeight: 900 }}>Plan/session set</dt><dd style={{ margin: 0 }}>{identity.plan_id} · {identity.canonical_session_set_hash}</dd></div>
-        <div><dt style={{ fontWeight: 900 }}>State and safety</dt><dd style={{ margin: 0 }}>Athlete state r{identity.athlete_state_revision} · {identity.safety_state_hash}</dd></div>
-        <div><dt style={{ fontWeight: 900 }}>Safety action</dt><dd style={{ margin: 0 }}>{manifest.safety?.action || 'NORMAL'} · {(manifest.safety?.scope || []).join(', ') || 'No scoped restriction'}{manifest.safety?.reason_codes?.length ? ` · ${manifest.safety.reason_codes.join(' · ')}` : ''}</dd></div>
-        <div><dt style={{ fontWeight: 900 }}>Goal revisions</dt><dd style={{ margin: 0 }}>{Object.entries(identity.goal_revisions || {}).map(([id, revision]) => `${id}: r${revision}`).join(' · ') || 'None'}</dd></div>
-      </dl>
+      <div style={{ minWidth: 0, padding: '0 12px 12px', overflowWrap: 'anywhere', fontSize: 11 }}>
+        <dl style={{ minWidth: 0, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 7, margin: 0 }}>
+          <div><dt style={{ fontWeight: 900 }}>Safety guidance</dt><dd style={{ margin: 0 }}>{safetyActionLabel(manifest.safety?.action)} · {safetyScopeList(manifest.safety?.scope)}{safetyReasons.length ? ` · ${safetyReasons.map((reason) => reasonCodeLabel(reason)).join(' · ')}` : ''}</dd></div>
+          <div><dt style={{ fontWeight: 900 }}>Workout availability</dt><dd style={{ margin: 0 }}>{availability.join(' · ') || 'No workouts are currently listed'}</dd></div>
+          <div><dt style={{ fontWeight: 900 }}>Export support</dt><dd style={{ margin: 0 }}>{exportSupport.join(' · ') || 'No workouts are currently listed'}</dd></div>
+        </dl>
+        <details style={{ minWidth: 0, marginTop: 10 }}>
+          <summary style={{ minHeight: 44, display: 'flex', alignItems: 'center', cursor: 'pointer', fontWeight: 900 }}>Technical verification</summary>
+          <dl style={{ minWidth: 0, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 7, margin: 0, overflowWrap: 'anywhere' }}>
+            <div><dt style={{ fontWeight: 900 }}>Revisions</dt><dd style={{ margin: 0 }}>Plan r{identity.plan_revision} · surface r{manifest.surface_revision}</dd></div>
+            <div><dt style={{ fontWeight: 900 }}>Decision</dt><dd style={{ margin: 0 }}>{identity.decision_id} · {identity.decision_hash}</dd></div>
+            <div><dt style={{ fontWeight: 900 }}>Candidate</dt><dd style={{ margin: 0 }}>{identity.candidate_id} · r{identity.candidate_revision} · {identity.candidate_hash}</dd></div>
+            <div><dt style={{ fontWeight: 900 }}>Plan/session set</dt><dd style={{ margin: 0 }}>{identity.plan_id} · {identity.canonical_session_set_hash}</dd></div>
+            <div><dt style={{ fontWeight: 900 }}>State and safety</dt><dd style={{ margin: 0 }}>Athlete state r{identity.athlete_state_revision} · {identity.safety_state_hash}</dd></div>
+            <div><dt style={{ fontWeight: 900 }}>Goal revisions</dt><dd style={{ margin: 0 }}>{Object.entries(identity.goal_revisions || {}).map(([id, revision]) => `${id}: r${revision}`).join(' · ') || 'None'}</dd></div>
+          </dl>
+        </details>
+      </div>
     </details>
   )
 }
@@ -348,9 +352,9 @@ function CanonicalBriefTruth({ canonical }) {
   const capability = canonical.capability?.classification || 'NOT_EXPORTABLE'
   return (
     <span role="note" style={{ display: 'block', minWidth: 0, marginTop: 8, padding: '8px 10px', borderRadius: 8, background: 'var(--bg-input)', overflowWrap: 'anywhere', fontSize: 11 }}>
-      <span style={{ display: 'block', margin: 0, fontWeight: 900 }}>{canonical.role} · {capability.replaceAll('_', ' ')}</span>
-      {purposeReasonCodes.length > 0 && <span style={{ display: 'block', marginTop: 3 }}>Why: {purposeReasonCodes.map(canonicalReasonLabel).join(' · ')}</span>}
-      <span style={{ display: 'block', marginTop: 3 }}>Target provenance: {targetProvenance.length} accepted source{targetProvenance.length === 1 ? '' : 's'} · {canonical.executability}</span>
+      <span style={{ display: 'block', margin: 0, fontWeight: 900 }}>{sessionRoleLabel(canonical.role)} · {capabilityLabel(capability)}</span>
+      {purposeReasonCodes.length > 0 && <span style={{ display: 'block', marginTop: 3 }}>Why: {purposeReasonCodes.map((reason) => reasonCodeLabel(reason)).join(' · ')}</span>}
+      <span style={{ display: 'block', marginTop: 3 }}>Prescription sources: {targetProvenance.length} accepted source{targetProvenance.length === 1 ? '' : 's'} · {executabilityLabel(canonical.executability)}</span>
     </span>
   )
 }
@@ -367,8 +371,8 @@ function WeeklyBriefHeader({ brief, onOpenDay }) {
       <h3 id="forged-weekly-brief-title">{brief.purpose}</h3>
       {brief.feasibility?.status && (
         <div role="status" style={{ minWidth: 0, marginTop: 8, overflowWrap: 'anywhere', fontSize: 12 }}>
-          <strong>Goal feasibility:</strong> {canonicalReasonLabel(brief.feasibility.status)}
-          {brief.feasibility.reasonCodes?.length > 0 && <span> · {brief.feasibility.reasonCodes.map(canonicalReasonLabel).join(' · ')}</span>}
+          <strong>Goal feasibility:</strong> {feasibilityLabel(brief.feasibility.status)}
+          {brief.feasibility.reasonCodes?.length > 0 && <span> · {brief.feasibility.reasonCodes.map((reason) => reasonCodeLabel(reason)).join(' · ')}</span>}
         </div>
       )}
       <div className="forged-weekly-brief-totals" role="group" aria-label="Weekly training target">
@@ -550,7 +554,7 @@ export default function ForgedCalendar({
             </div>
             <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
               {[
-                phase ? `${phase} phase` : null,
+                phase ? `${phaseLabel(phase)} phase` : null,
                 model?.modeLabel,
                 Number.isFinite(countdown) && countdown >= 0 ? `${countdown} days to go` : null,
               ].filter(Boolean).join(' · ')}
