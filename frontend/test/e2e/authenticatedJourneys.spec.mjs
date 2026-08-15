@@ -430,7 +430,7 @@ test('legacy empty check-in rest stays truthful and closes every workout handoff
     await expect(page.getByRole('button', { name })).toHaveCount(0)
   }
   await expect(page).not.toHaveURL(/\/log-lift(?:\?|$)/)
-  expect([320, 393]).toContain(page.viewportSize()?.width)
+  expect([320, 402]).toContain(page.viewportSize()?.width)
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(await page.evaluate(() => document.documentElement.clientWidth))
   assertCleanApiAndRuntime(apiState, runtimeErrors)
 })
@@ -482,7 +482,7 @@ test('legacy flat all-removed day stays removed without check-in recovery attrib
     await expect(page.getByRole('button', { name })).toHaveCount(0)
   }
   await expect(page).not.toHaveURL(/\/log-lift(?:\?|$)/)
-  expect([320, 393]).toContain(page.viewportSize()?.width)
+  expect([320, 402]).toContain(page.viewportSize()?.width)
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(await page.evaluate(() => document.documentElement.clientWidth))
   assertCleanApiAndRuntime(apiState, runtimeErrors)
 })
@@ -605,7 +605,7 @@ test('lift-only safety rest cannot expose strength or workout starts even with a
   await expect(page.getByRole('button', { name: /Copy workout/i })).toHaveCount(0)
   await expect(page.getByRole('button', { name: /Send to Watch/i })).toHaveCount(0)
   await expect(page).not.toHaveURL(/\/log-lift(?:\?|$)/)
-  expect([320, 393]).toContain(page.viewportSize()?.width)
+  expect([320, 402]).toContain(page.viewportSize()?.width)
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(await page.evaluate(() => document.documentElement.clientWidth))
 
   expect(requestsFor(apiState, 'POST', '/api/checkin')).toHaveLength(1)
@@ -634,7 +634,7 @@ test('lift-only safety rest cannot offer a travel bodyweight handoff', async ({ 
   expect(requestsFor(apiState, 'POST', '/api/travel-context')).toHaveLength(0)
   expect(requestsFor(apiState, 'POST', '/api/plans/today/bodyweight-alternative')).toHaveLength(0)
   expect(new URL(page.url()).pathname).not.toBe('/log-lift')
-  expect([320, 393]).toContain(page.viewportSize()?.width)
+  expect([320, 402]).toContain(page.viewportSize()?.width)
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(await page.evaluate(() => document.documentElement.clientWidth))
   assertCleanApiAndRuntime(apiState, runtimeErrors)
 })
@@ -667,7 +667,7 @@ test('ordinary traveling lift keeps its owner-bound bodyweight handoff', async (
     session_id: plannedLift.id,
   })
   await expect(page).toHaveURL(/\/log-lift$/)
-  expect([320, 393]).toContain(page.viewportSize()?.width)
+  expect([320, 402]).toContain(page.viewportSize()?.width)
   assertCleanApiAndRuntime(apiState, runtimeErrors)
 })
 
@@ -692,7 +692,7 @@ test('completed current-day session stays recognized and reversible without reop
   await page.getByRole('button', { name: 'Done', exact: true }).click()
   await expect.poll(() => requestsFor(apiState, 'PUT', '/api/plans/my/progress').length).toBe(1)
   expect(requestsFor(apiState, 'PUT', '/api/plans/my/progress')[0].body).toMatchObject({ unset_session_id: plannedRun.id })
-  expect([320, 393]).toContain(page.viewportSize()?.width)
+  expect([320, 402]).toContain(page.viewportSize()?.width)
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(await page.evaluate(() => document.documentElement.clientWidth))
   assertCleanApiAndRuntime(apiState, runtimeErrors)
 })
@@ -714,7 +714,7 @@ test('partially completed hybrid day keeps the completed run reversible and the 
   await expect(page.getByRole('button', { name: 'Start Run', exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Start Lift', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Mark done', exact: true })).toBeVisible()
-  expect([320, 393]).toContain(page.viewportSize()?.width)
+  expect([320, 402]).toContain(page.viewportSize()?.width)
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(await page.evaluate(() => document.documentElement.clientWidth))
   assertCleanApiAndRuntime(apiState, runtimeErrors)
 })
@@ -736,7 +736,7 @@ test('future plan actions stay available while the phone-local current day is ca
   await expect(page.getByRole('button', { name: 'Start Run', exact: true })).toBeVisible()
   await expect(page.getByText("Today's plan changed.", { exact: false })).toHaveCount(0)
   await expect(page.getByText("Today's safety status could not be verified.", { exact: false })).toHaveCount(0)
-  expect([320, 393]).toContain(page.viewportSize()?.width)
+  expect([320, 402]).toContain(page.viewportSize()?.width)
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(await page.evaluate(() => document.documentElement.clientWidth))
   assertCleanApiAndRuntime(apiState, runtimeErrors)
 })
@@ -758,7 +758,7 @@ test('mismatched-date execution authority fails closed after phone-local midnigh
   await expect(page.getByText("Today's plan changed.", { exact: false })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Start Run', exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Mark done', exact: true })).toHaveCount(0)
-  expect([320, 393]).toContain(page.viewportSize()?.width)
+  expect([320, 402]).toContain(page.viewportSize()?.width)
   assertCleanApiAndRuntime(apiState, runtimeErrors)
 })
 
@@ -1894,7 +1894,7 @@ test('v2.4 preview stays review-only and exposes canonical truth on both mobile 
   })
 
   await page.goto('/plan')
-  expect([320, 393]).toContain(testInfo.project.use.viewport.width)
+  expect([320, 402]).toContain(testInfo.project.use.viewport.width)
   await expect(page.getByRole('heading', { name: 'Review your v2.4 preview' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Accept', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Keep original', exact: true })).toBeVisible()
@@ -1936,7 +1936,7 @@ test('v2.4 full-rest safety and manual capability stay fail-closed on both mobil
   })
 
   await page.goto('/plan')
-  expect([320, 393]).toContain(testInfo.project.use.viewport.width)
+  expect([320, 402]).toContain(testInfo.project.use.viewport.width)
   const manifestSummary = page.locator('summary').filter({ hasText: 'Canonical plan · plan r7 · surface r3' })
   await expect(manifestSummary).toBeVisible()
   await manifestSummary.click()
