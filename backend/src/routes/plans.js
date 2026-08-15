@@ -206,7 +206,9 @@ function parsePlan(plan) {
     } else {
       parsed = typeof plan?.plan_json === 'string' ? JSON.parse(plan.plan_json) : plan?.plan_json;
     }
-    return repairPlanPrescriptions(parsed);
+    return Number(parsed?.canonical_workout_schema_version) === 1
+      ? parsed
+      : repairPlanPrescriptions(parsed);
   } catch (err) {
     console.error('[plans/parsePlan] invalid plan JSON:', err.message);
     return null;
@@ -2357,6 +2359,23 @@ function buildGoalBackwardArtifacts(input = {}) {
     },
   });
   const priorSurface = artifacts[surfaceIndex];
+  const surfaceManifest = buildCanonicalSurfaceManifest({
+    featureMode: input.featureMode || priorSurface.payload_json.feature_mode || 'shadow',
+    surfaceRevision: input.surfaceRevision || priorSurface.revision,
+    candidateRevision: input.candidateRevision || 1,
+    athleteStateRevision: input.athleteStateRevision || input.decision?.athlete_state_revision || 1,
+    safetyStateHash: input.safetyStateHash || prefixedHash(input.decision?.safety_state || {}),
+    goalRevisions: input.goalRevisions || Object.fromEntries((input.decision?.active_goals || []).map((goal) => [
+      String(goal.goal_id),
+      Math.max(1, Number(goal.source_revision || 1)),
+    ])),
+    decision: input.decision,
+    selectedCandidate: selected,
+    canonicalSessionSet: sessionSet,
+    plan: input.plan,
+    planGenerationCandidateRef: priorSurface.payload_json.plan_generation_candidate_ref,
+    currentCandidateHash: input.currentCandidateHash,
+  });
   const surfaceArtifact = buildPipelineArtifact({
     userId: priorSurface.user_id,
     kind: priorSurface.artifact_kind,
@@ -2367,13 +2386,190 @@ function buildGoalBackwardArtifacts(input = {}) {
     policyVersion: priorSurface.policy_version,
     revision: priorSurface.revision,
     createdAt: priorSurface.created_at,
-    payload: priorSurface.payload_json,
+    payload: surfaceManifest || priorSurface.payload_json,
   });
   return assertPipelineLinks([
     ...artifacts.slice(0, canonicalIndex),
     canonicalArtifact,
     surfaceArtifact,
   ]);
+}
+
+function buildCanonicalSurfaceManifest(input = {}) {
+  const featureMode = String(input.featureMode || 'off');
+  if (featureMode === 'off') return null;
+  if (featureMode === 'shadow') {
+    return {
+      plan_generation_candidate_ref: input.planGenerationCandidateRef || null,
+      feature_mode: 'shadow',
+      authoritative_engine: 'current',
+      current_candidate_hash: input.currentCandidateHash || null,
+      v24_surface_enabled: false,
+    };
+  }
+  if (!['preview', 'on'].includes(featureMode)) return null;
+  const sessionSet = input.canonicalSessionSet;
+  const decision = input.decision || {};
+  const selected = input.selectedCandidate || {};
+  const plan = input.plan || {};
+  if (!sessionSet || !Array.isArray(sessionSet.sessions) || !sessionSet.sessions.length) return null;
+  const purpose = String(
+    input.purpose
+      || plan.purpose
+      || (Array.isArray(plan.weeks) ? plan.weeks.find((week) => String(week?.purpose || '').trim())?.purpose : '')
+      || '',
+  ).trim();
+  const feasibilityStatus = String(input.feasibilityStatus || plan.overall_feasibility || '').trim();
+  const feasibilityReasonCodes = Array.isArray(input.feasibilityReasonCodes)
+    ? input.feasibilityReasonCodes
+    : Array.isArray(plan.reasons) ? plan.reasons : [];
+  const safetyState = decision.safety_state && typeof decision.safety_state === 'object'
+    ? decision.safety_state : {};
+  const weeks = (Array.isArray(plan.weeks) ? plan.weeks : []).map((week, index) => ({
+    week: Math.max(1, Number(week?.week || index + 1)),
+    start_date: String(week?.startDate || week?.start_date || ''),
+    phase: String(week?.phase || ''),
+    purpose: String(week?.purpose || week?.weekPurpose || week?.week_purpose || ''),
+  }));
+  return {
+    schema_version: 'goal_backward_surface_manifest_v1',
+    surface_revision: Math.max(1, Number(input.surfaceRevision || 1)),
+    feature_mode: featureMode,
+    v24_surface_enabled: true,
+    status: 'accepted',
+    identity: {
+      decision_id: String(sessionSet.decision_id || decision.decision_id || ''),
+      decision_hash: String(sessionSet.decision_hash || decision.decision_hash || ''),
+      candidate_id: String(sessionSet.candidate_id || selected.candidate_skeleton_id || ''),
+      candidate_revision: Math.max(1, Number(input.candidateRevision || 1)),
+      candidate_hash: String(sessionSet.candidate_hash || selected.candidate_hash || ''),
+      plan_id: String(sessionSet.plan_id || ''),
+      plan_revision: Math.max(1, Number(sessionSet.plan_revision || 1)),
+      canonical_session_set_hash: String(sessionSet.content_hash || ''),
+      athlete_state_revision: Math.max(1, Number(input.athleteStateRevision || decision.athlete_state_revision || 1)),
+      safety_state_hash: String(input.safetyStateHash || prefixedHash(safetyState)),
+      goal_revisions: input.goalRevisions && typeof input.goalRevisions === 'object' ? input.goalRevisions : {},
+    },
+    purpose,
+    feasibility: {
+      status: feasibilityStatus,
+      reason_codes: [...new Set(feasibilityReasonCodes.map(String).filter(Boolean))],
+    },
+    safety: {
+      action: String(safetyState.action || 'NORMAL'),
+      scope: Array.isArray(safetyState.scope) ? safetyState.scope : [],
+      reason_codes: Array.isArray(safetyState.reason_codes) ? safetyState.reason_codes : [],
+    },
+    weeks,
+    sessions: sessionSet.sessions,
+  };
+}
+
+function surfaceMismatchManifest(candidate = {}, payload = null) {
+  return {
+    schema_version: 'goal_backward_surface_manifest_v1',
+    surface_revision: Math.max(1, Number(candidate.surface_revision || payload?.surface_revision || 1)),
+    feature_mode: String(candidate.feature_mode || payload?.feature_mode || 'on'),
+    v24_surface_enabled: true,
+    status: 'blocked',
+    reason_codes: ['SURFACE_REVISION_MISMATCH'],
+    identity: payload?.identity && typeof payload.identity === 'object' ? payload.identity : null,
+    sessions: [],
+  };
+}
+
+function surfaceManifestMatchesAppliedPlan(manifest, candidate, activeRow, canonicalSessionSet = null) {
+  const identity = manifest?.identity;
+  if (manifest?.schema_version !== 'goal_backward_surface_manifest_v1'
+    || manifest?.status !== 'accepted'
+    || manifest?.v24_surface_enabled !== true
+    || !['preview', 'on'].includes(String(manifest?.feature_mode || ''))
+    || !identity || !Array.isArray(manifest.sessions) || !manifest.sessions.length) return false;
+  const hashIdentity = (value) => String(value || '').replace(/^sha256:/, '');
+  const activePlan = parsePlan(activeRow) || {};
+  const candidateGoalRevisions = parseJsonValue(candidate.goal_revisions_json, {});
+  const activeWeeks = (Array.isArray(activePlan.weeks) ? activePlan.weeks : []).map((week, index) => ({
+    week: Math.max(1, Number(week?.week || index + 1)),
+    start_date: String(week?.startDate || week?.start_date || ''),
+    phase: String(week?.phase || ''),
+    purpose: String(week?.purpose || week?.weekPurpose || week?.week_purpose || ''),
+  }));
+  const activePurpose = String(
+    activePlan.purpose
+      || activeWeeks.find((week) => week.purpose)?.purpose
+      || '',
+  ).trim();
+  const canonicalMatches = canonicalSessionSet && typeof canonicalSessionSet === 'object'
+    && String(canonicalSessionSet.plan_id || '') === String(identity.plan_id || '')
+    && Number(canonicalSessionSet.plan_revision) === Number(identity.plan_revision)
+    && String(canonicalSessionSet.decision_id || '') === String(identity.decision_id || '')
+    && hashIdentity(canonicalSessionSet.decision_hash) === hashIdentity(identity.decision_hash)
+    && String(canonicalSessionSet.candidate_id || canonicalSessionSet.selected_candidate_id || '') === String(identity.candidate_id || '')
+    && hashIdentity(canonicalSessionSet.candidate_hash || canonicalSessionSet.selected_candidate_hash) === hashIdentity(identity.candidate_hash)
+    && hashIdentity(canonicalSessionSet.content_hash) === hashIdentity(identity.canonical_session_set_hash)
+    && JSON.stringify(canonicalSessionSet.sessions || []) === JSON.stringify(manifest.sessions);
+  return Number(manifest.surface_revision) === Number(candidate.surface_revision)
+    && Number(identity.candidate_revision) === Number(candidate.candidate_revision)
+    && String(identity.decision_id || '') === String(candidate.decision_id || '')
+    && hashIdentity(identity.candidate_hash) === hashIdentity(candidate.selected_candidate_hash)
+    && Number(identity.athlete_state_revision) === Number(candidate.athlete_state_revision)
+    && String(identity.safety_state_hash || '') === String(candidate.safety_state_hash || '')
+    && prefixedHash(identity.goal_revisions || {}) === prefixedHash(candidateGoalRevisions)
+    && String(identity.plan_id || '') === String(activePlan.plan_id || '')
+    && Number(identity.plan_revision) === Number(activePlan.plan_revision)
+    && Number(identity.plan_revision) === Number(activeRow?.plan_version || 1)
+    && String(identity.decision_id || '') === String(activePlan.decision_id || '')
+    && hashIdentity(identity.decision_hash) === hashIdentity(activePlan.decision_hash)
+    && hashIdentity(identity.candidate_hash) === hashIdentity(activePlan.selected_candidate_hash)
+    && hashIdentity(identity.canonical_session_set_hash) === hashIdentity(activePlan.canonical_session_set_hash)
+    && String(manifest.purpose || '') === activePurpose
+    && String(manifest.feasibility?.status || '') === String(activePlan.overall_feasibility || '')
+    && prefixedHash(manifest.feasibility?.reason_codes || []) === prefixedHash(activePlan.reasons || [])
+    && prefixedHash(manifest.weeks || []) === prefixedHash(activeWeeks)
+    && canonicalMatches;
+}
+
+async function canonicalSurfaceManifestForActive(userId, activeRow, query = dbGet) {
+  const appliedUserPlanId = activeRow?.user_plan_id;
+  if (!appliedUserPlanId) return null;
+  const activePlan = parsePlan(activeRow) || {};
+  if (Number(activePlan.canonical_workout_schema_version) !== 1
+    || !activePlan.canonical_session_set_hash
+    || !activePlan.selected_candidate_hash) return null;
+  const candidate = await query(
+    `SELECT id, decision_id, candidate_revision, athlete_state_revision, safety_state_hash,
+            goal_revisions_json, surface_revision, feature_mode, selected_candidate_hash
+     FROM plan_generation_candidates
+     WHERE user_id=? AND applied_user_plan_id=? AND status='applied'
+       AND feature_mode IN ('preview','on')
+     ORDER BY applied_at DESC
+     LIMIT 1`,
+    [userId, appliedUserPlanId],
+  );
+  if (!candidate) return surfaceMismatchManifest({ feature_mode: 'on', surface_revision: 1 });
+  const artifact = await query(
+    `SELECT surface.payload_json, canonical.payload_json AS canonical_payload_json
+     FROM planning_pipeline_artifacts surface
+     LEFT JOIN planning_pipeline_artifacts canonical
+       ON canonical.id=surface.parent_artifact_id
+      AND canonical.user_id=surface.user_id
+      AND canonical.artifact_kind='canonical_session_set'
+     WHERE surface.user_id=? AND surface.plan_generation_candidate_id=?
+       AND surface.artifact_kind='surface_manifest'
+     ORDER BY surface.revision DESC, surface.created_at DESC
+     LIMIT 1`,
+    [userId, candidate.id],
+  );
+  const payload = parseJsonValue(artifact?.payload_json, null);
+  const canonicalSessionSet = parseJsonValue(artifact?.canonical_payload_json, null);
+  return surfaceManifestMatchesAppliedPlan(payload, candidate, activeRow, canonicalSessionSet)
+    ? payload
+    : surfaceMismatchManifest(candidate, payload);
+}
+
+async function canonicalSurfaceResponseField(userId, activeRow, query = dbGet) {
+  const manifest = await canonicalSurfaceManifestForActive(userId, activeRow, query);
+  return manifest ? { surface_manifest: manifest } : {};
 }
 
 async function maybeComputeGoalBackwardShadowDiagnostics({ mode, response, compute }) {
@@ -2505,6 +2701,7 @@ async function previewPlanForUser(userId, body = {}, { store = true, goalBackwar
           currentCandidateHash: candidateHash,
           decision: goalBackwardShadow.decision,
           candidates: goalBackwardShadow.candidates,
+          plan: normalized.plan,
         });
         const decisionArtifact = artifacts.find((artifact) => artifact.artifact_kind === 'planning_decision');
         const currentBindings = buildGoalBackwardShadowBindings({
@@ -4159,6 +4356,7 @@ router.get('/my', auth, async (req, res) => {
       progress: parseJsonValue(prior.progress_json, {}),
       status: prior.status,
     }));
+    const surfaceField = await canonicalSurfaceResponseField(req.user.id, row);
     res.json({
       plan: {
         id: row.plan_id,
@@ -4181,6 +4379,7 @@ router.get('/my', auth, async (req, res) => {
         progress,
       },
       lineage_history: lineageHistory,
+      ...surfaceField,
     });
   } catch (err) {
     console.error('[plans/my] failed:', err.message);
@@ -4620,11 +4819,13 @@ router.get('/today', auth, async (req, res) => {
       hrProfile,
       restSource,
     });
+    const surfaceField = await canonicalSurfaceResponseField(req.user.id, active.row);
 
     res.json({
       today: effortToday,
       execution: withPlanAnchorPayload(withDurationEstimateExecutionPayload(execution, parsed), parsed),
       ...anchorPayload,
+      ...surfaceField,
     });
     void requestImagesForWorkoutItems({
       userId: req.user.id,
@@ -4651,6 +4852,7 @@ router.get('/current', auth, async (req, res) => {
     const progress = active.source === 'assigned' ? parseJsonValue(active.row.progress_json, {}) : {};
     const parsed = withDurationEstimatePlanPayload(planWithoutRemovedSessions(servedPlan, progress, active.row));
     const anchorPayload = planAnchorPayload(parsed);
+    const surfaceField = await canonicalSurfaceResponseField(req.user.id, active.row);
     res.json({
       plan: {
         ...active.row,
@@ -4659,6 +4861,7 @@ router.get('/current', auth, async (req, res) => {
         plan_data: parsed,
         current_week: Number(active.row.current_week || 1),
       },
+      ...surfaceField,
     });
     void requestImagesForWorkoutItems({
       userId: req.user.id,
@@ -5145,7 +5348,9 @@ router._test = {
   applyPlanCandidate,
   assertCandidatePlanningDateCurrent,
   buildDeterministicCandidate,
+  buildCanonicalSurfaceManifest,
   buildGoalBackwardArtifacts,
+  canonicalSurfaceManifestForActive,
   candidateFeasibilityCanApply,
   candidateEffectiveFrom,
   computeGoalBackwardShadowDiagnostics,

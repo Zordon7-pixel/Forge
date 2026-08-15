@@ -251,6 +251,7 @@ function DayBriefContext({ briefDay, px }) {
       {briefDay.adjustmentReason && (
         <p className="forged-adjusted-because" role="status"><strong>Forge adjusted this because:</strong> {briefDay.adjustmentReason}</p>
       )}
+      <CanonicalSessionTruth canonical={briefDay.canonical} px={px} />
       {footwear && (
         <div className="forged-footwear-card">
           <div className="forged-footwear-head">
@@ -279,6 +280,73 @@ function DayBriefContext({ briefDay, px }) {
         </div>
       )}
     </section>
+  )
+}
+
+function canonicalLabel(value) {
+  return String(value || '').replaceAll('_', ' ').toLowerCase().replace(/^./, (letter) => letter.toUpperCase())
+}
+
+function canonicalTargetText(target = {}) {
+  if (!target || typeof target !== 'object') return ''
+  return Object.entries(target).map(([key, value]) => {
+    if (value === null || value === undefined || value === '') return ''
+    return `${canonicalLabel(key)}: ${Array.isArray(value) ? value.join('–') : displayValue(value)}`
+  }).filter(Boolean).join(' · ')
+}
+
+function canonicalStepRows(steps = [], depth = 0) {
+  return steps.flatMap((step) => [{ step, depth }, ...canonicalStepRows(Array.isArray(step?.children) ? step.children : [], depth + 1)])
+}
+
+function CanonicalSessionTruth({ canonical, session = null, px }) {
+  const truth = canonical || (session?.canonical ? {
+    sessionId: session.id,
+    sessionRevision: session.sessionRevision,
+    planRevision: session.planRevision,
+    contentHash: session.contentHash,
+    role: session.role,
+    steps: session.steps,
+    targetProvenance: session.targetProvenance,
+    purposeReasonCodes: session.purposeReasonCodes,
+    adjustmentCriteria: session.adjustmentCriteria,
+    stopCriteria: session.stopCriteria,
+    safetyScope: session.safetyScope,
+    executability: session.executability,
+    capability: session.capability,
+  } : null)
+  if (!truth) return null
+  const steps = canonicalStepRows(Array.isArray(truth.steps) ? truth.steps : [])
+  const targetProvenance = Array.isArray(truth.targetProvenance) ? truth.targetProvenance : []
+  const purposeReasonCodes = Array.isArray(truth.purposeReasonCodes) ? truth.purposeReasonCodes : []
+  const adjustmentCriteria = Array.isArray(truth.adjustmentCriteria) ? truth.adjustmentCriteria : []
+  const stopCriteria = Array.isArray(truth.stopCriteria) ? truth.stopCriteria : []
+  const capability = truth.capability?.classification || 'NOT_EXPORTABLE'
+  return (
+    <details style={{ minWidth: 0, marginTop: 10, padding: '9px 10px', border: '1px solid rgba(60,55,45,0.15)', borderRadius: 8, overflowWrap: 'anywhere' }}>
+      <summary style={{ minHeight: 44, display: 'flex', alignItems: 'center', cursor: 'pointer', fontSize: px(13), fontWeight: 900 }}>Canonical session details</summary>
+      <div style={{ minWidth: 0, fontSize: px(11), lineHeight: 1.5, overflowWrap: 'anywhere' }}>
+        <p><strong>Identity:</strong> {truth.sessionId} · session r{truth.sessionRevision} · plan r{truth.planRevision}</p>
+        <p><strong>Content hash:</strong> {truth.contentHash}</p>
+        <p><strong>Role:</strong> {truth.role} · <strong>Capability:</strong> {capability.replaceAll('_', ' ')}</p>
+        {purposeReasonCodes.length > 0 && <p><strong>Why:</strong> {purposeReasonCodes.map(canonicalLabel).join(' · ')}</p>}
+        {steps.length > 0 && (
+          <div><strong>Accepted steps and targets</strong><ol style={{ margin: '4px 0 0', paddingLeft: 18 }}>
+            {steps.map(({ step, depth }, index) => <li key={step.step_id || index} style={{ marginLeft: depth * 8 }}>{canonicalLabel(step.type)}{canonicalTargetText(step.target) ? ` · ${canonicalTargetText(step.target)}` : ''}</li>)}
+          </ol></div>
+        )}
+        {targetProvenance.length > 0 && (
+          <div style={{ marginTop: 8 }}><strong>Target provenance</strong><ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>
+            {targetProvenance.map((entry, index) => (
+              <li key={`${entry.decision_id || 'decision'}-${index}`}>{entry.policy_id || 'Policy unavailable'} {entry.policy_version || ''} · {entry.confidence || 'UNKNOWN'} · {entry.canonical_unit || 'unit unavailable'} · {(entry.evidence_ids || []).join(', ') || 'No evidence ID'}</li>
+            ))}
+          </ul></div>
+        )}
+        <p><strong>Safety:</strong> {(truth.safetyScope || []).join(', ') || 'No scoped restriction'} · {truth.executability}</p>
+        {adjustmentCriteria.length > 0 && <div><strong>Adjust when</strong><ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>{adjustmentCriteria.map((item) => <li key={item}>{displayValue(item)}</li>)}</ul></div>}
+        {stopCriteria.length > 0 && <div><strong>Stop when</strong><ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>{stopCriteria.map((item) => <li key={item}>{displayValue(item)}</li>)}</ul></div>}
+      </div>
+    </details>
   )
 }
 
@@ -378,6 +446,8 @@ export default function ForgedDayView({
     : []
   const anchoredBy = planContext.goal?.anchoredBy || day?.anchoredBy || null
   const anchorRunDate = formatAnchorRunDate(anchoredBy?.runDate)
+  const surfaceSafetyAction = String(planContext.surface?.manifest?.safety?.action || '')
+  const surfaceBlocksUnplannedRun = ['FULL_REST', 'NO_RUNNING', 'MODIFY_IMPACT'].includes(surfaceSafetyAction)
 
   const dateLabel = useMemo(() => {
     if (!day?.date) return day?.dayLabel || ''
@@ -494,6 +564,7 @@ export default function ForgedDayView({
       <PaperSection key={hyroxSession.id} title={hyroxSession.title || 'HYROX session'} tone="red" px={px}
         icon={<span className="forged-stamp forged-stamp--hyrox" data-state={sessionState(hyroxSession, completedSet)}><Activity size={16} /></span>}>
         <p className="forged-must-do">Must do</p>
+        <CanonicalSessionTruth session={hyroxSession} px={px} />
         <p className="forged-hand" style={{ margin: '0 0 8px', fontSize: px(15), fontWeight: 800 }}>HYROX-specific session · canonical metric prescription</p>
         {facts.purpose && <p style={{ margin: '0 0 9px', fontSize: px(13), lineHeight: 1.5 }}>{facts.purpose}</p>}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, padding: '9px 10px', borderRadius: 8, background: 'rgba(194,65,12,0.05)', fontSize: px(12) }}>
@@ -565,11 +636,13 @@ export default function ForgedDayView({
     const secondaryTitle = secondaryWorkoutTitle(runSession, canonicalTitle)
     const isPrimary = primarySessionKind === 'run'
     const recognized = recognizesSession(runSession, 'run')
-    const canExecute = canExecuteSession(runSession, 'run')
+    const surfaceExecutable = !runSession.executability || runSession.executability === 'EXECUTABLE'
+    const canExecute = surfaceExecutable && canExecuteSession(runSession, 'run')
     return (
       <PaperSection title={canonicalTitle} tone="run" px={px}
         icon={<span className="forged-stamp forged-stamp--run" data-state={sessionState(runSession, completedSet)}><Footprints size={16} /></span>}>
         <p className="forged-must-do">Must do</p>
+        <CanonicalSessionTruth session={runSession} px={px} />
         {secondaryTitle && <p className="forged-hand" style={{ fontSize: px(15), margin: '0 0 8px', fontWeight: 800 }}>{secondaryTitle}</p>}
         {isBenchmarkRun && (
           <p className="forged-hand forged-sec-red" style={{ fontSize: px(14), margin: '0 0 8px', fontWeight: 800 }}>
@@ -627,6 +700,12 @@ export default function ForgedDayView({
                 Start Run
               </button>
             )}
+            {!done && !surfaceExecutable && (
+              <button type="button" disabled title="This run is outside the accepted safety scope"
+                className={isPrimary ? 'forged-start-run' : undefined} style={{ flex: '1 1 140px', minHeight: 48, border: isPrimary ? 'none' : '1px solid rgba(60,55,45,0.24)', borderRadius: 8, padding: '12px', background: isPrimary ? undefined : 'transparent', color: isPrimary ? undefined : 'var(--ink, #241F18)', fontWeight: 900, fontSize: px(14), cursor: 'not-allowed', opacity: 0.5 }}>
+                Run blocked by safety scope
+              </button>
+            )}
             <button type="button" onClick={() => onToggleComplete?.(runSession.id)} disabled={updating}
               style={{ flex: '0 0 auto', border: '1px solid rgba(60,55,45,0.2)', borderRadius: 8, padding: '12px 14px', background: 'transparent', display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: px(13), cursor: 'pointer' }}>
               {done ? <CheckCircle2 size={16} color="#15803D" /> : <Circle size={16} />} {done ? 'Done' : 'Mark done'}
@@ -655,11 +734,13 @@ export default function ForgedDayView({
     const secondaryTitle = secondaryWorkoutTitle(liftSession, canonicalTitle)
     const isPrimary = primarySessionKind === 'lift'
     const recognized = recognizesSession(liftSession, 'lift')
-    const canExecute = canExecuteSession(liftSession, 'lift')
+    const surfaceExecutable = !liftSession.executability || liftSession.executability === 'EXECUTABLE'
+    const canExecute = surfaceExecutable && canExecuteSession(liftSession, 'lift')
     return (
       <PaperSection title={canonicalTitle} px={px}
         icon={<span className="forged-stamp forged-stamp--lift" data-state={sessionState(liftSession, completedSet)}><Dumbbell size={16} /></span>}>
         <p className="forged-must-do">Must do</p>
+        <CanonicalSessionTruth session={liftSession} px={px} />
         {secondaryTitle && <p className="forged-hand" style={{ fontSize: px(15), margin: '0 0 8px', fontWeight: 800 }}>{secondaryTitle}</p>}
         {f.focus && <p className="forged-hand" style={{ fontSize: px(15), margin: '0 0 8px' }}>{f.focus}</p>}
         <div style={{ marginBottom: 10, padding: '9px 10px', border: '1px solid rgba(60,55,45,0.14)', borderRadius: 8, background: 'rgba(255,255,255,0.28)' }}>
@@ -713,6 +794,12 @@ export default function ForgedDayView({
                 title="Start this scheduled lift"
                 className={isPrimary ? 'forged-start-lift' : undefined} style={{ flex: '1 1 140px', minHeight: 48, border: isPrimary ? 'none' : '1px solid rgba(60,55,45,0.24)', borderRadius: 8, padding: '12px', background: isPrimary ? undefined : 'transparent', color: isPrimary ? undefined : 'var(--ink, #241F18)', fontWeight: 900, fontSize: px(14), cursor: typeof onStartLift === 'function' ? 'pointer' : 'not-allowed', opacity: typeof onStartLift === 'function' ? 1 : 0.5 }}>
                 Start Lift
+              </button>
+            )}
+            {!done && !surfaceExecutable && (
+              <button type="button" disabled title="This lift is outside the accepted safety scope"
+                className={isPrimary ? 'forged-start-lift' : undefined} style={{ flex: '1 1 140px', minHeight: 48, border: isPrimary ? 'none' : '1px solid rgba(60,55,45,0.24)', borderRadius: 8, padding: '12px', background: isPrimary ? undefined : 'transparent', color: isPrimary ? undefined : 'var(--ink, #241F18)', fontWeight: 900, fontSize: px(14), cursor: 'not-allowed', opacity: 0.5 }}>
+                Lift blocked by safety scope
               </button>
             )}
             <button type="button" onClick={() => onToggleComplete?.(liftSession.id)} disabled={updating}
@@ -828,11 +915,11 @@ export default function ForgedDayView({
               <button
                 type="button"
                 onClick={onStartUnplannedRun}
-                disabled={typeof onStartUnplannedRun !== 'function'}
+                disabled={typeof onStartUnplannedRun !== 'function' || surfaceBlocksUnplannedRun}
                 className="forged-start-run"
-                style={{ marginTop: 16, width: '100%', minHeight: 48, border: 'none', borderRadius: 8, padding: '12px 14px', fontWeight: 900, cursor: typeof onStartUnplannedRun === 'function' ? 'pointer' : 'not-allowed', opacity: typeof onStartUnplannedRun === 'function' ? 1 : 0.5 }}
+                style={{ marginTop: 16, width: '100%', minHeight: 48, border: 'none', borderRadius: 8, padding: '12px 14px', fontWeight: 900, cursor: typeof onStartUnplannedRun === 'function' && !surfaceBlocksUnplannedRun ? 'pointer' : 'not-allowed', opacity: typeof onStartUnplannedRun === 'function' && !surfaceBlocksUnplannedRun ? 1 : 0.5 }}
               >
-                Start a run
+                {surfaceBlocksUnplannedRun ? 'Run blocked by safety scope' : 'Start a run'}
               </button>
               <p style={{ fontSize: px(11), color: 'var(--ink-soft, #5A554B)', marginTop: 6 }}>Choose an extra run or move a missed session onto today.</p>
             </> : null

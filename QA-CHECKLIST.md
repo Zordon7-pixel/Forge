@@ -163,3 +163,26 @@ node backend/test/planningRevisionConcurrency.smoke.js
 ```
 
 Batch 10 status (2026-08-14): `patched`; the four-command gate passes locally. Independent QA and Hermes verification remain pending.
+
+## Goal-Backward Coaching v2.4 — Phase 5A
+
+- [ ] Only the approved 10-file Batch 12 allowlist changed; no migration, package/lock, native, Watch, FIT, or unrelated tracked file changed
+- [ ] Applicable `preview|on` assignments serve one `goal_backward_surface_manifest_v1` beside the legacy-compatible plan; missing, invalid, `off`, and `shadow` responses retain the prior response shape
+- [ ] Manifest identity binds the decision/candidate/plan/session-set hashes, candidate/plan/athlete-state/surface revisions, safety-state hash, and goal revisions to the applied assignment and canonical artifact chain
+- [ ] Weekly brief, Plan, calendar, and detail consume the exact accepted session role, ordered steps/targets, provenance, reason codes, safety scope/executability, criteria, capability, and content hash
+- [ ] The frontend does not invent a v2.4 shoe, HR, pace, load, repetition, or replacement prescription; canonical numeric display is a representation of accepted targets only
+- [ ] Any plan, assignment, session revision, content hash, step, target/provenance, safety, or capability mismatch yields `SURFACE_REVISION_MISMATCH`, removes executable sessions, and prevents run/lift/Watch starts
+- [ ] `NO_RUNNING`, `MODIFY_IMPACT`, and `FULL_REST` keep applicable run controls closed; restricted sessions disclose the accepted safety scope and executability
+- [ ] Legacy plans without a manifest retain their existing calendar, weekly brief, daily execution, and detail presentation
+- [ ] The 320 px and 393 px fixtures expose canonical purpose/feasibility/reasons and session truth with bounded width, wrapping, and no unrelated style rewrite
+
+Run the Phase 5A gate:
+
+```sh
+node frontend/test/goalBackwardSurfaces.smoke.mjs
+node frontend/test/weeklyRunBrief.smoke.mjs
+node frontend/test/planCalendar.smoke.mjs
+npm --prefix frontend run build
+```
+
+Batch 12 status (2026-08-14): `patched`; the four-command gate passes locally. Independent QA and Hermes verification remain pending.

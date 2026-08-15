@@ -268,6 +268,9 @@ function dayTitle(day) {
 }
 
 function dayPurpose(day, session) {
+  if (session?.canonical) {
+    return (session.purposeReasonCodes || []).join(' · ')
+  }
   return String(
     session?.prescription?.purpose
       || session?.prescription?.description
@@ -276,6 +279,44 @@ function dayPurpose(day, session) {
       || day?.whyToday
       || '',
   ).trim()
+}
+
+function canonicalTargetValue(target = {}) {
+  if (!target || typeof target !== 'object') return ''
+  return Object.entries(target).map(([key, value]) => {
+    if (value === null || value === undefined || value === '') return ''
+    const label = String(key).replaceAll('_', ' ')
+    const rendered = Array.isArray(value) ? value.join('–') : String(value)
+    return `${label}: ${rendered}`
+  }).filter(Boolean).join(' · ')
+}
+
+function canonicalTargets(session) {
+  if (!session?.canonical || !Array.isArray(session.steps)) return ''
+  const walk = (steps) => steps.flatMap((step) => [
+    canonicalTargetValue(step?.target),
+    ...(Array.isArray(step?.children) ? walk(step.children) : []),
+  ]).filter(Boolean)
+  return walk(session.steps).join(' · ')
+}
+
+function canonicalBriefFields(session) {
+  if (!session?.canonical) return null
+  return {
+    sessionId: session.id,
+    sessionRevision: session.sessionRevision,
+    planRevision: session.planRevision,
+    contentHash: session.contentHash,
+    role: session.role,
+    steps: session.steps,
+    targetProvenance: session.targetProvenance,
+    purposeReasonCodes: session.purposeReasonCodes,
+    adjustmentCriteria: session.adjustmentCriteria,
+    stopCriteria: session.stopCriteria,
+    safetyScope: session.safetyScope,
+    executability: session.executability,
+    capability: session.capability,
+  }
 }
 
 function trustedHrTarget(session, hrContext = {}) {
@@ -355,12 +396,16 @@ export function buildWeeklyRunBrief({
   hrContext = { profile: null, zones: [] },
 } = {}) {
   if (!week) return null
+  if (week.surface?.status === 'blocked') return null
+  const canonicalSurface = week.surface?.status === 'accepted'
   const hardDayShoes = new Set()
   const days = (week.days || []).map((day) => {
     const session = primarySession(day)
     const intensity = sessionIntensity(session)
     const isHard = ['quality', 'long', 'race', 'hyrox'].includes(intensity.key)
-    const footwear = session?.kind === 'run' && gear.available
+    const footwear = session?.canonical
+      ? null
+      : session?.kind === 'run' && gear.available
       ? shoePick(gear.shoes, session, isHard ? hardDayShoes : new Set())
       : session?.kind === 'run'
         ? { state: 'unavailable', primary: null, alternate: null, warning: 'Gear is unavailable right now. No shoe was guessed.' }
@@ -387,8 +432,8 @@ export function buildWeeklyRunBrief({
       isRest: day.isRest,
       mission: dayPurpose(day, session),
       footwear,
-      hrTarget: session?.kind === 'run' ? trustedHrTarget(session, hrContext) : null,
-      effortTarget: session?.kind === 'run' ? String(
+      hrTarget: session?.canonical ? null : session?.kind === 'run' ? trustedHrTarget(session, hrContext) : null,
+      effortTarget: session?.canonical ? canonicalTargets(session) : session?.kind === 'run' ? String(
         session?.prescription?.pace_target
           || session?.prescription?.pace
           || session?.prescription?.intensity
@@ -399,6 +444,7 @@ export function buildWeeklyRunBrief({
           || '',
       ).trim() : '',
       adjustmentReason,
+      canonical: canonicalBriefFields(session),
       rawDay: day,
     }
   })
@@ -435,8 +481,14 @@ export function buildWeeklyRunBrief({
   ].filter(Boolean))]
 
   return {
+    surface: week.surface || { status: 'legacy', reasonCodes: [] },
     dateRange: dateRangeLabel(week.days),
     purpose,
+    feasibility: canonicalSurface ? {
+      status: week.surface.manifest?.feasibility?.status || null,
+      reasonCodes: Array.isArray(week.surface.manifest?.feasibility?.reason_codes)
+        ? week.surface.manifest.feasibility.reason_codes : [],
+    } : null,
     totalMiles,
     totalMilesLabel: totalMiles > 0 ? `${totalMilesIsEstimate ? '~' : ''}${totalMiles.toFixed(1)} mi` : '',
     totalTimeLabel: formatMinutes(totalMinutes),
@@ -446,7 +498,7 @@ export function buildWeeklyRunBrief({
     today,
     gearAvailable: gear.available !== false,
     gearWarnings,
-    safetyRules: [
+    safetyRules: canonicalSurface ? [] : [
       { if: 'pain is sharp, worsening, or changes your movement', then: 'stop the session and use the injury check-in before resuming' },
       { if: 'soreness does not improve during the warm-up', then: 'choose recovery or rest and check in so Forge can adapt safely' },
       { if: 'normal effort feels unexpectedly hard', then: 'stay within the saved effort target instead of forcing pace' },

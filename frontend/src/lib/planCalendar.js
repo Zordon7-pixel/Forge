@@ -9,6 +9,7 @@
 // arithmetic uses the local Date(y, m, d + n) constructor which is DST-safe.
 
 import { isRunningActivity } from './activityType.js'
+import { validateSurfaceManifest } from './dailyExecutionCore.js'
 
 export const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
@@ -34,6 +35,9 @@ const FEASIBILITY_LABELS = Object.freeze({
   stretch: 'Stretch target',
   unsafe: 'Goal needs adjustment',
   not_applicable: 'Completion goal',
+  unvalidated: 'Target needs evidence',
+  at_risk: 'At risk',
+  not_currently_supported: 'Not currently supported',
 })
 
 const HYROX_RUNWAY_LABELS = Object.freeze({
@@ -388,9 +392,10 @@ export function resolvePlanWeekSelection(plan, userPlan, selectedWeekIndex, now 
 
 export function sessionKind(rawSession = {}) {
   const raw = String(
-    rawSession.kind || rawSession.workout_type || rawSession.type || '',
+    rawSession.kind || rawSession.workout_family || rawSession.workout_type || rawSession.type || '',
   ).toLowerCase()
   if (raw.includes('rest')) return 'rest'
+  if (raw === 'mobility' || raw === 'manual_recovery') return 'rest'
   if (rawSession.kind === 'hyrox' || raw.startsWith('hyrox')) return 'hyrox'
   if (raw.includes('strength') || raw.includes('lift') || raw.includes('cross')) return 'lift'
   return 'run'
@@ -490,16 +495,33 @@ export function normalizeLiftExercisePrescription(exercise = {}) {
 // prescription when persisted labels conflict with hard-workout instructions.
 export function normalizeSession(rawSession, context = {}) {
   const kind = sessionKind(rawSession)
-  const normalized = normalizePrescription(rawSession)
+  const isCanonical = Number(rawSession?.canonical_workout_schema_version) === 1
+    && Boolean(rawSession?.session_id)
+  const normalized = isCanonical
+    ? { prescription: rawSession, raw: rawSession, adjusted: false }
+    : normalizePrescription(rawSession)
   const prescription = normalized.prescription
   const safeRaw = normalized.raw
   const anchor = context.anchor || 'day'
   const index = context.index ?? 0
-  const id = firstDefined(rawSession.id, context.fallbackId, `${anchor}-${kind}-${index}`)
+  const id = firstDefined(rawSession.session_id, rawSession.id, context.fallbackId, `${anchor}-${kind}-${index}`)
   const distanceMiles =
-    Number(firstDefined(rawSession.distance_miles, prescription.distanceMiles, prescription.distance_miles, 0)) || 0
+    Number(firstDefined(
+      rawSession.distance_miles,
+      prescription.distanceMiles,
+      prescription.distance_miles,
+      isCanonical && Number.isFinite(Number(rawSession.derived_totals?.distance_m))
+        ? Number(rawSession.derived_totals.distance_m) / 1609.344 : 0,
+    )) || 0
   const durationMinutes =
-    Number(firstDefined(rawSession.durationMin, rawSession.duration_min, prescription.durationMinutes, prescription.duration_min, 0)) || 0
+    Number(firstDefined(
+      rawSession.durationMin,
+      rawSession.duration_min,
+      prescription.durationMinutes,
+      prescription.duration_min,
+      isCanonical && Number.isFinite(Number(rawSession.derived_totals?.duration_s))
+        ? Number(rawSession.derived_totals.duration_s) / 60 : 0,
+    )) || 0
   const prescriptionBasis = String(firstDefined(rawSession.prescription_basis, prescription.prescriptionBasis, prescription.prescription_basis, '') || '').toLowerCase()
   const type = firstDefined(prescription.type, safeRaw.type, kind === 'lift' ? 'strength' : kind)
   const title = firstDefined(
@@ -542,6 +564,23 @@ export function normalizeSession(rawSession, context = {}) {
     adjusted: Boolean(safeRaw.adjusted || safeRaw.status === 'adjusted' || prescription.adjusted || normalized.adjusted),
     prescription,
     raw: safeRaw,
+    canonical: isCanonical,
+    sessionRevision: isCanonical ? Number(rawSession.session_revision) : null,
+    planId: isCanonical ? rawSession.plan_id : null,
+    planRevision: isCanonical ? Number(rawSession.plan_revision) : null,
+    decisionId: isCanonical ? rawSession.decision_id : null,
+    role: isCanonical ? rawSession.role : null,
+    workoutFamily: isCanonical ? rawSession.workout_family : null,
+    steps: isCanonical ? rawSession.steps : null,
+    targetProvenance: isCanonical ? rawSession.target_provenance : null,
+    purposeReasonCodes: isCanonical ? rawSession.purpose_reason_codes : null,
+    successCriteria: isCanonical ? rawSession.success_criteria : null,
+    adjustmentCriteria: isCanonical ? rawSession.adjustment_criteria : null,
+    stopCriteria: isCanonical ? rawSession.stop_criteria : null,
+    safetyScope: isCanonical ? rawSession.safety_scope : null,
+    executability: isCanonical ? rawSession.executability : null,
+    capability: isCanonical ? rawSession.capability : null,
+    contentHash: isCanonical ? rawSession.content_hash : null,
   }
 }
 
@@ -669,12 +708,16 @@ export function buildWeekDays(weekData, weekStartDate, options = {}) {
       )
       if (isSchemaV2Entry(rawEntry)) {
         return rawEntry.sessions
-          .map((raw, index) => normalizeSession(raw, {
+          .map((raw, index) => {
+            const rawId = String(raw?.session_id ?? raw?.id ?? '')
+            const authoritative = options.canonicalSessionsById?.get(rawId) || raw
+            return normalizeSession(authoritative, {
             anchor,
             index,
             dayCompleted: rawEntry.completed === true,
             dayStatus: rawEntry.status || rawEntry.state,
-          }))
+            })
+          })
       }
 
       // Legacy flat/day entry: the entry itself is one session. Keep the
@@ -694,7 +737,9 @@ export function buildWeekDays(weekData, weekStartDate, options = {}) {
       ))
       : normalizedSessions
     const restPrescription = visibleSessions.find((session) => session.kind === 'rest') || null
-    let sessions = visibleSessions.filter((session) => session.kind !== 'rest')
+    let sessions = options.surfaceBlocked
+      ? []
+      : visibleSessions.filter((session) => session.kind !== 'rest')
 
     if (runOnly) sessions = sessions.filter((session) => session.kind === 'run')
 
@@ -706,7 +751,7 @@ export function buildWeekDays(weekData, weekStartDate, options = {}) {
       date,
       sessions,
       isRest,
-      restPrescription,
+      restPrescription: options.surfaceBlocked ? null : restPrescription,
       orderGuidance: firstDefined(...mappedEntries.flatMap(({ entry: item }) => [item?.orderGuidance, item?.order_guidance])),
       whyToday: firstDefined(...mappedEntries.flatMap(({ entry: item }) => [item?.whyToday, item?.why_today, item?.explanation])),
       recovery: firstDefined(...mappedEntries.flatMap(({ entry: item }) => [item?.recovery, item?.recoveryNote])),
@@ -778,6 +823,7 @@ export function monthMarkWithRecordedRuns(dayModel, activities = []) {
 export function buildCalendarModel(plan, userPlan, options = {}) {
   const now = options.now || new Date()
   const data = planData(plan)
+  const surface = validateSurfaceManifest({ plan, userPlan, manifest: options.surfaceManifest || null })
   const mode = getPlanMode(plan)
   const runOnly = mode === 'run_only'
   const weeks = getWeeks(plan)
@@ -786,14 +832,27 @@ export function buildCalendarModel(plan, userPlan, options = {}) {
 
   const weekModels = weeks.map((weekData, weekIndex) => {
     const startDate = deriveWeekStart(plan, userPlan, weekIndex, now)
+    const surfaceWeek = surface.status === 'accepted'
+      ? surface.manifest?.weeks?.find((entry) => (
+        Number(entry?.week) === Number(weekData?.week || weekIndex + 1)
+        && (!entry?.start_date || entry.start_date === toISODate(startDate))
+      ))
+      : null
     return {
       weekNumber: Number(weekData?.week || weekIndex + 1),
       weekIndex,
       phase: weekData?.phase || null,
       startDate,
       startISO: toISODate(startDate),
-      days: buildWeekDays(weekData, startDate, { runOnly, removedSessionIds }),
-      purpose: firstDefined(weekData?.purpose, weekData?.weekPurpose, weekData?.week_purpose),
+      days: buildWeekDays(weekData, startDate, {
+        runOnly,
+        removedSessionIds,
+        canonicalSessionsById: surface.sessionsById,
+        surfaceBlocked: surface.status === 'blocked',
+      }),
+      purpose: surface.status === 'accepted'
+        ? firstDefined(surfaceWeek?.purpose, surface.manifest?.purpose, weekData?.purpose, weekData?.weekPurpose, weekData?.week_purpose)
+        : firstDefined(weekData?.purpose, weekData?.weekPurpose, weekData?.week_purpose),
       keyQualitySession: firstDefined(weekData?.keyQualitySession, weekData?.key_quality_session),
       longRunTarget: firstDefined(weekData?.longRunTarget, weekData?.long_run_target),
       strengthIntent: firstDefined(weekData?.strengthIntent, weekData?.strength_intent),
@@ -801,6 +860,7 @@ export function buildCalendarModel(plan, userPlan, options = {}) {
       deloadReason: firstDefined(weekData?.deloadReason, weekData?.deload_reason),
       bridgeWeek: Boolean(firstDefined(weekData?.bridgeWeek, weekData?.bridge_week, false)),
       raw: weekData,
+      surface,
     }
   })
 
@@ -832,6 +892,7 @@ export function buildCalendarModel(plan, userPlan, options = {}) {
   const trainingEvidence = firstDefined(data.trainingEvidence, data.training_evidence)
 
   return {
+    surface,
     mode,
     modeLabel: planModeLabel(mode),
     runOnly,
@@ -839,11 +900,17 @@ export function buildCalendarModel(plan, userPlan, options = {}) {
     goal: getGoal(plan),
     goals: getGoals(plan),
     feasibility: {
-      status: overallFeasibility || null,
-      label: feasibilityLabel(overallFeasibility),
+      status: surface.status === 'accepted'
+        ? String(surface.manifest?.feasibility?.status || '') || null
+        : overallFeasibility || null,
+      label: feasibilityLabel(surface.status === 'accepted'
+        ? surface.manifest?.feasibility?.status
+        : overallFeasibility),
       goals: normalizedGoalFeasibilities,
       checkpoint: firstDefined(data.checkpoint),
-      reasons: Array.isArray(data.reasons) ? data.reasons : [],
+      reasons: surface.status === 'accepted'
+        ? (Array.isArray(surface.manifest?.feasibility?.reason_codes) ? surface.manifest.feasibility.reason_codes : [])
+        : Array.isArray(data.reasons) ? data.reasons : [],
     },
     whyThisPlan: whyThisPlan && typeof whyThisPlan === 'object' ? whyThisPlan : null,
     inputSummary: inputSummary && typeof inputSummary === 'object' ? inputSummary : null,

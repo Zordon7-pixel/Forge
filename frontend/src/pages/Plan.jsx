@@ -35,6 +35,7 @@ import {
 } from '../lib/planSchedule'
 
 const RoutePlanner = lazy(() => import('../components/RoutePlanner'))
+const SURFACE_REVISION_MISMATCH = 'SURFACE_REVISION_MISMATCH'
 
 function executionFromCalendar(model, dateISO, completedSet) {
   if (!model) return null
@@ -117,6 +118,7 @@ export default function Plan() {
   const { isPro, loading: proLoading } = useProContext()
   const [myPlan, setMyPlan] = useState(null)
   const [myUserPlan, setMyUserPlan] = useState(null)
+  const [surfaceManifest, setSurfaceManifest] = useState(null)
   const [adaptationProposal, setAdaptationProposal] = useState(null)
   const [adaptationLoading, setAdaptationLoading] = useState(false)
   const [adaptationError, setAdaptationError] = useState('')
@@ -176,9 +178,13 @@ export default function Plan() {
       const myRes = await api.get('/plans/my')
       const nextPlan = myRes.data?.plan || null
       const nextUserPlan = myRes.data?.user_plan || null
+      const nextSurfaceManifest = myRes.data?.surface_manifest || null
       setMyPlan(nextPlan)
       setMyUserPlan(nextUserPlan)
-      const nextCalendar = nextPlan ? buildCalendarModel(nextPlan, nextUserPlan) : null
+      setSurfaceManifest(nextSurfaceManifest)
+      const nextCalendar = nextPlan
+        ? buildCalendarModel(nextPlan, nextUserPlan, { surfaceManifest: nextSurfaceManifest })
+        : null
       const runDateRange = calendarDateRange(nextCalendar, todayISO())
       const [executionRes, racesRes, runsRes, checkinRes, injuryRes, readinessRes, gearRes, hrRes] = await Promise.all([
         fetchDailyExecution(todayISO())
@@ -258,6 +264,7 @@ export default function Plan() {
       return {
         plan: nextPlan,
         userPlan: nextUserPlan,
+        surfaceManifest: nextSurfaceManifest,
         adaptationLoaded,
         adaptationProposal: loadedAdaptationProposal,
       }
@@ -315,8 +322,8 @@ export default function Plan() {
   )
 
   const model = useMemo(
-    () => (myPlan ? buildCalendarModel(myPlan, myUserPlan) : null),
-    [myPlan, myUserPlan],
+    () => (myPlan ? buildCalendarModel(myPlan, myUserPlan, { surfaceManifest }) : null),
+    [myPlan, myUserPlan, surfaceManifest],
   )
   const weekIndex = myPlan
     ? resolvePlanWeekSelection(myPlan, myUserPlan, selectedWeekIndex)
@@ -712,7 +719,11 @@ export default function Plan() {
   }
 
   const startRunSession = (runSession, { plannedRoute = null, surface = 'road' } = {}) => {
-    if (!runSession || !currentExecutionAllows(runSession, 'run') || !confirmOffScheduleStart('This run')) return
+    if (!runSession || runSession.executability === 'RESTRICTED'
+      || runSession.executability === 'NOT_EXECUTABLE'
+      || calendarModel?.surface?.status === 'blocked'
+      || !currentExecutionAllows(runSession, 'run')
+      || !confirmOffScheduleStart('This run')) return
     navigate('/warmup', { state: withActiveRunReturnTarget({
       planSessionId: runSession.id != null ? String(runSession.id) : null,
       currentWeek: Number.isFinite(selectedDay?.weekIndex) ? selectedDay.weekIndex + 1 : currentWeek,
@@ -734,7 +745,11 @@ export default function Plan() {
   }
 
   const startLiftSession = (liftSession) => {
-    if (!liftSession || !currentExecutionAllows(liftSession, 'lift') || !confirmOffScheduleStart('This lift')) return
+    if (!liftSession || liftSession.executability === 'RESTRICTED'
+      || liftSession.executability === 'NOT_EXECUTABLE'
+      || calendarModel?.surface?.status === 'blocked'
+      || !currentExecutionAllows(liftSession, 'lift')
+      || !confirmOffScheduleStart('This lift')) return
     navigate('/log-lift', { state: {
       planSessionId: liftSession.id != null ? String(liftSession.id) : null,
       currentWeek: Number.isFinite(selectedDay?.weekIndex) ? selectedDay.weekIndex + 1 : currentWeek,
@@ -988,8 +1003,17 @@ export default function Plan() {
           </section>
         )}
 
+        {myPlan && calendarModel?.surface?.status === 'blocked' && (
+          <section role="alert" aria-live="assertive" className="min-w-0 rounded-xl p-4" style={{ background: 'var(--danger-dim)', border: '1px solid var(--danger)', overflowWrap: 'anywhere' }}>
+            <h2 className="text-base font-black" style={{ color: 'var(--text-primary)' }}>Plan details are temporarily blocked</h2>
+            <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
+              Forge detected {SURFACE_REVISION_MISMATCH}. Refresh the plan before viewing or starting this prescription.
+            </p>
+          </section>
+        )}
+
         {/* Active plan: the Forged Training Calendar is primary */}
-        {myPlan && calendarModel && (
+        {myPlan && calendarModel && calendarModel.surface?.status !== 'blocked' && (
           <section
             ref={currentPlanCalendarRef}
             id="current-plan-calendar"
@@ -1010,6 +1034,7 @@ export default function Plan() {
                 feasibility: calendarModel.feasibility,
                 inputSummary: calendarModel.inputSummary || planInputs,
                 trainingEvidence: calendarModel.trainingEvidence?.length ? calendarModel.trainingEvidence : trainingEvidence,
+                surface: calendarModel.surface,
               }}
               completedSet={completedSet}
               onToggleComplete={toggleSession}

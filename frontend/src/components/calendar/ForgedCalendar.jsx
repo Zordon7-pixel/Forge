@@ -316,6 +316,45 @@ function recordedRunSummary(activities = []) {
   return totalMiles > 0 ? `${runLabel} · ${totalMiles.toFixed(2)} mi` : runLabel
 }
 
+function canonicalReasonLabel(value) {
+  return String(value || '').replaceAll('_', ' ').toLowerCase().replace(/^./, (letter) => letter.toUpperCase())
+}
+
+function SurfaceManifestSummary({ surface }) {
+  if (surface?.status !== 'accepted') return null
+  const identity = surface.identity || {}
+  const manifest = surface.manifest || {}
+  return (
+    <details style={{ minWidth: 0, marginBottom: 12, border: '1px solid var(--border-subtle)', borderRadius: 8, background: 'var(--bg-card)', overflow: 'hidden' }}>
+      <summary style={{ minHeight: 44, display: 'flex', alignItems: 'center', padding: '10px 12px', cursor: 'pointer', fontSize: 12, fontWeight: 900 }}>
+        Canonical plan · plan r{identity.plan_revision} · surface r{manifest.surface_revision}
+      </summary>
+      <dl style={{ minWidth: 0, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 7, margin: 0, padding: '0 12px 12px', overflowWrap: 'anywhere', fontSize: 11 }}>
+        <div><dt style={{ fontWeight: 900 }}>Decision</dt><dd style={{ margin: 0 }}>{identity.decision_id} · {identity.decision_hash}</dd></div>
+        <div><dt style={{ fontWeight: 900 }}>Candidate</dt><dd style={{ margin: 0 }}>{identity.candidate_id} · r{identity.candidate_revision} · {identity.candidate_hash}</dd></div>
+        <div><dt style={{ fontWeight: 900 }}>Plan/session set</dt><dd style={{ margin: 0 }}>{identity.plan_id} · {identity.canonical_session_set_hash}</dd></div>
+        <div><dt style={{ fontWeight: 900 }}>State and safety</dt><dd style={{ margin: 0 }}>Athlete state r{identity.athlete_state_revision} · {identity.safety_state_hash}</dd></div>
+        <div><dt style={{ fontWeight: 900 }}>Safety action</dt><dd style={{ margin: 0 }}>{manifest.safety?.action || 'NORMAL'} · {(manifest.safety?.scope || []).join(', ') || 'No scoped restriction'}{manifest.safety?.reason_codes?.length ? ` · ${manifest.safety.reason_codes.join(' · ')}` : ''}</dd></div>
+        <div><dt style={{ fontWeight: 900 }}>Goal revisions</dt><dd style={{ margin: 0 }}>{Object.entries(identity.goal_revisions || {}).map(([id, revision]) => `${id}: r${revision}`).join(' · ') || 'None'}</dd></div>
+      </dl>
+    </details>
+  )
+}
+
+function CanonicalBriefTruth({ canonical }) {
+  if (!canonical) return null
+  const purposeReasonCodes = Array.isArray(canonical.purposeReasonCodes) ? canonical.purposeReasonCodes : []
+  const targetProvenance = Array.isArray(canonical.targetProvenance) ? canonical.targetProvenance : []
+  const capability = canonical.capability?.classification || 'NOT_EXPORTABLE'
+  return (
+    <span role="note" style={{ display: 'block', minWidth: 0, marginTop: 8, padding: '8px 10px', borderRadius: 8, background: 'var(--bg-input)', overflowWrap: 'anywhere', fontSize: 11 }}>
+      <span style={{ display: 'block', margin: 0, fontWeight: 900 }}>{canonical.role} · {capability.replaceAll('_', ' ')}</span>
+      {purposeReasonCodes.length > 0 && <span style={{ display: 'block', marginTop: 3 }}>Why: {purposeReasonCodes.map(canonicalReasonLabel).join(' · ')}</span>}
+      <span style={{ display: 'block', marginTop: 3 }}>Target provenance: {targetProvenance.length} accepted source{targetProvenance.length === 1 ? '' : 's'} · {canonical.executability}</span>
+    </span>
+  )
+}
+
 function WeeklyBriefHeader({ brief, onOpenDay }) {
   if (!brief) return null
   const next = brief.days.find((day) => !day.isRest && day.state !== 'completed' && day.dateISO > (brief.today?.dateISO || ''))
@@ -326,6 +365,12 @@ function WeeklyBriefHeader({ brief, onOpenDay }) {
         <span>{brief.dateRange}</span>
       </div>
       <h3 id="forged-weekly-brief-title">{brief.purpose}</h3>
+      {brief.feasibility?.status && (
+        <div role="status" style={{ minWidth: 0, marginTop: 8, overflowWrap: 'anywhere', fontSize: 12 }}>
+          <strong>Goal feasibility:</strong> {canonicalReasonLabel(brief.feasibility.status)}
+          {brief.feasibility.reasonCodes?.length > 0 && <span> · {brief.feasibility.reasonCodes.map(canonicalReasonLabel).join(' · ')}</span>}
+        </div>
+      )}
       <div className="forged-weekly-brief-totals" role="group" aria-label="Weekly training target">
         {brief.totalMilesLabel && <span>{brief.totalMilesLabel}</span>}
         {brief.totalTimeLabel && <span>{brief.totalTimeLabel}</span>}
@@ -337,6 +382,7 @@ function WeeklyBriefHeader({ brief, onOpenDay }) {
             <span className="forged-mission-label">Today&apos;s mission</span>
             <strong>{brief.today.title}</strong>
             <span>{brief.today.target} · {brief.today.readiness}</span>
+            <CanonicalBriefTruth canonical={brief.today.canonical} />
           </span>
           <ChevronRight size={18} aria-hidden="true" />
         </button>
@@ -415,6 +461,7 @@ function WeekRow({ day, briefDay, isToday, completedSet, recordedRuns = [], onOp
             <span>{briefDay.readiness}</span>
           </span>
         )}
+        <CanonicalBriefTruth canonical={briefDay?.canonical} />
         {!day.isRest && hasRecordedRun && (
           <span className="forged-day-recorded">{recordedRunSummary(recordedRuns)}{unlinkedRun ? ' · Not linked to plan' : ''}</span>
         )}
@@ -486,6 +533,7 @@ export default function ForgedCalendar({
 
   return (
     <div className="forged-cal" style={{ width: '100%', maxWidth: '100%', minWidth: 0, overflowX: 'clip' }}>
+      <SurfaceManifestSummary surface={model?.surface} />
       {/* Header */}
       <div className="rounded-lg p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
         <div className="forged-cal-header">
