@@ -2572,6 +2572,183 @@ async function canonicalSurfaceResponseField(userId, activeRow, query = dbGet) {
   return manifest ? { surface_manifest: manifest } : {};
 }
 
+const WORKOUT_START_ACCESS_SCHEMA = 'goal_backward_workout_start_access_v1';
+const WORKOUT_START_RUNNING_FAMILIES = new Set([
+  'recovery_run', 'easy_run', 'long_aerobic', 'steady_run', 'threshold_run',
+  'interval_run', 'race_rhythm_run', 'race', 'assessment',
+]);
+const WORKOUT_START_HIGH_INTENSITY_FAMILIES = new Set([
+  'threshold_run', 'interval_run', 'race_rhythm_run', 'race',
+  'hyrox_compromised', 'hyrox_partial_simulation', 'hyrox_full_simulation',
+]);
+
+function workoutStartSessionId(session) {
+  const value = session?.session_id ?? session?.id;
+  return value === null || value === undefined ? '' : String(value);
+}
+
+function workoutStartFamily(session, activity = {}) {
+  return String(session?.workout_family || activity.workoutFamily || activity.workout_family || '').toLowerCase();
+}
+
+function workoutStartKind(session, activity = {}) {
+  const explicit = String(activity.kind || session?.kind || '').toLowerCase();
+  if (explicit) return explicit;
+  const family = workoutStartFamily(session, activity);
+  if (family.startsWith('strength_')) return 'lift';
+  if (family.startsWith('hyrox_')) return 'hybrid';
+  if (WORKOUT_START_RUNNING_FAMILIES.has(family)) return 'run';
+  return '';
+}
+
+function workoutStartScopes(session, activity = {}) {
+  if (session) {
+    return new Set((Array.isArray(session.safety_scope) ? session.safety_scope : [])
+      .map((value) => String(value || '').toUpperCase()).filter(Boolean));
+  }
+  return new Set([
+    ...(Array.isArray(activity.safetyScope) ? activity.safetyScope : []),
+    ...(Array.isArray(activity.safety_scope) ? activity.safety_scope : []),
+  ].map((value) => String(value || '').toUpperCase()).filter(Boolean));
+}
+
+function workoutStartRpes(value, found = []) {
+  if (Array.isArray(value)) {
+    value.forEach((entry) => workoutStartRpes(entry, found));
+    return found;
+  }
+  if (!value || typeof value !== 'object') return found;
+  for (const [key, entry] of Object.entries(value)) {
+    if (String(key).toLowerCase() === 'rpe' && Number.isFinite(Number(entry))) found.push(Number(entry));
+    else workoutStartRpes(entry, found);
+  }
+  return found;
+}
+
+function workoutStartHighIntensity(session, activity = {}) {
+  const explicit = Number(session
+    ? session.intensity_level
+    : activity.intensity ?? activity.intensityLevel);
+  if (Number.isFinite(explicit)) return explicit >= 3;
+  const rpes = workoutStartRpes(session?.steps || activity.steps || []);
+  if (rpes.length) return Math.max(...rpes) >= 3;
+  const family = workoutStartFamily(session, activity);
+  if (WORKOUT_START_HIGH_INTENSITY_FAMILIES.has(family)) return true;
+  if (['recovery_run', 'easy_run', 'mobility', 'manual_recovery', 'strength_upper'].includes(family)) return false;
+  const label = String(session?.intensity || activity.intensityLabel || '').toLowerCase();
+  if (/(hard|high|threshold|interval|race|tempo)/.test(label)) return true;
+  if (/(easy|recovery|technique|low)/.test(label)) return false;
+  return null;
+}
+
+function workoutStartSafetyAction(manifest) {
+  const safety = manifest?.safety && typeof manifest.safety === 'object' ? manifest.safety : {};
+  const action = String(safety.action || 'FULL_REST').toUpperCase();
+  if (action !== 'PROFESSIONAL_ASSESSMENT_RECOMMENDED') return action;
+  const scoped = String(safety.enforcement_action || safety.scoped_action || '').toUpperCase();
+  return scoped && scoped !== 'PROFESSIONAL_ASSESSMENT_RECOMMENDED' ? scoped : 'FULL_REST';
+}
+
+function workoutStartBlockReason(manifest, session, activity = {}) {
+  const action = workoutStartSafetyAction(manifest);
+  const scopes = workoutStartScopes(session, activity);
+  const family = workoutStartFamily(session, activity);
+  const kind = workoutStartKind(session, activity);
+  if (action === 'FULL_REST') return 'FULL_REST';
+  if (action === 'NO_RUNNING' && (
+    kind === 'run' || WORKOUT_START_RUNNING_FAMILIES.has(family)
+    || scopes.has('RUN') || scopes.has('IMPACT')
+  )) return 'NO_RUNNING';
+  if (action === 'NO_LOWER_BODY') {
+    const knownUpper = family === 'strength_upper';
+    const lower = scopes.has('LOWER_BODY') || scopes.has('RUN') || scopes.has('IMPACT')
+      || kind === 'run' || ['strength_lower', 'strength_full_body'].includes(family)
+      || family.startsWith('hyrox_') || (kind === 'lift' && !knownUpper);
+    if (lower) return 'NO_LOWER_BODY';
+  }
+  if (action === 'NO_HIGH_INTENSITY' && workoutStartHighIntensity(session, activity) !== false) {
+    return 'NO_HIGH_INTENSITY';
+  }
+  if (action === 'MODIFY_IMPACT' && scopes.has('IMPACT') && session?.impact_modified !== true) {
+    return 'MODIFY_IMPACT';
+  }
+  if (action === 'MODIFIED_SESSION_ONLY') {
+    const reasons = Array.isArray(session?.purpose_reason_codes) ? session.purpose_reason_codes : [];
+    const explicitlyValidated = session?.explicitly_validated_modified_session === true
+      || (!session && activity.explicitlyValidatedModifiedSession === true)
+      || reasons.some((reason) => [
+        'EXPLICITLY_VALIDATED_MODIFIED_SESSION', 'MODIFIED_SESSION_VALIDATED',
+      ].includes(String(reason || '').toUpperCase()));
+    if (!explicitlyValidated) return 'MODIFIED_SESSION_ONLY';
+  }
+  return null;
+}
+
+function canonicalWorkoutStartAccess(manifest, session = null) {
+  const identity = manifest?.identity && typeof manifest.identity === 'object' ? manifest.identity : null;
+  if (!identity || manifest?.schema_version !== 'goal_backward_surface_manifest_v1'
+    || manifest?.status !== 'accepted' || !manifest?.safety || typeof manifest.safety !== 'object') return null;
+  return {
+    schema_version: WORKOUT_START_ACCESS_SCHEMA,
+    manifest: {
+      schema_version: String(manifest.schema_version),
+      surface_revision: Number(manifest.surface_revision),
+      decision_id: String(identity.decision_id || ''),
+      candidate_id: String(identity.candidate_id || ''),
+      plan_id: String(identity.plan_id || ''),
+      plan_revision: Number(identity.plan_revision),
+      canonical_session_set_hash: String(identity.canonical_session_set_hash || ''),
+      athlete_state_revision: Number(identity.athlete_state_revision),
+      safety_state_hash: String(identity.safety_state_hash || ''),
+      safety_action: String(manifest.safety.action || ''),
+    },
+    session: session ? {
+      session_id: workoutStartSessionId(session),
+      session_revision: Number(session.session_revision),
+      content_hash: String(session.content_hash || ''),
+    } : null,
+  };
+}
+
+function canonicalWorkoutStartDecision({ manifest = null, access = null, sessionId = null, activity = {} } = {}) {
+  if (!manifest) {
+    return access
+      ? { allowed: false, reasonCode: 'WORKOUT_START_ACCESS_STALE', access: null, session: null }
+      : { allowed: true, reasonCode: null, access: null, session: null, legacy: true };
+  }
+  if (manifest.status !== 'accepted') {
+    return { allowed: false, reasonCode: 'WORKOUT_START_ACCESS_UNAVAILABLE', access: null, session: null };
+  }
+  const wanted = sessionId === null || sessionId === undefined || sessionId === '' ? '' : String(sessionId);
+  const session = wanted
+    ? (Array.isArray(manifest.sessions) ? manifest.sessions : [])
+      .find((entry) => workoutStartSessionId(entry) === wanted) || null
+    : null;
+  if (wanted && !session) {
+    return { allowed: false, reasonCode: 'CANONICAL_SESSION_MISSING', access: null, session: null };
+  }
+  const currentAccess = canonicalWorkoutStartAccess(manifest, session);
+  if (!currentAccess) {
+    return { allowed: false, reasonCode: 'WORKOUT_START_ACCESS_UNAVAILABLE', access: null, session };
+  }
+  if (!access || typeof access !== 'object') {
+    return { allowed: false, reasonCode: 'WORKOUT_START_ACCESS_MISSING', access: currentAccess, session };
+  }
+  if (JSON.stringify(access) !== JSON.stringify(currentAccess)) {
+    return { allowed: false, reasonCode: 'WORKOUT_START_ACCESS_STALE', access: currentAccess, session };
+  }
+  if (session && session.executability !== 'EXECUTABLE') {
+    return {
+      allowed: false,
+      reasonCode: workoutStartBlockReason(manifest, session, activity) || 'SESSION_NOT_EXECUTABLE',
+      access: currentAccess,
+      session,
+    };
+  }
+  const reasonCode = workoutStartBlockReason(manifest, session, activity);
+  return { allowed: !reasonCode, reasonCode, access: currentAccess, session };
+}
+
 async function maybeComputeGoalBackwardShadowDiagnostics({ mode, response, compute }) {
   if (mode === 'shadow') await compute();
   return response;
@@ -4523,6 +4700,26 @@ router.put('/my/progress', auth, async (req, res) => {
       const sessionIds = dailyExecution.collectSessionIds(visiblePlan);
       const requestedId = completedId || unsetId;
       if (requestedId && !sessionIds.has(requestedId)) return planningInputUnchanged({ invalidSession: true });
+      if (completedId && Number(parsed?.canonical_workout_schema_version) === 1) {
+        const manifest = await canonicalSurfaceManifestForActive(
+          req.user.id,
+          row,
+          (sql, params) => tx.get(sql, params),
+        );
+        const startDecision = canonicalWorkoutStartDecision({
+          manifest,
+          access: body.workout_start_access || null,
+          sessionId: completedId,
+          activity: {},
+        });
+        if (!startDecision.allowed) {
+          return planningInputUnchanged({
+            startAccessError: true,
+            status: 409,
+            code: startDecision.reasonCode,
+          });
+        }
+      }
 
       const rawWeekCount = Number(parsed?.weeks?.length || row.weeks || 1);
       const maxWeek = Number.isInteger(rawWeekCount) && rawWeekCount >= 1 ? rawWeekCount : 1;
@@ -4597,6 +4794,12 @@ router.put('/my/progress', auth, async (req, res) => {
     if (result.notFound) return res.status(404).json({ error: 'No assigned plan' });
     if (result.invalidSession) return res.status(400).json({ error: 'Invalid plan session' });
     if (result.invalidWeek) return res.status(400).json({ error: 'Invalid plan week' });
+    if (result.startAccessError) {
+      return res.status(result.status || 409).json({
+        error: 'The workout safety revision changed. Refresh Today or Train before linking completion.',
+        code: result.code || 'WORKOUT_START_ACCESS_UNAVAILABLE',
+      });
+    }
     res.json(result);
   } catch (err) {
     console.error('[plans/my/progress] failed:', err.message);
@@ -4765,6 +4968,52 @@ router.post('/today/bodyweight-alternative', auth, async (req, res) => {
   } catch (err) {
     console.error('[plans/today/bodyweight-alternative] failed:', err.message);
     return res.status(500).json({ error: 'Could not build the no-equipment alternative' });
+  }
+});
+
+router.post('/today/start-access', auth, async (req, res) => {
+  try {
+    const dateISO = getPlanningDateFromRequest(req);
+    if (dateISO === null) return res.status(400).json({ error: 'Invalid date', code: 'INVALID_PLANNING_DATE' });
+    const sessionId = req.body?.session_id === null || req.body?.session_id === undefined
+      ? null : String(req.body.session_id).trim();
+    if (sessionId && sessionId.length > 128) {
+      return res.status(400).json({ error: 'Invalid plan session', code: 'INVALID_PLAN_SESSION' });
+    }
+    const activity = req.body?.activity && typeof req.body.activity === 'object'
+      && !Array.isArray(req.body.activity) ? req.body.activity : {};
+    if (JSON.stringify(activity).length > 4096) {
+      return res.status(400).json({ error: 'Invalid workout start context', code: 'INVALID_START_CONTEXT' });
+    }
+    const active = await getActivePlanForUser(req.user.id, null, { planningDateLocal: dateISO });
+    const manifest = active ? await canonicalSurfaceManifestForActive(req.user.id, active.row) : null;
+    const decision = canonicalWorkoutStartDecision({
+      manifest,
+      access: req.body?.workout_start_access || null,
+      sessionId,
+      activity,
+    });
+    if (!decision.allowed) {
+      return res.status(409).json({
+        allowed: false,
+        code: decision.reasonCode,
+        reasonCode: decision.reasonCode,
+        access: decision.access,
+      });
+    }
+    return res.json({
+      allowed: true,
+      reasonCode: null,
+      access: decision.access,
+      legacy: decision.legacy === true,
+    });
+  } catch (err) {
+    console.error('[plans/today/start-access] failed:', err.message);
+    return res.status(500).json({
+      allowed: false,
+      error: 'Could not verify workout safety.',
+      code: 'WORKOUT_START_ACCESS_UNAVAILABLE',
+    });
   }
 });
 
@@ -5350,6 +5599,8 @@ router._test = {
   buildDeterministicCandidate,
   buildCanonicalSurfaceManifest,
   buildGoalBackwardArtifacts,
+  canonicalWorkoutStartAccess,
+  canonicalWorkoutStartDecision,
   canonicalSurfaceManifestForActive,
   candidateFeasibilityCanApply,
   candidateEffectiveFrom,

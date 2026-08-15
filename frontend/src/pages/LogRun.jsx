@@ -12,7 +12,7 @@ import AiGuidanceNote from '../components/AiGuidanceNote'
 import { queueRequest } from '../lib/offlineQueue'
 import { scrollToFirstError, validateRunLog } from '../utils/validation'
 import WatchWorkoutService from '../services/WatchWorkoutService'
-import { fetchDailyExecution, scheduledRunFromExecution, planSessionIdFromState, currentWeekFromState, markSessionComplete, queueSessionComplete, isRetryableCompletionFailure, localDateISO, unplannedRunRouteState, makeupRunRouteState } from '../lib/dailyExecution'
+import { authorizeWorkoutStart, fetchDailyExecution, scheduledRunFromExecution, planSessionIdFromState, currentWeekFromState, markSessionComplete, queueSessionComplete, isRetryableCompletionFailure, localDateISO, unplannedRunRouteState, makeupRunRouteState, workoutStartAccessFromState, workoutStartDecision, workoutStartErrorMessage } from '../lib/dailyExecution'
 import { loadPostRunCheckInDraft } from '../lib/postRunCheckInDraft'
 import { buildPlannedSessionSnapshot } from '../lib/runProvenance'
 import { lockDocumentScroll } from '../lib/documentScrollLock'
@@ -428,6 +428,7 @@ export default function LogRun() {
   // through warmup / ActiveRun so completion targets the exact calendar session.
   const [planSessionId, setPlanSessionId] = useState(() => travelWorkoutOverride ? null : planSessionIdFromState(location.state))
   const [planCurrentWeek, setPlanCurrentWeek] = useState(() => travelWorkoutOverride ? null : currentWeekFromState(location.state))
+  const [workoutStartAccess, setWorkoutStartAccess] = useState(() => travelWorkoutOverride ? null : workoutStartAccessFromState(location.state))
   const [todayLoading, setTodayLoading] = useState(false)
   const [planSchedule, setPlanSchedule] = useState(null)
   const [planScheduleState, setPlanScheduleState] = useState('idle')
@@ -441,6 +442,7 @@ export default function LogRun() {
   const [runIntentError, setRunIntentError] = useState('')
   const [missedRunOptions, setMissedRunOptions] = useState([])
   const [todayIsPlanRestDay, setTodayIsPlanRestDay] = useState(false)
+  const [runIntentExecution, setRunIntentExecution] = useState(null)
   const [startingMakeupId, setStartingMakeupId] = useState(null)
   const [selectedRunIntentId, setSelectedRunIntentId] = useState('extra')
 
@@ -488,13 +490,15 @@ export default function LogRun() {
         const missed = Array.isArray(complianceRes.data?.missed) ? complianceRes.data.missed : []
         setMissedRunOptions(missed.filter((item) => item?.type === 'run').sort((a, b) => String(b.date || '').localeCompare(String(a.date || ''))))
         setTodayIsPlanRestDay(Boolean(execution?.hasPlan && execution?.hasDay && execution?.isPlannedRest))
+        setRunIntentExecution(execution || null)
       })
       .catch((err) => {
         if (!active) return
         console.error('[LogRun] missed-run choices failed:', err?.message || err)
         setMissedRunOptions([])
         setTodayIsPlanRestDay(false)
-        setRunIntentError('Forged Hybrid could not check missed sessions right now. You can still start an extra run.')
+        setRunIntentExecution(null)
+        setRunIntentError('Forge could not verify the current safety revision. Refresh before starting a run.')
       })
       .finally(() => {
         if (active) setRunIntentLoading(false)
@@ -595,6 +599,19 @@ export default function LogRun() {
             : Number(scheduledRun.duration_min || 0) > 0 ? Number(scheduledRun.duration_min) * 60 : 0
           setPlanSessionId(scheduledRun.id ? String(scheduledRun.id) : null)
           setPlanCurrentWeek(currentWeekFromState({ currentWeek: execution?.week }))
+          const startDecision = workoutStartDecision({
+            execution,
+            sessionId: scheduledRun.id,
+            activity: { kind: 'run' },
+            expectedAccess: workoutStartAccess,
+            requireBoundAccess: Boolean(workoutStartAccess),
+          })
+          if (!startDecision.allowed) {
+            setError(workoutStartErrorMessage(startDecision.reasonCode))
+            setTodayWorkout(null)
+            return
+          }
+          setWorkoutStartAccess(startDecision.access)
           setRunBrief(null)
           setTodayWorkout({
             id: scheduledRun.id || '',
@@ -668,7 +685,7 @@ export default function LogRun() {
         console.error('[LogRun] failed to load today workout:', err?.message || err)
       })
       .finally(() => setTodayLoading(false))
-  }, [activeTab, todayWorkout])
+  }, [activeTab, todayWorkout, workoutStartAccess])
 
   useEffect(() => {
     localStorage.setItem(PANEL_KEY, JSON.stringify(panelPrefs))
@@ -711,6 +728,21 @@ export default function LogRun() {
     return { low, high, avg }
   }, [distance, todayWorkout, recentRuns])
 
+  const verifyRunStart = async ({ sessionId = null, expectedAccess = workoutStartAccess, activity = { kind: 'run' }, failClosed = false } = {}) => {
+    const decision = await authorizeWorkoutStart({ sessionId, expectedAccess, activity, failClosed })
+    if (!decision.allowed) {
+      const reasonCode = decision.reasonCode || 'WORKOUT_START_ACCESS_UNAVAILABLE'
+      const message = workoutStartErrorMessage(reasonCode)
+      setError(message)
+      setRunIntentError(message)
+      return null
+    }
+    setError('')
+    setRunIntentError('')
+    if (decision.access) setWorkoutStartAccess(decision.access)
+    return decision
+  }
+
   const onSubmit = async e => {
     e.preventDefault()
     setError('')
@@ -729,11 +761,21 @@ export default function LogRun() {
       return
     }
 
-    const clientRunId = createClientRunId()
-    const resolvedSurface = environment === 'inside' ? 'treadmill' : surface
     // The Manual tab records an ad-hoc activity. It must not inherit a plan
     // session just because the athlete arrived here from a scheduled workout.
     const submittedPlanSessionId = activeTab === 'log' ? null : planSessionId
+    let verifiedWorkoutStartAccess = null
+    if (submittedPlanSessionId) {
+      const startDecision = await verifyRunStart({
+        sessionId: submittedPlanSessionId,
+        expectedAccess: workoutStartAccess,
+        activity: { kind: 'run', workoutFamily: todayWorkout?.workout_family },
+      })
+      if (!startDecision) return
+      verifiedWorkoutStartAccess = startDecision.access
+    }
+    const clientRunId = createClientRunId()
+    const resolvedSurface = environment === 'inside' ? 'treadmill' : surface
     const submittedScheduledRun = submittedPlanSessionId ? todayWorkout : null
     const plannedSession = buildPlannedSessionSnapshot({
       planSessionId: submittedPlanSessionId,
@@ -761,6 +803,7 @@ export default function LogRun() {
       target_zone: submittedScheduledRun?.targetZone || null,
       plan_session_id: submittedPlanSessionId,
       planned_session: plannedSession,
+      ...(verifiedWorkoutStartAccess ? { workout_start_access: verifiedWorkoutStartAccess } : {}),
     }
 
     try {
@@ -771,7 +814,7 @@ export default function LogRun() {
         let progressNotice = ''
         if (submittedPlanSessionId) {
           try {
-            await queueSessionComplete(submittedPlanSessionId, planCurrentWeek)
+            await queueSessionComplete(submittedPlanSessionId, planCurrentWeek, verifiedWorkoutStartAccess)
           } catch (completionErr) {
             console.error('[LogRun] failed to queue plan completion:', completionErr?.message || completionErr)
             progressNotice = ' Open Plan after the run syncs to mark this session complete.'
@@ -801,12 +844,12 @@ export default function LogRun() {
       let planProgressNotice = ''
       if (submittedPlanSessionId) {
         try {
-          await markSessionComplete(submittedPlanSessionId, planCurrentWeek)
+          await markSessionComplete(submittedPlanSessionId, planCurrentWeek, verifiedWorkoutStartAccess)
         } catch (completionErr) {
           console.error('[LogRun] plan completion failed:', completionErr?.message || completionErr)
           if (isRetryableCompletionFailure(completionErr)) {
             try {
-              await queueSessionComplete(submittedPlanSessionId, planCurrentWeek)
+              await queueSessionComplete(submittedPlanSessionId, planCurrentWeek, verifiedWorkoutStartAccess)
               planProgressNotice = 'Plan progress is queued for sync.'
             } catch (queueErr) {
               console.error('[LogRun] failed to queue completion retry:', queueErr?.message || queueErr)
@@ -833,7 +876,7 @@ export default function LogRun() {
         let progressNotice = ''
         if (submittedPlanSessionId) {
           try {
-            await queueSessionComplete(submittedPlanSessionId, planCurrentWeek)
+            await queueSessionComplete(submittedPlanSessionId, planCurrentWeek, verifiedWorkoutStartAccess)
           } catch (completionErr) {
             console.error('[LogRun] failed to queue plan completion:', completionErr?.message || completionErr)
             progressNotice = ' Open Plan after the run syncs to mark this session complete.'
@@ -858,7 +901,13 @@ export default function LogRun() {
 
   const selectedSplits = useMemo(() => parseSplits(selectedRun), [selectedRun])
 
-  const startPlannedRoute = (plannedRoute, routeSurface) => {
+  const startPlannedRoute = async (plannedRoute, routeSurface) => {
+    const decision = await verifyRunStart({
+      sessionId: planSessionId,
+      expectedAccess: workoutStartAccess,
+      activity: { kind: 'run' },
+    })
+    if (!decision) return
     navigate('/run/active', {
       state: withActiveRunReturnTarget({
         countdown,
@@ -870,6 +919,7 @@ export default function LogRun() {
         // H5: carry the canonical plan session so ActiveRun can mark it complete.
         planSessionId,
         currentWeek: planCurrentWeek,
+        ...(decision.access ? { workoutStartAccess: decision.access } : {}),
         scheduledRun: todayWorkout,
         workoutTarget: {
           distanceMiles: todayWorkout?.distanceMiles || plannedRoute?.targetDistanceMiles || null,
@@ -882,7 +932,13 @@ export default function LogRun() {
 
   // H5: the scheduled run keeps the normal warm-up, then carries the exact
   // calendar session into ActiveRun. Manual logging remains secondary.
-  const startScheduledRun = () => {
+  const startScheduledRun = async () => {
+    const decision = await verifyRunStart({
+      sessionId: planSessionId,
+      expectedAccess: workoutStartAccess,
+      activity: { kind: 'run' },
+    })
+    if (!decision) return
     navigate('/warmup', {
       state: withActiveRunReturnTarget({
         countdown,
@@ -891,6 +947,7 @@ export default function LogRun() {
         mapMyRun: true,
         planSessionId,
         currentWeek: planCurrentWeek,
+        ...(decision.access ? { workoutStartAccess: decision.access } : {}),
         scheduledRun: todayWorkout,
         startAfterWarmup: true,
         workoutTarget: {
@@ -902,7 +959,15 @@ export default function LogRun() {
     })
   }
 
-  const startCalendarRun = (session, entry) => {
+  const startCalendarRun = async (session, entry) => {
+    const decision = await verifyRunStart({
+      sessionId: session.id,
+      expectedAccess: null,
+      failClosed: Number(session.session_revision ?? session.sessionRevision) >= 1
+        || Number(session.canonical_workout_schema_version ?? session.canonicalWorkoutSchemaVersion) === 1,
+      activity: { kind: 'run', workoutFamily: session.workout_family },
+    })
+    if (!decision) return
     navigate('/warmup', {
       state: withActiveRunReturnTarget({
         countdown,
@@ -911,6 +976,7 @@ export default function LogRun() {
         mapMyRun: true,
         planSessionId: session.id,
         currentWeek: entry.weekIndex + 1,
+        ...(decision.access ? { workoutStartAccess: decision.access } : {}),
         scheduledRun: session,
         startAfterWarmup: true,
         workoutTarget: {
@@ -922,10 +988,25 @@ export default function LogRun() {
     })
   }
 
-  const startUnplannedRun = () => {
+  const startUnplannedRun = async () => {
+    if (runIntentOpen && !runIntentExecution) {
+      setRunIntentError(workoutStartErrorMessage('WORKOUT_START_ACCESS_MISSING'))
+      return
+    }
+    const initial = workoutStartDecision({ execution: runIntentExecution, activity: { kind: 'run' } })
+    if (!initial.allowed) {
+      setRunIntentError(workoutStartErrorMessage(initial.reasonCode))
+      return
+    }
+    const decision = await verifyRunStart({
+      sessionId: null,
+      expectedAccess: initial.access,
+      activity: { kind: 'run' },
+    })
+    if (!decision) return
     track('unplanned_run_started', { via: activeTab === 'log' ? 'manual_tab' : 'rest_day' })
     if (environment === 'inside') {
-      navigate('/run/treadmill', { state: { treadmillType, disablePlanMatch: true } })
+      navigate('/run/treadmill', { state: { treadmillType, disablePlanMatch: true, ...(decision.access ? { workoutStartAccess: decision.access } : {}) } })
       return
     }
     const selectedSurface = trackWorkout === 'yes'
@@ -933,7 +1014,7 @@ export default function LogRun() {
       : surface === 'treadmill' ? 'road' : surface
     navigate('/warmup', {
       state: withActiveRunReturnTarget(
-        unplannedRunRouteState({ countdown, runType, surface: selectedSurface }),
+        { ...unplannedRunRouteState({ countdown, runType, surface: selectedSurface }), ...(decision.access ? { workoutStartAccess: decision.access } : {}) },
         activeRunReturnTo,
       ),
     })
@@ -966,6 +1047,14 @@ export default function LogRun() {
       setRunIntentError('Make-up runs can replace a plan rest day only. Start an extra run or open the calendar to avoid stacking workouts.')
       return
     }
+    const startDecision = await verifyRunStart({
+      sessionId: state.planSessionId,
+      expectedAccess: null,
+      failClosed: Number(state.scheduledRun?.session_revision ?? state.scheduledRun?.sessionRevision) >= 1
+        || Number(state.scheduledRun?.canonical_workout_schema_version ?? state.scheduledRun?.canonicalWorkoutSchemaVersion) === 1,
+      activity: { kind: 'run', workoutFamily: state.scheduledRun?.workout_family },
+    })
+    if (!startDecision) return
 
     setStartingMakeupId(state.planSessionId)
     setRunIntentError('')
@@ -980,7 +1069,7 @@ export default function LogRun() {
       }
       track('makeup_run_started', { session_id: state.planSessionId, missed_date: missed.date || null })
       setRunIntentOpen(false)
-      navigate('/warmup', { state: withActiveRunReturnTarget(state, activeRunReturnTo) })
+      navigate('/warmup', { state: withActiveRunReturnTarget({ ...state, ...(startDecision.access ? { workoutStartAccess: startDecision.access } : {}) }, activeRunReturnTo) })
     } catch (err) {
       console.error('[LogRun] make-up reschedule failed:', err?.message || err)
       setRunIntentError(err?.response?.data?.error || 'Forged Hybrid could not move that workout onto today. Your plan was not changed.')

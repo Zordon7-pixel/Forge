@@ -24,6 +24,7 @@ const {
   normalizePlanningConstraints,
 } = require('../src/lib/planCandidateLifecycle');
 const { buildCompletionOutcomeRevisions } = require('../src/lib/planningRevision');
+const plansRoute = require('../src/routes/plans');
 
 const results = [];
 
@@ -252,6 +253,35 @@ test('SAFE-04', 'a superseding resolved state can return to NORMAL without perma
   assert.equal(blocked.sessions[0].executable, false);
   assert.equal(resolved.sessions[0].executable, true);
   assert.equal(resolved.supersedes_safety_state_revision, 10);
+});
+
+test('SAFE-05', 'workout starts require one current manifest binding and preserve scoped eligibility', () => {
+  const hash = (character) => character.repeat(64);
+  const identity = {
+    plan_id: 'plan-start-safe', plan_revision: 3, athlete_state_revision: 11,
+    safety_state_hash: `sha256:${hash('a')}`,
+  };
+  const makeSession = (sessionId, workoutFamily, overrides = {}) => ({
+    session_id: sessionId, session_revision: 2, plan_id: identity.plan_id,
+    plan_revision: identity.plan_revision, workout_family: workoutFamily,
+    executability: 'EXECUTABLE', content_hash: hash('b'), safety_scope: [], steps: [],
+    ...overrides,
+  });
+  const upper = makeSession('safe-upper-start', 'strength_upper');
+  const run = makeSession('blocked-run-start', 'easy_run', { safety_scope: ['RUN', 'IMPACT'], content_hash: hash('c') });
+  const manifest = {
+    schema_version: 'goal_backward_surface_manifest_v1', surface_revision: 6,
+    status: 'accepted', identity,
+    safety: { action: 'NO_RUNNING', scope: ['RUN', 'IMPACT'], reason_codes: ['NO_RUNNING'] },
+    sessions: [run, upper],
+  };
+  const access = plansRoute._test.canonicalWorkoutStartAccess(manifest, upper);
+  assert.equal(plansRoute._test.canonicalWorkoutStartDecision({ manifest, access, sessionId: upper.session_id, activity: { kind: 'lift' } }).allowed, true);
+  assert.equal(plansRoute._test.canonicalWorkoutStartDecision({ manifest, access: plansRoute._test.canonicalWorkoutStartAccess(manifest, run), sessionId: run.session_id, activity: { kind: 'run' } }).reasonCode, 'NO_RUNNING');
+  const stale = JSON.parse(JSON.stringify(access));
+  stale.manifest.safety_state_hash = `sha256:${hash('d')}`;
+  assert.equal(plansRoute._test.canonicalWorkoutStartDecision({ manifest, access: stale, sessionId: upper.session_id, activity: { kind: 'lift' } }).reasonCode, 'WORKOUT_START_ACCESS_STALE');
+  assert.equal(plansRoute._test.canonicalWorkoutStartDecision({ manifest, access: null, sessionId: upper.session_id, activity: { kind: 'lift' } }).reasonCode, 'WORKOUT_START_ACCESS_MISSING');
 });
 
 test('LOCK-01', 'revisioned athlete day and session locks reject a silent move', () => {
@@ -492,7 +522,7 @@ test('MISS-02', 'multiple missed key sessions omit excess debt with NO_WORKOUT_D
 });
 
 const expectedBatch10Ids = [
-  'SAFE-01', 'SAFE-02', 'SAFE-03', 'SAFE-04',
+  'SAFE-01', 'SAFE-02', 'SAFE-03', 'SAFE-04', 'SAFE-05',
   'LOCK-01', 'EDIT-01', 'REJECT-01', 'MISS-01', 'MISS-02',
 ];
 assert.deepEqual(results, expectedBatch10Ids);

@@ -10,6 +10,7 @@ import {
   scheduledRunFromExecution,
   validateSurfaceManifest,
 } from '../src/lib/dailyExecutionCore.js'
+import { workoutStartDecision } from '../src/lib/todayPlanAccess.js'
 
 const require = createRequire(import.meta.url)
 const plansRoute = require('../../backend/src/routes/plans.js')
@@ -310,6 +311,34 @@ check('scoped safety blocks a restricted run while retaining an accepted upper-b
   assert.equal(hasExecutableSession(execution), true)
 })
 
+check('Today, Train, run, lift, and hybrid starts bind the same accepted manifest revision', () => {
+  const run = { ...canonicalSession, session_id: 'start-run', workout_family: 'easy_run', content_hash: hash('1') }
+  const lift = { ...canonicalSession, session_id: 'start-lift', workout_family: 'strength_upper', content_hash: hash('2'), safety_scope: [] }
+  const hybrid = { ...canonicalSession, session_id: 'start-hybrid', workout_family: 'hyrox_station_skill', content_hash: hash('3'), safety_scope: [] }
+  const startManifest = structuredClone(surfaceManifest)
+  startManifest.safety = { action: 'NO_RUNNING', scope: ['RUN', 'IMPACT'], reason_codes: ['NO_RUNNING'] }
+  startManifest.sessions = [run, lift, hybrid]
+  const execution = {
+    sessions: [run, lift, hybrid],
+    surface: { status: 'accepted', identity: startManifest.identity, manifest: startManifest },
+  }
+  const blockedRun = workoutStartDecision({ execution, sessionId: run.session_id, activity: { kind: 'run' } })
+  const safeLift = workoutStartDecision({ execution, sessionId: lift.session_id, activity: { kind: 'lift' } })
+  const safeHybrid = workoutStartDecision({ execution, sessionId: hybrid.session_id, activity: { kind: 'hybrid' } })
+  assert.equal(blockedRun.allowed, false)
+  assert.equal(safeLift.allowed, true)
+  assert.equal(safeHybrid.allowed, true)
+  assert.deepEqual(safeLift.access.manifest, safeHybrid.access.manifest)
+  const backend = plansRoute._test.canonicalWorkoutStartDecision({
+    manifest: startManifest,
+    access: safeLift.access,
+    sessionId: lift.session_id,
+    activity: { kind: 'lift' },
+  })
+  assert.equal(backend.allowed, true)
+  assert.deepEqual(backend.access, safeLift.access)
+})
+
 check('revision or hash mismatch fails closed for weekly, calendar, and daily execution surfaces', () => {
   const mismatched = structuredClone(surfaceManifest)
   mismatched.sessions[0].session_revision += 1
@@ -353,6 +382,9 @@ check('legacy plans retain their current calendar and execution presentation whe
 const planSource = fs.readFileSync(new URL('../src/pages/Plan.jsx', import.meta.url), 'utf8')
 const calendarSource = fs.readFileSync(new URL('../src/components/calendar/ForgedCalendar.jsx', import.meta.url), 'utf8')
 const daySource = fs.readFileSync(new URL('../src/components/calendar/ForgedDayView.jsx', import.meta.url), 'utf8')
+const dashboardSource = fs.readFileSync(new URL('../src/pages/Dashboard.jsx', import.meta.url), 'utf8')
+const logRunSource = fs.readFileSync(new URL('../src/pages/LogRun.jsx', import.meta.url), 'utf8')
+const activeWorkoutSource = fs.readFileSync(new URL('../src/pages/ActiveWorkout.jsx', import.meta.url), 'utf8')
 
 for (const viewport of [320, 393]) {
   check(`${viewport} px fixture exposes the same canonical fields without horizontal overflow`, () => {
@@ -368,5 +400,13 @@ for (const viewport of [320, 393]) {
     assert.match(daySource, /overflowWrap:\s*'anywhere'/)
   })
 }
+
+check('start pages revalidate canonical safety before navigation and plan-linked completion', () => {
+  assert.match(dashboardSource, /authorizeWorkoutStart/)
+  assert.match(logRunSource, /authorizeWorkoutStart/)
+  assert.match(logRunSource, /workoutStartAccess/)
+  assert.match(activeWorkoutSource, /authorizeWorkoutStart/)
+  assert.match(activeWorkoutSource, /WORKOUT_START_ACCESS/)
+})
 
 console.log(`\nGOAL-BACKWARD SURFACES SMOKE OK (${passed} checks)`)

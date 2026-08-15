@@ -13,7 +13,7 @@ import Skeleton from '../components/Skeleton'
 import { useOnlineStatus } from '../lib/useOnlineStatus'
 import HealthService from '../services/HealthService'
 import { useProContext } from '../context/ProContext'
-import { fetchDailyExecution, recommendationFromExecution, hasExecutableSession, runRouteState, localDateISO } from '../lib/dailyExecution'
+import { authorizeWorkoutStart, fetchDailyExecution, recommendationFromExecution, hasExecutableSession, liftRouteState, runRouteState, workoutStartDecision, workoutStartErrorMessage, localDateISO } from '../lib/dailyExecution'
 import { formatGroupRunDate, upcomingGroupRun } from '../lib/groupRuns'
 import { resolveReadiness } from '../lib/truthConsistency'
 import { HEALTH_SYNC_RESULT_EVENT, shouldRefreshPageForHealthSyncEvent } from '../lib/healthSync'
@@ -287,6 +287,7 @@ export default function Dashboard() {
   const [showMoreInsights, setShowMoreInsights] = useState(false)
   const [nextRecommendation, setNextRecommendation] = useState(null)
   const [execution, setExecution] = useState(null)
+  const [workoutStartError, setWorkoutStartError] = useState('')
   const [ageGradedPerformance, setAgeGradedPerformance] = useState(null)
   const [healthSync, setHealthSync] = useState({ loading: true, available: false, reason: null, metrics: null })
   const [readinessState, setReadinessState] = useState({ loading: true, error: false, locked: false, data: null })
@@ -677,15 +678,48 @@ export default function Dashboard() {
     }
   }, [])
 
-  const handleStartWorkout = useCallback(() => {
+  const verifyWorkoutStart = useCallback(async ({ sessionId = null, activity, expectedAccess } = {}) => {
+    const decision = await authorizeWorkoutStart({ sessionId, activity, expectedAccess })
+    if (!decision.allowed) {
+      setWorkoutStartError(workoutStartErrorMessage(decision.reasonCode))
+      return null
+    }
+    setWorkoutStartError('')
+    return decision
+  }, [])
+
+  const handleStartWorkout = useCallback(async () => {
     // H5: when today has an executable calendar session, hand off the canonical
     // scheduled run/lift (with its plan session id) instead of the legacy rec.
     if (hasExecutableSession(execution)) {
-      track('recommendation_followed', { via: 'today_card_start', source: 'calendar' })
       if (calendarRec && calendarRec.recommendationType === 'strength') {
-        return navigate('/log-lift', { state: { planSessionId: calendarRec.planSessionId, currentWeek: execution.week ?? null, scheduledLift: execution.lift || null } })
+        const handoff = liftRouteState(execution)
+        if (!handoff) {
+          setWorkoutStartError(workoutStartErrorMessage('SESSION_NOT_EXECUTABLE'))
+          return
+        }
+        const decision = await verifyWorkoutStart({
+          sessionId: handoff.planSessionId,
+          activity: { kind: 'lift', workoutFamily: handoff.scheduledLift?.workout_family },
+          expectedAccess: handoff.workoutStartAccess,
+        })
+        if (!decision) return
+        track('recommendation_followed', { via: 'today_card_start', source: 'calendar' })
+        return navigate('/log-lift', { state: { ...handoff, ...(decision.access ? { workoutStartAccess: decision.access } : {}) } })
       }
-      return navigate('/log-run', { state: runRouteState(execution) })
+      const handoff = runRouteState(execution)
+      if (!handoff) {
+        setWorkoutStartError(workoutStartErrorMessage('SESSION_NOT_EXECUTABLE'))
+        return
+      }
+      const decision = await verifyWorkoutStart({
+        sessionId: handoff.planSessionId,
+        activity: { kind: 'run' },
+        expectedAccess: handoff.workoutStartAccess,
+      })
+      if (!decision) return
+      track('recommendation_followed', { via: 'today_card_start', source: 'calendar' })
+      return navigate('/log-run', { state: { ...handoff, ...(decision.access ? { workoutStartAccess: decision.access } : {}) } })
     }
     if (calendarOwnsToday) return navigate('/plan')
     if (!nextRecommendation) return navigate('/run')
@@ -697,37 +731,76 @@ export default function Dashboard() {
     if (nextRecommendation.recommendationType) params.set('type', String(nextRecommendation.recommendationType))
     if (nextRecommendation.suggestedPace) params.set('pace', String(nextRecommendation.suggestedPace))
     navigate(`/log-run${params.toString() ? `?${params.toString()}` : ''}`)
-  }, [navigate, nextRecommendation, execution, calendarRec, calendarOwnsToday])
+  }, [navigate, nextRecommendation, execution, calendarRec, calendarOwnsToday, verifyWorkoutStart])
 
-  const handleStartTodayRun = useCallback(() => {
+  const handleStartTodayRun = useCallback(async () => {
     if (!execution?.run) return
+    const handoff = runRouteState(execution)
+    if (!handoff) {
+      setWorkoutStartError(workoutStartErrorMessage('SESSION_NOT_EXECUTABLE'))
+      return
+    }
+    const decision = await verifyWorkoutStart({
+      sessionId: handoff.planSessionId,
+      activity: { kind: 'run' },
+      expectedAccess: handoff.workoutStartAccess,
+    })
+    if (!decision) return
     track('recommendation_followed', { via: 'today_details_run', source: 'calendar' })
-    navigate('/log-run', { state: runRouteState(execution) })
-  }, [navigate, execution])
+    navigate('/log-run', { state: { ...handoff, ...(decision.access ? { workoutStartAccess: decision.access } : {}) } })
+  }, [navigate, execution, verifyWorkoutStart])
 
-  const handleStartTodayLift = useCallback(() => {
+  const handleStartTodayLift = useCallback(async () => {
     if (!execution?.lift) return
+    const handoff = liftRouteState(execution)
+    if (!handoff) {
+      setWorkoutStartError(workoutStartErrorMessage('SESSION_NOT_EXECUTABLE'))
+      return
+    }
+    const decision = await verifyWorkoutStart({
+      sessionId: handoff.planSessionId,
+      activity: { kind: 'lift', workoutFamily: handoff.scheduledLift?.workout_family },
+      expectedAccess: handoff.workoutStartAccess,
+    })
+    if (!decision) return
     track('recommendation_followed', { via: 'today_details_lift', source: 'calendar' })
     navigate('/log-lift', {
-      state: {
-        planSessionId: execution.lift.id || null,
-        currentWeek: execution.week ?? null,
-        scheduledLift: execution.lift,
-      },
+      state: { ...handoff, ...(decision.access ? { workoutStartAccess: decision.access } : {}) },
     })
-  }, [navigate, execution])
+  }, [navigate, execution, verifyWorkoutStart])
 
-  const handlePlanTodayRoute = useCallback(() => {
+  const handlePlanTodayRoute = useCallback(async () => {
     if (!execution?.run) return
+    const handoff = runRouteState(execution)
+    if (!handoff) {
+      setWorkoutStartError(workoutStartErrorMessage('SESSION_NOT_EXECUTABLE'))
+      return
+    }
+    const decision = await verifyWorkoutStart({
+      sessionId: handoff.planSessionId,
+      activity: { kind: 'run' },
+      expectedAccess: handoff.workoutStartAccess,
+    })
+    if (!decision) return
     track('route_planner_opened', { via: 'today_details', source: 'calendar' })
-    navigate('/log-run', { state: { ...runRouteState(execution), openRoutePlanner: true } })
-  }, [navigate, execution])
+    navigate('/log-run', { state: { ...handoff, ...(decision.access ? { workoutStartAccess: decision.access } : {}), openRoutePlanner: true } })
+  }, [navigate, execution, verifyWorkoutStart])
 
-  const handleStartUnplannedRun = useCallback(() => {
+  const handleStartUnplannedRun = useCallback(async () => {
+    const initial = workoutStartDecision({ execution, activity: { kind: 'run' } })
+    if (!initial.allowed) {
+      setWorkoutStartError(workoutStartErrorMessage(initial.reasonCode))
+      return
+    }
+    const decision = await verifyWorkoutStart({
+      activity: { kind: 'run' },
+      expectedAccess: initial.access,
+    })
+    if (!decision) return
     track('unplanned_run_selected', { via: 'today_rest_day' })
     setShowTodayDetail(false)
     navigate('/log-run?tab=manual&intent=rest-day')
-  }, [navigate])
+  }, [navigate, execution, verifyWorkoutStart])
 
   const decideTrainingGap = useCallback(async (decision) => {
     if (!trainingGapProposal?.id || !['accept', 'keep'].includes(decision)) return
@@ -906,6 +979,12 @@ export default function Dashboard() {
         runRecordedToday={hasRunRecordedToday}
         dateISO={localDateISO()}
       />
+
+      {workoutStartError && (
+        <p role="alert" className="rounded-xl p-3 text-sm font-semibold" style={{ background: 'var(--danger-dim)', color: 'var(--danger)', border: '1px solid rgba(239,68,68,0.35)' }}>
+          {workoutStartError}
+        </p>
+      )}
 
       <DailyCoachFlow /* H5: effectiveRecommendation prefers calendar */
         checkedInToday={checkedInToday}

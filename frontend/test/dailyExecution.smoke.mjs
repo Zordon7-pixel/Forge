@@ -22,6 +22,10 @@ import {
   currentWeekFromState,
   isRetryableCompletionFailure,
 } from '../src/lib/dailyExecutionCore.js';
+import {
+  resolveTodayPlanAccess,
+  workoutStartDecision,
+} from '../src/lib/todayPlanAccess.js';
 
 let passed = 0;
 let failed = 0;
@@ -273,6 +277,104 @@ console.log('\n== completion retry policy ==');
 assert(isRetryableCompletionFailure(new Error('offline')) === true, 'network completion failure is retryable');
 assert(isRetryableCompletionFailure({ response: { status: 503 } }) === true, 'server completion failure is retryable');
 assert(isRetryableCompletionFailure({ response: { status: 400 } }) === false, 'deterministic 4xx completion failure is not queued forever');
+
+console.log('\n== v2.4 fail-closed workout starts ==');
+const manifestIdentity = {
+  plan_id: 'plan-start-1',
+  plan_revision: 4,
+  athlete_state_revision: 8,
+  safety_state_hash: `sha256:${'a'.repeat(64)}`,
+};
+const startSession = (id, family, overrides = {}) => ({
+  session_id: id,
+  session_revision: 2,
+  plan_id: manifestIdentity.plan_id,
+  plan_revision: manifestIdentity.plan_revision,
+  workout_family: family,
+  executability: 'EXECUTABLE',
+  content_hash: 'b'.repeat(64),
+  safety_scope: [],
+  steps: [],
+  ...overrides,
+});
+const acceptedExecution = (action, sessions) => ({
+  hasPlan: true,
+  hasDay: true,
+  isRest: false,
+  sessions,
+  run: sessions.find((entry) => entry.workout_family.endsWith('_run')) || null,
+  lift: sessions.find((entry) => entry.workout_family.startsWith('strength_')) || null,
+  surface: {
+    status: 'accepted',
+    identity: manifestIdentity,
+    manifest: {
+      schema_version: 'goal_backward_surface_manifest_v1',
+      surface_revision: 5,
+      status: 'accepted',
+      identity: manifestIdentity,
+      safety: { action, scope: [], reason_codes: [action] },
+      sessions,
+    },
+  },
+});
+
+const noRunning = acceptedExecution('NO_RUNNING', [
+  startSession('run-blocked', 'easy_run', { safety_scope: ['RUN', 'IMPACT'] }),
+  startSession('upper-safe', 'strength_upper'),
+]);
+assert(workoutStartDecision({ execution: noRunning, sessionId: 'run-blocked', activity: { kind: 'run' } }).allowed === false, 'NO_RUNNING blocks the scheduled run start');
+const upperDecision = workoutStartDecision({ execution: noRunning, sessionId: 'upper-safe', activity: { kind: 'lift' } });
+assert(upperDecision.allowed === true, 'NO_RUNNING leaves unrelated upper-body strength eligible');
+
+const noLower = acceptedExecution('NO_LOWER_BODY', [
+  startSession('lower-blocked', 'strength_lower', { safety_scope: ['LOWER_BODY'] }),
+  startSession('upper-still-safe', 'strength_upper', { content_hash: 'c'.repeat(64) }),
+]);
+assert(workoutStartDecision({ execution: noLower, sessionId: 'lower-blocked', activity: { kind: 'lift' } }).allowed === false, 'NO_LOWER_BODY blocks lower-body lifting');
+assert(workoutStartDecision({ execution: noLower, sessionId: 'upper-still-safe', activity: { kind: 'lift' } }).allowed === true, 'NO_LOWER_BODY leaves upper-body lifting eligible');
+
+const noIntensity = acceptedExecution('NO_HIGH_INTENSITY', [
+  startSession('quality-blocked', 'threshold_run', { steps: [{ target: { rpe: 7 } }] }),
+  startSession('easy-safe', 'easy_run', { steps: [{ target: { rpe: 2 } }], content_hash: 'd'.repeat(64) }),
+]);
+assert(workoutStartDecision({ execution: noIntensity, sessionId: 'quality-blocked', activity: { kind: 'run' } }).allowed === false, 'NO_HIGH_INTENSITY blocks intensity three and above');
+assert(workoutStartDecision({ execution: noIntensity, sessionId: 'easy-safe', activity: { kind: 'run' } }).allowed === true, 'NO_HIGH_INTENSITY leaves explicitly easy work eligible');
+
+const modifiedOnly = acceptedExecution('MODIFIED_SESSION_ONLY', [
+  startSession('original-blocked', 'hyrox_compromised', { safety_scope: ['RUN', 'LOWER_BODY'] }),
+  startSession('modified-safe', 'hyrox_compromised', { explicitly_validated_modified_session: true, content_hash: 'e'.repeat(64) }),
+]);
+assert(workoutStartDecision({ execution: modifiedOnly, sessionId: 'original-blocked', activity: { kind: 'hybrid' } }).allowed === false, 'MODIFIED_SESSION_ONLY blocks the unmodified hybrid');
+assert(workoutStartDecision({ execution: modifiedOnly, sessionId: 'modified-safe', activity: { kind: 'hybrid' } }).allowed === true, 'MODIFIED_SESSION_ONLY permits only the explicitly validated hybrid');
+
+const fullRest = acceptedExecution('FULL_REST', [
+  startSession('rest-run', 'easy_run'),
+  startSession('rest-lift', 'strength_upper', { content_hash: 'f'.repeat(64) }),
+  startSession('rest-hybrid', 'hyrox_station_skill', { content_hash: '1'.repeat(64) }),
+]);
+for (const [sessionId, kind] of [['rest-run', 'run'], ['rest-lift', 'lift'], ['rest-hybrid', 'hybrid']]) {
+  assert(workoutStartDecision({ execution: fullRest, sessionId, activity: { kind } }).allowed === false, `FULL_REST blocks ${kind} start`);
+}
+assert(workoutStartDecision({ execution: fullRest, activity: { kind: 'run' } }).allowed === false, 'FULL_REST blocks an unplanned run start');
+
+const runDecision = workoutStartDecision({ execution: noIntensity, sessionId: 'easy-safe', activity: { kind: 'run' } });
+const liftDecision = workoutStartDecision({ execution: noLower, sessionId: 'upper-still-safe', activity: { kind: 'lift' } });
+const hybridDecision = workoutStartDecision({ execution: modifiedOnly, sessionId: 'modified-safe', activity: { kind: 'hybrid' } });
+assert(JSON.stringify(Object.keys(runDecision.access.manifest)) === JSON.stringify(Object.keys(liftDecision.access.manifest)), 'run and lift access consume the same manifest binding shape');
+assert(JSON.stringify(Object.keys(liftDecision.access.manifest)) === JSON.stringify(Object.keys(hybridDecision.access.manifest)), 'hybrid access consumes the same manifest binding shape');
+
+const staleAccess = structuredClone(runDecision.access);
+staleAccess.manifest.athlete_state_revision += 1;
+assert(workoutStartDecision({ execution: noIntensity, sessionId: 'easy-safe', activity: { kind: 'run' }, expectedAccess: staleAccess, requireBoundAccess: true }).reasonCode === 'WORKOUT_START_ACCESS_STALE', 'stale safety revision cannot start');
+assert(workoutStartDecision({ execution: noIntensity, sessionId: 'easy-safe', activity: { kind: 'run' }, expectedAccess: null, requireBoundAccess: true }).reasonCode === 'WORKOUT_START_ACCESS_MISSING', 'missing safety access cannot start');
+
+const blockedToday = resolveTodayPlanAccess({
+  checkedInToday: true,
+  calendarSessions: [{ id: 'restricted-run', executability: 'RESTRICTED' }],
+  onStartWorkout: () => 'unsafe-start',
+  onDetails: () => 'details',
+});
+assert(blockedToday.primaryLabel === 'View workout' && blockedToday.primaryAction() === 'details', 'Today/Train never exposes Start for a restricted-only day');
 
 console.log(`\nPASSED: ${passed}  FAILED: ${failed}`);
 if (failed) process.exit(1);

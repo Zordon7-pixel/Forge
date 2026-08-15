@@ -5,7 +5,7 @@ import api from '../lib/api'
 import ExercisePickerModal from '../components/ExercisePickerModal'
 import MovementDemo from '../components/MovementDemo'
 import { getWeightDropWarning, scrollToFirstError, validateWorkoutSet } from '../utils/validation'
-import { planSessionIdFromState, currentWeekFromState, markSessionComplete, queueSessionComplete, isRetryableCompletionFailure } from '../lib/dailyExecution'
+import { authorizeWorkoutStart, planSessionIdFromState, currentWeekFromState, markSessionComplete, queueSessionComplete, isRetryableCompletionFailure, workoutStartAccessFromState, workoutStartErrorMessage } from '../lib/dailyExecution'
 
 const REST_PRESETS = [30, 60, 90, 120, 180]
 const DEFAULT_REST_SECONDS = 90
@@ -167,6 +167,7 @@ export default function ActiveWorkout() {
   // marks the exact calendar lift complete. Null for ad-hoc/manual workouts.
   const planSessionId = planSessionIdFromState(location.state)
   const planCurrentWeek = currentWeekFromState(location.state)
+  const incomingWorkoutStartAccess = workoutStartAccessFromState(location.state)
 
   const [elapsed, setElapsed] = useState(0)
   const workoutTimerRef = useRef(null)
@@ -174,6 +175,8 @@ export default function ActiveWorkout() {
 
   const [activeGroup, setActiveGroup] = useState('')
   const [muscleGroups, setMuscleGroups] = useState([])
+  const [sessionSafetyContextReady, setSessionSafetyContextReady] = useState(false)
+  const [workoutStartGate, setWorkoutStartGate] = useState({ status: 'checking', access: incomingWorkoutStartAccess, reasonCode: null })
   const [selectedExercise, setSelectedExercise] = useState(null)
   const [showExercisePicker, setShowExercisePicker] = useState(false)
   const [reps, setReps] = useState('')
@@ -203,9 +206,10 @@ export default function ActiveWorkout() {
   const endErrorRef = useRef(null)
 
   useEffect(() => {
+    if (workoutStartGate.status !== 'allowed') return undefined
     workoutTimerRef.current = setInterval(() => setElapsed(e => e + 1), 1000)
     return () => clearInterval(workoutTimerRef.current)
-  }, [])
+  }, [workoutStartGate.status])
 
   useEffect(() => {
     api.get(`/workouts/${id}`).then(res => {
@@ -216,8 +220,32 @@ export default function ActiveWorkout() {
       }
     }).catch((error) => {
       console.error('[active-workout/session] load failed:', error?.message || error)
-    })
+    }).finally(() => setSessionSafetyContextReady(true))
   }, [id])
+
+  useEffect(() => {
+    if (!sessionSafetyContextReady) return undefined
+    let active = true
+    const upperBodyGroups = new Set(['chest', 'back', 'shoulders', 'arms', 'core'])
+    const knownUpperBody = muscleGroups.length > 0
+      && muscleGroups.every((group) => upperBodyGroups.has(String(group || '').toLowerCase()))
+    authorizeWorkoutStart({
+      sessionId: planSessionId,
+      expectedAccess: incomingWorkoutStartAccess,
+      failClosed: true,
+      activity: {
+        kind: 'lift',
+        workoutFamily: knownUpperBody ? 'strength_upper' : 'strength_full_body',
+        safetyScope: knownUpperBody ? ['UPPER_BODY'] : ['LOWER_BODY'],
+      },
+    }).then((decision) => {
+      if (!active) return
+      setWorkoutStartGate(decision.allowed
+        ? { status: 'allowed', access: decision.access, reasonCode: null }
+        : { status: 'blocked', access: decision.access, reasonCode: decision.reasonCode || 'WORKOUT_START_ACCESS_UNAVAILABLE' })
+    })
+    return () => { active = false }
+  }, [incomingWorkoutStartAccess, muscleGroups, planSessionId, sessionSafetyContextReady])
 
   useEffect(() => {
     api.get(`/workouts/${id}/sets`).then(res => {
@@ -308,6 +336,10 @@ export default function ActiveWorkout() {
   }
 
   const logSet = async () => {
+    if (workoutStartGate.status !== 'allowed') {
+      setFormErrors({ workout: workoutStartErrorMessage(workoutStartGate.reasonCode) })
+      return
+    }
     if (!selectedExercise?.name) return
     const { errors } = validateWorkoutSet({ reps, weight })
     setFormErrors(errors)
@@ -360,6 +392,18 @@ export default function ActiveWorkout() {
       scrollToFirstError({ workout: endErrorRef }, ['workout'])
       return
     }
+    const endAccess = await authorizeWorkoutStart({
+      sessionId: planSessionId,
+      expectedAccess: workoutStartGate.access,
+      failClosed: true,
+      activity: { kind: 'lift' },
+    })
+    if (!endAccess.allowed) {
+      setWorkoutStartGate({ status: 'blocked', access: endAccess.access, reasonCode: endAccess.reasonCode || 'WORKOUT_START_ACCESS_STALE' })
+      setFormErrors({ workout: workoutStartErrorMessage(endAccess.reasonCode) })
+      scrollToFirstError({ workout: endErrorRef }, ['workout'])
+      return
+    }
     setEnding(true)
     clearInterval(workoutTimerRef.current)
     try {
@@ -369,12 +413,12 @@ export default function ActiveWorkout() {
       // end succeeded. A failed completion must never block the summary nav.
       if (planSessionId) {
         try {
-          await markSessionComplete(planSessionId, planCurrentWeek)
+          await markSessionComplete(planSessionId, planCurrentWeek, endAccess.access)
         } catch (completionErr) {
           console.error('[active-workout] plan completion failed:', completionErr?.message || completionErr)
           if (isRetryableCompletionFailure(completionErr)) {
             try {
-              await queueSessionComplete(planSessionId, planCurrentWeek)
+              await queueSessionComplete(planSessionId, planCurrentWeek, endAccess.access)
               planProgressNotice = 'Workout saved. Plan progress is queued for sync.'
             } catch (queueErr) {
               console.error('[active-workout] failed to queue completion retry:', queueErr?.message || queueErr)
@@ -396,6 +440,27 @@ export default function ActiveWorkout() {
   const currentExerciseName = selectedExercise?.name || ''
   const lastSet = [...sets].reverse().find(s => s.exercise_name === currentExerciseName)
   const exerciseSets = sets.filter(s => s.exercise_name === currentExerciseName)
+
+  if (workoutStartGate.status !== 'allowed') {
+    const checking = workoutStartGate.status === 'checking'
+    return (
+      <div className="rounded-2xl p-5" role={checking ? 'status' : 'alert'} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+        <h1 className="text-lg font-black" style={{ color: 'var(--text-primary)' }}>
+          {checking ? 'Checking workout safety…' : 'Workout start blocked'}
+        </h1>
+        <p className="mt-2 text-sm" style={{ color: checking ? 'var(--text-muted)' : 'var(--danger)' }}>
+          {checking
+            ? 'Forge is verifying the current manifest revision and safety state before the timer starts.'
+            : workoutStartErrorMessage(workoutStartGate.reasonCode || 'WORKOUT_START_ACCESS_UNAVAILABLE')}
+        </p>
+        {!checking && (
+          <button type="button" onClick={() => navigate('/plan', { replace: true })} className="mt-4 w-full rounded-xl py-3 font-bold" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}>
+            Return to Train
+          </button>
+        )}
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-3" style={{ width: '100%', maxWidth: '100%', overflowX: 'hidden', paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 1rem)' }}>

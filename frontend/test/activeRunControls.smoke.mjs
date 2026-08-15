@@ -127,5 +127,8 @@ assert.match(activeRunSource, /Map hidden for Stats view · GPS recording and ru
 assert.match(activeRunSource, /addListener\('backButton'/, 'native/system back uses the same Active Run guard')
 assert.match(activeRunSource, /window\.addEventListener\('popstate'/, 'browser back uses the Active Run guard')
 assert.match(activeRunSource, /activeRunMapCommand\(mapLayout/, 'the rendered map consumes the executable layout policy')
+assert.match(logRunSource, /authorizeWorkoutStart/, 'every LogRun live-start path rechecks the server-issued safety manifest')
+assert.match(logRunSource, /workoutStartAccess/, 'the run handoff carries the manifest revision and safety hash')
+assert.match(logRunSource, /WORKOUT_START_ACCESS_(?:STALE|MISSING|BLOCKED|UNAVAILABLE)/, 'stale or missing run safety state has a visible fail-closed path')
 
 console.log('ACTIVE RUN CONTROLS SMOKE OK')
