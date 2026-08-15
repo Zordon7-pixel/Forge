@@ -6,6 +6,21 @@
 **Stress profile:** `compact-mobile-320`, 320 × 568 CSS pixels
 **Surface:** Dashboard Monitor surface; Plan remains the Operate/detail surface
 
+## Combined Release Boundary
+
+This branch intentionally combines two separately authorized release phases:
+
+1. **Phase 0 — customer-copy prerequisite**, completed before this Signature UI specification was approved. It humanizes v2.4 calendar and day-detail presentation so no customer sees underscore-delimited enums or improper machine copy. Its scoped commits are `3f7c8e20`, `83348d4b`, and `a7e0f6e3`, affecting:
+   - `frontend/src/components/calendar/ForgedCalendar.jsx`
+   - `frontend/src/components/calendar/ForgedDayView.jsx`
+   - `frontend/src/lib/goalBackwardPresentation.js`
+   - `frontend/test/e2e/authenticatedJourneys.spec.mjs`
+   - `frontend/test/goalBackwardPresentation.smoke.mjs`
+   - `frontend/test/goalBackwardSurfaces.smoke.mjs`
+2. **Phases 1–5 — Signature UI**, governed by the implementation allowlist below. The Signature UI build begins at commit `aa7e8aed`; its implementation and follow-up corrections remain inside that allowlist.
+
+The implementation allowlist below applies to the Signature UI phase, not retroactively to the already authorized Phase 0 prerequisite. Both phases are intentionally reviewed and shipped together so the new interface cannot launch while older v2.4 surfaces still expose raw machine labels.
+
 ## Product Decision
 
 Evolve the current FORGE interface rather than replace it. Preserve the existing warm orange, dark ink, paper surfaces, navigation, readiness chip, readiness detail sheet, workout prescriptions, and deterministic readiness engine. Add two memorable dashboard elements:
