@@ -7,6 +7,7 @@ import { resolveReadiness } from '../src/lib/truthConsistency.js'
 const read = (relativePath) => readFileSync(new URL(`../${relativePath}`, import.meta.url), 'utf8')
 const readinessCard = read('src/components/ReadinessArcCard.jsx')
 const coachsLog = read('src/components/CoachsLogCard.jsx')
+const insightsSheet = read('src/components/InsightsSheet.jsx')
 const dashboard = read('src/pages/Dashboard.jsx')
 const css = read('src/index.css')
 
@@ -62,14 +63,15 @@ assert.deepEqual(executionPayload, executionBefore, 'daily-execution fixture rem
 
 for (const [name, source] of [['ReadinessArcCard', readinessCard], ['CoachsLogCard', coachsLog]]) {
   assert.doesNotMatch(source, /\bfetch\s*\(|\bapi\s*\.|axios\s*\./, `${name} issues zero network requests`)
-  assert.match(source, /aria-expanded=\{expanded\}/, `${name} exposes disclosure state to assistive technology`)
   assert.match(source, /humanizeMachineValue/, `${name} uses the shared presentation helper for machine values`)
 }
 
 assert.doesNotMatch(readinessCard, /resolveReadiness|finiteReadinessScore/, 'the arc does not normalize or recompute readiness')
 assert.match(readinessCard, /data-readiness-score>\{normalized\.display\}/, 'the arc renders the Dashboard-normalized score')
 assert.match(readinessCard, /state\.data\?\.drivers/, 'the arc only renders existing readiness drivers')
+assert.match(readinessCard, /drivers\.map\(\(driver, index\)/, 'the opened arc renders every available readiness driver')
 assert.doesNotMatch(readinessCard, /Recovery signals look steady/, 'the arc does not invent a fallback recovery driver')
+assert.doesNotMatch(readinessCard, /aria-expanded|onExpandedChange|onOpenDetail|signature-disclosure-button/, 'the opened arc has no dead or nested disclosure control')
 for (const [state, copy] of [
   ['loading', 'Loading today'],
   ['locked', 'Upgrade to Forged Hybrid Pro'],
@@ -78,6 +80,7 @@ for (const [state, copy] of [
 ]) {
   assert.ok(readinessCard.includes(copy), `${state} readiness copy remains truthful`)
 }
+assert.match(coachsLog, /aria-expanded=\{expanded\}/, 'Coach\'s Daily Brief exposes disclosure state to assistive technology')
 assert.match(coachsLog, /matchingSession\(execution, recommendation\)/, 'the log binds the recommendation to daily execution')
 assert.match(coachsLog, /if \(!recommendation[^\n]+return null/, 'the log is omitted when no canonical mission exists')
 assert.match(coachsLog, /recommendation\?\.durationMinutes/, 'duration is conditional on an existing recommendation field')
@@ -85,7 +88,22 @@ assert.match(coachsLog, /recommendation\?\.suggestedDistance/, 'distance is cond
 assert.match(coachsLog, /recommendation\?\.brief\?\.effort \|\| recommendation\?\.intensity/, 'effort is conditional on an existing recommendation field')
 assert.match(coachsLog, /formatHrZone\(session\) \|\| recommendation\?\.targetZone/, 'zone uses the existing shared formatter and payload')
 
-assert.match(dashboard, /readiness=\{travelReadiness\}/, 'Dashboard passes its existing normalized readiness state to the arc')
+const readinessModal = insightsSheet.slice(
+  insightsSheet.indexOf('export function ReadinessBreakdownModal'),
+  insightsSheet.indexOf('export default function InsightsSheet'),
+)
+assert.ok(readinessModal.length > 0, 'the readiness overlay implementation is present')
+assert.equal((insightsSheet.match(/<ReadinessArcCard\b/g) || []).length, 1, 'the large arc is reused exactly once in the readiness overlay path')
+assert.match(readinessModal, /<ReadinessArcCard readinessState=\{readinessState\} readiness=\{readiness\}/, 'the overlay passes Dashboard readiness state directly to the reused arc')
+assert.doesNotMatch(readinessModal, /resolveReadiness\(|\/recovery\/readiness|\bfetch\s*\(|\bapi\s*\./, 'the overlay neither recomputes nor refetches readiness')
+assert.match(readinessModal, /role="dialog"[\s\S]*aria-modal="true"/, 'the readiness overlay exposes modal dialog semantics')
+assert.match(readinessModal, /event\.key === 'Escape'/, 'the readiness overlay supports keyboard dismissal')
+assert.match(readinessModal, /data-readiness-overlay/, 'the readiness overlay retains backdrop dismissal')
+assert.match(readinessModal, /return createPortal\([\s\S]*data-readiness-overlay[\s\S]*document\.body,?\s*\)/, 'the readiness overlay is portaled to the document body')
+
+assert.doesNotMatch(dashboard, /ReadinessArcCard/, 'Dashboard does not render the large arc inline')
+assert.match(dashboard, /<div className="signature-dashboard-stack">\s*<CoachsLogCard/, 'Coach\'s Daily Brief is the first inline Signature UI card')
+assert.match(dashboard, /<ReadinessBreakdownModal[\s\S]*readinessState=\{readinessState\}[\s\S]*readiness=\{travelReadiness\}/, 'Dashboard passes its existing readiness state and normalized value to the overlay')
 assert.match(dashboard, /recommendation=\{effectiveRecommendation\}/, 'Dashboard passes its existing canonical recommendation to the log')
 assert.match(dashboard, /execution=\{execution\}/, 'Dashboard passes its existing daily execution to the log')
 assert.equal((dashboard.match(/['"]\/recovery\/readiness['"]/g) || []).length, 1, 'Dashboard retains exactly one readiness request path')
@@ -99,6 +117,10 @@ assert.match(signatureCss, /@media \(prefers-reduced-motion: reduce\)/, 'signatu
 assert.match(signatureCss, /\.signature-arc-progress[\s\S]*animation: none;[\s\S]*transition: none;/, 'the readiness arc stops moving under reduced motion')
 assert.match(signatureCss, /min-width: 44px;[\s\S]*min-height: 44px;/, 'signature controls retain a 44px minimum target')
 assert.match(signatureCss, /:focus-visible/, 'signature controls have a visible keyboard focus treatment')
+assert.match(css, /\.readiness-sheet-backdrop\s*\{[^}]*box-sizing: border-box;[^}]*height: 100dvh;[^}]*max-height: 100dvh;[^}]*\}/, 'the readiness backdrop includes its safe-area padding within the viewport-height bound')
+assert.match(css, /\.readiness-sheet-panel[\s\S]*max-height: calc\(100dvh[\s\S]*overflow-x: hidden;[\s\S]*overflow-y: auto;/, 'the readiness sheet is viewport-bounded with internal vertical scrolling and no horizontal overflow')
+assert.match(css, /\.readiness-sheet-close[\s\S]*min-width: 44px;[\s\S]*min-height: 44px;/, 'the readiness Close control retains a 44px minimum target')
+assert.match(css, /\.readiness-sheet-close:focus-visible/, 'the readiness Close control has a visible keyboard focus treatment')
 
 const customerCopy = [
   readiness.display,

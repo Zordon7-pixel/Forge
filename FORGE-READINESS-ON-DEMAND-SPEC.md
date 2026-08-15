@@ -1,9 +1,9 @@
 # FORGE Readiness On-Demand UI Correction
 
-**Status:** Approved for Codex implementation  
-**Date:** 2026-08-15  
-**Base:** `828c7343870dfc9fdf39aad71b78e4b92eeb14e4`  
-**Primary viewport:** iPhone 17, 402 × 874 CSS pixels at 3×  
+**Status:** Approved for Codex implementation
+**Date:** 2026-08-15
+**Base:** `828c7343870dfc9fdf39aad71b78e4b92eeb14e4`
+**Primary viewport:** iPhone 17, 402 × 874 CSS pixels at 3×
 **Stress profile:** `compact-mobile-320`, 320 × 568 CSS pixels
 
 ## Product Decision

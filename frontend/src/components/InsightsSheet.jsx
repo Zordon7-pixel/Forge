@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Activity, ArrowDownRight, ArrowUpRight, Brain, ChevronRight, Lock, Watch, AlertTriangle, Footprints, Dumbbell, CheckCircle2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import AgeGradedPerformanceCard from './AgeGradedPerformanceCard'
@@ -10,6 +11,7 @@ import { finiteReadinessScore, resolveReadiness } from '../lib/truthConsistency'
 import { resolveTodayPlanAccess, resolveTodayWorkoutLabel } from '../lib/todayPlanAccess'
 import { isRestExecutionAuthority } from '../lib/dailyExecutionCore'
 import { workoutActivityTitle } from '../lib/recentActivity'
+import ReadinessArcCard from './ReadinessArcCard'
 
 function activityDateLabel(value) {
   if (!value) return '--'
@@ -880,65 +882,87 @@ export function CalendarDayDetailSheet({ selectedCalendarDay, onClose, fmtDurati
   )
 }
 
-function getReadinessBandColor(band) {
-  if (band === 'GREEN') return 'var(--accent)'
-  if (band === 'AMBER') return 'color-mix(in srgb, var(--accent) 78%, orange)'
-  if (band === 'RED') return 'color-mix(in srgb, var(--text-primary) 28%, red)'
-  return 'var(--text-muted)'
-}
+export function ReadinessBreakdownModal({ open, onClose, readinessState, readiness }) {
+  const dialogRef = useRef(null)
+  const closeButtonRef = useRef(null)
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
 
-export function ReadinessBreakdownModal({ open, onClose, readinessData }) {
+  useEffect(() => {
+    if (!open) return undefined
+
+    const previouslyFocused = document.activeElement
+    const previousBodyOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+
+    const animationFrame = window.requestAnimationFrame(() => closeButtonRef.current?.focus())
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onCloseRef.current?.()
+        return
+      }
+      if (event.key !== 'Tab') return
+
+      const focusable = Array.from(dialogRef.current?.querySelectorAll(
+        'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ) || []).filter((node) => node.getClientRects().length > 0)
+      if (focusable.length === 0) {
+        event.preventDefault()
+        dialogRef.current?.focus()
+        return
+      }
+
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      window.cancelAnimationFrame(animationFrame)
+      document.removeEventListener('keydown', handleKeyDown)
+      document.body.style.overflow = previousBodyOverflow
+      if (previouslyFocused instanceof HTMLElement) previouslyFocused.focus()
+    }
+  }, [open])
+
   if (!open) return null
 
-  const readiness = resolveReadiness(readinessData)
-  const drivers = !readiness.available
-    ? ['Sync Health data to unlock today\'s readiness drivers.']
-    : Array.isArray(readinessData?.drivers) && readinessData.drivers.length
-    ? readinessData.drivers
-    : ['Recovery signals look steady.']
-  const bandColor = readiness.available ? getReadinessBandColor(readinessData?.band) : 'var(--text-muted)'
-
-  return (
+  return createPortal(
     <div
       onClick={onClose}
-      className="sheet-backdrop"
-      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 50, display: 'flex', alignItems: 'flex-end' }}
+      className="sheet-backdrop readiness-sheet-backdrop"
+      data-readiness-overlay
     >
       <div
-        onClick={e => e.stopPropagation()}
-        className="sheet-panel"
-        style={{ background: 'var(--bg-card)', borderRadius: '20px 20px 0 0', padding: 24, width: '100%', maxHeight: '70vh', overflowY: 'auto' }}
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="readiness-dialog-title"
+        tabIndex={-1}
+        onClick={(event) => event.stopPropagation()}
+        className="sheet-panel readiness-sheet-panel"
       >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+        <div className="readiness-sheet-header">
           <div>
-            <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>Readiness</p>
-            <p style={{ fontSize: 28, fontWeight: 900, color: bandColor }}>
-              {readiness.available ? (
-                <>{readiness.score} <span style={{ fontSize: 14, fontWeight: 400, color: 'var(--text-muted)' }}>/ 100</span></>
-              ) : 'Readiness unavailable'}
-            </p>
-            <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 2 }}>{readiness.available ? readinessData.verdict : 'Sync Health data to unlock today\'s readiness score.'}</p>
+            <p className="readiness-sheet-eyebrow">Recovery</p>
+            <h2 id="readiness-dialog-title" className="readiness-sheet-title">Daily readiness details</h2>
           </div>
-          <button onClick={onClose} style={{ background: 'var(--bg-input)', border: 'none', borderRadius: 10, padding: '8px 14px', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 13 }}>Close</button>
+          <button ref={closeButtonRef} type="button" onClick={onClose} className="readiness-sheet-close">Close</button>
         </div>
-
-        <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 12 }}>Readiness Drivers</p>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {drivers.map((driver, i) => (
-            <div key={i} style={{ background: 'var(--bg-base)', borderRadius: 12, padding: 14 }}>
-              <p style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>{driver}</p>
-            </div>
-          ))}
-        </div>
-
-        <div style={{ marginTop: 20, padding: 14, background: 'var(--bg-base)', borderRadius: 12, borderLeft: '3px solid var(--accent)' }}>
-          <p style={{ fontSize: 12, fontWeight: 700, color: 'var(--accent)', marginBottom: 6 }}>How to improve your score</p>
-          <p style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6 }}>
-            Log runs consistently to build your streak. Keep weekly mileage within 10–20% of your average. Import watch data for HRV and sleep when available — that unlocks a much more accurate score.
-          </p>
+        <div className="readiness-sheet-content">
+          <ReadinessArcCard readinessState={readinessState} readiness={readiness} />
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 

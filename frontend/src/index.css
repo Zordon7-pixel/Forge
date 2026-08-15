@@ -416,6 +416,95 @@ body {
   }
 }
 
+.readiness-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  box-sizing: border-box;
+  height: 100dvh;
+  max-height: 100dvh;
+  align-items: flex-end;
+  justify-content: center;
+  overflow: hidden;
+  padding-top: max(12px, var(--safe-top));
+  background: rgba(0, 0, 0, 0.76);
+}
+
+.readiness-sheet-panel {
+  position: relative;
+  width: min(30rem, 100%);
+  max-height: calc(100dvh - max(12px, var(--safe-top)));
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--border-subtle);
+  border-radius: 20px 20px 0 0;
+  background: var(--bg-card);
+  box-shadow: 0 -18px 48px rgba(0, 0, 0, 0.4);
+}
+
+.readiness-sheet-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-card);
+}
+
+.readiness-sheet-header > div {
+  min-width: 0;
+}
+
+.readiness-sheet-eyebrow {
+  margin: 0;
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.readiness-sheet-title {
+  margin: 4px 0 0;
+  color: var(--text-primary);
+  font-size: 20px;
+  font-weight: 950;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.readiness-sheet-close {
+  min-width: 44px;
+  min-height: 44px;
+  flex: 0 0 auto;
+  padding: 8px 13px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.readiness-sheet-close:focus-visible {
+  outline: 3px solid #f97316;
+  outline-offset: 2px;
+}
+
+.readiness-sheet-content {
+  min-width: 0;
+  padding: 12px clamp(12px, 4vw, 18px) calc(16px + var(--safe-bottom));
+}
+
 /* FORGE Signature UI: Readiness Arc + Coach's Log */
 .signature-dashboard-stack {
   display: grid;
@@ -497,8 +586,7 @@ body {
 
 .signature-readiness-verdict,
 .signature-readiness-driver,
-.signature-state-copy,
-.signature-expanded-copy {
+.signature-state-copy {
   color: #d6cbb8;
   font-size: 13px;
   line-height: 1.45;
@@ -513,6 +601,11 @@ body {
   margin: 10px 0 0;
   padding-top: 10px;
   border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.signature-readiness-drivers {
+  display: grid;
+  min-width: 0;
 }
 
 .signature-arc {
@@ -547,8 +640,6 @@ body {
   to { stroke-dasharray: var(--signature-arc-fill); }
 }
 
-.signature-disclosure-button,
-.signature-detail-button,
 .signature-log-disclosure {
   min-width: 44px;
   min-height: 44px;
@@ -556,7 +647,6 @@ body {
   touch-action: manipulation;
 }
 
-.signature-disclosure-button,
 .signature-log-disclosure {
   display: flex;
   width: 100%;
@@ -574,38 +664,18 @@ body {
   text-align: left;
 }
 
-.signature-disclosure-button > span,
 .signature-log-disclosure > span {
   color: #fb923c;
   font-size: 20px;
   line-height: 1;
 }
 
-.signature-expanded-copy {
-  display: grid;
-  gap: 8px;
-  padding-top: 2px;
-}
-
-.signature-expanded-copy[hidden],
 .signature-log-rationale[hidden] {
   display: none;
 }
 
-.signature-expanded-copy p,
 .signature-log-rationale p {
   margin: 0;
-}
-
-.signature-detail-button {
-  width: 100%;
-  padding: 9px 12px;
-  border: 1px solid rgba(249, 115, 22, 0.5);
-  border-radius: 10px;
-  background: #211c14;
-  color: #fffaf0;
-  font-size: 12px;
-  font-weight: 850;
 }
 
 .signature-readiness-state {
@@ -712,7 +782,6 @@ body {
   overflow-wrap: anywhere;
 }
 
-.signature-readiness-card :is(button):focus-visible,
 .signature-coachs-log :is(button):focus-visible {
   outline: 3px solid #f97316;
   outline-offset: 3px;
@@ -748,7 +817,6 @@ body {
   .signature-readiness-verdict,
   .signature-readiness-driver,
   .signature-state-copy,
-  .signature-expanded-copy,
   .signature-log-rationale {
     font-size: 12px;
   }
@@ -758,7 +826,6 @@ body {
     padding-top: 7px;
   }
 
-  .signature-disclosure-button,
   .signature-log-disclosure {
     margin-top: 4px;
     padding-top: 4px;

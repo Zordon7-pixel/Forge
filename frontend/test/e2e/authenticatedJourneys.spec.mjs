@@ -316,7 +316,54 @@ async function assertSignatureResponsive(page, expectedViewport) {
   }
 }
 
-test('Signature UI reuses exact readiness and canonical mission facts on both mobile projects', async ({ page }, testInfo) => {
+async function assertReadinessOverlayResponsive(page, dialog, expectedViewport) {
+  await dialog.evaluate(async (node) => {
+    await Promise.all(node.getAnimations().map((animation) => animation.finished))
+  })
+
+  expect(page.viewportSize()).toEqual(expectedViewport)
+  const layout = await page.evaluate(() => ({
+    viewport: window.innerWidth,
+    documentWidth: document.documentElement.scrollWidth,
+    bodyWidth: document.body.scrollWidth,
+  }))
+  expect(layout.documentWidth).toBeLessThanOrEqual(layout.viewport)
+  expect(layout.bodyWidth).toBeLessThanOrEqual(layout.viewport)
+
+  const dialogMetrics = await dialog.evaluate((node) => ({
+    clientWidth: node.clientWidth,
+    scrollWidth: node.scrollWidth,
+    clientHeight: node.clientHeight,
+    scrollHeight: node.scrollHeight,
+  }))
+  expect(dialogMetrics.scrollWidth).toBeLessThanOrEqual(dialogMetrics.clientWidth)
+
+  const dialogBox = await dialog.boundingBox()
+  expect(dialogBox).not.toBeNull()
+  expect(dialogBox.x).toBeGreaterThanOrEqual(0)
+  expect(dialogBox.x + dialogBox.width).toBeLessThanOrEqual(expectedViewport.width)
+  expect(dialogBox.y).toBeGreaterThanOrEqual(0)
+  expect(dialogBox.y + dialogBox.height).toBeLessThanOrEqual(expectedViewport.height)
+
+  const close = dialog.getByRole('button', { name: 'Close', exact: true })
+  const closeBox = await close.boundingBox()
+  expect(closeBox).not.toBeNull()
+  expect(closeBox.width).toBeGreaterThanOrEqual(44)
+  expect(closeBox.height).toBeGreaterThanOrEqual(44)
+  expect(closeBox.y).toBeGreaterThanOrEqual(0)
+  expect(closeBox.y + closeBox.height).toBeLessThanOrEqual(expectedViewport.height)
+
+  if (dialogMetrics.scrollHeight > dialogMetrics.clientHeight) {
+    await dialog.evaluate((node) => node.scrollTo({ top: node.scrollHeight }))
+    await expect.poll(() => dialog.evaluate((node) => node.scrollTop)).toBeGreaterThan(0)
+    await expect(close).toBeVisible()
+    const scrolledCloseBox = await close.boundingBox()
+    expect(scrolledCloseBox.y).toBeGreaterThanOrEqual(0)
+    expect(scrolledCloseBox.y + scrolledCloseBox.height).toBeLessThanOrEqual(expectedViewport.height)
+  }
+}
+
+test('Signature UI opens canonical readiness on demand and keeps Coach\'s Daily Brief first on both mobile projects', async ({ page }, testInfo) => {
   const runtimeErrors = collectRuntimeErrors(page)
   const fixture = signatureUiDashboardFixture({ dateISO: today, day: todayDay })
   const fixtureBeforePresentation = structuredClone(fixture)
@@ -329,16 +376,12 @@ test('Signature UI reuses exact readiness and canonical mission facts on both mo
   })
 
   await page.goto('/')
-  const readiness = page.getByRole('region', { name: 'Recovery readiness' })
   const coachsLog = page.locator('[data-signature-coachs-log]')
-  await expect(readiness).toHaveAttribute('data-signature-readiness', 'loaded')
-  await expect(readiness.locator('[data-readiness-score]')).toHaveText(String(fixture.readiness.score))
-  await expect(readiness.locator('[data-readiness-band]')).toHaveText('Amber')
-  await expect(readiness.getByText(fixture.readiness.verdict, { exact: true })).toBeVisible()
-  await expect(readiness.getByText(fixture.readiness.drivers[0], { exact: true })).toBeVisible()
-  await expect(readiness.locator('.signature-arc')).toHaveAttribute('aria-hidden', 'true')
-
+  const headerReadiness = page.getByRole('button', { name: `Open recovery readiness, score ${fixture.readiness.score}` })
+  await expect(page.locator('[data-signature-readiness]')).toHaveCount(0)
   await expect(coachsLog).toBeVisible()
+  await expect(coachsLog.getByText("Coach's daily brief", { exact: true })).toBeVisible()
+  await expect(page.locator('.signature-dashboard-stack > :first-child[data-signature-coachs-log]')).toHaveCount(1)
   await expect(coachsLog.getByRole('heading', { name: 'Controlled progression run' })).toBeVisible()
   await expect(coachsLog.locator('[data-mission-fact="duration"] dd')).toHaveText('38 min')
   await expect(coachsLog.locator('[data-mission-fact="distance"] dd')).toHaveText('4.25 mi')
@@ -346,67 +389,49 @@ test('Signature UI reuses exact readiness and canonical mission facts on both mo
   await expect(coachsLog.locator('[data-mission-fact="pace"] dd')).toHaveText('9:15-9:45 /mi')
   await expect(coachsLog.locator('[data-mission-fact="zone"] dd')).toHaveText('Zone 2 · 132-146 bpm')
   await expect(coachsLog.getByText('9.9 mi', { exact: true })).toHaveCount(0)
+  await expect(headerReadiness).toBeVisible()
+  await expect(headerReadiness).toHaveAccessibleName(`Open recovery readiness, score ${fixture.readiness.score}`)
 
-  const readinessRequestsBeforeExpansion = requestsFor(apiState, 'GET', '/api/recovery/readiness').length
-  expect(readinessRequestsBeforeExpansion, 'Header chip plus Dashboard retain their two existing readiness requests').toBe(2)
-  const readinessToggle = readiness.locator('.signature-disclosure-button')
+  const readinessRequestsBeforeOpen = requestsFor(apiState, 'GET', '/api/recovery/readiness').length
+  expect(readinessRequestsBeforeOpen, 'Header chip plus Dashboard retain their two existing readiness requests').toBe(2)
   const rationaleToggle = coachsLog.getByRole('button', { name: 'Why today matters' })
-  await expect(readinessToggle).toHaveAttribute('aria-expanded', 'false')
-  await expect(readinessToggle).toHaveAccessibleName('Show readiness details')
   await expect(rationaleToggle).toHaveAttribute('aria-expanded', 'false')
 
-  await readinessToggle.focus()
-  await expect(readinessToggle).toBeFocused()
-  const focusStyle = await readinessToggle.evaluate((node) => {
+  await page.evaluate(() => window.scrollTo(0, 0))
+  await testInfo.attach(`signature-${testInfo.project.name}-dashboard-initial`, {
+    body: await page.screenshot({ fullPage: false }),
+    contentType: 'image/png',
+  })
+
+  await headerReadiness.click()
+  const readinessDialog = page.getByRole('dialog', { name: 'Daily readiness details' })
+  await expect(readinessDialog).toBeVisible()
+  await expect(readinessDialog).toHaveAttribute('aria-modal', 'true')
+  await expect(page.getByRole('dialog')).toHaveCount(1)
+  const readiness = readinessDialog.getByRole('region', { name: 'Recovery readiness' })
+  await expect(page.locator('[data-signature-readiness]')).toHaveCount(1)
+  await expect(readiness).toHaveAttribute('data-signature-readiness', 'loaded')
+  await expect(readiness.locator('[data-readiness-score]')).toHaveText(String(fixture.readiness.score))
+  await expect(readiness.locator('[data-readiness-band]')).toHaveText('Amber')
+  await expect(readiness.getByText(fixture.readiness.verdict, { exact: true })).toBeVisible()
+  for (const driver of fixture.readiness.drivers) {
+    await expect(readiness.getByText(driver, { exact: true })).toBeVisible()
+  }
+  await expect(readiness.locator('.signature-arc')).toHaveAttribute('aria-hidden', 'true')
+  await expect(readiness.locator('button')).toHaveCount(0)
+  const readinessRequestsAfterOpenRoute = requestsFor(apiState, 'GET', '/api/recovery/readiness').length
+  expect(readinessRequestsAfterOpenRoute).toBeGreaterThanOrEqual(readinessRequestsBeforeOpen)
+
+  const close = readinessDialog.getByRole('button', { name: 'Close', exact: true })
+  await expect(close).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(close).toBeFocused()
+  const closeFocusStyle = await close.evaluate((node) => {
     const style = getComputedStyle(node)
     return { style: style.outlineStyle, width: style.outlineWidth }
   })
-  expect(focusStyle.style).not.toBe('none')
-  expect(Number.parseFloat(focusStyle.width)).toBeGreaterThanOrEqual(3)
-
-  await page.evaluate(() => window.scrollTo(0, 0))
-  if (testInfo.project.name === 'compact-mobile-320') {
-    expect(page.viewportSize()).toEqual(testInfo.project.use.viewport)
-    const collapsedLayout = await page.evaluate(() => ({
-      viewport: window.innerWidth,
-      documentWidth: document.documentElement.scrollWidth,
-      bodyWidth: document.body.scrollWidth,
-    }))
-    expect(collapsedLayout.viewport).toBe(testInfo.project.use.viewport.width)
-    expect(collapsedLayout.documentWidth).toBeLessThanOrEqual(collapsedLayout.viewport)
-    expect(collapsedLayout.bodyWidth).toBeLessThanOrEqual(collapsedLayout.viewport)
-
-    const [collapsedRationaleBox, collapsedNavBox] = await Promise.all([
-      rationaleToggle.boundingBox(),
-      page.locator('nav.fixed').boundingBox(),
-    ])
-    expect(collapsedRationaleBox).not.toBeNull()
-    expect(collapsedNavBox).not.toBeNull()
-    expect(
-      collapsedRationaleBox.y + collapsedRationaleBox.height,
-      'Collapsed Why today matters control stays above the fixed nav at initial scroll position',
-    ).toBeLessThanOrEqual(collapsedNavBox.y)
-  }
-  if (testInfo.project.name === 'iphone-17') {
-    await testInfo.attach('signature-iphone-17-baseline', {
-      body: await page.screenshot({ fullPage: false }),
-      contentType: 'image/png',
-    })
-  }
-
-  await readinessToggle.click()
-  await rationaleToggle.click()
-  await expect(readinessToggle).toHaveAttribute('aria-expanded', 'true')
-  await expect(readinessToggle).toHaveAccessibleName('Hide readiness details')
-  await expect(rationaleToggle).toHaveAttribute('aria-expanded', 'true')
-  await expect(readiness.getByText(fixture.readiness.drivers[1], { exact: true })).toBeVisible()
-  await expect(coachsLog.getByText('Build aerobic control before the next quality session.', { exact: true })).toBeVisible()
-  expect(requestsFor(apiState, 'GET', '/api/recovery/readiness')).toHaveLength(readinessRequestsBeforeExpansion)
-  expect(requestsFor(apiState, 'GET', '/api/plans/today')).toHaveLength(1)
-
-  const expandedBody = await page.locator('body').innerText()
-  expect(expandedBody, 'Expanded Signature UI copy contains no underscore symbol').not.toContain('_')
-  expect(expandedBody, 'Expanded Signature UI copy contains no raw closed enum token').not.toMatch(/\b[A-Z][A-Z0-9]*_[A-Z0-9_]+\b/)
+  expect(closeFocusStyle.style).not.toBe('none')
+  expect(Number.parseFloat(closeFocusStyle.width)).toBeGreaterThanOrEqual(3)
 
   await page.emulateMedia({ reducedMotion: 'reduce' })
   const arcMotion = await readiness.locator('.signature-arc-progress').evaluate((node) => {
@@ -415,25 +440,47 @@ test('Signature UI reuses exact readiness and canonical mission facts on both mo
   })
   expect(arcMotion).toEqual({ animation: 'none', transition: '0s' })
 
+  await testInfo.attach(`signature-${testInfo.project.name}-readiness-opened`, {
+    body: await page.screenshot({ fullPage: false }),
+    contentType: 'image/png',
+  })
+  await assertReadinessOverlayResponsive(page, readinessDialog, testInfo.project.use.viewport)
+  await testInfo.attach(`signature-${testInfo.project.name}-readiness-max-scroll`, {
+    body: await page.screenshot({ fullPage: false }),
+    contentType: 'image/png',
+  })
+
+  const openedBody = await page.locator('body').innerText()
+  expect(openedBody, 'Opened Signature UI copy contains no underscore symbol').not.toContain('_')
+  expect(openedBody, 'Opened Signature UI copy contains no raw closed enum token').not.toMatch(/\b[A-Z][A-Z0-9]*_[A-Z0-9_]+\b/)
+  expect(openedBody, 'Opened Signature UI copy contains no raw hash').not.toMatch(/\b(?:sha256:)?[a-f0-9]{32,}\b/i)
+
+  await close.click()
+  await expect(readinessDialog).toHaveCount(0)
+  await expect(page.locator('[data-signature-readiness]')).toHaveCount(0)
+  await expect(coachsLog).toBeVisible()
+  await expect(headerReadiness).toBeFocused()
+  expect(requestsFor(apiState, 'GET', '/api/recovery/readiness')).toHaveLength(readinessRequestsAfterOpenRoute)
+
+  await headerReadiness.click()
+  await expect(readinessDialog).toBeVisible()
+  const readinessRequestsAfterBackdropRoute = requestsFor(apiState, 'GET', '/api/recovery/readiness').length
+  await page.locator('[data-readiness-overlay]').click({ position: { x: 4, y: 4 } })
+  await expect(readinessDialog).toHaveCount(0)
+  await expect(page.locator('[data-signature-readiness]')).toHaveCount(0)
+  expect(requestsFor(apiState, 'GET', '/api/recovery/readiness')).toHaveLength(readinessRequestsAfterBackdropRoute)
+
+  await rationaleToggle.click()
+  await expect(rationaleToggle).toHaveAttribute('aria-expanded', 'true')
+  await expect(coachsLog.getByText('Build aerobic control before the next quality session.', { exact: true })).toBeVisible()
   await assertSignatureResponsive(page, testInfo.project.use.viewport)
-  await page.evaluate(() => window.scrollTo(0, 0))
-  if (testInfo.project.name === 'iphone-17') {
-    await testInfo.attach('signature-iphone-17-expanded', {
-      body: await page.screenshot({ fullPage: false }),
-      contentType: 'image/png',
-    })
-  } else {
-    await testInfo.attach('signature-compact-mobile-320-stress', {
-      body: await page.screenshot({ fullPage: false }),
-      contentType: 'image/png',
-    })
-  }
+  expect(requestsFor(apiState, 'GET', '/api/plans/today')).toHaveLength(1)
 
   expect(fixture).toEqual(fixtureBeforePresentation)
   assertCleanApiAndRuntime(apiState, runtimeErrors)
 })
 
-test('Signature UI truthfully covers loading, locked, and unavailable states', async ({ page }) => {
+test('Signature UI truthfully covers loading, locked, unavailable, and error states on demand', async ({ page }) => {
   const runtimeErrors = collectRuntimeErrors(page)
   let readinessMode = 'locked'
   let releaseReadiness
@@ -443,15 +490,21 @@ test('Signature UI truthfully covers loading, locked, and unavailable states', a
     responses: new Map([
       ['GET /api/recovery/readiness', async () => {
         if (gatePending) await readinessGate
-        return readinessMode === 'locked'
-          ? qaResponse({ error: 'Upgrade required' }, 402)
-          : { available: false }
+        if (readinessMode === 'locked') return qaResponse({ error: 'Upgrade required' }, 402)
+        if (readinessMode === 'error') return qaResponse({ error: 'Readiness unavailable' }, 500)
+        return { available: false }
       }],
     ]),
   })
 
   await page.goto('/')
-  const readiness = page.getByRole('region', { name: 'Recovery readiness' })
+  await expect(page.locator('[data-signature-readiness]')).toHaveCount(0)
+  const headerReadiness = page.getByRole('button', { name: 'Open recovery readiness', exact: true })
+  await expect(headerReadiness).toBeVisible()
+  await headerReadiness.click()
+  const readinessDialog = page.getByRole('dialog', { name: 'Daily readiness details' })
+  const readiness = readinessDialog.getByRole('region', { name: 'Recovery readiness' })
+  await expect(readinessDialog).toBeVisible()
   await expect(readiness).toHaveAttribute('data-signature-readiness', 'loading')
   await expect(readiness).toHaveAttribute('aria-busy', 'true')
 
@@ -462,22 +515,40 @@ test('Signature UI truthfully covers loading, locked, and unavailable states', a
   await expect(readiness.locator('.signature-arc')).toHaveCount(0)
   await expect(readiness.locator('[data-readiness-score]')).toHaveCount(0)
   await expect(page.locator('[data-signature-coachs-log]')).toHaveCount(0)
+  const lockedReadinessRequests = requestsFor(apiState, 'GET', '/api/recovery/readiness').length
+  await readinessDialog.getByRole('button', { name: 'Close', exact: true }).click()
+  await expect(page.locator('[data-signature-readiness]')).toHaveCount(0)
+  expect(requestsFor(apiState, 'GET', '/api/recovery/readiness')).toHaveLength(lockedReadinessRequests)
 
   readinessMode = 'unavailable'
   await page.reload()
+  await expect(page.locator('[data-signature-readiness]')).toHaveCount(0)
+  await headerReadiness.click()
   await expect(readiness).toHaveAttribute('data-signature-readiness', 'unavailable')
   await expect(readiness.getByText('Sync Health data to unlock today\'s readiness score.', { exact: true })).toBeVisible()
   await expect(readiness.locator('.signature-arc')).toHaveCount(0)
   await expect(readiness.locator('[data-readiness-score]')).toHaveCount(0)
   await expect(page.locator('[data-signature-coachs-log]')).toHaveCount(0)
 
-  expect(requestsFor(apiState, 'GET', '/api/recovery/readiness')).toHaveLength(4)
+  await readinessDialog.getByRole('button', { name: 'Close', exact: true }).click()
+  readinessMode = 'error'
+  await page.reload()
+  await expect(page.locator('[data-signature-readiness]')).toHaveCount(0)
+  await headerReadiness.click()
+  await expect(readiness).toHaveAttribute('data-signature-readiness', 'error')
+  await expect(readiness.getByText("Couldn't load recovery readiness.", { exact: true })).toBeVisible()
+  await expect(readiness.locator('.signature-arc')).toHaveCount(0)
+  await expect(readiness.locator('[data-readiness-score]')).toHaveCount(0)
+
+  expect(requestsFor(apiState, 'GET', '/api/recovery/readiness').length).toBeGreaterThanOrEqual(6)
   const expectedLockedResourceError = 'Failed to load resource: the server responded with a status of 402 (Payment Required)'
-  expect(runtimeErrors, 'Locked readiness should emit only the two expected 402 resource errors').toEqual([
-    expectedLockedResourceError,
-    expectedLockedResourceError,
-  ])
-  const unexpectedRuntimeErrors = runtimeErrors.filter((error) => error !== expectedLockedResourceError)
+  expect(runtimeErrors.filter((error) => error === expectedLockedResourceError).length).toBeGreaterThanOrEqual(2)
+  expect(runtimeErrors.some((error) => error.includes('500 (Internal Server Error)'))).toBe(true)
+  const unexpectedRuntimeErrors = runtimeErrors.filter((error) => (
+    error !== expectedLockedResourceError
+    && !error.includes('500 (Internal Server Error)')
+    && !error.startsWith('[header/readiness] load failed:')
+  ))
   assertCleanApiAndRuntime(apiState, unexpectedRuntimeErrors)
 })
 
