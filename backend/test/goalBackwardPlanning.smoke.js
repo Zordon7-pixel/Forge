@@ -1110,5 +1110,14 @@ test('MAT-SESSION-BINDING-01', 'material review items must identify the actual c
   assert.equal(fabricatedReview.valid, false);
 });
 
+const ownedAcceptanceIds = [
+  'XLOAD-01', 'XLOAD-02', 'XLOAD-03', 'XLOAD-04', 'XLOAD-05',
+  'MAT-01', 'MAT-02', 'MAT-03', 'MAT-04', 'MAT-05',
+  'PHASE-01', 'PHASE-02', 'PHASE-03', 'PHASE-04',
+  'ROLE-01', 'ROLE-02', 'ROLE-03',
+  'INT-01', 'INT-02', 'INT-03', 'INT-04', 'CAND-01',
+];
 assert.equal(new Set(results).size, results.length, 'fixture IDs must remain unique');
+assert.deepEqual(results.filter((id) => ownedAcceptanceIds.includes(id)).sort(), [...ownedAcceptanceIds].sort(),
+  'all 22 planning-owned acceptance rows must report exactly once');
 console.log(`GOAL-BACKWARD PLANNING SMOKE OK (${results.length} checks)`);

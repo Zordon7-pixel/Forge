@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 const assert = require('node:assert/strict');
+const fixtureData = require('./fixtures/goalBackwardV24.fixtures.json');
 const canonicalWorkout = require('../src/lib/canonicalWorkout');
 const hyroxPlan = require('../src/lib/hyroxPlan');
 const standards = require('../src/lib/hyroxStandards');
@@ -18,6 +19,12 @@ const RULESET = {
   ruleset_id: 'hyrox-global',
   ruleset_version: '2026-2027',
 };
+
+const BRYAN_FIXTURE = fixtureData.fixtures.find((fixture) => Array.isArray(fixture.acceptance_ids));
+
+function bryanEventState() {
+  return hyroxPlan.buildHyroxEventState(BRYAN_FIXTURE.input.hyrox_event);
+}
 
 function singlesInput(overrides = {}) {
   return {
@@ -483,59 +490,49 @@ function assertNonClusterRejection() {
 
 function assertBryanWitnessRunningFloor() {
   const witness = hyroxPlan.buildBryanPeakWeekWitness({
-    hyrox_event_state: hyroxPlan.buildHyroxEventState(doublesInput({
-      planned_station_split: completeDoublesSplit(), actual_station_split: {},
-      athlete_station_contribution: {}, partner_station_contribution: {},
-    })),
+    hyrox_event_state: bryanEventState(),
   });
-  assert.equal(witness.recent_normal_median_distance_m, 33796.224);
-  assert.equal(witness.minimum_weekly_running_m, 30416);
-  assert.equal(witness.weekly_running_m, 30578);
+  assert.equal(witness.recent_normal_median_distance_m, BRYAN_FIXTURE.expected.recent_normal_median_distance_m);
+  assert.equal(witness.minimum_weekly_running_m, BRYAN_FIXTURE.expected.minimum_weekly_running_m);
+  assert.equal(witness.weekly_running_m, BRYAN_FIXTURE.expected.weekly_running_m);
   assert.equal(witness.weekly_running_m >= witness.minimum_weekly_running_m, true);
-  assert.equal(witness.weekly_running_miles, 19);
+  assert.equal(witness.weekly_running_miles, BRYAN_FIXTURE.expected.weekly_running_miles);
   assert.equal(witness.sessions.filter((session) => session.workout_family === 'rest').length, 0);
 }
 
 function assertBryanGoalsRemainUnvalidated() {
+  const input = BRYAN_FIXTURE.input;
   const decision = buildGoalBackwardPlanningDecision({
-    athlete_id: 'bryan-fixture', planning_date_local: '2026-08-03', timezone: 'America/New_York',
-    athlete_state: {
-      athlete_state_revision: 1, evidence_snapshot_id: 'bryan-snapshot', training_age_class: 'ESTABLISHED',
-      consistency_state: 'CONSISTENT', consistent_weeks: 8, recovery_state: 'NORMAL', safety_action: 'NORMAL',
-      recent_normal_running: { status: 'ESTABLISHED', median_distance_m: 33796.224 },
-      available_days: ['Mon', 'Tue', 'Thu', 'Fri', 'Sun'],
-    },
-    goals: [
-      { goal_id: 'hyrox-goal', race_id: 'hyrox-race', athlete_id: 'bryan-fixture', priority: 'A', goal_type: 'performance', event_kind: 'HYROX_DOUBLES', event_local_date: '2026-09-06', event_state: 'SCHEDULED', target_time_s: 3600 },
-      { goal_id: 'ten-mile-goal', race_id: 'ten-mile-race', athlete_id: 'bryan-fixture', priority: 'B', goal_type: 'performance', event_kind: 'ROAD_ENDURANCE', event_local_date: '2026-10-11', event_state: 'SCHEDULED', target_time_s: 5400 },
-    ],
-    races: [
-      { race_id: 'hyrox-race', athlete_id: 'bryan-fixture' },
-      { race_id: 'ten-mile-race', athlete_id: 'bryan-fixture' },
-    ],
-    development_gate_complete: true,
+    athlete_id: input.athlete_id, planning_date_local: input.planning_date_local, timezone: input.timezone,
+    athlete_state: input.athlete_state, goals: input.goals, races: input.races,
+    development_gate_complete: input.development_gate_complete,
   });
-  assert.deepEqual(decision.active_goals.map((goal) => goal.feasibility_status), ['unvalidated', 'unvalidated']);
-  assert.deepEqual(decision.active_goals.map((goal) => goal.target_time_s), [3600, 5400]);
+  assert.deepEqual(decision.ordered_goal_ids, BRYAN_FIXTURE.expected.ordered_goal_ids);
+  assert.deepEqual(decision.active_goals.map((goal) => goal.feasibility_status), BRYAN_FIXTURE.expected.feasibility_statuses);
+  assert.deepEqual(decision.active_goals.map((goal) => goal.target_time_s), input.goals.map((goal) => goal.target_time_s));
 }
 
 function assertBryanOrderedGoals() {
+  const input = BRYAN_FIXTURE.input;
+  const hyroxGoal = input.goals[0];
+  const tenMileGoal = input.goals[1];
   const previousMode = process.env.FORGE_GOAL_BACKWARD_V24_MODE;
   process.env.FORGE_GOAL_BACKWARD_V24_MODE = 'on';
   try {
     const plan = hyroxPlan.generateHyroxPlan({
-      athlete: { weeklyMilesCurrent: 21, runDaysPerWeek: 4, training_age_class: 'ESTABLISHED' },
-      planningLocalDate: '2026-08-03',
+      athlete: { weeklyMilesCurrent: input.athlete_state.recent_normal_running.median_distance_m / 1609.344, runDaysPerWeek: 4, training_age_class: input.athlete_state.training_age_class },
+      planningLocalDate: input.planning_date_local,
       event: {
-        raceId: 'hyrox-race', name: 'HYROX', eventLocalDate: '2026-09-06',
-        eventTimezone: 'America/New_York', format: 'doubles', category: 'men', rulesVersion: '2026-2027',
-        hyroxEventState: { planned_station_split: completeDoublesSplit() },
+        raceId: hyroxGoal.race_id, name: 'Synthetic HYROX', eventLocalDate: hyroxGoal.event_local_date,
+        eventTimezone: input.timezone, format: input.hyrox_event.format,
+        category: input.hyrox_event.registered_division, rulesVersion: input.hyrox_event.ruleset_version,
+        hyroxEventState: { planned_station_split: input.hyrox_event.planned_station_split },
       },
       equipment: ['ski_erg', 'row_erg', 'sled_push', 'sled_pull', 'wall_ball_target', 'sandbag', 'farmers_carry', 'treadmill'],
-      availableDays: ['Mon', 'Tue', 'Thu', 'Fri', 'Sun'],
+      availableDays: input.athlete_state.available_days,
       secondaryRace: {
-        raceId: 'ten-mile-race', name: '10-mile', eventLocalDate: '2026-10-11',
-        eventTimezone: 'America/New_York', distanceMiles: 10, goalTimeSeconds: 5400,
+        raceId: tenMileGoal.race_id, name: 'Synthetic 10-mile', eventLocalDate: tenMileGoal.event_local_date,
+        eventTimezone: input.timezone, distanceMiles: tenMileGoal.distance_miles, goalTimeSeconds: tenMileGoal.target_time_s,
       },
     });
     assert.deepEqual(plan.goals.map((goal) => goal.priority), ['A', 'B']);
@@ -553,24 +550,21 @@ function assertBryanOrderedGoals() {
 
 function assertBryanExactWitness() {
   const witness = hyroxPlan.buildBryanPeakWeekWitness({
-    hyrox_event_state: hyroxPlan.buildHyroxEventState(doublesInput({
-      planned_station_split: completeDoublesSplit(), actual_station_split: {},
-      athlete_station_contribution: {}, partner_station_contribution: {},
-    })),
+    hyrox_event_state: bryanEventState(),
   });
   const cluster = witness.sessions.find((session) => session.workout_family === 'hyrox_partial_simulation');
   assert.equal(cluster.run_station_pair_count, 3);
-  assert.equal(cluster.main_work_duration_s, 2160);
-  assert.equal(cluster.main_set_running_m, 2250);
-  assert.equal(cluster.warmup_cooldown_running_m, 4187);
-  assert.equal(cluster.running_distance_m, 6437);
-  assert.deepEqual(witness.weekly_stress_vector, [13, 12, 10, 5, 5, 9, 10, 7]);
-  assert.deepEqual(witness.normal_ceiling_vector, [14, 12, 9, 4, 4, 8, 9, 5]);
-  assert.deepEqual(witness.authorized_ceiling_vector, [16, 14, 12, 6, 6, 10, 12, 10]);
+  assert.equal(cluster.main_work_duration_s, BRYAN_FIXTURE.expected.cluster_main_work_duration_s);
+  assert.equal(cluster.main_set_running_m, BRYAN_FIXTURE.expected.cluster_main_set_running_m);
+  assert.equal(cluster.warmup_cooldown_running_m, BRYAN_FIXTURE.expected.cluster_warmup_cooldown_running_m);
+  assert.equal(cluster.running_distance_m, BRYAN_FIXTURE.expected.cluster_running_distance_m);
+  assert.deepEqual(witness.weekly_stress_vector, BRYAN_FIXTURE.expected.weekly_stress_vector);
+  assert.deepEqual(witness.normal_ceiling_vector, BRYAN_FIXTURE.expected.normal_ceiling_vector);
+  assert.deepEqual(witness.authorized_ceiling_vector, BRYAN_FIXTURE.expected.authorized_ceiling_vector);
   assert.deepEqual(witness.roles, {
     hyrox_partial_simulation: 'PRIMARY_KEY', long_aerobic: 'PRIMARY_KEY', hyrox_station_skill: 'SUPPORTING',
   });
-  assert.equal(witness.hard_day_count, 2);
+  assert.equal(witness.hard_day_count, BRYAN_FIXTURE.expected.hard_day_count);
   assert.equal(witness.validation.valid, true, JSON.stringify(witness.validation.violations));
   assert.deepEqual(witness.validation.reason_codes, ['PHASE_SPECIFIC_OVERLOAD']);
   assert.deepEqual(witness.overload.reason_codes, ['PHASE_SPECIFIC_OVERLOAD']);
@@ -583,6 +577,8 @@ function run() {
     results.push(id);
     console.log(`ok - ${id} - ${description}`);
   };
+  assert.ok(BRYAN_FIXTURE, 'the synthetic dual-goal parameterized fixture is required');
+  assert.deepEqual(BRYAN_FIXTURE.acceptance_ids, ['BRYAN-01', 'BRYAN-02', 'BRYAN-03', 'BRYAN-04']);
   assertRegistryPolicy();
   test('HYROX-01', 'Singles owns the complete official run and station workload', assertSinglesOwnership);
   test('HYROX-02', 'Doubles preserves team truth and unknown individual contribution', assertDoublesBurdenAndUnknownSplit);

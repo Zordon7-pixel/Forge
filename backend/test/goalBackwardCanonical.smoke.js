@@ -200,7 +200,7 @@ test('FIT-01', 'manual and station steps cannot claim fully structured export ca
   assert.equal(falseClaim.valid, false);
 });
 
-test('TRUTH-01', 'explanation numbers must be present in canonical facts and cannot mutate prescription', () => {
+test('CANON-TRUTH-01', 'explanation numbers must be present in canonical facts and cannot mutate prescription', () => {
   const canonical = buildCanonicalSession(intervalSession());
   assert.equal(validateExplanationAgainstCanonicalFacts('Complete 3 repeats of 1000 m.', canonical).valid, true);
   const rejected = validateExplanationAgainstCanonicalFacts('Complete 4 repeats of 1000 m.', canonical);
@@ -461,5 +461,157 @@ test('CANON-LEGACY-01', 'a canonical session-set plan remains readable through c
   assert.strictEqual(planSchema.buildCanonicalPlanFromSessionSet(null, { currentPlan: legacy }), legacy);
 });
 
-assert.equal(new Set(results).size, results.length, 'fixture IDs must remain unique');
-console.log(`GOAL-BACKWARD CANONICAL SMOKE OK (${results.length} checks)`);
+async function runCrossSurfaceAcceptance() {
+  const [calendarModule, dailyModule, fitModule] = await Promise.all([
+    import('../../frontend/src/lib/planCalendar.js'),
+    import('../../frontend/src/lib/dailyExecutionCore.js'),
+    import('../../frontend/src/services/fit/encodeWorkoutFit.js'),
+  ]);
+  const canonical = buildCanonicalSession(intervalSession({
+    session_id: 'session-surface-equality',
+    workout_family: 'easy_run',
+    title: 'Four mile canonical run',
+    steps: [{
+      step_id: 'four-mile-run', type: 'run', order: 1, workout_family: 'easy_run',
+      target: { distance_m: 6437 }, provenance: provenance(['m']),
+    }],
+    safety_scope: [],
+    executability: 'EXECUTABLE',
+  }));
+  const purpose = 'Preserve exact canonical surface truth.';
+  const identity = {
+    decision_id: canonical.decision_id,
+    decision_hash: 'd'.repeat(64),
+    candidate_id: 'candidate-surface-equality',
+    candidate_revision: 2,
+    candidate_hash: 'a'.repeat(64),
+    plan_id: canonical.plan_id,
+    plan_revision: canonical.plan_revision,
+    canonical_session_set_hash: 'b'.repeat(64),
+    athlete_state_revision: 5,
+    safety_state_hash: `sha256:${'e'.repeat(64)}`,
+    goal_revisions: { 'goal-synthetic-1': 3 },
+  };
+  const planData = {
+    schemaVersion: 2,
+    canonical_workout_schema_version: 1,
+    plan_id: canonical.plan_id,
+    plan_revision: canonical.plan_revision,
+    decision_id: canonical.decision_id,
+    decision_hash: identity.decision_hash,
+    selected_candidate_id: identity.candidate_id,
+    selected_candidate_hash: identity.candidate_hash,
+    canonical_session_set_hash: identity.canonical_session_set_hash,
+    planMode: 'run_only',
+    overall_feasibility: 'supported',
+    reasons: ['GOAL_EXPOSURES_SUPPORTED'],
+    weeks: [{
+      week: 1,
+      startDate: canonical.scheduled_local_date,
+      phase: canonical.phase,
+      purpose,
+      days: [{ date: canonical.scheduled_local_date, day: 'Tue', sessions: [canonical] }],
+    }],
+  };
+  const manifest = {
+    schema_version: 'goal_backward_surface_manifest_v1',
+    surface_revision: 3,
+    feature_mode: 'on',
+    v24_surface_enabled: true,
+    status: 'accepted',
+    identity,
+    purpose,
+    feasibility: { status: 'supported', reason_codes: ['GOAL_EXPOSURES_SUPPORTED'] },
+    safety: { action: 'NORMAL', scope: [], reason_codes: [] },
+    weeks: [{ week: 1, start_date: canonical.scheduled_local_date, phase: canonical.phase, purpose }],
+    sessions: [canonical],
+  };
+  const plan = { id: canonical.plan_id, weeks: 1, plan_data: planData };
+  const userPlan = { id: 'assignment-surface-equality', plan_version: canonical.plan_revision, progress: { completedSessionIds: [] } };
+  const surface = dailyModule.validateSurfaceManifest({ plan, userPlan, manifest });
+  assert.equal(surface.status, 'accepted');
+  const calendar = calendarModule.buildCalendarModel(plan, userPlan, {
+    surfaceManifest: manifest,
+    now: new Date(`${canonical.scheduled_local_date}T12:00:00.000Z`),
+  });
+  const displayed = calendar.getWeek(0).days.flatMap((day) => day.sessions)[0];
+  const execution = dailyModule.normalizeExecution({
+    plan,
+    user_plan: userPlan,
+    surface_manifest: manifest,
+    execution: {
+      hasPlan: true,
+      hasDay: true,
+      isRest: false,
+      date: canonical.scheduled_local_date,
+      sessions: [canonical],
+      run: canonical,
+    },
+  });
+  const watch = fitModule.buildAcceptedCanonicalWorkout({
+    surfaceManifest: manifest,
+    sessionId: canonical.session_id,
+    exportRevision: 2,
+  });
+  const fit = fitModule.buildFitWorkoutRepresentation({
+    surfaceManifest: manifest,
+    sessionId: canonical.session_id,
+    exportRevision: 2,
+  });
+
+  test('CANON-02', 'UI 4.00 miles and FIT metric distance remain within the two-metre tolerance', () => {
+    const fitDistanceM = fit.canonical_steps[0].target.distance_m;
+    assert.equal(displayed.distanceMiles.toFixed(2), '4.00');
+    assert.ok(Math.abs(displayed.distanceMiles * 1609.344 - fitDistanceM) <= 2);
+    assert.equal(fitDistanceM, canonical.derived_totals.distance_m);
+  });
+
+  test('CANON-03', 'UI, Watch, and FIT retain the same accepted identity and revisions', () => {
+    assert.deepEqual({
+      session_id: displayed.id,
+      session_revision: displayed.sessionRevision,
+      plan_id: canonical.plan_id,
+      plan_revision: displayed.planRevision,
+      surface_revision: manifest.surface_revision,
+      content_hash: displayed.contentHash,
+    }, {
+      session_id: watch.identity.session_id,
+      session_revision: watch.identity.session_revision,
+      plan_id: watch.identity.plan_id,
+      plan_revision: watch.identity.plan_revision,
+      surface_revision: watch.identity.surface_revision,
+      content_hash: watch.identity.content_hash,
+    });
+    assert.deepEqual(fit.identity, watch.identity);
+  });
+
+  test('CANON-05', 'UI, calendar, daily execution, Watch, and FIT use exact canonical content', () => {
+    assert.deepEqual(displayed.steps, canonical.steps);
+    assert.deepEqual(displayed.targetProvenance, canonical.target_provenance);
+    assert.deepEqual(displayed.purposeReasonCodes, canonical.purpose_reason_codes);
+    assert.deepEqual(displayed.adjustmentCriteria, canonical.adjustment_criteria);
+    assert.deepEqual(displayed.stopCriteria, canonical.stop_criteria);
+    assert.deepEqual(displayed.safetyScope, canonical.safety_scope);
+    assert.equal(displayed.executability, canonical.executability);
+    assert.deepEqual(displayed.capability, canonical.capability);
+    assert.deepEqual(execution.sessions[0].steps, canonical.steps);
+    assert.deepEqual(execution.sessions[0].target_provenance, canonical.target_provenance);
+    assert.deepEqual(watch.steps, canonical.steps);
+    assert.deepEqual(watch.target_provenance, canonical.target_provenance);
+    assert.deepEqual(watch.capability, canonical.capability);
+    assert.deepEqual(fit.canonical_steps, canonical.steps);
+    assert.deepEqual(fit.target_provenance, canonical.target_provenance);
+    assert.deepEqual(fit.capability, canonical.capability);
+  });
+
+  const ownedAcceptanceIds = ['FLOOR-01', 'CANON-01', 'CANON-02', 'CANON-03', 'CANON-04', 'CANON-05', 'FIT-01'];
+  assert.equal(new Set(results).size, results.length, 'fixture IDs must remain unique');
+  assert.deepEqual(results.filter((id) => ownedAcceptanceIds.includes(id)).sort(), [...ownedAcceptanceIds].sort(),
+    'all seven canonical-owned acceptance rows must report exactly once');
+  console.log(`GOAL-BACKWARD CANONICAL SMOKE OK (${results.length} checks)`);
+}
+
+runCrossSurfaceAcceptance().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

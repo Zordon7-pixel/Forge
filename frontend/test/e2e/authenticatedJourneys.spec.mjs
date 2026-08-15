@@ -1,5 +1,10 @@
 import { expect, test } from '@playwright/test'
-import { createQaToken, installAuthenticatedApi, qaResponse } from './support/mockApi.mjs'
+import {
+  createQaToken,
+  goalBackwardV24PlanFixture,
+  installAuthenticatedApi,
+  qaResponse,
+} from './support/mockApi.mjs'
 
 test.describe.configure({ timeout: 60_000 })
 
@@ -847,6 +852,7 @@ test('check-in hands off through warm-up, run save, recovery check-in, and recap
   await page.getByRole('button', { name: 'Finish Warm-Up', exact: true }).click()
   await page.getByRole('button', { name: 'Start Run', exact: true }).click()
   await expect(page).toHaveURL(/\/run\/active$/)
+  await page.getByRole('button', { name: 'Start Run', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Continue without route' })).toBeVisible()
   await page.getByRole('button', { name: 'Continue without route' }).click()
   await expect(page.getByTestId('pause-run')).toBeVisible({ timeout: 7_000 })
@@ -1843,5 +1849,107 @@ test('two-race schedule rebuild preserves both goals when the race list is empty
   expect(requests[0].body.race_ids).toEqual(['yonkers-half', 'army-ten'])
   expect(requestsFor(apiState, 'POST', '/api/plans/generate-for-race/yonkers-half')).toHaveLength(0)
   expect(requestsFor(apiState, 'POST', '/api/plans/generate')).toHaveLength(0)
+  assertCleanApiAndRuntime(apiState, runtimeErrors)
+})
+
+test('v2.4 preview stays review-only and exposes canonical truth on both mobile projects', async ({ page }, testInfo) => {
+  const runtimeErrors = collectRuntimeErrors(page)
+  const planFixture = goalBackwardV24PlanFixture({
+    dateISO: today,
+    day: todayDay,
+    featureMode: 'preview',
+    safetyAction: 'NO_RUNNING',
+    safetyScope: ['RUN', 'IMPACT'],
+    safetyReasonCodes: ['NO_RUNNING', 'MATERIAL_CHANGE_REVIEW_REQUIRED'],
+    executability: 'RESTRICTED',
+    capability: 'FULLY_STRUCTURED',
+  })
+  const proposal = {
+    id: 'adaptation-v24-mobile-preview',
+    revision: 'adaptation-v24-mobile-preview-r1',
+    planVersion: 7,
+    status: 'proposal',
+    decisionStatus: 'pending',
+    safetyException: true,
+    headline: 'Review your v2.4 preview',
+    reason: 'Fresh scoped safety evidence changed an executable run and requires explicit review.',
+    evidence: [{
+      source: 'injury',
+      objective: false,
+      freshness: 'fresh',
+      detail: 'Synthetic impact restriction applies to running only.',
+    }],
+    changes: [{
+      date: today,
+      sessionId: 'v24-mobile-run-session',
+      before: { title: 'Canonical four mile run', distance_miles: 4 },
+      after: { title: 'Run held by scoped safety', duration_min: 0 },
+      summary: 'The active calendar remains unchanged until this preview is reviewed.',
+    }],
+  }
+  const apiState = await installAuthenticatedApi(page, {
+    responses: new Map([
+      ['GET /api/plans/my', planFixture],
+      ['GET /api/plans/adaptation/current', { proposal }],
+    ]),
+  })
+
+  await page.goto('/plan')
+  expect([320, 393]).toContain(testInfo.project.use.viewport.width)
+  await expect(page.getByRole('heading', { name: 'Review your v2.4 preview' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Accept', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Keep original', exact: true })).toBeVisible()
+  await expect(page.getByText('The active calendar remains unchanged until this preview is reviewed.')).toBeVisible()
+
+  const manifestSummary = page.locator('summary').filter({ hasText: 'Canonical plan · plan r7 · surface r3' })
+  await expect(manifestSummary).toBeVisible()
+  await manifestSummary.click()
+  await expect(page.getByText(/NO_RUNNING · RUN, IMPACT/)).toBeVisible()
+  await expect(page.getByText(/PRIMARY_KEY · FULLY STRUCTURED/).first()).toBeVisible()
+  await expect.poll(() => page.evaluate(() => ({
+    scroll: document.documentElement.scrollWidth,
+    viewport: document.documentElement.clientWidth,
+  }))).toMatchObject({ viewport: testInfo.project.use.viewport.width })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true)
+  expect(requestsFor(apiState, 'POST', '/api/plans/adaptation/adaptation-v24-mobile-preview/accept')).toHaveLength(0)
+  expect(requestsFor(apiState, 'POST', '/api/plans/adaptation/adaptation-v24-mobile-preview/keep')).toHaveLength(0)
+  assertCleanApiAndRuntime(apiState, runtimeErrors)
+})
+
+test('v2.4 full-rest safety and manual capability stay fail-closed on both mobile projects', async ({ page }, testInfo) => {
+  const runtimeErrors = collectRuntimeErrors(page)
+  const planFixture = goalBackwardV24PlanFixture({
+    dateISO: today,
+    day: todayDay,
+    featureMode: 'on',
+    safetyAction: 'FULL_REST',
+    safetyScope: ['ALL'],
+    safetyReasonCodes: ['FULL_REST'],
+    executability: 'NOT_EXECUTABLE',
+    workoutFamily: 'hyrox_station_skill',
+    capability: 'MANUAL_COMPONENTS_REQUIRED',
+  })
+  const apiState = await installAuthenticatedApi(page, {
+    responses: new Map([
+      ['GET /api/plans/my', planFixture],
+      ['GET /api/plans/adaptation/current', { proposal: null }],
+    ]),
+  })
+
+  await page.goto('/plan')
+  expect([320, 393]).toContain(testInfo.project.use.viewport.width)
+  const manifestSummary = page.locator('summary').filter({ hasText: 'Canonical plan · plan r7 · surface r3' })
+  await expect(manifestSummary).toBeVisible()
+  await manifestSummary.click()
+  await expect(page.getByText(/FULL_REST · ALL/)).toBeVisible()
+
+  await page.getByRole('button', { name: /Today's mission Canonical station skill/ }).click()
+  const canonicalDetails = page.locator('summary').filter({ hasText: 'Canonical session details' }).last()
+  await expect(canonicalDetails).toBeVisible()
+  await canonicalDetails.click()
+  await expect(page.getByText(/Capability: MANUAL COMPONENTS REQUIRED/).last()).toBeVisible()
+  await expect(page.getByText(/Safety: ALL · NOT_EXECUTABLE/).last()).toBeVisible()
+  await expect(page.getByRole('button', { name: /Start (Run|Lift)/ })).toHaveCount(0)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true)
   assertCleanApiAndRuntime(apiState, runtimeErrors)
 })

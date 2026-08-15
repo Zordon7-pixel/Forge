@@ -15,6 +15,7 @@ import {
   buildAcceptedCanonicalWorkout,
   buildFitWorkoutRepresentation,
 } from '../src/services/fit/encodeWorkoutFit.js'
+import { goalBackwardV24PlanFixture } from './e2e/support/mockApi.mjs'
 
 const require = createRequire(import.meta.url)
 const plansRoute = require('../../backend/src/routes/plans.js')
@@ -440,6 +441,46 @@ for (const viewport of [320, 393]) {
     assert.match(daySource, /executability/)
     assert.match(calendarSource, /minWidth:\s*0/)
     assert.match(daySource, /overflowWrap:\s*'anywhere'/)
+
+    const preview = goalBackwardV24PlanFixture({
+      dateISO: '2026-08-14',
+      day: 'Fri',
+      featureMode: 'preview',
+      safetyAction: 'NO_RUNNING',
+      safetyScope: ['RUN', 'IMPACT'],
+      safetyReasonCodes: ['NO_RUNNING', 'MATERIAL_CHANGE_REVIEW_REQUIRED'],
+      executability: 'RESTRICTED',
+      capability: 'FULLY_STRUCTURED',
+    })
+    const previewModel = buildCalendarModel(preview.plan, preview.user_plan, {
+      surfaceManifest: preview.surface_manifest,
+      now: new Date('2026-08-14T12:00:00.000Z'),
+    })
+    assert.equal(previewModel.surface.status, 'accepted')
+    assert.equal(previewModel.surface.manifest.feature_mode, 'preview')
+    assert.equal(previewModel.surface.manifest.safety.action, 'NO_RUNNING')
+    assert.equal(previewModel.getWeek(0).days.flatMap((day) => day.sessions)[0].executability, 'RESTRICTED')
+
+    const fullRest = goalBackwardV24PlanFixture({
+      dateISO: '2026-08-14',
+      day: 'Fri',
+      featureMode: 'on',
+      safetyAction: 'FULL_REST',
+      safetyScope: ['ALL'],
+      safetyReasonCodes: ['FULL_REST'],
+      executability: 'NOT_EXECUTABLE',
+      workoutFamily: 'hyrox_station_skill',
+      capability: 'MANUAL_COMPONENTS_REQUIRED',
+    })
+    const fullRestModel = buildCalendarModel(fullRest.plan, fullRest.user_plan, {
+      surfaceManifest: fullRest.surface_manifest,
+      now: new Date('2026-08-14T12:00:00.000Z'),
+    })
+    const fullRestSession = fullRestModel.getWeek(0).days.flatMap((day) => day.sessions)[0]
+    assert.equal(fullRestModel.surface.status, 'accepted')
+    assert.equal(fullRestModel.surface.manifest.safety.action, 'FULL_REST')
+    assert.equal(fullRestSession.executability, 'NOT_EXECUTABLE')
+    assert.equal(fullRestSession.capability.classification, 'MANUAL_COMPONENTS_REQUIRED')
   })
 }
 

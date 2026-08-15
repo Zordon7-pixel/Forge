@@ -1,0 +1,668 @@
+{
+  "schema_version": "goal_backward_v24_generalization_fixtures_v1",
+  "fixtures": [
+    {
+      "fixture_id": "generalization-a-beginner-5k",
+      "acceptance_id": "GEN-A",
+      "input": {
+        "athlete_id": "synthetic-generalization-a",
+        "planning_date_local": "2026-08-03",
+        "timezone": "America/New_York",
+        "athlete_state": {
+          "athlete_state_revision": 1,
+          "evidence_snapshot_id": "snapshot-generalization-a",
+          "training_age_class": "BEGINNER",
+          "consistency_state": "SPARSE_DATA",
+          "consistent_weeks": 2,
+          "recovery_state": "NORMAL",
+          "safety_action": "NORMAL",
+          "safety_scope": [],
+          "recent_normal_running": {
+            "status": "INSUFFICIENT",
+            "median_distance_m": null
+          },
+          "available_days": ["Mon", "Wed", "Sat"]
+        },
+        "goals": [
+          {
+            "goal_id": "goal-generalization-a",
+            "race_id": "race-generalization-a",
+            "athlete_id": "synthetic-generalization-a",
+            "priority": "A",
+            "goal_type": "completion",
+            "event_kind": "ROAD_SHORT",
+            "distance_miles": 3.10686,
+            "event_local_date": "2026-10-17",
+            "event_state": "SCHEDULED"
+          }
+        ],
+        "races": [
+          {
+            "race_id": "race-generalization-a",
+            "athlete_id": "synthetic-generalization-a"
+          }
+        ],
+        "target_request": {
+          "target_type": "easy",
+          "workout_family": "easy_run",
+          "planning_instant": "2026-08-03T12:00:00.000Z",
+          "assessment": {
+            "duration_s": 1800
+          },
+          "decision_id": "decision-generalization-a"
+        }
+      },
+      "expected": {
+        "event_policy_id": "road_5k_v1",
+        "phase": "FOUNDATION",
+        "primary_count": 1,
+        "primary_families": ["easy_run"],
+        "target_authority_level": 4,
+        "target_rpe_range": {
+          "minimum": 2,
+          "maximum": 4
+        }
+      }
+    },
+    {
+      "fixture_id": "generalization-b-intermediate-half-marathon",
+      "acceptance_id": "GEN-B",
+      "input": {
+        "athlete_id": "synthetic-generalization-b",
+        "planning_date_local": "2026-08-03",
+        "timezone": "America/New_York",
+        "athlete_state": {
+          "athlete_state_revision": 2,
+          "evidence_snapshot_id": "snapshot-generalization-b",
+          "training_age_class": "ESTABLISHED",
+          "consistency_state": "CONSISTENT",
+          "consistent_weeks": 8,
+          "recovery_state": "NORMAL",
+          "safety_action": "NORMAL",
+          "safety_scope": [],
+          "recent_normal_running": {
+            "status": "ESTABLISHED",
+            "median_distance_m": 50000
+          },
+          "available_days": ["Mon", "Tue", "Thu", "Sat", "Sun"]
+        },
+        "goals": [
+          {
+            "goal_id": "goal-generalization-b",
+            "race_id": "race-generalization-b",
+            "athlete_id": "synthetic-generalization-b",
+            "priority": "A",
+            "goal_type": "performance",
+            "event_kind": "ROAD_ENDURANCE",
+            "distance_miles": 13.1094,
+            "event_local_date": "2026-11-01",
+            "event_state": "SCHEDULED",
+            "target_time_s": 6300
+          }
+        ],
+        "races": [
+          {
+            "race_id": "race-generalization-b",
+            "athlete_id": "synthetic-generalization-b"
+          }
+        ],
+        "target_request": {
+          "target_type": "threshold",
+          "workout_family": "threshold_run",
+          "planning_instant": "2026-08-03T12:00:00.000Z",
+          "benchmark_protocol_id": "threshold-20m-v1",
+          "level_1_evidence": [
+            {
+              "evidence_id": "threshold-generalization-b",
+              "observed_at": "2026-07-20T12:00:00.000Z",
+              "quality_state": "COMPLETE",
+              "freshness_class": "FRESH",
+              "conflict_state": "RESOLVED",
+              "successful": true,
+              "benchmark_protocol_id": "threshold-20m-v1",
+              "target_type": "threshold",
+              "workout_family": "threshold_run",
+              "surface_class": "outdoor",
+              "pace_s_per_km": 300
+            }
+          ],
+          "decision_id": "decision-generalization-b"
+        }
+      },
+      "expected": {
+        "event_policy_id": "road_half_marathon_v1",
+        "phase": "DEVELOPMENT",
+        "primary_count": 2,
+        "primary_families": ["threshold_run", "long_aerobic"],
+        "minimum_weekly_running_m": 42500,
+        "target_authority_level": 1
+      }
+    },
+    {
+      "fixture_id": "generalization-c-marathon",
+      "acceptance_id": "GEN-C",
+      "input": {
+        "athlete_id": "synthetic-generalization-c",
+        "planning_date_local": "2026-08-03",
+        "timezone": "America/Chicago",
+        "athlete_state": {
+          "athlete_state_revision": 4,
+          "evidence_snapshot_id": "snapshot-generalization-c",
+          "training_age_class": "ADVANCED",
+          "consistency_state": "CONSISTENT",
+          "consistent_weeks": 12,
+          "recovery_state": "READY",
+          "safety_action": "NORMAL",
+          "safety_scope": [],
+          "recent_normal_running": {
+            "status": "ESTABLISHED",
+            "median_distance_m": 80000
+          },
+          "available_days": ["Mon", "Tue", "Wed", "Thu", "Sat", "Sun"]
+        },
+        "goals": [
+          {
+            "goal_id": "goal-generalization-c",
+            "race_id": "race-generalization-c",
+            "athlete_id": "synthetic-generalization-c",
+            "priority": "A",
+            "goal_type": "performance",
+            "event_kind": "MARATHON",
+            "distance_miles": 26.2188,
+            "event_local_date": "2026-08-24",
+            "event_state": "SCHEDULED",
+            "target_time_s": 10800
+          }
+        ],
+        "races": [
+          {
+            "race_id": "race-generalization-c",
+            "athlete_id": "synthetic-generalization-c"
+          }
+        ]
+      },
+      "expected": {
+        "event_policy_id": "road_marathon_v1",
+        "taper_days": 14,
+        "phase_before_taper": "DEVELOPMENT",
+        "phase_at_taper": "TAPER_RACE_WEEK",
+        "minimum_weekly_running_m": 68000,
+        "primary_families": ["threshold_run", "steady_run", "long_aerobic"]
+      }
+    },
+    {
+      "fixture_id": "generalization-d-hyrox-singles",
+      "acceptance_id": "GEN-D",
+      "input": {
+        "athlete_id": "synthetic-generalization-d",
+        "planning_date_local": "2026-08-03",
+        "timezone": "America/New_York",
+        "development_gate_complete": true,
+        "athlete_state": {
+          "athlete_state_revision": 3,
+          "evidence_snapshot_id": "snapshot-generalization-d",
+          "training_age_class": "ESTABLISHED",
+          "consistency_state": "CONSISTENT",
+          "consistent_weeks": 8,
+          "recovery_state": "NORMAL",
+          "safety_action": "NORMAL",
+          "safety_scope": [],
+          "recent_normal_running": {
+            "status": "ESTABLISHED",
+            "median_distance_m": 32000
+          },
+          "available_days": ["Mon", "Tue", "Thu", "Sat", "Sun"]
+        },
+        "goals": [
+          {
+            "goal_id": "goal-generalization-d",
+            "race_id": "race-generalization-d",
+            "athlete_id": "synthetic-generalization-d",
+            "priority": "A",
+            "goal_type": "performance",
+            "event_kind": "HYROX_SINGLES",
+            "event_local_date": "2026-10-18",
+            "event_state": "SCHEDULED"
+          }
+        ],
+        "races": [
+          {
+            "race_id": "race-generalization-d",
+            "athlete_id": "synthetic-generalization-d"
+          }
+        ],
+        "hyrox_event": {
+          "athlete_id": "synthetic-generalization-d",
+          "format": "singles",
+          "event_format": "individual_open",
+          "registered_division": "men",
+          "ruleset_id": "hyrox-global",
+          "ruleset_version": "2026-2027"
+        }
+      },
+      "expected": {
+        "event_policy_id": "hyrox_singles_v1",
+        "format": "singles",
+        "run_ownership": "athlete",
+        "station_ownership": "athlete",
+        "station_role_family": "hyrox_station_skill"
+      }
+    },
+    {
+      "fixture_id": "generalization-e-hyrox-doubles",
+      "acceptance_id": "GEN-E",
+      "input": {
+        "athlete_id": "synthetic-generalization-e",
+        "planning_date_local": "2026-08-03",
+        "timezone": "America/New_York",
+        "development_gate_complete": true,
+        "athlete_state": {
+          "athlete_state_revision": 3,
+          "evidence_snapshot_id": "snapshot-generalization-e",
+          "training_age_class": "ESTABLISHED",
+          "consistency_state": "CONSISTENT",
+          "consistent_weeks": 8,
+          "recovery_state": "NORMAL",
+          "safety_action": "NORMAL",
+          "safety_scope": [],
+          "recent_normal_running": {
+            "status": "ESTABLISHED",
+            "median_distance_m": 32000
+          },
+          "available_days": ["Mon", "Tue", "Thu", "Sat", "Sun"]
+        },
+        "goals": [
+          {
+            "goal_id": "goal-generalization-e",
+            "race_id": "race-generalization-e",
+            "athlete_id": "synthetic-generalization-e",
+            "priority": "A",
+            "goal_type": "performance",
+            "event_kind": "HYROX_DOUBLES",
+            "event_local_date": "2026-10-18",
+            "event_state": "SCHEDULED"
+          }
+        ],
+        "races": [
+          {
+            "race_id": "race-generalization-e",
+            "athlete_id": "synthetic-generalization-e"
+          }
+        ],
+        "hyrox_event": {
+          "athlete_id": "synthetic-generalization-e",
+          "format": "doubles",
+          "registered_division": "men",
+          "ruleset_id": "hyrox-global",
+          "ruleset_version": "2026-2027",
+          "team_station_time": {
+            "ski_erg": 240,
+            "row": 255
+          },
+          "planned_station_split": {
+            "ski_erg": {
+              "athlete": {
+                "distance_m": 600
+              },
+              "partner": {
+                "distance_m": 400
+              }
+            },
+            "row": null
+          }
+        }
+      },
+      "expected": {
+        "event_policy_id": "hyrox_doubles_v1",
+        "format": "doubles",
+        "run_ownership": "athlete_required_with_partner",
+        "station_ownership": "team_shared",
+        "known_station": "ski_erg",
+        "unknown_station": "row"
+      }
+    },
+    {
+      "fixture_id": "generalization-f-four-day-lock",
+      "acceptance_id": "GEN-F",
+      "input": {
+        "athlete_id": "synthetic-generalization-f",
+        "planning_date_local": "2026-08-03",
+        "timezone": "America/New_York",
+        "athlete_state": {
+          "athlete_state_revision": 2,
+          "evidence_snapshot_id": "snapshot-generalization-f",
+          "training_age_class": "ESTABLISHED",
+          "consistency_state": "CONSISTENT",
+          "consistent_weeks": 8,
+          "recovery_state": "NORMAL",
+          "safety_action": "NORMAL",
+          "safety_scope": [],
+          "recent_normal_running": {
+            "status": "ESTABLISHED",
+            "median_distance_m": 36000
+          },
+          "available_days": ["Tue", "Thu", "Sat", "Sun"],
+          "locks": [
+            {
+              "constraint_kind": "day_lock",
+              "local_date": "2026-08-09",
+              "role": "PRIMARY_KEY",
+              "workout_family": "long_aerobic"
+            }
+          ]
+        },
+        "goals": [
+          {
+            "goal_id": "goal-generalization-f",
+            "race_id": "race-generalization-f",
+            "athlete_id": "synthetic-generalization-f",
+            "priority": "A",
+            "goal_type": "performance",
+            "event_kind": "ROAD_ENDURANCE",
+            "distance_miles": 13.1094,
+            "event_local_date": "2026-11-01",
+            "event_state": "SCHEDULED"
+          }
+        ],
+        "races": [
+          {
+            "race_id": "race-generalization-f",
+            "athlete_id": "synthetic-generalization-f"
+          }
+        ],
+        "candidate_sessions": [
+          {
+            "session_id": "generalization-f-long",
+            "scheduled_local_date": "2026-08-09",
+            "workout_family": "long_aerobic",
+            "role": "PRIMARY_KEY",
+            "duration_min": 75
+          }
+        ]
+      },
+      "expected": {
+        "available_day_count": 4,
+        "primary_count": 1,
+        "locked_local_date": "2026-08-09",
+        "maximum_session_count": 1
+      }
+    },
+    {
+      "fixture_id": "generalization-g-sparse-data",
+      "acceptance_id": "GEN-G",
+      "input": {
+        "athlete_id": "synthetic-generalization-g",
+        "planning_date_local": "2026-08-03",
+        "timezone": "America/Denver",
+        "athlete_state": {
+          "athlete_state_revision": 1,
+          "evidence_snapshot_id": "snapshot-generalization-g",
+          "training_age_class": "UNKNOWN",
+          "consistency_state": "SPARSE_DATA",
+          "consistent_weeks": 1,
+          "recovery_state": "UNKNOWN",
+          "safety_action": "NORMAL",
+          "safety_scope": [],
+          "recent_normal_running": {
+            "status": "INSUFFICIENT",
+            "median_distance_m": null
+          },
+          "available_days": ["Tue", "Thu", "Sat"],
+          "unknowns": ["threshold_pace", "recent_normal_running"],
+          "reason_codes": ["PARTIAL_SYNC", "RECENT_NORMAL_INSUFFICIENT"]
+        },
+        "goals": [
+          {
+            "goal_id": "goal-generalization-g",
+            "race_id": "race-generalization-g",
+            "athlete_id": "synthetic-generalization-g",
+            "priority": "A",
+            "goal_type": "completion",
+            "event_kind": "ROAD_SHORT",
+            "distance_miles": 6.21371,
+            "event_local_date": "2026-10-10",
+            "event_state": "SCHEDULED"
+          }
+        ],
+        "races": [
+          {
+            "race_id": "race-generalization-g",
+            "athlete_id": "synthetic-generalization-g"
+          }
+        ],
+        "target_request": {
+          "target_type": "interval",
+          "workout_family": "interval_run",
+          "planning_instant": "2026-08-03T12:00:00.000Z",
+          "assessment": {
+            "duration_s": 480,
+            "repetitions": 4
+          },
+          "decision_id": "decision-generalization-g"
+        }
+      },
+      "expected": {
+        "recent_normal_status": "INSUFFICIENT",
+        "phase": "FOUNDATION",
+        "target_authority_level": 5,
+        "target_rpe_range": {
+          "minimum": 8,
+          "maximum": 8
+        }
+      }
+    },
+    {
+      "fixture_id": "generalization-h-returning",
+      "acceptance_id": "GEN-H",
+      "input": {
+        "planning_date_local": "2026-08-10",
+        "complete_days_in_seed_window": 28,
+        "weeks": [
+          {
+            "week_id": "2026-01-05",
+            "distance_m": 40234,
+            "duration_s": 13411,
+            "forge_native_coverage": true
+          },
+          {
+            "week_id": "2026-02-02",
+            "distance_m": 40234,
+            "duration_s": 13411,
+            "forge_native_coverage": true
+          },
+          {
+            "week_id": "2026-03-02",
+            "distance_m": 40234,
+            "duration_s": 13411,
+            "forge_native_coverage": true
+          },
+          {
+            "week_id": "2026-04-06",
+            "distance_m": 40234,
+            "duration_s": 13411,
+            "forge_native_coverage": true
+          }
+        ],
+        "completed_runs": [
+          {
+            "observed_at": "2026-07-19T12:00:00.000Z",
+            "distance_m": 4000
+          },
+          {
+            "observed_at": "2026-07-18T12:00:00.000Z",
+            "distance_m": 4000
+          }
+        ]
+      },
+      "expected": {
+        "recent_normal_status": "TRAINING_GAP",
+        "historical_median_distance_m": 40234,
+        "forward_load_seed_m": 2000,
+        "reason_code": "TRAINING_GAP_REBUILD"
+      }
+    },
+    {
+      "fixture_id": "generalization-i-pain-modified",
+      "acceptance_id": "GEN-I",
+      "input": {
+        "athlete_id": "synthetic-generalization-i",
+        "planning_instant": "2026-08-14T12:00:00.000Z",
+        "timezone": "America/New_York",
+        "pain_reports": [
+          {
+            "id": "pain-generalization-i",
+            "observed_at": "2026-08-14T11:00:00.000Z",
+            "pain_level": "moderate",
+            "safety_action": "NO_RUNNING",
+            "safety_scope": ["RUN", "IMPACT"]
+          }
+        ],
+        "provider_coverage": [
+          {
+            "source_system": "garmin",
+            "modality": "running",
+            "coverage_start_local": "2026-08-07",
+            "coverage_end_local": "2026-08-13",
+            "quality_state": "COMPLETE"
+          }
+        ],
+        "sessions": [
+          {
+            "session_id": "generalization-i-run",
+            "scheduled_local_date": "2026-08-14",
+            "workout_family": "easy_run"
+          },
+          {
+            "session_id": "generalization-i-upper",
+            "scheduled_local_date": "2026-08-14",
+            "workout_family": "strength_upper"
+          }
+        ]
+      },
+      "expected": {
+        "safety_action": "NO_RUNNING",
+        "safety_scope": ["IMPACT", "RUN"],
+        "run_executable": false,
+        "upper_executable": true
+      }
+    },
+    {
+      "fixture_id": "synthetic-dual-goal-regression",
+      "acceptance_ids": ["BRYAN-01", "BRYAN-02", "BRYAN-03", "BRYAN-04"],
+      "input": {
+        "athlete_id": "synthetic-dual-goal-athlete",
+        "planning_date_local": "2026-08-03",
+        "timezone": "America/New_York",
+        "development_gate_complete": true,
+        "athlete_state": {
+          "athlete_state_revision": 1,
+          "evidence_snapshot_id": "snapshot-synthetic-dual-goal",
+          "training_age_class": "ESTABLISHED",
+          "consistency_state": "CONSISTENT",
+          "consistent_weeks": 8,
+          "recovery_state": "NORMAL",
+          "safety_action": "NORMAL",
+          "safety_scope": [],
+          "recent_normal_running": {
+            "status": "ESTABLISHED",
+            "median_distance_m": 33796.224
+          },
+          "available_days": ["Mon", "Tue", "Thu", "Fri", "Sun"]
+        },
+        "goals": [
+          {
+            "goal_id": "goal-synthetic-hyrox",
+            "race_id": "race-synthetic-hyrox",
+            "athlete_id": "synthetic-dual-goal-athlete",
+            "priority": "A",
+            "goal_type": "performance",
+            "event_kind": "HYROX_DOUBLES",
+            "event_local_date": "2026-09-06",
+            "event_state": "SCHEDULED",
+            "target_time_s": 3600
+          },
+          {
+            "goal_id": "goal-synthetic-ten-mile",
+            "race_id": "race-synthetic-ten-mile",
+            "athlete_id": "synthetic-dual-goal-athlete",
+            "priority": "B",
+            "goal_type": "performance",
+            "event_kind": "ROAD_ENDURANCE",
+            "distance_miles": 10,
+            "event_local_date": "2026-10-11",
+            "event_state": "SCHEDULED",
+            "target_time_s": 5400
+          }
+        ],
+        "races": [
+          {
+            "race_id": "race-synthetic-hyrox",
+            "athlete_id": "synthetic-dual-goal-athlete"
+          },
+          {
+            "race_id": "race-synthetic-ten-mile",
+            "athlete_id": "synthetic-dual-goal-athlete"
+          }
+        ],
+        "hyrox_event": {
+          "athlete_id": "synthetic-dual-goal-athlete",
+          "format": "doubles",
+          "registered_division": "men",
+          "ruleset_id": "hyrox-global",
+          "ruleset_version": "2026-2027",
+          "planned_station_split": {
+            "ski_erg": {
+              "athlete": { "distance_m": 600 },
+              "partner": { "distance_m": 400 }
+            },
+            "sled_push": {
+              "athlete": { "distance_m": 30 },
+              "partner": { "distance_m": 20 }
+            },
+            "sled_pull": {
+              "athlete": { "distance_m": 30 },
+              "partner": { "distance_m": 20 }
+            },
+            "burpee_broad_jump": {
+              "athlete": { "distance_m": 48 },
+              "partner": { "distance_m": 32 }
+            },
+            "row": {
+              "athlete": { "distance_m": 600 },
+              "partner": { "distance_m": 400 }
+            },
+            "farmers_carry": {
+              "athlete": { "distance_m": 120 },
+              "partner": { "distance_m": 80 }
+            },
+            "sandbag_lunge": {
+              "athlete": { "distance_m": 60 },
+              "partner": { "distance_m": 40 }
+            },
+            "wall_ball": {
+              "athlete": { "repetitions": 60 },
+              "partner": { "repetitions": 40 }
+            }
+          }
+        },
+        "cross_modal_median_vector": [11, 10, 7, 2, 2, 6, 7, 3]
+      },
+      "expected": {
+        "ordered_goal_ids": ["goal-synthetic-hyrox", "goal-synthetic-ten-mile"],
+        "feasibility_statuses": ["unvalidated", "unvalidated"],
+        "recent_normal_median_distance_m": 33796.224,
+        "minimum_weekly_running_m": 30416,
+        "weekly_running_m": 30578,
+        "weekly_running_miles": 19,
+        "cluster_main_work_duration_s": 2160,
+        "cluster_main_set_running_m": 2250,
+        "cluster_warmup_cooldown_running_m": 4187,
+        "cluster_running_distance_m": 6437,
+        "weekly_stress_vector": [13, 12, 10, 5, 5, 9, 10, 7],
+        "normal_ceiling_vector": [14, 12, 9, 4, 4, 8, 9, 5],
+        "authorized_ceiling_vector": [16, 14, 12, 6, 6, 10, 12, 10],
+        "hard_day_count": 2
+      }
+    }
+  ]
+}

@@ -3,6 +3,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const { computeZones, zoneForHr } = require('../src/lib/hrZones');
 const { buildHealthSignals } = require('../src/lib/healthSignals');
 const { hydrateHealthRow } = require('../src/lib/healthSyncMetrics');
@@ -195,6 +196,65 @@ check(/await this\.syncToProfile\(result\.metrics\)/.test(healthServiceSource), 
 check(/await this\.getWorkoutHistory\(historyOptions\)/.test(healthServiceSource), 'automatic sync requests workout history');
 check(/importHealthWorkoutBatches\(workouts,[\s\S]*api\.post\('\/import\/health', \{ workouts: batch \}, \{ timeout: HEALTH_IMPORT_TIMEOUT_MS \}\)/.test(healthServiceSource), 'automatic sync batches classified workouts through the idempotent endpoint');
 check(/markAutoHealthSyncAttempted\(\)/.test(healthServiceSource), 'only the completed sync path records the throttle timestamp');
+
+section('goal-backward v2.4 binary acceptance ownership');
+const acceptanceOwners = new Map([
+  ['backend/test/goalBackwardContracts.smoke.js', ['PIPE-01', 'TRUTH-01', 'OBS-01']],
+  ['backend/test/goalBackwardEvidence.smoke.js', [
+    'EVID-01', 'EVID-02', 'EVID-03', 'EVID-04', 'EVID-05', 'EVID-06',
+    'FRESH-01', 'FRESH-02', 'LOAD-01', 'LOAD-02', 'LOAD-03', 'LOAD-04', 'TIME-01', 'TIME-02',
+  ]],
+  ['backend/test/goalBackwardPlanning.smoke.js', [
+    'XLOAD-01', 'XLOAD-02', 'XLOAD-03', 'XLOAD-04', 'XLOAD-05',
+    'MAT-01', 'MAT-02', 'MAT-03', 'MAT-04', 'MAT-05',
+    'PHASE-01', 'PHASE-02', 'PHASE-03', 'PHASE-04',
+    'ROLE-01', 'ROLE-02', 'ROLE-03', 'INT-01', 'INT-02', 'INT-03', 'INT-04', 'CAND-01',
+  ]],
+  ['backend/test/goalBackwardTargets.smoke.js', [
+    'TGT-01', 'TGT-02', 'TGT-03', 'TGT-04', 'TGT-05',
+    'GOAL-01', 'GOAL-02', 'GOAL-03', 'GOAL-04', 'GOAL-05', 'CONF-01',
+  ]],
+  ['backend/test/goalBackwardHyrox.smoke.js', [
+    'HYROX-01', 'HYROX-02', 'HYROX-03', 'HYROX-04', 'HYROX-05', 'HYROX-06',
+    'BRYAN-01', 'BRYAN-02', 'BRYAN-03', 'BRYAN-04',
+  ]],
+  ['backend/test/goalBackwardCanonical.smoke.js', [
+    'FLOOR-01', 'CANON-01', 'CANON-02', 'CANON-03', 'CANON-04', 'CANON-05', 'FIT-01',
+  ]],
+  ['backend/test/goalBackwardAdaptation.smoke.js', [
+    'SAFE-01', 'SAFE-02', 'SAFE-03', 'SAFE-04', 'LOCK-01', 'EDIT-01', 'REJECT-01',
+    'MISS-01', 'MISS-02', 'MUT-01', 'MUT-02', 'MUT-03', 'MUT-04',
+  ]],
+  ['backend/test/goalBackwardGeneralization.smoke.js', [
+    'GEN-A', 'GEN-B', 'GEN-C', 'GEN-D', 'GEN-E', 'GEN-F', 'GEN-G', 'GEN-H', 'GEN-I',
+  ]],
+]);
+const acceptanceManifest = [...acceptanceOwners.values()].flat();
+const acceptanceSet = new Set(acceptanceManifest);
+const emittedAcceptanceIds = [];
+check(acceptanceManifest.length === 89 && acceptanceSet.size === 89,
+  'the literal binary acceptance manifest contains 89 unique rows');
+for (const [owner, expectedIds] of acceptanceOwners) {
+  const result = spawnSync(process.execPath, [path.join(repoRoot, owner)], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    maxBuffer: 8 * 1024 * 1024,
+  });
+  check(result.status === 0, `${owner} exits successfully during integrated acceptance`);
+  const reported = [...String(result.stdout || '').matchAll(/^ok - ([A-Z][A-Z0-9-]+)(?:\s|$)/gm)]
+    .map((match) => match[1])
+    .filter((id) => acceptanceSet.has(id));
+  check(reported.length === expectedIds.length
+    && new Set(reported).size === expectedIds.length
+    && [...reported].sort().join(',') === [...expectedIds].sort().join(','),
+  `${owner} reports each owned binary row exactly once`);
+  emittedAcceptanceIds.push(...reported);
+}
+check(emittedAcceptanceIds.length === 89
+  && new Set(emittedAcceptanceIds).size === 89
+  && [...emittedAcceptanceIds].sort().join(',') === [...acceptanceManifest].sort().join(','),
+'the integrated owner output reports all 89 binary rows exactly once');
+console.log(`GOAL_BACKWARD_V24_ACCEPTANCE ${JSON.stringify({ rows: emittedAcceptanceIds.length, ids: emittedAcceptanceIds })}`);
 
 console.log(`\nPASSED: ${passed}  FAILED: ${failed}`);
 if (failed) process.exit(1);

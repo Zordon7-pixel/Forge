@@ -19,9 +19,11 @@ const {
 } = require('../src/lib/goalBackwardValidators');
 const {
   buildCandidateRejectionRecord,
+  buildGoalBackwardApplyEnvelope,
   buildGoalBackwardFingerprintBindings,
   candidateRejectionMatches,
   normalizePlanningConstraints,
+  validateGoalBackwardApplyEnvelope,
 } = require('../src/lib/planCandidateLifecycle');
 const { buildCompletionOutcomeRevisions } = require('../src/lib/planningRevision');
 const plansRoute = require('../src/routes/plans');
@@ -521,9 +523,105 @@ test('MISS-02', 'multiple missed key sessions omit excess debt with NO_WORKOUT_D
   assert.equal(result.v24_validation.valid, true);
 });
 
-const expectedBatch10Ids = [
-  'SAFE-01', 'SAFE-02', 'SAFE-03', 'SAFE-04', 'SAFE-05',
+function applyEnvelopeFixture() {
+  return buildGoalBackwardApplyEnvelope({
+    id: 'candidate-mutation-fixture',
+    user_id: 'athlete-mutation-fixture',
+    candidate_hash: `sha256:${'a'.repeat(64)}`,
+    training_plan_id: 'plan-mutation-active',
+    user_plan_id: 'assignment-mutation-active',
+    active_plan_version: 7,
+    planning_input_revision: 12,
+    planning_date_local: '2026-08-14',
+    timezone_offset_minutes: 240,
+    decision_id: 'decision-mutation-fixture',
+    candidate_revision: 2,
+    athlete_state_revision: 5,
+    lock_revision: 3,
+    edit_revision: 4,
+    safety_state_hash: `sha256:${'b'.repeat(64)}`,
+    goal_revisions_json: { 'goal-mutation-fixture': 3 },
+    surface_revision: 4,
+    export_revision: 2,
+    feature_mode: 'on',
+    selected_candidate_hash: `sha256:${'a'.repeat(64)}`,
+    material_change_json: {
+      apply_bindings: {
+        decision_hash: 'c'.repeat(64),
+        decision_artifact: {
+          artifact_id: 'artifact-mutation-fixture',
+          revision: 1,
+          content_hash: `sha256:${'d'.repeat(64)}`,
+        },
+        planning_timezone: 'America/New_York',
+        goal_fingerprint: `sha256:${'e'.repeat(64)}`,
+        evidence_fingerprint: `sha256:${'f'.repeat(64)}`,
+        constraint_fingerprint: `sha256:${'1'.repeat(64)}`,
+        policy_fingerprint: `sha256:${'2'.repeat(64)}`,
+        lock_revision: 3,
+        edit_revision: 4,
+      },
+    },
+  });
+}
+
+test('MUT-01', 'a stale active-plan revision fails visibly before any apply write', () => {
+  const expected = applyEnvelopeFixture();
+  const result = validateGoalBackwardApplyEnvelope(expected, {
+    ...expected,
+    active_plan: { ...expected.active_plan, plan_revision: expected.active_plan.plan_revision + 1 },
+  });
+  assert.deepEqual(result, { valid: false, code: 'ACTIVE_PLAN_REVISION_CHANGED' });
+  const applySource = plansRoute._test.applyPlanCandidate.toString();
+  assert.ok(applySource.indexOf('validateGoalBackwardApplyEnvelope(expectedApplyEnvelope, requestEnvelope)')
+    < applySource.indexOf("row.status !== 'preview'"));
+});
+
+test('MUT-02', 'a race revision change invalidates the bound preview', () => {
+  const expected = applyEnvelopeFixture();
+  assert.deepEqual(validateGoalBackwardApplyEnvelope(expected, {
+    ...expected,
+    goal_revisions: { 'goal-mutation-fixture': 4 },
+  }), { valid: false, code: 'RACE_REVISION_CHANGED' });
+});
+
+test('MUT-03', 'an exact duplicate apply returns the recorded replay before successor writes', () => {
+  const expected = applyEnvelopeFixture();
+  assert.deepEqual(validateGoalBackwardApplyEnvelope(expected, expected), { valid: true, code: null });
+  const applySource = plansRoute._test.applyPlanCandidate.toString();
+  const replayBranch = applySource.indexOf("row.status === 'applied'");
+  const replayReturn = applySource.indexOf('status: 200, replay: true', replayBranch);
+  const previewBranch = applySource.indexOf("row.status !== 'preview'", replayBranch);
+  const firstSuccessorWrite = applySource.indexOf('await tx.run(', previewBranch);
+  assert.ok(replayBranch >= 0 && replayReturn > replayBranch && previewBranch > replayReturn);
+  assert.ok(firstSuccessorWrite === -1 || firstSuccessorWrite > previewBranch,
+    'duplicate replay must return before a successor assignment write');
+});
+
+test('MUT-04', 'a fresh restrictive safety revision stale-fails the preview and remains enforced', () => {
+  const expected = applyEnvelopeFixture();
+  const current = {
+    ...expected,
+    athlete_state_revision: expected.athlete_state_revision + 1,
+    safety_state_hash: `sha256:${'3'.repeat(64)}`,
+  };
+  assert.deepEqual(validateGoalBackwardApplyEnvelope(expected, current), {
+    valid: false,
+    code: 'ATHLETE_STATE_REVISION_CHANGED',
+  });
+  const safety = buildSafetyExecutability([
+    session('mutation-safety-run', '2026-08-14', 'easy_run'),
+  ], { safety_action: 'NO_RUNNING', safety_state_revision: current.athlete_state_revision });
+  assert.equal(safety.sessions[0].executable, false);
+  assert.equal(safety.sessions[0].safety_state_revision, current.athlete_state_revision);
+});
+
+const ownedAcceptanceIds = [
+  'SAFE-01', 'SAFE-02', 'SAFE-03', 'SAFE-04',
   'LOCK-01', 'EDIT-01', 'REJECT-01', 'MISS-01', 'MISS-02',
+  'MUT-01', 'MUT-02', 'MUT-03', 'MUT-04',
 ];
-assert.deepEqual(results, expectedBatch10Ids);
+assert.equal(new Set(results).size, results.length, 'fixture IDs must remain unique');
+assert.deepEqual(results.filter((id) => ownedAcceptanceIds.includes(id)).sort(), [...ownedAcceptanceIds].sort(),
+  'all 13 adaptation-owned acceptance rows must report exactly once');
 console.log(`GOAL BACKWARD ADAPTATION SMOKE OK (${results.length})`);
