@@ -349,9 +349,10 @@ test('Signature UI reuses exact readiness and canonical mission facts on both mo
 
   const readinessRequestsBeforeExpansion = requestsFor(apiState, 'GET', '/api/recovery/readiness').length
   expect(readinessRequestsBeforeExpansion, 'Header chip plus Dashboard retain their two existing readiness requests').toBe(2)
-  const readinessToggle = readiness.getByRole('button', { name: 'Show readiness details' })
+  const readinessToggle = readiness.locator('.signature-disclosure-button')
   const rationaleToggle = coachsLog.getByRole('button', { name: 'Why today matters' })
   await expect(readinessToggle).toHaveAttribute('aria-expanded', 'false')
+  await expect(readinessToggle).toHaveAccessibleName('Show readiness details')
   await expect(rationaleToggle).toHaveAttribute('aria-expanded', 'false')
 
   await readinessToggle.focus()
@@ -374,6 +375,7 @@ test('Signature UI reuses exact readiness and canonical mission facts on both mo
   await readinessToggle.click()
   await rationaleToggle.click()
   await expect(readinessToggle).toHaveAttribute('aria-expanded', 'true')
+  await expect(readinessToggle).toHaveAccessibleName('Hide readiness details')
   await expect(rationaleToggle).toHaveAttribute('aria-expanded', 'true')
   await expect(readiness.getByText(fixture.readiness.drivers[1], { exact: true })).toBeVisible()
   await expect(coachsLog.getByText('Build aerobic control before the next quality session.', { exact: true })).toBeVisible()
@@ -448,7 +450,13 @@ test('Signature UI truthfully covers loading, locked, and unavailable states', a
   await expect(page.locator('[data-signature-coachs-log]')).toHaveCount(0)
 
   expect(requestsFor(apiState, 'GET', '/api/recovery/readiness')).toHaveLength(4)
-  assertCleanApiAndRuntime(apiState, runtimeErrors)
+  const expectedLockedResourceError = 'Failed to load resource: the server responded with a status of 402 (Payment Required)'
+  expect(runtimeErrors, 'Locked readiness should emit only the two expected 402 resource errors').toEqual([
+    expectedLockedResourceError,
+    expectedLockedResourceError,
+  ])
+  const unexpectedRuntimeErrors = runtimeErrors.filter((error) => error !== expectedLockedResourceError)
+  assertCleanApiAndRuntime(apiState, unexpectedRuntimeErrors)
 })
 
 test('planned rest day does not prompt for a readiness check-in', async ({ page }) => {
