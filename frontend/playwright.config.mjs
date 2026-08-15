@@ -23,12 +23,12 @@ export default defineConfig({
   },
   projects: [
     {
-      name: 'iphone-se',
+      name: 'compact-mobile-320',
       use: { viewport: { width: 320, height: 568 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true },
     },
     {
-      name: 'iphone-15',
-      use: { viewport: { width: 393, height: 852 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true },
+      name: 'iphone-17',
+      use: { viewport: { width: 402, height: 874 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true },
     },
   ],
 })
