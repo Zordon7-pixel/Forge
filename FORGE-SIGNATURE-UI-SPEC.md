@@ -1,9 +1,9 @@
 # FORGE Signature UI — Production Implementation Spec
 
-**Status:** Approved for implementation  
-**Direction:** Readiness Arc + Coach's Log  
-**Primary viewport:** iPhone 17, 402 × 874 CSS pixels at 3×  
-**Stress profile:** `compact-mobile-320`, 320 × 568 CSS pixels  
+**Status:** Approved for implementation
+**Direction:** Readiness Arc + Coach's Log
+**Primary viewport:** iPhone 17, 402 × 874 CSS pixels at 3×
+**Stress profile:** `compact-mobile-320`, 320 × 568 CSS pixels
 **Surface:** Dashboard Monitor surface; Plan remains the Operate/detail surface
 
 ## Product Decision
