@@ -22,6 +22,54 @@ function parseJson(value, fallback) {
   }
 }
 
+const METRIC_STREAM_LIMITS = Object.freeze({
+  heart_rate_bpm: [30, 250],
+  post_workout_heart_rate_bpm: [30, 250],
+  running_speed_mps: [0, 15],
+  running_power_watts: [0, 2000],
+  running_cadence_spm: [0, 300],
+  running_stride_length_m: [0.2, 3],
+  running_vertical_oscillation_cm: [0, 30],
+  running_ground_contact_time_ms: [50, 1000],
+})
+
+export function parseWorkoutMetricStreams(value) {
+  const parsed = parseJson(value, {})
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+  const normalized = { version: 1, source: String(parsed.source || '').slice(0, 40) }
+  for (const [key, [minimum, maximum]] of Object.entries(METRIC_STREAM_LIMITS)) {
+    if (!Array.isArray(parsed[key])) continue
+    const points = parsed[key].flatMap((point) => {
+      const time = finiteNumber(Array.isArray(point) ? point[0] : point?.t ?? point?.time)
+      const metric = finiteNumber(Array.isArray(point) ? point[1] : point?.v ?? point?.value)
+      if (time === null || metric === null || time < 0 || time > 172800 || metric < minimum || metric > maximum) return []
+      return [{ t: time, v: metric }]
+    }).sort((left, right) => left.t - right.t).slice(0, 600)
+    if (points.length) normalized[key] = points
+  }
+  return normalized
+}
+
+export function elevationStreamFromRoute(value, units = 'imperial') {
+  const parsed = parseJson(value, [])
+  if (!Array.isArray(parsed)) return []
+  const candidates = parsed.flatMap((point, index) => {
+    const altitudeMeters = finiteNumber(Array.isArray(point) ? point[2] : point?.alt ?? point?.altitude)
+    if (altitudeMeters === null || altitudeMeters < -500 || altitudeMeters > 9000) return []
+    const rawTime = Array.isArray(point) ? point[3] : point?.time
+    const timestamp = rawTime ? new Date(rawTime).getTime() : Number.NaN
+    return [{ index, timestamp, altitudeMeters }]
+  })
+  if (!candidates.length) return []
+  const firstTimestamp = candidates.find((point) => Number.isFinite(point.timestamp))?.timestamp
+  return candidates.map((point) => ({
+    t: Number.isFinite(point.timestamp) && Number.isFinite(firstTimestamp)
+      ? Math.max(0, (point.timestamp - firstTimestamp) / 1000)
+      : point.index,
+    v: units === 'metric' ? point.altitudeMeters : point.altitudeMeters * 3.280839895,
+  })).slice(0, 600)
+}
+
 function parsePaceSeconds(value) {
   const numeric = finiteNumber(value)
   if (numeric !== null && numeric > 0) return numeric

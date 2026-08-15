@@ -96,11 +96,11 @@ assert(/\/streams/.test(stravaRoute) && /latlng,altitude,time/.test(stravaRoute)
 assert(/perceived_effort = COALESCE\(\?, perceived_effort\)/.test(importRoute), 'Apple Health re-sync can add a real effort score to an existing run');
 assert(/workoutEffortScore/.test(swift) && /HKWorkoutEffortRelationshipQuery/.test(swift), 'native bridge requests the associated HealthKit effort rating');
 assert(/elevation_derived_from_route/.test(swift) && /verticalAccuracy/.test(swift), 'route elevation fallback accepts only bounded-accuracy altitude');
-assert(/REQUIRED_HEALTH_AUTH_VERSION\s*=\s*4/.test(healthService) && /REQUIRED_WORKOUT_IMPORT_VERSION\s*=\s*5/.test(healthService), 'native authorization and full-history upgrades are versioned');
-assert(/Recording details not shared/.test(recap) && /Add how you felt/.test(recap), 'recap explains missing source data and offers a check-in');
+assert(/REQUIRED_HEALTH_AUTH_VERSION\s*=\s*4/.test(healthService) && /REQUIRED_WORKOUT_IMPORT_VERSION\s*=\s*6/.test(healthService), 'native authorization and full-history upgrades are versioned');
+assert(/Recording details not received/.test(recap) && /Add how you felt/.test(recap), 'recap explains missing source data without blaming the recording source and offers a check-in');
 assert(/Calculated training effort/.test(recap) && /objective load estimate, not your personal RPE/.test(recap), 'recap labels calculated effort separately from athlete-rated RPE');
 assert(/backendEffortSource[\s\S]*effort_source/.test(recap), 'recap consumes backend effort provenance before using its legacy fallback');
-assert(/Runs started in Forged Hybrid record iPhone GPS and altitude/.test(recap), 'recap explains when the phone can capture route and elevation');
+assert(/Runs started in Forged Hybrid also record iPhone GPS and altitude/.test(recap), 'recap explains when the phone can capture route and elevation');
 assert(/isRun && !shareOpen && routePositions\.length >= 2/.test(recap), 'the interactive Leaflet map unmounts while the share studio is open');
 assert(/z-\[2000\][\s\S]*zIndex: 2000/.test(shareStudio), 'the share studio sits above all Leaflet panes and controls');
 assert(!/MapContainer/.test(shareStudio), 'share cards render one canvas route instead of nesting an interactive map');

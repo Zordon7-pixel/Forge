@@ -197,7 +197,7 @@ const healthService = read('frontend/src/services/HealthService.js')
 check(/workout\.statistics\(for: type\)/.test(swift), 'native import prefers statistics owned by the workout')
 check(/predicateForObjects\(from: workout\)/.test(swift) && /workout\.sourceRevision\.source/.test(swift), 'heart-rate samples are scoped to the workout with a same-source fallback')
 check(/timeWeightedAverage/.test(swift), 'sparse fallback samples use time weighting instead of an unweighted mean')
-check(/metricsSchemaVersion": 5/.test(swift) && /REQUIRED_WORKOUT_IMPORT_VERSION = 5/.test(healthService), 'the next native build triggers one full re-import with corrected summaries')
+check(/metricsSchemaVersion": 6/.test(swift) && /REQUIRED_WORKOUT_IMPORT_VERSION = 6/.test(healthService), 'the next native build triggers one full re-import with corrected summaries and Watch streams')
 check(/workoutUpgradeAvailable[\s\S]*workoutHistoryUpgradeRequired/.test(healthService), 'old TestFlight shells cannot prematurely mark the v5 import complete')
 
 console.log(`\n${passed} passed, ${failed} failed`)

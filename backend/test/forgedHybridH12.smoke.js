@@ -99,7 +99,7 @@ check(/workout\.statistics\(for: type\)/.test(swift) && /timeWeightedAverage/.te
 check(/predicateForObjects\(from: workout\)/.test(swift) && /workout\.sourceRevision\.source/.test(swift), 'heart-rate samples are scoped to the workout or its source');
 check(!/suppliedMaxHR\s*\?\?\s*observedMaxHR/.test(swift), 'an observed workout maximum is never reused as the athlete zone maximum');
 check(/call\.getArray\("zoneMinimums"/.test(swift) && /historyOptions\.zoneMinimums\s*=\s*zones\.map/.test(service), 'saved watch boundaries reach native sample bucketing');
-check(/REQUIRED_HEALTH_AUTH_VERSION\s*=\s*4/.test(service) && /REQUIRED_WORKOUT_IMPORT_VERSION\s*=\s*5/.test(service), 'workout-effort permission upgrade and corrected workout summaries trigger a v5 full-history refresh once');
+check(/REQUIRED_HEALTH_AUTH_VERSION\s*=\s*4/.test(service) && /REQUIRED_WORKOUT_IMPORT_VERSION\s*=\s*6/.test(service), 'workout-effort permission upgrade and Apple Watch metric streams trigger a v6 full-history refresh once');
 check(/workoutUpgradeAvailable[\s\S]*workoutHistoryUpgradeRequired/.test(service), 'an old native shell cannot mark the v5 import complete before the corrected plugin arrives');
 check(/let profile\s*=\s*null[\s\S]*profile\s*=\s*data\?\.profile/.test(service), 'native sync keeps the HR profile in scope for its response');
 check(/isHealthHistoryImportComplete\([\s\S]*historyAvailable: history\.available[\s\S]*errors: importResult\.errors[\s\S]*if \(importComplete && workoutUpgradeAvailable\)[\s\S]*const complete = importComplete && upgradeCommitted[\s\S]*if \(complete\)[\s\S]*clearHealthHistoryTransferPending\(\)/.test(service), 'only a successful full-history read without retryable row failures completes the import upgrade');

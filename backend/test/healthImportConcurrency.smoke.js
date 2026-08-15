@@ -62,14 +62,15 @@ function createImportHarness() {
           type: params[3],
           perceived_effort: params[6],
           notes: params[7],
-          watch_mode: params[12],
-          watch_activity_type: params[13],
-          watch_normalized_type: params[14],
-          health_source: params[15],
-          health_source_workout_id: params[16],
-          health_start_at: params[17],
-          planned_session_json: params[30],
-          workout_metrics_json: params[28],
+          watch_mode: params[13],
+          watch_activity_type: params[14],
+          watch_normalized_type: params[15],
+          health_source: params[16],
+          health_source_workout_id: params[17],
+          health_start_at: params[18],
+          planned_session_json: params[32],
+          workout_metrics_json: params[29],
+          workout_metric_streams_json: params[30],
         });
         return { changes: 1 };
       }

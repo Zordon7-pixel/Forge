@@ -2,10 +2,12 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import {
   buildRunComparison,
+  elevationStreamFromRoute,
   formatPlannedPaceTarget,
   normalizeRunSplits,
   parsePlannedRun,
   parseRunRoute,
+  parseWorkoutMetricStreams,
   parseZoneTimeline,
   resolveRunHeartRateZone,
   targetZoneNumber,
@@ -105,6 +107,20 @@ const route = parseRunRoute(JSON.stringify([
 ]))
 check(route.length === 2, 'valid recorded route points render and invalid coordinates drop')
 check(parseRunRoute('not-json').length === 0, 'malformed route JSON fails closed')
+
+const metricStreams = parseWorkoutMetricStreams(JSON.stringify({
+  version: 1,
+  source: 'apple_health',
+  heart_rate_bpm: [{ t: 10, v: 171 }, { t: 0, v: 85 }, { t: 20, v: 999 }],
+  running_power_watts: [{ t: 0, v: 150 }, { t: 10, v: 154 }],
+}))
+check(metricStreams.heart_rate_bpm.length === 2 && metricStreams.heart_rate_bpm[0].t === 0, 'Apple Watch streams validate and sort')
+check(metricStreams.running_power_watts.length === 2, 'Apple Watch running dynamics survive recap parsing')
+const elevation = elevationStreamFromRoute(JSON.stringify([
+  { lat: 40, lon: -74, alt: 2, time: '2026-08-14T12:00:00Z' },
+  { lat: 40.001, lon: -74.001, alt: 5, time: '2026-08-14T12:00:10Z' },
+]), 'imperial')
+check(elevation.length === 2 && Math.round(elevation[1].v) === 16, 'route altitude becomes a bounded elevation timeline')
 
 console.log('\n== route wiring and ownership ==')
 const appSource = fs.readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8')

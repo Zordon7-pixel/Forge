@@ -122,9 +122,9 @@ export default function HealthSourceManager() {
       </button>
       {!isNativeRuntime && <p className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>Apple Health sync runs in the iPhone app.</p>}
       {notice && <p className="mt-3 text-xs" style={{ color: notice.includes('synced') ? 'var(--success)' : 'var(--warning)' }}>{notice}</p>}
-      {(health?.synced_at || lastSyncResult?.syncedAt) && Number(health?.metrics_schema_version || 0) < 3 && (
+      {(health?.synced_at || lastSyncResult?.syncedAt) && Number(health?.metrics_schema_version || 0) < 6 && (
         <p className="mt-3 text-xs leading-relaxed" style={{ color: 'var(--warning)' }}>
-          New workout-route and activity-detail imports need the next approved iPhone build. Existing Apple Health sync still works.
+          Full Apple Watch route, heart-rate, pace, and running-dynamics timelines need the next approved iPhone build. Existing Apple Health sync still works.
         </p>
       )}
 

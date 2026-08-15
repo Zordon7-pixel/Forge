@@ -528,6 +528,7 @@ async function runAlwaysMigrations() {
 
   await pg.query("ALTER TABLE user_hr_profile ADD COLUMN IF NOT EXISTS custom_zones_json TEXT DEFAULT '[]'");
   await pg.query("ALTER TABLE runs ADD COLUMN IF NOT EXISTS workout_metrics_json TEXT DEFAULT '{}'");
+  await pg.query("ALTER TABLE runs ADD COLUMN IF NOT EXISTS workout_metric_streams_json TEXT DEFAULT '{}'");
 
   await pg.query(`
     CREATE TABLE IF NOT EXISTS comp_codes (

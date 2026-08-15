@@ -7,7 +7,7 @@ import AiGuidanceNote from './AiGuidanceNote'
 import { Link } from 'react-router'
 import { activityLabel, isRunningActivity } from '../lib/activityType'
 import { runProvenanceFromRecord, RUN_PROVENANCE } from '../lib/runCompletionPolicy'
-import { buildRunComparison, formatPlannedPaceTarget, normalizeRunSplits, parseRunRoute, parseZoneTimeline, resolveRunHeartRateZone } from '../lib/runRecap'
+import { buildRunComparison, elevationStreamFromRoute, formatPlannedPaceTarget, normalizeRunSplits, parseRunRoute, parseWorkoutMetricStreams, parseZoneTimeline, resolveRunHeartRateZone } from '../lib/runRecap'
 import { providerSourcePresentation } from '../lib/deviceSourcePresentation'
 import ActivityShareStudio from './ActivityShareStudio'
 import RunPlanImpact from './RunPlanImpact'
@@ -65,6 +65,54 @@ function comparisonNote(actual, planned, { unit = '', precision = 1, tolerance =
   const allowed = Math.max(tolerance, Math.abs(Number(planned)) * 0.05)
   if (Math.abs(delta) <= allowed) return 'On target'
   return `${Math.abs(delta).toFixed(precision)}${unit ? ` ${unit}` : ''} ${delta > 0 ? 'over' : 'under'}`
+}
+
+function traceTimeLabel(seconds) {
+  const value = Math.max(0, Math.round(Number(seconds) || 0))
+  const hours = Math.floor(value / 3600)
+  const minutes = Math.floor((value % 3600) / 60)
+  const remainder = value % 60
+  return hours > 0
+    ? `${hours}:${String(minutes).padStart(2, '0')}:${String(remainder).padStart(2, '0')}`
+    : `${minutes}:${String(remainder).padStart(2, '0')}`
+}
+
+function MetricTraceCard({ label, points = [], average = null, minimum = null, maximum = null, formatValue, color = '#22D3EE', headline = null }) {
+  const valid = points.filter((point) => Number.isFinite(Number(point?.t)) && Number.isFinite(Number(point?.v)))
+  if (valid.length < 2) return null
+  const values = valid.map((point) => Number(point.v))
+  const times = valid.map((point) => Number(point.t))
+  const minimumNumber = minimum === null || minimum === undefined || minimum === '' ? Number.NaN : Number(minimum)
+  const maximumNumber = maximum === null || maximum === undefined || maximum === '' ? Number.NaN : Number(maximum)
+  const minValue = Number.isFinite(minimumNumber) ? minimumNumber : Math.min(...values)
+  const maxValue = Number.isFinite(maximumNumber) ? maximumNumber : Math.max(...values)
+  const minTime = Math.min(...times)
+  const maxTime = Math.max(...times)
+  const timeSpan = Math.max(1, maxTime - minTime)
+  const valueSpan = Math.max(0.0001, maxValue - minValue)
+  const polyline = valid.map((point) => {
+    const x = ((Number(point.t) - minTime) / timeSpan) * 320
+    const y = 58 - ((Number(point.v) - minValue) / valueSpan) * 50
+    return `${x.toFixed(1)},${y.toFixed(1)}`
+  }).join(' ')
+  const display = typeof formatValue === 'function' ? formatValue : (value) => String(Math.round(value))
+  const averageValue = average === null || average === undefined || average === '' ? Number.NaN : Number(average)
+
+  return (
+    <div className="rounded-xl border p-4" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)' }} data-metric-trace={label}>
+      <div className="flex items-end justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{label}</p>
+          <p className="mt-0.5 text-sm font-bold" style={{ color }}>{headline || (Number.isFinite(averageValue) ? `Average: ${display(averageValue)}` : 'Recorded timeline')}</p>
+        </div>
+        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{display(minValue)}–{display(maxValue)}</p>
+      </div>
+      <svg className="mt-3 h-16 w-full" viewBox="0 0 320 64" preserveAspectRatio="none" role="img" aria-label={`${label} recorded timeline`}>
+        <polyline points={polyline} fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+      </svg>
+      <div className="mt-1 flex justify-between text-[11px]" style={{ color: 'var(--text-muted)' }}><span>{traceTimeLabel(minTime)}</span><span>{traceTimeLabel(maxTime)}</span></div>
+    </div>
+  )
 }
 
 function FitRouteBounds({ positions }) {
@@ -200,6 +248,42 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
   const inferredPlanMatch = comparison.planned?.matchSource === 'scheduled_date' || run.planned_match_source === 'scheduled_date'
   const splits = normalizeRunSplits(run.pace_splits)
   const routePositions = parseRunRoute(run.route_coords)
+  const metricStreams = parseWorkoutMetricStreams(run.workout_metric_streams_json)
+  const elevationTrace = elevationStreamFromRoute(run.route_coords, units)
+  const paceTrace = (metricStreams.running_speed_mps || []).flatMap((point) => (
+    Number(point.v) > 0.2 ? [{ t: point.t, v: 1609.344 / Number(point.v) }] : []
+  ))
+  const minimumSpeed = Number(workoutMetrics.running_speed_min_mps)
+  const maximumSpeed = Number(workoutMetrics.running_speed_max_mps)
+  const minimumPace = Number.isFinite(maximumSpeed) && maximumSpeed > 0 ? 1609.344 / maximumSpeed : null
+  const maximumPace = Number.isFinite(minimumSpeed) && minimumSpeed > 0 ? 1609.344 / minimumSpeed : null
+  const dynamicMetricCards = [
+    {
+      key: 'running_power_watts', label: 'Power', average: workoutMetrics.running_power_watts,
+      minimum: workoutMetrics.running_power_min_watts, maximum: workoutMetrics.running_power_max_watts,
+      formatValue: (value) => `${Math.round(value)} W`, color: '#84CC16',
+    },
+    {
+      key: 'running_cadence_spm', label: 'Cadence', average: run.cadence_spm || workoutMetrics.running_cadence_spm,
+      minimum: workoutMetrics.running_cadence_min_spm, maximum: workoutMetrics.running_cadence_max_spm,
+      formatValue: (value) => `${Math.round(value)} spm`, color: '#22D3EE',
+    },
+    {
+      key: 'running_vertical_oscillation_cm', label: 'Vertical oscillation', average: workoutMetrics.running_vertical_oscillation_cm,
+      minimum: workoutMetrics.running_vertical_oscillation_min_cm, maximum: workoutMetrics.running_vertical_oscillation_max_cm,
+      formatValue: (value) => `${Number(value).toFixed(1)} cm`, color: '#38BDF8',
+    },
+    {
+      key: 'running_ground_contact_time_ms', label: 'Ground contact time', average: workoutMetrics.running_ground_contact_time_ms,
+      minimum: workoutMetrics.running_ground_contact_time_min_ms, maximum: workoutMetrics.running_ground_contact_time_max_ms,
+      formatValue: (value) => `${Math.round(value)} ms`, color: '#EAB308',
+    },
+    {
+      key: 'running_stride_length_m', label: 'Stride length', average: workoutMetrics.running_stride_length_m,
+      minimum: workoutMetrics.running_stride_length_min_m, maximum: workoutMetrics.running_stride_length_max_m,
+      formatValue: (value) => `${Number(value).toFixed(2)} m`, color: '#06B6D4',
+    },
+  ].filter((metric) => (metricStreams[metric.key] || []).length >= 2)
   const checkInAvailable = hasTrustedEffort || run.pain_level || run.post_energy
   const checkInComplete = hasTrustedEffort && Boolean(run.pain_level)
   const missingAppleRoute = isRun && isAppleHealthSource && routePositions.length < 2
@@ -284,11 +368,11 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
             <div className="flex items-start gap-2">
               <MapPin size={16} className="mt-0.5 shrink-0" style={{ color: 'var(--accent)' }} />
               <div>
-                <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Recording details not shared</p>
+                <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Recording details not received</p>
                 <p className="mt-1 text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-                  The app or watch that saved this workout to Apple Health did not include {missingAppleRoute && missingAppleElevation ? 'a GPS route or elevation gain' : missingAppleRoute ? 'a GPS route' : 'elevation gain'}. Past activity details cannot be recreated after the recording source omits them.
+                  Forged Hybrid has not received {missingAppleRoute && missingAppleElevation ? 'the GPS route or elevation gain' : missingAppleRoute ? 'the GPS route' : 'elevation gain'} for this Apple Health workout. This can happen when Health access is limited or an older app syncs before Apple finishes attaching the workout details.
                 </p>
-                <p className="mt-1 text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>Runs started in Forged Hybrid record iPhone GPS and altitude when location access is granted. A matching Strava activity can also fill supported route and elevation fields without duplicating the run.</p>
+                <p className="mt-1 text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>Keep the workout in Apple Health so a later full sync can recover details that remain there. Runs started in Forged Hybrid also record iPhone GPS and altitude when location access is granted.</p>
                 <Link to="/settings" className="mt-2 inline-flex text-xs font-bold" style={{ color: 'var(--accent)' }}>Open connected sources</Link>
               </div>
             </div>
@@ -301,6 +385,18 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
             <div><p className="text-xs" style={{ color: 'var(--text-muted)' }}>Elevation gain</p><p className="mt-1 text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{elevationLabel}</p></div>
             <div><p className="text-xs" style={{ color: 'var(--text-muted)' }}>Elevation loss</p><p className="mt-1 text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{elevationLossLabel}</p></div>
             <div><p className="text-xs" style={{ color: 'var(--text-muted)' }}>GPS status</p><p className="mt-1 text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{run.gps_available === false || run.gps_available === 0 ? 'Not recorded' : routePositions.length >= 2 ? 'Route recorded' : 'Unavailable'}</p></div>
+          </div>
+        )}
+
+        {panelIs('route') && elevationTrace.length >= 2 && (
+          <div className="mb-5">
+            <MetricTraceCard
+              label="Elevation"
+              points={elevationTrace}
+              headline={`Gain: ${elevationLabel}`}
+              formatValue={(value) => `${Math.round(value)} ${units === 'metric' ? 'm' : 'ft'}`}
+              color="#84CC16"
+            />
           </div>
         )}
 
@@ -380,6 +476,32 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
           </div>
         )}
 
+        {panelIs('heart_rate') && (metricStreams.heart_rate_bpm || []).length >= 2 && (
+          <div className="mb-5">
+            <MetricTraceCard
+              label="Heart rate"
+              points={metricStreams.heart_rate_bpm}
+              average={hr}
+              minimum={minHr}
+              maximum={maxHr}
+              formatValue={(value) => `${Math.round(value)} bpm`}
+              color="#EF4444"
+            />
+          </div>
+        )}
+
+        {panelIs('heart_rate') && (metricStreams.post_workout_heart_rate_bpm || []).length >= 2 && (
+          <div className="mb-5">
+            <MetricTraceCard
+              label="Post-workout heart rate"
+              points={metricStreams.post_workout_heart_rate_bpm}
+              headline={workoutMetrics.post_workout_heart_rate_drop_bpm != null ? `Down ${Math.round(Number(workoutMetrics.post_workout_heart_rate_drop_bpm))} bpm` : 'Three-minute recovery'}
+              formatValue={(value) => `${Math.round(value)} bpm`}
+              color="#FB7185"
+            />
+          </div>
+        )}
+
         {panelIs('heart_rate') && zone && (hr || hasTrustedHrCoverage) && (
           <div className="rounded-xl p-3 mb-5" style={{ background: 'var(--bg-input)' }}>
             <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Heart-rate evidence</p>
@@ -430,6 +552,20 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
           <div className="mb-5 rounded-xl border p-4" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)' }}>
             <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Heart rate unavailable</p>
             <p className="mt-1 text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>This run has no recorded average heart rate or trustworthy zone timeline. No heart-rate value is estimated.</p>
+          </div>
+        )}
+
+        {panelIs('pace') && isRun && paceTrace.length >= 2 && (
+          <div className="mb-5">
+            <MetricTraceCard
+              label="Pace"
+              points={paceTrace}
+              average={run.distance_miles && run.duration_seconds ? run.duration_seconds / run.distance_miles : null}
+              minimum={minimumPace}
+              maximum={maximumPace}
+              formatValue={(value) => fmt.pace(value)}
+              color="#22D3EE"
+            />
           </div>
         )}
 
@@ -490,7 +626,7 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
         {panelIs('recovery') && isRun && !checkInAvailable && onAddCheckIn && (
           <div className="mb-5 rounded-xl p-4" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
             <p className="text-xs font-bold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.6 }}>How did it feel?</p>
-            <p className="mt-1 text-sm leading-relaxed" style={{ color: 'var(--text-muted)' }}>{hasCalculatedEffort ? 'Forged Hybrid calculated training effort from reliable heart-rate data, but only you can rate how it felt.' : runProvenance === RUN_PROVENANCE.IMPORTED && isAppleHealthSource ? 'Apple Health did not include enough reliable data for a rated or calculated effort.' : 'No athlete-rated effort or pain has been saved for this run.'} Add your effort and pain so future training can adapt to what the run actually cost you. Post-run energy is optional.</p>
+            <p className="mt-1 text-sm leading-relaxed" style={{ color: 'var(--text-muted)' }}>{hasCalculatedEffort ? 'Forged Hybrid calculated training effort from reliable heart-rate data, but only you can rate how it felt.' : runProvenance === RUN_PROVENANCE.IMPORTED && isAppleHealthSource ? 'Forged Hybrid has not received enough reliable heart-rate data for a calculated effort.' : 'No athlete-rated effort or pain has been saved for this run.'} Add your effort and pain so future training can adapt to what the run actually cost you. Post-run energy is optional.</p>
             <button type="button" onClick={onAddCheckIn} className="mt-3 w-full rounded-lg py-2.5 text-sm font-bold" style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}>Add how you felt</button>
           </div>
         )}
@@ -508,6 +644,24 @@ export default function RunDetailModal({ run, hrZones = [], hrProfile = null, on
                 </div>
               ))}
             </div>
+          </div>
+        )}
+
+        {panelIs('summary') && dynamicMetricCards.length > 0 && (
+          <div className="mb-5 space-y-3">
+            <p className="text-xs font-bold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: 0.6 }}>Apple Watch timelines</p>
+            {dynamicMetricCards.map((metric) => (
+              <MetricTraceCard
+                key={metric.key}
+                label={metric.label}
+                points={metricStreams[metric.key]}
+                average={metric.average}
+                minimum={metric.minimum}
+                maximum={metric.maximum}
+                formatValue={metric.formatValue}
+                color={metric.color}
+              />
+            ))}
           </div>
         )}
 

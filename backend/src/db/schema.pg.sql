@@ -88,6 +88,7 @@ CREATE TABLE IF NOT EXISTS runs (
   health_start_at TEXT,
   health_end_at TEXT,
   workout_metrics_json TEXT DEFAULT '{}',
+  workout_metric_streams_json TEXT DEFAULT '{}',
   plan_session_id TEXT,
   planned_session_json TEXT DEFAULT '{}',
   created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP

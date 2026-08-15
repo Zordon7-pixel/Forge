@@ -311,12 +311,19 @@ async function runCanonicalRunMergeSmoke() {
     durationSeconds: PRODUCTION_PAIR.appleDurationSeconds,
     avgHeartRate: PRODUCTION_PAIR.appleAvgHeartRate,
     maxHeartRate: 181,
+    minHeartRate: 85,
     calories: 362,
     heart_rate_zones: { z1: 0, z2: 300, z3: 600, z4: 842, z5: 13 },
     routeCoords: [
       { lat: 38.91, lon: -76.95 },
       { lat: 38.921, lon: -76.939 },
     ],
+    workoutMetricStreams: {
+      version: 1,
+      source: 'apple_health',
+      heart_rate_bpm: [{ t: 0, v: 85 }, { t: 10, v: 171 }],
+      running_power_watts: [{ t: 0, v: 150 }, { t: 10, v: 154 }],
+    },
   });
   const db = {
     async all(sql) {
@@ -353,13 +360,17 @@ async function runCanonicalRunMergeSmoke() {
   assert.equal(summaryUpdate.params[1], PRODUCTION_PAIR.appleDurationSeconds, 'Apple Health duration becomes canonical');
   assert.equal(summaryUpdate.params[3], null, 'the user-rated Forged effort is never overwritten');
   assert.equal(summaryUpdate.params[4], PRODUCTION_PAIR.appleAvgHeartRate, 'Apple Health heart rate enriches the surviving row');
-  assert.equal(summaryUpdate.params[17], '[]', 'the Apple import cannot replace an existing Forged route');
-  assert.equal(summaryUpdate.params[24], 362, 'Apple Health calories become canonical');
-  assert.equal(summaryUpdate.params[28], 362, 'the stale phone calorie estimate is replaced');
-  assert.equal(summaryUpdate.params[30], 362, 'watch calories are stored explicitly');
-  assert.equal(summaryUpdate.params[34], 1, 'AI feedback invalidation is enabled');
-  assert.equal(summaryUpdate.params[35], 1, 'an in-flight AI feedback request is also invalidated');
-  const metrics = JSON.parse(summaryUpdate.params[31]);
+  assert.equal(summaryUpdate.params[6], 85, 'Apple Health minimum heart rate enriches the surviving row');
+  assert.equal(summaryUpdate.params[18], '[]', 'the Apple import cannot replace an existing Forged route');
+  assert.equal(summaryUpdate.params[25], 362, 'Apple Health calories become canonical');
+  assert.equal(summaryUpdate.params[29], 362, 'the stale phone calorie estimate is replaced');
+  assert.equal(summaryUpdate.params[31], 362, 'watch calories are stored explicitly');
+  assert.equal(summaryUpdate.params[36], 1, 'AI feedback invalidation is enabled');
+  assert.equal(summaryUpdate.params[37], 1, 'an in-flight AI feedback request is also invalidated');
+  const metrics = JSON.parse(summaryUpdate.params[32]);
+  const metricStreams = JSON.parse(summaryUpdate.params[33]);
+  assert.equal(metricStreams.heart_rate_bpm.length, 2, 'Apple Health heart-rate samples survive canonical merge');
+  assert.equal(metricStreams.running_power_watts.length, 2, 'Apple Health running-power samples survive canonical merge');
   assert.equal(metrics.route_source, 'forged_phone', 'the retained route records Forged provenance');
   assert.equal(metrics.summary_source, 'apple_health', 'the watch summary records Apple Health provenance');
   assert.ok(
@@ -387,6 +398,7 @@ async function runCanonicalRunMergeSmoke() {
     duration_seconds: item.durationSeconds,
     avg_heart_rate: item.avgHeartRate,
     max_heart_rate: item.maxHeartRate,
+    min_heart_rate: item.minHeartRate,
     heart_rate_zones: JSON.stringify(item.zoneSeconds),
     health_source: item.source,
     health_source_workout_id: item.sourceWorkoutId,
@@ -398,34 +410,49 @@ async function runCanonicalRunMergeSmoke() {
     calories_burned: 362,
     calories_watch: 362,
     workout_metrics_json: JSON.stringify(metrics),
+    workout_metric_streams_json: JSON.stringify(metricStreams),
     ai_feedback: 'Current Apple-summary feedback',
     ai_feedback_requested_at: '2026-07-24T15:30:00.000Z',
   };
   const identicalRepeat = await runHealthUpdate(repeatedAppleCanonical, item);
-  assert.equal(identicalRepeat.params[23], 1, 'a repeated Apple payload with calories keeps explicit sensor authority');
-  assert.equal(identicalRepeat.params[24], 362, 'the repeated Apple calorie value remains available');
-  assert.equal(identicalRepeat.params[34], 0, 'an identical Apple retry preserves existing AI feedback');
-  assert.equal(identicalRepeat.params[35], 0, 'an identical Apple retry preserves the feedback request marker');
+  assert.equal(identicalRepeat.params[24], 1, 'a repeated Apple payload with calories keeps explicit sensor authority');
+  assert.equal(identicalRepeat.params[25], 362, 'the repeated Apple calorie value remains available');
+  assert.equal(identicalRepeat.params[36], 0, 'an identical Apple retry preserves existing AI feedback');
+  assert.equal(identicalRepeat.params[37], 0, 'an identical Apple retry preserves the feedback request marker');
 
   const appleWithoutCalories = importTest.normalizeRow({
     ...item.raw,
     calories: undefined,
   });
   const omittedCaloriesRepeat = await runHealthUpdate(repeatedAppleCanonical, appleWithoutCalories);
-  assert.equal(omittedCaloriesRepeat.params[23], 0, 'a same-source Apple retry that omits calories preserves stored sensor calories');
-  assert.equal(omittedCaloriesRepeat.params[34], 0, 'omitted optional calories alone do not invalidate AI feedback');
+  assert.equal(omittedCaloriesRepeat.params[24], 0, 'a same-source Apple retry that omits calories preserves stored sensor calories');
+  assert.equal(omittedCaloriesRepeat.params[36], 0, 'omitted optional calories alone do not invalidate AI feedback');
+
+  const appleMissingLateRoute = {
+    ...repeatedAppleCanonical,
+    route_coords: '[]',
+    workout_metrics_json: JSON.stringify({
+      ...metrics,
+      route_status: 'none',
+      route_point_count: 0,
+      route_source: 'apple_health',
+    }),
+  };
+  const lateRouteUpdate = await runHealthUpdate(appleMissingLateRoute, item);
+  assert.equal(JSON.parse(lateRouteUpdate.params[18]).length, 2, 'a later Apple Health sync backfills a route that was attached after the first import');
+  assert.equal(lateRouteUpdate.params[36], 1, 'late route recovery invalidates stale route-less feedback');
 
   const changedAppleItem = importTest.normalizeRow({
     ...item.raw,
     avgHeartRate: PRODUCTION_PAIR.appleAvgHeartRate + 1,
   });
   const materiallyChangedRepeat = await runHealthUpdate(repeatedAppleCanonical, changedAppleItem);
-  assert.equal(materiallyChangedRepeat.params[34], 1, 'a material sensor-summary change invalidates stale AI feedback');
-  assert.equal(materiallyChangedRepeat.params[35], 1, 'a material sensor-summary change invalidates an in-flight feedback request');
+  assert.equal(materiallyChangedRepeat.params[36], 1, 'a material sensor-summary change invalidates stale AI feedback');
+  assert.equal(materiallyChangedRepeat.params[37], 1, 'a material sensor-summary change invalidates an in-flight feedback request');
 
   const firstAppleWithoutCalories = await runHealthUpdate(canonicalRun, appleWithoutCalories);
-  assert.equal(firstAppleWithoutCalories.params[23], 2, 'first trusted authority without calories explicitly clears the phone estimate');
-  assert.equal(firstAppleWithoutCalories.params[24], null, 'no sensor calories are invented during the authority change');
+  assert.equal(firstAppleWithoutCalories.params[24], 2, 'first trusted authority without calories explicitly clears the phone estimate');
+  assert.equal(firstAppleWithoutCalories.params[25], null, 'no sensor calories are invented during the authority change');
 
   const transferable = importTest.analyzeRunConsolidation(
     forgedCandidate({
@@ -550,7 +577,7 @@ async function runCanonicalRunMergeSmoke() {
   assert.equal(lowerPriorityUpdate.params[0], null, 'lower-priority Strava distance cannot replace Apple Health');
   assert.equal(lowerPriorityUpdate.params[1], null, 'lower-priority Strava duration cannot replace Apple Health');
   assert.equal(lowerPriorityUpdate.params[4], 160, 'lower-priority Strava can fill heart rate Apple Health did not provide');
-  const lowerPriorityMetrics = JSON.parse(lowerPriorityUpdate.params[31]);
+  const lowerPriorityMetrics = JSON.parse(lowerPriorityUpdate.params[32]);
   assert.equal(lowerPriorityMetrics.summary_source, 'apple_health', 'summary provenance remains Apple Health');
   assert.equal(lowerPriorityMetrics.running_power_watts, 300, 'lower-priority Strava fills missing JSON-only power');
   assert.equal(lowerPriorityMetrics.running_stride_length_m, 1, 'lower-priority Strava cannot overwrite Apple stride length');

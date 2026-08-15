@@ -8,6 +8,10 @@ const { buildRunImportKeys } = require('../lib/runImportKey');
 const { classifyRouteIntegrity, normalizeDistanceEvidence } = require('../lib/runPostRun');
 const { normalizeWorkoutMetrics } = require('../lib/workoutMetrics');
 const {
+  mergeWorkoutMetricStreams,
+  normalizeWorkoutMetricStreams,
+} = require('../lib/workoutMetricStreams');
+const {
   chooseForgedRunMatch,
   distanceTolerance,
   durationTolerance,
@@ -261,10 +265,23 @@ function storedValueMissing(value) {
 
 const LOWER_PRIORITY_FILLABLE_WORKOUT_METRICS = new Set([
   'running_power_watts',
+  'running_power_min_watts',
+  'running_power_max_watts',
   'running_speed_mps',
+  'running_speed_min_mps',
+  'running_speed_max_mps',
   'running_stride_length_m',
+  'running_stride_length_min_m',
+  'running_stride_length_max_m',
   'running_vertical_oscillation_cm',
+  'running_vertical_oscillation_min_cm',
+  'running_vertical_oscillation_max_cm',
   'running_ground_contact_time_ms',
+  'running_ground_contact_time_min_ms',
+  'running_ground_contact_time_max_ms',
+  'running_cadence_spm',
+  'running_cadence_min_spm',
+  'running_cadence_max_spm',
   'running_vertical_ratio_pct',
   'ground_contact_balance_left_pct',
   'ground_contact_balance_right_pct',
@@ -275,6 +292,7 @@ const LOWER_PRIORITY_FILLABLE_WORKOUT_METRICS = new Set([
   'walk_time_seconds',
   'idle_time_seconds',
   'hr_sample_coverage_pct',
+  'post_workout_heart_rate_drop_bpm',
 ]);
 
 function mergeMissingWorkoutMetrics(storedMetrics, incomingMetrics, source) {
@@ -429,6 +447,7 @@ function normalizeRow(raw = {}) {
   const durationSeconds = Math.max(0, Math.round(asNumber(raw.durationSeconds || raw.duration_seconds || raw.duration || raw.elapsedTime || 0, 0)));
   const avgHeartRate = normalizeHeartRate(raw.avgHR || raw.avgHeartRate || raw.avg_heart_rate || raw.average_heart_rate || raw['Average Heart Rate'] || null);
   const maxHeartRate = normalizeHeartRate(raw.maxHR || raw.maxHeartRate || raw.max_heart_rate || raw.maximum_heart_rate || raw['Max Heart Rate'] || null);
+  const minHeartRate = normalizeHeartRate(raw.minHR || raw.minHeartRate || raw.min_heart_rate || raw.minimum_heart_rate || raw['Min Heart Rate'] || null);
   const zoneSeconds = normalizeZoneSeconds(raw.zoneSeconds || raw.zone_seconds || raw.heart_rate_zones);
   const sourceWorkoutId = String(raw.sourceWorkoutId || raw.source_workout_id || raw.id || raw.uuid || '').trim().slice(0, 200) || null;
   const routeCoords = normalizeRouteCoords(raw.routeCoords || raw.route_coords || raw.route);
@@ -438,6 +457,9 @@ function normalizeRow(raw = {}) {
     coverageIncomplete: raw.routeCoverageIncomplete === true || raw.route_coverage_incomplete === true || raw.routeStatus === 'partial' || raw.route_status === 'partial',
   });
   const workoutMetrics = normalizeWorkoutMetrics({ ...raw, metric_source: source });
+  const workoutMetricStreams = normalizeWorkoutMetricStreams(
+    raw.workoutMetricStreams || raw.workout_metric_streams || raw.metricStreams || {}
+  );
   if (distanceEvidence.miles !== null) {
     workoutMetrics.metrics.distance_source = distanceEvidence.source;
     workoutMetrics.metrics.distance_unit = distanceEvidence.unit;
@@ -459,6 +481,7 @@ function normalizeRow(raw = {}) {
     durationSeconds,
     avgHeartRate,
     maxHeartRate,
+    minHeartRate,
     zoneSeconds,
     source,
     sourceWorkoutId,
@@ -474,6 +497,7 @@ function normalizeRow(raw = {}) {
     temperatureF: optionalNumber(raw, ['temperatureF', 'temperature_f', 'avgTemperatureF', 'Average Temperature'], -100, 150),
     routeCoords,
     workoutMetrics: workoutMetrics.metrics,
+    workoutMetricStreams,
     droppedMetricFields: workoutMetrics.droppedFields,
     raw,
   };
@@ -500,11 +524,11 @@ async function findMatchingForgedRun(db, userId, item, { excludeId = null } = {}
     `SELECT id, date, type, watch_mode, watch_activity_type, watch_normalized_type,
             duration_seconds, health_start_at, created_at, health_source, health_source_workout_id,
             distance_miles, route_coords, perceived_effort, pain_level, post_energy, notes,
-            avg_heart_rate, max_heart_rate, heart_rate_zones, cadence_spm,
+            avg_heart_rate, max_heart_rate, min_heart_rate, heart_rate_zones, cadence_spm,
             elevation_gain, elevation_loss, vo2_max, training_effect_aerobic,
             training_effect_anaerobic, recovery_time_hours, temperature_f,
             calories, calories_burned, calories_watch, shoe_id, plan_session_id,
-            planned_session_json, workout_metrics_json, ai_feedback, ai_feedback_requested_at
+            planned_session_json, workout_metrics_json, workout_metric_streams_json, ai_feedback, ai_feedback_requested_at
      FROM runs
      WHERE user_id=? AND date=?
        AND (
@@ -528,11 +552,11 @@ async function findExistingRun(db, userId, item) {
       `SELECT id, date, type, watch_mode, watch_activity_type, watch_normalized_type,
               duration_seconds, health_start_at, created_at, health_source, health_source_workout_id,
               distance_miles, route_coords, perceived_effort, pain_level, post_energy, notes,
-              avg_heart_rate, max_heart_rate, heart_rate_zones, cadence_spm,
+              avg_heart_rate, max_heart_rate, min_heart_rate, heart_rate_zones, cadence_spm,
               elevation_gain, elevation_loss, vo2_max, training_effect_aerobic,
               training_effect_anaerobic, recovery_time_hours, temperature_f,
               calories, calories_burned, calories_watch, shoe_id, plan_session_id,
-              planned_session_json, workout_metrics_json, ai_feedback, ai_feedback_requested_at
+              planned_session_json, workout_metrics_json, workout_metric_streams_json, ai_feedback, ai_feedback_requested_at
        FROM runs
        WHERE user_id=? AND health_source=? AND health_source_workout_id=?
        LIMIT 1
@@ -549,11 +573,11 @@ async function findExistingRun(db, userId, item) {
     `SELECT id, date, type, watch_mode, watch_activity_type, watch_normalized_type,
             duration_seconds, health_start_at, created_at, health_source, health_source_workout_id,
             distance_miles, route_coords, perceived_effort, pain_level, post_energy, notes,
-            avg_heart_rate, max_heart_rate, heart_rate_zones, cadence_spm,
+            avg_heart_rate, max_heart_rate, min_heart_rate, heart_rate_zones, cadence_spm,
             elevation_gain, elevation_loss, vo2_max, training_effect_aerobic,
             training_effect_anaerobic, recovery_time_hours, temperature_f,
             calories, calories_burned, calories_watch, shoe_id, plan_session_id,
-            planned_session_json, workout_metrics_json, ai_feedback, ai_feedback_requested_at
+            planned_session_json, workout_metrics_json, workout_metric_streams_json, ai_feedback, ai_feedback_requested_at
      FROM runs
      WHERE user_id=? AND date=? AND ABS(COALESCE(distance_miles,0) - ?) < 0.05
        AND COALESCE(health_source, '')<>'forged_hybrid'
@@ -627,12 +651,12 @@ async function insertRun(db, userId, item) {
   await db.run(
     `INSERT INTO runs (
       id, user_id, date, type, distance_miles, duration_seconds, perceived_effort, notes,
-      avg_heart_rate, max_heart_rate, heart_rate_zones, calories, watch_mode, watch_activity_type,
+      avg_heart_rate, max_heart_rate, min_heart_rate, heart_rate_zones, calories, watch_mode, watch_activity_type,
       watch_normalized_type, health_source, health_source_workout_id, health_start_at, health_end_at, cadence_spm,
       elevation_gain, elevation_loss, route_coords, vo2_max, training_effect_aerobic,
-      training_effect_anaerobic, recovery_time_hours, temperature_f, workout_metrics_json,
+      training_effect_anaerobic, recovery_time_hours, temperature_f, workout_metrics_json, workout_metric_streams_json,
       plan_session_id, planned_session_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       runId,
       userId,
@@ -644,6 +668,7 @@ async function insertRun(db, userId, item) {
       'Imported workout',
       item.avgHeartRate,
       item.maxHeartRate,
+      item.minHeartRate,
       JSON.stringify(item.zoneSeconds),
       Math.round(asNumber(item.calories, 0)),
       'import',
@@ -663,6 +688,7 @@ async function insertRun(db, userId, item) {
       item.recoveryTimeHours,
       item.temperatureF,
       JSON.stringify(item.workoutMetrics),
+      JSON.stringify(item.workoutMetricStreams),
       planned?.sessionId || null,
       JSON.stringify(planned || {}),
     ]
@@ -680,6 +706,7 @@ async function updateExistingRunHealth(db, userId, existingRun, item) {
     ? await findPlannedRunForDate(userId, item.date, { get: db.get })
     : null;
   const storedWorkoutMetrics = parseStoredWorkoutMetrics(existingRun.workout_metrics_json);
+  const storedWorkoutMetricStreams = normalizeWorkoutMetricStreams(existingRun.workout_metric_streams_json);
   const isForgedCapture = hasForgedRecordingProvenance(existingRun);
   const incomingSource = normalizedSource(item.source);
   const storedSummarySource = normalizedSource(
@@ -737,6 +764,9 @@ async function updateExistingRunHealth(db, userId, existingRun, item) {
     : isTrustedSensorSummarySource(incomingSource)
       ? mergeMissingWorkoutMetrics(storedWorkoutMetrics, item.workoutMetrics, item.source)
       : storedWorkoutMetrics;
+  const mergedWorkoutMetricStreams = summaryUpdateAllowed || isTrustedSensorSummarySource(incomingSource)
+    ? mergeWorkoutMetricStreams(storedWorkoutMetricStreams, item.workoutMetricStreams)
+    : storedWorkoutMetricStreams;
   const mergedWorkoutMetrics = {
     ...baseWorkoutMetrics,
     ...canonicalRouteMetrics,
@@ -781,6 +811,7 @@ async function updateExistingRunHealth(db, userId, existingRun, item) {
   );
   const canonicalAvgHeartRate = fillMissingSummaryValue(item.avgHeartRate, existingRun.avg_heart_rate);
   const canonicalMaxHeartRate = fillMissingSummaryValue(item.maxHeartRate, existingRun.max_heart_rate);
+  const canonicalMinHeartRate = fillMissingSummaryValue(item.minHeartRate, existingRun.min_heart_rate);
   const canonicalZones = fillMissingSummaryValue(zoneParam, existingRun.heart_rate_zones);
   const canonicalHealthSource = summaryValue(item.source);
   const canonicalHealthSourceWorkoutId = summaryValue(item.sourceWorkoutId);
@@ -809,6 +840,7 @@ async function updateExistingRunHealth(db, userId, existingRun, item) {
   const routeChanged = incomingRouteReplacesStored
     && !structuredValuesEqual(item.routeCoords, storedRouteCoords);
   const workoutMetricsChanged = !structuredValuesEqual(mergedWorkoutMetrics, storedWorkoutMetrics);
+  const workoutMetricStreamsChanged = !structuredValuesEqual(mergedWorkoutMetricStreams, storedWorkoutMetricStreams);
   const sensorCaloriesChanged = sensorCalorieAction === 1
     ? incomingValueChangesStored(canonicalSensorCalories, existingRun.calories)
       || incomingValueChangesStored(canonicalSensorCalories, existingRun.calories_burned)
@@ -825,6 +857,7 @@ async function updateExistingRunHealth(db, userId, existingRun, item) {
     [importedEffort, existingRun.perceived_effort],
     [canonicalAvgHeartRate, existingRun.avg_heart_rate],
     [canonicalMaxHeartRate, existingRun.max_heart_rate],
+    [canonicalMinHeartRate, existingRun.min_heart_rate],
     [canonicalZones, existingRun.heart_rate_zones],
     [canonicalType, existingRun.type],
     [canonicalWatchActivityType, existingRun.watch_activity_type],
@@ -840,6 +873,7 @@ async function updateExistingRunHealth(db, userId, existingRun, item) {
   ].some(([incomingValue, storedValue]) => incomingValueChangesStored(incomingValue, storedValue))
     || routeChanged
     || workoutMetricsChanged
+    || workoutMetricStreamsChanged
     || sensorCaloriesChanged
     || importedCaloriesChanged;
   const invalidateAiFeedback = authorityChanged || summaryChanged;
@@ -852,6 +886,7 @@ async function updateExistingRunHealth(db, userId, existingRun, item) {
       perceived_effort = COALESCE(?, perceived_effort),
       avg_heart_rate = COALESCE(?, avg_heart_rate),
       max_heart_rate = COALESCE(?, max_heart_rate),
+      min_heart_rate = COALESCE(?, min_heart_rate),
       heart_rate_zones = COALESCE(?, heart_rate_zones),
       health_source = COALESCE(?, health_source),
       health_source_workout_id = COALESCE(?, health_source_workout_id),
@@ -873,6 +908,7 @@ async function updateExistingRunHealth(db, userId, existingRun, item) {
       calories_burned = CASE CAST(? AS INTEGER) WHEN 1 THEN ? WHEN 2 THEN NULL ELSE calories_burned END,
       calories_watch = CASE CAST(? AS INTEGER) WHEN 1 THEN ? WHEN 2 THEN NULL ELSE calories_watch END,
       workout_metrics_json = COALESCE(NULLIF(?, '{}'), workout_metrics_json),
+      workout_metric_streams_json = COALESCE(NULLIF(?, '{}'), workout_metric_streams_json),
       plan_session_id = COALESCE(NULLIF(plan_session_id, ''), ?),
       planned_session_json = CASE
         WHEN planned_session_json IS NULL OR planned_session_json='' OR planned_session_json='{}'
@@ -889,6 +925,7 @@ async function updateExistingRunHealth(db, userId, existingRun, item) {
       importedEffort,
       canonicalAvgHeartRate,
       canonicalMaxHeartRate,
+      canonicalMinHeartRate,
       canonicalZones,
       canonicalHealthSource,
       canonicalHealthSourceWorkoutId,
@@ -915,6 +952,7 @@ async function updateExistingRunHealth(db, userId, existingRun, item) {
       sensorCalorieAction,
       canonicalSensorCalories,
       JSON.stringify(mergedWorkoutMetrics),
+      JSON.stringify(mergedWorkoutMetricStreams),
       planned?.sessionId || null,
       planned ? JSON.stringify(planned) : null,
       invalidateAiFeedback ? 1 : 0,

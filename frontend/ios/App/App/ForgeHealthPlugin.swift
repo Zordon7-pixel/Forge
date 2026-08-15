@@ -18,6 +18,8 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
     private let healthStore = HKHealthStore()
     private let workoutAnchorKey = "forge.healthkit.workoutHistoryAnchor"
     private let observedWorkoutEndKey = "forge.healthkit.lastObservedWorkoutEnd"
+    private let metricStreamVersion = 1
+    private let maxMetricStreamPoints = 600
     private var workoutObserverQuery: HKObserverQuery?
 
     public override func load() {
@@ -347,7 +349,7 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
 
         group.notify(queue: .main) {
             var payload: [String: Any] = [
-                "metricsSchemaVersion": 5,
+                "metricsSchemaVersion": 6,
                 "stepsToday": Int(stepsToday.rounded()),
                 "caloriesBurnedToday": Int(caloriesToday.rounded()),
                 "totalMilesThisWeek": round(milesThisWeek * 100) / 100,
@@ -667,13 +669,145 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     private struct RunningDynamicsSummary {
-        var powerWatts: Double?
-        var speedMps: Double?
-        var strideLengthM: Double?
-        var verticalOscillationCm: Double?
-        var groundContactTimeMs: Double?
-        var cadenceSpm: Double?
+        var series: [String: MetricSeries] = [:]
         var recordedAt: Date?
+    }
+
+    private struct MetricSeries {
+        let average: Double?
+        let minimum: Double?
+        let maximum: Double?
+        let points: [[String: Any]]
+    }
+
+    private func roundedMetricValue(_ value: Double, precision: Int) -> Double {
+        let multiplier = pow(10.0, Double(max(0, precision)))
+        return round(value * multiplier) / multiplier
+    }
+
+    private func boundedMetricPoints(_ points: [[String: Any]]) -> [[String: Any]] {
+        guard points.count > maxMetricStreamPoints, maxMetricStreamPoints > 1 else { return points }
+        let lastIndex = points.count - 1
+        let scale = Double(lastIndex) / Double(maxMetricStreamPoints - 1)
+        var used = Set<Int>()
+        return (0..<maxMetricStreamPoints).compactMap { index in
+            let sourceIndex = min(lastIndex, Int((Double(index) * scale).rounded()))
+            guard used.insert(sourceIndex).inserted else { return nil }
+            return points[sourceIndex]
+        }
+    }
+
+    private func metricSeries(
+        samples: [HKQuantitySample],
+        workout: HKWorkout,
+        precision: Int,
+        value: (HKQuantitySample) -> Double?
+    ) -> MetricSeries {
+        let resolved = samples.compactMap { sample -> (Date, Double)? in
+            guard let metricValue = value(sample), metricValue.isFinite else { return nil }
+            return (sample.startDate, metricValue)
+        }.sorted { $0.0 < $1.0 }
+        guard !resolved.isEmpty else {
+            return MetricSeries(average: nil, minimum: nil, maximum: nil, points: [])
+        }
+        let values = resolved.map { $0.1 }
+        let points = boundedMetricPoints(resolved.map { date, metricValue in
+            [
+                "t": roundedMetricValue(max(0, date.timeIntervalSince(workout.startDate)), precision: 1),
+                "v": roundedMetricValue(metricValue, precision: precision)
+            ]
+        })
+        return MetricSeries(
+            average: values.reduce(0, +) / Double(values.count),
+            minimum: values.min(),
+            maximum: values.max(),
+            points: points
+        )
+    }
+
+    private func queryQuantitySamples(
+        type: HKQuantityType,
+        predicate: NSPredicate,
+        completion: @escaping ([HKQuantitySample]) -> Void
+    ) {
+        let sort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)
+        let query = HKSampleQuery(sampleType: type, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: [sort]) { _, samples, error in
+            if let error = error {
+                NSLog("ForgeHealthPlugin %@ samples query failed: %@", type.identifier, error.localizedDescription)
+                completion([])
+                return
+            }
+            completion(samples as? [HKQuantitySample] ?? [])
+        }
+        healthStore.execute(query)
+    }
+
+    private func fetchWorkoutQuantitySamples(
+        identifier: HKQuantityTypeIdentifier,
+        workout: HKWorkout,
+        completion: @escaping ([HKQuantitySample]) -> Void
+    ) {
+        guard let type = HKQuantityType.quantityType(forIdentifier: identifier) else {
+            completion([])
+            return
+        }
+        let workoutPredicate = HKQuery.predicateForObjects(from: workout)
+        queryQuantitySamples(type: type, predicate: workoutPredicate) { associatedSamples in
+            guard associatedSamples.isEmpty else {
+                completion(associatedSamples)
+                return
+            }
+            let datePredicate = HKQuery.predicateForSamples(withStart: workout.startDate, end: workout.endDate, options: .strictStartDate)
+            let sourcePredicate = HKQuery.predicateForObjects(from: workout.sourceRevision.source)
+            let fallbackPredicate = NSCompoundPredicate(andPredicateWithSubpredicates: [datePredicate, sourcePredicate])
+            self.queryQuantitySamples(type: type, predicate: fallbackPredicate, completion: completion)
+        }
+    }
+
+    private func fetchMetricSeries(
+        identifier: HKQuantityTypeIdentifier,
+        unit: HKUnit,
+        streamKey: String,
+        precision: Int,
+        workout: HKWorkout,
+        completion: @escaping (String, MetricSeries) -> Void
+    ) {
+        fetchWorkoutQuantitySamples(identifier: identifier, workout: workout) { samples in
+            let series = self.metricSeries(samples: samples, workout: workout, precision: precision) { sample in
+                sample.quantity.doubleValue(for: unit)
+            }
+            completion(streamKey, series)
+        }
+    }
+
+    private func fetchCadenceSeries(workout: HKWorkout, completion: @escaping (String, MetricSeries) -> Void) {
+        fetchWorkoutQuantitySamples(identifier: .stepCount, workout: workout) { samples in
+            let series = self.metricSeries(samples: samples, workout: workout, precision: 1) { sample in
+                let seconds = sample.endDate.timeIntervalSince(sample.startDate)
+                guard seconds > 0 else { return nil }
+                let cadence = sample.quantity.doubleValue(for: .count()) / seconds * 60.0
+                return cadence > 0 && cadence <= 300 ? cadence : nil
+            }
+            let validSamples = samples.compactMap { sample -> (steps: Double, seconds: Double)? in
+                let seconds = sample.endDate.timeIntervalSince(sample.startDate)
+                let steps = sample.quantity.doubleValue(for: .count())
+                guard seconds > 0, steps > 0, (steps / seconds * 60.0) <= 300 else { return nil }
+                return (steps, seconds)
+            }
+            let totals = validSamples.reduce((steps: 0.0, seconds: 0.0)) { partial, sample in
+                (partial.steps + sample.steps, partial.seconds + sample.seconds)
+            }
+            let weightedAverage = totals.seconds > 0 ? totals.steps / totals.seconds * 60.0 : nil
+            completion(
+                "running_cadence_spm",
+                MetricSeries(
+                    average: weightedAverage,
+                    minimum: series.minimum,
+                    maximum: series.maximum,
+                    points: series.points
+                )
+            )
+        }
     }
 
     private func fetchRunningDynamics(workout: HKWorkout, completion: @escaping (RunningDynamicsSummary) -> Void) {
@@ -685,38 +819,34 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
         let group = DispatchGroup()
         let lock = NSLock()
         var summary = RunningDynamicsSummary()
-        let queries: [(HKQuantityTypeIdentifier, HKUnit, (Double) -> Void)] = [
-            (.runningPower, HKUnit.watt(), { summary.powerWatts = $0 }),
-            (.runningSpeed, HKUnit.meter().unitDivided(by: HKUnit.second()), { summary.speedMps = $0 }),
-            (.runningStrideLength, HKUnit.meter(), { summary.strideLengthM = $0 }),
-            (.runningVerticalOscillation, HKUnit.meterUnit(with: .centi), { summary.verticalOscillationCm = $0 }),
-            (.runningGroundContactTime, HKUnit.secondUnit(with: .milli), { summary.groundContactTimeMs = $0 })
+        let queries: [(HKQuantityTypeIdentifier, HKUnit, String, Int)] = [
+            (.runningPower, .watt(), "running_power_watts", 1),
+            (.runningSpeed, .meter().unitDivided(by: .second()), "running_speed_mps", 2),
+            (.runningStrideLength, .meter(), "running_stride_length_m", 2),
+            (.runningVerticalOscillation, .meterUnit(with: .centi), "running_vertical_oscillation_cm", 1),
+            (.runningGroundContactTime, .secondUnit(with: .milli), "running_ground_contact_time_ms", 1)
         ]
 
-        for (identifier, unit, assign) in queries {
+        for (identifier, unit, streamKey, precision) in queries {
             group.enter()
-            averageQuantity(identifier, unit: unit, startDate: workout.startDate, endDate: workout.endDate) { value in
-                if let value = value {
-                    lock.lock()
-                    assign(value)
-                    lock.unlock()
-                }
+            fetchMetricSeries(identifier: identifier, unit: unit, streamKey: streamKey, precision: precision, workout: workout) { key, series in
+                lock.lock()
+                summary.series[key] = series
+                lock.unlock()
                 group.leave()
             }
         }
 
         group.enter()
-        sumQuantity(.stepCount, unit: HKUnit.count(), startDate: workout.startDate, endDate: workout.endDate) { steps in
-            if steps > 0, workout.duration > 0 {
-                lock.lock()
-                summary.cadenceSpm = steps / (workout.duration / 60.0)
-                lock.unlock()
-            }
+        fetchCadenceSeries(workout: workout) { key, series in
+            lock.lock()
+            summary.series[key] = series
+            lock.unlock()
             group.leave()
         }
 
         group.notify(queue: .global(qos: .userInitiated)) {
-            if summary.powerWatts != nil || summary.speedMps != nil || summary.strideLengthM != nil || summary.verticalOscillationCm != nil || summary.groundContactTimeMs != nil || summary.cadenceSpm != nil {
+            if summary.series.values.contains(where: { !$0.points.isEmpty }) {
                 summary.recordedAt = workout.endDate
             }
             completion(summary)
@@ -942,7 +1072,9 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
     private struct WorkoutHeartRateSummary {
         let avgHR: Double?
         let maxHR: Double?
+        let minHR: Double?
         let zoneSeconds: [String: Int]
+        let samples: [HeartRatePoint]
     }
 
     private func enrichWorkoutsWithHeartRate(_ workouts: [HKWorkout], suppliedMaxHR: Double?, suppliedZoneMinimums: [Double]?, completion: @escaping ([[String: Any]], Double?) -> Void) {
@@ -955,54 +1087,51 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
         let lock = NSLock()
         var summaries: [UUID: WorkoutHeartRateSummary] = [:]
         var observedMaxHR: Double?
+        let zoneMinimums = validZoneMinimums(suppliedZoneMinimums)
 
         for workout in workouts {
             group.enter()
             fetchHeartRateSamples(workout: workout) { samples in
                 let workoutStatistics = self.workoutHeartRateStatistics(workout)
                 let maxHR = workoutStatistics.maxHR ?? samples.map { $0.bpm }.max()
+                let minHR = workoutStatistics.minHR ?? samples.map { $0.bpm }.min()
                 let avgHR = workoutStatistics.avgHR ?? self.timeWeightedAverage(samples, workout: workout)
+                let zoneSeconds = self.bucketHeartRateSamples(
+                    samples,
+                    workout: workout,
+                    maxHR: suppliedMaxHR,
+                    zoneMinimums: zoneMinimums
+                )
 
                 lock.lock()
                 if let maxHR = maxHR {
                     observedMaxHR = max(observedMaxHR ?? maxHR, maxHR)
                 }
-                summaries[workout.uuid] = WorkoutHeartRateSummary(avgHR: avgHR, maxHR: maxHR, zoneSeconds: [:])
+                summaries[workout.uuid] = WorkoutHeartRateSummary(
+                    avgHR: avgHR,
+                    maxHR: maxHR,
+                    minHR: minHR,
+                    zoneSeconds: zoneSeconds,
+                    samples: samples
+                )
                 lock.unlock()
                 group.leave()
             }
         }
 
         group.notify(queue: .global(qos: .userInitiated)) {
-            let zoneMinimums = self.validZoneMinimums(suppliedZoneMinimums)
-            let zoneGroup = DispatchGroup()
-
-            if zoneMinimums != nil || (suppliedMaxHR ?? 0) > 0 {
-                for workout in workouts {
-                    zoneGroup.enter()
-                    self.fetchHeartRateSamples(workout: workout) { samples in
-                        let zoneSeconds = self.bucketHeartRateSamples(samples, workout: workout, maxHR: suppliedMaxHR, zoneMinimums: zoneMinimums)
-                        lock.lock()
-                        let existing = summaries[workout.uuid]
-                        summaries[workout.uuid] = WorkoutHeartRateSummary(avgHR: existing?.avgHR, maxHR: existing?.maxHR, zoneSeconds: zoneSeconds)
-                        lock.unlock()
-                        zoneGroup.leave()
-                    }
-                }
+            let rows = workouts.map { workout -> [String: Any] in
+                let summary = summaries[workout.uuid]
+                return self.serializeWorkout(
+                    workout,
+                    avgHR: summary?.avgHR,
+                    maxHR: summary?.maxHR,
+                    minHR: summary?.minHR,
+                    zoneSeconds: summary?.zoneSeconds ?? self.emptyZoneSeconds(),
+                    heartRateSamples: summary?.samples ?? []
+                )
             }
-
-            zoneGroup.notify(queue: .global(qos: .userInitiated)) {
-                let rows = workouts.map { workout -> [String: Any] in
-                    let summary = summaries[workout.uuid]
-                    return self.serializeWorkout(
-                        workout,
-                        avgHR: summary?.avgHR,
-                        maxHR: summary?.maxHR,
-                        zoneSeconds: summary?.zoneSeconds ?? self.emptyZoneSeconds()
-                    )
-                }
-                completion(rows, observedMaxHR)
-            }
+            completion(rows, observedMaxHR)
         }
     }
 
@@ -1011,16 +1140,27 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
         let bpm: Double
     }
 
-    private func workoutHeartRateStatistics(_ workout: HKWorkout) -> (avgHR: Double?, maxHR: Double?) {
+    private func workoutHeartRateStatistics(_ workout: HKWorkout) -> (avgHR: Double?, maxHR: Double?, minHR: Double?) {
         guard #available(iOS 16.0, *), let type = HKQuantityType.quantityType(forIdentifier: .heartRate) else {
-            return (nil, nil)
+            return (nil, nil, nil)
         }
         let unit = HKUnit.count().unitDivided(by: HKUnit.minute())
         let statistics = workout.statistics(for: type)
         return (
             statistics?.averageQuantity()?.doubleValue(for: unit),
-            statistics?.maximumQuantity()?.doubleValue(for: unit)
+            statistics?.maximumQuantity()?.doubleValue(for: unit),
+            statistics?.minimumQuantity()?.doubleValue(for: unit)
         )
+    }
+
+    private func heartRateStreamPoints(_ samples: [HeartRatePoint], origin: Date) -> [[String: Any]] {
+        let points = samples.sorted { $0.date < $1.date }.map { sample in
+            [
+                "t": roundedMetricValue(max(0, sample.date.timeIntervalSince(origin)), precision: 1),
+                "v": Int(sample.bpm.rounded())
+            ] as [String: Any]
+        }
+        return boundedMetricPoints(points)
     }
 
     private func timeWeightedAverage(_ samples: [HeartRatePoint], workout: HKWorkout) -> Double? {
@@ -1072,6 +1212,14 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
             let fallbackPredicate = NSCompoundPredicate(andPredicateWithSubpredicates: [datePredicate, sourcePredicate])
             self.queryHeartRateSamples(predicate: fallbackPredicate, completion: completion)
         }
+    }
+
+    private func fetchPostWorkoutHeartRateSamples(workout: HKWorkout, completion: @escaping ([HeartRatePoint]) -> Void) {
+        let endDate = workout.endDate.addingTimeInterval(3 * 60)
+        let datePredicate = HKQuery.predicateForSamples(withStart: workout.endDate, end: endDate, options: .strictStartDate)
+        let sourcePredicate = HKQuery.predicateForObjects(from: workout.sourceRevision.source)
+        let predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [datePredicate, sourcePredicate])
+        queryHeartRateSamples(predicate: predicate, completion: completion)
     }
 
     private func emptyZoneSeconds() -> [String: Int] {
@@ -1139,6 +1287,7 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
             var route = WorkoutRouteSummary(points: [], elevationGainFeet: nil, elevationLossFeet: nil)
             var dynamics = RunningDynamicsSummary()
             var perceivedEffort: Int?
+            var postWorkoutHeartRateSamples: [HeartRatePoint] = []
 
             itemGroup.enter()
             fetchWorkoutRoute(workout: workout) { summary in
@@ -1164,22 +1313,56 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
                     itemLock.unlock()
                     itemGroup.leave()
                 }
+
+                itemGroup.enter()
+                fetchPostWorkoutHeartRateSamples(workout: workout) { samples in
+                    itemLock.lock()
+                    postWorkoutHeartRateSamples = samples
+                    itemLock.unlock()
+                    itemGroup.leave()
+                }
             }
 
             itemGroup.notify(queue: .global(qos: .userInitiated)) {
                 lock.lock()
                 var row = enriched[index]
                 var metrics = row["workoutMetrics"] as? [String: Any] ?? [:]
-                if let value = dynamics.powerWatts { metrics["running_power_watts"] = Int(value.rounded()) }
-                if let value = dynamics.speedMps { metrics["running_speed_mps"] = round(value * 100) / 100 }
-                if let value = dynamics.strideLengthM { metrics["running_stride_length_m"] = round(value * 100) / 100 }
-                if let value = dynamics.verticalOscillationCm { metrics["running_vertical_oscillation_cm"] = round(value * 10) / 10 }
-                if let value = dynamics.groundContactTimeMs { metrics["running_ground_contact_time_ms"] = Int(value.rounded()) }
-                if let stride = dynamics.strideLengthM, stride > 0, let vertical = dynamics.verticalOscillationCm {
+                var metricStreams = row["workoutMetricStreams"] as? [String: Any] ?? [
+                    "version": self.metricStreamVersion,
+                    "source": "apple_health"
+                ]
+                let metricMappings: [(String, String, String, String, Int)] = [
+                    ("running_power_watts", "running_power_watts", "running_power_min_watts", "running_power_max_watts", 1),
+                    ("running_speed_mps", "running_speed_mps", "running_speed_min_mps", "running_speed_max_mps", 2),
+                    ("running_stride_length_m", "running_stride_length_m", "running_stride_length_min_m", "running_stride_length_max_m", 2),
+                    ("running_vertical_oscillation_cm", "running_vertical_oscillation_cm", "running_vertical_oscillation_min_cm", "running_vertical_oscillation_max_cm", 1),
+                    ("running_ground_contact_time_ms", "running_ground_contact_time_ms", "running_ground_contact_time_min_ms", "running_ground_contact_time_max_ms", 1),
+                    ("running_cadence_spm", "running_cadence_spm", "running_cadence_min_spm", "running_cadence_max_spm", 1)
+                ]
+                for (streamKey, averageKey, minimumKey, maximumKey, precision) in metricMappings {
+                    guard let series = dynamics.series[streamKey] else { continue }
+                    if let value = series.average { metrics[averageKey] = self.roundedMetricValue(value, precision: precision) }
+                    if let value = series.minimum { metrics[minimumKey] = self.roundedMetricValue(value, precision: precision) }
+                    if let value = series.maximum { metrics[maximumKey] = self.roundedMetricValue(value, precision: precision) }
+                    if !series.points.isEmpty { metricStreams[streamKey] = series.points }
+                }
+                if let cadence = dynamics.series["running_cadence_spm"]?.average {
+                    row["cadenceSpm"] = self.roundedMetricValue(cadence, precision: 1)
+                }
+                if let stride = dynamics.series["running_stride_length_m"]?.average,
+                   stride > 0,
+                   let vertical = dynamics.series["running_vertical_oscillation_cm"]?.average {
                     metrics["running_vertical_ratio_pct"] = round((vertical / (stride * 100)) * 1000) / 10
                 }
-                if let value = dynamics.cadenceSpm {
-                    row["cadenceSpm"] = round(value * 10) / 10
+                if !postWorkoutHeartRateSamples.isEmpty {
+                    metricStreams["post_workout_heart_rate_bpm"] = self.heartRateStreamPoints(
+                        postWorkoutHeartRateSamples,
+                        origin: workout.endDate
+                    )
+                    if let first = postWorkoutHeartRateSamples.first?.bpm,
+                       let last = postWorkoutHeartRateSamples.last?.bpm {
+                        metrics["post_workout_heart_rate_drop_bpm"] = max(0, Int((first - last).rounded()))
+                    }
                 }
                 if !route.points.isEmpty { row["routeCoords"] = route.points }
                 if row["elevationGain"] == nil, let value = route.elevationGainFeet {
@@ -1195,6 +1378,7 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
                 }
                 metrics["metric_source"] = "apple_health"
                 row["workoutMetrics"] = metrics
+                row["workoutMetricStreams"] = metricStreams
                 enriched[index] = row
                 lock.unlock()
                 group.leave()
@@ -1217,7 +1401,14 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
-    private func serializeWorkout(_ workout: HKWorkout, avgHR: Double? = nil, maxHR: Double? = nil, zoneSeconds: [String: Int]? = nil) -> [String: Any] {
+    private func serializeWorkout(
+        _ workout: HKWorkout,
+        avgHR: Double? = nil,
+        maxHR: Double? = nil,
+        minHR: Double? = nil,
+        zoneSeconds: [String: Int]? = nil,
+        heartRateSamples: [HeartRatePoint] = []
+    ) -> [String: Any] {
         let distanceMiles = workout.totalDistance?.doubleValue(for: HKUnit.mile()) ?? 0
         let calories = workout.totalEnergyBurned?.doubleValue(for: HKUnit.kilocalorie()) ?? 0
 
@@ -1234,6 +1425,7 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
         ]
         payload["avgHR"] = avgHR.map { Int($0.rounded()) } ?? NSNull()
         payload["maxHR"] = maxHR.map { Int($0.rounded()) } ?? NSNull()
+        payload["minHR"] = minHR.map { Int($0.rounded()) } ?? NSNull()
         let resolvedZoneSeconds = zoneSeconds ?? emptyZoneSeconds()
         payload["zoneSeconds"] = resolvedZoneSeconds
         var workoutMetrics: [String: Any] = ["metric_source": "apple_health"]
@@ -1249,6 +1441,14 @@ public class ForgeHealthPlugin: CAPPlugin, CAPBridgedPlugin {
         }
         if let descent = workout.metadata?[HKMetadataKeyElevationDescended] as? HKQuantity {
             payload["elevationLoss"] = round(descent.doubleValue(for: HKUnit.foot()) * 10) / 10
+        }
+        let heartRatePoints = heartRateStreamPoints(heartRateSamples, origin: workout.startDate)
+        if !heartRatePoints.isEmpty {
+            payload["workoutMetricStreams"] = [
+                "version": metricStreamVersion,
+                "source": "apple_health",
+                "heart_rate_bpm": heartRatePoints
+            ] as [String: Any]
         }
         payload["workoutMetrics"] = workoutMetrics
         return payload

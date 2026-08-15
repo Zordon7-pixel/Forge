@@ -330,6 +330,11 @@ function isoDateDaysAgo(days) {
   return d.toISOString().slice(0, 10);
 }
 
+function withoutWorkoutMetricStreams(row = {}) {
+  const { workout_metric_streams_json: _metricStreams, ...summary } = row;
+  return summary;
+}
+
 router.get('/', auth, async (req, res) => {
   try {
     const startDate = String(req.query.start_date || '').trim();
@@ -355,7 +360,7 @@ router.get('/', auth, async (req, res) => {
         'SELECT * FROM runs WHERE user_id = ? ORDER BY date DESC, created_at DESC LIMIT ?',
         [req.user.id, limit]
       );
-    res.json({ runs: runs.map(withCalculatedEffort) });
+    res.json({ runs: runs.map((run) => withCalculatedEffort(withoutWorkoutMetricStreams(run))) });
   } catch (err) {
     console.error('[runs/list] failed:', err.message);
     res.status(500).json({ error: 'Failed to fetch runs' });

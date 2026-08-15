@@ -18,7 +18,7 @@ const NATIVE_HEALTH_AUTH_VERSION_KEY = 'forge_health_authorized_version'
 const REQUIRED_HEALTH_AUTH_VERSION = 4
 const AUTO_HEALTH_SYNC_LAST_SYNC_KEY = 'forge_auto_health_sync_last_sync_at'
 const WORKOUT_IMPORT_VERSION_KEY = 'forge_health_workout_import_version'
-const REQUIRED_WORKOUT_IMPORT_VERSION = 5
+const REQUIRED_WORKOUT_IMPORT_VERSION = 6
 const ForgeHealth = registerPlugin('ForgeHealth')
 
 function isIOSDevice() {
