@@ -5,6 +5,7 @@ import {
   normalizeBuildNumber,
   watchWorkoutUnavailableReason,
 } from '../src/services/watchWorkoutAvailability.js'
+import fs from 'node:fs'
 
 let passed = 0
 function check(condition, message) {
@@ -35,5 +36,15 @@ check(
     === 'Automatic Apple Watch delivery is not enabled in this beta. Manual entry still works.',
   'athletes never see native build numbers',
 )
+
+const deliverySource = fs.readFileSync(new URL('../src/services/WatchDeliveryService.js', import.meta.url), 'utf8')
+const workoutSource = fs.readFileSync(new URL('../src/services/WatchWorkoutService.js', import.meta.url), 'utf8')
+const fitSource = fs.readFileSync(new URL('../src/services/fit/encodeWorkoutFit.js', import.meta.url), 'utf8')
+check((deliverySource + fitSource).includes('CANONICAL_MANIFEST_NOT_ACCEPTED'), 'canonical Watch delivery requires an accepted manifest')
+check((deliverySource + fitSource).includes('WORKOUT_NOT_EXECUTABLE'), 'blocked canonical workouts fail closed before Watch/FIT delivery')
+check(workoutSource.includes('FULLY_STRUCTURED'), 'Apple Watch payloads declare exact capability truth')
+check(workoutSource.includes('PARTIALLY_STRUCTURED'), 'inexact Apple Watch payloads are disclosed as partial')
+check(workoutSource.includes('MANUAL_COMPONENTS_REQUIRED'), 'manual Apple Watch components remain explicit')
+check(workoutSource.includes('canonical_steps'), 'Apple Watch representations retain the canonical step graph')
 
 console.log(`WATCH AVAILABILITY SMOKE OK (${passed})`)

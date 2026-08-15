@@ -21,6 +21,13 @@ function workoutGoalLabel(workout = {}) {
   return 'Open goal'
 }
 
+function capabilityLabel(classification) {
+  if (classification === 'FULLY_STRUCTURED') return 'Fully structured'
+  if (classification === 'PARTIALLY_STRUCTURED') return 'Partially structured'
+  if (classification === 'MANUAL_COMPONENTS_REQUIRED') return 'Manual components required'
+  return 'Not exportable'
+}
+
 export default function WatchWorkoutSendButton({ workout, label = 'Send to Watch', className = '', compact = false }) {
   const [status, setStatus] = useState('')
   const [error, setError] = useState('')
@@ -30,9 +37,23 @@ export default function WatchWorkoutSendButton({ workout, label = 'Send to Watch
   const [availability, setAvailability] = useState({ checked: false, available: false, reason: '' })
   const fitDialogRef = useRef(null)
   const structuredWorkout = useMemo(() => (workout ? WatchDeliveryService.buildStructuredWorkout(workout) : null), [workout])
+  const watchRepresentation = useMemo(() => (
+    structuredWorkout?.canonical ? WatchDeliveryService.buildWatchRepresentation(structuredWorkout) : structuredWorkout
+  ), [structuredWorkout])
+  const fitRepresentation = useMemo(() => (
+    structuredWorkout?.canonical ? WatchDeliveryService.buildFitRepresentation(structuredWorkout) : structuredWorkout
+  ), [structuredWorkout])
   const workoutText = useMemo(() => WatchDeliveryService.formatFallbackText(workout || {}), [workout])
-  const fitStepCount = structuredWorkout?.steps?.length || 0
+  const fitStepCount = fitRepresentation?.steps?.length || 0
   const fitGoal = workoutGoalLabel(structuredWorkout)
+  const canonical = Boolean(structuredWorkout?.canonical)
+  const watchCapability = watchRepresentation?.capability?.classification || 'FULLY_STRUCTURED'
+  const fitCapability = fitRepresentation?.capability?.classification || 'FULLY_STRUCTURED'
+  const watchManualComponents = watchRepresentation?.manual_components || []
+  const manualComponents = fitRepresentation?.manual_components || []
+  const executable = !canonical || structuredWorkout?.executability === 'EXECUTABLE'
+  const watchExportable = executable && watchCapability !== 'NOT_EXPORTABLE'
+  const fitExportable = executable && fitCapability !== 'NOT_EXPORTABLE'
 
   useEffect(() => {
     let active = true
@@ -90,6 +111,10 @@ export default function WatchWorkoutSendButton({ workout, label = 'Send to Watch
   const openFitExport = () => {
     setStatus('')
     setError('')
+    if (!fitExportable) {
+      setError(executable ? 'This canonical session is not exportable as a .FIT file.' : 'This session is blocked by its current safety revision.')
+      return
+    }
     setFitExportOpen(true)
   }
 
@@ -106,6 +131,11 @@ export default function WatchWorkoutSendButton({ workout, label = 'Send to Watch
 
   const sendWorkout = async () => {
     if (!workout) return
+    if (!watchExportable) {
+      setError(executable ? 'This canonical session is not exportable to Apple Watch.' : 'This session is blocked by its current safety revision.')
+      setStatus('')
+      return
+    }
     if (availability.checked && !availability.available) {
       setError(athleteWatchAvailabilityMessage(availability.reason))
       setStatus('')
@@ -120,14 +150,16 @@ export default function WatchWorkoutSendButton({ workout, label = 'Send to Watch
       setStatus('Sent to watch.')
     } catch (err) {
       console.error('[watch-delivery] send failed:', err?.message || err)
-      setError('Could not send this workout to Apple Watch. Manual entry still works.')
+      setError(err?.code === 'WORKOUT_NOT_EXECUTABLE'
+        ? 'This session is blocked by its current safety revision.'
+        : 'Could not send this workout to Apple Watch. Manual entry still works.')
     } finally {
       setSending(false)
     }
   }
 
   const sendFitWorkout = async () => {
-    if (!structuredWorkout) return
+    if (!structuredWorkout || !fitExportable) return
     setFitSending(true)
     setError('')
     setStatus('')
@@ -139,22 +171,41 @@ export default function WatchWorkoutSendButton({ workout, label = 'Send to Watch
       setFitExportOpen(false)
     } catch (err) {
       console.error('[watch-fit-export] send failed:', err?.message || err)
-      setError('Could not export this workout as a .FIT file.')
+      setError(err?.code === 'WORKOUT_NOT_EXECUTABLE'
+        ? 'This session is blocked by its current safety revision.'
+        : 'Could not export this workout as a .FIT file.')
     } finally {
       setFitSending(false)
     }
   }
 
-  const canSend = availability.checked && availability.available
-  const showSendButton = !availability.checked || canSend
+  const canSend = availability.checked && availability.available && watchExportable
+  const showSendButton = watchExportable && (!availability.checked || canSend)
 
   return (
     <div className={className}>
+      {canonical && (
+        <div
+          role="status"
+          style={{ marginBottom: 8, padding: '10px 12px', borderRadius: 10, background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)', fontSize: 12, lineHeight: 1.45, overflowWrap: 'anywhere' }}
+        >
+          <strong style={{ color: 'var(--text-primary)' }}>Apple Watch: {capabilityLabel(watchCapability)}</strong>
+          <span aria-hidden="true"> · </span>
+          <strong style={{ color: 'var(--text-primary)' }}>.FIT: {capabilityLabel(fitCapability)}</strong>
+          {watchManualComponents.length > 0 && (
+            <span> · Apple Watch manual entry: {watchManualComponents.map((component) => component.step_id).join(', ')}</span>
+          )}
+          {manualComponents.length > 0 && (
+            <span> · .FIT manual {manualComponents.length === 1 ? 'component' : 'components'} retained: {manualComponents.map((component) => component.step_id).join(', ')}</span>
+          )}
+          {!executable && <span> · Blocked by the current safety revision.</span>}
+        </div>
+      )}
       {showSendButton && (
         <button
           type="button"
           onClick={sendWorkout}
-          disabled={sending || !workout || !availability.checked}
+          disabled={sending || !workout || !availability.checked || !watchExportable}
           className="w-full rounded-xl py-3 font-bold flex items-center justify-center gap-2 disabled:opacity-60"
           style={{ background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', cursor: sending ? 'wait' : 'pointer' }}
         >
@@ -165,7 +216,7 @@ export default function WatchWorkoutSendButton({ workout, label = 'Send to Watch
       <button
         type="button"
         onClick={openFitExport}
-        disabled={fitSending || !structuredWorkout}
+        disabled={fitSending || !structuredWorkout || !fitExportable}
         aria-haspopup="dialog"
         className={`w-full ${showSendButton ? 'mt-2' : ''}`}
         style={{
@@ -179,7 +230,8 @@ export default function WatchWorkoutSendButton({ workout, label = 'Send to Watch
           background: 'var(--bg-input)',
           color: 'var(--text-primary)',
           border: '1px solid var(--card-border-strong)',
-          cursor: fitSending ? 'wait' : 'pointer',
+          cursor: fitSending ? 'wait' : fitExportable ? 'pointer' : 'not-allowed',
+          opacity: fitExportable ? 1 : 0.6,
           textAlign: 'left',
         }}
       >
@@ -252,7 +304,7 @@ export default function WatchWorkoutSendButton({ workout, label = 'Send to Watch
               </span>
               <div style={{ minWidth: 0 }}>
                 <h2 id="fit-export-title" style={{ margin: 0, fontSize: 19, lineHeight: 1.2, fontWeight: 900 }}>Export to your watch</h2>
-                <p id="fit-export-description" style={{ margin: '3px 0 0', color: 'var(--text-muted)', fontSize: 12 }}>Structured Garmin-compatible workout file</p>
+                <p id="fit-export-description" style={{ margin: '3px 0 0', color: 'var(--text-muted)', fontSize: 12 }}>{capabilityLabel(fitCapability)} Garmin-compatible workout file</p>
               </div>
               <button
                 type="button"
@@ -271,6 +323,11 @@ export default function WatchWorkoutSendButton({ workout, label = 'Send to Watch
                   <span key={item} style={{ padding: '5px 8px', borderRadius: 7, background: 'var(--bg-card)', color: 'var(--text-muted)', border: '1px solid var(--border-subtle)', fontSize: 11, fontWeight: 750 }}>{item}</span>
                 ))}
               </div>
+              {manualComponents.length > 0 && (
+                <p style={{ margin: '9px 0 0', color: 'var(--warning)', fontSize: 12, lineHeight: 1.45 }}>
+                  Manual components stay in the file as explicit markers: {manualComponents.map((component) => component.step_id).join(', ')}. They are not silently omitted.
+                </p>
+              )}
             </div>
 
             <div style={{ marginTop: 16 }}>
@@ -294,7 +351,7 @@ export default function WatchWorkoutSendButton({ workout, label = 'Send to Watch
             <button
               type="button"
               onClick={sendFitWorkout}
-              disabled={fitSending || !structuredWorkout}
+              disabled={fitSending || !structuredWorkout || !fitExportable}
               className="w-full rounded-xl py-3 font-bold flex items-center justify-center gap-2"
               style={{ marginTop: 16, minHeight: 48, background: 'var(--accent)', color: 'var(--on-accent)', border: 'none', cursor: fitSending ? 'wait' : 'pointer' }}
             >

@@ -1,5 +1,11 @@
 import WatchWorkoutService from './WatchWorkoutService'
-import { encodeWorkoutFit } from './fit/encodeWorkoutFit'
+import {
+  assertCanonicalWorkoutExecutable,
+  buildAcceptedCanonicalWorkout,
+  buildFitWorkoutRepresentation,
+  encodeWorkoutFit,
+  hasCanonicalManifest,
+} from './fit/encodeWorkoutFit'
 
 const FIT_MIME_TYPE = 'application/vnd.ant.fit'
 const FIT_HELP_TEXT = {
@@ -180,6 +186,15 @@ function isNormalizedWorkout(workout = {}) {
     && Array.isArray(workout.steps)
 }
 
+function canonicalManifest(workout = {}) {
+  return workout?.surfaceManifest || workout?.surface_manifest || workout?.canonical_manifest
+    || (workout?.schema_version === 'goal_backward_surface_manifest_v1' ? workout : null)
+}
+
+function legacyWorkoutSource(workout = {}) {
+  return workout?.workout || workout?.legacyWorkout || workout
+}
+
 function fitDateStamp(date = new Date()) {
   const year = date.getFullYear()
   const month = String(date.getMonth() + 1).padStart(2, '0')
@@ -205,6 +220,7 @@ function triggerDownload(file) {
 
 export async function exportWorkoutFitFile(normalizedWorkout = {}) {
   try {
+    if (normalizedWorkout?.canonical) assertCanonicalWorkoutExecutable(normalizedWorkout)
     const bytes = encodeWorkoutFit(normalizedWorkout)
     const filename = fitFileName(normalizedWorkout)
     const file = new File([bytes], filename, { type: FIT_MIME_TYPE })
@@ -229,9 +245,25 @@ class WatchDeliveryService {
   }
 
   buildStructuredWorkout(workout = {}) {
+    if (hasCanonicalManifest(workout) && canonicalManifest(workout)?.v24_surface_enabled !== false) {
+      return buildAcceptedCanonicalWorkout(workout)
+    }
+    workout = legacyWorkoutSource(workout)
     if (isNormalizedWorkout(workout)) return workout
     if (workout.kind === 'strength') return normalizeStrengthWorkout(workout)
     return normalizeRunWorkout(workout)
+  }
+
+  buildWatchRepresentation(workout = {}) {
+    const structured = workout?.canonical ? workout : this.buildStructuredWorkout(workout)
+    return structured?.canonical
+      ? WatchWorkoutService.buildCanonicalWorkoutPayload(structured)
+      : structured
+  }
+
+  buildFitRepresentation(workout = {}) {
+    const structured = workout?.canonical ? workout : this.buildStructuredWorkout(workout)
+    return structured?.canonical ? buildFitWorkoutRepresentation(structured) : structured
   }
 
   async getAvailability() {
@@ -246,6 +278,17 @@ class WatchDeliveryService {
 
   async send(workout) {
     const structured = this.buildStructuredWorkout(workout)
+    if (structured?.canonical) {
+      assertCanonicalWorkoutExecutable(structured)
+      const watch = this.buildWatchRepresentation(structured)
+      if (watch.capability?.classification === 'NOT_EXPORTABLE') {
+        const error = new Error('This accepted canonical session is not exportable to Apple Watch.')
+        error.code = 'WORKOUT_NOT_EXPORTABLE'
+        throw error
+      }
+      const result = await WatchWorkoutService.sendToAppleWatch(watch)
+      return { ...result, capability: watch.capability, identity: watch.identity }
+    }
     if (structured.kind === 'strength' || structured.kind === 'run') {
       return WatchWorkoutService.sendToAppleWatch(workout)
     }
@@ -258,6 +301,26 @@ class WatchDeliveryService {
 
   formatFallbackText(workout = {}) {
     const structured = this.buildStructuredWorkout(workout)
+    if (structured.canonical) {
+      const rows = []
+      const append = (steps, depth = 0) => {
+        for (const step of Array.isArray(steps) ? steps : []) {
+          const target = Object.entries(step.target || {}).map(([key, value]) => (
+            `${key}: ${typeof value === 'object' ? JSON.stringify(value) : value}`
+          )).join(', ')
+          rows.push(`${'  '.repeat(depth)}${step.order}. ${step.type}${target ? ` — ${target}` : ''}${step.repeat_count ? ` × ${step.repeat_count}` : ''}`)
+          if (Array.isArray(step.children)) append(step.children, depth + 1)
+        }
+      }
+      append(structured.steps)
+      return [
+        structured.title,
+        `Session ${structured.identity.session_id} · revision ${structured.identity.session_revision}`,
+        `Plan revision ${structured.identity.plan_revision} · surface revision ${structured.identity.surface_revision}`,
+        ...rows,
+        structured.notes ? `Safety/adjustments: ${structured.notes}` : '',
+      ].filter(Boolean).join('\n')
+    }
     if (structured.kind === 'run') {
       return [
         `${structured.title}`,

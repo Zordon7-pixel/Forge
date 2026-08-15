@@ -11,6 +11,10 @@ import {
   validateSurfaceManifest,
 } from '../src/lib/dailyExecutionCore.js'
 import { workoutStartDecision } from '../src/lib/todayPlanAccess.js'
+import {
+  buildAcceptedCanonicalWorkout,
+  buildFitWorkoutRepresentation,
+} from '../src/services/fit/encodeWorkoutFit.js'
 
 const require = createRequire(import.meta.url)
 const plansRoute = require('../../backend/src/routes/plans.js')
@@ -58,7 +62,7 @@ const canonicalSession = Object.freeze({
     step_id: 'step-threshold-1',
     type: 'interval',
     order: 1,
-    target: { duration_s: 1200, pace_range_s_per_km: [285, 295], rpe: 7 },
+    target: { duration_s: 1200, pace_range_s_per_km: { minimum: 285, maximum: 295 } },
     provenance: [provenance],
   }],
   derived_totals: { distance_m: 0, duration_s: 1200 },
@@ -69,9 +73,9 @@ const canonicalSession = Object.freeze({
   safety_scope: ['RUN', 'IMPACT'],
   executability: 'EXECUTABLE',
   capability: {
-    classification: 'PARTIALLY_STRUCTURED',
+    classification: 'FULLY_STRUCTURED',
     manual_step_ids: [],
-    unsupported_step_ids: ['station-manual-1'],
+    unsupported_step_ids: [],
   },
   content_hash: hash('c'),
 })
@@ -218,6 +222,44 @@ check('accepted manifest validation binds plan, assignment, revisions, hashes, s
   assert.equal(result.status, 'accepted')
   assert.deepEqual(result.identity, surfaceManifest.identity)
   assert.deepEqual(result.sessionsById.get(canonicalSession.session_id), canonicalSession)
+})
+
+check('Watch/FIT adapters retain the accepted identity, exact canonical steps, provenance, safety, and export revision', () => {
+  const accepted = buildAcceptedCanonicalWorkout({
+    surfaceManifest,
+    sessionId: canonicalSession.session_id,
+    exportRevision: 2,
+  })
+  assert.deepEqual(accepted.identity, {
+    session_id: canonicalSession.session_id,
+    session_revision: canonicalSession.session_revision,
+    plan_id: canonicalSession.plan_id,
+    plan_revision: canonicalSession.plan_revision,
+    surface_revision: surfaceManifest.surface_revision,
+    export_revision: 2,
+    content_hash: canonicalSession.content_hash,
+  })
+  assert.equal(accepted.role, canonicalSession.role)
+  assert.deepEqual(accepted.steps, canonicalSession.steps)
+  assert.deepEqual(accepted.target_provenance, canonicalSession.target_provenance)
+  assert.deepEqual(accepted.safety, {
+    action: surfaceManifest.safety.action,
+    scope: canonicalSession.safety_scope,
+    reason_codes: surfaceManifest.safety.reason_codes,
+    executability: canonicalSession.executability,
+  })
+
+  const fit = buildFitWorkoutRepresentation({
+    surfaceManifest,
+    sessionId: canonicalSession.session_id,
+    exportRevision: 2,
+  })
+  assert.deepEqual(fit.identity, accepted.identity)
+  assert.equal(fit.role, canonicalSession.role)
+  assert.deepEqual(fit.canonical_steps, canonicalSession.steps)
+  assert.deepEqual(fit.target_provenance, canonicalSession.target_provenance)
+  assert.deepEqual(fit.safety, accepted.safety)
+  assert.equal(fit.capability.classification, 'FULLY_STRUCTURED')
 })
 
 check('weekly brief and calendar consume the exact accepted session instead of deriving a new prescription', () => {
