@@ -4,5 +4,5 @@ buildCommand = "cd frontend && npm install --legacy-peer-deps --include=dev && n
 
 [deploy]
 preDeployCommand = "cd backend && npm run check:active-plans"
-startCommand = "cd backend && node src/db/seed.js; node src/app.js"
+startCommand = "cd backend && node src/db/seed.js; FORGE_GOAL_BACKWARD_V24_MODE=on FORGE_GOAL_BACKWARD_V24_AUDIENCE=all FORGE_GOAL_BACKWARD_V24_EXPECTED_REVISION=$RAILWAY_GIT_COMMIT_SHA node src/app.js"
 restartPolicyType = "always"

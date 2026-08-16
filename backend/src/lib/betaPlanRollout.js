@@ -13,6 +13,8 @@ const MIN_RACE_GAP_DAYS = 21;
 const MAX_PLAN_WINDOW_DAYS = 139;
 const FORBIDDEN_BACKUP_KEYS = /(email|phone|password|token|secret|health|heart.?rate|gps|route|coordinate|latitude|longitude)/i;
 const GOAL_BACKWARD_V24_MODE_SET = new Set(FEATURE_MODES);
+const GOAL_BACKWARD_V24_AUDIENCES = Object.freeze(['cohort', 'all']);
+const GOAL_BACKWARD_V24_AUDIENCE_SET = new Set(GOAL_BACKWARD_V24_AUDIENCES);
 const GOAL_BACKWARD_TARGET_REF_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const PRODUCTION_ACCOUNT_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const GOAL_BACKWARD_RELEASE_TELEMETRY_SCHEMA = 'goal_backward_release_telemetry_v1';
@@ -103,6 +105,11 @@ function getGoalBackwardV24Mode(value = process.env.FORGE_GOAL_BACKWARD_V24_MODE
   return GOAL_BACKWARD_V24_MODE_SET.has(configured) ? configured : 'off';
 }
 
+function getGoalBackwardV24Audience(value = process.env.FORGE_GOAL_BACKWARD_V24_AUDIENCE) {
+  const configured = typeof value === 'string' ? value : '';
+  return GOAL_BACKWARD_V24_AUDIENCE_SET.has(configured) ? configured : 'cohort';
+}
+
 function parseGoalBackwardCohortRefs(
   value = process.env.FORGE_GOAL_BACKWARD_V24_DISPOSABLE_COHORT_REFS,
 ) {
@@ -126,18 +133,25 @@ function resolveOperationalGoalBackwardV24Mode(
   if (configured === 'off') return 'off';
   const userId = String(options.userId || '').trim();
   if (!userId) return 'off';
-  let cohortRefs;
-  try {
-    cohortRefs = parseGoalBackwardCohortRefs(options.cohortRefs);
-  } catch (_error) {
-    return 'off';
+  const audience = getGoalBackwardV24Audience(options.audience);
+  let audienceAuthorized = false;
+  if (audience === 'all') {
+    audienceAuthorized = PRODUCTION_ACCOUNT_ID_PATTERN.test(userId);
+  } else {
+    let cohortRefs;
+    try {
+      cohortRefs = parseGoalBackwardCohortRefs(options.cohortRefs);
+    } catch (_error) {
+      return 'off';
+    }
+    const cohortAuthorized = cohortRefs.includes(targetRef(userId));
+    const syntheticShadowCompatibility = configured === 'shadow'
+      && options.allowSyntheticShadow === true
+      && /(?:^|[/\\])[^/\\]+\.smoke\.js$/.test(String(process.argv[1] || ''))
+      && !PRODUCTION_ACCOUNT_ID_PATTERN.test(userId);
+    audienceAuthorized = cohortAuthorized || syntheticShadowCompatibility;
   }
-  const cohortAuthorized = cohortRefs.includes(targetRef(userId));
-  const syntheticShadowCompatibility = configured === 'shadow'
-    && options.allowSyntheticShadow === true
-    && /(?:^|[/\\])[^/\\]+\.smoke\.js$/.test(String(process.argv[1] || ''))
-    && !PRODUCTION_ACCOUNT_ID_PATTERN.test(userId);
-  if (!cohortAuthorized && !syntheticShadowCompatibility) return 'off';
+  if (!audienceAuthorized) return 'off';
   const alerts = evaluateGoalBackwardReleaseAlerts(releaseAlertEntries(options));
   return alerts.rollback_required ? 'off' : configured;
 }
@@ -463,6 +477,7 @@ function buildBackupManifest({ entries, createdAt = new Date().toISOString(), mo
 }
 
 module.exports = {
+  GOAL_BACKWARD_V24_AUDIENCES,
   GOAL_BACKWARD_V24_MODES: FEATURE_MODES,
   MAX_PROTECTED_RACES,
   authoritativePlanTarget,
@@ -473,6 +488,7 @@ module.exports = {
   clearGoalBackwardReleaseTelemetry,
   emitGoalBackwardReleaseTelemetry,
   evaluateGoalBackwardReleaseAlerts,
+  getGoalBackwardV24Audience,
   getGoalBackwardV24Mode,
   goalBackwardReleaseTelemetrySnapshot,
   assertGoalBackwardReleaseTelemetry,

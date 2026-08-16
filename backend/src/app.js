@@ -13,15 +13,21 @@ if (!process.env.JWT_SECRET) {
 }
 
 const { initDb } = require('./db');
+const {
+  getGoalBackwardV24Audience,
+  getGoalBackwardV24Mode,
+} = require('./lib/betaPlanRollout');
 const app = express();
 
 const deploymentRevision = String(process.env.RAILWAY_GIT_COMMIT_SHA || '').trim();
-if (deploymentRevision) {
-  app.use((_req, res, next) => {
-    res.set('X-Forge-Revision', deploymentRevision);
-    next();
-  });
-}
+const goalBackwardReleaseMode = getGoalBackwardV24Mode();
+const goalBackwardReleaseAudience = getGoalBackwardV24Audience();
+app.use((_req, res, next) => {
+  if (deploymentRevision) res.set('X-Forge-Revision', deploymentRevision);
+  res.set('X-Forge-Goal-Backward-Mode', goalBackwardReleaseMode);
+  res.set('X-Forge-Goal-Backward-Audience', goalBackwardReleaseAudience);
+  next();
+});
 
 // Trust Railway's reverse proxy so express-rate-limit can read X-Forwarded-For correctly
 app.set('trust proxy', 1);

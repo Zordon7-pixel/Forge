@@ -26,6 +26,8 @@ test('live production shell, hashed assets, and offline cache remain healthy', a
   if (EXPECTED_REVISION) {
     const rootResponse = await request.get('/')
     expect(String(rootResponse.headers()['x-forge-revision'] || '').toLowerCase()).toBe(EXPECTED_REVISION)
+    expect(rootResponse.headers()['x-forge-goal-backward-mode']).toBe('on')
+    expect(rootResponse.headers()['x-forge-goal-backward-audience']).toBe('all')
   }
 
   for (const { path, heading } of PUBLIC_ROUTES) {

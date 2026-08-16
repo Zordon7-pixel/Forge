@@ -22,6 +22,13 @@ async function probe() {
   if (expectedRevision && deployedRevision !== expectedRevision) {
     throw new Error(`shell serves revision ${deployedRevision || 'missing'}; waiting for ${expectedRevision}`)
   }
+  if (expectedRevision) {
+    const releaseMode = String(shellResponse.headers.get('x-forge-goal-backward-mode') || '').trim()
+    const releaseAudience = String(shellResponse.headers.get('x-forge-goal-backward-audience') || '').trim()
+    if (releaseMode !== 'on' || releaseAudience !== 'all') {
+      throw new Error(`shell serves goal-backward ${releaseMode || 'missing'}/${releaseAudience || 'missing'}; waiting for on/all`)
+    }
+  }
   const shell = await shellResponse.text()
   const assetPath = shell.match(/<script[^>]+src="([^"]+\.js)"/)?.[1]
   if (!assetPath) throw new Error('shell did not expose a hashed JavaScript asset')

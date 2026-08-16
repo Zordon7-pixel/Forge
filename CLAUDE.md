@@ -130,9 +130,10 @@ function sanitize(val, maxLen = 200) {
 | `PORT` | No | Defaults to 4002 |
 | `HOST` | No | Defaults to `0.0.0.0` on Railway, `127.0.0.1` locally |
 | `FORGE_BETA_ACCESS` | No | Set to `true` to unlock premium routes and AI limits for beta testers without changing subscription records; set to `false` before paid launch |
-| `FORGE_GOAL_BACKWARD_V24_MODE` | No | Goal-backward v2.4 runtime mode: `off\|shadow\|preview\|on`. Missing, malformed, whitespace-padded, or otherwise invalid values resolve to `off`. This flag is independent of `FORGE_BETA_ACCESS`. |
-| `FORGE_GOAL_BACKWARD_V24_DISPOSABLE_COHORT_REFS` | For non-off v2.4 | Comma-separated `sha256:` pseudonymous refs for explicitly authorized disposable/canary accounts. Raw user IDs are rejected. A non-off mode without an exact matching ref resolves to `off`. |
-| `FORGE_GOAL_BACKWARD_V24_EXPECTED_REVISION` / `RAILWAY_GIT_COMMIT_SHA` | For v2.4 apply | Independently supplied expected and deployed Git revisions; the canary script requires an exact match. |
+| `FORGE_GOAL_BACKWARD_V24_MODE` | No | Goal-backward v2.4 runtime mode: `off\|shadow\|preview\|on`. Missing, malformed, whitespace-padded, or otherwise invalid values resolve to `off`. The Railway start configuration explicitly selects `on` for public activation. This flag is independent of `FORGE_BETA_ACCESS`. |
+| `FORGE_GOAL_BACKWARD_V24_AUDIENCE` | No | Closed runtime audience: `cohort\|all`. Missing, malformed, whitespace-padded, or unknown values resolve to fail-closed `cohort` behavior. `all` authorizes only production-shaped UUID account IDs. The Railway start configuration explicitly selects `all`. |
+| `FORGE_GOAL_BACKWARD_V24_DISPOSABLE_COHORT_REFS` | When runtime audience is `cohort`, and for the migration script | Comma-separated `sha256:` pseudonymous refs for explicitly authorized disposable/canary accounts. Raw user IDs are rejected. Independently of the public runtime audience, the standalone migration/canary script always requires an exact matching ref. |
+| `FORGE_GOAL_BACKWARD_V24_EXPECTED_REVISION` / `RAILWAY_GIT_COMMIT_SHA` | For public runtime and v2.4 script apply | The Railway start command binds the expected runtime revision to its exact deployed Git revision. The canary script separately requires independently supplied expected and deployed revisions to match. |
 | `FORGE_GOAL_BACKWARD_V24_EXPECTED_ARTIFACT_SHA256` / `FORGE_GOAL_BACKWARD_V24_DEPLOYED_ARTIFACT_SHA256` | For v2.4 apply | Independently supplied expected and deployed frontend artifact identities; both must be full `sha256:` hashes and match exactly. |
 
 Resend HTTP API is used when `SMTP_HOST=smtp.resend.com` and `SMTP_USER=resend`; in that mode `SMTP_PASS` is the Resend bearer token, while `SMTP_PORT` and `SMTP_SECURE` are unused but still required by `isMailConfigured()`.
@@ -255,13 +256,17 @@ node backend/test/planningRevisionConcurrency.smoke.js
 
 Batch 10 status (2026-08-14): `patched`; the four-command Phase 4A gate passes locally. No commit, deploy, feature activation, independent QA, or Hermes verification is claimed by this source patch.
 
-## Goal-Backward Coaching v2.4 — Phase 6 Controlled Release Contract
+## Goal-Backward Coaching v2.4 — Phase 6 Release and Public Activation Contract
 
-Batch 16 makes the shipped Phase 1–5 path operational only for an exact pseudonymous disposable cohort. Code and invalid-value defaults remain `off`; `shadow` computes and records the comparison while the current candidate stays authoritative, `preview` exposes the canonical candidate but rejects apply, and `on` permits a fully bound apply only while the live mode and cohort still match. `FORGE_BETA_ACCESS` is not release authority.
+The runtime release resolver accepts only the closed audiences `cohort` and `all`. Code defaults remain fail-closed (`mode=off`, `audience=cohort`); missing, malformed, whitespace-padded, or unknown audience values are never public. `cohort` retains the exact pseudonymous `sha256:` allowlist check. `all` authorizes only production-shaped UUID account IDs and never blank or synthetic IDs. `shadow` computes and records the comparison while the current candidate stays authoritative, `preview` exposes the canonical candidate but rejects apply, and `on` permits a fully bound apply only while the live mode and audience still authorize the account. `FORGE_BETA_ACCESS` is not release authority.
+
+Repository-controlled Railway startup selects `mode=on` and `audience=all`, and binds `FORGE_GOAL_BACKWARD_V24_EXPECTED_REVISION` to Railway's exact `RAILWAY_GIT_COMMIT_SHA` when the backend process starts. Normal responses expose only the closed normalized mode/audience in `X-Forge-Goal-Backward-Mode` and `X-Forge-Goal-Backward-Audience`; `X-Forge-Revision` remains unchanged. This source configuration is the public activation intent, not evidence that a deployment is live.
 
 Release evidence is a bounded, closed-schema stream containing mode, policy/schema versions, reason counts, candidate selection, outcome, surface capability, and revision-mismatch state. It contains no plan/evidence payload, raw ID, health sample, route, email, token, or free text. A hard-validator bypass, mutation after stale failure, revision mismatch, unknown-to-zero conversion, telemetry redaction failure, surface executability mismatch, or duplicate assignment has a zero threshold and forces subsequent mode resolution to `off`.
 
-The rollout script defaults to a database-free, zero-write `off` dry run. An apply additionally requires one explicit non-placeholder disposable ID whose `targetRef()` is in `FORGE_GOAL_BACKWARD_V24_DISPOSABLE_COHORT_REFS`, a fresh authoritative phone-local clock, supported feasibility, exact deployed revision/artifact hashes, exact candidate hash replay, all seven immutable artifacts at the expected schema/policy revisions, `--confirm=APPLY_GOAL_BACKWARD_V24`, and a private 0700 directory outside the checkout. It writes 0600 redacted pre-apply, result, and cleanup evidence. Rollback runs separately with mode `off`, `--rollback`, `--confirm=ROLLBACK_GOAL_BACKWARD_V24`, the explicit disposable ID, and the private manifest; it supersedes the canary assignment, restores the previous assignment owner-safely, invalidates open v2.4 previews, and verifies one authoritative predecessor.
+The standalone rollout script remains a separate disposable migration/canary utility. It defaults to a database-free, zero-write `off` dry run, and public runtime `all` authority never replaces its explicit target allowlist. An apply additionally requires one explicit non-placeholder disposable ID whose `targetRef()` is in `FORGE_GOAL_BACKWARD_V24_DISPOSABLE_COHORT_REFS`, a fresh authoritative phone-local clock, supported feasibility, exact deployed revision/artifact hashes, exact candidate hash replay, all seven immutable artifacts at the expected schema/policy revisions, `--confirm=APPLY_GOAL_BACKWARD_V24`, and a private 0700 directory outside the checkout. It writes 0600 redacted pre-apply, result, and cleanup evidence. Script rollback runs separately with mode `off`, `--rollback`, `--confirm=ROLLBACK_GOAL_BACKWARD_V24`, the explicit disposable ID, and the private manifest; it supersedes the canary assignment, restores the previous assignment owner-safely, invalidates open v2.4 previews, and verifies one authoritative predecessor.
+
+Emergency public rollback is to deploy with `FORGE_GOAL_BACKWARD_V24_MODE=off` or revert the Railway activation start configuration. Independently, any zero-tolerance release alert forces affected runtime mode resolution to `off` before subsequent preview/apply execution.
 
 Batch 16 gate:
 
@@ -274,7 +279,7 @@ FORGE_QA_BASE_URL=https://forge-production-773f.up.railway.app npm --prefix fron
 node backend/scripts/upgrade-beta-race-plans.js
 ```
 
-Batch 16 status (2026-08-14): `patched`; local gates do not claim deployment, canary exposure, rollback execution, disposable-account deletion, independent acceptance, or Bryan cohort-expansion authorization.
+Public activation patch status (2026-08-16): `patched in source`; local gates do not claim deployment, public live exposure, canary execution, rollback, disposable-account deletion, independent acceptance, or live verification.
 
 ---
 

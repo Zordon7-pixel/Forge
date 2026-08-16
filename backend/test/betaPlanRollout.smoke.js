@@ -3,10 +3,12 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const {
+  GOAL_BACKWARD_V24_AUDIENCES,
   authoritativePlanTarget,
   assertApplyAuthorized,
   assertRedactedBackup,
   buildBackupManifest,
+  getGoalBackwardV24Audience,
   isCurrentRolloutPlan,
   localDateForOffset,
   preservedPlanTarget,
@@ -23,12 +25,81 @@ async function run() {
   const disposableId = '00000000-0000-4000-8000-000000000024';
   const disposableRef = targetRef(disposableId);
   const cohort = { userId: disposableId, cohortRefs: [disposableRef], alertEntries: [] };
+  const publicAccountId = '6f1d5c70-7bd7-4dce-8f20-e599ca5e73f2';
+  assert.deepEqual(GOAL_BACKWARD_V24_AUDIENCES, ['cohort', 'all']);
+  assert.equal(getGoalBackwardV24Audience('cohort'), 'cohort');
+  assert.equal(getGoalBackwardV24Audience('all'), 'all');
+  for (const invalidAudience of [null, false, [], ' all ', 'public', 'ALL']) {
+    assert.equal(
+      getGoalBackwardV24Audience(invalidAudience),
+      'cohort',
+      `invalid audience fails closed: ${JSON.stringify(invalidAudience)}`,
+    );
+  }
   assert.equal(resolveOperationalGoalBackwardV24Mode(), 'off');
   assert.equal(resolveOperationalGoalBackwardV24Mode('off'), 'off');
   assert.equal(resolveOperationalGoalBackwardV24Mode('shadow'), 'off', 'non-off modes require cohort authority');
   assert.equal(resolveOperationalGoalBackwardV24Mode('shadow', cohort), 'shadow');
   assert.equal(resolveOperationalGoalBackwardV24Mode('preview', cohort), 'preview');
   assert.equal(resolveOperationalGoalBackwardV24Mode('on', cohort), 'on');
+  assert.equal(
+    resolveOperationalGoalBackwardV24Mode('on', {
+      userId: publicAccountId,
+      audience: 'all',
+      alertEntries: [],
+    }),
+    'on',
+    'the public audience authorizes a production-shaped UUID account',
+  );
+  for (const syntheticId of ['', 'synthetic-athlete', 'test-user', 'user-123']) {
+    assert.equal(
+      resolveOperationalGoalBackwardV24Mode('on', {
+        userId: syntheticId,
+        audience: 'all',
+        alertEntries: [],
+      }),
+      'off',
+      `the public audience rejects a synthetic account ID: ${JSON.stringify(syntheticId)}`,
+    );
+  }
+  for (const invalidAudience of [' all ', 'public', 'ALL']) {
+    assert.equal(
+      resolveOperationalGoalBackwardV24Mode('on', {
+        userId: publicAccountId,
+        audience: invalidAudience,
+        cohortRefs: [],
+        alertEntries: [],
+      }),
+      'off',
+      `an invalid audience is never promoted to public: ${JSON.stringify(invalidAudience)}`,
+    );
+  }
+  const originalAudience = process.env.FORGE_GOAL_BACKWARD_V24_AUDIENCE;
+  try {
+    delete process.env.FORGE_GOAL_BACKWARD_V24_AUDIENCE;
+    assert.equal(getGoalBackwardV24Audience(), 'cohort');
+    assert.equal(
+      resolveOperationalGoalBackwardV24Mode('on', {
+        userId: publicAccountId,
+        cohortRefs: [],
+        alertEntries: [],
+      }),
+      'off',
+      'a missing audience is not public',
+    );
+  } finally {
+    if (originalAudience === undefined) delete process.env.FORGE_GOAL_BACKWARD_V24_AUDIENCE;
+    else process.env.FORGE_GOAL_BACKWARD_V24_AUDIENCE = originalAudience;
+  }
+  assert.equal(
+    resolveOperationalGoalBackwardV24Mode('on', {
+      userId: publicAccountId,
+      audience: 'all',
+      alertEntries: [{}],
+    }),
+    'off',
+    'a zero-tolerance release alert forces the public audience off',
+  );
   assert.equal(
     resolveOperationalGoalBackwardV24Mode('shadow', {
       userId: 'hyrox-army-owner',

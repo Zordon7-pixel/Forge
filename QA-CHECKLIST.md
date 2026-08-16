@@ -187,11 +187,13 @@ npm --prefix frontend run build
 
 Batch 12 status (2026-08-14): `patched`; the four-command gate passes locally. Independent QA and Hermes verification remain pending.
 
-## Goal-Backward Coaching v2.4 — Phase 6
+## Goal-Backward Coaching v2.4 — Phase 6 Release and Public Activation
 
-- [ ] Only the approved 10-file Batch 16 allowlist changed; no migration, package/lock, frontend, native, Watch, FIT, or unrelated tracked file changed
-- [ ] Missing/invalid modes and any account outside the exact pseudonymous disposable cohort resolve to `off`; raw IDs are rejected from the cohort configuration
-- [ ] `shadow` preserves the current candidate for response/apply, `preview` cannot apply, and `on` rechecks live mode/cohort plus every stale-safe binding before mutation
+- [ ] At most 10 approved activation/contract files changed; no migration, package/lock, native, Watch, FIT, engine, validator, or unrelated tracked file changed
+- [ ] Runtime audience accepts only exact `cohort\|all`; missing, malformed, whitespace-padded, or unknown audience values resolve to non-public `cohort` behavior
+- [ ] `cohort` retains the exact pseudonymous `sha256:` authorization check; `all` authorizes only production-shaped UUID accounts and rejects blank/synthetic IDs
+- [ ] Preview and apply use the same injected audience decision; missing/invalid modes, missing users, unauthorized audiences, and zero-tolerance alerts resolve to `off`
+- [ ] `shadow` preserves the current candidate for response/apply, `preview` cannot apply, and `on` rechecks live mode/audience plus every stale-safe binding before mutation
 - [ ] Telemetry contains only the closed release schema: mode, fixed policy/schema versions, pass/fail reason counts, candidate selection, outcome, surface capability, revision mismatch, and pseudonymous target ref
 - [ ] Telemetry and release diagnostics reject payloads, raw IDs, emails, tokens, health samples, routes/coordinates, and free text
 - [ ] Hard-validator bypass, mutation after stale failure, revision mismatch, unknown-to-zero, telemetry redaction, surface executability mismatch, and duplicate assignment have zero tolerance and force control/rollback
@@ -200,7 +202,11 @@ Batch 12 status (2026-08-14): `patched`; the four-command gate passes locally. I
 - [ ] Apply verifies all seven linked artifacts, exact schema/policy versions, exact candidate/artifact hashes, one successor assignment, and the private 0700/0600 redacted rollback evidence before reporting success
 - [ ] Rollback runs only with mode `off`, restores the exact previous assignment with owner-scoped updates, supersedes the canary assignment, invalidates open v2.4 previews, and proves one active predecessor with no orphan active assignment
 - [ ] Cleanup evidence is pseudonymous and is complete only after the disposable account, active assignments, open v2.4 candidates, and orphan assignments are all absent
-- [ ] CI/full QA, migration replay, exact production revision/artifact, shadow/preview/apply, rollback, disposable deletion, and no critical/high/medium independent findings are evidenced before Bryan is asked for separate cohort-expansion authorization
+- [ ] Railway starts the backend after the existing seed step with explicit `mode=on`, `audience=all`, and expected revision bound to exact `RAILWAY_GIT_COMMIT_SHA`; restart policy is unchanged
+- [ ] Normal responses expose exact closed `X-Forge-Goal-Backward-Mode` / `X-Forge-Goal-Backward-Audience` values without refs, IDs, hashes, telemetry, environment contents, or secrets
+- [ ] The expected-revision wait and production Playwright gates require exact `on` / `all` response headers
+- [ ] Emergency public rollback deploys mode `off` or reverts the activation start configuration; the disposable script remains exact-ref-only and separately authorized
+- [ ] CI/full QA, exact production revision/artifact, public preview/apply, emergency rollback readiness, and no critical/high/medium independent findings are evidenced before live verification is complete
 
 Run the Phase 6 gate:
 
@@ -213,4 +219,4 @@ FORGE_QA_BASE_URL=https://forge-production-773f.up.railway.app npm --prefix fron
 node backend/scripts/upgrade-beta-race-plans.js
 ```
 
-Batch 16 status (2026-08-14): `patched`; deployment, non-off execution, disposable canary mutation/rollback/deletion, independent acceptance, and Bryan cohort expansion remain separate gates.
+Public activation patch status (2026-08-16): `patched in source`; deployment, public live execution, disposable canary mutation/rollback/deletion, independent acceptance, and live verification remain separate gates.

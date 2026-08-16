@@ -124,6 +124,17 @@ function sendCandidateError(res, err, context) {
   });
 }
 
+function resolvePlanGoalBackwardV24Mode(userId, dependencies = {}, options = {}) {
+  return resolveOperationalGoalBackwardV24Mode(dependencies.mode, {
+    userId,
+    audience: dependencies.audience,
+    cohortRefs: dependencies.cohortRefs,
+    allowSyntheticShadow: options.allowSyntheticShadow === true,
+    ...(Object.hasOwn(dependencies, 'alertEntries')
+      ? { alertEntries: dependencies.alertEntries } : {}),
+  });
+}
+
 function getDayShort() {
   return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date().getDay()];
 }
@@ -3426,12 +3437,8 @@ async function previewPlanForUser(userId, body = {}, { store = true, goalBackwar
     races: initial.races,
     replacesActivePlan: Boolean(initial.active),
   };
-  let goalBackwardMode = resolveOperationalGoalBackwardV24Mode(goalBackwardDependencies.mode, {
-    userId,
-    cohortRefs: goalBackwardDependencies.cohortRefs,
+  let goalBackwardMode = resolvePlanGoalBackwardV24Mode(userId, goalBackwardDependencies, {
     allowSyntheticShadow: true,
-    ...(Object.hasOwn(goalBackwardDependencies, 'alertEntries')
-      ? { alertEntries: goalBackwardDependencies.alertEntries } : {}),
   });
   if (goalBackwardMode !== 'off' && !isRevisionedGoalBackedRequest(userId, initial, request)) {
     emitPlanReleaseTelemetry({
@@ -3954,12 +3961,7 @@ async function applyPlanCandidate(userId, candidateId, body = {}, constraints = 
       }
       if (storedGoalBackward.bindings?.feature_mode === 'on') {
         const runtimeDependencies = constraints.goalBackwardDependencies || {};
-        const runtimeMode = resolveOperationalGoalBackwardV24Mode(runtimeDependencies.mode, {
-          userId,
-          cohortRefs: runtimeDependencies.cohortRefs,
-          ...(Object.hasOwn(runtimeDependencies, 'alertEntries')
-            ? { alertEntries: runtimeDependencies.alertEntries } : {}),
-        });
+        const runtimeMode = resolvePlanGoalBackwardV24Mode(userId, runtimeDependencies);
         if (runtimeMode !== 'on') {
           return planningInputUnchanged({
             status: 409,
@@ -6496,6 +6498,7 @@ router._test = {
   planVersionFor,
   proposalDecisionConflict,
   proposalDecisionRevision,
+  resolvePlanGoalBackwardV24Mode,
   updateActivePlanData,
   getTimezoneOffsetFromRequest,
   deleteOwnedRaceForCandidate,
