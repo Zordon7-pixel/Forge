@@ -70,10 +70,21 @@ function rfc3339Instant(value) {
 }
 
 function dateOnly(value) {
-  const exact = exactLocalDate(value);
-  if (exact) return exact;
-  if (typeof value !== 'string' || !RFC3339_PATTERN.test(value)) return null;
-  return rfc3339Instant(value) ? value.slice(0, 10) : null;
+  return exactLocalDate(value);
+}
+
+function plainRecord(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function exactOwnKeys(value, expectedKeys) {
+  if (!plainRecord(value)) return false;
+  const actual = Object.keys(value).sort();
+  const expected = [...expectedKeys].sort();
+  return actual.length === expected.length
+    && actual.every((key, index) => key === expected[index]);
 }
 
 function validTimezone(value) {
@@ -564,8 +575,31 @@ function invalidCrossModalReductionEvidence(reasonCode) {
 }
 
 function normalizeCrossModalReductionEvidence(input, expected = {}) {
+  const envelopeKeys = [
+    'schema_version', 'athlete_id', 'athlete_state_revision', 'evidence_snapshot_id',
+    'evidence_revision', 'weekly_dimension_sum', 'dimensions', 'measured_running_ceiling_m',
+    'decisive_evidence_ids', 'content_hash',
+  ];
+  const dimensionKeys = ['status', 'confidence', 'normal_ceiling', 'authorized_ceiling'];
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     return invalidCrossModalReductionEvidence('CROSS_MODAL_EVIDENCE_RECEIPT_MISSING');
+  }
+  if (!exactOwnKeys(input, envelopeKeys) || !plainRecord(input.dimensions)) {
+    return invalidCrossModalReductionEvidence('CROSS_MODAL_EVIDENCE_SHAPE_INVALID');
+  }
+  const suppliedDimensionKeys = Object.keys(input.dimensions).sort();
+  if (suppliedDimensionKeys.length !== DIMENSIONS.length
+    || suppliedDimensionKeys.some((dimension, index) => dimension !== [...DIMENSIONS].sort()[index])) {
+    return invalidCrossModalReductionEvidence('CROSS_MODAL_DIMENSIONS_INCOMPLETE');
+  }
+  if (!DIMENSIONS.every((dimension) => exactOwnKeys(input.dimensions[dimension], dimensionKeys))
+    || !Array.isArray(input.weekly_dimension_sum)
+    || !input.weekly_dimension_sum.every((value) => Number.isFinite(value) && value >= 0)
+    || !Array.isArray(input.decisive_evidence_ids)
+    || !input.decisive_evidence_ids.every((value) => (
+      typeof value === 'string' && value.length > 0 && value.length <= 512
+    ))) {
+    return invalidCrossModalReductionEvidence('CROSS_MODAL_EVIDENCE_SHAPE_INVALID');
   }
   if (Number(input.schema_version) !== 1) {
     return invalidCrossModalReductionEvidence('CROSS_MODAL_EVIDENCE_SCHEMA_UNSUPPORTED');
@@ -586,11 +620,7 @@ function normalizeCrossModalReductionEvidence(input, expected = {}) {
   if (!Number.isSafeInteger(evidenceRevision) || evidenceRevision < 1) {
     return invalidCrossModalReductionEvidence('CROSS_MODAL_EVIDENCE_REVISION_INVALID');
   }
-  const dimensionKeys = input.dimensions && typeof input.dimensions === 'object' && !Array.isArray(input.dimensions)
-    ? Object.keys(input.dimensions).sort() : [];
-  if (dimensionKeys.length !== DIMENSIONS.length
-    || dimensionKeys.some((dimension, index) => dimension !== [...DIMENSIONS].sort()[index])
-    || !Array.isArray(input.weekly_dimension_sum)
+  if (!Array.isArray(input.weekly_dimension_sum)
     || input.weekly_dimension_sum.length !== DIMENSIONS.length) {
     return invalidCrossModalReductionEvidence('CROSS_MODAL_DIMENSIONS_INCOMPLETE');
   }

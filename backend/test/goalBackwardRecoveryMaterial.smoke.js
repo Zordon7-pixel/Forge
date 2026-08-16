@@ -510,7 +510,8 @@ test('C3-MAT-06', 'production-bound taper, training-gap, and corroborated safety
 test('C3-MAT-07', 'missing or malformed scheduled dates make candidate and active-plan dose unknown', () => {
   for (const badDate of [
     null, '', 'not-a-date', '2026-02-30', '2026-08-17garbage', '2026-08-17 ',
-    '2026-08-17\u0000', 20260817, { date: '2026-08-17' },
+    '2026-08-17\u0000', '2026-08-17T00:00:00Z', '2026-08-17T23:59:00-04:00',
+    20260817, { date: '2026-08-17' },
   ]) {
     const candidate = materialInput();
     candidate.candidate.sessions.push(runSession('undated-padding', 8, 'easy_run', 'SUPPORTING', badDate));
@@ -532,7 +533,7 @@ test('C3-MAT-07', 'missing or malformed scheduled dates make candidate and activ
   assert.equal(evaluateMaterialDose(bounded).candidate_running_m, milesToMeters(6.94),
     'window boundaries exclude dated sessions outside the inclusive candidate week');
 
-  for (const date of ['2026-08-17', '2026-08-23', '2026-08-23T23:59:00-04:00']) {
+  for (const date of ['2026-08-17', '2026-08-23']) {
     const input = materialInput({ candidateMiles: 0 });
     input.candidate.sessions = [runSession('boundary', 6.94, 'easy_run', 'SUPPORTING', date)];
     assert.equal(evaluateMaterialDose(input).candidate_running_m, milesToMeters(6.94));
@@ -591,6 +592,41 @@ test('C3-SCOPE-01', 'expiry instant and local calendar identity must agree and c
   dstInput.candidate_window_end_local = '2026-11-01';
   dstInput.candidate.sessions[0].scheduled_local_date = '2026-10-26';
   assert.equal(evaluateMaterialDose(dstInput).valid, true);
+});
+
+test('C3-DATE-01', 'decision and validator calendar fields reject timestamps instead of truncating them', () => {
+  assert.throws(() => buildGoalBackwardPlanningDecision({
+    athlete_id: 'synthetic-date-owner',
+    planning_date_local: '2026-08-17T00:00:00Z',
+  }), /valid planning_date_local/);
+
+  const validation = validateGoalBackwardCandidate({
+    sessions: [runSession(
+      'timestamp-calendar-field', 3, 'easy_run', 'SUPPORTING', '2026-08-17T00:00:00Z'
+    )],
+  }, {
+    available_local_dates: ['2026-08-17'],
+    safety_action: 'NORMAL',
+  });
+  const availability = validation.validator_results.find((entry) => entry.validator === 'availability');
+  assert.equal(availability.valid, false);
+  assert.equal(availability.violations[0].code, 'SESSION_DATE_INVALID');
+
+  const invalidOffsetSession = runSession(
+    'invalid-offset-instant', 3, 'easy_run', 'SUPPORTING', '2026-08-17'
+  );
+  delete invalidOffsetSession.scheduled_local_date;
+  invalidOffsetSession.scheduled_start_at = '2026-08-17T00:00:00+14:30';
+  const invalidOffsetValidation = validateGoalBackwardCandidate({
+    sessions: [invalidOffsetSession],
+  }, {
+    available_local_dates: ['2026-08-17'],
+    safety_action: 'NORMAL',
+  });
+  const invalidOffsetAvailability = invalidOffsetValidation.validator_results
+    .find((entry) => entry.validator === 'availability');
+  assert.equal(invalidOffsetAvailability.valid, false);
+  assert.equal(invalidOffsetAvailability.violations[0].code, 'SESSION_DATE_INVALID');
 });
 
 test('C3-ROUTE-01', 'the route binds taper and training-gap BLOCK scopes into candidate validation', () => {
@@ -727,6 +763,34 @@ test('C3-XMOD-02', 'cross-modal reduction evidence is owner/revision/hash bound 
     assert.deepEqual(receipt.reason_codes, [fixture.reason], fixture.name);
   }
 
+  const { content_hash: _contentHash, ...contentWithoutHash } = envelope;
+  const inheritedDimensionContent = {
+    ...contentWithoutHash,
+    dimensions: {
+      ...envelope.dimensions,
+      aerobic: Object.create(envelope.dimensions.aerobic),
+    },
+  };
+  const inheritedDimensionEnvelope = {
+    ...inheritedDimensionContent,
+    content_hash: `sha256:${canonicalHash(inheritedDimensionContent)}`,
+  };
+  const hostileFixtures = [
+    Object.create(envelope),
+    inheritedDimensionEnvelope,
+    crossModalEvidenceEnvelope({
+      dimensions: {
+        ...envelope.dimensions,
+        aerobic: { ...envelope.dimensions.aerobic, untrusted_override: true },
+      },
+    }),
+  ];
+  for (const hostile of hostileFixtures) {
+    const receipt = normalizeCrossModalReductionEvidence(hostile, expected);
+    assert.equal(receipt.valid, false, 'prototype or open-schema evidence must fail closed');
+    assert.deepEqual(receipt.reason_codes, ['CROSS_MODAL_EVIDENCE_SHAPE_INVALID']);
+  }
+
   const decision = {
     decision_id: 'synthetic-bound-cross-modal-decision',
     decision_hash: canonicalHash({ fixture: 'synthetic-bound-cross-modal-decision' }),
@@ -826,6 +890,24 @@ test('C3-XMOD-03', 'production route rejects absent, stale, mismatched, and inco
     assert.deepEqual(captured.validation_options.cross_modal_evidence_ids, [], fixture.label);
     assert.equal(result.selected_candidate, null, fixture.label);
     assert.equal(result.persisted, false, fixture.label);
+
+    const productionResult = plansRouter._test.computeGoalBackwardShadowDiagnostics({
+      userId: 'synthetic-cross-modal-owner', planningDateLocal, state,
+      built: { plan: { weeks: [{ days: [{
+        date: planningDateLocal,
+        sessions: [{
+          id: 'route-easy', workout_id: 'easy_aerobic', kind: 'run',
+          distance_miles: 6.94, duration_min: 70,
+        }],
+      }] }] } },
+    });
+    assert.equal(productionResult.selected_candidate, null, `${fixture.label} production selection`);
+    assert.ok(productionResult.candidates.length > 0, `${fixture.label} production candidates`);
+    assert.ok(productionResult.candidates.every((candidate) => (
+      candidate.persisted === false
+        && candidate.validation.valid === false
+        && candidate.validation.reason_codes.includes('RECENT_LOAD_MAINTAIN')
+    )), `${fixture.label} production candidates must remain rejected and non-persistable`);
   }
 });
 
@@ -1058,6 +1140,17 @@ test('C3-ENGINE-01', 'enumeration rejects unsupported under-dose deterministical
   assert.equal(first.candidates[0].validation.reason_codes.includes('RECENT_LOAD_MAINTAIN'), true);
   assert.equal(first.decision.selected_candidate_id, null);
   assert.deepEqual(second, first, 'retry/replay is byte-equivalent and non-mutating');
+
+  for (const badDate of ['2026-08-17garbage', '2026-08-17T00:00:00Z']) {
+    const hostileDate = enumerateGoalBackwardCandidates({
+      ...input,
+      available_local_dates: [badDate],
+      validation_options: { ...input.validation_options, available_local_dates: [badDate] },
+    });
+    assert.equal(hostileDate.selected_candidate, null);
+    assert.equal(hostileDate.candidates.length, 0,
+      `candidate enumeration must reject non-calendar placement date ${badDate}`);
+  }
 });
 
 test('C3-ENGINE-02', 'enumeration selects bounded taper and training-gap reductions derived from decision evidence', () => {

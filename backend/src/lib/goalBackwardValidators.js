@@ -103,10 +103,20 @@ function deepFreeze(value) {
 }
 
 function dateOnly(value) {
-  const raw = String(value || '').slice(0, 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
-  const parsed = new Date(`${raw}T12:00:00.000Z`);
-  return Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== raw ? null : raw;
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const parsed = new Date(`${value}T12:00:00.000Z`);
+  return Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value ? null : value;
+}
+
+function dateFromStartInstant(value) {
+  if (typeof value !== 'string') return null;
+  const match = value.match(
+    /^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,9})?(Z|[+-](?:0\d|1[0-4]):[0-5]\d)$/
+  );
+  if (!match || /^[+-]14:(?!00$)/.test(match[1])) return null;
+  const date = value.slice(0, 10);
+  const parsed = new Date(value);
+  return dateOnly(date) && !Number.isNaN(parsed.getTime()) ? date : null;
 }
 
 function sessionFamily(session = {}) {
@@ -122,10 +132,10 @@ function sessionId(session = {}, index = 0) {
 }
 
 function sessionLocalDate(session = {}) {
-  return dateOnly(
-    session.scheduled_local_date ?? session.scheduledLocalDate ?? session.local_date ?? session.date
-    ?? session.scheduled_start_at ?? session.scheduledStartAt
-  );
+  const calendarDate = session.scheduled_local_date ?? session.scheduledLocalDate
+    ?? session.local_date ?? session.date;
+  if (calendarDate !== null && calendarDate !== undefined) return dateOnly(calendarDate);
+  return dateFromStartInstant(session.scheduled_start_at ?? session.scheduledStartAt);
 }
 
 function sessionsFrom(container = {}) {

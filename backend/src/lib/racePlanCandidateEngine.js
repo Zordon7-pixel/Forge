@@ -812,14 +812,14 @@ function semanticCandidateErrors(plan, context, planningDateLocal) {
 }
 
 function buildRacePlanCandidate(context = {}, options = {}) {
-  const planningDateLocal = String(
+  const planningDateLocal = validLocalDate(
     options.planningDateLocal
       || context.planning_date_local
       || context.planningDateLocal
       || context.todayISO
       || ''
-  ).slice(0, 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(planningDateLocal) || !mondayFor(planningDateLocal)) {
+  );
+  if (!planningDateLocal || !mondayFor(planningDateLocal)) {
     throw new Error('planningDateLocal must be a real YYYY-MM-DD date');
   }
   const normalizedContext = clone({ ...context, todayISO: planningDateLocal });
@@ -943,9 +943,9 @@ function roadCandidateMaterial(source) {
       material_id: String(session.session_id ?? session.id ?? `road-material-${index + 1}`),
       source_workout_id: session.workout_id ?? null,
       workout_family: legacyGoalBackwardFamily(session),
-      legacy_scheduled_local_date: String(
-        session.scheduled_local_date ?? session.date ?? ''
-      ).slice(0, 10) || null,
+      legacy_scheduled_local_date: validLocalDate(
+        session.scheduled_local_date ?? session.date
+      ),
       source_kind: session.kind ?? 'run',
       source_title: session.title ?? null,
       duration_min: durationMin,
@@ -969,10 +969,10 @@ function roadCandidateMaterial(source) {
 
 function placementFor(placements, requirementId) {
   const placement = placements?.[requirementId];
-  if (typeof placement === 'string') return { scheduled_local_date: placement.slice(0, 10), scheduled_start_at: null, workout_family: null };
+  if (typeof placement === 'string') return { scheduled_local_date: validLocalDate(placement), scheduled_start_at: null, workout_family: null };
   if (!placement || typeof placement !== 'object') return { scheduled_local_date: null, scheduled_start_at: null, workout_family: null };
   return {
-    scheduled_local_date: String(placement.scheduled_local_date ?? placement.date ?? '').slice(0, 10) || null,
+    scheduled_local_date: validLocalDate(placement.scheduled_local_date ?? placement.date),
     scheduled_start_at: placement.scheduled_start_at ?? null,
     workout_family: placement.workout_family ?? placement.workoutFamily ?? null,
   };
@@ -1157,10 +1157,9 @@ function buildGoalBackwardCandidateSkeleton(input = {}) {
 }
 
 function validLocalDate(value) {
-  const date = String(value || '').slice(0, 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
-  const parsed = new Date(`${date}T12:00:00.000Z`);
-  return Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date ? null : date;
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const parsed = new Date(`${value}T12:00:00.000Z`);
+  return Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value ? null : value;
 }
 
 function fixedPlacementForRole(role, input = {}) {
