@@ -19,6 +19,23 @@ const MILE_M = 1609.344;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const TEMPORAL_FINGERPRINT_WINDOW_MS = 180 * 1000;
 const TEMPORAL_DURATION_TOLERANCE_S = 2;
+// Imported summaries occasionally reissue a provider id after changing only the
+// provider-computed elapsed duration. Exact source/start/distance is a much
+// stronger identity than duration alone, but the exception remains bounded by
+// the existing sensor-summary reconciliation ceiling.
+const EXACT_START_DURATION_TOLERANCE_S = 300;
+const EXACT_START_DURATION_TOLERANCE_RATIO = 0.15;
+const ACTIVITY_IDENTITY_RECEIPT_MAX_BYTES = 16 * 1024;
+const ACTIVITY_IDENTITY_RECEIPT_MAX_DECISIONS = 64;
+const ACTIVITY_IDENTITY_REASON_CODES = Object.freeze([
+  'EXACT_SOURCE_ACTIVITY_ID',
+  'FUZZY_SOURCE_ACTIVITY_MATCH',
+  'EXACT_START_SOURCE_METRIC_COLLISION',
+  'CROSS_SOURCE_ROUTE_CORROBORATION',
+  'EXACT_IMPORT_CLAIM',
+]);
+const ACTIVITY_IDENTITY_REASON_CODE_SET = new Set(ACTIVITY_IDENTITY_REASON_CODES);
+const LOAD_WINDOWS_DAYS = Object.freeze([7, 14, 21, 28, 42, 56]);
 const ROUTE_POINT_TOLERANCE_M = 50;
 const ROUTE_MATCH_MINIMUM = 0.8;
 const DISTANCE_EQUIVALENCE_FLOOR_M = 0.02 * MILE_M;
@@ -136,6 +153,13 @@ function localDateDistance(later, earlier) {
     : null;
 }
 
+function addLocalDays(localDate, days) {
+  const date = new Date(`${String(localDate || '').slice(0, 10)}T12:00:00.000Z`);
+  if (Number.isNaN(date.getTime())) return null;
+  date.setUTCDate(date.getUTCDate() + Number(days || 0));
+  return date.toISOString().slice(0, 10);
+}
+
 function sourceSystem(value) {
   const source = String(value || '').trim().toLowerCase();
   if (source === 'forged_hybrid' || source === 'forged_phone') return 'forge';
@@ -203,6 +227,86 @@ function temporalRouteFingerprintMatch(left = {}, right = {}) {
   return true;
 }
 
+function sameCanonicalSource(left, right) {
+  return sourceSystem(left?.source_system) === sourceSystem(right?.source_system);
+}
+
+function exactStartMetricCollision(left, right) {
+  const leftStart = timestamp(left?.observed_at);
+  const rightStart = timestamp(right?.observed_at);
+  const leftDuration = finite(left?.duration_s);
+  const rightDuration = finite(right?.duration_s);
+  if (leftStart === null || rightStart === null || leftStart !== rightStart) return false;
+  if (!distanceEquivalent(left?.distance_m, right?.distance_m)) return false;
+  if (leftDuration === null || rightDuration === null) return false;
+  const durationDelta = Math.abs(leftDuration - rightDuration);
+  const durationRatio = durationDelta / Math.max(leftDuration, rightDuration, 1);
+  return durationDelta <= EXACT_START_DURATION_TOLERANCE_S
+    && durationRatio <= EXACT_START_DURATION_TOLERANCE_RATIO;
+}
+
+function classifyCanonicalActivityIdentity(left = {}, right = {}) {
+  if (!left.athlete_id || left.athlete_id !== right.athlete_id) return null;
+  if (!left.activity_kind || left.activity_kind !== right.activity_kind) return null;
+  const sameSource = sameCanonicalSource(left, right);
+  const leftSourceId = String(left.source_activity_id || '').trim();
+  const rightSourceId = String(right.source_activity_id || '').trim();
+  if (sameSource && leftSourceId && rightSourceId && leftSourceId === rightSourceId) {
+    return { duplicate: true, reason_code: 'EXACT_SOURCE_ACTIVITY_ID' };
+  }
+  const comparable = temporalRouteFingerprintMatch(left, right);
+  if (sameSource && comparable && distanceEquivalent(left.distance_m, right.distance_m)) {
+    return { duplicate: true, reason_code: 'FUZZY_SOURCE_ACTIVITY_MATCH' };
+  }
+  const leftRoute = normalizeRoutePoints(left.route_points);
+  const rightRoute = normalizeRoutePoints(right.route_points);
+  if (!sameSource && leftRoute.length && rightRoute.length && comparable
+    && distanceEquivalent(left.distance_m, right.distance_m)) {
+    return { duplicate: true, reason_code: 'CROSS_SOURCE_ROUTE_CORROBORATION' };
+  }
+  if (sameSource && exactStartMetricCollision(left, right)) {
+    return { duplicate: true, reason_code: 'EXACT_START_SOURCE_METRIC_COLLISION' };
+  }
+  return null;
+}
+
+function privateActivityRef(value) {
+  const normalized = String(value || '').trim() || 'missing';
+  return `activity-ref-${canonicalHash(normalized).slice(0, 20)}`;
+}
+
+function boundedIdentityReceipt(decisions = []) {
+  const normalized = (Array.isArray(decisions) ? decisions : []).map((decision) => ({
+    kept_ref: privateActivityRef(decision.kept_ref),
+    suppressed_ref: privateActivityRef(decision.suppressed_ref),
+    reason_code: (() => {
+      const reasonCode = String(decision.reason_code || '');
+      if (!ACTIVITY_IDENTITY_REASON_CODE_SET.has(reasonCode)) throw new Error('Activity identity reason code is invalid');
+      return reasonCode;
+    })(),
+  })).sort((left, right) => (
+    left.kept_ref.localeCompare(right.kept_ref)
+    || left.suppressed_ref.localeCompare(right.suppressed_ref)
+    || left.reason_code.localeCompare(right.reason_code)
+  ));
+  let retained = normalized.slice(0, ACTIVITY_IDENTITY_RECEIPT_MAX_DECISIONS);
+  while (retained.length && Buffer.byteLength(canonicalStringify({ decisions: retained }), 'utf8') > ACTIVITY_IDENTITY_RECEIPT_MAX_BYTES - 512) {
+    retained = retained.slice(0, -1);
+  }
+  const content = {
+    receipt_schema_version: 1,
+    decision_count: normalized.length,
+    decisions_truncated: retained.length < normalized.length,
+    decisions: retained,
+    all_decisions_hash: prefixedHash(normalized),
+  };
+  return deepFreeze({ ...content, receipt_hash: prefixedHash(content) });
+}
+
+function buildActivityIdentityReceipt(decisions = []) {
+  return boundedIdentityReceipt(decisions);
+}
+
 function routeFingerprint(points) {
   const route = normalizeRoutePoints(points);
   if (!route.length) return null;
@@ -248,6 +352,7 @@ function runEvidenceRecord(row, athleteId, timezone) {
     source_record_id: evidenceId || null,
     source_activity_id: sourceActivityId,
     observed_at: observedAt,
+    identity_observed_at: row.health_start_at || row.activity_start_at || null,
     recorded_at: receivedAt,
     received_at: receivedAt,
     athlete_timezone: timezone,
@@ -502,7 +607,12 @@ function latestCorrections(rows, athleteId) {
     if (!validCorrection(correction, athleteId)) continue;
     const ref = String(correction.raw_evidence_ref || '');
     const current = latest.get(ref);
-    if (!current || Number(correction.revision) > Number(current.revision)) latest.set(ref, correction);
+    if (!current || Number(correction.revision) > Number(current.correction.revision)) {
+      latest.set(ref, { correction, conflicts: [] });
+    } else if (Number(correction.revision) === Number(current.correction.revision)
+      && correctionValue(correction) !== correctionValue(current.correction)) {
+      current.conflicts.push(correction);
+    }
   }
   return latest;
 }
@@ -527,34 +637,44 @@ function preferredActivity(records) {
   })[0];
 }
 
+function identityComparableForRecord(record) {
+  return {
+    athlete_id: record.envelope.athlete_id,
+    activity_kind: record.envelope.value.activity_kind,
+    observed_at: record.envelope.identity_observed_at,
+    duration_s: record.envelope.value.duration_s,
+    distance_m: record.envelope.value.distance_m,
+    source_system: record.envelope.source_system,
+    source_activity_id: record.envelope.source_activity_id,
+    route_points: record.routePoints,
+  };
+}
+
 function deduplicateActivityRecords(records, corrections) {
   const groups = [];
   for (const record of records) {
-    const comparable = {
-      athlete_id: record.envelope.athlete_id,
-      activity_kind: record.envelope.value.activity_kind,
-      observed_at: record.envelope.observed_at,
-      duration_s: record.envelope.value.duration_s,
-      route_points: record.routePoints,
-    };
-    const group = groups.find((candidate) => candidate.some((existing) => {
-      const leftSourceId = existing.envelope.source_activity_id;
-      const sameStableIdentity = leftSourceId && record.envelope.source_activity_id
-        && existing.envelope.source_system === record.envelope.source_system
-        && leftSourceId === record.envelope.source_activity_id;
-      if (sameStableIdentity) return true;
-      return temporalRouteFingerprintMatch({
-        athlete_id: existing.envelope.athlete_id,
-        activity_kind: existing.envelope.value.activity_kind,
-        observed_at: existing.envelope.observed_at,
-        duration_s: existing.envelope.value.duration_s,
-        route_points: existing.routePoints,
-      }, comparable);
-    }));
+    const comparable = identityComparableForRecord(record);
+    const group = groups.find((candidate) => {
+      // Exact provider identity may match any already grouped observation. Fuzzy
+      // identity compares only with the deterministic anchor to prevent
+      // transitive collision chains from swallowing nearby real workouts.
+      const exact = candidate.some((existing) => (
+        classifyCanonicalActivityIdentity(identityComparableForRecord(existing), comparable)?.reason_code
+        === 'EXACT_SOURCE_ACTIVITY_ID'
+      ));
+      if (exact) return true;
+      const anchor = candidate[0];
+      return Boolean(classifyCanonicalActivityIdentity(identityComparableForRecord(anchor), comparable));
+    });
     if (group) group.push(record);
     else groups.push([record]);
   }
-  return groups.map((group) => {
+  const decisions = [];
+  const activities = groups.map((group) => {
+    const identityAnchor = [...group].sort((left, right) => (
+      String(left.envelope.received_at || '').localeCompare(String(right.envelope.received_at || ''))
+      || left.envelope.evidence_id.localeCompare(right.envelope.evidence_id)
+    ))[0];
     const preferred = preferredActivity(group);
     const preferredDistance = preferredActivity(group.filter((record) => record.envelope.value.distance_m !== null)) || preferred;
     const preferredDuration = preferredActivity(group.filter((record) => record.envelope.value.duration_s !== null)) || preferred;
@@ -566,12 +686,18 @@ function deduplicateActivityRecords(records, corrections) {
       && Math.abs(duration - preferredDuration.envelope.value.duration_s) > TEMPORAL_DURATION_TOLERANCE_S
     ));
     const evidenceIds = group.map((record) => record.envelope.evidence_id).sort();
-    const applicableCorrections = evidenceIds.map((id) => corrections.get(id)).filter(Boolean)
-      .sort((left, right) => Number(right.revision) - Number(left.revision));
-    const correction = applicableCorrections[0] || null;
-    const resolvedDistance = correction ? correctionValue(correction) : distanceConflict ? null : preferredDistance.envelope.value.distance_m;
+    const correctionEntries = evidenceIds.map((id) => corrections.get(id)).filter(Boolean);
+    const applicableCorrections = correctionEntries.map((entry) => entry.correction)
+      .sort((left, right) => Number(right.revision) - Number(left.revision) || String(left.id).localeCompare(String(right.id)));
+    const correctionValues = [...new Set(applicableCorrections.map(correctionValue))];
+    const correctionConflict = correctionEntries.some((entry) => entry.conflicts.length)
+      || correctionValues.length > 1;
+    const correction = correctionConflict ? null : applicableCorrections[0] || null;
+    const resolvedDistance = correctionConflict
+      ? null
+      : correction ? correctionValue(correction) : distanceConflict ? null : preferredDistance.envelope.value.distance_m;
     const resolvedDuration = durationConflict ? null : preferredDuration.envelope.value.duration_s;
-    const distanceQualityState = distanceConflict && !correction ? 'CONFLICT' : resolvedDistance === null ? 'PARTIAL' : 'COMPLETE';
+    const distanceQualityState = correctionConflict || (distanceConflict && !correction) ? 'CONFLICT' : resolvedDistance === null ? 'PARTIAL' : 'COMPLETE';
     const durationQualityState = durationConflict ? 'CONFLICT' : resolvedDuration === null ? 'PARTIAL' : 'COMPLETE';
     const heartRateEvidence = group.map((record) => ({
       evidence_id: record.envelope.evidence_id,
@@ -583,8 +709,22 @@ function deduplicateActivityRecords(records, corrections) {
       },
     }));
     const heartRateResolution = resolveHeartRateEvidence(heartRateEvidence);
+    for (const suppressed of group.filter((record) => record !== identityAnchor)) {
+      const suppressedComparable = identityComparableForRecord(suppressed);
+      const match = classifyCanonicalActivityIdentity(identityComparableForRecord(identityAnchor), suppressedComparable)
+        || group.filter((candidate) => candidate !== suppressed)
+          .map((candidate) => classifyCanonicalActivityIdentity(identityComparableForRecord(candidate), suppressedComparable))
+          .find(Boolean);
+      decisions.push({
+        kept_ref: identityAnchor.envelope.evidence_id,
+        suppressed_ref: suppressed.envelope.evidence_id,
+        reason_code: match?.reason_code || 'FUZZY_SOURCE_ACTIVITY_MATCH',
+      });
+    }
     return {
-      canonical_activity_id: `activity-${canonicalHash(evidenceIds).slice(0, 24)}`,
+      canonical_activity_id: `activity-${canonicalHash(identityAnchor.envelope.evidence_id).slice(0, 24)}`,
+      identity_anchor_evidence_id: identityAnchor.envelope.evidence_id,
+      kept_evidence_id: preferred.envelope.evidence_id,
       activity_kind: preferred.envelope.value.activity_kind,
       observed_at: preferred.envelope.observed_at,
       distance_m: resolvedDistance,
@@ -601,9 +741,11 @@ function deduplicateActivityRecords(records, corrections) {
       duration_quality_state: durationQualityState,
       correction_id: correction?.id || null,
       correction_revision: correction ? Number(correction.revision) : null,
+      correction_evidence_ids: applicableCorrections.map((item) => String(item.id)).sort(),
       heart_rate_resolution: heartRateResolution,
       reason_codes: [
-        ...(distanceConflict && !correction ? ['EVIDENCE_CONFLICT_UNRESOLVED'] : []),
+        ...((distanceConflict && !correction) || correctionConflict ? ['EVIDENCE_CONFLICT_UNRESOLVED'] : []),
+        ...(correctionConflict ? ['MANUAL_CORRECTION_CONFLICT'] : []),
         ...(durationConflict ? ['EVIDENCE_CONFLICT_UNRESOLVED'] : []),
         ...(resolvedDistance === null && !distanceConflict ? ['EVIDENCE_MISSING'] : []),
         ...(resolvedDuration === null && !durationConflict ? ['EVIDENCE_MISSING'] : []),
@@ -612,6 +754,7 @@ function deduplicateActivityRecords(records, corrections) {
       ],
     };
   });
+  return { activities, identityReceipt: boundedIdentityReceipt(decisions) };
 }
 
 function normalizedProviderCoverage(rows) {
@@ -640,7 +783,11 @@ function buildEvidenceSnapshot({
   const planningAt = new Date(planningInstant);
   if (Number.isNaN(planningAt.getTime())) throw new Error('buildEvidenceSnapshot requires a valid planning instant');
   if (!isIanaTimezone(timezone)) throw new Error('buildEvidenceSnapshot requires an IANA athlete timezone');
-  const runRecords = (Array.isArray(runs) ? runs : []).map((row) => runEvidenceRecord(row, scopedAthleteId, timezone));
+  const scopedRuns = Array.isArray(runs) ? runs : [];
+  if (scopedRuns.some((row) => row?.user_id && String(row.user_id) !== scopedAthleteId)) {
+    throw new Error('Activity evidence owner mismatch');
+  }
+  const runRecords = scopedRuns.map((row) => runEvidenceRecord(row, scopedAthleteId, timezone));
   const safetyEvidence = [
     ...(Array.isArray(painReports) ? painReports : []).map((row) => normalizeSafetyReport(row, scopedAthleteId, timezone, 'pain_report')),
     ...(Array.isArray(illnessReports) ? illnessReports : []).map((row) => normalizeSafetyReport(row, scopedAthleteId, timezone, 'illness_report')),
@@ -662,7 +809,8 @@ function buildEvidenceSnapshot({
     String(left.envelope.observed_at || '').localeCompare(String(right.envelope.observed_at || ''))
     || left.envelope.evidence_id.localeCompare(right.envelope.evidence_id)
   ));
-  const canonicalActivities = deduplicateActivityRecords(runRecords, correctionMap)
+  const deduplicated = deduplicateActivityRecords(runRecords, correctionMap);
+  const canonicalActivities = deduplicated.activities
     .sort((left, right) => String(left.observed_at || '').localeCompare(String(right.observed_at || ''))
       || left.canonical_activity_id.localeCompare(right.canonical_activity_id));
   const coverage = normalizedProviderCoverage(providerCoverage);
@@ -686,6 +834,7 @@ function buildEvidenceSnapshot({
   const distanceConflicts = canonicalActivities.filter((activity) => activity.distance_quality_state === 'CONFLICT');
   const durationConflicts = canonicalActivities.filter((activity) => activity.duration_quality_state === 'CONFLICT');
   const heartRateConflicts = canonicalActivities.filter((activity) => activity.heart_rate_resolution.quality_state === 'CONFLICT');
+  const correctionConflicts = canonicalActivities.filter((activity) => activity.reason_codes.includes('MANUAL_CORRECTION_CONFLICT'));
   const reasonCodes = [...new Set([
     ...coverage.flatMap((row) => row.reason_codes),
     ...canonicalActivities.flatMap((activity) => activity.reason_codes),
@@ -702,6 +851,7 @@ function buildEvidenceSnapshot({
     timezone,
     evidence,
     canonical_activities: canonicalActivities,
+    identity_decision_receipt: deduplicated.identityReceipt,
     included_evidence_ids: [...new Set(evidence.filter((item) => item.quality_state !== 'CORRUPTED').map((item) => item.evidence_id))].sort(),
     excluded_evidence: [
       ...distanceConflicts.flatMap((activity) => activity.evidence_ids.map((evidenceId) => ({
@@ -727,6 +877,7 @@ function buildEvidenceSnapshot({
       ...distanceConflicts.map((activity) => ({ field: 'distance_m', evidence_ids: activity.evidence_ids, reason_code: 'EVIDENCE_CONFLICT_UNRESOLVED' })),
       ...durationConflicts.map((activity) => ({ field: 'duration_s', evidence_ids: activity.evidence_ids, reason_code: 'EVIDENCE_CONFLICT_UNRESOLVED' })),
       ...heartRateConflicts.map((activity) => ({ field: 'heart_rate', evidence_ids: activity.evidence_ids, reason_code: 'EVIDENCE_CONFLICT_UNRESOLVED' })),
+      ...correctionConflicts.map((activity) => ({ field: 'manual_correction', evidence_ids: activity.correction_evidence_ids, reason_code: 'EVIDENCE_CONFLICT_UNRESOLVED' })),
     ],
     provider_coverage_intervals: coverage,
     modality_eligibility: modalityEligibility(coverage),
@@ -744,6 +895,198 @@ function buildEvidenceSnapshot({
     ...payload,
     canonical_hash: canonicalHashValue,
   });
+}
+
+function loadInputCoverageState(providerCoverage, planningInstant, canonicalActivities, planningDateLocal) {
+  const rows = Array.isArray(providerCoverage) ? providerCoverage : [];
+  if (!rows.length) return 'MISSING';
+  const runningRows = rows.filter((row) => {
+    const modalities = row?.modalities || row?.modality || [];
+    return (Array.isArray(modalities) ? modalities : [modalities])
+      .map((value) => String(value || '').trim().toLowerCase())
+      .includes('running');
+  });
+  if (!runningRows.length) return 'UNKNOWN';
+  const rawStatuses = runningRows.map((row) => String(row?.status || '').trim().toLowerCase()).filter(Boolean);
+  if (rawStatuses.some((status) => ['failed', 'error', 'timeout'].includes(status))
+    || runningRows.some((row) => String(row?.quality_state || row?.qualityState || '').toUpperCase() === 'FAILED_SYNC')) return 'FAILED';
+  const syncTimes = runningRows.map((row) => timestamp(row.synced_at || row.syncedAt)).filter((value) => value !== null);
+  const planningTime = new Date(planningInstant).getTime();
+  if (syncTimes.length && Number.isFinite(planningTime) && planningTime - Math.max(...syncTimes) > 48 * 60 * 60 * 1000) return 'STALE';
+  if (rawStatuses.some((status) => !['complete', 'completed', 'success', 'succeeded', 'partial'].includes(status))) return 'UNKNOWN';
+  const normalized = normalizedProviderCoverage(runningRows);
+  if (normalized.some((row) => row.quality_state === 'FAILED_SYNC')) return 'FAILED';
+  if (normalized.some((row) => ['CONFLICT', 'CORRUPTED'].includes(row.quality_state))) return 'UNKNOWN';
+  if (normalized.some((row) => row.quality_state === 'PARTIAL' || row.complete !== true)) return 'PARTIAL';
+  const requiredStart = addLocalDays(planningDateLocal, -(LOAD_WINDOWS_DAYS.at(-1) - 1));
+  if (normalized.some((row) => row.coverage_start_local > requiredStart || row.coverage_end_local < planningDateLocal)) return 'PARTIAL';
+  return canonicalActivities.length ? 'COMPLETE' : 'VALID_ZERO';
+}
+
+function canonicalizeRunLoadInput({
+  athleteId,
+  planningInstant = new Date(),
+  planningDateLocal = null,
+  timezone,
+  runs = [],
+  providerCoverage = [],
+  corrections = [],
+} = {}) {
+  const snapshot = buildEvidenceSnapshot({
+    athleteId,
+    planningInstant,
+    timezone,
+    runs,
+    providerCoverage,
+    corrections,
+  });
+  const localPlanningDate = planningDateLocal || snapshot.planning_date_local;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(localPlanningDate || ''))) {
+    throw new Error('canonicalizeRunLoadInput requires a valid planning local date');
+  }
+  const rawRuns = snapshot.evidence.filter((item) => (
+    (item.evidence_type === 'completed_workout' || item.evidence_type === 'fit_activity')
+    && item.value?.activity_kind === 'run'
+  ));
+  const canonicalRuns = snapshot.canonical_activities.filter((item) => item.activity_kind === 'run');
+  const sourceRows = new Map((Array.isArray(runs) ? runs : []).map((row) => [String(row.id || ''), row]));
+  const coverageState = loadInputCoverageState(providerCoverage, planningInstant, canonicalRuns, localPlanningDate);
+  const measurementState = canonicalRuns.some((run) => run.distance_m === null || run.duration_s === null)
+    ? 'UNKNOWN' : canonicalRuns.length ? 'COMPLETE' : 'VALID_ZERO';
+  const loadInputState = ['COMPLETE', 'VALID_ZERO'].includes(coverageState) && measurementState === 'UNKNOWN'
+    ? 'UNKNOWN' : coverageState;
+  const windows = LOAD_WINDOWS_DAYS.map((days) => {
+    const inWindow = (item) => {
+      const date = activityDate(item, timezone);
+      const age = date ? localDateDistance(localPlanningDate, date) : null;
+      return age !== null && age >= 0 && age < days;
+    };
+    const raw = rawRuns.filter(inWindow);
+    const canonical = canonicalRuns.filter(inWindow);
+    const rawDistanceUnknown = raw.some((item) => finite(item.value?.distance_m) === null);
+    const canonicalDistanceUnknown = canonical.some((item) => finite(item.distance_m) === null);
+    const canonicalDurationUnknown = canonical.some((item) => finite(item.duration_s) === null);
+    const rawDistance = rawDistanceUnknown ? null : raw.reduce((sum, item) => sum + Math.round(finite(item.value.distance_m) || 0), 0);
+    const canonicalDistanceObserved = canonicalDistanceUnknown ? null : canonical.reduce((sum, item) => sum + Math.round(finite(item.distance_m) || 0), 0);
+    const canonicalDurationObserved = canonicalDurationUnknown ? null : canonical.reduce((sum, item) => sum + Math.round(finite(item.duration_s) || 0), 0);
+    const incompleteZero = canonical.length === 0 && !['COMPLETE', 'VALID_ZERO'].includes(loadInputState);
+    const distance = incompleteZero ? null : canonicalDistanceObserved;
+    const duration = incompleteZero ? null : canonicalDurationObserved;
+    return {
+      days,
+      start_date_local: addLocalDays(localPlanningDate, -(days - 1)),
+      end_date_local: localPlanningDate,
+      raw_activity_count: raw.length,
+      canonical_activity_count: canonical.length,
+      raw_distance_m: rawDistance,
+      distance_m: distance,
+      duration_s: duration,
+      duplicate_removal_delta_m: rawDistance === null || canonicalDistanceObserved === null
+        ? null : rawDistance - canonicalDistanceObserved,
+      value_state: distance === null ? 'UNKNOWN' : distance === 0 ? 'VALID_ZERO' : 'KNOWN',
+    };
+  });
+  const planningDateObject = new Date(`${localPlanningDate}T12:00:00.000Z`);
+  const planningWeekStart = addLocalDays(localPlanningDate, -((planningDateObject.getUTCDay() + 6) % 7));
+  const runningCoverage = normalizedProviderCoverage(providerCoverage).filter((row) => row.modalities.includes('running'));
+  const incompleteWeekReason = loadInputState === 'FAILED' ? 'FAILED_SYNC'
+    : loadInputState === 'STALE' ? 'EVIDENCE_STALE'
+      : ['MISSING', 'UNKNOWN'].includes(loadInputState) ? 'EVIDENCE_UNKNOWN' : 'PARTIAL_SYNC';
+  const recentNormalWeeks = Array.from({ length: 8 }, (_, index) => {
+    const endDate = addLocalDays(planningWeekStart, -(1 + index * 7));
+    const startDate = addLocalDays(endDate, -6);
+    const coverageComplete = runningCoverage.length > 0 && runningCoverage.every((row) => (
+      row.quality_state === 'COMPLETE'
+      && row.complete === true
+      && row.coverage_start_local <= startDate
+      && row.coverage_end_local >= endDate
+    ));
+    const activities = canonicalRuns.filter((item) => {
+      const date = activityDate(item, timezone);
+      return date && date >= startDate && date <= endDate;
+    });
+    const measurementsComplete = activities.every((item) => finite(item.distance_m) !== null && finite(item.duration_s) !== null);
+    const eligible = coverageComplete && measurementsComplete && ['COMPLETE', 'VALID_ZERO'].includes(loadInputState);
+    return {
+      week_start_local: startDate,
+      week_end_local: endDate,
+      eligible,
+      activity_count: activities.length,
+      distance_m: eligible ? activities.reduce((sum, item) => sum + Math.round(item.distance_m), 0) : null,
+      duration_s: eligible ? activities.reduce((sum, item) => sum + Math.round(item.duration_s), 0) : null,
+      reason_code: eligible ? 'RECENT_LOAD_MAINTAIN'
+        : coverageComplete && !measurementsComplete ? 'EVIDENCE_CONFLICT_UNRESOLVED' : incompleteWeekReason,
+    };
+  }).reverse();
+  const eligibleRecentNormalWeeks = recentNormalWeeks.filter((week) => week.eligible).length;
+  const recentNormalDistances = recentNormalWeeks.filter((week) => week.eligible).map((week) => week.distance_m);
+  const hasObservedLoad = canonicalRuns.some((run) => finite(run.distance_m) > 0);
+  const loadInputConfidence = ['COMPLETE', 'VALID_ZERO'].includes(loadInputState)
+    ? 'HIGH'
+    : hasObservedLoad && ['PARTIAL', 'STALE', 'UNKNOWN'].includes(loadInputState) ? 'LOW' : 'INSUFFICIENT';
+  const recentNormalConfidence = eligibleRecentNormalWeeks >= 6 ? 'HIGH'
+    : eligibleRecentNormalWeeks >= 4 ? 'MEDIUM'
+      : eligibleRecentNormalWeeks === 3 ? 'LOW' : 'INSUFFICIENT';
+  const recentNormalStatus = eligibleRecentNormalWeeks >= 4 ? 'ESTABLISHED'
+    : eligibleRecentNormalWeeks === 3 ? 'PROVISIONAL' : 'INSUFFICIENT';
+  const content = {
+    load_input_schema_version: 1,
+    planning_date_local: localPlanningDate,
+    coverage_state: coverageState,
+    measurement_state: measurementState,
+    load_input_state: loadInputState,
+    load_input_confidence: loadInputConfidence,
+    recent_normal_confidence: recentNormalConfidence,
+    recent_normal_eligible_week_count: eligibleRecentNormalWeeks,
+    recent_normal_weeks: recentNormalWeeks,
+    recent_normal: {
+      status: recentNormalStatus,
+      confidence: recentNormalConfidence,
+      eligible_week_count: eligibleRecentNormalWeeks,
+      median_distance_m: eligibleRecentNormalWeeks >= 3 ? Math.round(median(recentNormalDistances)) : null,
+      lower_bound_m: eligibleRecentNormalWeeks === 3 ? Math.min(...recentNormalDistances)
+        : eligibleRecentNormalWeeks >= 4 ? Math.round(type7Quantile(recentNormalDistances, 0.25)) : null,
+      upper_bound_m: eligibleRecentNormalWeeks === 3 ? Math.max(...recentNormalDistances)
+        : eligibleRecentNormalWeeks >= 4 ? Math.round(type7Quantile(recentNormalDistances, 0.75)) : null,
+    },
+    raw_row_count: rawRuns.length,
+    canonical_activity_count: canonicalRuns.length,
+    duplicate_activity_count: Math.max(0, rawRuns.length - canonicalRuns.length),
+    canonical_run_rows: canonicalRuns.map((activity) => {
+      const source = sourceRows.get(activity.kept_evidence_id) || {};
+      return {
+        id: activity.canonical_activity_id,
+        date: activityDate(activity, timezone),
+        type: 'run',
+        distance_miles: activity.distance_m === null ? null : activity.distance_m / MILE_M,
+        duration_seconds: activity.duration_s,
+        perceived_effort: source.perceived_effort ?? null,
+        avg_heart_rate: activity.heart_rate_resolution?.value ?? null,
+        pain_level: source.pain_level ?? null,
+        post_energy: source.post_energy ?? null,
+        pace_avg: source.pace_avg ?? null,
+        health_source: activity.source_system,
+        created_at: source.created_at || activity.observed_at,
+        heart_rate_zones: source.heart_rate_zones ?? null,
+        workout_metrics_json: source.workout_metrics_json ?? null,
+        watch_mode: source.watch_mode ?? null,
+        watch_activity_type: source.watch_activity_type ?? null,
+        watch_normalized_type: source.watch_normalized_type ?? null,
+      };
+    }),
+    windows,
+    identity_decision_receipt: snapshot.identity_decision_receipt,
+    unresolved_conflicts: snapshot.unresolved_conflicts,
+    reason_codes: [...new Set([
+      ...snapshot.reason_codes,
+      ...(loadInputState === 'PARTIAL' ? ['PARTIAL_SYNC'] : []),
+      ...(loadInputState === 'FAILED' ? ['FAILED_SYNC'] : []),
+      ...(loadInputState === 'STALE' ? ['EVIDENCE_STALE'] : []),
+      ...(['MISSING', 'UNKNOWN'].includes(loadInputState) ? ['EVIDENCE_UNKNOWN'] : []),
+      ...(loadInputState === 'VALID_ZERO' ? ['VALID_ZERO_CONFIRMED'] : []),
+    ])].sort(),
+  };
+  return deepFreeze({ ...content, load_input_hash: prefixedHash(content) });
 }
 
 function resolveHeartRateEvidence(rows = []) {
@@ -1309,8 +1652,12 @@ function buildEvidenceStateArtifacts({ snapshot, athleteState, decisionId, creat
 }
 
 module.exports = {
+  ACTIVITY_IDENTITY_REASON_CODES,
+  ACTIVITY_IDENTITY_RECEIPT_MAX_BYTES,
   DISTANCE_EQUIVALENCE_FLOOR_M,
   DISTANCE_EQUIVALENCE_RATIO,
+  EXACT_START_DURATION_TOLERANCE_RATIO,
+  EXACT_START_DURATION_TOLERANCE_S,
   FRESHNESS_WINDOWS_MS,
   HR_COVERAGE_TOLERANCE_PCT,
   HR_MEDIAN_TOLERANCE_BPM,
@@ -1320,9 +1667,12 @@ module.exports = {
   TEMPORAL_DURATION_TOLERANCE_S,
   TEMPORAL_FINGERPRINT_WINDOW_MS,
   buildAthleteState,
+  buildActivityIdentityReceipt,
   buildAttributedCorrection,
   buildEvidenceSnapshot,
   buildEvidenceStateArtifacts,
+  canonicalizeRunLoadInput,
+  classifyCanonicalActivityIdentity,
   classifyCompletedWeek,
   deriveCrossModalRecentNormal,
   deriveRecentNormalRunning,

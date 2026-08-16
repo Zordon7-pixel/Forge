@@ -35,6 +35,7 @@ const {
   suppressRejectedGoalBackwardCandidates,
 } = require('../lib/goalBackwardDecisionEngine');
 const { assertPipelineLinks, REQUIRED_REASON_CODES } = require('../lib/goalBackwardContracts');
+const { canonicalizeRunLoadInput } = require('../lib/goalBackwardEvidence');
 const {
   buildGoalBackwardReleaseTelemetry,
   emitGoalBackwardReleaseTelemetry,
@@ -1498,16 +1499,19 @@ async function buildConcurrentContext(userId, profile, target, tx = null) {
   const get = tx?.get || dbGet;
   const planningDateISO = /^\d{4}-\d{2}-\d{2}$/.test(String(target.todayISO || '')) ? target.todayISO : getTodayISO();
   const sinceDate = addPolicyDays(planningDateISO, -55);
-  const [runs, performanceRuns, workouts, legacyLifts, recentExercises, healthRow, activeInjury, dailyCheckin] = await Promise.all([
+  const planningWeekStartDate = concurrentPlan.racePlanWindow(planningDateISO, planningDateISO)?.startDate || planningDateISO;
+  const runHistoryStartDate = addPolicyDays(planningWeekStartDate, -56);
+  const [runs, performanceRuns, workouts, legacyLifts, recentExercises, healthRow, activeInjury, dailyCheckin, evidenceCorrections] = await Promise.all([
     all(
-      `SELECT date, distance_miles, duration_seconds, perceived_effort, avg_heart_rate,
+      `SELECT id, date, distance_miles, duration_seconds, perceived_effort, avg_heart_rate,
               pain_level, post_energy, pace_avg, health_source, created_at,
               heart_rate_zones, workout_metrics_json, watch_mode, notes,
-              type, watch_activity_type, watch_normalized_type
+              type, watch_activity_type, watch_normalized_type,
+              health_source_workout_id, health_start_at
        FROM runs
        WHERE user_id=? AND date>=? AND date<=? AND ${runActivitySql()}
        ORDER BY date ASC, created_at ASC`,
-      [userId, sinceDate, planningDateISO]
+      [userId, runHistoryStartDate, planningDateISO]
     ),
     all(
       `SELECT id, date, distance_miles, duration_seconds, health_source, watch_mode,
@@ -1558,10 +1562,44 @@ async function buildConcurrentContext(userId, profile, target, tx = null) {
       console.error('[plans/generate] daily check-in lookup failed:', err.message);
       return null;
     }),
+    all(
+      `SELECT id, user_id, raw_evidence_kind, raw_evidence_ref, revision,
+              corrected_canonical_value_json, canonical_unit, reason_code, reason,
+              attributed_by_user_id, attribution_json, supersedes_correction_id, created_at
+       FROM planning_evidence_corrections
+       WHERE user_id=? AND raw_evidence_kind='run'
+       ORDER BY raw_evidence_ref ASC, revision ASC, id ASC
+       LIMIT 1000`,
+      [userId]
+    ).catch((err) => {
+      console.error('[plans/generate] evidence correction lookup failed:', err.message);
+      return [];
+    }),
   ]);
+  const rawRuns = Array.isArray(runs) ? runs : [];
+  const sensorSources = [...new Set(rawRuns.map((run) => String(run.health_source || '').trim().toLowerCase())
+    .filter((source) => ['apple_health', 'healthkit', 'health_connect', 'garmin', 'garmin_csv', 'fit'].includes(source)))].sort();
+  const planningProviderCoverage = healthRow ? sensorSources.map((source) => ({
+    source_system: source,
+    modalities: ['running'],
+    // health_sync currently attests freshness, not a complete activity interval.
+    // Preserve that uncertainty until the provider supplies a coverage receipt.
+    status: 'unknown',
+    synced_at: healthRow?.synced_at || null,
+  })) : [];
+  const runLoadInput = canonicalizeRunLoadInput({
+    athleteId: userId,
+    planningInstant: `${planningDateISO}T23:59:59.999Z`,
+    planningDateLocal: planningDateISO,
+    timezone: isIanaTimezone(profile.timezone) ? profile.timezone : 'UTC',
+    runs: rawRuns,
+    providerCoverage: planningProviderCoverage,
+    corrections: evidenceCorrections || [],
+  });
+  const planningRuns = runLoadInput.canonical_run_rows;
   const strengthExposures = completedStrengthExposures(workouts, legacyLifts);
   const activityDates = [
-    ...(runs || []).map((run) => String(run.date || '').slice(0, 10)),
+    ...planningRuns.map((run) => String(run.date || '').slice(0, 10)),
     ...strengthExposures.map((exposure) => exposure.date),
   ].filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date)).sort();
   const weeksObserved = activityDates.length
@@ -1585,7 +1623,7 @@ async function buildConcurrentContext(userId, profile, target, tx = null) {
     currentWeekStart,
     planningDateISO,
   );
-  const completedSessions = (runs || []).length + strengthExposures.length;
+  const completedSessions = planningRuns.length + strengthExposures.length;
   const healthSignals = buildHealthSignals(healthRow || {});
   const healthMetrics = healthSignals.metrics || {};
   const healthFreshness = healthMetrics.freshness || {};
@@ -1614,12 +1652,12 @@ async function buildConcurrentContext(userId, profile, target, tx = null) {
   if (severeCheckin) recoveryState = 'low';
   else if (cautionCheckin && !['low', 'recovery'].includes(recoveryState)) recoveryState = 'caution';
   if (activeInjury || profile.comeback_mode || String(profile.injury_notes || '').trim()) recoveryState = 'low';
-  const mileageBaseline = concurrentPlan.estimateWeeklyMileageBaseline(runs, {
+  const mileageBaseline = concurrentPlan.estimateWeeklyMileageBaseline(planningRuns, {
     planningDateISO,
     profileWeeklyMiles: profile.weekly_miles_current,
   });
   const weeklyMileageBaseline = mileageBaseline.weeklyMiles;
-  const acuteRunLoad = summarizeRecentRunLoad(runs, {
+  const acuteRunLoad = summarizeRecentRunLoad(planningRuns, {
     todayISO: planningDateISO,
     weeklyBaseline: weeklyMileageBaseline,
     recoveryState,
@@ -1640,7 +1678,25 @@ async function buildConcurrentContext(userId, profile, target, tx = null) {
     history: {
       weeklyMileageBaseline,
       mileageBaseline,
-      recentRunCount: (runs || []).length,
+      recentRunCount: planningRuns.length,
+      runLoadInput: {
+        load_input_state: runLoadInput.load_input_state,
+        coverage_state: runLoadInput.coverage_state,
+        measurement_state: runLoadInput.measurement_state,
+        load_input_confidence: runLoadInput.load_input_confidence,
+        recent_normal_confidence: runLoadInput.recent_normal_confidence,
+        recent_normal_eligible_week_count: runLoadInput.recent_normal_eligible_week_count,
+        recent_normal_weeks: runLoadInput.recent_normal_weeks,
+        recent_normal: runLoadInput.recent_normal,
+        raw_row_count: runLoadInput.raw_row_count,
+        canonical_activity_count: runLoadInput.canonical_activity_count,
+        duplicate_activity_count: runLoadInput.duplicate_activity_count,
+        windows: runLoadInput.windows,
+        identity_decision_receipt: runLoadInput.identity_decision_receipt,
+        unresolved_conflicts: runLoadInput.unresolved_conflicts,
+        reason_codes: runLoadInput.reason_codes,
+        load_input_hash: runLoadInput.load_input_hash,
+      },
       recentLiftCount: strengthExposures.length,
       acuteRunLoad,
       currentWeekStrength,
@@ -2402,6 +2458,7 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
   const safetyAction = safetyState.action;
   const recentRunCount = Number(state.context?.history?.recentRunCount || 0);
   const weeklyMiles = Number(state.context?.history?.weeklyMileageBaseline || 0);
+  const runLoadInput = state.context?.history?.runLoadInput || null;
   const goals = goalBackwardGoalsForState(userId, state);
   const primaryEventDate = goals[0]?.event_local_date || null;
   const evidenceSnapshotId = `snapshot-${state.inputHash.slice(-24)}`;
@@ -2425,6 +2482,13 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
       recent_normal_running: {
         status: weeklyMiles > 0 ? (recentRunCount >= 8 ? 'ESTABLISHED' : 'PROVISIONAL') : 'INSUFFICIENT',
         median_distance_m: weeklyMiles > 0 ? Math.round(weeklyMiles * 1609.344) : null,
+        confidence: runLoadInput?.recent_normal_confidence || 'INSUFFICIENT',
+        load_input_state: runLoadInput?.load_input_state || 'UNKNOWN',
+        exact_window_totals: runLoadInput?.windows || [],
+        identity_decision_receipt: runLoadInput?.identity_decision_receipt || null,
+        canonical_recent_normal: runLoadInput?.recent_normal || null,
+        unresolved_conflicts: runLoadInput?.unresolved_conflicts || [],
+        reason_codes: runLoadInput?.reason_codes || ['EVIDENCE_UNKNOWN'],
       },
       available_days: availableLocalDates,
       locks: state.planningConstraints?.locks || [],
@@ -6114,6 +6178,7 @@ router._test = {
   applyPlanCandidate,
   assertCandidatePlanningDateCurrent,
   buildDeterministicCandidate,
+  buildConcurrentContext,
   buildCanonicalSurfaceManifest,
   buildGoalBackwardArtifacts,
   canonicalWorkoutStartAccess,

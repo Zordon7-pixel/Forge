@@ -27,6 +27,10 @@ const {
 } = require('../lib/plannedRunMatch');
 const autoUpdatePRs = require('../services/prAuto');
 const { planningInputUnchanged } = require('../lib/planningRevision');
+const {
+  buildActivityIdentityReceipt,
+  classifyCanonicalActivityIdentity,
+} = require('../lib/goalBackwardEvidence');
 
 function hashImportKey(parts) {
   return crypto.createHash('sha256').update(JSON.stringify(parts)).digest('hex');
@@ -503,12 +507,43 @@ function normalizeRow(raw = {}) {
   };
 }
 
-function startsMatch(existingStart, importedStart) {
-  if (!existingStart || !importedStart) return false;
-  const existingTime = new Date(existingStart).getTime();
-  const importedTime = new Date(importedStart).getTime();
-  if (Number.isNaN(existingTime) || Number.isNaN(importedTime)) return false;
-  return Math.abs(existingTime - importedTime) <= 30 * 60 * 1000;
+function selectExistingRunIdentityMatch(userId, candidates, item) {
+  const incoming = {
+    athlete_id: userId,
+    activity_kind: activityKind({ type: item.runType }),
+    observed_at: item.startDate,
+    duration_s: item.durationSeconds,
+    distance_m: Number(item.distanceMiles) * 1609.344,
+    source_system: item.source,
+    source_activity_id: item.sourceWorkoutId,
+    route_points: item.routeCoords,
+  };
+  const matches = (Array.isArray(candidates) ? candidates : []).map((row) => ({
+    row,
+    identity: classifyCanonicalActivityIdentity({
+      athlete_id: userId,
+      activity_kind: activityKind(row),
+      observed_at: row.health_start_at,
+      duration_s: row.duration_seconds,
+      distance_m: Number(row.distance_miles) * 1609.344,
+      source_system: row.health_source,
+      source_activity_id: row.health_source_workout_id,
+      route_points: row.route_coords,
+    }, incoming),
+  })).filter((entry) => entry.identity?.duplicate === true)
+    .sort((left, right) => (
+      left.identity.reason_code.localeCompare(right.identity.reason_code)
+      || String(left.row.id).localeCompare(String(right.row.id))
+    ));
+  const selected = matches[0] || null;
+  return selected ? {
+    run: selected.row,
+    identityDecision: {
+      kept_ref: selected.row.id,
+      suppressed_ref: item.sourceWorkoutId || canonicalImportSourceKey(item),
+      reason_code: selected.identity.reason_code,
+    },
+  } : { run: null, identityDecision: null };
 }
 
 async function findMatchingForgedRun(db, userId, item, { excludeId = null } = {}) {
@@ -563,11 +598,18 @@ async function findExistingRun(db, userId, item) {
        FOR UPDATE`,
       [userId, item.source, item.sourceWorkoutId]
     );
-    if (exact) return exact;
+    if (exact) return {
+      run: exact,
+      identityDecision: {
+        kept_ref: exact.id,
+        suppressed_ref: item.sourceWorkoutId,
+        reason_code: 'EXACT_SOURCE_ACTIVITY_ID',
+      },
+    };
   }
 
   const forgedMatch = await findMatchingForgedRun(db, userId, item);
-  if (forgedMatch) return forgedMatch;
+  if (forgedMatch) return { run: forgedMatch, identityDecision: null };
 
   const candidates = await db.all(
     `SELECT id, date, type, watch_mode, watch_activity_type, watch_normalized_type,
@@ -587,11 +629,7 @@ async function findExistingRun(db, userId, item) {
      FOR UPDATE`,
     [userId, item.date, item.distanceMiles]
   );
-  const incomingKind = activityKind({ type: item.runType });
-  const sameActivity = candidates.filter((row) => activityKind(row) === incomingKind);
-  return sameActivity.find((row) => startsMatch(row.health_start_at, item.startDate))
-    || sameActivity.find((row) => !row.health_start_at)
-    || null;
+  return selectExistingRunIdentityMatch(userId, candidates, item);
 }
 
 function importKeysForItem(item) {
@@ -696,7 +734,7 @@ async function insertRun(db, userId, item) {
   return runId;
 }
 
-async function updateExistingRunHealth(db, userId, existingRun, item) {
+async function updateExistingRunHealth(db, userId, existingRun, item, { preserveRawIdentityFacts = false } = {}) {
   const normalizedZones = item.zoneSeconds || normalizeZoneSeconds();
   const totalZoneSeconds = ['z1', 'z2', 'z3', 'z4', 'z5'].reduce((sum, zone) => sum + asNumber(normalizedZones[zone], 0), 0);
   const zoneParam = totalZoneSeconds > 0 ? JSON.stringify(normalizedZones) : null;
@@ -723,6 +761,7 @@ async function updateExistingRunHealth(db, userId, existingRun, item) {
       && storedSourcePriority === 0
       && Boolean(incomingSource)
       && incomingSource === storedSummarySource;
+  const authoritativeSummaryUpdate = summaryUpdateAllowed && !preserveRawIdentityFacts;
   const sensorSummaryWins = isForgedCapture
     && summaryUpdateAllowed
     && isTrustedSensorSummarySource(incomingSource);
@@ -741,6 +780,7 @@ async function updateExistingRunHealth(db, userId, existingRun, item) {
   const incomingRouteReplacesStored = isTrustedSensorSummarySource(incomingSource)
     && item.routeCoords.length >= 2
     && !preserveForgedRoute
+    && !preserveRawIdentityFacts
     && (item.workoutMetrics.route_status === 'complete' || storedRouteCoords.length < 2);
   const storedRouteIntegrity = classifyRouteIntegrity({
     routeCoords: storedRouteCoords,
@@ -759,7 +799,7 @@ async function updateExistingRunHealth(db, userId, existingRun, item) {
         ? storedWorkoutMetrics.route_status_reason || storedRouteIntegrity.reason
         : storedRouteIntegrity.reason,
     };
-  const baseWorkoutMetrics = summaryUpdateAllowed
+  const baseWorkoutMetrics = authoritativeSummaryUpdate
     ? mergeAuthoritativeWorkoutMetrics(storedWorkoutMetrics, item.workoutMetrics, item.source)
     : isTrustedSensorSummarySource(incomingSource)
       ? mergeMissingWorkoutMetrics(storedWorkoutMetrics, item.workoutMetrics, item.source)
@@ -772,7 +812,7 @@ async function updateExistingRunHealth(db, userId, existingRun, item) {
     ...canonicalRouteMetrics,
     distance_source: resolveCanonicalDistanceSource(storedWorkoutMetrics, existingRun, item, sensorSummaryWins),
     distance_unit: 'miles',
-    ...(summaryUpdateAllowed && isTrustedSensorSummarySource(incomingSource) ? {
+    ...(authoritativeSummaryUpdate && isTrustedSensorSummarySource(incomingSource) ? {
       summary_source: item.source,
     } : {}),
     ...(isForgedCapture ? {
@@ -781,8 +821,8 @@ async function updateExistingRunHealth(db, userId, existingRun, item) {
     ...(incomingRouteReplacesStored ? { route_source: item.source } : {}),
     ...(preserveForgedRoute ? { route_source: 'forged_phone' } : {}),
   };
-  const canonicalDistance = summaryUpdateAllowed && item.distanceMiles > 0 ? item.distanceMiles : null;
-  const canonicalDuration = summaryUpdateAllowed && item.durationSeconds > 0 ? item.durationSeconds : null;
+  const canonicalDistance = authoritativeSummaryUpdate && item.distanceMiles > 0 ? item.distanceMiles : null;
+  const canonicalDuration = authoritativeSummaryUpdate && item.durationSeconds > 0 ? item.durationSeconds : null;
   const canonicalPace = canonicalDistance && canonicalDuration
     ? canonicalDuration / canonicalDistance
     : null;
@@ -800,7 +840,6 @@ async function updateExistingRunHealth(db, userId, existingRun, item) {
   const importedCalories = summaryUpdateAllowed && incomingCalories > 0
     ? Math.round(incomingCalories)
     : 0;
-  const summaryValue = (value) => (summaryUpdateAllowed ? value : null);
   const fillMissingSummaryValue = (value, storedValue) => (
     summaryUpdateAllowed || (
       isTrustedSensorSummarySource(incomingSource)
@@ -813,13 +852,13 @@ async function updateExistingRunHealth(db, userId, existingRun, item) {
   const canonicalMaxHeartRate = fillMissingSummaryValue(item.maxHeartRate, existingRun.max_heart_rate);
   const canonicalMinHeartRate = fillMissingSummaryValue(item.minHeartRate, existingRun.min_heart_rate);
   const canonicalZones = fillMissingSummaryValue(zoneParam, existingRun.heart_rate_zones);
-  const canonicalHealthSource = summaryValue(item.source);
-  const canonicalHealthSourceWorkoutId = summaryValue(item.sourceWorkoutId);
-  const canonicalHealthStartAt = summaryValue(item.startDate);
-  const canonicalHealthEndAt = summaryValue(item.endDate);
-  const canonicalType = summaryValue(item.section === 'activity' ? item.runType : null);
-  const canonicalWatchActivityType = summaryValue(String(item.raw?.type || item.raw?.activityType || 'imported'));
-  const canonicalWatchNormalizedType = summaryValue(item.runType);
+  const canonicalHealthSource = authoritativeSummaryUpdate ? item.source : null;
+  const canonicalHealthSourceWorkoutId = authoritativeSummaryUpdate ? item.sourceWorkoutId : null;
+  const canonicalHealthStartAt = authoritativeSummaryUpdate ? item.startDate : null;
+  const canonicalHealthEndAt = authoritativeSummaryUpdate ? item.endDate : null;
+  const canonicalType = authoritativeSummaryUpdate && item.section === 'activity' ? item.runType : null;
+  const canonicalWatchActivityType = authoritativeSummaryUpdate ? String(item.raw?.type || item.raw?.activityType || 'imported') : null;
+  const canonicalWatchNormalizedType = authoritativeSummaryUpdate ? item.runType : null;
   const canonicalCadence = fillMissingSummaryValue(item.cadenceSpm, existingRun.cadence_spm);
   const canonicalElevationGain = fillMissingSummaryValue(item.elevationGain, existingRun.elevation_gain);
   const canonicalElevationLoss = fillMissingSummaryValue(item.elevationLoss, existingRun.elevation_loss);
@@ -1236,7 +1275,16 @@ async function importItem(db, userId, item) {
         const consolidatedRunId = await consolidateImportedRunIntoForged(db, userId, claimedRun, item);
         if (consolidatedRunId) return { status: 'skipped', runId: consolidatedRunId, changed: true };
         const runId = await updateExistingRunHealth(db, userId, claimedRun, item);
-        return { status: 'skipped', runId, changed: true };
+        return {
+          status: 'skipped',
+          runId,
+          changed: true,
+          identityDecision: {
+            kept_ref: claimedRun.id,
+            suppressed_ref: item.sourceWorkoutId || claim.sourceKey,
+            reason_code: item.sourceWorkoutId ? 'EXACT_SOURCE_ACTIVITY_ID' : 'EXACT_IMPORT_CLAIM',
+          },
+        };
       }
     } else if (claim.activity_kind === 'lift' && claim.activity_id) {
       const claimedLift = await db.get('SELECT id FROM lifts WHERE id=? AND user_id=? LIMIT 1', [claim.activity_id, userId]);
@@ -1246,17 +1294,21 @@ async function importItem(db, userId, item) {
   }
 
   if (item.section === 'run' || item.section === 'activity') {
-    const existing = await findExistingRun(db, userId, item);
+    const existingMatch = await findExistingRun(db, userId, item);
+    const existing = existingMatch.run;
     const consolidatedRunId = await consolidateImportedRunIntoForged(db, userId, existing, item);
     if (consolidatedRunId) {
       await finalizeImportClaim(db, userId, claim, 'run', consolidatedRunId);
-      return { status: 'skipped', runId: consolidatedRunId, changed: true };
+      return { status: 'skipped', runId: consolidatedRunId, changed: true, identityDecision: existingMatch.identityDecision };
     }
     const runId = existing
-      ? await updateExistingRunHealth(db, userId, existing, item)
+      ? await updateExistingRunHealth(db, userId, existing, item, {
+        preserveRawIdentityFacts: Boolean(existingMatch.identityDecision
+          && existingMatch.identityDecision.reason_code !== 'EXACT_SOURCE_ACTIVITY_ID'),
+      })
       : await insertRun(db, userId, item);
     await finalizeImportClaim(db, userId, claim, 'run', runId);
-    return { status: existing ? 'skipped' : 'imported', runId, changed: true };
+    return { status: existing ? 'skipped' : 'imported', runId, changed: true, identityDecision: existingMatch.identityDecision };
   }
 
   const existingLift = await findExistingLift(db, userId, item.date, item.distanceMiles, item.durationSeconds);
@@ -1272,6 +1324,7 @@ async function importRows(userId, rawRows, {
   const errors = [];
   let imported = 0;
   let skipped = 0;
+  const identityDecisions = [];
   const rows = Array.isArray(rawRows) ? rawRows : [];
   const transactionRunner = transaction || ((callback) => withPlanningInputMutation(userId, async (tx) => {
     const outcome = await callback(tx);
@@ -1301,6 +1354,7 @@ async function importRows(userId, rawRows, {
       );
       if (outcome.status === 'imported') imported += 1;
       else skipped += 1;
+      if (outcome.identityDecision) identityDecisions.push(outcome.identityDecision);
 
     } catch (err) {
       console.error(`[import] row ${i} failed:`, err.message);
@@ -1313,7 +1367,7 @@ async function importRows(userId, rawRows, {
     }
   }
 
-  return { imported, skipped, errors };
+  return { imported, skipped, errors, identity_decision_receipt: buildActivityIdentityReceipt(identityDecisions) };
 }
 
 router.post('/health', auth, async (req, res) => {
@@ -1346,6 +1400,7 @@ module.exports._test = {
   importRows,
   normalizeRouteCoords,
   normalizeRow,
+  selectExistingRunIdentityMatch,
   importKeysForItem,
   resolveCanonicalDistanceSource,
   canPreserveExplicitUnlinkedPlan,

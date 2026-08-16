@@ -60,6 +60,8 @@ function createImportHarness() {
           user_id: params[1],
           date: params[2],
           type: params[3],
+          distance_miles: params[4],
+          duration_seconds: params[5],
           perceived_effort: params[6],
           notes: params[7],
           watch_mode: params[13],
@@ -68,13 +70,24 @@ function createImportHarness() {
           health_source: params[16],
           health_source_workout_id: params[17],
           health_start_at: params[18],
+          route_coords: params[23],
           planned_session_json: params[32],
           workout_metrics_json: params[29],
           workout_metric_streams_json: params[30],
         });
         return { changes: 1 };
       }
-      if (sql.includes('UPDATE runs SET')) return { changes: 1 };
+      if (sql.includes('UPDATE runs SET')) {
+        const run = runs.get(params.at(-2));
+        if (run && run.user_id === params.at(-1)) {
+          if (params[0] != null) run.distance_miles = params[0];
+          if (params[1] != null) run.duration_seconds = params[1];
+          if (params[8] != null) run.health_source = params[8];
+          if (params[9] != null) run.health_source_workout_id = params[9];
+          if (params[10] != null) run.health_start_at = params[10];
+        }
+        return { changes: 1 };
+      }
       if (sql.includes('INSERT INTO lifts')) {
         liftInserts += 1;
         lifts.set(params[0], {
@@ -113,14 +126,18 @@ function createImportHarness() {
       if (sql.includes('FROM user_plans') || sql.includes('FROM training_plans')) return null;
       throw new Error(`Unexpected get query: ${sql}`);
     },
-    async all(sql) {
-      if (sql.includes('FROM runs')) return [];
+    async all(sql, params = []) {
+      if (sql.includes('FROM runs') && sql.includes("health_source='forged_hybrid'")) return [];
+      if (sql.includes('FROM runs')) {
+        return [...runs.values()].filter((run) => run.user_id === params[0] && run.date === params[1]);
+      }
       throw new Error(`Unexpected all query: ${sql}`);
     },
   });
 
   return {
     counts: () => ({ runInserts, liftInserts, claims: claims.size }),
+    runs: () => [...runs.values()].map((run) => ({ ...run })),
     transaction,
   };
 }
@@ -155,6 +172,31 @@ async function runHealthImportConcurrencySmoke() {
   assert.equal(runResults.reduce((sum, result) => sum + result.imported, 0), 1);
   assert.equal(runResults.reduce((sum, result) => sum + result.skipped, 0), 1);
   assert.equal(harness.counts().runInserts, 1, 'overlapping run retries create one run');
+  assert.equal(runResults.flatMap((result) => result.identity_decision_receipt.decisions)
+    .some((decision) => decision.reason_code === 'EXACT_SOURCE_ACTIVITY_ID'), true, 'exact concurrent replay emits an identity receipt');
+
+  const reissued = {
+    ...run,
+    sourceWorkoutId: 'run-uuid-reissued',
+    startDate: '2026-07-21T10:01:30.000Z',
+    endDate: '2026-07-21T10:31:32.000Z',
+    distanceMiles: 3.11,
+    durationSeconds: 1802,
+  };
+  const reissuedResult = await _test.importRows(userId, [reissued], options);
+  assert.equal(reissuedResult.imported, 0);
+  assert.equal(reissuedResult.skipped, 1);
+  assert.equal(harness.counts().runInserts, 1, 'changed provider id with near source metrics reuses the canonical run');
+  assert.equal(reissuedResult.identity_decision_receipt.decisions[0].reason_code, 'FUZZY_SOURCE_ACTIVITY_MATCH');
+  assert.doesNotMatch(JSON.stringify(reissuedResult.identity_decision_receipt), /health-import-user|run-uuid/i, 'identity receipt contains no owner or provider identifier');
+  const originalRun = [...harness.runs()].find((stored) => stored.user_id === userId);
+  assert.equal(originalRun.health_source_workout_id, run.sourceWorkoutId, 'fuzzy replay preserves the first immutable provider identity');
+  assert.equal(originalRun.health_start_at, run.startDate, 'fuzzy replay preserves the first observed start fact');
+  assert.equal(originalRun.distance_miles, run.distanceMiles, 'fuzzy replay does not overwrite the first raw summary');
+
+  const otherOwnerResult = await _test.importRows('health-import-other-user', [run], options);
+  assert.equal(otherOwnerResult.imported, 1, 'identity claims and fuzzy matching remain owner scoped');
+  assert.equal(harness.counts().runInserts, 2);
 
   const liftResults = await Promise.all([
     _test.importRows(userId, [lift], options),
@@ -163,7 +205,7 @@ async function runHealthImportConcurrencySmoke() {
   assert.equal(liftResults.reduce((sum, result) => sum + result.imported, 0), 1);
   assert.equal(liftResults.reduce((sum, result) => sum + result.skipped, 0), 1);
   assert.equal(harness.counts().liftInserts, 1, 'overlapping lift retries create one lift');
-  assert.equal(harness.counts().claims, 2, 'each source workout has one durable claim');
+  assert.equal(harness.counts().claims, 4, 'each owner-scoped source workout identity has one durable claim');
 
   const failed = await _test.importRows(userId, [run], {
     transaction: async () => {
@@ -175,7 +217,7 @@ async function runHealthImportConcurrencySmoke() {
   });
   assert.equal(failed.errors[0].retryable, true, 'operational row failures are explicitly retryable');
 
-  console.log('HEALTH IMPORT CONCURRENCY SMOKE OK (8)');
+  console.log('HEALTH IMPORT CONCURRENCY SMOKE OK (14)');
 }
 
 if (require.main === module) {
