@@ -3612,7 +3612,15 @@ async function previewPlanForUser(userId, body = {}, { store = true, goalBackwar
           candidates: goalBackwardShadow.candidates,
           featureMode: goalBackwardMode,
           plan: persistedPlan,
-          sourceRevision: goalBackwardDependencies.sourceRevision || process.env.RAILWAY_GIT_COMMIT_SHA || null,
+          engineVersion: 'goal-backward-coaching-v2.4',
+          sourceRevision: Object.hasOwn(goalBackwardDependencies, 'sourceRevision')
+            ? goalBackwardDependencies.sourceRevision
+            : process.env.FORGE_GOAL_BACKWARD_V24_EXPECTED_REVISION || null,
+          deploymentRevision: Object.hasOwn(goalBackwardDependencies, 'deploymentRevision')
+            ? goalBackwardDependencies.deploymentRevision
+            : process.env.RAILWAY_GIT_COMMIT_SHA
+              || process.env.FORGE_GOAL_BACKWARD_V24_DEPLOYED_REVISION
+              || null,
         });
         const decisionArtifact = artifacts.find((artifact) => artifact.artifact_kind === 'planning_decision');
         const currentBindings = {

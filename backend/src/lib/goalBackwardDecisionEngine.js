@@ -705,6 +705,7 @@ function buildGoalBackwardPlanningDecision(input = {}) {
     const feasibility = goalFeasibilities.find((entry) => entry.goal_id === goal.goal_id);
     return { ...clone(goal), feasibility_status: feasibility?.status || 'unvalidated' };
   });
+  const recentNormalRunning = athleteState.recent_normal_running || {};
   const createdAt = decisionCreatedAt(input, planningDate);
   const decisionContent = {
     created_at: createdAt,
@@ -760,6 +761,16 @@ function buildGoalBackwardPlanningDecision(input = {}) {
         presentation_floor_required: true,
       },
     ] : [],
+    recent_normal_running: {
+      status: recentNormalRunning.status || null,
+      median_distance_m: recentNormalRunning.median_distance_m ?? null,
+      observed_lower_bound_distance_m: recentNormalRunning.observed_lower_bound_distance_m ?? null,
+      confidence: recentNormalRunning.confidence || null,
+      load_input_confidence: recentNormalRunning.load_input_confidence || null,
+      load_input_state: recentNormalRunning.load_input_state || null,
+      reason_codes: clone(Array.isArray(recentNormalRunning.reason_codes)
+        ? recentNormalRunning.reason_codes : []),
+    },
     recent_normal_running_range_m: {
       low: athleteState.recent_normal_running?.lower_bound_m ?? null,
       median: athleteState.recent_normal_running?.median_distance_m ?? null,

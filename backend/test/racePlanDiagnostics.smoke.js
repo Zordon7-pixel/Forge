@@ -15,6 +15,7 @@ const {
   persistPipelineArtifacts,
 } = require('../src/lib/planCandidateLifecycle');
 const { assertPipelineLinks } = require('../src/lib/goalBackwardContracts');
+const { canonicalHash } = require('../src/lib/racePlanPolicy');
 
 function plan({ miles = 3, workoutId = 'easy_aerobic', title = 'Easy run' } = {}) {
   return {
@@ -75,6 +76,221 @@ function candidateFor(activePlan, nextPlan) {
       },
     },
   };
+}
+
+function buildC4Fixture() {
+  const targetUserId = 'synthetic-c4-owner';
+  const decisionId = 'decision-c4-complete';
+  const planGenerationCandidateId = 'candidate-row-c4';
+  const selectedCandidateId = 'candidate-skeleton-c4';
+  const selectedCandidateHash = 'b'.repeat(64);
+  const decisionHash = 'c'.repeat(64);
+  const canonicalSessionSetHash = 'd'.repeat(64);
+  const sourceRevision = '7c1bfdc4240fdb7ade6efb4d12402cd30e500ea2';
+  const safetyState = { action: 'NORMAL', scope: [], reason_codes: [] };
+  const safetyStateHash = `sha256:${canonicalHash(safetyState)}`;
+  const generatedAt = '2026-08-16T15:00:00.000Z';
+  const releaseIdentity = {
+    policy_version: 'goal-backward-planning-policy-v1',
+    engine_version: 'goal-backward-coaching-v2.4',
+    feature_mode: 'preview',
+    generation_timestamp: generatedAt,
+    source_revision: sourceRevision,
+    deployment_revision: sourceRevision,
+  };
+  const sessions = [{
+    session_id: 'session-c4-1',
+    session_revision: 1,
+    content_hash: 'e'.repeat(64),
+    local_date: '2026-08-17',
+    role: 'PRIMARY_KEY',
+    workout_family: 'long_aerobic',
+  }];
+  const payloads = {
+    evidence_snapshot: {
+      evidence_snapshot_id: 'snapshot-c4',
+      planning_date_local: '2026-08-16',
+      source: 'REDACTED_SHADOW_INPUT',
+      source_revision: sourceRevision,
+      deployment_revision: sourceRevision,
+      release_identity: releaseIdentity,
+    },
+    athlete_state: {
+      athlete_state_revision: 4,
+      recovery_state: 'NORMAL',
+      recent_normal_running: {
+        status: 'ESTABLISHED',
+        median_distance_m: 32000,
+        reason_codes: ['RECENT_LOAD_MAINTAIN'],
+      },
+      safety_state: safetyState,
+      safety_state_hash: safetyStateHash,
+    },
+    planning_decision: {
+      decision_id: decisionId,
+      decision_hash: decisionHash,
+      planning_date_local: '2026-08-16',
+      plan_revision: 8,
+      goal_set: {
+        primary_goal_id: 'goal-c4',
+        goals: [{
+          goal_id: 'goal-c4',
+          source_revision: 3,
+          priority: 'A',
+          goal_type: 'performance',
+          event_state: 'SCHEDULED',
+        }],
+      },
+      phase_decision: { phase: 'DEVELOPMENT', reason_codes: ['DEVELOPMENT_ENTRY'] },
+      candidate_ids: [selectedCandidateId],
+      selected_candidate_id: selectedCandidateId,
+      selected_candidate_hash: selectedCandidateHash,
+      candidate_enumeration: { retained_count: 1, total_unique_candidate_count: 1 },
+    },
+    candidate_week: {
+      plan_generation_candidate_ref: `sha256:${canonicalHash(planGenerationCandidateId)}`,
+      current_candidate_hash: `sha256:${selectedCandidateHash}`,
+      authoritative_engine: 'goal-backward-coaching-v2.4',
+      candidates: [{
+        candidate_id: selectedCandidateId,
+        candidate_hash: selectedCandidateHash,
+        valid: true,
+        reason_codes: [],
+        ranking_tuple: { due_primary_exposures_satisfied: 1 },
+      }],
+    },
+    validator_result: {
+      plan_generation_candidate_ref: `sha256:${canonicalHash(planGenerationCandidateId)}`,
+      results: [{
+        candidate_id: selectedCandidateId,
+        candidate_hash: selectedCandidateHash,
+        valid: true,
+        validators_executed: ['schedule', 'canonical_session_set'],
+        reason_codes: [],
+      }],
+      material_review: { review_contract_complete: true },
+    },
+    canonical_session_set: {
+      plan_generation_candidate_ref: `sha256:${canonicalHash(planGenerationCandidateId)}`,
+      canonical_sessions_materialized: true,
+      selected_candidate_id: selectedCandidateId,
+      selected_candidate_hash: selectedCandidateHash,
+      candidate_id: selectedCandidateId,
+      candidate_hash: selectedCandidateHash,
+      decision_id: decisionId,
+      decision_hash: decisionHash,
+      plan_id: 'plan-c4',
+      plan_revision: 9,
+      content_hash: canonicalSessionSetHash,
+      sessions,
+    },
+    surface_manifest: {
+      schema_version: 'goal_backward_surface_manifest_v1',
+      surface_revision: 1,
+      feature_mode: 'preview',
+      v24_surface_enabled: true,
+      status: 'accepted',
+      identity: {
+        decision_id: decisionId,
+        decision_hash: decisionHash,
+        candidate_id: selectedCandidateId,
+        candidate_revision: 1,
+        candidate_hash: selectedCandidateHash,
+        plan_id: 'plan-c4',
+        plan_revision: 9,
+        canonical_session_set_hash: canonicalSessionSetHash,
+        athlete_state_revision: 4,
+        safety_state_hash: safetyStateHash,
+        goal_revisions: { 'goal-c4': 3 },
+      },
+      sessions,
+    },
+  };
+  const artifacts = [];
+  let parentArtifactId = null;
+  for (const [index, kind] of [
+    'evidence_snapshot', 'athlete_state', 'planning_decision', 'candidate_week',
+    'validator_result', 'canonical_session_set', 'surface_manifest',
+  ].entries()) {
+    const artifact = buildPipelineArtifact({
+      id: `artifact-c4-${kind}`,
+      userId: targetUserId,
+      kind,
+      decisionId,
+      parentArtifactId,
+      planGenerationCandidateId: index >= 3 ? planGenerationCandidateId : null,
+      payload: payloads[kind],
+      createdAt: generatedAt,
+    });
+    artifacts.push(artifact);
+    parentArtifactId = artifact.id;
+  }
+  const decisionArtifact = artifacts.find((artifact) => artifact.artifact_kind === 'planning_decision');
+  const candidateRow = {
+    id: planGenerationCandidateId,
+    user_id: targetUserId,
+    status: 'preview',
+    training_plan_id: 'plan-c4-old',
+    user_plan_id: 'assignment-c4-old',
+    active_plan_version: 8,
+    planning_input_revision: 4,
+    planning_date_local: '2026-08-16',
+    timezone_offset_minutes: 0,
+    candidate_hash: `sha256:${selectedCandidateHash}`,
+    engine_version: 'goal-backward-coaching-v2.4',
+    policy_version: 'goal-backward-planning-policy-v1',
+    decision_id: decisionId,
+    candidate_revision: 1,
+    athlete_state_revision: 4,
+    safety_state_hash: safetyStateHash,
+    goal_revisions_json: { 'goal-c4': 3 },
+    lock_revision: 0,
+    edit_revision: 0,
+    surface_revision: 1,
+    export_revision: 1,
+    feature_mode: 'preview',
+    selected_candidate_hash: selectedCandidateHash,
+    material_change_json: {
+      review_contract_complete: true,
+      reason_codes: [],
+      changes: [],
+      apply_bindings: {
+        decision_hash: decisionHash,
+        decision_artifact: {
+          artifact_id: decisionArtifact.id,
+          revision: decisionArtifact.revision,
+          content_hash: decisionArtifact.content_hash,
+        },
+        planning_timezone: 'UTC',
+        evidence_fingerprint: `sha256:${'f'.repeat(64)}`,
+        constraint_fingerprint: `sha256:${'1'.repeat(64)}`,
+        goal_fingerprint: `sha256:${'2'.repeat(64)}`,
+        policy_fingerprint: `sha256:${'3'.repeat(64)}`,
+      },
+    },
+    created_at: generatedAt,
+  };
+  return { artifacts, candidateRow, decisionId, targetUserId };
+}
+
+function replaceC4Payload(fixture, kind, transform) {
+  const index = fixture.artifacts.findIndex((artifact) => artifact.artifact_kind === kind);
+  const prior = fixture.artifacts[index];
+  const payload = JSON.parse(JSON.stringify(prior.payload_json));
+  transform(payload);
+  fixture.artifacts[index] = buildPipelineArtifact({
+    id: prior.id,
+    userId: prior.user_id,
+    kind: prior.artifact_kind,
+    decisionId: prior.decision_id,
+    parentArtifactId: prior.parent_artifact_id,
+    planGenerationCandidateId: prior.plan_generation_candidate_id,
+    schemaVersion: prior.schema_version,
+    policyVersion: prior.policy_version,
+    revision: prior.revision,
+    payload,
+    createdAt: prior.created_at,
+  });
 }
 
 function responseRecorder() {
@@ -230,7 +446,10 @@ async function run() {
     }),
     (error) => error.code === 'DIAGNOSTIC_ARTIFACT_REDACTION_REQUIRED' && error.status === 422,
   );
-  for (const forbiddenKey of ['ssn', 'socialSecurityNumber', 'homeAddress', 'creditCardNumber']) {
+  for (const forbiddenKey of [
+    'ssn', 'socialSecurityNumber', 'homeAddress', 'creditCardNumber',
+    'accountId', 'credentials', 'rawHealthSamples',
+  ]) {
     assert.throws(
       () => buildPipelineArtifact({
         id: `artifact-pii-${forbiddenKey}`,
@@ -252,6 +471,121 @@ async function run() {
     }),
     (error) => error.code === 'DIAGNOSTIC_ARTIFACT_HASH_MISMATCH' && error.status === 422,
   );
+
+  const completeC4 = buildC4Fixture();
+  const completeDiagnostic = buildDecisionArtifactDiagnosticBundle({
+    targetUserId: completeC4.targetUserId,
+    decisionId: completeC4.decisionId,
+    artifactRows: completeC4.artifacts,
+    candidateRow: completeC4.candidateRow,
+  });
+  assert.equal(completeDiagnostic.production_complete, true);
+  assert.deepEqual(completeDiagnostic.reason_codes, []);
+  assert.equal(completeDiagnostic.stages.length, 11);
+  assert.equal(completeDiagnostic.stages.every((stage) => stage.complete === true), true);
+  assert.equal(completeDiagnostic.release_identity.revisions_match, true);
+  assert.equal(completeDiagnostic.canonical_binding.verified, true);
+  assert.ok(Buffer.byteLength(JSON.stringify(completeDiagnostic), 'utf8') < 256 * 1024);
+
+  const missingStageCases = [
+    ['evidence_snapshot', (payload) => { delete payload.evidence_snapshot_id; }, 'C4_EVIDENCE_IDENTITY_MISSING'],
+    ['athlete_state', (payload) => { delete payload.athlete_state_revision; }, 'C4_ATHLETE_STATE_MISSING'],
+    ['planning_decision', (payload) => { delete payload.goal_set; }, 'C4_GOAL_SET_MISSING'],
+    ['athlete_state', (payload) => { delete payload.recent_normal_running; }, 'C4_RECENT_NORMAL_SAFETY_STATE_MISSING'],
+    ['planning_decision', (payload) => { delete payload.phase_decision; }, 'C4_PHASE_DECISION_MISSING'],
+    ['planning_decision', (payload) => { delete payload.decision_hash; }, 'C4_PLANNING_DECISION_MISSING'],
+    ['candidate_week', (payload) => { payload.candidates = []; }, 'C4_CANDIDATE_SET_MISSING'],
+    ['validator_result', (payload) => { payload.results = []; }, 'C4_VALIDATOR_RECEIPTS_MISSING'],
+    ['canonical_session_set', (payload) => { payload.sessions = []; }, 'C4_CANONICAL_SESSIONS_MISSING'],
+    ['canonical_session_set', (payload) => { delete payload.plan_revision; }, 'C4_PLAN_REVISION_MISSING'],
+    ['surface_manifest', (payload) => { delete payload.identity; }, 'C4_SURFACE_IDENTITY_MISSING'],
+  ];
+  for (const [kind, mutate, reasonCode] of missingStageCases) {
+    const fixture = buildC4Fixture();
+    replaceC4Payload(fixture, kind, mutate);
+    const diagnostic = buildDecisionArtifactDiagnosticBundle({
+      targetUserId: fixture.targetUserId,
+      decisionId: fixture.decisionId,
+      artifactRows: fixture.artifacts,
+      candidateRow: fixture.candidateRow,
+    });
+    assert.equal(diagnostic.production_complete, false, reasonCode);
+    assert.equal(diagnostic.reason_codes.includes(reasonCode), true, reasonCode);
+  }
+
+  const membershipMismatch = buildC4Fixture();
+  replaceC4Payload(membershipMismatch, 'candidate_week', (payload) => {
+    payload.candidates[0].candidate_id = 'different-candidate';
+  });
+  assert.equal(buildDecisionArtifactDiagnosticBundle({
+    targetUserId: membershipMismatch.targetUserId,
+    decisionId: membershipMismatch.decisionId,
+    artifactRows: membershipMismatch.artifacts,
+    candidateRow: membershipMismatch.candidateRow,
+  }).reason_codes.includes('C4_SELECTED_CANDIDATE_NOT_IN_SET'), true);
+
+  const canonicalMismatch = buildC4Fixture();
+  replaceC4Payload(canonicalMismatch, 'canonical_session_set', (payload) => {
+    payload.selected_candidate_hash = '9'.repeat(64);
+  });
+  assert.equal(buildDecisionArtifactDiagnosticBundle({
+    targetUserId: canonicalMismatch.targetUserId,
+    decisionId: canonicalMismatch.decisionId,
+    artifactRows: canonicalMismatch.artifacts,
+    candidateRow: canonicalMismatch.candidateRow,
+  }).reason_codes.includes('C4_CANONICAL_PLAN_BINDING_MISMATCH'), true);
+
+  for (const [field, value, reasonCode] of [
+    ['source_revision', null, 'C4_SOURCE_REVISION_MISSING'],
+    ['deployment_revision', null, 'C4_DEPLOYMENT_REVISION_MISSING'],
+    ['deployment_revision', '1111111111111111111111111111111111111111', 'C4_RELEASE_REVISION_MISMATCH'],
+  ]) {
+    const fixture = buildC4Fixture();
+    replaceC4Payload(fixture, 'evidence_snapshot', (payload) => {
+      if (value === null) delete payload.release_identity[field];
+      else payload.release_identity[field] = value;
+    });
+    const diagnostic = buildDecisionArtifactDiagnosticBundle({
+      targetUserId: fixture.targetUserId,
+      decisionId: fixture.decisionId,
+      artifactRows: fixture.artifacts,
+      candidateRow: fixture.candidateRow,
+    });
+    assert.equal(diagnostic.production_complete, false, reasonCode);
+    assert.equal(diagnostic.reason_codes.includes(reasonCode), true, reasonCode);
+  }
+
+  const staleSurface = buildC4Fixture();
+  replaceC4Payload(staleSurface, 'surface_manifest', (payload) => {
+    payload.identity.candidate_revision = 2;
+  });
+  assert.equal(buildDecisionArtifactDiagnosticBundle({
+    targetUserId: staleSurface.targetUserId,
+    decisionId: staleSurface.decisionId,
+    artifactRows: staleSurface.artifacts,
+    candidateRow: staleSurface.candidateRow,
+  }).reason_codes.includes('C4_SURFACE_IDENTITY_STALE'), true);
+
+  const missingBinding = buildC4Fixture();
+  const missingBindingDiagnostic = buildDecisionArtifactDiagnosticBundle({
+    targetUserId: missingBinding.targetUserId,
+    decisionId: missingBinding.decisionId,
+    artifactRows: missingBinding.artifacts,
+    candidateRow: null,
+  });
+  assert.equal(missingBindingDiagnostic.production_complete, false);
+  assert.equal(missingBindingDiagnostic.reason_codes.includes('C4_CANONICAL_BINDING_MISSING'), true);
+
+  const brokenParent = buildC4Fixture();
+  brokenParent.artifacts[4] = { ...brokenParent.artifacts[4], parent_artifact_id: brokenParent.artifacts[1].id };
+  const brokenParentDiagnostic = buildDecisionArtifactDiagnosticBundle({
+    targetUserId: brokenParent.targetUserId,
+    decisionId: brokenParent.decisionId,
+    artifactRows: brokenParent.artifacts,
+    candidateRow: brokenParent.candidateRow,
+  });
+  assert.equal(brokenParentDiagnostic.production_complete, false);
+  assert.equal(brokenParentDiagnostic.reason_codes.includes('C4_PIPELINE_PARENT_MISMATCH'), true);
 
   const releaseDiagnostic = buildGoalBackwardReleaseDiagnosticBundle({
     telemetry: [
@@ -308,6 +642,7 @@ async function run() {
   assert.doesNotMatch(routeSource, /INSERT INTO plan_generation_candidates[\s\S]*plan-audit/);
   assert.match(routeSource, /router\.get\('\/plan-audit\/:decisionId\/artifacts', auth, requireDiagnosticsAdmin/);
   assert.match(routeSource, /FROM planning_pipeline_artifacts[\s\S]*WHERE user_id=\? AND decision_id=\?/);
+  assert.match(routeSource, /FROM plan_generation_candidates[\s\S]*WHERE id=\? AND user_id=\? AND decision_id=\?/);
   assert.match(routeSource, /LIMIT 32/);
   assert.match(routeSource, /router\.get\('\/goal-backward-release', auth, requireDiagnosticsAdmin/);
   assert.match(routeSource, /goalBackwardReleaseTelemetrySnapshot\(\)/);

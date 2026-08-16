@@ -16,6 +16,7 @@ const {
 } = require('../src/lib/racePlanCandidateEngine');
 const { targetRef: goalBackwardTargetRef } = require('../src/lib/betaPlanRollout');
 const candidateLifecycle = require('../src/lib/planCandidateLifecycle');
+const { buildDecisionArtifactDiagnosticBundle } = require('../src/lib/racePlanDiagnostics');
 const adaptation = require('../src/lib/adaptationEngine');
 const planSchema = require('../src/lib/planSchema');
 const { motivationalRunName } = require('../../shared/runDisplayName.mjs');
@@ -1783,6 +1784,7 @@ async function checkHyroxCandidateImmediateAdoption() {
           cohortRefs: [goalBackwardTargetRef(ownerId)],
           alertEntries: [],
           sourceRevision: 'd4169340b99469895372dd45ef6505c4e25d049e',
+          deploymentRevision: 'd4169340b99469895372dd45ef6505c4e25d049e',
           inspectDecision: (result) => { authorizedResult = result; },
         },
       });
@@ -1916,6 +1918,17 @@ async function checkHyroxCandidateImmediateAdoption() {
     assert.equal(canonicalPayload.canonical_sessions_materialized, true);
     assert.ok(canonicalPayload.content_hash);
     assert.ok(authorizedPreview.surfaceManifest?.identity?.canonical_session_set_hash);
+    const productionDiagnostic = buildDecisionArtifactDiagnosticBundle({
+      targetUserId: ownerId,
+      decisionId: authorizedRow.decision_id,
+      artifactRows: authorizedDecisionArtifacts,
+      candidateRow: authorizedRow,
+    });
+    assert.equal(productionDiagnostic.production_complete, true,
+      JSON.stringify(productionDiagnostic.reason_codes));
+    assert.equal(productionDiagnostic.stages.length, 11);
+    assert.equal(productionDiagnostic.canonical_binding.verified, true);
+    assert.equal(productionDiagnostic.release_identity.revisions_match, true);
     assert.equal(currentAssignment().id, activePlanBeforeForcedFailure, 'preview cannot mutate the active plan');
 
     const previewResponse = await invoke(preview, {

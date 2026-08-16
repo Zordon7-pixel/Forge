@@ -191,11 +191,28 @@ router.get('/plan-audit/:decisionId/artifacts', auth, requireDiagnosticsAdmin, a
       [targetUserId, decisionId]
     );
     if (!artifacts.length) return res.status(404).json({ error: 'No linked artifacts were found for that decision.' });
+    const candidateIds = [...new Set(artifacts
+      .map((artifact) => artifact.plan_generation_candidate_id)
+      .filter(Boolean))];
+    const candidateRow = candidateIds.length === 1 ? await dbGet(
+      `SELECT id, user_id, status, training_plan_id, user_plan_id, active_plan_version,
+              planning_input_revision, planning_date_local, timezone_offset_minutes,
+              candidate_hash, engine_version, policy_version, decision_id,
+              candidate_revision, athlete_state_revision, safety_state_hash,
+              goal_revisions_json, lock_revision, edit_revision, surface_revision,
+              export_revision, feature_mode, selected_candidate_hash,
+              material_change_json, created_at
+       FROM plan_generation_candidates
+       WHERE id=? AND user_id=? AND decision_id=?
+       LIMIT 1`,
+      [candidateIds[0], targetUserId, decisionId]
+    ) : null;
 
     const bundle = buildDecisionArtifactDiagnosticBundle({
       targetUserId,
       decisionId,
       artifactRows: artifacts,
+      candidateRow,
     });
     await withTransaction(async (tx) => {
       await tx.run(

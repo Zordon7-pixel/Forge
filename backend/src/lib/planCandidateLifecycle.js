@@ -42,6 +42,8 @@ const GOAL_BACKWARD_FEATURE_MODES = new Set(FEATURE_MODES);
 const HASH_PATTERN = /^(?:sha256:)?[a-f0-9]{64}$/;
 const MAX_BINDING_JSON_BYTES = 16 * 1024;
 const ADDITIONAL_PII_KEYS = new Set([
+  'account_id',
+  'account_ids',
   'account_number',
   'bank_account',
   'bank_account_number',
@@ -49,12 +51,16 @@ const ADDITIONAL_PII_KEYS = new Set([
   'card_number',
   'credit_card',
   'credit_card_number',
+  'credential',
+  'credentials',
   'driver_license',
   'drivers_license',
   'emergency_contact',
   'financial_account',
   'government_id',
   'home_address',
+  'health_sample',
+  'health_samples',
   'iban',
   'insurance_id',
   'mailing_address',
@@ -64,6 +70,8 @@ const ADDITIONAL_PII_KEYS = new Set([
   'passport_number',
   'residential_address',
   'routing_number',
+  'raw_health_sample',
+  'raw_health_samples',
   'social_security',
   'social_security_number',
   'ssn',
@@ -92,7 +100,11 @@ function findAdditionalPiiViolations(value, path = 'payload_json', found = []) {
   if (!value || typeof value !== 'object') return found;
   for (const [key, nested] of Object.entries(value)) {
     const childPath = `${path}.${key}`;
-    if (ADDITIONAL_PII_KEYS.has(normalizedArtifactKey(key))) found.push(childPath);
+    const normalized = normalizedArtifactKey(key);
+    if (ADDITIONAL_PII_KEYS.has(normalized)
+      || normalized.includes('health_sample')
+      || /(?:^|_)account_ids?$/.test(normalized)
+      || /(?:^|_)credentials?$/.test(normalized)) found.push(childPath);
     findAdditionalPiiViolations(nested, childPath, found);
   }
   return found;
@@ -958,6 +970,9 @@ function buildGoalBackwardDecisionArtifacts({
   athleteState = {},
   candidates = [],
   sourceRevision = null,
+  deploymentRevision = null,
+  engineVersion = null,
+  featureMode = 'shadow',
   createdAt = new Date().toISOString(),
 } = {}) {
   if (!decision?.decision_id || !planGenerationCandidateId) {
@@ -972,25 +987,66 @@ function buildGoalBackwardDecisionArtifacts({
     reason_codes: candidate.validation?.reason_codes || [],
     ranking_tuple: candidate.ranking_tuple || null,
   }));
-  const boundedSourceRevision = /^[a-zA-Z0-9._:+-]{7,128}$/.test(String(sourceRevision || ''))
-    ? String(sourceRevision) : null;
+  const boundedSourceRevision = /^[a-f0-9]{7,64}$/i.test(String(sourceRevision || ''))
+    ? String(sourceRevision).toLowerCase() : null;
+  const boundedDeploymentRevision = /^[a-f0-9]{7,64}$/i.test(String(deploymentRevision || ''))
+    ? String(deploymentRevision).toLowerCase() : null;
+  const boundedEngineVersion = /^[a-zA-Z0-9._:+-]{1,128}$/.test(String(engineVersion || ''))
+    ? String(engineVersion) : null;
+  const boundedFeatureMode = GOAL_BACKWARD_FEATURE_MODES.has(featureMode) ? featureMode : null;
+  const generationTimestamp = new Date(createdAt).toISOString();
+  const athleteStateRevision = Number.isSafeInteger(Number(
+    decision.athlete_state_revision ?? athleteState.athlete_state_revision,
+  )) && Number(decision.athlete_state_revision ?? athleteState.athlete_state_revision) >= 1
+    ? Number(decision.athlete_state_revision ?? athleteState.athlete_state_revision) : null;
+  const goals = (Array.isArray(decision.active_goals) ? decision.active_goals : []).map((goal) => ({
+    goal_id: String(goal.goal_id || ''),
+    source_revision: Number.isSafeInteger(Number(goal.source_revision)) && Number(goal.source_revision) >= 1
+      ? Number(goal.source_revision) : null,
+    priority: goal.priority || 'UNSPECIFIED',
+    goal_type: goal.goal_type || null,
+    event_state: goal.event_state || 'UNKNOWN',
+    event_local_date: goal.event_local_date || null,
+  }));
+  const safetyState = decision.safety_state || { action: athleteState.safety_action || 'NORMAL' };
   const payloads = {
     evidence_snapshot: {
       evidence_snapshot_id: decision.evidence_snapshot_id || null,
       planning_date_local: decision.planning_date_local,
       source: 'REDACTED_SHADOW_INPUT',
       ...(boundedSourceRevision ? { source_revision: boundedSourceRevision } : {}),
+      ...(boundedDeploymentRevision ? { deployment_revision: boundedDeploymentRevision } : {}),
+      release_identity: {
+        policy_version: PLANNING_POLICY_VERSION,
+        engine_version: boundedEngineVersion,
+        feature_mode: boundedFeatureMode,
+        generation_timestamp: generationTimestamp,
+        source_revision: boundedSourceRevision,
+        deployment_revision: boundedDeploymentRevision,
+      },
     },
     athlete_state: {
-      athlete_state_revision: Math.max(1, Number(decision.athlete_state_revision || athleteState.athlete_state_revision || 1)),
+      athlete_state_revision: athleteStateRevision,
       recovery_state: decision.recovery_state || athleteState.recovery_state || 'UNKNOWN',
-      safety_state_hash: prefixedHash(decision.safety_state || { action: athleteState.safety_action || 'NORMAL' }),
+      recent_normal_running: decision.recent_normal_running || athleteState.recent_normal_running || null,
+      safety_state: safetyState,
+      safety_state_hash: prefixedHash(safetyState),
     },
     planning_decision: {
       decision_id: decision.decision_id,
       decision_hash: decision.decision_hash,
       planning_date_local: decision.planning_date_local,
+      plan_revision: Number.isSafeInteger(Number(decision.plan_revision)) && Number(decision.plan_revision) >= 0
+        ? Number(decision.plan_revision) : null,
+      goal_set: {
+        primary_goal_id: decision.primary_goal_id || null,
+        goals,
+      },
       phase: decision.phase,
+      phase_decision: {
+        phase: decision.phase,
+        reason_codes: decision.phase_reason_codes || [],
+      },
       candidate_ids: decision.candidate_ids || [],
       selected_candidate_id: decision.selected_candidate_id || null,
       selected_candidate_hash: decision.selected_candidate_hash || null,
@@ -1001,7 +1057,7 @@ function buildGoalBackwardDecisionArtifacts({
     candidate_week: {
       plan_generation_candidate_ref: planGenerationCandidateRef,
       current_candidate_hash: currentCandidateHash,
-      authoritative_engine: 'current',
+      authoritative_engine: boundedFeatureMode === 'shadow' ? 'current' : boundedEngineVersion,
       candidates: candidateSummaries,
     },
     validator_result: {
