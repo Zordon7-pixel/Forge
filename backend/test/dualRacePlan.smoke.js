@@ -70,6 +70,68 @@ function checkTimePrescriptionDistanceAuthority() {
     withObservedPace.candidate_material[0].source_session.canonical_distance_derivation,
     'observed_pace_conservative_110_percent_v1',
   );
+  let coercionHookCalls = 0;
+  const coercionObject = {};
+  Object.defineProperty(coercionObject, Symbol.toPrimitive, {
+    enumerable: false,
+    get() {
+      coercionHookCalls += 1;
+      return () => 600;
+    },
+  });
+  const coercionProxy = new Proxy({}, {
+    get(_target, property) {
+      if ([Symbol.toPrimitive, 'valueOf', 'toString'].includes(property)) coercionHookCalls += 1;
+      return property === Symbol.toPrimitive ? () => 600 : undefined;
+    },
+  });
+  const hostilePaceDistances = ['600', [600], true, coercionObject, coercionProxy].map((pace) => {
+    const candidate = buildGoalBackwardCandidateSkeleton({
+      decision,
+      legacy_road_candidate_material: legacyMaterial,
+      hybrid_running_projection_pace_s_per_mile: pace,
+      validate: false,
+    });
+    return candidate.sessions[0].distance_m;
+  });
+  assert.deepEqual(hostilePaceDistances, [null, null, null, null, null],
+    'observed pace authority accepts only a primitive finite number');
+  const hostileMaterialDistances = [
+    { duration_min: '60', distance_miles: 6 },
+    { duration_min: 60, distance_miles: [6] },
+    { duration_min: coercionObject, distance_miles: 6 },
+  ].map((hostile) => {
+    try {
+      const candidate = buildGoalBackwardCandidateSkeleton({
+        decision,
+        legacy_road_candidate_material: [{ ...legacyMaterial[0], ...hostile }],
+        hybrid_running_projection_pace_s_per_mile: 600,
+        validate: false,
+      });
+      return candidate.sessions[0].distance_m;
+    } catch (_error) {
+      return null;
+    }
+  });
+  assert.deepEqual(hostileMaterialDistances, [null, null, null],
+    'duration and distance material accept only primitive finite numbers');
+  assert.equal(coercionHookCalls, 0, 'numeric validation never invokes object coercion hooks');
+  for (const pace of [180, 2400]) {
+    assert.ok(buildGoalBackwardCandidateSkeleton({
+      decision,
+      legacy_road_candidate_material: legacyMaterial,
+      hybrid_running_projection_pace_s_per_mile: pace,
+      validate: false,
+    }).sessions[0].distance_m > 0, `${pace} s/mi remains inside the closed observed-pace boundary`);
+  }
+  for (const pace of [179.999, 2400.001, Number.NaN, Number.POSITIVE_INFINITY]) {
+    assert.equal(buildGoalBackwardCandidateSkeleton({
+      decision,
+      legacy_road_candidate_material: legacyMaterial,
+      hybrid_running_projection_pace_s_per_mile: pace,
+      validate: false,
+    }).sessions[0].distance_m, null, `${pace} cannot authorize a canonical time-derived distance`);
+  }
 }
 
 function checkC1ProjectionAggregationBoundary() {
@@ -1262,6 +1324,7 @@ async function checkHyroxCandidateImmediateAdoption() {
   const originalDb = require.cache[dbModulePath];
   const originalPlansRoute = require.cache[plansRoutePath];
   const RealDate = global.Date;
+  const originalGenerateHyroxPlan = hyrox.generateHyroxPlan;
   const previousMode = process.env.FORGE_GOAL_BACKWARD_V24_MODE;
   const previousAudience = process.env.FORGE_GOAL_BACKWARD_V24_AUDIENCE;
   process.env.FORGE_GOAL_BACKWARD_V24_MODE = 'shadow';
@@ -1847,6 +1910,75 @@ async function checkHyroxCandidateImmediateAdoption() {
       diagnostics: authorizedResult?.search_diagnostics,
       violations: authorizedResult?.candidates.map((candidate) => candidate.validation.violations),
     }));
+    assert.ok(plansRouter._test.applicableGoalBackwardPlan(authorizedPreview.plan, authorizedResult),
+      'the exact one-to-one current/decision goal binding remains applicable');
+    const bindingMutationCases = [
+      {
+        label: 'duplicate plan goal',
+        mutate(plan) { plan.goals[1] = { ...plan.goals[0] }; },
+      },
+      {
+        label: 'blank plan race id',
+        mutate(plan) { plan.goals[0].raceId = ''; },
+      },
+      {
+        label: 'contradictory plan race aliases',
+        mutate(plan) { plan.goals[0].race_id = 'race-other'; },
+      },
+      {
+        label: 'mismatched optional goal id',
+        mutate(plan) { plan.goals[0].goal_id = 'goal-other'; },
+      },
+      {
+        label: 'mismatched optional owner',
+        mutate(plan) { plan.goal_feasibilities[0].athlete_id = '22222222-2222-4222-8222-222222222222'; },
+      },
+      {
+        label: 'mismatched optional event revision',
+        mutate(plan) { plan.goal_feasibilities[0].event_revision = 999; },
+      },
+      {
+        label: 'duplicate plan feasibility',
+        mutate(plan) { plan.goal_feasibilities[1] = { ...plan.goal_feasibilities[0] }; },
+      },
+      {
+        label: 'contradictory feasibility race aliases',
+        mutate(plan) { plan.goal_feasibilities[0].raceId = 'race-other'; },
+      },
+      {
+        label: 'unknown current feasibility status',
+        mutate(plan) { plan.goal_feasibilities[0].feasibility = 'hostile'; },
+      },
+      {
+        label: 'duplicate decision feasibility',
+        mutate(_plan, result) { result.decision.goal_feasibilities[1] = { ...result.decision.goal_feasibilities[0] }; },
+      },
+      {
+        label: 'unsupported decision feasibility',
+        mutate(_plan, result) { result.decision.goal_feasibilities[0].status = 'not_currently_supported'; },
+      },
+      {
+        label: 'cross-owner active goal',
+        mutate(_plan, result) {
+          result.decision.active_goals[1].athlete_id = '22222222-2222-4222-8222-222222222222';
+        },
+      },
+      {
+        label: 'foreign owner active goal set',
+        mutate(_plan, result) {
+          result.decision.active_goals.forEach((goal) => {
+            goal.athlete_id = '22222222-2222-4222-8222-222222222222';
+          });
+        },
+      },
+    ];
+    for (const mutation of bindingMutationCases) {
+      const plan = JSON.parse(JSON.stringify(authorizedPreview.plan));
+      const result = JSON.parse(JSON.stringify(authorizedResult));
+      mutation.mutate(plan, result);
+      assert.equal(plansRouter._test.applicableGoalBackwardPlan(plan, result), null,
+        `${mutation.label} fails the closed feasibility binding`);
+    }
     assert.equal(authorizedResult.decision.training_age_class, 'ESTABLISHED');
     assert.ok(authorizedResult.selected_candidate, 'realistic established mileage produces an eligible bounded candidate');
     assert.ok(authorizedResult.candidates.length <= 64);
@@ -1860,15 +1992,30 @@ async function checkHyroxCandidateImmediateAdoption() {
       'recovery_run', 'easy_run', 'long_aerobic', 'steady_run', 'threshold_run',
       'interval_run', 'race_rhythm_run', 'assessment', 'race',
     ]);
+    const canonicalPlanRunningMeters = (plan) => (plan?.weeks || [])
+      .flatMap((week) => week.days || [])
+      .flatMap((day) => day.sessions || [])
+      .reduce((sum, session) => (
+        sum + (runningFamilies.has(session.workout_family)
+          ? Number(session.derived_totals?.distance_m || 0) : 0)
+      ), 0);
     const selectedRunningMeters = authorizedResult.selected_candidate.sessions.reduce((sum, session) => (
       sum + (runningFamilies.has(session.workout_family) ? Number(session.derived_totals?.distance_m || 0) : 0)
     ), 0);
+    assert.ok(selectedRunningMeters >= 13815,
+      'the exact 4/5/4/6/3 history stays above the 13,815m incident regression floor');
     assert.equal(selectedRunningMeters, 14690);
     assert.ok(selectedRunningMeters >= authorizedResult.decision.minimum_weekly_demand.running_m,
       'selected candidate satisfies the full realistic-volume weekly running floor');
     assert.equal(authorizedResult.selected_candidate.validation.validator_results.find((entry) => (
       entry.validator === 'cross_modal_ceiling'
     )).valid, true);
+    const authorizedMaterialDose = authorizedResult.selected_candidate.validation.validator_results.find((entry) => (
+      entry.validator === 'material_dose'
+    ));
+    assert.equal(authorizedMaterialDose.valid, true);
+    assert.equal(authorizedMaterialDose.receipt.reduction_authorization, null,
+      'realistic history needs no synthetic BLOCK scope to retain material running dose');
     const selectedRunningPrimary = authorizedResult.selected_candidate.skeleton_sessions.find((session) => (
       session.role === 'PRIMARY_KEY' && runningFamilies.has(session.workout_family)
     ));
@@ -1984,6 +2131,58 @@ async function checkHyroxCandidateImmediateAdoption() {
 
     process.env.FORGE_GOAL_BACKWARD_V24_MODE = 'on';
     process.env.FORGE_GOAL_BACKWARD_V24_AUDIENCE = 'all';
+    const malformedFeasibilityResults = [];
+    for (const malformed of [
+      {
+        label: 'empty',
+        mutate(plan) { plan.goal_feasibilities = []; },
+      },
+      {
+        label: 'ghost',
+        mutate(plan) {
+          plan.goal_feasibilities.push({
+            race_id: 'R_GHOST', race_name: 'Ghost race', feasibility: 'unsafe',
+            reasons: ['UNBOUND_HOSTILE_ROW'],
+          });
+        },
+      },
+    ]) {
+      hyrox.generateHyroxPlan = (...args) => {
+        const plan = JSON.parse(JSON.stringify(originalGenerateHyroxPlan(...args)));
+        malformed.mutate(plan);
+        return plan;
+      };
+      const candidateCountBefore = candidates.size;
+      const artifactCountBefore = planningArtifacts.size;
+      const activeBefore = currentAssignment().id;
+      const result = await invoke(preview, {
+        ...requestBase,
+        body: {
+          ...requestClock,
+          race_ids: ['hyrox', 'army'],
+          target: { trainingDays: ['Tue', 'Thu', 'Sat', 'Sun'], runDaysPerWeek: 4, liftingEnabled: false },
+        },
+      });
+      malformedFeasibilityResults.push({
+        label: malformed.label,
+        statusCode: result.statusCode,
+        code: result.payload?.code,
+        candidateWrites: candidates.size - candidateCountBefore,
+        artifactWrites: planningArtifacts.size - artifactCountBefore,
+        activePlanChanged: currentAssignment().id !== activeBefore,
+      });
+    }
+    hyrox.generateHyroxPlan = originalGenerateHyroxPlan;
+    assert.deepEqual(malformedFeasibilityResults, [
+      {
+        label: 'empty', statusCode: 409, code: 'GOAL_BACKWARD_GENERATION_FAILED',
+        candidateWrites: 0, artifactWrites: 0, activePlanChanged: false,
+      },
+      {
+        label: 'ghost', statusCode: 409, code: 'GOAL_BACKWARD_GENERATION_FAILED',
+        candidateWrites: 0, artifactWrites: 0, activePlanChanged: false,
+      },
+    ], 'public on/all rejects malformed feasibility coverage before candidate or artifact persistence');
     const previewResponse = await invoke(preview, {
       ...requestBase,
       body: {
@@ -2002,6 +2201,9 @@ async function checkHyroxCandidateImmediateAdoption() {
       ['unvalidated', 'unvalidated'],
       'the executable plan-level verdict does not erase goal-level assessment requirements',
     );
+    const historicalCollapsedDoseM = Math.round(6.7 * 1609.344);
+    assert.ok(canonicalPlanRunningMeters(previewResponse.payload.plan.plan_data) > historicalCollapsedDoseM,
+      'public on/all never surfaces the historical 6.7-mile collapse for the established HYROX plus road fixture');
     const shadowRow = candidates.get(previewResponse.payload.candidate_id);
     const shadowArtifacts = [...planningArtifacts.values()]
       .filter((artifact) => artifact.decision_id === shadowRow.decision_id);
@@ -2064,6 +2266,11 @@ async function checkHyroxCandidateImmediateAdoption() {
     assert.deepEqual(immediate.payload.plan.plan_data.goals.map((goal) => goal.raceId), ['hyrox', 'army']);
     assert.equal(immediate.payload.plan.plan_data.goals[0].division, 'doubles');
     assert.equal(immediate.payload.plan.plan_data.goals[0].goalTimeSeconds, 3600);
+    assert.equal(
+      canonicalPlanRunningMeters(immediate.payload.plan.plan_data),
+      canonicalPlanRunningMeters(previewResponse.payload.plan.plan_data),
+      'the authoritative applied plan retains the exact reviewed running dose',
+    );
     assert.notEqual(immediate.payload.user_plan.id, 'assignment-hyrox', 'the predecessor is not returned on the accepted local date');
 
     const combinedPlan = immediate.payload.plan.plan_data;
@@ -2232,6 +2439,12 @@ async function checkHyroxCandidateImmediateAdoption() {
     });
     assert.equal(roadPreview.statusCode, 201, JSON.stringify(roadPreview.payload));
     assert.ok(['supported', 'stretch'].includes(roadPreview.payload.plan.plan_data.overall_feasibility));
+    assert.ok(roadPreview.payload.plan.plan_data.goal_feasibilities.every((entry) => (
+      entry.feasibility === 'unvalidated'
+        && entry.legacy_feasibility === 'unsafe'
+        && entry.reasons.includes('ASSESSMENT_REQUIRED')
+        && entry.legacy_reasons.every((reason) => entry.reasons.includes(reason))
+    )), 'v2.4 stretch truth retains the exact bound legacy goal risks without treating them as support');
     const roadApplyBody = {
       ...sundayClock,
       choice: 'train_for_target',
@@ -2258,6 +2471,7 @@ async function checkHyroxCandidateImmediateAdoption() {
     assert.equal(roadReplay.payload.replay, true);
   } finally {
     global.Date = RealDate;
+    hyrox.generateHyroxPlan = originalGenerateHyroxPlan;
     if (previousMode === undefined) delete process.env.FORGE_GOAL_BACKWARD_V24_MODE;
     else process.env.FORGE_GOAL_BACKWARD_V24_MODE = previousMode;
     if (previousAudience === undefined) delete process.env.FORGE_GOAL_BACKWARD_V24_AUDIENCE;

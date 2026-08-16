@@ -917,12 +917,8 @@ function legacyGoalBackwardFamily(session = {}) {
 }
 
 function finiteCandidateMaterialNumber(...values) {
-  const value = values.find((candidate) => (
-    candidate !== null && candidate !== undefined
-      && !(typeof candidate === 'string' && candidate.trim() === '')
-  ));
-  const numeric = Number(value);
-  return Number.isFinite(numeric) ? numeric : null;
+  const value = values.find((candidate) => candidate !== null && candidate !== undefined);
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
 function roadCandidateMaterial(source) {
