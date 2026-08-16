@@ -78,9 +78,12 @@ function evidenceRef(value) {
   return raw ? prefixedHash({ evidence_identity: raw.slice(0, 512) }) : null;
 }
 
+function evidenceRefSet(values) {
+  return [...new Set((Array.isArray(values) ? values : []).map(evidenceRef).filter(Boolean))].sort();
+}
+
 function evidenceRefs(values) {
-  return [...new Set((Array.isArray(values) ? values : []).map(evidenceRef).filter(Boolean))]
-    .sort().slice(0, 16);
+  return evidenceRefSet(values).slice(0, 16);
 }
 
 function sessionsFrom(container = {}) {
@@ -117,17 +120,32 @@ function distanceMeters(session = {}) {
   return miles === null ? null : miles * 1609.344;
 }
 
-function knownRunningDistance(container = {}, options = {}) {
+function runningDistanceObservation(container = {}, options = {}) {
   const start = dateOnly(options.start);
   const end = dateOnly(options.end);
-  const running = sessionsFrom(container).filter((session) => {
-    if (!RUNNING_FAMILIES.has(sessionFamily(session))) return false;
+  const windowRequested = Object.hasOwn(options, 'start') || Object.hasOwn(options, 'end');
+  if (windowRequested && (!start || !end || start > end)) {
+    return { state: 'UNKNOWN', distance_m: null, reason: 'RUNNING_WINDOW_UNKNOWN' };
+  }
+  const running = [];
+  for (const session of sessionsFrom(container)) {
+    if (!RUNNING_FAMILIES.has(sessionFamily(session))) continue;
     const date = dateOnly(session.scheduled_local_date ?? session.date);
-    return !(start && date && date < start) && !(end && date && date > end);
-  });
+    if (windowRequested && !date) {
+      return { state: 'UNKNOWN', distance_m: null, reason: 'RUNNING_DATE_UNKNOWN' };
+    }
+    if ((start && date < start) || (end && date > end)) continue;
+    running.push(session);
+  }
   const distances = running.map(distanceMeters);
-  if (distances.some((distance) => distance === null)) return null;
-  return round(distances.reduce((sum, distance) => sum + distance, 0), 3);
+  if (distances.some((distance) => distance === null)) {
+    return { state: 'UNKNOWN', distance_m: null, reason: 'RUNNING_DISTANCE_UNKNOWN' };
+  }
+  return {
+    state: 'KNOWN',
+    distance_m: round(distances.reduce((sum, distance) => sum + distance, 0), 3),
+    reason: null,
+  };
 }
 
 function normalizeScope(input = {}) {
@@ -136,26 +154,29 @@ function normalizeScope(input = {}) {
   const reasonCode = String(input.reason_code || '').toUpperCase();
   const effectiveFrom = dateOnly(input.effective_from_local);
   const expiresAtRaw = String(input.expires_at || '');
+  const expiresOnLocal = dateOnly(input.expires_on_local) || dateOnly(expiresAtRaw);
   const reevaluateAtRaw = String(input.reevaluate_at || '');
   const expiresAt = Number.isNaN(new Date(expiresAtRaw).getTime()) ? null : new Date(expiresAtRaw).toISOString();
   const reevaluateAt = Number.isNaN(new Date(reevaluateAtRaw).getTime()) ? null : new Date(reevaluateAtRaw).toISOString();
   const modalities = [...new Set((Array.isArray(input.affected_modalities) ? input.affected_modalities : [])
     .map((value) => String(value || '').toLowerCase()).filter((value) => BLOCK_MODALITIES.has(value)))].sort();
-  const decisiveEvidenceIds = evidenceRefs(input.decisive_evidence_ids);
+  const allDecisiveEvidenceIds = evidenceRefSet(input.decisive_evidence_ids);
+  const decisiveEvidenceIds = allDecisiveEvidenceIds.slice(0, 16);
   const actionRaw = String(input.action || '').toUpperCase();
   const action = actionRaw ? (SCOPE_ACTIONS.has(actionRaw) ? actionRaw : null) : null;
   if (!['ACUTE', 'BLOCK'].includes(scopeKind) || !SCOPED_REASONS.has(reasonCode)
-    || !effectiveFrom || !expiresAt || !reevaluateAt || !modalities.length || !decisiveEvidenceIds.length
+    || !effectiveFrom || !expiresAt || !expiresOnLocal || !reevaluateAt || !modalities.length
+    || !decisiveEvidenceIds.length || allDecisiveEvidenceIds.length > 16
     || (actionRaw && !action)) return null;
-  const expiresLocalDate = dateOnly(expiresAt);
   const effectiveStart = new Date(`${effectiveFrom}T00:00:00.000Z`).getTime();
-  if (!expiresLocalDate || expiresLocalDate <= effectiveFrom
+  if (expiresOnLocal <= effectiveFrom
     || new Date(reevaluateAt).getTime() < effectiveStart
     || new Date(reevaluateAt).getTime() > new Date(expiresAt).getTime()) return null;
   const normalized = {
     scope_kind: scopeKind,
     reason_code: reasonCode,
     effective_from_local: effectiveFrom,
+    expires_on_local: expiresOnLocal,
     expires_at: expiresAt,
     reevaluate_at: reevaluateAt,
     affected_modalities: modalities,
@@ -172,24 +193,55 @@ function normalizeScope(input = {}) {
   });
 }
 
-function acuteScope({ planningDate, evidenceSnapshotId, reasonCode, modalities, action }) {
+function acuteScope({ planningDate, evidenceIds, reasonCode, modalities, action }) {
+  const expiresOnLocal = addDays(planningDate, 2);
   const normalized = normalizeScope({
     scope_kind: 'ACUTE',
     reason_code: reasonCode,
     effective_from_local: planningDate,
-    expires_at: `${addDays(planningDate, 2)}T00:00:00.000Z`,
+    expires_on_local: expiresOnLocal,
+    expires_at: `${expiresOnLocal}T12:00:00.000Z`,
     reevaluate_at: `${addDays(planningDate, 1)}T12:00:00.000Z`,
     affected_modalities: modalities,
-    decisive_evidence_ids: [evidenceSnapshotId],
+    decisive_evidence_ids: evidenceIds,
     authorizes_material_reduction: false,
     action,
   });
   return normalized;
 }
 
+function blockScope({
+  planningDate,
+  candidateWindowEnd,
+  evidenceIds,
+  reasonCode,
+  modalities,
+  action,
+  authorizesMaterialReduction,
+  crossModalLedgerHash = null,
+  measuredRunningCeilingM = null,
+}) {
+  const expiresOnLocal = addDays(candidateWindowEnd, 1);
+  return normalizeScope({
+    scope_kind: 'BLOCK',
+    reason_code: reasonCode,
+    effective_from_local: planningDate,
+    expires_on_local: expiresOnLocal,
+    expires_at: `${expiresOnLocal}T12:00:00.000Z`,
+    reevaluate_at: `${addDays(planningDate, 1)}T12:00:00.000Z`,
+    affected_modalities: modalities,
+    decisive_evidence_ids: evidenceIds,
+    authorizes_material_reduction: authorizesMaterialReduction === true,
+    action,
+    cross_modal_ledger_hash: crossModalLedgerHash,
+    measured_running_ceiling_m: measuredRunningCeilingM,
+  });
+}
+
 function deriveScopedRecoveryState(input = {}) {
   const planningDate = dateOnly(input.planning_date_local);
   if (!planningDate) throw new Error('planning_date_local is required for recovery scope');
+  const candidateWindowEnd = dateOnly(input.candidate_window_end_local) || addDays(planningDate, 6);
   const context = input.context || {};
   const safety = context.safety || {};
   const recovery = context.recovery || {};
@@ -209,25 +261,41 @@ function deriveScopedRecoveryState(input = {}) {
     planning_date_local: planningDate,
     recovery_synced_at: recovery.syncedAt || null,
   });
+  const injuryEvidenceIds = [
+    safety.activeInjury === true ? `${snapshotId}:active-injury` : null,
+    safety.injuryNotesPresent === true ? `${snapshotId}:injury-notes` : null,
+    flags.has('injured') ? `${snapshotId}:injured-checkin` : null,
+  ].filter(Boolean);
+  const illnessEvidenceIds = [
+    illness ? `${snapshotId}:illness-checkin` : null,
+    illness && lowReadiness && recovery.syncedAt
+      && (recovery.available === true || recovery.dataAvailable === true)
+      ? `${snapshotId}:corroborating-recovery` : null,
+  ].filter(Boolean);
   if (injury) {
     recoveryState = 'RECOVERY';
     safetyAction = 'MONITOR';
-    const scope = acuteScope({
+    const scope = blockScope({
       planningDate,
-      evidenceSnapshotId: snapshotId,
+      candidateWindowEnd,
+      evidenceIds: injuryEvidenceIds,
       reasonCode: 'INJURY_SCOPE',
       modalities: ['running_impact', 'lower_body_muscular'],
       action: 'MODIFY_IMPACT',
+      authorizesMaterialReduction: injuryEvidenceIds.length >= 2,
     });
     if (scope) scopes.push(scope);
   } else if (illness) {
     recoveryState = 'RECOVERY';
     safetyAction = 'MONITOR';
-    const scope = acuteScope({
-      planningDate,
-      evidenceSnapshotId: snapshotId,
-      reasonCode: 'ILLNESS_RECOVERY',
-      modalities: ['running_quality', 'metabolic'],
+    const corroborated = illnessEvidenceIds.length >= 2;
+    const scope = corroborated ? blockScope({
+      planningDate, candidateWindowEnd, evidenceIds: illnessEvidenceIds,
+      reasonCode: 'ILLNESS_RECOVERY', modalities: ['running_quality', 'metabolic'],
+      action: 'NO_HIGH_INTENSITY', authorizesMaterialReduction: true,
+    }) : acuteScope({
+      planningDate, evidenceIds: illnessEvidenceIds,
+      reasonCode: 'ILLNESS_RECOVERY', modalities: ['running_quality', 'metabolic'],
       action: 'NO_HIGH_INTENSITY',
     });
     if (scope) scopes.push(scope);
@@ -236,7 +304,7 @@ function deriveScopedRecoveryState(input = {}) {
     safetyAction = 'MONITOR';
     const scope = acuteScope({
       planningDate,
-      evidenceSnapshotId: snapshotId,
+      evidenceIds: [snapshotId],
       reasonCode: 'RECOVERY_VOLUME_REDUCTION',
       modalities: ['running_quality', 'lower_body_intensity'],
       action: 'NO_HIGH_INTENSITY',
@@ -250,6 +318,79 @@ function deriveScopedRecoveryState(input = {}) {
     reason_codes: [...new Set(scopes.map((scope) => scope.reason_code))],
   };
   return deepFreeze({ ...receipt, receipt_hash: prefixedHash(receipt) });
+}
+
+function deriveMaterialReductionScope(input = {}) {
+  const planningDate = dateOnly(input.planning_date_local);
+  const candidateWindowEnd = dateOnly(input.candidate_window_end_local);
+  const decision = input.decision;
+  if (!planningDate || !candidateWindowEnd || planningDate > candidateWindowEnd
+    || !decision?.decision_id || !decision?.decision_hash) return null;
+  const scopedRecovery = input.scoped_recovery_state || {};
+  const existing = (Array.isArray(scopedRecovery.scopes) ? scopedRecovery.scopes : [])
+    .map(normalizeScope)
+    .filter((scope) => scope && scope.scope_kind === 'BLOCK'
+      && scope.authorizes_material_reduction === true
+      && scopeCoversCandidate(scope, {
+        planning_date_local: planningDate,
+        candidate_window_end_local: candidateWindowEnd,
+      }));
+  if (existing.length) {
+    const priority = ['INJURY_SCOPE', 'ILLNESS_RECOVERY', 'RECOVERY_VOLUME_REDUCTION'];
+    return existing.sort((left, right) => (
+      priority.indexOf(left.reason_code) - priority.indexOf(right.reason_code)
+      || left.scope_hash.localeCompare(right.scope_hash)
+    ))[0];
+  }
+  const decisionEvidenceIds = [
+    ...(decision.evidence_used || []).map((entry) => (
+      typeof entry === 'string' ? entry : entry?.evidence_id ?? entry?.id
+    )),
+    ...(input.decision_evidence_ids || []),
+    input.evidence_snapshot_id,
+  ].filter(Boolean);
+  if (String(decision.phase || '').toUpperCase() === 'TAPER_RACE_WEEK') {
+    return blockScope({
+      planningDate, candidateWindowEnd, evidenceIds: decisionEvidenceIds,
+      reasonCode: 'TAPER_VOLUME_REDUCTION', modalities: ['running', 'running_impact'],
+      action: null, authorizesMaterialReduction: true,
+    });
+  }
+  const recent = input.recent_normal_running || {};
+  const returning = String(decision.consistency_state || '').toUpperCase() === 'RETURNING'
+    || String(decision.training_age_class || '').toUpperCase() === 'RETURNING'
+    || String(recent.status || '').toUpperCase() === 'TRAINING_GAP';
+  if (returning) {
+    return blockScope({
+      planningDate,
+      candidateWindowEnd,
+      evidenceIds: [
+        ...(recent.evidence_ids || []),
+        ...(input.load_evidence_ids || []),
+        input.evidence_snapshot_id,
+      ].filter(Boolean),
+      reasonCode: 'TRAINING_GAP_REBUILD',
+      modalities: ['running', 'running_impact'],
+      action: null,
+      authorizesMaterialReduction: true,
+    });
+  }
+  const ledger = input.cross_modal_ledger;
+  const measuredRunningCeilingM = finiteNonnegative(input.measured_running_ceiling_m);
+  if (ledger?.valid === true && measuredRunningCeilingM !== null) {
+    return blockScope({
+      planningDate,
+      candidateWindowEnd,
+      evidenceIds: ledger.decisive_evidence_ids,
+      reasonCode: 'CROSS_MODAL_FATIGUE_LIMIT',
+      modalities: ['running_impact', 'lower_body_muscular'],
+      action: null,
+      authorizesMaterialReduction: true,
+      crossModalLedgerHash: ledger.receipt_hash,
+      measuredRunningCeilingM,
+    });
+  }
+  return null;
 }
 
 function buildCrossModalDoseLedger(input = {}) {
@@ -269,12 +410,14 @@ function buildCrossModalDoseLedger(input = {}) {
     && dimensions.every((entry) => ['ESTABLISHED', 'PROVISIONAL'].includes(entry.status)
       && ['HIGH', 'MEDIUM', 'LOW'].includes(entry.confidence)
       && entry.normal_ceiling !== null && entry.authorized_ceiling !== null);
-  const decisiveEvidenceIds = evidenceRefs(input.decisive_evidence_ids);
+  const allDecisiveEvidenceIds = evidenceRefSet(input.decisive_evidence_ids);
+  const decisiveEvidenceIds = allDecisiveEvidenceIds.slice(0, 16);
   const ledger = {
-    valid: complete && decisiveEvidenceIds.length > 0,
+    valid: complete && decisiveEvidenceIds.length > 0 && allDecisiveEvidenceIds.length <= 16,
     dimensions,
     decisive_evidence_ids: decisiveEvidenceIds,
-    reason_codes: complete && decisiveEvidenceIds.length > 0 ? [] : ['CROSS_MODAL_FATIGUE_LIMIT'],
+    reason_codes: complete && decisiveEvidenceIds.length > 0 && allDecisiveEvidenceIds.length <= 16
+      ? [] : ['CROSS_MODAL_FATIGUE_LIMIT'],
   };
   const receipt = deepFreeze({ ...ledger, receipt_hash: prefixedHash(ledger) });
   if (Buffer.byteLength(JSON.stringify(receipt), 'utf8') > MAX_RECEIPT_BYTES) {
@@ -312,7 +455,7 @@ function scopeCoversCandidate(scope, input, { requireMaterialAuthorization = tru
     || (requireMaterialAuthorization && scope.authorizes_material_reduction !== true)) return false;
   const start = dateOnly(input.planning_date_local);
   const end = dateOnly(input.candidate_window_end_local);
-  const expiry = dateOnly(scope.expires_at);
+  const expiry = scope.expires_on_local;
   return Boolean(start && end && scope.effective_from_local <= start && expiry && expiry > end);
 }
 
@@ -348,7 +491,8 @@ function evaluateMaterialDose(input = {}) {
     start: input.planning_date_local,
     end: input.candidate_window_end_local,
   };
-  const candidateRunning = knownRunningDistance(input.candidate || {}, window);
+  const candidateObservation = runningDistanceObservation(input.candidate || {}, window);
+  const candidateRunning = candidateObservation.distance_m;
   const recent = input.recent_normal_running || {};
   const comparators = [];
   const baseWithoutComparators = {
@@ -361,21 +505,49 @@ function evaluateMaterialDose(input = {}) {
     const receipt = {
       ...baseWithoutComparators,
       valid: false,
-      violations: [{ code: 'RECENT_NORMAL_INSUFFICIENT', reason: 'CANDIDATE_RUNNING_DISTANCE_UNKNOWN' }],
+      violations: [{
+        code: 'RECENT_NORMAL_INSUFFICIENT',
+        reason: candidateObservation.reason === 'RUNNING_DATE_UNKNOWN'
+          ? 'CANDIDATE_RUNNING_DATE_UNKNOWN'
+          : candidateObservation.reason === 'RUNNING_WINDOW_UNKNOWN'
+            ? 'CANDIDATE_RUNNING_WINDOW_UNKNOWN' : 'CANDIDATE_RUNNING_DISTANCE_UNKNOWN',
+      }],
       reason_codes: ['RECENT_NORMAL_INSUFFICIENT'],
     };
     return deepFreeze({ ...receipt, receipt_hash: prefixedHash(receipt) });
   }
-  const recentMedian = finiteNonnegative(recent.median_distance_m);
+  const recentMedian = finiteNonnegative(
+    String(recent.status || '').toUpperCase() === 'TRAINING_GAP'
+      ? recent.historical_median_distance_m ?? recent.median_distance_m
+      : recent.median_distance_m,
+  );
   const recentConfidence = String(recent.confidence || '').toUpperCase();
-  if (['ESTABLISHED', 'PROVISIONAL'].includes(String(recent.status || '').toUpperCase())
+  if (['ESTABLISHED', 'PROVISIONAL', 'TRAINING_GAP'].includes(String(recent.status || '').toUpperCase())
     && recentMedian !== null && recentMedian > 0 && ['HIGH', 'MEDIUM', 'LOW'].includes(recentConfidence)) {
     comparators.push(comparatorReceipt('CANONICAL_RECENT_NORMAL', recentMedian, {
       candidateRunning,
       evidenceIds: recent.evidence_ids,
     }));
   }
-  const activeRunning = input.active_applied_plan ? knownRunningDistance(input.active_applied_plan, window) : null;
+  const activeObservation = input.active_applied_plan
+    ? runningDistanceObservation(input.active_applied_plan, window) : null;
+  if (activeObservation?.state === 'UNKNOWN') {
+    const receipt = {
+      ...baseWithoutComparators,
+      comparators,
+      valid: false,
+      violations: [{
+        code: 'RECENT_NORMAL_INSUFFICIENT',
+        reason: activeObservation.reason === 'RUNNING_DATE_UNKNOWN'
+          ? 'ACTIVE_PLAN_RUNNING_DATE_UNKNOWN'
+          : activeObservation.reason === 'RUNNING_WINDOW_UNKNOWN'
+            ? 'ACTIVE_PLAN_RUNNING_WINDOW_UNKNOWN' : 'ACTIVE_PLAN_RUNNING_DISTANCE_UNKNOWN',
+      }],
+      reason_codes: ['RECENT_NORMAL_INSUFFICIENT'],
+    };
+    return deepFreeze({ ...receipt, receipt_hash: prefixedHash(receipt) });
+  }
+  const activeRunning = activeObservation?.distance_m ?? null;
   if (activeRunning !== null && activeRunning > 0) {
     comparators.push(comparatorReceipt('ACTIVE_APPLIED_PLAN', activeRunning, {
       candidateRunning,
@@ -431,7 +603,7 @@ function evaluateMaterialDose(input = {}) {
     reduction_authorization: authorization,
     violations,
     reason_codes: violations.length ? ['RECENT_LOAD_MAINTAIN']
-      : authorization ? [authorization.reason_code] : ['RECENT_LOAD_MAINTAIN'],
+      : authorization ? [authorization.reason_code] : [],
   };
   const finalReceipt = deepFreeze({ ...receipt, receipt_hash: prefixedHash(receipt) });
   if (Buffer.byteLength(JSON.stringify(finalReceipt), 'utf8') > MAX_RECEIPT_BYTES) {
@@ -452,23 +624,41 @@ function validateDevelopmentRoleDose(candidate = {}, options = {}) {
   const requirements = Array.isArray(options.development_role_requirements)
     ? options.development_role_requirements : [];
   if (!requirements.length) {
-    return { validator: 'development_roles', valid: true, violations: [], reason_codes: [] };
+    return {
+      validator: 'development_roles', valid: true, violations: [], role_evaluations: [], reason_codes: [],
+    };
   }
   const sessions = sessionsFrom(candidate);
   const conflicts = new Map((Array.isArray(options.development_role_conflicts)
     ? options.development_role_conflicts : []).map((conflict) => [String(conflict.requirement_id || ''), conflict]));
   const violations = [];
+  const roleEvaluations = [];
   for (const requirement of requirements) {
     const matched = sessions.filter((session) => (requirement.any_of || []).includes(sessionFamily(session))
       && (!requirement.minimum_role || sessionRole(session) === requirement.minimum_role));
     let meaningful = matched.length > 0;
+    let presentationFloorMin = null;
+    let presentationFloorSource = null;
     if (meaningful && requirement.presentation_floor_required === true) {
       const ordinary = finiteNonnegative(options.median_ordinary_easy_duration_min);
+      presentationFloorMin = ordinary === null ? 30 : Math.max(30, round(ordinary * 1.5, 2));
+      presentationFloorSource = ordinary === null
+        ? 'POLICY_MINIMUM_NO_ORDINARY_EASY_EVIDENCE'
+        : 'OBSERVED_ORDINARY_EASY_MEDIAN';
       meaningful = matched.some((session) => {
         const duration = finiteNonnegative(session.duration_min ?? session.duration_minutes);
-        return duration !== null && duration >= 30 && (ordinary === null || duration >= ordinary * 1.5);
+        return duration !== null && duration >= presentationFloorMin;
       });
     }
+    roleEvaluations.push({
+      requirement_id: String(requirement.requirement_id || ''),
+      matched_session_ids: matched.map((session, index) => String(
+        session.session_id ?? session.id ?? `${requirement.requirement_id}-${index + 1}`
+      )).sort(),
+      meaningful,
+      presentation_floor_min: presentationFloorMin,
+      presentation_floor_source: presentationFloorSource,
+    });
     if (meaningful) continue;
     const conflict = conflicts.get(String(requirement.requirement_id));
     const normalizedConflict = normalizeScope(conflict);
@@ -485,6 +675,7 @@ function validateDevelopmentRoleDose(candidate = {}, options = {}) {
     validator: 'development_roles',
     valid: violations.length === 0,
     violations,
+    role_evaluations: roleEvaluations,
     reason_codes: violations.length ? ['REQUIRED_EXPOSURE_UNPLACEABLE'] : [],
   };
 }
@@ -493,6 +684,7 @@ module.exports = {
   DIMENSIONS,
   MAX_RECEIPT_BYTES,
   buildCrossModalDoseLedger,
+  deriveMaterialReductionScope,
   deriveScopedRecoveryState,
   evaluateMaterialDose,
   normalizeScope,

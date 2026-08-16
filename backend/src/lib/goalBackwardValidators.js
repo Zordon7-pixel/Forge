@@ -985,7 +985,7 @@ function buildSafetyExecutability(container = {}, options = {}) {
   const evaluatedSessions = sessions.map((session, index) => {
     const localDate = sessionLocalDate(session);
     const activeScopes = scopes.filter((scope) => {
-      const expiryDate = dateOnly(scope.expires_at);
+      const expiryDate = scope.expires_on_local;
       return !localDate || (localDate >= scope.effective_from_local && expiryDate && localDate < expiryDate);
     });
     const blockingScopes = activeScopes.filter((scope) => safetyBlocksSession(scope.action, session))

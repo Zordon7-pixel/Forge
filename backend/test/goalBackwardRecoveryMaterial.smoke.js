@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 
 const {
   buildCrossModalDoseLedger,
+  deriveMaterialReductionScope,
   deriveScopedRecoveryState,
   evaluateMaterialDose,
 } = require('../src/lib/goalBackwardRecoveryMaterial');
@@ -154,7 +155,7 @@ test('C3-REC-01', 'one low-sleep readiness state is acute and cannot authorize a
     'comeback mode alone is not diagnosed as an injury');
 });
 
-test('C3-SAFETY-01', 'acute sleep, injury, and illness actions are enforced only inside their bounded scope', () => {
+test('C3-SAFETY-01', 'acute sleep and illness stay bounded while active injury protects the full candidate window', () => {
   const baseContext = {
     safety: { activeInjury: false, comebackMode: false, injuryNotesPresent: false },
     recovery: { state: 'NORMAL', readinessScore: 80, syncedAt: '2026-08-17T10:00:00.000Z' },
@@ -163,18 +164,21 @@ test('C3-SAFETY-01', 'acute sleep, injury, and illness actions are enforced only
   const states = [
     {
       expectedAction: 'NO_HIGH_INTENSITY',
+      laterBlocked: false,
       context: { ...baseContext, recovery: { ...baseContext.recovery, state: 'RECOVERY', readinessScore: 43 } },
       affected: runSession('sleep-quality-today', 3, 'threshold_run', 'PRIMARY_KEY', '2026-08-17'),
       later: runSession('sleep-quality-later', 3, 'threshold_run', 'PRIMARY_KEY', '2026-08-20'),
     },
     {
       expectedAction: 'MODIFY_IMPACT',
+      laterBlocked: true,
       context: { ...baseContext, safety: { ...baseContext.safety, activeInjury: true } },
       affected: runSession('injury-run-today', 3, 'easy_run', 'SUPPORTING', '2026-08-17'),
       later: runSession('injury-run-later', 3, 'easy_run', 'SUPPORTING', '2026-08-20'),
     },
     {
       expectedAction: 'NO_HIGH_INTENSITY',
+      laterBlocked: false,
       context: { ...baseContext, checkin: { lifeFlags: ['sick'] } },
       affected: runSession('illness-quality-today', 3, 'threshold_run', 'PRIMARY_KEY', '2026-08-17'),
       later: runSession('illness-quality-later', 3, 'threshold_run', 'PRIMARY_KEY', '2026-08-20'),
@@ -194,9 +198,14 @@ test('C3-SAFETY-01', 'acute sleep, injury, and illness actions are enforced only
     });
     const safety = validation.validator_results.find((entry) => entry.validator === 'safety');
     assert.equal(safety.valid, false);
-    assert.deepEqual(safety.violations.map((entry) => entry.session_id), [fixture.affected.session_id]);
+    assert.deepEqual(safety.violations.map((entry) => entry.session_id), fixture.laterBlocked
+      ? [fixture.affected.session_id, fixture.later.session_id]
+      : [fixture.affected.session_id]);
     assert.equal(safety.violations[0].code, fixture.expectedAction);
-    assert.equal(safety.executability.sessions.find((entry) => entry.session_id === fixture.later.session_id).executable, true);
+    assert.equal(
+      safety.executability.sessions.find((entry) => entry.session_id === fixture.later.session_id).executable,
+      !fixture.laterBlocked,
+    );
   }
 
   const injury = deriveScopedRecoveryState({
@@ -211,6 +220,48 @@ test('C3-SAFETY-01', 'acute sleep, injury, and illness actions are enforced only
     safety_scope: injury.scopes,
   });
   assert.equal(allowed.validator_results.find((entry) => entry.validator === 'safety').valid, true);
+  assert.equal(injury.scopes[0].scope_kind, 'BLOCK');
+  assert.equal(injury.scopes[0].authorizes_material_reduction, false,
+    'one injury signal protects impact but cannot itself authorize a weekly volume reduction');
+  assert.equal(injury.scopes[0].expires_on_local, '2026-08-24');
+
+  const fullWeekSessions = Array.from({ length: 7 }, (_, index) => (
+    runSession(`injury-week-${index + 1}`, 2, 'easy_run', 'SUPPORTING', `2026-08-${17 + index}`)
+  ));
+  const fullWeek = validateGoalBackwardCandidate({ sessions: fullWeekSessions }, {
+    safety_action: injury.safety_action, safety_scope: injury.scopes,
+  }).validator_results.find((entry) => entry.validator === 'safety');
+  assert.equal(fullWeek.violations.length, 7, 'active injury protects every impact day in the candidate window');
+  const nonImpact = validateGoalBackwardCandidate({ sessions: [{
+    session_id: 'injury-upper-body', scheduled_local_date: '2026-08-22',
+    workout_family: 'strength_upper', role: 'PRIMARY_KEY', duration_min: 35,
+  }] }, { safety_action: injury.safety_action, safety_scope: injury.scopes });
+  assert.equal(nonImpact.validator_results.find((entry) => entry.validator === 'safety').valid, true);
+});
+
+test('C3-SAFETY-04', 'injury notes and injured check-ins protect impact without fabricating injury from comeback', () => {
+  for (const context of [
+    { safety: { activeInjury: false, injuryNotesPresent: true }, recovery: { state: 'NORMAL' } },
+    { safety: {}, recovery: { state: 'NORMAL' }, checkin: { lifeFlags: ['injured'] } },
+  ]) {
+    const state = deriveScopedRecoveryState({
+      planning_date_local: '2026-08-17',
+      candidate_window_end_local: '2026-08-23',
+      evidence_snapshot_id: 'synthetic-injury-variant-snapshot',
+      context,
+    });
+    assert.equal(state.scopes[0].scope_kind, 'BLOCK');
+    assert.equal(state.scopes[0].action, 'MODIFY_IMPACT');
+    assert.equal(state.scopes[0].expires_on_local, '2026-08-24');
+    assert.ok(state.scopes[0].reevaluate_at <= state.scopes[0].expires_at);
+  }
+  const comeback = deriveScopedRecoveryState({
+    planning_date_local: '2026-08-17',
+    candidate_window_end_local: '2026-08-23',
+    evidence_snapshot_id: 'synthetic-comeback-snapshot',
+    context: { safety: { comebackMode: true }, recovery: { state: 'NORMAL' } },
+  });
+  assert.deepEqual(comeback.scopes, []);
 });
 
 test('C3-SAFETY-02', 'a malformed requested restriction fails closed instead of disappearing', () => {
@@ -345,6 +396,176 @@ test('C3-MAT-05', 'corroborated injury or illness may authorize a scoped reducti
   }
 });
 
+test('C3-MAT-06', 'production-bound taper, training-gap, and corroborated safety evidence derive real BLOCK authorizations', () => {
+  const common = {
+    planning_date_local: '2026-08-17',
+    candidate_window_end_local: '2026-08-23',
+    evidence_snapshot_id: 'synthetic-revisioned-planning-snapshot',
+    decision_evidence_ids: ['synthetic-goal-revision'],
+    decision: {
+      decision_id: 'synthetic-c3-scope-decision',
+      decision_hash: canonicalHash({ fixture: 'synthetic-c3-scope-decision' }),
+      phase: 'DEVELOPMENT',
+      consistency_state: 'CONSISTENT',
+      training_age_class: 'ESTABLISHED',
+      evidence_used: [{ evidence_id: 'synthetic-goal-revision' }],
+    },
+    context: { safety: {}, recovery: { state: 'NORMAL' }, checkin: null },
+  };
+  const taper = deriveMaterialReductionScope({
+    ...common,
+    decision: { ...common.decision, phase: 'TAPER_RACE_WEEK' },
+  });
+  assert.equal(taper.reason_code, 'TAPER_VOLUME_REDUCTION');
+  assert.equal(taper.scope_kind, 'BLOCK');
+  assert.equal(taper.authorizes_material_reduction, true);
+  assert.equal(evaluateMaterialDose(materialInput({
+    candidateMiles: 12,
+    recentNormalMiles: 30,
+    phase: 'TAPER_RACE_WEEK',
+    reductionScope: taper,
+  })).valid, true);
+
+  const returning = deriveMaterialReductionScope({
+    ...common,
+    decision: { ...common.decision, consistency_state: 'RETURNING' },
+    recent_normal_running: {
+      status: 'TRAINING_GAP',
+      evidence_ids: ['synthetic-canonical-load-receipt'],
+    },
+  });
+  assert.equal(returning.reason_code, 'TRAINING_GAP_REBUILD');
+  assert.equal(evaluateMaterialDose(materialInput({
+    consistency: 'RETURNING', reductionScope: returning,
+  })).valid, true);
+
+  const injuryState = deriveScopedRecoveryState({
+    ...common,
+    context: {
+      safety: { activeInjury: true, injuryNotesPresent: true },
+      recovery: { state: 'NORMAL' },
+      checkin: null,
+    },
+  });
+  const injury = deriveMaterialReductionScope({ ...common, scoped_recovery_state: injuryState });
+  assert.equal(injury.reason_code, 'INJURY_SCOPE');
+  assert.equal(injury.authorizes_material_reduction, true);
+
+  const illnessState = deriveScopedRecoveryState({
+    ...common,
+    context: {
+      safety: {},
+      recovery: {
+        state: 'RECOVERY', readinessScore: 35, available: true,
+        syncedAt: '2026-08-17T10:00:00.000Z',
+      },
+      checkin: { lifeFlags: ['sick'] },
+    },
+  });
+  const illness = deriveMaterialReductionScope({ ...common, scoped_recovery_state: illnessState });
+  assert.equal(illness.reason_code, 'ILLNESS_RECOVERY');
+  assert.equal(illness.scope_kind, 'BLOCK');
+  assert.equal(illness.authorizes_material_reduction, true);
+
+  const sleepOnly = deriveScopedRecoveryState({
+    ...common,
+    context: { safety: {}, recovery: { state: 'RECOVERY', readinessScore: 43 }, checkin: null },
+  });
+  assert.equal(deriveMaterialReductionScope({ ...common, scoped_recovery_state: sleepOnly }), null,
+    'one low-readiness snapshot cannot synthesize a BLOCK authorization');
+});
+
+test('C3-MAT-07', 'missing or malformed scheduled dates make candidate and active-plan dose unknown', () => {
+  for (const badDate of [null, '', 'not-a-date', '2026-02-30']) {
+    const candidate = materialInput();
+    candidate.candidate.sessions.push(runSession('undated-padding', 8, 'easy_run', 'SUPPORTING', badDate));
+    const receipt = evaluateMaterialDose(candidate);
+    assert.equal(receipt.valid, false, `candidate date ${String(badDate)} must fail closed`);
+    assert.equal(receipt.violations[0].reason, 'CANDIDATE_RUNNING_DATE_UNKNOWN');
+    assert.equal(receipt.candidate_running_m, null);
+
+    const active = materialInput({ activePlanMiles: 12.5 });
+    active.active_applied_plan.sessions[0].scheduled_local_date = badDate;
+    const activeReceipt = evaluateMaterialDose(active);
+    assert.equal(activeReceipt.valid, false, `active comparator date ${String(badDate)} must fail closed`);
+    assert.equal(activeReceipt.violations[0].reason, 'ACTIVE_PLAN_RUNNING_DATE_UNKNOWN');
+  }
+
+  const bounded = materialInput({ candidateMiles: 6.94, recentNormalMiles: 12.5 });
+  bounded.candidate.sessions.push(runSession('before-window', 20, 'easy_run', 'SUPPORTING', '2026-08-16'));
+  bounded.candidate.sessions.push(runSession('after-window', 20, 'easy_run', 'SUPPORTING', '2026-08-24'));
+  assert.equal(evaluateMaterialDose(bounded).candidate_running_m, milesToMeters(6.94),
+    'window boundaries exclude dated sessions outside the inclusive candidate week');
+
+  for (const date of ['2026-08-17', '2026-08-23', '2026-08-23T23:59:00-04:00']) {
+    const input = materialInput({ candidateMiles: 0 });
+    input.candidate.sessions = [runSession('boundary', 6.94, 'easy_run', 'SUPPORTING', date)];
+    assert.equal(evaluateMaterialDose(input).candidate_running_m, milesToMeters(6.94));
+  }
+});
+
+test('C3-ROUTE-01', 'the route binds taper and training-gap BLOCK scopes into candidate validation', () => {
+  function captureFor({ eventDate, recentNormal }) {
+    let captured = null;
+    const planningDateLocal = '2026-08-17';
+    const state = {
+      inputHash: `sha256:${'7'.repeat(64)}`,
+      planningInputRevision: 3,
+      active: null,
+      activePlan: null,
+      races: [{
+        id: 'synthetic-route-race', user_id: 'synthetic-route-athlete', race_date: eventDate,
+        event_local_date: eventDate, event_kind: 'road', distance_miles: 10, goal_revision: 4,
+      }],
+      target: { trainingDays: ['Mon', 'Wed', 'Sun'] },
+      context: {
+        profile: { training_age_class: 'ESTABLISHED', timezone: 'America/New_York' },
+        history: {
+          recentRunCount: 8,
+          weeklyMileageBaseline: 20,
+          runLoadInput: {
+            load_input_state: 'COMPLETE', load_input_confidence: 'HIGH',
+            recent_normal_confidence: 'HIGH', recent_normal: recentNormal,
+            load_input_hash: `sha256:${'8'.repeat(64)}`,
+            windows: [], reason_codes: [],
+          },
+        },
+        recovery: { state: 'NORMAL' }, safety: {}, checkin: null,
+      },
+    };
+    plansRouter._test.computeGoalBackwardShadowDiagnostics({
+      userId: 'synthetic-route-athlete', planningDateLocal, state,
+      built: { plan: { weeks: [{ days: [{
+        date: planningDateLocal,
+        sessions: [{ id: 'route-easy', workout_id: 'easy_aerobic', kind: 'run', distance_miles: 6.94, duration_min: 70 }],
+      }] }] } },
+    }, {
+      enumerateCandidates(input) {
+        captured = input;
+        return { decision: input.decision, candidates: [], selected_candidate: null };
+      },
+    });
+    return captured;
+  }
+
+  const taper = captureFor({
+    eventDate: '2026-08-20',
+    recentNormal: { status: 'ESTABLISHED', median_distance_m: milesToMeters(30), confidence: 'HIGH' },
+  });
+  assert.equal(taper.decision.phase, 'TAPER_RACE_WEEK');
+  assert.equal(taper.validation_options.material_reduction_scope.reason_code, 'TAPER_VOLUME_REDUCTION');
+
+  const returning = captureFor({
+    eventDate: '2026-10-18',
+    recentNormal: {
+      status: 'TRAINING_GAP', median_distance_m: milesToMeters(12.5), confidence: 'HIGH',
+      evidence_ids: ['synthetic-training-gap-evidence'],
+    },
+  });
+  assert.equal(returning.decision.consistency_state, 'RETURNING');
+  assert.equal(returning.validation_options.material_reduction_scope.reason_code, 'TRAINING_GAP_REBUILD');
+});
+
 test('C3-XMOD-01', 'cross-modal relief requires a complete dimension-specific ledger and never follows from a generic ceiling', () => {
   const ledger = buildCrossModalDoseLedger({
     weekly_dimension_sum: [9, 7, 12, 5, 6, 8, 10, 8],
@@ -367,15 +588,20 @@ test('C3-XMOD-01', 'cross-modal relief requires a complete dimension-specific le
   const noScope = evaluateMaterialDose(materialInput({ crossModalLedger: ledger }));
   assert.equal(noScope.valid, false, 'a ledger alone cannot silently delete running volume');
 
+  const decision = {
+    decision_id: 'synthetic-cross-modal-decision',
+    decision_hash: canonicalHash({ fixture: 'synthetic-cross-modal-decision' }),
+    phase: 'DEVELOPMENT', consistency_state: 'CONSISTENT', training_age_class: 'ESTABLISHED',
+    evidence_used: [{ evidence_id: 'sha256:cross-modal-week-a' }],
+  };
+  const measuredScope = deriveMaterialReductionScope({
+    planning_date_local: '2026-08-17', candidate_window_end_local: '2026-08-23',
+    evidence_snapshot_id: 'synthetic-cross-modal-snapshot', decision,
+    cross_modal_ledger: ledger, measured_running_ceiling_m: milesToMeters(7.2),
+  });
   const scoped = evaluateMaterialDose(materialInput({
     crossModalLedger: ledger,
-    reductionScope: restrictionScope({
-      reason_code: 'CROSS_MODAL_FATIGUE_LIMIT',
-      affected_modalities: ['running_impact', 'lower_body_muscular'],
-      decisive_evidence_ids: ['sha256:cross-modal-week-a', 'sha256:cross-modal-week-b'],
-      cross_modal_ledger_hash: ledger.receipt_hash,
-      measured_running_ceiling_m: milesToMeters(7.2),
-    }),
+    reductionScope: measuredScope,
   }));
   assert.equal(scoped.valid, true);
   assert.equal(scoped.reduction_authorization.cross_modal_ledger_hash, ledger.receipt_hash);
@@ -461,6 +687,10 @@ test('C3-VALIDATOR-01', 'material dose and meaningful role validation are hard g
   assert.ok(validation.validator_results.some((entry) => entry.validator === 'development_roles'));
   assert.ok(Buffer.byteLength(JSON.stringify(validation), 'utf8') < 16 * 1024);
   assert.equal(canonicalHash(validation).length, 64);
+  const roles = validation.validator_results.find((entry) => entry.validator === 'development_roles');
+  const longEvaluation = roles.role_evaluations.find((entry) => entry.requirement_id === 'long_aerobic');
+  assert.equal(longEvaluation.presentation_floor_min, 45);
+  assert.equal(longEvaluation.presentation_floor_source, 'OBSERVED_ORDINARY_EASY_MEDIAN');
 });
 
 test('C3-ROLE-02', 'an explicit bounded availability conflict may mark a role unplaceable without inventing a token session', () => {
@@ -550,6 +780,123 @@ test('C3-ENGINE-01', 'enumeration rejects unsupported under-dose deterministical
   assert.deepEqual(second, first, 'retry/replay is byte-equivalent and non-mutating');
 });
 
+test('C3-ENGINE-02', 'enumeration selects bounded taper and training-gap reductions derived from decision evidence', () => {
+  for (const fixture of [
+    {
+      label: 'taper', phase: 'TAPER_RACE_WEEK', consistency: 'CONSISTENT',
+      status: 'ESTABLISHED', baselineMiles: 30, candidateMiles: 12,
+      expectedReason: 'TAPER_VOLUME_REDUCTION', confidence: 'HIGH',
+    },
+    {
+      label: 'returning', phase: 'FOUNDATION', consistency: 'RETURNING',
+      status: 'TRAINING_GAP', baselineMiles: 12.5, candidateMiles: 6.94,
+      expectedReason: 'TRAINING_GAP_REBUILD', confidence: 'LOW',
+    },
+  ]) {
+    const decision = {
+      decision_id: `decision-c3-${fixture.label}`,
+      decision_hash: canonicalHash({ fixture: fixture.label }),
+      planning_date_local: '2026-08-17',
+      phase: fixture.phase,
+      primary_goal_id: `goal-c3-${fixture.label}`,
+      training_age_class: 'ESTABLISHED',
+      consistency_state: fixture.consistency,
+      recovery_state: 'NORMAL',
+      safety_state: { action: 'NORMAL', scope: [] },
+      evidence_used: [{ evidence_id: `synthetic-${fixture.label}-decision-evidence` }],
+      athlete_locks: [], manual_edits: [],
+      role_multiset: [{
+        requirement_id: 'bounded-aerobic', any_of: ['easy_run'], role: 'PRIMARY_KEY', scheduled_local_date: null,
+      }],
+      due_exposure_ledger: {
+        due_roles: [{ requirement_id: 'bounded-aerobic', any_of: ['easy_run'], role: 'PRIMARY_KEY' }],
+        unplaceable_requirement_ids: [],
+      },
+      development_role_requirements: [],
+    };
+    const recentNormal = {
+      status: fixture.status,
+      median_distance_m: milesToMeters(fixture.baselineMiles),
+      historical_median_distance_m: fixture.status === 'TRAINING_GAP'
+        ? milesToMeters(fixture.baselineMiles) : null,
+      confidence: fixture.confidence,
+      evidence_ids: [`synthetic-${fixture.label}-load-evidence`],
+    };
+    const reductionScope = deriveMaterialReductionScope({
+      planning_date_local: '2026-08-17', candidate_window_end_local: '2026-08-17',
+      evidence_snapshot_id: `synthetic-${fixture.label}-snapshot`,
+      decision, recent_normal_running: recentNormal,
+      load_evidence_ids: [`synthetic-${fixture.label}-load-evidence`],
+    });
+    const result = enumerateGoalBackwardCandidates({
+      decision,
+      available_local_dates: ['2026-08-17'],
+      maximum_session_count: 1,
+      materialize_canonical: false,
+      material_dose_enforced: true,
+      legacy_road_candidate_material: [{
+        id: `synthetic-${fixture.label}-easy`, workout_id: 'easy_aerobic', workout_family: 'easy_run',
+        kind: 'run', title: 'Easy run', distance_miles: fixture.candidateMiles, duration_min: 70,
+      }],
+      validation_options: {
+        available_local_dates: ['2026-08-17'], available_days_count: 1,
+        training_age_class: 'ESTABLISHED', consistency_state: fixture.consistency,
+        recovery_state: 'NORMAL', safety_action: 'NORMAL',
+        recent_normal_running: recentNormal, material_reduction_scope: reductionScope,
+      },
+    });
+    assert.ok(result.selected_candidate, `${fixture.label} must produce a selectable bounded candidate`);
+    assert.equal(result.selected_candidate.validation.valid, true);
+    assert.deepEqual(result.selected_candidate.validation.reason_codes, [fixture.expectedReason]);
+  }
+});
+
+test('C3-ENGINE-03', 'enumeration enforces healthy event-specific role gates instead of selecting a partial token week', () => {
+  const decision = {
+    decision_id: 'decision-c3-development-gate',
+    decision_hash: canonicalHash({ fixture: 'c3-development-gate' }),
+    planning_date_local: '2026-08-17', phase: 'EVENT_SPECIFIC_DEVELOPMENT',
+    primary_goal_id: 'goal-c3-hyrox', training_age_class: 'ESTABLISHED',
+    consistency_state: 'CONSISTENT', recovery_state: 'NORMAL',
+    safety_state: { action: 'NORMAL', scope: [] },
+    evidence_used: [{ evidence_id: 'synthetic-development-evidence' }],
+    athlete_locks: [], manual_edits: [],
+    role_multiset: [{
+      requirement_id: 'hyrox-specific', any_of: ['hyrox_compromised'], role: 'PRIMARY_KEY', scheduled_local_date: null,
+    }],
+    due_exposure_ledger: {
+      due_roles: [{ requirement_id: 'hyrox-specific', any_of: ['hyrox_compromised'], role: 'PRIMARY_KEY' }],
+      unplaceable_requirement_ids: [],
+    },
+    development_role_requirements: [
+      { requirement_id: 'hyrox_specific', any_of: ['hyrox_compromised'], minimum_role: 'PRIMARY_KEY' },
+      { requirement_id: 'pure_running_quality', any_of: ['threshold_run'], minimum_role: 'PRIMARY_KEY' },
+      { requirement_id: 'long_aerobic', any_of: ['long_aerobic'], minimum_role: 'PRIMARY_KEY', presentation_floor_required: true },
+    ],
+  };
+  const result = enumerateGoalBackwardCandidates({
+    decision, available_local_dates: ['2026-08-17'], maximum_session_count: 1,
+    materialize_canonical: false,
+    legacy_road_candidate_material: [{
+      id: 'hyrox-token', workout_id: 'hyrox_compromised', workout_family: 'hyrox_compromised',
+      kind: 'hyrox', title: 'Compromised run', distance_miles: 4, duration_min: 35,
+      run_station_pair_count: 3, main_work_duration_min: 30,
+    }],
+    validation_options: {
+      available_local_dates: ['2026-08-17'], available_days_count: 5,
+      training_age_class: 'ESTABLISHED', consistency_state: 'CONSISTENT',
+      recovery_state: 'NORMAL', safety_action: 'NORMAL', median_ordinary_easy_duration_min: 40,
+    },
+  });
+  assert.equal(result.selected_candidate, null);
+  const development = result.candidates[0].validation.validator_results
+    .find((entry) => entry.validator === 'development_roles');
+  assert.equal(development.valid, false);
+  assert.deepEqual(development.violations.map((entry) => entry.requirement_id).sort(), [
+    'long_aerobic', 'pure_running_quality',
+  ]);
+});
+
 test('C3-PRIVACY-01', 'receipt ordering is stable and raw evidence identities never escape diagnostics', () => {
   const left = buildCrossModalDoseLedger({
     weekly_dimension_sum: [1, 1, 1, 1, 1, 1, 1, 1],
@@ -574,6 +921,28 @@ test('C3-PRIVACY-01', 'receipt ordering is stable and raw evidence identities ne
   assert.deepEqual(right, left);
   assert.doesNotMatch(JSON.stringify(left), /person@example\.com|raw-provider-workout-id/);
   assert.ok(Buffer.byteLength(JSON.stringify(left), 'utf8') < 16 * 1024);
+
+  const tooMany = restrictionScope({
+    decisive_evidence_ids: Array.from({ length: 17 }, (_, index) => `private-evidence-${index}`),
+  });
+  assert.equal(evaluateMaterialDose(materialInput({ reductionScope: tooMany })).valid, false,
+    'approval-relevant evidence cannot be silently truncated');
+
+  const localExpiry = restrictionScope({
+    expires_on_local: '2026-08-24',
+    expires_at: '2026-08-24T00:30:00+14:00',
+    reevaluate_at: '2026-08-22T12:00:00.000Z',
+    decisive_evidence_ids: ['local-expiry-evidence-1', 'local-expiry-evidence-2'],
+  });
+  assert.equal(evaluateMaterialDose(materialInput({ reductionScope: localExpiry })).valid, true,
+    'an explicit local expiry date does not shift when its instant crosses a UTC day');
+});
+
+test('C3-MAT-08', 'a within-bound candidate emits no false maintain reduction reason', () => {
+  const receipt = evaluateMaterialDose(materialInput({ candidateMiles: 12, recentNormalMiles: 12.5 }));
+  assert.equal(receipt.valid, true);
+  assert.equal(receipt.dose_state, 'WITHIN_MATERIAL_BOUND');
+  assert.deepEqual(receipt.reason_codes, []);
 });
 
 test('C3-UNKNOWN-01', 'unknown load cannot become zero or authorize either increase or reduction', () => {

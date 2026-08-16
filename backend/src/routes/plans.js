@@ -36,7 +36,10 @@ const {
 } = require('../lib/goalBackwardDecisionEngine');
 const { assertPipelineLinks, REQUIRED_REASON_CODES } = require('../lib/goalBackwardContracts');
 const { canonicalizeRunLoadInput } = require('../lib/goalBackwardEvidence');
-const { deriveScopedRecoveryState } = require('../lib/goalBackwardRecoveryMaterial');
+const {
+  deriveMaterialReductionScope,
+  deriveScopedRecoveryState,
+} = require('../lib/goalBackwardRecoveryMaterial');
 const {
   buildGoalBackwardReleaseTelemetry,
   emitGoalBackwardReleaseTelemetry,
@@ -2619,6 +2622,7 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
   const evidenceSnapshotId = `snapshot-${state.inputHash.slice(-24)}`;
   const scopedRecovery = deriveScopedRecoveryState({
     planning_date_local: planningDateLocal,
+    candidate_window_end_local: addPolicyDays(planningDateLocal, 6),
     evidence_snapshot_id: evidenceSnapshotId,
     context: state.context,
   });
@@ -2647,6 +2651,9 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
     : runLoadComplete
       ? String(canonicalRecentNormal?.status || 'INSUFFICIENT').toUpperCase()
       : runningLoadAnchorMiles > 0 && recentRunCount >= 3 ? 'PROVISIONAL' : 'INSUFFICIENT';
+  const consistencyState = recentNormalStatus === 'TRAINING_GAP'
+    ? 'RETURNING'
+    : runLoadComplete ? (recentRunCount >= 4 ? 'CONSISTENT' : 'SPARSE_DATA') : 'UNKNOWN';
   const goals = goalBackwardGoalsForState(userId, state);
   const primaryEventDate = goals[0]?.event_local_date || null;
   const buildDecision = dependencies.buildDecision || buildGoalBackwardPlanningDecision;
@@ -2662,8 +2669,7 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
       athlete_state_revision: Math.max(1, Number(state.planningInputRevision || 1)),
       evidence_snapshot_id: evidenceSnapshotId,
       training_age_class: trainingAgeClass,
-      consistency_state: runLoadComplete
-        ? (recentRunCount >= 4 ? 'CONSISTENT' : 'SPARSE_DATA') : 'UNKNOWN',
+      consistency_state: consistencyState,
       consistent_weeks: runLoadComplete && recentRunCount >= 4 ? 4 : 0,
       recovery_state: recoveryState,
       safety_action: safetyAction,
@@ -2743,6 +2749,19 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
       decision = buildDecision({ ...decisionInput, supporting_stimuli: supportingStimuli });
     }
   }
+  const materialReductionScope = deriveMaterialReductionScope({
+    planning_date_local: planningDateLocal,
+    candidate_window_end_local: addPolicyDays(planningDateLocal, 6),
+    evidence_snapshot_id: evidenceSnapshotId,
+    decision,
+    scoped_recovery_state: scopedRecovery,
+    recent_normal_running: decisionInput.athlete_state.recent_normal_running,
+    load_evidence_ids: [
+      runLoadInput?.load_input_hash,
+      runLoadInput?.correction_receipt_hash,
+      runLoadInput?.identity_decision_receipt?.receipt_hash,
+    ].filter(Boolean),
+  });
   const activeAppliedPlan = state.active ? {
     ...parsePlan(state.active.row),
     plan_revision: Math.max(1, Number(state.activePlan?.planVersion || state.active.row?.plan_version || 1)),
@@ -2789,9 +2808,7 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
         ? null : Math.round(observedLowerBoundWeeklyMiles * 1609.344),
       observed_lower_bound_evidence_ids: observedLowerBoundWeeklyMiles === null
         ? [] : [evidenceSnapshotId],
-      material_reduction_scope: scopedRecovery.scopes.find((scope) => (
-        scope.scope_kind === 'BLOCK' && scope.authorizes_material_reduction === true
-      )) || null,
+      material_reduction_scope: materialReductionScope,
       cross_modal_evidence_ids: [],
     },
   });
@@ -3660,6 +3677,7 @@ function currentGoalBackwardApplyEnvelope(expected, userId, current) {
   const evidenceSnapshotId = `snapshot-${current.inputHash.slice(-24)}`;
   const scopedRecovery = deriveScopedRecoveryState({
     planning_date_local: expected.planning_date_local,
+    candidate_window_end_local: addPolicyDays(expected.planning_date_local, 6),
     evidence_snapshot_id: evidenceSnapshotId,
     context: current.context,
   });
