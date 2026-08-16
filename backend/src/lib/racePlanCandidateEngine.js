@@ -888,7 +888,22 @@ function legacyCandidateMaterialEntries(source) {
 function legacyGoalBackwardFamily(session = {}) {
   if (session.workout_family && resolveStressVector(session.workout_family)) return session.workout_family;
   const taxonomy = runWorkoutTaxonomy.workoutForId(session.workout_id);
-  return LEGACY_TO_GOAL_BACKWARD_FAMILY[taxonomy?.family] || null;
+  const aliases = {
+    easy_run: 'easy_run',
+    long_run: 'long_aerobic',
+    hyrox_skill: 'hyrox_station_skill',
+    hyrox_compromised: 'hyrox_compromised',
+    hyrox_partial_simulation: 'hyrox_partial_simulation',
+    hyrox_full_simulation: 'hyrox_full_simulation',
+  };
+  for (const value of [taxonomy?.family, session.workout_family, session.sessionType, session.session_type, session.type]) {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (!normalized) continue;
+    if (resolveStressVector(normalized)) return normalized;
+    if (aliases[normalized]) return aliases[normalized];
+    if (LEGACY_TO_GOAL_BACKWARD_FAMILY[normalized]) return LEGACY_TO_GOAL_BACKWARD_FAMILY[normalized];
+  }
+  return null;
 }
 
 function roadCandidateMaterial(source) {
@@ -1343,6 +1358,7 @@ module.exports = {
   compareGoalBackwardCandidateRankings,
   enumerateGoalBackwardCandidates,
   enforceDemandingSpacing,
+  legacyGoalBackwardFamily,
   ordinaryEasyMedians,
   semanticCandidateErrors,
   trustedActivityDates,
