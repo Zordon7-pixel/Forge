@@ -363,6 +363,16 @@ async function assertReadinessOverlayResponsive(page, dialog, expectedViewport) 
   }
 }
 
+async function waitForReadinessDialogEntered(page, dialog) {
+  await expect(dialog).toBeVisible()
+  await expect(page).toHaveURL('/')
+  await dialog.evaluate(async (node) => {
+    const overlay = node.closest('[data-readiness-overlay]')
+    const animations = [...(overlay?.getAnimations() || []), ...node.getAnimations()]
+    await Promise.all(animations.map((animation) => animation.finished))
+  })
+}
+
 test('Signature UI opens canonical readiness on demand and keeps Coach\'s Daily Brief first on both mobile projects', async ({ page }, testInfo) => {
   const runtimeErrors = collectRuntimeErrors(page)
   const fixture = signatureUiDashboardFixture({ dateISO: today, day: todayDay })
@@ -405,7 +415,7 @@ test('Signature UI opens canonical readiness on demand and keeps Coach\'s Daily 
 
   await headerReadiness.click()
   const readinessDialog = page.getByRole('dialog', { name: 'Daily readiness details' })
-  await expect(readinessDialog).toBeVisible()
+  await waitForReadinessDialogEntered(page, readinessDialog)
   await expect(readinessDialog).toHaveAttribute('aria-modal', 'true')
   await expect(page.getByRole('dialog')).toHaveCount(1)
   const readiness = readinessDialog.getByRole('region', { name: 'Recovery readiness' })
@@ -419,7 +429,6 @@ test('Signature UI opens canonical readiness on demand and keeps Coach\'s Daily 
   }
   await expect(readiness.locator('.signature-arc')).toHaveAttribute('aria-hidden', 'true')
   await expect(readiness.locator('button')).toHaveCount(0)
-  await expect(page).toHaveURL('/')
   const readinessRequestsAfterOpenRoute = requestsFor(apiState, 'GET', '/api/recovery/readiness').length
   expect(readinessRequestsAfterOpenRoute, 'Opening readiness reuses the loaded Dashboard and header truth').toBe(readinessRequestsBeforeOpen)
 
@@ -464,8 +473,7 @@ test('Signature UI opens canonical readiness on demand and keeps Coach\'s Daily 
   expect(requestsFor(apiState, 'GET', '/api/recovery/readiness')).toHaveLength(readinessRequestsAfterOpenRoute)
 
   await headerReadiness.click()
-  await expect(readinessDialog).toBeVisible()
-  await expect(page).toHaveURL('/')
+  await waitForReadinessDialogEntered(page, readinessDialog)
   const readinessRequestsAfterBackdropRoute = requestsFor(apiState, 'GET', '/api/recovery/readiness').length
   expect(readinessRequestsAfterBackdropRoute, 'Reopening readiness reuses the loaded Dashboard and header truth').toBe(readinessRequestsBeforeOpen)
   await page.locator('[data-readiness-overlay]').click({ position: { x: 4, y: 4 } })
@@ -507,7 +515,7 @@ test('Signature UI truthfully covers loading, locked, unavailable, and error sta
   await headerReadiness.click()
   const readinessDialog = page.getByRole('dialog', { name: 'Daily readiness details' })
   const readiness = readinessDialog.getByRole('region', { name: 'Recovery readiness' })
-  await expect(readinessDialog).toBeVisible()
+  await waitForReadinessDialogEntered(page, readinessDialog)
   await expect(readiness).toHaveAttribute('data-signature-readiness', 'loading')
   await expect(readiness).toHaveAttribute('aria-busy', 'true')
 
@@ -527,6 +535,7 @@ test('Signature UI truthfully covers loading, locked, unavailable, and error sta
   await page.reload()
   await expect(page.locator('[data-signature-readiness]')).toHaveCount(0)
   await headerReadiness.click()
+  await waitForReadinessDialogEntered(page, readinessDialog)
   await expect(readiness).toHaveAttribute('data-signature-readiness', 'unavailable')
   await expect(readiness.getByText('Sync Health data to unlock today\'s readiness score.', { exact: true })).toBeVisible()
   await expect(readiness.locator('.signature-arc')).toHaveCount(0)
@@ -538,6 +547,7 @@ test('Signature UI truthfully covers loading, locked, unavailable, and error sta
   await page.reload()
   await expect(page.locator('[data-signature-readiness]')).toHaveCount(0)
   await headerReadiness.click()
+  await waitForReadinessDialogEntered(page, readinessDialog)
   await expect(readiness).toHaveAttribute('data-signature-readiness', 'error')
   await expect(readiness.getByText("Couldn't load recovery readiness.", { exact: true })).toBeVisible()
   await expect(readiness.locator('.signature-arc')).toHaveCount(0)
