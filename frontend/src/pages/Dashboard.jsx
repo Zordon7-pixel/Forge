@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { App as CapacitorApp } from '@capacitor/app'
 import { useLocation, useNavigate } from 'react-router'
-import { CalendarClock, Dumbbell, X } from 'lucide-react'
+import { CalendarClock, ChevronRight, Dumbbell, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import InsightsSheet, { CalendarDayDetailSheet, DailyCoachFlow, ReadinessBreakdownModal, RecentActivityCard, TodayDetailSheet, WatchSyncWidget } from '../components/InsightsSheet'
 import { useUnits } from '../context/UnitsContext'
@@ -21,6 +21,8 @@ import { isRunningActivity } from '../lib/activityType'
 import { combineRecentActivity } from '../lib/recentActivity'
 import TravelTrainingPrompt from '../components/TravelTrainingPrompt'
 import CoachsLogCard from '../components/CoachsLogCard'
+import { WeeklyRecapDialog } from './WeeklyRecap'
+import { buildWeeklyRecapView } from '../lib/dashboardBrief'
 
 function fmtPace(durationSeconds, distance) {
   if (!durationSeconds || !distance) return '--'
@@ -283,6 +285,7 @@ export default function Dashboard() {
   const [injuryBannerDismissed, setInjuryBannerDismissed] = useState(false)
   const [weeklyRecap, setWeeklyRecap] = useState(null)
   const [showWeeklyRecap, setShowWeeklyRecap] = useState(false)
+  const [weeklyRecapOpen, setWeeklyRecapOpen] = useState(false)
   const [showSyncedFlash, setShowSyncedFlash] = useState(false)
   const [showTodayDetail, setShowTodayDetail] = useState(false)
   const [showMoreInsights, setShowMoreInsights] = useState(false)
@@ -408,6 +411,7 @@ export default function Dashboard() {
         setActiveInjury((injuryRes.data?.injuries || [])[0] || null)
         setInjurySafetyAvailable(injuryRes.data?.safetyUnavailable !== true)
         setWeeklyCalories(recapRes.data?.totalCalories || 0)
+        setWeeklyRecap(recapRes.data || null)
         setNextRecommendation(recommendationRes.data || null)
         setAgeGradedPerformance(ageGradedRes.data || null)
         const nextProposal = adaptationRes.data?.proposal || null
@@ -420,10 +424,7 @@ export default function Dashboard() {
         setTrainingGapProposal(!nextReconciliation && pendingGap ? nextProposal : null)
         const isSunday = new Date().getDay() === 0
         const weekKey = `recap-seen-${getWeekKey()}`
-        if (isSunday && localStorage.getItem(weekKey) !== '1') {
-          setWeeklyRecap(recapRes.data || null)
-          setShowWeeklyRecap(Boolean(recapRes.data))
-        }
+        setShowWeeklyRecap(isSunday && localStorage.getItem(weekKey) !== '1' && Boolean(recapRes.data))
     } finally {
         setLoading(false)
       }
@@ -665,6 +666,7 @@ export default function Dashboard() {
     ...resolveReadiness(readinessState.data),
     band: readinessState.data?.band || null,
   }), [readinessState.data])
+  const weeklyRecapView = useMemo(() => buildWeeklyRecapView(weeklyRecap), [weeklyRecap])
 
   const showLoadWarning = loadAnalysis && ['elevated', 'high', 'danger'].includes(loadAnalysis.loadStatus) && Date.now() > loadWarningDismissedUntil
   const complianceColor = compliance?.score >= 80 ? 'var(--success)' : compliance?.score >= 50 ? 'var(--accent)' : 'var(--danger)'
@@ -906,6 +908,9 @@ export default function Dashboard() {
         <CoachsLogCard
           recommendation={effectiveRecommendation}
           execution={execution}
+          weeklyRecap={weeklyRecap}
+          readinessData={readinessState.data}
+          nextRace={nextRace}
           expanded={coachsLogExpanded}
           onExpandedChange={setCoachsLogExpanded}
         />
@@ -944,28 +949,35 @@ export default function Dashboard() {
       )}
 
       {showWeeklyRecap && weeklyRecap && (
-        <div className="rounded-xl p-4" style={{ background: '#1a1d2e', border: '1px solid #2a2d3e' }}>
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="text-sm font-bold" style={{ color: 'var(--accent)' }}>Weekly Recap</p>
-              <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
-                {weeklyRecap.totalMiles?.toFixed?.(1) || 0} mi · {weeklyRecap.totalRuns || 0} runs · {(weeklyRecap.totalCalories || 0).toLocaleString()} cal
-              </p>
-            </div>
-            <button
-              onClick={() => {
+        <section className="card-hero dashboard-weekly-recap" aria-labelledby="dashboard-weekly-recap-title" data-dashboard-card-family="recap">
+          <button
+            type="button"
+            className="dashboard-weekly-recap-open"
+            aria-haspopup="dialog"
+            onClick={() => setWeeklyRecapOpen(true)}
+          >
+            <span className="dashboard-weekly-recap-copy">
+              <span id="dashboard-weekly-recap-title" className="dashboard-weekly-recap-kicker">Weekly recap</span>
+              <span className="dashboard-weekly-recap-summary">{weeklyRecapView?.teaserItems.join(' · ') || weeklyRecapView?.weekLabel}</span>
+              <span className="dashboard-weekly-recap-affordance">View recap <ChevronRight size={16} aria-hidden="true" /></span>
+            </span>
+          </button>
+          <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation()
                 localStorage.setItem(`recap-seen-${getWeekKey()}`, '1')
                 setShowWeeklyRecap(false)
               }}
-              style={{ background: 'transparent', color: 'var(--text-muted)' }}
-              className="p-1"
+              className="dashboard-weekly-recap-dismiss"
               aria-label="Dismiss weekly recap"
             >
-              <X size={16} />
+              <X size={18} aria-hidden="true" />
             </button>
-          </div>
-        </div>
+        </section>
       )}
+
+      <WeeklyRecapDialog open={weeklyRecapOpen} data={weeklyRecap} onClose={() => setWeeklyRecapOpen(false)} />
 
       <HybridSessionPrompt
         reconciliation={hybridReconciliation}

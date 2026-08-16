@@ -1,29 +1,141 @@
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Link } from 'react-router'
-import { Activity, AlertTriangle, Brain, Dumbbell, Mountain, Ruler, Timer, Trophy } from 'lucide-react'
+import { Activity, AlertTriangle, Brain, Dumbbell, Flame, Gauge, Ruler, Timer, Trophy, X } from 'lucide-react'
 import api from '../lib/api'
 import LoadingRunner from '../components/LoadingRunner'
 import { useProContext } from '../context/ProContext'
 import ProGate from '../components/ProGate'
 import AiGuidanceNote from '../components/AiGuidanceNote'
+import useDialogFocus from '../lib/useDialogFocus'
+import { buildWeeklyRecapView } from '../lib/dashboardBrief'
 
-function StatCard({ icon: Icon, label, value, sub }) {
+const METRIC_ICONS = {
+  distance: Ruler,
+  runs: Activity,
+  duration: Timer,
+  consistency: Flame,
+  calories: Gauge,
+  pace: Timer,
+  strength: Dumbbell,
+}
+
+function StatCard({ metric }) {
+  const Icon = METRIC_ICONS[metric.key] || Activity
   return (
-    <div
-      style={{
-        background: 'var(--bg-card)',
-        border: '1px solid var(--border-subtle)',
-        borderRadius: 14,
-        padding: 14,
-      }}
-    >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <Icon size={16} color="var(--accent)" />
-        <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0, textTransform: 'uppercase', letterSpacing: 0.7 }}>{label}</p>
+    <div className="weekly-recap-stat" data-recap-metric={metric.key}>
+      <div>
+        <Icon size={16} aria-hidden="true" />
+        <dt>{metric.label}</dt>
       </div>
-      <p style={{ fontSize: 24, fontWeight: 900, color: 'var(--text-primary)', marginTop: 8, lineHeight: 1 }}>{value}</p>
-      {sub && <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>{sub}</p>}
+      <dd>{metric.value}</dd>
     </div>
+  )
+}
+
+export function WeeklyRecapPresenter({ data, modal = false }) {
+  const view = buildWeeklyRecapView(data)
+  if (!view) {
+    return <p className="weekly-recap-empty">No completed-week recap is available yet.</p>
+  }
+
+  const Heading = modal ? 'h3' : 'h1'
+  const DetailHeading = modal ? 'h4' : 'h2'
+  const mileageDelta = view.mileageDelta
+  const deltaLabel = mileageDelta === null
+    ? ''
+    : `${mileageDelta > 0 ? '+' : ''}${mileageDelta}% vs last week`
+
+  return (
+    <div className="weekly-recap-presenter" data-weekly-recap-presenter>
+      <section className="card-hero weekly-recap-overview" aria-labelledby={modal ? 'weekly-recap-period-modal' : 'weekly-recap-period-page'}>
+        <p className="weekly-recap-eyebrow">Completed week</p>
+        <Heading id={modal ? 'weekly-recap-period-modal' : 'weekly-recap-period-page'}>{view.weekLabel}</Heading>
+        {deltaLabel && <p className="weekly-recap-delta">{deltaLabel}</p>}
+      </section>
+
+      {view.metrics.length > 0 && (
+        <dl className="weekly-recap-stats" aria-label="Weekly recap metrics">
+          {view.metrics.map((metric) => <StatCard key={metric.key} metric={metric} />)}
+        </dl>
+      )}
+
+      {view.highlight && (
+        <section className="weekly-recap-detail" aria-labelledby={modal ? 'weekly-highlight-modal' : 'weekly-highlight-page'}>
+          <div className="weekly-recap-detail-heading">
+            <Trophy size={17} aria-hidden="true" />
+            <DetailHeading id={modal ? 'weekly-highlight-modal' : 'weekly-highlight-page'}>Highlight</DetailHeading>
+          </div>
+          <p><strong>{view.highlight.label}</strong> — {view.highlight.text}</p>
+        </section>
+      )}
+
+      {view.riskReason && (
+        <section className="weekly-recap-detail weekly-recap-risk" aria-labelledby={modal ? 'weekly-risk-modal' : 'weekly-risk-page'}>
+          <div className="weekly-recap-detail-heading">
+            <AlertTriangle size={17} aria-hidden="true" />
+            <DetailHeading id={modal ? 'weekly-risk-modal' : 'weekly-risk-page'}>Load watch</DetailHeading>
+          </div>
+          <p>{view.riskReason}</p>
+        </section>
+      )}
+
+      {view.nextWeek && (
+        <section className="weekly-recap-detail weekly-recap-next" aria-labelledby={modal ? 'weekly-next-modal' : 'weekly-next-page'}>
+          <div className="weekly-recap-detail-heading">
+            <Brain size={17} aria-hidden="true" />
+            <DetailHeading id={modal ? 'weekly-next-modal' : 'weekly-next-page'}>Next week</DetailHeading>
+          </div>
+          <p>{view.nextWeek}</p>
+          {data?.is_pro && <AiGuidanceNote />}
+        </section>
+      )}
+    </div>
+  )
+}
+
+export function WeeklyRecapDialog({ open, data, onClose }) {
+  const active = Boolean(open && data)
+  const dialogRef = useDialogFocus(active, onClose)
+
+  useEffect(() => {
+    if (!active) return undefined
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = previousOverflow
+    }
+  }, [active])
+
+  if (!active) return null
+
+  return createPortal(
+    <div className="weekly-recap-backdrop" data-weekly-recap-overlay onClick={onClose}>
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="weekly-recap-dialog-title"
+        tabIndex={-1}
+        className="weekly-recap-dialog"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <header className="weekly-recap-dialog-header">
+          <div>
+            <p>Training review</p>
+            <h2 id="weekly-recap-dialog-title">Weekly recap</h2>
+          </div>
+          <button type="button" aria-label="Close weekly recap" onClick={onClose}>
+            <X size={19} aria-hidden="true" />
+          </button>
+        </header>
+        <div className="weekly-recap-dialog-scrollport" data-weekly-recap-scrollport>
+          <WeeklyRecapPresenter data={data} modal />
+          <button type="button" className="weekly-recap-done" onClick={onClose}>Done</button>
+        </div>
+      </div>
+    </div>,
+    document.body,
   )
 }
 
@@ -40,96 +152,15 @@ export default function WeeklyRecap() {
       .finally(() => setLoading(false))
   }, [])
 
-  const mileageDelta = Number(data?.mileageVsLastWeek || 0)
-  const deltaLabel = mileageDelta >= 0 ? `+${mileageDelta}% vs last week` : `${mileageDelta}% vs last week`
-
   return (
     <ProGate isPro={isPro} loading={proLoading} message="Weekly Recap is a Pro feature">
       <div className="space-y-4">
-        {loading ? (
-          <LoadingRunner message="Loading weekly recap" />
-        ) : (
-          <>
-            <section className="rounded-2xl p-5" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-              <p style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1.1, margin: 0 }}>Weekly AI Recap</p>
-              <h1 style={{ fontSize: 28, fontWeight: 900, color: 'var(--text-primary)', margin: '8px 0 2px' }}>{data?.weekLabel || 'Last 7 days'}</h1>
-              <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>{deltaLabel}</p>
-            </section>
-
-            <section style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-              <StatCard icon={Ruler} label="Total Miles" value={Number(data?.totalMiles || 0).toFixed(1)} sub="Distance this week" />
-              <StatCard icon={Activity} label="Runs" value={data?.totalRuns || 0} />
-              <StatCard icon={Timer} label="Avg Pace" value={data?.avgPace ? `${data.avgPace}/mi` : '--'} />
-              <StatCard icon={Dumbbell} label="Lift Sessions" value={data?.liftSessions || 0} sub="Protected strength work" />
-            </section>
-
-            <section style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-              <StatCard icon={Mountain} label="Elevation Gain" value={`${Number(data?.totalElevationGain || 0).toLocaleString()} ft`} />
-              <StatCard icon={Ruler} label="Longest Run" value={`${Number(data?.longestRun || 0).toFixed(1)} mi`} />
-            </section>
-
-            {Array.isArray(data?.prsThisWeek) && data.prsThisWeek.length > 0 && (
-              <section className="rounded-2xl p-4" style={{ background: 'var(--accent-dim)', border: '1px solid var(--border-subtle)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-                  <Trophy size={16} color="var(--accent)" />
-                  <p style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-primary)', margin: 0, textTransform: 'uppercase', letterSpacing: 0.8 }}>
-                    PRs Broken This Week
-                  </p>
-                </div>
-                <div className="space-y-2">
-                  {data.prsThisWeek.map((pr, idx) => (
-                    <div key={`${pr}-${idx}`} className="rounded-lg px-3 py-2" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-                      <p style={{ fontSize: 13, color: 'var(--text-primary)', margin: 0, fontWeight: 700 }}>{pr}</p>
-                    </div>
-                  ))}
-                </div>
-              </section>
-            )}
-
-            {data?.injuryRiskFlag && (
-              <section className="rounded-2xl p-4" style={{ background: 'rgba(249,115,22,0.14)', border: '1px solid rgba(249,115,22,0.4)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <AlertTriangle size={16} color="var(--warning)" />
-                  <p style={{ fontSize: 12, fontWeight: 800, color: 'var(--warning)', margin: 0, textTransform: 'uppercase', letterSpacing: 0.8 }}>
-                    Injury Risk Watch
-                  </p>
-                </div>
-                <p style={{ marginTop: 8, marginBottom: 0, fontSize: 13, color: 'var(--text-primary)' }}>
-                  {data?.injuryRiskReason || 'Training load is elevated this week. Keep the next run easy.'}
-                </p>
-              </section>
-            )}
-
-            <section className="rounded-2xl p-4" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', borderLeft: '4px solid var(--accent)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <Brain size={16} color="var(--accent)" />
-                <p style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-primary)', margin: 0, textTransform: 'uppercase', letterSpacing: 0.8 }}>
-                  AI Insight
-                </p>
-              </div>
-              <p style={{ marginTop: 10, marginBottom: 0, fontSize: 14, lineHeight: 1.55, color: 'var(--text-primary)' }}>
-                {data?.insight || 'Keep your next run easy and consistent to build aerobic fitness safely.'}
-              </p>
-              {data?.insight && <AiGuidanceNote />}
-            </section>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-              <Link
-                to="/"
-                className="rounded-xl py-3 text-center text-sm font-bold"
-                style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)', textDecoration: 'none' }}
-              >
-                Back to Dashboard
-              </Link>
-              <Link
-                to="/history"
-                className="rounded-xl py-3 text-center text-sm font-bold"
-                style={{ background: 'var(--accent)', color: 'var(--on-accent)', textDecoration: 'none' }}
-              >
-                View History
-              </Link>
-            </div>
-          </>
+        {loading ? <LoadingRunner message="Loading weekly recap" /> : <WeeklyRecapPresenter data={data} />}
+        {!loading && (
+          <div className="weekly-recap-page-actions">
+            <Link to="/">Back to Dashboard</Link>
+            <Link to="/history">View History</Link>
+          </div>
         )}
       </div>
     </ProGate>

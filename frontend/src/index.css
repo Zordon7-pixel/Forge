@@ -706,29 +706,17 @@ body {
 
 .signature-coachs-log {
   position: relative;
-  padding: 17px 17px 15px 20px;
-  border: 1px solid #dfcfb4;
-  border-radius: 16px;
-  background: #f5ead7;
-  color: #1b160f;
-  box-shadow: 0 9px 24px rgba(0, 0, 0, 0.2);
-}
-
-.signature-coachs-log::before {
-  content: '';
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 4px;
-  background: #f97316;
+  padding: 18px;
+  color: var(--text-primary);
 }
 
 .signature-log-kicker {
-  color: #c2410c;
+  color: var(--accent);
 }
 
 .signature-log-title {
   margin: 6px 0 0;
-  color: #1b160f;
+  color: var(--text-primary);
   font-size: 22px;
   font-weight: 950;
   line-height: 1.1;
@@ -749,7 +737,7 @@ body {
 }
 
 .signature-mission-facts dt {
-  color: #7c5d42;
+  color: var(--text-muted);
   font-size: 9px;
   font-weight: 900;
   letter-spacing: 0.07em;
@@ -758,7 +746,7 @@ body {
 
 .signature-mission-facts dd {
   margin: 2px 0 0;
-  color: #1b160f;
+  color: var(--text-primary);
   font-size: 13px;
   font-weight: 850;
   line-height: 1.25;
@@ -766,25 +754,408 @@ body {
 }
 
 .signature-log-disclosure {
-  border-top-color: rgba(27, 22, 15, 0.15);
-  color: #1b160f;
+  border-top-color: var(--border-subtle);
+  color: var(--text-primary);
 }
 
 .signature-log-disclosure > span {
-  color: #c2410c;
+  color: var(--accent);
 }
 
 .signature-log-rationale {
   padding-top: 3px;
-  color: #584431;
+  color: var(--text-muted);
   font-size: 13px;
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
 
 .signature-coachs-log :is(button):focus-visible {
-  outline: 3px solid #f97316;
+  outline: 3px solid var(--accent);
   outline-offset: 3px;
+}
+
+.signature-rest-rationale {
+  min-width: 0;
+  margin-top: 14px;
+  padding-top: 13px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.signature-rest-rationale-title {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.01em;
+}
+
+.signature-rest-reasons {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+  margin: 11px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.signature-rest-reasons li {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 8px minmax(0, 1fr);
+  align-items: start;
+  gap: 9px;
+}
+
+.signature-rest-reason-marker {
+  width: 7px;
+  height: 7px;
+  margin-top: 5px;
+  border: 1px solid rgba(234, 179, 8, 0.6);
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: 0 0 8px rgba(234, 179, 8, 0.32);
+}
+
+.signature-rest-reasons li > span:last-child {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.signature-rest-reasons strong {
+  color: #f5d76b;
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+.signature-rest-reasons li > span:last-child > span {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.dashboard-weekly-recap {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  padding: 0;
+}
+
+.dashboard-weekly-recap-open {
+  display: block;
+  width: 100%;
+  min-height: 112px;
+  padding: 18px 62px 18px 18px;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+  touch-action: manipulation;
+}
+
+.dashboard-weekly-recap-copy {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.dashboard-weekly-recap-kicker,
+.weekly-recap-eyebrow {
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.dashboard-weekly-recap-summary {
+  color: var(--text-primary);
+  font-size: 15px;
+  font-weight: 850;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.dashboard-weekly-recap-affordance {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.dashboard-weekly-recap-dismiss {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.dashboard-weekly-recap-open:active,
+.weekly-recap-done:active {
+  transform: scale(0.99);
+}
+
+.dashboard-weekly-recap :is(button):focus-visible,
+.weekly-recap-dialog :is(button, a):focus-visible,
+.weekly-recap-page-actions a:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: -3px;
+}
+
+.weekly-recap-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100dvh;
+  max-height: 100dvh;
+  align-items: flex-end;
+  justify-content: center;
+  overflow: hidden;
+  padding-top: max(12px, var(--safe-top));
+  background: rgba(0, 0, 0, 0.78);
+}
+
+.weekly-recap-dialog {
+  display: flex;
+  width: min(32rem, 100%);
+  max-height: calc(100dvh - max(12px, var(--safe-top)));
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid rgba(234, 179, 8, 0.32);
+  border-radius: 20px 20px 0 0;
+  background: var(--bg-card);
+  box-shadow: 0 -18px 48px rgba(0, 0, 0, 0.48), var(--glow-accent);
+}
+
+.weekly-recap-dialog-header {
+  display: flex;
+  min-width: 0;
+  flex: 0 0 auto;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-card);
+}
+
+.weekly-recap-dialog-header > div {
+  min-width: 0;
+}
+
+.weekly-recap-dialog-header p {
+  margin: 0;
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.weekly-recap-dialog-header h2 {
+  margin: 4px 0 0;
+  color: var(--text-primary);
+  font-size: 21px;
+  font-weight: 950;
+  line-height: 1.15;
+}
+
+.weekly-recap-dialog-header button {
+  display: grid;
+  min-width: 44px;
+  min-height: 44px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.weekly-recap-dialog-scrollport {
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 14px clamp(12px, 4vw, 18px) calc(18px + var(--safe-bottom));
+  -webkit-overflow-scrolling: touch;
+}
+
+.weekly-recap-presenter {
+  display: grid;
+  min-width: 0;
+  gap: 12px;
+}
+
+.weekly-recap-overview {
+  min-width: 0;
+  padding: 18px;
+}
+
+.weekly-recap-overview h1,
+.weekly-recap-overview h3 {
+  margin: 6px 0 0;
+  color: var(--text-primary);
+  font-size: clamp(23px, 7vw, 29px);
+  font-weight: 950;
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+}
+
+.weekly-recap-delta {
+  margin: 6px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.weekly-recap-stats {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.weekly-recap-stat {
+  min-width: 0;
+  padding: 13px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  background: var(--bg-input);
+}
+
+.weekly-recap-stat > div {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  color: var(--accent);
+}
+
+.weekly-recap-stat dt {
+  color: var(--text-muted);
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.weekly-recap-stat dd {
+  margin: 8px 0 0;
+  color: var(--text-primary);
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 950;
+  line-height: 1.05;
+  overflow-wrap: anywhere;
+}
+
+.weekly-recap-detail {
+  min-width: 0;
+  padding: 15px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 16px;
+  background: var(--bg-input);
+}
+
+.weekly-recap-detail-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--accent);
+}
+
+.weekly-recap-detail-heading :is(h2, h4) {
+  margin: 0;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.weekly-recap-detail > p {
+  margin: 9px 0 0;
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.weekly-recap-risk {
+  border-color: rgba(249, 115, 22, 0.4);
+}
+
+.weekly-recap-next {
+  border-color: rgba(234, 179, 8, 0.3);
+}
+
+.weekly-recap-done {
+  width: 100%;
+  min-height: 46px;
+  margin-top: 14px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--accent);
+  color: var(--on-accent);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.weekly-recap-empty {
+  margin: 0;
+  padding: 18px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 16px;
+  color: var(--text-muted);
+}
+
+.weekly-recap-page-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.weekly-recap-page-actions a {
+  display: grid;
+  min-height: 46px;
+  place-items: center;
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 850;
+  text-align: center;
+  text-decoration: none;
+}
+
+.weekly-recap-page-actions a:last-child {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
 }
 
 @media (max-width: 340px) {
@@ -832,7 +1203,7 @@ body {
   }
 
   .signature-coachs-log {
-    padding: 12px 12px 11px 16px;
+    padding: 13px;
   }
 
   .signature-log-title {
@@ -843,6 +1214,39 @@ body {
     gap: 5px 10px;
     margin-top: 10px;
   }
+
+  .signature-rest-rationale {
+    margin-top: 11px;
+    padding-top: 10px;
+  }
+
+  .signature-rest-reasons {
+    gap: 8px;
+  }
+
+  .dashboard-weekly-recap-open {
+    min-height: 104px;
+    padding: 14px 56px 14px 13px;
+  }
+
+  .weekly-recap-dialog-header {
+    padding: 11px 12px;
+  }
+
+  .weekly-recap-dialog-scrollport {
+    padding-right: 10px;
+    padding-left: 10px;
+  }
+
+  .weekly-recap-overview,
+  .weekly-recap-detail,
+  .weekly-recap-stat {
+    padding: 12px;
+  }
+
+  .weekly-recap-stat dd {
+    font-size: 17px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -852,8 +1256,22 @@ body {
   }
 
   .signature-readiness-card *,
-  .signature-coachs-log * {
+  .signature-coachs-log *,
+  .dashboard-weekly-recap *,
+  .weekly-recap-dialog * {
     scroll-behavior: auto;
     transition: none;
+  }
+}
+
+@media (min-width: 640px) {
+  .weekly-recap-backdrop {
+    align-items: center;
+    padding: max(16px, var(--safe-top)) 16px max(16px, var(--safe-bottom));
+  }
+
+  .weekly-recap-dialog {
+    max-height: min(760px, calc(100dvh - max(32px, var(--safe-top)) - var(--safe-bottom)));
+    border-radius: 20px;
   }
 }

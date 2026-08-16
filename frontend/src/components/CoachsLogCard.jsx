@@ -1,6 +1,7 @@
 import { useId } from 'react'
 import { formatHrZone } from '../lib/dailyExecutionCore'
 import { humanizeMachineValue } from '../lib/goalBackwardPresentation'
+import { buildRestDayReasons } from '../lib/dashboardBrief'
 
 function customerText(value, { casing = 'sentence' } = {}) {
   const raw = String(value ?? '').trim()
@@ -24,6 +25,8 @@ function matchingSession(execution, recommendation) {
 }
 
 function missionTitle(recommendation, session) {
+  const recommendationType = String(recommendation?.recommendationType || recommendation?.type || '').toLowerCase()
+  if (recommendationType === 'rest') return 'Rest & recover'
   const title = customerText(session?.title || session?.label || session?.workout_name, { casing: 'title' })
   if (title) return title
   return customerText(recommendation?.recommendationType || recommendation?.type, { casing: 'title' })
@@ -54,7 +57,15 @@ function missionRationale(recommendation) {
     || customerText(recommendation?.reason)
 }
 
-export default function CoachsLogCard({ recommendation, execution, expanded = false, onExpandedChange }) {
+export default function CoachsLogCard({
+  recommendation,
+  execution,
+  weeklyRecap,
+  readinessData,
+  nextRace,
+  expanded = false,
+  onExpandedChange,
+}) {
   const rationaleId = useId()
   if (!recommendation || execution?.surface?.status === 'blocked') return null
 
@@ -64,9 +75,11 @@ export default function CoachsLogCard({ recommendation, execution, expanded = fa
 
   const metrics = missionMetrics(recommendation, session)
   const rationale = missionRationale(recommendation)
+  const restReasons = buildRestDayReasons({ recommendation, execution, weeklyRecap, readinessData, nextRace })
+  const isRestDay = restReasons.length > 0
 
   return (
-    <section className="signature-coachs-log" aria-labelledby="signature-coachs-log-title" data-signature-coachs-log>
+    <section className="signature-coachs-log card-hero" aria-labelledby="signature-coachs-log-title" data-dashboard-card-family="brief" data-signature-coachs-log>
       <p className="signature-log-kicker">Coach&apos;s daily brief</p>
       <h2 id="signature-coachs-log-title" className="signature-log-title">{title}</h2>
 
@@ -81,7 +94,24 @@ export default function CoachsLogCard({ recommendation, execution, expanded = fa
         </dl>
       )}
 
-      {rationale && (
+      {isRestDay && (
+        <div className="signature-rest-rationale" aria-labelledby={rationaleId}>
+          <p id={rationaleId} className="signature-rest-rationale-title">Why today matters</p>
+          <ul className="signature-rest-reasons" aria-label="Rest day reasons">
+            {restReasons.map((reason) => (
+              <li key={reason.key}>
+                <span className="signature-rest-reason-marker" aria-hidden="true" />
+                <span>
+                  <strong>{reason.label}</strong>
+                  <span>{reason.detail}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {!isRestDay && rationale && (
         <>
           <button
             type="button"
