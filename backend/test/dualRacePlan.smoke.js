@@ -8,6 +8,7 @@ const concurrent = require('../src/lib/concurrentPlan');
 const hyrox = require('../src/lib/hyroxPlan');
 const { aggregateWeeklyStress } = require('../src/lib/goalBackwardLoad');
 const { buildGoalBackwardPlanningDecision } = require('../src/lib/goalBackwardDecisionEngine');
+const { targetRef: goalBackwardTargetRef } = require('../src/lib/betaPlanRollout');
 const adaptation = require('../src/lib/adaptationEngine');
 const planSchema = require('../src/lib/planSchema');
 const { motivationalRunName } = require('../../shared/runDisplayName.mjs');
@@ -1016,6 +1017,8 @@ async function checkHyroxCandidateImmediateAdoption() {
       event_kind: 'hyrox',
       event_format: 'doubles',
       event_category: 'men',
+      event_revision: 3,
+      goal_revision: 4,
       rules_version: '2026-2027',
       event_config_json: JSON.stringify({
         equipment: HYROX_EQUIPMENT,
@@ -1032,16 +1035,18 @@ async function checkHyroxCandidateImmediateAdoption() {
       event_local_date: '2026-10-11',
       event_timezone: 'America/New_York',
       event_kind: 'run_race',
+      event_revision: 2,
+      goal_revision: 3,
       distance_miles: 10,
       goal_time_seconds: 5220,
     }],
   ]);
   const recentRuns = [
-    { id: 'run-1', date: '2026-07-27', distance_miles: 4, duration_seconds: 2200, type: 'easy', created_at: '2026-07-27T12:00:00Z' },
-    { id: 'run-2', date: '2026-07-30', distance_miles: 5, duration_seconds: 2700, type: 'easy', created_at: '2026-07-30T12:00:00Z' },
-    { id: 'run-3', date: '2026-08-04', distance_miles: 4, duration_seconds: 2200, type: 'easy', created_at: '2026-08-04T12:00:00Z' },
-    { id: 'run-4', date: '2026-08-08', distance_miles: 6, duration_seconds: 3300, type: 'long', created_at: '2026-08-08T12:00:00Z' },
-    { id: 'completed-today', date: planningDate, distance_miles: 3, duration_seconds: 1650, type: 'easy', created_at: '2026-08-14T11:00:00Z' },
+    { id: 'run-1', date: '2026-07-27', distance_miles: 1, duration_seconds: 720, type: 'easy', created_at: '2026-07-27T12:00:00Z' },
+    { id: 'run-2', date: '2026-07-30', distance_miles: 1, duration_seconds: 720, type: 'easy', created_at: '2026-07-30T12:00:00Z' },
+    { id: 'run-3', date: '2026-08-04', distance_miles: 1, duration_seconds: 720, type: 'easy', created_at: '2026-08-04T12:00:00Z' },
+    { id: 'run-4', date: '2026-08-08', distance_miles: 1, duration_seconds: 720, type: 'long', created_at: '2026-08-08T12:00:00Z' },
+    { id: 'completed-today', date: planningDate, distance_miles: 1, duration_seconds: 720, type: 'easy', created_at: '2026-08-14T11:00:00Z' },
   ];
   const initialPlan = hyrox.generateHyroxPlan({
     planningLocalDate: planningDate,
@@ -1318,6 +1323,121 @@ async function checkHyroxCandidateImmediateAdoption() {
       headers: { 'x-forged-local-date': planningDate, 'x-forged-timezone-offset-minutes': '240' },
       get(name) { return this.headers[String(name).toLowerCase()]; },
     };
+    const candidateCountBeforeForcedFailure = candidates.size;
+    const artifactCountBeforeForcedFailure = planningArtifacts.size;
+    const activePlanBeforeForcedFailure = currentAssignment().id;
+    await assert.rejects(
+      () => plansRouter._test.previewPlanForUser(ownerId, {
+        ...requestClock,
+        race_ids: ['hyrox', 'army'],
+        target: { trainingDays: ['Tue', 'Thu', 'Sat', 'Sun'], runDaysPerWeek: 4, liftingEnabled: false },
+      }, {
+        goalBackwardDependencies: {
+          mode: 'preview',
+          cohortRefs: [goalBackwardTargetRef(ownerId)],
+          alertEntries: [],
+          enumerateCandidates: () => { throw new Error('synthetic forced v2.4 construction failure'); },
+        },
+      }),
+      (error) => error?.code === 'GOAL_BACKWARD_GENERATION_FAILED' && error?.status === 409,
+      'an authorized v2.4 construction failure must fail closed before legacy candidate persistence',
+    );
+    assert.equal(candidates.size, candidateCountBeforeForcedFailure, 'v2.4 failure persists no legacy candidate');
+    assert.equal(planningArtifacts.size, artifactCountBeforeForcedFailure, 'v2.4 failure persists no partial artifacts');
+    assert.equal(currentAssignment().id, activePlanBeforeForcedFailure, 'v2.4 failure changes no active plan');
+
+    const candidateCountBeforeArtifactFailure = candidates.size;
+    const artifactCountBeforeArtifactFailure = planningArtifacts.size;
+    await assert.rejects(
+      () => plansRouter._test.previewPlanForUser(ownerId, {
+        ...requestClock,
+        race_ids: ['hyrox', 'army'],
+        target: {
+          trainingDays: ['Mon', 'Tue', 'Thu', 'Sat', 'Sun'],
+          runDaysPerWeek: 4,
+          liftingEnabled: false,
+        },
+      }, {
+        goalBackwardDependencies: {
+          mode: 'on',
+          cohortRefs: [goalBackwardTargetRef(ownerId)],
+          alertEntries: [],
+          buildArtifacts: () => { throw new Error('synthetic forced v2.4 artifact failure'); },
+        },
+      }),
+      (error) => error?.code === 'GOAL_BACKWARD_GENERATION_FAILED' && error?.status === 409,
+      'an authorized v2.4 artifact failure must fail closed before legacy candidate persistence',
+    );
+    assert.equal(candidates.size, candidateCountBeforeArtifactFailure, 'artifact failure persists no legacy candidate');
+    assert.equal(planningArtifacts.size, artifactCountBeforeArtifactFailure, 'artifact failure persists no partial artifacts');
+    assert.equal(currentAssignment().id, activePlanBeforeForcedFailure, 'artifact failure changes no active plan');
+
+    const authorizedPreview = await plansRouter._test.previewPlanForUser(ownerId, {
+      ...requestClock,
+      race_ids: ['hyrox', 'army'],
+      target: {
+        trainingDays: ['Mon', 'Tue', 'Thu', 'Sat', 'Sun'],
+        runDaysPerWeek: 4,
+        liftingEnabled: false,
+      },
+    }, {
+      goalBackwardDependencies: {
+        mode: 'preview',
+        cohortRefs: [goalBackwardTargetRef(ownerId)],
+        alertEntries: [],
+        sourceRevision: 'd4169340b99469895372dd45ef6505c4e25d049e',
+      },
+    });
+    const authorizedRow = candidates.get(authorizedPreview.id);
+    assert.equal(authorizedRow.feature_mode, 'preview');
+    assert.equal(authorizedRow.engine_version, 'goal-backward-coaching-v2.4');
+    assert.ok(authorizedRow.decision_id);
+    assert.ok(Number(authorizedRow.athlete_state_revision) >= 1);
+    assert.ok(Number(authorizedRow.candidate_revision) >= 1);
+    assert.match(authorizedRow.candidate_hash, /^sha256:[a-f0-9]{64}$/);
+    assert.equal(authorizedRow.selected_candidate_hash, authorizedRow.candidate_hash);
+    assert.deepEqual(JSON.parse(authorizedRow.goal_revisions_json), {
+      'goal-army': 3,
+      'goal-hyrox': 4,
+    });
+    const materialReview = JSON.parse(authorizedRow.material_change_json);
+    assert.ok(Array.isArray(materialReview.reason_codes));
+    assert.ok(materialReview.apply_bindings?.decision_artifact?.artifact_id);
+    const authorizedArtifacts = [...planningArtifacts.values()]
+      .filter((artifact) => artifact.plan_generation_candidate_id === authorizedPreview.id);
+    assert.deepEqual(authorizedArtifacts.map((artifact) => artifact.artifact_kind).sort(), [
+      'candidate_week', 'canonical_session_set', 'surface_manifest', 'validator_result',
+    ]);
+    const authorizedDecisionArtifacts = [...planningArtifacts.values()]
+      .filter((artifact) => artifact.decision_id === authorizedRow.decision_id);
+    assert.deepEqual(authorizedDecisionArtifacts.map((artifact) => artifact.artifact_kind).sort(), [
+      'athlete_state', 'candidate_week', 'canonical_session_set', 'evidence_snapshot',
+      'planning_decision', 'surface_manifest', 'validator_result',
+    ]);
+    const evidenceArtifact = authorizedDecisionArtifacts.find((artifact) => (
+      artifact.artifact_kind === 'evidence_snapshot'
+    ));
+    assert.equal(
+      JSON.parse(evidenceArtifact.payload_json).source_revision,
+      'd4169340b99469895372dd45ef6505c4e25d049e',
+    );
+    const validatorArtifact = authorizedDecisionArtifacts.find((artifact) => (
+      artifact.artifact_kind === 'validator_result'
+    ));
+    assert.equal(JSON.parse(validatorArtifact.payload_json).material_review.review_contract_complete, true);
+    const canonicalArtifact = authorizedDecisionArtifacts.find((artifact) => (
+      artifact.artifact_kind === 'canonical_session_set'
+    ));
+    const canonicalPayload = JSON.parse(canonicalArtifact.payload_json);
+    assert.equal(
+      canonicalPayload.selected_candidate_hash.replace(/^sha256:/, ''),
+      authorizedRow.selected_candidate_hash.replace(/^sha256:/, ''),
+    );
+    assert.equal(canonicalPayload.canonical_sessions_materialized, true);
+    assert.ok(canonicalPayload.content_hash);
+    assert.ok(authorizedPreview.surfaceManifest?.identity?.canonical_session_set_hash);
+    assert.equal(currentAssignment().id, activePlanBeforeForcedFailure, 'preview cannot mutate the active plan');
+
     const previewResponse = await invoke(preview, {
       ...requestBase,
       body: {
@@ -1329,6 +1449,24 @@ async function checkHyroxCandidateImmediateAdoption() {
     assert.equal(previewResponse.statusCode, 201, JSON.stringify(previewResponse.payload));
     assert.equal(candidates.get(previewResponse.payload.candidate_id).feature_mode, 'shadow',
       'the route regression applies a legacy/current-engine candidate with attached shadow diagnostics');
+    const shadowRow = candidates.get(previewResponse.payload.candidate_id);
+    const shadowArtifacts = [...planningArtifacts.values()]
+      .filter((artifact) => artifact.decision_id === shadowRow.decision_id);
+    assert.deepEqual(shadowArtifacts.map((artifact) => artifact.artifact_kind).sort(), [
+      'athlete_state', 'candidate_week', 'canonical_session_set', 'evidence_snapshot',
+      'planning_decision', 'surface_manifest', 'validator_result',
+    ]);
+    const shadowCandidateReceipt = JSON.parse(shadowArtifacts.find((artifact) => (
+      artifact.artifact_kind === 'candidate_week'
+    )).payload_json);
+    assert.equal(shadowCandidateReceipt.authoritative_engine, 'current');
+    assert.ok(shadowCandidateReceipt.candidates.some((candidate) => candidate.valid === true));
+    assert.ok(shadowCandidateReceipt.candidates.some((candidate) => candidate.valid === false));
+    const shadowSurfaceReceipt = JSON.parse(shadowArtifacts.find((artifact) => (
+      artifact.artifact_kind === 'surface_manifest'
+    )).payload_json);
+    assert.equal(shadowSurfaceReceipt.feature_mode, 'shadow');
+    assert.equal(shadowSurfaceReceipt.v24_surface_enabled, false);
     assert.equal(previewResponse.payload.effective_from, planningDate);
     assert.deepEqual(previewResponse.payload.plan.plan_data.goals.map((goal) => goal.raceId), ['hyrox', 'army']);
     const retainedHyroxGoal = previewResponse.payload.plan.plan_data.goals[0];

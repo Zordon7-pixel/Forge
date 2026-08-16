@@ -623,6 +623,36 @@ function buildGoalBackwardShadowBindings({
     Math.max(1, Number(goal.source_revision || 1)),
   ]));
   const materialChange = selectedCandidate?.material_change || { required: false, reason_codes: [] };
+  const compactMaterialChange = jsonBytes(materialChange) <= (MAX_BINDING_JSON_BYTES / 2)
+    ? materialChange
+    : {
+      material_change: materialChange.material_change === true,
+      preview_required: materialChange.preview_required === true,
+      review_required: materialChange.review_required === true,
+      review_contract_complete: materialChange.review_contract_complete === true,
+      baseline_source: materialChange.baseline_source || null,
+      baseline_plan_revision: materialChange.baseline_plan_revision ?? null,
+      candidate_plan_revision: materialChange.candidate_plan_revision ?? null,
+      active_prescription_hash: materialChange.active_prescription_hash || null,
+      candidate_prescription_hash: materialChange.candidate_prescription_hash || null,
+      reason_codes: materialChange.reason_codes || [],
+      changes: (materialChange.changes || []).map((change) => ({
+        code: change.code,
+        session_id: change.session_id || null,
+        reason_code: change.reason_code || null,
+        review_required: change.review_required === true,
+        decisive_evidence_ids: change.decisive_evidence_ids || [],
+        baseline_plan_revision: change.baseline_plan_revision ?? null,
+        candidate_plan_revision: change.candidate_plan_revision ?? null,
+        baseline_session_revision: change.baseline_session_revision ?? null,
+        candidate_session_revision: change.candidate_session_revision ?? null,
+        baseline_session_content_hash: change.baseline_session_content_hash || null,
+        candidate_session_content_hash: change.candidate_session_content_hash || null,
+        decision_id: change.decision_id || null,
+        candidate_hash: change.candidate_hash || null,
+        canonical_session_set_hash: change.canonical_session_set_hash || null,
+      })),
+    };
   return buildGoalBackwardCandidateBindings({
     decisionId: decision?.decision_id,
     candidateRevision: 1,
@@ -636,7 +666,7 @@ function buildGoalBackwardShadowBindings({
     featureMode: 'shadow',
     selectedCandidateHash: selectedCandidate?.candidate_hash || currentCandidateHash,
     materialChange: {
-      ...cloneJson(materialChange),
+      ...cloneJson(compactMaterialChange),
       apply_bindings: buildGoalBackwardFingerprintBindings(decision, { decisionArtifact }),
     },
   });
@@ -874,6 +904,7 @@ function buildGoalBackwardDecisionArtifacts({
   decision,
   athleteState = {},
   candidates = [],
+  sourceRevision = null,
   createdAt = new Date().toISOString(),
 } = {}) {
   if (!decision?.decision_id || !planGenerationCandidateId) {
@@ -888,11 +919,14 @@ function buildGoalBackwardDecisionArtifacts({
     reason_codes: candidate.validation?.reason_codes || [],
     ranking_tuple: candidate.ranking_tuple || null,
   }));
+  const boundedSourceRevision = /^[a-zA-Z0-9._:+-]{7,128}$/.test(String(sourceRevision || ''))
+    ? String(sourceRevision) : null;
   const payloads = {
     evidence_snapshot: {
       evidence_snapshot_id: decision.evidence_snapshot_id || null,
       planning_date_local: decision.planning_date_local,
       source: 'REDACTED_SHADOW_INPUT',
+      ...(boundedSourceRevision ? { source_revision: boundedSourceRevision } : {}),
     },
     athlete_state: {
       athlete_state_revision: Math.max(1, Number(decision.athlete_state_revision || athleteState.athlete_state_revision || 1)),
@@ -920,6 +954,7 @@ function buildGoalBackwardDecisionArtifacts({
     validator_result: {
       plan_generation_candidate_ref: planGenerationCandidateRef,
       results: decision.validator_results || [],
+      material_review: selected?.material_change || null,
     },
     canonical_session_set: {
       plan_generation_candidate_ref: planGenerationCandidateRef,

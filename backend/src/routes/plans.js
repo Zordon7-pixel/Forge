@@ -27,6 +27,7 @@ const { localDateForOffset } = require('../lib/requestPlanningDate');
 const {
   buildRacePlanCandidate,
   enumerateGoalBackwardCandidates,
+  legacyGoalBackwardFamily,
   semanticCandidateErrors,
 } = require('../lib/racePlanCandidateEngine');
 const {
@@ -2209,13 +2210,76 @@ function raceLifecycleForPlanning(race = {}) {
 }
 
 function goalBackwardEventKind(race, state) {
-  if (String(race?.event_kind || '').toLowerCase() === 'hyrox' || state?.target?.hyroxEvent) {
+  const targetHyroxRaceId = state?.target?.hyroxEvent?.raceId;
+  const isTargetHyrox = targetHyroxRaceId !== null && targetHyroxRaceId !== undefined
+    && String(targetHyroxRaceId) === String(race?.id || '');
+  if (String(race?.event_kind || '').toLowerCase() === 'hyrox' || isTargetHyrox) {
     const format = String(race?.event_format || state?.target?.hyroxEvent?.format || '').toLowerCase();
     return format.includes('double') ? 'HYROX_DOUBLES' : 'HYROX_SINGLES';
   }
   const distanceMiles = Number(race?.distance_miles || state?.target?.distanceMiles || 0);
   if (distanceMiles > 20) return 'MARATHON';
   return distanceMiles > 6.3 ? 'ROAD_ENDURANCE' : 'ROAD_SHORT';
+}
+
+const GOAL_BACKWARD_RUNNING_FAMILIES = new Set([
+  'recovery_run', 'easy_run', 'long_aerobic', 'steady_run', 'threshold_run', 'interval_run',
+  'race_rhythm_run', 'assessment', 'race',
+]);
+
+function goalBackwardCandidateMaterial(plan, availableLocalDates) {
+  const available = Array.isArray(availableLocalDates) ? new Set(availableLocalDates) : null;
+  return (Array.isArray(plan?.weeks) ? plan.weeks : []).flatMap((week) => (
+    (Array.isArray(week?.days) ? week.days : []).flatMap((day) => (
+      (!available || available.has(String(day?.date || '')))
+        ? (Array.isArray(day.sessions) ? day.sessions : []).map((session) => ({
+          ...session,
+          date: session.date || day.date,
+        }))
+        : []
+    ))
+  ));
+}
+
+function goalBackwardMaterialRunningMeters(session) {
+  const direct = Number(session?.distance_m ?? session?.distanceMeters);
+  if (Number.isFinite(direct) && direct >= 0) return direct;
+  const miles = Number(session?.distance_miles ?? session?.distanceMiles);
+  return Number.isFinite(miles) && miles >= 0 ? Math.round(miles * 1609.344) : 0;
+}
+
+function goalBackwardSupportingStimuli(candidateMaterial, primaryRoles, minimumRunningM) {
+  const unmatchedPrimary = (Array.isArray(primaryRoles) ? primaryRoles : [])
+    .filter((role) => role.role === 'PRIMARY_KEY')
+    .map((role) => new Set(role.any_of || []));
+  const primaryRequirementId = (Array.isArray(primaryRoles) ? primaryRoles : [])
+    .find((role) => role.role === 'PRIMARY_KEY')?.requirement_id || null;
+  const requiredRunningM = Number(minimumRunningM);
+  let selectedRunningM = 0;
+  const supporting = [];
+  for (const session of candidateMaterial) {
+    const family = legacyGoalBackwardFamily(session);
+    if (!family) continue;
+    const primaryIndex = unmatchedPrimary.findIndex((families) => families.has(family));
+    if (primaryIndex >= 0) {
+      unmatchedPrimary.splice(primaryIndex, 1);
+      if (GOAL_BACKWARD_RUNNING_FAMILIES.has(family)) {
+        selectedRunningM += goalBackwardMaterialRunningMeters(session);
+      }
+      continue;
+    }
+    if (!GOAL_BACKWARD_RUNNING_FAMILIES.has(family)) continue;
+    if (!Number.isSafeInteger(requiredRunningM) || requiredRunningM < 0 || selectedRunningM >= requiredRunningM) continue;
+    supporting.push({
+      requirement_id: `current-candidate-support-${supporting.length + 1}`,
+      any_of: [family],
+      role: 'SUPPORTING',
+      scheduled_local_date: String(session.date || ''),
+      ...(primaryRequirementId ? { supports_requirement_id: primaryRequirementId } : {}),
+    });
+    selectedRunningM += goalBackwardMaterialRunningMeters(session);
+  }
+  return supporting;
 }
 
 function goalBackwardGoalsForState(userId, state) {
@@ -2270,7 +2334,7 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
   const evidenceSnapshotId = `snapshot-${state.inputHash.slice(-24)}`;
   const buildDecision = dependencies.buildDecision || buildGoalBackwardPlanningDecision;
   const enumerateCandidates = dependencies.enumerateCandidates || enumerateGoalBackwardCandidates;
-  const decision = buildDecision({
+  const decisionInput = {
     athlete_id: userId,
     planning_date_local: planningDateLocal,
     created_at: `${planningDateLocal}T00:00:00.000Z`,
@@ -2320,7 +2384,24 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
         supports_requirement_id: 'long_aerobic',
       },
     ] : [],
-  });
+  };
+  let decision = buildDecision(decisionInput);
+  const boundedCandidateMaterial = clusterPolicy?.required === true && selectedClusterWeek
+    ? goalBackwardCandidateMaterial({ weeks: [selectedClusterWeek] }, availableLocalDates)
+    : goalBackwardCandidateMaterial(built.plan, availableLocalDates);
+  const candidateMaterial = boundedCandidateMaterial.length
+    ? boundedCandidateMaterial
+    : goalBackwardCandidateMaterial(built.plan, null);
+  if (clusterPolicy?.required !== true) {
+    const supportingStimuli = goalBackwardSupportingStimuli(
+      candidateMaterial,
+      decision.role_multiset,
+      decision.minimum_weekly_demand?.running_m,
+    );
+    if (supportingStimuli.length) {
+      decision = buildDecision({ ...decisionInput, supporting_stimuli: supportingStimuli });
+    }
+  }
   const activeAppliedPlan = state.active ? {
     ...parsePlan(state.active.row),
     plan_revision: Math.max(1, Number(state.activePlan?.planVersion || state.active.row?.plan_version || 1)),
@@ -2329,8 +2410,7 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
     decision,
     available_local_dates: availableLocalDates,
     maximum_session_count: decision.role_multiset.length,
-    legacy_road_candidate_material: clusterPolicy?.required === true && selectedClusterWeek
-      ? { weeks: [selectedClusterWeek] } : built.plan,
+    legacy_road_candidate_material: candidateMaterial,
     active_applied_plan: activeAppliedPlan,
     preferred_weekdays: state.target?.trainingDays || [],
     selected_running_volume_m: decision.proposed_running_volume_m,
@@ -2831,6 +2911,36 @@ function applicableGoalBackwardPlan(currentPlan, goalBackwardResult) {
   };
 }
 
+function isRevisionedGoalBackedRequest(userId, state, request = state?.request) {
+  const ownerId = String(userId || '').trim();
+  const requestedRaceIds = Array.isArray(request?.race_ids)
+    ? request.race_ids.map((value) => String(value || '').trim()) : [];
+  const races = Array.isArray(state?.races) ? state.races : [];
+  const planningInputRevision = Number(state?.planningInputRevision);
+  if (!ownerId || requestedRaceIds.length < 1 || requestedRaceIds.length > 2
+    || !Number.isSafeInteger(planningInputRevision) || planningInputRevision < 0
+    || races.length !== requestedRaceIds.length) return false;
+  const requested = [...requestedRaceIds].sort();
+  const loaded = races.map((race) => String(race?.id || '')).sort();
+  if (requested.some((raceId) => !raceId) || JSON.stringify(requested) !== JSON.stringify(loaded)) return false;
+  const goals = goalBackwardGoalsForState(ownerId, state);
+  return goals.length === races.length && goals.every((goal) => (
+    goal.athlete_id === ownerId
+    && requestedRaceIds.includes(String(goal.race_id || ''))
+    && Number.isSafeInteger(Number(goal.source_revision))
+    && Number(goal.source_revision) >= 1
+  ));
+}
+
+function goalBackwardGenerationFailed() {
+  return candidateError(
+    409,
+    'GOAL_BACKWARD_GENERATION_FAILED',
+    'The goal-backed plan could not be completed. No candidate was saved; review the goal or training inputs and preview again.',
+    { reason_code: 'CANDIDATE_NOT_SELECTED' },
+  );
+}
+
 function emitPlanReleaseTelemetry({
   userId,
   eventType,
@@ -2904,6 +3014,9 @@ async function previewPlanForUser(userId, body = {}, { store = true, goalBackwar
     ...(Object.hasOwn(goalBackwardDependencies, 'alertEntries')
       ? { alertEntries: goalBackwardDependencies.alertEntries } : {}),
   });
+  if (goalBackwardMode !== 'off' && !isRevisionedGoalBackedRequest(userId, initial, request)) {
+    goalBackwardMode = 'off';
+  }
   let goalBackwardShadow = null;
   await maybeComputeGoalBackwardShadowDiagnostics({
     mode: goalBackwardMode,
@@ -2926,14 +3039,14 @@ async function previewPlanForUser(userId, body = {}, { store = true, goalBackwar
     emitPlanReleaseTelemetry({
       userId,
       eventType: 'mode_resolution',
-      mode: 'off',
+      mode: goalBackwardMode,
       outcome: 'candidate_rejected',
       candidateSelected: false,
       failReasonCodes: ['CANDIDATE_NOT_SELECTED'],
       surfaceCapability: 'BLOCKED',
       sink: goalBackwardDependencies.telemetrySink,
     });
-    goalBackwardMode = 'off';
+    if (['preview', 'on'].includes(goalBackwardMode)) throw goalBackwardGenerationFailed();
   }
   if (['preview', 'on'].includes(goalBackwardMode)) {
     const applicablePlan = applicableGoalBackwardPlan(normalized.plan, goalBackwardShadow);
@@ -2943,8 +3056,17 @@ async function previewPlanForUser(userId, body = {}, { store = true, goalBackwar
       response.candidateHash = candidateHash;
       response.plan = persistedPlan;
     } else {
-      goalBackwardMode = 'off';
-      goalBackwardShadow = null;
+      emitPlanReleaseTelemetry({
+        userId,
+        eventType: 'mode_resolution',
+        mode: goalBackwardMode,
+        outcome: 'candidate_rejected',
+        candidateSelected: false,
+        failReasonCodes: ['CANDIDATE_NOT_SELECTED'],
+        surfaceCapability: 'BLOCKED',
+        sink: goalBackwardDependencies.telemetrySink,
+      });
+      throw goalBackwardGenerationFailed();
     }
   }
   if (goalBackwardMode !== 'off') {
@@ -2952,15 +3074,19 @@ async function previewPlanForUser(userId, body = {}, { store = true, goalBackwar
     const passReasonCodes = candidateSelected
       ? (goalBackwardShadow.selected_candidate.validation?.reason_codes || []).filter((code) => REQUIRED_RELEASE_TELEMETRY_REASON_CODES.has(code))
       : [];
-    const failReasonCodes = (goalBackwardShadow?.rejected_candidates || [])
-      .flatMap((candidate) => candidate.reason_codes || [])
-      .filter((code) => REQUIRED_RELEASE_TELEMETRY_REASON_CODES.has(code))
-      .slice(0, 32);
+    const failReasonCodes = goalBackwardShadow
+      ? (goalBackwardShadow.rejected_candidates || [])
+        .flatMap((candidate) => candidate.reason_codes || [])
+        .filter((code) => REQUIRED_RELEASE_TELEMETRY_REASON_CODES.has(code))
+        .slice(0, 32)
+      : ['CANDIDATE_NOT_SELECTED'];
     emitPlanReleaseTelemetry({
       userId,
       eventType: 'candidate_comparison',
       mode: goalBackwardMode,
-      outcome: goalBackwardMode === 'shadow' ? 'control_selected' : 'candidate_selected',
+      outcome: goalBackwardShadow
+        ? (goalBackwardMode === 'shadow' ? 'control_selected' : 'candidate_selected')
+        : 'candidate_rejected',
       candidateSelected,
       passReasonCodes,
       failReasonCodes,
@@ -3048,7 +3174,8 @@ async function previewPlanForUser(userId, body = {}, { store = true, goalBackwar
           );
         }
         goalBackwardShadow = suppressRejectedGoalBackwardCandidates(goalBackwardShadow, priorRejections);
-        const artifacts = buildGoalBackwardArtifacts({
+        const buildArtifacts = goalBackwardDependencies.buildArtifacts || buildGoalBackwardArtifacts;
+        const artifacts = buildArtifacts({
           userId,
           planGenerationCandidateId: candidateId,
           currentCandidateHash: candidateHash,
@@ -3056,6 +3183,7 @@ async function previewPlanForUser(userId, body = {}, { store = true, goalBackwar
           candidates: goalBackwardShadow.candidates,
           featureMode: goalBackwardMode,
           plan: persistedPlan,
+          sourceRevision: goalBackwardDependencies.sourceRevision || process.env.RAILWAY_GIT_COMMIT_SHA || null,
         });
         const decisionArtifact = artifacts.find((artifact) => artifact.artifact_kind === 'planning_decision');
         const currentBindings = {
@@ -3124,24 +3252,16 @@ async function previewPlanForUser(userId, body = {}, { store = true, goalBackwar
         emitPlanReleaseTelemetry({
           userId,
           eventType: 'mode_resolution',
-          mode: 'off',
+          mode: goalBackwardMode,
           outcome: 'candidate_rejected',
           candidateSelected: false,
           failReasonCodes: ['CANDIDATE_NOT_SELECTED'],
           surfaceCapability: 'BLOCKED',
           sink: goalBackwardDependencies.telemetrySink,
         });
-        goalBackwardMode = 'off';
         goalBackwardShadow = null;
         if (applicableModeFailed) {
-          candidateHash = legacyCandidateHash;
-          persistedPlan = normalized.plan;
-          response.candidateHash = legacyCandidateHash;
-          response.plan = normalized.plan;
-          delete response.surfaceManifest;
-          delete response.applyBindings;
-          baseValues[10] = legacyCandidateHash;
-          baseValues[15] = JSON.stringify(normalized.plan);
+          throw goalBackwardGenerationFailed();
         }
       }
     }
@@ -5898,6 +6018,7 @@ router.post('/generate-for-race/:raceId', auth, requirePremium('Race Programs'),
 router._test = {
   adaptationEpisodeDisposition,
   applicableGoalBackwardPlan,
+  isRevisionedGoalBackedRequest,
   canonicalAdaptationPlan,
   applyPlanCandidate,
   assertCandidatePlanningDateCurrent,
