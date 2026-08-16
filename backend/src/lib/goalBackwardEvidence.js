@@ -19,6 +19,8 @@ const MILE_M = 1609.344;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const TEMPORAL_FINGERPRINT_WINDOW_MS = 180 * 1000;
 const TEMPORAL_DURATION_TOLERANCE_S = 2;
+const CROSS_SOURCE_METRIC_WINDOW_MS = 30 * 1000;
+const CROSS_SOURCE_DURATION_TOLERANCE_S = 5;
 // Imported summaries occasionally reissue a provider id after changing only the
 // provider-computed elapsed duration. Exact source/start/distance is a much
 // stronger identity than duration alone, but the exception remains bounded by
@@ -32,6 +34,7 @@ const ACTIVITY_IDENTITY_REASON_CODES = Object.freeze([
   'FUZZY_SOURCE_ACTIVITY_MATCH',
   'EXACT_START_SOURCE_METRIC_COLLISION',
   'CROSS_SOURCE_ROUTE_CORROBORATION',
+  'CROSS_SOURCE_METRIC_CORROBORATION',
   'EXACT_IMPORT_CLAIM',
 ]);
 const ACTIVITY_IDENTITY_REASON_CODE_SET = new Set(ACTIVITY_IDENTITY_REASON_CODES);
@@ -160,13 +163,25 @@ function addLocalDays(localDate, days) {
   return date.toISOString().slice(0, 10);
 }
 
-function sourceSystem(value) {
-  const source = String(value || '').trim().toLowerCase();
+function sourceNamespace(value) {
+  const source = String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
   if (source === 'forged_hybrid' || source === 'forged_phone') return 'forge';
   if (source === 'garmin_csv' || source === 'watch_sync') return 'garmin';
+  if (source === 'strava_csv') return 'strava';
   if (source === 'healthkit') return 'apple_health';
-  if (['forge', 'fit', 'garmin', 'apple_health', 'health_connect', 'manual', 'import'].includes(source)) return source;
-  return 'import';
+  if (source === 'imported') return 'import';
+  if (['forge', 'fit', 'garmin', 'apple_health', 'health_connect', 'strava', 'csv', 'manual', 'import'].includes(source)) return source;
+  // Unknown external providers must not share the generic `import` namespace:
+  // provider-local ids are only unique within their originating system. Keep a
+  // stable pseudonymous namespace so artifacts never expose the client label.
+  return source ? `external_${canonicalHash(source).slice(0, 16)}` : 'import';
+}
+
+function sourceSystem(value) {
+  const namespace = sourceNamespace(value);
+  return ['forge', 'fit', 'garmin', 'apple_health', 'health_connect', 'manual', 'import'].includes(namespace)
+    ? namespace
+    : 'import';
 }
 
 function normalizeRoutePoints(raw) {
@@ -228,7 +243,8 @@ function temporalRouteFingerprintMatch(left = {}, right = {}) {
 }
 
 function sameCanonicalSource(left, right) {
-  return sourceSystem(left?.source_system) === sourceSystem(right?.source_system);
+  return sourceNamespace(left?.source_namespace || left?.source_system)
+    === sourceNamespace(right?.source_namespace || right?.source_system);
 }
 
 function exactStartMetricCollision(left, right) {
@@ -243,6 +259,27 @@ function exactStartMetricCollision(left, right) {
   const durationRatio = durationDelta / Math.max(leftDuration, rightDuration, 1);
   return durationDelta <= EXACT_START_DURATION_TOLERANCE_S
     && durationRatio <= EXACT_START_DURATION_TOLERANCE_RATIO;
+}
+
+function crossSourceMetricCorroboration(left, right) {
+  const allowedSources = new Set(['apple_health', 'health_connect', 'garmin', 'fit', 'strava', 'csv']);
+  const leftSource = sourceNamespace(left?.source_namespace || left?.source_system);
+  const rightSource = sourceNamespace(right?.source_namespace || right?.source_system);
+  if (leftSource === rightSource || !allowedSources.has(leftSource) || !allowedSources.has(rightSource)) return false;
+  const leftStart = timestamp(left?.observed_at);
+  const rightStart = timestamp(right?.observed_at);
+  const leftDuration = finite(left?.duration_s);
+  const rightDuration = finite(right?.duration_s);
+  if (leftStart === null || rightStart === null || leftDuration === null || rightDuration === null) return false;
+  if (Math.abs(leftStart - rightStart) > CROSS_SOURCE_METRIC_WINDOW_MS) return false;
+  if (Math.abs(leftDuration - rightDuration) > CROSS_SOURCE_DURATION_TOLERANCE_S) return false;
+  if (!distanceEquivalent(left?.distance_m, right?.distance_m)) return false;
+  const leftRoute = normalizeRoutePoints(left?.route_points);
+  const rightRoute = normalizeRoutePoints(right?.route_points);
+  // Two available routes are stronger evidence. A contradiction is therefore
+  // not allowed to fall back to looser summary metrics.
+  if (leftRoute.length && rightRoute.length) return false;
+  return true;
 }
 
 function classifyCanonicalActivityIdentity(left = {}, right = {}) {
@@ -263,6 +300,9 @@ function classifyCanonicalActivityIdentity(left = {}, right = {}) {
   if (!sameSource && leftRoute.length && rightRoute.length && comparable
     && distanceEquivalent(left.distance_m, right.distance_m)) {
     return { duplicate: true, reason_code: 'CROSS_SOURCE_ROUTE_CORROBORATION' };
+  }
+  if (!sameSource && crossSourceMetricCorroboration(left, right)) {
+    return { duplicate: true, reason_code: 'CROSS_SOURCE_METRIC_CORROBORATION' };
   }
   if (sameSource && exactStartMetricCollision(left, right)) {
     return { duplicate: true, reason_code: 'EXACT_START_SOURCE_METRIC_COLLISION' };
@@ -326,7 +366,9 @@ function runEvidenceRecord(row, athleteId, timezone) {
   const perceivedEffort = finite(row.perceived_effort);
   const observedAt = row.health_start_at || row.activity_start_at || (row.date ? `${String(row.date).slice(0, 10)}T12:00:00.000Z` : null);
   const receivedAt = row.created_at || observedAt || new Date(0).toISOString();
-  const source = sourceSystem(row.health_source || metrics.distance_source || row.watch_mode || 'manual');
+  const rawSource = row.health_source || metrics.distance_source || row.watch_mode || 'manual';
+  const source = sourceSystem(rawSource);
+  const sourceNamespaceValue = sourceNamespace(rawSource);
   const invalidMeasurement = (distanceMiles !== null && distanceMiles < 0) || (durationSeconds !== null && durationSeconds < 0);
   const qualityState = invalidMeasurement ? 'CORRUPTED' : distanceM === null || durationS === null ? 'PARTIAL' : 'COMPLETE';
   const valueState = distanceM === null || durationS === null ? 'MISSING' : 'KNOWN';
@@ -349,9 +391,15 @@ function runEvidenceRecord(row, athleteId, timezone) {
     },
     canonical_unit: 'm',
     source_system: source,
+    source_namespace: sourceNamespaceValue,
     source_record_id: evidenceId || null,
     source_activity_id: sourceActivityId,
     observed_at: observedAt,
+    // This is the calendar date persisted from the originating device/import.
+    // UTC provider instants are identity evidence, not local-date authority.
+    local_activity_date: /^\d{4}-\d{2}-\d{2}$/.test(String(row.date || '').slice(0, 10))
+      ? String(row.date).slice(0, 10)
+      : null,
     identity_observed_at: row.health_start_at || row.activity_start_at || null,
     recorded_at: receivedAt,
     received_at: receivedAt,
@@ -645,6 +693,7 @@ function identityComparableForRecord(record) {
     duration_s: record.envelope.value.duration_s,
     distance_m: record.envelope.value.distance_m,
     source_system: record.envelope.source_system,
+    source_namespace: record.envelope.source_namespace,
     source_activity_id: record.envelope.source_activity_id,
     route_points: record.routePoints,
   };
@@ -699,7 +748,11 @@ function deduplicateActivityRecords(records, corrections) {
     const resolvedDuration = durationConflict ? null : preferredDuration.envelope.value.duration_s;
     const distanceQualityState = correctionConflict || (distanceConflict && !correction) ? 'CONFLICT' : resolvedDistance === null ? 'PARTIAL' : 'COMPLETE';
     const durationQualityState = durationConflict ? 'CONFLICT' : resolvedDuration === null ? 'PARTIAL' : 'COMPLETE';
-    const heartRateEvidence = group.map((record) => ({
+    // Suppressed provider summaries can corroborate activity identity without
+    // being measurement-compatible. Keep stream-derived fields attached to the
+    // retained metric provenance unless an explicit compatibility contract is
+    // added later.
+    const heartRateEvidence = [preferred].map((record) => ({
       evidence_id: record.envelope.evidence_id,
       source_system: record.envelope.source_system,
       quality_state: record.envelope.quality_state,
@@ -727,12 +780,15 @@ function deduplicateActivityRecords(records, corrections) {
       kept_evidence_id: preferred.envelope.evidence_id,
       activity_kind: preferred.envelope.value.activity_kind,
       observed_at: preferred.envelope.observed_at,
+      local_activity_date: preferred.envelope.local_activity_date,
       distance_m: resolvedDistance,
       duration_s: resolvedDuration,
       source_system: preferredDistance.envelope.source_system,
+      source_namespace: preferredDistance.envelope.source_namespace,
       source_activity_id: preferredDistance.envelope.source_activity_id,
       evidence_ids: evidenceIds,
       corroborating_source_systems: [...new Set(group.map((record) => record.envelope.source_system))].sort(),
+      corroborating_source_namespaces: [...new Set(group.map((record) => record.envelope.source_namespace))].sort(),
       quality_state: distanceQualityState === 'CONFLICT' || durationQualityState === 'CONFLICT'
         ? 'CONFLICT'
         : distanceQualityState === 'PARTIAL' || durationQualityState === 'PARTIAL' ? 'PARTIAL' : 'COMPLETE',
@@ -874,10 +930,10 @@ function buildEvidenceSnapshot({
     partial_sync_sources: [...new Set(coverage.filter((row) => row.quality_state === 'PARTIAL').map((row) => row.source_system))].sort(),
     failed_sync_sources: [...new Set(coverage.filter((row) => row.quality_state === 'FAILED_SYNC').map((row) => row.source_system))].sort(),
     unresolved_conflicts: [
-      ...distanceConflicts.map((activity) => ({ field: 'distance_m', evidence_ids: activity.evidence_ids, reason_code: 'EVIDENCE_CONFLICT_UNRESOLVED' })),
-      ...durationConflicts.map((activity) => ({ field: 'duration_s', evidence_ids: activity.evidence_ids, reason_code: 'EVIDENCE_CONFLICT_UNRESOLVED' })),
-      ...heartRateConflicts.map((activity) => ({ field: 'heart_rate', evidence_ids: activity.evidence_ids, reason_code: 'EVIDENCE_CONFLICT_UNRESOLVED' })),
-      ...correctionConflicts.map((activity) => ({ field: 'manual_correction', evidence_ids: activity.correction_evidence_ids, reason_code: 'EVIDENCE_CONFLICT_UNRESOLVED' })),
+      ...distanceConflicts.map((activity) => ({ field: 'distance_m', evidence_refs: activity.evidence_ids.map(privateActivityRef), reason_code: 'EVIDENCE_CONFLICT_UNRESOLVED' })),
+      ...durationConflicts.map((activity) => ({ field: 'duration_s', evidence_refs: activity.evidence_ids.map(privateActivityRef), reason_code: 'EVIDENCE_CONFLICT_UNRESOLVED' })),
+      ...heartRateConflicts.map((activity) => ({ field: 'heart_rate', evidence_refs: activity.evidence_ids.map(privateActivityRef), reason_code: 'EVIDENCE_CONFLICT_UNRESOLVED' })),
+      ...correctionConflicts.map((activity) => ({ field: 'manual_correction', evidence_refs: activity.correction_evidence_ids.map(privateActivityRef), reason_code: 'EVIDENCE_CONFLICT_UNRESOLVED' })),
     ],
     provider_coverage_intervals: coverage,
     modality_eligibility: modalityEligibility(coverage),
@@ -931,6 +987,8 @@ function canonicalizeRunLoadInput({
   runs = [],
   providerCoverage = [],
   corrections = [],
+  correctionsComplete = true,
+  correctionInputCount = null,
 } = {}) {
   const snapshot = buildEvidenceSnapshot({
     athleteId,
@@ -953,8 +1011,10 @@ function canonicalizeRunLoadInput({
   const coverageState = loadInputCoverageState(providerCoverage, planningInstant, canonicalRuns, localPlanningDate);
   const measurementState = canonicalRuns.some((run) => run.distance_m === null || run.duration_s === null)
     ? 'UNKNOWN' : canonicalRuns.length ? 'COMPLETE' : 'VALID_ZERO';
-  const loadInputState = ['COMPLETE', 'VALID_ZERO'].includes(coverageState) && measurementState === 'UNKNOWN'
-    ? 'UNKNOWN' : coverageState;
+  const loadInputState = correctionsComplete !== true
+    ? 'UNKNOWN'
+    : ['COMPLETE', 'VALID_ZERO'].includes(coverageState) && measurementState === 'UNKNOWN'
+      ? 'UNKNOWN' : coverageState;
   const windows = LOAD_WINDOWS_DAYS.map((days) => {
     const inWindow = (item) => {
       const date = activityDate(item, timezone);
@@ -1021,7 +1081,8 @@ function canonicalizeRunLoadInput({
   const eligibleRecentNormalWeeks = recentNormalWeeks.filter((week) => week.eligible).length;
   const recentNormalDistances = recentNormalWeeks.filter((week) => week.eligible).map((week) => week.distance_m);
   const hasObservedLoad = canonicalRuns.some((run) => finite(run.distance_m) > 0);
-  const loadInputConfidence = ['COMPLETE', 'VALID_ZERO'].includes(loadInputState)
+  const loadInputConfidence = correctionsComplete !== true ? 'INSUFFICIENT'
+    : ['COMPLETE', 'VALID_ZERO'].includes(loadInputState)
     ? 'HIGH'
     : hasObservedLoad && ['PARTIAL', 'STALE', 'UNKNOWN'].includes(loadInputState) ? 'LOW' : 'INSUFFICIENT';
   const recentNormalConfidence = eligibleRecentNormalWeeks >= 6 ? 'HIGH'
@@ -1036,6 +1097,11 @@ function canonicalizeRunLoadInput({
     measurement_state: measurementState,
     load_input_state: loadInputState,
     load_input_confidence: loadInputConfidence,
+    correction_input_state: correctionsComplete === true ? 'COMPLETE' : 'TRUNCATED',
+    correction_receipt_hash: prefixedHash({
+      state: correctionsComplete === true ? 'COMPLETE' : 'TRUNCATED',
+      input_count: Number.isInteger(correctionInputCount) ? correctionInputCount : (Array.isArray(corrections) ? corrections.length : 0),
+    }),
     recent_normal_confidence: recentNormalConfidence,
     recent_normal_eligible_week_count: eligibleRecentNormalWeeks,
     recent_normal_weeks: recentNormalWeeks,
@@ -1084,6 +1150,7 @@ function canonicalizeRunLoadInput({
       ...(loadInputState === 'STALE' ? ['EVIDENCE_STALE'] : []),
       ...(['MISSING', 'UNKNOWN'].includes(loadInputState) ? ['EVIDENCE_UNKNOWN'] : []),
       ...(loadInputState === 'VALID_ZERO' ? ['VALID_ZERO_CONFIRMED'] : []),
+      ...(correctionsComplete !== true ? ['CORRECTION_INPUT_TRUNCATED', 'EVIDENCE_UNKNOWN'] : []),
     ])].sort(),
   };
   return deepFreeze({ ...content, load_input_hash: prefixedHash(content) });
@@ -1222,7 +1289,11 @@ function median(values) {
 }
 
 function activityDate(activity, timezone) {
-  const instant = activity.observed_at || activity.date;
+  const persistedLocalDate = activity.local_activity_date || activity.date;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(String(persistedLocalDate || '').slice(0, 10))) {
+    return String(persistedLocalDate).slice(0, 10);
+  }
+  const instant = activity.observed_at;
   if (!instant) return null;
   if (/^\d{4}-\d{2}-\d{2}$/.test(String(instant))) return String(instant);
   try {
@@ -1654,6 +1725,8 @@ function buildEvidenceStateArtifacts({ snapshot, athleteState, decisionId, creat
 module.exports = {
   ACTIVITY_IDENTITY_REASON_CODES,
   ACTIVITY_IDENTITY_RECEIPT_MAX_BYTES,
+  CROSS_SOURCE_DURATION_TOLERANCE_S,
+  CROSS_SOURCE_METRIC_WINDOW_MS,
   DISTANCE_EQUIVALENCE_FLOOR_M,
   DISTANCE_EQUIVALENCE_RATIO,
   EXACT_START_DURATION_TOLERANCE_RATIO,

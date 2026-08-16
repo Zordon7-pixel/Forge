@@ -434,13 +434,25 @@ function classifyType(rawType = '') {
   return { section: 'activity', runType: value.slice(0, 40), liftCategory: null };
 }
 
+function normalizeImportSource(value) {
+  const rawSource = String(value ?? 'imported').trim();
+  if (!rawSource || rawSource.length > 80 || /[\u0000-\u001f\u007f]/.test(rawSource)
+    || !/^[A-Za-z0-9][A-Za-z0-9._:/ -]*$/.test(rawSource)) {
+    const error = new Error('Import source must be a bounded provider namespace');
+    error.code = 'IMPORT_ROW_INVALID';
+    throw error;
+  }
+  const normalized = rawSource.toLowerCase().replace(/[\s-]+/g, '_');
+  return normalized.slice(0, 40);
+}
+
 function normalizeRow(raw = {}) {
   const startDate = normalizeDateTime(raw.startDate || raw.start_date || raw.start || raw.activityStartDate);
   const endDate = normalizeDateTime(raw.endDate || raw.end_date || raw.end || raw.activityEndDate);
   const createdAt = normalizeDateTime(raw.createdAt || raw.created_at || raw.importCreatedAt || raw.import_created_at);
   const date = normalizeDate(raw.date || startDate || raw.startDate || raw.start_date || raw.activityDate || raw['Activity Date']);
   const type = classifyType(raw.type || raw.activityType || raw['Activity Type']);
-  const source = String(raw.source || 'imported').slice(0, 40);
+  const source = normalizeImportSource(raw.source);
   const distanceEvidence = normalizeDistanceEvidence(distanceEvidenceCandidates(raw, source));
   if (distanceEvidence.error) {
     const error = new Error(distanceEvidence.error);

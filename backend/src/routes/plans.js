@@ -1494,6 +1494,55 @@ function summarizeStrengthExposures(exposures, startDate, endDate) {
   };
 }
 
+function confidenceAwareMileageBaseline(rows, runLoadInput, options = {}) {
+  const loadInputState = String(runLoadInput?.load_input_state || 'UNKNOWN').toUpperCase();
+  const evidenceConfidence = String(runLoadInput?.load_input_confidence || 'INSUFFICIENT').toUpperCase();
+  const estimateOptions = {
+    planningDateISO: options.planningDateISO,
+    profileWeeklyMiles: options.profileWeeklyMiles,
+  };
+  const observed = concurrentPlan.estimateWeeklyMileageBaseline(rows, estimateOptions);
+  if (loadInputState === 'VALID_ZERO') {
+    return {
+      ...observed,
+      weeklyMiles: 0,
+      longTermWeeklyMiles: 0,
+      recent28WeeklyMiles: 0,
+      recent14WeeklyMiles: 0,
+      meaningfulRunCount: 0,
+      method: 'complete_valid_zero',
+      progressionEligible: true,
+      evidenceConfidence,
+      loadInputState,
+    };
+  }
+  if (loadInputState === 'COMPLETE') {
+    return {
+      ...observed,
+      progressionEligible: true,
+      evidenceConfidence,
+      loadInputState,
+    };
+  }
+  const profileOnly = concurrentPlan.estimateWeeklyMileageBaseline([], estimateOptions);
+  const profileBound = Number(profileOnly.weeklyMiles || 0);
+  const observedBound = Number(observed.weeklyMiles || 0);
+  const weeklyMiles = profileBound > 0 ? Math.min(profileBound, observedBound || profileBound) : 0;
+  const uncertainLoadSafetyHold = observedBound > weeklyMiles + 0.5;
+  return {
+    ...observed,
+    weeklyMiles,
+    method: 'profile_bounded_uncertain_evidence',
+    progressionEligible: false,
+    evidenceConfidence,
+    loadInputState,
+    profileBoundWeeklyMiles: profileBound,
+    observedBoundWeeklyMiles: observedBound,
+    uncertainLoadSafetyHold,
+    reasonCodes: uncertainLoadSafetyHold ? ['UNCERTAIN_LOAD_ABOVE_PRESCRIPTION_BOUND'] : ['EVIDENCE_UNKNOWN'],
+  };
+}
+
 async function buildConcurrentContext(userId, profile, target, tx = null) {
   const all = tx?.all || dbAll;
   const get = tx?.get || dbGet;
@@ -1514,8 +1563,11 @@ async function buildConcurrentContext(userId, profile, target, tx = null) {
       [userId, runHistoryStartDate, planningDateISO]
     ),
     all(
-      `SELECT id, date, distance_miles, duration_seconds, health_source, watch_mode,
-              workout_metrics_json, type, watch_activity_type, watch_normalized_type
+      `SELECT id, date, distance_miles, duration_seconds, perceived_effort, avg_heart_rate,
+              pain_level, post_energy, pace_avg, health_source, created_at,
+              heart_rate_zones, workout_metrics_json, watch_mode,
+              type, watch_activity_type, watch_normalized_type,
+              health_source_workout_id, health_start_at
        FROM runs
        WHERE user_id=? AND date<=? AND distance_miles>0 AND duration_seconds>0 AND ${runActivitySql()}
        ORDER BY date DESC, created_at DESC
@@ -1569,7 +1621,7 @@ async function buildConcurrentContext(userId, profile, target, tx = null) {
        FROM planning_evidence_corrections
        WHERE user_id=? AND raw_evidence_kind='run'
        ORDER BY raw_evidence_ref ASC, revision ASC, id ASC
-       LIMIT 1000`,
+       LIMIT 1001`,
       [userId]
     ).catch((err) => {
       console.error('[plans/generate] evidence correction lookup failed:', err.message);
@@ -1587,16 +1639,26 @@ async function buildConcurrentContext(userId, profile, target, tx = null) {
     status: 'unknown',
     synced_at: healthRow?.synced_at || null,
   })) : [];
-  const runLoadInput = canonicalizeRunLoadInput({
+  const correctionRows = Array.isArray(evidenceCorrections) ? evidenceCorrections : [];
+  const correctionsComplete = correctionRows.length <= 1000;
+  const canonicalCorrections = correctionsComplete ? correctionRows : [];
+  const loadInputOptions = {
     athleteId: userId,
     planningInstant: `${planningDateISO}T23:59:59.999Z`,
     planningDateLocal: planningDateISO,
     timezone: isIanaTimezone(profile.timezone) ? profile.timezone : 'UTC',
-    runs: rawRuns,
     providerCoverage: planningProviderCoverage,
-    corrections: evidenceCorrections || [],
-  });
+    corrections: canonicalCorrections,
+    correctionsComplete,
+    correctionInputCount: correctionRows.length,
+  };
+  const runLoadInput = canonicalizeRunLoadInput({ ...loadInputOptions, runs: rawRuns });
   const planningRuns = runLoadInput.canonical_run_rows;
+  const performanceLoadInput = canonicalizeRunLoadInput({
+    ...loadInputOptions,
+    runs: Array.isArray(performanceRuns) ? performanceRuns : [],
+  });
+  const canonicalPerformanceRuns = performanceLoadInput.canonical_run_rows;
   const strengthExposures = completedStrengthExposures(workouts, legacyLifts);
   const activityDates = [
     ...planningRuns.map((run) => String(run.date || '').slice(0, 10)),
@@ -1623,6 +1685,7 @@ async function buildConcurrentContext(userId, profile, target, tx = null) {
     currentWeekStart,
     planningDateISO,
   );
+  const completeRunCoverage = ['COMPLETE', 'VALID_ZERO'].includes(runLoadInput.load_input_state);
   const completedSessions = planningRuns.length + strengthExposures.length;
   const healthSignals = buildHealthSignals(healthRow || {});
   const healthMetrics = healthSignals.metrics || {};
@@ -1652,17 +1715,20 @@ async function buildConcurrentContext(userId, profile, target, tx = null) {
   if (severeCheckin) recoveryState = 'low';
   else if (cautionCheckin && !['low', 'recovery'].includes(recoveryState)) recoveryState = 'caution';
   if (activeInjury || profile.comeback_mode || String(profile.injury_notes || '').trim()) recoveryState = 'low';
-  const mileageBaseline = concurrentPlan.estimateWeeklyMileageBaseline(planningRuns, {
+  const mileageBaseline = confidenceAwareMileageBaseline(planningRuns, runLoadInput, {
     planningDateISO,
     profileWeeklyMiles: profile.weekly_miles_current,
   });
   const weeklyMileageBaseline = mileageBaseline.weeklyMiles;
-  const acuteRunLoad = summarizeRecentRunLoad(planningRuns, {
+  const acuteRunLoad = {
+    ...summarizeRecentRunLoad(planningRuns, {
     todayISO: planningDateISO,
     weeklyBaseline: weeklyMileageBaseline,
     recoveryState,
-  });
-  const performanceProfile = concurrentPlan.buildRunPerformanceProfile(performanceRuns, {
+    }),
+    evidenceUse: completeRunCoverage ? 'PRESCRIPTION_AND_SAFETY' : 'SAFETY_ONLY',
+  };
+  const performanceProfile = concurrentPlan.buildRunPerformanceProfile(canonicalPerformanceRuns, {
     todayISO: planningDateISO,
     targetDistanceMiles: target.distanceMiles,
   });
@@ -1684,6 +1750,8 @@ async function buildConcurrentContext(userId, profile, target, tx = null) {
         coverage_state: runLoadInput.coverage_state,
         measurement_state: runLoadInput.measurement_state,
         load_input_confidence: runLoadInput.load_input_confidence,
+        correction_input_state: runLoadInput.correction_input_state,
+        correction_receipt_hash: runLoadInput.correction_receipt_hash,
         recent_normal_confidence: runLoadInput.recent_normal_confidence,
         recent_normal_eligible_week_count: runLoadInput.recent_normal_eligible_week_count,
         recent_normal_weeks: runLoadInput.recent_normal_weeks,
@@ -1702,8 +1770,8 @@ async function buildConcurrentContext(userId, profile, target, tx = null) {
       currentWeekStrength,
       performanceProfile,
       recentExercises: summarizeRecentExercises(recentExercises || []),
-      adherenceRate: expectedSessions ? clamp(completedSessions / expectedSessions, 0, 1) : null,
-      missedWorkouts: expectedSessions ? Math.max(0, expectedSessions - completedSessions) : 0,
+      adherenceRate: completeRunCoverage && expectedSessions ? clamp(completedSessions / expectedSessions, 0, 1) : null,
+      missedWorkouts: completeRunCoverage && expectedSessions ? Math.max(0, expectedSessions - completedSessions) : null,
     },
     recovery: {
       state: recoveryState,
@@ -2231,6 +2299,10 @@ function goalBackwardAvailableLocalDates(state, planningDateLocal) {
 function goalBackwardTrainingAge(context = {}) {
   const explicit = String(context.profile?.training_age_class || '').toUpperCase();
   if (['BEGINNER', 'DEVELOPING', 'ESTABLISHED', 'ADVANCED'].includes(explicit)) return explicit;
+  if (context.history?.runLoadInput
+    && !['COMPLETE', 'VALID_ZERO'].includes(String(context.history.runLoadInput.load_input_state || '').toUpperCase())) {
+    return 'BEGINNER';
+  }
   const count = Number(context.history?.recentRunCount || 0);
   return count >= 24 ? 'ESTABLISHED' : count >= 8 ? 'DEVELOPING' : 'BEGINNER';
 }
@@ -2243,6 +2315,13 @@ function goalBackwardRecoveryState(context = {}) {
 }
 
 function goalBackwardSafetyState(context = {}) {
+  if (context.history?.mileageBaseline?.uncertainLoadSafetyHold === true) {
+    return {
+      action: 'NO_HIGH_INTENSITY',
+      scope: ['running'],
+      reason_codes: ['UNCERTAIN_LOAD_ABOVE_PRESCRIPTION_BOUND'],
+    };
+  }
   return {
     action: context.safety?.activeInjury ? 'MODIFY_IMPACT' : 'NORMAL',
     scope: [],
@@ -2459,6 +2538,15 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
   const recentRunCount = Number(state.context?.history?.recentRunCount || 0);
   const weeklyMiles = Number(state.context?.history?.weeklyMileageBaseline || 0);
   const runLoadInput = state.context?.history?.runLoadInput || null;
+  const hasCanonicalLoadContract = Boolean(runLoadInput);
+  const runLoadComplete = !hasCanonicalLoadContract
+    || ['COMPLETE', 'VALID_ZERO'].includes(String(runLoadInput?.load_input_state || '').toUpperCase());
+  const canonicalRecentNormal = runLoadInput?.recent_normal || null;
+  const recentNormalStatus = !hasCanonicalLoadContract
+    ? (weeklyMiles > 0 ? (recentRunCount >= 8 ? 'ESTABLISHED' : 'PROVISIONAL') : 'INSUFFICIENT')
+    : runLoadComplete
+      ? String(canonicalRecentNormal?.status || 'INSUFFICIENT').toUpperCase()
+      : weeklyMiles > 0 && recentRunCount >= 3 ? 'PROVISIONAL' : 'INSUFFICIENT';
   const goals = goalBackwardGoalsForState(userId, state);
   const primaryEventDate = goals[0]?.event_local_date || null;
   const evidenceSnapshotId = `snapshot-${state.inputHash.slice(-24)}`;
@@ -2480,8 +2568,10 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
       recovery_state: recoveryState,
       safety_action: safetyAction,
       recent_normal_running: {
-        status: weeklyMiles > 0 ? (recentRunCount >= 8 ? 'ESTABLISHED' : 'PROVISIONAL') : 'INSUFFICIENT',
-        median_distance_m: weeklyMiles > 0 ? Math.round(weeklyMiles * 1609.344) : null,
+        status: recentNormalStatus,
+        median_distance_m: recentNormalStatus !== 'INSUFFICIENT'
+          ? (runLoadComplete ? canonicalRecentNormal?.median_distance_m : null) ?? Math.round(weeklyMiles * 1609.344)
+          : null,
         confidence: runLoadInput?.recent_normal_confidence || 'INSUFFICIENT',
         load_input_state: runLoadInput?.load_input_state || 'UNKNOWN',
         exact_window_totals: runLoadInput?.windows || [],
@@ -2500,6 +2590,9 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
     goals,
     races: state.races.map((race) => ({ race_id: String(race.id), athlete_id: userId })),
     evidence_used: [{ evidence_id: evidenceSnapshotId, purpose: 'CURRENT_PLANNING_SNAPSHOT' }],
+    // C1 phase routing still owns this historic gate. C2 supplies the separate
+    // fail-closed load state/status above; it must not turn missing coverage
+    // into established recent-normal evidence.
     development_gate_complete: recentRunCount >= 4,
     full_pre_taper_weeks: clusterPolicy?.fullPreTaperWeeks,
     mandatory_hyrox_cluster: clusterPolicy?.required === true,
@@ -6179,6 +6272,7 @@ router._test = {
   assertCandidatePlanningDateCurrent,
   buildDeterministicCandidate,
   buildConcurrentContext,
+  confidenceAwareMileageBaseline,
   buildCanonicalSurfaceManifest,
   buildGoalBackwardArtifacts,
   canonicalWorkoutStartAccess,
