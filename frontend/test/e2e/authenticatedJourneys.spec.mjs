@@ -1668,8 +1668,7 @@ test('an existing owned HYROX event can apply a foundation without requiring dat
   assertCleanApiAndRuntime(apiState, runtimeErrors)
 })
 
-test('a failed reviewed HYROX apply confirms the prior assignment and remains retryable at 320px', async ({ page }) => {
-  await page.setViewportSize({ width: 320, height: 568 })
+test('a failed reviewed HYROX apply keeps confirmed prior-calendar feedback beside the retry controls on mobile', async ({ page }, testInfo) => {
   const runtimeErrors = collectRuntimeErrors(page)
   const hyrox = {
     id: 'hyrox-dc', race_name: 'HYROX Washington DC', race_date: '2026-09-06',
@@ -1683,10 +1682,14 @@ test('a failed reviewed HYROX apply confirms the prior assignment and remains re
     }] } },
     user_plan: { id: 'assignment-before-failure', supersedes_user_plan_id: null, current_week: 1, started_at: today, progress: {} },
   }
+  const servedAssignmentIds = []
   const apiState = await installAuthenticatedApi(page, {
     responses: new Map([
       ['GET /api/races', { races: [hyrox] }],
-      ['GET /api/plans/my', active],
+      ['GET /api/plans/my', () => {
+        servedAssignmentIds.push(active.user_plan.id)
+        return active
+      }],
       ['PATCH /api/races/hyrox-dc', { race: hyrox }],
       ['POST /api/plans/generate-for-race/hyrox-dc', {
         candidate_id: 'failed-hyrox-candidate',
@@ -1707,10 +1710,63 @@ test('a failed reviewed HYROX apply confirms the prior assignment and remains re
   await page.getByRole('button', { name: 'Preview HYROX plan', exact: true }).click()
   await page.getByRole('button', { name: 'Apply reviewed HYROX plan', exact: true }).click()
 
-  await expect(page.getByRole('alert')).toContainText('Forge confirmed the prior calendar is still active, so it is safe to retry.')
-  await expect(page.getByRole('button', { name: 'Apply reviewed HYROX plan', exact: true })).toBeEnabled()
+  const feedback = page.getByRole('alert')
+  const retry = page.getByRole('button', { name: 'Apply reviewed HYROX plan', exact: true })
+  const back = page.getByRole('button', { name: 'Back to setup', exact: true })
+  await expect(feedback, 'the failure has one alert announcement').toHaveCount(1)
+  await expect(feedback).toHaveText('Could not apply the reviewed plan. Forge confirmed the prior calendar is still active, so it is safe to retry.')
+  await expect(feedback).toBeVisible()
+  await expect(retry).toBeEnabled()
+  await expect(retry).toBeInViewport()
   await expect(page.getByRole('button', { name: 'Applying reviewed plan…', exact: true })).toHaveCount(0)
-  expect(requestsFor(apiState, 'POST', '/api/plans/candidates/failed-hyrox-candidate/apply')).toHaveLength(1)
+
+  const dialog = page.getByRole('dialog')
+  const [feedbackBox, retryBox, backBox, dialogBox] = await Promise.all([
+    feedback.boundingBox(), retry.boundingBox(), back.boundingBox(), dialog.boundingBox(),
+  ])
+  expect(page.viewportSize()).toEqual(testInfo.project.use.viewport)
+  expect(feedbackBox, 'reconciliation feedback has rendered geometry').not.toBeNull()
+  expect(retryBox, 'retry control has rendered geometry').not.toBeNull()
+  expect(backBox, 'back control has rendered geometry').not.toBeNull()
+  expect(dialogBox, 'review dialog has rendered geometry').not.toBeNull()
+  expect(feedbackBox.y, 'feedback starts inside the current viewport').toBeGreaterThanOrEqual(0)
+  expect(feedbackBox.y + feedbackBox.height, 'the complete reconciliation feedback remains visible in the current viewport').toBeLessThanOrEqual(testInfo.project.use.viewport.height)
+  expect(feedbackBox.y + feedbackBox.height, 'the complete feedback remains inside the dialog viewport').toBeLessThanOrEqual(dialogBox.y + dialogBox.height)
+  expect(retryBox.y, 'retry remains fully visible in the current viewport').toBeGreaterThanOrEqual(0)
+  expect(retryBox.y + retryBox.height, 'retry remains fully visible in the current viewport').toBeLessThanOrEqual(testInfo.project.use.viewport.height)
+  expect(retryBox.y, 'retry remains inside the dialog viewport').toBeGreaterThanOrEqual(dialogBox.y)
+  expect(feedbackBox.y, 'feedback follows the retry control without overlap').toBeGreaterThanOrEqual(retryBox.y + retryBox.height)
+  expect(feedbackBox.y - (retryBox.y + retryBox.height), 'feedback stays adjacent to the retry control').toBeLessThanOrEqual(16)
+  expect(backBox.y, 'back control follows feedback without overlap').toBeGreaterThanOrEqual(feedbackBox.y + feedbackBox.height)
+
+  const layout = await page.evaluate(() => {
+    const dialog = document.querySelector('[role="dialog"]')
+    return {
+      viewportWidth: document.documentElement.clientWidth,
+      documentWidth: document.documentElement.scrollWidth,
+      bodyWidth: document.body.scrollWidth,
+      dialogClientWidth: dialog?.clientWidth || 0,
+      dialogScrollWidth: dialog?.scrollWidth || 0,
+    }
+  })
+  expect(layout.documentWidth).toBeLessThanOrEqual(layout.viewportWidth)
+  expect(layout.bodyWidth).toBeLessThanOrEqual(layout.viewportWidth)
+  expect(layout.dialogScrollWidth).toBeLessThanOrEqual(layout.dialogClientWidth)
+  for (const box of [feedbackBox, retryBox, backBox]) {
+    expect(box.x, 'failure controls do not clip left').toBeGreaterThanOrEqual(0)
+    expect(box.x + box.width, 'failure controls do not clip right').toBeLessThanOrEqual(layout.viewportWidth)
+  }
+
+  const applyRequests = requestsFor(apiState, 'POST', '/api/plans/candidates/failed-hyrox-candidate/apply')
+  expect(applyRequests).toHaveLength(1)
+  expect(applyRequests[0].body).toMatchObject({
+    candidate_hash: 'sha256:failed-hyrox-candidate',
+    choice: 'train_for_target',
+  })
+  expect(applyRequests[0].body).not.toHaveProperty('user_plan_id')
+  expect(servedAssignmentIds.length, 'the page load and fresh before/after reconciliation reads all occurred').toBeGreaterThanOrEqual(3)
+  expect(new Set(servedAssignmentIds)).toEqual(new Set(['assignment-before-failure']))
+  expect(apiState.requests.filter((request) => request.pathname.includes('assignment-before-failure'))).toHaveLength(0)
   expect([...new Set(apiState.unexpectedRequests)]).toEqual([])
   expect(runtimeErrors.filter((message) => !/status of 500 \(Internal Server Error\)/.test(message))).toEqual([])
 })
