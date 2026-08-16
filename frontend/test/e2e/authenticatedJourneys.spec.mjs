@@ -1669,6 +1669,10 @@ test('an existing owned HYROX event can apply a foundation without requiring dat
 })
 
 test('a failed reviewed HYROX apply keeps confirmed prior-calendar feedback beside the retry controls on mobile', async ({ page }, testInfo) => {
+  const expectedViewport = testInfo.project.name === 'compact-mobile-320'
+    ? { width: 320, height: 568 }
+    : { width: 393, height: 852 }
+  await page.setViewportSize(expectedViewport)
   const runtimeErrors = collectRuntimeErrors(page)
   const hyrox = {
     id: 'hyrox-dc', race_name: 'HYROX Washington DC', race_date: '2026-09-06',
@@ -1715,29 +1719,34 @@ test('a failed reviewed HYROX apply keeps confirmed prior-calendar feedback besi
   const back = page.getByRole('button', { name: 'Back to setup', exact: true })
   await expect(feedback, 'the failure has one alert announcement').toHaveCount(1)
   await expect(feedback).toHaveText('Could not apply the reviewed plan. Forge confirmed the prior calendar is still active, so it is safe to retry.')
+  await expect(feedback).toHaveAttribute('aria-live', 'assertive')
   await expect(feedback).toBeVisible()
   await expect(retry).toBeEnabled()
   await expect(retry).toBeInViewport()
+  await expect(back).toBeEnabled()
+  await expect(back).toBeInViewport()
   await expect(page.getByRole('button', { name: 'Applying reviewed plan…', exact: true })).toHaveCount(0)
 
   const dialog = page.getByRole('dialog')
   const [feedbackBox, retryBox, backBox, dialogBox] = await Promise.all([
     feedback.boundingBox(), retry.boundingBox(), back.boundingBox(), dialog.boundingBox(),
   ])
-  expect(page.viewportSize()).toEqual(testInfo.project.use.viewport)
+  expect(page.viewportSize()).toEqual(expectedViewport)
   expect(feedbackBox, 'reconciliation feedback has rendered geometry').not.toBeNull()
   expect(retryBox, 'retry control has rendered geometry').not.toBeNull()
   expect(backBox, 'back control has rendered geometry').not.toBeNull()
   expect(dialogBox, 'review dialog has rendered geometry').not.toBeNull()
   expect(feedbackBox.y, 'feedback starts inside the current viewport').toBeGreaterThanOrEqual(0)
-  expect(feedbackBox.y + feedbackBox.height, 'the complete reconciliation feedback remains visible in the current viewport').toBeLessThanOrEqual(testInfo.project.use.viewport.height)
+  expect(feedbackBox.y + feedbackBox.height, 'the complete reconciliation feedback remains visible in the current viewport').toBeLessThanOrEqual(expectedViewport.height)
   expect(feedbackBox.y + feedbackBox.height, 'the complete feedback remains inside the dialog viewport').toBeLessThanOrEqual(dialogBox.y + dialogBox.height)
   expect(retryBox.y, 'retry remains fully visible in the current viewport').toBeGreaterThanOrEqual(0)
-  expect(retryBox.y + retryBox.height, 'retry remains fully visible in the current viewport').toBeLessThanOrEqual(testInfo.project.use.viewport.height)
+  expect(retryBox.y + retryBox.height, 'retry remains fully visible in the current viewport').toBeLessThanOrEqual(expectedViewport.height)
   expect(retryBox.y, 'retry remains inside the dialog viewport').toBeGreaterThanOrEqual(dialogBox.y)
   expect(feedbackBox.y, 'feedback follows the retry control without overlap').toBeGreaterThanOrEqual(retryBox.y + retryBox.height)
   expect(feedbackBox.y - (retryBox.y + retryBox.height), 'feedback stays adjacent to the retry control').toBeLessThanOrEqual(16)
   expect(backBox.y, 'back control follows feedback without overlap').toBeGreaterThanOrEqual(feedbackBox.y + feedbackBox.height)
+  expect(backBox.y + backBox.height, 'back remains fully visible in the current viewport').toBeLessThanOrEqual(expectedViewport.height)
+  expect(backBox.y + backBox.height, 'back remains inside the dialog viewport').toBeLessThanOrEqual(dialogBox.y + dialogBox.height)
 
   const layout = await page.evaluate(() => {
     const dialog = document.querySelector('[role="dialog"]')

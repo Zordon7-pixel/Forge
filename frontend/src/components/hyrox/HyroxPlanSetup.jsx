@@ -43,8 +43,6 @@ function planFromPreview(preview = {}) {
 export default function HyroxPlanSetup({ savedRaces = [], activePlanRaceIds = [], initialRace = null, initialSecondaryRaceId = '', onClose, onComplete }) {
   const { t } = useTranslation()
   const dialogRef = useRef(null)
-  const retryRef = useRef(null)
-  const feedbackRef = useRef(null)
   const tx = (key, defaultValue, values = {}) => t(`hyrox.${key}`, { defaultValue, ...values })
   const initial = useMemo(
     () => hyroxSetupInitialState(initialRace, initialSecondaryRaceId, browserTimezone()),
@@ -94,17 +92,8 @@ export default function HyroxPlanSetup({ savedRaces = [], activePlanRaceIds = []
     if (!error || !candidate || busy) return undefined
     const frame = window.requestAnimationFrame(() => {
       const dialog = dialogRef.current
-      const retry = retryRef.current
-      const feedback = feedbackRef.current
-      if (!dialog || !retry || !feedback) return
-      const dialogBox = dialog.getBoundingClientRect()
-      const retryBox = retry.getBoundingClientRect()
-      const feedbackBox = feedback.getBoundingClientRect()
-      const visibleTop = Math.max(0, dialogBox.top)
-      const visibleBottom = Math.min(window.innerHeight, dialogBox.bottom)
-      const revealBy = Math.max(0, feedbackBox.bottom - visibleBottom)
-      const retryRoom = Math.max(0, retryBox.top - visibleTop)
-      if (revealBy > 0 && revealBy <= retryRoom) dialog.scrollTop += Math.ceil(revealBy)
+      if (!dialog) return
+      dialog.scrollTop = dialog.scrollHeight
     })
     return () => window.cancelAnimationFrame(frame)
   }, [busy, candidate, error])
@@ -299,10 +288,10 @@ export default function HyroxPlanSetup({ savedRaces = [], activePlanRaceIds = []
               )}
             </dl>
             <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: 12 }}>Canonical station distances, loads, and repetitions remain metric. Locale conversion is display-only.</p>
-            <button ref={retryRef} type="button" onClick={applyCandidate} disabled={busy} style={{ width: '100%', minHeight: 48, borderRadius: 8, border: 0, background: 'var(--accent)', color: 'var(--on-accent)', fontSize: 15, fontWeight: 950, opacity: busy ? 0.6 : 1 }}>
+            <button type="button" onClick={applyCandidate} disabled={busy} style={{ width: '100%', minHeight: 48, borderRadius: 8, border: 0, background: 'var(--accent)', color: 'var(--on-accent)', fontSize: 15, fontWeight: 950, opacity: busy ? 0.6 : 1 }}>
               {busy ? tx('review.applying', 'Applying reviewed plan…') : tx('review.apply', 'Apply reviewed HYROX plan')}
             </button>
-            {error && <p ref={feedbackRef} role="alert" aria-live="assertive" style={{ margin: 0, padding: 12, borderRadius: 8, background: 'var(--danger-dim)', color: 'var(--danger)', fontSize: 13, fontWeight: 750, overflowWrap: 'anywhere' }}>{error}</p>}
+            {error && <p role="alert" aria-live="assertive" style={{ margin: 0, padding: 12, borderRadius: 8, background: 'var(--danger-dim)', color: 'var(--danger)', fontSize: 13, fontWeight: 750, overflowWrap: 'anywhere' }}>{error}</p>}
             <button type="button" onClick={() => { setCandidate(null); setError('') }} disabled={busy} style={{ width: '100%', minHeight: 44, borderRadius: 8, border: '1px solid var(--border-subtle)', background: 'var(--bg-input)', color: 'var(--text-primary)', fontSize: 14, fontWeight: 800 }}><ChevronLeft size={16} style={{ display: 'inline', marginRight: 5, verticalAlign: -3 }} />Back to setup</button>
           </div>
         ) : (
