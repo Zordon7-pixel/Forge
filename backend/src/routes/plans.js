@@ -36,6 +36,7 @@ const {
 } = require('../lib/goalBackwardDecisionEngine');
 const { assertPipelineLinks, REQUIRED_REASON_CODES } = require('../lib/goalBackwardContracts');
 const { canonicalizeRunLoadInput } = require('../lib/goalBackwardEvidence');
+const { deriveScopedRecoveryState } = require('../lib/goalBackwardRecoveryMaterial');
 const {
   buildGoalBackwardReleaseTelemetry,
   emitGoalBackwardReleaseTelemetry,
@@ -2615,8 +2616,19 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
     ? clusterWeekDates
     : goalBackwardAvailableLocalDates(state, planningDateLocal);
   const trainingAgeClass = goalBackwardTrainingAge(state.context);
-  const recoveryState = goalBackwardRecoveryState(state.context);
-  const safetyState = goalBackwardSafetyState(state.context);
+  const evidenceSnapshotId = `snapshot-${state.inputHash.slice(-24)}`;
+  const scopedRecovery = deriveScopedRecoveryState({
+    planning_date_local: planningDateLocal,
+    evidence_snapshot_id: evidenceSnapshotId,
+    context: state.context,
+  });
+  const recoveryState = scopedRecovery.recovery_state;
+  const safetyState = {
+    action: scopedRecovery.safety_action,
+    scope: scopedRecovery.scopes,
+    reason_codes: scopedRecovery.reason_codes,
+    receipt_hash: scopedRecovery.receipt_hash,
+  };
   const safetyAction = safetyState.action;
   const recentRunCount = Number(state.context?.history?.recentRunCount || 0);
   const weeklyMiles = nullableNonNegativeNumber(state.context?.history?.weeklyMileageBaseline, 300);
@@ -2637,7 +2649,6 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
       : runningLoadAnchorMiles > 0 && recentRunCount >= 3 ? 'PROVISIONAL' : 'INSUFFICIENT';
   const goals = goalBackwardGoalsForState(userId, state);
   const primaryEventDate = goals[0]?.event_local_date || null;
-  const evidenceSnapshotId = `snapshot-${state.inputHash.slice(-24)}`;
   const buildDecision = dependencies.buildDecision || buildGoalBackwardPlanningDecision;
   const enumerateCandidates = dependencies.enumerateCandidates || enumerateGoalBackwardCandidates;
   const decisionInput = {
@@ -2656,6 +2667,7 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
       consistent_weeks: runLoadComplete && recentRunCount >= 4 ? 4 : 0,
       recovery_state: recoveryState,
       safety_action: safetyAction,
+      safety_scope: safetyState.scope,
       recent_normal_running: {
         status: recentNormalStatus,
         median_distance_m: recentNormalStatus !== 'INSUFFICIENT'
@@ -2743,6 +2755,10 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
     active_applied_plan: activeAppliedPlan,
     preferred_weekdays: state.target?.trainingDays || [],
     selected_running_volume_m: decision.proposed_running_volume_m,
+    // C3 consumes only the canonical C2 load contract. Legacy/synthetic states
+    // without that contract retain the pre-C3 path rather than fabricating a
+    // complete recent-normal comparator.
+    material_dose_enforced: hasCanonicalLoadContract,
     hybrid_running_projection_pace_s_per_mile:
       state.context?.history?.acuteRunLoad?.latestRun?.paceSecondsPerMile ?? null,
     mandatory_hyrox_cluster: decision.mandatory_hyrox_cluster === true,
@@ -2765,6 +2781,18 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
       event_local_date: primaryEventDate,
       mandatory_hyrox_cluster: decision.mandatory_hyrox_cluster === true,
       minimum_weekly_demand: decision.minimum_weekly_demand,
+      recent_normal_running: {
+        ...decisionInput.athlete_state.recent_normal_running,
+        evidence_ids: [evidenceSnapshotId],
+      },
+      observed_lower_bound_running_m: observedLowerBoundWeeklyMiles === null
+        ? null : Math.round(observedLowerBoundWeeklyMiles * 1609.344),
+      observed_lower_bound_evidence_ids: observedLowerBoundWeeklyMiles === null
+        ? [] : [evidenceSnapshotId],
+      material_reduction_scope: scopedRecovery.scopes.find((scope) => (
+        scope.scope_kind === 'BLOCK' && scope.authorizes_material_reduction === true
+      )) || null,
+      cross_modal_evidence_ids: [],
     },
   });
   if (typeof dependencies.inspectDecision === 'function') dependencies.inspectDecision(result);
@@ -3628,9 +3656,19 @@ function currentGoalBackwardApplyEnvelope(expected, userId, current) {
     ? firstGoal
     : goals.find((goal) => ['SCHEDULED', 'POSTPONED', 'UNKNOWN'].includes(goal.event_state)) || null;
   const currentEventPolicy = primaryGoal ? eventPolicyForGoal(primaryGoal) : null;
-  const safetyState = goalBackwardSafetyState(current.context);
   const athleteStateRevision = Math.max(1, Number(current.planningInputRevision || 1));
   const evidenceSnapshotId = `snapshot-${current.inputHash.slice(-24)}`;
+  const scopedRecovery = deriveScopedRecoveryState({
+    planning_date_local: expected.planning_date_local,
+    evidence_snapshot_id: evidenceSnapshotId,
+    context: current.context,
+  });
+  const safetyState = {
+    action: scopedRecovery.safety_action,
+    scope: scopedRecovery.scopes,
+    reason_codes: scopedRecovery.reason_codes,
+    receipt_hash: scopedRecovery.receipt_hash,
+  };
   const fingerprints = buildGoalBackwardFingerprintBindings({
     athlete_id: userId,
     plan_id: current.activePlan?.trainingPlanId || null,

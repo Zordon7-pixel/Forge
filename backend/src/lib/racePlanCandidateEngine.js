@@ -39,6 +39,7 @@ const {
 } = require('./goalBackwardValidators');
 const { materializeCanonicalSessionSet } = require('./canonicalWorkout');
 const { buildCanonicalPlanFromSessionSet } = require('./planSchema');
+const { buildCrossModalDoseLedger } = require('./goalBackwardRecoveryMaterial');
 
 const MAX_GOAL_BACKWARD_CANDIDATES = 64;
 const MAX_GOAL_BACKWARD_SEARCH_FRONTIER = 128;
@@ -1135,6 +1136,7 @@ function buildGoalBackwardCandidateSkeleton(input = {}) {
       consistency_state: input.validation_options?.consistency_state ?? decision.consistency_state,
       recovery_state: input.validation_options?.recovery_state ?? decision.recovery_state,
       safety_action: input.validation_options?.safety_action ?? decision.safety_state?.action,
+      safety_scope: input.validation_options?.safety_scope ?? decision.safety_state?.scope,
       locks: input.validation_options?.locks ?? decision.athlete_locks,
       manual_edits: input.validation_options?.manual_edits ?? decision.manual_edits,
       required_exposure_ledger: decision.due_exposure_ledger,
@@ -1307,6 +1309,13 @@ function candidateWorkloadEvidence(sessions, input = {}) {
     ...input.validation_options,
     spacing_valid: validateInterference(sessions, input.validation_options).valid,
   });
+  const doseLedger = buildCrossModalDoseLedger({
+    weekly_dimension_sum: aggregate.weekly_dimension_sum,
+    dimensions: ceilings.dimensions,
+    decisive_evidence_ids: input.validation_options?.cross_modal_evidence_ids
+      ?? input.cross_modal_evidence_ids
+      ?? [],
+  });
   return {
     valid: aggregate.valid && budget.valid && rolling.valid,
     violations: [
@@ -1319,6 +1328,7 @@ function candidateWorkloadEvidence(sessions, input = {}) {
       ...(budget.reason_codes || []),
       ...(rolling.reason_codes || []),
     ])],
+    dimension_ledger: doseLedger,
   };
 }
 
@@ -1499,9 +1509,36 @@ function enumerateGoalBackwardCandidates(input = {}) {
         materializationError = error;
       }
     }
+    const workloadEvidence = candidateWorkloadEvidence(withCanonical.sessions, input);
+    const materialDose = input.material_dose_enforced === true ? {
+      recent_normal_running: input.validation_options?.recent_normal_running ?? {
+        status: decision.recent_normal_running_range_m?.median == null ? 'INSUFFICIENT' : 'PROVISIONAL',
+        median_distance_m: decision.recent_normal_running_range_m?.median ?? null,
+        confidence: decision.recent_normal_running_range_m?.median == null ? 'INSUFFICIENT' : 'LOW',
+      },
+      observed_lower_bound_running_m: input.validation_options?.observed_lower_bound_running_m ?? null,
+      observed_lower_bound_evidence_ids: input.validation_options?.observed_lower_bound_evidence_ids ?? [],
+      active_applied_plan: input.active_applied_plan ?? null,
+      phase: decision.phase,
+      training_age_class: input.validation_options?.training_age_class ?? decision.training_age_class,
+      consistency_state: input.validation_options?.consistency_state ?? decision.consistency_state,
+      planning_date_local: decision.planning_date_local,
+      candidate_window_end_local: availableDates[availableDates.length - 1] ?? decision.planning_date_local,
+      decisive_evidence_ids: (decision.evidence_used || []).map((entry) => (
+        typeof entry === 'string' ? entry : entry?.evidence_id ?? entry?.id
+      )).filter(Boolean),
+      reduction_scope: input.validation_options?.material_reduction_scope ?? null,
+      cross_modal_ledger: workloadEvidence.dimension_ledger,
+    } : null;
     const validation = validateGoalBackwardCandidate(withCanonical, {
       ...input.validation_options,
-      workload_evidence: candidateWorkloadEvidence(withCanonical.sessions, input),
+      workload_evidence: workloadEvidence,
+      safety_scope: input.validation_options?.safety_scope ?? decision.safety_state?.scope,
+      material_dose: materialDose,
+      development_role_requirements: decision.development_role_requirements || [],
+      development_role_conflicts: decision.development_role_conflicts || [],
+      planning_date_local: decision.planning_date_local,
+      candidate_window_end_local: availableDates[availableDates.length - 1] ?? decision.planning_date_local,
       allowed_requirement_ids: roles.map((role) => String(role.requirement_id)),
       enforce_due_role_scope: true,
       maximum_session_count: maximumSessionCount,

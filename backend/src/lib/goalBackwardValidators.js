@@ -12,6 +12,11 @@ const {
 } = require('./goalBackwardLoad');
 const { normalizePlanningConstraints } = require('./planCandidateLifecycle');
 const {
+  evaluateMaterialDose,
+  normalizeScope,
+  validateDevelopmentRoleDose,
+} = require('./goalBackwardRecoveryMaterial');
+const {
   validateCanonicalSession,
   validateCanonicalSessionSet,
   validatePartialRaceOrderCluster,
@@ -53,6 +58,8 @@ const HARD_VALIDATOR_NAMES = Object.freeze([
   'schema',
   'canonical_session_set',
   'material_review',
+  'material_dose',
+  'development_roles',
   'scope',
   'availability',
   'constraints',
@@ -620,6 +627,23 @@ function validateMaterialReview(candidate, sessions) {
   };
 }
 
+function validateMaterialDose(candidate, options = {}) {
+  if (!options.material_dose) {
+    return { validator: 'material_dose', valid: true, violations: [], reason_codes: [] };
+  }
+  const receipt = evaluateMaterialDose({
+    ...options.material_dose,
+    candidate,
+  });
+  return {
+    validator: 'material_dose',
+    valid: receipt.valid,
+    violations: clone(receipt.violations || []),
+    reason_codes: clone(receipt.reason_codes || []),
+    receipt,
+  };
+}
+
 function dueRoleRequirements(options = {}) {
   const source = options.required_exposure_ledger?.due_roles
     ?? options.required_exposure_ledger
@@ -946,23 +970,44 @@ function buildSafetyExecutability(container = {}, options = {}) {
     ? (SAFETY_ACTIONS.has(scopedAction) && scopedAction !== 'PROFESSIONAL_ASSESSMENT_RECOMMENDED'
       ? scopedAction : 'FULL_REST')
     : action;
+  const rawScopeInput = options.safety_scope ?? options.safetyScope;
+  // Legacy safety_scope is a closed list of affected modality strings paired
+  // with the global safety action. C3 structured scopes are objects with
+  // explicit dates, evidence, expiry, and action; preserve the legacy path.
+  const rawScopes = Array.isArray(rawScopeInput)
+    ? rawScopeInput.filter((scope) => scope && typeof scope === 'object' && !Array.isArray(scope))
+    : rawScopeInput && typeof rawScopeInput === 'object' ? [rawScopeInput] : [];
+  const normalizedScopes = rawScopes.map(normalizeScope);
+  const invalidScope = normalizedScopes.some((scope) => !scope || !SAFETY_ACTIONS.has(scope.action));
+  const scopes = normalizedScopes.filter((scope) => scope && SAFETY_ACTIONS.has(scope.action));
   const safetyStateRevision = Number(options.safety_state_revision ?? options.safetyStateRevision
     ?? options.athlete_state_revision ?? options.athleteStateRevision ?? 0);
   const evaluatedSessions = sessions.map((session, index) => {
-    const blocked = safetyBlocksSession(enforcementAction, session);
+    const localDate = sessionLocalDate(session);
+    const activeScopes = scopes.filter((scope) => {
+      const expiryDate = dateOnly(scope.expires_at);
+      return !localDate || (localDate >= scope.effective_from_local && expiryDate && localDate < expiryDate);
+    });
+    const blockingScopes = activeScopes.filter((scope) => safetyBlocksSession(scope.action, session))
+      .sort((left, right) => left.action.localeCompare(right.action) || left.scope_hash.localeCompare(right.scope_hash));
+    const globalBlocked = safetyBlocksSession(enforcementAction, session);
+    const blocked = invalidScope || globalBlocked || blockingScopes.length > 0;
+    const reasonCode = invalidScope ? 'SAFETY_SCOPE_INVALID'
+      : globalBlocked ? enforcementAction : blockingScopes[0]?.action ?? null;
     const surfaceExecutability = Object.fromEntries(EXECUTABLE_SURFACES.map((surface) => [surface, !blocked]));
     return {
       session_id: sessionId(session, index),
       workout_family: sessionFamily(session),
       executable: !blocked,
-      reason_code: blocked ? enforcementAction : null,
+      reason_code: reasonCode,
       safety_action: action,
-      enforcement_action: enforcementAction,
+      enforcement_action: reasonCode || enforcementAction,
+      applied_scope_hashes: activeScopes.map((scope) => scope.scope_hash).sort(),
       safety_state_revision: safetyStateRevision,
       surface_executability: surfaceExecutability,
     };
   });
-  const allBlocked = enforcementAction === 'FULL_REST'
+  const allBlocked = invalidScope || enforcementAction === 'FULL_REST'
     || (evaluatedSessions.length > 0 && !evaluatedSessions.some((session) => session.executable));
   return deepFreeze({
     safety_action: action,
@@ -973,6 +1018,9 @@ function buildSafetyExecutability(container = {}, options = {}) {
     resolution_evidence_ids: clone(options.resolution_evidence_ids || options.resolutionEvidenceIds || []),
     advisory_flags: action === 'PROFESSIONAL_ASSESSMENT_RECOMMENDED'
       ? ['PROFESSIONAL_ASSESSMENT_RECOMMENDED'] : [],
+    safety_scope_state: invalidScope ? 'INVALID_FAIL_CLOSED'
+      : scopes.length ? 'BOUNDED' : 'NONE',
+    safety_scope_hashes: scopes.map((scope) => scope.scope_hash).sort(),
     surface_executability: Object.fromEntries(EXECUTABLE_SURFACES.map((surface) => [surface, !allBlocked])),
     sessions: evaluatedSessions,
   });
@@ -1026,6 +1074,8 @@ function validateGoalBackwardCandidate(candidate = {}, options = {}) {
     validateCandidateSchema(sessions),
     validateCanonicalMaterialization(candidate, sessions),
     validateMaterialReview(candidate, sessions),
+    validateMaterialDose(candidate, options),
+    validateDevelopmentRoleDose(candidate, options),
     validateCandidateScope(sessions, options),
     validateAvailability(sessions, options),
     validateConstraints(sessions, options),

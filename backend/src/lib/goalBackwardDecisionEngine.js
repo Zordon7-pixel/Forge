@@ -643,7 +643,7 @@ function buildGoalBackwardPlanningDecision(input = {}) {
     due_exposure_count: input.due_exposure_count ?? initialDueCount,
   }) : { phase: 'FOUNDATION', days_to_event: null, reason_codes: ['FOUNDATION_ENTRY'] };
   const availableDays = Array.isArray(athleteState.available_days) ? athleteState.available_days : [];
-  const exposureLedger = buildDueExposureLedger({
+  const baseExposureLedger = buildDueExposureLedger({
     ...input,
     event_policy: eventPolicy,
     phase: phaseDecision.phase,
@@ -654,6 +654,27 @@ function buildGoalBackwardPlanningDecision(input = {}) {
     safety_action: athleteState.safety_action,
     available_days_count: availableDays.length,
   });
+  const healthyEventSpecificMultiGoal = phaseDecision.phase === 'EVENT_SPECIFIC_DEVELOPMENT'
+    && ['HYROX_SINGLES', 'HYROX_DOUBLES'].includes(String(primaryGoal?.event_kind || '').toUpperCase())
+    && ownedGoals.some((goal) => goal.goal_id !== primaryGoal?.goal_id
+      && goal.planning_eligible !== false
+      && ['ROAD_SHORT', 'ROAD_ENDURANCE', 'MARATHON'].includes(String(goal.event_kind || '').toUpperCase()))
+    && ['READY', 'NORMAL'].includes(String(athleteState.recovery_state || '').toUpperCase())
+    && ['NORMAL', 'MONITOR'].includes(String(athleteState.safety_action || 'NORMAL').toUpperCase())
+    && !['BEGINNER', 'RETURNING'].includes(String(athleteState.training_age_class || '').toUpperCase());
+  const secondaryRoadQuality = {
+    requirement_id: 'secondary_road_quality',
+    any_of: ['threshold_run', 'interval_run', 'race_rhythm_run'],
+    role: 'PRIMARY_KEY',
+    supports_goal_id: ownedGoals.find((goal) => goal.goal_id !== primaryGoal?.goal_id
+      && ['ROAD_SHORT', 'ROAD_ENDURANCE', 'MARATHON'].includes(String(goal.event_kind || '').toUpperCase()))?.goal_id || null,
+  };
+  const exposureLedger = healthyEventSpecificMultiGoal ? {
+    ...clone(baseExposureLedger),
+    due_roles: [...clone(baseExposureLedger.due_roles || []), secondaryRoadQuality],
+    required_primary_count: Number(baseExposureLedger.required_primary_count || 0) + 1,
+    complete: false,
+  } : baseExposureLedger;
   const roleMultiset = buildRoleMultiset({
     ...input,
     exposure_ledger: exposureLedger,
@@ -722,6 +743,24 @@ function buildGoalBackwardPlanningDecision(input = {}) {
     consistency_state: athleteState.consistency_state || 'UNKNOWN',
     due_exposure_ledger: exposureLedger,
     role_multiset: roleMultiset,
+    development_role_requirements: healthyEventSpecificMultiGoal ? [
+      {
+        requirement_id: 'hyrox_specific',
+        any_of: ['hyrox_compromised', 'hyrox_partial_simulation', 'hyrox_full_simulation'],
+        minimum_role: 'PRIMARY_KEY',
+      },
+      {
+        requirement_id: 'pure_running_quality',
+        any_of: ['threshold_run', 'interval_run', 'race_rhythm_run'],
+        minimum_role: 'PRIMARY_KEY',
+      },
+      {
+        requirement_id: 'long_aerobic',
+        any_of: ['long_aerobic'],
+        minimum_role: 'PRIMARY_KEY',
+        presentation_floor_required: true,
+      },
+    ] : [],
     recent_normal_running_range_m: {
       low: athleteState.recent_normal_running?.lower_bound_m ?? null,
       median: athleteState.recent_normal_running?.median_distance_m ?? null,
