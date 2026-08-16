@@ -8,5 +8,6 @@ export function isReplayUnsafeQueuedRequest(item = {}) {
     return false
   }
   return /^\/api\/races\/[^/]+\/removal-(?:preview|apply)$/.test(pathname)
+    || /^\/api\/plans\/candidates\/[^/]+\/apply$/.test(pathname)
     || /^\/api\/plans\/adaptation\/[^/]+\/(?:accept|keep)$/.test(pathname)
 }

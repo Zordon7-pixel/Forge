@@ -5,6 +5,7 @@ import { isReplayUnsafeQueuedRequest } from '../src/lib/offlineReplayPolicy.js'
 const unsafe = [
   '/api/races/race-1/removal-preview',
   '/api/races/race-1/removal-apply',
+  '/api/plans/candidates/candidate-1/apply',
   '/api/plans/adaptation/proposal-1/accept',
   'https://forge.test/api/plans/adaptation/proposal-1/keep',
 ]

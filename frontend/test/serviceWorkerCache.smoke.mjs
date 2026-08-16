@@ -120,7 +120,7 @@ async function dispatchFetch(harness, pathname, init = {}) {
 }
 
 async function runServiceWorkerCacheSmoke() {
-  assert.match(source, /const CACHE = 'forge-v7'/, 'cache version advances for controlled activation')
+  assert.match(source, /const CACHE = 'forge-v8'/, 'cache version advances for controlled activation')
   assert.match(source, /hasExpectedAssetType\(url, response\)/, 'static responses are type-checked before caching')
 
   const installation = buildWorkerHarness()
@@ -146,9 +146,9 @@ async function runServiceWorkerCacheSmoke() {
   )
 
   const activation = buildWorkerHarness()
-  activation.setCacheNames(['forge-v4', 'forge-v5', 'forge-v6', 'forge-v7', 'forge-api-v1', 'forge-api-v2'])
+  activation.setCacheNames(['forge-v4', 'forge-v5', 'forge-v6', 'forge-v7', 'forge-v8', 'forge-api-v1', 'forge-api-v2'])
   await dispatchLifecycle(activation, 'activate')
-  assert.deepEqual(activation.deletes, ['forge-v4', 'forge-v5', 'forge-v6', 'forge-api-v1'], 'activation deletes stale app caches and the unpartitioned API cache')
+  assert.deepEqual(activation.deletes, ['forge-v4', 'forge-v5', 'forge-v6', 'forge-v7', 'forge-api-v1'], 'activation deletes stale app caches and the unpartitioned API cache')
 
   const messagedActivation = buildWorkerHarness()
   let activationWork
@@ -164,7 +164,7 @@ async function runServiceWorkerCacheSmoke() {
     ports: [{ postMessage(value) { reportedVersion = value } }],
   })
   assert.equal(reportedVersion?.type, 'FORGE_SW_VERSION')
-  assert.equal(reportedVersion?.revision, 'forge-v7', 'worker reports its cache revision for loop-bounded adoption')
+  assert.equal(reportedVersion?.revision, 'forge-v8', 'worker reports its cache revision for loop-bounded adoption')
 
   const isolatedApi = buildWorkerHarness()
   isolatedApi.setResponse(new Response('{"units":"imperial"}', {
@@ -185,6 +185,7 @@ async function runServiceWorkerCacheSmoke() {
   for (const pathname of [
     '/api/races/race-1/removal-preview',
     '/api/races/race-1/removal-apply',
+    '/api/plans/candidates/candidate-1/apply',
     '/api/plans/adaptation/proposal-1/accept',
     '/api/plans/adaptation/proposal-1/keep',
   ]) {
