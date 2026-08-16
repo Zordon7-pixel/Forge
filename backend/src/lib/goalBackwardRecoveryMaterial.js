@@ -39,6 +39,9 @@ const SCOPE_ACTIONS = new Set([
   'MODIFIED_SESSION_ONLY', 'FULL_REST',
 ]);
 const MAX_RECEIPT_BYTES = 16 * 1024;
+const LOCAL_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const RFC3339_PATTERN = /^(\d{4}-\d{2}-\d{2})T([01]\d|2[0-3]):([0-5]\d):([0-5]\d)(?:\.\d{1,9})?(Z|[+-](?:0\d|1[0-4]):[0-5]\d)$/;
+const BOUNDED_ID_PATTERN = /^[A-Za-z0-9._:-]{1,160}$/;
 
 function clone(value) {
   return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
@@ -50,11 +53,80 @@ function deepFreeze(value) {
   return Object.freeze(value);
 }
 
-function dateOnly(value) {
-  const raw = String(value || '').slice(0, 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
+function exactLocalDate(value) {
+  if (typeof value !== 'string' || !LOCAL_DATE_PATTERN.test(value)) return null;
+  const raw = value;
   const parsed = new Date(`${raw}T12:00:00.000Z`);
   return Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== raw ? null : raw;
+}
+
+function rfc3339Instant(value) {
+  if (typeof value !== 'string') return null;
+  const match = value.match(RFC3339_PATTERN);
+  if (!match || !exactLocalDate(match[1])) return null;
+  if (/^[+-]14:(?!00$)/.test(match[5])) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
+function dateOnly(value) {
+  const exact = exactLocalDate(value);
+  if (exact) return exact;
+  if (typeof value !== 'string' || !RFC3339_PATTERN.test(value)) return null;
+  return rfc3339Instant(value) ? value.slice(0, 10) : null;
+}
+
+function validTimezone(value) {
+  const timezone = String(value || '');
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: timezone }).format(new Date(0));
+    return timezone;
+  } catch (_error) {
+    return null;
+  }
+}
+
+function instantLocalDate(instant, timezone) {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      year: 'numeric', month: '2-digit', day: '2-digit',
+    }).formatToParts(new Date(instant));
+    const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    return exactLocalDate(`${values.year}-${values.month}-${values.day}`);
+  } catch (_error) {
+    return null;
+  }
+}
+
+function instantForLocalNoon(localDate, timezone) {
+  const date = exactLocalDate(localDate);
+  const zone = validTimezone(timezone);
+  if (!date || !zone) return null;
+  const [year, month, day] = date.split('-').map(Number);
+  const target = Date.UTC(year, month - 1, day, 12, 0, 0, 0);
+  let instant = target;
+  for (let iteration = 0; iteration < 3; iteration += 1) {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: zone,
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+    }).formatToParts(new Date(instant));
+    const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    const represented = Date.UTC(
+      Number(values.year), Number(values.month) - 1, Number(values.day),
+      Number(values.hour), Number(values.minute), Number(values.second), 0,
+    );
+    instant += target - represented;
+  }
+  const result = new Date(instant).toISOString();
+  return instantLocalDate(result, zone) === date ? result : null;
+}
+
+function normalizedHash(value) {
+  const raw = String(value || '').toLowerCase();
+  if (/^sha256:[a-f0-9]{64}$/.test(raw)) return raw;
+  return /^[a-f0-9]{64}$/.test(raw) ? `sha256:${raw}` : null;
 }
 
 function finiteNonnegative(value) {
@@ -152,25 +224,38 @@ function normalizeScope(input = {}) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
   const scopeKind = String(input.scope_kind || '').toUpperCase();
   const reasonCode = String(input.reason_code || '').toUpperCase();
-  const effectiveFrom = dateOnly(input.effective_from_local);
-  const expiresAtRaw = String(input.expires_at || '');
-  const expiresOnLocal = dateOnly(input.expires_on_local) || dateOnly(expiresAtRaw);
-  const reevaluateAtRaw = String(input.reevaluate_at || '');
-  const expiresAt = Number.isNaN(new Date(expiresAtRaw).getTime()) ? null : new Date(expiresAtRaw).toISOString();
-  const reevaluateAt = Number.isNaN(new Date(reevaluateAtRaw).getTime()) ? null : new Date(reevaluateAtRaw).toISOString();
+  const effectiveFrom = exactLocalDate(input.effective_from_local);
+  const expiresOnLocal = exactLocalDate(input.expires_on_local);
+  const expiresAt = rfc3339Instant(input.expires_at);
+  const reevaluateAt = rfc3339Instant(input.reevaluate_at);
+  const scopeTimezone = validTimezone(input.scope_timezone || 'UTC');
   const modalities = [...new Set((Array.isArray(input.affected_modalities) ? input.affected_modalities : [])
     .map((value) => String(value || '').toLowerCase()).filter((value) => BLOCK_MODALITIES.has(value)))].sort();
   const allDecisiveEvidenceIds = evidenceRefSet(input.decisive_evidence_ids);
   const decisiveEvidenceIds = allDecisiveEvidenceIds.slice(0, 16);
   const actionRaw = String(input.action || '').toUpperCase();
   const action = actionRaw ? (SCOPE_ACTIONS.has(actionRaw) ? actionRaw : null) : null;
+  const roleConflict = reasonCode === 'SCHEDULE_CONSTRAINT';
+  const requirementId = roleConflict && BOUNDED_ID_PATTERN.test(String(input.requirement_id || ''))
+    ? String(input.requirement_id) : null;
+  const governingDecisionId = roleConflict && BOUNDED_ID_PATTERN.test(String(input.governing_decision_id || ''))
+    ? String(input.governing_decision_id) : null;
+  const governingDecisionHash = roleConflict ? normalizedHash(input.governing_decision_hash) : null;
+  const governingConstraintRevision = roleConflict
+    && /^lock:(?:0|[1-9]\d{0,9}):edit:(?:0|[1-9]\d{0,9})$/.test(String(input.governing_constraint_revision || ''))
+    ? String(input.governing_constraint_revision) : null;
+  const governingConstraintHash = roleConflict ? normalizedHash(input.governing_constraint_hash) : null;
   if (!['ACUTE', 'BLOCK'].includes(scopeKind) || !SCOPED_REASONS.has(reasonCode)
-    || !effectiveFrom || !expiresAt || !expiresOnLocal || !reevaluateAt || !modalities.length
+    || !effectiveFrom || !expiresAt || !expiresOnLocal || !reevaluateAt || !scopeTimezone || !modalities.length
     || !decisiveEvidenceIds.length || allDecisiveEvidenceIds.length > 16
-    || (actionRaw && !action)) return null;
-  const effectiveStart = new Date(`${effectiveFrom}T00:00:00.000Z`).getTime();
+    || (actionRaw && !action)
+    || (roleConflict && (!requirementId || !governingDecisionId || !governingDecisionHash
+      || !governingConstraintRevision || !governingConstraintHash))) return null;
+  const expiresAtLocal = instantLocalDate(expiresAt, scopeTimezone);
+  const reevaluateAtLocal = instantLocalDate(reevaluateAt, scopeTimezone);
   if (expiresOnLocal <= effectiveFrom
-    || new Date(reevaluateAt).getTime() < effectiveStart
+    || expiresAtLocal !== expiresOnLocal
+    || !reevaluateAtLocal || reevaluateAtLocal < effectiveFrom
     || new Date(reevaluateAt).getTime() > new Date(expiresAt).getTime()) return null;
   const normalized = {
     scope_kind: scopeKind,
@@ -179,29 +264,40 @@ function normalizeScope(input = {}) {
     expires_on_local: expiresOnLocal,
     expires_at: expiresAt,
     reevaluate_at: reevaluateAt,
+    scope_timezone: scopeTimezone,
     affected_modalities: modalities,
     decisive_evidence_ids: decisiveEvidenceIds,
     action,
     authorizes_material_reduction: input.authorizes_material_reduction === true,
     cross_modal_ledger_hash: /^sha256:[a-f0-9]{64}$/.test(String(input.cross_modal_ledger_hash || ''))
       ? String(input.cross_modal_ledger_hash) : null,
+    cross_modal_evidence_receipt_hash: /^sha256:[a-f0-9]{64}$/.test(String(input.cross_modal_evidence_receipt_hash || ''))
+      ? String(input.cross_modal_evidence_receipt_hash) : null,
     measured_running_ceiling_m: finiteNonnegative(input.measured_running_ceiling_m),
+    requirement_id: requirementId,
+    governing_decision_id: governingDecisionId,
+    governing_decision_hash: governingDecisionHash,
+    governing_constraint_revision: governingConstraintRevision,
+    governing_constraint_hash: governingConstraintHash,
   };
-  return deepFreeze({
+  const complete = {
     ...normalized,
     scope_hash: prefixedHash(normalized),
-  });
+  };
+  if (input.scope_hash && input.scope_hash !== complete.scope_hash) return null;
+  return deepFreeze(complete);
 }
 
-function acuteScope({ planningDate, evidenceIds, reasonCode, modalities, action }) {
+function acuteScope({ planningDate, timezone, evidenceIds, reasonCode, modalities, action }) {
   const expiresOnLocal = addDays(planningDate, 2);
   const normalized = normalizeScope({
     scope_kind: 'ACUTE',
     reason_code: reasonCode,
     effective_from_local: planningDate,
     expires_on_local: expiresOnLocal,
-    expires_at: `${expiresOnLocal}T12:00:00.000Z`,
-    reevaluate_at: `${addDays(planningDate, 1)}T12:00:00.000Z`,
+    expires_at: instantForLocalNoon(expiresOnLocal, timezone),
+    reevaluate_at: instantForLocalNoon(addDays(planningDate, 1), timezone),
+    scope_timezone: timezone,
     affected_modalities: modalities,
     decisive_evidence_ids: evidenceIds,
     authorizes_material_reduction: false,
@@ -220,6 +316,8 @@ function blockScope({
   authorizesMaterialReduction,
   crossModalLedgerHash = null,
   measuredRunningCeilingM = null,
+  crossModalEvidenceReceiptHash = null,
+  timezone = 'UTC',
 }) {
   const expiresOnLocal = addDays(candidateWindowEnd, 1);
   return normalizeScope({
@@ -227,13 +325,15 @@ function blockScope({
     reason_code: reasonCode,
     effective_from_local: planningDate,
     expires_on_local: expiresOnLocal,
-    expires_at: `${expiresOnLocal}T12:00:00.000Z`,
-    reevaluate_at: `${addDays(planningDate, 1)}T12:00:00.000Z`,
+    expires_at: instantForLocalNoon(expiresOnLocal, timezone),
+    reevaluate_at: instantForLocalNoon(addDays(planningDate, 1), timezone),
+    scope_timezone: timezone,
     affected_modalities: modalities,
     decisive_evidence_ids: evidenceIds,
     authorizes_material_reduction: authorizesMaterialReduction === true,
     action,
     cross_modal_ledger_hash: crossModalLedgerHash,
+    cross_modal_evidence_receipt_hash: crossModalEvidenceReceiptHash,
     measured_running_ceiling_m: measuredRunningCeilingM,
   });
 }
@@ -243,6 +343,7 @@ function deriveScopedRecoveryState(input = {}) {
   if (!planningDate) throw new Error('planning_date_local is required for recovery scope');
   const candidateWindowEnd = dateOnly(input.candidate_window_end_local) || addDays(planningDate, 6);
   const context = input.context || {};
+  const timezone = validTimezone(input.timezone || context.profile?.timezone || 'UTC') || 'UTC';
   const safety = context.safety || {};
   const recovery = context.recovery || {};
   const checkin = context.checkin || {};
@@ -278,6 +379,7 @@ function deriveScopedRecoveryState(input = {}) {
     const scope = blockScope({
       planningDate,
       candidateWindowEnd,
+      timezone,
       evidenceIds: injuryEvidenceIds,
       reasonCode: 'INJURY_SCOPE',
       modalities: ['running_impact', 'lower_body_muscular'],
@@ -290,11 +392,11 @@ function deriveScopedRecoveryState(input = {}) {
     safetyAction = 'MONITOR';
     const corroborated = illnessEvidenceIds.length >= 2;
     const scope = corroborated ? blockScope({
-      planningDate, candidateWindowEnd, evidenceIds: illnessEvidenceIds,
+      planningDate, candidateWindowEnd, timezone, evidenceIds: illnessEvidenceIds,
       reasonCode: 'ILLNESS_RECOVERY', modalities: ['running_quality', 'metabolic'],
       action: 'NO_HIGH_INTENSITY', authorizesMaterialReduction: true,
     }) : acuteScope({
-      planningDate, evidenceIds: illnessEvidenceIds,
+      planningDate, timezone, evidenceIds: illnessEvidenceIds,
       reasonCode: 'ILLNESS_RECOVERY', modalities: ['running_quality', 'metabolic'],
       action: 'NO_HIGH_INTENSITY',
     });
@@ -304,6 +406,7 @@ function deriveScopedRecoveryState(input = {}) {
     safetyAction = 'MONITOR';
     const scope = acuteScope({
       planningDate,
+      timezone,
       evidenceIds: [snapshotId],
       reasonCode: 'RECOVERY_VOLUME_REDUCTION',
       modalities: ['running_quality', 'lower_body_intensity'],
@@ -324,6 +427,7 @@ function deriveMaterialReductionScope(input = {}) {
   const planningDate = dateOnly(input.planning_date_local);
   const candidateWindowEnd = dateOnly(input.candidate_window_end_local);
   const decision = input.decision;
+  const timezone = validTimezone(input.timezone || decision?.timezone || 'UTC') || 'UTC';
   if (!planningDate || !candidateWindowEnd || planningDate > candidateWindowEnd
     || !decision?.decision_id || !decision?.decision_hash) return null;
   const scopedRecovery = input.scoped_recovery_state || {};
@@ -352,6 +456,7 @@ function deriveMaterialReductionScope(input = {}) {
   if (String(decision.phase || '').toUpperCase() === 'TAPER_RACE_WEEK') {
     return blockScope({
       planningDate, candidateWindowEnd, evidenceIds: decisionEvidenceIds,
+      timezone,
       reasonCode: 'TAPER_VOLUME_REDUCTION', modalities: ['running', 'running_impact'],
       action: null, authorizesMaterialReduction: true,
     });
@@ -364,6 +469,7 @@ function deriveMaterialReductionScope(input = {}) {
     return blockScope({
       planningDate,
       candidateWindowEnd,
+      timezone,
       evidenceIds: [
         ...(recent.evidence_ids || []),
         ...(input.load_evidence_ids || []),
@@ -375,18 +481,27 @@ function deriveMaterialReductionScope(input = {}) {
       authorizesMaterialReduction: true,
     });
   }
-  const ledger = input.cross_modal_ledger;
+  const evidence = input.cross_modal_reduction_evidence;
   const measuredRunningCeilingM = finiteNonnegative(input.measured_running_ceiling_m);
-  if (ledger?.valid === true && measuredRunningCeilingM !== null) {
+  const decisionOwnerRef = evidenceRef(decision.athlete_id);
+  const decisionSnapshotRef = evidenceRef(decision.evidence_snapshot_id);
+  if (evidence?.valid === true
+    && evidence.owner_ref === decisionOwnerRef
+    && evidence.athlete_state_revision === Number(decision.athlete_state_revision)
+    && evidence.evidence_snapshot_ref === decisionSnapshotRef
+    && measuredRunningCeilingM !== null
+    && measuredRunningCeilingM === evidence.measured_running_ceiling_m) {
     return blockScope({
       planningDate,
       candidateWindowEnd,
-      evidenceIds: ledger.decisive_evidence_ids,
+      timezone,
+      evidenceIds: evidence.decisive_evidence_ids,
       reasonCode: 'CROSS_MODAL_FATIGUE_LIMIT',
       modalities: ['running_impact', 'lower_body_muscular'],
       action: null,
       authorizesMaterialReduction: true,
-      crossModalLedgerHash: ledger.receipt_hash,
+      crossModalLedgerHash: evidence.dimension_ledger.receipt_hash,
+      crossModalEvidenceReceiptHash: evidence.receipt_hash,
       measuredRunningCeilingM,
     });
   }
@@ -432,6 +547,101 @@ function buildCrossModalDoseLedger(input = {}) {
   return receipt;
 }
 
+function invalidCrossModalReductionEvidence(reasonCode) {
+  const content = {
+    valid: false,
+    owner_ref: null,
+    athlete_state_revision: null,
+    evidence_snapshot_ref: null,
+    evidence_revision: null,
+    content_hash: null,
+    measured_running_ceiling_m: null,
+    decisive_evidence_ids: [],
+    dimension_ledger: null,
+    reason_codes: [reasonCode],
+  };
+  return deepFreeze({ ...content, receipt_hash: prefixedHash(content) });
+}
+
+function normalizeCrossModalReductionEvidence(input, expected = {}) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return invalidCrossModalReductionEvidence('CROSS_MODAL_EVIDENCE_RECEIPT_MISSING');
+  }
+  if (Number(input.schema_version) !== 1) {
+    return invalidCrossModalReductionEvidence('CROSS_MODAL_EVIDENCE_SCHEMA_UNSUPPORTED');
+  }
+  if (!expected.athlete_id || String(input.athlete_id || '') !== String(expected.athlete_id)) {
+    return invalidCrossModalReductionEvidence('CROSS_MODAL_OWNER_MISMATCH');
+  }
+  const athleteStateRevision = Number(input.athlete_state_revision);
+  if (!Number.isSafeInteger(athleteStateRevision) || athleteStateRevision < 1
+    || athleteStateRevision !== Number(expected.athlete_state_revision)) {
+    return invalidCrossModalReductionEvidence('CROSS_MODAL_REVISION_MISMATCH');
+  }
+  const snapshotRef = evidenceRef(input.evidence_snapshot_id);
+  if (!snapshotRef || snapshotRef !== evidenceRef(expected.evidence_snapshot_id)) {
+    return invalidCrossModalReductionEvidence('CROSS_MODAL_SNAPSHOT_MISMATCH');
+  }
+  const evidenceRevision = Number(input.evidence_revision);
+  if (!Number.isSafeInteger(evidenceRevision) || evidenceRevision < 1) {
+    return invalidCrossModalReductionEvidence('CROSS_MODAL_EVIDENCE_REVISION_INVALID');
+  }
+  const dimensionKeys = input.dimensions && typeof input.dimensions === 'object' && !Array.isArray(input.dimensions)
+    ? Object.keys(input.dimensions).sort() : [];
+  if (dimensionKeys.length !== DIMENSIONS.length
+    || dimensionKeys.some((dimension, index) => dimension !== [...DIMENSIONS].sort()[index])
+    || !Array.isArray(input.weekly_dimension_sum)
+    || input.weekly_dimension_sum.length !== DIMENSIONS.length) {
+    return invalidCrossModalReductionEvidence('CROSS_MODAL_DIMENSIONS_INCOMPLETE');
+  }
+  const measuredRunningCeilingM = finiteNonnegative(input.measured_running_ceiling_m);
+  if (measuredRunningCeilingM === null || measuredRunningCeilingM <= 0) {
+    return invalidCrossModalReductionEvidence('CROSS_MODAL_RUNNING_CEILING_UNKNOWN');
+  }
+  const decisiveEvidenceIds = evidenceRefSet(input.decisive_evidence_ids);
+  if (!decisiveEvidenceIds.length || decisiveEvidenceIds.length > 16) {
+    return invalidCrossModalReductionEvidence('CROSS_MODAL_DECISIVE_EVIDENCE_INVALID');
+  }
+  const canonicalContent = {
+    schema_version: 1,
+    athlete_id: String(input.athlete_id),
+    athlete_state_revision: athleteStateRevision,
+    evidence_snapshot_id: String(input.evidence_snapshot_id),
+    evidence_revision: evidenceRevision,
+    weekly_dimension_sum: clone(input.weekly_dimension_sum),
+    dimensions: clone(input.dimensions),
+    measured_running_ceiling_m: measuredRunningCeilingM,
+    decisive_evidence_ids: clone(input.decisive_evidence_ids),
+  };
+  const contentHash = normalizedHash(input.content_hash);
+  if (!contentHash || contentHash !== prefixedHash(canonicalContent)) {
+    return invalidCrossModalReductionEvidence('CROSS_MODAL_EVIDENCE_HASH_MISMATCH');
+  }
+  const dimensionLedger = buildCrossModalDoseLedger({
+    weekly_dimension_sum: canonicalContent.weekly_dimension_sum,
+    dimensions: canonicalContent.dimensions,
+    decisive_evidence_ids: canonicalContent.decisive_evidence_ids,
+  });
+  if (!dimensionLedger.valid) {
+    return invalidCrossModalReductionEvidence('CROSS_MODAL_DIMENSIONS_INCOMPLETE');
+  }
+  const content = {
+    valid: true,
+    owner_ref: evidenceRef(input.athlete_id),
+    athlete_state_revision: athleteStateRevision,
+    evidence_snapshot_ref: snapshotRef,
+    evidence_revision: evidenceRevision,
+    content_hash: contentHash,
+    measured_running_ceiling_m: measuredRunningCeilingM,
+    decisive_evidence_ids: dimensionLedger.decisive_evidence_ids,
+    dimension_ledger: dimensionLedger,
+    reason_codes: [],
+  };
+  const receipt = deepFreeze({ ...content, receipt_hash: prefixedHash(content) });
+  return Buffer.byteLength(JSON.stringify(receipt), 'utf8') <= MAX_RECEIPT_BYTES
+    ? receipt : invalidCrossModalReductionEvidence('CROSS_MODAL_EVIDENCE_RECEIPT_OVERSIZED');
+}
+
 function comparatorReceipt(source, baselineRunning, options = {}) {
   const candidateRunning = options.candidateRunning;
   const deltaMeters = round(candidateRunning - baselineRunning, 3);
@@ -474,14 +684,19 @@ function qualifyingAuthorization(scope, input, comparators) {
     CROSS_MODAL_FATIGUE_LIMIT: false,
   };
   if (scope.reason_code === 'CROSS_MODAL_FATIGUE_LIMIT') {
-    const ledger = input.cross_modal_ledger;
+    const candidateLedger = input.cross_modal_ledger;
+    const evidence = input.cross_modal_reduction_evidence;
     const maximumCandidate = finiteNonnegative(scope.measured_running_ceiling_m);
-    reasons.CROSS_MODAL_FATIGUE_LIMIT = ledger?.valid === true
-      && scope.cross_modal_ledger_hash === ledger.receipt_hash
+    reasons.CROSS_MODAL_FATIGUE_LIMIT = candidateLedger?.valid === true
+      && evidence?.valid === true
+      && scope.cross_modal_ledger_hash === evidence.dimension_ledger?.receipt_hash
+      && scope.cross_modal_evidence_receipt_hash === evidence.receipt_hash
       && maximumCandidate !== null
+      && maximumCandidate === evidence.measured_running_ceiling_m
       && finiteNonnegative(input.candidate_running_m) <= maximumCandidate
       && comparators.some((comparator) => comparator.baseline_running_m > maximumCandidate)
-      && scope.decisive_evidence_ids.every((ref) => ledger.decisive_evidence_ids.includes(ref));
+      && scope.decisive_evidence_ids.every((ref) => evidence.decisive_evidence_ids.includes(ref)
+        && candidateLedger.decisive_evidence_ids.includes(ref));
   }
   return reasons[scope.reason_code] === true ? scope : null;
 }
@@ -620,6 +835,40 @@ function evaluateMaterialDose(input = {}) {
   return finalReceipt;
 }
 
+function buildDevelopmentRoleBinding(decision = {}) {
+  if (!BOUNDED_ID_PATTERN.test(String(decision.decision_id || ''))) return null;
+  const decisionHash = normalizedHash(decision.decision_hash);
+  if (!decisionHash) return null;
+  const lockRevision = Math.max(0, Number(decision.lock_revision || 0));
+  const editRevision = Math.max(0, Number(decision.edit_revision || 0));
+  if (!Number.isSafeInteger(lockRevision) || !Number.isSafeInteger(editRevision)) return null;
+  const constraintContent = {
+    lock_revision: lockRevision,
+    edit_revision: editRevision,
+    constraint_fingerprint: decision.constraint_fingerprint || null,
+    athlete_locks: clone(decision.athlete_locks || []),
+    manual_edits: clone(decision.manual_edits || []),
+  };
+  return deepFreeze({
+    decision_id: String(decision.decision_id),
+    decision_hash: decisionHash,
+    constraint_revision: `lock:${lockRevision}:edit:${editRevision}`,
+    constraint_hash: prefixedHash(constraintContent),
+  });
+}
+
+function validDevelopmentRoleConflict(rawConflict, requirementId, binding) {
+  if (!rawConflict || !binding || !rawConflict.scope_hash) return false;
+  const normalized = normalizeScope(rawConflict);
+  return Boolean(normalized
+    && normalized.reason_code === 'SCHEDULE_CONSTRAINT'
+    && normalized.requirement_id === requirementId
+    && normalized.governing_decision_id === binding.decision_id
+    && normalized.governing_decision_hash === binding.decision_hash
+    && normalized.governing_constraint_revision === binding.constraint_revision
+    && normalized.governing_constraint_hash === binding.constraint_hash);
+}
+
 function validateDevelopmentRoleDose(candidate = {}, options = {}) {
   const requirements = Array.isArray(options.development_role_requirements)
     ? options.development_role_requirements : [];
@@ -629,8 +878,14 @@ function validateDevelopmentRoleDose(candidate = {}, options = {}) {
     };
   }
   const sessions = sessionsFrom(candidate);
-  const conflicts = new Map((Array.isArray(options.development_role_conflicts)
-    ? options.development_role_conflicts : []).map((conflict) => [String(conflict.requirement_id || ''), conflict]));
+  const conflicts = new Map();
+  for (const conflict of Array.isArray(options.development_role_conflicts)
+    ? options.development_role_conflicts : []) {
+    const requirementId = String(conflict?.requirement_id || '');
+    if (!conflicts.has(requirementId)) conflicts.set(requirementId, []);
+    conflicts.get(requirementId).push(conflict);
+  }
+  const binding = options.development_role_binding || null;
   const violations = [];
   const roleEvaluations = [];
   for (const requirement of requirements) {
@@ -660,11 +915,15 @@ function validateDevelopmentRoleDose(candidate = {}, options = {}) {
       presentation_floor_source: presentationFloorSource,
     });
     if (meaningful) continue;
-    const conflict = conflicts.get(String(requirement.requirement_id));
-    const normalizedConflict = normalizeScope(conflict);
-    if (normalizedConflict && scopeCoversCandidate(normalizedConflict, options, {
-      requireMaterialAuthorization: false,
-    })) continue;
+    const requirementId = String(requirement.requirement_id || '');
+    const roleConflicts = conflicts.get(requirementId) || [];
+    if (roleConflicts.length === 1
+      && validDevelopmentRoleConflict(roleConflicts[0], requirementId, binding)) {
+      const normalizedConflict = normalizeScope(roleConflicts[0]);
+      if (scopeCoversCandidate(normalizedConflict, options, {
+        requireMaterialAuthorization: false,
+      })) continue;
+    }
     violations.push({
       code: 'REQUIRED_EXPOSURE_UNPLACEABLE',
       reason: matched.length ? 'REQUIRED_ROLE_BELOW_PRESENTATION_FLOOR' : 'REQUIRED_DEVELOPMENT_ROLE_MISSING',
@@ -683,10 +942,12 @@ function validateDevelopmentRoleDose(candidate = {}, options = {}) {
 module.exports = {
   DIMENSIONS,
   MAX_RECEIPT_BYTES,
+  buildDevelopmentRoleBinding,
   buildCrossModalDoseLedger,
   deriveMaterialReductionScope,
   deriveScopedRecoveryState,
   evaluateMaterialDose,
+  normalizeCrossModalReductionEvidence,
   normalizeScope,
   validateDevelopmentRoleDose,
 };

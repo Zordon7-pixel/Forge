@@ -39,7 +39,10 @@ const {
 } = require('./goalBackwardValidators');
 const { materializeCanonicalSessionSet } = require('./canonicalWorkout');
 const { buildCanonicalPlanFromSessionSet } = require('./planSchema');
-const { buildCrossModalDoseLedger } = require('./goalBackwardRecoveryMaterial');
+const {
+  buildCrossModalDoseLedger,
+  buildDevelopmentRoleBinding,
+} = require('./goalBackwardRecoveryMaterial');
 
 const MAX_GOAL_BACKWARD_CANDIDATES = 64;
 const MAX_GOAL_BACKWARD_SEARCH_FRONTIER = 128;
@@ -1529,6 +1532,7 @@ function enumerateGoalBackwardCandidates(input = {}) {
       )).filter(Boolean),
       reduction_scope: input.validation_options?.material_reduction_scope ?? null,
       cross_modal_ledger: workloadEvidence.dimension_ledger,
+      cross_modal_reduction_evidence: input.validation_options?.cross_modal_reduction_evidence ?? null,
     } : null;
     const validation = validateGoalBackwardCandidate(withCanonical, {
       ...input.validation_options,
@@ -1537,6 +1541,7 @@ function enumerateGoalBackwardCandidates(input = {}) {
       material_dose: materialDose,
       development_role_requirements: decision.development_role_requirements || [],
       development_role_conflicts: decision.development_role_conflicts || [],
+      development_role_binding: buildDevelopmentRoleBinding(decision),
       planning_date_local: decision.planning_date_local,
       candidate_window_end_local: availableDates[availableDates.length - 1] ?? decision.planning_date_local,
       allowed_requirement_ids: roles.map((role) => String(role.requirement_id)),

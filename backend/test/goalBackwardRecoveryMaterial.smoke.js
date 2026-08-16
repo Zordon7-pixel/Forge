@@ -1,10 +1,13 @@
 const assert = require('node:assert/strict');
 
 const {
+  buildDevelopmentRoleBinding,
   buildCrossModalDoseLedger,
   deriveMaterialReductionScope,
   deriveScopedRecoveryState,
   evaluateMaterialDose,
+  normalizeCrossModalReductionEvidence,
+  normalizeScope,
 } = require('../src/lib/goalBackwardRecoveryMaterial');
 const { buildGoalBackwardPlanningDecision } = require('../src/lib/goalBackwardDecisionEngine');
 const { validateGoalBackwardCandidate } = require('../src/lib/goalBackwardValidators');
@@ -44,6 +47,7 @@ function materialInput({
   consistency = 'CONSISTENT',
   reductionScope = null,
   crossModalLedger = null,
+  crossModalReductionEvidence = null,
 } = {}) {
   return {
     candidate: {
@@ -69,7 +73,33 @@ function materialInput({
     decisive_evidence_ids: ['sha256:planning-snapshot'],
     reduction_scope: reductionScope,
     cross_modal_ledger: crossModalLedger,
+    cross_modal_reduction_evidence: crossModalReductionEvidence,
   };
+}
+
+const CROSS_MODAL_DIMENSIONS = [
+  'aerobic', 'running_impact', 'lower_body_muscular', 'upper_body_muscular',
+  'grip', 'neuromuscular', 'metabolic', 'event_specific_fatigue',
+];
+
+function crossModalEvidenceEnvelope(overrides = {}) {
+  const content = {
+    schema_version: 1,
+    athlete_id: 'synthetic-cross-modal-owner',
+    athlete_state_revision: 4,
+    evidence_snapshot_id: `sha256:${'2'.repeat(64)}`,
+    evidence_revision: 3,
+    weekly_dimension_sum: [9, 7, 12, 5, 6, 8, 10, 8],
+    dimensions: Object.fromEntries(CROSS_MODAL_DIMENSIONS.map((dimension, index) => [dimension, {
+      status: 'ESTABLISHED', confidence: 'HIGH',
+      normal_ceiling: [10, 8, 12, 6, 7, 9, 10, 8][index],
+      authorized_ceiling: [10, 8, 12, 6, 7, 9, 10, 8][index],
+    }])),
+    measured_running_ceiling_m: milesToMeters(7.2),
+    decisive_evidence_ids: [`sha256:${'3'.repeat(64)}`, `sha256:${'4'.repeat(64)}`],
+    ...overrides,
+  };
+  return { ...content, content_hash: `sha256:${canonicalHash(content)}` };
 }
 
 function restrictionScope(overrides = {}) {
@@ -77,8 +107,10 @@ function restrictionScope(overrides = {}) {
     scope_kind: 'BLOCK',
     reason_code: 'INJURY_SCOPE',
     effective_from_local: '2026-08-17',
+    expires_on_local: '2026-08-24',
     expires_at: '2026-08-24T04:00:00.000Z',
     reevaluate_at: '2026-08-23T12:00:00.000Z',
+    scope_timezone: 'UTC',
     affected_modalities: ['running_impact'],
     decisive_evidence_ids: ['sha256:injury-evidence'],
     authorizes_material_reduction: true,
@@ -476,7 +508,10 @@ test('C3-MAT-06', 'production-bound taper, training-gap, and corroborated safety
 });
 
 test('C3-MAT-07', 'missing or malformed scheduled dates make candidate and active-plan dose unknown', () => {
-  for (const badDate of [null, '', 'not-a-date', '2026-02-30']) {
+  for (const badDate of [
+    null, '', 'not-a-date', '2026-02-30', '2026-08-17garbage', '2026-08-17 ',
+    '2026-08-17\u0000', 20260817, { date: '2026-08-17' },
+  ]) {
     const candidate = materialInput();
     candidate.candidate.sessions.push(runSession('undated-padding', 8, 'easy_run', 'SUPPORTING', badDate));
     const receipt = evaluateMaterialDose(candidate);
@@ -502,6 +537,60 @@ test('C3-MAT-07', 'missing or malformed scheduled dates make candidate and activ
     input.candidate.sessions = [runSession('boundary', 6.94, 'easy_run', 'SUPPORTING', date)];
     assert.equal(evaluateMaterialDose(input).candidate_running_m, milesToMeters(6.94));
   }
+
+  const padded = materialInput({ candidateMiles: 6.94, recentNormalMiles: 12.5 });
+  padded.candidate.sessions.push(runSession(
+    'prefix-garbage-padding', 8, 'easy_run', 'SUPPORTING', '2026-08-17garbage'
+  ));
+  const paddedReceipt = evaluateMaterialDose(padded);
+  assert.equal(paddedReceipt.valid, false);
+  assert.equal(paddedReceipt.violations[0].reason, 'CANDIDATE_RUNNING_DATE_UNKNOWN');
+
+  const inflatedActive = materialInput({ recentNormalMiles: null, activePlanMiles: 12.5 });
+  inflatedActive.active_applied_plan.sessions[0].scheduled_local_date = '2026-08-17garbage';
+  const inflatedActiveReceipt = evaluateMaterialDose(inflatedActive);
+  assert.equal(inflatedActiveReceipt.valid, false);
+  assert.equal(inflatedActiveReceipt.violations[0].reason, 'ACTIVE_PLAN_RUNNING_DATE_UNKNOWN');
+});
+
+test('C3-SCOPE-01', 'expiry instant and local calendar identity must agree and cover the whole candidate window', () => {
+  const contradictory = restrictionScope({
+    expires_on_local: '2026-08-30',
+    expires_at: '2026-08-17T12:00:00.000Z',
+    reevaluate_at: '2026-08-17T10:00:00.000Z',
+  });
+  assert.equal(normalizeScope(contradictory), null);
+  assert.equal(evaluateMaterialDose(materialInput({ reductionScope: contradictory })).valid, false);
+
+  for (const invalid of [
+    restrictionScope({ expires_on_local: '2026-08-23', expires_at: '2026-08-23T23:59:00.000Z' }),
+    restrictionScope({ expires_on_local: '2026-08-18', expires_at: '2026-08-18T12:00:00.000Z' }),
+  ]) {
+    assert.equal(evaluateMaterialDose(materialInput({ reductionScope: invalid })).valid, false);
+  }
+
+  const legitimateOffsetCrossing = restrictionScope({
+    scope_timezone: 'Pacific/Kiritimati',
+    expires_on_local: '2026-08-24',
+    expires_at: '2026-08-24T00:30:00+14:00',
+    reevaluate_at: '2026-08-23T12:00:00+14:00',
+    decisive_evidence_ids: ['offset-evidence-1', 'offset-evidence-2'],
+  });
+  assert.equal(evaluateMaterialDose(materialInput({ reductionScope: legitimateOffsetCrossing })).valid, true);
+
+  const dstBound = restrictionScope({
+    effective_from_local: '2026-10-26',
+    scope_timezone: 'America/New_York',
+    expires_on_local: '2026-11-02',
+    expires_at: '2026-11-02T00:00:00-05:00',
+    reevaluate_at: '2026-10-27T12:00:00-04:00',
+    decisive_evidence_ids: ['dst-evidence-1', 'dst-evidence-2'],
+  });
+  const dstInput = materialInput({ reductionScope: dstBound });
+  dstInput.planning_date_local = '2026-10-26';
+  dstInput.candidate_window_end_local = '2026-11-01';
+  dstInput.candidate.sessions[0].scheduled_local_date = '2026-10-26';
+  assert.equal(evaluateMaterialDose(dstInput).valid, true);
 });
 
 test('C3-ROUTE-01', 'the route binds taper and training-gap BLOCK scopes into candidate validation', () => {
@@ -599,12 +688,145 @@ test('C3-XMOD-01', 'cross-modal relief requires a complete dimension-specific le
     evidence_snapshot_id: 'synthetic-cross-modal-snapshot', decision,
     cross_modal_ledger: ledger, measured_running_ceiling_m: milesToMeters(7.2),
   });
+  assert.equal(measuredScope, null, 'a candidate ledger is not an authoritative measured reduction receipt');
   const scoped = evaluateMaterialDose(materialInput({
     crossModalLedger: ledger,
     reductionScope: measuredScope,
   }));
-  assert.equal(scoped.valid, true);
-  assert.equal(scoped.reduction_authorization.cross_modal_ledger_hash, ledger.receipt_hash);
+  assert.equal(scoped.valid, false);
+});
+
+test('C3-XMOD-02', 'cross-modal reduction evidence is owner/revision/hash bound and complete before route use', () => {
+  const envelope = crossModalEvidenceEnvelope();
+  const expected = {
+    athlete_id: envelope.athlete_id,
+    athlete_state_revision: envelope.athlete_state_revision,
+    evidence_snapshot_id: envelope.evidence_snapshot_id,
+  };
+  const normalized = normalizeCrossModalReductionEvidence(envelope, expected);
+  assert.equal(normalized.valid, true);
+  assert.equal(normalized.measured_running_ceiling_m, milesToMeters(7.2));
+  assert.equal(normalized.dimension_ledger.dimensions.length, 8);
+  assert.doesNotMatch(JSON.stringify(normalized), /synthetic-cross-modal-owner/);
+
+  const invalidFixtures = [
+    { name: 'owner', value: { ...envelope, athlete_id: 'different-owner' }, reason: 'CROSS_MODAL_OWNER_MISMATCH' },
+    { name: 'revision', value: { ...envelope, athlete_state_revision: 5 }, reason: 'CROSS_MODAL_REVISION_MISMATCH' },
+    { name: 'snapshot', value: { ...envelope, evidence_snapshot_id: `sha256:${'5'.repeat(64)}` }, reason: 'CROSS_MODAL_SNAPSHOT_MISMATCH' },
+    { name: 'hash', value: { ...envelope, content_hash: `sha256:${'6'.repeat(64)}` }, reason: 'CROSS_MODAL_EVIDENCE_HASH_MISMATCH' },
+    {
+      name: 'dimension',
+      value: { ...envelope, dimensions: Object.fromEntries(Object.entries(envelope.dimensions).slice(0, 7)) },
+      reason: 'CROSS_MODAL_DIMENSIONS_INCOMPLETE',
+    },
+    { name: 'ceiling', value: { ...envelope, measured_running_ceiling_m: null }, reason: 'CROSS_MODAL_RUNNING_CEILING_UNKNOWN' },
+  ];
+  for (const fixture of invalidFixtures) {
+    const receipt = normalizeCrossModalReductionEvidence(fixture.value, expected);
+    assert.equal(receipt.valid, false, fixture.name);
+    assert.deepEqual(receipt.reason_codes, [fixture.reason], fixture.name);
+  }
+
+  const decision = {
+    decision_id: 'synthetic-bound-cross-modal-decision',
+    decision_hash: canonicalHash({ fixture: 'synthetic-bound-cross-modal-decision' }),
+    athlete_id: envelope.athlete_id,
+    athlete_state_revision: envelope.athlete_state_revision,
+    evidence_snapshot_id: envelope.evidence_snapshot_id,
+    phase: 'DEVELOPMENT', consistency_state: 'CONSISTENT', training_age_class: 'ESTABLISHED',
+    evidence_used: [{ evidence_id: envelope.evidence_snapshot_id }],
+  };
+  const scope = deriveMaterialReductionScope({
+    planning_date_local: '2026-08-17', candidate_window_end_local: '2026-08-23',
+    decision, cross_modal_reduction_evidence: normalized,
+    measured_running_ceiling_m: normalized.measured_running_ceiling_m,
+  });
+  assert.equal(scope.reason_code, 'CROSS_MODAL_FATIGUE_LIMIT');
+  assert.equal(scope.cross_modal_ledger_hash, normalized.dimension_ledger.receipt_hash);
+  assert.equal(deriveMaterialReductionScope({
+    planning_date_local: '2026-08-17', candidate_window_end_local: '2026-08-23',
+    decision, cross_modal_reduction_evidence: normalized,
+    measured_running_ceiling_m: normalized.measured_running_ceiling_m + 1,
+  }), null, 'a ceiling mismatch cannot authorize reduction');
+
+  const candidateLedger = buildCrossModalDoseLedger({
+    weekly_dimension_sum: [9, 7, 12, 5, 6, 8, 10, 8],
+    dimensions: envelope.dimensions,
+    decisive_evidence_ids: normalized.decisive_evidence_ids,
+  });
+  const accepted = evaluateMaterialDose(materialInput({
+    reductionScope: scope,
+    crossModalLedger: candidateLedger,
+    crossModalReductionEvidence: normalized,
+  }));
+  assert.equal(accepted.valid, true);
+});
+
+test('C3-XMOD-03', 'production route rejects absent, stale, mismatched, and incomplete cross-modal evidence', () => {
+  const planningDateLocal = '2026-08-17';
+  const baseState = {
+    inputHash: `sha256:${'a'.repeat(64)}`,
+    planningInputRevision: 4,
+    active: null,
+    activePlan: null,
+    races: [{
+      id: 'synthetic-cross-modal-race', user_id: 'synthetic-cross-modal-owner',
+      race_date: '2026-10-18', event_local_date: '2026-10-18', event_kind: 'road',
+      distance_miles: 10, goal_revision: 4,
+    }],
+    target: { trainingDays: ['Mon', 'Wed', 'Sun'] },
+    context: {
+      profile: { training_age_class: 'ESTABLISHED', timezone: 'America/New_York' },
+      history: {
+        recentRunCount: 8, weeklyMileageBaseline: 12.5,
+        runLoadInput: {
+          load_input_state: 'COMPLETE', load_input_confidence: 'HIGH', recent_normal_confidence: 'HIGH',
+          recent_normal: { status: 'ESTABLISHED', median_distance_m: milesToMeters(12.5), confidence: 'HIGH' },
+          load_input_hash: `sha256:${'b'.repeat(64)}`, windows: [], reason_codes: [],
+        },
+      },
+      recovery: { state: 'NORMAL' }, safety: {}, checkin: null,
+    },
+  };
+  const snapshotId = `snapshot-${baseState.inputHash.slice(-24)}`;
+  const validEnvelope = crossModalEvidenceEnvelope({ evidence_snapshot_id: snapshotId });
+  const fixtures = [
+    { label: 'absent', evidence: null, reason: 'CROSS_MODAL_EVIDENCE_RECEIPT_MISSING' },
+    { label: 'owner', evidence: { ...validEnvelope, athlete_id: 'other-owner' }, reason: 'CROSS_MODAL_OWNER_MISMATCH' },
+    { label: 'revision', evidence: { ...validEnvelope, athlete_state_revision: 3 }, reason: 'CROSS_MODAL_REVISION_MISMATCH' },
+    { label: 'stale snapshot', evidence: { ...validEnvelope, evidence_snapshot_id: 'stale-snapshot' }, reason: 'CROSS_MODAL_SNAPSHOT_MISMATCH' },
+    { label: 'hash', evidence: { ...validEnvelope, content_hash: `sha256:${'c'.repeat(64)}` }, reason: 'CROSS_MODAL_EVIDENCE_HASH_MISMATCH' },
+    {
+      label: 'dimension',
+      evidence: { ...validEnvelope, dimensions: Object.fromEntries(Object.entries(validEnvelope.dimensions).slice(0, 7)) },
+      reason: 'CROSS_MODAL_DIMENSIONS_INCOMPLETE',
+    },
+    { label: 'ceiling', evidence: { ...validEnvelope, measured_running_ceiling_m: null }, reason: 'CROSS_MODAL_RUNNING_CEILING_UNKNOWN' },
+  ];
+  for (const fixture of fixtures) {
+    let captured = null;
+    const state = JSON.parse(JSON.stringify(baseState));
+    state.context.history.crossModalReductionEvidence = fixture.evidence;
+    const result = plansRouter._test.computeGoalBackwardShadowDiagnostics({
+      userId: 'synthetic-cross-modal-owner', planningDateLocal, state,
+      built: { plan: { weeks: [{ days: [{
+        date: planningDateLocal,
+        sessions: [{ id: 'route-easy', workout_id: 'easy_aerobic', kind: 'run', distance_miles: 6.94, duration_min: 70 }],
+      }] }] } },
+    }, {
+      enumerateCandidates(input) {
+        captured = input;
+        return { decision: input.decision, candidates: [], selected_candidate: null, persisted: false };
+      },
+    });
+    assert.equal(captured.validation_options.material_reduction_scope, null, fixture.label);
+    assert.equal(captured.validation_options.cross_modal_reduction_evidence.valid, false, fixture.label);
+    assert.deepEqual(captured.validation_options.cross_modal_reduction_evidence.reason_codes,
+      [fixture.reason], fixture.label);
+    assert.deepEqual(captured.validation_options.cross_modal_evidence_ids, [], fixture.label);
+    assert.equal(result.selected_candidate, null, fixture.label);
+    assert.equal(result.persisted, false, fixture.label);
+  }
 });
 
 test('C3-ROLE-01', 'healthy HYROX plus road development requires pure-running quality, HYROX-specific work, and long aerobic work', () => {
@@ -694,6 +916,34 @@ test('C3-VALIDATOR-01', 'material dose and meaningful role validation are hard g
 });
 
 test('C3-ROLE-02', 'an explicit bounded availability conflict may mark a role unplaceable without inventing a token session', () => {
+  const decisionBinding = buildDevelopmentRoleBinding({
+    decision_id: 'decision-c3-role-conflict',
+    decision_hash: canonicalHash({ decision: 'c3-role-conflict' }),
+    lock_revision: 3,
+    edit_revision: 2,
+    constraint_fingerprint: `sha256:${canonicalHash({ constraints: 'c3-role-conflict' })}`,
+    athlete_locks: [],
+    manual_edits: [],
+  });
+  const conflictInput = {
+    requirement_id: 'long_aerobic',
+    governing_decision_id: decisionBinding.decision_id,
+    governing_decision_hash: decisionBinding.decision_hash,
+    governing_constraint_revision: decisionBinding.constraint_revision,
+    governing_constraint_hash: decisionBinding.constraint_hash,
+    scope_kind: 'BLOCK',
+    reason_code: 'SCHEDULE_CONSTRAINT',
+    effective_from_local: '2026-08-17',
+    expires_on_local: '2026-08-24',
+    expires_at: '2026-08-24T04:00:00.000Z',
+    reevaluate_at: '2026-08-23T12:00:00.000Z',
+    scope_timezone: 'UTC',
+    affected_modalities: ['running'],
+    decisive_evidence_ids: ['synthetic-availability-revision'],
+    authorizes_material_reduction: false,
+  };
+  const boundConflict = normalizeScope(conflictInput);
+  assert.ok(boundConflict?.scope_hash);
   const result = validateGoalBackwardCandidate({
     sessions: [runSession('quality-only', 4, 'threshold_run', 'PRIMARY_KEY')],
   }, {
@@ -708,20 +958,50 @@ test('C3-ROLE-02', 'an explicit bounded availability conflict may mark a role un
       requirement_id: 'long_aerobic', any_of: ['long_aerobic'], minimum_role: 'PRIMARY_KEY',
       presentation_floor_required: true,
     }],
-    development_role_conflicts: [{
-      requirement_id: 'long_aerobic',
-      scope_kind: 'BLOCK',
-      reason_code: 'SCHEDULE_CONSTRAINT',
-      effective_from_local: '2026-08-17',
-      expires_at: '2026-08-24T04:00:00.000Z',
-      reevaluate_at: '2026-08-23T12:00:00.000Z',
-      affected_modalities: ['running'],
-      decisive_evidence_ids: ['synthetic-availability-revision'],
-      authorizes_material_reduction: false,
-    }],
+    development_role_conflicts: [boundConflict],
+    development_role_binding: decisionBinding,
   });
   assert.equal(result.validator_results.find((entry) => entry.validator === 'development_roles').valid, true);
   assert.equal(result.valid, true);
+
+  const qualityConflict = normalizeScope({ ...conflictInput, requirement_id: 'pure_running_quality' });
+  assert.notEqual(qualityConflict.scope_hash, boundConflict.scope_hash,
+    'the waived requirement identity must be part of the immutable scope hash');
+  for (const conflicts of [
+    [{ ...boundConflict, governing_decision_hash: `sha256:${'0'.repeat(64)}` }],
+    [{ ...boundConflict, governing_constraint_revision: 'lock:2:edit:2' }],
+    [{ ...boundConflict, governing_constraint_hash: `sha256:${'1'.repeat(64)}` }],
+    [boundConflict, { ...boundConflict, decisive_evidence_ids: ['synthetic-duplicate-waiver'] }],
+    [{ ...qualityConflict, requirement_id: 'long_aerobic' }],
+  ]) {
+    const rejected = validateGoalBackwardCandidate({
+      sessions: [runSession('quality-only-negative', 4, 'threshold_run', 'PRIMARY_KEY')],
+    }, {
+      training_age_class: 'ESTABLISHED', consistency_state: 'CONSISTENT', recovery_state: 'NORMAL',
+      safety_action: 'NORMAL', available_local_dates: ['2026-08-17'],
+      planning_date_local: '2026-08-17', candidate_window_end_local: '2026-08-23',
+      development_role_requirements: [{
+        requirement_id: 'long_aerobic', any_of: ['long_aerobic'], minimum_role: 'PRIMARY_KEY',
+      }],
+      development_role_conflicts: conflicts,
+      development_role_binding: decisionBinding,
+    });
+    assert.equal(rejected.validator_results.find((entry) => entry.validator === 'development_roles').valid, false);
+  }
+
+  const selfAuthored = validateGoalBackwardCandidate({
+    sessions: [runSession('quality-only-self-authored', 4, 'threshold_run', 'PRIMARY_KEY')],
+    development_role_conflicts: [boundConflict],
+  }, {
+    training_age_class: 'ESTABLISHED', consistency_state: 'CONSISTENT', recovery_state: 'NORMAL',
+    safety_action: 'NORMAL', available_local_dates: ['2026-08-17'],
+    planning_date_local: '2026-08-17', candidate_window_end_local: '2026-08-23',
+    development_role_requirements: [{
+      requirement_id: 'long_aerobic', any_of: ['long_aerobic'], minimum_role: 'PRIMARY_KEY',
+    }],
+    development_role_binding: decisionBinding,
+  });
+  assert.equal(selfAuthored.validator_results.find((entry) => entry.validator === 'development_roles').valid, false);
 });
 
 test('C3-ENGINE-01', 'enumeration rejects unsupported under-dose deterministically and retains no persistable least-bad selection', () => {
@@ -929,9 +1209,10 @@ test('C3-PRIVACY-01', 'receipt ordering is stable and raw evidence identities ne
     'approval-relevant evidence cannot be silently truncated');
 
   const localExpiry = restrictionScope({
+    scope_timezone: 'Pacific/Kiritimati',
     expires_on_local: '2026-08-24',
     expires_at: '2026-08-24T00:30:00+14:00',
-    reevaluate_at: '2026-08-22T12:00:00.000Z',
+    reevaluate_at: '2026-08-22T12:00:00+14:00',
     decisive_evidence_ids: ['local-expiry-evidence-1', 'local-expiry-evidence-2'],
   });
   assert.equal(evaluateMaterialDose(materialInput({ reductionScope: localExpiry })).valid, true,

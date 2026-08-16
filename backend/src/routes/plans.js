@@ -39,6 +39,7 @@ const { canonicalizeRunLoadInput } = require('../lib/goalBackwardEvidence');
 const {
   deriveMaterialReductionScope,
   deriveScopedRecoveryState,
+  normalizeCrossModalReductionEvidence,
 } = require('../lib/goalBackwardRecoveryMaterial');
 const {
   buildGoalBackwardReleaseTelemetry,
@@ -1816,6 +1817,16 @@ async function buildConcurrentContext(userId, profile, target, tx = null) {
         reason_codes: runLoadInput.reason_codes,
         load_input_hash: runLoadInput.load_input_hash,
       },
+      // The current schema has no immutable owner/revision/hash-bound
+      // 8-dimension measurement plus measured running ceiling receipt.
+      // Keep material reduction fail-closed until that server-owned evidence
+      // contract is persisted and assembled here.
+      crossModalReductionEvidence: null,
+      crossModalReductionEvidenceState: {
+        available: false,
+        reason_code: 'CROSS_MODAL_EVIDENCE_RECEIPT_MISSING',
+        required_contract: 'PERSISTED_CROSS_MODAL_REDUCTION_EVIDENCE_V1',
+      },
       recentLiftCount: strengthExposures.length,
       acuteRunLoad,
       currentWeekStrength,
@@ -2623,6 +2634,7 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
   const scopedRecovery = deriveScopedRecoveryState({
     planning_date_local: planningDateLocal,
     candidate_window_end_local: addPolicyDays(planningDateLocal, 6),
+    timezone: state.context?.profile?.timezone || 'UTC',
     evidence_snapshot_id: evidenceSnapshotId,
     context: state.context,
   });
@@ -2749,9 +2761,18 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
       decision = buildDecision({ ...decisionInput, supporting_stimuli: supportingStimuli });
     }
   }
+  const crossModalReductionEvidence = normalizeCrossModalReductionEvidence(
+    state.context?.history?.crossModalReductionEvidence,
+    {
+      athlete_id: userId,
+      athlete_state_revision: decisionInput.athlete_state.athlete_state_revision,
+      evidence_snapshot_id: evidenceSnapshotId,
+    },
+  );
   const materialReductionScope = deriveMaterialReductionScope({
     planning_date_local: planningDateLocal,
     candidate_window_end_local: addPolicyDays(planningDateLocal, 6),
+    timezone: decision.timezone,
     evidence_snapshot_id: evidenceSnapshotId,
     decision,
     scoped_recovery_state: scopedRecovery,
@@ -2761,7 +2782,26 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
       runLoadInput?.correction_receipt_hash,
       runLoadInput?.identity_decision_receipt?.receipt_hash,
     ].filter(Boolean),
+    cross_modal_reduction_evidence: crossModalReductionEvidence,
+    measured_running_ceiling_m: crossModalReductionEvidence.valid
+      ? crossModalReductionEvidence.measured_running_ceiling_m : null,
   });
+  const crossModalFatigueCeilings = crossModalReductionEvidence.valid ? {
+    dimensions: Object.fromEntries(crossModalReductionEvidence.dimension_ledger.dimensions.map((entry) => [
+      entry.dimension,
+      {
+        dimension: entry.dimension,
+        status: entry.status,
+        confidence: entry.confidence,
+        normal_ceiling: entry.normal_ceiling,
+        authorized_ceiling: entry.authorized_ceiling,
+      },
+    ])),
+    normal_ceiling_vector: crossModalReductionEvidence.dimension_ledger.dimensions
+      .map((entry) => entry.normal_ceiling),
+    authorized_ceiling_vector: crossModalReductionEvidence.dimension_ledger.dimensions
+      .map((entry) => entry.authorized_ceiling),
+  } : null;
   const activeAppliedPlan = state.active ? {
     ...parsePlan(state.active.row),
     plan_revision: Math.max(1, Number(state.activePlan?.planVersion || state.active.row?.plan_version || 1)),
@@ -2787,6 +2827,7 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
       ?? state.context?.history?.crossModalRecentNormal
       ?? state.context?.history?.cross_modal_recent_normal
       ?? {},
+    ...(crossModalFatigueCeilings ? { fatigue_ceilings: crossModalFatigueCeilings } : {}),
     materialize_canonical: true,
     planning_instant: `${planningDateLocal}T00:00:00.000Z`,
     timezone: state.context?.profile?.timezone || decision.timezone || 'UTC',
@@ -2809,7 +2850,9 @@ function computeGoalBackwardShadowDiagnostics({ userId, state, built, planningDa
       observed_lower_bound_evidence_ids: observedLowerBoundWeeklyMiles === null
         ? [] : [evidenceSnapshotId],
       material_reduction_scope: materialReductionScope,
-      cross_modal_evidence_ids: [],
+      cross_modal_reduction_evidence: crossModalReductionEvidence,
+      cross_modal_evidence_ids: crossModalReductionEvidence.valid
+        ? crossModalReductionEvidence.decisive_evidence_ids : [],
     },
   });
   if (typeof dependencies.inspectDecision === 'function') dependencies.inspectDecision(result);
@@ -3678,6 +3721,7 @@ function currentGoalBackwardApplyEnvelope(expected, userId, current) {
   const scopedRecovery = deriveScopedRecoveryState({
     planning_date_local: expected.planning_date_local,
     candidate_window_end_local: addPolicyDays(expected.planning_date_local, 6),
+    timezone: current.context?.profile?.timezone || 'UTC',
     evidence_snapshot_id: evidenceSnapshotId,
     context: current.context,
   });
